@@ -40,21 +40,35 @@ native Quest path.
 3. `docs/VALIDATION.md`
 4. `fixtures/README.md`
 
-For work in `apps/spatial-camera-panel-android`, then read its
-`morphospace/project.spec.json`, `feature.lock.json`, `workspace.state.json`,
-and the current iteration unit before source. That app is the first downstream
-adopter of the portable project/module workflow: the panel shell is the only
-workflow-selected baseline, nearby particle/hand/camera/media/asset/room
-families are explicit disabled entries, and unlisted features remain inert.
+`apps/spatial-camera-panel-android` is shared public adapter source, not a
+single consumer-project authority. Private downstream effect projects resume
+from their own private project workspaces. Spatial VR Strobe work resumes from
+`apps/spatial-vr-strobe-android/morphospace/`. The live
+`apps/spatial-camera-panel-android/morphospace/` entrypoint is an inert v2
+legacy index; the complete mixed v1 ledger is integrity-bound under
+`apps/spatial-camera-panel-android/legacy-workspaces/mixed-integration-v1/`.
+Neither historical Strobe nor camera state may gate another project. In that
+archive the panel shell remains the only workflow-selected baseline, nearby
+particle/hand/camera/media/asset/room families are explicit disabled entries,
+and unlisted features remain inert.
 The staged Spatial asset lane is also lock-bound: a GLB/GLTF URI or legacy
 enable property alone must stay inert unless the app-owned
 `spatial-asset-model.feature.lock.json` and its exact runtime identity tuple
 apply first.
 
-For corrective WF-005 reconciliation, inspect both app-local workspaces:
-`apps/spatial-camera-panel-android/morphospace` and
-`apps/native-renderer-android/morphospace`. Their default locks remain inert;
-particle and hand families may appear only in explicit conformance locks. Run
+Spatial Camera Panel and Spatial VR Strobe are mutually exclusive public adapter products. A
+build must select one product identity and therefore one package, client,
+feature-lock, marker, property, intermediate-build, and output namespace.
+Ambient Android properties cannot switch products. Run
+`tools/checks/Test-SpatialProductIsolationStatic.ps1` when changing this
+boundary.
+
+For corrective WF-005 reconciliation, inspect the archived Camera integration
+workspace and the independent Native Renderer workspace:
+`apps/spatial-camera-panel-android/legacy-workspaces/mixed-integration-v1` and
+`apps/native-renderer-android/morphospace`. Their historical default locks
+remain inert; particle and hand families may appear only in explicit
+conformance locks. Run
 `tools/checks/Test-SpatialCameraPanelWorkflowStatic.ps1` and its self-test for
 workspace changes. Local MOD-006 source validation is device-pending and must
 not be presented as central promotion or device acceptance.
@@ -265,18 +279,45 @@ ordinary serial-scoped ADB work behind a global `adb-server` lease.
   transport layer; the consuming app must also emit the matching effective
   setting, marker, or command receipt before the value counts as accepted
   runtime behavior.
+- Route one-sided Meta Spatial SDK UI-panel placement through the shared
+  front-face convention in `docs/SPATIAL_SDK_PANEL_FACING.md`. Keep UI-panel
+  facing separate from scene-quad/material orientation, emit the effective
+  facing marker, register only the panels active for an exclusive feature
+  route, and require headset visibility confirmation after a change. Layer
+  z-index is not a substitute for an attended foreground contract over a
+  full-field custom material. A nearer, proportionally scaled panel requires
+  separate comfort and controller-ray proof; if that proof fails, retain the
+  comfortable panel pose and suppress the competing carrier while the panel is
+  visible without changing its output lifecycle. Do not rely on ECS
+  `Visible(false)` alone to isolate an unrelated compositor panel; hide its
+  native scene object and remove app actions that a reserved global controller
+  shortcut must never invoke. Give each reserved physical shortcut one
+  authoritative action arbiter. Multiple platform observations may feed that
+  arbiter when no single route is proven complete, but they must share physical
+  edge state or a bounded cross-route deduplication window; never discard a
+  working key/motion route merely to make a separate snapshot route exclusive.
+  Emit action-to-render receipts; a host-side SceneObject assignment or a
+  completed series of `SceneMaterial.setAttribute` calls proves submission,
+  not visible renderer adoption. Keep interactive material deltas bounded,
+  separate submission from a later frame-boundary observation, and retain
+  attended visibility as the final proof. When a comfortable physical panel must overlay a
+  view-locked carrier, scaling carrier distance and geometry by the same ratio
+  may preserve angular coverage while restoring depth order; clamp its nearest
+  distance behind the panel and require attended occlusion proof. Treat a
+  reference UI's random editor bounds as outer compatibility limits, not proof
+  of numerically valid or performant mobile shader profiles.
 
 ## Validation
 
 Run:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\check_all.ps1
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\check_all.ps1
 ```
 
 The Spatial Camera Panel wrapper runs its focused workflow gate before the
 large legacy static ledger:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\checks\Test-SpatialCameraPanelWorkflowStatic.ps1 -RepoRoot .
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\checks\Test-SpatialCameraPanelWorkflowStatic.ps1 -RepoRoot .
 ```

@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:horizonos="http://schemas.horizonos/sdk"
+    android:installLocation="auto">
+
+    <horizonos:uses-horizonos-sdk
+        horizonos:minSdkVersion="69"
+        horizonos:targetSdkVersion="69" />
+
+    <uses-feature android:name="android.hardware.vr.headtracking" android:required="true" />
+    <uses-feature android:name="com.oculus.feature.PASSTHROUGH" android:required="false" />
+    <uses-feature android:name="oculus.software.handtracking" android:required="false" />
+    <uses-feature android:glEsVersion="0x00030001" />
+
+    <uses-permission android:name="com.oculus.permission.HAND_TRACKING" />
+    <uses-permission android:name="horizonos.permission.USE_SCENE" />
+    <uses-permission android:name="org.khronos.openxr.permission.OPENXR" />
+    <uses-permission android:name="org.khronos.openxr.permission.OPENXR_SYSTEM" />
+
+    <application
+        android:allowBackup="false"
+        android:debuggable="true"
+        android:label="Rusty Quest Spatial VR Strobe"
+        android:theme="@android:style/Theme.Black.NoTitleBar.Fullscreen">
+        <meta-data android:name="rusty.manifold.client_id" android:value="client.quest.spatial-vr-strobe" />
+        <meta-data android:name="rusty.manifold.feature_lock_id" android:value="lock.spatial-vr-strobe.v1" />
+        <meta-data android:name="rusty.manifold.marker_namespace" android:value="RUSTY_QUEST_SPATIAL_VR_STROBE" />
+        <meta-data android:name="com.oculus.supportedDevices" android:value="quest2|questpro|quest3|quest3s" />
+        <meta-data android:name="com.oculus.vr.focusaware" android:value="true" />
+        <meta-data android:name="com.oculus.handtracking.version" android:value="V2.0" />
+        <uses-native-library android:name="libossdk.oculus.so" android:required="true" />
+
+        <activity
+            android:name=".SpatialVrStrobeActivity"
+            android:configChanges="screenSize|screenLayout|orientation|keyboardHidden|keyboard|navigation|uiMode"
+            android:exported="true"
+            android:launchMode="singleTask">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="com.oculus.intent.category.VR" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>

@@ -197,8 +197,47 @@ internal object SpatialDiagnosticProbeRouteModule {
       "channel=external-xr-swapchain-wrap-probe status=start externalSwapchainProbe=true " +
           "reason=${activityMarkerToken(reason)} cycles=$cycles cycleMs=$cycleMs " +
           "debugProperty=$EXTERNAL_SWAPCHAIN_PROBE_PROPERTY rendererAuthority=spatial-sdk-openxr-session " +
-          "nativeFrameLoop=false customProjectionStack=false camera2Stack=false privateShaderStack=false " +
+          "probeMode=standard-openxr-functions sdkSceneObjectConversion=false " +
+          "queueSubmissionAttempted=false nativeFrameLoop=false " +
+          "customProjectionStack=false camera2Stack=false privateShaderStack=false " +
           explicitOptInMarkerFields(EXTERNAL_SWAPCHAIN_PROBE_PROPERTY)
+
+  fun externalSwapchainProbeCompileTimeBoundaryMarker(
+      cycleIndex: Int,
+      openXrInstanceHandleNonZero: Boolean,
+      openXrSessionHandleNonZero: Boolean,
+      openXrGetInstanceProcAddrHandleNonZero: Boolean,
+  ): String =
+      "channel=sdk-openxr-compile-time-boundary status=observed " +
+          "externalSwapchainProbe=true cycleIndex=$cycleIndex " +
+          "sdkApiVersion=0.13.1 accessSurface=typed-sdk-and-openxr-api " +
+          "openXrInstanceHandleNonZero=$openXrInstanceHandleNonZero " +
+          "openXrSessionHandleNonZero=$openXrSessionHandleNonZero " +
+          "openXrGetInstanceProcAddrHandleNonZero=$openXrGetInstanceProcAddrHandleNonZero " +
+          "sessionGraphicsBindingGetterAvailable=false sdkSceneObjectConversion=false"
+
+  fun externalSwapchainProbeStandardCompleteMarker(
+      cycleIndex: Int,
+      cycleCount: Int,
+      destroyOwnership: String,
+  ): String =
+      "channel=external-xr-swapchain-wrap-probe status=complete externalSwapchainProbe=true " +
+          "cycleIndex=$cycleIndex cycleCount=$cycleCount " +
+          "xrCreateSwapchainResult=success swapchainImagesEnumerated=see-native-marker " +
+          "sdkSceneObjectConversion=false sceneQuadLayerCreated=false " +
+          "queueSubmissionAttempted=false swapchainImageWriteAttempted=false " +
+          "nativeCanRenderIntoImages=false " +
+          "renderBoundary=session-graphics-binding-not-returned-by-spatial-sdk-api " +
+          "destroyOwnership=$destroyOwnership deviceLost=false runtimeCrash=false"
+
+  fun externalSwapchainProbeStandardCleanupMarker(
+      reason: String,
+      nativeDestroyResult: Int,
+      destroyOwnership: String,
+  ): String =
+      "channel=external-xr-swapchain-wrap-probe status=cleanup " +
+          "reason=${activityMarkerToken(reason)} nativeDestroyResult=$nativeDestroyResult " +
+          "destroyOwnership=$destroyOwnership runtimeCrash=false"
 
   fun externalSwapchainProbeLibraryUnavailableCompleteMarker(
       cycleIndex: Int,
@@ -298,12 +337,14 @@ internal object SpatialDiagnosticProbeRouteModule {
       cycleIndex: Int,
       layerPositionM: String,
       layerQuaternion: String,
+      anchorMode: String,
   ): String =
       "channel=external-xr-swapchain-wrap-probe status=layer-created " +
           "externalSwapchainProbe=true cycleIndex=$cycleIndex sceneQuadLayerCreated=true " +
           "widthMeters=$EXTERNAL_SWAPCHAIN_PROBE_WIDTH_METERS " +
           "heightMeters=$EXTERNAL_SWAPCHAIN_PROBE_HEIGHT_METERS " +
           "stereoMode=None poseSource=Scene.getViewerPose " +
+          "anchorMode=${activityMarkerToken(anchorMode)} " +
           "layerPositionM=$layerPositionM layerQuaternion=$layerQuaternion"
 
   fun externalSwapchainProbeLayerCreateFailedMarker(
@@ -321,13 +362,15 @@ internal object SpatialDiagnosticProbeRouteModule {
       cycleCount: Int,
       sdkHandleWrapMode: String,
       layerCreated: Boolean,
+      accessMask: Long,
   ): String =
       "channel=external-xr-swapchain-wrap-probe status=cycle-visible externalSwapchainProbe=true " +
           "cycleIndex=$cycleIndex cycleCount=$cycleCount sdkHandleWrapMode=$sdkHandleWrapMode " +
           "xrCreateSwapchainResult=success wrappedExternalSwapchain=true " +
           "sceneQuadLayerCreated=$layerCreated swapchainImagesEnumerated=see-native-marker " +
-          "nativeCanRenderIntoImages=false visiblePatternConfirmed=false " +
-          "renderBlockReason=missing-spatial-sdk-vulkan-device-queue " +
+          "sdkOwnedVulkanAccessMask=$accessMask nativeCanRenderIntoImages=false " +
+          "visiblePatternConfirmed=false " +
+          "renderBlockReason=spatial-sdk-public-api-does-not-provide-session-vkdevice-or-queue " +
           "destroyOwnership=pending deviceLost=false runtimeCrash=false"
 
   fun externalSwapchainProbeLayerCreateFailedCompleteMarker(
@@ -456,6 +499,8 @@ internal object SpatialDiagnosticProbeRouteModule {
       reason: String,
       layerDestroyed: Boolean,
       sceneObjectDestroyed: Boolean,
+      anchorMeshDestroyed: Boolean,
+      anchorMaterialDestroyed: Boolean,
       wrapperDestroyed: Boolean,
       wrapperDestroySkipped: Boolean,
       nativeDestroyResult: String,
@@ -463,7 +508,8 @@ internal object SpatialDiagnosticProbeRouteModule {
   ): String =
       "channel=external-xr-swapchain-wrap-probe status=destroyed externalSwapchainProbe=true " +
           "reason=${activityMarkerToken(reason)} layerDestroyed=$layerDestroyed " +
-          "sceneObjectDestroyed=$sceneObjectDestroyed wrapperDestroyed=$wrapperDestroyed " +
+          "sceneObjectDestroyed=$sceneObjectDestroyed anchorMeshDestroyed=$anchorMeshDestroyed " +
+          "anchorMaterialDestroyed=$anchorMaterialDestroyed wrapperDestroyed=$wrapperDestroyed " +
           "wrapperDestroySkipped=$wrapperDestroySkipped " +
           "nativeDestroyResult=$nativeDestroyResult destroyOwnership=$destroyOwnership " +
           "deviceLost=false runtimeCrash=false"
@@ -908,10 +954,13 @@ internal object SpatialDiagnosticProbeRouteModule {
 
   fun panelSurfaceMatrixProbeStartMarker(reason: String): String =
       "channel=panel-surface-matrix-probe status=start panelSurfaceMatrixProbe=true " +
-          "reason=${activityMarkerToken(reason)} debugProperty=$PANEL_SURFACE_MATRIX_PROBE_PROPERTY " +
+      "reason=${activityMarkerToken(reason)} debugProperty=$PANEL_SURFACE_MATRIX_PROBE_PROPERTY " +
           "widthPx=$PANEL_SURFACE_MATRIX_PROBE_WIDTH_PX heightPx=$PANEL_SURFACE_MATRIX_PROBE_HEIGHT_PX " +
-          "variants=useSwapchain-true-useTexture-false,useSwapchain-false-useTexture-true " +
-          "sceneQuadLayerBackedByPanelSurfaceSwapchainPlanned=true nativeVulkanProducerPlanned=true " +
+          "variants=useSwapchain-true-useTexture-false,useSwapchain-false-useTexture-true,useSwapchain-true-useTexture-true " +
+          "sceneQuadLayerBackedByPanelSurfaceSwapchainPlanned=true " +
+          "sceneTextureBacksWorldMaterialPlanned=true dualConsumerPlanned=true " +
+          "panelEffectShaderPlanned=spatial_panel_surface_probe.frag " +
+          "sceneSkipRenderDiscriminatorPlanned=true nativeVulkanProducerPlanned=true " +
           explicitOptInMarkerFields(PANEL_SURFACE_MATRIX_PROBE_PROPERTY)
 
   fun panelSurfaceMatrixProbeVariantCreateFailedMarker(
@@ -936,13 +985,15 @@ internal object SpatialDiagnosticProbeRouteModule {
       mips: Int,
       reportedUseSwapchain: Boolean,
       reportedUseTexture: Boolean,
+      fragmentShader: String,
   ): String =
       "channel=panel-surface-matrix-probe status=variant-created " +
           "panelSurfaceMatrixProbe=true variant=${activityMarkerToken(variantName)} " +
           "panelSurfaceCreated=true surfaceValid=$surfaceValid " +
           "swapchainNonNull=$swapchainNonNull textureNonNull=$textureNonNull " +
           "widthPx=$widthPx heightPx=$heightPx mips=$mips " +
-          "reportedUseSwapchain=$reportedUseSwapchain reportedUseTexture=$reportedUseTexture"
+          "reportedUseSwapchain=$reportedUseSwapchain reportedUseTexture=$reportedUseTexture " +
+          "fragmentShader=${activityMarkerToken(fragmentShader.ifEmpty { "none" })}"
 
   fun panelSurfaceMatrixProbeSceneQuadLayerAttemptedMarker(
       variantName: String,
@@ -953,6 +1004,40 @@ internal object SpatialDiagnosticProbeRouteModule {
           "panelSurfaceMatrixProbe=true variant=${activityMarkerToken(variantName)} " +
           "swapchainNonNull=$swapchainNonNull " +
           "swapchainBacksSceneQuadLayer=$layerCreated anchorMode=generated-single-sided-quad"
+
+  fun panelSurfaceMatrixProbeTextureMeshAttemptedMarker(
+      variantName: String,
+      textureHandle: Long,
+      textureBacksSceneMaterial: Boolean,
+      sceneObjectHandle: Long,
+      horizontalOffsetMeters: Float,
+  ): String =
+      "channel=panel-surface-matrix-probe status=scene-texture-material-attempted " +
+          "panelSurfaceMatrixProbe=true variant=${activityMarkerToken(variantName)} " +
+          "textureHandle=$textureHandle textureBacksSceneMaterial=$textureBacksSceneMaterial " +
+          "sceneObjectHandle=$sceneObjectHandle " +
+          "horizontalOffsetMeters=${activityMarkerFloat(horizontalOffsetMeters)} " +
+          "anchorMode=generated-single-sided-quad materialShader=unlit"
+
+  fun panelSurfaceMatrixProbeTextureMeshFailedMarker(
+      variantName: String,
+      error: String,
+      message: String,
+  ): String =
+      "channel=panel-surface-matrix-probe status=scene-texture-material-failed " +
+          "panelSurfaceMatrixProbe=true variant=${activityMarkerToken(variantName)} " +
+          "textureBacksSceneMaterial=false error=${activityMarkerToken(error)} " +
+          "message=${activityMarkerToken(message)} runtimeCrash=false"
+
+  fun panelSurfaceMatrixProbeSkipRenderMarker(
+      enabled: Boolean,
+      accepted: Boolean,
+      expectedWitness: String,
+  ): String =
+      "channel=panel-surface-matrix-probe status=scene-skip-render-toggle " +
+          "panelSurfaceMatrixProbe=true sceneSkipRenderEnabled=$enabled " +
+          "sceneSkipRenderCallAccepted=$accepted " +
+          "expectedWitness=${activityMarkerToken(expectedWitness)}"
 
   fun panelSurfaceMatrixProbeNativeStartFailedMarker(
       variantName: String,
@@ -982,6 +1067,8 @@ internal object SpatialDiagnosticProbeRouteModule {
       swapchainNonNull: Boolean,
       textureNonNull: Boolean,
       layerCreated: Boolean,
+      textureMeshCreated: Boolean,
+      fragmentShader: String,
       nativeStartRequested: Boolean,
       nativeStartMask: Long,
       sceneCleanupStatus: String,
@@ -992,13 +1079,16 @@ internal object SpatialDiagnosticProbeRouteModule {
           "panelSurfaceCreated=true surfaceValid=$surfaceValid " +
           "swapchainNonNull=$swapchainNonNull textureNonNull=$textureNonNull " +
           "swapchainBacksSceneQuadLayer=$layerCreated " +
+          "textureBacksSceneMaterial=$textureMeshCreated " +
+          "fragmentShader=${activityMarkerToken(fragmentShader.ifEmpty { "none" })} " +
           "nativeVulkanStartRequested=$nativeStartRequested nativeStartMask=$nativeStartMask " +
           "sceneCleanupStatus=$sceneCleanupStatus " +
           "panelSurfaceDestroyed=$panelSurfaceDestroyed runtimeCrash=false"
 
   fun panelSurfaceMatrixProbeCompleteMarker(): String =
       "channel=panel-surface-matrix-probe status=complete panelSurfaceMatrixProbe=true " +
-          "variantsTested=2 runtimeCrash=false"
+          "variantsTested=3 dualConsumerVariantTested=true " +
+          "sceneSkipRenderRestored=false runtimeCrash=false"
 
   fun cameraHwbProbeStartMarker(
       reason: String,

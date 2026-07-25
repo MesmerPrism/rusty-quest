@@ -140,7 +140,6 @@ function Start-SpatialSurface {
     )
     Invoke-Adb -Serial $Serial -Arguments @(
         "shell", "am", "start", "-W", "-n", $Activity, "-a", $SurfaceTargetAction,
-        "--es", "participant_id", "mod006",
         "--es", "surface_target_id", $Target,
         "--es", "run_label", $Label,
         "--es", "operator_id", "codex",

@@ -7,6 +7,7 @@ use std::process::Command;
 
 fn main() {
     let out_dir = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR must be set"));
+    write_spatial_presentation_policy(&out_dir);
     write_recorded_hand_replay_source(&out_dir);
     let shaders = [
         (
@@ -90,12 +91,21 @@ fn main() {
         &out_dir,
         "RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OPAQUE_GUIDE_SHADER",
     );
-    let opaque_projection_shader = compile_optional_shader_env(
+    let opaque_projection_shader = compile_optional_shader_env_with_args(
         &glslc,
         &out_dir,
         "RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OPAQUE_PROJECTION_SHADER",
         "spatial_opaque_projection.frag.spv",
         "fragment",
+        &["-DPRIVATE_LAYER_VIDEO_COMPOSITOR=0".to_string()],
+    );
+    let opaque_projection_video_compositor_shader = compile_optional_shader_env_with_args(
+        &glslc,
+        &out_dir,
+        "RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OPAQUE_PROJECTION_SHADER",
+        "spatial_opaque_projection_video_compositor.frag.spv",
+        "fragment",
+        &["-DPRIVATE_LAYER_VIDEO_COMPOSITOR=1".to_string()],
     );
     let opaque_projection_effect =
         opaque_projection_effect_env("RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OPAQUE_PROJECTION_EFFECT");
@@ -106,9 +116,54 @@ fn main() {
         public_guide_blur_shader_byte_count,
         opaque_guide_shader,
         opaque_projection_shader,
+        opaque_projection_video_compositor_shader,
         opaque_projection_effect,
         &private_surface_particle,
     );
+}
+
+fn write_spatial_presentation_policy(out_dir: &Path) {
+    const LOCK_ENV: &str = "RUSTY_QUEST_SPATIAL_LOCKED_FINAL_PRESENTATION";
+    const SPEED_ENV: &str = "RUSTY_QUEST_SPATIAL_DISTORTION_SPEED_SCALE";
+    println!("cargo:rerun-if-env-changed={LOCK_ENV}");
+    println!("cargo:rerun-if-env-changed={SPEED_ENV}");
+
+    let locked = match env::var(LOCK_ENV) {
+        Ok(raw) => match raw.trim().to_ascii_lowercase().as_str() {
+            "1" | "true" | "yes" | "on" => true,
+            "0" | "false" | "no" | "off" => false,
+            _ => panic!("{LOCK_ENV} must be a boolean, got {raw:?}"),
+        },
+        Err(_) => false,
+    };
+    let speed_scale = match env::var(SPEED_ENV) {
+        Ok(raw) => raw
+            .trim()
+            .parse::<f32>()
+            .unwrap_or_else(|_| panic!("{SPEED_ENV} must be numeric, got {raw:?}")),
+        Err(_) => 1.0,
+    };
+    assert!(
+        speed_scale.is_finite() && (0.0..=4.0).contains(&speed_scale),
+        "{SPEED_ENV} must be between 0.0 and 4.0, got {speed_scale}"
+    );
+
+    let output = out_dir.join("spatial_presentation_policy_build.rs");
+    fs::write(
+        &output,
+        format!(
+            "pub(crate) const SPATIAL_LOCKED_FINAL_PRESENTATION: bool = {};\n\
+             pub(crate) const SPATIAL_DISTORTION_SPEED_SCALE: f32 = {:.8};\n",
+            bool_literal(locked),
+            speed_scale,
+        ),
+    )
+    .unwrap_or_else(|error| {
+        panic!(
+            "failed to write Spatial presentation policy {}: {error}",
+            output.display()
+        )
+    });
 }
 
 #[derive(Clone, Copy)]
@@ -219,6 +274,17 @@ fn compile_optional_shader_env(
     output_name: &str,
     stage: &str,
 ) -> OptionalShaderBuild {
+    compile_optional_shader_env_with_args(glslc, out_dir, env_key, output_name, stage, &[])
+}
+
+fn compile_optional_shader_env_with_args(
+    glslc: &Path,
+    out_dir: &Path,
+    env_key: &str,
+    output_name: &str,
+    stage: &str,
+    extra_args: &[String],
+) -> OptionalShaderBuild {
     println!("cargo:rerun-if-env-changed={env_key}");
     let Some(source) = env_path(env_key) else {
         fs::write(out_dir.join(output_name), []).unwrap_or_else(|error| {
@@ -230,7 +296,13 @@ fn compile_optional_shader_env(
         };
     };
     println!("cargo:rerun-if-changed={}", source.display());
-    let byte_count = compile_shader(glslc, &source, &out_dir.join(output_name), stage);
+    let byte_count = compile_shader_with_args(
+        glslc,
+        &source,
+        &out_dir.join(output_name),
+        stage,
+        extra_args,
+    );
     OptionalShaderBuild {
         compiled: true,
         byte_count,
@@ -606,6 +678,7 @@ fn write_spatial_multistack_build_metadata(
     public_guide_blur_shader_byte_count: u64,
     opaque_guide_shader: OptionalGuideShaderBuild,
     opaque_projection_shader: OptionalShaderBuild,
+    opaque_projection_video_compositor_shader: OptionalShaderBuild,
     opaque_projection_effect: [f32; 4],
     private_surface_particle: &PrivateSurfaceParticleBuild,
 ) {
@@ -635,6 +708,10 @@ fn write_spatial_multistack_build_metadata(
              pub(crate) const OPAQUE_PROJECTION_SHADER_COMPILED: bool = {};\n\
              #[allow(dead_code)]\n\
              pub(crate) const OPAQUE_PROJECTION_SHADER_BYTE_COUNT: usize = {};\n\
+             #[allow(dead_code)]\n\
+             pub(crate) const OPAQUE_PROJECTION_VIDEO_COMPOSITOR_SHADER_COMPILED: bool = {};\n\
+             #[allow(dead_code)]\n\
+             pub(crate) const OPAQUE_PROJECTION_VIDEO_COMPOSITOR_SHADER_BYTE_COUNT: usize = {};\n\
              #[allow(dead_code)]\n\
              pub(crate) const OPAQUE_PROJECTION_EFFECT: [f32; 4] = [{:.8}, {:.8}, {:.8}, {:.8}];\n\
              #[allow(dead_code)]\n\
@@ -681,6 +758,8 @@ fn write_spatial_multistack_build_metadata(
             opaque_guide_shader.total_byte_count,
             bool_literal(opaque_projection_shader.compiled),
             opaque_projection_shader.byte_count,
+            bool_literal(opaque_projection_video_compositor_shader.compiled),
+            opaque_projection_video_compositor_shader.byte_count,
             opaque_projection_effect[0],
             opaque_projection_effect[1],
             opaque_projection_effect[2],

@@ -10,7 +10,9 @@ const MODULE_ID: &str = "surface-particle-runtime";
 pub(crate) const ACCEPTED_PROFILE_ID: &str =
     "profile.quest.spatial_camera_panel.particle_adapter_conformance";
 const CONFORMANCE_LOCK_JSON: &str =
-    include_str!("../../morphospace/conformance-locks/particle-adapter.feature.lock.json");
+    include_str!(
+        "../../legacy-workspaces/mixed-integration-v1/conformance-locks/particle-adapter.feature.lock.json"
+    );
 const ACCEPTED_LOCK_SHA256: &str =
     "780814BE82C12A54036DE0259C6188E2D41813858C30E6B6C725EB8422F7301B";
 #[cfg(test)]

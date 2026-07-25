@@ -1,0 +1,96 @@
+{
+  "schema": "rusty.morphospace.workflow.validation_receipt.v1",
+  "project_id": "spatial-camera-panel",
+  "unit_id": "mod-009",
+  "result": "pass",
+  "tier": "standard",
+  "generated_at": "2026-07-17T15:14:56.8786988Z",
+  "summary": "The default-disabled Meta Spatial SDK stimulus-volume adapter passed fixed-phase host validation. No APK was built, no headset was mutated, and no temporal content was launched.",
+  "artifacts": [
+    {
+      "artifact_id": "mod009-host-validation",
+      "path": "S:\\Work\\repos\\active\\rusty-quest\\apps\\spatial-camera-panel-android\\morphospace\\receipts\\mod-009-host-validation-20260717.json",
+      "sha256": "07e55e6fe01eecf17fa0ab3c5638b86a757eccff4610b000669d736698a89bff",
+      "kind": "source-only-host-validation"
+    }
+  ],
+  "criteria": [
+    {
+      "acceptance_id": "closed-world-activation",
+      "command": "Spatial stimulus-volume JVM and static activation gates",
+      "status": "pass",
+      "evidence_refs": ["mod009-host-validation"]
+    },
+    {
+      "acceptance_id": "fixed-phase-kernel",
+      "command": "Spatial stimulus-volume shader/static contract gate",
+      "status": "pass",
+      "evidence_refs": ["mod009-host-validation"]
+    },
+    {
+      "acceptance_id": "optics-authority",
+      "command": "Project-spec, feature-lock, route, and documentation authority checks",
+      "status": "pass",
+      "evidence_refs": ["mod009-host-validation"]
+    },
+    {
+      "acceptance_id": "host-validation",
+      "command": "Focused Kotlin tests, Spatial static checks, and source-only shader/build configuration checks",
+      "status": "pass",
+      "evidence_refs": ["mod009-host-validation"]
+    }
+  ],
+  "gates": [
+    {
+      "gate_id": "validation-quick",
+      "command": "Spatial stimulus-volume JVM tests and focused static gate",
+      "status": "pass",
+      "evidence_refs": ["mod009-host-validation"]
+    },
+    {
+      "gate_id": "validation-standard",
+      "command": "Spatial Camera Panel host validation plus shader/build configuration checks",
+      "status": "pass",
+      "evidence_refs": ["mod009-host-validation"]
+    },
+    {
+      "gate_id": "instruction-synchronization",
+      "command": "Verify every declared instruction surface is complete and validated.",
+      "status": "pass",
+      "evidence_refs": ["mod009-host-validation"]
+    }
+  ],
+  "repository_revisions": [
+    {
+      "repo_id": "spatial-app",
+      "path": "S:\\Work\\repos\\active\\rusty-quest\\apps\\spatial-camera-panel-android",
+      "branch": "codex/spatial-camera-guard-band-baseline",
+      "base_revision": "7df59dac068d62e6c222a522c763122dc89efd70",
+      "head_revision": "7df59dac068d62e6c222a522c763122dc89efd70"
+    },
+    {
+      "repo_id": "quest-repo",
+      "path": "S:\\Work\\repos\\active\\rusty-quest",
+      "branch": "codex/spatial-camera-guard-band-baseline",
+      "base_revision": "7df59dac068d62e6c222a522c763122dc89efd70",
+      "head_revision": "7df59dac068d62e6c222a522c763122dc89efd70"
+    }
+  ],
+  "changed_paths": [
+    {"repo_id": "spatial-app", "path": "README.md"},
+    {"repo_id": "spatial-app", "path": "app/src/main/java/io/github/mesmerprism/rustyquest/spatial_camera_panel/SpatialStimulusVolumeCoordinator.kt"},
+    {"repo_id": "spatial-app", "path": "app/src/main/java/io/github/mesmerprism/rustyquest/spatial_camera_panel/SpatialStimulusVolumeRoute.kt"},
+    {"repo_id": "spatial-app", "path": "app/src/shaders/spatial_stimulus_volume.frag"},
+    {"repo_id": "spatial-app", "path": "app/src/shaders/spatial_stimulus_volume.vert"},
+    {"repo_id": "spatial-app", "path": "app/src/test/java/io/github/mesmerprism/rustyquest/spatial_camera_panel/SpatialStimulusVolumeRouteTest.kt"},
+    {"repo_id": "spatial-app", "path": "morphospace/iteration-units/mod-009.json"},
+    {"repo_id": "spatial-app", "path": "morphospace/receipts/mod-009-host-validation-20260717.json"},
+    {"repo_id": "spatial-app", "path": "morphospace/receipts/mod-009-inflight-adoption-20260717.json"},
+    {"repo_id": "spatial-app", "path": "morphospace/receipts/mod-009-workflow-validation-20260717.json"},
+    {"repo_id": "quest-repo", "path": "docs/SPATIAL_SDK_STIMULUS_VOLUME.md"},
+    {"repo_id": "quest-repo", "path": "tools/checks/Test-SpatialCameraPanelWorkflowStatic.ps1"},
+    {"repo_id": "quest-repo", "path": "tools/checks/Test-SpatialStimulusVolumeStatic.ps1"}
+  ],
+  "device_validation": null,
+  "evidence_boundary": "Passing validation is source-only. It does not claim headset visual parity, stereo comfort, compositor timing, scanout timing, device performance, or temporal strobing behavior."
+}

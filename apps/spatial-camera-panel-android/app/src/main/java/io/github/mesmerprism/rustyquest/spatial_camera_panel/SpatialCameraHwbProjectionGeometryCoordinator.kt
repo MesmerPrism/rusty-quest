@@ -17,7 +17,6 @@ internal data class SpatialCameraHwbProjectionGeometryBindings(
     val virtualRoomEnabled: () -> Boolean,
     val projectionWidthMeters: (Float) -> Float,
     val projectionHeightMeters: (Float) -> Float,
-    val legacyLauncherPanelSuppressed: () -> Boolean,
     val privateLayerPanelZ: () -> Float,
 )
 
@@ -73,7 +72,6 @@ internal class SpatialCameraHwbProjectionGeometryCoordinator(
             targetScale = bindings.tuning.targetScale(),
             stereoHorizontalOffsetUv = bindings.tuning.stereoHorizontalOffsetUv(),
             targetScaleJoystickRatePerSecond = bindings.tuning.targetScaleJoystickRate(),
-            legacyLauncherPanelSuppressed = bindings.legacyLauncherPanelSuppressed(),
             targetDistanceSource = targetDistanceSource(),
             virtualRoomForegroundDistanceActive =
                 virtualRoomForegroundDistanceActive(placementMode),

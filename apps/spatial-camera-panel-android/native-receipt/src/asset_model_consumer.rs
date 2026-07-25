@@ -12,7 +12,9 @@ const REQUESTED_BY: &str = "conformance-profile:spatial-asset-model";
 const RECEIPT_SCHEMA: &str = "rusty.quest.spatial_asset_model.activation_receipt.v1";
 const EFFECTIVE_MARKER: &str = "rusty.quest.spatial_asset_model.effective";
 const CONFORMANCE_LOCK_JSON: &str =
-    include_str!("../../morphospace/conformance-locks/spatial-asset-model.feature.lock.json");
+    include_str!(
+        "../../legacy-workspaces/mixed-integration-v1/conformance-locks/spatial-asset-model.feature.lock.json"
+    );
 pub(crate) const ACCEPTED_LOCK_SHA256: &str =
     "DA385EFC37AA4BD8D74B5AEADD7C8A06461E8EE68308B9E20C24BBA64A1C8793";
 #[cfg(test)]

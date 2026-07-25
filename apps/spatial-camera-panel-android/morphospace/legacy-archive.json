@@ -1,0 +1,22 @@
+{
+  "schema": "rusty.quest.spatial_camera_panel.legacy_workspace_archive.v1",
+  "captured_at": "2026-07-25T12:22:14+02:00",
+  "project_id": "spatial-camera-panel",
+  "archive_path": "../legacy-workspaces/mixed-integration-v1",
+  "file_count": 89,
+  "archive_fingerprint_sha256": "48a718c847f414f03f20cfd987c946c32942b62c77c23f6f2815722b143ee3f9",
+  "fingerprint_algorithm": "sha256(sorted(relative_path + tab + lowercase_file_sha256 + newline))",
+  "source_workflow": {
+    "schema": "rusty.morphospace.workflow.project_spec.v1",
+    "project_revision": 8,
+    "last_event_id": "mod-013-accepted-0061"
+  },
+  "preservation": {
+    "historical_bytes_rewritten": false,
+    "accepted_or_blocked_units_relabelled": false,
+    "superseded_inflight_units_relabelled": false,
+    "runtime_authority_claimed": false,
+    "current_project_gate_claimed": false
+  },
+  "reason": "Portable v0.6 terminal-unit adoption cannot legally normalize immutable superseded in-flight records. The complete mixed v1 workspace is therefore preserved as an integrity-bound archive while the live entrypoint remains inert."
+}

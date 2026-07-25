@@ -14,8 +14,8 @@ tracked in `docs/SPATIAL_LAYERING_CARRIER_PROBE_PLAN.md`.
 
 - Spatial SDK feature registration and one Compose-backed control panel.
 - Panel placement, panel headlock, controller routing, and validation markers.
-- Low-rate app-private JSONL records for participant/session setup, Polar H10
-  intake, ECG mirroring, block events, foreground events, and questionnaires.
+- One low-rate camera/effect layer-control panel. Participant-study and
+  physiological-sensor workflows are explicitly out of scope.
 - Raw Camera2/AHardwareBuffer and public blur/projection validation probes.
 - Optional public stereo-video projection behind the raw camera probe, using an
   explicitly staged runtime path, Java `MediaCodec`, native
@@ -68,9 +68,9 @@ tracked in `docs/SPATIAL_LAYERING_CARRIER_PROBE_PLAN.md`.
 - Right-controller Y-axis input scales the packed projection target around each
   eye center. The live control is reported with
   `projectionTargetScaleJoystickControlsEnabled=true` and
-  `right-stick-y-projection-target-scale`. Left-stick Y controls workflow-panel
-  distance after the default stereo horizontal offset was locked in; when the
-  layer-control panel is open it controls that panel's stored distance and
+  `right-stick-y-projection-target-scale`. Left-stick Y controls the
+  layer-control panel's stored distance after the default stereo horizontal
+  offset was locked in and
   persists across close/open. Right-stick X is intentionally
   ignored/swallowed so it no longer drives panel scale, distance, or private
   panel side-flick movement.
@@ -384,21 +384,16 @@ Apply that model here when a lane grows beyond a narrow facade method:
   it only from Activity lifecycle callbacks, retain the JNI declaration in the
   Activity, and forward explicit multimodal/controller bootstrap callbacks
   without giving the coordinator feature-property or panel-action authority;
-- package validation and remote UI command marker policy, including self-test,
-  UI-command, surface-target activation, remote participant, and Polar
-  live-validation marker envelopes plus default validation identifiers, in
+- package validation and remote UI command marker policy, including UI-command
+  and surface-target activation marker envelopes plus default validation identifiers, in
   `SpatialValidationCommandModule.kt`;
-- package the four exact-action validation intent opt-ins, command parsing,
-  store/session sequencing, remote UI dispatch, and delayed self-test/Polar
-  automation in `SpatialValidationWorkflowCoordinator.kt`; keep ordinary
+- package the two exact-action validation intent opt-ins, command parsing and
+  remote UI dispatch in `SpatialValidationWorkflowCoordinator.kt`; keep ordinary
   launches inert and retain scene mutation, feature registration, runtime
   properties, and JNI behind Activity-supplied callbacks or outside this
   coordinator;
-- keep the Compose experiment UI plus experiment lifecycle and auto-panel
-  marker envelopes in `ExperimentPanelController.kt`, while the Activity owns
-  store mutation, panel visibility, and marker emission;
-- package workflow, private-layer control, and launcher Compose panel
-  construction in `SpatialComposePanelRegistrationModule.kt`; pass state and
+- package private-layer control panel construction in
+  `SpatialComposePanelRegistrationModule.kt`; pass state and
   requester callbacks explicitly while the Activity retains panel lifecycle,
   scene-object adoption, marker emission, JNI, persistence, and video-surface
   carrier authority limited to feature selection and adapter binding;
@@ -465,13 +460,12 @@ Apply that model here when a lane grows beyond a narrow facade method:
   route state, runtime-property and clock adapters, state-owner mutation, and
   concrete entity-pose application in Activity bindings, and prohibit feature
   registration, visibility changes, or activation in the coordinator.
-- package workflow placement, private-layer placement, private-layer
-  visibility, and their pure adjust/resize/reset/headlock/visibility transitions
-  in `SpatialPanelPlacementStateCoordinator.kt`; expose read-only Activity
+- package private-layer placement, visibility, and their pure transitions in
+  `SpatialPanelPlacementStateCoordinator.kt`; expose read-only Activity
   facade views, retain pose capture/entity/marker/persistence/property/SDK
   mutation adapters in Activity, and prohibit feature registration or activation.
-- package workflow headlock, private-layer viewer-pose, and
-  entity-pose-to-placement geometry in `SpatialPanelPoseCoordinator.kt`; retain
+- package private-layer viewer-pose and entity-pose-to-placement geometry in
+  `SpatialPanelPoseCoordinator.kt`; retain
   `Scene.getViewerPose`, entity transform capture/mutation, and corrected-state
   adoption in Activity bindings, and prohibit property reads, marker emission,
   JNI, or feature activation in pose geometry.
@@ -553,8 +547,7 @@ enabled, the projection surface starts in the full-FOV viewer-locked mode and
 reports
 `projectionDefaultPlacementMode=viewer-pose-projection-locked-quad`,
 `projectionCarrier=video-surface-panel-scene-object`,
-`projectionRoomRenderOrder=video-surface-panel-over-virtual-room`, and
-`legacyLauncherPanelSuppressed=true`. A headset retry with
+`projectionRoomRenderOrder=video-surface-panel-over-virtual-room`. A headset retry with
 `scenequadlayer-room-object` proved that the old `SceneQuadLayer` path can keep
 input/control evidence alive but still renders behind authored room geometry,
 visible outside/through the room window. A restored first-room-style direct

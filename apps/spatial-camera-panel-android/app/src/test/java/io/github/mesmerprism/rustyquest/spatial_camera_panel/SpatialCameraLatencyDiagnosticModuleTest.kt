@@ -152,6 +152,25 @@ class SpatialCameraLatencyDiagnosticModuleTest {
   }
 
   @Test
+  fun dynamicReprojectionGuardBandModeIsAccepted() {
+    val parsed =
+        parseSpatialCameraLatencyDiagnosticSettings(
+            mapOf(
+                CAMERA_LATENCY_REVISION_PROPERTY to "59",
+                CAMERA_LATENCY_REPROJECTION_SOURCE_OVERSCAN_PERCENT_PROPERTY to "10",
+                CAMERA_LATENCY_REPROJECTION_GUARD_BAND_MODE_PROPERTY to
+                    "dynamic-reduced-footprint",
+            )
+        )
+
+    assertNull(parsed.error)
+    assertEquals(
+        SpatialCameraLatencyReprojectionGuardBandMode.DynamicReducedFootprint,
+        parsed.settings?.reprojectionGuardBandMode,
+    )
+  }
+
+  @Test
   fun unknownPresentationPoseModeIsRejectedClosed() {
     val parsed =
         parseSpatialCameraLatencyDiagnosticSettings(

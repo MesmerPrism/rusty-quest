@@ -157,16 +157,24 @@ io.github.mesmerprism.rustyquest.spatial_camera_panel/.SpatialCameraPanelActivit
 
 This package is a Quest platform adapter for Spatial SDK panel behavior. It
 uses `AppSystemActivity`, `VRFeature`, and `ComposeFeature` to register and
-spawn one Compose-backed 2D panel, then exposes low-rate controls for
-participant setup, direct BLE Polar H10 intake, ECG event mirroring, surface
-target selection, block timing, questionnaire submission, raw Camera2/HWB
-projection probes, and public blur/projection receipts. The panel placement
+spawn one Compose-backed layer-control panel, then exposes low-rate controls
+for surface target selection, raw Camera2/HWB projection probes, and public
+blur/projection receipts. The panel placement
 controls are there to test Spatial SDK position, scale, and resolution options
 on headset; they are not a renderer contract and are not the native Quest XR
 path.
-The Spatial SDK dependency is treated as a carrier substrate, not as camera,
-particle, or experiment authority. `SpatialSdkLaneBoundary.kt` records that
-layer/panel placement, camera projection, surface particles, experiment panel,
+One-sided Compose UI panels have a narrower pose authority:
+`SpatialPanelFacing` computes their front-facing viewer-relative rotation using
+the official Meta `lookRotationAroundY` convention and owns the known-facing
+fallback. Scene geometry, custom-material quads, camera carriers, and quad
+layers do not consume this helper because their winding, culling, UV, and
+stereo contracts remain independent. The full contract and reference boundary
+are in `docs/SPATIAL_SDK_PANEL_FACING.md`. Registration is a parallel authority:
+an exclusive feature route admits only its active UI panel and does not create
+or register hidden opaque panel layers from another feature.
+The Spatial SDK dependency is treated as a carrier substrate, not as camera or
+particle authority. `SpatialSdkLaneBoundary.kt` records that layer/panel
+placement, camera projection, surface particles, layer controls,
 and debug probes are separate route owners, while static checks reject direct
 camera/particle cross-ownership in the split native modules.
 `SpatialCameraLatencyDiagnosticModule` is an app-local diagnostic control-plane
@@ -199,6 +207,13 @@ within an unchanged full-surface scissor. A live-safe central source crop can re
 camera pixels at each edge for rotation reprojection; invalid warped UVs are
 discarded to the underlying carrier only after that real margin is exhausted,
 rather than clamped or replaced with an unwarped stale sample.
+The guide-processing data plane is a separate generic policy module. It owns
+only pre/post blur kernel selection and first-preblur input treatment. Native
+parity is the default (`native-box5`, `luma`, `native-box5`) at a packed
+`768x384` target (`384x384` per eye); `gaussian5` and `rgb-preserve` remain
+runtime-selectable alternatives. Camera ingress continues to store reprojected
+RGB, and luma extraction occurs exactly once at the first public blur stage.
+This keeps camera residency and effect-input treatment independently testable.
 The environment-depth adapter keeps depth acquisition and texture ownership in
 native code. A coherent frame snapshot carries both D16 array layers, near/far,
 capture/display times, and two depth plus two render FOV/pose records into the
@@ -229,24 +244,15 @@ Every profile emits its mapping token and determinant and retains fixture plus
 live-headset acceptance evidence.
 
 The lane deliberately stays outside `apps/native-renderer-android`. It does
-not link the Rust native renderer, does not request camera or hand-tracking
-features, and does not move hand mesh frames, particle arrays, field buffers,
-or replay sequences through Java/Kotlin JSON. Questionnaire output remains a
-low-rate app-private JSONL artifact keyed by `participant_id`, `session_id`,
-`block_index`, `block_number`, `condition_id`, `profile_id`, and
-`surface_target_id` so downstream analysis can join it back to private study
-state without making Rusty Quest the effect authority. Polar stream rows remain
-low-rate panel records: the Spatial app may scan/connect to Polar H10, decode
-HR/RR, ACC, ECG, and device-status events, and mirror ECG rows to
-`ecg_events.jsonl`, but those samples do not enter the native Vulkan renderer,
-particle buffers, or shader parameter path.
+not move hand mesh frames, particle arrays, field buffers, or replay sequences
+through Java/Kotlin JSON. Participant-study state and physiological-sensor
+intake are explicitly outside this app's boundary.
 
 When a Spatial block starts, the panel maps condition metadata to bounded
 generic driver values (`driver0` and `driver1`) and submits them through the
-existing native surface-particle JNI parameter bridge. That is the only
-block-start runtime handoff: native Vulkan/OpenXR still owns validation,
-resident public particle buffers, compute dispatch, and presentation, and the
-workflow panel returns to particle view after the request. Private downstream
+existing native surface-particle JNI parameter bridge. Native Vulkan/OpenXR
+still owns validation, resident public particle buffers, compute dispatch, and
+presentation. Private downstream
 visual semantics, coupling kernels, and tuned parameters stay out of Rusty
 Quest.
 

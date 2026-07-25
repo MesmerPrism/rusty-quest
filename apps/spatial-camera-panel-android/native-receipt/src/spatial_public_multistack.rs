@@ -61,6 +61,10 @@ const PUBLIC_MULTISTACK_STATIC_MARKER_FIELDS: &str = concat!(
         "1:public-preblur-horizontal,2:public-preblur-vertical,3:opaque-analysis1,",
         "4:public-postblur-horizontal,5:public-postblur-vertical ",
         "publicGuideBlurKernel=separable-5tap ",
+        "publicGuideProcessingDefault=native-parity ",
+        "publicGuideKernelAlternatives=native-box5+gaussian5 ",
+        "publicGuideInputAlternatives=luma+rgb-preserve ",
+        "publicGuidePerEyeExtent=384x384 ",
         "publicGuideBlurShader=public_guide_blur.frag.glsl ",
         "publicGuideBlurLayer=public-contract ",
         "publicGuideBlurRuntimeReady=false ",
@@ -84,11 +88,13 @@ const PUBLIC_MULTISTACK_STATIC_MARKER_FIELDS: &str = concat!(
 pub(crate) fn public_multistack_marker_fields() -> String {
     let passthrough_fields = spatial_native_passthrough_marker_fields();
     let depth_fields = spatial_environment_depth_marker_fields();
+    let presentation_fields = spatial_presentation_policy_marker_fields();
     format!(
-        "{} {} {} publicGuideBlurShaderCompiled={} publicGuideBlurShaderBytes={} publicMultiStackOpaqueGuideShaderCompiled={} publicMultiStackOpaqueGuideShaderBytes={} publicMultiStackOpaqueGuideShaderPassCount={} publicMultiStackOpaqueGuideShaderPassVariantsCompiled={} publicMultiStackOpaqueGuideShaderPassByteCounts={} publicMultiStackOpaqueProjectionShaderCompiled={} publicMultiStackOpaqueProjectionShaderBytes={} publicMultiStackOpaquePayloadExecutionReady=false publicMultiStackPrivateSurfaceParticleProfileConfigured={} publicMultiStackPrivateSurfaceParticleShaderConfigured={} publicMultiStackPrivateSurfaceParticlePayloadDirConfigured={} publicMultiStackPrivateSurfaceParticleMarkerPrefixConfigured={} publicMultiStackPrivateSurfaceParticleMetadataActive={} publicMultiStackPrivateSurfaceParticleExecutableInputsConfigured={} publicMultiStackPrivateSurfaceParticlePayloadActive={} publicMultiStackPrivateSurfaceParticleRendererStatus={} publicMultiStackPrivateSurfaceParticleExecutionReady={}",
+        "{} {} {} {} publicGuideBlurShaderCompiled={} publicGuideBlurShaderBytes={} publicMultiStackOpaqueGuideShaderCompiled={} publicMultiStackOpaqueGuideShaderBytes={} publicMultiStackOpaqueGuideShaderPassCount={} publicMultiStackOpaqueGuideShaderPassVariantsCompiled={} publicMultiStackOpaqueGuideShaderPassByteCounts={} publicMultiStackOpaqueProjectionShaderCompiled={} publicMultiStackOpaqueProjectionShaderBytes={} publicMultiStackOpaquePayloadExecutionReady=false publicMultiStackPrivateSurfaceParticleProfileConfigured={} publicMultiStackPrivateSurfaceParticleShaderConfigured={} publicMultiStackPrivateSurfaceParticlePayloadDirConfigured={} publicMultiStackPrivateSurfaceParticleMarkerPrefixConfigured={} publicMultiStackPrivateSurfaceParticleMetadataActive={} publicMultiStackPrivateSurfaceParticleExecutableInputsConfigured={} publicMultiStackPrivateSurfaceParticlePayloadActive={} publicMultiStackPrivateSurfaceParticleRendererStatus={} publicMultiStackPrivateSurfaceParticleExecutionReady={}",
         PUBLIC_MULTISTACK_STATIC_MARKER_FIELDS,
         passthrough_fields,
         depth_fields,
+        presentation_fields,
         bool_marker(PUBLIC_GUIDE_BLUR_SHADER_COMPILED),
         PUBLIC_GUIDE_BLUR_SHADER_BYTE_COUNT,
         bool_marker(OPAQUE_GUIDE_SHADER_COMPILED),
@@ -211,6 +217,10 @@ mod tests {
         )));
         assert!(fields.contains("publicMultiStackOpaqueGuidePasses=2"));
         assert!(fields.contains("publicGuideBlurKernel=separable-5tap"));
+        assert!(fields.contains("publicGuideProcessingDefault=native-parity"));
+        assert!(fields.contains("publicGuideKernelAlternatives=native-box5+gaussian5"));
+        assert!(fields.contains("publicGuideInputAlternatives=luma+rgb-preserve"));
+        assert!(fields.contains("publicGuidePerEyeExtent=384x384"));
         assert!(fields.contains("publicGuideBlurShader=public_guide_blur.frag.glsl"));
         assert!(fields.contains("publicGuideBlurShaderCompiled=true"));
         assert!(fields.contains("publicGuideBlurShaderBytes="));
@@ -297,3 +307,4 @@ mod tests {
         );
     }
 }
+use crate::spatial_presentation_policy::spatial_presentation_policy_marker_fields;

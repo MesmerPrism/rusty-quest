@@ -195,7 +195,7 @@ function Read-MediaLifecycleAuthority {
         }
         "client.quest.spatial-camera-panel" = @{
             lifecycle = "fixtures\broker-clients\spatial-camera-panel.media-lifecycle.json"
-            feature = "apps\spatial-camera-panel-android\morphospace\conformance-locks\broker-media-client.feature.lock.json"
+            feature = "apps\spatial-camera-panel-android\legacy-workspaces\mixed-integration-v1\conformance-locks\broker-media-client.feature.lock.json"
         }
     }
     if (-not $mapping.ContainsKey($clientId)) {

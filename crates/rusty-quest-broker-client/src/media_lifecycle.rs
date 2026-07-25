@@ -983,7 +983,7 @@ mod tests {
     const SPATIAL_LOCK: &str =
         include_str!("../../../fixtures/broker-clients/spatial-camera-panel.media-lifecycle.json");
     const SPATIAL_FEATURE: &str = include_str!(
-        "../../../apps/spatial-camera-panel-android/morphospace/conformance-locks/broker-media-client.feature.lock.json"
+        "../../../apps/spatial-camera-panel-android/legacy-workspaces/mixed-integration-v1/conformance-locks/broker-media-client.feature.lock.json"
     );
     const SPATIAL_MEDIA: &str = include_str!(
         "../../../fixtures/media-runtime-products/spatial-camera-panel-display.binding.json"

@@ -114,7 +114,7 @@ if ([string]::IsNullOrWhiteSpace($RepoRoot)) {
 }
 $repoRootPath = (Resolve-Path -LiteralPath $RepoRoot).Path
 $assetConformanceLockResolved = if ([string]::IsNullOrWhiteSpace($AssetConformanceLockPath)) {
-    Join-Path $repoRootPath "apps\spatial-camera-panel-android\morphospace\conformance-locks\spatial-asset-model.feature.lock.json"
+    Join-Path $repoRootPath "apps\spatial-camera-panel-android\legacy-workspaces\mixed-integration-v1\conformance-locks\spatial-asset-model.feature.lock.json"
 } elseif ([System.IO.Path]::IsPathRooted($AssetConformanceLockPath)) {
     $AssetConformanceLockPath
 } else {

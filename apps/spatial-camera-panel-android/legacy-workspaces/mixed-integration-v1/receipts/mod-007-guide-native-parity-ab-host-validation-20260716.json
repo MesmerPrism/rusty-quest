@@ -1,0 +1,107 @@
+{
+  "schema": "rusty.quest.spatial_camera_panel.mod007_guide_native_parity_ab_host_validation.v1",
+  "unit_id": "mod-007",
+  "status": "host-build-passed-device-visual-pending",
+  "completed_at": "2026-07-16T09:42:00Z",
+  "scope": {
+    "public_carrier": "generic-guide-kernel-and-input-treatment-policy",
+    "private_profile": "selects-accepted-default-without-publishing-private-formulas",
+    "native_renderer": "comparison-oracle-push-abi-repair"
+  },
+  "accepted_default": {
+    "preset": "native-parity",
+    "preblur_kernel": "native-box5",
+    "preblur_input": "luma",
+    "postblur_kernel": "native-box5",
+    "packed_guide_extent": "768x384",
+    "guide_per_eye_extent": "384x384",
+    "opaque_guide_phase_rate_hz": 0.5
+  },
+  "retained_ab_paths": {
+    "kernel_alternatives": [
+      "native-box5",
+      "gaussian5"
+    ],
+    "input_alternatives": [
+      "luma",
+      "rgb-preserve"
+    ],
+    "panel_presets": [
+      "Native target",
+      "Gaussian + RGB"
+    ],
+    "independent_controls": [
+      "preblur-kernel",
+      "preblur-input-treatment",
+      "postblur-kernel"
+    ]
+  },
+  "residency_contract": {
+    "private_guide_pass0": "stores-reprojected-rgb-and-validity",
+    "first_public_preblur_pass": "applies-selected-input-treatment-once",
+    "later_blur_passes": "preserve-resulting-channel-shape",
+    "anti_echo_contract_weakened": false
+  },
+  "native_oracle_abi": {
+    "host_push_bytes": 112,
+    "shader_push_bytes": 112,
+    "portable_limit_bytes": 128,
+    "reprojection_disabled_identity_supplied": true,
+    "phase_rate_hz": 0.5
+  },
+  "host_validation": {
+    "spatial_native_receipt_tests": {
+      "passed": 92,
+      "failed": 0
+    },
+    "native_renderer_tests": {
+      "passed": 168,
+      "failed": 0
+    },
+    "private_effect_tests": {
+      "passed": 30,
+      "failed": 0
+    },
+    "spatial_static_suite": "passed",
+    "native_renderer_static_suite": "passed",
+    "private_shader_compile": "passed",
+    "format_and_diff_checks": "passed"
+  },
+  "android_builds": {
+    "spatial_camera_panel": {
+      "result": "passed",
+      "apk_sha256": "82391966635a5ecd543b58ef42b2ec3186cfdd06a4af0f4406eb361363883990",
+      "native_receipt_sha256": "963137421c55afb2304f4fabac6076ab408d2267aa9e0f6fd9b372e0b8b02a12",
+      "private_guide_shader_sha256": "65f1337abbe2e903aa45c273ad8cd0541174bdcfcb4406a4f4d85f2aff62c501",
+      "private_projection_shader_sha256": "cad58e759ded04b81f3953f1d451505f4e8694b65233f5d36d278de8c52105bb",
+      "artifact_policy": "local-only"
+    },
+    "native_renderer_oracle": {
+      "result": "passed",
+      "apk_sha256": "dc3e84afac5979ee0f6dd4db4ef873faaa8c9083ece5773b389b82bd95b048ab",
+      "private_extension_payloads_packaged": true,
+      "private_guide_shader_sha256": "65f1337abbe2e903aa45c273ad8cd0541174bdcfcb4406a4f4d85f2aff62c501",
+      "private_projection_shader_sha256": "cad58e759ded04b81f3953f1d451505f4e8694b65233f5d36d278de8c52105bb",
+      "artifact_policy": "local-only"
+    }
+  },
+  "device_validation": {
+    "run": false,
+    "headset_resource_touched": false,
+    "visual_acceptance": "pending-user-available",
+    "required_comparison": "Native target versus Gaussian + RGB with reduced-footprint anti-echo baseline held fixed",
+    "required_observations": [
+      "preblur-character-match-to-remembered-native",
+      "postblur-character-match-to-remembered-native",
+      "color-treatment-difference",
+      "no-regression-of-general-echo-fix",
+      "performance-or-frame-outlier-change"
+    ]
+  },
+  "resource_cleanup": {
+    "spatial_apk_build_lease_released": true,
+    "native_apk_build_lease_released": true,
+    "headset_lease_acquired": false,
+    "adb_server_lifecycle_lease_acquired": false
+  }
+}

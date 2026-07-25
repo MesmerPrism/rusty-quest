@@ -15,6 +15,11 @@ layout(push_constant) uniform CameraHwbProjectionPush {
 layout(location = 0) in vec2 vUv;
 layout(location = 0) out vec4 outColor;
 
+const float VIDEO_BORDER_INNER_BLEND_UV = 0.04;
+const float VIDEO_BORDER_BLEND_CURVE = 1.6;
+const float THIN_LINE_AA_MIN_RADIUS_TEXELS = 0.75;
+const float THIN_LINE_AA_MAX_RADIUS_TEXELS = 2.0;
+
 bool local_uv_for_rect(vec2 uv, vec4 rect, out vec2 localUv) {
     vec2 size = max(rect.zw, vec2(0.0001));
     localUv = (uv - rect.xy) / size;
@@ -81,6 +86,33 @@ vec2 rotation_reprojected_uv(vec2 presentationSourceUv) {
     );
 }
 
+float video_border_alpha(vec2 localUv) {
+    float edge = min(min(localUv.x, 1.0 - localUv.x), min(localUv.y, 1.0 - localUv.y));
+    float towardEdge = smoothstep(-VIDEO_BORDER_INNER_BLEND_UV, 0.0, -edge);
+    return clamp(1.0 - pow(towardEdge, VIDEO_BORDER_BLEND_CURVE), 0.0, 1.0);
+}
+
+vec3 camera_sample(sampler2D source, vec2 sampleUv) {
+    if (pc.params.x < 0.5) {
+        return texture(source, sampleUv).rgb;
+    }
+    vec2 sourceExtent = max(vec2(textureSize(source, 0)), vec2(1.0));
+    vec2 texel = 1.0 / sourceExtent;
+    vec2 footprintTexels = max(fwidth(sampleUv) * sourceExtent, vec2(1.0));
+    vec2 radiusTexels = clamp(
+        footprintTexels * 0.5,
+        vec2(THIN_LINE_AA_MIN_RADIUS_TEXELS),
+        vec2(THIN_LINE_AA_MAX_RADIUS_TEXELS)
+    );
+    vec2 d = radiusTexels * texel;
+    vec3 color = texture(source, sampleUv).rgb * 0.5;
+    color += texture(source, clamp(sampleUv + vec2(-d.x, -d.y), vec2(0.0), vec2(1.0))).rgb * 0.125;
+    color += texture(source, clamp(sampleUv + vec2( d.x, -d.y), vec2(0.0), vec2(1.0))).rgb * 0.125;
+    color += texture(source, clamp(sampleUv + vec2(-d.x,  d.y), vec2(0.0), vec2(1.0))).rgb * 0.125;
+    color += texture(source, clamp(sampleUv + vec2( d.x,  d.y), vec2(0.0), vec2(1.0))).rgb * 0.125;
+    return color;
+}
+
 void main() {
     vec2 localUv = vec2(0.0);
     if (local_uv_for_rect(vUv, pc.targetRect, localUv)) {
@@ -91,9 +123,11 @@ void main() {
             discard;
         }
         vec3 rgb = pc.params.z < 0.5
-            ? texture(u_camera_left, sampleUv).rgb
-            : texture(u_camera_right, sampleUv).rgb;
-        outColor = vec4(fallback_layer_debug(rgb, localUv), 1.0);
+            ? camera_sample(u_camera_left, sampleUv)
+            : camera_sample(u_camera_right, sampleUv);
+        float alpha = video_border_alpha(localUv);
+        vec3 color = fallback_layer_debug(rgb, localUv);
+        outColor = vec4(clamp(color, vec3(0.0), vec3(1.0)) * alpha, alpha);
         return;
     }
 

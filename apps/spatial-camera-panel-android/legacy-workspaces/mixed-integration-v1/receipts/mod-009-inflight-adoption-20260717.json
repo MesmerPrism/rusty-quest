@@ -1,0 +1,24 @@
+{
+  "$schema": "https://github.com/MesmerPrism/rusty-morphospace-work-environment/schemas/inflight-adoption-receipt.schema.json",
+  "schema": "rusty.morphospace.workflow.inflight_adoption_receipt.v1",
+  "receipt_id": "mod-009-inflight-adoption",
+  "project_id": "spatial-camera-panel",
+  "unit_id": "mod-009",
+  "captured_at": "2026-07-17T14:44:44.1483274Z",
+  "reason": "work-started-before-protocol-v2",
+  "safe_to_claim": true,
+  "external_mutation_performed": false,
+  "repositories": [
+    {
+      "repo_id": "spatial-app",
+      "observed_revision": "7df59dac068d62e6c222a522c763122dc89efd70",
+      "files": [
+        {
+          "path": "README.md",
+          "state": "present",
+          "sha256": "edcd6043338568a38c5d5ee5d7c995a691927f8b346b7cea72a01ed8b7965ad0"
+        }
+      ]
+    }
+  ]
+}

@@ -682,11 +682,13 @@ if (Test-TruthyBuildEnvValue -Value (Get-EffectiveBuildEnvValue -Name "RUSTY_QUE
     $lslNativeLibrarySha256 = Get-FileSha256 -Path $lslSource
 }
 
+$privateLayerGuideShaderPath = Get-EffectiveBuildEnvValue -Name "RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_LAYER_GUIDE_SHADER" -AppBuildEnvByName $appBuildEnvByName
+$privateLayerProjectionShaderPath = Get-EffectiveBuildEnvValue -Name "RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_LAYER_PROJECTION_SHADER" -AppBuildEnvByName $appBuildEnvByName
 $privateLayerPayloadLinked =
-    (-not [string]::IsNullOrWhiteSpace((Get-EffectiveBuildEnvValue -Name "RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_LAYER_GUIDE_SHADER" -AppBuildEnvByName $appBuildEnvByName))) -and
-    (-not [string]::IsNullOrWhiteSpace((Get-EffectiveBuildEnvValue -Name "RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_LAYER_PROJECTION_SHADER" -AppBuildEnvByName $appBuildEnvByName))) -and
-    (Test-Path (Get-EffectiveBuildEnvValue -Name "RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_LAYER_GUIDE_SHADER" -AppBuildEnvByName $appBuildEnvByName)) -and
-    (Test-Path (Get-EffectiveBuildEnvValue -Name "RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_LAYER_PROJECTION_SHADER" -AppBuildEnvByName $appBuildEnvByName))
+    (-not [string]::IsNullOrWhiteSpace($privateLayerGuideShaderPath)) -and
+    (-not [string]::IsNullOrWhiteSpace($privateLayerProjectionShaderPath)) -and
+    (Test-Path $privateLayerGuideShaderPath) -and
+    (Test-Path $privateLayerProjectionShaderPath)
 
 $privateParticlePayloadLinked =
     (-not [string]::IsNullOrWhiteSpace((Get-EffectiveBuildEnvValue -Name "RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_DATA_DIR" -AppBuildEnvByName $appBuildEnvByName))) -and
@@ -751,6 +753,11 @@ $manifest = [ordered]@{
     runtime_permission_request = "rust-jni-framework-activity-requestPermissions"
     public_effect_layers = @("blur-guide", "recorded-hand-replay-visual", "gpu-mesh-boundary", "target-space-validation-mesh-sdf")
     private_extension_payloads_packaged = [bool]$privateLayerPayloadLinked
+    private_layer_guide_push_constant_bytes = 112
+    private_layer_guide_push_constant_portable_limit_bytes = 128
+    private_layer_guide_phase_rate_hz = 0.5
+    private_layer_guide_shader_sha256 = if ($privateLayerPayloadLinked) { Get-FileSha256 -Path $privateLayerGuideShaderPath } else { "" }
+    private_layer_projection_shader_sha256 = if ($privateLayerPayloadLinked) { Get-FileSha256 -Path $privateLayerProjectionShaderPath } else { "" }
     private_particle_payloads_packaged = [bool]$privateParticlePayloadLinked
     private_particle_payload_kind = if ($privateParticlePayloadLinked) { Get-EffectiveBuildEnvValue -Name "RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_KIND" -AppBuildEnvByName $appBuildEnvByName } else { "none" }
     camera_ids = [ordered]@{

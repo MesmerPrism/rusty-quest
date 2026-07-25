@@ -6,7 +6,6 @@ internal data class SpatialSurfaceParticleRuntimeBindings(
     val privateRendererEnabled: () -> Boolean,
     val receiptLibraryLoaded: () -> Boolean,
     val receiptLibraryError: () -> String,
-    val launcherPanelVisible: () -> Boolean,
     val stopNative: () -> Unit,
     val marker: (String) -> Unit,
 )
@@ -180,7 +179,6 @@ internal class SpatialSurfaceParticleRuntimeCoordinator(
                     source = source,
                     stopAttempted = true,
                     stopSucceeded = true,
-                    launcherPanelVisible = bindings.launcherPanelVisible(),
                     particleLayerStarted = particleLayerStarted,
                     nativeSurfaceStartRequested = nativeSurfaceStartRequested,
                 )
@@ -208,7 +206,6 @@ internal class SpatialSurfaceParticleRuntimeCoordinator(
             source = source,
             stopAttempted = stopAttempted,
             stopSucceeded = true,
-            launcherPanelVisible = bindings.launcherPanelVisible(),
             particleLayerStarted = particleLayerStarted,
             nativeSurfaceStartRequested = nativeSurfaceStartRequested,
         )

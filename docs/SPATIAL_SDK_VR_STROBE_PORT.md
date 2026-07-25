@@ -1,22 +1,26 @@
-# Spatial SDK VR Strobe Port
+# Spatial SDK VR Strobe Application
 
-The Spatial Camera Panel contains an app-local, default-disabled Spatial SDK
-port of Trevor Hewitt's `vr_strobe` portal. The source authority is pinned to
+Spatial VR Strobe is a separate product, Morphospace project, and Android
+application module. It shares only neutral Spatial SDK support with the Camera
+app and is not a private downstream-effect feature. The source authority is pinned to
 commit `52c71cc069f4102bc4148e05c5fd3fc4d5466479`. Creator permission to release
 the port under `AGPL-3.0-or-later` is bound by the MOD-010 permission receipt
 and the app's `THIRD_PARTY_NOTICES.md`.
 
 ## Activation and safety
 
-The feature is absent from the scene by default. Registering its panel and
-packaging its shader do not activate it. A run must explicitly set:
+The `:strobe-app` module contains no camera/private-effect routes or camera
+permissions, while the `:app` Camera module contains no Strobe source. The legacy ambient property
+`debug.rustyquest.spatial.vr_strobe.enabled` is no longer activation authority;
+stale device state therefore cannot switch applications.
 
-```text
-debug.rustyquest.spatial.vr_strobe.enabled=true
-```
+Build with `tools/Build-SpatialVrStrobeAndroid.ps1`. Its default package is
+`io.github.mesmerprism.rustyquest.spatial_vr_strobe`, with project-specific
+client, feature-lock, marker, property, intermediate-build, and APK-output
+identities.
 
-That property only exposes the warning panel. It cannot start either visual
-mode. Every focused app session requires all of the following:
+Launching the Strobe application exposes only the warning panel. It cannot start
+either visual mode. Every focused app session requires all of the following:
 
 1. The panel opens on the photosensitivity warning.
 2. The user deliberately presses `I UNDERSTAND — CONTINUE`.
@@ -166,7 +170,7 @@ The human-readable interchange schema is
 `rusty.quest.spatial_vr_strobe.profile_bundle.v1`. The app validates a staged
 JSON import before transactionally replacing its app-private list, then mirrors
 the effective list to an app-private export file. The flat browser editor in
-`apps/spatial-camera-panel-android/profile-editor-web` validates the same
+`apps/spatial-vr-strobe-android/profile-editor-web` validates the same
 profile vocabulary and bounds; it never reads or writes SharedPreferences
 bytes. `tools/Invoke-SpatialVrStrobeProfileTransfer.ps1` is the serial-scoped
 CLI-equivalent route for validate, import, export, and explicit list reset.
@@ -214,8 +218,10 @@ it does not clear app data.
 
 The renderer is a Meta Spatial SDK custom material compiled to the headset's
 Vulkan shader path; it does not generate the stimulus on the Kotlin CPU. The
-full-field carrier is one 2.84 m-radius radial disc with 16 rings and 48 angular
-segments, not a box, and remains one material draw. Its 4.00 m default distance
+full-field carrier is one 2.84 m-radius radial disc with 32 rings and 96 angular
+segments, not a box, and remains one material draw. Its +Z winding and analytic
+normal face the viewer, so the material renders front-sided instead of spending
+fragment work on a second face the operator cannot use. Its 4.00 m default distance
 is the right-stick range maximum. Flat mode bypasses bending. Curved
 mode maps the disc in both X and Y onto a spherical bowl in the vertex shader,
 preserving the original flat stimulus coordinates while left-stick changes
@@ -226,6 +232,23 @@ coordinator packs only active patterns and sends one count per pattern family,
 allowing each bounded eight-slot shader loop to terminate before unused slots.
 The counts are submitted after their active slot payloads and act as the
 shader-side active-range commit; stale trailing slots are never evaluated.
+
+Interference depth deformation defaults on at the full symmetric 1.42 m range,
+half the carrier radius; temporal strobes remain flat. Depth follows the
+interference palette coordinate instead of RGB luminance. In a two-color
+profile, palette slot 1 is the far layer and slot 2 is the near layer. In a
+three-color profile, slot 1 is far, slot 2 is the undeformed carrier, and slot
+3 is near. The visible pattern and geometric structure therefore share the
+same interference coordinate even when two selected colors have similar
+brightness. Polarity changes reverse the visible palette order and depth order
+together.
+
+The fragment image keeps its full spatial detail. Only the geometric witness
+adapts above 5 cm displacement: its maximum spatial frequency eases from 12 to
+4 as displacement approaches 1.42 m. This prevents the 32-by-96 surface from
+folding repeatedly over itself at the stress-range maximum, while front-face
+culling rejects remaining backwards folds before fragment shading. The panel
+retains a quadratic slider so centimeter-scale tuning remains possible.
 
 Randomization updates the one material already bound to the visible carrier and
 does not replace the scene object's mesh. This deliberately rejects the former
@@ -296,5 +319,5 @@ establish a performance improvement.
 Browser contract tests run with:
 
 ```powershell
-node --test apps/spatial-camera-panel-android/profile-editor-web/tests/*.test.mjs
+node --test apps/spatial-vr-strobe-android/profile-editor-web/tests/*.test.mjs
 ```

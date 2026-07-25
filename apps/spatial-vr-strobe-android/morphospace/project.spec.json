@@ -1,0 +1,84 @@
+{
+  "$schema": "https://raw.githubusercontent.com/MesmerPrism/rusty-morphospace-work-environment/90644542c33e420938c7c7b6ba999417cd5edfb3/schemas/project-spec-v2.schema.json",
+  "schema": "rusty.morphospace.workflow.project_spec.v2",
+  "project_id": "spatial-vr-strobe",
+  "revision": 2,
+  "owner": "spatial-vr-strobe-app",
+  "purpose": "Own the warning-gated Spatial VR Strobe application, profile tooling, renderer controls, and validation independently from the private effect project.",
+  "activation_model": {
+    "default": "disabled",
+    "unlisted_modules": "inert",
+    "runtime_rule": "selected-lock-and-runtime-input"
+  },
+  "composition": {
+    "selected_features": [],
+    "denied_features": ["camera-hwb-projection", "private-effect-layer"],
+    "selected_modules": [],
+    "denied_modules": ["camera-hwb-projection", "private-effect-layer"],
+    "allowed_permissions": [],
+    "denied_permissions": ["android.permission.CAMERA", "horizonos.permission.HEADSET_CAMERA", "horizonos.permission.SPATIAL_CAMERA"],
+    "data_classes": ["public-profile", "public-stimulus-source", "local-device-evidence"]
+  },
+  "authority_map": [
+    {
+      "parameter": "project.composition",
+      "owner": "spatial-vr-strobe-app",
+      "adapters": ["quest-spatial-adapter"]
+    },
+    {
+      "parameter": "stimulus.temporal-run-state",
+      "owner": "spatial-vr-strobe-app",
+      "adapters": ["quest-spatial-adapter"]
+    }
+  ],
+  "repositories": [
+    {
+      "repo_id": "spatial-vr-strobe-app",
+      "role": "application",
+      "path": "..",
+      "allowed_paths": ["README.md", "morphospace/"]
+    },
+    {
+      "repo_id": "quest-spatial-adapter",
+      "role": "adapter",
+      "path": "../../..",
+      "allowed_paths": ["AGENTS.md", "README.md", "apps/spatial-camera-panel-android/", "apps/spatial-vr-strobe-android/", "docs/SPATIAL_SDK_VR_STROBE_PORT.md", "docs/PROJECT_ISOLATION.md", "tools/Build-SpatialCameraPanelAndroid.ps1", "tools/Build-SpatialVrStrobeAndroid.ps1", "tools/Invoke-SpatialVrStrobeProfileTransfer.ps1", "tools/Start-SpatialVrStrobeProfileEditor.ps1", "tools/Test-SpatialCameraPanelAndroid.ps1", "tools/checks/Test-SpatialCameraPanelAndroidStatic.ps1", "tools/checks/Test-SpatialCameraPanelWorkflowStatic.ps1", "tools/checks/Test-SpatialVrStrobeStatic.ps1", "tools/checks/Test-SpatialProductIsolationStatic.ps1"]
+    }
+  ],
+  "modules": [],
+  "non_scope": [
+    "Private-project brightness, color, distortion, depth, guard-band, tuning, and shader work.",
+    "Camera/HWB capture, projection, latency, reprojection, or presentation-prediction work.",
+    "Activation from an ambient Android property or another product's feature lock.",
+    "Device serials, raw headset evidence, APKs, logs, and captures in tracked project state."
+  ],
+  "validation_profiles": [
+    {
+      "profile_id": "workflow",
+      "commands": ["pwsh -NoProfile -ExecutionPolicy Bypass -File <work-environment-root>/scripts/Test-WorkflowContracts.ps1 -WorkspaceRoot <project-root>/morphospace"]
+    },
+    {
+      "profile_id": "host",
+      "commands": ["pwsh -NoProfile -ExecutionPolicy Bypass -File tools/checks/Test-SpatialVrStrobeStatic.ps1 -RepoRoot .", "pwsh -NoProfile -ExecutionPolicy Bypass -File tools/checks/Test-SpatialProductIsolationStatic.ps1 -RepoRoot ."]
+    }
+  ],
+  "acceptance_profiles": [
+    {
+      "profile_id": "rollback",
+      "commands": ["Build the Spatial Camera Panel adapter product and verify the Strobe panel, routes, shaders, properties, and effective markers remain inactive."]
+    }
+  ],
+  "release_policy": {
+    "versioning": "semver",
+    "commit_policy": "Commit coherent host-validated Strobe slices separately from private-project work.",
+    "push_checkpoint": "integration-batch",
+    "source_first": true,
+    "planning_last": true,
+    "force_push_allowed": false
+  },
+  "public_boundary": {
+    "mode": "public",
+    "private_overlay": "local/",
+    "prohibited_evidence": ["device serials", "raw logs and captures", "APKs", "signing and pairing material"]
+  }
+}

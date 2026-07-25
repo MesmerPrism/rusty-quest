@@ -1,1 +1,24 @@
-{"$schema":"https://github.com/MesmerPrism/rusty-morphospace-work-environment/schemas/workspace-state.schema.json","blockers":[],"current_unit":"mod-007","dirty_repositories":["native-renderer-app","quest-repo","spatial-app"],"last_event_id":"mod-007-claimed-0018","next_ready_unit":null,"pending_push_bundle":null,"plan_revision":3,"project_id":"spatial-camera-panel","schema":"rusty.morphospace.workflow.workspace_state.v1","validation_checkpoint":{"receipt":"receipts/mod-006-workflow-validation-twoquest-20260713.json","result":"pass","tier":"deep"}}
+{
+  "$schema": "https://raw.githubusercontent.com/MesmerPrism/rusty-morphospace-work-environment/6b75d944614a8f863dd612c9b114d7c68f0862b0/schemas/workspace-state-v2.schema.json",
+  "schema": "rusty.morphospace.workflow.workspace_state.v2",
+  "project_id": "spatial-camera-panel",
+  "plan_revision": 9,
+  "current_unit": null,
+  "next_ready_unit": null,
+  "last_event_id": null,
+  "last_accepted_receipt": null,
+  "repository_heads": [],
+  "repository_checkpoints": [],
+  "module_registry": {
+    "lock_revision": 1,
+    "lock_fingerprint": "f2e660df46c349bc8698d88e6d63b3e9bbd62743ab32f52c1c883566a75fa165",
+    "modules": []
+  },
+  "capability_registry": [],
+  "dirty_repositories": [
+    "quest-repo"
+  ],
+  "blockers": [],
+  "validation_checkpoint": null,
+  "pending_push_bundle": null
+}

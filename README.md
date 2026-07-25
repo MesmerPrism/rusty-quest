@@ -122,31 +122,49 @@ names, formulas, and tuning are not part of this package.
 
 ## Spatial Camera Panel Lane
 
-`apps/spatial-camera-panel-android` is a separate Meta Spatial SDK experiment
-lane for public Quest panel and camera-stack validation. It packages a
-Compose-backed Spatial SDK 2D panel under
-`io.github.mesmerprism.rustyquest.spatial_camera_panel` so participant setup,
-surface selection, block timing, questionnaire capture, raw Camera2/HWB
-projection probes, and public blur/projection receipts can be tested with
-Spatial SDK panel placement, sizing, and scaling controls. It does not replace
+`apps/spatial-camera-panel-android` is a separate Meta Spatial SDK camera and
+layer-control lane. It packages one Compose-backed Spatial SDK 2D panel under
+`io.github.mesmerprism.rustyquest.spatial_camera_panel` so camera projection,
+surface selection, public blur/projection receipts, and effect-layer controls
+can be tested with Spatial SDK placement, sizing, and scaling. It does not replace
 `apps/native-renderer-android`, does not carry high-rate hand mesh or private
 particle payloads through Java/Kotlin JSON, and keeps hand visuals explicit:
 the Spatial SDK avatar hand visual and the public ECS hand-billboard flock are
 both opt-in comparison surfaces.
 
-The app also carries a public `morphospace/` composition workspace. It selects
-only the panel shell as its workflow baseline, records nearby optional feature
-families as disabled, keeps remote peer media absent, and tracks particle and
-hand extraction candidates without changing runtime behavior. Run
+That directory now supplies shared public adapter source to private downstream
+effect projects and the public Spatial VR Strobe application. Their adapter
+products do not share package/client/lock/marker identity, property namespace,
+build intermediates, APK output, or runtime route selection. Private projects
+resume from their own workspaces; Strobe resumes from
+`apps/spatial-vr-strobe-android/morphospace/`. The old Camera Panel workspace
+remains immutable integration history only. See `docs/PROJECT_ISOLATION.md`.
+
+One-sided Spatial SDK UI panels use the repository's shared front-face
+convention; panel entity creation or Android presentation-surface visibility
+does not prove that the readable face points toward the headset. See
+`docs/SPATIAL_SDK_PANEL_FACING.md` for the Meta-sample-aligned
+`lookRotationAroundY` rule, static fallback, black-panel diagnosis, and focused
+regression gate. Scene quads and camera/effect carriers retain their separate
+orientation authority. Exclusive panel features also register only their active
+panel; an opaque hidden layer is not kept alive behind `Visible(false)`.
+
+The adapter's live `morphospace/` entrypoint is an inert protocol-v2 legacy
+index. The complete mixed v1 composition workspace is preserved under
+`legacy-workspaces/mixed-integration-v1/`; it selects only the panel shell as
+its historical workflow baseline, records nearby optional feature families as
+disabled, keeps remote peer media absent, and tracks particle and hand
+extraction candidates without changing runtime behavior. Run
 `tools/checks/Test-SpatialCameraPanelWorkflowStatic.ps1` before the broader
 Spatial static ledger when changing that app's composition or module map.
 
-The paired Native Renderer workspace at
+The independent Native Renderer workspace at
 `apps/native-renderer-android/morphospace/` is independent rather than a
 projection that can promote Spatial. Both workspaces keep particle and hand
-families disabled by default and use separate conformance locks for bounded
-source checks. Their shared static workflow gate proves source consistency only;
-it does not prove a device run, central acceptance, or stable promotion.
+families disabled by default; the archived Camera ledger and Native workspace
+retain separate conformance locks for bounded source checks. Their shared
+static workflow gate proves source consistency only; it does not prove a
+device run, central acceptance, or stable promotion.
 
 The same lane now has two generic Spatial SDK asset/environment hooks. The
 Spatial SDK staged 3D asset path accepts only explicit GLB/GLTF `Mesh` URIs at
@@ -165,8 +183,7 @@ enabled, prior room diagnostics placed the video plus custom camera projection
 surface either on a fixed virtual wall or in a full-field viewer-locked pose.
 The accepted default disables the room and skybox, starts the projection
 surface at 2m, opens the generic layer-control UI panel at 1m, and consumes
-right secondary/B as a no-op. The legacy launcher panel is suppressed on this
-camera-stack route, and the right primary button opens only the generic
+right secondary/B as a no-op. The right primary button opens only the generic
 multi-layer control panel. Its layer buttons keep submitting the active layer
 override. The default-off `Meta poster LUT` button keeps stereo video decode
 active while clearing the custom projection footprint to alpha zero and applies
@@ -219,12 +236,18 @@ are recorded in the
 The earlier test sequence and calibration findings remain in the
 [Spatial Camera Motion Iteration Report](docs/SPATIAL_CAMERA_MOTION_ITERATION_REPORT.md).
 
-The lane records low-rate session, Polar placeholder, ECG placeholder, block,
-and questionnaire JSONL files in app-private storage. Questionnaire rows remain
-joinable by participant, session, block, condition/profile, and surface target.
-Driver-profile fields are generic bounded scalars only; private downstream
-effect formulas, coupling kernels, and tuned study parameters are not part of
-this public package.
+The public guide carrier now also has an explicit processing-policy boundary.
+Its accepted comparison default is a uniform five-tap box pre/post blur with
+luma extraction on the first pre-blur pass and `384x384` guide resolution per
+eye. The prior Gaussian five-tap kernel and RGB-preserving input remain live,
+independently selectable diagnostics through the layer panel or Android debug
+properties. Pass 0 still retains reprojected RGB; input treatment starts in the
+first public blur pass so processing A/B choices cannot weaken frame residency
+or anti-echo behavior.
+
+The lane has no participant-study, questionnaire, or physiological-sensor
+workflow. Private downstream effect formulas, coupling kernels, and tuned study
+parameters are not part of this public package.
 The implementation and validation plan is tracked in
 `docs/SPATIAL_SDK_PORT_IMPLEMENTATION_PLAN.md`.
 

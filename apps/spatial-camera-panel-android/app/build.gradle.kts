@@ -9,6 +9,8 @@ val spatialApplicationId =
   providers.environmentVariable("RUSTY_QUEST_SPATIAL_APP_ID")
     .orElse("io.github.mesmerprism.rustyquest.spatial_camera_panel")
 
+val spatialProductId = providers.provider { "spatial-camera-panel" }
+
 val spatialAppLabel =
   providers.environmentVariable("RUSTY_QUEST_SPATIAL_APP_LABEL")
     .orElse("Rusty Quest Spatial Camera Panel")
@@ -21,9 +23,28 @@ val spatialStartInParticleViewDefault =
   providers.environmentVariable("RUSTY_QUEST_SPATIAL_START_IN_PARTICLE_VIEW_DEFAULT")
     .orElse("false")
 
-val spatialPanelLauncherVisibleDefault =
-  providers.environmentVariable("RUSTY_QUEST_SPATIAL_PANEL_LAUNCHER_VISIBLE_DEFAULT")
-    .orElse("true")
+val spatialLockedFinalPresentation =
+  providers.environmentVariable("RUSTY_QUEST_SPATIAL_LOCKED_FINAL_PRESENTATION")
+    .map { raw ->
+      when (raw.trim().lowercase()) {
+        "1", "true", "yes", "on" -> "true"
+        "0", "false", "no", "off" -> "false"
+        else -> error("RUSTY_QUEST_SPATIAL_LOCKED_FINAL_PRESENTATION must be a boolean")
+      }
+    }
+    .orElse("false")
+
+val spatialDistortionSpeedScale =
+  providers.environmentVariable("RUSTY_QUEST_SPATIAL_DISTORTION_SPEED_SCALE")
+    .map { raw ->
+      val value = raw.trim().toFloatOrNull()
+        ?: error("RUSTY_QUEST_SPATIAL_DISTORTION_SPEED_SCALE must be numeric")
+      require(value in 0.0f..4.0f) {
+        "RUSTY_QUEST_SPATIAL_DISTORTION_SPEED_SCALE must be between 0.0 and 4.0"
+      }
+      value.toString()
+    }
+    .orElse("1.0")
 
 val spatialHandAlignmentEnabledDefault =
   providers.environmentVariable("RUSTY_QUEST_SPATIAL_HAND_ALIGNMENT_ENABLED_DEFAULT")
@@ -58,6 +79,15 @@ val spatialNdkVersion =
   providers.environmentVariable("RUSTY_QUEST_ANDROID_NDK_VERSION")
     .orElse("27.2.12479018")
 
+val spatialClientId = providers.provider { "client.quest.spatial-camera-panel" }
+val spatialFeatureLockId = providers.provider { "lock.broker-client.spatial-camera-panel.v1" }
+val spatialMarkerNamespace = providers.provider { "RUSTY_QUEST_SPATIAL_BROKER_CLIENT" }
+val spatialPropertyNamespace = providers.provider { "debug.rustyquest.spatial_camera_panel" }
+
+providers.environmentVariable("RUSTY_QUEST_SPATIAL_APP_BUILD_DIR").orNull
+  ?.takeIf { it.isNotBlank() }
+  ?.let { layout.buildDirectory.set(file(it)) }
+
 fun buildConfigString(value: String): String =
   "\"" + value.replace("\\", "\\\\").replace("\"", "\\\"") + "\""
 
@@ -73,6 +103,19 @@ android {
     versionCode = 1
     versionName = "0.1.0"
     manifestPlaceholders["spatialAppLabel"] = spatialAppLabel.get()
+    manifestPlaceholders["spatialClientId"] = spatialClientId.get()
+    manifestPlaceholders["spatialFeatureLockId"] = spatialFeatureLockId.get()
+    manifestPlaceholders["spatialMarkerNamespace"] = spatialMarkerNamespace.get()
+    buildConfigField(
+      "String",
+      "SPATIAL_PRODUCT_ID",
+      buildConfigString(spatialProductId.get()),
+    )
+    buildConfigField(
+      "String",
+      "SPATIAL_PROPERTY_NAMESPACE",
+      buildConfigString(spatialPropertyNamespace.get()),
+    )
     buildConfigField(
       "String",
       "PARTICLE_LAYER_CARRIER_DEFAULT",
@@ -84,9 +127,14 @@ android {
       buildConfigString(spatialStartInParticleViewDefault.get()),
     )
     buildConfigField(
-      "String",
-      "PANEL_LAUNCHER_VISIBLE_DEFAULT",
-      buildConfigString(spatialPanelLauncherVisibleDefault.get()),
+      "boolean",
+      "LOCKED_FINAL_PRESENTATION",
+      spatialLockedFinalPresentation.get(),
+    )
+    buildConfigField(
+      "float",
+      "DISTORTION_SPEED_SCALE",
+      "${spatialDistortionSpeedScale.get()}f",
     )
     buildConfigField(
       "boolean",
@@ -178,6 +226,7 @@ android {
 }
 
 dependencies {
+  implementation(project(":spatial-sdk-shared"))
   implementation(libs.androidx.core.ktx)
   implementation(libs.androidx.activity.compose)
   implementation(platform(libs.androidx.compose.bom))

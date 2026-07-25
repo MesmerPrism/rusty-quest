@@ -377,7 +377,7 @@ if ([string]::IsNullOrWhiteSpace($RepoRoot)) {
 }
 $repoRootPath = Resolve-Path -LiteralPath $RepoRoot
 $assetConformanceLockResolved = if ([string]::IsNullOrWhiteSpace($AssetConformanceLockPath)) {
-    Join-Path $repoRootPath "apps\spatial-camera-panel-android\morphospace\conformance-locks\spatial-asset-model.feature.lock.json"
+    Join-Path $repoRootPath "apps\spatial-camera-panel-android\legacy-workspaces\mixed-integration-v1\conformance-locks\spatial-asset-model.feature.lock.json"
 } elseif ([System.IO.Path]::IsPathRooted($AssetConformanceLockPath)) {
     $AssetConformanceLockPath
 } else {
@@ -1042,7 +1042,7 @@ try {
     $summary.projection_target_stereo_horizontal_offset_readback = Test-TextContains $evidenceText "projectionTargetStereoHorizontalOffsetUv="
     $summary.projection_target_stereo_horizontal_offset_default = Test-TextContains $evidenceText "projectionTargetStereoHorizontalOffsetDefaultUv=0.046320"
     $summary.projection_target_left_right_offset_readback = (Test-TextContains $evidenceText "projectionTargetLeftOffsetUv=") -and (Test-TextContains $evidenceText "projectionTargetRightOffsetUv=")
-    $summary.projection_target_stereo_horizontal_offset_control_disabled = Test-TextContains $evidenceText "stereoHorizontalOffsetJoystickInput=disabled-default-locked-left-stick-y-controls-workflow-or-private-panel-distance-only"
+    $summary.projection_target_stereo_horizontal_offset_control_disabled = Test-TextContains $evidenceText "stereoHorizontalOffsetJoystickInput=disabled-default-locked-left-stick-y-controls-private-panel-distance-only"
     $summary.mono_duplicated_false = Test-TextContains $evidenceText "monoDuplicated=false"
     $summary.private_shader_stack_false = Test-TextContains $evidenceText "privateShaderStack=false"
     $summary.custom_projection_stack_false = Test-TextContains $evidenceText "customProjectionStack=false"
@@ -1176,8 +1176,6 @@ try {
         Test-TextContains $evidenceText "cameraProjectionWallToggleInput=disabled-right-secondary-noop"
     $summary.camera_projection_wall_mode_declared =
         Test-TextContains $evidenceText "virtualRoomWallPlacementMode=virtual-room-wall-fixed-quad"
-    $summary.legacy_launcher_panel_suppressed =
-        Test-TextContains $evidenceText "legacyLauncherPanelSuppressed=true"
     $summary.camera_projection_initial_full_fov_mode =
         Test-TextContains $evidenceText "projectionDefaultPlacementMode=viewer-pose-projection-locked-quad"
     $summary.camera_projection_start_gate_virtual_room_loaded =
@@ -1425,7 +1423,6 @@ try {
             "spatial_virtual_room_not_mruk",
             "camera_projection_wall_toggle_disabled",
             "camera_projection_wall_mode_declared",
-            "legacy_launcher_panel_suppressed",
             "camera_projection_initial_full_fov_mode",
             "camera_projection_start_gate_virtual_room_loaded",
             "camera_projection_room_render_order"

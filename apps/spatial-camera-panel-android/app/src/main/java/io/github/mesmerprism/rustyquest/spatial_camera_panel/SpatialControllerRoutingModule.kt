@@ -22,9 +22,7 @@ internal const val NATIVE_SPATIAL_CONTROLLER_ACTIONS_DEFAULT_ENABLED = false
 
 internal enum class SpatialControllerPanelToggleAction(val markerToken: String) {
   ClosePrivateLayerPanel("close-private-layer-panel"),
-  CloseWorkflowPanel("close-workflow-panel"),
   OpenPrivateLayerPanel("open-private-layer-panel"),
-  OpenWorkflowPanel("open-workflow-panel"),
 }
 
 internal data class SpatialJoystickArbitrationMarkerInput(
@@ -72,14 +70,11 @@ internal object SpatialControllerRoutingModule {
       privateLayerFreeTransform: Boolean,
       privateLayerGrabbed: Boolean,
       privateLayerHeadlocked: Boolean,
-      workflowPanelVisible: Boolean,
-      workflowPanelHeadlocked: Boolean,
   ): Boolean =
       joystickEnabled &&
           when {
             privateLayerPanelVisible ->
                 if (privateLayerFreeTransform) !privateLayerGrabbed else privateLayerHeadlocked
-            workflowPanelVisible -> workflowPanelHeadlocked
             else -> false
           }
 
@@ -102,14 +97,11 @@ internal object SpatialControllerRoutingModule {
 
   fun panelToggleAction(
       privateLayerPanelVisible: Boolean,
-      workflowPanelVisible: Boolean,
-      opensPrivateLayerPanel: Boolean,
   ): SpatialControllerPanelToggleAction =
-      when {
-        privateLayerPanelVisible -> SpatialControllerPanelToggleAction.ClosePrivateLayerPanel
-        workflowPanelVisible -> SpatialControllerPanelToggleAction.CloseWorkflowPanel
-        opensPrivateLayerPanel -> SpatialControllerPanelToggleAction.OpenPrivateLayerPanel
-        else -> SpatialControllerPanelToggleAction.OpenWorkflowPanel
+      if (privateLayerPanelVisible) {
+        SpatialControllerPanelToggleAction.ClosePrivateLayerPanel
+      } else {
+        SpatialControllerPanelToggleAction.OpenPrivateLayerPanel
       }
 
   fun isJoystickEvent(event: MotionEvent): Boolean =
@@ -272,6 +264,12 @@ internal object SpatialControllerRoutingModule {
           "activeControllerComponentCount=${snapshot.activeCount} " +
           "localControllerComponentCount=${snapshot.localControllerCount} " +
           "localActiveControllerComponentCount=${snapshot.localActiveControllerCount} " +
+          "localLeftControllerType=${activityMarkerToken(snapshot.localLeftControllerType)} " +
+          "localLeftControllerAttachmentType=${activityMarkerToken(snapshot.localLeftControllerAttachmentType)} " +
+          "localLeftControllerActive=${snapshot.localLeftControllerActive} " +
+          "localLeftControllerButtonState=${snapshot.localLeftControllerButtonState} " +
+          "localLeftControllerChangedButtons=${snapshot.localLeftControllerChangedButtons} " +
+          "localLeftControllerPreferred=${snapshot.leftInputSource == "spatial-sdk-controller-component"} " +
           "localRightControllerType=${activityMarkerToken(snapshot.localRightControllerType)} " +
           "localRightControllerAttachmentType=${activityMarkerToken(snapshot.localRightControllerAttachmentType)} " +
           "localRightControllerActive=${snapshot.localRightControllerActive} " +
@@ -384,17 +382,14 @@ internal object SpatialControllerRoutingModule {
       detail: String,
       panelToggleAction: SpatialControllerPanelToggleAction,
       panelMode: String,
-      workflowPanelVisible: Boolean,
       privateLayerPanelVisible: Boolean,
-      opensPrivateLayerPanel: Boolean,
   ): String =
       "channel=spatial-panel status=controller-primary-toggled-panel " +
           "controllerInput=right-primary-button inputSource=${activityMarkerToken(inputSource)} " +
           "${detail.trim()} " +
           "panelToggleAction=${activityMarkerToken(panelToggleAction.markerToken)} " +
-          "panelMode=$panelMode workflowPanelVisible=$workflowPanelVisible " +
+          "panelMode=$panelMode " +
           "privateLayerPanelVisible=$privateLayerPanelVisible " +
-          "opensPrivateLayerPanel=$opensPrivateLayerPanel " +
-          "spatialPrivateLayerControlPanel=$opensPrivateLayerPanel " +
+          "opensPrivateLayerPanel=true spatialPrivateLayerControlPanel=true " +
           "debugOnly=true"
 }

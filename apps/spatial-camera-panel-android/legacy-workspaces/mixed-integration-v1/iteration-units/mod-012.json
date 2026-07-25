@@ -1,0 +1,267 @@
+{
+  "$schema": "https://github.com/MesmerPrism/rusty-morphospace-work-environment/schemas/iteration-unit.schema.json",
+  "acceptance": [
+    {
+      "acceptance_id": "shared-panel-facing-authority",
+      "command": "Focused JVM tests and source inspection",
+      "proof": "One named helper owns Meta Spatial SDK UI-panel front-face rotation and fallback placement; the VR Strobe and private control panel use it while non-panel scene geometry retains its existing authority."
+    },
+    {
+      "acceptance_id": "official-meta-sample-alignment",
+      "command": "Pinned read-only reference audit and static documentation gate",
+      "proof": "The documented dynamic and static conventions cite the exact official Meta sample revision and use its lookRotationAroundY or 180-degree-yaw patterns without copying unrelated sample code."
+    },
+    {
+      "acceptance_id": "panel-facing-regression",
+      "command": "tools/checks/Test-SpatialSdkPanelFacingStatic.ps1 plus SpatialPanelFacingTest",
+      "proof": "The gate fails if the strobe or private UI panel returns to direct Quaternion.fromDirection placement, loses the known-facing fallback, or bypasses the shared helper."
+    },
+    {
+      "acceptance_id": "exclusive-strobe-panel-registration",
+      "command": "SpatialComposePanelRegistrationModuleTest plus tools/checks/Test-SpatialSdkPanelFacingStatic.ps1",
+      "proof": "A VR Strobe launch registers exactly its own Compose panel; the hidden private opaque layer and unrelated projection or particle panels are neither registered nor created. The panel remains at the comfortable trigger-tested 0.82 m pose. The carrier starts at the controller range maximum of 4.00 m with its 2.84 m radius while the selected carrier remains active behind the opaque panel; its minimum distance is 1.05 m. An accepted Begin auto-closes the panel. Its z-index-100 explicit-OPAQUE layer is supplemental, while the stimulus uses LESS_OR_EQUAL depth testing with depth writes enabled."
+    },
+    {
+      "acceptance_id": "dark-neon-panel-contrast",
+      "command": "tools/checks/Test-SpatialSdkPanelFacingStatic.ps1 plus attended headset readback",
+      "proof": "The Strobe Compose surface uses a complete dark Material color scheme: existing pink remains primary, Matrix green owns secondary/background and variant text, and electric blue owns tertiary/surface/outline roles so no unspecified light-theme role renders black against the black panel."
+    },
+    {
+      "acceptance_id": "warning-first-selection-start-flow",
+      "command": "VrStrobePanelFlowTest, VrStrobeSafetyControllerTest, static UI contract checks, and attended headset readback",
+      "proof": "Every fresh app launch and focus-loss recovery opens on a prominent warning acknowledgement screen. Acknowledgement enters stimulus selection, and selecting a preset is the explicit start gesture with the 500 ms black lead-in; no property, restored state, launch, or mere designer navigation starts output. Once started, output remains active until explicit Stop, focus loss, session withdrawal, or app destruction rather than an automatic timer."
+    },
+    {
+      "acceptance_id": "strobe-controller-input-contract",
+      "command": "VrStrobeControllerInputCoordinatorTest, controller snapshot tests, static routing checks, and attended Touch-controller readback",
+      "proof": "While a stimulus is selected, right A randomizes the exact unified selection revision most recently adopted by panel selection or either-stick cycling. One app-owned action arbiter accepts the first Android key/motion or Spatial SDK snapshot edge and suppresses duplicate platform observations within a bounded cross-route window; neither observation path owns a second randomize callback. Numbered ingress, press, randomize-start, renderer-submission, later-frame, randomize-complete, and press-complete markers expose the full transaction. No Pause/Resume panel action, callback, or safety state exists. B-close blocks descendant focus, clears/disables the backing root, hides the native PanelSceneObject, and hides the ECS entity, so a hidden surface cannot retain the conflicting hit target. Randomize preserves the output lifecycle. The next horizontal flick continues from that preset index. Stable local left and right controller components remain valid snapshot samples even when Meta transiently reports isActive=false. Left primary stores the exact current stimulus, distance, carrier mode, and concavity; right trigger is reserved for pointed panel interaction and owns no Store route. In flat mode either thumbstick vertical movement adjusts distance; in curved mode left Y adjusts concavity and right Y adjusts distance. Right B opens or closes the VR Strobe panel independently of output and every open recenters/faces it from the current viewer pose. Valid-sample release confirmation, cross-route deduplication, and dominant-axis arbitration prevent controller-source dropouts, duplicate observations, or diagonal input from repeating actions."
+    },
+    {
+      "acceptance_id": "trevor-bounded-quest-randomization-and-stored-profile-parity",
+      "command": "VrStrobeRandomizationTest, VrStrobeStoredProfileAuthorityTest, source-pinned static gate, app restart readback, and attended panel load",
+      "proof": "Trevor's pinned sim.html and strobe.html controls remain outer compatibility bounds, while the Quest Randomize action uses the tested quest-reliable-v3 subset: separated bright palettes, bounded brightness/contrast, positive-width or disabled vignette, at most three active patterns with one active distortion and wave branch, and 1..30 Hz/20..80 percent temporal values. A mixed coarse/fine spatial distribution gives the fine bands 60 percent selection weight and reaches global scale 16, stripe/ripple and ray period 50, and Perlin scale 40 without adding fragment evaluations or relaxing the viability guards. The shader rejects equal-edge vignette input from older profiles. Candidate markers expose envelope acceptance, fine-detail presence, spatial ranges, costly branch counts, and host transaction duration. Each active randomize stages its at-most-26 profile attributes on the single live material through cached numeric indices, writes no more than six attributes per scene tick, repeats the bounded profile pass once, commits active pattern counts last in each pass, and advances the continuously reasserted visible generation only after the profile publication completes. Rapid accepted actions queue rather than overwrite one another; inactive slots remain untouched, and a later scene-frame receipt remains distinct from attended visible adoption. Panel and left-primary storage share one versioned app-private authority that round-trips exact interference/temporal parameters, spatial distance, carrier mode, and concavity across restart. A versioned human-readable JSON bundle is the single Quest/browser interchange contract; Quest import replaces the stored list transactionally, Quest export mirrors the effective list, and the flat browser editor validates the same bounds and profile vocabulary. The browser warning is a dedicated session-scoped entry gate; one command authority owns Left/Right cycling, Space pause/resume, Up randomize, Down per-profile bounded LIFO restore, and S session-only snapshot storage. Session snapshots join browser cycling and explicit download but never silently enter persistent browser storage. Version 3 binary storage remains readable internally for migration, while browser interchange never depends on Android SharedPreferences bytes."
+    },
+    {
+      "acceptance_id": "bounded-gpu-fragment-budget",
+      "command": "Shader compilation, VrStrobeGpuPlanTest, static shader budget checks, and attended headset GPU-frame evidence",
+      "proof": "The full-field carrier is one bounded 32-ring by 96-segment radial disc rather than a double-sided box. Its 2.84 m radius and 4.00 m default distance begin at the controller range maximum, allowing the selected carrier to remain active behind the 0.82 m panel. It defaults to curved mode at maximum concavity, the full 180-degree viewer-facing hemisphere; flat mode remains available, and joystick changes update one uniform without geometry rebuilds or added fragment evaluations. The viewer-facing +Z winding is rendered front-sided only so folded back faces cannot add redundant fragment work. Randomize updates the single material already bound to the visible carrier through a bounded cached-index multi-frame commit, increments an explicit staged renderer revision, advances the visible revision only after two complete profile passes, and performs no SceneObject mesh swap, retaining one visible draw and continuous time-uniform ownership. The commit adds no fragment work and stays below the former full-clear mutation count. Quest randomization permits at most one optional distortion branch and one wave branch. Inactive pattern slots are packed out and uniform counts terminate shader loops, and the combined interference/trail/blur/glow path uses exactly one complete interference-signal evaluation per fragment rather than three or seven. Derivative band limiting and decorrelated post noise reject the observed large square-line raster artifact."
+    },
+    {
+      "acceptance_id": "experimental-interference-depth-deformation",
+      "command": "VrStrobeDepthDeformationTest, VrStrobeCarrierGeometryTest, shader compilation, focused static gate, bounded launch smoke, and attended headset comparison",
+      "proof": "Depth deformation is an app-owned experimental option that defaults on at the full symmetric 1.42 m maximum, exactly half the 2.84 m carrier radius; it is available only for selected interference stimuli and never deforms temporal output. The panel separates current/effective state from a button whose label describes the next action, and a quadratic slider preserves centimeter-scale control near zero. The depth coordinate follows the stimulus palette roles rather than RGB luminance: for two colors slot 1 is far and slot 2 near; for three colors slot 1 is far, slot 2 remains on the carrier, and slot 3 is near. The same band-limited interference signal therefore integrates geometry with the visible pattern even when palette colors have similar brightness. At displacement above 5 cm only the geometric bandwidth adapts smoothly from 12 to 4 while the fragment image retains its full fine detail, limiting severe folds and self-overdraw. The front-sided 32-by-96 carrier displaces along an analytic viewer-facing flat or spherical normal. The original fragment hot path retains one interference-signal evaluation, no gl_FragDepth is written, one material and one draw remain, and host/runtime markers separate requested, effective, and temporal-suppressed state."
+    },
+    {
+      "acceptance_id": "general-repo-guidance",
+      "command": "Repository documentation and instruction-surface checks",
+      "proof": "Rusty Quest explains front-face direction, safe viewer-relative placement, fallback, observability limits, black-panel diagnosis, and required host/device validation for future Spatial SDK panels."
+    },
+    {
+      "acceptance_id": "headset-front-face-proof",
+      "command": "Serial-scoped inert panel-only launch and operator confirmation",
+      "proof": "The selected headset shows the VR Strobe control panel front-facing at launch, no visual output starts automatically, and cleanup restores the exact prior property state with no bounded fatal."
+    }
+  ],
+  "allowed_repositories": [
+    {
+      "allowed_paths": [
+        "README.md",
+        "app/build.gradle.kts",
+        "gradle/libs.versions.toml",
+        "app/src/main/java/io/github/mesmerprism/rustyquest/spatial_camera_panel/SpatialCameraPanelActivity.kt",
+        "app/src/main/java/io/github/mesmerprism/rustyquest/spatial_camera_panel/SpatialCameraPanelModels.kt",
+        "app/src/main/java/io/github/mesmerprism/rustyquest/spatial_camera_panel/SpatialComposePanelRegistrationModule.kt",
+        "app/src/main/java/io/github/mesmerprism/rustyquest/spatial_camera_panel/SpatialControllerPollingCoordinator.kt",
+        "app/src/main/java/io/github/mesmerprism/rustyquest/spatial_camera_panel/SpatialControllerSnapshotAdapter.kt",
+        "app/src/main/java/io/github/mesmerprism/rustyquest/spatial_camera_panel/SpatialPanelFacing.kt",
+        "app/src/main/java/io/github/mesmerprism/rustyquest/spatial_camera_panel/SpatialPanelPlacementModule.kt",
+        "app/src/main/java/io/github/mesmerprism/rustyquest/spatial_camera_panel/SpatialPanelPoseCoordinator.kt",
+        "app/src/main/java/io/github/mesmerprism/rustyquest/spatial_camera_panel/vrstrobe/",
+        "app/src/shaders/vr_strobe_interference.frag",
+        "app/src/shaders/vr_strobe_interference.vert",
+        "app/src/test/java/io/github/mesmerprism/rustyquest/spatial_camera_panel/SpatialPanelFacingTest.kt",
+        "app/src/test/java/io/github/mesmerprism/rustyquest/spatial_camera_panel/SpatialComposePanelRegistrationModuleTest.kt",
+        "app/src/test/java/io/github/mesmerprism/rustyquest/spatial_camera_panel/vrstrobe/",
+        "morphospace/iteration-events.jsonl",
+        "morphospace/iteration-units/mod-012.json",
+        "morphospace/receipts/mod-012",
+        "morphospace/workspace.state.json",
+        "profile-editor-web/"
+      ],
+      "repo_id": "spatial-app"
+    },
+    {
+      "allowed_paths": [
+        "AGENTS.md",
+        "README.md",
+        "docs/ARCHITECTURE.md",
+        "docs/SPATIAL_SDK_PANEL_FACING.md",
+        "docs/SPATIAL_SDK_VR_STROBE_PORT.md",
+        "docs/VALIDATION.md",
+        "tools/Test-SpatialCameraPanelAndroid.ps1",
+        "tools/checks/Test-SpatialCameraPanelAndroidStatic.ps1",
+        "tools/checks/Test-SpatialCameraPanelWorkflowStatic.ps1",
+        "tools/checks/Test-SpatialSdkPanelFacingStatic.ps1",
+        "tools/checks/Test-SpatialVrStrobeStatic.ps1",
+        "tools/Invoke-SpatialVrStrobeProfileTransfer.ps1",
+        "tools/Start-SpatialVrStrobeProfileEditor.ps1"
+      ],
+      "repo_id": "quest-repo"
+    }
+  ],
+  "change_categories": [
+    "implementation",
+    "authority",
+    "validation",
+    "documentation",
+    "device-policy"
+  ],
+  "commit_policy": "Keep the shared helper, app adoption, focused tests, general documentation, and sanitized workflow evidence in one reviewable local Quest slice; do not publish without explicit user authorization.",
+  "device_requirement": "required",
+  "instruction_impact": "update",
+  "instruction_none_justification": null,
+  "instruction_surfaces": [
+    {
+      "action": "update",
+      "change_reason": "Route future Meta Spatial SDK UI panels through the shared front-face convention and focused validation guide.",
+      "owner": "quest-repo",
+      "path": "<workspace-root>/repos/rusty-quest/AGENTS.md",
+      "skill_id": null,
+      "status": "pending",
+      "surface_kind": "agents",
+      "validation": "tools/checks/Test-SpatialSdkPanelFacingStatic.ps1"
+    },
+    {
+      "action": "update",
+      "change_reason": "Document the app's UI-panel pose authority and distinguish it from scene-quad placement.",
+      "owner": "spatial-app",
+      "path": "<workspace-root>/repos/rusty-quest/apps/spatial-camera-panel-android/README.md",
+      "skill_id": null,
+      "status": "pending",
+      "surface_kind": "readme",
+      "validation": "tools/checks/Test-SpatialSdkPanelFacingStatic.ps1"
+    },
+    {
+      "action": "update",
+      "change_reason": "Route Spatial SDK panel implementers to the general panel-facing contract.",
+      "owner": "quest-repo",
+      "path": "<workspace-root>/repos/rusty-quest/README.md",
+      "skill_id": null,
+      "status": "pending",
+      "surface_kind": "readme",
+      "validation": "tools/check_all.ps1"
+    },
+    {
+      "action": "update",
+      "change_reason": "Record UI-panel pose authority separately from scene-geometry pose authority.",
+      "owner": "quest-repo",
+      "path": "<workspace-root>/repos/rusty-quest/docs/ARCHITECTURE.md",
+      "skill_id": null,
+      "status": "pending",
+      "surface_kind": "router-doc",
+      "validation": "tools/checks/Test-SpatialSdkPanelFacingStatic.ps1"
+    },
+    {
+      "action": "update",
+      "change_reason": "Add black-panel facing diagnosis and human visibility acceptance requirements.",
+      "owner": "quest-repo",
+      "path": "<workspace-root>/repos/rusty-quest/docs/VALIDATION.md",
+      "skill_id": null,
+      "status": "pending",
+      "surface_kind": "router-doc",
+      "validation": "tools/checks/Test-SpatialSdkPanelFacingStatic.ps1"
+    },
+    {
+      "action": "review-no-change",
+      "change_reason": "Confirm that the fix remains in the Rusty Quest app/runtime lane and does not move reusable platform authority.",
+      "owner": "workflow",
+      "path": "<skills-root>/rusty-morphospace-context/SKILL.md",
+      "skill_id": "rusty-morphospace-context",
+      "status": "complete",
+      "surface_kind": "skill",
+      "validation": "repo-family boundary review"
+    },
+    {
+      "action": "review-no-change",
+      "change_reason": "Apply existing single-authority, observability, and regression-gate contracts without changing the skill.",
+      "owner": "workflow",
+      "path": "<skills-root>/system-engineering/SKILL.md",
+      "skill_id": "system-engineering",
+      "status": "complete",
+      "surface_kind": "skill",
+      "validation": "authority and instruction-impact review"
+    },
+    {
+      "action": "review-no-change",
+      "change_reason": "Use the existing serial-scoped build, install, launch, evidence, and cleanup policy; panel orientation remains repository implementation guidance.",
+      "owner": "workflow",
+      "path": "<skills-root>/meta-quest-workflow/SKILL.md",
+      "skill_id": "meta-quest-workflow",
+      "status": "complete",
+      "surface_kind": "skill",
+      "validation": "device workflow review"
+    },
+    {
+      "action": "review-no-change",
+      "change_reason": "Use bounded pre/post source and validation-surface reconciliation without changing graph policy.",
+      "owner": "workflow",
+      "path": "<skills-root>/rust-work-graph/SKILL.md",
+      "skill_id": "rust-work-graph",
+      "status": "complete",
+      "surface_kind": "skill",
+      "validation": "bounded graph review"
+    }
+  ],
+  "non_scope": [
+    "Changing scene-mesh, camera carrier, fragment-probe, stimulus, or effect-quad orientation semantics.",
+    "Editing other Spatial SDK applications observed during the read-only anti-pattern audit.",
+    "Starting visual strobe output before the repaired inert panel is visible and the operator explicitly authorizes the next attended step.",
+    "Publishing device serials, raw logs, screenshots, APKs, private paths, or unreviewed reference code.",
+    "Claiming that panel-created markers alone prove that a one-sided panel is visible from the viewer."
+  ],
+  "objective": "Correct the recurring black or unreadable Meta Spatial SDK Compose-panel failure, then complete the VR Strobe operator flow with a warning-first selection-start contract, persistent operator-controlled stimulus lifetime, Touch-controller shortcuts, and reduced GPU-bound full-field fragment cost; document and prove the repaired panel, safety flow, input route, and optimized renderer on the selected Quest.",
+  "outputs": [
+    "Shared Spatial SDK UI-panel pose helper with an explicit front-face convention and safe static fallback.",
+    "VR Strobe and private control-panel placement routed through the shared helper without changing scene-quad orientation authority.",
+    "VR Strobe-only registration that omits the hidden private opaque layer and unrelated projection/particle panel surfaces, with a comfortable 0.82 m panel, a 4.00 m default active carrier using the existing 2.84 m radial geometry, accepted-Begin auto-close, supplemental explicit-OPAQUE z-index-100 layer, depth-respecting stimulus, and viewer recenter on every open.",
+    "Complete VR Strobe dark Material palette retaining pink primary accents and assigning Matrix green and electric blue to every formerly implicit black or grey content role.",
+    "Warning-first Compose flow whose acknowledged preset-selection gesture begins the chosen stimulus immediately after the bounded black lead-in.",
+    "Persistent stimulus lifecycle with explicit Stop/focus-loss cleanup, active-panel Randomize, global-only right A with no Pause/Resume UI route, left-primary Store, right trigger reserved for panel pointing, preview-key consumption, descendant-focus blocking, hidden-root disable, and hidden native panel scene object, viewer-recentering B open, horizontal preset flicks, clamped distance adjustment, and curved-mode left-stick concavity.",
+    "Pinned-source outer randomization bounds plus the quest-reliable-v3 mixed coarse/fine viable subset, bounded active-slot material deltas with frame-boundary receipts, app-private stored profiles with left-primary Store, panel list/load, exact parameter/spatial-distance/carrier-shape round-trip, browser/Quest JSON interchange, version-1 shape and version-1/2 distance migration, and restart persistence.",
+    "Single-draw, front-sided 32-ring by 96-segment 2.84 m radial-disc custom-material carrier at a 4.00 m default distance and defaulting to a full 180-degree viewer-facing hemisphere, with flat-circle availability, default-on full-range interference-only palette-relative 0..1.42 m normal displacement, amplitude-adaptive geometric bandwidth, an unambiguous state/action UI and nonlinear fine-control slider, direct active-material randomize submission with no SceneObject mesh swap, active-pattern packing/counts, and a shared bounded post-sampling shader path for lower fragment cost.",
+    "Flat browser profile editor derived from the permission-bound Trevor reference vocabulary, using the exact Quest interchange schema and Quest-safe randomization bounds, with a session-scoped entry warning, shared keyboard exploration commands, bounded per-profile randomization undo, temporary session snapshots, local import/export, and a serial-scoped CLI bridge for transactional Quest transfer.",
+    "Focused JVM and static regression gates that reject direct generic-direction quaternion use for UI-panel placement.",
+    "General Rusty Quest panel-facing architecture, validation, and troubleshooting guidance grounded in pinned official Meta samples.",
+    "Fresh APK and attended serial-scoped headset proof that the inert VR Strobe control panel is visible and front-facing."
+  ],
+  "prerequisites": [
+    "mod-010"
+  ],
+  "project_id": "spatial-camera-panel",
+  "push_checkpoint": "local-only",
+  "risk_tier": "deep",
+  "schema": "rusty.morphospace.workflow.iteration_unit.v1",
+  "status": "active",
+  "tags": [
+    "spatial-sdk",
+    "compose-panel",
+    "panel-facing",
+    "vr-strobe",
+    "quest-device"
+  ],
+  "unit_id": "mod-012",
+  "validation": [
+    {
+      "command": "Focused Spatial panel-facing JVM tests and static convention gate",
+      "profile_id": "quick"
+    },
+    {
+      "command": "Spatial Camera Panel host suite, debug APK build, and bounded repository diff/graph reconciliation",
+      "profile_id": "standard"
+    },
+    {
+      "command": "Serial-scoped inert VR Strobe panel launch, front-face operator confirmation, bounded logcat, exact property restoration, and package cleanup",
+      "profile_id": "device"
+    }
+  ]
+}

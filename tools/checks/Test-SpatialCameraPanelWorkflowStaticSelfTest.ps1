@@ -120,11 +120,11 @@ try {
     Assert-SelfTest ((Invoke-Gate -Root $implicitBroker).exit_code -ne 0) "implicit default broker activation was accepted"
 
     $danglingBroker = New-TestRepo -Name "dangling-broker-dependency"
-    $danglingBrokerLockPath = Join-Path $danglingBroker "apps\spatial-camera-panel-android\morphospace\conformance-locks\broker-media-client.feature.lock.json"
+    $danglingBrokerLockPath = Join-Path $danglingBroker "apps\spatial-camera-panel-android\legacy-workspaces\mixed-integration-v1\conformance-locks\broker-media-client.feature.lock.json"
     $danglingBrokerLock = Get-Content -Raw -LiteralPath $danglingBrokerLockPath | ConvertFrom-Json
     ($danglingBrokerLock.features | Where-Object { [string]$_.feature_id -eq "broker-media-client" }).dependencies = @("missing-shell")
     Write-TestJson -Path $danglingBrokerLockPath -Value $danglingBrokerLock
-    $danglingBrokerIndexPath = Join-Path $danglingBroker "apps\spatial-camera-panel-android\morphospace\conformance-locks\index.json"
+    $danglingBrokerIndexPath = Join-Path $danglingBroker "apps\spatial-camera-panel-android\legacy-workspaces\mixed-integration-v1\conformance-locks\index.json"
     $danglingBrokerIndex = Get-Content -Raw -LiteralPath $danglingBrokerIndexPath | ConvertFrom-Json
     ($danglingBrokerIndex.locks | Where-Object { [string]$_.feature_id -eq "broker-media-client" }).sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $danglingBrokerLockPath).Hash
     Write-TestJson -Path $danglingBrokerIndexPath -Value $danglingBrokerIndex

@@ -1,0 +1,66 @@
+{
+  "schema": "rusty.quest.spatial_camera_panel.mod007_single_layer_control_ui_host_validation.v1",
+  "unit_id": "mod-007",
+  "status": "host-validation-passed",
+  "completed_at": "2026-07-16T13:51:24Z",
+  "ownership_decision": {
+    "registered_ui": "spatial_private_layer_panel",
+    "removed_domain": "participant-study-questionnaire-and-physiological-sensor-workflow",
+    "participant_workflow_belongs_to_spatial_camera_panel": false,
+    "camera_effect_controls_preserved": true
+  },
+  "removed_components": [
+    "ExperimentPanelController",
+    "SpatialCameraPanelStore",
+    "PolarSensorPanel",
+    "spatial_camera_panel_launcher",
+    "spatial_camera_panel",
+    "participant-and-questionnaire-validation-actions",
+    "polar-live-and-workflow-self-test-tools",
+    "bluetooth-and-fine-location-permissions"
+  ],
+  "host_validation": {
+    "spatial_static_gate": "passed",
+    "powershell_parse_gate": "passed-9-scripts",
+    "json_parse_gate": "passed-4-ownership-documents",
+    "git_diff_check": "passed",
+    "tracked_graph_reconciliation": {
+      "legacy_workflow_occurrences_in_spatial_app_and_tools_before": 274,
+      "legacy_workflow_occurrences_in_spatial_app_and_tools_after": 5,
+      "remaining_occurrences": "explicit-negative-scope-documentation-only",
+      "current_layer_panel_occurrences_before": 161,
+      "current_layer_panel_occurrences_after": 163
+    },
+    "jvm_unit_tests": {
+      "passed": 23,
+      "failed": 0,
+      "errors": 0
+    },
+    "android_debug_build": "passed",
+    "packaged_resource_check": {
+      "spatial_private_layer_panel": "present",
+      "spatial_camera_panel_launcher": "absent",
+      "spatial_camera_panel": "absent"
+    },
+    "merged_manifest_check": {
+      "bluetooth_permissions": "absent",
+      "fine_location_permission": "absent"
+    }
+  },
+  "android_artifact": {
+    "path": "target/spatial-camera-panel-android/rusty-quest-spatial-camera-panel.apk",
+    "sha256": "0c6da718fef6c4e196f04c62f84d08e79a34858e3a5fad6495559718cc81beb8",
+    "bytes": 97823153,
+    "artifact_policy": "local-only"
+  },
+  "device_validation": {
+    "run": false,
+    "headset_resource_touched": false,
+    "adb_server_lifecycle_lease_acquired": false,
+    "visual_confirmation_required_for_ownership_removal": false
+  },
+  "resource_cleanup": {
+    "apk_build_lease": "released-done",
+    "headset_lease_acquired": false
+  }
+}

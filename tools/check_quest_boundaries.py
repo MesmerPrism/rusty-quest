@@ -39,13 +39,19 @@ FORBIDDEN = (
 
 SCAN_SUFFIXES = {".java", ".json", ".kt", ".kts", ".glsl", ".md", ".ps1", ".rs", ".toml", ".xml"}
 SKIP_DIRS = {".git", ".gradle", ".kotlin", "build", "local-artifacts", "target"}
+PRESERVED_HISTORY_ROOT = Path(
+    "apps/spatial-camera-panel-android/legacy-workspaces/mixed-integration-v1"
+)
 
 
 def main() -> int:
     root = Path(__file__).resolve().parents[1]
     failures: list[str] = []
     for path in root.rglob("*"):
+        relative = path.relative_to(root)
         if any(part in SKIP_DIRS for part in path.parts):
+            continue
+        if relative == PRESERVED_HISTORY_ROOT or PRESERVED_HISTORY_ROOT in relative.parents:
             continue
         if path.name == "legacy-property.profile.json":
             continue

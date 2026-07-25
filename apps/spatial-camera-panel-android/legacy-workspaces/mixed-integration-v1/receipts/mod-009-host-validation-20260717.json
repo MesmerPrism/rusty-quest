@@ -1,0 +1,128 @@
+{
+  "schema": "rusty.quest.spatial_stimulus_volume.host_validation.v1",
+  "receipt_id": "mod-009-host-validation-20260717",
+  "unit_id": "mod-009",
+  "generated_at": "2026-07-17T15:13:00.0187577Z",
+  "result": "pass",
+  "repository": {
+    "branch": "codex/spatial-camera-guard-band-baseline",
+    "head_revision": "7df59dac068d62e6c222a522c763122dc89efd70"
+  },
+  "scope": {
+    "phase_mode": "fixed-phase",
+    "temporal_modulation": false,
+    "autostart": false,
+    "feature_default_enabled": false,
+    "apk_built": false,
+    "device_operation_performed": false,
+    "device_visual_proof": false
+  },
+  "checks": [
+    {
+      "check_id": "stimulus-static",
+      "command": "tools/checks/Test-SpatialStimulusVolumeStatic.ps1",
+      "result": "pass"
+    },
+    {
+      "check_id": "workflow-static",
+      "command": "tools/checks/Test-SpatialCameraPanelWorkflowStatic.ps1",
+      "result": "pass"
+    },
+    {
+      "check_id": "spatial-android-static",
+      "command": "tools/checks/Test-SpatialCameraPanelAndroidStatic.ps1",
+      "result": "pass"
+    },
+    {
+      "check_id": "fragment-probe-regression",
+      "command": "tools/checks/Test-SpatialFragmentProbeStatic.ps1",
+      "result": "pass"
+    },
+    {
+      "check_id": "render-access-regression",
+      "command": "tools/checks/Test-SpatialRenderAccessProbeStatic.ps1",
+      "result": "pass"
+    },
+    {
+      "check_id": "stimulus-route-jvm",
+      "command": ":app:testDebugUnitTest --tests *SpatialStimulusVolumeRouteTest",
+      "result": "pass",
+      "tests": 9
+    },
+    {
+      "check_id": "spatial-app-jvm",
+      "command": ":app:testDebugUnitTest",
+      "result": "pass",
+      "suites": 7,
+      "tests": 37,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "check_id": "shader-compile",
+      "command": ":app:compileShadersFordebug --rerun-tasks",
+      "result": "pass",
+      "reported_variants": 40,
+      "reported_unique_files": 23
+    },
+    {
+      "check_id": "diff-whitespace",
+      "command": "git diff --check -- <MOD-009 tracked paths>",
+      "result": "pass"
+    }
+  ],
+  "generated_shader_artifacts": [
+    {
+      "path": "app/build/generated/assets/compileShadersFordebug/spatial_stimulus_volume.frag.mv.spv",
+      "bytes": 6020,
+      "sha256": "0bd209d329b71e323f7d496011d7a47b3be92eb6f6598ca3ef5dc699cd588549"
+    },
+    {
+      "path": "app/build/generated/assets/compileShadersFordebug/spatial_stimulus_volume.frag.spv",
+      "bytes": 5996,
+      "sha256": "16d035ddc123e521206716950f4c635afd1eb20ea0769721bc90ee40d5331403"
+    },
+    {
+      "path": "app/build/generated/assets/compileShadersFordebug/spatial_stimulus_volume.vert.2uv.mv.spv",
+      "bytes": 890,
+      "sha256": "fd65abe5a52af7b9a23708cee9f624370c062d1da32df5236cee3ba2a37050f1"
+    },
+    {
+      "path": "app/build/generated/assets/compileShadersFordebug/spatial_stimulus_volume.vert.2uv.spv",
+      "bytes": 878,
+      "sha256": "dc945da75581312d10b6e8801d44f2a85315814c76353c7181a52c6600f1cd63"
+    },
+    {
+      "path": "app/build/generated/assets/compileShadersFordebug/spatial_stimulus_volume.vert.mv.spv",
+      "bytes": 898,
+      "sha256": "08009c0670272df008b9fb8901c3a0e4c8edcebdd480f561674b1f6c6acd75b9"
+    },
+    {
+      "path": "app/build/generated/assets/compileShadersFordebug/spatial_stimulus_volume.vert.skin.mv.spv",
+      "bytes": 892,
+      "sha256": "4afccb1bbf1b4a05bfb0a71ff9072411b543d71487fe141aded2443252077805"
+    },
+    {
+      "path": "app/build/generated/assets/compileShadersFordebug/spatial_stimulus_volume.vert.skin.spv",
+      "bytes": 876,
+      "sha256": "5e93faa324b5c7c908f2d8ad16d36b72b06a21575d5dfe0989872581c1e4f9c2"
+    },
+    {
+      "path": "app/build/generated/assets/compileShadersFordebug/spatial_stimulus_volume.vert.spv",
+      "bytes": 878,
+      "sha256": "85a6daed26293c352bb30fbd18098dc3a41ad16c565e7d3bc05888ba962f8e75"
+    },
+    {
+      "path": "app/build/generated/assets/compileShadersFordebug/spatial_stimulus_volume.vert.tangent.mv.spv",
+      "bytes": 893,
+      "sha256": "05b99284b664efd99ec0f47ff3c803936d8313be36ab1ab20d737665615488d3"
+    },
+    {
+      "path": "app/build/generated/assets/compileShadersFordebug/spatial_stimulus_volume.vert.tangent.spv",
+      "bytes": 877,
+      "sha256": "0a5ed60013dcdd84770251cf34a30f723c1c68be493c040825af920709fc4a8e"
+    }
+  ],
+  "evidence_boundary": "This receipt proves source wiring, closed-world activation, Kotlin behavior, static authority checks, and Spatial SDK shader compilation. It does not prove headset appearance, stereo comfort, compositor timing, scanout timing, device performance, or temporal strobing behavior."
+}

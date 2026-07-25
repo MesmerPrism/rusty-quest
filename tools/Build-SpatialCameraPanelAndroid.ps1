@@ -15,9 +15,12 @@ param(
     [string]$PrivateSurfaceParticlePayloadDir = $env:RUSTY_QUEST_SPATIAL_SURFACE_PRIVATE_PARTICLE_PAYLOAD_DIR,
     [string]$PrivateSurfaceParticleMarkerPrefix = $env:RUSTY_QUEST_SPATIAL_SURFACE_PRIVATE_PARTICLE_MARKER_PREFIX,
     [string]$HandMeshRigAssetDir = $env:RUSTY_QUEST_SPATIAL_HAND_MESH_RIG_ASSET_DIR,
+    [string]$ProductId = $env:RUSTY_QUEST_SPATIAL_PRODUCT_ID,
     [string]$AppId = $env:RUSTY_QUEST_SPATIAL_APP_ID,
     [string]$AppLabel = $env:RUSTY_QUEST_SPATIAL_APP_LABEL,
     [string]$ApkFileName = $env:RUSTY_QUEST_SPATIAL_APK_FILE_NAME,
+    [switch]$LockedFinalPresentation,
+    [ValidateRange(0.0, 4.0)][double]$DistortionSpeedScale = 1.0,
     [string]$Keystore = "",
     [string]$OutDir = ""
 )
@@ -307,8 +310,23 @@ function Test-ProjectionEffectValue {
     return $true
 }
 
-function Resolve-SpatialAppId {
+function Resolve-SpatialProductId {
     param([string]$Value)
+    if ([string]::IsNullOrWhiteSpace($Value)) {
+        return "spatial-camera-panel"
+    }
+    $trimmed = $Value.Trim()
+    if ($trimmed -ne "spatial-camera-panel") {
+        throw "Build-SpatialCameraPanelAndroid.ps1 only builds spatial-camera-panel. Use Build-SpatialVrStrobeAndroid.ps1 for Strobe."
+    }
+    return $trimmed
+}
+
+function Resolve-SpatialAppId {
+    param(
+        [string]$Value,
+        [Parameter(Mandatory=$true)][string]$ResolvedProductId
+    )
     if ([string]::IsNullOrWhiteSpace($Value)) {
         return "io.github.mesmerprism.rustyquest.spatial_camera_panel"
     }
@@ -320,7 +338,10 @@ function Resolve-SpatialAppId {
 }
 
 function Resolve-SpatialAppLabel {
-    param([string]$Value)
+    param(
+        [string]$Value,
+        [Parameter(Mandatory=$true)][string]$ResolvedProductId
+    )
     if ([string]::IsNullOrWhiteSpace($Value)) {
         return "Rusty Quest Spatial Camera Panel"
     }
@@ -334,7 +355,8 @@ function Resolve-SpatialAppLabel {
 function Resolve-ApkFileName {
     param(
         [string]$Value,
-        [Parameter(Mandatory=$true)][string]$ResolvedAppId
+        [Parameter(Mandatory=$true)][string]$ResolvedAppId,
+        [Parameter(Mandatory=$true)][string]$ResolvedProductId
     )
     if ([string]::IsNullOrWhiteSpace($Value)) {
         if ($ResolvedAppId -eq "io.github.mesmerprism.rustyquest.spatial_camera_panel") {
@@ -389,9 +411,15 @@ $resolvedPrivateSurfaceParticlePayloadDir = Resolve-OptionalDirectoryPath -Path 
 $resolvedPrivateSurfaceParticleMarkerPrefix = Test-MarkerPrefix -Value $PrivateSurfaceParticleMarkerPrefix
 $resolvedHandMeshRigAssetDir = Resolve-OptionalDirectoryPath -Path $HandMeshRigAssetDir -Label "Hand mesh rig asset directory"
 $handMeshRigAssetInfo = Test-HandMeshRigAssetPack -Path $resolvedHandMeshRigAssetDir
-$resolvedAppId = Resolve-SpatialAppId -Value $AppId
-$resolvedAppLabel = Resolve-SpatialAppLabel -Value $AppLabel
-$resolvedApkFileName = Resolve-ApkFileName -Value $ApkFileName -ResolvedAppId $resolvedAppId
+$resolvedProductId = Resolve-SpatialProductId -Value $ProductId
+$resolvedAppId = Resolve-SpatialAppId -Value $AppId -ResolvedProductId $resolvedProductId
+$resolvedAppLabel = Resolve-SpatialAppLabel -Value $AppLabel -ResolvedProductId $resolvedProductId
+$resolvedApkFileName = Resolve-ApkFileName -Value $ApkFileName -ResolvedAppId $resolvedAppId -ResolvedProductId $resolvedProductId
+if ($resolvedAppId -eq "io.github.mesmerprism.rustyquest.spatial_vr_strobe") {
+    throw "The Camera build cannot use the standalone Spatial VR Strobe AppId."
+}
+$lockedFinalPresentationEnabled = [bool]$LockedFinalPresentation
+$resolvedDistortionSpeedScale = [double]$DistortionSpeedScale
 $privateSurfaceParticleInputsConfigured =
     (-not [string]::IsNullOrWhiteSpace($resolvedPrivateSurfaceParticleProfilePath)) -or
     (-not [string]::IsNullOrWhiteSpace($resolvedPrivateSurfaceParticleShader)) -or
@@ -464,14 +492,13 @@ if ($privateLayerShaderInputsConfigured -and -not $opaqueProjectionEffectConfigu
     $OpaqueProjectionEffect = "1.0,1.0,0.0,1.0"
     $opaqueProjectionEffectConfigured = $true
 }
-
 if ([string]::IsNullOrWhiteSpace($RepoRoot)) {
     $RepoRoot = Join-Path $PSScriptRoot ".."
 }
 $repoRoot = Resolve-Path $RepoRoot
 $appRoot = Resolve-Path (Join-Path $repoRoot "apps\spatial-camera-panel-android")
 $targetRoot = Join-Path $repoRoot "target"
-$assetConformanceLockRelativePath = "morphospace/conformance-locks/spatial-asset-model.feature.lock.json"
+$assetConformanceLockRelativePath = "legacy-workspaces/mixed-integration-v1/conformance-locks/spatial-asset-model.feature.lock.json"
 $assetConformanceLockPath = Join-Path $appRoot $assetConformanceLockRelativePath
 if (-not (Test-Path -LiteralPath $assetConformanceLockPath -PathType Leaf)) {
     throw "Spatial asset conformance lock not found: $assetConformanceLockPath"
@@ -510,8 +537,12 @@ New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
 
 $nativeReceiptRoot = Join-Path $appRoot "native-receipt"
 $nativeReceiptCargoManifest = Join-Path $nativeReceiptRoot "Cargo.toml"
-$nativeReceiptTargetDir = Join-Path $targetRoot "spatial-camera-panel-native-receipt-cargo"
-$nativeReceiptJniRoot = Join-Path $appRoot "app\build\generated\rustJniLibs"
+$productBuildRoot = Join-Path $targetRoot "spatial-product-builds\$resolvedProductId"
+$appBuildDir = Join-Path $productBuildRoot "gradle-app"
+$rootBuildDir = Join-Path $productBuildRoot "gradle-root"
+$gradleProjectCacheDir = Join-Path $productBuildRoot "gradle-project-cache"
+$nativeReceiptTargetDir = Join-Path $productBuildRoot "native-receipt-cargo"
+$nativeReceiptJniRoot = Join-Path $appBuildDir "generated\rustJniLibs"
 $nativeReceiptJniAbiDir = Join-Path $nativeReceiptJniRoot "arm64-v8a"
 $nativeReceiptJniLib = Join-Path $nativeReceiptJniAbiDir "libspatial_camera_panel_native_receipt.so"
 $nativeReceiptApkEntry = "lib/arm64-v8a/libspatial_camera_panel_native_receipt.so"
@@ -543,6 +574,8 @@ $previousPrivateLayerProfile = $env:RUSTY_QUEST_SPATIAL_CAMERA_PANEL_PRIVATE_LAY
 $previousOpaqueGuideShader = $env:RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OPAQUE_GUIDE_SHADER
 $previousOpaqueProjectionShader = $env:RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OPAQUE_PROJECTION_SHADER
 $previousOpaqueProjectionEffect = $env:RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OPAQUE_PROJECTION_EFFECT
+$previousLockedFinalPresentation = $env:RUSTY_QUEST_SPATIAL_LOCKED_FINAL_PRESENTATION
+$previousDistortionSpeedScale = $env:RUSTY_QUEST_SPATIAL_DISTORTION_SPEED_SCALE
 $previousPrivateSurfaceParticleProfile = $env:RUSTY_QUEST_SPATIAL_SURFACE_PRIVATE_PARTICLE_PROFILE
 $previousPrivateSurfaceParticleShader = $env:RUSTY_QUEST_SPATIAL_SURFACE_PRIVATE_PARTICLE_SHADER
 $previousPrivateSurfaceParticlePayloadDir = $env:RUSTY_QUEST_SPATIAL_SURFACE_PRIVATE_PARTICLE_PAYLOAD_DIR
@@ -552,6 +585,8 @@ try {
     $env:ANDROID_NDK_HOME = $NdkHome
     $env:CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER = $nativeReceiptLinker
     $env:CC_aarch64_linux_android = $nativeReceiptLinker
+    $env:RUSTY_QUEST_SPATIAL_LOCKED_FINAL_PRESENTATION = $lockedFinalPresentationEnabled.ToString().ToLowerInvariant()
+    $env:RUSTY_QUEST_SPATIAL_DISTORTION_SPEED_SCALE = $resolvedDistortionSpeedScale.ToString([System.Globalization.CultureInfo]::InvariantCulture)
     if ([string]::IsNullOrWhiteSpace($resolvedRecordedHandCaptureDir)) {
         Remove-Item Env:\RUSTY_QUEST_NATIVE_RECORDED_HAND_CAPTURE_DIR -ErrorAction SilentlyContinue
         Remove-Item Env:\RUSTY_QUEST_NATIVE_RECORDED_HAND_FRAME_LIMIT -ErrorAction SilentlyContinue
@@ -654,6 +689,16 @@ try {
     } else {
         $env:RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OPAQUE_PROJECTION_EFFECT = $previousOpaqueProjectionEffect
     }
+    if ($null -eq $previousLockedFinalPresentation) {
+        Remove-Item Env:\RUSTY_QUEST_SPATIAL_LOCKED_FINAL_PRESENTATION -ErrorAction SilentlyContinue
+    } else {
+        $env:RUSTY_QUEST_SPATIAL_LOCKED_FINAL_PRESENTATION = $previousLockedFinalPresentation
+    }
+    if ($null -eq $previousDistortionSpeedScale) {
+        Remove-Item Env:\RUSTY_QUEST_SPATIAL_DISTORTION_SPEED_SCALE -ErrorAction SilentlyContinue
+    } else {
+        $env:RUSTY_QUEST_SPATIAL_DISTORTION_SPEED_SCALE = $previousDistortionSpeedScale
+    }
     if ($null -eq $previousPrivateSurfaceParticleProfile) {
         Remove-Item Env:\RUSTY_QUEST_SPATIAL_SURFACE_PRIVATE_PARTICLE_PROFILE -ErrorAction SilentlyContinue
     } else {
@@ -683,22 +728,36 @@ Copy-Item -LiteralPath $nativeReceiptBuiltLib -Destination $nativeReceiptJniLib 
 $nativeReceiptSha256 = Get-FileSha256 -Path $nativeReceiptJniLib
 
 $gradleBat = Resolve-Gradle -RepoRoot ([string]$repoRoot) -Version $GradleVersion
-$gradleUserHome = Join-Path $repoRoot "local-artifacts\gradle-user-home"
+$gradleUserHome = Join-Path $productBuildRoot "gradle-user-home"
 New-Item -ItemType Directory -Force -Path $gradleUserHome | Out-Null
 
 $previousAndroidHome = $env:ANDROID_HOME
+$previousGradleNdkHome = $env:ANDROID_NDK_HOME
+$previousGradleNdkVersion = $env:RUSTY_QUEST_ANDROID_NDK_VERSION
 $previousJavaHome = $env:JAVA_HOME
 $previousGradleUserHome = $env:GRADLE_USER_HOME
+$previousSpatialProductId = $env:RUSTY_QUEST_SPATIAL_PRODUCT_ID
+$previousSpatialAppBuildDir = $env:RUSTY_QUEST_SPATIAL_APP_BUILD_DIR
+$previousSpatialRootBuildDir = $env:RUSTY_QUEST_SPATIAL_ROOT_BUILD_DIR
 $previousSpatialAppId = $env:RUSTY_QUEST_SPATIAL_APP_ID
 $previousSpatialAppLabel = $env:RUSTY_QUEST_SPATIAL_APP_LABEL
+$previousGradleLockedFinalPresentation = $env:RUSTY_QUEST_SPATIAL_LOCKED_FINAL_PRESENTATION
+$previousGradleDistortionSpeedScale = $env:RUSTY_QUEST_SPATIAL_DISTORTION_SPEED_SCALE
 $previousHandMeshRigAssetDir = $env:RUSTY_QUEST_SPATIAL_HAND_MESH_RIG_ASSET_DIR
 $previousSigningKeystore = $env:RUSTY_QUEST_SPATIAL_SIGNING_KEYSTORE
 try {
     $env:ANDROID_HOME = $AndroidHome
+    $env:ANDROID_NDK_HOME = $NdkHome
+    $env:RUSTY_QUEST_ANDROID_NDK_VERSION = Split-Path -Leaf $NdkHome
     $env:JAVA_HOME = $JavaHome
     $env:GRADLE_USER_HOME = $gradleUserHome
+    $env:RUSTY_QUEST_SPATIAL_PRODUCT_ID = $resolvedProductId
+    $env:RUSTY_QUEST_SPATIAL_APP_BUILD_DIR = $appBuildDir
+    $env:RUSTY_QUEST_SPATIAL_ROOT_BUILD_DIR = $rootBuildDir
     $env:RUSTY_QUEST_SPATIAL_APP_ID = $resolvedAppId
     $env:RUSTY_QUEST_SPATIAL_APP_LABEL = $resolvedAppLabel
+    $env:RUSTY_QUEST_SPATIAL_LOCKED_FINAL_PRESENTATION = $lockedFinalPresentationEnabled.ToString().ToLowerInvariant()
+    $env:RUSTY_QUEST_SPATIAL_DISTORTION_SPEED_SCALE = $resolvedDistortionSpeedScale.ToString([System.Globalization.CultureInfo]::InvariantCulture)
     if ([string]::IsNullOrWhiteSpace($resolvedHandMeshRigAssetDir)) {
         Remove-Item Env:\RUSTY_QUEST_SPATIAL_HAND_MESH_RIG_ASSET_DIR -ErrorAction SilentlyContinue
     } else {
@@ -712,11 +771,22 @@ try {
     Invoke-Checked "Spatial Camera Panel Gradle build" $gradleBat @(
         "--no-daemon",
         "--console=plain",
+        "--project-cache-dir", $gradleProjectCacheDir,
         "-p", ([string]$appRoot),
         ":app:assembleDebug"
     )
 } finally {
     $env:ANDROID_HOME = $previousAndroidHome
+    if ($null -eq $previousGradleNdkHome) {
+        Remove-Item Env:\ANDROID_NDK_HOME -ErrorAction SilentlyContinue
+    } else {
+        $env:ANDROID_NDK_HOME = $previousGradleNdkHome
+    }
+    if ($null -eq $previousGradleNdkVersion) {
+        Remove-Item Env:\RUSTY_QUEST_ANDROID_NDK_VERSION -ErrorAction SilentlyContinue
+    } else {
+        $env:RUSTY_QUEST_ANDROID_NDK_VERSION = $previousGradleNdkVersion
+    }
     $env:JAVA_HOME = $previousJavaHome
     if ($null -eq $previousGradleUserHome) {
         Remove-Item Env:\GRADLE_USER_HOME -ErrorAction SilentlyContinue
@@ -728,10 +798,35 @@ try {
     } else {
         $env:RUSTY_QUEST_SPATIAL_APP_ID = $previousSpatialAppId
     }
+    if ($null -eq $previousSpatialProductId) {
+        Remove-Item Env:\RUSTY_QUEST_SPATIAL_PRODUCT_ID -ErrorAction SilentlyContinue
+    } else {
+        $env:RUSTY_QUEST_SPATIAL_PRODUCT_ID = $previousSpatialProductId
+    }
+    if ($null -eq $previousSpatialAppBuildDir) {
+        Remove-Item Env:\RUSTY_QUEST_SPATIAL_APP_BUILD_DIR -ErrorAction SilentlyContinue
+    } else {
+        $env:RUSTY_QUEST_SPATIAL_APP_BUILD_DIR = $previousSpatialAppBuildDir
+    }
+    if ($null -eq $previousSpatialRootBuildDir) {
+        Remove-Item Env:\RUSTY_QUEST_SPATIAL_ROOT_BUILD_DIR -ErrorAction SilentlyContinue
+    } else {
+        $env:RUSTY_QUEST_SPATIAL_ROOT_BUILD_DIR = $previousSpatialRootBuildDir
+    }
     if ($null -eq $previousSpatialAppLabel) {
         Remove-Item Env:\RUSTY_QUEST_SPATIAL_APP_LABEL -ErrorAction SilentlyContinue
     } else {
         $env:RUSTY_QUEST_SPATIAL_APP_LABEL = $previousSpatialAppLabel
+    }
+    if ($null -eq $previousGradleLockedFinalPresentation) {
+        Remove-Item Env:\RUSTY_QUEST_SPATIAL_LOCKED_FINAL_PRESENTATION -ErrorAction SilentlyContinue
+    } else {
+        $env:RUSTY_QUEST_SPATIAL_LOCKED_FINAL_PRESENTATION = $previousGradleLockedFinalPresentation
+    }
+    if ($null -eq $previousGradleDistortionSpeedScale) {
+        Remove-Item Env:\RUSTY_QUEST_SPATIAL_DISTORTION_SPEED_SCALE -ErrorAction SilentlyContinue
+    } else {
+        $env:RUSTY_QUEST_SPATIAL_DISTORTION_SPEED_SCALE = $previousGradleDistortionSpeedScale
     }
     if ($null -eq $previousHandMeshRigAssetDir) {
         Remove-Item Env:\RUSTY_QUEST_SPATIAL_HAND_MESH_RIG_ASSET_DIR -ErrorAction SilentlyContinue
@@ -745,7 +840,7 @@ try {
     }
 }
 
-$apkSource = Join-Path $appRoot "app\build\outputs\apk\debug\app-debug.apk"
+$apkSource = Join-Path $appBuildDir "outputs\apk\debug\app-debug.apk"
 if (-not (Test-Path -LiteralPath $apkSource)) {
     throw "Gradle build did not produce expected APK: $apkSource"
 }
@@ -760,15 +855,24 @@ if (-not $nativeReceiptLibraryPackaged) {
 
 $manifest = [ordered]@{
     '$schema' = "rusty.quest.spatial_camera_panel_sdk_android.build_manifest.v1"
+    product_id = $resolvedProductId
     package_name = $resolvedAppId
     application_id = $resolvedAppId
     app_label = $resolvedAppLabel
     activity = "$resolvedAppId/io.github.mesmerprism.rustyquest.spatial_camera_panel.SpatialCameraPanelActivity"
     source_namespace = "io.github.mesmerprism.rustyquest.spatial_camera_panel"
     app_lane = "spatial-camera-panel-android"
+    project_workspace = "private-project-workspace"
+    client_id = "client.quest.spatial-camera-panel"
+    feature_lock_id = "lock.broker-client.spatial-camera-panel.v1"
+    marker_namespace = "RUSTY_QUEST_SPATIAL_BROKER_CLIENT"
+    property_namespace = "debug.rustyquest.spatial_camera_panel"
+    gradle_app_build_dir = $appBuildDir
+    gradle_root_build_dir = $rootBuildDir
+    gradle_project_cache_dir = $gradleProjectCacheDir
     authority = "rusty.quest.spatial_camera_panel_sdk_panel"
     target_runtime = "quest-spatial-sdk-appsystemactivity-panel"
-    spatial_input_mode = "interaction-sdk-hands-and-controllers"
+    spatial_input_mode = $(if ($lockedFinalPresentationEnabled) { "disabled-presentation-output-only" } else { "interaction-sdk-hands-and-controllers" })
     spatial_vr_input_system_default = "interaction_sdk"
     spatial_should_consume_left_right_input_default = $false
     spatial_handtracking_manifest_declared = $true
@@ -783,7 +887,16 @@ $manifest = [ordered]@{
     spatial_environment_depth_diagnostic_policy = "distinguish-permission-pregrant-provider-binding-acquire-valid-sample"
     spatial_multimodal_input_default_enabled = $false
     native_spatial_controller_actions_default_enabled = $false
-    spatial_controller_launch_policy = "app-owned-readiness-prompt-if-no-active-avatarbody-controller"
+    spatial_controller_launch_policy = $(if ($lockedFinalPresentationEnabled) { "disabled-by-locked-presentation-build" } else { "app-owned-readiness-prompt-if-no-active-avatarbody-controller" })
+    locked_final_presentation = $lockedFinalPresentationEnabled
+    locked_final_private_layer_override = $(if ($lockedFinalPresentationEnabled) { 0.0 } else { $null })
+    locked_projection_scale = $(if ($lockedFinalPresentationEnabled) { 1.0 } else { $null })
+    locked_app_control_inputs_enabled = (-not $lockedFinalPresentationEnabled)
+    locked_video_projection_forced_enabled = $lockedFinalPresentationEnabled
+    locked_video_border_forced_enabled = $lockedFinalPresentationEnabled
+    distortion_speed_scale = $resolvedDistortionSpeedScale
+    distortion_base_phase_rate_hz = 0.5
+    distortion_effective_phase_rate_hz = (0.5 * $resolvedDistortionSpeedScale)
     spatial_sdk_version = "0.13.1"
     spatial_hand_mesh_rig_packaged = $handMeshRigAssetInfo.ready
     spatial_hand_mesh_rig_asset_id = $handMeshRigAssetInfo.asset_id
@@ -881,6 +994,30 @@ $manifest = [ordered]@{
     native_receipt_library_packaged = $nativeReceiptLibraryPackaged
     native_receipt_library_sha256 = $nativeReceiptSha256
     native_receipt_generated_jni_libs = "app/build/generated/rustJniLibs/arm64-v8a"
+    spatial_public_guide_target_extent = "768x384-packed-stereo"
+    spatial_public_guide_per_eye_extent = "384x384"
+    spatial_public_guide_processing_default = "native-parity"
+    spatial_public_guide_preblur_kernel_default = "native-box5"
+    spatial_public_guide_preblur_input_default = "luma"
+    spatial_public_guide_postblur_kernel_default = "native-box5"
+    spatial_public_guide_kernel_alternatives = @("native-box5", "gaussian5")
+    spatial_public_guide_input_alternatives = @("luma", "rgb-preserve")
+    spatial_camera_sampling_default = "thin-line-tent5"
+    spatial_camera_sampling_alternatives = @("linear", "thin-line-tent5")
+    spatial_camera_sampling_footprint_aware = $true
+    spatial_camera_sampling_radius_texels = "0.75..2.0"
+    spatial_camera_projection_blend_policy = "premultiplied-alpha-over-same-surface-video"
+    spatial_camera_projection_border_inner_blend_uv = 0.04
+    spatial_camera_projection_border_blend_curve = 1.6
+    spatial_camera_raw_projection_border_blend = $true
+    spatial_camera_opaque_projection_border_blend = $true
+    spatial_public_guide_processing_properties = @(
+        "debug.rustyquest.spatial.camera_hwb_projection_probe.guide.preblur.kernel",
+        "debug.rustyquest.spatial.camera_hwb_projection_probe.guide.preblur.input",
+        "debug.rustyquest.spatial.camera_hwb_projection_probe.guide.postblur.kernel",
+        "debug.rustyquest.spatial.camera_hwb_projection_probe.camera.sampling"
+    )
+    spatial_public_opaque_guide_native_phase_rate_hz = (0.5 * $resolvedDistortionSpeedScale)
     spatial_public_multistack_private_layer_profile_configured = (-not [string]::IsNullOrWhiteSpace($resolvedPrivateLayerProfilePath))
     spatial_public_multistack_private_shader_inputs = $(if ($privateLayerShaderInputsConfigured) { "external-build-inputs" } else { "not-configured-raw-camera-fallback" })
     spatial_public_multistack_opaque_guide_shader_configured = (-not [string]::IsNullOrWhiteSpace($resolvedOpaqueGuideShader))
@@ -939,11 +1076,8 @@ $manifest = [ordered]@{
     native_surface_particle_layer_stop_bridge = "SpatialCameraPanelActivity.nativeStopSurfaceParticleLayer"
     native_surface_particle_layer_parameter_bridge = "SpatialCameraPanelActivity.nativeUpdateSurfaceParticleParameters"
     native_surface_particle_layer_parameter_transport = "jni-live-queue"
-    driver_profile_parameter_bridge = "SpatialCameraPanelActivity.applyDriverProfileToParticleControls-to-nativeUpdateSurfaceParticleParameters"
-    driver_profile_mapping = "driver0_value01-to-native-driver0;driver1_value01-to-native-driver1"
-    panel_flow = "panel-first-workflow-then-explicit-panel-close-starts-driver-profile-block"
-    driver_profile_panel_transition = "setWorkflowPanelVisible(false,false,source=block-start)-before-startNextBlock"
-    questionnaire_next_block_policy = "questionnaire-submit-keeps-panel-open-ready_next_block-explicit-start"
+    effect_control_parameter_bridge = "SpatialCameraPanelActivity.updateSurfaceParticleControls-to-nativeUpdateSurfaceParticleParameters"
+    layer_control_panel = "spatial-private-layer-panel"
     surface_modes = @("real-hands", "gpu-replay-hands", "icosphere")
     driver_profile_high_rate_policy = "profile-metadata-and-bounded-scalars-only"
     native_surface_particle_layer_hotload_property = "debug.rustyquest.spatial_camera_panel.live_hand_depth_offset_meters"
@@ -1167,45 +1301,10 @@ $manifest = [ordered]@{
         view_origin_meters = "0.0;0.0;2.0"
         view_origin_yaw_degrees = 180.0
     }
-    panel_registration_id = "spatial_camera_panel"
-    panel_launcher_registration_id = "spatial_camera_panel_launcher"
+    panel_registration_id = "spatial_private_layer_panel"
     particle_surface_panel_registration_id = "spatial_camera_surface_panel"
-    polar_sensor_panel = "spatial-sdk-direct-ble-panel"
-    polar_sensor_permissions = @(
-        "android.permission.ACCESS_FINE_LOCATION",
-        "android.permission.BLUETOOTH_CONNECT",
-        "android.permission.BLUETOOTH_SCAN"
-    )
-    polar_sensor_streams = @(
-        "stream.polar_h10.hr_rr",
-        "stream.polar_h10.ecg",
-        "stream.polar_h10.acc",
-        "stream.polar_h10.device_status"
-    )
-    polar_sensor_event_mirror = "SpatialCameraPanelStore.appendPolarEvent-to-polar_events-jsonl-and-ecg_events-jsonl"
-    polar_sensor_high_rate_policy = "ble-stream-decoded-in-panel-not-renderer-json"
-    polar_live_validation_action = "io.github.mesmerprism.rustyquest.spatial_camera_panel.action.RUN_POLAR_LIVE_VALIDATION"
-    polar_live_validation_wrapper = "tools/Invoke-SpatialCameraPanelAndroidPolarLive.ps1"
-    polar_live_validation_required_markers = @(
-        "polar-live-validation status=start",
-        "polar-live-validation status=polar-panel-automation-ready",
-        "polar-live-validation status=scan-command-issued",
-        "polar-sensor-panel status=device-found",
-        "polar-sensor-panel status=connected",
-        "polar-sensor-panel status=pmd-started mode=ecg",
-        "polar-sensor-panel status=ecg-frame",
-        "experiment status=polar-stream-event-recorded streamId=stream.polar_h10.ecg ecgMirrored=true",
-        "polar-live-validation status=complete ecgReceiving=true"
-    )
-    polar_live_validation_app_private_files = @(
-        "polar_sensor_status.json",
-        "polar_stream_events.jsonl",
-        "spatial_camera_panel_session.json",
-        "polar_events.jsonl",
-        "ecg_events.jsonl"
-    )
-    spatial_panel_mode = "workflow-panel-open-or-particle-view-panel-closed"
-    spatial_panel_mode_transition = "Visible(false)-workflow-panel-with-launcher-reopen"
+    spatial_panel_mode = "private-layer-controls-open-or-render-view"
+    spatial_panel_mode_transition = "right-controller-primary-toggles-private-layer-panel"
     spatial_panel_mode_renderer_continuity = "native-vulkan-surface-particle-layer-kept-running"
     spatial_panel_focus_pose_meters = "0.0;1.1;0.475"
     spatial_panel_surface_target_activation_action = "io.github.mesmerprism.rustyquest.spatial_camera_panel.action.RUN_SURFACE_TARGET"
@@ -1214,23 +1313,20 @@ $manifest = [ordered]@{
     spatial_panel_ui_actions = @(
         "panel-open",
         "panel-close",
-        "panel-reset",
-        "panel-headlock-on",
-        "panel-headlock-off",
-        "panel-headlock-toggle",
-        "panel-adjust",
-        "panel-resize",
+        "private-layer-panel-open",
+        "private-layer-panel-close",
+        "private-layer-select",
+        "projection-panel-on",
+        "projection-panel-off",
         "particle-controls",
-        "participant-reset",
-        "participant-begin",
-        "polar-setup-save",
-        "surface-select",
-        "start-block",
-        "surface-target-activate",
-        "questionnaire-submit"
+        "particle-panel-distance",
+        "particle-panel-view-yaw",
+        "particle-recenter",
+        "particle-alias-control",
+        "surface-target-activate"
     )
-    spatial_panel_debug_controller_reopen = "right-controller-primary-button-SpatialSDK-Controller-ButtonA-plus-Android-KeyEvent-and-motion-fallback-toggles-panel-open-close"
-    spatial_panel_headlock_mode = "enabled-by-default-viewer-relative-while-workflow-panel-open"
+    spatial_panel_debug_controller_reopen = $(if ($lockedFinalPresentationEnabled) { "disabled-by-locked-presentation-build" } else { "right-controller-primary-button-SpatialSDK-Controller-ButtonA-plus-Android-KeyEvent-and-motion-fallback-toggles-panel-open-close" })
+    spatial_panel_headlock_mode = "viewer-relative-private-layer-controls"
     spatial_panel_headlock_default_pose_meters = "0.0;0.0;1.40"
     spatial_panel_headlock_default_scale = 0.65
     spatial_private_layer_panel_render_mode = "spatial-sdk-layer-world-space-high-z"
@@ -1256,7 +1352,7 @@ $manifest = [ordered]@{
     )
     spatial_panel_headlock_joystick_controls = "android-generic-motion-left-stick-y-workflow-panel-distance-private-layer-panel-distance-right-stick-y-projection-scale-disabled-while-private-panel-open-right-stick-x-ignored-right-stick-side-flick-panel-move-disabled"
     spatial_camera_projection_distance_controls = "fixed-2m-default; no joystick distance control"
-    spatial_camera_projection_scale_controls = "android-right-stick-y; spatial-sdk-avatar-body-right-thumb-up-down; native-openxr-right-thumbstick-y diagnostic; panel-control"
+    spatial_camera_projection_scale_controls = $(if ($lockedFinalPresentationEnabled) { "disabled-forced-scale-1.0" } else { "android-right-stick-y; spatial-sdk-avatar-body-right-thumb-up-down; native-openxr-right-thumbstick-y diagnostic; panel-control" })
     spatial_camera_projection_stereo_offset_controls = "disabled-default-locked; left-stick-y-controls-panel-distance-private-free-transform"
     spatial_camera_projection_distance_vr_input_system_property = "debug.rustyquest.spatial_camera_panel.vr_input_system"
     spatial_panel_headlock_tuning_file = "files/spatial_camera_panel_headlock_tuning.json"
@@ -1268,18 +1364,13 @@ $manifest = [ordered]@{
         option = "DpPerMeterDisplayOptions"
         dp_per_meter = 720
     }
-    panel_launcher_shape_meters = [ordered]@{
-        width = 0.78
-        height = 0.30
-    }
-    panel_transform_runtime_controls = @("Transform(Pose(Vector3, Quaternion))", "Scale(Vector3)", "PanelDimensions(Vector2)", "Visible(panelPlacement.visible)", "Visible(!panelPlacement.visible)-launcher")
+    panel_transform_runtime_controls = @("Transform(Pose(Vector3, Quaternion))", "Scale(Vector3)", "PanelDimensions(Vector2)", "Visible(privateLayerPanelPlacement.visible)")
     diagnostic_backdrop = "disabled-vulkan-carrier-is-user-facing-surface"
     panel_content_probe = "sample-quaternion-opaque-yellow-background-teal-banner-orange-button"
-    questionnaire_schema = "rusty.quest.spatial_camera_panel.questionnaire.v1"
     high_rate_json_payload = $false
     hand_rendering_expected = $false
-    controller_rendering_expected = $true
-    spatial_pointer_input_expected = $true
+    controller_rendering_expected = (-not $lockedFinalPresentationEnabled)
+    spatial_pointer_input_expected = (-not $lockedFinalPresentationEnabled)
     apk_path = $apkOut
     apk_sha256 = $sha256
     signing_keystore = $(if ([string]::IsNullOrWhiteSpace($Keystore)) { "gradle-debug-default" } else { $Keystore })

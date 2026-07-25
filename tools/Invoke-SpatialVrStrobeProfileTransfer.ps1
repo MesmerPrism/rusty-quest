@@ -7,7 +7,7 @@ param(
     [string]$Serial,
     [string]$BundlePath,
     [string]$OutPath,
-    [string]$Package = 'io.github.mesmerprism.rustyquest.spatial_vr_strobe_test',
+    [string]$Package = 'io.github.mesmerprism.rustyquest.spatial_vr_strobe',
     [string]$Activity = 'io.github.mesmerprism.rustyquest.spatial_camera_panel.SpatialCameraPanelActivity',
     [string]$AdbPath = 'adb',
     [switch]$ConfirmReset

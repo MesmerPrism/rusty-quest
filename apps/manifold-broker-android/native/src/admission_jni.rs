@@ -245,7 +245,7 @@ mod tests {
         let media_lifecycle_lock: serde_json::Value =
             serde_json::from_str(&media_lifecycle_lock_json).expect("media lifecycle lock json");
         let app_feature_lock_json = std::fs::read_to_string(quest_root.join(
-            "apps/spatial-camera-panel-android/morphospace/conformance-locks/broker-media-client.feature.lock.json",
+            "apps/spatial-camera-panel-android/legacy-workspaces/mixed-integration-v1/conformance-locks/broker-media-client.feature.lock.json",
         ))
         .expect("app feature lock");
         let client_lock_sha256 =

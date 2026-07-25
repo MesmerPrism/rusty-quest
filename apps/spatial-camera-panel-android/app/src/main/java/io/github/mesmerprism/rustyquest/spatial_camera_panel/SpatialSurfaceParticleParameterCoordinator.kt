@@ -1,11 +1,8 @@
 package io.github.mesmerprism.rustyquest.spatial_camera_panel
 
-import java.util.Locale
-
 internal data class SpatialSurfaceParticleParameterBindings(
     val featureEnabled: () -> Boolean,
     val receiptLibraryLoaded: () -> Boolean,
-    val workflowPanelVisible: () -> Boolean,
     val submitNativeParameters: (SurfaceParticleControlState) -> Long,
     val resolveNativeAlias: (String, Float, String) -> Long,
     val marker: (String) -> Unit,
@@ -56,35 +53,6 @@ internal class SpatialSurfaceParticleParameterCoordinator(
         )
     submit(source)
     return controls
-  }
-
-  fun applyDriverProfile(
-      block: ActiveBlockSnapshot,
-      source: String,
-  ): SurfaceParticleControlState {
-    val updated =
-        updateControls(
-            block.driver0Value01.toFloat(),
-            block.driver1Value01.toFloat(),
-            controls.pointScale,
-            source = source,
-        )
-    val panelVisible = bindings.workflowPanelVisible()
-    bindings.marker(
-        "channel=spatial-camera-panel status=driver-profile-parameter-handoff " +
-            "rendererAuthority=native-vulkan-wsi-surface-panel transport=jni-live-queue " +
-            "panelMustNotBeAuthority=true highRatePayloadsAllowed=false " +
-            "source=${activityMarkerToken(source)} driverProfileId=${activityMarkerToken(block.conditionId)} " +
-            "profileId=${activityMarkerToken(block.profileId)} " +
-            "workflowPanelVisibleAtHandoff=$panelVisible " +
-            "panelClosedBeforeHandoff=${!panelVisible} " +
-            "profileDriver0Value01=${String.format(Locale.US, "%.3f", block.driver0Value01)} " +
-            "profileDriver1Value01=${String.format(Locale.US, "%.3f", block.driver1Value01)} " +
-            "driver0Value01=${activityMarkerFloat(updated.driver0Value01)} " +
-            "driver1Value01=${activityMarkerFloat(updated.driver1Value01)} " +
-            "pointScale=${activityMarkerFloat(updated.pointScale)}"
-    )
-    return updated
   }
 
   fun submit(source: String) {

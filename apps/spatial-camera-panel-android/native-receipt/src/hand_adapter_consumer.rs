@@ -8,8 +8,9 @@ pub(crate) const FEATURE_ID: &str = "tracked-hand-surface";
 const MODULE_ID: &str = "tracked-hand-surface";
 pub(crate) const ACCEPTED_PROFILE_ID: &str =
     "profile.quest.spatial_camera_panel.hand_adapter_conformance";
-const CONFORMANCE_LOCK_JSON: &str =
-    include_str!("../../morphospace/conformance-locks/hand-adapter.feature.lock.json");
+const CONFORMANCE_LOCK_JSON: &str = include_str!(
+    "../../legacy-workspaces/mixed-integration-v1/conformance-locks/hand-adapter.feature.lock.json"
+);
 const ACCEPTED_LOCK_SHA256: &str =
     "FFB07E39C7290FDE8EBB154EFB94985CF4628CB2E4D098A81A5611849DFD32F1";
 #[cfg(test)]

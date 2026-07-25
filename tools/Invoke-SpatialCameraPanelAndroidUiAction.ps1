@@ -7,43 +7,19 @@ param(
         "private-layer-select",
         "projection-panel-off",
         "projection-panel-on",
-        "panel-reset",
-        "panel-headlock-on",
-        "panel-headlock-off",
-        "panel-headlock-toggle",
-        "panel-adjust",
-        "panel-resize",
         "particle-controls",
+        "particle-panel-distance",
+        "particle-panel-view-yaw",
         "particle-recenter",
         "particle-alias-control",
-        "participant-reset",
-        "participant-begin",
-        "polar-setup-save",
-        "surface-select",
-        "start-block",
-        "surface-target-activate",
-        "questionnaire-submit"
+        "surface-target-activate"
     )]
     [string]$Action = "panel-open",
-
-    [string]$ParticipantId = "codex-spatial-ui-command",
 
     [ValidateSet("real-hands", "gpu-replay-hands", "icosphere")]
     [string]$SurfaceTargetId = "real-hands",
 
     [double]$PrivateLayerOverride = 0.0,
-
-    [double]$DeltaX = 0.0,
-
-    [double]$DeltaY = 0.0,
-
-    [double]$DeltaZ = 0.0,
-
-    [double]$DeltaScale = 0.0,
-
-    [double]$DeltaWidth = 0.0,
-
-    [double]$DeltaHeight = 0.0,
 
     [double]$Driver0 = 1.0,
 
@@ -73,24 +49,16 @@ param(
 
     [double]$ProjectionWorldScale = 1.0,
 
+    [double]$ParticleLayerTargetDistanceMeters = 1.35,
+
+    [double]$ParticleLayerViewYawDegrees = 0.0,
+
     [string]$ParticleAliasParameterId = "tracer_draw_slots_per_oscillator",
 
     [double]$ParticleAliasValue = 7.0,
 
     [ValidateSet("default", "particle-size-driver2", "all-visual-drivers")]
     [string]$VisualDriverActivationProfile = "default",
-
-    [string]$RunLabel = "remote-ui-command",
-
-    [string]$OperatorId = "codex",
-
-    [string]$Notes = "Remote UI command",
-
-    [int]$ComfortRating = 4,
-
-    [int]$IntensityRating = 4,
-
-    [int]$EngagementRating = 4,
 
     [string]$Serial = $env:RUSTY_QUEST_SERIAL,
 
@@ -221,38 +189,11 @@ $intentArguments = @(
     "ui_action",
     $Action,
     "--es",
-    "participant_id",
-    $ParticipantId,
-    "--es",
     "surface_target_id",
     $SurfaceTargetId,
     "--ef",
     "private_layer_override",
     (Format-InvariantNumber ([Math]::Max(-1.0, [Math]::Min(8.0, $PrivateLayerOverride)))),
-    "--es",
-    "run_label",
-    $RunLabel,
-    "--es",
-    "operator_id",
-    $OperatorId,
-    "--ef",
-    "delta_x",
-    (Format-InvariantNumber $DeltaX),
-    "--ef",
-    "delta_y",
-    (Format-InvariantNumber $DeltaY),
-    "--ef",
-    "delta_z",
-    (Format-InvariantNumber $DeltaZ),
-    "--ef",
-    "delta_scale",
-    (Format-InvariantNumber $DeltaScale),
-    "--ef",
-    "delta_width",
-    (Format-InvariantNumber $DeltaWidth),
-    "--ef",
-    "delta_height",
-    (Format-InvariantNumber $DeltaHeight),
     "--ef",
     "driver0",
     (Format-InvariantNumber ([Math]::Max(0.0, [Math]::Min(1.0, $Driver0)))),
@@ -295,6 +236,12 @@ $intentArguments = @(
     "--ef",
     "projection_world_scale",
     (Format-InvariantNumber ([Math]::Max(0.5, [Math]::Min(2.0, $ProjectionWorldScale)))),
+    "--ef",
+    "particle_layer_target_distance_meters",
+    (Format-InvariantNumber ([Math]::Max(0.2, [Math]::Min(8.0, $ParticleLayerTargetDistanceMeters)))),
+    "--ef",
+    "particle_layer_view_yaw_degrees",
+    (Format-InvariantNumber ([Math]::Max(-180.0, [Math]::Min(180.0, $ParticleLayerViewYawDegrees)))),
     "--es",
     "parameter_id",
     $ParticleAliasParameterId,
@@ -303,19 +250,7 @@ $intentArguments = @(
     (Format-InvariantNumber $ParticleAliasValue),
     "--es",
     "visual_driver_activation_profile",
-    $VisualDriverActivationProfile,
-    "--ei",
-    "comfort_rating",
-    ([Math]::Max(1, [Math]::Min(7, $ComfortRating))).ToString(),
-    "--ei",
-    "intensity_rating",
-    ([Math]::Max(1, [Math]::Min(7, $IntensityRating))).ToString(),
-    "--ei",
-    "engagement_rating",
-    ([Math]::Max(1, [Math]::Min(7, $EngagementRating))).ToString(),
-    "--es",
-    "notes",
-    $Notes
+    $VisualDriverActivationProfile
 )
 
 $launch = Invoke-AdbCommand -Name "run Spatial Camera Panel UI action $Action" -Arguments $intentArguments
@@ -339,7 +274,6 @@ if ($ReadMarkers) {
     activity = $Activity
     action = $Action
     surface_target_id = $SurfaceTargetId
-    participant_id = $ParticipantId
     pid = $targetPid
     launch_exit_code = $launch.exit_code
     launch_output = $launch.output

@@ -66,6 +66,10 @@ internal object SpatialPublicMultiStack {
           "publicMultiStackGuideTargetManifest=$GUIDE_TARGET_MANIFEST " +
           "publicMultiStackGuidePassManifest=$GUIDE_PASS_MANIFEST " +
           "publicGuideBlurKernel=separable-5tap " +
+          "publicGuideProcessingDefault=native-parity " +
+          "publicGuideKernelAlternatives=native-box5+gaussian5 " +
+          "publicGuideInputAlternatives=luma+rgb-preserve " +
+          "publicGuidePerEyeExtent=384x384 " +
           "publicGuideBlurShader=public_guide_blur.frag.glsl " +
           "publicGuideBlurShaderCompiled=true " +
           "publicGuideBlurLayer=public-contract " +

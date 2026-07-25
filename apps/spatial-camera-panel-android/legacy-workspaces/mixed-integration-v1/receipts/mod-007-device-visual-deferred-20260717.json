@@ -1,0 +1,166 @@
+{
+  "schema": "rusty.morphospace.workflow.validation_receipt.v1",
+  "project_id": "spatial-camera-panel",
+  "unit_id": "mod-007",
+  "result": "blocked",
+  "tier": "deep",
+  "artifacts": [
+    {
+      "artifact_id": "mod007-host-validation",
+      "path": "mod-007-guide-native-parity-ab-host-validation-20260716.json",
+      "sha256": "030709141ea04876387b2aae13b30dc7d9e2dfa964eeb6223738de5b04a4afc5"
+    }
+  ],
+  "criteria": [
+    {
+      "acceptance_id": "closed-time-contract",
+      "command": "focused Rust tests plus Spatial camera static gate",
+      "status": "pass",
+      "evidence_refs": ["mod007-host-validation"]
+    },
+    {
+      "acceptance_id": "continuous-pose-selection",
+      "command": "cargo test --manifest-path apps/spatial-camera-panel-android/native-receipt/Cargo.toml camera_latency --lib",
+      "status": "pass",
+      "evidence_refs": ["mod007-host-validation"]
+    },
+    {
+      "acceptance_id": "per-eye-projection",
+      "command": "focused Rust/Kotlin tests and shader/static contract checks",
+      "status": "pass",
+      "evidence_refs": ["mod007-host-validation"]
+    },
+    {
+      "acceptance_id": "native-cadence-default",
+      "command": "serial-scoped Baseline45Control versus presentation-pose A/B receipt",
+      "status": "blocked",
+      "evidence_refs": ["mod007-host-validation"]
+    },
+    {
+      "acceptance_id": "headset-motion-proof",
+      "command": "serial-scoped device wrapper plus user visual confirmation",
+      "status": "blocked",
+      "evidence_refs": ["mod007-host-validation"]
+    },
+    {
+      "acceptance_id": "rollback",
+      "command": "hotload preset rollback gate",
+      "status": "blocked",
+      "evidence_refs": ["mod007-host-validation"]
+    },
+    {
+      "acceptance_id": "guide-native-parity-ab",
+      "command": "Spatial host tests, private shader compile, Android build, and later headset A/B",
+      "status": "blocked",
+      "evidence_refs": ["mod007-host-validation"]
+    },
+    {
+      "acceptance_id": "native-oracle-guide-abi",
+      "command": "native renderer Android build with the shared private guide shader",
+      "status": "pass",
+      "evidence_refs": ["mod007-host-validation"]
+    },
+    {
+      "acceptance_id": "single-layer-control-ui",
+      "command": "Spatial JVM tests, static ownership gate, and debug APK build",
+      "status": "pass",
+      "evidence_refs": ["mod007-host-validation"]
+    }
+  ],
+  "gates": [
+    {
+      "gate_id": "validation-quick",
+      "command": "focused native camera-latency unit tests and Spatial static gates",
+      "status": "pass",
+      "evidence_refs": ["mod007-host-validation"]
+    },
+    {
+      "gate_id": "validation-standard",
+      "command": "Spatial Camera Panel validation, debug APK build, and repository diff/graph reconciliation",
+      "status": "pass",
+      "evidence_refs": ["mod007-host-validation"]
+    },
+    {
+      "gate_id": "validation-device",
+      "command": "serial-scoped install/launch, preset sweep, PID-scoped logcat receipt, automated timing assertions, controlled user yaw/pitch/lateral motion, visual decision, and cleanup",
+      "status": "blocked",
+      "evidence_refs": ["mod007-host-validation"]
+    },
+    {
+      "gate_id": "instruction-synchronization",
+      "command": "Verify every declared instruction surface is complete and validated.",
+      "status": "pass",
+      "evidence_refs": ["mod007-host-validation"]
+    },
+    {
+      "gate_id": "device-validation",
+      "command": "Use the device workflow with only the explicitly supplied serials.",
+      "status": "blocked",
+      "evidence_refs": ["mod007-host-validation"]
+    }
+  ],
+  "repository_revisions": [
+    {
+      "repo_id": "spatial-app",
+      "base_revision": "7df59dac068d62e6c222a522c763122dc89efd70",
+      "head_revision": "7df59dac068d62e6c222a522c763122dc89efd70",
+      "branch": "codex/spatial-camera-guard-band-baseline"
+    },
+    {
+      "repo_id": "quest-repo",
+      "base_revision": "7df59dac068d62e6c222a522c763122dc89efd70",
+      "head_revision": "7df59dac068d62e6c222a522c763122dc89efd70",
+      "branch": "codex/spatial-camera-guard-band-baseline"
+    },
+    {
+      "repo_id": "native-renderer-app",
+      "base_revision": "7df59dac068d62e6c222a522c763122dc89efd70",
+      "head_revision": "7df59dac068d62e6c222a522c763122dc89efd70",
+      "branch": "codex/spatial-camera-guard-band-baseline"
+    }
+  ],
+  "device_validation": null,
+  "changed_paths": [
+    {"repo_id": "spatial-app", "path": "README.md"},
+    {"repo_id": "spatial-app", "path": "app/src/main/java/io/github/mesmerprism/rustyquest/spatial_camera_panel/SpatialFragmentProbeCoordinator.kt"},
+    {"repo_id": "spatial-app", "path": "app/src/main/java/io/github/mesmerprism/rustyquest/spatial_camera_panel/SpatialFragmentProbeRoute.kt"},
+    {"repo_id": "spatial-app", "path": "app/src/main/java/io/github/mesmerprism/rustyquest/spatial_camera_panel/SpatialPresentationPolicy.kt"},
+    {"repo_id": "spatial-app", "path": "app/src/shaders/spatial_fragment_probe_depth.frag"},
+    {"repo_id": "spatial-app", "path": "app/src/shaders/spatial_fragment_probe_depth.vert"},
+    {"repo_id": "spatial-app", "path": "app/src/shaders/spatial_fragment_probe_nodepth.frag"},
+    {"repo_id": "spatial-app", "path": "app/src/shaders/spatial_fragment_probe_nodepth.vert"},
+    {"repo_id": "spatial-app", "path": "app/src/shaders/spatial_panel_surface_probe.frag"},
+    {"repo_id": "spatial-app", "path": "app/src/test/java/io/github/mesmerprism/rustyquest/spatial_camera_panel/SpatialFragmentProbeRouteTest.kt"},
+    {"repo_id": "spatial-app", "path": "app/src/test/java/io/github/mesmerprism/rustyquest/spatial_camera_panel/SpatialPresentationPolicyTest.kt"},
+    {"repo_id": "spatial-app", "path": "morphospace/iteration-units/mod-009.json"},
+    {"repo_id": "spatial-app", "path": "morphospace/receipts/mod-007-device-visual-deferred-20260717.json"},
+    {"repo_id": "spatial-app", "path": "morphospace/receipts/mod-007-guide-native-parity-ab-host-validation-20260716.json"},
+    {"repo_id": "spatial-app", "path": "morphospace/receipts/mod-007-single-layer-control-ui-host-validation-20260716.json"},
+    {"repo_id": "spatial-app", "path": "native-receipt/src/spatial_guide_processing.rs"},
+    {"repo_id": "spatial-app", "path": "native-receipt/src/spatial_presentation_policy.rs"},
+    {"repo_id": "quest-repo", "path": "README.md"},
+    {"repo_id": "quest-repo", "path": "docs/ARCHITECTURE.md"},
+    {"repo_id": "quest-repo", "path": "docs/SPATIAL_SDK_FRAGMENT_PROBE.md"},
+    {"repo_id": "quest-repo", "path": "docs/SPATIAL_SDK_PORT_IMPLEMENTATION_PLAN.md"},
+    {"repo_id": "quest-repo", "path": "docs/VALIDATION.md"},
+    {"repo_id": "quest-repo", "path": "tools/Build-NativeRendererAndroid.ps1"},
+    {"repo_id": "quest-repo", "path": "tools/Build-SpatialCameraPanelAndroid.ps1"},
+    {"repo_id": "quest-repo", "path": "tools/Grant-SpatialCameraPanelAndroidPermissions.ps1"},
+    {"repo_id": "quest-repo", "path": "tools/Invoke-Mod006LockBoundAdapterTwoQuest.ps1"},
+    {"repo_id": "quest-repo", "path": "tools/Invoke-SpatialCameraPanelAndroidCameraHwbProjectionSmoke.ps1"},
+    {"repo_id": "quest-repo", "path": "tools/Invoke-SpatialCameraPanelAndroidParticleAliasSmoke.ps1"},
+    {"repo_id": "quest-repo", "path": "tools/Invoke-SpatialCameraPanelAndroidParticleVisualSmoke.ps1"},
+    {"repo_id": "quest-repo", "path": "tools/Invoke-SpatialCameraPanelAndroidPolarLive.ps1"},
+    {"repo_id": "quest-repo", "path": "tools/Invoke-SpatialCameraPanelAndroidSelfTest.ps1"},
+    {"repo_id": "quest-repo", "path": "tools/Invoke-SpatialCameraPanelAndroidUiAction.ps1"},
+    {"repo_id": "quest-repo", "path": "tools/Invoke-SpatialCameraPanelFragmentProbeSmoke.ps1"},
+    {"repo_id": "quest-repo", "path": "tools/Invoke-SpatialCameraPanelRenderAccessSmoke.ps1"},
+    {"repo_id": "quest-repo", "path": "tools/Test-SpatialCameraPanelAndroid.ps1"},
+    {"repo_id": "quest-repo", "path": "tools/Test-SpatialHandLabAndroid.ps1"},
+    {"repo_id": "quest-repo", "path": "tools/checks/Test-NativeRendererAndroidScaffoldStatic.ps1"},
+    {"repo_id": "quest-repo", "path": "tools/checks/Test-NativeRendererOpenXrVulkanStatic.ps1"},
+    {"repo_id": "quest-repo", "path": "tools/checks/Test-SpatialCameraPanelAndroidStatic.ps1"},
+    {"repo_id": "quest-repo", "path": "tools/checks/Test-SpatialFragmentProbeStatic.ps1"},
+    {"repo_id": "quest-repo", "path": "tools/checks/Test-SpatialRenderAccessProbeStatic.ps1"}
+  ]
+}

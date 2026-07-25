@@ -1,0 +1,346 @@
+{
+  "schema": "rusty.morphospace.workflow.validation_receipt.v1",
+  "project_id": "spatial-camera-panel",
+  "unit_id": "mod-006",
+  "result": "pass",
+  "tier": "deep",
+  "generated_at": "2026-07-13T15:54:07.0241577Z",
+  "summary": "MOD-006 selected/off-lock particle and hand adapter evidence passed on two serial-scoped Quest devices using a fresh spatial hand-lab APK.",
+  "artifacts": [
+    {
+      "artifact_id": "device-summary",
+      "path": "S:\\Work\\repos\\active\\rusty-quest\\target\\mod006-twoquest-20260713-174814\\summary.json",
+      "sha256": "71f191ea39b6bfa9f9f9fa463640880d4f07f18f5fd289e615fc02d858236432",
+      "kind": "two-quest-summary"
+    },
+    {
+      "artifact_id": "particle-scorecard",
+      "path": "S:\\Work\\repos\\active\\rusty-quest\\target\\mod006-twoquest-20260713-174814\\particle-adapter-scorecard.json",
+      "sha256": "36e36aa8c00f9b689b5d633bf84a9f4974af62151ee16593273ab666b2fcf978",
+      "kind": "device-scorecard"
+    },
+    {
+      "artifact_id": "hand-scorecard",
+      "path": "S:\\Work\\repos\\active\\rusty-quest\\target\\mod006-twoquest-20260713-174814\\hand-adapter-scorecard.json",
+      "sha256": "d9c3665671e4cb267755189899e060a099be621ada2fa145f33dba25701956cf",
+      "kind": "device-scorecard"
+    },
+    {
+      "artifact_id": "spatial-hand-build-manifest",
+      "path": "S:\\Work\\repos\\active\\rusty-quest\\target\\mod006-spatial-hand-source-build-final\\build-manifest.json",
+      "sha256": "9310cf23f6f12c4e62a7bc956c8fdc468413af7709493fd5b68c814679226258",
+      "kind": "build-manifest"
+    }
+  ],
+  "criteria": [
+    {
+      "acceptance_id": "single-rust-authority",
+      "command": "cargo test -p spatial-camera-panel-native-receipt and Spatial JVM unit tests",
+      "status": "pass",
+      "evidence_refs": [
+        "device-summary",
+        "particle-scorecard",
+        "hand-scorecard",
+        "spatial-hand-build-manifest"
+      ]
+    },
+    {
+      "acceptance_id": "effect-closure",
+      "command": "cargo test -p rusty-quest-native-renderer-android-native and focused static/JVM gates",
+      "status": "pass",
+      "evidence_refs": [
+        "device-summary",
+        "particle-scorecard",
+        "hand-scorecard",
+        "spatial-hand-build-manifest"
+      ]
+    },
+    {
+      "acceptance_id": "append-only-history",
+      "command": "Test-SpatialCameraPanelWorkflowStatic.ps1",
+      "status": "pass",
+      "evidence_refs": [
+        "device-summary",
+        "particle-scorecard",
+        "hand-scorecard",
+        "spatial-hand-build-manifest"
+      ]
+    },
+    {
+      "acceptance_id": "device-gate",
+      "command": "serial-scoped two-Quest validation",
+      "status": "pass",
+      "evidence_refs": [
+        "device-summary",
+        "particle-scorecard",
+        "hand-scorecard",
+        "spatial-hand-build-manifest"
+      ]
+    }
+  ],
+  "gates": [
+    {
+      "gate_id": "validation-quick",
+      "command": "shared adapter, JNI authority, Kotlin cache/parity, and static negative tests",
+      "status": "pass",
+      "evidence_refs": [
+        "spatial-hand-build-manifest"
+      ]
+    },
+    {
+      "gate_id": "validation-standard",
+      "command": "Spatial/Native build and Rusty Quest relevant full gates",
+      "status": "pass",
+      "evidence_refs": [
+        "spatial-hand-build-manifest"
+      ]
+    },
+    {
+      "gate_id": "validation-device",
+      "command": "two-Quest selected/off-lock effect, fatal, and cleanup scorecard",
+      "status": "pass",
+      "evidence_refs": [
+        "device-summary",
+        "particle-scorecard",
+        "hand-scorecard"
+      ]
+    },
+    {
+      "gate_id": "instruction-synchronization",
+      "command": "Verify every declared instruction surface is complete and validated.",
+      "status": "pass",
+      "evidence_refs": [
+        "device-summary"
+      ]
+    },
+    {
+      "gate_id": "device-validation",
+      "command": "Use the device workflow with only the explicitly supplied serials.",
+      "status": "pass",
+      "evidence_refs": [
+        "device-summary",
+        "particle-scorecard",
+        "hand-scorecard"
+      ]
+    }
+  ],
+  "repository_revisions": [
+    {
+      "repo_id": "spatial-app",
+      "path": "S:\\Work\\repos\\active\\rusty-quest\\apps\\spatial-camera-panel-android",
+      "branch": "codex/spatial-viscereality-gpu-panel-openxr-remap",
+      "base_revision": "f9abb76a5668f755751758d8b8a78b279cc260b5",
+      "head_revision": "f9abb76a5668f755751758d8b8a78b279cc260b5"
+    },
+    {
+      "repo_id": "native-renderer-app",
+      "path": "S:\\Work\\repos\\active\\rusty-quest\\apps\\native-renderer-android",
+      "branch": "codex/spatial-viscereality-gpu-panel-openxr-remap",
+      "base_revision": "f9abb76a5668f755751758d8b8a78b279cc260b5",
+      "head_revision": "f9abb76a5668f755751758d8b8a78b279cc260b5"
+    },
+    {
+      "repo_id": "quest-repo",
+      "path": "S:\\Work\\repos\\active\\rusty-quest",
+      "branch": "codex/spatial-viscereality-gpu-panel-openxr-remap",
+      "base_revision": "f9abb76a5668f755751758d8b8a78b279cc260b5",
+      "head_revision": "f9abb76a5668f755751758d8b8a78b279cc260b5"
+    }
+  ],
+  "changed_paths": [
+    {
+      "repo_id": "spatial-app",
+      "path": "app/src/main/java/io/github/mesmerprism/rustyquest/spatial_camera_panel/SpatialAdapterLockBinding.kt"
+    },
+    {
+      "repo_id": "spatial-app",
+      "path": "app/src/main/java/io/github/mesmerprism/rustyquest/spatial_camera_panel/SpatialAdapterNativeAuthority.kt"
+    },
+    {
+      "repo_id": "spatial-app",
+      "path": "app/src/test/java/io/github/mesmerprism/rustyquest/spatial_camera_panel/SpatialAdapterDecisionCacheTest.kt"
+    },
+    {
+      "repo_id": "spatial-app",
+      "path": "app/src/test/java/io/github/mesmerprism/rustyquest/spatial_camera_panel/SpatialSurfaceParticleRuntimeCoordinatorTest.kt"
+    },
+    {
+      "repo_id": "spatial-app",
+      "path": "morphospace/conformance-locks/broker-media-client.feature.lock.json"
+    },
+    {
+      "repo_id": "spatial-app",
+      "path": "morphospace/conformance-locks/hand-adapter.feature.lock.json"
+    },
+    {
+      "repo_id": "spatial-app",
+      "path": "morphospace/conformance-locks/index.json"
+    },
+    {
+      "repo_id": "spatial-app",
+      "path": "morphospace/conformance-locks/particle-adapter.feature.lock.json"
+    },
+    {
+      "repo_id": "spatial-app",
+      "path": "morphospace/iteration-units/mod-006.json"
+    },
+    {
+      "repo_id": "spatial-app",
+      "path": "morphospace/iteration-units/net-016.json"
+    },
+    {
+      "repo_id": "spatial-app",
+      "path": "morphospace/mod-006-reviews/lock-bound-activation-readiness.json"
+    },
+    {
+      "repo_id": "spatial-app",
+      "path": "morphospace/receipts/mod-006-lock-bound-activation.json"
+    },
+    {
+      "repo_id": "spatial-app",
+      "path": "morphospace/receipts/mod-006-twoquest-device-validation-20260713.json"
+    },
+    {
+      "repo_id": "spatial-app",
+      "path": "morphospace/receipts/mod-006-workflow-validation-twoquest-20260713.json"
+    },
+    {
+      "repo_id": "spatial-app",
+      "path": "morphospace/repo-maps/mod-006-exact-repository-map-20260713.json"
+    },
+    {
+      "repo_id": "spatial-app",
+      "path": "native-receipt/src/adapter_lock_authority.rs"
+    },
+    {
+      "repo_id": "native-renderer-app",
+      "path": "morphospace/conformance-locks/broker-media-client.feature.lock.json"
+    },
+    {
+      "repo_id": "native-renderer-app",
+      "path": "morphospace/conformance-locks/hand-adapter.feature.lock.json"
+    },
+    {
+      "repo_id": "native-renderer-app",
+      "path": "morphospace/conformance-locks/index.json"
+    },
+    {
+      "repo_id": "native-renderer-app",
+      "path": "morphospace/conformance-locks/particle-adapter.feature.lock.json"
+    },
+    {
+      "repo_id": "native-renderer-app",
+      "path": "morphospace/feature.lock.json"
+    },
+    {
+      "repo_id": "native-renderer-app",
+      "path": "morphospace/iteration-events.jsonl"
+    },
+    {
+      "repo_id": "native-renderer-app",
+      "path": "morphospace/iteration-units/mod-006.json"
+    },
+    {
+      "repo_id": "native-renderer-app",
+      "path": "morphospace/iteration-units/net-016.json"
+    },
+    {
+      "repo_id": "native-renderer-app",
+      "path": "morphospace/mod-006-reviews/lock-bound-activation-readiness.json"
+    },
+    {
+      "repo_id": "native-renderer-app",
+      "path": "morphospace/project.spec.json"
+    },
+    {
+      "repo_id": "native-renderer-app",
+      "path": "morphospace/receipts/mod-006-lock-bound-activation.json"
+    },
+    {
+      "repo_id": "native-renderer-app",
+      "path": "morphospace/workspace.state.json"
+    },
+    {
+      "repo_id": "quest-repo",
+      "path": "tools/checks/Invoke-CorrectedReleaseFailureCriterion.ps1"
+    },
+    {
+      "repo_id": "quest-repo",
+      "path": "tools/checks/Test-CorrectedReleaseTwoQuestMatrixStatic.ps1"
+    },
+    {
+      "repo_id": "quest-repo",
+      "path": "tools/checks/Test-ManifoldBrokerBuildArtifact.ps1"
+    },
+    {
+      "repo_id": "quest-repo",
+      "path": "tools/checks/Test-ManifoldBrokerProductBuildPreparation.ps1"
+    },
+    {
+      "repo_id": "quest-repo",
+      "path": "tools/checks/Test-MultiAppBrokerClients.ps1"
+    },
+    {
+      "repo_id": "quest-repo",
+      "path": "tools/checks/Test-NativeRendererAndroidScaffoldStatic.ps1"
+    },
+    {
+      "repo_id": "quest-repo",
+      "path": "tools/checks/Test-NativeRendererPropertyManifestStatic.ps1"
+    },
+    {
+      "repo_id": "quest-repo",
+      "path": "tools/checks/Test-QuestBrokerAdmissionStatic.ps1"
+    },
+    {
+      "repo_id": "quest-repo",
+      "path": "tools/checks/Test-QuestBrokerAuthorityStatic.ps1"
+    },
+    {
+      "repo_id": "quest-repo",
+      "path": "tools/checks/Test-QuestBrokerProductStatic.ps1"
+    },
+    {
+      "repo_id": "quest-repo",
+      "path": "tools/checks/Test-QuestHandAdapterStatic.ps1"
+    },
+    {
+      "repo_id": "quest-repo",
+      "path": "tools/checks/Test-QuestParticleAdapterStatic.ps1"
+    },
+    {
+      "repo_id": "quest-repo",
+      "path": "tools/checks/Test-SpatialCameraPanelAndroidStatic.ps1"
+    },
+    {
+      "repo_id": "quest-repo",
+      "path": "tools/checks/Test-SpatialCameraPanelWorkflowStatic.ps1"
+    },
+    {
+      "repo_id": "quest-repo",
+      "path": "tools/checks/Test-SpatialCameraPanelWorkflowStaticSelfTest.ps1"
+    },
+    {
+      "repo_id": "quest-repo",
+      "path": "tools/Test-QuestHandAdapterEvidence.ps1"
+    },
+    {
+      "repo_id": "quest-repo",
+      "path": "tools/Test-QuestParticleAdapterEvidence.ps1"
+    }
+  ],
+  "device_validation": {
+    "serials": [
+      "340YC10G7T0JBW",
+      "3487C10H3M017Q"
+    ],
+    "cleanup_complete": true,
+    "package_fatal_count": 0,
+    "system_fatal_count": 0,
+    "evidence_refs": [
+      "device-summary",
+      "particle-scorecard",
+      "hand-scorecard"
+    ]
+  }
+}

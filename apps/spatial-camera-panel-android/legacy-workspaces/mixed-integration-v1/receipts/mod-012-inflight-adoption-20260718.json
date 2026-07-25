@@ -1,0 +1,50 @@
+{
+  "$schema": "https://github.com/MesmerPrism/rusty-morphospace-work-environment/schemas/inflight-adoption-receipt.schema.json",
+  "schema": "rusty.morphospace.workflow.inflight_adoption_receipt.v1",
+  "receipt_id": "mod-012-inflight-adoption",
+  "project_id": "spatial-camera-panel",
+  "unit_id": "mod-012",
+  "captured_at": "2026-07-18T08:16:04.7215017Z",
+  "reason": "work-started-before-protocol-v2",
+  "safe_to_claim": true,
+  "external_mutation_performed": false,
+  "repositories": [
+    {
+      "repo_id": "quest-repo",
+      "observed_revision": "7df59dac068d62e6c222a522c763122dc89efd70",
+      "files": [
+        {
+          "path": "docs/ARCHITECTURE.md",
+          "state": "present",
+          "sha256": "c5ba62c58dbcea1119a84eddbfcf80b3ded9b1a8dc5c95ee7ae1671afd8f486c"
+        },
+        {
+          "path": "docs/VALIDATION.md",
+          "state": "present",
+          "sha256": "7d05a234767465636386d302af7be8287255dc76a6c7ea6f2f6d8212696548e7"
+        },
+        {
+          "path": "README.md",
+          "state": "present",
+          "sha256": "fe0249d266d46b21e52befc7cd794821e567832fa7c92d7b7f3ce8d9cd8f0222"
+        },
+        {
+          "path": "tools/Test-SpatialCameraPanelAndroid.ps1",
+          "state": "present",
+          "sha256": "9582b04191736c685c9a3bae666f6febdc5338a84e1d6bc3b5063463d21c2ad2"
+        }
+      ]
+    },
+    {
+      "repo_id": "spatial-app",
+      "observed_revision": "7df59dac068d62e6c222a522c763122dc89efd70",
+      "files": [
+        {
+          "path": "README.md",
+          "state": "present",
+          "sha256": "430f24b8701b4f65ee90886bf7dd728e47f9845a03e86ad0f50fbd38cfd41e65"
+        }
+      ]
+    }
+  ]
+}

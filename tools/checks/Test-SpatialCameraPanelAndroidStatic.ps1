@@ -40,6 +40,13 @@ function Assert-NotContains {
     }
 }
 
+function Assert-FileAbsent {
+    param([Parameter(Mandatory=$true)][string]$RelativePath)
+    if (Test-Path -LiteralPath (Join-Path $repoRootPath $RelativePath)) {
+        throw "Spatial Camera Panel must not contain unrelated file: $RelativePath"
+    }
+}
+
 function Assert-RegistrationUsesSettings {
     param(
         [Parameter(Mandatory=$true)][string]$Label,
@@ -108,11 +115,11 @@ $stagedAssetModule = Read-RequiredText "apps\spatial-camera-panel-android\app\sr
 $spatialStereoVideoPlayback = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\SpatialStereoVideoPlayback.java"
 $laneBoundary = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\SpatialSdkLaneBoundary.kt"
 $publicMultiStack = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\SpatialPublicMultiStack.kt"
-$panelController = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\ExperimentPanelController.kt"
 $composePanelRegistrationModule = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\SpatialComposePanelRegistrationModule.kt"
 $privateLayerPanel = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\PrivateLayerControlPanel.kt"
 $privateLayerPanelControlModule = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\PrivateLayerPanelControlModule.kt"
 $privateLayerControlCoordinator = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\SpatialPrivateLayerControlCoordinator.kt"
+$presentationPolicy = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\SpatialPresentationPolicy.kt"
 $spatialPassthroughLutModule = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\SpatialPassthroughLutModule.kt"
 $privateLayerPanelLayerCoordinator = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\SpatialPrivateLayerPanelLayerCoordinator.kt"
 $panelModels = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\SpatialCameraPanelModels.kt"
@@ -147,17 +154,18 @@ $spatialHandCapture = Read-RequiredText "apps\spatial-camera-panel-android\app\s
 $liveHandBridge = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\SpatialLiveHandJointBridge.kt"
 $spatialHandAlignmentMappingFixture = Read-RequiredText "fixtures\spatial-hand-alignment\openxr-to-spatial-mirror-x.pass.json"
 $privateFeatureLoader = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\SpatialPrivateFeatureLoader.kt"
-$store = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\SpatialCameraPanelStore.kt"
 $nativeLib = Read-RequiredText "apps\spatial-camera-panel-android\native-receipt\src\lib.rs"
 $nativeBuildScript = Read-RequiredText "apps\spatial-camera-panel-android\native-receipt\build.rs"
 $cameraProbe = Read-RequiredText "apps\spatial-camera-panel-android\native-receipt\src\camera_hwb_probe.rs"
 $cameraProjectionTarget = Read-RequiredText "apps\spatial-camera-panel-android\native-receipt\src\camera_hwb_projection_target.rs"
 $nativeMultiStack = Read-RequiredText "apps\spatial-camera-panel-android\native-receipt\src\spatial_public_multistack.rs"
 $nativeMultiStackRuntime = Read-RequiredText "apps\spatial-camera-panel-android\native-receipt\src\spatial_public_multistack_runtime.rs"
+$spatialGuideProcessing = Read-RequiredText "apps\spatial-camera-panel-android\native-receipt\src\spatial_guide_processing.rs"
 $nativeControllerActions = Read-RequiredText "apps\spatial-camera-panel-android\native-receipt\src\spatial_controller_actions.rs"
 $nativeMultimodalInput = Read-RequiredText "apps\spatial-camera-panel-android\native-receipt\src\spatial_multimodal_input.rs"
 $nativeEnvironmentDepth = Read-RequiredText "apps\spatial-camera-panel-android\native-receipt\src\spatial_environment_depth.rs"
 $nativePassthrough = Read-RequiredText "apps\spatial-camera-panel-android\native-receipt\src\spatial_native_passthrough.rs"
+$nativePresentationPolicy = Read-RequiredText "apps\spatial-camera-panel-android\native-receipt\src\spatial_presentation_policy.rs"
 $publicGuideBlurShader = Read-RequiredText "apps\spatial-camera-panel-android\native-receipt\shaders\public_guide_blur.frag.glsl"
 $cameraRawColorShader = Read-RequiredText "apps\spatial-camera-panel-android\native-receipt\shaders\camera_hwb_raw_color.frag.glsl"
 $privateSurfaceParticlesVert = Read-RequiredText "apps\spatial-camera-panel-android\native-receipt\shaders\surface_private_particles.vert.glsl"
@@ -176,7 +184,6 @@ $surfaceProjection = Read-RequiredText "apps\spatial-camera-panel-android\native
 $liveHandJoints = Read-RequiredText "apps\spatial-camera-panel-android\native-receipt\src\live_hand_joints.rs"
 $replayHands = Read-RequiredText "apps\spatial-camera-panel-android\native-receipt\src\replay_hands.rs"
 $buildScript = Read-RequiredText "tools\Build-SpatialCameraPanelAndroid.ps1"
-$selfTestWrapper = Read-RequiredText "tools\Invoke-SpatialCameraPanelAndroidSelfTest.ps1"
 $cameraProjectionSmoke = Read-RequiredText "tools\Invoke-SpatialCameraPanelAndroidCameraHwbProjectionSmoke.ps1"
 $layeringMatrix = Read-RequiredText "tools\Invoke-SpatialCameraPanelAndroidLayeringMatrix.ps1"
 $stageSpatialAsset = Read-RequiredText "tools\Stage-SpatialCameraPanelAsset.ps1"
@@ -192,11 +199,34 @@ $roomIterationLog = Read-RequiredText "docs\SPATIAL_ROOM_WORLDSPACE_ITERATION_LO
 $testScript = Read-RequiredText "tools\Test-SpatialCameraPanelAndroid.ps1"
 
 Assert-Contains "Gradle app" $appGradle 'namespace = "io.github.mesmerprism.rustyquest.spatial_camera_panel"'
+Assert-FileAbsent "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\ExperimentPanelController.kt"
+Assert-FileAbsent "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\SpatialCameraPanelStore.kt"
+Assert-FileAbsent "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\PolarSensorPanel.java"
+Assert-FileAbsent "tools\Invoke-SpatialCameraPanelAndroidSelfTest.ps1"
+Assert-FileAbsent "tools\Invoke-SpatialCameraPanelAndroidPolarLive.ps1"
+Assert-NotContains "Android manifest" $manifest "android.permission.BLUETOOTH"
+Assert-NotContains "Android manifest" $manifest "android.permission.ACCESS_FINE_LOCATION"
+Assert-NotContains "Panel ids" $ids "spatial_camera_panel_launcher"
+Assert-NotContains "Panel ids" $ids 'name="spatial_camera_panel"'
+Assert-NotContains "Activity" $activity "SpatialCameraPanelStore"
+Assert-NotContains "Activity" $activity "ExperimentPanelController"
+Assert-NotContains "Activity" $activity "PolarSensorPanel"
 Assert-Contains "Gradle app" $appGradle 'RUSTY_QUEST_SPATIAL_APP_ID'
 Assert-Contains "Gradle app" $appGradle '.orElse("io.github.mesmerprism.rustyquest.spatial_camera_panel")'
 Assert-Contains "Gradle app" $appGradle 'applicationId = spatialApplicationId.get()'
 Assert-Contains "Gradle app" $appGradle 'RUSTY_QUEST_SPATIAL_APP_LABEL'
 Assert-Contains "Gradle app" $appGradle 'manifestPlaceholders["spatialAppLabel"] = spatialAppLabel.get()'
+Assert-Contains "Gradle app" $appGradle 'RUSTY_QUEST_SPATIAL_LOCKED_FINAL_PRESENTATION'
+Assert-Contains "Gradle app" $appGradle 'RUSTY_QUEST_SPATIAL_DISTORTION_SPEED_SCALE'
+Assert-Contains "Gradle app" $appGradle '"LOCKED_FINAL_PRESENTATION"'
+Assert-Contains "Gradle app" $appGradle '"DISTORTION_SPEED_SCALE"'
+Assert-Contains "Presentation policy" $presentationPolicy "fixedLayerOverride"
+Assert-Contains "Presentation policy" $presentationPolicy "fixedProjectionScale"
+Assert-Contains "Presentation policy" $presentationPolicy "appControlInputsEnabled"
+Assert-Contains "Presentation policy" $presentationPolicy "videoBorderForcedEnabled"
+Assert-Contains "Native presentation policy" $nativePresentationPolicy "presentation_layer_override"
+Assert-Contains "Native presentation policy" $nativePresentationPolicy "presentation_projection_scale"
+Assert-Contains "Native presentation policy" $nativePresentationPolicy "presentation_distortion_phase_rate_hz"
 Assert-Contains "Android manifest" $manifest 'android:name="io.github.mesmerprism.rustyquest.spatial_camera_panel.SpatialCameraPanelActivity"'
 Assert-Contains "Android manifest" $manifest 'android:label="${spatialAppLabel}"'
 Assert-Contains "Android manifest" $manifest 'com.oculus.permission.HAND_TRACKING'
@@ -345,18 +375,16 @@ Assert-Contains "External swapchain probe coordinator" $externalSwapchainProbeCo
 Assert-Contains "External swapchain probe coordinator" $externalSwapchainProbeCoordinator "SpatialExternalSwapchainProbeBindings("
 Assert-Contains "External swapchain probe coordinator" $externalSwapchainProbeCoordinator "SpatialExternalSwapchainProbeNativeState("
 Assert-Contains "External swapchain probe coordinator" $externalSwapchainProbeCoordinator "private var started = false"
-Assert-Contains "External swapchain probe coordinator" $externalSwapchainProbeCoordinator "private var layer: SceneQuadLayer? = null"
-Assert-Contains "External swapchain probe coordinator" $externalSwapchainProbeCoordinator "private var sceneObject: SceneObject? = null"
-Assert-Contains "External swapchain probe coordinator" $externalSwapchainProbeCoordinator "private var wrappedSwapchain: SceneSwapchain? = null"
 Assert-Contains "External swapchain probe coordinator" $externalSwapchainProbeCoordinator "private var externalHandle = 0L"
-Assert-Contains "External swapchain probe coordinator" $externalSwapchainProbeCoordinator "private val sdkWrapRetainers = mutableListOf<SceneSwapchain>()"
-Assert-Contains "External swapchain probe coordinator" $externalSwapchainProbeCoordinator "private val externalWrapRetainers = mutableListOf<SceneSwapchain>()"
 Assert-Contains "External swapchain probe coordinator" $externalSwapchainProbeCoordinator "fun runIfRequested(reason: String)"
 Assert-Contains "External swapchain probe coordinator" $externalSwapchainProbeCoordinator "fun destroy(reason: String): String = cleanup(reason)"
 Assert-Contains "External swapchain probe coordinator" $externalSwapchainProbeCoordinator "SpatialDiagnosticProbeRouteModule.externalSwapchainProbeEnabled()"
-Assert-Contains "External swapchain probe coordinator" $externalSwapchainProbeCoordinator "SceneSwapchain(createdExternalHandle)"
-Assert-Contains "External swapchain probe coordinator" $externalSwapchainProbeCoordinator "SceneQuadLayer("
-Assert-Contains "External swapchain probe coordinator" $externalSwapchainProbeCoordinator "OPENXR_ERROR_HANDLE_INVALID -> `"sdk`""
+Assert-Contains "External swapchain probe coordinator" $externalSwapchainProbeCoordinator "bindings.createExternalSwapchain("
+Assert-Contains "External swapchain probe coordinator" $externalSwapchainProbeCoordinator "bindings.destroyExternalSwapchain("
+Assert-Contains "External swapchain probe coordinator" $externalSwapchainProbeCoordinator "does not convert the returned XrSwapchain into an SDK scene object"
+Assert-Contains "External swapchain probe coordinator" $externalSwapchainProbeCoordinator "OPENXR_ERROR_HANDLE_INVALID -> `"runtime`""
+Assert-NotContains "External swapchain probe coordinator" $externalSwapchainProbeCoordinator "SceneSwapchain("
+Assert-NotContains "External swapchain probe coordinator" $externalSwapchainProbeCoordinator "SceneQuadLayer("
 Assert-NotContains "External swapchain probe coordinator" $externalSwapchainProbeCoordinator "external fun"
 Assert-NotContains "External swapchain probe coordinator" $externalSwapchainProbeCoordinator "nativeCreateExternalOpenXrSwapchain"
 Assert-NotContains "External swapchain probe coordinator" $externalSwapchainProbeCoordinator "nativeDestroyExternalOpenXrSwapchain"
@@ -365,14 +393,16 @@ Assert-NotContains "External swapchain probe coordinator" $externalSwapchainProb
 Assert-Contains "SDK quad resource coordinator" $sdkQuadResourceCoordinator "internal class SpatialSdkQuadResourceCoordinator("
 Assert-Contains "SDK quad resource coordinator" $sdkQuadResourceCoordinator 'MODULE_ID = "spatial-sdk-quad-resource-coordinator"'
 Assert-Contains "SDK quad resource coordinator" $sdkQuadResourceCoordinator "SpatialSdkQuadResourceBindings("
-Assert-Contains "SDK quad resource coordinator" $sdkQuadResourceCoordinator "private var layer: SceneQuadLayer? = null"
-Assert-Contains "SDK quad resource coordinator" $sdkQuadResourceCoordinator "private var sceneObject: SceneObject? = null"
+Assert-Contains "SDK quad resource coordinator" $sdkQuadResourceCoordinator "private val layers = mutableListOf<SceneQuadLayer>()"
+Assert-Contains "SDK quad resource coordinator" $sdkQuadResourceCoordinator "private val sceneObjects = mutableListOf<SceneObject>()"
 Assert-Contains "SDK quad resource coordinator" $sdkQuadResourceCoordinator "private var swapchain: SceneSwapchain? = null"
 Assert-Contains "SDK quad resource coordinator" $sdkQuadResourceCoordinator "private var surface: AndroidSurface? = null"
-Assert-Contains "SDK quad resource coordinator" $sdkQuadResourceCoordinator "private var anchorMesh: SceneMesh? = null"
-Assert-Contains "SDK quad resource coordinator" $sdkQuadResourceCoordinator "private var anchorMaterial: SceneMaterial? = null"
+Assert-Contains "SDK quad resource coordinator" $sdkQuadResourceCoordinator "private val anchorMeshes = mutableListOf<SceneMesh>()"
+Assert-Contains "SDK quad resource coordinator" $sdkQuadResourceCoordinator "private val anchorMaterials = mutableListOf<SceneMaterial>()"
 Assert-Contains "SDK quad resource coordinator" $sdkQuadResourceCoordinator "fun adoptSwapchain(value: SceneSwapchain)"
 Assert-Contains "SDK quad resource coordinator" $sdkQuadResourceCoordinator "fun registerAnchor(material: SceneMaterial, mesh: SceneMesh)"
+Assert-Contains "SDK quad resource coordinator" $sdkQuadResourceCoordinator "fun registerSceneObject(value: SceneObject)"
+Assert-Contains "SDK quad resource coordinator" $sdkQuadResourceCoordinator "fun registerLayer(value: SceneQuadLayer)"
 Assert-Contains "SDK quad resource coordinator" $sdkQuadResourceCoordinator "fun <T> withLayer(block: (SceneQuadLayer) -> T): T?"
 Assert-Contains "SDK quad resource coordinator" $sdkQuadResourceCoordinator "fun cleanupSceneOnly(reason: String): String"
 Assert-Contains "SDK quad resource coordinator" $sdkQuadResourceCoordinator "fun cleanup(reason: String): String"
@@ -400,12 +430,11 @@ Assert-Contains "Camera HWB probe coordinator" $cameraHwbProbeCoordinator "Spati
 Assert-Contains "External swapchain probe coordinator" $externalSwapchainProbeCoordinator "SpatialDiagnosticProbeRouteModule.externalSwapchainProbeStartMarker"
 Assert-Contains "External swapchain probe coordinator" $externalSwapchainProbeCoordinator "SpatialDiagnosticProbeRouteModule.externalSwapchainProbeLibraryUnavailableCompleteMarker"
 Assert-Contains "External swapchain probe coordinator" $externalSwapchainProbeCoordinator "SpatialDiagnosticProbeRouteModule.externalSwapchainProbeMissingOpenXrHandlesCompleteMarker"
+Assert-Contains "External swapchain probe coordinator" $externalSwapchainProbeCoordinator "SpatialDiagnosticProbeRouteModule.externalSwapchainProbeCompileTimeBoundaryMarker"
 Assert-Contains "External swapchain probe coordinator" $externalSwapchainProbeCoordinator "SpatialDiagnosticProbeRouteModule.externalSwapchainProbeNativeCreateCallFailedMarker"
-Assert-Contains "External swapchain probe coordinator" $externalSwapchainProbeCoordinator "SpatialDiagnosticProbeRouteModule.externalSwapchainProbeExternalWrapResultMarker"
-Assert-Contains "External swapchain probe coordinator" $externalSwapchainProbeCoordinator "SpatialDiagnosticProbeRouteModule.externalSwapchainProbeLayerCreatedMarker"
-Assert-Contains "External swapchain probe coordinator" $externalSwapchainProbeCoordinator "SpatialDiagnosticProbeRouteModule.externalSwapchainProbeCycleCompleteMarker"
-Assert-Contains "External swapchain probe coordinator" $externalSwapchainProbeCoordinator "SpatialDiagnosticProbeRouteModule.externalSwapchainProbeSdkHandleWrapSummaryMarker"
-Assert-Contains "External swapchain probe coordinator" $externalSwapchainProbeCoordinator "SpatialDiagnosticProbeRouteModule.externalSwapchainProbeDestroyedMarker"
+Assert-Contains "External swapchain probe coordinator" $externalSwapchainProbeCoordinator "SpatialDiagnosticProbeRouteModule.externalSwapchainProbeZeroHandleCompleteMarker"
+Assert-Contains "External swapchain probe coordinator" $externalSwapchainProbeCoordinator "SpatialDiagnosticProbeRouteModule.externalSwapchainProbeStandardCompleteMarker"
+Assert-Contains "External swapchain probe coordinator" $externalSwapchainProbeCoordinator "SpatialDiagnosticProbeRouteModule.externalSwapchainProbeStandardCleanupMarker"
 Assert-Contains "Activity" $activity "externalSwapchainProbeCoordinator by lazy(LazyThreadSafetyMode.NONE)"
 Assert-Contains "Activity" $activity "SpatialExternalSwapchainProbeBindings("
 Assert-Contains "Activity" $activity "createExternalSwapchain = ::nativeCreateExternalOpenXrSwapchain"
@@ -647,7 +676,7 @@ Assert-Contains "Activity" $activity "stagedAssetModule = SpatialStagedAssetModu
 Assert-Contains "Activity" $activity "SpatialAvatarHandInvestigationFeature(::marker)"
 Assert-Contains "Activity" $activity "SpatialHandBillboardFlockFeature("
 Assert-Contains "Activity" $activity "SpatialOpenXrHandAlignmentFeature(::marker)"
-Assert-Contains "Activity" $activity "{ store.snapshot().surfaceTargetId }"
+Assert-Contains "Activity" $activity "{ surfaceTargetId }"
 Assert-Contains "Activity" $activity "SpatialPrivateFeatureLoader.load(::marker, this)"
 Assert-Contains "Activity" $activity "spatialWorldHandBillboardFlock=spatial-sdk-world-hand-billboard-flock"
 Assert-Contains "Activity" $activity "debug.rustyquest.spatial.hand_billboard_flock.enabled"
@@ -665,7 +694,7 @@ Assert-Contains "Spatial adapter Rust authority" $adapterAuthorityRust "particle
 Assert-Contains "Spatial adapter Rust authority" $adapterAuthorityRust "asset_authority_receipt"
 Assert-Contains "Spatial adapter Rust authority" $adapterAuthorityRust "runtime_lock_sha256"
 Assert-Contains "Spatial asset lock consumer" $assetModelConsumer "resolve_lock_bound_activation"
-Assert-Contains "Spatial asset lock consumer" $assetModelConsumer 'include_str!("../../morphospace/conformance-locks/spatial-asset-model.feature.lock.json")'
+Assert-Contains "Spatial asset lock consumer" $assetModelConsumer 'mixed-integration-v1/conformance-locks/spatial-asset-model.feature.lock.json'
 Assert-Contains "Spatial asset lock consumer" $assetModelConsumer 'const FEATURE_ID: &str = "spatial-asset-model"'
 Assert-Contains "Spatial asset lock consumer" $assetModelConsumer 'const MODULE_ID: &str = "spatial-asset-model"'
 Assert-Contains "Spatial asset lock consumer" $assetModelConsumer '"profile.quest.spatial_camera_panel.spatial_asset_model_conformance"'
@@ -704,8 +733,6 @@ Assert-Contains "Surface particle parameter coordinator" $surfaceParticleParamet
 Assert-Contains "Surface particle parameter coordinator" $surfaceParticleParameterCoordinator "tracerCopiesPerSecond.coerceIn(0.0f, 14.0f)"
 Assert-Contains "Surface particle parameter coordinator" $surfaceParticleParameterCoordinator "transparencyOpacity.coerceIn(0.0f, 1.0f)"
 Assert-Contains "Surface particle parameter coordinator" $surfaceParticleParameterCoordinator "projectionWorldScale.coerceIn(0.5f, 2.0f)"
-Assert-Contains "Surface particle parameter coordinator" $surfaceParticleParameterCoordinator "fun applyDriverProfile("
-Assert-Contains "Surface particle parameter coordinator" $surfaceParticleParameterCoordinator "status=driver-profile-parameter-handoff"
 Assert-Contains "Surface particle parameter coordinator" $surfaceParticleParameterCoordinator "fun submit(source: String)"
 Assert-Contains "Surface particle parameter coordinator" $surfaceParticleParameterCoordinator "fun resolveAlias("
 Assert-Contains "Surface particle parameter coordinator" $surfaceParticleParameterCoordinator "if (!bindings.featureEnabled())"
@@ -1411,7 +1438,7 @@ Assert-NotContains "Activity" $activity "private fun updateNativePanelProjection
 Assert-Contains "Camera HWB projection tuning coordinator" $cameraHwbProjectionTuningCoordinator "internal class SpatialCameraHwbProjectionTuningCoordinator("
 Assert-Contains "Camera HWB projection tuning coordinator" $cameraHwbProjectionTuningCoordinator 'MODULE_ID = "spatial-camera-hwb-projection-tuning-coordinator"'
 Assert-Contains "Camera HWB projection tuning coordinator" $cameraHwbProjectionTuningCoordinator "SpatialCameraHwbProjectionTuningBindings("
-Assert-Contains "Camera HWB projection tuning coordinator" $cameraHwbProjectionTuningCoordinator "private var targetScale = CAMERA_HWB_PROJECTION_TARGET_LIVE_SCALE_DEFAULT"
+Assert-Contains "Camera HWB projection tuning coordinator" $cameraHwbProjectionTuningCoordinator "private var targetScale = fixedTargetScale ?: CAMERA_HWB_PROJECTION_TARGET_LIVE_SCALE_DEFAULT"
 Assert-Contains "Camera HWB projection tuning coordinator" $cameraHwbProjectionTuningCoordinator "private var stereoHorizontalOffsetUv ="
 Assert-Contains "Camera HWB projection tuning coordinator" $cameraHwbProjectionTuningCoordinator "private var lastScaleJoystickMs = 0L"
 Assert-Contains "Camera HWB projection tuning coordinator" $cameraHwbProjectionTuningCoordinator "private var lastScaleJoystickMarkerMs = 0L"
@@ -1777,19 +1804,9 @@ Assert-Contains "Camera HWB projection module" $cameraProjectionModule "cameraPr
 Assert-Contains "Camera HWB projection module" $cameraProjectionModule "virtualRoomWallPlacementMode"
 Assert-Contains "Camera HWB projection module" $cameraProjectionModule "virtualRoomWallCenterM="
 Assert-Contains "Camera HWB projection module" $cameraProjectionModule "CAMERA_HWB_PROJECTION_WALL_CENTER_MARKER"
-Assert-Contains "Activity" $activity "launcherPanelVisibleForPanelMode"
-Assert-Contains "Panel placement module" $panelPlacementModule "legacy-workflow-panels-deactivated"
-Assert-Contains "Panel placement module" $panelPlacementModule "onlyRightPrimaryPrivateLayerPanel=true"
-Assert-Contains "Panel placement module" $panelPlacementModule "legacyLauncherPanelSuppressed=true"
-Assert-Contains "Activity" $activity "questionnaireDueReopensPanel by mutableStateOf(true)"
-Assert-Contains "Spatial validation workflow coordinator" $validationWorkflowCoordinator "setQuestionnaireDueReopensPanel(false, source)"
-Assert-Contains "Activity" $activity "remoteSurfaceTargetQuestionnaireAutoPanelSuppressed=true"
 Assert-Contains "Activity" $activity "leftEyeOffsetRightMeters"
 Assert-Contains "Activity" $activity "rightEyeOffsetRightMeters"
 Assert-Contains "Surface particle route module" $surfaceParticleRouteModule "particleLayerEyeOffsetSource=Scene.getEyeOffsets.viewerLocalX"
-Assert-Contains "Panel controller" $panelController 'updated.stage == "questionnaire" && questionnaireDueReopensPanel'
-Assert-Contains "Panel controller" $panelController "setQuestionnaireDueReopensPanel(true, source)"
-Assert-Contains "Panel controller" $panelController "LaunchedEffect(snapshot.stage, snapshot.activeBlock?.deadlineUnixMs, questionnaireDueReopensPanel)"
 Assert-Contains "Spatial virtual room module" $spatialVirtualRoomModule "projectionDefaultPlacementMode="
 Assert-Contains "Spatial virtual room module" $spatialVirtualRoomModule "rightSecondaryTogglesFullFov=false"
 Assert-Contains "Spatial virtual room module" $spatialVirtualRoomModule "projectionDisplaySurface=video-plus-custom-camera-stack"
@@ -1818,31 +1835,18 @@ Assert-Contains "Camera HWB projection module" $cameraProjectionModule "toggleGu
 Assert-Contains "Camera HWB projection carrier state coordinator" $cameraHwbProjectionCarrierStateCoordinator "CAMERA_HWB_PROJECTION_PLACEMENT_TOGGLE_DEBOUNCE_MS"
 Assert-Contains "Activity" $activity "cameraHwbProjectionTuningCoordinator.updateTargetScaleFromPanel("
 Assert-Contains "Panel placement module" $panelPlacementModule "internal object SpatialPanelPlacementModule"
-Assert-Contains "Panel placement module" $panelPlacementModule "workflowPlacementUpdatedMarker"
-Assert-Contains "Panel placement module" $panelPlacementModule "workflowPanelSizeUpdatedMarker"
-Assert-Contains "Panel placement module" $panelPlacementModule "workflowPlacementResetMarker"
-Assert-Contains "Panel placement module" $panelPlacementModule "workflowHeadlockModeUpdatedMarker"
 Assert-Contains "Panel placement module" $panelPlacementModule "privateLayerPlacementSyncedFromSdkTransformMarker"
 Assert-Contains "Panel placement module" $panelPlacementModule "privateLayerGrabbableStateMarker"
 Assert-Contains "Panel placement module" $panelPlacementModule "headlockedPoseUpdateSkippedMarker"
 Assert-Contains "Panel placement module" $panelPlacementModule "headlockedPoseUpdatedMarker"
-Assert-Contains "Panel placement module" $panelPlacementModule "headlockHotloadUpdatedMarker"
 Assert-Contains "Panel placement module" $panelPlacementModule "headlockTuningPersistFailedMarker"
-Assert-Contains "Panel placement module" $panelPlacementModule "legacyWorkflowPanelsDeactivatedMarker"
 Assert-Contains "Panel placement module" $panelPlacementModule "panelShellHiddenMarker"
 Assert-Contains "Panel placement module" $panelPlacementModule "panelStateRecordFailedMarker"
 Assert-Contains "Panel placement module" $panelPlacementModule "status=panel-state-record-failed"
 Assert-Contains "Panel placement module" $panelPlacementModule "panelModeUpdateSuppressedMarker"
-Assert-Contains "Panel placement module" $panelPlacementModule "workflowPanelModeUpdatedMarker"
 Assert-Contains "Panel placement module" $panelPlacementModule "privateLayerPanelModeUpdatedMarker"
 Assert-Contains "Panel placement module" $panelPlacementModule "SpatialPanelShellHiddenMarkerInput"
-Assert-Contains "Panel placement module" $panelPlacementModule "SpatialPanelModeMarkerInput"
 Assert-Contains "Panel placement module" $panelPlacementModule "SpatialPrivateLayerPanelModeMarkerInput"
-Assert-Contains "Panel placement module" $panelPlacementModule "status=placement-updated"
-Assert-Contains "Panel placement module" $panelPlacementModule "status=size-updated"
-Assert-Contains "Panel placement module" $panelPlacementModule "status=placement-reset"
-Assert-Contains "Panel placement module" $panelPlacementModule "status=headlock-mode-updated"
-Assert-Contains "Panel placement module" $panelPlacementModule "status=legacy-workflow-panels-deactivated"
 Assert-Contains "Panel placement module" $panelPlacementModule "status=panel-shell-hidden"
 Assert-Contains "Panel placement module" $panelPlacementModule "status=mode-update-suppressed"
 Assert-Contains "Panel placement module" $panelPlacementModule "status=mode-updated"
@@ -1850,18 +1854,15 @@ Assert-Contains "Panel placement module" $panelPlacementModule "status=placement
 Assert-Contains "Panel placement module" $panelPlacementModule "status=sdk-grabbable-state"
 Assert-Contains "Panel placement module" $panelPlacementModule "status=headlocked-pose-update-skipped"
 Assert-Contains "Panel placement module" $panelPlacementModule "status=headlocked-pose-updated"
-Assert-Contains "Panel placement module" $panelPlacementModule "status=headlock-hotload-updated"
 Assert-Contains "Panel placement module" $panelPlacementModule "status=headlock-tuning-persist-failed"
 Assert-Contains "Panel placement module" $panelPlacementModule "PRIVATE_LAYER_PANEL_DISTANCE_METERS = 1.0f"
 Assert-Contains "Panel interaction state coordinator" $panelInteractionStateCoordinator "internal class SpatialPanelInteractionStateCoordinator"
 Assert-Contains "Panel interaction state coordinator" $panelInteractionStateCoordinator "private var headlockMarkerCount = 0"
-Assert-Contains "Panel interaction state coordinator" $panelInteractionStateCoordinator "private var lastHeadlockHotloadToken"
 Assert-Contains "Panel interaction state coordinator" $panelInteractionStateCoordinator "private var lastJoystickInputMs = 0L"
 Assert-Contains "Panel interaction state coordinator" $panelInteractionStateCoordinator "private var lastPrivateLayerGrabbableState: Boolean? = null"
 Assert-Contains "Panel interaction state coordinator" $panelInteractionStateCoordinator "fun shouldEmitHeadlockPoseMarker("
 Assert-Contains "Panel interaction state coordinator" $panelInteractionStateCoordinator "headlockMarkerCount < MAX_AUTOMATIC_HEADLOCK_MARKERS"
 Assert-Contains "Panel interaction state coordinator" $panelInteractionStateCoordinator "PANEL_HEADLOCK_MARKER_INTERVAL_MS"
-Assert-Contains "Panel interaction state coordinator" $panelInteractionStateCoordinator "fun consumeHeadlockHotloadToken(token: String): Boolean"
 Assert-Contains "Panel interaction state coordinator" $panelInteractionStateCoordinator "fun joystickDeltaSeconds(nowMs: Long): Float"
 Assert-Contains "Panel interaction state coordinator" $panelInteractionStateCoordinator "DEFAULT_JOYSTICK_DELTA_SECONDS"
 Assert-Contains "Panel interaction state coordinator" $panelInteractionStateCoordinator "MAX_JOYSTICK_DELTA_SECONDS"
@@ -1883,7 +1884,6 @@ Assert-NotContains "Panel interaction state coordinator" $panelInteractionStateC
 Assert-NotContains "Panel interaction state coordinator" $panelInteractionStateCoordinator "nativeStart"
 Assert-Contains "Activity" $activity "private val panelInteractionStateCoordinator = SpatialPanelInteractionStateCoordinator()"
 Assert-Contains "Activity" $activity "panelInteractionStateCoordinator.shouldEmitHeadlockPoseMarker("
-Assert-Contains "Activity" $activity "panelInteractionStateCoordinator.consumeHeadlockHotloadToken(token)"
 Assert-Contains "Activity" $activity "joystickDeltaSeconds = panelInteractionStateCoordinator::joystickDeltaSeconds"
 Assert-Contains "Activity" $activity "panelInteractionStateCoordinator::shouldEmitJoystickMarker"
 Assert-Contains "Activity" $activity "panelInteractionStateCoordinator.shouldEmitPrivateLayerGrabbableMarker("
@@ -1955,19 +1955,11 @@ Assert-Contains "Activity" $activity "panelDistanceActuationCoordinator.apply("
 Assert-NotContains "Activity" $activity "private fun applyPanelHeadlockDistanceInput("
 Assert-NotContains "Activity" $activity "private fun applyPrivateLayerPanelFreeTransformDistanceInput("
 Assert-Contains "Panel placement state coordinator" $panelPlacementStateCoordinator "internal class SpatialPanelPlacementStateCoordinator"
-Assert-Contains "Panel placement state coordinator" $panelPlacementStateCoordinator "var workflowPlacement: PanelPlacement = initialWorkflowPlacement"
 Assert-Contains "Panel placement state coordinator" $panelPlacementStateCoordinator "var privateLayerPlacement: PanelPlacement = initialPrivateLayerPlacement"
 Assert-Contains "Panel placement state coordinator" $panelPlacementStateCoordinator "var privateLayerVisible: Boolean = false"
-Assert-Contains "Panel placement state coordinator" $panelPlacementStateCoordinator "fun replaceWorkflowPlacement(placement: PanelPlacement): PanelPlacement"
 Assert-Contains "Panel placement state coordinator" $panelPlacementStateCoordinator "fun replacePrivateLayerPlacement(placement: PanelPlacement): PanelPlacement"
 Assert-Contains "Panel placement state coordinator" $panelPlacementStateCoordinator "fun setPrivateLayerVisibleFlag(visible: Boolean)"
 Assert-Contains "Panel placement state coordinator" $panelPlacementStateCoordinator "fun hideAllPanels()"
-Assert-Contains "Panel placement state coordinator" $panelPlacementStateCoordinator "fun adjustWorkflowPlacement("
-Assert-Contains "Panel placement state coordinator" $panelPlacementStateCoordinator "SpatialPanelPlacementModule.adjustWorkflowPlacement("
-Assert-Contains "Panel placement state coordinator" $panelPlacementStateCoordinator "fun resizeWorkflowPanel(deltaWidth: Float, deltaHeight: Float): PanelPlacement"
-Assert-Contains "Panel placement state coordinator" $panelPlacementStateCoordinator "fun resetWorkflowPanelPlacement(): PanelPlacement"
-Assert-Contains "Panel placement state coordinator" $panelPlacementStateCoordinator "fun setWorkflowHeadlocked(enabled: Boolean): PanelPlacement"
-Assert-Contains "Panel placement state coordinator" $panelPlacementStateCoordinator "fun setWorkflowPanelVisible(visible: Boolean, focus: Boolean): PanelPlacement"
 Assert-Contains "Panel placement state coordinator" $panelPlacementStateCoordinator "fun setPrivateLayerPanelVisible("
 Assert-Contains "Panel placement state coordinator" $panelPlacementStateCoordinator "SpatialPanelPlacementModule.coercePrivateLayerPanelPlacement("
 Assert-Contains "Panel placement state coordinator" $panelPlacementStateCoordinator 'const val MODULE_ID = "spatial-panel-placement-state-coordinator"'
@@ -1982,18 +1974,11 @@ Assert-NotContains "Panel placement state coordinator" $panelPlacementStateCoord
 Assert-NotContains "Panel placement state coordinator" $panelPlacementStateCoordinator "nativeStart"
 Assert-Contains "Activity" $activity "private val panelPlacementStateCoordinator ="
 Assert-Contains "Activity" $activity "SpatialPanelPlacementStateCoordinator("
-Assert-Contains "Activity" $activity "get() = panelPlacementStateCoordinator.workflowPlacement"
 Assert-Contains "Activity" $activity "get() = panelPlacementStateCoordinator.privateLayerPlacement"
 Assert-Contains "Activity" $activity "get() = panelPlacementStateCoordinator.privateLayerVisible"
 Assert-Contains "Activity" $activity "panelPlacementStateCoordinator.hideAllPanels()"
-Assert-Contains "Activity" $activity "panelPlacementStateCoordinator.adjustWorkflowPlacement("
-Assert-Contains "Activity" $activity "panelPlacementStateCoordinator.resizeWorkflowPanel("
-Assert-Contains "Activity" $activity "panelPlacementStateCoordinator.resetWorkflowPanelPlacement()"
-Assert-Contains "Activity" $activity "panelPlacementStateCoordinator.setWorkflowHeadlocked(enabled)"
-Assert-Contains "Activity" $activity "panelPlacementStateCoordinator.setWorkflowPanelVisible(visible, focus)"
 Assert-Contains "Activity" $activity "panelPlacementStateCoordinator.setPrivateLayerPanelVisible("
 Assert-Contains "Activity" $activity "panelPlacementStateCoordinator.replacePrivateLayerPlacement("
-Assert-Contains "Activity" $activity "panelPlacementStateCoordinator.replaceWorkflowPlacement("
 Assert-NotContains "Activity" $activity "private var panelPlacement"
 Assert-NotContains "Activity" $activity "private var privateLayerPanelPlacement"
 Assert-NotContains "Activity" $activity "private var privateLayerPanelVisible"
@@ -2001,11 +1986,9 @@ Assert-Contains "Panel pose coordinator" $panelPoseCoordinator "internal data cl
 Assert-Contains "Panel pose coordinator" $panelPoseCoordinator "internal class SpatialPanelPoseCoordinator"
 Assert-Contains "Panel pose coordinator" $panelPoseCoordinator "fun privateLayerPlacementFromEntity("
 Assert-Contains "Panel pose coordinator" $panelPoseCoordinator "SpatialPanelPlacementModule.coercePrivateLayerPanelPlacement("
-Assert-Contains "Panel pose coordinator" $panelPoseCoordinator "fun headlockedWorkflowPose("
-Assert-Contains "Panel pose coordinator" $panelPoseCoordinator "activityRollStableParticleProjectionBasis(rawForward, yawDegrees)"
 Assert-Contains "Panel pose coordinator" $panelPoseCoordinator "fun privateLayerPoseFromViewer("
 Assert-Contains "Panel pose coordinator" $panelPoseCoordinator "sqrt((distance * distance - lateralSquared)"
-Assert-Contains "Panel pose coordinator" $panelPoseCoordinator "Quaternion.fromDirection(direction, panelUp)"
+Assert-Contains "Panel pose coordinator" $panelPoseCoordinator "SpatialPanelFacing.rotationFacingViewer(direction)"
 Assert-Contains "Panel pose coordinator" $panelPoseCoordinator 'const val MODULE_ID = "spatial-panel-pose-coordinator"'
 Assert-NotContains "Panel pose coordinator" $panelPoseCoordinator "System.getProperty"
 Assert-NotContains "Panel pose coordinator" $panelPoseCoordinator "BuildConfig"
@@ -2018,7 +2001,6 @@ Assert-NotContains "Panel pose coordinator" $panelPoseCoordinator "external fun"
 Assert-NotContains "Panel pose coordinator" $panelPoseCoordinator "nativeStart"
 Assert-Contains "Activity" $activity "private val panelPoseCoordinator = SpatialPanelPoseCoordinator()"
 Assert-Contains "Activity" $activity "panelPoseCoordinator.privateLayerPlacementFromEntity("
-Assert-Contains "Activity" $activity "panelPoseCoordinator.headlockedWorkflowPose("
 Assert-Contains "Activity" $activity "panelPoseCoordinator.privateLayerPoseFromViewer("
 Assert-Contains "Activity" $activity "scene.getViewerPose()"
 Assert-Contains "Activity" $activity "privateLayerPanelEntity?.tryGetComponent<Transform>()"
@@ -2032,7 +2014,6 @@ Assert-Contains "Panel persistence coordinator" $panelPersistenceCoordinator "fu
 Assert-Contains "Panel persistence coordinator" $panelPersistenceCoordinator "fun recordPanelState(source: String)"
 Assert-Contains "Panel persistence coordinator" $panelPersistenceCoordinator '"rusty.quest.spatial_camera_panel.panel_headlock_tuning.v1"'
 Assert-Contains "Panel persistence coordinator" $panelPersistenceCoordinator 'File(bindings.outputDirectory(), PANEL_HEADLOCK_TUNING_FILE)'
-Assert-Contains "Panel persistence coordinator" $panelPersistenceCoordinator '"workflow_panel"'
 Assert-Contains "Panel persistence coordinator" $panelPersistenceCoordinator '"private_layer_panel"'
 Assert-Contains "Panel persistence coordinator" $panelPersistenceCoordinator '"render_mode", "spatial-sdk-mesh"'
 Assert-Contains "Panel persistence coordinator" $panelPersistenceCoordinator '"layer_config", "disabled"'
@@ -2051,9 +2032,8 @@ Assert-Contains "Activity" $activity "private val panelPersistenceCoordinator: S
 Assert-Contains "Activity" $activity "SpatialPanelPersistenceBindings("
 Assert-Contains "Activity" $activity "outputDirectory = { filesDir }"
 Assert-Contains "Activity" $activity "SpatialPanelHeadlockTuningSnapshot("
-Assert-Contains "Activity" $activity "store.recordPanelForegroundState(panelMode, source)"
-Assert-Contains "Activity" $activity "panelPersistenceCoordinator.persistHeadlockTuning("
-Assert-Contains "Activity" $activity "panelPersistenceCoordinator.recordPanelState("
+Assert-Contains "Activity" $activity "status=foreground-state-recorded"
+Assert-Contains "Activity" $activity "persistHeadlockTuning = panelPersistenceCoordinator::persistHeadlockTuning"
 Assert-NotContains "Activity" $activity "private fun persistPanelHeadlockTuning"
 Assert-NotContains "Activity" $activity "private fun recordPanelState"
 Assert-NotContains "Activity" $activity '"rusty.quest.spatial_camera_panel.panel_headlock_tuning.v1"'
@@ -2069,7 +2049,7 @@ Assert-Contains "Camera HWB projection module" $cameraProjectionModule "targetDi
 Assert-Contains "Camera HWB projection module" $cameraProjectionModule "projectionTargetScaleJoystickControlsEnabled=true"
 Assert-Contains "Camera HWB projection module" $cameraProjectionModule "projectionTargetScaleJoystickInput=android-right-stick-y;spatial-sdk-avatar-body-right-thumb-up-down;native-openxr-right-thumbstick-y;panel-control"
 Assert-Contains "Camera HWB projection module" $cameraProjectionModule "stereoHorizontalOffsetJoystickControlsEnabled=false"
-Assert-Contains "Camera HWB projection module" $cameraProjectionModule "stereoHorizontalOffsetJoystickInput=disabled-default-locked-left-stick-y-controls-workflow-or-private-panel-distance-only"
+Assert-Contains "Camera HWB projection module" $cameraProjectionModule "stereoHorizontalOffsetJoystickInput=disabled-default-locked-left-stick-y-controls-private-panel-distance-only"
 Assert-Contains "Camera HWB projection module" $cameraProjectionModule "cameraHwbProjectionStereoHorizontalOffsetIgnoresPanelVisibility=true"
 Assert-Contains "Camera HWB projection module" $cameraProjectionModule "projectionTargetStereoHorizontalOffsetUv="
 Assert-Contains "Camera HWB projection module" $cameraProjectionModule "projectionTargetStereoHorizontalOffsetDefaultUv="
@@ -2106,7 +2086,7 @@ Assert-Contains "Private layer panel control module" $privateLayerPanelControlMo
 Assert-Contains "Private layer panel control module" $privateLayerPanelControlModule "status=depth-alignment-submitted"
 Assert-Contains "Private layer control coordinator" $privateLayerControlCoordinator "internal data class SpatialPrivateLayerControlBindings"
 Assert-Contains "Private layer control coordinator" $privateLayerControlCoordinator "internal class SpatialPrivateLayerControlCoordinator"
-Assert-Contains "Private layer control coordinator" $privateLayerControlCoordinator "var layerOverride: Float by mutableStateOf(PrivateLayerControls.cycleOverride)"
+Assert-Contains "Private layer control coordinator" $privateLayerControlCoordinator "mutableStateOf(fixedLayerOverride ?: PrivateLayerControls.cycleOverride)"
 Assert-Contains "Private layer control coordinator" $privateLayerControlCoordinator "var depthLayerPolicy: Int = PrivateLayerControls.defaultDepthLayerPolicy"
 Assert-Contains "Private layer control coordinator" $privateLayerControlCoordinator "var depthAlignment: PrivateLayerDepthAlignment = PrivateLayerDepthAlignment()"
 Assert-Contains "Private layer control coordinator" $privateLayerControlCoordinator "fun initializeDepthLayerPolicy(policy: Int)"
@@ -2331,9 +2311,11 @@ Assert-Contains "Build manifest" $buildScript "spatial_private_layer_panel_proje
 Assert-Contains "Activity" $activity "privateLayerPanelPoseFromViewer"
 Assert-Contains "Panel placement module" $panelPlacementModule "coercePrivateLayerPanelPlacement"
 Assert-Contains "Activity" $activity "activeHeadlockedPanelPlacement"
-Assert-RegistrationUsesSettings "Compose panel registration module" $composePanelRegistrationModule "ComposeViewPanelRegistration(`r`n          R.id.spatial_private_layer_panel" "ComposeViewPanelRegistration(`r`n          R.id.spatial_camera_panel_launcher" "settingsCreator = bindings.settings"
-Assert-Contains "Spatial validation workflow coordinator" $validationWorkflowCoordinator '"private-layer-panel-open" -> bindings.setPrivateLayerPanelVisible(true, true, source)'
-Assert-Contains "Spatial validation workflow coordinator" $validationWorkflowCoordinator '"private-layer-panel-close" -> bindings.setPrivateLayerPanelVisible(false, false, source)'
+Assert-Contains "Compose panel registration module" $composePanelRegistrationModule "R.id.spatial_private_layer_panel"
+Assert-Contains "Compose panel registration module" $composePanelRegistrationModule "settingsCreator = bindings.settings"
+Assert-NotContains "Compose panel registration module" $composePanelRegistrationModule "spatial_camera_panel_launcher"
+Assert-Contains "Spatial validation workflow coordinator" $validationWorkflowCoordinator '"panel-open", "private-layer-panel-open" ->'
+Assert-Contains "Spatial validation workflow coordinator" $validationWorkflowCoordinator '"panel-close", "private-layer-panel-close" ->'
 Assert-Contains "Surface particle route module" $surfaceParticleRouteModule "nativePanelPoseAuthority=camera-hwb-projection-plane"
 Assert-Contains "Surface particle route module" $surfaceParticleRouteModule "projection-plane-update-suppressed"
 Assert-Contains "Camera HWB projection placement update coordinator" $cameraHwbProjectionPlacementUpdateCoordinator "private fun updateNativePanelPose("
@@ -2436,7 +2418,8 @@ Assert-Contains "Activity" $activity "controllerPollingCoordinator by lazy(LazyT
 Assert-Contains "Activity" $activity "SpatialControllerPollingBindings("
 Assert-Contains "Activity" $activity "featureEnabled = nativeSpatialControllerActionsEnabled()"
 Assert-Contains "Activity" $activity "captureSpatialSnapshot = { SpatialControllerSnapshotAdapter.capture(scene) }"
-Assert-Contains "Activity" $activity "SpatialControllerInputLateFeature(controllerPollingCoordinator::pollSpatialInput)"
+Assert-Contains "Activity" $activity "SpatialControllerInputLateFeature {"
+Assert-Contains "Activity" $activity "if (presentationPolicy.appControlInputsEnabled) {"
 Assert-Contains "Activity" $activity "controllerPollingCoordinator.pollNativeInput()"
 Assert-NotContains "Activity" $activity "pollNativeSpatialControllerProjectionScaleInput"
 Assert-NotContains "Activity" $activity "pollSpatialControllerInput"
@@ -2466,8 +2449,9 @@ Assert-NotContains "Controller input route coordinator" $controllerInputRouteCoo
 Assert-NotContains "Controller input route coordinator" $controllerInputRouteCoordinator "nativePoll"
 Assert-NotContains "Controller input route coordinator" $controllerInputRouteCoordinator "SpatialCameraPanelStore"
 Assert-Contains "Activity" $activity "controllerInputRouteSpec ="
-Assert-Contains "Activity" $activity "enabled = true"
-Assert-Contains "Activity" $activity 'source = "spatial-camera-panel-app-spec"'
+Assert-Contains "Activity" $activity "enabled = presentationPolicy.appControlInputsEnabled"
+Assert-Contains "Activity" $activity '"spatial-camera-panel-app-spec"'
+Assert-Contains "Activity" $activity '"locked-final-presentation-build"'
 Assert-Contains "Activity" $activity "controllerInputRouteCoordinator by lazy(LazyThreadSafetyMode.NONE)"
 Assert-Contains "Activity" $activity "SpatialControllerInputRouteBindings("
 Assert-Contains "Activity" $activity "scene.spatialInterface.enableInput(true)"
@@ -2583,10 +2567,6 @@ Assert-Contains "Activity" $activity "SpatialValidationWorkflowBindings("
 Assert-Contains "Activity" $activity "validationWorkflowCoordinator.dispatchIfRequested(intent)"
 Assert-Contains "Activity" $activity "scheduleParticleLayerLifecycleDiagnostics ="
 Assert-Contains "Activity" $activity "surfaceParticleLifecycleDiagnosticsCoordinator.schedule("
-Assert-Contains "Activity" $activity "logParticleLayerLifecycleStatus = { phase ->"
-Assert-Contains "Activity" $activity "surfaceParticleLifecycleDiagnosticsCoordinator.log("
-Assert-Contains "Activity" $activity "explicitRequest = true"
-Assert-Contains "Activity" $activity "ensurePolarSensorPanel = ::ensurePolarSensorPanel"
 Assert-Contains "Activity" $activity "logError = { message, throwable -> Log.e(TAG, message, throwable) }"
 Assert-NotContains "Activity" $activity "runValidationWorkflowIfRequested"
 Assert-NotContains "Activity" $activity "runUiCommandIfRequested"
@@ -2597,17 +2577,15 @@ Assert-NotContains "Activity" $activity "private const val ACTION_RUN_UI_COMMAND
 Assert-Contains "Spatial validation workflow coordinator" $validationWorkflowCoordinator "internal class SpatialValidationWorkflowCoordinator"
 Assert-Contains "Spatial validation workflow coordinator" $validationWorkflowCoordinator 'MODULE_ID = "spatial-validation-workflow-coordinator"'
 Assert-Contains "Spatial validation workflow coordinator" $validationWorkflowCoordinator "fun dispatchIfRequested(intent: Intent?): Boolean"
-Assert-Contains "Spatial validation workflow coordinator" $validationWorkflowCoordinator "ACTION_RUN_WORKFLOW_SELF_TEST ->"
-Assert-Contains "Spatial validation workflow coordinator" $validationWorkflowCoordinator "ACTION_RUN_POLAR_LIVE_VALIDATION ->"
 Assert-Contains "Spatial validation workflow coordinator" $validationWorkflowCoordinator "ACTION_RUN_UI_COMMAND ->"
 Assert-Contains "Spatial validation workflow coordinator" $validationWorkflowCoordinator "ACTION_RUN_SURFACE_TARGET ->"
 Assert-Contains "Spatial validation workflow coordinator" $validationWorkflowCoordinator "else -> false"
-Assert-Contains "Spatial validation workflow coordinator" $validationWorkflowCoordinator "val store: () -> SpatialCameraPanelStore"
-Assert-Contains "Spatial validation workflow coordinator" $validationWorkflowCoordinator "SpatialValidationCommandModule.selfTestStartMarker"
 Assert-Contains "Spatial validation workflow coordinator" $validationWorkflowCoordinator "SpatialValidationCommandModule.uiCommandCompleteMarker"
 Assert-Contains "Spatial validation workflow coordinator" $validationWorkflowCoordinator "SpatialValidationCommandModule.surfaceTargetActivationStartMarker"
-Assert-Contains "Spatial validation workflow coordinator" $validationWorkflowCoordinator "SpatialValidationCommandModule.polarLiveStartMarker"
-Assert-Contains "Spatial validation workflow coordinator" $validationWorkflowCoordinator "Handler(Looper.getMainLooper())"
+Assert-NotContains "Spatial validation workflow coordinator" $validationWorkflowCoordinator "SpatialCameraPanelStore"
+Assert-NotContains "Spatial validation workflow coordinator" $validationWorkflowCoordinator "participant"
+Assert-NotContains "Spatial validation workflow coordinator" $validationWorkflowCoordinator "questionnaire"
+Assert-NotContains "Spatial validation workflow coordinator" $validationWorkflowCoordinator "polar"
 Assert-NotContains "Spatial validation workflow coordinator" $validationWorkflowCoordinator "external fun"
 Assert-NotContains "Spatial validation workflow coordinator" $validationWorkflowCoordinator "nativeStart"
 Assert-NotContains "Spatial validation workflow coordinator" $validationWorkflowCoordinator "System.getProperty"
@@ -2615,10 +2593,8 @@ Assert-NotContains "Spatial validation workflow coordinator" $validationWorkflow
 Assert-NotContains "Spatial validation workflow coordinator" $validationWorkflowCoordinator "SpatialFeature"
 Assert-NotContains "Spatial validation workflow coordinator" $validationWorkflowCoordinator "createPanelEntity"
 Assert-Contains "Spatial validation command module" $validationCommandModule "MODULE_ID = `"spatial-validation-command-route`""
-Assert-Contains "Spatial validation command module" $validationCommandModule "channel=validation status=self-test-start"
 Assert-Contains "Spatial validation command module" $validationCommandModule "channel=validation status=ui-command-complete"
 Assert-Contains "Spatial validation command module" $validationCommandModule "channel=validation status=surface-target-activation-start"
-Assert-Contains "Spatial validation command module" $validationCommandModule "channel=polar-live-validation status=start"
 Assert-Contains "Spatial validation command module" $validationCommandModule "rendererAuthority=native-vulkan-wsi-surface-panel"
 Assert-NotContains "Activity" $activity "SpatialValidationCommandModule.selfTestStartMarker"
 Assert-NotContains "Activity" $activity "SpatialValidationCommandModule.uiCommandCompleteMarker"
@@ -2628,14 +2604,6 @@ Assert-NotContains "Activity" $activity "channel=validation status=self-test-sta
 Assert-NotContains "Activity" $activity "channel=validation status=ui-command-complete"
 Assert-NotContains "Activity" $activity "channel=validation status=surface-target-activation-start"
 Assert-NotContains "Activity" $activity "channel=polar-live-validation status=start"
-Assert-Contains "Spatial self-test wrapper" $selfTestWrapper 'rusty.quest.spatial_camera_panel_selftest_run.v2'
-Assert-Contains "Spatial self-test wrapper" $selfTestWrapper 'panel_registration_count_4'
-Assert-Contains "Spatial self-test wrapper" $selfTestWrapper 'parameter_submit_self_test_applied'
-Assert-Contains "Spatial self-test wrapper" $selfTestWrapper 'parameter_submit_self_test_suppressed'
-Assert-Contains "Spatial self-test wrapper" $selfTestWrapper 'particle_activation_state'
-Assert-Contains "Spatial self-test wrapper" $selfTestWrapper 'particle_inert_no_runtime_side_effects'
-Assert-NotContains "Spatial self-test wrapper" $selfTestWrapper 'panel_registration_count_3'
-Assert-NotContains "Spatial self-test wrapper" $selfTestWrapper 'parameter_submit_self_test_marker'
 Assert-Contains "Spatial OpenXR route module" $openXrRouteModule "XR_FB_passthrough"
 Assert-Contains "Spatial OpenXR route module" $openXrRouteModule "XR_META_environment_depth"
 Assert-Contains "Camera HWB projection raw carrier coordinator" $cameraHwbProjectionRawCarrierCoordinator "nativeEnvironmentDepthStartMask"
@@ -2664,7 +2632,7 @@ Assert-Contains "Activity" $activity "spatialRequiredOpenXrExtensions="
 Assert-Contains "Spatial OpenXR route module" $openXrRouteModule "SPATIAL_MULTIMODAL_INPUT_DEFAULT_ENABLED = false"
 Assert-Contains "Activity" $activity "spatialControllerOnlyMode=false"
 Assert-Contains "Activity" $activity "spatialHandsAndControllersManifest=true"
-Assert-Contains "Activity" $activity "spatialPointerInputExpected=true"
+Assert-Contains "Activity" $activity 'spatialPointerInputExpected=${presentationPolicy.appControlInputsEnabled}'
 Assert-Contains "Native input bootstrap coordinator" $nativeInputBootstrapCoordinator "SpatialOpenXrRouteModule.nativeSpatialControllerActionSetAttached"
 Assert-Contains "Spatial OpenXR route module" $openXrRouteModule "NATIVE_SPATIAL_CONTROLLER_ACTION_SET_ATTACHED_BIT"
 Assert-Contains "Activity" $activity "controllerInputRouteCoordinator.ensureEnabled"
@@ -2674,7 +2642,6 @@ Assert-Contains "Controller routing module" $controllerRoutingModule "status=spa
 Assert-Contains "Camera HWB projection module" $cameraProjectionModule "eyeSpaceTargetRectPreserved=true"
 Assert-Contains "Camera HWB projection module" $cameraProjectionModule "projectionPlaneAngularCoveragePreserved=true"
 Assert-Contains "Camera HWB projection placement update coordinator" $cameraHwbProjectionPlacementUpdateCoordinator "layer.updateLayer"
-Assert-Contains "Panel placement module" $panelPlacementModule "panelShellVisible &&"
 Assert-Contains "Panel placement module" $panelPlacementModule "!cameraStackSuppressesParticles"
 Assert-Contains "Surface particle runtime coordinator" $surfaceParticleRuntimeCoordinator "SpatialSurfaceParticleRouteModule.cameraStackParticleLayerSuppressedMarker"
 Assert-Contains "Surface particle runtime coordinator" $surfaceParticleRuntimeCoordinator "SpatialSurfaceParticleRouteModule.cameraStackParticleLayerSuppressFailedMarker"
@@ -2699,7 +2666,6 @@ Assert-Contains "Activity" $activity "suppressionSource = ::nativeSurfaceParticl
 Assert-Contains "Activity" $activity "privateRendererEnabled = ::privateSpatialEcsParticleRendererEnabled"
 Assert-Contains "Activity" $activity "receiptLibraryLoaded = { nativeInteropCoordinator.receiptLibraryLoaded }"
 Assert-Contains "Activity" $activity "receiptLibraryError = { nativeInteropCoordinator.receiptLibraryError }"
-Assert-Contains "Activity" $activity "launcherPanelVisible = ::launcherPanelVisibleForPanelMode"
 Assert-Contains "Activity" $activity "stopNative = ::nativeStopSurfaceParticleLayer"
 Assert-Contains "Activity" $activity "SpatialSurfaceParticleStartRequest("
 Assert-Contains "Activity" $activity "surfaceValid = { surface.isValid }"
@@ -2768,24 +2734,16 @@ Assert-Contains "Surface particle projection geometry coordinator" $surfaceParti
 Assert-Contains "Surface particle projection geometry coordinator" $surfaceParticleProjectionGeometryCoordinator "SpatialSurfaceParticleRouteModule.particleLayerViewYawCommandAppliedMarker"
 Assert-NotContains "Activity" $activity "SpatialSurfaceParticleRouteModule.particleLayerTargetDistanceCommandAppliedMarker"
 Assert-NotContains "Activity" $activity "SpatialSurfaceParticleRouteModule.particleLayerViewYawCommandAppliedMarker"
-Assert-Contains "Activity" $activity "SpatialPanelPlacementModule.workflowPlacementUpdatedMarker"
-Assert-Contains "Activity" $activity "SpatialPanelPlacementModule.workflowPanelSizeUpdatedMarker"
-Assert-Contains "Activity" $activity "SpatialPanelPlacementModule.workflowPlacementResetMarker"
-Assert-Contains "Activity" $activity "SpatialPanelPlacementModule.workflowHeadlockModeUpdatedMarker"
 Assert-Contains "Activity" $activity "SpatialPanelPlacementModule.privateLayerPlacementSyncedFromSdkTransformMarker"
 Assert-Contains "Activity" $activity "SpatialPanelPlacementModule.privateLayerGrabbableStateMarker"
-Assert-Contains "Activity" $activity "SpatialPanelPlacementModule.headlockedPoseUpdateSkippedMarker"
 Assert-Contains "Activity" $activity "SpatialPanelPlacementModule.headlockedPoseUpdatedMarker"
-Assert-Contains "Activity" $activity "SpatialPanelPlacementModule.headlockHotloadUpdatedMarker"
 Assert-Contains "Panel persistence coordinator" $panelPersistenceCoordinator "SpatialPanelPlacementModule.headlockTuningPersistFailedMarker"
 Assert-NotContains "Activity" $activity "SpatialPanelPlacementModule.headlockTuningPersistFailedMarker"
-Assert-Contains "Activity" $activity "SpatialPanelPlacementModule.legacyWorkflowPanelsDeactivatedMarker"
 Assert-Contains "Activity" $activity "SpatialPanelPlacementModule.panelShellHiddenMarker"
 Assert-Contains "Panel persistence coordinator" $panelPersistenceCoordinator "SpatialPanelPlacementModule.panelStateRecordFailedMarker"
 Assert-NotContains "Activity" $activity "SpatialPanelPlacementModule.panelStateRecordFailedMarker"
 Assert-NotContains "Activity" $activity "channel=spatial-panel status=panel-state-record-failed"
 Assert-Contains "Activity" $activity "SpatialPanelPlacementModule.panelModeUpdateSuppressedMarker"
-Assert-Contains "Activity" $activity "SpatialPanelPlacementModule.workflowPanelModeUpdatedMarker"
 Assert-Contains "Activity" $activity "SpatialPanelPlacementModule.privateLayerPanelModeUpdatedMarker"
 Assert-NotContains "Activity" $activity "channel=native-surface-particle-layer status=start-suppressed"
 Assert-NotContains "Activity" $activity "channel=native-surface-particle-layer status=start-skipped"
@@ -2874,7 +2832,6 @@ Assert-Contains "Spatial stereo video playback" $spatialStereoVideoPlayback 'ret
 Assert-NotContains "Spatial stereo video playback" $spatialStereoVideoPlayback "noodletest"
 Assert-NotContains "Spatial stereo video playback" $spatialStereoVideoPlayback ".mp4"
 Assert-Contains "Spatial SDK lane boundary" $laneBoundary "internal object SpatialSdkLayerCarrier"
-Assert-Contains "Spatial SDK lane boundary" $laneBoundary "internal object ExperimentPanelControllerBoundary"
 Assert-Contains "Spatial SDK lane boundary" $laneBoundary "internal object CameraProjectionProbeController"
 Assert-Contains "Spatial SDK lane boundary" $laneBoundary "internal object PublicMultiStackController"
 Assert-Contains "Spatial SDK lane boundary" $laneBoundary "kind = SpatialSdkLaneKind.PublicMultiStack"
@@ -2887,7 +2844,6 @@ Assert-Contains "Spatial SDK lane boundary" $laneBoundary "internal object Spati
 Assert-Contains "Spatial SDK lane boundary" $laneBoundary "spatial-sdk-packaged-virtual-room"
 Assert-Contains "Spatial SDK lane boundary" $laneBoundary "MRUK real-room placement"
 Assert-Contains "Spatial SDK lane boundary" $laneBoundary "internal object SpatialDebugProbeController"
-Assert-Contains "Spatial SDK lane boundary" $laneBoundary 'mustNotOwn = setOf("surface particles", "driver-profile dynamics", "questionnaire state")'
 Assert-Contains "Spatial staged asset module" $stagedAssetModule 'MODULE_ID = "spatial-sdk-staged-3d-asset"'
 Assert-Contains "Spatial staged asset module" $stagedAssetModule "debug.rustyquest.spatial.asset_model.mesh_uri"
 Assert-Contains "Spatial staged asset module" $stagedAssetModule "MeshCollision.NoCollision"
@@ -2926,46 +2882,37 @@ Assert-Contains "Public multi-stack" $publicMultiStack "publicMultiStackGuidePas
 Assert-Contains "Public multi-stack" $publicMultiStack "publicGuideBlurShader=public_guide_blur.frag.glsl"
 Assert-Contains "Public multi-stack" $publicMultiStack "RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OPAQUE_GUIDE_SHADER"
 Assert-Contains "Public multi-stack" $publicMultiStack "public-guide-blur"
+Assert-Contains "Public multi-stack" $publicMultiStack "publicGuideProcessingDefault=native-parity"
+Assert-Contains "Public multi-stack" $publicMultiStack "publicGuideKernelAlternatives=native-box5+gaussian5"
+Assert-Contains "Public multi-stack" $publicMultiStack "publicGuideInputAlternatives=luma+rgb-preserve"
+Assert-Contains "Public multi-stack" $publicMultiStack "publicGuidePerEyeExtent=384x384"
 Assert-Contains "Public multi-stack" $publicMultiStack "publicMultiStackDownstreamPayloadActive=false"
 Assert-Contains "Public multi-stack" $publicMultiStack 'private const val LAYER_COUNT = 9'
 Assert-Contains "Public multi-stack" $publicMultiStack "7:meta-passthrough-edge-window"
 Assert-Contains "Public multi-stack" $publicMultiStack "8:raw-custom-projection"
 Assert-Contains "Public multi-stack" $publicMultiStack "rawCustomProjectionSource=camera2-hwb-direct-sample"
 Assert-Contains "Public multi-stack" $publicMultiStack "metaPassthroughEdgeWindowDefaultActive=false"
-Assert-Contains "Experiment panel controller" $panelController "internal object ExperimentPanelController"
-Assert-Contains "Experiment panel controller" $panelController 'highRatePayloadPolicy: String = "forbidden"'
-Assert-Contains "Experiment panel controller" $panelController "panelFirstLaunchResetMarker"
-Assert-Contains "Experiment panel controller" $panelController "status=panel-first-launch-reset"
-Assert-Contains "Experiment panel controller" $panelController "panelFirstFlowReadyMarker"
-Assert-Contains "Experiment panel controller" $panelController "status=panel-first-flow-ready"
-Assert-Contains "Experiment panel controller" $panelController "questionnaireAutoPanelPolicyUpdatedMarker"
-Assert-Contains "Experiment panel controller" $panelController "status=questionnaire-auto-panel-policy-updated"
-Assert-Contains "Activity" $activity "ExperimentPanelController.panelFirstLaunchResetMarker"
-Assert-Contains "Activity" $activity "ExperimentPanelController.panelFirstFlowReadyMarker"
-Assert-Contains "Activity" $activity "ExperimentPanelController.questionnaireAutoPanelPolicyUpdatedMarker"
 Assert-NotContains "Activity" $activity "channel=experiment-panel status=panel-first-launch-reset"
 Assert-NotContains "Activity" $activity "channel=experiment-panel status=panel-first-flow-ready"
 Assert-NotContains "Activity" $activity "channel=experiment-panel status=questionnaire-auto-panel-policy-updated"
-Assert-Contains "Experiment panel controller" $panelController "internal fun SpatialCameraPanel("
-Assert-Contains "Experiment panel controller" $panelController "internal fun SpatialCameraPanelLauncher("
 Assert-Contains "Compose panel registration module" $composePanelRegistrationModule 'MODULE_ID = "spatial-compose-panel-registration"'
-Assert-Contains "Compose panel registration module" $composePanelRegistrationModule "SpatialWorkflowPanelRegistrationBindings"
 Assert-Contains "Compose panel registration module" $composePanelRegistrationModule "SpatialPrivateLayerPanelRegistrationBindings"
 Assert-Contains "Compose panel registration module" $composePanelRegistrationModule "ComposeViewPanelRegistration("
-Assert-Contains "Compose panel registration module" $composePanelRegistrationModule "R.id.spatial_camera_panel"
 Assert-Contains "Compose panel registration module" $composePanelRegistrationModule "R.id.spatial_private_layer_panel"
-Assert-Contains "Compose panel registration module" $composePanelRegistrationModule "R.id.spatial_camera_panel_launcher"
-Assert-Contains "Compose panel registration module" $composePanelRegistrationModule "SpatialCameraPanel("
 Assert-Contains "Compose panel registration module" $composePanelRegistrationModule "PrivateLayerControlPanel("
 Assert-Contains "Compose panel registration module" $composePanelRegistrationModule "layerOverride = bindings.layerOverride()"
-Assert-Contains "Compose panel registration module" $composePanelRegistrationModule "SpatialCameraPanelLauncher("
+Assert-Contains "Compose panel registration module" $composePanelRegistrationModule "guideProcessing = bindings.guideProcessing"
+Assert-Contains "Compose panel registration module" $composePanelRegistrationModule "updateGuideProcessing = bindings.updateGuideProcessing"
+Assert-NotContains "Compose panel registration module" $composePanelRegistrationModule "SpatialCameraPanel("
+Assert-NotContains "Compose panel registration module" $composePanelRegistrationModule "SpatialCameraPanelLauncher("
 Assert-NotContains "Compose panel registration module" $composePanelRegistrationModule "nativeStart"
 Assert-NotContains "Compose panel registration module" $composePanelRegistrationModule "marker("
 Assert-NotContains "Compose panel registration module" $composePanelRegistrationModule "Entity.create"
 Assert-NotContains "Compose panel registration module" $composePanelRegistrationModule "System.loadLibrary"
 Assert-Contains "Activity" $activity "SpatialComposePanelRegistrationModule.registrations("
-Assert-Contains "Activity" $activity "SpatialWorkflowPanelRegistrationBindings("
 Assert-Contains "Activity" $activity "SpatialPrivateLayerPanelRegistrationBindings("
+Assert-Contains "Activity" $activity "nativeUpdatePrivateLayerGuideProcessing("
+Assert-Contains "Activity" $activity "initialPrivateLayerGuideProcessing"
 Assert-NotContains "Activity" $activity "ComposeViewPanelRegistration("
 Assert-Contains "Private layer panel" $privateLayerPanel "internal fun PrivateLayerControlPanel("
 Assert-Contains "Private layer panel" $privateLayerPanel "Layer Selection Panel"
@@ -2976,6 +2923,10 @@ Assert-Contains "Private layer panel" $privateLayerPanel "Turn image projection 
 Assert-Contains "Private layer panel" $privateLayerPanel "Turn image projection panel on"
 Assert-Contains "Private layer panel" $privateLayerPanel "Depth Source"
 Assert-Contains "Private layer panel" $privateLayerPanel "Depth Alignment"
+Assert-Contains "Private layer panel" $privateLayerPanel "Guide Processing A/B"
+Assert-Contains "Private layer panel" $privateLayerPanel "Native target"
+Assert-Contains "Private layer panel" $privateLayerPanel "Gaussian + RGB"
+Assert-Contains "Private layer panel" $privateLayerPanel "Preserve RGB"
 Assert-Contains "Private layer panel" $privateLayerPanel "PrivateLayerControls.layers"
 Assert-Contains "Private layer panel" $privateLayerPanel "PrivateLayerControls.depthSourcePolicies"
 Assert-Contains "Private layer panel" $privateLayerPanel "updateDepthLayerPolicy"
@@ -3002,6 +2953,14 @@ Assert-Contains "Private layer panel control module" $privateLayerPanelControlMo
 Assert-Contains "Private layer panel control module" $privateLayerPanelControlModule 'PrivateLayerDepthSourceChoice(depthPolicyMonoLayer1, "Mono 1", "mono-layer1")'
 Assert-Contains "Private layer panel control module" $privateLayerPanelControlModule 'PrivateLayerDepthSourceChoice(depthPolicyEyeIndex, "Stereo (per eye)", "eye-index")'
 Assert-Contains "Private layer panel control module" $privateLayerPanelControlModule 'PrivateLayerDepthSourceChoice(depthPolicyCompare, "Compare", "compare")'
+Assert-Contains "Private layer panel control module" $privateLayerPanelControlModule "nativeParityGuideProcessing"
+Assert-Contains "Private layer panel control module" $privateLayerPanelControlModule "gaussianRgbGuideProcessing"
+Assert-Contains "Private layer panel control module" $privateLayerPanelControlModule "publicGuideProcessingDefault=native-parity"
+Assert-Contains "Private layer panel control module" $privateLayerPanelControlModule "publicGuideKernelAlternatives=native-box5+gaussian5"
+Assert-Contains "Private layer panel control module" $privateLayerPanelControlModule "publicGuideInputAlternatives=luma+rgb-preserve"
+Assert-Contains "Private layer control coordinator" $privateLayerControlCoordinator "updateGuideProcessingNative"
+Assert-Contains "Private layer control coordinator" $privateLayerControlCoordinator "initializeGuideProcessing"
+Assert-Contains "Private layer control coordinator" $privateLayerControlCoordinator "guideProcessingSubmittedMarker"
 $privateLayerLabelNeedles = @(
   ("Raw " + "brightness"),
   ("Pre" + "blur brightness"),
@@ -3043,14 +3002,11 @@ Assert-Contains "Spatial validation workflow coordinator" $validationWorkflowCoo
 Assert-Contains "Activity" $activity "private val surfaceParticleParameterCoordinator by lazy"
 Assert-Contains "Activity" $activity "SpatialSurfaceParticleParameterBindings("
 Assert-Contains "Activity" $activity "receiptLibraryLoaded = { nativeInteropCoordinator.receiptLibraryLoaded }"
-Assert-Contains "Activity" $activity "workflowPanelVisible = { panelPlacement.visible }"
 Assert-Contains "Activity" $activity "submitNativeParameters = { controls ->"
 Assert-Contains "Activity" $activity "nativeUpdateSurfaceParticleParameters("
 Assert-Contains "Activity" $activity "resolveNativeAlias = ::nativeResolveSurfaceParticleAliasParameter"
 Assert-Contains "Activity" $activity "currentParticleControls = { surfaceParticleParameterCoordinator.controls }"
 Assert-Contains "Activity" $activity "surfaceParticleParameterCoordinator.updateControls(controls, source)"
-Assert-Contains "Activity" $activity "surfaceParticleParameterCoordinator.updateControls(controls)"
-Assert-Contains "Activity" $activity "surfaceParticleParameterCoordinator.applyDriverProfile(block, source)"
 Assert-Contains "Activity" $activity 'surfaceParticleParameterCoordinator.submit(source = "start")'
 Assert-Contains "Activity" $activity "private fun resolveSurfaceParticleAliasControl"
 Assert-Contains "Activity" $activity "SpatialValidationWorkflowCoordinator.EXTRA_PARTICLE_ALIAS_PARAMETER_ID"
@@ -3136,9 +3092,8 @@ Assert-NotContains "Activity" $activity "private var particleSurfaceConsumerSurf
 Assert-Contains "Activity" $activity "private val surfaceParticleRecenterCoordinator by lazy"
 Assert-Contains "Activity" $activity "SpatialSurfaceParticleRecenterBindings("
 Assert-Contains "Activity" $activity 'surfaceParticleRuntimeCoordinator.reconcileAdapterAdmission("recenter-effect")'
-Assert-Contains "Activity" $activity "surfaceTargetId = { store.snapshot().surfaceTargetId }"
+Assert-Contains "Activity" $activity "surfaceTargetId = { surfaceTargetId }"
 Assert-Contains "Activity" $activity "particleLayerVisible = ::particleLayerVisibleForPanelMode"
-Assert-Contains "Activity" $activity "workflowPanelVisible = { panelPlacement.visible }"
 Assert-Contains "Activity" $activity "privateLayerPanelVisible = { privateLayerPanelVisible }"
 Assert-Contains "Activity" $activity "receiptLibraryLoaded = { nativeInteropCoordinator.receiptLibraryLoaded }"
 Assert-Contains "Activity" $activity "recenterNative = ::nativeRecenterSurfaceParticleSphereOnViewer"
@@ -3307,20 +3262,6 @@ Assert-Contains "Spatial hand capture CLI" $spatialHandCaptureTool "debug.rustyq
 Assert-Contains "App Gradle" $appGradle "RUSTY_QUEST_SPATIAL_HAND_MESH_RIG_ASSET_DIR"
 Assert-Contains "App Gradle" $appGradle "HAND_MESH_RIG_PACKAGED"
 Assert-Contains "App Gradle" $appGradle "HAND_ALIGNMENT_VIEWER_MARKERS_ENABLED_DEFAULT"
-Assert-Contains "Store" $store 'SESSION_SCHEMA = "rusty.quest.spatial_camera_panel.session.v1"'
-Assert-Contains "Store" $store 'EVENT_SCHEMA = "rusty.quest.spatial_camera_panel.event.v1"'
-Assert-Contains "Store" $store 'QUESTIONNAIRE_SCHEMA = "rusty.quest.spatial_camera_panel.questionnaire.v1"'
-Assert-Contains "Store" $store "driver0_value01"
-Assert-Contains "Store" $store "driver1_value01"
-Assert-Contains "Store" $store "rusty.quest.spatial_camera_panel.driver_profile.profile-a.v1"
-Assert-Contains "Store" $store "rusty.quest.spatial_camera_panel.driver_profile.profile-d.v1"
-Assert-Contains "Experiment panel controller" $panelController "updateParticleControls: (SurfaceParticleControlState) -> SurfaceParticleControlState"
-Assert-Contains "Experiment panel controller" $panelController '"Driver 7"'
-Assert-Contains "Experiment panel controller" $panelController '"Tracer slots"'
-Assert-Contains "Experiment panel controller" $panelController '"Tracer lifetime"'
-Assert-Contains "Experiment panel controller" $panelController '"Tracer copies/s"'
-Assert-Contains "Experiment panel controller" $panelController '"Opacity"'
-Assert-Contains "Experiment panel controller" $panelController '"World scale"'
 Assert-Contains "Activity" $activity "driver7Value01: Float"
 Assert-Contains "Activity" $activity "tracerDrawSlotsPerOscillator: Float"
 Assert-Contains "Surface particle route module" $surfaceParticleRouteModule "privateSurfaceParticleUiParameterPacketReady=true"
@@ -3382,6 +3323,21 @@ Assert-Contains "Native receipt build script" $nativeBuildScript "PUBLIC_GUIDE_B
 Assert-Contains "Native receipt build script" $nativeBuildScript "OPAQUE_GUIDE_SHADER_PASS_BYTE_COUNTS"
 Assert-Contains "Native receipt build script" $nativeBuildScript "OPAQUE_PROJECTION_EFFECT"
 Assert-Contains "Native receipt build script" $nativeBuildScript "PRIVATE_SURFACE_PARTICLE_PROFILE_CONFIGURED"
+Assert-Contains "Build script" $buildScript 'spatial_public_guide_target_extent = "768x384-packed-stereo"'
+Assert-Contains "Build script" $buildScript 'spatial_public_guide_per_eye_extent = "384x384"'
+Assert-Contains "Build script" $buildScript 'spatial_public_guide_processing_default = "native-parity"'
+Assert-Contains "Build script" $buildScript 'spatial_public_guide_preblur_kernel_default = "native-box5"'
+Assert-Contains "Build script" $buildScript 'spatial_public_guide_preblur_input_default = "luma"'
+Assert-Contains "Build script" $buildScript 'spatial_public_guide_postblur_kernel_default = "native-box5"'
+Assert-Contains "Build script" $buildScript 'spatial_public_guide_kernel_alternatives = @("native-box5", "gaussian5")'
+Assert-Contains "Build script" $buildScript 'spatial_public_guide_input_alternatives = @("luma", "rgb-preserve")'
+Assert-Contains "Build script" $buildScript '[switch]$LockedFinalPresentation'
+Assert-Contains "Build script" $buildScript 'DistortionSpeedScale = 1.0'
+Assert-Contains "Build script" $buildScript 'locked_final_private_layer_override'
+Assert-Contains "Build script" $buildScript 'locked_projection_scale'
+Assert-Contains "Build script" $buildScript 'locked_video_border_forced_enabled'
+Assert-Contains "Build script" $buildScript 'distortion_effective_phase_rate_hz'
+Assert-Contains "Build script" $buildScript "spatial_public_opaque_guide_native_phase_rate_hz = (0.5 * `$resolvedDistortionSpeedScale)"
 Assert-Contains "Native receipt build script" $nativeBuildScript "PRIVATE_SURFACE_PARTICLE_PAYLOAD_DIR_CONFIGURED"
 Assert-Contains "Native receipt build script" $nativeBuildScript "PRIVATE_SURFACE_PARTICLE_SHADER_COMPILED"
 Assert-Contains "Native receipt build script" $nativeBuildScript "PRIVATE_SURFACE_PARTICLE_PAYLOAD_FILES_PRESENT"
@@ -3530,6 +3486,10 @@ Assert-Contains "Native public multi-stack" $nativeMultiStack "publicMultiStackP
 Assert-Contains "Native public multi-stack" $nativeMultiStack "publicMultiStackPrivateSurfaceParticleExecutionReady="
 Assert-Contains "Native public multi-stack" $nativeMultiStack "PRIVATE_SURFACE_PARTICLE_PROFILE_CONFIGURED"
 Assert-Contains "Native public multi-stack" $nativeMultiStack "public-guide-blur"
+Assert-Contains "Native public multi-stack" $nativeMultiStack "publicGuideProcessingDefault=native-parity"
+Assert-Contains "Native public multi-stack" $nativeMultiStack "publicGuideKernelAlternatives=native-box5+gaussian5"
+Assert-Contains "Native public multi-stack" $nativeMultiStack "publicGuideInputAlternatives=luma+rgb-preserve"
+Assert-Contains "Native public multi-stack" $nativeMultiStack "publicGuidePerEyeExtent=384x384"
 Assert-Contains "Native public multi-stack" $nativeMultiStack "publicMultiStackDownstreamPayloadActive=false"
 Assert-Contains "Native public multi-stack runtime" $nativeMultiStackRuntime "SPATIAL_PUBLIC_GUIDE_TARGET_COUNT"
 Assert-Contains "Native public multi-stack runtime" $nativeMultiStackRuntime "SPATIAL_PUBLIC_GUIDE_TARGET_FORMAT"
@@ -3550,6 +3510,12 @@ Assert-Contains "Native public multi-stack runtime" $nativeMultiStackRuntime "cr
 Assert-Contains "Native public multi-stack runtime" $nativeMultiStackRuntime "create_public_blur_pipeline"
 Assert-Contains "Native public multi-stack runtime" $nativeMultiStackRuntime "record_public_blur_pass"
 Assert-Contains "Native public multi-stack runtime" $nativeMultiStackRuntime "PublicGuideBlurDirection"
+Assert-Contains "Native public multi-stack runtime" $nativeMultiStackRuntime "SpatialGuideBlurStage"
+Assert-Contains "Native public multi-stack runtime" $nativeMultiStackRuntime "SPATIAL_PUBLIC_GUIDE_PER_EYE_WIDTH: u32 = 384"
+Assert-Contains "Native public multi-stack runtime" $nativeMultiStackRuntime "SPATIAL_PUBLIC_GUIDE_PER_EYE_HEIGHT: u32 = 384"
+Assert-Contains "Native public multi-stack runtime" $nativeMultiStackRuntime "update_spatial_public_guide_processing_policy"
+Assert-Contains "Native public multi-stack runtime" $nativeMultiStackRuntime "initialize_spatial_public_guide_processing_policy_from_properties"
+Assert-Contains "Native public multi-stack runtime" $nativeMultiStackRuntime "debug.rustyquest.spatial.camera_hwb_projection_probe.guide.preblur.kernel"
 Assert-Contains "Native public multi-stack runtime" $nativeMultiStackRuntime "source_rect"
 Assert-Contains "Native public multi-stack runtime" $nativeMultiStackRuntime "packed_eye_source_rect"
 Assert-Contains "Native public multi-stack runtime" $nativeMultiStackRuntime "packed_projection_target_rect"
@@ -3657,11 +3623,23 @@ Assert-Contains "Native environment depth" $nativeEnvironmentDepth "environmentD
 Assert-Contains "Native environment depth" $nativeEnvironmentDepth "environmentDepthRealProviderBound=true"
 Assert-Contains "Native environment depth" $nativeEnvironmentDepth "environmentDepthValidData=true"
 Assert-Contains "Native lib" $nativeLib "mod spatial_environment_depth"
+Assert-Contains "Native lib" $nativeLib "mod spatial_guide_processing"
 Assert-Contains "Native multimodal input" $nativeMultimodalInput "xrResumeSimultaneousHandsAndControllersTrackingMETA"
 Assert-Contains "Public guide blur shader" $publicGuideBlurShader "PublicGuideBlurPush"
 Assert-Contains "Public guide blur shader" $publicGuideBlurShader "stepAndScale"
 Assert-Contains "Public guide blur shader" $publicGuideBlurShader "sourceRect"
 Assert-Contains "Public guide blur shader" $publicGuideBlurShader "guideTexture"
+Assert-Contains "Public guide blur shader" $publicGuideBlurShader "vec4 processing"
+Assert-Contains "Public guide blur shader" $publicGuideBlurShader "return 0.2"
+Assert-Contains "Public guide blur shader" $publicGuideBlurShader "0.38774"
+Assert-Contains "Public guide blur shader" $publicGuideBlurShader "0.2126"
+Assert-Contains "Spatial guide processing" $spatialGuideProcessing "SpatialGuideBlurKernel"
+Assert-Contains "Spatial guide processing" $spatialGuideProcessing "NativeBox5"
+Assert-Contains "Spatial guide processing" $spatialGuideProcessing "Gaussian5"
+Assert-Contains "Spatial guide processing" $spatialGuideProcessing "SpatialGuideInputTreatment"
+Assert-Contains "Spatial guide processing" $spatialGuideProcessing "publicGuideProcessingPreset="
+Assert-Contains "Spatial guide processing" $spatialGuideProcessing "publicGuideKernelAlternatives=native-box5+gaussian5"
+Assert-Contains "Spatial guide processing" $spatialGuideProcessing "publicGuideInputAlternatives=luma+rgb-preserve"
 Assert-Contains "Camera HWB stream" $cameraStream "AImageReader_newWithUsage"
 Assert-Contains "Camera HWB stream" $cameraStream "AImage_getHardwareBuffer"
 Assert-Contains "Camera HWB stream" $cameraStream "StereoCamera50_51"
@@ -3670,6 +3648,8 @@ Assert-Contains "Camera HWB probe" $cameraProbe "status=public-multistack-projec
 Assert-Contains "Camera HWB probe" $cameraProbe "status=public-multistack-depth-evidence"
 Assert-Contains "Camera HWB probe" $cameraProbe "status=public-multistack-depth-alignment-evidence"
 Assert-Contains "Camera HWB probe" $cameraProbe "status=public-multistack-depth-source-evidence"
+Assert-Contains "Camera HWB probe" $cameraProbe "nativeUpdatePrivateLayerGuideProcessing"
+Assert-Contains "Camera HWB probe" $cameraProbe "status=private-layer-guide-processing-updated"
 Assert-Contains "Camera HWB WSI" $cameraWsi "create_ahb_sampler_ycbcr_conversion"
 Assert-Contains "Camera HWB WSI" $cameraWsi "record_camera_hwb_probe_command_buffer"
 Assert-Contains "Camera HWB WSI" $cameraWsi "select_camera_surface_device"
@@ -4150,9 +4130,9 @@ Assert-Contains "Replay hands" $replayHands "center: [0.0, 1.22, -2.0]"
 Assert-Contains "Replay hands" $replayHands "width_meters: 4.0"
 Assert-Contains "Replay hands" $replayHands "height_meters: 4.0"
 Assert-Contains "Build script" $buildScript "libspatial_camera_panel_native_receipt.so"
-Assert-Contains "Build script" $buildScript 'driver_profile_mapping = "driver0_value01-to-native-driver0;driver1_value01-to-native-driver1"'
-Assert-Contains "Build script" $buildScript 'questionnaire_schema = "rusty.quest.spatial_camera_panel.questionnaire.v1"'
-Assert-Contains "Build script" $buildScript 'spatial_input_mode = "interaction-sdk-hands-and-controllers"'
+Assert-Contains "Build script" $buildScript 'spatial_input_mode = $(if ($lockedFinalPresentationEnabled)'
+Assert-Contains "Build script" $buildScript '"disabled-presentation-output-only"'
+Assert-Contains "Build script" $buildScript '"interaction-sdk-hands-and-controllers"'
 Assert-Contains "Build script" $buildScript 'spatial_handtracking_manifest_declared = $true'
 Assert-Contains "Build script" $buildScript 'spatial_render_model_manifest_declared = $true'
 Assert-Contains "Build script" $buildScript 'spatial_scene_permission_declared = $true'
@@ -4344,7 +4324,7 @@ Assert-Contains "Camera projection smoke wrapper" $cameraProjectionSmoke "partic
 Assert-Contains "Camera projection smoke wrapper" $cameraProjectionSmoke "status=first-camera-frame-presented"
 Assert-Contains "Camera projection smoke wrapper" $cameraProjectionSmoke "stereoSource=camera50-51"
 Assert-Contains "Camera projection smoke wrapper" $cameraProjectionSmoke "outputMode=raw-color-target-rect"
-Assert-Contains "Camera projection smoke wrapper" $cameraProjectionSmoke "stereoHorizontalOffsetJoystickInput=disabled-default-locked-left-stick-y-controls-workflow-or-private-panel-distance-only"
+Assert-Contains "Camera projection smoke wrapper" $cameraProjectionSmoke "stereoHorizontalOffsetJoystickInput=disabled-default-locked-left-stick-y-controls-private-panel-distance-only"
 Assert-Contains "Camera projection smoke wrapper" $cameraProjectionSmoke "projection_panel_input_pass_through"
 Assert-Contains "Camera projection smoke wrapper" $cameraProjectionSmoke "projection_panel_hittable_no_collision"
 Assert-Contains "Camera projection smoke wrapper" $cameraProjectionSmoke "private_layer_panel_default_reach_distance_preserved"
@@ -4370,7 +4350,6 @@ Assert-Contains "Camera projection smoke wrapper" $cameraProjectionSmoke "spatia
 Assert-Contains "Camera projection smoke wrapper" $cameraProjectionSmoke "spatial_asset_model_private_source_not_packaged"
 Assert-Contains "Camera projection smoke wrapper" $cameraProjectionSmoke "spatial_virtual_room_loaded"
 Assert-Contains "Camera projection smoke wrapper" $cameraProjectionSmoke "camera_projection_wall_toggle_disabled"
-Assert-Contains "Camera projection smoke wrapper" $cameraProjectionSmoke "legacy_launcher_panel_suppressed"
 Assert-Contains "Camera projection smoke wrapper" $cameraProjectionSmoke "camera_projection_initial_full_fov_mode"
 Assert-Contains "Camera projection smoke wrapper" $cameraProjectionSmoke "camera_projection_room_render_order"
 Assert-Contains "Camera projection smoke wrapper" $cameraProjectionSmoke "private_layer_controls_apply_to_wall_and_full_fov"
@@ -4456,11 +4435,8 @@ Assert-Contains "UI action wrapper" $uiActionWrapper '"tracer_lifetime_seconds"'
 Assert-Contains "UI action wrapper" $uiActionWrapper '"tracer_copies_per_second"'
 Assert-Contains "UI action wrapper" $uiActionWrapper '"transparency_opacity"'
 Assert-Contains "UI action wrapper" $uiActionWrapper '"projection_world_scale"'
-$uiActionProjectionWorldScaleIndex = $uiActionWrapper.IndexOf('"projection_world_scale"')
-$uiActionNotesIndex = $uiActionWrapper.LastIndexOf('"notes"')
-if ($uiActionProjectionWorldScaleIndex -lt 0 -or $uiActionNotesIndex -lt 0 -or $uiActionNotesIndex -lt $uiActionProjectionWorldScaleIndex) {
-    throw "UI action wrapper must append free-text notes after particle-control extras so adb shell am parsing cannot drop live-control fields."
-}
+Assert-Contains "UI action wrapper" $uiActionWrapper '"particle_layer_target_distance_meters"'
+Assert-Contains "UI action wrapper" $uiActionWrapper '"particle_layer_view_yaw_degrees"'
 Assert-Contains "Particle alias smoke" $particleAliasSmoke "rusty.quest.spatial_camera_panel_particle_alias_smoke.v1"
 Assert-Contains "Particle alias smoke" $particleAliasSmoke "controller_input_required = `$false"
 Assert-Contains "Particle alias smoke" $particleAliasSmoke "adb-am-start-intent-commands-no-physical-controller"
@@ -4684,7 +4660,7 @@ Assert-Contains "README" $readme "SpatialPanelDistanceActuationCoordinator.kt"
 Assert-Contains "README" $readme "normal versus free-transform distance routing"
 Assert-Contains "README" $readme "actuation cannot register, show, or"
 Assert-Contains "README" $readme "SpatialPanelPlacementStateCoordinator.kt"
-Assert-Contains "README" $readme "mutable owner for workflow placement"
+Assert-Contains "README" $readme "mutable owner for private-layer placement"
 Assert-Contains "README" $readme "Placement state cannot register or activate a feature"
 Assert-Contains "README" $readme "SpatialPanelPoseCoordinator.kt"
 Assert-Contains "README" $readme "entity-pose-to-placement geometry"
@@ -4715,14 +4691,12 @@ Assert-Contains "README" $readme "native receipt library-load and interop probe/
 Assert-Contains "README" $readme "native passthrough and"
 Assert-Contains "README" $readme "native controller-action start marker"
 Assert-Contains "README" $readme "SpatialValidationCommandModule.kt"
-Assert-Contains "README" $readme "validation and"
-Assert-Contains "README" $readme "remote UI command route marker policy"
+Assert-Contains "README" $readme "remote UI and"
+Assert-Contains "README" $readme "surface-target validation marker policy"
 Assert-Contains "README" $readme "SpatialValidationWorkflowCoordinator.kt"
 Assert-Contains "README" $readme "exact-action intent opt-ins"
-Assert-Contains "README" $readme "Ordinary launches are inert"
+Assert-Contains "README" $readme "are inert unless the intent action matches"
 Assert-Contains "README" $readme "typed panel,"
-Assert-Contains "README" $readme "experiment lifecycle and auto-panel marker"
-Assert-Contains "README" $readme "must not emit markers directly"
 Assert-Contains "README" $readme "SpatialComposePanelRegistrationModule.kt"
 Assert-Contains "README" $readme "video-surface carrier authority"
 Assert-Contains "README" $readme "SpatialSurfaceParticleRouteModule.kt"
@@ -4764,7 +4738,7 @@ Assert-Contains "README" $readme "registerRequiredOpenXRExtensions()"
 Assert-Contains "README" $readme "XR_META_detached_controllers"
 Assert-Contains "README" $readme "Invoke-SpatialCameraPanelAndroidCameraHwbProjectionSmoke.ps1"
 Assert-Contains "README" $readme "right-stick-y-projection-target-scale"
-Assert-Contains "README" $readme "controls workflow panel distance"
+Assert-Contains "README" $readme "controls the layer-control panel's stored distance"
 Assert-Contains "README" $readme "Right-stick X is intentionally"
 Assert-Contains "README" $readme "spatial_private_layer_panel"
 Assert-Contains "README" $readme "Grabbable(type = PIVOT_Y)"
@@ -4838,7 +4812,7 @@ Assert-Contains "Implementation notes" $notes "SpatialPanelDistanceActuationCoor
 Assert-Contains "Implementation notes" $notes "panel-distance dead-zone/rate integration"
 Assert-Contains "Implementation notes" $notes "prohibit feature"
 Assert-Contains "Implementation notes" $notes "SpatialPanelPlacementStateCoordinator.kt"
-Assert-Contains "Implementation notes" $notes "workflow placement, private-layer placement"
+Assert-Contains "Implementation notes" $notes "private-layer placement, visibility"
 Assert-Contains "Implementation notes" $notes "prohibit feature registration or activation"
 Assert-Contains "Implementation notes" $notes "SpatialPanelPoseCoordinator.kt"
 Assert-Contains "Implementation notes" $notes "entity-pose-to-placement geometry"
@@ -4871,10 +4845,8 @@ Assert-Contains "Implementation notes" $notes "native controller-action start ma
 Assert-Contains "Implementation notes" $notes "SpatialValidationCommandModule.kt"
 Assert-Contains "Implementation notes" $notes "validation and remote UI command marker policy"
 Assert-Contains "Implementation notes" $notes "SpatialValidationWorkflowCoordinator.kt"
-Assert-Contains "Implementation notes" $notes "four exact-action validation intent opt-ins"
+Assert-Contains "Implementation notes" $notes "two exact-action validation intent opt-ins"
 Assert-Contains "Implementation notes" $notes "keep ordinary"
-Assert-Contains "Implementation notes" $notes "experiment lifecycle and auto-panel"
-Assert-Contains "Implementation notes" $notes "ExperimentPanelController.kt"
 Assert-Contains "Implementation notes" $notes "SpatialComposePanelRegistrationModule.kt"
 Assert-Contains "Implementation notes" $notes "video-surface"
 Assert-Contains "Implementation notes" $notes "carrier authority"
@@ -4911,8 +4883,7 @@ Assert-Contains "Implementation notes" $notes "Individual modules can be compile
 Assert-Contains "Implementation notes" $notes "multimodal opt-in marker fields"
 Assert-Contains "Implementation notes" $notes "public multi-stack receipts"
 Assert-Contains "Implementation notes" $notes "right-stick-y-projection-target-scale"
-Assert-Contains "Implementation notes" $notes "Left-stick Y controls workflow-panel"
-Assert-Contains "Implementation notes" $notes "layer-control panel is open it controls that panel's stored distance"
+Assert-Contains "Implementation notes" $notes "layer-control panel's stored distance"
 Assert-Contains "Implementation notes" $notes "spatial_private_layer_panel"
 Assert-Contains "Implementation notes" $notes "scenequadlayer-room-object"
 Assert-Contains "Implementation notes" $notes "Grabbable(type = PIVOT_Y)"
@@ -4960,10 +4931,6 @@ foreach ($entry in $particleBoundaryFiles.GetEnumerator()) {
     Assert-NotContains $entry.Key $entry.Value "raw-color-target-rect"
 }
 
-Assert-NotContains "Experiment panel controller" $panelController "SceneSwapchain"
-Assert-NotContains "Experiment panel controller" $panelController "SceneQuadLayer"
-Assert-NotContains "Experiment panel controller" $panelController "nativeStart"
-Assert-NotContains "Experiment panel controller" $panelController "AImageReader"
 
 $spatialAppPath = Join-Path $repoRootPath "apps\spatial-camera-panel-android"
 $forbiddenMediaExtensions = @(".mp4", ".mov", ".mkv", ".webm", ".avi")
@@ -5016,8 +4983,6 @@ $scanRoots = @(
     "apps\spatial-camera-panel-android",
     "tools\Build-SpatialCameraPanelAndroid.ps1",
     "tools\Test-SpatialCameraPanelAndroid.ps1",
-    "tools\Invoke-SpatialCameraPanelAndroidSelfTest.ps1",
-    "tools\Invoke-SpatialCameraPanelAndroidPolarLive.ps1",
     "tools\Invoke-SpatialCameraPanelAndroidUiAction.ps1",
     "tools\Invoke-SpatialCameraPanelAndroidCameraHwbProjectionSmoke.ps1",
     "tools\Stage-SpatialCameraPanelAsset.ps1",

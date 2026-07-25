@@ -102,7 +102,6 @@ internal class SpatialVirtualRoomModule(
             "projectionRoomRenderOrder=${projectionState.roomRenderOrderToken} " +
             "rightSecondaryTogglesFullFov=false " +
             "projectionDisplaySurface=video-plus-custom-camera-stack " +
-            "legacyLauncherPanelSuppressed=true " +
             "mrukPlacement=false passthroughRoomPlacement=false highRateJsonPayload=false"
     )
     loadJob =
@@ -200,7 +199,6 @@ internal class SpatialVirtualRoomModule(
             "projectionCarrierProperty=${projectionState.carrierProperty} " +
             "rightSecondaryTogglesFullFov=false " +
             "projectionRoomRenderOrder=${projectionState.roomRenderOrderToken} " +
-            "legacyLauncherPanelSuppressed=true " +
             "roomAssetSource=packaged-glxf roomMeshLoaded=$virtualRoomEnabled " +
             "mrukPlacement=false passthroughRoomPlacement=false " +
             "runtimeCrash=false"

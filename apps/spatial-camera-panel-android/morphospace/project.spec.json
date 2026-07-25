@@ -1,227 +1,108 @@
 {
-  "$schema": "https://github.com/MesmerPrism/rusty-morphospace-work-environment/schemas/project-spec.schema.json",
-  "schema": "rusty.morphospace.workflow.project_spec.v1",
+  "$schema": "https://raw.githubusercontent.com/MesmerPrism/rusty-morphospace-work-environment/6b75d944614a8f863dd612c9b114d7c68f0862b0/schemas/project-spec-v2.schema.json",
+  "schema": "rusty.morphospace.workflow.project_spec.v2",
   "project_id": "spatial-camera-panel",
-  "revision": 3,
-  "purpose": "Compose the public Spatial Camera Panel from explicit Quest adapters and app-local particle, hand, camera, and media candidates without allowing application behavior to become a reusable-module default.",
+  "revision": 9,
+  "owner": "spatial-camera-panel-legacy-index",
+  "purpose": "Provide an inert protocol-v2 index for the archived mixed Spatial Camera Panel integration workspace without authorizing new Camera, private-effect, or Strobe work.",
   "activation_model": {
     "default": "disabled",
-    "unlisted_modules": "inert"
+    "unlisted_modules": "inert",
+    "runtime_rule": "selected-lock-and-runtime-input"
+  },
+  "composition": {
+    "selected_features": [],
+    "denied_features": [
+      "camera-hwb-projection",
+      "private-effect-layer",
+      "spatial-vr-strobe"
+    ],
+    "selected_modules": [],
+    "denied_modules": [
+      "camera-hwb-projection",
+      "private-effect-layer",
+      "spatial-vr-strobe"
+    ],
+    "allowed_permissions": [],
+    "denied_permissions": [
+      "android.permission.CAMERA",
+      "horizonos.permission.HEADSET_CAMERA",
+      "horizonos.permission.SPATIAL_CAMERA"
+    ],
+    "data_classes": [
+      "public-historical-workflow-index"
+    ]
   },
   "authority_map": [
     {
-      "parameter": "app.composition",
-      "owner": "spatial-app",
-      "adapters": []
-    },
-    {
-      "parameter": "app.session-workflow",
-      "owner": "spatial-app",
-      "adapters": []
-    },
-    {
-      "parameter": "quest.package-permissions",
-      "owner": "quest-repo",
-      "adapters": ["spatial-app"]
-    },
-    {
-      "parameter": "particle.simulation",
-      "owner": "matter",
-      "adapters": ["spatial-app"]
-    },
-    {
-      "parameter": "hand.tracked-relations",
-      "owner": "lattice",
-      "adapters": ["spatial-app"]
-    },
-    {
-      "parameter": "hand.geometry-skinning",
-      "owner": "matter",
-      "adapters": ["spatial-app"]
-    },
-    {
-      "parameter": "hand.appearance",
-      "owner": "optics",
-      "adapters": ["spatial-app"]
-    },
-    {
-      "parameter": "stream.session",
-      "owner": "manifold",
-      "adapters": ["spatial-app"]
-    },
-    {
-      "parameter": "render.adoption",
-      "owner": "spatial-app",
+      "parameter": "legacy.integration-history",
+      "owner": "spatial-camera-panel-legacy-index",
       "adapters": []
     }
   ],
   "repositories": [
     {
-      "repo_id": "spatial-app",
-      "role": "application",
-      "path": "..",
-      "allowed_paths": ["README.md", "app/", "native-receipt/", "morphospace/"]
-    },
-    {
       "repo_id": "quest-repo",
       "role": "adapter",
       "path": "../../..",
-      "allowed_paths": ["AGENTS.md", "README.md", "docs/", "tools/"]
-    },
-    {
-      "repo_id": "native-renderer-app",
-      "role": "application",
-      "path": "../../native-renderer-android",
-      "allowed_paths": ["README.md", "app/", "native-receipt/", "morphospace/"]
-    },
-    {
-      "repo_id": "matter",
-      "role": "core",
-      "path": "<workspace-root>/repos/rusty-matter",
-      "allowed_paths": ["AGENTS.md", "README.md", "crates/", "docs/", "fixtures/", "schemas/", "tools/"]
-    },
-    {
-      "repo_id": "lattice",
-      "role": "core",
-      "path": "<workspace-root>/repos/rusty-lattice",
-      "allowed_paths": ["AGENTS.md", "README.md", "crates/", "docs/", "fixtures/", "schemas/", "tools/"]
-    },
-    {
-      "repo_id": "optics",
-      "role": "core",
-      "path": "<workspace-root>/repos/rusty-optics",
-      "allowed_paths": ["AGENTS.md", "README.md", "crates/", "docs/", "fixtures/", "schemas/", "tools/"]
-    },
-    {
-      "repo_id": "manifold",
-      "role": "core",
-      "path": "<workspace-root>/repos/rusty-manifold",
-      "allowed_paths": ["crates/", "docs/", "fixtures/", "schemas/"]
-    },
-    {
-      "repo_id": "work-environment",
-      "role": "tool",
-      "path": "<workspace-root>/repos/rusty-morphospace-work-environment",
-      "allowed_paths": ["AGENTS.md", "README.md", "skills/"]
-    },
-    {
-      "repo_id": "installed-skills",
-      "role": "tool",
-      "path": "<skills-root>",
-      "allowed_paths": ["rusty-morphospace-context/", "system-engineering/", "meta-quest-workflow/", "rust-work-graph/"]
+      "allowed_paths": [
+        "AGENTS.md",
+        "README.md",
+        "apps/spatial-camera-panel-android/README.md",
+        "apps/spatial-camera-panel-android/legacy-workspaces/",
+        "apps/spatial-camera-panel-android/morphospace/",
+        "docs/",
+        "tools/"
+      ]
     }
   ],
-  "modules": [
-    {
-      "module_id": "spatial-panel-shell",
-      "feature_id": "spatial-panel-shell",
-      "lane": "quest",
-      "maturity": "app-local",
-      "contract": "rusty.quest.spatial_camera_panel.shell.v1",
-      "source_repo": "spatial-app",
-      "dependencies": []
-    },
-    {
-      "module_id": "camera-hwb-projection",
-      "feature_id": "camera-hwb-projection",
-      "lane": "quest",
-      "maturity": "app-local",
-      "contract": "rusty.quest.camera_hwb_projection.v1",
-      "source_repo": "spatial-app",
-      "dependencies": ["spatial-panel-shell"]
-    },
-    {
-      "module_id": "surface-particle-runtime",
-      "feature_id": "surface-particle-runtime",
-      "lane": "matter",
-      "maturity": "candidate",
-      "contract": "rusty.matter.surface_runtime.particle_snapshot.v1",
-      "source_repo": "spatial-app",
-      "dependencies": ["spatial-panel-shell"]
-    },
-    {
-      "module_id": "tracked-hand-surface",
-      "feature_id": "tracked-hand-surface",
-      "lane": "lattice",
-      "maturity": "candidate",
-      "contract": "rusty.lattice.tracked_hand_surface.candidate.v1",
-      "source_repo": "spatial-app",
-      "dependencies": ["spatial-panel-shell"]
-    },
-    {
-      "module_id": "spatial-stereo-video",
-      "feature_id": "spatial-stereo-video",
-      "lane": "quest",
-      "maturity": "app-local",
-      "contract": "rusty.quest.spatial_stereo_video.v1",
-      "source_repo": "spatial-app",
-      "dependencies": ["spatial-panel-shell"]
-    },
-    {
-      "module_id": "spatial-asset-model",
-      "feature_id": "spatial-asset-model",
-      "lane": "quest",
-      "maturity": "app-local",
-      "contract": "rusty.quest.spatial_asset_model.v1",
-      "source_repo": "spatial-app",
-      "dependencies": ["spatial-panel-shell"]
-    },
-    {
-      "module_id": "spatial-virtual-room",
-      "feature_id": "spatial-virtual-room",
-      "lane": "quest",
-      "maturity": "app-local",
-      "contract": "rusty.quest.spatial_virtual_room.v1",
-      "source_repo": "spatial-app",
-      "dependencies": ["spatial-panel-shell"]
-    },
-    {
-      "module_id": "broker-media-client",
-      "feature_id": "broker-media-client",
-      "lane": "quest",
-      "maturity": "candidate",
-      "contract": "rusty.quest.broker_media_lifecycle_receipt.v1",
-      "source_repo": "quest-repo",
-      "dependencies": ["spatial-panel-shell"]
-    }
-  ],
+  "modules": [],
   "non_scope": [
-    "Private study semantics, participant policy, tuned effect formulas, and downstream payloads.",
-    "Manifold broker authority, peer topology, Wi-Fi Direct, and BLE rendezvous becoming panel-app authority; the app owns only its explicit client and render adoption.",
-    "High-rate camera, hand, particle, pose, or media payloads in JSON control paths.",
-    "Treating Spatial SDK carrier code as Matter, Lattice, Optics, or Manifold authority.",
-    "Activating any module or permission because nearby source exists."
+    "Authorizing new Camera, private-effect, Strobe, particle, hand, media, asset, room, or broker implementation work.",
+    "Rewriting the archived v1 units, events, receipts, candidates, reviews, or conformance locks.",
+    "Treating historical blockers as current project gates for another consumer.",
+    "Selecting a runtime feature, permission, route, asset, shader, service, activity, marker, or package effect.",
+    "Device serials, raw headset evidence, APKs, logs, captures, signing material, private repository identities, and private effect formulas."
   ],
   "validation_profiles": [
     {
-      "profile_id": "quick",
+      "profile_id": "workflow",
       "commands": [
-        "powershell -NoProfile -ExecutionPolicy Bypass -File tools/checks/Test-SpatialCameraPanelWorkflowStatic.ps1 -RepoRoot .",
-        "powershell -NoProfile -ExecutionPolicy Bypass -File tools/checks/Test-SpatialCameraPanelAndroidStatic.ps1 -RepoRoot ."
+        "pwsh -NoProfile -ExecutionPolicy Bypass -File <work-environment-root>/scripts/Test-WorkflowContracts.ps1 -WorkspaceRoot <repo-root>/apps/spatial-camera-panel-android/morphospace"
       ]
     },
     {
-      "profile_id": "standard",
+      "profile_id": "host",
       "commands": [
-        "powershell -NoProfile -ExecutionPolicy Bypass -File tools/Test-SpatialCameraPanelAndroid.ps1",
-        "powershell -NoProfile -ExecutionPolicy Bypass -File tools/check_all.ps1"
-      ]
-    },
-    {
-      "profile_id": "device",
-      "commands": [
-        "Run serial-scoped two-Quest install, launch, effective-feature receipt, visual/runtime evidence, logcat, and cleanup scorecard."
+        "pwsh -NoProfile -ExecutionPolicy Bypass -File tools/checks/Test-SpatialCameraPanelWorkflowStatic.ps1 -RepoRoot ."
       ]
     }
   ],
+  "acceptance_profiles": [
+    {
+      "profile_id": "archive-integrity",
+      "commands": [
+        "Recompute the sorted path-and-SHA-256 fingerprint of legacy-workspaces/mixed-integration-v1 and compare it with legacy-archive.json."
+      ]
+    }
+  ],
+  "release_policy": {
+    "versioning": "semver",
+    "commit_policy": "Preserve the archived v1 workspace byte-for-byte and commit only additive index or integrity evidence changes.",
+    "push_checkpoint": "integration-batch",
+    "source_first": true,
+    "planning_last": true,
+    "force_push_allowed": false
+  },
   "public_boundary": {
     "mode": "public",
-    "private_overlay": "<project-root>/local",
+    "private_overlay": "local/",
     "prohibited_evidence": [
       "device serials",
-      "private package identities",
       "raw logs and captures",
+      "APKs",
       "signing and pairing material",
+      "private repository identities",
       "private effect formulas and payloads"
     ]
   }

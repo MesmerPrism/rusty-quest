@@ -6,13 +6,19 @@ import android.os.Handler
 import android.os.Looper
 import android.view.Surface as AndroidSurface
 import com.meta.spatial.core.Entity
+import com.meta.spatial.core.Pose
 import com.meta.spatial.core.Vector3
+import com.meta.spatial.runtime.AlphaMode
+import com.meta.spatial.runtime.DepthTest
+import com.meta.spatial.runtime.DepthWrite
+import com.meta.spatial.runtime.MaterialSidedness
 import com.meta.spatial.runtime.Scene
 import com.meta.spatial.runtime.SceneMaterial
 import com.meta.spatial.runtime.SceneMesh
 import com.meta.spatial.runtime.SceneObject
 import com.meta.spatial.runtime.SceneQuadLayer
 import com.meta.spatial.runtime.SceneSwapchain
+import com.meta.spatial.runtime.SceneTexture
 import com.meta.spatial.runtime.StereoMode
 import com.meta.spatial.toolkit.Scale
 import com.meta.spatial.toolkit.Transform
@@ -104,6 +110,64 @@ internal class SpatialSdkQuadSurfaceProbeCoordinator(
                 SpatialDiagnosticProbeRouteModule.sdkQuadSurfaceProbeLayerCreateFailedMarker(
                     canvasDrawn = canvasDrawn,
                     anchorMode = anchorMode,
+                    error = throwable.javaClass.simpleName,
+                    message = throwable.message ?: "none",
+                )
+            )
+            false
+          }
+
+  fun createTextureMesh(
+      texture: SceneTexture,
+      variantName: String,
+      horizontalOffsetMeters: Float,
+  ): Boolean =
+      runCatching {
+            val basePose = bindings.resources.poseFromViewer(SDK_QUAD_SURFACE_PROBE_DISTANCE_METERS)
+            val pose =
+                Pose(
+                    basePose.t + basePose.right() * horizontalOffsetMeters,
+                    basePose.q,
+                )
+            val material =
+                SceneMaterial(texture, AlphaMode.OPAQUE, SceneMaterial.UNLIT_SHADER).apply {
+                  setUnlit(true)
+                  setSidedness(MaterialSidedness.DOUBLE_SIDED)
+                  setDepthTest(DepthTest.LESS_OR_EQUAL)
+                  setDepthWrite(DepthWrite.ENABLE)
+                }
+            val mesh =
+                SceneMesh.singleSidedQuad(
+                    PANEL_SURFACE_MATRIX_TEXTURE_QUAD_HALF_WIDTH_METERS,
+                    PANEL_SURFACE_MATRIX_TEXTURE_QUAD_HALF_HEIGHT_METERS,
+                    material,
+                )
+            val entity =
+                Entity.create(
+                    Transform(pose),
+                    Scale(Vector3(1.0f, 1.0f, 1.0f)),
+                    Visible(true),
+                )
+            val sceneObject =
+                SceneObject(bindings.scene, mesh, "panel_surface_texture_probe", entity)
+            bindings.resources.registerAnchor(material, mesh)
+            bindings.scene.addObject(sceneObject)
+            bindings.resources.registerSceneObject(sceneObject)
+            bindings.marker(
+                SpatialDiagnosticProbeRouteModule.panelSurfaceMatrixProbeTextureMeshAttemptedMarker(
+                    variantName = variantName,
+                    textureHandle = texture.handle,
+                    textureBacksSceneMaterial = true,
+                    sceneObjectHandle = sceneObject.handle,
+                    horizontalOffsetMeters = horizontalOffsetMeters,
+                )
+            )
+            true
+          }
+          .getOrElse { throwable ->
+            bindings.marker(
+                SpatialDiagnosticProbeRouteModule.panelSurfaceMatrixProbeTextureMeshFailedMarker(
+                    variantName = variantName,
                     error = throwable.javaClass.simpleName,
                     message = throwable.message ?: "none",
                 )
@@ -306,5 +370,7 @@ internal class SpatialSdkQuadSurfaceProbeCoordinator(
 
   companion object {
     const val MODULE_ID = "spatial-sdk-quad-surface-probe-coordinator"
+    private const val PANEL_SURFACE_MATRIX_TEXTURE_QUAD_HALF_WIDTH_METERS = 0.24f
+    private const val PANEL_SURFACE_MATRIX_TEXTURE_QUAD_HALF_HEIGHT_METERS = 0.24f
   }
 }

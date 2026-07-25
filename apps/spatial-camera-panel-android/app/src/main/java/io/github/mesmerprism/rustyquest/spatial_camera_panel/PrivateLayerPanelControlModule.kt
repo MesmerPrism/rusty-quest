@@ -23,6 +23,13 @@ internal data class PrivateLayerDepthSourceChoice(
     val token: String,
 )
 
+internal data class PrivateLayerGuideProcessing(
+    val preblurKernel: Int = PrivateLayerControls.guideKernelNativeBox5,
+    val preblurInput: Int = PrivateLayerControls.guideInputLuma,
+    val postblurKernel: Int = PrivateLayerControls.guideKernelNativeBox5,
+    val cameraSampling: Int = PrivateLayerControls.cameraSamplingThinLineTent5,
+)
+
 internal object PrivateLayerControls {
   const val cycleOverride: Float = -1.0f
   const val metaPassthroughEdgeWindowOverride: Float = 7.0f
@@ -32,6 +39,19 @@ internal object PrivateLayerControls {
   const val depthPolicyEyeIndex: Int = 2
   const val depthPolicyCompare: Int = 3
   const val defaultDepthLayerPolicy: Int = depthPolicyEyeIndex
+  const val guideKernelNativeBox5: Int = 0
+  const val guideKernelGaussian5: Int = 1
+  const val guideInputLuma: Int = 0
+  const val guideInputPreserveRgb: Int = 1
+  const val cameraSamplingLinear: Int = 0
+  const val cameraSamplingThinLineTent5: Int = 1
+  val nativeParityGuideProcessing = PrivateLayerGuideProcessing()
+  val gaussianRgbGuideProcessing =
+      PrivateLayerGuideProcessing(
+          preblurKernel = guideKernelGaussian5,
+          preblurInput = guideInputPreserveRgb,
+          postblurKernel = guideKernelGaussian5,
+      )
 
   val layers =
       listOf(
@@ -88,6 +108,68 @@ internal object PrivateLayerControls {
       else -> null
     }
   }
+
+  fun normalizeGuideKernel(code: Int): Int =
+      if (code == guideKernelGaussian5) guideKernelGaussian5 else guideKernelNativeBox5
+
+  fun normalizeGuideInput(code: Int): Int =
+      if (code == guideInputPreserveRgb) guideInputPreserveRgb else guideInputLuma
+
+  fun normalizeCameraSampling(code: Int): Int =
+      if (code == cameraSamplingLinear) cameraSamplingLinear else cameraSamplingThinLineTent5
+
+  fun guideKernelForToken(token: String): Int? =
+      when (token.trim().lowercase().replace("_", "-")) {
+        "native-box5", "box5", "box", "native", "0" -> guideKernelNativeBox5
+        "gaussian5", "gaussian", "1" -> guideKernelGaussian5
+        else -> null
+      }
+
+  fun guideInputForToken(token: String): Int? =
+      when (token.trim().lowercase().replace("_", "-")) {
+        "luma", "luminance", "grayscale", "native", "0" -> guideInputLuma
+        "rgb", "preserve-rgb", "rgb-preserve", "color", "1" -> guideInputPreserveRgb
+        else -> null
+      }
+
+  fun cameraSamplingForToken(token: String): Int? =
+      when (token.trim().lowercase().replace("_", "-")) {
+        "linear", "bilinear", "0" -> cameraSamplingLinear
+        "thin-line-aa", "thin-line-tent5", "tent5", "aa", "1" -> cameraSamplingThinLineTent5
+        else -> null
+      }
+
+  fun guideKernelToken(code: Int): String =
+      if (normalizeGuideKernel(code) == guideKernelGaussian5) "gaussian5" else "native-box5"
+
+  fun guideInputToken(code: Int): String =
+      if (normalizeGuideInput(code) == guideInputPreserveRgb) "rgb-preserve" else "luma"
+
+  fun cameraSamplingToken(code: Int): String =
+      if (normalizeCameraSampling(code) == cameraSamplingLinear) "linear" else "thin-line-tent5"
+
+  fun guideProcessingPresetToken(processing: PrivateLayerGuideProcessing): String {
+    val normalized = normalizeGuideProcessing(processing)
+    return when {
+      normalized.preblurKernel == guideKernelNativeBox5 &&
+          normalized.preblurInput == guideInputLuma &&
+          normalized.postblurKernel == guideKernelNativeBox5 -> "native-parity"
+      normalized.preblurKernel == guideKernelGaussian5 &&
+          normalized.preblurInput == guideInputPreserveRgb &&
+          normalized.postblurKernel == guideKernelGaussian5 -> "gaussian-rgb-diagnostic"
+      else -> "custom-ab"
+    }
+  }
+
+  fun normalizeGuideProcessing(
+      processing: PrivateLayerGuideProcessing
+  ): PrivateLayerGuideProcessing =
+      PrivateLayerGuideProcessing(
+          preblurKernel = normalizeGuideKernel(processing.preblurKernel),
+          preblurInput = normalizeGuideInput(processing.preblurInput),
+          postblurKernel = normalizeGuideKernel(processing.postblurKernel),
+          cameraSampling = normalizeCameraSampling(processing.cameraSampling),
+      )
 }
 
 internal object PrivateLayerPanelControlModule {
@@ -103,6 +185,10 @@ internal object PrivateLayerPanelControlModule {
 
   fun normalizeDepthLayerPolicy(requestedPolicy: Int): Int =
       PrivateLayerControls.normalizeDepthLayerPolicy(requestedPolicy)
+
+  fun normalizeGuideProcessing(
+      requestedProcessing: PrivateLayerGuideProcessing
+  ): PrivateLayerGuideProcessing = PrivateLayerControls.normalizeGuideProcessing(requestedProcessing)
 
   fun depthLayerCompareMode(policy: Int): String =
       if (policy == PrivateLayerControls.depthPolicyCompare) {
@@ -291,6 +377,49 @@ internal object PrivateLayerPanelControlModule {
           depthAlignmentMarkerFields(previousAlignment, "previous") + " " +
           depthAlignmentMarkerFields(updatedAlignment, "") + " " +
           "panelRenderOrder=spatial-sdk-quad-layer-z-index runtimeCrash=false"
+
+  fun guideProcessingUpdateFailedMarker(
+      source: String,
+      updatedProcessing: PrivateLayerGuideProcessing,
+      error: String,
+      message: String,
+  ): String =
+      "channel=private-layer-panel status=guide-processing-update-failed " +
+          "source=${activityMarkerToken(source)} spatialPrivateLayerControlPanel=true " +
+          guideProcessingMarkerFields(updatedProcessing) + " " +
+          "error=${activityMarkerToken(error)} message=${activityMarkerToken(message)} " +
+          "runtimeCrash=false"
+
+  fun guideProcessingSubmittedMarker(
+      source: String,
+      updateMask: Long,
+      previousProcessing: PrivateLayerGuideProcessing,
+      updatedProcessing: PrivateLayerGuideProcessing,
+  ): String =
+      "channel=private-layer-panel status=guide-processing-submitted " +
+          "source=${activityMarkerToken(source)} spatialPrivateLayerControlPanel=true " +
+          "transport=jni-live-queue publicGuideProcessingControl=true updateMask=$updateMask " +
+          guideProcessingMarkerFields(previousProcessing, "previous") + " " +
+          guideProcessingMarkerFields(updatedProcessing) + " " +
+          "publicGuideProcessingDefault=native-parity " +
+          "publicGuideKernelAlternatives=native-box5+gaussian5 " +
+          "publicGuideInputAlternatives=luma+rgb-preserve " +
+          "publicCameraSamplingAlternatives=linear+thin-line-tent5 " +
+          "publicCameraSamplingDefault=thin-line-tent5 " +
+          "runtimeCrash=false"
+
+  private fun guideProcessingMarkerFields(
+      processing: PrivateLayerGuideProcessing,
+      prefix: String = "",
+  ): String {
+    val normalized = normalizeGuideProcessing(processing)
+    val namePrefix = if (prefix.isBlank()) "public" else prefix
+    return "${namePrefix}GuideProcessingPreset=${activityMarkerToken(PrivateLayerControls.guideProcessingPresetToken(normalized))} " +
+        "${namePrefix}GuidePreblurKernel=${activityMarkerToken(PrivateLayerControls.guideKernelToken(normalized.preblurKernel))} " +
+        "${namePrefix}GuidePreblurInput=${activityMarkerToken(PrivateLayerControls.guideInputToken(normalized.preblurInput))} " +
+        "${namePrefix}GuidePostblurKernel=${activityMarkerToken(PrivateLayerControls.guideKernelToken(normalized.postblurKernel))} " +
+        "${namePrefix}CameraSampling=${activityMarkerToken(PrivateLayerControls.cameraSamplingToken(normalized.cameraSampling))}"
+  }
 
   private fun depthAlignmentMarkerFields(
       alignment: PrivateLayerDepthAlignment,

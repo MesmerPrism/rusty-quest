@@ -128,7 +128,8 @@ impl SpatialVideoProjectionFrameStats {
 }
 
 pub(crate) struct PreparedSpatialVideoProjection {
-    descriptor_set: vk::DescriptorSet,
+    pub(crate) descriptor_set: vk::DescriptorSet,
+    pub(crate) descriptor_set_layout: vk::DescriptorSetLayout,
     pipeline_layout: vk::PipelineLayout,
     pipeline: vk::Pipeline,
     pub(crate) stats: SpatialVideoProjectionFrameStats,
@@ -307,6 +308,7 @@ impl SpatialVideoProjectionRenderer {
         let (
             pipeline_layout,
             pipeline,
+            descriptor_set_layout,
             descriptor_shape,
             external_format_sampling,
             sampler_ycbcr_conversion,
@@ -318,6 +320,7 @@ impl SpatialVideoProjectionRenderer {
             (
                 resources.pipeline_layout,
                 resources.pipeline,
+                resources.descriptor_set_layout,
                 resources.descriptor_shape(),
                 resources.sampler_ycbcr_conversion.is_some(),
                 resources.sampler_ycbcr_conversion.is_some(),
@@ -327,6 +330,7 @@ impl SpatialVideoProjectionRenderer {
         self.track_frame_hardware_buffer_id(frame_slot, protected_hardware_buffer_id);
         Ok(Some(PreparedSpatialVideoProjection {
             descriptor_set: self.imports[import_index].descriptor_set,
+            descriptor_set_layout,
             pipeline_layout,
             pipeline,
             stats: SpatialVideoProjectionFrameStats {

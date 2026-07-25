@@ -1,0 +1,97 @@
+{
+  "schema": "rusty.quest.spatial_vr_strobe.host_validation.v1",
+  "receipt_id": "mod-010-host-validation-20260717",
+  "unit_id": "mod-010",
+  "generated_at": "2026-07-17T17:09:37.4263303Z",
+  "result": "pass",
+  "repository": {
+    "branch": "codex/spatial-camera-guard-band-baseline",
+    "head_revision": "7df59dac068d62e6c222a522c763122dc89efd70"
+  },
+  "source": {
+    "repository": "https://github.com/trevorhewitt/vr_strobe",
+    "revision": "52c71cc069f4102bc4148e05c5fd3fc4d5466479",
+    "permission_receipt": "mod-010-vr-strobe-source-permission-20260717.json",
+    "target_license": "AGPL-3.0-or-later",
+    "copied_simulation_payload_sha256": [
+      "7ac9679bc3152f72d34c085d54ec295931071cc06cee2f1e0c5d75249510374d",
+      "67bdf36a7a78fd2ed215a045c0c52b399279abd5bde2f496b3f1406c386c85c3",
+      "ca1005e7cf105f6f1b6b1b21014bc65ae6cd5d610aaea8050863c6e4bed63e43",
+      "ae063e1d505d5c00bc0db40f8897ee1a45ea4a0b14efe0b60928e313b83707ac",
+      "edf9579792faed2b2517375c5b48ae31932a09ec1a74821ecc015ef4708d54a3"
+    ]
+  },
+  "scope": {
+    "feature_default_enabled": false,
+    "preset_or_restore_autostart": false,
+    "warning_acknowledgement_required": true,
+    "current_run_begin_required": true,
+    "black_lead_in_milliseconds": 500,
+    "bounded_duration_seconds": [
+      1,
+      300
+    ],
+    "apk_built": false,
+    "adb_operation_performed": false,
+    "device_operation_performed": false,
+    "device_visual_proof": false,
+    "temporal_display_fidelity_proven": false
+  },
+  "checks": [
+    {
+      "check_id": "source-permission-and-payload-parity",
+      "command": "tools/checks/Test-SpatialVrStrobeStatic.ps1",
+      "result": "pass"
+    },
+    {
+      "check_id": "workflow-static",
+      "command": "tools/checks/Test-SpatialCameraPanelWorkflowStatic.ps1",
+      "result": "pass"
+    },
+    {
+      "check_id": "spatial-android-static",
+      "command": "tools/checks/Test-SpatialCameraPanelAndroidStatic.ps1",
+      "result": "pass"
+    },
+    {
+      "check_id": "vr-strobe-focused-jvm",
+      "command": ":app:testDebugUnitTest --tests *vrstrobe*",
+      "result": "pass"
+    },
+    {
+      "check_id": "spatial-app-final-jvm",
+      "command": ":app:testDebugUnitTest -Pkotlin.incremental=false --no-daemon",
+      "result": "pass",
+      "suites": 10,
+      "tests": 54,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "check_id": "shader-compile",
+      "command": ":app:compileShadersFordebug -Pkotlin.incremental=false --no-daemon",
+      "result": "pass",
+      "vr_strobe_shader_artifacts": 9
+    },
+    {
+      "check_id": "spatial-camera-panel-host-suite",
+      "command": "tools/Test-SpatialCameraPanelAndroid.ps1",
+      "result": "pass",
+      "reported_native_tests": 45
+    },
+    {
+      "check_id": "repository-host-suite",
+      "command": "tools/check_all.ps1",
+      "result": "pass",
+      "elapsed_seconds": 247,
+      "legacy_makepad": "skipped"
+    }
+  ],
+  "limitations": [
+    "The Spatial shader uses analytical history samples in place of the source WebGL framebuffer feedback trail.",
+    "Host evidence does not prove headset appearance, stereo comfort, frame pacing, compositor scanout timing, temporal frequency fidelity, or device performance.",
+    "APK build, installation, launch, and flashing-content execution are deliberately deferred to a later explicitly attended device unit."
+  ],
+  "evidence_boundary": "This receipt proves permission and attribution recording, exact preset payload intake, default-disabled routing, safety-state behavior, profile bounds, Kotlin integration, static authority checks, and Meta Spatial SDK shader compilation. It makes no device, medical, treatment, entrainment, or source-device-equivalence claim."
+}

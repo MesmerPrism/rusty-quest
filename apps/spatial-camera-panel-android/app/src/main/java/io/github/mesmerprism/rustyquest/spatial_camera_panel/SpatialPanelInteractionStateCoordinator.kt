@@ -3,7 +3,6 @@ package io.github.mesmerprism.rustyquest.spatial_camera_panel
 internal class SpatialPanelInteractionStateCoordinator {
   private var headlockMarkerCount = 0
   private var lastHeadlockMarkerMs = 0L
-  private var lastHeadlockHotloadToken = ""
   private var lastJoystickInputMs = 0L
   private var lastJoystickMarkerMs = 0L
   private var lastPrivateLayerGrabbableState: Boolean? = null
@@ -22,12 +21,6 @@ internal class SpatialPanelInteractionStateCoordinator {
     if (!shouldEmit) return false
     headlockMarkerCount += 1
     lastHeadlockMarkerMs = nowMs
-    return true
-  }
-
-  fun consumeHeadlockHotloadToken(token: String): Boolean {
-    if (token == lastHeadlockHotloadToken) return false
-    lastHeadlockHotloadToken = token
     return true
   }
 

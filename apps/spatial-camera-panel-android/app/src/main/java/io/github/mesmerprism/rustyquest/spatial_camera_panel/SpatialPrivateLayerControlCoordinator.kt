@@ -15,13 +15,17 @@ internal data class SpatialPrivateLayerControlBindings(
     val refreshProjectionAfterPassthroughActivation: (String) -> Unit,
     val updateDepthLayerPolicyNative: (Int) -> Long,
     val updateDepthAlignmentNative: (PrivateLayerDepthAlignment) -> Long,
+    val updateGuideProcessingNative: (PrivateLayerGuideProcessing) -> Long,
+    val updateZoneCompositorNative: (PrivateLayerZoneCompositor) -> Long,
     val marker: (String) -> Unit,
 )
 
 internal class SpatialPrivateLayerControlCoordinator(
     private val bindings: SpatialPrivateLayerControlBindings,
+    private val fixedLayerOverride: Float? = null,
 ) {
-  var layerOverride: Float by mutableStateOf(PrivateLayerControls.cycleOverride)
+  var layerOverride: Float by
+      mutableStateOf(fixedLayerOverride ?: PrivateLayerControls.cycleOverride)
     private set
 
   var depthLayerPolicy: Int = PrivateLayerControls.defaultDepthLayerPolicy
@@ -30,8 +34,18 @@ internal class SpatialPrivateLayerControlCoordinator(
   var depthAlignment: PrivateLayerDepthAlignment = PrivateLayerDepthAlignment()
     private set
 
+  var guideProcessing: PrivateLayerGuideProcessing = PrivateLayerControls.nativeParityGuideProcessing
+    private set
+
+  var zoneCompositor: PrivateLayerZoneCompositor = PrivateLayerZoneCompositorControls.legacyOff
+    private set
+
   fun initializeDepthLayerPolicy(policy: Int) {
     depthLayerPolicy = policy
+  }
+
+  fun initializeGuideProcessing(processing: PrivateLayerGuideProcessing) {
+    guideProcessing = PrivateLayerPanelControlModule.normalizeGuideProcessing(processing)
   }
 
   fun applyCurrentConfiguration(source: String) {
@@ -39,13 +53,16 @@ internal class SpatialPrivateLayerControlCoordinator(
     updateLayerOverride(layerOverride, source)
     updateDepthLayerPolicy(depthLayerPolicy, source)
     updateDepthAlignment(depthAlignment, source)
+    updateGuideProcessing(guideProcessing, source)
+    updateZoneCompositor(zoneCompositor, source)
   }
 
   fun updateLayerOverride(requestedLayerOverride: Float, source: String): Float {
     if (!bindings.routeActive()) return layerOverride
     val previousOverride = layerOverride
     val updatedOverride =
-        PrivateLayerPanelControlModule.normalizeLayerOverride(requestedLayerOverride)
+        fixedLayerOverride
+            ?: PrivateLayerPanelControlModule.normalizeLayerOverride(requestedLayerOverride)
     bindings.marker(
         PrivateLayerPanelControlModule.layerButtonSelectedMarker(
             source = source,
@@ -201,6 +218,68 @@ internal class SpatialPrivateLayerControlCoordinator(
         )
     )
     return updatedAlignment
+  }
+
+  fun updateGuideProcessing(
+      requestedProcessing: PrivateLayerGuideProcessing,
+      source: String,
+  ): PrivateLayerGuideProcessing {
+    if (!bindings.routeActive()) return guideProcessing
+    val previousProcessing = guideProcessing
+    val updatedProcessing =
+        PrivateLayerPanelControlModule.normalizeGuideProcessing(requestedProcessing)
+    guideProcessing = updatedProcessing
+    val updateMask =
+        runCatching { bindings.updateGuideProcessingNative(updatedProcessing) }
+            .getOrElse { throwable ->
+              bindings.marker(
+                  PrivateLayerPanelControlModule.guideProcessingUpdateFailedMarker(
+                      source = source,
+                      updatedProcessing = updatedProcessing,
+                      error = throwable.javaClass.simpleName,
+                      message = throwable.message ?: "none",
+                  )
+              )
+              0L
+            }
+    bindings.marker(
+        PrivateLayerPanelControlModule.guideProcessingSubmittedMarker(
+            source = source,
+            updateMask = updateMask,
+            previousProcessing = previousProcessing,
+            updatedProcessing = updatedProcessing,
+        )
+    )
+    return updatedProcessing
+  }
+
+  fun updateZoneCompositor(
+      requestedConfiguration: PrivateLayerZoneCompositor,
+      source: String,
+  ): PrivateLayerZoneCompositor {
+    if (!bindings.routeActive()) return zoneCompositor
+    val previous = zoneCompositor
+    val updated = PrivateLayerZoneCompositorModule.normalize(requestedConfiguration)
+    zoneCompositor = updated
+    val updateMask =
+        runCatching { bindings.updateZoneCompositorNative(updated) }
+            .getOrElse { throwable ->
+              bindings.marker(
+                  "channel=private-layer-panel status=zone-compositor-update-failed " +
+                      "source=${activityMarkerToken(source)} " +
+                      "error=${activityMarkerToken(throwable.javaClass.simpleName)} " +
+                      "message=${activityMarkerToken(throwable.message ?: "none")} " +
+                      "${PrivateLayerZoneCompositorModule.markerFields(updated)} runtimeCrash=false"
+              )
+              0L
+            }
+    bindings.marker(
+        "channel=private-layer-panel status=zone-compositor-submitted " +
+            "source=${activityMarkerToken(source)} transport=jni-live-queue updateMask=$updateMask " +
+            "previousProjectionZoneMode=${PrivateLayerZoneCompositorControls.coverageToken(previous.coverageMode)} " +
+            "${PrivateLayerZoneCompositorModule.markerFields(updated)} runtimeCrash=false"
+    )
+    return updated
   }
 
   companion object {

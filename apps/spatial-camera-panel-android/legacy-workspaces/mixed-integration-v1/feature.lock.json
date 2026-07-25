@@ -1,0 +1,219 @@
+{
+  "$schema": "https://github.com/MesmerPrism/rusty-morphospace-work-environment/schemas/feature-lock.schema.json",
+  "schema": "rusty.morphospace.workflow.feature_lock.v1",
+  "project_id": "spatial-camera-panel",
+  "revision": 5,
+  "default_activation": "disabled",
+  "features": [
+    {
+      "feature_id": "spatial-panel-shell",
+      "module_id": "spatial-panel-shell",
+      "enabled": true,
+      "requested_by": "project-spec:spatial-camera-panel",
+      "descriptor": "morphospace/project.spec.json#spatial-panel-shell",
+      "dependencies": [],
+      "conflicts": [],
+      "permissions": [],
+      "routes": ["spatial-private-layer-panel"],
+      "assets": [],
+      "parameter_authorities": [
+        {
+          "parameter": "app.composition",
+          "owner": "spatial-app"
+        }
+      ],
+      "activation_receipt": {
+        "required": true,
+        "schema": "rusty.quest.spatial_camera_panel.activation_receipt.v1",
+        "effective_marker": "rusty.quest.spatial_camera_panel.shell.effective"
+      }
+    },
+    {
+      "feature_id": "camera-hwb-projection",
+      "module_id": "camera-hwb-projection",
+      "enabled": false,
+      "requested_by": "",
+      "descriptor": "morphospace/project.spec.json#camera-hwb-projection",
+      "dependencies": ["spatial-panel-shell"],
+      "conflicts": [],
+      "permissions": ["android.permission.CAMERA", "horizonos.permission.HEADSET_CAMERA", "horizonos.permission.SPATIAL_CAMERA"],
+      "routes": ["camera-hwb-projection"],
+      "assets": [],
+      "parameter_authorities": [],
+      "activation_receipt": {
+        "required": true,
+        "schema": "rusty.quest.camera_hwb_projection.activation_receipt.v1",
+        "effective_marker": "rusty.quest.camera_hwb_projection.effective"
+      }
+    },
+    {
+      "feature_id": "surface-particle-runtime",
+      "module_id": "surface-particle-runtime",
+      "enabled": false,
+      "requested_by": "",
+      "descriptor": "morphospace/project.spec.json#surface-particle-runtime",
+      "dependencies": ["spatial-panel-shell"],
+      "conflicts": [],
+      "permissions": [],
+      "routes": ["native-surface-particle"],
+      "assets": [],
+      "parameter_authorities": [],
+      "activation_receipt": {
+        "required": true,
+        "schema": "rusty.matter.surface_particle.activation_receipt.v1",
+        "effective_marker": "rusty.matter.surface_particle.effective"
+      }
+    },
+    {
+      "feature_id": "tracked-hand-surface",
+      "module_id": "tracked-hand-surface",
+      "enabled": false,
+      "requested_by": "",
+      "descriptor": "morphospace/project.spec.json#tracked-hand-surface",
+      "dependencies": ["spatial-panel-shell"],
+      "conflicts": [],
+      "permissions": [],
+      "routes": ["spatial-hand-billboard-flock"],
+      "assets": [],
+      "parameter_authorities": [],
+      "activation_receipt": {
+        "required": true,
+        "schema": "rusty.lattice.tracked_hand_surface.activation_receipt.v1",
+        "effective_marker": "rusty.lattice.tracked_hand_surface.effective"
+      }
+    },
+    {
+      "feature_id": "spatial-stereo-video",
+      "module_id": "spatial-stereo-video",
+      "enabled": false,
+      "requested_by": "",
+      "descriptor": "morphospace/project.spec.json#spatial-stereo-video",
+      "dependencies": ["spatial-panel-shell"],
+      "conflicts": [],
+      "permissions": [],
+      "routes": ["spatial-stereo-video"],
+      "assets": [],
+      "parameter_authorities": [],
+      "activation_receipt": {
+        "required": true,
+        "schema": "rusty.quest.spatial_stereo_video.activation_receipt.v1",
+        "effective_marker": "rusty.quest.spatial_stereo_video.effective"
+      }
+    },
+    {
+      "feature_id": "spatial-asset-model",
+      "module_id": "spatial-asset-model",
+      "enabled": false,
+      "requested_by": "",
+      "descriptor": "morphospace/project.spec.json#spatial-asset-model",
+      "dependencies": ["spatial-panel-shell"],
+      "conflicts": [],
+      "permissions": [],
+      "routes": ["spatial-asset-model"],
+      "assets": [],
+      "parameter_authorities": [],
+      "activation_receipt": {
+        "required": true,
+        "schema": "rusty.quest.spatial_asset_model.activation_receipt.v1",
+        "effective_marker": "rusty.quest.spatial_asset_model.effective"
+      }
+    },
+    {
+      "feature_id": "spatial-virtual-room",
+      "module_id": "spatial-virtual-room",
+      "enabled": false,
+      "requested_by": "",
+      "descriptor": "morphospace/project.spec.json#spatial-virtual-room",
+      "dependencies": ["spatial-panel-shell"],
+      "conflicts": [],
+      "permissions": [],
+      "routes": ["spatial-virtual-room"],
+      "assets": ["assets/scenes/Composition.glxf"],
+      "parameter_authorities": [],
+      "activation_receipt": {
+        "required": true,
+        "schema": "rusty.quest.spatial_virtual_room.activation_receipt.v1",
+        "effective_marker": "rusty.quest.spatial_virtual_room.effective"
+      }
+    },
+    {
+      "feature_id": "spatial-stimulus-volume",
+      "module_id": "spatial-stimulus-volume",
+      "enabled": false,
+      "requested_by": "",
+      "descriptor": "morphospace/project.spec.json#spatial-stimulus-volume",
+      "dependencies": ["spatial-panel-shell"],
+      "conflicts": [],
+      "permissions": [],
+      "routes": ["spatial-stimulus-volume-fixed-phase"],
+      "assets": [],
+      "parameter_authorities": [
+        {
+          "parameter": "stimulus.profile-safety-presentation",
+          "owner": "optics"
+        },
+        {
+          "parameter": "render.adoption",
+          "owner": "spatial-app"
+        }
+      ],
+      "activation_receipt": {
+        "required": true,
+        "schema": "rusty.quest.spatial_stimulus_volume.activation_receipt.v1",
+        "effective_marker": "rusty.quest.spatial_stimulus_volume.effective"
+      }
+    },
+    {
+      "feature_id": "spatial-vr-strobe",
+      "module_id": "spatial-vr-strobe",
+      "enabled": false,
+      "requested_by": "",
+      "descriptor": "morphospace/project.spec.json#spatial-vr-strobe",
+      "dependencies": ["spatial-panel-shell"],
+      "conflicts": [],
+      "permissions": [],
+      "routes": ["spatial-vr-strobe-control-panel", "spatial-vr-strobe-full-field-carrier"],
+      "assets": ["app/src/shaders/vr_strobe_interference.frag", "app/src/shaders/vr_strobe_interference.vert"],
+      "parameter_authorities": [
+        {
+          "parameter": "stimulus.profile-safety-presentation",
+          "owner": "optics"
+        },
+        {
+          "parameter": "stimulus.temporal-run-state",
+          "owner": "spatial-app"
+        },
+        {
+          "parameter": "render.adoption",
+          "owner": "spatial-app"
+        }
+      ],
+      "activation_receipt": {
+        "required": true,
+        "schema": "rusty.quest.spatial_vr_strobe.activation_receipt.v1",
+        "effective_marker": "rusty.quest.spatial_vr_strobe.effective"
+      }
+    },
+    {
+      "feature_id": "broker-media-client",
+      "module_id": "broker-media-client",
+      "enabled": false,
+      "requested_by": "",
+      "descriptor": "morphospace/project.spec.json#broker-media-client",
+      "dependencies": ["spatial-panel-shell"],
+      "conflicts": [],
+      "permissions": ["io.github.mesmerprism.rustymanifold.permission.BROKER_ADMISSION"],
+      "routes": ["manifold-media-session", "spatial-sdk-render-sink"],
+      "assets": [],
+      "parameter_authorities": [
+        {"parameter": "stream.session", "owner": "manifold"},
+        {"parameter": "render.adoption", "owner": "spatial-app"}
+      ],
+      "activation_receipt": {
+        "required": true,
+        "schema": "rusty.quest.broker_media_lifecycle_receipt.v1",
+        "effective_marker": "rusty.quest.spatial_camera_panel.broker_media_client.effective"
+      }
+    }
+  ]
+}

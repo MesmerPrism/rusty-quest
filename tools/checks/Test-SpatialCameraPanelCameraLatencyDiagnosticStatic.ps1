@@ -35,10 +35,12 @@ $openXrRoute = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main
 $placement = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\SpatialCameraHwbProjectionPlacementUpdateCoordinator.kt"
 $native = Read-RequiredText "apps\spatial-camera-panel-android\native-receipt\src\camera_latency_diagnostics.rs"
 $probe = Read-RequiredText "apps\spatial-camera-panel-android\native-receipt\src\camera_hwb_probe.rs"
+$wsi = Read-RequiredText "apps\spatial-camera-panel-android\native-receipt\src\camera_hwb_wsi.rs"
 $stream = Read-RequiredText "apps\spatial-camera-panel-android\native-receipt\src\camera_hwb_stream.rs"
 $projection = Read-RequiredText "apps\spatial-camera-panel-android\native-receipt\src\camera_hwb_projection_target.rs"
 $projectionShader = Read-RequiredText "apps\spatial-camera-panel-android\native-receipt\shaders\camera_hwb_raw_color.frag.glsl"
 $publicMultiStackRuntime = Read-RequiredText "apps\spatial-camera-panel-android\native-receipt\src\spatial_public_multistack_runtime.rs"
+$dynamicGuardBand = Read-RequiredText "apps\spatial-camera-panel-android\native-receipt\src\camera_reprojection_guard_band.rs"
 $build = Read-RequiredText "tools\Build-SpatialCameraPanelAndroid.ps1"
 $toolPath = Join-Path $repoRootPath "tools\Set-SpatialCameraPanelCameraLatencyDiagnostic.ps1"
 $tool = Read-RequiredText "tools\Set-SpatialCameraPanelCameraLatencyDiagnostic.ps1"
@@ -59,6 +61,7 @@ Assert-Contains $kotlin "openxr-locate-views" "Kotlin diagnostic module must exp
 Assert-Contains $kotlin "presentation_lead_ms" "Kotlin diagnostic module must expose bounded presentation lead."
 Assert-Contains $kotlin "reprojection_source_overscan_percent" "Kotlin diagnostic module must expose bounded real-source overscan."
 Assert-Contains $kotlin "reprojection_guard_band_mode" "Kotlin diagnostic module must expose the explicit projection-footprint policy."
+Assert-Contains $kotlin "dynamic-reduced-footprint" "Kotlin diagnostic module must expose motion-driven reduced-footprint coverage."
 Assert-Contains $activity "nativeUpdateCameraLatencyDiagnostics" "Activity must bridge diagnostic settings into native code."
 Assert-Contains $activity "cameraLatencyDiagnosticModule.projectionPlane" "Activity must route projection placement through the pose A/B module."
 Assert-Contains $activity "nativeUpdateCameraLatencyViewerPose" "Activity must feed viewer-pose history to the native diagnostic."
@@ -112,6 +115,18 @@ Assert-Contains $projectionShader "sourceOverscanUv" "Reprojection must expose t
 Assert-Contains $projectionShader "presentationSourceUv" "Rotation reprojection must start from the central source crop."
 Assert-Contains $projection "effective_rect(left_base_effective, footprint_scale" "Projection geometry must scale the retained-source footprint around each existing eye center."
 Assert-Contains $probe "cameraAngularScalePolicy" "Presentation evidence must distinguish zoom-to-fill from preserved angular scale."
+Assert-Contains $probe "projection_guard_band.marker_fields()" "Presentation evidence must report the applied per-frame guard-band decision."
+Assert-Contains $probe "camera_reprojection_guard_band.update(" "Render loop must compute exactly one guard-band decision for the current stereo reprojection."
+Assert-Contains $wsi "let projection_footprint_scale = projection_guard_band.footprint_scale" "Projection geometry must use the per-frame guard-band footprint."
+Assert-Contains $wsi "projection_guard_band.source_overscan_uv" "Raw and guide camera ingress must use the per-frame guard-band crop."
+if ($wsi.Contains("latency_settings.reprojection_source_overscan_uv()")) {
+    throw "Render recording must not recompute a fixed source crop after receiving the per-frame guard-band decision."
+}
+Assert-Contains $dynamicGuardBand "left_required_margin_uv" "Dynamic guard band must derive coverage independently for both eyes."
+Assert-Contains $dynamicGuardBand "right_required_margin_uv" "Dynamic guard band must derive coverage independently for both eyes."
+Assert-Contains $dynamicGuardBand "DYNAMIC_HOLD_NS" "Dynamic guard band must hold its peak before release."
+Assert-Contains $dynamicGuardBand "DYNAMIC_RELEASE_UV_PER_SECOND" "Dynamic guard band must release gradually."
+Assert-Contains $dynamicGuardBand "MAX_MARGIN_UV" "Dynamic guard band must remain bounded by real captured source coverage."
 if ($projectionShader.Contains("stable_rotation_reprojected_uv")) {
     throw "Reprojection must not hide exhausted source coverage with an unwarped fallback image."
 }
@@ -163,6 +178,7 @@ $presets = @(
     "PresentationOpenXr11Overscan0",
     "PresentationOpenXr11Overscan10",
     "PresentationOpenXr11GuardBand10",
+    "PresentationOpenXr11DynamicGuardBand10",
     "PresentationOpenXr16",
     "PresentationOpenXr22",
     "PresentationOpenXr11Adoption45",
@@ -305,11 +321,14 @@ if (
 $presentationOpenXr11Overscan0 = (& $toolPath -Preset PresentationOpenXr11Overscan0 -Revision 999571 -DryRun | ConvertFrom-Json)
 $presentationOpenXr11Overscan10 = (& $toolPath -Preset PresentationOpenXr11Overscan10 -Revision 999572 -DryRun | ConvertFrom-Json)
 $presentationOpenXr11GuardBand10 = (& $toolPath -Preset PresentationOpenXr11GuardBand10 -Revision 999573 -DryRun | ConvertFrom-Json)
+$presentationOpenXr11DynamicGuardBand10 = (& $toolPath -Preset PresentationOpenXr11DynamicGuardBand10 -Revision 999574 -DryRun | ConvertFrom-Json)
 $overscan0Write = @($presentationOpenXr11Overscan0.write_plan | Where-Object { $_.property -like "*.reprojection_source_overscan_percent" })
 $overscan10Write = @($presentationOpenXr11Overscan10.write_plan | Where-Object { $_.property -like "*.reprojection_source_overscan_percent" })
 $overscan10ModeWrite = @($presentationOpenXr11Overscan10.write_plan | Where-Object { $_.property -like "*.reprojection_guard_band_mode" })
 $guardBand10Write = @($presentationOpenXr11GuardBand10.write_plan | Where-Object { $_.property -like "*.reprojection_source_overscan_percent" })
 $guardBand10ModeWrite = @($presentationOpenXr11GuardBand10.write_plan | Where-Object { $_.property -like "*.reprojection_guard_band_mode" })
+$dynamicGuardBand10Write = @($presentationOpenXr11DynamicGuardBand10.write_plan | Where-Object { $_.property -like "*.reprojection_source_overscan_percent" })
+$dynamicGuardBand10ModeWrite = @($presentationOpenXr11DynamicGuardBand10.write_plan | Where-Object { $_.property -like "*.reprojection_guard_band_mode" })
 if (
     $presentationOpenXr11Overscan0.preset_requires_restart -or
     $overscan0Write.Count -ne 1 -or
@@ -334,6 +353,15 @@ if (
     $guardBand10ModeWrite[0].value -ne "reduced-footprint"
 ) {
     throw "PresentationOpenXr11GuardBand10 must preserve source scale by coupling ten-percent margins to an eighty-percent target footprint."
+}
+if (
+    $presentationOpenXr11DynamicGuardBand10.preset_requires_restart -or
+    $dynamicGuardBand10Write.Count -ne 1 -or
+    $dynamicGuardBand10Write[0].value -ne "10" -or
+    $dynamicGuardBand10ModeWrite.Count -ne 1 -or
+    $dynamicGuardBand10ModeWrite[0].value -ne "dynamic-reduced-footprint"
+) {
+    throw "PresentationOpenXr11DynamicGuardBand10 must combine the ten-percent minimum, motion-driven coverage, OpenXR prediction, and every-available adoption."
 }
 $presentationOpenXr11Adoption45 = (& $toolPath -Preset PresentationOpenXr11Adoption45 -Revision 99958 -DryRun | ConvertFrom-Json)
 $presentationOpenXr11Adoption45Cadence = @($presentationOpenXr11Adoption45.write_plan | Where-Object { $_.property -like "*.adoption_cadence" })

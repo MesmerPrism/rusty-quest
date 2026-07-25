@@ -2600,7 +2600,7 @@ unsafe fn create_external_openxr_swapchain(
     android_log_info(
         "RQSpatialCameraPanelNative",
         &format!(
-            "RUSTY_QUEST_SPATIAL_CAMERA_PANEL_NATIVE channel=external-xr-swapchain-wrap-probe status=native-create-result externalSwapchainProbe=true xrCreateSwapchainResult={} swapchainHandle={} widthPx={} heightPx={} arraySize=1 mipCount=1 selectedFormat={} enumeratedFormatCount={} usageFlags={} usageFlagsRaw={} xrEnumerateSwapchainImagesResult={} swapchainImagesEnumerated={} firstVkImageHandle={} xrAcquireSwapchainImageResult={} acquiredImageIndex={} xrWaitSwapchainImageResult={} xrReleaseSwapchainImageResult={} nativeCanRenderIntoImages=false renderBlockReason=missing-spatial-sdk-vulkan-device-queue visiblePatternConfirmed=false nativeFrameLoop=false deviceLost=false runtimeCrash=false",
+            "RUSTY_QUEST_SPATIAL_CAMERA_PANEL_NATIVE channel=external-xr-swapchain-wrap-probe status=native-create-result externalSwapchainProbe=true xrCreateSwapchainResult={} swapchainHandle={} widthPx={} heightPx={} arraySize=1 mipCount=1 selectedFormat={} enumeratedFormatCount={} usageFlags={} usageFlagsRaw={} xrEnumerateSwapchainImagesResult={} swapchainImagesEnumerated={} firstVkImageHandle={} xrAcquireSwapchainImageResult={} acquiredImageIndex={} xrWaitSwapchainImageResult={} xrReleaseSwapchainImageResult={} sdkSceneObjectConversion=false queueSubmissionAttempted=false swapchainImageWriteAttempted=false nativeCanRenderIntoImages=false renderBoundary=session-graphics-binding-not-returned-by-spatial-sdk-api visiblePatternConfirmed=false nativeFrameLoop=false deviceLost=false runtimeCrash=false",
             external_swapchain_xr_result_token(create_result),
             swapchain.into_raw(),
             width,
