@@ -674,6 +674,10 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
               privateLayerControlCoordinator.updateLayerOverride(layerOverride, source)
               Unit
             },
+            updatePrivateLayerZoneCompositor = { configuration, source ->
+              privateLayerControlCoordinator.updateZoneCompositor(configuration, source)
+              Unit
+            },
             setProjectionPanelEnabled = { enabled, source ->
               setProjectionPanelEnabled(enabled, source)
               Unit

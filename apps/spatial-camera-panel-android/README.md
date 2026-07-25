@@ -223,6 +223,13 @@ app-local. Stopping the bridge is the rollback and leaves the adapter inert.
   selectable. The public adapter owns only rectangles, the numeric mapping id,
   three bounded family parameters, descriptors, and rollback; the lens formula
   and downstream color/effect formulas stay in the private downstream shader.
+  Device validation can select the same bounded presets without controller
+  input through `Invoke-SpatialCameraPanelAndroidUiAction.ps1`: use
+  `private-layer-zone-native-buffer`, `private-layer-zone-linear-buffer`,
+  `private-layer-zone-organic-buffer`, `private-layer-zone-full-stretch`, and
+  `private-layer-zone-off`. These commands route through the same coordinator
+  and native update queue as the panel buttons; they do not add a second
+  compositor authority.
 - Scene-depth permission diagnostics that mirror the native renderer surface:
   `horizonos.permission.USE_SCENE`, OpenXR permissions, and a smoke-wrapper
   `USE_SCENE_DATA` app-op receipt. The public multi-stack keeps a fallback

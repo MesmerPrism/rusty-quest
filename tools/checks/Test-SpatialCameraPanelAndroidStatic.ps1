@@ -4397,12 +4397,22 @@ Assert-Contains "Native public multi-stack" $nativeMultiStack "spatial_native_pa
 Assert-Contains "UI action wrapper" $uiActionWrapper "private-layer-panel-open"
 Assert-Contains "UI action wrapper" $uiActionWrapper "private-layer-panel-close"
 Assert-Contains "UI action wrapper" $uiActionWrapper "private-layer-select"
+Assert-Contains "UI action wrapper" $uiActionWrapper "private-layer-zone-native-buffer"
+Assert-Contains "UI action wrapper" $uiActionWrapper "private-layer-zone-linear-buffer"
+Assert-Contains "UI action wrapper" $uiActionWrapper "private-layer-zone-organic-buffer"
+Assert-Contains "UI action wrapper" $uiActionWrapper "private-layer-zone-full-stretch"
+Assert-Contains "UI action wrapper" $uiActionWrapper "private-layer-zone-off"
 Assert-Contains "UI action wrapper" $uiActionWrapper "projection-panel-off"
 Assert-Contains "UI action wrapper" $uiActionWrapper "projection-panel-on"
 Assert-Contains "UI action wrapper" $uiActionWrapper '[double]$PrivateLayerOverride'
 Assert-Contains "UI action wrapper" $uiActionWrapper '[Math]::Min(8.0, $PrivateLayerOverride)'
 Assert-Contains "UI action wrapper" $uiActionWrapper '"private_layer_override"'
 Assert-Contains "Spatial validation workflow coordinator" $validationWorkflowCoordinator '"private-layer-select" ->'
+Assert-Contains "Spatial validation workflow coordinator" $validationWorkflowCoordinator '"private-layer-zone-native-buffer" ->'
+Assert-Contains "Spatial validation workflow coordinator" $validationWorkflowCoordinator '"private-layer-zone-linear-buffer" ->'
+Assert-Contains "Spatial validation workflow coordinator" $validationWorkflowCoordinator '"private-layer-zone-organic-buffer" ->'
+Assert-Contains "Spatial validation workflow coordinator" $validationWorkflowCoordinator '"private-layer-zone-full-stretch" ->'
+Assert-Contains "Spatial validation workflow coordinator" $validationWorkflowCoordinator '"private-layer-zone-off" ->'
 Assert-Contains "Spatial validation workflow coordinator" $validationWorkflowCoordinator '"projection-panel-off" -> bindings.setProjectionPanelEnabled(false, source)'
 Assert-Contains "Spatial validation workflow coordinator" $validationWorkflowCoordinator '"projection-panel-on" -> bindings.setProjectionPanelEnabled(true, source)'
 Assert-Contains "Projection panel visibility coordinator" $projectionPanelVisibilityCoordinator "internal class SpatialProjectionPanelVisibilityCoordinator"

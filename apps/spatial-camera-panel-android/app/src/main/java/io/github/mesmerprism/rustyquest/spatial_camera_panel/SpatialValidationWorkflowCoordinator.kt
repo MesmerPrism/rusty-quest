@@ -8,6 +8,7 @@ internal data class SpatialValidationWorkflowBindings(
     val setPrivateLayerPanelVisible: (Boolean, Boolean, String) -> Unit,
     val privateLayerPanelVisible: () -> Boolean,
     val updatePrivateLayerOverride: (Float, String) -> Unit,
+    val updatePrivateLayerZoneCompositor: (PrivateLayerZoneCompositor, String) -> Unit,
     val setProjectionPanelEnabled: (Boolean, String) -> Unit,
     val currentParticleControls: () -> SurfaceParticleControlState,
     val updateSurfaceParticleControls: (SurfaceParticleControlState, String) -> Unit,
@@ -52,6 +53,31 @@ internal class SpatialValidationWorkflowCoordinator(
         "private-layer-select" ->
             bindings.updatePrivateLayerOverride(
                 intent.getFloatExtra(EXTRA_PRIVATE_LAYER_OVERRIDE, 0.0f),
+                source,
+            )
+        "private-layer-zone-off" ->
+            bindings.updatePrivateLayerZoneCompositor(
+                PrivateLayerZoneCompositorControls.legacyOff,
+                source,
+            )
+        "private-layer-zone-native-buffer" ->
+            bindings.updatePrivateLayerZoneCompositor(
+                PrivateLayerZoneCompositorControls.nativeBuffer,
+                source,
+            )
+        "private-layer-zone-linear-buffer" ->
+            bindings.updatePrivateLayerZoneCompositor(
+                PrivateLayerZoneCompositorControls.linearBuffer,
+                source,
+            )
+        "private-layer-zone-organic-buffer" ->
+            bindings.updatePrivateLayerZoneCompositor(
+                PrivateLayerZoneCompositorControls.organicBuffer,
+                source,
+            )
+        "private-layer-zone-full-stretch" ->
+            bindings.updatePrivateLayerZoneCompositor(
+                PrivateLayerZoneCompositorControls.fullStretch,
                 source,
             )
         "projection-panel-off" -> bindings.setProjectionPanelEnabled(false, source)
