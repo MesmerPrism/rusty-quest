@@ -195,6 +195,13 @@ the first selection can perform the required one-shot carrier rebind
 automatically. The adjacent default-off `Raw custom projection` button draws
 the direct Camera2/AHardwareBuffer stereo sample over the still-active video
 without the private effect shader or its inner edge fade.
+The same custom projection exposes a default-off, neutral projection-surface
+displacement transport. A downstream build may provide an optional vertex
+payload that uses a bounded 32x32 grid inside the existing planar carrier;
+disabled and payload-absent runs retain the original fullscreen triangle. This
+preserves stereo video switching and the same-surface zone compositor while
+keeping the downstream signal mapping private. See
+`docs/PROJECTION_SURFACE_DISPLACEMENT.md`.
 Right-stick Y still controls projection target scale, Left-stick Y
 controls workflow/layer-control panel distance, and Right-stick X is
 intentionally ignored.

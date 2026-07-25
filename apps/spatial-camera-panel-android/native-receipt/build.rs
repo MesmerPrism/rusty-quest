@@ -99,6 +99,13 @@ fn main() {
         "fragment",
         &["-DPRIVATE_LAYER_VIDEO_COMPOSITOR=0".to_string()],
     );
+    let opaque_projection_vertex_shader = compile_optional_shader_env(
+        &glslc,
+        &out_dir,
+        "RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OPAQUE_PROJECTION_VERTEX_SHADER",
+        "spatial_opaque_projection.vert.spv",
+        "vertex",
+    );
     let opaque_projection_video_compositor_shader = compile_optional_shader_env_with_args(
         &glslc,
         &out_dir,
@@ -116,6 +123,7 @@ fn main() {
         public_guide_blur_shader_byte_count,
         opaque_guide_shader,
         opaque_projection_shader,
+        opaque_projection_vertex_shader,
         opaque_projection_video_compositor_shader,
         opaque_projection_effect,
         &private_surface_particle,
@@ -678,6 +686,7 @@ fn write_spatial_multistack_build_metadata(
     public_guide_blur_shader_byte_count: u64,
     opaque_guide_shader: OptionalGuideShaderBuild,
     opaque_projection_shader: OptionalShaderBuild,
+    opaque_projection_vertex_shader: OptionalShaderBuild,
     opaque_projection_video_compositor_shader: OptionalShaderBuild,
     opaque_projection_effect: [f32; 4],
     private_surface_particle: &PrivateSurfaceParticleBuild,
@@ -708,6 +717,10 @@ fn write_spatial_multistack_build_metadata(
              pub(crate) const OPAQUE_PROJECTION_SHADER_COMPILED: bool = {};\n\
              #[allow(dead_code)]\n\
              pub(crate) const OPAQUE_PROJECTION_SHADER_BYTE_COUNT: usize = {};\n\
+             #[allow(dead_code)]\n\
+             pub(crate) const OPAQUE_PROJECTION_VERTEX_SHADER_COMPILED: bool = {};\n\
+             #[allow(dead_code)]\n\
+             pub(crate) const OPAQUE_PROJECTION_VERTEX_SHADER_BYTE_COUNT: usize = {};\n\
              #[allow(dead_code)]\n\
              pub(crate) const OPAQUE_PROJECTION_VIDEO_COMPOSITOR_SHADER_COMPILED: bool = {};\n\
              #[allow(dead_code)]\n\
@@ -758,6 +771,8 @@ fn write_spatial_multistack_build_metadata(
             opaque_guide_shader.total_byte_count,
             bool_literal(opaque_projection_shader.compiled),
             opaque_projection_shader.byte_count,
+            bool_literal(opaque_projection_vertex_shader.compiled),
+            opaque_projection_vertex_shader.byte_count,
             bool_literal(opaque_projection_video_compositor_shader.compiled),
             opaque_projection_video_compositor_shader.byte_count,
             opaque_projection_effect[0],

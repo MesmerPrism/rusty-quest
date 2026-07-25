@@ -71,6 +71,7 @@ const PUBLIC_MULTISTACK_STATIC_MARKER_FIELDS: &str = concat!(
         "publicMultiStackPassExecutionReady=false ",
         "publicMultiStackOpaqueGuideShaderEnv=RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OPAQUE_GUIDE_SHADER ",
         "publicMultiStackOpaqueProjectionShaderEnv=RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OPAQUE_PROJECTION_SHADER ",
+        "publicMultiStackOpaqueProjectionVertexShaderEnv=RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OPAQUE_PROJECTION_VERTEX_SHADER ",
         "publicMultiStackPrivateSurfaceParticleHook=generic-build-time-private-surface-particle-hook ",
         "publicMultiStackPrivateSurfaceParticleProfileEnv=RUSTY_QUEST_SPATIAL_SURFACE_PRIVATE_PARTICLE_PROFILE ",
         "publicMultiStackPrivateSurfaceParticleShaderEnv=RUSTY_QUEST_SPATIAL_SURFACE_PRIVATE_PARTICLE_SHADER ",
@@ -90,7 +91,7 @@ pub(crate) fn public_multistack_marker_fields() -> String {
     let depth_fields = spatial_environment_depth_marker_fields();
     let presentation_fields = spatial_presentation_policy_marker_fields();
     format!(
-        "{} {} {} {} publicGuideBlurShaderCompiled={} publicGuideBlurShaderBytes={} publicMultiStackOpaqueGuideShaderCompiled={} publicMultiStackOpaqueGuideShaderBytes={} publicMultiStackOpaqueGuideShaderPassCount={} publicMultiStackOpaqueGuideShaderPassVariantsCompiled={} publicMultiStackOpaqueGuideShaderPassByteCounts={} publicMultiStackOpaqueProjectionShaderCompiled={} publicMultiStackOpaqueProjectionShaderBytes={} publicMultiStackOpaquePayloadExecutionReady=false publicMultiStackPrivateSurfaceParticleProfileConfigured={} publicMultiStackPrivateSurfaceParticleShaderConfigured={} publicMultiStackPrivateSurfaceParticlePayloadDirConfigured={} publicMultiStackPrivateSurfaceParticleMarkerPrefixConfigured={} publicMultiStackPrivateSurfaceParticleMetadataActive={} publicMultiStackPrivateSurfaceParticleExecutableInputsConfigured={} publicMultiStackPrivateSurfaceParticlePayloadActive={} publicMultiStackPrivateSurfaceParticleRendererStatus={} publicMultiStackPrivateSurfaceParticleExecutionReady={}",
+        "{} {} {} {} publicGuideBlurShaderCompiled={} publicGuideBlurShaderBytes={} publicMultiStackOpaqueGuideShaderCompiled={} publicMultiStackOpaqueGuideShaderBytes={} publicMultiStackOpaqueGuideShaderPassCount={} publicMultiStackOpaqueGuideShaderPassVariantsCompiled={} publicMultiStackOpaqueGuideShaderPassByteCounts={} publicMultiStackOpaqueProjectionShaderCompiled={} publicMultiStackOpaqueProjectionShaderBytes={} publicMultiStackOpaqueProjectionVertexShaderCompiled={} publicMultiStackOpaqueProjectionVertexShaderBytes={} publicMultiStackOpaquePayloadExecutionReady=false publicMultiStackPrivateSurfaceParticleProfileConfigured={} publicMultiStackPrivateSurfaceParticleShaderConfigured={} publicMultiStackPrivateSurfaceParticlePayloadDirConfigured={} publicMultiStackPrivateSurfaceParticleMarkerPrefixConfigured={} publicMultiStackPrivateSurfaceParticleMetadataActive={} publicMultiStackPrivateSurfaceParticleExecutableInputsConfigured={} publicMultiStackPrivateSurfaceParticlePayloadActive={} publicMultiStackPrivateSurfaceParticleRendererStatus={} publicMultiStackPrivateSurfaceParticleExecutionReady={}",
         PUBLIC_MULTISTACK_STATIC_MARKER_FIELDS,
         passthrough_fields,
         depth_fields,
@@ -104,6 +105,8 @@ pub(crate) fn public_multistack_marker_fields() -> String {
         opaque_guide_shader_pass_byte_counts_marker(),
         bool_marker(OPAQUE_PROJECTION_SHADER_COMPILED),
         OPAQUE_PROJECTION_SHADER_BYTE_COUNT,
+        bool_marker(OPAQUE_PROJECTION_VERTEX_SHADER_COMPILED),
+        OPAQUE_PROJECTION_VERTEX_SHADER_BYTE_COUNT,
         bool_marker(PRIVATE_SURFACE_PARTICLE_PROFILE_CONFIGURED),
         bool_marker(PRIVATE_SURFACE_PARTICLE_SHADER_CONFIGURED),
         bool_marker(PRIVATE_SURFACE_PARTICLE_PAYLOAD_DIR_CONFIGURED),
@@ -227,6 +230,7 @@ mod tests {
         assert!(fields.contains("publicMultiStackPassExecutionReady=false"));
         assert!(fields.contains("RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OPAQUE_GUIDE_SHADER"));
         assert!(fields.contains("RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OPAQUE_PROJECTION_SHADER"));
+        assert!(fields.contains("RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OPAQUE_PROJECTION_VERTEX_SHADER"));
         assert!(fields.contains("RUSTY_QUEST_SPATIAL_SURFACE_PRIVATE_PARTICLE_PROFILE"));
         assert!(fields.contains("RUSTY_QUEST_SPATIAL_SURFACE_PRIVATE_PARTICLE_SHADER"));
         assert!(fields.contains("RUSTY_QUEST_SPATIAL_SURFACE_PRIVATE_PARTICLE_PAYLOAD_DIR"));
@@ -269,6 +273,13 @@ mod tests {
         )));
         assert!(fields.contains(&format!(
             "publicMultiStackOpaqueProjectionShaderBytes={OPAQUE_PROJECTION_SHADER_BYTE_COUNT}"
+        )));
+        assert!(fields.contains(&format!(
+            "publicMultiStackOpaqueProjectionVertexShaderCompiled={}",
+            bool_marker(OPAQUE_PROJECTION_VERTEX_SHADER_COMPILED)
+        )));
+        assert!(fields.contains(&format!(
+            "publicMultiStackOpaqueProjectionVertexShaderBytes={OPAQUE_PROJECTION_VERTEX_SHADER_BYTE_COUNT}"
         )));
         assert!(fields.contains("publicMultiStackOpaquePayloadExecutionReady=false"));
         assert!(fields.contains(&format!(

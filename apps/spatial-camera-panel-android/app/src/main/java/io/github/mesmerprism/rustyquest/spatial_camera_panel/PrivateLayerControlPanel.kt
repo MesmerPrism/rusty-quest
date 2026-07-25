@@ -57,6 +57,7 @@ internal fun PrivateLayerControlPanel(
     depthAlignment: PrivateLayerDepthAlignment,
     guideProcessing: PrivateLayerGuideProcessing,
     rgbChannelTransform: RgbChannelTransform,
+    projectionSurfaceDisplacement: ProjectionSurfaceDisplacement,
     videoSession: () -> SpatialImmersiveVideoSessionSnapshot,
     setLayerOverride: (Float, String) -> Float,
     setProjectionPanelEnabled: (Boolean, String) -> Boolean,
@@ -67,6 +68,8 @@ internal fun PrivateLayerControlPanel(
         (PrivateLayerGuideProcessing, String) -> PrivateLayerGuideProcessing,
     updateRgbChannelTransform:
         (RgbChannelTransform, String) -> RgbChannelTransform,
+    updateProjectionSurfaceDisplacement:
+        (ProjectionSurfaceDisplacement, String) -> ProjectionSurfaceDisplacement,
     selectPreviousVideo: () -> SpatialImmersiveVideoSessionSnapshot,
     selectNextVideo: () -> SpatialImmersiveVideoSessionSnapshot,
     closePanel: () -> Unit,
@@ -80,6 +83,10 @@ internal fun PrivateLayerControlPanel(
   var localGuideProcessing by remember(guideProcessing) { mutableStateOf(guideProcessing) }
   var localRgbChannelTransform by
       remember(rgbChannelTransform) { mutableStateOf(rgbChannelTransform) }
+  var localProjectionSurfaceDisplacement by
+      remember(projectionSurfaceDisplacement) {
+        mutableStateOf(projectionSurfaceDisplacement)
+      }
   var localVideoSession by remember { mutableStateOf(videoSession()) }
   LaunchedEffect(Unit) {
     while (true) {
@@ -263,6 +270,53 @@ internal fun PrivateLayerControlPanel(
           OperatorButton("1.25x") {
             localProjectionScale =
                 updateProjectionScale(1.25f, "private-layer-control-panel-scale-preset")
+          }
+        }
+      }
+
+      Section("Projection Depth") {
+        Text(
+            "Adds a guide-driven depth/parallax warp inside the existing stereo projection. The Spatial carrier stays planar, so video switching and the peripheral compositor remain active.",
+            style = MaterialTheme.typography.bodySmall,
+            color = LayerPanelMuted,
+        )
+        Text(
+            "Preset: ${ProjectionSurfaceDisplacementControls.presetToken(localProjectionSurfaceDisplacement)} · amplitude ${"%.2f".format(localProjectionSurfaceDisplacement.maxDisplacementMeters)} m",
+            style = MaterialTheme.typography.bodyMedium,
+            color = LayerPanelMuted,
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+          ChoiceButton(
+              "Off",
+              !localProjectionSurfaceDisplacement.enabled,
+          ) {
+            localProjectionSurfaceDisplacement =
+                updateProjectionSurfaceDisplacement(
+                    ProjectionSurfaceDisplacementControls.off,
+                    "private-layer-projection-depth-off",
+                )
+          }
+          ChoiceButton(
+              "Gentle",
+              localProjectionSurfaceDisplacement.enabled &&
+                  localProjectionSurfaceDisplacement.maxDisplacementMeters < 0.12f,
+          ) {
+            localProjectionSurfaceDisplacement =
+                updateProjectionSurfaceDisplacement(
+                    ProjectionSurfaceDisplacementControls.gentle,
+                    "private-layer-projection-depth-gentle",
+                )
+          }
+          ChoiceButton(
+              "Deep",
+              localProjectionSurfaceDisplacement.enabled &&
+                  localProjectionSurfaceDisplacement.maxDisplacementMeters >= 0.12f,
+          ) {
+            localProjectionSurfaceDisplacement =
+                updateProjectionSurfaceDisplacement(
+                    ProjectionSurfaceDisplacementControls.deep,
+                    "private-layer-projection-depth-deep",
+                )
           }
         }
       }

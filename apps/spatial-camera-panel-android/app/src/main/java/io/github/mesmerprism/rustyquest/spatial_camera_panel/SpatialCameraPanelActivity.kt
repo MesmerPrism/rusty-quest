@@ -289,6 +289,15 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
                       configuration.blue.coverageScale,
                   )
                 },
+                updateProjectionSurfaceDisplacementNative = { configuration ->
+                  nativeUpdateProjectionSurfaceDisplacement(
+                      if (configuration.enabled) 1 else 0,
+                      configuration.maxDisplacementMeters,
+                      configuration.referenceSurfaceDistanceMeters,
+                      configuration.polarity,
+                      configuration.edgeTaper,
+                  )
+                },
                 marker = ::marker,
             ),
             fixedLayerOverride = presentationPolicy.fixedLayerOverride,
@@ -713,6 +722,13 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             },
             updateRgbChannelTransform = { configuration, source ->
               privateLayerControlCoordinator.updateRgbChannelTransform(configuration, source)
+              Unit
+            },
+            updateProjectionSurfaceDisplacement = { configuration, source ->
+              privateLayerControlCoordinator.updateProjectionSurfaceDisplacement(
+                  configuration,
+                  source,
+              )
               Unit
             },
             setProjectionPanelEnabled = { enabled, source ->
@@ -1792,6 +1808,8 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
                     depthAlignment = privateLayerControlCoordinator.depthAlignment,
                     guideProcessing = privateLayerControlCoordinator.guideProcessing,
                     rgbChannelTransform = privateLayerControlCoordinator.rgbChannelTransform,
+                    projectionSurfaceDisplacement =
+                        privateLayerControlCoordinator.projectionSurfaceDisplacement,
                     videoSession = immersiveVideoPanelCoordinator::sessionSnapshot,
                     setLayerOverride = privateLayerControlCoordinator::updateLayerOverride,
                     setProjectionPanelEnabled = ::setProjectionPanelEnabled,
@@ -1808,6 +1826,8 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
                         privateLayerControlCoordinator::updateGuideProcessing,
                     updateRgbChannelTransform =
                         privateLayerControlCoordinator::updateRgbChannelTransform,
+                    updateProjectionSurfaceDisplacement =
+                        privateLayerControlCoordinator::updateProjectionSurfaceDisplacement,
                     selectPreviousVideo = {
                       changeImmersiveVideo(
                           "previous",
@@ -3104,6 +3124,14 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
       redCoverageScale: Float,
       greenCoverageScale: Float,
       blueCoverageScale: Float,
+  ): Long
+
+  private external fun nativeUpdateProjectionSurfaceDisplacement(
+      enabled: Int,
+      maxDisplacementMeters: Float,
+      referenceSurfaceDistanceMeters: Float,
+      polarity: Float,
+      edgeTaper: Float,
   ): Long
 
   private external fun nativeStartSpatialVideoProjectionProbe(

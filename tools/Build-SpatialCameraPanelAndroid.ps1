@@ -9,6 +9,7 @@ param(
     [string]$PrivateLayerProfilePath = $env:RUSTY_QUEST_SPATIAL_CAMERA_PANEL_PRIVATE_LAYER_PROFILE,
     [string]$OpaqueGuideShader = $env:RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OPAQUE_GUIDE_SHADER,
     [string]$OpaqueProjectionShader = $env:RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OPAQUE_PROJECTION_SHADER,
+    [string]$OpaqueProjectionVertexShader = $env:RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OPAQUE_PROJECTION_VERTEX_SHADER,
     [string]$OpaqueProjectionEffect = $env:RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OPAQUE_PROJECTION_EFFECT,
     [string]$PrivateSurfaceParticleProfilePath = $env:RUSTY_QUEST_SPATIAL_SURFACE_PRIVATE_PARTICLE_PROFILE,
     [string]$PrivateSurfaceParticleShader = $env:RUSTY_QUEST_SPATIAL_SURFACE_PRIVATE_PARTICLE_SHADER,
@@ -476,12 +477,16 @@ if (-not [string]::IsNullOrWhiteSpace($resolvedPrivateLayerProfilePath)) {
     if ([string]::IsNullOrWhiteSpace($OpaqueProjectionShader) -and $null -ne $privateLayerProfile.private_shader_sources) {
         $OpaqueProjectionShader = [string]$privateLayerProfile.private_shader_sources.projection_shader
     }
+    if ([string]::IsNullOrWhiteSpace($OpaqueProjectionVertexShader) -and $null -ne $privateLayerProfile.private_shader_sources) {
+        $OpaqueProjectionVertexShader = [string]$privateLayerProfile.private_shader_sources.projection_vertex_shader
+    }
     if ([string]::IsNullOrWhiteSpace($OpaqueProjectionEffect) -and $null -ne $privateLayerProfile.required_public_bridge) {
         $OpaqueProjectionEffect = [string]$privateLayerProfile.required_public_bridge.opaque_projection_effect
     }
 }
 $resolvedOpaqueGuideShader = Resolve-OptionalFilePath -Path $OpaqueGuideShader -Label "Opaque guide shader"
 $resolvedOpaqueProjectionShader = Resolve-OptionalFilePath -Path $OpaqueProjectionShader -Label "Opaque projection shader"
+$resolvedOpaqueProjectionVertexShader = Resolve-OptionalFilePath -Path $OpaqueProjectionVertexShader -Label "Opaque projection vertex shader"
 $privateLayerShaderInputsConfigured =
     (-not [string]::IsNullOrWhiteSpace($resolvedOpaqueGuideShader)) -or
     (-not [string]::IsNullOrWhiteSpace($resolvedOpaqueProjectionShader))
@@ -576,6 +581,7 @@ $previousRecordedHandFrameLimit = $env:RUSTY_QUEST_NATIVE_RECORDED_HAND_FRAME_LI
 $previousPrivateLayerProfile = $env:RUSTY_QUEST_SPATIAL_CAMERA_PANEL_PRIVATE_LAYER_PROFILE
 $previousOpaqueGuideShader = $env:RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OPAQUE_GUIDE_SHADER
 $previousOpaqueProjectionShader = $env:RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OPAQUE_PROJECTION_SHADER
+$previousOpaqueProjectionVertexShader = $env:RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OPAQUE_PROJECTION_VERTEX_SHADER
 $previousOpaqueProjectionEffect = $env:RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OPAQUE_PROJECTION_EFFECT
 $previousLockedFinalPresentation = $env:RUSTY_QUEST_SPATIAL_LOCKED_FINAL_PRESENTATION
 $previousDistortionSpeedScale = $env:RUSTY_QUEST_SPATIAL_DISTORTION_SPEED_SCALE
@@ -605,10 +611,16 @@ try {
     if ($privateLayerShaderInputsConfigured) {
         $env:RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OPAQUE_GUIDE_SHADER = $resolvedOpaqueGuideShader
         $env:RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OPAQUE_PROJECTION_SHADER = $resolvedOpaqueProjectionShader
+        if ([string]::IsNullOrWhiteSpace($resolvedOpaqueProjectionVertexShader)) {
+            Remove-Item Env:\RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OPAQUE_PROJECTION_VERTEX_SHADER -ErrorAction SilentlyContinue
+        } else {
+            $env:RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OPAQUE_PROJECTION_VERTEX_SHADER = $resolvedOpaqueProjectionVertexShader
+        }
         $env:RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OPAQUE_PROJECTION_EFFECT = $OpaqueProjectionEffect
     } else {
         Remove-Item Env:\RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OPAQUE_GUIDE_SHADER -ErrorAction SilentlyContinue
         Remove-Item Env:\RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OPAQUE_PROJECTION_SHADER -ErrorAction SilentlyContinue
+        Remove-Item Env:\RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OPAQUE_PROJECTION_VERTEX_SHADER -ErrorAction SilentlyContinue
         Remove-Item Env:\RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OPAQUE_PROJECTION_EFFECT -ErrorAction SilentlyContinue
     }
     if ($privateSurfaceParticleInputsConfigured) {
@@ -686,6 +698,11 @@ try {
         Remove-Item Env:\RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OPAQUE_PROJECTION_SHADER -ErrorAction SilentlyContinue
     } else {
         $env:RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OPAQUE_PROJECTION_SHADER = $previousOpaqueProjectionShader
+    }
+    if ($null -eq $previousOpaqueProjectionVertexShader) {
+        Remove-Item Env:\RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OPAQUE_PROJECTION_VERTEX_SHADER -ErrorAction SilentlyContinue
+    } else {
+        $env:RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OPAQUE_PROJECTION_VERTEX_SHADER = $previousOpaqueProjectionVertexShader
     }
     if ($null -eq $previousOpaqueProjectionEffect) {
         Remove-Item Env:\RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OPAQUE_PROJECTION_EFFECT -ErrorAction SilentlyContinue
@@ -1045,17 +1062,20 @@ $manifest = [ordered]@{
     spatial_public_multistack_private_shader_inputs = $(if ($privateLayerShaderInputsConfigured) { "external-build-inputs" } else { "not-configured-raw-camera-fallback" })
     spatial_public_multistack_opaque_guide_shader_configured = (-not [string]::IsNullOrWhiteSpace($resolvedOpaqueGuideShader))
     spatial_public_multistack_opaque_projection_shader_configured = (-not [string]::IsNullOrWhiteSpace($resolvedOpaqueProjectionShader))
+    spatial_public_multistack_opaque_projection_vertex_shader_configured = (-not [string]::IsNullOrWhiteSpace($resolvedOpaqueProjectionVertexShader))
     spatial_public_multistack_opaque_projection_effect_configured = $opaqueProjectionEffectConfigured
     spatial_public_multistack_opaque_projection_effect = $(if ($opaqueProjectionEffectConfigured) { $OpaqueProjectionEffect } else { "" })
     spatial_public_multistack_private_layer_build_env = @(
         "RUSTY_QUEST_SPATIAL_CAMERA_PANEL_PRIVATE_LAYER_PROFILE",
         "RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OPAQUE_GUIDE_SHADER",
         "RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OPAQUE_PROJECTION_SHADER",
+        "RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OPAQUE_PROJECTION_VERTEX_SHADER",
         "RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OPAQUE_PROJECTION_EFFECT"
     )
     spatial_public_multistack_private_layer_profile_sha256 = $(if ([string]::IsNullOrWhiteSpace($resolvedPrivateLayerProfilePath)) { "" } else { Get-FileSha256 -Path $resolvedPrivateLayerProfilePath })
     spatial_public_multistack_opaque_guide_shader_sha256 = $(if ([string]::IsNullOrWhiteSpace($resolvedOpaqueGuideShader)) { "" } else { Get-FileSha256 -Path $resolvedOpaqueGuideShader })
     spatial_public_multistack_opaque_projection_shader_sha256 = $(if ([string]::IsNullOrWhiteSpace($resolvedOpaqueProjectionShader)) { "" } else { Get-FileSha256 -Path $resolvedOpaqueProjectionShader })
+    spatial_public_multistack_opaque_projection_vertex_shader_sha256 = $(if ([string]::IsNullOrWhiteSpace($resolvedOpaqueProjectionVertexShader)) { "" } else { Get-FileSha256 -Path $resolvedOpaqueProjectionVertexShader })
     spatial_surface_private_particle_hook = "generic-build-time-private-surface-particle-hook"
     spatial_surface_private_particle_public_default = "no-op-private-surface-particle-hook"
     spatial_surface_private_particle_renderer_status = $(if ($privateSurfaceParticleStagedPayloadReady) { "main-draw-overlay-public-hand-anchor-fallback" } elseif ($privateSurfaceParticleInputsConfigured) { "metadata-only-private-renderer-public-hand-anchor-fallback" } else { "public-default-no-private-surface-particle-inputs" })

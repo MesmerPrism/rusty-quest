@@ -18,6 +18,8 @@ internal data class SpatialPrivateLayerControlBindings(
     val updateGuideProcessingNative: (PrivateLayerGuideProcessing) -> Long,
     val updateZoneCompositorNative: (PrivateLayerZoneCompositor) -> Long,
     val updateRgbChannelTransformNative: (RgbChannelTransform) -> Long,
+    val updateProjectionSurfaceDisplacementNative:
+        (ProjectionSurfaceDisplacement) -> Long,
     val marker: (String) -> Unit,
 )
 
@@ -44,6 +46,10 @@ internal class SpatialPrivateLayerControlCoordinator(
   var rgbChannelTransform: RgbChannelTransform = RgbChannelTransformControls.bypass
     private set
 
+  var projectionSurfaceDisplacement: ProjectionSurfaceDisplacement =
+      ProjectionSurfaceDisplacementControls.off
+    private set
+
   fun initializeDepthLayerPolicy(policy: Int) {
     depthLayerPolicy = policy
   }
@@ -60,6 +66,7 @@ internal class SpatialPrivateLayerControlCoordinator(
     updateGuideProcessing(guideProcessing, source)
     updateZoneCompositor(zoneCompositor, source)
     updateRgbChannelTransform(rgbChannelTransform, source)
+    updateProjectionSurfaceDisplacement(projectionSurfaceDisplacement, source)
   }
 
   fun updateLayerOverride(requestedLayerOverride: Float, source: String): Float {
@@ -312,6 +319,35 @@ internal class SpatialPrivateLayerControlCoordinator(
             "source=${activityMarkerToken(source)} transport=jni-live-queue updateMask=$updateMask " +
             "previousRgbChannelTransformMode=${RgbChannelTransformControls.modeToken(previous.mode)} " +
             "${RgbChannelTransformModule.markerFields(updated)} runtimeCrash=false"
+    )
+    return updated
+  }
+
+  fun updateProjectionSurfaceDisplacement(
+      requestedConfiguration: ProjectionSurfaceDisplacement,
+      source: String,
+  ): ProjectionSurfaceDisplacement {
+    if (!bindings.routeActive()) return projectionSurfaceDisplacement
+    val previous = projectionSurfaceDisplacement
+    val updated = ProjectionSurfaceDisplacementModule.normalize(requestedConfiguration)
+    projectionSurfaceDisplacement = updated
+    val updateMask =
+        runCatching { bindings.updateProjectionSurfaceDisplacementNative(updated) }
+            .getOrElse { throwable ->
+              bindings.marker(
+                  "channel=private-layer-panel status=projection-surface-displacement-update-failed " +
+                      "source=${activityMarkerToken(source)} " +
+                      "error=${activityMarkerToken(throwable.javaClass.simpleName)} " +
+                      "message=${activityMarkerToken(throwable.message ?: "none")} " +
+                      "${ProjectionSurfaceDisplacementModule.markerFields(updated)} runtimeCrash=false"
+              )
+              0L
+            }
+    bindings.marker(
+        "channel=private-layer-panel status=projection-surface-displacement-submitted " +
+            "source=${activityMarkerToken(source)} transport=jni-live-queue updateMask=$updateMask " +
+            "previousProjectionSurfaceDisplacementPreset=${ProjectionSurfaceDisplacementControls.presetToken(previous)} " +
+            "${ProjectionSurfaceDisplacementModule.markerFields(updated)} runtimeCrash=false"
     )
     return updated
   }

@@ -1389,3 +1389,21 @@ sources without restarting the activity or the projection stack.
 This is transport and control infrastructure only. The guide signal,
 color-to-strength mapping, artistic tuning, and final sampling/compositing
 formula remain consumer-owned. See `docs/RGB_CHANNEL_TRANSFORM.md`.
+
+## Projection surface displacement
+
+The shared projection adapter also exposes
+`rusty.quest.projection-surface-displacement.v1`. Its `Off`, `Gentle`, and
+`Deep` controls feed one bounded native owner. A build-time optional vertex
+payload can select a 32x32 tessellated projection draw; Off or a missing payload
+uses the original three-vertex fullscreen pipeline exactly.
+
+The Spatial SDK `SceneQuadLayer` remains planar. The tessellated draw produces
+parallax inside that carrier and deliberately keeps the camera hardware-buffer
+path, encrypted stereo video selection, RGB transforms, and core/buffer/outer
+video compositor alive. Signal derivation, signed depth mapping, and artistic
+tuning remain downstream-owned. Serial-scoped validation can switch live with
+`projection-surface-displacement-off`,
+`projection-surface-displacement-gentle`, and
+`projection-surface-displacement-deep`. See
+`docs/PROJECTION_SURFACE_DISPLACEMENT.md`.

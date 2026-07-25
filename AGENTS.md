@@ -226,6 +226,15 @@ Consuming projects retain their signal derivation, color-to-strength mapping,
 artistic tuning, and final distortion/compositor formulas. Keep those formulas
 out of this public repository and run the dedicated RGB static check whenever
 the ABI or controls change.
+
+The reusable projection-surface displacement transport is documented in
+`docs/PROJECTION_SURFACE_DISPLACEMENT.md`. Rusty Quest owns its bounded,
+disabled-by-default controls, 32x32 tessellated draw, optional private vertex
+slot, JNI/Vulkan transport, exact fullscreen fallback, and effective markers.
+Downstream projects own the displacement field, signal-to-depth mapping, and
+tuning. The Spatial SDK carrier remains planar; do not claim compositor-space
+mesh or environment-depth geometry. Run the dedicated projection-surface
+static check whenever this ABI or pipeline selection changes.
 authority.
 
 For release-candidate broker recovery, distinguish client death from authority

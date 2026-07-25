@@ -2982,12 +2982,12 @@ $privateLayerLabelNeedles = @(
   ("Pre" + "blur brightness"),
   ("Raw " + "strength"),
   ("Blurred " + "strength"),
-  ("Dis" + "placement"),
   ("Depth " + "gradient")
 )
 foreach ($needle in $privateLayerLabelNeedles) {
   Assert-NotContains "Private layer panel" $privateLayerPanel $needle
 }
+Assert-NotContains "Private layer panel" $privateLayerPanel 'ChoiceButton("Displacement"'
 Assert-NotContains "Activity" $activity ("1:" + "raw" + "-brightness")
 Assert-Contains "Private layer panel control module" $privateLayerPanelControlModule "publicMultiStackLayerManifest=0:final,1:opaque-analysis0-slot,2:public-guide-blur,3:opaque-analysis1-slot,4:public-post-blur-guide,5:opaque-projection-slot,6:public-depth-diagnostic,7:meta-passthrough-edge-window,8:raw-custom-projection"
 Assert-Contains "Private layer panel control module" $privateLayerPanelControlModule "status=meta-passthrough-edge-window-submitted"

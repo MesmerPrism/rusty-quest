@@ -23,6 +23,7 @@ internal data class SpatialPrivateLayerPanelRegistrationBindings(
     val depthAlignment: PrivateLayerDepthAlignment,
     val guideProcessing: PrivateLayerGuideProcessing,
     val rgbChannelTransform: RgbChannelTransform,
+    val projectionSurfaceDisplacement: ProjectionSurfaceDisplacement,
     val videoSession: () -> SpatialImmersiveVideoSessionSnapshot,
     val setLayerOverride: (Float, String) -> Float,
     val setProjectionPanelEnabled: (Boolean, String) -> Boolean,
@@ -34,6 +35,8 @@ internal data class SpatialPrivateLayerPanelRegistrationBindings(
         (PrivateLayerGuideProcessing, String) -> PrivateLayerGuideProcessing,
     val updateRgbChannelTransform:
         (RgbChannelTransform, String) -> RgbChannelTransform,
+    val updateProjectionSurfaceDisplacement:
+        (ProjectionSurfaceDisplacement, String) -> ProjectionSurfaceDisplacement,
     val selectPreviousVideo: () -> SpatialImmersiveVideoSessionSnapshot,
     val selectNextVideo: () -> SpatialImmersiveVideoSessionSnapshot,
     val closePanel: () -> Unit,
@@ -80,6 +83,7 @@ internal object SpatialComposePanelRegistrationModule {
                       depthAlignment = bindings.depthAlignment,
                       guideProcessing = bindings.guideProcessing,
                       rgbChannelTransform = bindings.rgbChannelTransform,
+                      projectionSurfaceDisplacement = bindings.projectionSurfaceDisplacement,
                       videoSession = bindings.videoSession,
                       setLayerOverride = bindings.setLayerOverride,
                       setProjectionPanelEnabled = bindings.setProjectionPanelEnabled,
@@ -88,6 +92,8 @@ internal object SpatialComposePanelRegistrationModule {
                       updateDepthAlignment = bindings.updateDepthAlignment,
                       updateGuideProcessing = bindings.updateGuideProcessing,
                       updateRgbChannelTransform = bindings.updateRgbChannelTransform,
+                      updateProjectionSurfaceDisplacement =
+                          bindings.updateProjectionSurfaceDisplacement,
                       selectPreviousVideo = bindings.selectPreviousVideo,
                       selectNextVideo = bindings.selectNextVideo,
                       closePanel = bindings.closePanel,

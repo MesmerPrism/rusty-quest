@@ -6,6 +6,7 @@ param(
     [string]$PrivateLayerProfilePath = $env:RUSTY_QUEST_SPATIAL_CAMERA_PANEL_PRIVATE_LAYER_PROFILE,
     [string]$OpaqueGuideShader = $env:RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OPAQUE_GUIDE_SHADER,
     [string]$OpaqueProjectionShader = $env:RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OPAQUE_PROJECTION_SHADER,
+    [string]$OpaqueProjectionVertexShader = $env:RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OPAQUE_PROJECTION_VERTEX_SHADER,
     [string]$OpaqueProjectionEffect = $env:RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OPAQUE_PROJECTION_EFFECT,
     [string]$PrivateSurfaceParticleProfilePath = $env:RUSTY_QUEST_SPATIAL_SURFACE_PRIVATE_PARTICLE_PROFILE,
     [string]$PrivateSurfaceParticleShader = $env:RUSTY_QUEST_SPATIAL_SURFACE_PRIVATE_PARTICLE_SHADER,
@@ -29,6 +30,7 @@ $workflowCheckPath = Join-Path $PSScriptRoot "checks\Test-SpatialCameraPanelWork
 $staticCheckPath = Join-Path $PSScriptRoot "checks\Test-SpatialCameraPanelAndroidStatic.ps1"
 $immersiveVideoCheckPath = Join-Path $PSScriptRoot "checks\Test-SpatialCameraPanelImmersiveVideoStatic.ps1"
 $rgbChannelTransformCheckPath = Join-Path $PSScriptRoot "checks\Test-SpatialCameraPanelRgbChannelTransformStatic.ps1"
+$projectionSurfaceDisplacementCheckPath = Join-Path $PSScriptRoot "checks\Test-SpatialCameraPanelProjectionSurfaceDisplacementStatic.ps1"
 $cameraLatencyCheckPath = Join-Path $PSScriptRoot "checks\Test-SpatialCameraPanelCameraLatencyDiagnosticStatic.ps1"
 $fragmentProbeCheckPath = Join-Path $PSScriptRoot "checks\Test-SpatialFragmentProbeStatic.ps1"
 $vrStrobeCheckPath = Join-Path $PSScriptRoot "checks\Test-SpatialVrStrobeStatic.ps1"
@@ -47,6 +49,9 @@ if (-not (Test-Path -LiteralPath $immersiveVideoCheckPath)) {
 }
 if (-not (Test-Path -LiteralPath $rgbChannelTransformCheckPath)) {
     throw "Missing Spatial Camera Panel RGB channel transform static check: $rgbChannelTransformCheckPath"
+}
+if (-not (Test-Path -LiteralPath $projectionSurfaceDisplacementCheckPath)) {
+    throw "Missing Spatial Camera Panel projection-surface displacement static check: $projectionSurfaceDisplacementCheckPath"
 }
 if (-not (Test-Path -LiteralPath $cameraLatencyCheckPath)) {
     throw "Missing Spatial Camera Panel camera latency diagnostic check: $cameraLatencyCheckPath"
@@ -71,6 +76,7 @@ if (-not (Test-Path -LiteralPath $buildPath)) {
 & $staticCheckPath -RepoRoot $repoRootPath
 & $immersiveVideoCheckPath -RepoRoot $repoRootPath
 & $rgbChannelTransformCheckPath -RepoRoot $repoRootPath
+& $projectionSurfaceDisplacementCheckPath -RepoRoot $repoRootPath
 & $cameraLatencyCheckPath -RepoRoot $repoRootPath
 & $fragmentProbeCheckPath -RepoRoot $repoRootPath
 & $vrStrobeCheckPath -RepoRoot $repoRootPath
@@ -80,6 +86,7 @@ Push-Location -LiteralPath $repoRootPath
 try {
     cargo test -p spatial-camera-panel-native-receipt surface_particle
     cargo test -p spatial-camera-panel-native-receipt camera_latency
+    cargo test -p spatial-camera-panel-native-receipt projection_surface_displacement
 } finally {
     Pop-Location
 }
@@ -92,6 +99,7 @@ if ($Build) {
         -PrivateLayerProfilePath $PrivateLayerProfilePath `
         -OpaqueGuideShader $OpaqueGuideShader `
         -OpaqueProjectionShader $OpaqueProjectionShader `
+        -OpaqueProjectionVertexShader $OpaqueProjectionVertexShader `
         -OpaqueProjectionEffect $OpaqueProjectionEffect `
         -PrivateSurfaceParticleProfilePath $PrivateSurfaceParticleProfilePath `
         -PrivateSurfaceParticleShader $PrivateSurfaceParticleShader `

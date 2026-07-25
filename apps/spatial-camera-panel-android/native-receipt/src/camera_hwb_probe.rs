@@ -32,6 +32,7 @@ use crate::camera_latency_diagnostics::{
     CameraLatencyWindow, CAMERA_LATENCY_STRICT_PAIR_MAX_DELTA_NS,
 };
 use crate::camera_reprojection_guard_band::CameraReprojectionGuardBandController;
+use crate::projection_surface_displacement::update_projection_surface_displacement_settings;
 use crate::rgb_channel_transform::update_rgb_channel_transform_settings;
 use crate::spatial_public_multistack::{
     public_multistack_inactive_marker_fields, public_multistack_marker_fields,
@@ -501,6 +502,32 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1pa
         applied.marker_fields(),
         mode,
         edge_mode,
+    ));
+    1
+}
+
+#[no_mangle]
+#[allow(non_snake_case)]
+pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1panel_SpatialCameraPanelActivity_nativeUpdateProjectionSurfaceDisplacement(
+    _env: *mut c_void,
+    _thiz: *mut c_void,
+    enabled: c_int,
+    max_displacement_m: c_float,
+    reference_distance_m: c_float,
+    polarity: c_float,
+    edge_taper: c_float,
+) -> i64 {
+    let applied = update_projection_surface_displacement_settings(
+        enabled != 0,
+        max_displacement_m as f32,
+        reference_distance_m as f32,
+        polarity as f32,
+        edge_taper as f32,
+    );
+    log_marker(format!(
+        "status=projection-surface-displacement-updated rawCameraProjectionProbe=true updateMask=1 spatialPrivateLayerControlPanel=true {} requestedProjectionSurfaceDisplacementEnabled={} runtimeCrash=false",
+        applied.marker_fields(crate::spatial_public_multistack::OPAQUE_PROJECTION_VERTEX_SHADER_COMPILED),
+        enabled,
     ));
     1
 }
