@@ -22,6 +22,7 @@ members = [
     "crates/rusty-quest-hand-adapter",
     "crates/rusty-quest-peer-session-adapter",
     "crates/rusty-quest-fleet-agent",
+    "crates/rusty-quest-package-updater",
 ]
 resolver = "2"
 

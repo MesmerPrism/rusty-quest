@@ -1,0 +1,24 @@
+{
+  "schema": "rusty.quest.package_update_receipt.v1",
+  "stage": "manifest_admission",
+  "decision": "accepted",
+  "code": "manifest_accepted",
+  "observed_at_ms": 2000000000000,
+  "envelope_sha256": "sha256:4c570cff3e135aa9d1f1b517fa944a2400f81683467a4d1c608ad148ce624af5",
+  "signed_manifest_sha256": "sha256:a114839381a81d150158987db3639a86b44ad7143b65637b197a3f2eeae22d6c",
+  "key_id": "release-test-2026-a",
+  "manifest_id": "rusty-kiosk.alpha.101",
+  "package_name": "io.github.mesmerprism.rustykiosk",
+  "rollout_ring": "alpha",
+  "sequence": 41,
+  "version_code": 101,
+  "prior_checkpoint": {
+    "package_name": "io.github.mesmerprism.rustykiosk",
+    "rollout_ring": "alpha",
+    "sequence": 40,
+    "version_code": 100,
+    "signed_manifest_sha256": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+  },
+  "accepted_checkpoint": null,
+  "state_changed": false
+}

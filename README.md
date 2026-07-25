@@ -107,6 +107,16 @@ domain-separated JCS claims with Ed25519. Its default profile is inert. It does
 not discover a Hub, enroll itself, accept authority, inspect arbitrary apps,
 listen for commands, or add ADB/File Manager/media capability.
 
+`crates/rusty-quest-package-updater` owns the fail-closed, one-APK signed
+manifest, exact policy, anti-rollback checkpoint, and deterministic receipt
+contracts for the separate attended
+`apps/package-updater-android` sidecar. The Android app fixes its manifest URL,
+release key, package, rollout ring, signer, and HTTPS origin at build time,
+downloads only into app-private storage, verifies the archive before staging,
+and always uses Android Package Installer with wearer action required. It is
+not part of the Store launcher, does not accept arbitrary URLs or packages,
+and advances rollback state only after exact installed-package readback.
+
 `crates/rusty-quest-media-stream` provides the generic receiver-first platform
 runtime described in [Generic Media Stream Runtime](docs/MEDIA_STREAM_RUNTIME.md).
 It composes explicit sources, dual-lane/packed/passthrough processors, validated

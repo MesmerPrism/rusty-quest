@@ -1,0 +1,27 @@
+{
+  "expected_code": "malformed_envelope",
+  "envelope": {
+    "schema": "rusty.quest.package_update_manifest_envelope.v1",
+    "key_id": "release-test-2026-a",
+    "algorithm": "Ed25519",
+    "signature": "d5h3k8bdRzMSc2qgCb1fxursZNWvqWlncyc0N3vtnvlwD5TmvKVvvyj7tdDK8o4hOC1zPGCHeeYqK6DsHFICAQ",
+    "unexpected_authority": true,
+    "signed": {
+      "schema": "rusty.quest.package_update_manifest.v1",
+      "manifest_id": "rusty-kiosk.alpha.101",
+      "sequence": 41,
+      "issued_at_ms": 1999999900000,
+      "expires_at_ms": 2000000500000,
+      "rollout_ring": "alpha",
+      "artifact": {
+        "package_name": "io.github.mesmerprism.rustykiosk",
+        "version_code": 101,
+        "version_name": "0.1.1",
+        "apk_url": "https://updates.mesmerprism.com/rusty-kiosk/alpha/rusty-kiosk-0.1.1.apk",
+        "apk_sha256": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+        "apk_size_bytes": 123456,
+        "signer_sha256": "sha256:23bb7bb81143a81f216118af35960aaee2468e9880b94e07574cac0a9239dcf6"
+      }
+    }
+  }
+}

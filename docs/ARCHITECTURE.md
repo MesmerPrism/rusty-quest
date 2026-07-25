@@ -29,6 +29,9 @@ apps.
 - narrow Meta Spatial SDK Android experiment lanes when they are Quest platform
   adapters for panel placement, sizing, launch, and headset validation rather
   than Morphospace geometry, rendering, or session authority.
+- source-only signed package-update admission, exact package/ring/origin/signer
+  policy, installed-APK observation, and anti-rollback receipts for an attended
+  Quest updater sidecar.
 
 ## Non-Ownership
 
@@ -47,6 +50,33 @@ apps.
 - private downstream effect kernels, tuned profiles, study semantics, live
   hand-mesh dynamics, or coupling parameters beyond the low-rate generic
   driver-profile panel records needed for headset validation.
+- Fleet release authorization, arbitrary package discovery, silent or
+  device-owner installation, Store launcher authority, and Android Package
+  Installer confirmation on the wearer's behalf.
+
+## Attended Package Updater
+
+`crates/rusty-quest-package-updater` owns the strict
+`rusty.quest.package_update_manifest.v1` signed payload and its envelope,
+policy, receipt, and rollback-state validation. Ed25519 covers the RFC 8785 JCS
+payload after the exact `rusty.quest.package_update_manifest.v1\0` domain.
+Release-key identifiers are caller-selected only from a closed registry, and
+one public key cannot be aliased under multiple identifiers.
+
+`apps/package-updater-android` is a distinct native 2D sidecar. Its only
+permissions are `INTERNET` and `REQUEST_INSTALL_PACKAGES`; its sole exported
+component is the visible launcher Activity. Compile-time policy fixes the
+manifest endpoint, release key, exact HTTPS origin, target package, rollout
+ring, and APK signer. Redirects are disabled, response and APK sizes are
+bounded, staging is app-private, and Android archive metadata must match the
+signed facts before a full-install Package Installer session is committed with
+`USER_ACTION_REQUIRED`.
+
+Wearer cancellation and terminal failure never advance rollback state. A
+successful callback still requires exact installed package, version, and signer
+readback before the checkpoint changes. Restart reconciliation retains a
+visible pending state, permits explicit session cancellation, and cleans the
+private staged APK after every terminal outcome.
 
 ADB writes are generated operations from validated profiles. They are not
 hand-authored settings authority.

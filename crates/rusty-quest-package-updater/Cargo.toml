@@ -1,0 +1,21 @@
+[package]
+name = "rusty-quest-package-updater"
+description = "Fail-closed signed package-update admission contracts for Quest sidecars."
+version = "0.1.0"
+edition = "2021"
+authors = ["Till Holzapfel"]
+license = "AGPL-3.0-or-later"
+rust-version = "1.80"
+
+[dependencies]
+ed25519-dalek = { version = "=2.1.1", default-features = false, features = ["std"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_jcs = "=0.2.0"
+sha2 = "0.10"
+
+[dev-dependencies]
+ed25519-dalek = { version = "=2.1.1", default-features = false, features = ["std"] }
+
+[lints]
+workspace = true

@@ -1,0 +1,129 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/MesmerPrism/rusty-quest/schemas/rusty.quest.package_update_receipt.v1.schema.json",
+  "title": "Rusty Quest Package Update Receipt v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "stage",
+    "decision",
+    "code",
+    "observed_at_ms",
+    "envelope_sha256",
+    "signed_manifest_sha256",
+    "key_id",
+    "manifest_id",
+    "package_name",
+    "rollout_ring",
+    "sequence",
+    "version_code",
+    "prior_checkpoint",
+    "accepted_checkpoint",
+    "state_changed"
+  ],
+  "properties": {
+    "schema": {
+      "const": "rusty.quest.package_update_receipt.v1"
+    },
+    "stage": {
+      "enum": ["manifest_admission", "install_commit"]
+    },
+    "decision": {
+      "enum": ["accepted", "rejected"]
+    },
+    "code": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]{0,63}$"
+    },
+    "observed_at_ms": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "envelope_sha256": {
+      "oneOf": [
+        {"type": "null"},
+        {"$ref": "#/$defs/sha256"}
+      ]
+    },
+    "signed_manifest_sha256": {
+      "oneOf": [
+        {"type": "null"},
+        {"$ref": "#/$defs/sha256"}
+      ]
+    },
+    "key_id": {
+      "type": ["string", "null"],
+      "pattern": "^[A-Za-z0-9._-]{1,96}$"
+    },
+    "manifest_id": {
+      "type": ["string", "null"],
+      "pattern": "^[A-Za-z0-9._-]{1,128}$"
+    },
+    "package_name": {
+      "type": ["string", "null"],
+      "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$"
+    },
+    "rollout_ring": {
+      "type": ["string", "null"],
+      "pattern": "^[A-Za-z0-9._-]{1,32}$"
+    },
+    "sequence": {
+      "type": ["integer", "null"],
+      "minimum": 1,
+      "maximum": 9007199254740991
+    },
+    "version_code": {
+      "type": ["integer", "null"],
+      "minimum": 1,
+      "maximum": 9007199254740991
+    },
+    "prior_checkpoint": {
+      "oneOf": [
+        {"type": "null"},
+        {"$ref": "#/$defs/checkpoint"}
+      ]
+    },
+    "accepted_checkpoint": {
+      "oneOf": [
+        {"type": "null"},
+        {"$ref": "#/$defs/checkpoint"}
+      ]
+    },
+    "state_changed": {
+      "type": "boolean"
+    }
+  },
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "checkpoint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "package_name",
+        "rollout_ring",
+        "sequence",
+        "version_code",
+        "signed_manifest_sha256"
+      ],
+      "properties": {
+        "package_name": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$",
+          "maxLength": 255
+        },
+        "rollout_ring": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9._-]{1,32}$"
+        },
+        "sequence": {"type": "integer", "minimum": 1, "maximum": 9007199254740991},
+        "version_code": {"type": "integer", "minimum": 1, "maximum": 9007199254740991},
+        "signed_manifest_sha256": {"$ref": "#/$defs/sha256"}
+      }
+    }
+  }
+}

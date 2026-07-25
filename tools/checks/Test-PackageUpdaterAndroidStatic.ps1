@@ -1,0 +1,451 @@
+[CmdletBinding()]
+param(
+    [string]$RepoRoot = ""
+)
+
+$ErrorActionPreference = "Stop"
+if ($PSVersionTable.PSEdition -ne "Core" -or
+    $PSVersionTable.PSVersion -lt [version]"7.6") {
+    throw "Package Updater validation requires PowerShell 7.6 Core or newer."
+}
+if ([string]::IsNullOrWhiteSpace($RepoRoot)) {
+    $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
+}
+
+$appRoot = Join-Path $RepoRoot "apps\package-updater-android"
+$javaRoot = Join-Path $appRoot `
+    "app\src\main\java\io\github\mesmerprism\rustyquest\packageupdater"
+$paths = [ordered]@{
+    readme = Join-Path $appRoot "README.md"
+    settings = Join-Path $appRoot "settings.gradle.kts"
+    root_build = Join-Path $appRoot "build.gradle.kts"
+    app_build = Join-Path $appRoot "app\build.gradle.kts"
+    manifest = Join-Path $appRoot "app\src\main\AndroidManifest.xml"
+    activity = Join-Path $javaRoot "PackageUpdaterActivity.java"
+    verifier_boundary = Join-Path $javaRoot "UpdateEnvelopeVerifier.java"
+    verifier = Join-Path $javaRoot "StrictUpdateEnvelopeVerifier.java"
+    canonicalizer = Join-Path $javaRoot "UpdateManifestCanonicalizer.java"
+    json_preflight = Join-Path $javaRoot "StrictJsonPreflight.java"
+    state_store = Join-Path $javaRoot "UpdateStateStore.java"
+    manifest_client = Join-Path $javaRoot "UpdateManifestClient.java"
+    stager = Join-Path $javaRoot "ApkStager.java"
+    inspection = Join-Path $javaRoot "PackageInspection.java"
+    receipt = Join-Path $javaRoot "InstallReceiptStore.java"
+    installer = Join-Path $javaRoot "PackageInstallController.java"
+    callback = Join-Path $javaRoot "PackageInstallCallbackReceiver.java"
+    host_vector = Join-Path $appRoot `
+        "host-tests\io\github\mesmerprism\rustyquest\packageupdater\PackageUpdaterCanonicalVectorTest.java"
+    build_wrapper = Join-Path $RepoRoot "tools\Build-PackageUpdaterAndroid.ps1"
+    publish_wrapper = Join-Path $RepoRoot "tools\Publish-PackageUpdateManifest.ps1"
+}
+foreach ($entry in $paths.GetEnumerator()) {
+    if (-not (Test-Path -LiteralPath $entry.Value)) {
+        throw "Missing Package Updater surface $($entry.Key): $($entry.Value)"
+    }
+}
+
+function Assert-Match(
+    [string]$Text,
+    [string]$Pattern,
+    [string]$Message
+) {
+    if ($Text -notmatch $Pattern) {
+        throw $Message
+    }
+}
+
+$readme = Get-Content -Raw -LiteralPath $paths.readme
+$settings = Get-Content -Raw -LiteralPath $paths.settings
+$rootBuild = Get-Content -Raw -LiteralPath $paths.root_build
+$appBuild = Get-Content -Raw -LiteralPath $paths.app_build
+$manifestText = Get-Content -Raw -LiteralPath $paths.manifest
+$activity = Get-Content -Raw -LiteralPath $paths.activity
+$verifierBoundary = Get-Content -Raw -LiteralPath $paths.verifier_boundary
+$verifier = Get-Content -Raw -LiteralPath $paths.verifier
+$canonicalizer = Get-Content -Raw -LiteralPath $paths.canonicalizer
+$jsonPreflight = Get-Content -Raw -LiteralPath $paths.json_preflight
+$stateStore = Get-Content -Raw -LiteralPath $paths.state_store
+$manifestClient = Get-Content -Raw -LiteralPath $paths.manifest_client
+$stager = Get-Content -Raw -LiteralPath $paths.stager
+$inspection = Get-Content -Raw -LiteralPath $paths.inspection
+$receipt = Get-Content -Raw -LiteralPath $paths.receipt
+$installer = Get-Content -Raw -LiteralPath $paths.installer
+$callback = Get-Content -Raw -LiteralPath $paths.callback
+$buildWrapper = Get-Content -Raw -LiteralPath $paths.build_wrapper
+$publishWrapper = Get-Content -Raw -LiteralPath $paths.publish_wrapper
+
+[xml]$manifest = $manifestText
+$androidNamespace = "http://schemas.android.com/apk/res/android"
+$packageName = [string]$manifest.manifest.package
+if ($packageName -ne "io.github.mesmerprism.rustyquest.packageupdater") {
+    throw "Package Updater manifest package identity changed: $packageName"
+}
+
+$permissions = @(
+    $manifest.manifest.'uses-permission' |
+        ForEach-Object { $_.GetAttribute("name", $androidNamespace) } |
+        Sort-Object -Unique
+)
+$expectedPermissions = @(
+    "android.permission.INTERNET",
+    "android.permission.REQUEST_INSTALL_PACKAGES"
+) | Sort-Object
+if (@(Compare-Object $permissions $expectedPermissions -SyncWindow 0).Count -ne 0) {
+    throw "Package Updater permission closure changed: $($permissions -join ', ')"
+}
+$queries = @($manifest.manifest.queries.package)
+if ($queries.Count -ne 1 -or
+    $queries[0].GetAttribute("name", $androidNamespace) -ne
+        '${expectedPackageName}') {
+    throw "Package Updater may query only its exact build-fixed target package."
+}
+
+$application = $manifest.manifest.application
+if ($application.GetAttribute("allowBackup", $androidNamespace) -ne "false") {
+    throw "Package Updater app-private receipts must not be backed up."
+}
+if ($application.GetAttribute("usesCleartextTraffic", $androidNamespace) -ne "false") {
+    throw "Package Updater must reject cleartext transport at the manifest boundary."
+}
+if ($null -ne $application.service -or $null -ne $application.provider) {
+    throw "Package Updater must not declare services or providers."
+}
+
+$activities = @($application.activity)
+if ($activities.Count -ne 1) {
+    throw "Package Updater must expose exactly one Activity."
+}
+$launcherActivity = $activities[0]
+if ($launcherActivity.GetAttribute("name", $androidNamespace) -ne
+        ".PackageUpdaterActivity" -or
+    $launcherActivity.GetAttribute("exported", $androidNamespace) -ne "true") {
+    throw "Package Updater must expose only its launcher Activity."
+}
+$launcherActions = @(
+    $launcherActivity.'intent-filter'.action |
+        ForEach-Object { $_.GetAttribute("name", $androidNamespace) }
+)
+$launcherCategories = @(
+    $launcherActivity.'intent-filter'.category |
+        ForEach-Object { $_.GetAttribute("name", $androidNamespace) }
+)
+if ($launcherActions -notcontains "android.intent.action.MAIN" -or
+    $launcherCategories -notcontains "android.intent.category.LAUNCHER") {
+    throw "Package Updater Activity must remain a visible 2D launcher."
+}
+if ($launcherCategories -contains "android.intent.category.HOME") {
+    throw "Package Updater must not claim HOME authority."
+}
+
+$receivers = @($application.receiver)
+if ($receivers.Count -ne 1 -or
+    $receivers[0].GetAttribute("name", $androidNamespace) -ne
+        ".PackageInstallCallbackReceiver" -or
+    $receivers[0].GetAttribute("exported", $androidNamespace) -ne "false") {
+    throw "The sole Package Installer callback receiver must remain non-exported."
+}
+
+Assert-Match $settings 'rootProject\.name = "RustyQuestPackageUpdater"' `
+    "Standalone Package Updater Gradle project identity missing."
+Assert-Match $rootBuild 'com\.android\.application.*8\.11\.1' `
+    "Package Updater must use the repository Android Gradle Plugin baseline."
+foreach ($token in @(
+    'applicationId = "io.github.mesmerprism.rustyquest.packageupdater"',
+    'compileSdk = 34',
+    'minSdk = 34',
+    'targetSdk = 34',
+    'JavaVersion.VERSION_17',
+    'RUSTY_QUEST_PACKAGE_UPDATER_MANIFEST_URL',
+    'RUSTY_QUEST_PACKAGE_UPDATER_TRUSTED_KEY_ID',
+    'RUSTY_QUEST_PACKAGE_UPDATER_TRUSTED_PUBLIC_KEY_BASE64',
+    'RUSTY_QUEST_PACKAGE_UPDATER_EXPECTED_HTTPS_ORIGIN',
+    'RUSTY_QUEST_PACKAGE_UPDATER_EXPECTED_PACKAGE_NAME',
+    'RUSTY_QUEST_PACKAGE_UPDATER_EXPECTED_ROLLOUT_RING',
+    'RUSTY_QUEST_PACKAGE_UPDATER_EXPECTED_SIGNER_SHA256',
+    'startsWith\("https://"\)',
+    'buildConfigField\("String", "UPDATE_MANIFEST_URL"',
+    'buildConfigField\(\s*"String",\s*"TRUSTED_PUBLIC_KEY_BASE64"',
+    'buildConfigField\(\s*"String",\s*"EXPECTED_HTTPS_ORIGIN"',
+    'buildConfigField\(\s*"String",\s*"EXPECTED_PACKAGE_NAME"',
+    'buildConfigField\(\s*"String",\s*"EXPECTED_ROLLOUT_RING"',
+    'buildConfigField\(\s*"String",\s*"EXPECTED_SIGNER_SHA256"',
+    'buildConfigField\("long", "MINIMUM_TARGET_VERSION_CODE", "1L"\)',
+    '"MAXIMUM_TARGET_VERSION_CODE"')) {
+    Assert-Match $appBuild $token "Package Updater build is missing fixed input token: $token"
+}
+Assert-Match $appBuild `
+    'manifestPlaceholders\["expectedPackageName"\] = expectedPackageName' `
+    "Package Updater fixed package visibility placeholder is missing."
+if ($appBuild -match '(?m)^\s*(implementation|api|runtimeOnly|compileOnly|kapt)\s*\(') {
+    throw "Package Updater must remain dependency-light with no runtime libraries."
+}
+
+foreach ($token in @(
+    'Attended sideloaded updater',
+    'BuildConfig.UPDATE_MANIFEST_URL',
+    'BuildConfig.TRUSTED_KEY_ID',
+    'BuildConfig.EXPECTED_PACKAGE_NAME',
+    'BuildConfig.EXPECTED_ROLLOUT_RING',
+    'BuildConfig.EXPECTED_HTTPS_ORIGIN',
+    'canRequestPackageInstalls',
+    'Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES',
+    'Uri\.parse\("package:" \+ getPackageName\(\)\)',
+    'Executors.newSingleThreadExecutor',
+    'UpdateManifestClient.requireFixedHttpsUri',
+    'StrictUpdateEnvelopeVerifier',
+    'PackageInspection.installedVersionOrMissing',
+    'PackageInspection.verifyInstalledSigner',
+    'downloadAndVerify',
+    'stageAttendedInstall')) {
+    Assert-Match $activity $token "Visible Package Updater flow is missing token: $token"
+}
+Assert-Match $activity 'cancelPersistedSession' `
+    "Package Updater must expose a visible attended-session cancellation path."
+foreach ($forbidden in @(
+    'getIntent\(',
+    'onNewIntent\(',
+    'get[A-Za-z]*Extra\(',
+    'ACTION_VIEW',
+    'ACTION_SEND',
+    'ACTION_INSTALL_PACKAGE',
+    'ACTION_OPEN_DOCUMENT',
+    'ACTION_GET_CONTENT',
+    'ClipboardManager')) {
+    if ($activity -match $forbidden) {
+        throw "Package Updater Activity accepts a forbidden external input surface: $forbidden"
+    }
+}
+
+Assert-Match $verifierBoundary 'VerifiedUpdatePlan verify\(byte\[\] envelopeBytes, long nowMs\)' `
+    "Package Updater must expose a strict verifier boundary."
+foreach ($token in @(
+    'rusty\.quest\.package_update_manifest_envelope\.v1',
+    'rusty\.quest\.package_update_manifest\.v1',
+    'SIGNATURE_DOMAIN',
+    'Signature\.getInstance\(SIGNATURE_ALGORITHM\)',
+    'KeyFactory\.getInstance\(SIGNATURE_ALGORITHM\)',
+    'X509EncodedKeySpec',
+    'trusted_key_not_configured',
+    'trusted_signer_not_configured',
+    'requireExactKeys',
+    'StrictJsonPreflight\.requireNoDuplicateObjectKeys',
+    'canonicalSignedManifest',
+    'manifest_expired',
+    'maximumManifestValidityMs',
+    'minimumTargetVersionCode',
+    'maximumTargetVersionCode',
+    'MAX_JCS_SAFE_INTEGER',
+    'requireEquals\(expectedPackageName',
+    'requireEquals\(expectedRolloutRing',
+    'requireEquals\(expectedSignerSha256',
+    'canonicalOrigin\(uri\)\.equals\(expectedHttpsOrigin\)',
+    'stateStore\.requireAdvances',
+    'sequence_rollback',
+    'version_rollback',
+    'commitInstalled',
+    'json_duplicate_object_key')) {
+    Assert-Match (
+        $verifier + "`n" + $canonicalizer + "`n" + $stateStore + "`n" + $jsonPreflight
+    ) $token `
+        "Fail-closed signed-envelope verifier is missing token: $token"
+}
+if ($verifier -match 'return\s+true\s*;|accepted\s*=\s*true') {
+    throw "Package Updater verifier contains a permissive acceptance shortcut."
+}
+
+foreach ($networkSource in @($manifestClient, $stager)) {
+    foreach ($token in @(
+        'HttpsURLConnection',
+        'setInstanceFollowRedirects\(false\)',
+        'setConnectTimeout\(',
+        'setReadTimeout\(',
+        'Accept-Encoding", "identity"',
+        'disconnect\(\)')) {
+        Assert-Match $networkSource $token `
+            "Package Updater HTTPS path is missing bounded transport token: $token"
+    }
+}
+Assert-Match $manifestClient 'MAX_RESPONSE_BYTES = 256 \* 1024' `
+    "Manifest response bound changed."
+foreach ($token in @(
+    'getNoBackupFilesDir',
+    'package-updater/staged',
+    'apk_download_exceeded_signed_size',
+    'apk_download_size_mismatch',
+    'apk_sha256_mismatch',
+    'PackageInspection.verifyArchive')) {
+    Assert-Match $stager $token "Private APK staging is missing token: $token"
+}
+foreach ($token in @(
+    'getPackageArchiveInfo',
+    'GET_SIGNING_CERTIFICATES',
+    'getLongVersionCode',
+    'getApkContentsSigners',
+    'signers.length != 1',
+    'apk_package_mismatch',
+    'apk_version_mismatch',
+    'installed_version_readback_mismatch',
+    '"_signer_mismatch"')) {
+    Assert-Match $inspection $token "APK identity readback is missing token: $token"
+}
+
+foreach ($token in @(
+    'PackageInstaller.SessionParams.MODE_FULL_INSTALL',
+    'PackageInstaller.SessionParams.USER_ACTION_REQUIRED',
+    'setAppPackageName\(artifact.packageName\)',
+    'PACKAGE_SOURCE_DOWNLOADED_FILE',
+    'session.openWrite\("base.apk"',
+    'session.fsync\(output\)',
+    'receiptStore.begin',
+    'PendingIntent.FLAG_MUTABLE',
+    'setPackage\(context.getPackageName\(\)\)',
+    'session.commit',
+    'getSessionInfo',
+    'sessionInfo\.isCommitted',
+    'cancelPersistedSession',
+    'cleanupTerminalArtifacts',
+    'install_cancelled_by_wearer',
+    'PackageInspection.verifyInstalled')) {
+    Assert-Match $installer $token "Attended Package Installer path is missing token: $token"
+}
+foreach ($token in @(
+    'AtomicFile',
+    'getNoBackupFilesDir',
+    'session_id',
+    'callback_token',
+    'package_name',
+    'version_code',
+    'version_name',
+    'apk_url',
+    'apk_size_bytes',
+    'apk_sha256',
+    'signer_sha256',
+    'manifest_sequence',
+    'manifest_expires_at_ms',
+    'signed_manifest_sha256',
+    'rollout_ring',
+    'matchesCallback',
+    'CALLBACK_SCHEME',
+    'CALLBACK_AUTHORITY',
+    'intent.getIntExtra')) {
+    Assert-Match $receipt $token "Persisted install receipt is missing token: $token"
+}
+foreach ($token in @(
+    'receiptStore.matchesCallback\(intent\)',
+    'PackageInstaller.STATUS_PENDING_USER_ACTION',
+    'intent.getParcelableExtra\(Intent.EXTRA_INTENT, Intent.class\)',
+    'pending_user_confirmation',
+    'Intent.FLAG_ACTIVITY_NEW_TASK',
+    'PackageInstaller.STATUS_SUCCESS',
+    'PackageInspection.verifyInstalled',
+    'ApkStager\.verifyStaged',
+    'UpdateStateStore\(context\)\.commitInstalled',
+    'installed_readback_ok',
+    'readback_failed_after_installer_success')) {
+    Assert-Match $callback $token "Package Installer callback is missing token: $token"
+}
+Assert-Match $callback 'PackageInstaller\.STATUS_FAILURE_ABORTED' `
+    "Package Installer wearer cancellation must be a distinct terminal state."
+Assert-Match $callback 'cleanupTerminalArtifacts' `
+    "Package Installer terminal callbacks must remove private staged APKs."
+Assert-Match $stager 'failed_private_stage_not_removed' `
+    "Failed downloads must fail closed when private partial-file cleanup fails."
+
+foreach ($token in @(
+    'status --porcelain',
+    'Test-PackageUpdaterAndroidStatic.ps1',
+    ':app:assembleRelease',
+    '--no-configuration-cache',
+    'rusty.quest.package_updater_android.build_manifest.v1',
+    'RUSTY_QUEST_PACKAGE_UPDATER_KEYSTORE_PASSWORD')) {
+    Assert-Match $buildWrapper $token `
+        "Reproducible Package Updater build wrapper is missing token: $token"
+}
+foreach ($token in @(
+    'RUSTY_QUEST_UPDATE_SIGNING_SEED_BASE64URL',
+    'sign_package_update_manifest',
+    '--locked',
+    'Get-FileHash',
+    'rusty.quest.package_update_publication.v1',
+    'envelope.json')) {
+    Assert-Match $publishWrapper $token `
+        "Signed Package Updater publication wrapper is missing token: $token"
+}
+
+$allJava = (
+    Get-ChildItem -LiteralPath $javaRoot -Filter "*.java" -File |
+        Sort-Object FullName |
+        ForEach-Object { Get-Content -Raw -LiteralPath $_.FullName }
+) -join "`n"
+foreach ($forbidden in @(
+    'AccessibilityService',
+    'DevicePolicyManager',
+    'MediaProjection',
+    'CameraManager',
+    'AudioRecord',
+    'RECORD_AUDIO',
+    'SYSTEM_ALERT_WINDOW',
+    'MANAGE_EXTERNAL_STORAGE',
+    'READ_EXTERNAL_STORAGE',
+    'WRITE_EXTERNAL_STORAGE',
+    'QUERY_ALL_PACKAGES',
+    'Runtime\.getRuntime\(\)\.exec',
+    'ProcessBuilder',
+    '\badb\b',
+    'ServerSocket',
+    'setInstanceFollowRedirects\(true\)')) {
+    if ($allJava -match $forbidden) {
+        throw "Package Updater crosses a forbidden authority boundary: $forbidden"
+    }
+}
+
+foreach ($token in @(
+    'REQUEST_INSTALL_PACKAGES',
+    'unknown-app source',
+    'approve\s+each Package Installer confirmation',
+    'default public-key value is empty',
+    'fails closed',
+    'never taken\s+from an Intent',
+    'One package-specific signed channel')) {
+    Assert-Match $readme $token "Package Updater guide is missing boundary token: $token"
+}
+
+$javac = (Get-Command "javac" -ErrorAction Stop).Source
+$java = (Get-Command "java" -ErrorAction Stop).Source
+$temporaryRoot = [System.IO.Path]::GetFullPath(
+    [System.IO.Path]::Combine(
+        [System.IO.Path]::GetTempPath(),
+        "rusty-quest-package-updater-vector-$([guid]::NewGuid().ToString('N'))"
+    )
+)
+New-Item -ItemType Directory -Path $temporaryRoot | Out-Null
+try {
+    & $javac -encoding UTF-8 -d $temporaryRoot `
+        (Join-Path $javaRoot "UpdateArtifact.java") `
+        $paths.canonicalizer `
+        $paths.host_vector
+    if ($LASTEXITCODE -ne 0) {
+        throw "Package Updater Java/Rust canonical vector did not compile."
+    }
+    $vectorOutput = & $java -cp $temporaryRoot `
+        "io.github.mesmerprism.rustyquest.packageupdater.PackageUpdaterCanonicalVectorTest"
+    if ($LASTEXITCODE -ne 0 -or
+        ($vectorOutput -join "`n") -notmatch
+            "Package Updater Java/Rust canonical vector passed") {
+        throw "Package Updater Java/Rust canonical vector failed."
+    }
+} finally {
+    $systemTemp = [System.IO.Path]::GetFullPath(
+        [System.IO.Path]::GetTempPath()
+    )
+    if (-not $temporaryRoot.StartsWith(
+            $systemTemp,
+            [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "Refusing to remove unexpected canonical-vector directory: $temporaryRoot"
+    }
+    if ([System.IO.Directory]::Exists($temporaryRoot)) {
+        [System.IO.Directory]::Delete($temporaryRoot, $true)
+    }
+}
+
+Write-Output "Rusty Quest Package Updater Android static validation passed"
