@@ -50,6 +50,7 @@ $activity = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\ja
 $native = Read-RequiredText "apps\spatial-camera-panel-android\native-receipt\src\rgb_channel_transform.rs"
 $jni = Read-RequiredText "apps\spatial-camera-panel-android\native-receipt\src\camera_hwb_probe.rs"
 $runtime = Read-RequiredText "apps\spatial-camera-panel-android\native-receipt\src\spatial_public_multistack_runtime.rs"
+$uiAction = Read-RequiredText "tools\Invoke-SpatialCameraPanelAndroidUiAction.ps1"
 $docs = Read-RequiredText "docs\RGB_CHANNEL_TRANSFORM.md"
 
 Assert-Contains "Kotlin contract" $kotlin 'CONTRACT_ID = "rusty.quest.rgb-channel-transform.v1"'
@@ -69,6 +70,12 @@ Assert-Contains "Coordinator" $coordinator "status=rgb-channel-transform-submitt
 Assert-Contains "Validation workflow" $workflow '"rgb-channel-bypass"'
 Assert-Contains "Validation workflow" $workflow '"rgb-channel-linked"'
 Assert-Contains "Validation workflow" $workflow '"rgb-channel-independent"'
+Assert-Contains "UI action wrapper" $uiAction '"rgb-channel-bypass"'
+Assert-Contains "UI action wrapper" $uiAction '"rgb-channel-linked"'
+Assert-Contains "UI action wrapper" $uiAction '"rgb-channel-independent"'
+Assert-Contains "UI action wrapper" $uiAction '"video-next"'
+Assert-Contains "UI action wrapper" $uiAction '"video-select"'
+Assert-Contains "UI action wrapper" $uiAction '"video_pack_id"'
 Assert-Contains "Activity JNI" $activity "nativeUpdateRgbChannelTransform"
 Assert-Contains "Native JNI" $jni "update_rgb_channel_transform_settings"
 

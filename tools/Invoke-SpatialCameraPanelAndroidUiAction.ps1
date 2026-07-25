@@ -10,8 +10,14 @@ param(
         "private-layer-zone-linear-buffer",
         "private-layer-zone-organic-buffer",
         "private-layer-zone-full-stretch",
+        "rgb-channel-bypass",
+        "rgb-channel-linked",
+        "rgb-channel-independent",
         "projection-panel-off",
         "projection-panel-on",
+        "video-previous",
+        "video-next",
+        "video-select",
         "particle-controls",
         "particle-panel-distance",
         "particle-panel-view-yaw",
@@ -23,6 +29,8 @@ param(
 
     [ValidateSet("real-hands", "gpu-replay-hands", "icosphere")]
     [string]$SurfaceTargetId = "real-hands",
+
+    [string]$VideoPackId = "",
 
     [double]$PrivateLayerOverride = 0.0,
 
@@ -258,6 +266,13 @@ $intentArguments = @(
     $VisualDriverActivationProfile
 )
 
+if ($Action -eq "video-select" -and [string]::IsNullOrWhiteSpace($VideoPackId)) {
+    throw "-VideoPackId is required when -Action video-select is requested."
+}
+if (-not [string]::IsNullOrWhiteSpace($VideoPackId)) {
+    $intentArguments += @("--es", "video_pack_id", $VideoPackId.Trim())
+}
+
 $launch = Invoke-AdbCommand -Name "run Spatial Camera Panel UI action $Action" -Arguments $intentArguments
 Start-Sleep -Milliseconds 350
 $pidResult = Invoke-AdbCommand -Name "read app pid" -Arguments @("shell", "pidof", $PackageName) -AllowFailure
@@ -279,6 +294,7 @@ if ($ReadMarkers) {
     activity = $Activity
     action = $Action
     surface_target_id = $SurfaceTargetId
+    video_pack_id = $VideoPackId
     pid = $targetPid
     launch_exit_code = $launch.exit_code
     launch_output = $launch.output

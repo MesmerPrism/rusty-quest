@@ -1380,6 +1380,11 @@ green, and blue spatial-transform parameters through
 `rusty.quest.rgb-channel-transform.v1`. It provides panel controls, validation
 commands, JNI normalization, a 96-byte Vulkan uniform, and requested/effective
 markers. Bypass leaves the consuming shader's existing behavior unchanged.
+The shared UI-action wrapper exposes `rgb-channel-bypass`,
+`rgb-channel-linked`, and `rgb-channel-independent`; the same wrapper exposes
+`video-previous`, `video-next`, and `video-select -VideoPackId <pack-id>` so a
+live custom-projection session can change transform presets and packaged video
+sources without restarting the activity or the projection stack.
 
 This is transport and control infrastructure only. The guide signal,
 color-to-strength mapping, artistic tuning, and final sampling/compositing
