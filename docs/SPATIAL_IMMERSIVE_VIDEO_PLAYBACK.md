@@ -4,7 +4,25 @@ The Spatial Camera Panel app has an explicit, default-off immersive-video
 launch route for local media. It uses the Meta Spatial SDK's direct-to-surface
 media panel path and AndroidX Media3 ExoPlayer. Source videos are staged as
 shared video media and opened through a single MediaStore URI read grant; they
-are never packaged into the APK, and the app requests no broad media access.
+are not packaged into the ordinary APK, and the app requests no broad media
+access.
+
+For offline sideload bundles, the same route can instead read an authenticated
+encrypted media pack. The prototype APK may package encrypted chunks as assets
+and import only that ciphertext into app-private storage on first launch.
+Media3 receives a seekable virtual byte stream backed by independently
+encrypted AES-256-GCM chunks. Each chunk is decrypted in memory on demand; the
+app never writes a plaintext video file. The decoded surface and Spatial SDK
+projection path are identical to the ordinary local-file route when the direct
+media panel is active.
+
+An authenticated side-by-side pack may instead feed the app's existing custom
+stereo projection compositor. Android `MediaExtractor` reads the same
+random-access decrypted byte stream through `MediaDataSource`, `MediaCodec`
+decodes directly to the Rust-owned surface, and the Vulkan compositor combines
+the video with the camera and private projection/effect stack. The encrypted
+video route and the custom stack are therefore no longer activity-level
+exclusive features.
 
 This is generic public adapter infrastructure. Media libraries, private
 filenames, classification evidence, artistic content, and effect-specific
@@ -44,6 +62,28 @@ Reference implementation and API guidance:
 
 The adapter tracks Spatial SDK `0.13.2` and Media3 `1.4.1`, matching the
 current official media samples when this route was introduced.
+
+## Switchable offline sessions
+
+Packaged pack directories are discovered only under the fixed
+`offline-media-packs/` asset namespace. The importer validates a maximum of 32
+pack IDs and each pack's authenticated manifest before exposing it to the
+session coordinator. Raw filenames and private playlist labels are not part of
+the public contract.
+
+One session contains only packs with the same projection shape, stereo layout,
+and per-eye aspect class as the initially requested pack. Encoded resolution
+may vary. For the custom side-by-side compositor, the decoder surface is scaled
+proportionally to fit within 4096 pixels on either axis while retaining an even
+packed width.
+
+The layer control panel shows only an ordinal (`Video 1 of N`) and offers
+Previous and Next actions. Validation clients may send `video-previous`,
+`video-next`, or `video-select` through the existing `RUN_UI_COMMAND` action;
+`video-select` carries an opaque `video_pack_id`. A direct Spatial SDK panel
+recreates only its ExoPlayer instance. The custom compositor stops and restarts
+only its MediaCodec source and native video stream; it does not recreate the
+Activity, camera runtime, projection carrier, or private effect stack.
 
 Performance validation must use the non-debuggable release variant:
 
@@ -96,17 +136,74 @@ The wrapper:
 No shared-storage permission is needed. The script never starts, stops, or
 reconfigures the ADB daemon.
 
+## Offline encrypted sideload bundles
+
+Create a content-addressed pack outside source control with PowerShell 7:
+
+```powershell
+$env:RUSTY_QUEST_OFFLINE_MEDIA_KEY_HEX = "<64 hexadecimal characters>"
+pwsh -NoProfile -File .\tools\New-SpatialCameraPanelOfflineMediaPack.ps1 `
+  -SourcePath <local-video.mp4> `
+  -OutDir <local-bundle-media-directory> `
+  -PackId <content-addressed-pack-id> `
+  -Shape equirect-180 `
+  -Stereo side-by-side-left-right
+```
+
+Place the pack directory under
+`offline-media-packs/<pack-id>/` in an ignored asset root, set
+`RUSTY_QUEST_OFFLINE_MEDIA_PACK_ASSET_DIR` to that root, and build the APK in
+the same process environment. Then install and optionally validate it:
+
+```powershell
+pwsh -NoProfile -File .\tools\Install-SpatialCameraPanelOfflineMediaPack.ps1 `
+  -Serial <quest-serial> `
+  -ApkPath <release.apk> `
+  -PackDirectory <local-bundle-media-directory\pack-id> `
+  -PackagedInApk `
+  -Launch
+```
+
+The pack manifest records classification, encoded dimensions, source length
+and hash, chunk boundaries, random nonces, and ciphertext hashes. Stable
+manifest fields are also bound into each chunk's AES-GCM associated data, so a
+classification, ordering, or content change fails authentication. The
+installer verifies every encrypted asset inside the exact APK before install.
+
+`RUSTY_QUEST_OFFLINE_MEDIA_KEY_HEX` is deliberately a build-time input and must
+never be committed, printed, copied into the media pack, or written to a build
+receipt. When supplied, the value is compiled into `BuildConfig` and therefore
+extractable from the APK by a determined recipient. This mode is suitable only
+for proving offline distribution and discouraging casual raw-file access. It
+is not DRM and it is not a durable confidentiality boundary. A production
+hardening pass should replace it with user- or device-provisioned key material
+and Android Keystore wrapping.
+
+The shareable prototype bundle can consist of only the self-contained APK and
+an installer helper. It does not require a server, network connection, live
+streaming, or separately exposed raw media. Packaging large libraries this way
+does make the APK correspondingly large and requires an APK rebuild to replace
+content; the separate-pack contract remains useful for a later provisioned-key
+distribution path.
+
 ## Fail-closed behavior
 
-The immersive route is exclusive when explicitly requested. A valid request
-registers only the immersive media panel and suppresses the camera/effect
-presentation stack for that launch.
+The immersive route is not lifecycle-exclusive. A valid direct-media request
+adds its ideal Spatial SDK media panel without short-circuiting ordinary scene,
+VR-ready, tick, or control-panel setup. When the custom stereo projection route
+is active and the selected encrypted pack is side-by-side compatible, the
+direct media panel is suppressed to prevent duplicate rendering and that pack
+becomes the custom compositor's video source.
 
 An invalid request registers no panel and emits
 `channel=spatial-immersive-video status=route-rejected ... failClosed=true`.
 It never falls back to a guessed projection or the normal camera presentation.
 Only a readable, explicitly granted MediaStore video URI or a canonical file
-inside the app-owned `immersive-video` directory is accepted.
+inside the app-owned `immersive-video` directory is accepted. The offline
+variant additionally accepts a validated pack ID rooted under the app-private
+`files/offline-media-packs` directory. Packaged assets are imported only from
+the fixed `offline-media-packs/<validated-pack-id>/` namespace; arbitrary
+manifest paths are not accepted.
 
 Useful runtime markers include:
 
@@ -117,9 +214,14 @@ Useful runtime markers include:
 - `status=decoded-video-size`
 - `status=first-frame-rendered`
 - `status=playback-error`
+- `status=encrypted-chunk-decrypted`
+- `status=encrypted-chunk-error`
+- `status=catalog-ready`
+- `status=selection-applied`
+- `status=source-switch-applied`
 
 Host checks live in
 `tools/checks/Test-SpatialCameraPanelImmersiveVideoStatic.ps1`, and pure route
 tests cover 180° SBS, 360° mono, flat top-bottom, default-off behavior,
-single-URI media access, unknown classifications, path confinement, and
-packed-layout geometry.
+single-URI media access, unknown classifications, path confinement,
+projection-class compatibility, resolution scaling, and selection wraparound.

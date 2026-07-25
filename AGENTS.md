@@ -212,6 +212,14 @@ free of app policy. `rusty-quest-remote-camera` remains a compatibility adapter
 that maps into this runtime; do not copy its properties or defaults into new
 source, processor, or sink descriptors.
 
+Spatial Camera Panel offline immersive media is a separate local adapter
+boundary documented in `docs/SPATIAL_IMMERSIVE_VIDEO_PLAYBACK.md`. Keep its
+encrypted pack catalog generic, bounded, opt-in, and free of private media
+names. A compatible side-by-side pack may feed the existing custom projection
+compositor, but source switching may restart only the media decoder/stream; it
+must not replace camera, carrier, private-effect, or Activity lifecycle
+authority.
+
 For release-candidate broker recovery, distinguish client death from authority
 process death. A stopped client may rebind to the existing authority revision;
 after an explicit broker process stop, clients must rebuild from their exact

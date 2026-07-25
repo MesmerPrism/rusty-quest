@@ -7,10 +7,12 @@ import android.os.Handler
 import android.os.Looper
 import android.view.Surface
 import androidx.media3.common.MediaItem
+import androidx.media3.common.MimeTypes
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.VideoSize
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import com.meta.spatial.core.Entity
 import com.meta.spatial.core.Pose
 import com.meta.spatial.runtime.PanelSceneObject
@@ -39,21 +41,80 @@ internal class SpatialImmersiveVideoPanelCoordinator(
   private var player: ExoPlayer? = null
   private var surface: Surface? = null
   private var resumeAfterPause = false
+  private var activeIndex = 0
   private val progressHandler = Handler(Looper.getMainLooper())
+  private val initialConfig: SpatialImmersiveVideoConfig?
+    get() = (resolution as? SpatialImmersiveVideoRouteResolution.Ready)?.config
+  private val catalog: List<SpatialImmersiveVideoConfig> by
+      lazy(LazyThreadSafetyMode.NONE, ::loadCompatibleCatalog)
 
   val requested: Boolean
     get() = resolution.requested
 
+  val activeConfig: SpatialImmersiveVideoConfig?
+    get() = catalog.getOrNull(activeIndex)
+
+  val activeOfflinePack: OfflineImmersiveMediaPack?
+    get() = activeConfig?.offlinePack
+
+  val customProjectionCompatible: Boolean
+    get() =
+        SpatialImmersiveVideoSessionPolicy.customProjectionSettings(
+            SpatialVideoProjectionSettings.disabled(),
+            activeConfig,
+        ) != null
+
   fun routePolicyMarker(): String =
       SpatialImmersiveVideoRouteModule.routePolicyMarker(resolution)
 
+  fun sessionSnapshot(): SpatialImmersiveVideoSessionSnapshot {
+    val config = activeConfig
+    return SpatialImmersiveVideoSessionSnapshot(
+        requested = requested,
+        available = config != null,
+        activeIndex = if (config == null) -1 else activeIndex,
+        itemCount = catalog.size,
+        activePackId = config?.offlinePack?.packId,
+        customProjectionCompatible =
+            SpatialImmersiveVideoSessionPolicy.customProjectionSettings(
+                SpatialVideoProjectionSettings.disabled(),
+                config,
+            ) != null,
+    )
+  }
+
+  fun selectPrevious(source: String): SpatialImmersiveVideoSelection =
+      selectIndex(activeIndex - 1, source)
+
+  fun selectNext(source: String): SpatialImmersiveVideoSelection =
+      selectIndex(activeIndex + 1, source)
+
+  fun selectPack(packId: String, source: String): SpatialImmersiveVideoSelection {
+    val normalizedPackId = packId.trim().lowercase()
+    val requestedIndex =
+        catalog.indexOfFirst { it.offlinePack?.packId == normalizedPackId }
+    if (requestedIndex < 0) {
+      emitMarker(
+          "channel=spatial-immersive-video status=selection-rejected " +
+              "reason=pack-not-in-session source=${activityMarkerToken(source)}"
+      )
+      return SpatialImmersiveVideoSelection(sessionSnapshot(), activeConfig, false)
+    }
+    return selectIndex(requestedIndex, source)
+  }
+
+  fun customProjectionSettings(
+      base: SpatialVideoProjectionSettings,
+  ): SpatialVideoProjectionSettings? =
+      SpatialImmersiveVideoSessionPolicy.customProjectionSettings(base, activeConfig)
+
   fun panelRegistrationOrNull(): PanelRegistration? {
-    val config = (resolution as? SpatialImmersiveVideoRouteResolution.Ready)?.config ?: return null
+    val config = activeConfig ?: return null
     return VideoSurfacePanelRegistration(
         R.id.spatial_immersive_video_panel,
         surfaceConsumer = { _, videoSurface ->
           surface = videoSurface
-          startPlayer(config, videoSurface)
+          startPlayer(activeConfig ?: config, videoSurface)
         },
         settingsCreator = { mediaPanelSettings(config) },
         panelSetup = { panel, _ ->
@@ -67,7 +128,7 @@ internal class SpatialImmersiveVideoPanelCoordinator(
   }
 
   fun spawnAtViewer(viewerPose: Pose) {
-    val config = (resolution as? SpatialImmersiveVideoRouteResolution.Ready)?.config ?: return
+    val config = activeConfig ?: return
     if (entity != null) {
       return
     }
@@ -93,7 +154,7 @@ internal class SpatialImmersiveVideoPanelCoordinator(
   }
 
   fun resume(reason: String) {
-    val config = (resolution as? SpatialImmersiveVideoRouteResolution.Ready)?.config ?: return
+    val config = activeConfig ?: return
     val currentPlayer = player ?: return
     if (config.autoplay && resumeAfterPause) {
       currentPlayer.play()
@@ -105,13 +166,7 @@ internal class SpatialImmersiveVideoPanelCoordinator(
 
   fun destroy(reason: String) {
     progressHandler.removeCallbacksAndMessages(null)
-    player?.run {
-      playWhenReady = false
-      clearVideoSurface()
-      clearMediaItems()
-      release()
-    }
-    player = null
+    releasePlayer()
     surface = null
     panelSceneObject = null
     entity?.destroy()
@@ -123,6 +178,101 @@ internal class SpatialImmersiveVideoPanelCoordinator(
     }
   }
 
+  private fun selectIndex(
+      requestedIndex: Int,
+      source: String,
+  ): SpatialImmersiveVideoSelection {
+    if (catalog.isEmpty()) {
+      return SpatialImmersiveVideoSelection(sessionSnapshot(), null, false)
+    }
+    val normalizedIndex =
+        SpatialImmersiveVideoSessionPolicy.wrappedIndex(requestedIndex, catalog.size)
+    val changed = normalizedIndex != activeIndex
+    activeIndex = normalizedIndex
+    val config = activeConfig
+    if (changed && config != null) {
+      surface?.takeIf { it.isValid }?.let { videoSurface ->
+        releasePlayer()
+        startPlayer(config, videoSurface)
+      }
+      emitMarker(
+          "channel=spatial-immersive-video status=selection-applied " +
+              "source=${activityMarkerToken(source)} activeOrdinal=${activeIndex + 1} " +
+              "itemCount=${catalog.size} decoderRestarted=${surface != null} " +
+              "activityRestarted=false ${config.markerFields()}"
+      )
+    }
+    return SpatialImmersiveVideoSelection(sessionSnapshot(), config, changed)
+  }
+
+  private fun loadCompatibleCatalog(): List<SpatialImmersiveVideoConfig> {
+    val anchor = initialConfig ?: return emptyList()
+    val anchorPack = anchor.offlinePack ?: return listOf(anchor)
+    val mediaPackRoot = File(context.filesDir, "offline-media-packs")
+    val candidates = ArrayList<SpatialImmersiveVideoConfig>()
+    candidates += anchor
+    var rejectedCount = 0
+    for (packId in PackagedOfflineImmersiveMediaPackImporter.packagedPackIds(context)) {
+      if (packId == anchorPack.packId) {
+        continue
+      }
+      if (!PackagedOfflineImmersiveMediaPackImporter.ensureImported(context, packId)) {
+        rejectedCount += 1
+        continue
+      }
+      val pack =
+          when (
+              val packResolution =
+                  OfflineImmersiveMediaPackLoader.resolve(
+                      mediaPackRoot = mediaPackRoot,
+                      packId = packId,
+                      keyHex = BuildConfig.OFFLINE_MEDIA_KEY_HEX,
+                      packagedInApk = true,
+                  )
+          ) {
+            is OfflineImmersiveMediaPackResolution.Ready -> packResolution.pack
+            is OfflineImmersiveMediaPackResolution.Rejected -> {
+              rejectedCount += 1
+              continue
+            }
+          }
+      val candidateResolution =
+          SpatialImmersiveVideoRouteModule.resolveOfflinePack(
+              pack = pack,
+              autoplay = anchor.autoplay.toString(),
+              loop = anchor.loop.toString(),
+              radiusMeters = anchor.radiusMeters.toString(),
+          )
+      val candidate =
+          (candidateResolution as? SpatialImmersiveVideoRouteResolution.Ready)?.config
+      if (candidate == null ||
+          !SpatialImmersiveVideoSessionPolicy.compatibleWithSession(anchor, candidate)) {
+        rejectedCount += 1
+        continue
+      }
+      candidates += candidate
+    }
+    val result = candidates.distinctBy { it.offlinePack?.packId ?: it.path }
+    emitMarker(
+        "channel=spatial-immersive-video status=catalog-ready " +
+            "itemCount=${result.size} rejectedCount=$rejectedCount " +
+            "boundedCatalog=true maxPackagedPacks=32 projectionClassLocked=true " +
+            "resolutionMayVary=true rawMediaNamesExposed=false"
+    )
+    return result
+  }
+
+  private fun releasePlayer() {
+    progressHandler.removeCallbacksAndMessages(null)
+    player?.run {
+      playWhenReady = false
+      clearVideoSurface()
+      clearMediaItems()
+      release()
+    }
+    player = null
+  }
+
   private fun startPlayer(config: SpatialImmersiveVideoConfig, videoSurface: Surface) {
     if (player != null) {
       emitMarker(
@@ -132,16 +282,36 @@ internal class SpatialImmersiveVideoPanelCoordinator(
       return
     }
     val mediaUri =
-        if (config.isGrantedContentUri) {
-          Uri.parse(config.path)
-        } else {
-          Uri.fromFile(File(config.path))
+        when {
+          config.isEncryptedOfflinePack -> config.offlinePack!!.virtualUri
+          config.isGrantedContentUri -> Uri.parse(config.path)
+          else -> Uri.fromFile(File(config.path))
         }
     val exoPlayer =
-        ExoPlayer.Builder(context).build().apply {
+        if (config.offlinePack != null) {
+          ExoPlayer.Builder(context)
+              .setMediaSourceFactory(
+                  DefaultMediaSourceFactory(
+                      EncryptedOfflineImmersiveMediaDataSource.Factory(
+                          config.offlinePack,
+                          emitMarker,
+                      )
+                  )
+              )
+              .build()
+        } else {
+          ExoPlayer.Builder(context).build()
+        }
+    exoPlayer.apply {
           repeatMode = if (config.loop) Player.REPEAT_MODE_ONE else Player.REPEAT_MODE_OFF
           addListener(playerListener(config))
-          setMediaItem(MediaItem.fromUri(mediaUri))
+          setMediaItem(
+              if (config.isEncryptedOfflinePack) {
+                MediaItem.Builder().setUri(mediaUri).setMimeType(MimeTypes.VIDEO_MP4).build()
+              } else {
+                MediaItem.fromUri(mediaUri)
+              }
+          )
           setVideoSurface(videoSurface)
           playWhenReady = config.autoplay
           prepare()
@@ -151,7 +321,11 @@ internal class SpatialImmersiveVideoPanelCoordinator(
     emitMarker(
         "channel=spatial-immersive-video status=player-preparing " +
             "${config.markerFields()} surfaceValid=${videoSurface.isValid} " +
-            "source=${if (config.isGrantedContentUri) "granted-media-content-uri" else "app-scoped-local-file"}"
+            "source=${when {
+              config.isEncryptedOfflinePack -> "encrypted-offline-media-pack"
+              config.isGrantedContentUri -> "granted-media-content-uri"
+              else -> "app-scoped-local-file"
+            }}"
     )
   }
 
@@ -240,6 +414,9 @@ internal class SpatialImmersiveVideoPanelCoordinator(
       )
 
   companion object {
+    private const val EXTRA_OFFLINE_PACK_ID =
+        "io.github.mesmerprism.rustyquest.extra.IMMERSIVE_VIDEO_OFFLINE_PACK_ID"
+
     fun resolveFromIntent(
         context: Context,
         intent: Intent,
@@ -302,6 +479,44 @@ internal class SpatialImmersiveVideoPanelCoordinator(
             allowedMediaRoot = "",
             sourceReadable = sourceReadable ?: { File(it).isFile },
         )
+      }
+
+      val offlinePackId = intent.getStringExtra(EXTRA_OFFLINE_PACK_ID)?.trim().orEmpty()
+      if (offlinePackId.isNotEmpty()) {
+        if (!values.path.isNullOrBlank()) {
+          return SpatialImmersiveVideoRouteResolution.Rejected(
+              "offline-pack-source-ambiguous"
+          )
+        }
+        val mediaPackRoot = File(context.filesDir, "offline-media-packs")
+        val packagedImportReady =
+            if (BuildConfig.OFFLINE_MEDIA_PACKAGED_ASSETS) {
+              PackagedOfflineImmersiveMediaPackImporter.ensureImported(
+                  context,
+                  offlinePackId,
+              )
+            } else {
+              false
+            }
+        return when (
+            val packResolution =
+                OfflineImmersiveMediaPackLoader.resolve(
+                    mediaPackRoot = mediaPackRoot,
+                    packId = offlinePackId,
+                    keyHex = BuildConfig.OFFLINE_MEDIA_KEY_HEX,
+                    packagedInApk = packagedImportReady,
+                )
+        ) {
+          is OfflineImmersiveMediaPackResolution.Rejected ->
+              SpatialImmersiveVideoRouteResolution.Rejected(packResolution.reason)
+          is OfflineImmersiveMediaPackResolution.Ready ->
+              SpatialImmersiveVideoRouteModule.resolveOfflinePack(
+                  pack = packResolution.pack,
+                  autoplay = values.autoplay,
+                  loop = values.loop,
+                  radiusMeters = values.radiusMeters,
+              )
+        }
       }
 
       val externalFilesRoot =

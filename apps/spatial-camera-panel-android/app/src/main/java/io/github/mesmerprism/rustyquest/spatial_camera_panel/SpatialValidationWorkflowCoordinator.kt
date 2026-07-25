@@ -10,6 +10,7 @@ internal data class SpatialValidationWorkflowBindings(
     val updatePrivateLayerOverride: (Float, String) -> Unit,
     val updatePrivateLayerZoneCompositor: (PrivateLayerZoneCompositor, String) -> Unit,
     val setProjectionPanelEnabled: (Boolean, String) -> Unit,
+    val changeImmersiveVideo: (String, String?, String) -> Unit,
     val currentParticleControls: () -> SurfaceParticleControlState,
     val updateSurfaceParticleControls: (SurfaceParticleControlState, String) -> Unit,
     val applyRemoteParticleLayerTargetDistance: (Intent, String) -> Unit,
@@ -82,6 +83,14 @@ internal class SpatialValidationWorkflowCoordinator(
             )
         "projection-panel-off" -> bindings.setProjectionPanelEnabled(false, source)
         "projection-panel-on" -> bindings.setProjectionPanelEnabled(true, source)
+        "video-previous" -> bindings.changeImmersiveVideo("previous", null, source)
+        "video-next" -> bindings.changeImmersiveVideo("next", null, source)
+        "video-select" ->
+            bindings.changeImmersiveVideo(
+                "select",
+                intent.getStringExtra(EXTRA_IMMERSIVE_VIDEO_PACK_ID),
+                source,
+            )
         "particle-controls" -> updateParticleControls(intent, source)
         "particle-panel-distance" ->
             bindings.applyRemoteParticleLayerTargetDistance(intent, source)
@@ -203,6 +212,7 @@ internal class SpatialValidationWorkflowCoordinator(
     private const val EXTRA_SURFACE_TARGET_ID = "surface_target_id"
     private const val EXTRA_UI_ACTION = "ui_action"
     private const val EXTRA_PRIVATE_LAYER_OVERRIDE = "private_layer_override"
+    private const val EXTRA_IMMERSIVE_VIDEO_PACK_ID = "video_pack_id"
     private const val EXTRA_DRIVER0 = "driver0"
     private const val EXTRA_DRIVER1 = "driver1"
     private const val EXTRA_DRIVER2 = "driver2"

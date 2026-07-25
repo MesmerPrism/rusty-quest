@@ -856,6 +856,10 @@ if (-not $nativeReceiptLibraryPackaged) {
     throw "APK is missing native receipt library entry: $nativeReceiptApkEntry"
 }
 
+$offlineMediaEmbeddedKeyEnabled =
+    -not [string]::IsNullOrWhiteSpace($env:RUSTY_QUEST_OFFLINE_MEDIA_KEY_HEX)
+$offlineMediaPackagedAssets =
+    -not [string]::IsNullOrWhiteSpace($env:RUSTY_QUEST_OFFLINE_MEDIA_PACK_ASSET_DIR)
 $manifest = [ordered]@{
     '$schema' = "rusty.quest.spatial_camera_panel_sdk_android.build_manifest.v1"
     product_id = $resolvedProductId
@@ -905,11 +909,18 @@ $manifest = [ordered]@{
     spatial_sdk_version = "0.13.2"
     media3_version = "1.4.1"
     immersive_video_default_enabled = $false
-    immersive_video_source_policy = "explicit-single-grant-media-content-uri-or-app-owned-file"
+    immersive_video_source_policy = "explicit-single-grant-media-content-uri-app-owned-file-or-authenticated-obb-pack"
     immersive_video_shape_tokens = @("flat", "equirect-180", "equirect-360")
     immersive_video_stereo_tokens = @("mono", "side-by-side-left-right", "top-bottom")
     immersive_video_render_path = "VideoSurfacePanelRegistration-direct-to-surface"
-    immersive_video_media_packaged = $false
+    immersive_video_media_packaged = $offlineMediaPackagedAssets
+    offline_immersive_media_pack_supported = $true
+    offline_immersive_media_pack_schema = "rusty.quest.offline_immersive_media_pack.v1"
+    offline_immersive_media_encryption = "AES-256-GCM-independent-authenticated-chunks"
+    offline_media_key_embedded_prototype = $offlineMediaEmbeddedKeyEnabled
+    offline_media_key_value_recorded = $false
+    offline_immersive_media_packaged_assets = $offlineMediaPackagedAssets
+    offline_immersive_media_plaintext_file_written = $false
     spatial_hand_mesh_rig_packaged = $handMeshRigAssetInfo.ready
     spatial_hand_mesh_rig_asset_id = $handMeshRigAssetInfo.asset_id
     spatial_hand_mesh_rig_asset_file_count = $handMeshRigAssetInfo.file_count

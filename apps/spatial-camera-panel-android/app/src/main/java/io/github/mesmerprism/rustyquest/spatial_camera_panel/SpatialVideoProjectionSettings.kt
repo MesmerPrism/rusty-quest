@@ -296,6 +296,8 @@ internal object SpatialVideoProjectionRouteModule {
   fun normalizeSource(value: String): String =
       when (value.trim().lowercase(Locale.US).replace("_", "-")) {
         "broker-rmanvid1", "rmanvid1" -> "broker-rmanvid1"
+        "encrypted-offline-pack", "offline-pack" ->
+            SpatialImmersiveVideoSessionPolicy.CUSTOM_PROJECTION_SOURCE
         else -> CAMERA_HWB_PROJECTION_VIDEO_DEFAULT_SOURCE
       }
 
@@ -315,7 +317,8 @@ internal object SpatialVideoProjectionRouteModule {
           "videoProjectionDefaultEnabled=$CAMERA_HWB_PROJECTION_VIDEO_DEFAULT_ENABLED " +
           "videoProjectionPath=${activityMarkerToken(settings.path)} " +
           "videoProjectionPathProvided=${settings.path.isNotBlank()} " +
-          "videoProjectionNoPackagedMedia=true " +
+          "videoProjectionPackagedMedia=${settings.source == SpatialImmersiveVideoSessionPolicy.CUSTOM_PROJECTION_SOURCE} " +
+          "videoProjectionPlaintextFileWritten=false " +
           "videoProjectionPathProperty=$CAMERA_HWB_PROJECTION_VIDEO_PATH_PROPERTY " +
           "videoProjectionEnabledProperty=$CAMERA_HWB_PROJECTION_VIDEO_ENABLED_PROPERTY " +
           "videoProjectionEnabledIntentExtra=$EXTRA_VIDEO_PROJECTION_ENABLED " +
@@ -333,7 +336,12 @@ internal object SpatialVideoProjectionRouteModule {
           "videoProjectionOpacity=${activityMarkerFloat(settings.opacity)} " +
           "videoProjectionHighRateJsonPayload=${settings.highRateJsonPayload} " +
           "videoProjectionStream=stereo_video " +
-          "videoProjectionSourceAuthority=${if (settings.source == "broker-rmanvid1") "manifold-broker-rmanvid1-packed-camera2-h264" else "android-mediacodec-surface-decoder"} " +
+          "videoProjectionSourceAuthority=${when (settings.source) {
+            "broker-rmanvid1" -> "manifold-broker-rmanvid1-packed-camera2-h264"
+            SpatialImmersiveVideoSessionPolicy.CUSTOM_PROJECTION_SOURCE ->
+                "authenticated-aes-gcm-random-access-mediadatasource"
+            else -> "android-mediacodec-surface-decoder"
+          }} " +
           "videoProjectionTransport=mediacodec-surface-to-ndk-aimage-reader-ahardwarebuffer " +
           "videoProjectionControlPlane=spatial-activity-runtime-property-or-intent-extra " +
           "videoProjectionDecodePath=MediaCodec-to-Surface " +

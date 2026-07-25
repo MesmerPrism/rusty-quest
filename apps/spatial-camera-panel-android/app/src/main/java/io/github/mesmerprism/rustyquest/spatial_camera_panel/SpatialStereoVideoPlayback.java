@@ -3,6 +3,7 @@ package io.github.mesmerprism.rustyquest.spatial_camera_panel;
 import android.content.Context;
 import android.media.MediaCodec;
 import android.media.MediaCodec.BufferInfo;
+import android.media.MediaDataSource;
 import android.media.MediaExtractor;
 import android.media.MediaFormat;
 import android.os.SystemClock;
@@ -13,6 +14,7 @@ import java.nio.ByteBuffer;
 
 public final class SpatialStereoVideoPlayback {
     private static final String SOURCE_BROKER_RMANVID1 = "broker-rmanvid1";
+    private static final String SOURCE_ENCRYPTED_OFFLINE_PACK = "encrypted-offline-pack";
     private static final int EVENT_START_REQUESTED = 1;
     private static final int EVENT_STARTED = 2;
     private static final int EVENT_STOPPED = 3;
@@ -43,6 +45,7 @@ public final class SpatialStereoVideoPlayback {
         Context context,
         String source,
         String path,
+        MediaDataSource encryptedMediaSource,
         int width,
         int height,
         int maxImages,
@@ -59,6 +62,7 @@ public final class SpatialStereoVideoPlayback {
         int requestedFpsCap = clamp(fpsCap, 1, 90);
         String resolvedPath = resolvePath(context, path);
         boolean brokerSource = SOURCE_BROKER_RMANVID1.equals(source);
+        boolean encryptedOfflinePackSource = SOURCE_ENCRYPTED_OFFLINE_PACK.equals(source);
 
         synchronized (LOCK) {
             stopLocked();
@@ -77,9 +81,25 @@ public final class SpatialStereoVideoPlayback {
             );
         }
         if (!nativeBridgeLoaded) {
+            closeQuietly(encryptedMediaSource);
             return;
         }
-        if (!brokerSource && (resolvedPath.isEmpty() || !new File(resolvedPath).isFile())) {
+        if (encryptedOfflinePackSource && encryptedMediaSource == null) {
+            nativeStereoVideoLifecycleEvent(
+                EVENT_ERROR,
+                -5,
+                requestedWidth,
+                requestedHeight,
+                requestedMaxImages,
+                requestedFpsCap,
+                looping ? 1 : 0
+            );
+            return;
+        }
+        if (!brokerSource
+            && !encryptedOfflinePackSource
+            && (resolvedPath.isEmpty() || !new File(resolvedPath).isFile())) {
+            closeQuietly(encryptedMediaSource);
             nativeStereoVideoLifecycleEvent(
                 EVENT_ERROR,
                 -2,
@@ -99,6 +119,7 @@ public final class SpatialStereoVideoPlayback {
             requestedFpsCap
         );
         if (surface == null) {
+            closeQuietly(encryptedMediaSource);
             nativeStereoVideoLifecycleEvent(
                 EVENT_ERROR,
                 -3,
@@ -126,6 +147,16 @@ public final class SpatialStereoVideoPlayback {
                             requestedHeight,
                             requestedMaxImages,
                             requestedFpsCap
+                        );
+                    } else if (encryptedOfflinePackSource) {
+                        runPlayback(
+                            encryptedMediaSource,
+                            surface,
+                            requestedWidth,
+                            requestedHeight,
+                            requestedMaxImages,
+                            requestedFpsCap,
+                            looping
                         );
                     } else {
                         runPlayback(
@@ -235,6 +266,59 @@ public final class SpatialStereoVideoPlayback {
         }
     }
 
+    private static void runPlayback(
+        MediaDataSource mediaDataSource,
+        Surface surface,
+        int width,
+        int height,
+        int maxImages,
+        int fpsCap,
+        boolean looping
+    ) {
+        int loopingFlag = looping ? 1 : 0;
+        try {
+            nativeStereoVideoLifecycleEvent(
+                EVENT_STARTED,
+                0,
+                width,
+                height,
+                maxImages,
+                fpsCap,
+                loopingFlag
+            );
+            decodeOnce(mediaDataSource, surface, width, height, maxImages, fpsCap, looping);
+            nativeStereoVideoLifecycleEvent(
+                EVENT_STOPPED,
+                0,
+                width,
+                height,
+                maxImages,
+                fpsCap,
+                loopingFlag
+            );
+        } catch (RuntimeException | IOException error) {
+            nativeStereoVideoLifecycleEvent(
+                EVENT_ERROR,
+                -1,
+                width,
+                height,
+                maxImages,
+                fpsCap,
+                loopingFlag
+            );
+        } finally {
+            synchronized (LOCK) {
+                if (playbackSurface == surface) {
+                    playbackSurface = null;
+                }
+                if (playbackThread == Thread.currentThread()) {
+                    playbackThread = null;
+                }
+            }
+            surface.release();
+        }
+    }
+
     private static void runBrokerPlayback(
         String host,
         int port,
@@ -288,11 +372,62 @@ public final class SpatialStereoVideoPlayback {
         int fpsCap,
         boolean looping
     ) throws IOException {
-        int loopingFlag = looping ? 1 : 0;
         MediaExtractor extractor = new MediaExtractor();
-        MediaCodec codec = null;
         try {
             extractor.setDataSource(path);
+            decodeConfiguredExtractor(
+                extractor,
+                surface,
+                width,
+                height,
+                maxImages,
+                fpsCap,
+                looping
+            );
+        } finally {
+            extractor.release();
+        }
+    }
+
+    private static void decodeOnce(
+        MediaDataSource mediaDataSource,
+        Surface surface,
+        int width,
+        int height,
+        int maxImages,
+        int fpsCap,
+        boolean looping
+    ) throws IOException {
+        MediaExtractor extractor = new MediaExtractor();
+        try {
+            extractor.setDataSource(mediaDataSource);
+            decodeConfiguredExtractor(
+                extractor,
+                surface,
+                width,
+                height,
+                maxImages,
+                fpsCap,
+                looping
+            );
+        } finally {
+            extractor.release();
+            closeQuietly(mediaDataSource);
+        }
+    }
+
+    private static void decodeConfiguredExtractor(
+        MediaExtractor extractor,
+        Surface surface,
+        int width,
+        int height,
+        int maxImages,
+        int fpsCap,
+        boolean looping
+    ) throws IOException {
+        int loopingFlag = looping ? 1 : 0;
+        MediaCodec codec = null;
+        try {
             int trackIndex = selectVideoTrack(extractor);
             if (trackIndex < 0) {
                 throw new IOException("video track missing");
@@ -428,7 +563,6 @@ public final class SpatialStereoVideoPlayback {
                 }
                 codec.release();
             }
-            extractor.release();
         }
     }
 
@@ -477,6 +611,16 @@ public final class SpatialStereoVideoPlayback {
             return file.getAbsolutePath();
         }
         return new File(context.getFilesDir(), trimmed).getAbsolutePath();
+    }
+
+    private static void closeQuietly(MediaDataSource mediaDataSource) {
+        if (mediaDataSource == null) {
+            return;
+        }
+        try {
+            mediaDataSource.close();
+        } catch (IOException ignored) {
+        }
     }
 
     private static int clamp(int value, int minValue, int maxValue) {

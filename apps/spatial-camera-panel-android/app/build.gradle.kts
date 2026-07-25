@@ -75,6 +75,23 @@ val spatialHandMeshRigPackaged =
 val spatialSigningKeystore =
   providers.environmentVariable("RUSTY_QUEST_SPATIAL_SIGNING_KEYSTORE")
 
+val offlineMediaKeyHex =
+  providers.environmentVariable("RUSTY_QUEST_OFFLINE_MEDIA_KEY_HEX")
+    .map { raw ->
+      val value = raw.trim()
+      require(value.matches(Regex("^[a-fA-F0-9]{64}$"))) {
+        "RUSTY_QUEST_OFFLINE_MEDIA_KEY_HEX must be exactly 64 hexadecimal characters"
+      }
+      value.lowercase()
+    }
+    .orElse("")
+
+val offlineMediaPackAssetDir =
+  providers.environmentVariable("RUSTY_QUEST_OFFLINE_MEDIA_PACK_ASSET_DIR")
+
+val offlineMediaPackagedAssets =
+  offlineMediaPackAssetDir.map { it.isNotBlank().toString() }.orElse("false")
+
 val spatialNdkVersion =
   providers.environmentVariable("RUSTY_QUEST_ANDROID_NDK_VERSION")
     .orElse("27.2.12479018")
@@ -166,6 +183,16 @@ android {
       "HAND_MESH_RIG_PACKAGED",
       spatialHandMeshRigPackaged.get(),
     )
+    buildConfigField(
+      "String",
+      "OFFLINE_MEDIA_KEY_HEX",
+      buildConfigString(offlineMediaKeyHex.get()),
+    )
+    buildConfigField(
+      "boolean",
+      "OFFLINE_MEDIA_PACKAGED_ASSETS",
+      offlineMediaPackagedAssets.get(),
+    )
   }
 
   spatialSigningKeystore.orNull
@@ -219,6 +246,9 @@ android {
       spatialHandMeshRigAssetDir.orNull
         ?.takeIf { it.isNotBlank() }
         ?.let { assets.srcDir(it) }
+      offlineMediaPackAssetDir.orNull
+        ?.takeIf { it.isNotBlank() }
+        ?.let { assets.srcDir(it) }
       providers.environmentVariable("RUSTY_QUEST_SPATIAL_PRIVATE_FEATURE_RES_DIR").orNull
         ?.takeIf { it.isNotBlank() }
         ?.let { res.srcDir(it) }
@@ -250,6 +280,7 @@ dependencies {
   implementation(libs.meta.spatial.sdk.isdk)
   implementation(libs.gson)
   implementation(libs.androidx.media3.common)
+  implementation(libs.androidx.media3.datasource)
   implementation(libs.androidx.media3.exoplayer)
 
   testImplementation(kotlin("test"))

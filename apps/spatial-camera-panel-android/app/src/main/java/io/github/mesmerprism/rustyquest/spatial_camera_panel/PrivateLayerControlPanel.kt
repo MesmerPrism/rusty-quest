@@ -24,6 +24,7 @@ import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -35,6 +36,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.delay
 
 private val LayerPanelBackground = Color(0xFF141820)
 private val LayerPanelSurface = Color(0xFF202634)
@@ -54,6 +56,7 @@ internal fun PrivateLayerControlPanel(
     depthLayerPolicy: Int,
     depthAlignment: PrivateLayerDepthAlignment,
     guideProcessing: PrivateLayerGuideProcessing,
+    videoSession: () -> SpatialImmersiveVideoSessionSnapshot,
     setLayerOverride: (Float, String) -> Float,
     setProjectionPanelEnabled: (Boolean, String) -> Boolean,
     updateProjectionScale: (Float, String) -> Float,
@@ -61,6 +64,8 @@ internal fun PrivateLayerControlPanel(
     updateDepthAlignment: (PrivateLayerDepthAlignment, String) -> PrivateLayerDepthAlignment,
     updateGuideProcessing:
         (PrivateLayerGuideProcessing, String) -> PrivateLayerGuideProcessing,
+    selectPreviousVideo: () -> SpatialImmersiveVideoSessionSnapshot,
+    selectNextVideo: () -> SpatialImmersiveVideoSessionSnapshot,
     closePanel: () -> Unit,
 ) {
   var localLayerOverride by remember(layerOverride) { mutableStateOf(layerOverride) }
@@ -70,6 +75,16 @@ internal fun PrivateLayerControlPanel(
   var localDepthLayerPolicy by remember(depthLayerPolicy) { mutableStateOf(depthLayerPolicy) }
   var localDepthAlignment by remember(depthAlignment) { mutableStateOf(depthAlignment) }
   var localGuideProcessing by remember(guideProcessing) { mutableStateOf(guideProcessing) }
+  var localVideoSession by remember { mutableStateOf(videoSession()) }
+  LaunchedEffect(Unit) {
+    while (true) {
+      delay(500L)
+      val latestVideoSession = videoSession()
+      if (latestVideoSession != localVideoSession) {
+        localVideoSession = latestVideoSession
+      }
+    }
+  }
   val localZoneCompositor = PrivateLayerZoneCompositorPanelBridge.configuration
   Surface(
       modifier = Modifier.fillMaxSize(),
@@ -164,6 +179,58 @@ internal fun PrivateLayerControlPanel(
               localLayerOverride = setLayerOverride(override, "private-layer-control-panel")
             },
         )
+      }
+
+      if (localVideoSession.requested) {
+        Section("Offline Video") {
+          Text(
+              if (localVideoSession.available) {
+                "Active video ${localVideoSession.activeOrdinal} of ${localVideoSession.itemCount}"
+              } else {
+                "No compatible offline video is available."
+              },
+              style = MaterialTheme.typography.bodyMedium,
+              color = LayerPanelMuted,
+          )
+          Text(
+              if (localVideoSession.customProjectionCompatible) {
+                "The selected stereo video is feeding the custom projection and effect stack."
+              } else {
+                "The selected video is using its ideal Spatial SDK projection surface."
+              },
+              style = MaterialTheme.typography.bodySmall,
+              color = LayerPanelMuted,
+          )
+          Row(
+              horizontalArrangement = Arrangement.spacedBy(10.dp),
+              modifier = Modifier.fillMaxWidth(),
+          ) {
+            Button(
+                modifier = Modifier.weight(1.0f),
+                enabled = localVideoSession.itemCount > 1,
+                onClick = { localVideoSession = selectPreviousVideo() },
+                colors =
+                    ButtonDefaults.buttonColors(
+                        containerColor = LayerPanelSurfaceAlt,
+                        contentColor = LayerPanelInk,
+                    ),
+            ) {
+              Text("Previous")
+            }
+            Button(
+                modifier = Modifier.weight(1.0f),
+                enabled = localVideoSession.itemCount > 1,
+                onClick = { localVideoSession = selectNextVideo() },
+                colors =
+                    ButtonDefaults.buttonColors(
+                        containerColor = LayerPanelAccent,
+                        contentColor = Color(0xFF04111A),
+                    ),
+            ) {
+              Text("Next")
+            }
+          }
+        }
       }
 
       Section("Projection Area") {

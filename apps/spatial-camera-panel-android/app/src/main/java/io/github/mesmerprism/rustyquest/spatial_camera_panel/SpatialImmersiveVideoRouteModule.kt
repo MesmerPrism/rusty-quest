@@ -45,9 +45,13 @@ internal data class SpatialImmersiveVideoConfig(
     val autoplay: Boolean,
     val loop: Boolean,
     val radiusMeters: Float,
+    val offlinePack: OfflineImmersiveMediaPack? = null,
 ) {
   val isGrantedContentUri: Boolean
     get() = path.startsWith("content://")
+
+  val isEncryptedOfflinePack: Boolean
+    get() = offlinePack != null
 
   val perEyeAspectRatio: Float
     get() =
@@ -72,7 +76,10 @@ internal data class SpatialImmersiveVideoConfig(
       "immersiveVideo=true projectionShape=${shape.token} stereoLayout=${stereoLayout.token} " +
           "sourceWidthPx=$widthPx sourceHeightPx=$heightPx " +
           "directToSurface=true readableSurface=false zIndex=$zIndex " +
-          "autoplay=$autoplay loop=$loop"
+          "autoplay=$autoplay loop=$loop " +
+          "offlineEncryptedPack=$isEncryptedOfflinePack embeddedKeyPrototype=$isEncryptedOfflinePack " +
+          "encryptedMediaPackagedInApk=${offlinePack?.packagedInApk == true} " +
+          "plaintextFileWritten=false"
 }
 
 internal sealed class SpatialImmersiveVideoRouteResolution {
@@ -194,6 +201,43 @@ internal object SpatialImmersiveVideoRouteModule {
             autoplay = autoplay,
             loop = loop,
             radiusMeters = radiusMeters,
+        )
+    )
+  }
+
+  fun resolveOfflinePack(
+      pack: OfflineImmersiveMediaPack,
+      autoplay: String?,
+      loop: String?,
+      radiusMeters: String?,
+  ): SpatialImmersiveVideoRouteResolution {
+    val autoplayValue =
+        parseBooleanOrDefault(autoplay, true)
+            ?: return SpatialImmersiveVideoRouteResolution.Rejected("autoplay-not-boolean")
+    val loopValue =
+        parseBooleanOrDefault(loop, true)
+            ?: return SpatialImmersiveVideoRouteResolution.Rejected("loop-not-boolean")
+    val radiusValue =
+        if (radiusMeters.isNullOrBlank()) {
+          DEFAULT_RADIUS_METERS
+        } else {
+          radiusMeters.toFloatOrNull()
+              ?: return SpatialImmersiveVideoRouteResolution.Rejected("radius-invalid")
+        }
+    if (!radiusValue.isFinite() || radiusValue !in 1.0f..100.0f) {
+      return SpatialImmersiveVideoRouteResolution.Rejected("radius-out-of-range")
+    }
+    return SpatialImmersiveVideoRouteResolution.Ready(
+        SpatialImmersiveVideoConfig(
+            path = pack.virtualUri.toString(),
+            shape = pack.shape,
+            stereoLayout = pack.stereoLayout,
+            widthPx = pack.widthPx,
+            heightPx = pack.heightPx,
+            autoplay = autoplayValue,
+            loop = loopValue,
+            radiusMeters = radiusValue,
+            offlinePack = pack,
         )
     )
   }

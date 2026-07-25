@@ -22,6 +22,7 @@ internal data class SpatialPrivateLayerPanelRegistrationBindings(
     val depthLayerPolicy: Int,
     val depthAlignment: PrivateLayerDepthAlignment,
     val guideProcessing: PrivateLayerGuideProcessing,
+    val videoSession: () -> SpatialImmersiveVideoSessionSnapshot,
     val setLayerOverride: (Float, String) -> Float,
     val setProjectionPanelEnabled: (Boolean, String) -> Boolean,
     val updateProjectionScale: (Float, String) -> Float,
@@ -30,6 +31,8 @@ internal data class SpatialPrivateLayerPanelRegistrationBindings(
         (PrivateLayerDepthAlignment, String) -> PrivateLayerDepthAlignment,
     val updateGuideProcessing:
         (PrivateLayerGuideProcessing, String) -> PrivateLayerGuideProcessing,
+    val selectPreviousVideo: () -> SpatialImmersiveVideoSessionSnapshot,
+    val selectNextVideo: () -> SpatialImmersiveVideoSessionSnapshot,
     val closePanel: () -> Unit,
     val settings: (Entity) -> PanelSettings,
     val onPanelSetup: (PanelSceneObject) -> Unit,
@@ -73,12 +76,15 @@ internal object SpatialComposePanelRegistrationModule {
                       depthLayerPolicy = bindings.depthLayerPolicy,
                       depthAlignment = bindings.depthAlignment,
                       guideProcessing = bindings.guideProcessing,
+                      videoSession = bindings.videoSession,
                       setLayerOverride = bindings.setLayerOverride,
                       setProjectionPanelEnabled = bindings.setProjectionPanelEnabled,
                       updateProjectionScale = bindings.updateProjectionScale,
                       updateDepthLayerPolicy = bindings.updateDepthLayerPolicy,
                       updateDepthAlignment = bindings.updateDepthAlignment,
                       updateGuideProcessing = bindings.updateGuideProcessing,
+                      selectPreviousVideo = bindings.selectPreviousVideo,
+                      selectNextVideo = bindings.selectNextVideo,
                       closePanel = bindings.closePanel,
                   )
                 }
