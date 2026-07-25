@@ -9,10 +9,7 @@ import java.nio.ByteBuffer;
 import java.nio.charset.CharacterCodingException;
 import java.nio.charset.CodingErrorAction;
 import java.nio.charset.StandardCharsets;
-import java.security.KeyFactory;
 import java.security.MessageDigest;
-import java.security.Signature;
-import java.security.spec.X509EncodedKeySpec;
 import java.util.Iterator;
 import java.util.Locale;
 import java.util.Set;
@@ -24,9 +21,6 @@ final class StrictUpdateEnvelopeVerifier implements UpdateEnvelopeVerifier {
     private static final String MANIFEST_SCHEMA =
             UpdateManifestCanonicalizer.MANIFEST_SCHEMA;
     private static final String SIGNATURE_ALGORITHM = "Ed25519";
-    private static final byte[] ED25519_X509_PREFIX = new byte[] {
-        0x30, 0x2a, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x70, 0x03, 0x21, 0x00
-    };
     private static final int MAX_ENVELOPE_BYTES = 256 * 1024;
     private static final long MAX_JCS_SAFE_INTEGER = 9_007_199_254_740_991L;
 
@@ -253,22 +247,24 @@ final class StrictUpdateEnvelopeVerifier implements UpdateEnvelopeVerifier {
             if (rawKey.length != 32) {
                 throw new VerificationException("invalid_release_key");
             }
-            byte[] x509Key = new byte[ED25519_X509_PREFIX.length + rawKey.length];
+            byte[] domain = UpdateManifestCanonicalizer.signatureDomain();
+            byte[] message = new byte[domain.length + canonicalSigned.length];
+            System.arraycopy(domain, 0, message, 0, domain.length);
             System.arraycopy(
-                    ED25519_X509_PREFIX, 0, x509Key, 0, ED25519_X509_PREFIX.length);
-            System.arraycopy(
-                    rawKey, 0, x509Key, ED25519_X509_PREFIX.length, rawKey.length);
-            Signature verifier = Signature.getInstance(SIGNATURE_ALGORITHM);
-            verifier.initVerify(
-                    KeyFactory.getInstance(SIGNATURE_ALGORITHM)
-                            .generatePublic(new X509EncodedKeySpec(x509Key)));
-            verifier.update(UpdateManifestCanonicalizer.signatureDomain());
-            verifier.update(canonicalSigned);
-            if (!verifier.verify(signatureBytes)) {
+                    canonicalSigned,
+                    0,
+                    message,
+                    domain.length,
+                    canonicalSigned.length);
+            if (!NativeEd25519Verifier.verify(
+                    rawKey, message, signatureBytes)) {
                 throw new VerificationException("signature_verification_failed");
             }
         } catch (VerificationException exception) {
             throw exception;
+        } catch (LinkageError error) {
+            throw new VerificationException(
+                    "signature_verifier_failed_closed", error);
         } catch (Exception exception) {
             throw new VerificationException("signature_verifier_failed_closed", exception);
         }

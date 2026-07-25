@@ -1,0 +1,27 @@
+[package]
+name = "rusty-quest-package-updater-android-native"
+description = "JNI Ed25519 verification bridge for the attended Quest package updater."
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+
+[lib]
+name = "rusty_quest_package_updater_android"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+ed25519-dalek = { version = "=2.1.1", default-features = false, features = ["std"] }
+
+[target.'cfg(target_os = "android")'.dependencies]
+jni = "0.22"
+
+[lints.rust]
+unsafe_code = "allow"
+missing_docs = "allow"
+
+[lints.clippy]
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"

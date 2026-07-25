@@ -13,8 +13,6 @@ import android.widget.TextView;
 
 import org.json.JSONObject;
 
-import java.io.File;
-import java.net.URI;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -143,49 +141,19 @@ public final class PackageUpdaterActivity extends Activity {
         operationStatus.setText("Fetching the fixed signed manifest…");
         worker.execute(() -> {
             try {
-                URI manifestUri = UpdateManifestClient.requireFixedHttpsUri(
-                        URI.create(BuildConfig.UPDATE_MANIFEST_URL));
-                UpdateManifestClient client = new UpdateManifestClient();
-                byte[] envelopeBytes = client.fetch(manifestUri);
-                long installedVersion =
-                        PackageInspection.installedVersionOrMissing(
-                                this, BuildConfig.EXPECTED_PACKAGE_NAME);
-                if (installedVersion >= 0L
-                        && BuildConfig.EXPECTED_SIGNER_SHA256
-                                .matches("sha256:[0-9a-f]{64}")) {
-                    PackageInspection.verifyInstalledSigner(
-                            this,
-                            BuildConfig.EXPECTED_PACKAGE_NAME,
-                            BuildConfig.EXPECTED_SIGNER_SHA256);
-                }
-                UpdateEnvelopeVerifier verifier = new StrictUpdateEnvelopeVerifier(
-                        BuildConfig.TRUSTED_KEY_ID,
-                        BuildConfig.TRUSTED_PUBLIC_KEY_BASE64,
-                        BuildConfig.EXPECTED_HTTPS_ORIGIN,
-                        BuildConfig.EXPECTED_PACKAGE_NAME,
-                        BuildConfig.EXPECTED_ROLLOUT_RING,
-                        BuildConfig.EXPECTED_SIGNER_SHA256,
-                        Math.max(installedVersion, 0L),
-                        BuildConfig.MINIMUM_TARGET_VERSION_CODE,
-                        BuildConfig.MAXIMUM_TARGET_VERSION_CODE,
-                        BuildConfig.MAXIMUM_APK_SIZE_BYTES,
-                        BuildConfig.MAXIMUM_MANIFEST_VALIDITY_MS,
-                        BuildConfig.MAXIMUM_FUTURE_ISSUE_SKEW_MS,
-                        new UpdateStateStore(this));
-                VerifiedUpdatePlan plan =
-                        verifier.verify(envelopeBytes, System.currentTimeMillis());
-                UpdateArtifact selected = plan.artifact;
-                showProgress(
-                        "Manifest verified. Downloading "
-                                + selected.packageName
-                                + " version "
-                                + selected.versionCode
-                                + " to private staging…");
-                File apkFile = new ApkStager().downloadAndVerify(this, selected);
-                int sessionId = installController.stageAttendedInstall(plan, apkFile);
+                PackageUpdatePipeline.Result result =
+                        new PackageUpdatePipeline(this, installController)
+                                .checkAndStage(
+                                        () -> Thread.currentThread().isInterrupted(),
+                                        (state, artifact, received, expected) ->
+                                                showProgress(describeProgress(
+                                                        state,
+                                                        artifact,
+                                                        received,
+                                                        expected)));
                 showResult(
                         "Verified APK staged in Package Installer session "
-                                + sessionId
+                                + result.sessionId
                                 + ". Approve the Android confirmation UI.");
             } catch (Exception exception) {
                 String message = exception.getMessage();
@@ -195,6 +163,35 @@ public final class PackageUpdaterActivity extends Activity {
                 showResult("Update rejected or failed closed: " + message);
             }
         });
+    }
+
+    private static String describeProgress(
+            String state,
+            UpdateArtifact artifact,
+            long bytesReceived,
+            long bytesExpected) {
+        if ("fetching_manifest".equals(state)) {
+            return "Fetching the fixed signed manifest…";
+        }
+        if ("verifying_manifest".equals(state)) {
+            return "Verifying the signed manifest and installed package identity…";
+        }
+        if ("downloading".equals(state) && artifact != null) {
+            long percent = bytesExpected <= 0L
+                    ? 0L
+                    : Math.min(100L, (bytesReceived * 100L) / bytesExpected);
+            return "Manifest verified. Downloading "
+                    + artifact.packageName
+                    + " version "
+                    + artifact.versionCode
+                    + " to private staging… "
+                    + percent
+                    + "%";
+        }
+        if ("staging_installer_session".equals(state)) {
+            return "APK verified. Preparing the attended Android install session…";
+        }
+        return "Waiting for the Android Package Installer confirmation…";
     }
 
     private void cancelPendingInstall() {

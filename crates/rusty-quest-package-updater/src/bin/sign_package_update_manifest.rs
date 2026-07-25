@@ -19,6 +19,7 @@ const SEED_ENV: &str = "RUSTY_QUEST_UPDATE_SIGNING_SEED_BASE64URL";
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct SignerArgs {
     key_id: String,
+    expected_public_key: String,
     package_name: String,
     rollout_ring: String,
     expected_https_origin: String,
@@ -99,6 +100,10 @@ fn build_and_self_verify(args: &SignerArgs, seed: &[u8; 32]) -> Result<Vec<u8>, 
     };
     let signing_bytes = manifest_signing_bytes(&manifest).map_err(|error| error.to_string())?;
     let signing_key = SigningKey::from_bytes(seed);
+    let derived_public_key = encode_base64url(&signing_key.verifying_key().to_bytes());
+    if derived_public_key != args.expected_public_key {
+        return Err("signing seed does not match the explicitly trusted public key".to_owned());
+    }
     let signature = signing_key.sign(&signing_bytes);
     let envelope = PackageUpdateManifestEnvelope {
         schema: ENVELOPE_SCHEMA.to_owned(),
@@ -170,6 +175,7 @@ fn parse_args(arguments: Vec<String>) -> Result<SignerArgs, String> {
 
     Ok(SignerArgs {
         key_id: required(&values, "--key-id")?,
+        expected_public_key: required(&values, "--expected-public-key")?,
         package_name: required(&values, "--package")?,
         rollout_ring: required(&values, "--ring")?,
         expected_https_origin: required(&values, "--origin")?,
@@ -210,6 +216,7 @@ The signing seed is read only from {SEED_ENV} as canonical unpadded base64url.
 
 Required options:
   --key-id <id>
+  --expected-public-key <canonical-base64url-raw-ed25519-key>
   --manifest-id <id>
   --package <android.package>
   --ring <rollout-ring>
@@ -231,6 +238,7 @@ Use --out - for stdout. The seed is never emitted."
 
 const KNOWN_OPTIONS: &[&str] = &[
     "--key-id",
+    "--expected-public-key",
     "--manifest-id",
     "--package",
     "--ring",
@@ -255,6 +263,8 @@ mod tests {
         [
             "--key-id",
             "release-test-2026-a",
+            "--expected-public-key",
+            "6kpsY-KcUgq-9VB7Ey7F-ZVHdq6-vnuSQh7qaRRG0iw",
             "--manifest-id",
             "rusty-kiosk.alpha.101",
             "--package",
@@ -301,6 +311,15 @@ mod tests {
             "io.github.mesmerprism.rustykiosk"
         );
         assert_eq!(envelope.signed.sequence, 41);
+    }
+
+    #[test]
+    fn signing_seed_must_match_explicit_trusted_public_key() {
+        let mut args = parse_args(arguments()).expect("arguments");
+        args.expected_public_key = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA".to_owned();
+        assert!(build_and_self_verify(&args, &[7_u8; 32])
+            .expect_err("mismatched trusted key")
+            .contains("does not match"));
     }
 
     #[test]

@@ -7,8 +7,6 @@ import android.content.pm.PackageInstaller;
 
 import org.json.JSONObject;
 
-import java.io.File;
-
 public final class PackageInstallCallbackReceiver extends BroadcastReceiver {
     @Override
     public void onReceive(Context context, Intent intent) {
@@ -27,6 +25,12 @@ public final class PackageInstallCallbackReceiver extends BroadcastReceiver {
             String statusMessage = intent.getStringExtra(
                     PackageInstaller.EXTRA_STATUS_MESSAGE);
             if (status == PackageInstaller.STATUS_PENDING_USER_ACTION) {
+                if (InstallReceiptStore.isCancellationPending(
+                                receipt.optString("state"))
+                        || InstallReceiptStore.isInstalledCheckpointPending(
+                                receipt.optString("state"))) {
+                    return;
+                }
                 Intent confirmation =
                         intent.getParcelableExtra(Intent.EXTRA_INTENT, Intent.class);
                 if (confirmation == null) {
@@ -49,33 +53,8 @@ public final class PackageInstallCallbackReceiver extends BroadcastReceiver {
             }
             if (status == PackageInstaller.STATUS_SUCCESS) {
                 try {
-                    if (System.currentTimeMillis()
-                            >= receipt.getLong("manifest_expires_at_ms")) {
-                        throw new IllegalStateException(
-                                "manifest_expired_before_install_commit");
-                    }
-                    UpdateArtifact artifact = InstallReceiptStore.artifact(receipt);
-                    ApkStager.verifyStaged(
-                            context,
-                            new File(receipt.getString("staged_apk_path")),
-                            artifact);
-                    PackageInspection.verifyInstalled(
-                            context,
-                            artifact.packageName,
-                            artifact.versionCode,
-                            artifact.signerSha256);
-                    new UpdateStateStore(context).commitInstalled(
-                            receipt.getString("package_name"),
-                            receipt.getString("rollout_ring"),
-                            receipt.getLong("manifest_sequence"),
-                            receipt.getLong("version_code"),
-                            receipt.getString("signed_manifest_sha256"));
-                    receiptStore.updateState(
-                            sessionId,
-                            "installed_readback_ok",
-                            status,
-                            statusMessage);
-                    PackageInstallController.cleanupTerminalArtifacts(context, receipt);
+                    PackageInstallController.verifyInstalledReadback(
+                            context, receipt);
                 } catch (Exception exception) {
                     receiptStore.updateState(
                             sessionId,
@@ -83,7 +62,25 @@ public final class PackageInstallCallbackReceiver extends BroadcastReceiver {
                             PackageInstaller.STATUS_FAILURE_INVALID,
                             exception.getMessage());
                     PackageInstallController.cleanupTerminalArtifacts(context, receipt);
+                    return;
                 }
+                try {
+                    PackageInstallController.commitInstalledCheckpoint(
+                            context, receipt);
+                } catch (Exception exception) {
+                    receiptStore.updateState(
+                            sessionId,
+                            "installed_readback_checkpoint_pending",
+                            null,
+                            exception.getMessage());
+                    return;
+                }
+                receiptStore.updateState(
+                        sessionId,
+                        "installed_readback_ok",
+                        status,
+                        statusMessage);
+                PackageInstallController.cleanupTerminalArtifacts(context, receipt);
                 return;
             }
             String terminalState = status == PackageInstaller.STATUS_FAILURE_ABORTED

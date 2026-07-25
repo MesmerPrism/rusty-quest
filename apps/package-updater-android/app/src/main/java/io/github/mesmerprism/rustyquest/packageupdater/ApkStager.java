@@ -16,7 +16,20 @@ final class ApkStager {
     private static final int CONNECT_TIMEOUT_MS = 5_000;
     private static final int READ_TIMEOUT_MS = 30_000;
 
+    interface DownloadProgress {
+        void update(long bytesReceived, long bytesExpected);
+    }
+
     File downloadAndVerify(Context context, UpdateArtifact artifact) throws Exception {
+        return downloadAndVerify(
+                context, artifact, () -> false, (received, expected) -> {});
+    }
+
+    File downloadAndVerify(
+            Context context,
+            UpdateArtifact artifact,
+            PackageUpdatePipeline.Cancellation cancellation,
+            DownloadProgress progress) throws Exception {
         File stagingDirectory =
                 new File(context.getNoBackupFilesDir(), "package-updater/staged");
         if (!stagingDirectory.exists() && !stagingDirectory.mkdirs()) {
@@ -25,8 +38,10 @@ final class ApkStager {
         String apkDigestHex = artifact.apkSha256.substring("sha256:".length());
         File finalFile = new File(stagingDirectory, apkDigestHex + ".apk");
         if (finalFile.isFile()) {
+            requireNotCancelled(cancellation);
             requireFileIdentity(finalFile, artifact);
             PackageInspection.verifyArchive(context, finalFile, artifact);
+            progress.update(artifact.apkSizeBytes, artifact.apkSizeBytes);
             return finalFile;
         }
 
@@ -69,12 +84,14 @@ final class ApkStager {
                 byte[] buffer = new byte[64 * 1024];
                 int read;
                 while ((read = input.read(buffer)) != -1) {
+                    requireNotCancelled(cancellation);
                     total += read;
                     if (total > artifact.apkSizeBytes) {
                         throw new IllegalStateException("apk_download_exceeded_signed_size");
                     }
                     digest.update(buffer, 0, read);
                     output.write(buffer, 0, read);
+                    progress.update(total, artifact.apkSizeBytes);
                 }
                 output.flush();
                 output.getFD().sync();
@@ -133,5 +150,13 @@ final class ApkStager {
             builder.append(String.format(Locale.ROOT, "%02x", value & 0xff));
         }
         return builder.toString();
+    }
+
+    private static void requireNotCancelled(
+            PackageUpdatePipeline.Cancellation cancellation)
+            throws PackageUpdatePipeline.UpdateCancelledException {
+        if (cancellation.isCancellationRequested()) {
+            throw new PackageUpdatePipeline.UpdateCancelledException();
+        }
     }
 }

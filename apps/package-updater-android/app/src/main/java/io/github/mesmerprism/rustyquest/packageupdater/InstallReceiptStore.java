@@ -113,6 +113,45 @@ final class InstallReceiptStore {
         if (receipt == null || receipt.getInt("session_id") != sessionId) {
             throw new IllegalStateException("install_receipt_session_mismatch");
         }
+        String currentState = receipt.optString("state");
+        if (isTerminal(currentState) && !currentState.equals(state)) {
+            return;
+        }
+        if (isCancellationPending(currentState)
+                && !isTerminal(state)
+                && !isInstalledCheckpointPending(state)) {
+            return;
+        }
+        if (isInstalledCheckpointPending(currentState)
+                && !isTerminal(state)) {
+            return;
+        }
+        writeState(receipt, state, statusCode, statusMessage);
+    }
+
+    synchronized boolean compareAndSetState(
+            int sessionId,
+            String expectedState,
+            String state,
+            Integer statusCode,
+            String statusMessage) throws Exception {
+        JSONObject receipt = read();
+        if (receipt == null || receipt.getInt("session_id") != sessionId) {
+            throw new IllegalStateException("install_receipt_session_mismatch");
+        }
+        String currentState = receipt.optString("state");
+        if (isTerminal(currentState) || !expectedState.equals(currentState)) {
+            return false;
+        }
+        writeState(receipt, state, statusCode, statusMessage);
+        return true;
+    }
+
+    private void writeState(
+            JSONObject receipt,
+            String state,
+            Integer statusCode,
+            String statusMessage) throws Exception {
         receipt.put("state", state);
         receipt.put("status_code", statusCode == null ? JSONObject.NULL : statusCode);
         String boundedMessage = statusMessage;
@@ -130,9 +169,19 @@ final class InstallReceiptStore {
         return state != null
                 && (state.startsWith("installed_readback_ok")
                         || state.startsWith("install_failed")
+                        || state.startsWith("install_staging_failed")
                         || state.startsWith("install_cancelled")
                         || state.startsWith("readback_failed")
                         || state.startsWith("session_missing"));
+    }
+
+    static boolean isCancellationPending(String state) {
+        return state != null && state.startsWith("cancel_requested");
+    }
+
+    static boolean isInstalledCheckpointPending(String state) {
+        return state != null
+                && state.startsWith("installed_readback_checkpoint_pending");
     }
 
     static UpdateArtifact artifact(JSONObject receipt) throws Exception {

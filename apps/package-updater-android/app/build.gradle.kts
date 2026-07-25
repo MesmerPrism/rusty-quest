@@ -1,3 +1,5 @@
+import org.gradle.api.tasks.Exec
+
 plugins {
   id("com.android.application")
 }
@@ -73,6 +75,90 @@ require(!releaseBuildRequested || releaseSigningConfigured) {
   "Package Updater release builds require all release signing variables"
 }
 
+val repoRoot = layout.projectDirectory.dir("../../..")
+val nativeCrate = layout.projectDirectory.dir("../native")
+val nativeTarget = layout.buildDirectory.dir("rustNativeTarget")
+val nativeArtifact = nativeTarget.map {
+  it.file(
+    "aarch64-linux-android/release/" +
+      "librusty_quest_package_updater_android.so",
+  )
+}
+val generatedNativeDirectory =
+  layout.buildDirectory.dir("generated/rustJniLibs/arm64-v8a")
+val generatedNativeArtifact = generatedNativeDirectory.map {
+  it.file("librusty_quest_package_updater_android.so")
+}
+val buildRustNativeVerifier =
+  tasks.register<Exec>("buildRustNativeVerifier") {
+    group = "build"
+    description =
+      "Builds the exact arm64 Rust Ed25519 verifier packaged in every APK variant."
+    inputs.file(repoRoot.file("Cargo.toml"))
+    inputs.file(repoRoot.file("Cargo.lock"))
+    inputs.file(nativeCrate.file("Cargo.toml"))
+    inputs.dir(nativeCrate.dir("src"))
+    outputs.file(generatedNativeArtifact)
+
+    doFirst {
+      val configuredNdk =
+        providers.environmentVariable("ANDROID_NDK_HOME").orNull
+      val sdkRoot =
+        providers.environmentVariable("ANDROID_SDK_ROOT")
+          .orElse(providers.environmentVariable("ANDROID_HOME"))
+          .orNull
+      val ndkRoot = if (!configuredNdk.isNullOrBlank()) {
+        file(configuredNdk)
+      } else {
+        require(!sdkRoot.isNullOrBlank()) {
+          "ANDROID_NDK_HOME or an Android SDK root is required for the native verifier"
+        }
+        file("$sdkRoot/ndk").listFiles()
+          ?.filter { it.isDirectory }
+          ?.maxByOrNull { it.name }
+          ?: error("No Android NDK is installed under $sdkRoot/ndk")
+      }
+      val linker =
+        ndkRoot.resolve(
+          "toolchains/llvm/prebuilt/windows-x86_64/bin/" +
+            "aarch64-linux-android34-clang.cmd",
+        )
+      require(linker.isFile) {
+        "Package Updater Android linker is missing: $linker"
+      }
+      environment(
+        "CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER",
+        linker.absolutePath,
+      )
+      commandLine(
+        "cargo",
+        "build",
+        "--manifest-path",
+        nativeCrate.file("Cargo.toml").asFile.absolutePath,
+        "--target",
+        "aarch64-linux-android",
+        "--release",
+        "--target-dir",
+        nativeTarget.get().asFile.absolutePath,
+        "--locked",
+      )
+    }
+
+    doLast {
+      val built = nativeArtifact.get().asFile
+      require(built.isFile) {
+        "Package Updater native verifier output is missing: $built"
+      }
+      copy {
+        from(built)
+        into(generatedNativeDirectory)
+      }
+      require(generatedNativeArtifact.get().asFile.isFile) {
+        "Package Updater generated JNI verifier was not copied"
+      }
+    }
+  }
+
 android {
   namespace = "io.github.mesmerprism.rustyquest.packageupdater"
   compileSdk = 34
@@ -83,6 +169,9 @@ android {
     targetSdk = 34
     versionCode = 1
     versionName = "0.1.0"
+    ndk {
+      abiFilters += "arm64-v8a"
+    }
 
     buildConfigField("String", "UPDATE_MANIFEST_URL", buildConfigString(updateManifestUrl))
     buildConfigField("String", "TRUSTED_KEY_ID", buildConfigString(trustedKeyId))
@@ -135,6 +224,13 @@ android {
   }
 
   buildTypes {
+    create("e2e") {
+      initWith(getByName("debug"))
+      applicationIdSuffix = ".e2ecli"
+      versionNameSuffix = "-e2ecli"
+      isDebuggable = true
+      matchingFallbacks += listOf("debug")
+    }
     release {
       isMinifyEnabled = false
       signingConfig = if (releaseSigningConfigured) {
@@ -149,6 +245,12 @@ android {
     buildConfig = true
   }
 
+  sourceSets {
+    getByName("main") {
+      jniLibs.srcDir(layout.buildDirectory.dir("generated/rustJniLibs"))
+    }
+  }
+
   compileOptions {
     sourceCompatibility = JavaVersion.VERSION_17
     targetCompatibility = JavaVersion.VERSION_17
@@ -157,6 +259,12 @@ android {
   lint {
     abortOnError = true
     checkReleaseBuilds = true
+  }
+}
+
+tasks.configureEach {
+  if (name.matches(Regex("merge[A-Z].*JniLibFolders"))) {
+    dependsOn(buildRustNativeVerifier)
   }
 }
 

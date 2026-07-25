@@ -15,13 +15,18 @@ if ([string]::IsNullOrWhiteSpace($RepoRoot)) {
 $appRoot = Join-Path $RepoRoot "apps\package-updater-android"
 $javaRoot = Join-Path $appRoot `
     "app\src\main\java\io\github\mesmerprism\rustyquest\packageupdater"
+$e2eJavaRoot = Join-Path $appRoot `
+    "app\src\e2e\java\io\github\mesmerprism\rustyquest\packageupdater"
 $paths = [ordered]@{
     readme = Join-Path $appRoot "README.md"
     settings = Join-Path $appRoot "settings.gradle.kts"
     root_build = Join-Path $appRoot "build.gradle.kts"
     app_build = Join-Path $appRoot "app\build.gradle.kts"
     manifest = Join-Path $appRoot "app\src\main\AndroidManifest.xml"
+    e2e_manifest = Join-Path $appRoot "app\src\e2e\AndroidManifest.xml"
     activity = Join-Path $javaRoot "PackageUpdaterActivity.java"
+    pipeline = Join-Path $javaRoot "PackageUpdatePipeline.java"
+    native_verifier = Join-Path $javaRoot "NativeEd25519Verifier.java"
     verifier_boundary = Join-Path $javaRoot "UpdateEnvelopeVerifier.java"
     verifier = Join-Path $javaRoot "StrictUpdateEnvelopeVerifier.java"
     canonicalizer = Join-Path $javaRoot "UpdateManifestCanonicalizer.java"
@@ -33,10 +38,16 @@ $paths = [ordered]@{
     receipt = Join-Path $javaRoot "InstallReceiptStore.java"
     installer = Join-Path $javaRoot "PackageInstallController.java"
     callback = Join-Path $javaRoot "PackageInstallCallbackReceiver.java"
+    e2e_provider = Join-Path $e2eJavaRoot "E2ePackageUpdaterCliProvider.java"
+    e2e_service = Join-Path $e2eJavaRoot "E2ePackageUpdateService.java"
+    e2e_store = Join-Path $e2eJavaRoot "E2eUpdateOperationStore.java"
+    native_cargo = Join-Path $appRoot "native\Cargo.toml"
+    native_lib = Join-Path $appRoot "native\src\lib.rs"
     host_vector = Join-Path $appRoot `
         "host-tests\io\github\mesmerprism\rustyquest\packageupdater\PackageUpdaterCanonicalVectorTest.java"
     build_wrapper = Join-Path $RepoRoot "tools\Build-PackageUpdaterAndroid.ps1"
     publish_wrapper = Join-Path $RepoRoot "tools\Publish-PackageUpdateManifest.ps1"
+    e2e_cli_wrapper = Join-Path $RepoRoot "tools\Invoke-PackageUpdaterE2eCli.ps1"
 }
 foreach ($entry in $paths.GetEnumerator()) {
     if (-not (Test-Path -LiteralPath $entry.Value)) {
@@ -59,7 +70,10 @@ $settings = Get-Content -Raw -LiteralPath $paths.settings
 $rootBuild = Get-Content -Raw -LiteralPath $paths.root_build
 $appBuild = Get-Content -Raw -LiteralPath $paths.app_build
 $manifestText = Get-Content -Raw -LiteralPath $paths.manifest
+$e2eManifestText = Get-Content -Raw -LiteralPath $paths.e2e_manifest
 $activity = Get-Content -Raw -LiteralPath $paths.activity
+$pipeline = Get-Content -Raw -LiteralPath $paths.pipeline
+$nativeVerifier = Get-Content -Raw -LiteralPath $paths.native_verifier
 $verifierBoundary = Get-Content -Raw -LiteralPath $paths.verifier_boundary
 $verifier = Get-Content -Raw -LiteralPath $paths.verifier
 $canonicalizer = Get-Content -Raw -LiteralPath $paths.canonicalizer
@@ -71,8 +85,14 @@ $inspection = Get-Content -Raw -LiteralPath $paths.inspection
 $receipt = Get-Content -Raw -LiteralPath $paths.receipt
 $installer = Get-Content -Raw -LiteralPath $paths.installer
 $callback = Get-Content -Raw -LiteralPath $paths.callback
+$e2eProvider = Get-Content -Raw -LiteralPath $paths.e2e_provider
+$e2eService = Get-Content -Raw -LiteralPath $paths.e2e_service
+$e2eStore = Get-Content -Raw -LiteralPath $paths.e2e_store
+$nativeCargo = Get-Content -Raw -LiteralPath $paths.native_cargo
+$nativeLib = Get-Content -Raw -LiteralPath $paths.native_lib
 $buildWrapper = Get-Content -Raw -LiteralPath $paths.build_wrapper
 $publishWrapper = Get-Content -Raw -LiteralPath $paths.publish_wrapper
+$e2eCliWrapper = Get-Content -Raw -LiteralPath $paths.e2e_cli_wrapper
 
 [xml]$manifest = $manifestText
 $androidNamespace = "http://schemas.android.com/apk/res/android"
@@ -173,6 +193,22 @@ foreach ($token in @(
     '"MAXIMUM_TARGET_VERSION_CODE"')) {
     Assert-Match $appBuild $token "Package Updater build is missing fixed input token: $token"
 }
+foreach ($token in @(
+    'create\("e2e"\)',
+    'initWith\(getByName\("debug"\)\)',
+    'applicationIdSuffix = "\.e2ecli"',
+    'versionNameSuffix = "-e2ecli"',
+    'abiFilters \+= "arm64-v8a"',
+    'generated/rustJniLibs',
+    'buildRustNativeVerifier',
+    'merge\[A-Z\]\.\*JniLibFolders',
+    'CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER',
+    'nativeCrate\.dir\("src"\)',
+    'outputs\.file\(generatedNativeArtifact\)',
+    '--target-dir')) {
+    Assert-Match $appBuild $token `
+        "Package Updater test-only E2E build closure is missing token: $token"
+}
 Assert-Match $appBuild `
     'manifestPlaceholders\["expectedPackageName"\] = expectedPackageName' `
     "Package Updater fixed package visibility placeholder is missing."
@@ -191,12 +227,10 @@ foreach ($token in @(
     'Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES',
     'Uri\.parse\("package:" \+ getPackageName\(\)\)',
     'Executors.newSingleThreadExecutor',
-    'UpdateManifestClient.requireFixedHttpsUri',
-    'StrictUpdateEnvelopeVerifier',
-    'PackageInspection.installedVersionOrMissing',
-    'PackageInspection.verifyInstalledSigner',
-    'downloadAndVerify',
-    'stageAttendedInstall')) {
+    'PackageUpdatePipeline',
+    'checkAndStage',
+    'Thread\.currentThread\(\)\.isInterrupted',
+    'describeProgress')) {
     Assert-Match $activity $token "Visible Package Updater flow is missing token: $token"
 }
 Assert-Match $activity 'cancelPersistedSession' `
@@ -216,15 +250,29 @@ foreach ($forbidden in @(
     }
 }
 
+foreach ($token in @(
+    'UpdateManifestClient\.requireFixedHttpsUri',
+    'BuildConfig\.UPDATE_MANIFEST_URL',
+    'StrictUpdateEnvelopeVerifier',
+    'PackageInspection\.installedVersionOrMissing',
+    'PackageInspection\.verifyInstalledSigner',
+    'downloadAndVerify',
+    'stageAttendedInstall',
+    'install_permission_required',
+    'UpdateCancelledException')) {
+    Assert-Match $pipeline $token `
+        "Shared Package Updater pipeline is missing token: $token"
+}
+
 Assert-Match $verifierBoundary 'VerifiedUpdatePlan verify\(byte\[\] envelopeBytes, long nowMs\)' `
     "Package Updater must expose a strict verifier boundary."
 foreach ($token in @(
     'rusty\.quest\.package_update_manifest_envelope\.v1',
     'rusty\.quest\.package_update_manifest\.v1',
     'SIGNATURE_DOMAIN',
-    'Signature\.getInstance\(SIGNATURE_ALGORITHM\)',
-    'KeyFactory\.getInstance\(SIGNATURE_ALGORITHM\)',
-    'X509EncodedKeySpec',
+    'NativeEd25519Verifier\.verify',
+    'signature_verifier_failed_closed',
+    'LinkageError',
     'trusted_key_not_configured',
     'trusted_signer_not_configured',
     'requireExactKeys',
@@ -248,6 +296,27 @@ foreach ($token in @(
         $verifier + "`n" + $canonicalizer + "`n" + $stateStore + "`n" + $jsonPreflight
     ) $token `
         "Fail-closed signed-envelope verifier is missing token: $token"
+}
+foreach ($token in @(
+    'System\.loadLibrary\("rusty_quest_package_updater_android"\)',
+    'nativeVerify\(')) {
+    Assert-Match $nativeVerifier $token `
+        "Package Updater native verifier Java boundary is missing token: $token"
+}
+foreach ($token in @(
+    'crate-type = \["cdylib", "rlib"\]',
+    'ed25519-dalek',
+    'jni = "0\.22"')) {
+    Assert-Match $nativeCargo $token `
+        "Package Updater native verifier crate is missing token: $token"
+}
+foreach ($token in @(
+    'verify_strict',
+    'Java_io_github_mesmerprism_rustyquest_packageupdater_NativeEd25519Verifier_nativeVerify',
+    'JNI_FALSE',
+    'accepts_exact_signature_and_rejects_damage')) {
+    Assert-Match $nativeLib $token `
+        "Package Updater native verifier implementation is missing token: $token"
 }
 if ($verifier -match 'return\s+true\s*;|accepted\s*=\s*true') {
     throw "Package Updater verifier contains a permissive acceptance shortcut."
@@ -294,14 +363,25 @@ foreach ($token in @(
     'PackageInstaller.SessionParams.USER_ACTION_REQUIRED',
     'setAppPackageName\(artifact.packageName\)',
     'PACKAGE_SOURCE_DOWNLOADED_FILE',
-    'session.openWrite\("base.apk"',
+    'session\.openWrite\(\s*"base\.apk"',
+    'requireNotCancelled\(cancellation\)',
     'session.fsync\(output\)',
     'receiptStore.begin',
     'PendingIntent.FLAG_MUTABLE',
     'setPackage\(context.getPackageName\(\)\)',
     'session.commit',
+    'compareAndSetState',
     'getSessionInfo',
     'sessionInfo\.isCommitted',
+    'cancel_requested_awaiting_installer_callback',
+    'cancel_requested_manifest_expired_awaiting_installer_callback',
+    'isCancellationPending',
+    'isInstalledCheckpointPending',
+    'installed_readback_checkpoint_pending',
+    'commitInstalledCheckpoint',
+    'manifest_expired_before_install_commit',
+    '5_000L',
+    'install_staging_failed_interrupted',
     'cancelPersistedSession',
     'cleanupTerminalArtifacts',
     'install_cancelled_by_wearer',
@@ -327,19 +407,25 @@ foreach ($token in @(
     'matchesCallback',
     'CALLBACK_SCHEME',
     'CALLBACK_AUTHORITY',
-    'intent.getIntExtra')) {
+    'intent.getIntExtra',
+    'compareAndSetState',
+    'isTerminal\(currentState\)',
+    'isCancellationPending\(currentState\)',
+    'isInstalledCheckpointPending\(currentState\)',
+    'install_staging_failed')) {
     Assert-Match $receipt $token "Persisted install receipt is missing token: $token"
 }
 foreach ($token in @(
     'receiptStore.matchesCallback\(intent\)',
     'PackageInstaller.STATUS_PENDING_USER_ACTION',
+    'InstallReceiptStore\.isCancellationPending',
     'intent.getParcelableExtra\(Intent.EXTRA_INTENT, Intent.class\)',
     'pending_user_confirmation',
     'Intent.FLAG_ACTIVITY_NEW_TASK',
     'PackageInstaller.STATUS_SUCCESS',
-    'PackageInspection.verifyInstalled',
-    'ApkStager\.verifyStaged',
-    'UpdateStateStore\(context\)\.commitInstalled',
+    'verifyInstalledReadback',
+    'commitInstalledCheckpoint',
+    'installed_readback_checkpoint_pending',
     'installed_readback_ok',
     'readback_failed_after_installer_success')) {
     Assert-Match $callback $token "Package Installer callback is missing token: $token"
@@ -350,11 +436,117 @@ Assert-Match $callback 'cleanupTerminalArtifacts' `
     "Package Installer terminal callbacks must remove private staged APKs."
 Assert-Match $stager 'failed_private_stage_not_removed' `
     "Failed downloads must fail closed when private partial-file cleanup fails."
+foreach ($token in @(
+    'PackageUpdatePipeline\.Cancellation',
+    'requireNotCancelled\(cancellation\)',
+    'progress\.update\(total, artifact\.apkSizeBytes\)')) {
+    Assert-Match $stager $token `
+        "Private APK staging cancellation/progress closure is missing token: $token"
+}
+
+[xml]$e2eManifest = $e2eManifestText
+$e2ePermissions = @(
+    $e2eManifest.manifest.'uses-permission' |
+        ForEach-Object { $_.GetAttribute("name", $androidNamespace) } |
+        Sort-Object -Unique
+)
+$expectedE2ePermissions = @(
+    "android.permission.FOREGROUND_SERVICE",
+    "android.permission.FOREGROUND_SERVICE_DATA_SYNC"
+) | Sort-Object
+if (@(Compare-Object $e2ePermissions $expectedE2ePermissions -SyncWindow 0).
+    Count -ne 0) {
+    throw "Package Updater E2E permission closure changed: $($e2ePermissions -join ', ')"
+}
+$e2eApplication = $e2eManifest.manifest.application
+$e2eProviders = @($e2eApplication.provider)
+if ($e2eProviders.Count -ne 1 -or
+    $e2eProviders[0].GetAttribute("name", $androidNamespace) -ne
+        ".E2ePackageUpdaterCliProvider" -or
+    $e2eProviders[0].GetAttribute("authorities", $androidNamespace) -ne
+        '${applicationId}.cli' -or
+    $e2eProviders[0].GetAttribute("exported", $androidNamespace) -ne "true" -or
+    $e2eProviders[0].GetAttribute("grantUriPermissions", $androidNamespace) -ne
+        "false" -or
+    $e2eProviders[0].GetAttribute("permission", $androidNamespace) -ne
+        "android.permission.DUMP") {
+    throw "Package Updater E2E CLI provider boundary changed."
+}
+$e2eServices = @($e2eApplication.service)
+if ($e2eServices.Count -ne 1 -or
+    $e2eServices[0].GetAttribute("name", $androidNamespace) -ne
+        ".E2ePackageUpdateService" -or
+    $e2eServices[0].GetAttribute("exported", $androidNamespace) -ne "false" -or
+    $e2eServices[0].GetAttribute("foregroundServiceType", $androidNamespace) -ne
+        "dataSync") {
+    throw "Package Updater E2E foreground worker boundary changed."
+}
+foreach ($token in @(
+    'ANDROID_SHELL_UID = 2000',
+    'Binder\.getCallingUid\(\) != ANDROID_SHELL_UID',
+    '"check"\.equals\(command\)',
+    '"status"\.equals\(command\)',
+    '"cancel"\.equals\(command\)',
+    'result_b64',
+    'unsupported_cli_command')) {
+    Assert-Match $e2eProvider $token `
+        "Package Updater E2E CLI provider is missing token: $token"
+}
+foreach ($token in @(
+    'startForeground\(',
+    'FOREGROUND_SERVICE_TYPE_DATA_SYNC',
+    'PackageUpdatePipeline',
+    'requestCancel',
+    'isRunning',
+    'awaitingWearer',
+    'stopSelf\(\)',
+    'stopForeground\(STOP_FOREGROUND_REMOVE\)')) {
+    Assert-Match $e2eService $token `
+        "Package Updater E2E worker is missing token: $token"
+}
+foreach ($forbidden in @(
+    'StrictUpdateEnvelopeVerifier',
+    'UpdateManifestClient',
+    'ApkStager',
+    'PackageInstaller\.SessionParams',
+    'USER_ACTION_REQUIRED')) {
+    if ($e2eProvider -match $forbidden -or $e2eService -match $forbidden) {
+        throw "Package Updater E2E CLI duplicates production authority: $forbidden"
+    }
+}
+foreach ($token in @(
+    'AtomicFile',
+    'getNoBackupFilesDir',
+    'rusty\.quest\.package_update\.e2e_operation_status\.v1',
+    'cancel_requested',
+    'installed_readback_ok',
+    'correlateInstallReceipt',
+    'if \(operation\.optBoolean\("terminal", false\)\)',
+    'InstallReceiptStore\.isTerminal')) {
+    Assert-Match $e2eStore $token `
+        "Package Updater E2E operation store is missing token: $token"
+}
+foreach ($token in @(
+    'ValidateSet\("Check", "Status", "Cancel"\)',
+    'adb',
+    'content call',
+    'result_b64',
+    'ConvertFrom-Json',
+    'rusty\.quest\.package_update\.e2e_cli_response\.v1')) {
+    Assert-Match $e2eCliWrapper $token `
+        "Package Updater E2E host CLI is missing token: $token"
+}
 
 foreach ($token in @(
     'status --porcelain',
     'Test-PackageUpdaterAndroidStatic.ps1',
     ':app:assembleRelease',
+    'aarch64-linux-android34-clang\.cmd',
+    'librusty_quest_package_updater_android\.so',
+    'lib/arm64-v8a/librusty_quest_package_updater_android\.so',
+    'OpenRead\(\$builtApk\)',
+    'packagedNativeHash -ne \$nativeVerifierHash',
+    'native_verifier_sha256',
     '--no-configuration-cache',
     'rusty.quest.package_updater_android.build_manifest.v1',
     'RUSTY_QUEST_PACKAGE_UPDATER_KEYSTORE_PASSWORD')) {
@@ -363,9 +555,16 @@ foreach ($token in @(
 }
 foreach ($token in @(
     'RUSTY_QUEST_UPDATE_SIGNING_SEED_BASE64URL',
+    'TrustedPublicKeyBase64Url',
+    'ValidatePattern\("\^\[A-Za-z0-9\._-\]\{1,64\}\$"\)',
+    '--expected-public-key',
     'sign_package_update_manifest',
     '--locked',
     'Get-FileHash',
+    '\.package-update-publish-',
+    'Refusing to replace a published APK with different bytes',
+    '\[System\.IO\.File\]::Move\(',
+    '\$publishedEnvelopePath',
     'rusty.quest.package_update_publication.v1',
     'envelope.json')) {
     Assert-Match $publishWrapper $token `

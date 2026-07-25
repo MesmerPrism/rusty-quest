@@ -71,6 +71,24 @@ if (-not [string]::IsNullOrWhiteSpace((& git -C $repoRoot status --porcelain))) 
     throw "Package Updater release build requires a clean Rusty Quest worktree."
 }
 
+$ndkRoot = Get-ChildItem -LiteralPath (Join-Path $AndroidHome "ndk") `
+        -Directory -ErrorAction Stop |
+    Sort-Object { [version]$_.Name } -Descending |
+    Select-Object -First 1
+if ($null -eq $ndkRoot) {
+    throw "Package Updater native verifier requires an Android NDK."
+}
+$androidClang = Join-Path $ndkRoot.FullName `
+    "toolchains\llvm\prebuilt\windows-x86_64\bin\aarch64-linux-android34-clang.cmd"
+if (-not (Test-Path -LiteralPath $androidClang -PathType Leaf)) {
+    throw "Package Updater Android linker is missing: $androidClang"
+}
+$rustup = (Get-Command "rustup" -ErrorAction Stop).Source
+& $rustup target add aarch64-linux-android
+if ($LASTEXITCODE -ne 0) {
+    throw "Could not provision the Package Updater Rust Android target."
+}
+
 $plainStorePassword =
     [System.Net.NetworkCredential]::new("", $StorePassword).Password
 $plainKeyPassword =
@@ -78,6 +96,7 @@ $plainKeyPassword =
 $environment = @{
     ANDROID_HOME = $AndroidHome
     ANDROID_SDK_ROOT = $AndroidHome
+    ANDROID_NDK_HOME = $ndkRoot.FullName
     JAVA_HOME = $JavaHome
     RUSTY_QUEST_PACKAGE_UPDATER_MANIFEST_URL = $ManifestUrl
     RUSTY_QUEST_PACKAGE_UPDATER_TRUSTED_KEY_ID = $TrustedKeyId
@@ -117,6 +136,42 @@ $builtApk = Join-Path $projectRoot "app\build\outputs\apk\release\app-release.ap
 if (-not (Test-Path -LiteralPath $builtApk -PathType Leaf)) {
     throw "Package Updater release APK was not produced."
 }
+$packagedNativeLibrary = Join-Path $projectRoot `
+    "app\build\generated\rustJniLibs\arm64-v8a\librusty_quest_package_updater_android.so"
+if (-not (Test-Path -LiteralPath $packagedNativeLibrary -PathType Leaf)) {
+    throw "Gradle did not produce the Package Updater native verifier."
+}
+$nativeVerifierHash = (
+    Get-FileHash -LiteralPath $packagedNativeLibrary -Algorithm SHA256
+).Hash.ToLowerInvariant()
+
+$archive = [System.IO.Compression.ZipFile]::OpenRead($builtApk)
+try {
+    $nativeEntry = $archive.GetEntry(
+        "lib/arm64-v8a/librusty_quest_package_updater_android.so"
+    )
+    if ($null -eq $nativeEntry) {
+        throw "Release APK does not contain the native verifier."
+    }
+    $nativeStream = $nativeEntry.Open()
+    try {
+        $sha256 = [System.Security.Cryptography.SHA256]::Create()
+        try {
+            $packagedNativeHash = [Convert]::ToHexString(
+                $sha256.ComputeHash($nativeStream)
+            ).ToLowerInvariant()
+        } finally {
+            $sha256.Dispose()
+        }
+    } finally {
+        $nativeStream.Dispose()
+    }
+} finally {
+    $archive.Dispose()
+}
+if ($packagedNativeHash -ne $nativeVerifierHash) {
+    throw "Release APK native verifier hash does not match the Gradle output."
+}
 New-Item -ItemType Directory -Path $OutDir -Force | Out-Null
 $outputApk = Join-Path $OutDir "rusty-quest-package-updater.apk"
 Copy-Item -LiteralPath $builtApk -Destination $outputApk -Force
@@ -135,6 +190,7 @@ $manifest = [ordered]@{
     expected_package_name = $ExpectedPackageName
     expected_rollout_ring = $ExpectedRolloutRing
     expected_signer_sha256 = $ExpectedSignerSha256
+    native_verifier_sha256 = "sha256:$nativeVerifierHash"
     apk_sha256 = "sha256:$apkHash"
     apk_size_bytes = (Get-Item -LiteralPath $outputApk).Length
 }

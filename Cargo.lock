@@ -874,6 +874,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "rusty-quest-package-updater-android-native"
+version = "0.1.0"
+dependencies = [
+ "ed25519-dalek",
+ "jni 0.22.4",
+]
+
+[[package]]
 name = "rusty-quest-particle-adapter"
 version = "0.1.0"
 dependencies = [

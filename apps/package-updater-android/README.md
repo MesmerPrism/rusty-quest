@@ -14,7 +14,7 @@ each Package Installer confirmation UI.
 
 ## Authority boundary
 
-The app has only `INTERNET` and `REQUEST_INSTALL_PACKAGES`. It has no
+The production app has only `INTERNET` and `REQUEST_INSTALL_PACKAGES`. It has no
 Accessibility, HOME, boot, device-owner, storage, camera, microphone, overlay,
 notification, service, or package-enumeration authority. Its launcher Activity
 is the only exported component. The Package Installer callback receiver is
@@ -39,6 +39,12 @@ RUSTY_QUEST_PACKAGE_UPDATER_EXPECTED_SIGNER_SHA256
 The default public-key value is empty, so an ordinary source build fails closed
 before accepting any update. A release build must inject the 32-byte raw
 Ed25519 public key as standard Base64 and the exact matching key id.
+
+Android 14 exposes no public Ed25519 `KeyFactory` for importing that raw
+build-fixed release key. Signature verification therefore crosses a narrow JNI
+boundary into the repository's pinned `ed25519-dalek` Rust implementation.
+The bridge accepts only raw public-key, message, and signature bytes; it has no
+network, storage, package, or installer authority.
 
 ## Signed envelope
 
@@ -77,10 +83,40 @@ several fixed updater channel builds, or a later contract version can define a
 signed index without weakening this one-artifact v1. Every consumer-headset
 package change remains individually visible and attended.
 
+## Test-only adb CLI
+
+The `e2e` build type adds a separate
+`io.github.mesmerprism.rustyquest.packageupdater.e2ecli` test package. It
+contains an exported `ContentProvider` protected by the platform
+`android.permission.DUMP` permission and an exact Binder shell-UID check. The
+provider accepts only `check`, `status`, and `cancel`; callers cannot supply a
+URL, key, package, signer, ring, APK, or installer flag.
+
+`check` queues the same `PackageUpdatePipeline` used by the visible Activity.
+A non-exported foreground data-sync service owns the potentially long
+download. `status` returns a Base64url-encoded JSON operation snapshot, and
+`cancel` cancels a run-owned download or exact persisted Package Installer
+session. The CLI cannot click, approve, or bypass Android Package Installer,
+and the final confirmation remains wearer-attended.
+
+The provider, service, foreground-service permissions, and their Java classes
+exist only under `src/e2e`; they are absent from `debug` and `release`. The
+host wrapper uses only serial-scoped adb:
+
+```powershell
+pwsh -NoProfile -File .\tools\Invoke-PackageUpdaterE2eCli.ps1 `
+  -Serial <quest-serial> -Command Check
+pwsh -NoProfile -File .\tools\Invoke-PackageUpdaterE2eCli.ps1 `
+  -Serial <quest-serial> -Command Status
+pwsh -NoProfile -File .\tools\Invoke-PackageUpdaterE2eCli.ps1 `
+  -Serial <quest-serial> -Command Cancel
+```
+
 ## Build
 
-This is a dependency-free Android Gradle project using the repository's
-compile/target SDK 34 and Java 17 baseline:
+This is a dependency-light Android Gradle project using the repository's
+compile/target SDK 34 and Java 17 baseline plus the pinned Rust Ed25519
+verifier:
 
 ```powershell
 pwsh -NoProfile -ExecutionPolicy Bypass -File `
@@ -99,7 +135,9 @@ For an exact clean source revision, use
 `tools/Build-PackageUpdaterAndroid.ps1`; it runs the static gate, injects the
 fixed trust/policy inputs and Android signing material through the child
 environment, builds the signed APK, and writes a public build manifest.
-`tools/Publish-PackageUpdateManifest.ps1` then copies one exact Kiosk APK into a
-bounded channel directory, signs its manifest with the seed supplied only
-through `RUSTY_QUEST_UPDATE_SIGNING_SEED_BASE64URL`, and writes public release
-metadata. Neither wrapper copies signing material into an output directory.
+`tools/Publish-PackageUpdateManifest.ps1` stages one exact Kiosk APK, envelope,
+and release receipt under the bounded output root, signs before touching the
+channel, refuses to replace a same-name APK with different bytes, and publishes
+the envelope last. The signing seed is supplied only through
+`RUSTY_QUEST_UPDATE_SIGNING_SEED_BASE64URL`. Neither wrapper copies signing
+material into an output directory.
