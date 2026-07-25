@@ -32,6 +32,7 @@ use crate::camera_latency_diagnostics::{
     CameraLatencyWindow, CAMERA_LATENCY_STRICT_PAIR_MAX_DELTA_NS,
 };
 use crate::camera_reprojection_guard_band::CameraReprojectionGuardBandController;
+use crate::rgb_channel_transform::update_rgb_channel_transform_settings;
 use crate::spatial_public_multistack::{
     public_multistack_inactive_marker_fields, public_multistack_marker_fields,
 };
@@ -439,6 +440,67 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1pa
     log_marker(format!(
         "status=private-layer-zone-compositor-updated rawCameraProjectionProbe=true updateMask=1 spatialPrivateLayerControlPanel=true projectionZoneGeometryOrder=user-scale-then-dynamic-core projectionZoneVideoSampling=prepared-stereo-video-descriptor {} runtimeCrash=false",
         applied.marker_fields(),
+    ));
+    1
+}
+
+#[no_mangle]
+#[allow(non_snake_case, clippy::too_many_arguments)]
+pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1panel_SpatialCameraPanelActivity_nativeUpdateRgbChannelTransform(
+    _env: *mut c_void,
+    _thiz: *mut c_void,
+    mode: c_int,
+    edge_mode: c_int,
+    red_direction_turns: c_float,
+    green_direction_turns: c_float,
+    blue_direction_turns: c_float,
+    red_direction_rate_hz: c_float,
+    green_direction_rate_hz: c_float,
+    blue_direction_rate_hz: c_float,
+    red_displacement_strength_uv: c_float,
+    green_displacement_strength_uv: c_float,
+    blue_displacement_strength_uv: c_float,
+    red_image_scale: c_float,
+    green_image_scale: c_float,
+    blue_image_scale: c_float,
+    red_coverage_scale: c_float,
+    green_coverage_scale: c_float,
+    blue_coverage_scale: c_float,
+) -> i64 {
+    let applied = update_rgb_channel_transform_settings(
+        mode.max(0) as u32,
+        edge_mode.max(0) as u32,
+        [
+            red_direction_turns as f32,
+            green_direction_turns as f32,
+            blue_direction_turns as f32,
+        ],
+        [
+            red_direction_rate_hz as f32,
+            green_direction_rate_hz as f32,
+            blue_direction_rate_hz as f32,
+        ],
+        [
+            red_displacement_strength_uv as f32,
+            green_displacement_strength_uv as f32,
+            blue_displacement_strength_uv as f32,
+        ],
+        [
+            red_image_scale as f32,
+            green_image_scale as f32,
+            blue_image_scale as f32,
+        ],
+        [
+            red_coverage_scale as f32,
+            green_coverage_scale as f32,
+            blue_coverage_scale as f32,
+        ],
+    );
+    log_marker(format!(
+        "status=rgb-channel-transform-updated rawCameraProjectionProbe=true updateMask=1 spatialPrivateLayerControlPanel=true {} requestedRgbChannelTransformMode={} requestedRgbChannelTransformEdge={} runtimeCrash=false",
+        applied.marker_fields(),
+        mode,
+        edge_mode,
     ));
     1
 }

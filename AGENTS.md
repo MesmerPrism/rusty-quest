@@ -217,7 +217,15 @@ boundary documented in `docs/SPATIAL_IMMERSIVE_VIDEO_PLAYBACK.md`. Keep its
 encrypted pack catalog generic, bounded, opt-in, and free of private media
 names. A compatible side-by-side pack may feed the existing custom projection
 compositor, but source switching may restart only the media decoder/stream; it
-must not replace camera, carrier, private-effect, or Activity lifecycle
+must not replace camera, carrier, private-effect, or Activity lifecycle.
+
+The reusable RGB-channel spatial transform is documented in
+`docs/RGB_CHANNEL_TRANSFORM.md`. Rusty Quest owns only its bounded neutral
+configuration, controls, JNI/Vulkan transport, ABI, and effective markers.
+Consuming projects retain their signal derivation, color-to-strength mapping,
+artistic tuning, and final distortion/compositor formulas. Keep those formulas
+out of this public repository and run the dedicated RGB static check whenever
+the ABI or controls change.
 authority.
 
 For release-candidate broker recovery, distinguish client death from authority

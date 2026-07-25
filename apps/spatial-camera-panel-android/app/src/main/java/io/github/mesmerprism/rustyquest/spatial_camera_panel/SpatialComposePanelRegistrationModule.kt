@@ -22,6 +22,7 @@ internal data class SpatialPrivateLayerPanelRegistrationBindings(
     val depthLayerPolicy: Int,
     val depthAlignment: PrivateLayerDepthAlignment,
     val guideProcessing: PrivateLayerGuideProcessing,
+    val rgbChannelTransform: RgbChannelTransform,
     val videoSession: () -> SpatialImmersiveVideoSessionSnapshot,
     val setLayerOverride: (Float, String) -> Float,
     val setProjectionPanelEnabled: (Boolean, String) -> Boolean,
@@ -31,6 +32,8 @@ internal data class SpatialPrivateLayerPanelRegistrationBindings(
         (PrivateLayerDepthAlignment, String) -> PrivateLayerDepthAlignment,
     val updateGuideProcessing:
         (PrivateLayerGuideProcessing, String) -> PrivateLayerGuideProcessing,
+    val updateRgbChannelTransform:
+        (RgbChannelTransform, String) -> RgbChannelTransform,
     val selectPreviousVideo: () -> SpatialImmersiveVideoSessionSnapshot,
     val selectNextVideo: () -> SpatialImmersiveVideoSessionSnapshot,
     val closePanel: () -> Unit,
@@ -76,6 +79,7 @@ internal object SpatialComposePanelRegistrationModule {
                       depthLayerPolicy = bindings.depthLayerPolicy,
                       depthAlignment = bindings.depthAlignment,
                       guideProcessing = bindings.guideProcessing,
+                      rgbChannelTransform = bindings.rgbChannelTransform,
                       videoSession = bindings.videoSession,
                       setLayerOverride = bindings.setLayerOverride,
                       setProjectionPanelEnabled = bindings.setProjectionPanelEnabled,
@@ -83,6 +87,7 @@ internal object SpatialComposePanelRegistrationModule {
                       updateDepthLayerPolicy = bindings.updateDepthLayerPolicy,
                       updateDepthAlignment = bindings.updateDepthAlignment,
                       updateGuideProcessing = bindings.updateGuideProcessing,
+                      updateRgbChannelTransform = bindings.updateRgbChannelTransform,
                       selectPreviousVideo = bindings.selectPreviousVideo,
                       selectNextVideo = bindings.selectNextVideo,
                       closePanel = bindings.closePanel,

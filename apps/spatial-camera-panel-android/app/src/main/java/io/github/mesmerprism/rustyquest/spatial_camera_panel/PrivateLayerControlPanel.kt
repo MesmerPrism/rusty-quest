@@ -56,6 +56,7 @@ internal fun PrivateLayerControlPanel(
     depthLayerPolicy: Int,
     depthAlignment: PrivateLayerDepthAlignment,
     guideProcessing: PrivateLayerGuideProcessing,
+    rgbChannelTransform: RgbChannelTransform,
     videoSession: () -> SpatialImmersiveVideoSessionSnapshot,
     setLayerOverride: (Float, String) -> Float,
     setProjectionPanelEnabled: (Boolean, String) -> Boolean,
@@ -64,6 +65,8 @@ internal fun PrivateLayerControlPanel(
     updateDepthAlignment: (PrivateLayerDepthAlignment, String) -> PrivateLayerDepthAlignment,
     updateGuideProcessing:
         (PrivateLayerGuideProcessing, String) -> PrivateLayerGuideProcessing,
+    updateRgbChannelTransform:
+        (RgbChannelTransform, String) -> RgbChannelTransform,
     selectPreviousVideo: () -> SpatialImmersiveVideoSessionSnapshot,
     selectNextVideo: () -> SpatialImmersiveVideoSessionSnapshot,
     closePanel: () -> Unit,
@@ -75,6 +78,8 @@ internal fun PrivateLayerControlPanel(
   var localDepthLayerPolicy by remember(depthLayerPolicy) { mutableStateOf(depthLayerPolicy) }
   var localDepthAlignment by remember(depthAlignment) { mutableStateOf(depthAlignment) }
   var localGuideProcessing by remember(guideProcessing) { mutableStateOf(guideProcessing) }
+  var localRgbChannelTransform by
+      remember(rgbChannelTransform) { mutableStateOf(rgbChannelTransform) }
   var localVideoSession by remember { mutableStateOf(videoSession()) }
   LaunchedEffect(Unit) {
     while (true) {
@@ -258,6 +263,132 @@ internal fun PrivateLayerControlPanel(
           OperatorButton("1.25x") {
             localProjectionScale =
                 updateProjectionScale(1.25f, "private-layer-control-panel-scale-preset")
+          }
+        }
+      }
+
+      Section("RGB Channel Transform") {
+        Text(
+            "A public neutral transform supplies independent direction, cycle rate, strength, image scale, and effect coverage. The private shader retains authority over the guide signal and final distortion formula.",
+            style = MaterialTheme.typography.bodySmall,
+            color = LayerPanelMuted,
+        )
+        Text(
+            "Mode: ${RgbChannelTransformControls.modeToken(localRgbChannelTransform.mode)} · edge: ${RgbChannelTransformControls.edgeToken(localRgbChannelTransform.edgeMode)}",
+            style = MaterialTheme.typography.bodyMedium,
+            color = LayerPanelMuted,
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+          ChoiceButton(
+              "Bypass",
+              localRgbChannelTransform.mode == RgbChannelTransformControls.modeBypass,
+          ) {
+            localRgbChannelTransform =
+                updateRgbChannelTransform(
+                    RgbChannelTransformControls.bypass,
+                    "private-layer-rgb-preset-bypass",
+                )
+          }
+          ChoiceButton(
+              "Linked",
+              localRgbChannelTransform.mode == RgbChannelTransformControls.modeLinked,
+          ) {
+            localRgbChannelTransform =
+                updateRgbChannelTransform(
+                    RgbChannelTransformControls.linked,
+                    "private-layer-rgb-preset-linked",
+                )
+          }
+          ChoiceButton(
+              "Independent",
+              localRgbChannelTransform.mode == RgbChannelTransformControls.modeIndependent,
+          ) {
+            localRgbChannelTransform =
+                updateRgbChannelTransform(
+                    RgbChannelTransformControls.independent,
+                    "private-layer-rgb-preset-independent",
+                )
+          }
+        }
+        if (localRgbChannelTransform.mode != RgbChannelTransformControls.modeBypass) {
+          Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+            ChoiceButton(
+                "Clamp",
+                localRgbChannelTransform.edgeMode == RgbChannelTransformControls.edgeClamp,
+            ) {
+              localRgbChannelTransform =
+                  updateRgbChannelTransform(
+                      localRgbChannelTransform.copy(edgeMode = RgbChannelTransformControls.edgeClamp),
+                      "private-layer-rgb-edge-clamp",
+                  )
+            }
+            ChoiceButton(
+                "Mirror",
+                localRgbChannelTransform.edgeMode == RgbChannelTransformControls.edgeMirror,
+            ) {
+              localRgbChannelTransform =
+                  updateRgbChannelTransform(
+                      localRgbChannelTransform.copy(edgeMode = RgbChannelTransformControls.edgeMirror),
+                      "private-layer-rgb-edge-mirror",
+                  )
+            }
+            ChoiceButton(
+                "Fade",
+                localRgbChannelTransform.edgeMode == RgbChannelTransformControls.edgeFade,
+            ) {
+              localRgbChannelTransform =
+                  updateRgbChannelTransform(
+                      localRgbChannelTransform.copy(edgeMode = RgbChannelTransformControls.edgeFade),
+                      "private-layer-rgb-edge-fade",
+                  )
+            }
+          }
+          if (localRgbChannelTransform.mode == RgbChannelTransformControls.modeLinked) {
+            RgbChannelEditor(
+                label = "Linked RGB",
+                channel = localRgbChannelTransform.red,
+                update = { channel, source ->
+                  localRgbChannelTransform =
+                      updateRgbChannelTransform(
+                          localRgbChannelTransform.copy(red = channel),
+                          source,
+                      )
+                },
+            )
+          } else {
+            RgbChannelEditor(
+                label = "Red",
+                channel = localRgbChannelTransform.red,
+                update = { channel, source ->
+                  localRgbChannelTransform =
+                      updateRgbChannelTransform(
+                          localRgbChannelTransform.copy(red = channel),
+                          source,
+                      )
+                },
+            )
+            RgbChannelEditor(
+                label = "Green",
+                channel = localRgbChannelTransform.green,
+                update = { channel, source ->
+                  localRgbChannelTransform =
+                      updateRgbChannelTransform(
+                          localRgbChannelTransform.copy(green = channel),
+                          source,
+                      )
+                },
+            )
+            RgbChannelEditor(
+                label = "Blue",
+                channel = localRgbChannelTransform.blue,
+                update = { channel, source ->
+                  localRgbChannelTransform =
+                      updateRgbChannelTransform(
+                          localRgbChannelTransform.copy(blue = channel),
+                          source,
+                      )
+                },
+            )
           }
         }
       }
@@ -738,6 +869,36 @@ internal fun PrivateLayerControlPanel(
         }
       }
     }
+  }
+}
+
+@Composable
+private fun RgbChannelEditor(
+    label: String,
+    channel: RgbChannelParameters,
+    update: (RgbChannelParameters, String) -> Unit,
+) {
+  Text(label, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+  DepthSlider("Direction", channel.directionTurns, 0.0f..1.0f) {
+    update(channel.copy(directionTurns = it), "private-layer-rgb-${label.lowercase()}-direction")
+  }
+  DepthSlider("Direction speed", channel.directionRateHz, -1.0f..1.0f) {
+    update(channel.copy(directionRateHz = it), "private-layer-rgb-${label.lowercase()}-speed")
+  }
+  DepthSlider("Strength", channel.displacementStrengthUv, 0.0f..0.08f) {
+    update(
+        channel.copy(displacementStrengthUv = it),
+        "private-layer-rgb-${label.lowercase()}-strength",
+    )
+  }
+  DepthSlider("Image scale", channel.imageScale, 0.5f..2.0f) {
+    update(channel.copy(imageScale = it), "private-layer-rgb-${label.lowercase()}-image-scale")
+  }
+  DepthSlider("Coverage scale", channel.coverageScale, 0.5f..1.0f) {
+    update(
+        channel.copy(coverageScale = it),
+        "private-layer-rgb-${label.lowercase()}-coverage-scale",
+    )
   }
 }
 

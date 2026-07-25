@@ -28,6 +28,7 @@ $repoRootPath = Resolve-Path $RepoRoot
 $workflowCheckPath = Join-Path $PSScriptRoot "checks\Test-SpatialCameraPanelWorkflowStatic.ps1"
 $staticCheckPath = Join-Path $PSScriptRoot "checks\Test-SpatialCameraPanelAndroidStatic.ps1"
 $immersiveVideoCheckPath = Join-Path $PSScriptRoot "checks\Test-SpatialCameraPanelImmersiveVideoStatic.ps1"
+$rgbChannelTransformCheckPath = Join-Path $PSScriptRoot "checks\Test-SpatialCameraPanelRgbChannelTransformStatic.ps1"
 $cameraLatencyCheckPath = Join-Path $PSScriptRoot "checks\Test-SpatialCameraPanelCameraLatencyDiagnosticStatic.ps1"
 $fragmentProbeCheckPath = Join-Path $PSScriptRoot "checks\Test-SpatialFragmentProbeStatic.ps1"
 $vrStrobeCheckPath = Join-Path $PSScriptRoot "checks\Test-SpatialVrStrobeStatic.ps1"
@@ -43,6 +44,9 @@ if (-not (Test-Path -LiteralPath $staticCheckPath)) {
 }
 if (-not (Test-Path -LiteralPath $immersiveVideoCheckPath)) {
     throw "Missing Spatial Camera Panel immersive-video static check: $immersiveVideoCheckPath"
+}
+if (-not (Test-Path -LiteralPath $rgbChannelTransformCheckPath)) {
+    throw "Missing Spatial Camera Panel RGB channel transform static check: $rgbChannelTransformCheckPath"
 }
 if (-not (Test-Path -LiteralPath $cameraLatencyCheckPath)) {
     throw "Missing Spatial Camera Panel camera latency diagnostic check: $cameraLatencyCheckPath"
@@ -66,6 +70,7 @@ if (-not (Test-Path -LiteralPath $buildPath)) {
 & $workflowCheckPath -RepoRoot $repoRootPath
 & $staticCheckPath -RepoRoot $repoRootPath
 & $immersiveVideoCheckPath -RepoRoot $repoRootPath
+& $rgbChannelTransformCheckPath -RepoRoot $repoRootPath
 & $cameraLatencyCheckPath -RepoRoot $repoRootPath
 & $fragmentProbeCheckPath -RepoRoot $repoRootPath
 & $vrStrobeCheckPath -RepoRoot $repoRootPath

@@ -12,6 +12,9 @@ use ash::vk::{self, Handle};
 
 use crate::camera_hwb_projection_target::{CameraHwbProjectionZoneFrame, ProjectionZoneUniform};
 use crate::camera_latency_diagnostics::CameraLatencyStereoReprojection;
+use crate::rgb_channel_transform::{
+    current_rgb_channel_transform_settings, RgbChannelTransformUniform,
+};
 use crate::spatial_guide_processing::{
     current_spatial_guide_processing_policy, update_spatial_guide_processing_policy,
     SpatialGuideBlurPassPolicy, SpatialGuideBlurStage, SpatialGuideProcessingPolicy,
@@ -282,6 +285,7 @@ pub(crate) struct SpatialPublicGuideTargets {
     opaque_projection_pipeline: Option<vk::Pipeline>,
     projection_render_pass: vk::RenderPass,
     camera_descriptor_set_layout: vk::DescriptorSetLayout,
+    rgb_channel_transform_uniform: SpatialRgbChannelTransformUniformResources,
     projection_zone_uniform: SpatialProjectionZoneUniformResources,
     projection_zone_video_pipeline: Option<SpatialProjectionZoneVideoPipeline>,
     blur_pipeline_layout: vk::PipelineLayout,
@@ -294,6 +298,41 @@ struct SpatialProjectionZoneUniformResources {
     descriptor_set_layout: vk::DescriptorSetLayout,
     descriptor_pool: vk::DescriptorPool,
     descriptor_set: vk::DescriptorSet,
+}
+
+struct SpatialRgbChannelTransformUniformResources {
+    buffer: vk::Buffer,
+    memory: vk::DeviceMemory,
+    descriptor_set_layout: vk::DescriptorSetLayout,
+    descriptor_pool: vk::DescriptorPool,
+    descriptor_set: vk::DescriptorSet,
+}
+
+impl SpatialRgbChannelTransformUniformResources {
+    unsafe fn update(
+        &self,
+        device: &ash::Device,
+        uniform: &RgbChannelTransformUniform,
+    ) -> Result<(), String> {
+        let size = mem::size_of::<RgbChannelTransformUniform>() as vk::DeviceSize;
+        let mapped = device
+            .map_memory(self.memory, 0, size, vk::MemoryMapFlags::empty())
+            .map_err(|error| format!("map-rgb-channel-transform-uniform-{error:?}"))?;
+        std::ptr::copy_nonoverlapping(
+            (uniform as *const RgbChannelTransformUniform).cast::<u8>(),
+            mapped.cast::<u8>(),
+            size as usize,
+        );
+        device.unmap_memory(self.memory);
+        Ok(())
+    }
+
+    unsafe fn destroy(self, device: &ash::Device) {
+        device.destroy_descriptor_pool(self.descriptor_pool, None);
+        device.destroy_descriptor_set_layout(self.descriptor_set_layout, None);
+        device.destroy_buffer(self.buffer, None);
+        device.free_memory(self.memory, None);
+    }
 }
 
 impl SpatialProjectionZoneUniformResources {
@@ -348,6 +387,7 @@ impl SpatialPublicGuideTargets {
             pipeline.destroy(device);
         }
         self.projection_zone_uniform.destroy(device);
+        self.rgb_channel_transform_uniform.destroy(device);
         device.destroy_pipeline_layout(self.opaque_projection_pipeline_layout, None);
         device.destroy_pipeline_layout(self.opaque_guide_pipeline_layout, None);
         device.destroy_pipeline(self.blur_pipeline, None);
@@ -381,7 +421,7 @@ impl SpatialPublicGuideTargets {
             "supported"
         };
         format!(
-            "publicMultiStackGuideTargetsAllocated=true publicMultiStackGuideTargetCount={} publicMultiStackGuideTargetExtent={}x{} publicMultiStackGuidePerEyeExtent={}x{} publicMultiStackGuideTargetFormat={:?} publicMultiStackGuideTargetBytes={} publicMultiStackGuideTargetMemory={} publicMultiStackPackedStereoGuides=true publicMultiStackPassExecutionReady={} publicGuideBlurPipelineReady=true publicGuideBlurRecordFunctionReady=true publicGuideBlurRuntimeReady={} publicMultiStackOpaqueProjectionPipelineReady={} publicMultiStackOpaqueProjectionPayloadExecutionReady={} publicMultiStackOpaquePayloadExecutionReady={} {}",
+            "publicMultiStackGuideTargetsAllocated=true publicMultiStackGuideTargetCount={} publicMultiStackGuideTargetExtent={}x{} publicMultiStackGuidePerEyeExtent={}x{} publicMultiStackGuideTargetFormat={:?} publicMultiStackGuideTargetBytes={} publicMultiStackGuideTargetMemory={} publicMultiStackPackedStereoGuides=true publicMultiStackPassExecutionReady={} publicGuideBlurPipelineReady=true publicGuideBlurRecordFunctionReady=true publicGuideBlurRuntimeReady={} publicMultiStackOpaqueProjectionPipelineReady={} publicMultiStackOpaqueProjectionPayloadExecutionReady={} publicMultiStackOpaquePayloadExecutionReady={} {} {}",
             self.targets.len(),
             self.extent.width,
             self.extent.height,
@@ -396,6 +436,7 @@ impl SpatialPublicGuideTargets {
             bool_marker(self.projection_execution_available()),
             bool_marker(self.projection_execution_available()),
             current_spatial_guide_processing_policy().marker_fields(),
+            current_rgb_channel_transform_settings().marker_fields(),
         )
         + &format!(
             " publicMultiStackGuidePassResourcesReady=true publicMultiStackGuideFramebuffers={} publicMultiStackGuideSampleDescriptorSets={} publicMultiStackGuideSampleDescriptorShape=single-combined-rgba-sampler publicMultiStackGuidePassSchedule={} publicMultiStackOpaqueGuideDescriptorReady=true publicMultiStackOpaqueGuideDescriptorBindings=4,5,6,7,8 publicMultiStackOpaqueGuideDescriptorSets={} publicMultiStackOpaqueGuidePipelinesReady={} publicMultiStackOpaqueGuidePipelines={} publicMultiStackOpaqueGuideShaderPassCount={} {} {} {} {}",
@@ -426,7 +467,7 @@ impl SpatialPublicGuideTargets {
         let left_projection_rect = packed_projection_target_rect(0, footprint_scale);
         let right_projection_rect = packed_projection_target_rect(1, footprint_scale);
         format!(
-            "publicMultiStackProjectionApplied={} publicMultiStackLayerCycleEnabled=true publicMultiStackLayerCycleElapsedSeconds={:.3} publicMultiStackOpaqueProjectionTargetSpace=packed-stereo-surface-uv publicMultiStackOpaqueProjectionLeftTargetRect={} publicMultiStackOpaqueProjectionRightTargetRect={} publicMultiStackGuideTargetsAllocated=true publicMultiStackGuidePassResourcesReady=true publicMultiStackPassExecutionReady={} publicGuideBlurRuntimeReady={} publicGuideBlurPipelineReady=true publicGuideBlurRecordFunctionReady=true publicMultiStackOpaqueGuideDescriptorReady=true publicMultiStackOpaqueGuidePipelinesReady={} publicMultiStackOpaqueGuidePipelines={} publicMultiStackOpaqueGuideShaderPassCount={} publicMultiStackOpaqueProjectionPipelineReady={} publicMultiStackOpaqueProjectionPayloadExecutionReady={} publicMultiStackOpaquePayloadExecutionReady={} {} {} {} {} publicMultiStackGuideFramebuffers={} publicMultiStackGuideSampleDescriptorSets={}",
+            "publicMultiStackProjectionApplied={} publicMultiStackLayerCycleEnabled=true publicMultiStackLayerCycleElapsedSeconds={:.3} publicMultiStackOpaqueProjectionTargetSpace=packed-stereo-surface-uv publicMultiStackOpaqueProjectionLeftTargetRect={} publicMultiStackOpaqueProjectionRightTargetRect={} publicMultiStackGuideTargetsAllocated=true publicMultiStackGuidePassResourcesReady=true publicMultiStackPassExecutionReady={} publicGuideBlurRuntimeReady={} publicGuideBlurPipelineReady=true publicGuideBlurRecordFunctionReady=true publicMultiStackOpaqueGuideDescriptorReady=true publicMultiStackOpaqueGuidePipelinesReady={} publicMultiStackOpaqueGuidePipelines={} publicMultiStackOpaqueGuideShaderPassCount={} publicMultiStackOpaqueProjectionPipelineReady={} publicMultiStackOpaqueProjectionPayloadExecutionReady={} publicMultiStackOpaquePayloadExecutionReady={} {} {} {} {} publicMultiStackGuideFramebuffers={} publicMultiStackGuideSampleDescriptorSets={} {}",
             bool_marker(projected_by_public_stack),
             elapsed_seconds.max(0.0),
             rect_marker(left_projection_rect),
@@ -445,6 +486,7 @@ impl SpatialPublicGuideTargets {
             spatial_public_depth_layer_policy_marker_fields(),
             self.targets.len(),
             self.sample_descriptor_sets.len(),
+            current_rgb_channel_transform_settings().marker_fields(),
         )
     }
 
@@ -683,6 +725,7 @@ impl SpatialPublicGuideTargets {
                 self.camera_descriptor_set_layout,
                 self.opaque_guide_descriptor_set_layout,
                 self.depth_descriptor_set_layout,
+                self.rgb_channel_transform_uniform.descriptor_set_layout,
                 video_descriptor_set_layout,
                 self.projection_zone_uniform.descriptor_set_layout,
             )?);
@@ -702,6 +745,8 @@ impl SpatialPublicGuideTargets {
         if !self.projection_execution_available() {
             return Ok(false);
         }
+        self.rgb_channel_transform_uniform
+            .update(device, &current_rgb_channel_transform_settings().uniform())?;
         for eye_index in 0..SPATIAL_PUBLIC_PACKED_EYE_COUNT {
             let target_rect = packed_projection_target_rect(eye_index, footprint_scale);
             set_packed_projection_target_view(device, command_buffer, extent, target_rect);
@@ -718,6 +763,7 @@ impl SpatialPublicGuideTargets {
                     camera_descriptor_set,
                     self.opaque_guide_descriptor_set,
                     self.depth_resources.current_binding().descriptor_set,
+                    self.rgb_channel_transform_uniform.descriptor_set,
                 ],
                 &[],
             );
@@ -754,6 +800,8 @@ impl SpatialPublicGuideTargets {
             .projection_zone_video_pipeline
             .as_ref()
             .ok_or_else(|| "projection-zone-video-pipeline-missing".to_string())?;
+        self.rgb_channel_transform_uniform
+            .update(device, &current_rgb_channel_transform_settings().uniform())?;
         for eye_index in 0..SPATIAL_PUBLIC_PACKED_EYE_COUNT {
             set_packed_projection_target_view(
                 device,
@@ -775,6 +823,7 @@ impl SpatialPublicGuideTargets {
                     camera_descriptor_set,
                     self.opaque_guide_descriptor_set,
                     self.depth_resources.current_binding().descriptor_set,
+                    self.rgb_channel_transform_uniform.descriptor_set,
                     video_descriptor_set,
                     self.projection_zone_uniform.descriptor_set,
                 ],
@@ -2519,17 +2568,41 @@ pub(crate) unsafe fn allocate_spatial_public_guide_targets(
             return Err(error);
         }
     };
+    let rgb_channel_transform_uniform =
+        match create_rgb_channel_transform_uniform_resources(device, memory_properties) {
+            Ok(resources) => resources,
+            Err(error) => {
+                for target in targets {
+                    target.destroy(device);
+                }
+                depth_resources.destroy(device);
+                device.destroy_descriptor_set_layout(depth_descriptor_set_layout, None);
+                device.destroy_pipeline(blur_pipeline, None);
+                device.destroy_pipeline_layout(blur_pipeline_layout, None);
+                destroy_pipelines(device, opaque_guide_pipelines);
+                device.destroy_pipeline_layout(opaque_guide_pipeline_layout, None);
+                device.destroy_descriptor_pool(opaque_guide_descriptor_pool, None);
+                device.destroy_descriptor_set_layout(opaque_guide_descriptor_set_layout, None);
+                device.destroy_descriptor_pool(descriptor_pool, None);
+                device.destroy_descriptor_set_layout(descriptor_set_layout, None);
+                device.destroy_sampler(sampler, None);
+                device.destroy_render_pass(render_pass, None);
+                return Err(error);
+            }
+        };
     let opaque_projection_pipeline_layout = match create_opaque_projection_pipeline_layout(
         device,
         camera_descriptor_set_layout,
         opaque_guide_descriptor_set_layout,
         depth_descriptor_set_layout,
+        rgb_channel_transform_uniform.descriptor_set_layout,
     ) {
         Ok(layout) => layout,
         Err(error) => {
             for target in targets {
                 target.destroy(device);
             }
+            rgb_channel_transform_uniform.destroy(device);
             depth_resources.destroy(device);
             device.destroy_descriptor_set_layout(depth_descriptor_set_layout, None);
             device.destroy_pipeline(blur_pipeline, None);
@@ -2556,6 +2629,7 @@ pub(crate) unsafe fn allocate_spatial_public_guide_targets(
                 target.destroy(device);
             }
             device.destroy_pipeline_layout(opaque_projection_pipeline_layout, None);
+            rgb_channel_transform_uniform.destroy(device);
             depth_resources.destroy(device);
             device.destroy_descriptor_set_layout(depth_descriptor_set_layout, None);
             device.destroy_pipeline(blur_pipeline, None);
@@ -2582,6 +2656,7 @@ pub(crate) unsafe fn allocate_spatial_public_guide_targets(
                     target.destroy(device);
                 }
                 device.destroy_pipeline_layout(opaque_projection_pipeline_layout, None);
+                rgb_channel_transform_uniform.destroy(device);
                 depth_resources.destroy(device);
                 device.destroy_descriptor_set_layout(depth_descriptor_set_layout, None);
                 device.destroy_pipeline(blur_pipeline, None);
@@ -2617,6 +2692,7 @@ pub(crate) unsafe fn allocate_spatial_public_guide_targets(
         opaque_projection_pipeline,
         projection_render_pass,
         camera_descriptor_set_layout,
+        rgb_channel_transform_uniform,
         projection_zone_uniform,
         projection_zone_video_pipeline: None,
         blur_pipeline_layout,
@@ -2850,11 +2926,13 @@ unsafe fn create_opaque_projection_pipeline_layout(
     camera_descriptor_set_layout: vk::DescriptorSetLayout,
     opaque_guide_descriptor_set_layout: vk::DescriptorSetLayout,
     depth_descriptor_set_layout: vk::DescriptorSetLayout,
+    rgb_channel_transform_descriptor_set_layout: vk::DescriptorSetLayout,
 ) -> Result<vk::PipelineLayout, String> {
     let set_layouts = [
         camera_descriptor_set_layout,
         opaque_guide_descriptor_set_layout,
         depth_descriptor_set_layout,
+        rgb_channel_transform_descriptor_set_layout,
     ];
     let push_ranges = [vk::PushConstantRange::default()
         .stage_flags(vk::ShaderStageFlags::FRAGMENT)
@@ -2870,6 +2948,145 @@ unsafe fn create_opaque_projection_pipeline_layout(
         .map_err(|error| {
             format!("create-spatial-public-opaque-projection-pipeline-layout-{error:?}")
         })
+}
+
+unsafe fn create_rgb_channel_transform_uniform_resources(
+    device: &ash::Device,
+    memory_properties: &vk::PhysicalDeviceMemoryProperties,
+) -> Result<SpatialRgbChannelTransformUniformResources, String> {
+    let bindings = [vk::DescriptorSetLayoutBinding::default()
+        .binding(0)
+        .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER)
+        .descriptor_count(1)
+        .stage_flags(vk::ShaderStageFlags::FRAGMENT)];
+    let descriptor_set_layout = device
+        .create_descriptor_set_layout(
+            &vk::DescriptorSetLayoutCreateInfo::default().bindings(&bindings),
+            None,
+        )
+        .map_err(|error| format!("create-rgb-channel-transform-uniform-layout-{error:?}"))?;
+    let size = mem::size_of::<RgbChannelTransformUniform>() as vk::DeviceSize;
+    let buffer = match device.create_buffer(
+        &vk::BufferCreateInfo::default()
+            .size(size)
+            .usage(vk::BufferUsageFlags::UNIFORM_BUFFER)
+            .sharing_mode(vk::SharingMode::EXCLUSIVE),
+        None,
+    ) {
+        Ok(buffer) => buffer,
+        Err(error) => {
+            device.destroy_descriptor_set_layout(descriptor_set_layout, None);
+            return Err(format!(
+                "create-rgb-channel-transform-uniform-buffer-{error:?}"
+            ));
+        }
+    };
+    let requirements = device.get_buffer_memory_requirements(buffer);
+    let memory_type_index = match find_memory_type_index(
+        memory_properties,
+        requirements.memory_type_bits,
+        vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
+    ) {
+        Some(index) => index,
+        None => {
+            device.destroy_buffer(buffer, None);
+            device.destroy_descriptor_set_layout(descriptor_set_layout, None);
+            return Err(
+                "rgb-channel-transform-uniform-host-coherent-memory-unavailable".to_string(),
+            );
+        }
+    };
+    let memory = match device.allocate_memory(
+        &vk::MemoryAllocateInfo::default()
+            .allocation_size(requirements.size)
+            .memory_type_index(memory_type_index),
+        None,
+    ) {
+        Ok(memory) => memory,
+        Err(error) => {
+            device.destroy_buffer(buffer, None);
+            device.destroy_descriptor_set_layout(descriptor_set_layout, None);
+            return Err(format!(
+                "allocate-rgb-channel-transform-uniform-memory-{error:?}"
+            ));
+        }
+    };
+    if let Err(error) = device.bind_buffer_memory(buffer, memory, 0) {
+        device.free_memory(memory, None);
+        device.destroy_buffer(buffer, None);
+        device.destroy_descriptor_set_layout(descriptor_set_layout, None);
+        return Err(format!(
+            "bind-rgb-channel-transform-uniform-memory-{error:?}"
+        ));
+    }
+    let pool_sizes = [vk::DescriptorPoolSize::default()
+        .ty(vk::DescriptorType::UNIFORM_BUFFER)
+        .descriptor_count(1)];
+    let descriptor_pool = match device.create_descriptor_pool(
+        &vk::DescriptorPoolCreateInfo::default()
+            .pool_sizes(&pool_sizes)
+            .max_sets(1),
+        None,
+    ) {
+        Ok(pool) => pool,
+        Err(error) => {
+            device.free_memory(memory, None);
+            device.destroy_buffer(buffer, None);
+            device.destroy_descriptor_set_layout(descriptor_set_layout, None);
+            return Err(format!(
+                "create-rgb-channel-transform-uniform-pool-{error:?}"
+            ));
+        }
+    };
+    let set_layouts = [descriptor_set_layout];
+    let descriptor_set = match device.allocate_descriptor_sets(
+        &vk::DescriptorSetAllocateInfo::default()
+            .descriptor_pool(descriptor_pool)
+            .set_layouts(&set_layouts),
+    ) {
+        Ok(mut sets) => sets.remove(0),
+        Err(error) => {
+            device.destroy_descriptor_pool(descriptor_pool, None);
+            device.free_memory(memory, None);
+            device.destroy_buffer(buffer, None);
+            device.destroy_descriptor_set_layout(descriptor_set_layout, None);
+            return Err(format!(
+                "allocate-rgb-channel-transform-uniform-set-{error:?}"
+            ));
+        }
+    };
+    let buffer_info = [vk::DescriptorBufferInfo::default()
+        .buffer(buffer)
+        .offset(0)
+        .range(size)];
+    let writes = [vk::WriteDescriptorSet::default()
+        .dst_set(descriptor_set)
+        .dst_binding(0)
+        .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER)
+        .buffer_info(&buffer_info)];
+    device.update_descriptor_sets(&writes, &[]);
+    let resources = SpatialRgbChannelTransformUniformResources {
+        buffer,
+        memory,
+        descriptor_set_layout,
+        descriptor_pool,
+        descriptor_set,
+    };
+    if let Err(error) = resources.update(
+        device,
+        &RgbChannelTransformUniform {
+            mode: [0.0; 4],
+            direction_turns: [0.0; 4],
+            direction_rate_hz: [0.0; 4],
+            displacement_strength_uv: [0.0; 4],
+            image_scale: [1.0; 4],
+            coverage_scale: [1.0; 4],
+        },
+    ) {
+        resources.destroy(device);
+        return Err(error);
+    }
+    Ok(resources)
 }
 
 unsafe fn create_projection_zone_uniform_resources(
@@ -2991,6 +3208,7 @@ unsafe fn create_projection_zone_video_pipeline(
     camera_descriptor_set_layout: vk::DescriptorSetLayout,
     opaque_guide_descriptor_set_layout: vk::DescriptorSetLayout,
     depth_descriptor_set_layout: vk::DescriptorSetLayout,
+    rgb_channel_transform_descriptor_set_layout: vk::DescriptorSetLayout,
     video_descriptor_set_layout: vk::DescriptorSetLayout,
     zone_descriptor_set_layout: vk::DescriptorSetLayout,
 ) -> Result<SpatialProjectionZoneVideoPipeline, String> {
@@ -2998,6 +3216,7 @@ unsafe fn create_projection_zone_video_pipeline(
         camera_descriptor_set_layout,
         opaque_guide_descriptor_set_layout,
         depth_descriptor_set_layout,
+        rgb_channel_transform_descriptor_set_layout,
         video_descriptor_set_layout,
         zone_descriptor_set_layout,
     ];

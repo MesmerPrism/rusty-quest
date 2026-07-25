@@ -1372,3 +1372,15 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-SpatialCamera
   -StopAfterRun `
   -RequirePublicMultiStackProjection
 ```
+
+## RGB channel transform
+
+The shared projection adapter supports bounded independent or linked red,
+green, and blue spatial-transform parameters through
+`rusty.quest.rgb-channel-transform.v1`. It provides panel controls, validation
+commands, JNI normalization, a 96-byte Vulkan uniform, and requested/effective
+markers. Bypass leaves the consuming shader's existing behavior unchanged.
+
+This is transport and control infrastructure only. The guide signal,
+color-to-strength mapping, artistic tuning, and final sampling/compositing
+formula remain consumer-owned. See `docs/RGB_CHANNEL_TRANSFORM.md`.

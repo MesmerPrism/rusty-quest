@@ -17,6 +17,7 @@ internal data class SpatialPrivateLayerControlBindings(
     val updateDepthAlignmentNative: (PrivateLayerDepthAlignment) -> Long,
     val updateGuideProcessingNative: (PrivateLayerGuideProcessing) -> Long,
     val updateZoneCompositorNative: (PrivateLayerZoneCompositor) -> Long,
+    val updateRgbChannelTransformNative: (RgbChannelTransform) -> Long,
     val marker: (String) -> Unit,
 )
 
@@ -40,6 +41,9 @@ internal class SpatialPrivateLayerControlCoordinator(
   var zoneCompositor: PrivateLayerZoneCompositor = PrivateLayerZoneCompositorControls.legacyOff
     private set
 
+  var rgbChannelTransform: RgbChannelTransform = RgbChannelTransformControls.bypass
+    private set
+
   fun initializeDepthLayerPolicy(policy: Int) {
     depthLayerPolicy = policy
   }
@@ -55,6 +59,7 @@ internal class SpatialPrivateLayerControlCoordinator(
     updateDepthAlignment(depthAlignment, source)
     updateGuideProcessing(guideProcessing, source)
     updateZoneCompositor(zoneCompositor, source)
+    updateRgbChannelTransform(rgbChannelTransform, source)
   }
 
   fun updateLayerOverride(requestedLayerOverride: Float, source: String): Float {
@@ -278,6 +283,35 @@ internal class SpatialPrivateLayerControlCoordinator(
             "source=${activityMarkerToken(source)} transport=jni-live-queue updateMask=$updateMask " +
             "previousProjectionZoneMode=${PrivateLayerZoneCompositorControls.coverageToken(previous.coverageMode)} " +
             "${PrivateLayerZoneCompositorModule.markerFields(updated)} runtimeCrash=false"
+    )
+    return updated
+  }
+
+  fun updateRgbChannelTransform(
+      requestedConfiguration: RgbChannelTransform,
+      source: String,
+  ): RgbChannelTransform {
+    if (!bindings.routeActive()) return rgbChannelTransform
+    val previous = rgbChannelTransform
+    val updated = RgbChannelTransformModule.normalize(requestedConfiguration)
+    rgbChannelTransform = updated
+    val updateMask =
+        runCatching { bindings.updateRgbChannelTransformNative(updated) }
+            .getOrElse { throwable ->
+              bindings.marker(
+                  "channel=private-layer-panel status=rgb-channel-transform-update-failed " +
+                      "source=${activityMarkerToken(source)} " +
+                      "error=${activityMarkerToken(throwable.javaClass.simpleName)} " +
+                      "message=${activityMarkerToken(throwable.message ?: "none")} " +
+                      "${RgbChannelTransformModule.markerFields(updated)} runtimeCrash=false"
+              )
+              0L
+            }
+    bindings.marker(
+        "channel=private-layer-panel status=rgb-channel-transform-submitted " +
+            "source=${activityMarkerToken(source)} transport=jni-live-queue updateMask=$updateMask " +
+            "previousRgbChannelTransformMode=${RgbChannelTransformControls.modeToken(previous.mode)} " +
+            "${RgbChannelTransformModule.markerFields(updated)} runtimeCrash=false"
     )
     return updated
   }

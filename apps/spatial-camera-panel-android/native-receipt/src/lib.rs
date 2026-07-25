@@ -43,6 +43,7 @@ mod live_hand_joints;
 mod particle_adapter_consumer;
 #[cfg(any(target_os = "android", test))]
 mod replay_hands;
+mod rgb_channel_transform;
 #[cfg(target_os = "android")]
 mod spatial_controller_actions;
 #[cfg(target_os = "android")]

@@ -9,6 +9,7 @@ internal data class SpatialValidationWorkflowBindings(
     val privateLayerPanelVisible: () -> Boolean,
     val updatePrivateLayerOverride: (Float, String) -> Unit,
     val updatePrivateLayerZoneCompositor: (PrivateLayerZoneCompositor, String) -> Unit,
+    val updateRgbChannelTransform: (RgbChannelTransform, String) -> Unit,
     val setProjectionPanelEnabled: (Boolean, String) -> Unit,
     val changeImmersiveVideo: (String, String?, String) -> Unit,
     val currentParticleControls: () -> SurfaceParticleControlState,
@@ -81,6 +82,12 @@ internal class SpatialValidationWorkflowCoordinator(
                 PrivateLayerZoneCompositorControls.fullStretch,
                 source,
             )
+        "rgb-channel-bypass" ->
+            bindings.updateRgbChannelTransform(RgbChannelTransformControls.bypass, source)
+        "rgb-channel-linked" ->
+            bindings.updateRgbChannelTransform(RgbChannelTransformControls.linked, source)
+        "rgb-channel-independent" ->
+            bindings.updateRgbChannelTransform(RgbChannelTransformControls.independent, source)
         "projection-panel-off" -> bindings.setProjectionPanelEnabled(false, source)
         "projection-panel-on" -> bindings.setProjectionPanelEnabled(true, source)
         "video-previous" -> bindings.changeImmersiveVideo("previous", null, source)

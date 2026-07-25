@@ -268,6 +268,27 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
                       configuration.outerMotionGain,
                   )
                 },
+                updateRgbChannelTransformNative = { configuration ->
+                  nativeUpdateRgbChannelTransform(
+                      configuration.mode,
+                      configuration.edgeMode,
+                      configuration.red.directionTurns,
+                      configuration.green.directionTurns,
+                      configuration.blue.directionTurns,
+                      configuration.red.directionRateHz,
+                      configuration.green.directionRateHz,
+                      configuration.blue.directionRateHz,
+                      configuration.red.displacementStrengthUv,
+                      configuration.green.displacementStrengthUv,
+                      configuration.blue.displacementStrengthUv,
+                      configuration.red.imageScale,
+                      configuration.green.imageScale,
+                      configuration.blue.imageScale,
+                      configuration.red.coverageScale,
+                      configuration.green.coverageScale,
+                      configuration.blue.coverageScale,
+                  )
+                },
                 marker = ::marker,
             ),
             fixedLayerOverride = presentationPolicy.fixedLayerOverride,
@@ -688,6 +709,10 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             },
             updatePrivateLayerZoneCompositor = { configuration, source ->
               privateLayerControlCoordinator.updateZoneCompositor(configuration, source)
+              Unit
+            },
+            updateRgbChannelTransform = { configuration, source ->
+              privateLayerControlCoordinator.updateRgbChannelTransform(configuration, source)
               Unit
             },
             setProjectionPanelEnabled = { enabled, source ->
@@ -1766,6 +1791,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
                     depthLayerPolicy = privateLayerControlCoordinator.depthLayerPolicy,
                     depthAlignment = privateLayerControlCoordinator.depthAlignment,
                     guideProcessing = privateLayerControlCoordinator.guideProcessing,
+                    rgbChannelTransform = privateLayerControlCoordinator.rgbChannelTransform,
                     videoSession = immersiveVideoPanelCoordinator::sessionSnapshot,
                     setLayerOverride = privateLayerControlCoordinator::updateLayerOverride,
                     setProjectionPanelEnabled = ::setProjectionPanelEnabled,
@@ -1780,6 +1806,8 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
                     updateDepthAlignment = privateLayerControlCoordinator::updateDepthAlignment,
                     updateGuideProcessing =
                         privateLayerControlCoordinator::updateGuideProcessing,
+                    updateRgbChannelTransform =
+                        privateLayerControlCoordinator::updateRgbChannelTransform,
                     selectPreviousVideo = {
                       changeImmersiveVideo(
                           "previous",
@@ -3056,6 +3084,26 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
       outerCycleAmplitude: Float,
       outerCycleHz: Float,
       outerMotionGain: Float,
+  ): Long
+
+  private external fun nativeUpdateRgbChannelTransform(
+      mode: Int,
+      edgeMode: Int,
+      redDirectionTurns: Float,
+      greenDirectionTurns: Float,
+      blueDirectionTurns: Float,
+      redDirectionRateHz: Float,
+      greenDirectionRateHz: Float,
+      blueDirectionRateHz: Float,
+      redDisplacementStrengthUv: Float,
+      greenDisplacementStrengthUv: Float,
+      blueDisplacementStrengthUv: Float,
+      redImageScale: Float,
+      greenImageScale: Float,
+      blueImageScale: Float,
+      redCoverageScale: Float,
+      greenCoverageScale: Float,
+      blueCoverageScale: Float,
   ): Long
 
   private external fun nativeStartSpatialVideoProjectionProbe(
