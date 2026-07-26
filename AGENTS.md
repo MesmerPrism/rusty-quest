@@ -215,7 +215,11 @@ source, processor, or sink descriptors.
 Spatial Camera Panel offline immersive media is a separate local adapter
 boundary documented in `docs/SPATIAL_IMMERSIVE_VIDEO_PLAYBACK.md`. Keep its
 encrypted pack catalog generic, bounded, opt-in, and free of private media
-names. A compatible side-by-side pack may feed the existing custom projection
+names. In direct video-only mode, each item owns its ideal Spatial SDK shape
+and stereo mode; switching may rebuild only that world-centered media surface
+and decoder, never head-lock an immersive surface, and must require neutral
+rearm between right-stick selection flicks. A compatible side-by-side pack may
+feed the existing custom projection
 compositor, but source switching may restart only the media decoder/stream; it
 must not replace camera, carrier, private-effect, or Activity lifecycle.
 
