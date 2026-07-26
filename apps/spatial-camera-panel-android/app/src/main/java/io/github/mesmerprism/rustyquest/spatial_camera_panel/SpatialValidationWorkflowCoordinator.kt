@@ -14,6 +14,8 @@ internal data class SpatialValidationWorkflowBindings(
         (ProjectionSurfaceDisplacement, String) -> Unit,
     val setProjectionPanelEnabled: (Boolean, String) -> Unit,
     val changeImmersiveVideo: (String, String?, String) -> Unit,
+    val setImmersiveVideoPresentationMode:
+        (SpatialImmersiveVideoPresentationMode, String) -> Unit,
     val currentParticleControls: () -> SurfaceParticleControlState,
     val updateSurfaceParticleControls: (SurfaceParticleControlState, String) -> Unit,
     val applyRemoteParticleLayerTargetDistance: (Intent, String) -> Unit,
@@ -109,6 +111,16 @@ internal class SpatialValidationWorkflowCoordinator(
         "projection-panel-on" -> bindings.setProjectionPanelEnabled(true, source)
         "video-previous" -> bindings.changeImmersiveVideo("previous", null, source)
         "video-next" -> bindings.changeImmersiveVideo("next", null, source)
+        "video-world-anchored" ->
+            bindings.setImmersiveVideoPresentationMode(
+                SpatialImmersiveVideoPresentationMode.WorldAnchored,
+                source,
+            )
+        "video-head-fixed-border" ->
+            bindings.setImmersiveVideoPresentationMode(
+                SpatialImmersiveVideoPresentationMode.HeadFixedBorder,
+                source,
+            )
         "video-select" ->
             bindings.changeImmersiveVideo(
                 "select",

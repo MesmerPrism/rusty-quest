@@ -102,6 +102,23 @@ internal class SpatialVideoProjectionRuntimeCoordinator(
     return true
   }
 
+  fun prepareForCarrierRebuild(
+      settings: SpatialVideoProjectionSettings,
+      offlinePack: OfflineImmersiveMediaPack,
+      reason: String,
+  ) {
+    if (started) {
+      runCatching { bindings.stopPlayback() }
+    }
+    started = false
+    adoptSettings(settings, offlinePack)
+    bindings.marker(
+        "channel=spatial-video-projection status=carrier-rebuild-prepared " +
+            "reason=${activityMarkerToken(reason)} playbackStopped=true " +
+            "activityRestarted=false ${markerFields(settings)}"
+    )
+  }
+
   fun stop(reason: String) {
     if (!started && !settings.enabled) {
       return

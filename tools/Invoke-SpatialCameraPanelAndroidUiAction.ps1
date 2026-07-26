@@ -21,6 +21,8 @@ param(
         "video-previous",
         "video-next",
         "video-select",
+        "video-world-anchored",
+        "video-head-fixed-border",
         "particle-controls",
         "particle-panel-distance",
         "particle-panel-view-yaw",

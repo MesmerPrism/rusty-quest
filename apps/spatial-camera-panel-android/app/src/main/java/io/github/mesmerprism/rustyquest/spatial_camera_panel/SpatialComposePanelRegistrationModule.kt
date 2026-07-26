@@ -39,6 +39,8 @@ internal data class SpatialPrivateLayerPanelRegistrationBindings(
         (ProjectionSurfaceDisplacement, String) -> ProjectionSurfaceDisplacement,
     val selectPreviousVideo: () -> SpatialImmersiveVideoSessionSnapshot,
     val selectNextVideo: () -> SpatialImmersiveVideoSessionSnapshot,
+    val setVideoPresentationMode:
+        (SpatialImmersiveVideoPresentationMode) -> SpatialImmersiveVideoSessionSnapshot,
     val closePanel: () -> Unit,
     val settings: (Entity) -> PanelSettings,
     val onPanelSetup: (PanelSceneObject) -> Unit,
@@ -96,6 +98,7 @@ internal object SpatialComposePanelRegistrationModule {
                           bindings.updateProjectionSurfaceDisplacement,
                       selectPreviousVideo = bindings.selectPreviousVideo,
                       selectNextVideo = bindings.selectNextVideo,
+                      setVideoPresentationMode = bindings.setVideoPresentationMode,
                       closePanel = bindings.closePanel,
                   )
                 }

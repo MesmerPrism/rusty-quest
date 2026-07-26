@@ -44,6 +44,7 @@ internal class SpatialImmersiveVideoPanelCoordinator(
   private var spawnPose: Pose? = null
   private var resumeAfterPause = false
   private var activeIndex = 0
+  private var presentationMode = SpatialImmersiveVideoPresentationMode.WorldAnchored
   private val progressHandler = Handler(Looper.getMainLooper())
   private val initialConfig: SpatialImmersiveVideoConfig?
     get() = (resolution as? SpatialImmersiveVideoRouteResolution.Ready)?.config
@@ -68,6 +69,13 @@ internal class SpatialImmersiveVideoPanelCoordinator(
             activeConfig,
         ) != null
 
+  val customCarrierPresentation: SpatialImmersiveVideoCustomCarrierPresentation?
+    get() =
+        SpatialImmersiveVideoSessionPolicy.customCarrierPresentation(
+            activeConfig,
+            presentationMode,
+        )
+
   fun routePolicyMarker(): String =
       SpatialImmersiveVideoRouteModule.routePolicyMarker(resolution)
 
@@ -84,7 +92,27 @@ internal class SpatialImmersiveVideoPanelCoordinator(
                 SpatialVideoProjectionSettings.disabled(),
                 config,
             ) != null,
+        presentationMode = presentationMode,
     )
+  }
+
+  fun setPresentationMode(
+      requestedMode: SpatialImmersiveVideoPresentationMode,
+      source: String,
+  ): SpatialImmersiveVideoSessionSnapshot {
+    val changed = presentationMode != requestedMode
+    presentationMode = requestedMode
+    val presentation = customCarrierPresentation
+    emitMarker(
+        "channel=spatial-immersive-video status=presentation-mode-applied " +
+            "source=${activityMarkerToken(source)} changed=$changed " +
+            "activityRestarted=false customProjectionConfigurationRetained=true " +
+            (presentation?.markerFields()
+                ?: "videoCarrierPresentation=${presentationMode.token} " +
+                    "headOrientationLocked=" +
+                    "${presentationMode == SpatialImmersiveVideoPresentationMode.HeadFixedBorder}")
+    )
+    return sessionSnapshot()
   }
 
   fun selectPrevious(source: String): SpatialImmersiveVideoSelection =

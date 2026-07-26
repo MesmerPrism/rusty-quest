@@ -770,6 +770,10 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
               changeImmersiveVideo(action, packId, source)
               Unit
             },
+            setImmersiveVideoPresentationMode = { mode, source ->
+              setImmersiveVideoPresentationMode(mode, source)
+              Unit
+            },
             currentParticleControls = { surfaceParticleParameterCoordinator.controls },
             updateSurfaceParticleControls = { controls, source ->
               surfaceParticleParameterCoordinator.updateControls(controls, source)
@@ -1227,6 +1231,12 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
               )
             },
             panelMediaSettings = cameraHwbProjectionGeometryCoordinator::panelMediaSettings,
+            immersiveVideoCarrierPresentation = {
+              immersiveVideoPanelCoordinator.customCarrierPresentation.takeIf {
+                usesImmersiveVideoAsCustomProjectionSource()
+              }
+            },
+            outputDimensions = cameraHwbProjectionGeometryCoordinator::outputDimensions,
             projectionPlane = {
               cameraLatencyDiagnosticModule.projectionPlane(
                   cameraHwbProjectionGeometryCoordinator::planeForPlacement
@@ -1240,7 +1250,11 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             projectionMarkerFields = cameraHwbProjectionGeometryCoordinator::markerFields,
             stereoMarkerFields = cameraHwbProjectionGeometryCoordinator::stereoMarkerFields,
             videoSettings = { spatialVideoProjectionRuntimeCoordinator.settings },
-            videoProjectionMarkerFields = spatialVideoProjectionRuntimeCoordinator::markerFields,
+            videoProjectionMarkerFields = { settings ->
+              spatialVideoProjectionRuntimeCoordinator.markerFields(settings) + " " +
+                  (immersiveVideoPanelCoordinator.customCarrierPresentation?.markerFields()
+                      ?: "videoCarrierPresentation=legacy-camera")
+            },
             syntheticVisualEnabled = ::cameraHwbProjectionSyntheticVisualProbeEnabled,
             drawSyntheticVisual = cameraHwbProjectionSyntheticRenderer::draw,
             startNativePassthrough =
@@ -1408,6 +1422,11 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             projectionHeightMeters =
                 surfaceParticleProjectionGeometryCoordinator::projectionHeightMeters,
             privateLayerPanelZ = { privateLayerPanelPlacement.zMeters },
+            immersiveVideoCarrierPresentation = {
+              immersiveVideoPanelCoordinator.customCarrierPresentation.takeIf {
+                usesImmersiveVideoAsCustomProjectionSource()
+              }
+            },
         )
     )
   }
@@ -1605,6 +1624,8 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
       requestedPackId: String?,
       source: String,
   ): SpatialImmersiveVideoSessionSnapshot {
+    val previousCarrierPresentation =
+        immersiveVideoPanelCoordinator.customCarrierPresentation
     val selection =
         when (action) {
           "previous" -> immersiveVideoPanelCoordinator.selectPrevious(source)
@@ -1625,14 +1646,52 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
               spatialVideoProjectionRuntimeCoordinator.settings
           )
       if (pack != null && settings != null) {
-        spatialVideoProjectionRuntimeCoordinator.replaceMediaSource(
+        val currentCarrierPresentation =
+            immersiveVideoPanelCoordinator.customCarrierPresentation
+        if (previousCarrierPresentation != currentCarrierPresentation) {
+          spatialVideoProjectionRuntimeCoordinator.prepareForCarrierRebuild(
+              settings = settings,
+              offlinePack = pack,
+              reason = source,
+          )
+          cameraHwbProjectionPanelCarrierCoordinator.rebuild(settings, source)
+        } else {
+          spatialVideoProjectionRuntimeCoordinator.replaceMediaSource(
+              settings = settings,
+              offlinePack = pack,
+              reason = source,
+          )
+        }
+      }
+    }
+    return selection.snapshot
+  }
+
+  private fun setImmersiveVideoPresentationMode(
+      mode: SpatialImmersiveVideoPresentationMode,
+      source: String,
+  ): SpatialImmersiveVideoSessionSnapshot {
+    val previousPresentation = immersiveVideoPanelCoordinator.customCarrierPresentation
+    val snapshot = immersiveVideoPanelCoordinator.setPresentationMode(mode, source)
+    val currentPresentation = immersiveVideoPanelCoordinator.customCarrierPresentation
+    if (previousPresentation != currentPresentation &&
+        usesImmersiveVideoAsCustomProjectionSource() &&
+        cameraHwbProjectionLaunchCoordinator.started) {
+      val pack = immersiveVideoPanelCoordinator.activeOfflinePack
+      val settings =
+          immersiveVideoPanelCoordinator.customProjectionSettings(
+              spatialVideoProjectionRuntimeCoordinator.settings
+          )
+      if (pack != null && settings != null) {
+        spatialVideoProjectionRuntimeCoordinator.prepareForCarrierRebuild(
             settings = settings,
             offlinePack = pack,
             reason = source,
         )
+        cameraHwbProjectionPanelCarrierCoordinator.rebuild(settings, source)
       }
     }
-    return selection.snapshot
+    return snapshot
   }
 
   override fun onSceneReady() {
@@ -1648,7 +1707,9 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
       marker(
           "channel=spatial-immersive-video status=custom-projection-source-adopted " +
               "directSpatialPanelSuppressed=true customProjectionStackActive=true " +
-              "activityLifecycleExclusive=false"
+              "activityLifecycleExclusive=false " +
+              (immersiveVideoPanelCoordinator.customCarrierPresentation?.markerFields()
+                  ?: "videoCarrierPresentation=legacy-camera")
       )
     }
     if (productPolicy.cameraPanelRoutesEnabled) {
@@ -1876,6 +1937,12 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
                           "next",
                           null,
                           "private-layer-control-panel-video-next",
+                      )
+                    },
+                    setVideoPresentationMode = { mode ->
+                      setImmersiveVideoPresentationMode(
+                          mode,
+                          "private-layer-control-panel-video-presentation",
                       )
                     },
                     closePanel = {

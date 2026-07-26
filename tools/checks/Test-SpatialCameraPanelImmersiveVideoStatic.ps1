@@ -47,6 +47,10 @@ $ids = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\res\val
 $route = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\SpatialImmersiveVideoRouteModule.kt"
 $coordinator = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\SpatialImmersiveVideoPanelCoordinator.kt"
 $session = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\SpatialImmersiveVideoSession.kt"
+$geometry = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\SpatialCameraHwbProjectionGeometryCoordinator.kt"
+$panelCarrier = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\SpatialCameraHwbProjectionPanelCarrierCoordinator.kt"
+$validationWorkflow = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\SpatialValidationWorkflowCoordinator.kt"
+$uiActionTool = Read-RequiredText "tools\Invoke-SpatialCameraPanelAndroidUiAction.ps1"
 $offlinePack = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\OfflineImmersiveMediaPack.kt"
 $activity = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\SpatialCameraPanelActivity.kt"
 $routeTest = Read-RequiredText "apps\spatial-camera-panel-android\app\src\test\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\SpatialImmersiveVideoRouteModuleTest.kt"
@@ -131,6 +135,17 @@ Assert-Contains "Immersive session" $session "compatibleWithSession("
 Assert-Contains "Immersive session" $session 'CUSTOM_PROJECTION_SOURCE = "encrypted-offline-pack"'
 Assert-Contains "Immersive session" $session "MAX_CUSTOM_PROJECTION_DIMENSION_PX = 4096"
 Assert-Contains "Immersive session" $session 'SpatialImmersiveVideoStereoLayout.TopBottom ->'
+Assert-Contains "Immersive session" $session 'WorldAnchored("world-anchored")'
+Assert-Contains "Immersive session" $session 'HeadFixedBorder("head-fixed-border")'
+Assert-Contains "Immersive session" $session "EQUIRECT_360_OUTPUT_WIDTH_PX = 4096"
+Assert-Contains "Immersive geometry" $geometry "Equirect180ShapeOptions"
+Assert-Contains "Immersive geometry" $geometry "Equirect360ShapeOptions"
+Assert-Contains "Immersive panel carrier" $panelCarrier "world-anchored-transform-retained"
+Assert-Contains "Immersive panel carrier" $panelCarrier "fun rebuild("
+Assert-Contains "Immersive validation workflow" $validationWorkflow '"video-world-anchored"'
+Assert-Contains "Immersive validation workflow" $validationWorkflow '"video-head-fixed-border"'
+Assert-Contains "Immersive UI action tool" $uiActionTool '"video-world-anchored"'
+Assert-Contains "Immersive UI action tool" $uiActionTool '"video-head-fixed-border"'
 Assert-Contains "Immersive coordinator" $coordinator "fun selectPrevious("
 Assert-Contains "Immersive coordinator" $coordinator "fun selectNext("
 Assert-Contains "Immersive coordinator" $coordinator "status=catalog-ready"

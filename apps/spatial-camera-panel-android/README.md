@@ -1292,10 +1292,13 @@ for the shape matrix, failure policy, lifecycle, and validation markers.
 
 Sideload-only builds may instead embed authenticated encrypted packs. One live
 custom-projection catalog can mix SBS and top-bottom stereo items, including
-different flat/180°/360° source classifications. Selection replaces only the
-decoder source. Top-bottom eye regions are mapped into the compositor's
-existing packed-SBS target, while the Activity, camera, planar carrier, and
-private effect stack stay active. Mono items continue to use the ideal direct
+different flat/180°/360° source classifications. Top-bottom eye regions are
+mapped into the compositor's existing packed-SBS target. The composited result
+can then use its declared world-anchored flat/180°/360° Spatial SDK surface or
+the legacy head-fixed border quad. Selection replaces only the decoder when
+the carrier profile is unchanged; a shape or presentation change rebinds the
+carrier and reapplies the current private configuration without restarting the
+Activity or losing control state. Mono items continue to use the ideal direct
 Spatial SDK media panel rather than the custom stereo compositor.
 
 To include a generic Spatial SDK staged 3D asset, provide a staged mesh URI or
@@ -1396,9 +1399,10 @@ commands, JNI normalization, a 96-byte Vulkan uniform, and requested/effective
 markers. Bypass leaves the consuming shader's existing behavior unchanged.
 The shared UI-action wrapper exposes `rgb-channel-bypass`,
 `rgb-channel-linked`, and `rgb-channel-independent`; the same wrapper exposes
-`video-previous`, `video-next`, and `video-select -VideoPackId <pack-id>` so a
-live custom-projection session can change transform presets and packaged video
-sources without restarting the activity or the projection stack.
+`video-previous`, `video-next`, `video-select -VideoPackId <pack-id>`,
+`video-world-anchored`, and `video-head-fixed-border` so a live
+custom-projection session can change transform presets, packaged video
+sources, and the final carrier mode without restarting the Activity.
 
 This is transport and control infrastructure only. The guide signal,
 color-to-strength mapping, artistic tuning, and final sampling/compositing

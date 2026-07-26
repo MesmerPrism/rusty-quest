@@ -10,9 +10,41 @@ internal data class SpatialImmersiveVideoSessionSnapshot(
     val itemCount: Int,
     val activePackId: String?,
     val customProjectionCompatible: Boolean,
+    val presentationMode: SpatialImmersiveVideoPresentationMode,
 ) {
   val activeOrdinal: Int
     get() = if (activeIndex >= 0) activeIndex + 1 else 0
+}
+
+internal enum class SpatialImmersiveVideoPresentationMode(val token: String) {
+  WorldAnchored("world-anchored"),
+  HeadFixedBorder("head-fixed-border"),
+}
+
+internal enum class SpatialImmersiveVideoCarrierShape {
+  LegacyQuad,
+  WorldQuad,
+  Equirect180,
+  Equirect360,
+}
+
+internal data class SpatialImmersiveVideoCustomCarrierPresentation(
+    val mode: SpatialImmersiveVideoPresentationMode,
+    val shape: SpatialImmersiveVideoCarrierShape,
+    val radiusMeters: Float,
+    val flatPanelWidthMeters: Float,
+    val flatPanelHeightMeters: Float,
+    val outputWidthPx: Int,
+    val outputHeightPx: Int,
+) {
+  val worldAnchored: Boolean
+    get() = mode == SpatialImmersiveVideoPresentationMode.WorldAnchored
+
+  fun markerFields(): String =
+      "videoCarrierPresentation=${mode.token} " +
+          "videoCarrierShape=${shape.name.lowercase()} " +
+          "headOrientationLocked=${!worldAnchored} " +
+          "videoCarrierOutputExtentPx=${outputWidthPx}x$outputHeightPx"
 }
 
 internal data class SpatialImmersiveVideoSelection(
@@ -25,6 +57,10 @@ internal object SpatialImmersiveVideoSessionPolicy {
   private const val MAX_CUSTOM_PROJECTION_DIMENSION_PX = 4096
   private const val MIN_CUSTOM_PROJECTION_WIDTH_PX = 320
   private const val MIN_CUSTOM_PROJECTION_HEIGHT_PX = 240
+  private const val LEGACY_OUTPUT_WIDTH_PX = 2048
+  private const val LEGACY_OUTPUT_HEIGHT_PX = 1024
+  private const val EQUIRECT_360_OUTPUT_WIDTH_PX = 4096
+  private const val EQUIRECT_360_OUTPUT_HEIGHT_PX = 1024
   const val CUSTOM_PROJECTION_SOURCE = "encrypted-offline-pack"
 
   fun compatibleWithSession(
@@ -92,6 +128,49 @@ internal object SpatialImmersiveVideoSessionPolicy {
       return null
     }
     return scaledWidth to scaledHeight
+  }
+
+  fun customCarrierPresentation(
+      config: SpatialImmersiveVideoConfig?,
+      mode: SpatialImmersiveVideoPresentationMode,
+  ): SpatialImmersiveVideoCustomCarrierPresentation? {
+    if (config == null || customProjectionDimensions(config) == null) {
+      return null
+    }
+    if (mode == SpatialImmersiveVideoPresentationMode.HeadFixedBorder) {
+      return SpatialImmersiveVideoCustomCarrierPresentation(
+          mode = mode,
+          shape = SpatialImmersiveVideoCarrierShape.LegacyQuad,
+          radiusMeters = config.radiusMeters,
+          flatPanelWidthMeters = config.flatPanelWidthMeters,
+          flatPanelHeightMeters = config.flatPanelHeightMeters,
+          outputWidthPx = LEGACY_OUTPUT_WIDTH_PX,
+          outputHeightPx = LEGACY_OUTPUT_HEIGHT_PX,
+      )
+    }
+    val shape =
+        when (config.shape) {
+          SpatialImmersiveVideoShape.Flat -> SpatialImmersiveVideoCarrierShape.WorldQuad
+          SpatialImmersiveVideoShape.Equirect180 ->
+              SpatialImmersiveVideoCarrierShape.Equirect180
+          SpatialImmersiveVideoShape.Equirect360 ->
+              SpatialImmersiveVideoCarrierShape.Equirect360
+        }
+    val outputDimensions =
+        if (shape == SpatialImmersiveVideoCarrierShape.Equirect360) {
+          EQUIRECT_360_OUTPUT_WIDTH_PX to EQUIRECT_360_OUTPUT_HEIGHT_PX
+        } else {
+          LEGACY_OUTPUT_WIDTH_PX to LEGACY_OUTPUT_HEIGHT_PX
+        }
+    return SpatialImmersiveVideoCustomCarrierPresentation(
+        mode = mode,
+        shape = shape,
+        radiusMeters = config.radiusMeters,
+        flatPanelWidthMeters = config.flatPanelWidthMeters,
+        flatPanelHeightMeters = config.flatPanelHeightMeters,
+        outputWidthPx = outputDimensions.first,
+        outputHeightPx = outputDimensions.second,
+    )
   }
 
   fun wrappedIndex(requestedIndex: Int, itemCount: Int): Int =

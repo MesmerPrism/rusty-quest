@@ -72,6 +72,8 @@ internal fun PrivateLayerControlPanel(
         (ProjectionSurfaceDisplacement, String) -> ProjectionSurfaceDisplacement,
     selectPreviousVideo: () -> SpatialImmersiveVideoSessionSnapshot,
     selectNextVideo: () -> SpatialImmersiveVideoSessionSnapshot,
+    setVideoPresentationMode:
+        (SpatialImmersiveVideoPresentationMode) -> SpatialImmersiveVideoSessionSnapshot,
     closePanel: () -> Unit,
 ) {
   var localLayerOverride by remember(layerOverride) { mutableStateOf(layerOverride) }
@@ -213,6 +215,43 @@ internal fun PrivateLayerControlPanel(
               style = MaterialTheme.typography.bodySmall,
               color = LayerPanelMuted,
           )
+          Text(
+              if (localVideoSession.presentationMode ==
+                  SpatialImmersiveVideoPresentationMode.WorldAnchored) {
+                "World anchored: immersive video stays fixed in the scene as you turn your head."
+              } else {
+                "Head-fixed border: the composited video surface follows your view like the legacy border."
+              },
+              style = MaterialTheme.typography.bodySmall,
+              color = LayerPanelMuted,
+          )
+          Row(
+              horizontalArrangement = Arrangement.spacedBy(10.dp),
+              modifier = Modifier.fillMaxWidth(),
+          ) {
+            ChoiceButton(
+                label = "World anchored",
+                selected =
+                    localVideoSession.presentationMode ==
+                        SpatialImmersiveVideoPresentationMode.WorldAnchored,
+            ) {
+              localVideoSession =
+                  setVideoPresentationMode(
+                      SpatialImmersiveVideoPresentationMode.WorldAnchored
+                  )
+            }
+            ChoiceButton(
+                label = "Head-fixed border",
+                selected =
+                    localVideoSession.presentationMode ==
+                        SpatialImmersiveVideoPresentationMode.HeadFixedBorder,
+            ) {
+              localVideoSession =
+                  setVideoPresentationMode(
+                      SpatialImmersiveVideoPresentationMode.HeadFixedBorder
+                  )
+            }
+          }
           Row(
               horizontalArrangement = Arrangement.spacedBy(10.dp),
               modifier = Modifier.fillMaxWidth(),

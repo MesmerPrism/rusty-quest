@@ -80,7 +80,18 @@ resolutions. Mono packs remain outside that stereo session. Each decoder
 surface is scaled proportionally to fit within 4096 pixels on either axis while
 retaining an even packed width for SBS or even packed height for top-bottom.
 The source manifest keeps its ideal direct Spatial SDK shape and stereo mode;
-the custom projection carrier remains the existing planar effect surface.
+the private compositor always normalizes its result to packed SBS before the
+Spatial SDK carrier presents it.
+
+The custom route has two selectable presentation modes. `World anchored` wraps
+the composited result onto the source's declared flat, equirectangular 180°, or
+equirectangular 360° Spatial SDK surface and retains the initial world-space
+pose as the viewer turns. Stereo 360° uses a 4096×1024 packed output so each
+eye retains a 2:1 equirectangular aspect; stereo 180° uses 2048×1024 so each
+eye remains square. `Head-fixed border` preserves the legacy viewer-following
+2048×1024 quad. Both modes use the same Vulkan compositor, blend zones,
+displacement transport, private effect configuration, and encrypted decoder
+source.
 
 The layer control panel shows only an ordinal (`Video 1 of N`) and offers
 Previous and Next actions. A horizontal right-stick flick selects the previous
@@ -89,15 +100,16 @@ neutral before another selection, which prevents a held stick from skipping
 multiple items. Both Spatial SDK controller-component input and Android
 joystick fallback input feed the same latch.
 
-Validation clients may also send `video-previous`, `video-next`, or
-`video-select` through the existing `RUN_UI_COMMAND` action; `video-select`
-carries an opaque `video_pack_id`. A direct Spatial SDK selection rebuilds
-only its media-panel entity and ExoPlayer, retaining the Activity and its
-initial world-space center. This is required because shape, stereo mode, and
-encoded dimensions may differ between catalog items. The custom compositor
-stops and restarts only its MediaCodec source and native video stream; it does
-not recreate the Activity, camera runtime, projection carrier, or private
-effect stack.
+Validation clients may also send `video-previous`, `video-next`,
+`video-select`, `video-world-anchored`, or `video-head-fixed-border` through
+the existing `RUN_UI_COMMAND` action; `video-select` carries an opaque
+`video_pack_id`. A direct Spatial SDK selection rebuilds only its media-panel
+entity and ExoPlayer, retaining the Activity and its initial world-space
+center. The custom route changes only the decoder when the next item uses the
+same carrier profile. A shape, output-extent, or presentation-mode change
+rebinds the video-surface carrier and native compositor, then reapplies the
+current private configuration without recreating the Activity or control
+state.
 
 Performance validation must use the non-debuggable release variant:
 
@@ -236,6 +248,8 @@ Useful runtime markers include:
 - `status=controller-flick-selection`
 - `status=selection-applied`
 - `status=source-switch-applied`
+- `status=presentation-mode-applied`
+- `status=custom-carrier-rebuilt`
 
 Host checks live in
 `tools/checks/Test-SpatialCameraPanelImmersiveVideoStatic.ps1`, and pure route

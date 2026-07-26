@@ -112,6 +112,75 @@ class SpatialImmersiveVideoSessionPolicyTest {
     assertEquals(-1, SpatialImmersiveVideoSessionPolicy.wrappedIndex(0, 0))
   }
 
+  @Test
+  fun worldAnchored360UsesEquirectCarrierWithTwoToOnePerEyeOutput() {
+    val stereo360 =
+        config(
+            pack(
+                "stereo-360",
+                3840,
+                4320,
+                shape = SpatialImmersiveVideoShape.Equirect360,
+                stereoLayout = SpatialImmersiveVideoStereoLayout.TopBottom,
+            )
+        )
+
+    val presentation =
+        requireNotNull(
+            SpatialImmersiveVideoSessionPolicy.customCarrierPresentation(
+                stereo360,
+                SpatialImmersiveVideoPresentationMode.WorldAnchored,
+            )
+        )
+
+    assertTrue(presentation.worldAnchored)
+    assertEquals(SpatialImmersiveVideoCarrierShape.Equirect360, presentation.shape)
+    assertEquals(4096, presentation.outputWidthPx)
+    assertEquals(1024, presentation.outputHeightPx)
+    assertTrue(presentation.markerFields().contains("headOrientationLocked=false"))
+  }
+
+  @Test
+  fun headFixedBorderPreservesLegacyStereoQuadFor360Video() {
+    val stereo360 =
+        config(
+            pack(
+                "stereo-360",
+                3840,
+                4320,
+                shape = SpatialImmersiveVideoShape.Equirect360,
+                stereoLayout = SpatialImmersiveVideoStereoLayout.TopBottom,
+            )
+        )
+
+    val presentation =
+        requireNotNull(
+            SpatialImmersiveVideoSessionPolicy.customCarrierPresentation(
+                stereo360,
+                SpatialImmersiveVideoPresentationMode.HeadFixedBorder,
+            )
+        )
+
+    assertFalse(presentation.worldAnchored)
+    assertEquals(SpatialImmersiveVideoCarrierShape.LegacyQuad, presentation.shape)
+    assertEquals(2048 to 1024, presentation.outputWidthPx to presentation.outputHeightPx)
+    assertTrue(presentation.markerFields().contains("headOrientationLocked=true"))
+  }
+
+  @Test
+  fun worldAnchored180KeepsSquarePerEyePackedStereoOutput() {
+    val presentation =
+        requireNotNull(
+            SpatialImmersiveVideoSessionPolicy.customCarrierPresentation(
+                config(pack("stereo-180", 5760, 2880)),
+                SpatialImmersiveVideoPresentationMode.WorldAnchored,
+            )
+        )
+
+    assertEquals(SpatialImmersiveVideoCarrierShape.Equirect180, presentation.shape)
+    assertEquals(2048 to 1024, presentation.outputWidthPx to presentation.outputHeightPx)
+  }
+
   private fun config(pack: OfflineImmersiveMediaPack): SpatialImmersiveVideoConfig =
       SpatialImmersiveVideoConfig(
           path = "rusty-offline-media://${pack.packId}/video",

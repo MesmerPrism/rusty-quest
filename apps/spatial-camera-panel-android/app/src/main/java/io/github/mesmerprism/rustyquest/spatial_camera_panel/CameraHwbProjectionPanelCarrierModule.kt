@@ -2,6 +2,7 @@ package io.github.mesmerprism.rustyquest.spatial_camera_panel
 
 import android.view.Surface as AndroidSurface
 import com.meta.spatial.core.Entity
+import com.meta.spatial.core.Pose
 import com.meta.spatial.core.Vector2
 import com.meta.spatial.runtime.AlphaMode
 import com.meta.spatial.runtime.PanelSceneObject
@@ -16,6 +17,7 @@ import com.meta.spatial.toolkit.MediaPanelRenderOptions
 import com.meta.spatial.toolkit.MediaPanelSettings
 import com.meta.spatial.toolkit.MeshCollision
 import com.meta.spatial.toolkit.PanelDimensions
+import com.meta.spatial.toolkit.Panel
 import com.meta.spatial.toolkit.PanelInputOptions
 import com.meta.spatial.toolkit.PanelRegistration
 import com.meta.spatial.toolkit.QuadShapeOptions
@@ -98,15 +100,27 @@ internal object CameraHwbProjectionPanelCarrierModule {
   fun createVideoSurfacePanelEntity(
       plane: CameraHwbProjectionPlane,
       carrier: String,
+      worldAnchored: Boolean = false,
   ): CameraHwbProjectionPanelEntityCreateResult =
       runCatching {
-            Entity.createPanelEntity(
-                R.id.spatial_camera_projection_surface_panel,
-                Transform(plane.pose),
-                PanelDimensions(Vector2(plane.projectionWidthMeters, plane.projectionHeightMeters)),
-                Hittable(MeshCollision.NoCollision),
-                Visible(true),
-            )
+            if (worldAnchored) {
+              Entity.create(
+                  Panel(R.id.spatial_camera_projection_surface_panel),
+                  Transform(Pose(plane.viewerPosition, plane.pose.q)),
+                  Hittable(MeshCollision.NoCollision),
+                  Visible(true),
+              )
+            } else {
+              Entity.createPanelEntity(
+                  R.id.spatial_camera_projection_surface_panel,
+                  Transform(plane.pose),
+                  PanelDimensions(
+                      Vector2(plane.projectionWidthMeters, plane.projectionHeightMeters)
+                  ),
+                  Hittable(MeshCollision.NoCollision),
+                  Visible(true),
+              )
+            }
           }
           .fold(
               onSuccess = { entity -> CameraHwbProjectionPanelEntityCreateResult.Ready(entity) },
