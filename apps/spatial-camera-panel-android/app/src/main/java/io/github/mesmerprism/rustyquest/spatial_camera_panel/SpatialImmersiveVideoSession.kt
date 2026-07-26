@@ -25,7 +25,6 @@ internal object SpatialImmersiveVideoSessionPolicy {
   private const val MAX_CUSTOM_PROJECTION_DIMENSION_PX = 4096
   private const val MIN_CUSTOM_PROJECTION_WIDTH_PX = 320
   private const val MIN_CUSTOM_PROJECTION_HEIGHT_PX = 240
-  private const val ASPECT_RATIO_TOLERANCE = 0.01f
   const val CUSTOM_PROJECTION_SOURCE = "encrypted-offline-pack"
 
   fun compatibleWithSession(
@@ -34,10 +33,8 @@ internal object SpatialImmersiveVideoSessionPolicy {
   ): Boolean =
       anchor.isEncryptedOfflinePack &&
           candidate.isEncryptedOfflinePack &&
-          anchor.shape == candidate.shape &&
-          anchor.stereoLayout == candidate.stereoLayout &&
-          kotlin.math.abs(anchor.perEyeAspectRatio - candidate.perEyeAspectRatio) <=
-              ASPECT_RATIO_TOLERANCE
+          customProjectionDimensions(anchor) != null &&
+          customProjectionDimensions(candidate) != null
 
   fun customProjectionSettings(
       base: SpatialVideoProjectionSettings,
@@ -46,22 +43,31 @@ internal object SpatialImmersiveVideoSessionPolicy {
     val pack = config?.offlinePack ?: return null
     val dimensions = customProjectionDimensions(config) ?: return null
     val (scaledWidth, scaledHeight) = dimensions
+    val packedLayout = customProjectionLayout(config) ?: return null
     return base.copy(
         enabled = true,
         source = CUSTOM_PROJECTION_SOURCE,
         path = pack.virtualUri.toString(),
-        mediaLayout = "side-by-side-left-right",
-        stereoLayout = "side-by-side-left-right",
+        mediaLayout = packedLayout,
+        stereoLayout = packedLayout,
         width = scaledWidth,
         height = scaledHeight,
         looping = config.loop,
     )
   }
 
+  fun customProjectionLayout(config: SpatialImmersiveVideoConfig): String? =
+      when (config.stereoLayout) {
+        SpatialImmersiveVideoStereoLayout.SideBySideLeftRight ->
+            "side-by-side-left-right"
+        SpatialImmersiveVideoStereoLayout.TopBottom -> "top-bottom-left-right"
+        SpatialImmersiveVideoStereoLayout.Mono -> null
+      }
+
   fun customProjectionDimensions(
       config: SpatialImmersiveVideoConfig,
   ): Pair<Int, Int>? {
-    if (config.stereoLayout != SpatialImmersiveVideoStereoLayout.SideBySideLeftRight) {
+    if (config.stereoLayout == SpatialImmersiveVideoStereoLayout.Mono) {
       return null
     }
     val scale =
@@ -72,8 +78,15 @@ internal object SpatialImmersiveVideoSessionPolicy {
                 MAX_CUSTOM_PROJECTION_DIMENSION_PX.toDouble() / config.heightPx,
             ),
         )
-    val scaledWidth = floor(config.widthPx * scale).toInt().let { it - (it % 2) }
-    val scaledHeight = floor(config.heightPx * scale).toInt()
+    var scaledWidth = floor(config.widthPx * scale).toInt()
+    var scaledHeight = floor(config.heightPx * scale).toInt()
+    when (config.stereoLayout) {
+      SpatialImmersiveVideoStereoLayout.SideBySideLeftRight ->
+          scaledWidth -= scaledWidth % 2
+      SpatialImmersiveVideoStereoLayout.TopBottom ->
+          scaledHeight -= scaledHeight % 2
+      SpatialImmersiveVideoStereoLayout.Mono -> return null
+    }
     if (scaledWidth < MIN_CUSTOM_PROJECTION_WIDTH_PX ||
         scaledHeight < MIN_CUSTOM_PROJECTION_HEIGHT_PX) {
       return null

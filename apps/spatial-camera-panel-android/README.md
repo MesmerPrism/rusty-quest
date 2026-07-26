@@ -1284,6 +1284,14 @@ spherical metadata. Videos remain local and are not bundled into the APK. See
 [`docs/SPATIAL_IMMERSIVE_VIDEO_PLAYBACK.md`](../../docs/SPATIAL_IMMERSIVE_VIDEO_PLAYBACK.md)
 for the shape matrix, failure policy, lifecycle, and validation markers.
 
+Sideload-only builds may instead embed authenticated encrypted packs. One live
+custom-projection catalog can mix SBS and top-bottom stereo items, including
+different flat/180°/360° source classifications. Selection replaces only the
+decoder source. Top-bottom eye regions are mapped into the compositor's
+existing packed-SBS target, while the Activity, camera, planar carrier, and
+private effect stack stay active. Mono items continue to use the ideal direct
+Spatial SDK media panel rather than the custom stereo compositor.
+
 To include a generic Spatial SDK staged 3D asset, provide a staged mesh URI or
 let the wrapper stage a local GLB/GLTF source. Raw FBX sources must be converted
 to GLB/GLTF first; the source model remains local and is not packaged:

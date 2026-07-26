@@ -130,9 +130,11 @@ Assert-Contains "Activity" $activity 'immersiveVideoPanelCoordinator.destroy("ac
 Assert-Contains "Immersive session" $session "compatibleWithSession("
 Assert-Contains "Immersive session" $session 'CUSTOM_PROJECTION_SOURCE = "encrypted-offline-pack"'
 Assert-Contains "Immersive session" $session "MAX_CUSTOM_PROJECTION_DIMENSION_PX = 4096"
+Assert-Contains "Immersive session" $session 'SpatialImmersiveVideoStereoLayout.TopBottom ->'
 Assert-Contains "Immersive coordinator" $coordinator "fun selectPrevious("
 Assert-Contains "Immersive coordinator" $coordinator "fun selectNext("
 Assert-Contains "Immersive coordinator" $coordinator "status=catalog-ready"
+Assert-Contains "Immersive coordinator" $coordinator "projectionClassLocked=false"
 
 Assert-Contains "Immersive route tests" $routeTest "routesEquirect180SideBySideStereo"
 Assert-Contains "Immersive route tests" $routeTest "routesEquirect360MonoEvenWhenSourceMetadataWouldClaimStereo"

@@ -256,7 +256,8 @@ internal class SpatialImmersiveVideoPanelCoordinator(
     emitMarker(
         "channel=spatial-immersive-video status=catalog-ready " +
             "itemCount=${result.size} rejectedCount=$rejectedCount " +
-            "boundedCatalog=true maxPackagedPacks=32 projectionClassLocked=true " +
+            "boundedCatalog=true maxPackagedPacks=32 projectionClassLocked=false " +
+            "encryptedStereoCatalog=true shapeAndStereoLayoutMayVary=true " +
             "resolutionMayVary=true rawMediaNamesExposed=false"
     )
     return result

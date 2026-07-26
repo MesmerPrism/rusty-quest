@@ -303,13 +303,24 @@ internal object SpatialVideoProjectionRouteModule {
 
   fun normalizeMediaLayout(value: String): String =
       when (value.trim().lowercase(Locale.US).replace("_", "-")) {
+        "top-bottom", "top-bottom-left-right", "tb", "over-under" ->
+            "top-bottom-left-right"
         "side-by-side", "sbs", "left-right", "side-by-side-left-right" ->
             CAMERA_HWB_PROJECTION_VIDEO_PACKED_MEDIA_LAYOUT
         else -> CAMERA_HWB_PROJECTION_VIDEO_PACKED_MEDIA_LAYOUT
       }
 
-  fun markerFields(settings: SpatialVideoProjectionSettings): String =
-      "videoProjectionEnabled=${settings.enabled} " +
+  fun markerFields(settings: SpatialVideoProjectionSettings): String {
+    val (leftSourceUvRect, rightSourceUvRect) =
+        when (normalizeStereoLayout(settings.stereoLayout)) {
+          "top-bottom-left-right" ->
+              "0.000000,0.000000,1.000000,0.500000" to
+                  "0.000000,0.500000,1.000000,0.500000"
+          else ->
+              "0.000000,0.000000,0.500000,1.000000" to
+                  "0.500000,0.000000,0.500000,1.000000"
+        }
+    return "videoProjectionEnabled=${settings.enabled} " +
           "spatialVideoProjectionEnabled=${settings.enabled} " +
           "spatialVideoProjectionActive=${settings.active} " +
           "spatialFeatureExplicitOptIn=${settings.enabled} " +
@@ -346,8 +357,8 @@ internal object SpatialVideoProjectionRouteModule {
           "videoProjectionControlPlane=spatial-activity-runtime-property-or-intent-extra " +
           "videoProjectionDecodePath=MediaCodec-to-Surface " +
           "videoProjectionFormat=private " +
-          "videoProjectionLeftSourceUvRect=0.000000,0.000000,0.500000,1.000000 " +
-          "videoProjectionRightSourceUvRect=0.500000,0.000000,0.500000,1.000000 " +
+          "videoProjectionLeftSourceUvRect=$leftSourceUvRect " +
+          "videoProjectionRightSourceUvRect=$rightSourceUvRect " +
           "videoProjectionLeftTargetPackedUvRect=0.000000,0.000000,0.500000,1.000000 " +
           "videoProjectionRightTargetPackedUvRect=0.500000,0.000000,0.500000,1.000000 " +
           "spatialVideoProjectionSameSurfaceComposition=true " +
@@ -356,6 +367,7 @@ internal object SpatialVideoProjectionRouteModule {
           "nativeImageReader=true javaHardwareBufferBridge=false cpuPixelCopy=false " +
           "highRateJsonPayload=${settings.highRateJsonPayload} " +
           "rawCamera=false passthroughTexture=false environmentDepth=false geometryWitness=false"
+  }
 
   fun startDeferredForSceneMarker(reason: String): String =
       "channel=$CHANNEL status=start-deferred " +

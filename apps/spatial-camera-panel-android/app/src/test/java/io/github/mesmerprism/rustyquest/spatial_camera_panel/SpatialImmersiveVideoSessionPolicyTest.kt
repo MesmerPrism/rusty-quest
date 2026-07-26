@@ -18,30 +18,91 @@ class SpatialImmersiveVideoSessionPolicyTest {
   }
 
   @Test
-  fun rejectsAProjectionShapeOrPerEyeAspectChange() {
+  fun acceptsMixedShapeAspectAndStereoPackingForEncryptedStereoSources() {
     val anchor = config(pack("anchor", 5760, 2880))
-    val changedShape =
+    val topBottom360 =
         config(
-            pack("shape", 5760, 2880, shape = SpatialImmersiveVideoShape.Equirect360)
+            pack(
+                "top-bottom-360",
+                3840,
+                4320,
+                shape = SpatialImmersiveVideoShape.Equirect360,
+                stereoLayout = SpatialImmersiveVideoStereoLayout.TopBottom,
+            )
         )
-    val changedAspect = config(pack("aspect", 3840, 2160))
 
-    assertFalse(
-        SpatialImmersiveVideoSessionPolicy.compatibleWithSession(anchor, changedShape)
-    )
-    assertFalse(
-        SpatialImmersiveVideoSessionPolicy.compatibleWithSession(anchor, changedAspect)
+    assertTrue(
+        SpatialImmersiveVideoSessionPolicy.compatibleWithSession(anchor, topBottom360)
     )
   }
 
   @Test
-  fun scalesPackedStereoToTheCustomDecoderSurfaceLimit() {
+  fun rejectsMonoOrUnencryptedSourcesFromTheCustomStereoSession() {
+    val anchor = config(pack("anchor", 5760, 2880))
+    val mono =
+        config(
+            pack(
+                "mono",
+                7680,
+                3840,
+                shape = SpatialImmersiveVideoShape.Equirect360,
+                stereoLayout = SpatialImmersiveVideoStereoLayout.Mono,
+            )
+        )
+    val unencrypted = config(pack("plain", 4096, 2048)).copy(offlinePack = null)
+
+    assertFalse(SpatialImmersiveVideoSessionPolicy.compatibleWithSession(anchor, mono))
+    assertFalse(
+        SpatialImmersiveVideoSessionPolicy.compatibleWithSession(anchor, unencrypted)
+    )
+  }
+
+  @Test
+  fun scalesSideBySideStereoToTheCustomDecoderSurfaceLimit() {
     val dimensions =
         SpatialImmersiveVideoSessionPolicy.customProjectionDimensions(
             config(pack("large", 5760, 2880))
         )
 
     assertEquals(4096 to 2048, dimensions)
+  }
+
+  @Test
+  fun scalesTopBottomStereoAndPreservesItsEyePacking() {
+    val topBottom =
+        config(
+            pack(
+                "top-bottom",
+                3840,
+                4320,
+                shape = SpatialImmersiveVideoShape.Equirect360,
+                stereoLayout = SpatialImmersiveVideoStereoLayout.TopBottom,
+            )
+        )
+
+    assertEquals(
+        3640 to 4096,
+        SpatialImmersiveVideoSessionPolicy.customProjectionDimensions(topBottom),
+    )
+    val layout =
+        requireNotNull(SpatialImmersiveVideoSessionPolicy.customProjectionLayout(topBottom))
+    assertEquals("top-bottom-left-right", layout)
+    val settings =
+        SpatialVideoProjectionSettings.disabled().copy(
+            mediaLayout = layout,
+            stereoLayout = layout,
+        )
+    val marker = SpatialVideoProjectionRouteModule.markerFields(settings)
+    assertTrue(
+        marker.contains(
+            "videoProjectionLeftSourceUvRect=0.000000,0.000000,1.000000,0.500000"
+        )
+    )
+    assertTrue(
+        marker.contains(
+            "videoProjectionRightSourceUvRect=0.000000,0.500000,1.000000,0.500000"
+        )
+    )
   }
 
   @Test
@@ -69,6 +130,8 @@ class SpatialImmersiveVideoSessionPolicyTest {
       widthPx: Int,
       heightPx: Int,
       shape: SpatialImmersiveVideoShape = SpatialImmersiveVideoShape.Equirect180,
+      stereoLayout: SpatialImmersiveVideoStereoLayout =
+          SpatialImmersiveVideoStereoLayout.SideBySideLeftRight,
   ): OfflineImmersiveMediaPack =
       OfflineImmersiveMediaPack(
           packId = id,
@@ -77,7 +140,7 @@ class SpatialImmersiveVideoSessionPolicyTest {
           sourceSha256 = "0".repeat(64),
           chunkSizeBytes = 1,
           shape = shape,
-          stereoLayout = SpatialImmersiveVideoStereoLayout.SideBySideLeftRight,
+          stereoLayout = stereoLayout,
           widthPx = widthPx,
           heightPx = heightPx,
           chunks = emptyList(),

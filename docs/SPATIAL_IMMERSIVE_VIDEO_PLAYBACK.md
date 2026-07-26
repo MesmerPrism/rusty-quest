@@ -16,13 +16,14 @@ app never writes a plaintext video file. The decoded surface and Spatial SDK
 projection path are identical to the ordinary local-file route when the direct
 media panel is active.
 
-An authenticated side-by-side pack may instead feed the app's existing custom
-stereo projection compositor. Android `MediaExtractor` reads the same
-random-access decrypted byte stream through `MediaDataSource`, `MediaCodec`
-decodes directly to the Rust-owned surface, and the Vulkan compositor combines
-the video with the camera and private projection/effect stack. The encrypted
-video route and the custom stack are therefore no longer activity-level
-exclusive features.
+An authenticated side-by-side or top-bottom stereo pack may instead feed the
+app's existing custom stereo projection compositor. Android `MediaExtractor`
+reads the same random-access decrypted byte stream through `MediaDataSource`,
+`MediaCodec` decodes directly to the Rust-owned surface, and the Vulkan
+compositor maps the declared eye regions into its packed-SBS target before
+combining the video with the camera and private projection/effect stack. The
+encrypted video route and the custom stack are therefore no longer
+activity-level exclusive features.
 
 This is generic public adapter infrastructure. Media libraries, private
 filenames, classification evidence, artistic content, and effect-specific
@@ -71,11 +72,13 @@ pack IDs and each pack's authenticated manifest before exposing it to the
 session coordinator. Raw filenames and private playlist labels are not part of
 the public contract.
 
-One session contains only packs with the same projection shape, stereo layout,
-and per-eye aspect class as the initially requested pack. Encoded resolution
-may vary. For the custom side-by-side compositor, the decoder surface is scaled
-proportionally to fit within 4096 pixels on either axis while retaining an even
-packed width.
+One custom-projection session may contain authenticated SBS and top-bottom
+stereo packs with different declared shapes, per-eye aspect ratios, and encoded
+resolutions. Mono packs remain outside that stereo session. Each decoder
+surface is scaled proportionally to fit within 4096 pixels on either axis while
+retaining an even packed width for SBS or even packed height for top-bottom.
+The source manifest keeps its ideal direct Spatial SDK shape and stereo mode;
+the custom projection carrier remains the existing planar effect surface.
 
 The layer control panel shows only an ordinal (`Video 1 of N`) and offers
 Previous and Next actions. Validation clients may send `video-previous`,
@@ -191,9 +194,11 @@ distribution path.
 The immersive route is not lifecycle-exclusive. A valid direct-media request
 adds its ideal Spatial SDK media panel without short-circuiting ordinary scene,
 VR-ready, tick, or control-panel setup. When the custom stereo projection route
-is active and the selected encrypted pack is side-by-side compatible, the
+is active and the selected encrypted pack has a supported stereo packing, the
 direct media panel is suppressed to prevent duplicate rendering and that pack
-becomes the custom compositor's video source.
+becomes the custom compositor's video source. SBS and top-bottom sources use
+their declared per-eye UV regions; both feed the compositor's existing
+packed-SBS full-eye target.
 
 An invalid request registers no panel and emits
 `channel=spatial-immersive-video status=route-rejected ... failClosed=true`.
@@ -223,5 +228,6 @@ Useful runtime markers include:
 Host checks live in
 `tools/checks/Test-SpatialCameraPanelImmersiveVideoStatic.ps1`, and pure route
 tests cover 180° SBS, 360° mono, flat top-bottom, default-off behavior,
-single-URI media access, unknown classifications, path confinement,
-projection-class compatibility, resolution scaling, and selection wraparound.
+single-URI media access, unknown classifications, path confinement, mixed
+encrypted stereo catalogs, layout-aware resolution scaling and source
+rectangles, and selection wraparound.
