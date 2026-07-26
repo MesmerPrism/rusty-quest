@@ -67,6 +67,8 @@ Assert-Contains "App embedded-key boundary" $appGradle "RUSTY_QUEST_OFFLINE_MEDI
 Assert-Contains "App embedded-key boundary" $appGradle "OFFLINE_MEDIA_KEY_HEX"
 Assert-Contains "App packaged-media boundary" $appGradle "RUSTY_QUEST_OFFLINE_MEDIA_PACK_ASSET_DIR"
 Assert-Contains "App packaged-media boundary" $appGradle "OFFLINE_MEDIA_PACKAGED_ASSETS"
+Assert-Contains "App packaged-media asset-root validation" $appGradle 'resolve("offline-media-packs")'
+Assert-Contains "App packaged-media asset-root validation" $appGradle "must point to an asset root"
 Assert-Contains "App release build" $appGradle 'getByName("release")'
 Assert-Contains "App release build" $appGradle "signingConfig = signingConfigs.getByName(`"debug`")"
 Assert-Contains "Panel ids" $ids "spatial_immersive_video_panel"

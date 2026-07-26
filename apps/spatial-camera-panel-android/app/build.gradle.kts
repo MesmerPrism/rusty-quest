@@ -248,7 +248,14 @@ android {
         ?.let { assets.srcDir(it) }
       offlineMediaPackAssetDir.orNull
         ?.takeIf { it.isNotBlank() }
-        ?.let { assets.srcDir(it) }
+        ?.let { assetRoot ->
+          val packagedMediaRoot = file(assetRoot).resolve("offline-media-packs")
+          require(packagedMediaRoot.isDirectory) {
+            "RUSTY_QUEST_OFFLINE_MEDIA_PACK_ASSET_DIR must point to an asset root " +
+              "containing offline-media-packs/"
+          }
+          assets.srcDir(assetRoot)
+        }
       providers.environmentVariable("RUSTY_QUEST_SPATIAL_PRIVATE_FEATURE_RES_DIR").orNull
         ?.takeIf { it.isNotBlank() }
         ?.let { res.srcDir(it) }
