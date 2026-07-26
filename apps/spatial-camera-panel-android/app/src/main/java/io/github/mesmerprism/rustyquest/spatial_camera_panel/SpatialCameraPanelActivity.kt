@@ -331,6 +331,14 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
       SpatialPanelJoystickArbitrationCoordinator by lazy(LazyThreadSafetyMode.NONE) {
         SpatialPanelJoystickArbitrationCoordinator(
             SpatialPanelJoystickArbitrationBindings(
+                applyImmersiveVideoSelection = { axes, inputSource ->
+                  immersiveVideoSelectionInputCoordinator.handleRightStick(
+                      axes.rightX,
+                      axes.rightY,
+                      inputSource,
+                  )
+                },
+                immersiveVideoSelectionEnabled = ::directImmersiveVideoSelectionEnabled,
                 applyProjectionScale = { rightY ->
                   cameraHwbProjectionTuningCoordinator.applyScaleInput(
                       rightY = rightY,
@@ -346,6 +354,22 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
                 projectionTargetScale = cameraHwbProjectionTuningCoordinator::targetScale,
                 headlockMarkerFields = ::panelHeadlockMarkerFields,
                 elapsedRealtimeMs = SystemClock::elapsedRealtime,
+                marker = ::marker,
+            )
+        )
+      }
+  private val immersiveVideoSelectionInputCoordinator:
+      SpatialImmersiveVideoSelectionInputCoordinator by lazy(LazyThreadSafetyMode.NONE) {
+        SpatialImmersiveVideoSelectionInputCoordinator(
+            SpatialImmersiveVideoSelectionInputBindings(
+                selectionEnabled = ::directImmersiveVideoSelectionEnabled,
+                select = { direction, inputSource ->
+                  changeImmersiveVideo(
+                      direction.action,
+                      null,
+                      "$inputSource-right-stick-flick",
+                  )
+                },
                 marker = ::marker,
             )
         )
@@ -659,6 +683,13 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             currentLeftStickPanelDistanceMapping = ::currentLeftStickPanelDistanceMapping,
             currentLeftStickPanelDistanceEnabled = ::currentLeftStickPanelDistanceEnabled,
             currentSpatialVrInputSystemToken = ::currentSpatialVrInputSystemToken,
+            applyImmersiveVideoSelection = { rightX, rightY, inputSource ->
+              immersiveVideoSelectionInputCoordinator.handleRightStick(
+                  rightX,
+                  rightY,
+                  inputSource,
+              )
+            },
             applyProjectionScale = { value, inputSource, mapping, detail ->
               cameraHwbProjectionTuningCoordinator.applyScaleInput(
                   value,
@@ -1552,6 +1583,11 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
       immersiveVideoPanelCoordinator.requested &&
           !usesImmersiveVideoAsCustomProjectionSource()
 
+  private fun directImmersiveVideoSelectionEnabled(): Boolean {
+    val session = immersiveVideoPanelCoordinator.sessionSnapshot()
+    return directImmersiveVideoPanelRequested() && session.available && session.itemCount > 1
+  }
+
   private fun currentProjectionVideoSettings(): SpatialVideoProjectionSettings {
     val base =
         presentationPolicy.videoSettings(
@@ -1869,14 +1905,16 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
                     },
                 ),
         )
+    val immersiveVideoPanels =
+        if (directImmersiveVideoPanelRequested()) {
+          immersiveVideoPanelCoordinator.panelRegistrations()
+        } else {
+          emptyList()
+        }
     val panels =
         composePanels +
+            immersiveVideoPanels +
             listOfNotNull(
-        if (directImmersiveVideoPanelRequested()) {
-          immersiveVideoPanelCoordinator.panelRegistrationOrNull()
-        } else {
-          null
-        },
         CameraHwbProjectionPanelCarrierModule.videoSurfacePanelRegistration(
             cameraHwbProjectionPanelCarrierCoordinator.videoPanelBindings()
         ),
@@ -2722,7 +2760,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
         detail =
             "leftStick=${activityMarkerFloat(axes.leftX)};${activityMarkerFloat(axes.leftY)} " +
                 "rightStick=${activityMarkerFloat(axes.rightX)};${activityMarkerFloat(axes.rightY)} " +
-                "rightStickXIgnored=true rightStickYPanelDistanceDisabled=true " +
+                "rightStickXVideoSelectionReserved=true rightStickYPanelDistanceDisabled=true " +
                 "rightStickXPanelScaleDisabled=true",
     )
   }

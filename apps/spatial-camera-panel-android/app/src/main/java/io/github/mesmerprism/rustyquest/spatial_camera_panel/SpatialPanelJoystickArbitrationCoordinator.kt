@@ -10,6 +10,8 @@ internal data class SpatialPanelJoystickAxes(
 )
 
 internal data class SpatialPanelJoystickArbitrationBindings(
+    val applyImmersiveVideoSelection: (SpatialPanelJoystickAxes, String) -> Boolean,
+    val immersiveVideoSelectionEnabled: () -> Boolean,
     val applyProjectionScale: (Float) -> Boolean,
     val applyPanelPlacement: (SpatialPanelJoystickAxes, String) -> Boolean,
     val leftStickPanelDistanceEnabled: () -> Boolean,
@@ -27,6 +29,8 @@ internal class SpatialPanelJoystickArbitrationCoordinator(
   private var lastArbitrationMarkerMs = 0L
 
   fun handle(axes: SpatialPanelJoystickAxes, inputSource: String): Boolean {
+    val immersiveVideoSelectionHandled =
+        bindings.applyImmersiveVideoSelection(axes, inputSource)
     val observed =
         abs(axes.leftX) >= PANEL_HEADLOCK_JOYSTICK_DEADZONE ||
             abs(axes.leftY) >= PANEL_HEADLOCK_JOYSTICK_DEADZONE ||
@@ -34,7 +38,12 @@ internal class SpatialPanelJoystickArbitrationCoordinator(
             abs(axes.rightY) >= PANEL_HEADLOCK_JOYSTICK_DEADZONE
     if (!observed) return false
 
-    val projectionScaleHandled = bindings.applyProjectionScale(axes.rightY)
+    val projectionScaleHandled =
+        if (immersiveVideoSelectionHandled) {
+          false
+        } else {
+          bindings.applyProjectionScale(axes.rightY)
+        }
     val panelPlacementHandled =
         if (projectionScaleHandled) {
           false
@@ -47,10 +56,15 @@ internal class SpatialPanelJoystickArbitrationCoordinator(
     val leftDistanceObserved = abs(axes.leftY) >= PANEL_HEADLOCK_JOYSTICK_DEADZONE
     val rightStickSwallowedAsIgnored =
         rightStickObserved &&
+            !immersiveVideoSelectionHandled &&
             !projectionScaleHandled &&
             !panelPlacementHandled &&
             !leftDistanceObserved
-    val consumed = projectionScaleHandled || panelPlacementHandled || rightStickSwallowedAsIgnored
+    val consumed =
+        immersiveVideoSelectionHandled ||
+            projectionScaleHandled ||
+            panelPlacementHandled ||
+            rightStickSwallowedAsIgnored
     val leftStickPanelDistanceEnabled = bindings.leftStickPanelDistanceEnabled()
     val privateLayerPanelVisible = bindings.privateLayerPanelVisible()
     val leftStickYDeliveredToPanelScroll =
@@ -69,6 +83,8 @@ internal class SpatialPanelJoystickArbitrationCoordinator(
                   leftY = axes.leftY,
                   rightX = axes.rightX,
                   rightY = axes.rightY,
+                  immersiveVideoSelectionHandled = immersiveVideoSelectionHandled,
+                  immersiveVideoSelectionEnabled = bindings.immersiveVideoSelectionEnabled(),
                   projectionScaleHandled = projectionScaleHandled,
                   panelPlacementHandled = panelPlacementHandled,
                   rightStickSwallowedAsIgnored = rightStickSwallowedAsIgnored,

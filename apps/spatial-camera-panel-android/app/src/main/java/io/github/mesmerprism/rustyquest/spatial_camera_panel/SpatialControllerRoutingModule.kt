@@ -31,6 +31,8 @@ internal data class SpatialJoystickArbitrationMarkerInput(
     val leftY: Float,
     val rightX: Float,
     val rightY: Float,
+    val immersiveVideoSelectionHandled: Boolean,
+    val immersiveVideoSelectionEnabled: Boolean,
     val projectionScaleHandled: Boolean,
     val panelPlacementHandled: Boolean,
     val rightStickSwallowedAsIgnored: Boolean,
@@ -131,6 +133,8 @@ internal object SpatialControllerRoutingModule {
           "inputSource=${activityMarkerToken(input.inputSource)} " +
           "leftStick=${activityMarkerFloat(input.leftX)};${activityMarkerFloat(input.leftY)} " +
           "rightStick=${activityMarkerFloat(input.rightX)};${activityMarkerFloat(input.rightY)} " +
+          "immersiveVideoSelectionHandled=${input.immersiveVideoSelectionHandled} " +
+          "immersiveVideoSelectionEnabled=${input.immersiveVideoSelectionEnabled} " +
           "projectionScaleHandled=${input.projectionScaleHandled} " +
           "panelPlacementHandled=${input.panelPlacementHandled} " +
           "rightStickSwallowedAsIgnored=${input.rightStickSwallowedAsIgnored} " +
@@ -143,7 +147,9 @@ internal object SpatialControllerRoutingModule {
           "rightStickYProjectionScaleEnabled=${!input.privateLayerPanelVisible} " +
           "rightStickYProjectionScaleSuppressedByPrivateLayerPanel=${input.privateLayerPanelVisible} " +
           "rightStickYPanelDistanceDisabled=true " +
-          "rightStickXIgnored=true rightStickXPanelScaleDisabled=true " +
+          "rightStickXVideoSelectionEnabled=${input.immersiveVideoSelectionEnabled} " +
+          "rightStickXIgnored=${!input.immersiveVideoSelectionEnabled} " +
+          "rightStickXPanelScaleDisabled=true " +
           "panelMode=${input.panelMode} " +
           "projectionTargetLiveScale=${activityMarkerFloat(input.projectionTargetLiveScale)} " +
           input.headlockMarkerFields
@@ -257,7 +263,7 @@ internal object SpatialControllerRoutingModule {
   ): String =
       "channel=spatial-panel status=controller-input-route-ready " +
           "inputSource=${activityMarkerToken(snapshot.rightInputSource)} " +
-          "controllerInput=right-primary-button+right-secondary-button-wall-toggle+right-trigger-particle-recenter+right-thumb-up-down-projection-scale+$leftStickPanelDistanceMapping " +
+          "controllerInput=right-primary-button+right-secondary-button-wall-toggle+right-trigger-particle-recenter+right-thumb-left-right-video-selection+right-thumb-up-down-projection-scale+$leftStickPanelDistanceMapping " +
           "spatialVrInputSystem=$spatialVrInputSystem " +
           "controllerComponentCount=${snapshot.componentCount} " +
           "controllerTypeComponentCount=${snapshot.controllerTypeCount} " +
@@ -298,6 +304,9 @@ internal object SpatialControllerRoutingModule {
           "leftThumbYProjectionHorizontalOffsetDisabled=true " +
           "rightThumbUpBit=${ButtonBits.ButtonThumbRU} rightThumbDownBit=${ButtonBits.ButtonThumbRD} " +
           "rightThumbUp=${snapshot.rightThumbUp} rightThumbDown=${snapshot.rightThumbDown} " +
+          "rightThumbLeftBit=${ButtonBits.ButtonThumbRL} rightThumbRightBit=${ButtonBits.ButtonThumbRR} " +
+          "rightThumbLeft=${snapshot.rightThumbLeft} rightThumbRight=${snapshot.rightThumbRight} " +
+          "rightThumbX=${activityMarkerFloat(snapshot.rightThumbX)} " +
           "rightThumbY=${activityMarkerFloat(snapshot.rightThumbY)} " +
           "activeButtonState=${snapshot.buttonState} activeChangedButtons=${snapshot.changedButtons} " +
           "allControllerButtonState=${snapshot.allControllerButtonState} " +

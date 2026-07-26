@@ -6,6 +6,7 @@ import android.net.Uri
 import android.os.Handler
 import android.os.Looper
 import android.view.Surface
+import android.view.View
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MimeTypes
 import androidx.media3.common.PlaybackException
@@ -40,6 +41,7 @@ internal class SpatialImmersiveVideoPanelCoordinator(
   private var panelSceneObject: PanelSceneObject? = null
   private var player: ExoPlayer? = null
   private var surface: Surface? = null
+  private var spawnPose: Pose? = null
   private var resumeAfterPause = false
   private var activeIndex = 0
   private val progressHandler = Handler(Looper.getMainLooper())
@@ -47,6 +49,8 @@ internal class SpatialImmersiveVideoPanelCoordinator(
     get() = (resolution as? SpatialImmersiveVideoRouteResolution.Ready)?.config
   private val catalog: List<SpatialImmersiveVideoConfig> by
       lazy(LazyThreadSafetyMode.NONE, ::loadCompatibleCatalog)
+  private val panelRegistrationIds: List<Int> by
+      lazy(LazyThreadSafetyMode.NONE) { catalog.map { View.generateViewId() } }
 
   val requested: Boolean
     get() = resolution.requested
@@ -108,40 +112,36 @@ internal class SpatialImmersiveVideoPanelCoordinator(
   ): SpatialVideoProjectionSettings? =
       SpatialImmersiveVideoSessionPolicy.customProjectionSettings(base, activeConfig)
 
-  fun panelRegistrationOrNull(): PanelRegistration? {
-    val config = activeConfig ?: return null
-    return VideoSurfacePanelRegistration(
-        R.id.spatial_immersive_video_panel,
-        surfaceConsumer = { _, videoSurface ->
-          surface = videoSurface
-          startPlayer(activeConfig ?: config, videoSurface)
-        },
-        settingsCreator = { mediaPanelSettings(config) },
-        panelSetup = { panel, _ ->
-          panelSceneObject = panel
-          emitMarker(
-              "channel=spatial-immersive-video status=panel-ready " +
-                  "${config.markerFields()} surfaceValid=${panel.surface.isValid}"
-          )
-        },
-    )
-  }
+  fun panelRegistrations(): List<PanelRegistration> =
+      catalog.mapIndexed { index, config ->
+        VideoSurfacePanelRegistration(
+            panelRegistrationIds[index],
+            surfaceConsumer = { _, videoSurface ->
+              if (index == activeIndex) {
+                surface = videoSurface
+                startPlayer(config, videoSurface)
+              }
+            },
+            settingsCreator = { mediaPanelSettings(config) },
+            panelSetup = { panel, _ ->
+              if (index == activeIndex) {
+                panelSceneObject = panel
+                emitMarker(
+                    "channel=spatial-immersive-video status=panel-ready " +
+                        "registrationOrdinal=${index + 1} " +
+                        "${config.markerFields()} surfaceValid=${panel.surface.isValid}"
+                )
+              }
+            },
+        )
+      }
 
   fun spawnAtViewer(viewerPose: Pose) {
-    val config = activeConfig ?: return
+    spawnPose = Pose(viewerPose.t, viewerPose.q)
     if (entity != null) {
       return
     }
-    entity =
-        Entity.create(
-            Panel(R.id.spatial_immersive_video_panel),
-            Transform(Pose(viewerPose.t, viewerPose.q)),
-            Visible(true),
-        )
-    emitMarker(
-        "channel=spatial-immersive-video status=entity-spawned " +
-            "${config.markerFields()} centeredOnInitialViewer=true"
-    )
+    spawnActiveEntity("initial-spawn")
   }
 
   fun pause(reason: String) {
@@ -168,6 +168,7 @@ internal class SpatialImmersiveVideoPanelCoordinator(
     progressHandler.removeCallbacksAndMessages(null)
     releasePlayer()
     surface = null
+    spawnPose = null
     panelSceneObject = null
     entity?.destroy()
     entity = null
@@ -188,21 +189,45 @@ internal class SpatialImmersiveVideoPanelCoordinator(
     val normalizedIndex =
         SpatialImmersiveVideoSessionPolicy.wrappedIndex(requestedIndex, catalog.size)
     val changed = normalizedIndex != activeIndex
+    val hadDirectPanelEntity = entity != null
+    if (changed && hadDirectPanelEntity) {
+      releasePlayer()
+      surface = null
+      panelSceneObject = null
+      entity?.destroy()
+      entity = null
+    }
     activeIndex = normalizedIndex
     val config = activeConfig
     if (changed && config != null) {
-      surface?.takeIf { it.isValid }?.let { videoSurface ->
-        releasePlayer()
-        startPlayer(config, videoSurface)
+      if (hadDirectPanelEntity) {
+        spawnActiveEntity("selection-change")
       }
       emitMarker(
           "channel=spatial-immersive-video status=selection-applied " +
               "source=${activityMarkerToken(source)} activeOrdinal=${activeIndex + 1} " +
-              "itemCount=${catalog.size} decoderRestarted=${surface != null} " +
-              "activityRestarted=false ${config.markerFields()}"
+              "itemCount=${catalog.size} decoderRestarted=$hadDirectPanelEntity " +
+              "spatialPanelRebuilt=$hadDirectPanelEntity activityRestarted=false ${config.markerFields()}"
       )
     }
     return SpatialImmersiveVideoSelection(sessionSnapshot(), config, changed)
+  }
+
+  private fun spawnActiveEntity(reason: String) {
+    val config = activeConfig ?: return
+    val pose = spawnPose ?: return
+    val registrationId = panelRegistrationIds.getOrNull(activeIndex) ?: return
+    entity =
+        Entity.create(
+            Panel(registrationId),
+            Transform(Pose(pose.t, pose.q)),
+            Visible(true),
+        )
+    emitMarker(
+        "channel=spatial-immersive-video status=entity-spawned " +
+            "reason=${activityMarkerToken(reason)} registrationOrdinal=${activeIndex + 1} " +
+            "${config.markerFields()} centeredOnInitialViewer=true headOrientationLocked=false"
+    )
   }
 
   private fun loadCompatibleCatalog(): List<SpatialImmersiveVideoConfig> {

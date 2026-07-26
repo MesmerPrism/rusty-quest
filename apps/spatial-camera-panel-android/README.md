@@ -1280,7 +1280,13 @@ panel pixel dimensions to the encoded source, opens the verified staged file
 through a single MediaStore URI grant without broad media permission, and
 verifies the device copy by size and SHA-256. Projection and stereo
 classification are always explicit; the app does not trust filenames or
-spherical metadata. Videos remain local and are not bundled into the APK. See
+spherical metadata. Equirectangular surfaces remain centered in world space,
+so head rotation changes the viewed direction instead of carrying the video
+with the headset. A right-stick flick selects the previous video on the left
+or the next video on the right; returning the stick near neutral rearms the
+next selection. Direct selection rebuilds the media panel so every item gets
+its own flat/180°/360° shape, mono/SBS/top-bottom stereo mode, and source pixel
+dimensions. Videos remain local and are not bundled into the APK. See
 [`docs/SPATIAL_IMMERSIVE_VIDEO_PLAYBACK.md`](../../docs/SPATIAL_IMMERSIVE_VIDEO_PLAYBACK.md)
 for the shape matrix, failure policy, lifecycle, and validation markers.
 

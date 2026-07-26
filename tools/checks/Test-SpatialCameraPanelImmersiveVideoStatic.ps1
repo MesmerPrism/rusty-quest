@@ -143,7 +143,7 @@ Assert-Contains "Immersive route tests" $routeTest "rejectsUnknownProjectionInst
 
 Assert-Contains "Immersive staging tool" $stageTool 'throw "-Serial or RUSTY_QUEST_SERIAL is required'
 Assert-Contains "Immersive staging tool" $stageTool '@("-s", $script:Serial)'
-Assert-Contains "Immersive staging tool" $stageTool "/sdcard/Movies/RustyMorphovision"
+Assert-Contains "Immersive staging tool" $stageTool "/sdcard/Movies/RustyQuestImmersiveVideo"
 Assert-Contains "Immersive staging tool" $stageTool "content://media/external/video/media/`$mediaStoreId"
 Assert-Contains "Immersive staging tool" $stageTool '"-f", "0x1"'
 Assert-Contains "Immersive staging tool" $stageTool "single_uri_read_grant = `$true"

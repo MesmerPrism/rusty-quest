@@ -165,9 +165,9 @@ if ($Stereo -eq "top-bottom" -and ($HeightPx % 2) -ne 0) {
     throw "Top-bottom video height must be even: $HeightPx"
 }
 
-$remoteRoot = "/sdcard/Movies/RustyMorphovision"
+$remoteRoot = "/sdcard/Movies/RustyQuestImmersiveVideo"
 $remotePath = "$remoteRoot/v$extension"
-$remoteRelativePath = "Movies/RustyMorphovision/"
+$remoteRelativePath = "Movies/RustyQuestImmersiveVideo/"
 $validationRemoteRoot = "/sdcard/Android/data/$PackageName/files/immersive-video-validation"
 if ([string]::IsNullOrWhiteSpace($Out)) {
     $timestamp = Get-Date -Format "yyyyMMdd-HHmmss"

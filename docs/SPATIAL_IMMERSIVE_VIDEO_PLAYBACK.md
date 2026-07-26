@@ -46,7 +46,9 @@ spherical metadata.
 All routes use `VideoSurfacePanelRegistration`, `PixelDisplayOptions` at the
 encoded source dimensions, and `MediaPanelRenderOptions`. Equirectangular
 content is placed behind ordinary UI with `zIndex=-1`. The sphere is centered
-on the initial viewer pose and uses a 50 m default radius.
+on the initial viewer pose and uses a 50 m default radius. Its entity remains
+in the world reference space: head movement changes the view into the
+hemisphere or sphere rather than moving the video with the viewer's head.
 
 Direct-to-surface is intentional. Meta documents it as the high-performance
 path for high-resolution and non-rectilinear media. The readable surface path
@@ -81,12 +83,21 @@ The source manifest keeps its ideal direct Spatial SDK shape and stereo mode;
 the custom projection carrier remains the existing planar effect surface.
 
 The layer control panel shows only an ordinal (`Video 1 of N`) and offers
-Previous and Next actions. Validation clients may send `video-previous`,
-`video-next`, or `video-select` through the existing `RUN_UI_COMMAND` action;
-`video-select` carries an opaque `video_pack_id`. A direct Spatial SDK panel
-recreates only its ExoPlayer instance. The custom compositor stops and restarts
-only its MediaCodec source and native video stream; it does not recreate the
-Activity, camera runtime, projection carrier, or private effect stack.
+Previous and Next actions. A horizontal right-stick flick selects the previous
+item on the left or the next item on the right. The stick must return near
+neutral before another selection, which prevents a held stick from skipping
+multiple items. Both Spatial SDK controller-component input and Android
+joystick fallback input feed the same latch.
+
+Validation clients may also send `video-previous`, `video-next`, or
+`video-select` through the existing `RUN_UI_COMMAND` action; `video-select`
+carries an opaque `video_pack_id`. A direct Spatial SDK selection rebuilds
+only its media-panel entity and ExoPlayer, retaining the Activity and its
+initial world-space center. This is required because shape, stereo mode, and
+encoded dimensions may differ between catalog items. The custom compositor
+stops and restarts only its MediaCodec source and native video stream; it does
+not recreate the Activity, camera runtime, projection carrier, or private
+effect stack.
 
 Performance validation must use the non-debuggable release variant:
 
@@ -123,7 +134,7 @@ The wrapper:
 1. reads the encoded dimensions with `ffprobe`;
 2. hashes the host file;
 3. pushes it to
-   `/sdcard/Movies/RustyMorphovision/v.<extension>` and indexes that exact
+   `/sdcard/Movies/RustyQuestImmersiveVideo/v.<extension>` and indexes that exact
    file in Android MediaStore;
 4. verifies byte length and SHA-256 on the exact device;
 5. stops only the target package when `-Launch` is supplied;
@@ -222,6 +233,7 @@ Useful runtime markers include:
 - `status=encrypted-chunk-decrypted`
 - `status=encrypted-chunk-error`
 - `status=catalog-ready`
+- `status=controller-flick-selection`
 - `status=selection-applied`
 - `status=source-switch-applied`
 

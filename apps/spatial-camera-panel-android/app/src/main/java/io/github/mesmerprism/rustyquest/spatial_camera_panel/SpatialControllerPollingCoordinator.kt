@@ -20,6 +20,7 @@ internal data class SpatialControllerPollingBindings(
     val currentLeftStickPanelDistanceMapping: () -> String,
     val currentLeftStickPanelDistanceEnabled: () -> Boolean,
     val currentSpatialVrInputSystemToken: () -> String,
+    val applyImmersiveVideoSelection: (Float, Float, String) -> Boolean,
     val applyProjectionScale: (Float, String, String, String) -> Unit,
     val applyPanelDistance: (Float, String, String, String) -> Unit,
     val recenterParticleSphere: (String, String) -> Boolean,
@@ -173,7 +174,13 @@ internal class SpatialControllerPollingCoordinator(
       )
     }
 
-    if (snapshot.rightThumbY != 0.0f) {
+    val immersiveVideoSelectionHandled =
+        bindings.applyImmersiveVideoSelection(
+            snapshot.rightThumbX,
+            snapshot.rightThumbY,
+            snapshot.rightInputSource,
+        )
+    if (!immersiveVideoSelectionHandled && snapshot.rightThumbY != 0.0f) {
       bindings.applyProjectionScale(
           snapshot.rightThumbY,
           snapshot.rightInputSource,
