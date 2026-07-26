@@ -218,10 +218,13 @@ encrypted pack catalog generic, bounded, opt-in, and free of private media
 names. In direct video-only mode, each item owns its ideal Spatial SDK shape
 and stereo mode; switching may rebuild only that world-centered media surface
 and decoder, never head-lock an immersive surface, and must require neutral
-rearm between right-stick selection flicks. A compatible side-by-side pack may
-feed the existing custom projection
-compositor, but source switching may restart only the media decoder/stream; it
-must not replace camera, carrier, private-effect, or Activity lifecycle.
+rearm between right-stick selection flicks. A compatible encrypted stereo pack
+may feed the existing custom projection compositor. Its final public carrier
+may use the declared world-anchored flat/180/360 shape or an explicitly
+selected legacy head-fixed border quad. A matching carrier profile changes only
+the decoder/stream; a shape or presentation change may rebind the carrier and
+native compositor, but must retain the Activity, control state, and current
+private configuration.
 
 The reusable RGB-channel spatial transform is documented in
 `docs/RGB_CHANNEL_TRANSFORM.md`. Rusty Quest owns only its bounded neutral
