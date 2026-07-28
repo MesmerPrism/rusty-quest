@@ -25,7 +25,8 @@ the Quest-owned adapter:
 ```powershell
 pwsh -NoProfile -File tools\Convert-HostessReplayControlState.ps1 `
   -InputPath <state.replay-control-state.json> `
-  -OutPath <profile.profile.json>
+  -OutPath <profile.profile.json> `
+  -GradleHome <gradle-9.4.1>
 ```
 
 The converter rejects unknown fields, wrong block lengths, non-finite values,
@@ -34,7 +35,10 @@ result through the authoritative Quest profile parser. It maps only the
 public, effect-neutral transport values; provider-private meanings and tuning
 do not enter the output. The PowerShell route invokes the production
 `convertHostessReplayControlState` JVM task with explicit input/output
-arguments. The production main writes a temporary sibling and requires an
+arguments. `-GradleHome` (or `GRADLE_HOME`) permits a clean detached source
+materialization to use an externally provisioned exact `gradle-9.4.1`
+distribution; the repo-local ignored tool cache remains the fallback. The
+production main writes a temporary sibling and requires an
 atomic rename before the final profile becomes visible.
 
 State v2 is preferred and carries an opaque descriptor-keyed

@@ -10,6 +10,8 @@ param(
 
     [string]$JavaHome = $env:JAVA_HOME,
 
+    [string]$GradleHome = $env:GRADLE_HOME,
+
     [string]$GradleVersion = "9.4.1"
 )
 
@@ -30,9 +32,17 @@ if (-not [string]::IsNullOrWhiteSpace($outputDirectory)) {
     New-Item -ItemType Directory -Force -Path $outputDirectory | Out-Null
 }
 
-$gradle = Join-Path $repoRoot "local-artifacts\tools\gradle-$GradleVersion\bin\gradle.bat"
+$resolvedGradleHome = if ([string]::IsNullOrWhiteSpace($GradleHome)) {
+    Join-Path $repoRoot "local-artifacts\tools\gradle-$GradleVersion"
+} else {
+    (Resolve-Path -LiteralPath $GradleHome -ErrorAction Stop).Path
+}
+if ((Split-Path -Leaf $resolvedGradleHome) -cne "gradle-$GradleVersion") {
+    throw "GradleHome must name the exact gradle-$GradleVersion distribution directory."
+}
+$gradle = Join-Path $resolvedGradleHome "bin\gradle.bat"
 if (-not (Test-Path -LiteralPath $gradle -PathType Leaf)) {
-    throw "Gradle $GradleVersion is not provisioned at $gradle. Use the repository's Spatial Camera Panel build resolver."
+    throw "Gradle $GradleVersion is not provisioned at $gradle. Supply -GradleHome or use the repository's Spatial Camera Panel build resolver."
 }
 if ([string]::IsNullOrWhiteSpace($AndroidHome) -or -not (Test-Path -LiteralPath $AndroidHome -PathType Container)) {
     throw "ANDROID_HOME or -AndroidHome must name a valid Android SDK directory."

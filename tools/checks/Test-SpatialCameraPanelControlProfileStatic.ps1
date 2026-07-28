@@ -63,6 +63,8 @@ Assert-Contains "Hostess state converter CLI" $converterCli "StandardCopyOption.
 Assert-Contains "Hostess state converter tests" $converterTests "goldenHostessStateExportsSameEffectiveQuestControls"
 Assert-Contains "Hostess state converter tests" $converterTests "damagedExpandedNonFiniteAndUnsupportedStatesFailClosed"
 Assert-Contains "Hostess state converter tool" $converterTool ":app:convertHostessReplayControlState"
+Assert-Contains "Hostess state converter tool" $converterTool '[string]$GradleHome = $env:GRADLE_HOME'
+Assert-Contains "Hostess state converter tool" $converterTool 'GradleHome must name the exact gradle-$GradleVersion distribution directory.'
 Assert-Contains "Manual installer" $installer "serial-scoped-adb-fallback"
 Assert-Contains "Manual installer" $installer "profile_sha256"
 Assert-Contains "Manual installer" $installer "last-apply-receipt.json"
