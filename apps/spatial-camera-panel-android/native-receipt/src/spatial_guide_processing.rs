@@ -147,9 +147,26 @@ pub(crate) enum SpatialGuideBlurStage {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(u32)]
+pub(crate) enum SpatialGuideAuxiliaryTreatment {
+    Preserve = 0,
+    DeriveLuma = 1,
+}
+
+impl SpatialGuideAuxiliaryTreatment {
+    pub(crate) fn marker_token(self) -> &'static str {
+        match self {
+            Self::Preserve => "preserve",
+            Self::DeriveLuma => "derive-luma",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct SpatialGuideBlurPassPolicy {
     pub(crate) kernel: SpatialGuideBlurKernel,
     pub(crate) input_treatment: SpatialGuideInputTreatment,
+    pub(crate) auxiliary_treatment: SpatialGuideAuxiliaryTreatment,
 }
 
 impl SpatialGuideBlurPassPolicy {
@@ -157,7 +174,7 @@ impl SpatialGuideBlurPassPolicy {
         [
             self.kernel as u32 as f32,
             self.input_treatment as u32 as f32,
-            0.0,
+            self.auxiliary_treatment as u32 as f32,
             0.0,
         ]
     }
@@ -202,15 +219,18 @@ impl SpatialGuideProcessingPolicy {
             SpatialGuideBlurStage::PreHorizontal => SpatialGuideBlurPassPolicy {
                 kernel: self.preblur_kernel,
                 input_treatment: self.preblur_input,
+                auxiliary_treatment: SpatialGuideAuxiliaryTreatment::DeriveLuma,
             },
             SpatialGuideBlurStage::PreVertical => SpatialGuideBlurPassPolicy {
                 kernel: self.preblur_kernel,
                 input_treatment: SpatialGuideInputTreatment::PreserveRgb,
+                auxiliary_treatment: SpatialGuideAuxiliaryTreatment::Preserve,
             },
             SpatialGuideBlurStage::PostHorizontal | SpatialGuideBlurStage::PostVertical => {
                 SpatialGuideBlurPassPolicy {
                     kernel: self.postblur_kernel,
                     input_treatment: SpatialGuideInputTreatment::PreserveRgb,
+                    auxiliary_treatment: SpatialGuideAuxiliaryTreatment::Preserve,
                 }
             }
         }
@@ -234,11 +254,17 @@ impl SpatialGuideProcessingPolicy {
 
     pub(crate) fn marker_fields(self) -> String {
         format!(
-            "publicGuideProcessingPreset={} publicGuidePreblurKernel={} publicGuidePreblurInput={} publicGuidePostblurKernel={} publicGuideKernelAlternatives=native-box5+gaussian5 publicGuideInputAlternatives=luma+rgb-preserve publicCameraSampling={} publicCameraSamplingRadiusTexels={:.2} publicCameraSamplingAlternatives=linear+thin-line-tent5 publicCameraSamplingDefault=thin-line-tent5 publicCameraSamplingFootprintAware=true",
+            "publicGuideProcessingPreset={} publicGuidePreblurKernel={} publicGuidePreblurInput={} publicGuidePostblurKernel={} publicGuideKernelAlternatives=native-box5+gaussian5 publicGuideInputAlternatives=luma+rgb-preserve publicGuidePreblurAuxiliary={} publicGuidePostblurAuxiliary={} publicGuideAuxiliaryAlternatives=preserve+derive-luma publicCameraSampling={} publicCameraSamplingRadiusTexels={:.2} publicCameraSamplingAlternatives=linear+thin-line-tent5 publicCameraSamplingDefault=thin-line-tent5 publicCameraSamplingFootprintAware=true",
             self.preset_token(),
             self.preblur_kernel.marker_token(),
             self.preblur_input.marker_token(),
             self.postblur_kernel.marker_token(),
+            self.for_stage(SpatialGuideBlurStage::PreHorizontal)
+                .auxiliary_treatment
+                .marker_token(),
+            self.for_stage(SpatialGuideBlurStage::PostHorizontal)
+                .auxiliary_treatment
+                .marker_token(),
             self.camera_sampling.marker_token(),
             self.camera_sampling.radius_texels(),
         )
@@ -283,6 +309,7 @@ mod tests {
             SpatialGuideBlurPassPolicy {
                 kernel: SpatialGuideBlurKernel::NativeBox5,
                 input_treatment: SpatialGuideInputTreatment::Luma,
+                auxiliary_treatment: SpatialGuideAuxiliaryTreatment::DeriveLuma,
             }
         );
         assert_eq!(
@@ -290,6 +317,12 @@ mod tests {
                 .for_stage(SpatialGuideBlurStage::PreVertical)
                 .input_treatment,
             SpatialGuideInputTreatment::PreserveRgb
+        );
+        assert_eq!(
+            policy
+                .for_stage(SpatialGuideBlurStage::PreVertical)
+                .auxiliary_treatment,
+            SpatialGuideAuxiliaryTreatment::Preserve
         );
     }
 
@@ -323,6 +356,30 @@ mod tests {
             SpatialGuideInputTreatment::Luma.apply([0.0, 0.0, 1.0]),
             [0.0722; 3]
         );
+    }
+
+    #[test]
+    fn auxiliary_scalar_is_derived_once_then_preserved_across_blur_stages() {
+        let policy = SpatialGuideProcessingPolicy::default();
+        assert_eq!(
+            policy
+                .for_stage(SpatialGuideBlurStage::PreHorizontal)
+                .push_codes(),
+            [0.0, 0.0, 1.0, 0.0]
+        );
+        for stage in [
+            SpatialGuideBlurStage::PreVertical,
+            SpatialGuideBlurStage::PostHorizontal,
+            SpatialGuideBlurStage::PostVertical,
+        ] {
+            assert_eq!(
+                policy.for_stage(stage).auxiliary_treatment,
+                SpatialGuideAuxiliaryTreatment::Preserve
+            );
+        }
+        let marker = policy.marker_fields();
+        assert!(marker.contains("publicGuidePreblurAuxiliary=derive-luma"));
+        assert!(marker.contains("publicGuidePostblurAuxiliary=preserve"));
     }
 
     #[test]

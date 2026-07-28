@@ -210,14 +210,17 @@ app-local. Stopping the bridge is the rollback and leaves the adapter inert.
   `user scale -> dynamic core -> stretch/seams -> video carrier`. Right-stick
   projection scaling therefore changes the outer projection boundary before
   the motion-driven guard contracts the visible core. `Off` remains the exact
-  legacy projection-over-video path. `Lens buffer` fills only the area around
-  the guarded core and leaves the ordinary video draw behind it. Its default
-  mapping id selects the private native-reference mirrored lens treatment;
-  `Linear` retains the earlier rectangular edge-ray mapping for live A/B and
-  rollback. `Full lens`
+  legacy projection-over-video path. `Native stretch` fills only the area
+  around the guarded core and leaves the ordinary video draw behind it. Its
+  default mapping id selects the original native graded edge-trail treatment:
+  samples begin at the corresponding projection border and move progressively
+  deeper into that same side under a nonlinear distance curve. The rounded
+  target footprint supplies the corner treatment. The later cross-center lens
+  effect is not part of this route; old requests for it normalize to the graded
+  edge-trail defaults. `Full stretch`
   expands the treatment to the full stereo carrier and suppresses the separate
   video draw only after the video-aware compositor pipeline is ready; a missing
-  video frame or pipeline falls back to the legacy path. `Organic lens` is an
+  video frame or pipeline falls back to the legacy path. `Organic stretch` is an
   A/B preset for RGB/difference-responsive seams with bounded sine and motion
   modulation. Raw-camera, processed-layer, and mixed stretch sources remain
   selectable. The public adapter owns only rectangles, the numeric mapping id,
@@ -225,11 +228,12 @@ app-local. Stopping the bridge is the rollback and leaves the adapter inert.
   and downstream color/effect formulas stay in the private downstream shader.
   Device validation can select the same bounded presets without controller
   input through `Invoke-SpatialCameraPanelAndroidUiAction.ps1`: use
-  `private-layer-zone-native-buffer`, `private-layer-zone-linear-buffer`,
-  `private-layer-zone-organic-buffer`, `private-layer-zone-full-stretch`, and
-  `private-layer-zone-off`. These commands route through the same coordinator
-  and native update queue as the panel buttons; they do not add a second
-  compositor authority.
+  `private-layer-zone-native-buffer`, `private-layer-zone-organic-buffer`,
+  `private-layer-zone-full-stretch`, and `private-layer-zone-off`. These
+  commands route through the same coordinator and native update queue as the
+  panel buttons; they do not add a second compositor authority. The deprecated
+  `private-layer-zone-linear-buffer` action is accepted only as a compatibility
+  alias for the native lens preset.
 - Scene-depth permission diagnostics that mirror the native renderer surface:
   `horizonos.permission.USE_SCENE`, OpenXR permissions, and a smoke-wrapper
   `USE_SCENE_DATA` app-op receipt. The public multi-stack keeps a fallback
@@ -633,6 +637,13 @@ Interaction SDK pointer input without native multimodal extension forcing.
   carrier selection, marker-field composition, and projection execution; the
   coordinator cannot activate raw or panel carriers without that explicit
   launch gate.
+- `app/src/main/.../SpatialCameraReplayCaptureModule.kt` owns the optional
+  finite replay-capture configuration and app-private session directory.
+  Native `camera_replay_capture.rs` copies paired camera images into bounded
+  packed left-right RGBA8 frames and writes
+  `rusty.quest.camera_replay_capture.v1`. The route is disabled by default;
+  frame files, pulled captures, and replay evidence are local artifacts and
+  must not enter source control.
 - `app/src/main/.../SpatialCameraHwbProjectionDepthPrerequisiteCoordinator.kt`
   owns request-driven native passthrough and environment-depth startup/stop
   plus the retained depth-start mask. Both start routes fail closed unless the
@@ -1291,15 +1302,14 @@ dimensions. Videos remain local and are not bundled into the APK. See
 for the shape matrix, failure policy, lifecycle, and validation markers.
 
 Sideload-only builds may instead embed authenticated encrypted packs. One live
-custom-projection catalog can mix SBS and top-bottom stereo items, including
-different flat/180°/360° source classifications. Top-bottom eye regions are
-mapped into the compositor's existing packed-SBS target. The composited result
-can then use its declared world-anchored flat/180°/360° Spatial SDK surface or
-the legacy head-fixed border quad. Selection replaces only the decoder when
-the carrier profile is unchanged; a shape or presentation change rebinds the
-carrier and reapplies the current private configuration without restarting the
-Activity or losing control state. Mono items continue to use the ideal direct
-Spatial SDK media panel rather than the custom stereo compositor.
+catalog can mix SBS and top-bottom stereo items, including different
+flat/180°/360° source classifications. When the custom camera projection is
+also active, the video remains on its ideal world-anchored Spatial SDK surface
+below a separate planar custom-projection carrier. `Head-fixed border` rebuilds
+only the video as a viewer-following background quad. Video selection and
+presentation changes never curve, rebuild, or restart the planar camera
+projection, and the control panel remains ordered above both visual layers.
+Mono items follow the same ideal direct Spatial SDK media-panel route.
 
 To include a generic Spatial SDK staged 3D asset, provide a staged mesh URI or
 let the wrapper stage a local GLB/GLTF source. Raw FBX sources must be converted
@@ -1407,6 +1417,20 @@ sources, and the final carrier mode without restarting the Activity.
 This is transport and control infrastructure only. The guide signal,
 color-to-strength mapping, artistic tuning, and final sampling/compositing
 formula remain consumer-owned. See `docs/RGB_CHANNEL_TRANSFORM.md`.
+
+## File-based control profiles
+
+The running custom-projection route can accept one bounded
+`rusty.quest.spatial_camera_panel.control_profile.v1` JSON file. The desktop
+replay tool can author this public control surface, while a serial-scoped
+helper atomically replaces the active app-specific file and waits for an
+app-owned effective receipt. A file left on the headset before launch is
+deliberately inert; only a replacement made after the watcher is armed can
+change the current run.
+
+This path carries only low-rate public controls. It does not carry camera
+frames, videos, shader payloads, guide packing, or private effect formulas.
+See `docs/SPATIAL_CAMERA_CONTROL_PROFILES.md`.
 
 ## Projection surface displacement
 

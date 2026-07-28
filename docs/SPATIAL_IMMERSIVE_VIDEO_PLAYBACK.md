@@ -83,15 +83,15 @@ The source manifest keeps its ideal direct Spatial SDK shape and stereo mode;
 the private compositor always normalizes its result to packed SBS before the
 Spatial SDK carrier presents it.
 
-The custom route has two selectable presentation modes. `World anchored` wraps
-the composited result onto the source's declared flat, equirectangular 180°, or
-equirectangular 360° Spatial SDK surface and retains the initial world-space
-pose as the viewer turns. Stereo 360° uses a 4096×1024 packed output so each
-eye retains a 2:1 equirectangular aspect; stereo 180° uses 2048×1024 so each
-eye remains square. `Head-fixed border` preserves the legacy viewer-following
-2048×1024 quad. Both modes use the same Vulkan compositor, blend zones,
-displacement transport, private effect configuration, and encrypted decoder
-source.
+The combined route uses two coordinated carriers. The selected video keeps its
+ideal Spatial SDK surface below the custom projection layer. `World anchored`
+uses the source's declared flat, equirectangular 180°, or equirectangular 360°
+surface and retains its initial world-space pose as the viewer turns.
+`Head-fixed border` rebuilds only the video as a viewer-following background
+quad. The custom camera/effect compositor remains on the original planar stereo
+carrier in both modes, so camera-ray mapping, blend zones, displacement, and
+private tuning are never wrapped onto an equirectangular surface. The control
+panel remains above both visual carriers.
 
 The layer control panel shows only an ordinal (`Video 1 of N`) and offers
 Previous and Next actions. A horizontal right-stick flick selects the previous

@@ -54,7 +54,9 @@ pub(crate) struct ProjectionZoneCompositorSettings {
     pub(crate) coverage_mode: u32,
     pub(crate) stretch_source: u32,
     pub(crate) debug_mode: u32,
+    pub(crate) outer_target_mode: u32,
     pub(crate) stretch_mapping: u32,
+    pub(crate) projection_effect_edge_guard_enabled: bool,
     pub(crate) edge_inset_uv: f32,
     pub(crate) max_inset_uv: f32,
     pub(crate) stretch_curve: f32,
@@ -68,6 +70,13 @@ pub(crate) struct ProjectionZoneCompositorSettings {
     pub(crate) inner_cycle_amplitude: f32,
     pub(crate) inner_cycle_hz: f32,
     pub(crate) inner_motion_gain: f32,
+    pub(crate) inner_application_mode: u32,
+    pub(crate) inner_source_choice: u32,
+    pub(crate) inner_region_driver: u32,
+    pub(crate) inner_strength_rgb: [f32; 3],
+    pub(crate) inner_cycle_amplitude_rgb: [f32; 3],
+    pub(crate) inner_cycle_hz_rgb: [f32; 3],
+    pub(crate) inner_cycle_phase_rgb: [f32; 3],
     pub(crate) outer_signal: u32,
     pub(crate) outer_width_uv: f32,
     pub(crate) outer_curve: f32,
@@ -77,6 +86,13 @@ pub(crate) struct ProjectionZoneCompositorSettings {
     pub(crate) outer_cycle_amplitude: f32,
     pub(crate) outer_cycle_hz: f32,
     pub(crate) outer_motion_gain: f32,
+    pub(crate) outer_application_mode: u32,
+    pub(crate) outer_source_choice: u32,
+    pub(crate) outer_region_driver: u32,
+    pub(crate) outer_strength_rgb: [f32; 3],
+    pub(crate) outer_cycle_amplitude_rgb: [f32; 3],
+    pub(crate) outer_cycle_hz_rgb: [f32; 3],
+    pub(crate) outer_cycle_phase_rgb: [f32; 3],
 }
 
 impl Default for ProjectionZoneCompositorSettings {
@@ -85,10 +101,12 @@ impl Default for ProjectionZoneCompositorSettings {
             coverage_mode: 0,
             stretch_source: 1,
             debug_mode: 0,
-            stretch_mapping: 1,
-            edge_inset_uv: 0.14,
-            max_inset_uv: 0.58,
-            stretch_curve: 0.22,
+            outer_target_mode: 0,
+            stretch_mapping: 0,
+            projection_effect_edge_guard_enabled: true,
+            edge_inset_uv: 0.015,
+            max_inset_uv: 0.14,
+            stretch_curve: 1.6,
             processed_mix: 1.0,
             inner_signal: 0,
             inner_width_uv: 0.04,
@@ -99,6 +117,13 @@ impl Default for ProjectionZoneCompositorSettings {
             inner_cycle_amplitude: 0.0,
             inner_cycle_hz: 0.12,
             inner_motion_gain: 0.0,
+            inner_application_mode: 0,
+            inner_source_choice: 1,
+            inner_region_driver: 3,
+            inner_strength_rgb: [0.0; 3],
+            inner_cycle_amplitude_rgb: [0.0; 3],
+            inner_cycle_hz_rgb: [0.12, 0.17, 0.23],
+            inner_cycle_phase_rgb: [0.0, 0.333333, 0.666667],
             outer_signal: 0,
             outer_width_uv: 0.04,
             outer_curve: 1.6,
@@ -108,6 +133,13 @@ impl Default for ProjectionZoneCompositorSettings {
             outer_cycle_amplitude: 0.0,
             outer_cycle_hz: 0.10,
             outer_motion_gain: 0.0,
+            outer_application_mode: 0,
+            outer_source_choice: 1,
+            outer_region_driver: 3,
+            outer_strength_rgb: [0.0; 3],
+            outer_cycle_amplitude_rgb: [0.0; 3],
+            outer_cycle_hz_rgb: [0.10, 0.14, 0.19],
+            outer_cycle_phase_rgb: [0.0, 0.333333, 0.666667],
         }
     }
 }
@@ -121,12 +153,30 @@ impl ProjectionZoneCompositorSettings {
         self.coverage_mode == 2
     }
 
+    pub(crate) fn synthetic_diagnostic(self) -> bool {
+        self.debug_mode == 1
+    }
+
+    pub(crate) fn transparent_underlay_requested(self) -> bool {
+        self.outer_target_mode == 1
+    }
+
+    pub(crate) fn transparent_underlay_supported(self) -> bool {
+        self.transparent_underlay_requested()
+            && self.coverage_mode == 1
+            && self.debug_mode == 0
+            && self.outer_signal != 4
+            && self.outer_application_mode == 2
+            && self.outer_source_choice == 0
+    }
+
     pub(crate) fn marker_fields(self) -> String {
-        format!(
-            "projectionZoneCompositorMode={} projectionZoneStretchSource={} projectionZoneStretchMapping={} projectionZoneStretchParameterA={:.4} projectionZoneStretchParameterB={:.4} projectionZoneStretchParameterC={:.3} projectionZoneProcessedMix={:.3} projectionZoneInnerSignal={} projectionZoneInnerWidthUv={:.4} projectionZoneInnerThresholdRgb={:.3},{:.3},{:.3} projectionZoneInnerSoftness={:.3} projectionZoneInnerStrength={:.3} projectionZoneInnerCycleAmplitude={:.3} projectionZoneInnerCycleHz={:.3} projectionZoneInnerMotionGain={:.3} projectionZoneOuterSignal={} projectionZoneOuterWidthUv={:.4} projectionZoneOuterThresholdRgb={:.3},{:.3},{:.3} projectionZoneOuterSoftness={:.3} projectionZoneOuterStrength={:.3} projectionZoneOuterCycleAmplitude={:.3} projectionZoneOuterCycleHz={:.3} projectionZoneOuterMotionGain={:.3} projectionZoneDebugMode={}",
+        let base = format!(
+            "projectionZoneCompositorMode={} projectionZoneStretchSource={} projectionZoneStretchMapping={} projectionZoneEffectEdgeGuardEnabled={} projectionZoneStretchParameterA={:.4} projectionZoneStretchParameterB={:.4} projectionZoneStretchParameterC={:.3} projectionZoneProcessedMix={:.3} projectionZoneInnerSignal={} projectionZoneInnerWidthUv={:.4} projectionZoneInnerThresholdRgb={:.3},{:.3},{:.3} projectionZoneInnerSoftness={:.3} projectionZoneInnerStrength={:.3} projectionZoneInnerCycleAmplitude={:.3} projectionZoneInnerCycleHz={:.3} projectionZoneInnerMotionGain={:.3} projectionZoneOuterSignal={} projectionZoneOuterWidthUv={:.4} projectionZoneOuterThresholdRgb={:.3},{:.3},{:.3} projectionZoneOuterSoftness={:.3} projectionZoneOuterStrength={:.3} projectionZoneOuterCycleAmplitude={:.3} projectionZoneOuterCycleHz={:.3} projectionZoneOuterMotionGain={:.3} projectionZoneDebugMode={}",
             coverage_mode_token(self.coverage_mode),
             stretch_source_token(self.stretch_source),
             stretch_mapping_token(self.stretch_mapping),
+            self.projection_effect_edge_guard_enabled,
             self.edge_inset_uv,
             self.max_inset_uv,
             self.stretch_curve,
@@ -152,6 +202,45 @@ impl ProjectionZoneCompositorSettings {
             self.outer_cycle_hz,
             self.outer_motion_gain,
             debug_mode_token(self.debug_mode),
+        );
+        format!(
+            "{base} projectionZoneInnerApplication={} projectionZoneInnerColorSource={} projectionZoneInnerRegionDriver={} projectionZoneInnerStrengthRgb={:.3},{:.3},{:.3} projectionZoneInnerCycleAmplitudeRgb={:.3},{:.3},{:.3} projectionZoneInnerCycleHzRgb={:.3},{:.3},{:.3} projectionZoneInnerCyclePhaseTurnsRgb={:.3},{:.3},{:.3} projectionZoneOuterApplication={} projectionZoneOuterColorSource={} projectionZoneOuterRegionDriver={} projectionZoneOuterStrengthRgb={:.3},{:.3},{:.3} projectionZoneOuterCycleAmplitudeRgb={:.3},{:.3},{:.3} projectionZoneOuterCycleHzRgb={:.3},{:.3},{:.3} projectionZoneOuterCyclePhaseTurnsRgb={:.3},{:.3},{:.3} projectionZoneOuterTarget={} projectionZoneOuterUnderlaySupported={} projectionZoneOuterAlphaDriver={} projectionZoneSyntheticSourceIsolation={} projectionZoneSyntheticDisplacementSuppressed={} projectionZoneUnsampledOuterData={}",
+            blend_application_token(self.inner_application_mode),
+            blend_source_choice_token(self.inner_source_choice),
+            blend_region_driver_token(self.inner_region_driver),
+            self.inner_strength_rgb[0],
+            self.inner_strength_rgb[1],
+            self.inner_strength_rgb[2],
+            self.inner_cycle_amplitude_rgb[0],
+            self.inner_cycle_amplitude_rgb[1],
+            self.inner_cycle_amplitude_rgb[2],
+            self.inner_cycle_hz_rgb[0],
+            self.inner_cycle_hz_rgb[1],
+            self.inner_cycle_hz_rgb[2],
+            self.inner_cycle_phase_rgb[0],
+            self.inner_cycle_phase_rgb[1],
+            self.inner_cycle_phase_rgb[2],
+            blend_application_token(self.outer_application_mode),
+            blend_source_choice_token(self.outer_source_choice),
+            blend_region_driver_token(self.outer_region_driver),
+            self.outer_strength_rgb[0],
+            self.outer_strength_rgb[1],
+            self.outer_strength_rgb[2],
+            self.outer_cycle_amplitude_rgb[0],
+            self.outer_cycle_amplitude_rgb[1],
+            self.outer_cycle_amplitude_rgb[2],
+            self.outer_cycle_hz_rgb[0],
+            self.outer_cycle_hz_rgb[1],
+            self.outer_cycle_hz_rgb[2],
+            self.outer_cycle_phase_rgb[0],
+            self.outer_cycle_phase_rgb[1],
+            self.outer_cycle_phase_rgb[2],
+            outer_target_mode_token(self.outer_target_mode),
+            self.transparent_underlay_supported(),
+            blend_region_driver_token(self.outer_region_driver),
+            self.synthetic_diagnostic(),
+            self.synthetic_diagnostic(),
+            self.transparent_underlay_requested(),
         )
     }
 }
@@ -171,9 +260,17 @@ pub(crate) struct ProjectionZoneUniform {
     pub(crate) outer_threshold: [f32; 4],
     pub(crate) outer_dynamics: [f32; 4],
     pub(crate) outer_shape: [f32; 4],
+    pub(crate) inner_channel_strength_mode: [f32; 4],
+    pub(crate) inner_channel_amplitude_source: [f32; 4],
+    pub(crate) inner_channel_hz_driver: [f32; 4],
+    pub(crate) inner_channel_phase: [f32; 4],
+    pub(crate) outer_channel_strength_mode: [f32; 4],
+    pub(crate) outer_channel_amplitude_source: [f32; 4],
+    pub(crate) outer_channel_hz_driver: [f32; 4],
+    pub(crate) outer_channel_phase: [f32; 4],
 }
 
-const _: () = assert!(std::mem::size_of::<ProjectionZoneUniform>() == 240);
+const _: () = assert!(std::mem::size_of::<ProjectionZoneUniform>() == 368);
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct CameraHwbProjectionZoneFrame {
@@ -243,7 +340,9 @@ pub(crate) fn update_projection_zone_compositor_settings(
     coverage_mode: u32,
     stretch_source: u32,
     debug_mode: u32,
+    outer_target_mode: u32,
     stretch_mapping: u32,
+    projection_effect_edge_guard_enabled: bool,
     edge_inset_uv: f32,
     max_inset_uv: f32,
     stretch_curve: f32,
@@ -271,26 +370,20 @@ pub(crate) fn update_projection_zone_compositor_settings(
     outer_cycle_hz: f32,
     outer_motion_gain: f32,
 ) -> ProjectionZoneCompositorSettings {
-    let stretch_mapping = stretch_mapping.min(1);
-    let (parameter_a, parameter_b, parameter_c) = if stretch_mapping == 1 {
-        (
-            finite_or(edge_inset_uv, 0.14).clamp(0.0, 0.55),
-            finite_or(max_inset_uv, 0.58).clamp(0.0, 1.50),
-            finite_or(stretch_curve, 0.22).clamp(0.0, 0.75),
-        )
-    } else {
-        let edge_inset_uv = finite_or(edge_inset_uv, 0.015).clamp(0.0, 0.49);
-        (
+    let (stretch_mapping, parameter_a, parameter_b, parameter_c) =
+        normalize_projection_zone_edge_trail_parameters(
+            stretch_mapping,
             edge_inset_uv,
-            finite_or(max_inset_uv, 0.14).clamp(edge_inset_uv, 0.49),
-            finite_or(stretch_curve, 1.6).clamp(0.25, 6.0),
-        )
-    };
+            max_inset_uv,
+            stretch_curve,
+        );
     let settings = ProjectionZoneCompositorSettings {
         coverage_mode: coverage_mode.min(2),
         stretch_source: stretch_source.min(2),
         debug_mode: debug_mode.min(2),
+        outer_target_mode: outer_target_mode.min(1),
         stretch_mapping,
+        projection_effect_edge_guard_enabled,
         edge_inset_uv: parameter_a,
         max_inset_uv: parameter_b,
         stretch_curve: parameter_c,
@@ -313,9 +406,79 @@ pub(crate) fn update_projection_zone_compositor_settings(
         outer_cycle_amplitude: finite_or(outer_cycle_amplitude, 0.0).clamp(0.0, 0.5),
         outer_cycle_hz: finite_or(outer_cycle_hz, 0.10).clamp(0.0, 4.0),
         outer_motion_gain: finite_or(outer_motion_gain, 0.0).clamp(-0.5, 0.5),
+        ..current_projection_zone_compositor_settings()
     };
     if let Ok(mut current) = projection_zone_compositor_settings_lock().write() {
         *current = settings;
+    }
+    settings
+}
+
+fn normalize_projection_zone_edge_trail_parameters(
+    mapping: u32,
+    edge_inset_uv: f32,
+    max_inset_uv: f32,
+    curve: f32,
+) -> (u32, f32, f32, f32) {
+    if mapping != 0 {
+        return (0, 0.015, 0.14, 1.6);
+    }
+    let edge_inset_uv = finite_or(edge_inset_uv, 0.015).clamp(0.0, 0.49);
+    (
+        0,
+        edge_inset_uv,
+        finite_or(max_inset_uv, 0.14).clamp(edge_inset_uv, 0.49),
+        finite_or(curve, 1.6).clamp(0.25, 6.0),
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn update_projection_zone_channel_dynamics_settings(
+    inner_application_mode: u32,
+    inner_source_choice: u32,
+    inner_region_driver: u32,
+    inner_strength_rgb: [f32; 3],
+    inner_cycle_amplitude_rgb: [f32; 3],
+    inner_cycle_hz_rgb: [f32; 3],
+    inner_cycle_phase_rgb: [f32; 3],
+    outer_application_mode: u32,
+    outer_source_choice: u32,
+    outer_region_driver: u32,
+    outer_strength_rgb: [f32; 3],
+    outer_cycle_amplitude_rgb: [f32; 3],
+    outer_cycle_hz_rgb: [f32; 3],
+    outer_cycle_phase_rgb: [f32; 3],
+) -> ProjectionZoneCompositorSettings {
+    let current = current_projection_zone_compositor_settings();
+    let settings = ProjectionZoneCompositorSettings {
+        inner_application_mode: inner_application_mode.min(2),
+        inner_source_choice: inner_source_choice.min(2),
+        inner_region_driver: inner_region_driver.min(4),
+        inner_strength_rgb: clamp_triplet(inner_strength_rgb, [0.0; 3], 0.0, 1.0),
+        inner_cycle_amplitude_rgb: clamp_triplet(inner_cycle_amplitude_rgb, [0.0; 3], 0.0, 0.5),
+        inner_cycle_hz_rgb: clamp_triplet(inner_cycle_hz_rgb, [0.12, 0.17, 0.23], 0.0, 4.0),
+        inner_cycle_phase_rgb: clamp_triplet(
+            inner_cycle_phase_rgb,
+            [0.0, 0.333333, 0.666667],
+            -4.0,
+            4.0,
+        ),
+        outer_application_mode: outer_application_mode.min(2),
+        outer_source_choice: outer_source_choice.min(2),
+        outer_region_driver: outer_region_driver.min(4),
+        outer_strength_rgb: clamp_triplet(outer_strength_rgb, [0.0; 3], 0.0, 1.0),
+        outer_cycle_amplitude_rgb: clamp_triplet(outer_cycle_amplitude_rgb, [0.0; 3], 0.0, 0.5),
+        outer_cycle_hz_rgb: clamp_triplet(outer_cycle_hz_rgb, [0.10, 0.14, 0.19], 0.0, 4.0),
+        outer_cycle_phase_rgb: clamp_triplet(
+            outer_cycle_phase_rgb,
+            [0.0, 0.333333, 0.666667],
+            -4.0,
+            4.0,
+        ),
+        ..current
+    };
+    if let Ok(mut applied) = projection_zone_compositor_settings_lock().write() {
+        *applied = settings;
     }
     settings
 }
@@ -325,6 +488,14 @@ fn clamp_rgb(rgb: [f32; 3]) -> [f32; 3] {
         finite_or(rgb[0], 0.5).clamp(0.0, 1.0),
         finite_or(rgb[1], 0.5).clamp(0.0, 1.0),
         finite_or(rgb[2], 0.5).clamp(0.0, 1.0),
+    ]
+}
+
+fn clamp_triplet(values: [f32; 3], fallbacks: [f32; 3], minimum: f32, maximum: f32) -> [f32; 3] {
+    [
+        finite_or(values[0], fallbacks[0]).clamp(minimum, maximum),
+        finite_or(values[1], fallbacks[1]).clamp(minimum, maximum),
+        finite_or(values[2], fallbacks[2]).clamp(minimum, maximum),
     ]
 }
 
@@ -344,11 +515,8 @@ fn stretch_source_token(source: u32) -> &'static str {
     }
 }
 
-fn stretch_mapping_token(mapping: u32) -> &'static str {
-    match mapping {
-        1 => "mirrored-lens-native",
-        _ => "rectangular-linear",
-    }
+fn stretch_mapping_token(_mapping: u32) -> &'static str {
+    "graded-edge-trail-native"
 }
 
 fn blend_signal_token(signal: u32) -> &'static str {
@@ -361,11 +529,44 @@ fn blend_signal_token(signal: u32) -> &'static str {
     }
 }
 
+fn blend_application_token(mode: u32) -> &'static str {
+    match mode {
+        1 => "component",
+        2 => "region",
+        _ => "legacy",
+    }
+}
+
+fn blend_source_choice_token(source: u32) -> &'static str {
+    match source {
+        0 => "outgoing",
+        2 => "incoming",
+        _ => "midpoint",
+    }
+}
+
+fn blend_region_driver_token(driver: u32) -> &'static str {
+    match driver {
+        0 => "red",
+        1 => "green",
+        2 => "blue",
+        4 => "max",
+        _ => "luma",
+    }
+}
+
 fn debug_mode_token(mode: u32) -> &'static str {
     match mode {
         1 => "regions",
         2 => "sample-uv",
         _ => "off",
+    }
+}
+
+fn outer_target_mode_token(mode: u32) -> &'static str {
+    match mode {
+        1 => "transparent-spatial-video",
+        _ => "readable-color",
     }
 }
 
@@ -532,6 +733,20 @@ fn camera_hwb_projection_zone_frame_with_settings(
     video_source_rects: [[f32; 4]; 2],
     settings: ProjectionZoneCompositorSettings,
 ) -> CameraHwbProjectionZoneFrame {
+    let (stretch_mapping, edge_inset_uv, max_inset_uv, stretch_curve) =
+        normalize_projection_zone_edge_trail_parameters(
+            settings.stretch_mapping,
+            settings.edge_inset_uv,
+            settings.max_inset_uv,
+            settings.stretch_curve,
+        );
+    let settings = ProjectionZoneCompositorSettings {
+        stretch_mapping,
+        edge_inset_uv,
+        max_inset_uv,
+        stretch_curve,
+        ..settings
+    };
     let live_scale = current_camera_hwb_projection_target_live_scale();
     let stereo_horizontal_offset_uv = current_camera_hwb_projection_stereo_horizontal_offset_uv();
     let (left_user, right_user) =
@@ -572,7 +787,12 @@ fn camera_hwb_projection_zone_frame_with_settings(
             settings.edge_inset_uv,
             settings.max_inset_uv,
             settings.stretch_curve,
-            settings.stretch_mapping as f32,
+            (settings.stretch_mapping
+                | if settings.projection_effect_edge_guard_enabled {
+                    0
+                } else {
+                    1 << 1
+                }) as f32,
         ],
         frame: [
             footprint_scale.clamp(0.0, 1.0),
@@ -614,7 +834,55 @@ fn camera_hwb_projection_zone_frame_with_settings(
             settings.outer_signal as f32,
             settings.outer_width_uv,
             settings.outer_curve,
-            0.0,
+            settings.outer_target_mode as f32,
+        ],
+        inner_channel_strength_mode: [
+            settings.inner_strength_rgb[0],
+            settings.inner_strength_rgb[1],
+            settings.inner_strength_rgb[2],
+            settings.inner_application_mode as f32,
+        ],
+        inner_channel_amplitude_source: [
+            settings.inner_cycle_amplitude_rgb[0],
+            settings.inner_cycle_amplitude_rgb[1],
+            settings.inner_cycle_amplitude_rgb[2],
+            settings.inner_source_choice as f32,
+        ],
+        inner_channel_hz_driver: [
+            settings.inner_cycle_hz_rgb[0],
+            settings.inner_cycle_hz_rgb[1],
+            settings.inner_cycle_hz_rgb[2],
+            settings.inner_region_driver as f32,
+        ],
+        inner_channel_phase: [
+            settings.inner_cycle_phase_rgb[0],
+            settings.inner_cycle_phase_rgb[1],
+            settings.inner_cycle_phase_rgb[2],
+            1.0,
+        ],
+        outer_channel_strength_mode: [
+            settings.outer_strength_rgb[0],
+            settings.outer_strength_rgb[1],
+            settings.outer_strength_rgb[2],
+            settings.outer_application_mode as f32,
+        ],
+        outer_channel_amplitude_source: [
+            settings.outer_cycle_amplitude_rgb[0],
+            settings.outer_cycle_amplitude_rgb[1],
+            settings.outer_cycle_amplitude_rgb[2],
+            settings.outer_source_choice as f32,
+        ],
+        outer_channel_hz_driver: [
+            settings.outer_cycle_hz_rgb[0],
+            settings.outer_cycle_hz_rgb[1],
+            settings.outer_cycle_hz_rgb[2],
+            settings.outer_region_driver as f32,
+        ],
+        outer_channel_phase: [
+            settings.outer_cycle_phase_rgb[0],
+            settings.outer_cycle_phase_rgb[1],
+            settings.outer_cycle_phase_rgb[2],
+            1.0,
         ],
     };
     CameraHwbProjectionZoneFrame {
@@ -1030,6 +1298,54 @@ mod tests {
     }
 
     #[test]
+    fn transparent_spatial_video_underlay_requires_outgoing_region_alpha() {
+        let supported = ProjectionZoneCompositorSettings {
+            coverage_mode: 1,
+            debug_mode: 0,
+            outer_target_mode: 1,
+            outer_signal: 1,
+            outer_application_mode: 2,
+            outer_source_choice: 0,
+            outer_region_driver: 4,
+            ..ProjectionZoneCompositorSettings::default()
+        };
+        assert!(supported.transparent_underlay_requested());
+        assert!(supported.transparent_underlay_supported());
+        let unsupported = ProjectionZoneCompositorSettings {
+            outer_application_mode: 1,
+            outer_source_choice: 2,
+            ..supported
+        };
+        assert!(unsupported.transparent_underlay_requested());
+        assert!(!unsupported.transparent_underlay_supported());
+        let marker = unsupported.marker_fields();
+        assert!(marker.contains("projectionZoneOuterTarget=transparent-spatial-video"));
+        assert!(marker.contains("projectionZoneOuterUnderlaySupported=false"));
+        assert!(marker.contains("projectionZoneUnsampledOuterData=true"));
+    }
+
+    #[test]
+    fn transparent_underlay_mode_is_packed_without_expanding_the_uniform_abi() {
+        let settings = ProjectionZoneCompositorSettings {
+            coverage_mode: 1,
+            outer_target_mode: 1,
+            outer_signal: 1,
+            outer_application_mode: 2,
+            outer_source_choice: 0,
+            ..ProjectionZoneCompositorSettings::default()
+        };
+        let frame = camera_hwb_projection_zone_frame_with_settings(
+            1.0,
+            0.0,
+            0.0,
+            [[0.0, 0.0, 0.5, 1.0], [0.5, 0.0, 0.5, 1.0]],
+            settings,
+        );
+        assert_eq!(std::mem::size_of::<ProjectionZoneUniform>(), 23 * 16);
+        assert_eq!(frame.uniform.outer_shape[3], 1.0);
+    }
+
+    #[test]
     fn projection_zone_applies_user_scale_before_dynamic_core_contraction() {
         let settings = ProjectionZoneCompositorSettings {
             coverage_mode: 1,
@@ -1055,21 +1371,42 @@ mod tests {
         }
         assert!((frame.uniform.frame[2] - 1.0).abs() < 0.000001);
         assert_eq!(frame.uniform.user_rects, frame.user_rects);
-        assert_eq!(frame.uniform.stretch[3], 1.0);
+        assert_eq!(frame.uniform.stretch[3], 0.0);
         assert!(frame
             .settings
             .marker_fields()
-            .contains("projectionZoneStretchMapping=mirrored-lens-native"));
+            .contains("projectionZoneStretchMapping=graded-edge-trail-native"));
     }
 
     #[test]
-    fn projection_zone_linear_mapping_remains_a_uniform_rollback() {
+    fn projection_zone_effect_edge_guard_disable_is_packed_without_expanding_the_uniform_abi() {
         let settings = ProjectionZoneCompositorSettings {
             coverage_mode: 1,
-            stretch_mapping: 0,
-            edge_inset_uv: 0.015,
-            max_inset_uv: 0.14,
-            stretch_curve: 1.6,
+            projection_effect_edge_guard_enabled: false,
+            ..ProjectionZoneCompositorSettings::default()
+        };
+        let frame = camera_hwb_projection_zone_frame_with_settings(
+            1.0,
+            0.0,
+            0.0,
+            [[0.0, 0.0, 0.5, 1.0], [0.5, 0.0, 0.5, 1.0]],
+            settings,
+        );
+        assert_eq!(frame.uniform.stretch[3], 2.0);
+        assert!(frame
+            .settings
+            .marker_fields()
+            .contains("projectionZoneEffectEdgeGuardEnabled=false"));
+    }
+
+    #[test]
+    fn projection_zone_legacy_lens_request_is_coerced_to_native_edge_trail() {
+        let settings = ProjectionZoneCompositorSettings {
+            coverage_mode: 1,
+            stretch_mapping: 1,
+            edge_inset_uv: 0.16,
+            max_inset_uv: 0.18,
+            stretch_curve: 0.12,
             ..ProjectionZoneCompositorSettings::default()
         };
         let frame = camera_hwb_projection_zone_frame_with_settings(
@@ -1083,7 +1420,11 @@ mod tests {
         assert!(frame
             .settings
             .marker_fields()
-            .contains("projectionZoneStretchMapping=rectangular-linear"));
+            .contains("projectionZoneStretchMapping=graded-edge-trail-native"));
+        assert!(!frame
+            .settings
+            .marker_fields()
+            .contains("mirrored-lens-native"));
     }
 
     #[test]
@@ -1106,7 +1447,51 @@ mod tests {
 
     #[test]
     fn projection_zone_uniform_layout_is_vec4_aligned() {
-        assert_eq!(std::mem::size_of::<ProjectionZoneUniform>(), 15 * 16);
+        assert_eq!(std::mem::size_of::<ProjectionZoneUniform>(), 23 * 16);
         assert_eq!(std::mem::align_of::<ProjectionZoneUniform>(), 4);
+    }
+
+    #[test]
+    fn projection_zone_uniform_carries_independent_seam_channel_dynamics() {
+        let settings = ProjectionZoneCompositorSettings {
+            coverage_mode: 1,
+            inner_application_mode: 1,
+            inner_source_choice: 0,
+            inner_region_driver: 2,
+            inner_strength_rgb: [0.9, 0.5, 0.2],
+            inner_cycle_amplitude_rgb: [0.14, 0.10, 0.07],
+            inner_cycle_hz_rgb: [0.10, 0.17, 0.26],
+            inner_cycle_phase_rgb: [0.0, 0.333333, 0.666667],
+            outer_application_mode: 2,
+            outer_source_choice: 2,
+            outer_region_driver: 3,
+            ..ProjectionZoneCompositorSettings::default()
+        };
+        let frame = camera_hwb_projection_zone_frame_with_settings(
+            0.8,
+            0.04,
+            3.0,
+            [[0.0, 0.0, 0.5, 1.0], [0.5, 0.0, 0.5, 1.0]],
+            settings,
+        );
+        assert_eq!(
+            frame.uniform.inner_channel_strength_mode,
+            [0.9, 0.5, 0.2, 1.0]
+        );
+        assert_eq!(
+            frame.uniform.inner_channel_amplitude_source,
+            [0.14, 0.10, 0.07, 0.0]
+        );
+        assert_eq!(
+            frame.uniform.inner_channel_hz_driver,
+            [0.10, 0.17, 0.26, 2.0]
+        );
+        assert_eq!(
+            frame.uniform.inner_channel_phase,
+            [0.0, 0.333333, 0.666667, 1.0]
+        );
+        assert_eq!(frame.uniform.outer_channel_strength_mode[3], 2.0);
+        assert_eq!(frame.uniform.outer_channel_amplitude_source[3], 2.0);
+        assert_eq!(frame.uniform.outer_channel_hz_driver[3], 3.0);
     }
 }

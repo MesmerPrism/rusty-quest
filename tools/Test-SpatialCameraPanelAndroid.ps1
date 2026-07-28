@@ -3,6 +3,7 @@ param(
     [string]$RepoRoot,
     [string]$AndroidHome = $env:ANDROID_HOME,
     [string]$JavaHome = $env:JAVA_HOME,
+    [string]$GradleVersion = "9.4.1",
     [string]$PrivateLayerProfilePath = $env:RUSTY_QUEST_SPATIAL_CAMERA_PANEL_PRIVATE_LAYER_PROFILE,
     [string]$OpaqueGuideShader = $env:RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OPAQUE_GUIDE_SHADER,
     [string]$OpaqueProjectionShader = $env:RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OPAQUE_PROJECTION_SHADER,
@@ -31,6 +32,7 @@ $staticCheckPath = Join-Path $PSScriptRoot "checks\Test-SpatialCameraPanelAndroi
 $immersiveVideoCheckPath = Join-Path $PSScriptRoot "checks\Test-SpatialCameraPanelImmersiveVideoStatic.ps1"
 $rgbChannelTransformCheckPath = Join-Path $PSScriptRoot "checks\Test-SpatialCameraPanelRgbChannelTransformStatic.ps1"
 $projectionSurfaceDisplacementCheckPath = Join-Path $PSScriptRoot "checks\Test-SpatialCameraPanelProjectionSurfaceDisplacementStatic.ps1"
+$controlProfileCheckPath = Join-Path $PSScriptRoot "checks\Test-SpatialCameraPanelControlProfileStatic.ps1"
 $cameraLatencyCheckPath = Join-Path $PSScriptRoot "checks\Test-SpatialCameraPanelCameraLatencyDiagnosticStatic.ps1"
 $fragmentProbeCheckPath = Join-Path $PSScriptRoot "checks\Test-SpatialFragmentProbeStatic.ps1"
 $vrStrobeCheckPath = Join-Path $PSScriptRoot "checks\Test-SpatialVrStrobeStatic.ps1"
@@ -52,6 +54,9 @@ if (-not (Test-Path -LiteralPath $rgbChannelTransformCheckPath)) {
 }
 if (-not (Test-Path -LiteralPath $projectionSurfaceDisplacementCheckPath)) {
     throw "Missing Spatial Camera Panel projection-surface displacement static check: $projectionSurfaceDisplacementCheckPath"
+}
+if (-not (Test-Path -LiteralPath $controlProfileCheckPath)) {
+    throw "Missing Spatial Camera Panel control-profile static check: $controlProfileCheckPath"
 }
 if (-not (Test-Path -LiteralPath $cameraLatencyCheckPath)) {
     throw "Missing Spatial Camera Panel camera latency diagnostic check: $cameraLatencyCheckPath"
@@ -77,11 +82,53 @@ if (-not (Test-Path -LiteralPath $buildPath)) {
 & $immersiveVideoCheckPath -RepoRoot $repoRootPath
 & $rgbChannelTransformCheckPath -RepoRoot $repoRootPath
 & $projectionSurfaceDisplacementCheckPath -RepoRoot $repoRootPath
+& $controlProfileCheckPath -RepoRoot $repoRootPath
 & $cameraLatencyCheckPath -RepoRoot $repoRootPath
 & $fragmentProbeCheckPath -RepoRoot $repoRootPath
 & $vrStrobeCheckPath -RepoRoot $repoRootPath
 & $panelFacingCheckPath -RepoRoot $repoRootPath
 & $productIsolationCheckPath -RepoRoot $repoRootPath
+
+$gradleBat = Join-Path $repoRootPath "local-artifacts\tools\gradle-$GradleVersion\bin\gradle.bat"
+if (-not (Test-Path -LiteralPath $gradleBat -PathType Leaf)) {
+    throw "Gradle $GradleVersion is not provisioned at $gradleBat. Use the repository's Spatial Camera Panel build resolver."
+}
+if ([string]::IsNullOrWhiteSpace($AndroidHome) -or -not (Test-Path -LiteralPath $AndroidHome -PathType Container)) {
+    throw "ANDROID_HOME or -AndroidHome must name a valid Android SDK directory for Spatial Camera Panel Kotlin compilation and JVM tests."
+}
+if ([string]::IsNullOrWhiteSpace($JavaHome) -or -not (Test-Path -LiteralPath $JavaHome -PathType Container)) {
+    throw "JAVA_HOME or -JavaHome must name a valid JDK directory for Spatial Camera Panel Kotlin compilation and JVM tests."
+}
+$previousAndroidHome = $env:ANDROID_HOME
+$previousJavaHome = $env:JAVA_HOME
+$previousGradleUserHome = $env:GRADLE_USER_HOME
+$previousAppBuildDir = $env:RUSTY_QUEST_SPATIAL_APP_BUILD_DIR
+$previousRootBuildDir = $env:RUSTY_QUEST_SPATIAL_ROOT_BUILD_DIR
+try {
+    $env:ANDROID_HOME = (Resolve-Path -LiteralPath $AndroidHome).Path
+    $env:JAVA_HOME = (Resolve-Path -LiteralPath $JavaHome).Path
+    $env:GRADLE_USER_HOME = Join-Path $repoRootPath "local-artifacts\gradle-user-home"
+    $env:RUSTY_QUEST_SPATIAL_APP_BUILD_DIR =
+        Join-Path $repoRootPath "local-artifacts\spatial-camera-panel-host\app"
+    $env:RUSTY_QUEST_SPATIAL_ROOT_BUILD_DIR =
+        Join-Path $repoRootPath "local-artifacts\spatial-camera-panel-host\root"
+    & $gradleBat `
+        --no-daemon `
+        --console=plain `
+        -p (Join-Path $repoRootPath "apps\spatial-camera-panel-android") `
+        :app:compileDebugKotlin `
+        :app:testDebugUnitTest
+    if ($LASTEXITCODE -ne 0) {
+        throw "Spatial Camera Panel Kotlin compilation or JVM unit tests failed."
+    }
+} finally {
+    $env:ANDROID_HOME = $previousAndroidHome
+    $env:JAVA_HOME = $previousJavaHome
+    $env:GRADLE_USER_HOME = $previousGradleUserHome
+    $env:RUSTY_QUEST_SPATIAL_APP_BUILD_DIR = $previousAppBuildDir
+    $env:RUSTY_QUEST_SPATIAL_ROOT_BUILD_DIR = $previousRootBuildDir
+}
+
 Push-Location -LiteralPath $repoRootPath
 try {
     cargo test -p spatial-camera-panel-native-receipt surface_particle

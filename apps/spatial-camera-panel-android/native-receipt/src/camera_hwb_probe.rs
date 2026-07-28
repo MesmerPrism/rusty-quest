@@ -13,7 +13,8 @@ use crate::ahardware_buffer_vulkan::{
 use crate::camera_hwb_marker::log_camera_hwb_marker as log_marker;
 use crate::camera_hwb_projection_target::{
     camera_hwb_projection_marker_fields, update_camera_hwb_projection_stereo_horizontal_offset_uv,
-    update_camera_hwb_projection_target_live_scale, update_projection_zone_compositor_settings,
+    update_camera_hwb_projection_target_live_scale,
+    update_projection_zone_channel_dynamics_settings, update_projection_zone_compositor_settings,
 };
 use crate::camera_hwb_stream::{
     CameraProbeFrame, CameraProbeFrameSet, CameraProbeRuntime, CameraProbeStreamMode,
@@ -30,6 +31,9 @@ use crate::camera_latency_diagnostics::{
     current_camera_latency_stereo_reprojection, CameraLatencyCameraSyncMode,
     CameraLatencyFrameTiming, CameraLatencyStereoPolicy, CameraLatencyStrictPairDecision,
     CameraLatencyWindow, CAMERA_LATENCY_STRICT_PAIR_MAX_DELTA_NS,
+};
+use crate::camera_replay_capture::{
+    configured_camera_replay_capture, CameraReplayCaptureRecorder, CameraReplayFrameMetadata,
 };
 use crate::camera_reprojection_guard_band::CameraReprojectionGuardBandController;
 use crate::projection_surface_displacement::update_projection_surface_displacement_settings;
@@ -378,7 +382,9 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1pa
     coverage_mode: c_int,
     stretch_source: c_int,
     debug_mode: c_int,
+    outer_target_mode: c_int,
     stretch_mapping: c_int,
+    projection_effect_edge_guard_enabled: c_int,
     edge_inset_uv: c_float,
     max_inset_uv: c_float,
     stretch_curve: c_float,
@@ -410,7 +416,9 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1pa
         coverage_mode.max(0) as u32,
         stretch_source.max(0) as u32,
         debug_mode.max(0) as u32,
+        outer_target_mode.max(0) as u32,
         stretch_mapping.max(0) as u32,
+        projection_effect_edge_guard_enabled != 0,
         edge_inset_uv as f32,
         max_inset_uv as f32,
         stretch_curve as f32,
@@ -440,6 +448,97 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1pa
     );
     log_marker(format!(
         "status=private-layer-zone-compositor-updated rawCameraProjectionProbe=true updateMask=1 spatialPrivateLayerControlPanel=true projectionZoneGeometryOrder=user-scale-then-dynamic-core projectionZoneVideoSampling=prepared-stereo-video-descriptor {} runtimeCrash=false",
+        applied.marker_fields(),
+    ));
+    1
+}
+
+#[no_mangle]
+#[allow(non_snake_case, clippy::too_many_arguments)]
+pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1panel_SpatialCameraPanelActivity_nativeUpdatePrivateLayerZoneChannelDynamics(
+    _env: *mut c_void,
+    _thiz: *mut c_void,
+    inner_application_mode: c_int,
+    inner_source_choice: c_int,
+    inner_region_driver: c_int,
+    inner_strength_r: c_float,
+    inner_strength_g: c_float,
+    inner_strength_b: c_float,
+    inner_cycle_amplitude_r: c_float,
+    inner_cycle_amplitude_g: c_float,
+    inner_cycle_amplitude_b: c_float,
+    inner_cycle_hz_r: c_float,
+    inner_cycle_hz_g: c_float,
+    inner_cycle_hz_b: c_float,
+    inner_cycle_phase_r: c_float,
+    inner_cycle_phase_g: c_float,
+    inner_cycle_phase_b: c_float,
+    outer_application_mode: c_int,
+    outer_source_choice: c_int,
+    outer_region_driver: c_int,
+    outer_strength_r: c_float,
+    outer_strength_g: c_float,
+    outer_strength_b: c_float,
+    outer_cycle_amplitude_r: c_float,
+    outer_cycle_amplitude_g: c_float,
+    outer_cycle_amplitude_b: c_float,
+    outer_cycle_hz_r: c_float,
+    outer_cycle_hz_g: c_float,
+    outer_cycle_hz_b: c_float,
+    outer_cycle_phase_r: c_float,
+    outer_cycle_phase_g: c_float,
+    outer_cycle_phase_b: c_float,
+) -> i64 {
+    let applied = update_projection_zone_channel_dynamics_settings(
+        inner_application_mode.max(0) as u32,
+        inner_source_choice.max(0) as u32,
+        inner_region_driver.max(0) as u32,
+        [
+            inner_strength_r as f32,
+            inner_strength_g as f32,
+            inner_strength_b as f32,
+        ],
+        [
+            inner_cycle_amplitude_r as f32,
+            inner_cycle_amplitude_g as f32,
+            inner_cycle_amplitude_b as f32,
+        ],
+        [
+            inner_cycle_hz_r as f32,
+            inner_cycle_hz_g as f32,
+            inner_cycle_hz_b as f32,
+        ],
+        [
+            inner_cycle_phase_r as f32,
+            inner_cycle_phase_g as f32,
+            inner_cycle_phase_b as f32,
+        ],
+        outer_application_mode.max(0) as u32,
+        outer_source_choice.max(0) as u32,
+        outer_region_driver.max(0) as u32,
+        [
+            outer_strength_r as f32,
+            outer_strength_g as f32,
+            outer_strength_b as f32,
+        ],
+        [
+            outer_cycle_amplitude_r as f32,
+            outer_cycle_amplitude_g as f32,
+            outer_cycle_amplitude_b as f32,
+        ],
+        [
+            outer_cycle_hz_r as f32,
+            outer_cycle_hz_g as f32,
+            outer_cycle_hz_b as f32,
+        ],
+        [
+            outer_cycle_phase_r as f32,
+            outer_cycle_phase_g as f32,
+            outer_cycle_phase_b as f32,
+        ],
+    );
+    log_marker(format!(
+        "status=private-layer-zone-channel-dynamics-updated rawCameraProjectionProbe=true updateMask=1 spatialPrivateLayerControlPanel=true publicChannelTransport=true privateBlendFormulaOwnedByPrivateConsumer=true {} runtimeCrash=false",
         applied.marker_fields(),
     ));
     1
@@ -1060,6 +1159,19 @@ unsafe fn render_camera_hwb_probe(
         sampled_right_image.as_ref().map(|image| image.image_view),
         mode,
     )?;
+    let mut camera_replay_capture = if matches!(mode, CameraHwbProbeMode::RawColorProjection) {
+        match configured_camera_replay_capture() {
+            Some(config) => Some(CameraReplayCaptureRecorder::create(
+                &device,
+                &memory_properties,
+                camera_resources.descriptor_set_layout,
+                config,
+            )?),
+            None => None,
+        }
+    } else {
+        None
+    };
     let sampler_mode = if format_key.external_format != 0 {
         "external-format-ycbcr"
     } else {
@@ -1099,6 +1211,7 @@ unsafe fn render_camera_hwb_probe(
     let mut frames_presented = 0_u32;
     let mut camera_reprojection_guard_band = CameraReprojectionGuardBandController::default();
     let mut spatial_video_projection_rendered_marker_logged = false;
+    let mut last_projection_zone_render_stats = None;
     let mut public_multistack_depth_evidence_marker_logged = false;
     let mut observed_latency_settings = active_latency_launch_settings;
     let mut freeze_frame_pending = active_latency_launch_settings.enabled
@@ -1183,6 +1296,9 @@ unsafe fn render_camera_hwb_probe(
         device
             .wait_for_fences(&[frame_fence], true, u64::MAX)
             .map_err(|error| format!("wait-fence-{error:?}"))?;
+        if let Some(capture) = camera_replay_capture.as_mut() {
+            capture.retire_completed(&device)?;
+        }
         device
             .reset_fences(&[frame_fence])
             .map_err(|error| format!("reset-fence-{error:?}"))?;
@@ -1546,9 +1662,29 @@ unsafe fn render_camera_hwb_probe(
             camera_reprojection,
             projection_guard_band,
             observed_latency_settings,
+            camera_replay_capture.as_mut(),
+            boottime_now_ns().max(0) as u64,
+            CameraReplayFrameMetadata {
+                left_camera_id: current_left_frame.camera_id.clone(),
+                right_camera_id: current_right_frame.camera_id.clone(),
+                left_frame_index: current_left_frame.frame_index,
+                right_frame_index: current_right_frame.frame_index,
+                left_timestamp_ns: current_left_frame.timestamp_ns,
+                right_timestamp_ns: current_right_frame.timestamp_ns,
+                pair_delta_ns: current_left_frame
+                    .timestamp_ns
+                    .abs_diff(current_right_frame.timestamp_ns),
+            },
         )?;
         frame_timing.record = record_started.elapsed();
         let projected_by_public_stack = record_result.projected_by_public_stack;
+        if last_projection_zone_render_stats != Some(record_result.projection_zone_stats) {
+            log_marker(format!(
+                "status=projection-zone-render-effective {} runtimeCrash=false",
+                record_result.projection_zone_stats.marker_fields(),
+            ));
+            last_projection_zone_render_stats = Some(record_result.projection_zone_stats);
+        }
         transition_left_camera_image = false;
         transition_right_camera_image = false;
         let wait_semaphores = [image_available];
@@ -1816,6 +1952,15 @@ unsafe fn render_camera_hwb_probe(
     device
         .device_wait_idle()
         .map_err(|error| format!("device-wait-idle-{error:?}"))?;
+    if let Some(mut capture) = camera_replay_capture {
+        capture.retire_completed(&device)?;
+        capture.finish(if capture.is_complete() {
+            "requested-frame-count-reached"
+        } else {
+            "camera-projection-stopped"
+        })?;
+        capture.destroy(&device);
+    }
     if let Some(sampled_right_image) = sampled_right_image {
         sampled_right_image.destroy(&device);
     }

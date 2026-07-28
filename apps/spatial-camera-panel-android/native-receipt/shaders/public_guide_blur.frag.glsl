@@ -5,7 +5,7 @@ layout(set = 0, binding = 0) uniform sampler2D guideTexture;
 layout(push_constant) uniform PublicGuideBlurPush {
     vec4 stepAndScale; // xy: directional step, zw: full packed-target texel size
     vec4 sourceRect;
-    vec4 processing; // x: 0 native box5 / 1 gaussian5, y: 0 luma / 1 preserve RGB
+    vec4 processing; // x: kernel, y: RGB treatment, z: 0 preserve alpha / 1 derive luma
 } pc;
 
 layout(location = 0) in vec2 vUv;
@@ -13,12 +13,15 @@ layout(location = 0) out vec4 outColor;
 
 const vec3 PUBLIC_GUIDE_LUMA_WEIGHTS = vec3(0.2126, 0.7152, 0.0722);
 
-vec3 publicGuideInput(vec2 uv) {
-    vec3 color = texture(guideTexture, uv).rgb;
+vec4 publicGuideInput(vec2 uv) {
+    vec4 sampleColor = texture(guideTexture, uv);
+    float sourceLuma = clamp(dot(sampleColor.rgb, PUBLIC_GUIDE_LUMA_WEIGHTS), 0.0, 1.0);
+    vec3 color = sampleColor.rgb;
     if (pc.processing.y < 0.5) {
-        return vec3(clamp(dot(color, PUBLIC_GUIDE_LUMA_WEIGHTS), 0.0, 1.0));
+        color = vec3(sourceLuma);
     }
-    return color;
+    float auxiliary = pc.processing.z < 0.5 ? sampleColor.a : sourceLuma;
+    return vec4(color, auxiliary);
 }
 
 float publicGuideWeight(int offset) {
@@ -36,10 +39,10 @@ void main() {
     vec2 sourceMin = pc.sourceRect.xy + texelInset;
     vec2 sourceMax = pc.sourceRect.xy + pc.sourceRect.zw - texelInset;
     vec2 stepUv = pc.stepAndScale.xy;
-    vec3 color = vec3(0.0);
+    vec4 color = vec4(0.0);
     for (int offset = -2; offset <= 2; ++offset) {
         vec2 sampleUv = clamp(sourceUv + float(offset) * stepUv, sourceMin, sourceMax);
         color += publicGuideInput(sampleUv) * publicGuideWeight(offset);
     }
-    outColor = vec4(color, 1.0);
+    outColor = clamp(color, vec4(0.0), vec4(1.0));
 }

@@ -128,10 +128,16 @@ Assert-NotContains "Offline immersive pack" $offlinePack "FileOutputStream"
 
 Assert-Contains "Activity" $activity "immersiveVideoPanelCoordinator.requested"
 Assert-Contains "Activity" $activity "directImmersiveVideoPanelRequested()"
-Assert-Contains "Activity" $activity "usesImmersiveVideoAsCustomProjectionSource()"
-Assert-Contains "Activity" $activity "spatialVideoProjectionRuntimeCoordinator.replaceMediaSource("
+Assert-Contains "Activity" $activity "status=layered-carriers-adopted"
+Assert-Contains "Activity" $activity "customProjectionCarrierShape=planar-quad"
+Assert-Contains "Activity" $activity "immersiveVideoPanelCoordinator::updateFromViewer"
+Assert-NotContains "Activity" $activity "usesImmersiveVideoAsCustomProjectionSource()"
+Assert-NotContains "Activity" $activity "spatialVideoProjectionRuntimeCoordinator.replaceMediaSource("
 Assert-NotContains "Activity" $activity "return listOfNotNull(immersiveVideoPanelCoordinator.panelRegistrationOrNull())"
 Assert-Contains "Activity" $activity 'immersiveVideoPanelCoordinator.destroy("activity-destroy")'
+Assert-Contains "Immersive coordinator" $coordinator "DIRECT_VIDEO_BACKGROUND_Z_INDEX = -40"
+Assert-Contains "Immersive coordinator" $coordinator "HEAD_FIXED_VIDEO_DISTANCE_METERS = 2.05f"
+Assert-Contains "Immersive coordinator" $coordinator "spatialPanelRebuilt="
 
 Assert-Contains "Immersive session" $session "compatibleWithSession("
 Assert-Contains "Immersive session" $session 'CUSTOM_PROJECTION_SOURCE = "encrypted-offline-pack"'

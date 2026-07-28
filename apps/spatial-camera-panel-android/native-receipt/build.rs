@@ -61,6 +61,11 @@ fn main() {
             "fragment",
         ),
         (
+            "shaders/camera_replay_capture.frag.glsl",
+            "camera_replay_capture.frag.spv",
+            "fragment",
+        ),
+        (
             "shaders/public_guide_blur.frag.glsl",
             "public_guide_blur.frag.spv",
             "fragment",

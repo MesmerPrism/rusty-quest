@@ -239,7 +239,9 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
                       configuration.coverageMode,
                       configuration.stretchSource,
                       configuration.debugMode,
+                      configuration.outerTargetMode,
                       configuration.stretchMapping,
+                      if (configuration.projectionEffectEdgeGuardEnabled) 1 else 0,
                       configuration.edgeInsetUv,
                       configuration.maxInsetUv,
                       configuration.stretchCurve,
@@ -266,6 +268,38 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
                       configuration.outerCycleAmplitude,
                       configuration.outerCycleHz,
                       configuration.outerMotionGain,
+                  )
+                  nativeUpdatePrivateLayerZoneChannelDynamics(
+                      configuration.innerChannelDynamics.applicationMode,
+                      configuration.innerChannelDynamics.sourceChoice,
+                      configuration.innerChannelDynamics.regionDriver,
+                      configuration.innerChannelDynamics.strengthR,
+                      configuration.innerChannelDynamics.strengthG,
+                      configuration.innerChannelDynamics.strengthB,
+                      configuration.innerChannelDynamics.cycleAmplitudeR,
+                      configuration.innerChannelDynamics.cycleAmplitudeG,
+                      configuration.innerChannelDynamics.cycleAmplitudeB,
+                      configuration.innerChannelDynamics.cycleHzR,
+                      configuration.innerChannelDynamics.cycleHzG,
+                      configuration.innerChannelDynamics.cycleHzB,
+                      configuration.innerChannelDynamics.cyclePhaseR,
+                      configuration.innerChannelDynamics.cyclePhaseG,
+                      configuration.innerChannelDynamics.cyclePhaseB,
+                      configuration.outerChannelDynamics.applicationMode,
+                      configuration.outerChannelDynamics.sourceChoice,
+                      configuration.outerChannelDynamics.regionDriver,
+                      configuration.outerChannelDynamics.strengthR,
+                      configuration.outerChannelDynamics.strengthG,
+                      configuration.outerChannelDynamics.strengthB,
+                      configuration.outerChannelDynamics.cycleAmplitudeR,
+                      configuration.outerChannelDynamics.cycleAmplitudeG,
+                      configuration.outerChannelDynamics.cycleAmplitudeB,
+                      configuration.outerChannelDynamics.cycleHzR,
+                      configuration.outerChannelDynamics.cycleHzG,
+                      configuration.outerChannelDynamics.cycleHzB,
+                      configuration.outerChannelDynamics.cyclePhaseR,
+                      configuration.outerChannelDynamics.cyclePhaseG,
+                      configuration.outerChannelDynamics.cyclePhaseB,
                   )
                 },
                 updateRgbChannelTransformNative = { configuration ->
@@ -301,6 +335,18 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
                 marker = ::marker,
             ),
             fixedLayerOverride = presentationPolicy.fixedLayerOverride,
+        )
+      }
+  private val controlProfileHotloader: SpatialCameraControlProfileHotloader by
+      lazy(LazyThreadSafetyMode.NONE) {
+        SpatialCameraControlProfileHotloader(
+            context = this,
+            routeActive = {
+              cameraHwbProjectionLaunchCoordinator.started ||
+                  spatialVideoProjectionRuntimeCoordinator.started
+            },
+            applyProfile = ::applyControlProfile,
+            marker = ::marker,
         )
       }
   private val spatialPassthroughLutCoordinator: SpatialPassthroughLutCoordinator by
@@ -678,6 +724,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             disableNativeActions = nativeInputBootstrapCoordinator::disableControllerActions,
             pollNativeLeftThumbstickY = ::nativePollSpatialControllerLeftThumbstickY,
             pollNativeRightThumbstickY = ::nativePollSpatialControllerRightThumbstickY,
+            pollNativeRightButtonA = ::nativePollSpatialControllerRightButtonA,
             pollNativeRightButtonB = ::nativePollSpatialControllerRightButtonB,
             captureSpatialSnapshot = { SpatialControllerSnapshotAdapter.capture(scene) },
             currentLeftStickPanelDistanceMapping = ::currentLeftStickPanelDistanceMapping,
@@ -1231,11 +1278,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
               )
             },
             panelMediaSettings = cameraHwbProjectionGeometryCoordinator::panelMediaSettings,
-            immersiveVideoCarrierPresentation = {
-              immersiveVideoPanelCoordinator.customCarrierPresentation.takeIf {
-                usesImmersiveVideoAsCustomProjectionSource()
-              }
-            },
+            immersiveVideoCarrierPresentation = { null },
             outputDimensions = cameraHwbProjectionGeometryCoordinator::outputDimensions,
             projectionPlane = {
               cameraLatencyDiagnosticModule.projectionPlane(
@@ -1252,8 +1295,8 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             videoSettings = { spatialVideoProjectionRuntimeCoordinator.settings },
             videoProjectionMarkerFields = { settings ->
               spatialVideoProjectionRuntimeCoordinator.markerFields(settings) + " " +
-                  (immersiveVideoPanelCoordinator.customCarrierPresentation?.markerFields()
-                      ?: "videoCarrierPresentation=legacy-camera")
+                  "customProjectionCarrierShape=planar-quad " +
+                  "immersiveVideoCarrier=separate-spatial-layer"
             },
             syntheticVisualEnabled = ::cameraHwbProjectionSyntheticVisualProbeEnabled,
             drawSyntheticVisual = cameraHwbProjectionSyntheticRenderer::draw,
@@ -1422,11 +1465,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             projectionHeightMeters =
                 surfaceParticleProjectionGeometryCoordinator::projectionHeightMeters,
             privateLayerPanelZ = { privateLayerPanelPlacement.zMeters },
-            immersiveVideoCarrierPresentation = {
-              immersiveVideoPanelCoordinator.customCarrierPresentation.takeIf {
-                usesImmersiveVideoAsCustomProjectionSource()
-              }
-            },
+            immersiveVideoCarrierPresentation = { null },
         )
     )
   }
@@ -1502,8 +1541,22 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
         initial = privateLayerControlCoordinator.zoneCompositor,
         submit = privateLayerControlCoordinator::updateZoneCompositor,
     )
+    controlProfileHotloader.arm()
     if (productPolicy.cameraPanelRoutesEnabled) {
       nativeInteropCoordinator.loadReceiptLibrary()
+      if (nativeInteropCoordinator.receiptLibraryLoaded) {
+        val cameraReplayCapture = SpatialCameraReplayCaptureModule.resolve(this)
+        val cameraReplayCaptureReceipt =
+            nativeConfigureCameraReplayCapture(
+                cameraReplayCapture.outputDirectory,
+                cameraReplayCapture.requestedFrameCount,
+                cameraReplayCapture.intervalMs,
+            )
+        marker(
+            "channel=camera-replay-capture status=activity-configured " +
+                cameraReplayCapture.markerFields(cameraReplayCaptureReceipt)
+        )
+      }
       suppressParticleLayerIfCameraProjectionRequested("activity-created")
       deactivateControlPanelForCameraStack("activity-created")
       deactivatePanelShellIfRequested("activity-created")
@@ -1573,6 +1626,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
       validationWorkflowCoordinator.dispatchIfRequested(intent)
       runSpatialStagedAssetIfRequested(intent, "new-intent")
       runSpatialVirtualRoomIfRequested("new-intent")
+      controlProfileHotloader.poll(force = true)
     }
   }
 
@@ -1593,14 +1647,8 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
                   CAMERA_HWB_PROJECTION_PROBE_PROPERTY
               ) == true)
 
-  private fun usesImmersiveVideoAsCustomProjectionSource(): Boolean =
-      immersiveVideoPanelCoordinator.requested &&
-          customStereoProjectionRequested() &&
-          immersiveVideoPanelCoordinator.customProjectionCompatible
-
   private fun directImmersiveVideoPanelRequested(): Boolean =
-      immersiveVideoPanelCoordinator.requested &&
-          !usesImmersiveVideoAsCustomProjectionSource()
+      immersiveVideoPanelCoordinator.requested
 
   private fun directImmersiveVideoSelectionEnabled(): Boolean {
     val session = immersiveVideoPanelCoordinator.sessionSnapshot()
@@ -1608,15 +1656,9 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
   }
 
   private fun currentProjectionVideoSettings(): SpatialVideoProjectionSettings {
-    val base =
-        presentationPolicy.videoSettings(
-            spatialVideoProjectionRuntimeCoordinator.resolveSettings(intent)
-        )
-    return if (usesImmersiveVideoAsCustomProjectionSource()) {
-      immersiveVideoPanelCoordinator.customProjectionSettings(base) ?: base
-    } else {
-      base
-    }
+    return presentationPolicy.videoSettings(
+        spatialVideoProjectionRuntimeCoordinator.resolveSettings(intent)
+    )
   }
 
   private fun changeImmersiveVideo(
@@ -1624,8 +1666,6 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
       requestedPackId: String?,
       source: String,
   ): SpatialImmersiveVideoSessionSnapshot {
-    val previousCarrierPresentation =
-        immersiveVideoPanelCoordinator.customCarrierPresentation
     val selection =
         when (action) {
           "previous" -> immersiveVideoPanelCoordinator.selectPrevious(source)
@@ -1637,33 +1677,6 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
               )
           else -> error("unknown_immersive_video_action_$action")
         }
-    if (selection.changed &&
-        usesImmersiveVideoAsCustomProjectionSource() &&
-        cameraHwbProjectionLaunchCoordinator.started) {
-      val pack = selection.config?.offlinePack
-      val settings =
-          immersiveVideoPanelCoordinator.customProjectionSettings(
-              spatialVideoProjectionRuntimeCoordinator.settings
-          )
-      if (pack != null && settings != null) {
-        val currentCarrierPresentation =
-            immersiveVideoPanelCoordinator.customCarrierPresentation
-        if (previousCarrierPresentation != currentCarrierPresentation) {
-          spatialVideoProjectionRuntimeCoordinator.prepareForCarrierRebuild(
-              settings = settings,
-              offlinePack = pack,
-              reason = source,
-          )
-          cameraHwbProjectionPanelCarrierCoordinator.rebuild(settings, source)
-        } else {
-          spatialVideoProjectionRuntimeCoordinator.replaceMediaSource(
-              settings = settings,
-              offlinePack = pack,
-              reason = source,
-          )
-        }
-      }
-    }
     return selection.snapshot
   }
 
@@ -1671,27 +1684,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
       mode: SpatialImmersiveVideoPresentationMode,
       source: String,
   ): SpatialImmersiveVideoSessionSnapshot {
-    val previousPresentation = immersiveVideoPanelCoordinator.customCarrierPresentation
-    val snapshot = immersiveVideoPanelCoordinator.setPresentationMode(mode, source)
-    val currentPresentation = immersiveVideoPanelCoordinator.customCarrierPresentation
-    if (previousPresentation != currentPresentation &&
-        usesImmersiveVideoAsCustomProjectionSource() &&
-        cameraHwbProjectionLaunchCoordinator.started) {
-      val pack = immersiveVideoPanelCoordinator.activeOfflinePack
-      val settings =
-          immersiveVideoPanelCoordinator.customProjectionSettings(
-              spatialVideoProjectionRuntimeCoordinator.settings
-          )
-      if (pack != null && settings != null) {
-        spatialVideoProjectionRuntimeCoordinator.prepareForCarrierRebuild(
-            settings = settings,
-            offlinePack = pack,
-            reason = source,
-        )
-        cameraHwbProjectionPanelCarrierCoordinator.rebuild(settings, source)
-      }
-    }
-    return snapshot
+    return immersiveVideoPanelCoordinator.setPresentationMode(mode, source)
   }
 
   override fun onSceneReady() {
@@ -1703,13 +1696,18 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
       marker(immersiveVideoPanelCoordinator.routePolicyMarker())
       val viewerPose = runCatching { scene.getViewerPose() }.getOrElse { Pose() }
       immersiveVideoPanelCoordinator.spawnAtViewer(viewerPose)
-    } else if (usesImmersiveVideoAsCustomProjectionSource()) {
+      if (customStereoProjectionRequested()) {
+        marker(
+            "channel=spatial-immersive-video status=layered-carriers-adopted " +
+                "directSpatialPanelActive=true customProjectionStackActive=true " +
+                "customProjectionCarrierShape=planar-quad cameraMappingPreserved=true " +
+                "activityLifecycleExclusive=false"
+        )
+      }
+    } else if (immersiveVideoPanelCoordinator.requested) {
       marker(
-          "channel=spatial-immersive-video status=custom-projection-source-adopted " +
-              "directSpatialPanelSuppressed=true customProjectionStackActive=true " +
-              "activityLifecycleExclusive=false " +
-              (immersiveVideoPanelCoordinator.customCarrierPresentation?.markerFields()
-                  ?: "videoCarrierPresentation=legacy-camera")
+          "channel=spatial-immersive-video status=direct-panel-unavailable " +
+              "customProjectionCarrierShape=planar-quad cameraMappingPreserved=true"
       )
     }
     if (productPolicy.cameraPanelRoutesEnabled) {
@@ -1830,7 +1828,12 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
 
   override fun onSceneTick() {
     super.onSceneTick()
+    if (directImmersiveVideoPanelRequested()) {
+      runCatching { scene.getViewerPose() }
+          .onSuccess(immersiveVideoPanelCoordinator::updateFromViewer)
+    }
     if (productPolicy.cameraPanelRoutesEnabled) {
+      controlProfileHotloader.poll()
       updateLayerControlPanelPoseFromViewer(reason = "scene-tick", forceLog = false)
       updateParticleLayerProjectionFromViewer(reason = "scene-tick", forceLog = false)
       cameraHwbProjectionPlacementUpdateCoordinator.update("scene-tick", false)
@@ -1841,6 +1844,38 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     if (presentationPolicy.appControlInputsEnabled) {
       controllerPollingCoordinator.pollNativeInput()
     }
+  }
+
+  private fun applyControlProfile(
+      profile: SpatialCameraControlProfile,
+      source: String,
+  ): SpatialCameraControlProfileEffective {
+    val effectiveLayer =
+        privateLayerControlCoordinator.updateLayerOverride(profile.layerOverride, source)
+    val effectiveScale =
+        cameraHwbProjectionTuningCoordinator.updateTargetScaleFromPanel(
+            profile.projectionScale,
+            source,
+        )
+    val effectiveZone =
+        privateLayerControlCoordinator.updateZoneCompositor(profile.zoneCompositor, source)
+    val effectiveRgb =
+        privateLayerControlCoordinator.updateRgbChannelTransform(
+            profile.rgbChannelTransform,
+            source,
+        )
+    val effectiveDisplacement =
+        privateLayerControlCoordinator.updateProjectionSurfaceDisplacement(
+            profile.projectionSurfaceDisplacement,
+            source,
+        )
+    return SpatialCameraControlProfileEffective(
+        layerOverride = effectiveLayer,
+        projectionScale = effectiveScale,
+        zoneCompositor = effectiveZone,
+        rgbChannelTransform = effectiveRgb,
+        projectionSurfaceDisplacement = effectiveDisplacement,
+    )
   }
 
   override fun dispatchGenericMotionEvent(event: MotionEvent): Boolean {
@@ -3053,6 +3088,8 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
 
   private external fun nativePollSpatialControllerRightThumbstickY(): Float
 
+  private external fun nativePollSpatialControllerRightButtonA(): Boolean
+
   private external fun nativePollSpatialControllerRightButtonB(): Boolean
 
   private external fun nativeStopSpatialControllerActions()
@@ -3104,6 +3141,12 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
   ): Long
 
   private external fun nativeStopCameraHwbProbe()
+
+  private external fun nativeConfigureCameraReplayCapture(
+      outputDirectory: String,
+      requestedFrameCount: Int,
+      intervalMs: Int,
+  ): Long
 
   private external fun nativeUpdateCameraHwbProjectionStereoOffsetUv(stereoOffsetUv: Float): Long
 
@@ -3182,7 +3225,9 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
       coverageMode: Int,
       stretchSource: Int,
       debugMode: Int,
+      outerTargetMode: Int,
       stretchMapping: Int,
+      projectionEffectEdgeGuardEnabled: Int,
       edgeInsetUv: Float,
       maxInsetUv: Float,
       stretchCurve: Float,
@@ -3209,6 +3254,39 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
       outerCycleAmplitude: Float,
       outerCycleHz: Float,
       outerMotionGain: Float,
+  ): Long
+
+  private external fun nativeUpdatePrivateLayerZoneChannelDynamics(
+      innerApplicationMode: Int,
+      innerSourceChoice: Int,
+      innerRegionDriver: Int,
+      innerStrengthR: Float,
+      innerStrengthG: Float,
+      innerStrengthB: Float,
+      innerCycleAmplitudeR: Float,
+      innerCycleAmplitudeG: Float,
+      innerCycleAmplitudeB: Float,
+      innerCycleHzR: Float,
+      innerCycleHzG: Float,
+      innerCycleHzB: Float,
+      innerCyclePhaseR: Float,
+      innerCyclePhaseG: Float,
+      innerCyclePhaseB: Float,
+      outerApplicationMode: Int,
+      outerSourceChoice: Int,
+      outerRegionDriver: Int,
+      outerStrengthR: Float,
+      outerStrengthG: Float,
+      outerStrengthB: Float,
+      outerCycleAmplitudeR: Float,
+      outerCycleAmplitudeG: Float,
+      outerCycleAmplitudeB: Float,
+      outerCycleHzR: Float,
+      outerCycleHzG: Float,
+      outerCycleHzB: Float,
+      outerCyclePhaseR: Float,
+      outerCyclePhaseG: Float,
+      outerCyclePhaseB: Float,
   ): Long
 
   private external fun nativeUpdateRgbChannelTransform(

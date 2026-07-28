@@ -33,6 +33,8 @@ mod camera_hwb_stream;
 mod camera_hwb_wsi;
 #[cfg(any(target_os = "android", test))]
 mod camera_latency_diagnostics;
+#[cfg(target_os = "android")]
+mod camera_replay_capture;
 #[cfg(any(target_os = "android", test))]
 mod camera_reprojection_guard_band;
 mod hand_adapter_consumer;

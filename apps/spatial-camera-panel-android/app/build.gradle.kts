@@ -291,6 +291,35 @@ dependencies {
   implementation(libs.androidx.media3.exoplayer)
 
   testImplementation(kotlin("test"))
+  testImplementation("org.json:json:20240303")
+}
+
+val controlProfileConverterRuntime by configurations.creating
+
+dependencies {
+  controlProfileConverterRuntime("org.json:json:20240303")
+  controlProfileConverterRuntime(kotlin("stdlib"))
+}
+
+tasks.register<JavaExec>("convertHostessReplayControlState") {
+  group = "application"
+  description = "Export one Hostess replay control state as a Quest control profile."
+  dependsOn("compileDebugKotlin")
+  mainClass.set(
+    "io.github.mesmerprism.rustyquest.spatial_camera_panel.HostessReplayControlStateCli"
+  )
+  classpath(
+    controlProfileConverterRuntime,
+    layout.buildDirectory.dir("tmp/kotlin-classes/debug"),
+    layout.buildDirectory.dir("intermediates/javac/debug/compileDebugJavaWithJavac/classes"),
+  )
+  val input = providers.gradleProperty("hostessControlStateInput")
+  val output = providers.gradleProperty("questControlProfileOutput")
+  doFirst {
+    require(input.isPresent) { "missing -PhostessControlStateInput=<path>" }
+    require(output.isPresent) { "missing -PquestControlProfileOutput=<path>" }
+    args(input.get(), output.get())
+  }
 }
 
 spatial {

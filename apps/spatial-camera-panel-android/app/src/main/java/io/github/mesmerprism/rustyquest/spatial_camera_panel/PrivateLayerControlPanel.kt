@@ -100,6 +100,9 @@ internal fun PrivateLayerControlPanel(
     }
   }
   val localZoneCompositor = PrivateLayerZoneCompositorPanelBridge.configuration
+  val transparentSpatialUnderlay =
+      localZoneCompositor.outerTargetMode ==
+          PrivateLayerZoneCompositorControls.outerTargetTransparentSpatialVideo
   Surface(
       modifier = Modifier.fillMaxSize(),
       color = LayerPanelBackground,
@@ -208,7 +211,7 @@ internal fun PrivateLayerControlPanel(
           )
           Text(
               if (localVideoSession.customProjectionCompatible) {
-                "The selected stereo video is feeding the custom projection and effect stack."
+                "The video uses its ideal Spatial SDK surface behind the planar custom camera projection."
               } else {
                 "The selected video is using its ideal Spatial SDK projection surface."
               },
@@ -220,7 +223,7 @@ internal fun PrivateLayerControlPanel(
                   SpatialImmersiveVideoPresentationMode.WorldAnchored) {
                 "World anchored: immersive video stays fixed in the scene as you turn your head."
               } else {
-                "Head-fixed border: the composited video surface follows your view like the legacy border."
+                "Head-fixed border: a flat video background follows your view behind the camera projection."
               },
               style = MaterialTheme.typography.bodySmall,
               color = LayerPanelMuted,
@@ -488,7 +491,7 @@ internal fun PrivateLayerControlPanel(
 
       Section("Peripheral Stretch & Zone Blend") {
         Text(
-            "The core follows the live projection scale, then the motion guard contracts it. Lens mode uses the native mirrored oval treatment; Linear preserves the earlier edge-ray mapping for A/B. Buffer mode fills only the released margin, while Full mode replaces the video layer.",
+            "The core follows the live projection scale, then the motion guard contracts it. Stretch always uses the native mirrored oval treatment. Buffer mode fills only the released margin, while Full mode replaces the video layer.",
             style = MaterialTheme.typography.bodySmall,
             color = LayerPanelMuted,
         )
@@ -504,7 +507,7 @@ internal fun PrivateLayerControlPanel(
                 "private-layer-zone-preset-off",
             )
           }
-          ChoiceButton("Lens buffer", localZoneCompositor == PrivateLayerZoneCompositorControls.nativeBuffer) {
+          ChoiceButton("Native stretch", localZoneCompositor == PrivateLayerZoneCompositorControls.nativeBuffer) {
             PrivateLayerZoneCompositorPanelBridge.submit(
                 PrivateLayerZoneCompositorControls.nativeBuffer,
                 "private-layer-zone-preset-native-buffer",
@@ -512,38 +515,52 @@ internal fun PrivateLayerControlPanel(
           }
         }
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
-          ChoiceButton("Organic lens", localZoneCompositor == PrivateLayerZoneCompositorControls.organicBuffer) {
+          ChoiceButton("Organic stretch", localZoneCompositor == PrivateLayerZoneCompositorControls.organicBuffer) {
             PrivateLayerZoneCompositorPanelBridge.submit(
                 PrivateLayerZoneCompositorControls.organicBuffer,
                 "private-layer-zone-preset-organic-buffer",
             )
           }
-          ChoiceButton("Full lens", localZoneCompositor == PrivateLayerZoneCompositorControls.fullStretch) {
+          ChoiceButton("Full stretch", localZoneCompositor == PrivateLayerZoneCompositorControls.fullStretch) {
             PrivateLayerZoneCompositorPanelBridge.submit(
                 PrivateLayerZoneCompositorControls.fullStretch,
                 "private-layer-zone-preset-full-stretch",
             )
           }
         }
-
-        Text("Stretch style", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
-          ChoiceButton("Native lens", localZoneCompositor.stretchMapping == PrivateLayerZoneCompositorControls.mappingMirroredLens) {
+          ChoiceButton("RGB components", localZoneCompositor == PrivateLayerZoneCompositorControls.componentBlendTest) {
+            localProjectionSurfaceDisplacement =
+                updateProjectionSurfaceDisplacement(
+                    ProjectionSurfaceDisplacementControls.off,
+                    "private-layer-zone-synthetic-displacement-off",
+                )
             PrivateLayerZoneCompositorPanelBridge.submit(
-                PrivateLayerZoneCompositorControls.withMapping(
-                    localZoneCompositor,
-                    PrivateLayerZoneCompositorControls.mappingMirroredLens,
-                ),
-                "private-layer-zone-mapping-mirrored-lens",
+                PrivateLayerZoneCompositorControls.componentBlendTest,
+                "private-layer-zone-preset-component-blend-test",
             )
           }
-          ChoiceButton("Linear", localZoneCompositor.stretchMapping == PrivateLayerZoneCompositorControls.mappingRectangularLinear) {
+          ChoiceButton("RGB regions", localZoneCompositor == PrivateLayerZoneCompositorControls.regionBlendTest) {
+            localProjectionSurfaceDisplacement =
+                updateProjectionSurfaceDisplacement(
+                    ProjectionSurfaceDisplacementControls.off,
+                    "private-layer-zone-synthetic-displacement-off",
+                )
             PrivateLayerZoneCompositorPanelBridge.submit(
-                PrivateLayerZoneCompositorControls.withMapping(
-                    localZoneCompositor,
-                    PrivateLayerZoneCompositorControls.mappingRectangularLinear,
-                ),
-                "private-layer-zone-mapping-rectangular-linear",
+                PrivateLayerZoneCompositorControls.regionBlendTest,
+                "private-layer-zone-preset-region-blend-test",
+            )
+          }
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+          ChoiceButton(
+              "360 underlay blend",
+              localZoneCompositor ==
+                  PrivateLayerZoneCompositorControls.spatialVideoUnderlayBlendTest,
+          ) {
+            PrivateLayerZoneCompositorPanelBridge.submit(
+                PrivateLayerZoneCompositorControls.spatialVideoUnderlayBlendTest,
+                "private-layer-zone-preset-spatial-video-underlay-blend-test",
             )
           }
         }
@@ -569,44 +586,23 @@ internal fun PrivateLayerControlPanel(
             )
           }
         }
-        if (localZoneCompositor.stretchMapping == PrivateLayerZoneCompositorControls.mappingMirroredLens) {
-          DepthSlider("Lens pullback", localZoneCompositor.edgeInsetUv, 0.0f..0.55f) {
-            PrivateLayerZoneCompositorPanelBridge.submit(
-                localZoneCompositor.copy(edgeInsetUv = it),
-                "private-layer-zone-lens-pullback",
-            )
-          }
-          DepthSlider("Lens swirl", localZoneCompositor.maxInsetUv, 0.0f..1.50f) {
-            PrivateLayerZoneCompositorPanelBridge.submit(
-                localZoneCompositor.copy(maxInsetUv = it),
-                "private-layer-zone-lens-swirl",
-            )
-          }
-          DepthSlider("Lens zoom", localZoneCompositor.stretchCurve, 0.0f..0.75f) {
-            PrivateLayerZoneCompositorPanelBridge.submit(
-                localZoneCompositor.copy(stretchCurve = it),
-                "private-layer-zone-lens-zoom",
-            )
-          }
-        } else {
-          DepthSlider("Edge inset", localZoneCompositor.edgeInsetUv, 0.0f..0.20f) {
-            PrivateLayerZoneCompositorPanelBridge.submit(
-                localZoneCompositor.copy(edgeInsetUv = it),
-                "private-layer-zone-edge-inset",
-            )
-          }
-          DepthSlider("Maximum inset", localZoneCompositor.maxInsetUv, 0.015f..0.49f) {
-            PrivateLayerZoneCompositorPanelBridge.submit(
-                localZoneCompositor.copy(maxInsetUv = it),
-                "private-layer-zone-max-inset",
-            )
-          }
-          DepthSlider("Stretch curve", localZoneCompositor.stretchCurve, 0.25f..6.0f) {
-            PrivateLayerZoneCompositorPanelBridge.submit(
-                localZoneCompositor.copy(stretchCurve = it),
-                "private-layer-zone-stretch-curve",
-            )
-          }
+        DepthSlider("Edge inset", localZoneCompositor.edgeInsetUv, 0.0f..0.49f) {
+          PrivateLayerZoneCompositorPanelBridge.submit(
+              localZoneCompositor.copy(edgeInsetUv = it),
+              "private-layer-zone-edge-inset",
+          )
+        }
+        DepthSlider("Maximum inset", localZoneCompositor.maxInsetUv, 0.0f..0.49f) {
+          PrivateLayerZoneCompositorPanelBridge.submit(
+              localZoneCompositor.copy(maxInsetUv = it),
+              "private-layer-zone-maximum-inset",
+          )
+        }
+        DepthSlider("Stretch curve", localZoneCompositor.stretchCurve, 0.25f..6.0f) {
+          PrivateLayerZoneCompositorPanelBridge.submit(
+              localZoneCompositor.copy(stretchCurve = it),
+              "private-layer-zone-stretch-curve",
+          )
         }
         if (localZoneCompositor.stretchSource == PrivateLayerZoneCompositorControls.sourceMixed) {
           DepthSlider("Processed source mix", localZoneCompositor.processedMix, 0.0f..1.0f) {
@@ -636,21 +632,101 @@ internal fun PrivateLayerControlPanel(
         DepthSlider("Inner softness", localZoneCompositor.innerSoftness, 0.001f..0.5f) {
           PrivateLayerZoneCompositorPanelBridge.submit(localZoneCompositor.copy(innerSoftness = it), "private-layer-zone-inner-softness")
         }
-        DepthSlider("Inner channel influence", localZoneCompositor.innerStrength, 0.0f..1.0f) {
-          PrivateLayerZoneCompositorPanelBridge.submit(localZoneCompositor.copy(innerStrength = it), "private-layer-zone-inner-strength")
+        ZoneBlendApplicationButtons(localZoneCompositor.innerChannelDynamics.applicationMode) { mode ->
+          PrivateLayerZoneCompositorPanelBridge.submit(
+              localZoneCompositor.copy(
+                  innerChannelDynamics = localZoneCompositor.innerChannelDynamics.copy(applicationMode = mode)
+              ),
+              "private-layer-zone-inner-application",
+          )
         }
-        DepthSlider("Inner cycle amount", localZoneCompositor.innerCycleAmplitude, 0.0f..0.5f) {
-          PrivateLayerZoneCompositorPanelBridge.submit(localZoneCompositor.copy(innerCycleAmplitude = it), "private-layer-zone-inner-cycle-amount")
-        }
-        DepthSlider("Inner cycle speed", localZoneCompositor.innerCycleHz, 0.0f..1.0f) {
-          PrivateLayerZoneCompositorPanelBridge.submit(localZoneCompositor.copy(innerCycleHz = it), "private-layer-zone-inner-cycle-speed")
+        if (localZoneCompositor.innerChannelDynamics.applicationMode == PrivateLayerZoneCompositorControls.applicationLegacy) {
+          DepthSlider("Inner channel influence", localZoneCompositor.innerStrength, 0.0f..1.0f) {
+            PrivateLayerZoneCompositorPanelBridge.submit(localZoneCompositor.copy(innerStrength = it), "private-layer-zone-inner-strength")
+          }
+          DepthSlider("Inner cycle amount", localZoneCompositor.innerCycleAmplitude, 0.0f..0.5f) {
+            PrivateLayerZoneCompositorPanelBridge.submit(localZoneCompositor.copy(innerCycleAmplitude = it), "private-layer-zone-inner-cycle-amount")
+          }
+          DepthSlider("Inner cycle speed", localZoneCompositor.innerCycleHz, 0.0f..1.0f) {
+            PrivateLayerZoneCompositorPanelBridge.submit(localZoneCompositor.copy(innerCycleHz = it), "private-layer-zone-inner-cycle-speed")
+          }
+        } else {
+          ZoneBlendSourceButtons(localZoneCompositor.innerChannelDynamics.sourceChoice) { source ->
+            PrivateLayerZoneCompositorPanelBridge.submit(
+                localZoneCompositor.copy(
+                    innerChannelDynamics = localZoneCompositor.innerChannelDynamics.copy(sourceChoice = source)
+                ),
+                "private-layer-zone-inner-color-source",
+            )
+          }
+          if (localZoneCompositor.innerChannelDynamics.applicationMode == PrivateLayerZoneCompositorControls.applicationRegion) {
+            ZoneRegionDriverButtons(localZoneCompositor.innerChannelDynamics.regionDriver) { driver ->
+              PrivateLayerZoneCompositorPanelBridge.submit(
+                  localZoneCompositor.copy(
+                      innerChannelDynamics = localZoneCompositor.innerChannelDynamics.copy(regionDriver = driver)
+                  ),
+                  "private-layer-zone-inner-region-driver",
+              )
+            }
+          }
+          ZoneChannelDynamicsEditor("Inner", localZoneCompositor.innerChannelDynamics) { dynamics ->
+            PrivateLayerZoneCompositorPanelBridge.submit(
+                localZoneCompositor.copy(innerChannelDynamics = dynamics),
+                "private-layer-zone-inner-channel-dynamics",
+            )
+          }
         }
         DepthSlider("Inner motion response", localZoneCompositor.innerMotionGain, -0.5f..0.5f) {
           PrivateLayerZoneCompositorPanelBridge.submit(localZoneCompositor.copy(innerMotionGain = it), "private-layer-zone-inner-motion")
         }
 
-        Text("Outer seam · stretch ↔ video", style = MaterialTheme.typography.titleSmall)
-        ZoneSignalButtons(localZoneCompositor.outerSignal) { signal ->
+        Text(
+            if (transparentSpatialUnderlay) {
+              "Outer seam · stretch ↔ transparent 360 video"
+            } else {
+              "Outer seam · stretch ↔ readable color"
+            },
+            style = MaterialTheme.typography.titleSmall,
+        )
+        Text(
+            if (transparentSpatialUnderlay) {
+              "The direct Spatial video is not sampled. The outgoing buffer's selected red, green, blue, luma, or max driver controls one premultiplied alpha ramp. Component, midpoint, incoming, difference, and synthetic-debug choices are disabled."
+            } else {
+              "Readable outer color supports the complete three-source component and region test matrix."
+            },
+            style = MaterialTheme.typography.bodySmall,
+            color = LayerPanelMuted,
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+          ChoiceButton(
+              "Readable outer",
+              !transparentSpatialUnderlay,
+          ) {
+            PrivateLayerZoneCompositorPanelBridge.submit(
+                PrivateLayerZoneCompositorControls.withOuterTarget(
+                    localZoneCompositor,
+                    PrivateLayerZoneCompositorControls.outerTargetReadableColor,
+                ),
+                "private-layer-zone-outer-target-readable-color",
+            )
+          }
+          ChoiceButton(
+              "360 underlay",
+              transparentSpatialUnderlay,
+          ) {
+            PrivateLayerZoneCompositorPanelBridge.submit(
+                PrivateLayerZoneCompositorControls.withOuterTarget(
+                    localZoneCompositor,
+                    PrivateLayerZoneCompositorControls.outerTargetTransparentSpatialVideo,
+                ),
+                "private-layer-zone-outer-target-transparent-spatial-video",
+            )
+          }
+        }
+        ZoneSignalButtons(
+            selectedSignal = localZoneCompositor.outerSignal,
+            differenceEnabled = !transparentSpatialUnderlay,
+        ) { signal ->
           PrivateLayerZoneCompositorPanelBridge.submit(
               localZoneCompositor.copy(outerSignal = signal),
               "private-layer-zone-outer-signal",
@@ -668,14 +744,57 @@ internal fun PrivateLayerControlPanel(
         DepthSlider("Outer softness", localZoneCompositor.outerSoftness, 0.001f..0.5f) {
           PrivateLayerZoneCompositorPanelBridge.submit(localZoneCompositor.copy(outerSoftness = it), "private-layer-zone-outer-softness")
         }
-        DepthSlider("Outer channel influence", localZoneCompositor.outerStrength, 0.0f..1.0f) {
-          PrivateLayerZoneCompositorPanelBridge.submit(localZoneCompositor.copy(outerStrength = it), "private-layer-zone-outer-strength")
+        ZoneBlendApplicationButtons(
+            selectedMode = localZoneCompositor.outerChannelDynamics.applicationMode,
+            legacyEnabled = !transparentSpatialUnderlay,
+            componentEnabled = !transparentSpatialUnderlay,
+        ) { mode ->
+          PrivateLayerZoneCompositorPanelBridge.submit(
+              localZoneCompositor.copy(
+                  outerChannelDynamics = localZoneCompositor.outerChannelDynamics.copy(applicationMode = mode)
+              ),
+              "private-layer-zone-outer-application",
+          )
         }
-        DepthSlider("Outer cycle amount", localZoneCompositor.outerCycleAmplitude, 0.0f..0.5f) {
-          PrivateLayerZoneCompositorPanelBridge.submit(localZoneCompositor.copy(outerCycleAmplitude = it), "private-layer-zone-outer-cycle-amount")
-        }
-        DepthSlider("Outer cycle speed", localZoneCompositor.outerCycleHz, 0.0f..1.0f) {
-          PrivateLayerZoneCompositorPanelBridge.submit(localZoneCompositor.copy(outerCycleHz = it), "private-layer-zone-outer-cycle-speed")
+        if (localZoneCompositor.outerChannelDynamics.applicationMode == PrivateLayerZoneCompositorControls.applicationLegacy) {
+          DepthSlider("Outer channel influence", localZoneCompositor.outerStrength, 0.0f..1.0f) {
+            PrivateLayerZoneCompositorPanelBridge.submit(localZoneCompositor.copy(outerStrength = it), "private-layer-zone-outer-strength")
+          }
+          DepthSlider("Outer cycle amount", localZoneCompositor.outerCycleAmplitude, 0.0f..0.5f) {
+            PrivateLayerZoneCompositorPanelBridge.submit(localZoneCompositor.copy(outerCycleAmplitude = it), "private-layer-zone-outer-cycle-amount")
+          }
+          DepthSlider("Outer cycle speed", localZoneCompositor.outerCycleHz, 0.0f..1.0f) {
+            PrivateLayerZoneCompositorPanelBridge.submit(localZoneCompositor.copy(outerCycleHz = it), "private-layer-zone-outer-cycle-speed")
+          }
+        } else {
+          ZoneBlendSourceButtons(
+              selectedSource = localZoneCompositor.outerChannelDynamics.sourceChoice,
+              midpointEnabled = !transparentSpatialUnderlay,
+              incomingEnabled = !transparentSpatialUnderlay,
+          ) { source ->
+            PrivateLayerZoneCompositorPanelBridge.submit(
+                localZoneCompositor.copy(
+                    outerChannelDynamics = localZoneCompositor.outerChannelDynamics.copy(sourceChoice = source)
+                ),
+                "private-layer-zone-outer-color-source",
+            )
+          }
+          if (localZoneCompositor.outerChannelDynamics.applicationMode == PrivateLayerZoneCompositorControls.applicationRegion) {
+            ZoneRegionDriverButtons(localZoneCompositor.outerChannelDynamics.regionDriver) { driver ->
+              PrivateLayerZoneCompositorPanelBridge.submit(
+                  localZoneCompositor.copy(
+                      outerChannelDynamics = localZoneCompositor.outerChannelDynamics.copy(regionDriver = driver)
+                  ),
+                  "private-layer-zone-outer-region-driver",
+              )
+            }
+          }
+          ZoneChannelDynamicsEditor("Outer", localZoneCompositor.outerChannelDynamics) { dynamics ->
+            PrivateLayerZoneCompositorPanelBridge.submit(
+                localZoneCompositor.copy(outerChannelDynamics = dynamics),
+                "private-layer-zone-outer-channel-dynamics",
+            )
+          }
         }
         DepthSlider("Outer motion response", localZoneCompositor.outerMotionGain, -0.5f..0.5f) {
           PrivateLayerZoneCompositorPanelBridge.submit(localZoneCompositor.copy(outerMotionGain = it), "private-layer-zone-outer-motion")
@@ -685,10 +804,18 @@ internal fun PrivateLayerControlPanel(
           ChoiceButton("Normal", localZoneCompositor.debugMode == PrivateLayerZoneCompositorControls.debugOff) {
             PrivateLayerZoneCompositorPanelBridge.submit(localZoneCompositor.copy(debugMode = PrivateLayerZoneCompositorControls.debugOff), "private-layer-zone-debug-off")
           }
-          ChoiceButton("Regions", localZoneCompositor.debugMode == PrivateLayerZoneCompositorControls.debugRegions) {
+          ChoiceButton(
+              "Regions",
+              localZoneCompositor.debugMode == PrivateLayerZoneCompositorControls.debugRegions,
+              enabled = !transparentSpatialUnderlay,
+          ) {
             PrivateLayerZoneCompositorPanelBridge.submit(localZoneCompositor.copy(debugMode = PrivateLayerZoneCompositorControls.debugRegions), "private-layer-zone-debug-regions")
           }
-          ChoiceButton("Sample UV", localZoneCompositor.debugMode == PrivateLayerZoneCompositorControls.debugSampleUv) {
+          ChoiceButton(
+              "Sample UV",
+              localZoneCompositor.debugMode == PrivateLayerZoneCompositorControls.debugSampleUv,
+              enabled = !transparentSpatialUnderlay,
+          ) {
             PrivateLayerZoneCompositorPanelBridge.submit(localZoneCompositor.copy(debugMode = PrivateLayerZoneCompositorControls.debugSampleUv), "private-layer-zone-debug-sample-uv")
           }
         }
@@ -1153,7 +1280,11 @@ private fun DepthSourceButtonGrid(
 }
 
 @Composable
-private fun ZoneSignalButtons(selectedSignal: Int, onSelect: (Int) -> Unit) {
+private fun ZoneSignalButtons(
+    selectedSignal: Int,
+    differenceEnabled: Boolean = true,
+    onSelect: (Int) -> Unit,
+) {
   Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
     ChoiceButton("Flat", selectedSignal == PrivateLayerZoneCompositorControls.signalFlat) {
       onSelect(PrivateLayerZoneCompositorControls.signalFlat)
@@ -1169,7 +1300,11 @@ private fun ZoneSignalButtons(selectedSignal: Int, onSelect: (Int) -> Unit) {
     ChoiceButton("Chroma", selectedSignal == PrivateLayerZoneCompositorControls.signalChroma) {
       onSelect(PrivateLayerZoneCompositorControls.signalChroma)
     }
-    ChoiceButton("Difference", selectedSignal == PrivateLayerZoneCompositorControls.signalDifference) {
+    ChoiceButton(
+        "Difference",
+        selectedSignal == PrivateLayerZoneCompositorControls.signalDifference,
+        enabled = differenceEnabled,
+    ) {
       onSelect(PrivateLayerZoneCompositorControls.signalDifference)
     }
   }
@@ -1186,6 +1321,163 @@ private fun ZoneChannelSliders(
   DepthSlider("$prefix red threshold", red, 0.0f..1.0f) { onChange(it, green, blue) }
   DepthSlider("$prefix green threshold", green, 0.0f..1.0f) { onChange(red, it, blue) }
   DepthSlider("$prefix blue threshold", blue, 0.0f..1.0f) { onChange(red, green, it) }
+}
+
+@Composable
+private fun ZoneBlendApplicationButtons(
+    selectedMode: Int,
+    legacyEnabled: Boolean = true,
+    componentEnabled: Boolean = true,
+    onSelect: (Int) -> Unit,
+) {
+  Text("Color application", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+  Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+    ChoiceButton(
+        "Legacy",
+        selectedMode == PrivateLayerZoneCompositorControls.applicationLegacy,
+        enabled = legacyEnabled,
+    ) {
+      onSelect(PrivateLayerZoneCompositorControls.applicationLegacy)
+    }
+    ChoiceButton(
+        "Components",
+        selectedMode == PrivateLayerZoneCompositorControls.applicationComponent,
+        enabled = componentEnabled,
+    ) {
+      onSelect(PrivateLayerZoneCompositorControls.applicationComponent)
+    }
+    ChoiceButton("Regions", selectedMode == PrivateLayerZoneCompositorControls.applicationRegion) {
+      onSelect(PrivateLayerZoneCompositorControls.applicationRegion)
+    }
+  }
+}
+
+@Composable
+private fun ZoneBlendSourceButtons(
+    selectedSource: Int,
+    midpointEnabled: Boolean = true,
+    incomingEnabled: Boolean = true,
+    onSelect: (Int) -> Unit,
+) {
+  Text("Color signal source", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+  Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+    ChoiceButton("Outgoing", selectedSource == PrivateLayerZoneCompositorControls.blendSourceOutgoing) {
+      onSelect(PrivateLayerZoneCompositorControls.blendSourceOutgoing)
+    }
+    ChoiceButton(
+        "Midpoint",
+        selectedSource == PrivateLayerZoneCompositorControls.blendSourceMidpoint,
+        enabled = midpointEnabled,
+    ) {
+      onSelect(PrivateLayerZoneCompositorControls.blendSourceMidpoint)
+    }
+    ChoiceButton(
+        "Incoming",
+        selectedSource == PrivateLayerZoneCompositorControls.blendSourceIncoming,
+        enabled = incomingEnabled,
+    ) {
+      onSelect(PrivateLayerZoneCompositorControls.blendSourceIncoming)
+    }
+  }
+}
+
+@Composable
+private fun ZoneRegionDriverButtons(selectedDriver: Int, onSelect: (Int) -> Unit) {
+  Text("Whole-region driver", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+  Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+    ChoiceButton("Red", selectedDriver == PrivateLayerZoneCompositorControls.regionDriverRed) {
+      onSelect(PrivateLayerZoneCompositorControls.regionDriverRed)
+    }
+    ChoiceButton("Green", selectedDriver == PrivateLayerZoneCompositorControls.regionDriverGreen) {
+      onSelect(PrivateLayerZoneCompositorControls.regionDriverGreen)
+    }
+    ChoiceButton("Blue", selectedDriver == PrivateLayerZoneCompositorControls.regionDriverBlue) {
+      onSelect(PrivateLayerZoneCompositorControls.regionDriverBlue)
+    }
+  }
+  Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+    ChoiceButton("Luma", selectedDriver == PrivateLayerZoneCompositorControls.regionDriverLuma) {
+      onSelect(PrivateLayerZoneCompositorControls.regionDriverLuma)
+    }
+    ChoiceButton("Max", selectedDriver == PrivateLayerZoneCompositorControls.regionDriverMax) {
+      onSelect(PrivateLayerZoneCompositorControls.regionDriverMax)
+    }
+  }
+}
+
+@Composable
+private fun ZoneChannelDynamicsEditor(
+    prefix: String,
+    dynamics: PrivateLayerZoneChannelDynamics,
+    onChange: (PrivateLayerZoneChannelDynamics) -> Unit,
+) {
+  var selectedChannel by remember(prefix) { mutableStateOf(0) }
+  Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+    ChoiceButton("Red", selectedChannel == 0) { selectedChannel = 0 }
+    ChoiceButton("Green", selectedChannel == 1) { selectedChannel = 1 }
+    ChoiceButton("Blue", selectedChannel == 2) { selectedChannel = 2 }
+  }
+  val channelName = when (selectedChannel) {
+    1 -> "green"
+    2 -> "blue"
+    else -> "red"
+  }
+  val strength = when (selectedChannel) {
+    1 -> dynamics.strengthG
+    2 -> dynamics.strengthB
+    else -> dynamics.strengthR
+  }
+  val amplitude = when (selectedChannel) {
+    1 -> dynamics.cycleAmplitudeG
+    2 -> dynamics.cycleAmplitudeB
+    else -> dynamics.cycleAmplitudeR
+  }
+  val frequency = when (selectedChannel) {
+    1 -> dynamics.cycleHzG
+    2 -> dynamics.cycleHzB
+    else -> dynamics.cycleHzR
+  }
+  val phase = when (selectedChannel) {
+    1 -> dynamics.cyclePhaseG
+    2 -> dynamics.cyclePhaseB
+    else -> dynamics.cyclePhaseR
+  }
+  DepthSlider("$prefix $channelName influence", strength, 0.0f..1.0f) {
+    onChange(
+        when (selectedChannel) {
+          1 -> dynamics.copy(strengthG = it)
+          2 -> dynamics.copy(strengthB = it)
+          else -> dynamics.copy(strengthR = it)
+        }
+    )
+  }
+  DepthSlider("$prefix $channelName cycle amount", amplitude, 0.0f..0.5f) {
+    onChange(
+        when (selectedChannel) {
+          1 -> dynamics.copy(cycleAmplitudeG = it)
+          2 -> dynamics.copy(cycleAmplitudeB = it)
+          else -> dynamics.copy(cycleAmplitudeR = it)
+        }
+    )
+  }
+  DepthSlider("$prefix $channelName cycle speed", frequency, 0.0f..1.0f) {
+    onChange(
+        when (selectedChannel) {
+          1 -> dynamics.copy(cycleHzG = it)
+          2 -> dynamics.copy(cycleHzB = it)
+          else -> dynamics.copy(cycleHzR = it)
+        }
+    )
+  }
+  DepthSlider("$prefix $channelName phase (turns)", phase, -1.0f..1.0f) {
+    onChange(
+        when (selectedChannel) {
+          1 -> dynamics.copy(cyclePhaseG = it)
+          2 -> dynamics.copy(cyclePhaseB = it)
+          else -> dynamics.copy(cyclePhaseR = it)
+        }
+    )
+  }
 }
 
 @Composable
@@ -1223,9 +1515,15 @@ private fun OperatorButton(label: String, onClick: () -> Unit) {
 }
 
 @Composable
-private fun RowScope.ChoiceButton(label: String, selected: Boolean, onClick: () -> Unit) {
+private fun RowScope.ChoiceButton(
+    label: String,
+    selected: Boolean,
+    enabled: Boolean = true,
+    onClick: () -> Unit,
+) {
   Button(
       modifier = Modifier.weight(1.0f).height(52.dp),
+      enabled = enabled,
       onClick = onClick,
       colors =
           ButtonDefaults.buttonColors(

@@ -42,6 +42,7 @@ internal class SpatialImmersiveVideoPanelCoordinator(
   private var player: ExoPlayer? = null
   private var surface: Surface? = null
   private var spawnPose: Pose? = null
+  private var latestViewerPose: Pose? = null
   private var resumeAfterPause = false
   private var activeIndex = 0
   private var presentationMode = SpatialImmersiveVideoPresentationMode.WorldAnchored
@@ -102,11 +103,13 @@ internal class SpatialImmersiveVideoPanelCoordinator(
   ): SpatialImmersiveVideoSessionSnapshot {
     val changed = presentationMode != requestedMode
     presentationMode = requestedMode
+    val panelRebuilt = changed && rebuildActiveEntity("presentation-change")
     val presentation = customCarrierPresentation
     emitMarker(
         "channel=spatial-immersive-video status=presentation-mode-applied " +
             "source=${activityMarkerToken(source)} changed=$changed " +
-            "activityRestarted=false customProjectionConfigurationRetained=true " +
+            "spatialPanelRebuilt=$panelRebuilt activityRestarted=false " +
+            "customProjectionConfigurationRetained=true customProjectionCarrierShape=planar-quad " +
             (presentation?.markerFields()
                 ?: "videoCarrierPresentation=${presentationMode.token} " +
                     "headOrientationLocked=" +
@@ -166,10 +169,19 @@ internal class SpatialImmersiveVideoPanelCoordinator(
 
   fun spawnAtViewer(viewerPose: Pose) {
     spawnPose = Pose(viewerPose.t, viewerPose.q)
+    latestViewerPose = Pose(viewerPose.t, viewerPose.q)
     if (entity != null) {
       return
     }
     spawnActiveEntity("initial-spawn")
+  }
+
+  fun updateFromViewer(viewerPose: Pose) {
+    latestViewerPose = Pose(viewerPose.t, viewerPose.q)
+    if (presentationMode != SpatialImmersiveVideoPresentationMode.HeadFixedBorder) {
+      return
+    }
+    entity?.setComponent(Transform(headFixedPose(viewerPose)))
   }
 
   fun pause(reason: String) {
@@ -197,6 +209,7 @@ internal class SpatialImmersiveVideoPanelCoordinator(
     releasePlayer()
     surface = null
     spawnPose = null
+    latestViewerPose = null
     panelSceneObject = null
     entity?.destroy()
     entity = null
@@ -241,22 +254,51 @@ internal class SpatialImmersiveVideoPanelCoordinator(
     return SpatialImmersiveVideoSelection(sessionSnapshot(), config, changed)
   }
 
+  private fun rebuildActiveEntity(reason: String): Boolean {
+    if (entity == null) {
+      return false
+    }
+    releasePlayer()
+    surface = null
+    panelSceneObject = null
+    entity?.destroy()
+    entity = null
+    spawnActiveEntity(reason)
+    return entity != null
+  }
+
   private fun spawnActiveEntity(reason: String) {
     val config = activeConfig ?: return
     val pose = spawnPose ?: return
     val registrationId = panelRegistrationIds.getOrNull(activeIndex) ?: return
+    val entityPose =
+        if (presentationMode == SpatialImmersiveVideoPresentationMode.HeadFixedBorder) {
+          headFixedPose(latestViewerPose ?: pose)
+        } else {
+          Pose(pose.t, pose.q)
+        }
     entity =
         Entity.create(
             Panel(registrationId),
-            Transform(Pose(pose.t, pose.q)),
+            Transform(entityPose),
             Visible(true),
         )
+    val presentation = customCarrierPresentation
     emitMarker(
         "channel=spatial-immersive-video status=entity-spawned " +
             "reason=${activityMarkerToken(reason)} registrationOrdinal=${activeIndex + 1} " +
-            "${config.markerFields()} centeredOnInitialViewer=true headOrientationLocked=false"
+            "${config.markerFields()} directVideoLayer=true customProjectionCarrierShape=planar-quad " +
+            "directVideoLayerZIndex=$DIRECT_VIDEO_BACKGROUND_Z_INDEX " +
+            (presentation?.markerFields()
+                ?: "videoCarrierPresentation=${presentationMode.token}")
     )
   }
+
+  private fun headFixedPose(viewerPose: Pose): Pose =
+      Pose(
+          viewerPose.t + viewerPose.forward() * HEAD_FIXED_VIDEO_DISTANCE_METERS,
+          viewerPose.q,
+      )
 
   private fun loadCompatibleCatalog(): List<SpatialImmersiveVideoConfig> {
     val anchor = initialConfig ?: return emptyList()
@@ -441,16 +483,24 @@ internal class SpatialImmersiveVideoPanelCoordinator(
   private fun mediaPanelSettings(config: SpatialImmersiveVideoConfig): MediaPanelSettings =
       MediaPanelSettings(
           shape =
-              when (config.shape) {
-                SpatialImmersiveVideoShape.Flat ->
-                    QuadShapeOptions(
-                        width = config.flatPanelWidthMeters,
-                        height = config.flatPanelHeightMeters,
-                    )
-                SpatialImmersiveVideoShape.Equirect180 ->
-                    Equirect180ShapeOptions(radius = config.radiusMeters)
-                SpatialImmersiveVideoShape.Equirect360 ->
-                    Equirect360ShapeOptions(radius = config.radiusMeters)
+              if (presentationMode ==
+                  SpatialImmersiveVideoPresentationMode.HeadFixedBorder) {
+                QuadShapeOptions(
+                    width = config.flatPanelWidthMeters,
+                    height = config.flatPanelHeightMeters,
+                )
+              } else {
+                when (config.shape) {
+                  SpatialImmersiveVideoShape.Flat ->
+                      QuadShapeOptions(
+                          width = config.flatPanelWidthMeters,
+                          height = config.flatPanelHeightMeters,
+                      )
+                  SpatialImmersiveVideoShape.Equirect180 ->
+                      Equirect180ShapeOptions(radius = config.radiusMeters)
+                  SpatialImmersiveVideoShape.Equirect360 ->
+                      Equirect360ShapeOptions(radius = config.radiusMeters)
+                }
               },
           display = PixelDisplayOptions(width = config.widthPx, height = config.heightPx),
           rendering =
@@ -462,12 +512,14 @@ internal class SpatialImmersiveVideoPanelCoordinator(
                             StereoMode.LeftRight
                         SpatialImmersiveVideoStereoLayout.TopBottom -> StereoMode.UpDown
                       },
-                  zIndex = config.zIndex,
+                  zIndex = DIRECT_VIDEO_BACKGROUND_Z_INDEX,
               ),
           input = PanelInputOptions(0),
       )
 
   companion object {
+    private const val HEAD_FIXED_VIDEO_DISTANCE_METERS = 2.05f
+    private const val DIRECT_VIDEO_BACKGROUND_Z_INDEX = -40
     private const val EXTRA_OFFLINE_PACK_ID =
         "io.github.mesmerprism.rustyquest.extra.IMMERSIVE_VIDEO_OFFLINE_PACK_ID"
 

@@ -218,13 +218,16 @@ encrypted pack catalog generic, bounded, opt-in, and free of private media
 names. In direct video-only mode, each item owns its ideal Spatial SDK shape
 and stereo mode; switching may rebuild only that world-centered media surface
 and decoder, never head-lock an immersive surface, and must require neutral
-rearm between right-stick selection flicks. A compatible encrypted stereo pack
-may feed the existing custom projection compositor. Its final public carrier
-may use the declared world-anchored flat/180/360 shape or an explicitly
-selected legacy head-fixed border quad. A matching carrier profile changes only
-the decoder/stream; a shape or presentation change may rebind the carrier and
-native compositor, but must retain the Activity, control state, and current
-private configuration.
+rearm between right-stick selection flicks. When video and the custom camera
+projection are both active, keep them on coordinated carriers: the video uses
+its declared world-anchored flat/180/360 surface or an explicitly selected
+legacy head-fixed background quad, while the custom camera/effect compositor
+retains its planar stereo carrier and camera mapping. The video carrier uses a
+strictly lower Spatial SDK z-index than the custom projection, and the control
+panel remains above both. Video selection or
+presentation changes may rebuild only the video surface and decoder; they must
+retain the Activity, planar camera carrier, control state, and current private
+configuration.
 
 The reusable RGB-channel spatial transform is documented in
 `docs/RGB_CHANNEL_TRANSFORM.md`. Rusty Quest owns only its bounded neutral
@@ -295,6 +298,10 @@ ordinary serial-scoped ADB work behind a global `adb-server` lease.
   marker stream, media path, or private payload behavior unless a feature
   descriptor, app spec, runtime profile, Android property, or intent extra
   explicitly enables that feature.
+- Keep camera replay capture finite and explicit-opt-in. Store packed frame
+  data only in the app-private external-files tree, emit bounded manifest and
+  completion markers, and treat captures and pulled copies as local artifacts
+  that never enter source control.
 - After a split, update the nearest distributed file map: this `AGENTS.md`,
   `README.md`, `docs/ARCHITECTURE.md`, fixture docs, validation docs, or the
   planning `agent-state\iteration-events.jsonl`.

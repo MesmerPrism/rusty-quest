@@ -560,6 +560,8 @@ internal object CameraHwbProjectionModule {
           "zIndex=$layerZIndex " +
           "carrier=$carrier " +
           "renderSurfaceCarrier=scenequadlayer-createAsAndroid-vulkan-wsi " +
+          "projectionPanelAlphaBlendEnabled=true " +
+          "projectionPanelAlphaBlend=premultiplied-one-over-one-minus-source-alpha " +
           "projectionCarrierRoomObject=${carrierMode == CameraHwbProjectionCarrierMode.SceneQuadLayerRoomObject} " +
           "projectionAnchorHittable=none-first-room-diagnostic " +
           "projectionAnchorMaterialRenderOrder=default-first-room-diagnostic " +

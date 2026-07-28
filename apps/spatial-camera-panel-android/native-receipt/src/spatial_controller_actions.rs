@@ -25,6 +25,9 @@ const LEFT_THUMBSTICK_Y_PATH: &str = "/user/hand/left/input/thumbstick/y";
 const RIGHT_THUMBSTICK_Y_ACTION: &str = "spatial_right_thumbstick_y";
 const RIGHT_THUMBSTICK_Y_LOCALIZED_NAME: &str = "Spatial Right Thumbstick Y";
 const RIGHT_THUMBSTICK_Y_PATH: &str = "/user/hand/right/input/thumbstick/y";
+const RIGHT_BUTTON_A_ACTION: &str = "spatial_right_button_a";
+const RIGHT_BUTTON_A_LOCALIZED_NAME: &str = "Spatial Right Button A";
+const RIGHT_BUTTON_A_PATH: &str = "/user/hand/right/input/a/click";
 const RIGHT_BUTTON_B_ACTION: &str = "spatial_right_button_b";
 const RIGHT_BUTTON_B_LOCALIZED_NAME: &str = "Spatial Right Button B";
 const RIGHT_BUTTON_B_PATH: &str = "/user/hand/right/input/b/click";
@@ -69,13 +72,15 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1pa
     match start_result {
         Ok(actions) => {
             marker(format!(
-                "status=started nativeControllerActionBridge=true startMask={} actionSet={} leftThumbstickYAction={} leftThumbstickYInputPath={} rightThumbstickYAction={} rightThumbstickYInputPath={} rightButtonBAction={} rightButtonBInputPath={} actionSetAttached={}",
+                "status=started nativeControllerActionBridge=true startMask={} actionSet={} leftThumbstickYAction={} leftThumbstickYInputPath={} rightThumbstickYAction={} rightThumbstickYInputPath={} rightButtonAAction={} rightButtonAInputPath={} rightButtonBAction={} rightButtonBInputPath={} actionSetAttached={}",
                 mask,
                 ACTION_SET_NAME,
                 LEFT_THUMBSTICK_Y_ACTION,
                 LEFT_THUMBSTICK_Y_PATH,
                 RIGHT_THUMBSTICK_Y_ACTION,
                 RIGHT_THUMBSTICK_Y_PATH,
+                RIGHT_BUTTON_A_ACTION,
+                RIGHT_BUTTON_A_PATH,
                 RIGHT_BUTTON_B_ACTION,
                 RIGHT_BUTTON_B_PATH,
                 crate::bool_token((mask & START_ACTION_SET_ATTACHED) != 0),
@@ -84,7 +89,7 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1pa
         }
         Err(reason) => {
             marker(format!(
-                "status=start-failed nativeControllerActionBridge=true startMask={} reason={} actionSetAttached=false leftThumbstickYAction=false rightThumbstickYAction=false rightButtonBAction=false",
+                "status=start-failed nativeControllerActionBridge=true startMask={} reason={} actionSetAttached=false leftThumbstickYAction=false rightThumbstickYAction=false rightButtonAAction=false rightButtonBAction=false",
                 mask,
                 crate::marker_token(&reason),
             ));
@@ -125,6 +130,25 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1pa
 
 #[no_mangle]
 #[allow(non_snake_case)]
+pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1panel_SpatialCameraPanelActivity_nativePollSpatialControllerRightButtonA(
+    _env: *mut c_void,
+    _thiz: *mut c_void,
+) -> u8 {
+    let mut guard = CONTROLLER_ACTIONS
+        .lock()
+        .expect("controller action mutex poisoned");
+    let Some(actions) = guard.as_mut() else {
+        return 0;
+    };
+    if actions.poll_right_button_a() {
+        1
+    } else {
+        0
+    }
+}
+
+#[no_mangle]
+#[allow(non_snake_case)]
 pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1panel_SpatialCameraPanelActivity_nativePollSpatialControllerRightButtonB(
     _env: *mut c_void,
     _thiz: *mut c_void,
@@ -160,6 +184,7 @@ struct SpatialControllerActions {
     action_set: xr::ActionSet,
     left_thumbstick_y: xr::Action,
     right_thumbstick_y: xr::Action,
+    right_button_a: xr::Action,
     right_button_b: xr::Action,
     sync_actions: xr::pfn::SyncActions,
     get_action_state_float: xr::pfn::GetActionStateFloat,
@@ -280,6 +305,30 @@ impl SpatialControllerActions {
             ));
         }
 
+        let right_button_a_action_info = xr::ActionCreateInfo {
+            ty: xr::ActionCreateInfo::TYPE,
+            next: ptr::null(),
+            action_name: fixed_c_chars(RIGHT_BUTTON_A_ACTION),
+            action_type: xr::ActionType::BOOLEAN_INPUT,
+            count_subaction_paths: 0,
+            subaction_paths: ptr::null(),
+            localized_action_name: fixed_c_chars(RIGHT_BUTTON_A_LOCALIZED_NAME),
+        };
+        let mut right_button_a = xr::Action::NULL;
+        let create_right_button_a_result =
+            unsafe { create_action(action_set, &right_button_a_action_info, &mut right_button_a) };
+        if create_right_button_a_result != xr::Result::SUCCESS {
+            unsafe {
+                destroy_action(left_thumbstick_y);
+                destroy_action(right_thumbstick_y);
+                destroy_action_set(action_set);
+            }
+            return Err(format!(
+                "xrCreateRightButtonAAction-{}",
+                xr_result_token(create_right_button_a_result)
+            ));
+        }
+
         let right_button_b_action_info = xr::ActionCreateInfo {
             ty: xr::ActionCreateInfo::TYPE,
             next: ptr::null(),
@@ -296,6 +345,7 @@ impl SpatialControllerActions {
             unsafe {
                 destroy_action(left_thumbstick_y);
                 destroy_action(right_thumbstick_y);
+                destroy_action(right_button_a);
                 destroy_action_set(action_set);
             }
             return Err(format!(
@@ -309,6 +359,8 @@ impl SpatialControllerActions {
             string_to_openxr_path(instance, string_to_path, LEFT_THUMBSTICK_Y_PATH)?;
         let right_binding_path =
             string_to_openxr_path(instance, string_to_path, RIGHT_THUMBSTICK_Y_PATH)?;
+        let right_button_a_binding_path =
+            string_to_openxr_path(instance, string_to_path, RIGHT_BUTTON_A_PATH)?;
         let right_button_b_binding_path =
             string_to_openxr_path(instance, string_to_path, RIGHT_BUTTON_B_PATH)?;
         let mut suggested_count = 0_u32;
@@ -322,6 +374,10 @@ impl SpatialControllerActions {
                 xr::ActionSuggestedBinding {
                     action: right_thumbstick_y,
                     binding: right_binding_path,
+                },
+                xr::ActionSuggestedBinding {
+                    action: right_button_a,
+                    binding: right_button_a_binding_path,
                 },
                 xr::ActionSuggestedBinding {
                     action: right_button_b,
@@ -339,15 +395,16 @@ impl SpatialControllerActions {
             if result == xr::Result::SUCCESS {
                 suggested_count += 1;
                 marker(format!(
-                    "status=binding-suggested interactionProfile={} leftThumbstickYInputPath={} rightThumbstickYInputPath={} rightButtonBInputPath={} leftControllerThumbstickYBinding=true rightControllerThumbstickYBinding=true rightButtonBBinding=true",
+                    "status=binding-suggested interactionProfile={} leftThumbstickYInputPath={} rightThumbstickYInputPath={} rightButtonAInputPath={} rightButtonBInputPath={} leftControllerThumbstickYBinding=true rightControllerThumbstickYBinding=true rightButtonABinding=true rightButtonBBinding=true",
                     crate::marker_token(profile),
                     LEFT_THUMBSTICK_Y_PATH,
                     RIGHT_THUMBSTICK_Y_PATH,
+                    RIGHT_BUTTON_A_PATH,
                     RIGHT_BUTTON_B_PATH,
                 ));
             } else {
                 marker(format!(
-                    "status=binding-warning interactionProfile={} reason={} leftControllerThumbstickYBinding=false rightControllerThumbstickYBinding=false rightButtonBBinding=false",
+                    "status=binding-warning interactionProfile={} reason={} leftControllerThumbstickYBinding=false rightControllerThumbstickYBinding=false rightButtonABinding=false rightButtonBBinding=false",
                     crate::marker_token(profile),
                     xr_result_token(result),
                 ));
@@ -369,6 +426,7 @@ impl SpatialControllerActions {
             unsafe {
                 destroy_action(left_thumbstick_y);
                 destroy_action(right_thumbstick_y);
+                destroy_action(right_button_a);
                 destroy_action(right_button_b);
                 destroy_action_set(action_set);
             }
@@ -380,11 +438,12 @@ impl SpatialControllerActions {
         *mask |= START_ACTION_SET_ATTACHED;
 
         marker(format!(
-            "status=attached actionSet={} actionSetAttached=true suggestedBindingCount={} leftThumbstickYAction=true rightThumbstickYAction=true rightButtonBAction=true leftControllerThumbstickY={} rightControllerThumbstickY={} rightControllerButtonB={}",
+            "status=attached actionSet={} actionSetAttached=true suggestedBindingCount={} leftThumbstickYAction=true rightThumbstickYAction=true rightButtonAAction=true rightButtonBAction=true leftControllerThumbstickY={} rightControllerThumbstickY={} rightControllerButtonA={} rightControllerButtonB={}",
             ACTION_SET_NAME,
             suggested_count,
             LEFT_THUMBSTICK_Y_PATH,
             RIGHT_THUMBSTICK_Y_PATH,
+            RIGHT_BUTTON_A_PATH,
             RIGHT_BUTTON_B_PATH,
         ));
 
@@ -393,6 +452,7 @@ impl SpatialControllerActions {
             action_set,
             left_thumbstick_y,
             right_thumbstick_y,
+            right_button_a,
             right_button_b,
             sync_actions,
             get_action_state_float,
@@ -409,6 +469,10 @@ impl SpatialControllerActions {
 
     fn poll_right_thumbstick_y(&mut self) -> f32 {
         self.poll_thumbstick_y(self.right_thumbstick_y, "right")
+    }
+
+    fn poll_right_button_a(&mut self) -> bool {
+        self.poll_boolean(self.right_button_a, "rightButtonA")
     }
 
     fn poll_right_button_b(&mut self) -> bool {
@@ -566,6 +630,7 @@ impl Drop for SpatialControllerActions {
         unsafe {
             (self.destroy_action)(self.left_thumbstick_y);
             (self.destroy_action)(self.right_thumbstick_y);
+            (self.destroy_action)(self.right_button_a);
             (self.destroy_action)(self.right_button_b);
             (self.destroy_action_set)(self.action_set);
         }

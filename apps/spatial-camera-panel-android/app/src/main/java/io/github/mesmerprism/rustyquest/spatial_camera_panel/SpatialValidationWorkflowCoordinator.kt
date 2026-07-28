@@ -73,7 +73,7 @@ internal class SpatialValidationWorkflowCoordinator(
             )
         "private-layer-zone-linear-buffer" ->
             bindings.updatePrivateLayerZoneCompositor(
-                PrivateLayerZoneCompositorControls.linearBuffer,
+                PrivateLayerZoneCompositorControls.nativeBuffer,
                 source,
             )
         "private-layer-zone-organic-buffer" ->
@@ -84,6 +84,31 @@ internal class SpatialValidationWorkflowCoordinator(
         "private-layer-zone-full-stretch" ->
             bindings.updatePrivateLayerZoneCompositor(
                 PrivateLayerZoneCompositorControls.fullStretch,
+                source,
+            )
+        "private-layer-zone-component-blend-test" -> {
+          bindings.updateProjectionSurfaceDisplacement(
+              ProjectionSurfaceDisplacementControls.off,
+              source,
+          )
+            bindings.updatePrivateLayerZoneCompositor(
+                PrivateLayerZoneCompositorControls.componentBlendTest,
+                source,
+            )
+        }
+        "private-layer-zone-region-blend-test" -> {
+          bindings.updateProjectionSurfaceDisplacement(
+              ProjectionSurfaceDisplacementControls.off,
+              source,
+          )
+            bindings.updatePrivateLayerZoneCompositor(
+                PrivateLayerZoneCompositorControls.regionBlendTest,
+                source,
+            )
+        }
+        "private-layer-zone-video-underlay-blend-test" ->
+            bindings.updatePrivateLayerZoneCompositor(
+                PrivateLayerZoneCompositorControls.spatialVideoUnderlayBlendTest,
                 source,
             )
         "rgb-channel-bypass" ->

@@ -35,6 +35,7 @@ pub(crate) const SPATIAL_PUBLIC_GUIDE_TARGET_COUNT: usize = 5;
 pub(crate) const SPATIAL_PUBLIC_GUIDE_TARGET_FORMAT: vk::Format = vk::Format::R8G8B8A8_UNORM;
 pub(crate) const SPATIAL_PUBLIC_GUIDE_PER_EYE_WIDTH: u32 = 384;
 pub(crate) const SPATIAL_PUBLIC_GUIDE_PER_EYE_HEIGHT: u32 = 384;
+const SPATIAL_PUBLIC_GUIDE_CLEAR_COLOR: [f32; 4] = [0.0, 0.0, 0.0, 0.0];
 const SPATIAL_PUBLIC_DEPTH_FALLBACK_FORMAT: vk::Format = vk::Format::D16_UNORM;
 const SPATIAL_PUBLIC_MAX_DEPTH_DESCRIPTOR_SETS: u32 = 9;
 const SPATIAL_PUBLIC_ENVIRONMENT_DEPTH_CONFIGURED_FAR_M: f32 = 4.0;
@@ -460,7 +461,7 @@ impl SpatialPublicGuideTargets {
             "supported"
         };
         format!(
-            "publicMultiStackGuideTargetsAllocated=true publicMultiStackGuideTargetCount={} publicMultiStackGuideTargetExtent={}x{} publicMultiStackGuidePerEyeExtent={}x{} publicMultiStackGuideTargetFormat={:?} publicMultiStackGuideTargetBytes={} publicMultiStackGuideTargetMemory={} publicMultiStackPackedStereoGuides=true publicMultiStackPassExecutionReady={} publicGuideBlurPipelineReady=true publicGuideBlurRecordFunctionReady=true publicGuideBlurRuntimeReady={} publicMultiStackOpaqueProjectionPipelineReady={} publicMultiStackOpaqueProjectionPayloadExecutionReady={} publicMultiStackOpaquePayloadExecutionReady={} {} {}",
+            "publicMultiStackGuideTargetsAllocated=true publicMultiStackGuideTargetCount={} publicMultiStackGuideTargetExtent={}x{} publicMultiStackGuidePerEyeExtent={}x{} publicMultiStackGuideTargetFormat={:?} publicMultiStackGuideTargetBytes={} publicMultiStackGuideTargetMemory={} publicMultiStackPackedStereoGuides=true publicMultiStackGuideClear=transparent-invalid publicMultiStackGuideValidityPolicy=fail-closed-alpha0 publicMultiStackPassExecutionReady={} publicGuideBlurPipelineReady=true publicGuideBlurRecordFunctionReady=true publicGuideBlurRuntimeReady={} publicMultiStackOpaqueProjectionPipelineReady={} publicMultiStackOpaqueProjectionPayloadExecutionReady={} publicMultiStackOpaquePayloadExecutionReady={} {} {}",
             self.targets.len(),
             self.extent.width,
             self.extent.height,
@@ -876,8 +877,8 @@ impl SpatialPublicGuideTargets {
             .update(device, &current_rgb_channel_transform_settings().uniform())?;
         self.rgb_channel_transform_uniform
             .update_displacement(device, &displacement.uniform(zone_frame.draw_rects))?;
-        let displacement_effective =
-            displacement.effective(pipeline.displacement_pipeline.is_some());
+        let displacement_effective = !zone_frame.settings.synthetic_diagnostic()
+            && displacement.effective(pipeline.displacement_pipeline.is_some());
         for eye_index in 0..SPATIAL_PUBLIC_PACKED_EYE_COUNT {
             set_packed_projection_target_view(
                 device,
@@ -3677,7 +3678,7 @@ unsafe fn begin_guide_pass(
 ) {
     let clear_values = [vk::ClearValue {
         color: vk::ClearColorValue {
-            float32: [0.0, 0.0, 0.0, 1.0],
+            float32: SPATIAL_PUBLIC_GUIDE_CLEAR_COLOR,
         },
     }];
     device.cmd_begin_render_pass(
@@ -4485,5 +4486,10 @@ mod tests {
         assert!(public_guide_pass_schedule_marker().contains("public-preblur-vertical"));
         assert!(public_guide_pass_schedule_marker().contains("public-postblur-horizontal"));
         assert!(public_guide_pass_schedule_marker().contains("public-postblur-vertical"));
+    }
+
+    #[test]
+    fn guide_targets_clear_to_transparent_invalid_payloads() {
+        assert_eq!(SPATIAL_PUBLIC_GUIDE_CLEAR_COLOR, [0.0, 0.0, 0.0, 0.0]);
     }
 }
