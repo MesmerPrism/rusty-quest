@@ -10,6 +10,136 @@ import org.junit.Test
 
 class SpatialCameraControlProfileTest {
   @Test
+  fun malformedUtf8InOtherwiseValidStringFailsClosed() {
+    assertThrows(IllegalArgumentException::class.java) {
+      SpatialCameraControlProfileContract.parse(
+          malformedUtf8Inside(validProfile().toString(), "final")
+      )
+    }
+  }
+
+  @Test
+  fun duplicateRootSchemaIncludingEscapeEquivalentFailsClosed() {
+    val profile = validProfile().toString()
+    val damaged =
+        "{\"\\u0073chema\":\"${SpatialCameraControlProfileContract.SCHEMA}\"," +
+            profile.drop(1)
+    assertThrows(IllegalArgumentException::class.java) {
+      SpatialCameraControlProfileContract.parse(damaged.toByteArray())
+    }
+  }
+
+  @Test
+  fun duplicateNumericControlFailsClosed() {
+    val profile = validProfile()
+    val damaged =
+        prependObjectMember(
+            profile.toString(),
+            profile.getJSONObject("quest_controls"),
+            "\"projection_scale\":1.0",
+        )
+    assertThrows(IllegalArgumentException::class.java) {
+      SpatialCameraControlProfileContract.parse(damaged)
+    }
+  }
+
+  @Test
+  fun duplicateNestedObjectKeyIncludingEscapeEquivalentFailsClosed() {
+    val profile = validProfile()
+    val zone =
+        profile.getJSONObject("quest_controls").getJSONObject("zone_compositor")
+    val damaged =
+        prependObjectMember(
+            profile.toString(),
+            zone,
+            "\"\\u0065dge_inset_uv\":0.02",
+        )
+    assertThrows(IllegalArgumentException::class.java) {
+      SpatialCameraControlProfileContract.parse(damaged)
+    }
+  }
+
+  @Test
+  fun trailingContentFailsClosed() {
+    val damaged = validProfile().toString().toByteArray() + byteArrayOf('x'.code.toByte())
+    assertThrows(IllegalArgumentException::class.java) {
+      SpatialCameraControlProfileContract.parse(damaged)
+    }
+  }
+
+  @Test
+  fun excessiveNestingFailsAtStrictByteIngress() {
+    val profile = validProfile().toString()
+    val nestedArray = "[".repeat(65) + "0" + "]".repeat(65)
+    val damaged = "{\"depth_probe\":$nestedArray,${profile.drop(1)}".toByteArray()
+
+    val error =
+        assertThrows(IllegalArgumentException::class.java) {
+          SpatialCameraControlProfileContract.parse(damaged)
+        }
+
+    assertTrue(error.message?.contains("nesting_too_deep") == true)
+  }
+
+  @Test
+  fun integralMetadataUsesExactLongConversionAndRangeChecks() {
+    val profile = validProfile().toString()
+    listOf(
+            "0",
+            "7e0",
+            "9223372036854775807",
+            "9.223372036854775807e18",
+        )
+        .forEach { literal ->
+          SpatialCameraControlProfileContract.parse(
+              replaceNumberField(profile, "revision", literal)
+          )
+        }
+
+    listOf(
+            "9223372036854775808",
+            "18446744073709551615",
+            "18446744073709551616",
+            "99999999999999999999999999999999999999999999999999",
+            "7.0000000000000000001",
+            "9.223372036854775808e18",
+        )
+        .forEach { literal ->
+          assertThrows("should reject revision=$literal", IllegalArgumentException::class.java) {
+            SpatialCameraControlProfileContract.parse(
+                replaceNumberField(profile, "revision", literal)
+            )
+          }
+        }
+
+    assertThrows(IllegalArgumentException::class.java) {
+      SpatialCameraControlProfileContract.parse(
+          replaceNumberField(profile, "created_unix_ms", "9223372036854775808")
+      )
+    }
+  }
+
+  @Test
+  fun authoritativeByteBoundsAcceptExactlyLimitAndRejectEmptyOrLimitPlusOne() {
+    val valid = validProfile().toString().toByteArray(Charsets.UTF_8)
+    val atLimit =
+        valid + ByteArray(SpatialCameraControlProfileContract.MAX_PROFILE_BYTES - valid.size) { ' '.code.toByte() }
+    SpatialCameraControlProfileContract.parse(atLimit)
+
+    val emptyError =
+        assertThrows(IllegalArgumentException::class.java) {
+          SpatialCameraControlProfileContract.parse(byteArrayOf())
+        }
+    assertEquals("profile_empty", emptyError.message)
+
+    val oversizedError =
+        assertThrows(IllegalArgumentException::class.java) {
+          SpatialCameraControlProfileContract.parse(atLimit + ' '.code.toByte())
+        }
+    assertEquals("profile_too_large", oversizedError.message)
+  }
+
+  @Test
   fun validProfileCarriesStructuredDesktopControlsIntoQuestTypes() {
     val profile =
         SpatialCameraControlProfileContract.parse(validProfile().toString().toByteArray())
@@ -163,6 +293,34 @@ class SpatialCameraControlProfileTest {
                 .put("color_effect_rate_hz", 0.0)
                 .put("buffer_footprint_scale", 1.0),
         )
+  }
+
+  private fun malformedUtf8Inside(document: String, marker: String): ByteArray {
+    val bytes = document.toByteArray(Charsets.UTF_8)
+    val offset = document.indexOf(marker)
+    require(offset >= 0 && marker.length >= 2)
+    bytes[offset] = 0xc3.toByte()
+    bytes[offset + 1] = 0x28
+    return bytes
+  }
+
+  private fun prependObjectMember(
+      document: String,
+      target: JSONObject,
+      member: String,
+  ): ByteArray {
+    val original = target.toString()
+    require(document.contains(original))
+    return document
+        .replaceFirst(original, "{$member,${original.drop(1)}")
+        .toByteArray(Charsets.UTF_8)
+  }
+
+  private fun replaceNumberField(document: String, name: String, literal: String): ByteArray {
+    val originalValue = JSONObject(document).get(name)
+    val marker = "\"$name\":$originalValue"
+    require(document.contains(marker))
+    return document.replaceFirst(marker, "\"$name\":$literal").toByteArray(Charsets.UTF_8)
   }
 
   private fun band(signal: String, source: String, application: String): JSONObject =

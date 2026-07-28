@@ -29,8 +29,16 @@ pwsh -NoProfile -File tools\Convert-HostessReplayControlState.ps1 `
   -GradleHome <gradle-9.4.1>
 ```
 
-The converter rejects unknown fields, wrong block lengths, non-finite values,
-unsupported tokens and unsupported effective combinations, then runs the
+Both byte ingress routes decode UTF-8 with malformed and unmappable input
+reported as errors, validate the complete strict JSON grammar, and reject
+duplicate object keys at every nesting level before constructing an
+`org.json` object. Escaped and literal spellings of the same decoded key count
+as duplicates, trailing non-whitespace content is rejected, and nesting is
+bounded to 64 containers including the root object. Integral metadata uses
+exact conversion and range checks; fractional, rounded, overflowing, and
+wrapping `revision` or `created_unix_ms` values fail closed. The converter then
+rejects unknown fields, wrong block lengths, non-finite values, unsupported
+tokens and unsupported effective combinations before running the
 result through the authoritative Quest profile parser. It maps only the
 public, effect-neutral transport values; provider-private meanings and tuning
 do not enter the output. The PowerShell route invokes the production

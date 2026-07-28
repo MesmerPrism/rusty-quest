@@ -1430,6 +1430,12 @@ change the current run.
 
 This path carries only low-rate public controls. It does not carry camera
 frames, videos, shader payloads, guide packing, or private effect formulas.
+Both the Hostess-state converter and the profile parser share one strict
+byte-ingress validator that rejects malformed UTF-8, duplicate decoded object
+keys at any depth, incomplete JSON, and trailing content before `org.json`
+parsing. Integral metadata is converted exactly, so fractional or out-of-range
+`revision` and `created_unix_ms` values cannot round or wrap into accepted
+`Long` values.
 See `docs/SPATIAL_CAMERA_CONTROL_PROFILES.md`.
 
 ## Projection surface displacement

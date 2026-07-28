@@ -5,9 +5,140 @@ import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertThrows
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class HostessReplayControlStateConverterTest {
+  @Test
+  fun malformedUtf8InOtherwiseValidStringFailsClosed() {
+    assertThrows(IllegalArgumentException::class.java) {
+      HostessReplayControlStateConverter.export(
+          malformedUtf8Inside(validState().toString(), "final")
+      )
+    }
+  }
+
+  @Test
+  fun duplicateRootSchemaIncludingEscapeEquivalentFailsClosed() {
+    val state = validState().toString()
+    val damaged =
+        "{\"\\u0073chema\":\"${HostessReplayControlStateConverter.INPUT_SCHEMA}\"," +
+            state.drop(1)
+    assertThrows(IllegalArgumentException::class.java) {
+      HostessReplayControlStateConverter.export(damaged.toByteArray())
+    }
+  }
+
+  @Test
+  fun duplicateNumericControlFailsClosed() {
+    val state = validState()
+    val damaged =
+        prependObjectMember(
+            state.toString(),
+            state.getJSONObject("projection"),
+            "\"scale\":1.0",
+        )
+    assertThrows(IllegalArgumentException::class.java) {
+      HostessReplayControlStateConverter.export(damaged)
+    }
+  }
+
+  @Test
+  fun duplicateNestedObjectKeyIncludingEscapeEquivalentFailsClosed() {
+    val state = validState()
+    val values =
+        state.getJSONObject("control_transport").getJSONObject("values")
+    val damaged =
+        prependObjectMember(
+            state.toString(),
+            values,
+            "\"\\u006fpaque-control\":0.5",
+        )
+    assertThrows(IllegalArgumentException::class.java) {
+      HostessReplayControlStateConverter.export(damaged)
+    }
+  }
+
+  @Test
+  fun trailingContentFailsClosed() {
+    val damaged = validState().toString().toByteArray() + byteArrayOf('x'.code.toByte())
+    assertThrows(IllegalArgumentException::class.java) {
+      HostessReplayControlStateConverter.export(damaged)
+    }
+  }
+
+  @Test
+  fun excessiveNestingFailsAtStrictByteIngress() {
+    val state = validState().toString()
+    val nestedArray = "[".repeat(65) + "0" + "]".repeat(65)
+    val damaged = "{\"depth_probe\":$nestedArray,${state.drop(1)}".toByteArray()
+
+    val error =
+        assertThrows(IllegalArgumentException::class.java) {
+          HostessReplayControlStateConverter.export(damaged)
+        }
+
+    assertTrue(error.message?.contains("nesting_too_deep") == true)
+  }
+
+  @Test
+  fun integralMetadataUsesExactLongConversionAndRangeChecks() {
+    val state = validState().toString()
+    listOf(
+            "0",
+            "7e0",
+            "9223372036854775807",
+            "9.223372036854775807e18",
+        )
+        .forEach { literal ->
+          HostessReplayControlStateConverter.export(
+              replaceNumberField(state, "revision", literal)
+          )
+        }
+
+    listOf(
+            "9223372036854775808",
+            "18446744073709551615",
+            "18446744073709551616",
+            "99999999999999999999999999999999999999999999999999",
+            "7.0000000000000000001",
+            "9.223372036854775808e18",
+        )
+        .forEach { literal ->
+          assertThrows("should reject revision=$literal", IllegalArgumentException::class.java) {
+            HostessReplayControlStateConverter.export(
+                replaceNumberField(state, "revision", literal)
+            )
+          }
+        }
+
+    assertThrows(IllegalArgumentException::class.java) {
+      HostessReplayControlStateConverter.export(
+          replaceNumberField(state, "created_unix_ms", "9223372036854775808")
+      )
+    }
+  }
+
+  @Test
+  fun authoritativeByteBoundsAcceptExactlyLimitAndRejectEmptyOrLimitPlusOne() {
+    val valid = validState().toString().toByteArray(Charsets.UTF_8)
+    val atLimit =
+        valid + ByteArray(HostessReplayControlStateConverter.MAX_INPUT_BYTES - valid.size) { ' '.code.toByte() }
+    HostessReplayControlStateConverter.export(atLimit)
+
+    val emptyError =
+        assertThrows(IllegalArgumentException::class.java) {
+          HostessReplayControlStateConverter.export(byteArrayOf())
+        }
+    assertEquals("control_state_empty", emptyError.message)
+
+    val oversizedError =
+        assertThrows(IllegalArgumentException::class.java) {
+          HostessReplayControlStateConverter.export(atLimit + ' '.code.toByte())
+        }
+    assertEquals("control_state_too_large", oversizedError.message)
+  }
+
   @Test
   fun goldenHostessStateExportsSameEffectiveQuestControls() {
     val output = HostessReplayControlStateConverter.export(validState().toString().toByteArray())
@@ -224,6 +355,34 @@ class HostessReplayControlStateConverterTest {
                 .put("displacement_enabled", true)
                 .put("zone_uniform_f32", JSONArray(zone.toList())),
         )
+  }
+
+  private fun malformedUtf8Inside(document: String, marker: String): ByteArray {
+    val bytes = document.toByteArray(Charsets.UTF_8)
+    val offset = document.indexOf(marker)
+    require(offset >= 0 && marker.length >= 2)
+    bytes[offset] = 0xc3.toByte()
+    bytes[offset + 1] = 0x28
+    return bytes
+  }
+
+  private fun prependObjectMember(
+      document: String,
+      target: JSONObject,
+      member: String,
+  ): ByteArray {
+    val original = target.toString()
+    require(document.contains(original))
+    return document
+        .replaceFirst(original, "{$member,${original.drop(1)}")
+        .toByteArray(Charsets.UTF_8)
+  }
+
+  private fun replaceNumberField(document: String, name: String, literal: String): ByteArray {
+    val originalValue = JSONObject(document).get(name)
+    val marker = "\"$name\":$originalValue"
+    require(document.contains(marker))
+    return document.replaceFirst(marker, "\"$name\":$literal").toByteArray(Charsets.UTF_8)
   }
 
   private fun validV1State(): JSONObject =

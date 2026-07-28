@@ -12,7 +12,7 @@ internal object HostessReplayControlStateConverter {
   fun export(bytes: ByteArray): ByteArray {
     require(bytes.isNotEmpty()) { "control_state_empty" }
     require(bytes.size <= MAX_INPUT_BYTES) { "control_state_too_large" }
-    val root = JSONObject(bytes.toString(Charsets.UTF_8))
+    val root = StrictJsonByteIngress.parseObject(bytes)
     root.requireOnlyKeys(
         "schema",
         "state_id",

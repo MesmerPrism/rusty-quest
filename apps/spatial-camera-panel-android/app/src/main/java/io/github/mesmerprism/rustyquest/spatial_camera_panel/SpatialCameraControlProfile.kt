@@ -1,5 +1,7 @@
 package io.github.mesmerprism.rustyquest.spatial_camera_panel
 
+import java.math.BigDecimal
+import java.math.BigInteger
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -26,7 +28,7 @@ internal object SpatialCameraControlProfileContract {
   fun parse(bytes: ByteArray): SpatialCameraControlProfile {
     require(bytes.isNotEmpty()) { "profile_empty" }
     require(bytes.size <= MAX_PROFILE_BYTES) { "profile_too_large" }
-    val root = JSONObject(bytes.toString(Charsets.UTF_8))
+    val root = StrictJsonByteIngress.parseObject(bytes)
     root.requireOnlyKeys(
         "schema",
         "profile_id",
@@ -394,9 +396,26 @@ internal fun JSONObject.requireBoolean(name: String): Boolean {
 internal fun JSONObject.requireLong(name: String, minimum: Long, maximum: Long): Long {
   val value = get(name)
   require(value is Number) { "${name}_must_be_integer" }
-  val double = value.toDouble()
-  require(double.isFinite() && double % 1.0 == 0.0) { "${name}_must_be_integer" }
-  val result = value.toLong()
+  val result =
+      when (value) {
+        is Byte, is Short, is Int, is Long -> value.toLong()
+        is BigInteger -> runCatching { value.longValueExact() }.getOrNull()
+        is BigDecimal -> runCatching { value.longValueExact() }.getOrNull()
+        is Float ->
+            if (value.isFinite()) {
+              runCatching { BigDecimal(value.toString()).longValueExact() }.getOrNull()
+            } else {
+              null
+            }
+        is Double ->
+            if (value.isFinite()) {
+              runCatching { BigDecimal.valueOf(value).longValueExact() }.getOrNull()
+            } else {
+              null
+            }
+        else -> null
+      }
+  require(result != null) { "${name}_must_be_integer" }
   require(result in minimum..maximum) { "${name}_out_of_range" }
   return result
 }

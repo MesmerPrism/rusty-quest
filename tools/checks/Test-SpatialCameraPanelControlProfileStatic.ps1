@@ -30,6 +30,8 @@ function Assert-Contains {
 }
 
 $contract = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\SpatialCameraControlProfile.kt"
+$strictIngress = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\StrictJsonByteIngress.kt"
+$strictIngressTests = Read-RequiredText "apps\spatial-camera-panel-android\app\src\test\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\StrictJsonByteIngressTest.kt"
 $hotloader = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\SpatialCameraControlProfileHotloader.kt"
 $activity = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\SpatialCameraPanelActivity.kt"
 $tests = Read-RequiredText "apps\spatial-camera-panel-android\app\src\test\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\SpatialCameraControlProfileTest.kt"
@@ -42,8 +44,18 @@ $docs = Read-RequiredText "docs\SPATIAL_CAMERA_CONTROL_PROFILES.md"
 
 Assert-Contains "Profile contract" $contract 'SCHEMA = "rusty.quest.spatial_camera_panel.control_profile.v1"'
 Assert-Contains "Profile contract" $contract "MAX_PROFILE_BYTES = 64 * 1024"
+Assert-Contains "Profile contract" $contract "StrictJsonByteIngress.parseObject(bytes)"
+Assert-Contains "Profile contract" $contract "is BigInteger -> runCatching { value.longValueExact() }"
+Assert-Contains "Profile contract" $contract "is BigDecimal -> runCatching { value.longValueExact() }"
 Assert-Contains "Profile contract" $contract "unsupported_transparent_spatial_video_blend"
 Assert-Contains "Profile contract" $contract 'APPLY_RECEIPT_FILE = "last-apply-receipt.json"'
+Assert-Contains "Strict JSON ingress" $strictIngress "CodingErrorAction.REPORT"
+Assert-Contains "Strict JSON ingress" $strictIngress "duplicate_object_key"
+Assert-Contains "Strict JSON ingress" $strictIngress "trailing_content"
+Assert-Contains "Strict JSON ingress" $strictIngress "MAX_NESTING_DEPTH = 64"
+Assert-Contains "Strict JSON ingress tests" $strictIngressTests "malformedUtf8VariantsFailBeforeJsonConstruction"
+Assert-Contains "Strict JSON ingress tests" $strictIngressTests "damagedStringsRootsNumbersAndTrailingValuesFailClosed"
+Assert-Contains "Strict JSON ingress tests" $strictIngressTests "decodedDuplicateKeysFailAtEveryObjectLocation"
 Assert-Contains "Profile hotloader" $hotloader "staleProfileApplied=false"
 Assert-Contains "Profile hotloader" $hotloader "status=pending-route"
 Assert-Contains "Profile hotloader" $hotloader "previousEffectiveControlsRetained=true"
@@ -55,13 +67,30 @@ Assert-Contains "Profile tests" $tests "damagedAndExpandedProfilesFailClosed"
 Assert-Contains "Profile tests" $tests "unsampledOuterVideoRouteRejectsUnsupportedIncomingColor"
 Assert-Contains "Profile tests" $tests "desktopPreviewMustBeAnObjectWhenPresent"
 Assert-Contains "Profile tests" $tests "desktopPreviewRejectsUnknownMalformedAndOutOfRangeFields"
+Assert-Contains "Profile tests" $tests "malformedUtf8InOtherwiseValidStringFailsClosed"
+Assert-Contains "Profile tests" $tests "duplicateRootSchemaIncludingEscapeEquivalentFailsClosed"
+Assert-Contains "Profile tests" $tests "duplicateNumericControlFailsClosed"
+Assert-Contains "Profile tests" $tests "duplicateNestedObjectKeyIncludingEscapeEquivalentFailsClosed"
+Assert-Contains "Profile tests" $tests "trailingContentFailsClosed"
+Assert-Contains "Profile tests" $tests "excessiveNestingFailsAtStrictByteIngress"
+Assert-Contains "Profile tests" $tests "integralMetadataUsesExactLongConversionAndRangeChecks"
+Assert-Contains "Profile tests" $tests "authoritativeByteBoundsAcceptExactlyLimitAndRejectEmptyOrLimitPlusOne"
 Assert-Contains "Hostess state converter" $converter 'INPUT_SCHEMA = "rusty.hostess.projection_replay_control_state.v2"'
 Assert-Contains "Hostess state converter" $converter 'INPUT_V1_SCHEMA = "rusty.hostess.projection_replay_control_state.v1"'
 Assert-Contains "Hostess state converter" $converter '"control_transport"'
+Assert-Contains "Hostess state converter" $converter "StrictJsonByteIngress.parseObject(bytes)"
 Assert-Contains "Hostess state converter" $converter "SpatialCameraControlProfileContract.parse(encoded)"
 Assert-Contains "Hostess state converter CLI" $converterCli "StandardCopyOption.ATOMIC_MOVE"
 Assert-Contains "Hostess state converter tests" $converterTests "goldenHostessStateExportsSameEffectiveQuestControls"
 Assert-Contains "Hostess state converter tests" $converterTests "damagedExpandedNonFiniteAndUnsupportedStatesFailClosed"
+Assert-Contains "Hostess state converter tests" $converterTests "malformedUtf8InOtherwiseValidStringFailsClosed"
+Assert-Contains "Hostess state converter tests" $converterTests "duplicateRootSchemaIncludingEscapeEquivalentFailsClosed"
+Assert-Contains "Hostess state converter tests" $converterTests "duplicateNumericControlFailsClosed"
+Assert-Contains "Hostess state converter tests" $converterTests "duplicateNestedObjectKeyIncludingEscapeEquivalentFailsClosed"
+Assert-Contains "Hostess state converter tests" $converterTests "trailingContentFailsClosed"
+Assert-Contains "Hostess state converter tests" $converterTests "excessiveNestingFailsAtStrictByteIngress"
+Assert-Contains "Hostess state converter tests" $converterTests "integralMetadataUsesExactLongConversionAndRangeChecks"
+Assert-Contains "Hostess state converter tests" $converterTests "authoritativeByteBoundsAcceptExactlyLimitAndRejectEmptyOrLimitPlusOne"
 Assert-Contains "Hostess state converter tool" $converterTool ":app:convertHostessReplayControlState"
 Assert-Contains "Hostess state converter tool" $converterTool '[string]$GradleHome = $env:GRADLE_HOME'
 Assert-Contains "Hostess state converter tool" $converterTool 'GradleHome must name the exact gradle-$GradleVersion distribution directory.'
