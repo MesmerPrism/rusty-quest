@@ -100,9 +100,12 @@ pwsh -NoProfile -ExecutionPolicy Bypass `
 ```
 
 The helper validates the host file, stages it under a temporary device name,
-atomically replaces `active.profile.json`, and waits for a fresh app-owned
-receipt with the same SHA-256. A successful file transfer without a matching
-application receipt is a failure.
+assigns a strictly newer staged modification time than the active profile,
+atomically replaces `active.profile.json`, verifies the resulting device file
+signature, and waits for a fresh app-owned receipt with the same SHA-256. The
+generation step makes publishing identical bytes observable to the app without
+changing those bytes or their digest. A successful file transfer without a
+matching application receipt is a failure.
 
 The current helper is an ADB fallback for manual development. File Manager or
 Manifold can later publish the same Quest-owned file contract without changing

@@ -11,7 +11,9 @@ param(
     [ValidateRange(1, 60)]
     [int]$TimeoutSeconds = 15,
 
-    [string]$OutPath
+    [string]$OutPath,
+
+    [string]$Adb = $env:RUSTY_QUEST_ADB
 )
 
 $ErrorActionPreference = "Stop"
@@ -19,6 +21,44 @@ Set-StrictMode -Version Latest
 
 $expectedSchema = "rusty.quest.spatial_camera_panel.control_profile.v1"
 $expectedReceiptSchema = "rusty.quest.spatial_camera_panel.control_profile_apply_receipt.v1"
+
+function Get-DeviceFileSignature {
+    param(
+        [Parameter(Mandatory)]
+        [string]$AdbPath,
+
+        [Parameter(Mandatory)]
+        [string]$TargetSerial,
+
+        [Parameter(Mandatory)]
+        [string]$DevicePath,
+
+        [switch]$AllowMissing
+    )
+
+    & $AdbPath -s $TargetSerial shell test -f $DevicePath | Out-Null
+    $testExitCode = $LASTEXITCODE
+    if ($testExitCode -eq 1 -and $AllowMissing) {
+        return $null
+    }
+    if ($testExitCode -ne 0) {
+        throw "Could not inspect the device file before publication: $DevicePath"
+    }
+
+    $rawSignature = ((& $AdbPath -s $TargetSerial shell stat -c "%s:%Y" $DevicePath) -join "`n").Trim()
+    if ($LASTEXITCODE -ne 0) {
+        throw "Could not read the device file signature: $DevicePath"
+    }
+    if ($rawSignature -notmatch '^(?<length>[0-9]+):(?<modified>[0-9]+)$') {
+        throw "Device file signature has an unsupported shape: $rawSignature"
+    }
+
+    return [pscustomobject]@{
+        length = [long]$Matches.length
+        modified_unix_seconds = [long]$Matches.modified
+        token = $rawSignature
+    }
+}
 
 if ($Serial -notmatch '^[A-Za-z0-9._:-]{2,128}$') {
     throw "Serial contains unsupported characters."
@@ -44,12 +84,19 @@ if ($null -eq $profile.quest_controls) {
 }
 $profileSha256 = (Get-FileHash -LiteralPath $resolvedProfile -Algorithm SHA256).Hash.ToLowerInvariant()
 
-$adb = (Get-Command adb -ErrorAction Stop).Source
-& $adb -s $Serial get-state | Out-Null
+if ([string]::IsNullOrWhiteSpace($Adb)) {
+    $adbPath = (Get-Command adb -ErrorAction Stop).Source
+} elseif (Test-Path -LiteralPath $Adb -PathType Leaf) {
+    $adbPath = (Resolve-Path -LiteralPath $Adb).Path
+} else {
+    $adbPath = (Get-Command $Adb -ErrorAction Stop).Source
+}
+
+& $adbPath -s $Serial get-state | Out-Null
 if ($LASTEXITCODE -ne 0) {
     throw "ADB target $Serial is unavailable."
 }
-$model = (& $adb -s $Serial shell getprop ro.product.model).Trim()
+$model = (& $adbPath -s $Serial shell getprop ro.product.model).Trim()
 if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($model)) {
     throw "Could not confirm the exact ADB target."
 }
@@ -60,24 +107,70 @@ $pendingPath = "$deviceDirectory/.pending-$($profileSha256.Substring(0, 16)).pro
 $receiptPath = "$deviceDirectory/last-apply-receipt.json"
 $startedUnixMs = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
 
-& $adb -s $Serial shell mkdir -p $deviceDirectory
+& $adbPath -s $Serial shell mkdir -p $deviceDirectory
 if ($LASTEXITCODE -ne 0) {
     throw "Could not create the app-specific profile directory."
 }
-& $adb -s $Serial push $resolvedProfile $pendingPath | Out-Null
+$priorSignature = Get-DeviceFileSignature `
+    -AdbPath $adbPath `
+    -TargetSerial $Serial `
+    -DevicePath $activePath `
+    -AllowMissing
+
+& $adbPath -s $Serial push $resolvedProfile $pendingPath | Out-Null
 if ($LASTEXITCODE -ne 0) {
     throw "Could not stage the control profile on the headset."
 }
-& $adb -s $Serial shell mv $pendingPath $activePath
+
+$publishModifiedUnixSeconds = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
+if ($null -ne $priorSignature) {
+    if ([long]$priorSignature.modified_unix_seconds -eq [long]::MaxValue) {
+        throw "The active profile modification time cannot be advanced."
+    }
+    $nextModifiedUnixSeconds = [long]$priorSignature.modified_unix_seconds + 1L
+    if ($nextModifiedUnixSeconds -gt $publishModifiedUnixSeconds) {
+        $publishModifiedUnixSeconds = $nextModifiedUnixSeconds
+    }
+}
+
+& $adbPath -s $Serial shell touch -m -d "@$publishModifiedUnixSeconds" $pendingPath
+if ($LASTEXITCODE -ne 0) {
+    throw "Could not assign a new publication generation to the staged control profile."
+}
+$stagedSignature = Get-DeviceFileSignature `
+    -AdbPath $adbPath `
+    -TargetSerial $Serial `
+    -DevicePath $pendingPath
+if (
+    [long]$stagedSignature.length -ne [long]$profileInfo.Length -or
+    [long]$stagedSignature.modified_unix_seconds -ne $publishModifiedUnixSeconds
+) {
+    throw "The staged control profile signature did not match its publication generation."
+}
+if ($null -ne $priorSignature -and [string]$stagedSignature.token -eq [string]$priorSignature.token) {
+    throw "The staged control profile did not advance the device-observed signature."
+}
+
+& $adbPath -s $Serial shell mv $pendingPath $activePath
 if ($LASTEXITCODE -ne 0) {
     throw "Could not atomically publish the staged control profile."
+}
+$publishedSignature = Get-DeviceFileSignature `
+    -AdbPath $adbPath `
+    -TargetSerial $Serial `
+    -DevicePath $activePath
+if ([string]$publishedSignature.token -ne [string]$stagedSignature.token) {
+    throw "The published control profile did not retain the staged signature."
+}
+if ($null -ne $priorSignature -and [string]$publishedSignature.token -eq [string]$priorSignature.token) {
+    throw "The published control profile did not advance the device-observed signature."
 }
 
 $deadline = [DateTimeOffset]::UtcNow.AddSeconds($TimeoutSeconds)
 $effectiveReceipt = $null
 do {
     Start-Sleep -Milliseconds 250
-    $rawReceipt = (& $adb -s $Serial shell cat $receiptPath 2>$null) -join "`n"
+    $rawReceipt = (& $adbPath -s $Serial shell cat $receiptPath 2>$null) -join "`n"
     if (-not [string]::IsNullOrWhiteSpace($rawReceipt)) {
         try {
             $candidate = $rawReceipt | ConvertFrom-Json
@@ -121,6 +214,13 @@ $result = [ordered]@{
     device_profile_path = "external-files/control-profiles/active.profile.json"
     app_receipt_path = "external-files/control-profiles/last-apply-receipt.json"
     app_receipt = $effectiveReceipt
+    publication_signature = [ordered]@{
+        prior_present = ($null -ne $priorSignature)
+        length = [long]$publishedSignature.length
+        modified_unix_seconds = [long]$publishedSignature.modified_unix_seconds
+        changed_from_prior = ($null -eq $priorSignature -or [string]$publishedSignature.token -ne [string]$priorSignature.token)
+        atomic_replace = $true
+    }
     high_rate_payload = $false
 }
 

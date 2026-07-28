@@ -33,6 +33,7 @@ $immersiveVideoCheckPath = Join-Path $PSScriptRoot "checks\Test-SpatialCameraPan
 $rgbChannelTransformCheckPath = Join-Path $PSScriptRoot "checks\Test-SpatialCameraPanelRgbChannelTransformStatic.ps1"
 $projectionSurfaceDisplacementCheckPath = Join-Path $PSScriptRoot "checks\Test-SpatialCameraPanelProjectionSurfaceDisplacementStatic.ps1"
 $controlProfileCheckPath = Join-Path $PSScriptRoot "checks\Test-SpatialCameraPanelControlProfileStatic.ps1"
+$controlProfileHostTestPath = Join-Path $PSScriptRoot "checks\Test-InstallSpatialCameraPanelControlProfileHost.ps1"
 $cameraLatencyCheckPath = Join-Path $PSScriptRoot "checks\Test-SpatialCameraPanelCameraLatencyDiagnosticStatic.ps1"
 $fragmentProbeCheckPath = Join-Path $PSScriptRoot "checks\Test-SpatialFragmentProbeStatic.ps1"
 $vrStrobeCheckPath = Join-Path $PSScriptRoot "checks\Test-SpatialVrStrobeStatic.ps1"
@@ -57,6 +58,9 @@ if (-not (Test-Path -LiteralPath $projectionSurfaceDisplacementCheckPath)) {
 }
 if (-not (Test-Path -LiteralPath $controlProfileCheckPath)) {
     throw "Missing Spatial Camera Panel control-profile static check: $controlProfileCheckPath"
+}
+if (-not (Test-Path -LiteralPath $controlProfileHostTestPath)) {
+    throw "Missing Spatial Camera Panel control-profile host test: $controlProfileHostTestPath"
 }
 if (-not (Test-Path -LiteralPath $cameraLatencyCheckPath)) {
     throw "Missing Spatial Camera Panel camera latency diagnostic check: $cameraLatencyCheckPath"
@@ -83,6 +87,7 @@ if (-not (Test-Path -LiteralPath $buildPath)) {
 & $rgbChannelTransformCheckPath -RepoRoot $repoRootPath
 & $projectionSurfaceDisplacementCheckPath -RepoRoot $repoRootPath
 & $controlProfileCheckPath -RepoRoot $repoRootPath
+& $controlProfileHostTestPath -RepoRoot $repoRootPath
 & $cameraLatencyCheckPath -RepoRoot $repoRootPath
 & $fragmentProbeCheckPath -RepoRoot $repoRootPath
 & $vrStrobeCheckPath -RepoRoot $repoRootPath
