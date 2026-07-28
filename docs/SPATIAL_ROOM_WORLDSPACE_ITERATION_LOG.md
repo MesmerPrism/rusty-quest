@@ -809,12 +809,12 @@ Current actual app build and launch workflow, public-safe form:
 
 ```powershell
 & '<Quest toolchain activation script>'
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Build-SpatialCameraPanelAndroid.ps1 `
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Build-SpatialCameraPanelAndroid.ps1 `
   -PrivateLayerProfilePath <private downstream profile json> `
   -OutDir target\spatial-camera-panel-android-manual-actual
 
 . .\local-artifacts\Set-SpatialCameraPanelPrivateInputs.ps1
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-SpatialCameraPanelAndroidCameraHwbProjectionSmoke.ps1 `
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-SpatialCameraPanelAndroidCameraHwbProjectionSmoke.ps1 `
   -ApkPath target\spatial-camera-panel-android-manual-actual\rusty-quest-spatial-camera-panel.apk `
   -OutDir local-artifacts\spatial-camera-panel-headset\<timestamp>-manual-actual-room-sample-skybox `
   -RunSeconds 20 `
@@ -850,7 +850,7 @@ Use the matrix wrapper when the next question is carrier behavior rather than
 runtime implementation:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-SpatialCameraPanelAndroidLayeringMatrix.ps1 `
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-SpatialCameraPanelAndroidLayeringMatrix.ps1 `
   -Serial <quest-serial> `
   -MatrixPreset implemented-carriers `
   -UsePrivateInputsManifest `

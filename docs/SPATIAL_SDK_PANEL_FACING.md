@@ -141,8 +141,8 @@ separate operator authorization for output.
 Run the focused guard and the owning app suite:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\checks\Test-SpatialSdkPanelFacingStatic.ps1 -RepoRoot .
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-SpatialCameraPanelAndroid.ps1
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\checks\Test-SpatialSdkPanelFacingStatic.ps1 -RepoRoot .
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-SpatialCameraPanelAndroid.ps1
 ```
 
 The focused gate requires the shared `lookRotationAroundY` convention, the

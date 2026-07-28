@@ -9,7 +9,7 @@ metric/axial conversion policy.
 Use:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File tools\Apply-RuntimeProfile.ps1 -ProfilePath fixtures\runtime-profiles\quest-native-renderer-native-passthrough-meta-environment-depth-particles.profile.json -DryRun
+pwsh -NoProfile -ExecutionPolicy Bypass -File tools\Apply-RuntimeProfile.ps1 -ProfilePath fixtures\runtime-profiles\quest-native-renderer-native-passthrough-meta-environment-depth-particles.profile.json -DryRun
 ```
 
 The profile sets:
@@ -37,7 +37,7 @@ Use the wrapper so permission pregrant, profile application, log capture, and
 raw-D16 evidence checks stay mechanical:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File tools\Invoke-NativeRendererEnvironmentDepthKnownDistanceProof.ps1 -ApkPath target\native-renderer-android\rusty-quest-native-renderer.apk -Serial <quest-serial> -TargetDistanceMeters 1.0 -ToleranceMeters 0.15 -RunSeconds 8
+pwsh -NoProfile -ExecutionPolicy Bypass -File tools\Invoke-NativeRendererEnvironmentDepthKnownDistanceProof.ps1 -ApkPath target\native-renderer-android\rusty-quest-native-renderer.apk -Serial <quest-serial> -TargetDistanceMeters 1.0 -ToleranceMeters 0.15 -RunSeconds 8
 ```
 
 Run one capture per measured target distance. Place a flat target centered in
@@ -82,7 +82,7 @@ the per-run `runtime-evidence-summary.json` artifacts. Use the series checker
 to validate that table mechanically:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File tools\Test-NativeRendererEnvironmentDepthKnownDistanceSeries.ps1 -SummaryPath <0p5m-summary.json>,<1m-summary.json>,<2m-summary.json>,<4m-summary.json> -MinimumDistances 4
+pwsh -NoProfile -ExecutionPolicy Bypass -File tools\Test-NativeRendererEnvironmentDepthKnownDistanceSeries.ps1 -SummaryPath <0p5m-summary.json>,<1m-summary.json>,<2m-summary.json>,<4m-summary.json> -MinimumDistances 4
 ```
 
 The checker requires every summary to come from the known-distance evidence
@@ -94,7 +94,7 @@ After the movement proof run also exists, tie the machine-readable artifacts
 together with the evidence-bundle checker:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File tools\Test-NativeRendererEnvironmentDepthEvidenceBundle.ps1 -MotionRunSummaryPath <motion-run-summary.json> -KnownDistanceSeriesPath <known-distance-series-result.json> -KnownDistanceRunSummaryPath <0p5m-run-summary.json>,<1m-run-summary.json>,<2m-run-summary.json>,<4m-run-summary.json>
+pwsh -NoProfile -ExecutionPolicy Bypass -File tools\Test-NativeRendererEnvironmentDepthEvidenceBundle.ps1 -MotionRunSummaryPath <motion-run-summary.json> -KnownDistanceSeriesPath <known-distance-series-result.json> -KnownDistanceRunSummaryPath <0p5m-run-summary.json>,<1m-run-summary.json>,<2m-run-summary.json>,<4m-run-summary.json>
 ```
 
 The bundle checker validates wrapper provenance, pid-scoped runtime evidence,
@@ -105,7 +105,7 @@ For the final headset session, the acceptance-suite wrapper runs those steps in
 order:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File tools\Invoke-NativeRendererEnvironmentDepthAcceptanceSuite.ps1 -ApkPath target\native-renderer-android\rusty-quest-native-renderer.apk -Serial <quest-serial>
+pwsh -NoProfile -ExecutionPolicy Bypass -File tools\Invoke-NativeRendererEnvironmentDepthAcceptanceSuite.ps1 -ApkPath target\native-renderer-android\rusty-quest-native-renderer.apk -Serial <quest-serial>
 ```
 
 Use the lower-level commands above when a specific target distance or motion

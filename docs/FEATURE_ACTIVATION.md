@@ -53,6 +53,21 @@ Any mismatch produces a typed rejection before marker, input, scene, media,
 permission, route, or rendering effects. A conformance lock is test evidence;
 it does not change an application's inert default lock.
 
+## Build And Run Closure
+
+Feature presence in source is not packaging authority. Native app resolution
+binds the app spec and selected descriptor hashes into one resolution
+fingerprint; the locked builder rejects undeclared ambient native-renderer
+feature variables. Spatial builds hash only explicit arguments and clear
+ambient `RUSTY_QUEST_SPATIAL_*` values around Gradle. Each project uses a
+distinct package/client identity and content-addressed output.
+
+Runtime activation starts from the build's hashed `run-capsule.json`, not a
+loose APK plus remembered launcher properties. Launchers clear the complete
+app property manifest before applying the capsule profile, serialize by
+headset serial, and restore exact prior property values in `finally`. See
+[APK Build And Run Isolation](APK_RUN_ISOLATION.md).
+
 Hand and particle decisions are intentionally different Rust types. A hand
 decision cannot cross a particle effect gate (or vice versa), and neither type
 has a public constructor or public inner fields. Compile-fail doctests preserve

@@ -36,7 +36,7 @@ Use the sweep wrapper to generate one profile, one runtime artifact directory,
 and one summary row per mode:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-NativeRendererVideoBorderBlendSweep.ps1 `
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-NativeRendererVideoBorderBlendSweep.ps1 `
   -Serial <quest-serial> `
   -ApkPath .\target\native-renderer-android\rusty-quest-native-renderer.apk `
   -OutDir .\local-artifacts\native-renderer-video-border-blend-sweep\headset
@@ -45,7 +45,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-NativeRendere
 Dry-run profile generation without touching a device:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-NativeRendererVideoBorderBlendSweep.ps1 `
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-NativeRendererVideoBorderBlendSweep.ps1 `
   -DryRunOnly `
   -OutDir .\local-artifacts\native-renderer-video-border-blend-sweep\dryrun
 ```

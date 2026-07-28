@@ -4,28 +4,41 @@ param(
     [string]$JavaHome = $env:JAVA_HOME,
     [string]$NdkHome = $env:ANDROID_NDK_HOME,
     [string]$GradleVersion = "9.4.1",
-    [string]$RecordedHandCaptureDir = $env:RUSTY_QUEST_NATIVE_RECORDED_HAND_CAPTURE_DIR,
+    [string]$RecordedHandCaptureDir = "",
     [int]$RecordedHandFrameLimit = 24,
-    [string]$PrivateLayerProfilePath = $env:RUSTY_QUEST_SPATIAL_CAMERA_PANEL_PRIVATE_LAYER_PROFILE,
-    [string]$OpaqueGuideShader = $env:RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OPAQUE_GUIDE_SHADER,
-    [string]$OpaqueProjectionShader = $env:RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OPAQUE_PROJECTION_SHADER,
-    [string]$OpaqueProjectionVertexShader = $env:RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OPAQUE_PROJECTION_VERTEX_SHADER,
-    [string]$OpaqueProjectionEffect = $env:RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OPAQUE_PROJECTION_EFFECT,
-    [string]$PrivateSurfaceParticleProfilePath = $env:RUSTY_QUEST_SPATIAL_SURFACE_PRIVATE_PARTICLE_PROFILE,
-    [string]$PrivateSurfaceParticleShader = $env:RUSTY_QUEST_SPATIAL_SURFACE_PRIVATE_PARTICLE_SHADER,
-    [string]$PrivateSurfaceParticlePayloadDir = $env:RUSTY_QUEST_SPATIAL_SURFACE_PRIVATE_PARTICLE_PAYLOAD_DIR,
-    [string]$PrivateSurfaceParticleMarkerPrefix = $env:RUSTY_QUEST_SPATIAL_SURFACE_PRIVATE_PARTICLE_MARKER_PREFIX,
-    [string]$HandMeshRigAssetDir = $env:RUSTY_QUEST_SPATIAL_HAND_MESH_RIG_ASSET_DIR,
-    [string]$ProductId = $env:RUSTY_QUEST_SPATIAL_PRODUCT_ID,
-    [string]$AppId = $env:RUSTY_QUEST_SPATIAL_APP_ID,
-    [string]$AppLabel = $env:RUSTY_QUEST_SPATIAL_APP_LABEL,
-    [string]$ApkFileName = $env:RUSTY_QUEST_SPATIAL_APK_FILE_NAME,
+    [string]$PrivateLayerProfilePath = "",
+    [string]$OpaqueGuideShader = "",
+    [string]$OpaqueProjectionShader = "",
+    [string]$OpaqueProjectionVertexShader = "",
+    [string]$OpaqueProjectionEffect = "",
+    [string]$PrivateSurfaceParticleProfilePath = "",
+    [string]$PrivateSurfaceParticleShader = "",
+    [string]$PrivateSurfaceParticlePayloadDir = "",
+    [string]$PrivateSurfaceParticleMarkerPrefix = "",
+    [string]$HandMeshRigAssetDir = "",
+    [string]$PrivateFeatureSourceDir = "",
+    [string]$PrivateFeatureAssetDir = "",
+    [string]$PrivateFeatureResourceDir = "",
+    [string]$ProductId = "",
+    [string]$AppId = "",
+    [string]$AppLabel = "",
+    [string]$ApkFileName = "",
+    [string]$ParticleLayerCarrierDefault = "manual-panel-scene-object-custom-mesh",
+    [string]$StartInParticleViewDefault = "false",
+    [string]$PanelLauncherVisibleDefault = "true",
+    [string]$HandAlignmentEnabledDefault = "false",
+    [string]$HandAlignmentViewerMarkersEnabledDefault = "false",
+    [string]$HandAlignmentMappingProfileDefault = "mirror-x-origin-registration",
+    [string]$HandBillboardFlockEnabledDefault = "false",
+    [string]$HandBillboardSourceDefault = "spatial-sdk-anchor-flock",
     [ValidateSet("Debug", "Release")]
     [string]$BuildType = "Debug",
     [switch]$LockedFinalPresentation,
     [ValidateRange(0.0, 4.0)][double]$DistortionSpeedScale = 1.0,
     [string]$Keystore = "",
-    [string]$OutDir = ""
+    [string]$OutDir = "",
+    [switch]$AllowSharedDevelopmentPackage,
+    [switch]$ReplaceExistingOutput
 )
 
 $ErrorActionPreference = "Stop"
@@ -53,6 +66,16 @@ function Get-FileSha256 {
     }
 }
 
+function Get-StringSha256 {
+    param([Parameter(Mandatory=$true)][AllowEmptyString()][string]$Value)
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        return ([System.BitConverter]::ToString($sha.ComputeHash([System.Text.Encoding]::UTF8.GetBytes($Value)))).Replace("-", "").ToLowerInvariant()
+    } finally {
+        $sha.Dispose()
+    }
+}
+
 function Get-DirectorySha256 {
     param([Parameter(Mandatory=$true)][string]$Path)
     $root = (Resolve-Path -LiteralPath $Path).Path.TrimEnd([char[]]@('\', '/'))
@@ -70,6 +93,23 @@ function Get-DirectorySha256 {
     } finally {
         $sha.Dispose()
     }
+}
+
+function Get-SpatialPropertyNames {
+    param([Parameter(Mandatory=$true)][string[]]$Roots)
+    $names = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    foreach ($root in @($Roots | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Sort-Object -Unique)) {
+        if (-not (Test-Path -LiteralPath $root -PathType Container)) { continue }
+        foreach ($file in @(Get-ChildItem -LiteralPath $root -Recurse -File | Where-Object {
+            $_.FullName -notmatch '[\\/](build|target|\.gradle)[\\/]' -and $_.Length -le 4MB
+        })) {
+            try { $text = [IO.File]::ReadAllText($file.FullName) } catch { continue }
+            foreach ($match in [regex]::Matches($text, 'debug\.rustyquest\.(?:spatial|spatial_camera_panel)\.[A-Za-z0-9_.-]+')) {
+                [void]$names.Add([string]$match.Value)
+            }
+        }
+    }
+    return @($names | Sort-Object)
 }
 
 function Get-LatestDirectory {
@@ -413,7 +453,13 @@ $resolvedPrivateSurfaceParticleShader = Resolve-OptionalFilePath -Path $PrivateS
 $resolvedPrivateSurfaceParticlePayloadDir = Resolve-OptionalDirectoryPath -Path $PrivateSurfaceParticlePayloadDir -Label "Private surface-particle payload directory"
 $resolvedPrivateSurfaceParticleMarkerPrefix = Test-MarkerPrefix -Value $PrivateSurfaceParticleMarkerPrefix
 $resolvedHandMeshRigAssetDir = Resolve-OptionalDirectoryPath -Path $HandMeshRigAssetDir -Label "Hand mesh rig asset directory"
+$resolvedPrivateFeatureSourceDir = Resolve-OptionalDirectoryPath -Path $PrivateFeatureSourceDir -Label "Private feature source directory"
+$resolvedPrivateFeatureAssetDir = Resolve-OptionalDirectoryPath -Path $PrivateFeatureAssetDir -Label "Private feature asset directory"
+$resolvedPrivateFeatureResourceDir = Resolve-OptionalDirectoryPath -Path $PrivateFeatureResourceDir -Label "Private feature resource directory"
 $handMeshRigAssetInfo = Test-HandMeshRigAssetPack -Path $resolvedHandMeshRigAssetDir
+if ([string]::IsNullOrWhiteSpace($AppId) -and -not $AllowSharedDevelopmentPackage) {
+    throw "-AppId is required so each Spatial project has a distinct Android identity. Use -AllowSharedDevelopmentPackage only for explicit compatibility with the shared development package."
+}
 $resolvedProductId = Resolve-SpatialProductId -Value $ProductId
 $resolvedAppId = Resolve-SpatialAppId -Value $AppId -ResolvedProductId $resolvedProductId
 $resolvedAppLabel = Resolve-SpatialAppLabel -Value $AppLabel -ResolvedProductId $resolvedProductId
@@ -506,6 +552,16 @@ if ([string]::IsNullOrWhiteSpace($RepoRoot)) {
 $repoRoot = Resolve-Path $RepoRoot
 $appRoot = Resolve-Path (Join-Path $repoRoot "apps\spatial-camera-panel-android")
 $targetRoot = Join-Path $repoRoot "target"
+Import-Module (Join-Path $PSScriptRoot "lib\SourceComposition.psm1") -Force
+$sourceComposition = Get-QuestBuildSourceComposition -RepoRoot ([string]$repoRoot) -PackageName @("spatial-camera-panel-native-receipt")
+$primarySource = @($sourceComposition.repositories | Where-Object { $_.role -eq "primary" })
+if ($primarySource.Count -ne 1) { throw "Spatial APK source composition did not resolve exactly one primary Rusty Quest repository." }
+$sourceHead = [string]$primarySource[0].commit
+$sourceTree = [string]$primarySource[0].tree
+$sourceDependencies = @($sourceComposition.repositories | Where-Object { $_.role -eq "path-dependency" })
+$sourceDependencyIdentities = @($sourceDependencies | ForEach-Object {
+    [ordered]@{ repository_id = [string]$_.repository_id; role = [string]$_.role; commit = [string]$_.commit; tree = [string]$_.tree }
+})
 $assetConformanceLockRelativePath = "legacy-workspaces/mixed-integration-v1/conformance-locks/spatial-asset-model.feature.lock.json"
 $assetConformanceLockPath = Join-Path $appRoot $assetConformanceLockRelativePath
 if (-not (Test-Path -LiteralPath $assetConformanceLockPath -PathType Leaf)) {
@@ -531,8 +587,52 @@ if (-not [string]::IsNullOrWhiteSpace($Keystore)) {
     }
     $Keystore = (Resolve-Path -LiteralPath $Keystore).Path
 }
+$buildInputDescriptor = [ordered]@{
+    schema = "rusty.quest.spatial_camera_panel.build_input_lock.v1"
+    source_commit = $sourceHead
+    source_tree = $sourceTree
+    source_composition_fingerprint = [string]$sourceComposition.fingerprint
+    source_dependencies = $sourceDependencyIdentities
+    product_id = $resolvedProductId
+    application_id = $resolvedAppId
+    app_label = $resolvedAppLabel
+    apk_file_name = $resolvedApkFileName
+    gradle_version = $GradleVersion
+    android_build_type = $buildTypeLower
+    locked_final_presentation = $lockedFinalPresentationEnabled
+    distortion_speed_scale = $resolvedDistortionSpeedScale
+    recorded_hand_capture = if ([string]::IsNullOrWhiteSpace($resolvedRecordedHandCaptureDir)) { $null } else { [ordered]@{ path = $resolvedRecordedHandCaptureDir; sha256 = Get-DirectorySha256 -Path $resolvedRecordedHandCaptureDir; frame_limit = $resolvedRecordedHandFrameLimit } }
+    private_layer = [ordered]@{
+        profile = if ([string]::IsNullOrWhiteSpace($resolvedPrivateLayerProfilePath)) { $null } else { [ordered]@{ path = $resolvedPrivateLayerProfilePath; sha256 = Get-FileSha256 -Path $resolvedPrivateLayerProfilePath } }
+        guide_shader = if ([string]::IsNullOrWhiteSpace($resolvedOpaqueGuideShader)) { $null } else { [ordered]@{ path = $resolvedOpaqueGuideShader; sha256 = Get-FileSha256 -Path $resolvedOpaqueGuideShader } }
+        projection_shader = if ([string]::IsNullOrWhiteSpace($resolvedOpaqueProjectionShader)) { $null } else { [ordered]@{ path = $resolvedOpaqueProjectionShader; sha256 = Get-FileSha256 -Path $resolvedOpaqueProjectionShader } }
+        projection_vertex_shader = if ([string]::IsNullOrWhiteSpace($resolvedOpaqueProjectionVertexShader)) { $null } else { [ordered]@{ path = $resolvedOpaqueProjectionVertexShader; sha256 = Get-FileSha256 -Path $resolvedOpaqueProjectionVertexShader } }
+        projection_effect = if ($opaqueProjectionEffectConfigured) { $OpaqueProjectionEffect } else { "" }
+    }
+    private_particles = [ordered]@{
+        profile = if ([string]::IsNullOrWhiteSpace($resolvedPrivateSurfaceParticleProfilePath)) { $null } else { [ordered]@{ path = $resolvedPrivateSurfaceParticleProfilePath; sha256 = Get-FileSha256 -Path $resolvedPrivateSurfaceParticleProfilePath } }
+        shader = if ([string]::IsNullOrWhiteSpace($resolvedPrivateSurfaceParticleShader)) { $null } else { [ordered]@{ path = $resolvedPrivateSurfaceParticleShader; sha256 = Get-FileSha256 -Path $resolvedPrivateSurfaceParticleShader } }
+        payload = if ([string]::IsNullOrWhiteSpace($resolvedPrivateSurfaceParticlePayloadDir)) { $null } else { [ordered]@{ path = $resolvedPrivateSurfaceParticlePayloadDir; sha256 = Get-DirectorySha256 -Path $resolvedPrivateSurfaceParticlePayloadDir } }
+        marker_prefix = $resolvedPrivateSurfaceParticleMarkerPrefix
+    }
+    packaged_inputs = [ordered]@{
+        hand_mesh_rig = if ([string]::IsNullOrWhiteSpace($resolvedHandMeshRigAssetDir)) { $null } else { [ordered]@{ path = $resolvedHandMeshRigAssetDir; sha256 = Get-DirectorySha256 -Path $resolvedHandMeshRigAssetDir } }
+        private_source = if ([string]::IsNullOrWhiteSpace($resolvedPrivateFeatureSourceDir)) { $null } else { [ordered]@{ path = $resolvedPrivateFeatureSourceDir; sha256 = Get-DirectorySha256 -Path $resolvedPrivateFeatureSourceDir } }
+        private_assets = if ([string]::IsNullOrWhiteSpace($resolvedPrivateFeatureAssetDir)) { $null } else { [ordered]@{ path = $resolvedPrivateFeatureAssetDir; sha256 = Get-DirectorySha256 -Path $resolvedPrivateFeatureAssetDir } }
+        private_resources = if ([string]::IsNullOrWhiteSpace($resolvedPrivateFeatureResourceDir)) { $null } else { [ordered]@{ path = $resolvedPrivateFeatureResourceDir; sha256 = Get-DirectorySha256 -Path $resolvedPrivateFeatureResourceDir } }
+    }
+    defaults = [ordered]@{
+        particle_layer_carrier = $ParticleLayerCarrierDefault; start_in_particle_view = $StartInParticleViewDefault
+        panel_launcher_visible = $PanelLauncherVisibleDefault; hand_alignment_enabled = $HandAlignmentEnabledDefault
+        hand_alignment_viewer_markers = $HandAlignmentViewerMarkersEnabledDefault; hand_alignment_mapping_profile = $HandAlignmentMappingProfileDefault
+        hand_billboard_flock_enabled = $HandBillboardFlockEnabledDefault; hand_billboard_source = $HandBillboardSourceDefault
+    }
+}
+$buildInputFingerprint = Get-StringSha256 -Value ($buildInputDescriptor | ConvertTo-Json -Depth 20 -Compress)
+$buildInputDescriptor["fingerprint"] = $buildInputFingerprint
 if ([string]::IsNullOrWhiteSpace($OutDir)) {
-    $OutDir = Join-Path $targetRoot "spatial-camera-panel-android"
+    $packageLeaf = ($resolvedAppId -replace '[^A-Za-z0-9_.-]+', '-')
+    $OutDir = Join-Path $targetRoot "spatial-camera-panel-android\builds\$packageLeaf\$($buildInputFingerprint.Substring(0, 24))"
 }
 
 New-Item -ItemType Directory -Force -Path $targetRoot | Out-Null
@@ -541,15 +641,36 @@ $resolvedOutFull = [System.IO.Path]::GetFullPath($OutDir).TrimEnd([char[]]@('\')
 if (-not $resolvedOutFull.StartsWith($resolvedTargetRoot + "\", [System.StringComparison]::OrdinalIgnoreCase)) {
     throw "OutDir must be under the repo target directory: $resolvedOutFull"
 }
+if (Test-Path -LiteralPath $OutDir) {
+    if (-not $ReplaceExistingOutput) { throw "Content-addressed Spatial APK output already exists: $OutDir. Reuse its run capsule or pass -ReplaceExistingOutput explicitly." }
+    Remove-Item -LiteralPath (Resolve-Path -LiteralPath $OutDir).Path -Recurse -Force
+}
 New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
+$buildInputLockPath = Join-Path $OutDir "build-input-lock.json"
+$buildInputDescriptor | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $buildInputLockPath -Encoding UTF8
+$propertyManifestPath = Join-Path $OutDir "spatial-property-manifest.json"
+$propertyScanRoots = @([string]$appRoot)
+if (-not [string]::IsNullOrWhiteSpace($resolvedPrivateFeatureSourceDir)) { $propertyScanRoots += $resolvedPrivateFeatureSourceDir }
+$propertyNames = Get-SpatialPropertyNames -Roots $propertyScanRoots
+if ($propertyNames.Count -eq 0) { throw "Spatial APK build could not discover its app-scoped Android property surface." }
+$propertyManifest = [ordered]@{
+    schema = "rusty.quest.android_property_manifest.v1"
+    owner_package = $resolvedAppId
+    scope = "complete-source-consumer-surface"
+    prefixes = @("debug.rustyquest.spatial.", "debug.rustyquest.spatial_camera_panel.")
+    properties = @($propertyNames | ForEach-Object { [ordered]@{ name = [string]$_ } })
+}
+$propertyManifest | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $propertyManifestPath -Encoding UTF8
+$intermediateRoot = Join-Path $targetRoot ("apk-i\s\{0}" -f $buildInputFingerprint.Substring(0, 16))
+$spatialBuildRoot = Join-Path $intermediateRoot "gradle"
 
 $nativeReceiptRoot = Join-Path $appRoot "native-receipt"
 $nativeReceiptCargoManifest = Join-Path $nativeReceiptRoot "Cargo.toml"
-$productBuildRoot = Join-Path $targetRoot "spatial-product-builds\$resolvedProductId"
-$appBuildDir = Join-Path $productBuildRoot "gradle-app"
-$rootBuildDir = Join-Path $productBuildRoot "gradle-root"
-$gradleProjectCacheDir = Join-Path $productBuildRoot "gradle-project-cache"
-$nativeReceiptTargetDir = Join-Path $productBuildRoot "native-receipt-cargo"
+$productBuildRoot = Join-Path $spatialBuildRoot $resolvedProductId
+$appBuildDir = Join-Path $productBuildRoot "app"
+$rootBuildDir = Join-Path $productBuildRoot "root"
+$gradleProjectCacheDir = Join-Path $intermediateRoot "gradle-project-cache"
+$nativeReceiptTargetDir = Join-Path $intermediateRoot "cargo"
 $nativeReceiptJniRoot = Join-Path $appBuildDir "generated\rustJniLibs"
 $nativeReceiptJniAbiDir = Join-Path $nativeReceiptJniRoot "arm64-v8a"
 $nativeReceiptJniLib = Join-Path $nativeReceiptJniAbiDir "libspatial_camera_panel_native_receipt.so"
@@ -649,6 +770,7 @@ try {
     Invoke-Checked "Spatial Camera Panel native receipt cargo build" $cargoCommand.Source @(
         "build",
         "--manifest-path", $nativeReceiptCargoManifest,
+        "--locked",
         "--target", "aarch64-linux-android",
         "--release",
         "--target-dir", $nativeReceiptTargetDir
@@ -765,7 +887,15 @@ $previousGradleLockedFinalPresentation = $env:RUSTY_QUEST_SPATIAL_LOCKED_FINAL_P
 $previousGradleDistortionSpeedScale = $env:RUSTY_QUEST_SPATIAL_DISTORTION_SPEED_SCALE
 $previousHandMeshRigAssetDir = $env:RUSTY_QUEST_SPATIAL_HAND_MESH_RIG_ASSET_DIR
 $previousSigningKeystore = $env:RUSTY_QUEST_SPATIAL_SIGNING_KEYSTORE
+$previousSpatialScopedEnvironment = @{}
+foreach ($entry in @(Get-ChildItem Env: | Where-Object { $_.Name -like "RUSTY_QUEST_SPATIAL_*" })) {
+    $previousSpatialScopedEnvironment[[string]$entry.Name] = [string]$entry.Value
+}
+$ignoredAmbientSpatialFeatureVariables = @($previousSpatialScopedEnvironment.Keys | Sort-Object)
 try {
+    foreach ($name in @($previousSpatialScopedEnvironment.Keys)) {
+        [Environment]::SetEnvironmentVariable([string]$name, $null, "Process")
+    }
     $env:ANDROID_HOME = $AndroidHome
     $env:ANDROID_NDK_HOME = $NdkHome
     $env:RUSTY_QUEST_ANDROID_NDK_VERSION = Split-Path -Leaf $NdkHome
@@ -778,6 +908,15 @@ try {
     $env:RUSTY_QUEST_SPATIAL_APP_LABEL = $resolvedAppLabel
     $env:RUSTY_QUEST_SPATIAL_LOCKED_FINAL_PRESENTATION = $lockedFinalPresentationEnabled.ToString().ToLowerInvariant()
     $env:RUSTY_QUEST_SPATIAL_DISTORTION_SPEED_SCALE = $resolvedDistortionSpeedScale.ToString([System.Globalization.CultureInfo]::InvariantCulture)
+    $env:RUSTY_QUEST_SPATIAL_BUILD_ROOT = $productBuildRoot
+    $env:RUSTY_QUEST_SPATIAL_PARTICLE_LAYER_CARRIER_DEFAULT = $ParticleLayerCarrierDefault
+    $env:RUSTY_QUEST_SPATIAL_START_IN_PARTICLE_VIEW_DEFAULT = $StartInParticleViewDefault
+    $env:RUSTY_QUEST_SPATIAL_PANEL_LAUNCHER_VISIBLE_DEFAULT = $PanelLauncherVisibleDefault
+    $env:RUSTY_QUEST_SPATIAL_HAND_ALIGNMENT_ENABLED_DEFAULT = $HandAlignmentEnabledDefault
+    $env:RUSTY_QUEST_SPATIAL_HAND_ALIGNMENT_VIEWER_MARKERS_ENABLED_DEFAULT = $HandAlignmentViewerMarkersEnabledDefault
+    $env:RUSTY_QUEST_SPATIAL_HAND_ALIGNMENT_MAPPING_PROFILE_DEFAULT = $HandAlignmentMappingProfileDefault
+    $env:RUSTY_QUEST_SPATIAL_HAND_BILLBOARD_FLOCK_ENABLED_DEFAULT = $HandBillboardFlockEnabledDefault
+    $env:RUSTY_QUEST_SPATIAL_HAND_BILLBOARD_SOURCE_DEFAULT = $HandBillboardSourceDefault
     if ([string]::IsNullOrWhiteSpace($resolvedHandMeshRigAssetDir)) {
         Remove-Item Env:\RUSTY_QUEST_SPATIAL_HAND_MESH_RIG_ASSET_DIR -ErrorAction SilentlyContinue
     } else {
@@ -787,6 +926,17 @@ try {
         Remove-Item Env:\RUSTY_QUEST_SPATIAL_SIGNING_KEYSTORE -ErrorAction SilentlyContinue
     } else {
         $env:RUSTY_QUEST_SPATIAL_SIGNING_KEYSTORE = $Keystore
+    }
+    foreach ($binding in @(
+        @{ Name = "RUSTY_QUEST_SPATIAL_PRIVATE_FEATURE_SRC_DIR"; Value = $resolvedPrivateFeatureSourceDir },
+        @{ Name = "RUSTY_QUEST_SPATIAL_PRIVATE_FEATURE_ASSET_DIR"; Value = $resolvedPrivateFeatureAssetDir },
+        @{ Name = "RUSTY_QUEST_SPATIAL_PRIVATE_FEATURE_RES_DIR"; Value = $resolvedPrivateFeatureResourceDir }
+    )) {
+        if ([string]::IsNullOrWhiteSpace([string]$binding.Value)) {
+            [Environment]::SetEnvironmentVariable([string]$binding.Name, $null, "Process")
+        } else {
+            [Environment]::SetEnvironmentVariable([string]$binding.Name, [string]$binding.Value, "Process")
+        }
     }
     Invoke-Checked "Spatial Camera Panel Gradle build" $gradleBat @(
         "--no-daemon",
@@ -858,6 +1008,12 @@ try {
     } else {
         $env:RUSTY_QUEST_SPATIAL_SIGNING_KEYSTORE = $previousSigningKeystore
     }
+    foreach ($name in @(Get-ChildItem Env: | Where-Object { $_.Name -like "RUSTY_QUEST_SPATIAL_*" } | Select-Object -ExpandProperty Name)) {
+        [Environment]::SetEnvironmentVariable([string]$name, $null, "Process")
+    }
+    foreach ($name in @($previousSpatialScopedEnvironment.Keys)) {
+        [Environment]::SetEnvironmentVariable([string]$name, [string]$previousSpatialScopedEnvironment[$name], "Process")
+    }
 }
 
 $apkSource = Join-Path $appBuildDir "outputs\apk\$buildTypeLower\app-$buildTypeLower.apk"
@@ -880,6 +1036,19 @@ $offlineMediaPackagedAssets =
 $manifest = [ordered]@{
     '$schema' = "rusty.quest.spatial_camera_panel_sdk_android.build_manifest.v1"
     product_id = $resolvedProductId
+    build_input_fingerprint = $buildInputFingerprint
+    build_input_lock_path = $buildInputLockPath
+    build_input_lock_sha256 = Get-FileSha256 -Path $buildInputLockPath
+    source_commit = $sourceHead
+    source_tree = $sourceTree
+    source_tracked_worktree_clean = $true
+    source_composition_fingerprint = [string]$sourceComposition.fingerprint
+    source_dependencies = $sourceDependencies
+    property_manifest_path = $propertyManifestPath
+    property_manifest_sha256 = Get-FileSha256 -Path $propertyManifestPath
+    property_manifest_count = $propertyNames.Count
+    output_policy = "content-addressed-explicit-input-lock"
+    ambient_spatial_feature_environment_ignored = $ignoredAmbientSpatialFeatureVariables
     package_name = $resolvedAppId
     application_id = $resolvedAppId
     app_label = $resolvedAppLabel
@@ -947,11 +1116,11 @@ $manifest = [ordered]@{
     spatial_hand_mesh_rig_runtime_source = "XR_EXT_hand_tracking-mapped-world-joints"
     spatial_hand_mesh_rig_skinning = "cpu-linear-blend-four-influences"
     spatial_hand_mesh_rig_surface_anchors = "triangle-index-plus-barycentric"
-    spatial_hand_alignment_enabled_default = ($env:RUSTY_QUEST_SPATIAL_HAND_ALIGNMENT_ENABLED_DEFAULT -eq "true")
-    spatial_hand_alignment_viewer_markers_enabled_default = ($env:RUSTY_QUEST_SPATIAL_HAND_ALIGNMENT_VIEWER_MARKERS_ENABLED_DEFAULT -eq "true")
-    spatial_hand_alignment_mapping_profile_default = $env:RUSTY_QUEST_SPATIAL_HAND_ALIGNMENT_MAPPING_PROFILE_DEFAULT
-    spatial_hand_billboard_flock_enabled_default = ($env:RUSTY_QUEST_SPATIAL_HAND_BILLBOARD_FLOCK_ENABLED_DEFAULT -eq "true")
-    spatial_hand_billboard_source_default = $env:RUSTY_QUEST_SPATIAL_HAND_BILLBOARD_SOURCE_DEFAULT
+    spatial_hand_alignment_enabled_default = ($HandAlignmentEnabledDefault -eq "true")
+    spatial_hand_alignment_viewer_markers_enabled_default = ($HandAlignmentViewerMarkersEnabledDefault -eq "true")
+    spatial_hand_alignment_mapping_profile_default = $HandAlignmentMappingProfileDefault
+    spatial_hand_billboard_flock_enabled_default = ($HandBillboardFlockEnabledDefault -eq "true")
+    spatial_hand_billboard_source_default = $HandBillboardSourceDefault
     spatial_sdk_3d_asset_module = "spatial-sdk-staged-3d-asset"
     spatial_sdk_3d_asset_module_mesh_uri_transport = "runtime-property-or-intent-extra"
     spatial_sdk_3d_asset_module_source_policy = "no-source-model-packaged-or-committed"
@@ -992,6 +1161,7 @@ $manifest = [ordered]@{
     android_gradle_plugin_version = "8.11.1"
     kotlin_version = "2.1.0"
     gradle_version = $GradleVersion
+    isolated_intermediate_root = $intermediateRoot
     native_renderer_package_preserved = "io.github.mesmerprism.rustyquest.native_renderer"
     native_renderer_spatial_sdk_packaged = $false
     native_interop_probe = "spatial-sdk-openxr-handles-and-panelsurface-capability"
@@ -1429,4 +1599,34 @@ $manifest = [ordered]@{
 $manifestPath = Join-Path $OutDir "build-manifest.json"
 $manifest | ConvertTo-Json -Depth 8 | Set-Content -Encoding UTF8 -Path $manifestPath
 
+$runCapsule = [ordered]@{
+    schema = "rusty.quest.apk_run_capsule.v1"
+    capsule_id = "spatial-$($resolvedAppId.Replace('.', '-'))-$($buildInputFingerprint.Substring(0, 12))"
+    app_id = $resolvedAppId
+    app_lane = "spatial-camera-panel-android"
+    source = [ordered]@{
+        repository = [string]$repoRoot; commit = $sourceHead; tree = $sourceTree; tracked_worktree_clean = $true
+        composition_fingerprint = [string]$sourceComposition.fingerprint; packages = @($sourceComposition.packages); dependencies = $sourceDependencies
+    }
+    build_lock = [ordered]@{
+        path = $buildInputLockPath; sha256 = Get-FileSha256 -Path $buildInputLockPath; resolution_fingerprint = $buildInputFingerprint
+    }
+    build_manifest = [ordered]@{ path = $manifestPath; sha256 = Get-FileSha256 -Path $manifestPath }
+    apk = [ordered]@{ path = $apkOut; sha256 = $sha256 }
+    runtime_profile = $null
+    property_manifest = [ordered]@{ path = $propertyManifestPath; sha256 = Get-FileSha256 -Path $propertyManifestPath; scope = "complete-manifest" }
+    android = [ordered]@{
+        package_name = $resolvedAppId
+        activity = "$resolvedAppId/io.github.mesmerprism.rustyquest.spatial_camera_panel.SpatialCameraPanelActivity"
+    }
+    cleanup = [ordered]@{
+        policy = "always-force-stop-and-restore-exact-property-snapshot"
+        serial_exclusive_mutex = $true
+        restore_on_failure = $true
+    }
+}
+$runCapsulePath = Join-Path $OutDir "run-capsule.json"
+$runCapsule | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath $runCapsulePath -Encoding UTF8
+
+Write-Output $runCapsulePath
 Write-Output $apkOut

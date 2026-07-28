@@ -1,0 +1,91 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "rusty.quest.apk_run_capsule.v1",
+  "title": "Rusty Quest immutable APK run capsule",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "capsule_id", "app_id", "app_lane", "source", "build_lock", "build_manifest", "apk", "runtime_profile", "property_manifest", "android", "cleanup"],
+  "properties": {
+    "schema": { "const": "rusty.quest.apk_run_capsule.v1" },
+    "capsule_id": { "type": "string", "minLength": 1 },
+    "app_id": { "type": "string", "minLength": 1 },
+    "app_lane": { "enum": ["native-renderer-android", "spatial-camera-panel-android"] },
+    "source": {
+      "type": "object", "additionalProperties": false,
+      "required": ["repository", "commit", "tree", "tracked_worktree_clean"],
+      "properties": {
+        "repository": { "type": "string", "minLength": 1 },
+        "commit": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+        "tree": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+        "tracked_worktree_clean": { "const": true },
+        "composition_fingerprint": { "$ref": "#/$defs/hash" },
+        "packages": {
+          "type": "array", "minItems": 1, "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "dependencies": {
+          "type": "array", "items": { "$ref": "#/$defs/sourceRepository" }
+        }
+      }
+    },
+    "build_lock": { "$ref": "#/$defs/fileRecord" },
+    "build_manifest": { "$ref": "#/$defs/fileRecord" },
+    "apk": { "$ref": "#/$defs/fileRecord" },
+    "runtime_profile": { "oneOf": [{ "$ref": "#/$defs/fileRecord" }, { "type": "null" }] },
+    "property_manifest": {
+      "oneOf": [
+        {
+          "type": "object", "additionalProperties": false,
+          "required": ["path", "sha256", "scope"],
+          "properties": {
+            "path": { "type": "string", "minLength": 1 },
+            "sha256": { "$ref": "#/$defs/hash" },
+            "scope": { "const": "complete-manifest" }
+          }
+        },
+        { "type": "null" }
+      ]
+    },
+    "android": {
+      "type": "object", "additionalProperties": false,
+      "required": ["package_name", "activity"],
+      "properties": {
+        "package_name": { "type": "string", "pattern": "^[A-Za-z][A-Za-z0-9_]*(\\.[A-Za-z][A-Za-z0-9_]*)+$" },
+        "activity": { "type": "string", "minLength": 3 }
+      }
+    },
+    "cleanup": {
+      "type": "object", "additionalProperties": false,
+      "required": ["policy", "serial_exclusive_mutex", "restore_on_failure"],
+      "properties": {
+        "policy": { "const": "always-force-stop-and-restore-exact-property-snapshot" },
+        "serial_exclusive_mutex": { "const": true },
+        "restore_on_failure": { "const": true }
+      }
+    }
+  },
+  "$defs": {
+    "hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "fileRecord": {
+      "type": "object", "additionalProperties": false,
+      "required": ["path", "sha256"],
+      "properties": {
+        "path": { "type": "string", "minLength": 1 },
+        "sha256": { "$ref": "#/$defs/hash" },
+        "resolution_fingerprint": { "$ref": "#/$defs/hash" }
+      }
+    },
+    "sourceRepository": {
+      "type": "object", "additionalProperties": false,
+      "required": ["repository_id", "role", "repository", "commit", "tree", "tracked_worktree_clean"],
+      "properties": {
+        "repository_id": { "type": "string", "minLength": 1 },
+        "role": { "const": "path-dependency" },
+        "repository": { "type": "string", "minLength": 1 },
+        "commit": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+        "tree": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+        "tracked_worktree_clean": { "const": true }
+      }
+    }
+  }
+}

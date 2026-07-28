@@ -114,7 +114,7 @@ state.
 Performance validation must use the non-debuggable release variant:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Build-SpatialCameraPanelAndroid.ps1 `
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Build-SpatialCameraPanelAndroid.ps1 `
   -BuildType Release `
   -ApkFileName spatial-camera-panel-immersive-video-release.apk
 ```
@@ -129,7 +129,7 @@ without introducing minifier variance.
 Use the serial-scoped wrapper with an explicit classification:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Stage-SpatialCameraPanelImmersiveVideo.ps1 `
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Stage-SpatialCameraPanelImmersiveVideo.ps1 `
   -Serial <quest-serial> `
   -SourcePath <local-video.mp4> `
   -Shape equirect-180 `

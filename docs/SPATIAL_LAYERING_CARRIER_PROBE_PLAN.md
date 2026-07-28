@@ -150,7 +150,7 @@ Hypotheses:
 Use:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-SpatialCameraPanelAndroidLayeringMatrix.ps1 `
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-SpatialCameraPanelAndroidLayeringMatrix.ps1 `
   -Serial <quest-serial> `
   -MatrixPreset implemented-carriers `
   -UsePrivateInputsManifest `

@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "rusty.quest.android_property_manifest.v1",
+  "title": "Complete app-scoped Android property manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "owner_package", "scope", "prefixes", "properties"],
+  "properties": {
+    "schema": { "const": "rusty.quest.android_property_manifest.v1" },
+    "owner_package": { "type": "string", "minLength": 1 },
+    "scope": { "const": "complete-source-consumer-surface" },
+    "prefixes": {
+      "type": "array", "minItems": 1, "uniqueItems": true,
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "properties": {
+      "type": "array", "minItems": 1,
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["name"],
+        "properties": { "name": { "type": "string", "pattern": "^debug\\.rustyquest\\.[A-Za-z0-9_.-]+$" } }
+      }
+    }
+  }
+}

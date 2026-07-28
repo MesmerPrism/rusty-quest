@@ -72,7 +72,7 @@ asset validation outcomes.
 Camera-free preparation:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Build-ManifoldBrokerAndroid.ps1 `
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Build-ManifoldBrokerAndroid.ps1 `
   -ProductSpecPath ..\rusty-manifold\fixtures\broker-product\media-session-standalone.json `
   -ProductLockPath ..\rusty-manifold\fixtures\broker-product\media-session-standalone.lock.json `
   -PrepareOnly
@@ -81,7 +81,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Build-ManifoldBroker
 Fail-fast runtime-config authority preflight:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Build-ManifoldBrokerAndroid.ps1 `
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Build-ManifoldBrokerAndroid.ps1 `
   -ProductSpecPath ..\rusty-manifold\fixtures\broker-product\base-standalone.json `
   -ProductLockPath ..\rusty-manifold\fixtures\broker-product\base-standalone.lock.json `
   -OutDir .\target\manifold-broker-runtime-preflight `
@@ -92,10 +92,10 @@ Focused validation:
 
 ```powershell
 cargo test -p rusty-quest-broker-product
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\checks\Test-QuestBrokerProductStatic.ps1 -RepoRoot .
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\checks\Test-ManifoldBrokerProductBuildPreparation.ps1 -RepoRoot .
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-ManifoldBrokerAndroid.ps1
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\checks\Test-ManifoldBrokerBuildArtifact.ps1 `
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\checks\Test-QuestBrokerProductStatic.ps1 -RepoRoot .
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\checks\Test-ManifoldBrokerProductBuildPreparation.ps1 -RepoRoot .
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-ManifoldBrokerAndroid.ps1
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\checks\Test-ManifoldBrokerBuildArtifact.ps1 `
   -RepoRoot . -BuildDir .\target\manifold-broker-android -ExpectedProductName base-standalone
 ```
 

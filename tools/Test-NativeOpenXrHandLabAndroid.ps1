@@ -30,7 +30,7 @@ foreach ($path in @($specPath, $resolverPath, $staticCheckPath, $buildPath)) {
     }
 }
 
-& powershell -NoProfile -ExecutionPolicy Bypass -File $resolverPath -AppSpec $specPath -DryRun
+& pwsh -NoProfile -ExecutionPolicy Bypass -File $resolverPath -AppSpec $specPath -DryRun
 if ($LASTEXITCODE -ne 0) {
     throw "Native OpenXR hand lab app spec resolution failed with exit code $LASTEXITCODE"
 }

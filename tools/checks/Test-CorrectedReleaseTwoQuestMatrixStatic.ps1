@@ -116,7 +116,7 @@ if ($providerPreflightIndex -lt 0 -or $adbPreflightIndex -lt 0 -or $providerPref
     throw "Mandatory peer-provider preflight is not ordered before ADB/APK resolution."
 }
 
-$result = & powershell -NoProfile -ExecutionPolicy Bypass -File $runnerPath -Mode SelfTest 2>&1
+$result = & pwsh -NoProfile -ExecutionPolicy Bypass -File $runnerPath -Mode SelfTest 2>&1
 if ($LASTEXITCODE -ne 0) {
     throw "Corrected release orchestrator damaged self-test failed: $($result -join ' ')"
 }

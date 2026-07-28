@@ -446,6 +446,7 @@ function Invoke-ModuleLockSelected {
         -Serial $transport `
         -AllowFlatScreenshot `
         -AllowPerformanceBudgetMiss `
+        -AllowLegacyLooseInputs `
         -ClearLogcat `
         -StopAfterRun | Out-Null
     $nativeSummaryPath = Join-Path $nativeDir "run-summary.json"
@@ -526,6 +527,7 @@ function Invoke-ModuleLockOffLock {
             -Serial $transport `
             -AllowFlatScreenshot `
             -AllowPerformanceBudgetMiss `
+            -AllowLegacyLooseInputs `
             -PostProfileAndroidPropertyName $Profiles.native_lock_property `
             -PostProfileAndroidPropertyValue $Profiles.bad_digest `
             -ClearLogcat `
@@ -938,7 +940,7 @@ function Invoke-Camera2Conformance {
         -Serial $transport `
         -ClearLogcat `
         -StopAfterRun `
-        -SkipForceStopKnownXrPackages | Out-Null
+        -AllowLegacyLooseInputs | Out-Null
     $summaryPath = Join-Path $Directory "evidence-summary.json"
     $summary = Read-JsonFile -Path $summaryPath -Label "Camera2 media conformance summary"
     Assert-RunSummary -Summary $summary -Schema "rusty.quest.spatial_camera_panel.camera_hwb_projection_smoke.v1" -AcceptedStatus @("passed") -SerialValue $transport -Label "Camera2 media conformance summary" -DollarSchema

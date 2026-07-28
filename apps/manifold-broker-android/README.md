@@ -19,7 +19,7 @@ The camera-free generic media-session package can be prepared without an
 Android toolchain:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Build-ManifoldBrokerAndroid.ps1 `
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Build-ManifoldBrokerAndroid.ps1 `
   -ProductSpecPath ..\rusty-manifold\fixtures\broker-product\media-session-standalone.json `
   -ProductLockPath ..\rusty-manifold\fixtures\broker-product\media-session-standalone.lock.json `
   -PrepareOnly
@@ -36,7 +36,7 @@ The old remote-camera/QCL validation surface is retained only as explicit
 compatibility:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Build-ManifoldBrokerAndroid.ps1 `
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Build-ManifoldBrokerAndroid.ps1 `
   -LegacyCameraP2pCompatibility
 ```
 

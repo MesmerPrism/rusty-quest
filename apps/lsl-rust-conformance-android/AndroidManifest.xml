@@ -1,0 +1,13 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="io.github.mesmerprism.rustyquest.lslrustconformance">
+    <application android:allowBackup="false" android:debuggable="true"
+        android:label="Rusty LSL Rust Conformance" android:theme="@android:style/Theme.Material.Light.NoActionBar">
+        <activity android:name=".RustConformanceActivity" android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+                <category android:name="com.oculus.intent.category.2D" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>

@@ -72,7 +72,7 @@ Full media broker builds require `-MediaSessionBindingPath`. The committed
 camera-free example is:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Build-ManifoldBrokerAndroid.ps1 `
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Build-ManifoldBrokerAndroid.ps1 `
   -ProductSpecPath ..\rusty-manifold\fixtures\broker-product\media-session-standalone.json `
   -ProductLockPath ..\rusty-manifold\fixtures\broker-product\media-session-standalone.lock.json `
   -MediaSessionBindingPath .\fixtures\media-runtime-products\display-composite.binding.json
@@ -91,7 +91,7 @@ broker probe identity.
 cargo test -p rusty-quest-media-stream
 cargo test -p rusty-quest-broker-authority
 cargo test -p rusty-quest-manifold-broker-authority-native
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\checks\Test-QuestBrokerAuthorityStatic.ps1 -RepoRoot .
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\checks\Test-QuestBrokerAuthorityStatic.ps1 -RepoRoot .
 ```
 
 The test matrix covers display-composite and Camera2 valid/damaged bindings,

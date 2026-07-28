@@ -279,11 +279,11 @@ Focused checks:
 
 ```powershell
 cargo test -p rusty-quest-profile stimulus_volume
-powershell -NoProfile -ExecutionPolicy Bypass -File tools\Apply-RuntimeProfile.ps1 -ProfilePath fixtures\runtime-profiles\quest-native-renderer-solid-black-stimulus-volume.profile.json -DryRun -Out local-artifacts\native-renderer-solid-black-stimulus-volume-property-write-plan.json
-powershell -NoProfile -ExecutionPolicy Bypass -File tools\Apply-RuntimeProfile.ps1 -ProfilePath fixtures\runtime-profiles\quest-native-renderer-solid-black-stimulus-volume-balanced.profile.json -DryRun -Out local-artifacts\native-renderer-solid-black-stimulus-volume-balanced-property-write-plan.json
-powershell -NoProfile -ExecutionPolicy Bypass -File tools\Apply-RuntimeProfile.ps1 -ProfilePath fixtures\runtime-profiles\quest-native-renderer-solid-black-stimulus-volume-performance.profile.json -DryRun -Out local-artifacts\native-renderer-solid-black-stimulus-volume-performance-property-write-plan.json
-powershell -NoProfile -ExecutionPolicy Bypass -File tools\Apply-RuntimeProfile.ps1 -ProfilePath fixtures\runtime-profiles\quest-native-renderer-native-passthrough-stimulus-volume.profile.json -DryRun -Out local-artifacts\native-renderer-native-passthrough-stimulus-volume-property-write-plan.json
-powershell -NoProfile -ExecutionPolicy Bypass -File tools\Test-NativeRendererAndroid.ps1
+pwsh -NoProfile -ExecutionPolicy Bypass -File tools\Apply-RuntimeProfile.ps1 -ProfilePath fixtures\runtime-profiles\quest-native-renderer-solid-black-stimulus-volume.profile.json -DryRun -Out local-artifacts\native-renderer-solid-black-stimulus-volume-property-write-plan.json
+pwsh -NoProfile -ExecutionPolicy Bypass -File tools\Apply-RuntimeProfile.ps1 -ProfilePath fixtures\runtime-profiles\quest-native-renderer-solid-black-stimulus-volume-balanced.profile.json -DryRun -Out local-artifacts\native-renderer-solid-black-stimulus-volume-balanced-property-write-plan.json
+pwsh -NoProfile -ExecutionPolicy Bypass -File tools\Apply-RuntimeProfile.ps1 -ProfilePath fixtures\runtime-profiles\quest-native-renderer-solid-black-stimulus-volume-performance.profile.json -DryRun -Out local-artifacts\native-renderer-solid-black-stimulus-volume-performance-property-write-plan.json
+pwsh -NoProfile -ExecutionPolicy Bypass -File tools\Apply-RuntimeProfile.ps1 -ProfilePath fixtures\runtime-profiles\quest-native-renderer-native-passthrough-stimulus-volume.profile.json -DryRun -Out local-artifacts\native-renderer-native-passthrough-stimulus-volume-property-write-plan.json
+pwsh -NoProfile -ExecutionPolicy Bypass -File tools\Test-NativeRendererAndroid.ps1
 ```
 
 Android target compile with shaders:

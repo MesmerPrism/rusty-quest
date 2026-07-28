@@ -1,0 +1,29 @@
+[package]
+name = "rusty-quest-fleet-agent-android-native"
+description = "JNI bridge for the permission-minimal Rusty Quest Fleet Agent."
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+
+[lib]
+name = "rusty_quest_fleet_agent_android"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+rusty-quest-fleet-agent = { path = "../../../crates/rusty-quest-fleet-agent" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[target.'cfg(target_os = "android")'.dependencies]
+jni = "0.22"
+
+[lints.rust]
+unsafe_code = "allow"
+missing_docs = "allow"
+
+[lints.clippy]
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"

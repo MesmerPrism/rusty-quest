@@ -1,5 +1,34 @@
 # Rusty Quest Agent Notes
 
+The P70 `lsl-rust-float32-lan-outlet-android` package is an opt-in,
+same-LAN, one-channel Float32 Quest-outlet to host-inlet qualification only.
+It does not establish the reverse direction or a default runtime feature.
+Use its dedicated build/static/device scripts; the device runner retains the
+installed package after target-only force-stop.
+
+The `lsl-rust-float32-two-record-chunk-android` app is a distinct public test
+package for LSLC-005S. It builds exact clean Rusty LSL for
+`aarch64-linux-android` and executes only the accepted one-channel, two-record
+Float32 chunk runtime over IPv4 loopback inside Rust. Java owns lifecycle only;
+runs require ordered exact-bit evidence, immediate port reuse, zero bounded
+fatals, one explicit serial, distinct identities, and exact run-owned cleanup.
+It adds no arbitrary chunk, production activation, or compatibility breadth.
+
+The `lsl-rust-float32-loopback-android` app is a distinct public test package
+for LSLC-005L. It builds the exact clean Rusty LSL revision for
+`aarch64-linux-android` and executes the accepted one-channel, one-record
+Float32 handshake/sample runtime over IPv4 loopback inside Rust. Java owns
+lifecycle only. Runs use one explicit serial, a distinct package/build/staging
+identity, zero bounded fatals, immediate port-reuse evidence, and exact
+run-owned cleanup. This adds no production activation or compatibility breadth.
+
+The `lsl-rust-conformance-android` app is a distinct public test package for
+LSLC-005H. Its generated native crate binds an exact clean Rusty LSL source
+revision and builds only for `aarch64-linux-android`; Java owns lifecycle while
+Rust owns the effective core-contract marker. Runs are serial-scoped and must
+remove only the run-owned package with zero bounded fatals and complete
+package/process/forward/reverse/property/staging cleanup.
+
 This is the clean source repository for Rusty Quest. Keep committed content
 self-contained and free of local-only planning paths, downstream app names, and
 historical naming drift.
@@ -13,6 +42,11 @@ schemas here; use `rusty.quest.*` for Quest platform contracts.
 Project-owned source in this repo is licensed `AGPL-3.0-or-later`. Platform
 SDKs, APKs, generated binaries, headset logs, and tool downloads need separate
 provenance and notice handling.
+
+Use PowerShell `7.6` LTS or newer through `pwsh` for all validation, build,
+launch, and evidence wrappers. Windows PowerShell 5.1 is bootstrap detection
+only. Do not add new Windows PowerShell child routes; child
+processes must resolve the explicit `pwsh` host.
 
 ## Purpose
 
@@ -40,17 +74,24 @@ native Quest path.
 3. `docs/VALIDATION.md`
 4. `fixtures/README.md`
 
-`apps/spatial-camera-panel-android` is shared public adapter source, not a
-single consumer-project authority. Private downstream effect projects resume
-from their own private project workspaces. Spatial VR Strobe work resumes from
-`apps/spatial-vr-strobe-android/morphospace/`. The live
-`apps/spatial-camera-panel-android/morphospace/` entrypoint is an inert v2
-legacy index; the complete mixed v1 ledger is integrity-bound under
-`apps/spatial-camera-panel-android/legacy-workspaces/mixed-integration-v1/`.
-Neither historical Strobe nor camera state may gate another project. In that
-archive the panel shell remains the only workflow-selected baseline, nearby
-particle/hand/camera/media/asset/room families are explicit disabled entries,
-and unlisted features remain inert.
+For APK builds or repeated same-headset runs, also read
+`docs/APK_RUN_ISOLATION.md`. Locked builds use app-specific package/client
+identities, explicit inputs, clean exact source, content-addressed outputs, and
+a hashed run capsule. Launch wrappers serialize per serial, apply complete
+property closure, stop only the target package, and restore exact prior values.
+
+For work in `apps/spatial-camera-panel-android`, then read its
+`morphospace/project.spec.json`, `feature.lock.json`, `workspace.state.json`,
+and the current iteration unit before source. This directory is shared public
+adapter source, not a single consumer-project authority. Its live workflow
+entrypoint is the inert v2 index: the panel shell remains its only selected
+baseline, nearby particle/hand/camera/media/asset/room families are explicit
+disabled entries, and unlisted features remain inert. Private downstream effect
+projects resume from their own private project workspaces, while Spatial VR
+Strobe resumes from `apps/spatial-vr-strobe-android/morphospace/`. The complete
+mixed v1 camera ledger is integrity-bound under
+`apps/spatial-camera-panel-android/legacy-workspaces/mixed-integration-v1/`;
+neither that history nor Strobe state may gate another project.
 The staged Spatial asset lane is also lock-bound: a GLB/GLTF URI or legacy
 enable property alone must stay inert unless the app-owned
 `spatial-asset-model.feature.lock.json` and its exact runtime identity tuple
@@ -204,6 +245,15 @@ inputs stay source/privacy/advisory only; they never authenticate a direct
 route or carry media. Validate with
 `tools/Invoke-NPeerMeshTwoQuestConfiguredPeer.ps1`.
 
+Fleet check-in production lives in `crates/rusty-quest-fleet-agent` and the
+permission-minimal `apps/fleet-agent-android` adapter. Keep the default profile
+inert, require an explicit Hub endpoint and enrolled signing identity, preserve
+host-owned receive time, and report arbitrary foreground state as unknown
+unless an explicitly participating app supplies its own evidence. The baseline
+must not add ADB, package-query, accessibility, storage, camera, microphone,
+media, or command-listener authority. Manifold accepts peer status and Fleet
+accepts the device projection; the Quest producer accepts neither.
+
 Generic media adoption lives in `rusty-quest-media-stream`. Manifold owns the
 accepted session/stream descriptor; the Quest runtime owns only receiver-first
 platform lifecycle after the accepted decision. Sources, processors, direct-
@@ -302,6 +352,10 @@ ordinary serial-scoped ADB work behind a global `adb-server` lease.
   data only in the app-private external-files tree, emit bounded manifest and
   completion markers, and treat captures and pulled copies as local artifacts
   that never enter source control.
+- Do not build or launch a new project from loose APK/profile inputs or shared
+  package defaults. Resolve/build from an exact app lock, validate the run
+  capsule, and keep package, marker, property, staging, and build identities
+  distinct from other projects.
 - After a split, update the nearest distributed file map: this `AGENTS.md`,
   `README.md`, `docs/ARCHITECTURE.md`, fixture docs, validation docs, or the
   planning `agent-state\iteration-events.jsonl`.
@@ -352,6 +406,8 @@ Run:
 
 ```powershell
 pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\check_all.ps1
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\checks\Test-ApkRunIsolationStatic.ps1 -RepoRoot .
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-FleetAgentAndroid.ps1 -Tier Host
 ```
 
 The Spatial Camera Panel wrapper runs its focused workflow gate before the

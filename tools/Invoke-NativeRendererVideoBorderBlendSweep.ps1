@@ -136,7 +136,7 @@ function Invoke-CheckedPowershell {
     $previousErrorActionPreference = $ErrorActionPreference
     $ErrorActionPreference = "Continue"
     try {
-        $output = & powershell @Arguments 2>&1
+        $output = & pwsh @Arguments 2>&1
         $exitCode = $LASTEXITCODE
     } finally {
         $ErrorActionPreference = $previousErrorActionPreference

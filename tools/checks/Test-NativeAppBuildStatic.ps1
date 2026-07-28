@@ -300,7 +300,7 @@ if (-not [string]::IsNullOrWhiteSpace(($trackedGenerated -join "`n"))) {
     throw "Generated native app-build artifacts must not be tracked under local-artifacts/native-app-builds"
 }
 
-& powershell -NoProfile -ExecutionPolicy Bypass -File $profileGate -RepoRoot $repoRootPath
+& pwsh -NoProfile -ExecutionPolicy Bypass -File $profileGate -RepoRoot $repoRootPath
 if ($LASTEXITCODE -ne 0) {
     throw "Native app-build profile gate failed with exit code $LASTEXITCODE"
 }

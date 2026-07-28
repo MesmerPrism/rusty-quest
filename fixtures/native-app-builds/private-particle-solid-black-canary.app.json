@@ -2,8 +2,8 @@
   "schema": "rusty.quest.native_app_build.v1",
   "app_id": "private_particle_solid_black_canary",
   "owner_repo": "downstream-private-app",
-  "package_policy": "native-renderer-dev-package",
-  "package_name": "io.github.mesmerprism.rustyquest.native_renderer",
+  "package_policy": "app-specific-package",
+  "package_name": "io.github.mesmerprism.rustyquest.native_renderer.private_particle_canary",
   "requested_features": [
     "input.controllers_and_hands_optional",
     "quest.native.openxr_vulkan_base",

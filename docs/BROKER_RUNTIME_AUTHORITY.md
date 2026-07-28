@@ -74,7 +74,7 @@ cargo test -p rusty-quest-broker-authority
 cargo test -p rusty-quest-manifold-broker-authority-native
 cargo test -p rusty-quest-native-renderer-android-native embedded_manifold_runtime_authority_jni
 cargo test -p rusty-quest-broker-client
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\checks\Test-QuestBrokerAuthorityStatic.ps1 -RepoRoot .
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\checks\Test-QuestBrokerAuthorityStatic.ps1 -RepoRoot .
 ```
 
 ## Product-adoption boundary

@@ -1146,7 +1146,7 @@ $process = $null
 Write-Host "[qcl100-monitor] starting run_id=$RunId timeout=${OverallTimeoutSeconds}s phase_stall=${PhaseStallTimeoutSeconds}s poll=${PollSeconds}s out_dir=$OutDir"
 try {
     $process = Start-Process `
-        -FilePath "powershell" `
+        -FilePath "pwsh" `
         -ArgumentList @("-NoProfile", "-ExecutionPolicy", "Bypass", "-EncodedCommand", $encodedCommand) `
         -WorkingDirectory $runnerWorkingDirectory `
         -RedirectStandardOutput $stdoutPath `

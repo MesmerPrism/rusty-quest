@@ -37,7 +37,7 @@ Matter skinning plus Optics appearance as separate owners.
 Validate the closed-world composition with:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File ..\..\tools\checks\Test-SpatialCameraPanelWorkflowStatic.ps1 -RepoRoot ..\..
+pwsh -NoProfile -ExecutionPolicy Bypass -File ..\..\tools\checks\Test-SpatialCameraPanelWorkflowStatic.ps1 -RepoRoot ..\..
 ```
 
 This workflow metadata does not itself activate a runtime route or add package
@@ -1130,13 +1130,13 @@ not replace the interactive diagnostic build.
 Run the static gate:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-SpatialCameraPanelAndroid.ps1
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-SpatialCameraPanelAndroid.ps1
 ```
 
 Build with:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-SpatialCameraPanelAndroid.ps1 -Build
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-SpatialCameraPanelAndroid.ps1 -Build
 ```
 
 Builds that need the generic layer selector to visibly change the active
@@ -1145,7 +1145,7 @@ build time. Prefer passing a private profile that names those shader sources
 and projection constants:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-SpatialCameraPanelAndroid.ps1 `
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-SpatialCameraPanelAndroid.ps1 `
   -Build `
   -PrivateLayerProfilePath <path-to-private-layer-profile.json>
 ```
@@ -1162,7 +1162,7 @@ The generic private surface-particle alias command is available through the UI
 action wrapper without controller input:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-SpatialCameraPanelAndroidUiAction.ps1 `
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-SpatialCameraPanelAndroidUiAction.ps1 `
   -Action particle-alias-control `
   -ParticleAliasParameterId tracer_draw_slots_per_oscillator `
   -ParticleAliasValue 3 `
@@ -1180,7 +1180,7 @@ private alias meanings stay in the configured profile.
 Use the focused no-controller headset smoke to validate the full alias sequence:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-SpatialCameraPanelAndroidParticleAliasSmoke.ps1 `
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-SpatialCameraPanelAndroidParticleAliasSmoke.ps1 `
   -Serial <quest-serial> `
   -ClearLogcat `
   -StopAfterRun
@@ -1215,7 +1215,7 @@ inputs, or with the matching `Build-SpatialCameraPanelAndroid.ps1`
 arguments:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-SpatialCameraPanelAndroidParticleVisualSmoke.ps1 `
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-SpatialCameraPanelAndroidParticleVisualSmoke.ps1 `
   -Serial <quest-serial> `
   -SurfaceTargetId icosphere `
   -ClearLogcat `
@@ -1231,10 +1231,28 @@ world-anchor capture/mapping, nonzero 2562-particle / 17934-tracer draw counts,
 and screenshot dimensions. It does not require
 physical controller input.
 
+Build and launch each project with a distinct package and content-addressed
+output. The builder rejects tracked source drift, ignores ambient
+`RUSTY_QUEST_SPATIAL_*` feature inputs, isolates Gradle/Cargo intermediates,
+and writes a validated run capsule:
+
+```powershell
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Build-SpatialCameraPanelAndroid.ps1 `
+  -AppId <project-specific-package> `
+  -AppLabel <project-label>
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-ApkRunCapsule.ps1 `
+  -Path <content-addressed-output>\run-capsule.json
+```
+
+All camera-projection wrapper examples below require that capsule. The wrapper
+serializes by headset serial, stops only the capsule package, and restores the
+complete pre-run property state. See `docs/APK_RUN_ISOLATION.md`.
+
 Run the raw camera projection headset smoke with:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-SpatialCameraPanelAndroidCameraHwbProjectionSmoke.ps1 `
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-SpatialCameraPanelAndroidCameraHwbProjectionSmoke.ps1 `
+  -RunCapsule <content-addressed-output>\run-capsule.json `
   -Serial <quest-serial> `
   -ClearLogcat
 ```
@@ -1252,7 +1270,8 @@ To include the optional public video background, stage the media on the device
 or under the app-private files directory and pass the path at runtime:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-SpatialCameraPanelAndroidCameraHwbProjectionSmoke.ps1 `
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-SpatialCameraPanelAndroidCameraHwbProjectionSmoke.ps1 `
+  -RunCapsule <content-addressed-output>\run-capsule.json `
   -Serial <quest-serial> `
   -ClearLogcat `
   -VideoPath <device-or-app-private-path> `
@@ -1263,14 +1282,15 @@ For local host media, prefer staging through the wrapper so spaces and scoped
 storage do not break Android system-property transport:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-SpatialCameraPanelAndroidCameraHwbProjectionSmoke.ps1 `
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-SpatialCameraPanelAndroidCameraHwbProjectionSmoke.ps1 `
+  -RunCapsule <content-addressed-output>\run-capsule.json `
   -Serial <quest-serial> `
   -VideoSourcePath <local-stereo-video.mp4> `
   -RequireSpatialVideoProjection
 ```
 
 This stages the file to the package-scoped external path
-`/sdcard/Android/data/io.github.mesmerprism.rustyquest.spatial_camera_panel/files/v.mp4`,
+`/sdcard/Android/data/<project-specific-package>/files/v.mp4`,
 which is the path used by the successful native-loop Spatial proofs.
 
 For full immersive-media playback, use the separate explicit route. It
@@ -1278,7 +1298,7 @@ supports flat, equirectangular 180°, and equirectangular 360° surfaces with
 mono, side-by-side, or top-bottom stereo:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Stage-SpatialCameraPanelImmersiveVideo.ps1 `
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Stage-SpatialCameraPanelImmersiveVideo.ps1 `
   -Serial <quest-serial> `
   -SourcePath <local-video.mp4> `
   -Shape equirect-360 `
@@ -1316,7 +1336,8 @@ let the wrapper stage a local GLB/GLTF source. Raw FBX sources must be converted
 to GLB/GLTF first; the source model remains local and is not packaged:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-SpatialCameraPanelAndroidCameraHwbProjectionSmoke.ps1 `
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-SpatialCameraPanelAndroidCameraHwbProjectionSmoke.ps1 `
+  -RunCapsule <content-addressed-output>\run-capsule.json `
   -Serial <quest-serial> `
   -AssetSourcePath <local-source-model.fbx> `
   -AssetConvertedMeshPath <converted-model.glb> `
@@ -1343,7 +1364,8 @@ To include a packaged virtual room in the same smoke, export a GLXF room into
 the APK assets before building and add the room flags:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-SpatialCameraPanelAndroidCameraHwbProjectionSmoke.ps1 `
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-SpatialCameraPanelAndroidCameraHwbProjectionSmoke.ps1 `
+  -RunCapsule <content-addressed-output>\run-capsule.json `
   -Serial <quest-serial> `
   -AssetSourcePath <local-source-model.fbx> `
   -AssetConvertedMeshPath <converted-model.glb> `
@@ -1393,7 +1415,8 @@ After building with downstream opaque shader inputs, require the public
 multi-stack projection proof with:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-SpatialCameraPanelAndroidCameraHwbProjectionSmoke.ps1 `
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-SpatialCameraPanelAndroidCameraHwbProjectionSmoke.ps1 `
+  -RunCapsule <content-addressed-output>\run-capsule.json `
   -Serial <quest-serial> `
   -ClearLogcat `
   -StopAfterRun `

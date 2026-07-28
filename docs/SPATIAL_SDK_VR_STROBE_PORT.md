@@ -302,7 +302,7 @@ pacing, comfort, or visual parity.
 From the `rusty-quest` repository:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File tools/checks/Test-SpatialVrStrobeStatic.ps1 -RepoRoot .
+pwsh -NoProfile -ExecutionPolicy Bypass -File tools/checks/Test-SpatialVrStrobeStatic.ps1 -RepoRoot .
 ```
 
 From `apps/spatial-camera-panel-android`, run the focused JVM tests and the
