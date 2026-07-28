@@ -296,18 +296,31 @@ internal object SpatialVideoProjectionRouteModule {
   fun normalizeSource(value: String): String =
       when (value.trim().lowercase(Locale.US).replace("_", "-")) {
         "broker-rmanvid1", "rmanvid1" -> "broker-rmanvid1"
+        "encrypted-offline-pack", "offline-pack" ->
+            SpatialImmersiveVideoSessionPolicy.CUSTOM_PROJECTION_SOURCE
         else -> CAMERA_HWB_PROJECTION_VIDEO_DEFAULT_SOURCE
       }
 
   fun normalizeMediaLayout(value: String): String =
       when (value.trim().lowercase(Locale.US).replace("_", "-")) {
+        "top-bottom", "top-bottom-left-right", "tb", "over-under" ->
+            "top-bottom-left-right"
         "side-by-side", "sbs", "left-right", "side-by-side-left-right" ->
             CAMERA_HWB_PROJECTION_VIDEO_PACKED_MEDIA_LAYOUT
         else -> CAMERA_HWB_PROJECTION_VIDEO_PACKED_MEDIA_LAYOUT
       }
 
-  fun markerFields(settings: SpatialVideoProjectionSettings): String =
-      "videoProjectionEnabled=${settings.enabled} " +
+  fun markerFields(settings: SpatialVideoProjectionSettings): String {
+    val (leftSourceUvRect, rightSourceUvRect) =
+        when (normalizeStereoLayout(settings.stereoLayout)) {
+          "top-bottom-left-right" ->
+              "0.000000,0.000000,1.000000,0.500000" to
+                  "0.000000,0.500000,1.000000,0.500000"
+          else ->
+              "0.000000,0.000000,0.500000,1.000000" to
+                  "0.500000,0.000000,0.500000,1.000000"
+        }
+    return "videoProjectionEnabled=${settings.enabled} " +
           "spatialVideoProjectionEnabled=${settings.enabled} " +
           "spatialVideoProjectionActive=${settings.active} " +
           "spatialFeatureExplicitOptIn=${settings.enabled} " +
@@ -315,7 +328,8 @@ internal object SpatialVideoProjectionRouteModule {
           "videoProjectionDefaultEnabled=$CAMERA_HWB_PROJECTION_VIDEO_DEFAULT_ENABLED " +
           "videoProjectionPath=${activityMarkerToken(settings.path)} " +
           "videoProjectionPathProvided=${settings.path.isNotBlank()} " +
-          "videoProjectionNoPackagedMedia=true " +
+          "videoProjectionPackagedMedia=${settings.source == SpatialImmersiveVideoSessionPolicy.CUSTOM_PROJECTION_SOURCE} " +
+          "videoProjectionPlaintextFileWritten=false " +
           "videoProjectionPathProperty=$CAMERA_HWB_PROJECTION_VIDEO_PATH_PROPERTY " +
           "videoProjectionEnabledProperty=$CAMERA_HWB_PROJECTION_VIDEO_ENABLED_PROPERTY " +
           "videoProjectionEnabledIntentExtra=$EXTRA_VIDEO_PROJECTION_ENABLED " +
@@ -333,13 +347,18 @@ internal object SpatialVideoProjectionRouteModule {
           "videoProjectionOpacity=${activityMarkerFloat(settings.opacity)} " +
           "videoProjectionHighRateJsonPayload=${settings.highRateJsonPayload} " +
           "videoProjectionStream=stereo_video " +
-          "videoProjectionSourceAuthority=${if (settings.source == "broker-rmanvid1") "manifold-broker-rmanvid1-packed-camera2-h264" else "android-mediacodec-surface-decoder"} " +
+          "videoProjectionSourceAuthority=${when (settings.source) {
+            "broker-rmanvid1" -> "manifold-broker-rmanvid1-packed-camera2-h264"
+            SpatialImmersiveVideoSessionPolicy.CUSTOM_PROJECTION_SOURCE ->
+                "authenticated-aes-gcm-random-access-mediadatasource"
+            else -> "android-mediacodec-surface-decoder"
+          }} " +
           "videoProjectionTransport=mediacodec-surface-to-ndk-aimage-reader-ahardwarebuffer " +
           "videoProjectionControlPlane=spatial-activity-runtime-property-or-intent-extra " +
           "videoProjectionDecodePath=MediaCodec-to-Surface " +
           "videoProjectionFormat=private " +
-          "videoProjectionLeftSourceUvRect=0.000000,0.000000,0.500000,1.000000 " +
-          "videoProjectionRightSourceUvRect=0.500000,0.000000,0.500000,1.000000 " +
+          "videoProjectionLeftSourceUvRect=$leftSourceUvRect " +
+          "videoProjectionRightSourceUvRect=$rightSourceUvRect " +
           "videoProjectionLeftTargetPackedUvRect=0.000000,0.000000,0.500000,1.000000 " +
           "videoProjectionRightTargetPackedUvRect=0.500000,0.000000,0.500000,1.000000 " +
           "spatialVideoProjectionSameSurfaceComposition=true " +
@@ -348,6 +367,7 @@ internal object SpatialVideoProjectionRouteModule {
           "nativeImageReader=true javaHardwareBufferBridge=false cpuPixelCopy=false " +
           "highRateJsonPayload=${settings.highRateJsonPayload} " +
           "rawCamera=false passthroughTexture=false environmentDepth=false geometryWitness=false"
+  }
 
   fun startDeferredForSceneMarker(reason: String): String =
       "channel=$CHANNEL status=start-deferred " +

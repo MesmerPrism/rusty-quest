@@ -1,0 +1,1689 @@
+{
+  "$schema": "https://github.com/MesmerPrism/rusty-morphospace-work-environment/schemas/inflight-adoption-receipt.schema.json",
+  "schema": "rusty.morphospace.workflow.inflight_adoption_receipt.v1",
+  "receipt_id": "spatial-vr-strobe-product-separation-001-inflight-adoption",
+  "project_id": "spatial-vr-strobe",
+  "unit_id": "spatial-vr-strobe-product-separation-001",
+  "captured_at": "2026-07-25T10:36:12.8738992Z",
+  "reason": "work-started-before-protocol-v2",
+  "safe_to_claim": true,
+  "external_mutation_performed": false,
+  "repositories": [
+    {
+      "repo_id": "quest-spatial-adapter",
+      "observed_revision": "6502d55f73f337836c15868ef39734ebdfe7fa08",
+      "files": [
+        {
+          "path": "AGENTS.md",
+          "state": "present",
+          "sha256": "01f3e0b49374df13e297e617a8631c6ee22abcd346396f1e6003f2dd9fa1ef46"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/app/build.gradle.kts",
+          "state": "present",
+          "sha256": "b3453f35efa3648f0a9ca9391c1984ac0aee2593452e497df27a62a705c1af1c"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/app/src/main/AndroidManifest.xml",
+          "state": "present",
+          "sha256": "d68bbbf9beed95185ba73666a1b318b72e69a239cb16442b649f6d0295b67cac"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/app/src/main/java/io/github/mesmerprism/rustyquest/spatial_camera_panel/CameraHwbProjectionModule.kt",
+          "state": "present",
+          "sha256": "e86a20b3b744c02872e0f0d21ecbc9089985f236e206b967a775d58e38d535d2"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/app/src/main/java/io/github/mesmerprism/rustyquest/spatial_camera_panel/ExperimentPanelController.kt",
+          "state": "deleted",
+          "sha256": null
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/app/src/main/java/io/github/mesmerprism/rustyquest/spatial_camera_panel/PolarSensorPanel.java",
+          "state": "deleted",
+          "sha256": null
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/app/src/main/java/io/github/mesmerprism/rustyquest/spatial_camera_panel/PrivateLayerControlPanel.kt",
+          "state": "present",
+          "sha256": "2ed1497153011158d19f145a3c950ea95a1e44219348c4d484aec28384651a08"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/app/src/main/java/io/github/mesmerprism/rustyquest/spatial_camera_panel/PrivateLayerPanelControlModule.kt",
+          "state": "present",
+          "sha256": "e6b0cc4abc4734930ae3f5faf7b01a7a5fd2741ab45d3f2bde3abcea5970559a"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/app/src/main/java/io/github/mesmerprism/rustyquest/spatial_camera_panel/PrivateLayerZoneCompositor.kt",
+          "state": "present",
+          "sha256": "74a954796fc1cec09f6ac9d91844d9dbd2067bd3d1051770848fa76db171a937"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/app/src/main/java/io/github/mesmerprism/rustyquest/spatial_camera_panel/SpatialCameraHwbProjectionGeometryCoordinator.kt",
+          "state": "present",
+          "sha256": "8846744e991008e8a63071de9390bce9d814b922d2ca7a09a5e290ae01bc6076"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/app/src/main/java/io/github/mesmerprism/rustyquest/spatial_camera_panel/SpatialCameraHwbProjectionTuningCoordinator.kt",
+          "state": "present",
+          "sha256": "1c7470ea8e931dcb774836decbaecbdc356d8b5b20222d955c8b4df52a80504e"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/app/src/main/java/io/github/mesmerprism/rustyquest/spatial_camera_panel/SpatialCameraLatencyDiagnosticModule.kt",
+          "state": "present",
+          "sha256": "498fceb53e9d8b785370f0b9e936dc67ffcf5660ce6ee7a2b816a925a6b3cd5e"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/app/src/main/java/io/github/mesmerprism/rustyquest/spatial_camera_panel/SpatialCameraPanelActivity.kt",
+          "state": "present",
+          "sha256": "c7b5898546e1acd7af6c3605e2443267ca5d35a791490df8983159e5d53558ae"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/app/src/main/java/io/github/mesmerprism/rustyquest/spatial_camera_panel/SpatialCameraPanelModels.kt",
+          "state": "present",
+          "sha256": "4a119ca0e312bb444ab8f187d966653c0097db813cf5a1c614c8426799212868"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/app/src/main/java/io/github/mesmerprism/rustyquest/spatial_camera_panel/SpatialCameraPanelStore.kt",
+          "state": "deleted",
+          "sha256": null
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/app/src/main/java/io/github/mesmerprism/rustyquest/spatial_camera_panel/SpatialComposePanelRegistrationModule.kt",
+          "state": "present",
+          "sha256": "5744fd15ea90314e836bdd9831b8e5116b8f1a11cc146e159b9d442722b8a8e2"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/app/src/main/java/io/github/mesmerprism/rustyquest/spatial_camera_panel/SpatialControllerAndroidEventRouter.kt",
+          "state": "present",
+          "sha256": "a37c3d3aafcd12335ada1cbdec172d82e70b127a00f3f9e47eb3d9574e34f3dc"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/app/src/main/java/io/github/mesmerprism/rustyquest/spatial_camera_panel/SpatialControllerRoutingModule.kt",
+          "state": "present",
+          "sha256": "2436714ef8e250adf9a3be16b6c156c0f8f6c0f99da8165975dc58c1789f77f8"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/app/src/main/java/io/github/mesmerprism/rustyquest/spatial_camera_panel/SpatialControllerSnapshotAdapter.kt",
+          "state": "present",
+          "sha256": "187081344531429e5d6e831244fcc8bbf84d3fd8910500747b11417f05b2d8d0"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/app/src/main/java/io/github/mesmerprism/rustyquest/spatial_camera_panel/SpatialDiagnosticProbeRouteModule.kt",
+          "state": "present",
+          "sha256": "89715741562efc31bc49e989689b201a2690c79b6b8808e5ec82d5b29c4a27fe"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/app/src/main/java/io/github/mesmerprism/rustyquest/spatial_camera_panel/SpatialExternalSwapchainProbeCoordinator.kt",
+          "state": "present",
+          "sha256": "b3819ec63ad2db043361de838e00cec6b7b3e5d1086d7f236236d2e2afd55407"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/app/src/main/java/io/github/mesmerprism/rustyquest/spatial_camera_panel/SpatialFragmentProbeCoordinator.kt",
+          "state": "present",
+          "sha256": "4d60ddce698cf666029730a2e217958f8512639f149426159ce20d08655cdfde"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/app/src/main/java/io/github/mesmerprism/rustyquest/spatial_camera_panel/SpatialFragmentProbeRoute.kt",
+          "state": "present",
+          "sha256": "bbc967d0d3103f15c2361e3f87d17241c52ca0f294dc829f0b9939f79d05564d"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/app/src/main/java/io/github/mesmerprism/rustyquest/spatial_camera_panel/SpatialPanelDistanceActuationCoordinator.kt",
+          "state": "present",
+          "sha256": "8d808c3c9c1d644ce2419a29176bb13bc5de4777de7df8358c83a1b00bb359d8"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/app/src/main/java/io/github/mesmerprism/rustyquest/spatial_camera_panel/SpatialPanelInteractionStateCoordinator.kt",
+          "state": "present",
+          "sha256": "5a4b34d2f93ecf01f06bfb1f6cb433e2a7d5a884c129513aecb8f32e2ce88ad1"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/app/src/main/java/io/github/mesmerprism/rustyquest/spatial_camera_panel/SpatialPanelPersistenceCoordinator.kt",
+          "state": "present",
+          "sha256": "63ba12d91d086c250182e24003b784dcfa6f262ff4338c3b30ad824e66ae5877"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/app/src/main/java/io/github/mesmerprism/rustyquest/spatial_camera_panel/SpatialPanelPlacementModule.kt",
+          "state": "present",
+          "sha256": "be130ff8285751cd94120651989ee362f9931b07331ad39f6f7e57151af9464c"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/app/src/main/java/io/github/mesmerprism/rustyquest/spatial_camera_panel/SpatialPanelPlacementStateCoordinator.kt",
+          "state": "present",
+          "sha256": "e4cb8a7039389c4552fa58649e28f7edafe725d401f56ef25d5b5b16b40eace2"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/app/src/main/java/io/github/mesmerprism/rustyquest/spatial_camera_panel/SpatialPanelPoseCoordinator.kt",
+          "state": "present",
+          "sha256": "2769d65f97eae4f1cbdf4519fe11b043731d3ad46dcdeafe7f499359a11c34d9"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/app/src/main/java/io/github/mesmerprism/rustyquest/spatial_camera_panel/SpatialPanelSurfaceMatrixProbeCoordinator.kt",
+          "state": "present",
+          "sha256": "8bdfff137f879f5b93da5b5e7470c9f9c25859a6293a7b68bd492f6ac478b52f"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/app/src/main/java/io/github/mesmerprism/rustyquest/spatial_camera_panel/SpatialPresentationPolicy.kt",
+          "state": "present",
+          "sha256": "b3d388017360bdbcc3e145b335d2a4573113845d28760c9d4fff4cc6deae1a12"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/app/src/main/java/io/github/mesmerprism/rustyquest/spatial_camera_panel/SpatialPrivateLayerControlCoordinator.kt",
+          "state": "present",
+          "sha256": "09590480c97d5dba1b266544d08fad1b2fb6271613a38934a88d2953bfd8348f"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/app/src/main/java/io/github/mesmerprism/rustyquest/spatial_camera_panel/SpatialProductBuildPolicy.kt",
+          "state": "present",
+          "sha256": "a3958be79603cbbefdf07069e030c59af99417ebcff773d72d64af7f8a74fc97"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/app/src/main/java/io/github/mesmerprism/rustyquest/spatial_camera_panel/SpatialPublicMultiStack.kt",
+          "state": "present",
+          "sha256": "73f1814dff40efa2c12949acf127eb9d23c0bd6293c5c3860c039d6250f7228f"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/app/src/main/java/io/github/mesmerprism/rustyquest/spatial_camera_panel/SpatialSdkLaneBoundary.kt",
+          "state": "present",
+          "sha256": "0270a0f720fe789ca5603b0f2cacc92b336dccb3202d55018094e4aa22709329"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/app/src/main/java/io/github/mesmerprism/rustyquest/spatial_camera_panel/SpatialSdkQuadResourceCoordinator.kt",
+          "state": "present",
+          "sha256": "0409bcab1a96270d9516cd4e15112fc92a4a4581a79e3ddf8f68522a208cde92"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/app/src/main/java/io/github/mesmerprism/rustyquest/spatial_camera_panel/SpatialSdkQuadSurfaceProbeCoordinator.kt",
+          "state": "present",
+          "sha256": "f9585eda85834bc42bb5a92f61860a8ee0ee1912b98293282a84c76c4316dbb8"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/app/src/main/java/io/github/mesmerprism/rustyquest/spatial_camera_panel/SpatialStimulusVolumeCoordinator.kt",
+          "state": "present",
+          "sha256": "764b6df2c4db8e87715f4807fbddd1f3bebdb53add1d66ccae5a81b80cc28ca6"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/app/src/main/java/io/github/mesmerprism/rustyquest/spatial_camera_panel/SpatialStimulusVolumeRoute.kt",
+          "state": "present",
+          "sha256": "fcf895c0c80259d2f707a0d8db90de3dd1636e57d9b1747e3a1554cef661af51"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/app/src/main/java/io/github/mesmerprism/rustyquest/spatial_camera_panel/SpatialSurfaceParticleLifecycleDiagnosticsCoordinator.kt",
+          "state": "present",
+          "sha256": "7eb96f4b1a4e6be46a2f784d1d3157ea5c5ab6e04d6c5e9a2179b9d0e242c86c"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/app/src/main/java/io/github/mesmerprism/rustyquest/spatial_camera_panel/SpatialSurfaceParticleParameterCoordinator.kt",
+          "state": "present",
+          "sha256": "d1bff9b8532c395eea00e8f72b516af1dcba3caf24daee970cda527af7ffe9cf"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/app/src/main/java/io/github/mesmerprism/rustyquest/spatial_camera_panel/SpatialSurfaceParticleRecenterCoordinator.kt",
+          "state": "present",
+          "sha256": "cdc8eb4a6691eb0d7df28268565acd5de79865f93ca1f684e7a6eb928a66f3fa"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/app/src/main/java/io/github/mesmerprism/rustyquest/spatial_camera_panel/SpatialSurfaceParticleRouteModule.kt",
+          "state": "present",
+          "sha256": "b51785d457bc21da4d3f9ec03eb0023a2b956e15d069e8eabd74a989ba5d5c8e"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/app/src/main/java/io/github/mesmerprism/rustyquest/spatial_camera_panel/SpatialSurfaceParticleRuntimeCoordinator.kt",
+          "state": "present",
+          "sha256": "880bfac4ab4952cc79b7edc30810c021a2ef8981c09f9660c0a810409cde997b"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/app/src/main/java/io/github/mesmerprism/rustyquest/spatial_camera_panel/SpatialValidationCommandModule.kt",
+          "state": "present",
+          "sha256": "b25e2ed574414ed0def850996b9ca8e2b551ecff7dc7807aec6b94ffb23a6a1e"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/app/src/main/java/io/github/mesmerprism/rustyquest/spatial_camera_panel/SpatialValidationWorkflowCoordinator.kt",
+          "state": "present",
+          "sha256": "a9890b5901e5655a92b84e7048376abe9813a1a2e89efbf6f7f8ec6f6779477e"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/app/src/main/java/io/github/mesmerprism/rustyquest/spatial_camera_panel/SpatialVirtualRoomModule.kt",
+          "state": "present",
+          "sha256": "8e8951c7117ff94aaa2825920fbf92fb3b51869f2b866a52f220a5d597e9addf"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/app/src/main/java/io/github/mesmerprism/rustyquest/spatial_camera_panel/vrstrobe/SpatialVrStrobeCoordinator.kt",
+          "state": "deleted",
+          "sha256": null
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/app/src/main/java/io/github/mesmerprism/rustyquest/spatial_camera_panel/vrstrobe/VrStrobeCarrierGeometry.kt",
+          "state": "deleted",
+          "sha256": null
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/app/src/main/java/io/github/mesmerprism/rustyquest/spatial_camera_panel/vrstrobe/VrStrobeControllerInputCoordinator.kt",
+          "state": "deleted",
+          "sha256": null
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/app/src/main/java/io/github/mesmerprism/rustyquest/spatial_camera_panel/vrstrobe/VrStrobeControlPanel.kt",
+          "state": "deleted",
+          "sha256": null
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/app/src/main/java/io/github/mesmerprism/rustyquest/spatial_camera_panel/vrstrobe/VrStrobeFeatureRoute.kt",
+          "state": "deleted",
+          "sha256": null
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/app/src/main/java/io/github/mesmerprism/rustyquest/spatial_camera_panel/vrstrobe/VrStrobeGpuPlan.kt",
+          "state": "deleted",
+          "sha256": null
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/app/src/main/java/io/github/mesmerprism/rustyquest/spatial_camera_panel/vrstrobe/VrStrobePanelFlow.kt",
+          "state": "deleted",
+          "sha256": null
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/app/src/main/java/io/github/mesmerprism/rustyquest/spatial_camera_panel/vrstrobe/VrStrobePresetCatalog.kt",
+          "state": "deleted",
+          "sha256": null
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/app/src/main/java/io/github/mesmerprism/rustyquest/spatial_camera_panel/vrstrobe/VrStrobeProfileBundleCodec.kt",
+          "state": "deleted",
+          "sha256": null
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/app/src/main/java/io/github/mesmerprism/rustyquest/spatial_camera_panel/vrstrobe/VrStrobeProfileCodec.kt",
+          "state": "deleted",
+          "sha256": null
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/app/src/main/java/io/github/mesmerprism/rustyquest/spatial_camera_panel/vrstrobe/VrStrobeProfiles.kt",
+          "state": "deleted",
+          "sha256": null
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/app/src/main/java/io/github/mesmerprism/rustyquest/spatial_camera_panel/vrstrobe/VrStrobeRandomization.kt",
+          "state": "deleted",
+          "sha256": null
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/app/src/main/java/io/github/mesmerprism/rustyquest/spatial_camera_panel/vrstrobe/VrStrobeSafetyController.kt",
+          "state": "deleted",
+          "sha256": null
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/app/src/main/java/io/github/mesmerprism/rustyquest/spatial_camera_panel/vrstrobe/VrStrobeStimulusSelectionAuthority.kt",
+          "state": "deleted",
+          "sha256": null
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/app/src/main/java/io/github/mesmerprism/rustyquest/spatial_camera_panel/vrstrobe/VrStrobeStoredProfiles.kt",
+          "state": "deleted",
+          "sha256": null
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/app/src/main/res/values/ids.xml",
+          "state": "present",
+          "sha256": "7dfd901626b3db11a899db26fcef266a92bfb1c4f4b7b61007c46a0454c1ece6"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/app/src/shaders/spatial_fragment_probe_depth.frag",
+          "state": "present",
+          "sha256": "3b4492281c48dd149710cd65c110eacf41efc605d656f022085ad62648464908"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/app/src/shaders/spatial_fragment_probe_depth.vert",
+          "state": "present",
+          "sha256": "b7871c83c422dfcbf09d3e1a8dafadf6263468b73b4ff08323e123f4f986f608"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/app/src/shaders/spatial_fragment_probe_nodepth.frag",
+          "state": "present",
+          "sha256": "c815af886a46659536a1da296beac3dc1e6853951dc391e40732cc8c7b4e3027"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/app/src/shaders/spatial_fragment_probe_nodepth.vert",
+          "state": "present",
+          "sha256": "b7871c83c422dfcbf09d3e1a8dafadf6263468b73b4ff08323e123f4f986f608"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/app/src/shaders/spatial_panel_surface_probe.frag",
+          "state": "present",
+          "sha256": "b0884dd602102f63afeb9197e3ab1ce677d1c519ab5dbdcfec9f48c08d665b58"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/app/src/shaders/spatial_stimulus_volume.frag",
+          "state": "present",
+          "sha256": "73749a2f180239e0d622c768b2d9f778a8609a7a5192146cfbd21cb202404c88"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/app/src/shaders/spatial_stimulus_volume.vert",
+          "state": "present",
+          "sha256": "ce7b5e4aadc88db20e2487932045b8a5be1c4ae199f95bec55c924b5f271ebfe"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/app/src/shaders/vr_strobe_interference.frag",
+          "state": "deleted",
+          "sha256": null
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/app/src/shaders/vr_strobe_interference.vert",
+          "state": "deleted",
+          "sha256": null
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/app/src/test/java/io/github/mesmerprism/rustyquest/spatial_camera_panel/PrivateLayerZoneCompositorTest.kt",
+          "state": "present",
+          "sha256": "ba766e089900d1548567e7a521195c1b4eacc809d492e6b3137f7f6cb8fd82f8"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/app/src/test/java/io/github/mesmerprism/rustyquest/spatial_camera_panel/SpatialCameraLatencyDiagnosticModuleTest.kt",
+          "state": "present",
+          "sha256": "728a65c79c1f0395d636fccfd476041daede12d2e4e41756851d59753ad71484"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/app/src/test/java/io/github/mesmerprism/rustyquest/spatial_camera_panel/SpatialComposePanelRegistrationModuleTest.kt",
+          "state": "present",
+          "sha256": "9d3ea0de32cf03ab1a9cfea6dae6743d574b2811710d672fd9a9090340618a9d"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/app/src/test/java/io/github/mesmerprism/rustyquest/spatial_camera_panel/SpatialFragmentProbeRouteTest.kt",
+          "state": "present",
+          "sha256": "43478ce33778bd653607526e03bb6a818f5d1aaa1dfc315ec675f0724545be3e"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/app/src/test/java/io/github/mesmerprism/rustyquest/spatial_camera_panel/SpatialPresentationPolicyTest.kt",
+          "state": "present",
+          "sha256": "74fdddd42c64723a8f9eae2049e9c28f17d2f18f65c336056f22ef2b7128df92"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/app/src/test/java/io/github/mesmerprism/rustyquest/spatial_camera_panel/SpatialProductBuildPolicyTest.kt",
+          "state": "present",
+          "sha256": "478571cf93431698bcf49f0ccbbdf279ad0d866d88d72d8823b228aca9555abb"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/app/src/test/java/io/github/mesmerprism/rustyquest/spatial_camera_panel/SpatialStimulusVolumeRouteTest.kt",
+          "state": "present",
+          "sha256": "75a5bf51e1efde0f0df2ba4f00d67690d306941faee5efcc3c47154e50eb6393"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/app/src/test/java/io/github/mesmerprism/rustyquest/spatial_camera_panel/SpatialSurfaceParticleRuntimeCoordinatorTest.kt",
+          "state": "present",
+          "sha256": "e1091771a0127a21edb4abebef65cff680f25eb7ab50b62fcf0f2dda01c8767b"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/app/src/test/java/io/github/mesmerprism/rustyquest/spatial_camera_panel/vrstrobe/VrStrobeCarrierGeometryTest.kt",
+          "state": "deleted",
+          "sha256": null
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/app/src/test/java/io/github/mesmerprism/rustyquest/spatial_camera_panel/vrstrobe/VrStrobeControllerInputCoordinatorTest.kt",
+          "state": "deleted",
+          "sha256": null
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/app/src/test/java/io/github/mesmerprism/rustyquest/spatial_camera_panel/vrstrobe/VrStrobeFeatureRouteTest.kt",
+          "state": "deleted",
+          "sha256": null
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/app/src/test/java/io/github/mesmerprism/rustyquest/spatial_camera_panel/vrstrobe/VrStrobeGpuPlanTest.kt",
+          "state": "deleted",
+          "sha256": null
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/app/src/test/java/io/github/mesmerprism/rustyquest/spatial_camera_panel/vrstrobe/VrStrobePanelFlowTest.kt",
+          "state": "deleted",
+          "sha256": null
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/app/src/test/java/io/github/mesmerprism/rustyquest/spatial_camera_panel/vrstrobe/VrStrobeProfileBundleCodecTest.kt",
+          "state": "deleted",
+          "sha256": null
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/app/src/test/java/io/github/mesmerprism/rustyquest/spatial_camera_panel/vrstrobe/VrStrobeProfileCatalogTest.kt",
+          "state": "deleted",
+          "sha256": null
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/app/src/test/java/io/github/mesmerprism/rustyquest/spatial_camera_panel/vrstrobe/VrStrobeRandomizationTest.kt",
+          "state": "deleted",
+          "sha256": null
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/app/src/test/java/io/github/mesmerprism/rustyquest/spatial_camera_panel/vrstrobe/VrStrobeSafetyControllerTest.kt",
+          "state": "deleted",
+          "sha256": null
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/app/src/test/java/io/github/mesmerprism/rustyquest/spatial_camera_panel/vrstrobe/VrStrobeStimulusSelectionAuthorityTest.kt",
+          "state": "deleted",
+          "sha256": null
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/app/src/test/java/io/github/mesmerprism/rustyquest/spatial_camera_panel/vrstrobe/VrStrobeStoredProfileAuthorityTest.kt",
+          "state": "deleted",
+          "sha256": null
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/build.gradle.kts",
+          "state": "present",
+          "sha256": "fa26f8f58ff171b31db035a30f948c797ef7893c70855bf375e1784a875e780d"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/gradle/libs.versions.toml",
+          "state": "present",
+          "sha256": "290f3033f2f501e563ca71ba5721899fca1a43c163d97db90807a99df69beaba"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/legacy-workspaces/mixed-integration-v1/conformance-locks/broker-media-client.feature.lock.json",
+          "state": "present",
+          "sha256": "d68952b3cc5ebc8c23d85a1ab610e3005ee6c7197da0355f61a923809d252d5a"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/legacy-workspaces/mixed-integration-v1/conformance-locks/hand-adapter.feature.lock.json",
+          "state": "present",
+          "sha256": "ffb07e39c7290fde8ebb154efb94985cf4628cb2e4d098a81a5611849dfd32f1"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/legacy-workspaces/mixed-integration-v1/conformance-locks/index.json",
+          "state": "present",
+          "sha256": "7e93ca79a76490948e079c75011960dd991f460d28f0f04819cea2e11d2725c3"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/legacy-workspaces/mixed-integration-v1/conformance-locks/particle-adapter.feature.lock.json",
+          "state": "present",
+          "sha256": "780814be82c12a54036de0259c6188e2d41813858c30e6b6c725eb8422f7301b"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/legacy-workspaces/mixed-integration-v1/conformance-locks/spatial-asset-model.feature.lock.json",
+          "state": "present",
+          "sha256": "da385efc37aa4bd8d74b5aeadd7c8a06461e8ee68308b9e20c24bba64a1c8793"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/legacy-workspaces/mixed-integration-v1/feature.lock.json",
+          "state": "present",
+          "sha256": "da553b173e890934fb3e6ce109f34a511dc18753b6aa974d524a7cc985128654"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/legacy-workspaces/mixed-integration-v1/iteration-events.jsonl",
+          "state": "present",
+          "sha256": "16ad1a70e209e4dadf5cd0dd3b50b1002015962d3619feb79be262fc7515dbc3"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/legacy-workspaces/mixed-integration-v1/iteration-units/mod-001.json",
+          "state": "present",
+          "sha256": "593bf8b74871e3d5c125fcde108fe62118f46cc7138d778d9600a5b571c2d8ba"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/legacy-workspaces/mixed-integration-v1/iteration-units/mod-002.json",
+          "state": "present",
+          "sha256": "8f75017a41641e80b537dfd3f8ece2edfce6d22fdb95e7ce2d45bbac6cc1f615"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/legacy-workspaces/mixed-integration-v1/iteration-units/mod-003.json",
+          "state": "present",
+          "sha256": "4350ee99f1e1f804e7e914b96e0ae971a46f1533df31535a222d5977d34e92a0"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/legacy-workspaces/mixed-integration-v1/iteration-units/mod-006.json",
+          "state": "present",
+          "sha256": "b7810be73867a6bb3ca0067bbd6c63aebd8a89dd1c48a2722fc44eab90659052"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/legacy-workspaces/mixed-integration-v1/iteration-units/mod-007.json",
+          "state": "present",
+          "sha256": "6d0dcc445fc1d1b583b3efbbe7e4fc01cb73a93988d9a77c701059b3790d380b"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/legacy-workspaces/mixed-integration-v1/iteration-units/mod-009.json",
+          "state": "present",
+          "sha256": "b93c5005e6845cc7c4dd6961868479674cbe08215c8df4f44d7020f5085fa2b0"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/legacy-workspaces/mixed-integration-v1/iteration-units/mod-010.json",
+          "state": "present",
+          "sha256": "59641d38258fdd4bbdf5ea40b6f37e3a22a5aa1090094965e9f98bf194a69bb3"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/legacy-workspaces/mixed-integration-v1/iteration-units/mod-011.json",
+          "state": "present",
+          "sha256": "fb65e4c9d1d512302172ddc265bd254afbb5d1d6d0cf2d9ac7ce83fe5fdb5cc5"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/legacy-workspaces/mixed-integration-v1/iteration-units/mod-012.json",
+          "state": "present",
+          "sha256": "83ee8964c03572462ab277d6bb6438cbdf31c9d66f68e80cb261df35623b72bf"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/legacy-workspaces/mixed-integration-v1/iteration-units/mod-013.json",
+          "state": "present",
+          "sha256": "03cc478629c4d1d56af5184dd292a76b93faaeb69f2ce9460e5c6cbc91f78500"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/legacy-workspaces/mixed-integration-v1/iteration-units/net-016.json",
+          "state": "present",
+          "sha256": "73a60534085cf939c9cd6e6c1cd403920c50103e33d6f90438a3398880d51213"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/legacy-workspaces/mixed-integration-v1/iteration-units/wf-003.json",
+          "state": "present",
+          "sha256": "371175c1eefb70d85c914ca8bfa7495651356aae25fcf0141dcb1ba6781d2135"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/legacy-workspaces/mixed-integration-v1/mod-006-reviews/lock-bound-activation-readiness.json",
+          "state": "present",
+          "sha256": "eca27c491e4a288fedb4d22ebc8d554bdc3c429735c8028089f71b9f6a624d76"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/legacy-workspaces/mixed-integration-v1/module-candidates/surface-particle-substrate.json",
+          "state": "present",
+          "sha256": "afbcdebddb8d3b425864ac0c51197ad32d7832870997d49cb1a28cba3c6bcf99"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/legacy-workspaces/mixed-integration-v1/module-candidates/tracked-hand-substrate.json",
+          "state": "present",
+          "sha256": "b4dda73382624bb5b24a0ec1c7895c21aa73c72b5046961a2e3cbfb01d7d9c7b"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/legacy-workspaces/mixed-integration-v1/project.spec.json",
+          "state": "present",
+          "sha256": "ad2f3d0b1538de4c2dfce060abe53b087ca8859143d1dad7d88cec8209b53e7c"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/legacy-workspaces/mixed-integration-v1/promotion-reviews/.gitkeep",
+          "state": "present",
+          "sha256": "1756e2de9356854c8f13d2d4b2fcb0b15b6b699cdac26162853b274cbe1818f7"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/legacy-workspaces/mixed-integration-v1/README.md",
+          "state": "present",
+          "sha256": "1dd6b63aba3dd5bc784fb9ca1d5a2224c046346b2a00363afea14f24031ba53f"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/legacy-workspaces/mixed-integration-v1/receipts/mod-006-lock-bound-activation.json",
+          "state": "present",
+          "sha256": "a14cc44018fc7874dc77d48c98257880e6184102389367e4ac85b4ced98dcf87"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/legacy-workspaces/mixed-integration-v1/receipts/mod-006-twoquest-device-validation-20260713.json",
+          "state": "present",
+          "sha256": "71f191ea39b6bfa9f9f9fa463640880d4f07f18f5fd289e615fc02d858236432"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/legacy-workspaces/mixed-integration-v1/receipts/mod-006-workflow-validation-twoquest-20260713.json",
+          "state": "present",
+          "sha256": "792b5d2d8b7171820187245f333c8bf57bb6ddc68ed3c3aff1591a5042463c58"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/legacy-workspaces/mixed-integration-v1/receipts/mod-007-automated-presentation-validation-20260715.json",
+          "state": "present",
+          "sha256": "29bad49a655903d36069867fe1e70eea53972e27c1f9da26bc6e6a9aaa0bb71d"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/legacy-workspaces/mixed-integration-v1/receipts/mod-007-device-visual-deferred-20260717.json",
+          "state": "present",
+          "sha256": "1142653e50d2492b74f5d4e5bcf712451c7dbf18da33d0a273e88694abd87fbe"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/legacy-workspaces/mixed-integration-v1/receipts/mod-007-guide-native-parity-ab-host-validation-20260716.json",
+          "state": "present",
+          "sha256": "030709141ea04876387b2aae13b30dc7d9e2dfa964eeb6223738de5b04a4afc5"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/legacy-workspaces/mixed-integration-v1/receipts/mod-007-real-source-overscan-host-validation-20260715.json",
+          "state": "present",
+          "sha256": "4fe8de3101a3773d10a19012b1ee752b5519650057afef2afacbf64006173055"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/legacy-workspaces/mixed-integration-v1/receipts/mod-007-reduced-footprint-guard-band-validation-20260715.json",
+          "state": "present",
+          "sha256": "d8ce966372924771f758aba006c64796c9689bfdff658cdb7d9bdd45521e0f3c"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/legacy-workspaces/mixed-integration-v1/receipts/mod-007-single-layer-control-ui-host-validation-20260716.json",
+          "state": "present",
+          "sha256": "da5bbb48e455aa67dacb145b26205794f703e8c356be0d836d8ffa3679c39d07"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/legacy-workspaces/mixed-integration-v1/receipts/mod-009-host-validation-20260717.json",
+          "state": "present",
+          "sha256": "07e55e6fe01eecf17fa0ab3c5638b86a757eccff4610b000669d736698a89bff"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/legacy-workspaces/mixed-integration-v1/receipts/mod-009-inflight-adoption-20260717.json",
+          "state": "present",
+          "sha256": "c5d5ffdedb9c42fcb1d9a19b3612969037a8d89e8433c593421d18764dbf8dd5"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/legacy-workspaces/mixed-integration-v1/receipts/mod-009-workflow-validation-20260717.json",
+          "state": "present",
+          "sha256": "1d13b9662b8ae8a4721e282ab9ec3eba2136f2126640604652945f39eba8fd5f"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/legacy-workspaces/mixed-integration-v1/receipts/mod-010-host-validation-20260717.json",
+          "state": "present",
+          "sha256": "4c2b9a212b63f9f1984f2e7580450fb9824bf201a20b67b774cef7cf4a97bf77"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/legacy-workspaces/mixed-integration-v1/receipts/mod-010-vr-strobe-source-permission-20260717.json",
+          "state": "present",
+          "sha256": "903ec1803e6ef8b71a5bc7ef942f3743fba5ac7846c67b76e1134a515e6ba966"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/legacy-workspaces/mixed-integration-v1/receipts/mod-010-workflow-validation-20260717.json",
+          "state": "present",
+          "sha256": "2e2256e9207bea22c23b5318d785ab5a3dc32d6f568d97642e6695a939702244"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/legacy-workspaces/mixed-integration-v1/receipts/mod-011-device-panel-facing-blocked-20260718.json",
+          "state": "present",
+          "sha256": "0f807650bd349425da7f3d761cb6588b4467a2023afeead456edf8c0c6e53a8c"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/legacy-workspaces/mixed-integration-v1/receipts/mod-012-inflight-adoption-20260718.json",
+          "state": "present",
+          "sha256": "a3887f0cf1718d8d540a7fdb1e6f7eac4daac8bde1920a71572a1d7d88dfccc0"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/legacy-workspaces/mixed-integration-v1/receipts/transactions/MOD-006-accepted-0016-transition.completion.json",
+          "state": "present",
+          "sha256": "5f98511d90a86d61b5bdfbf42f468b949b77f590c93896f3593e5f8fc2edcb0a"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/legacy-workspaces/mixed-integration-v1/receipts/transactions/MOD-006-accepted-0016-transition.intent.json",
+          "state": "present",
+          "sha256": "fd208373df321ebe6719055327d6006c33f768d0011564984f04dfa9fd0aa1ed"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/legacy-workspaces/mixed-integration-v1/receipts/transactions/MOD-006-validation-pass-0015-transition.completion.json",
+          "state": "present",
+          "sha256": "abd7e33316e5bbccb4e55beec5eda27dd57f865ae6ebab08cb0133a3f6b505a0"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/legacy-workspaces/mixed-integration-v1/receipts/transactions/MOD-006-validation-pass-0015-transition.intent.json",
+          "state": "present",
+          "sha256": "d713657b71e834786326248d3dfec275e2e1906e41073f4635f498a1974f13cd"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/legacy-workspaces/mixed-integration-v1/receipts/transactions/mod-007-claimed-0018-transition.completion.json",
+          "state": "present",
+          "sha256": "8c6fe6d6f32db45014d720de2985a4be61822f446c7d0a35025bea6d09fd4f24"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/legacy-workspaces/mixed-integration-v1/receipts/transactions/mod-007-claimed-0018-transition.intent.json",
+          "state": "present",
+          "sha256": "93202d2d848a98bfb299caa4f94bed4711bf40e278274c4252107b709d05ce20"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/legacy-workspaces/mixed-integration-v1/receipts/transactions/mod-007-ready-0017-transition.completion.json",
+          "state": "present",
+          "sha256": "3af2262264420f1e9dfc8e8aac11d73feb9c1ae7dcbd13c616656c1e4b8f2dcd"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/legacy-workspaces/mixed-integration-v1/receipts/transactions/mod-007-ready-0017-transition.intent.json",
+          "state": "present",
+          "sha256": "06b1fc97681810c1630631158d7f0f9547efe8a90d707ba97f0f60022371f05b"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/legacy-workspaces/mixed-integration-v1/receipts/transactions/mod-007-validating-0019-transition.completion.json",
+          "state": "present",
+          "sha256": "36d49e6fb2ad9cd561485310e861ed3680b0bc1306ed93bb4d998f1026ace5d1"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/legacy-workspaces/mixed-integration-v1/receipts/transactions/mod-007-validating-0019-transition.intent.json",
+          "state": "present",
+          "sha256": "82f056a068182421895ce4a97fd0e0c32ddbe96d9af6db3071f7251bfa6c0fa8"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/legacy-workspaces/mixed-integration-v1/receipts/transactions/mod-007-validation-blocked-0020-transition.completion.json",
+          "state": "present",
+          "sha256": "19c07588d751e9493fecbddb100b51346a67af9d72db8583a83d99c68732df06"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/legacy-workspaces/mixed-integration-v1/receipts/transactions/mod-007-validation-blocked-0020-transition.intent.json",
+          "state": "present",
+          "sha256": "83ee969c0b535d6e6d19335d52fc74faf125049f2d0335f9fb987cfcbf0c6a38"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/legacy-workspaces/mixed-integration-v1/receipts/transactions/mod-009-accepted-0026-transition.completion.json",
+          "state": "present",
+          "sha256": "1d47065af8407784048f7aa84bc908af17f0252f040e1387cbb8c9094f647588"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/legacy-workspaces/mixed-integration-v1/receipts/transactions/mod-009-accepted-0026-transition.intent.json",
+          "state": "present",
+          "sha256": "d6d8d330b6961a309d8f17b7a3158acc62b81f0d5c6bb2251038a6f540c7f8bc"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/legacy-workspaces/mixed-integration-v1/receipts/transactions/mod-009-claimed-0022-transition.completion.json",
+          "state": "present",
+          "sha256": "c2cd9248f90d23ab1055e86c31f98bfe2302a020797652b4de4845dfdf93c21b"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/legacy-workspaces/mixed-integration-v1/receipts/transactions/mod-009-claimed-0022-transition.intent.json",
+          "state": "present",
+          "sha256": "0dc90e491d3f02c692e4ed48391b9ba348b0fa16931d9b02f6c3c1a2a051dd8c"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/legacy-workspaces/mixed-integration-v1/receipts/transactions/mod-009-ready-0021-transition.completion.json",
+          "state": "present",
+          "sha256": "371016d8588aec4f41ff56e2c8f063305ca916969167db6cfcb1498eac36661f"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/legacy-workspaces/mixed-integration-v1/receipts/transactions/mod-009-ready-0021-transition.intent.json",
+          "state": "present",
+          "sha256": "6e632bc6988abe0ebb275d36287d5d22f1e4aaf2761cf24fc6e8c2f1f7e0c56e"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/legacy-workspaces/mixed-integration-v1/receipts/transactions/mod-009-validating-0024-transition.completion.json",
+          "state": "present",
+          "sha256": "53b032d0601a362a9e54f2ea4b93e96f595d9fb57b34c810fca3ade92ae13751"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/legacy-workspaces/mixed-integration-v1/receipts/transactions/mod-009-validating-0024-transition.intent.json",
+          "state": "present",
+          "sha256": "ea9fab8cfb29401291e9351408b3fc87e5ec5f542baf9b2dd2bb2b1c3df81875"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/legacy-workspaces/mixed-integration-v1/receipts/transactions/mod-009-validation-pass-0025-transition.completion.json",
+          "state": "present",
+          "sha256": "51f7b96082c2245d16a486b10831b890384986e668f67a17428fa183386d0ec5"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/legacy-workspaces/mixed-integration-v1/receipts/transactions/mod-009-validation-pass-0025-transition.intent.json",
+          "state": "present",
+          "sha256": "06f3f9cdcb0eff33670575ae8586e4abba3215e77bd23fc6b0b291fa9bb83b05"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/legacy-workspaces/mixed-integration-v1/receipts/transactions/mod-010-accepted-0031-transition.completion.json",
+          "state": "present",
+          "sha256": "c1e2e1286b28f18438cf975e26261f19ce576cf4c0ec5289c53edf03123612b7"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/legacy-workspaces/mixed-integration-v1/receipts/transactions/mod-010-accepted-0031-transition.intent.json",
+          "state": "present",
+          "sha256": "1539b51da411999846692c69b30f69c9e30b0192f792d433479a077dc913dca0"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/legacy-workspaces/mixed-integration-v1/receipts/transactions/mod-010-claimed-0028-transition.completion.json",
+          "state": "present",
+          "sha256": "c5e4a53cbc681d7f726c138ee4f51797e8a2d89f4ead5c27726bad05213fda16"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/legacy-workspaces/mixed-integration-v1/receipts/transactions/mod-010-claimed-0028-transition.intent.json",
+          "state": "present",
+          "sha256": "c11241e590f67400440fd184b40298ed28518beede7520862e9f885c7a97640d"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/legacy-workspaces/mixed-integration-v1/receipts/transactions/mod-010-ready-0027-transition.completion.json",
+          "state": "present",
+          "sha256": "8658e638ec9f0b6c2fad70a980c0c02b7ee258d317f114f22c614422f5d25cf0"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/legacy-workspaces/mixed-integration-v1/receipts/transactions/mod-010-ready-0027-transition.intent.json",
+          "state": "present",
+          "sha256": "ff53110674457a71c9d5a4c0b1ac3c8a587631289e6afe08056c880713721ddb"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/legacy-workspaces/mixed-integration-v1/receipts/transactions/mod-010-validating-0029-transition.completion.json",
+          "state": "present",
+          "sha256": "9e7633f195687b7d29bf8567e69f0d1c83a6960dfbced43b5d278cec30eb8bd4"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/legacy-workspaces/mixed-integration-v1/receipts/transactions/mod-010-validating-0029-transition.intent.json",
+          "state": "present",
+          "sha256": "e5c61c08254ccd6be39fd886f80ada2a6685dbe982f1d184f53ae87f527397ff"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/legacy-workspaces/mixed-integration-v1/receipts/transactions/mod-010-validation-pass-0030-transition.completion.json",
+          "state": "present",
+          "sha256": "bb5e11edc3667000867c9e5dad7e4e919d5f7665c04a88ed1482071a8d047ab4"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/legacy-workspaces/mixed-integration-v1/receipts/transactions/mod-010-validation-pass-0030-transition.intent.json",
+          "state": "present",
+          "sha256": "1e25996f995572f6b99c88c56c89102fd230e87f3f172c0208bbc7df6042f8c0"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/legacy-workspaces/mixed-integration-v1/receipts/transactions/mod-011-claimed-0033-transition.completion.json",
+          "state": "present",
+          "sha256": "bf2ca3748d2c522d9b1d83ce1a7cef9b77fee687645a71edeb848d9c3e1be44a"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/legacy-workspaces/mixed-integration-v1/receipts/transactions/mod-011-claimed-0033-transition.intent.json",
+          "state": "present",
+          "sha256": "4d26c9561262c3a3c6c159d4786f8d1864e4c05a30f23841de1dc94f1a47d487"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/legacy-workspaces/mixed-integration-v1/receipts/transactions/mod-011-ready-0032-transition.completion.json",
+          "state": "present",
+          "sha256": "9a06e0dc5fce03cb68bda0dbb8a89de0a13335cb3ed8f6b5e65e0f27f138d1c3"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/legacy-workspaces/mixed-integration-v1/receipts/transactions/mod-011-ready-0032-transition.intent.json",
+          "state": "present",
+          "sha256": "980edea857396e7291313bfdc533897f0e27d45c4471e32219ddb59c9c5976cd"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/legacy-workspaces/mixed-integration-v1/receipts/transactions/mod-011-validating-0034-transition.completion.json",
+          "state": "present",
+          "sha256": "3fd7e8edb4ca42882deebd389933f2f7f903d1edb92292cfcc48fc55dac0d690"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/legacy-workspaces/mixed-integration-v1/receipts/transactions/mod-011-validating-0034-transition.intent.json",
+          "state": "present",
+          "sha256": "767e26ed266a5bacd641f0d3b5239c4561c833fbe4dd5009d5914ccc9e1cc7c8"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/legacy-workspaces/mixed-integration-v1/receipts/transactions/mod-011-validation-blocked-0035-transition.completion.json",
+          "state": "present",
+          "sha256": "14bf50e9308be80a8a8e8790d6012f0c7d57a6d6898e52d5af46bcf839d26a35"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/legacy-workspaces/mixed-integration-v1/receipts/transactions/mod-011-validation-blocked-0035-transition.intent.json",
+          "state": "present",
+          "sha256": "74b0a8c00407bfff5fd65ef8a55bfa18b6ebf695a47d82b2ba2873e8d1e013ef"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/legacy-workspaces/mixed-integration-v1/receipts/transactions/mod-012-claimed-0037-transition.completion.json",
+          "state": "present",
+          "sha256": "97143bb75ae34589f5f26a54bd28e92b06914db3782d833a760cd9bb60e01058"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/legacy-workspaces/mixed-integration-v1/receipts/transactions/mod-012-claimed-0037-transition.intent.json",
+          "state": "present",
+          "sha256": "57a87806ee25652a6306317bd5745f33a79d501a6ed7019293a3616dd24f351d"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/legacy-workspaces/mixed-integration-v1/receipts/transactions/mod-012-ready-0036-transition.completion.json",
+          "state": "present",
+          "sha256": "f7046b666cbd58d10df38b2ddf88362e2c38cdab2da2d95b07fd98a37425f418"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/legacy-workspaces/mixed-integration-v1/receipts/transactions/mod-012-ready-0036-transition.intent.json",
+          "state": "present",
+          "sha256": "e582ce231fcc6fff7859e8e05291008bb6e068dc5c966125a42a23b8cd4ec25b"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/legacy-workspaces/mixed-integration-v1/receipts/wf-003-workspace-adoption.json",
+          "state": "present",
+          "sha256": "6630732555bb6ee82f429ac35ffe40e210b99bc4120596714ae11511e3f598b8"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/legacy-workspaces/mixed-integration-v1/repo-maps/mod-006-exact-repository-map-20260713.json",
+          "state": "present",
+          "sha256": "fcaea7e7fca264d937aca9aead6ace8b453c31fce145f18aa7d92dc86d074ccc"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/legacy-workspaces/mixed-integration-v1/workspace.state.json",
+          "state": "present",
+          "sha256": "ac343bc84830861e23385e7b3a10b6f6e9992e8e1c227a5ff60cf50d649ee440"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/morphospace/conformance-locks/broker-media-client.feature.lock.json",
+          "state": "deleted",
+          "sha256": null
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/morphospace/conformance-locks/hand-adapter.feature.lock.json",
+          "state": "deleted",
+          "sha256": null
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/morphospace/conformance-locks/index.json",
+          "state": "deleted",
+          "sha256": null
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/morphospace/conformance-locks/particle-adapter.feature.lock.json",
+          "state": "deleted",
+          "sha256": null
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/morphospace/conformance-locks/spatial-asset-model.feature.lock.json",
+          "state": "deleted",
+          "sha256": null
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/morphospace/feature.lock.json",
+          "state": "present",
+          "sha256": "bd6a711468c93fcc3c1ad379c960263f7eb7e2829c8127b2106970539ff58b3e"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/morphospace/iteration-events.jsonl",
+          "state": "present",
+          "sha256": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/morphospace/iteration-units/mod-001.json",
+          "state": "deleted",
+          "sha256": null
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/morphospace/iteration-units/mod-002.json",
+          "state": "deleted",
+          "sha256": null
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/morphospace/iteration-units/mod-003.json",
+          "state": "deleted",
+          "sha256": null
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/morphospace/iteration-units/mod-006.json",
+          "state": "deleted",
+          "sha256": null
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/morphospace/iteration-units/mod-007.json",
+          "state": "deleted",
+          "sha256": null
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/morphospace/iteration-units/net-016.json",
+          "state": "deleted",
+          "sha256": null
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/morphospace/iteration-units/wf-003.json",
+          "state": "deleted",
+          "sha256": null
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/morphospace/legacy-archive.json",
+          "state": "present",
+          "sha256": "15a5606cc69d0e40edcb3db1f4dc105055e42b5714c5d8407d9baaf41864d08e"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/morphospace/mod-006-reviews/lock-bound-activation-readiness.json",
+          "state": "deleted",
+          "sha256": null
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/morphospace/module-candidates/surface-particle-substrate.json",
+          "state": "deleted",
+          "sha256": null
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/morphospace/module-candidates/tracked-hand-substrate.json",
+          "state": "deleted",
+          "sha256": null
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/morphospace/project.spec.json",
+          "state": "present",
+          "sha256": "8129811722406fd8ded4c890b470e94b245dfc33bc4b474aeeccea00d99837ff"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/morphospace/promotion-reviews/.gitkeep",
+          "state": "deleted",
+          "sha256": null
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/morphospace/README.md",
+          "state": "present",
+          "sha256": "7d371874ffb3cf1e3c937f823ae6fb872971a5c404a607f51217eb9f32eea9df"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/morphospace/receipts/mod-006-lock-bound-activation.json",
+          "state": "deleted",
+          "sha256": null
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/morphospace/receipts/mod-006-twoquest-device-validation-20260713.json",
+          "state": "deleted",
+          "sha256": null
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/morphospace/receipts/mod-006-workflow-validation-twoquest-20260713.json",
+          "state": "deleted",
+          "sha256": null
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/morphospace/receipts/mod-007-automated-presentation-validation-20260715.json",
+          "state": "deleted",
+          "sha256": null
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/morphospace/receipts/mod-007-real-source-overscan-host-validation-20260715.json",
+          "state": "deleted",
+          "sha256": null
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/morphospace/receipts/mod-007-reduced-footprint-guard-band-validation-20260715.json",
+          "state": "deleted",
+          "sha256": null
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/morphospace/receipts/mod-010-vr-strobe-source-permission-20260717.json",
+          "state": "deleted",
+          "sha256": null
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/morphospace/receipts/transactions/MOD-006-accepted-0016-transition.completion.json",
+          "state": "deleted",
+          "sha256": null
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/morphospace/receipts/transactions/MOD-006-accepted-0016-transition.intent.json",
+          "state": "deleted",
+          "sha256": null
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/morphospace/receipts/transactions/MOD-006-validation-pass-0015-transition.completion.json",
+          "state": "deleted",
+          "sha256": null
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/morphospace/receipts/transactions/MOD-006-validation-pass-0015-transition.intent.json",
+          "state": "deleted",
+          "sha256": null
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/morphospace/receipts/transactions/mod-007-claimed-0018-transition.completion.json",
+          "state": "deleted",
+          "sha256": null
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/morphospace/receipts/transactions/mod-007-claimed-0018-transition.intent.json",
+          "state": "deleted",
+          "sha256": null
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/morphospace/receipts/transactions/mod-007-ready-0017-transition.completion.json",
+          "state": "deleted",
+          "sha256": null
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/morphospace/receipts/transactions/mod-007-ready-0017-transition.intent.json",
+          "state": "deleted",
+          "sha256": null
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/morphospace/receipts/wf-003-workspace-adoption.json",
+          "state": "deleted",
+          "sha256": null
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/morphospace/repo-maps/mod-006-exact-repository-map-20260713.json",
+          "state": "deleted",
+          "sha256": null
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/morphospace/workspace.state.json",
+          "state": "present",
+          "sha256": "063cdff14ef4258d48409a3630b878327b55295a7e0e1ba381d927fdff205c1a"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/native-receipt/build.rs",
+          "state": "present",
+          "sha256": "82da2c44b6b742b49e7f60dafa514497fa5168374cf5fc6d71088442c359e542"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/native-receipt/shaders/camera_hwb_raw_color.frag.glsl",
+          "state": "present",
+          "sha256": "dbcdb71c2513e0668ff03ffde7cef8558adcc3520a915715422c79cf4090f367"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/native-receipt/shaders/public_guide_blur.frag.glsl",
+          "state": "present",
+          "sha256": "1030b35894c660f7f82beeb3e0d31a7e4e9a381636fc227716335cee29e70285"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/native-receipt/src/camera_hwb_probe.rs",
+          "state": "present",
+          "sha256": "a0ca10874a8c4dd7da3ac29452f5576efd04603f39909ee34ff8191633b634f7"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/native-receipt/src/camera_hwb_projection_target.rs",
+          "state": "present",
+          "sha256": "2c7e78d6ddaae3fc3f3c6f22868d5721fed918cb9a692531c65ecaa2fd65bd9e"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/native-receipt/src/camera_hwb_wsi.rs",
+          "state": "present",
+          "sha256": "8b9d7415a07fe7c4c3aef84a281387a9dfcc9f2c529d61d0c38fdcefff70e2bb"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/native-receipt/src/camera_latency_diagnostics.rs",
+          "state": "present",
+          "sha256": "aaecaa8bf3f480ef3d4008c2567b06f11eafb4bb1625c94538d5998f2f5723aa"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/native-receipt/src/camera_reprojection_guard_band.rs",
+          "state": "present",
+          "sha256": "46d922a8ee671d0bb9373777c4261d65adc48c5e77f6c04fd68a77df9e3a63f4"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/native-receipt/src/lib.rs",
+          "state": "present",
+          "sha256": "68500606eac765415787041b27a25f9f5f0d7e3e52e6bc68196f5be7b38e0a58"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/native-receipt/src/spatial_guide_processing.rs",
+          "state": "present",
+          "sha256": "ed8b7d494e123c22653fad08a2edc965e0e011cdc7a2c9c8372027cbb8d628c8"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/native-receipt/src/spatial_presentation_policy.rs",
+          "state": "present",
+          "sha256": "c30116bdb9d38cf034ca77d3a4eb0ba8c98ce6988e8848c94ef60a7186f311e9"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/native-receipt/src/spatial_public_multistack_runtime.rs",
+          "state": "present",
+          "sha256": "2467be6672bd3acbbe9edd341e9091d448634797ffc92915a67895b02df7016a"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/native-receipt/src/spatial_public_multistack.rs",
+          "state": "present",
+          "sha256": "fab68b31671bf03f00299419d70eeec10eae65461f472a79f41ad377639b0064"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/native-receipt/src/spatial_video_projection.rs",
+          "state": "present",
+          "sha256": "4ae49d61ad6c384bd2321317c432ed6cad07cfbf01df5283060e00b7d3ba75ea"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/native-receipt/src/surface_particle_layer.rs",
+          "state": "present",
+          "sha256": "3b52c06781c67795b598a1503ff6572fd8ee47602e5fcb17ab4491ea70d9c8bd"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/profile-editor-web/app.mjs",
+          "state": "deleted",
+          "sha256": null
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/profile-editor-web/exploration-session.mjs",
+          "state": "deleted",
+          "sha256": null
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/profile-editor-web/fixtures/empty-profile-bundle.json",
+          "state": "deleted",
+          "sha256": null
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/profile-editor-web/index.html",
+          "state": "deleted",
+          "sha256": null
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/profile-editor-web/onboarding.css",
+          "state": "deleted",
+          "sha256": null
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/profile-editor-web/onboarding/index.html",
+          "state": "deleted",
+          "sha256": null
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/profile-editor-web/profile-contract.mjs",
+          "state": "deleted",
+          "sha256": null
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/profile-editor-web/README.md",
+          "state": "deleted",
+          "sha256": null
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/profile-editor-web/renderer.mjs",
+          "state": "deleted",
+          "sha256": null
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/profile-editor-web/styles.css",
+          "state": "deleted",
+          "sha256": null
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/profile-editor-web/tests/exploration-session.test.mjs",
+          "state": "deleted",
+          "sha256": null
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/profile-editor-web/tests/onboarding.test.mjs",
+          "state": "deleted",
+          "sha256": null
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/profile-editor-web/tests/profile-contract.test.mjs",
+          "state": "deleted",
+          "sha256": null
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/profile-editor-web/tests/trevor-catalog.test.mjs",
+          "state": "deleted",
+          "sha256": null
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/profile-editor-web/trevor-catalog.mjs",
+          "state": "deleted",
+          "sha256": null
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/README.md",
+          "state": "present",
+          "sha256": "29fd962b82f3e22611727d5e11de6fadfa2380984a973559e8110183fcaba29b"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/settings.gradle.kts",
+          "state": "present",
+          "sha256": "d85575fb137cd8aa443d21725c2d0fd7a326f65f1d685eba7ed49a3ac7c6195b"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/spatial-sdk-shared/build.gradle.kts",
+          "state": "present",
+          "sha256": "1970920d7f7835b8870f88ea897c35e8305efd75bad9b946f7db14401a03812c"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/spatial-sdk-shared/src/main/AndroidManifest.xml",
+          "state": "present",
+          "sha256": "daa0fb1f32ba7ea85a07ef6302ab3d58c3407d7fd2aa03ec132cb9e38e8d9849"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/spatial-sdk-shared/src/main/java/io/github/mesmerprism/rustyquest/spatial_sdk_shared/SpatialPanelFacing.kt",
+          "state": "present",
+          "sha256": "f11d63039cec8e9117fad535c84038b83ff4d1188ace7aecdcfcc5aed97882e7"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/spatial-sdk-shared/src/test/java/io/github/mesmerprism/rustyquest/spatial_sdk_shared/SpatialPanelFacingTest.kt",
+          "state": "present",
+          "sha256": "427589ea5cbee48288c0c9ef2b8a3b0d9b9ae1af77ce9108c89df04c1b52d1b2"
+        },
+        {
+          "path": "apps/spatial-camera-panel-android/THIRD_PARTY_NOTICES.md",
+          "state": "deleted",
+          "sha256": null
+        },
+        {
+          "path": "apps/spatial-vr-strobe-android/.gitignore",
+          "state": "present",
+          "sha256": "9dd6a00c17631daef1926f07a5ce74f31687b8ac6e049be3a4bdefddc7c3990d"
+        },
+        {
+          "path": "apps/spatial-vr-strobe-android/app/build.gradle.kts",
+          "state": "present",
+          "sha256": "fb7eb9b5025b2f94fd06b2fb744fd0d2377b575b4ded40d838e440c943ecd883"
+        },
+        {
+          "path": "apps/spatial-vr-strobe-android/app/src/main/AndroidManifest.xml",
+          "state": "present",
+          "sha256": "5bd0e9eaad2f3665d8f57033730ddef5ffc17cb05e9d38e430c804bb775abe1c"
+        },
+        {
+          "path": "apps/spatial-vr-strobe-android/app/src/main/java/io/github/mesmerprism/rustyquest/spatial_vr_strobe/SpatialVrStrobeActivity.kt",
+          "state": "present",
+          "sha256": "6ba3e59fb19ae8c6d7727f3a0a4b169d33a85a932b021890fac16a669a910b20"
+        },
+        {
+          "path": "apps/spatial-vr-strobe-android/app/src/main/java/io/github/mesmerprism/rustyquest/spatial_vr_strobe/SpatialVrStrobeControllerAdapter.kt",
+          "state": "present",
+          "sha256": "e0d0aeb50ea3aeb0ea6afb3a6b9bd165eb1b21fb7fcb1ad691991612ce2e46d5"
+        },
+        {
+          "path": "apps/spatial-vr-strobe-android/app/src/main/java/io/github/mesmerprism/rustyquest/spatial_vr_strobe/SpatialVrStrobeCoordinator.kt",
+          "state": "present",
+          "sha256": "1352612137ffc785d29a091beca8bd8612ff02d96c3a759277729edf58541c9c"
+        },
+        {
+          "path": "apps/spatial-vr-strobe-android/app/src/main/java/io/github/mesmerprism/rustyquest/spatial_vr_strobe/SpatialVrStrobePanelModule.kt",
+          "state": "present",
+          "sha256": "fd1321619a4c485d9ccb08c6bf0a576a644184584911e36d29adf75de506b4a1"
+        },
+        {
+          "path": "apps/spatial-vr-strobe-android/app/src/main/java/io/github/mesmerprism/rustyquest/spatial_vr_strobe/VrStrobeCarrierGeometry.kt",
+          "state": "present",
+          "sha256": "e2efde72c9589e89321ed3458d0c333f260eb6841fd68bb7fba7dd9d2328d031"
+        },
+        {
+          "path": "apps/spatial-vr-strobe-android/app/src/main/java/io/github/mesmerprism/rustyquest/spatial_vr_strobe/VrStrobeControllerInputCoordinator.kt",
+          "state": "present",
+          "sha256": "160815dd5066a736bd4d69cbb28019e8816a72ce53e9f1b5a9ea9059a4ebacc8"
+        },
+        {
+          "path": "apps/spatial-vr-strobe-android/app/src/main/java/io/github/mesmerprism/rustyquest/spatial_vr_strobe/VrStrobeControlPanel.kt",
+          "state": "present",
+          "sha256": "0f1233eacf72f1f76162c1f498f346136d92b6532dad5cccef9524c1e72faa35"
+        },
+        {
+          "path": "apps/spatial-vr-strobe-android/app/src/main/java/io/github/mesmerprism/rustyquest/spatial_vr_strobe/VrStrobeDepthDeformation.kt",
+          "state": "present",
+          "sha256": "af3687e1157e382917e2092ca187b03d11a87c60da1b570108ca98ecaec130f1"
+        },
+        {
+          "path": "apps/spatial-vr-strobe-android/app/src/main/java/io/github/mesmerprism/rustyquest/spatial_vr_strobe/VrStrobeFeatureRoute.kt",
+          "state": "present",
+          "sha256": "3382026c5794a0cba5b70142c94862da447ff663d237dac26ef1cf38969673c3"
+        },
+        {
+          "path": "apps/spatial-vr-strobe-android/app/src/main/java/io/github/mesmerprism/rustyquest/spatial_vr_strobe/VrStrobeGpuPlan.kt",
+          "state": "present",
+          "sha256": "af296fee1da95fe0dcde0c2691dc25cd1d2e7b69de2dcc66496b9af68e71d133"
+        },
+        {
+          "path": "apps/spatial-vr-strobe-android/app/src/main/java/io/github/mesmerprism/rustyquest/spatial_vr_strobe/VrStrobePanelFlow.kt",
+          "state": "present",
+          "sha256": "4146a3b8adaccb728e0a4153f43f321c2e41a3ceff119023b571ab6c5d5829b6"
+        },
+        {
+          "path": "apps/spatial-vr-strobe-android/app/src/main/java/io/github/mesmerprism/rustyquest/spatial_vr_strobe/VrStrobePresetCatalog.kt",
+          "state": "present",
+          "sha256": "2e56fd35defdccd0817a9c5819db05285c6c16a8fbf099d6dcd61b204638ac69"
+        },
+        {
+          "path": "apps/spatial-vr-strobe-android/app/src/main/java/io/github/mesmerprism/rustyquest/spatial_vr_strobe/VrStrobeProfileBundleCodec.kt",
+          "state": "present",
+          "sha256": "de2164c7909cdaa0938165d6f9e5437e136c2eef664fdfd5cce9c3b953a08814"
+        },
+        {
+          "path": "apps/spatial-vr-strobe-android/app/src/main/java/io/github/mesmerprism/rustyquest/spatial_vr_strobe/VrStrobeProfileCodec.kt",
+          "state": "present",
+          "sha256": "e6aacbdd932c8f78fb7baa873002e3486308474d3ffe8b576e1448a04b9b6622"
+        },
+        {
+          "path": "apps/spatial-vr-strobe-android/app/src/main/java/io/github/mesmerprism/rustyquest/spatial_vr_strobe/VrStrobeProfiles.kt",
+          "state": "present",
+          "sha256": "33d6aed30e01ddfea403b09f7332c7080ed05f008d9f2ad76bbd7acdf0fabf83"
+        },
+        {
+          "path": "apps/spatial-vr-strobe-android/app/src/main/java/io/github/mesmerprism/rustyquest/spatial_vr_strobe/VrStrobeRandomization.kt",
+          "state": "present",
+          "sha256": "4c907d2d2a58bc939fc842adac5b691e45bd72f75144d42e8fb3e308973a9cc0"
+        },
+        {
+          "path": "apps/spatial-vr-strobe-android/app/src/main/java/io/github/mesmerprism/rustyquest/spatial_vr_strobe/VrStrobeSafetyController.kt",
+          "state": "present",
+          "sha256": "db048791900ed0c09f273878c9c498d087f455d2e6df67ccdc0bf3771fbae85d"
+        },
+        {
+          "path": "apps/spatial-vr-strobe-android/app/src/main/java/io/github/mesmerprism/rustyquest/spatial_vr_strobe/VrStrobeStimulusSelectionAuthority.kt",
+          "state": "present",
+          "sha256": "4ba09c05913ad7a4f4062237487466cc4c83b64ae158995808e34d32aa859776"
+        },
+        {
+          "path": "apps/spatial-vr-strobe-android/app/src/main/java/io/github/mesmerprism/rustyquest/spatial_vr_strobe/VrStrobeStoredProfiles.kt",
+          "state": "present",
+          "sha256": "5f318ee54c5773bca8d48781b8bb52d3b4ff13ac2846bcdcd03e62828686e11d"
+        },
+        {
+          "path": "apps/spatial-vr-strobe-android/app/src/main/res/values/ids.xml",
+          "state": "present",
+          "sha256": "eea7ef2d735c902bcc9794d33c541c63a45c136baa658d67e4ff72180cc5474e"
+        },
+        {
+          "path": "apps/spatial-vr-strobe-android/app/src/main/res/values/styles.xml",
+          "state": "present",
+          "sha256": "782c3ef83304d745f860b03ec06dceec065e0c3ca72470f177f167b7d43bdd95"
+        },
+        {
+          "path": "apps/spatial-vr-strobe-android/app/src/shaders/vr_strobe_interference.frag",
+          "state": "present",
+          "sha256": "f902715a475e79196c536e795350939da863831ab2c53649f1e1d9d1ca87d720"
+        },
+        {
+          "path": "apps/spatial-vr-strobe-android/app/src/shaders/vr_strobe_interference.vert",
+          "state": "present",
+          "sha256": "f066ed94c5ac8d83b2bb9863e836fa053cd2e8a13ffcdd3cd37cab2d3f15c3ae"
+        },
+        {
+          "path": "apps/spatial-vr-strobe-android/app/src/test/java/io/github/mesmerprism/rustyquest/spatial_vr_strobe/SpatialVrStrobePanelModuleTest.kt",
+          "state": "present",
+          "sha256": "b62d6b29ca3542055fa912e3a24d6c0e5ceb362955d8db45ed4c083ec4883553"
+        },
+        {
+          "path": "apps/spatial-vr-strobe-android/app/src/test/java/io/github/mesmerprism/rustyquest/spatial_vr_strobe/VrStrobeCarrierGeometryTest.kt",
+          "state": "present",
+          "sha256": "05bd0322c9da6c0cda72fa0fee97fcc386283eab1191a765309bf0e1192d883a"
+        },
+        {
+          "path": "apps/spatial-vr-strobe-android/app/src/test/java/io/github/mesmerprism/rustyquest/spatial_vr_strobe/VrStrobeControllerInputCoordinatorTest.kt",
+          "state": "present",
+          "sha256": "99faf191ebbf2ea03858308fac0ebcdc413b4d250e062a3c7b6fec1aa048c0a2"
+        },
+        {
+          "path": "apps/spatial-vr-strobe-android/app/src/test/java/io/github/mesmerprism/rustyquest/spatial_vr_strobe/VrStrobeDepthDeformationTest.kt",
+          "state": "present",
+          "sha256": "c8f37c9176ee7595a88816ae6447a7070c10378e36591f4c56c05f13fd226382"
+        },
+        {
+          "path": "apps/spatial-vr-strobe-android/app/src/test/java/io/github/mesmerprism/rustyquest/spatial_vr_strobe/VrStrobeFeatureRouteTest.kt",
+          "state": "present",
+          "sha256": "3cb32f4f117dd1207b713a6342c8b68d3b840ed7228074f3b5d33b278c32afe3"
+        },
+        {
+          "path": "apps/spatial-vr-strobe-android/app/src/test/java/io/github/mesmerprism/rustyquest/spatial_vr_strobe/VrStrobeGpuPlanTest.kt",
+          "state": "present",
+          "sha256": "e04a0e1487f11d55da5c13bf0bd0f9a86b19faf9bb73ba6501eb0be28b73e30f"
+        },
+        {
+          "path": "apps/spatial-vr-strobe-android/app/src/test/java/io/github/mesmerprism/rustyquest/spatial_vr_strobe/VrStrobePanelFlowTest.kt",
+          "state": "present",
+          "sha256": "a86839097b36c55e18b433f2ba6ea17aedbab44a96e75a081a20073a06ec2858"
+        },
+        {
+          "path": "apps/spatial-vr-strobe-android/app/src/test/java/io/github/mesmerprism/rustyquest/spatial_vr_strobe/VrStrobeProfileBundleCodecTest.kt",
+          "state": "present",
+          "sha256": "3a3b6fc767901469f908d5b381ee7d5520b77c45c094abd01bf00f91ee1162b1"
+        },
+        {
+          "path": "apps/spatial-vr-strobe-android/app/src/test/java/io/github/mesmerprism/rustyquest/spatial_vr_strobe/VrStrobeProfileCatalogTest.kt",
+          "state": "present",
+          "sha256": "66e46e3f54ea89984f7d05af273cb94bd347cee05f3857a7b983874e10a6d66c"
+        },
+        {
+          "path": "apps/spatial-vr-strobe-android/app/src/test/java/io/github/mesmerprism/rustyquest/spatial_vr_strobe/VrStrobeRandomizationTest.kt",
+          "state": "present",
+          "sha256": "c3847e973d367a82a8635b7cf10a2baf6c8ed2b7e2fcf2a634be3756bf9c5810"
+        },
+        {
+          "path": "apps/spatial-vr-strobe-android/app/src/test/java/io/github/mesmerprism/rustyquest/spatial_vr_strobe/VrStrobeSafetyControllerTest.kt",
+          "state": "present",
+          "sha256": "f9eaf4928d03fbefc8f3e8e79e01a39a71b5eb7630c574b9e0d9662a137b0684"
+        },
+        {
+          "path": "apps/spatial-vr-strobe-android/app/src/test/java/io/github/mesmerprism/rustyquest/spatial_vr_strobe/VrStrobeStimulusSelectionAuthorityTest.kt",
+          "state": "present",
+          "sha256": "1964a08a3af308cd95ed3c8954abea37a705ee217d66a1dffb122aabec5fda45"
+        },
+        {
+          "path": "apps/spatial-vr-strobe-android/app/src/test/java/io/github/mesmerprism/rustyquest/spatial_vr_strobe/VrStrobeStoredProfileAuthorityTest.kt",
+          "state": "present",
+          "sha256": "ab3457bd7ef1b716b187e5c5879b7cb13956029e7081b0a8490d18e8819ce884"
+        },
+        {
+          "path": "apps/spatial-vr-strobe-android/morphospace/feature.lock.json",
+          "state": "present",
+          "sha256": "0c317fbbfb73def11946efa270397d9ca2646b002f64d86f85d02384aad2168c"
+        },
+        {
+          "path": "apps/spatial-vr-strobe-android/morphospace/iteration-events.jsonl",
+          "state": "present",
+          "sha256": "dbf8099dee8be3225487162418016307a46d5ec95e5d6e5009a8bbe5787f1b7d"
+        },
+        {
+          "path": "apps/spatial-vr-strobe-android/morphospace/iteration-units/spatial-vr-strobe-product-separation-001.json",
+          "state": "present",
+          "sha256": "3aa086f3fb0a1a6aed64cc530afb698756c72fc93608222c19b599295dba2fb3"
+        },
+        {
+          "path": "apps/spatial-vr-strobe-android/morphospace/project.spec.json",
+          "state": "present",
+          "sha256": "632e78aa1d8c3f5612215b14908f31d1aabbc8c37fb9b803cd04dd1c04a92a80"
+        },
+        {
+          "path": "apps/spatial-vr-strobe-android/morphospace/README.md",
+          "state": "present",
+          "sha256": "2629219fc7038759658c96c59045a56e3384b4fcb89b61b885687c60fdbb2abb"
+        },
+        {
+          "path": "apps/spatial-vr-strobe-android/morphospace/receipts/transactions/spatial-vr-strobe-product-separation-001-ready-0001-transition.completion.json",
+          "state": "present",
+          "sha256": "abfb159c901cb9f704a569880f42d8d421fc659d5976fda279e916fc5444537d"
+        },
+        {
+          "path": "apps/spatial-vr-strobe-android/morphospace/receipts/transactions/spatial-vr-strobe-product-separation-001-ready-0001-transition.intent.json",
+          "state": "present",
+          "sha256": "5e1212dfa442366c1d521e148b3b6ec8c3d5f5f823ac4ec7ea5923f29813eee1"
+        },
+        {
+          "path": "apps/spatial-vr-strobe-android/morphospace/workspace.state.json",
+          "state": "present",
+          "sha256": "b7dd254180efed06d93582577407577d85b4f9507dc9f2da12a656a9c796620f"
+        },
+        {
+          "path": "apps/spatial-vr-strobe-android/profile-editor-web/app.mjs",
+          "state": "present",
+          "sha256": "f28993d94463f0f6742b2f1cf2dd32cc18b841390a9b52cc7fa6f4049a06fe8f"
+        },
+        {
+          "path": "apps/spatial-vr-strobe-android/profile-editor-web/exploration-session.mjs",
+          "state": "present",
+          "sha256": "2dd7cf77518e02a6dbff47aaf7d0dd941c79ef3bc752f601f219e417be76f413"
+        },
+        {
+          "path": "apps/spatial-vr-strobe-android/profile-editor-web/fixtures/empty-profile-bundle.json",
+          "state": "present",
+          "sha256": "9dbb04aa41e1ba333e6335cd4cf6accb57bd8f35bb85f2badf3bb751fbb311e3"
+        },
+        {
+          "path": "apps/spatial-vr-strobe-android/profile-editor-web/index.html",
+          "state": "present",
+          "sha256": "9cd5e791dad0d41c695392c2a0d7ad4d384210d470b6ba6118ca66d093d643b5"
+        },
+        {
+          "path": "apps/spatial-vr-strobe-android/profile-editor-web/onboarding.css",
+          "state": "present",
+          "sha256": "1d3494d84e2b635747e7f208bfec48876fddd15ca4079b315afd16833463fe62"
+        },
+        {
+          "path": "apps/spatial-vr-strobe-android/profile-editor-web/onboarding/index.html",
+          "state": "present",
+          "sha256": "d5db40e9ed595c88364d36ef569de9e0688c4b463297e130359fbbb91221f064"
+        },
+        {
+          "path": "apps/spatial-vr-strobe-android/profile-editor-web/profile-contract.mjs",
+          "state": "present",
+          "sha256": "b0f96a297a68feb220cf652c31f243e13a7023720144b49406de005c08c34f03"
+        },
+        {
+          "path": "apps/spatial-vr-strobe-android/profile-editor-web/README.md",
+          "state": "present",
+          "sha256": "17e9e7c83736e0b36b2350e61c35d0df92fc8cd6844c62960f989a1f8aadd74b"
+        },
+        {
+          "path": "apps/spatial-vr-strobe-android/profile-editor-web/renderer.mjs",
+          "state": "present",
+          "sha256": "12c3af3a52205ea624e9318d7e7c77ad40ba96701c9a14d441346cad6a1330f6"
+        },
+        {
+          "path": "apps/spatial-vr-strobe-android/profile-editor-web/styles.css",
+          "state": "present",
+          "sha256": "dd8a9a53fe39819cf9c99d37b2a6ce5d1875303afa21d8f6cb5e9988c3829873"
+        },
+        {
+          "path": "apps/spatial-vr-strobe-android/profile-editor-web/tests/exploration-session.test.mjs",
+          "state": "present",
+          "sha256": "29a6c1b182d30435a4e5f1f8f2ffce63392e49ddfeef981126a917df21e46bf9"
+        },
+        {
+          "path": "apps/spatial-vr-strobe-android/profile-editor-web/tests/onboarding.test.mjs",
+          "state": "present",
+          "sha256": "3154e26b97df8ce4c89631d227db7c7461d3362de2ce455ad86e154e631bd984"
+        },
+        {
+          "path": "apps/spatial-vr-strobe-android/profile-editor-web/tests/profile-contract.test.mjs",
+          "state": "present",
+          "sha256": "28cad6b1f793414f075336d00afe5463e64df9ff988354f51e68c088df39f85f"
+        },
+        {
+          "path": "apps/spatial-vr-strobe-android/profile-editor-web/tests/trevor-catalog.test.mjs",
+          "state": "present",
+          "sha256": "c064b1c87321150f57b3804368a3e1dddfa9a003ef2efb5f2e5fd329e40377f6"
+        },
+        {
+          "path": "apps/spatial-vr-strobe-android/profile-editor-web/trevor-catalog.mjs",
+          "state": "present",
+          "sha256": "f7200ad37ecc4f33d78784b28f305562d420797de9313434c97dd2d8afddc275"
+        },
+        {
+          "path": "apps/spatial-vr-strobe-android/README.md",
+          "state": "present",
+          "sha256": "cb5c44c5be36f7a88410863e077836d0e8e4799c0a0ea4023f6ebdecd800a477"
+        },
+        {
+          "path": "apps/spatial-vr-strobe-android/THIRD_PARTY_NOTICES.md",
+          "state": "present",
+          "sha256": "156904020e2373d2870b4ed88c861d5b07886e15893fc93274ec8a7bdae09298"
+        },
+        {
+          "path": "docs/PROJECT_ISOLATION.md",
+          "state": "present",
+          "sha256": "0cdd95c8bb295571d1efb98916abad405ce742f75b3b5c1fa14f39a6fa01810a"
+        },
+        {
+          "path": "docs/SPATIAL_SDK_VR_STROBE_PORT.md",
+          "state": "present",
+          "sha256": "2004243ed6291150ca26f6eb588b85d88b3b72234d929315d56c4eb79acf3617"
+        },
+        {
+          "path": "README.md",
+          "state": "present",
+          "sha256": "4b6a4c8fabbcb1ba761490c123d9f31a72dffe6bfcd605a81b6224b951d4058a"
+        },
+        {
+          "path": "tools/Build-SpatialCameraPanelAndroid.ps1",
+          "state": "present",
+          "sha256": "c06a0c246c132f88ff257785c50ed030c054acae633ab1a39206d6b4edab408e"
+        },
+        {
+          "path": "tools/Build-SpatialVrStrobeAndroid.ps1",
+          "state": "present",
+          "sha256": "3677b35c501dbab3b9c577f2e328fe5e206c90b841e718ec72e0d8c8c35c6c2a"
+        },
+        {
+          "path": "tools/checks/Test-SpatialCameraPanelAndroidStatic.ps1",
+          "state": "present",
+          "sha256": "1a3bb7d01e9c4df6d7375a85bc2b572c56fdd37de87c6b5e03ede394afa67e14"
+        },
+        {
+          "path": "tools/checks/Test-SpatialCameraPanelWorkflowStatic.ps1",
+          "state": "present",
+          "sha256": "297c437a4458d754fc32817fa2b40f370eaa4d3b430ea707c1f5b953d3c0578c"
+        },
+        {
+          "path": "tools/checks/Test-SpatialProductIsolationStatic.ps1",
+          "state": "present",
+          "sha256": "02a590d7f3096ade83f9469aaa436555f039da42a93811e974830d212f6b0294"
+        },
+        {
+          "path": "tools/checks/Test-SpatialVrStrobeStatic.ps1",
+          "state": "present",
+          "sha256": "88de5651838c7d8e55304f0273e07581810e3dcae8c0085bf50dcac643fc2848"
+        },
+        {
+          "path": "tools/Invoke-SpatialVrStrobeProfileTransfer.ps1",
+          "state": "present",
+          "sha256": "8854db8511a14836992dff066becc434c29c175f1700f86cea36a2af7898d4b0"
+        },
+        {
+          "path": "tools/Start-SpatialVrStrobeProfileEditor.ps1",
+          "state": "present",
+          "sha256": "4f3f5cf62226fab1607b27dbdb801f5fefab64644eadb2f25bd558757946be91"
+        },
+        {
+          "path": "tools/Test-SpatialCameraPanelAndroid.ps1",
+          "state": "present",
+          "sha256": "0adacdab772c8b1c1bd5fa69a7b49fd71ca4c355779a2cf0accbf7dec2b7dd53"
+        }
+      ]
+    }
+  ]
+}

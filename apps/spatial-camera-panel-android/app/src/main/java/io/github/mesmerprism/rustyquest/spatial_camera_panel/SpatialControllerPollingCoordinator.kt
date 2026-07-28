@@ -15,11 +15,13 @@ internal data class SpatialControllerPollingBindings(
     val disableNativeActions: () -> Unit,
     val pollNativeLeftThumbstickY: () -> Float,
     val pollNativeRightThumbstickY: () -> Float,
+    val pollNativeRightButtonA: () -> Boolean,
     val pollNativeRightButtonB: () -> Boolean,
     val captureSpatialSnapshot: () -> SpatialControllerPrimarySnapshot,
     val currentLeftStickPanelDistanceMapping: () -> String,
     val currentLeftStickPanelDistanceEnabled: () -> Boolean,
     val currentSpatialVrInputSystemToken: () -> String,
+    val applyImmersiveVideoSelection: (Float, Float, String) -> Boolean,
     val applyProjectionScale: (Float, String, String, String) -> Unit,
     val applyPanelDistance: (Float, String, String, String) -> Unit,
     val recenterParticleSphere: (String, String) -> Boolean,
@@ -41,6 +43,7 @@ internal class SpatialControllerPollingCoordinator(
   private var lastSpatialAllButtonState = -1
   private var spatialSecondaryDown = false
   private var spatialRightTriggerDown = false
+  private var nativePrimaryDown = false
   private var nativeSecondaryDown = false
 
   fun pollNativeInput() {
@@ -91,6 +94,30 @@ internal class SpatialControllerPollingCoordinator(
           "native-openxr-action",
           "right-thumbstick-y-projection-target-scale",
           "rightThumbstickY=${activityMarkerFloat(rightY)} " +
+              "nativeControllerActionStartMask=${state.actionStartMask}",
+      )
+    }
+
+    val rightButtonADown =
+        runCatching(bindings.pollNativeRightButtonA)
+            .getOrElse { throwable ->
+              bindings.disableNativeActions()
+              nativePrimaryDown = false
+              bindings.marker(
+                  SpatialControllerRoutingModule.nativeControllerActionPollErrorMarker(
+                      controllerInput = "right-button-a",
+                      error = throwable.javaClass.simpleName,
+                      message = throwable.message ?: "none",
+                  )
+              )
+              false
+            }
+    val rightButtonAPressedEdge = rightButtonADown && !nativePrimaryDown
+    nativePrimaryDown = rightButtonADown
+    if (rightButtonAPressedEdge) {
+      bindings.openPrimary(
+          "native-openxr-action",
+          "rightButtonADown=true nativeRightButtonAAction=true " +
               "nativeControllerActionStartMask=${state.actionStartMask}",
       )
     }
@@ -173,7 +200,13 @@ internal class SpatialControllerPollingCoordinator(
       )
     }
 
-    if (snapshot.rightThumbY != 0.0f) {
+    val immersiveVideoSelectionHandled =
+        bindings.applyImmersiveVideoSelection(
+            snapshot.rightThumbX,
+            snapshot.rightThumbY,
+            snapshot.rightInputSource,
+        )
+    if (!immersiveVideoSelectionHandled && snapshot.rightThumbY != 0.0f) {
       bindings.applyProjectionScale(
           snapshot.rightThumbY,
           snapshot.rightInputSource,

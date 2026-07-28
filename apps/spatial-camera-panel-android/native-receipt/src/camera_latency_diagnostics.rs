@@ -253,14 +253,15 @@ pub(crate) enum CameraLatencyReprojectionMode {
 pub(crate) enum CameraLatencyReprojectionGuardBandMode {
     ZoomToFill = 0,
     ReducedFootprint = 1,
+    DynamicReducedFootprint = 2,
 }
 
 impl CameraLatencyReprojectionGuardBandMode {
     pub(crate) fn from_code(code: u32) -> Self {
-        if code == Self::ReducedFootprint as u32 {
-            Self::ReducedFootprint
-        } else {
-            Self::ZoomToFill
+        match code {
+            code if code == Self::ReducedFootprint as u32 => Self::ReducedFootprint,
+            code if code == Self::DynamicReducedFootprint as u32 => Self::DynamicReducedFootprint,
+            _ => Self::ZoomToFill,
         }
     }
 
@@ -268,6 +269,7 @@ impl CameraLatencyReprojectionGuardBandMode {
         match self {
             Self::ZoomToFill => "zoom-to-fill",
             Self::ReducedFootprint => "reduced-footprint",
+            Self::DynamicReducedFootprint => "dynamic-reduced-footprint",
         }
     }
 }
@@ -568,6 +570,9 @@ impl CameraLatencySettings {
         match self.reprojection_guard_band_mode {
             CameraLatencyReprojectionGuardBandMode::ZoomToFill => 1.0,
             CameraLatencyReprojectionGuardBandMode::ReducedFootprint => {
+                (1.0 - 2.0 * self.reprojection_source_overscan_uv()).clamp(0.6, 1.0)
+            }
+            CameraLatencyReprojectionGuardBandMode::DynamicReducedFootprint => {
                 (1.0 - 2.0 * self.reprojection_source_overscan_uv()).clamp(0.6, 1.0)
             }
         }

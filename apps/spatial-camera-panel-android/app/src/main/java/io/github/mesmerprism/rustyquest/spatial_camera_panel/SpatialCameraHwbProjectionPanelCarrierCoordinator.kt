@@ -29,6 +29,9 @@ internal data class SpatialCameraHwbProjectionPanelCarrierBindings(
     val manualCustomMeshEnabled: () -> Boolean,
     val nativeState: () -> SpatialCameraHwbProjectionPanelNativeState,
     val panelMediaSettings: () -> MediaPanelSettings,
+    val immersiveVideoCarrierPresentation:
+        () -> SpatialImmersiveVideoCustomCarrierPresentation?,
+    val outputDimensions: () -> Pair<Int, Int>,
     val projectionPlane: () -> CameraHwbProjectionPlane,
     val projectionEntity: () -> Entity?,
     val setProjectionEntity: (Entity?) -> Unit,
@@ -129,6 +132,8 @@ internal class SpatialCameraHwbProjectionPanelCarrierCoordinator(
                 CameraHwbProjectionPanelCarrierModule.createVideoSurfacePanelEntity(
                     plane = plane,
                     carrier = bindings.carrierToken(),
+                    worldAnchored =
+                        bindings.immersiveVideoCarrierPresentation()?.worldAnchored == true,
                 )
         ) {
           is CameraHwbProjectionPanelEntityCreateResult.Ready -> result.entity
@@ -154,6 +159,21 @@ internal class SpatialCameraHwbProjectionPanelCarrierCoordinator(
     if (entityCreated) {
       startIfReady("entity-spawned")
     }
+  }
+
+  fun rebuild(videoSettings: SpatialVideoProjectionSettings, reason: String): Boolean {
+    val cleanupStatus = cleanup("$reason-carrier-rebuild")
+    run(readerMaxImages, videoSettings)
+    val rebuilt = panelEntity != null
+    bindings.marker(
+        "channel=spatial-immersive-video status=custom-carrier-rebuilt " +
+            "reason=${activityMarkerToken(reason)} cleanupStatus=$cleanupStatus " +
+            "carrierRebuilt=$rebuilt activityRestarted=false " +
+            "privateConfigurationReapplied=$rebuilt " +
+            (bindings.immersiveVideoCarrierPresentation()?.markerFields()
+                ?: "videoCarrierPresentation=legacy-camera")
+    )
+    return rebuilt
   }
 
   private fun createManualCustomMeshPanel(
@@ -245,10 +265,15 @@ internal class SpatialCameraHwbProjectionPanelCarrierCoordinator(
     }
 
     val plane = bindings.projectionPlane()
-    entity.setComponent(Transform(plane.pose))
-    entity.setComponent(
-        PanelDimensions(Vector2(plane.projectionWidthMeters, plane.projectionHeightMeters))
-    )
+    val immersivePresentation = bindings.immersiveVideoCarrierPresentation()
+    if (immersivePresentation?.worldAnchored == true) {
+      entity.setComponent(Transform(com.meta.spatial.core.Pose(plane.viewerPosition, plane.pose.q)))
+    } else {
+      entity.setComponent(Transform(plane.pose))
+      entity.setComponent(
+          PanelDimensions(Vector2(plane.projectionWidthMeters, plane.projectionHeightMeters))
+      )
+    }
     if (!bindings.manualCustomMeshEnabled()) {
       entity.setComponent(Hittable(MeshCollision.NoCollision))
     }
@@ -297,10 +322,11 @@ internal class SpatialCameraHwbProjectionPanelCarrierCoordinator(
     }
     val requestedStartMask =
         runCatching {
+              val outputDimensions = bindings.outputDimensions()
               bindings.startNative(
                   surface,
-                  CAMERA_HWB_PROJECTION_WIDTH_PX,
-                  CAMERA_HWB_PROJECTION_HEIGHT_PX,
+                  outputDimensions.first,
+                  outputDimensions.second,
                   CAMERA_HWB_PROJECTION_FRAME_COUNT_UNBOUNDED,
                   readerMaxImages,
               )
@@ -362,6 +388,13 @@ internal class SpatialCameraHwbProjectionPanelCarrierCoordinator(
             return "updated-manual-custom-mesh-scene-object-layer-skipped"
           }
           panelEntity?.setComponent(Hittable(MeshCollision.NoCollision))
+          val immersivePresentation = bindings.immersiveVideoCarrierPresentation()
+          if (immersivePresentation?.worldAnchored == true) {
+            panel.layer?.setZIndex(bindings.layerZIndex(plane.placementMode))
+                ?: return "panel-layer-missing"
+            panel.setIsVisible(true)
+            return "world-anchored-transform-retained"
+          }
           panel.setPosition(plane.center)
           panel.setRotationQuat(plane.pose.q)
           panel.setScale(Vector3(1.0f, 1.0f, 1.0f))

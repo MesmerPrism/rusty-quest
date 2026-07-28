@@ -8,6 +8,7 @@ internal class SpatialControllerAndroidEventRouter(
     private val toggleSecondary: (String, String) -> Boolean,
     private val recenterTrigger: (String, String) -> Boolean,
     private val openPrimary: (String, String) -> Boolean,
+    private val storeLeftPrimary: (String, String) -> Boolean,
 ) {
   private var primaryKeyDown = false
   private var primaryMotionDown = false
@@ -15,9 +16,10 @@ internal class SpatialControllerAndroidEventRouter(
   private var secondaryMotionDown = false
   private var rightTriggerKeyDown = false
   private var rightTriggerMotionDown = false
+  private var leftPrimaryKeyDown = false
 
   fun dispatchKeyEvent(event: KeyEvent): Boolean =
-      handleSecondary(event) || handleTrigger(event) || handlePrimary(event)
+      handleSecondary(event) || handleLeftPrimary(event) || handleTrigger(event) || handlePrimary(event)
 
   fun dispatchMotionButtonEvent(event: MotionEvent): Boolean =
       handleSecondary(event) || handleTrigger(event) || handlePrimary(event)
@@ -126,6 +128,28 @@ internal class SpatialControllerAndroidEventRouter(
         "motionAction=$action motionButtonState=${event.buttonState} " +
             "rightTriggerAxis=${activityMarkerFloat(rightTriggerValue)} " +
             "rightTriggerThreshold=${activityMarkerFloat(CONTROLLER_TRIGGER_PRESS_THRESHOLD)}",
+    )
+  }
+
+  private fun handleLeftPrimary(event: KeyEvent): Boolean {
+    if (event.keyCode != KeyEvent.KEYCODE_BUTTON_X) return false
+    val pressedEdge =
+        when (event.action) {
+          KeyEvent.ACTION_DOWN -> {
+            val firstDown = !leftPrimaryKeyDown && event.repeatCount == 0
+            leftPrimaryKeyDown = true
+            firstDown
+          }
+          KeyEvent.ACTION_UP -> {
+            leftPrimaryKeyDown = false
+            false
+          }
+          else -> false
+        }
+    if (!pressedEdge) return false
+    return storeLeftPrimary(
+        "android-key-event",
+        "keyCode=${event.keyCode} keyAction=${event.action} repeatCount=${event.repeatCount}",
     )
   }
 

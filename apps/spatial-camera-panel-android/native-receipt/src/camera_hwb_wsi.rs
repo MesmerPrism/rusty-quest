@@ -12,12 +12,16 @@ use crate::bool_token;
 use crate::camera_hwb_marker::log_camera_hwb_marker as log_marker;
 use crate::camera_hwb_probe::CameraHwbProbeMode;
 use crate::camera_hwb_projection_target::{
-    camera_hwb_projection_eye_push, camera_hwb_projection_marker_fields, CameraHwbProjectionEyePush,
+    camera_hwb_projection_eye_push, camera_hwb_projection_marker_fields,
+    camera_hwb_projection_zone_frame, CameraHwbProjectionEyePush,
 };
 use crate::camera_hwb_stream::CameraProbeFrame;
 use crate::camera_latency_diagnostics::{
     CameraLatencyIsolationMode, CameraLatencySettings, CameraLatencyStereoReprojection,
 };
+use crate::camera_replay_capture::{CameraReplayCaptureRecorder, CameraReplayFrameMetadata};
+use crate::camera_reprojection_guard_band::CameraReprojectionGuardBandFrame;
+use crate::spatial_guide_processing::current_spatial_guide_processing_policy;
 use crate::spatial_public_multistack::public_multistack_marker_fields;
 use crate::spatial_public_multistack_runtime::{
     record_spatial_public_meta_passthrough_edge_window_cutout,
@@ -34,6 +38,41 @@ pub(crate) struct CameraHwbRecordResult {
     pub(crate) projected_by_public_stack: bool,
     pub(crate) camera_projection_visible: bool,
     pub(crate) video_stats: SpatialVideoProjectionFrameStats,
+    pub(crate) projection_zone_stats: ProjectionZoneRenderStats,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct ProjectionZoneRenderStats {
+    pub(crate) requested_mode: u32,
+    pub(crate) prepared_video_ready: bool,
+    pub(crate) public_projection_ready: bool,
+    pub(crate) pipeline_ready: bool,
+    pub(crate) rendered: bool,
+    pub(crate) native_video_drawn: bool,
+    pub(crate) native_video_suppressed: bool,
+    pub(crate) transparent_underlay_requested: bool,
+    pub(crate) transparent_underlay_supported: bool,
+    pub(crate) synthetic_displacement_suppressed: bool,
+    pub(crate) descriptor_source: &'static str,
+}
+
+impl ProjectionZoneRenderStats {
+    pub(crate) fn marker_fields(self) -> String {
+        format!(
+            "projectionZoneRequestedMode={} projectionZonePreparedVideoReady={} projectionZonePublicProjectionReady={} projectionZonePipelineReady={} projectionZoneRendered={} projectionZoneNativeVideoDrawn={} projectionZoneNativeVideoSuppressed={} projectionZoneTransparentUnderlayRequested={} projectionZoneTransparentUnderlaySupported={} projectionZoneSyntheticDisplacementSuppressed={} projectionZoneDescriptorSource={}",
+            self.requested_mode,
+            bool_token(self.prepared_video_ready),
+            bool_token(self.public_projection_ready),
+            bool_token(self.pipeline_ready),
+            bool_token(self.rendered),
+            bool_token(self.native_video_drawn),
+            bool_token(self.native_video_suppressed),
+            bool_token(self.transparent_underlay_requested),
+            bool_token(self.transparent_underlay_supported),
+            bool_token(self.synthetic_displacement_suppressed),
+            self.descriptor_source,
+        )
+    }
 }
 
 pub(crate) struct CameraHwbProbeResources {
@@ -212,6 +251,14 @@ pub(crate) unsafe fn create_camera_hwb_probe_resources(
         .as_ref()
         .map(|metadata| metadata.marker_fields())
         .unwrap_or_else(|| "ahbSamplerYcbcrConversion=false".to_string());
+    if matches!(mode, CameraHwbProbeMode::RawColorProjection) {
+        let sampling = current_spatial_guide_processing_policy().camera_sampling;
+        log_marker(format!(
+            "status=projection-composition-policy projectionBlendPolicy=premultiplied-alpha-over-same-surface-video rawCustomProjectionBorderBlend=true opaqueProjectionBorderBlend=true videoBorderInnerBlendUv=0.040 videoBorderBlendCurve=1.600 offscreenGuideBlendPolicy=opaque publicCameraSampling={} publicCameraSamplingRadiusTexels={:.2} runtimeCrash=false",
+            sampling.marker_token(),
+            sampling.radius_texels(),
+        ));
+    }
     log_marker(format!(
         "status=probe-resources-created externalFormat={} vkFormat={:?} descriptorShape={} descriptorBindingCount={} samplerMode={} samplerFilter={:?} samplerLinearFilterSupported={} {} sampledCameraTexture=true sampledLeftCameraTexture=true sampledRightCameraTexture={} outputMode={} rawCameraProjectionProbe={} stereoSource={} {}",
         format_key.external_format,
@@ -398,14 +445,25 @@ unsafe fn create_camera_hwb_probe_pipeline(
         .line_width(1.0);
     let multisample = vk::PipelineMultisampleStateCreateInfo::default()
         .rasterization_samples(vk::SampleCountFlags::TYPE_1);
-    let color_blend_attachment = [vk::PipelineColorBlendAttachmentState::default()
+    let premultiplied_alpha_blend = matches!(mode, CameraHwbProbeMode::RawColorProjection);
+    let mut color_blend_state = vk::PipelineColorBlendAttachmentState::default()
         .color_write_mask(
             vk::ColorComponentFlags::R
                 | vk::ColorComponentFlags::G
                 | vk::ColorComponentFlags::B
                 | vk::ColorComponentFlags::A,
         )
-        .blend_enable(false)];
+        .blend_enable(premultiplied_alpha_blend);
+    if premultiplied_alpha_blend {
+        color_blend_state = color_blend_state
+            .src_color_blend_factor(vk::BlendFactor::ONE)
+            .dst_color_blend_factor(vk::BlendFactor::ONE_MINUS_SRC_ALPHA)
+            .color_blend_op(vk::BlendOp::ADD)
+            .src_alpha_blend_factor(vk::BlendFactor::ONE)
+            .dst_alpha_blend_factor(vk::BlendFactor::ONE_MINUS_SRC_ALPHA)
+            .alpha_blend_op(vk::BlendOp::ADD);
+    }
+    let color_blend_attachment = [color_blend_state];
     let color_blend =
         vk::PipelineColorBlendStateCreateInfo::default().attachments(&color_blend_attachment);
     let dynamic_states = [vk::DynamicState::VIEWPORT, vk::DynamicState::SCISSOR];
@@ -451,7 +509,11 @@ pub(crate) unsafe fn record_camera_hwb_probe_command_buffer(
     video_settings: &SpatialVideoProjectionSettings,
     frame_slot: usize,
     camera_reprojection: CameraLatencyStereoReprojection,
+    projection_guard_band: CameraReprojectionGuardBandFrame,
     latency_settings: CameraLatencySettings,
+    camera_replay_capture: Option<&mut CameraReplayCaptureRecorder>,
+    camera_replay_boottime_ns: u64,
+    camera_replay_metadata: CameraReplayFrameMetadata,
 ) -> Result<CameraHwbRecordResult, String> {
     device
         .reset_command_buffer(command_buffer, vk::CommandBufferResetFlags::empty())
@@ -474,6 +536,15 @@ pub(crate) unsafe fn record_camera_hwb_probe_command_buffer(
                 sampled_right_image.image,
             );
         }
+    }
+    if let Some(capture) = camera_replay_capture {
+        capture.record_if_due(
+            device,
+            command_buffer,
+            descriptor_set,
+            camera_replay_boottime_ns,
+            camera_replay_metadata,
+        );
     }
     let opaque_camera_only = latency_settings.enabled
         && latency_settings.isolation_mode == CameraLatencyIsolationMode::OpaqueCameraOnly;
@@ -516,11 +587,23 @@ pub(crate) unsafe fn record_camera_hwb_probe_command_buffer(
         }
         _ => None,
     };
+    let projection_zone_frame = camera_hwb_projection_zone_frame(
+        projection_guard_band.footprint_scale,
+        projection_guard_band.source_overscan_uv,
+        elapsed_seconds,
+        [
+            video_settings.source_rect_for_eye(0),
+            video_settings.source_rect_for_eye(1),
+        ],
+    );
 
     let mut public_guide_targets = public_guide_targets;
     let edge_window_selected = spatial_public_meta_passthrough_edge_window_selected();
     let raw_custom_projection_selected = spatial_public_raw_custom_projection_selected();
-    let projection_footprint_scale = latency_settings.reprojection_footprint_scale();
+    let projection_footprint_scale = projection_guard_band.footprint_scale;
+    let mut projection_zone_ready = false;
+    let mut projection_zone_descriptor_set = vk::DescriptorSet::null();
+    let mut projection_zone_descriptor_source = "unavailable";
     let public_projection_ready = if !camera_projection_visible
         || opaque_camera_only
         || edge_window_selected
@@ -534,9 +617,58 @@ pub(crate) unsafe fn record_camera_hwb_probe_command_buffer(
             descriptor_set,
             elapsed_seconds,
             camera_reprojection,
-            latency_settings.reprojection_source_overscan_uv(),
+            projection_guard_band.source_overscan_uv,
         )?;
-        targets.prepare_spatial_public_projection_sampling(device, command_buffer)
+        let sampling_ready =
+            targets.prepare_spatial_public_projection_sampling(device, command_buffer);
+        if sampling_ready {
+            let synthetic_diagnostic = projection_zone_frame.settings.synthetic_diagnostic();
+            let transparent_underlay = projection_zone_frame
+                .settings
+                .transparent_underlay_requested();
+            let projection_zone_descriptor = if projection_zone_frame.settings.replaces_video()
+                || synthetic_diagnostic
+                || transparent_underlay
+            {
+                // These routes never sample u_video_projection. Bind the already-valid camera
+                // descriptor at the otherwise-compatible slot: full stretch replaces video,
+                // the deterministic diagnostic supplies three readable synthetic sources, and
+                // transparent underlay derives alpha only from the outgoing buffer source.
+                Some((
+                    resources.descriptor_set_layout,
+                    descriptor_set,
+                    if synthetic_diagnostic {
+                        "synthetic-diagnostic-fallback-unused"
+                    } else if transparent_underlay {
+                        "transparent-underlay-fallback-unused"
+                    } else {
+                        "camera-fallback-unused"
+                    },
+                ))
+            } else {
+                prepared_video.as_ref().map(|(_, prepared)| {
+                    (
+                        prepared.descriptor_set_layout,
+                        prepared.descriptor_set,
+                        "prepared-video",
+                    )
+                })
+            };
+            if let Some((descriptor_set_layout, zone_descriptor_set, descriptor_source)) =
+                projection_zone_descriptor
+            {
+                projection_zone_ready = targets.prepare_projection_zone_compositor(
+                    device,
+                    &projection_zone_frame,
+                    descriptor_set_layout,
+                )?;
+                if projection_zone_ready {
+                    projection_zone_descriptor_set = zone_descriptor_set;
+                    projection_zone_descriptor_source = descriptor_source;
+                }
+            }
+        }
+        sampling_ready
     } else {
         false
     };
@@ -549,9 +681,21 @@ pub(crate) unsafe fn record_camera_hwb_probe_command_buffer(
         extent,
         opaque_camera_only,
     );
+    let mut native_video_drawn = false;
+    let mut native_video_suppressed = false;
     if let Some((renderer, prepared)) = prepared_video.as_ref() {
-        renderer.record_video_eye(device, command_buffer, extent, 0, video_settings, prepared);
-        renderer.record_video_eye(device, command_buffer, extent, 1, video_settings, prepared);
+        if !(projection_zone_ready
+            && (projection_zone_frame.settings.replaces_video()
+                || projection_zone_frame
+                    .settings
+                    .transparent_underlay_requested()))
+        {
+            renderer.record_video_eye(device, command_buffer, extent, 0, video_settings, prepared);
+            renderer.record_video_eye(device, command_buffer, extent, 1, video_settings, prepared);
+            native_video_drawn = true;
+        } else {
+            native_video_suppressed = true;
+        }
     }
     let edge_window_cutout_applied = camera_projection_visible
         && !opaque_camera_only
@@ -561,10 +705,27 @@ pub(crate) unsafe fn record_camera_hwb_probe_command_buffer(
             extent,
             projection_footprint_scale,
         );
+    let mut projection_zone_rendered = false;
     let projected_by_public_stack = if opaque_camera_only {
         false
     } else if edge_window_cutout_applied {
         true
+    } else if public_projection_ready && projection_zone_ready {
+        let rendered = public_guide_targets
+            .as_deref()
+            .ok_or_else(|| "public-guide-targets-missing-after-zone-ready".to_string())?
+            .record_projection_zone_compositor_in_open_render_pass(
+                device,
+                command_buffer,
+                extent,
+                descriptor_set,
+                projection_zone_descriptor_set,
+                elapsed_seconds,
+                projection_footprint_scale,
+                &projection_zone_frame,
+            )?;
+        projection_zone_rendered = rendered;
+        rendered
     } else if public_projection_ready {
         public_guide_targets
             .as_deref()
@@ -588,7 +749,7 @@ pub(crate) unsafe fn record_camera_hwb_probe_command_buffer(
             resources,
             descriptor_set,
             camera_reprojection,
-            latency_settings.reprojection_source_overscan_uv(),
+            projection_guard_band.source_overscan_uv,
             projection_footprint_scale,
         );
     }
@@ -600,6 +761,25 @@ pub(crate) unsafe fn record_camera_hwb_probe_command_buffer(
         projected_by_public_stack,
         camera_projection_visible,
         video_stats,
+        projection_zone_stats: ProjectionZoneRenderStats {
+            requested_mode: projection_zone_frame.settings.coverage_mode,
+            prepared_video_ready: prepared_video.is_some(),
+            public_projection_ready,
+            pipeline_ready: projection_zone_ready,
+            rendered: projection_zone_rendered,
+            native_video_drawn,
+            native_video_suppressed,
+            transparent_underlay_requested: projection_zone_frame
+                .settings
+                .transparent_underlay_requested(),
+            transparent_underlay_supported: projection_zone_frame
+                .settings
+                .transparent_underlay_supported(),
+            synthetic_displacement_suppressed: projection_zone_frame
+                .settings
+                .synthetic_diagnostic(),
+            descriptor_source: projection_zone_descriptor_source,
+        },
     })
 }
 
@@ -831,10 +1011,10 @@ pub(crate) fn choose_composite_alpha(
     flags: vk::CompositeAlphaFlagsKHR,
 ) -> vk::CompositeAlphaFlagsKHR {
     for candidate in [
-        vk::CompositeAlphaFlagsKHR::INHERIT,
-        vk::CompositeAlphaFlagsKHR::OPAQUE,
         vk::CompositeAlphaFlagsKHR::PRE_MULTIPLIED,
+        vk::CompositeAlphaFlagsKHR::INHERIT,
         vk::CompositeAlphaFlagsKHR::POST_MULTIPLIED,
+        vk::CompositeAlphaFlagsKHR::OPAQUE,
     ] {
         if flags.contains(candidate) {
             return candidate;
@@ -927,4 +1107,31 @@ pub(crate) unsafe fn create_framebuffers(
                 .map_err(|error| format!("create-framebuffer-{error:?}"))
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn composite_alpha_prefers_premultiplied_output_for_spatial_panel_blending() {
+        let all = vk::CompositeAlphaFlagsKHR::PRE_MULTIPLIED
+            | vk::CompositeAlphaFlagsKHR::INHERIT
+            | vk::CompositeAlphaFlagsKHR::POST_MULTIPLIED
+            | vk::CompositeAlphaFlagsKHR::OPAQUE;
+        assert_eq!(
+            choose_composite_alpha(all),
+            vk::CompositeAlphaFlagsKHR::PRE_MULTIPLIED
+        );
+        assert_eq!(
+            choose_composite_alpha(
+                vk::CompositeAlphaFlagsKHR::INHERIT | vk::CompositeAlphaFlagsKHR::OPAQUE
+            ),
+            vk::CompositeAlphaFlagsKHR::INHERIT
+        );
+        assert_eq!(
+            choose_composite_alpha(vk::CompositeAlphaFlagsKHR::OPAQUE),
+            vk::CompositeAlphaFlagsKHR::OPAQUE
+        );
+    }
 }

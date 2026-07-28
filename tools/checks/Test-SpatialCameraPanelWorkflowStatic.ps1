@@ -9,7 +9,8 @@ if ([string]::IsNullOrWhiteSpace($RepoRoot)) {
     $RepoRoot = Resolve-Path (Join-Path $PSScriptRoot "..\..")
 }
 $repoRootPath = (Resolve-Path -LiteralPath $RepoRoot).Path
-$spatialRoot = Join-Path $repoRootPath "apps\spatial-camera-panel-android\morphospace"
+$spatialIndexRoot = Join-Path $repoRootPath "apps\spatial-camera-panel-android\morphospace"
+$spatialRoot = Join-Path $repoRootPath "apps\spatial-camera-panel-android\legacy-workspaces\mixed-integration-v1"
 $nativeRoot = Join-Path $repoRootPath "apps\native-renderer-android\morphospace"
 
 function Assert-Workflow {
@@ -53,6 +54,71 @@ function Get-WorkflowSha256 {
         $sha.Dispose()
         $stream.Dispose()
     }
+}
+
+function Resolve-RepositoryEvidencePath {
+    param([Parameter(Mandatory=$true)][string]$RelativePath)
+
+    $normalized = $RelativePath.Replace("\", "/")
+    $legacyPrefix = "apps/spatial-camera-panel-android/morphospace/"
+    if ($normalized.StartsWith($legacyPrefix, [System.StringComparison]::Ordinal)) {
+        $suffix = $normalized.Substring($legacyPrefix.Length)
+        $normalized = "apps/spatial-camera-panel-android/legacy-workspaces/mixed-integration-v1/$suffix"
+    }
+    return Join-Path $repoRootPath ($normalized -replace "/", "\")
+}
+
+function Get-LegacyArchiveFingerprint {
+    param([Parameter(Mandatory=$true)][string]$Root)
+
+    $rows = @(Get-ChildItem -Recurse -File -LiteralPath $Root | ForEach-Object {
+        $relativePath = [System.IO.Path]::GetRelativePath($Root, $_.FullName).Replace("\", "/")
+        $sha256 = (Get-WorkflowSha256 -Path $_.FullName).ToLowerInvariant()
+        "$relativePath`t$sha256"
+    } | Sort-Object)
+    $canonical = ($rows -join "`n") + "`n"
+    $bytes = (New-Object System.Text.UTF8Encoding($false)).GetBytes($canonical)
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        return [pscustomobject]@{
+            FileCount = $rows.Count
+            Sha256 = (($sha.ComputeHash($bytes) | ForEach-Object { $_.ToString("x2") }) -join "")
+        }
+    } finally {
+        $sha.Dispose()
+    }
+}
+
+function Test-SpatialLegacyIndex {
+    param([Parameter(Mandatory=$true)][string]$IndexRoot)
+
+    $spec = Read-JsonDocument -Root $IndexRoot -RelativePath "project.spec.json"
+    $lock = Read-JsonDocument -Root $IndexRoot -RelativePath "feature.lock.json"
+    $state = Read-JsonDocument -Root $IndexRoot -RelativePath "workspace.state.json"
+    $archive = Read-JsonDocument -Root $IndexRoot -RelativePath "legacy-archive.json"
+
+    Assert-Workflow ([string]$spec.schema -eq "rusty.morphospace.workflow.project_spec.v2") "Spatial legacy index must use project_spec.v2."
+    Assert-Workflow ([string]$spec.project_id -eq "spatial-camera-panel") "Spatial legacy index project id drifted."
+    Assert-Workflow ([int]$spec.revision -eq 9) "Spatial legacy index revision drifted."
+    Assert-Workflow (@($spec.composition.selected_features).Count -eq 0 -and @($spec.composition.selected_modules).Count -eq 0) "Spatial legacy index must select no features or modules."
+    Assert-Workflow ([string]$lock.schema -eq "rusty.morphospace.workflow.feature_lock.v2") "Spatial legacy index must use feature_lock.v2."
+    Assert-Workflow ([string]$lock.project_id -eq "spatial-camera-panel" -and [int]$lock.project_revision -eq 9) "Spatial legacy index feature lock drifted."
+    Assert-Workflow (@($lock.selected_features).Count -eq 0 -and @($lock.features).Count -eq 0) "Spatial legacy index lock must stay inert."
+    Assert-Workflow ([string]$lock.default_activation -eq "disabled") "Spatial legacy index default activation must stay disabled."
+    Assert-Workflow ([string]$state.schema -eq "rusty.morphospace.workflow.workspace_state.v2") "Spatial legacy index must use workspace_state.v2."
+    Assert-Workflow ($null -eq $state.current_unit -and $null -eq $state.next_ready_unit -and $null -eq $state.pending_push_bundle) "Spatial legacy index must not carry active work or publication state."
+    Assert-Workflow ([string]$archive.schema -eq "rusty.quest.spatial_camera_panel.legacy_workspace_archive.v1") "Spatial legacy archive receipt has the wrong schema."
+    Assert-Workflow ($archive.preservation.historical_bytes_rewritten -eq $false) "Spatial legacy archive must not claim historical byte rewriting."
+    Assert-Workflow ($archive.preservation.runtime_authority_claimed -eq $false) "Spatial legacy archive must not claim runtime authority."
+
+    $archiveRoot = [System.IO.Path]::GetFullPath((Join-Path $IndexRoot ([string]$archive.archive_path)))
+    $appRoot = [System.IO.Path]::GetFullPath((Join-Path $repoRootPath "apps\spatial-camera-panel-android"))
+    $appPrefix = $appRoot.TrimEnd([System.IO.Path]::DirectorySeparatorChar) + [System.IO.Path]::DirectorySeparatorChar
+    Assert-Workflow ($archiveRoot.StartsWith($appPrefix, [System.StringComparison]::OrdinalIgnoreCase)) "Spatial legacy archive path escapes the Camera app."
+    Assert-Workflow (Test-Path -LiteralPath $archiveRoot -PathType Container) "Spatial legacy archive directory is missing."
+    $actual = Get-LegacyArchiveFingerprint -Root $archiveRoot
+    Assert-Workflow ([int]$archive.file_count -eq $actual.FileCount) "Spatial legacy archive file count drifted."
+    Assert-Workflow ([string]$archive.archive_fingerprint_sha256 -eq $actual.Sha256) "Spatial legacy archive fingerprint drifted."
 }
 
 function Read-ProjectionReceipt {
@@ -253,8 +319,41 @@ function Test-ProjectStateAndEvents {
         [string]$State.last_event_id -eq "MOD-006-accepted-0016" -and
         $null -eq $State.current_unit
     )
-    $inFlight = @($Units | Where-Object { [string]$_.status -in @("active", "validating") })
-    if ($terminalSpatialMod006) {
+    $terminalSpatialMod009 = (
+        [string]$Spec.project_id -eq "spatial-camera-panel" -and
+        [string]$State.last_event_id -like "mod-009-accepted-*" -and
+        $null -eq $State.current_unit
+    )
+    $terminalSpatialMod010 = (
+        [string]$Spec.project_id -eq "spatial-camera-panel" -and
+        [string]$State.last_event_id -like "mod-010-accepted-*" -and
+        $null -eq $State.current_unit
+    )
+    $terminalSpatialMod013 = (
+        [string]$Spec.project_id -eq "spatial-camera-panel" -and
+        [string]$State.last_event_id -like "mod-013-accepted-*" -and
+        $null -eq $State.current_unit
+    )
+    $supersededUnitIds = @{}
+    foreach ($event in $events) {
+        $supersession = [regex]::Match(
+            [string]$event.event_id,
+            "^(?<old>[a-z0-9-]+)-superseded-by-(?<new>[a-z0-9-]+)$",
+            [Text.RegularExpressions.RegexOptions]::IgnoreCase
+        )
+        if (
+            $supersession.Success -and
+            [string]$event.event_type -eq "state-transition" -and
+            [string]$event.unit_id -eq [string]$supersession.Groups["old"].Value
+        ) {
+            $supersededUnitIds[[string]$event.unit_id] = $true
+        }
+    }
+    $inFlight = @($Units | Where-Object {
+        [string]$_.status -in @("active", "validating") -and
+        -not $supersededUnitIds.ContainsKey([string]$_.unit_id)
+    })
+    if ($terminalSpatialMod006 -or $terminalSpatialMod009 -or $terminalSpatialMod010 -or $terminalSpatialMod013) {
         $inFlight = @($inFlight | Where-Object { [string]$_.unit_id -ne "mod-003" })
     }
     if ($null -eq $State.current_unit) {
@@ -264,7 +363,7 @@ function Test-ProjectStateAndEvents {
         $historicalActiveExceptions = @()
         if (
             [string]$Spec.project_id -eq "spatial-camera-panel" -and
-            @("mod-006", "mod-007") -contains [string]$State.current_unit
+            @("mod-006", "mod-007", "mod-009", "mod-010", "mod-011", "mod-012") -contains [string]$State.current_unit
         ) {
             $historicalActiveExceptions = @("mod-003")
         }
@@ -281,7 +380,7 @@ function Test-ProjectStateAndEvents {
         Assert-Workflow ($readyUnits.Count -eq 1 -and [string]$readyUnits[0].unit_id -eq [string]$State.next_ready_unit) "$($Spec.project_id) next_ready_unit does not match its sole ready unit."
     }
     if ($null -eq $State.current_unit) {
-        if ($terminalSpatialMod006) {
+        if ($terminalSpatialMod006 -or $terminalSpatialMod009 -or $terminalSpatialMod010 -or $terminalSpatialMod013) {
             Assert-EqualSet -Label "$($Spec.project_id) accepted MOD-006 dirty repository preservation" -Actual @($State.dirty_repositories) -Expected @("native-renderer-app", "quest-repo", "spatial-app")
         } else {
             Assert-Workflow (@($State.dirty_repositories).Count -eq 0) "$($Spec.project_id) terminal compact state still claims dirty repositories."
@@ -289,9 +388,33 @@ function Test-ProjectStateAndEvents {
     } else {
         Assert-Workflow (@($State.dirty_repositories).Count -gt 0) "$($Spec.project_id) in-flight compact state erased its dirty repository projection."
     }
-    Assert-Workflow (@($State.blockers).Count -eq 0) "$($Spec.project_id) compact state still carries a blocker after accepted projections."
+    $currentWorkWithDeferredMod007 =
+        [string]$Spec.project_id -eq "spatial-camera-panel" -and
+        (
+            [string]$State.current_unit -in @("mod-009", "mod-010") -or
+            $terminalSpatialMod009 -or
+            $terminalSpatialMod010
+        ) -and
+        @($State.blockers).Count -eq 1 -and
+        [string]$State.blockers[0].blocker_id -eq "mod-007-validation-blocked"
+    $blockerIds = @($State.blockers | ForEach-Object { [string]$_.blocker_id })
+    $currentMod012WithDeferredPanelBlockers =
+        [string]$Spec.project_id -eq "spatial-camera-panel" -and
+        [string]$State.current_unit -eq "mod-012" -and
+        $blockerIds.Count -eq 2 -and
+        $blockerIds -contains "mod-007-validation-blocked" -and
+        $blockerIds -contains "mod-011-validation-blocked"
+    $terminalMod013WithRoutedHistoricalBlockers =
+        $terminalSpatialMod013 -and
+        $blockerIds.Count -eq 2 -and
+        $blockerIds -contains "mod-007-validation-blocked" -and
+        $blockerIds -contains "mod-011-validation-blocked"
+    Assert-Workflow (($currentWorkWithDeferredMod007 -or $currentMod012WithDeferredPanelBlockers -or $terminalMod013WithRoutedHistoricalBlockers -or @($State.blockers).Count -eq 0)) "$($Spec.project_id) compact state carries an unexpected blocker."
     Assert-Workflow ($null -eq $State.pending_push_bundle) "$($Spec.project_id) compact state still carries a pending push bundle after its pushed projections."
-    Assert-Workflow ([string]$State.validation_checkpoint.result -eq "pass") "$($Spec.project_id) terminal validation checkpoint is not pass."
+    Assert-Workflow (
+        [string]$State.validation_checkpoint.result -eq "pass" -or
+        (($currentWorkWithDeferredMod007 -or $currentMod012WithDeferredPanelBlockers) -and [string]$State.validation_checkpoint.result -eq "blocked")
+    ) "$($Spec.project_id) validation checkpoint is inconsistent with the current workflow projection."
     $checkpointReceipt = [string]$State.validation_checkpoint.receipt
     if ($checkpointReceipt.StartsWith("receipts/")) {
         Assert-Workflow (Test-Path -LiteralPath (Join-Path $Root ($checkpointReceipt -replace "/", "\")) -PathType Leaf) "$($Spec.project_id) validation checkpoint references missing '$checkpointReceipt'."
@@ -333,11 +456,11 @@ function Test-Mod006Projection {
     Assert-Workflow ([string]$receipt.device_gate.status -eq "pending") "$ExpectedProjectId MOD-006 receipt prematurely closed the device gate."
     Assert-Workflow (@($receipt.does_not_prove).Count -gt 0) "$ExpectedProjectId MOD-006 receipt lacks limitations."
     foreach ($evidence in @($receipt.source_evidence)) {
-        $path = Join-Path $repoRootPath (([string]$evidence) -replace "/", "\")
+        $path = Resolve-RepositoryEvidencePath -RelativePath ([string]$evidence)
         Assert-Workflow (Test-Path -LiteralPath $path) "$ExpectedProjectId MOD-006 references missing source evidence '$evidence'."
     }
     foreach ($entry in @($receipt.historical_fixture_hashes)) {
-        $path = Join-Path $repoRootPath (([string]$entry.path) -replace "/", "\")
+        $path = Resolve-RepositoryEvidencePath -RelativePath ([string]$entry.path)
         Assert-Workflow (Test-Path -LiteralPath $path -PathType Leaf) "$ExpectedProjectId MOD-006 references missing historical fixture '$($entry.path)'."
         $actualHash = Get-WorkflowSha256 -Path $path
         Assert-Workflow ($actualHash -eq [string]$entry.sha256) "$ExpectedProjectId MOD-006 historical fixture '$($entry.path)' was rewritten."
@@ -346,7 +469,7 @@ function Test-Mod006Projection {
     }
     if ($receipt.PSObject.Properties.Name -contains "historical_tracked_artifact_hashes") {
         foreach ($entry in @($receipt.historical_tracked_artifact_hashes)) {
-            $path = Join-Path $repoRootPath (([string]$entry.path) -replace "/", "\")
+            $path = Resolve-RepositoryEvidencePath -RelativePath ([string]$entry.path)
             Assert-Workflow (Test-Path -LiteralPath $path -PathType Leaf) "$ExpectedProjectId MOD-006 historical tracked artifact '$($entry.path)' is missing."
             $actualHash = Get-WorkflowSha256 -Path $path
             if ($actualHash -ne [string]$entry.sha256) {
@@ -358,7 +481,7 @@ function Test-Mod006Projection {
     }
     if ($receipt.PSObject.Properties.Name -contains "historical_event_prefix") {
         $prefix = $receipt.historical_event_prefix
-        $path = Join-Path $repoRootPath (([string]$prefix.path) -replace "/", "\")
+        $path = Resolve-RepositoryEvidencePath -RelativePath ([string]$prefix.path)
         $lines = @(Get-Content -LiteralPath $path)
         $prefixCount = [int]$prefix.line_count
         Assert-Workflow ($lines.Count -ge $prefixCount) "$ExpectedProjectId MOD-006 historical event prefix was truncated."
@@ -371,6 +494,11 @@ function Test-Mod006Projection {
             $event = $line | ConvertFrom-Json
             $isCorrectiveEvent = [string]$event.unit_id -eq "mod-006" -and [string]$event.event_id -like "mod-006-*"
             $isMod007Event = [string]$event.unit_id -eq "mod-007" -and [string]$event.event_id -like "mod-007-*"
+            $isMod009Event = [string]$event.unit_id -eq "mod-009" -and [string]$event.event_id -like "mod-009-*"
+            $isMod010Event = [string]$event.unit_id -eq "mod-010" -and [string]$event.event_id -like "mod-010-*"
+            $isMod011Event = [string]$event.unit_id -eq "mod-011" -and [string]$event.event_id -like "mod-011-*"
+            $isMod012Event = [string]$event.unit_id -eq "mod-012" -and [string]$event.event_id -like "mod-012-*"
+            $isMod013Event = [string]$event.unit_id -eq "mod-013" -and [string]$event.event_id -like "mod-013-*"
             $isExactSupersession = (
                 [string]$event.event_id -eq "mod-003-superseded-by-mod-006" -and
                 [string]$event.unit_id -eq "mod-003" -and
@@ -382,7 +510,7 @@ function Test-Mod006Projection {
                 [string]$event.event_type -eq "planning" -and
                 @($event.receipts).Count -eq 0
             )
-            Assert-Workflow ($isCorrectiveEvent -or $isMod007Event -or $isExactSupersession -or $isExactNet016Proposal) "$ExpectedProjectId appended an event outside MOD-006/MOD-007, the exact additive MOD-003 supersession, or the inert NET-016 proposal."
+            Assert-Workflow ($isCorrectiveEvent -or $isMod007Event -or $isMod009Event -or $isMod010Event -or $isMod011Event -or $isMod012Event -or $isMod013Event -or $isExactSupersession -or $isExactNet016Proposal) "$ExpectedProjectId appended an event outside the declared MOD-006 through MOD-013 history, the exact additive MOD-003 supersession, or the inert NET-016 proposal."
         }
     }
 
@@ -516,6 +644,11 @@ function Test-BrokerMediaWorkflowProjection {
     Assert-Workflow ([string]$unit.device_requirement -eq "required") "$Label local NET-016 must retain its device gate."
     if ($Label -eq "Spatial") {
         $mod007 = @($Units | Where-Object { [string]$_.unit_id -eq "mod-007" })
+        $mod009 = @($Units | Where-Object { [string]$_.unit_id -eq "mod-009" })
+        $mod010 = @($Units | Where-Object { [string]$_.unit_id -eq "mod-010" })
+        $mod011 = @($Units | Where-Object { [string]$_.unit_id -eq "mod-011" })
+        $mod012 = @($Units | Where-Object { [string]$_.unit_id -eq "mod-012" })
+        $mod013 = @($Units | Where-Object { [string]$_.unit_id -eq "mod-013" })
         $terminalAfterMod006 =
             $null -eq $State.current_unit -and
             [string]$State.last_event_id -eq "MOD-006-accepted-0016"
@@ -524,12 +657,74 @@ function Test-BrokerMediaWorkflowProjection {
             @("active", "validating") -contains [string]$mod007[0].status -and
             [string]$State.current_unit -eq "mod-007" -and
             [string]$State.last_event_id -like "mod-007-*"
-        Assert-Workflow (($terminalAfterMod006 -or $mod007InFlight) -and $null -eq $State.next_ready_unit) "$Label must remain terminal after MOD-006 or identify MOD-007 as the sole in-flight unit before NET-016 claim."
+        $mod009InFlightWithDeferredMod007 =
+            $mod007.Count -eq 1 -and
+            [string]$mod007[0].status -eq "blocked" -and
+            $mod009.Count -eq 1 -and
+            @("active", "validating") -contains [string]$mod009[0].status -and
+            [string]$State.current_unit -eq "mod-009" -and
+            [string]$State.last_event_id -like "mod-009-*"
+        $mod009AcceptedWithDeferredMod007 =
+            $mod007.Count -eq 1 -and
+            [string]$mod007[0].status -eq "blocked" -and
+            $mod009.Count -eq 1 -and
+            [string]$mod009[0].status -eq "accepted" -and
+            $null -eq $State.current_unit -and
+            [string]$State.last_event_id -like "mod-009-accepted-*"
+        $mod010InFlightWithDeferredMod007 =
+            $mod007.Count -eq 1 -and
+            [string]$mod007[0].status -eq "blocked" -and
+            $mod009.Count -eq 1 -and
+            [string]$mod009[0].status -eq "accepted" -and
+            $mod010.Count -eq 1 -and
+            @("active", "validating") -contains [string]$mod010[0].status -and
+            [string]$State.current_unit -eq "mod-010" -and
+            [string]$State.last_event_id -like "mod-010-*"
+        $mod010AcceptedWithDeferredMod007 =
+            $mod007.Count -eq 1 -and
+            [string]$mod007[0].status -eq "blocked" -and
+            $mod009.Count -eq 1 -and
+            [string]$mod009[0].status -eq "accepted" -and
+            $mod010.Count -eq 1 -and
+            [string]$mod010[0].status -eq "accepted" -and
+            $null -eq $State.current_unit -and
+            [string]$State.last_event_id -like "mod-010-accepted-*"
+        $mod012InFlightWithDeferredPanelBlockers =
+            $mod007.Count -eq 1 -and
+            [string]$mod007[0].status -eq "blocked" -and
+            $mod009.Count -eq 1 -and
+            [string]$mod009[0].status -eq "accepted" -and
+            $mod010.Count -eq 1 -and
+            [string]$mod010[0].status -eq "accepted" -and
+            $mod011.Count -eq 1 -and
+            [string]$mod011[0].status -eq "blocked" -and
+            $mod012.Count -eq 1 -and
+            @("active", "validating") -contains [string]$mod012[0].status -and
+            [string]$State.current_unit -eq "mod-012" -and
+            [string]$State.last_event_id -like "mod-012-*"
+        $mod013AcceptedProjectIsolation =
+            $mod007.Count -eq 1 -and
+            [string]$mod007[0].status -eq "blocked" -and
+            $mod009.Count -eq 1 -and
+            [string]$mod009[0].status -eq "accepted" -and
+            $mod010.Count -eq 1 -and
+            [string]$mod010[0].status -eq "accepted" -and
+            $mod011.Count -eq 1 -and
+            [string]$mod011[0].status -eq "blocked" -and
+            $mod012.Count -eq 1 -and
+            @("active", "validating") -contains [string]$mod012[0].status -and
+            $mod013.Count -eq 1 -and
+            [string]$mod013[0].status -eq "accepted" -and
+            $null -eq $State.current_unit -and
+            [string]$State.last_event_id -like "mod-013-accepted-*"
+        Assert-Workflow (($terminalAfterMod006 -or $mod007InFlight -or $mod009InFlightWithDeferredMod007 -or $mod009AcceptedWithDeferredMod007 -or $mod010InFlightWithDeferredMod007 -or $mod010AcceptedWithDeferredMod007 -or $mod012InFlightWithDeferredPanelBlockers -or $mod013AcceptedProjectIsolation) -and $null -eq $State.next_ready_unit) "$Label must remain terminal after MOD-006/MOD-009/MOD-010, identify active MOD-012, or close the mixed workspace through accepted MOD-013 project isolation before NET-016 claim."
     } else {
         Assert-Workflow ([string]$State.current_unit -eq "mod-006" -and $null -eq $State.next_ready_unit) "$Label must keep MOD-006 as the sole current unit before NET-016 claim."
         Assert-Workflow ([string]$State.last_event_id -eq "net-016-proposed") "$Label compact state does not terminate at the additive NET-016 proposal event."
     }
 }
+
+Test-SpatialLegacyIndex -IndexRoot $spatialIndexRoot
 
 $spatialSpec = Read-JsonDocument -Root $spatialRoot -RelativePath "project.spec.json"
 $spatialLock = Read-JsonDocument -Root $spatialRoot -RelativePath "feature.lock.json"
@@ -543,7 +738,7 @@ Assert-Workflow ([string]$spatialSpec.project_id -eq "spatial-camera-panel") "Sp
 Assert-Workflow ($spatialSpec.activation_model.default -eq "disabled" -and $spatialSpec.activation_model.unlisted_modules -eq "inert") "Spatial composition must fail closed."
 Test-ProjectFeatureLockClosure -Label "Spatial" -Spec $spatialSpec -Lock $spatialLock
 Assert-EqualSet -Label "Spatial default enabled features" -Actual @($spatialLock.features | Where-Object enabled -eq $true | ForEach-Object feature_id) -Expected @("spatial-panel-shell")
-Assert-EqualSet -Label "Spatial default disabled features" -Actual @($spatialLock.features | Where-Object enabled -eq $false | ForEach-Object feature_id) -Expected @("camera-hwb-projection", "surface-particle-runtime", "tracked-hand-surface", "spatial-stereo-video", "spatial-asset-model", "spatial-virtual-room", "broker-media-client")
+Assert-EqualSet -Label "Spatial default disabled features" -Actual @($spatialLock.features | Where-Object enabled -eq $false | ForEach-Object feature_id) -Expected @("camera-hwb-projection", "surface-particle-runtime", "tracked-hand-surface", "spatial-stereo-video", "spatial-asset-model", "spatial-virtual-room", "spatial-stimulus-volume", "spatial-vr-strobe", "broker-media-client")
 Assert-Workflow (@($spatialSpec.modules | Where-Object { $_.module_id -eq "remote-peer-media" }).Count -eq 0) "Remote peer media must remain absent from Spatial composition."
 
 $particleCandidate = Get-ById -Items $spatialCandidates -Property "candidate_id" -Id "surface-particle-substrate" -Label "Spatial candidate"

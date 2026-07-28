@@ -8,7 +8,6 @@ param(
     [string]$AdbServerPort = $env:RUSTY_QUEST_ADB_SERVER_PORT,
     [string]$PackageName = "io.github.mesmerprism.rustyquest.spatial_camera_panel",
     [string]$Activity = "io.github.mesmerprism.rustyquest.spatial_camera_panel/.SpatialCameraPanelActivity",
-    [string]$ParticipantId = "",
     [ValidateSet("real-hands", "gpu-replay-hands", "icosphere")]
     [string]$SurfaceTargetId = "icosphere",
     [switch]$SkipInstall,
@@ -215,9 +214,6 @@ function Invoke-ParticleAliasCommand {
         "ui_action",
         "particle-alias-control",
         "--es",
-        "participant_id",
-        $ParticipantId,
-        "--es",
         "surface_target_id",
         $SurfaceTargetId,
         "--es",
@@ -271,10 +267,6 @@ if (-not (Test-Path -LiteralPath $resolvedApk)) {
     throw "APK not found: $resolvedApk"
 }
 
-if ([string]::IsNullOrWhiteSpace($ParticipantId)) {
-    $ParticipantId = "codex-spatial-particle-alias-$(Get-Date -Format 'yyyyMMdd-HHmmss')"
-}
-
 if ([string]::IsNullOrWhiteSpace($OutDir)) {
     $stamp = Get-Date -Format "yyyyMMdd-HHmmss"
     $OutDir = Join-Path $repoRootPath "local-artifacts\spatial-camera-panel-headset\$stamp-particle-alias-smoke"
@@ -309,7 +301,6 @@ $summary = [ordered]@{
     package = $PackageName
     activity = $Activity
     ui_command_action = $UiCommandAction
-    participant_id = $ParticipantId
     surface_target_id = $SurfaceTargetId
     apk_path = (Resolve-Path -LiteralPath $resolvedApk).Path
     apk_sha256 = $apkSha256

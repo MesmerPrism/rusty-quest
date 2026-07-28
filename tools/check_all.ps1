@@ -56,8 +56,8 @@ try {
     Invoke-Checked "Corrected release two-Quest matrix static gate" "pwsh" @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools\checks\Test-CorrectedReleaseTwoQuestMatrixStatic.ps1", "-RepoRoot", ".")
     Invoke-Checked "Spatial Camera Panel Android static gate" "pwsh" @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools\Test-SpatialCameraPanelAndroid.ps1", "-RepoRoot", ".")
     Invoke-Checked "Manifold broker Android scaffold" "pwsh" @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools\Test-ManifoldBrokerAndroid.ps1")
-Invoke-Checked "Peer rendezvous Android scaffold" "pwsh" @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools\Test-PeerRendezvousAndroid.ps1")
-Invoke-Checked "N-peer mesh authority and adapter" "pwsh" @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools\checks\Test-NPeerMesh.ps1")
+    Invoke-Checked "Peer rendezvous Android scaffold" "pwsh" @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools\Test-PeerRendezvousAndroid.ps1")
+    Invoke-Checked "N-peer mesh authority and adapter" "pwsh" @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools\checks\Test-NPeerMesh.ps1")
     Invoke-Checked "Native renderer Android scaffold" "pwsh" @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools\Test-NativeRendererAndroid.ps1", "-SkipProfileMatrix")
     Invoke-Checked "Quest boundary scan" "python" @("tools\check_quest_boundaries.py")
 } finally {

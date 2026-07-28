@@ -1,23 +1,32 @@
 # Spatial Camera Panel Android
 
-This app is a public Meta Spatial SDK lane for headset panel validation and
-low-rate driver-profile control. It packages a Spatial SDK/Compose panel under
-`io.github.mesmerprism.rustyquest.spatial_camera_panel`.
+This directory owns the public Spatial Camera Panel Android application,
+plus the Gradle root and neutral `:spatial-sdk-shared` support library used by
+the repository's Spatial SDK applications. The Camera app is always `:app`;
+it no longer contains a build-time Strobe route.
 
 ## Project Composition Workspace
 
-Before changing this app, read `morphospace/project.spec.json`,
-`morphospace/feature.lock.json`, `morphospace/workspace.state.json`, and the
-current unit under `morphospace/iteration-units/`. This is the app-local
-composition and extraction control surface; runtime modules keep their own
-authority.
+The local `morphospace/` directory is an inert protocol-v2 index after MOD-013.
+The complete mixed v1 integration ledger is preserved under
+`legacy-workspaces/mixed-integration-v1/` and bound by the index's archive
+fingerprint. For private effect work, follow the private-project route in the
+repository `AGENTS.md`. For Strobe, read
+`../spatial-vr-strobe-android/morphospace/`. Never use a historical unit to
+block or authorize another project.
+
+The applications have distinct source sets, manifests, packages, Manifold
+identities, markers, properties, Gradle intermediates, and APK outputs. Build
+Strobe with its dedicated wrapper in `tools/Build-SpatialVrStrobeAndroid.ps1`.
+Validate the module firewall with
+`tools/checks/Test-SpatialProductIsolationStatic.ps1`.
 
 The adopted baseline selects only `spatial-panel-shell`. Camera/HWB
 projection, native surface particles, tracked-hand surfaces, stereo video,
 staged assets, and the virtual room are explicit disabled workflow entries and
 still require their existing property/profile/app-spec opt-ins. The staged
 asset path additionally requires the exact app-owned
-`morphospace/conformance-locks/spatial-asset-model.feature.lock.json`; a mesh
+`legacy-workspaces/mixed-integration-v1/conformance-locks/spatial-asset-model.feature.lock.json`; a mesh
 URI or enable property alone remains inert. Remote peer
 media is intentionally absent from the composition, so nearby broker or QCL
 work cannot bleed into this app. The first candidates are recorded under
@@ -60,8 +69,13 @@ app-local. Stopping the bridge is the rollback and leaves the adapter inert.
 ## Public Scope
 
 - Spatial SDK panel registration, placement, scaling, and headlock controls.
-- Low-rate participant/session files, Polar H10 intake records, ECG mirroring,
-  block timing, and questionnaire JSONL artifacts.
+- One-sided Compose UI-panel facing through the neutral
+  `:spatial-sdk-shared` `SpatialPanelFacing` authority, using the
+  Meta-sample-aligned upright viewer-facing rotation and a known-facing static
+  fallback. Scene quad, camera carrier, and material orientation remain
+  separate authorities; see `../../docs/SPATIAL_SDK_PANEL_FACING.md`.
+- One camera/effect layer-control panel; participant-study and physiological
+  sensor workflows are outside this app.
 - Raw Camera2/AHardwareBuffer projection probes and public blur/projection
   receipts.
 - Optional public stereo-video projection for the raw camera probe: Java
@@ -87,6 +101,10 @@ app-local. Stopping the bridge is the rollback and leaves the adapter inert.
   the system style and native cutout are live. Slot 8 is an explicit raw
   Camera2/AHardwareBuffer stereo projection over the still-active video; it
   bypasses the private effect shader and its edge fade.
+- Generic guide-processing A/B controls. The default `Native target` policy is
+  box5/luma/box5 at `384x384` per eye. Gaussian five-tap and RGB-preserving
+  input remain independently selectable from the private-layer panel for later
+  experiments; these public policies do not contain downstream effect formulas.
 - The private layer panel also exposes a separate projection-panel isolation
   toggle. Turning it off stops MediaCodec playback and native custom projection,
   destroys the Spatial projection carrier, and explicitly leaves system
@@ -102,7 +120,7 @@ app-local. Stopping the bridge is the rollback and leaves the adapter inert.
   `SensorWarpCameraCalibrated`, `PresentationLatest50`, the
   `PresentationSceneExtrapolated*` and `PresentationOpenXr*` lead sweeps,
   `PresentationOpenXr11Overscan0`, `PresentationOpenXr11Overscan10`,
-  `PresentationOpenXr11GuardBand10`,
+  `PresentationOpenXr11GuardBand10`, `PresentationOpenXr11DynamicGuardBand10`,
   `PresentationOpenXr11Adoption45`, and `VerboseFrameLog`
   hotload while the projection is active. The rotation-warp presets apply only
   to slot 8's raw projection shader. The original presets associate callback
@@ -166,7 +184,15 @@ app-local. Stopping the bridge is the rollback and leaves the adapter inert.
   the reduced-footprint mode is the accepted non-magnified baseline. The user
   confirmed that its general echo is gone and described it as the best state so
   far. Remaining inconsistency appears as rare individual frames and is tracked
-  separately as a timing-outlier/cadence investigation.
+  separately as a timing-outlier/cadence investigation. The dynamic variant
+  keeps that accepted 10 percent per-edge baseline, then evaluates both eyes'
+  capture-to-predicted-presentation rotation every display frame. It immediately
+  contracts source crop and target footprint together to the shared worst-eye
+  requirement, holds a new peak briefly, and releases slowly. The maximum is 20
+  percent per edge; exceeding real captured coverage remains visible as a
+  saturation marker and discarded UVs rather than synthetic fill. Raw, private
+  guide ingress, edge cutout, and final public projection consume the same
+  per-frame margin and footprint decision.
   `PresentationOpenXr11Adoption45` changes
   only camera-image adoption to display-aligned 45 Hz, so it is the controlled
   cadence comparison rather than the default. The unattended Quest pass kept
@@ -178,6 +204,36 @@ app-local. Stopping the bridge is the rollback and leaves the adapter inert.
   and the
   [motion iteration report](../../docs/SPATIAL_CAMERA_MOTION_ITERATION_REPORT.md)
   for the complete A/B sequence and remaining limitations.
+- The private-layer panel now includes an optional peripheral stretch and
+  zone-blend compositor. Its geometry is recomputed from the same display-frame
+  snapshot as the projection guard band, in this fixed order:
+  `user scale -> dynamic core -> stretch/seams -> video carrier`. Right-stick
+  projection scaling therefore changes the outer projection boundary before
+  the motion-driven guard contracts the visible core. `Off` remains the exact
+  legacy projection-over-video path. `Native stretch` fills only the area
+  around the guarded core and leaves the ordinary video draw behind it. Its
+  default mapping id selects the original native graded edge-trail treatment:
+  samples begin at the corresponding projection border and move progressively
+  deeper into that same side under a nonlinear distance curve. The rounded
+  target footprint supplies the corner treatment. The later cross-center lens
+  effect is not part of this route; old requests for it normalize to the graded
+  edge-trail defaults. `Full stretch`
+  expands the treatment to the full stereo carrier and suppresses the separate
+  video draw only after the video-aware compositor pipeline is ready; a missing
+  video frame or pipeline falls back to the legacy path. `Organic stretch` is an
+  A/B preset for RGB/difference-responsive seams with bounded sine and motion
+  modulation. Raw-camera, processed-layer, and mixed stretch sources remain
+  selectable. The public adapter owns only rectangles, the numeric mapping id,
+  three bounded family parameters, descriptors, and rollback; the lens formula
+  and downstream color/effect formulas stay in the private downstream shader.
+  Device validation can select the same bounded presets without controller
+  input through `Invoke-SpatialCameraPanelAndroidUiAction.ps1`: use
+  `private-layer-zone-native-buffer`, `private-layer-zone-organic-buffer`,
+  `private-layer-zone-full-stretch`, and `private-layer-zone-off`. These
+  commands route through the same coordinator and native update queue as the
+  panel buttons; they do not add a second compositor authority. The deprecated
+  `private-layer-zone-linear-buffer` action is accepted only as a compatibility
+  alias for the native lens preset.
 - Scene-depth permission diagnostics that mirror the native renderer surface:
   `horizonos.permission.USE_SCENE`, OpenXR permissions, and a smoke-wrapper
   `USE_SCENE_DATA` app-op receipt. The public multi-stack keeps a fallback
@@ -353,8 +409,8 @@ layer-control UI panel opens at a 1.0m default distance, and the opposed
 per-eye horizontal UV offset stays locked to the current default `0.046320`,
 captured from a live Quest 3S headset readback on 2026-06-28 where the camera
 projection and Meta performance HUD aligned simultaneously. Left-stick Y
-controls workflow panel distance, and when the layer-control panel is open it
-controls that panel's stored distance; it does not tune projection stereo
+controls the layer-control panel's stored distance while that panel is open; it
+does not tune projection stereo
 offset.
 Runtime readback uses
 `projectionTargetStereoHorizontalOffsetUv`, `projectionTargetLeftOffsetUv`,
@@ -409,12 +465,10 @@ Earlier foreground-room runtime evidence used
 `cameraProjectionWallToggleInput=right-controller-secondary-button`,
 `virtualRoomWallPlacementMode=virtual-room-wall-fixed-quad`, and
 `virtualRoomWallCenterM` markers plus
-`projectionRoomRenderOrder=video-surface-panel-over-virtual-room` and
-`legacyLauncherPanelSuppressed=true`.
+`projectionRoomRenderOrder=video-surface-panel-over-virtual-room`.
 
-When the camera/video stack is active, the right primary button opens a
-front-of-camera private-layer control panel instead of the participant workflow
-panel or the legacy launcher panel. That panel mirrors the native private
+When the camera/video stack is active, the right primary button opens the
+front-of-camera private-layer control panel. That panel mirrors the native private
 layer selector: seven generic
 layer choices, live projection-area scale, live depth source policy
   (`eye-index` stereo by default, `mono-layer0`, `mono-layer1`, or `compare`),
@@ -483,6 +537,11 @@ Interaction SDK pointer input without native multimodal extension forcing.
   token formatting, Android system-property and intent-extra parsing, and
   small Spatial vector math helpers used by the facade. It must stay free of
   lifecycle, panel, camera, particle, and JNI start/stop authority.
+- `app/src/main/.../SpatialPanelFacing.kt` owns the front-face pose convention
+  for one-sided Spatial SDK UI panels, including viewer-relative upright
+  rotation, the known-facing fallback, and marker vocabulary. It must not
+  become scene-mesh, custom-material, camera-carrier, or quad-layer orientation
+  authority.
 - `app/src/main/.../SpatialVideoProjectionSettings.kt` owns the Kotlin-side
   video projection route policy: default-disabled opt-in controls,
   intent/property parsing, the low-rate settings value object, route marker
@@ -578,6 +637,13 @@ Interaction SDK pointer input without native multimodal extension forcing.
   carrier selection, marker-field composition, and projection execution; the
   coordinator cannot activate raw or panel carriers without that explicit
   launch gate.
+- `app/src/main/.../SpatialCameraReplayCaptureModule.kt` owns the optional
+  finite replay-capture configuration and app-private session directory.
+  Native `camera_replay_capture.rs` copies paired camera images into bounded
+  packed left-right RGBA8 frames and writes
+  `rusty.quest.camera_replay_capture.v1`. The route is disabled by default;
+  frame files, pulled captures, and replay evidence are local artifacts and
+  must not enter source control.
 - `app/src/main/.../SpatialCameraHwbProjectionDepthPrerequisiteCoordinator.kt`
   owns request-driven native passthrough and environment-depth startup/stop
   plus the retained depth-start mask. Both start routes fail closed unless the
@@ -650,8 +716,8 @@ Interaction SDK pointer input without native multimodal extension forcing.
   bindings.
   It must not start JNI native routes, update native projection parameters,
   poll controllers, or decide whether a carrier is enabled for the current run.
-- `app/src/main/.../SpatialPanelPlacementModule.kt` owns workflow/private-layer
-  panel placement policy: default distances and sizes, headlock property
+- `app/src/main/.../SpatialPanelPlacementModule.kt` owns private-layer panel
+  placement policy: default distances and sizes, headlock property
   parsing, placement clamping, pose/dimension/settings factories, private
   layer `Grabbable(type = PIVOT_Y)` setup, headlock marker fields,
   placement/headlock marker envelopes, panel shell/mode marker envelopes,
@@ -736,19 +802,14 @@ Interaction SDK pointer input without native multimodal extension forcing.
   retains the JNI declaration and forwards explicit multimodal/controller
   bootstrap callbacks; the coordinator has no feature-property or panel-action
   authority.
-- `app/src/main/.../SpatialValidationCommandModule.kt` owns validation and
-  remote UI command route marker policy: self-test, remote UI command, surface
-  target activation, remote participant creation, and Polar live-validation
-  marker envelopes plus default validation identifiers. It must not mutate the
-  store, operate panels, schedule handlers, call Polar APIs, or start native
-  routes.
-- `app/src/main/.../SpatialValidationWorkflowCoordinator.kt` owns the four
-  exact-action intent opt-ins, validation command parsing, store/session
-  sequencing, remote UI command dispatch, and delayed self-test/Polar
-  automation. Ordinary launches are inert: no store provider, panel callback,
-  Polar callback, or diagnostic callback is invoked unless the intent action
-  matches a declared validation route. The Activity supplies typed panel,
-  particle, Polar, diagnostics, marker, and error-reporting bindings; the
+- `app/src/main/.../SpatialValidationCommandModule.kt` owns remote UI and
+  surface-target validation marker policy. It must not operate panels or start
+  native routes.
+- `app/src/main/.../SpatialValidationWorkflowCoordinator.kt` owns the two
+  exact-action intent opt-ins and remote control dispatch. Ordinary launches
+  are inert unless the intent action matches a declared validation route. The
+  Activity supplies typed panel, particle, diagnostics, marker, and
+  error-reporting bindings; the
   coordinator must not register features, mutate Spatial scene entities, read
   runtime properties, or call JNI.
 - `app/src/main/.../SpatialSurfaceParticleRouteModule.kt` owns the
@@ -821,13 +882,12 @@ Interaction SDK pointer input without native multimodal extension forcing.
   and concrete entity-pose application; actuation cannot register, show, or
   activate an input or panel feature.
 - `app/src/main/.../SpatialPanelPlacementStateCoordinator.kt` is the single
-  mutable owner for workflow placement, private-layer placement, and
-  private-layer visibility. It owns only pure adjust/resize/reset/headlock/
-  visibility transitions; the Activity exposes read-only facade views and
+  mutable owner for private-layer placement and visibility. It owns only pure
+  placement/visibility transitions; the Activity exposes read-only facade views and
   retains pose capture, entities, markers, persistence, properties, and SDK
   mutation. Placement state cannot register or activate a feature.
-- `app/src/main/.../SpatialPanelPoseCoordinator.kt` owns pure workflow
-  headlock, private-layer viewer-pose, and entity-pose-to-placement geometry.
+- `app/src/main/.../SpatialPanelPoseCoordinator.kt` owns private-layer
+  viewer-pose and entity-pose-to-placement geometry.
   The Activity captures `Scene.getViewerPose`, reads/writes entity transforms,
   and adopts any coerced placement through the placement state owner. Pose
   geometry cannot read properties, emit markers, call JNI, or activate features.
@@ -857,7 +917,7 @@ Interaction SDK pointer input without native multimodal extension forcing.
   particle buffers, or JNI start/stop authority.
 - `app/src/main/.../SpatialSdkLaneBoundary.kt` records the explicit route
   boundaries. Spatial SDK layer/panel primitives are the carrier substrate;
-  experiment panel, camera projection, surface particles, and debug probes are
+  layer controls, camera projection, surface particles, and debug probes are
   separate consumers of that carrier.
 - `app/src/main/.../SpatialStagedAssetModule.kt` owns the generic Spatial SDK
   staged 3D asset path. It creates a runtime `Mesh` entity from an explicit
@@ -873,14 +933,9 @@ Interaction SDK pointer input without native multimodal extension forcing.
   camera guide multi-stack receipt fields for Kotlin-side start, carrier, and
   placement markers. It marks opaque downstream slots inactive in this public
   app.
-- `app/src/main/.../ExperimentPanelController.kt` owns the Compose experiment
-  panel UI and launcher UI plus experiment lifecycle and auto-panel marker
-  envelopes. It may request panel visibility changes and low-rate
-  particle-driver scalar updates, but it must not emit markers directly or
-  own camera frames, Vulkan WSI, SDK quad layers, or particle buffers.
 - `app/src/main/.../SpatialComposePanelRegistrationModule.kt` owns construction
-  of the workflow, private-layer control, and launcher Compose panel
-  registrations. The Activity supplies explicit state and requester callbacks,
+  of the private-layer control panel registration. The Activity supplies
+  explicit state and requester callbacks,
   and retains panel lifecycle, scene-object adoption, marker emission, JNI,
   persistence, and video-surface carrier authority limited to feature selection
   and adapter binding.
@@ -938,8 +993,8 @@ Interaction SDK pointer input without native multimodal extension forcing.
   `RUSTY_QUEST_SPATIAL_PRIVATE_FEATURE_RES_DIR=<res-dir>` for private
   drawables/material resources; when absent, the loader returns no features.
 - Headless private stimulus runs can set
-  `debug.rustyquest.spatial.panel_shell.visible=false` to hide the workflow,
-  private-layer, launcher, and native surface-particle panels while leaving
+  `debug.rustyquest.spatial.panel_shell.visible=false` to hide the private-layer
+  and native surface-particle panels while leaving
   Spatial SDK world entities/features active.
 - Future Spatial lane growth should follow the official `FeatureDevSample`
   modularity pattern: move reusable Spatial SDK behavior into feature/module
@@ -990,6 +1045,11 @@ Interaction SDK pointer input without native multimodal extension forcing.
   packed-surface viewport state plus per-eye packed target-rect scissors, not a
   resized Spatial quad. It is intentionally separate from camera stream
   orchestration and surface-particle proof modules.
+- `native-receipt/src/spatial_guide_processing.rs` owns the low-rate generic
+  guide policy. It selects `native-box5` or `gaussian5` independently for the
+  pre/post stages and selects `luma` or `rgb-preserve` only at the first
+  pre-blur stage. Native parity is the default; Android properties and the
+  panel can update the policy without recreating the guide resources.
   Slot 7 is handled as a compositor-window operation after video rendering:
   `vkCmdClearAttachments` writes transparent black only inside both packed
   projection target rects, so video decode/import remains live while the
@@ -1005,8 +1065,18 @@ Interaction SDK pointer input without native multimodal extension forcing.
   `nativeImageReader=true`, `javaHardwareBufferBridge=false`,
   `cpuPixelCopy=false`, same-surface composition, and preserved camera
   alignment.
+- Final raw and downstream camera projections use premultiplied-alpha-over
+  blending on top of that same-surface video draw. Both routes apply the same
+  4-percent inner border fade, so the blend region reveals decoded video rather
+  than transparent compositor passthrough. Offscreen guide and blur passes stay
+  opaque. Camera ingress also exposes a low-rate `Linear` versus
+  `Thin-line AA` A/B policy; the latter uses a footprint-aware five-tap tent
+  sample (0.75-2.0 source texels) before raw display or guide downsampling.
 - `native-receipt/shaders/public_guide_blur.frag.glsl` is the public generic
-  separable 5-tap blur shader asset. Downstream opaque shader overrides are
+  separable 5-tap blur shader asset. It contains both uniform box and Gaussian
+  weights plus first-pass luma/RGB treatment, selected by a small push-policy
+  field. Packed-eye sampling clamps to a half-texel inset so neither kernel can
+  cross the stereo boundary. Downstream opaque shader overrides are
   optional build inputs watched by the native receipt build script. Native
   receipts report compiled shader byte counts and whether opaque overrides were
   present; downstream shader contents remain outside this public app.
@@ -1044,6 +1114,18 @@ internals, and the panel controller does not directly own native start calls or
 SDK quad/swapchain primitives.
 
 ## Validation
+
+The Android builder also supports an output-only presentation variant. Pass
+`-LockedFinalPresentation` to make the APK start the camera projection without
+the debug enable property, force private layer `0` (`Final`), force projection
+scale `1.0`, keep the same-surface video border enabled, hide the private-layer
+panel, and disable app-owned controller, joystick, panel, and
+automation attempts to change those locked authorities. Native code enforces
+the layer and scale locks independently of the Kotlin UI. Use
+`-DistortionSpeedScale 0.5` to reduce the accepted `0.5 Hz` native distortion
+phase to `0.25 Hz`; ordinary builds keep a scale of `1.0`. Give presentation
+builds a distinct `-AppId`, `-AppLabel`, `-ApkFileName`, and `-OutDir` so they do
+not replace the interactive diagnostic build.
 
 Run the static gate:
 
@@ -1181,8 +1263,8 @@ starts tag-filtered logcat before launch, captures the marker summary, window
 state, and screenshot under `local-artifacts\spatial-camera-panel-headset`,
 and leaves the projection running for visual inspection unless `-StopAfterRun`
 is passed. Pass `-PanelShellVisible $false` only for an intentional headless
-run; otherwise workflow and private-layer panel toggles remain available to
-controller input.
+run; otherwise the private-layer panel toggle remains available to controller
+input.
 
 To include the optional public video background, stage the media on the device
 or under the app-private files directory and pass the path at runtime:
@@ -1211,6 +1293,44 @@ This stages the file to the package-scoped external path
 `/sdcard/Android/data/<project-specific-package>/files/v.mp4`,
 which is the path used by the successful native-loop Spatial proofs.
 
+For full immersive-media playback, use the separate explicit route. It
+supports flat, equirectangular 180°, and equirectangular 360° surfaces with
+mono, side-by-side, or top-bottom stereo:
+
+```powershell
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Stage-SpatialCameraPanelImmersiveVideo.ps1 `
+  -Serial <quest-serial> `
+  -SourcePath <local-video.mp4> `
+  -Shape equirect-360 `
+  -Stereo mono `
+  -Launch
+```
+
+This route uses the Spatial SDK direct-to-surface media panel, matches the
+panel pixel dimensions to the encoded source, opens the verified staged file
+through a single MediaStore URI grant without broad media permission, and
+verifies the device copy by size and SHA-256. Projection and stereo
+classification are always explicit; the app does not trust filenames or
+spherical metadata. Equirectangular surfaces remain centered in world space,
+so head rotation changes the viewed direction instead of carrying the video
+with the headset. A right-stick flick selects the previous video on the left
+or the next video on the right; returning the stick near neutral rearms the
+next selection. Direct selection rebuilds the media panel so every item gets
+its own flat/180°/360° shape, mono/SBS/top-bottom stereo mode, and source pixel
+dimensions. Videos remain local and are not bundled into the APK. See
+[`docs/SPATIAL_IMMERSIVE_VIDEO_PLAYBACK.md`](../../docs/SPATIAL_IMMERSIVE_VIDEO_PLAYBACK.md)
+for the shape matrix, failure policy, lifecycle, and validation markers.
+
+Sideload-only builds may instead embed authenticated encrypted packs. One live
+catalog can mix SBS and top-bottom stereo items, including different
+flat/180°/360° source classifications. When the custom camera projection is
+also active, the video remains on its ideal world-anchored Spatial SDK surface
+below a separate planar custom-projection carrier. `Head-fixed border` rebuilds
+only the video as a viewer-following background quad. Video selection and
+presentation changes never curve, rebuild, or restart the planar camera
+projection, and the control panel remains ordered above both visual layers.
+Mono items follow the same ideal direct Spatial SDK media-panel route.
+
 To include a generic Spatial SDK staged 3D asset, provide a staged mesh URI or
 let the wrapper stage a local GLB/GLTF source. Raw FBX sources must be converted
 to GLB/GLTF first; the source model remains local and is not packaged:
@@ -1234,7 +1354,7 @@ The runtime module is controlled by
 `debug.rustyquest.spatial.asset_model.grabbable`. These values are runtime
 inputs, not activation authority. The smoke wrapper also supplies the accepted
 profile/project/feature/revision/SHA-256 tuple from
-`morphospace/conformance-locks/spatial-asset-model.feature.lock.json`; the
+`legacy-workspaces/mixed-integration-v1/conformance-locks/spatial-asset-model.feature.lock.json`; the
 native receipt authority verifies the exact embedded lock before a `Mesh`
 entity is created. Required evidence includes `activationState=applied` and
 `activationEffectiveMarker=rusty.quest.spatial_asset_model.effective` on the
@@ -1258,6 +1378,39 @@ The required room markers are `channel=spatial-virtual-room status=loaded`,
 `status=scene-configured`, `roomAssetSource=packaged-glxf`,
 `genericModuleSupport=true`, and `mrukPlacement=false`.
 
+## Static custom-fragment and raymarch probe
+
+The app also contains a default-off Meta Spatial SDK custom-material probe
+with a static 2D control, a bounded per-eye raymarch mode, and separate shader
+variants with and without `gl_FragDepth`. Its properties, scene occluder A/B,
+effective markers, safety constraints, host checks, and serial-scoped device
+matrix are documented in
+[`docs/SPATIAL_SDK_FRAGMENT_PROBE.md`](../../docs/SPATIAL_SDK_FRAGMENT_PROBE.md).
+
+The implementation is split across
+`SpatialFragmentProbeRoute.kt`, `SpatialFragmentProbeCoordinator.kt`, and
+`app/src/shaders/spatial_fragment_probe_*`. The route is activation authority;
+the coordinator exclusively owns probe scene resources; the smoke wrapper
+owns reversible device projection and evidence capture.
+
+## Fixed-phase Spatial stimulus volume
+
+The separate `spatial-stimulus-volume` feature ports the public native
+OpenXR/Vulkan volume kernel into a Meta Spatial SDK custom fragment material.
+It is disabled in `morphospace/feature.lock.json` and accepts only the canonical
+Rusty Optics profile `stimulus.profile.volume_only_bright_interference` in
+`fixed-phase` mode. The adapter requires temporal modulation and autostart to
+be explicitly false, requires an explicit safety acknowledgement, and bounds
+the visible hold to 30 seconds. Its shader has no clock or advancing phase.
+
+The initial carrier is an oversized opaque scene quad whose pose is refreshed
+from the viewer on each scene tick. This is the Spatial SDK adaptation of the
+profile's `StereoEyeField` / `FullViewport` / `ViewLocked` presentation intent;
+host checks do not prove full headset coverage, comfort, visual parity, or
+performance. No temporal or headset launch belongs to MOD-009. See
+[`docs/SPATIAL_SDK_STIMULUS_VOLUME.md`](../../docs/SPATIAL_SDK_STIMULUS_VOLUME.md)
+for the authority boundary, properties, markers, and later attended gates.
+
 After building with downstream opaque shader inputs, require the public
 multi-stack projection proof with:
 
@@ -1269,3 +1422,59 @@ pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-SpatialCameraPanelA
   -StopAfterRun `
   -RequirePublicMultiStackProjection
 ```
+
+## RGB channel transform
+
+The shared projection adapter supports bounded independent or linked red,
+green, and blue spatial-transform parameters through
+`rusty.quest.rgb-channel-transform.v1`. It provides panel controls, validation
+commands, JNI normalization, a 96-byte Vulkan uniform, and requested/effective
+markers. Bypass leaves the consuming shader's existing behavior unchanged.
+The shared UI-action wrapper exposes `rgb-channel-bypass`,
+`rgb-channel-linked`, and `rgb-channel-independent`; the same wrapper exposes
+`video-previous`, `video-next`, `video-select -VideoPackId <pack-id>`,
+`video-world-anchored`, and `video-head-fixed-border` so a live
+custom-projection session can change transform presets, packaged video
+sources, and the final carrier mode without restarting the Activity.
+
+This is transport and control infrastructure only. The guide signal,
+color-to-strength mapping, artistic tuning, and final sampling/compositing
+formula remain consumer-owned. See `docs/RGB_CHANNEL_TRANSFORM.md`.
+
+## File-based control profiles
+
+The running custom-projection route can accept one bounded
+`rusty.quest.spatial_camera_panel.control_profile.v1` JSON file. The desktop
+replay tool can author this public control surface, while a serial-scoped
+helper atomically replaces the active app-specific file and waits for an
+app-owned effective receipt. A file left on the headset before launch is
+deliberately inert; only a replacement made after the watcher is armed can
+change the current run.
+
+This path carries only low-rate public controls. It does not carry camera
+frames, videos, shader payloads, guide packing, or private effect formulas.
+Both the Hostess-state converter and the profile parser share one strict
+byte-ingress validator that rejects malformed UTF-8, duplicate decoded object
+keys at any depth, incomplete JSON, and trailing content before `org.json`
+parsing. Integral metadata is converted exactly, so fractional or out-of-range
+`revision` and `created_unix_ms` values cannot round or wrap into accepted
+`Long` values.
+See `docs/SPATIAL_CAMERA_CONTROL_PROFILES.md`.
+
+## Projection surface displacement
+
+The shared projection adapter also exposes
+`rusty.quest.projection-surface-displacement.v1`. Its `Off`, `Gentle`, and
+`Deep` controls feed one bounded native owner. A build-time optional vertex
+payload can select a 32x32 tessellated projection draw; Off or a missing payload
+uses the original three-vertex fullscreen pipeline exactly.
+
+The Spatial SDK `SceneQuadLayer` remains planar. The tessellated draw produces
+parallax inside that carrier and deliberately keeps the camera hardware-buffer
+path, encrypted stereo video selection, RGB transforms, and core/buffer/outer
+video compositor alive. Signal derivation, signed depth mapping, and artistic
+tuning remain downstream-owned. Serial-scoped validation can switch live with
+`projection-surface-displacement-off`,
+`projection-surface-displacement-gentle`, and
+`projection-surface-displacement-deep`. See
+`docs/PROJECTION_SURFACE_DISPLACEMENT.md`.

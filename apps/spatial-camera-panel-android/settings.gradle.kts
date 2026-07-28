@@ -14,6 +14,10 @@ dependencyResolutionManagement {
   }
 }
 
-rootProject.name = "RustyQuestSpatialCameraPanel"
+rootProject.name = "RustyQuestSpatialApps"
 
 include(":app")
+include(":spatial-sdk-shared")
+include(":strobe-app")
+
+project(":strobe-app").projectDir = file("../spatial-vr-strobe-android/app")

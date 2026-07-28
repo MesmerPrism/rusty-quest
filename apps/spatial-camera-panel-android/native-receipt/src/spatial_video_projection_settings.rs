@@ -83,6 +83,7 @@ impl SpatialVideoProjectionSettings {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum SpatialVideoProjectionStereoLayout {
     SideBySideLeftRight,
+    TopBottom,
     Mono,
 }
 
@@ -90,6 +91,7 @@ impl SpatialVideoProjectionStereoLayout {
     pub(crate) fn from_token(value: &str) -> Self {
         match normalized_token(value).as_str() {
             "mono" | "mono-full" | "monoscopic" => Self::Mono,
+            "top-bottom" | "top-bottom-left-right" | "tb" | "over-under" => Self::TopBottom,
             "side-by-side-left-right" | "sbs-left-right" | "sbs" | "" => Self::SideBySideLeftRight,
             _ => Self::SideBySideLeftRight,
         }
@@ -98,6 +100,7 @@ impl SpatialVideoProjectionStereoLayout {
     pub(crate) fn marker_value(self) -> &'static str {
         match self {
             Self::SideBySideLeftRight => "side-by-side-left-right",
+            Self::TopBottom => "top-bottom-left-right",
             Self::Mono => "mono",
         }
     }
@@ -106,6 +109,8 @@ impl SpatialVideoProjectionStereoLayout {
         match (self, eye_index) {
             (Self::SideBySideLeftRight, 0) => [0.0, 0.0, 0.5, 1.0],
             (Self::SideBySideLeftRight, _) => [0.5, 0.0, 0.5, 1.0],
+            (Self::TopBottom, 0) => [0.0, 0.0, 1.0, 0.5],
+            (Self::TopBottom, _) => [0.0, 0.5, 1.0, 0.5],
             (Self::Mono, _) => [0.0, 0.0, 1.0, 1.0],
         }
     }
@@ -230,5 +235,23 @@ mod tests {
         assert!(settings
             .marker_fields()
             .contains("cameraProjectionAlignmentPreserved=true"));
+    }
+
+    #[test]
+    fn top_bottom_rects_map_each_eye_into_the_packed_surface_contract() {
+        let settings = SpatialVideoProjectionSettings {
+            enabled: true,
+            path: "video/staged-top-bottom-source".to_string(),
+            stereo_layout: SpatialVideoProjectionStereoLayout::from_token("top-bottom"),
+            ..SpatialVideoProjectionSettings::default()
+        };
+        assert!(settings.active());
+        assert_eq!(settings.source_rect_for_eye(0), [0.0, 0.0, 1.0, 0.5]);
+        assert_eq!(settings.source_rect_for_eye(1), [0.0, 0.5, 1.0, 0.5]);
+        assert_eq!(settings.target_rect_for_eye(0), [0.0, 0.0, 0.5, 1.0]);
+        assert_eq!(settings.target_rect_for_eye(1), [0.5, 0.0, 0.5, 1.0]);
+        assert!(settings
+            .marker_fields()
+            .contains("videoProjectionStereoLayout=top-bottom-left-right"));
     }
 }

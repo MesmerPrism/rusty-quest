@@ -428,6 +428,11 @@ Assert-ContainsTokens $buildScriptText @(
     'gpu-mesh-boundary',
     'panel_candidate_file',
     'panel_status_file',
+    'private_layer_guide_push_constant_bytes = 112',
+    'private_layer_guide_push_constant_portable_limit_bytes = 128',
+    'private_layer_guide_phase_rate_hz = 0\.5',
+    'private_layer_guide_shader_sha256',
+    'private_layer_projection_shader_sha256',
     'spatial_sdk_packaged = \$false',
     'rusty\.quest\.native_renderer_android\.build_manifest\.v1'
 ) "native renderer build script"

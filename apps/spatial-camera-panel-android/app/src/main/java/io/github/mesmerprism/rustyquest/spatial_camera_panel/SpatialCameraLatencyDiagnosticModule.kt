@@ -174,6 +174,7 @@ internal enum class SpatialCameraLatencyReprojectionGuardBandMode(
 ) {
   ZoomToFill("zoom-to-fill", 0),
   ReducedFootprint("reduced-footprint", 1),
+  DynamicReducedFootprint("dynamic-reduced-footprint", 2),
 }
 
 internal data class SpatialCameraLatencyDiagnosticSettings(
@@ -371,6 +372,8 @@ internal fun parseSpatialCameraLatencyDiagnosticSettings(
       when (value(CAMERA_LATENCY_REPROJECTION_GUARD_BAND_MODE_PROPERTY)) {
         "", "zoom-to-fill" -> SpatialCameraLatencyReprojectionGuardBandMode.ZoomToFill
         "reduced-footprint" -> SpatialCameraLatencyReprojectionGuardBandMode.ReducedFootprint
+        "dynamic-reduced-footprint" ->
+            SpatialCameraLatencyReprojectionGuardBandMode.DynamicReducedFootprint
         else ->
             return SpatialCameraLatencyDiagnosticParseResult(
                 error = "invalid-reprojection-guard-band-mode"

@@ -70,6 +70,16 @@ $nativeRendererOptionSurface = @(
     (Read-RequiredText (Join-Path $srcRoot "native_renderer_options.rs") "native renderer options facade"),
     (Read-RequiredText (Join-Path $srcRoot "native_renderer_options_tests.rs") "native renderer options tests")
 ) -join "`n"
+
+Assert-ContainsTokens $privateExtensionSlot @(
+    'PRIVATE_GUIDE_NATIVE_PHASE_RATE_HZ: f32 = 0\.5',
+    'struct PrivateLayerGuidePush',
+    'reprojection_row0: \[f32; 4\]',
+    'reprojection_row1: \[f32; 4\]',
+    'reprojection_row2: \[f32; 4\]',
+    'reprojection_params: \[f32; 4\]',
+    'size_of::<PrivateLayerGuidePush>\(\) == 112'
+) "private guide push-constant ABI"
 $xrVulkanSurface = @(
     (Read-RequiredText (Join-Path $srcRoot "xr_vulkan.rs") "xr_vulkan facade"),
     (Read-RequiredText (Join-Path $srcRoot "openxr_passthrough_style.rs") "OpenXR passthrough style helper"),

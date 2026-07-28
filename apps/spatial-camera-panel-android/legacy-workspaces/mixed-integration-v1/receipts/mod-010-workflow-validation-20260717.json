@@ -1,0 +1,204 @@
+{
+  "schema": "rusty.morphospace.workflow.validation_receipt.v1",
+  "project_id": "spatial-camera-panel",
+  "unit_id": "mod-010",
+  "result": "pass",
+  "tier": "deep",
+  "generated_at": "2026-07-17T17:11:10.3186547Z",
+  "summary": "The permission-cleared, default-disabled Meta Spatial SDK vr_strobe port passed source-only host validation. No APK was built, no headset was mutated, and no temporal content was launched.",
+  "artifacts": [
+    {
+      "artifact_id": "mod010-host-validation",
+      "path": "S:\\Work\\repos\\active\\rusty-quest\\apps\\spatial-camera-panel-android\\morphospace\\receipts\\mod-010-host-validation-20260717.json",
+      "sha256": "4c2b9a212b63f9f1984f2e7580450fb9824bf201a20b67b774cef7cf4a97bf77",
+      "kind": "source-only-host-validation"
+    },
+    {
+      "artifact_id": "mod010-source-permission",
+      "path": "S:\\Work\\repos\\active\\rusty-quest\\apps\\spatial-camera-panel-android\\morphospace\\receipts\\mod-010-vr-strobe-source-permission-20260717.json",
+      "sha256": "903ec1803e6ef8b71a5bc7ef942f3743fba5ac7846c67b76e1134a515e6ba966",
+      "kind": "user-relayed-creator-permission"
+    }
+  ],
+  "criteria": [
+    {
+      "acceptance_id": "permission-and-attribution",
+      "command": "Source receipt, attribution notice, and pinned-reference static checks",
+      "status": "pass",
+      "evidence_refs": [
+        "mod010-host-validation",
+        "mod010-source-permission"
+      ]
+    },
+    {
+      "acceptance_id": "closed-world-safety",
+      "command": "VR Strobe route and safety-state JVM tests",
+      "status": "pass",
+      "evidence_refs": [
+        "mod010-host-validation"
+      ]
+    },
+    {
+      "acceptance_id": "portal-profile-parity",
+      "command": "Preset/profile catalog JVM and static parity checks",
+      "status": "pass",
+      "evidence_refs": [
+        "mod010-host-validation"
+      ]
+    },
+    {
+      "acceptance_id": "interference-designer-parity",
+      "command": "Interference profile codec, parameter-boundary, and shader contract tests",
+      "status": "pass",
+      "evidence_refs": [
+        "mod010-host-validation"
+      ]
+    },
+    {
+      "acceptance_id": "real-strobe-designer-parity",
+      "command": "Real-strobe profile, phase, noise, fixation, and duration tests",
+      "status": "pass",
+      "evidence_refs": [
+        "mod010-host-validation"
+      ]
+    },
+    {
+      "acceptance_id": "source-only-validation",
+      "command": "Focused JVM tests, Spatial static checks, and shader compilation",
+      "status": "pass",
+      "evidence_refs": [
+        "mod010-host-validation"
+      ]
+    }
+  ],
+  "gates": [
+    {
+      "gate_id": "validation-quick",
+      "command": "VR Strobe focused JVM tests and static gate",
+      "status": "pass",
+      "evidence_refs": [
+        "mod010-host-validation"
+      ]
+    },
+    {
+      "gate_id": "validation-standard",
+      "command": "Spatial Camera Panel JVM suite, workflow/static regression gates, and shader compilation",
+      "status": "pass",
+      "evidence_refs": [
+        "mod010-host-validation"
+      ]
+    },
+    {
+      "gate_id": "instruction-synchronization",
+      "command": "Verify every declared instruction surface is complete and validated.",
+      "status": "pass",
+      "evidence_refs": [
+        "mod010-host-validation"
+      ]
+    }
+  ],
+  "repository_revisions": [
+    {
+      "repo_id": "spatial-app",
+      "path": "S:\\Work\\repos\\active\\rusty-quest\\apps\\spatial-camera-panel-android",
+      "branch": "codex/spatial-camera-guard-band-baseline",
+      "base_revision": "7df59dac068d62e6c222a522c763122dc89efd70",
+      "head_revision": "7df59dac068d62e6c222a522c763122dc89efd70"
+    },
+    {
+      "repo_id": "quest-repo",
+      "path": "S:\\Work\\repos\\active\\rusty-quest",
+      "branch": "codex/spatial-camera-guard-band-baseline",
+      "base_revision": "7df59dac068d62e6c222a522c763122dc89efd70",
+      "head_revision": "7df59dac068d62e6c222a522c763122dc89efd70"
+    }
+  ],
+  "changed_paths": [
+    {
+      "repo_id": "spatial-app",
+      "path": "THIRD_PARTY_NOTICES.md"
+    },
+    {
+      "repo_id": "spatial-app",
+      "path": "app/src/main/java/io/github/mesmerprism/rustyquest/spatial_camera_panel/vrstrobe/SpatialVrStrobeCoordinator.kt"
+    },
+    {
+      "repo_id": "spatial-app",
+      "path": "app/src/main/java/io/github/mesmerprism/rustyquest/spatial_camera_panel/vrstrobe/VrStrobeControlPanel.kt"
+    },
+    {
+      "repo_id": "spatial-app",
+      "path": "app/src/main/java/io/github/mesmerprism/rustyquest/spatial_camera_panel/vrstrobe/VrStrobeFeatureRoute.kt"
+    },
+    {
+      "repo_id": "spatial-app",
+      "path": "app/src/main/java/io/github/mesmerprism/rustyquest/spatial_camera_panel/vrstrobe/VrStrobePresetCatalog.kt"
+    },
+    {
+      "repo_id": "spatial-app",
+      "path": "app/src/main/java/io/github/mesmerprism/rustyquest/spatial_camera_panel/vrstrobe/VrStrobeProfileCodec.kt"
+    },
+    {
+      "repo_id": "spatial-app",
+      "path": "app/src/main/java/io/github/mesmerprism/rustyquest/spatial_camera_panel/vrstrobe/VrStrobeProfiles.kt"
+    },
+    {
+      "repo_id": "spatial-app",
+      "path": "app/src/main/java/io/github/mesmerprism/rustyquest/spatial_camera_panel/vrstrobe/VrStrobeSafetyController.kt"
+    },
+    {
+      "repo_id": "spatial-app",
+      "path": "app/src/shaders/vr_strobe_interference.frag"
+    },
+    {
+      "repo_id": "spatial-app",
+      "path": "app/src/shaders/vr_strobe_interference.vert"
+    },
+    {
+      "repo_id": "spatial-app",
+      "path": "app/src/test/java/io/github/mesmerprism/rustyquest/spatial_camera_panel/vrstrobe/VrStrobeFeatureRouteTest.kt"
+    },
+    {
+      "repo_id": "spatial-app",
+      "path": "app/src/test/java/io/github/mesmerprism/rustyquest/spatial_camera_panel/vrstrobe/VrStrobeProfileCatalogTest.kt"
+    },
+    {
+      "repo_id": "spatial-app",
+      "path": "app/src/test/java/io/github/mesmerprism/rustyquest/spatial_camera_panel/vrstrobe/VrStrobeSafetyControllerTest.kt"
+    },
+    {
+      "repo_id": "spatial-app",
+      "path": "morphospace/iteration-units/mod-010.json"
+    },
+    {
+      "repo_id": "spatial-app",
+      "path": "morphospace/receipts/mod-010-host-validation-20260717.json"
+    },
+    {
+      "repo_id": "spatial-app",
+      "path": "morphospace/receipts/mod-010-vr-strobe-source-permission-20260717.json"
+    },
+    {
+      "repo_id": "spatial-app",
+      "path": "morphospace/receipts/mod-010-workflow-validation-20260717.json"
+    },
+    {
+      "repo_id": "quest-repo",
+      "path": "docs/SPATIAL_SDK_VR_STROBE_PORT.md"
+    },
+    {
+      "repo_id": "quest-repo",
+      "path": "tools/checks/Test-SpatialVrStrobeStatic.ps1"
+    },
+    {
+      "repo_id": "quest-repo",
+      "path": "tools/checks/Test-SpatialCameraPanelWorkflowStatic.ps1"
+    },
+    {
+      "repo_id": "quest-repo",
+      "path": "tools/Test-SpatialCameraPanelAndroid.ps1"
+    }
+  ],
+  "device_validation": null,
+  "evidence_boundary": "Passing validation is source-only. It does not claim headset appearance, stereo comfort, frame pacing, compositor or scanout timing, temporal frequency fidelity, device performance, medical efficacy, or source-device equivalence."
+}

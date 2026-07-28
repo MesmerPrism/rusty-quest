@@ -4,7 +4,6 @@ internal data class SpatialSurfaceParticleRecenterBindings(
     val featureEnabled: () -> Boolean,
     val surfaceTargetId: () -> String,
     val particleLayerVisible: () -> Boolean,
-    val workflowPanelVisible: () -> Boolean,
     val privateLayerPanelVisible: () -> Boolean,
     val receiptLibraryLoaded: () -> Boolean,
     val recenterNative: () -> Long,
@@ -36,7 +35,6 @@ internal class SpatialSurfaceParticleRecenterCoordinator(
               surfaceTargetId = surfaceTargetId,
               particleLayerVisible = particleViewVisible,
               requireParticleView = request.requireParticleView,
-              workflowPanelVisible = bindings.workflowPanelVisible(),
               privateLayerPanelVisible = bindings.privateLayerPanelVisible(),
           )
       )

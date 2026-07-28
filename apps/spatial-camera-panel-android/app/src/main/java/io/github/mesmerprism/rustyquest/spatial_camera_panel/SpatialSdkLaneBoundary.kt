@@ -2,7 +2,6 @@ package io.github.mesmerprism.rustyquest.spatial_camera_panel
 
 internal enum class SpatialSdkLaneKind {
   Carrier,
-  PanelWorkflow,
   CameraProjection,
   PublicMultiStack,
   SurfaceParticle,
@@ -34,28 +33,13 @@ internal object SpatialSdkLayerCarrier {
           highRatePayloadPolicy = "surface-carrier-only",
           mayRequest =
               setOf(
-                  "panel-workflow",
                   "camera-projection",
                   "public-multistack",
                   "surface-particle",
                   "virtual-room",
                   "debug-probe",
               ),
-          mustNotOwn = setOf("Camera2 streams", "Vulkan shader semantics", "particle dynamics", "session truth"),
-      )
-}
-
-internal object ExperimentPanelControllerBoundary {
-  val boundary =
-      SpatialSdkLaneBoundary(
-          id = ExperimentPanelController.boundaryId,
-          kind = SpatialSdkLaneKind.PanelWorkflow,
-          owner = "Compose experiment panel",
-          authority = ExperimentPanelController.authority,
-          renderCarrier = "Spatial SDK ComposeViewPanelRegistration",
-          highRatePayloadPolicy = ExperimentPanelController.highRatePayloadPolicy,
-          mayRequest = setOf("surface-particle parameter update", "workflow panel visibility"),
-          mustNotOwn = setOf("Camera2 frames", "Vulkan WSI", "particle buffers"),
+          mustNotOwn = setOf("Camera2 streams", "Vulkan shader semantics", "particle dynamics"),
       )
 }
 
@@ -69,7 +53,7 @@ internal object CameraProjectionProbeController {
           renderCarrier = "SDK-owned SceneQuadLayer Android Surface",
           highRatePayloadPolicy = "Camera2/AHardwareBuffer only, no JSON frames",
           mayRequest = setOf("spatial-sdk-layer-carrier"),
-          mustNotOwn = setOf("surface particles", "driver-profile dynamics", "questionnaire state"),
+          mustNotOwn = setOf("surface particles", "effect parameter dynamics"),
       )
 }
 
@@ -96,8 +80,8 @@ internal object SurfaceParticleLayerController {
           authority = "native Vulkan particle compute/draw over SDK-owned panel surface",
           renderCarrier = "Spatial SDK VideoSurfacePanelRegistration Android Surface",
           highRatePayloadPolicy = "resident native buffers only, no Kotlin particle arrays",
-          mayRequest = setOf("spatial-sdk-layer-carrier", "low-rate driver-profile scalars"),
-          mustNotOwn = setOf("Camera2/AImageReader streams", "raw camera target rects", "questionnaire state"),
+          mayRequest = setOf("spatial-sdk-layer-carrier", "low-rate effect-control scalars"),
+          mustNotOwn = setOf("Camera2/AImageReader streams", "raw camera target rects"),
       )
 }
 
@@ -153,7 +137,7 @@ internal object SpatialDebugProbeController {
           renderCarrier = "temporary SceneQuadLayer or PanelSurface variants",
           highRatePayloadPolicy = "diagnostic-only",
           mayRequest = setOf("spatial-sdk-layer-carrier"),
-          mustNotOwn = setOf("experiment flow", "camera projection", "surface particles"),
+          mustNotOwn = setOf("camera projection", "surface particles"),
       )
 }
 
@@ -161,7 +145,6 @@ internal object SpatialSdkLaneBoundaries {
   val all: List<SpatialSdkLaneBoundary> =
       listOf(
           SpatialSdkLayerCarrier.boundary,
-          ExperimentPanelControllerBoundary.boundary,
           CameraProjectionProbeController.boundary,
           PublicMultiStackController.boundary,
           SurfaceParticleLayerController.boundary,

@@ -42,6 +42,7 @@ param(
         "PresentationOpenXr11Overscan0",
         "PresentationOpenXr11Overscan10",
         "PresentationOpenXr11GuardBand10",
+        "PresentationOpenXr11DynamicGuardBand10",
         "PresentationOpenXr16",
         "PresentationOpenXr22",
         "PresentationOpenXr11Adoption45",
@@ -321,6 +322,11 @@ switch ($Preset) {
         & $setPresentationWarpBaseline -PoseMode "openxr-locate-views" -LeadMs 11
         $settings.reprojection_source_overscan_percent = "10"
         $settings.reprojection_guard_band_mode = "reduced-footprint"
+    }
+    "PresentationOpenXr11DynamicGuardBand10" {
+        & $setPresentationWarpBaseline -PoseMode "openxr-locate-views" -LeadMs 11
+        $settings.reprojection_source_overscan_percent = "10"
+        $settings.reprojection_guard_band_mode = "dynamic-reduced-footprint"
     }
     "PresentationOpenXr16" {
         & $setPresentationWarpBaseline -PoseMode "openxr-locate-views" -LeadMs 16

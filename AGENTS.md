@@ -82,19 +82,34 @@ property closure, stop only the target package, and restore exact prior values.
 
 For work in `apps/spatial-camera-panel-android`, then read its
 `morphospace/project.spec.json`, `feature.lock.json`, `workspace.state.json`,
-and the current iteration unit before source. That app is the first downstream
-adopter of the portable project/module workflow: the panel shell is the only
-workflow-selected baseline, nearby particle/hand/camera/media/asset/room
-families are explicit disabled entries, and unlisted features remain inert.
+and the current iteration unit before source. This directory is shared public
+adapter source, not a single consumer-project authority. Its live workflow
+entrypoint is the inert v2 index: the panel shell remains its only selected
+baseline, nearby particle/hand/camera/media/asset/room families are explicit
+disabled entries, and unlisted features remain inert. Private downstream effect
+projects resume from their own private project workspaces, while Spatial VR
+Strobe resumes from `apps/spatial-vr-strobe-android/morphospace/`. The complete
+mixed v1 camera ledger is integrity-bound under
+`apps/spatial-camera-panel-android/legacy-workspaces/mixed-integration-v1/`;
+neither that history nor Strobe state may gate another project.
 The staged Spatial asset lane is also lock-bound: a GLB/GLTF URI or legacy
 enable property alone must stay inert unless the app-owned
 `spatial-asset-model.feature.lock.json` and its exact runtime identity tuple
 apply first.
 
-For corrective WF-005 reconciliation, inspect both app-local workspaces:
-`apps/spatial-camera-panel-android/morphospace` and
-`apps/native-renderer-android/morphospace`. Their default locks remain inert;
-particle and hand families may appear only in explicit conformance locks. Run
+Spatial Camera Panel and Spatial VR Strobe are mutually exclusive public adapter products. A
+build must select one product identity and therefore one package, client,
+feature-lock, marker, property, intermediate-build, and output namespace.
+Ambient Android properties cannot switch products. Run
+`tools/checks/Test-SpatialProductIsolationStatic.ps1` when changing this
+boundary.
+
+For corrective WF-005 reconciliation, inspect the archived Camera integration
+workspace and the independent Native Renderer workspace:
+`apps/spatial-camera-panel-android/legacy-workspaces/mixed-integration-v1` and
+`apps/native-renderer-android/morphospace`. Their historical default locks
+remain inert; particle and hand families may appear only in explicit
+conformance locks. Run
 `tools/checks/Test-SpatialCameraPanelWorkflowStatic.ps1` and its self-test for
 workspace changes. Local MOD-006 source validation is device-pending and must
 not be presented as central promotion or device acceptance.
@@ -247,6 +262,41 @@ free of app policy. `rusty-quest-remote-camera` remains a compatibility adapter
 that maps into this runtime; do not copy its properties or defaults into new
 source, processor, or sink descriptors.
 
+Spatial Camera Panel offline immersive media is a separate local adapter
+boundary documented in `docs/SPATIAL_IMMERSIVE_VIDEO_PLAYBACK.md`. Keep its
+encrypted pack catalog generic, bounded, opt-in, and free of private media
+names. In direct video-only mode, each item owns its ideal Spatial SDK shape
+and stereo mode; switching may rebuild only that world-centered media surface
+and decoder, never head-lock an immersive surface, and must require neutral
+rearm between right-stick selection flicks. When video and the custom camera
+projection are both active, keep them on coordinated carriers: the video uses
+its declared world-anchored flat/180/360 surface or an explicitly selected
+legacy head-fixed background quad, while the custom camera/effect compositor
+retains its planar stereo carrier and camera mapping. The video carrier uses a
+strictly lower Spatial SDK z-index than the custom projection, and the control
+panel remains above both. Video selection or
+presentation changes may rebuild only the video surface and decoder; they must
+retain the Activity, planar camera carrier, control state, and current private
+configuration.
+
+The reusable RGB-channel spatial transform is documented in
+`docs/RGB_CHANNEL_TRANSFORM.md`. Rusty Quest owns only its bounded neutral
+configuration, controls, JNI/Vulkan transport, ABI, and effective markers.
+Consuming projects retain their signal derivation, color-to-strength mapping,
+artistic tuning, and final distortion/compositor formulas. Keep those formulas
+out of this public repository and run the dedicated RGB static check whenever
+the ABI or controls change.
+
+The reusable projection-surface displacement transport is documented in
+`docs/PROJECTION_SURFACE_DISPLACEMENT.md`. Rusty Quest owns its bounded,
+disabled-by-default controls, 32x32 tessellated draw, optional private vertex
+slot, JNI/Vulkan transport, exact fullscreen fallback, and effective markers.
+Downstream projects own the displacement field, signal-to-depth mapping, and
+tuning. The Spatial SDK carrier remains planar; do not claim compositor-space
+mesh or environment-depth geometry. Run the dedicated projection-surface
+static check whenever this ABI or pipeline selection changes.
+authority.
+
 For release-candidate broker recovery, distinguish client death from authority
 process death. A stopped client may rebind to the existing authority revision;
 after an explicit broker process stop, clients must rebuild from their exact
@@ -298,6 +348,10 @@ ordinary serial-scoped ADB work behind a global `adb-server` lease.
   marker stream, media path, or private payload behavior unless a feature
   descriptor, app spec, runtime profile, Android property, or intent extra
   explicitly enables that feature.
+- Keep camera replay capture finite and explicit-opt-in. Store packed frame
+  data only in the app-private external-files tree, emit bounded manifest and
+  completion markers, and treat captures and pulled copies as local artifacts
+  that never enter source control.
 - Do not build or launch a new project from loose APK/profile inputs or shared
   package defaults. Resolve/build from an exact app lock, validate the run
   capsule, and keep package, marker, property, staging, and build identities
@@ -318,6 +372,33 @@ ordinary serial-scoped ADB work behind a global `adb-server` lease.
   transport layer; the consuming app must also emit the matching effective
   setting, marker, or command receipt before the value counts as accepted
   runtime behavior.
+- Route one-sided Meta Spatial SDK UI-panel placement through the shared
+  front-face convention in `docs/SPATIAL_SDK_PANEL_FACING.md`. Keep UI-panel
+  facing separate from scene-quad/material orientation, emit the effective
+  facing marker, register only the panels active for an exclusive feature
+  route, and require headset visibility confirmation after a change. Layer
+  z-index is not a substitute for an attended foreground contract over a
+  full-field custom material. A nearer, proportionally scaled panel requires
+  separate comfort and controller-ray proof; if that proof fails, retain the
+  comfortable panel pose and suppress the competing carrier while the panel is
+  visible without changing its output lifecycle. Do not rely on ECS
+  `Visible(false)` alone to isolate an unrelated compositor panel; hide its
+  native scene object and remove app actions that a reserved global controller
+  shortcut must never invoke. Give each reserved physical shortcut one
+  authoritative action arbiter. Multiple platform observations may feed that
+  arbiter when no single route is proven complete, but they must share physical
+  edge state or a bounded cross-route deduplication window; never discard a
+  working key/motion route merely to make a separate snapshot route exclusive.
+  Emit action-to-render receipts; a host-side SceneObject assignment or a
+  completed series of `SceneMaterial.setAttribute` calls proves submission,
+  not visible renderer adoption. Keep interactive material deltas bounded,
+  separate submission from a later frame-boundary observation, and retain
+  attended visibility as the final proof. When a comfortable physical panel must overlay a
+  view-locked carrier, scaling carrier distance and geometry by the same ratio
+  may preserve angular coverage while restoring depth order; clamp its nearest
+  distance behind the panel and require attended occlusion proof. Treat a
+  reference UI's random editor bounds as outer compatibility limits, not proof
+  of numerically valid or performant mobile shader profiles.
 
 ## Validation
 

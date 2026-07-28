@@ -632,8 +632,7 @@ internal object SpatialSurfaceParticleRouteModule {
   ): String =
       "channel=native-surface-particle-layer status=panel-registrations-created " +
           "renderPolicy=$RENDER_POLICY panelRegistrationCount=$panelRegistrationCount " +
-          "workflowPanelRegistrationId=spatial_camera_panel " +
-          "launcherPanelRegistrationId=spatial_camera_panel_launcher " +
+          "controlPanelRegistrationId=spatial_private_layer_panel " +
           "projectionPanelRegistrationId=spatial_camera_projection_surface_panel " +
           "particlePanelRegistrationId=${activityMarkerToken(particlePanelRegistrationId)} " +
           "surfaceParticleProjectionCarrier=${activityMarkerToken(carrier)} " +
@@ -669,9 +668,6 @@ internal object SpatialSurfaceParticleRouteModule {
       activityMarkersFile: String,
       panelRegistrationCount: Int,
       panelMode: String,
-      workflowPanelVisible: Boolean,
-      launcherPanelVisible: Boolean,
-      legacyLauncherPanelSuppressed: Boolean,
       particleLayerEntityCreated: Boolean,
       particleSurfacePanelReady: Boolean,
       particleSurfaceConsumerCalled: Boolean,
@@ -685,8 +681,6 @@ internal object SpatialSurfaceParticleRouteModule {
       openXrInstanceHandleNonZero: Boolean,
       openXrSessionHandleNonZero: Boolean,
       openXrGetInstanceProcAddrHandleNonZero: Boolean,
-      currentDriverProfileId: String,
-      currentProfileId: String,
       placementMarkerFields: String,
       stereoMarkerFields: String,
   ): String =
@@ -694,9 +688,7 @@ internal object SpatialSurfaceParticleRouteModule {
           "phase=${activityMarkerToken(phase)} " +
           "renderPolicy=$RENDER_POLICY " +
           "activityMarkerFile=$activityMarkersFile panelRegistrationCount=$panelRegistrationCount " +
-          "panelMode=$panelMode workflowPanelVisible=$workflowPanelVisible " +
-          "launcherPanelVisible=$launcherPanelVisible " +
-          "legacyLauncherPanelSuppressed=$legacyLauncherPanelSuppressed " +
+          "panelMode=$panelMode " +
           "particleLayerEntityCreated=$particleLayerEntityCreated " +
           "particleSurfacePanelReady=$particleSurfacePanelReady " +
           "particleSurfaceConsumerCalled=$particleSurfaceConsumerCalled " +
@@ -711,8 +703,6 @@ internal object SpatialSurfaceParticleRouteModule {
           "openXrInstanceHandleNonZero=$openXrInstanceHandleNonZero " +
           "openXrSessionHandleNonZero=$openXrSessionHandleNonZero " +
           "openXrGetInstanceProcAddrHandleNonZero=$openXrGetInstanceProcAddrHandleNonZero " +
-          "currentDriverProfileId=${activityMarkerToken(currentDriverProfileId)} " +
-          "currentProfileId=${activityMarkerToken(currentProfileId)} " +
           placementMarkerFields + " " +
           stereoMarkerFields
 
@@ -722,14 +712,13 @@ internal object SpatialSurfaceParticleRouteModule {
       surfaceTargetId: String,
       particleLayerVisible: Boolean,
       requireParticleView: Boolean,
-      workflowPanelVisible: Boolean,
       privateLayerPanelVisible: Boolean,
   ): String =
       "channel=native-surface-particle-layer status=particle-recenter-ignored " +
           "controllerInput=right-trigger-button inputSource=${activityMarkerToken(inputSource)} " +
           "${detail.trim()} surfaceTargetId=${activityMarkerToken(surfaceTargetId)} " +
           "requiredSurfaceTargetId=icosphere particleLayerVisible=$particleLayerVisible " +
-          "requireParticleView=$requireParticleView workflowPanelVisible=$workflowPanelVisible " +
+          "requireParticleView=$requireParticleView " +
           "privateLayerPanelVisible=$privateLayerPanelVisible " +
           "privateSurfaceParticleWorldAnchorRecenterAccepted=false " +
           "privateSurfaceParticleWorldAnchorRecenterRejectReason=not-icosphere-particle-view " +
@@ -789,15 +778,12 @@ internal object SpatialSurfaceParticleRouteModule {
       source: String,
       stopAttempted: Boolean,
       stopSucceeded: Boolean,
-      launcherPanelVisible: Boolean,
       particleLayerStarted: Boolean,
       nativeSurfaceStartRequested: Boolean,
   ): String =
       "channel=camera-hwb-spatial-probe status=particle-layer-suppressed " +
           "source=${activityMarkerToken(source)} cameraStackSuppressesParticles=true " +
           "stopAttempted=$stopAttempted stopSucceeded=$stopSucceeded particleLayerVisible=false " +
-          "launcherPanelVisible=$launcherPanelVisible " +
-          "legacyLauncherPanelSuppressed=true launcherPanelSuppressedForCameraStack=true " +
           "particleLayerStarted=$particleLayerStarted " +
           "nativeSurfaceStartRequested=$nativeSurfaceStartRequested " +
           "particleLayerRenderContinuity=stopped-for-camera-stack"

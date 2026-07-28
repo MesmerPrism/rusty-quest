@@ -250,7 +250,7 @@ internal class SpatialCameraHwbProjectionRawCarrierCoordinator(
             layer.setZIndex(layerZIndex)
             layer.setAlphaBlend(
                 LayerAlphaBlend(
-                    BlendFactor.SOURCE_ALPHA,
+                    BlendFactor.ONE,
                     BlendFactor.ONE_MINUS_SOURCE_ALPHA,
                     BlendFactor.ONE,
                     BlendFactor.ONE_MINUS_SOURCE_ALPHA,

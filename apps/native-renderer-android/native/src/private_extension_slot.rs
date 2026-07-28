@@ -35,6 +35,7 @@ const PRIVATE_GUIDE_TARGET_COUNT: usize = 5;
 const PRIVATE_GUIDE_PASS_COUNT: usize = 6;
 const PRIVATE_LAYER_COUNT: u32 = 7;
 const ASSUMED_DISPLAY_HZ: f32 = 90.0;
+const PRIVATE_GUIDE_NATIVE_PHASE_RATE_HZ: f32 = 0.5;
 
 fn marker_vec4(values: [f32; 4]) -> String {
     format!(
@@ -474,7 +475,7 @@ impl PrivateLayerGraphRenderer {
         }];
         let pass_targets = [(0, 0), (1, 1), (2, 2), (3, 3), (4, 1), (5, 4)];
         let elapsed_seconds = elapsed_seconds_for_frame(frame_count);
-        let cycle_phase = elapsed_seconds / settings.layer_seconds.max(0.001);
+        let cycle_phase = elapsed_seconds * PRIVATE_GUIDE_NATIVE_PHASE_RATE_HZ;
 
         for eye_index in 0..PRIVATE_EYE_COUNT {
             let eye = &resources.eyes[eye_index];
@@ -513,6 +514,10 @@ impl PrivateLayerGraphRenderer {
                         settings.layer_seconds,
                         0.0,
                     ],
+                    reprojection_row0: [1.0, 0.0, 0.0, 0.5],
+                    reprojection_row1: [0.0, 1.0, 0.0, 0.5],
+                    reprojection_row2: [0.0, 0.0, 1.0, 0.0],
+                    reprojection_params: [0.0, 1.0, 1.0, 0.0],
                 };
                 push_fragment_constants(device, cmd, resources.guide_pipeline_layout, &push);
                 device.cmd_draw(cmd, 3, 1, 0, 0);
@@ -1574,7 +1579,14 @@ struct PrivateLayerGuidePush {
     params0: [f32; 4],
     effect: [f32; 4],
     cycle: [f32; 4],
+    reprojection_row0: [f32; 4],
+    reprojection_row1: [f32; 4],
+    reprojection_row2: [f32; 4],
+    reprojection_params: [f32; 4],
 }
+
+const _: () = assert!(mem::size_of::<PrivateLayerGuidePush>() == 112);
+const _: () = assert!(mem::size_of::<PrivateLayerGuidePush>() <= 128);
 
 #[repr(C)]
 struct PrivateLayerProjectionPush {
@@ -2058,4 +2070,20 @@ unsafe fn destroy_layout_scaffold(
         sampler,
         render_pass,
     );
+}
+
+#[cfg(test)]
+mod guide_push_tests {
+    use super::*;
+
+    #[test]
+    fn private_guide_push_matches_the_shared_shader_abi() {
+        assert_eq!(mem::size_of::<PrivateLayerGuidePush>(), 112);
+        assert!(mem::size_of::<PrivateLayerGuidePush>() <= 128);
+    }
+
+    #[test]
+    fn verified_native_phase_rate_is_half_a_cycle_per_second() {
+        assert_eq!(2.0 * PRIVATE_GUIDE_NATIVE_PHASE_RATE_HZ, 1.0);
+    }
 }

@@ -1,0 +1,20 @@
+{
+  "$schema": "https://raw.githubusercontent.com/MesmerPrism/rusty-morphospace-work-environment/90644542c33e420938c7c7b6ba999417cd5edfb3/schemas/feature-lock-v2.schema.json",
+  "schema": "rusty.morphospace.workflow.feature_lock.v2",
+  "project_id": "spatial-vr-strobe",
+  "project_revision": 2,
+  "revision": 1,
+  "generated_at": "1970-01-01T00:00:00Z",
+  "resolver_version": "rusty-morphospace-feature-resolver/2",
+  "lock_fingerprint": "97810f071d4da2a7374821660d58380b7e77397b2c8f55f82c785144d365b52f",
+  "default_activation": "disabled",
+  "activation_rule": "selected-lock-and-runtime-input",
+  "selected_features": [],
+  "denied_features": ["camera-hwb-projection", "private-effect-layer"],
+  "features": [],
+  "effect_union": {
+    "permissions": [], "services": [], "activities": [], "queries": [], "tools": [], "assets": [],
+    "shaders": [], "native_libraries": [], "commands": [], "routes": [], "streams": [], "inputs": [],
+    "scenes": [], "markers": []
+  }
+}

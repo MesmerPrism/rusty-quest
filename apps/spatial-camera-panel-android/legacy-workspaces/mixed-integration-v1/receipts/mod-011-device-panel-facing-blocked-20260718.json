@@ -1,0 +1,139 @@
+{
+  "$schema": "https://github.com/MesmerPrism/rusty-morphospace-work-environment/schemas/validation-receipt.schema.json",
+  "schema": "rusty.morphospace.workflow.validation_receipt.v1",
+  "receipt_id": "mod-011-device-panel-facing-blocked-20260718",
+  "project_id": "spatial-camera-panel",
+  "unit_id": "mod-011",
+  "created_at": "2026-07-18T08:12:30Z",
+  "tier": "deep",
+  "result": "blocked",
+  "repository_revisions": [
+    {
+      "repo_id": "spatial-app",
+      "base_revision": "7df59dac068d62e6c222a522c763122dc89efd70",
+      "head_revision": "7df59dac068d62e6c222a522c763122dc89efd70",
+      "branch": "codex/spatial-camera-guard-band-baseline"
+    }
+  ],
+  "changed_paths": [
+    {
+      "repo_id": "spatial-app",
+      "path": "morphospace/iteration-events.jsonl"
+    },
+    {
+      "repo_id": "spatial-app",
+      "path": "morphospace/iteration-units/mod-011.json"
+    },
+    {
+      "repo_id": "spatial-app",
+      "path": "morphospace/receipts/mod-011-device-panel-facing-blocked-20260718.json"
+    },
+    {
+      "repo_id": "spatial-app",
+      "path": "morphospace/workspace.state.json"
+    }
+  ],
+  "artifacts": [
+    {
+      "artifact_id": "mod011-private-attended-run",
+      "kind": "private-device-run-manifest",
+      "path": "S:\\Work\\repos\\active\\rusty-quest\\local-artifacts\\spatial-vr-strobe-runs\\mod-011-attended-20260718-095412\\run-manifest.json",
+      "sha256": "978285e74edd7656fa62fbf7f99be8be68e741893357a0a9b2c1250949d92337"
+    }
+  ],
+  "criteria": [
+    {
+      "acceptance_id": "exact-build-and-install",
+      "status": "pass",
+      "command": "Build the Spatial Camera Panel APK, record its SHA-256/build manifest, and install it with serial-scoped ADB on the selected physical Quest.",
+      "evidence_refs": [
+        "mod011-private-attended-run"
+      ]
+    },
+    {
+      "acceptance_id": "panel-only-inert-launch",
+      "status": "blocked",
+      "command": "Launch with only debug.rustyquest.spatial.vr_strobe.enabled=true after snapshotting and clearing the app property manifest.",
+      "evidence_refs": [
+        "mod011-private-attended-run"
+      ]
+    },
+    {
+      "acceptance_id": "attended-safety-transitions",
+      "status": "blocked",
+      "command": "With the operator present, acknowledge the warning, begin one bounded conservative interference profile, confirm the black lead-in, then exercise Stop before any temporal preset.",
+      "evidence_refs": [
+        "mod011-private-attended-run"
+      ]
+    },
+    {
+      "acceptance_id": "visual-and-comfort-feedback",
+      "status": "blocked",
+      "command": "Collect explicit operator feedback for stereo coverage, world/view lock, artifacts, comfort, and control usability.",
+      "evidence_refs": [
+        "mod011-private-attended-run"
+      ]
+    },
+    {
+      "acceptance_id": "cleanup-and-fatals",
+      "status": "pass",
+      "command": "Capture a bounded PID/package log window, stop only the target package, restore the exact prior property values, and verify cleanup.",
+      "evidence_refs": [
+        "mod011-private-attended-run"
+      ]
+    }
+  ],
+  "gates": [
+    {
+      "gate_id": "validation-quick",
+      "status": "pass",
+      "command": "VR Strobe static gate and final Android/JVM/shader evidence readback",
+      "evidence_refs": [
+        "mod011-private-attended-run"
+      ]
+    },
+    {
+      "gate_id": "validation-standard",
+      "status": "pass",
+      "command": "Fresh Spatial Camera Panel debug APK build and build-manifest/APK hash verification",
+      "evidence_refs": [
+        "mod011-private-attended-run"
+      ]
+    },
+    {
+      "gate_id": "validation-device",
+      "status": "blocked",
+      "command": "Serial-scoped panel-only launch, attended safety/visual checks, bounded logcat, exact property restoration, package stop, and cleanup scorecard",
+      "evidence_refs": [
+        "mod011-private-attended-run"
+      ]
+    },
+    {
+      "gate_id": "instruction-synchronization",
+      "status": "pass",
+      "command": "Verify every declared instruction surface is complete and validated.",
+      "evidence_refs": [
+        "mod011-private-attended-run"
+      ]
+    },
+    {
+      "gate_id": "device-validation",
+      "status": "blocked",
+      "command": "Use the device workflow with only the explicitly supplied serials.",
+      "evidence_refs": [
+        "mod011-private-attended-run"
+      ]
+    }
+  ],
+  "device_validation": {
+    "serials": [
+      "3487C10H3M017Q"
+    ],
+    "cleanup_complete": true,
+    "package_fatal_count": 0,
+    "system_fatal_count": 0,
+    "evidence_refs": [
+      "mod011-private-attended-run"
+    ]
+  }
+}

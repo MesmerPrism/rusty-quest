@@ -84,6 +84,20 @@ pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-SpatialCameraPanelAnd
 pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-SpatialCameraPanelAndroid.ps1 -Build
 ```
 
+Panel-facing changes also run the focused guard directly when diagnosing a
+black or missing one-sided Compose panel:
+
+```powershell
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\checks\Test-SpatialSdkPanelFacingStatic.ps1 -RepoRoot .
+```
+
+Follow `docs/SPATIAL_SDK_PANEL_FACING.md`: isolate other immersive apps,
+require an exclusive feature to report exactly its active panel registrations,
+separate registration/entity/surface evidence from actual front-face
+visibility, and require an operator to confirm the readable panel after a clean
+serial-scoped launch. Do not begin safety-sensitive visual output merely
+because the panel-created marker exists.
+
 The hand-tracking lab lanes have dedicated wrappers:
 
 ```powershell
@@ -213,10 +227,9 @@ pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-SpatialCameraPanelAnd
 ```
 
 The static gate checks the Spatial SDK package identity, `AppSystemActivity`
-activity, `VRFeature`/`ComposeFeature` registration, panel shape/resolution
-settings, app-private experiment record schemas, joinable questionnaire fields,
-direct BLE Polar panel wiring, ECG event mirroring, the experiment
-condition-to-native-parameter handoff, and the high-rate payload ban. The build
+activity, `VRFeature`/`ComposeFeature` registration, layer-control panel
+shape/resolution settings, camera and effect-control routing, the absence of
+participant/physiological-sensor UI, and the high-rate payload ban. The build
 gate writes
 `target\spatial-camera-panel-android\rusty-quest-spatial-camera-panel.apk` plus
 `rusty.quest.spatial_camera_panel_sdk_android.build_manifest.v1`. Live validation
@@ -228,30 +241,14 @@ of a staged GLB/GLTF must use
 `activationEffectiveMarker=rusty.quest.spatial_asset_model.effective` on the
 entity marker. A raw FBX remains a local conversion input, and staging or a
 mesh URI without the exact activation tuple must remain inert. Live validation
-must install and launch that APK with serial-scoped ADB, then confirm the
-participant setup, surface selection, block start/completion, workflow-panel
-transition back to particle view, condition parameter handoff markers,
-automatic questionnaire, submit path, and `RUSTY_QUEST_SPATIAL_CAMERA_PANEL` log
-markers.
-Use `tools\Invoke-SpatialCameraPanelAndroidSelfTest.ps1 -Serial <quest-serial>`
-for the repeatable headset lane; it captures PID-scoped logcat, app-private
-session JSONL artifacts, and `evidence-summary.json`. The v2 evidence contract
-requires four panel registrations and evaluates the particle route against its
-closed activation state: an active conformance build must produce the complete
-parameter/start/render marker chain, while the default inert lock must produce
-the explicit parameter-suppression marker and no particle runtime side effects.
-Condition, panel, and Polar-panel evidence remains mandatory in either state.
-Reserve `quest:<serial>` before running it.
-Polar live validation additionally requires headset-side BLE permission
-acceptance plus a nearby Polar H10 scan/connect/start-ECG run, with
-`polar-sensor-panel` markers and app-private `polar_events.jsonl` /
-`ecg_events.jsonl` evidence. Use
-`tools\Invoke-SpatialCameraPanelAndroidPolarLive.ps1 -Serial <quest-serial>`
-for that gate; it launches `RUN_POLAR_LIVE_VALIDATION`, pregrants the declared
-BLE runtime permissions where Android allows it, captures PID-scoped logcat
-plus root Polar status/stream files and participant JSONL files, and fails
-unless the scan/connect/start-ECG path yields decoded ECG frames mirrored into
-`ecg_events.jsonl`. Reserve `quest:<serial>` before running it.
+must install and launch that APK with serial-scoped ADB, then confirm surface
+selection, private-layer panel toggling, effect parameter handoff markers, and
+`RUSTY_QUEST_SPATIAL_CAMERA_PANEL` log markers. The camera projection smoke
+tools capture PID-scoped logcat and app-private evidence. Active conformance
+builds must produce the complete parameter/start/render marker chain, while the
+default inert lock must produce the explicit parameter-suppression marker and
+no particle runtime side effects. Reserve `quest:<serial>` before headset
+validation.
 The current raw-camera quality hardening backlog is tracked in
 `docs/NATIVE_CAMERA_QUALITY_ITERATION_PLAN.md`; this document lists the
 validation commands and profile fixtures that prove each landed slice.
@@ -528,6 +525,19 @@ scale and exposing more underlying video around the smaller custom footprint.
 Both 10-percent modes must use
 real captured pixels outside the displayed central crop; an unwarped fallback,
 edge clamp, or replacement visual is a failed test even if it hides the border.
+
+For basic guide-stack parity, keep the reduced-footprint anti-echo baseline and
+compare the panel's `Native target` and `Gaussian + RGB` presets without
+changing any other camera setting. Native-target evidence must report
+`publicGuideProcessingPreset=native-parity`,
+`publicGuidePreblurKernel=native-box5`, `publicGuidePreblurInput=luma`,
+`publicGuidePostblurKernel=native-box5`, and
+`publicMultiStackGuidePerEyeExtent=384x384`. The alternative must report
+`gaussian-rgb` with Gaussian pre/post kernels and RGB-preserving input. Also
+exercise one mixed setting to prove the three controls are independent. A host
+build/static pass validates selection and ABI wiring; blur character and
+native visual parity still require headset confirmation.
+
 Per-frame camera markers remain off unless `VerboseFrameLog` is selected.
 When enabled, require `capturePoseAssociation`, `capturePoseTargetTimestampNs`,
 and `capturePoseAvailable` on acquired-frame markers. `Adoption45` is live-safe and should

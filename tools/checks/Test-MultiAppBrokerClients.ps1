@@ -36,7 +36,16 @@ foreach ($token in @($nativeSpec.client_id,$nativeSpec.feature_lock_id,$nativeSp
     if ($nativeManifest -notmatch [regex]::Escape([string]$token)) { throw "Native broker client manifest missing $token" }
 }
 foreach ($token in @($spatialSpec.client_id,$spatialSpec.feature_lock_id,$spatialSpec.marker_namespace,"BrokerClientProbeActivity","BROKER_ADMISSION")) {
-    if ($spatialManifest -notmatch [regex]::Escape([string]$token)) { throw "Spatial broker client manifest missing $token" }
+    if ($spatialManifest -notmatch [regex]::Escape([string]$token) -and
+        $spatialBuild -notmatch [regex]::Escape([string]$token)) {
+        throw "Spatial broker client manifest/build binding missing $token"
+    }
+}
+foreach ($placeholder in @("spatialClientId","spatialFeatureLockId","spatialMarkerNamespace")) {
+    if ($spatialManifest -notmatch [regex]::Escape('${' + $placeholder + '}') -or
+        $spatialBuild -notmatch [regex]::Escape('manifestPlaceholders["' + $placeholder + '"]')) {
+        throw "Spatial broker client manifest placeholder binding missing $placeholder"
+    }
 }
 if ($nativeManifest -match [regex]::Escape([string]$spatialSpec.marker_namespace) -or
     $spatialManifest -match [regex]::Escape([string]$nativeSpec.marker_namespace)) {

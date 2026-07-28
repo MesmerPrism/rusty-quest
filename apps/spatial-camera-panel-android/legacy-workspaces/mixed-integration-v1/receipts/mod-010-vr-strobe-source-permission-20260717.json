@@ -1,0 +1,34 @@
+{
+  "schema": "rusty.quest.reference_source_permission.v1",
+  "receipt_id": "mod-010-vr-strobe-source-permission-20260717",
+  "project_id": "spatial-camera-panel",
+  "unit_id": "mod-010",
+  "recorded_at": "2026-07-17T16:07:16.6505684Z",
+  "reference": {
+    "name": "vr_strobe",
+    "repository": "https://github.com/trevorhewitt/vr_strobe",
+    "commit": "52c71cc069f4102bc4148e05c5fd3fc4d5466479",
+    "files": [
+      {"path": "index.html", "git_blob_sha1": "d999f5e39b2318cfeb024cc42fa578c281eb608e"},
+      {"path": "sim.html", "git_blob_sha1": "95e46dc1d437012f4e155383b9a9bb460a314bd0"},
+      {"path": "strobe.html", "git_blob_sha1": "ff0a56838b2417c72d0234cc9587f41ab2057e1e"}
+    ]
+  },
+  "permission": {
+    "evidence_kind": "project-owner-relayed-creator-confirmation",
+    "statement": "The project owner reports explicit confirmation from the vr_strobe creator to port the work under the general Rusty Morphospace license.",
+    "target_spdx_license": "AGPL-3.0-or-later",
+    "copy_allowed": true,
+    "modification_allowed": true,
+    "derivative_distribution_allowed": true,
+    "attribution_required": true
+  },
+  "deployment_observation": {
+    "site": "https://vr-strobe.netlify.app/",
+    "sim_matches_commit_blob": true,
+    "strobe_matches_commit_blob": true,
+    "homepage_matches_commit_blob": false,
+    "homepage_note": "The deployed homepage differs from the pinned repository index; the pinned repository is source authority and the deployed site remains behavioral comparison evidence."
+  },
+  "boundary": "This receipt records the permission relayed for the pinned source. It does not transfer WebXR runtime authority, medical claims, headset safety acceptance, or temporal device-run authorization into Rusty Quest."
+}

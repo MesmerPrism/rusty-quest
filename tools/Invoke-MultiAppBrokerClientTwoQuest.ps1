@@ -371,7 +371,7 @@ Make-MediaLifecyclePackage `
 Make-MediaLifecyclePackage `
   -Client (Join-Path $repo "fixtures\broker-clients\spatial-camera-panel.client.json") `
   -Lifecycle (Join-Path $repo "fixtures\broker-clients\spatial-camera-panel.media-lifecycle.json") `
-  -Feature (Join-Path $repo "apps\spatial-camera-panel-android\morphospace\conformance-locks\broker-media-client.feature.lock.json") `
+  -Feature (Join-Path $repo "apps\spatial-camera-panel-android\legacy-workspaces\mixed-integration-v1\conformance-locks\broker-media-client.feature.lock.json") `
   -Binding (Join-Path $repo "fixtures\media-runtime-products\spatial-camera-panel-display.binding.json") `
   -OutPath $spatialPackage
 $pairReceipt = Join-Path $EvidenceDir "media-lifecycle-pair-receipt.json"

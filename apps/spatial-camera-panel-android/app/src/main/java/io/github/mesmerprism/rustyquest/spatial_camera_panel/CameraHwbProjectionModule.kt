@@ -24,6 +24,14 @@ internal const val CAMERA_HWB_PROJECTION_TARGET_SCALE_JOYSTICK_RATE_PROPERTY =
     "debug.rustyquest.spatial.camera_hwb_projection_probe.projection.target.joystick.scale.rate_per_second"
 internal const val CAMERA_HWB_PROJECTION_DEPTH_LAYER_POLICY_PROPERTY =
     "debug.rustyquest.spatial.camera_hwb_projection_probe.depth.layer_policy"
+internal const val CAMERA_HWB_PROJECTION_GUIDE_PREBLUR_KERNEL_PROPERTY =
+    "debug.rustyquest.spatial.camera_hwb_projection_probe.guide.preblur.kernel"
+internal const val CAMERA_HWB_PROJECTION_GUIDE_PREBLUR_INPUT_PROPERTY =
+    "debug.rustyquest.spatial.camera_hwb_projection_probe.guide.preblur.input"
+internal const val CAMERA_HWB_PROJECTION_GUIDE_POSTBLUR_KERNEL_PROPERTY =
+    "debug.rustyquest.spatial.camera_hwb_projection_probe.guide.postblur.kernel"
+internal const val CAMERA_HWB_PROJECTION_CAMERA_SAMPLING_PROPERTY =
+    "debug.rustyquest.spatial.camera_hwb_projection_probe.camera.sampling"
 internal const val CAMERA_HWB_PROJECTION_TARGET_SCALE_JOYSTICK_RATE_PER_SECOND = 0.30f
 internal const val CAMERA_HWB_PROJECTION_STEREO_HORIZONTAL_OFFSET_DEFAULT_UV = 0.046320f
 internal const val CAMERA_HWB_PROJECTION_STEREO_HORIZONTAL_OFFSET_MIN_UV = -0.12f
@@ -91,7 +99,6 @@ internal data class CameraHwbProjectionMarkerInput(
     val targetScale: Float,
     val stereoHorizontalOffsetUv: Float,
     val targetScaleJoystickRatePerSecond: Float,
-    val legacyLauncherPanelSuppressed: Boolean,
     val targetDistanceSource: String,
     val virtualRoomForegroundDistanceActive: Boolean,
     val privatePanelInputClearanceActive: Boolean,
@@ -553,6 +560,8 @@ internal object CameraHwbProjectionModule {
           "zIndex=$layerZIndex " +
           "carrier=$carrier " +
           "renderSurfaceCarrier=scenequadlayer-createAsAndroid-vulkan-wsi " +
+          "projectionPanelAlphaBlendEnabled=true " +
+          "projectionPanelAlphaBlend=premultiplied-one-over-one-minus-source-alpha " +
           "projectionCarrierRoomObject=${carrierMode == CameraHwbProjectionCarrierMode.SceneQuadLayerRoomObject} " +
           "projectionAnchorHittable=none-first-room-diagnostic " +
           "projectionAnchorMaterialRenderOrder=default-first-room-diagnostic " +
@@ -1020,7 +1029,6 @@ internal object CameraHwbProjectionModule {
         "projectionPanelHittable=$projectionPanelHittable " +
         "projectionAnchorHittable=$projectionAnchorHittable " +
         "cameraVideoProjectionLayerZIndex=$layerZIndex " +
-        "legacyLauncherPanelSuppressed=${input.legacyLauncherPanelSuppressed} " +
         "viewerLockedPlacementMode=$CAMERA_HWB_PROJECTION_PLACEMENT_MODE " +
         "virtualRoomWallPlacementMode=$CAMERA_HWB_PROJECTION_WALL_PLACEMENT_MODE " +
         "virtualRoomWallPlacementActive=${input.placementMode == CameraHwbProjectionPlacementMode.VirtualRoomWall} " +
@@ -1046,7 +1054,7 @@ internal object CameraHwbProjectionModule {
         "projectionTargetScaleJoystickRateProperty=$CAMERA_HWB_PROJECTION_TARGET_SCALE_JOYSTICK_RATE_PROPERTY " +
         "projectionTargetScaleJoystickRatePerSecond=${activityMarkerFloat(input.targetScaleJoystickRatePerSecond)} " +
         "stereoHorizontalOffsetJoystickControlsEnabled=false " +
-        "stereoHorizontalOffsetJoystickInput=disabled-default-locked-left-stick-y-controls-workflow-or-private-panel-distance-only " +
+        "stereoHorizontalOffsetJoystickInput=disabled-default-locked-left-stick-y-controls-private-panel-distance-only " +
         "stereoHorizontalOffsetJoystickRateProperty=none-disabled " +
         "stereoHorizontalOffsetJoystickRateUvPerSecond=0.000 " +
         "cameraHwbProjectionStereoHorizontalOffsetIgnoresPanelVisibility=true " +

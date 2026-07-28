@@ -22,9 +22,7 @@ internal const val NATIVE_SPATIAL_CONTROLLER_ACTIONS_DEFAULT_ENABLED = false
 
 internal enum class SpatialControllerPanelToggleAction(val markerToken: String) {
   ClosePrivateLayerPanel("close-private-layer-panel"),
-  CloseWorkflowPanel("close-workflow-panel"),
   OpenPrivateLayerPanel("open-private-layer-panel"),
-  OpenWorkflowPanel("open-workflow-panel"),
 }
 
 internal data class SpatialJoystickArbitrationMarkerInput(
@@ -33,6 +31,8 @@ internal data class SpatialJoystickArbitrationMarkerInput(
     val leftY: Float,
     val rightX: Float,
     val rightY: Float,
+    val immersiveVideoSelectionHandled: Boolean,
+    val immersiveVideoSelectionEnabled: Boolean,
     val projectionScaleHandled: Boolean,
     val panelPlacementHandled: Boolean,
     val rightStickSwallowedAsIgnored: Boolean,
@@ -72,14 +72,11 @@ internal object SpatialControllerRoutingModule {
       privateLayerFreeTransform: Boolean,
       privateLayerGrabbed: Boolean,
       privateLayerHeadlocked: Boolean,
-      workflowPanelVisible: Boolean,
-      workflowPanelHeadlocked: Boolean,
   ): Boolean =
       joystickEnabled &&
           when {
             privateLayerPanelVisible ->
                 if (privateLayerFreeTransform) !privateLayerGrabbed else privateLayerHeadlocked
-            workflowPanelVisible -> workflowPanelHeadlocked
             else -> false
           }
 
@@ -102,14 +99,11 @@ internal object SpatialControllerRoutingModule {
 
   fun panelToggleAction(
       privateLayerPanelVisible: Boolean,
-      workflowPanelVisible: Boolean,
-      opensPrivateLayerPanel: Boolean,
   ): SpatialControllerPanelToggleAction =
-      when {
-        privateLayerPanelVisible -> SpatialControllerPanelToggleAction.ClosePrivateLayerPanel
-        workflowPanelVisible -> SpatialControllerPanelToggleAction.CloseWorkflowPanel
-        opensPrivateLayerPanel -> SpatialControllerPanelToggleAction.OpenPrivateLayerPanel
-        else -> SpatialControllerPanelToggleAction.OpenWorkflowPanel
+      if (privateLayerPanelVisible) {
+        SpatialControllerPanelToggleAction.ClosePrivateLayerPanel
+      } else {
+        SpatialControllerPanelToggleAction.OpenPrivateLayerPanel
       }
 
   fun isJoystickEvent(event: MotionEvent): Boolean =
@@ -139,6 +133,8 @@ internal object SpatialControllerRoutingModule {
           "inputSource=${activityMarkerToken(input.inputSource)} " +
           "leftStick=${activityMarkerFloat(input.leftX)};${activityMarkerFloat(input.leftY)} " +
           "rightStick=${activityMarkerFloat(input.rightX)};${activityMarkerFloat(input.rightY)} " +
+          "immersiveVideoSelectionHandled=${input.immersiveVideoSelectionHandled} " +
+          "immersiveVideoSelectionEnabled=${input.immersiveVideoSelectionEnabled} " +
           "projectionScaleHandled=${input.projectionScaleHandled} " +
           "panelPlacementHandled=${input.panelPlacementHandled} " +
           "rightStickSwallowedAsIgnored=${input.rightStickSwallowedAsIgnored} " +
@@ -151,7 +147,9 @@ internal object SpatialControllerRoutingModule {
           "rightStickYProjectionScaleEnabled=${!input.privateLayerPanelVisible} " +
           "rightStickYProjectionScaleSuppressedByPrivateLayerPanel=${input.privateLayerPanelVisible} " +
           "rightStickYPanelDistanceDisabled=true " +
-          "rightStickXIgnored=true rightStickXPanelScaleDisabled=true " +
+          "rightStickXVideoSelectionEnabled=${input.immersiveVideoSelectionEnabled} " +
+          "rightStickXIgnored=${!input.immersiveVideoSelectionEnabled} " +
+          "rightStickXPanelScaleDisabled=true " +
           "panelMode=${input.panelMode} " +
           "projectionTargetLiveScale=${activityMarkerFloat(input.projectionTargetLiveScale)} " +
           input.headlockMarkerFields
@@ -265,13 +263,19 @@ internal object SpatialControllerRoutingModule {
   ): String =
       "channel=spatial-panel status=controller-input-route-ready " +
           "inputSource=${activityMarkerToken(snapshot.rightInputSource)} " +
-          "controllerInput=right-primary-button+right-secondary-button-wall-toggle+right-trigger-particle-recenter+right-thumb-up-down-projection-scale+$leftStickPanelDistanceMapping " +
+          "controllerInput=right-primary-button+right-secondary-button-wall-toggle+right-trigger-particle-recenter+right-thumb-left-right-video-selection+right-thumb-up-down-projection-scale+$leftStickPanelDistanceMapping " +
           "spatialVrInputSystem=$spatialVrInputSystem " +
           "controllerComponentCount=${snapshot.componentCount} " +
           "controllerTypeComponentCount=${snapshot.controllerTypeCount} " +
           "activeControllerComponentCount=${snapshot.activeCount} " +
           "localControllerComponentCount=${snapshot.localControllerCount} " +
           "localActiveControllerComponentCount=${snapshot.localActiveControllerCount} " +
+          "localLeftControllerType=${activityMarkerToken(snapshot.localLeftControllerType)} " +
+          "localLeftControllerAttachmentType=${activityMarkerToken(snapshot.localLeftControllerAttachmentType)} " +
+          "localLeftControllerActive=${snapshot.localLeftControllerActive} " +
+          "localLeftControllerButtonState=${snapshot.localLeftControllerButtonState} " +
+          "localLeftControllerChangedButtons=${snapshot.localLeftControllerChangedButtons} " +
+          "localLeftControllerPreferred=${snapshot.leftInputSource == "spatial-sdk-controller-component"} " +
           "localRightControllerType=${activityMarkerToken(snapshot.localRightControllerType)} " +
           "localRightControllerAttachmentType=${activityMarkerToken(snapshot.localRightControllerAttachmentType)} " +
           "localRightControllerActive=${snapshot.localRightControllerActive} " +
@@ -300,6 +304,9 @@ internal object SpatialControllerRoutingModule {
           "leftThumbYProjectionHorizontalOffsetDisabled=true " +
           "rightThumbUpBit=${ButtonBits.ButtonThumbRU} rightThumbDownBit=${ButtonBits.ButtonThumbRD} " +
           "rightThumbUp=${snapshot.rightThumbUp} rightThumbDown=${snapshot.rightThumbDown} " +
+          "rightThumbLeftBit=${ButtonBits.ButtonThumbRL} rightThumbRightBit=${ButtonBits.ButtonThumbRR} " +
+          "rightThumbLeft=${snapshot.rightThumbLeft} rightThumbRight=${snapshot.rightThumbRight} " +
+          "rightThumbX=${activityMarkerFloat(snapshot.rightThumbX)} " +
           "rightThumbY=${activityMarkerFloat(snapshot.rightThumbY)} " +
           "activeButtonState=${snapshot.buttonState} activeChangedButtons=${snapshot.changedButtons} " +
           "allControllerButtonState=${snapshot.allControllerButtonState} " +
@@ -384,17 +391,14 @@ internal object SpatialControllerRoutingModule {
       detail: String,
       panelToggleAction: SpatialControllerPanelToggleAction,
       panelMode: String,
-      workflowPanelVisible: Boolean,
       privateLayerPanelVisible: Boolean,
-      opensPrivateLayerPanel: Boolean,
   ): String =
       "channel=spatial-panel status=controller-primary-toggled-panel " +
           "controllerInput=right-primary-button inputSource=${activityMarkerToken(inputSource)} " +
           "${detail.trim()} " +
           "panelToggleAction=${activityMarkerToken(panelToggleAction.markerToken)} " +
-          "panelMode=$panelMode workflowPanelVisible=$workflowPanelVisible " +
+          "panelMode=$panelMode " +
           "privateLayerPanelVisible=$privateLayerPanelVisible " +
-          "opensPrivateLayerPanel=$opensPrivateLayerPanel " +
-          "spatialPrivateLayerControlPanel=$opensPrivateLayerPanel " +
+          "opensPrivateLayerPanel=true spatialPrivateLayerControlPanel=true " +
           "debugOnly=true"
 }

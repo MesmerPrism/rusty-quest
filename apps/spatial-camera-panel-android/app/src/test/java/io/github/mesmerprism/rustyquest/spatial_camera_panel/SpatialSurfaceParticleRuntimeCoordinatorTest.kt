@@ -39,7 +39,6 @@ class SpatialSurfaceParticleRuntimeCoordinatorTest {
                 privateRendererEnabled = { false },
                 receiptLibraryLoaded = { true },
                 receiptLibraryError = { "none" },
-                launcherPanelVisible = { false },
                 stopNative = {},
                 marker = markers::add,
             )
@@ -74,7 +73,6 @@ class SpatialSurfaceParticleRuntimeCoordinatorTest {
                 privateRendererEnabled = { false },
                 receiptLibraryLoaded = { true },
                 receiptLibraryError = { "none" },
-                launcherPanelVisible = { false },
                 stopNative = { nativeStops += 1 },
                 marker = {},
             )
@@ -106,7 +104,6 @@ class SpatialSurfaceParticleRuntimeCoordinatorTest {
             SpatialSurfaceParticleParameterBindings(
                 featureEnabled = { false },
                 receiptLibraryLoaded = { true },
-                workflowPanelVisible = { false },
                 submitNativeParameters = {
                   nativeSubmits += 1
                   1L

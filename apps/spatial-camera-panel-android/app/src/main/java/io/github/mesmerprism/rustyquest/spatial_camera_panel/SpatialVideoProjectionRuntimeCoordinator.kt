@@ -9,7 +9,7 @@ internal data class SpatialVideoProjectionRuntimeNativeState(
 internal data class SpatialVideoProjectionRuntimeBindings(
     val nativeState: () -> SpatialVideoProjectionRuntimeNativeState,
     val configureNative: (SpatialVideoProjectionSettings) -> Long,
-    val startPlayback: (SpatialVideoProjectionSettings) -> Unit,
+    val startPlayback: (SpatialVideoProjectionSettings, OfflineImmersiveMediaPack?) -> Unit,
     val stopPlayback: () -> Unit,
     val stopNativeProbe: () -> Unit,
     val marker: (String) -> Unit,
@@ -23,6 +23,7 @@ internal class SpatialVideoProjectionRuntimeCoordinator(
 
   var started = false
     private set
+  private var offlinePack: OfflineImmersiveMediaPack? = null
 
   fun resolveSettings(intent: Intent?): SpatialVideoProjectionSettings =
       SpatialVideoProjectionRouteModule.currentSettings(intent)
@@ -30,8 +31,12 @@ internal class SpatialVideoProjectionRuntimeCoordinator(
   fun markerFields(settings: SpatialVideoProjectionSettings): String =
       SpatialVideoProjectionRouteModule.markerFields(settings)
 
-  fun adoptSettings(settings: SpatialVideoProjectionSettings) {
+  fun adoptSettings(
+      settings: SpatialVideoProjectionSettings,
+      offlinePack: OfflineImmersiveMediaPack? = null,
+  ) {
     this.settings = settings
+    this.offlinePack = offlinePack
   }
 
   fun configure(settings: SpatialVideoProjectionSettings, reason: String): Long {
@@ -66,8 +71,52 @@ internal class SpatialVideoProjectionRuntimeCoordinator(
       return
     }
     bindings.marker(SpatialVideoProjectionRouteModule.startRequestedMarker(reason, settings))
-    bindings.startPlayback(settings)
+    bindings.startPlayback(settings, offlinePack)
     started = true
+  }
+
+  fun replaceMediaSource(
+      settings: SpatialVideoProjectionSettings,
+      offlinePack: OfflineImmersiveMediaPack,
+      reason: String,
+  ): Boolean {
+    if (!started || !settings.active) {
+      bindings.marker(
+          "channel=spatial-video-projection status=source-switch-rejected " +
+              "reason=${activityMarkerToken(reason)} projectionStarted=$started " +
+              "sourceActive=${settings.active} activityRestarted=false"
+      )
+      return false
+    }
+    runCatching { bindings.stopPlayback() }
+    this.settings = settings
+    this.offlinePack = offlinePack
+    configure(settings, "$reason-source-switch")
+    bindings.startPlayback(settings, offlinePack)
+    bindings.marker(
+        "channel=spatial-video-projection status=source-switch-applied " +
+            "reason=${activityMarkerToken(reason)} mediaDecoderRestarted=true " +
+            "customProjectionStackRestarted=false cameraRuntimeRestarted=false " +
+            "activityRestarted=false ${markerFields(settings)}"
+    )
+    return true
+  }
+
+  fun prepareForCarrierRebuild(
+      settings: SpatialVideoProjectionSettings,
+      offlinePack: OfflineImmersiveMediaPack,
+      reason: String,
+  ) {
+    if (started) {
+      runCatching { bindings.stopPlayback() }
+    }
+    started = false
+    adoptSettings(settings, offlinePack)
+    bindings.marker(
+        "channel=spatial-video-projection status=carrier-rebuild-prepared " +
+            "reason=${activityMarkerToken(reason)} playbackStopped=true " +
+            "activityRestarted=false ${markerFields(settings)}"
+    )
   }
 
   fun stop(reason: String) {
@@ -89,6 +138,7 @@ internal class SpatialVideoProjectionRuntimeCoordinator(
     }
     started = false
     settings = SpatialVideoProjectionSettings.disabled()
+    offlinePack = null
     bindings.marker(SpatialVideoProjectionRouteModule.stoppedMarker(reason, previousSettings))
   }
 

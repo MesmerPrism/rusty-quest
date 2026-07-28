@@ -7,7 +7,6 @@ internal data class SpatialCameraHwbProjectionTuningBindings(
     val routeActive: () -> Boolean,
     val projectionEntityPresent: () -> Boolean,
     val privateLayerPanelVisible: () -> Boolean,
-    val workflowPanelVisible: () -> Boolean,
     val initialTargetScale: () -> Float,
     val targetScaleJoystickRate: () -> Float,
     val targetDistanceMeters: () -> Float,
@@ -19,15 +18,16 @@ internal data class SpatialCameraHwbProjectionTuningBindings(
 
 internal class SpatialCameraHwbProjectionTuningCoordinator(
     private val bindings: SpatialCameraHwbProjectionTuningBindings,
+    private val fixedTargetScale: Float? = null,
 ) {
-  private var targetScale = CAMERA_HWB_PROJECTION_TARGET_LIVE_SCALE_DEFAULT
+  private var targetScale = fixedTargetScale ?: CAMERA_HWB_PROJECTION_TARGET_LIVE_SCALE_DEFAULT
   private var stereoHorizontalOffsetUv =
       CAMERA_HWB_PROJECTION_STEREO_HORIZONTAL_OFFSET_DEFAULT_UV
   private var lastScaleJoystickMs = 0L
   private var lastScaleJoystickMarkerMs = 0L
 
   fun resetForLaunch() {
-    targetScale = bindings.initialTargetScale()
+    targetScale = fixedTargetScale ?: bindings.initialTargetScale()
     resetStereoOffset()
     lastScaleJoystickMs = 0L
     lastScaleJoystickMarkerMs = 0L
@@ -38,7 +38,7 @@ internal class SpatialCameraHwbProjectionTuningCoordinator(
   }
 
   fun targetScale(): Float =
-      targetScale.coerceIn(
+      (fixedTargetScale ?: targetScale).coerceIn(
           CAMERA_HWB_PROJECTION_TARGET_MIN_SCALE,
           CAMERA_HWB_PROJECTION_TARGET_MAX_SCALE,
       )
@@ -81,6 +81,9 @@ internal class SpatialCameraHwbProjectionTuningCoordinator(
       controllerJoystickMapping: String,
       detail: String,
   ): Boolean {
+    if (fixedTargetScale != null) {
+      return false
+    }
     if (bindings.privateLayerPanelVisible()) {
       return false
     }
@@ -132,7 +135,7 @@ internal class SpatialCameraHwbProjectionTuningCoordinator(
               detail = detail,
               dtSeconds = dtSeconds,
               scaleRate = scaleRate,
-              panelVisible = bindings.workflowPanelVisible(),
+              panelVisible = bindings.privateLayerPanelVisible(),
               previousScale = previousScale,
               updatedScale = updatedScale,
               targetDistanceMeters = bindings.targetDistanceMeters(),
@@ -146,7 +149,7 @@ internal class SpatialCameraHwbProjectionTuningCoordinator(
   fun updateTargetScaleFromPanel(requestedScale: Float, source: String): Float {
     val previousScale = targetScale()
     targetScale =
-        requestedScale.coerceIn(
+        (fixedTargetScale ?: requestedScale).coerceIn(
             CAMERA_HWB_PROJECTION_TARGET_MIN_SCALE,
             CAMERA_HWB_PROJECTION_TARGET_MAX_SCALE,
         )

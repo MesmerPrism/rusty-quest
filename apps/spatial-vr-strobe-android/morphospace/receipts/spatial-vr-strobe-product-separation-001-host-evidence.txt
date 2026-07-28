@@ -1,0 +1,23 @@
+Spatial VR Strobe product-separation host validation
+Date: 2026-07-25
+Workspace: apps/spatial-vr-strobe-android/morphospace
+Source revision under test: 6502d55f73f337836c15868ef39734ebdfe7fa08 plus the exact adopted dirty overlay bound by spatial-vr-strobe-product-separation-001-inflight-adoption.json
+
+PASS: portable Morphospace v0.6 workflow contracts
+PASS: complete public repository host gate (tools/check_all.ps1)
+PASS: standalone Spatial VR Strobe static validation
+PASS: Camera/Strobe/shared-library product-isolation static validation
+PASS: focused Spatial Camera Panel Android validation
+PASS: native Camera receipt tests (30 presentation/particle tests and 15 camera-latency tests)
+PASS: Android JVM tests for :spatial-sdk-shared, :app, and :strobe-app
+PASS: browser profile-editor tests (12 tests)
+PASS: Camera build graph contains no Strobe route
+PASS: Strobe manifest contains no Camera permission
+
+Known non-blocking warnings:
+- Six Rust dead-code warnings remain in Camera diagnostic and zone-compositor helpers.
+- Four Meta Spatial SDK Kotlin APIs used by existing Camera carriers are deprecated.
+- Gradle reports features that will need modernization before Gradle 10.
+
+Device validation: intentionally not claimed by this unit.
+Publication/source checkpoint: pending the coherent public source commit and remote readback.

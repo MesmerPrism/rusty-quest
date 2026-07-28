@@ -8,7 +8,6 @@ param(
     [string]$AdbServerPort = $env:RUSTY_QUEST_ADB_SERVER_PORT,
     [string]$PackageName = "io.github.mesmerprism.rustyquest.spatial_camera_panel",
     [string]$Activity = "io.github.mesmerprism.rustyquest.spatial_camera_panel/.SpatialCameraPanelActivity",
-    [string]$ParticipantId = "",
     [ValidateSet("real-hands", "gpu-replay-hands", "icosphere")]
     [string]$SurfaceTargetId = "icosphere",
     [switch]$UsePrivateEcsIcosphere,
@@ -487,9 +486,6 @@ function Invoke-SurfaceTargetActivation {
         "-a",
         $SurfaceTargetAction,
         "--es",
-        "participant_id",
-        $ParticipantId,
-        "--es",
         "surface_target_id",
         $SurfaceTargetId,
         "--es",
@@ -519,9 +515,6 @@ function Invoke-ParticleControlBoost {
         "--es",
         "ui_action",
         "particle-controls",
-        "--es",
-        "participant_id",
-        $ParticipantId,
         "--es",
         "surface_target_id",
         $SurfaceTargetId,
@@ -582,9 +575,6 @@ function Invoke-ParticleRecenter {
         "--es",
         "ui_action",
         "particle-recenter",
-        "--es",
-        "participant_id",
-        $ParticipantId,
         "--es",
         "surface_target_id",
         $SurfaceTargetId,
@@ -652,9 +642,6 @@ function Invoke-ParticleLayerTargetDistanceCommand {
         "ui_action",
         "particle-panel-distance",
         "--es",
-        "participant_id",
-        $ParticipantId,
-        "--es",
         "surface_target_id",
         $SurfaceTargetId,
         "--es",
@@ -693,9 +680,6 @@ function Invoke-ParticleLayerViewYawCommand {
         "--es",
         "ui_action",
         "particle-panel-view-yaw",
-        "--es",
-        "participant_id",
-        $ParticipantId,
         "--es",
         "surface_target_id",
         $SurfaceTargetId,
@@ -804,10 +788,6 @@ if (-not (Test-Path -LiteralPath $resolvedApk)) {
     throw "APK not found: $resolvedApk"
 }
 
-if ([string]::IsNullOrWhiteSpace($ParticipantId)) {
-    $ParticipantId = "codex-spatial-particle-visual-$(Get-Date -Format 'yyyyMMdd-HHmmss')"
-}
-
 if ([string]::IsNullOrWhiteSpace($OutDir)) {
     $stamp = Get-Date -Format "yyyyMMdd-HHmmss"
     $OutDir = Join-Path $repoRootPath "local-artifacts\spatial-camera-panel-headset\$stamp-particle-visual-smoke"
@@ -850,7 +830,6 @@ $summary = [ordered]@{
     activity = $Activity
     surface_target_action = $SurfaceTargetAction
     ui_command_action = $UiCommandAction
-    participant_id = $ParticipantId
     surface_target_id = $SurfaceTargetId
     private_ecs_icosphere_requested = [bool]$UsePrivateEcsIcosphere
     renderer_ownership_mode = $(if ($UsePrivateEcsIcosphere) { "private-spatial-ecs-icosphere-only" } else { "native-surface-particle-layer" })

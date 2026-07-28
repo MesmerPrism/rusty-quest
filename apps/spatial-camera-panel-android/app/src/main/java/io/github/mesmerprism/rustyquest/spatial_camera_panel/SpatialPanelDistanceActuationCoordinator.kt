@@ -3,7 +3,6 @@ package io.github.mesmerprism.rustyquest.spatial_camera_panel
 import kotlin.math.abs
 
 internal data class SpatialPanelDistanceActuationBindings(
-    val workflowPlacement: () -> PanelPlacement,
     val privateLayerPlacement: () -> PanelPlacement,
     val privateLayerPanelVisible: () -> Boolean,
     val panelHeadlockJoystickEnabled: () -> Boolean,
@@ -15,7 +14,6 @@ internal data class SpatialPanelDistanceActuationBindings(
     val joystickDeltaSeconds: (Long) -> Float,
     val shouldEmitJoystickMarker: (Long) -> Boolean,
     val distanceRateMetersPerSecond: () -> Float,
-    val replaceWorkflowPlacement: (PanelPlacement) -> Unit,
     val replacePrivateLayerPlacement: (PanelPlacement) -> Unit,
     val applyPanelPlacement: (Boolean) -> Unit,
     val applyPrivateLayerPanelPose: () -> Unit,
@@ -42,11 +40,9 @@ internal class SpatialPanelDistanceActuationCoordinator(
       bindings.syncPrivateLayerPlacement("controller-joystick-distance")
     }
     val privateLayerPanelVisible = bindings.privateLayerPanelVisible()
-    val workflowPlacement = bindings.workflowPlacement()
-    val placement =
-        if (privateLayerPanelVisible) bindings.privateLayerPlacement() else workflowPlacement
+    val placement = bindings.privateLayerPlacement()
     if (
-        (!workflowPlacement.visible && !privateLayerPanelVisible) ||
+        !privateLayerPanelVisible ||
             !placement.headlocked ||
             !bindings.panelHeadlockJoystickEnabled()
     ) {
@@ -64,22 +60,16 @@ internal class SpatialPanelDistanceActuationCoordinator(
             leftY = leftY,
             distanceRate = distanceRate,
             dtSeconds = dtSeconds,
-            minimumDistance =
-                if (privateLayerPanelVisible) PRIVATE_LAYER_PANEL_DISTANCE_MIN_METERS
-                else PANEL_HEADLOCK_DISTANCE_MIN_METERS,
+            minimumDistance = PRIVATE_LAYER_PANEL_DISTANCE_MIN_METERS,
         )
     if (abs(updatedDistance - previousDistance) < DISTANCE_CHANGE_EPSILON_METERS) return true
 
-    if (privateLayerPanelVisible) {
-      bindings.replacePrivateLayerPlacement(
-          SpatialPanelPlacementModule.coercePrivateLayerPanelPlacement(
-              bindings.privateLayerPlacement().copy(zMeters = updatedDistance)
-          )
-      )
-    } else {
-      bindings.replaceWorkflowPlacement(workflowPlacement.copy(zMeters = updatedDistance))
-    }
-    bindings.applyPanelPlacement(privateLayerPanelVisible)
+    bindings.replacePrivateLayerPlacement(
+        SpatialPanelPlacementModule.coercePrivateLayerPanelPlacement(
+            bindings.privateLayerPlacement().copy(zMeters = updatedDistance)
+        )
+    )
+    bindings.applyPanelPlacement(true)
     bindings.persistHeadlockTuning("controller-joystick-distance")
     if (bindings.shouldEmitJoystickMarker(now)) {
       bindings.marker(

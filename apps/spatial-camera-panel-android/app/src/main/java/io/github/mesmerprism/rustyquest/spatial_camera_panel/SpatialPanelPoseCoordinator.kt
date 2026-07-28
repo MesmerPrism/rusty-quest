@@ -1,9 +1,9 @@
 package io.github.mesmerprism.rustyquest.spatial_camera_panel
 
 import com.meta.spatial.core.Pose
-import com.meta.spatial.core.Quaternion
 import com.meta.spatial.core.SpatialSDKExperimentalAPI
 import com.meta.spatial.core.Vector3
+import io.github.mesmerprism.rustyquest.spatial_sdk_shared.SpatialPanelFacing
 import kotlin.math.sqrt
 
 internal data class SpatialPrivateLayerPanelPoseResult(
@@ -37,24 +37,6 @@ internal class SpatialPanelPoseCoordinator {
     )
   }
 
-  fun headlockedWorkflowPose(
-      viewerPose: Pose,
-      placement: PanelPlacement,
-      yawDegrees: Float,
-  ): Pose {
-    val rawForward = viewerPose.forward().activityNormalizedOr(Vector3(0.0f, 0.0f, -1.0f))
-    val rollStableBasis = activityRollStableParticleProjectionBasis(rawForward, yawDegrees)
-    val forward = rollStableBasis.first
-    val right = rollStableBasis.second
-    val up = rollStableBasis.third
-    val center =
-        viewerPose.t +
-            right * placement.xMeters +
-            up * placement.yMeters +
-            forward * placement.zMeters
-    return Pose(center, Quaternion.fromDirection(forward, up))
-  }
-
   fun privateLayerPoseFromViewer(
       viewerPose: Pose,
       currentPlacement: PanelPlacement,
@@ -76,11 +58,9 @@ internal class SpatialPanelPoseCoordinator {
     val offset =
         right * placement.xMeters + up * placement.yMeters + forward * forwardMeters
     val direction = offset.activityNormalizedOr(forward)
-    val panelUp =
-        (up + direction * -activityDot(up, direction)).activityNormalizedOr(up)
     val center = viewerPose.t + direction * distance
     return SpatialPrivateLayerPanelPoseResult(
-        pose = Pose(center, Quaternion.fromDirection(direction, panelUp)),
+        pose = Pose(center, SpatialPanelFacing.rotationFacingViewer(direction)),
         placement = placement,
     )
   }

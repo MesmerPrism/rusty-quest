@@ -33,22 +33,30 @@ mod camera_hwb_stream;
 mod camera_hwb_wsi;
 #[cfg(any(target_os = "android", test))]
 mod camera_latency_diagnostics;
+#[cfg(target_os = "android")]
+mod camera_replay_capture;
+#[cfg(any(target_os = "android", test))]
+mod camera_reprojection_guard_band;
 mod hand_adapter_consumer;
 #[cfg(target_os = "android")]
 mod live_hand_joint_bridge;
 #[cfg(any(target_os = "android", test))]
 mod live_hand_joints;
 mod particle_adapter_consumer;
+mod projection_surface_displacement;
 #[cfg(any(target_os = "android", test))]
 mod replay_hands;
+mod rgb_channel_transform;
 #[cfg(target_os = "android")]
 mod spatial_controller_actions;
 #[cfg(target_os = "android")]
 mod spatial_environment_depth;
+mod spatial_guide_processing;
 #[cfg(target_os = "android")]
 mod spatial_multimodal_input;
 #[cfg(target_os = "android")]
 mod spatial_native_passthrough;
+mod spatial_presentation_policy;
 mod spatial_public_multistack;
 mod spatial_public_multistack_runtime;
 #[cfg(target_os = "android")]

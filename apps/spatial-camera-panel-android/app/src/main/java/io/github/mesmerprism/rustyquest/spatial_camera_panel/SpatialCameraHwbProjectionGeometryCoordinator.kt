@@ -6,6 +6,8 @@ import com.meta.spatial.runtime.Scene
 import com.meta.spatial.runtime.StereoMode
 import com.meta.spatial.toolkit.MediaPanelRenderOptions
 import com.meta.spatial.toolkit.MediaPanelSettings
+import com.meta.spatial.toolkit.Equirect180ShapeOptions
+import com.meta.spatial.toolkit.Equirect360ShapeOptions
 import com.meta.spatial.toolkit.PanelInputOptions
 import com.meta.spatial.toolkit.PanelStyleOptions
 import com.meta.spatial.toolkit.QuadShapeOptions
@@ -17,8 +19,9 @@ internal data class SpatialCameraHwbProjectionGeometryBindings(
     val virtualRoomEnabled: () -> Boolean,
     val projectionWidthMeters: (Float) -> Float,
     val projectionHeightMeters: (Float) -> Float,
-    val legacyLauncherPanelSuppressed: () -> Boolean,
     val privateLayerPanelZ: () -> Float,
+    val immersiveVideoCarrierPresentation:
+        () -> SpatialImmersiveVideoCustomCarrierPresentation?,
 )
 
 @OptIn(SpatialSDKExperimentalAPI::class)
@@ -73,7 +76,6 @@ internal class SpatialCameraHwbProjectionGeometryCoordinator(
             targetScale = bindings.tuning.targetScale(),
             stereoHorizontalOffsetUv = bindings.tuning.stereoHorizontalOffsetUv(),
             targetScaleJoystickRatePerSecond = bindings.tuning.targetScaleJoystickRate(),
-            legacyLauncherPanelSuppressed = bindings.legacyLauncherPanelSuppressed(),
             targetDistanceSource = targetDistanceSource(),
             virtualRoomForegroundDistanceActive =
                 virtualRoomForegroundDistanceActive(placementMode),
@@ -133,12 +135,30 @@ internal class SpatialCameraHwbProjectionGeometryCoordinator(
 
   fun panelMediaSettings(): MediaPanelSettings {
     val plane = planeForPlacement()
+    val videoPresentation = bindings.immersiveVideoCarrierPresentation()
+    val outputWidthPx =
+        videoPresentation?.outputWidthPx ?: CAMERA_HWB_PROJECTION_WIDTH_PX
+    val outputHeightPx =
+        videoPresentation?.outputHeightPx ?: CAMERA_HWB_PROJECTION_HEIGHT_PX
     return MediaPanelSettings(
-        shape = QuadShapeOptions(plane.projectionWidthMeters, plane.projectionHeightMeters),
+        shape =
+            when (videoPresentation?.shape) {
+              SpatialImmersiveVideoCarrierShape.WorldQuad ->
+                  QuadShapeOptions(
+                      videoPresentation.flatPanelWidthMeters,
+                      videoPresentation.flatPanelHeightMeters,
+                  )
+              SpatialImmersiveVideoCarrierShape.Equirect180 ->
+                  Equirect180ShapeOptions(radius = videoPresentation.radiusMeters)
+              SpatialImmersiveVideoCarrierShape.Equirect360 ->
+                  Equirect360ShapeOptions(radius = videoPresentation.radiusMeters)
+              SpatialImmersiveVideoCarrierShape.LegacyQuad, null ->
+                  QuadShapeOptions(plane.projectionWidthMeters, plane.projectionHeightMeters)
+            },
         display =
             FixedMediaPanelDisplayOptions(
-                widthPx = CAMERA_HWB_PROJECTION_WIDTH_PX,
-                heightPx = CAMERA_HWB_PROJECTION_HEIGHT_PX,
+                widthPx = outputWidthPx,
+                heightPx = outputHeightPx,
             ),
         rendering =
             MediaPanelRenderOptions(
@@ -152,6 +172,11 @@ internal class SpatialCameraHwbProjectionGeometryCoordinator(
         input = PanelInputOptions(0),
     )
   }
+
+  fun outputDimensions(): Pair<Int, Int> =
+      bindings.immersiveVideoCarrierPresentation()?.let {
+        it.outputWidthPx to it.outputHeightPx
+      } ?: (CAMERA_HWB_PROJECTION_WIDTH_PX to CAMERA_HWB_PROJECTION_HEIGHT_PX)
 
   companion object {
     const val MODULE_ID = "spatial-camera-hwb-projection-geometry-coordinator"

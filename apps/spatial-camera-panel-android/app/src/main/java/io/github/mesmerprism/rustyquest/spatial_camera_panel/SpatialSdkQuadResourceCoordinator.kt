@@ -21,12 +21,12 @@ internal data class SpatialSdkQuadResourceBindings(
 internal class SpatialSdkQuadResourceCoordinator(
     private val bindings: SpatialSdkQuadResourceBindings,
 ) {
-  private var layer: SceneQuadLayer? = null
-  private var sceneObject: SceneObject? = null
+  private val layers = mutableListOf<SceneQuadLayer>()
+  private val sceneObjects = mutableListOf<SceneObject>()
   private var swapchain: SceneSwapchain? = null
   private var surface: AndroidSurface? = null
-  private var anchorMesh: SceneMesh? = null
-  private var anchorMaterial: SceneMaterial? = null
+  private val anchorMeshes = mutableListOf<SceneMesh>()
+  private val anchorMaterials = mutableListOf<SceneMaterial>()
 
   fun adoptSwapchain(value: SceneSwapchain) {
     swapchain = value
@@ -37,38 +37,33 @@ internal class SpatialSdkQuadResourceCoordinator(
   }
 
   fun registerAnchor(material: SceneMaterial, mesh: SceneMesh) {
-    anchorMaterial = material
-    anchorMesh = mesh
+    anchorMaterials += material
+    anchorMeshes += mesh
   }
 
   fun registerSceneObject(value: SceneObject) {
-    sceneObject = value
+    sceneObjects += value
   }
 
   fun registerLayer(value: SceneQuadLayer) {
-    layer = value
+    layers += value
   }
 
-  fun <T> withLayer(block: (SceneQuadLayer) -> T): T? = layer?.let(block)
+  fun <T> withLayer(block: (SceneQuadLayer) -> T): T? = layers.lastOrNull()?.let(block)
 
   fun cleanupSceneOnly(reason: String): String {
-    var layerDestroyed = layer == null
-    var sceneObjectDestroyed = sceneObject == null
-    var meshDestroyed = anchorMesh == null
-    var materialDestroyed = anchorMaterial == null
+    var layerDestroyed = true
+    var sceneObjectDestroyed = true
+    var meshDestroyed = true
+    var materialDestroyed = true
 
-    layer?.let { ownedLayer ->
-      layerDestroyed =
-          runCatching {
-                ownedLayer.destroy()
-                true
-              }
-              .getOrDefault(false)
+    layers.asReversed().forEach { ownedLayer ->
+      layerDestroyed = runCatching { ownedLayer.destroy() }.isSuccess && layerDestroyed
     }
-    layer = null
+    layers.clear()
 
-    sceneObject?.let { ownedSceneObject ->
-      sceneObjectDestroyed =
+    sceneObjects.asReversed().forEach { ownedSceneObject ->
+      val destroyed =
           runCatching {
                 bindings.scene.destroyObject(ownedSceneObject)
                 true
@@ -78,29 +73,20 @@ internal class SpatialSdkQuadResourceCoordinator(
                 true
               }
               .getOrDefault(false)
+      sceneObjectDestroyed = destroyed && sceneObjectDestroyed
     }
-    sceneObject = null
+    sceneObjects.clear()
     bindings.onSceneResourcesCleared()
 
-    anchorMesh?.let { ownedMesh ->
-      meshDestroyed =
-          runCatching {
-                ownedMesh.destroy()
-                true
-              }
-              .getOrDefault(false)
+    anchorMeshes.asReversed().forEach { ownedMesh ->
+      meshDestroyed = runCatching { ownedMesh.destroy() }.isSuccess && meshDestroyed
     }
-    anchorMesh = null
+    anchorMeshes.clear()
 
-    anchorMaterial?.let { ownedMaterial ->
-      materialDestroyed =
-          runCatching {
-                ownedMaterial.destroy()
-                true
-              }
-              .getOrDefault(false)
+    anchorMaterials.asReversed().forEach { ownedMaterial ->
+      materialDestroyed = runCatching { ownedMaterial.destroy() }.isSuccess && materialDestroyed
     }
-    anchorMaterial = null
+    anchorMaterials.clear()
 
     val cleanupStatus =
         if (layerDestroyed && sceneObjectDestroyed && meshDestroyed && materialDestroyed) {
@@ -125,12 +111,12 @@ internal class SpatialSdkQuadResourceCoordinator(
 
   fun cleanup(reason: String): String {
     val hadResources =
-        layer != null ||
-            sceneObject != null ||
+        layers.isNotEmpty() ||
+            sceneObjects.isNotEmpty() ||
             swapchain != null ||
             surface != null ||
-            anchorMesh != null ||
-            anchorMaterial != null
+            anchorMeshes.isNotEmpty() ||
+            anchorMaterials.isNotEmpty()
     val sceneCleanupStatus = cleanupSceneOnly(reason)
     val sceneCleanupDestroyed = sceneCleanupStatus == "destroyed"
     var swapchainDestroyed = swapchain == null

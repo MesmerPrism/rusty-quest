@@ -6,9 +6,6 @@ import android.os.Looper
 internal data class SpatialSurfaceParticleLifecycleDiagnosticSnapshot(
     val panelRegistrationCount: Int,
     val panelMode: String,
-    val workflowPanelVisible: Boolean,
-    val launcherPanelVisible: Boolean,
-    val legacyLauncherPanelSuppressed: Boolean,
     val particleLayerEntityCreated: Boolean,
     val particleSurfacePanelReady: Boolean,
     val particleSurfaceConsumerCalled: Boolean,
@@ -22,8 +19,6 @@ internal data class SpatialSurfaceParticleLifecycleDiagnosticSnapshot(
     val openXrInstanceHandleNonZero: Boolean,
     val openXrSessionHandleNonZero: Boolean,
     val openXrGetInstanceProcAddrHandleNonZero: Boolean,
-    val currentDriverProfileId: String,
-    val currentProfileId: String,
     val placementMarkerFields: String,
     val stereoMarkerFields: String,
 )
@@ -59,9 +54,6 @@ internal class SpatialSurfaceParticleLifecycleDiagnosticsCoordinator(
             activityMarkersFile = bindings.activityMarkersFile,
             panelRegistrationCount = snapshot.panelRegistrationCount,
             panelMode = snapshot.panelMode,
-            workflowPanelVisible = snapshot.workflowPanelVisible,
-            launcherPanelVisible = snapshot.launcherPanelVisible,
-            legacyLauncherPanelSuppressed = snapshot.legacyLauncherPanelSuppressed,
             particleLayerEntityCreated = snapshot.particleLayerEntityCreated,
             particleSurfacePanelReady = snapshot.particleSurfacePanelReady,
             particleSurfaceConsumerCalled = snapshot.particleSurfaceConsumerCalled,
@@ -76,8 +68,6 @@ internal class SpatialSurfaceParticleLifecycleDiagnosticsCoordinator(
             openXrSessionHandleNonZero = snapshot.openXrSessionHandleNonZero,
             openXrGetInstanceProcAddrHandleNonZero =
                 snapshot.openXrGetInstanceProcAddrHandleNonZero,
-            currentDriverProfileId = snapshot.currentDriverProfileId,
-            currentProfileId = snapshot.currentProfileId,
             placementMarkerFields = snapshot.placementMarkerFields,
             stereoMarkerFields = snapshot.stereoMarkerFields,
         )

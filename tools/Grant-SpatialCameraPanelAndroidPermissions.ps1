@@ -158,11 +158,6 @@ if (-not [string]::IsNullOrWhiteSpace($outDir)) {
 }
 
 $defaultPermissions = @(
-    "android.permission.ACCESS_FINE_LOCATION",
-    "android.permission.BLUETOOTH",
-    "android.permission.BLUETOOTH_ADMIN",
-    "android.permission.BLUETOOTH_CONNECT",
-    "android.permission.BLUETOOTH_SCAN",
     "android.permission.CAMERA",
     "android.permission.MODIFY_AUDIO_SETTINGS",
     "com.oculus.permission.HAND_TRACKING",
