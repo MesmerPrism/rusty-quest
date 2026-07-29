@@ -201,6 +201,25 @@ internal object PrivateLayerZoneCompositorControls {
               ),
       )
 
+  fun presetForToken(token: String): PrivateLayerZoneCompositor =
+      when (token.trim().lowercase()) {
+        "native-buffer" -> nativeBuffer
+        "organic-buffer" -> organicBuffer
+        "full-stretch" -> fullStretch
+        "spatial-video-underlay" -> spatialVideoUnderlayBlendTest
+        else -> legacyOff
+      }
+
+  fun presetToken(configuration: PrivateLayerZoneCompositor): String =
+      when (PrivateLayerZoneCompositorModule.normalize(configuration)) {
+        nativeBuffer -> "native-buffer"
+        organicBuffer -> "organic-buffer"
+        fullStretch -> "full-stretch"
+        spatialVideoUnderlayBlendTest -> "spatial-video-underlay"
+        legacyOff -> "off"
+        else -> "custom"
+      }
+
   fun coverageToken(mode: Int): String =
       when (mode) {
         coverageDynamicBuffer -> "dynamic-buffer"

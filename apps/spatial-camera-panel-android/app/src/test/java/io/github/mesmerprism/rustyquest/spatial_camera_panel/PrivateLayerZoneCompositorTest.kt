@@ -135,6 +135,37 @@ class PrivateLayerZoneCompositorTest {
   }
 
   @Test
+  fun productDefaultTokenSelectsTheThreeRegionVideoUnderlayPreset() {
+    val preset =
+        PrivateLayerZoneCompositorControls.presetForToken(
+            "spatial-video-underlay"
+        )
+
+    assertEquals(
+        PrivateLayerZoneCompositorControls.spatialVideoUnderlayBlendTest,
+        preset,
+    )
+    assertEquals(
+        PrivateLayerZoneCompositorControls.coverageDynamicBuffer,
+        preset.coverageMode,
+    )
+    assertEquals(
+        PrivateLayerZoneCompositorControls.outerTargetTransparentSpatialVideo,
+        preset.outerTargetMode,
+    )
+    assertTrue(preset.innerCycleAmplitude > 0.0f)
+    assertTrue(preset.outerCycleAmplitude > 0.0f)
+    assertEquals(
+        "spatial-video-underlay",
+        PrivateLayerZoneCompositorControls.presetToken(preset),
+    )
+    assertEquals(
+        PrivateLayerZoneCompositorControls.legacyOff,
+        PrivateLayerZoneCompositorControls.presetForToken("unsupported"),
+    )
+  }
+
+  @Test
   fun unsampledSpatialVideoRouteFailsClosedInsteadOfSubstitutingAReadableSource() {
     val invalid =
         PrivateLayerZoneCompositorModule.normalize(

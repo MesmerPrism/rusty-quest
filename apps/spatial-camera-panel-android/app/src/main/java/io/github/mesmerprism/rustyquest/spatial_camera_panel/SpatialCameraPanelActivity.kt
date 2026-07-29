@@ -335,6 +335,10 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
                 marker = ::marker,
             ),
             fixedLayerOverride = presentationPolicy.fixedLayerOverride,
+            initialZoneCompositor =
+                PrivateLayerZoneCompositorControls.presetForToken(
+                    BuildConfig.ZONE_COMPOSITOR_DEFAULT_PRESET
+                ),
         )
       }
   private val controlProfileHotloader: SpatialCameraControlProfileHotloader by
@@ -1128,16 +1132,21 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
         )
     )
   }
+
+  private var projectionPanelRuntimeEnabled = true
+
   private val cameraHwbProjectionLaunchCoordinator by lazy(LazyThreadSafetyMode.NONE) {
     SpatialCameraHwbProjectionLaunchCoordinator(
         SpatialCameraHwbProjectionLaunchBindings(
             state = {
               SpatialCameraHwbProjectionLaunchState(
                   enabled =
-                      presentationPolicy.lockedFinalPresentation ||
-                          activityReadOptionalBooleanSystemProperty(
-                              CAMERA_HWB_PROJECTION_PROBE_PROPERTY
-                          ) == true,
+                      projectionPanelRuntimeEnabled &&
+                          (presentationPolicy.lockedFinalPresentation ||
+                              BuildConfig.CAMERA_PROJECTION_DEFAULT_ENABLED ||
+                              activityReadOptionalBooleanSystemProperty(
+                                  CAMERA_HWB_PROJECTION_PROBE_PROPERTY
+                              ) == true),
                   sceneReady = spatialSceneReady,
                   virtualRoomEnabled = spatialVirtualRoomEnabled(),
                   virtualRoomLoaded = spatialVirtualRoomLoaded(),
@@ -1166,6 +1175,9 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             currentVideoSettings = { spatialVideoProjectionRuntimeCoordinator.settings },
             markProjectionLaunchStopped = cameraHwbProjectionLaunchCoordinator::markStopped,
             stopProjectionPanel = ::stopCameraHwbProjectionPanel,
+            directImmersiveVideoActive = {
+              immersiveVideoPanelCoordinator.sessionSnapshot().playbackEnabled
+            },
             enableSystemPassthrough = {
               scene.enablePassthrough(true)
               scene.isSystemPassthroughEnabled()
@@ -1595,6 +1607,10 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             "startInParticleViewProperty=$PANEL_START_IN_PARTICLE_VIEW_PROPERTY " +
             "startInParticleView=${startInParticleView()} " +
             "startInParticleViewDefault=${BuildConfig.START_IN_PARTICLE_VIEW_DEFAULT} " +
+            "cameraProjectionDefaultEnabled=${BuildConfig.CAMERA_PROJECTION_DEFAULT_ENABLED} " +
+            "immersiveVideoDefaultEnabled=${BuildConfig.IMMERSIVE_VIDEO_DEFAULT_ENABLED} " +
+            "immersiveVideoDefaultOfflinePackConfigured=${BuildConfig.IMMERSIVE_VIDEO_DEFAULT_OFFLINE_PACK_ID.isNotBlank()} " +
+            "zoneCompositorDefaultPreset=${activityMarkerToken(BuildConfig.ZONE_COMPOSITOR_DEFAULT_PRESET)} " +
             "spatialVirtualRoomModule=${SpatialVirtualRoomModule.MODULE_ID} " +
             "spatialVirtualRoomEnabledProperty=${SpatialVirtualRoomModule.ENABLED_PROPERTY} " +
             "spatialVirtualRoomDefaultEnabled=false " +
@@ -1642,7 +1658,9 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
 
   private fun customStereoProjectionRequested(): Boolean =
       productPolicy.cameraPanelRoutesEnabled &&
+          projectionPanelRuntimeEnabled &&
           (presentationPolicy.lockedFinalPresentation ||
+              BuildConfig.CAMERA_PROJECTION_DEFAULT_ENABLED ||
               activityReadOptionalBooleanSystemProperty(
                   CAMERA_HWB_PROJECTION_PROBE_PROPERTY
               ) == true)
@@ -1656,9 +1674,11 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
   }
 
   private fun currentProjectionVideoSettings(): SpatialVideoProjectionSettings {
-    return presentationPolicy.videoSettings(
-        spatialVideoProjectionRuntimeCoordinator.resolveSettings(intent)
-    )
+    val base =
+        presentationPolicy.videoSettings(
+            spatialVideoProjectionRuntimeCoordinator.resolveSettings(intent)
+        )
+    return immersiveVideoPanelCoordinator.customProjectionSettings(base) ?: base
   }
 
   private fun changeImmersiveVideo(
@@ -1677,8 +1697,34 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
               )
           else -> error("unknown_immersive_video_action_$action")
         }
+    if (selection.changed &&
+        projectionPanelVisibilityCoordinator.enabled &&
+        cameraHwbProjectionLaunchCoordinator.started) {
+      val replacementSettings =
+          immersiveVideoPanelCoordinator.customProjectionSettings(
+              presentationPolicy.videoSettings(
+                  spatialVideoProjectionRuntimeCoordinator.resolveSettings(intent)
+              )
+          )
+      if (replacementSettings != null) {
+        spatialVideoProjectionRuntimeCoordinator.adoptSettings(
+            replacementSettings,
+            immersiveVideoPanelCoordinator.activeOfflinePack,
+        )
+        projectionPanelVisibilityCoordinator.restartWith(
+            replacementSettings,
+            "$source-video-selection",
+        )
+      }
+    }
     return selection.snapshot
   }
+
+  private fun setImmersiveVideoPlaybackEnabled(
+      enabled: Boolean,
+      source: String,
+  ): SpatialImmersiveVideoSessionSnapshot =
+      immersiveVideoPanelCoordinator.setPlaybackEnabled(enabled, source)
 
   private fun setImmersiveVideoPresentationMode(
       mode: SpatialImmersiveVideoPresentationMode,
@@ -1945,6 +1991,12 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
                     videoSession = immersiveVideoPanelCoordinator::sessionSnapshot,
                     setLayerOverride = privateLayerControlCoordinator::updateLayerOverride,
                     setProjectionPanelEnabled = ::setProjectionPanelEnabled,
+                    setVideoPlaybackEnabled = { enabled ->
+                      setImmersiveVideoPlaybackEnabled(
+                          enabled,
+                          "private-layer-control-panel-video-toggle",
+                      )
+                    },
                     updateProjectionScale = { scale, source ->
                       cameraHwbProjectionTuningCoordinator.updateTargetScaleFromPanel(
                           scale,
@@ -2401,11 +2453,14 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     )
   }
 
-  private fun setProjectionPanelEnabled(enabled: Boolean, source: String): Boolean =
-      projectionPanelVisibilityCoordinator.setEnabled(
-          requestedEnabled = enabled || presentationPolicy.lockedFinalPresentation,
-          source = source,
-      )
+  private fun setProjectionPanelEnabled(enabled: Boolean, source: String): Boolean {
+    val effectiveEnabled = enabled || presentationPolicy.lockedFinalPresentation
+    projectionPanelRuntimeEnabled = effectiveEnabled
+    return projectionPanelVisibilityCoordinator.setEnabled(
+        requestedEnabled = effectiveEnabled,
+        source = source,
+    )
+  }
 
   private fun selectSurfaceTarget(requestedTargetId: String, source: String): String {
     val targetId = requestedTargetId.trim()

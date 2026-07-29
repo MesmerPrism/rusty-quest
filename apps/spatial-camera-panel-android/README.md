@@ -106,11 +106,12 @@ app-local. Stopping the bridge is the rollback and leaves the adapter inert.
   input remain independently selectable from the private-layer panel for later
   experiments; these public policies do not contain downstream effect formulas.
 - The private layer panel also exposes a separate projection-panel isolation
-  toggle. Turning it off stops MediaCodec playback and native custom projection,
-  destroys the Spatial projection carrier, and explicitly leaves system
-  passthrough enabled. This diagnostic distinguishes a black submitted carrier
-  from an unavailable or unsubmitted passthrough layer; turning it back on
-  rebuilds the same carrier and resumes the captured video settings.
+  toggle. Turning it off stops native custom projection and destroys only the
+  custom Spatial projection carrier. The independent Spatial SDK 360 video
+  layer and system passthrough remain available. The video page has its own
+  playback toggle, so either carrier can be isolated without conflating their
+  lifecycle. Turning custom projection back on rebuilds the same carrier and
+  resumes the captured video settings.
 - Camera-latency diagnosis has a revisioned, serial-scoped A/B control plane in
   `tools/Set-SpatialCameraPanelCameraLatencyDiagnostic.ps1`. `Baseline`,
   `FrozenWorld`, `NonBlocking`, `FrozenNonBlocking`, `StrictPair`, `MonoLeft`,
@@ -468,12 +469,14 @@ Earlier foreground-room runtime evidence used
 `projectionRoomRenderOrder=video-surface-panel-over-virtual-room`.
 
 When the camera/video stack is active, the right primary button opens the
-front-of-camera private-layer control panel. That panel mirrors the native private
-layer selector: seven generic
-layer choices, live projection-area scale, live depth source policy
-  (`eye-index` stereo by default, `mono-layer0`, `mono-layer1`, or `compare`),
-  and live metadata-auto, per-eye X/Y, independent X/Y scale, and roll controls.
-  It is registered as
+front-of-camera private-layer control panel. Its front page presents live
+summaries and navigation for `Layers & projection`, `360 video`,
+`Three-region effect`, `Image processing`, and `Depth alignment`; every detail
+page has a persistent Home action. The detail pages retain the seven generic
+layer choices, live projection-area scale, independent custom-projection and
+video controls, live video selection, live depth source policy (`eye-index`
+stereo by default, `mono-layer0`, `mono-layer1`, or `compare`), metadata-auto,
+per-eye X/Y, independent X/Y scale, and roll controls. It is registered as
 `spatial_private_layer_panel`, currently renders through the targeted
 `spatial-sdk-layer` UI ordering test path with layer z-index `99`, uses
 Spatial SDK `Grabbable` as the movement authority so it sticks to the grabbed
@@ -1127,6 +1130,16 @@ phase to `0.25 Hz`; ordinary builds keep a scale of `1.0`. Give presentation
 builds a distinct `-AppId`, `-AppLabel`, `-ApkFileName`, and `-OutDir` so they do
 not replace the interactive diagnostic build.
 
+Interactive product builds can select normal-launch defaults without a debug
+property or launcher extra. `-CameraProjectionDefaultEnabled`,
+`-ImmersiveVideoDefaultEnabled`,
+`-ImmersiveVideoDefaultOfflinePackId <pack-id>`, and
+`-ZoneCompositorDefaultPreset spatial-video-underlay` are content-addressed
+build inputs. The immersive default requires the matching authenticated
+offline pack to be packaged by the same build. Omitting these inputs preserves
+the shared adapter's inert defaults. Unlike `-LockedFinalPresentation`, this
+path keeps the panel and all runtime controls available.
+
 Run the static gate:
 
 ```powershell
@@ -1239,7 +1252,13 @@ and writes a validated run capsule:
 ```powershell
 pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Build-SpatialCameraPanelAndroid.ps1 `
   -AppId <project-specific-package> `
-  -AppLabel <project-label>
+  -AppLabel <project-label> `
+  -CameraProjectionDefaultEnabled `
+  -ImmersiveVideoDefaultEnabled `
+  -ImmersiveVideoDefaultOfflinePackId <pack-id> `
+  -ZoneCompositorDefaultPreset spatial-video-underlay `
+  -OfflineMediaPackAssetDir <authenticated-pack-directory> `
+  -OfflineMediaKeyHex <64-hex-character-key>
 pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-ApkRunCapsule.ps1 `
   -Path <content-addressed-output>\run-capsule.json
 ```
@@ -1326,10 +1345,14 @@ catalog can mix SBS and top-bottom stereo items, including different
 flat/180°/360° source classifications. When the custom camera projection is
 also active, the video remains on its ideal world-anchored Spatial SDK surface
 below a separate planar custom-projection carrier. `Head-fixed border` rebuilds
-only the video as a viewer-following background quad. Video selection and
-presentation changes never curve, rebuild, or restart the planar camera
-projection, and the control panel remains ordered above both visual layers.
-Mono items follow the same ideal direct Spatial SDK media-panel route.
+only the direct video as a viewer-following background quad. Selecting another
+encrypted stereo item rebuilds the direct video for its own shape and
+atomically restarts only the planar custom-projection carrier with the selected
+pack's layout and dimensions; it does not restart the Activity or the control
+panel. The video and custom-projection toggles remain independent, and the
+control panel stays ordered above both visual layers. Mono items follow the
+same ideal direct Spatial SDK media-panel route and are not adopted by the
+custom stereo projection carrier.
 
 To include a generic Spatial SDK staged 3D asset, provide a staged mesh URI or
 let the wrapper stage a local GLB/GLTF source. Raw FBX sources must be converted

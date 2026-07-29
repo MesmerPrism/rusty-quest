@@ -47,6 +47,18 @@ private val LayerPanelAccent = Color(0xFF63D2FF)
 private val LayerPanelWarm = Color(0xFFFFC857)
 private val LayerPanelBorder = Color(0xFF3B465A)
 
+private enum class PrivateLayerPanelPage(
+    val title: String,
+    val subtitle: String,
+) {
+  Home("Settings", "Choose a topic"),
+  Layers("Layers & projection", "Visibility, rendering layer, and projection size"),
+  Video("360 video", "Playback, presentation, and active video"),
+  Regions("Three-region effect", "Core, dynamic buffer, and outer-region behavior"),
+  Image("Image processing", "Depth warp, RGB transform, sampling, and guide blur"),
+  Depth("Depth alignment", "Depth source and per-eye fine tuning"),
+}
+
 @Composable
 internal fun PrivateLayerControlPanel(
     layerOverride: Float,
@@ -61,6 +73,7 @@ internal fun PrivateLayerControlPanel(
     videoSession: () -> SpatialImmersiveVideoSessionSnapshot,
     setLayerOverride: (Float, String) -> Float,
     setProjectionPanelEnabled: (Boolean, String) -> Boolean,
+    setVideoPlaybackEnabled: (Boolean) -> SpatialImmersiveVideoSessionSnapshot,
     updateProjectionScale: (Float, String) -> Float,
     updateDepthLayerPolicy: (Int, String) -> Int,
     updateDepthAlignment: (PrivateLayerDepthAlignment, String) -> PrivateLayerDepthAlignment,
@@ -89,6 +102,7 @@ internal fun PrivateLayerControlPanel(
       remember(projectionSurfaceDisplacement) {
         mutableStateOf(projectionSurfaceDisplacement)
       }
+  var currentPage by remember { mutableStateOf(PrivateLayerPanelPage.Home) }
   var localVideoSession by remember { mutableStateOf(videoSession()) }
   LaunchedEffect(Unit) {
     while (true) {
@@ -130,36 +144,77 @@ internal fun PrivateLayerControlPanel(
           PanelGrabHandle()
           Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Text(
-                "Layer Selection Panel",
+                currentPage.title,
                 style = MaterialTheme.typography.headlineSmall,
                 fontWeight = FontWeight.Bold,
             )
             Text(
-                "Active: ${PrivateLayerControls.labelForOverride(localLayerOverride)}",
+                currentPage.subtitle,
                 style = MaterialTheme.typography.bodyMedium,
                 color = LayerPanelMuted,
             )
           }
         }
-        Button(
-            onClick = closePanel,
-            colors =
-                ButtonDefaults.buttonColors(
-                    containerColor = LayerPanelSurfaceAlt,
-                    contentColor = LayerPanelInk,
-                ),
-        ) {
-          Text("Close")
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+          if (currentPage != PrivateLayerPanelPage.Home) {
+            Button(
+                onClick = { currentPage = PrivateLayerPanelPage.Home },
+                colors =
+                    ButtonDefaults.buttonColors(
+                        containerColor = LayerPanelAccent,
+                        contentColor = Color(0xFF04111A),
+                    ),
+            ) {
+              Text("Home")
+            }
+          }
+          Button(
+              onClick = closePanel,
+              colors =
+                  ButtonDefaults.buttonColors(
+                      containerColor = LayerPanelSurfaceAlt,
+                      contentColor = LayerPanelInk,
+                  ),
+          ) {
+            Text("Close")
+          }
         }
       }
 
-      PreviewBand()
-      Section("Projection Panel Isolation") {
+      if (currentPage == PrivateLayerPanelPage.Home) {
+        PreviewBand()
+        PanelTopicMenu(
+            projectionSummary =
+                "Custom projection ${if (localProjectionPanelEnabled) "on" else "off"} · " +
+                    PrivateLayerControls.labelForOverride(localLayerOverride),
+            videoSummary =
+                if (localVideoSession.available) {
+                  "${if (localVideoSession.playbackEnabled) "On" else "Off"} · " +
+                      "${localVideoSession.activeOrdinal} of ${localVideoSession.itemCount}"
+                } else {
+                  "No packaged video available"
+                },
+            regionSummary =
+                "${PrivateLayerZoneCompositorControls.presetToken(localZoneCompositor)} · " +
+                    PrivateLayerZoneCompositorControls.coverageToken(
+                        localZoneCompositor.coverageMode
+                    ),
+            imageSummary =
+                "${PrivateLayerControls.guideProcessingPresetToken(localGuideProcessing)} · " +
+                    RgbChannelTransformControls.modeToken(localRgbChannelTransform.mode),
+            depthSummary =
+                "${PrivateLayerControls.labelForDepthLayerPolicy(localDepthLayerPolicy)} · " +
+                    (if (localDepthAlignment.metadataAutoAlign) "auto align" else "manual"),
+            onSelect = { currentPage = it },
+        )
+      }
+      if (currentPage == PrivateLayerPanelPage.Layers) {
+      Section("Custom Projection") {
         Text(
             if (localProjectionPanelEnabled) {
-              "Projection panel: On — video and custom projection are active."
+              "Custom camera/effect projection: On. The independent 360 video layer can stay on or off."
             } else {
-              "Projection panel: Off — carrier, video, and custom projection are disabled; passthrough remains on."
+              "Custom camera/effect projection: Off. The 360 video layer and system passthrough are retained."
             },
             style = MaterialTheme.typography.bodyMedium,
             color = LayerPanelMuted,
@@ -182,9 +237,9 @@ internal fun PrivateLayerControlPanel(
         ) {
           Text(
               if (localProjectionPanelEnabled) {
-                "Turn image projection panel off"
+                "Turn custom projection off"
               } else {
-                "Turn image projection panel on"
+                "Turn custom projection on"
               }
           )
         }
@@ -197,9 +252,10 @@ internal fun PrivateLayerControlPanel(
             },
         )
       }
+      }
 
-      if (localVideoSession.requested) {
-        Section("Offline Video") {
+      if (currentPage == PrivateLayerPanelPage.Video) {
+        Section("360 Video Playback") {
           Text(
               if (localVideoSession.available) {
                 "Active video ${localVideoSession.activeOrdinal} of ${localVideoSession.itemCount}"
@@ -209,6 +265,32 @@ internal fun PrivateLayerControlPanel(
               style = MaterialTheme.typography.bodyMedium,
               color = LayerPanelMuted,
           )
+          Button(
+              modifier = Modifier.fillMaxWidth().height(52.dp),
+              enabled = localVideoSession.available,
+              onClick = {
+                localVideoSession =
+                    setVideoPlaybackEnabled(!localVideoSession.playbackEnabled)
+              },
+              colors =
+                  ButtonDefaults.buttonColors(
+                      containerColor =
+                          if (localVideoSession.playbackEnabled) {
+                            LayerPanelWarm
+                          } else {
+                            LayerPanelAccent
+                          },
+                      contentColor = Color(0xFF04111A),
+                  ),
+          ) {
+            Text(
+                if (localVideoSession.playbackEnabled) {
+                  "Turn 360 video off"
+                } else {
+                  "Turn 360 video on"
+                }
+            )
+          }
           Text(
               if (localVideoSession.customProjectionCompatible) {
                 "The video uses its ideal Spatial SDK surface behind the planar custom camera projection."
@@ -287,6 +369,7 @@ internal fun PrivateLayerControlPanel(
         }
       }
 
+      if (currentPage == PrivateLayerPanelPage.Layers) {
       Section("Projection Area") {
         Text(
             "Scale ${"%.2f".format(localProjectionScale)}",
@@ -315,7 +398,9 @@ internal fun PrivateLayerControlPanel(
           }
         }
       }
+      }
 
+      if (currentPage == PrivateLayerPanelPage.Image) {
       Section("Projection Depth") {
         Text(
             "Adds a guide-driven depth/parallax warp inside the existing stereo projection. The Spatial carrier stays planar, so video switching and the peripheral compositor remain active.",
@@ -488,7 +573,9 @@ internal fun PrivateLayerControlPanel(
           }
         }
       }
+      }
 
+      if (currentPage == PrivateLayerPanelPage.Regions) {
       Section("Peripheral Stretch & Zone Blend") {
         Text(
             "The core follows the live projection scale, then the motion guard contracts it. Stretch always uses the native mirrored oval treatment. Buffer mode fills only the released margin, while Full mode replaces the video layer.",
@@ -820,7 +907,9 @@ internal fun PrivateLayerControlPanel(
           }
         }
       }
+      }
 
+      if (currentPage == PrivateLayerPanelPage.Image) {
       Section("Camera Sampling A/B") {
         Text(
             "Thin-line AA applies a modest footprint-aware five-tap tent filter at camera ingress. Linear preserves the previous single bilinear sample for direct comparison.",
@@ -989,7 +1078,9 @@ internal fun PrivateLayerControlPanel(
           }
         }
       }
+      }
 
+      if (currentPage == PrivateLayerPanelPage.Depth) {
       Section("Depth Source") {
         Text(
             "Active: ${PrivateLayerControls.labelForDepthLayerPolicy(localDepthLayerPolicy)}",
@@ -1088,6 +1179,71 @@ internal fun PrivateLayerControlPanel(
               )
         }
       }
+      }
+    }
+  }
+}
+
+@Composable
+private fun PanelTopicMenu(
+    projectionSummary: String,
+    videoSummary: String,
+    regionSummary: String,
+    imageSummary: String,
+    depthSummary: String,
+    onSelect: (PrivateLayerPanelPage) -> Unit,
+) {
+  Section("Settings topics") {
+    TopicNavigationButton(
+        title = PrivateLayerPanelPage.Layers.title,
+        summary = projectionSummary,
+        onClick = { onSelect(PrivateLayerPanelPage.Layers) },
+    )
+    TopicNavigationButton(
+        title = PrivateLayerPanelPage.Video.title,
+        summary = videoSummary,
+        onClick = { onSelect(PrivateLayerPanelPage.Video) },
+    )
+    TopicNavigationButton(
+        title = PrivateLayerPanelPage.Regions.title,
+        summary = regionSummary,
+        onClick = { onSelect(PrivateLayerPanelPage.Regions) },
+    )
+    TopicNavigationButton(
+        title = PrivateLayerPanelPage.Image.title,
+        summary = imageSummary,
+        onClick = { onSelect(PrivateLayerPanelPage.Image) },
+    )
+    TopicNavigationButton(
+        title = PrivateLayerPanelPage.Depth.title,
+        summary = depthSummary,
+        onClick = { onSelect(PrivateLayerPanelPage.Depth) },
+    )
+  }
+}
+
+@Composable
+private fun TopicNavigationButton(
+    title: String,
+    summary: String,
+    onClick: () -> Unit,
+) {
+  Button(
+      modifier = Modifier.fillMaxWidth().height(72.dp),
+      onClick = onClick,
+      colors =
+          ButtonDefaults.buttonColors(
+              containerColor = LayerPanelSurfaceAlt,
+              contentColor = LayerPanelInk,
+          ),
+  ) {
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalAlignment = Alignment.Start,
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+      Text(title, fontWeight = FontWeight.SemiBold)
+      Text(summary, style = MaterialTheme.typography.bodySmall, color = LayerPanelMuted)
     }
   }
 }

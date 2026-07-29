@@ -27,6 +27,8 @@ internal data class SpatialPrivateLayerPanelRegistrationBindings(
     val videoSession: () -> SpatialImmersiveVideoSessionSnapshot,
     val setLayerOverride: (Float, String) -> Float,
     val setProjectionPanelEnabled: (Boolean, String) -> Boolean,
+    val setVideoPlaybackEnabled:
+        (Boolean) -> SpatialImmersiveVideoSessionSnapshot,
     val updateProjectionScale: (Float, String) -> Float,
     val updateDepthLayerPolicy: (Int, String) -> Int,
     val updateDepthAlignment:
@@ -89,6 +91,7 @@ internal object SpatialComposePanelRegistrationModule {
                       videoSession = bindings.videoSession,
                       setLayerOverride = bindings.setLayerOverride,
                       setProjectionPanelEnabled = bindings.setProjectionPanelEnabled,
+                      setVideoPlaybackEnabled = bindings.setVideoPlaybackEnabled,
                       updateProjectionScale = bindings.updateProjectionScale,
                       updateDepthLayerPolicy = bindings.updateDepthLayerPolicy,
                       updateDepthAlignment = bindings.updateDepthAlignment,

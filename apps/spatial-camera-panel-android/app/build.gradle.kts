@@ -46,6 +46,53 @@ val spatialDistortionSpeedScale =
     }
     .orElse("1.0")
 
+fun booleanBuildInput(name: String, defaultValue: String = "false") =
+  providers.environmentVariable(name)
+    .map { raw ->
+      when (raw.trim().lowercase()) {
+        "1", "true", "yes", "on" -> "true"
+        "0", "false", "no", "off" -> "false"
+        else -> error("$name must be a boolean")
+      }
+    }
+    .orElse(defaultValue)
+
+val spatialCameraProjectionDefaultEnabled =
+  booleanBuildInput("RUSTY_QUEST_SPATIAL_CAMERA_PROJECTION_DEFAULT_ENABLED")
+
+val spatialImmersiveVideoDefaultEnabled =
+  booleanBuildInput("RUSTY_QUEST_SPATIAL_IMMERSIVE_VIDEO_DEFAULT_ENABLED")
+
+val spatialImmersiveVideoDefaultOfflinePackId =
+  providers.environmentVariable("RUSTY_QUEST_SPATIAL_IMMERSIVE_VIDEO_DEFAULT_OFFLINE_PACK_ID")
+    .map { raw ->
+      val value = raw.trim().lowercase()
+      require(value.isEmpty() || value.matches(Regex("^[a-z0-9][a-z0-9._-]{1,63}$"))) {
+        "RUSTY_QUEST_SPATIAL_IMMERSIVE_VIDEO_DEFAULT_OFFLINE_PACK_ID must be empty or a valid pack id"
+      }
+      value
+    }
+    .orElse("")
+
+val spatialZoneCompositorDefaultPreset =
+  providers.environmentVariable("RUSTY_QUEST_SPATIAL_ZONE_COMPOSITOR_DEFAULT_PRESET")
+    .map { raw ->
+      val value = raw.trim().lowercase()
+      require(
+        value in setOf(
+          "off",
+          "native-buffer",
+          "organic-buffer",
+          "full-stretch",
+          "spatial-video-underlay",
+        )
+      ) {
+        "RUSTY_QUEST_SPATIAL_ZONE_COMPOSITOR_DEFAULT_PRESET is unsupported"
+      }
+      value
+    }
+    .orElse("off")
+
 val spatialHandAlignmentEnabledDefault =
   providers.environmentVariable("RUSTY_QUEST_SPATIAL_HAND_ALIGNMENT_ENABLED_DEFAULT")
     .orElse("false")
@@ -152,6 +199,26 @@ android {
       "float",
       "DISTORTION_SPEED_SCALE",
       "${spatialDistortionSpeedScale.get()}f",
+    )
+    buildConfigField(
+      "boolean",
+      "CAMERA_PROJECTION_DEFAULT_ENABLED",
+      spatialCameraProjectionDefaultEnabled.get(),
+    )
+    buildConfigField(
+      "boolean",
+      "IMMERSIVE_VIDEO_DEFAULT_ENABLED",
+      spatialImmersiveVideoDefaultEnabled.get(),
+    )
+    buildConfigField(
+      "String",
+      "IMMERSIVE_VIDEO_DEFAULT_OFFLINE_PACK_ID",
+      buildConfigString(spatialImmersiveVideoDefaultOfflinePackId.get()),
+    )
+    buildConfigField(
+      "String",
+      "ZONE_COMPOSITOR_DEFAULT_PRESET",
+      buildConfigString(spatialZoneCompositorDefaultPreset.get()),
     )
     buildConfigField(
       "boolean",

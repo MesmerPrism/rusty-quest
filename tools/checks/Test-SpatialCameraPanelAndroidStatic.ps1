@@ -2860,7 +2860,19 @@ Assert-Contains "Offline immersive media pack" $offlineImmersiveMediaPack '.list
 Assert-Contains "Immersive video session" $immersiveVideoSession 'CUSTOM_PROJECTION_SOURCE = "encrypted-offline-pack"'
 Assert-Contains "Immersive video panel coordinator" $immersiveVideoPanelCoordinator "fun selectPrevious("
 Assert-Contains "Immersive video panel coordinator" $immersiveVideoPanelCoordinator "fun selectNext("
+Assert-Contains "Immersive video panel coordinator" $immersiveVideoPanelCoordinator "fun setPlaybackEnabled("
+Assert-Contains "Immersive video panel coordinator" $immersiveVideoPanelCoordinator "playbackEnabled = effectiveEnabled"
+Assert-Contains "Immersive video panel coordinator" $immersiveVideoPanelCoordinator "BuildConfig.IMMERSIVE_VIDEO_DEFAULT_ENABLED"
+Assert-Contains "Immersive video panel coordinator" $immersiveVideoPanelCoordinator "BuildConfig.IMMERSIVE_VIDEO_DEFAULT_OFFLINE_PACK_ID"
 Assert-Contains "Activity" $activity "directImmersiveVideoPanelRequested()"
+Assert-Contains "Activity" $activity "setImmersiveVideoPlaybackEnabled("
+Assert-Contains "Activity" $activity "projectionPanelVisibilityCoordinator.restartWith("
+Assert-Contains "Activity" $activity "BuildConfig.CAMERA_PROJECTION_DEFAULT_ENABLED"
+Assert-Contains `
+    "Activity" `
+    $activity `
+    "projectionPanelRuntimeEnabled &&"
+Assert-Contains "Activity" $activity "BuildConfig.ZONE_COMPOSITOR_DEFAULT_PRESET"
 Assert-Contains "Activity" $activity "status=layered-carriers-adopted"
 Assert-Contains "Activity" $activity "customProjectionCarrierShape=planar-quad"
 Assert-NotContains "Activity" $activity "usesImmersiveVideoAsCustomProjectionSource()"
@@ -2949,12 +2961,24 @@ Assert-Contains "Activity" $activity "nativeUpdatePrivateLayerGuideProcessing("
 Assert-Contains "Activity" $activity "initialPrivateLayerGuideProcessing"
 Assert-NotContains "Activity" $activity "ComposeViewPanelRegistration("
 Assert-Contains "Private layer panel" $privateLayerPanel "internal fun PrivateLayerControlPanel("
-Assert-Contains "Private layer panel" $privateLayerPanel "Layer Selection Panel"
+Assert-Contains "Private layer panel" $privateLayerPanel 'Home("Settings", "Choose a topic")'
+Assert-Contains "Private layer panel" $privateLayerPanel "Settings topics"
+Assert-Contains "Private layer panel" $privateLayerPanel "Layers & projection"
+Assert-Contains "Private layer panel" $privateLayerPanel "360 video"
+Assert-Contains "Private layer panel" $privateLayerPanel "Three-region effect"
+Assert-Contains "Private layer panel" $privateLayerPanel "Image processing"
+Assert-Contains "Private layer panel" $privateLayerPanel "Depth alignment"
+Assert-Contains "Private layer panel" $privateLayerPanel 'Text("Home")'
 Assert-Contains "Private layer panel" $privateLayerPanel "Active Rendering"
 Assert-Contains "Private layer panel" $privateLayerPanel "Projection Area"
-Assert-Contains "Private layer panel" $privateLayerPanel "Projection Panel Isolation"
-Assert-Contains "Private layer panel" $privateLayerPanel "Turn image projection panel off"
-Assert-Contains "Private layer panel" $privateLayerPanel "Turn image projection panel on"
+Assert-Contains "Private layer panel" $privateLayerPanel "Custom Projection"
+Assert-Contains "Private layer panel" $privateLayerPanel "360 Video Playback"
+Assert-Contains "Private layer panel" $privateLayerPanel "Turn custom projection off"
+Assert-Contains "Private layer panel" $privateLayerPanel "Turn custom projection on"
+Assert-Contains "Private layer panel" $privateLayerPanel "Turn 360 video off"
+Assert-Contains "Private layer panel" $privateLayerPanel "Turn 360 video on"
+Assert-Contains "Private layer panel" $privateLayerPanel "The independent 360 video layer can stay on or off."
+Assert-Contains "Private layer panel" $privateLayerPanel "The 360 video layer and system passthrough are retained."
 Assert-Contains "Private layer panel" $privateLayerPanel "Depth Source"
 Assert-Contains "Private layer panel" $privateLayerPanel "Depth Alignment"
 Assert-Contains "Private layer panel" $privateLayerPanel "Guide Processing A/B"
@@ -3369,6 +3393,17 @@ Assert-Contains "Build script" $buildScript 'spatial_public_guide_postblur_kerne
 Assert-Contains "Build script" $buildScript 'spatial_public_guide_kernel_alternatives = @("native-box5", "gaussian5")'
 Assert-Contains "Build script" $buildScript 'spatial_public_guide_input_alternatives = @("luma", "rgb-preserve")'
 Assert-Contains "Build script" $buildScript '[switch]$LockedFinalPresentation'
+Assert-Contains "Build script" $buildScript '[switch]$CameraProjectionDefaultEnabled'
+Assert-Contains "Build script" $buildScript '[switch]$ImmersiveVideoDefaultEnabled'
+Assert-Contains "Build script" $buildScript '[string]$ImmersiveVideoDefaultOfflinePackId'
+Assert-Contains "Build script" $buildScript '[string]$ZoneCompositorDefaultPreset'
+Assert-Contains "Build script" $buildScript 'camera_projection_default_enabled'
+Assert-Contains "Build script" $buildScript 'immersive_video_default_enabled'
+Assert-Contains "Build script" $buildScript 'projection_zone_compositor_default_preset'
+Assert-Contains "App Gradle" $appGradle "RUSTY_QUEST_SPATIAL_CAMERA_PROJECTION_DEFAULT_ENABLED"
+Assert-Contains "App Gradle" $appGradle "RUSTY_QUEST_SPATIAL_IMMERSIVE_VIDEO_DEFAULT_ENABLED"
+Assert-Contains "App Gradle" $appGradle "RUSTY_QUEST_SPATIAL_IMMERSIVE_VIDEO_DEFAULT_OFFLINE_PACK_ID"
+Assert-Contains "App Gradle" $appGradle "RUSTY_QUEST_SPATIAL_ZONE_COMPOSITOR_DEFAULT_PRESET"
 Assert-Contains "Build script" $buildScript 'DistortionSpeedScale = 1.0'
 Assert-Contains "Build script" $buildScript 'locked_final_private_layer_override'
 Assert-Contains "Build script" $buildScript 'locked_projection_scale'
@@ -4493,7 +4528,9 @@ Assert-Contains "Spatial validation workflow coordinator" $validationWorkflowCoo
 Assert-Contains "Spatial validation workflow coordinator" $validationWorkflowCoordinator '"projection-panel-on" -> bindings.setProjectionPanelEnabled(true, source)'
 Assert-Contains "Projection panel visibility coordinator" $projectionPanelVisibilityCoordinator "internal class SpatialProjectionPanelVisibilityCoordinator"
 Assert-Contains "Projection panel visibility coordinator" $projectionPanelVisibilityCoordinator "projectionCarrierVisible=false customProjectionEnabled=false"
-Assert-Contains "Projection panel visibility coordinator" $projectionPanelVisibilityCoordinator 'videoProjectionEnabled=false'
+Assert-Contains "Projection panel visibility coordinator" $projectionPanelVisibilityCoordinator "fun restartWith("
+Assert-Contains "Projection panel visibility coordinator" $projectionPanelVisibilityCoordinator "directImmersiveVideoActive"
+Assert-Contains "Projection panel visibility coordinator" $projectionPanelVisibilityCoordinator "directImmersiveVideoRetained"
 Assert-Contains "Projection panel visibility coordinator" $projectionPanelVisibilityCoordinator 'passthroughIsolationDiagnostic=true'
 Assert-Contains "Projection panel visibility coordinator" $projectionPanelVisibilityCoordinator 'const val MODULE_ID = "spatial-projection-panel-visibility-coordinator"'
 Assert-Contains "Activity" $activity "private fun stopCameraHwbProjectionPanel(reason: String): SpatialProjectionPanelStopReceipt"

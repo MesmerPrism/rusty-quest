@@ -44,8 +44,11 @@ internal data class OfflineImmersiveMediaPack(
     val key: ByteArray,
     val packagedInApk: Boolean,
 ) {
+  val virtualUriString: String
+    get() = "rusty-offline-media://$packId/video"
+
   val virtualUri: Uri
-    get() = Uri.parse("rusty-offline-media://$packId/video")
+    get() = Uri.parse(virtualUriString)
 
   fun aad(chunk: OfflineImmersiveMediaChunk): ByteArray =
       listOf(

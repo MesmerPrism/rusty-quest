@@ -106,6 +106,37 @@ class SpatialImmersiveVideoSessionPolicyTest {
   }
 
   @Test
+  fun selectedOfflineVideoBecomesTheActiveCustomProjectionSource() {
+    val selected =
+        config(
+            pack(
+                "selected-360",
+                3840,
+                4320,
+                shape = SpatialImmersiveVideoShape.Equirect360,
+                stereoLayout = SpatialImmersiveVideoStereoLayout.TopBottom,
+            )
+        )
+
+    val settings =
+        requireNotNull(
+            SpatialImmersiveVideoSessionPolicy.customProjectionSettings(
+                SpatialVideoProjectionSettings.disabled(),
+                selected,
+            )
+        )
+
+    assertTrue(settings.enabled)
+    assertEquals(SpatialImmersiveVideoSessionPolicy.CUSTOM_PROJECTION_SOURCE, settings.source)
+    assertEquals("rusty-offline-media://selected-360/video", settings.path)
+    assertEquals("top-bottom-left-right", settings.mediaLayout)
+    assertEquals("top-bottom-left-right", settings.stereoLayout)
+    assertEquals(3640, settings.width)
+    assertEquals(4096, settings.height)
+    assertTrue(settings.looping)
+  }
+
+  @Test
   fun previousAndNextSelectionWrapWithinTheBoundedCatalog() {
     assertEquals(2, SpatialImmersiveVideoSessionPolicy.wrappedIndex(-1, 3))
     assertEquals(0, SpatialImmersiveVideoSessionPolicy.wrappedIndex(3, 3))

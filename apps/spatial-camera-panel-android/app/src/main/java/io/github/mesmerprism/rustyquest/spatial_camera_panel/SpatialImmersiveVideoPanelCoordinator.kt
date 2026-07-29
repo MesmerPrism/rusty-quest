@@ -44,6 +44,7 @@ internal class SpatialImmersiveVideoPanelCoordinator(
   private var spawnPose: Pose? = null
   private var latestViewerPose: Pose? = null
   private var resumeAfterPause = false
+  private var playbackEnabled = resolution is SpatialImmersiveVideoRouteResolution.Ready
   private var activeIndex = 0
   private var presentationMode = SpatialImmersiveVideoPresentationMode.WorldAnchored
   private val progressHandler = Handler(Looper.getMainLooper())
@@ -85,6 +86,7 @@ internal class SpatialImmersiveVideoPanelCoordinator(
     return SpatialImmersiveVideoSessionSnapshot(
         requested = requested,
         available = config != null,
+        playbackEnabled = playbackEnabled && config != null,
         activeIndex = if (config == null) -1 else activeIndex,
         itemCount = catalog.size,
         activePackId = config?.offlinePack?.packId,
@@ -143,6 +145,44 @@ internal class SpatialImmersiveVideoPanelCoordinator(
   ): SpatialVideoProjectionSettings? =
       SpatialImmersiveVideoSessionPolicy.customProjectionSettings(base, activeConfig)
 
+  fun setPlaybackEnabled(
+      requestedEnabled: Boolean,
+      source: String,
+  ): SpatialImmersiveVideoSessionSnapshot {
+    val effectiveEnabled = requestedEnabled && activeConfig != null
+    if (playbackEnabled == effectiveEnabled) {
+      emitMarker(
+          "channel=spatial-immersive-video status=playback-visibility-unchanged " +
+              "source=${activityMarkerToken(source)} playbackEnabled=$playbackEnabled " +
+              "directVideoCarrierVisible=${entity != null} activityRestarted=false"
+      )
+      return sessionSnapshot()
+    }
+    playbackEnabled = effectiveEnabled
+    if (!playbackEnabled) {
+      releasePlayer()
+      surface = null
+      panelSceneObject = null
+      entity?.destroy()
+      entity = null
+      emitMarker(
+          "channel=spatial-immersive-video status=playback-disabled " +
+              "source=${activityMarkerToken(source)} playbackEnabled=false " +
+              "directVideoCarrierVisible=false customProjectionRetained=true " +
+              "activityRestarted=false"
+      )
+    } else {
+      spawnActiveEntity("playback-enabled")
+      emitMarker(
+          "channel=spatial-immersive-video status=playback-enabled " +
+              "source=${activityMarkerToken(source)} playbackEnabled=true " +
+              "directVideoCarrierVisible=${entity != null} customProjectionRetained=true " +
+              "activityRestarted=false"
+      )
+    }
+    return sessionSnapshot()
+  }
+
   fun panelRegistrations(): List<PanelRegistration> =
       catalog.mapIndexed { index, config ->
         VideoSurfacePanelRegistration(
@@ -170,7 +210,7 @@ internal class SpatialImmersiveVideoPanelCoordinator(
   fun spawnAtViewer(viewerPose: Pose) {
     spawnPose = Pose(viewerPose.t, viewerPose.q)
     latestViewerPose = Pose(viewerPose.t, viewerPose.q)
-    if (entity != null) {
+    if (entity != null || !playbackEnabled) {
       return
     }
     spawnActiveEntity("initial-spawn")
@@ -194,6 +234,9 @@ internal class SpatialImmersiveVideoPanelCoordinator(
   }
 
   fun resume(reason: String) {
+    if (!playbackEnabled) {
+      return
+    }
     val config = activeConfig ?: return
     val currentPlayer = player ?: return
     if (config.autoplay && resumeAfterPause) {
@@ -268,6 +311,9 @@ internal class SpatialImmersiveVideoPanelCoordinator(
   }
 
   private fun spawnActiveEntity(reason: String) {
+    if (!playbackEnabled) {
+      return
+    }
     val config = activeConfig ?: return
     val pose = spawnPose ?: return
     val registrationId = panelRegistrationIds.getOrNull(activeIndex) ?: return
@@ -528,13 +574,19 @@ internal class SpatialImmersiveVideoPanelCoordinator(
         intent: Intent,
         sourceReadable: ((String) -> Boolean)? = null,
     ): SpatialImmersiveVideoRouteResolution {
+      val intentEnabledProvided =
+          intent.hasExtra(SpatialImmersiveVideoRouteModule.EXTRA_ENABLED)
+      val effectiveEnabled =
+          if (intentEnabledProvided) {
+            intent.getBooleanExtra(SpatialImmersiveVideoRouteModule.EXTRA_ENABLED, false)
+          } else {
+            BuildConfig.IMMERSIVE_VIDEO_DEFAULT_ENABLED
+          }
       val values =
           SpatialImmersiveVideoLaunchValues(
               enabled =
-                  if (intent.hasExtra(SpatialImmersiveVideoRouteModule.EXTRA_ENABLED)) {
-                    intent
-                        .getBooleanExtra(SpatialImmersiveVideoRouteModule.EXTRA_ENABLED, false)
-                        .toString()
+                  if (intentEnabledProvided || BuildConfig.IMMERSIVE_VIDEO_DEFAULT_ENABLED) {
+                    effectiveEnabled.toString()
                   } else {
                     null
                   },
@@ -587,7 +639,15 @@ internal class SpatialImmersiveVideoPanelCoordinator(
         )
       }
 
-      val offlinePackId = intent.getStringExtra(EXTRA_OFFLINE_PACK_ID)?.trim().orEmpty()
+      val requestedPath = values.path?.trim().orEmpty()
+      val offlinePackId =
+          intent.getStringExtra(EXTRA_OFFLINE_PACK_ID)?.trim().orEmpty().ifBlank {
+            if (requestedPath.isEmpty()) {
+              BuildConfig.IMMERSIVE_VIDEO_DEFAULT_OFFLINE_PACK_ID
+            } else {
+              ""
+            }
+          }
       if (offlinePackId.isNotEmpty()) {
         if (!values.path.isNullOrBlank()) {
           return SpatialImmersiveVideoRouteResolution.Rejected(
@@ -631,7 +691,6 @@ internal class SpatialImmersiveVideoPanelCoordinator(
                   "app-external-files-root-unavailable"
               )
       val allowedMediaRoot = File(externalFilesRoot, "immersive-video").canonicalFile
-      val requestedPath = values.path?.trim().orEmpty()
       val packageScopedAliases =
           listOf(
               "/sdcard/Android/data/${context.packageName}/files/immersive-video/",
