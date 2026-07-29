@@ -35,6 +35,15 @@ final class FakePlayer implements PlayerPort {
         queue(effect);
     }
 
+    @Override
+    public synchronized void cancelPending(AcceptedEffect effect) {
+        if (pending != null
+                && pending.requestId().equals(effect.requestId())
+                && pending.acceptedCommandReceiptId().equals(effect.acceptedCommandReceiptId())) {
+            pending = null;
+        }
+    }
+
     synchronized void flush() {
         AcceptedEffect effect = pending;
         if (effect == null) {
@@ -67,6 +76,19 @@ final class FakePlayer implements PlayerPort {
                     default -> throw new IllegalStateException("unknown effect");
                 };
         listener.onApplied(new AppliedEffect(effect, state));
+    }
+
+    synchronized void observeReadyPosition(long positionMs) {
+        state =
+                new Snapshot(
+                        state.revision() + 1,
+                        state.selectedVideoId(),
+                        state.playing(),
+                        "ready",
+                        positionMs);
+        if (listener != null) {
+            listener.onStateObserved(state);
+        }
     }
 
     private void queue(AcceptedEffect effect) {

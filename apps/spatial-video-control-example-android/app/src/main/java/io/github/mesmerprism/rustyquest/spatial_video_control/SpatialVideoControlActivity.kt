@@ -27,13 +27,13 @@ import com.meta.spatial.core.Quaternion
 import com.meta.spatial.core.SpatialFeature
 import com.meta.spatial.core.Vector2
 import com.meta.spatial.core.Vector3
-import com.meta.spatial.runtime.Panel
+import com.meta.spatial.runtime.ButtonBits
 import com.meta.spatial.runtime.ReferenceSpace
 import com.meta.spatial.toolkit.AppSystemActivity
-import com.meta.spatial.toolkit.ButtonBits
 import com.meta.spatial.toolkit.DpPerMeterDisplayOptions
 import com.meta.spatial.toolkit.MediaPanelRenderOptions
 import com.meta.spatial.toolkit.MediaPanelSettings
+import com.meta.spatial.toolkit.Panel
 import com.meta.spatial.toolkit.PanelDimensions
 import com.meta.spatial.toolkit.PanelInputOptions
 import com.meta.spatial.toolkit.PanelRegistration
@@ -50,25 +50,30 @@ import com.meta.spatial.toolkit.createPanelEntity
 import com.meta.spatial.vr.LocomotionControls
 import com.meta.spatial.vr.VRFeature
 import com.meta.spatial.vr.VrInputSystemType
-import java.net.InetAddress
 
 /**
  * Clean public Spatial SDK example. The default build has no Manifold binding
- * or bind address, so its listener remains visibly unavailable and disabled.
+ * unless the closed native provider initializes successfully. The listener
+ * remains disabled until the wearer reviews one unambiguous private address.
  */
 open class SpatialVideoControlActivity : AppSystemActivity() {
   private lateinit var player: Media3SpatialPlayerAdapter
   private var control: AndroidTrustedLocalControlAdapter? = null
   private var controllerState by mutableStateOf(HeadsetControllerState())
+  private var bindCandidate by
+      mutableStateOf(PrivateAddressSelector.Candidate.unavailable())
   private var controlPanel: Entity? = null
   private var videoPanel: Entity? = null
   private var nextControllerStateRefreshMs = 0L
+  private var nextBindCandidateRefreshMs = 0L
 
-  /** A production build must return its explicit process-local Manifold adapter. */
-  protected open fun manifoldAuthorityPort(): ManifoldAuthorityPort? = null
+  /** Fails closed when the exact process-local native Manifold provider cannot initialize. */
+  protected open fun manifoldAuthorityPort(): ManifoldAuthorityPort? =
+      NativeManifoldAuthorityPort.createOrNull(this)
 
-  /** A production build must return the wearer-reviewed LAN/private-hotspot bind address. */
-  protected open fun listenerBindAddress(): InetAddress? = null
+  /** Platform observation only; selection does not enable or authorize the listener. */
+  protected open fun resolvePrivateAddressCandidate(): PrivateAddressSelector.Candidate =
+      PrivateAddressSelector.selectHostAddress()
 
   override fun registerFeatures(): List<SpatialFeature> =
       listOf(
@@ -86,6 +91,7 @@ open class SpatialVideoControlActivity : AppSystemActivity() {
             runOnUiThread { controllerState = next }
           }
         }
+    refreshPrivateAddressCandidate()
   }
 
   override fun onSceneReady() {
@@ -126,6 +132,7 @@ open class SpatialVideoControlActivity : AppSystemActivity() {
 
   override fun onResume() {
     super.onResume()
+    refreshPrivateAddressCandidate()
     control?.setWearerForeground(true)
     control?.refreshVisibleState()
   }
@@ -136,6 +143,10 @@ open class SpatialVideoControlActivity : AppSystemActivity() {
     if (now >= nextControllerStateRefreshMs) {
       nextControllerStateRefreshMs = now + 500L
       control?.refreshVisibleState()
+    }
+    if (!controllerState.listenerEnabled && now >= nextBindCandidateRefreshMs) {
+      nextBindCandidateRefreshMs = now + 2_000L
+      refreshPrivateAddressCandidate()
     }
   }
 
@@ -177,7 +188,11 @@ open class SpatialVideoControlActivity : AppSystemActivity() {
                     )
                     Text(
                         controllerState.displayedAddress
-                            ?: "Bind a real Manifold authority and reviewed network address."
+                            ?: if (control == null) {
+                              "The process-local Manifold authority is unavailable."
+                            } else {
+                              bindCandidate.displayText()
+                            }
                     )
                     Text(
                         controllerState.pairingCode?.let { "Single-use code: $it" }
@@ -190,15 +205,18 @@ open class SpatialVideoControlActivity : AppSystemActivity() {
                           "No controller connected."
                         }
                     )
+                    controllerState.lastRevocationCause?.let { cause ->
+                      Text("Last revoke: $cause")
+                    }
                     Text("Authenticated trusted-LAN control; no confidentiality.")
                     Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                       Button(
                           enabled =
                               control != null &&
-                                  listenerBindAddress() != null &&
+                                  bindCandidate.available() &&
                                   !controllerState.listenerEnabled,
                           onClick = {
-                            listenerBindAddress()?.let { address ->
+                            bindCandidate.address()?.let { address ->
                               control?.enableFromWearer(address)
                             }
                           },
@@ -232,4 +250,10 @@ open class SpatialVideoControlActivity : AppSystemActivity() {
             )
           },
       )
+
+  private fun refreshPrivateAddressCandidate() {
+    if (!controllerState.listenerEnabled) {
+      bindCandidate = resolvePrivateAddressCandidate()
+    }
+  }
 }

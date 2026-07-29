@@ -93,6 +93,62 @@ $gradle = Get-Content -Raw -LiteralPath (Join-Path $appRoot 'app\build.gradle.kt
 if ($gradle -notmatch 'TRUSTED_LOCAL_HTTP_ENABLED_DEFAULT", "false"') {
   throw 'Android listener default must remain disabled.'
 }
+if ($gradle -notmatch 'outputs\.upToDateWhen \{ false \}' -or
+    $gradle -notmatch 'RUSTY_MANIFOLD_SOURCE_ROOT') {
+  throw 'Native Gradle builds must always revalidate the exact external Manifold source.'
+}
+
+$versions = Get-Content -Raw -LiteralPath (Join-Path $appRoot 'gradle\libs.versions.toml')
+if ($versions -notmatch 'kotlin = "2\.2\.0"') {
+  throw 'The Spatial SDK example must use Kotlin 2.2.0.'
+}
+$activity = Get-Content -Raw -LiteralPath (
+  Join-Path $appRoot 'app\src\main\java\io\github\mesmerprism\rustyquest\spatial_video_control\SpatialVideoControlActivity.kt'
+)
+if ($activity -notmatch 'com\.meta\.spatial\.runtime\.ButtonBits' -or
+    $activity -notmatch 'com\.meta\.spatial\.toolkit\.Panel' -or
+    $activity -notmatch 'NativeManifoldAuthorityPort\.createOrNull') {
+  throw 'Spatial SDK imports or native Manifold injection regressed.'
+}
+
+$lockPath = Join-Path $appRoot 'native\manifold-source.lock.json'
+$nativeLock = Get-Content -Raw -LiteralPath $lockPath | ConvertFrom-Json
+$nativeManifest = Get-Content -Raw -LiteralPath (Join-Path $appRoot 'native\Cargo.toml')
+if ($nativeLock.repository -ne 'https://github.com/MesmerPrism/rusty-manifold.git' -or
+    [string]$nativeLock.revision -notmatch '^[0-9a-f]{40}$' -or
+    [string]$nativeLock.tree -notmatch '^[0-9a-f]{40}$') {
+  throw 'Native Manifold lock is incomplete or non-canonical.'
+}
+if (($nativeManifest | Select-String -Pattern ([regex]::Escape([string]$nativeLock.revision)) -AllMatches).Matches.Count -ne 4) {
+  throw 'Every direct Manifold crate must use the exact locked Git revision.'
+}
+$nativeSource = Get-Content -Raw -LiteralPath (Join-Path $appRoot 'native\src\lib.rs')
+$expectedNativeOperations = @(
+  'nativeInitialize',
+  'nativeOpenPairingWindow',
+  'nativeAdmitController',
+  'nativeAcceptCommand',
+  'nativeDisable',
+  'nativeEnforceExpiry',
+  'nativeSafeStatus'
+)
+foreach ($operation in $expectedNativeOperations) {
+  if ($nativeSource -notmatch [regex]::Escape($operation)) {
+    throw "Missing typed native operation: $operation"
+  }
+}
+$nativeRuntimeSource = $nativeSource.Split('#[cfg(test)]', 2)[0]
+if ($nativeRuntimeSource -match '(?i)nativeExecute|raw[_ ]shell|process::Command') {
+  throw 'Generic or arbitrary native execution surface detected.'
+}
+$nativeBridge = Get-Content -Raw -LiteralPath (
+  Join-Path $appRoot 'app\src\main\java\io\github\mesmerprism\rustyquest\spatial_video_control\NativeManifoldAuthorityPort.kt'
+)
+if ($nativeBridge -notmatch 'PackageManager\.GET_SIGNING_CERTIFICATES' -or
+    $nativeBridge -notmatch 'Locale\.ROOT' -or
+    $nativeBridge -notmatch 'MessageDigest\.isEqual') {
+  throw 'Native adapter identity or pairing verification is not fail-closed.'
+}
 
 $javac = Get-Command javac -ErrorAction Stop
 $java = Get-Command java -ErrorAction Stop

@@ -8,6 +8,7 @@ plugins {
 }
 
 val generatedMediaRoot = layout.buildDirectory.dir("generated/synthetic-media/res")
+val generatedNativeRoot = layout.buildDirectory.dir("generated/native-jniLibs")
 val mediaSourceRoot = layout.projectDirectory.dir("src/main/media-source")
 
 val decodeSyntheticMedia by tasks.registering {
@@ -27,6 +28,43 @@ val decodeSyntheticMedia by tasks.registering {
     listOf("synthetic_grid_1s", "synthetic_blue_2s").forEach { name ->
       val encoded = mediaSourceRoot.file("$name.mp4.base64").asFile.readText(Charsets.US_ASCII)
       raw.resolve("$name.mp4").writeBytes(Base64.getMimeDecoder().decode(encoded))
+    }
+  }
+}
+
+val buildNativeLocalControl by tasks.registering(Exec::class) {
+  group = "build setup"
+  description = "Build the exact pinned Rust/Manifold JNI adapter for Quest arm64."
+  inputs.files(fileTree("../native") { exclude("target/**") })
+  inputs.files(fileTree("../tools") { include("Build-NativeLocalControl.ps1", "build-native-local-control.sh") })
+  outputs.file(
+      generatedNativeRoot.map {
+        it.file("arm64-v8a/librusty_quest_spatial_video_local_control.so")
+      }
+  )
+  outputs.upToDateWhen { false }
+  doFirst {
+    check(!System.getenv("RUSTY_MANIFOLD_SOURCE_ROOT").isNullOrBlank()) {
+      "RUSTY_MANIFOLD_SOURCE_ROOT must identify the clean source pinned by native/manifold-source.lock.json"
+    }
+    val output = generatedNativeRoot.get().asFile.absolutePath
+    if (System.getProperty("os.name").lowercase().contains("windows")) {
+      commandLine(
+          "pwsh",
+          "-NoProfile",
+          "-File",
+          file("../tools/Build-NativeLocalControl.ps1").absolutePath,
+          "-Profile",
+          "release",
+          "-OutputRoot",
+          output,
+      )
+    } else {
+      commandLine(
+          "bash",
+          file("../tools/build-native-local-control.sh").absolutePath,
+          output,
+      )
     }
   }
 }
@@ -58,12 +96,16 @@ android {
   sourceSets {
     getByName("main") {
       java.srcDir("../host/src/main/java")
+      jniLibs.srcDir(generatedNativeRoot)
       res.srcDir(generatedMediaRoot)
     }
   }
 }
 
-tasks.named("preBuild").configure { dependsOn(decodeSyntheticMedia) }
+tasks.named("preBuild").configure {
+  dependsOn(decodeSyntheticMedia)
+  dependsOn(buildNativeLocalControl)
+}
 
 dependencies {
   implementation(libs.androidx.core.ktx)

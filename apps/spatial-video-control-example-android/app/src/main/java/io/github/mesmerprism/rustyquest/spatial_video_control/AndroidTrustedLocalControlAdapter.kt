@@ -7,6 +7,7 @@ import java.io.Closeable
 import java.net.InetAddress
 import java.time.Duration
 import java.time.Instant
+import java.security.SecureRandom
 
 data class HeadsetControllerState(
     val listenerEnabled: Boolean = false,
@@ -15,9 +16,14 @@ data class HeadsetControllerState(
     val enableExpiresAt: Instant? = null,
     val controllerConnected: Boolean = false,
     val controllerLabel: String? = null,
-    val authorityRevision: Long = 0,
+    val authority: ManifoldAuthorityPort.AuthoritySnapshot? = null,
+    val lastRevocationReceiptId: String? = null,
+    val lastRevocationCause: String? = null,
     val status: String = "disabled",
-)
+) {
+  val authorityRevision: Long
+    get() = authority?.revisions()?.localRevision() ?: 0
+}
 
 /**
  * Android lifecycle adapter. It has no ambient authority and cannot start
@@ -30,6 +36,7 @@ class AndroidTrustedLocalControlAdapter(
     private val onState: (HeadsetControllerState) -> Unit,
 ) : Closeable {
   private val mainHandler = Handler(Looper.getMainLooper())
+  private val random = SecureRandom()
   private val coordinator =
       LocalControlCoordinator(authority, player, VideoCatalog.bundledSynthetic())
   private var foreground = false
@@ -82,7 +89,7 @@ class AndroidTrustedLocalControlAdapter(
     if (!offer.enabled()) {
       publish(
           HeadsetControllerState(
-              authorityRevision = offer.authorityRevision(),
+              authority = authority.snapshot(),
               status = offer.reason(),
           )
       )
@@ -115,10 +122,18 @@ class AndroidTrustedLocalControlAdapter(
     val endpoint =
         runCatching { nextServer.start(offer, bindAddress) }
             .getOrElse { error ->
-              authority.revokeByWearer(Instant.now())
+              val revoked =
+                  authority.revokeByWearer(
+                      ManifoldAuthorityPort.RevokeRequest(
+                          randomRequestId("listener-failure"),
+                          "listener_start_failed",
+                      )
+                  )
               publish(
                   HeadsetControllerState(
-                      authorityRevision = authority.snapshot(Instant.now()).authorityRevision(),
+                      authority = authority.snapshot(),
+                      lastRevocationReceiptId = revoked.disableReceiptId(),
+                      lastRevocationCause = revoked.cause(),
                       status = "listener_start_failed_${error.javaClass.simpleName}",
                   )
               )
@@ -131,7 +146,7 @@ class AndroidTrustedLocalControlAdapter(
             displayedAddress = endpoint.origin(),
             pairingCode = offer.singleUseCode(),
             enableExpiresAt = offer.expiresAt(),
-            authorityRevision = offer.authorityRevision(),
+            authority = authority.snapshot(),
             status = "awaiting_manual_pairing",
         )
     )
@@ -140,7 +155,13 @@ class AndroidTrustedLocalControlAdapter(
   }
 
   fun refreshVisibleState() {
-    val authorityState = authority.snapshot(Instant.now())
+    authority.enforceExpiry(
+        ManifoldAuthorityPort.ExpiryRequest(
+            randomRequestId("visible-expiry"),
+            Instant.now(),
+        )
+    )
+    val authorityState = authority.snapshot()
     if (!authorityState.enabled() && state.listenerEnabled) {
       server?.close()
       server = null
@@ -157,8 +178,8 @@ class AndroidTrustedLocalControlAdapter(
                   null
                 },
             controllerConnected = authorityState.controllerConnected(),
-            controllerLabel = authorityState.controllerLabel(),
-            authorityRevision = authorityState.authorityRevision(),
+            controllerLabel = authorityState.controllerId(),
+            authority = authorityState,
             status =
                 when {
                   !remainsEnabled -> "disabled_or_expired"
@@ -173,24 +194,47 @@ class AndroidTrustedLocalControlAdapter(
     mainHandler.removeCallbacks(expiryAction)
     server?.close()
     server = null
-    if (state.listenerEnabled || authority.snapshot(Instant.now()).enabled()) {
-      authority.revokeByWearer(Instant.now())
-    }
-    val revision = authority.snapshot(Instant.now()).authorityRevision()
+    val before = authority.snapshot()
+    val revoked =
+        if (before.enabled()) {
+          authority.revokeByWearer(
+              ManifoldAuthorityPort.RevokeRequest(
+                  randomRequestId("wearer-disable"),
+                  reason,
+              )
+          )
+        } else {
+          null
+        }
     publish(
         HeadsetControllerState(
-            authorityRevision = revision,
-            status = reason,
+            authority = authority.snapshot(),
+            lastRevocationReceiptId = revoked?.disableReceiptId(),
+            lastRevocationCause = revoked?.cause(),
+            status =
+                if (revoked == null || revoked.revoked()) {
+                  reason
+                } else {
+                  "revoke_failed_${revoked.reason()}"
+                },
         )
     )
   }
 
   override fun close() {
     revokeFromHeadset("activity_destroyed")
+    coordinator.close()
   }
 
   private fun publish(next: HeadsetControllerState) {
     state = next
     onState(next)
+  }
+
+  private fun randomRequestId(prefix: String): String {
+    val bytes = ByteArray(12).also(random::nextBytes)
+    val suffix = bytes.joinToString("") { "%02x".format(it) }
+    bytes.fill(0)
+    return "$prefix-$suffix"
   }
 }

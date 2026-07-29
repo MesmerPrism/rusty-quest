@@ -1,6 +1,11 @@
 package io.github.mesmerprism.rustyquest.spatial_video_control;
 
 public interface PlayerPort {
+    /**
+     * Effective Quest state. Revision advances for semantic selection,
+     * play/pause, and playback-state transitions; position is an observational
+     * field and may update without invalidating a pending controller command.
+     */
     record Snapshot(
             long revision,
             String selectedVideoId,
@@ -12,7 +17,8 @@ public interface PlayerPort {
             String requestId,
             String command,
             long expectedPlayerRevision,
-            long acceptedAuthorityRevision,
+            ManifoldAuthorityPort.AuthorityRevisions acceptedAuthorityRevisions,
+            String acceptedCommandReceiptId,
             String videoId) {}
 
     record AppliedEffect(AcceptedEffect cause, Snapshot state) {}
@@ -21,6 +27,8 @@ public interface PlayerPort {
         void onApplied(AppliedEffect effect);
 
         void onFailed(AcceptedEffect effect, String reason);
+
+        void onStateObserved(Snapshot state);
     }
 
     Snapshot snapshot();
@@ -32,4 +40,10 @@ public interface PlayerPort {
     void play(AcceptedEffect effect);
 
     void pause(AcceptedEffect effect);
+
+    /**
+     * Cancels one still-pending submission after the bounded coordinator
+     * deadline. Cancellation never claims an application effect.
+     */
+    void cancelPending(AcceptedEffect effect);
 }

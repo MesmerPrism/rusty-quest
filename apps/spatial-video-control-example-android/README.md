@@ -14,7 +14,7 @@ The source slice is deliberately inert:
   pairing code;
 - only one controller lease can exist;
 - idle/session expiry, replay rejection, strict rates, and revoke are owned by
-  `ManifoldAuthorityPort`;
+  the pinned process-local Rust Manifold composite;
 - QR and mDNS are optional future conveniences and are not implemented;
 - there is no relay, Fleet operation, arbitrary headset discovery, ADB,
   intent/shell bridge, upload surface, or runtime-loaded UI.
@@ -26,12 +26,18 @@ returns `command_accepted` before Quest invokes the player. Acceptance is not
 application effect. `command_applied` is emitted only after the fake player or
 Media3 callback reports the effective state and advances the Quest-owned player
 revision. Every receipt retains the request id, expected authority revision,
-expected player revision, and accepted authority revision.
+expected player revision, exact Manifold receipt id, and the resulting
+local/admission/lease/host revision tuple. The browser uses `local_revision` as
+the one authoritative concurrency token; the full tuple remains visible for
+diagnostics and receipt verification.
 
 `ManifoldAuthorityPort` is an adapter contract, not a second authority
 implementation. `FakeManifoldAuthority` exists under `host/src/test` only for
-offline tests. The Android example must remain disabled until a real
-process-local Manifold provider is injected.
+offline tests. Android binds the typed JNI adapter under `native/` to exact
+Manifold commit `1fe0f786a10371334c00296a5b4deff493796af1`. Rust sources trusted
+wall/monotonic clock observations and token entropy; Kotlin owns only the
+six-digit code, its one-use verification, the opaque HTTP cookie, and the
+remote-address transport binding.
 
 ## Closed commands
 
@@ -56,6 +62,7 @@ Selection never implies playback.
 - `host/src/test/java/`: fake authority/player and loopback conformance tests.
 - `app/src/main/assets/control/`: packaged controller page; no external assets.
 - `app/src/main/java/`: opt-in Android, Media3, and Spatial SDK adapter source.
+- `native/`: closed JNI operations and the exact Manifold source lock.
 - `app/src/main/media-source/`: deterministic CC0 synthetic MP4 source blobs
   decoded only at Android build time.
 
@@ -67,15 +74,26 @@ git diff --check
 ```
 
 The gate compiles and runs the pure Java tests, verifies the exact registries,
-checks same-origin web constraints, and confirms that the only exercised
-listener is loopback with port `0`. It performs no dependency download, Gradle
-assembly, APK install, LAN bind, mDNS advertisement, ADB action, or headset
-operation.
+checks same-origin web constraints and native/Gradle lock wiring, and confirms
+that the only exercised listener is loopback with port `0`. It performs no
+dependency download, APK install, LAN bind, mDNS advertisement, ADB action, or
+headset operation.
 
-## Later Android gate
+## Native and Android source gate
 
-Android packaging is intentionally not validated in this slice. Before an APK
-build, bind a real `ManifoldAuthorityPort`, review the foreground lifecycle and
-network-security configuration, then validate Media3 callback causality and
-Spatial SDK panel behavior on a clean source revision. Manual address entry and
-single-use pairing remain mandatory even if QR or mDNS is added later.
+The Manifold commit is intentionally local and unpublished in this no-push
+slice. Set `RUSTY_MANIFOLD_SOURCE_ROOT` to a clean checkout matching
+`native/manifold-source.lock.json`; every native build rechecks both commit and
+tree before Cargo runs. Also set `ANDROID_NDK_ROOT` to NDK 27.2 or a compatible
+API-34 toolchain.
+
+```powershell
+$env:RUSTY_MANIFOLD_SOURCE_ROOT = 'X:\path\to\rusty-manifold'
+$env:ANDROID_NDK_ROOT = 'X:\Android\Sdk\ndk\27.2.12479018'
+pwsh -NoProfile -File .\tools\Build-NativeLocalControl.ps1
+gradle :app:compileDebugKotlin :app:lintDebug :app:assembleDebug
+```
+
+Gradle 8.13 is the validated runner. These commands build source only; they do
+not install, launch, bind a LAN socket, or use ADB. Manual address entry and the
+single-use code remain mandatory even if QR or mDNS is added later.

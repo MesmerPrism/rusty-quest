@@ -11,9 +11,11 @@ import java.net.InetAddress;
 import java.net.Inet6Address;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.net.SocketTimeoutException;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.time.Instant;
+import java.util.ArrayDeque;
 import java.util.Base64;
 import java.util.LinkedHashMap;
 import java.util.Locale;
@@ -23,6 +25,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * Minimal HTTP/WebSocket transport for the fixed controller assets.
@@ -51,7 +54,8 @@ public final class TrustedLocalHttpServer implements Closeable {
     private final LocalControlCoordinator coordinator;
     private final AssetProvider assets;
     private final ExecutorService connections =
-            Executors.newCachedThreadPool(
+            Executors.newFixedThreadPool(
+                    TrustedLocalControlPolicy.MAX_CONCURRENT_CONNECTIONS,
                     runnable -> {
                         Thread thread = new Thread(runnable, "trusted-local-http-connection");
                         thread.setDaemon(true);
@@ -59,6 +63,10 @@ public final class TrustedLocalHttpServer implements Closeable {
                     });
     private final CopyOnWriteArrayList<Socket> openSockets = new CopyOnWriteArrayList<>();
     private final AtomicBoolean running = new AtomicBoolean(false);
+    private final AtomicInteger activeConnections = new AtomicInteger();
+    private final Object malformedLock = new Object();
+    private final LinkedHashMap<String, ArrayDeque<Instant>> malformedByRemote =
+            new LinkedHashMap<>();
     private volatile ServerSocket serverSocket;
     private volatile Thread acceptThread;
     private volatile BoundEndpoint endpoint;
@@ -126,9 +134,26 @@ public final class TrustedLocalHttpServer implements Closeable {
         while (running.get()) {
             try {
                 Socket socket = serverSocket.accept();
-                socket.setSoTimeout(5_000);
+                socket.setSoTimeout(TrustedLocalControlPolicy.HTTP_READ_TIMEOUT_MS);
+                if (!tryAcquireConnectionSlot()) {
+                    socket.close();
+                    continue;
+                }
                 openSockets.add(socket);
-                connections.execute(() -> handle(socket));
+                try {
+                    connections.execute(
+                            () -> {
+                                try {
+                                    handle(socket);
+                                } finally {
+                                    releaseConnectionSlot();
+                                }
+                            });
+                } catch (RuntimeException error) {
+                    openSockets.remove(socket);
+                    releaseConnectionSlot();
+                    socket.close();
+                }
             } catch (IOException error) {
                 if (running.get()) {
                     close();
@@ -142,8 +167,24 @@ public final class TrustedLocalHttpServer implements Closeable {
         try (socket) {
             BufferedInputStream input = new BufferedInputStream(socket.getInputStream());
             OutputStream output = socket.getOutputStream();
-            HttpRequest request = readRequest(input);
+            String remoteAddress = socket.getInetAddress().getHostAddress();
+            HttpRequest request;
+            try {
+                request = readRequest(input);
+            } catch (IOException error) {
+                recordMalformedAttempt(remoteAddress, Instant.now());
+                return;
+            }
             if (request == null) {
+                return;
+            }
+            if (malformedLimitReached(remoteAddress, Instant.now())) {
+                writeResponse(
+                        output,
+                        429,
+                        "application/json; charset=utf-8",
+                        error("malformed_request_rate_limited"),
+                        Map.of());
                 return;
             }
             BoundEndpoint bound = endpoint();
@@ -179,6 +220,8 @@ public final class TrustedLocalHttpServer implements Closeable {
                 return;
             }
             writeResponse(output, 404, "text/plain; charset=utf-8", "not found", Map.of());
+        } catch (SocketTimeoutException ignored) {
+            // Bounded inactivity closes the connection.
         } catch (Exception ignored) {
             // A malformed/untrusted connection is closed without expanding the surface.
         } finally {
@@ -201,11 +244,17 @@ public final class TrustedLocalHttpServer implements Closeable {
         try {
             pairing = PairingRequest.parseCanonical(request.body());
         } catch (IllegalArgumentException error) {
+            boolean withinLimit =
+                    recordMalformedAttempt(
+                            socket.getInetAddress().getHostAddress(), Instant.now());
             writeResponse(
                     output,
-                    400,
+                    withinLimit ? 400 : 429,
                     "application/json; charset=utf-8",
-                    error("invalid_canonical_pairing_request"),
+                    error(
+                            withinLimit
+                                    ? "invalid_canonical_pairing_request"
+                                    : "malformed_request_rate_limited"),
                     Map.of());
             return;
         }
@@ -246,8 +295,16 @@ public final class TrustedLocalHttpServer implements Closeable {
                                 + "; HttpOnly; SameSite=Strict; Path=/; Max-Age="
                                 + maxAge);
         Map<String, Object> body = new LinkedHashMap<>();
-        body.put("authority_revision", decision.authorityRevision());
+        body.put("admission_receipt_id", decision.admissionReceiptId());
+        body.put("admission_revision", decision.revisions().admissionRevision());
+        body.put("authority_revision", decision.revisions().localRevision());
+        body.put("controller_lease_id", decision.controllerLeaseId());
         body.put("controller_label", decision.controllerLabel());
+        body.put("host_revision", decision.revisions().hostRevision());
+        body.put(
+                "lease_authority_revision",
+                decision.revisions().leaseAuthorityRevision());
+        body.put("local_revision", decision.revisions().localRevision());
         body.put("paired", true);
         body.put("session_expires_at", decision.sessionExpiresAt().toString());
         writeResponse(
@@ -321,6 +378,8 @@ public final class TrustedLocalHttpServer implements Closeable {
                         + "\r\n";
         output.write(response.getBytes(StandardCharsets.US_ASCII));
         output.flush();
+        socket.setSoTimeout(
+                Math.toIntExact(TrustedLocalControlPolicy.WEBSOCKET_READ_TIMEOUT.toMillis()));
 
         Object writeLock = new Object();
         LocalControlCoordinator.EventSink sink =
@@ -364,7 +423,14 @@ public final class TrustedLocalHttpServer implements Closeable {
                 try {
                     command = CommandEnvelope.parseCanonical(text);
                 } catch (IllegalArgumentException error) {
+                    boolean withinLimit =
+                            recordMalformedAttempt(
+                                    socket.getInetAddress().getHostAddress(), Instant.now());
                     synchronized (writeLock) {
+                        if (!withinLimit) {
+                            writeCloseFrame(output, 1008);
+                            return;
+                        }
                         writeTextFrame(output, error("invalid_canonical_command"));
                     }
                     continue;
@@ -573,6 +639,7 @@ public final class TrustedLocalHttpServer implements Closeable {
                     case 403 -> "Forbidden";
                     case 404 -> "Not Found";
                     case 421 -> "Misdirected Request";
+                    case 429 -> "Too Many Requests";
                     case 500 -> "Internal Server Error";
                     default -> "Response";
                 };
@@ -634,7 +701,73 @@ public final class TrustedLocalHttpServer implements Closeable {
         }
         openSockets.clear();
         connections.shutdownNow();
+        synchronized (malformedLock) {
+            malformedByRemote.clear();
+        }
         endpoint = null;
+    }
+
+    boolean tryAcquireConnectionSlot() {
+        while (true) {
+            int current = activeConnections.get();
+            if (current >= TrustedLocalControlPolicy.MAX_CONCURRENT_CONNECTIONS) {
+                return false;
+            }
+            if (activeConnections.compareAndSet(current, current + 1)) {
+                return true;
+            }
+        }
+    }
+
+    void releaseConnectionSlot() {
+        int remaining = activeConnections.decrementAndGet();
+        if (remaining < 0) {
+            activeConnections.set(0);
+            throw new IllegalStateException("connection slot released without acquisition");
+        }
+    }
+
+    boolean recordMalformedAttempt(String remoteAddress, Instant now) {
+        synchronized (malformedLock) {
+            ArrayDeque<Instant> attempts = malformedAttempts(remoteAddress, now);
+            if (attempts.size()
+                    >= TrustedLocalControlPolicy.MAX_MALFORMED_ATTEMPTS_PER_MINUTE) {
+                return false;
+            }
+            attempts.addLast(now);
+            return true;
+        }
+    }
+
+    boolean malformedLimitReached(String remoteAddress, Instant now) {
+        synchronized (malformedLock) {
+            return malformedAttempts(remoteAddress, now).size()
+                    >= TrustedLocalControlPolicy.MAX_MALFORMED_ATTEMPTS_PER_MINUTE;
+        }
+    }
+
+    int malformedAttemptCount(String remoteAddress, Instant now) {
+        synchronized (malformedLock) {
+            return malformedAttempts(remoteAddress, now).size();
+        }
+    }
+
+    private ArrayDeque<Instant> malformedAttempts(String remoteAddress, Instant now) {
+        ArrayDeque<Instant> attempts = malformedByRemote.get(remoteAddress);
+        if (attempts == null) {
+            if (malformedByRemote.size()
+                    >= TrustedLocalControlPolicy.MAX_TRACKED_REMOTE_ADDRESSES) {
+                String oldest = malformedByRemote.keySet().iterator().next();
+                malformedByRemote.remove(oldest);
+            }
+            attempts = new ArrayDeque<>();
+            malformedByRemote.put(remoteAddress, attempts);
+        }
+        Instant threshold = now.minusSeconds(60);
+        while (!attempts.isEmpty() && attempts.peekFirst().isBefore(threshold)) {
+            attempts.removeFirst();
+        }
+        return attempts;
     }
 
     private record HttpRequest(

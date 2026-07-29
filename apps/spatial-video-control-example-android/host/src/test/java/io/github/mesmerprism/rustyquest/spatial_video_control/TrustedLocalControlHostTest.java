@@ -37,7 +37,12 @@ public final class TrustedLocalControlHostTest {
                 "runtime command set");
         testCanonicalEnvelopes();
         testTrustedBindAddressPolicy();
+        testPrivateAddressSelection();
+        testTransportResourceBounds();
+        testPlayerStateProjection();
+        testReadOnlyBootstrapWithAdvancedPlayerState();
         testAuthorityAndPlayerCausality();
+        testPlayerEffectTimeoutDoesNotWedge();
         testAuthorityLimitsAndExpiry();
         testLoopbackHttpAndWebSocket(appRoot);
         System.out.println("trusted_local_http_v1 host tests passed");
@@ -72,6 +77,116 @@ public final class TrustedLocalControlHostTest {
                 !TrustedLocalHttpServer.isTrustedBindAddress(
                         InetAddress.getByName("2001:4860:4860::8888")),
                 "globally routable IPv6 rejected");
+    }
+
+    private static void testPrivateAddressSelection() throws Exception {
+        PrivateAddressSelector.Candidate selected =
+                PrivateAddressSelector.select(
+                        List.of(
+                                InetAddress.getByName("127.0.0.1"),
+                                InetAddress.getByName("192.168.20.4"),
+                                InetAddress.getByName("2001:4860:4860::8888")));
+        assertTrue(selected.available(), "one private IPv4 candidate selected");
+        assertEquals(
+                "192.168.20.4",
+                selected.address().getHostAddress(),
+                "selected private candidate");
+        assertContains(selected.displayText(), "192.168.20.4", "candidate visible to wearer");
+
+        PrivateAddressSelector.Candidate ambiguous =
+                PrivateAddressSelector.select(
+                        List.of(
+                                InetAddress.getByName("192.168.20.4"),
+                                InetAddress.getByName("10.0.0.8")));
+        assertTrue(!ambiguous.available(), "ambiguous private addresses fail closed");
+        assertEquals(
+                "ambiguous_private_addresses",
+                ambiguous.status(),
+                "ambiguous status");
+
+        PrivateAddressSelector.Candidate absent =
+                PrivateAddressSelector.select(
+                        List.of(
+                                InetAddress.getByName("127.0.0.1"),
+                                InetAddress.getByName("8.8.8.8")));
+        assertTrue(!absent.available(), "no private address fails closed");
+        assertEquals("no_private_address", absent.status(), "absent status");
+    }
+
+    private static void testTransportResourceBounds() {
+        FakeManifoldAuthority authority = new FakeManifoldAuthority();
+        FakePlayer player = new FakePlayer();
+        LocalControlCoordinator coordinator =
+                new LocalControlCoordinator(authority, player, VideoCatalog.bundledSynthetic());
+        try (TrustedLocalHttpServer server =
+                new TrustedLocalHttpServer(coordinator, ignored -> null)) {
+            for (int i = 0; i < TrustedLocalControlPolicy.MAX_CONCURRENT_CONNECTIONS; i++) {
+                assertTrue(server.tryAcquireConnectionSlot(), "bounded connection slot " + i);
+            }
+            assertTrue(!server.tryAcquireConnectionSlot(), "excess connection rejected");
+            for (int i = 0; i < TrustedLocalControlPolicy.MAX_CONCURRENT_CONNECTIONS; i++) {
+                server.releaseConnectionSlot();
+            }
+            assertTrue(server.tryAcquireConnectionSlot(), "released connection slot reusable");
+            server.releaseConnectionSlot();
+
+            Instant now = Instant.now();
+            for (int i = 0;
+                    i < TrustedLocalControlPolicy.MAX_MALFORMED_ATTEMPTS_PER_MINUTE;
+                    i++) {
+                assertTrue(
+                        server.recordMalformedAttempt(LOOPBACK, now),
+                        "bounded malformed attempt " + i);
+            }
+            assertTrue(
+                    server.malformedLimitReached(LOOPBACK, now),
+                    "malformed limit visible");
+            assertTrue(
+                    !server.recordMalformedAttempt(LOOPBACK, now),
+                    "excess malformed attempt rejected");
+            assertTrue(
+                    server.recordMalformedAttempt(LOOPBACK, now.plusSeconds(61)),
+                    "malformed window expires");
+        }
+        assertTrue(
+                TrustedLocalControlPolicy.WEBSOCKET_READ_TIMEOUT.compareTo(
+                                TrustedLocalControlPolicy.MAX_IDLE_LIFETIME)
+                        > 0,
+                "websocket read timeout must not preempt authority idle expiry");
+    }
+
+    private static void testPlayerStateProjection() {
+        PlayerPort.Snapshot initial =
+                new PlayerPort.Snapshot(0, "synthetic-grid-1s", false, "idle", 0);
+        PlayerPort.Snapshot ready =
+                PlayerStateProjection.apply(
+                        initial,
+                        new PlayerStateProjection.Observation(
+                                "synthetic-grid-1s", false, "ready", 0));
+        assertEquals(1L, ready.revision(), "READY advances semantic revision");
+        PlayerPort.Snapshot progressed =
+                PlayerStateProjection.apply(
+                        ready,
+                        new PlayerStateProjection.Observation(
+                                "synthetic-grid-1s", false, "ready", 750));
+        assertEquals(
+                ready.revision(),
+                progressed.revision(),
+                "position-only observation retains semantic revision");
+        assertEquals(750L, progressed.positionMs(), "position observation retained");
+        PlayerPort.Snapshot playing =
+                PlayerStateProjection.apply(
+                        progressed,
+                        new PlayerStateProjection.Observation(
+                                "synthetic-grid-1s", true, "ready", 760));
+        assertEquals(2L, playing.revision(), "playing transition advances revision");
+        PlayerPort.Snapshot failed =
+                PlayerStateProjection.apply(
+                        playing,
+                        new PlayerStateProjection.Observation(
+                                "synthetic-grid-1s", false, "media3_2001", 760));
+        assertEquals(3L, failed.revision(), "error transition advances revision");
+        assertEquals("media3_2001", failed.playbackState(), "error state retained");
     }
 
     private static void testCanonicalEnvelopes() {
@@ -143,7 +258,7 @@ public final class TrustedLocalControlHostTest {
         CommandEnvelope describe =
                 new CommandEnvelope(
                         "describe",
-                        pair.authorityRevision(),
+                        pair.revisions().localRevision(),
                         player.snapshot().revision(),
                         null,
                         "request-describe01");
@@ -152,7 +267,7 @@ public final class TrustedLocalControlHostTest {
         assertContains(events.get(0), "\"event\":\"command_accepted\"", "query accepted first");
         assertContains(events.get(1), "\"event\":\"command_result\"", "query result second");
 
-        long afterDescribe = authority.snapshot(now.plusMillis(4)).authorityRevision();
+        long afterDescribe = authority.snapshot().revisions().localRevision();
         CommandEnvelope select =
                 new CommandEnvelope(
                         "select_video",
@@ -165,22 +280,47 @@ public final class TrustedLocalControlHostTest {
                 events.get(events.size() - 1),
                 "\"event\":\"command_accepted\"",
                 "effect accepted before invocation callback");
+        assertContains(
+                events.get(events.size() - 1),
+                "\"manifold_command_receipt_id\":\"receipt.manifold.command.request-select-01\"",
+                "accepted Manifold command receipt retained");
         assertTrue(
                 events.stream().noneMatch(value -> value.contains("\"event\":\"command_applied\"")),
                 "no applied event before player callback");
+        CommandEnvelope whilePending =
+                new CommandEnvelope(
+                        "play",
+                        authority.snapshot().revisions().localRevision(),
+                        player.snapshot().revision(),
+                        null,
+                        "request-pending-01");
+        coordinator.handleCommand(
+                pair.sessionCookie(), LOOPBACK, whilePending, now.plusMillis(5));
+        assertContains(
+                events.get(events.size() - 1),
+                "\"event\":\"command_not_submitted\"",
+                "pending effect is not mislabeled as Manifold rejection");
+        assertContains(
+                events.get(events.size() - 1),
+                "\"reason\":\"player_effect_pending\"",
+                "pending effect reason");
         player.flush();
         int appliedIndex = indexOf(events, "\"event\":\"command_applied\"");
         int acceptedIndex = lastIndexOf(events, "\"event\":\"command_accepted\"");
         assertTrue(appliedIndex > acceptedIndex, "applied follows accepted");
         assertContains(events.get(appliedIndex), "\"expected_player_revision\":0", "expected player revision retained");
         assertContains(events.get(appliedIndex), "\"player_revision\":1", "effective player revision advanced");
+        assertContains(
+                events.get(appliedIndex),
+                "\"manifold_command_receipt_id\":\"receipt.manifold.command.request-select-01\"",
+                "applied event retains accepted Manifold receipt");
         assertEquals(
                 "synthetic-blue-2s",
                 player.snapshot().selectedVideoId(),
                 "selection applied");
         assertTrue(!player.snapshot().playing(), "selection and play remain separate");
 
-        long currentAuthority = authority.snapshot(now.plusMillis(6)).authorityRevision();
+        long currentAuthority = authority.snapshot().revisions().localRevision();
         CommandEnvelope replay =
                 new CommandEnvelope(
                         "select_video",
@@ -191,13 +331,130 @@ public final class TrustedLocalControlHostTest {
         coordinator.handleCommand(pair.sessionCookie(), LOOPBACK, replay, now.plusMillis(7));
         assertContains(
                 events.get(events.size() - 1),
-                "\"reason\":\"request_replayed\"",
-                "one-use request ids");
+                "\"reason\":\"already_selected\"",
+                "Quest-owned no-op check runs before Manifold submission");
 
-        authority.revokeByWearer(now.plusMillis(8));
+        ManifoldAuthorityPort.RevokeDecision revoke =
+                authority.revokeByWearer(
+                        new ManifoldAuthorityPort.RevokeRequest(
+                                "request-revoke-0001", "wearer_revoke"));
+        assertTrue(revoke.revoked(), "wearer revoke applied");
+        assertEquals("wearer_revoke", revoke.cause(), "wearer revoke cause retained");
+        assertContains(
+                revoke.disableReceiptId(),
+                "receipt.local_control.disable.",
+                "wearer revoke receipt retained");
         ManifoldAuthorityPort.SessionDecision revoked =
                 coordinator.inspectSession(pair.sessionCookie(), LOOPBACK, now.plusMillis(9));
         assertTrue(!revoked.active(), "wearer revoke ends controller session");
+        coordinator.close();
+    }
+
+    private static void testReadOnlyBootstrapWithAdvancedPlayerState() {
+        Instant now = Instant.now();
+        FakeManifoldAuthority authority = new FakeManifoldAuthority();
+        FakePlayer player = new FakePlayer();
+        player.observeReadyPosition(42);
+        LocalControlCoordinator coordinator =
+                new LocalControlCoordinator(authority, player, VideoCatalog.bundledSynthetic());
+        List<String> events = new ArrayList<>();
+        coordinator.addEventSink(events::add);
+        enable(authority, now);
+        ManifoldAuthorityPort.PairDecision pair =
+                coordinator.pair(
+                        LOOPBACK,
+                        new PairingRequest("482731", "request-pair-bootstrap"),
+                        now.plusMillis(1));
+
+        coordinator.handleCommand(
+                pair.sessionCookie(),
+                LOOPBACK,
+                new CommandEnvelope(
+                        "describe",
+                        pair.revisions().localRevision(),
+                        0,
+                        null,
+                        "request-bootstrap-describe"),
+                now.plusMillis(2));
+        assertTrue(
+                events.stream().anyMatch(value -> value.contains("\"event\":\"command_result\"")),
+                "describe succeeds even when Media3 already advanced player state");
+
+        long nextAuthority = authority.snapshot().revisions().localRevision();
+        coordinator.handleCommand(
+                pair.sessionCookie(),
+                LOOPBACK,
+                new CommandEnvelope(
+                        "get_state",
+                        nextAuthority,
+                        0,
+                        null,
+                        "request-bootstrap-state"),
+                now.plusMillis(3));
+        assertContains(
+                events.get(events.size() - 1),
+                "\"revision\":1",
+                "get_state teaches browser the effective player revision");
+        coordinator.close();
+    }
+
+    private static void testPlayerEffectTimeoutDoesNotWedge() throws Exception {
+        Instant now = Instant.now();
+        FakeManifoldAuthority authority = new FakeManifoldAuthority();
+        FakePlayer player = new FakePlayer();
+        LocalControlCoordinator coordinator =
+                new LocalControlCoordinator(
+                        authority,
+                        player,
+                        VideoCatalog.bundledSynthetic(),
+                        Duration.ofMillis(20));
+        List<String> events = new ArrayList<>();
+        coordinator.addEventSink(events::add);
+        enable(authority, now);
+        ManifoldAuthorityPort.PairDecision pair =
+                coordinator.pair(
+                        LOOPBACK,
+                        new PairingRequest("482731", "request-pair-timeout"),
+                        now.plusMillis(1));
+        coordinator.handleCommand(
+                pair.sessionCookie(),
+                LOOPBACK,
+                new CommandEnvelope(
+                        "select_video",
+                        pair.revisions().localRevision(),
+                        0,
+                        "synthetic-blue-2s",
+                        "request-timeout-select"),
+                now.plusMillis(2));
+        long deadline = System.nanoTime() + Duration.ofSeconds(2).toNanos();
+        while (events.stream()
+                        .noneMatch(
+                                value ->
+                                        value.contains("\"reason\":\"player_effect_timeout\""))
+                && System.nanoTime() < deadline) {
+            Thread.sleep(10);
+        }
+        assertTrue(
+                events.stream()
+                        .anyMatch(
+                                value ->
+                                        value.contains("\"reason\":\"player_effect_timeout\"")),
+                "bounded effect timeout emitted");
+        coordinator.handleCommand(
+                pair.sessionCookie(),
+                LOOPBACK,
+                new CommandEnvelope(
+                        "select_video",
+                        authority.snapshot().revisions().localRevision(),
+                        player.snapshot().revision(),
+                        "synthetic-blue-2s",
+                        "request-after-timeout"),
+                now.plusMillis(3));
+        assertContains(
+                events.get(events.size() - 1),
+                "\"event\":\"command_accepted\"",
+                "timeout clears both coordinator and player pending state");
+        coordinator.close();
     }
 
     private static void testAuthorityLimitsAndExpiry() {
@@ -213,7 +470,7 @@ public final class TrustedLocalControlHostTest {
                         new PairingRequest("482731", "request-pair-limit"),
                         now.plusMillis(1));
         assertTrue(pair.accepted(), "rate test pair");
-        long revision = pair.authorityRevision();
+        long revision = pair.revisions().localRevision();
         for (int i = 0; i < TrustedLocalControlPolicy.MAX_REQUESTS_PER_MINUTE; i++) {
             String id = String.format(Locale.ROOT, "request-rate-%06d", i);
             CommandEnvelope command =
@@ -223,11 +480,9 @@ public final class TrustedLocalControlHostTest {
                             new ManifoldAuthorityPort.CommandAttempt(
                                     pair.sessionCookie(),
                                     LOOPBACK,
-                                    command,
-                                    player.snapshot(),
-                                    now.plusSeconds(1)));
+                                    command));
             assertTrue(decision.accepted(), "bounded request inside rate");
-            revision = decision.authorityRevision();
+            revision = decision.revisions().localRevision();
         }
         CommandEnvelope excess =
                 new CommandEnvelope(
@@ -241,9 +496,7 @@ public final class TrustedLocalControlHostTest {
                         new ManifoldAuthorityPort.CommandAttempt(
                                 pair.sessionCookie(),
                                 LOOPBACK,
-                                excess,
-                                player.snapshot(),
-                                now.plusSeconds(1)));
+                                excess));
         assertEquals("command_rate_limited", limited.reason(), "strict command rate");
 
         ManifoldAuthorityPort.SessionDecision expired =
@@ -252,6 +505,31 @@ public final class TrustedLocalControlHostTest {
                         LOOPBACK,
                         now.plus(TrustedLocalControlPolicy.MAX_IDLE_LIFETIME).plusSeconds(2));
         assertTrue(!expired.active(), "idle expiry");
+        coordinator.close();
+
+        FakeManifoldAuthority rejectingAuthority = new FakeManifoldAuthority();
+        FakePlayer rejectingPlayer = new FakePlayer();
+        LocalControlCoordinator rejectingCoordinator =
+                new LocalControlCoordinator(
+                        rejectingAuthority,
+                        rejectingPlayer,
+                        VideoCatalog.bundledSynthetic());
+        enable(rejectingAuthority, now);
+        ManifoldAuthorityPort.PairDecision rejectingPair =
+                rejectingCoordinator.pair(
+                        LOOPBACK,
+                        new PairingRequest("482731", "request-pair-expiry-reject"),
+                        now.plusMillis(1));
+        rejectingAuthority.rejectNextDueExpiry();
+        expectIllegalState(
+                () ->
+                        rejectingCoordinator.inspectSession(
+                                rejectingPair.sessionCookie(),
+                                LOOPBACK,
+                                now.plus(TrustedLocalControlPolicy.MAX_IDLE_LIFETIME)
+                                        .plusSeconds(2)),
+                "due expiry rejection must fail closed");
+        rejectingCoordinator.close();
     }
 
     private static void testLoopbackHttpAndWebSocket(Path appRoot) throws Exception {
@@ -353,6 +631,18 @@ public final class TrustedLocalControlHostTest {
                 assertContains(result, "\"event\":\"command_result\"", "WS query result");
                 assertContains(result, "\"protocol\":\"trusted_local_http_v1\"", "protocol described");
             }
+
+            try (Socket malformed = new Socket(endpoint.address(), endpoint.port())) {
+                malformed.getOutputStream()
+                        .write("BROKEN\r\n\r\n".getBytes(StandardCharsets.US_ASCII));
+                malformed.getOutputStream().flush();
+                malformed.shutdownOutput();
+                malformed.getInputStream().readAllBytes();
+            }
+            assertEquals(
+                    1,
+                    server.malformedAttemptCount(LOOPBACK, Instant.now()),
+                    "HTTP parser failure counted as malformed attempt");
         }
     }
 
@@ -533,6 +823,17 @@ public final class TrustedLocalControlHostTest {
             action.run();
             throw new AssertionError(message);
         } catch (IllegalArgumentException expected) {
+            // Expected.
+        } catch (Exception error) {
+            throw new AssertionError(message, error);
+        }
+    }
+
+    private static void expectIllegalState(ThrowingRunnable action, String message) {
+        try {
+            action.run();
+            throw new AssertionError(message);
+        } catch (IllegalStateException expected) {
             // Expected.
         } catch (Exception error) {
             throw new AssertionError(message, error);

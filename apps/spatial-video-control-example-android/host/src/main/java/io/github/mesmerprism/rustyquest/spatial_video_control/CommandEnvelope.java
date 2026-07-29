@@ -34,8 +34,9 @@ public record CommandEnvelope(
         if (!TrustedLocalControlPolicy.COMMANDS.contains(command)) {
             throw new IllegalArgumentException("command is not in the build-time registry");
         }
-        if (expectedAuthorityRevision < 0 || expectedPlayerRevision < 0) {
-            throw new IllegalArgumentException("revisions must be non-negative");
+        if (expectedAuthorityRevision < 1 || expectedPlayerRevision < 0) {
+            throw new IllegalArgumentException(
+                    "authority revisions must be positive and player revision non-negative");
         }
         if (command.equals("select_video") != (videoId != null)) {
             throw new IllegalArgumentException("only select_video carries video_id");

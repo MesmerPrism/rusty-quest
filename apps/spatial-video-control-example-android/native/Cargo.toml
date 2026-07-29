@@ -1,0 +1,27 @@
+[package]
+name = "rusty-quest-spatial-video-local-control-native"
+version = "0.1.0"
+edition = "2021"
+license = "AGPL-3.0-or-later"
+publish = false
+rust-version = "1.80"
+
+[lib]
+name = "rusty_quest_spatial_video_local_control"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+getrandom = "0.2"
+hex = "0.4"
+rusty-manifold-admission = { git = "https://github.com/MesmerPrism/rusty-manifold.git", rev = "1fe0f786a10371334c00296a5b4deff493796af1" }
+rusty-manifold-local-control = { git = "https://github.com/MesmerPrism/rusty-manifold.git", rev = "1fe0f786a10371334c00296a5b4deff493796af1" }
+rusty-manifold-model = { git = "https://github.com/MesmerPrism/rusty-manifold.git", rev = "1fe0f786a10371334c00296a5b4deff493796af1", features = ["serde"] }
+rusty-manifold-runtime-host = { git = "https://github.com/MesmerPrism/rusty-manifold.git", rev = "1fe0f786a10371334c00296a5b4deff493796af1" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+
+[target.'cfg(target_os = "android")'.dependencies]
+jni = "0.21"
+
+[workspace]

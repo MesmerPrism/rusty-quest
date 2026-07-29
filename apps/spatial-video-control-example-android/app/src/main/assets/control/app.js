@@ -2,6 +2,9 @@
 
 const state = {
   authorityRevision: 0,
+  admissionRevision: 0,
+  leaseAuthorityRevision: 0,
+  hostRevision: 0,
   playerRevision: 0,
   selectedVideoId: null,
   socket: null,
@@ -57,6 +60,15 @@ function updateRevisions(event) {
   if (Number.isSafeInteger(event.authority_revision)) {
     state.authorityRevision = event.authority_revision;
     authorityRevision.textContent = String(event.authority_revision);
+  }
+  if (Number.isSafeInteger(event.admission_revision)) {
+    state.admissionRevision = event.admission_revision;
+  }
+  if (Number.isSafeInteger(event.lease_authority_revision)) {
+    state.leaseAuthorityRevision = event.lease_authority_revision;
+  }
+  if (Number.isSafeInteger(event.host_revision)) {
+    state.hostRevision = event.host_revision;
   }
   const nextPlayerRevision =
     event.player_revision ?? event.state?.revision ?? event.state?.player?.revision;
@@ -123,7 +135,11 @@ function sendNextBootstrap() {
 function handleEvent(event) {
   appendEvent(event);
   updateRevisions(event);
-  if (event.event === "command_applied" || event.event === "state_changed") {
+  if (
+    event.event === "command_applied" ||
+    event.event === "state_changed" ||
+    event.event === "state_observed"
+  ) {
     updatePlayer(event.state?.player ?? event.state);
   }
   if (event.event === "command_result") {
@@ -136,6 +152,9 @@ function handleEvent(event) {
   }
   if (event.event === "command_rejected" || event.event === "command_failed") {
     connectionState.textContent = "Command rejected";
+  }
+  if (event.event === "command_not_submitted") {
+    connectionState.textContent = "Player busy";
   }
 }
 
@@ -185,8 +204,7 @@ pairingForm.addEventListener("submit", async (event) => {
       pairingStatus.textContent = "Pairing was rejected. Request a new code in the headset.";
       return;
     }
-    state.authorityRevision = body.authority_revision;
-    authorityRevision.textContent = String(body.authority_revision);
+    updateRevisions(body);
     pairingCard.hidden = true;
     controllerCard.hidden = false;
     connect();
