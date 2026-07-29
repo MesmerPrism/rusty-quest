@@ -138,9 +138,21 @@ try {
 Push-Location -LiteralPath $repoRootPath
 try {
     cargo test -p spatial-camera-panel-native-receipt surface_particle
+    if ($LASTEXITCODE -ne 0) {
+        throw "Spatial Camera Panel surface-particle Rust tests failed."
+    }
     cargo test -p spatial-camera-panel-native-receipt camera_latency
+    if ($LASTEXITCODE -ne 0) {
+        throw "Spatial Camera Panel camera-latency Rust tests failed."
+    }
     cargo test -p spatial-camera-panel-native-receipt projection_surface_displacement
+    if ($LASTEXITCODE -ne 0) {
+        throw "Spatial Camera Panel projection-surface displacement Rust tests failed."
+    }
     cargo test -p spatial-camera-panel-native-receipt projection_surface_features
+    if ($LASTEXITCODE -ne 0) {
+        throw "Spatial Camera Panel projection-surface feature Rust tests failed."
+    }
 } finally {
     Pop-Location
 }
