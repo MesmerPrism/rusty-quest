@@ -26,6 +26,8 @@ internal data class SpatialPrivateLayerControlBindings(
 internal class SpatialPrivateLayerControlCoordinator(
     private val bindings: SpatialPrivateLayerControlBindings,
     private val fixedLayerOverride: Float? = null,
+    initialZoneCompositor: PrivateLayerZoneCompositor =
+        PrivateLayerZoneCompositorControls.legacyOff,
 ) {
   var layerOverride: Float by
       mutableStateOf(fixedLayerOverride ?: PrivateLayerControls.cycleOverride)
@@ -40,7 +42,8 @@ internal class SpatialPrivateLayerControlCoordinator(
   var guideProcessing: PrivateLayerGuideProcessing = PrivateLayerControls.nativeParityGuideProcessing
     private set
 
-  var zoneCompositor: PrivateLayerZoneCompositor = PrivateLayerZoneCompositorControls.legacyOff
+  var zoneCompositor: PrivateLayerZoneCompositor =
+      PrivateLayerZoneCompositorModule.normalize(initialZoneCompositor)
     private set
 
   var rgbChannelTransform: RgbChannelTransform = RgbChannelTransformControls.bypass

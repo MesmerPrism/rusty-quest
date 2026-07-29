@@ -26,6 +26,19 @@ param(
     [string]$ParticleLayerCarrierDefault = "manual-panel-scene-object-custom-mesh",
     [string]$StartInParticleViewDefault = "false",
     [string]$PanelLauncherVisibleDefault = "true",
+    [switch]$CameraProjectionDefaultEnabled,
+    [switch]$ImmersiveVideoDefaultEnabled,
+    [string]$ImmersiveVideoDefaultOfflinePackId = "",
+    [string]$OfflineMediaPackAssetDir = $env:RUSTY_QUEST_OFFLINE_MEDIA_PACK_ASSET_DIR,
+    [string]$OfflineMediaKeyHex = $env:RUSTY_QUEST_OFFLINE_MEDIA_KEY_HEX,
+    [ValidateSet(
+        "off",
+        "native-buffer",
+        "organic-buffer",
+        "full-stretch",
+        "spatial-video-underlay"
+    )]
+    [string]$ZoneCompositorDefaultPreset = "off",
     [string]$HandAlignmentEnabledDefault = "false",
     [string]$HandAlignmentViewerMarkersEnabledDefault = "false",
     [string]$HandAlignmentMappingProfileDefault = "mirror-x-origin-registration",
@@ -464,6 +477,37 @@ $resolvedProductId = Resolve-SpatialProductId -Value $ProductId
 $resolvedAppId = Resolve-SpatialAppId -Value $AppId -ResolvedProductId $resolvedProductId
 $resolvedAppLabel = Resolve-SpatialAppLabel -Value $AppLabel -ResolvedProductId $resolvedProductId
 $resolvedApkFileName = Resolve-ApkFileName -Value $ApkFileName -ResolvedAppId $resolvedAppId -ResolvedProductId $resolvedProductId
+$resolvedImmersiveVideoDefaultOfflinePackId =
+    $ImmersiveVideoDefaultOfflinePackId.Trim().ToLowerInvariant()
+$resolvedOfflineMediaPackAssetDir =
+    Resolve-OptionalDirectoryPath -Path $OfflineMediaPackAssetDir -Label "Offline media pack asset root"
+$resolvedOfflineMediaKeyHex = $OfflineMediaKeyHex.Trim().ToLowerInvariant()
+if (-not [string]::IsNullOrWhiteSpace($resolvedOfflineMediaKeyHex) -and
+    $resolvedOfflineMediaKeyHex -notmatch '^[a-f0-9]{64}$') {
+    throw "OfflineMediaKeyHex must be empty or exactly 64 hexadecimal characters."
+}
+if (-not [string]::IsNullOrWhiteSpace($resolvedImmersiveVideoDefaultOfflinePackId) -and
+    $resolvedImmersiveVideoDefaultOfflinePackId -notmatch '^[a-z0-9][a-z0-9._-]{1,63}$') {
+    throw "ImmersiveVideoDefaultOfflinePackId must be empty or a valid offline media pack id."
+}
+if ([bool]$ImmersiveVideoDefaultEnabled -and
+    [string]::IsNullOrWhiteSpace($resolvedImmersiveVideoDefaultOfflinePackId)) {
+    throw "ImmersiveVideoDefaultOfflinePackId is required when ImmersiveVideoDefaultEnabled is selected."
+}
+if ([bool]$ImmersiveVideoDefaultEnabled) {
+    if ([string]::IsNullOrWhiteSpace($resolvedOfflineMediaPackAssetDir) -or
+        [string]::IsNullOrWhiteSpace($resolvedOfflineMediaKeyHex)) {
+        throw "A packaged offline media asset root and key are required when ImmersiveVideoDefaultEnabled is selected."
+    }
+    $defaultPackManifest = Join-Path $resolvedOfflineMediaPackAssetDir "offline-media-packs\$resolvedImmersiveVideoDefaultOfflinePackId\manifest.json"
+    if (-not (Test-Path -LiteralPath $defaultPackManifest -PathType Leaf)) {
+        throw "Default immersive video pack manifest not found: $defaultPackManifest"
+    }
+    $defaultPack = Get-Content -LiteralPath $defaultPackManifest -Raw | ConvertFrom-Json
+    if ([string]$defaultPack.pack_id -ne $resolvedImmersiveVideoDefaultOfflinePackId) {
+        throw "Default immersive video pack manifest id does not match ImmersiveVideoDefaultOfflinePackId."
+    }
+}
 $buildTypeLower = $BuildType.ToLowerInvariant()
 if ($resolvedAppId -eq "io.github.mesmerprism.rustyquest.spatial_vr_strobe") {
     throw "The Camera build cannot use the standalone Spatial VR Strobe AppId."
@@ -600,6 +644,10 @@ $buildInputDescriptor = [ordered]@{
     gradle_version = $GradleVersion
     android_build_type = $buildTypeLower
     locked_final_presentation = $lockedFinalPresentationEnabled
+    camera_projection_default_enabled = [bool]$CameraProjectionDefaultEnabled
+    immersive_video_default_enabled = [bool]$ImmersiveVideoDefaultEnabled
+    immersive_video_default_offline_pack_id = $resolvedImmersiveVideoDefaultOfflinePackId
+    zone_compositor_default_preset = $ZoneCompositorDefaultPreset
     distortion_speed_scale = $resolvedDistortionSpeedScale
     recorded_hand_capture = if ([string]::IsNullOrWhiteSpace($resolvedRecordedHandCaptureDir)) { $null } else { [ordered]@{ path = $resolvedRecordedHandCaptureDir; sha256 = Get-DirectorySha256 -Path $resolvedRecordedHandCaptureDir; frame_limit = $resolvedRecordedHandFrameLimit } }
     private_layer = [ordered]@{
@@ -616,6 +664,9 @@ $buildInputDescriptor = [ordered]@{
         marker_prefix = $resolvedPrivateSurfaceParticleMarkerPrefix
     }
     packaged_inputs = [ordered]@{
+        offline_media_packs = if ([string]::IsNullOrWhiteSpace($resolvedOfflineMediaPackAssetDir)) { $null } else { [ordered]@{ path = $resolvedOfflineMediaPackAssetDir; sha256 = Get-DirectorySha256 -Path $resolvedOfflineMediaPackAssetDir } }
+        offline_media_key_configured = (-not [string]::IsNullOrWhiteSpace($resolvedOfflineMediaKeyHex))
+        offline_media_key_sha256 = if ([string]::IsNullOrWhiteSpace($resolvedOfflineMediaKeyHex)) { "" } else { Get-StringSha256 -Value $resolvedOfflineMediaKeyHex }
         hand_mesh_rig = if ([string]::IsNullOrWhiteSpace($resolvedHandMeshRigAssetDir)) { $null } else { [ordered]@{ path = $resolvedHandMeshRigAssetDir; sha256 = Get-DirectorySha256 -Path $resolvedHandMeshRigAssetDir } }
         private_source = if ([string]::IsNullOrWhiteSpace($resolvedPrivateFeatureSourceDir)) { $null } else { [ordered]@{ path = $resolvedPrivateFeatureSourceDir; sha256 = Get-DirectorySha256 -Path $resolvedPrivateFeatureSourceDir } }
         private_assets = if ([string]::IsNullOrWhiteSpace($resolvedPrivateFeatureAssetDir)) { $null } else { [ordered]@{ path = $resolvedPrivateFeatureAssetDir; sha256 = Get-DirectorySha256 -Path $resolvedPrivateFeatureAssetDir } }
@@ -887,6 +938,8 @@ $previousGradleLockedFinalPresentation = $env:RUSTY_QUEST_SPATIAL_LOCKED_FINAL_P
 $previousGradleDistortionSpeedScale = $env:RUSTY_QUEST_SPATIAL_DISTORTION_SPEED_SCALE
 $previousHandMeshRigAssetDir = $env:RUSTY_QUEST_SPATIAL_HAND_MESH_RIG_ASSET_DIR
 $previousSigningKeystore = $env:RUSTY_QUEST_SPATIAL_SIGNING_KEYSTORE
+$previousOfflineMediaPackAssetDir = $env:RUSTY_QUEST_OFFLINE_MEDIA_PACK_ASSET_DIR
+$previousOfflineMediaKeyHex = $env:RUSTY_QUEST_OFFLINE_MEDIA_KEY_HEX
 $previousSpatialScopedEnvironment = @{}
 foreach ($entry in @(Get-ChildItem Env: | Where-Object { $_.Name -like "RUSTY_QUEST_SPATIAL_*" })) {
     $previousSpatialScopedEnvironment[[string]$entry.Name] = [string]$entry.Value
@@ -908,6 +961,10 @@ try {
     $env:RUSTY_QUEST_SPATIAL_APP_LABEL = $resolvedAppLabel
     $env:RUSTY_QUEST_SPATIAL_LOCKED_FINAL_PRESENTATION = $lockedFinalPresentationEnabled.ToString().ToLowerInvariant()
     $env:RUSTY_QUEST_SPATIAL_DISTORTION_SPEED_SCALE = $resolvedDistortionSpeedScale.ToString([System.Globalization.CultureInfo]::InvariantCulture)
+    $env:RUSTY_QUEST_SPATIAL_CAMERA_PROJECTION_DEFAULT_ENABLED = ([bool]$CameraProjectionDefaultEnabled).ToString().ToLowerInvariant()
+    $env:RUSTY_QUEST_SPATIAL_IMMERSIVE_VIDEO_DEFAULT_ENABLED = ([bool]$ImmersiveVideoDefaultEnabled).ToString().ToLowerInvariant()
+    $env:RUSTY_QUEST_SPATIAL_IMMERSIVE_VIDEO_DEFAULT_OFFLINE_PACK_ID = $resolvedImmersiveVideoDefaultOfflinePackId
+    $env:RUSTY_QUEST_SPATIAL_ZONE_COMPOSITOR_DEFAULT_PRESET = $ZoneCompositorDefaultPreset
     $env:RUSTY_QUEST_SPATIAL_BUILD_ROOT = $productBuildRoot
     $env:RUSTY_QUEST_SPATIAL_PARTICLE_LAYER_CARRIER_DEFAULT = $ParticleLayerCarrierDefault
     $env:RUSTY_QUEST_SPATIAL_START_IN_PARTICLE_VIEW_DEFAULT = $StartInParticleViewDefault
@@ -917,6 +974,16 @@ try {
     $env:RUSTY_QUEST_SPATIAL_HAND_ALIGNMENT_MAPPING_PROFILE_DEFAULT = $HandAlignmentMappingProfileDefault
     $env:RUSTY_QUEST_SPATIAL_HAND_BILLBOARD_FLOCK_ENABLED_DEFAULT = $HandBillboardFlockEnabledDefault
     $env:RUSTY_QUEST_SPATIAL_HAND_BILLBOARD_SOURCE_DEFAULT = $HandBillboardSourceDefault
+    if ([string]::IsNullOrWhiteSpace($resolvedOfflineMediaPackAssetDir)) {
+        Remove-Item Env:\RUSTY_QUEST_OFFLINE_MEDIA_PACK_ASSET_DIR -ErrorAction SilentlyContinue
+    } else {
+        $env:RUSTY_QUEST_OFFLINE_MEDIA_PACK_ASSET_DIR = $resolvedOfflineMediaPackAssetDir
+    }
+    if ([string]::IsNullOrWhiteSpace($resolvedOfflineMediaKeyHex)) {
+        Remove-Item Env:\RUSTY_QUEST_OFFLINE_MEDIA_KEY_HEX -ErrorAction SilentlyContinue
+    } else {
+        $env:RUSTY_QUEST_OFFLINE_MEDIA_KEY_HEX = $resolvedOfflineMediaKeyHex
+    }
     if ([string]::IsNullOrWhiteSpace($resolvedHandMeshRigAssetDir)) {
         Remove-Item Env:\RUSTY_QUEST_SPATIAL_HAND_MESH_RIG_ASSET_DIR -ErrorAction SilentlyContinue
     } else {
@@ -1008,6 +1075,16 @@ try {
     } else {
         $env:RUSTY_QUEST_SPATIAL_SIGNING_KEYSTORE = $previousSigningKeystore
     }
+    if ($null -eq $previousOfflineMediaPackAssetDir) {
+        Remove-Item Env:\RUSTY_QUEST_OFFLINE_MEDIA_PACK_ASSET_DIR -ErrorAction SilentlyContinue
+    } else {
+        $env:RUSTY_QUEST_OFFLINE_MEDIA_PACK_ASSET_DIR = $previousOfflineMediaPackAssetDir
+    }
+    if ($null -eq $previousOfflineMediaKeyHex) {
+        Remove-Item Env:\RUSTY_QUEST_OFFLINE_MEDIA_KEY_HEX -ErrorAction SilentlyContinue
+    } else {
+        $env:RUSTY_QUEST_OFFLINE_MEDIA_KEY_HEX = $previousOfflineMediaKeyHex
+    }
     foreach ($name in @(Get-ChildItem Env: | Where-Object { $_.Name -like "RUSTY_QUEST_SPATIAL_*" } | Select-Object -ExpandProperty Name)) {
         [Environment]::SetEnvironmentVariable([string]$name, $null, "Process")
     }
@@ -1030,9 +1107,9 @@ if (-not $nativeReceiptLibraryPackaged) {
 }
 
 $offlineMediaEmbeddedKeyEnabled =
-    -not [string]::IsNullOrWhiteSpace($env:RUSTY_QUEST_OFFLINE_MEDIA_KEY_HEX)
+    -not [string]::IsNullOrWhiteSpace($resolvedOfflineMediaKeyHex)
 $offlineMediaPackagedAssets =
-    -not [string]::IsNullOrWhiteSpace($env:RUSTY_QUEST_OFFLINE_MEDIA_PACK_ASSET_DIR)
+    -not [string]::IsNullOrWhiteSpace($resolvedOfflineMediaPackAssetDir)
 $manifest = [ordered]@{
     '$schema' = "rusty.quest.spatial_camera_panel_sdk_android.build_manifest.v1"
     product_id = $resolvedProductId
@@ -1094,7 +1171,12 @@ $manifest = [ordered]@{
     distortion_effective_phase_rate_hz = (0.5 * $resolvedDistortionSpeedScale)
     spatial_sdk_version = "0.13.2"
     media3_version = "1.4.1"
-    immersive_video_default_enabled = $false
+    camera_projection_default_enabled = [bool]$CameraProjectionDefaultEnabled
+    camera_projection_activation_policy = "explicit-intent-or-property-or-product-build-default"
+    immersive_video_default_enabled = [bool]$ImmersiveVideoDefaultEnabled
+    immersive_video_default_offline_pack_id = $resolvedImmersiveVideoDefaultOfflinePackId
+    immersive_video_default_activation_policy = "explicit-intent-or-product-build-default"
+    projection_zone_compositor_default_preset = $ZoneCompositorDefaultPreset
     immersive_video_source_policy = "explicit-single-grant-media-content-uri-app-owned-file-or-authenticated-obb-pack"
     immersive_video_shape_tokens = @("flat", "equirect-180", "equirect-360")
     immersive_video_stereo_tokens = @("mono", "side-by-side-left-right", "top-bottom")

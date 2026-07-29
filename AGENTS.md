@@ -92,6 +92,11 @@ Strobe resumes from `apps/spatial-vr-strobe-android/morphospace/`. The complete
 mixed v1 camera ledger is integrity-bound under
 `apps/spatial-camera-panel-android/legacy-workspaces/mixed-integration-v1/`;
 neither that history nor Strobe state may gate another project.
+An app-owned, content-addressed build may select explicit normal-launch camera
+projection, encrypted immersive-video pack, and zone-compositor defaults.
+Those selections must be recorded in the build lock and BuildConfig, while the
+shared adapter defaults remain inert and runtime panel controls remain
+independent.
 The staged Spatial asset lane is also lock-bound: a GLB/GLTF URI or legacy
 enable property alone must stay inert unless the app-owned
 `spatial-asset-model.feature.lock.json` and its exact runtime identity tuple

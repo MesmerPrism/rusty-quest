@@ -6,6 +6,7 @@ import kotlin.math.min
 internal data class SpatialImmersiveVideoSessionSnapshot(
     val requested: Boolean,
     val available: Boolean,
+    val playbackEnabled: Boolean,
     val activeIndex: Int,
     val itemCount: Int,
     val activePackId: String?,
@@ -83,7 +84,7 @@ internal object SpatialImmersiveVideoSessionPolicy {
     return base.copy(
         enabled = true,
         source = CUSTOM_PROJECTION_SOURCE,
-        path = pack.virtualUri.toString(),
+        path = pack.virtualUriString,
         mediaLayout = packedLayout,
         stereoLayout = packedLayout,
         width = scaledWidth,

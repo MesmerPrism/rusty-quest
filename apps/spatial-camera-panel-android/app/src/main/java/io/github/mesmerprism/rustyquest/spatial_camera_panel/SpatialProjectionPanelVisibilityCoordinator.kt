@@ -15,6 +15,7 @@ internal data class SpatialProjectionPanelVisibilityBindings(
     val currentVideoSettings: () -> SpatialVideoProjectionSettings,
     val markProjectionLaunchStopped: () -> Unit,
     val stopProjectionPanel: (String) -> SpatialProjectionPanelStopReceipt,
+    val directImmersiveVideoActive: () -> Boolean,
     val enableSystemPassthrough: () -> Boolean,
     val restartProjectionPanel: (SpatialVideoProjectionSettings, String) -> Unit,
     val marker: (String) -> Unit,
@@ -61,6 +62,7 @@ internal class SpatialProjectionPanelVisibilityCoordinator(
               source = source,
               resumeProjectionOnEnable = resumeProjectionOnEnable,
               videoWasActive = resumeVideoSettings.active,
+              directImmersiveVideoActive = bindings.directImmersiveVideoActive(),
               stopReceipt = stopReceipt,
               systemPassthroughEnabled = systemPassthroughEnabled,
           )
@@ -85,6 +87,49 @@ internal class SpatialProjectionPanelVisibilityCoordinator(
     return enabled
   }
 
+  fun restartWith(
+      videoSettings: SpatialVideoProjectionSettings,
+      source: String,
+  ): Boolean {
+    resumeProjectionOnEnable = true
+    resumeVideoSettings = videoSettings
+    if (!enabled) {
+      bindings.marker(
+          "channel=projection-panel status=restart-deferred " +
+              "source=${activityMarkerToken(source)} projectionPanelEnabled=false " +
+              "resumeProjectionOnEnable=true videoRestartRequested=${videoSettings.active} " +
+              "directImmersiveVideoActive=${bindings.directImmersiveVideoActive()} " +
+              "activityRestarted=false runtimeCrash=false"
+      )
+      return false
+    }
+    bindings.markProjectionLaunchStopped()
+    val stopReceipt =
+        runCatching { bindings.stopProjectionPanel("projection-panel-content-restart") }
+            .getOrElse { throwable ->
+              SpatialProjectionPanelStopReceipt(
+                  nativeProjectionStopped = false,
+                  videoProjectionStopped = false,
+                  carrierCleanupStatus = "failed-${throwable.javaClass.simpleName}",
+              )
+            }
+    val systemPassthroughEnabled =
+        runCatching { bindings.enableSystemPassthrough() }.getOrDefault(false)
+    bindings.restartProjectionPanel(videoSettings, "projection-panel-content-restart")
+    bindings.marker(
+        "channel=projection-panel status=content-restart-requested " +
+            "source=${activityMarkerToken(source)} projectionPanelEnabled=true " +
+            "videoRestartRequested=${videoSettings.active} " +
+            "nativeProjectionStopped=${stopReceipt.nativeProjectionStopped} " +
+            "videoProjectionStopped=${stopReceipt.videoProjectionStopped} " +
+            "carrierCleanupStatus=${activityMarkerToken(stopReceipt.carrierCleanupStatus)} " +
+            "directImmersiveVideoActive=${bindings.directImmersiveVideoActive()} " +
+            "systemPassthroughEnabled=$systemPassthroughEnabled " +
+            "activityRestarted=false runtimeCrash=false"
+    )
+    return true
+  }
+
   companion object {
     const val MODULE_ID = "spatial-projection-panel-visibility-coordinator"
   }
@@ -97,6 +142,7 @@ internal object SpatialProjectionPanelVisibilityModule {
       source: String,
       resumeProjectionOnEnable: Boolean,
       videoWasActive: Boolean,
+      directImmersiveVideoActive: Boolean,
       stopReceipt: SpatialProjectionPanelStopReceipt,
       systemPassthroughEnabled: Boolean,
   ): String =
@@ -107,6 +153,8 @@ internal object SpatialProjectionPanelVisibilityModule {
           "nativeProjectionStopped=${stopReceipt.nativeProjectionStopped} " +
           "carrierCleanupStatus=${activityMarkerToken(stopReceipt.carrierCleanupStatus)} " +
           "systemPassthroughEnabled=$systemPassthroughEnabled " +
+          "directImmersiveVideoActive=$directImmersiveVideoActive " +
+          "directImmersiveVideoRetained=$directImmersiveVideoActive " +
           "resumeProjectionOnEnable=$resumeProjectionOnEnable videoWasActive=$videoWasActive " +
           "passthroughIsolationDiagnostic=true runtimeCrash=false"
 
