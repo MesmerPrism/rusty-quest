@@ -56,6 +56,12 @@ is lower performance, is only needed for custom shader sampling, and has a
 current mesh/layer known issue. The app therefore does not request
 `ReadableVideoSurfacePanelRegistration` for this route.
 
+Projection inner-alpha controls do not change this boundary. They apply to the
+custom processed-core projection and its optional stretch output, not to
+individual pixels of the direct 180/360 video carrier. Whole-layer video
+opacity remains a possible later, focused adapter experiment and is not part
+of the current control or shader ABI.
+
 Reference implementation and API guidance:
 
 - [Meta Spatial SDK media playback](https://developers.meta.com/horizon/documentation/spatial-sdk/spatial-sdk-media-playback/)

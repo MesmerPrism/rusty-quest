@@ -13,6 +13,8 @@ internal data class SpatialCameraControlProfile(
     val zoneCompositor: PrivateLayerZoneCompositor,
     val rgbChannelTransform: RgbChannelTransform,
     val projectionSurfaceDisplacement: ProjectionSurfaceDisplacement,
+    val projectionSurfaceTiling: ProjectionSurfaceTiling,
+    val projectionInnerAlpha: ProjectionInnerAlpha,
 )
 
 internal object SpatialCameraControlProfileContract {
@@ -54,6 +56,8 @@ internal object SpatialCameraControlProfileContract {
         "zone_compositor",
         "rgb_channel_transform",
         "projection_surface_displacement",
+        "projection_surface_tiling",
+        "projection_inner_alpha",
     )
     return SpatialCameraControlProfile(
         profileId = profileId,
@@ -67,6 +71,18 @@ internal object SpatialCameraControlProfileContract {
             parseSurfaceDisplacement(
                 controls.requireObject("projection_surface_displacement")
             ),
+        projectionSurfaceTiling =
+            if (controls.has("projection_surface_tiling")) {
+              parseSurfaceTiling(controls.requireObject("projection_surface_tiling"))
+            } else {
+              ProjectionSurfaceTilingControls.off
+            },
+        projectionInnerAlpha =
+            if (controls.has("projection_inner_alpha")) {
+              parseInnerAlpha(controls.requireObject("projection_inner_alpha"))
+            } else {
+              ProjectionInnerAlphaControls.off
+            },
     )
   }
 
@@ -362,6 +378,77 @@ internal object SpatialCameraControlProfileContract {
                 json.requireFloat("reference_surface_distance_meters", 1.0f, 4.0f),
             polarity = json.requireFloat("polarity", -1.0f, 1.0f),
             edgeTaper = json.requireFloat("edge_taper", 0.02f, 0.45f),
+        )
+    )
+  }
+
+  private fun parseSurfaceTiling(json: JSONObject): ProjectionSurfaceTiling {
+    json.requireOnlyKeys(
+        "enabled",
+        "topology",
+        "gap_normalized",
+        "depth_flexibility",
+        "scope",
+    )
+    return ProjectionSurfaceTilingModule.normalize(
+        ProjectionSurfaceTiling(
+            enabled = json.requireBoolean("enabled"),
+            topology =
+                when (json.requireToken("topology", "continuous", "tiled")) {
+                  "tiled" -> ProjectionSurfaceTilingControls.topologyTiled
+                  else -> ProjectionSurfaceTilingControls.topologyContinuous
+                },
+            gapNormalized = json.requireFloat("gap_normalized", 0.0f, 0.45f),
+            depthFlexibility = json.requireFloat("depth_flexibility", 0.0f, 1.0f),
+            scope =
+                when (json.requireToken("scope", "core-and-stretch", "core-only")) {
+                  "core-only" -> ProjectionSurfaceTilingControls.scopeCoreOnly
+                  else -> ProjectionSurfaceTilingControls.scopeCoreAndStretch
+                },
+        )
+    )
+  }
+
+  private fun parseInnerAlpha(json: JSONObject): ProjectionInnerAlpha {
+    json.requireOnlyKeys(
+        "enabled",
+        "driver",
+        "threshold",
+        "softness",
+        "amount",
+        "invert",
+        "stretch_policy",
+        "stretch_obeys_exact_projection_mask",
+    )
+    return ProjectionInnerAlphaModule.normalize(
+        ProjectionInnerAlpha(
+            enabled = json.requireBoolean("enabled"),
+            driver =
+                when (json.requireToken("driver", "red", "green", "blue", "luma", "max")) {
+                  "red" -> ProjectionInnerAlphaControls.driverRed
+                  "green" -> ProjectionInnerAlphaControls.driverGreen
+                  "blue" -> ProjectionInnerAlphaControls.driverBlue
+                  "max" -> ProjectionInnerAlphaControls.driverMax
+                  else -> ProjectionInnerAlphaControls.driverLuma
+                },
+            threshold = json.requireFloat("threshold", 0.0f, 1.0f),
+            softness = json.requireFloat("softness", 0.001f, 0.5f),
+            amount = json.requireFloat("amount", 0.0f, 1.0f),
+            invert = json.requireBoolean("invert"),
+            stretchPolicy =
+                when (
+                    json.requireToken(
+                        "stretch_policy",
+                        "follow-projection",
+                        "opaque-independent",
+                    )
+                ) {
+                  "opaque-independent" ->
+                      ProjectionInnerAlphaControls.stretchOpaqueIndependent
+                  else -> ProjectionInnerAlphaControls.stretchFollowProjection
+                },
+            stretchObeysExactProjectionMask =
+                json.requireBoolean("stretch_obeys_exact_projection_mask"),
         )
     )
   }

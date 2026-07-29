@@ -13,8 +13,10 @@ use ash::vk::{self, Handle};
 use crate::camera_hwb_projection_target::{CameraHwbProjectionZoneFrame, ProjectionZoneUniform};
 use crate::camera_latency_diagnostics::CameraLatencyStereoReprojection;
 use crate::projection_surface_displacement::{
-    current_projection_surface_displacement_settings, ProjectionSurfaceDisplacementUniform,
-    PROJECTION_SURFACE_GRID_RESOLUTION, PROJECTION_SURFACE_GRID_VERTEX_COUNT,
+    current_projection_surface_displacement_settings, PROJECTION_SURFACE_GRID_VERTEX_COUNT,
+};
+use crate::projection_surface_features::{
+    current_projection_surface_feature_settings, ProjectionSurfaceFeatureUniformV2,
 };
 use crate::rgb_channel_transform::{
     current_rgb_channel_transform_settings, RgbChannelTransformUniform,
@@ -338,9 +340,9 @@ impl SpatialRgbChannelTransformUniformResources {
     unsafe fn update_displacement(
         &self,
         device: &ash::Device,
-        uniform: &ProjectionSurfaceDisplacementUniform,
+        uniform: &ProjectionSurfaceFeatureUniformV2,
     ) -> Result<(), String> {
-        let size = mem::size_of::<ProjectionSurfaceDisplacementUniform>() as vk::DeviceSize;
+        let size = mem::size_of::<ProjectionSurfaceFeatureUniformV2>() as vk::DeviceSize;
         let mapped = device
             .map_memory(
                 self.displacement_memory,
@@ -350,7 +352,7 @@ impl SpatialRgbChannelTransformUniformResources {
             )
             .map_err(|error| format!("map-projection-surface-displacement-uniform-{error:?}"))?;
         std::ptr::copy_nonoverlapping(
-            (uniform as *const ProjectionSurfaceDisplacementUniform).cast::<u8>(),
+            (uniform as *const ProjectionSurfaceFeatureUniformV2).cast::<u8>(),
             mapped.cast::<u8>(),
             size as usize,
         );
@@ -499,6 +501,8 @@ impl SpatialPublicGuideTargets {
         + " "
         + &current_projection_surface_displacement_settings()
             .marker_fields(self.opaque_projection_displacement_pipeline.is_some())
+        + " "
+        + &self.projection_surface_feature_marker_fields()
     }
 
     pub(crate) fn frame_marker_fields(
@@ -534,6 +538,8 @@ impl SpatialPublicGuideTargets {
         + " "
         + &current_projection_surface_displacement_settings()
             .marker_fields(self.opaque_projection_displacement_pipeline.is_some())
+        + " "
+        + &self.projection_surface_feature_marker_fields()
     }
 
     pub(crate) fn compact_projection_evidence_marker_fields(
@@ -575,6 +581,8 @@ impl SpatialPublicGuideTargets {
         + " "
         + &current_projection_surface_displacement_settings()
             .marker_fields(self.opaque_projection_displacement_pipeline.is_some())
+        + " "
+        + &self.projection_surface_feature_marker_fields()
     }
 
     pub(crate) fn compact_depth_evidence_marker_fields(&self) -> Option<String> {
@@ -648,6 +656,15 @@ impl SpatialPublicGuideTargets {
 
     fn projection_execution_available(&self) -> bool {
         self.guide_pass_execution_available() && self.opaque_projection_pipeline.is_some()
+    }
+
+    fn projection_surface_feature_marker_fields(&self) -> String {
+        let abi_v2 = PROJECTION_SURFACE_UNIFORM_ABI_VERSION >= 2;
+        current_projection_surface_feature_settings().marker_fields(
+            abi_v2 && self.opaque_projection_displacement_pipeline.is_some(),
+            abi_v2 && self.opaque_projection_pipeline.is_some(),
+            PROJECTION_SURFACE_UNIFORM_ABI_VERSION,
+        )
     }
 
     pub(crate) unsafe fn record_spatial_public_guide_passes(
@@ -795,6 +812,7 @@ impl SpatialPublicGuideTargets {
             return Ok(false);
         }
         let displacement = current_projection_surface_displacement_settings();
+        let surface_features = current_projection_surface_feature_settings();
         let draw_rects = [
             packed_projection_target_rect(0, footprint_scale),
             packed_projection_target_rect(1, footprint_scale),
@@ -802,13 +820,22 @@ impl SpatialPublicGuideTargets {
         self.rgb_channel_transform_uniform
             .update(device, &current_rgb_channel_transform_settings().uniform())?;
         self.rgb_channel_transform_uniform
-            .update_displacement(device, &displacement.uniform(draw_rects))?;
+            .update_displacement(device, &surface_features.uniform(displacement, draw_rects))?;
         let displacement_effective =
             displacement.effective(self.opaque_projection_displacement_pipeline.is_some());
+        let tiling_effective = surface_features.tiling.effective(
+            PROJECTION_SURFACE_UNIFORM_ABI_VERSION >= 2
+                && self.opaque_projection_displacement_pipeline.is_some(),
+        );
+        let tessellated_effective = if displacement_effective {
+            true
+        } else {
+            tiling_effective
+        };
         for eye_index in 0..SPATIAL_PUBLIC_PACKED_EYE_COUNT {
             let target_rect = draw_rects[eye_index];
             set_packed_projection_target_view(device, command_buffer, extent, target_rect);
-            let pipeline = if displacement_effective {
+            let pipeline = if tessellated_effective {
                 self.opaque_projection_displacement_pipeline
                     .ok_or_else(|| "opaque-projection-displacement-pipeline-missing".to_string())?
             } else {
@@ -844,7 +871,7 @@ impl SpatialPublicGuideTargets {
             );
             device.cmd_draw(
                 command_buffer,
-                if displacement_effective {
+                if tessellated_effective {
                     PROJECTION_SURFACE_GRID_VERTEX_COUNT
                 } else {
                     3
@@ -873,12 +900,21 @@ impl SpatialPublicGuideTargets {
             .as_ref()
             .ok_or_else(|| "projection-zone-video-pipeline-missing".to_string())?;
         let displacement = current_projection_surface_displacement_settings();
+        let surface_features = current_projection_surface_feature_settings();
         self.rgb_channel_transform_uniform
             .update(device, &current_rgb_channel_transform_settings().uniform())?;
-        self.rgb_channel_transform_uniform
-            .update_displacement(device, &displacement.uniform(zone_frame.draw_rects))?;
+        self.rgb_channel_transform_uniform.update_displacement(
+            device,
+            &surface_features.uniform(displacement, zone_frame.draw_rects),
+        )?;
         let displacement_effective = !zone_frame.settings.synthetic_diagnostic()
             && displacement.effective(pipeline.displacement_pipeline.is_some());
+        let tiling_effective = !zone_frame.settings.synthetic_diagnostic()
+            && surface_features.tiling.effective(
+                PROJECTION_SURFACE_UNIFORM_ABI_VERSION >= 2
+                    && pipeline.displacement_pipeline.is_some(),
+            );
+        let tessellated_effective = displacement_effective || tiling_effective;
         for eye_index in 0..SPATIAL_PUBLIC_PACKED_EYE_COUNT {
             set_packed_projection_target_view(
                 device,
@@ -889,7 +925,7 @@ impl SpatialPublicGuideTargets {
             device.cmd_bind_pipeline(
                 command_buffer,
                 vk::PipelineBindPoint::GRAPHICS,
-                if displacement_effective {
+                if tessellated_effective {
                     pipeline.displacement_pipeline.ok_or_else(|| {
                         "projection-zone-displacement-pipeline-missing".to_string()
                     })?
@@ -921,7 +957,7 @@ impl SpatialPublicGuideTargets {
             push_projection_constants(device, command_buffer, pipeline.pipeline_layout, &push);
             device.cmd_draw(
                 command_buffer,
-                if displacement_effective {
+                if tessellated_effective {
                     PROJECTION_SURFACE_GRID_VERTEX_COUNT
                 } else {
                     3
@@ -2843,6 +2879,12 @@ pub(crate) fn public_guide_targets_pending_marker_fields(reason: &str) -> String
         crate::marker_token(reason),
         spatial_environment_depth_marker_fields(),
     )
+    + " "
+    + &current_projection_surface_feature_settings().marker_fields(
+        false,
+        false,
+        PROJECTION_SURFACE_UNIFORM_ABI_VERSION,
+    )
 }
 
 #[cfg(target_os = "android")]
@@ -3097,7 +3139,7 @@ unsafe fn create_rgb_channel_transform_uniform_resources(
             .binding(1)
             .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER)
             .descriptor_count(1)
-            .stage_flags(vk::ShaderStageFlags::VERTEX),
+            .stage_flags(vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT),
     ];
     let descriptor_set_layout = device
         .create_descriptor_set_layout(
@@ -3159,8 +3201,7 @@ unsafe fn create_rgb_channel_transform_uniform_resources(
             "bind-rgb-channel-transform-uniform-memory-{error:?}"
         ));
     }
-    let displacement_size =
-        mem::size_of::<ProjectionSurfaceDisplacementUniform>() as vk::DeviceSize;
+    let displacement_size = mem::size_of::<ProjectionSurfaceFeatureUniformV2>() as vk::DeviceSize;
     let (displacement_buffer, displacement_memory) = match create_host_coherent_uniform_buffer(
         device,
         memory_properties,
@@ -3261,11 +3302,10 @@ unsafe fn create_rgb_channel_transform_uniform_resources(
     }
     if let Err(error) = resources.update_displacement(
         device,
-        &ProjectionSurfaceDisplacementUniform {
-            mode: [0.0, 1.0, 0.0, PROJECTION_SURFACE_GRID_RESOLUTION as f32],
-            geometry: [0.0, 2.0, 0.12, 0.0],
-            draw_rects: [[0.0, 0.0, 0.5, 1.0], [0.5, 0.0, 0.5, 1.0]],
-        },
+        &current_projection_surface_feature_settings().uniform(
+            current_projection_surface_displacement_settings(),
+            [[0.0, 0.0, 0.5, 1.0], [0.5, 0.0, 0.5, 1.0]],
+        ),
     ) {
         resources.destroy(device);
         return Err(error);
@@ -3325,7 +3365,7 @@ unsafe fn create_projection_zone_uniform_resources(
         .binding(0)
         .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER)
         .descriptor_count(1)
-        .stage_flags(vk::ShaderStageFlags::FRAGMENT)];
+        .stage_flags(vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT)];
     let descriptor_set_layout = device
         .create_descriptor_set_layout(
             &vk::DescriptorSetLayoutCreateInfo::default().bindings(&bindings),

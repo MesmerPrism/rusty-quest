@@ -13,6 +13,8 @@ internal data class SpatialCameraControlProfileEffective(
     val zoneCompositor: PrivateLayerZoneCompositor,
     val rgbChannelTransform: RgbChannelTransform,
     val projectionSurfaceDisplacement: ProjectionSurfaceDisplacement,
+    val projectionSurfaceTiling: ProjectionSurfaceTiling,
+    val projectionInnerAlpha: ProjectionInnerAlpha,
 )
 
 internal class SpatialCameraControlProfileHotloader(
@@ -131,6 +133,8 @@ internal class SpatialCameraControlProfileHotloader(
             "${PrivateLayerZoneCompositorModule.markerFields(effective.zoneCompositor)} " +
             "${RgbChannelTransformModule.markerFields(effective.rgbChannelTransform)} " +
             "${ProjectionSurfaceDisplacementModule.markerFields(effective.projectionSurfaceDisplacement)} " +
+            "projectionSurfaceTilingRequested=${ProjectionSurfaceTilingModule.requested(effective.projectionSurfaceTiling)} " +
+            "projectionInnerAlphaRequested=${ProjectionInnerAlphaModule.requested(effective.projectionInnerAlpha)} " +
             "runtimeCrash=false"
     )
   }
@@ -206,6 +210,14 @@ internal class SpatialCameraControlProfileHotloader(
           .put(
               "projection_surface_displacement",
               surfaceDisplacementJson(effective.projectionSurfaceDisplacement),
+          )
+          .put(
+              "projection_surface_tiling",
+              surfaceTilingJson(effective.projectionSurfaceTiling),
+          )
+          .put(
+              "projection_inner_alpha",
+              innerAlphaJson(effective.projectionInnerAlpha),
           )
 
   private fun zoneJson(value: PrivateLayerZoneCompositor): JSONObject =
@@ -358,6 +370,31 @@ internal class SpatialCameraControlProfileHotloader(
           )
           .put("polarity", value.polarity)
           .put("edge_taper", value.edgeTaper)
+
+  private fun surfaceTilingJson(value: ProjectionSurfaceTiling): JSONObject =
+      JSONObject()
+          .put("enabled", value.enabled)
+          .put("topology", ProjectionSurfaceTilingControls.topologyToken(value.topology))
+          .put("gap_normalized", value.gapNormalized)
+          .put("depth_flexibility", value.depthFlexibility)
+          .put("scope", ProjectionSurfaceTilingControls.scopeToken(value.scope))
+
+  private fun innerAlphaJson(value: ProjectionInnerAlpha): JSONObject =
+      JSONObject()
+          .put("enabled", value.enabled)
+          .put("driver", ProjectionInnerAlphaControls.driverToken(value.driver))
+          .put("threshold", value.threshold)
+          .put("softness", value.softness)
+          .put("amount", value.amount)
+          .put("invert", value.invert)
+          .put(
+              "stretch_policy",
+              ProjectionInnerAlphaControls.stretchPolicyToken(value.stretchPolicy),
+          )
+          .put(
+              "stretch_obeys_exact_projection_mask",
+              value.stretchObeysExactProjectionMask,
+          )
 
   private fun zoneSignalToken(value: Int): String =
       when (value) {

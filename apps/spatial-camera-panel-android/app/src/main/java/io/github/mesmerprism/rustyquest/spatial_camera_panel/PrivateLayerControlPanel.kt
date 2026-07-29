@@ -70,6 +70,8 @@ internal fun PrivateLayerControlPanel(
     guideProcessing: PrivateLayerGuideProcessing,
     rgbChannelTransform: RgbChannelTransform,
     projectionSurfaceDisplacement: ProjectionSurfaceDisplacement,
+    projectionSurfaceTiling: ProjectionSurfaceTiling,
+    projectionInnerAlpha: ProjectionInnerAlpha,
     videoSession: () -> SpatialImmersiveVideoSessionSnapshot,
     setLayerOverride: (Float, String) -> Float,
     setProjectionPanelEnabled: (Boolean, String) -> Boolean,
@@ -83,6 +85,10 @@ internal fun PrivateLayerControlPanel(
         (RgbChannelTransform, String) -> RgbChannelTransform,
     updateProjectionSurfaceDisplacement:
         (ProjectionSurfaceDisplacement, String) -> ProjectionSurfaceDisplacement,
+    updateProjectionSurfaceTiling:
+        (ProjectionSurfaceTiling, String) -> ProjectionSurfaceTiling,
+    updateProjectionInnerAlpha:
+        (ProjectionInnerAlpha, String) -> ProjectionInnerAlpha,
     selectPreviousVideo: () -> SpatialImmersiveVideoSessionSnapshot,
     selectNextVideo: () -> SpatialImmersiveVideoSessionSnapshot,
     setVideoPresentationMode:
@@ -102,6 +108,10 @@ internal fun PrivateLayerControlPanel(
       remember(projectionSurfaceDisplacement) {
         mutableStateOf(projectionSurfaceDisplacement)
       }
+  var localProjectionSurfaceTiling by
+      remember(projectionSurfaceTiling) { mutableStateOf(projectionSurfaceTiling) }
+  var localProjectionInnerAlpha by
+      remember(projectionInnerAlpha) { mutableStateOf(projectionInnerAlpha) }
   var currentPage by remember { mutableStateOf(PrivateLayerPanelPage.Home) }
   var localVideoSession by remember { mutableStateOf(videoSession()) }
   LaunchedEffect(Unit) {
@@ -444,6 +454,290 @@ internal fun PrivateLayerControlPanel(
                     ProjectionSurfaceDisplacementControls.deep,
                     "private-layer-projection-depth-deep",
                 )
+          }
+        }
+      }
+
+      Section("Surface Topology") {
+        Text(
+            "Keeps the same rest-space content coordinates while selecting a continuous or tiled tessellated surface. Depth flexibility moves from one depth value per tile at 0 to the per-vertex depth path at 1.",
+            style = MaterialTheme.typography.bodySmall,
+            color = LayerPanelMuted,
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+          ChoiceButton("Off", !localProjectionSurfaceTiling.enabled) {
+            localProjectionSurfaceTiling =
+                updateProjectionSurfaceTiling(
+                    ProjectionSurfaceTilingControls.off,
+                    "private-layer-surface-tiling-off",
+                )
+          }
+          ChoiceButton(
+              "Continuous",
+              localProjectionSurfaceTiling.enabled &&
+                  localProjectionSurfaceTiling.topology ==
+                      ProjectionSurfaceTilingControls.topologyContinuous,
+          ) {
+            localProjectionSurfaceTiling =
+                updateProjectionSurfaceTiling(
+                    localProjectionSurfaceTiling.copy(
+                        enabled = true,
+                        topology = ProjectionSurfaceTilingControls.topologyContinuous,
+                    ),
+                    "private-layer-surface-topology-continuous",
+                )
+          }
+          ChoiceButton(
+              "Tiled",
+              localProjectionSurfaceTiling.enabled &&
+                  localProjectionSurfaceTiling.topology ==
+                      ProjectionSurfaceTilingControls.topologyTiled,
+          ) {
+            localProjectionSurfaceTiling =
+                updateProjectionSurfaceTiling(
+                    localProjectionSurfaceTiling.copy(
+                        enabled = true,
+                        topology = ProjectionSurfaceTilingControls.topologyTiled,
+                    ),
+                    "private-layer-surface-topology-tiled",
+                )
+          }
+        }
+        if (localProjectionSurfaceTiling.enabled) {
+          DepthSlider(
+              "Tile gap",
+              localProjectionSurfaceTiling.gapNormalized,
+              0.0f..0.45f,
+          ) {
+            localProjectionSurfaceTiling =
+                updateProjectionSurfaceTiling(
+                    localProjectionSurfaceTiling.copy(gapNormalized = it),
+                    "private-layer-surface-tile-gap",
+                )
+          }
+          DepthSlider(
+              "Depth flexibility",
+              localProjectionSurfaceTiling.depthFlexibility,
+              0.0f..1.0f,
+          ) {
+            localProjectionSurfaceTiling =
+                updateProjectionSurfaceTiling(
+                    localProjectionSurfaceTiling.copy(depthFlexibility = it),
+                    "private-layer-surface-depth-flexibility",
+                )
+          }
+          Row(
+              horizontalArrangement = Arrangement.spacedBy(10.dp),
+              modifier = Modifier.fillMaxWidth(),
+          ) {
+            ChoiceButton(
+                "Core + stretch",
+                localProjectionSurfaceTiling.scope ==
+                    ProjectionSurfaceTilingControls.scopeCoreAndStretch,
+            ) {
+              localProjectionSurfaceTiling =
+                  updateProjectionSurfaceTiling(
+                      localProjectionSurfaceTiling.copy(
+                          scope = ProjectionSurfaceTilingControls.scopeCoreAndStretch
+                      ),
+                      "private-layer-surface-scope-core-and-stretch",
+                  )
+            }
+            ChoiceButton(
+                "Core only",
+                localProjectionSurfaceTiling.scope ==
+                    ProjectionSurfaceTilingControls.scopeCoreOnly,
+            ) {
+              localProjectionSurfaceTiling =
+                  updateProjectionSurfaceTiling(
+                      localProjectionSurfaceTiling.copy(
+                          scope = ProjectionSurfaceTilingControls.scopeCoreOnly
+                      ),
+                      "private-layer-surface-scope-core-only",
+                  )
+            }
+          }
+        }
+      }
+
+      Section("Inner Transparency") {
+        Text(
+            "Derives transparency from the processed core color, emits premultiplied alpha, and multiplies the existing outer-underlay alpha. This does not alter the direct 180/360 video layer.",
+            style = MaterialTheme.typography.bodySmall,
+            color = LayerPanelMuted,
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+          ChoiceButton("Off", !localProjectionInnerAlpha.enabled) {
+            localProjectionInnerAlpha =
+                updateProjectionInnerAlpha(
+                    ProjectionInnerAlphaControls.off,
+                    "private-layer-inner-alpha-off",
+                )
+          }
+          ChoiceButton("On", localProjectionInnerAlpha.enabled) {
+            localProjectionInnerAlpha =
+                updateProjectionInnerAlpha(
+                    localProjectionInnerAlpha.copy(
+                        enabled = true,
+                        amount =
+                            if (localProjectionInnerAlpha.amount > 0.0f) {
+                              localProjectionInnerAlpha.amount
+                            } else {
+                              1.0f
+                            },
+                    ),
+                    "private-layer-inner-alpha-on",
+                )
+          }
+        }
+        if (localProjectionInnerAlpha.enabled) {
+          Row(
+              horizontalArrangement = Arrangement.spacedBy(10.dp),
+              modifier = Modifier.fillMaxWidth(),
+          ) {
+            listOf(
+                    "Red" to ProjectionInnerAlphaControls.driverRed,
+                    "Green" to ProjectionInnerAlphaControls.driverGreen,
+                    "Blue" to ProjectionInnerAlphaControls.driverBlue,
+                )
+                .forEach { (label, driver) ->
+                  ChoiceButton(label, localProjectionInnerAlpha.driver == driver) {
+                    localProjectionInnerAlpha =
+                        updateProjectionInnerAlpha(
+                            localProjectionInnerAlpha.copy(driver = driver),
+                            "private-layer-inner-alpha-driver-${label.lowercase()}",
+                        )
+                  }
+                }
+          }
+          Row(
+              horizontalArrangement = Arrangement.spacedBy(10.dp),
+              modifier = Modifier.fillMaxWidth(),
+          ) {
+            ChoiceButton(
+                "Luma",
+                localProjectionInnerAlpha.driver == ProjectionInnerAlphaControls.driverLuma,
+            ) {
+              localProjectionInnerAlpha =
+                  updateProjectionInnerAlpha(
+                      localProjectionInnerAlpha.copy(
+                          driver = ProjectionInnerAlphaControls.driverLuma
+                      ),
+                      "private-layer-inner-alpha-driver-luma",
+                  )
+            }
+            ChoiceButton(
+                "Max",
+                localProjectionInnerAlpha.driver == ProjectionInnerAlphaControls.driverMax,
+            ) {
+              localProjectionInnerAlpha =
+                  updateProjectionInnerAlpha(
+                      localProjectionInnerAlpha.copy(
+                          driver = ProjectionInnerAlphaControls.driverMax
+                      ),
+                      "private-layer-inner-alpha-driver-max",
+                  )
+            }
+          }
+          DepthSlider("Threshold", localProjectionInnerAlpha.threshold, 0.0f..1.0f) {
+            localProjectionInnerAlpha =
+                updateProjectionInnerAlpha(
+                    localProjectionInnerAlpha.copy(threshold = it),
+                    "private-layer-inner-alpha-threshold",
+                )
+          }
+          DepthSlider("Softness", localProjectionInnerAlpha.softness, 0.001f..0.5f) {
+            localProjectionInnerAlpha =
+                updateProjectionInnerAlpha(
+                    localProjectionInnerAlpha.copy(softness = it),
+                    "private-layer-inner-alpha-softness",
+                )
+          }
+          DepthSlider("Amount", localProjectionInnerAlpha.amount, 0.0f..1.0f) {
+            localProjectionInnerAlpha =
+                updateProjectionInnerAlpha(
+                    localProjectionInnerAlpha.copy(amount = it),
+                    "private-layer-inner-alpha-amount",
+                )
+          }
+          Row(
+              horizontalArrangement = Arrangement.spacedBy(10.dp),
+              modifier = Modifier.fillMaxWidth(),
+          ) {
+            ChoiceButton("Normal", !localProjectionInnerAlpha.invert) {
+              localProjectionInnerAlpha =
+                  updateProjectionInnerAlpha(
+                      localProjectionInnerAlpha.copy(invert = false),
+                      "private-layer-inner-alpha-normal",
+                  )
+            }
+            ChoiceButton("Invert", localProjectionInnerAlpha.invert) {
+              localProjectionInnerAlpha =
+                  updateProjectionInnerAlpha(
+                      localProjectionInnerAlpha.copy(invert = true),
+                      "private-layer-inner-alpha-invert",
+                  )
+            }
+          }
+          Row(
+              horizontalArrangement = Arrangement.spacedBy(10.dp),
+              modifier = Modifier.fillMaxWidth(),
+          ) {
+            ChoiceButton(
+                "Follow projection",
+                localProjectionInnerAlpha.stretchPolicy ==
+                    ProjectionInnerAlphaControls.stretchFollowProjection,
+            ) {
+              localProjectionInnerAlpha =
+                  updateProjectionInnerAlpha(
+                      localProjectionInnerAlpha.copy(
+                          stretchPolicy = ProjectionInnerAlphaControls.stretchFollowProjection
+                      ),
+                      "private-layer-inner-alpha-stretch-follow-projection",
+                  )
+            }
+            ChoiceButton(
+                "Opaque stretch",
+                localProjectionInnerAlpha.stretchPolicy ==
+                    ProjectionInnerAlphaControls.stretchOpaqueIndependent,
+            ) {
+              localProjectionInnerAlpha =
+                  updateProjectionInnerAlpha(
+                      localProjectionInnerAlpha.copy(
+                          stretchPolicy = ProjectionInnerAlphaControls.stretchOpaqueIndependent
+                      ),
+                      "private-layer-inner-alpha-stretch-opaque-independent",
+                  )
+            }
+          }
+          Row(
+              horizontalArrangement = Arrangement.spacedBy(10.dp),
+              modifier = Modifier.fillMaxWidth(),
+          ) {
+            ChoiceButton(
+                "Exact projection mask",
+                localProjectionInnerAlpha.stretchObeysExactProjectionMask,
+            ) {
+              localProjectionInnerAlpha =
+                  updateProjectionInnerAlpha(
+                      localProjectionInnerAlpha.copy(
+                          stretchObeysExactProjectionMask = true
+                      ),
+                      "private-layer-inner-alpha-exact-mask-on",
+                  )
+            }
+            ChoiceButton(
+                "Independent mask",
+                !localProjectionInnerAlpha.stretchObeysExactProjectionMask,
+            ) {
+              localProjectionInnerAlpha =
+                  updateProjectionInnerAlpha(
+                      localProjectionInnerAlpha.copy(
+                          stretchObeysExactProjectionMask = false
+                      ),
+                      "private-layer-inner-alpha-exact-mask-off",
+                  )
+            }
           }
         }
       }

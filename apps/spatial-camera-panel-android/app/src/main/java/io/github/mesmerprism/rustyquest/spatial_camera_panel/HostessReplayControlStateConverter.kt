@@ -61,18 +61,49 @@ internal object HostessReplayControlStateConverter {
     }
     val layerOverride = layer.requireFloat("override_value", -1.0f, 8.0f)
     val projection = root.requireObject("projection")
-    projection.requireOnlyKeys(
-        "scale",
-        "rgb_uniform_f32",
-        "displacement_uniform_f32",
-        "displacement_enabled",
-        "zone_uniform_f32",
-    )
+    if (inputSchema == INPUT_SCHEMA) {
+      projection.requireOnlyKeys(
+          "scale",
+          "rgb_uniform_f32",
+          "displacement_uniform_f32",
+          "displacement_enabled",
+          "zone_uniform_f32",
+          "surface_feature_uniform_f32",
+      )
+    } else {
+      projection.requireOnlyKeys(
+          "scale",
+          "rgb_uniform_f32",
+          "displacement_uniform_f32",
+          "displacement_enabled",
+          "zone_uniform_f32",
+      )
+    }
     val scale = projection.requireFloat("scale", 0.25f, 1.8f)
     val rgb = projection.requireFloatArray("rgb_uniform_f32", 24)
     val displacement = projection.requireFloatArray("displacement_uniform_f32", 16)
     val displacementEnabled = projection.requireBoolean("displacement_enabled")
     val zone = projection.requireFloatArray("zone_uniform_f32", 92)
+    val surfaceFeatures =
+        if (projection.has("surface_feature_uniform_f32")) {
+          projection.requireFloatArray("surface_feature_uniform_f32", 32).also { values ->
+            require(
+                (0 until 16).all { index ->
+                  kotlin.math.abs(values[index] - displacement[index]) <= 0.000001f
+                }
+            ) {
+              "surface_feature_uniform_prefix_mismatch"
+            }
+            require(token(values[30], "v0", "v1", "v2") == "v2") {
+              "unsupported_surface_feature_uniform_abi"
+            }
+            require(kotlin.math.abs(values[31]) <= 0.000001f) {
+              "surface_feature_uniform_reserved_nonzero"
+            }
+          }
+        } else {
+          null
+        }
     val preview =
         if (root.has("preview") && !root.isNull("preview")) {
           root.requireObject("preview").also {
@@ -119,6 +150,8 @@ internal object HostessReplayControlStateConverter {
                     .put("polarity", displacement[1])
                     .put("edge_taper", displacement[6]),
             )
+            .put("projection_surface_tiling", surfaceTilingJson(surfaceFeatures))
+            .put("projection_inner_alpha", innerAlphaJson(surfaceFeatures))
     val output =
         JSONObject()
             .put("schema", SpatialCameraControlProfileContract.SCHEMA)
@@ -149,6 +182,49 @@ internal object HostessReplayControlStateConverter {
           .put("displacement_strength_uv", values[12 + channel])
           .put("image_scale", values[16 + channel])
           .put("coverage_scale", values[20 + channel])
+
+  private fun surfaceTilingJson(values: FloatArray?): JSONObject =
+      if (values == null) {
+        JSONObject()
+            .put("enabled", false)
+            .put("topology", "continuous")
+            .put("gap_normalized", 0.0)
+            .put("depth_flexibility", 1.0)
+            .put("scope", "core-and-stretch")
+      } else {
+        JSONObject()
+            .put("enabled", values[16] >= 0.5f)
+            .put("topology", token(values[17], "continuous", "tiled"))
+            .put("gap_normalized", values[18])
+            .put("depth_flexibility", values[19])
+            .put("scope", token(values[20], "core-and-stretch", "core-only"))
+      }
+
+  private fun innerAlphaJson(values: FloatArray?): JSONObject =
+      if (values == null) {
+        JSONObject()
+            .put("enabled", false)
+            .put("driver", "luma")
+            .put("threshold", 0.5)
+            .put("softness", 0.1)
+            .put("amount", 0.0)
+            .put("invert", false)
+            .put("stretch_policy", "follow-projection")
+            .put("stretch_obeys_exact_projection_mask", false)
+      } else {
+        JSONObject()
+            .put("enabled", values[21] >= 0.5f)
+            .put("driver", token(values[22], "red", "green", "blue", "luma", "max"))
+            .put("threshold", values[24])
+            .put("softness", values[25])
+            .put("amount", values[26])
+            .put("invert", values[27] >= 0.5f)
+            .put(
+                "stretch_policy",
+                token(values[23], "follow-projection", "opaque-independent"),
+            )
+            .put("stretch_obeys_exact_projection_mask", values[28] >= 0.5f)
+      }
 
   private fun zoneJson(v: FloatArray): JSONObject =
       JSONObject()

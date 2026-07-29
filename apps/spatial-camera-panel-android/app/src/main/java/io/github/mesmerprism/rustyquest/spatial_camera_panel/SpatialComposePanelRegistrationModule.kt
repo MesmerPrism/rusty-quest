@@ -24,6 +24,8 @@ internal data class SpatialPrivateLayerPanelRegistrationBindings(
     val guideProcessing: PrivateLayerGuideProcessing,
     val rgbChannelTransform: RgbChannelTransform,
     val projectionSurfaceDisplacement: ProjectionSurfaceDisplacement,
+    val projectionSurfaceTiling: ProjectionSurfaceTiling,
+    val projectionInnerAlpha: ProjectionInnerAlpha,
     val videoSession: () -> SpatialImmersiveVideoSessionSnapshot,
     val setLayerOverride: (Float, String) -> Float,
     val setProjectionPanelEnabled: (Boolean, String) -> Boolean,
@@ -39,6 +41,10 @@ internal data class SpatialPrivateLayerPanelRegistrationBindings(
         (RgbChannelTransform, String) -> RgbChannelTransform,
     val updateProjectionSurfaceDisplacement:
         (ProjectionSurfaceDisplacement, String) -> ProjectionSurfaceDisplacement,
+    val updateProjectionSurfaceTiling:
+        (ProjectionSurfaceTiling, String) -> ProjectionSurfaceTiling,
+    val updateProjectionInnerAlpha:
+        (ProjectionInnerAlpha, String) -> ProjectionInnerAlpha,
     val selectPreviousVideo: () -> SpatialImmersiveVideoSessionSnapshot,
     val selectNextVideo: () -> SpatialImmersiveVideoSessionSnapshot,
     val setVideoPresentationMode:
@@ -88,6 +94,8 @@ internal object SpatialComposePanelRegistrationModule {
                       guideProcessing = bindings.guideProcessing,
                       rgbChannelTransform = bindings.rgbChannelTransform,
                       projectionSurfaceDisplacement = bindings.projectionSurfaceDisplacement,
+                      projectionSurfaceTiling = bindings.projectionSurfaceTiling,
+                      projectionInnerAlpha = bindings.projectionInnerAlpha,
                       videoSession = bindings.videoSession,
                       setLayerOverride = bindings.setLayerOverride,
                       setProjectionPanelEnabled = bindings.setProjectionPanelEnabled,
@@ -99,6 +107,8 @@ internal object SpatialComposePanelRegistrationModule {
                       updateRgbChannelTransform = bindings.updateRgbChannelTransform,
                       updateProjectionSurfaceDisplacement =
                           bindings.updateProjectionSurfaceDisplacement,
+                      updateProjectionSurfaceTiling = bindings.updateProjectionSurfaceTiling,
+                      updateProjectionInnerAlpha = bindings.updateProjectionInnerAlpha,
                       selectPreviousVideo = bindings.selectPreviousVideo,
                       selectNextVideo = bindings.selectNextVideo,
                       setVideoPresentationMode = bindings.setVideoPresentationMode,

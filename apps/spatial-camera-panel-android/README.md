@@ -1501,3 +1501,34 @@ tuning remain downstream-owned. Serial-scoped validation can switch live with
 `projection-surface-displacement-gentle`, and
 `projection-surface-displacement-deep`. See
 `docs/PROJECTION_SURFACE_DISPLACEMENT.md`.
+
+## Projection surface topology and inner alpha
+
+Two additive public controls extend the same custom projection route:
+
+- `rusty.quest.projection-surface-tiling.v1` selects a continuous or tiled
+  tessellated surface, bounded gap, rigid-to-flexible tile depth, and
+  `core-and-stretch` or `core-only` scope while retaining rest-space UV
+  identity.
+- `rusty.quest.projection-inner-alpha.v1` selects a processed-core scalar
+  driver (`red`, `green`, `blue`, `luma`, or `max`), threshold, softness,
+  amount, inversion, and the `follow-projection` or `opaque-independent`
+  stretch policy. The exact projection mask remains an explicit option.
+
+Both features are independently disabled by default. Disabled profiles retain
+the original fullscreen/tessellated selection and alpha behavior. Runtime
+markers keep requested, supported, and effective state separate.
+
+The existing descriptor-set-3/binding-1 displacement block remains the first
+64 bytes. Uniform ABI v2 appends a 64-byte neutral suffix; existing ABI-v1
+shader payloads can continue reading only the prefix. The 368-byte zone block
+also remains unchanged. A v2-consuming build declares
+`-ProjectionSurfaceUniformAbiVersion 2` (or the matching public build
+environment value), and the optional vertex and fragment payloads remain
+responsible for consuming the neutral controls.
+
+The Inner Transparency panel acts only on the custom processed-core
+projection. Its result is premultiplied and multiplicatively composes with the
+existing outer-underlay alpha. It does not add per-pixel transparency to the
+direct Spatial 180/360 video carrier. See
+`docs/SPATIAL_CAMERA_CONTROL_PROFILES.md`.

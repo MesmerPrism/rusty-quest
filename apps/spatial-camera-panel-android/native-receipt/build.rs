@@ -121,6 +121,9 @@ fn main() {
     );
     let opaque_projection_effect =
         opaque_projection_effect_env("RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OPAQUE_PROJECTION_EFFECT");
+    let projection_surface_uniform_abi_version = projection_surface_uniform_abi_version_env(
+        "RUSTY_QUEST_SPATIAL_CAMERA_PANEL_PROJECTION_SURFACE_UNIFORM_ABI_VERSION",
+    );
     let private_surface_particle = private_surface_particle_build_env(&glslc, &out_dir);
     write_spatial_surface_private_particle_payload_metadata(&out_dir, &private_surface_particle);
     write_spatial_multistack_build_metadata(
@@ -130,6 +133,7 @@ fn main() {
         opaque_projection_shader,
         opaque_projection_vertex_shader,
         opaque_projection_video_compositor_shader,
+        projection_surface_uniform_abi_version,
         opaque_projection_effect,
         &private_surface_particle,
     );
@@ -340,6 +344,24 @@ fn opaque_projection_effect_env(env_key: &str) -> [f32; 4] {
         panic!("{env_key} must contain four floats");
     }
     [parts[0], parts[1], parts[2], parts[3]]
+}
+
+fn projection_surface_uniform_abi_version_env(env_key: &str) -> u32 {
+    println!("cargo:rerun-if-env-changed={env_key}");
+    match env::var(env_key) {
+        Ok(raw) => {
+            let version = raw
+                .trim()
+                .parse::<u32>()
+                .unwrap_or_else(|_| panic!("{env_key} must be an integer, got {raw:?}"));
+            assert!(
+                (1..=2).contains(&version),
+                "{env_key} must be 1 or 2, got {version}"
+            );
+            version
+        }
+        Err(_) => 1,
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -693,6 +715,7 @@ fn write_spatial_multistack_build_metadata(
     opaque_projection_shader: OptionalShaderBuild,
     opaque_projection_vertex_shader: OptionalShaderBuild,
     opaque_projection_video_compositor_shader: OptionalShaderBuild,
+    projection_surface_uniform_abi_version: u32,
     opaque_projection_effect: [f32; 4],
     private_surface_particle: &PrivateSurfaceParticleBuild,
 ) {
@@ -730,6 +753,8 @@ fn write_spatial_multistack_build_metadata(
              pub(crate) const OPAQUE_PROJECTION_VIDEO_COMPOSITOR_SHADER_COMPILED: bool = {};\n\
              #[allow(dead_code)]\n\
              pub(crate) const OPAQUE_PROJECTION_VIDEO_COMPOSITOR_SHADER_BYTE_COUNT: usize = {};\n\
+             #[allow(dead_code)]\n\
+             pub(crate) const PROJECTION_SURFACE_UNIFORM_ABI_VERSION: u32 = {};\n\
              #[allow(dead_code)]\n\
              pub(crate) const OPAQUE_PROJECTION_EFFECT: [f32; 4] = [{:.8}, {:.8}, {:.8}, {:.8}];\n\
              #[allow(dead_code)]\n\
@@ -780,6 +805,7 @@ fn write_spatial_multistack_build_metadata(
             opaque_projection_vertex_shader.byte_count,
             bool_literal(opaque_projection_video_compositor_shader.compiled),
             opaque_projection_video_compositor_shader.byte_count,
+            projection_surface_uniform_abi_version,
             opaque_projection_effect[0],
             opaque_projection_effect[1],
             opaque_projection_effect[2],

@@ -165,6 +165,10 @@ $cameraProbe = Read-RequiredText "apps\spatial-camera-panel-android\native-recei
 $cameraProjectionTarget = Read-RequiredText "apps\spatial-camera-panel-android\native-receipt\src\camera_hwb_projection_target.rs"
 $nativeMultiStack = Read-RequiredText "apps\spatial-camera-panel-android\native-receipt\src\spatial_public_multistack.rs"
 $nativeMultiStackRuntime = Read-RequiredText "apps\spatial-camera-panel-android\native-receipt\src\spatial_public_multistack_runtime.rs"
+$nativeProjectionSurfaceFeatures = Read-RequiredText "apps\spatial-camera-panel-android\native-receipt\src\projection_surface_features.rs"
+$projectionSurfaceTiling = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\ProjectionSurfaceTiling.kt"
+$projectionInnerAlpha = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\ProjectionInnerAlpha.kt"
+$privateLayerControlPanel = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\PrivateLayerControlPanel.kt"
 $spatialGuideProcessing = Read-RequiredText "apps\spatial-camera-panel-android\native-receipt\src\spatial_guide_processing.rs"
 $nativeControllerActions = Read-RequiredText "apps\spatial-camera-panel-android\native-receipt\src\spatial_controller_actions.rs"
 $nativeMultimodalInput = Read-RequiredText "apps\spatial-camera-panel-android\native-receipt\src\spatial_multimodal_input.rs"
@@ -3383,6 +3387,16 @@ Assert-Contains "Native receipt build script" $nativeBuildScript 'PRIVATE_SURFAC
 Assert-Contains "Native receipt build script" $nativeBuildScript "PUBLIC_GUIDE_BLUR_SHADER_BYTE_COUNT"
 Assert-Contains "Native receipt build script" $nativeBuildScript "OPAQUE_GUIDE_SHADER_PASS_BYTE_COUNTS"
 Assert-Contains "Native receipt build script" $nativeBuildScript "OPAQUE_PROJECTION_EFFECT"
+Assert-Contains "Native receipt build script" $nativeBuildScript "PROJECTION_SURFACE_UNIFORM_ABI_VERSION"
+Assert-Contains "Projection surface feature ABI" $nativeProjectionSurfaceFeatures "PROJECTION_SURFACE_FEATURE_UNIFORM_PREFIX_BYTES: usize = 64"
+Assert-Contains "Projection surface feature ABI" $nativeProjectionSurfaceFeatures "PROJECTION_SURFACE_FEATURE_UNIFORM_SUFFIX_BYTES: usize = 64"
+Assert-Contains "Projection surface feature ABI" $nativeProjectionSurfaceFeatures "ProjectionSurfaceFeatureUniformV2"
+Assert-Contains "Projection surface feature ABI" $nativeProjectionSurfaceFeatures "projectionSurfaceTilingSupported"
+Assert-Contains "Projection surface feature ABI" $nativeProjectionSurfaceFeatures "projectionInnerAlphaEffective"
+Assert-Contains "Projection surface tiling controls" $projectionSurfaceTiling "ProjectionSurfaceTilingControls.off"
+Assert-Contains "Projection inner alpha controls" $projectionInnerAlpha "ProjectionInnerAlphaControls.off"
+Assert-Contains "Projection feature panel" $privateLayerControlPanel 'Section("Surface Topology")'
+Assert-Contains "Projection feature panel" $privateLayerControlPanel 'Section("Inner Transparency")'
 Assert-Contains "Native receipt build script" $nativeBuildScript "PRIVATE_SURFACE_PARTICLE_PROFILE_CONFIGURED"
 Assert-Contains "Build script" $buildScript 'spatial_public_guide_target_extent = "768x384-packed-stereo"'
 Assert-Contains "Build script" $buildScript 'spatial_public_guide_per_eye_extent = "384x384"'
@@ -3397,6 +3411,9 @@ Assert-Contains "Build script" $buildScript '[switch]$CameraProjectionDefaultEna
 Assert-Contains "Build script" $buildScript '[switch]$ImmersiveVideoDefaultEnabled'
 Assert-Contains "Build script" $buildScript '[string]$ImmersiveVideoDefaultOfflinePackId'
 Assert-Contains "Build script" $buildScript '[string]$ZoneCompositorDefaultPreset'
+Assert-Contains "Build script" $buildScript '[ValidateSet(1, 2)][int]$ProjectionSurfaceUniformAbiVersion = 1'
+Assert-Contains "Build script" $buildScript 'projection_surface_uniform_prefix_bytes = 64'
+Assert-Contains "Build script" $buildScript 'RUSTY_QUEST_SPATIAL_CAMERA_PANEL_PROJECTION_SURFACE_UNIFORM_ABI_VERSION'
 Assert-Contains "Build script" $buildScript 'camera_projection_default_enabled'
 Assert-Contains "Build script" $buildScript 'immersive_video_default_enabled'
 Assert-Contains "Build script" $buildScript 'projection_zone_compositor_default_preset'
