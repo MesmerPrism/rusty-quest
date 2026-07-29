@@ -36,10 +36,42 @@ public final class TrustedLocalControlHostTest {
                 TrustedLocalControlPolicy.COMMANDS,
                 "runtime command set");
         testCanonicalEnvelopes();
+        testTrustedBindAddressPolicy();
         testAuthorityAndPlayerCausality();
         testAuthorityLimitsAndExpiry();
         testLoopbackHttpAndWebSocket(appRoot);
         System.out.println("trusted_local_http_v1 host tests passed");
+    }
+
+    private static void testTrustedBindAddressPolicy() throws Exception {
+        assertTrue(
+                TrustedLocalHttpServer.isTrustedBindAddress(InetAddress.getByName("127.0.0.1")),
+                "IPv4 loopback allowed");
+        assertTrue(
+                TrustedLocalHttpServer.isTrustedBindAddress(InetAddress.getByName("192.168.20.4")),
+                "IPv4 site-local allowed");
+        assertTrue(
+                TrustedLocalHttpServer.isTrustedBindAddress(InetAddress.getByName("169.254.20.4")),
+                "IPv4 link-local allowed");
+        assertTrue(
+                TrustedLocalHttpServer.isTrustedBindAddress(InetAddress.getByName("fd12:3456::1")),
+                "IPv6 unique-local allowed");
+        assertTrue(
+                TrustedLocalHttpServer.isTrustedBindAddress(InetAddress.getByName("fe80::1")),
+                "IPv6 link-local allowed");
+        assertTrue(
+                !TrustedLocalHttpServer.isTrustedBindAddress(InetAddress.getByName("0.0.0.0")),
+                "any-local rejected");
+        assertTrue(
+                !TrustedLocalHttpServer.isTrustedBindAddress(InetAddress.getByName("224.0.0.1")),
+                "multicast rejected");
+        assertTrue(
+                !TrustedLocalHttpServer.isTrustedBindAddress(InetAddress.getByName("8.8.8.8")),
+                "globally routable IPv4 rejected");
+        assertTrue(
+                !TrustedLocalHttpServer.isTrustedBindAddress(
+                        InetAddress.getByName("2001:4860:4860::8888")),
+                "globally routable IPv6 rejected");
     }
 
     private static void testCanonicalEnvelopes() {

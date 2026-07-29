@@ -8,6 +8,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.InetAddress;
+import java.net.Inet6Address;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.nio.charset.StandardCharsets;
@@ -76,6 +77,10 @@ public final class TrustedLocalHttpServer implements Closeable {
             throw new IllegalArgumentException("a live wearer-enabled Manifold offer is required");
         }
         Objects.requireNonNull(bindAddress, "bindAddress");
+        if (!isTrustedBindAddress(bindAddress)) {
+            throw new IllegalArgumentException(
+                    "bind address must be loopback, private/site-local, link-local, or IPv6 unique-local");
+        }
         ServerSocket socket = new ServerSocket(0, 8, bindAddress);
         int port = socket.getLocalPort();
         String address = bindAddress.getHostAddress();
@@ -87,6 +92,22 @@ public final class TrustedLocalHttpServer implements Closeable {
         acceptThread.setDaemon(true);
         acceptThread.start();
         return endpoint;
+    }
+
+    static boolean isTrustedBindAddress(InetAddress address) {
+        if (address.isAnyLocalAddress() || address.isMulticastAddress()) {
+            return false;
+        }
+        if (address.isLoopbackAddress()
+                || address.isSiteLocalAddress()
+                || address.isLinkLocalAddress()) {
+            return true;
+        }
+        if (address instanceof Inet6Address) {
+            byte[] bytes = address.getAddress();
+            return bytes.length == 16 && (bytes[0] & 0xfe) == 0xfc;
+        }
+        return false;
     }
 
     public boolean isRunning() {
