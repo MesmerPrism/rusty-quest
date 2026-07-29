@@ -1132,17 +1132,21 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
         )
     )
   }
+
+  private var projectionPanelRuntimeEnabled = true
+
   private val cameraHwbProjectionLaunchCoordinator by lazy(LazyThreadSafetyMode.NONE) {
     SpatialCameraHwbProjectionLaunchCoordinator(
         SpatialCameraHwbProjectionLaunchBindings(
             state = {
               SpatialCameraHwbProjectionLaunchState(
                   enabled =
-                      presentationPolicy.lockedFinalPresentation ||
-                          BuildConfig.CAMERA_PROJECTION_DEFAULT_ENABLED ||
-                          activityReadOptionalBooleanSystemProperty(
-                              CAMERA_HWB_PROJECTION_PROBE_PROPERTY
-                          ) == true,
+                      projectionPanelRuntimeEnabled &&
+                          (presentationPolicy.lockedFinalPresentation ||
+                              BuildConfig.CAMERA_PROJECTION_DEFAULT_ENABLED ||
+                              activityReadOptionalBooleanSystemProperty(
+                                  CAMERA_HWB_PROJECTION_PROBE_PROPERTY
+                              ) == true),
                   sceneReady = spatialSceneReady,
                   virtualRoomEnabled = spatialVirtualRoomEnabled(),
                   virtualRoomLoaded = spatialVirtualRoomLoaded(),
@@ -1654,6 +1658,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
 
   private fun customStereoProjectionRequested(): Boolean =
       productPolicy.cameraPanelRoutesEnabled &&
+          projectionPanelRuntimeEnabled &&
           (presentationPolicy.lockedFinalPresentation ||
               BuildConfig.CAMERA_PROJECTION_DEFAULT_ENABLED ||
               activityReadOptionalBooleanSystemProperty(
@@ -2448,11 +2453,14 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     )
   }
 
-  private fun setProjectionPanelEnabled(enabled: Boolean, source: String): Boolean =
-      projectionPanelVisibilityCoordinator.setEnabled(
-          requestedEnabled = enabled || presentationPolicy.lockedFinalPresentation,
-          source = source,
-      )
+  private fun setProjectionPanelEnabled(enabled: Boolean, source: String): Boolean {
+    val effectiveEnabled = enabled || presentationPolicy.lockedFinalPresentation
+    projectionPanelRuntimeEnabled = effectiveEnabled
+    return projectionPanelVisibilityCoordinator.setEnabled(
+        requestedEnabled = effectiveEnabled,
+        source = source,
+    )
+  }
 
   private fun selectSurfaceTarget(requestedTargetId: String, source: String): String {
     val targetId = requestedTargetId.trim()

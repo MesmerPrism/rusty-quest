@@ -2868,6 +2868,10 @@ Assert-Contains "Activity" $activity "directImmersiveVideoPanelRequested()"
 Assert-Contains "Activity" $activity "setImmersiveVideoPlaybackEnabled("
 Assert-Contains "Activity" $activity "projectionPanelVisibilityCoordinator.restartWith("
 Assert-Contains "Activity" $activity "BuildConfig.CAMERA_PROJECTION_DEFAULT_ENABLED"
+Assert-Contains `
+    "Activity" `
+    $activity `
+    "projectionPanelRuntimeEnabled &&"
 Assert-Contains "Activity" $activity "BuildConfig.ZONE_COMPOSITOR_DEFAULT_PRESET"
 Assert-Contains "Activity" $activity "status=layered-carriers-adopted"
 Assert-Contains "Activity" $activity "customProjectionCarrierShape=planar-quad"
