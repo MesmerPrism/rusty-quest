@@ -41,6 +41,8 @@ $converterTests = Read-RequiredText "apps\spatial-camera-panel-android\app\src\t
 $converterTool = Read-RequiredText "tools\Convert-HostessReplayControlState.ps1"
 $installer = Read-RequiredText "tools\Install-SpatialCameraPanelControlProfile.ps1"
 $docs = Read-RequiredText "docs\SPATIAL_CAMERA_CONTROL_PROFILES.md"
+$surfaceTiling = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\ProjectionSurfaceTiling.kt"
+$innerAlpha = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\ProjectionInnerAlpha.kt"
 
 Assert-Contains "Profile contract" $contract 'SCHEMA = "rusty.quest.spatial_camera_panel.control_profile.v1"'
 Assert-Contains "Profile contract" $contract "MAX_PROFILE_BYTES = 64 * 1024"
@@ -49,6 +51,13 @@ Assert-Contains "Profile contract" $contract "is BigInteger -> runCatching { val
 Assert-Contains "Profile contract" $contract "is BigDecimal -> runCatching { value.longValueExact() }"
 Assert-Contains "Profile contract" $contract "unsupported_transparent_spatial_video_blend"
 Assert-Contains "Profile contract" $contract 'APPLY_RECEIPT_FILE = "last-apply-receipt.json"'
+Assert-Contains "Profile contract" $contract '"projection_surface_tiling"'
+Assert-Contains "Profile contract" $contract '"projection_inner_alpha"'
+Assert-Contains "Surface tiling contract" $surfaceTiling 'CONTRACT_ID = "rusty.quest.projection-surface-tiling.v1"'
+Assert-Contains "Surface tiling contract" $surfaceTiling "ProjectionSurfaceTilingControls.off"
+Assert-Contains "Inner alpha contract" $innerAlpha 'CONTRACT_ID = "rusty.quest.projection-inner-alpha.v1"'
+Assert-Contains "Inner alpha contract" $innerAlpha 'INPUT_TOKEN = "processed-core"'
+Assert-Contains "Inner alpha contract" $innerAlpha "ProjectionInnerAlphaControls.off"
 Assert-Contains "Strict JSON ingress" $strictIngress "CodingErrorAction.REPORT"
 Assert-Contains "Strict JSON ingress" $strictIngress "duplicate_object_key"
 Assert-Contains "Strict JSON ingress" $strictIngress "trailing_content"
@@ -75,11 +84,14 @@ Assert-Contains "Profile tests" $tests "trailingContentFailsClosed"
 Assert-Contains "Profile tests" $tests "excessiveNestingFailsAtStrictByteIngress"
 Assert-Contains "Profile tests" $tests "integralMetadataUsesExactLongConversionAndRangeChecks"
 Assert-Contains "Profile tests" $tests "authoritativeByteBoundsAcceptExactlyLimitAndRejectEmptyOrLimitPlusOne"
+Assert-Contains "Profile tests" $tests "profilesWithoutAdditiveSurfaceFeaturesRetainDisabledCompatibilityDefaults"
 Assert-Contains "Hostess state converter" $converter 'INPUT_SCHEMA = "rusty.hostess.projection_replay_control_state.v2"'
 Assert-Contains "Hostess state converter" $converter 'INPUT_V1_SCHEMA = "rusty.hostess.projection_replay_control_state.v1"'
 Assert-Contains "Hostess state converter" $converter '"control_transport"'
 Assert-Contains "Hostess state converter" $converter "StrictJsonByteIngress.parseObject(bytes)"
 Assert-Contains "Hostess state converter" $converter "SpatialCameraControlProfileContract.parse(encoded)"
+Assert-Contains "Hostess state converter" $converter '"surface_feature_uniform_f32"'
+Assert-Contains "Hostess state converter" $converter "surface_feature_uniform_prefix_mismatch"
 Assert-Contains "Hostess state converter CLI" $converterCli "StandardCopyOption.ATOMIC_MOVE"
 Assert-Contains "Hostess state converter tests" $converterTests "goldenHostessStateExportsSameEffectiveQuestControls"
 Assert-Contains "Hostess state converter tests" $converterTests "damagedExpandedNonFiniteAndUnsupportedStatesFailClosed"
@@ -91,6 +103,8 @@ Assert-Contains "Hostess state converter tests" $converterTests "trailingContent
 Assert-Contains "Hostess state converter tests" $converterTests "excessiveNestingFailsAtStrictByteIngress"
 Assert-Contains "Hostess state converter tests" $converterTests "integralMetadataUsesExactLongConversionAndRangeChecks"
 Assert-Contains "Hostess state converter tests" $converterTests "authoritativeByteBoundsAcceptExactlyLimitAndRejectEmptyOrLimitPlusOne"
+Assert-Contains "Hostess state converter tests" $converterTests "additiveSurfaceFeatureUniformExportsTilingAndInnerAlphaControls"
+Assert-Contains "Hostess state converter tests" $converterTests "additiveSurfaceFeatureUniformRejectsPrefixDriftAndUnsupportedAbi"
 Assert-Contains "Hostess state converter tool" $converterTool ":app:convertHostessReplayControlState"
 Assert-Contains "Hostess state converter tool" $converterTool '[string]$GradleHome = $env:GRADLE_HOME'
 Assert-Contains "Hostess state converter tool" $converterTool 'GradleHome must name the exact gradle-$GradleVersion distribution directory.'

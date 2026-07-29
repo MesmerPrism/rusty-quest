@@ -11,6 +11,7 @@ param(
     [string]$OpaqueProjectionShader = "",
     [string]$OpaqueProjectionVertexShader = "",
     [string]$OpaqueProjectionEffect = "",
+    [ValidateSet(1, 2)][int]$ProjectionSurfaceUniformAbiVersion = 1,
     [string]$PrivateSurfaceParticleProfilePath = "",
     [string]$PrivateSurfaceParticleShader = "",
     [string]$PrivateSurfaceParticlePayloadDir = "",
@@ -559,6 +560,9 @@ if (-not [string]::IsNullOrWhiteSpace($RecordedHandCaptureDir)) {
 }
 $resolvedRecordedHandFrameLimit = [Math]::Max(1, [Math]::Min(120, $RecordedHandFrameLimit))
 $resolvedPrivateLayerProfilePath = Resolve-OptionalFilePath -Path $PrivateLayerProfilePath -Label "Private layer profile"
+$projectionSurfaceUniformAbiVersionExplicit =
+    $PSBoundParameters.ContainsKey("ProjectionSurfaceUniformAbiVersion")
+$resolvedProjectionSurfaceUniformAbiVersion = $ProjectionSurfaceUniformAbiVersion
 if (-not [string]::IsNullOrWhiteSpace($resolvedPrivateLayerProfilePath)) {
     $privateLayerProfile = Get-Content -LiteralPath $resolvedPrivateLayerProfilePath -Raw | ConvertFrom-Json
     if ([string]::IsNullOrWhiteSpace($OpaqueGuideShader) -and $null -ne $privateLayerProfile.private_shader_sources) {
@@ -573,6 +577,15 @@ if (-not [string]::IsNullOrWhiteSpace($resolvedPrivateLayerProfilePath)) {
     if ([string]::IsNullOrWhiteSpace($OpaqueProjectionEffect) -and $null -ne $privateLayerProfile.required_public_bridge) {
         $OpaqueProjectionEffect = [string]$privateLayerProfile.required_public_bridge.opaque_projection_effect
     }
+    if (-not $projectionSurfaceUniformAbiVersionExplicit -and
+        $null -ne $privateLayerProfile.required_public_bridge -and
+        $null -ne $privateLayerProfile.required_public_bridge.projection_surface_uniform_abi_version) {
+        $resolvedProjectionSurfaceUniformAbiVersion =
+            [int]$privateLayerProfile.required_public_bridge.projection_surface_uniform_abi_version
+    }
+}
+if ($resolvedProjectionSurfaceUniformAbiVersion -notin @(1, 2)) {
+    throw "Projection surface uniform ABI version must be 1 or 2."
 }
 $resolvedOpaqueGuideShader = Resolve-OptionalFilePath -Path $OpaqueGuideShader -Label "Opaque guide shader"
 $resolvedOpaqueProjectionShader = Resolve-OptionalFilePath -Path $OpaqueProjectionShader -Label "Opaque projection shader"
@@ -755,6 +768,7 @@ $previousOpaqueGuideShader = $env:RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OPAQUE_GUIDE_
 $previousOpaqueProjectionShader = $env:RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OPAQUE_PROJECTION_SHADER
 $previousOpaqueProjectionVertexShader = $env:RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OPAQUE_PROJECTION_VERTEX_SHADER
 $previousOpaqueProjectionEffect = $env:RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OPAQUE_PROJECTION_EFFECT
+$previousProjectionSurfaceUniformAbiVersion = $env:RUSTY_QUEST_SPATIAL_CAMERA_PANEL_PROJECTION_SURFACE_UNIFORM_ABI_VERSION
 $previousLockedFinalPresentation = $env:RUSTY_QUEST_SPATIAL_LOCKED_FINAL_PRESENTATION
 $previousDistortionSpeedScale = $env:RUSTY_QUEST_SPATIAL_DISTORTION_SPEED_SCALE
 $previousPrivateSurfaceParticleProfile = $env:RUSTY_QUEST_SPATIAL_SURFACE_PRIVATE_PARTICLE_PROFILE
@@ -768,6 +782,8 @@ try {
     $env:CC_aarch64_linux_android = $nativeReceiptLinker
     $env:RUSTY_QUEST_SPATIAL_LOCKED_FINAL_PRESENTATION = $lockedFinalPresentationEnabled.ToString().ToLowerInvariant()
     $env:RUSTY_QUEST_SPATIAL_DISTORTION_SPEED_SCALE = $resolvedDistortionSpeedScale.ToString([System.Globalization.CultureInfo]::InvariantCulture)
+    $env:RUSTY_QUEST_SPATIAL_CAMERA_PANEL_PROJECTION_SURFACE_UNIFORM_ABI_VERSION =
+        $resolvedProjectionSurfaceUniformAbiVersion.ToString([System.Globalization.CultureInfo]::InvariantCulture)
     if ([string]::IsNullOrWhiteSpace($resolvedRecordedHandCaptureDir)) {
         Remove-Item Env:\RUSTY_QUEST_NATIVE_RECORDED_HAND_CAPTURE_DIR -ErrorAction SilentlyContinue
         Remove-Item Env:\RUSTY_QUEST_NATIVE_RECORDED_HAND_FRAME_LIMIT -ErrorAction SilentlyContinue
@@ -881,6 +897,12 @@ try {
         Remove-Item Env:\RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OPAQUE_PROJECTION_EFFECT -ErrorAction SilentlyContinue
     } else {
         $env:RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OPAQUE_PROJECTION_EFFECT = $previousOpaqueProjectionEffect
+    }
+    if ($null -eq $previousProjectionSurfaceUniformAbiVersion) {
+        Remove-Item Env:\RUSTY_QUEST_SPATIAL_CAMERA_PANEL_PROJECTION_SURFACE_UNIFORM_ABI_VERSION -ErrorAction SilentlyContinue
+    } else {
+        $env:RUSTY_QUEST_SPATIAL_CAMERA_PANEL_PROJECTION_SURFACE_UNIFORM_ABI_VERSION =
+            $previousProjectionSurfaceUniformAbiVersion
     }
     if ($null -eq $previousLockedFinalPresentation) {
         Remove-Item Env:\RUSTY_QUEST_SPATIAL_LOCKED_FINAL_PRESENTATION -ErrorAction SilentlyContinue
@@ -1317,12 +1339,16 @@ $manifest = [ordered]@{
     spatial_public_multistack_opaque_projection_vertex_shader_configured = (-not [string]::IsNullOrWhiteSpace($resolvedOpaqueProjectionVertexShader))
     spatial_public_multistack_opaque_projection_effect_configured = $opaqueProjectionEffectConfigured
     spatial_public_multistack_opaque_projection_effect = $(if ($opaqueProjectionEffectConfigured) { $OpaqueProjectionEffect } else { "" })
+    projection_surface_uniform_abi_version = $resolvedProjectionSurfaceUniformAbiVersion
+    projection_surface_uniform_prefix_bytes = 64
+    projection_surface_uniform_suffix_bytes = $(if ($resolvedProjectionSurfaceUniformAbiVersion -ge 2) { 64 } else { 0 })
     spatial_public_multistack_private_layer_build_env = @(
         "RUSTY_QUEST_SPATIAL_CAMERA_PANEL_PRIVATE_LAYER_PROFILE",
         "RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OPAQUE_GUIDE_SHADER",
         "RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OPAQUE_PROJECTION_SHADER",
         "RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OPAQUE_PROJECTION_VERTEX_SHADER",
-        "RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OPAQUE_PROJECTION_EFFECT"
+        "RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OPAQUE_PROJECTION_EFFECT",
+        "RUSTY_QUEST_SPATIAL_CAMERA_PANEL_PROJECTION_SURFACE_UNIFORM_ABI_VERSION"
     )
     spatial_public_multistack_private_layer_profile_sha256 = $(if ([string]::IsNullOrWhiteSpace($resolvedPrivateLayerProfilePath)) { "" } else { Get-FileSha256 -Path $resolvedPrivateLayerProfilePath })
     spatial_public_multistack_opaque_guide_shader_sha256 = $(if ([string]::IsNullOrWhiteSpace($resolvedOpaqueGuideShader)) { "" } else { Get-FileSha256 -Path $resolvedOpaqueGuideShader })

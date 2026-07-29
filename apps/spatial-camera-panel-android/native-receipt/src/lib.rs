@@ -44,6 +44,7 @@ mod live_hand_joint_bridge;
 mod live_hand_joints;
 mod particle_adapter_consumer;
 mod projection_surface_displacement;
+mod projection_surface_features;
 #[cfg(any(target_os = "android", test))]
 mod replay_hands;
 mod rgb_channel_transform;

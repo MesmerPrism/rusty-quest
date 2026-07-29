@@ -11,16 +11,18 @@ The public schema is:
 
 It carries the selected output-layer override, projection scale, generic zone
 compositor controls, RGB-channel transform transport, and neutral
-projection-surface displacement controls. Effect formulas, guide packing,
-private shader assets, captures, media, and product tuning stay with the
-private provider.
+projection-surface displacement, tiling, and inner-alpha controls. Effect
+formulas, guide packing, shader assets, captures, media, and product tuning
+stay with the provider.
 
 Rusty Quest is the sole owner of profile conversion, validation,
 serialization, hotload application, and effective receipts. Hostess-authored
-desktop states use
-`rusty.hostess.projection_replay_control_state.v2` and contain capsule-native
-24/16/92-float ABI blocks rather than Quest-shaped controls. Convert one with
-the Quest-owned adapter:
+desktop states use `rusty.hostess.projection_replay_control_state.v2` and
+contain capsule-native 24/16/92-float ABI blocks rather than Quest-shaped
+controls. A state may also carry the additive 32-float projection-surface
+uniform: its first 16 floats must exactly repeat the displacement block and
+its final 16 floats are the public v2 suffix. Convert one with the Quest-owned
+adapter:
 
 ```powershell
 pwsh -NoProfile -File tools\Convert-HostessReplayControlState.ps1 `
@@ -55,7 +57,46 @@ SHA-256. Quest validates that envelope but does not interpret provider labels
 or destination mappings, and the exported Quest profile remains byte-for-byte
 equivalent for the same capsule-native blocks. State v1 remains read-only
 compatibility input; a v1 document containing the v2 `control_transport`
-envelope is rejected.
+envelope or the additive surface-feature uniform is rejected.
+
+## Additive Surface Controls
+
+`projection_surface_tiling` and `projection_inner_alpha` are optional
+`quest_controls` objects. Omitting either object produces its exact disabled
+compatibility identity.
+
+The tiling object contains:
+
+- `enabled`;
+- `topology`: `continuous` or `tiled`;
+- `gap_normalized`: `0.0..0.45`;
+- `depth_flexibility`: `0.0..1.0`, where zero requests one depth value per
+  tile and one requests the per-vertex depth path; and
+- `scope`: `core-and-stretch` or `core-only`.
+
+The inner-alpha object contains:
+
+- `enabled`;
+- `driver`: `red`, `green`, `blue`, `luma`, or `max`;
+- bounded `threshold`, `softness`, and `amount`;
+- `invert`;
+- `stretch_policy`: `follow-projection` or `opaque-independent`; and
+- `stretch_obeys_exact_projection_mask`.
+
+The inner-alpha input is the processed core. The consuming shader must emit
+premultiplied alpha and multiply this alpha with the existing outer-underlay
+alpha. The contract does not apply per-pixel transparency to the direct
+Spatial 180/360 video carrier.
+
+Native transport uses
+`rusty.quest.projection-surface-tiling.v1` and
+`rusty.quest.projection-inner-alpha.v1`. Descriptor set 3, binding 1 retains
+the original 64-byte displacement prefix. Uniform ABI v2 appends a 64-byte
+suffix for these controls, for a total of 128 bytes. Builds declare support
+with
+`RUSTY_QUEST_SPATIAL_CAMERA_PANEL_PROJECTION_SURFACE_UNIFORM_ABI_VERSION=2`;
+requested, supported, and effective markers remain separate. ABI v1 and
+missing optional payloads keep both features ineffective.
 
 ## Runtime Behavior
 
@@ -118,6 +159,8 @@ the app-side parser.
   hyphens and must begin with a letter or digit.
 - `desktop_preview` is optional, must be an object when present, and is
   ignored by Quest.
+- Omitted additive surface controls normalize to disabled identities; they do
+  not select the tessellated pipeline or change alpha.
 - Direct Spatial video is unsampled by the custom compositor. A transparent
   video underlay therefore accepts only the documented outgoing,
   region-driven outer-alpha route.

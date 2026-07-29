@@ -37,6 +37,7 @@ use crate::camera_replay_capture::{
 };
 use crate::camera_reprojection_guard_band::CameraReprojectionGuardBandController;
 use crate::projection_surface_displacement::update_projection_surface_displacement_settings;
+use crate::projection_surface_features::update_projection_surface_feature_settings;
 use crate::rgb_channel_transform::update_rgb_channel_transform_settings;
 use crate::spatial_public_multistack::{
     public_multistack_inactive_marker_fields, public_multistack_marker_fields,
@@ -629,6 +630,74 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1pa
         enabled,
     ));
     1
+}
+
+#[no_mangle]
+#[allow(non_snake_case)]
+pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1panel_SpatialCameraPanelActivity_nativeUpdateProjectionSurfaceFeatures(
+    _env: *mut c_void,
+    _thiz: *mut c_void,
+    tiling_enabled: c_int,
+    topology: c_int,
+    gap: c_float,
+    depth_flexibility: c_float,
+    scope: c_int,
+    inner_alpha_enabled: c_int,
+    inner_alpha_driver: c_int,
+    threshold: c_float,
+    softness: c_float,
+    amount: c_float,
+    invert: c_int,
+    stretch_policy: c_int,
+    stretch_obeys_projection_mask: c_int,
+) -> i64 {
+    let applied = update_projection_surface_feature_settings(
+        tiling_enabled != 0,
+        topology,
+        gap as f32,
+        depth_flexibility as f32,
+        scope,
+        inner_alpha_enabled != 0,
+        inner_alpha_driver,
+        threshold as f32,
+        softness as f32,
+        amount as f32,
+        invert != 0,
+        stretch_policy,
+        stretch_obeys_projection_mask != 0,
+    );
+    let abi_supported =
+        crate::spatial_public_multistack::PROJECTION_SURFACE_UNIFORM_ABI_VERSION >= 2;
+    let tiling_supported =
+        abi_supported && crate::spatial_public_multistack::OPAQUE_PROJECTION_VERTEX_SHADER_COMPILED;
+    let inner_alpha_supported = abi_supported
+        && crate::spatial_public_multistack::OPAQUE_PROJECTION_SHADER_COMPILED
+        && crate::spatial_public_multistack::OPAQUE_PROJECTION_VIDEO_COMPOSITOR_SHADER_COMPILED;
+    let update_mask = 1_i64
+        | if tiling_supported { 1 << 1 } else { 0 }
+        | if inner_alpha_supported { 1 << 2 } else { 0 }
+        | if applied.tiling.effective(tiling_supported) {
+            1 << 3
+        } else {
+            0
+        }
+        | if applied.inner_alpha.effective(inner_alpha_supported) {
+            1 << 4
+        } else {
+            0
+        };
+    log_marker(format!(
+        "status=projection-surface-features-updated rawCameraProjectionProbe=true updateMask={} spatialPrivateLayerControlPanel=true {} requestedProjectionSurfaceTilingEnabled={} requestedProjectionInnerAlphaEnabled={} runtimeCrash=false",
+        update_mask,
+        applied.marker_fields(
+            tiling_supported,
+            inner_alpha_supported,
+            crate::spatial_public_multistack::PROJECTION_SURFACE_UNIFORM_ABI_VERSION,
+        ),
+        tiling_enabled,
+        inner_alpha_enabled,
+    ));
+    update_mask
 }
 
 fn start_camera_hwb_probe(

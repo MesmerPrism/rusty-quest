@@ -159,6 +159,29 @@ class SpatialCameraControlProfileTest {
     )
     assertTrue(profile.projectionSurfaceDisplacement.enabled)
     assertEquals(0.18f, profile.projectionSurfaceDisplacement.maxDisplacementMeters)
+    assertTrue(profile.projectionSurfaceTiling.enabled)
+    assertEquals(
+        ProjectionSurfaceTilingControls.topologyTiled,
+        profile.projectionSurfaceTiling.topology,
+    )
+    assertTrue(profile.projectionInnerAlpha.enabled)
+    assertEquals(
+        ProjectionInnerAlphaControls.driverMax,
+        profile.projectionInnerAlpha.driver,
+    )
+  }
+
+  @Test
+  fun profilesWithoutAdditiveSurfaceFeaturesRetainDisabledCompatibilityDefaults() {
+    val profile = validProfile()
+    val controls = profile.getJSONObject("quest_controls")
+    controls.remove("projection_surface_tiling")
+    controls.remove("projection_inner_alpha")
+
+    val parsed = SpatialCameraControlProfileContract.parse(profile.toString().toByteArray())
+
+    assertEquals(ProjectionSurfaceTilingControls.off, parsed.projectionSurfaceTiling)
+    assertEquals(ProjectionInnerAlphaControls.off, parsed.projectionInnerAlpha)
   }
 
   @Test
@@ -268,6 +291,23 @@ class SpatialCameraControlProfileTest {
             .put("reference_surface_distance_meters", 2.0)
             .put("polarity", 1.0)
             .put("edge_taper", 0.18)
+    val tiling =
+        JSONObject()
+            .put("enabled", true)
+            .put("topology", "tiled")
+            .put("gap_normalized", 0.08)
+            .put("depth_flexibility", 0.35)
+            .put("scope", "core-only")
+    val innerAlpha =
+        JSONObject()
+            .put("enabled", true)
+            .put("driver", "max")
+            .put("threshold", 0.55)
+            .put("softness", 0.12)
+            .put("amount", 0.72)
+            .put("invert", false)
+            .put("stretch_policy", "follow-projection")
+            .put("stretch_obeys_exact_projection_mask", true)
     val controls =
         JSONObject()
             .put("layer_override", 0.0)
@@ -275,6 +315,8 @@ class SpatialCameraControlProfileTest {
             .put("zone_compositor", zone)
             .put("rgb_channel_transform", rgb)
             .put("projection_surface_displacement", displacement)
+            .put("projection_surface_tiling", tiling)
+            .put("projection_inner_alpha", innerAlpha)
     return JSONObject()
         .put("schema", SpatialCameraControlProfileContract.SCHEMA)
         .put("profile_id", "artifact-test")

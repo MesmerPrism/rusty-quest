@@ -20,6 +20,8 @@ internal data class SpatialPrivateLayerControlBindings(
     val updateRgbChannelTransformNative: (RgbChannelTransform) -> Long,
     val updateProjectionSurfaceDisplacementNative:
         (ProjectionSurfaceDisplacement) -> Long,
+    val updateProjectionSurfaceFeaturesNative:
+        (ProjectionSurfaceTiling, ProjectionInnerAlpha) -> Long,
     val marker: (String) -> Unit,
 )
 
@@ -53,6 +55,12 @@ internal class SpatialPrivateLayerControlCoordinator(
       ProjectionSurfaceDisplacementControls.off
     private set
 
+  var projectionSurfaceTiling: ProjectionSurfaceTiling = ProjectionSurfaceTilingControls.off
+    private set
+
+  var projectionInnerAlpha: ProjectionInnerAlpha = ProjectionInnerAlphaControls.off
+    private set
+
   fun initializeDepthLayerPolicy(policy: Int) {
     depthLayerPolicy = policy
   }
@@ -70,6 +78,7 @@ internal class SpatialPrivateLayerControlCoordinator(
     updateZoneCompositor(zoneCompositor, source)
     updateRgbChannelTransform(rgbChannelTransform, source)
     updateProjectionSurfaceDisplacement(projectionSurfaceDisplacement, source)
+    updateProjectionSurfaceFeatures(projectionSurfaceTiling, projectionInnerAlpha, source)
   }
 
   fun updateLayerOverride(requestedLayerOverride: Float, source: String): Float {
@@ -353,6 +362,79 @@ internal class SpatialPrivateLayerControlCoordinator(
             "${ProjectionSurfaceDisplacementModule.markerFields(updated)} runtimeCrash=false"
     )
     return updated
+  }
+
+  fun updateProjectionSurfaceTiling(
+      requestedConfiguration: ProjectionSurfaceTiling,
+      source: String,
+  ): ProjectionSurfaceTiling {
+    updateProjectionSurfaceFeatures(
+        requestedTiling = requestedConfiguration,
+        requestedInnerAlpha = projectionInnerAlpha,
+        source = source,
+    )
+    return projectionSurfaceTiling
+  }
+
+  fun updateProjectionInnerAlpha(
+      requestedConfiguration: ProjectionInnerAlpha,
+      source: String,
+  ): ProjectionInnerAlpha {
+    updateProjectionSurfaceFeatures(
+        requestedTiling = projectionSurfaceTiling,
+        requestedInnerAlpha = requestedConfiguration,
+        source = source,
+    )
+    return projectionInnerAlpha
+  }
+
+  fun updateProjectionSurfaceFeatures(
+      requestedTiling: ProjectionSurfaceTiling,
+      requestedInnerAlpha: ProjectionInnerAlpha,
+      source: String,
+  ): Pair<ProjectionSurfaceTiling, ProjectionInnerAlpha> {
+    if (!bindings.routeActive()) {
+      return projectionSurfaceTiling to projectionInnerAlpha
+    }
+    val previousTiling = projectionSurfaceTiling
+    val previousInnerAlpha = projectionInnerAlpha
+    val updatedTiling = ProjectionSurfaceTilingModule.normalize(requestedTiling)
+    val updatedInnerAlpha = ProjectionInnerAlphaModule.normalize(requestedInnerAlpha)
+    projectionSurfaceTiling = updatedTiling
+    projectionInnerAlpha = updatedInnerAlpha
+    val updateMask =
+        runCatching {
+              bindings.updateProjectionSurfaceFeaturesNative(
+                  updatedTiling,
+                  updatedInnerAlpha,
+              )
+            }
+            .getOrElse { throwable ->
+              bindings.marker(
+                  "channel=private-layer-panel status=projection-surface-features-update-failed " +
+                      "source=${activityMarkerToken(source)} " +
+                      "error=${activityMarkerToken(throwable.javaClass.simpleName)} " +
+                      "message=${activityMarkerToken(throwable.message ?: "none")} " +
+                      "${ProjectionSurfaceTilingModule.markerFields(updatedTiling, false, false)} " +
+                      "${ProjectionInnerAlphaModule.markerFields(updatedInnerAlpha, false, false)} " +
+                      "runtimeCrash=false"
+              )
+              0L
+            }
+    val tilingSupported = updateMask and (1L shl 1) != 0L
+    val innerAlphaSupported = updateMask and (1L shl 2) != 0L
+    val tilingEffective = updateMask and (1L shl 3) != 0L
+    val innerAlphaEffective = updateMask and (1L shl 4) != 0L
+    bindings.marker(
+        "channel=private-layer-panel status=projection-surface-features-submitted " +
+            "source=${activityMarkerToken(source)} transport=jni-live-queue updateMask=$updateMask " +
+            "previousProjectionSurfaceTilingRequested=${ProjectionSurfaceTilingModule.requested(previousTiling)} " +
+            "previousProjectionInnerAlphaRequested=${ProjectionInnerAlphaModule.requested(previousInnerAlpha)} " +
+            "${ProjectionSurfaceTilingModule.markerFields(updatedTiling, tilingSupported, tilingEffective)} " +
+            "${ProjectionInnerAlphaModule.markerFields(updatedInnerAlpha, innerAlphaSupported, innerAlphaEffective)} " +
+            "runtimeCrash=false"
+    )
+    return updatedTiling to updatedInnerAlpha
   }
 
   companion object {

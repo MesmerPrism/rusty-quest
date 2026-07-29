@@ -332,6 +332,23 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
                       configuration.edgeTaper,
                   )
                 },
+                updateProjectionSurfaceFeaturesNative = { tiling, innerAlpha ->
+                  nativeUpdateProjectionSurfaceFeatures(
+                      if (tiling.enabled) 1 else 0,
+                      tiling.topology,
+                      tiling.gapNormalized,
+                      tiling.depthFlexibility,
+                      tiling.scope,
+                      if (innerAlpha.enabled) 1 else 0,
+                      innerAlpha.driver,
+                      innerAlpha.threshold,
+                      innerAlpha.softness,
+                      innerAlpha.amount,
+                      if (innerAlpha.invert) 1 else 0,
+                      innerAlpha.stretchPolicy,
+                      if (innerAlpha.stretchObeysExactProjectionMask) 1 else 0,
+                  )
+                },
                 marker = ::marker,
             ),
             fixedLayerOverride = presentationPolicy.fixedLayerOverride,
@@ -1915,12 +1932,20 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             profile.projectionSurfaceDisplacement,
             source,
         )
+    val (effectiveTiling, effectiveInnerAlpha) =
+        privateLayerControlCoordinator.updateProjectionSurfaceFeatures(
+            profile.projectionSurfaceTiling,
+            profile.projectionInnerAlpha,
+            source,
+        )
     return SpatialCameraControlProfileEffective(
         layerOverride = effectiveLayer,
         projectionScale = effectiveScale,
         zoneCompositor = effectiveZone,
         rgbChannelTransform = effectiveRgb,
         projectionSurfaceDisplacement = effectiveDisplacement,
+        projectionSurfaceTiling = effectiveTiling,
+        projectionInnerAlpha = effectiveInnerAlpha,
     )
   }
 
@@ -1988,6 +2013,10 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
                     rgbChannelTransform = privateLayerControlCoordinator.rgbChannelTransform,
                     projectionSurfaceDisplacement =
                         privateLayerControlCoordinator.projectionSurfaceDisplacement,
+                    projectionSurfaceTiling =
+                        privateLayerControlCoordinator.projectionSurfaceTiling,
+                    projectionInnerAlpha =
+                        privateLayerControlCoordinator.projectionInnerAlpha,
                     videoSession = immersiveVideoPanelCoordinator::sessionSnapshot,
                     setLayerOverride = privateLayerControlCoordinator::updateLayerOverride,
                     setProjectionPanelEnabled = ::setProjectionPanelEnabled,
@@ -2012,6 +2041,10 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
                         privateLayerControlCoordinator::updateRgbChannelTransform,
                     updateProjectionSurfaceDisplacement =
                         privateLayerControlCoordinator::updateProjectionSurfaceDisplacement,
+                    updateProjectionSurfaceTiling =
+                        privateLayerControlCoordinator::updateProjectionSurfaceTiling,
+                    updateProjectionInnerAlpha =
+                        privateLayerControlCoordinator::updateProjectionInnerAlpha,
                     selectPreviousVideo = {
                       changeImmersiveVideo(
                           "previous",
@@ -3370,6 +3403,22 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
       referenceSurfaceDistanceMeters: Float,
       polarity: Float,
       edgeTaper: Float,
+  ): Long
+
+  private external fun nativeUpdateProjectionSurfaceFeatures(
+      tilingEnabled: Int,
+      topology: Int,
+      gapNormalized: Float,
+      depthFlexibility: Float,
+      scope: Int,
+      innerAlphaEnabled: Int,
+      innerAlphaDriver: Int,
+      threshold: Float,
+      softness: Float,
+      amount: Float,
+      invert: Int,
+      stretchPolicy: Int,
+      stretchObeysExactProjectionMask: Int,
   ): Long
 
   private external fun nativeStartSpatialVideoProjectionProbe(

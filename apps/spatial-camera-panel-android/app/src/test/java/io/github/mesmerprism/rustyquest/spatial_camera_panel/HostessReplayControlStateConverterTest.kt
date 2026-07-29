@@ -154,6 +154,58 @@ class HostessReplayControlStateConverterTest {
     assertEquals(-0.13f, profile.rgbChannelTransform.blue.directionRateHz)
     assertEquals(true, profile.projectionSurfaceDisplacement.enabled)
     assertEquals(0.18f, profile.projectionSurfaceDisplacement.maxDisplacementMeters)
+    assertEquals(ProjectionSurfaceTilingControls.off, profile.projectionSurfaceTiling)
+    assertEquals(ProjectionInnerAlphaControls.off, profile.projectionInnerAlpha)
+  }
+
+  @Test
+  fun additiveSurfaceFeatureUniformExportsTilingAndInnerAlphaControls() {
+    val output =
+        HostessReplayControlStateConverter.export(
+            stateWithSurfaceFeatures().toString().toByteArray()
+        )
+    val profile = SpatialCameraControlProfileContract.parse(output)
+
+    assertTrue(profile.projectionSurfaceTiling.enabled)
+    assertEquals(
+        ProjectionSurfaceTilingControls.topologyTiled,
+        profile.projectionSurfaceTiling.topology,
+    )
+    assertEquals(0.08f, profile.projectionSurfaceTiling.gapNormalized)
+    assertEquals(0.25f, profile.projectionSurfaceTiling.depthFlexibility)
+    assertEquals(
+        ProjectionSurfaceTilingControls.scopeCoreOnly,
+        profile.projectionSurfaceTiling.scope,
+    )
+    assertTrue(profile.projectionInnerAlpha.enabled)
+    assertEquals(ProjectionInnerAlphaControls.driverMax, profile.projectionInnerAlpha.driver)
+    assertEquals(0.65f, profile.projectionInnerAlpha.amount)
+    assertEquals(
+        ProjectionInnerAlphaControls.stretchFollowProjection,
+        profile.projectionInnerAlpha.stretchPolicy,
+    )
+    assertTrue(profile.projectionInnerAlpha.stretchObeysExactProjectionMask)
+  }
+
+  @Test
+  fun additiveSurfaceFeatureUniformRejectsPrefixDriftAndUnsupportedAbi() {
+    val prefixDrift = stateWithSurfaceFeatures()
+    prefixDrift
+        .getJSONObject("projection")
+        .getJSONArray("surface_feature_uniform_f32")
+        .put(4, 0.19)
+    assertThrows(IllegalArgumentException::class.java) {
+      HostessReplayControlStateConverter.export(prefixDrift.toString().toByteArray())
+    }
+
+    val unsupportedAbi = stateWithSurfaceFeatures()
+    unsupportedAbi
+        .getJSONObject("projection")
+        .getJSONArray("surface_feature_uniform_f32")
+        .put(30, 1.0)
+    assertThrows(IllegalArgumentException::class.java) {
+      HostessReplayControlStateConverter.export(unsupportedAbi.toString().toByteArray())
+    }
   }
 
   @Test
@@ -391,6 +443,34 @@ class HostessReplayControlStateConverterTest {
             put("schema", HostessReplayControlStateConverter.INPUT_V1_SCHEMA)
             remove("control_transport")
           }
+
+  private fun stateWithSurfaceFeatures(): JSONObject {
+    val state = validState()
+    val projection = state.getJSONObject("projection")
+    val displacement = projection.getJSONArray("displacement_uniform_f32")
+    val values = FloatArray(32)
+    for (index in 0 until 16) {
+      values[index] = displacement.getDouble(index).toFloat()
+    }
+    values[16] = 1.0f
+    values[17] = 1.0f
+    values[18] = 0.08f
+    values[19] = 0.25f
+    values[20] = 1.0f
+    values[21] = 1.0f
+    values[22] = 4.0f
+    values[23] = 0.0f
+    values[24] = 0.55f
+    values[25] = 0.1f
+    values[26] = 0.65f
+    values[27] = 0.0f
+    values[28] = 1.0f
+    values[29] = 7.0f
+    values[30] = 2.0f
+    values[31] = 0.0f
+    projection.put("surface_feature_uniform_f32", JSONArray(values.toList()))
+    return state
+  }
 
   private fun validPreview(): JSONObject =
       JSONObject()

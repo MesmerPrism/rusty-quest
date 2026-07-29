@@ -72,6 +72,7 @@ const PUBLIC_MULTISTACK_STATIC_MARKER_FIELDS: &str = concat!(
         "publicMultiStackOpaqueGuideShaderEnv=RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OPAQUE_GUIDE_SHADER ",
         "publicMultiStackOpaqueProjectionShaderEnv=RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OPAQUE_PROJECTION_SHADER ",
         "publicMultiStackOpaqueProjectionVertexShaderEnv=RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OPAQUE_PROJECTION_VERTEX_SHADER ",
+        "projectionSurfaceUniformAbiEnv=RUSTY_QUEST_SPATIAL_CAMERA_PANEL_PROJECTION_SURFACE_UNIFORM_ABI_VERSION ",
         "publicMultiStackPrivateSurfaceParticleHook=generic-build-time-private-surface-particle-hook ",
         "publicMultiStackPrivateSurfaceParticleProfileEnv=RUSTY_QUEST_SPATIAL_SURFACE_PRIVATE_PARTICLE_PROFILE ",
         "publicMultiStackPrivateSurfaceParticleShaderEnv=RUSTY_QUEST_SPATIAL_SURFACE_PRIVATE_PARTICLE_SHADER ",
@@ -91,7 +92,7 @@ pub(crate) fn public_multistack_marker_fields() -> String {
     let depth_fields = spatial_environment_depth_marker_fields();
     let presentation_fields = spatial_presentation_policy_marker_fields();
     format!(
-        "{} {} {} {} publicGuideBlurShaderCompiled={} publicGuideBlurShaderBytes={} publicMultiStackOpaqueGuideShaderCompiled={} publicMultiStackOpaqueGuideShaderBytes={} publicMultiStackOpaqueGuideShaderPassCount={} publicMultiStackOpaqueGuideShaderPassVariantsCompiled={} publicMultiStackOpaqueGuideShaderPassByteCounts={} publicMultiStackOpaqueProjectionShaderCompiled={} publicMultiStackOpaqueProjectionShaderBytes={} publicMultiStackOpaqueProjectionVertexShaderCompiled={} publicMultiStackOpaqueProjectionVertexShaderBytes={} publicMultiStackOpaquePayloadExecutionReady=false publicMultiStackPrivateSurfaceParticleProfileConfigured={} publicMultiStackPrivateSurfaceParticleShaderConfigured={} publicMultiStackPrivateSurfaceParticlePayloadDirConfigured={} publicMultiStackPrivateSurfaceParticleMarkerPrefixConfigured={} publicMultiStackPrivateSurfaceParticleMetadataActive={} publicMultiStackPrivateSurfaceParticleExecutableInputsConfigured={} publicMultiStackPrivateSurfaceParticlePayloadActive={} publicMultiStackPrivateSurfaceParticleRendererStatus={} publicMultiStackPrivateSurfaceParticleExecutionReady={}",
+        "{} {} {} {} publicGuideBlurShaderCompiled={} publicGuideBlurShaderBytes={} publicMultiStackOpaqueGuideShaderCompiled={} publicMultiStackOpaqueGuideShaderBytes={} publicMultiStackOpaqueGuideShaderPassCount={} publicMultiStackOpaqueGuideShaderPassVariantsCompiled={} publicMultiStackOpaqueGuideShaderPassByteCounts={} publicMultiStackOpaqueProjectionShaderCompiled={} publicMultiStackOpaqueProjectionShaderBytes={} publicMultiStackOpaqueProjectionVertexShaderCompiled={} publicMultiStackOpaqueProjectionVertexShaderBytes={} projectionSurfaceUniformAbiVersion={} projectionSurfaceUniformAbiV2Supported={} publicMultiStackOpaquePayloadExecutionReady=false publicMultiStackPrivateSurfaceParticleProfileConfigured={} publicMultiStackPrivateSurfaceParticleShaderConfigured={} publicMultiStackPrivateSurfaceParticlePayloadDirConfigured={} publicMultiStackPrivateSurfaceParticleMarkerPrefixConfigured={} publicMultiStackPrivateSurfaceParticleMetadataActive={} publicMultiStackPrivateSurfaceParticleExecutableInputsConfigured={} publicMultiStackPrivateSurfaceParticlePayloadActive={} publicMultiStackPrivateSurfaceParticleRendererStatus={} publicMultiStackPrivateSurfaceParticleExecutionReady={}",
         PUBLIC_MULTISTACK_STATIC_MARKER_FIELDS,
         passthrough_fields,
         depth_fields,
@@ -107,6 +108,8 @@ pub(crate) fn public_multistack_marker_fields() -> String {
         OPAQUE_PROJECTION_SHADER_BYTE_COUNT,
         bool_marker(OPAQUE_PROJECTION_VERTEX_SHADER_COMPILED),
         OPAQUE_PROJECTION_VERTEX_SHADER_BYTE_COUNT,
+        PROJECTION_SURFACE_UNIFORM_ABI_VERSION,
+        bool_marker(PROJECTION_SURFACE_UNIFORM_ABI_VERSION >= 2),
         bool_marker(PRIVATE_SURFACE_PARTICLE_PROFILE_CONFIGURED),
         bool_marker(PRIVATE_SURFACE_PARTICLE_SHADER_CONFIGURED),
         bool_marker(PRIVATE_SURFACE_PARTICLE_PAYLOAD_DIR_CONFIGURED),

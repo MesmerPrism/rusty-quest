@@ -9,6 +9,7 @@ param(
     [string]$OpaqueProjectionShader = $env:RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OPAQUE_PROJECTION_SHADER,
     [string]$OpaqueProjectionVertexShader = $env:RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OPAQUE_PROJECTION_VERTEX_SHADER,
     [string]$OpaqueProjectionEffect = $env:RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OPAQUE_PROJECTION_EFFECT,
+    [ValidateSet(1, 2)][int]$ProjectionSurfaceUniformAbiVersion = 1,
     [string]$PrivateSurfaceParticleProfilePath = $env:RUSTY_QUEST_SPATIAL_SURFACE_PRIVATE_PARTICLE_PROFILE,
     [string]$PrivateSurfaceParticleShader = $env:RUSTY_QUEST_SPATIAL_SURFACE_PRIVATE_PARTICLE_SHADER,
     [string]$PrivateSurfaceParticlePayloadDir = $env:RUSTY_QUEST_SPATIAL_SURFACE_PRIVATE_PARTICLE_PAYLOAD_DIR,
@@ -139,6 +140,7 @@ try {
     cargo test -p spatial-camera-panel-native-receipt surface_particle
     cargo test -p spatial-camera-panel-native-receipt camera_latency
     cargo test -p spatial-camera-panel-native-receipt projection_surface_displacement
+    cargo test -p spatial-camera-panel-native-receipt projection_surface_features
 } finally {
     Pop-Location
 }
@@ -153,6 +155,7 @@ if ($Build) {
         -OpaqueProjectionShader $OpaqueProjectionShader `
         -OpaqueProjectionVertexShader $OpaqueProjectionVertexShader `
         -OpaqueProjectionEffect $OpaqueProjectionEffect `
+        -ProjectionSurfaceUniformAbiVersion $ProjectionSurfaceUniformAbiVersion `
         -PrivateSurfaceParticleProfilePath $PrivateSurfaceParticleProfilePath `
         -PrivateSurfaceParticleShader $PrivateSurfaceParticleShader `
         -PrivateSurfaceParticlePayloadDir $PrivateSurfaceParticlePayloadDir `
