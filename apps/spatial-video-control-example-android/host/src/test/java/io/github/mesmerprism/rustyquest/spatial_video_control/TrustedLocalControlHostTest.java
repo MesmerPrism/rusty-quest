@@ -25,6 +25,10 @@ public final class TrustedLocalControlHostTest {
     private static final String LOOPBACK = "127.0.0.1";
 
     public static void main(String[] args) throws Exception {
+        if (args.length != 1) {
+            throw new IllegalArgumentException("expected the absolute app root path");
+        }
+        Path appRoot = Path.of(args[0]).toAbsolutePath().normalize();
         assertTrue(!TrustedLocalControlPolicy.ENABLED_BY_DEFAULT, "policy must default disabled");
         assertEquals(
                 java.util.Set.of(
@@ -34,7 +38,7 @@ public final class TrustedLocalControlHostTest {
         testCanonicalEnvelopes();
         testAuthorityAndPlayerCausality();
         testAuthorityLimitsAndExpiry();
-        testLoopbackHttpAndWebSocket();
+        testLoopbackHttpAndWebSocket(appRoot);
         System.out.println("trusted_local_http_v1 host tests passed");
     }
 
@@ -218,14 +222,15 @@ public final class TrustedLocalControlHostTest {
         assertTrue(!expired.active(), "idle expiry");
     }
 
-    private static void testLoopbackHttpAndWebSocket() throws Exception {
+    private static void testLoopbackHttpAndWebSocket(Path appRoot) throws Exception {
         Instant now = Instant.now();
         FakeManifoldAuthority authority = new FakeManifoldAuthority();
         FakePlayer player = new FakePlayer();
         LocalControlCoordinator coordinator =
                 new LocalControlCoordinator(authority, player, VideoCatalog.bundledSynthetic());
         ManifoldAuthorityPort.PairingOffer offer = enable(authority, now);
-        Path assets = Path.of("app", "src", "main", "assets", "control");
+        Path assets = appRoot.resolve(Path.of("app", "src", "main", "assets", "control"));
+        assertTrue(Files.isDirectory(assets), "packaged asset root");
         TrustedLocalHttpServer.AssetProvider provider =
                 path -> {
                     Path file = assets.resolve(path.substring(1));

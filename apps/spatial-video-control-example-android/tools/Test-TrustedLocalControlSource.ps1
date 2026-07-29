@@ -115,7 +115,7 @@ try {
   if ($LASTEXITCODE -ne 0) {
     throw "javac failed with exit code $LASTEXITCODE"
   }
-  & $java.Source -cp $classes.FullName io.github.mesmerprism.rustyquest.spatial_video_control.TrustedLocalControlHostTest
+  & $java.Source -cp $classes.FullName io.github.mesmerprism.rustyquest.spatial_video_control.TrustedLocalControlHostTest $appRoot
   if ($LASTEXITCODE -ne 0) {
     throw "host tests failed with exit code $LASTEXITCODE"
   }
