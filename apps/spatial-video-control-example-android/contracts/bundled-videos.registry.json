@@ -1,0 +1,31 @@
+{
+  "schema": "rusty.quest.spatial_video_example.bundled_videos.v1",
+  "catalog_id": "public-synthetic-video-catalog-v1",
+  "license": "CC0-1.0",
+  "items": [
+    {
+      "video_id": "synthetic-grid-1s",
+      "title": "Synthetic grid",
+      "resource_name": "synthetic_grid_1s",
+      "mime_type": "video/mp4",
+      "duration_ms": 1000,
+      "width_px": 64,
+      "height_px": 36,
+      "source_blob": "app/src/main/media-source/synthetic_grid_1s.mp4.base64",
+      "generation_recipe": "ffmpeg lavfi testsrc2=size=64x36:rate=1:duration=1, libx264 constrained baseline level 1.0, yuv420p, no audio",
+      "sha256_decoded": "fb70c4f1adda538bbd577b187d9ff930906c9246cb4175a1551db1fa24b2e0b9"
+    },
+    {
+      "video_id": "synthetic-blue-2s",
+      "title": "Synthetic blue",
+      "resource_name": "synthetic_blue_2s",
+      "mime_type": "video/mp4",
+      "duration_ms": 2000,
+      "width_px": 160,
+      "height_px": 90,
+      "source_blob": "app/src/main/media-source/synthetic_blue_2s.mp4.base64",
+      "generation_recipe": "ffmpeg lavfi color=c=0x164e63:size=160x90:rate=2:duration=2, libx264 constrained baseline level 1.0, yuv420p, no audio",
+      "sha256_decoded": "470568d21dde56ec7f72ab5c14d3dfbee96a5c59be9072aa9965dbf084597e90"
+    }
+  ]
+}

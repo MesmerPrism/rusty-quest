@@ -1,0 +1,72 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "schema": "rusty.quest.trusted_local_http.command_registry.v1",
+  "protocol": "trusted_local_http_v1",
+  "registry_id": "rusty-quest-spatial-video-example-v1",
+  "payload_max_bytes": 4096,
+  "request_id_pattern": "^[a-z0-9][a-z0-9-]{15,63}$",
+  "commands": [
+    {
+      "id": "describe",
+      "kind": "query",
+      "payload": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": []
+      }
+    },
+    {
+      "id": "get_state",
+      "kind": "query",
+      "payload": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": []
+      }
+    },
+    {
+      "id": "list_videos",
+      "kind": "query",
+      "payload": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": []
+      }
+    },
+    {
+      "id": "select_video",
+      "kind": "effect",
+      "payload": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "video_id"
+        ],
+        "properties": {
+          "video_id": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9-]{1,47}$"
+          }
+        }
+      }
+    },
+    {
+      "id": "play",
+      "kind": "effect",
+      "payload": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": []
+      }
+    },
+    {
+      "id": "pause",
+      "kind": "effect",
+      "payload": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": []
+      }
+    }
+  ]
+}

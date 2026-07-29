@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="VideoControlPanelTheme" parent="android:style/Theme.Material.Light.NoActionBar">
+        <item name="android:colorAccent">#0F766E</item>
+        <item name="android:windowIsTranslucent">false</item>
+    </style>
+</resources>
