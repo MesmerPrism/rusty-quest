@@ -97,8 +97,13 @@ Assert-Contains "Hostess state converter tool" $converterTool 'GradleHome must n
 Assert-Contains "Manual installer" $installer "serial-scoped-adb-fallback"
 Assert-Contains "Manual installer" $installer "profile_sha256"
 Assert-Contains "Manual installer" $installer "last-apply-receipt.json"
+Assert-Contains "Manual installer" $installer 'shell touch -m -d "@$publishModifiedUnixSeconds"'
+Assert-Contains "Manual installer" $installer "did not advance the device-observed signature"
+Assert-Contains "Manual installer" $installer "publication_signature"
+Assert-Contains "Manual installer" $installer "atomic_replace = `$true"
 Assert-Contains "Public documentation" $docs "Only an atomic replacement"
-Assert-Contains "Public documentation" $docs "A successful file transfer without a matching"
+Assert-Contains "Public documentation" $docs "A successful file transfer without a"
+Assert-Contains "Public documentation" $docs "strictly newer staged modification time"
 Assert-Contains "Public documentation" $docs "not packaged into the APK"
 
 Write-Output "Spatial Camera Panel control-profile static checks passed."
