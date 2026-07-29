@@ -63,7 +63,8 @@ Selection never implies playback.
 - `app/src/main/assets/control/`: packaged controller page; no external assets.
 - `app/src/main/java/`: opt-in Android, Media3, and Spatial SDK adapter source.
 - `native/`: closed JNI operations and the exact Manifold source lock.
-- `app/src/main/media-source/`: deterministic CC0 synthetic MP4 source blobs
+- `app/src/main/media-source/`: deterministic CC0 320x180/30fps synthetic MP4
+  source blobs kept inside the Quest hardware-decoder compatibility profile
   decoded only at Android build time.
 
 ## Source-only validation

@@ -41,6 +41,11 @@ if (@($mediaRegistry.items).Count -ne 2 -or $mediaRegistry.license -ne 'CC0-1.0'
   throw 'Expected exactly two CC0 synthetic media items.'
 }
 foreach ($item in $mediaRegistry.items) {
+  if ([int]$item.width_px -lt 320 -or [int]$item.height_px -lt 180 -or
+      [string]$item.generation_recipe -notmatch 'rate=30' -or
+      [string]$item.generation_recipe -notmatch 'constrained baseline level 1\.3') {
+    throw "Bundled media is outside the Quest hardware-decoder compatibility profile: $($item.video_id)"
+  }
   $sourcePath = Join-Path $appRoot ([string]$item.source_blob -replace '/', '\')
   if (-not (Test-Path -LiteralPath $sourcePath -PathType Leaf)) {
     throw "Missing media source blob: $($item.source_blob)"
