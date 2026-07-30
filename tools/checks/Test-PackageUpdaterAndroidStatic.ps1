@@ -562,11 +562,17 @@ foreach ($token in @(
     '--locked',
     'Get-FileHash',
     '\.package-update-publish-',
-    'Refusing to replace a published APK with different bytes',
+    'Immutable generation already exists',
+    'ExpectedPriorPointerSha256',
+    'ExpectedPriorEnvelopeSha256',
+    'ExpectPriorAbsent',
+    'Assert-PackageUpdatePointerUnchanged',
+    'aapt2\.exe',
+    'apksigner\.bat',
     '\[System\.IO\.File\]::Move\(',
-    '\$publishedEnvelopePath',
-    'rusty.quest.package_update_publication_receipt.v1',
-    'envelope.json')) {
+    'current\.json',
+    'rusty.quest.package_update_publication_receipt.v2',
+    'generations')) {
     Assert-Match $publishWrapper $token `
         "Signed Package Updater publication wrapper is missing token: $token"
 }
@@ -682,7 +688,7 @@ foreach ($code in @(
 Assert-Match $appBuild `
     'applicationId = "io\.github\.mesmerprism\.rustyquest\.packageupdater\.alpha"' `
     "Release updater package is not alpha-isolated."
-Assert-Match $publishWrapper 'package_update_publication_receipt\.v1' `
+Assert-Match $publishWrapper 'package_update_publication_receipt\.v2' `
     "Publication output is not the deterministic receipt contract."
 
 Write-Output "Rusty Quest Package Updater Android static validation passed"
