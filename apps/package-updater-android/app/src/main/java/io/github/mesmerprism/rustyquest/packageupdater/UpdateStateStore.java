@@ -30,18 +30,15 @@ final class UpdateStateStore {
         stateFile = new AtomicFile(new File(directory, "rollback-state.json"));
     }
 
-    synchronized void requireAdvances(
-            String packageName, String rolloutRing, long sequence, long versionCode)
+    synchronized void requireAdvances(VerifiedUpdatePlan plan)
             throws UpdateEnvelopeVerifier.VerificationException {
         for (Checkpoint checkpoint : read()) {
-            if (checkpoint.packageName.equals(packageName)
-                    && checkpoint.rolloutRing.equals(rolloutRing)
-                    && checkpoint.matchesClosedTuple()) {
-                if (sequence <= checkpoint.sequence) {
+            if (checkpoint.matches(plan)) {
+                if (plan.sequence <= checkpoint.sequence) {
                     throw new UpdateEnvelopeVerifier.VerificationException(
                             "sequence_rollback");
                 }
-                if (versionCode <= checkpoint.versionCode) {
+                if (plan.artifact.versionCode <= checkpoint.versionCode) {
                     throw new UpdateEnvelopeVerifier.VerificationException(
                             "version_rollback");
                 }
@@ -50,39 +47,30 @@ final class UpdateStateStore {
         }
     }
 
-    synchronized void commitInstalled(
-            String packageName,
-            String rolloutRing,
-            long sequence,
-            long versionCode,
-            String signedManifestSha256) throws Exception {
+    synchronized void commitInstalled(VerifiedUpdatePlan plan) throws Exception {
         List<Checkpoint> checkpoints = read();
         for (Checkpoint checkpoint : checkpoints) {
-            if (checkpoint.packageName.equals(packageName)
-                    && checkpoint.rolloutRing.equals(rolloutRing)
-                    && checkpoint.matchesClosedTuple()
-                    && checkpoint.sequence == sequence
-                    && checkpoint.versionCode == versionCode
-                    && checkpoint.signedManifestSha256.equals(signedManifestSha256)) {
+            if (checkpoint.matches(plan)
+                    && checkpoint.sequence == plan.sequence
+                    && checkpoint.versionCode == plan.artifact.versionCode
+                    && checkpoint.signedManifestSha256.equals(
+                            plan.signedManifestSha256)) {
                 return;
             }
         }
-        requireAdvances(packageName, rolloutRing, sequence, versionCode);
-        checkpoints.removeIf(
-                checkpoint -> checkpoint.packageName.equals(packageName)
-                        && checkpoint.rolloutRing.equals(rolloutRing)
-                        && checkpoint.matchesClosedTuple());
+        requireAdvances(plan);
+        checkpoints.removeIf(checkpoint -> checkpoint.matches(plan));
         checkpoints.add(new Checkpoint(
-                BuildConfig.UPDATE_CHANNEL,
-                packageName,
-                rolloutRing,
-                BuildConfig.EXPECTED_SIGNER_SHA256,
-                BuildConfig.TRUSTED_KEY_ID,
-                BuildConfig.TRUSTED_PUBLIC_KEY_BASE64,
-                BuildConfig.EXPECTED_HTTPS_ORIGIN,
-                sequence,
-                versionCode,
-                signedManifestSha256));
+                plan.channel,
+                plan.artifact.packageName,
+                plan.rolloutRing,
+                plan.signerSha256,
+                plan.keyId,
+                plan.publicKey,
+                plan.httpsOrigin,
+                plan.sequence,
+                plan.artifact.versionCode,
+                plan.signedManifestSha256));
         checkpoints.sort(Comparator.comparing(
                 checkpoint -> checkpoint.tupleKey()));
 
@@ -228,12 +216,14 @@ final class UpdateStateStore {
             this.signedManifestSha256 = signedManifestSha256;
         }
 
-        boolean matchesClosedTuple() {
-            return channel.equals(BuildConfig.UPDATE_CHANNEL)
-                    && signerSha256.equals(BuildConfig.EXPECTED_SIGNER_SHA256)
-                    && keyId.equals(BuildConfig.TRUSTED_KEY_ID)
-                    && publicKey.equals(BuildConfig.TRUSTED_PUBLIC_KEY_BASE64)
-                    && httpsOrigin.equals(BuildConfig.EXPECTED_HTTPS_ORIGIN);
+        boolean matches(VerifiedUpdatePlan plan) {
+            return channel.equals(plan.channel)
+                    && packageName.equals(plan.artifact.packageName)
+                    && rolloutRing.equals(plan.rolloutRing)
+                    && signerSha256.equals(plan.signerSha256)
+                    && keyId.equals(plan.keyId)
+                    && publicKey.equals(plan.publicKey)
+                    && httpsOrigin.equals(plan.httpsOrigin);
         }
 
         String tupleKey() {

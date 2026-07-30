@@ -1457,6 +1457,40 @@ mod tests {
     }
 
     #[test]
+    fn maximum_safe_integer_canonical_vector_matches_android_boundary() {
+        let manifest = PackageUpdateManifest {
+            schema: MANIFEST_SCHEMA.to_owned(),
+            manifest_id: "boundary.9007199254740991".to_owned(),
+            sequence: MAX_JCS_SAFE_INTEGER,
+            issued_at_ms: 0,
+            expires_at_ms: MAX_JCS_SAFE_INTEGER,
+            channel: "alpha".to_owned(),
+            rollout_ring: "alpha".to_owned(),
+            artifact: PackageUpdateArtifact {
+                package_name: "io.github.mesmerprism.rustykiosk".to_owned(),
+                version_code: MAX_JCS_SAFE_INTEGER,
+                version_name: "v-_.1".to_owned(),
+                apk_url: "https://updates.mesmerprism.com/a-b_c.apk".to_owned(),
+                apk_sha256:
+                    "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                        .to_owned(),
+                apk_size_bytes: MAX_JCS_SAFE_INTEGER,
+                signer_sha256:
+                    "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+                        .to_owned(),
+            },
+        };
+        let canonical = String::from_utf8(
+            canonical_signed_manifest(&manifest).expect("boundary canonicalization"),
+        )
+        .expect("UTF-8");
+        assert_eq!(
+            canonical,
+            "{\"artifact\":{\"apk_sha256\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"apk_size_bytes\":9007199254740991,\"apk_url\":\"https://updates.mesmerprism.com/a-b_c.apk\",\"package_name\":\"io.github.mesmerprism.rustykiosk\",\"signer_sha256\":\"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"version_code\":9007199254740991,\"version_name\":\"v-_.1\"},\"channel\":\"alpha\",\"expires_at_ms\":9007199254740991,\"issued_at_ms\":0,\"manifest_id\":\"boundary.9007199254740991\",\"rollout_ring\":\"alpha\",\"schema\":\"rusty.quest.package_update_manifest.v1\",\"sequence\":9007199254740991}"
+        );
+    }
+
+    #[test]
     fn jcs_is_independent_of_envelope_object_order() {
         let mut value: serde_json::Value =
             serde_json::from_slice(&envelope_bytes()).expect("envelope");

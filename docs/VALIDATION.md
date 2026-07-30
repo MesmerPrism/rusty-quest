@@ -39,6 +39,10 @@ gates before any build or headset work:
 cargo test -p rusty-quest-package-updater --locked
 pwsh -NoProfile -ExecutionPolicy Bypass -File `
   .\tools\checks\Test-PackageUpdaterAndroidStatic.ps1 -RepoRoot .
+pwsh -NoProfile -ExecutionPolicy Bypass -File `
+  .\tools\checks\Test-PackageUpdatePublicationContract.ps1
+pwsh -NoProfile -ExecutionPolicy Bypass -File `
+  .\tools\checks\Test-PackageUpdaterBuildArtifactContract.ps1
 ```
 
 The Rust gate covers signature/domain stability, exact policy dimensions,
@@ -50,6 +54,10 @@ cross-language canonical signature vector. Release APK assembly additionally
 checks the alpha package identity, signed/effective channel, normative
 full-tuple rollback schema, cross-channel damage matrix, deterministic
 publication receipt, isolated storage, and absence of release E2E components.
+Publisher self-tests cover interruption, stale/concurrent CAS, downgrade,
+tuple drift, fresh-client assertions, exact 24-hour validity, APK identity,
+and single-signer negatives. Artifact self-tests cover canonical alpha pointer
+URLs and final merged-manifest permission/component/E2E leakage.
 Release APK assembly additionally
 requires all release signing values and an Agent Board reservation for the
 long build. Headset validation must reserve the exact `quest:<serial>`, snapshot

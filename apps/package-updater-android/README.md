@@ -48,7 +48,11 @@ network, storage, package, or installer authority.
 
 ## Signed envelope
 
-The endpoint returns the exact Rust-owned
+The configured endpoint returns a strict
+`rusty.quest.package_update_channel_pointer.v1` binding the closed tuple and
+SHA-256 of an envelope in an immutable `generations/<id>/` directory. The
+client rejects pointer drift and fetches only that exact generation. The
+generation contains the Rust-owned
 `rusty.quest.package_update_manifest_envelope.v1`. Its `signed` member is RFC
 8785/JCS canonicalized and signed with Ed25519 over:
 
@@ -78,15 +82,18 @@ without advancing rollback state. The visible cancel control can abandon a
 stale pending session, and restart reconciliation either confirms an exact
 installed readback or keeps the attended session visibly pending.
 
-One package-specific signed channel is staged per check. A fleet can provision
-several fixed updater channel builds, or a later contract version can define a
-signed index without weakening this one-artifact v1. Every consumer-headset
-package change remains individually visible and attended.
+Alpha is an explicitly same-package policy that updates the existing
+`io.github.mesmerprism.rustykiosk` package in place under continuous APK
+signer identity. Alpha and the installed Kiosk cannot coexist, and there is no
+immediate downgrade. Exit to stable requires a separately accepted stable
+release with a strictly higher Android version code under the same signer.
+Every consumer-headset package change remains individually visible and
+attended.
 
 ## Test-only adb CLI
 
 The `e2e` build type adds a separate
-`io.github.mesmerprism.rustyquest.packageupdater.e2ecli` test package. It
+`io.github.mesmerprism.rustyquest.packageupdater.alpha.e2ecli` test package. It
 contains an exported `ContentProvider` protected by the platform
 `android.permission.DUMP` permission and an exact Binder shell-UID check. The
 provider accepts only `check`, `status`, and `cancel`; callers cannot supply a
@@ -135,9 +142,11 @@ For an exact clean source revision, use
 `tools/Build-PackageUpdaterAndroid.ps1`; it runs the static gate, injects the
 fixed trust/policy inputs and Android signing material through the child
 environment, builds the signed APK, and writes a public build manifest.
-`tools/Publish-PackageUpdateManifest.ps1` stages one exact Kiosk APK, envelope,
-and release receipt under the bounded output root, signs before touching the
-channel, refuses to replace a same-name APK with different bytes, and publishes
-the envelope last. The signing seed is supplied only through
+`tools/Publish-PackageUpdateManifest.ps1` first inspects the exact Kiosk APK
+with caller-pinned Android build tools, then stages an immutable generation
+containing the APK, envelope, and receipt. It requires an explicit absent
+assertion or exact prior pointer/envelope hashes, rejects tuple drift and
+downgrade, and atomically updates `current.json` last. The signing seed is
+supplied only through
 `RUSTY_QUEST_UPDATE_SIGNING_SEED_BASE64URL`. Neither wrapper copies signing
 material into an output directory.

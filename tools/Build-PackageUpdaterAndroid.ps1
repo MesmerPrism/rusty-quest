@@ -3,6 +3,8 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$GradlePath,
     [string]$AndroidHome = $env:ANDROID_HOME,
+    [Parameter(Mandatory = $true)]
+    [string]$AndroidBuildToolsDirectory,
     [string]$JavaHome = $env:JAVA_HOME,
     [Parameter(Mandatory = $true)]
     [string]$ManifestUrl,
@@ -24,10 +26,13 @@ param(
     [string]$KeyAlias,
     [Parameter(Mandatory = $true)]
     [securestring]$KeyPassword,
-    [string]$OutDir = ""
+    [string]$OutDir = "",
+    [string]$InspectE2eApkPath = ""
 )
 
 $ErrorActionPreference = "Stop"
+Set-StrictMode -Version Latest
+. (Join-Path $PSScriptRoot "package_updater\BuildArtifactContract.ps1")
 if ($PSVersionTable.PSEdition -ne "Core" -or
     $PSVersionTable.PSVersion -lt [version]"7.6") {
     throw "Package Updater builds require PowerShell 7.6 Core or newer."
@@ -40,14 +45,20 @@ if ([string]::IsNullOrWhiteSpace($OutDir)) {
 }
 $OutDir = [System.IO.Path]::GetFullPath($OutDir)
 
-foreach ($requiredPath in @($GradlePath, $AndroidHome, $JavaHome, $KeystorePath)) {
+foreach ($requiredPath in @(
+        $GradlePath,
+        $AndroidHome,
+        $AndroidBuildToolsDirectory,
+        $JavaHome,
+        $KeystorePath
+    )) {
     if (-not (Test-Path -LiteralPath $requiredPath)) {
         throw "Required Package Updater build path is missing: $requiredPath"
     }
 }
-if (-not $ManifestUrl.StartsWith("$ExpectedHttpsOrigin/")) {
-    throw "Manifest URL must use the exact expected HTTPS origin."
-}
+Assert-PackageUpdaterManifestUrl `
+    -ManifestUrl $ManifestUrl `
+    -ExpectedHttpsOrigin $ExpectedHttpsOrigin
 if ($TrustedKeyId -notmatch "^[A-Za-z0-9._-]{1,96}$" -or
     $TrustedPublicKeyBase64Url -notmatch "^[A-Za-z0-9_-]{43}$" -or
     $ExpectedPackageName -notmatch "^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$" -or
@@ -136,6 +147,43 @@ $builtApk = Join-Path $projectRoot "app\build\outputs\apk\release\app-release.ap
 if (-not (Test-Path -LiteralPath $builtApk -PathType Leaf)) {
     throw "Package Updater release APK was not produced."
 }
+$aapt2 = Join-Path $AndroidBuildToolsDirectory "aapt2.exe"
+foreach ($tool in @($aapt2)) {
+    if (-not (Test-Path -LiteralPath $tool -PathType Leaf)) {
+        throw "Pinned Android build tool is missing: $tool"
+    }
+}
+$releaseBadging = @(& $aapt2 dump badging $builtApk 2>&1)
+if ($LASTEXITCODE -ne 0) {
+    throw "Pinned aapt2 could not inspect release APK badging."
+}
+$releasePermissions = @(& $aapt2 dump permissions $builtApk 2>&1)
+if ($LASTEXITCODE -ne 0) {
+    throw "Pinned aapt2 could not inspect release APK permissions."
+}
+$releaseManifestTree = @(
+    & $aapt2 dump xmltree --file AndroidManifest.xml $builtApk 2>&1
+)
+if ($LASTEXITCODE -ne 0) {
+    throw "Pinned aapt2 could not inspect the merged release manifest."
+}
+$releaseIdentity = Assert-PackageUpdaterReleaseArtifact `
+    -Badging $releaseBadging `
+    -Permissions $releasePermissions `
+    -ManifestTree $releaseManifestTree
+if (-not [string]::IsNullOrWhiteSpace($InspectE2eApkPath)) {
+    $InspectE2eApkPath = (Resolve-Path -LiteralPath $InspectE2eApkPath).Path
+    $e2eBadging = @(& $aapt2 dump badging $InspectE2eApkPath 2>&1)
+    $e2eManifestTree = @(
+        & $aapt2 dump xmltree --file AndroidManifest.xml $InspectE2eApkPath 2>&1
+    )
+    if ($LASTEXITCODE -ne 0) {
+        throw "Pinned aapt2 could not inspect the E2E APK."
+    }
+    Assert-PackageUpdaterE2eArtifact `
+        -Badging $e2eBadging `
+        -ManifestTree $e2eManifestTree | Out-Null
+}
 $packagedNativeLibrary = Join-Path $projectRoot `
     "app\build\generated\rustJniLibs\arm64-v8a\librusty_quest_package_updater_android.so"
 if (-not (Test-Path -LiteralPath $packagedNativeLibrary -PathType Leaf)) {
@@ -181,9 +229,9 @@ $apkHash = (Get-FileHash -LiteralPath $outputApk -Algorithm SHA256).
 $manifest = [ordered]@{
     schema = "rusty.quest.package_updater_android.build_manifest.v1"
     source_revision = $sourceRevision
-    package_name = "io.github.mesmerprism.rustyquest.packageupdater.alpha"
-    version_code = 1
-    version_name = "0.1.0"
+    package_name = $releaseIdentity.package_name
+    version_code = $releaseIdentity.version_code
+    version_name = $releaseIdentity.version_name
     manifest_url = $ManifestUrl
     trusted_key_id = $TrustedKeyId
     expected_https_origin = $ExpectedHttpsOrigin
@@ -193,6 +241,21 @@ $manifest = [ordered]@{
     native_verifier_sha256 = "sha256:$nativeVerifierHash"
     apk_sha256 = "sha256:$apkHash"
     apk_size_bytes = (Get-Item -LiteralPath $outputApk).Length
+    artifact_inspection = [ordered]@{
+        aapt2_path = $aapt2
+        aapt2_sha256 = "sha256:" + (
+            Get-FileHash -LiteralPath $aapt2 -Algorithm SHA256
+        ).Hash.ToLowerInvariant()
+        release_permissions = @(
+            "android.permission.INTERNET",
+            "android.permission.REQUEST_INSTALL_PACKAGES"
+        )
+        release_components = @(
+            "PackageUpdaterActivity",
+            "PackageInstallCallbackReceiver"
+        )
+        e2e_inspected = -not [string]::IsNullOrWhiteSpace($InspectE2eApkPath)
+    }
 }
 $manifest | ConvertTo-Json -Depth 8 |
     Set-Content -LiteralPath (

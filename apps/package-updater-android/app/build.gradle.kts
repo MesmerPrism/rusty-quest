@@ -1,4 +1,5 @@
 import org.gradle.api.tasks.Exec
+import java.net.URI
 
 plugins {
   id("com.android.application")
@@ -9,7 +10,7 @@ fun buildConfigString(value: String): String =
 
 val updateManifestUrl =
   providers.environmentVariable("RUSTY_QUEST_PACKAGE_UPDATER_MANIFEST_URL")
-    .orElse("https://mesmerprism.com/package-updates/rusty-kiosk/alpha/envelope.json")
+    .orElse("https://mesmerprism.com/package-updates/rusty-kiosk/alpha/current.json")
     .get()
 val trustedKeyId =
   providers.environmentVariable("RUSTY_QUEST_PACKAGE_UPDATER_TRUSTED_KEY_ID")
@@ -37,11 +38,23 @@ val expectedSignerSha256 =
     .get()
 val updateChannel = "alpha"
 
-require(updateManifestUrl.startsWith("https://")) {
-  "RUSTY_QUEST_PACKAGE_UPDATER_MANIFEST_URL must be an HTTPS URL"
-}
 require(expectedHttpsOrigin.matches(Regex("https://[a-z0-9.-]+(?::[1-9][0-9]{0,4})?"))) {
   "RUSTY_QUEST_PACKAGE_UPDATER_EXPECTED_HTTPS_ORIGIN must be a canonical HTTPS origin"
+}
+val parsedManifestUri = URI(updateManifestUrl)
+require(
+  updateManifestUrl ==
+    "$expectedHttpsOrigin/package-updates/rusty-kiosk/alpha/current.json" &&
+    parsedManifestUri.scheme == "https" &&
+    parsedManifestUri.rawUserInfo == null &&
+    parsedManifestUri.rawQuery == null &&
+    parsedManifestUri.rawFragment == null &&
+    parsedManifestUri.rawPath == "/package-updates/rusty-kiosk/alpha/current.json" &&
+    !updateManifestUrl.contains("%") &&
+    !parsedManifestUri.rawPath.contains("..") &&
+    !parsedManifestUri.rawPath.contains("//"),
+) {
+  "RUSTY_QUEST_PACKAGE_UPDATER_MANIFEST_URL must be the exact canonical alpha pointer"
 }
 require(expectedPackageName.matches(Regex("[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+"))) {
   "RUSTY_QUEST_PACKAGE_UPDATER_EXPECTED_PACKAGE_NAME is invalid"

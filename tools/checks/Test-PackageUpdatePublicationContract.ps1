@@ -115,6 +115,28 @@ Assert-Rejected {
 Assert-Rejected {
     Assert-PackageUpdatePointerUnchanged -Initial $prior -Current $null
 } "interrupted pointer removal"
+$interruptionRoot = Join-Path (
+    [System.IO.Path]::GetTempPath()
+) ("package-update-publication-interruption-" + [guid]::NewGuid().ToString("N"))
+try {
+    New-Item -ItemType Directory -Path (
+        Join-Path $interruptionRoot "generations\unreferenced"
+    ) -Force | Out-Null
+    $pointerPath = Join-Path $interruptionRoot "current.json"
+    [System.IO.File]::WriteAllBytes($pointerPath, $pointerBytes)
+    [System.IO.File]::WriteAllText(
+        (Join-Path $interruptionRoot "generations\unreferenced\envelope.json"),
+        "{}"
+    )
+    $afterInterruptedGeneration = Read-PackageUpdatePointer -Path $pointerPath
+    Assert-PackageUpdatePointerUnchanged `
+        -Initial $prior `
+        -Current $afterInterruptedGeneration
+} finally {
+    if (Test-Path -LiteralPath $interruptionRoot) {
+        Remove-Item -LiteralPath $interruptionRoot -Recurse -Force
+    }
+}
 $concurrent = [pscustomobject]@{
     value = $pointerValue
     bytes = [byte[]]($pointerBytes + 10)

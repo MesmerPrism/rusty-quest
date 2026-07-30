@@ -146,7 +146,8 @@ function Assert-PackageUpdatePointerUnchanged {
     }
     if ($null -ne $Initial -and (
             $Initial.sha256 -ne $Current.sha256 -or
-            -not $Initial.bytes.AsSpan().SequenceEqual($Current.bytes))) {
+            [Convert]::ToBase64String([byte[]]$Initial.bytes) -ne
+                [Convert]::ToBase64String([byte[]]$Current.bytes))) {
         throw "Concurrent publication changed the pinned pointer."
     }
 }
@@ -194,4 +195,3 @@ function Assert-PackageUpdateObservedApk {
         throw "Observed APK identity differs from the exact publication inputs."
     }
 }
-

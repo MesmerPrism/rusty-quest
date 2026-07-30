@@ -40,6 +40,26 @@ public final class PackageUpdaterCanonicalVectorTest {
         if (!EXPECTED_JCS.equals(canonical)) {
             throw new AssertionError("Java JCS projection differs from Rust fixed vector");
         }
+        String boundary = UpdateManifestCanonicalizer.canonicalSignedManifest(
+                "boundary.9007199254740991",
+                9007199254740991L,
+                0L,
+                9007199254740991L,
+                "alpha",
+                "alpha",
+                new UpdateArtifact(
+                        "io.github.mesmerprism.rustykiosk",
+                        9007199254740991L,
+                        "v-_.1",
+                        URI.create("https://updates.mesmerprism.com/a-b_c.apk"),
+                        9007199254740991L,
+                        "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                        "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"));
+        String expectedBoundary =
+                "{\"artifact\":{\"apk_sha256\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"apk_size_bytes\":9007199254740991,\"apk_url\":\"https://updates.mesmerprism.com/a-b_c.apk\",\"package_name\":\"io.github.mesmerprism.rustykiosk\",\"signer_sha256\":\"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"version_code\":9007199254740991,\"version_name\":\"v-_.1\"},\"channel\":\"alpha\",\"expires_at_ms\":9007199254740991,\"issued_at_ms\":0,\"manifest_id\":\"boundary.9007199254740991\",\"rollout_ring\":\"alpha\",\"schema\":\"rusty.quest.package_update_manifest.v1\",\"sequence\":9007199254740991}";
+        if (!expectedBoundary.equals(boundary)) {
+            throw new AssertionError("Java JCS maximum-safe-integer vector drifted");
+        }
 
         byte[] rawKey = Base64.getUrlDecoder().decode(PUBLIC_KEY);
         byte[] encodedKey = new byte[ED25519_X509_PREFIX.length + rawKey.length];

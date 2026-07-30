@@ -1,0 +1,108 @@
+Set-StrictMode -Version Latest
+
+function Assert-PackageUpdaterManifestUrl {
+    param([string]$ManifestUrl, [string]$ExpectedHttpsOrigin)
+    if ($ExpectedHttpsOrigin -notmatch
+            "^https://[a-z0-9.-]+(?::[1-9][0-9]{0,4})?$" -or
+        $ManifestUrl -match "%|\\\\|//package-updates|[?#]" -or
+        $ManifestUrl -ne
+            "$ExpectedHttpsOrigin/package-updates/rusty-kiosk/alpha/current.json") {
+        throw "Manifest URL must be the canonical alpha pointer under the exact origin."
+    }
+    try {
+        $uri = [Uri]::new($ManifestUrl, [UriKind]::Absolute)
+    } catch {
+        throw "Manifest URL is not an absolute canonical URI."
+    }
+    if ($uri.Scheme -ne "https" -or
+        -not [string]::IsNullOrEmpty($uri.UserInfo) -or
+        -not [string]::IsNullOrEmpty($uri.Query) -or
+        -not [string]::IsNullOrEmpty($uri.Fragment) -or
+        $uri.AbsolutePath -ne "/package-updates/rusty-kiosk/alpha/current.json" -or
+        $uri.AbsolutePath.Contains("..") -or
+        $uri.AbsolutePath.Contains("//")) {
+        throw "Manifest URL contains an ambiguous or forbidden URI component."
+    }
+}
+
+function ConvertFrom-PackageUpdaterBadging {
+    param([string[]]$Lines)
+    $line = @($Lines | Where-Object { $_ -match "^package: " })
+    if ($line.Count -ne 1 -or $line[0] -notmatch
+            "^package: name='([^']+)' versionCode='([0-9]+)' versionName='([^']+)'") {
+        throw "APK badging does not contain one exact package identity."
+    }
+    [ordered]@{
+        package_name = $Matches[1]
+        version_code = [uint64]$Matches[2]
+        version_name = $Matches[3]
+    }
+}
+
+function Assert-PackageUpdaterReleaseArtifact {
+    param(
+        [string[]]$Badging,
+        [string[]]$Permissions,
+        [string[]]$ManifestTree
+    )
+    $identity = ConvertFrom-PackageUpdaterBadging $Badging
+    if ($identity.package_name -ne
+            "io.github.mesmerprism.rustyquest.packageupdater.alpha" -or
+        $identity.version_code -ne 1 -or
+        $identity.version_name -ne "0.1.0") {
+        throw "Release APK identity is not the exact alpha updater identity."
+    }
+    $permissionNames = @($Permissions | ForEach-Object {
+        if ($_ -match "name='([^']+)'") { $Matches[1] }
+    } | Where-Object { $_ })
+    $expectedPermissions = @(
+        "android.permission.INTERNET",
+        "android.permission.REQUEST_INSTALL_PACKAGES"
+    )
+    if (@(Compare-Object $permissionNames $expectedPermissions -SyncWindow 0).
+            Count -ne 0) {
+        throw "Release APK permission closure differs from the exact allowlist."
+    }
+    $tree = $ManifestTree -join "`n"
+    foreach ($forbidden in @(
+        "E2ePackageUpdaterCliProvider",
+        "E2ePackageUpdateService",
+        "android.app.Service",
+        "foregroundServiceType",
+        "debuggable",
+        "testOnly"
+    )) {
+        if ($tree.Contains($forbidden)) {
+            throw "Release APK contains forbidden debug/E2E surface: $forbidden"
+        }
+    }
+    if ([regex]::Matches($tree, "E: provider ").Count -ne 0 -or
+        [regex]::Matches($tree, "E: service ").Count -ne 0 -or
+        [regex]::Matches($tree, "E: activity").Count -ne 1 -or
+        [regex]::Matches($tree, "E: receiver").Count -ne 1 -or
+        -not $tree.Contains(
+            "io.github.mesmerprism.rustyquest.packageupdater.PackageUpdaterActivity") -or
+        -not $tree.Contains(
+            "io.github.mesmerprism.rustyquest.packageupdater.PackageInstallCallbackReceiver") -or
+        [regex]::Matches($tree, "io\.github\.mesmerprism\.rustykiosk").Count -ne 1 -or
+        $tree -notmatch
+            "(?s)E: activity.*?PackageUpdaterActivity.*?android:exported.*?0xffffffff" -or
+        $tree -notmatch
+            "(?s)E: receiver.*?PackageInstallCallbackReceiver.*?android:exported.*?0x0") {
+        throw "Release APK component/query closure differs from the exact manifest."
+    }
+    $identity
+}
+
+function Assert-PackageUpdaterE2eArtifact {
+    param([string[]]$Badging, [string[]]$ManifestTree)
+    $identity = ConvertFrom-PackageUpdaterBadging $Badging
+    $tree = $ManifestTree -join "`n"
+    if ($identity.package_name -ne
+            "io.github.mesmerprism.rustyquest.packageupdater.alpha.e2ecli" -or
+        -not $tree.Contains("E2ePackageUpdaterCliProvider") -or
+        -not $tree.Contains("E2ePackageUpdateService")) {
+        throw "E2E APK does not retain its distinct test-only identity."
+    }
+    $identity
+}

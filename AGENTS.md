@@ -57,6 +57,10 @@ Ed25519 key id/public key, and HTTPS origin form one closed tuple. Fleet may
 select, authorize, and project only; Quest owns verification, download,
 PackageInstaller lifecycle, readback, rollback, and the effective receipt.
 Release variants must expose no debug or E2E components.
+Publication uses immutable generation directories and one CAS-bound alpha
+pointer updated last. Kiosk remains same-package in-place alpha with continuous
+signer identity, no coexistence or immediate downgrade, and only a
+higher-version same-signer stable exit.
 
 Rusty Quest owns platform profile contracts and write/readback transports. It
 does not own Makepad widget implementation, Matter simulation truth, Optics

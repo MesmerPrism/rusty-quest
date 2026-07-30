@@ -52,6 +52,9 @@ final class InstallReceiptStore {
         receipt.put("staged_apk_path", stagedApk.getAbsolutePath());
         receipt.put("manifest_id", plan.manifestId);
         receipt.put("channel", plan.channel);
+        receipt.put("key_id", plan.keyId);
+        receipt.put("public_key", plan.publicKey);
+        receipt.put("https_origin", plan.httpsOrigin);
         receipt.put("manifest_sequence", plan.sequence);
         receipt.put("manifest_expires_at_ms", plan.expiresAtMs);
         receipt.put("rollout_ring", plan.rolloutRing);

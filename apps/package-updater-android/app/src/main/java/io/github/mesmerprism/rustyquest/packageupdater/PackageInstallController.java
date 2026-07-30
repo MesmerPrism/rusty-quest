@@ -342,17 +342,14 @@ final class PackageInstallController {
     static void commitInstalledCheckpoint(Context context, JSONObject receipt)
             throws Exception {
         new UpdateStateStore(context).commitInstalled(
-                receipt.getString("package_name"),
-                receipt.getString("rollout_ring"),
-                receipt.getLong("manifest_sequence"),
-                receipt.getLong("version_code"),
-                receipt.getString("signed_manifest_sha256"));
+                VerifiedUpdatePlan.fromInstallReceipt(receipt));
     }
 
     private static void cleanupStagedApk(Context context, File candidate)
             throws Exception {
         File stagingRoot = new File(
-                context.getNoBackupFilesDir(), "package-updater/staged").getCanonicalFile();
+                context.getNoBackupFilesDir(),
+                "package-updater/alpha/staged").getCanonicalFile();
         File stagedApk = candidate.getCanonicalFile();
         String rootPrefix = stagingRoot.getPath() + File.separator;
         if (!stagedApk.getPath().startsWith(rootPrefix)) {

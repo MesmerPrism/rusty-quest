@@ -71,6 +71,12 @@ key, and canonical HTTPS origin form one tuple and key rollback state. Fleet
 may select, authorize, and project this packaged tuple only. Quest owns
 verification, download, PackageInstaller, installed readback, rollback
 advancement, and the effective channel-bearing receipt.
+Publication writes immutable generations and changes only the single channel
+pointer last under caller-pinned prior pointer/envelope hashes. The updater
+retains the pointer-bound verified tuple through rollback admission and
+installed commit. Kiosk remains an in-place alpha same-package update with
+continuous signer identity, no coexistence, and no immediate downgrade;
+stable exit requires a higher version code.
 
 `apps/package-updater-android` is a distinct native 2D sidecar. Its only
 permissions are `INTERNET` and `REQUEST_INSTALL_PACKAGES`; its sole exported

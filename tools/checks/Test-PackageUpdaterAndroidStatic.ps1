@@ -26,6 +26,8 @@ $paths = [ordered]@{
     e2e_manifest = Join-Path $appRoot "app\src\e2e\AndroidManifest.xml"
     activity = Join-Path $javaRoot "PackageUpdaterActivity.java"
     pipeline = Join-Path $javaRoot "PackageUpdatePipeline.java"
+    channel_pointer = Join-Path $javaRoot "UpdateChannelPointer.java"
+    verified_plan = Join-Path $javaRoot "VerifiedUpdatePlan.java"
     native_verifier = Join-Path $javaRoot "NativeEd25519Verifier.java"
     verifier_boundary = Join-Path $javaRoot "UpdateEnvelopeVerifier.java"
     verifier = Join-Path $javaRoot "StrictUpdateEnvelopeVerifier.java"
@@ -48,6 +50,10 @@ $paths = [ordered]@{
     build_wrapper = Join-Path $RepoRoot "tools\Build-PackageUpdaterAndroid.ps1"
     publish_wrapper = Join-Path $RepoRoot "tools\Publish-PackageUpdateManifest.ps1"
     e2e_cli_wrapper = Join-Path $RepoRoot "tools\Invoke-PackageUpdaterE2eCli.ps1"
+    publication_contract_test = Join-Path $RepoRoot `
+        "tools\checks\Test-PackageUpdatePublicationContract.ps1"
+    build_artifact_contract_test = Join-Path $RepoRoot `
+        "tools\checks\Test-PackageUpdaterBuildArtifactContract.ps1"
 }
 foreach ($entry in $paths.GetEnumerator()) {
     if (-not (Test-Path -LiteralPath $entry.Value)) {
@@ -73,6 +79,8 @@ $manifestText = Get-Content -Raw -LiteralPath $paths.manifest
 $e2eManifestText = Get-Content -Raw -LiteralPath $paths.e2e_manifest
 $activity = Get-Content -Raw -LiteralPath $paths.activity
 $pipeline = Get-Content -Raw -LiteralPath $paths.pipeline
+$channelPointer = Get-Content -Raw -LiteralPath $paths.channel_pointer
+$verifiedPlan = Get-Content -Raw -LiteralPath $paths.verified_plan
 $nativeVerifier = Get-Content -Raw -LiteralPath $paths.native_verifier
 $verifierBoundary = Get-Content -Raw -LiteralPath $paths.verifier_boundary
 $verifier = Get-Content -Raw -LiteralPath $paths.verifier
@@ -182,7 +190,10 @@ foreach ($token in @(
     'RUSTY_QUEST_PACKAGE_UPDATER_EXPECTED_PACKAGE_NAME',
     'RUSTY_QUEST_PACKAGE_UPDATER_EXPECTED_ROLLOUT_RING',
     'RUSTY_QUEST_PACKAGE_UPDATER_EXPECTED_SIGNER_SHA256',
-    'startsWith\("https://"\)',
+    'package-updates/rusty-kiosk/alpha/current\.json',
+    'parsedManifestUri\.rawUserInfo == null',
+    'parsedManifestUri\.rawQuery == null',
+    'parsedManifestUri\.rawFragment == null',
     'buildConfigField\("String", "UPDATE_MANIFEST_URL"',
     'buildConfigField\(\s*"String",\s*"TRUSTED_PUBLIC_KEY_BASE64"',
     'buildConfigField\(\s*"String",\s*"EXPECTED_HTTPS_ORIGIN"',
@@ -334,6 +345,38 @@ foreach ($networkSource in @($manifestClient, $stager)) {
             "Package Updater HTTPS path is missing bounded transport token: $token"
     }
 }
+foreach ($token in @(
+    'rusty\.quest\.package_update_channel_pointer\.v1',
+    'BuildConfig\.UPDATE_CHANNEL',
+    'BuildConfig\.TRUSTED_KEY_ID',
+    'BuildConfig\.TRUSTED_PUBLIC_KEY_BASE64',
+    'channel_pointer_envelope_hash_mismatch',
+    'channel_pointer_plan_mismatch',
+    '/package-updates/rusty-kiosk/alpha/generations/'
+)) {
+    Assert-Match $channelPointer $token `
+        "Immutable channel pointer verification is missing token: $token"
+}
+foreach ($token in @(
+    'UpdateChannelPointer\.verify\(pointerBytes\)',
+    'pointer\.verifyEnvelopeBytes\(envelopeBytes\)',
+    'pointer\.verifyPlan\(plan\)'
+)) {
+    Assert-Match $pipeline $token `
+        "Fresh-client pointer resolution is missing token: $token"
+}
+foreach ($token in @(
+    'fromInstallReceipt',
+    'install_receipt_tuple_mismatch',
+    'BuildConfig\.EXPECTED_HTTPS_ORIGIN'
+)) {
+    Assert-Match $verifiedPlan $token `
+        "Immutable rollback plan reconstruction is missing token: $token"
+}
+Assert-Match $stateStore 'requireAdvances\(VerifiedUpdatePlan plan\)' `
+    "Rollback admission does not consume the immutable verified plan."
+Assert-Match $stateStore 'commitInstalled\(VerifiedUpdatePlan plan\)' `
+    "Rollback commit does not consume the immutable verified plan."
 Assert-Match $manifestClient 'MAX_RESPONSE_BYTES = 256 \* 1024' `
     "Manifest response bound changed."
 foreach ($token in @(
@@ -549,6 +592,13 @@ foreach ($token in @(
     'native_verifier_sha256',
     '--no-configuration-cache',
     'rusty.quest.package_updater_android.build_manifest.v1',
+    'Assert-PackageUpdaterManifestUrl',
+    'Assert-PackageUpdaterReleaseArtifact',
+    'dump xmltree --file AndroidManifest\.xml',
+    'dump permissions',
+    'InspectE2eApkPath',
+    'Assert-PackageUpdaterE2eArtifact',
+    'artifact_inspection',
     'RUSTY_QUEST_PACKAGE_UPDATER_KEYSTORE_PASSWORD')) {
     Assert-Match $buildWrapper $token `
         "Reproducible Package Updater build wrapper is missing token: $token"
@@ -611,7 +661,9 @@ foreach ($token in @(
     'default public-key value is empty',
     'fails closed',
     'never taken\s+from an Intent',
-    'One package-specific signed channel')) {
+    'same-package',
+    'current\.json',
+    'strictly higher Android version code')) {
     Assert-Match $readme $token "Package Updater guide is missing boundary token: $token"
 }
 
@@ -690,5 +742,16 @@ Assert-Match $appBuild `
     "Release updater package is not alpha-isolated."
 Assert-Match $publishWrapper 'package_update_publication_receipt\.v2' `
     "Publication output is not the deterministic receipt contract."
+
+& pwsh -NoProfile -ExecutionPolicy Bypass -File `
+    $paths.publication_contract_test
+if ($LASTEXITCODE -ne 0) {
+    throw "Package update publication contract self-test failed."
+}
+& pwsh -NoProfile -ExecutionPolicy Bypass -File `
+    $paths.build_artifact_contract_test
+if ($LASTEXITCODE -ne 0) {
+    throw "Package updater build artifact contract self-test failed."
+}
 
 Write-Output "Rusty Quest Package Updater Android static validation passed"

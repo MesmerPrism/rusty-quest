@@ -123,6 +123,10 @@ channel/package/ring/APK-signer/manifest-key/origin tuple. Fleet may
 select/authorize/project this packaged tuple but supplies no verifier policy.
 The normative state contract is
 `schemas/rusty.quest.package_update_rollback_state.v1.schema.json`.
+The Kiosk policy is explicitly same-package, in-place alpha under continuous
+APK signer identity: alpha cannot coexist with the installed Kiosk and has no
+immediate downgrade. Stable exit requires a strictly higher Android version
+code under the same signer.
 
 `crates/rusty-quest-media-stream` provides the generic receiver-first platform
 runtime described in [Generic Media Stream Runtime](docs/MEDIA_STREAM_RUNTIME.md).

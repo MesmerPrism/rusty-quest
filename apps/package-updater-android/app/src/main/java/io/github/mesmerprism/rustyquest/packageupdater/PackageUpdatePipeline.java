@@ -55,9 +55,13 @@ final class PackageUpdatePipeline {
         }
         requireNotCancelled(cancellation);
         progress.update("fetching_manifest", null, 0L, -1L);
-        URI manifestUri = UpdateManifestClient.requireFixedHttpsUri(
+        URI pointerUri = UpdateManifestClient.requireFixedHttpsUri(
                 URI.create(BuildConfig.UPDATE_MANIFEST_URL));
-        byte[] envelopeBytes = new UpdateManifestClient().fetch(manifestUri);
+        UpdateManifestClient manifestClient = new UpdateManifestClient();
+        byte[] pointerBytes = manifestClient.fetch(pointerUri);
+        UpdateChannelPointer pointer = UpdateChannelPointer.verify(pointerBytes);
+        byte[] envelopeBytes = manifestClient.fetch(pointer.envelopeUri);
+        pointer.verifyEnvelopeBytes(envelopeBytes);
 
         requireNotCancelled(cancellation);
         progress.update("verifying_manifest", null, 0L, -1L);
@@ -89,6 +93,7 @@ final class PackageUpdatePipeline {
                 new UpdateStateStore(context));
         VerifiedUpdatePlan plan =
                 verifier.verify(envelopeBytes, System.currentTimeMillis());
+        pointer.verifyPlan(plan);
         UpdateArtifact artifact = plan.artifact;
 
         requireNotCancelled(cancellation);

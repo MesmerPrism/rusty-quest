@@ -194,21 +194,22 @@ final class StrictUpdateEnvelopeVerifier implements UpdateEnvelopeVerifier {
             verifySignature(canonicalSigned, signatureBytes);
 
             String signedManifestSha256 = sha256Identity(canonicalSigned);
-            stateStore.requireAdvances(
-                    packageName,
-                    rolloutRing,
-                    sequence,
-                    versionCode);
-            return new VerifiedUpdatePlan(
+            VerifiedUpdatePlan plan = new VerifiedUpdatePlan(
                     manifestId,
                     channel,
                     sequence,
                     issuedAtMs,
                     expiresAtMs,
                     rolloutRing,
+                    signerSha256,
+                    trustedKeyId,
+                    trustedPublicKeyBase64Url,
+                    expectedHttpsOrigin,
                     sha256Identity(envelopeBytes),
                     signedManifestSha256,
                     artifact);
+            stateStore.requireAdvances(plan);
+            return plan;
         } catch (VerificationException exception) {
             throw exception;
         } catch (Exception exception) {
