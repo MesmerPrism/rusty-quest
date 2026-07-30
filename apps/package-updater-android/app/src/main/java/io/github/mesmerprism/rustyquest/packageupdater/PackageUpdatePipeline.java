@@ -75,6 +75,7 @@ final class PackageUpdatePipeline {
         UpdateEnvelopeVerifier verifier = new StrictUpdateEnvelopeVerifier(
                 BuildConfig.TRUSTED_KEY_ID,
                 BuildConfig.TRUSTED_PUBLIC_KEY_BASE64,
+                BuildConfig.UPDATE_CHANNEL,
                 BuildConfig.EXPECTED_HTTPS_ORIGIN,
                 BuildConfig.EXPECTED_PACKAGE_NAME,
                 BuildConfig.EXPECTED_ROLLOUT_RING,

@@ -63,6 +63,15 @@ payload after the exact `rusty.quest.package_update_manifest.v1\0` domain.
 Release-key identifiers are caller-selected only from a closed registry, and
 one public key cannot be aliased under multiple identifiers.
 
+Alpha is a channel-isolated release product with Android package
+`io.github.mesmerprism.rustyquest.packageupdater.alpha`, its own manifest
+endpoint, and alpha-scoped staging, rollback, and receipt namespaces. The
+signed channel, target package, rollout ring, APK signer, Ed25519 key id/public
+key, and canonical HTTPS origin form one tuple and key rollback state. Fleet
+may select, authorize, and project this packaged tuple only. Quest owns
+verification, download, PackageInstaller, installed readback, rollback
+advancement, and the effective channel-bearing receipt.
+
 `apps/package-updater-android` is a distinct native 2D sidecar. Its only
 permissions are `INTERNET` and `REQUEST_INSTALL_PACKAGES`; its sole exported
 component is the visible launcher Activity. Compile-time policy fixes the

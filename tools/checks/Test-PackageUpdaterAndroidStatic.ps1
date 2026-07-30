@@ -97,7 +97,7 @@ $e2eCliWrapper = Get-Content -Raw -LiteralPath $paths.e2e_cli_wrapper
 [xml]$manifest = $manifestText
 $androidNamespace = "http://schemas.android.com/apk/res/android"
 $packageName = [string]$manifest.manifest.package
-if ($packageName -ne "io.github.mesmerprism.rustyquest.packageupdater") {
+if ($packageName -ne "io.github.mesmerprism.rustyquest.packageupdater.alpha") {
     throw "Package Updater manifest package identity changed: $packageName"
 }
 
@@ -170,7 +170,7 @@ Assert-Match $settings 'rootProject\.name = "RustyQuestPackageUpdater"' `
 Assert-Match $rootBuild 'com\.android\.application.*8\.11\.1' `
     "Package Updater must use the repository Android Gradle Plugin baseline."
 foreach ($token in @(
-    'applicationId = "io.github.mesmerprism.rustyquest.packageupdater"',
+    'applicationId = "io.github.mesmerprism.rustyquest.packageupdater.alpha"',
     'compileSdk = 34',
     'minSdk = 34',
     'targetSdk = 34',
@@ -338,7 +338,7 @@ Assert-Match $manifestClient 'MAX_RESPONSE_BYTES = 256 \* 1024' `
     "Manifest response bound changed."
 foreach ($token in @(
     'getNoBackupFilesDir',
-    'package-updater/staged',
+    'package-updater/alpha/staged',
     'apk_download_exceeded_signed_size',
     'apk_download_size_mismatch',
     'apk_sha256_mismatch',
@@ -565,7 +565,7 @@ foreach ($token in @(
     'Refusing to replace a published APK with different bytes',
     '\[System\.IO\.File\]::Move\(',
     '\$publishedEnvelopePath',
-    'rusty.quest.package_update_publication.v1',
+    'rusty.quest.package_update_publication_receipt.v1',
     'envelope.json')) {
     Assert-Match $publishWrapper $token `
         "Signed Package Updater publication wrapper is missing token: $token"
@@ -646,5 +646,43 @@ try {
         [System.IO.Directory]::Delete($temporaryRoot, $true)
     }
 }
+
+$rollbackSchemaPath = Join-Path $RepoRoot `
+    "schemas\rusty.quest.package_update_rollback_state.v1.schema.json"
+$isolationFixturePath = Join-Path $RepoRoot `
+    "fixtures\package-updater\channel-isolation-cases.json"
+foreach ($requiredPath in @($rollbackSchemaPath, $isolationFixturePath)) {
+    if (-not (Test-Path -LiteralPath $requiredPath -PathType Leaf)) {
+        throw "Package Updater channel-isolation contract is missing: $requiredPath"
+    }
+}
+$rollbackSchema = Get-Content -Raw -LiteralPath $rollbackSchemaPath
+$isolationFixture = Get-Content -Raw -LiteralPath $isolationFixturePath
+foreach ($token in @(
+    '"channel"',
+    '"signer_sha256"',
+    '"key_id"',
+    '"public_key"',
+    '"https_origin"'
+)) {
+    Assert-Match $rollbackSchema ([regex]::Escape($token)) `
+        "Normative rollback schema is missing full-tuple field: $token"
+}
+foreach ($code in @(
+    "channel_mismatch",
+    "package_policy_mismatch",
+    "signer_policy_mismatch",
+    "key_id_mismatch",
+    "public_key_mismatch",
+    "origin_mismatch"
+)) {
+    Assert-Match $isolationFixture ([regex]::Escape($code)) `
+        "Channel-isolation fixture is missing rejection: $code"
+}
+Assert-Match $appBuild `
+    'applicationId = "io\.github\.mesmerprism\.rustyquest\.packageupdater\.alpha"' `
+    "Release updater package is not alpha-isolated."
+Assert-Match $publishWrapper 'package_update_publication_receipt\.v1' `
+    "Publication output is not the deterministic receipt contract."
 
 Write-Output "Rusty Quest Package Updater Android static validation passed"

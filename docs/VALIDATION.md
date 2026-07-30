@@ -47,6 +47,10 @@ damaged manifests, deterministic receipts, and post-install-only rollback
 advance. The Android gate closes permissions and exported components, verifies
 the fixed-input/network/archive/Package Installer path, and compiles the
 cross-language canonical signature vector. Release APK assembly additionally
+checks the alpha package identity, signed/effective channel, normative
+full-tuple rollback schema, cross-channel damage matrix, deterministic
+publication receipt, isolated storage, and absence of release E2E components.
+Release APK assembly additionally
 requires all release signing values and an Agent Board reservation for the
 long build. Headset validation must reserve the exact `quest:<serial>`, snapshot
 the target package and unknown-source/accessibility state, exercise one wearer-

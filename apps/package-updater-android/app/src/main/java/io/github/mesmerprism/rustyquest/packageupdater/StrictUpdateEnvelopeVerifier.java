@@ -25,6 +25,7 @@ final class StrictUpdateEnvelopeVerifier implements UpdateEnvelopeVerifier {
     private static final long MAX_JCS_SAFE_INTEGER = 9_007_199_254_740_991L;
 
     private final String trustedKeyId;
+    private final String expectedChannel;
     private final String trustedPublicKeyBase64Url;
     private final String expectedHttpsOrigin;
     private final String expectedPackageName;
@@ -41,6 +42,7 @@ final class StrictUpdateEnvelopeVerifier implements UpdateEnvelopeVerifier {
     StrictUpdateEnvelopeVerifier(
             String trustedKeyId,
             String trustedPublicKeyBase64Url,
+            String expectedChannel,
             String expectedHttpsOrigin,
             String expectedPackageName,
             String expectedRolloutRing,
@@ -53,6 +55,7 @@ final class StrictUpdateEnvelopeVerifier implements UpdateEnvelopeVerifier {
             long maximumFutureIssueSkewMs,
             UpdateStateStore stateStore) {
         this.trustedKeyId = trustedKeyId;
+        this.expectedChannel = expectedChannel;
         this.trustedPublicKeyBase64Url = trustedPublicKeyBase64Url;
         this.expectedHttpsOrigin = expectedHttpsOrigin;
         this.expectedPackageName = expectedPackageName;
@@ -102,13 +105,17 @@ final class StrictUpdateEnvelopeVerifier implements UpdateEnvelopeVerifier {
                             "sequence",
                             "issued_at_ms",
                             "expires_at_ms",
+                            "channel",
                             "rollout_ring",
                             "artifact"),
                     "signed_manifest");
             requireEquals(MANIFEST_SCHEMA, signed.getString("schema"), "manifest_schema");
             String manifestId = signed.getString("manifest_id");
+            String channel = signed.getString("channel");
             String rolloutRing = signed.getString("rollout_ring");
             requireToken(manifestId, 1, 128, "manifest_id");
+            requireToken(channel, 1, 32, "channel");
+            requireEquals(expectedChannel, channel, "channel");
             requireToken(rolloutRing, 1, 32, "rollout_ring");
             requireEquals(expectedRolloutRing, rolloutRing, "rollout_ring");
 
@@ -176,6 +183,7 @@ final class StrictUpdateEnvelopeVerifier implements UpdateEnvelopeVerifier {
                     sequence,
                     issuedAtMs,
                     expiresAtMs,
+                    channel,
                     rolloutRing,
                     artifact).getBytes(StandardCharsets.UTF_8);
             byte[] signatureBytes = decodeCanonicalBase64Url(
@@ -193,6 +201,7 @@ final class StrictUpdateEnvelopeVerifier implements UpdateEnvelopeVerifier {
                     versionCode);
             return new VerifiedUpdatePlan(
                     manifestId,
+                    channel,
                     sequence,
                     issuedAtMs,
                     expiresAtMs,
@@ -220,6 +229,7 @@ final class StrictUpdateEnvelopeVerifier implements UpdateEnvelopeVerifier {
         }
         requireSha256Identity(expectedSignerSha256, "expected_signer_sha256");
         if (expectedPackageName == null
+                || expectedChannel == null
                 || expectedRolloutRing == null
                 || installedVersionCode < 0L
                 || installedVersionCode > MAX_JCS_SAFE_INTEGER
@@ -235,6 +245,7 @@ final class StrictUpdateEnvelopeVerifier implements UpdateEnvelopeVerifier {
             throw new VerificationException("update_policy_not_configured");
         }
         requirePackageName(expectedPackageName);
+        requireToken(expectedChannel, 1, 32, "expected_channel");
         requireToken(expectedRolloutRing, 1, 32, "expected_rollout_ring");
         requireCanonicalOrigin(expectedHttpsOrigin);
     }

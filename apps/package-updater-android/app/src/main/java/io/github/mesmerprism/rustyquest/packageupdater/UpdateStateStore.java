@@ -22,7 +22,8 @@ final class UpdateStateStore {
     private final AtomicFile stateFile;
 
     UpdateStateStore(Context context) {
-        File directory = new File(context.getNoBackupFilesDir(), "package-updater");
+        File directory = new File(
+                context.getNoBackupFilesDir(), "package-updater/alpha/rollback");
         if (!directory.exists() && !directory.mkdirs()) {
             throw new IllegalStateException("could_not_create_private_state_directory");
         }
@@ -34,7 +35,8 @@ final class UpdateStateStore {
             throws UpdateEnvelopeVerifier.VerificationException {
         for (Checkpoint checkpoint : read()) {
             if (checkpoint.packageName.equals(packageName)
-                    && checkpoint.rolloutRing.equals(rolloutRing)) {
+                    && checkpoint.rolloutRing.equals(rolloutRing)
+                    && checkpoint.matchesClosedTuple()) {
                 if (sequence <= checkpoint.sequence) {
                     throw new UpdateEnvelopeVerifier.VerificationException(
                             "sequence_rollback");
@@ -58,6 +60,7 @@ final class UpdateStateStore {
         for (Checkpoint checkpoint : checkpoints) {
             if (checkpoint.packageName.equals(packageName)
                     && checkpoint.rolloutRing.equals(rolloutRing)
+                    && checkpoint.matchesClosedTuple()
                     && checkpoint.sequence == sequence
                     && checkpoint.versionCode == versionCode
                     && checkpoint.signedManifestSha256.equals(signedManifestSha256)) {
@@ -67,23 +70,34 @@ final class UpdateStateStore {
         requireAdvances(packageName, rolloutRing, sequence, versionCode);
         checkpoints.removeIf(
                 checkpoint -> checkpoint.packageName.equals(packageName)
-                        && checkpoint.rolloutRing.equals(rolloutRing));
+                        && checkpoint.rolloutRing.equals(rolloutRing)
+                        && checkpoint.matchesClosedTuple());
         checkpoints.add(new Checkpoint(
+                BuildConfig.UPDATE_CHANNEL,
                 packageName,
                 rolloutRing,
+                BuildConfig.EXPECTED_SIGNER_SHA256,
+                BuildConfig.TRUSTED_KEY_ID,
+                BuildConfig.TRUSTED_PUBLIC_KEY_BASE64,
+                BuildConfig.EXPECTED_HTTPS_ORIGIN,
                 sequence,
                 versionCode,
                 signedManifestSha256));
         checkpoints.sort(Comparator.comparing(
-                checkpoint -> checkpoint.packageName + "\0" + checkpoint.rolloutRing));
+                checkpoint -> checkpoint.tupleKey()));
 
         JSONObject state = new JSONObject();
         state.put("schema", STATE_SCHEMA);
         JSONArray values = new JSONArray();
         for (Checkpoint checkpoint : checkpoints) {
             JSONObject value = new JSONObject();
+            value.put("channel", checkpoint.channel);
             value.put("package_name", checkpoint.packageName);
             value.put("rollout_ring", checkpoint.rolloutRing);
+            value.put("signer_sha256", checkpoint.signerSha256);
+            value.put("key_id", checkpoint.keyId);
+            value.put("public_key", checkpoint.publicKey);
+            value.put("https_origin", checkpoint.httpsOrigin);
             value.put("sequence", checkpoint.sequence);
             value.put("version_code", checkpoint.versionCode);
             value.put("signed_manifest_sha256", checkpoint.signedManifestSha256);
@@ -116,20 +130,31 @@ final class UpdateStateStore {
             String priorKey = null;
             for (int index = 0; index < values.length(); index++) {
                 JSONObject value = values.getJSONObject(index);
-                if (value.length() != 5) {
+                if (value.length() != 10) {
                     throw new UpdateEnvelopeVerifier.VerificationException(
                             "invalid_rollback_checkpoint");
                 }
                 Checkpoint checkpoint = new Checkpoint(
+                        value.getString("channel"),
                         value.getString("package_name"),
                         value.getString("rollout_ring"),
+                        value.getString("signer_sha256"),
+                        value.getString("key_id"),
+                        value.getString("public_key"),
+                        value.getString("https_origin"),
                         value.getLong("sequence"),
                         value.getLong("version_code"),
                         value.getString("signed_manifest_sha256"));
-                String key = checkpoint.packageName + "\0" + checkpoint.rolloutRing;
-                if (!checkpoint.packageName
+                String key = checkpoint.tupleKey();
+                if (!checkpoint.channel.matches("[A-Za-z0-9._-]{1,32}")
+                        || !checkpoint.packageName
                                 .matches("[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+")
                         || !checkpoint.rolloutRing.matches("[A-Za-z0-9._-]{1,32}")
+                        || !checkpoint.signerSha256.matches("sha256:[0-9a-f]{64}")
+                        || !checkpoint.keyId.matches("[A-Za-z0-9._-]{1,96}")
+                        || !checkpoint.publicKey.matches("[A-Za-z0-9_-]{43}")
+                        || !checkpoint.httpsOrigin
+                                .matches("https://[a-z0-9.-]+(?::[1-9][0-9]{0,4})?")
                         || checkpoint.sequence <= 0L
                         || checkpoint.sequence > MAX_JCS_SAFE_INTEGER
                         || checkpoint.versionCode <= 0L
@@ -169,23 +194,52 @@ final class UpdateStateStore {
     }
 
     private static final class Checkpoint {
+        final String channel;
         final String packageName;
         final String rolloutRing;
+        final String signerSha256;
+        final String keyId;
+        final String publicKey;
+        final String httpsOrigin;
         final long sequence;
         final long versionCode;
         final String signedManifestSha256;
 
         Checkpoint(
+                String channel,
                 String packageName,
                 String rolloutRing,
+                String signerSha256,
+                String keyId,
+                String publicKey,
+                String httpsOrigin,
                 long sequence,
                 long versionCode,
                 String signedManifestSha256) {
+            this.channel = channel;
             this.packageName = packageName;
             this.rolloutRing = rolloutRing;
+            this.signerSha256 = signerSha256;
+            this.keyId = keyId;
+            this.publicKey = publicKey;
+            this.httpsOrigin = httpsOrigin;
             this.sequence = sequence;
             this.versionCode = versionCode;
             this.signedManifestSha256 = signedManifestSha256;
+        }
+
+        boolean matchesClosedTuple() {
+            return channel.equals(BuildConfig.UPDATE_CHANNEL)
+                    && signerSha256.equals(BuildConfig.EXPECTED_SIGNER_SHA256)
+                    && keyId.equals(BuildConfig.TRUSTED_KEY_ID)
+                    && publicKey.equals(BuildConfig.TRUSTED_PUBLIC_KEY_BASE64)
+                    && httpsOrigin.equals(BuildConfig.EXPECTED_HTTPS_ORIGIN);
+        }
+
+        String tupleKey() {
+            return channel + "\0" + packageName + "\0" + rolloutRing + "\0"
+                    + signerSha256 + "\0" + keyId + "\0" + publicKey + "\0"
+                    + httpsOrigin;
         }
     }
 }

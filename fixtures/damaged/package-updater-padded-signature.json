@@ -11,6 +11,7 @@
       "sequence": 41,
       "issued_at_ms": 1999999900000,
       "expires_at_ms": 2000000500000,
+      "channel": "alpha",
       "rollout_ring": "alpha",
       "artifact": {
         "package_name": "io.github.mesmerprism.rustykiosk",

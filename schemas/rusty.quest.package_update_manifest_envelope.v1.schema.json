@@ -38,6 +38,7 @@
         "sequence",
         "issued_at_ms",
         "expires_at_ms",
+        "channel",
         "rollout_ring",
         "artifact"
       ],
@@ -63,6 +64,10 @@
           "type": "integer",
           "minimum": 1,
           "maximum": 9007199254740991
+        },
+        "channel": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9._-]{1,32}$"
         },
         "rollout_ring": {
           "type": "string",

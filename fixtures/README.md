@@ -1,5 +1,8 @@
 # Rusty Quest Fixtures
 
+- `package-updater/`: synthetic signed alpha manifests, deterministic receipts,
+  normative full-tuple rollback state, and the cross-channel/wrong package,
+  signer, key, and origin isolation matrix. No production key is present.
 - `fleet-agent/`: source-only profiles and cross-repository signing evidence
   for the permission-minimal Rusty Fleet check-in producer. The disabled
   profile proves opt-in activation, while the golden claims fixture is pinned

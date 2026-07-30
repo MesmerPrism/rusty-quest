@@ -16,7 +16,7 @@ import java.nio.charset.StandardCharsets;
 final class InstallReceiptStore {
     static final String SCHEMA = "rusty.quest.package_update.install_receipt.v1";
     static final String CALLBACK_ACTION =
-            "io.github.mesmerprism.rustyquest.packageupdater.INSTALL_STATUS";
+            "io.github.mesmerprism.rustyquest.packageupdater.alpha.INSTALL_STATUS";
     static final String CALLBACK_SCHEME = "rusty-package-updater";
     static final String CALLBACK_AUTHORITY = "install";
     private static final int MAX_RECEIPT_BYTES = 32 * 1024;
@@ -24,7 +24,8 @@ final class InstallReceiptStore {
     private final AtomicFile receiptFile;
 
     InstallReceiptStore(Context context) {
-        File directory = new File(context.getNoBackupFilesDir(), "package-updater");
+        File directory = new File(
+                context.getNoBackupFilesDir(), "package-updater/alpha/receipts");
         if (!directory.exists() && !directory.mkdirs()) {
             throw new IllegalStateException("could_not_create_private_receipt_directory");
         }
@@ -50,6 +51,7 @@ final class InstallReceiptStore {
         receipt.put("signer_sha256", artifact.signerSha256);
         receipt.put("staged_apk_path", stagedApk.getAbsolutePath());
         receipt.put("manifest_id", plan.manifestId);
+        receipt.put("channel", plan.channel);
         receipt.put("manifest_sequence", plan.sequence);
         receipt.put("manifest_expires_at_ms", plan.expiresAtMs);
         receipt.put("rollout_ring", plan.rolloutRing);

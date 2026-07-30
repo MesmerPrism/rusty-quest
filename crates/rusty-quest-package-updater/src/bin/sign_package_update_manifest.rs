@@ -18,6 +18,7 @@ const SEED_ENV: &str = "RUSTY_QUEST_UPDATE_SIGNING_SEED_BASE64URL";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct SignerArgs {
+    channel: String,
     key_id: String,
     expected_public_key: String,
     package_name: String,
@@ -87,6 +88,7 @@ fn build_and_self_verify(args: &SignerArgs, seed: &[u8; 32]) -> Result<Vec<u8>, 
         sequence: args.sequence,
         issued_at_ms: args.issued_at_ms,
         expires_at_ms: args.expires_at_ms,
+        channel: args.channel.clone(),
         rollout_ring: args.rollout_ring.clone(),
         artifact: PackageUpdateArtifact {
             package_name: args.package_name.clone(),
@@ -122,10 +124,13 @@ fn build_and_self_verify(args: &SignerArgs, seed: &[u8; 32]) -> Result<Vec<u8>, 
     }])
     .map_err(|error| error.to_string())?;
     let policy = PackageUpdatePolicy {
+        expected_channel: args.channel.clone(),
         expected_https_origin: args.expected_https_origin.clone(),
         expected_package_name: args.package_name.clone(),
         expected_rollout_ring: args.rollout_ring.clone(),
         expected_signer_sha256: args.signer_sha256.clone(),
+        expected_key_id: args.key_id.clone(),
+        expected_public_key: args.expected_public_key.clone(),
         installed_version_code,
         minimum_target_version_code: args.version_code,
         maximum_target_version_code: args.version_code,
@@ -174,6 +179,7 @@ fn parse_args(arguments: Vec<String>) -> Result<SignerArgs, String> {
     }
 
     Ok(SignerArgs {
+        channel: required(&values, "--channel")?,
         key_id: required(&values, "--key-id")?,
         expected_public_key: required(&values, "--expected-public-key")?,
         package_name: required(&values, "--package")?,
@@ -211,6 +217,7 @@ fn print_usage() {
     println!(
         "\
 sign_package_update_manifest
+  --channel <closed-channel>
 
 The signing seed is read only from {SEED_ENV} as canonical unpadded base64url.
 
@@ -238,6 +245,7 @@ Use --out - for stdout. The seed is never emitted."
 
 const KNOWN_OPTIONS: &[&str] = &[
     "--key-id",
+    "--channel",
     "--expected-public-key",
     "--manifest-id",
     "--package",
@@ -261,6 +269,8 @@ mod tests {
 
     fn arguments() -> Vec<String> {
         [
+            "--channel",
+            "alpha",
             "--key-id",
             "release-test-2026-a",
             "--expected-public-key",
@@ -325,7 +335,7 @@ mod tests {
     #[test]
     fn parser_rejects_missing_duplicate_unknown_and_nonnumeric_options() {
         let mut missing = arguments();
-        missing.drain(0..2);
+        missing.drain(2..4);
         assert!(parse_args(missing)
             .expect_err("missing key id")
             .contains("--key-id"));

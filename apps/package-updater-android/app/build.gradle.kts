@@ -35,6 +35,7 @@ val expectedSignerSha256 =
   providers.environmentVariable("RUSTY_QUEST_PACKAGE_UPDATER_EXPECTED_SIGNER_SHA256")
     .orElse("unconfigured")
     .get()
+val updateChannel = "alpha"
 
 require(updateManifestUrl.startsWith("https://")) {
   "RUSTY_QUEST_PACKAGE_UPDATER_MANIFEST_URL must be an HTTPS URL"
@@ -164,7 +165,7 @@ android {
   compileSdk = 34
 
   defaultConfig {
-    applicationId = "io.github.mesmerprism.rustyquest.packageupdater"
+    applicationId = "io.github.mesmerprism.rustyquest.packageupdater.alpha"
     minSdk = 34
     targetSdk = 34
     versionCode = 1
@@ -174,6 +175,7 @@ android {
     }
 
     buildConfigField("String", "UPDATE_MANIFEST_URL", buildConfigString(updateManifestUrl))
+    buildConfigField("String", "UPDATE_CHANNEL", buildConfigString(updateChannel))
     buildConfigField("String", "TRUSTED_KEY_ID", buildConfigString(trustedKeyId))
     buildConfigField(
       "String",

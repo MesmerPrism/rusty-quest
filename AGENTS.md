@@ -50,6 +50,14 @@ processes must resolve the explicit `pwsh` host.
 
 ## Purpose
 
+The package updater release product is the alpha-only
+`io.github.mesmerprism.rustyquest.packageupdater.alpha`. Its signed manifest,
+rollback state, endpoint, storage, receipts, target package, APK signer,
+Ed25519 key id/public key, and HTTPS origin form one closed tuple. Fleet may
+select, authorize, and project only; Quest owns verification, download,
+PackageInstaller lifecycle, readback, rollback, and the effective receipt.
+Release variants must expose no debug or E2E components.
+
 Rusty Quest owns platform profile contracts and write/readback transports. It
 does not own Makepad widget implementation, Matter simulation truth, Optics
 appearance truth, Manifold command authority, or Lattice relation contracts.

@@ -23,6 +23,7 @@ final class UpdateManifestCanonicalizer {
             long sequence,
             long issuedAtMs,
             long expiresAtMs,
+            String channel,
             String rolloutRing,
             UpdateArtifact artifact) {
         return "{\"artifact\":{\"apk_sha256\":" + quote(artifact.apkSha256)
@@ -32,7 +33,8 @@ final class UpdateManifestCanonicalizer {
                 + ",\"signer_sha256\":" + quote(artifact.signerSha256)
                 + ",\"version_code\":" + artifact.versionCode
                 + ",\"version_name\":" + quote(artifact.versionName)
-                + "},\"expires_at_ms\":" + expiresAtMs
+                + "},\"channel\":" + quote(channel)
+                + ",\"expires_at_ms\":" + expiresAtMs
                 + ",\"issued_at_ms\":" + issuedAtMs
                 + ",\"manifest_id\":" + quote(manifestId)
                 + ",\"rollout_ring\":" + quote(rolloutRing)

@@ -13,6 +13,8 @@ param(
     [string]$TrustedPublicKeyBase64Url,
     [string]$PackageName = "io.github.mesmerprism.rustykiosk",
     [string]$RolloutRing = "alpha",
+    [ValidateSet("alpha")]
+    [string]$Channel = "alpha",
     [Parameter(Mandatory = $true)]
     [string]$SignerSha256,
     [Parameter(Mandatory = $true)]
@@ -102,6 +104,7 @@ try {
         --bin sign_package_update_manifest `
         -- `
         --key-id $KeyId `
+        --channel $Channel `
         --expected-public-key $TrustedPublicKeyBase64Url `
         --manifest-id $ManifestId `
         --package $PackageName `
@@ -123,8 +126,15 @@ try {
 
     $sourceRevision = (& git -C $repoRoot rev-parse HEAD).Trim()
     $release = [ordered]@{
-        schema = "rusty.quest.package_update_publication.v1"
+        schema = "rusty.quest.package_update_publication_receipt.v1"
         source_revision = $sourceRevision
+        channel = $Channel
+        package_name = $PackageName
+        rollout_ring = $RolloutRing
+        signer_sha256 = $SignerSha256
+        key_id = $KeyId
+        public_key = $TrustedPublicKeyBase64Url
+        https_origin = $HttpsOrigin
         manifest_id = $ManifestId
         manifest_url = "$HttpsOrigin/$ChannelPath/envelope.json"
         apk_url = $apkUrl

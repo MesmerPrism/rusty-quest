@@ -58,6 +58,8 @@ pub struct PackageUpdateManifest {
     pub issued_at_ms: u64,
     /// Manifest expiry time in Unix milliseconds.
     pub expires_at_ms: u64,
+    /// Exact closed release channel.
+    pub channel: String,
     /// Exact rollout ring selected by policy.
     pub rollout_ring: String,
     /// The sole APK artifact.
@@ -159,6 +161,8 @@ impl ReleaseKeyRegistry {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct PackageUpdatePolicy {
+    /// Exact closed release channel packaged into the updater.
+    pub expected_channel: String,
     /// Canonical HTTPS origin, without path, query, fragment, or userinfo.
     pub expected_https_origin: String,
     /// Exact package identity this policy may update.
@@ -167,6 +171,10 @@ pub struct PackageUpdatePolicy {
     pub expected_rollout_ring: String,
     /// Exact allowed signing-certificate SHA-256.
     pub expected_signer_sha256: String,
+    /// Exact manifest verification key id packaged into the updater.
+    pub expected_key_id: String,
+    /// Exact canonical public key packaged into the updater.
+    pub expected_public_key: String,
     /// Current installed version; candidates must be strictly newer.
     pub installed_version_code: u64,
     /// Smallest target version admitted by this policy.
@@ -184,9 +192,18 @@ pub struct PackageUpdatePolicy {
 impl PackageUpdatePolicy {
     fn validate(&self) -> Result<(), PackageUpdateError> {
         validate_https_origin(&self.expected_https_origin)?;
+        validate_token("channel", &self.expected_channel, 1, 32)?;
         validate_package_name(&self.expected_package_name)?;
         validate_token("rollout_ring", &self.expected_rollout_ring, 1, 32)?;
         validate_sha256_identity(&self.expected_signer_sha256)?;
+        validate_token("key_id", &self.expected_key_id, 1, 96)?;
+        let public_key = decode_base64url_canonical(&self.expected_public_key)?;
+        if public_key.len() != 32 {
+            return Err(PackageUpdateError::new(
+                "invalid_release_key",
+                "policy release public key must contain exactly 32 bytes",
+            ));
+        }
         if self.minimum_target_version_code == 0
             || self.minimum_target_version_code > self.maximum_target_version_code
             || self.maximum_apk_size_bytes == 0
@@ -215,10 +232,20 @@ impl PackageUpdatePolicy {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct PackageUpdateCheckpoint {
+    /// Exact closed release channel.
+    pub channel: String,
     /// Exact package identity.
     pub package_name: String,
     /// Exact rollout ring.
     pub rollout_ring: String,
+    /// APK signer identity in the closed rollback tuple.
+    pub signer_sha256: String,
+    /// Manifest verification key id in the closed rollback tuple.
+    pub key_id: String,
+    /// Manifest verification public key in the closed rollback tuple.
+    pub public_key: String,
+    /// Artifact HTTPS origin in the closed rollback tuple.
+    pub https_origin: String,
     /// Highest successfully installed signed manifest sequence.
     pub sequence: u64,
     /// Highest successfully installed version code.
@@ -254,11 +281,21 @@ impl PackageUpdateRollbackState {
                 "rollback state schema is not supported",
             ));
         }
-        let mut prior_key: Option<(String, String)> = None;
+        let mut prior_key: Option<(String, String, String, String, String, String, String)> = None;
         let mut seen = BTreeSet::new();
         for checkpoint in &self.checkpoints {
             validate_package_name(&checkpoint.package_name)?;
+            validate_token("channel", &checkpoint.channel, 1, 32)?;
             validate_token("rollout_ring", &checkpoint.rollout_ring, 1, 32)?;
+            validate_sha256_identity(&checkpoint.signer_sha256)?;
+            validate_token("key_id", &checkpoint.key_id, 1, 96)?;
+            if decode_base64url_canonical(&checkpoint.public_key)?.len() != 32 {
+                return Err(PackageUpdateError::new(
+                    "invalid_rollback_checkpoint",
+                    "rollback public key must contain exactly 32 bytes",
+                ));
+            }
+            validate_https_origin(&checkpoint.https_origin)?;
             validate_sha256_identity(&checkpoint.signed_manifest_sha256)?;
             if checkpoint.sequence == 0 || checkpoint.version_code == 0 {
                 return Err(PackageUpdateError::new(
@@ -268,13 +305,18 @@ impl PackageUpdateRollbackState {
             }
             validate_jcs_integers([checkpoint.sequence, checkpoint.version_code])?;
             let key = (
+                checkpoint.channel.clone(),
                 checkpoint.package_name.clone(),
                 checkpoint.rollout_ring.clone(),
+                checkpoint.signer_sha256.clone(),
+                checkpoint.key_id.clone(),
+                checkpoint.public_key.clone(),
+                checkpoint.https_origin.clone(),
             );
             if prior_key.as_ref().is_some_and(|prior| prior >= &key) || !seen.insert(key.clone()) {
                 return Err(PackageUpdateError::new(
                     "noncanonical_rollback_state",
-                    "rollback checkpoints must be a strict package/ring sorted set",
+                    "rollback checkpoints must be a strict full-tuple sorted set",
                 ));
             }
             prior_key = Some(key);
@@ -284,25 +326,57 @@ impl PackageUpdateRollbackState {
 
     fn checkpoint(
         &self,
+        channel: &str,
         package_name: &str,
         rollout_ring: &str,
+        signer_sha256: &str,
+        key_id: &str,
+        public_key: &str,
+        https_origin: &str,
     ) -> Option<&PackageUpdateCheckpoint> {
         self.checkpoints.iter().find(|checkpoint| {
-            checkpoint.package_name == package_name && checkpoint.rollout_ring == rollout_ring
+            checkpoint.channel == channel
+                && checkpoint.package_name == package_name
+                && checkpoint.rollout_ring == rollout_ring
+                && checkpoint.signer_sha256 == signer_sha256
+                && checkpoint.key_id == key_id
+                && checkpoint.public_key == public_key
+                && checkpoint.https_origin == https_origin
         })
     }
 
     fn apply(&mut self, checkpoint: PackageUpdateCheckpoint) {
         if let Some(existing) = self.checkpoints.iter_mut().find(|existing| {
             existing.package_name == checkpoint.package_name
+                && existing.channel == checkpoint.channel
                 && existing.rollout_ring == checkpoint.rollout_ring
+                && existing.signer_sha256 == checkpoint.signer_sha256
+                && existing.key_id == checkpoint.key_id
+                && existing.public_key == checkpoint.public_key
+                && existing.https_origin == checkpoint.https_origin
         }) {
             *existing = checkpoint;
         } else {
             self.checkpoints.push(checkpoint);
             self.checkpoints.sort_by(|left, right| {
-                (&left.package_name, &left.rollout_ring)
-                    .cmp(&(&right.package_name, &right.rollout_ring))
+                (
+                    &left.channel,
+                    &left.package_name,
+                    &left.rollout_ring,
+                    &left.signer_sha256,
+                    &left.key_id,
+                    &left.public_key,
+                    &left.https_origin,
+                )
+                    .cmp(&(
+                        &right.channel,
+                        &right.package_name,
+                        &right.rollout_ring,
+                        &right.signer_sha256,
+                        &right.key_id,
+                        &right.public_key,
+                        &right.https_origin,
+                    ))
             });
         }
     }
@@ -366,6 +440,8 @@ pub struct PackageUpdateReceipt {
     pub key_id: Option<String>,
     /// Manifest id, when parsing succeeded.
     pub manifest_id: Option<String>,
+    /// Closed release channel, when available.
+    pub channel: Option<String>,
     /// Package identity, when available.
     pub package_name: Option<String>,
     /// Rollout ring, when available.
@@ -396,6 +472,10 @@ pub struct ManifestAdmission {
 pub struct VerifiedPackageUpdate {
     /// Release key id that verified the signature.
     key_id: String,
+    /// Canonical public key bound by the closed channel tuple.
+    public_key: String,
+    /// Canonical HTTPS origin bound by the closed channel tuple.
+    https_origin: String,
     /// Canonical SHA-256 of the signed manifest.
     signed_manifest_sha256: String,
     /// Verified signed manifest.
@@ -519,8 +599,13 @@ pub fn verify_manifest(
     let signed_digest = canonical.as_deref().map(sha256_identity);
     let prior = rollback_state
         .checkpoint(
+            &envelope.signed.channel,
             &envelope.signed.artifact.package_name,
             &envelope.signed.rollout_ring,
+            &envelope.signed.artifact.signer_sha256,
+            &envelope.key_id,
+            &policy.expected_public_key,
+            &policy.expected_https_origin,
         )
         .cloned();
     let base = receipt_base(
@@ -546,6 +631,8 @@ pub fn verify_manifest(
             receipt: accepted_receipt(base, "manifest_accepted", None),
             verified: Some(VerifiedPackageUpdate {
                 key_id: envelope.key_id,
+                public_key: policy.expected_public_key.clone(),
+                https_origin: policy.expected_https_origin.clone(),
                 signed_manifest_sha256: signed_digest
                     .expect("successful canonicalization always has a digest"),
                 manifest: envelope.signed,
@@ -569,7 +656,15 @@ pub fn commit_installed_apk(
 ) -> PackageUpdateReceipt {
     let manifest = &verified.manifest;
     let prior = rollback_state
-        .checkpoint(&manifest.artifact.package_name, &manifest.rollout_ring)
+        .checkpoint(
+            &manifest.channel,
+            &manifest.artifact.package_name,
+            &manifest.rollout_ring,
+            &manifest.artifact.signer_sha256,
+            &verified.key_id,
+            &verified.public_key,
+            &verified.https_origin,
+        )
         .cloned();
     if observed_at_ms > MAX_JCS_SAFE_INTEGER {
         return rejected_receipt(
@@ -614,8 +709,13 @@ pub fn commit_installed_apk(
     }
 
     let checkpoint = PackageUpdateCheckpoint {
+        channel: manifest.channel.clone(),
         package_name: manifest.artifact.package_name.clone(),
         rollout_ring: manifest.rollout_ring.clone(),
+        signer_sha256: manifest.artifact.signer_sha256.clone(),
+        key_id: verified.key_id.clone(),
+        public_key: verified.public_key.clone(),
+        https_origin: verified.https_origin.clone(),
         sequence: manifest.sequence,
         version_code: manifest.artifact.version_code,
         signed_manifest_sha256: verified.signed_manifest_sha256.clone(),
@@ -655,6 +755,18 @@ fn verify_parsed_envelope(
             "manifest key id is absent from the known-key registry",
         )
     })?;
+    if envelope.key_id != policy.expected_key_id {
+        return Err(PackageUpdateError::new(
+            "key_id_mismatch",
+            "manifest key id does not match the closed channel tuple",
+        ));
+    }
+    if encode_base64url(&key.to_bytes()) != policy.expected_public_key {
+        return Err(PackageUpdateError::new(
+            "public_key_mismatch",
+            "manifest verification key does not match the closed channel tuple",
+        ));
+    }
     let signature_bytes = decode_base64url_canonical(&envelope.signature)?;
     let signature_array: [u8; 64] = signature_bytes.try_into().map_err(|_| {
         PackageUpdateError::new(
@@ -684,14 +796,20 @@ fn verify_parsed_envelope(
     validate_sequence(
         &envelope.signed,
         rollback_state.checkpoint(
+            &envelope.signed.channel,
             &envelope.signed.artifact.package_name,
             &envelope.signed.rollout_ring,
+            &envelope.signed.artifact.signer_sha256,
+            &envelope.key_id,
+            &policy.expected_public_key,
+            &policy.expected_https_origin,
         ),
     )
 }
 
 fn validate_manifest_fields(manifest: &PackageUpdateManifest) -> Result<(), PackageUpdateError> {
     validate_token("manifest_id", &manifest.manifest_id, 1, 128)?;
+    validate_token("channel", &manifest.channel, 1, 32)?;
     validate_token("rollout_ring", &manifest.rollout_ring, 1, 32)?;
     if manifest.sequence == 0 {
         return Err(PackageUpdateError::new(
@@ -766,6 +884,12 @@ fn validate_policy(
     policy: &PackageUpdatePolicy,
 ) -> Result<(), PackageUpdateError> {
     let artifact = &manifest.artifact;
+    if manifest.channel != policy.expected_channel {
+        return Err(PackageUpdateError::new(
+            "channel_mismatch",
+            "manifest channel does not match the closed channel tuple",
+        ));
+    }
     if artifact.package_name != policy.expected_package_name {
         return Err(PackageUpdateError::new(
             "package_mismatch",
@@ -1172,6 +1296,7 @@ fn receipt_base(
         signed_manifest_sha256,
         key_id,
         manifest_id: manifest.map(|value| value.manifest_id.clone()),
+        channel: manifest.map(|value| value.channel.clone()),
         package_name: manifest.map(|value| value.artifact.package_name.clone()),
         rollout_ring: manifest.map(|value| value.rollout_ring.clone()),
         sequence: manifest.map(|value| value.sequence),
@@ -1717,8 +1842,13 @@ mod tests {
         );
         let verified = admission.verified.expect("verified");
         state.apply(PackageUpdateCheckpoint {
+            channel: verified.manifest.channel.clone(),
             package_name: verified.manifest.artifact.package_name.clone(),
             rollout_ring: verified.manifest.rollout_ring.clone(),
+            signer_sha256: verified.manifest.artifact.signer_sha256.clone(),
+            key_id: verified.key_id.clone(),
+            public_key: verified.public_key.clone(),
+            https_origin: verified.https_origin.clone(),
             sequence: verified.manifest.sequence,
             version_code: verified.manifest.artifact.version_code,
             signed_manifest_sha256: verified.signed_manifest_sha256.clone(),

@@ -2,6 +2,7 @@ package io.github.mesmerprism.rustyquest.packageupdater;
 
 final class VerifiedUpdatePlan {
     final String manifestId;
+    final String channel;
     final long sequence;
     final long issuedAtMs;
     final long expiresAtMs;
@@ -12,6 +13,7 @@ final class VerifiedUpdatePlan {
 
     VerifiedUpdatePlan(
             String manifestId,
+            String channel,
             long sequence,
             long issuedAtMs,
             long expiresAtMs,
@@ -20,6 +22,7 @@ final class VerifiedUpdatePlan {
             String signedManifestSha256,
             UpdateArtifact artifact) {
         this.manifestId = manifestId;
+        this.channel = channel;
         this.sequence = sequence;
         this.issuedAtMs = issuedAtMs;
         this.expiresAtMs = expiresAtMs;

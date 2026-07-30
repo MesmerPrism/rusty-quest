@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/MesmerPrism/rusty-quest/schemas/rusty.quest.package_update_rollback_state.v1.schema.json",
+  "title": "Rusty Quest Package Update Rollback State v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "checkpoints"],
+  "properties": {
+    "schema": {"const": "rusty.quest.package_update_rollback_state.v1"},
+    "checkpoints": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/checkpoint"}
+    }
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "checkpoint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "channel",
+        "package_name",
+        "rollout_ring",
+        "signer_sha256",
+        "key_id",
+        "public_key",
+        "https_origin",
+        "sequence",
+        "version_code",
+        "signed_manifest_sha256"
+      ],
+      "properties": {
+        "channel": {"type": "string", "pattern": "^[A-Za-z0-9._-]{1,32}$"},
+        "package_name": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$",
+          "maxLength": 255
+        },
+        "rollout_ring": {"type": "string", "pattern": "^[A-Za-z0-9._-]{1,32}$"},
+        "signer_sha256": {"$ref": "#/$defs/sha256"},
+        "key_id": {"type": "string", "pattern": "^[A-Za-z0-9._-]{1,96}$"},
+        "public_key": {"type": "string", "pattern": "^[A-Za-z0-9_-]{43}$"},
+        "https_origin": {
+          "type": "string",
+          "pattern": "^https://[a-z0-9.-]+(?::[1-9][0-9]{0,4})?$"
+        },
+        "sequence": {"type": "integer", "minimum": 1, "maximum": 9007199254740991},
+        "version_code": {"type": "integer", "minimum": 1, "maximum": 9007199254740991},
+        "signed_manifest_sha256": {"$ref": "#/$defs/sha256"}
+      }
+    }
+  }
+}

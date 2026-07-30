@@ -4,13 +4,14 @@
     "schema": "rusty.quest.package_update_manifest_envelope.v1",
     "key_id": "release-test-2026-a",
     "algorithm": "Ed25519",
-    "signature": "g5w3S6FqgCOoj1PO1p-sfT-CsoIGfRhUwK0R2_V8BRtSdMxY2SxSdNBnzCIwUf-3EgB47QbOoeSLzjbKECNYBA",
+    "signature": "oAYLvBBdhr8iUk274DzwzeK4YuA8xDghy_3lpXPAnTeC2hrZSeSImQpuW21wZwJvkutydoKjBGTX3h6cG7iyDg",
     "signed": {
       "schema": "rusty.quest.package_update_manifest.v1",
       "manifest_id": "rusty-kiosk.alpha.101",
       "sequence": 41,
       "issued_at_ms": 1999998000000,
       "expires_at_ms": 1999999000000,
+      "channel": "alpha",
       "rollout_ring": "alpha",
       "artifact": {
         "package_name": "io.github.mesmerprism.rustykiosk",

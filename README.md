@@ -116,6 +116,13 @@ downloads only into app-private storage, verifies the archive before staging,
 and always uses Android Package Installer with wearer action required. It is
 not part of the Store launcher, does not accept arbitrary URLs or packages,
 and advances rollback state only after exact installed-package readback.
+The release identity is the alpha-only
+`io.github.mesmerprism.rustyquest.packageupdater.alpha`; channel is signed and
+receipt-visible, and rollback is keyed by the full
+channel/package/ring/APK-signer/manifest-key/origin tuple. Fleet may
+select/authorize/project this packaged tuple but supplies no verifier policy.
+The normative state contract is
+`schemas/rusty.quest.package_update_rollback_state.v1.schema.json`.
 
 `crates/rusty-quest-media-stream` provides the generic receiver-first platform
 runtime described in [Generic Media Stream Runtime](docs/MEDIA_STREAM_RUNTIME.md).

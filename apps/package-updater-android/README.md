@@ -3,7 +3,7 @@
 This directory contains a separate native 2D, attended package-updater app:
 
 ```text
-io.github.mesmerprism.rustyquest.packageupdater/.PackageUpdaterActivity
+io.github.mesmerprism.rustyquest.packageupdater.alpha/.PackageUpdaterActivity
 ```
 
 It is intentionally not part of the Store launcher. The Store launcher remains
