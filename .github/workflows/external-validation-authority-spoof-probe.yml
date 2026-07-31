@@ -1,0 +1,21 @@
+name: External validation authority same-context probe
+
+on:
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  spoof-static-admission:
+    name: Static admission
+    runs-on: windows-2025
+    timeout-minutes: 2
+    steps:
+      - name: Emit credential-free probe success
+        shell: pwsh
+        run: |
+          Write-Output "Adversarial same-name/same-App probe only."
+          Write-Output "This success is not validation or publication authority."
