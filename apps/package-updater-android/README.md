@@ -39,7 +39,8 @@ RUSTY_QUEST_PACKAGE_UPDATER_EXPECTED_SIGNER_SHA256
 
 The default public-key value is empty, so an ordinary source build fails closed
 before accepting any update. A release build must inject the 32-byte raw
-Ed25519 public key as standard Base64 and the exact matching key id.
+Ed25519 public key as canonical unpadded Base64URL and the exact matching key
+id.
 
 Android 14 exposes no public Ed25519 `KeyFactory` for importing that raw
 build-fixed release key. Signature verification therefore crosses a narrow JNI
@@ -161,7 +162,8 @@ uploads only `rusty-quest-package-updater.apk`,
 `rusty-quest-package-updater.release.json`, the project license, and the exact
 source notice, verifies all four remote names, SHA-256 digests, and byte counts
 before and after promotion, rechecks the authoritative tag immediately before
-promotion, and keeps the release non-latest. Tag sequence `N` is emitted as
+promotion, requires the live release to be immutable, and keeps it non-latest.
+Tag sequence `N` is emitted as
 Android version code `N` and version name `0.1.0-alpha.N`.
 `tools/Publish-PackageUpdateManifest.ps1` first inspects the exact Kiosk APK
 with caller-pinned Android build tools, then stages an immutable generation

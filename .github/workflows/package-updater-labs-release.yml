@@ -91,6 +91,93 @@ jobs:
             throw "Release checkout is not clean."
           }
 
+      - name: Require fresh independent release-immutability attestation
+        shell: pwsh
+        env:
+          SETTINGS_ATTESTATION_HMAC_BASE64: ${{ secrets.PACKAGE_UPDATER_RELEASE_SETTINGS_ATTESTATION_HMAC_BASE64 }}
+          SETTINGS_ATTESTATION_KEY_ID: ${{ vars.PACKAGE_UPDATER_RELEASE_SETTINGS_ATTESTATION_KEY_ID }}
+          SETTINGS_ATTESTATION_RELEASE_TAG: ${{ vars.PACKAGE_UPDATER_RELEASE_SETTINGS_ATTESTATION_RELEASE_TAG }}
+          SETTINGS_ATTESTATION_SOURCE_SHA: ${{ vars.PACKAGE_UPDATER_RELEASE_SETTINGS_ATTESTATION_SOURCE_SHA }}
+          SETTINGS_ATTESTATION_OBSERVED_AT_MS: ${{ vars.PACKAGE_UPDATER_RELEASE_SETTINGS_ATTESTATION_OBSERVED_AT_MS }}
+          SETTINGS_ATTESTATION_EXPIRES_AT_MS: ${{ vars.PACKAGE_UPDATER_RELEASE_SETTINGS_ATTESTATION_EXPIRES_AT_MS }}
+          SETTINGS_ATTESTATION_HMAC_SHA256: ${{ vars.PACKAGE_UPDATER_RELEASE_SETTINGS_ATTESTATION_HMAC_SHA256 }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          if ($env:GITHUB_REPOSITORY -cne "MesmerPrism/rusty-quest" -or
+            $env:SETTINGS_ATTESTATION_KEY_ID -cne
+              "release-settings-attestor-2026-a" -or
+            $env:SETTINGS_ATTESTATION_RELEASE_TAG -cnotmatch
+              "^package-updater-v0\.1\.0-alpha\.[1-9][0-9]*$" -or
+            $env:SETTINGS_ATTESTATION_SOURCE_SHA -cnotmatch "^[0-9a-f]{40}$" -or
+            $env:SETTINGS_ATTESTATION_HMAC_BASE64 -cnotmatch
+              "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$" -or
+            $env:SETTINGS_ATTESTATION_OBSERVED_AT_MS -cnotmatch "^[1-9][0-9]{12}$" -or
+            $env:SETTINGS_ATTESTATION_EXPIRES_AT_MS -cnotmatch "^[1-9][0-9]{12}$" -or
+            $env:SETTINGS_ATTESTATION_HMAC_SHA256 -cnotmatch "^[0-9a-f]{64}$") {
+            throw "Release-immutability attestation inputs are noncanonical."
+          }
+          $observed = [int64]$env:SETTINGS_ATTESTATION_OBSERVED_AT_MS
+          $expires = [int64]$env:SETTINGS_ATTESTATION_EXPIRES_AT_MS
+          $now = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+          $maximumAge = [int64][TimeSpan]::FromMinutes(30).TotalMilliseconds
+          $maximumValidity = [int64][TimeSpan]::FromHours(2).TotalMilliseconds
+          if ($observed -gt $now -or $expires -le $now -or
+            $now - $observed -gt $maximumAge -or
+            $expires -le $observed -or $expires - $observed -gt $maximumValidity -or
+            $env:SETTINGS_ATTESTATION_RELEASE_TAG -cne $env:GITHUB_REF_NAME -or
+            $env:SETTINGS_ATTESTATION_SOURCE_SHA -cne $env:GITHUB_SHA) {
+            throw "Release-immutability attestation is future, expired, or overlong."
+          }
+          $key = [Convert]::FromBase64String(
+            $env:SETTINGS_ATTESTATION_HMAC_BASE64
+          )
+          try {
+            if ($key.Length -ne 32 -or
+              [Convert]::ToBase64String($key) -cne
+                $env:SETTINGS_ATTESTATION_HMAC_BASE64) {
+              throw "Release-immutability attestation key encoding differs."
+            }
+            $message = [string]::Join("`n", @(
+                "rusty.quest.release_immutability_attestation.v1",
+                "attestor_key_id=release-settings-attestor-2026-a",
+                "repository=MesmerPrism/rusty-quest",
+                "settings_api_version=2026-03-10",
+                "enabled=true",
+                "enforced_by_owner=false",
+                "release_tag=$($env:SETTINGS_ATTESTATION_RELEASE_TAG)",
+                "source_revision=$($env:SETTINGS_ATTESTATION_SOURCE_SHA)",
+                "observed_at_ms=$observed",
+                "expires_at_ms=$expires"
+              ))
+            $hmac = [Security.Cryptography.HMACSHA256]::new($key)
+            try {
+              $actual = $hmac.ComputeHash(
+                [Text.Encoding]::UTF8.GetBytes($message)
+              )
+              $expected = [Convert]::FromHexString(
+                $env:SETTINGS_ATTESTATION_HMAC_SHA256
+              )
+              if (-not [Security.Cryptography.CryptographicOperations]::FixedTimeEquals(
+                  $actual,
+                  $expected
+                )) {
+                throw "Release-immutability attestation authentication failed."
+              }
+            } finally {
+              if ($null -ne $hmac) { $hmac.Dispose() }
+              if ($null -ne $actual) {
+                [Array]::Clear($actual, 0, $actual.Length)
+              }
+              if ($null -ne $expected) {
+                [Array]::Clear($expected, 0, $expected.Length)
+              }
+            }
+          } finally {
+            [Array]::Clear($key, 0, $key.Length)
+            Remove-Item Env:\SETTINGS_ATTESTATION_HMAC_BASE64 `
+              -ErrorAction SilentlyContinue
+          }
+
       - name: Install pinned Android SDK components
         shell: pwsh
         run: |
@@ -212,7 +299,7 @@ jobs:
           $headers = @{
             Authorization = "Bearer $env:GH_TOKEN"
             Accept = "application/vnd.github+json"
-            "X-GitHub-Api-Version" = "2022-11-28"
+            "X-GitHub-Api-Version" = "2026-03-10"
           }
           $api = "https://api.github.com/repos/$env:GITHUB_REPOSITORY"
           $tag = $env:GITHUB_REF_NAME
@@ -227,6 +314,8 @@ jobs:
               $Release.target_commitish -cne $env:GITHUB_SHA -or
               -not $Release.prerelease -or
               $Release.draft -ne $ExpectedDraft -or
+              $Release.immutable -isnot [bool] -or
+              $Release.immutable -ne (-not $ExpectedDraft) -or
               $Release.url -cne $expectedReleaseUrl -or
               $Release.assets_url -cne $expectedAssetsUrl -or
               $Release.upload_url -cne $expectedUploadUrl) {

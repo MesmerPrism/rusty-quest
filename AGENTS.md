@@ -149,7 +149,7 @@ native Quest path.
 
 For a protected validation, workflow, policy, schema, publisher, or package
 updater authority change, also read `docs/EXTERNAL_VALIDATION_AUTHORITY.md`
-before editing.
+and `docs/PACKAGE_UPDATE_LABS_DISTRIBUTION.md` before editing.
 
 For APK builds or repeated same-headset runs, also read
 `docs/APK_RUN_ISOLATION.md`. Locked builds use app-specific package/client

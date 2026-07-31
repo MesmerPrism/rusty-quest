@@ -1147,7 +1147,7 @@ fn validate_https_origin(origin: &str) -> Result<(), PackageUpdateError> {
     if canonical_https_origin(origin).as_deref() != Some(origin) {
         return Err(PackageUpdateError::new(
             "invalid_https_origin",
-            "origin must be canonical HTTPS scheme, host, and optional non-default port only",
+            "origin must be canonical HTTPS scheme and host without an explicit port",
         ));
     }
     Ok(())
@@ -1241,21 +1241,10 @@ fn canonical_https_origin(url: &str) -> Option<String> {
     {
         return None;
     }
-    let port = match port {
-        None => None,
-        Some("443") | Some("") => return None,
-        Some(value) => {
-            let parsed: u16 = value.parse().ok()?;
-            if parsed == 0 || value.starts_with('0') {
-                return None;
-            }
-            Some(parsed)
-        }
-    };
-    Some(match port {
-        Some(port) => format!("https://{host}:{port}"),
-        None => format!("https://{host}"),
-    })
+    if port.is_some() {
+        return None;
+    }
+    Some(format!("https://{host}"))
 }
 
 fn url_has_exact_origin(url: &str, expected_origin: &str) -> bool {

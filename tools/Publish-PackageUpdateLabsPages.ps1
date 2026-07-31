@@ -146,6 +146,7 @@ function Assert-PinnedReleaseContract($Release, $Target) {
     $actualNames = @($Release.assets.name | Sort-Object)
     if ([int64]$Release.id -ne [int64]$Target.release_id -or
         $Release.draft -isnot [bool] -or $Release.prerelease -isnot [bool] -or
+        $Release.immutable -isnot [bool] -or $Release.immutable -ne $true -or
         $Release.draft -ne $false -or $Release.prerelease -ne $true -or
         $Release.tag_name -cne $Target.release_tag -or
         $Release.target_commitish -cne $Target.source_revision -or

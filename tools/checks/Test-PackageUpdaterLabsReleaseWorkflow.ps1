@@ -33,6 +33,22 @@ foreach ($token in @(
     'Release tag source is not reachable from protected main',
     '\$env:GITHUB_REPOSITORY -cne "MesmerPrism/rusty-quest"',
     'Release workflow repository identity differs',
+    'Require fresh independent release-immutability attestation',
+    'PACKAGE_UPDATER_RELEASE_SETTINGS_ATTESTATION_HMAC_BASE64',
+    'PACKAGE_UPDATER_RELEASE_SETTINGS_ATTESTATION_KEY_ID',
+    'PACKAGE_UPDATER_RELEASE_SETTINGS_ATTESTATION_RELEASE_TAG',
+    'PACKAGE_UPDATER_RELEASE_SETTINGS_ATTESTATION_SOURCE_SHA',
+    'PACKAGE_UPDATER_RELEASE_SETTINGS_ATTESTATION_OBSERVED_AT_MS',
+    'PACKAGE_UPDATER_RELEASE_SETTINGS_ATTESTATION_EXPIRES_AT_MS',
+    'PACKAGE_UPDATER_RELEASE_SETTINGS_ATTESTATION_HMAC_SHA256',
+    'rusty\.quest\.release_immutability_attestation\.v1',
+    'enabled=true',
+    'TimeSpan\]::FromMinutes\(30\)',
+    'TimeSpan\]::FromHours\(2\)',
+    'SETTINGS_ATTESTATION_RELEASE_TAG -cne \$env:GITHUB_REF_NAME',
+    'SETTINGS_ATTESTATION_SOURCE_SHA -cne \$env:GITHUB_SHA',
+    'CryptographicOperations\]::FixedTimeEquals',
+    'Remove-Item Env:\\SETTINGS_ATTESTATION_HMAC_BASE64',
     'PACKAGE_UPDATER_KEYSTORE_BASE64',
     'PACKAGE_UPDATER_LABS_MANIFEST_URL',
     'PACKAGE_UPDATER_LABS_EXPECTED_SITE_BASE_PATH',
@@ -54,6 +70,8 @@ foreach ($token in @(
     'RELEASE_LICENSE_NAME: RUSTY-QUEST-PACKAGE-UPDATER-LICENSE\.txt',
     'RELEASE_SOURCE_NAME: RUSTY-QUEST-PACKAGE-UPDATER-SOURCE\.txt',
     '\$Release\.target_commitish -cne \$env:GITHUB_SHA',
+    '\$Release\.immutable -ne \(-not \$ExpectedDraft\)',
+    'X-GitHub-Api-Version" = "2026-03-10"',
     '\$Release\.url -cne \$expectedReleaseUrl',
     '\$Release\.assets_url -cne \$expectedAssetsUrl',
     '\$Release\.upload_url -cne \$expectedUploadUrl',
@@ -118,6 +136,10 @@ $draftIndex = $workflow.IndexOf(
     '$release = Invoke-RestMethod -Method Post',
     [StringComparison]::Ordinal
 )
+$settingsAttestationIndex = $workflow.IndexOf(
+    '- name: Require fresh independent release-immutability attestation',
+    [StringComparison]::Ordinal
+)
 $assetVerificationIndex = $workflow.IndexOf(
     '$draftAssets = @(Assert-ReleaseAssets',
     [StringComparison]::Ordinal
@@ -135,10 +157,12 @@ $publishedAssetVerificationIndex = $workflow.IndexOf(
     [StringComparison]::Ordinal
 )
 if ($tagChecks.Count -ne 3 -or $nonLatestChecks.Count -ne 1 -or
-    $draftIndex -lt 0 -or $assetVerificationIndex -lt 0 -or
+    $settingsAttestationIndex -lt 0 -or $draftIndex -lt 0 -or
+    $assetVerificationIndex -lt 0 -or
     $promotionIndex -lt 0 -or $publishedReadbackIndex -lt 0 -or
     $publishedAssetVerificationIndex -lt 0 -or
     -not (
+        $settingsAttestationIndex -lt $draftIndex -and
         $tagChecks[0].Index -lt $draftIndex -and
         $draftIndex -lt $assetVerificationIndex -and
         $assetVerificationIndex -lt $tagChecks[1].Index -and

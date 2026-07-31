@@ -51,8 +51,8 @@ val packageUpdaterVersionName =
     .get()
 val updateChannel = "labs"
 
-require(expectedHttpsOrigin.matches(Regex("https://[a-z0-9.-]+(?::[1-9][0-9]{0,4})?"))) {
-  "RUSTY_QUEST_PACKAGE_UPDATER_EXPECTED_HTTPS_ORIGIN must be a canonical HTTPS origin"
+require(expectedHttpsOrigin.matches(Regex("https://[a-z0-9.-]+"))) {
+  "RUSTY_QUEST_PACKAGE_UPDATER_EXPECTED_HTTPS_ORIGIN must be a canonical HTTPS origin without an explicit port"
 }
 require(expectedSiteBasePath == "rusty-quest") {
   "RUSTY_QUEST_PACKAGE_UPDATER_EXPECTED_SITE_BASE_PATH must be the exact project site"
@@ -254,7 +254,7 @@ android {
     buildConfigField(
       "long",
       "MAXIMUM_TARGET_VERSION_CODE",
-      "9007199254740991L",
+      "2147483647L",
     )
     buildConfigField("long", "MAXIMUM_MANIFEST_VALIDITY_MS", "86400000L")
     buildConfigField("long", "MAXIMUM_FUTURE_ISSUE_SKEW_MS", "300000L")

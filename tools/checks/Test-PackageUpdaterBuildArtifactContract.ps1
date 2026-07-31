@@ -22,6 +22,7 @@ foreach ($bad in @(
     "http://updates.example.test/rusty-quest/package-updates/rusty-kiosk/labs/current.json",
     "https://updates.example.test.evil.test/rusty-quest/package-updates/rusty-kiosk/labs/current.json",
     "https://user@updates.example.test/rusty-quest/package-updates/rusty-kiosk/labs/current.json",
+    "https://updates.example.test:4443/rusty-quest/package-updates/rusty-kiosk/labs/current.json",
     "${url}?x=1",
     "${url}#fragment",
     "$origin/rusty-quest/package-updates/rusty-kiosk/labs/../stable/current.json",

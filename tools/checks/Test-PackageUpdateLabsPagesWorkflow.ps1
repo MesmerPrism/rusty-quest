@@ -51,9 +51,10 @@ foreach ($token in @(
     'package-update-labs-target\.json',
     'Require protected continuous feed authority',
     'PACKAGE_UPDATE_LABS_FEED_RULESET_ID',
-    'PACKAGE_UPDATE_LABS_FEED_DEPLOY_KEY_ID',
+    'PACKAGE_UPDATE_LABS_FEED_DEPLOY_KEY_FINGERPRINT',
     'rulesets/',
     'actor_type -cne "DeployKey"',
+    '\$null -ne \$bypass\[0\]\.actor_id',
     'refs/heads/package-update-labs-feed',
     'creation", "deletion", "non_fast_forward", "update',
     'git -C feed ls-remote --exit-code origin',
@@ -64,10 +65,13 @@ foreach ($token in @(
     'IdentitiesOnly=yes',
     'AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl',
     'ssh-keygen\.exe -y -P "" -f',
+    'ssh-keygen\.exe -lf \$keyPath -E sha256',
+    'exact configured deploy key',
     '\[Array\]::Clear\(\$keyBytes, 0, \$keyBytes\.Length\)',
     'WriteAllBytes\(\$keyPath, \[byte\[\]\]::new\(\$length\)\)',
     'Remove-Item Env:\\FEED_DEPLOY_KEY_BASE64',
     'git -C feed push origin "HEAD:\$env:FEED_BRANCH"',
+    'Protected feed push did not read back the exact committed generation',
     'needs\.publish\.outputs\.feed_commit',
     'Feed commit contains content outside the Kiosk Labs subtree',
     'Feed commit contains an unexpected path or Git mode',
@@ -164,6 +168,7 @@ foreach ($token in @(
     'safe Android integer bound',
     'browser_download_url',
     'target_commitish -cne \$Target\.source_revision',
+    '\$Release\.immutable -ne \$true',
     'complete-product',
     'Assert-PinnedReleaseContract',
     'Assert-PinnedOwnerMetadata',
@@ -274,6 +279,7 @@ $release = [pscustomobject][ordered]@{
     target_commitish = $sourceRevision
     draft = $false
     prerelease = $true
+    immutable = $true
     assets = $remoteAssets
 }
 $owner = [pscustomobject][ordered]@{
@@ -361,6 +367,9 @@ Assert-Rejected { Assert-PinnedReleaseContract $badRelease $target } "release HT
 $badRelease = Copy-JsonObject $release
 $badRelease.target_commitish = "0" * 40
 Assert-Rejected { Assert-PinnedReleaseContract $badRelease $target } "release target mismatch"
+$badRelease = Copy-JsonObject $release
+$badRelease.immutable = $false
+Assert-Rejected { Assert-PinnedReleaseContract $badRelease $target } "mutable upstream release"
 $badRelease = Copy-JsonObject $release
 ($badRelease.assets | Where-Object name -CEQ "rusty-kiosk.apk").id++
 Assert-Rejected { Assert-PinnedReleaseContract $badRelease $target } "asset id mismatch"

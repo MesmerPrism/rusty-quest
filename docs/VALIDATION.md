@@ -110,11 +110,14 @@ build/metadata fields. The workflow gate requires pinned actions and tools,
 protected signing/policy inputs, draft-before-promotion, exact tag readback
 both before draft creation and immediately before promotion, prerelease and
 non-latest state, exact four-asset remote readback before and after promotion,
-and no overwrite, latest, or delete route.
+live release immutability, and no overwrite, latest, or delete route.
 The Pages workflow gate additionally requires a default-branch publisher,
 serialized non-rewriting feed history, an exact Kiosk Labs-only deployment
-closure, pinned Kiosk release assets, signed equal-version refreshes, and
-deployment of the exact committed feed identity.
+closure, an immutable pinned Kiosk release, signed equal-version refreshes,
+and deployment of the exact committed feed identity. Run the external settings,
+per-release attestation, key rotation, and bootstrap sequence in
+[Package Update Labs Distribution](PACKAGE_UPDATE_LABS_DISTRIBUTION.md) before
+enabling either release environment.
 Release APK assembly additionally
 requires all release signing values and an Agent Board reservation for the
 long build. Headset validation must reserve the exact `quest:<serial>`, snapshot

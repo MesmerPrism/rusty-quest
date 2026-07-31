@@ -50,6 +50,8 @@ $paths = [ordered]@{
         "host-tests\io\github\mesmerprism\rustyquest\packageupdater\PackageUpdaterCanonicalVectorTest.java"
     host_post_install_policy = Join-Path $appRoot `
         "host-tests\io\github\mesmerprism\rustyquest\packageupdater\PostInstallCheckpointPolicyTest.java"
+    canonical_vector_fixture = Join-Path $RepoRoot `
+        "fixtures\package-updater\manifest-envelope.fixed-vector.json"
     build_wrapper = Join-Path $RepoRoot "tools\Build-PackageUpdaterAndroid.ps1"
     publish_wrapper = Join-Path $RepoRoot "tools\Publish-PackageUpdateManifest.ps1"
     e2e_cli_wrapper = Join-Path $RepoRoot "tools\Invoke-PackageUpdaterE2eCli.ps1"
@@ -114,6 +116,20 @@ $canonicalizer = Get-Content -Raw -LiteralPath $paths.canonicalizer
 $jsonPreflight = Get-Content -Raw -LiteralPath $paths.json_preflight
 $stateStore = Get-Content -Raw -LiteralPath $paths.state_store
 $manifestClient = Get-Content -Raw -LiteralPath $paths.manifest_client
+$hostVector = Get-Content -Raw -LiteralPath $paths.host_vector
+$canonicalVector = Get-Content -Raw -LiteralPath $paths.canonical_vector_fixture |
+    ConvertFrom-Json
+$javaExpectedJcs = ([string]$canonicalVector.expected_jcs).
+    Replace('\', '\\').Replace('"', '\"')
+foreach ($value in @(
+        $javaExpectedJcs,
+        [string]$canonicalVector.public_key,
+        [string]$canonicalVector.envelope.signature
+    )) {
+    if (-not $hostVector.Contains($value)) {
+        throw "Package Updater Java vector no longer matches the authoritative Rust fixture."
+    }
+}
 $stager = Get-Content -Raw -LiteralPath $paths.stager
 $inspection = Get-Content -Raw -LiteralPath $paths.inspection
 $receipt = Get-Content -Raw -LiteralPath $paths.receipt
@@ -239,7 +255,8 @@ foreach ($token in @(
     'buildConfigField\(\s*"String",\s*"EXPECTED_ROLLOUT_RING"',
     'buildConfigField\(\s*"String",\s*"EXPECTED_SIGNER_SHA256"',
     'buildConfigField\("long", "MINIMUM_TARGET_VERSION_CODE", "1L"\)',
-    '"MAXIMUM_TARGET_VERSION_CODE"')) {
+    '"MAXIMUM_TARGET_VERSION_CODE"',
+    '"2147483647L"')) {
     Assert-Match $appBuild $token "Package Updater build is missing fixed input token: $token"
 }
 foreach ($token in @(

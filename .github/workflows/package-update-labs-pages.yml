@@ -83,20 +83,14 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           EXPECTED_FEED_RULESET_ID: ${{ vars.PACKAGE_UPDATE_LABS_FEED_RULESET_ID }}
-          EXPECTED_FEED_DEPLOY_KEY_ID: ${{ vars.PACKAGE_UPDATE_LABS_FEED_DEPLOY_KEY_ID }}
         run: |
           $ErrorActionPreference = "Stop"
           if ($env:GITHUB_REPOSITORY -cne "MesmerPrism/rusty-quest" -or
             $env:FEED_BRANCH -cne "package-update-labs-feed") {
             throw "Labs feed authority repository or branch identity differs."
           }
-          foreach ($entry in @(
-              @{ Value = $env:EXPECTED_FEED_RULESET_ID; Name = "ruleset" },
-              @{ Value = $env:EXPECTED_FEED_DEPLOY_KEY_ID; Name = "deploy key" }
-            )) {
-            if ($entry.Value -cnotmatch "^[1-9][0-9]{0,18}$") {
-              throw "Expected feed $($entry.Name) ID is not a positive integer."
-            }
+          if ($env:EXPECTED_FEED_RULESET_ID -cnotmatch "^[1-9][0-9]{0,18}$") {
+            throw "Expected feed ruleset ID is not a positive integer."
           }
           $ruleset = & gh api (
             "repos/$env:GITHUB_REPOSITORY/rulesets/" +
@@ -120,11 +114,10 @@ jobs:
             $exclude.Count -ne 0 -or
             $bypass.Count -ne 1 -or
             $bypass[0].actor_type -cne "DeployKey" -or
-            [int64]$bypass[0].actor_id -ne
-              [int64]$env:EXPECTED_FEED_DEPLOY_KEY_ID -or
+            $null -ne $bypass[0].actor_id -or
             $bypass[0].bypass_mode -cne "always" -or
             ($ruleTypes -join "`n") -cne ($expectedRuleTypes -join "`n")) {
-            throw "Labs feed ruleset does not prove its exact writer/continuity policy."
+            throw "Labs feed ruleset does not prove its DeployKey-class continuity policy."
           }
           $origin = (git -C feed remote get-url origin).Trim()
           if ($origin -cne "https://github.com/MesmerPrism/rusty-quest") {
@@ -199,6 +192,8 @@ jobs:
         shell: pwsh
         env:
           FEED_DEPLOY_KEY_BASE64: ${{ secrets.PACKAGE_UPDATE_LABS_FEED_DEPLOY_KEY_BASE64 }}
+          EXPECTED_FEED_DEPLOY_KEY_FINGERPRINT: ${{ vars.PACKAGE_UPDATE_LABS_FEED_DEPLOY_KEY_FINGERPRINT }}
+          EXPECTED_FEED_COMMIT: ${{ steps.commit.outputs.feed_commit }}
         run: |
           $ErrorActionPreference = "Stop"
           $keyPath = Join-Path $env:RUNNER_TEMP (
@@ -212,6 +207,11 @@ jobs:
               $env:FEED_DEPLOY_KEY_BASE64 -cnotmatch
                 "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$") {
               throw "The dedicated Labs feed deploy key is absent or noncanonical."
+            }
+            if ($env:EXPECTED_FEED_DEPLOY_KEY_FINGERPRINT -cnotmatch
+              "^SHA256:[A-Za-z0-9+/]{43}$" -or
+              $env:EXPECTED_FEED_COMMIT -cnotmatch "^[0-9a-f]{40}$") {
+              throw "The expected Labs feed key fingerprint or commit is noncanonical."
             }
             $keyBytes = [Convert]::FromBase64String(
               $env:FEED_DEPLOY_KEY_BASE64
@@ -241,6 +241,16 @@ jobs:
               $publicKey -cnotmatch "^ssh-ed25519 [A-Za-z0-9+/]+={0,2}$") {
               throw "The dedicated Labs feed deploy key is not a valid Ed25519 key."
             }
+            $fingerprintLine = (& ssh-keygen.exe -lf $keyPath -E sha256).Trim()
+            $fingerprintMatch = [Regex]::Match(
+              $fingerprintLine,
+              "^[0-9]+\s+(?<fingerprint>SHA256:[A-Za-z0-9+/]{43})(?:\s|$)"
+            )
+            if ($LASTEXITCODE -ne 0 -or -not $fingerprintMatch.Success -or
+              $fingerprintMatch.Groups["fingerprint"].Value -cne
+                $env:EXPECTED_FEED_DEPLOY_KEY_FINGERPRINT) {
+              throw "The Labs feed secret is not the exact configured deploy key."
+            }
             git -C feed remote set-url origin `
               "git@github.com:MesmerPrism/rusty-quest.git"
             if ($LASTEXITCODE -ne 0) {
@@ -253,6 +263,21 @@ jobs:
             git -C feed push origin "HEAD:$env:FEED_BRANCH"
             if ($LASTEXITCODE -ne 0) {
               throw "Protected feed push lost its non-fast-forward publication race."
+            }
+            $remoteRows = @(git -C feed ls-remote --exit-code origin `
+              "refs/heads/$env:FEED_BRANCH")
+            $remoteMatch = if ($remoteRows.Count -eq 1) {
+              [Regex]::Match(
+                [string]$remoteRows[0],
+                "^(?<sha>[0-9a-f]{40})`trefs/heads/package-update-labs-feed$"
+              )
+            } else {
+              $null
+            }
+            if ($LASTEXITCODE -ne 0 -or $null -eq $remoteMatch -or
+              -not $remoteMatch.Success -or
+              $remoteMatch.Groups["sha"].Value -cne $env:EXPECTED_FEED_COMMIT) {
+              throw "Protected feed push did not read back the exact committed generation."
             }
           } finally {
             Remove-Item Env:\GIT_SSH_COMMAND -ErrorAction SilentlyContinue

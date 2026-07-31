@@ -6,8 +6,7 @@ function Assert-PackageUpdaterManifestUrl {
         [string]$ExpectedHttpsOrigin,
         [string]$ExpectedSiteBasePath
     )
-    if ($ExpectedHttpsOrigin -notmatch
-            "^https://[a-z0-9.-]+(?::[1-9][0-9]{0,4})?$" -or
+    if ($ExpectedHttpsOrigin -notmatch "^https://[a-z0-9.-]+$" -or
         $ExpectedSiteBasePath -ne "rusty-quest" -or
         $ManifestUrl -match "%|\\\\|//package-updates|[?#]" -or
         $ManifestUrl -ne
@@ -23,6 +22,7 @@ function Assert-PackageUpdaterManifestUrl {
         -not [string]::IsNullOrEmpty($uri.UserInfo) -or
         -not [string]::IsNullOrEmpty($uri.Query) -or
         -not [string]::IsNullOrEmpty($uri.Fragment) -or
+        -not $uri.IsDefaultPort -or
         $uri.AbsolutePath -ne
             "/$ExpectedSiteBasePath/package-updates/rusty-kiosk/labs/current.json" -or
         $uri.AbsolutePath.Contains("..") -or
