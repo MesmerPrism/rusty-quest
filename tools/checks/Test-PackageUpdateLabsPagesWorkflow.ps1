@@ -114,6 +114,7 @@ function Assert-FeedWriterKeyLifecycle([string]$WorkflowText) {
     $writerStep = Get-WorkflowStepBlock $WorkflowText `
         'Push through the dedicated protected feed writer'
     $tokens = [ordered]@{
+        cleanup_source = '. .\source\tools\package_updater\FeedWriterSecretCleanup.ps1'
         key_write = '[IO.File]::WriteAllBytes($keyPath, $keyBytes)'
         key_acl = 'icacls.exe $keyPath /inheritance:r /grant:r "$currentIdentity`:(R,W)"'
         key_read = 'ssh-keygen.exe -y -P "" -f $keyPath'
@@ -133,7 +134,8 @@ function Assert-FeedWriterKeyLifecycle([string]$WorkflowText) {
             $entry.Value, [StringComparison]::Ordinal
         )
     }
-    if (-not ($indexes.key_write -lt $indexes.key_acl -and
+    if (-not ($indexes.cleanup_source -lt $indexes.key_write -and
+        $indexes.key_write -lt $indexes.key_acl -and
         $indexes.key_acl -lt $indexes.key_read -and
         $indexes.key_read -lt $indexes.push -and
         $indexes.push -lt $indexes.readback -and
@@ -379,6 +381,14 @@ foreach ($damage in @(
 
 $writerStep = Get-WorkflowStepBlock $workflow `
     'Push through the dedicated protected feed writer'
+$cleanupSource = '. .\source\tools\package_updater\FeedWriterSecretCleanup.ps1'
+$missingCleanupSourceWorkflow = $workflow.Replace(
+    $writerStep,
+    $writerStep.Replace($cleanupSource, '')
+)
+Assert-Rejected {
+    Assert-FeedWriterKeyLifecycle $missingCleanupSourceWorkflow
+} 'cleanup helper sourced outside the protected writer process'
 $cleanupCall = 'Invoke-PackageUpdateLabsFeedWriterSecretCleanup'
 $pushCall = 'git -C feed push origin "HEAD:$env:FEED_BRANCH"'
 $earlyCleanupStep = $writerStep.Replace($cleanupCall, '')
@@ -446,6 +456,39 @@ if (($cleanupEvents -join ',') -cne
 }
 if (@($fixtureKeyBytes | Where-Object { $_ -ne 0 }).Count -ne 0) {
     throw 'Cleanup did not clear the decoded key byte array first.'
+}
+
+$probeEvents = [Collections.Generic.List[string]]::new()
+$probePaths = [Collections.Generic.HashSet[string]]::new(
+    [StringComparer]::Ordinal
+)
+$null = $probePaths.Add($fixtureKeyPath)
+$null = $probePaths.Add($fixtureKnownHostsPath)
+$probeFailureAction = { param($Path) throw 'synthetic probe failure' }
+$probeDeleteAction = {
+    param($Path)
+    $probeEvents.Add("delete:$Path")
+    $null = $probePaths.Remove($Path)
+}.GetNewClosure()
+$probePrimary = $null
+$oldWarningPreference = $WarningPreference
+try {
+    $WarningPreference = 'SilentlyContinue'
+    Invoke-PackageUpdateLabsFeedWriterSecretCleanup `
+        -KeyBytes ([byte[]](9, 8, 7)) -KeyPath $fixtureKeyPath `
+        -KnownHostsPath $fixtureKnownHostsPath -PrimaryError $primaryFixture `
+        -FileExists $probeFailureAction -DeleteFile $probeDeleteAction
+} catch {
+    $probePrimary = $_
+} finally {
+    $WarningPreference = $oldWarningPreference
+}
+if ($null -eq $probePrimary -or
+    $probePrimary.Exception.Message -notmatch 'primary-operation-sentinel' -or
+    ($probeEvents -join ',') -cne
+        'delete:fixture-key,delete:fixture-known-hosts' -or
+    $probePaths.Count -ne 0) {
+    throw 'Existence-probe failure suppressed independent deletion or primary error.'
 }
 
 $validRulesetProjection = [pscustomobject][ordered]@{

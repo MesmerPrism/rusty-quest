@@ -54,25 +54,17 @@ function Invoke-PackageUpdateLabsFeedWriterSecretCleanup {
         } catch {
             $cleanupFailures.Add("key_wipe_failed")
         }
-        try {
-            & $DeleteFile $KeyPath
-        } catch {
-            $cleanupFailures.Add("key_delete_failed")
-        }
+    }
+    try {
+        & $DeleteFile $KeyPath
+    } catch {
+        $cleanupFailures.Add("key_delete_failed")
     }
 
-    $knownHostsExists = $false
     try {
-        $knownHostsExists = [bool](& $FileExists $KnownHostsPath)
+        & $DeleteFile $KnownHostsPath
     } catch {
-        $cleanupFailures.Add("known_hosts_exists_probe_failed")
-    }
-    if ($knownHostsExists) {
-        try {
-            & $DeleteFile $KnownHostsPath
-        } catch {
-            $cleanupFailures.Add("known_hosts_delete_failed")
-        }
+        $cleanupFailures.Add("known_hosts_delete_failed")
     }
 
     $failureLabels = @($cleanupFailures | Sort-Object -Unique)

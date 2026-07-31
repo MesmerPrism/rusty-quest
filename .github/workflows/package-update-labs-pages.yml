@@ -132,7 +132,6 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
           . .\source\tools\package_updater\FeedRulesetProjection.ps1
-          . .\source\tools\package_updater\FeedWriterSecretCleanup.ps1
           if ($env:GITHUB_REPOSITORY -cne "MesmerPrism/rusty-quest" -or
             $env:FEED_BRANCH -cne "package-update-labs-feed") {
             throw "Labs feed authority repository or branch identity differs."
@@ -238,6 +237,7 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
           . .\source\tools\package_updater\FeedRulesetProjection.ps1
+          . .\source\tools\package_updater\FeedWriterSecretCleanup.ps1
           function Read-FeedRulesetProjection([string]$Phase) {
             $rulesetJson = & gh api (
               "repos/$env:GITHUB_REPOSITORY/rulesets/" +
