@@ -13,11 +13,19 @@ pub(crate) fn initialize_for_host_test(
     config_json: &str,
     expected_config_sha256: &str,
     epoch_entropy_hex: &str,
+    authority_wall_unix_ms: i64,
+    authority_monotonic_elapsed_ns: u64,
 ) -> Result<String, String> {
     let status = provider()
         .lock()
         .map_err(|_| "embedded broker runtime lock poisoned".to_owned())?
-        .initialize(config_json, expected_config_sha256, epoch_entropy_hex)
+        .initialize(
+            config_json,
+            expected_config_sha256,
+            epoch_entropy_hex,
+            authority_wall_unix_ms,
+            authority_monotonic_elapsed_ns,
+        )
         .map_err(|error| error.to_string())?;
     serde_json::to_string(&status).map_err(|error| error.to_string())
 }
@@ -63,15 +71,27 @@ fn jni_initialize(
     config_json: jni::objects::JString,
     expected_config_sha256: jni::objects::JString,
     epoch_entropy_hex: jni::objects::JString,
+    authority_wall_unix_ms: jni::sys::jlong,
+    authority_monotonic_elapsed_ns: jni::sys::jlong,
 ) -> jni::sys::jstring {
     match env
         .with_env(|env| -> jni::errors::Result<jni::sys::jstring> {
             let config_json = config_json.try_to_string(env)?;
             let expected_config_sha256 = expected_config_sha256.try_to_string(env)?;
             let epoch_entropy_hex = epoch_entropy_hex.try_to_string(env)?;
-            let response =
-                initialize_for_host_test(&config_json, &expected_config_sha256, &epoch_entropy_hex)
-                    .unwrap_or_default();
+            let response = u64::try_from(authority_monotonic_elapsed_ns)
+                .ok()
+                .and_then(|monotonic_ns| {
+                    initialize_for_host_test(
+                        &config_json,
+                        &expected_config_sha256,
+                        &epoch_entropy_hex,
+                        authority_wall_unix_ms,
+                        monotonic_ns,
+                    )
+                    .ok()
+                })
+                .unwrap_or_default();
             env.new_string(response).map(|value| value.into_raw())
         })
         .into_outcome()
@@ -108,8 +128,17 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_native_1renderer_Em
     config_json: jni::objects::JString,
     expected_config_sha256: jni::objects::JString,
     epoch_entropy_hex: jni::objects::JString,
+    authority_wall_unix_ms: jni::sys::jlong,
+    authority_monotonic_elapsed_ns: jni::sys::jlong,
 ) -> jni::sys::jstring {
-    jni_initialize(env, config_json, expected_config_sha256, epoch_entropy_hex)
+    jni_initialize(
+        env,
+        config_json,
+        expected_config_sha256,
+        epoch_entropy_hex,
+        authority_wall_unix_ms,
+        authority_monotonic_elapsed_ns,
+    )
 }
 
 #[cfg(target_os = "android")]
@@ -237,7 +266,7 @@ mod tests {
             "capability.sink.native-openxr"
         ]);
         serde_json::json!({
-            "$schema": "rusty.quest.broker.runtime_config.v1",
+            "$schema": "rusty.quest.broker.runtime_config.v2",
             "bridge_kind": "embedded_in_process_jni",
             "adapter_config": {
                 "$schema": "rusty.manifold.broker.adapter_config.v2",
@@ -294,8 +323,14 @@ mod tests {
             rusty_quest_broker_authority::canonical_runtime_config_sha256(&config_json)
                 .expect("config digest");
         let status: serde_json::Value = serde_json::from_str(
-            &initialize_for_host_test(&config_json, &config_sha256, &"88".repeat(32))
-                .expect("initialize"),
+            &initialize_for_host_test(
+                &config_json,
+                &config_sha256,
+                &"88".repeat(32),
+                1_000,
+                1_000_000_000,
+            )
+            .expect("initialize"),
         )
         .expect("status");
         let issue = serde_json::json!({
@@ -331,12 +366,6 @@ mod tests {
         assert!(admit_for_host_test(&use_.to_string())
             .expect("use")
             .contains("\"applied\":true"));
-        let invocation_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../..")
-            .join("fixtures/broker-authority/embedded-applied.invocation.json");
-        let invocation: serde_json::Value =
-            serde_json::from_str(&std::fs::read_to_string(invocation_path).expect("invocation"))
-                .expect("invocation json");
         let effect_params: rusty_quest_broker_authority::QuestBrokerEffectParams =
             serde_json::from_value(serde_json::json!({
                 "$schema": "rusty.quest.broker.effect_params.v1",
@@ -347,11 +376,17 @@ mod tests {
         let params_digest =
             rusty_quest_broker_authority::canonical_effect_params_digest(&effect_params)
                 .expect("params digest");
-        let mut command = invocation["request"].clone();
-        command["requester_id"] = serde_json::json!("client.quest.native-renderer");
-        command["lease_id"] =
-            serde_json::json!("lease.broker.media-session.client.quest.native-renderer");
-        command["params_digest"] = serde_json::to_value(params_digest).expect("params digest json");
+        let command = serde_json::json!({
+            "$schema": "rusty.manifold.runtime_host.command_request.v1",
+            "request_id": "request.embedded.command",
+            "expected_authority_revision": 1,
+            "requester_id": "client.quest.native-renderer",
+            "command_id": "command.media.session.start",
+            "lease_id": "lease.broker.media-session.client.quest.native-renderer",
+            "params_digest": params_digest,
+            "issued_at_ms": 3_000,
+            "expires_at_ms": 9_000
+        });
         let mutation = serde_json::json!({
             "$schema": "rusty.quest.broker.server_mutation_request.v1",
             "bridge_kind": "embedded_in_process_jni",

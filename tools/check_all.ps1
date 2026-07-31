@@ -37,6 +37,7 @@ try {
     Invoke-Checked "native renderer property parity" "python" @("tools\check_native_renderer_property_parity.py", "--out", "local-artifacts\native-renderer-property-parity.json")
     Invoke-Checked "native app-build static gate" "pwsh" @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools\checks\Test-NativeAppBuildStatic.ps1", "-RepoRoot", ".")
     Invoke-Checked "APK build and run isolation static gate" "pwsh" @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools\checks\Test-ApkRunIsolationStatic.ps1", "-RepoRoot", ".")
+    Invoke-Checked "Quest attended package updater static gate" "pwsh" @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools\checks\Test-PackageUpdaterAndroidStatic.ps1", "-RepoRoot", ".")
     Invoke-Checked "QCL-041 Wi-Fi Direct Android harness" "pwsh" @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools\Test-Qcl041WifiDirectHarnessAndroid.ps1")
     if ($IncludeLegacyMakepad) {
         Invoke-Checked "legacy QCL-099 stereo projection runner" "pwsh" @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools\Test-Qcl099StereoProjectionRunner.ps1")

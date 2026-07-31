@@ -5,16 +5,19 @@
 Standalone and embedded brokers use the same stateful Rust path:
 
 1. the provider verifies a build-generated canonical config digest plus exact
-   packaged product/client lock hashes, then initializes one closed config;
-2. signature-scoped Binder evidence, or the embedded app's Android-derived
+   packaged product/client lock hashes, then initializes one closed v2 config;
+2. on a fresh provider only, Android supplies its wall and monotonic clock
+   readings and each product-requested initial lease is reviewed and applied
+   through the generic Manifold control-lease authority;
+3. signature-scoped Binder evidence, or the embedded app's Android-derived
    package/single-signer evidence, issues a client-bound token;
-3. `authorize_use` creates one capability-scoped bounded use;
-4. the server mutation carries that use id, its opaque token id, use-creation
+4. `authorize_use` creates one capability-scoped bounded use;
+5. the server mutation carries that use id, its opaque token id, use-creation
    admission revision, live provider epoch, exact client id, Runtime Host
    revision, command, lease, and bounded time window;
-5. `ManifoldBrokerRuntime` consumes the use and invokes the single Runtime Host
-   review/application path;
-6. Java executes a named platform effect only when the Rust response reports
+6. the one retained `ManifoldBrokerRuntime` consumes the use and invokes the
+   single Runtime Host review/application path;
+7. Java executes a named platform effect only when the Rust response reports
    the preserved host application as applied and returns the exact
    receipt-bound typed parameters.
 
@@ -23,6 +26,21 @@ same canonical config preserves the provider epoch and both accepted-state
 revisions. A different config rejects. Process death discards the provider;
 the next initialization uses fresh `SecureRandom` entropy and Rust derives a
 new `epoch.provider.*` id. Old-epoch requests cannot enter review.
+
+The provider retains exactly one non-cloneable
+`ManifoldBrokerControlLeaseAuthority` inside that runtime. The v2 runtime
+config's `initial_leases` are product request shapes, not accepted lease
+evidence: initialization reproduces each lease through a generic Manifold
+review/application and retains the exact source lineage. Expired, duplicate,
+or otherwise unreproducible rows reject. Released v1 runtime configs carried
+raw Runtime Host lease rows and therefore require a product rebuild; they are
+never silently migrated or reinterpreted as owner authority.
+
+Media-session preparation and refresh borrow the same live Broker runtime
+behind one synchronized owner handle. They do not clone a runtime, manufacture
+lease lineage, or call a private adapter command gate. Runtime-state,
+control-lease-authority, initialization-clock, and synchronization failures
+remain distinct typed errors.
 
 ## Transport request
 
@@ -79,11 +97,11 @@ pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\checks\Test-QuestBrokerAut
 
 ## Product-adoption boundary
 
-The authority and Native Renderer embedded config/admission path are complete,
-but generic media command adoption remains separately gated. Later product work
-must route only accepted and leased `command.media.session.*` work into
-`rusty-quest-media-stream`; keep
-source, processor, route/socket, codec, sink, and cleanup receipts separate;
-and retain remote-camera only as an explicit compatibility mapper. Until then,
-missing capability or lease fails closed and no compatibility command regains
-unauthenticated loopback authority.
+The authority and Native Renderer embedded config/admission path now route only
+accepted and leased `command.media.session.*` work into
+`rusty-quest-media-stream`. Runtime Host acceptance prepares an action; it does
+not claim the platform effect completed. Source, processor, route/socket,
+codec, sink, and cleanup receipts remain separate, and remote-camera remains
+an explicit compatibility mapper. Missing capability, missing/current-owner
+lease, owner completion, or cleanup evidence fails closed; no compatibility
+command regains unauthenticated loopback authority.

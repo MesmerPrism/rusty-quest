@@ -136,7 +136,7 @@ foreach ($token in @(
     "manifold_product_lock_sha256",
     "GeneratedBrokerRuntimeConfig.java",
     "static final String SHA256",
-    "rusty.quest.broker.runtime_config.v1",
+    "rusty.quest.broker.runtime_config.v2",
     "broker_runtime_config_sha256",
     "broker_runtime_config_canonical_sha256",
     "ValidateRuntimeConfigOnly",

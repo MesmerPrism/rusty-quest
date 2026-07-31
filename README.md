@@ -107,6 +107,36 @@ domain-separated JCS claims with Ed25519. Its default profile is inert. It does
 not discover a Hub, enroll itself, accept authority, inspect arbitrary apps,
 listen for commands, or add ADB/File Manager/media capability.
 
+`crates/rusty-quest-package-updater` owns the fail-closed, one-APK signed
+manifest, exact policy, anti-rollback checkpoint, and deterministic receipt
+contracts for the separate attended
+`apps/package-updater-android` sidecar. The Android app fixes its manifest URL,
+release key, package, rollout ring, signer, and HTTPS origin at build time,
+downloads only into app-private storage, verifies the archive before staging,
+and always uses Android Package Installer with wearer action required. It is
+not part of the Store launcher, does not accept arbitrary URLs or packages,
+and advances rollback state only after exact installed-package readback.
+The release identity is the Labs-only
+`io.github.mesmerprism.rustyquest.packageupdater.labs`; channel is signed and
+receipt-visible, and rollback is keyed by the full
+channel/package/ring/APK-signer/manifest-key/origin tuple. Fleet may
+select/authorize/project this packaged tuple but supplies no verifier policy.
+The normative state contract is
+`schemas/rusty.quest.package_update_rollback_state.v1.schema.json`.
+The target policy is explicitly Labs-only under continuous APK signer identity:
+the updater accepts only `io.github.mesmerprism.rustykiosk.labs`, so stable and
+Labs can coexist and Labs removal leaves stable unchanged.
+The updater product release is independently tag-bound:
+`package-updater-v0.1.0-alpha.N` identifies an alpha-maturity Labs prerelease of
+`io.github.mesmerprism.rustyquest.packageupdater.labs`. Repository-owned
+metadata binds the exact source revision/tree and primary APK identity after
+revalidating the closed build manifest and actual APK. Alpha sequence `N` is
+also the Android version code and `0.1.0-alpha.N` is the version name, so
+successive updater products have monotonic installed-package evidence. The
+protected workflow pins the updater APK's own signing certificate,
+publishes only the APK, sanitized metadata, project license, and exact source
+notice, draft-first and non-latest.
+
 `crates/rusty-quest-media-stream` provides the generic receiver-first platform
 runtime described in [Generic Media Stream Runtime](docs/MEDIA_STREAM_RUNTIME.md).
 It composes explicit sources, dual-lane/packed/passthrough processors, validated
@@ -718,7 +748,12 @@ creating the provider.
 The product-only authority path is implemented in
 `crates/rusty-quest-broker-authority`. It projects a trusted app-local
 standalone-process or embedded-in-process provider into one stateful
-`ManifoldBrokerRuntime`. Signature-scoped Binder admission creates an
+`ManifoldBrokerRuntime` with one retained, non-cloneable Manifold control-lease
+owner. Fresh v2 config initialization uses Android wall/monotonic clock
+readings and converts product-requested lease shapes into exact generic
+Manifold review/application lineage; expired or duplicate requests reject, and
+released raw-lease v1 configs require a product rebuild rather than silent
+migration. Signature-scoped Binder admission creates an
 opaque-token, client/capability/revision-bound one-use permit; the real
   WebSocket or embedded server
 entrypoint must consume that permit before the shared Runtime Host review/apply

@@ -1,0 +1,307 @@
+name: Package Updater Labs prerelease
+
+on:
+  push:
+    tags:
+      - package-updater-v0.1.0-alpha.*
+
+permissions:
+  contents: write
+
+concurrency:
+  group: package-updater-labs-release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: windows-2025
+    environment: package-updater-labs-release
+    env:
+      ANDROID_BUILD_TOOLS_VERSION: 35.0.1
+      ANDROID_NDK_VERSION: 27.2.12479018
+      GRADLE_VERSION: 8.13
+      RELEASE_APK_NAME: rusty-quest-package-updater.apk
+      RELEASE_METADATA_NAME: rusty-quest-package-updater.release.json
+      RELEASE_LICENSE_NAME: RUSTY-QUEST-PACKAGE-UPDATER-LICENSE.txt
+      RELEASE_SOURCE_NAME: RUSTY-QUEST-PACKAGE-UPDATER-SOURCE.txt
+    steps:
+      - name: Checkout exact tag target
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+          persist-credentials: false
+          ref: ${{ github.sha }}
+
+      - name: Set up exact Java
+        uses: actions/setup-java@03ad4de0992f5dab5e18fcb136590ce7c4a0ac95 # v5.6.0
+        with:
+          distribution: temurin
+          java-version: 17.0.14+7
+
+      - name: Set up exact Gradle
+        uses: gradle/actions/setup-gradle@748248ddd2a24f49513d8f472f81c3a07d4d50e1 # v4.4.4
+        with:
+          gradle-version: 8.13
+          cache-disabled: true
+
+      - name: Verify pre-existing exact tag and source
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $tag = "${{ github.ref_name }}"
+          if ($tag -notmatch '^package-updater-v0\.1\.0-alpha\.[1-9][0-9]*$') {
+            throw "Release tag is outside the Package Updater Labs product."
+          }
+          git show-ref --verify --quiet "refs/tags/$tag"
+          if ($LASTEXITCODE -ne 0) { throw "Release tag does not pre-exist." }
+          $peeled = (git rev-parse "refs/tags/$tag^{}").Trim()
+          if ($peeled -ne "$env:GITHUB_SHA") {
+            throw "Exact tag peel differs from GITHUB_SHA."
+          }
+          if ((git status --porcelain).Count -ne 0) {
+            throw "Release checkout is not clean."
+          }
+
+      - name: Install pinned Android SDK components
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $sdkManager = Join-Path $env:ANDROID_SDK_ROOT "cmdline-tools\latest\bin\sdkmanager.bat"
+          if (-not (Test-Path -LiteralPath $sdkManager -PathType Leaf)) {
+            throw "Pinned sdkmanager entrypoint is unavailable."
+          }
+          & $sdkManager `
+            "platforms;android-34" `
+            "build-tools;$env:ANDROID_BUILD_TOOLS_VERSION" `
+            "ndk;$env:ANDROID_NDK_VERSION"
+          if ($LASTEXITCODE -ne 0) { throw "Pinned Android components failed." }
+
+      - name: Build signed Labs product and owner metadata
+        shell: pwsh
+        env:
+          UPDATER_KEYSTORE_BASE64: ${{ secrets.PACKAGE_UPDATER_KEYSTORE_BASE64 }}
+          UPDATER_STORE_PASSWORD: ${{ secrets.PACKAGE_UPDATER_KEYSTORE_PASSWORD }}
+          UPDATER_KEY_ALIAS: ${{ secrets.PACKAGE_UPDATER_KEY_ALIAS }}
+          UPDATER_KEY_PASSWORD: ${{ secrets.PACKAGE_UPDATER_KEY_PASSWORD }}
+          UPDATE_MANIFEST_URL: ${{ vars.PACKAGE_UPDATER_LABS_MANIFEST_URL }}
+          UPDATE_KEY_ID: ${{ vars.PACKAGE_UPDATER_LABS_TRUSTED_KEY_ID }}
+          UPDATE_PUBLIC_KEY: ${{ vars.PACKAGE_UPDATER_LABS_TRUSTED_PUBLIC_KEY_BASE64URL }}
+          UPDATE_HTTPS_ORIGIN: ${{ vars.PACKAGE_UPDATER_LABS_EXPECTED_HTTPS_ORIGIN }}
+          UPDATE_TARGET_PACKAGE: ${{ vars.PACKAGE_UPDATER_LABS_EXPECTED_PACKAGE_NAME }}
+          UPDATE_ROLLOUT_RING: ${{ vars.PACKAGE_UPDATER_LABS_EXPECTED_ROLLOUT_RING }}
+          UPDATE_TARGET_SIGNER: ${{ vars.PACKAGE_UPDATER_LABS_EXPECTED_SIGNER_SHA256 }}
+          UPDATE_UPDATER_SIGNER: ${{ vars.PACKAGE_UPDATER_LABS_EXPECTED_UPDATER_SIGNER_SHA256 }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $tagMatch = [regex]::Match(
+            "${{ github.ref_name }}",
+            '^package-updater-v(?<version>0\.1\.0-alpha\.(?<sequence>[1-9][0-9]*))$'
+          )
+          $alphaSequence = 0
+          if (-not $tagMatch.Success -or
+            -not [int]::TryParse(
+              $tagMatch.Groups["sequence"].Value, [ref]$alphaSequence
+            ) -or $alphaSequence -lt 1) {
+            throw "Release tag cannot derive a canonical Android version."
+          }
+          $releaseVersion = $tagMatch.Groups["version"].Value
+          $releaseRoot = Join-Path $env:RUNNER_TEMP "package-updater-release"
+          New-Item -ItemType Directory -Path $releaseRoot | Out-Null
+          $keystore = Join-Path $env:RUNNER_TEMP "package-updater-release.jks"
+          [IO.File]::WriteAllBytes(
+            $keystore, [Convert]::FromBase64String($env:UPDATER_KEYSTORE_BASE64)
+          )
+          try {
+            $gradle = (Get-Command gradle -ErrorAction Stop).Source
+            $buildTools = Join-Path $env:ANDROID_SDK_ROOT `
+              "build-tools\$env:ANDROID_BUILD_TOOLS_VERSION"
+            $ndk = Join-Path $env:ANDROID_SDK_ROOT "ndk\$env:ANDROID_NDK_VERSION"
+            $result = .\tools\Build-PackageUpdaterAndroid.ps1 `
+              -GradlePath $gradle `
+              -AndroidHome $env:ANDROID_SDK_ROOT `
+              -AndroidBuildToolsDirectory $buildTools `
+              -AndroidNdkDirectory $ndk `
+              -JavaHome $env:JAVA_HOME `
+              -ManifestUrl $env:UPDATE_MANIFEST_URL `
+              -TrustedKeyId $env:UPDATE_KEY_ID `
+              -TrustedPublicKeyBase64Url $env:UPDATE_PUBLIC_KEY `
+              -ExpectedHttpsOrigin $env:UPDATE_HTTPS_ORIGIN `
+              -ExpectedPackageName $env:UPDATE_TARGET_PACKAGE `
+              -ExpectedRolloutRing $env:UPDATE_ROLLOUT_RING `
+              -ExpectedSignerSha256 $env:UPDATE_TARGET_SIGNER `
+              -ExpectedUpdaterSignerSha256 $env:UPDATE_UPDATER_SIGNER `
+              -VersionCode $alphaSequence `
+              -VersionName $releaseVersion `
+              -KeystorePath $keystore `
+              -StorePassword (ConvertTo-SecureString $env:UPDATER_STORE_PASSWORD -AsPlainText -Force) `
+              -KeyAlias $env:UPDATER_KEY_ALIAS `
+              -KeyPassword (ConvertTo-SecureString $env:UPDATER_KEY_PASSWORD -AsPlainText -Force) `
+              -OutDir $releaseRoot
+            $apk = Join-Path $releaseRoot $env:RELEASE_APK_NAME
+            $buildManifest = Join-Path $releaseRoot `
+              "rusty-quest-package-updater.build-manifest.json"
+            $metadata = Join-Path $releaseRoot $env:RELEASE_METADATA_NAME
+            .\tools\New-PackageUpdaterProductReleaseMetadata.ps1 `
+              -BuildManifestPath $buildManifest -ApkPath $apk `
+              -ReleaseTag "${{ github.ref_name }}" -RepoRoot . -OutPath $metadata
+            .\tools\Test-PackageUpdaterProductReleaseMetadata.ps1 `
+              -MetadataPath $metadata -BuildManifestPath $buildManifest `
+              -ApkPath $apk -ReleaseTag "${{ github.ref_name }}" -RepoRoot .
+            Copy-Item -LiteralPath .\LICENSE `
+              -Destination (Join-Path $releaseRoot $env:RELEASE_LICENSE_NAME)
+            $sourceTree = (git rev-parse 'HEAD^{tree}').Trim()
+            if ($LASTEXITCODE -ne 0 -or
+              $sourceTree -notmatch '^[0-9a-f]{40}$') {
+              throw "Could not resolve the exact release source tree."
+            }
+            [IO.File]::WriteAllLines(
+              (Join-Path $releaseRoot $env:RELEASE_SOURCE_NAME),
+              @(
+                "Repository: https://github.com/$env:GITHUB_REPOSITORY",
+                "Tag: ${{ github.ref_name }}",
+                "Source revision: $env:GITHUB_SHA",
+                "Source tree: $sourceTree",
+                "License: AGPL-3.0-or-later"
+              )
+            )
+            "RELEASE_ROOT=$releaseRoot" >> $env:GITHUB_ENV
+          } finally {
+            if (Test-Path -LiteralPath $keystore) {
+              [IO.File]::WriteAllBytes($keystore, [byte[]]::new(0))
+              Remove-Item -LiteralPath $keystore -Force
+            }
+          }
+
+      - name: Create draft, upload closed assets, verify, and promote
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $headers = @{
+            Authorization = "Bearer $env:GH_TOKEN"
+            Accept = "application/vnd.github+json"
+            "X-GitHub-Api-Version" = "2022-11-28"
+          }
+          $api = "https://api.github.com/repos/$env:GITHUB_REPOSITORY"
+          $tag = "${{ github.ref_name }}"
+          function Assert-RemoteTag {
+            $commit = Invoke-RestMethod -Uri "$api/commits/$tag" `
+              -Headers $headers
+            if ($commit.sha -cne $env:GITHUB_SHA) {
+              throw "Authoritative remote tag does not peel to GITHUB_SHA."
+            }
+          }
+          function Assert-LabsIsNotLatest {
+            $latestResponse = Invoke-WebRequest -Uri "$api/releases/latest" `
+              -Headers $headers -SkipHttpErrorCheck
+            if ($latestResponse.StatusCode -eq 404) { return }
+            if ($latestResponse.StatusCode -lt 200 -or
+              $latestResponse.StatusCode -ge 300) {
+              throw "Latest-release readback failed with HTTP " +
+                $latestResponse.StatusCode + "."
+            }
+            $latest = $latestResponse.Content | ConvertFrom-Json
+            if ($latest.tag_name -ceq $tag) {
+              throw "Package Updater Labs became the latest release."
+            }
+          }
+          Assert-RemoteTag
+          $existing = Invoke-WebRequest -Uri "$api/releases/tags/$tag" `
+            -Headers $headers -SkipHttpErrorCheck
+          if ($existing.StatusCode -ne 404) {
+            if ($existing.StatusCode -ge 200 -and $existing.StatusCode -lt 300) {
+              throw "An immutable release already exists for the exact tag."
+            }
+            throw "GitHub release lookup failed with HTTP $($existing.StatusCode)."
+          }
+          $createBody = @{
+            tag_name = $tag
+            target_commitish = $env:GITHUB_SHA
+            name = "Rusty Quest Package Updater $tag"
+            draft = $true
+            prerelease = $true
+            make_latest = "false"
+          } | ConvertTo-Json
+          $release = Invoke-RestMethod -Method Post -Uri "$api/releases" `
+            -Headers $headers -Body $createBody -ContentType "application/json"
+          if (-not $release.draft -or -not $release.prerelease) {
+            throw "GitHub did not create the required draft prerelease."
+          }
+          $assets = @(
+            Join-Path $env:RELEASE_ROOT $env:RELEASE_APK_NAME
+            Join-Path $env:RELEASE_ROOT $env:RELEASE_METADATA_NAME
+            Join-Path $env:RELEASE_ROOT $env:RELEASE_LICENSE_NAME
+            Join-Path $env:RELEASE_ROOT $env:RELEASE_SOURCE_NAME
+          )
+          foreach ($asset in $assets) {
+            $name = Split-Path -Leaf $asset
+            $uploadUri = $release.upload_url.Replace("{?name,label}", "") +
+              "?name=$([Uri]::EscapeDataString($name))"
+            Invoke-RestMethod -Method Post -Uri $uploadUri -Headers $headers `
+              -InFile $asset -ContentType "application/octet-stream" | Out-Null
+          }
+          $remoteAssets = @(
+            Invoke-RestMethod -Uri "$api/releases/$($release.id)/assets" `
+              -Headers $headers
+          )
+          if ($remoteAssets.Count -ne 4) {
+            throw "Remote release asset closure is not exact."
+          }
+          foreach ($asset in $assets) {
+            $name = Split-Path -Leaf $asset
+            $expectedBytes = (Get-Item -LiteralPath $asset).Length
+            $expectedDigest = "sha256:" + (
+              Get-FileHash -LiteralPath $asset -Algorithm SHA256
+            ).Hash.ToLowerInvariant()
+            $remote = @($remoteAssets | Where-Object { $_.name -ceq $name })
+            if ($remote.Count -ne 1 -or $remote[0].size -ne $expectedBytes -or
+              $remote[0].digest -cne $expectedDigest -or
+              $remote[0].state -ne "uploaded") {
+              throw "Remote asset name, digest, byte count, or state differs."
+            }
+          }
+          Assert-RemoteTag
+          $promoteBody = @{
+            draft = $false
+            prerelease = $true
+            make_latest = "false"
+          } | ConvertTo-Json
+          $promoted = Invoke-RestMethod -Method Patch `
+            -Uri "$api/releases/$($release.id)" -Headers $headers `
+            -Body $promoteBody -ContentType "application/json"
+          if ($promoted.draft -or -not $promoted.prerelease) {
+            throw "Labs release promotion did not remain a non-latest prerelease."
+          }
+          $published = Invoke-RestMethod -Uri "$api/releases/tags/$tag" `
+            -Headers $headers
+          if ($published.draft -or -not $published.prerelease -or
+            $published.tag_name -cne $tag) {
+            throw "Published Labs release identity or channel differs."
+          }
+          $publishedAssets = @(
+            Invoke-RestMethod -Uri "$api/releases/$($published.id)/assets" `
+              -Headers $headers
+          )
+          if ($publishedAssets.Count -ne 4) {
+            throw "Published Labs release asset closure differs."
+          }
+          foreach ($asset in $assets) {
+            $name = Split-Path -Leaf $asset
+            $expectedBytes = (Get-Item -LiteralPath $asset).Length
+            $expectedDigest = "sha256:" + (
+              Get-FileHash -LiteralPath $asset -Algorithm SHA256
+            ).Hash.ToLowerInvariant()
+            $remote = @(
+              $publishedAssets | Where-Object { $_.name -ceq $name }
+            )
+            if ($remote.Count -ne 1 -or
+              $remote[0].size -ne $expectedBytes -or
+              $remote[0].digest -cne $expectedDigest -or
+              $remote[0].state -ne "uploaded") {
+              throw "Published asset name, digest, byte count, or state differs."
+            }
+          }
+          Assert-RemoteTag
+          Assert-LabsIsNotLatest

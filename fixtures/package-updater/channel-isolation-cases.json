@@ -1,0 +1,20 @@
+{
+  "schema": "rusty.quest.package_update_channel_isolation_cases.v1",
+  "closed_tuple": {
+    "channel": "alpha",
+    "package_name": "io.github.mesmerprism.rustykiosk",
+    "rollout_ring": "alpha",
+    "signer_sha256": "sha256:23bb7bb81143a81f216118af35960aaee2468e9880b94e07574cac0a9239dcf6",
+    "key_id": "release-test-2026-a",
+    "public_key": "6kpsY-KcUgq-9VB7Ey7F-ZVHdq6-vnuSQh7qaRRG0iw",
+    "https_origin": "https://updates.mesmerprism.com"
+  },
+  "cases": [
+    {"field": "channel", "value": "stable", "expected_code": "channel_mismatch"},
+    {"field": "package_name", "value": "io.github.mesmerprism.other", "expected_code": "package_policy_mismatch"},
+    {"field": "signer_sha256", "value": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "expected_code": "signer_policy_mismatch"},
+    {"field": "key_id", "value": "release-test-stable-a", "expected_code": "key_id_mismatch"},
+    {"field": "public_key", "value": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "expected_code": "public_key_mismatch"},
+    {"field": "https_origin", "value": "https://stable-updates.mesmerprism.com", "expected_code": "origin_mismatch"}
+  ]
+}

@@ -4,27 +4,13 @@ $ErrorActionPreference = "Stop"
 if ([string]::IsNullOrWhiteSpace($RepoRoot)) { $RepoRoot = Resolve-Path (Join-Path $PSScriptRoot "..\..") }
 $root = (Resolve-Path -LiteralPath $RepoRoot).Path
 $fixtureRoot = Join-Path $root "fixtures\broker-authority"
-
-function Read-Json([string]$Path) {
-    Get-Content -Raw -LiteralPath $Path | ConvertFrom-Json
+$obsoleteExporter = Join-Path $root "crates\rusty-quest-broker-authority\src\bin\export_broker_authority_fixtures.rs"
+if (Test-Path -LiteralPath $obsoleteExporter -PathType Leaf) {
+    throw "The obsolete direct-adapter fixture exporter still exists."
 }
-
-foreach ($suffix in @("applied", "unknown-rejected", "unleased-rejected")) {
-    $standalone = Read-Json (Join-Path $fixtureRoot "standalone-$suffix.response.json")
-    $embedded = Read-Json (Join-Path $fixtureRoot "embedded-$suffix.response.json")
-    foreach ($response in @($standalone, $embedded)) {
-        if ($response.'$schema' -ne "rusty.quest.broker.authority_response.v1") { throw "Authority response schema drifted for '$suffix'." }
-        if ($response.local_acceptance_rules -ne $false) { throw "Quest bridge gained local acceptance rules for '$suffix'." }
-        if ($response.decision_owner_id -ne "module.runtime.host") { throw "Quest bridge authority owner drifted for '$suffix'." }
-        if ($response.adapter_receipt.authority_owner_id -ne "module.runtime.host") { throw "Adapter receipt authority owner drifted for '$suffix'." }
-    }
-    $standaloneDispatch = $standalone.adapter_receipt.dispatch | ConvertTo-Json -Depth 20 -Compress
-    $embeddedDispatch = $embedded.adapter_receipt.dispatch | ConvertTo-Json -Depth 20 -Compress
-    $standaloneApplication = $standalone.adapter_receipt.application | ConvertTo-Json -Depth 20 -Compress
-    $embeddedApplication = $embedded.adapter_receipt.application | ConvertTo-Json -Depth 20 -Compress
-    if ($standaloneDispatch -ne $embeddedDispatch -or $standaloneApplication -ne $embeddedApplication) {
-        throw "Standalone/embedded Runtime Host decision parity drifted for '$suffix'."
-    }
+if ((Test-Path -LiteralPath $fixtureRoot -PathType Container) -and
+    @(Get-ChildItem -LiteralPath $fixtureRoot -File).Count -ne 0) {
+    throw "Obsolete stateless broker-authority fixtures still exist."
 }
 
 $standaloneJavaPath = Join-Path $root "apps\manifold-broker-android\src\main\java\io\github\mesmerprism\rustymanifold\broker\ManifoldRuntimeAuthorityBridge.java"
@@ -52,7 +38,7 @@ $javaSources = @(
     (Get-Content -Raw -LiteralPath $embeddedJavaPath)
 )
 foreach ($java in $javaSources) {
-    foreach ($token in @("nativeInitialize", "nativeMutate", "nativeCompleteMediaAction", "expectedConfigSha256", "rusty.quest.broker.runtime_initialize_status.v1", "rusty.quest.broker.server_mutation_response.v1", "rusty.quest.broker.media_completion_response.v1", "module.runtime.host", "local_acceptance_rules")) {
+    foreach ($token in @("nativeInitialize", "nativeMutate", "nativeCompleteMediaAction", "expectedConfigSha256", "System.currentTimeMillis()", "SystemClock.elapsedRealtimeNanos()", "rusty.quest.broker.runtime_initialize_status.v1", "rusty.quest.broker.server_mutation_response.v1", "rusty.quest.broker.media_completion_response.v1", "module.runtime.host", "local_acceptance_rules")) {
         if ($java -notmatch [regex]::Escape($token)) { throw "Java authority bridge is missing '$token'." }
     }
     if ($java -match 'command\.[a-z]' -or $java -match 'rejection_reason' -or $java -match 'nativeEvaluate') {
@@ -81,6 +67,14 @@ foreach ($token in @("apply_media_platform_completion_json", "nativeApplyMediaCo
 $authorityRust = Get-Content -Raw -LiteralPath $authorityRustPath
 foreach ($token in @(
     "ManifoldBrokerRuntime",
+    "ManifoldBrokerControlLeaseAuthority",
+    "from_caller_attested_retained_authority_state",
+    "commit_mutation",
+    "Arc<RwLock<ManifoldBrokerRuntime>>",
+    "reviewed_control_lease_adoption_ids",
+    "reviewed_derivative_lease_revocation_ids",
+    "LegacyRuntimeConfigRequiresRebuild",
+    "RuntimeLockPoisoned",
     "QuestBrokerRuntimeProvider",
     "existing_authority_preserved",
     "RebindConfigMismatch",
@@ -104,6 +98,11 @@ foreach ($token in @(
     if ($authorityRust -notmatch [regex]::Escape($token)) {
         throw "Stateful Quest broker authority is missing '$token'."
     }
+}
+if ($authorityRust -match '\.runtime\.clone\(' -or
+    $authorityRust -match '\.handle_command\(' -or
+    $authorityRust -match 'evaluate_authority_invocation') {
+    throw "Stateful Quest broker authority bypasses the retained Manifold owner/runtime."
 }
 
 $clientRust = Get-Content -Raw -LiteralPath $clientRustPath
@@ -186,7 +185,7 @@ if ($LASTEXITCODE -ne 0) { throw "Embedded WebSocket authority damaged test fail
 
 $build = Get-Content -Raw -LiteralPath $buildPath
 foreach ($token in @(
-    "rusty.quest.broker.runtime_config.v1",
+    "rusty.quest.broker.runtime_config.v2",
     "GeneratedBrokerRuntimeConfig.java",
     "packaged_authority",
     "Get-ExactClientGrantCapabilities",

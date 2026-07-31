@@ -29,6 +29,9 @@ apps.
 - narrow Meta Spatial SDK Android experiment lanes when they are Quest platform
   adapters for panel placement, sizing, launch, and headset validation rather
   than Morphospace geometry, rendering, or session authority.
+- source-only signed package-update admission, exact package/ring/origin/signer
+  policy, installed-APK observation, and anti-rollback receipts for an attended
+  Quest updater sidecar.
 
 ## Non-Ownership
 
@@ -47,6 +50,70 @@ apps.
 - private downstream effect kernels, tuned profiles, study semantics, live
   hand-mesh dynamics, or coupling parameters beyond the low-rate generic
   driver-profile panel records needed for headset validation.
+- Fleet release authorization, arbitrary package discovery, silent or
+  device-owner installation, Store launcher authority, and Android Package
+  Installer confirmation on the wearer's behalf.
+
+## Attended Package Updater
+
+`crates/rusty-quest-package-updater` owns the strict
+`rusty.quest.package_update_manifest.v1` signed payload and its envelope,
+policy, receipt, and rollback-state validation. Ed25519 covers the RFC 8785 JCS
+payload after the exact `rusty.quest.package_update_manifest.v1\0` domain.
+Release-key identifiers are caller-selected only from a closed registry, and
+one public key cannot be aliased under multiple identifiers.
+
+Labs is a channel-isolated release product with Android package
+`io.github.mesmerprism.rustyquest.packageupdater.labs`, its own manifest
+endpoint, and Labs-scoped staging, rollback, and receipt namespaces. The
+signed channel, target package, rollout ring, APK signer, Ed25519 key id/public
+key, and canonical HTTPS origin form one tuple and key rollback state. Fleet
+may select, authorize, and project this packaged tuple only. Quest owns
+verification, download, PackageInstaller, installed readback, rollback
+advancement, and the effective channel-bearing receipt.
+Publication writes immutable generations and changes only the single channel
+pointer last under caller-pinned prior pointer/envelope hashes. The updater
+retains the pointer-bound verified tuple through rollback admission and
+installed commit. Its target is the co-installable Labs Kiosk package; stable
+is outside this updater's accepted package tuple.
+
+The updater APK is also a closed Labs release product. Its only accepted tag
+shape is `package-updater-v0.1.0-alpha.N`; the tag peels to the exact workflow
+source revision. `rusty.quest.package_updater_product_release.v2` is sanitized
+owner metadata derived only after strict closed-shape validation of the
+existing build manifest and byte-for-byte APK hash/size readback. It binds the
+release tag/version, source revision/tree, Labs product channel, alpha maturity,
+GitHub-prerelease distribution track, installation
+identity, tag-derived APK version, updater signing-certificate SHA-256, and
+primary APK name/hash/bytes. SDK, aapt2, NDK, Gradle, and keystore paths are
+adapter inputs and never metadata.
+
+The tag workflow runs behind the `package-updater-labs-release` protected
+environment with pinned actions and tool versions. It distinguishes a missing
+release from a GitHub API failure, creates a draft prerelease, uploads exactly
+the APK, owner metadata, project license, and exact source notice, reads back
+each remote name/digest/byte count before and after promotion, and only then
+rechecks the remote tag immediately before promotion. It only then accepts the
+result as prerelease and non-latest. Existing releases/assets are not
+overwritten or deleted.
+
+`apps/package-updater-android` is a distinct native 2D sidecar. Its only
+permissions are `INTERNET` and `REQUEST_INSTALL_PACKAGES`; its sole exported
+component is the visible launcher Activity. Compile-time policy fixes the
+manifest endpoint, release key, exact HTTPS origin, target package, rollout
+ring, and APK signer. Redirects are disabled, response and APK sizes are
+bounded, staging is app-private, and Android archive metadata must match the
+signed facts before a full-install Package Installer session is committed with
+`USER_ACTION_REQUIRED`.
+
+Wearer cancellation and terminal failure never advance rollback state. A
+successful callback still requires exact installed package, version, and signer
+readback before the checkpoint changes. Restart reconciliation retains a
+visible pending state, permits explicit session cancellation, and cleans the
+private staged APK after every terminal outcome.
+Installer success observed at or after manifest expiry remains a truthful
+installed outcome but is terminally rejected for rollback advancement; a
+fresh signed manifest is required for the next trusted update decision.
 
 ADB writes are generated operations from validated profiles. They are not
 hand-authored settings authority.
@@ -635,8 +702,12 @@ only by generated product constants. Direct-P2P and BLE remain dedicated
 provider lanes. The former broad camera/P2P validation package is retained only
 as an explicitly selected legacy compatibility product.
 
-The build also generates one exact `runtime_config.v1` containing the accepted
-lock, adapter binding, initial leases, and signature-derived admission grants.
+The build also generates one exact `runtime_config.v2` containing the accepted
+lock, adapter binding, requested initial lease shapes, and signature-derived
+admission grants. On a fresh provider, Android supplies wall and monotonic
+clock readings and Rust reproduces each requested lease through generic
+Manifold review/application into one retained control-lease owner. Released
+v1 raw-lease configs require a product rebuild rather than silent migration.
 Media products additionally require exact canonical Manifold-descriptor and
 Quest-runtime bindings. Runtime Host acceptance prepares a seven-owner media
 action with `platform_effect_completed=false`; only an exact receiver-first or
@@ -648,8 +719,9 @@ JSON plus their hashes; grants are the product/client capability intersection,
 not a union. A separately generated canonical config digest is checked by Rust
 at initialization. Base and camera-free products therefore cannot inherit
 camera, peer, or unselected media/sink authority.
-`QuestBrokerRuntimeProvider` retains that config and one
-`ManifoldBrokerRuntime` for the life of the process. Binder `authorize_use`
+`QuestBrokerRuntimeProvider` retains that config and one non-cloned
+`ManifoldBrokerRuntime` for the life of the process. Media refresh borrows that
+same live Broker owner. Binder `authorize_use`
 creates a one-use permit bound to its opaque token, the caller's
 package/signature-derived client, exact command capability, resulting admission
 revision for that use, expiry, and provider

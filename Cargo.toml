@@ -9,6 +9,7 @@ members = [
     "apps/manifold-broker-android/native",
     "apps/direct-p2p-provider-android/native",
     "apps/fleet-agent-android/native",
+    "apps/package-updater-android/native",
     "apps/spatial-camera-panel-android/native-receipt",
     "apps/native-renderer-android/native",
     "crates/rusty-quest-native-renderer",
@@ -22,6 +23,7 @@ members = [
     "crates/rusty-quest-hand-adapter",
     "crates/rusty-quest-peer-session-adapter",
     "crates/rusty-quest-fleet-agent",
+    "crates/rusty-quest-package-updater",
 ]
 resolver = "2"
 

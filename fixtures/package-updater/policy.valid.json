@@ -1,0 +1,15 @@
+{
+  "expected_channel": "alpha",
+  "expected_https_origin": "https://updates.mesmerprism.com",
+  "expected_package_name": "io.github.mesmerprism.rustykiosk",
+  "expected_rollout_ring": "alpha",
+  "expected_signer_sha256": "sha256:23bb7bb81143a81f216118af35960aaee2468e9880b94e07574cac0a9239dcf6",
+  "expected_key_id": "release-test-2026-a",
+  "expected_public_key": "6kpsY-KcUgq-9VB7Ey7F-ZVHdq6-vnuSQh7qaRRG0iw",
+  "installed_version_code": 100,
+  "minimum_target_version_code": 101,
+  "maximum_target_version_code": 199,
+  "maximum_apk_size_bytes": 104857600,
+  "maximum_manifest_validity_ms": 86400000,
+  "maximum_future_issue_skew_ms": 300000
+}

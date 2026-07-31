@@ -1,7 +1,11 @@
 //! Prints the canonical SHA-256 for one packaged broker runtime config.
 
 use rusty_quest_broker_authority::{canonical_runtime_config_sha256, QuestBrokerAuthorityRuntime};
-use std::{env, fs, process::ExitCode};
+use std::{
+    env, fs,
+    process::ExitCode,
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 fn main() -> ExitCode {
     let mut args = env::args().skip(1);
@@ -18,7 +22,13 @@ fn main() -> ExitCode {
         .and_then(|json| {
             let digest =
                 canonical_runtime_config_sha256(&json).map_err(|error| error.to_string())?;
-            QuestBrokerAuthorityRuntime::from_config_json(&json, &"00".repeat(32))
+            let now_ms = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map_err(|error| error.to_string())?
+                .as_millis()
+                .try_into()
+                .map_err(|_| "system clock exceeds i64 milliseconds".to_owned())?;
+            QuestBrokerAuthorityRuntime::from_config_json(&json, &"00".repeat(32), now_ms, 0)
                 .map_err(|error| error.to_string())?;
             Ok(digest)
         }) {

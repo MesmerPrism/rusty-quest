@@ -7,8 +7,16 @@ pub fn initialize_for_host_test(
     config_json: &str,
     expected_config_sha256: &str,
     epoch_entropy_hex: &str,
+    authority_wall_unix_ms: i64,
+    authority_monotonic_elapsed_ns: u64,
 ) -> Result<String, String> {
-    admission_jni::initialize(config_json, expected_config_sha256, epoch_entropy_hex)
+    admission_jni::initialize(
+        config_json,
+        expected_config_sha256,
+        epoch_entropy_hex,
+        authority_wall_unix_ms,
+        authority_monotonic_elapsed_ns,
+    )
 }
 
 /// Executes signature-scoped admission through the shared runtime in host tests.

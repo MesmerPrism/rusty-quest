@@ -1,5 +1,7 @@
 package io.github.mesmerprism.rustyquest.native_renderer;
 
+import android.os.SystemClock;
+
 import org.json.JSONObject;
 
 import java.security.SecureRandom;
@@ -30,7 +32,9 @@ public final class EmbeddedManifoldRuntimeAuthorityBridge {
                 nativeInitialize(
                         GeneratedEmbeddedManifoldRuntimeConfig.JSON,
                         GeneratedEmbeddedManifoldRuntimeConfig.SHA256,
-                        EPOCH_ENTROPY_HEX),
+                        EPOCH_ENTROPY_HEX,
+                        System.currentTimeMillis(),
+                        SystemClock.elapsedRealtimeNanos()),
                 INITIALIZE_SCHEMA,
                 "initialization");
     }
@@ -97,7 +101,9 @@ public final class EmbeddedManifoldRuntimeAuthorityBridge {
     private static native String nativeInitialize(
             String configJson,
             String expectedConfigSha256,
-            String epochEntropyHex);
+            String epochEntropyHex,
+            long authorityWallUnixMs,
+            long authorityMonotonicElapsedNs);
     private static native String nativeAdmit(String operationJson);
     private static native String nativeMutate(String mutationJson, long nowMs);
     private static native String nativeCompleteMediaAction(String completionJson, long nowMs);

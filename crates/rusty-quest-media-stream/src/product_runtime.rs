@@ -10,6 +10,7 @@ use std::{
     sync::{Arc, RwLock},
 };
 
+use rusty_manifold_broker_adapter::ManifoldBrokerRuntime;
 use rusty_manifold_media_session::{
     ManifoldAcceptedMediaSession, ManifoldMediaSessionCurrentReceipt,
     ManifoldMediaSessionLifecycleStatus, MANIFOLD_ACCEPTED_MEDIA_SESSION_SCHEMA,
@@ -390,6 +391,7 @@ pub struct MediaStreamSessionProductRuntime {
 enum MediaStreamAuthoritySource {
     Live {
         host: Arc<RwLock<ManifoldPeerRuntimeHost>>,
+        broker: Option<Arc<RwLock<ManifoldBrokerRuntime>>>,
         decision_id: DottedId,
     },
     #[cfg(any(test, feature = "test-support"))]
@@ -430,6 +432,68 @@ impl MediaStreamSessionProductRuntime {
             current_acceptance,
             authority: MediaStreamAuthoritySource::Live {
                 host: authority,
+                broker: None,
+                decision_id,
+            },
+            authority_epoch_id,
+            runtime,
+            pending_action: None,
+            pending_owner_receipts: Vec::new(),
+            pending_uncertain_owner: None,
+            pending_abort_receipts: Vec::new(),
+            abort_in_progress: false,
+            active_provider_handles: BTreeMap::new(),
+            active_client_authority: None,
+            applied_action_ids: BTreeSet::new(),
+            aborted_action_ids: BTreeSet::new(),
+        })
+    }
+
+    /// Creates one runtime bound to a live in-process peer host and the exact
+    /// integrated Broker authority that admitted its derived media lease.
+    ///
+    /// # Errors
+    ///
+    /// Rejects an invalid product binding, unavailable synchronized authority,
+    /// non-current accepted session, provider-epoch mismatch, or invalid
+    /// platform runtime specification.
+    pub fn new_with_live_broker_runtime(
+        binding: MediaStreamRuntimeProductBinding,
+        authority: Arc<RwLock<ManifoldPeerRuntimeHost>>,
+        broker: Arc<RwLock<ManifoldBrokerRuntime>>,
+        decision_id: DottedId,
+        now_ms: u64,
+    ) -> Result<Self, MediaStreamProductRuntimeError> {
+        binding.validate()?;
+        let (current_acceptance, authority_epoch_id) = {
+            let host = authority
+                .read()
+                .map_err(|_| MediaStreamProductRuntimeError::AuthorityProviderUnavailable)?;
+            let broker = broker
+                .read()
+                .map_err(|_| MediaStreamProductRuntimeError::AuthorityProviderUnavailable)?;
+            let current = host
+                .validate_media_session_with_live_broker_runtime(&broker, &decision_id, now_ms)
+                .map_err(|_| MediaStreamProductRuntimeError::AcceptedSessionNotCurrent)?;
+            let epoch: String = host.snapshot().provider_epoch_id.as_str().to_owned();
+            (current, epoch)
+        };
+        validate_current_acceptance(
+            &binding,
+            &current_acceptance,
+            &authority_epoch_id,
+            now_ms,
+            true,
+            None,
+        )?;
+        let runtime = MediaStreamSessionRuntime::new(binding.spec.clone())
+            .map_err(MediaStreamProductRuntimeError::RuntimeSpecInvalid)?;
+        Ok(Self {
+            binding,
+            current_acceptance,
+            authority: MediaStreamAuthoritySource::Live {
+                host: authority,
+                broker: Some(broker),
                 decision_id,
             },
             authority_epoch_id,
@@ -523,9 +587,18 @@ impl MediaStreamSessionProductRuntime {
         let mut candidate = Self {
             binding: self.binding.clone(),
             current_acceptance: self.current_acceptance.clone(),
-            authority: MediaStreamAuthoritySource::Live {
-                host: authority,
-                decision_id,
+            authority: match &self.authority {
+                MediaStreamAuthoritySource::Live { broker, .. } => {
+                    MediaStreamAuthoritySource::Live {
+                        host: authority,
+                        broker: broker.as_ref().map(Arc::clone),
+                        decision_id,
+                    }
+                }
+                #[cfg(any(test, feature = "test-support"))]
+                MediaStreamAuthoritySource::Test { .. } => {
+                    return Err(MediaStreamProductRuntimeError::AuthorityProviderUnavailable)
+                }
             },
             authority_epoch_id: self.authority_epoch_id.clone(),
             runtime: self.runtime.clone(),
@@ -550,14 +623,30 @@ impl MediaStreamSessionProductRuntime {
         require_current: bool,
     ) -> Result<(), MediaStreamProductRuntimeError> {
         let current = match &self.authority {
-            MediaStreamAuthoritySource::Live { host, decision_id } => {
+            MediaStreamAuthoritySource::Live {
+                host,
+                broker,
+                decision_id,
+            } => {
                 let host = host
                     .read()
                     .map_err(|_| MediaStreamProductRuntimeError::AuthorityProviderUnavailable)?;
                 if host.snapshot().provider_epoch_id.as_str() != self.authority_epoch_id {
                     return Err(MediaStreamProductRuntimeError::AcceptedProviderEpochMismatch);
                 }
-                host.validate_media_session(decision_id, now_ms)
+                if let Some(broker) = broker {
+                    let broker = broker.read().map_err(|_| {
+                        MediaStreamProductRuntimeError::AuthorityProviderUnavailable
+                    })?;
+                    host.validate_media_session_with_live_broker_runtime(
+                        &broker,
+                        decision_id,
+                        now_ms,
+                    )
+                    .map_err(|_| MediaStreamProductRuntimeError::AcceptedSessionNotCurrent)?
+                } else {
+                    host.validate_media_session(decision_id, now_ms)
+                }
             }
             #[cfg(any(test, feature = "test-support"))]
             MediaStreamAuthoritySource::Test { current } => {

@@ -50,6 +50,26 @@ processes must resolve the explicit `pwsh` host.
 
 ## Purpose
 
+The package updater release product is the Labs-only
+`io.github.mesmerprism.rustyquest.packageupdater.labs`. Its signed manifest,
+rollback state, endpoint, storage, receipts, target package, APK signer,
+Ed25519 key id/public key, and HTTPS origin form one closed tuple. Fleet may
+select, authorize, and project only; Quest owns verification, download,
+PackageInstaller lifecycle, readback, rollback, and the effective receipt.
+Release variants must expose no debug or E2E components.
+Publication uses immutable generation directories and one CAS-bound Labs
+pointer updated last. The updater targets only the co-installable
+`io.github.mesmerprism.rustykiosk.labs` core and must never retarget stable.
+The updater product itself releases only from an exact pre-existing
+`package-updater-v0.1.0-alpha.N` tag through the protected Labs environment.
+Its owner metadata is derived from the closed build manifest plus actual APK
+and exposes only tag/version, source revision/tree, Labs installation
+identity, tag-derived monotonic APK version, updater signer SHA-256, and primary
+asset name/hash/bytes. Public release assets are exactly that APK, metadata,
+project license, and exact source notice; promotion is draft-first,
+prerelease, non-latest, rechecks the remote tag immediately before promotion,
+and never overwrites or deletes an existing release.
+
 Rusty Quest owns platform profile contracts and write/readback transports. It
 does not own Makepad widget implementation, Matter simulation truth, Optics
 appearance truth, Manifold command authority, or Lattice relation contracts.
@@ -164,7 +184,12 @@ requires its explicit switch.
 `crates/rusty-quest-broker-authority` is the trusted local process/JNI
 projection over `ManifoldBrokerRuntime`. Real standalone and embedded JNI
 surfaces retain one process-local provider, exact product lock, admission
-  state, bounded-use permits, and Runtime Host. Every server mutation carries
+  state, bounded-use permits, Runtime Host, and one non-cloneable
+  `ManifoldBrokerControlLeaseAuthority`. Fresh v2 initialization must use the
+  Android wall/monotonic clock and generic Manifold review/application for
+  every product-requested initial lease. Reject expired, duplicate, or
+  unreproducible requests; released v1 raw-lease configs require rebuild and
+  must never be silently reinterpreted. Every server mutation carries
   the live provider epoch plus one signature-scoped use id, its opaque token id,
   and that use's creation revision; Rust binds it to the exact client/command
   capability, consumes it,
@@ -192,6 +217,9 @@ platform effect before the Rust receipt applies. Same-provider rebind preserves
   product features. Runtime Host command acceptance prepares a receipt-bound
   action with `platform_effect_completed=false`. Only an exact owner completion
   applied by Rust may advance receiver-first start or cleanup-last stop state.
+  Media preparation and refresh must borrow the same synchronized live Broker
+  runtime; do not clone it, fabricate lease lineage, or bypass the public owner
+  and mutation APIs.
   Generic media must never route through `RemoteCameraSessionRuntime` or inherit
   its properties, defaults, permissions, or command aliases; that runtime is an
   explicit compatibility branch only. See `docs/MEDIA_SESSION_RUNTIME.md`.

@@ -32,6 +32,50 @@ Validate the host contract before a focused or aggregate run:
 pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-PowerShellHost.ps1 -SelfTest
 ```
 
+For the attended package updater, run the Rust contract and Android authority
+gates before any build or headset work:
+
+```powershell
+cargo test -p rusty-quest-package-updater --locked
+pwsh -NoProfile -ExecutionPolicy Bypass -File `
+  .\tools\checks\Test-PackageUpdaterAndroidStatic.ps1 -RepoRoot .
+pwsh -NoProfile -ExecutionPolicy Bypass -File `
+  .\tools\checks\Test-PackageUpdatePublicationContract.ps1
+pwsh -NoProfile -ExecutionPolicy Bypass -File `
+  .\tools\checks\Test-PackageUpdaterBuildArtifactContract.ps1
+pwsh -NoProfile -ExecutionPolicy Bypass -File `
+  .\tools\checks\Test-PackageUpdaterProductReleaseContract.ps1
+pwsh -NoProfile -ExecutionPolicy Bypass -File `
+  .\tools\checks\Test-PackageUpdaterAlphaReleaseWorkflow.ps1 -RepoRoot .
+```
+
+The Rust gate covers signature/domain stability, exact policy dimensions,
+release-key closure, unsafe clock rejection, URL/package canonicalization,
+damaged manifests, deterministic receipts, and post-install-only rollback
+advance. The Android gate closes permissions and exported components, verifies
+the fixed-input/network/archive/Package Installer path, and compiles the
+cross-language canonical signature vector. Release APK assembly additionally
+checks the alpha package identity, signed/effective channel, normative
+full-tuple rollback schema, cross-channel damage matrix, deterministic
+publication receipt, isolated storage, and absence of release E2E components.
+Publisher self-tests cover interruption, stale/concurrent CAS, downgrade,
+tuple drift, fresh-client assertions, exact 24-hour validity, APK identity,
+and single-signer negatives. Artifact self-tests cover canonical alpha pointer
+URLs and final merged-manifest permission/component/E2E leakage. Product
+release self-tests cover the exact alpha tag and installation identity,
+source revision/tree, tag-derived monotonic Android version, protected updater
+signer equality, actual primary APK hash/bytes, and missing, wrong, or expanded
+build/metadata fields. The workflow gate requires pinned actions and tools,
+protected signing/policy inputs, draft-before-promotion, exact tag readback
+both before draft creation and immediately before promotion, prerelease and
+non-latest state, exact four-asset remote readback before and after promotion,
+and no overwrite, latest, or delete route.
+Release APK assembly additionally
+requires all release signing values and an Agent Board reservation for the
+long build. Headset validation must reserve the exact `quest:<serial>`, snapshot
+the target package and unknown-source/accessibility state, exercise one wearer-
+approved update plus one wearer cancellation, then restore the original state.
+
 Run:
 
 ```powershell
@@ -1306,6 +1350,14 @@ rebind
 continuity, and fresh provider restart. Static checks reject Java/WebSocket
 `accepted` or Manifold-authority manufacture and require the standalone start
 service to remain non-exported.
+
+Fresh v2 initialization additionally requires Android wall/monotonic clock
+inputs and reproduces every requested initial lease through the generic
+Manifold control-lease review/application path. Tests reject released v1
+raw-lease configs without a rebuild, expired or duplicate lease requests,
+runtime cloning/private command-gate bypass, and missing Runtime Host v4 replay
+fields. Evidence must retain the v3 owner schema and exact source application
+lineage, while media refresh borrows the same live Broker runtime.
 
 The same matrix now covers independent pending uses across unrelated admission
 revision advances, token-scoped revoke/expiry invalidation, 128-bit per-launch

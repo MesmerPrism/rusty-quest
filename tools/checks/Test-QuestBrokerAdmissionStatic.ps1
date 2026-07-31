@@ -56,7 +56,7 @@ foreach ($source in @($bridge, $native, $questProjection)) {
         throw "Admission bridge does not preserve Manifold decision ownership."
     }
 }
-foreach ($token in @("aarch64-linux-android", "librusty_quest_manifold_broker_authority.so", "broker-signing-certificate.der", "admission_client_signing_certificate_sha256", "manifold_product_lock_id", "manifold_product_lock_sha256", "GeneratedBrokerRuntimeConfig.java", "static final String SHA256", "rusty.quest.broker.runtime_config.v1", "packaged_authority", "client_lock_sha256", "Get-ExactClientGrantCapabilities")) {
+foreach ($token in @("aarch64-linux-android", "librusty_quest_manifold_broker_authority.so", "broker-signing-certificate.der", "admission_client_signing_certificate_sha256", "manifold_product_lock_id", "manifold_product_lock_sha256", "GeneratedBrokerRuntimeConfig.java", "static final String SHA256", "rusty.quest.broker.runtime_config.v2", "packaged_authority", "client_lock_sha256", "Get-ExactClientGrantCapabilities")) {
     if ($build -notmatch [regex]::Escape($token)) { throw "Broker build is missing admission package input '$token'." }
 }
 if ($clientBuild -notmatch 'different_from_broker' -or $clientBuild -notmatch 'same_as_broker') {
