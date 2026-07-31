@@ -1,0 +1,40 @@
+{
+  "schema": "rusty.quest.package_update_publication_receipt.v3",
+  "source_revision": "dfc05fc4f58aa6fd8b426f44b222e7896b8d03cc",
+  "publication_mode": "version-advance",
+  "generation": "s1785541621084-v60606-be7856e3ad911507-98134e5eb0a59a35",
+  "prior_pointer_sha256": null,
+  "prior_envelope_sha256": null,
+  "channel": "labs",
+  "package_name": "io.github.mesmerprism.rustykiosk.labs",
+  "rollout_ring": "labs",
+  "signer_sha256": "sha256:423d20004c79dd140c692e31aa80369cd3677b1ae2688dbd75011a4c83a0f1fb",
+  "key_id": "release-manifest-2026-a",
+  "public_key": "GtgU9RKlhTbuL1uXIlfBkDvqYBX6K4kao_8ZwIzA3BI",
+  "https_origin": "https://mesmerprism.github.io",
+  "site_base_path": "rusty-quest",
+  "manifest_id": "rusty-kiosk.labs.s1785541621084.v60606",
+  "manifest_url": "https://mesmerprism.github.io/rusty-quest/package-updates/rusty-kiosk/labs/generations/s1785541621084-v60606-be7856e3ad911507-98134e5eb0a59a35/envelope.json",
+  "apk_url": "https://mesmerprism.github.io/rusty-quest/package-updates/rusty-kiosk/labs/artifacts/sha256/be7856e3ad91150747e640410d53087f81dd1466dc41a8e95df2b0a1275408bd/rusty-kiosk-0.6.6-alpha.6.apk",
+  "apk_sha256": "sha256:be7856e3ad91150747e640410d53087f81dd1466dc41a8e95df2b0a1275408bd",
+  "apk_size_bytes": 87062353,
+  "envelope_sha256": "sha256:98134e5eb0a59a35c77730eea95ffb9bbda227d1b6b8ad222c641eca43582c35",
+  "version_code": 60606,
+  "version_name": "0.6.6-alpha.6",
+  "sequence": 1785541621084,
+  "issued_at_ms": 1785541621084,
+  "expires_at_ms": 1785628021084,
+  "observed_apk": {
+    "package_name": "io.github.mesmerprism.rustykiosk.labs",
+    "version_code": 60606,
+    "version_name": "0.6.6-alpha.6",
+    "signer_sha256": "sha256:423d20004c79dd140c692e31aa80369cd3677b1ae2688dbd75011a4c83a0f1fb"
+  },
+  "inspection_tool": {
+    "build_tools_version": "35.0.1",
+    "aapt2_name": "aapt2.exe",
+    "aapt2_sha256": "sha256:90481d1cbee3a170007701363391059ac3f9f22c4a4916b0423d591a22ac22d6",
+    "apksigner_name": "apksigner.bat",
+    "apksigner_sha256": "sha256:549dd0028b0314a5112d6b56e2de7800e713f297da4508b513a735546e52ce38"
+  }
+}
