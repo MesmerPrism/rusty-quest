@@ -35,6 +35,75 @@ function Assert-Rejected([scriptblock]$Action, [string]$Label) {
     throw "Damaged Labs Pages publisher contract was accepted: $Label"
 }
 
+function Get-WorkflowStepBlock([string]$WorkflowText, [string]$StepName) {
+    $namePattern = '(?m)^(?<indent>[ ]*)- name: ' +
+        [regex]::Escape($StepName) + '[ ]*\r?$'
+    $matches = [regex]::Matches($WorkflowText, $namePattern)
+    if ($matches.Count -ne 1) {
+        throw "Workflow must contain exactly one step named: $StepName"
+    }
+    $match = $matches[0]
+    $indent = [regex]::Escape($match.Groups['indent'].Value)
+    $tail = $WorkflowText.Substring($match.Index + $match.Length)
+    $next = [regex]::Match($tail, "(?m)^${indent}- name: ")
+    $length = if ($next.Success) {
+        $match.Length + $next.Index
+    } else {
+        $WorkflowText.Length - $match.Index
+    }
+    $WorkflowText.Substring($match.Index, $length).TrimEnd()
+}
+
+function Assert-PinnedDependencyCheckouts([string]$WorkflowText) {
+    $dependencySpecs = @(
+        [pscustomobject]@{
+            Name = 'Manifold'
+            Path = 'rusty-manifold'
+            Repository = 'MesmerPrism/rusty-manifold'
+            Ref = '947421a928889889e485006bcc0200e05c2394f9'
+        }
+        [pscustomobject]@{
+            Name = 'Lattice'
+            Path = 'rusty-lattice'
+            Repository = 'MesmerPrism/rusty-lattice'
+            Ref = '0aee7faa52fc965ff2255381781dd082ab639f4b'
+        }
+        [pscustomobject]@{
+            Name = 'Matter'
+            Path = 'rusty-matter'
+            Repository = 'MesmerPrism/rusty-matter'
+            Ref = 'eec8cddd9830f7ef0f90574ddcbde2daac0ec804'
+        }
+        [pscustomobject]@{
+            Name = 'Optics'
+            Path = 'rusty-optics'
+            Repository = 'MesmerPrism/rusty-optics'
+            Ref = 'fd01d84acffa1b0a3a192fe978af337d9fedd18a'
+        }
+    )
+    foreach ($dependency in $dependencySpecs) {
+        $actual = Get-WorkflowStepBlock $WorkflowText `
+            "Checkout exact $($dependency.Name) workspace dependency"
+        $expected = @"
+      - name: Checkout exact $($dependency.Name) workspace dependency
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+          lfs: false
+          path: $($dependency.Path)
+          persist-credentials: false
+          ref: $($dependency.Ref)
+          repository: $($dependency.Repository)
+          submodules: false
+"@.TrimEnd()
+        $actualNormalized = $actual -replace "\r\n?", "`n"
+        $expectedNormalized = $expected -replace "\r\n?", "`n"
+        if ($actualNormalized -cne $expectedNormalized) {
+            throw "Labs Pages workflow has a damaged pinned $($dependency.Name) checkout."
+        }
+    }
+}
+
 foreach ($token in @(
     'cron: "17 \*/6 \* \* \*"',
     'workflow_dispatch:',
@@ -207,49 +276,48 @@ if (-not ($preKeyProjectionIndex -lt $prePushProjectionIndex -and
     $pushIndex -lt $postPushProjectionIndex)) {
     throw 'Labs feed projection checks do not bracket the protected push.'
 }
+if (-not ($dependencyIndexes[0] -lt $dependencyIndexes[1] -and
+    $dependencyIndexes[1] -lt $dependencyIndexes[2] -and
+    $dependencyIndexes[2] -lt $dependencyIndexes[3])) {
+    throw 'Pinned workspace dependency checkout ordering changed.'
+}
 $persistFalseCount = @(
     [regex]::Matches($workflow, '(?m)^\s*persist-credentials:\s*false\s*$')
 ).Count
 if ($persistFalseCount -ne 7) {
     throw 'Every Labs feed checkout must disable persisted token credentials.'
 }
-$dependencySpecs = @(
+Assert-PinnedDependencyCheckouts $workflow
+$manifoldStep = Get-WorkflowStepBlock $workflow `
+    'Checkout exact Manifold workspace dependency'
+foreach ($damage in @(
     [pscustomobject]@{
-        Name = 'Manifold'
-        Path = 'rusty-manifold'
-        Repository = 'MesmerPrism/rusty-manifold'
-        Ref = '947421a928889889e485006bcc0200e05c2394f9'
-    }
-    [pscustomobject]@{
-        Name = 'Lattice'
-        Path = 'rusty-lattice'
-        Repository = 'MesmerPrism/rusty-lattice'
-        Ref = '0aee7faa52fc965ff2255381781dd082ab639f4b'
+        Label = 'terminal field borrowed from following step'
+        Apply = { param($block) $block -replace '(?m)^\s*submodules: false\s*$', '' }
     }
     [pscustomobject]@{
-        Name = 'Matter'
-        Path = 'rusty-matter'
-        Repository = 'MesmerPrism/rusty-matter'
-        Ref = 'eec8cddd9830f7ef0f90574ddcbde2daac0ec804'
+        Label = 'mutable checkout action substitution'
+        Apply = { param($block) $block.Replace(
+            'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1',
+            'actions/checkout@v7'
+        ) }
     }
     [pscustomobject]@{
-        Name = 'Optics'
-        Path = 'rusty-optics'
-        Repository = 'MesmerPrism/rusty-optics'
-        Ref = 'fd01d84acffa1b0a3a192fe978af337d9fedd18a'
+        Label = 'nested dependency checkout path'
+        Apply = { param($block) $block.Replace(
+            'path: rusty-manifold', 'path: source/rusty-manifold'
+        ) }
     }
-)
-foreach ($dependency in $dependencySpecs) {
-    $blockPattern = '(?ms)^\s*- name: Checkout exact ' +
-        [regex]::Escape($dependency.Name) +
-        ' workspace dependency\s*$.*?^\s*path:\s*' +
-        [regex]::Escape($dependency.Path) + '\s*$.*?^\s*persist-credentials:\s*false\s*$.*?' +
-        '^\s*ref:\s*' + [regex]::Escape($dependency.Ref) + '\s*$.*?' +
-        '^\s*repository:\s*' + [regex]::Escape($dependency.Repository) + '\s*$.*?' +
-        '^\s*submodules:\s*false\s*$'
-    if ([regex]::Matches($workflow, $blockPattern).Count -ne 1) {
-        throw "Labs Pages workflow lacks one exact pinned $($dependency.Name) checkout."
+    [pscustomobject]@{
+        Label = 'missing LFS boundary'
+        Apply = { param($block) $block -replace '(?m)^\s*lfs: false\s*$', '' }
     }
+)) {
+    $damagedStep = & $damage.Apply $manifoldStep
+    $damagedWorkflow = $workflow.Replace($manifoldStep, $damagedStep)
+    Assert-Rejected {
+        Assert-PinnedDependencyCheckouts $damagedWorkflow
+    } $damage.Label
 }
 
 $validRulesetProjection = [pscustomobject][ordered]@{
