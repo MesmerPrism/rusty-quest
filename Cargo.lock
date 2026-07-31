@@ -828,6 +828,7 @@ dependencies = [
 name = "rusty-quest-media-stream"
 version = "0.1.0"
 dependencies = [
+ "rusty-manifold-broker-adapter",
  "rusty-manifold-media-session",
  "rusty-manifold-model",
  "rusty-manifold-peer-runtime-host",

@@ -1,5 +1,6 @@
 package io.github.mesmerprism.rustymanifold.broker;
 
+import android.os.SystemClock;
 import android.util.Log;
 
 import org.json.JSONObject;
@@ -26,7 +27,9 @@ public final class ManifoldRuntimeAuthorityBridge {
         String responseJson = nativeInitialize(
                 GeneratedBrokerRuntimeConfig.JSON,
                 GeneratedBrokerRuntimeConfig.SHA256,
-                ProviderEpochEntropy.hex());
+                ProviderEpochEntropy.hex(),
+                System.currentTimeMillis(),
+                SystemClock.elapsedRealtimeNanos());
         JSONObject status = requireAuthorityResponse(
                 responseJson,
                 INITIALIZE_SCHEMA,
@@ -76,7 +79,9 @@ public final class ManifoldRuntimeAuthorityBridge {
     private static native String nativeInitialize(
             String configJson,
             String expectedConfigSha256,
-            String epochEntropyHex);
+            String epochEntropyHex,
+            long authorityWallUnixMs,
+            long authorityMonotonicElapsedNs);
     private static native String nativeMutate(String mutationJson, long nowMs);
     private static native String nativeCompleteMediaAction(String completionJson, long nowMs);
     private static native String nativeEvidence();

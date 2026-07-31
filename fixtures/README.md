@@ -367,19 +367,17 @@
   grants only from each client/product intersection; runtime properties and app
   defaults remain empty so no application policy can bleed through the shared
   broker SDK.
-- `broker-authority/`: trusted local standalone/embedded JNI invocations and
-  their Quest response projections. Applied, unknown-command, and missing-lease
-  pairs preserve identical Manifold dispatch/application receipts; only bridge
-  placement, lock fingerprint, and adapter identity differ. Rejected pairs keep
-  revision 1, and every response reports `local_acceptance_rules=false` with
-  `module.runtime.host` as decision owner. Those files preserve the v1
-  stateless projection contract; the real NET-014 server-entrypoint matrix now
-  executes the process-local provider tests in `rusty-quest-broker-authority`
-  and both JNI crates, covering bounded admission, parity, damage, rebind, and
-  fresh provider epochs. Focused runtime tests additionally cover independent
-  uses across unrelated revisions, token-scoped invalidation, canonical typed
-  effect-parameter binding, packaged-lock/config hashes, and exact grant
-  closure.
+- The obsolete `broker-authority/` stateless direct-adapter invocation/response
+  family has been retired. It was consumed only by its exporter and tests and
+  could not represent the retained Manifold owner/runtime boundary. The
+  NET-014 authority matrix now executes the process-local provider tests in
+  `rusty-quest-broker-authority` and both JNI crates. It covers bounded
+  admission, standalone/embedded parity, damage, rebind, fresh provider
+  epochs, v1-requires-rebuild migration behavior, trusted initialization clock
+  rejection, generic control-lease review/application lineage, Runtime Host v4
+  replay fields, independent uses across unrelated revisions, token-scoped
+  invalidation, canonical typed effect-parameter binding, packaged-lock/config
+  hashes, and exact grant closure.
 - `damaged/`: invalid runtime profile, remote-camera, and native-renderer
   examples that must be rejected, including runtime evidence logs where replay
   markers exist but the visual mesh was not actually reported visible, and a

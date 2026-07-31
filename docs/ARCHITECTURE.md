@@ -683,8 +683,12 @@ only by generated product constants. Direct-P2P and BLE remain dedicated
 provider lanes. The former broad camera/P2P validation package is retained only
 as an explicitly selected legacy compatibility product.
 
-The build also generates one exact `runtime_config.v1` containing the accepted
-lock, adapter binding, initial leases, and signature-derived admission grants.
+The build also generates one exact `runtime_config.v2` containing the accepted
+lock, adapter binding, requested initial lease shapes, and signature-derived
+admission grants. On a fresh provider, Android supplies wall and monotonic
+clock readings and Rust reproduces each requested lease through generic
+Manifold review/application into one retained control-lease owner. Released
+v1 raw-lease configs require a product rebuild rather than silent migration.
 Media products additionally require exact canonical Manifold-descriptor and
 Quest-runtime bindings. Runtime Host acceptance prepares a seven-owner media
 action with `platform_effect_completed=false`; only an exact receiver-first or
@@ -696,8 +700,9 @@ JSON plus their hashes; grants are the product/client capability intersection,
 not a union. A separately generated canonical config digest is checked by Rust
 at initialization. Base and camera-free products therefore cannot inherit
 camera, peer, or unselected media/sink authority.
-`QuestBrokerRuntimeProvider` retains that config and one
-`ManifoldBrokerRuntime` for the life of the process. Binder `authorize_use`
+`QuestBrokerRuntimeProvider` retains that config and one non-cloned
+`ManifoldBrokerRuntime` for the life of the process. Media refresh borrows that
+same live Broker owner. Binder `authorize_use`
 creates a one-use permit bound to its opaque token, the caller's
 package/signature-derived client, exact command capability, resulting admission
 revision for that use, expiry, and provider

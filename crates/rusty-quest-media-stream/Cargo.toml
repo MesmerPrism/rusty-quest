@@ -11,6 +11,7 @@ default = []
 test-support = []
 
 [dependencies]
+rusty-manifold-broker-adapter = { path = "../../../rusty-manifold/crates/rusty-manifold-broker-adapter" }
 rusty-manifold-media-session = { path = "../../../rusty-manifold/crates/rusty-manifold-media-session" }
 rusty-manifold-model = { path = "../../../rusty-manifold/crates/rusty-manifold-model", features = ["serde"] }
 rusty-manifold-peer-runtime-host = { path = "../../../rusty-manifold/crates/rusty-manifold-peer-runtime-host" }

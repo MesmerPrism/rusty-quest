@@ -176,7 +176,12 @@ requires its explicit switch.
 `crates/rusty-quest-broker-authority` is the trusted local process/JNI
 projection over `ManifoldBrokerRuntime`. Real standalone and embedded JNI
 surfaces retain one process-local provider, exact product lock, admission
-  state, bounded-use permits, and Runtime Host. Every server mutation carries
+  state, bounded-use permits, Runtime Host, and one non-cloneable
+  `ManifoldBrokerControlLeaseAuthority`. Fresh v2 initialization must use the
+  Android wall/monotonic clock and generic Manifold review/application for
+  every product-requested initial lease. Reject expired, duplicate, or
+  unreproducible requests; released v1 raw-lease configs require rebuild and
+  must never be silently reinterpreted. Every server mutation carries
   the live provider epoch plus one signature-scoped use id, its opaque token id,
   and that use's creation revision; Rust binds it to the exact client/command
   capability, consumes it,
@@ -204,6 +209,9 @@ platform effect before the Rust receipt applies. Same-provider rebind preserves
   product features. Runtime Host command acceptance prepares a receipt-bound
   action with `platform_effect_completed=false`. Only an exact owner completion
   applied by Rust may advance receiver-first start or cleanup-last stop state.
+  Media preparation and refresh must borrow the same synchronized live Broker
+  runtime; do not clone it, fabricate lease lineage, or bypass the public owner
+  and mutation APIs.
   Generic media must never route through `RemoteCameraSessionRuntime` or inherit
   its properties, defaults, permissions, or command aliases; that runtime is an
   explicit compatibility branch only. See `docs/MEDIA_SESSION_RUNTIME.md`.

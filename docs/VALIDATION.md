@@ -1339,6 +1339,14 @@ continuity, and fresh provider restart. Static checks reject Java/WebSocket
 `accepted` or Manifold-authority manufacture and require the standalone start
 service to remain non-exported.
 
+Fresh v2 initialization additionally requires Android wall/monotonic clock
+inputs and reproduces every requested initial lease through the generic
+Manifold control-lease review/application path. Tests reject released v1
+raw-lease configs without a rebuild, expired or duplicate lease requests,
+runtime cloning/private command-gate bypass, and missing Runtime Host v4 replay
+fields. Evidence must retain the v3 owner schema and exact source application
+lineage, while media refresh borrows the same live Broker runtime.
+
 The same matrix now covers independent pending uses across unrelated admission
 revision advances, token-scoped revoke/expiry invalidation, 128-bit per-launch
 request namespaces, ambiguous Binder UID package rejection, canonical typed

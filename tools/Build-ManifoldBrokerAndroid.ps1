@@ -493,7 +493,7 @@ $admissionConfig = [ordered]@{
     }
 }
 $runtimeConfig = [ordered]@{
-    '$schema' = "rusty.quest.broker.runtime_config.v1"
+    '$schema' = "rusty.quest.broker.runtime_config.v2"
     bridge_kind = "standalone_process_jni"
     adapter_config = [ordered]@{
         '$schema' = "rusty.manifold.broker.adapter_config.v2"

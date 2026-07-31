@@ -1,15 +1,16 @@
 //! Stateful standalone/embedded server entrypoint over one Manifold broker runtime.
 
-use crate::QuestBrokerAuthorityBridgeKind;
 use rusty_manifold_admission::{
     ManifoldAdmissionRequest, ManifoldAdmissionRevocationRequest, ManifoldAdmissionUseRequest,
     ADMISSION_REQUEST_SCHEMA, ADMISSION_REVOCATION_REQUEST_SCHEMA, ADMISSION_USE_REQUEST_SCHEMA,
 };
 use rusty_manifold_broker_adapter::{
     command_capability, ManifoldBrokerAdapter, ManifoldBrokerAdapterConfig,
-    ManifoldBrokerAdapterError, ManifoldBrokerAdapterMode, ManifoldBrokerMutationReceipt,
-    ManifoldBrokerMutationRequest, ManifoldBrokerRuntime, BROKER_MUTATION_REQUEST_SCHEMA,
-    RUNTIME_HOST_AUTHORITY_OWNER,
+    ManifoldBrokerAdapterError, ManifoldBrokerAdapterMode, ManifoldBrokerControlLeaseAuthority,
+    ManifoldBrokerControlLeaseAuthorityError, ManifoldBrokerControlLeaseSource,
+    ManifoldBrokerMutationReceipt, ManifoldBrokerMutationRequest, ManifoldBrokerRuntime,
+    ManifoldBrokerRuntimeStateError, BROKER_CONTROL_LEASE_SOURCE_SCHEMA,
+    BROKER_MUTATION_REQUEST_SCHEMA, RUNTIME_HOST_AUTHORITY_OWNER,
 };
 use rusty_manifold_broker_product::{
     validate_broker_product_lock, ManifoldBrokerFeature, ManifoldBrokerProductLock,
@@ -23,7 +24,11 @@ use rusty_manifold_media_session::{
     MANIFOLD_MEDIA_SESSION_ACCEPT_COMMAND, MANIFOLD_MEDIA_SESSION_STOP_COMMAND,
     MANIFOLD_MEDIA_SESSION_TERMINATION_REQUEST_SCHEMA,
 };
-use rusty_manifold_model::{DottedId, Revision, SchemaId};
+use rusty_manifold_model::{
+    AuthorityRole, ClockHealth, DottedId, ManifoldAuthoritySnapshot, ManifoldClockSnapshot,
+    ManifoldControlLeaseAuthorityApplicationOutcome, ManifoldControlLeaseRequest,
+    ManifoldHostManifest, ManifoldStreamRegistrySnapshot, Revision, SafetyClass, SchemaId,
+};
 use rusty_manifold_peer_runtime_host::{
     ManifoldPeerRuntimeAuthorityFamily, ManifoldPeerRuntimeBrokerLeaseAttemptOutcome,
     ManifoldPeerRuntimeHost, ManifoldPeerRuntimeHostError, ManifoldPeerRuntimeTrustPolicy,
@@ -61,7 +66,11 @@ use std::{
 };
 
 /// Product-owned live runtime configuration schema.
-pub const QUEST_BROKER_RUNTIME_CONFIG_SCHEMA: &str = "rusty.quest.broker.runtime_config.v1";
+pub const QUEST_BROKER_RUNTIME_CONFIG_SCHEMA: &str = "rusty.quest.broker.runtime_config.v2";
+/// Released raw-lease runtime config. It requires a product rebuild and is
+/// never silently reinterpreted as owner-authorized lease state.
+pub const LEGACY_QUEST_BROKER_RUNTIME_CONFIG_V1_SCHEMA: &str =
+    "rusty.quest.broker.runtime_config.v1";
 /// Real server mutation request schema.
 pub const QUEST_BROKER_SERVER_MUTATION_SCHEMA: &str =
     "rusty.quest.broker.server_mutation_request.v1";
@@ -82,6 +91,16 @@ const QUEST_BROKER_CLIENT_LOCK_SCHEMA: &str = "rusty.quest.broker_client_spec.v1
 const QUEST_BROKER_ADMISSION_PERMISSION: &str =
     "io.github.mesmerprism.rustymanifold.permission.BROKER_ADMISSION";
 
+/// Android process boundary used to call the shared Rust authority path.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum QuestBrokerAuthorityBridgeKind {
+    /// Dedicated broker app/process JNI boundary.
+    StandaloneProcessJni,
+    /// Same-app embedded JNI boundary.
+    EmbeddedInProcessJni,
+}
+
 /// Product-owned inputs used only when a provider process creates a fresh epoch.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -97,7 +116,9 @@ pub struct QuestBrokerRuntimeConfig {
     pub product_lock: ManifoldBrokerProductLock,
     /// Packaged source/digest bindings for product and client locks.
     pub packaged_authority: QuestBrokerPackagedAuthorityBinding,
-    /// Product-owned initial accepted leases.
+    /// Product-owned requested initial lease shapes. At fresh initialization
+    /// each row is admitted through the generic Manifold control-lease
+    /// review/application path before it can be projected into Runtime Host.
     pub initial_leases: Vec<ManifoldRuntimeLease>,
     /// Product/operator-owned admission grants and initial state.
     pub admission: QuestBrokerAdmissionConfig,
@@ -360,7 +381,8 @@ pub struct QuestBrokerRuntimeInitializeStatus {
 /// One live stateful authority instance retained by a provider process.
 pub struct QuestBrokerAuthorityRuntime {
     bridge_kind: QuestBrokerAuthorityBridgeKind,
-    runtime: ManifoldBrokerRuntime,
+    provider_epoch_id: DottedId,
+    runtime: Arc<RwLock<ManifoldBrokerRuntime>>,
     media_bindings: Vec<QuestBrokerMediaSessionProductBinding>,
     peer_runtime_host: Option<Arc<RwLock<ManifoldPeerRuntimeHost>>>,
     media_sessions: BTreeMap<DottedId, MediaStreamSessionProductRuntime>,
@@ -475,6 +497,8 @@ impl QuestBrokerRuntimeProvider {
         config_json: &str,
         expected_config_sha256: &str,
         provider_epoch_entropy_hex: &str,
+        authority_wall_unix_ms: i64,
+        authority_monotonic_elapsed_ns: u64,
     ) -> Result<QuestBrokerRuntimeInitializeStatus, QuestBrokerRuntimeError> {
         let config: QuestBrokerRuntimeConfig =
             serde_json::from_str(config_json).map_err(QuestBrokerRuntimeError::Decode)?;
@@ -487,10 +511,15 @@ impl QuestBrokerRuntimeProvider {
             if self.config_sha256.as_deref() != Some(config_sha256.as_str()) {
                 return Err(QuestBrokerRuntimeError::RebindConfigMismatch);
             }
-            return Ok(initialize_status(runtime, config_sha256, true));
+            return initialize_status(runtime, config_sha256, true);
         }
-        let runtime = QuestBrokerAuthorityRuntime::from_config(config, provider_epoch_entropy_hex)?;
-        let status = initialize_status(&runtime, config_sha256.clone(), false);
+        let runtime = QuestBrokerAuthorityRuntime::from_config(
+            config,
+            provider_epoch_entropy_hex,
+            authority_wall_unix_ms,
+            authority_monotonic_elapsed_ns,
+        )?;
+        let status = initialize_status(&runtime, config_sha256.clone(), false)?;
         self.runtime = Some(runtime);
         self.config_sha256 = Some(config_sha256);
         Ok(status)
@@ -607,31 +636,49 @@ impl QuestBrokerAuthorityRuntime {
     pub fn from_config(
         config: QuestBrokerRuntimeConfig,
         provider_epoch_entropy_hex: &str,
+        authority_wall_unix_ms: i64,
+        authority_monotonic_elapsed_ns: u64,
     ) -> Result<Self, QuestBrokerRuntimeError> {
-        if config.schema_id != QUEST_BROKER_RUNTIME_CONFIG_SCHEMA
-            || config.admission.schema_id != QUEST_ADMISSION_CONFIG_SCHEMA
-        {
+        if config.schema_id == LEGACY_QUEST_BROKER_RUNTIME_CONFIG_V1_SCHEMA {
+            return Err(QuestBrokerRuntimeError::LegacyRuntimeConfigRequiresRebuild);
+        }
+        if config.schema_id != QUEST_BROKER_RUNTIME_CONFIG_SCHEMA {
             return Err(QuestBrokerRuntimeError::SchemaMismatch);
         }
+        if config.admission.schema_id != QUEST_ADMISSION_CONFIG_SCHEMA {
+            return Err(QuestBrokerRuntimeError::SchemaMismatch);
+        }
+        validate_initial_lease_request_ids(&config.initial_leases)?;
         validate_media_session_binding(&config)?;
         validate_packaged_authority(&config)?;
         validate_bridge_mode(&config.bridge_kind, &config.adapter_config.mode)?;
         let media_bindings = effective_media_bindings(&config);
         let provider_epoch_id = provider_epoch(provider_epoch_entropy_hex)?;
         let peer_runtime_host = build_media_peer_runtime_host(&config, &provider_epoch_id)?;
+        let control_lease_authority = build_initial_control_lease_authority(
+            &config,
+            &provider_epoch_id,
+            authority_wall_unix_ms,
+            authority_monotonic_elapsed_ns,
+        )?;
         let packaged_product_lock = config.packaged_authority.product_lock_json.into_bytes();
         let adapter = ManifoldBrokerAdapter::new(
             config.adapter_config,
             &packaged_product_lock,
-            config.initial_leases,
+            &control_lease_authority,
         )
         .map_err(QuestBrokerRuntimeError::Adapter)?;
-        let runtime =
-            ManifoldBrokerRuntime::new(provider_epoch_id, adapter, config.admission.snapshot)
-                .map_err(QuestBrokerRuntimeError::Admission)?;
+        let runtime = ManifoldBrokerRuntime::new(
+            provider_epoch_id.clone(),
+            adapter,
+            control_lease_authority,
+            config.admission.snapshot,
+        )
+        .map_err(QuestBrokerRuntimeError::RuntimeState)?;
         Ok(Self {
             bridge_kind: config.bridge_kind,
-            runtime,
+            provider_epoch_id,
+            runtime: Arc::new(RwLock::new(runtime)),
             media_bindings,
             peer_runtime_host,
             media_sessions: BTreeMap::new(),
@@ -646,15 +693,22 @@ impl QuestBrokerAuthorityRuntime {
     pub fn from_config_json(
         config_json: &str,
         provider_epoch_entropy_hex: &str,
+        authority_wall_unix_ms: i64,
+        authority_monotonic_elapsed_ns: u64,
     ) -> Result<Self, QuestBrokerRuntimeError> {
         let config = serde_json::from_str(config_json).map_err(QuestBrokerRuntimeError::Decode)?;
-        Self::from_config(config, provider_epoch_entropy_hex)
+        Self::from_config(
+            config,
+            provider_epoch_entropy_hex,
+            authority_wall_unix_ms,
+            authority_monotonic_elapsed_ns,
+        )
     }
 
     /// Returns the current provider epoch.
     #[must_use]
     pub const fn provider_epoch_id(&self) -> &DottedId {
-        self.runtime.provider_epoch_id()
+        &self.provider_epoch_id
     }
 
     /// Executes one signature-scoped Binder admission operation through Manifold.
@@ -666,6 +720,10 @@ impl QuestBrokerAuthorityRuntime {
         &mut self,
         operation: QuestBrokerAdmissionOperation,
     ) -> Result<QuestBrokerAdmissionResponse, QuestBrokerRuntimeError> {
+        let mut runtime = self
+            .runtime
+            .write()
+            .map_err(|_| QuestBrokerRuntimeError::RuntimeLockPoisoned)?;
         let receipt = match operation {
             QuestBrokerAdmissionOperation::IssueToken {
                 schema_id,
@@ -683,13 +741,13 @@ impl QuestBrokerAuthorityRuntime {
                     schema_id: schema(ADMISSION_REQUEST_SCHEMA),
                     request_id,
                     expected_authority_revision,
-                    identity: project_binder_caller(self.runtime.admission_snapshot(), &caller),
+                    identity: project_binder_caller(runtime.admission_snapshot(), &caller),
                     requested_capabilities,
                     issued_at_ms,
                     expires_at_ms,
                     requested_token_ttl_ms,
                 };
-                self.runtime.issue_token(
+                runtime.issue_token(
                     &request,
                     parse_entropy_hex(&entropy_hex)
                         .map_err(QuestBrokerRuntimeError::AdmissionProjection)?,
@@ -712,12 +770,12 @@ impl QuestBrokerAuthorityRuntime {
                     request_id,
                     expected_authority_revision,
                     token_id,
-                    identity: project_binder_caller(self.runtime.admission_snapshot(), &caller),
+                    identity: project_binder_caller(runtime.admission_snapshot(), &caller),
                     capability_id,
                     issued_at_ms,
                     expires_at_ms,
                 };
-                self.runtime.authorize_use(&request, issued_at_ms)
+                runtime.authorize_use(&request, issued_at_ms)
             }
             QuestBrokerAdmissionOperation::RevokeToken {
                 schema_id,
@@ -733,10 +791,10 @@ impl QuestBrokerAuthorityRuntime {
                     request_id,
                     expected_authority_revision,
                     token_id,
-                    identity: project_binder_caller(self.runtime.admission_snapshot(), &caller),
+                    identity: project_binder_caller(runtime.admission_snapshot(), &caller),
                     reason,
                 };
-                self.runtime.revoke_token(&request)
+                runtime.revoke_token(&request)
             }
             QuestBrokerAdmissionOperation::ExpireTokens {
                 schema_id,
@@ -745,8 +803,7 @@ impl QuestBrokerAuthorityRuntime {
                 now_ms,
             } => {
                 check_operation_schema(&schema_id)?;
-                self.runtime
-                    .expire_tokens(sweep_id, expected_authority_revision, now_ms)
+                runtime.expire_tokens(sweep_id, expected_authority_revision, now_ms)
             }
         };
         Ok(QuestBrokerAdmissionResponse {
@@ -755,8 +812,8 @@ impl QuestBrokerAuthorityRuntime {
             decision_owner: MANIFOLD_ADMISSION_OWNER.to_owned(),
             local_token_or_grant_policy: false,
             receipt,
-            provider_epoch_id: Some(self.runtime.provider_epoch_id().clone()),
-            runtime_host_revision: Some(self.runtime.host_snapshot().authority_revision),
+            provider_epoch_id: Some(self.provider_epoch_id.clone()),
+            runtime_host_revision: Some(runtime.host_snapshot().authority_revision),
         })
     }
 
@@ -773,25 +830,23 @@ impl QuestBrokerAuthorityRuntime {
     > {
         let live_host = self
             .peer_runtime_host
-            .as_ref()
+            .clone()
             .ok_or(QuestBrokerRuntimeError::MediaPeerRuntimeConfig)?;
         let mut peer = live_host
-            .read()
-            .map_err(|_| QuestBrokerRuntimeError::MediaPeerRuntimeConfig)?
-            .clone();
-        let mut broker = self.runtime.clone();
+            .write()
+            .map_err(|_| QuestBrokerRuntimeError::MediaPeerRuntimeConfig)?;
+        let mut broker = self
+            .runtime
+            .write()
+            .map_err(|_| QuestBrokerRuntimeError::RuntimeLockPoisoned)?;
         let attempt = peer
             .apply_broker_media_command_and_admit_runtime_lease(&mut broker, mutation, now_ms)
             .map_err(QuestBrokerRuntimeError::MediaPeerRuntime)?;
         let receipt = attempt.broker_receipt.clone();
         let admission = match attempt.outcome {
-            ManifoldPeerRuntimeBrokerLeaseAttemptOutcome::BrokerAdmissionRejected => {
-                return Ok((receipt, None));
-            }
-            ManifoldPeerRuntimeBrokerLeaseAttemptOutcome::BrokerCommandRejected
+            ManifoldPeerRuntimeBrokerLeaseAttemptOutcome::BrokerAdmissionRejected
+            | ManifoldPeerRuntimeBrokerLeaseAttemptOutcome::BrokerCommandRejected
             | ManifoldPeerRuntimeBrokerLeaseAttemptOutcome::PeerLeaseRejected => {
-                self.runtime = broker;
-                self.peer_runtime_host = Some(Arc::new(RwLock::new(peer)));
                 return Ok((receipt, None));
             }
             ManifoldPeerRuntimeBrokerLeaseAttemptOutcome::LeaseAdmitted => attempt
@@ -830,7 +885,7 @@ impl QuestBrokerAuthorityRuntime {
             request_id: acceptance_request_id,
             expected_authority_revision: peer.snapshot().media_sessions.authority_revision,
             runtime_command_request_id: runtime_request_id.clone(),
-            expected_provider_epoch_id: self.runtime.provider_epoch_id().clone(),
+            expected_provider_epoch_id: self.provider_epoch_id.clone(),
             product_id: grant.product_id.clone(),
             feature_lock_id: grant.feature_lock_id.clone(),
             feature_lock_fingerprint: grant.feature_lock_fingerprint.clone(),
@@ -855,15 +910,22 @@ impl QuestBrokerAuthorityRuntime {
             expires_at_ms: admission.runtime_lease.expires_at_ms,
         };
         let accepted = peer
-            .review_media_session_acceptance(&acceptance, &acceptance_command, now_ms)
+            .review_media_session_acceptance_with_live_broker_runtime(
+                &broker,
+                &acceptance,
+                &acceptance_command,
+                now_ms,
+            )
             .map_err(QuestBrokerRuntimeError::MediaPeerRuntime)?;
         if !accepted.accepted || accepted.accepted_session.is_none() {
             return Err(QuestBrokerRuntimeError::MediaPeerRuntimeTransitionRejected);
         }
-        let peer = Arc::new(RwLock::new(peer));
-        let mut media = MediaStreamSessionProductRuntime::new(
+        drop(broker);
+        drop(peer);
+        let mut media = MediaStreamSessionProductRuntime::new_with_live_broker_runtime(
             binding.quest,
-            Arc::clone(&peer),
+            Arc::clone(&live_host),
+            Arc::clone(&self.runtime),
             accepted.decision_id,
             now_ms,
         )
@@ -877,8 +939,6 @@ impl QuestBrokerAuthorityRuntime {
             )
             .map_err(QuestBrokerRuntimeError::MediaRuntime)?;
 
-        self.runtime = broker;
-        self.peer_runtime_host = Some(peer);
         self.media_sessions.insert(grant.client_id.clone(), media);
         Ok((admission.broker_receipt, Some(action)))
     }
@@ -896,8 +956,7 @@ impl QuestBrokerAuthorityRuntime {
     > {
         let live_host = self
             .peer_runtime_host
-            .as_ref()
-            .cloned()
+            .clone()
             .ok_or(QuestBrokerRuntimeError::MediaPeerRuntimeConfig)?;
         let grant = live_host
             .read()
@@ -909,9 +968,12 @@ impl QuestBrokerAuthorityRuntime {
             .find(|grant| grant.client_id == mutation.command.requester_id)
             .cloned()
             .ok_or(QuestBrokerRuntimeError::MediaPeerRuntimeConfig)?;
-        let mut broker = self.runtime.clone();
-        let receipt = broker.handle_mutation(mutation, now_ms);
-        self.runtime = broker.clone();
+        let receipt = self
+            .runtime
+            .write()
+            .map_err(|_| QuestBrokerRuntimeError::RuntimeLockPoisoned)?
+            .commit_mutation(mutation, now_ms, |receipt, _| receipt.clone())
+            .map_err(QuestBrokerRuntimeError::RuntimeState)?;
         if !receipt.applied {
             return Ok((receipt, None));
         }
@@ -931,8 +993,7 @@ impl QuestBrokerAuthorityRuntime {
             .ok_or(QuestBrokerRuntimeError::MediaPeerRuntimeConfig)?
             .current_acceptance()
             .session
-            .as_ref()
-            .cloned()
+            .clone()
             .ok_or(QuestBrokerRuntimeError::MediaPeerRuntimeConfig)?;
         let termination = ManifoldMediaSessionTerminationRequest {
             schema_id: schema(MANIFOLD_MEDIA_SESSION_TERMINATION_REQUEST_SCHEMA),
@@ -947,7 +1008,7 @@ impl QuestBrokerAuthorityRuntime {
             )?,
             decision_id: current.decision_id,
             session_id: current.session_id,
-            expected_provider_epoch_id: self.runtime.provider_epoch_id().clone(),
+            expected_provider_epoch_id: self.provider_epoch_id.clone(),
             action: ManifoldMediaSessionTerminationAction::Stop,
         };
         let termination_command = ManifoldRuntimeCommandRequest {
@@ -965,9 +1026,19 @@ impl QuestBrokerAuthorityRuntime {
             issued_at_ms: now_ms,
             expires_at_ms: now_ms.saturating_add(30_000),
         };
-        let terminated = peer
-            .review_media_session_termination(&termination, &termination_command, now_ms)
-            .map_err(QuestBrokerRuntimeError::MediaPeerRuntime)?;
+        let terminated = {
+            let broker = self
+                .runtime
+                .read()
+                .map_err(|_| QuestBrokerRuntimeError::RuntimeLockPoisoned)?;
+            peer.review_media_session_termination_with_live_broker_runtime(
+                &broker,
+                &termination,
+                &termination_command,
+                now_ms,
+            )
+            .map_err(QuestBrokerRuntimeError::MediaPeerRuntime)?
+        };
         if !terminated.applied {
             return Err(QuestBrokerRuntimeError::MediaPeerRuntimeTransitionRejected);
         }
@@ -985,7 +1056,6 @@ impl QuestBrokerAuthorityRuntime {
                 now_ms,
             )
             .map_err(QuestBrokerRuntimeError::MediaRuntime)?;
-        self.runtime = broker;
         self.peer_runtime_host = Some(candidate_host);
         Ok((receipt, Some(action)))
     }
@@ -995,7 +1065,7 @@ impl QuestBrokerAuthorityRuntime {
         request: &QuestBrokerMediaCompletionRequest,
         now_ms: u64,
     ) -> Result<QuestBrokerMediaCompletionResponse, QuestBrokerRuntimeError> {
-        let provider_epoch_id = self.runtime.provider_epoch_id().clone();
+        let provider_epoch_id = self.provider_epoch_id.clone();
         let media = self
             .media_sessions
             .get_mut(&request.client_id)
@@ -1027,8 +1097,7 @@ impl QuestBrokerAuthorityRuntime {
             schema_id: QUEST_BROKER_MEDIA_COMPLETION_RESPONSE_SCHEMA.to_owned(),
             provider_epoch_id,
             local_acceptance_rules: false,
-            decision_owner_id: DottedId::new(RUNTIME_HOST_AUTHORITY_OWNER)
-                .expect("static authority owner"),
+            decision_owner_id: runtime_host_authority_owner(),
             client_id: request.client_id.clone(),
             current_acceptance,
             action,
@@ -1082,7 +1151,14 @@ impl QuestBrokerAuthorityRuntime {
         let (receipt, platform_action) = match request.command.command_id.as_str() {
             "command.media.session.start" => self.start_media_session(&mutation, now_ms)?,
             "command.media.session.stop" => self.stop_media_session(&mutation, now_ms)?,
-            _ => (self.runtime.handle_mutation(&mutation, now_ms), None),
+            _ => (
+                self.runtime
+                    .write()
+                    .map_err(|_| QuestBrokerRuntimeError::RuntimeLockPoisoned)?
+                    .commit_mutation(&mutation, now_ms, |receipt, _| receipt.clone())
+                    .map_err(QuestBrokerRuntimeError::RuntimeState)?,
+                None,
+            ),
         };
         if let Some(adapter_receipt) = &receipt.adapter_receipt {
             if adapter_receipt.dispatch.params_digest.as_ref() != Some(&params_digest)
@@ -1105,14 +1181,13 @@ impl QuestBrokerAuthorityRuntime {
             schema_id: QUEST_BROKER_SERVER_RESPONSE_SCHEMA.to_owned(),
             response_type: "command_ack".to_owned(),
             bridge_kind: self.bridge_kind.clone(),
-            provider_epoch_id: self.runtime.provider_epoch_id().clone(),
+            provider_epoch_id: self.provider_epoch_id.clone(),
             request_id: request.command.request_id.clone(),
             command_id: request.command.command_id.clone(),
             accepted,
             status: status.to_owned(),
             local_acceptance_rules: false,
-            decision_owner_id: DottedId::new(RUNTIME_HOST_AUTHORITY_OWNER)
-                .expect("static authority owner"),
+            decision_owner_id: runtime_host_authority_owner(),
             mutation_receipt: receipt,
             platform_effect: effect,
             effect_params: accepted.then(|| request.params.clone()),
@@ -1152,15 +1227,22 @@ impl QuestBrokerAuthorityRuntime {
     }
 
     /// Returns current state evidence without granting mutation authority.
-    #[must_use]
-    pub fn evidence(&self) -> QuestBrokerRuntimeEvidenceResponse {
-        QuestBrokerRuntimeEvidenceResponse {
+    ///
+    /// # Errors
+    ///
+    /// Returns a distinct runtime synchronization failure if a prior panic
+    /// poisoned the retained Manifold owner lock.
+    pub fn evidence(&self) -> Result<QuestBrokerRuntimeEvidenceResponse, QuestBrokerRuntimeError> {
+        let runtime = self
+            .runtime
+            .read()
+            .map_err(|_| QuestBrokerRuntimeError::RuntimeLockPoisoned)?;
+        Ok(QuestBrokerRuntimeEvidenceResponse {
             schema_id: QUEST_BROKER_RUNTIME_EVIDENCE_SCHEMA.to_owned(),
             bridge_kind: self.bridge_kind.clone(),
             local_acceptance_rules: false,
-            decision_owner_id: DottedId::new(RUNTIME_HOST_AUTHORITY_OWNER)
-                .expect("static authority owner"),
-            runtime: self.runtime.evidence(),
+            decision_owner_id: runtime_host_authority_owner(),
+            runtime: runtime.evidence(),
             media_runtime_state: self
                 .media_sessions
                 .values()
@@ -1171,7 +1253,7 @@ impl QuestBrokerAuthorityRuntime {
                 .values()
                 .next()
                 .and_then(|media| media.pending_action().cloned()),
-        }
+        })
     }
 
     /// Returns current state evidence as JSON.
@@ -1180,7 +1262,7 @@ impl QuestBrokerAuthorityRuntime {
     ///
     /// Returns serialization failure.
     pub fn evidence_json(&self) -> Result<String, QuestBrokerRuntimeError> {
-        serde_json::to_string(&self.evidence()).map_err(QuestBrokerRuntimeError::Encode)
+        serde_json::to_string(&self.evidence()?).map_err(QuestBrokerRuntimeError::Encode)
     }
 
     /// Returns the raw accepted admission snapshot for existing Binder clients.
@@ -1189,8 +1271,11 @@ impl QuestBrokerAuthorityRuntime {
     ///
     /// Returns serialization failure.
     pub fn admission_snapshot_json(&self) -> Result<String, QuestBrokerRuntimeError> {
-        serde_json::to_string(self.runtime.admission_snapshot())
-            .map_err(QuestBrokerRuntimeError::Encode)
+        let runtime = self
+            .runtime
+            .read()
+            .map_err(|_| QuestBrokerRuntimeError::RuntimeLockPoisoned)?;
+        serde_json::to_string(runtime.admission_snapshot()).map_err(QuestBrokerRuntimeError::Encode)
     }
 }
 
@@ -1198,9 +1283,9 @@ fn initialize_status(
     runtime: &QuestBrokerAuthorityRuntime,
     config_sha256: String,
     existing_authority_preserved: bool,
-) -> QuestBrokerRuntimeInitializeStatus {
-    let evidence = runtime.evidence();
-    QuestBrokerRuntimeInitializeStatus {
+) -> Result<QuestBrokerRuntimeInitializeStatus, QuestBrokerRuntimeError> {
+    let evidence = runtime.evidence()?;
+    Ok(QuestBrokerRuntimeInitializeStatus {
         schema_id: QUEST_BROKER_RUNTIME_INITIALIZE_STATUS_SCHEMA.to_owned(),
         provider_epoch_id: evidence.runtime.provider_epoch_id,
         existing_authority_preserved,
@@ -1208,9 +1293,8 @@ fn initialize_status(
         runtime_host_revision: evidence.runtime.host_snapshot.authority_revision,
         admission_authority_revision: evidence.runtime.admission_snapshot.authority_revision,
         local_acceptance_rules: false,
-        decision_owner_id: DottedId::new(RUNTIME_HOST_AUTHORITY_OWNER)
-            .expect("static authority owner"),
-    }
+        decision_owner_id: runtime_host_authority_owner(),
+    })
 }
 
 fn derived_request_id(
@@ -1589,6 +1673,8 @@ fn build_media_peer_runtime_host(
         leases: Vec::new(),
         applied_request_ids: Vec::new(),
         reviewed_sweep_ids: Vec::new(),
+        reviewed_control_lease_adoption_ids: Vec::new(),
+        reviewed_derivative_lease_revocation_ids: Vec::new(),
         audit_events: Vec::new(),
     };
     let host = ManifoldPeerRuntimeHost::new(
@@ -1762,6 +1848,170 @@ fn derive_grant_capabilities(
         .collect()
 }
 
+fn build_initial_control_lease_authority(
+    config: &QuestBrokerRuntimeConfig,
+    provider_epoch_id: &DottedId,
+    authority_wall_unix_ms: i64,
+    authority_monotonic_elapsed_ns: u64,
+) -> Result<ManifoldBrokerControlLeaseAuthority, QuestBrokerRuntimeError> {
+    let authority_now_ms = u64::try_from(authority_wall_unix_ms)
+        .map_err(|_| QuestBrokerRuntimeError::InvalidAuthorityClock)?;
+    let mut requested_leases = config.initial_leases.clone();
+    validate_initial_lease_request_ids(&requested_leases)?;
+    requested_leases.sort_by(|left, right| left.lease_id.cmp(&right.lease_id));
+
+    let clock = ManifoldClockSnapshot {
+        schema_id: schema("rusty.manifold.clock.snapshot.v1"),
+        clock_domain: DottedId::new("clock.android.system").expect("static Android clock domain"),
+        clock_epoch_id: DottedId::new(format!("clock_epoch.{}", provider_epoch_id.as_str()))
+            .map_err(|_| QuestBrokerRuntimeError::InvalidAuthorityClock)?,
+        sequence: 1,
+        monotonic_elapsed_ns: authority_monotonic_elapsed_ns,
+        wall_unix_ms: authority_wall_unix_ms,
+        read_uncertainty_ns: 1_000_000,
+        health: ClockHealth::Healthy,
+        wall_clock_adjustment_count: 0,
+    };
+    let mut capabilities = requested_leases
+        .iter()
+        .map(|lease| {
+            let suffix = lease
+                .lease_id
+                .as_str()
+                .strip_prefix("lease.")
+                .ok_or(QuestBrokerRuntimeError::ControlLeaseBootstrap)?;
+            DottedId::new(format!("capability.control-lease.bootstrap.{suffix}"))
+                .map_err(|_| QuestBrokerRuntimeError::ControlLeaseBootstrap)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    capabilities.sort();
+    if capabilities.windows(2).any(|pair| pair[0] >= pair[1]) {
+        return Err(QuestBrokerRuntimeError::ControlLeaseBootstrap);
+    }
+
+    let product_suffix = config.product_lock.product_id.as_str();
+    let mut current = ManifoldAuthoritySnapshot {
+        schema_id: schema("rusty.manifold.authority.snapshot.v1"),
+        authority_id: DottedId::new(format!(
+            "authority.quest.broker.control-leases.{product_suffix}"
+        ))
+        .map_err(|_| QuestBrokerRuntimeError::ControlLeaseBootstrap)?,
+        authority_revision: Revision::INITIAL,
+        host_manifest: ManifoldHostManifest {
+            schema_id: schema("rusty.manifold.host.manifest.v1"),
+            host_id: DottedId::new(format!(
+                "host.quest.broker.control-lease-owner.{product_suffix}"
+            ))
+            .map_err(|_| QuestBrokerRuntimeError::ControlLeaseBootstrap)?,
+            authority_role: AuthorityRole::Primary,
+            host_category: Some(
+                DottedId::new("host.quest.broker.control-lease-owner")
+                    .expect("static host category"),
+            ),
+            clock_domain: clock.clock_domain.clone(),
+            endpoints: Vec::new(),
+            capabilities: capabilities.clone(),
+            supported_backends: Vec::new(),
+            permissions: Vec::new(),
+            lifecycle_limits: Vec::new(),
+            missing_requirements: Vec::new(),
+        },
+        clock_snapshot: clock.clone(),
+        stream_registry: ManifoldStreamRegistrySnapshot {
+            schema_id: schema("rusty.manifold.stream.registry_snapshot.v1"),
+            registry_revision: Revision::INITIAL,
+            streams: Vec::new(),
+        },
+        module_runtime_states: Vec::new(),
+        command_ids: Vec::new(),
+        command_descriptors: Vec::new(),
+        active_leases: Vec::new(),
+        revoked_control_lease_tombstones: Vec::new(),
+        active_stream_subscriptions: Vec::new(),
+    };
+    let mut sources = Vec::with_capacity(requested_leases.len());
+    for (lease, required_capability) in requested_leases.iter().zip(capabilities) {
+        let lease_suffix = lease
+            .lease_id
+            .as_str()
+            .strip_prefix("lease.")
+            .ok_or(QuestBrokerRuntimeError::ControlLeaseBootstrap)?;
+        let requested_ttl_ms = lease
+            .expires_at_ms
+            .checked_sub(authority_now_ms)
+            .filter(|ttl| *ttl > 0)
+            .ok_or(QuestBrokerRuntimeError::InvalidAuthorityClock)?;
+        let prior = current.clone();
+        let request = ManifoldControlLeaseRequest {
+            schema_id: schema("rusty.manifold.command.lease_request.v1"),
+            request_id: DottedId::new(format!("request.{lease_suffix}"))
+                .map_err(|_| QuestBrokerRuntimeError::ControlLeaseBootstrap)?,
+            holder_id: lease.holder_id.clone(),
+            scope: lease.scope.clone(),
+            expected_revision: prior.authority_revision,
+            requested_ttl_ms,
+            required_capability,
+            safety_class: SafetyClass::BoundedMutation,
+        };
+        let review = prior
+            .review_lease_request(
+                request,
+                clock.clone(),
+                vec![DottedId::new(format!(
+                    "evidence.quest.broker.control-lease.{lease_suffix}"
+                ))
+                .map_err(|_| QuestBrokerRuntimeError::ControlLeaseBootstrap)?],
+            )
+            .map_err(|_| QuestBrokerRuntimeError::ControlLeaseBootstrap)?;
+        let application = prior
+            .apply_control_lease_authority_review(review)
+            .map_err(|_| QuestBrokerRuntimeError::ControlLeaseBootstrap)?;
+        if application.outcome != ManifoldControlLeaseAuthorityApplicationOutcome::LeaseApplied {
+            return Err(QuestBrokerRuntimeError::ControlLeaseBootstrap);
+        }
+        let accepted = application
+            .review
+            .accepted
+            .as_ref()
+            .ok_or(QuestBrokerRuntimeError::ControlLeaseBootstrap)?;
+        if accepted.lease_id != lease.lease_id
+            || accepted.scope != lease.scope
+            || accepted.holder_id != lease.holder_id
+            || accepted.expires_at_ms != lease.expires_at_ms
+        {
+            return Err(QuestBrokerRuntimeError::ControlLeaseBootstrap);
+        }
+        current = application
+            .applied_snapshot
+            .clone()
+            .ok_or(QuestBrokerRuntimeError::ControlLeaseBootstrap)?;
+        sources.push(ManifoldBrokerControlLeaseSource {
+            schema_id: schema(BROKER_CONTROL_LEASE_SOURCE_SCHEMA),
+            prior_authority_snapshot: prior,
+            application,
+        });
+    }
+    ManifoldBrokerControlLeaseAuthority::from_caller_attested_retained_authority_state(
+        current, clock, sources,
+    )
+    .map_err(QuestBrokerRuntimeError::ControlLeaseAuthority)
+}
+
+fn validate_initial_lease_request_ids(
+    requested_leases: &[ManifoldRuntimeLease],
+) -> Result<(), QuestBrokerRuntimeError> {
+    let mut lease_ids = requested_leases
+        .iter()
+        .map(|lease| lease.lease_id.clone())
+        .collect::<Vec<_>>();
+    lease_ids.sort();
+    if lease_ids.windows(2).any(|pair| pair[0] >= pair[1]) {
+        Err(QuestBrokerRuntimeError::ControlLeaseBootstrap)
+    } else {
+        Ok(())
+    }
+}
+
 fn provider_epoch(entropy_hex: &str) -> Result<DottedId, QuestBrokerRuntimeError> {
     let entropy =
         parse_entropy_hex(entropy_hex).map_err(QuestBrokerRuntimeError::AdmissionProjection)?;
@@ -1889,15 +2139,27 @@ fn schema(value: &str) -> SchemaId {
     SchemaId::new(value).expect("static schema")
 }
 
+fn runtime_host_authority_owner() -> DottedId {
+    DottedId::new(RUNTIME_HOST_AUTHORITY_OWNER).expect("static authority owner")
+}
+
 /// Stateful runtime initialization, projection, or serialization failure.
 #[derive(Debug)]
 pub enum QuestBrokerRuntimeError {
     /// Config, operation, or server request schema mismatch.
     SchemaMismatch,
+    /// Released v1 configs carried raw Runtime Host leases and must be rebuilt
+    /// as v2 so initialization can create real owner applications.
+    LegacyRuntimeConfigRequiresRebuild,
     /// Standalone/embedded placement mismatch.
     BridgeModeMismatch,
     /// Provider epoch derivation failed.
     InvalidProviderEpoch,
+    /// The trusted platform clock cannot establish a live initial owner view.
+    InvalidAuthorityClock,
+    /// Initial lease requests could not be reproduced through generic
+    /// Manifold review/application with the exact packaged lease shape.
+    ControlLeaseBootstrap,
     /// Same-provider rebind supplied different immutable config.
     RebindConfigMismatch,
     /// Provider entrypoint was used before initialization.
@@ -1946,6 +2208,12 @@ pub enum QuestBrokerRuntimeError {
     MediaPeerRuntimeTransitionRejected,
     /// Manifold adapter construction failed.
     Adapter(ManifoldBrokerAdapterError),
+    /// Manifold control-lease owner construction or projection failed.
+    ControlLeaseAuthority(ManifoldBrokerControlLeaseAuthorityError),
+    /// Integrated broker runtime construction or commit-before-observe failed.
+    RuntimeState(ManifoldBrokerRuntimeStateError),
+    /// Process-local runtime synchronization was poisoned by a prior panic.
+    RuntimeLockPoisoned,
     /// Manifold admission snapshot failed validation.
     Admission(rusty_manifold_admission::ManifoldAdmissionError),
     /// Quest Binder projection failed before Manifold evaluation.
@@ -1960,8 +2228,23 @@ impl fmt::Display for QuestBrokerRuntimeError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::SchemaMismatch => write!(formatter, "Quest broker runtime schema mismatch"),
+            Self::LegacyRuntimeConfigRequiresRebuild => {
+                write!(
+                    formatter,
+                    "released Quest broker runtime config v1 requires a product rebuild"
+                )
+            }
             Self::BridgeModeMismatch => write!(formatter, "Quest broker runtime mode mismatch"),
             Self::InvalidProviderEpoch => write!(formatter, "provider epoch derivation failed"),
+            Self::InvalidAuthorityClock => {
+                write!(formatter, "initial control-lease authority clock invalid")
+            }
+            Self::ControlLeaseBootstrap => {
+                write!(
+                    formatter,
+                    "initial control lease was not accepted through Manifold authority"
+                )
+            }
             Self::RebindConfigMismatch => {
                 write!(formatter, "same-provider rebind config mismatch")
             }
@@ -2037,6 +2320,18 @@ impl fmt::Display for QuestBrokerRuntimeError {
                 write!(formatter, "media authority candidate transition rejected")
             }
             Self::Adapter(error) => write!(formatter, "Manifold adapter failed: {error}"),
+            Self::ControlLeaseAuthority(error) => {
+                write!(
+                    formatter,
+                    "Manifold control-lease authority failed: {error}"
+                )
+            }
+            Self::RuntimeState(error) => {
+                write!(formatter, "Manifold broker runtime state failed: {error}")
+            }
+            Self::RuntimeLockPoisoned => {
+                write!(formatter, "Manifold broker runtime lock poisoned")
+            }
             Self::Admission(error) => write!(formatter, "Manifold admission failed: {error}"),
             Self::AdmissionProjection(error) => {
                 write!(formatter, "Quest admission projection failed: {error}")
@@ -2248,6 +2543,7 @@ mod tests {
             scope: id("lease.media.session"),
             holder_id: identity().client_id,
             expires_at_ms: 60_000,
+            derivative_binding: None,
         });
         let product_spec_json = serde_json::to_string(&product_spec).expect("product spec");
         let product_lock_json = serde_json::to_string(&lock).expect("product lock");
@@ -2515,8 +2811,116 @@ mod tests {
         QuestBrokerAuthorityRuntime::from_config(
             config(kind, features, command_id, with_lease),
             &entropy_byte.repeat(32),
+            1_000,
+            1_000_000_000,
         )
         .expect("runtime")
+    }
+
+    #[test]
+    fn runtime_config_v1_requires_rebuild_instead_of_raw_lease_reinterpretation() {
+        let mut legacy = config(
+            QuestBrokerAuthorityBridgeKind::StandaloneProcessJni,
+            Vec::new(),
+            "command.session.list",
+            false,
+        );
+        legacy.schema_id = LEGACY_QUEST_BROKER_RUNTIME_CONFIG_V1_SCHEMA.to_owned();
+        assert!(matches!(
+            QuestBrokerAuthorityRuntime::from_config(
+                legacy,
+                &"10".repeat(32),
+                1_000,
+                1_000_000_000,
+            ),
+            Err(QuestBrokerRuntimeError::LegacyRuntimeConfigRequiresRebuild)
+        ));
+    }
+
+    #[test]
+    fn fresh_runtime_uses_generic_control_lease_application_lineage() {
+        let runtime = runtime_for(
+            QuestBrokerAuthorityBridgeKind::StandaloneProcessJni,
+            vec![ManifoldBrokerFeature::MediaSession],
+            "command.media.session.start",
+            true,
+            "12",
+        );
+        let evidence = runtime.evidence().expect("runtime evidence");
+        let authority = &evidence.runtime.control_lease_authority;
+        assert_eq!(
+            authority.schema_id.as_str(),
+            "rusty.manifold.broker.control_lease_authority_evidence.v3"
+        );
+        assert_eq!(authority.baseline.lease_sources.len(), 1);
+        let source = &authority.baseline.lease_sources[0];
+        assert_eq!(
+            source.schema_id.as_str(),
+            BROKER_CONTROL_LEASE_SOURCE_SCHEMA
+        );
+        assert_eq!(
+            source.application.outcome,
+            ManifoldControlLeaseAuthorityApplicationOutcome::LeaseApplied
+        );
+        let accepted = source
+            .application
+            .review
+            .accepted
+            .as_ref()
+            .expect("accepted generic control lease");
+        assert_eq!(
+            accepted.lease_id.as_str(),
+            "lease.broker.media-session.quest.runtime"
+        );
+        assert_eq!(
+            evidence.runtime.host_snapshot.leases[0].lease_id,
+            accepted.lease_id
+        );
+    }
+
+    #[test]
+    fn fresh_runtime_rejects_expired_or_duplicate_initial_lease_requests() {
+        let expired = config(
+            QuestBrokerAuthorityBridgeKind::StandaloneProcessJni,
+            vec![ManifoldBrokerFeature::MediaSession],
+            "command.media.session.start",
+            true,
+        );
+        assert!(matches!(
+            QuestBrokerAuthorityRuntime::from_config(
+                expired,
+                &"13".repeat(32),
+                60_000,
+                1_000_000_000,
+            ),
+            Err(QuestBrokerRuntimeError::InvalidAuthorityClock)
+        ));
+
+        let mut duplicate = config(
+            QuestBrokerAuthorityBridgeKind::StandaloneProcessJni,
+            vec![ManifoldBrokerFeature::MediaSession],
+            "command.media.session.start",
+            true,
+        );
+        duplicate
+            .initial_leases
+            .push(duplicate.initial_leases[0].clone());
+        let duplicate_error = match QuestBrokerAuthorityRuntime::from_config(
+            duplicate,
+            &"14".repeat(32),
+            1_000,
+            1_000_000_000,
+        ) {
+            Ok(_) => panic!("duplicate initial lease must reject"),
+            Err(error) => error,
+        };
+        assert!(
+            matches!(
+                duplicate_error,
+                QuestBrokerRuntimeError::ControlLeaseBootstrap
+            ),
+            "unexpected duplicate error: {duplicate_error:?}"
+        );
     }
 
     #[test]
@@ -2556,7 +2960,11 @@ mod tests {
             let action = response.platform_action.as_ref().expect("platform action");
             assert_eq!(action.operation, MediaStreamPlatformOperation::Start);
             assert_eq!(
-                runtime.evidence().media_pending_action.as_ref(),
+                runtime
+                    .evidence()
+                    .expect("runtime evidence")
+                    .media_pending_action
+                    .as_ref(),
                 Some(action)
             );
             responses.push(response);
@@ -2636,6 +3044,7 @@ mod tests {
         assert_eq!(
             runtime
                 .evidence()
+                .expect("runtime evidence")
                 .runtime
                 .host_snapshot
                 .authority_revision
@@ -2728,7 +3137,12 @@ mod tests {
             .expect("camera binding"),
         );
         assert!(matches!(
-            QuestBrokerAuthorityRuntime::from_config(camera_drift, &"51".repeat(32)),
+            QuestBrokerAuthorityRuntime::from_config(
+                camera_drift,
+                &"51".repeat(32),
+                1_000,
+                1_000_000_000,
+            ),
             Err(QuestBrokerRuntimeError::MediaProductFeatureMismatch)
         ));
 
@@ -2752,7 +3166,12 @@ mod tests {
             rusty_quest_media_stream::canonical_media_stream_runtime_sha256(&binding.quest.spec)
                 .expect("drift digest");
         assert!(matches!(
-            QuestBrokerAuthorityRuntime::from_config(route_drift, &"52".repeat(32)),
+            QuestBrokerAuthorityRuntime::from_config(
+                route_drift,
+                &"52".repeat(32),
+                1_000,
+                1_000_000_000,
+            ),
             Err(QuestBrokerRuntimeError::MediaProductFeatureMismatch)
         ));
     }
@@ -2771,6 +3190,8 @@ mod tests {
                     QuestBrokerAuthorityRuntime::from_config(
                         config(kind.clone(), features, command_id, false),
                         &"33".repeat(32),
+                        1_000,
+                        1_000_000_000,
                     ),
                     Err(QuestBrokerRuntimeError::GrantClosureMismatch)
                 ));
@@ -2786,6 +3207,8 @@ mod tests {
                         false,
                     ),
                     &"33".repeat(32),
+                    1_000,
+                    1_000_000_000,
                 ),
                 Err(QuestBrokerRuntimeError::MediaLifecycleAuthorityMismatch)
             ));
@@ -2911,6 +3334,7 @@ mod tests {
         assert_eq!(
             runtime
                 .evidence()
+                .expect("runtime evidence")
                 .runtime
                 .host_snapshot
                 .authority_revision
@@ -2923,6 +3347,7 @@ mod tests {
         assert_eq!(
             restarted
                 .evidence()
+                .expect("runtime evidence")
                 .runtime
                 .host_snapshot
                 .authority_revision

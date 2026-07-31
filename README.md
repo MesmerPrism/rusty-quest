@@ -739,7 +739,12 @@ creating the provider.
 The product-only authority path is implemented in
 `crates/rusty-quest-broker-authority`. It projects a trusted app-local
 standalone-process or embedded-in-process provider into one stateful
-`ManifoldBrokerRuntime`. Signature-scoped Binder admission creates an
+`ManifoldBrokerRuntime` with one retained, non-cloneable Manifold control-lease
+owner. Fresh v2 config initialization uses Android wall/monotonic clock
+readings and converts product-requested lease shapes into exact generic
+Manifold review/application lineage; expired or duplicate requests reject, and
+released raw-lease v1 configs require a product rebuild rather than silent
+migration. Signature-scoped Binder admission creates an
 opaque-token, client/capability/revision-bound one-use permit; the real
   WebSocket or embedded server
 entrypoint must consume that permit before the shared Runtime Host review/apply
