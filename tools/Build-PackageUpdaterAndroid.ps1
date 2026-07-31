@@ -170,7 +170,8 @@ if ($LASTEXITCODE -ne 0) {
 $releaseIdentity = Assert-PackageUpdaterReleaseArtifact `
     -Badging $releaseBadging `
     -Permissions $releasePermissions `
-    -ManifestTree $releaseManifestTree
+    -ManifestTree $releaseManifestTree `
+    -ExpectedPackageName $ExpectedPackageName
 if (-not [string]::IsNullOrWhiteSpace($InspectE2eApkPath)) {
     $InspectE2eApkPath = (Resolve-Path -LiteralPath $InspectE2eApkPath).Path
     $e2eBadging = @(& $aapt2 dump badging $InspectE2eApkPath 2>&1)

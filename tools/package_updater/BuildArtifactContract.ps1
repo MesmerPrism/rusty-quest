@@ -43,7 +43,9 @@ function Assert-PackageUpdaterReleaseArtifact {
     param(
         [string[]]$Badging,
         [string[]]$Permissions,
-        [string[]]$ManifestTree
+        [string[]]$ManifestTree,
+        [Parameter(Mandatory = $true)]
+        [string]$ExpectedPackageName
     )
     $identity = ConvertFrom-PackageUpdaterBadging $Badging
     if ($identity.package_name -ne
@@ -76,19 +78,47 @@ function Assert-PackageUpdaterReleaseArtifact {
             throw "Release APK contains forbidden debug/E2E surface: $forbidden"
         }
     }
+    $queries = [regex]::Match(
+        $tree,
+        "(?ms)^\s*E: queries[^\r\n]*\r?\n(?<body>.*?)(?=^\s*E: application\b)"
+    )
+    $queryPackageNames = @(
+        [regex]::Matches(
+            $queries.Groups["body"].Value,
+            '(?m)^\s*A: .*android:name(?:\([^)]*\))?="([^"]+)"'
+        ) | ForEach-Object { $_.Groups[1].Value }
+    )
+    $activity = [regex]::Match(
+        $tree,
+        "(?ms)^\s*E: activity[^\r\n]*\r?\n(?<body>.*?)(?=" +
+            "^\s*E: (?:receiver|provider|service)\b|\z)"
+    )
+    $receiver = [regex]::Match(
+        $tree,
+        "(?ms)^\s*E: receiver[^\r\n]*\r?\n(?<body>.*?)(?=" +
+            "^\s*E: (?:activity|provider|service)\b|\z)"
+    )
     if ([regex]::Matches($tree, "E: provider ").Count -ne 0 -or
         [regex]::Matches($tree, "E: service ").Count -ne 0 -or
         [regex]::Matches($tree, "E: activity").Count -ne 1 -or
         [regex]::Matches($tree, "E: receiver").Count -ne 1 -or
-        -not $tree.Contains(
+        -not $queries.Success -or
+        [regex]::Matches(
+            $queries.Groups["body"].Value,
+            "(?m)^\s*E: package "
+        ).Count -ne 1 -or
+        $queryPackageNames.Count -ne 1 -or
+        $queryPackageNames[0] -ne $ExpectedPackageName -or
+        -not $activity.Success -or
+        -not $activity.Groups["body"].Value.Contains(
             "io.github.mesmerprism.rustyquest.packageupdater.PackageUpdaterActivity") -or
-        -not $tree.Contains(
+        $activity.Groups["body"].Value -notmatch
+            "(?m)^\s*A: .*android:exported\([^)]*\)=true\s*$" -or
+        -not $receiver.Success -or
+        -not $receiver.Groups["body"].Value.Contains(
             "io.github.mesmerprism.rustyquest.packageupdater.PackageInstallCallbackReceiver") -or
-        [regex]::Matches($tree, "io\.github\.mesmerprism\.rustykiosk").Count -ne 1 -or
-        $tree -notmatch
-            "(?s)E: activity.*?PackageUpdaterActivity.*?android:exported.*?0xffffffff" -or
-        $tree -notmatch
-            "(?s)E: receiver.*?PackageInstallCallbackReceiver.*?android:exported.*?0x0") {
+        $receiver.Groups["body"].Value -notmatch
+            "(?m)^\s*A: .*android:exported\([^)]*\)=false\s*$") {
         throw "Release APK component/query closure differs from the exact manifest."
     }
     $identity
