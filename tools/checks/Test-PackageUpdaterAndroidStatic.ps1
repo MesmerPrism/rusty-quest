@@ -108,9 +108,8 @@ $e2eCliWrapper = Get-Content -Raw -LiteralPath $paths.e2e_cli_wrapper
 
 [xml]$manifest = $manifestText
 $androidNamespace = "http://schemas.android.com/apk/res/android"
-$packageName = [string]$manifest.manifest.package
-if ($packageName -ne "io.github.mesmerprism.rustyquest.packageupdater.alpha") {
-    throw "Package Updater manifest package identity changed: $packageName"
+if ($manifest.manifest.HasAttribute("package")) {
+    throw "Package Updater source manifest must leave package identity to the Gradle applicationId."
 }
 
 $permissions = @(
@@ -182,6 +181,7 @@ Assert-Match $settings 'rootProject\.name = "RustyQuestPackageUpdater"' `
 Assert-Match $rootBuild 'com\.android\.application.*8\.11\.1' `
     "Package Updater must use the repository Android Gradle Plugin baseline."
 foreach ($token in @(
+    'namespace = "io.github.mesmerprism.rustyquest.packageupdater"',
     'applicationId = "io.github.mesmerprism.rustyquest.packageupdater.alpha"',
     'compileSdk = 34',
     'minSdk = 34',
