@@ -171,33 +171,33 @@
   "approved_change_sets": [
     {
       "approval_id": "bootstrap-sealed-candidate-i",
-      "required_ancestor": "f54e916bef4bc2dbcfb99534bf3b218a0bba60b7",
+      "required_ancestor": "2316fa4ab090d374b970588f7e7862557bb7013d",
       "changed_paths": [
         ".github/workflows/package-update-labs-pages.yml",
         "tools/checks/Test-PackageUpdateLabsPagesWorkflow.ps1",
-        "tools/package_updater/FeedWriterSecretCleanup.ps1"
+        "tools/package_updater/FeedWriterKeyValidation.ps1"
       ],
       "artifacts": [
         {
           "path": ".github/workflows/package-update-labs-pages.yml",
           "state": "present",
           "mode": "100644",
-          "size_bytes": 20526,
-          "sha256": "475c860079788a10050c3e7f9ad00adc4652a0cafe1b078f6eced19442f9e0df"
+          "size_bytes": 20044,
+          "sha256": "c2dcfa5a2db7765a361571a20ee838f8bc2bfcf8efe615f583919ba02419be1a"
         },
         {
           "path": "tools/checks/Test-PackageUpdateLabsPagesWorkflow.ps1",
           "state": "present",
           "mode": "100644",
-          "size_bytes": 39249,
-          "sha256": "57b428808bbbc4dac78ad590d786ea9d88c5d0b284f8b0d3c5a6320d175f122f"
+          "size_bytes": 45216,
+          "sha256": "e7760f28f22689af7a6f1928bf0d8bfc15db7b977c0ab7a4f2034dd85df93c18"
         },
         {
-          "path": "tools/package_updater/FeedWriterSecretCleanup.ps1",
+          "path": "tools/package_updater/FeedWriterKeyValidation.ps1",
           "state": "present",
           "mode": "100644",
-          "size_bytes": 2791,
-          "sha256": "483e1d79ac093931524ac5bfd82feecfdf39e987dcef50de8dcd36200594af56"
+          "size_bytes": 3299,
+          "sha256": "6ad2496d96b97042cf0f86fb052d53e4b9bc03ee0f7efe574164109447b102f9"
         }
       ],
       "status": "approved"
