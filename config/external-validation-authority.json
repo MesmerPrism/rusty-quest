@@ -171,7 +171,7 @@
   "approved_change_sets": [
     {
       "approval_id": "bootstrap-sealed-candidate-i",
-      "required_ancestor": "664749a0a8ee8969592b77aa108cab31ed974c1b",
+      "required_ancestor": "0e3d108a5a96695550b17c9b5e50cff2aaa3caca",
       "changed_paths": [
         ".github/workflows/package-updater-labs-release.yml",
         "tools/checks/Test-PackageUpdaterLabsReleaseWorkflow.ps1"
@@ -181,15 +181,15 @@
           "path": ".github/workflows/package-updater-labs-release.yml",
           "state": "present",
           "mode": "100644",
-          "size_bytes": 24891,
-          "sha256": "adc1b0084d8c70128311108338c03b08f677e2eee9aa4e513b50999188ab774a"
+          "size_bytes": 24881,
+          "sha256": "a581e48a2d26f0a3e734b7b96579142e0f71bc85c144a3b68ed1be93ac439519"
         },
         {
           "path": "tools/checks/Test-PackageUpdaterLabsReleaseWorkflow.ps1",
           "state": "present",
           "mode": "100644",
-          "size_bytes": 13888,
-          "sha256": "35fb0e7a27cec7a7e7c565105cb71e1a032d577f27c5892ef63ae608d176b215"
+          "size_bytes": 14361,
+          "sha256": "70a53a00f5acaf7f61fa003c52883a5ae7f35a161083594c6f61e03ce5617290"
         }
       ],
       "status": "approved"
