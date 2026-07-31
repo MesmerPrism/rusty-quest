@@ -9,7 +9,11 @@ $workflowPath = Join-Path $RepoRoot ".github\workflows\package-update-labs-pages
 $publisherPath = Join-Path $RepoRoot "tools\Publish-PackageUpdateLabsPages.ps1"
 $projectionPath = Join-Path $RepoRoot `
     "tools\package_updater\FeedRulesetProjection.ps1"
-foreach ($path in @($workflowPath, $publisherPath, $projectionPath)) {
+$secretCleanupPath = Join-Path $RepoRoot `
+    "tools\package_updater\FeedWriterSecretCleanup.ps1"
+foreach ($path in @(
+    $workflowPath, $publisherPath, $projectionPath, $secretCleanupPath
+)) {
     if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
         throw "Labs Pages publication surface is missing: $path"
     }
@@ -17,10 +21,12 @@ foreach ($path in @($workflowPath, $publisherPath, $projectionPath)) {
 $workflow = Get-Content -Raw -LiteralPath $workflowPath
 $publisher = Get-Content -Raw -LiteralPath $publisherPath
 $projectionHelper = Get-Content -Raw -LiteralPath $projectionPath
+$secretCleanupHelper = Get-Content -Raw -LiteralPath $secretCleanupPath
 . $publisherPath -FeedRoot "unused" -TargetPath "unused" `
     -AndroidBuildToolsDirectory "unused" -TrustedKeyId "unused" `
     -TrustedPublicKeyBase64Url "unused" -LibraryOnly
 . $projectionPath
+. $secretCleanupPath
 
 function Copy-JsonObject($Value) {
     $Value | ConvertTo-Json -Depth 16 -Compress | ConvertFrom-Json
@@ -104,6 +110,41 @@ function Assert-PinnedDependencyCheckouts([string]$WorkflowText) {
     }
 }
 
+function Assert-FeedWriterKeyLifecycle([string]$WorkflowText) {
+    $writerStep = Get-WorkflowStepBlock $WorkflowText `
+        'Push through the dedicated protected feed writer'
+    $tokens = [ordered]@{
+        cleanup_source = '. .\source\tools\package_updater\FeedWriterSecretCleanup.ps1'
+        key_write = '[IO.File]::WriteAllBytes($keyPath, $keyBytes)'
+        key_acl = 'icacls.exe $keyPath /inheritance:r /grant:r "$currentIdentity`:(R,W)"'
+        key_read = 'ssh-keygen.exe -y -P "" -f $keyPath'
+        push = 'git -C feed push origin "HEAD:$env:FEED_BRANCH"'
+        readback = 'git -C feed ls-remote --exit-code origin'
+        post_push = 'Read-FeedRulesetProjection "post-push"'
+        cleanup = 'Invoke-PackageUpdateLabsFeedWriterSecretCleanup'
+    }
+    $indexes = [ordered]@{}
+    foreach ($entry in $tokens.GetEnumerator()) {
+        if ([regex]::Matches(
+                $writerStep, [regex]::Escape($entry.Value)
+            ).Count -ne 1) {
+            throw "Feed writer must contain one key lifecycle token: $($entry.Key)"
+        }
+        $indexes[$entry.Key] = $writerStep.IndexOf(
+            $entry.Value, [StringComparison]::Ordinal
+        )
+    }
+    if (-not ($indexes.cleanup_source -lt $indexes.key_write -and
+        $indexes.key_write -lt $indexes.key_acl -and
+        $indexes.key_acl -lt $indexes.key_read -and
+        $indexes.key_read -lt $indexes.push -and
+        $indexes.push -lt $indexes.readback -and
+        $indexes.readback -lt $indexes.post_push -and
+        $indexes.post_push -lt $indexes.cleanup)) {
+        throw 'Feed writer key lifecycle no longer ends after the final SSH readback.'
+    }
+}
+
 foreach ($token in @(
     'cron: "17 \*/6 \* \* \*"',
     'workflow_dispatch:',
@@ -132,6 +173,7 @@ foreach ($token in @(
     'PACKAGE_UPDATE_LABS_FEED_RULESET_FULL_POLICY_SHA256',
     'PACKAGE_UPDATE_LABS_FEED_DEPLOY_KEY_FINGERPRINT',
     'FeedRulesetProjection\.ps1',
+    'FeedWriterSecretCleanup\.ps1',
     'rulesets/',
     '-Phase "pre-publication"',
     'Read-FeedRulesetProjection "pre-key-use"',
@@ -149,10 +191,10 @@ foreach ($token in @(
     'AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl',
     'ssh-keygen\.exe -y -P "" -f',
     'ssh-keygen\.exe -lf \$keyPath -E sha256',
+    'icacls\.exe \$keyPath /inheritance:r /grant:r "\$currentIdentity`:\(R,W\)"',
     'exact configured deploy key',
-    '\[Array\]::Clear\(\$keyBytes, 0, \$keyBytes\.Length\)',
-    'WriteAllBytes\(\$keyPath, \[byte\[\]\]::new\(\$length\)\)',
-    'Remove-Item Env:\\FEED_DEPLOY_KEY_BASE64',
+    'Invoke-PackageUpdateLabsFeedWriterSecretCleanup',
+    '-PrimaryError \$primaryError',
     'git -C feed push origin "HEAD:\$env:FEED_BRANCH"',
     'Protected feed push did not read back the exact committed generation',
     'needs\.publish\.outputs\.feed_commit',
@@ -170,11 +212,27 @@ foreach ($token in @(
         throw "Labs Pages workflow is missing contract token: $token"
     }
 }
+foreach ($token in @(
+    'Remove-Item Env:\\GIT_SSH_COMMAND',
+    'Remove-Item Env:\\FEED_DEPLOY_KEY_BASE64',
+    '\[Array\]::Clear\(\$KeyBytes, 0, \$KeyBytes\.Length\)',
+    'key_wipe_failed',
+    'key_delete_failed',
+    'known_hosts_delete_failed',
+    'Write-Warning',
+    'throw \$PrimaryError',
+    'WriteAllBytes\(\$Path, \[byte\[\]\]::new\(\$Length\)\)'
+)) {
+    if ($secretCleanupHelper -notmatch $token) {
+        throw "Feed writer secret cleanup helper lacks contract token: $token"
+    }
+}
 foreach ($forbidden in @(
     'pull_request', 'pull_request_target', 'force-with-lease', '--force',
     'cancel-in-progress: true', 'CNAME', 'repository_dispatch',
     'contents: write', 'persist-credentials: true',
     'git -C feed push https?://',
+    '"\$currentIdentity`:\(R\)"',
     'actions/(?:checkout|setup-java)@v[0-9]',
     'actions/(?:configure-pages|upload-pages-artifact|deploy-pages)@v[0-9]'
 )) {
@@ -276,6 +334,7 @@ if (-not ($preKeyProjectionIndex -lt $prePushProjectionIndex -and
     $pushIndex -lt $postPushProjectionIndex)) {
     throw 'Labs feed projection checks do not bracket the protected push.'
 }
+Assert-FeedWriterKeyLifecycle $workflow
 if (-not ($dependencyIndexes[0] -lt $dependencyIndexes[1] -and
     $dependencyIndexes[1] -lt $dependencyIndexes[2] -and
     $dependencyIndexes[2] -lt $dependencyIndexes[3])) {
@@ -318,6 +377,118 @@ foreach ($damage in @(
     Assert-Rejected {
         Assert-PinnedDependencyCheckouts $damagedWorkflow
     } $damage.Label
+}
+
+$writerStep = Get-WorkflowStepBlock $workflow `
+    'Push through the dedicated protected feed writer'
+$cleanupSource = '. .\source\tools\package_updater\FeedWriterSecretCleanup.ps1'
+$missingCleanupSourceWorkflow = $workflow.Replace(
+    $writerStep,
+    $writerStep.Replace($cleanupSource, '')
+)
+Assert-Rejected {
+    Assert-FeedWriterKeyLifecycle $missingCleanupSourceWorkflow
+} 'cleanup helper sourced outside the protected writer process'
+$cleanupCall = 'Invoke-PackageUpdateLabsFeedWriterSecretCleanup'
+$pushCall = 'git -C feed push origin "HEAD:$env:FEED_BRANCH"'
+$earlyCleanupStep = $writerStep.Replace($cleanupCall, '')
+$earlyCleanupStep = $earlyCleanupStep.Replace(
+    $pushCall, "$cleanupCall`n            $pushCall"
+)
+$earlyCleanupWorkflow = $workflow.Replace($writerStep, $earlyCleanupStep)
+Assert-Rejected {
+    Assert-FeedWriterKeyLifecycle $earlyCleanupWorkflow
+} 'key cleanup moved before protected push and SSH readback'
+
+$cleanupEvents = [Collections.Generic.List[string]]::new()
+$existingCleanupPaths = [Collections.Generic.HashSet[string]]::new(
+    [StringComparer]::Ordinal
+)
+$fixtureKeyPath = 'fixture-key'
+$fixtureKnownHostsPath = 'fixture-known-hosts'
+$null = $existingCleanupPaths.Add($fixtureKeyPath)
+$null = $existingCleanupPaths.Add($fixtureKnownHostsPath)
+$existsAction = {
+    param($Path) $existingCleanupPaths.Contains($Path)
+}.GetNewClosure()
+$lengthAction = { param($Path) 32 }
+$wipeFailureAction = {
+    param($Path, $Length)
+    $cleanupEvents.Add("wipe:$Path")
+    throw 'synthetic wipe failure'
+}.GetNewClosure()
+$deleteAction = {
+    param($Path)
+    $cleanupEvents.Add("delete:$Path")
+    if (-not $existingCleanupPaths.Remove($Path)) {
+        throw "Synthetic cleanup path was already absent: $Path"
+    }
+}.GetNewClosure()
+$primaryFixture = $null
+try {
+    throw 'primary-operation-sentinel'
+} catch {
+    $primaryFixture = $_
+}
+$fixtureKeyBytes = [byte[]](1, 2, 3, 4)
+$caughtPrimary = $null
+$oldWarningPreference = $WarningPreference
+try {
+    $WarningPreference = 'SilentlyContinue'
+    Invoke-PackageUpdateLabsFeedWriterSecretCleanup `
+        -KeyBytes $fixtureKeyBytes -KeyPath $fixtureKeyPath `
+        -KnownHostsPath $fixtureKnownHostsPath -PrimaryError $primaryFixture `
+        -FileExists $existsAction -GetFileLength $lengthAction `
+        -WriteZeros $wipeFailureAction -DeleteFile $deleteAction
+} catch {
+    $caughtPrimary = $_
+} finally {
+    $WarningPreference = $oldWarningPreference
+}
+if ($null -eq $caughtPrimary -or
+    $caughtPrimary.Exception.Message -notmatch 'primary-operation-sentinel') {
+    throw 'Cleanup failure did not preserve the primary publication error.'
+}
+if (($cleanupEvents -join ',') -cne
+        'wipe:fixture-key,delete:fixture-key,delete:fixture-known-hosts' -or
+    $existingCleanupPaths.Count -ne 0) {
+    throw 'Cleanup did not continue through independent deletion attempts.'
+}
+if (@($fixtureKeyBytes | Where-Object { $_ -ne 0 }).Count -ne 0) {
+    throw 'Cleanup did not clear the decoded key byte array first.'
+}
+
+$probeEvents = [Collections.Generic.List[string]]::new()
+$probePaths = [Collections.Generic.HashSet[string]]::new(
+    [StringComparer]::Ordinal
+)
+$null = $probePaths.Add($fixtureKeyPath)
+$null = $probePaths.Add($fixtureKnownHostsPath)
+$probeFailureAction = { param($Path) throw 'synthetic probe failure' }
+$probeDeleteAction = {
+    param($Path)
+    $probeEvents.Add("delete:$Path")
+    $null = $probePaths.Remove($Path)
+}.GetNewClosure()
+$probePrimary = $null
+$oldWarningPreference = $WarningPreference
+try {
+    $WarningPreference = 'SilentlyContinue'
+    Invoke-PackageUpdateLabsFeedWriterSecretCleanup `
+        -KeyBytes ([byte[]](9, 8, 7)) -KeyPath $fixtureKeyPath `
+        -KnownHostsPath $fixtureKnownHostsPath -PrimaryError $primaryFixture `
+        -FileExists $probeFailureAction -DeleteFile $probeDeleteAction
+} catch {
+    $probePrimary = $_
+} finally {
+    $WarningPreference = $oldWarningPreference
+}
+if ($null -eq $probePrimary -or
+    $probePrimary.Exception.Message -notmatch 'primary-operation-sentinel' -or
+    ($probeEvents -join ',') -cne
+        'delete:fixture-key,delete:fixture-known-hosts' -or
+    $probePaths.Count -ne 0) {
+    throw 'Existence-probe failure suppressed independent deletion or primary error.'
 }
 
 $validRulesetProjection = [pscustomobject][ordered]@{
