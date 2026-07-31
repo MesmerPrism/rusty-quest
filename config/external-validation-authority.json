@@ -171,33 +171,25 @@
   "approved_change_sets": [
     {
       "approval_id": "bootstrap-sealed-candidate-i",
-      "required_ancestor": "6f6e6c603199740c2f0ff128292cd2d8afd86e00",
+      "required_ancestor": "d4cd7ce0a337965e2ffd94457558f64013ace4fe",
       "changed_paths": [
         ".github/workflows/package-update-labs-pages.yml",
-        "tools/checks/Test-PackageUpdateLabsPagesWorkflow.ps1",
-        "tools/package_updater/FeedRulesetProjection.ps1"
+        "tools/checks/Test-PackageUpdateLabsPagesWorkflow.ps1"
       ],
       "artifacts": [
         {
           "path": ".github/workflows/package-update-labs-pages.yml",
           "state": "present",
           "mode": "100644",
-          "size_bytes": 19115,
-          "sha256": "6c85f329019a5c13b8ad93babce1cfdb323a07b17e2012190b62d3d220953c65"
+          "size_bytes": 20708,
+          "sha256": "bed1c9f5bf28a53e42794360c96797fb1ee5caa365fba9e6082b44c5078a97b3"
         },
         {
           "path": "tools/checks/Test-PackageUpdateLabsPagesWorkflow.ps1",
           "state": "present",
           "mode": "100644",
-          "size_bytes": 27888,
-          "sha256": "4b5ae4a908edbc7c9f215b7fd48515288b50f1b1d2695f7e3a6acd4729b2df0b"
-        },
-        {
-          "path": "tools/package_updater/FeedRulesetProjection.ps1",
-          "state": "present",
-          "mode": "100644",
-          "size_bytes": 5736,
-          "sha256": "97fb22b91682b4a8eb22c939e651d65c23f8a7e5001d0a9b0f5791b4d428ff51"
+          "size_bytes": 32512,
+          "sha256": "94459490b0962a4184d08934c22b9015f7a60a75549a2a43e0984af7d58f189c"
         }
       ],
       "status": "approved"
