@@ -116,6 +116,13 @@ those environments. The floating `windows-2025` runner has no accepted image
 allowlist; the static assessment records exact observed Git, PowerShell, and
 runner identities with drift explicitly `observed-unpinned`.
 
+The live feed is served from the Rusty Quest project Pages prefix
+`/rusty-quest/package-updates/rusty-kiosk/labs`. The origin, exact project
+prefix, feed path, and target tuple are build-fixed. A bounded refresh may
+advance only sequence and signed issue/expiry times while retaining the exact
+authenticated prior APK identity; installation rollback remains strictly
+version-advancing.
+
 Rusty Quest owns platform profile contracts and write/readback transports. It
 does not own Makepad widget implementation, Matter simulation truth, Optics
 appearance truth, Manifold command authority, or Lattice relation contracts.
@@ -142,7 +149,7 @@ native Quest path.
 
 For a protected validation, workflow, policy, schema, publisher, or package
 updater authority change, also read `docs/EXTERNAL_VALIDATION_AUTHORITY.md`
-before editing.
+and `docs/PACKAGE_UPDATE_LABS_DISTRIBUTION.md` before editing.
 
 For APK builds or repeated same-headset runs, also read
 `docs/APK_RUN_ISOLATION.md`. Locked builds use app-specific package/client

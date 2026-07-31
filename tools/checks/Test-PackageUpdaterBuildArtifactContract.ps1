@@ -14,22 +14,28 @@ function Assert-Rejected([scriptblock]$Action, [string]$Name) {
 }
 
 $origin = "https://updates.example.test"
-$url = "$origin/package-updates/rusty-kiosk/labs/current.json"
-Assert-PackageUpdaterManifestUrl -ManifestUrl $url -ExpectedHttpsOrigin $origin
+$siteBasePath = "rusty-quest"
+$url = "$origin/$siteBasePath/package-updates/rusty-kiosk/labs/current.json"
+Assert-PackageUpdaterManifestUrl -ManifestUrl $url `
+    -ExpectedHttpsOrigin $origin -ExpectedSiteBasePath $siteBasePath
 foreach ($bad in @(
-    "http://updates.example.test/package-updates/rusty-kiosk/labs/current.json",
-    "https://updates.example.test.evil.test/package-updates/rusty-kiosk/labs/current.json",
-    "https://user@updates.example.test/package-updates/rusty-kiosk/labs/current.json",
+    "http://updates.example.test/rusty-quest/package-updates/rusty-kiosk/labs/current.json",
+    "https://updates.example.test.evil.test/rusty-quest/package-updates/rusty-kiosk/labs/current.json",
+    "https://user@updates.example.test/rusty-quest/package-updates/rusty-kiosk/labs/current.json",
+    "https://updates.example.test:4443/rusty-quest/package-updates/rusty-kiosk/labs/current.json",
     "${url}?x=1",
     "${url}#fragment",
-    "$origin/package-updates/rusty-kiosk/labs/../stable/current.json",
-    "$origin/package-updates//rusty-kiosk/labs/current.json",
-    "$origin/package-updates/rusty-kiosk/labs/%63urrent.json",
-    "$origin/package-updates/rusty-kiosk/labs/envelope.json"
+    "$origin/rusty-quest/package-updates/rusty-kiosk/labs/../stable/current.json",
+    "$origin/rusty-quest/package-updates//rusty-kiosk/labs/current.json",
+    "$origin/rusty-quest/package-updates/rusty-kiosk/labs/%63urrent.json",
+    "$origin/rusty-quest/package-updates/rusty-kiosk/labs/envelope.json",
+    "$origin/package-updates/rusty-kiosk/labs/current.json",
+    "$origin/rusty-quest-evil/package-updates/rusty-kiosk/labs/current.json",
+    "$origin/rusty-quest/rusty-quest/package-updates/rusty-kiosk/labs/current.json"
 )) {
     Assert-Rejected {
         Assert-PackageUpdaterManifestUrl -ManifestUrl $bad `
-            -ExpectedHttpsOrigin $origin
+            -ExpectedHttpsOrigin $origin -ExpectedSiteBasePath $siteBasePath
     } "bad manifest URL $bad"
 }
 

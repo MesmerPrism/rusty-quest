@@ -168,7 +168,8 @@ final class StrictUpdateEnvelopeVerifier implements UpdateEnvelopeVerifier {
             String signerSha256 = requireSha256Identity(
                     artifactJson.getString("signer_sha256"), "signer_sha256");
             requireEquals(expectedSignerSha256, signerSha256, "signer");
-            URI apkUri = requirePolicyHttpsUri(artifactJson.getString("apk_url"));
+            URI apkUri = requirePolicyHttpsUri(
+                    artifactJson.getString("apk_url"), apkSha256, versionName);
 
             UpdateArtifact artifact = new UpdateArtifact(
                     packageName,
@@ -282,21 +283,30 @@ final class StrictUpdateEnvelopeVerifier implements UpdateEnvelopeVerifier {
         }
     }
 
-    private URI requirePolicyHttpsUri(String value) throws VerificationException {
+    private URI requirePolicyHttpsUri(
+            String value,
+            String apkSha256,
+            String versionName) throws VerificationException {
         try {
             URI uri = URI.create(value);
+            String expectedPath = "/"
+                    + BuildConfig.EXPECTED_SITE_BASE_PATH
+                    + "/package-updates/rusty-kiosk/labs/artifacts/sha256/"
+                    + apkSha256.substring("sha256:".length())
+                    + "/rusty-kiosk-"
+                    + versionName
+                    + ".apk";
             if (!value.isEmpty()
                     && value.equals(uri.toASCIIString())
+                    && !value.contains("%")
+                    && !value.contains("\\")
                     && "https".equals(uri.getScheme())
                     && uri.getHost() != null
                     && uri.getHost().equals(uri.getHost().toLowerCase(Locale.ROOT))
                     && uri.getUserInfo() == null
+                    && uri.getRawQuery() == null
                     && uri.getFragment() == null
-                    && uri.getRawPath() != null
-                    && !uri.getRawPath().equals("/")
-                    && !uri.getRawPath().startsWith("//")
-                    && !uri.getRawPath().contains("/../")
-                    && !uri.getRawPath().endsWith("/..")
+                    && expectedPath.equals(uri.getRawPath())
                     && canonicalOrigin(uri).equals(expectedHttpsOrigin)) {
                 return uri;
             }

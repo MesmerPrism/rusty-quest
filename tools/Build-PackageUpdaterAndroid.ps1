@@ -15,6 +15,7 @@ param(
     [string]$TrustedPublicKeyBase64Url,
     [Parameter(Mandatory = $true)]
     [string]$ExpectedHttpsOrigin,
+    [string]$ExpectedSiteBasePath = "rusty-quest",
     [string]$ExpectedPackageName = "io.github.mesmerprism.rustykiosk.labs",
     [string]$ExpectedRolloutRing = "labs",
     [Parameter(Mandatory = $true)]
@@ -65,7 +66,8 @@ foreach ($requiredPath in @(
 }
 Assert-PackageUpdaterManifestUrl `
     -ManifestUrl $ManifestUrl `
-    -ExpectedHttpsOrigin $ExpectedHttpsOrigin
+    -ExpectedHttpsOrigin $ExpectedHttpsOrigin `
+    -ExpectedSiteBasePath $ExpectedSiteBasePath
 if ($TrustedKeyId -notmatch "^[A-Za-z0-9._-]{1,96}$" -or
     $TrustedPublicKeyBase64Url -notmatch "^[A-Za-z0-9_-]{43}$" -or
     $ExpectedPackageName -notmatch "^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$" -or
@@ -133,6 +135,7 @@ $environment = @{
     RUSTY_QUEST_PACKAGE_UPDATER_TRUSTED_PUBLIC_KEY_BASE64 =
         $TrustedPublicKeyBase64Url
     RUSTY_QUEST_PACKAGE_UPDATER_EXPECTED_HTTPS_ORIGIN = $ExpectedHttpsOrigin
+    RUSTY_QUEST_PACKAGE_UPDATER_EXPECTED_SITE_BASE_PATH = $ExpectedSiteBasePath
     RUSTY_QUEST_PACKAGE_UPDATER_EXPECTED_PACKAGE_NAME = $ExpectedPackageName
     RUSTY_QUEST_PACKAGE_UPDATER_EXPECTED_ROLLOUT_RING = $ExpectedRolloutRing
     RUSTY_QUEST_PACKAGE_UPDATER_EXPECTED_SIGNER_SHA256 = $ExpectedSignerSha256
@@ -281,6 +284,7 @@ $manifest = [ordered]@{
     manifest_url = $ManifestUrl
     trusted_key_id = $TrustedKeyId
     expected_https_origin = $ExpectedHttpsOrigin
+    expected_site_base_path = $ExpectedSiteBasePath
     expected_package_name = $ExpectedPackageName
     expected_rollout_ring = $ExpectedRolloutRing
     expected_signer_sha256 = $ExpectedSignerSha256

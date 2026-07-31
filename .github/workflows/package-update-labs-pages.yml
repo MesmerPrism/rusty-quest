@@ -1,0 +1,389 @@
+name: Publish Package Update Labs Pages
+
+on:
+  schedule:
+    - cron: "17 */6 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: rusty-quest-package-update-labs-pages
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: windows-2025
+    timeout-minutes: 45
+    environment: package-update-labs-publication
+    permissions:
+      contents: read
+    outputs:
+      feed_commit: ${{ steps.commit.outputs.feed_commit }}
+    env:
+      ANDROID_BUILD_TOOLS_VERSION: 35.0.1
+      FEED_BRANCH: package-update-labs-feed
+      PINNED_RUST_TOOLCHAIN: 1.96.0
+    steps:
+      - name: Check out trusted publisher source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: source
+          persist-credentials: false
+
+      - name: Require default-branch publisher source
+        shell: pwsh
+        working-directory: source
+        run: |
+          $ErrorActionPreference = "Stop"
+          if ($env:GITHUB_REF -cne "refs/heads/main" -or
+            (git rev-parse HEAD).Trim() -cne $env:GITHUB_SHA) {
+            throw "Labs feed publication must execute the exact default-branch source."
+          }
+
+      - name: Set up pinned Java
+        uses: actions/setup-java@03ad4de0992f5dab5e18fcb136590ce7c4a0ac95 # v5.6.0
+        with:
+          distribution: temurin
+          java-version: 17.0.14+7
+
+      - name: Install and verify pinned Rust
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          & rustup toolchain install $env:PINNED_RUST_TOOLCHAIN `
+            --profile minimal --no-self-update
+          if ($LASTEXITCODE -ne 0) { throw "Pinned Rust installation failed." }
+          $actual = (& rustup run $env:PINNED_RUST_TOOLCHAIN rustc --version).Trim()
+          if ($actual -cne "rustc 1.96.0 (ac68faa20 2026-05-25)") {
+            throw "Pinned Rust compiler identity differs: $actual"
+          }
+          "RUSTUP_TOOLCHAIN=$env:PINNED_RUST_TOOLCHAIN" >> $env:GITHUB_ENV
+
+      - name: Resolve pinned Android build tools
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $sdkManager = Join-Path $env:ANDROID_SDK_ROOT `
+            "cmdline-tools\latest\bin\sdkmanager.bat"
+          & $sdkManager "build-tools;$env:ANDROID_BUILD_TOOLS_VERSION"
+          if ($LASTEXITCODE -ne 0) { throw "Pinned Android build tools failed." }
+
+      - name: Check out persistent Quest-owned feed state
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: package-update-labs-feed
+          path: feed
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Require protected continuous feed authority
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EXPECTED_FEED_RULESET_ID: ${{ vars.PACKAGE_UPDATE_LABS_FEED_RULESET_ID }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          if ($env:GITHUB_REPOSITORY -cne "MesmerPrism/rusty-quest" -or
+            $env:FEED_BRANCH -cne "package-update-labs-feed") {
+            throw "Labs feed authority repository or branch identity differs."
+          }
+          if ($env:EXPECTED_FEED_RULESET_ID -cnotmatch "^[1-9][0-9]{0,18}$") {
+            throw "Expected feed ruleset ID is not a positive integer."
+          }
+          $ruleset = & gh api (
+            "repos/$env:GITHUB_REPOSITORY/rulesets/" +
+            $env:EXPECTED_FEED_RULESET_ID
+          ) | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0 -or $null -eq $ruleset) {
+            throw "Could not read the exact Labs feed ruleset."
+          }
+          $include = @($ruleset.conditions.ref_name.include)
+          $exclude = @($ruleset.conditions.ref_name.exclude)
+          $bypass = @($ruleset.bypass_actors)
+          $ruleTypes = @($ruleset.rules.type | Sort-Object)
+          $expectedRuleTypes = @(
+            "creation", "deletion", "non_fast_forward", "update"
+          ) | Sort-Object
+          if ([int64]$ruleset.id -ne [int64]$env:EXPECTED_FEED_RULESET_ID -or
+            $ruleset.target -cne "branch" -or
+            $ruleset.enforcement -cne "active" -or
+            $include.Count -ne 1 -or
+            $include[0] -cne "refs/heads/package-update-labs-feed" -or
+            $exclude.Count -ne 0 -or
+            $bypass.Count -ne 1 -or
+            $bypass[0].actor_type -cne "DeployKey" -or
+            $null -ne $bypass[0].actor_id -or
+            $bypass[0].bypass_mode -cne "always" -or
+            ($ruleTypes -join "`n") -cne ($expectedRuleTypes -join "`n")) {
+            throw "Labs feed ruleset does not prove its DeployKey-class continuity policy."
+          }
+          $origin = (git -C feed remote get-url origin).Trim()
+          if ($origin -cne "https://github.com/MesmerPrism/rusty-quest") {
+            throw "Labs feed read origin is not the canonical public repository."
+          }
+          $local = (git -C feed rev-parse HEAD).Trim()
+          $remoteRows = @(git -C feed ls-remote --exit-code origin `
+            "refs/heads/$env:FEED_BRANCH")
+          if ($LASTEXITCODE -ne 0 -or $remoteRows.Count -ne 1) {
+            throw "Labs feed branch continuity readback failed."
+          }
+          $remoteMatch = [regex]::Match(
+            [string]$remoteRows[0],
+            "^(?<sha>[0-9a-f]{40})`trefs/heads/package-update-labs-feed$"
+          )
+          if (-not $remoteMatch.Success -or
+            $remoteMatch.Groups["sha"].Value -cne $local) {
+            throw "Labs feed checkout is not the exact remote branch tip."
+          }
+
+      - name: Publish authenticated generation and pointer
+        id: publish
+        shell: pwsh
+        working-directory: source
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUSTY_QUEST_UPDATE_SIGNING_SEED_BASE64URL: ${{ secrets.PACKAGE_UPDATER_MANIFEST_SIGNING_SEED_BASE64URL }}
+          UPDATE_KEY_ID: ${{ vars.PACKAGE_UPDATER_LABS_TRUSTED_KEY_ID }}
+          UPDATE_PUBLIC_KEY: ${{ vars.PACKAGE_UPDATER_LABS_TRUSTED_PUBLIC_KEY_BASE64URL }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $buildTools = Join-Path $env:ANDROID_SDK_ROOT `
+            "build-tools\$env:ANDROID_BUILD_TOOLS_VERSION"
+          $receipt = .\tools\Publish-PackageUpdateLabsPages.ps1 `
+            -FeedRoot ..\feed `
+            -TargetPath .\distribution\package-update-labs-target.json `
+            -AndroidBuildToolsDirectory $buildTools `
+            -TrustedKeyId $env:UPDATE_KEY_ID `
+            -TrustedPublicKeyBase64Url $env:UPDATE_PUBLIC_KEY
+          $receipt | ConvertTo-Json -Depth 8 -Compress | Out-Null
+
+      - name: Commit feed state without rewriting history
+        id: commit
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          git -C feed config user.name "github-actions[bot]"
+          git -C feed config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git -C feed add -- .nojekyll package-updates
+          if (-not (git -C feed diff --cached --name-only)) {
+            throw "A successful refresh must create one new immutable generation."
+          }
+          $changed = @(git -C feed diff --cached --name-only)
+          foreach ($path in $changed) {
+            if ($path -cne ".nojekyll" -and
+              -not $path.StartsWith(
+                "package-updates/rusty-kiosk/labs/",
+                [StringComparison]::Ordinal
+              )) {
+              throw "Feed publication changed content outside its exact subtree."
+            }
+          }
+          git -C feed commit -m "Refresh Rusty Kiosk Labs update feed"
+          if ($LASTEXITCODE -ne 0) { throw "Could not commit the feed generation." }
+          $feedCommit = (git -C feed rev-parse HEAD).Trim()
+          if ($feedCommit -notmatch "^[0-9a-f]{40}$") {
+            throw "Feed commit identity is not canonical."
+          }
+          "feed_commit=$feedCommit" >> $env:GITHUB_OUTPUT
+
+      - name: Push through the dedicated protected feed writer
+        shell: pwsh
+        env:
+          FEED_DEPLOY_KEY_BASE64: ${{ secrets.PACKAGE_UPDATE_LABS_FEED_DEPLOY_KEY_BASE64 }}
+          EXPECTED_FEED_DEPLOY_KEY_FINGERPRINT: ${{ vars.PACKAGE_UPDATE_LABS_FEED_DEPLOY_KEY_FINGERPRINT }}
+          EXPECTED_FEED_COMMIT: ${{ steps.commit.outputs.feed_commit }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $keyPath = Join-Path $env:RUNNER_TEMP (
+            "rusty-quest-feed-key-$([guid]::NewGuid().ToString('N'))"
+          )
+          $knownHostsPath = Join-Path $env:RUNNER_TEMP (
+            "rusty-quest-known-hosts-$([guid]::NewGuid().ToString('N'))"
+          )
+          try {
+            if ([string]::IsNullOrWhiteSpace($env:FEED_DEPLOY_KEY_BASE64) -or
+              $env:FEED_DEPLOY_KEY_BASE64 -cnotmatch
+                "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$") {
+              throw "The dedicated Labs feed deploy key is absent or noncanonical."
+            }
+            if ($env:EXPECTED_FEED_DEPLOY_KEY_FINGERPRINT -cnotmatch
+              "^SHA256:[A-Za-z0-9+/]{43}$" -or
+              $env:EXPECTED_FEED_COMMIT -cnotmatch "^[0-9a-f]{40}$") {
+              throw "The expected Labs feed key fingerprint or commit is noncanonical."
+            }
+            $keyBytes = [Convert]::FromBase64String(
+              $env:FEED_DEPLOY_KEY_BASE64
+            )
+            if ($keyBytes.Length -lt 100 -or
+              [Convert]::ToBase64String($keyBytes) -cne
+                $env:FEED_DEPLOY_KEY_BASE64) {
+              throw "The dedicated Labs feed deploy key encoding differs."
+            }
+            [IO.File]::WriteAllBytes($keyPath, $keyBytes)
+            $currentIdentity = [Security.Principal.WindowsIdentity]::GetCurrent().Name
+            & icacls.exe $keyPath /inheritance:r /grant:r "$currentIdentity`:(R)" |
+              Out-Null
+            if ($LASTEXITCODE -ne 0) {
+              throw "Could not restrict the Labs feed deploy key ACL."
+            }
+            $knownHost =
+              "github.com ssh-ed25519 " +
+              "AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl`n"
+            [IO.File]::WriteAllText(
+              $knownHostsPath,
+              $knownHost,
+              [Text.UTF8Encoding]::new($false, $true)
+            )
+            $publicKey = (& ssh-keygen.exe -y -P "" -f $keyPath).Trim()
+            if ($LASTEXITCODE -ne 0 -or
+              $publicKey -cnotmatch "^ssh-ed25519 [A-Za-z0-9+/]+={0,2}$") {
+              throw "The dedicated Labs feed deploy key is not a valid Ed25519 key."
+            }
+            $fingerprintLine = (& ssh-keygen.exe -lf $keyPath -E sha256).Trim()
+            $fingerprintMatch = [Regex]::Match(
+              $fingerprintLine,
+              "^[0-9]+\s+(?<fingerprint>SHA256:[A-Za-z0-9+/]{43})(?:\s|$)"
+            )
+            if ($LASTEXITCODE -ne 0 -or -not $fingerprintMatch.Success -or
+              $fingerprintMatch.Groups["fingerprint"].Value -cne
+                $env:EXPECTED_FEED_DEPLOY_KEY_FINGERPRINT) {
+              throw "The Labs feed secret is not the exact configured deploy key."
+            }
+            git -C feed remote set-url origin `
+              "git@github.com:MesmerPrism/rusty-quest.git"
+            if ($LASTEXITCODE -ne 0) {
+              throw "Could not bind the dedicated Labs feed SSH origin."
+            }
+            $env:GIT_SSH_COMMAND =
+              "ssh.exe -i `"$keyPath`" -o IdentitiesOnly=yes " +
+              "-o BatchMode=yes -o StrictHostKeyChecking=yes " +
+              "-o UserKnownHostsFile=`"$knownHostsPath`""
+            git -C feed push origin "HEAD:$env:FEED_BRANCH"
+            if ($LASTEXITCODE -ne 0) {
+              throw "Protected feed push lost its non-fast-forward publication race."
+            }
+            $remoteRows = @(git -C feed ls-remote --exit-code origin `
+              "refs/heads/$env:FEED_BRANCH")
+            $remoteMatch = if ($remoteRows.Count -eq 1) {
+              [Regex]::Match(
+                [string]$remoteRows[0],
+                "^(?<sha>[0-9a-f]{40})`trefs/heads/package-update-labs-feed$"
+              )
+            } else {
+              $null
+            }
+            if ($LASTEXITCODE -ne 0 -or $null -eq $remoteMatch -or
+              -not $remoteMatch.Success -or
+              $remoteMatch.Groups["sha"].Value -cne $env:EXPECTED_FEED_COMMIT) {
+              throw "Protected feed push did not read back the exact committed generation."
+            }
+          } finally {
+            Remove-Item Env:\GIT_SSH_COMMAND -ErrorAction SilentlyContinue
+            Remove-Item Env:\FEED_DEPLOY_KEY_BASE64 -ErrorAction SilentlyContinue
+            if ($null -ne $keyBytes) {
+              [Array]::Clear($keyBytes, 0, $keyBytes.Length)
+            }
+            if ([IO.File]::Exists($keyPath)) {
+              $length = (Get-Item -LiteralPath $keyPath).Length
+              [IO.File]::WriteAllBytes($keyPath, [byte[]]::new($length))
+              [IO.File]::Delete($keyPath)
+            }
+            if ([IO.File]::Exists($knownHostsPath)) {
+              [IO.File]::Delete($knownHostsPath)
+            }
+          }
+
+  deploy:
+    needs: publish
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    steps:
+      - name: Check out exact published feed commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.publish.outputs.feed_commit }}
+          persist-credentials: false
+          path: feed
+
+      - name: Stage exact Pages closure
+        shell: pwsh
+        env:
+          EXPECTED_FEED_COMMIT: ${{ needs.publish.outputs.feed_commit }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $actual = (git -C feed rev-parse HEAD).Trim()
+          if ($actual -cne $env:EXPECTED_FEED_COMMIT) {
+            throw "Deployment checkout differs from the publication receipt."
+          }
+          $tracked = @(git -C feed ls-tree -r --full-tree $actual)
+          if ($LASTEXITCODE -ne 0 -or $tracked.Count -lt 1) {
+            throw "Feed commit tracked inventory is absent."
+          }
+          $versionPattern = "(?:0|[1-9][0-9]{0,3})\." +
+            "(?:0|[1-9][0-9]?)\.(?:0|[1-9][0-9]?)-alpha\." +
+            "(?:[1-9]|[1-8][0-9]|9[0-8])"
+          $generationPattern = "s[1-9][0-9]{0,19}-v[1-9][0-9]{0,19}-" +
+            "[0-9a-f]{16}-[0-9a-f]{16}"
+          foreach ($entry in $tracked) {
+            $match = [regex]::Match(
+              [string]$entry,
+              "^(?<mode>[0-9]{6}) blob (?<oid>[0-9a-f]{40})`t(?<path>.+)$"
+            )
+            $path = $match.Groups["path"].Value
+            $allowed = $path -ceq ".nojekyll" -or
+              $path -ceq "package-updates/rusty-kiosk/labs/current.json" -or
+              $path -match (
+                "^package-updates/rusty-kiosk/labs/generations/" +
+                "$generationPattern/(?:envelope\.json|publication-receipt\.json)$"
+              ) -or
+              $path -match (
+                "^package-updates/rusty-kiosk/labs/artifacts/sha256/" +
+                "[0-9a-f]{64}/rusty-kiosk-$versionPattern\.apk$"
+              )
+            if (-not $match.Success -or
+              $match.Groups["mode"].Value -cne "100644" -or -not $allowed) {
+              throw "Feed commit contains an unexpected path or Git mode."
+            }
+          }
+          $packageUpdateNames = @(
+            Get-ChildItem feed/package-updates -Force |
+              ForEach-Object Name | Sort-Object
+          )
+          $kioskNames = @(
+            Get-ChildItem feed/package-updates/rusty-kiosk -Force |
+              ForEach-Object Name | Sort-Object
+          )
+          if (($packageUpdateNames -join "`n") -cne "rusty-kiosk" -or
+            ($kioskNames -join "`n") -cne "labs") {
+            throw "Feed commit contains content outside the Kiosk Labs subtree."
+          }
+          New-Item -ItemType Directory `
+            -Path deploy-root/package-updates/rusty-kiosk | Out-Null
+          Copy-Item -LiteralPath feed/.nojekyll -Destination deploy-root/.nojekyll
+          Copy-Item -LiteralPath feed/package-updates/rusty-kiosk/labs `
+            -Destination deploy-root/package-updates/rusty-kiosk/labs -Recurse
+          $rootNames = @(Get-ChildItem deploy-root -Force | ForEach-Object Name | Sort-Object)
+          if (($rootNames -join "`n") -cne ".nojekyll`npackage-updates") {
+            throw "Deployment artifact contains content outside the exact feed closure."
+          }
+
+      - name: Configure project Pages
+        uses: actions/configure-pages@983d7736d9b0ae728b81ab479565c72886d7745b # v5
+
+      - name: Upload exact feed snapshot
+        uses: actions/upload-pages-artifact@7b1f4a764d45c48632c6b24a0339c27f5614fb0b # v4
+        with:
+          path: deploy-root
+
+      - name: Deploy exact feed snapshot
+        id: deployment
+        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4

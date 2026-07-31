@@ -143,6 +143,15 @@ The normative state contract is
 The target policy is explicitly Labs-only under continuous APK signer identity:
 the updater accepts only `io.github.mesmerprism.rustykiosk.labs`, so stable and
 Labs can coexist and Labs removal leaves stable unchanged.
+The public feed is Quest-owned project Pages at
+`https://mesmerprism.github.io/rusty-quest/package-updates/rusty-kiosk/labs/current.json`.
+Its settings, orphan-branch bootstrap, one-write-deploy-key constraint,
+short-lived release-immutability attestation, Pages activation, and recovery
+sequence are defined in
+[Package Update Labs Distribution](docs/PACKAGE_UPDATE_LABS_DISTRIBUTION.md).
+It retains a 24-hour signed validity window and refreshes the same version only
+when the prior signed envelope and byte-for-byte APK identity match; refreshes
+advance sequence but never relax device installation rollback.
 The updater product release is independently tag-bound:
 `package-updater-v0.1.0-alpha.N` identifies an alpha-maturity Labs prerelease of
 `io.github.mesmerprism.rustyquest.packageupdater.labs`. Repository-owned
@@ -153,6 +162,8 @@ successive updater products have monotonic installed-package evidence. The
 protected workflow pins the updater APK's own signing certificate,
 publishes only the APK, sanitized metadata, project license, and exact source
 notice, draft-first and non-latest.
+Successful promotion also requires the live GitHub release to report
+`immutable=true`; a feed cannot consume a mutable updater release.
 
 `crates/rusty-quest-media-stream` provides the generic receiver-first platform
 runtime described in [Generic Media Stream Runtime](docs/MEDIA_STREAM_RUNTIME.md).

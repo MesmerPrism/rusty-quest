@@ -84,7 +84,9 @@ pwsh -NoProfile -ExecutionPolicy Bypass -File `
 pwsh -NoProfile -ExecutionPolicy Bypass -File `
   .\tools\checks\Test-PackageUpdaterProductReleaseContract.ps1
 pwsh -NoProfile -ExecutionPolicy Bypass -File `
-  .\tools\checks\Test-PackageUpdaterAlphaReleaseWorkflow.ps1 -RepoRoot .
+  .\tools\checks\Test-PackageUpdaterLabsReleaseWorkflow.ps1 -RepoRoot .
+pwsh -NoProfile -ExecutionPolicy Bypass -File `
+  .\tools\checks\Test-PackageUpdateLabsPagesWorkflow.ps1 -RepoRoot .
 ```
 
 The Rust gate covers signature/domain stability, exact policy dimensions,
@@ -98,7 +100,8 @@ full-tuple rollback schema, cross-channel damage matrix, deterministic
 publication receipt, isolated storage, and absence of release E2E components.
 Publisher self-tests cover interruption, stale/concurrent CAS, downgrade,
 tuple drift, fresh-client assertions, exact 24-hour validity, APK identity,
-and single-signer negatives. Artifact self-tests cover canonical alpha pointer
+single-signer negatives, and equal-version refresh identity drift. Artifact
+self-tests cover the exact Rusty Quest project-Pages prefix and canonical Labs pointer
 URLs and final merged-manifest permission/component/E2E leakage. Product
 release self-tests cover the exact alpha tag and installation identity,
 source revision/tree, tag-derived monotonic Android version, protected updater
@@ -107,7 +110,14 @@ build/metadata fields. The workflow gate requires pinned actions and tools,
 protected signing/policy inputs, draft-before-promotion, exact tag readback
 both before draft creation and immediately before promotion, prerelease and
 non-latest state, exact four-asset remote readback before and after promotion,
-and no overwrite, latest, or delete route.
+live release immutability, and no overwrite, latest, or delete route.
+The Pages workflow gate additionally requires a default-branch publisher,
+serialized non-rewriting feed history, an exact Kiosk Labs-only deployment
+closure, an immutable pinned Kiosk release, signed equal-version refreshes,
+and deployment of the exact committed feed identity. Run the external settings,
+per-release attestation, key rotation, and bootstrap sequence in
+[Package Update Labs Distribution](PACKAGE_UPDATE_LABS_DISTRIBUTION.md) before
+enabling either release environment.
 Release APK assembly additionally
 requires all release signing values and an Agent Board reservation for the
 long build. Headset validation must reserve the exact `quest:<serial>`, snapshot
