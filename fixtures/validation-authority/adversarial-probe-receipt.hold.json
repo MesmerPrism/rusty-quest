@@ -1,0 +1,163 @@
+{
+  "schema": "rusty.quest.external_validation_authority_probe_receipt.v1",
+  "evidence_origin": "synthetic-schema-fixture",
+  "receipt_id": "synthetic-probe-hold",
+  "repository": {
+    "full_name": "MesmerPrism/rusty-quest",
+    "id": 1264057043,
+    "target_ref": "refs/heads/main"
+  },
+  "ruleset_snapshot": {
+    "ruleset_id": 1,
+    "enforcement": "active",
+    "bypass_actor_count": 0,
+    "context": "Static admission",
+    "app_id": 15368,
+    "strict": true,
+    "snapshot_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  "probe": {
+    "pull_request_number": 1,
+    "pull_request_url": "https://github.com/MesmerPrism/rusty-quest/pull/1",
+    "base_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "head_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "merge_sha": "cccccccccccccccccccccccccccccccccccccccc",
+    "candidate_workflow_path": ".github/workflows/external-validation-authority-spoof-probe.yml",
+    "protected_changed_paths": [
+      ".github/workflows/external-validation-authority-spoof-probe.yml"
+    ]
+  },
+  "runs": [
+    {
+      "phase": "failure-before-success-base",
+      "owner": "base",
+      "workflow_run_id": 1,
+      "workflow_path": ".github/workflows/external-validation-authority.yml",
+      "event": "pull_request_target",
+      "run_attempt": 1,
+      "head_sha": "cccccccccccccccccccccccccccccccccccccccc",
+      "conclusion": "failure",
+      "started_at": "2026-07-31T00:00:00Z",
+      "completed_at": "2026-07-31T00:00:01Z"
+    },
+    {
+      "phase": "failure-before-success-candidate",
+      "owner": "candidate",
+      "workflow_run_id": 2,
+      "workflow_path": ".github/workflows/external-validation-authority-spoof-probe.yml",
+      "event": "pull_request",
+      "run_attempt": 1,
+      "head_sha": "cccccccccccccccccccccccccccccccccccccccc",
+      "conclusion": "success",
+      "started_at": "2026-07-31T00:00:02Z",
+      "completed_at": "2026-07-31T00:00:03Z"
+    },
+    {
+      "phase": "success-before-failure-candidate",
+      "owner": "candidate",
+      "workflow_run_id": 2,
+      "workflow_path": ".github/workflows/external-validation-authority-spoof-probe.yml",
+      "event": "pull_request",
+      "run_attempt": 2,
+      "head_sha": "cccccccccccccccccccccccccccccccccccccccc",
+      "conclusion": "success",
+      "started_at": "2026-07-31T00:00:04Z",
+      "completed_at": "2026-07-31T00:00:05Z"
+    },
+    {
+      "phase": "success-before-failure-base",
+      "owner": "base",
+      "workflow_run_id": 1,
+      "workflow_path": ".github/workflows/external-validation-authority.yml",
+      "event": "pull_request_target",
+      "run_attempt": 2,
+      "head_sha": "cccccccccccccccccccccccccccccccccccccccc",
+      "conclusion": "failure",
+      "started_at": "2026-07-31T00:00:06Z",
+      "completed_at": "2026-07-31T00:00:07Z"
+    }
+  ],
+  "check_runs": [
+    {
+      "phase": "failure-before-success-base",
+      "check_run_id": 1,
+      "check_suite_id": 1,
+      "name": "Static admission",
+      "app_id": 15368,
+      "head_sha": "cccccccccccccccccccccccccccccccccccccccc",
+      "conclusion": "failure",
+      "details_url": "https://github.com/MesmerPrism/rusty-quest/actions/runs/1",
+      "completed_at": "2026-07-31T00:00:01Z"
+    },
+    {
+      "phase": "failure-before-success-candidate",
+      "check_run_id": 2,
+      "check_suite_id": 2,
+      "name": "Static admission",
+      "app_id": 15368,
+      "head_sha": "cccccccccccccccccccccccccccccccccccccccc",
+      "conclusion": "success",
+      "details_url": "https://github.com/MesmerPrism/rusty-quest/actions/runs/2",
+      "completed_at": "2026-07-31T00:00:03Z"
+    },
+    {
+      "phase": "success-before-failure-candidate",
+      "check_run_id": 3,
+      "check_suite_id": 3,
+      "name": "Static admission",
+      "app_id": 15368,
+      "head_sha": "cccccccccccccccccccccccccccccccccccccccc",
+      "conclusion": "success",
+      "details_url": "https://github.com/MesmerPrism/rusty-quest/actions/runs/2",
+      "completed_at": "2026-07-31T00:00:05Z"
+    },
+    {
+      "phase": "success-before-failure-base",
+      "check_run_id": 4,
+      "check_suite_id": 4,
+      "name": "Static admission",
+      "app_id": 15368,
+      "head_sha": "cccccccccccccccccccccccccccccccccccccccc",
+      "conclusion": "failure",
+      "details_url": "https://github.com/MesmerPrism/rusty-quest/actions/runs/1",
+      "completed_at": "2026-07-31T00:00:07Z"
+    }
+  ],
+  "ordering_observations": [
+    "base-failure-then-candidate-success",
+    "candidate-success-then-base-failure"
+  ],
+  "inventory": {
+    "queried_sha": "cccccccccccccccccccccccccccccccccccccccc",
+    "base_and_candidate_runs_proven": false,
+    "mappings_distinguishable": false,
+    "same_context": true,
+    "same_app": true,
+    "opposite_conclusions": true
+  },
+  "merge_gate": {
+    "observed_at": "2026-07-31T00:00:08Z",
+    "merge_state_status": "UNKNOWN",
+    "ordering_results": [
+      {
+        "ordering": "base-failure-then-candidate-success",
+        "observed_at": "2026-07-31T00:00:03Z",
+        "merge_state_status": "UNKNOWN"
+      },
+      {
+        "ordering": "candidate-success-then-base-failure",
+        "observed_at": "2026-07-31T00:00:07Z",
+        "merge_state_status": "UNKNOWN"
+      }
+    ],
+    "admin_bypass_used": false,
+    "merge_attempted": false,
+    "pr_closed_without_merge": true,
+    "release_environments_held_during_probe": true
+  },
+  "decision": "hold",
+  "hold_reasons": [
+    "synthetic-not-authority"
+  ],
+  "recorded_at": "2026-07-31T00:00:09Z"
+}

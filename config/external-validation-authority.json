@@ -1,0 +1,431 @@
+{
+  "schema": "rusty.morphospace.workflow.external_validation_authority_policy.v1",
+  "policy_id": "rusty-quest-external-validation-authority-v1",
+  "repository": "MesmerPrism/rusty-quest",
+  "mandatory_protected_paths": [
+    ".github/scripts/Invoke-RustyQuestExternalValidationAuthority.ps1",
+    ".github/workflows/external-validation-authority.yml",
+    ".github/workflows/package-updater-dynamic-validation.yml",
+    "config/external-validation-authority-settings.json",
+    "config/external-validation-authority.json",
+    "fixtures/validation-authority/adversarial-probe-receipt.hold.json",
+    "fixtures/validation-authority/bootstrap-approval.valid.json",
+    "schemas/rusty.quest.external_validation_authority_assessment.v1.schema.json",
+    "schemas/rusty.quest.external_validation_authority_probe_receipt.v1.schema.json",
+    "schemas/rusty.quest.external_validation_authority_settings.v1.schema.json",
+    "tools/checks/Test-ExternalValidationAuthorityPolicySelfTest.ps1",
+    "tools/checks/Test-ExternalValidationAuthorityStatic.ps1"
+  ],
+  "protected_rules": [
+    {
+      "rule_id": "android-package-updater",
+      "match": "prefix",
+      "path": "apps/package-updater-android/"
+    },
+    {
+      "rule_id": "cargo-lock",
+      "match": "exact",
+      "path": "Cargo.lock"
+    },
+    {
+      "rule_id": "cargo-manifest",
+      "match": "exact",
+      "path": "Cargo.toml"
+    },
+    {
+      "rule_id": "damaged-package-updater-bad-signature",
+      "match": "exact",
+      "path": "fixtures/damaged/package-updater-bad-signature.json"
+    },
+    {
+      "rule_id": "damaged-package-updater-expired",
+      "match": "exact",
+      "path": "fixtures/damaged/package-updater-expired.json"
+    },
+    {
+      "rule_id": "damaged-package-updater-origin-confusion",
+      "match": "exact",
+      "path": "fixtures/damaged/package-updater-origin-confusion.json"
+    },
+    {
+      "rule_id": "damaged-package-updater-padded-signature",
+      "match": "exact",
+      "path": "fixtures/damaged/package-updater-padded-signature.json"
+    },
+    {
+      "rule_id": "damaged-package-updater-sequence-rollback",
+      "match": "exact",
+      "path": "fixtures/damaged/package-updater-sequence-rollback.json"
+    },
+    {
+      "rule_id": "damaged-package-updater-unknown-field",
+      "match": "exact",
+      "path": "fixtures/damaged/package-updater-unknown-field.json"
+    },
+    {
+      "rule_id": "distribution-package-update-target",
+      "match": "exact",
+      "path": "distribution/package-update-labs-target.json"
+    },
+    {
+      "rule_id": "github-authority",
+      "match": "prefix",
+      "path": ".github/"
+    },
+    {
+      "rule_id": "package-updater-build",
+      "match": "exact",
+      "path": "tools/Build-PackageUpdaterAndroid.ps1"
+    },
+    {
+      "rule_id": "package-updater-check-android",
+      "match": "exact",
+      "path": "tools/checks/Test-PackageUpdaterAndroidStatic.ps1"
+    },
+    {
+      "rule_id": "package-updater-check-artifact",
+      "match": "exact",
+      "path": "tools/checks/Test-PackageUpdaterBuildArtifactContract.ps1"
+    },
+    {
+      "rule_id": "package-updater-check-pages",
+      "match": "exact",
+      "path": "tools/checks/Test-PackageUpdateLabsPagesWorkflow.ps1"
+    },
+    {
+      "rule_id": "package-updater-check-publication",
+      "match": "exact",
+      "path": "tools/checks/Test-PackageUpdatePublicationContract.ps1"
+    },
+    {
+      "rule_id": "package-updater-check-release",
+      "match": "exact",
+      "path": "tools/checks/Test-PackageUpdaterLabsReleaseWorkflow.ps1"
+    },
+    {
+      "rule_id": "package-updater-check-release-contract",
+      "match": "exact",
+      "path": "tools/checks/Test-PackageUpdaterProductReleaseContract.ps1"
+    },
+    {
+      "rule_id": "package-updater-crate",
+      "match": "prefix",
+      "path": "crates/rusty-quest-package-updater/"
+    },
+    {
+      "rule_id": "package-updater-e2e",
+      "match": "exact",
+      "path": "tools/Invoke-PackageUpdaterE2eCli.ps1"
+    },
+    {
+      "rule_id": "package-updater-fixtures",
+      "match": "prefix",
+      "path": "fixtures/package-updater/"
+    },
+    {
+      "rule_id": "package-updater-new-release-metadata",
+      "match": "exact",
+      "path": "tools/New-PackageUpdaterProductReleaseMetadata.ps1"
+    },
+    {
+      "rule_id": "package-updater-product-metadata-check",
+      "match": "exact",
+      "path": "tools/Test-PackageUpdaterProductReleaseMetadata.ps1"
+    },
+    {
+      "rule_id": "package-updater-publish",
+      "match": "exact",
+      "path": "tools/Publish-PackageUpdateManifest.ps1"
+    },
+    {
+      "rule_id": "package-updater-publish-pages",
+      "match": "exact",
+      "path": "tools/Publish-PackageUpdateLabsPages.ps1"
+    },
+    {
+      "rule_id": "package-updater-schema-envelope",
+      "match": "exact",
+      "path": "schemas/rusty.quest.package_update_manifest_envelope.v1.schema.json"
+    },
+    {
+      "rule_id": "package-updater-schema-receipt",
+      "match": "exact",
+      "path": "schemas/rusty.quest.package_update_receipt.v1.schema.json"
+    },
+    {
+      "rule_id": "package-updater-schema-rollback",
+      "match": "exact",
+      "path": "schemas/rusty.quest.package_update_rollback_state.v1.schema.json"
+    },
+    {
+      "rule_id": "package-updater-tool-contracts",
+      "match": "prefix",
+      "path": "tools/package_updater/"
+    },
+    {
+      "rule_id": "validation-runner",
+      "match": "exact",
+      "path": "tools/check_all.ps1"
+    }
+  ],
+  "approved_change_sets": [
+    {
+      "approval_id": "bootstrap-sealed-candidate-i",
+      "required_ancestor": "daf32feeff354414a770fa28391f6bdba54908a9",
+      "changed_paths": [
+        ".github/workflows/package-update-labs-pages.yml",
+        ".github/workflows/package-updater-labs-release.yml",
+        "AGENTS.md",
+        "README.md",
+        "apps/package-updater-android/README.md",
+        "apps/package-updater-android/app/build.gradle.kts",
+        "apps/package-updater-android/app/src/main/java/io/github/mesmerprism/rustyquest/packageupdater/StrictUpdateEnvelopeVerifier.java",
+        "apps/package-updater-android/app/src/main/java/io/github/mesmerprism/rustyquest/packageupdater/UpdateChannelPointer.java",
+        "apps/package-updater-android/host-tests/io/github/mesmerprism/rustyquest/packageupdater/PackageUpdaterCanonicalVectorTest.java",
+        "crates/rusty-quest-package-updater/src/bin/authenticate_package_update_manifest.rs",
+        "crates/rusty-quest-package-updater/src/bin/sign_package_update_manifest.rs",
+        "crates/rusty-quest-package-updater/src/lib.rs",
+        "distribution/package-update-labs-target.json",
+        "docs/ARCHITECTURE.md",
+        "docs/PACKAGE_UPDATE_LABS_DISTRIBUTION.md",
+        "docs/VALIDATION.md",
+        "fixtures/package-updater/manifest-admission-receipt.fixed.json",
+        "fixtures/package-updater/manifest-envelope.fixed-vector.json",
+        "fixtures/package-updater/policy.valid.json",
+        "tools/Build-PackageUpdaterAndroid.ps1",
+        "tools/Publish-PackageUpdateLabsPages.ps1",
+        "tools/Publish-PackageUpdateManifest.ps1",
+        "tools/checks/Test-PackageUpdateLabsPagesWorkflow.ps1",
+        "tools/checks/Test-PackageUpdatePublicationContract.ps1",
+        "tools/checks/Test-PackageUpdaterAndroidStatic.ps1",
+        "tools/checks/Test-PackageUpdaterBuildArtifactContract.ps1",
+        "tools/checks/Test-PackageUpdaterLabsReleaseWorkflow.ps1",
+        "tools/checks/Test-PackageUpdaterProductReleaseContract.ps1",
+        "tools/package_updater/BuildArtifactContract.ps1",
+        "tools/package_updater/ProductReleaseContract.ps1",
+        "tools/package_updater/PublicationContract.ps1"
+      ],
+      "artifacts": [
+        {
+          "path": ".github/workflows/package-update-labs-pages.yml",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 17099,
+          "sha256": "ad1c5e001167e12a8dfa98e978fa920c9c93161bb930658676f67c09821d0e0b"
+        },
+        {
+          "path": ".github/workflows/package-updater-labs-release.yml",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 23157,
+          "sha256": "106d347b50d2d6eb39184ae14e511713ec01fac9c611d51ec5277c0c3e9394c3"
+        },
+        {
+          "path": "AGENTS.md",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 31274,
+          "sha256": "4ce35ab72194181419bf004e403d187ec5c4d75d5f57901dcfe9925f66594922"
+        },
+        {
+          "path": "README.md",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 63933,
+          "sha256": "79449d657f2cb8aa23afe03946b47b8010b21d7585918ae7dc8c47f27178480b"
+        },
+        {
+          "path": "apps/package-updater-android/README.md",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 9099,
+          "sha256": "f32a2bcc0cf9516dc8a4b19fbc5a3255052e98ebd971b2ffbf40f76dd87f3178"
+        },
+        {
+          "path": "apps/package-updater-android/app/build.gradle.kts",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 10629,
+          "sha256": "1bf415c0a11841c389b1ca1128da76cc531dc9ee3963a938868d633bb4b5b8c1"
+        },
+        {
+          "path": "apps/package-updater-android/app/src/main/java/io/github/mesmerprism/rustyquest/packageupdater/StrictUpdateEnvelopeVerifier.java",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 20456,
+          "sha256": "aa76bc43fef2ce4637c0b4358e5046d067449b24eee4b65516aef1dd460d2059"
+        },
+        {
+          "path": "apps/package-updater-android/app/src/main/java/io/github/mesmerprism/rustyquest/packageupdater/UpdateChannelPointer.java",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 5573,
+          "sha256": "d4b954c80ed214a59557161b069cb592ee33072793f7779718d5a8d279420051"
+        },
+        {
+          "path": "apps/package-updater-android/host-tests/io/github/mesmerprism/rustyquest/packageupdater/PackageUpdaterCanonicalVectorTest.java",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 5328,
+          "sha256": "63bf4d78da394f420102acedddeaac1047000ef77e1046b6c76789a2d0080eb1"
+        },
+        {
+          "path": "crates/rusty-quest-package-updater/src/bin/authenticate_package_update_manifest.rs",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 1499,
+          "sha256": "7e608f134aad3b09e8730c03ea2a9a3a9c2310c3607e2900530f416748bc7133"
+        },
+        {
+          "path": "crates/rusty-quest-package-updater/src/bin/sign_package_update_manifest.rs",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 15482,
+          "sha256": "1feb62b1044c7edf2fb9a5cb4b39b40efd463a772a730ae48ce3708f59dad2ca"
+        },
+        {
+          "path": "crates/rusty-quest-package-updater/src/lib.rs",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 81268,
+          "sha256": "9c510ed589dda35e5f3020197b7e016158901fbe365f9de223790c5fc22bf6ad"
+        },
+        {
+          "path": "distribution/package-update-labs-target.json",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 1667,
+          "sha256": "dbe5d90ec00c5aeaf1fdb91716eac256c1a30d58151fd77f8af44f999738c6ab"
+        },
+        {
+          "path": "docs/ARCHITECTURE.md",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 53902,
+          "sha256": "afb44b5942a94ccb3783e147a3f46114010576250357de78e329517552aa4318"
+        },
+        {
+          "path": "docs/PACKAGE_UPDATE_LABS_DISTRIBUTION.md",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 5151,
+          "sha256": "b4a6fe34ecab6cf781007590d7a5dedca3b30f08a2464fccc5e1c36d92feef05"
+        },
+        {
+          "path": "docs/VALIDATION.md",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 95574,
+          "sha256": "284f326ca3dc9c423685eb498815a8ae2077da402239a4cb9b267757fed98b66"
+        },
+        {
+          "path": "fixtures/package-updater/manifest-admission-receipt.fixed.json",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 1198,
+          "sha256": "16066c910d2a6b1fa7f1069c1f50dc934b496252f71b6a785b2bf0ff55137dc6"
+        },
+        {
+          "path": "fixtures/package-updater/manifest-envelope.fixed-vector.json",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 2268,
+          "sha256": "68293b6d86648d30b3e675565ab7dc583977948a3a06743e476058dbf09e6417"
+        },
+        {
+          "path": "fixtures/package-updater/policy.valid.json",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 692,
+          "sha256": "e628a035c9ff16528e4fe903df1f8a5d200c4cf0bd783c59e2f1abe739a8e09f"
+        },
+        {
+          "path": "tools/Build-PackageUpdaterAndroid.ps1",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 12421,
+          "sha256": "d89e56d59f54c914718b83e424de66ebe472b6f5f56c44864319d73441a6168b"
+        },
+        {
+          "path": "tools/Publish-PackageUpdateLabsPages.ps1",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 38833,
+          "sha256": "28e26ef385ff140a9dc8be3f0ecaa5c4b0868b00e95ae53a98697a9ff30d8bda"
+        },
+        {
+          "path": "tools/Publish-PackageUpdateManifest.ps1",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 14880,
+          "sha256": "a9cf96a1cdaf767e5380779c7772c10aff1bbc92d9cd3962c041ded2bc5c25ad"
+        },
+        {
+          "path": "tools/checks/Test-PackageUpdateLabsPagesWorkflow.ps1",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 23019,
+          "sha256": "ea9313df0aa3aebc75ad9b786a04542d74319e3fa2693dc7961d24a80bc6f1b6"
+        },
+        {
+          "path": "tools/checks/Test-PackageUpdatePublicationContract.ps1",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 15102,
+          "sha256": "15d80274a3372f50806e3574eeae4cc9afe0e0ba69d9742ec8909e98c0ff7f32"
+        },
+        {
+          "path": "tools/checks/Test-PackageUpdaterAndroidStatic.ps1",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 36944,
+          "sha256": "6f6a431af967ec9fbad4b023d140b5be32c81ba1e19e85616b838f3cc52b515a"
+        },
+        {
+          "path": "tools/checks/Test-PackageUpdaterBuildArtifactContract.ps1",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 6496,
+          "sha256": "5361335089a611d601163d9b16b702529cfa383bfb64fdee16c46a8b93f9f9b0"
+        },
+        {
+          "path": "tools/checks/Test-PackageUpdaterLabsReleaseWorkflow.ps1",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 7756,
+          "sha256": "1a647c4051c19ba5acd6e3488f29c510d83bebe236513ce5dc1ba918985782f8"
+        },
+        {
+          "path": "tools/checks/Test-PackageUpdaterProductReleaseContract.ps1",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 9079,
+          "sha256": "c357efa7e5ab81953dbf712f109dd650130a04ed11a7156ead818e1b014a84dd"
+        },
+        {
+          "path": "tools/package_updater/BuildArtifactContract.ps1",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 7350,
+          "sha256": "e66349e58be93261abaa5ba156c21a0eeabbf82aa5e53bb1d5a0410d529a0e85"
+        },
+        {
+          "path": "tools/package_updater/ProductReleaseContract.ps1",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 8287,
+          "sha256": "5f54e4ca87ad501131a8c4b000a1cec940b0a461b461d32a66a8b65b98c56989"
+        },
+        {
+          "path": "tools/package_updater/PublicationContract.ps1",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 12776,
+          "sha256": "ad546264f89b73701689561e13d35b6e5d8325bc4f92d1689629ddc81869386a"
+        }
+      ],
+      "status": "approved"
+    }
+  ],
+  "status": "active"
+}

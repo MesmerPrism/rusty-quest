@@ -70,6 +70,52 @@ project license, and exact source notice; promotion is draft-first,
 prerelease, non-latest, rechecks the remote tag immediately before promotion,
 and never overwrites or deletes an existing release.
 
+Changes to `.github/` or the protected package-updater validation and
+publication surfaces use the two-PR trust-root route in
+`docs/EXTERNAL_VALIDATION_AUTHORITY.md`. The base-owned workflow performs
+static Git-object admission only; it never executes candidate code, attests
+dynamic validation, or authorizes publication. Do not add approvals directly
+to an implementation PR. Before sealed candidate `I` exists, the live bootstrap
+policy must contain zero approvals. After independent audit of immutable `I`,
+the final bootstrap commit may carry exactly one approval named
+`bootstrap-sealed-candidate-i`; validate it with
+`-ExpectedBootstrapApprovalAncestor I`. The fixture is inert test data, never
+live authority.
+The separate credential-free `pull_request` workflow executes the exact
+candidate head only for formatting, package-updater Rust tests, and the Android
+static gate. Its pass is test evidence, not effect, acceptance, or publication
+authority.
+
+Configure admission from
+`config/external-validation-authority-settings.json`. Rusty Quest is user-owned;
+organization required-workflow rules are future-only. The deployable repository
+rule binds `Static admission` to GitHub Actions App ID `15368` but does not bind
+workflow path or event and is never authoritative without the mandatory
+same-name/same-App adversarial PR probe. Run both success-before-failure and
+success-after-failure orderings, API-inventory both workflow and check runs,
+require `mergeStateStatus=BLOCKED` both times, use no bypass or merge attempt,
+close unmerged, and keep the observed receipt private. Any ambiguity,
+mergeability, missing run, ordering inconsistency, or bypass holds candidate,
+publication, release, and Pages environments. The ordinary dynamic workflow is
+supplemental and non-authoritative.
+
+Validation-authority history uses ordinary merge commits throughout. The first
+bootstrap PR, every policy PR, and every candidate PR must land through an
+ordinary two-parent merge commit. Seal the implementation commit `I`; merge
+bootstrap/policy `main` into its branch without rewriting `I`; then merge the
+candidate normally. Squash, rebase, merge queue, amend, replacement, and
+force-update routes are forbidden. After merge, prove `I` is an ancestor of
+`main` and the exact approval is consumed or retired.
+
+Secret-bearing environments are closed independently: publication is
+protected-`main` only; updater signing is limited to protected
+`package-updater-v0.1.0-alpha.*` tags whose peeled commits are reachable from
+`main`; and `github-pages` accepts only the protected same-run publisher to
+exact-feed-commit deployment lineage. Pull-request workflows never reference
+those environments. The floating `windows-2025` runner has no accepted image
+allowlist; the static assessment records exact observed Git, PowerShell, and
+runner identities with drift explicitly `observed-unpinned`.
+
 Rusty Quest owns platform profile contracts and write/readback transports. It
 does not own Makepad widget implementation, Matter simulation truth, Optics
 appearance truth, Manifold command authority, or Lattice relation contracts.
@@ -93,6 +139,10 @@ native Quest path.
 2. `docs/ARCHITECTURE.md`
 3. `docs/VALIDATION.md`
 4. `fixtures/README.md`
+
+For a protected validation, workflow, policy, schema, publisher, or package
+updater authority change, also read `docs/EXTERNAL_VALIDATION_AUTHORITY.md`
+before editing.
 
 For APK builds or repeated same-headset runs, also read
 `docs/APK_RUN_ISOLATION.md`. Locked builds use app-specific package/client

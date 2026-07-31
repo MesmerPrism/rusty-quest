@@ -1,0 +1,315 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/MesmerPrism/rusty-quest/schemas/rusty.quest.external_validation_authority_assessment.v1.schema.json",
+  "title": "Rusty Quest external validation authority assessment v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "policy_id",
+    "policy_sha256",
+    "repository",
+    "pull_request_number",
+    "event_identity",
+    "workflow",
+    "runtime",
+    "base",
+    "candidate",
+    "merge",
+    "changed_paths",
+    "protected_paths",
+    "decision",
+    "approval_id",
+    "candidate_code_executed",
+    "execution_attested",
+    "publication_authority",
+    "limitations"
+  ],
+  "properties": {
+    "schema": {
+      "const": "rusty.quest.external_validation_authority_assessment.v1"
+    },
+    "policy_id": {
+      "$ref": "#/$defs/id"
+    },
+    "policy_sha256": {
+      "$ref": "#/$defs/hash"
+    },
+    "repository": {
+      "const": "MesmerPrism/rusty-quest"
+    },
+    "pull_request_number": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 2147483647
+    },
+    "event_identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "base_repository",
+        "base_ref",
+        "head_repository",
+        "merge_commit_observation",
+        "merge_commit_relation"
+      ],
+      "properties": {
+        "base_repository": {
+          "const": "MesmerPrism/rusty-quest"
+        },
+        "base_ref": {
+          "const": "main"
+        },
+        "head_repository": {
+          "$ref": "#/$defs/repository"
+        },
+        "merge_commit_observation": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/objectId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "merge_commit_relation": {
+          "enum": [
+            "event-merge-observation-absent",
+            "event-merge-observation-matched-fetched-ref",
+            "event-merge-observation-stale-fetched-ref-authoritative"
+          ]
+        }
+      }
+    },
+    "workflow": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "event",
+        "run_id",
+        "run_attempt"
+      ],
+      "properties": {
+        "event": {
+          "const": "pull_request_target"
+        },
+        "run_id": {
+          "type": "string",
+          "pattern": "^[1-9][0-9]{0,29}$"
+        },
+        "run_attempt": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2147483647
+        }
+      }
+    },
+    "runtime": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "powershell",
+        "git",
+        "runner"
+      ],
+      "properties": {
+        "powershell": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/executableIdentity"
+            },
+            {
+              "type": "object",
+              "required": [
+                "edition"
+              ],
+              "properties": {
+                "edition": {
+                  "const": "Core"
+                }
+              }
+            }
+          ]
+        },
+        "git": {
+          "$ref": "#/$defs/executableIdentity"
+        },
+        "runner": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "label",
+            "os",
+            "architecture",
+            "image_os",
+            "image_version",
+            "image_allowlist_enforced",
+            "drift_status"
+          ],
+          "properties": {
+            "label": {
+              "const": "windows-2025"
+            },
+            "os": {
+              "const": "Windows"
+            },
+            "architecture": {
+              "const": "X64"
+            },
+            "image_os": {
+              "$ref": "#/$defs/runtimeText"
+            },
+            "image_version": {
+              "$ref": "#/$defs/runtimeText"
+            },
+            "image_allowlist_enforced": {
+              "const": false
+            },
+            "drift_status": {
+              "const": "observed-unpinned"
+            }
+          }
+        }
+      }
+    },
+    "base": {
+      "$ref": "#/$defs/gitIdentity"
+    },
+    "candidate": {
+      "$ref": "#/$defs/gitIdentity"
+    },
+    "merge": {
+      "$ref": "#/$defs/gitIdentity"
+    },
+    "changed_paths": {
+      "$ref": "#/$defs/pathSet"
+    },
+    "protected_paths": {
+      "$ref": "#/$defs/pathSet"
+    },
+    "decision": {
+      "enum": [
+        "unprotected",
+        "approved-change-set"
+      ]
+    },
+    "approval_id": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/id"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "candidate_code_executed": {
+      "const": false
+    },
+    "execution_attested": {
+      "const": false
+    },
+    "publication_authority": {
+      "const": false
+    },
+    "limitations": {
+      "type": "array",
+      "minItems": 4,
+      "maxItems": 4,
+      "uniqueItems": true,
+      "items": {
+        "enum": [
+          "Static admission only; no candidate code was executed.",
+          "Execution, tests, and owner-effect evidence require separate trusted validation.",
+          "This assessment does not authorize publication.",
+          "Runner image and tool identities are observed exactly but not allowlisted."
+        ]
+      }
+    }
+  },
+  "$defs": {
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]{1,127}$"
+    },
+    "hash": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "repository": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_.-]{1,100}/[A-Za-z0-9_.-]{1,100}$"
+    },
+    "runtimeText": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9._+()-]+$"
+    },
+    "executableIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "version",
+        "executable_bytes",
+        "executable_sha256"
+      ],
+      "properties": {
+        "edition": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 16
+        },
+        "version": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[ -~]+$"
+        },
+        "executable_bytes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1073741824
+        },
+        "executable_sha256": {
+          "$ref": "#/$defs/hash"
+        }
+      }
+    },
+    "objectId": {
+      "type": "string",
+      "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
+    },
+    "path": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512,
+      "pattern": "^[^\\\\\\u0000-\\u001f\\u007f]+$"
+    },
+    "pathSet": {
+      "type": "array",
+      "maxItems": 512,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/path"
+      }
+    },
+    "gitIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "commit",
+        "tree"
+      ],
+      "properties": {
+        "commit": {
+          "$ref": "#/$defs/objectId"
+        },
+        "tree": {
+          "$ref": "#/$defs/objectId"
+        }
+      }
+    }
+  }
+}

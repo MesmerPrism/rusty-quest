@@ -1,0 +1,208 @@
+name: Package updater dynamic validation (non-authoritative)
+
+on:
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  credential-free-dynamic-validation:
+    name: Credential-free candidate checks (non-authoritative)
+    runs-on: windows-2025
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: rusty-quest
+    steps:
+      - name: Checkout exact candidate head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          lfs: false
+          path: rusty-quest
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha }}
+          submodules: false
+
+      - name: Verify exact PR event topology (non-authoritative)
+        shell: pwsh
+        env:
+          EVENT_BASE_REF: ${{ github.event.pull_request.base.ref }}
+          EVENT_BASE_REPOSITORY: ${{ github.event.pull_request.base.repo.full_name }}
+          EVENT_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          EVENT_HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
+          EVENT_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          EVENT_MERGE_SHA: ${{ github.event.pull_request.merge_commit_sha }}
+          PR_NUMBER_EXACT: ${{ github.event.pull_request.number }}
+          REPOSITORY_EXACT: ${{ github.repository }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          if ($env:REPOSITORY_EXACT -cne "MesmerPrism/rusty-quest" -or
+              $env:EVENT_BASE_REPOSITORY -cne "MesmerPrism/rusty-quest") {
+            throw "Dynamic validation base repository differs."
+          }
+          if ($env:EVENT_BASE_REF -cne "main") {
+            throw "Dynamic validation base ref differs from main."
+          }
+          if ($env:EVENT_HEAD_REPOSITORY -cnotmatch
+              '^[A-Za-z0-9_.-]{1,100}/[A-Za-z0-9_.-]{1,100}$') {
+            throw "Dynamic validation head repository is malformed."
+          }
+          foreach ($sha in @(
+              $env:EVENT_BASE_SHA,
+              $env:EVENT_HEAD_SHA
+          )) {
+            if ($sha -cnotmatch '^[0-9a-f]{40}$') {
+              throw "Dynamic validation event contains a malformed SHA."
+            }
+          }
+          if (-not [string]::IsNullOrEmpty($env:EVENT_MERGE_SHA) -and
+              $env:EVENT_MERGE_SHA -cnotmatch '^[0-9a-f]{40}$') {
+            throw "Dynamic validation event merge SHA is malformed."
+          }
+          if ($env:PR_NUMBER_EXACT -cnotmatch '^[1-9][0-9]{0,9}$') {
+            throw "Dynamic validation PR number is malformed."
+          }
+          $origin = (git remote get-url origin).Trim()
+          if ($LASTEXITCODE -ne 0 -or $origin -cnotmatch
+              '^https://github\.com/MesmerPrism/rusty-quest(?:\.git)?$') {
+            throw "Dynamic validation origin differs."
+          }
+          $head = (git rev-parse HEAD).Trim()
+          if ($LASTEXITCODE -ne 0 -or $head -cne $env:EVENT_HEAD_SHA) {
+            throw "Dynamic validation checkout differs from the event head."
+          }
+          git cat-file -e "$($env:EVENT_BASE_SHA)^{commit}"
+          if ($LASTEXITCODE -ne 0) {
+            throw "Dynamic validation event base object is absent."
+          }
+          $privateMerge = "refs/dynamic-validation/pr-$($env:PR_NUMBER_EXACT)/merge"
+          git fetch --force --no-tags --no-write-fetch-head origin `
+            "+refs/pull/$($env:PR_NUMBER_EXACT)/merge`:$privateMerge"
+          if ($LASTEXITCODE -ne 0) {
+            throw "Dynamic validation merge-object fetch failed."
+          }
+          $merge = (git rev-parse --verify "$privateMerge^{commit}").Trim()
+          if ($LASTEXITCODE -ne 0) {
+            throw "Dynamic validation merge object could not be resolved."
+          }
+          $eventMergeRelation = if (
+            [string]::IsNullOrEmpty($env:EVENT_MERGE_SHA)
+          ) {
+            "event-merge-observation-absent"
+          } elseif ($merge -ceq $env:EVENT_MERGE_SHA) {
+            "event-merge-observation-matched-fetched-ref"
+          } else {
+            "event-merge-observation-stale-fetched-ref-authoritative"
+          }
+          $parents = @(
+            ((git rev-list --parents -n 1 $merge) | Out-String).Trim().Split(
+              " ", [StringSplitOptions]::RemoveEmptyEntries
+            )
+          )
+          if ($LASTEXITCODE -ne 0 -or $parents.Count -ne 3 -or
+              $parents[0] -cne $merge -or
+              $parents[1] -cne $env:EVENT_BASE_SHA -or
+              $parents[2] -cne $env:EVENT_HEAD_SHA) {
+            throw "Dynamic validation merge parents differ from base and head."
+          }
+          if ((git rev-parse HEAD).Trim() -cne $env:EVENT_HEAD_SHA -or
+              (git status --porcelain).Count -ne 0) {
+            throw "Dynamic validation topology inspection changed candidate state."
+          }
+          Write-Output (
+            "Non-authoritative topology bound base=" + $env:EVENT_BASE_SHA +
+            " head=" + $env:EVENT_HEAD_SHA + " merge=" + $merge +
+            " head_repository=" + $env:EVENT_HEAD_REPOSITORY +
+            " event_merge_relation=" + $eventMergeRelation
+          )
+
+      - name: Checkout exact Manifold workspace dependency
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+          lfs: false
+          path: rusty-manifold
+          persist-credentials: false
+          ref: 947421a928889889e485006bcc0200e05c2394f9
+          repository: MesmerPrism/rusty-manifold
+          submodules: false
+
+      - name: Checkout exact Lattice workspace dependency
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+          lfs: false
+          path: rusty-lattice
+          persist-credentials: false
+          ref: 0aee7faa52fc965ff2255381781dd082ab639f4b
+          repository: MesmerPrism/rusty-lattice
+          submodules: false
+
+      - name: Checkout exact Matter workspace dependency
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+          lfs: false
+          path: rusty-matter
+          persist-credentials: false
+          ref: eec8cddd9830f7ef0f90574ddcbde2daac0ec804
+          repository: MesmerPrism/rusty-matter
+          submodules: false
+
+      - name: Checkout exact Optics workspace dependency
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+          lfs: false
+          path: rusty-optics
+          persist-credentials: false
+          ref: fd01d84acffa1b0a3a192fe978af337d9fedd18a
+          repository: MesmerPrism/rusty-optics
+          submodules: false
+
+      - name: Set up exact Java
+        uses: actions/setup-java@03ad4de0992f5dab5e18fcb136590ce7c4a0ac95 # v5.6.0
+        with:
+          distribution: temurin
+          java-version: 17.0.14+7
+
+      - name: Set up exact Rust
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          rustup set profile minimal
+          rustup toolchain install 1.96.0 --component rustfmt --no-self-update
+          rustup override set 1.96.0
+          $rustVersion = (rustc --version).Trim()
+          if ($rustVersion -cnotmatch '^rustc 1\.96\.0 \(') {
+            throw "Rust toolchain differs from 1.96.0."
+          }
+          $javaVersion = (& java -version 2>&1 | Out-String)
+          if ($javaVersion -cnotmatch '17\.0\.14\+7') {
+            throw "Java runtime differs from Temurin 17.0.14+7."
+          }
+
+      - name: Check Rust formatting
+        shell: pwsh
+        run: cargo +1.96.0 fmt --all --check
+
+      - name: Test package updater Rust authority
+        shell: pwsh
+        run: cargo +1.96.0 test -p rusty-quest-package-updater --locked
+
+      - name: Test package updater Android static boundary
+        shell: pwsh
+        run: >-
+          pwsh -NoProfile -NonInteractive -ExecutionPolicy Bypass
+          -File .\tools\checks\Test-PackageUpdaterAndroidStatic.ps1
+          -RepoRoot .
+
+      - name: State the non-authoritative boundary
+        shell: pwsh
+        run: |
+          Write-Output "Credential-free candidate checks completed."
+          Write-Output "This check does not validate owner effects, accept work, or authorize publication."
