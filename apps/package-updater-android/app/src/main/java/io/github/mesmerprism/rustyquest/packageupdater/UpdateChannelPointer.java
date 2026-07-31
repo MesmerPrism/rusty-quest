@@ -71,7 +71,7 @@ final class UpdateChannelPointer {
         }
         URI envelopeUri = URI.create(
                 BuildConfig.EXPECTED_HTTPS_ORIGIN
-                        + "/package-updates/rusty-kiosk/alpha/generations/"
+                        + "/package-updates/rusty-kiosk/labs/generations/"
                         + generation
                         + "/envelope.json");
         return new UpdateChannelPointer(

@@ -17,9 +17,9 @@ function Assert-Rejected {
 }
 
 $tuple = Get-PackageUpdateTuple `
-    -Channel alpha `
-    -PackageName io.github.mesmerprism.rustykiosk `
-    -RolloutRing alpha `
+    -Channel labs `
+    -PackageName io.github.mesmerprism.rustykiosk.labs `
+    -RolloutRing labs `
     -SignerSha256 ("sha256:" + ("2" * 64)) `
     -KeyId release-test-a `
     -PublicKey ("A" * 43) `
@@ -27,10 +27,10 @@ $tuple = Get-PackageUpdateTuple `
 
 Assert-PackageUpdateCanonicalInputs `
     -HttpsOrigin https://updates.example.test `
-    -ChannelPath package-updates/rusty-kiosk/alpha `
-    -Channel alpha `
-    -PackageName io.github.mesmerprism.rustykiosk `
-    -RolloutRing alpha `
+    -ChannelPath package-updates/rusty-kiosk/labs `
+    -Channel labs `
+    -PackageName io.github.mesmerprism.rustykiosk.labs `
+    -RolloutRing labs `
     -KeyId release-test-a `
     -PublicKey ("A" * 43) `
     -SignerSha256 ("sha256:" + ("2" * 64)) `
@@ -39,10 +39,10 @@ Assert-PackageUpdateCanonicalInputs `
 Assert-Rejected {
     Assert-PackageUpdateCanonicalInputs `
         -HttpsOrigin https://updates.example.test `
-        -ChannelPath package-updates/rusty-kiosk/alpha `
-        -Channel alpha `
-        -PackageName io.github.mesmerprism.rustykiosk `
-        -RolloutRing alpha `
+        -ChannelPath package-updates/rusty-kiosk/labs `
+        -Channel labs `
+        -PackageName io.github.mesmerprism.rustykiosk.labs `
+        -RolloutRing labs `
         -KeyId release-test-a `
         -PublicKey ("A" * 43) `
         -SignerSha256 ("sha256:" + ("2" * 64)) `

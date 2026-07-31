@@ -8,15 +8,15 @@ param(
     [string]$AndroidBuildToolsDirectory,
     [Parameter(Mandatory = $true)]
     [string]$HttpsOrigin,
-    [string]$ChannelPath = "package-updates/rusty-kiosk/alpha",
-    [ValidateSet("alpha")]
-    [string]$Channel = "alpha",
+    [string]$ChannelPath = "package-updates/rusty-kiosk/labs",
+    [ValidateSet("labs")]
+    [string]$Channel = "labs",
     [string]$KeyId = "release-manifest-2026-a",
     [Parameter(Mandatory = $true)]
     [ValidatePattern("^[A-Za-z0-9_-]{43}$")]
     [string]$TrustedPublicKeyBase64Url,
-    [string]$PackageName = "io.github.mesmerprism.rustykiosk",
-    [string]$RolloutRing = "alpha",
+    [string]$PackageName = "io.github.mesmerprism.rustykiosk.labs",
+    [string]$RolloutRing = "labs",
     [Parameter(Mandatory = $true)]
     [string]$SignerSha256,
     [Parameter(Mandatory = $true)]

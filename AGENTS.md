@@ -50,21 +50,20 @@ processes must resolve the explicit `pwsh` host.
 
 ## Purpose
 
-The package updater release product is the alpha-only
-`io.github.mesmerprism.rustyquest.packageupdater.alpha`. Its signed manifest,
+The package updater release product is the Labs-only
+`io.github.mesmerprism.rustyquest.packageupdater.labs`. Its signed manifest,
 rollback state, endpoint, storage, receipts, target package, APK signer,
 Ed25519 key id/public key, and HTTPS origin form one closed tuple. Fleet may
 select, authorize, and project only; Quest owns verification, download,
 PackageInstaller lifecycle, readback, rollback, and the effective receipt.
 Release variants must expose no debug or E2E components.
-Publication uses immutable generation directories and one CAS-bound alpha
-pointer updated last. Kiosk remains same-package in-place alpha with continuous
-signer identity, no coexistence or immediate downgrade, and only a
-higher-version same-signer stable exit.
+Publication uses immutable generation directories and one CAS-bound Labs
+pointer updated last. The updater targets only the co-installable
+`io.github.mesmerprism.rustykiosk.labs` core and must never retarget stable.
 The updater product itself releases only from an exact pre-existing
-`package-updater-v0.1.0-alpha.N` tag through the protected alpha environment.
+`package-updater-v0.1.0-alpha.N` tag through the protected Labs environment.
 Its owner metadata is derived from the closed build manifest plus actual APK
-and exposes only tag/version, source revision/tree, alpha installation
+and exposes only tag/version, source revision/tree, Labs installation
 identity, tag-derived monotonic APK version, updater signer SHA-256, and primary
 asset name/hash/bytes. Public release assets are exactly that APK, metadata,
 project license, and exact source notice; promotion is draft-first,

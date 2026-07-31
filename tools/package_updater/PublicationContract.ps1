@@ -14,16 +14,16 @@ function Assert-PackageUpdateCanonicalInputs {
         [uint64]$ExpiresAtMs
     )
     if ($HttpsOrigin -notmatch "^https://[a-z0-9.-]+(?::[1-9][0-9]{0,4})?$" -or
-        $ChannelPath -ne "package-updates/rusty-kiosk/alpha" -or
-        $Channel -ne "alpha" -or
-        $PackageName -ne "io.github.mesmerprism.rustykiosk" -or
-        $RolloutRing -ne "alpha" -or
+        $ChannelPath -ne "package-updates/rusty-kiosk/labs" -or
+        $Channel -ne "labs" -or
+        $PackageName -ne "io.github.mesmerprism.rustykiosk.labs" -or
+        $RolloutRing -ne "labs" -or
         $KeyId -notmatch "^[A-Za-z0-9._-]{1,96}$" -or
         $PublicKey -notmatch "^[A-Za-z0-9_-]{43}$" -or
         $SignerSha256 -notmatch "^sha256:[0-9a-f]{64}$" -or
         $ExpiresAtMs -le $IssuedAtMs -or
         ($ExpiresAtMs - $IssuedAtMs) -gt 86400000) {
-        throw "Package update publication inputs are not the canonical alpha tuple."
+        throw "Package update publication inputs are not the canonical Labs tuple."
     }
 }
 

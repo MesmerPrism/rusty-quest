@@ -15,8 +15,8 @@ param(
     [string]$TrustedPublicKeyBase64Url,
     [Parameter(Mandatory = $true)]
     [string]$ExpectedHttpsOrigin,
-    [string]$ExpectedPackageName = "io.github.mesmerprism.rustykiosk",
-    [string]$ExpectedRolloutRing = "alpha",
+    [string]$ExpectedPackageName = "io.github.mesmerprism.rustykiosk.labs",
+    [string]$ExpectedRolloutRing = "labs",
     [Parameter(Mandatory = $true)]
     [string]$ExpectedSignerSha256,
     [Parameter(Mandatory = $true)]
@@ -73,6 +73,11 @@ if ($TrustedKeyId -notmatch "^[A-Za-z0-9._-]{1,96}$" -or
     $ExpectedSignerSha256 -notmatch "^sha256:[0-9a-f]{64}$" -or
     $ExpectedUpdaterSignerSha256 -notmatch "^sha256:[0-9a-f]{64}$") {
     throw "Package Updater build policy contains a noncanonical value."
+}
+if ($ExpectedPackageName -cne
+        "io.github.mesmerprism.rustykiosk.labs" -or
+    $ExpectedRolloutRing -cne "labs") {
+    throw "Rusty Package Updater Labs may target only Kiosk Labs on the exact labs rollout ring."
 }
 
 & pwsh -NoProfile -ExecutionPolicy Bypass -File (

@@ -116,20 +116,19 @@ downloads only into app-private storage, verifies the archive before staging,
 and always uses Android Package Installer with wearer action required. It is
 not part of the Store launcher, does not accept arbitrary URLs or packages,
 and advances rollback state only after exact installed-package readback.
-The release identity is the alpha-only
-`io.github.mesmerprism.rustyquest.packageupdater.alpha`; channel is signed and
+The release identity is the Labs-only
+`io.github.mesmerprism.rustyquest.packageupdater.labs`; channel is signed and
 receipt-visible, and rollback is keyed by the full
 channel/package/ring/APK-signer/manifest-key/origin tuple. Fleet may
 select/authorize/project this packaged tuple but supplies no verifier policy.
 The normative state contract is
 `schemas/rusty.quest.package_update_rollback_state.v1.schema.json`.
-The Kiosk policy is explicitly same-package, in-place alpha under continuous
-APK signer identity: alpha cannot coexist with the installed Kiosk and has no
-immediate downgrade. Stable exit requires a strictly higher Android version
-code under the same signer.
+The target policy is explicitly Labs-only under continuous APK signer identity:
+the updater accepts only `io.github.mesmerprism.rustykiosk.labs`, so stable and
+Labs can coexist and Labs removal leaves stable unchanged.
 The updater product release is independently tag-bound:
-`package-updater-v0.1.0-alpha.N` identifies an alpha prerelease of
-`io.github.mesmerprism.rustyquest.packageupdater.alpha`. Repository-owned
+`package-updater-v0.1.0-alpha.N` identifies an alpha-maturity Labs prerelease of
+`io.github.mesmerprism.rustyquest.packageupdater.labs`. Repository-owned
 metadata binds the exact source revision/tree and primary APK identity after
 revalidating the closed build manifest and actual APK. Alpha sequence `N` is
 also the Android version code and `0.1.0-alpha.N` is the version name, so

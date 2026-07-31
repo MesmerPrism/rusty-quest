@@ -8,7 +8,7 @@ param(
     [string]$Command,
     [string]$AdbPath = "adb",
     [string]$PackageName =
-        "io.github.mesmerprism.rustyquest.packageupdater.alpha.e2ecli"
+        "io.github.mesmerprism.rustyquest.packageupdater.labs.e2ecli"
 )
 
 $ErrorActionPreference = "Stop"

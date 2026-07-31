@@ -14,18 +14,18 @@ function Assert-Rejected([scriptblock]$Action, [string]$Name) {
 }
 
 $origin = "https://updates.example.test"
-$url = "$origin/package-updates/rusty-kiosk/alpha/current.json"
+$url = "$origin/package-updates/rusty-kiosk/labs/current.json"
 Assert-PackageUpdaterManifestUrl -ManifestUrl $url -ExpectedHttpsOrigin $origin
 foreach ($bad in @(
-    "http://updates.example.test/package-updates/rusty-kiosk/alpha/current.json",
-    "https://updates.example.test.evil.test/package-updates/rusty-kiosk/alpha/current.json",
-    "https://user@updates.example.test/package-updates/rusty-kiosk/alpha/current.json",
+    "http://updates.example.test/package-updates/rusty-kiosk/labs/current.json",
+    "https://updates.example.test.evil.test/package-updates/rusty-kiosk/labs/current.json",
+    "https://user@updates.example.test/package-updates/rusty-kiosk/labs/current.json",
     "${url}?x=1",
     "${url}#fragment",
-    "$origin/package-updates/rusty-kiosk/alpha/../stable/current.json",
-    "$origin/package-updates//rusty-kiosk/alpha/current.json",
-    "$origin/package-updates/rusty-kiosk/alpha/%63urrent.json",
-    "$origin/package-updates/rusty-kiosk/alpha/envelope.json"
+    "$origin/package-updates/rusty-kiosk/labs/../stable/current.json",
+    "$origin/package-updates//rusty-kiosk/labs/current.json",
+    "$origin/package-updates/rusty-kiosk/labs/%63urrent.json",
+    "$origin/package-updates/rusty-kiosk/labs/envelope.json"
 )) {
     Assert-Rejected {
         Assert-PackageUpdaterManifestUrl -ManifestUrl $bad `
@@ -34,7 +34,7 @@ foreach ($bad in @(
 }
 
 $badging = @(
-    "package: name='io.github.mesmerprism.rustyquest.packageupdater.alpha' versionCode='7' versionName='0.1.0-alpha.7'"
+    "package: name='io.github.mesmerprism.rustyquest.packageupdater.labs' versionCode='7' versionName='0.1.0-alpha.7'"
 )
 $permissions = @(
     "uses-permission: name='android.permission.INTERNET'",
@@ -90,7 +90,7 @@ Assert-Rejected {
 } "wrong release identity"
 Assert-Rejected {
     Assert-PackageUpdaterReleaseArtifact -Badging @(
-        "package: name='io.github.mesmerprism.rustyquest.packageupdater.alpha' versionCode='1' versionName='0.1.0'"
+        "package: name='io.github.mesmerprism.rustyquest.packageupdater.labs' versionCode='1' versionName='0.1.0'"
     ) -Permissions $permissions -ManifestTree $tree `
         -ExpectedPackageName "io.github.mesmerprism.rustykiosk" `
         -ExpectedVersionCode 7 -ExpectedVersionName "0.1.0-alpha.7"
@@ -129,7 +129,7 @@ if ($publicToolJson.Contains("D:\private") -or
 }
 
 $e2eBadging = @(
-    "package: name='io.github.mesmerprism.rustyquest.packageupdater.alpha.e2ecli' versionCode='1' versionName='0.1.0-e2ecli'"
+    "package: name='io.github.mesmerprism.rustyquest.packageupdater.labs.e2ecli' versionCode='1' versionName='0.1.0-e2ecli'"
 )
 Assert-PackageUpdaterE2eArtifact -Badging $e2eBadging -ManifestTree @(
     "E: provider E2ePackageUpdaterCliProvider",

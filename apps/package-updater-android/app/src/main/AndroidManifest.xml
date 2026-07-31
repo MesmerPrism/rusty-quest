@@ -9,7 +9,7 @@
 
     <application
         android:allowBackup="false"
-        android:label="Rusty Package Updater Alpha"
+        android:label="Rusty Package Updater Labs"
         android:theme="@android:style/Theme.Material.Light.NoActionBar"
         android:usesCleartextTraffic="false">
         <activity

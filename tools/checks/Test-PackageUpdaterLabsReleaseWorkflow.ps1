@@ -6,12 +6,12 @@ if ([string]::IsNullOrWhiteSpace($RepoRoot)) {
     $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
 }
 $path = Join-Path $RepoRoot `
-    ".github\workflows\package-updater-alpha-release.yml"
+    ".github\workflows\package-updater-labs-release.yml"
 $workflow = Get-Content -Raw -LiteralPath $path
 foreach ($token in @(
     'package-updater-v0\.1\.0-alpha\.\*',
     'runs-on: windows-2025',
-    'environment: package-updater-alpha-release',
+    'environment: package-updater-labs-release',
     'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7\.0\.1',
     'actions/setup-java@03ad4de0992f5dab5e18fcb136590ce7c4a0ac95 # v5\.6\.0',
     'gradle/actions/setup-gradle@748248ddd2a24f49513d8f472f81c3a07d4d50e1 # v4\.4\.4',
@@ -24,8 +24,8 @@ foreach ($token in @(
     'git rev-parse "refs/tags/\$tag\^\{\}"',
     '\$peeled -ne "\$env:GITHUB_SHA"',
     'PACKAGE_UPDATER_KEYSTORE_BASE64',
-    'PACKAGE_UPDATER_MANIFEST_URL',
-    'PACKAGE_UPDATER_EXPECTED_UPDATER_SIGNER_SHA256',
+    'PACKAGE_UPDATER_LABS_MANIFEST_URL',
+    'PACKAGE_UPDATER_LABS_EXPECTED_UPDATER_SIGNER_SHA256',
     '-ExpectedUpdaterSignerSha256 \$env:UPDATE_UPDATER_SIGNER',
     '-VersionCode \$alphaSequence',
     '-VersionName \$releaseVersion',
@@ -47,10 +47,10 @@ foreach ($token in @(
     'draft = \$false',
     '\$publishedAssets\.Count -ne 4',
     'Published asset name, digest, byte count, or state differs',
-    'Package Updater alpha became the latest release'
+    'Package Updater Labs became the latest release'
 )) {
     if ($workflow -notmatch $token) {
-        throw "Package Updater alpha workflow is missing contract token: $token"
+        throw "Package Updater Labs workflow is missing contract token: $token"
     }
 }
 foreach ($forbidden in @(
@@ -62,14 +62,14 @@ foreach ($forbidden in @(
     'actions/upload-artifact', 'InspectE2eApkPath'
 )) {
     if ($workflow -match $forbidden) {
-        throw "Package Updater alpha workflow contains forbidden route: $forbidden"
+        throw "Package Updater Labs workflow contains forbidden route: $forbidden"
     }
 }
 $tagChecks = @(
     [regex]::Matches($workflow, '(?m)^\s*Assert-RemoteTag\s*$')
 )
 $nonLatestChecks = @(
-    [regex]::Matches($workflow, '(?m)^\s*Assert-AlphaIsNotLatest\s*$')
+    [regex]::Matches($workflow, '(?m)^\s*Assert-LabsIsNotLatest\s*$')
 )
 $draftIndex = $workflow.IndexOf(
     '$release = Invoke-RestMethod -Method Post',
@@ -107,4 +107,4 @@ if ($tagChecks.Count -ne 3 -or $nonLatestChecks.Count -ne 1 -or
     )) {
     throw "Package Updater release evidence and promotion ordering changed."
 }
-Write-Output "Package Updater alpha release workflow contract passed."
+Write-Output "Package Updater Labs release workflow contract passed."

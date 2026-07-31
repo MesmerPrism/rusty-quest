@@ -63,9 +63,9 @@ payload after the exact `rusty.quest.package_update_manifest.v1\0` domain.
 Release-key identifiers are caller-selected only from a closed registry, and
 one public key cannot be aliased under multiple identifiers.
 
-Alpha is a channel-isolated release product with Android package
-`io.github.mesmerprism.rustyquest.packageupdater.alpha`, its own manifest
-endpoint, and alpha-scoped staging, rollback, and receipt namespaces. The
+Labs is a channel-isolated release product with Android package
+`io.github.mesmerprism.rustyquest.packageupdater.labs`, its own manifest
+endpoint, and Labs-scoped staging, rollback, and receipt namespaces. The
 signed channel, target package, rollout ring, APK signer, Ed25519 key id/public
 key, and canonical HTTPS origin form one tuple and key rollback state. Fleet
 may select, authorize, and project this packaged tuple only. Quest owns
@@ -74,21 +74,21 @@ advancement, and the effective channel-bearing receipt.
 Publication writes immutable generations and changes only the single channel
 pointer last under caller-pinned prior pointer/envelope hashes. The updater
 retains the pointer-bound verified tuple through rollback admission and
-installed commit. Kiosk remains an in-place alpha same-package update with
-continuous signer identity, no coexistence, and no immediate downgrade;
-stable exit requires a higher version code.
+installed commit. Its target is the co-installable Labs Kiosk package; stable
+is outside this updater's accepted package tuple.
 
-The updater APK is also a closed alpha release product. Its only accepted tag
+The updater APK is also a closed Labs release product. Its only accepted tag
 shape is `package-updater-v0.1.0-alpha.N`; the tag peels to the exact workflow
-source revision. `rusty.quest.package_updater_product_release.v1` is sanitized
+source revision. `rusty.quest.package_updater_product_release.v2` is sanitized
 owner metadata derived only after strict closed-shape validation of the
 existing build manifest and byte-for-byte APK hash/size readback. It binds the
-release tag/version, source revision/tree, alpha channel, installation
+release tag/version, source revision/tree, Labs product channel, alpha maturity,
+GitHub-prerelease distribution track, installation
 identity, tag-derived APK version, updater signing-certificate SHA-256, and
 primary APK name/hash/bytes. SDK, aapt2, NDK, Gradle, and keystore paths are
 adapter inputs and never metadata.
 
-The tag workflow runs behind the `package-updater-alpha-release` protected
+The tag workflow runs behind the `package-updater-labs-release` protected
 environment with pinned actions and tool versions. It distinguishes a missing
 release from a GitHub API failure, creates a draft prerelease, uploads exactly
 the APK, owner metadata, project license, and exact source notice, reads back

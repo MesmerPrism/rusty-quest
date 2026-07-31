@@ -10,7 +10,7 @@ fun buildConfigString(value: String): String =
 
 val updateManifestUrl =
   providers.environmentVariable("RUSTY_QUEST_PACKAGE_UPDATER_MANIFEST_URL")
-    .orElse("https://mesmerprism.com/package-updates/rusty-kiosk/alpha/current.json")
+    .orElse("https://mesmerprism.com/package-updates/rusty-kiosk/labs/current.json")
     .get()
 val trustedKeyId =
   providers.environmentVariable("RUSTY_QUEST_PACKAGE_UPDATER_TRUSTED_KEY_ID")
@@ -26,11 +26,11 @@ val expectedHttpsOrigin =
     .get()
 val expectedPackageName =
   providers.environmentVariable("RUSTY_QUEST_PACKAGE_UPDATER_EXPECTED_PACKAGE_NAME")
-    .orElse("io.github.mesmerprism.rustykiosk")
+    .orElse("io.github.mesmerprism.rustykiosk.labs")
     .get()
 val expectedRolloutRing =
   providers.environmentVariable("RUSTY_QUEST_PACKAGE_UPDATER_EXPECTED_ROLLOUT_RING")
-    .orElse("alpha")
+    .orElse("labs")
     .get()
 val expectedSignerSha256 =
   providers.environmentVariable("RUSTY_QUEST_PACKAGE_UPDATER_EXPECTED_SIGNER_SHA256")
@@ -45,7 +45,7 @@ val packageUpdaterVersionName =
   providers.environmentVariable("RUSTY_QUEST_PACKAGE_UPDATER_VERSION_NAME")
     .orElse("0.1.0")
     .get()
-val updateChannel = "alpha"
+val updateChannel = "labs"
 
 require(expectedHttpsOrigin.matches(Regex("https://[a-z0-9.-]+(?::[1-9][0-9]{0,4})?"))) {
   "RUSTY_QUEST_PACKAGE_UPDATER_EXPECTED_HTTPS_ORIGIN must be a canonical HTTPS origin"
@@ -53,23 +53,29 @@ require(expectedHttpsOrigin.matches(Regex("https://[a-z0-9.-]+(?::[1-9][0-9]{0,4
 val parsedManifestUri = URI(updateManifestUrl)
 require(
   updateManifestUrl ==
-    "$expectedHttpsOrigin/package-updates/rusty-kiosk/alpha/current.json" &&
+    "$expectedHttpsOrigin/package-updates/rusty-kiosk/labs/current.json" &&
     parsedManifestUri.scheme == "https" &&
     parsedManifestUri.rawUserInfo == null &&
     parsedManifestUri.rawQuery == null &&
     parsedManifestUri.rawFragment == null &&
-    parsedManifestUri.rawPath == "/package-updates/rusty-kiosk/alpha/current.json" &&
+    parsedManifestUri.rawPath == "/package-updates/rusty-kiosk/labs/current.json" &&
     !updateManifestUrl.contains("%") &&
     !parsedManifestUri.rawPath.contains("..") &&
     !parsedManifestUri.rawPath.contains("//"),
 ) {
-  "RUSTY_QUEST_PACKAGE_UPDATER_MANIFEST_URL must be the exact canonical alpha pointer"
+  "RUSTY_QUEST_PACKAGE_UPDATER_MANIFEST_URL must be the exact canonical Labs pointer"
 }
 require(expectedPackageName.matches(Regex("[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+"))) {
   "RUSTY_QUEST_PACKAGE_UPDATER_EXPECTED_PACKAGE_NAME is invalid"
 }
 require(expectedRolloutRing.matches(Regex("[A-Za-z0-9._-]{1,32}"))) {
   "RUSTY_QUEST_PACKAGE_UPDATER_EXPECTED_ROLLOUT_RING is invalid"
+}
+require(expectedPackageName == "io.github.mesmerprism.rustykiosk.labs") {
+  "Rusty Package Updater Labs may target only the co-installable Kiosk Labs package"
+}
+require(expectedRolloutRing == "labs") {
+  "Rusty Package Updater Labs requires the exact labs rollout ring"
 }
 require(packageUpdaterVersionCode != null && packageUpdaterVersionCode > 0) {
   "RUSTY_QUEST_PACKAGE_UPDATER_VERSION_CODE must be a positive Android version code"
@@ -193,7 +199,7 @@ android {
   compileSdk = 34
 
   defaultConfig {
-    applicationId = "io.github.mesmerprism.rustyquest.packageupdater.alpha"
+    applicationId = "io.github.mesmerprism.rustyquest.packageupdater.labs"
     minSdk = 34
     targetSdk = 34
     versionCode = packageUpdaterVersionCode

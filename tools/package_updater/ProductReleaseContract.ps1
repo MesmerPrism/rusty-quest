@@ -48,19 +48,21 @@ function Read-PackageUpdaterBuildManifest {
             "rusty.quest.package_updater_android.build_manifest.v1" -or
         $manifest.source_revision -notmatch "^[0-9a-f]{40}$" -or
         $manifest.package_name -ne
-            "io.github.mesmerprism.rustyquest.packageupdater.alpha" -or
+            "io.github.mesmerprism.rustyquest.packageupdater.labs" -or
         [uint64]$manifest.version_code -lt 1 -or
         [uint64]$manifest.version_code -gt 2147483647 -or
         $manifest.version_name -notmatch
             "^0\.1\.0(?:-alpha\.[1-9][0-9]*)?$" -or
         $manifest.manifest_url -ne
-            "$($manifest.expected_https_origin)/package-updates/rusty-kiosk/alpha/current.json" -or
+            "$($manifest.expected_https_origin)/package-updates/rusty-kiosk/labs/current.json" -or
         $manifest.trusted_key_id -notmatch "^[A-Za-z0-9._-]{1,96}$" -or
         $manifest.expected_https_origin -notmatch
             "^https://[a-z0-9.-]+(?::[1-9][0-9]{0,4})?$" -or
         $manifest.expected_package_name -notmatch
             "^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$" -or
-        $manifest.expected_rollout_ring -ne "alpha" -or
+        $manifest.expected_package_name -ne
+            "io.github.mesmerprism.rustykiosk.labs" -or
+        $manifest.expected_rollout_ring -ne "labs" -or
         $manifest.expected_signer_sha256 -notmatch "^sha256:[0-9a-f]{64}$" -or
         $manifest.expected_updater_signer_sha256 -notmatch
             "^sha256:[0-9a-f]{64}$" -or
@@ -79,7 +81,7 @@ function Read-PackageUpdaterBuildManifest {
             "^sha256:[0-9a-f]{64}$" -or
         $manifest.artifact_inspection.tool.apksigner_sha256 -notmatch
             "^sha256:[0-9a-f]{64}$") {
-        throw "Package Updater build manifest is not an alpha release artifact."
+        throw "Package Updater build manifest is not a Labs release artifact."
     }
     $permissions = @($manifest.artifact_inspection.release_permissions)
     $components = @($manifest.artifact_inspection.release_components)
@@ -128,15 +130,17 @@ function New-PackageUpdaterProductReleaseMetadata {
         throw "Package Updater APK version is not derived from its alpha tag."
     }
     [ordered]@{
-        schema = "rusty.quest.package_updater_product_release.v1"
-        product = "rusty-quest-package-updater"
+        schema = "rusty.quest.package_updater_product_release.v2"
+        product = "rusty-quest-package-updater-labs"
         release_tag = $Tag
         release_version = $version
         source_revision = $BuildManifest.source_revision
         source_tree = $SourceTree
-        channel = "alpha"
+        product_channel = "labs"
+        maturity = "alpha"
+        distribution_track = "github-prerelease"
         installation_identity =
-            "io.github.mesmerprism.rustyquest.packageupdater.alpha"
+            "io.github.mesmerprism.rustyquest.packageupdater.labs"
         apk_version_name = $BuildManifest.version_name
         apk_version_code = [uint64]$BuildManifest.version_code
         updater_signer_sha256 =
@@ -158,7 +162,8 @@ function Assert-PackageUpdaterProductReleaseMetadata {
     )
     Assert-ExactJsonFields $Metadata @(
         "schema", "product", "release_tag", "release_version",
-        "source_revision", "source_tree", "channel", "installation_identity",
+        "source_revision", "source_tree", "product_channel", "maturity",
+        "distribution_track", "installation_identity",
         "apk_version_name", "apk_version_code", "updater_signer_sha256",
         "primary_apk"
     ) "Package Updater product release metadata"

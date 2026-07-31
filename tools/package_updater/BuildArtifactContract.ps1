@@ -6,8 +6,8 @@ function Assert-PackageUpdaterManifestUrl {
             "^https://[a-z0-9.-]+(?::[1-9][0-9]{0,4})?$" -or
         $ManifestUrl -match "%|\\\\|//package-updates|[?#]" -or
         $ManifestUrl -ne
-            "$ExpectedHttpsOrigin/package-updates/rusty-kiosk/alpha/current.json") {
-        throw "Manifest URL must be the canonical alpha pointer under the exact origin."
+            "$ExpectedHttpsOrigin/package-updates/rusty-kiosk/labs/current.json") {
+        throw "Manifest URL must be the canonical Labs pointer under the exact origin."
     }
     try {
         $uri = [Uri]::new($ManifestUrl, [UriKind]::Absolute)
@@ -18,7 +18,7 @@ function Assert-PackageUpdaterManifestUrl {
         -not [string]::IsNullOrEmpty($uri.UserInfo) -or
         -not [string]::IsNullOrEmpty($uri.Query) -or
         -not [string]::IsNullOrEmpty($uri.Fragment) -or
-        $uri.AbsolutePath -ne "/package-updates/rusty-kiosk/alpha/current.json" -or
+        $uri.AbsolutePath -ne "/package-updates/rusty-kiosk/labs/current.json" -or
         $uri.AbsolutePath.Contains("..") -or
         $uri.AbsolutePath.Contains("//")) {
         throw "Manifest URL contains an ambiguous or forbidden URI component."
@@ -94,10 +94,10 @@ function Assert-PackageUpdaterReleaseArtifact {
     )
     $identity = ConvertFrom-PackageUpdaterBadging $Badging
     if ($identity.package_name -ne
-            "io.github.mesmerprism.rustyquest.packageupdater.alpha" -or
+            "io.github.mesmerprism.rustyquest.packageupdater.labs" -or
         $identity.version_code -ne $ExpectedVersionCode -or
         $identity.version_name -cne $ExpectedVersionName) {
-        throw "Release APK identity is not the exact alpha updater identity."
+        throw "Release APK identity is not the exact Labs updater identity."
     }
     $permissionNames = @($Permissions | ForEach-Object {
         if ($_ -match "name='([^']+)'") { $Matches[1] }
@@ -174,7 +174,7 @@ function Assert-PackageUpdaterE2eArtifact {
     $identity = ConvertFrom-PackageUpdaterBadging $Badging
     $tree = $ManifestTree -join "`n"
     if ($identity.package_name -ne
-            "io.github.mesmerprism.rustyquest.packageupdater.alpha.e2ecli" -or
+            "io.github.mesmerprism.rustyquest.packageupdater.labs.e2ecli" -or
         -not $tree.Contains("E2ePackageUpdaterCliProvider") -or
         -not $tree.Contains("E2ePackageUpdateService")) {
         throw "E2E APK does not retain its distinct test-only identity."

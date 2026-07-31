@@ -60,7 +60,7 @@ $paths = [ordered]@{
     product_release_contract_test = Join-Path $RepoRoot `
         "tools\checks\Test-PackageUpdaterProductReleaseContract.ps1"
     alpha_release_workflow_test = Join-Path $RepoRoot `
-        "tools\checks\Test-PackageUpdaterAlphaReleaseWorkflow.ps1"
+        "tools\checks\Test-PackageUpdaterLabsReleaseWorkflow.ps1"
     product_release_contract = Join-Path $RepoRoot `
         "tools\package_updater\ProductReleaseContract.ps1"
     product_release_generator = Join-Path $RepoRoot `
@@ -68,7 +68,7 @@ $paths = [ordered]@{
     product_release_validator = Join-Path $RepoRoot `
         "tools\Test-PackageUpdaterProductReleaseMetadata.ps1"
     alpha_release_workflow = Join-Path $RepoRoot `
-        ".github\workflows\package-updater-alpha-release.yml"
+        ".github\workflows\package-updater-labs-release.yml"
 }
 foreach ($entry in $paths.GetEnumerator()) {
     if (-not (Test-Path -LiteralPath $entry.Value)) {
@@ -202,7 +202,7 @@ Assert-Match $rootBuild 'com\.android\.application.*8\.11\.1' `
     "Package Updater must use the repository Android Gradle Plugin baseline."
 foreach ($token in @(
     'namespace = "io.github.mesmerprism.rustyquest.packageupdater"',
-    'applicationId = "io.github.mesmerprism.rustyquest.packageupdater.alpha"',
+    'applicationId = "io.github.mesmerprism.rustyquest.packageupdater.labs"',
     'compileSdk = 34',
     'minSdk = 34',
     'targetSdk = 34',
@@ -214,7 +214,9 @@ foreach ($token in @(
     'RUSTY_QUEST_PACKAGE_UPDATER_EXPECTED_PACKAGE_NAME',
     'RUSTY_QUEST_PACKAGE_UPDATER_EXPECTED_ROLLOUT_RING',
     'RUSTY_QUEST_PACKAGE_UPDATER_EXPECTED_SIGNER_SHA256',
-    'package-updates/rusty-kiosk/alpha/current\.json',
+    'expectedPackageName == "io\.github\.mesmerprism\.rustykiosk\.labs"',
+    'expectedRolloutRing == "labs"',
+    'package-updates/rusty-kiosk/labs/current\.json',
     'parsedManifestUri\.rawUserInfo == null',
     'parsedManifestUri\.rawQuery == null',
     'parsedManifestUri\.rawFragment == null',
@@ -384,7 +386,7 @@ foreach ($token in @(
     'BuildConfig\.TRUSTED_PUBLIC_KEY_BASE64',
     'channel_pointer_envelope_hash_mismatch',
     'channel_pointer_plan_mismatch',
-    '/package-updates/rusty-kiosk/alpha/generations/'
+    '/package-updates/rusty-kiosk/labs/generations/'
 )) {
     Assert-Match $channelPointer $token `
         "Immutable channel pointer verification is missing token: $token"
@@ -413,7 +415,7 @@ Assert-Match $manifestClient 'MAX_RESPONSE_BYTES = 256 \* 1024' `
     "Manifest response bound changed."
 foreach ($token in @(
     'getNoBackupFilesDir',
-    'package-updater/alpha/staged',
+    'package-updater/labs/staged',
     'apk_download_exceeded_signed_size',
     'apk_download_size_mismatch',
     'apk_sha256_mismatch',
@@ -610,7 +612,7 @@ foreach ($token in @(
 }
 foreach ($token in @(
     'ValidateSet\("Check", "Status", "Cancel"\)',
-    '"io\.github\.mesmerprism\.rustyquest\.packageupdater\.alpha\.e2ecli"',
+    '"io\.github\.mesmerprism\.rustyquest\.packageupdater\.labs\.e2ecli"',
     'adb',
     'content call',
     'result_b64',
@@ -654,7 +656,15 @@ foreach ($token in @(
         "Reproducible Package Updater build wrapper is missing token: $token"
 }
 foreach ($token in @(
-    'rusty\.quest\.package_updater_product_release\.v1',
+    'ExpectedPackageName -cne',
+    'io\.github\.mesmerprism\.rustykiosk\.labs',
+    'ExpectedRolloutRing -cne "labs"',
+    'may target only Kiosk Labs')) {
+    Assert-Match $buildWrapper $token `
+        "Release build wrapper lacks a hard Labs target boundary: $token"
+}
+foreach ($token in @(
+    'rusty\.quest\.package_updater_product_release\.v2',
     'package-updater-v\(\?<version>0\\\.1\\\.0-alpha',
     'source_revision', 'source_tree', 'installation_identity',
     'expected_updater_signer_sha256', 'updater_signer_sha256',
@@ -674,8 +684,8 @@ foreach ($token in @(
 Assert-Match $buildWrapper 'AndroidNdkDirectory' `
     "Release build wrapper lacks an exact NDK directory input."
 Assert-Match $alphaReleaseWorkflow `
-    'environment: package-updater-alpha-release' `
-    "Package Updater alpha release lacks its protected environment."
+    'environment: package-updater-labs-release' `
+    "Package Updater Labs release lacks its protected environment."
 foreach ($token in @(
     'RUSTY_QUEST_UPDATE_SIGNING_SEED_BASE64URL',
     'TrustedPublicKeyBase64Url',
@@ -734,9 +744,9 @@ foreach ($token in @(
     'default public-key value is empty',
     'fails closed',
     'never taken\s+from an Intent',
-    'same-package',
+    'co-installable',
     'current\.json',
-    'strictly higher Android version code')) {
+    'uninstall-labs-without-changing-stable')) {
     Assert-Match $readme $token "Package Updater guide is missing boundary token: $token"
 }
 
@@ -820,8 +830,8 @@ foreach ($code in @(
         "Channel-isolation fixture is missing rejection: $code"
 }
 Assert-Match $appBuild `
-    'applicationId = "io\.github\.mesmerprism\.rustyquest\.packageupdater\.alpha"' `
-    "Release updater package is not alpha-isolated."
+    'applicationId = "io\.github\.mesmerprism\.rustyquest\.packageupdater\.labs"' `
+    "Release updater package is not Labs-isolated."
 Assert-Match $publishWrapper 'package_update_publication_receipt\.v2' `
     "Publication output is not the deterministic receipt contract."
 foreach ($leak in @('aapt2_path', 'apksigner_path')) {
@@ -849,7 +859,7 @@ if ($LASTEXITCODE -ne 0) {
 & pwsh -NoProfile -ExecutionPolicy Bypass -File `
     $paths.alpha_release_workflow_test -RepoRoot $RepoRoot
 if ($LASTEXITCODE -ne 0) {
-    throw "Package updater alpha workflow contract failed."
+    throw "Package updater Labs workflow contract failed."
 }
 
 Write-Output "Rusty Quest Package Updater Android static validation passed"

@@ -3,7 +3,7 @@
 This directory contains a separate native 2D, attended package-updater app:
 
 ```text
-io.github.mesmerprism.rustyquest.packageupdater.alpha/.PackageUpdaterActivity
+io.github.mesmerprism.rustyquest.packageupdater.labs/.PackageUpdaterActivity
 ```
 
 It is intentionally not part of the Store launcher. The Store launcher remains
@@ -86,18 +86,17 @@ expiry boundary before checkpoint observation, the receipt truthfully records
 `installed_but_checkpoint_rejected_expired`; rollback state is unchanged and
 the next update decision requires a fresh signed manifest.
 
-Alpha is an explicitly same-package policy that updates the existing
-`io.github.mesmerprism.rustykiosk` package in place under continuous APK
-signer identity. Alpha and the installed Kiosk cannot coexist, and there is no
-immediate downgrade. Exit to stable requires a separately accepted stable
-release with a strictly higher Android version code under the same signer.
+Labs updates only the co-installable
+`io.github.mesmerprism.rustykiosk.labs` package under continuous APK signer
+identity. It never targets the stable Kiosk package. Stable and Labs may
+coexist; removing Labs follows `uninstall-labs-without-changing-stable`.
 Every consumer-headset package change remains individually visible and
 attended.
 
 ## Test-only adb CLI
 
 The `e2e` build type adds a separate
-`io.github.mesmerprism.rustyquest.packageupdater.alpha.e2ecli` test package. It
+`io.github.mesmerprism.rustyquest.packageupdater.labs.e2ecli` test package. It
 contains an exported `ContentProvider` protected by the platform
 `android.permission.DUMP` permission and an exact Binder shell-UID check. The
 provider accepts only `check`, `status`, and `cancel`; callers cannot supply a
@@ -152,9 +151,9 @@ writes a public build manifest containing only bounded build-tool names,
 versions, and hashes rather than local SDK paths.
 `tools/New-PackageUpdaterProductReleaseMetadata.ps1` then revalidates that
 closed build manifest against the actual APK and emits the sanitized
-`rusty.quest.package_updater_product_release.v1` owner artifact for an exact
+`rusty.quest.package_updater_product_release.v2` owner artifact for an exact
 `package-updater-v0.1.0-alpha.N` tag. It contains no SDK, aapt2, NDK, Gradle,
-or keystore path. The protected tag workflow creates a draft alpha prerelease,
+or keystore path. The protected tag workflow creates a draft Labs prerelease,
 uploads only `rusty-quest-package-updater.apk`,
 `rusty-quest-package-updater.release.json`, the project license, and the exact
 source notice, verifies all four remote names, SHA-256 digests, and byte counts

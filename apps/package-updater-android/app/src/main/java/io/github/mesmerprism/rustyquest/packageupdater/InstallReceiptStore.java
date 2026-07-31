@@ -16,7 +16,7 @@ import java.nio.charset.StandardCharsets;
 final class InstallReceiptStore {
     static final String SCHEMA = "rusty.quest.package_update.install_receipt.v1";
     static final String CALLBACK_ACTION =
-            "io.github.mesmerprism.rustyquest.packageupdater.alpha.INSTALL_STATUS";
+            "io.github.mesmerprism.rustyquest.packageupdater.labs.INSTALL_STATUS";
     static final String CALLBACK_SCHEME = "rusty-package-updater";
     static final String CALLBACK_AUTHORITY = "install";
     private static final int MAX_RECEIPT_BYTES = 32 * 1024;
@@ -25,7 +25,7 @@ final class InstallReceiptStore {
 
     InstallReceiptStore(Context context) {
         File directory = new File(
-                context.getNoBackupFilesDir(), "package-updater/alpha/receipts");
+                context.getNoBackupFilesDir(), "package-updater/labs/receipts");
         if (!directory.exists() && !directory.mkdirs()) {
             throw new IllegalStateException("could_not_create_private_receipt_directory");
         }

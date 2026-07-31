@@ -22,14 +22,14 @@ try {
     $build = [ordered]@{
         schema = "rusty.quest.package_updater_android.build_manifest.v1"
         source_revision = "1" * 40
-        package_name = "io.github.mesmerprism.rustyquest.packageupdater.alpha"
+        package_name = "io.github.mesmerprism.rustyquest.packageupdater.labs"
         version_code = 7
         version_name = "0.1.0-alpha.7"
-        manifest_url = "https://updates.example.test/package-updates/rusty-kiosk/alpha/current.json"
+        manifest_url = "https://updates.example.test/package-updates/rusty-kiosk/labs/current.json"
         trusted_key_id = "release-a"
         expected_https_origin = "https://updates.example.test"
-        expected_package_name = "io.github.mesmerprism.rustykiosk"
-        expected_rollout_ring = "alpha"
+        expected_package_name = "io.github.mesmerprism.rustykiosk.labs"
+        expected_rollout_ring = "labs"
         expected_signer_sha256 = "sha256:" + ("2" * 64)
         expected_updater_signer_sha256 = "sha256:" + ("3" * 64)
         updater_signer_sha256 = "sha256:" + ("3" * 64)
@@ -169,8 +169,14 @@ try {
         @("wrong source tree", {
             param($value) $value.source_tree = "8" * 40
         }),
-        @("wrong channel", {
-            param($value) $value.channel = "stable"
+        @("wrong product channel", {
+            param($value) $value.product_channel = "stable"
+        }),
+        @("wrong maturity", {
+            param($value) $value.maturity = "released"
+        }),
+        @("wrong distribution track", {
+            param($value) $value.distribution_track = "github-release"
         }),
         @("wrong installation identity", {
             param($value) $value.installation_identity = "io.example.wrong"

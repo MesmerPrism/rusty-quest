@@ -31,7 +31,7 @@ final class ApkStager {
             PackageUpdatePipeline.Cancellation cancellation,
             DownloadProgress progress) throws Exception {
         File stagingDirectory =
-                new File(context.getNoBackupFilesDir(), "package-updater/alpha/staged");
+                new File(context.getNoBackupFilesDir(), "package-updater/labs/staged");
         if (!stagingDirectory.exists() && !stagingDirectory.mkdirs()) {
             throw new IllegalStateException("could_not_create_private_staging_directory");
         }

@@ -23,7 +23,7 @@ final class UpdateStateStore {
 
     UpdateStateStore(Context context) {
         File directory = new File(
-                context.getNoBackupFilesDir(), "package-updater/alpha/rollback");
+                context.getNoBackupFilesDir(), "package-updater/labs/rollback");
         if (!directory.exists() && !directory.mkdirs()) {
             throw new IllegalStateException("could_not_create_private_state_directory");
         }

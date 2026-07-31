@@ -375,7 +375,7 @@ final class PackageInstallController {
             throws Exception {
         File stagingRoot = new File(
                 context.getNoBackupFilesDir(),
-                "package-updater/alpha/staged").getCanonicalFile();
+                "package-updater/labs/staged").getCanonicalFile();
         File stagedApk = candidate.getCanonicalFile();
         String rootPrefix = stagingRoot.getPath() + File.separator;
         if (!stagedApk.getPath().startsWith(rootPrefix)) {

@@ -1,4 +1,4 @@
-name: Package Updater alpha prerelease
+name: Package Updater Labs prerelease
 
 on:
   push:
@@ -9,13 +9,13 @@ permissions:
   contents: write
 
 concurrency:
-  group: package-updater-alpha-release
+  group: package-updater-labs-release
   cancel-in-progress: false
 
 jobs:
   release:
     runs-on: windows-2025
-    environment: package-updater-alpha-release
+    environment: package-updater-labs-release
     env:
       ANDROID_BUILD_TOOLS_VERSION: 35.0.1
       ANDROID_NDK_VERSION: 27.2.12479018
@@ -51,7 +51,7 @@ jobs:
           $ErrorActionPreference = "Stop"
           $tag = "${{ github.ref_name }}"
           if ($tag -notmatch '^package-updater-v0\.1\.0-alpha\.[1-9][0-9]*$') {
-            throw "Release tag is outside the Package Updater alpha product."
+            throw "Release tag is outside the Package Updater Labs product."
           }
           git show-ref --verify --quiet "refs/tags/$tag"
           if ($LASTEXITCODE -ne 0) { throw "Release tag does not pre-exist." }
@@ -77,21 +77,21 @@ jobs:
             "ndk;$env:ANDROID_NDK_VERSION"
           if ($LASTEXITCODE -ne 0) { throw "Pinned Android components failed." }
 
-      - name: Build signed alpha product and owner metadata
+      - name: Build signed Labs product and owner metadata
         shell: pwsh
         env:
           UPDATER_KEYSTORE_BASE64: ${{ secrets.PACKAGE_UPDATER_KEYSTORE_BASE64 }}
           UPDATER_STORE_PASSWORD: ${{ secrets.PACKAGE_UPDATER_KEYSTORE_PASSWORD }}
           UPDATER_KEY_ALIAS: ${{ secrets.PACKAGE_UPDATER_KEY_ALIAS }}
           UPDATER_KEY_PASSWORD: ${{ secrets.PACKAGE_UPDATER_KEY_PASSWORD }}
-          UPDATE_MANIFEST_URL: ${{ vars.PACKAGE_UPDATER_MANIFEST_URL }}
-          UPDATE_KEY_ID: ${{ vars.PACKAGE_UPDATER_TRUSTED_KEY_ID }}
-          UPDATE_PUBLIC_KEY: ${{ vars.PACKAGE_UPDATER_TRUSTED_PUBLIC_KEY_BASE64URL }}
-          UPDATE_HTTPS_ORIGIN: ${{ vars.PACKAGE_UPDATER_EXPECTED_HTTPS_ORIGIN }}
-          UPDATE_TARGET_PACKAGE: ${{ vars.PACKAGE_UPDATER_EXPECTED_PACKAGE_NAME }}
-          UPDATE_ROLLOUT_RING: ${{ vars.PACKAGE_UPDATER_EXPECTED_ROLLOUT_RING }}
-          UPDATE_TARGET_SIGNER: ${{ vars.PACKAGE_UPDATER_EXPECTED_SIGNER_SHA256 }}
-          UPDATE_UPDATER_SIGNER: ${{ vars.PACKAGE_UPDATER_EXPECTED_UPDATER_SIGNER_SHA256 }}
+          UPDATE_MANIFEST_URL: ${{ vars.PACKAGE_UPDATER_LABS_MANIFEST_URL }}
+          UPDATE_KEY_ID: ${{ vars.PACKAGE_UPDATER_LABS_TRUSTED_KEY_ID }}
+          UPDATE_PUBLIC_KEY: ${{ vars.PACKAGE_UPDATER_LABS_TRUSTED_PUBLIC_KEY_BASE64URL }}
+          UPDATE_HTTPS_ORIGIN: ${{ vars.PACKAGE_UPDATER_LABS_EXPECTED_HTTPS_ORIGIN }}
+          UPDATE_TARGET_PACKAGE: ${{ vars.PACKAGE_UPDATER_LABS_EXPECTED_PACKAGE_NAME }}
+          UPDATE_ROLLOUT_RING: ${{ vars.PACKAGE_UPDATER_LABS_EXPECTED_ROLLOUT_RING }}
+          UPDATE_TARGET_SIGNER: ${{ vars.PACKAGE_UPDATER_LABS_EXPECTED_SIGNER_SHA256 }}
+          UPDATE_UPDATER_SIGNER: ${{ vars.PACKAGE_UPDATER_LABS_EXPECTED_UPDATER_SIGNER_SHA256 }}
         run: |
           $ErrorActionPreference = "Stop"
           $tagMatch = [regex]::Match(
@@ -193,7 +193,7 @@ jobs:
               throw "Authoritative remote tag does not peel to GITHUB_SHA."
             }
           }
-          function Assert-AlphaIsNotLatest {
+          function Assert-LabsIsNotLatest {
             $latestResponse = Invoke-WebRequest -Uri "$api/releases/latest" `
               -Headers $headers -SkipHttpErrorCheck
             if ($latestResponse.StatusCode -eq 404) { return }
@@ -204,7 +204,7 @@ jobs:
             }
             $latest = $latestResponse.Content | ConvertFrom-Json
             if ($latest.tag_name -ceq $tag) {
-              throw "Package Updater alpha became the latest release."
+              throw "Package Updater Labs became the latest release."
             }
           }
           Assert-RemoteTag
@@ -272,20 +272,20 @@ jobs:
             -Uri "$api/releases/$($release.id)" -Headers $headers `
             -Body $promoteBody -ContentType "application/json"
           if ($promoted.draft -or -not $promoted.prerelease) {
-            throw "Alpha release promotion did not remain a non-latest prerelease."
+            throw "Labs release promotion did not remain a non-latest prerelease."
           }
           $published = Invoke-RestMethod -Uri "$api/releases/tags/$tag" `
             -Headers $headers
           if ($published.draft -or -not $published.prerelease -or
             $published.tag_name -cne $tag) {
-            throw "Published alpha release identity or channel differs."
+            throw "Published Labs release identity or channel differs."
           }
           $publishedAssets = @(
             Invoke-RestMethod -Uri "$api/releases/$($published.id)/assets" `
               -Headers $headers
           )
           if ($publishedAssets.Count -ne 4) {
-            throw "Published alpha release asset closure differs."
+            throw "Published Labs release asset closure differs."
           }
           foreach ($asset in $assets) {
             $name = Split-Path -Leaf $asset
@@ -304,4 +304,4 @@ jobs:
             }
           }
           Assert-RemoteTag
-          Assert-AlphaIsNotLatest
+          Assert-LabsIsNotLatest
