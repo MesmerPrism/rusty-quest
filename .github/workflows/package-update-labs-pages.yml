@@ -132,6 +132,7 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
           . .\source\tools\package_updater\FeedRulesetProjection.ps1
+          . .\source\tools\package_updater\FeedWriterSecretCleanup.ps1
           if ($env:GITHUB_REPOSITORY -cne "MesmerPrism/rusty-quest" -or
             $env:FEED_BRANCH -cne "package-update-labs-feed") {
             throw "Labs feed authority repository or branch identity differs."
@@ -261,6 +262,7 @@ jobs:
             "rusty-quest-known-hosts-$([guid]::NewGuid().ToString('N'))"
           )
           $keyBytes = $null
+          $primaryError = $null
           try {
             $preKeyProjection = Read-FeedRulesetProjection "pre-key-use"
             if ([string]::IsNullOrWhiteSpace($env:FEED_DEPLOY_KEY_BASE64) -or
@@ -354,20 +356,14 @@ jobs:
               throw "Visible feed-ruleset projection drifted across the protected push."
             }
             $postPushProjection | ConvertTo-Json -Depth 8 -Compress
+          } catch {
+            $primaryError = $_
           } finally {
-            Remove-Item Env:\GIT_SSH_COMMAND -ErrorAction SilentlyContinue
-            Remove-Item Env:\FEED_DEPLOY_KEY_BASE64 -ErrorAction SilentlyContinue
-            if ($null -ne $keyBytes) {
-              [Array]::Clear($keyBytes, 0, $keyBytes.Length)
-            }
-            if ([IO.File]::Exists($keyPath)) {
-              $length = (Get-Item -LiteralPath $keyPath).Length
-              [IO.File]::WriteAllBytes($keyPath, [byte[]]::new($length))
-              [IO.File]::Delete($keyPath)
-            }
-            if ([IO.File]::Exists($knownHostsPath)) {
-              [IO.File]::Delete($knownHostsPath)
-            }
+            $cleanupReceipt =
+              Invoke-PackageUpdateLabsFeedWriterSecretCleanup `
+                -KeyBytes $keyBytes -KeyPath $keyPath `
+                -KnownHostsPath $knownHostsPath -PrimaryError $primaryError
+            $cleanupReceipt | ConvertTo-Json -Depth 4 -Compress
           }
 
   deploy:
