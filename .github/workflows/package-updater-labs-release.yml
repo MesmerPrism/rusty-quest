@@ -522,3 +522,5 @@ jobs:
           }
           Assert-RemoteTag
           Assert-LabsIsNotLatest
+
+# Consumed-approval probe only; no workflow semantics.

@@ -345,3 +345,4 @@ if ($tagChecks.Count -ne 3 -or $nonLatestChecks.Count -ne 1 -or
     throw "Package Updater release evidence and promotion ordering changed."
 }
 Write-Output "Package Updater Labs release workflow contract passed."
+# Consumed-approval probe only; no test semantics.
