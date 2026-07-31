@@ -17,6 +17,9 @@ jobs:
     runs-on: windows-2025
     timeout-minutes: 60
     environment: package-updater-labs-release
+    defaults:
+      run:
+        working-directory: rusty-quest
     env:
       ANDROID_BUILD_TOOLS_VERSION: 35.0.1
       ANDROID_NDK_VERSION: 27.2.12479018
@@ -32,8 +35,55 @@ jobs:
         with:
           fetch-depth: 0
           fetch-tags: true
+          lfs: false
+          path: rusty-quest
           persist-credentials: false
           ref: ${{ github.sha }}
+          submodules: false
+
+      - name: Checkout exact Manifold workspace dependency
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+          lfs: false
+          path: rusty-manifold
+          persist-credentials: false
+          ref: 947421a928889889e485006bcc0200e05c2394f9
+          repository: MesmerPrism/rusty-manifold
+          submodules: false
+
+      - name: Checkout exact Lattice workspace dependency
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+          lfs: false
+          path: rusty-lattice
+          persist-credentials: false
+          ref: 0aee7faa52fc965ff2255381781dd082ab639f4b
+          repository: MesmerPrism/rusty-lattice
+          submodules: false
+
+      - name: Checkout exact Matter workspace dependency
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+          lfs: false
+          path: rusty-matter
+          persist-credentials: false
+          ref: eec8cddd9830f7ef0f90574ddcbde2daac0ec804
+          repository: MesmerPrism/rusty-matter
+          submodules: false
+
+      - name: Checkout exact Optics workspace dependency
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+          lfs: false
+          path: rusty-optics
+          persist-credentials: false
+          ref: fd01d84acffa1b0a3a192fe978af337d9fedd18a
+          repository: MesmerPrism/rusty-optics
+          submodules: false
 
       - name: Set up exact Java
         uses: actions/setup-java@03ad4de0992f5dab5e18fcb136590ce7c4a0ac95 # v5.6.0
