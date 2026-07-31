@@ -1,0 +1,173 @@
+{
+  "schema": "rusty.morphospace.workflow.external_validation_authority_policy.v1",
+  "policy_id": "rusty-quest-external-validation-authority-v1",
+  "repository": "MesmerPrism/rusty-quest",
+  "mandatory_protected_paths": [
+    ".github/scripts/Invoke-RustyQuestExternalValidationAuthority.ps1",
+    ".github/workflows/external-validation-authority.yml",
+    ".github/workflows/package-updater-dynamic-validation.yml",
+    "config/external-validation-authority-settings.json",
+    "config/external-validation-authority.json",
+    "fixtures/validation-authority/adversarial-probe-receipt.hold.json",
+    "fixtures/validation-authority/bootstrap-approval.valid.json",
+    "schemas/rusty.quest.external_validation_authority_assessment.v1.schema.json",
+    "schemas/rusty.quest.external_validation_authority_probe_receipt.v1.schema.json",
+    "schemas/rusty.quest.external_validation_authority_settings.v1.schema.json",
+    "tools/checks/Test-ExternalValidationAuthorityPolicySelfTest.ps1",
+    "tools/checks/Test-ExternalValidationAuthorityStatic.ps1"
+  ],
+  "protected_rules": [
+    {
+      "rule_id": "android-package-updater",
+      "match": "prefix",
+      "path": "apps/package-updater-android/"
+    },
+    {
+      "rule_id": "cargo-lock",
+      "match": "exact",
+      "path": "Cargo.lock"
+    },
+    {
+      "rule_id": "cargo-manifest",
+      "match": "exact",
+      "path": "Cargo.toml"
+    },
+    {
+      "rule_id": "damaged-package-updater-bad-signature",
+      "match": "exact",
+      "path": "fixtures/damaged/package-updater-bad-signature.json"
+    },
+    {
+      "rule_id": "damaged-package-updater-expired",
+      "match": "exact",
+      "path": "fixtures/damaged/package-updater-expired.json"
+    },
+    {
+      "rule_id": "damaged-package-updater-origin-confusion",
+      "match": "exact",
+      "path": "fixtures/damaged/package-updater-origin-confusion.json"
+    },
+    {
+      "rule_id": "damaged-package-updater-padded-signature",
+      "match": "exact",
+      "path": "fixtures/damaged/package-updater-padded-signature.json"
+    },
+    {
+      "rule_id": "damaged-package-updater-sequence-rollback",
+      "match": "exact",
+      "path": "fixtures/damaged/package-updater-sequence-rollback.json"
+    },
+    {
+      "rule_id": "damaged-package-updater-unknown-field",
+      "match": "exact",
+      "path": "fixtures/damaged/package-updater-unknown-field.json"
+    },
+    {
+      "rule_id": "distribution-package-update-target",
+      "match": "exact",
+      "path": "distribution/package-update-labs-target.json"
+    },
+    {
+      "rule_id": "github-authority",
+      "match": "prefix",
+      "path": ".github/"
+    },
+    {
+      "rule_id": "package-updater-build",
+      "match": "exact",
+      "path": "tools/Build-PackageUpdaterAndroid.ps1"
+    },
+    {
+      "rule_id": "package-updater-check-android",
+      "match": "exact",
+      "path": "tools/checks/Test-PackageUpdaterAndroidStatic.ps1"
+    },
+    {
+      "rule_id": "package-updater-check-artifact",
+      "match": "exact",
+      "path": "tools/checks/Test-PackageUpdaterBuildArtifactContract.ps1"
+    },
+    {
+      "rule_id": "package-updater-check-pages",
+      "match": "exact",
+      "path": "tools/checks/Test-PackageUpdateLabsPagesWorkflow.ps1"
+    },
+    {
+      "rule_id": "package-updater-check-publication",
+      "match": "exact",
+      "path": "tools/checks/Test-PackageUpdatePublicationContract.ps1"
+    },
+    {
+      "rule_id": "package-updater-check-release",
+      "match": "exact",
+      "path": "tools/checks/Test-PackageUpdaterLabsReleaseWorkflow.ps1"
+    },
+    {
+      "rule_id": "package-updater-check-release-contract",
+      "match": "exact",
+      "path": "tools/checks/Test-PackageUpdaterProductReleaseContract.ps1"
+    },
+    {
+      "rule_id": "package-updater-crate",
+      "match": "prefix",
+      "path": "crates/rusty-quest-package-updater/"
+    },
+    {
+      "rule_id": "package-updater-e2e",
+      "match": "exact",
+      "path": "tools/Invoke-PackageUpdaterE2eCli.ps1"
+    },
+    {
+      "rule_id": "package-updater-fixtures",
+      "match": "prefix",
+      "path": "fixtures/package-updater/"
+    },
+    {
+      "rule_id": "package-updater-new-release-metadata",
+      "match": "exact",
+      "path": "tools/New-PackageUpdaterProductReleaseMetadata.ps1"
+    },
+    {
+      "rule_id": "package-updater-product-metadata-check",
+      "match": "exact",
+      "path": "tools/Test-PackageUpdaterProductReleaseMetadata.ps1"
+    },
+    {
+      "rule_id": "package-updater-publish",
+      "match": "exact",
+      "path": "tools/Publish-PackageUpdateManifest.ps1"
+    },
+    {
+      "rule_id": "package-updater-publish-pages",
+      "match": "exact",
+      "path": "tools/Publish-PackageUpdateLabsPages.ps1"
+    },
+    {
+      "rule_id": "package-updater-schema-envelope",
+      "match": "exact",
+      "path": "schemas/rusty.quest.package_update_manifest_envelope.v1.schema.json"
+    },
+    {
+      "rule_id": "package-updater-schema-receipt",
+      "match": "exact",
+      "path": "schemas/rusty.quest.package_update_receipt.v1.schema.json"
+    },
+    {
+      "rule_id": "package-updater-schema-rollback",
+      "match": "exact",
+      "path": "schemas/rusty.quest.package_update_rollback_state.v1.schema.json"
+    },
+    {
+      "rule_id": "package-updater-tool-contracts",
+      "match": "prefix",
+      "path": "tools/package_updater/"
+    },
+    {
+      "rule_id": "validation-runner",
+      "match": "exact",
+      "path": "tools/check_all.ps1"
+    }
+  ],
+  "approved_change_sets": [],
+  "status": "active"
+}

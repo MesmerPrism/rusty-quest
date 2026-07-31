@@ -1,0 +1,161 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/MesmerPrism/rusty-quest/schemas/rusty.quest.external_validation_authority_settings.v1.schema.json",
+  "title": "Rusty Quest external validation authority settings v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "target",
+    "selected_mode",
+    "authoritative_workflow_identity",
+    "required_status_check",
+    "adversarial_probe",
+    "future_stronger_mode",
+    "status"
+  ],
+  "properties": {
+    "schema": { "const": "rusty.quest.external_validation_authority_settings.v1" },
+    "target": { "$ref": "#/$defs/target" },
+    "selected_mode": { "const": "repository-status-check-probe-gated" },
+    "authoritative_workflow_identity": { "$ref": "#/$defs/workflowIdentity" },
+    "required_status_check": { "$ref": "#/$defs/statusCheck" },
+    "adversarial_probe": { "$ref": "#/$defs/probe" },
+    "future_stronger_mode": { "$ref": "#/$defs/futureMode" },
+    "status": { "const": "probe-required-before-protected-candidate" }
+  },
+  "$defs": {
+    "target": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["owner_kind", "repository", "repository_id", "ref"],
+      "properties": {
+        "owner_kind": { "const": "user" },
+        "repository": { "const": "MesmerPrism/rusty-quest" },
+        "repository_id": { "const": 1264057043 },
+        "ref": { "const": "refs/heads/main" }
+      }
+    },
+    "workflowIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "repository", "repository_id", "path", "ref", "event", "job_id",
+        "check_name", "base_owned", "settings_bind_workflow_path",
+        "cryptographic_path_provenance"
+      ],
+      "properties": {
+        "repository": { "const": "MesmerPrism/rusty-quest" },
+        "repository_id": { "const": 1264057043 },
+        "path": { "const": ".github/workflows/external-validation-authority.yml" },
+        "ref": { "const": "refs/heads/main" },
+        "event": { "const": "pull_request_target" },
+        "job_id": { "const": "static-admission" },
+        "check_name": { "const": "Static admission" },
+        "base_owned": { "const": true },
+        "settings_bind_workflow_path": { "const": false },
+        "cryptographic_path_provenance": { "const": false }
+      }
+    },
+    "statusCheck": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "ruleset_scope", "rule_type", "context", "app_id", "app_slug",
+        "app_name", "strict", "required", "binds_workflow_path",
+        "authoritative_without_probe"
+      ],
+      "properties": {
+        "ruleset_scope": { "const": "repository" },
+        "rule_type": { "const": "required_status_checks" },
+        "context": { "const": "Static admission" },
+        "app_id": { "const": 15368 },
+        "app_slug": { "const": "github-actions" },
+        "app_name": { "const": "GitHub Actions" },
+        "strict": { "const": true },
+        "required": { "const": true },
+        "binds_workflow_path": { "const": false },
+        "authoritative_without_probe": { "const": false }
+      }
+    },
+    "probe": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "required_after_bootstrap_and_protection",
+        "required_before_candidate_or_release",
+        "candidate_workflow_path",
+        "candidate_event",
+        "candidate_check_name",
+        "candidate_conclusion",
+        "base_conclusion",
+        "required_orderings",
+        "receipt_schema",
+        "receipt_storage",
+        "committed_receipt_forbidden",
+        "merge_state_required",
+        "admin_bypass_allowed",
+        "merge_attempt_allowed",
+        "close_without_merge",
+        "hold_conditions",
+        "held_environments"
+      ],
+      "properties": {
+        "required_after_bootstrap_and_protection": { "const": true },
+        "required_before_candidate_or_release": { "const": true },
+        "candidate_workflow_path": { "const": ".github/workflows/external-validation-authority-spoof-probe.yml" },
+        "candidate_event": { "const": "pull_request" },
+        "candidate_check_name": { "const": "Static admission" },
+        "candidate_conclusion": { "const": "success" },
+        "base_conclusion": { "const": "failure" },
+        "required_orderings": {
+          "const": [
+            "base-failure-then-candidate-success",
+            "candidate-success-then-base-failure"
+          ]
+        },
+        "receipt_schema": { "const": "rusty.quest.external_validation_authority_probe_receipt.v1" },
+        "receipt_storage": { "const": "private-local" },
+        "committed_receipt_forbidden": { "const": true },
+        "merge_state_required": { "const": "BLOCKED" },
+        "admin_bypass_allowed": { "const": false },
+        "merge_attempt_allowed": { "const": false },
+        "close_without_merge": { "const": true },
+        "hold_conditions": {
+          "const": [
+            "admin-bypass-observed",
+            "base-and-candidate-runs-not-both-proven",
+            "check-inventory-indistinguishable",
+            "inconsistent-ordering-result",
+            "merge-state-not-blocked",
+            "required-check-not-app-bound"
+          ]
+        },
+        "held_environments": {
+          "const": [
+            "github-pages",
+            "package-update-labs-publication",
+            "package-updater-labs-release"
+          ]
+        }
+      }
+    },
+    "futureMode": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mode", "deployable_for_current_owner", "required_owner_kind",
+        "repository", "repository_id", "path", "ref"
+      ],
+      "properties": {
+        "mode": { "const": "organization-required-workflow" },
+        "deployable_for_current_owner": { "const": false },
+        "required_owner_kind": { "const": "organization-or-enterprise" },
+        "repository": { "const": "MesmerPrism/rusty-quest" },
+        "repository_id": { "const": 1264057043 },
+        "path": { "const": ".github/workflows/external-validation-authority.yml" },
+        "ref": { "const": "refs/heads/main" }
+      }
+    }
+  }
+}

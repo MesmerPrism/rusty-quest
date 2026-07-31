@@ -1,0 +1,87 @@
+name: External validation authority
+
+on:
+  pull_request_target:
+    types:
+      - opened
+      - reopened
+      - synchronize
+      - ready_for_review
+
+permissions:
+  contents: read
+
+jobs:
+  static-admission:
+    name: Static admission
+    runs-on: windows-2025
+    timeout-minutes: 10
+    steps:
+      - name: Checkout exact trusted base
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          lfs: false
+          path: trusted-base
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.base.sha }}
+          submodules: false
+
+      - name: Checkout pinned external verifier
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+          lfs: false
+          path: pinned-verifier
+          persist-credentials: false
+          ref: 50a4c5222c9d6c4567bac09405e43049c61b126f
+          repository: MesmerPrism/rusty-morphospace-work-environment
+          submodules: false
+
+      - name: Assess candidate Git objects without checkout or execution
+        shell: pwsh
+        env:
+          EVENT_BASE_REF: ${{ github.event.pull_request.base.ref }}
+          EVENT_BASE_REPOSITORY: ${{ github.event.pull_request.base.repo.full_name }}
+          EVENT_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          EVENT_HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
+          EVENT_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          EVENT_MERGE_SHA: ${{ github.event.pull_request.merge_commit_sha }}
+          EVENT_NAME_EXACT: ${{ github.event_name }}
+          PR_NUMBER_EXACT: ${{ github.event.pull_request.number }}
+          REPOSITORY_EXACT: ${{ github.repository }}
+          RUN_ATTEMPT_EXACT: ${{ github.run_attempt }}
+          RUN_ID_EXACT: ${{ github.run_id }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          if ($PSVersionTable.PSVersion -lt [version]"7.6.0") {
+            throw "PowerShell 7.6 or newer is required."
+          }
+          $assessment = Join-Path $env:RUNNER_TEMP (
+            "rusty-quest-external-validation-" + $env:RUN_ID_EXACT +
+            "-" + $env:RUN_ATTEMPT_EXACT + ".json"
+          )
+          & .\trusted-base\.github\scripts\Invoke-RustyQuestExternalValidationAuthority.ps1 `
+            -BaseRoot .\trusted-base `
+            -VerifierRoot .\pinned-verifier `
+            -Repository $env:REPOSITORY_EXACT `
+            -BaseRepository $env:EVENT_BASE_REPOSITORY `
+            -BaseRef $env:EVENT_BASE_REF `
+            -HeadRepository $env:EVENT_HEAD_REPOSITORY `
+            -EventName $env:EVENT_NAME_EXACT `
+            -BaseCommit $env:EVENT_BASE_SHA `
+            -CandidateCommit $env:EVENT_HEAD_SHA `
+            -MergeCommit $env:EVENT_MERGE_SHA `
+            -PullRequestNumber $env:PR_NUMBER_EXACT `
+            -RunId $env:RUN_ID_EXACT `
+            -RunAttempt $env:RUN_ATTEMPT_EXACT `
+            -RunnerLabel "windows-2025" `
+            -RunnerOs $env:RUNNER_OS `
+            -RunnerArchitecture $env:RUNNER_ARCH `
+            -RunnerImageOs $env:ImageOS `
+            -RunnerImageVersion $env:ImageVersion `
+            -OutPath $assessment
+          if (-not $?) {
+            throw "Base-owned external validation adapter failed."
+          }
+          Get-Content -Raw -LiteralPath $assessment
