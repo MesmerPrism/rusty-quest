@@ -9,10 +9,13 @@ $workflowPath = Join-Path $RepoRoot ".github\workflows\package-update-labs-pages
 $publisherPath = Join-Path $RepoRoot "tools\Publish-PackageUpdateLabsPages.ps1"
 $projectionPath = Join-Path $RepoRoot `
     "tools\package_updater\FeedRulesetProjection.ps1"
+$keyValidationPath = Join-Path $RepoRoot `
+    "tools\package_updater\FeedWriterKeyValidation.ps1"
 $secretCleanupPath = Join-Path $RepoRoot `
     "tools\package_updater\FeedWriterSecretCleanup.ps1"
 foreach ($path in @(
-    $workflowPath, $publisherPath, $projectionPath, $secretCleanupPath
+    $workflowPath, $publisherPath, $projectionPath, $keyValidationPath,
+    $secretCleanupPath
 )) {
     if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
         throw "Labs Pages publication surface is missing: $path"
@@ -21,11 +24,13 @@ foreach ($path in @(
 $workflow = Get-Content -Raw -LiteralPath $workflowPath
 $publisher = Get-Content -Raw -LiteralPath $publisherPath
 $projectionHelper = Get-Content -Raw -LiteralPath $projectionPath
+$keyValidationHelper = Get-Content -Raw -LiteralPath $keyValidationPath
 $secretCleanupHelper = Get-Content -Raw -LiteralPath $secretCleanupPath
 . $publisherPath -FeedRoot "unused" -TargetPath "unused" `
     -AndroidBuildToolsDirectory "unused" -TrustedKeyId "unused" `
     -TrustedPublicKeyBase64Url "unused" -LibraryOnly
 . $projectionPath
+. $keyValidationPath
 . $secretCleanupPath
 
 function Copy-JsonObject($Value) {
@@ -39,6 +44,131 @@ function Assert-Rejected([scriptblock]$Action, [string]$Label) {
         return
     }
     throw "Damaged Labs Pages publisher contract was accepted: $Label"
+}
+
+function Assert-KeyValidationRejected([scriptblock]$Action, [string]$Label) {
+    try {
+        & $Action
+    } catch {
+        return
+    }
+    throw "Damaged Labs feed key validation was accepted: $Label"
+}
+
+$syntheticPublicBlob = "A" * 68
+$syntheticFingerprint = "SHA256:" + ("B" * 43)
+$projectionWithoutComment =
+    Assert-PackageUpdateLabsEd25519PublicProjection `
+        -Rows @("ssh-ed25519 $syntheticPublicBlob")
+if ($projectionWithoutComment.comment_present) {
+    throw "Comment-free Ed25519 projection reported a comment."
+}
+$projectionWithComment =
+    Assert-PackageUpdateLabsEd25519PublicProjection `
+        -Rows @("ssh-ed25519 $syntheticPublicBlob labs feed writer")
+if (-not $projectionWithComment.comment_present) {
+    throw "Commented Ed25519 projection lost its bounded comment."
+}
+$null = Assert-PackageUpdateLabsEd25519FingerprintLine `
+    -Rows @("256 $syntheticFingerprint labs feed writer (ED25519)") `
+    -ExpectedFingerprint $syntheticFingerprint
+Assert-KeyValidationRejected {
+    $null = Assert-PackageUpdateLabsEd25519PublicProjection -Rows @(
+        "ssh-ed25519 $syntheticPublicBlob",
+        "ssh-ed25519 $syntheticPublicBlob second"
+    )
+} "multiline public projection"
+Assert-KeyValidationRejected {
+    $null = Assert-PackageUpdateLabsEd25519PublicProjection `
+        -Rows @("ssh-rsa $syntheticPublicBlob")
+} "RSA public projection"
+Assert-KeyValidationRejected {
+    $null = Assert-PackageUpdateLabsEd25519PublicProjection `
+        -Rows @("ssh-ed25519 $syntheticPublicBlob $("x" * 129)")
+} "overlong public comment"
+Assert-KeyValidationRejected {
+    $null = Assert-PackageUpdateLabsEd25519FingerprintLine `
+        -Rows @("256 $syntheticFingerprint labs feed writer (RSA)") `
+        -ExpectedFingerprint $syntheticFingerprint
+} "RSA fingerprint projection"
+Assert-KeyValidationRejected {
+    $null = Assert-PackageUpdateLabsEd25519FingerprintLine `
+        -Rows @("256 $syntheticFingerprint labs feed writer (ED25519)") `
+        -ExpectedFingerprint ("SHA256:" + ("C" * 43))
+} "wrong Ed25519 fingerprint"
+
+$keyFixtureRoot = Join-Path ([IO.Path]::GetTempPath()) (
+    "rusty-quest-feed-key-validation-$([guid]::NewGuid().ToString('N'))"
+)
+$currentIdentity = [Security.Principal.WindowsIdentity]::GetCurrent().Name
+New-Item -ItemType Directory -Path $keyFixtureRoot | Out-Null
+try {
+    foreach ($fixture in @(
+        [pscustomobject]@{ Name = "commented"; Comment = "labs feed writer"; HasComment = $true },
+        [pscustomobject]@{ Name = "comment-free"; Comment = ""; HasComment = $false }
+    )) {
+        $keyPath = Join-Path $keyFixtureRoot $fixture.Name
+        & ssh-keygen.exe -q -t ed25519 -N "" -C $fixture.Comment -f $keyPath
+        if ($LASTEXITCODE -ne 0) {
+            throw "Could not create synthetic Ed25519 fixture: $($fixture.Name)"
+        }
+        & icacls.exe $keyPath /inheritance:r /grant:r `
+            "$currentIdentity`:(R,W)" | Out-Null
+        if ($LASTEXITCODE -ne 0) {
+            throw "Could not restrict synthetic Ed25519 fixture ACL."
+        }
+        $fixtureFingerprintRows = @(
+            & ssh-keygen.exe -lf $keyPath -E sha256 2>$null
+        )
+        $fixtureFingerprintMatch = [Regex]::Match(
+            ($fixtureFingerprintRows -join " "),
+            "SHA256:[A-Za-z0-9+/]{43}"
+        )
+        if ($LASTEXITCODE -ne 0 -or -not $fixtureFingerprintMatch.Success) {
+            throw "Could not project synthetic Ed25519 fixture fingerprint."
+        }
+        $receipt = Assert-PackageUpdateLabsFeedWriterDeployKey `
+            -KeyPath $keyPath `
+            -ExpectedFingerprint $fixtureFingerprintMatch.Value
+        if ($receipt.algorithm -cne "ssh-ed25519" -or
+            $receipt.comment_present -ne $fixture.HasComment) {
+            throw "Synthetic Ed25519 fixture receipt differs: $($fixture.Name)"
+        }
+    }
+
+    $malformedKeyPath = Join-Path $keyFixtureRoot "malformed"
+    [IO.File]::WriteAllText(
+        $malformedKeyPath,
+        "not an OpenSSH private key",
+        [Text.UTF8Encoding]::new($false, $true)
+    )
+    & icacls.exe $malformedKeyPath /inheritance:r /grant:r `
+        "$currentIdentity`:(R,W)" | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        throw "Could not restrict malformed key fixture ACL."
+    }
+    Assert-KeyValidationRejected {
+        $null = Assert-PackageUpdateLabsFeedWriterDeployKey `
+            -KeyPath $malformedKeyPath `
+            -ExpectedFingerprint $syntheticFingerprint
+    } "malformed private key"
+} finally {
+    $fullKeyFixtureRoot = [IO.Path]::GetFullPath($keyFixtureRoot)
+    $systemTemp = [IO.Path]::GetFullPath([IO.Path]::GetTempPath())
+    if (-not $fullKeyFixtureRoot.StartsWith(
+            $systemTemp, [StringComparison]::OrdinalIgnoreCase
+        ) -or $fullKeyFixtureRoot -ceq $systemTemp) {
+        throw "Refusing to remove unsafe key-validation fixture path."
+    }
+    foreach ($fixtureFile in @(
+        Get-ChildItem -LiteralPath $fullKeyFixtureRoot -File -ErrorAction SilentlyContinue
+    )) {
+        & icacls.exe $fixtureFile.FullName /grant:r `
+            "$currentIdentity`:(F)" | Out-Null
+    }
+    if ([IO.Directory]::Exists($fullKeyFixtureRoot)) {
+        [IO.Directory]::Delete($fullKeyFixtureRoot, $true)
+    }
 }
 
 function Get-WorkflowStepBlock([string]$WorkflowText, [string]$StepName) {
@@ -114,10 +244,11 @@ function Assert-FeedWriterKeyLifecycle([string]$WorkflowText) {
     $writerStep = Get-WorkflowStepBlock $WorkflowText `
         'Push through the dedicated protected feed writer'
     $tokens = [ordered]@{
+        validation_source = '. .\source\tools\package_updater\FeedWriterKeyValidation.ps1'
         cleanup_source = '. .\source\tools\package_updater\FeedWriterSecretCleanup.ps1'
         key_write = '[IO.File]::WriteAllBytes($keyPath, $keyBytes)'
         key_acl = 'icacls.exe $keyPath /inheritance:r /grant:r "$currentIdentity`:(R,W)"'
-        key_read = 'ssh-keygen.exe -y -P "" -f $keyPath'
+        key_read = 'Assert-PackageUpdateLabsFeedWriterDeployKey'
         push = 'git -C feed push origin "HEAD:$env:FEED_BRANCH"'
         readback = 'git -C feed ls-remote --exit-code origin'
         post_push = 'Read-FeedRulesetProjection "post-push"'
@@ -134,7 +265,8 @@ function Assert-FeedWriterKeyLifecycle([string]$WorkflowText) {
             $entry.Value, [StringComparison]::Ordinal
         )
     }
-    if (-not ($indexes.cleanup_source -lt $indexes.key_write -and
+    if (-not ($indexes.validation_source -lt $indexes.cleanup_source -and
+        $indexes.cleanup_source -lt $indexes.key_write -and
         $indexes.key_write -lt $indexes.key_acl -and
         $indexes.key_acl -lt $indexes.key_read -and
         $indexes.key_read -lt $indexes.push -and
@@ -173,6 +305,7 @@ foreach ($token in @(
     'PACKAGE_UPDATE_LABS_FEED_RULESET_FULL_POLICY_SHA256',
     'PACKAGE_UPDATE_LABS_FEED_DEPLOY_KEY_FINGERPRINT',
     'FeedRulesetProjection\.ps1',
+    'FeedWriterKeyValidation\.ps1',
     'FeedWriterSecretCleanup\.ps1',
     'rulesets/',
     '-Phase "pre-publication"',
@@ -189,10 +322,8 @@ foreach ($token in @(
     'StrictHostKeyChecking=yes',
     'IdentitiesOnly=yes',
     'AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl',
-    'ssh-keygen\.exe -y -P "" -f',
-    'ssh-keygen\.exe -lf \$keyPath -E sha256',
+    'Assert-PackageUpdateLabsFeedWriterDeployKey',
     'icacls\.exe \$keyPath /inheritance:r /grant:r "\$currentIdentity`:\(R,W\)"',
-    'exact configured deploy key',
     'Invoke-PackageUpdateLabsFeedWriterSecretCleanup',
     '-PrimaryError \$primaryError',
     'git -C feed push origin "HEAD:\$env:FEED_BRANCH"',
@@ -210,6 +341,18 @@ foreach ($token in @(
 )) {
     if ($workflow -notmatch $token) {
         throw "Labs Pages workflow is missing contract token: $token"
+    }
+}
+foreach ($token in @(
+    'ssh-keygen\.exe -y -P "" -f \$KeyPath',
+    'ssh-keygen\.exe -lf \$KeyPath -E sha256',
+    'rusty\.quest\.package_update_labs_feed_key_validation\.v1',
+    'ED25519',
+    'exact configured deploy key',
+    'comment_present'
+)) {
+    if ($keyValidationHelper -notmatch $token) {
+        throw "Labs feed key validation helper is missing contract token: $token"
     }
 }
 foreach ($token in @(

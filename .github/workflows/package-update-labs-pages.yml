@@ -237,6 +237,7 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
           . .\source\tools\package_updater\FeedRulesetProjection.ps1
+          . .\source\tools\package_updater\FeedWriterKeyValidation.ps1
           . .\source\tools\package_updater\FeedWriterSecretCleanup.ps1
           function Read-FeedRulesetProjection([string]$Phase) {
             $rulesetJson = & gh api (
@@ -298,21 +299,11 @@ jobs:
               $knownHost,
               [Text.UTF8Encoding]::new($false, $true)
             )
-            $publicKey = (& ssh-keygen.exe -y -P "" -f $keyPath).Trim()
-            if ($LASTEXITCODE -ne 0 -or
-              $publicKey -cnotmatch "^ssh-ed25519 [A-Za-z0-9+/]+={0,2}$") {
-              throw "The dedicated Labs feed deploy key is not a valid Ed25519 key."
-            }
-            $fingerprintLine = (& ssh-keygen.exe -lf $keyPath -E sha256).Trim()
-            $fingerprintMatch = [Regex]::Match(
-              $fingerprintLine,
-              "^[0-9]+\s+(?<fingerprint>SHA256:[A-Za-z0-9+/]{43})(?:\s|$)"
-            )
-            if ($LASTEXITCODE -ne 0 -or -not $fingerprintMatch.Success -or
-              $fingerprintMatch.Groups["fingerprint"].Value -cne
-                $env:EXPECTED_FEED_DEPLOY_KEY_FINGERPRINT) {
-              throw "The Labs feed secret is not the exact configured deploy key."
-            }
+            $keyValidationReceipt =
+              Assert-PackageUpdateLabsFeedWriterDeployKey `
+                -KeyPath $keyPath `
+                -ExpectedFingerprint $env:EXPECTED_FEED_DEPLOY_KEY_FINGERPRINT
+            $keyValidationReceipt | ConvertTo-Json -Depth 4 -Compress
             git -C feed remote set-url origin `
               "git@github.com:MesmerPrism/rusty-quest.git"
             if ($LASTEXITCODE -ne 0) {
