@@ -89,9 +89,14 @@ jobs:
           if ($LASTEXITCODE -ne 0) {
             throw "Dynamic validation merge object could not be resolved."
           }
-          if (-not [string]::IsNullOrEmpty($env:EVENT_MERGE_SHA) -and
-              $merge -cne $env:EVENT_MERGE_SHA) {
-            throw "Dynamic validation merge object differs from the nonempty event value."
+          $eventMergeRelation = if (
+            [string]::IsNullOrEmpty($env:EVENT_MERGE_SHA)
+          ) {
+            "event-merge-observation-absent"
+          } elseif ($merge -ceq $env:EVENT_MERGE_SHA) {
+            "event-merge-observation-matched-fetched-ref"
+          } else {
+            "event-merge-observation-stale-fetched-ref-authoritative"
           }
           $parents = @(
             ((git rev-list --parents -n 1 $merge) | Out-String).Trim().Split(
@@ -111,7 +116,8 @@ jobs:
           Write-Output (
             "Non-authoritative topology bound base=" + $env:EVENT_BASE_SHA +
             " head=" + $env:EVENT_HEAD_SHA + " merge=" + $merge +
-            " head_repository=" + $env:EVENT_HEAD_REPOSITORY
+            " head_repository=" + $env:EVENT_HEAD_REPOSITORY +
+            " event_merge_relation=" + $eventMergeRelation
           )
 
       - name: Checkout exact Manifold workspace dependency

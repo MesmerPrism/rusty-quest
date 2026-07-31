@@ -16,10 +16,12 @@ or executed.
 
 The static assessment binds the exact event base repository
 `MesmerPrism/rusty-quest`, base ref `main`, head repository identity, exact
-base/head commits, and the exact fetched GitHub PR merge commit and tree. When
-the event payload supplies a nonempty merge commit it must equal that fetched
-object; an empty nullable event value does not weaken the fetched merge-ref and
-exact-parent proof. The assessment also records the observed Git and
+base/head commits, and the exact fetched GitHub PR merge commit and tree.
+GitHub's event merge SHA is observation only: live runs proved it can be empty
+or stale relative to the current generated merge ref. The workflow validates
+its shape when present and records its relation, but never uses it as
+authority. The freshly fetched merge ref must have the exact event base and
+head parents. The assessment also records the observed Git and
 PowerShell versions, executable byte lengths and SHA-256 digests, plus the
 hosted-runner OS, architecture, image OS, and image version. `windows-2025` is
 a moving hosted-runner label; there is no accepted current image allowlist.

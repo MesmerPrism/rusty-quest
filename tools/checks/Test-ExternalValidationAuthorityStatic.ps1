@@ -118,7 +118,7 @@ foreach ($token in @(
     '-BaseRef \$env:EVENT_BASE_REF',
     '-HeadRepository \$env:EVENT_HEAD_REPOSITORY',
     '-CandidateCommit \$env:EVENT_HEAD_SHA',
-    '-MergeCommit \$env:EVENT_MERGE_SHA',
+    '-EventMergeCommit \$env:EVENT_MERGE_SHA',
     '-RunnerLabel "windows-2025"',
     '-RunnerOs \$env:RUNNER_OS',
     '-RunnerArchitecture \$env:RUNNER_ARCH',
@@ -186,7 +186,7 @@ foreach ($token in @(
     'EVENT_HEAD_REPOSITORY: \$\{\{ github\.event\.pull_request\.head\.repo\.full_name \}\}',
     'EVENT_MERGE_SHA: \$\{\{ github\.event\.pull_request\.merge_commit_sha \}\}',
     '\[string\]::IsNullOrEmpty\(\$env:EVENT_MERGE_SHA\)',
-    'merge object differs from the nonempty event value',
+    'event-merge-observation-stale-fetched-ref-authoritative',
     'Dynamic validation base repository differs',
     'Dynamic validation base ref differs from main',
     'refs/pull/\$\(\$env:PR_NUMBER_EXACT\)/merge',
@@ -322,9 +322,9 @@ foreach ($token in @(
     'fcab9717b53bee594949d3d7ffc6126d91db0a4b7592241efab9f9cefcd5a5be',
     'refs/pull/\$PullRequestNumber/head',
     'refs/pull/\$PullRequestNumber/merge',
-    '\[AllowEmptyString\(\)\]\[string\]\$MergeCommit = ""',
+    '\[AllowEmptyString\(\)\]\[string\]\$EventMergeCommit = ""',
     '\$effectiveMergeCommit = \$fetchedMerge',
-    'nonempty event merge object',
+    'event-merge-observation-stale-fetched-ref-authoritative',
     'parents\.Count -ne 3',
     'WaitForExit\(30000\)',
     'Git process output exceeded 1 MiB',
@@ -389,7 +389,7 @@ function Assert-AdapterInputDamageRejected {
         EventName = "pull_request_target"
         BaseCommit = "0" * 40
         CandidateCommit = "1" * 40
-        MergeCommit = "2" * 40
+        EventMergeCommit = "2" * 40
         PullRequestNumber = "1"
         RunId = "1"
         RunAttempt = "1"
@@ -444,6 +444,8 @@ $schemaFixture = [pscustomobject][ordered]@{
         base_repository = "MesmerPrism/rusty-quest"
         base_ref = "main"
         head_repository = "example/fork"
+        merge_commit_observation = $null
+        merge_commit_relation = "event-merge-observation-absent"
     }
     workflow = [pscustomobject][ordered]@{
         event = "pull_request_target"
@@ -495,12 +497,15 @@ if (-not (Test-Json -Json $schemaJson -SchemaFile $schemaPath -ErrorAction Stop)
 }
 $baseIdentityDamage = $schemaJson | ConvertFrom-Json -Depth 30
 $baseIdentityDamage.event_identity.base_ref = "develop"
+$mergeRelationDamage = $schemaJson | ConvertFrom-Json -Depth 30
+$mergeRelationDamage.event_identity.merge_commit_relation = "event-merge-authoritative"
 $runnerAllowlistDamage = $schemaJson | ConvertFrom-Json -Depth 30
 $runnerAllowlistDamage.runtime.runner.image_allowlist_enforced = $true
 $authorityDamage = $schemaJson | ConvertFrom-Json -Depth 30
 $authorityDamage.publication_authority = $true
 foreach ($damage in @(
     [pscustomobject]@{ name = "base-ref"; value = $baseIdentityDamage },
+    [pscustomobject]@{ name = "merge-relation"; value = $mergeRelationDamage },
     [pscustomobject]@{ name = "runner-allowlist"; value = $runnerAllowlistDamage },
     [pscustomobject]@{ name = "publication-authority"; value = $authorityDamage }
 )) {

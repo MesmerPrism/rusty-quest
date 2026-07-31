@@ -9,7 +9,7 @@ param(
     [Parameter(Mandatory = $true)][string]$EventName,
     [Parameter(Mandatory = $true)][string]$BaseCommit,
     [Parameter(Mandatory = $true)][string]$CandidateCommit,
-    [AllowEmptyString()][string]$MergeCommit = "",
+    [AllowEmptyString()][string]$EventMergeCommit = "",
     [Parameter(Mandatory = $true)][string]$PullRequestNumber,
     [Parameter(Mandatory = $true)][string]$RunId,
     [Parameter(Mandatory = $true)][string]$RunAttempt,
@@ -217,8 +217,8 @@ Assert-RunnerIdentityValue $RunnerImageOs "Runner image OS"
 Assert-RunnerIdentityValue $RunnerImageVersion "Runner image version"
 Assert-ObjectId $BaseCommit "Base commit"
 Assert-ObjectId $CandidateCommit "Candidate commit"
-if (-not [string]::IsNullOrEmpty($MergeCommit)) {
-    Assert-ObjectId $MergeCommit "Event merge commit"
+if (-not [string]::IsNullOrEmpty($EventMergeCommit)) {
+    Assert-ObjectId $EventMergeCommit "Event merge commit observation"
 }
 Assert-Decimal $PullRequestNumber "Pull-request number"
 Assert-Decimal $RunId "Workflow run ID"
@@ -340,13 +340,14 @@ $fetchedMerge = (Invoke-BaseGit @(
 if ($fetchedHead -cne $CandidateCommit) {
     throw "Fetched PR head differs from the event head object."
 }
-if (
-    -not [string]::IsNullOrEmpty($MergeCommit) -and
-    $fetchedMerge -cne $MergeCommit
-) {
-    throw "Fetched PR merge object differs from the nonempty event merge object."
-}
 $effectiveMergeCommit = $fetchedMerge
+$eventMergeRelation = if ([string]::IsNullOrEmpty($EventMergeCommit)) {
+    "event-merge-observation-absent"
+} elseif ($EventMergeCommit -ceq $effectiveMergeCommit) {
+    "event-merge-observation-matched-fetched-ref"
+} else {
+    "event-merge-observation-stale-fetched-ref-authoritative"
+}
 $parents = @(
     ((Invoke-BaseGit @(
         "rev-list", "--parents", "-n", "1", $effectiveMergeCommit
@@ -459,6 +460,14 @@ try {
             base_repository = $BaseRepository
             base_ref = $BaseRef
             head_repository = $HeadRepository
+            merge_commit_observation = $(
+                if ([string]::IsNullOrEmpty($EventMergeCommit)) {
+                    $null
+                } else {
+                    $EventMergeCommit
+                }
+            )
+            merge_commit_relation = $eventMergeRelation
         }
         workflow = [pscustomobject][ordered]@{
             event = "pull_request_target"
