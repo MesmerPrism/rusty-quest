@@ -57,6 +57,18 @@ $paths = [ordered]@{
         "tools\checks\Test-PackageUpdatePublicationContract.ps1"
     build_artifact_contract_test = Join-Path $RepoRoot `
         "tools\checks\Test-PackageUpdaterBuildArtifactContract.ps1"
+    product_release_contract_test = Join-Path $RepoRoot `
+        "tools\checks\Test-PackageUpdaterProductReleaseContract.ps1"
+    alpha_release_workflow_test = Join-Path $RepoRoot `
+        "tools\checks\Test-PackageUpdaterAlphaReleaseWorkflow.ps1"
+    product_release_contract = Join-Path $RepoRoot `
+        "tools\package_updater\ProductReleaseContract.ps1"
+    product_release_generator = Join-Path $RepoRoot `
+        "tools\New-PackageUpdaterProductReleaseMetadata.ps1"
+    product_release_validator = Join-Path $RepoRoot `
+        "tools\Test-PackageUpdaterProductReleaseMetadata.ps1"
+    alpha_release_workflow = Join-Path $RepoRoot `
+        ".github\workflows\package-updater-alpha-release.yml"
 }
 foreach ($entry in $paths.GetEnumerator()) {
     if (-not (Test-Path -LiteralPath $entry.Value)) {
@@ -105,6 +117,14 @@ $nativeLib = Get-Content -Raw -LiteralPath $paths.native_lib
 $buildWrapper = Get-Content -Raw -LiteralPath $paths.build_wrapper
 $publishWrapper = Get-Content -Raw -LiteralPath $paths.publish_wrapper
 $e2eCliWrapper = Get-Content -Raw -LiteralPath $paths.e2e_cli_wrapper
+$productReleaseContract = Get-Content -Raw `
+    -LiteralPath $paths.product_release_contract
+$productReleaseGenerator = Get-Content -Raw `
+    -LiteralPath $paths.product_release_generator
+$productReleaseValidator = Get-Content -Raw `
+    -LiteralPath $paths.product_release_validator
+$alphaReleaseWorkflow = Get-Content -Raw `
+    -LiteralPath $paths.alpha_release_workflow
 
 [xml]$manifest = $manifestText
 $androidNamespace = "http://schemas.android.com/apk/res/android"
@@ -207,6 +227,14 @@ foreach ($token in @(
     'buildConfigField\("long", "MINIMUM_TARGET_VERSION_CODE", "1L"\)',
     '"MAXIMUM_TARGET_VERSION_CODE"')) {
     Assert-Match $appBuild $token "Package Updater build is missing fixed input token: $token"
+}
+foreach ($token in @(
+    'Read-PackageUpdaterBuildManifest',
+    'Assert-PackageUpdaterProductReleaseMetadata',
+    '\$head -ne \$build\.source_revision',
+    '\^\{tree\}')) {
+    Assert-Match $productReleaseValidator $token `
+        "Product release metadata validator is missing token: $token"
 }
 foreach ($token in @(
     'create\("e2e"\)',
@@ -606,8 +634,18 @@ foreach ($token in @(
     'rusty.quest.package_updater_android.build_manifest.v1',
     'Assert-PackageUpdaterManifestUrl',
     'Assert-PackageUpdaterReleaseArtifact',
+    'ExpectedVersionCode \$VersionCode',
+    'ExpectedVersionName \$VersionName',
     'dump xmltree --file AndroidManifest\.xml',
     'dump permissions',
+    'apksigner\.bat',
+    'ConvertFrom-PackageUpdaterSignerCertificates',
+    'ExpectedUpdaterSignerSha256',
+    'release signer differs from the protected expected certificate',
+    'updater_signer_sha256',
+    'RUSTY_QUEST_PACKAGE_UPDATER_VERSION_CODE',
+    'RUSTY_QUEST_PACKAGE_UPDATER_VERSION_NAME',
+    'Get-PublicPackageUpdaterBuildTool',
     'InspectE2eApkPath',
     'Assert-PackageUpdaterE2eArtifact',
     'artifact_inspection',
@@ -615,6 +653,29 @@ foreach ($token in @(
     Assert-Match $buildWrapper $token `
         "Reproducible Package Updater build wrapper is missing token: $token"
 }
+foreach ($token in @(
+    'rusty\.quest\.package_updater_product_release\.v1',
+    'package-updater-v\(\?<version>0\\\.1\\\.0-alpha',
+    'source_revision', 'source_tree', 'installation_identity',
+    'expected_updater_signer_sha256', 'updater_signer_sha256',
+    'APK version is not derived from its alpha tag',
+    'primary_apk', 'Assert-ExactJsonFields',
+    'Actual Package Updater APK differs from its build manifest')) {
+    Assert-Match $productReleaseContract $token `
+        "Product release metadata contract is missing token: $token"
+}
+foreach ($token in @(
+    'rev-parse "\$\(\$build\.source_revision\)\^\{tree\}"',
+    '\$head -ne \$build\.source_revision',
+    'ConvertTo-Json -Depth 5')) {
+    Assert-Match $productReleaseGenerator $token `
+        "Product release metadata generator is missing token: $token"
+}
+Assert-Match $buildWrapper 'AndroidNdkDirectory' `
+    "Release build wrapper lacks an exact NDK directory input."
+Assert-Match $alphaReleaseWorkflow `
+    'environment: package-updater-alpha-release' `
+    "Package Updater alpha release lacks its protected environment."
 foreach ($token in @(
     'RUSTY_QUEST_UPDATE_SIGNING_SEED_BASE64URL',
     'TrustedPublicKeyBase64Url',
@@ -764,8 +825,9 @@ Assert-Match $appBuild `
 Assert-Match $publishWrapper 'package_update_publication_receipt\.v2' `
     "Publication output is not the deterministic receipt contract."
 foreach ($leak in @('aapt2_path', 'apksigner_path')) {
-    if ($publishWrapper -match [regex]::Escape($leak)) {
-        throw "Public publication receipt retains local tool path field: $leak"
+    if ($publishWrapper -match [regex]::Escape($leak) -or
+        $buildWrapper -match [regex]::Escape($leak)) {
+        throw "Public Package Updater receipt retains local tool path field: $leak"
     }
 }
 
@@ -778,6 +840,16 @@ if ($LASTEXITCODE -ne 0) {
     $paths.build_artifact_contract_test
 if ($LASTEXITCODE -ne 0) {
     throw "Package updater build artifact contract self-test failed."
+}
+& pwsh -NoProfile -ExecutionPolicy Bypass -File `
+    $paths.product_release_contract_test
+if ($LASTEXITCODE -ne 0) {
+    throw "Package updater product release contract self-test failed."
+}
+& pwsh -NoProfile -ExecutionPolicy Bypass -File `
+    $paths.alpha_release_workflow_test -RepoRoot $RepoRoot
+if ($LASTEXITCODE -ne 0) {
+    throw "Package updater alpha workflow contract failed."
 }
 
 Write-Output "Rusty Quest Package Updater Android static validation passed"

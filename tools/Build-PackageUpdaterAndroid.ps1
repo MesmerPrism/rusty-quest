@@ -5,6 +5,7 @@ param(
     [string]$AndroidHome = $env:ANDROID_HOME,
     [Parameter(Mandatory = $true)]
     [string]$AndroidBuildToolsDirectory,
+    [string]$AndroidNdkDirectory = "",
     [string]$JavaHome = $env:JAVA_HOME,
     [Parameter(Mandatory = $true)]
     [string]$ManifestUrl,
@@ -18,6 +19,12 @@ param(
     [string]$ExpectedRolloutRing = "alpha",
     [Parameter(Mandatory = $true)]
     [string]$ExpectedSignerSha256,
+    [Parameter(Mandatory = $true)]
+    [string]$ExpectedUpdaterSignerSha256,
+    [ValidateRange(1, 2147483647)]
+    [int]$VersionCode = 1,
+    [ValidatePattern("^0\.1\.0(?:-alpha\.[1-9][0-9]*)?$")]
+    [string]$VersionName = "0.1.0",
     [Parameter(Mandatory = $true)]
     [string]$KeystorePath,
     [Parameter(Mandatory = $true)]
@@ -63,7 +70,8 @@ if ($TrustedKeyId -notmatch "^[A-Za-z0-9._-]{1,96}$" -or
     $TrustedPublicKeyBase64Url -notmatch "^[A-Za-z0-9_-]{43}$" -or
     $ExpectedPackageName -notmatch "^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$" -or
     $ExpectedRolloutRing -notmatch "^[A-Za-z0-9._-]{1,32}$" -or
-    $ExpectedSignerSha256 -notmatch "^sha256:[0-9a-f]{64}$") {
+    $ExpectedSignerSha256 -notmatch "^sha256:[0-9a-f]{64}$" -or
+    $ExpectedUpdaterSignerSha256 -notmatch "^sha256:[0-9a-f]{64}$") {
     throw "Package Updater build policy contains a noncanonical value."
 }
 
@@ -82,10 +90,16 @@ if (-not [string]::IsNullOrWhiteSpace((& git -C $repoRoot status --porcelain))) 
     throw "Package Updater release build requires a clean Rusty Quest worktree."
 }
 
-$ndkRoot = Get-ChildItem -LiteralPath (Join-Path $AndroidHome "ndk") `
-        -Directory -ErrorAction Stop |
-    Sort-Object { [version]$_.Name } -Descending |
-    Select-Object -First 1
+$ndkRoot = if ([string]::IsNullOrWhiteSpace($AndroidNdkDirectory)) {
+    Get-ChildItem -LiteralPath (Join-Path $AndroidHome "ndk") `
+            -Directory -ErrorAction Stop |
+        Sort-Object { [version]$_.Name } -Descending |
+        Select-Object -First 1
+} else {
+    Get-Item -LiteralPath (
+        Resolve-Path -LiteralPath $AndroidNdkDirectory
+    ).Path -ErrorAction Stop
+}
 if ($null -eq $ndkRoot) {
     throw "Package Updater native verifier requires an Android NDK."
 }
@@ -117,6 +131,8 @@ $environment = @{
     RUSTY_QUEST_PACKAGE_UPDATER_EXPECTED_PACKAGE_NAME = $ExpectedPackageName
     RUSTY_QUEST_PACKAGE_UPDATER_EXPECTED_ROLLOUT_RING = $ExpectedRolloutRing
     RUSTY_QUEST_PACKAGE_UPDATER_EXPECTED_SIGNER_SHA256 = $ExpectedSignerSha256
+    RUSTY_QUEST_PACKAGE_UPDATER_VERSION_CODE = "$VersionCode"
+    RUSTY_QUEST_PACKAGE_UPDATER_VERSION_NAME = $VersionName
     RUSTY_QUEST_PACKAGE_UPDATER_KEYSTORE_PATH =
         [System.IO.Path]::GetFullPath($KeystorePath)
     RUSTY_QUEST_PACKAGE_UPDATER_KEYSTORE_PASSWORD = $plainStorePassword
@@ -147,8 +163,13 @@ $builtApk = Join-Path $projectRoot "app\build\outputs\apk\release\app-release.ap
 if (-not (Test-Path -LiteralPath $builtApk -PathType Leaf)) {
     throw "Package Updater release APK was not produced."
 }
+$AndroidBuildToolsDirectory = (
+    Resolve-Path -LiteralPath $AndroidBuildToolsDirectory
+).Path
+$buildToolsVersion = Split-Path -Leaf $AndroidBuildToolsDirectory
 $aapt2 = Join-Path $AndroidBuildToolsDirectory "aapt2.exe"
-foreach ($tool in @($aapt2)) {
+$apkSigner = Join-Path $AndroidBuildToolsDirectory "apksigner.bat"
+foreach ($tool in @($aapt2, $apkSigner)) {
     if (-not (Test-Path -LiteralPath $tool -PathType Leaf)) {
         throw "Pinned Android build tool is missing: $tool"
     }
@@ -171,7 +192,20 @@ $releaseIdentity = Assert-PackageUpdaterReleaseArtifact `
     -Badging $releaseBadging `
     -Permissions $releasePermissions `
     -ManifestTree $releaseManifestTree `
-    -ExpectedPackageName $ExpectedPackageName
+    -ExpectedPackageName $ExpectedPackageName `
+    -ExpectedVersionCode $VersionCode `
+    -ExpectedVersionName $VersionName
+$releaseSignerOutput = @(
+    & $apkSigner verify --verbose --print-certs $builtApk 2>&1
+)
+if ($LASTEXITCODE -ne 0) {
+    throw "Pinned apksigner rejected the Package Updater release APK."
+}
+$releaseSignerSha256 = ConvertFrom-PackageUpdaterSignerCertificates `
+    -Lines $releaseSignerOutput
+if ($releaseSignerSha256 -cne $ExpectedUpdaterSignerSha256) {
+    throw "Package Updater release signer differs from the protected expected certificate."
+}
 if (-not [string]::IsNullOrWhiteSpace($InspectE2eApkPath)) {
     $InspectE2eApkPath = (Resolve-Path -LiteralPath $InspectE2eApkPath).Path
     $e2eBadging = @(& $aapt2 dump badging $InspectE2eApkPath 2>&1)
@@ -227,6 +261,12 @@ Copy-Item -LiteralPath $builtApk -Destination $outputApk -Force
 
 $apkHash = (Get-FileHash -LiteralPath $outputApk -Algorithm SHA256).
     Hash.ToLowerInvariant()
+$aapt2Hash = "sha256:" + (
+    Get-FileHash -LiteralPath $aapt2 -Algorithm SHA256
+).Hash.ToLowerInvariant()
+$apkSignerHash = "sha256:" + (
+    Get-FileHash -LiteralPath $apkSigner -Algorithm SHA256
+).Hash.ToLowerInvariant()
 $manifest = [ordered]@{
     schema = "rusty.quest.package_updater_android.build_manifest.v1"
     source_revision = $sourceRevision
@@ -239,14 +279,18 @@ $manifest = [ordered]@{
     expected_package_name = $ExpectedPackageName
     expected_rollout_ring = $ExpectedRolloutRing
     expected_signer_sha256 = $ExpectedSignerSha256
+    expected_updater_signer_sha256 = $ExpectedUpdaterSignerSha256
+    updater_signer_sha256 = $releaseSignerSha256
     native_verifier_sha256 = "sha256:$nativeVerifierHash"
     apk_sha256 = "sha256:$apkHash"
     apk_size_bytes = (Get-Item -LiteralPath $outputApk).Length
     artifact_inspection = [ordered]@{
-        aapt2_path = $aapt2
-        aapt2_sha256 = "sha256:" + (
-            Get-FileHash -LiteralPath $aapt2 -Algorithm SHA256
-        ).Hash.ToLowerInvariant()
+        tool = Get-PublicPackageUpdaterBuildTool `
+            -BuildToolsVersion $buildToolsVersion `
+            -Aapt2Path $aapt2 `
+            -Aapt2Sha256 $aapt2Hash `
+            -ApkSignerPath $apkSigner `
+            -ApkSignerSha256 $apkSignerHash
         release_permissions = @(
             "android.permission.INTERNET",
             "android.permission.REQUEST_INSTALL_PACKAGES"

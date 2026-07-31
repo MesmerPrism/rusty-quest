@@ -61,6 +61,15 @@ Publication uses immutable generation directories and one CAS-bound alpha
 pointer updated last. Kiosk remains same-package in-place alpha with continuous
 signer identity, no coexistence or immediate downgrade, and only a
 higher-version same-signer stable exit.
+The updater product itself releases only from an exact pre-existing
+`package-updater-v0.1.0-alpha.N` tag through the protected alpha environment.
+Its owner metadata is derived from the closed build manifest plus actual APK
+and exposes only tag/version, source revision/tree, alpha installation
+identity, tag-derived monotonic APK version, updater signer SHA-256, and primary
+asset name/hash/bytes. Public release assets are exactly that APK, metadata,
+project license, and exact source notice; promotion is draft-first,
+prerelease, non-latest, rechecks the remote tag immediately before promotion,
+and never overwrites or deletes an existing release.
 
 Rusty Quest owns platform profile contracts and write/readback transports. It
 does not own Makepad widget implementation, Matter simulation truth, Optics

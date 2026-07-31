@@ -140,12 +140,27 @@ pwsh -NoProfile -ExecutionPolicy Bypass -File `
 Release signing uses only the `RUSTY_QUEST_PACKAGE_UPDATER_KEYSTORE_*`
 environment variables. All four signing values must be supplied together, and
 release assembly fails closed when they are absent. No secret is stored in this
-repository.
+repository. Product release also requires the protected expected updater
+certificate SHA-256; a valid APK signed by any other sole certificate is
+rejected.
 
 For an exact clean source revision, use
 `tools/Build-PackageUpdaterAndroid.ps1`; it runs the static gate, injects the
 fixed trust/policy inputs and Android signing material through the child
-environment, builds the signed APK, and writes a public build manifest.
+environment, builds the signed APK, verifies its sole signing certificate, and
+writes a public build manifest containing only bounded build-tool names,
+versions, and hashes rather than local SDK paths.
+`tools/New-PackageUpdaterProductReleaseMetadata.ps1` then revalidates that
+closed build manifest against the actual APK and emits the sanitized
+`rusty.quest.package_updater_product_release.v1` owner artifact for an exact
+`package-updater-v0.1.0-alpha.N` tag. It contains no SDK, aapt2, NDK, Gradle,
+or keystore path. The protected tag workflow creates a draft alpha prerelease,
+uploads only `rusty-quest-package-updater.apk`,
+`rusty-quest-package-updater.release.json`, the project license, and the exact
+source notice, verifies all four remote names, SHA-256 digests, and byte counts
+before and after promotion, rechecks the authoritative tag immediately before
+promotion, and keeps the release non-latest. Tag sequence `N` is emitted as
+Android version code `N` and version name `0.1.0-alpha.N`.
 `tools/Publish-PackageUpdateManifest.ps1` first inspects the exact Kiosk APK
 with caller-pinned Android build tools, then stages an immutable generation
 containing the APK, envelope, and receipt. It requires an explicit absent

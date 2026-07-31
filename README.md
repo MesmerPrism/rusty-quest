@@ -127,6 +127,16 @@ The Kiosk policy is explicitly same-package, in-place alpha under continuous
 APK signer identity: alpha cannot coexist with the installed Kiosk and has no
 immediate downgrade. Stable exit requires a strictly higher Android version
 code under the same signer.
+The updater product release is independently tag-bound:
+`package-updater-v0.1.0-alpha.N` identifies an alpha prerelease of
+`io.github.mesmerprism.rustyquest.packageupdater.alpha`. Repository-owned
+metadata binds the exact source revision/tree and primary APK identity after
+revalidating the closed build manifest and actual APK. Alpha sequence `N` is
+also the Android version code and `0.1.0-alpha.N` is the version name, so
+successive updater products have monotonic installed-package evidence. The
+protected workflow pins the updater APK's own signing certificate,
+publishes only the APK, sanitized metadata, project license, and exact source
+notice, draft-first and non-latest.
 
 `crates/rusty-quest-media-stream` provides the generic receiver-first platform
 runtime described in [Generic Media Stream Runtime](docs/MEDIA_STREAM_RUNTIME.md).

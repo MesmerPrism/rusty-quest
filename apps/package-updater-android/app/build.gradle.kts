@@ -36,6 +36,15 @@ val expectedSignerSha256 =
   providers.environmentVariable("RUSTY_QUEST_PACKAGE_UPDATER_EXPECTED_SIGNER_SHA256")
     .orElse("unconfigured")
     .get()
+val packageUpdaterVersionCodeText =
+  providers.environmentVariable("RUSTY_QUEST_PACKAGE_UPDATER_VERSION_CODE")
+    .orElse("1")
+    .get()
+val packageUpdaterVersionCode = packageUpdaterVersionCodeText.toIntOrNull()
+val packageUpdaterVersionName =
+  providers.environmentVariable("RUSTY_QUEST_PACKAGE_UPDATER_VERSION_NAME")
+    .orElse("0.1.0")
+    .get()
 val updateChannel = "alpha"
 
 require(expectedHttpsOrigin.matches(Regex("https://[a-z0-9.-]+(?::[1-9][0-9]{0,4})?"))) {
@@ -61,6 +70,12 @@ require(expectedPackageName.matches(Regex("[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+"
 }
 require(expectedRolloutRing.matches(Regex("[A-Za-z0-9._-]{1,32}"))) {
   "RUSTY_QUEST_PACKAGE_UPDATER_EXPECTED_ROLLOUT_RING is invalid"
+}
+require(packageUpdaterVersionCode != null && packageUpdaterVersionCode > 0) {
+  "RUSTY_QUEST_PACKAGE_UPDATER_VERSION_CODE must be a positive Android version code"
+}
+require(packageUpdaterVersionName.matches(Regex("0\\.1\\.0(?:-alpha\\.[1-9][0-9]*)?"))) {
+  "RUSTY_QUEST_PACKAGE_UPDATER_VERSION_NAME is outside the updater product line"
 }
 
 val releaseKeystorePath =
@@ -181,8 +196,8 @@ android {
     applicationId = "io.github.mesmerprism.rustyquest.packageupdater.alpha"
     minSdk = 34
     targetSdk = 34
-    versionCode = 1
-    versionName = "0.1.0"
+    versionCode = packageUpdaterVersionCode
+    versionName = packageUpdaterVersionName
     ndk {
       abiFilters += "arm64-v8a"
     }

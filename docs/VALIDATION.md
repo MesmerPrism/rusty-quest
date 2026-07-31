@@ -43,6 +43,10 @@ pwsh -NoProfile -ExecutionPolicy Bypass -File `
   .\tools\checks\Test-PackageUpdatePublicationContract.ps1
 pwsh -NoProfile -ExecutionPolicy Bypass -File `
   .\tools\checks\Test-PackageUpdaterBuildArtifactContract.ps1
+pwsh -NoProfile -ExecutionPolicy Bypass -File `
+  .\tools\checks\Test-PackageUpdaterProductReleaseContract.ps1
+pwsh -NoProfile -ExecutionPolicy Bypass -File `
+  .\tools\checks\Test-PackageUpdaterAlphaReleaseWorkflow.ps1 -RepoRoot .
 ```
 
 The Rust gate covers signature/domain stability, exact policy dimensions,
@@ -57,7 +61,15 @@ publication receipt, isolated storage, and absence of release E2E components.
 Publisher self-tests cover interruption, stale/concurrent CAS, downgrade,
 tuple drift, fresh-client assertions, exact 24-hour validity, APK identity,
 and single-signer negatives. Artifact self-tests cover canonical alpha pointer
-URLs and final merged-manifest permission/component/E2E leakage.
+URLs and final merged-manifest permission/component/E2E leakage. Product
+release self-tests cover the exact alpha tag and installation identity,
+source revision/tree, tag-derived monotonic Android version, protected updater
+signer equality, actual primary APK hash/bytes, and missing, wrong, or expanded
+build/metadata fields. The workflow gate requires pinned actions and tools,
+protected signing/policy inputs, draft-before-promotion, exact tag readback
+both before draft creation and immediately before promotion, prerelease and
+non-latest state, exact four-asset remote readback before and after promotion,
+and no overwrite, latest, or delete route.
 Release APK assembly additionally
 requires all release signing values and an Agent Board reservation for the
 long build. Headset validation must reserve the exact `quest:<serial>`, snapshot

@@ -34,7 +34,7 @@ foreach ($bad in @(
 }
 
 $badging = @(
-    "package: name='io.github.mesmerprism.rustyquest.packageupdater.alpha' versionCode='1' versionName='0.1.0'"
+    "package: name='io.github.mesmerprism.rustyquest.packageupdater.alpha' versionCode='7' versionName='0.1.0-alpha.7'"
 )
 $permissions = @(
     "uses-permission: name='android.permission.INTERNET'",
@@ -55,7 +55,8 @@ $tree = @(
 )
 Assert-PackageUpdaterReleaseArtifact -Badging $badging `
     -Permissions $permissions -ManifestTree $tree `
-    -ExpectedPackageName "io.github.mesmerprism.rustykiosk" | Out-Null
+    -ExpectedPackageName "io.github.mesmerprism.rustykiosk" `
+    -ExpectedVersionCode 7 -ExpectedVersionName "0.1.0-alpha.7" | Out-Null
 Assert-PackageUpdaterReleaseArtifact -Badging $badging `
     -Permissions $permissions `
     -ManifestTree (
@@ -63,31 +64,69 @@ Assert-PackageUpdaterReleaseArtifact -Badging $badging `
             "io.github.mesmerprism.rustykiosk",
             "io.github.mesmerprism.rustyquest.alphae2efixture"
     ) `
-    -ExpectedPackageName "io.github.mesmerprism.rustyquest.alphae2efixture" |
+    -ExpectedPackageName "io.github.mesmerprism.rustyquest.alphae2efixture" `
+    -ExpectedVersionCode 7 -ExpectedVersionName "0.1.0-alpha.7" |
     Out-Null
 Assert-Rejected {
     Assert-PackageUpdaterReleaseArtifact -Badging $badging `
         -Permissions ($permissions + "uses-permission: name='android.permission.CAMERA'") `
         -ManifestTree $tree `
-        -ExpectedPackageName "io.github.mesmerprism.rustykiosk"
+        -ExpectedPackageName "io.github.mesmerprism.rustykiosk" `
+        -ExpectedVersionCode 7 -ExpectedVersionName "0.1.0-alpha.7"
 } "permission leak"
 Assert-Rejected {
     Assert-PackageUpdaterReleaseArtifact -Badging $badging `
         -Permissions $permissions `
         -ManifestTree ($tree + "E: provider " + "E2ePackageUpdaterCliProvider") `
-        -ExpectedPackageName "io.github.mesmerprism.rustykiosk"
+        -ExpectedPackageName "io.github.mesmerprism.rustykiosk" `
+        -ExpectedVersionCode 7 -ExpectedVersionName "0.1.0-alpha.7"
 } "E2E provider leak"
 Assert-Rejected {
     Assert-PackageUpdaterReleaseArtifact -Badging @(
-        "package: name='io.github.mesmerprism.rustyquest.packageupdater' versionCode='1' versionName='0.1.0'"
+        "package: name='io.github.mesmerprism.rustyquest.packageupdater' versionCode='7' versionName='0.1.0-alpha.7'"
     ) -Permissions $permissions -ManifestTree $tree `
-        -ExpectedPackageName "io.github.mesmerprism.rustykiosk"
+        -ExpectedPackageName "io.github.mesmerprism.rustykiosk" `
+        -ExpectedVersionCode 7 -ExpectedVersionName "0.1.0-alpha.7"
 } "wrong release identity"
+Assert-Rejected {
+    Assert-PackageUpdaterReleaseArtifact -Badging @(
+        "package: name='io.github.mesmerprism.rustyquest.packageupdater.alpha' versionCode='1' versionName='0.1.0'"
+    ) -Permissions $permissions -ManifestTree $tree `
+        -ExpectedPackageName "io.github.mesmerprism.rustykiosk" `
+        -ExpectedVersionCode 7 -ExpectedVersionName "0.1.0-alpha.7"
+} "stale hardcoded updater version"
 Assert-Rejected {
     Assert-PackageUpdaterReleaseArtifact -Badging $badging `
         -Permissions $permissions -ManifestTree $tree `
-        -ExpectedPackageName "io.github.mesmerprism.rustyquest.alphae2efixture"
+        -ExpectedPackageName "io.github.mesmerprism.rustyquest.alphae2efixture" `
+        -ExpectedVersionCode 7 -ExpectedVersionName "0.1.0-alpha.7"
 } "wrong query package"
+
+$signer = ConvertFrom-PackageUpdaterSignerCertificates @(
+    "Signer #1 certificate SHA-256 digest: " + ("AB" * 32)
+)
+if ($signer -ne "sha256:" + ("ab" * 32)) {
+    throw "Release signer digest was not canonicalized."
+}
+Assert-Rejected {
+    ConvertFrom-PackageUpdaterSignerCertificates @(
+        "Signer #1 certificate SHA-256 digest: " + ("ab" * 32),
+        "Signer #2 certificate SHA-256 digest: " + ("cd" * 32)
+    )
+} "multiple release signers"
+
+$publicTool = Get-PublicPackageUpdaterBuildTool `
+    -BuildToolsVersion "35.0.1" `
+    -Aapt2Path "D:\private\sdk\35.0.1\aapt2.exe" `
+    -Aapt2Sha256 ("sha256:" + ("1" * 64)) `
+    -ApkSignerPath "D:\private\sdk\35.0.1\apksigner.bat" `
+    -ApkSignerSha256 ("sha256:" + ("2" * 64))
+$publicToolJson = $publicTool | ConvertTo-Json -Compress
+if ($publicToolJson.Contains("D:\private") -or
+    $publicTool.aapt2_name -ne "aapt2.exe" -or
+    $publicTool.apksigner_name -ne "apksigner.bat") {
+    throw "Public build-tool receipt leaked a local path."
+}
 
 $e2eBadging = @(
     "package: name='io.github.mesmerprism.rustyquest.packageupdater.alpha.e2ecli' versionCode='1' versionName='0.1.0-e2ecli'"

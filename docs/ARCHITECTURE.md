@@ -78,6 +78,25 @@ installed commit. Kiosk remains an in-place alpha same-package update with
 continuous signer identity, no coexistence, and no immediate downgrade;
 stable exit requires a higher version code.
 
+The updater APK is also a closed alpha release product. Its only accepted tag
+shape is `package-updater-v0.1.0-alpha.N`; the tag peels to the exact workflow
+source revision. `rusty.quest.package_updater_product_release.v1` is sanitized
+owner metadata derived only after strict closed-shape validation of the
+existing build manifest and byte-for-byte APK hash/size readback. It binds the
+release tag/version, source revision/tree, alpha channel, installation
+identity, tag-derived APK version, updater signing-certificate SHA-256, and
+primary APK name/hash/bytes. SDK, aapt2, NDK, Gradle, and keystore paths are
+adapter inputs and never metadata.
+
+The tag workflow runs behind the `package-updater-alpha-release` protected
+environment with pinned actions and tool versions. It distinguishes a missing
+release from a GitHub API failure, creates a draft prerelease, uploads exactly
+the APK, owner metadata, project license, and exact source notice, reads back
+each remote name/digest/byte count before and after promotion, and only then
+rechecks the remote tag immediately before promotion. It only then accepts the
+result as prerelease and non-latest. Existing releases/assets are not
+overwritten or deleted.
+
 `apps/package-updater-android` is a distinct native 2D sidecar. Its only
 permissions are `INTERNET` and `REQUEST_INSTALL_PACKAGES`; its sole exported
 component is the visible launcher Activity. Compile-time policy fixes the
