@@ -7,16 +7,20 @@ if ([string]::IsNullOrWhiteSpace($RepoRoot)) {
 }
 $workflowPath = Join-Path $RepoRoot ".github\workflows\package-update-labs-pages.yml"
 $publisherPath = Join-Path $RepoRoot "tools\Publish-PackageUpdateLabsPages.ps1"
-foreach ($path in @($workflowPath, $publisherPath)) {
+$projectionPath = Join-Path $RepoRoot `
+    "tools\package_updater\FeedRulesetProjection.ps1"
+foreach ($path in @($workflowPath, $publisherPath, $projectionPath)) {
     if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
         throw "Labs Pages publication surface is missing: $path"
     }
 }
 $workflow = Get-Content -Raw -LiteralPath $workflowPath
 $publisher = Get-Content -Raw -LiteralPath $publisherPath
+$projectionHelper = Get-Content -Raw -LiteralPath $projectionPath
 . $publisherPath -FeedRoot "unused" -TargetPath "unused" `
     -AndroidBuildToolsDirectory "unused" -TrustedKeyId "unused" `
     -TrustedPublicKeyBase64Url "unused" -LibraryOnly
+. $projectionPath
 
 function Copy-JsonObject($Value) {
     $Value | ConvertTo-Json -Depth 16 -Compress | ConvertFrom-Json
@@ -51,12 +55,18 @@ foreach ($token in @(
     'package-update-labs-target\.json',
     'Require protected continuous feed authority',
     'PACKAGE_UPDATE_LABS_FEED_RULESET_ID',
+    'PACKAGE_UPDATE_LABS_FEED_RULESET_UPDATED_AT_UTC',
+    'PACKAGE_UPDATE_LABS_FEED_RULESET_FULL_POLICY_SHA256',
     'PACKAGE_UPDATE_LABS_FEED_DEPLOY_KEY_FINGERPRINT',
+    'FeedRulesetProjection\.ps1',
     'rulesets/',
-    'actor_type -cne "DeployKey"',
-    '\$null -ne \$bypass\[0\]\.actor_id',
+    '-Phase "pre-publication"',
+    'Read-FeedRulesetProjection "pre-key-use"',
+    'Read-FeedRulesetProjection "pre-push"',
+    'Read-FeedRulesetProjection "post-push"',
+    'Visible feed-ruleset projection drifted before the protected push',
+    'Visible feed-ruleset projection drifted across the protected push',
     'refs/heads/package-update-labs-feed',
-    'creation", "deletion", "non_fast_forward", "update',
     'git -C feed ls-remote --exit-code origin',
     'PACKAGE_UPDATE_LABS_FEED_DEPLOY_KEY_BASE64',
     'Push through the dedicated protected feed writer',
@@ -97,6 +107,19 @@ foreach ($forbidden in @(
 )) {
     if ($workflow -match $forbidden) {
         throw "Labs Pages workflow contains forbidden route: $forbidden"
+    }
+}
+foreach ($token in @(
+    'bypass_actor_closure = "externally-audited-not-projected"',
+    'publisher_bypass_report = \$publisherBypassReport',
+    'unexpectedly exposes bypass actors',
+    'Protect Package Update Labs feed',
+    'MesmerPrism/rusty-quest',
+    'refs/heads/package-update-labs-feed',
+    'creation", "deletion", "non_fast_forward", "update'
+)) {
+    if ($projectionHelper -notmatch $token) {
+        throw "Feed ruleset projection helper is missing contract token: $token"
     }
 }
 $workflowLines = Get-Content -LiteralPath $workflowPath
@@ -144,12 +167,31 @@ $pushIndex = $workflow.IndexOf(
     'git -C feed push origin "HEAD:$env:FEED_BRANCH"',
     [StringComparison]::Ordinal
 )
+$preKeyProjectionIndex = $workflow.IndexOf(
+    'Read-FeedRulesetProjection "pre-key-use"',
+    [StringComparison]::Ordinal
+)
+$prePushProjectionIndex = $workflow.IndexOf(
+    'Read-FeedRulesetProjection "pre-push"',
+    [StringComparison]::Ordinal
+)
+$postPushProjectionIndex = $workflow.IndexOf(
+    'Read-FeedRulesetProjection "post-push"',
+    [StringComparison]::Ordinal
+)
 if ($protectionIndex -lt 0 -or $publicationIndex -lt 0 -or
     $commitIndex -lt 0 -or $secretIndex -lt 0 -or $pushIndex -lt 0 -or
+    $preKeyProjectionIndex -lt 0 -or $prePushProjectionIndex -lt 0 -or
+    $postPushProjectionIndex -lt 0 -or
     -not ($protectionIndex -lt $publicationIndex -and
         $publicationIndex -lt $commitIndex -and
         $commitIndex -lt $secretIndex -and $secretIndex -lt $pushIndex)) {
     throw 'Labs feed protection, publication, commit, secret, and push ordering changed.'
+}
+if (-not ($preKeyProjectionIndex -lt $prePushProjectionIndex -and
+    $prePushProjectionIndex -lt $pushIndex -and
+    $pushIndex -lt $postPushProjectionIndex)) {
+    throw 'Labs feed projection checks do not bracket the protected push.'
 }
 $persistFalseCount = @(
     [regex]::Matches($workflow, '(?m)^\s*persist-credentials:\s*false\s*$')
@@ -157,6 +199,80 @@ $persistFalseCount = @(
 if ($persistFalseCount -ne 3) {
     throw 'Every Labs feed checkout must disable persisted token credentials.'
 }
+
+$validRulesetProjection = [pscustomobject][ordered]@{
+    id = 20137239
+    name = "Protect Package Update Labs feed"
+    target = "branch"
+    source_type = "Repository"
+    source = "MesmerPrism/rusty-quest"
+    enforcement = "active"
+    conditions = [pscustomobject][ordered]@{
+        ref_name = [pscustomobject][ordered]@{
+            exclude = @()
+            include = @("refs/heads/package-update-labs-feed")
+        }
+    }
+    rules = @(
+        [pscustomobject]@{ type = "creation" }
+        [pscustomobject]@{ type = "update" }
+        [pscustomobject]@{ type = "deletion" }
+        [pscustomobject]@{ type = "non_fast_forward" }
+    )
+    node_id = "RRS_fixture"
+    created_at = "2026-07-31T17:00:00.000Z"
+    updated_at = "2026-07-31T17:15:58.739Z"
+    _links = [pscustomobject]@{}
+}
+$projectionReceipt = Assert-PackageUpdateLabsFeedRulesetProjection `
+    -Ruleset $validRulesetProjection -ExpectedRulesetId 20137239 `
+    -ExpectedUpdatedAtUtc "2026-07-31T17:15:58.7390000Z" `
+    -ExternallyAuditedFullPolicySha256 ("ab" * 32) `
+    -Phase "pre-publication"
+if ($projectionReceipt.bypass_actor_closure -cne
+        "externally-audited-not-projected" -or
+    $projectionReceipt.publisher_bypass_report -cne "not-projected" -or
+    $projectionReceipt.visible_projection_sha256 -cnotmatch "^[0-9a-f]{64}$") {
+    throw "Valid feed-ruleset projection did not return its bounded receipt."
+}
+foreach ($mutation in @(
+    [pscustomobject]@{ Name = "source drift"; Apply = {
+        param($value) $value.source = "example/other"
+    } },
+    [pscustomobject]@{ Name = "ruleset revision drift"; Apply = {
+        param($value) $value.updated_at = "2026-07-31T17:15:59.739Z"
+    } },
+    [pscustomobject]@{ Name = "extra visible rule"; Apply = {
+        param($value) $value.rules += [pscustomobject]@{ type = "required_signatures" }
+    } },
+    [pscustomobject]@{ Name = "exposed bypass actors"; Apply = {
+        param($value) $value | Add-Member -NotePropertyName bypass_actors `
+            -NotePropertyValue @([pscustomobject]@{
+                actor_id = $null; actor_type = "DeployKey"; bypass_mode = "always"
+            })
+    } },
+    [pscustomobject]@{ Name = "publisher bypass authority"; Apply = {
+        param($value) $value | Add-Member `
+            -NotePropertyName current_user_can_bypass -NotePropertyValue "always"
+    } }
+)) {
+    $damaged = Copy-JsonObject $validRulesetProjection
+    & $mutation.Apply $damaged
+    Assert-Rejected {
+        Assert-PackageUpdateLabsFeedRulesetProjection `
+            -Ruleset $damaged -ExpectedRulesetId 20137239 `
+            -ExpectedUpdatedAtUtc "2026-07-31T17:15:58.7390000Z" `
+            -ExternallyAuditedFullPolicySha256 ("ab" * 32) `
+            -Phase "pre-publication" | Out-Null
+    } $mutation.Name
+}
+Assert-Rejected {
+    Assert-PackageUpdateLabsFeedRulesetProjection `
+        -Ruleset $validRulesetProjection -ExpectedRulesetId 20137239 `
+        -ExpectedUpdatedAtUtc "2026-07-31T17:15:58.7390000Z" `
+        -ExternallyAuditedFullPolicySha256 "ABCD" `
+        -Phase "pre-publication" | Out-Null
+} "noncanonical external audit hash"
 foreach ($token in @(
     'rusty\.quest\.package_update_labs_target\.v2',
     'MesmerPrism/Rusty-Kiosk',

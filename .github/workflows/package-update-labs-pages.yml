@@ -83,8 +83,11 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           EXPECTED_FEED_RULESET_ID: ${{ vars.PACKAGE_UPDATE_LABS_FEED_RULESET_ID }}
+          EXPECTED_FEED_RULESET_UPDATED_AT_UTC: ${{ vars.PACKAGE_UPDATE_LABS_FEED_RULESET_UPDATED_AT_UTC }}
+          EXTERNALLY_AUDITED_FEED_RULESET_POLICY_SHA256: ${{ vars.PACKAGE_UPDATE_LABS_FEED_RULESET_FULL_POLICY_SHA256 }}
         run: |
           $ErrorActionPreference = "Stop"
+          . .\source\tools\package_updater\FeedRulesetProjection.ps1
           if ($env:GITHUB_REPOSITORY -cne "MesmerPrism/rusty-quest" -or
             $env:FEED_BRANCH -cne "package-update-labs-feed") {
             throw "Labs feed authority repository or branch identity differs."
@@ -92,33 +95,22 @@ jobs:
           if ($env:EXPECTED_FEED_RULESET_ID -cnotmatch "^[1-9][0-9]{0,18}$") {
             throw "Expected feed ruleset ID is not a positive integer."
           }
-          $ruleset = & gh api (
+          $rulesetJson = & gh api (
             "repos/$env:GITHUB_REPOSITORY/rulesets/" +
             $env:EXPECTED_FEED_RULESET_ID
-          ) | ConvertFrom-Json
-          if ($LASTEXITCODE -ne 0 -or $null -eq $ruleset) {
+          )
+          if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($rulesetJson)) {
             throw "Could not read the exact Labs feed ruleset."
           }
-          $include = @($ruleset.conditions.ref_name.include)
-          $exclude = @($ruleset.conditions.ref_name.exclude)
-          $bypass = @($ruleset.bypass_actors)
-          $ruleTypes = @($ruleset.rules.type | Sort-Object)
-          $expectedRuleTypes = @(
-            "creation", "deletion", "non_fast_forward", "update"
-          ) | Sort-Object
-          if ([int64]$ruleset.id -ne [int64]$env:EXPECTED_FEED_RULESET_ID -or
-            $ruleset.target -cne "branch" -or
-            $ruleset.enforcement -cne "active" -or
-            $include.Count -ne 1 -or
-            $include[0] -cne "refs/heads/package-update-labs-feed" -or
-            $exclude.Count -ne 0 -or
-            $bypass.Count -ne 1 -or
-            $bypass[0].actor_type -cne "DeployKey" -or
-            $null -ne $bypass[0].actor_id -or
-            $bypass[0].bypass_mode -cne "always" -or
-            ($ruleTypes -join "`n") -cne ($expectedRuleTypes -join "`n")) {
-            throw "Labs feed ruleset does not prove its DeployKey-class continuity policy."
-          }
+          $ruleset = $rulesetJson | ConvertFrom-Json
+          $projection = Assert-PackageUpdateLabsFeedRulesetProjection `
+            -Ruleset $ruleset `
+            -ExpectedRulesetId ([int64]$env:EXPECTED_FEED_RULESET_ID) `
+            -ExpectedUpdatedAtUtc $env:EXPECTED_FEED_RULESET_UPDATED_AT_UTC `
+            -ExternallyAuditedFullPolicySha256 `
+              $env:EXTERNALLY_AUDITED_FEED_RULESET_POLICY_SHA256 `
+            -Phase "pre-publication"
+          $projection | ConvertTo-Json -Depth 8 -Compress
           $origin = (git -C feed remote get-url origin).Trim()
           if ($origin -cne "https://github.com/MesmerPrism/rusty-quest") {
             throw "Labs feed read origin is not the canonical public repository."
@@ -191,18 +183,42 @@ jobs:
       - name: Push through the dedicated protected feed writer
         shell: pwsh
         env:
+          GH_TOKEN: ${{ github.token }}
           FEED_DEPLOY_KEY_BASE64: ${{ secrets.PACKAGE_UPDATE_LABS_FEED_DEPLOY_KEY_BASE64 }}
           EXPECTED_FEED_DEPLOY_KEY_FINGERPRINT: ${{ vars.PACKAGE_UPDATE_LABS_FEED_DEPLOY_KEY_FINGERPRINT }}
           EXPECTED_FEED_COMMIT: ${{ steps.commit.outputs.feed_commit }}
+          EXPECTED_FEED_RULESET_ID: ${{ vars.PACKAGE_UPDATE_LABS_FEED_RULESET_ID }}
+          EXPECTED_FEED_RULESET_UPDATED_AT_UTC: ${{ vars.PACKAGE_UPDATE_LABS_FEED_RULESET_UPDATED_AT_UTC }}
+          EXTERNALLY_AUDITED_FEED_RULESET_POLICY_SHA256: ${{ vars.PACKAGE_UPDATE_LABS_FEED_RULESET_FULL_POLICY_SHA256 }}
         run: |
           $ErrorActionPreference = "Stop"
+          . .\source\tools\package_updater\FeedRulesetProjection.ps1
+          function Read-FeedRulesetProjection([string]$Phase) {
+            $rulesetJson = & gh api (
+              "repos/$env:GITHUB_REPOSITORY/rulesets/" +
+              $env:EXPECTED_FEED_RULESET_ID
+            )
+            if ($LASTEXITCODE -ne 0 -or
+              [string]::IsNullOrWhiteSpace($rulesetJson)) {
+              throw "$Phase feed-ruleset read failed."
+            }
+            Assert-PackageUpdateLabsFeedRulesetProjection `
+              -Ruleset ($rulesetJson | ConvertFrom-Json) `
+              -ExpectedRulesetId ([int64]$env:EXPECTED_FEED_RULESET_ID) `
+              -ExpectedUpdatedAtUtc $env:EXPECTED_FEED_RULESET_UPDATED_AT_UTC `
+              -ExternallyAuditedFullPolicySha256 `
+                $env:EXTERNALLY_AUDITED_FEED_RULESET_POLICY_SHA256 `
+              -Phase $Phase
+          }
           $keyPath = Join-Path $env:RUNNER_TEMP (
             "rusty-quest-feed-key-$([guid]::NewGuid().ToString('N'))"
           )
           $knownHostsPath = Join-Path $env:RUNNER_TEMP (
             "rusty-quest-known-hosts-$([guid]::NewGuid().ToString('N'))"
           )
+          $keyBytes = $null
           try {
+            $preKeyProjection = Read-FeedRulesetProjection "pre-key-use"
             if ([string]::IsNullOrWhiteSpace($env:FEED_DEPLOY_KEY_BASE64) -or
               $env:FEED_DEPLOY_KEY_BASE64 -cnotmatch
                 "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$") {
@@ -260,6 +276,13 @@ jobs:
               "ssh.exe -i `"$keyPath`" -o IdentitiesOnly=yes " +
               "-o BatchMode=yes -o StrictHostKeyChecking=yes " +
               "-o UserKnownHostsFile=`"$knownHostsPath`""
+            $prePushProjection = Read-FeedRulesetProjection "pre-push"
+            if ($preKeyProjection.visible_projection_sha256 -cne
+                $prePushProjection.visible_projection_sha256 -or
+              $preKeyProjection.updated_at_utc -cne
+                $prePushProjection.updated_at_utc) {
+              throw "Visible feed-ruleset projection drifted before the protected push."
+            }
             git -C feed push origin "HEAD:$env:FEED_BRANCH"
             if ($LASTEXITCODE -ne 0) {
               throw "Protected feed push lost its non-fast-forward publication race."
@@ -279,6 +302,14 @@ jobs:
               $remoteMatch.Groups["sha"].Value -cne $env:EXPECTED_FEED_COMMIT) {
               throw "Protected feed push did not read back the exact committed generation."
             }
+            $postPushProjection = Read-FeedRulesetProjection "post-push"
+            if ($prePushProjection.visible_projection_sha256 -cne
+                $postPushProjection.visible_projection_sha256 -or
+              $prePushProjection.updated_at_utc -cne
+                $postPushProjection.updated_at_utc) {
+              throw "Visible feed-ruleset projection drifted across the protected push."
+            }
+            $postPushProjection | ConvertTo-Json -Depth 8 -Compress
           } finally {
             Remove-Item Env:\GIT_SSH_COMMAND -ErrorAction SilentlyContinue
             Remove-Item Env:\FEED_DEPLOY_KEY_BASE64 -ErrorAction SilentlyContinue
