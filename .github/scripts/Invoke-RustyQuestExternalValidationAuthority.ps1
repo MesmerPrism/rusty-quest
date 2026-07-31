@@ -9,7 +9,7 @@ param(
     [Parameter(Mandatory = $true)][string]$EventName,
     [Parameter(Mandatory = $true)][string]$BaseCommit,
     [Parameter(Mandatory = $true)][string]$CandidateCommit,
-    [Parameter(Mandatory = $true)][string]$MergeCommit,
+    [AllowEmptyString()][string]$MergeCommit = "",
     [Parameter(Mandatory = $true)][string]$PullRequestNumber,
     [Parameter(Mandatory = $true)][string]$RunId,
     [Parameter(Mandatory = $true)][string]$RunAttempt,
@@ -217,7 +217,9 @@ Assert-RunnerIdentityValue $RunnerImageOs "Runner image OS"
 Assert-RunnerIdentityValue $RunnerImageVersion "Runner image version"
 Assert-ObjectId $BaseCommit "Base commit"
 Assert-ObjectId $CandidateCommit "Candidate commit"
-Assert-ObjectId $MergeCommit "Merge commit"
+if (-not [string]::IsNullOrEmpty($MergeCommit)) {
+    Assert-ObjectId $MergeCommit "Event merge commit"
+}
 Assert-Decimal $PullRequestNumber "Pull-request number"
 Assert-Decimal $RunId "Workflow run ID"
 Assert-Decimal $RunAttempt "Workflow run attempt"
@@ -335,19 +337,26 @@ $fetchedHead = (Invoke-BaseGit @(
 $fetchedMerge = (Invoke-BaseGit @(
     "rev-parse", "--verify", "$privateMerge`^{commit}"
 )).Trim()
-if ($fetchedHead -cne $CandidateCommit -or $fetchedMerge -cne $MergeCommit) {
-    throw "Fetched PR head or merge object differs from the event object."
+if ($fetchedHead -cne $CandidateCommit) {
+    throw "Fetched PR head differs from the event head object."
 }
+if (
+    -not [string]::IsNullOrEmpty($MergeCommit) -and
+    $fetchedMerge -cne $MergeCommit
+) {
+    throw "Fetched PR merge object differs from the nonempty event merge object."
+}
+$effectiveMergeCommit = $fetchedMerge
 $parents = @(
     ((Invoke-BaseGit @(
-        "rev-list", "--parents", "-n", "1", $MergeCommit
+        "rev-list", "--parents", "-n", "1", $effectiveMergeCommit
     )).Trim()).Split(
         " ", [StringSplitOptions]::RemoveEmptyEntries
     )
 )
 if (
     $parents.Count -ne 3 -or
-    $parents[0] -cne $MergeCommit -or
+    $parents[0] -cne $effectiveMergeCommit -or
     $parents[1] -cne $BaseCommit -or
     $parents[2] -cne $CandidateCommit
 ) {
@@ -480,7 +489,7 @@ try {
         }
         base = $generic.base
         candidate = $generic.candidate
-        merge = Get-GitIdentity $MergeCommit
+        merge = Get-GitIdentity $effectiveMergeCommit
         changed_paths = @($generic.changed_paths)
         protected_paths = @($generic.protected_paths)
         decision = [string]$generic.decision

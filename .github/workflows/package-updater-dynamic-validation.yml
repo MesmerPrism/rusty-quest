@@ -53,12 +53,15 @@ jobs:
           }
           foreach ($sha in @(
               $env:EVENT_BASE_SHA,
-              $env:EVENT_HEAD_SHA,
-              $env:EVENT_MERGE_SHA
+              $env:EVENT_HEAD_SHA
           )) {
             if ($sha -cnotmatch '^[0-9a-f]{40}$') {
               throw "Dynamic validation event contains a malformed SHA."
             }
+          }
+          if (-not [string]::IsNullOrEmpty($env:EVENT_MERGE_SHA) -and
+              $env:EVENT_MERGE_SHA -cnotmatch '^[0-9a-f]{40}$') {
+            throw "Dynamic validation event merge SHA is malformed."
           }
           if ($env:PR_NUMBER_EXACT -cnotmatch '^[1-9][0-9]{0,9}$') {
             throw "Dynamic validation PR number is malformed."
@@ -83,8 +86,12 @@ jobs:
             throw "Dynamic validation merge-object fetch failed."
           }
           $merge = (git rev-parse --verify "$privateMerge^{commit}").Trim()
-          if ($LASTEXITCODE -ne 0 -or $merge -cne $env:EVENT_MERGE_SHA) {
-            throw "Dynamic validation merge object differs from the event."
+          if ($LASTEXITCODE -ne 0) {
+            throw "Dynamic validation merge object could not be resolved."
+          }
+          if (-not [string]::IsNullOrEmpty($env:EVENT_MERGE_SHA) -and
+              $merge -cne $env:EVENT_MERGE_SHA) {
+            throw "Dynamic validation merge object differs from the nonempty event value."
           }
           $parents = @(
             ((git rev-list --parents -n 1 $merge) | Out-String).Trim().Split(

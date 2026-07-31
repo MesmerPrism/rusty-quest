@@ -15,8 +15,11 @@ Candidate files are never checked out, imported, built, restored, extracted,
 or executed.
 
 The static assessment binds the exact event base repository
-`MesmerPrism/rusty-quest`, base ref `main`, head repository identity, and exact
-base/head/merge commits and trees. It also records the observed Git and
+`MesmerPrism/rusty-quest`, base ref `main`, head repository identity, exact
+base/head commits, and the exact fetched GitHub PR merge commit and tree. When
+the event payload supplies a nonempty merge commit it must equal that fetched
+object; an empty nullable event value does not weaken the fetched merge-ref and
+exact-parent proof. The assessment also records the observed Git and
 PowerShell versions, executable byte lengths and SHA-256 digests, plus the
 hosted-runner OS, architecture, image OS, and image version. `windows-2025` is
 a moving hosted-runner label; there is no accepted current image allowlist.
