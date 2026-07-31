@@ -582,6 +582,7 @@ foreach ($token in @(
 }
 foreach ($token in @(
     'ValidateSet\("Check", "Status", "Cancel"\)',
+    '"io\.github\.mesmerprism\.rustyquest\.packageupdater\.alpha\.e2ecli"',
     'adb',
     'content call',
     'result_b64',
