@@ -283,7 +283,7 @@ jobs:
             }
             [IO.File]::WriteAllBytes($keyPath, $keyBytes)
             $currentIdentity = [Security.Principal.WindowsIdentity]::GetCurrent().Name
-            & icacls.exe $keyPath /inheritance:r /grant:r "$currentIdentity`:(R)" |
+            & icacls.exe $keyPath /inheritance:r /grant:r "$currentIdentity`:(R,W)" |
               Out-Null
             if ($LASTEXITCODE -ne 0) {
               throw "Could not restrict the Labs feed deploy key ACL."

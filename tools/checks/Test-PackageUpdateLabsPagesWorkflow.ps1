@@ -149,6 +149,7 @@ foreach ($token in @(
     'AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl',
     'ssh-keygen\.exe -y -P "" -f',
     'ssh-keygen\.exe -lf \$keyPath -E sha256',
+    'icacls\.exe \$keyPath /inheritance:r /grant:r "\$currentIdentity`:\(R,W\)"',
     'exact configured deploy key',
     '\[Array\]::Clear\(\$keyBytes, 0, \$keyBytes\.Length\)',
     'WriteAllBytes\(\$keyPath, \[byte\[\]\]::new\(\$length\)\)',
@@ -175,6 +176,7 @@ foreach ($forbidden in @(
     'cancel-in-progress: true', 'CNAME', 'repository_dispatch',
     'contents: write', 'persist-credentials: true',
     'git -C feed push https?://',
+    '"\$currentIdentity`:\(R\)"',
     'actions/(?:checkout|setup-java)@v[0-9]',
     'actions/(?:configure-pages|upload-pages-artifact|deploy-pages)@v[0-9]'
 )) {
@@ -260,9 +262,27 @@ $postPushProjectionIndex = $workflow.IndexOf(
     'Read-FeedRulesetProjection "post-push"',
     [StringComparison]::Ordinal
 )
+$keyWriteIndex = $workflow.IndexOf(
+    '[IO.File]::WriteAllBytes($keyPath, $keyBytes)',
+    [StringComparison]::Ordinal
+)
+$keyAclIndex = $workflow.IndexOf(
+    'icacls.exe $keyPath /inheritance:r /grant:r "$currentIdentity`:(R,W)"',
+    [StringComparison]::Ordinal
+)
+$keyReadIndex = $workflow.IndexOf(
+    'ssh-keygen.exe -y -P "" -f $keyPath',
+    [StringComparison]::Ordinal
+)
+$keyWipeIndex = $workflow.IndexOf(
+    '[IO.File]::WriteAllBytes($keyPath, [byte[]]::new($length))',
+    [StringComparison]::Ordinal
+)
 if ($protectionIndex -lt 0 -or $publicationIndex -lt 0 -or
     $commitIndex -lt 0 -or $secretIndex -lt 0 -or $pushIndex -lt 0 -or
     @($dependencyIndexes | Where-Object { $_ -lt 0 }).Count -ne 0 -or
+    $keyWriteIndex -lt 0 -or $keyAclIndex -lt 0 -or $keyReadIndex -lt 0 -or
+    $keyWipeIndex -lt 0 -or
     $preKeyProjectionIndex -lt 0 -or $prePushProjectionIndex -lt 0 -or
     $postPushProjectionIndex -lt 0 -or
     -not ($protectionIndex -lt $publicationIndex -and
@@ -275,6 +295,10 @@ if (-not ($preKeyProjectionIndex -lt $prePushProjectionIndex -and
     $prePushProjectionIndex -lt $pushIndex -and
     $pushIndex -lt $postPushProjectionIndex)) {
     throw 'Labs feed projection checks do not bracket the protected push.'
+}
+if (-not ($keyWriteIndex -lt $keyAclIndex -and
+    $keyAclIndex -lt $keyReadIndex -and $keyReadIndex -lt $keyWipeIndex)) {
+    throw 'Labs feed key ACL no longer permits bounded use followed by secure wiping.'
 }
 if (-not ($dependencyIndexes[0] -lt $dependencyIndexes[1] -and
     $dependencyIndexes[1] -lt $dependencyIndexes[2] -and
