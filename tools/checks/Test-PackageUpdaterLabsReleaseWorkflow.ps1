@@ -82,6 +82,8 @@ foreach ($token in @(
     '\$draftReadbackIdentity\.ReleaseId -ne \$draftIdentity\.ReleaseId',
     '\$promotedIdentity\.ReleaseId -ne \$draftIdentity\.ReleaseId',
     '\$publishedIdentity\.ReleaseId -ne \$draftIdentity\.ReleaseId',
+    '\[object\[\]\]\$remoteAssets = Invoke-RestMethod',
+    '\[object\[\]\]\$publishedAssets = Invoke-RestMethod',
     'Release asset IDs or content drifted across promotion',
     'draft = \$false',
     'Package Updater Labs became the latest release'
@@ -101,6 +103,14 @@ foreach ($forbidden in @(
     if ($workflow -match $forbidden) {
         throw "Package Updater Labs workflow contains forbidden route: $forbidden"
     }
+}
+$typedAssetReads = @([regex]::Matches(
+    $workflow,
+    '(?m)^\s*\[object\[\]\]\$(?:remoteAssets|publishedAssets) = Invoke-RestMethod `\s*$'
+))
+if ($typedAssetReads.Count -ne 2 -or $workflow -match
+    '(?ms)\$\w*Assets\s*=\s*@\(\s*Invoke-RestMethod\s+-Uri\s+"\$api/releases/') {
+    throw 'Release asset reads must flatten the REST array exactly once.'
 }
 $checkoutUses = @([regex]::Matches(
     $workflow,

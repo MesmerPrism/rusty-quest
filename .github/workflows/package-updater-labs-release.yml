@@ -473,10 +473,9 @@ jobs:
             Invoke-RestMethod -Method Post -Uri $uploadUri -Headers $headers `
               -InFile $asset.FullName -ContentType "application/octet-stream" | Out-Null
           }
-          $remoteAssets = @(
-            Invoke-RestMethod -Uri "$api/releases/$($draftIdentity.ReleaseId)/assets" `
-              -Headers $headers
-          )
+          [object[]]$remoteAssets = Invoke-RestMethod `
+            -Uri "$api/releases/$($draftIdentity.ReleaseId)/assets" `
+            -Headers $headers
           $draftAssets = @(Assert-ReleaseAssets `
             -RemoteAssets $remoteAssets -LocalAssets $assets `
             -Route $draftIdentity.DownloadRoute -Phase "Pre-promotion draft")
@@ -510,10 +509,9 @@ jobs:
           if ($publishedIdentity.ReleaseId -ne $draftIdentity.ReleaseId) {
             throw "Published tag route differs from the promoted release ID."
           }
-          $publishedAssets = @(
-            Invoke-RestMethod -Uri "$api/releases/$($publishedIdentity.ReleaseId)/assets" `
-              -Headers $headers
-          )
+          [object[]]$publishedAssets = Invoke-RestMethod `
+            -Uri "$api/releases/$($publishedIdentity.ReleaseId)/assets" `
+            -Headers $headers
           $liveAssets = @(Assert-ReleaseAssets `
             -RemoteAssets $publishedAssets -LocalAssets $assets `
             -Route $publishedIdentity.DownloadRoute -Phase "Post-promotion live")
