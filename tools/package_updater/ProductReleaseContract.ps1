@@ -31,7 +31,7 @@ function Read-PackageUpdaterBuildManifest {
     Assert-ExactJsonFields $manifest @(
         "schema", "source_revision", "package_name", "version_code",
         "version_name", "manifest_url", "trusted_key_id",
-        "expected_https_origin", "expected_package_name",
+        "expected_https_origin", "expected_site_base_path", "expected_package_name",
         "expected_rollout_ring", "expected_signer_sha256",
         "expected_updater_signer_sha256", "updater_signer_sha256",
         "native_verifier_sha256", "apk_sha256",
@@ -54,10 +54,11 @@ function Read-PackageUpdaterBuildManifest {
         $manifest.version_name -notmatch
             "^0\.1\.0(?:-alpha\.[1-9][0-9]*)?$" -or
         $manifest.manifest_url -ne
-            "$($manifest.expected_https_origin)/package-updates/rusty-kiosk/labs/current.json" -or
+            "$($manifest.expected_https_origin)/$($manifest.expected_site_base_path)/package-updates/rusty-kiosk/labs/current.json" -or
         $manifest.trusted_key_id -notmatch "^[A-Za-z0-9._-]{1,96}$" -or
         $manifest.expected_https_origin -notmatch
             "^https://[a-z0-9.-]+(?::[1-9][0-9]{0,4})?$" -or
+        $manifest.expected_site_base_path -ne "rusty-quest" -or
         $manifest.expected_package_name -notmatch
             "^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$" -or
         $manifest.expected_package_name -ne

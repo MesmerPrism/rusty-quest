@@ -25,6 +25,8 @@ pub const ROLLBACK_STATE_SCHEMA: &str = "rusty.quest.package_update_rollback_sta
 pub const SIGNATURE_ALGORITHM: &str = "Ed25519";
 /// Domain separator prepended to the JCS signed payload.
 pub const SIGNATURE_DOMAIN: &[u8] = b"rusty.quest.package_update_manifest.v1\0";
+/// Exact GitHub Pages project-site base path for the Labs update feed.
+pub const PACKAGE_UPDATE_LABS_SITE_BASE_PATH: &str = "rusty-quest";
 /// Largest integer exactly interoperable with the RFC 8785 / I-JSON number model.
 pub const MAX_JCS_SAFE_INTEGER: u64 = 9_007_199_254_740_991;
 
@@ -165,6 +167,8 @@ pub struct PackageUpdatePolicy {
     pub expected_channel: String,
     /// Canonical HTTPS origin, without path, query, fragment, or userinfo.
     pub expected_https_origin: String,
+    /// Exact canonical project-site base path packaged into the updater.
+    pub expected_site_base_path: String,
     /// Exact package identity this policy may update.
     pub expected_package_name: String,
     /// Exact rollout ring this device consumes.
@@ -192,6 +196,12 @@ pub struct PackageUpdatePolicy {
 impl PackageUpdatePolicy {
     fn validate(&self) -> Result<(), PackageUpdateError> {
         validate_https_origin(&self.expected_https_origin)?;
+        if self.expected_site_base_path != PACKAGE_UPDATE_LABS_SITE_BASE_PATH {
+            return Err(PackageUpdateError::new(
+                "invalid_site_base_path",
+                "policy site base path must be the exact canonical rusty-quest project path",
+            ));
+        }
         validate_token("channel", &self.expected_channel, 1, 32)?;
         validate_package_name(&self.expected_package_name)?;
         validate_token("rollout_ring", &self.expected_rollout_ring, 1, 32)?;
@@ -556,6 +566,28 @@ pub fn manifest_signing_bytes(
     Ok(signing)
 }
 
+/// Authenticates one envelope's strict schema, canonical signed payload, and
+/// Ed25519 signature without applying clock, installation, or rollback policy.
+/// This is intended for publisher-side comparison with an already committed
+/// immutable generation, including recovery after that generation expires.
+///
+/// # Errors
+///
+/// Returns a stable validation error when the envelope is malformed, its
+/// fields are noncanonical, its key is unknown, or its signature is invalid.
+pub fn authenticate_manifest(
+    envelope_json: &[u8],
+    keys: &ReleaseKeyRegistry,
+) -> Result<PackageUpdateManifestEnvelope, PackageUpdateError> {
+    let envelope: PackageUpdateManifestEnvelope =
+        serde_json::from_slice(envelope_json).map_err(|_| {
+            PackageUpdateError::new("malformed_envelope", "manifest envelope is malformed")
+        })?;
+    let canonical = canonical_signed_manifest(&envelope.signed)?;
+    authenticate_parsed_envelope(&envelope, &canonical, keys)?;
+    Ok(envelope)
+}
+
 /// Verifies and policy-admits one signed one-APK manifest without changing
 /// rollback state.
 #[must_use]
@@ -734,6 +766,52 @@ fn verify_parsed_envelope(
 ) -> Result<(), PackageUpdateError> {
     policy.validate()?;
     rollback_state.validate()?;
+    let canonical = canonical.ok_or_else(|| {
+        PackageUpdateError::new(
+            "canonicalization_failed",
+            "signed manifest could not be JCS canonicalized",
+        )
+    })?;
+    authenticate_parsed_envelope(envelope, canonical, keys)?;
+    if envelope.key_id != policy.expected_key_id {
+        return Err(PackageUpdateError::new(
+            "key_id_mismatch",
+            "manifest key id does not match the closed channel tuple",
+        ));
+    }
+    let key = keys.get(&envelope.key_id).ok_or_else(|| {
+        PackageUpdateError::new(
+            "unknown_release_key",
+            "manifest key id is absent from the known-key registry",
+        )
+    })?;
+    if encode_base64url(&key.to_bytes()) != policy.expected_public_key {
+        return Err(PackageUpdateError::new(
+            "public_key_mismatch",
+            "manifest verification key does not match the closed channel tuple",
+        ));
+    }
+    validate_time(&envelope.signed, policy, now_ms)?;
+    validate_policy(&envelope.signed, policy)?;
+    validate_sequence(
+        &envelope.signed,
+        rollback_state.checkpoint(
+            &envelope.signed.channel,
+            &envelope.signed.artifact.package_name,
+            &envelope.signed.rollout_ring,
+            &envelope.signed.artifact.signer_sha256,
+            &envelope.key_id,
+            &policy.expected_public_key,
+            &policy.expected_https_origin,
+        ),
+    )
+}
+
+fn authenticate_parsed_envelope(
+    envelope: &PackageUpdateManifestEnvelope,
+    canonical: &[u8],
+    keys: &ReleaseKeyRegistry,
+) -> Result<(), PackageUpdateError> {
     if envelope.schema != ENVELOPE_SCHEMA || envelope.signed.schema != MANIFEST_SCHEMA {
         return Err(PackageUpdateError::new(
             "wrong_schema",
@@ -755,18 +833,6 @@ fn verify_parsed_envelope(
             "manifest key id is absent from the known-key registry",
         )
     })?;
-    if envelope.key_id != policy.expected_key_id {
-        return Err(PackageUpdateError::new(
-            "key_id_mismatch",
-            "manifest key id does not match the closed channel tuple",
-        ));
-    }
-    if encode_base64url(&key.to_bytes()) != policy.expected_public_key {
-        return Err(PackageUpdateError::new(
-            "public_key_mismatch",
-            "manifest verification key does not match the closed channel tuple",
-        ));
-    }
     let signature_bytes = decode_base64url_canonical(&envelope.signature)?;
     let signature_array: [u8; 64] = signature_bytes.try_into().map_err(|_| {
         PackageUpdateError::new(
@@ -775,12 +841,6 @@ fn verify_parsed_envelope(
         )
     })?;
     let signature = Signature::from_bytes(&signature_array);
-    let canonical = canonical.ok_or_else(|| {
-        PackageUpdateError::new(
-            "canonicalization_failed",
-            "signed manifest could not be JCS canonicalized",
-        )
-    })?;
     let mut signing = Vec::with_capacity(SIGNATURE_DOMAIN.len() + canonical.len());
     signing.extend_from_slice(SIGNATURE_DOMAIN);
     signing.extend_from_slice(canonical);
@@ -791,20 +851,7 @@ fn verify_parsed_envelope(
         )
     })?;
 
-    validate_time(&envelope.signed, policy, now_ms)?;
-    validate_policy(&envelope.signed, policy)?;
-    validate_sequence(
-        &envelope.signed,
-        rollback_state.checkpoint(
-            &envelope.signed.channel,
-            &envelope.signed.artifact.package_name,
-            &envelope.signed.rollout_ring,
-            &envelope.signed.artifact.signer_sha256,
-            &envelope.key_id,
-            &policy.expected_public_key,
-            &policy.expected_https_origin,
-        ),
-    )
+    Ok(())
 }
 
 fn validate_manifest_fields(manifest: &PackageUpdateManifest) -> Result<(), PackageUpdateError> {
@@ -927,6 +974,22 @@ fn validate_policy(
         return Err(PackageUpdateError::new(
             "origin_mismatch",
             "APK URL does not use the exact configured HTTPS origin",
+        ));
+    }
+    let apk_digest = artifact.apk_sha256.strip_prefix("sha256:").ok_or_else(|| {
+        PackageUpdateError::new("invalid_sha256", "APK SHA-256 identity is not canonical")
+    })?;
+    let expected_apk_url = format!(
+        "{}/{}/package-updates/rusty-kiosk/labs/artifacts/sha256/{}/rusty-kiosk-{}.apk",
+        policy.expected_https_origin,
+        policy.expected_site_base_path,
+        apk_digest,
+        artifact.version_name,
+    );
+    if artifact.apk_url != expected_apk_url {
+        return Err(PackageUpdateError::new(
+            "apk_url_mismatch",
+            "APK URL does not match the exact content-addressed Labs artifact path",
         ));
     }
     Ok(())
@@ -1095,6 +1158,8 @@ fn validate_https_url(url: &str) -> Result<(), PackageUpdateError> {
         || !url.is_ascii()
         || url.contains('\\')
         || url.contains('#')
+        || url.contains('?')
+        || url.contains('%')
         || url
             .bytes()
             .any(|byte| byte.is_ascii_control() || byte == b' ')
@@ -1119,18 +1184,17 @@ fn validate_https_url(url: &str) -> Result<(), PackageUpdateError> {
             "APK URL must contain an absolute path before any query",
         ));
     }
-    let path_and_query = &after_scheme[path_start..];
-    let path_end = path_and_query.find('?').unwrap_or(path_and_query.len());
-    let path = &path_and_query[..path_end];
+    let path = &after_scheme[path_start..];
     if path == "/"
         || path.starts_with("//")
+        || path.contains("//")
         || path
             .split('/')
             .any(|segment| segment == "." || segment == "..")
     {
         return Err(PackageUpdateError::new(
             "invalid_apk_url",
-            "APK URL path must be nonempty and must not traverse",
+            "APK URL path must be canonical, nonempty, and must not traverse",
         ));
     }
     Ok(())
@@ -1358,7 +1422,7 @@ mod tests {
         serde_json::from_str(include_str!(
             "../../../fixtures/package-updater/policy.valid.json"
         ))
-        .expect("policy fixture")
+        .expect("closed-path policy fixture")
     }
 
     fn rollback() -> PackageUpdateRollbackState {
@@ -1382,7 +1446,24 @@ mod tests {
 
     fn envelope_bytes() -> Vec<u8> {
         let vector: serde_json::Value = serde_json::from_slice(FIXTURE).expect("vector JSON");
-        serde_json::to_vec(&vector["envelope"]).expect("envelope bytes")
+        serde_json::to_vec(&vector["envelope"]).expect("fixed envelope")
+    }
+
+    fn set_closed_apk_url(envelope: &mut serde_json::Value) {
+        let artifact = &mut envelope["signed"]["artifact"];
+        let digest = artifact["apk_sha256"]
+            .as_str()
+            .expect("APK digest")
+            .strip_prefix("sha256:")
+            .expect("APK digest prefix")
+            .to_owned();
+        let version_name = artifact["version_name"]
+            .as_str()
+            .expect("version name")
+            .to_owned();
+        artifact["apk_url"] = serde_json::json!(format!(
+            "https://updates.mesmerprism.com/rusty-quest/package-updates/rusty-kiosk/labs/artifacts/sha256/{digest}/rusty-kiosk-{version_name}.apk"
+        ));
     }
 
     fn resign(mut envelope: serde_json::Value) -> Vec<u8> {
@@ -1437,6 +1518,9 @@ mod tests {
                 .as_str()
                 .expect("manifest digest")
         );
+        let fixed_envelope = serde_json::to_vec(&vector["envelope"]).expect("fixed envelope");
+        authenticate_manifest(&fixed_envelope, &registry())
+            .expect("fixed-vector signature authentication");
 
         let admission = verify_manifest(
             &envelope_bytes(),
@@ -1454,6 +1538,62 @@ mod tests {
         ))
         .expect("fixed receipt");
         assert_eq!(admission.receipt, expected_receipt);
+    }
+
+    #[test]
+    fn publisher_authentication_accepts_expired_history_but_not_damaged_authority() {
+        let mut expired: serde_json::Value =
+            serde_json::from_slice(&envelope_bytes()).expect("envelope");
+        expired["signed"]["issued_at_ms"] = serde_json::json!(1_u64);
+        expired["signed"]["expires_at_ms"] = serde_json::json!(86_400_001_u64);
+        let expired = resign(expired);
+        let authenticated = authenticate_manifest(&expired, &registry())
+            .expect("expired signature remains history");
+        assert_eq!(authenticated.signed.expires_at_ms, 86_400_001);
+        let normal = verify_manifest(
+            &expired,
+            &registry(),
+            &policy(),
+            &rollback(),
+            2_000_000_000_000,
+        );
+        assert_eq!(normal.receipt.code, "manifest_expired");
+        assert!(normal.verified.is_none());
+
+        let mut bad_signature: serde_json::Value =
+            serde_json::from_slice(&expired).expect("expired envelope");
+        let mut signature =
+            decode_base64url_canonical(bad_signature["signature"].as_str().expect("signature"))
+                .expect("signature encoding");
+        signature[0] ^= 1;
+        bad_signature["signature"] = serde_json::json!(encode_base64url(&signature));
+        let error = authenticate_manifest(
+            &serde_json::to_vec(&bad_signature).expect("bad signature envelope"),
+            &registry(),
+        )
+        .expect_err("damaged signature must fail");
+        assert_eq!(error.code, "signature_verification_failed");
+
+        let mut unknown_key: serde_json::Value =
+            serde_json::from_slice(&expired).expect("expired envelope");
+        unknown_key["key_id"] = serde_json::json!("unknown-release-key");
+        let error = authenticate_manifest(
+            &serde_json::to_vec(&unknown_key).expect("unknown-key envelope"),
+            &registry(),
+        )
+        .expect_err("unknown key must fail");
+        assert_eq!(error.code, "unknown_release_key");
+
+        let mut noncanonical: serde_json::Value =
+            serde_json::from_slice(&expired).expect("expired envelope");
+        noncanonical["signed"]["artifact"]["apk_sha256"] =
+            serde_json::json!(format!("sha256:{}", "AA".repeat(32)));
+        let error = authenticate_manifest(
+            &serde_json::to_vec(&noncanonical).expect("noncanonical envelope"),
+            &registry(),
+        )
+        .expect_err("noncanonical signed fields must fail");
+        assert_eq!(error.code, "invalid_sha256");
     }
 
     #[test]
@@ -1602,7 +1742,13 @@ mod tests {
         for (path, bytes) in damaged {
             let fixture: serde_json::Value = serde_json::from_slice(bytes).expect(path);
             let expected = fixture["expected_code"].as_str().expect("expected code");
-            let envelope = serde_json::to_vec(&fixture["envelope"]).expect("envelope");
+            let envelope = if expected == "sequence_rollback" {
+                let mut envelope = fixture["envelope"].clone();
+                set_closed_apk_url(&mut envelope);
+                resign(envelope)
+            } else {
+                serde_json::to_vec(&fixture["envelope"]).expect("envelope")
+            };
             let admission = verify_manifest(
                 &envelope,
                 &registry(),
@@ -1800,13 +1946,94 @@ mod tests {
     }
 
     #[test]
-    fn url_requires_path_before_query_and_package_names_are_lowercase() {
+    fn url_requires_exact_content_addressed_labs_path() {
         let base: serde_json::Value = serde_json::from_slice(&envelope_bytes()).expect("envelope");
 
         let mut query_before_path = base.clone();
         query_before_path["signed"]["artifact"]["apk_url"] =
             serde_json::json!("https://updates.mesmerprism.com?next=/rusty-kiosk.apk");
         assert_rejected(&resign(query_before_path), "invalid_apk_url");
+
+        let exact_url = base["signed"]["artifact"]["apk_url"]
+            .as_str()
+            .expect("exact APK URL");
+        let damaged_urls = [
+            (
+                exact_url.replace("/rusty-quest/", "/rusty-quest-labs/"),
+                "wrong project-site base",
+            ),
+            (
+                exact_url.replace(
+                    &"1".repeat(64),
+                    "2222222222222222222222222222222222222222222222222222222222222222",
+                ),
+                "wrong content digest path",
+            ),
+            (
+                exact_url.replace(&"1".repeat(64), &"A".repeat(64)),
+                "digest path case drift",
+            ),
+            (
+                exact_url.replace("rusty-kiosk-0.1.1.apk", "rusty-kiosk-0.1.2.apk"),
+                "wrong version filename",
+            ),
+            (
+                exact_url.replace("/rusty-kiosk/", "/Rusty-Kiosk/"),
+                "path case drift",
+            ),
+            (
+                exact_url.replace("/artifacts/", "/downloads/"),
+                "wrong same-origin path family",
+            ),
+        ];
+        for (url, label) in damaged_urls {
+            let mut damaged = base.clone();
+            damaged["signed"]["artifact"]["apk_url"] = serde_json::json!(url);
+            let admission = verify_manifest(
+                &resign(damaged),
+                &registry(),
+                &policy(),
+                &rollback(),
+                2_000_000_000_000,
+            );
+            assert_eq!(admission.receipt.code, "apk_url_mismatch", "{label}");
+            assert!(admission.verified.is_none(), "{label}");
+        }
+
+        let mut version_case = base.clone();
+        version_case["signed"]["artifact"]["version_name"] = serde_json::json!("0.1.1-alpha.1");
+        version_case["signed"]["artifact"]["apk_url"] =
+            serde_json::json!(exact_url.replace("0.1.1.apk", "0.1.1-Alpha.1.apk"));
+        assert_rejected(&resign(version_case), "apk_url_mismatch");
+
+        let mut query = base.clone();
+        query["signed"]["artifact"]["apk_url"] =
+            serde_json::json!(format!("{exact_url}?download=1"));
+        assert_rejected(&resign(query), "invalid_apk_url");
+
+        let mut encoded_path = base.clone();
+        encoded_path["signed"]["artifact"]["apk_url"] =
+            serde_json::json!(exact_url.replace("rusty-quest", "%72usty-quest"));
+        assert_rejected(&resign(encoded_path), "invalid_apk_url");
+
+        let mut invalid_site_policy = policy();
+        invalid_site_policy.expected_site_base_path = "Rusty-Quest".to_owned();
+        let admission = verify_manifest(
+            &envelope_bytes(),
+            &registry(),
+            &invalid_site_policy,
+            &rollback(),
+            2_000_000_000_000,
+        );
+        assert_eq!(admission.receipt.code, "invalid_site_base_path");
+        assert!(admission.verified.is_none());
+
+        let mut missing_site_base = serde_json::to_value(policy()).expect("policy JSON");
+        missing_site_base
+            .as_object_mut()
+            .expect("policy object")
+            .remove("expected_site_base_path");
+        assert!(serde_json::from_value::<PackageUpdatePolicy>(missing_site_base).is_err());
 
         let mut uppercase_package = base;
         uppercase_package["signed"]["artifact"]["package_name"] =

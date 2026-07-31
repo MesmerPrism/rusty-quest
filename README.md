@@ -30,6 +30,23 @@ host for repository validation, builds, launch wrappers, and child scripts.
 Windows PowerShell 5.1 may run the bootstrap detector in
 `tools/Test-PowerShellHost.ps1`, but it is not a supported workflow host.
 
+Validation-authority changes use the bounded trust-root route in
+[External Validation Authority](docs/EXTERNAL_VALIDATION_AUTHORITY.md). A
+base-owned `pull_request_target` workflow inspects candidate Git objects with a
+pinned external verifier while never checking out or executing candidate code.
+Its typed result is static admission only. A separate credential-free
+`pull_request` workflow checks out the exact candidate head and runs the
+package-updater formatting, Rust, and Android static gates with pinned Java and
+Rust toolchains. That pass is test evidence only, not effect, acceptance,
+release, or publication authority.
+Repository settings can bind `Static admission` to the GitHub Actions App but
+cannot bind the base-owned workflow path. The exact settings contract therefore
+requires a same-name/same-App adversarial PR probe, both completion orderings,
+API run/check inventory, and `mergeStateStatus=BLOCKED` before candidate or
+release work proceeds. The live bootstrap policy remains approval-free until
+candidate `I` is sealed and independently audited, then may carry only its one
+exact bootstrap approval.
+
 This repo treats ADB and Android properties as transports. They are generated
 from validated profiles and produce dry-run/readback evidence rather than
 becoming hand-written launch authority.
@@ -126,6 +143,11 @@ The normative state contract is
 The target policy is explicitly Labs-only under continuous APK signer identity:
 the updater accepts only `io.github.mesmerprism.rustykiosk.labs`, so stable and
 Labs can coexist and Labs removal leaves stable unchanged.
+The public feed is Quest-owned project Pages at
+`https://mesmerprism.github.io/rusty-quest/package-updates/rusty-kiosk/labs/current.json`.
+It retains a 24-hour signed validity window and refreshes the same version only
+when the prior signed envelope and byte-for-byte APK identity match; refreshes
+advance sequence but never relax device installation rollback.
 The updater product release is independently tag-bound:
 `package-updater-v0.1.0-alpha.N` identifies an alpha-maturity Labs prerelease of
 `io.github.mesmerprism.rustyquest.packageupdater.labs`. Repository-owned

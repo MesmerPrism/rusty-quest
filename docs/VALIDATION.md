@@ -32,6 +32,44 @@ Validate the host contract before a focused or aggregate run:
 pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-PowerShellHost.ps1 -SelfTest
 ```
 
+When a pull request changes `.github/` or a package-updater validation or
+publication authority path, use
+[`EXTERNAL_VALIDATION_AUTHORITY.md`](EXTERNAL_VALIDATION_AUTHORITY.md). Run the
+repository-owned policy self-test and static adapter/workflow check before any
+dynamic gate:
+
+```powershell
+pwsh -NoProfile -NonInteractive -ExecutionPolicy Bypass `
+  -File .\tools\checks\Test-ExternalValidationAuthorityPolicySelfTest.ps1 `
+  -RepoRoot .
+pwsh -NoProfile -NonInteractive -ExecutionPolicy Bypass `
+  -File .\tools\checks\Test-ExternalValidationAuthorityStatic.ps1 `
+  -RepoRoot .
+```
+
+These checks and the base-owned GitHub assessment execute no candidate code and
+claim neither dynamic execution nor publication authority. The assessment
+binds the exact `MesmerPrism/rusty-quest`/`main` base, event head repository,
+commit topology, Git and PowerShell executable identities, and observed runner
+image. Because no hosted-image allowlist is accepted, runner drift is recorded
+as `observed-unpinned` rather than rejected or described as pinned. The
+repository-settings contract honestly records that a user-owned repository can
+bind only the `Static admission` context and GitHub Actions App, not the
+base-owned workflow path. Before candidate or release work, the mandatory
+same-name/same-App adversarial PR must prove both completion orderings remain
+`BLOCKED`, with exact API workflow/check-run inventory and no bypass. Otherwise
+candidate and deployment environments remain held. The separate
+credential-free `pull_request` workflow executes the exact candidate head on
+`windows-2025`, first verifies its event base/head/merge topology, then uses
+Temurin `17.0.14+7` and Rust `1.96.0` to run
+`cargo fmt --all --check`, the locked package-updater Rust tests, and
+`Test-PackageUpdaterAndroidStatic.ps1`. Its pass is non-authoritative test
+evidence only. Before the final bootstrap commit, live approvals remain empty.
+After immutable `I` is independently audited, the bootstrap may carry exactly
+one approval bound to `I`; validate that insertion with
+`-ExpectedBootstrapApprovalAncestor I` before refreshing the implementation
+branch while retaining `I` as an ancestor.
+
 For the attended package updater, run the Rust contract and Android authority
 gates before any build or headset work:
 
@@ -46,7 +84,9 @@ pwsh -NoProfile -ExecutionPolicy Bypass -File `
 pwsh -NoProfile -ExecutionPolicy Bypass -File `
   .\tools\checks\Test-PackageUpdaterProductReleaseContract.ps1
 pwsh -NoProfile -ExecutionPolicy Bypass -File `
-  .\tools\checks\Test-PackageUpdaterAlphaReleaseWorkflow.ps1 -RepoRoot .
+  .\tools\checks\Test-PackageUpdaterLabsReleaseWorkflow.ps1 -RepoRoot .
+pwsh -NoProfile -ExecutionPolicy Bypass -File `
+  .\tools\checks\Test-PackageUpdateLabsPagesWorkflow.ps1 -RepoRoot .
 ```
 
 The Rust gate covers signature/domain stability, exact policy dimensions,
@@ -60,7 +100,8 @@ full-tuple rollback schema, cross-channel damage matrix, deterministic
 publication receipt, isolated storage, and absence of release E2E components.
 Publisher self-tests cover interruption, stale/concurrent CAS, downgrade,
 tuple drift, fresh-client assertions, exact 24-hour validity, APK identity,
-and single-signer negatives. Artifact self-tests cover canonical alpha pointer
+single-signer negatives, and equal-version refresh identity drift. Artifact
+self-tests cover the exact Rusty Quest project-Pages prefix and canonical Labs pointer
 URLs and final merged-manifest permission/component/E2E leakage. Product
 release self-tests cover the exact alpha tag and installation identity,
 source revision/tree, tag-derived monotonic Android version, protected updater
@@ -70,6 +111,10 @@ protected signing/policy inputs, draft-before-promotion, exact tag readback
 both before draft creation and immediately before promotion, prerelease and
 non-latest state, exact four-asset remote readback before and after promotion,
 and no overwrite, latest, or delete route.
+The Pages workflow gate additionally requires a default-branch publisher,
+serialized non-rewriting feed history, an exact Kiosk Labs-only deployment
+closure, pinned Kiosk release assets, signed equal-version refreshes, and
+deployment of the exact committed feed identity.
 Release APK assembly additionally
 requires all release signing values and an Agent Board reservation for the
 long build. Headset validation must reserve the exact `quest:<serial>`, snapshot

@@ -1,0 +1,35 @@
+{
+  "schema": "rusty.quest.package_update_labs_target.v2",
+  "repository": "MesmerPrism/Rusty-Kiosk",
+  "release_id": 363205415,
+  "release_api_url": "https://api.github.com/repos/MesmerPrism/Rusty-Kiosk/releases/363205415",
+  "release_html_url": "https://github.com/MesmerPrism/Rusty-Kiosk/releases/tag/v0.6.6-alpha.6",
+  "release_tag": "v0.6.6-alpha.6",
+  "source_revision": "132b45325ec082f6ade9c5824d2c510194eccb22",
+  "source_tree": "638bf5157cbbdab84ddc11d01bf2c1180c5709d0",
+  "package_name": "io.github.mesmerprism.rustykiosk.labs",
+  "version_code": 60606,
+  "version_name": "0.6.6-alpha.6",
+  "signer_sha256": "sha256:423d20004c79dd140c692e31aa80369cd3677b1ae2688dbd75011a4c83a0f1fb",
+  "apk": {
+    "id": 496913097,
+    "name": "rusty-kiosk.apk",
+    "browser_download_url": "https://github.com/MesmerPrism/Rusty-Kiosk/releases/download/v0.6.6-alpha.6/rusty-kiosk.apk",
+    "sha256": "sha256:be7856e3ad91150747e640410d53087f81dd1466dc41a8e95df2b0a1275408bd",
+    "bytes": 87062353
+  },
+  "owner_metadata": {
+    "id": 496913007,
+    "name": "rusty-kiosk-labs-owner-release.json",
+    "browser_download_url": "https://github.com/MesmerPrism/Rusty-Kiosk/releases/download/v0.6.6-alpha.6/rusty-kiosk-labs-owner-release.json",
+    "sha256": "sha256:a249fb9195270ad9bd5295503c88331e9977c9748bbd5c31c18b76640c3d5755",
+    "bytes": 1319
+  },
+  "bundle_manifest": {
+    "id": 496913009,
+    "name": "bundle-manifest.json",
+    "browser_download_url": "https://github.com/MesmerPrism/Rusty-Kiosk/releases/download/v0.6.6-alpha.6/bundle-manifest.json",
+    "sha256": "sha256:316ee5ac819571db242d4d2ffd083ffcb02837d82af9e5ef678821e40aa44761",
+    "bytes": 1642
+  }
+}

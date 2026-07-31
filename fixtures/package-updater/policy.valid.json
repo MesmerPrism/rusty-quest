@@ -1,6 +1,7 @@
 {
   "expected_channel": "alpha",
   "expected_https_origin": "https://updates.mesmerprism.com",
+  "expected_site_base_path": "rusty-quest",
   "expected_package_name": "io.github.mesmerprism.rustykiosk",
   "expected_rollout_ring": "alpha",
   "expected_signer_sha256": "sha256:23bb7bb81143a81f216118af35960aaee2468e9880b94e07574cac0a9239dcf6",

@@ -25,9 +25,10 @@ try {
         package_name = "io.github.mesmerprism.rustyquest.packageupdater.labs"
         version_code = 7
         version_name = "0.1.0-alpha.7"
-        manifest_url = "https://updates.example.test/package-updates/rusty-kiosk/labs/current.json"
+        manifest_url = "https://updates.example.test/rusty-quest/package-updates/rusty-kiosk/labs/current.json"
         trusted_key_id = "release-a"
         expected_https_origin = "https://updates.example.test"
+        expected_site_base_path = "rusty-quest"
         expected_package_name = "io.github.mesmerprism.rustykiosk.labs"
         expected_rollout_ring = "labs"
         expected_signer_sha256 = "sha256:" + ("2" * 64)

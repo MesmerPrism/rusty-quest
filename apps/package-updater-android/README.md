@@ -31,6 +31,7 @@ RUSTY_QUEST_PACKAGE_UPDATER_MANIFEST_URL
 RUSTY_QUEST_PACKAGE_UPDATER_TRUSTED_KEY_ID
 RUSTY_QUEST_PACKAGE_UPDATER_TRUSTED_PUBLIC_KEY_BASE64
 RUSTY_QUEST_PACKAGE_UPDATER_EXPECTED_HTTPS_ORIGIN
+RUSTY_QUEST_PACKAGE_UPDATER_EXPECTED_SITE_BASE_PATH
 RUSTY_QUEST_PACKAGE_UPDATER_EXPECTED_PACKAGE_NAME
 RUSTY_QUEST_PACKAGE_UPDATER_EXPECTED_ROLLOUT_RING
 RUSTY_QUEST_PACKAGE_UPDATER_EXPECTED_SIGNER_SHA256
@@ -49,7 +50,8 @@ network, storage, package, or installer authority.
 ## Signed envelope
 
 The configured endpoint returns a strict
-`rusty.quest.package_update_channel_pointer.v1` binding the closed tuple and
+`rusty.quest.package_update_channel_pointer.v2` binding the closed tuple,
+the exact `rusty-quest` project-site base, and
 SHA-256 of an envelope in an immutable `generations/<id>/` directory. The
 client rejects pointer drift and fetches only that exact generation. The
 generation contains the Rust-owned
@@ -65,7 +67,8 @@ The signed member is the strict, one-APK
 unknown/missing keys, non-JCS-safe numbers, wrong key ids or algorithms,
 invalid signatures, package/ring/signer/origin policy mismatches, rollback
 sequences or versions, expired or excessively long-lived manifests,
-non-HTTPS URLs, and invalid APK hashes/signers/sizes.
+non-HTTPS URLs, noncanonical or off-prefix project URLs, and invalid APK
+hashes/signers/sizes.
 
 Verified APKs are downloaded with redirects disabled and bounded time/size into
 the app's no-backup private directory. Before installation, Android's archive
@@ -162,9 +165,13 @@ promotion, and keeps the release non-latest. Tag sequence `N` is emitted as
 Android version code `N` and version name `0.1.0-alpha.N`.
 `tools/Publish-PackageUpdateManifest.ps1` first inspects the exact Kiosk APK
 with caller-pinned Android build tools, then stages an immutable generation
-containing the APK, envelope, and receipt. It requires an explicit absent
+containing the envelope and receipt while storing APK bytes once under their
+content-addressed artifact path. It requires an explicit absent
 assertion or exact prior pointer/envelope hashes, rejects tuple drift and
-downgrade, and atomically updates `current.json` last. The signing seed is
+downgrade, and atomically updates `current.json` last. An explicit refresh
+authenticates the prior signed envelope and permits an equal version only when
+every immutable APK identity field is unchanged; installed clients still
+reject equal-version reinstall. The signing seed is
 supplied only through
 `RUSTY_QUEST_UPDATE_SIGNING_SEED_BASE64URL`. Neither wrapper copies signing
 material into an output directory. Public receipts retain only bounded Android

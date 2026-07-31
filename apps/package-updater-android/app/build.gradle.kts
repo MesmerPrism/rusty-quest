@@ -10,7 +10,7 @@ fun buildConfigString(value: String): String =
 
 val updateManifestUrl =
   providers.environmentVariable("RUSTY_QUEST_PACKAGE_UPDATER_MANIFEST_URL")
-    .orElse("https://mesmerprism.com/package-updates/rusty-kiosk/labs/current.json")
+    .orElse("https://mesmerprism.github.io/rusty-quest/package-updates/rusty-kiosk/labs/current.json")
     .get()
 val trustedKeyId =
   providers.environmentVariable("RUSTY_QUEST_PACKAGE_UPDATER_TRUSTED_KEY_ID")
@@ -22,7 +22,11 @@ val trustedPublicKeyBase64 =
     .get()
 val expectedHttpsOrigin =
   providers.environmentVariable("RUSTY_QUEST_PACKAGE_UPDATER_EXPECTED_HTTPS_ORIGIN")
-    .orElse("https://mesmerprism.com")
+    .orElse("https://mesmerprism.github.io")
+    .get()
+val expectedSiteBasePath =
+  providers.environmentVariable("RUSTY_QUEST_PACKAGE_UPDATER_EXPECTED_SITE_BASE_PATH")
+    .orElse("rusty-quest")
     .get()
 val expectedPackageName =
   providers.environmentVariable("RUSTY_QUEST_PACKAGE_UPDATER_EXPECTED_PACKAGE_NAME")
@@ -50,15 +54,19 @@ val updateChannel = "labs"
 require(expectedHttpsOrigin.matches(Regex("https://[a-z0-9.-]+(?::[1-9][0-9]{0,4})?"))) {
   "RUSTY_QUEST_PACKAGE_UPDATER_EXPECTED_HTTPS_ORIGIN must be a canonical HTTPS origin"
 }
+require(expectedSiteBasePath == "rusty-quest") {
+  "RUSTY_QUEST_PACKAGE_UPDATER_EXPECTED_SITE_BASE_PATH must be the exact project site"
+}
 val parsedManifestUri = URI(updateManifestUrl)
 require(
   updateManifestUrl ==
-    "$expectedHttpsOrigin/package-updates/rusty-kiosk/labs/current.json" &&
+    "$expectedHttpsOrigin/$expectedSiteBasePath/package-updates/rusty-kiosk/labs/current.json" &&
     parsedManifestUri.scheme == "https" &&
     parsedManifestUri.rawUserInfo == null &&
     parsedManifestUri.rawQuery == null &&
     parsedManifestUri.rawFragment == null &&
-    parsedManifestUri.rawPath == "/package-updates/rusty-kiosk/labs/current.json" &&
+    parsedManifestUri.rawPath ==
+      "/$expectedSiteBasePath/package-updates/rusty-kiosk/labs/current.json" &&
     !updateManifestUrl.contains("%") &&
     !parsedManifestUri.rawPath.contains("..") &&
     !parsedManifestUri.rawPath.contains("//"),
@@ -220,6 +228,11 @@ android {
       "String",
       "EXPECTED_HTTPS_ORIGIN",
       buildConfigString(expectedHttpsOrigin),
+    )
+    buildConfigField(
+      "String",
+      "EXPECTED_SITE_BASE_PATH",
+      buildConfigString(expectedSiteBasePath),
     )
     buildConfigField(
       "String",

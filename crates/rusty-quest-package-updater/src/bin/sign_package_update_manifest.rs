@@ -11,7 +11,8 @@ use rusty_quest_package_updater::{
     decode_base64url_canonical, encode_base64url, manifest_signing_bytes, verify_manifest,
     PackageUpdateArtifact, PackageUpdateDecision, PackageUpdateManifest,
     PackageUpdateManifestEnvelope, PackageUpdatePolicy, PackageUpdateRollbackState,
-    ReleaseKeyRecord, ReleaseKeyRegistry, ENVELOPE_SCHEMA, MANIFEST_SCHEMA, SIGNATURE_ALGORITHM,
+    ReleaseKeyRecord, ReleaseKeyRegistry, ENVELOPE_SCHEMA, MANIFEST_SCHEMA,
+    PACKAGE_UPDATE_LABS_SITE_BASE_PATH, SIGNATURE_ALGORITHM,
 };
 
 const SEED_ENV: &str = "RUSTY_QUEST_UPDATE_SIGNING_SEED_BASE64URL";
@@ -126,6 +127,7 @@ fn build_and_self_verify(args: &SignerArgs, seed: &[u8; 32]) -> Result<Vec<u8>, 
     let policy = PackageUpdatePolicy {
         expected_channel: args.channel.clone(),
         expected_https_origin: args.expected_https_origin.clone(),
+        expected_site_base_path: PACKAGE_UPDATE_LABS_SITE_BASE_PATH.to_owned(),
         expected_package_name: args.package_name.clone(),
         expected_rollout_ring: args.rollout_ring.clone(),
         expected_signer_sha256: args.signer_sha256.clone(),
@@ -228,7 +230,7 @@ Required options:
   --package <android.package>
   --ring <rollout-ring>
   --origin <https://canonical-origin>
-  --apk-url <https://exact-origin/path.apk>
+  --apk-url <origin/rusty-quest/package-updates/rusty-kiosk/labs/artifacts/sha256/digest/rusty-kiosk-version.apk>
   --signer-sha256 <sha256:lowercase-hex>
   --apk-sha256 <sha256:lowercase-hex>
   --apk-size <bytes>
@@ -284,7 +286,7 @@ mod tests {
             "--origin",
             "https://updates.mesmerprism.com",
             "--apk-url",
-            "https://updates.mesmerprism.com/rusty-kiosk/alpha/app.apk",
+            "https://updates.mesmerprism.com/rusty-quest/package-updates/rusty-kiosk/labs/artifacts/sha256/1111111111111111111111111111111111111111111111111111111111111111/rusty-kiosk-0.1.1.apk",
             "--signer-sha256",
             "sha256:23bb7bb81143a81f216118af35960aaee2468e9880b94e07574cac0a9239dcf6",
             "--apk-sha256",
@@ -371,10 +373,46 @@ mod tests {
             .expect_err("origin confusion")
             .contains("origin_mismatch"));
 
+        let mut path = parse_args(arguments()).expect("arguments");
+        path.apk_url = "https://updates.mesmerprism.com/rusty-quest/package-updates/rusty-kiosk/labs/rusty-kiosk-0.1.1.apk".to_owned();
+        assert!(build_and_self_verify(&path, &[7_u8; 32])
+            .expect_err("same-origin path confusion")
+            .contains("apk_url_mismatch"));
+
         let mut expiry = parse_args(arguments()).expect("arguments");
         expiry.expires_at_ms = expiry.issued_at_ms;
         assert!(build_and_self_verify(&expiry, &[7_u8; 32])
             .expect_err("invalid expiry")
             .contains("later than"));
+    }
+
+    #[test]
+    fn self_verification_rejects_every_noncanonical_labs_apk_route() {
+        let exact = parse_args(arguments()).expect("arguments").apk_url;
+        let damaged = [
+            exact.replace("/rusty-quest/", "/rusty-quest-labs/"),
+            exact.replace("/rusty-quest/", "/Rusty-Quest/"),
+            exact.replace("/rusty-quest/", "/%72usty-quest/"),
+            exact.replace(
+                "/1111111111111111111111111111111111111111111111111111111111111111/",
+                "/2222222222222222222222222222222222222222222222222222222222222222/",
+            ),
+            exact.replace("rusty-kiosk-0.1.1.apk", "rusty-kiosk-0.1.2.apk"),
+            format!("{exact}?mirror=1"),
+            format!("{exact}#fragment"),
+        ];
+
+        for apk_url in damaged {
+            let mut args = parse_args(arguments()).expect("arguments");
+            args.apk_url = apk_url.clone();
+            let error = match build_and_self_verify(&args, &[7_u8; 32]) {
+                Ok(_) => panic!("noncanonical route unexpectedly accepted: {apk_url}"),
+                Err(error) => error,
+            };
+            assert!(
+                error.contains("apk_url_mismatch") || error.contains("invalid_apk_url"),
+                "unexpected rejection for {apk_url}: {error}"
+            );
+        }
     }
 }

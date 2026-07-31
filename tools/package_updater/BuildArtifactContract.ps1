@@ -1,12 +1,17 @@
 Set-StrictMode -Version Latest
 
 function Assert-PackageUpdaterManifestUrl {
-    param([string]$ManifestUrl, [string]$ExpectedHttpsOrigin)
+    param(
+        [string]$ManifestUrl,
+        [string]$ExpectedHttpsOrigin,
+        [string]$ExpectedSiteBasePath
+    )
     if ($ExpectedHttpsOrigin -notmatch
             "^https://[a-z0-9.-]+(?::[1-9][0-9]{0,4})?$" -or
+        $ExpectedSiteBasePath -ne "rusty-quest" -or
         $ManifestUrl -match "%|\\\\|//package-updates|[?#]" -or
         $ManifestUrl -ne
-            "$ExpectedHttpsOrigin/package-updates/rusty-kiosk/labs/current.json") {
+            "$ExpectedHttpsOrigin/$ExpectedSiteBasePath/package-updates/rusty-kiosk/labs/current.json") {
         throw "Manifest URL must be the canonical Labs pointer under the exact origin."
     }
     try {
@@ -18,7 +23,8 @@ function Assert-PackageUpdaterManifestUrl {
         -not [string]::IsNullOrEmpty($uri.UserInfo) -or
         -not [string]::IsNullOrEmpty($uri.Query) -or
         -not [string]::IsNullOrEmpty($uri.Fragment) -or
-        $uri.AbsolutePath -ne "/package-updates/rusty-kiosk/labs/current.json" -or
+        $uri.AbsolutePath -ne
+            "/$ExpectedSiteBasePath/package-updates/rusty-kiosk/labs/current.json" -or
         $uri.AbsolutePath.Contains("..") -or
         $uri.AbsolutePath.Contains("//")) {
         throw "Manifest URL contains an ambiguous or forbidden URI component."

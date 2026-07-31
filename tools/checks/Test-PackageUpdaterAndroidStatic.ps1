@@ -61,6 +61,8 @@ $paths = [ordered]@{
         "tools\checks\Test-PackageUpdaterProductReleaseContract.ps1"
     alpha_release_workflow_test = Join-Path $RepoRoot `
         "tools\checks\Test-PackageUpdaterLabsReleaseWorkflow.ps1"
+    pages_workflow_test = Join-Path $RepoRoot `
+        "tools\checks\Test-PackageUpdateLabsPagesWorkflow.ps1"
     product_release_contract = Join-Path $RepoRoot `
         "tools\package_updater\ProductReleaseContract.ps1"
     product_release_generator = Join-Path $RepoRoot `
@@ -69,6 +71,14 @@ $paths = [ordered]@{
         "tools\Test-PackageUpdaterProductReleaseMetadata.ps1"
     alpha_release_workflow = Join-Path $RepoRoot `
         ".github\workflows\package-updater-labs-release.yml"
+    pages_workflow = Join-Path $RepoRoot `
+        ".github\workflows\package-update-labs-pages.yml"
+    pages_publisher = Join-Path $RepoRoot `
+        "tools\Publish-PackageUpdateLabsPages.ps1"
+    pages_target = Join-Path $RepoRoot `
+        "distribution\package-update-labs-target.json"
+    manifest_authenticator = Join-Path $RepoRoot `
+        "crates\rusty-quest-package-updater\src\bin\authenticate_package_update_manifest.rs"
 }
 foreach ($entry in $paths.GetEnumerator()) {
     if (-not (Test-Path -LiteralPath $entry.Value)) {
@@ -211,6 +221,7 @@ foreach ($token in @(
     'RUSTY_QUEST_PACKAGE_UPDATER_TRUSTED_KEY_ID',
     'RUSTY_QUEST_PACKAGE_UPDATER_TRUSTED_PUBLIC_KEY_BASE64',
     'RUSTY_QUEST_PACKAGE_UPDATER_EXPECTED_HTTPS_ORIGIN',
+    'RUSTY_QUEST_PACKAGE_UPDATER_EXPECTED_SITE_BASE_PATH',
     'RUSTY_QUEST_PACKAGE_UPDATER_EXPECTED_PACKAGE_NAME',
     'RUSTY_QUEST_PACKAGE_UPDATER_EXPECTED_ROLLOUT_RING',
     'RUSTY_QUEST_PACKAGE_UPDATER_EXPECTED_SIGNER_SHA256',
@@ -223,6 +234,7 @@ foreach ($token in @(
     'buildConfigField\("String", "UPDATE_MANIFEST_URL"',
     'buildConfigField\(\s*"String",\s*"TRUSTED_PUBLIC_KEY_BASE64"',
     'buildConfigField\(\s*"String",\s*"EXPECTED_HTTPS_ORIGIN"',
+    'buildConfigField\(\s*"String",\s*"EXPECTED_SITE_BASE_PATH"',
     'buildConfigField\(\s*"String",\s*"EXPECTED_PACKAGE_NAME"',
     'buildConfigField\(\s*"String",\s*"EXPECTED_ROLLOUT_RING"',
     'buildConfigField\(\s*"String",\s*"EXPECTED_SIGNER_SHA256"',
@@ -380,10 +392,11 @@ foreach ($networkSource in @($manifestClient, $stager)) {
     }
 }
 foreach ($token in @(
-    'rusty\.quest\.package_update_channel_pointer\.v1',
+    'rusty\.quest\.package_update_channel_pointer\.v2',
     'BuildConfig\.UPDATE_CHANNEL',
     'BuildConfig\.TRUSTED_KEY_ID',
     'BuildConfig\.TRUSTED_PUBLIC_KEY_BASE64',
+    'BuildConfig\.EXPECTED_SITE_BASE_PATH',
     'channel_pointer_envelope_hash_mismatch',
     'channel_pointer_plan_mismatch',
     '/package-updates/rusty-kiosk/labs/generations/'
@@ -699,12 +712,15 @@ foreach ($token in @(
     'ExpectedPriorPointerSha256',
     'ExpectedPriorEnvelopeSha256',
     'ExpectPriorAbsent',
+    'Refresh',
+    'authenticate_package_update_manifest',
+    'artifacts\\sha256',
     'Assert-PackageUpdatePointerUnchanged',
     'aapt2\.exe',
     'apksigner\.bat',
     '\[System\.IO\.File\]::Move\(',
     'current\.json',
-    'rusty.quest.package_update_publication_receipt.v2',
+    'rusty.quest.package_update_publication_receipt.v3',
     'generations')) {
     Assert-Match $publishWrapper $token `
         "Signed Package Updater publication wrapper is missing token: $token"
@@ -832,7 +848,7 @@ foreach ($code in @(
 Assert-Match $appBuild `
     'applicationId = "io\.github\.mesmerprism\.rustyquest\.packageupdater\.labs"' `
     "Release updater package is not Labs-isolated."
-Assert-Match $publishWrapper 'package_update_publication_receipt\.v2' `
+Assert-Match $publishWrapper 'package_update_publication_receipt\.v3' `
     "Publication output is not the deterministic receipt contract."
 foreach ($leak in @('aapt2_path', 'apksigner_path')) {
     if ($publishWrapper -match [regex]::Escape($leak) -or
@@ -860,6 +876,11 @@ if ($LASTEXITCODE -ne 0) {
     $paths.alpha_release_workflow_test -RepoRoot $RepoRoot
 if ($LASTEXITCODE -ne 0) {
     throw "Package updater Labs workflow contract failed."
+}
+& pwsh -NoProfile -ExecutionPolicy Bypass -File `
+    $paths.pages_workflow_test -RepoRoot $RepoRoot
+if ($LASTEXITCODE -ne 0) {
+    throw "Package update Labs Pages workflow contract failed."
 }
 
 Write-Output "Rusty Quest Package Updater Android static validation passed"

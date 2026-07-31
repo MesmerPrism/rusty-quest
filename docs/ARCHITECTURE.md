@@ -76,6 +76,13 @@ pointer last under caller-pinned prior pointer/envelope hashes. The updater
 retains the pointer-bound verified tuple through rollback admission and
 installed commit. Its target is the co-installable Labs Kiosk package; stable
 is outside this updater's accepted package tuple.
+Rusty Quest owns the project Pages publication surface at the exact
+`https://mesmerprism.github.io/rusty-quest/package-updates/rusty-kiosk/labs/`
+base. APK bytes live once under a content-addressed artifact path; generations
+contain fresh signed envelopes and receipts. A scheduled refresh preserves the
+24-hour expiry boundary and is accepted only after authenticating the prior
+envelope and proving the package, version name/code, URL, hash, byte count, and
+signer are unchanged. Equal-version manifests never become reinstall authority.
 
 The updater APK is also a closed Labs release product. Its only accepted tag
 shape is `package-updater-v0.1.0-alpha.N`; the tag peels to the exact workflow

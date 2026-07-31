@@ -15,11 +15,13 @@ concurrency:
 jobs:
   release:
     runs-on: windows-2025
+    timeout-minutes: 60
     environment: package-updater-labs-release
     env:
       ANDROID_BUILD_TOOLS_VERSION: 35.0.1
       ANDROID_NDK_VERSION: 27.2.12479018
       GRADLE_VERSION: 8.13
+      PINNED_RUST_TOOLCHAIN: 1.96.0
       RELEASE_APK_NAME: rusty-quest-package-updater.apk
       RELEASE_METADATA_NAME: rusty-quest-package-updater.release.json
       RELEASE_LICENSE_NAME: RUSTY-QUEST-PACKAGE-UPDATER-LICENSE.txt
@@ -45,11 +47,27 @@ jobs:
           gradle-version: 8.13
           cache-disabled: true
 
+      - name: Install and verify pinned Rust
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          & rustup toolchain install $env:PINNED_RUST_TOOLCHAIN `
+            --profile minimal --no-self-update
+          if ($LASTEXITCODE -ne 0) { throw "Pinned Rust installation failed." }
+          $actual = (& rustup run $env:PINNED_RUST_TOOLCHAIN rustc --version).Trim()
+          if ($actual -cne "rustc 1.96.0 (ac68faa20 2026-05-25)") {
+            throw "Pinned Rust compiler identity differs: $actual"
+          }
+          "RUSTUP_TOOLCHAIN=$env:PINNED_RUST_TOOLCHAIN" >> $env:GITHUB_ENV
+
       - name: Verify pre-existing exact tag and source
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          $tag = "${{ github.ref_name }}"
+          if ($env:GITHUB_REPOSITORY -cne "MesmerPrism/rusty-quest") {
+            throw "Release workflow repository identity differs."
+          }
+          $tag = $env:GITHUB_REF_NAME
           if ($tag -notmatch '^package-updater-v0\.1\.0-alpha\.[1-9][0-9]*$') {
             throw "Release tag is outside the Package Updater Labs product."
           }
@@ -58,6 +76,16 @@ jobs:
           $peeled = (git rev-parse "refs/tags/$tag^{}").Trim()
           if ($peeled -ne "$env:GITHUB_SHA") {
             throw "Exact tag peel differs from GITHUB_SHA."
+          }
+          git fetch --no-tags origin `
+            "+refs/heads/main:refs/remotes/origin/main"
+          if ($LASTEXITCODE -ne 0) {
+            throw "Fresh protected main fetch failed."
+          }
+          git merge-base --is-ancestor `
+            $env:GITHUB_SHA refs/remotes/origin/main
+          if ($LASTEXITCODE -ne 0) {
+            throw "Release tag source is not reachable from protected main."
           }
           if ((git status --porcelain).Count -ne 0) {
             throw "Release checkout is not clean."
@@ -88,6 +116,7 @@ jobs:
           UPDATE_KEY_ID: ${{ vars.PACKAGE_UPDATER_LABS_TRUSTED_KEY_ID }}
           UPDATE_PUBLIC_KEY: ${{ vars.PACKAGE_UPDATER_LABS_TRUSTED_PUBLIC_KEY_BASE64URL }}
           UPDATE_HTTPS_ORIGIN: ${{ vars.PACKAGE_UPDATER_LABS_EXPECTED_HTTPS_ORIGIN }}
+          UPDATE_SITE_BASE_PATH: ${{ vars.PACKAGE_UPDATER_LABS_EXPECTED_SITE_BASE_PATH }}
           UPDATE_TARGET_PACKAGE: ${{ vars.PACKAGE_UPDATER_LABS_EXPECTED_PACKAGE_NAME }}
           UPDATE_ROLLOUT_RING: ${{ vars.PACKAGE_UPDATER_LABS_EXPECTED_ROLLOUT_RING }}
           UPDATE_TARGET_SIGNER: ${{ vars.PACKAGE_UPDATER_LABS_EXPECTED_SIGNER_SHA256 }}
@@ -95,7 +124,7 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
           $tagMatch = [regex]::Match(
-            "${{ github.ref_name }}",
+            $env:GITHUB_REF_NAME,
             '^package-updater-v(?<version>0\.1\.0-alpha\.(?<sequence>[1-9][0-9]*))$'
           )
           $alphaSequence = 0
@@ -127,6 +156,7 @@ jobs:
               -TrustedKeyId $env:UPDATE_KEY_ID `
               -TrustedPublicKeyBase64Url $env:UPDATE_PUBLIC_KEY `
               -ExpectedHttpsOrigin $env:UPDATE_HTTPS_ORIGIN `
+              -ExpectedSiteBasePath $env:UPDATE_SITE_BASE_PATH `
               -ExpectedPackageName $env:UPDATE_TARGET_PACKAGE `
               -ExpectedRolloutRing $env:UPDATE_ROLLOUT_RING `
               -ExpectedSignerSha256 $env:UPDATE_TARGET_SIGNER `
@@ -144,10 +174,10 @@ jobs:
             $metadata = Join-Path $releaseRoot $env:RELEASE_METADATA_NAME
             .\tools\New-PackageUpdaterProductReleaseMetadata.ps1 `
               -BuildManifestPath $buildManifest -ApkPath $apk `
-              -ReleaseTag "${{ github.ref_name }}" -RepoRoot . -OutPath $metadata
+              -ReleaseTag $env:GITHUB_REF_NAME -RepoRoot . -OutPath $metadata
             .\tools\Test-PackageUpdaterProductReleaseMetadata.ps1 `
               -MetadataPath $metadata -BuildManifestPath $buildManifest `
-              -ApkPath $apk -ReleaseTag "${{ github.ref_name }}" -RepoRoot .
+              -ApkPath $apk -ReleaseTag $env:GITHUB_REF_NAME -RepoRoot .
             Copy-Item -LiteralPath .\LICENSE `
               -Destination (Join-Path $releaseRoot $env:RELEASE_LICENSE_NAME)
             $sourceTree = (git rev-parse 'HEAD^{tree}').Trim()
@@ -159,7 +189,7 @@ jobs:
               (Join-Path $releaseRoot $env:RELEASE_SOURCE_NAME),
               @(
                 "Repository: https://github.com/$env:GITHUB_REPOSITORY",
-                "Tag: ${{ github.ref_name }}",
+                "Tag: $env:GITHUB_REF_NAME",
                 "Source revision: $env:GITHUB_SHA",
                 "Source tree: $sourceTree",
                 "License: AGPL-3.0-or-later"
@@ -185,7 +215,70 @@ jobs:
             "X-GitHub-Api-Version" = "2022-11-28"
           }
           $api = "https://api.github.com/repos/$env:GITHUB_REPOSITORY"
-          $tag = "${{ github.ref_name }}"
+          $tag = $env:GITHUB_REF_NAME
+          function Assert-ReleaseIdentity($Release, [bool]$ExpectedDraft, [string]$Phase) {
+            $releaseId = [int64]$Release.id
+            $expectedReleaseUrl = "$api/releases/$releaseId"
+            $expectedAssetsUrl = "$expectedReleaseUrl/assets"
+            $expectedUploadUrl =
+              "https://uploads.github.com/repos/$env:GITHUB_REPOSITORY/" +
+              "releases/$releaseId/assets{?name,label}"
+            if ($releaseId -le 0 -or $Release.tag_name -cne $tag -or
+              $Release.target_commitish -cne $env:GITHUB_SHA -or
+              -not $Release.prerelease -or
+              $Release.draft -ne $ExpectedDraft -or
+              $Release.url -cne $expectedReleaseUrl -or
+              $Release.assets_url -cne $expectedAssetsUrl -or
+              $Release.upload_url -cne $expectedUploadUrl) {
+              throw "$Phase release identity differs from the exact owner tuple."
+            }
+            $route = $tag
+            if ($ExpectedDraft) {
+              $pattern = '^https://github\.com/' +
+                [Regex]::Escape($env:GITHUB_REPOSITORY) +
+                '/releases/tag/(?<route>untagged-[0-9a-f]{20})$'
+              $match = [Regex]::Match([string]$Release.html_url, $pattern)
+              if (-not $match.Success) {
+                throw "$Phase draft release route is malformed."
+              }
+              $route = $match.Groups['route'].Value
+            } elseif ($Release.html_url -cne
+              "https://github.com/$env:GITHUB_REPOSITORY/releases/tag/$tag") {
+              throw "$Phase live release route is malformed."
+            }
+            [pscustomobject]@{ ReleaseId = $releaseId; DownloadRoute = $route }
+          }
+          function Assert-ReleaseAssets(
+            $RemoteAssets,
+            [System.IO.FileInfo[]]$LocalAssets,
+            [string]$Route,
+            [string]$Phase
+          ) {
+            if (@($RemoteAssets).Count -ne $LocalAssets.Count) {
+              throw "$Phase release asset closure is not exact."
+            }
+            $snapshot = @()
+            $assetIds = [Collections.Generic.HashSet[long]]::new()
+            foreach ($asset in $LocalAssets) {
+              $name = $asset.Name
+              $expectedDigest = "sha256:" + (
+                Get-FileHash -LiteralPath $asset.FullName -Algorithm SHA256
+              ).Hash.ToLowerInvariant()
+              $remote = @($RemoteAssets | Where-Object { $_.name -ceq $name })
+              $expectedUrl = "https://github.com/$env:GITHUB_REPOSITORY/" +
+                "releases/download/$Route/$name"
+              if ($remote.Count -ne 1 -or [int64]$remote[0].id -le 0 -or
+                -not $assetIds.Add([int64]$remote[0].id) -or
+                $remote[0].size -ne $asset.Length -or
+                $remote[0].digest -cne $expectedDigest -or
+                $remote[0].state -cne "uploaded" -or
+                $remote[0].browser_download_url -cne $expectedUrl) {
+                throw "$Phase asset identity differs for $name."
+              }
+              $snapshot += "$($remote[0].id)|$name|$($asset.Length)|$expectedDigest"
+            }
+            @($snapshot | Sort-Object)
+          }
           function Assert-RemoteTag {
             $commit = Invoke-RestMethod -Uri "$api/commits/$tag" `
               -Headers $headers
@@ -226,41 +319,35 @@ jobs:
           } | ConvertTo-Json
           $release = Invoke-RestMethod -Method Post -Uri "$api/releases" `
             -Headers $headers -Body $createBody -ContentType "application/json"
-          if (-not $release.draft -or -not $release.prerelease) {
-            throw "GitHub did not create the required draft prerelease."
-          }
-          $assets = @(
-            Join-Path $env:RELEASE_ROOT $env:RELEASE_APK_NAME
-            Join-Path $env:RELEASE_ROOT $env:RELEASE_METADATA_NAME
-            Join-Path $env:RELEASE_ROOT $env:RELEASE_LICENSE_NAME
-            Join-Path $env:RELEASE_ROOT $env:RELEASE_SOURCE_NAME
+          $draftIdentity = Assert-ReleaseIdentity `
+            -Release $release -ExpectedDraft $true -Phase "Created draft"
+          [System.IO.FileInfo[]]$assets = @(
+            Get-Item -LiteralPath (Join-Path $env:RELEASE_ROOT $env:RELEASE_APK_NAME)
+            Get-Item -LiteralPath (Join-Path $env:RELEASE_ROOT $env:RELEASE_METADATA_NAME)
+            Get-Item -LiteralPath (Join-Path $env:RELEASE_ROOT $env:RELEASE_LICENSE_NAME)
+            Get-Item -LiteralPath (Join-Path $env:RELEASE_ROOT $env:RELEASE_SOURCE_NAME)
           )
           foreach ($asset in $assets) {
-            $name = Split-Path -Leaf $asset
+            $name = $asset.Name
             $uploadUri = $release.upload_url.Replace("{?name,label}", "") +
               "?name=$([Uri]::EscapeDataString($name))"
             Invoke-RestMethod -Method Post -Uri $uploadUri -Headers $headers `
-              -InFile $asset -ContentType "application/octet-stream" | Out-Null
+              -InFile $asset.FullName -ContentType "application/octet-stream" | Out-Null
           }
           $remoteAssets = @(
-            Invoke-RestMethod -Uri "$api/releases/$($release.id)/assets" `
+            Invoke-RestMethod -Uri "$api/releases/$($draftIdentity.ReleaseId)/assets" `
               -Headers $headers
           )
-          if ($remoteAssets.Count -ne 4) {
-            throw "Remote release asset closure is not exact."
-          }
-          foreach ($asset in $assets) {
-            $name = Split-Path -Leaf $asset
-            $expectedBytes = (Get-Item -LiteralPath $asset).Length
-            $expectedDigest = "sha256:" + (
-              Get-FileHash -LiteralPath $asset -Algorithm SHA256
-            ).Hash.ToLowerInvariant()
-            $remote = @($remoteAssets | Where-Object { $_.name -ceq $name })
-            if ($remote.Count -ne 1 -or $remote[0].size -ne $expectedBytes -or
-              $remote[0].digest -cne $expectedDigest -or
-              $remote[0].state -ne "uploaded") {
-              throw "Remote asset name, digest, byte count, or state differs."
-            }
+          $draftAssets = @(Assert-ReleaseAssets `
+            -RemoteAssets $remoteAssets -LocalAssets $assets `
+            -Route $draftIdentity.DownloadRoute -Phase "Pre-promotion draft")
+          $draftReadback = Invoke-RestMethod `
+            -Uri "$api/releases/$($draftIdentity.ReleaseId)" -Headers $headers
+          $draftReadbackIdentity = Assert-ReleaseIdentity `
+            -Release $draftReadback -ExpectedDraft $true `
+            -Phase "Pre-promotion draft"
+          if ($draftReadbackIdentity.ReleaseId -ne $draftIdentity.ReleaseId) {
+            throw "Draft release ID drifted before promotion."
           }
           Assert-RemoteTag
           $promoteBody = @{
@@ -269,39 +356,30 @@ jobs:
             make_latest = "false"
           } | ConvertTo-Json
           $promoted = Invoke-RestMethod -Method Patch `
-            -Uri "$api/releases/$($release.id)" -Headers $headers `
+            -Uri "$api/releases/$($draftIdentity.ReleaseId)" -Headers $headers `
             -Body $promoteBody -ContentType "application/json"
-          if ($promoted.draft -or -not $promoted.prerelease) {
-            throw "Labs release promotion did not remain a non-latest prerelease."
+          $promotedIdentity = Assert-ReleaseIdentity `
+            -Release $promoted -ExpectedDraft $false -Phase "Promotion response"
+          if ($promotedIdentity.ReleaseId -ne $draftIdentity.ReleaseId) {
+            throw "Release ID drifted across promotion."
           }
           $published = Invoke-RestMethod -Uri "$api/releases/tags/$tag" `
             -Headers $headers
-          if ($published.draft -or -not $published.prerelease -or
-            $published.tag_name -cne $tag) {
-            throw "Published Labs release identity or channel differs."
+          $publishedIdentity = Assert-ReleaseIdentity `
+            -Release $published -ExpectedDraft $false `
+            -Phase "Post-promotion live"
+          if ($publishedIdentity.ReleaseId -ne $draftIdentity.ReleaseId) {
+            throw "Published tag route differs from the promoted release ID."
           }
           $publishedAssets = @(
-            Invoke-RestMethod -Uri "$api/releases/$($published.id)/assets" `
+            Invoke-RestMethod -Uri "$api/releases/$($publishedIdentity.ReleaseId)/assets" `
               -Headers $headers
           )
-          if ($publishedAssets.Count -ne 4) {
-            throw "Published Labs release asset closure differs."
-          }
-          foreach ($asset in $assets) {
-            $name = Split-Path -Leaf $asset
-            $expectedBytes = (Get-Item -LiteralPath $asset).Length
-            $expectedDigest = "sha256:" + (
-              Get-FileHash -LiteralPath $asset -Algorithm SHA256
-            ).Hash.ToLowerInvariant()
-            $remote = @(
-              $publishedAssets | Where-Object { $_.name -ceq $name }
-            )
-            if ($remote.Count -ne 1 -or
-              $remote[0].size -ne $expectedBytes -or
-              $remote[0].digest -cne $expectedDigest -or
-              $remote[0].state -ne "uploaded") {
-              throw "Published asset name, digest, byte count, or state differs."
-            }
+          $liveAssets = @(Assert-ReleaseAssets `
+            -RemoteAssets $publishedAssets -LocalAssets $assets `
+            -Route $publishedIdentity.DownloadRoute -Phase "Post-promotion live")
+          if (($draftAssets -join "`n") -cne ($liveAssets -join "`n")) {
+            throw "Release asset IDs or content drifted across promotion."
           }
           Assert-RemoteTag
           Assert-LabsIsNotLatest
