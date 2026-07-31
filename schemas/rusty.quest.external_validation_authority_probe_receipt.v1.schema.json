@@ -1,0 +1,302 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/MesmerPrism/rusty-quest/schemas/rusty.quest.external_validation_authority_probe_receipt.v1.schema.json",
+  "title": "Rusty Quest external validation authority adversarial probe receipt v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "evidence_origin",
+    "receipt_id",
+    "repository",
+    "ruleset_snapshot",
+    "probe",
+    "runs",
+    "check_runs",
+    "ordering_observations",
+    "inventory",
+    "merge_gate",
+    "decision",
+    "hold_reasons",
+    "recorded_at"
+  ],
+  "properties": {
+    "schema": { "const": "rusty.quest.external_validation_authority_probe_receipt.v1" },
+    "evidence_origin": { "enum": ["observed", "synthetic-schema-fixture"] },
+    "receipt_id": { "$ref": "#/$defs/id" },
+    "repository": { "$ref": "#/$defs/repository" },
+    "ruleset_snapshot": { "$ref": "#/$defs/ruleset" },
+    "probe": { "$ref": "#/$defs/probe" },
+    "runs": {
+      "type": "array",
+      "minItems": 4,
+      "maxItems": 4,
+      "items": { "$ref": "#/$defs/run" }
+    },
+    "check_runs": {
+      "type": "array",
+      "minItems": 4,
+      "maxItems": 4,
+      "items": { "$ref": "#/$defs/checkRun" }
+    },
+    "ordering_observations": {
+      "const": [
+        "base-failure-then-candidate-success",
+        "candidate-success-then-base-failure"
+      ]
+    },
+    "inventory": { "$ref": "#/$defs/inventory" },
+    "merge_gate": { "$ref": "#/$defs/mergeGate" },
+    "decision": { "enum": ["pass", "hold"] },
+    "hold_reasons": {
+      "type": "array",
+      "maxItems": 16,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/id" }
+    },
+    "recorded_at": { "$ref": "#/$defs/timestamp" }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "decision": { "const": "pass" } } },
+      "then": {
+        "properties": {
+          "evidence_origin": { "const": "observed" },
+          "hold_reasons": { "maxItems": 0 },
+          "inventory": {
+            "properties": {
+              "base_and_candidate_runs_proven": { "const": true },
+              "mappings_distinguishable": { "const": true },
+              "same_context": { "const": true },
+              "same_app": { "const": true },
+              "opposite_conclusions": { "const": true }
+            }
+          },
+          "merge_gate": {
+            "properties": {
+              "merge_state_status": { "const": "BLOCKED" },
+              "ordering_results": {
+                "prefixItems": [
+                  {
+                    "properties": {
+                      "ordering": { "const": "base-failure-then-candidate-success" },
+                      "merge_state_status": { "const": "BLOCKED" }
+                    }
+                  },
+                  {
+                    "properties": {
+                      "ordering": { "const": "candidate-success-then-base-failure" },
+                      "merge_state_status": { "const": "BLOCKED" }
+                    }
+                  }
+                ]
+              },
+              "admin_bypass_used": { "const": false },
+              "merge_attempted": { "const": false },
+              "pr_closed_without_merge": { "const": true },
+              "release_environments_held_during_probe": { "const": true }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "decision": { "const": "hold" } } },
+      "then": { "properties": { "hold_reasons": { "minItems": 1 } } }
+    }
+  ],
+  "$defs": {
+    "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{1,127}$" },
+    "sha": { "type": "string", "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$" },
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "timestamp": { "type": "string", "format": "date-time" },
+    "positiveId": { "type": "integer", "minimum": 1 },
+    "repository": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["full_name", "id", "target_ref"],
+      "properties": {
+        "full_name": { "const": "MesmerPrism/rusty-quest" },
+        "id": { "const": 1264057043 },
+        "target_ref": { "const": "refs/heads/main" }
+      }
+    },
+    "ruleset": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "ruleset_id", "enforcement", "bypass_actor_count", "context",
+        "app_id", "strict", "snapshot_sha256"
+      ],
+      "properties": {
+        "ruleset_id": { "$ref": "#/$defs/positiveId" },
+        "enforcement": { "const": "active" },
+        "bypass_actor_count": { "const": 0 },
+        "context": { "const": "Static admission" },
+        "app_id": { "const": 15368 },
+        "strict": { "const": true },
+        "snapshot_sha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "probe": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "pull_request_number", "pull_request_url", "base_sha", "head_sha",
+        "merge_sha", "candidate_workflow_path", "protected_changed_paths"
+      ],
+      "properties": {
+        "pull_request_number": { "$ref": "#/$defs/positiveId" },
+        "pull_request_url": {
+          "type": "string",
+          "pattern": "^https://github\\.com/MesmerPrism/rusty-quest/pull/[1-9][0-9]*$"
+        },
+        "base_sha": { "$ref": "#/$defs/sha" },
+        "head_sha": { "$ref": "#/$defs/sha" },
+        "merge_sha": { "$ref": "#/$defs/sha" },
+        "candidate_workflow_path": {
+          "const": ".github/workflows/external-validation-authority-spoof-probe.yml"
+        },
+        "protected_changed_paths": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 16,
+          "uniqueItems": true,
+          "contains": {
+            "const": ".github/workflows/external-validation-authority-spoof-probe.yml"
+          },
+          "items": { "type": "string", "minLength": 1, "maxLength": 512 }
+        }
+      }
+    },
+    "run": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "phase", "owner", "workflow_run_id", "workflow_path", "event",
+        "run_attempt", "head_sha", "conclusion", "started_at", "completed_at"
+      ],
+      "properties": {
+        "phase": {
+          "enum": [
+            "failure-before-success-base",
+            "failure-before-success-candidate",
+            "success-before-failure-candidate",
+            "success-before-failure-base"
+          ]
+        },
+        "owner": { "enum": ["base", "candidate"] },
+        "workflow_run_id": { "$ref": "#/$defs/positiveId" },
+        "workflow_path": {
+          "enum": [
+            ".github/workflows/external-validation-authority.yml",
+            ".github/workflows/external-validation-authority-spoof-probe.yml"
+          ]
+        },
+        "event": { "enum": ["pull_request_target", "pull_request"] },
+        "run_attempt": { "$ref": "#/$defs/positiveId" },
+        "head_sha": { "$ref": "#/$defs/sha" },
+        "conclusion": { "enum": ["success", "failure"] },
+        "started_at": { "$ref": "#/$defs/timestamp" },
+        "completed_at": { "$ref": "#/$defs/timestamp" }
+      }
+    },
+    "checkRun": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "phase", "check_run_id", "check_suite_id", "name", "app_id",
+        "head_sha", "conclusion", "details_url", "completed_at"
+      ],
+      "properties": {
+        "phase": {
+          "enum": [
+            "failure-before-success-base",
+            "failure-before-success-candidate",
+            "success-before-failure-candidate",
+            "success-before-failure-base"
+          ]
+        },
+        "check_run_id": { "$ref": "#/$defs/positiveId" },
+        "check_suite_id": { "$ref": "#/$defs/positiveId" },
+        "name": { "const": "Static admission" },
+        "app_id": { "const": 15368 },
+        "head_sha": { "$ref": "#/$defs/sha" },
+        "conclusion": { "enum": ["success", "failure"] },
+        "details_url": { "type": "string", "pattern": "^https://github\\.com/" },
+        "completed_at": { "$ref": "#/$defs/timestamp" }
+      }
+    },
+    "inventory": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "queried_sha", "base_and_candidate_runs_proven", "mappings_distinguishable",
+        "same_context", "same_app", "opposite_conclusions"
+      ],
+      "properties": {
+        "queried_sha": { "$ref": "#/$defs/sha" },
+        "base_and_candidate_runs_proven": { "type": "boolean" },
+        "mappings_distinguishable": { "type": "boolean" },
+        "same_context": { "type": "boolean" },
+        "same_app": { "type": "boolean" },
+        "opposite_conclusions": { "type": "boolean" }
+      }
+    },
+    "mergeGate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "observed_at", "merge_state_status", "admin_bypass_used",
+        "merge_attempted", "pr_closed_without_merge",
+        "release_environments_held_during_probe", "ordering_results"
+      ],
+      "properties": {
+        "observed_at": { "$ref": "#/$defs/timestamp" },
+        "merge_state_status": {
+          "enum": ["BLOCKED", "BEHIND", "CLEAN", "DIRTY", "UNKNOWN", "UNSTABLE"]
+        },
+        "ordering_results": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "prefixItems": [
+            {
+              "allOf": [
+                { "$ref": "#/$defs/orderingResult" },
+                { "properties": { "ordering": { "const": "base-failure-then-candidate-success" } } }
+              ]
+            },
+            {
+              "allOf": [
+                { "$ref": "#/$defs/orderingResult" },
+                { "properties": { "ordering": { "const": "candidate-success-then-base-failure" } } }
+              ]
+            }
+          ]
+        },
+        "admin_bypass_used": { "const": false },
+        "merge_attempted": { "const": false },
+        "pr_closed_without_merge": { "type": "boolean" },
+        "release_environments_held_during_probe": { "const": true }
+      }
+    },
+    "orderingResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ordering", "observed_at", "merge_state_status"],
+      "properties": {
+        "ordering": {
+          "enum": [
+            "base-failure-then-candidate-success",
+            "candidate-success-then-base-failure"
+          ]
+        },
+        "observed_at": { "$ref": "#/$defs/timestamp" },
+        "merge_state_status": {
+          "enum": ["BLOCKED", "BEHIND", "CLEAN", "DIRTY", "UNKNOWN", "UNSTABLE"]
+        }
+      }
+    }
+  }
+}

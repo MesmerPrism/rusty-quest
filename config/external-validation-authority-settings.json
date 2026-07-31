@@ -1,0 +1,77 @@
+{
+  "schema": "rusty.quest.external_validation_authority_settings.v1",
+  "target": {
+    "owner_kind": "user",
+    "repository": "MesmerPrism/rusty-quest",
+    "repository_id": 1264057043,
+    "ref": "refs/heads/main"
+  },
+  "selected_mode": "repository-status-check-probe-gated",
+  "authoritative_workflow_identity": {
+    "repository": "MesmerPrism/rusty-quest",
+    "repository_id": 1264057043,
+    "path": ".github/workflows/external-validation-authority.yml",
+    "ref": "refs/heads/main",
+    "event": "pull_request_target",
+    "job_id": "static-admission",
+    "check_name": "Static admission",
+    "base_owned": true,
+    "settings_bind_workflow_path": false,
+    "cryptographic_path_provenance": false
+  },
+  "required_status_check": {
+    "ruleset_scope": "repository",
+    "rule_type": "required_status_checks",
+    "context": "Static admission",
+    "app_id": 15368,
+    "app_slug": "github-actions",
+    "app_name": "GitHub Actions",
+    "strict": true,
+    "required": true,
+    "binds_workflow_path": false,
+    "authoritative_without_probe": false
+  },
+  "adversarial_probe": {
+    "required_after_bootstrap_and_protection": true,
+    "required_before_candidate_or_release": true,
+    "candidate_workflow_path": ".github/workflows/external-validation-authority-spoof-probe.yml",
+    "candidate_event": "pull_request",
+    "candidate_check_name": "Static admission",
+    "candidate_conclusion": "success",
+    "base_conclusion": "failure",
+    "required_orderings": [
+      "base-failure-then-candidate-success",
+      "candidate-success-then-base-failure"
+    ],
+    "receipt_schema": "rusty.quest.external_validation_authority_probe_receipt.v1",
+    "receipt_storage": "private-local",
+    "committed_receipt_forbidden": true,
+    "merge_state_required": "BLOCKED",
+    "admin_bypass_allowed": false,
+    "merge_attempt_allowed": false,
+    "close_without_merge": true,
+    "hold_conditions": [
+      "admin-bypass-observed",
+      "base-and-candidate-runs-not-both-proven",
+      "check-inventory-indistinguishable",
+      "inconsistent-ordering-result",
+      "merge-state-not-blocked",
+      "required-check-not-app-bound"
+    ],
+    "held_environments": [
+      "github-pages",
+      "package-update-labs-publication",
+      "package-updater-labs-release"
+    ]
+  },
+  "future_stronger_mode": {
+    "mode": "organization-required-workflow",
+    "deployable_for_current_owner": false,
+    "required_owner_kind": "organization-or-enterprise",
+    "repository": "MesmerPrism/rusty-quest",
+    "repository_id": 1264057043,
+    "path": ".github/workflows/external-validation-authority.yml",
+    "ref": "refs/heads/main"
+  },
+  "status": "probe-required-before-protected-candidate"
+}

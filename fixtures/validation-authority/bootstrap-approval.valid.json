@@ -1,0 +1,22 @@
+{
+  "approval_id": "bootstrap-sealed-candidate-i",
+  "required_ancestor": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "changed_paths": [
+    "README.md",
+    "tools/check_all.ps1"
+  ],
+  "artifacts": [
+    {
+      "path": "README.md",
+      "state": "present",
+      "mode": "100644",
+      "size_bytes": 1,
+      "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    },
+    {
+      "path": "tools/check_all.ps1",
+      "state": "absent"
+    }
+  ],
+  "status": "approved"
+}
