@@ -13,6 +13,7 @@ foreach ($token in @(
     'runs-on: windows-2025',
     'timeout-minutes: 60',
     'environment: package-updater-labs-release',
+    'working-directory: rusty-quest',
     'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7\.0\.1',
     'actions/setup-java@03ad4de0992f5dab5e18fcb136590ce7c4a0ac95 # v5\.6\.0',
     'gradle/actions/setup-gradle@748248ddd2a24f49513d8f472f81c3a07d4d50e1 # v4\.4\.4',
@@ -101,6 +102,17 @@ foreach ($forbidden in @(
         throw "Package Updater Labs workflow contains forbidden route: $forbidden"
     }
 }
+$checkoutUses = @([regex]::Matches(
+    $workflow,
+    '(?m)^\s*uses:\s*actions/checkout@[^\s]+(?:\s+#.*)?$'
+))
+$pinnedCheckoutUses = @([regex]::Matches(
+    $workflow,
+    '(?m)^\s*uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7\.0\.1\s*$'
+))
+if ($checkoutUses.Count -ne 5 -or $pinnedCheckoutUses.Count -ne 5) {
+    throw 'Package Updater Labs workflow checkout closure is not exact.'
+}
 $workflowLines = Get-Content -LiteralPath $path
 for ($lineIndex = 0; $lineIndex -lt $workflowLines.Count; $lineIndex++) {
     if ($workflowLines[$lineIndex] -notmatch
@@ -124,6 +136,164 @@ for ($lineIndex = 0; $lineIndex -lt $workflowLines.Count; $lineIndex++) {
         if ($bodyLine.Contains('${{')) {
             throw 'Package Updater Labs workflow interpolates an expression in a run block.'
         }
+    }
+}
+$workspaceDependencies = @(
+    [pscustomobject]@{
+        Name = 'Manifold'
+        Path = 'rusty-manifold'
+        Ref = '947421a928889889e485006bcc0200e05c2394f9'
+        Repository = 'MesmerPrism/rusty-manifold'
+    }
+    [pscustomobject]@{
+        Name = 'Lattice'
+        Path = 'rusty-lattice'
+        Ref = '0aee7faa52fc965ff2255381781dd082ab639f4b'
+        Repository = 'MesmerPrism/rusty-lattice'
+    }
+    [pscustomobject]@{
+        Name = 'Matter'
+        Path = 'rusty-matter'
+        Ref = 'eec8cddd9830f7ef0f90574ddcbde2daac0ec804'
+        Repository = 'MesmerPrism/rusty-matter'
+    }
+    [pscustomobject]@{
+        Name = 'Optics'
+        Path = 'rusty-optics'
+        Ref = 'fd01d84acffa1b0a3a192fe978af337d9fedd18a'
+        Repository = 'MesmerPrism/rusty-optics'
+    }
+)
+function Get-ExactWorkflowStep(
+    [string]$Name,
+    [string]$WorkflowText
+) {
+    $header = "      - name: $Name"
+    $headers = @([regex]::Matches(
+        $WorkflowText,
+        '(?m)^' + [regex]::Escape($header) + '\r?$'
+    ))
+    if ($headers.Count -ne 1) {
+        throw "Package Updater Labs workflow lacks one named step: $Name"
+    }
+    $start = $headers[0].Index
+    $next = $WorkflowText.IndexOf(
+        "`n      - name:",
+        $start + $headers[0].Length,
+        [StringComparison]::Ordinal
+    )
+    if ($next -lt 0) { $next = $WorkflowText.Length }
+    [pscustomobject]@{
+        Index = $start
+        Block = $WorkflowText.Substring($start, $next - $start).
+            Replace("`r`n", "`n").TrimEnd()
+    }
+}
+function Assert-ExactWorkflowStep(
+    [string]$Name,
+    [string[]]$ExpectedLines,
+    [string]$WorkflowText
+) {
+    $step = Get-ExactWorkflowStep -Name $Name -WorkflowText $WorkflowText
+    $expected = ($ExpectedLines -join "`n").TrimEnd()
+    if ($step.Block -cne $expected) {
+        throw "Package Updater Labs workflow step differs: $Name"
+    }
+    $step
+}
+function Assert-WorkspaceTopology([string]$WorkflowText) {
+    if (@([regex]::Matches(
+        $WorkflowText,
+        '(?m)^  release:\r?$\n' +
+            '^    runs-on: windows-2025\r?$\n' +
+            '^    timeout-minutes: 60\r?$\n' +
+            '^    environment: package-updater-labs-release\r?$\n' +
+            '^    defaults:\r?$\n' +
+            '^      run:\r?$\n' +
+            '^        working-directory: rusty-quest\r?$\n' +
+            '^    env:\r?$'
+        )).Count -ne 1) {
+        throw 'Package Updater Labs release job lacks the exact nested workspace layout.'
+    }
+    $tagCheckout = Assert-ExactWorkflowStep `
+        -Name 'Checkout exact tag target' `
+        -WorkflowText $WorkflowText `
+        -ExpectedLines @(
+            '      - name: Checkout exact tag target'
+            '        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1'
+            '        with:'
+            '          fetch-depth: 0'
+            '          fetch-tags: true'
+            '          lfs: false'
+            '          path: rusty-quest'
+            '          persist-credentials: false'
+            '          ref: ${{ github.sha }}'
+            '          submodules: false'
+        )
+    $javaSetupIndex = $WorkflowText.IndexOf(
+        '- name: Set up exact Java',
+        [StringComparison]::Ordinal
+    )
+    $lastDependencyIndex = $tagCheckout.Index
+    foreach ($dependency in $workspaceDependencies) {
+        $name = "Checkout exact $($dependency.Name) workspace dependency"
+        $step = Assert-ExactWorkflowStep -Name $name `
+            -WorkflowText $WorkflowText -ExpectedLines @(
+                "      - name: $name"
+                '        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1'
+                '        with:'
+                '          fetch-depth: 1'
+                '          lfs: false'
+                "          path: $($dependency.Path)"
+                '          persist-credentials: false'
+                "          ref: $($dependency.Ref)"
+                "          repository: $($dependency.Repository)"
+                '          submodules: false'
+            )
+        if ($step.Index -le $lastDependencyIndex -or
+            $step.Index -ge $javaSetupIndex) {
+            throw "Package Updater Labs workspace checkout ordering changed for $($dependency.Name)."
+        }
+        $lastDependencyIndex = $step.Index
+    }
+}
+Assert-WorkspaceTopology -WorkflowText $workflow
+foreach ($mutation in @(
+    [pscustomobject]@{
+        Name = 'missing nested source path'
+        Pattern = '(?m)^          path: rusty-quest\r?$'
+        Replacement = '          path: nested/rusty-quest'
+    }
+    [pscustomobject]@{
+        Name = 'missing nested run root'
+        Pattern = '(?m)^        working-directory: rusty-quest\r?$'
+        Replacement = '        working-directory: .'
+    }
+    [pscustomobject]@{
+        Name = 'nested dependency path'
+        Pattern = '(?m)^          path: rusty-manifold\r?$'
+        Replacement = '          path: rusty-quest/rusty-manifold'
+    }
+    [pscustomobject]@{
+        Name = 'dependency field outside its step'
+        Pattern = '(?m)^          repository: MesmerPrism/rusty-manifold\r?$'
+        Replacement = '          repository-moved: MesmerPrism/rusty-manifold'
+    }
+)) {
+    $mutated = [regex]::Replace(
+        $workflow, $mutation.Pattern, $mutation.Replacement
+    )
+    if ($mutated -ceq $workflow) {
+        throw "Workspace topology self-test did not mutate: $($mutation.Name)"
+    }
+    $rejected = $false
+    try {
+        Assert-WorkspaceTopology -WorkflowText $mutated
+    } catch {
+        $rejected = $true
+    }
+    if (-not $rejected) {
+        throw "Workspace topology self-test accepted: $($mutation.Name)"
     }
 }
 $tagChecks = @(
