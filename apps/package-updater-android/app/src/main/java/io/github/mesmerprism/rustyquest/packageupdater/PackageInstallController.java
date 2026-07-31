@@ -173,7 +173,17 @@ final class PackageInstallController {
                 return;
             }
             try {
-                commitInstalledCheckpoint(context, receipt);
+                if (!commitInstalledCheckpoint(
+                        context, receipt, System.currentTimeMillis())) {
+                    receiptStore.updateState(
+                            sessionId,
+                            "installed_but_checkpoint_rejected_expired",
+                            PackageInstaller.STATUS_SUCCESS,
+                            "Installed readback succeeded after manifest expiry; "
+                                    + "a fresh signed manifest is required");
+                    cleanupTerminalArtifacts(context, receipt);
+                    return;
+                }
             } catch (Exception exception) {
                 receiptStore.updateState(
                         sessionId,
@@ -251,7 +261,17 @@ final class PackageInstallController {
             return;
         }
         try {
-            commitInstalledCheckpoint(context, receipt);
+            if (!commitInstalledCheckpoint(
+                    context, receipt, System.currentTimeMillis())) {
+                receiptStore.updateState(
+                        sessionId,
+                        "installed_but_checkpoint_rejected_expired",
+                        PackageInstaller.STATUS_SUCCESS,
+                        "Installed readback succeeded after manifest expiry; "
+                                + "a fresh signed manifest is required");
+                cleanupTerminalArtifacts(context, receipt);
+                return;
+            }
         } catch (Exception exception) {
             receiptStore.updateState(
                     sessionId,
@@ -339,10 +359,16 @@ final class PackageInstallController {
                 artifact.signerSha256);
     }
 
-    static void commitInstalledCheckpoint(Context context, JSONObject receipt)
+    static boolean commitInstalledCheckpoint(
+            Context context, JSONObject receipt, long observedAtMs)
             throws Exception {
+        if (!PostInstallCheckpointPolicy.mayAdvance(
+                observedAtMs, receipt.getLong("manifest_expires_at_ms"))) {
+            return false;
+        }
         new UpdateStateStore(context).commitInstalled(
                 VerifiedUpdatePlan.fromInstallReceipt(receipt));
+        return true;
     }
 
     private static void cleanupStagedApk(Context context, File candidate)

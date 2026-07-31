@@ -65,8 +65,18 @@ public final class PackageInstallCallbackReceiver extends BroadcastReceiver {
                     return;
                 }
                 try {
-                    PackageInstallController.commitInstalledCheckpoint(
-                            context, receipt);
+                    if (!PackageInstallController.commitInstalledCheckpoint(
+                            context, receipt, System.currentTimeMillis())) {
+                        receiptStore.updateState(
+                                sessionId,
+                                "installed_but_checkpoint_rejected_expired",
+                                PackageInstaller.STATUS_SUCCESS,
+                                "Installed readback succeeded after manifest expiry; "
+                                        + "a fresh signed manifest is required");
+                        PackageInstallController.cleanupTerminalArtifacts(
+                                context, receipt);
+                        return;
+                    }
                 } catch (Exception exception) {
                     receiptStore.updateState(
                             sessionId,

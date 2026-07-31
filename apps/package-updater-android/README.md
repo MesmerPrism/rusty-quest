@@ -81,6 +81,10 @@ signer are read back. A wearer rejection is recorded as a terminal cancellation
 without advancing rollback state. The visible cancel control can abandon a
 stale pending session, and restart reconciliation either confirms an exact
 installed readback or keeps the attended session visibly pending.
+If Package Installer succeeds but the manifest has reached its exclusive
+expiry boundary before checkpoint observation, the receipt truthfully records
+`installed_but_checkpoint_rejected_expired`; rollback state is unchanged and
+the next update decision requires a fresh signed manifest.
 
 Alpha is an explicitly same-package policy that updates the existing
 `io.github.mesmerprism.rustykiosk` package in place under continuous APK
@@ -149,4 +153,5 @@ assertion or exact prior pointer/envelope hashes, rejects tuple drift and
 downgrade, and atomically updates `current.json` last. The signing seed is
 supplied only through
 `RUSTY_QUEST_UPDATE_SIGNING_SEED_BASE64URL`. Neither wrapper copies signing
-material into an output directory.
+material into an output directory. Public receipts retain only bounded Android
+build-tool names, version, and hashes—never absolute SDK paths.

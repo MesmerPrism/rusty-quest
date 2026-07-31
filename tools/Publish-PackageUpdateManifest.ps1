@@ -248,15 +248,12 @@ try {
             version_name = $observed.version_name
             signer_sha256 = $observed.signer_sha256
         }
-        inspection_tool = [ordered]@{
-            build_tools_version = (
-                Split-Path -Leaf $AndroidBuildToolsDirectory
-            )
-            aapt2_path = $aapt2
-            aapt2_sha256 = $aapt2Hash
-            apksigner_path = $apkSigner
-            apksigner_sha256 = $apkSignerHash
-        }
+        inspection_tool = Get-PublicPackageUpdateInspectionTool `
+            -BuildToolsVersion (Split-Path -Leaf $AndroidBuildToolsDirectory) `
+            -Aapt2Path $aapt2 `
+            -Aapt2Sha256 $aapt2Hash `
+            -ApkSignerPath $apkSigner `
+            -ApkSignerSha256 $apkSignerHash
     }
     $receipt | ConvertTo-Json -Depth 8 |
         Set-Content -LiteralPath $stagedReceipt -Encoding utf8NoBOM

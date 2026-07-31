@@ -92,6 +92,9 @@ successful callback still requires exact installed package, version, and signer
 readback before the checkpoint changes. Restart reconciliation retains a
 visible pending state, permits explicit session cancellation, and cleans the
 private staged APK after every terminal outcome.
+Installer success observed at or after manifest expiry remains a truthful
+installed outcome but is terminally rejected for rollback advancement; a
+fresh signed manifest is required for the next trusted update decision.
 
 ADB writes are generated operations from validated profiles. They are not
 hand-authored settings authority.

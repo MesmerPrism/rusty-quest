@@ -173,6 +173,7 @@ final class InstallReceiptStore {
     static boolean isTerminal(String state) {
         return state != null
                 && (state.startsWith("installed_readback_ok")
+                        || state.startsWith("installed_but_checkpoint_rejected")
                         || state.startsWith("install_failed")
                         || state.startsWith("install_staging_failed")
                         || state.startsWith("install_cancelled")

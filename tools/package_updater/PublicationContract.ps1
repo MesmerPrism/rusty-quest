@@ -195,3 +195,31 @@ function Assert-PackageUpdateObservedApk {
         throw "Observed APK identity differs from the exact publication inputs."
     }
 }
+
+function Get-PublicPackageUpdateInspectionTool {
+    param(
+        [string]$BuildToolsVersion,
+        [string]$Aapt2Path,
+        [string]$Aapt2Sha256,
+        [string]$ApkSignerPath,
+        [string]$ApkSignerSha256
+    )
+    if ($BuildToolsVersion -notmatch "^[A-Za-z0-9._-]{1,64}$" -or
+        $Aapt2Sha256 -notmatch "^sha256:[0-9a-f]{64}$" -or
+        $ApkSignerSha256 -notmatch "^sha256:[0-9a-f]{64}$") {
+        throw "Inspection tool receipt fields are not bounded and canonical."
+    }
+    $aapt2Name = [System.IO.Path]::GetFileName($Aapt2Path)
+    $apkSignerName = [System.IO.Path]::GetFileName($ApkSignerPath)
+    if ($aapt2Name -notmatch "^aapt2(?:\.exe)?$" -or
+        $apkSignerName -notmatch "^apksigner(?:\.bat)?$") {
+        throw "Inspection tool names are not the exact Android build tools."
+    }
+    [ordered]@{
+        build_tools_version = $BuildToolsVersion
+        aapt2_name = $aapt2Name
+        aapt2_sha256 = $Aapt2Sha256
+        apksigner_name = $apkSignerName
+        apksigner_sha256 = $ApkSignerSha256
+    }
+}

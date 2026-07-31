@@ -228,7 +228,15 @@ final class E2eUpdateOperationStore {
                                 "error_code",
                                 "checkpoint_persistence_pending");
             } else if (InstallReceiptStore.isTerminal(receiptState)) {
-                if (receiptState.contains("installed_readback_ok")) {
+                if (receiptState.contains(
+                        "installed_but_checkpoint_rejected_expired")) {
+                    operation.put(
+                                    "state",
+                                    "installed_but_checkpoint_rejected_expired")
+                            .put(
+                                    "error_code",
+                                    "fresh_signed_manifest_required");
+                } else if (receiptState.contains("installed_readback_ok")) {
                     operation.put("state", "installed_readback_ok")
                             .put("error_code", JSONObject.NULL);
                 } else if (receiptState.contains("cancel")) {

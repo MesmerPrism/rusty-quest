@@ -188,4 +188,26 @@ Assert-Rejected {
         -ExpectedSignerSha256 ("sha256:" + ("23" * 32))
 } "wrong observed package"
 
+$publicTool = Get-PublicPackageUpdateInspectionTool `
+    -BuildToolsVersion "35.0.1" `
+    -Aapt2Path "C:\Users\alice\AppData\Android\35.0.1\aapt2.exe" `
+    -Aapt2Sha256 ("sha256:" + ("a" * 64)) `
+    -ApkSignerPath "D:\private\sdk\35.0.1\apksigner.bat" `
+    -ApkSignerSha256 ("sha256:" + ("b" * 64))
+$publicToolJson = $publicTool | ConvertTo-Json -Compress
+foreach ($leak in @(
+    "C:\Users\alice",
+    "D:\private",
+    "aapt2_path",
+    "apksigner_path"
+)) {
+    if ($publicToolJson.Contains($leak)) {
+        throw "Public inspection receipt leaked local path material: $leak"
+    }
+}
+if ($publicTool.aapt2_name -ne "aapt2.exe" -or
+    $publicTool.apksigner_name -ne "apksigner.bat") {
+    throw "Public inspection receipt did not retain bounded tool names."
+}
+
 Write-Output "Package update publication contract self-test passed."

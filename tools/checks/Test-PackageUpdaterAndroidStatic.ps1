@@ -28,6 +28,7 @@ $paths = [ordered]@{
     pipeline = Join-Path $javaRoot "PackageUpdatePipeline.java"
     channel_pointer = Join-Path $javaRoot "UpdateChannelPointer.java"
     verified_plan = Join-Path $javaRoot "VerifiedUpdatePlan.java"
+    post_install_policy = Join-Path $javaRoot "PostInstallCheckpointPolicy.java"
     native_verifier = Join-Path $javaRoot "NativeEd25519Verifier.java"
     verifier_boundary = Join-Path $javaRoot "UpdateEnvelopeVerifier.java"
     verifier = Join-Path $javaRoot "StrictUpdateEnvelopeVerifier.java"
@@ -47,6 +48,8 @@ $paths = [ordered]@{
     native_lib = Join-Path $appRoot "native\src\lib.rs"
     host_vector = Join-Path $appRoot `
         "host-tests\io\github\mesmerprism\rustyquest\packageupdater\PackageUpdaterCanonicalVectorTest.java"
+    host_post_install_policy = Join-Path $appRoot `
+        "host-tests\io\github\mesmerprism\rustyquest\packageupdater\PostInstallCheckpointPolicyTest.java"
     build_wrapper = Join-Path $RepoRoot "tools\Build-PackageUpdaterAndroid.ps1"
     publish_wrapper = Join-Path $RepoRoot "tools\Publish-PackageUpdateManifest.ps1"
     e2e_cli_wrapper = Join-Path $RepoRoot "tools\Invoke-PackageUpdaterE2eCli.ps1"
@@ -81,6 +84,7 @@ $activity = Get-Content -Raw -LiteralPath $paths.activity
 $pipeline = Get-Content -Raw -LiteralPath $paths.pipeline
 $channelPointer = Get-Content -Raw -LiteralPath $paths.channel_pointer
 $verifiedPlan = Get-Content -Raw -LiteralPath $paths.verified_plan
+$postInstallPolicy = Get-Content -Raw -LiteralPath $paths.post_install_policy
 $nativeVerifier = Get-Content -Raw -LiteralPath $paths.native_verifier
 $verifierBoundary = Get-Content -Raw -LiteralPath $paths.verifier_boundary
 $verifier = Get-Content -Raw -LiteralPath $paths.verifier
@@ -421,6 +425,8 @@ foreach ($token in @(
     'isCancellationPending',
     'isInstalledCheckpointPending',
     'installed_readback_checkpoint_pending',
+    'installed_but_checkpoint_rejected_expired',
+    'PostInstallCheckpointPolicy\.mayAdvance',
     'commitInstalledCheckpoint',
     'manifest_expired_before_install_commit',
     '5_000L',
@@ -469,6 +475,8 @@ foreach ($token in @(
     'verifyInstalledReadback',
     'commitInstalledCheckpoint',
     'installed_readback_checkpoint_pending',
+    'installed_but_checkpoint_rejected_expired',
+    'a fresh signed manifest is required',
     'installed_readback_ok',
     'readback_failed_after_installer_success')) {
     Assert-Match $callback $token "Package Installer callback is missing token: $token"
@@ -477,6 +485,9 @@ Assert-Match $callback 'PackageInstaller\.STATUS_FAILURE_ABORTED' `
     "Package Installer wearer cancellation must be a distinct terminal state."
 Assert-Match $callback 'cleanupTerminalArtifacts' `
     "Package Installer terminal callbacks must remove private staged APKs."
+Assert-Match $postInstallPolicy `
+    'observedAtMs >= 0L && observedAtMs < manifestExpiresAtMs' `
+    "Post-install expiry boundary must match Rust's exclusive expiry."
 Assert-Match $stager 'failed_private_stage_not_removed' `
     "Failed downloads must fail closed when private partial-file cleanup fails."
 foreach ($token in @(
@@ -680,7 +691,9 @@ try {
     & $javac -encoding UTF-8 -d $temporaryRoot `
         (Join-Path $javaRoot "UpdateArtifact.java") `
         $paths.canonicalizer `
-        $paths.host_vector
+        $paths.host_vector `
+        $paths.post_install_policy `
+        $paths.host_post_install_policy
     if ($LASTEXITCODE -ne 0) {
         throw "Package Updater Java/Rust canonical vector did not compile."
     }
@@ -690,6 +703,13 @@ try {
         ($vectorOutput -join "`n") -notmatch
             "Package Updater Java/Rust canonical vector passed") {
         throw "Package Updater Java/Rust canonical vector failed."
+    }
+    $expiryOutput = & $java -cp $temporaryRoot `
+        "io.github.mesmerprism.rustyquest.packageupdater.PostInstallCheckpointPolicyTest"
+    if ($LASTEXITCODE -ne 0 -or
+        ($expiryOutput -join "`n") -notmatch
+            "Post-install checkpoint expiry policy passed") {
+        throw "Package Updater post-install expiry boundary test failed."
     }
 } finally {
     $systemTemp = [System.IO.Path]::GetFullPath(
@@ -742,6 +762,11 @@ Assert-Match $appBuild `
     "Release updater package is not alpha-isolated."
 Assert-Match $publishWrapper 'package_update_publication_receipt\.v2' `
     "Publication output is not the deterministic receipt contract."
+foreach ($leak in @('aapt2_path', 'apksigner_path')) {
+    if ($publishWrapper -match [regex]::Escape($leak)) {
+        throw "Public publication receipt retains local tool path field: $leak"
+    }
+}
 
 & pwsh -NoProfile -ExecutionPolicy Bypass -File `
     $paths.publication_contract_test
