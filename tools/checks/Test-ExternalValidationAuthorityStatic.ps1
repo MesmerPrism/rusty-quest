@@ -362,6 +362,21 @@ foreach ($forbidden in @(
     }
 }
 
+$portableTrimExpression = @'
+$script:TrustedBase.TrimEnd([char[]]@('\', '/'))
+'@
+if (-not $adapter.Contains($portableTrimExpression.Trim())) {
+    throw "Base-owned adapter must pass an explicit char array to TrimEnd."
+}
+if ($adapter.Contains('$script:TrustedBase.TrimEnd("\\", "/")')) {
+    throw "Base-owned adapter retains the PowerShell 7.6-incompatible TrimEnd overload."
+}
+foreach ($trimProbe in @('C:\trusted\', 'C:\trusted/')) {
+    if ($trimProbe.TrimEnd([char[]]@('\', '/')) -cne 'C:\trusted') {
+        throw "PowerShell path-trimming regression probe failed."
+    }
+}
+
 foreach ($scriptPath in @($adapterPath, $policySelfTest, $PSCommandPath)) {
     $tokens = $null
     $errors = $null

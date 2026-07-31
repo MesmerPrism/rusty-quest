@@ -408,7 +408,7 @@ if (-not (Test-Path -LiteralPath $outputParent -PathType Container)) {
 if (Test-Path -LiteralPath $finalOutput) {
     throw "Assessment output already exists."
 }
-$basePrefix = $script:TrustedBase.TrimEnd("\\", "/") + `
+$basePrefix = $script:TrustedBase.TrimEnd([char[]]@('\', '/')) + `
     [IO.Path]::DirectorySeparatorChar
 if (
     $finalOutput.Equals(
