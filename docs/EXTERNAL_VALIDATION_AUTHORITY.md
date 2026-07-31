@@ -60,10 +60,17 @@ required and not authoritative.
 
 1. Seal the independently reviewed implementation commit as immutable `I`.
    Do not amend, rebase, replace, or force-update it.
-2. Have an independent reviewer audit `I`, its complete changed-path set, and
-   every final artifact's Git mode, byte length, and SHA-256. Before the final
-   bootstrap commit, replace the live empty `approved_change_sets` array with
-   exactly one object shaped like
+2. Have an independent reviewer audit `I` and the exact planned candidate
+   tree `J` after the bootstrap base `S` is merged. The approval's
+   `required_ancestor` is `I`, but its sorted `changed_paths` and artifact
+   evidence describe the complete two-endpoint diff `S..J`, not an assumed
+   pre-bootstrap `B..I` diff. This distinction matters when bootstrap and
+   candidate touch the same path. Seal an empty-policy bootstrap commit first,
+   construct and review the exact combined tree, and prove that the later
+   approval-only bootstrap commit is inherited identically by both `S` and
+   `J`. Audit every final artifact's Git mode, byte length, and SHA-256.
+   Before the final bootstrap commit, replace the live empty
+   `approved_change_sets` array with exactly one object shaped like
    `fixtures/validation-authority/bootstrap-approval.valid.json`. Its
    `approval_id` must be exactly `bootstrap-sealed-candidate-i`, its
    `required_ancestor` must be exactly `I`, and its sorted artifacts must equal
