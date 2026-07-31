@@ -35,6 +35,75 @@ function Assert-Rejected([scriptblock]$Action, [string]$Label) {
     throw "Damaged Labs Pages publisher contract was accepted: $Label"
 }
 
+function Get-WorkflowStepBlock([string]$WorkflowText, [string]$StepName) {
+    $namePattern = '(?m)^(?<indent>[ ]*)- name: ' +
+        [regex]::Escape($StepName) + '[ ]*\r?$'
+    $matches = [regex]::Matches($WorkflowText, $namePattern)
+    if ($matches.Count -ne 1) {
+        throw "Workflow must contain exactly one step named: $StepName"
+    }
+    $match = $matches[0]
+    $indent = [regex]::Escape($match.Groups['indent'].Value)
+    $tail = $WorkflowText.Substring($match.Index + $match.Length)
+    $next = [regex]::Match($tail, "(?m)^${indent}- name: ")
+    $length = if ($next.Success) {
+        $match.Length + $next.Index
+    } else {
+        $WorkflowText.Length - $match.Index
+    }
+    $WorkflowText.Substring($match.Index, $length).TrimEnd()
+}
+
+function Assert-PinnedDependencyCheckouts([string]$WorkflowText) {
+    $dependencySpecs = @(
+        [pscustomobject]@{
+            Name = 'Manifold'
+            Path = 'rusty-manifold'
+            Repository = 'MesmerPrism/rusty-manifold'
+            Ref = '947421a928889889e485006bcc0200e05c2394f9'
+        }
+        [pscustomobject]@{
+            Name = 'Lattice'
+            Path = 'rusty-lattice'
+            Repository = 'MesmerPrism/rusty-lattice'
+            Ref = '0aee7faa52fc965ff2255381781dd082ab639f4b'
+        }
+        [pscustomobject]@{
+            Name = 'Matter'
+            Path = 'rusty-matter'
+            Repository = 'MesmerPrism/rusty-matter'
+            Ref = 'eec8cddd9830f7ef0f90574ddcbde2daac0ec804'
+        }
+        [pscustomobject]@{
+            Name = 'Optics'
+            Path = 'rusty-optics'
+            Repository = 'MesmerPrism/rusty-optics'
+            Ref = 'fd01d84acffa1b0a3a192fe978af337d9fedd18a'
+        }
+    )
+    foreach ($dependency in $dependencySpecs) {
+        $actual = Get-WorkflowStepBlock $WorkflowText `
+            "Checkout exact $($dependency.Name) workspace dependency"
+        $expected = @"
+      - name: Checkout exact $($dependency.Name) workspace dependency
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+          lfs: false
+          path: $($dependency.Path)
+          persist-credentials: false
+          ref: $($dependency.Ref)
+          repository: $($dependency.Repository)
+          submodules: false
+"@.TrimEnd()
+        $actualNormalized = $actual -replace "\r\n?", "`n"
+        $expectedNormalized = $expected -replace "\r\n?", "`n"
+        if ($actualNormalized -cne $expectedNormalized) {
+            throw "Labs Pages workflow has a damaged pinned $($dependency.Name) checkout."
+        }
+    }
+}
+
 foreach ($token in @(
     'cron: "17 \*/6 \* \* \*"',
     'workflow_dispatch:',
@@ -49,6 +118,10 @@ foreach ($token in @(
     'persist-credentials: false',
     'path: source',
     'working-directory: source',
+    'Checkout exact Manifold workspace dependency',
+    'Checkout exact Lattice workspace dependency',
+    'Checkout exact Matter workspace dependency',
+    'Checkout exact Optics workspace dependency',
     'refs/heads/main',
     'package-update-labs-feed',
     'Publish-PackageUpdateLabsPages\.ps1',
@@ -155,6 +228,14 @@ $publicationIndex = $workflow.IndexOf(
     '.\tools\Publish-PackageUpdateLabsPages.ps1',
     [StringComparison]::Ordinal
 )
+$dependencyIndexes = @(
+    'Manifold', 'Lattice', 'Matter', 'Optics' | ForEach-Object {
+        $workflow.IndexOf(
+            "- name: Checkout exact $_ workspace dependency",
+            [StringComparison]::Ordinal
+        )
+    }
+)
 $commitIndex = $workflow.IndexOf(
     '- name: Commit feed state without rewriting history',
     [StringComparison]::Ordinal
@@ -181,9 +262,11 @@ $postPushProjectionIndex = $workflow.IndexOf(
 )
 if ($protectionIndex -lt 0 -or $publicationIndex -lt 0 -or
     $commitIndex -lt 0 -or $secretIndex -lt 0 -or $pushIndex -lt 0 -or
+    @($dependencyIndexes | Where-Object { $_ -lt 0 }).Count -ne 0 -or
     $preKeyProjectionIndex -lt 0 -or $prePushProjectionIndex -lt 0 -or
     $postPushProjectionIndex -lt 0 -or
     -not ($protectionIndex -lt $publicationIndex -and
+        @($dependencyIndexes | Where-Object { $_ -ge $publicationIndex }).Count -eq 0 -and
         $publicationIndex -lt $commitIndex -and
         $commitIndex -lt $secretIndex -and $secretIndex -lt $pushIndex)) {
     throw 'Labs feed protection, publication, commit, secret, and push ordering changed.'
@@ -193,11 +276,48 @@ if (-not ($preKeyProjectionIndex -lt $prePushProjectionIndex -and
     $pushIndex -lt $postPushProjectionIndex)) {
     throw 'Labs feed projection checks do not bracket the protected push.'
 }
+if (-not ($dependencyIndexes[0] -lt $dependencyIndexes[1] -and
+    $dependencyIndexes[1] -lt $dependencyIndexes[2] -and
+    $dependencyIndexes[2] -lt $dependencyIndexes[3])) {
+    throw 'Pinned workspace dependency checkout ordering changed.'
+}
 $persistFalseCount = @(
     [regex]::Matches($workflow, '(?m)^\s*persist-credentials:\s*false\s*$')
 ).Count
-if ($persistFalseCount -ne 3) {
+if ($persistFalseCount -ne 7) {
     throw 'Every Labs feed checkout must disable persisted token credentials.'
+}
+Assert-PinnedDependencyCheckouts $workflow
+$manifoldStep = Get-WorkflowStepBlock $workflow `
+    'Checkout exact Manifold workspace dependency'
+foreach ($damage in @(
+    [pscustomobject]@{
+        Label = 'terminal field borrowed from following step'
+        Apply = { param($block) $block -replace '(?m)^\s*submodules: false\s*$', '' }
+    }
+    [pscustomobject]@{
+        Label = 'mutable checkout action substitution'
+        Apply = { param($block) $block.Replace(
+            'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1',
+            'actions/checkout@v7'
+        ) }
+    }
+    [pscustomobject]@{
+        Label = 'nested dependency checkout path'
+        Apply = { param($block) $block.Replace(
+            'path: rusty-manifold', 'path: source/rusty-manifold'
+        ) }
+    }
+    [pscustomobject]@{
+        Label = 'missing LFS boundary'
+        Apply = { param($block) $block -replace '(?m)^\s*lfs: false\s*$', '' }
+    }
+)) {
+    $damagedStep = & $damage.Apply $manifoldStep
+    $damagedWorkflow = $workflow.Replace($manifoldStep, $damagedStep)
+    Assert-Rejected {
+        Assert-PinnedDependencyCheckouts $damagedWorkflow
+    } $damage.Label
 }
 
 $validRulesetProjection = [pscustomobject][ordered]@{
