@@ -171,105 +171,25 @@
   "approved_change_sets": [
     {
       "approval_id": "bootstrap-sealed-candidate-i",
-      "required_ancestor": "c2468217422ae8e0941be70040cc8e1b449f2e75",
+      "required_ancestor": "270b204c8476b915bfd2c879204ebcb58e6a118a",
       "changed_paths": [
         ".github/workflows/package-update-labs-pages.yml",
-        ".github/workflows/package-updater-labs-release.yml",
-        "apps/package-updater-android/app/build.gradle.kts",
-        "docs/ARCHITECTURE.md",
-        "docs/PACKAGE_UPDATE_LABS_DISTRIBUTION.md",
-        "tools/Publish-PackageUpdateLabsPages.ps1",
-        "tools/Publish-PackageUpdateManifest.ps1",
-        "tools/checks/Test-PackageUpdateLabsPagesWorkflow.ps1",
-        "tools/checks/Test-PackageUpdatePublicationContract.ps1",
-        "tools/checks/Test-PackageUpdaterAndroidStatic.ps1",
-        "tools/checks/Test-PackageUpdaterLabsReleaseWorkflow.ps1",
-        "tools/package_updater/PublicationContract.ps1"
+        "tools/checks/Test-PackageUpdateLabsPagesWorkflow.ps1"
       ],
       "artifacts": [
         {
           "path": ".github/workflows/package-update-labs-pages.yml",
           "state": "present",
           "mode": "100644",
-          "size_bytes": 21051,
-          "sha256": "3e2e7acc9ba98955e005f4bd7c7b17f2deead67cbc58dcba3e5f022c3c65b764"
-        },
-        {
-          "path": ".github/workflows/package-updater-labs-release.yml",
-          "state": "present",
-          "mode": "100644",
-          "size_bytes": 25229,
-          "sha256": "1825c0e7093f664627fa01fa7860df73e8dc6f0dc5c5f96a98b47d04a9f9b08f"
-        },
-        {
-          "path": "apps/package-updater-android/app/build.gradle.kts",
-          "state": "present",
-          "mode": "100644",
-          "size_bytes": 10617,
-          "sha256": "1456dafa14f3b4bbd86a8b104a3c314822b45f1d3f46420a423ff0998e96d2a5"
-        },
-        {
-          "path": "docs/ARCHITECTURE.md",
-          "state": "present",
-          "mode": "100644",
-          "size_bytes": 53896,
-          "sha256": "20c3dbcab7f3d994fabae6cafa807fcddaa7b05769b8c57893a5b6ea361f0ed8"
-        },
-        {
-          "path": "docs/PACKAGE_UPDATE_LABS_DISTRIBUTION.md",
-          "state": "present",
-          "mode": "100644",
-          "size_bytes": 6048,
-          "sha256": "57a4e6c9dff2ad3fcfaf2a52a1f0d04dea20acee52a79ff79f6099b63bbb9a60"
-        },
-        {
-          "path": "tools/Publish-PackageUpdateLabsPages.ps1",
-          "state": "present",
-          "mode": "100644",
-          "size_bytes": 43583,
-          "sha256": "ceb4a9208f6868ab7cb55eddc9e29228245801923279d2913f1ee926bf4f6a62"
-        },
-        {
-          "path": "tools/Publish-PackageUpdateManifest.ps1",
-          "state": "present",
-          "mode": "100644",
-          "size_bytes": 15191,
-          "sha256": "f3a696ff9d12f665f252a17638fb5c849c1ffca3d8088a527821e3955816f6e7"
+          "size_bytes": 22093,
+          "sha256": "7f7d920b594dd8b4969ec122054384f73aee6ddd5e70d36c86dfd25b6c7391ba"
         },
         {
           "path": "tools/checks/Test-PackageUpdateLabsPagesWorkflow.ps1",
           "state": "present",
           "mode": "100644",
-          "size_bytes": 52145,
-          "sha256": "4e34f156b792cd914425048f94c7b84770102c90135104acc3a6d92996bd4222"
-        },
-        {
-          "path": "tools/checks/Test-PackageUpdatePublicationContract.ps1",
-          "state": "present",
-          "mode": "100644",
-          "size_bytes": 22604,
-          "sha256": "4cd377224416c9a358370d64d94087b15ee7eb7e16e6f66b1c7704fcba63f8dd"
-        },
-        {
-          "path": "tools/checks/Test-PackageUpdaterAndroidStatic.ps1",
-          "state": "present",
-          "mode": "100644",
-          "size_bytes": 37268,
-          "sha256": "190756fd89922f7b3dcf5190277e56db04bebc5cf74c4350082293a4c78426a8"
-        },
-        {
-          "path": "tools/checks/Test-PackageUpdaterLabsReleaseWorkflow.ps1",
-          "state": "present",
-          "mode": "100644",
-          "size_bytes": 14502,
-          "sha256": "f2897973a42296539c5c9be29dc22bd505fe69ce0a69bf4f3142defeb25ea203"
-        },
-        {
-          "path": "tools/package_updater/PublicationContract.ps1",
-          "state": "present",
-          "mode": "100644",
-          "size_bytes": 14390,
-          "sha256": "926c265c3059ebdbd2b62a492a2ef7f4e3aa46b12016805da6eb8c47f4f0c2f0"
+          "size_bytes": 56741,
+          "sha256": "f84cda0a85e40168993cfb779678f2b125d3d003236b561752feaedf234f4d36"
         }
       ],
       "status": "approved"
