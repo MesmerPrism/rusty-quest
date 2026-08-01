@@ -337,6 +337,52 @@ function Assert-PinnedDependencyCheckouts([string]$WorkflowText) {
     }
 }
 
+function Assert-ByteExactFeedCheckout([string]$WorkflowText) {
+    $actual = Get-WorkflowStepBlock $WorkflowText `
+        'Materialize persistent feed bytes without Windows conversion'
+    $expected = @"
+      - name: Materialize persistent feed bytes without Windows conversion
+        shell: pwsh
+        run: |
+          `$ErrorActionPreference = "Stop"
+          git -C feed config core.autocrlf false
+          if (`$LASTEXITCODE -ne 0) {
+            throw "Could not disable feed checkout line-ending conversion."
+          }
+          git -C feed config core.eol lf
+          if (`$LASTEXITCODE -ne 0) {
+            throw "Could not pin the feed checkout line-ending mode."
+          }
+          git -C feed checkout-index --all -f
+          if (`$LASTEXITCODE -ne 0) {
+            throw "Could not rematerialize the exact feed index bytes."
+          }
+          `$status = @(git -C feed status --porcelain=v1 --untracked-files=all)
+          if (`$LASTEXITCODE -ne 0 -or `$status.Count -ne 0) {
+            throw "Byte-exact feed rematerialization did not remain clean."
+          }
+"@.TrimEnd()
+    $actualNormalized = $actual -replace "\r\n?", "`n"
+    $expectedNormalized = $expected -replace "\r\n?", "`n"
+    if ($actualNormalized -cne $expectedNormalized) {
+        throw "Labs Pages workflow has a damaged byte-exact feed checkout."
+    }
+}
+
+function Assert-ByteExactGitEnvironment([string]$WorkflowText) {
+    $normalized = $WorkflowText -replace "\r\n?", "`n"
+    $expected = @(
+        "      GIT_CONFIG_COUNT: 2",
+        "      GIT_CONFIG_KEY_0: core.autocrlf",
+        "      GIT_CONFIG_VALUE_0: `"false`"",
+        "      GIT_CONFIG_KEY_1: core.eol",
+        "      GIT_CONFIG_VALUE_1: lf"
+    ) -join "`n"
+    if ([regex]::Matches($normalized, [regex]::Escape($expected)).Count -ne 1) {
+        throw "Labs Pages workflow does not pin byte-exact Git checkout semantics."
+    }
+}
+
 function Assert-FeedWriterKeyLifecycle([string]$WorkflowText) {
     $writerStep = Get-WorkflowStepBlock $WorkflowText `
         'Push through the dedicated protected feed writer'
@@ -399,6 +445,11 @@ foreach ($token in @(
     'Checkout exact Optics workspace dependency',
     'refs/heads/main',
     'package-update-labs-feed',
+    'Materialize persistent feed bytes without Windows conversion',
+    'git -C feed config core\.autocrlf false',
+    'git -C feed config core\.eol lf',
+    'git -C feed checkout-index --all -f',
+    'Byte-exact feed rematerialization did not remain clean',
     'Publish-PackageUpdateLabsPages\.ps1',
     'package-update-labs-target\.json',
     'Require protected continuous feed authority',
@@ -446,6 +497,8 @@ foreach ($token in @(
     }
 }
 Assert-MigrationWorkflowAuthorizationContract $workflow
+Assert-ByteExactGitEnvironment $workflow
+Assert-ByteExactFeedCheckout $workflow
 foreach ($damage in @(
     [pscustomobject]@{
         Name = "dispatch predicate broadened"
@@ -463,6 +516,61 @@ foreach ($damage in @(
     }
     Assert-Rejected {
         Assert-MigrationWorkflowAuthorizationContract $damagedWorkflow
+    } "workflow $($damage.Name)"
+}
+foreach ($damage in @(
+    [pscustomobject]@{
+        Name = "job-wide conversion disable removed"
+        Old = '      GIT_CONFIG_VALUE_0: "false"'
+        New = '      GIT_CONFIG_VALUE_0: "true"'
+    },
+    [pscustomobject]@{
+        Name = "job-wide LF mode removed"
+        Old = "      GIT_CONFIG_VALUE_1: lf"
+        New = "      GIT_CONFIG_VALUE_1: native"
+    },
+    [pscustomobject]@{
+        Name = "job-wide Git config count reduced"
+        Old = "      GIT_CONFIG_COUNT: 2"
+        New = "      GIT_CONFIG_COUNT: 1"
+    }
+)) {
+    $damagedWorkflow = $workflow.Replace($damage.Old, $damage.New)
+    if ($damagedWorkflow -ceq $workflow) {
+        throw "Byte-exact Git environment test mutation was inert: $($damage.Name)"
+    }
+    Assert-Rejected {
+        Assert-ByteExactGitEnvironment $damagedWorkflow
+    } "workflow $($damage.Name)"
+}
+foreach ($damage in @(
+    [pscustomobject]@{
+        Name = "conversion disable removed"
+        Old = "git -C feed config core.autocrlf false"
+        New = "git -C feed config core.autocrlf true"
+    },
+    [pscustomobject]@{
+        Name = "LF mode removed"
+        Old = "git -C feed config core.eol lf"
+        New = "git -C feed config core.eol native"
+    },
+    [pscustomobject]@{
+        Name = "index rematerialization not forced"
+        Old = "git -C feed checkout-index --all -f"
+        New = "git -C feed checkout-index --all"
+    },
+    [pscustomobject]@{
+        Name = "clean readback removed"
+        Old = "`$status.Count -ne 0"
+        New = "`$status.Count -lt 0"
+    }
+)) {
+    $damagedWorkflow = $workflow.Replace($damage.Old, $damage.New)
+    if ($damagedWorkflow -ceq $workflow) {
+        throw "Byte-exact feed checkout test mutation was inert: $($damage.Name)"
+    }
+    Assert-Rejected {
+        Assert-ByteExactFeedCheckout $damagedWorkflow
     } "workflow $($damage.Name)"
 }
 foreach ($token in @(
@@ -547,6 +655,14 @@ $protectionIndex = $workflow.IndexOf(
     '- name: Require protected continuous feed authority',
     [StringComparison]::Ordinal
 )
+$feedStateCheckoutIndex = $workflow.IndexOf(
+    '- name: Check out persistent Quest-owned feed state',
+    [StringComparison]::Ordinal
+)
+$byteExactCheckoutIndex = $workflow.IndexOf(
+    '- name: Materialize persistent feed bytes without Windows conversion',
+    [StringComparison]::Ordinal
+)
 $publicationIndex = $workflow.IndexOf(
     '.\tools\Publish-PackageUpdateLabsPages.ps1',
     [StringComparison]::Ordinal
@@ -583,12 +699,16 @@ $postPushProjectionIndex = $workflow.IndexOf(
     'Read-FeedRulesetProjection "post-push"',
     [StringComparison]::Ordinal
 )
-if ($protectionIndex -lt 0 -or $publicationIndex -lt 0 -or
+if ($feedStateCheckoutIndex -lt 0 -or $byteExactCheckoutIndex -lt 0 -or
+    $protectionIndex -lt 0 -or
+    $publicationIndex -lt 0 -or
     $commitIndex -lt 0 -or $secretIndex -lt 0 -or $pushIndex -lt 0 -or
     @($dependencyIndexes | Where-Object { $_ -lt 0 }).Count -ne 0 -or
     $preKeyProjectionIndex -lt 0 -or $prePushProjectionIndex -lt 0 -or
     $postPushProjectionIndex -lt 0 -or
-    -not ($protectionIndex -lt $publicationIndex -and
+    -not ($feedStateCheckoutIndex -lt $byteExactCheckoutIndex -and
+        $byteExactCheckoutIndex -lt $protectionIndex -and
+        $protectionIndex -lt $publicationIndex -and
         @($dependencyIndexes | Where-Object { $_ -ge $publicationIndex }).Count -eq 0 -and
         $publicationIndex -lt $commitIndex -and
         $commitIndex -lt $secretIndex -and $secretIndex -lt $pushIndex)) {

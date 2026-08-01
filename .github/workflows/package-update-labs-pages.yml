@@ -32,6 +32,11 @@ jobs:
     env:
       ANDROID_BUILD_TOOLS_VERSION: 35.0.1
       FEED_BRANCH: package-update-labs-feed
+      GIT_CONFIG_COUNT: 2
+      GIT_CONFIG_KEY_0: core.autocrlf
+      GIT_CONFIG_VALUE_0: "false"
+      GIT_CONFIG_KEY_1: core.eol
+      GIT_CONFIG_VALUE_1: lf
       PINNED_RUST_TOOLCHAIN: 1.96.0
     steps:
       - name: Check out trusted publisher source
@@ -129,6 +134,27 @@ jobs:
           path: feed
           fetch-depth: 1
           persist-credentials: false
+
+      - name: Materialize persistent feed bytes without Windows conversion
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          git -C feed config core.autocrlf false
+          if ($LASTEXITCODE -ne 0) {
+            throw "Could not disable feed checkout line-ending conversion."
+          }
+          git -C feed config core.eol lf
+          if ($LASTEXITCODE -ne 0) {
+            throw "Could not pin the feed checkout line-ending mode."
+          }
+          git -C feed checkout-index --all -f
+          if ($LASTEXITCODE -ne 0) {
+            throw "Could not rematerialize the exact feed index bytes."
+          }
+          $status = @(git -C feed status --porcelain=v1 --untracked-files=all)
+          if ($LASTEXITCODE -ne 0 -or $status.Count -ne 0) {
+            throw "Byte-exact feed rematerialization did not remain clean."
+          }
 
       - name: Require protected continuous feed authority
         shell: pwsh
