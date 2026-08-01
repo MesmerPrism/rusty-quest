@@ -55,6 +55,103 @@ function Assert-KeyValidationRejected([scriptblock]$Action, [string]$Label) {
     throw "Damaged Labs feed key validation was accepted: $Label"
 }
 
+function Assert-MigrationWorkflowAuthorizationContract([string]$Value) {
+    $normalized = $Value.Replace("`r`n", "`n")
+    $inputBlock = @(
+        "      migrate_github_pages_project_origin_to_custom_domain:",
+        "        description: >-",
+        "          One-time old project-origin to custom-domain migration after the",
+        "          custom-domain updater has been released and installed",
+        "        required: false",
+        "        default: false",
+        "        type: boolean"
+    ) -join "`n"
+    $environmentLine =
+        "          MIGRATE_GITHUB_PAGES_PROJECT_ORIGIN_TO_CUSTOM_DOMAIN: " +
+        "`${{ github.event_name == 'workflow_dispatch' && " +
+        "inputs.migrate_github_pages_project_origin_to_custom_domain == true }}"
+    $runtimeBlock = @(
+        "          `$authorizeOriginMigration =",
+        "            `$env:GITHUB_EVENT_NAME -ceq `"workflow_dispatch`" -and",
+        "            `$env:MIGRATE_GITHUB_PAGES_PROJECT_ORIGIN_TO_CUSTOM_DOMAIN -ceq `"true`"",
+        "          if (`$env:GITHUB_EVENT_NAME -cne `"workflow_dispatch`" -and",
+        "            `$env:MIGRATE_GITHUB_PAGES_PROJECT_ORIGIN_TO_CUSTOM_DOMAIN -cne `"false`") {",
+        "            throw `"A scheduled feed refresh cannot authorize an origin migration.`"",
+        "          }"
+    ) -join "`n"
+    $switchLine =
+        "            -MigrateGitHubPagesProjectOriginToCustomDomain:" +
+        "`$authorizeOriginMigration"
+    foreach ($exact in @($inputBlock, $environmentLine, $runtimeBlock, $switchLine)) {
+        if ([regex]::Matches(
+                $normalized,
+                [regex]::Escape($exact)
+            ).Count -ne 1) {
+            throw "Labs origin migration authorization block differs."
+        }
+    }
+}
+
+$directBytes = [Text.Encoding]::UTF8.GetBytes("direct artifact")
+$directHash = "sha256:" + (
+    [Convert]::ToHexString(
+        [Security.Cryptography.SHA256]::HashData($directBytes)
+    ).ToLowerInvariant()
+)
+$directUri = "https://mesmerprism.com/rusty-quest/package-updates/" +
+    "rusty-kiosk/labs/artifacts/sha256/$($directHash.Substring(7))/" +
+    "rusty-kiosk-0.6.6-alpha.6.apk"
+$directStream = [IO.MemoryStream]::new($directBytes, $false)
+try {
+    $null = Assert-DirectPackageUpdateArtifactResponse `
+        -StatusCode 200 -RequestedUri $directUri -ExpectedUri $directUri `
+        -ContentLength $directBytes.Length -Content $directStream `
+        -ExpectedSha256 $directHash -ExpectedBytes $directBytes.Length
+} finally {
+    $directStream.Dispose()
+}
+$directStreamWithoutDeclaredLength = [IO.MemoryStream]::new($directBytes, $false)
+try {
+    $null = Assert-DirectPackageUpdateArtifactResponse `
+        -StatusCode 200 -RequestedUri $directUri -ExpectedUri $directUri `
+        -ContentLength $null -Content $directStreamWithoutDeclaredLength `
+        -ExpectedSha256 $directHash -ExpectedBytes $directBytes.Length
+} finally {
+    $directStreamWithoutDeclaredLength.Dispose()
+}
+$directHandler = New-DirectPackageUpdateHttpClientHandler
+try {
+    if ($directHandler.AllowAutoRedirect) {
+        throw "Canonical Labs artifact HTTP handler permits redirects."
+    }
+} finally {
+    $directHandler.Dispose()
+}
+$sameLengthWrongBytes = [byte[]]$directBytes.Clone()
+$sameLengthWrongBytes[$sameLengthWrongBytes.Length - 1] =
+    $sameLengthWrongBytes[$sameLengthWrongBytes.Length - 1] -bxor 1
+foreach ($damage in @(
+    [pscustomobject]@{ Name = "redirect"; Status = 301; Uri = $directUri; Length = $directBytes.Length; Bytes = $directBytes },
+    [pscustomobject]@{ Name = "final URI drift"; Status = 200; Uri = "${directUri}?redirected=1"; Length = $directBytes.Length; Bytes = $directBytes },
+    [pscustomobject]@{ Name = "declared length drift"; Status = 200; Uri = $directUri; Length = $directBytes.Length + 1; Bytes = $directBytes },
+    [pscustomobject]@{ Name = "truncated stream"; Status = 200; Uri = $directUri; Length = $directBytes.Length; Bytes = $directBytes[0..($directBytes.Length - 2)] },
+    [pscustomobject]@{ Name = "oversized stream"; Status = 200; Uri = $directUri; Length = $null; Bytes = [byte[]]($directBytes + 0) },
+    [pscustomobject]@{ Name = "same-length wrong bytes"; Status = 200; Uri = $directUri; Length = $directBytes.Length; Bytes = $sameLengthWrongBytes }
+)) {
+    Assert-Rejected {
+        $stream = [IO.MemoryStream]::new($damage.Bytes, $false)
+        try {
+            $null = Assert-DirectPackageUpdateArtifactResponse `
+                -StatusCode $damage.Status -RequestedUri $damage.Uri `
+                -ExpectedUri $directUri -ContentLength $damage.Length `
+                -Content $stream -ExpectedSha256 $directHash `
+                -ExpectedBytes $directBytes.Length
+        } finally {
+            $stream.Dispose()
+        }
+    } "canonical endpoint $($damage.Name)"
+}
+
 $syntheticPublicBlob = "A" * 68
 $syntheticFingerprint = "SHA256:" + ("B" * 43)
 $projectionWithoutComment =
@@ -280,6 +377,11 @@ function Assert-FeedWriterKeyLifecycle([string]$WorkflowText) {
 foreach ($token in @(
     'cron: "17 \*/6 \* \* \*"',
     'workflow_dispatch:',
+    'migrate_github_pages_project_origin_to_custom_domain:',
+    'type: boolean',
+    'GITHUB_EVENT_NAME -ceq "workflow_dispatch"',
+    'A scheduled feed refresh cannot authorize an origin migration',
+    '-MigrateGitHubPagesProjectOriginToCustomDomain:\$authorizeOriginMigration',
     'cancel-in-progress: false',
     'timeout-minutes: 45',
     'timeout-minutes: 15',
@@ -342,6 +444,26 @@ foreach ($token in @(
     if ($workflow -notmatch $token) {
         throw "Labs Pages workflow is missing contract token: $token"
     }
+}
+Assert-MigrationWorkflowAuthorizationContract $workflow
+foreach ($damage in @(
+    [pscustomobject]@{
+        Name = "dispatch predicate broadened"
+        Old = "github.event_name == 'workflow_dispatch' &&"
+        New = "github.event_name != 'pull_request' &&"
+    },
+    [pscustomobject]@{ Name = "input default true"; Old = "        default: false"; New = "        default: true" },
+    [pscustomobject]@{ Name = "input type string"; Old = "        type: boolean"; New = "        type: string" },
+    [pscustomobject]@{ Name = "runtime event broadened"; Old = '-ceq "workflow_dispatch" -and'; New = '-cne "pull_request" -and' },
+    [pscustomobject]@{ Name = "publisher switch unconditional"; Old = '-MigrateGitHubPagesProjectOriginToCustomDomain:$authorizeOriginMigration'; New = '-MigrateGitHubPagesProjectOriginToCustomDomain:$true' }
+)) {
+    $damagedWorkflow = $workflow.Replace($damage.Old, $damage.New)
+    if ($damagedWorkflow -ceq $workflow) {
+        throw "Labs origin migration test mutation was inert: $($damage.Name)"
+    }
+    Assert-Rejected {
+        Assert-MigrationWorkflowAuthorizationContract $damagedWorkflow
+    } "workflow $($damage.Name)"
 }
 foreach ($token in @(
     'ssh-keygen\.exe -y -P "" -f \$KeyPath',
@@ -738,6 +860,17 @@ foreach ($token in @(
     'ExpectedPriorPointerSha256',
     'ExpectedPriorEnvelopeSha256',
     'Refresh',
+    'MigrateGitHubPagesProjectOriginToCustomDomain',
+    'explicit one-shot operator switch',
+    'origin migration requires a prior pointer',
+    'origin migration is not applicable',
+    'https://mesmerprism\.github\.io',
+    'https://mesmerprism\.com',
+    'Labs feed origin drift is outside the sealed migration',
+    'Assert-DirectPackageUpdateArtifact',
+    'AllowAutoRedirect = \$false',
+    'ResponseHeadersRead',
+    'Canonical Labs artifact endpoint is not a direct exact response',
     '86400000',
     'package_update_publication_receipt\.v3',
     'FileAttributes\]::ReparsePoint',
@@ -747,6 +880,10 @@ foreach ($token in @(
     if ($publisher -notmatch $token) {
         throw "Labs Pages publisher is missing contract token: $token"
     }
+}
+if ($publisher -notmatch
+    '\[string\]\$HttpsOrigin = "https://mesmerprism\.com"') {
+    throw "Labs Pages publisher does not default to the non-redirecting canonical origin."
 }
 foreach ($forbidden in @(
     '--clobber', 'gh release upload', 'gh release edit', 'CNAME',

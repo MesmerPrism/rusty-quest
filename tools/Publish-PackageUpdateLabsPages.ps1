@@ -5,8 +5,9 @@ param(
     [Parameter(Mandatory = $true)][string]$AndroidBuildToolsDirectory,
     [Parameter(Mandatory = $true)][string]$TrustedKeyId,
     [Parameter(Mandatory = $true)][string]$TrustedPublicKeyBase64Url,
-    [string]$HttpsOrigin = "https://mesmerprism.github.io",
+    [string]$HttpsOrigin = "https://mesmerprism.com",
     [string]$SiteBasePath = "rusty-quest",
+    [switch]$MigrateGitHubPagesProjectOriginToCustomDomain,
     [switch]$LibraryOnly
 )
 
@@ -42,6 +43,97 @@ function Assert-ExactCanonicalHttpsUrl(
         -not [string]::IsNullOrEmpty($uri.Fragment) -or
         $Value -cne $Expected) {
         throw "$Label is not the exact canonical HTTPS route."
+    }
+}
+
+function Assert-DirectPackageUpdateArtifactResponse {
+    param(
+        [int]$StatusCode,
+        [string]$RequestedUri,
+        [string]$ExpectedUri,
+        [Nullable[int64]]$ContentLength,
+        [Parameter(Mandatory = $true)][System.IO.Stream]$Content,
+        [string]$ExpectedSha256,
+        [int64]$ExpectedBytes
+    )
+    if ($StatusCode -ne 200 -or $RequestedUri -cne $ExpectedUri -or
+        $ExpectedSha256 -cnotmatch "^sha256:[0-9a-f]{64}$" -or
+        $ExpectedBytes -lt 1 -or
+        ($null -ne $ContentLength -and $ContentLength -ne $ExpectedBytes)) {
+        throw "Canonical Labs artifact endpoint is not a direct exact response."
+    }
+    $hash = [Security.Cryptography.IncrementalHash]::CreateHash(
+        [Security.Cryptography.HashAlgorithmName]::SHA256
+    )
+    try {
+        $buffer = [byte[]]::new(65536)
+        $observedBytes = 0L
+        while (($read = $Content.Read($buffer, 0, $buffer.Length)) -gt 0) {
+            $observedBytes += $read
+            if ($observedBytes -gt $ExpectedBytes) {
+                throw "Canonical Labs artifact response exceeds its pinned size."
+            }
+            $hash.AppendData($buffer, 0, $read)
+        }
+        $observedSha256 = "sha256:" + (
+            [Convert]::ToHexString($hash.GetHashAndReset()).ToLowerInvariant()
+        )
+    } finally {
+        $hash.Dispose()
+    }
+    if ($observedBytes -ne $ExpectedBytes -or
+        $observedSha256 -cne $ExpectedSha256) {
+        throw "Canonical Labs artifact response differs from its release pin."
+    }
+    [pscustomobject]@{
+        status_code = $StatusCode
+        requested_uri = $RequestedUri
+        bytes = $observedBytes
+        sha256 = $observedSha256
+    }
+}
+
+function New-DirectPackageUpdateHttpClientHandler {
+    $handler = [Net.Http.HttpClientHandler]::new()
+    $handler.AllowAutoRedirect = $false
+    $handler
+}
+
+function Assert-DirectPackageUpdateArtifact {
+    param(
+        [string]$Uri,
+        [string]$ExpectedSha256,
+        [int64]$ExpectedBytes
+    )
+    $handler = New-DirectPackageUpdateHttpClientHandler
+    $client = [Net.Http.HttpClient]::new($handler)
+    $client.Timeout = [TimeSpan]::FromMinutes(5)
+    $request = [Net.Http.HttpRequestMessage]::new(
+        [Net.Http.HttpMethod]::Get,
+        $Uri
+    )
+    $response = $null
+    $stream = $null
+    try {
+        $response = $client.Send(
+            $request,
+            [Net.Http.HttpCompletionOption]::ResponseHeadersRead
+        )
+        $stream = $response.Content.ReadAsStream()
+        Assert-DirectPackageUpdateArtifactResponse `
+            -StatusCode ([int]$response.StatusCode) `
+            -RequestedUri $response.RequestMessage.RequestUri.AbsoluteUri `
+            -ExpectedUri $Uri `
+            -ContentLength $response.Content.Headers.ContentLength `
+            -Content $stream `
+            -ExpectedSha256 $ExpectedSha256 `
+            -ExpectedBytes $ExpectedBytes
+    } finally {
+        if ($null -ne $stream) { $stream.Dispose() }
+        if ($null -ne $response) { $response.Dispose() }
+        $request.Dispose()
+        $client.Dispose()
+        $handler.Dispose()
     }
 }
 
@@ -760,6 +852,9 @@ try {
         ManifestId = "rusty-kiosk.labs.s$sequence.v$($target.version_code)"
     }
     if ($null -eq $prior) {
+        if ($MigrateGitHubPagesProjectOriginToCustomDomain) {
+            throw "The one-shot Labs feed origin migration requires a prior pointer."
+        }
         $arguments.ExpectPriorAbsent = $true
     } else {
         $arguments.ExpectedPriorPointerSha256 = $prior.sha256
@@ -769,6 +864,35 @@ try {
         } elseif ([uint64]$target.version_code -lt [uint64]$prior.value.version_code) {
             throw "Pinned Kiosk Labs target is older than the live feed."
         }
+        if ([string]$prior.value.https_origin -cne $HttpsOrigin) {
+            if ([string]$prior.value.https_origin -cne
+                    "https://mesmerprism.github.io" -or
+                $HttpsOrigin -cne "https://mesmerprism.com") {
+                throw "Labs feed origin drift is outside the sealed migration."
+            }
+            if (-not $MigrateGitHubPagesProjectOriginToCustomDomain) {
+                throw (
+                    "The sealed Labs feed origin migration requires its " +
+                    "explicit one-shot operator switch."
+                )
+            }
+            $arguments.MigrateGitHubPagesProjectOriginToCustomDomain = $true
+        } elseif ($MigrateGitHubPagesProjectOriginToCustomDomain) {
+            throw "The one-shot Labs feed origin migration is not applicable."
+        }
+    }
+    if ($arguments.ContainsKey(
+            "MigrateGitHubPagesProjectOriginToCustomDomain"
+        )) {
+        $artifactHash = ([string]$target.apk.sha256).Substring(7)
+        $canonicalArtifactUrl =
+            "$HttpsOrigin/$SiteBasePath/package-updates/rusty-kiosk/labs/" +
+            "artifacts/sha256/$artifactHash/" +
+            "rusty-kiosk-$($target.version_name).apk"
+        $null = Assert-DirectPackageUpdateArtifact `
+            -Uri $canonicalArtifactUrl `
+            -ExpectedSha256 $target.apk.sha256 `
+            -ExpectedBytes ([int64]$target.apk.bytes)
     }
     $receipt = & (Join-Path $PSScriptRoot "Publish-PackageUpdateManifest.ps1") `
         @arguments

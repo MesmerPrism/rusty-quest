@@ -260,6 +260,13 @@ foreach ($token in @(
     Assert-Match $appBuild $token "Package Updater build is missing fixed input token: $token"
 }
 foreach ($token in @(
+    'https://mesmerprism\.com/rusty-quest/package-updates/rusty-kiosk/labs/current\.json',
+    '\.orElse\("https://mesmerprism\.com"\)'
+)) {
+    Assert-Match $appBuild $token `
+        "Package Updater default canonical origin is missing: $token"
+}
+foreach ($token in @(
     'Read-PackageUpdaterBuildManifest',
     'Assert-PackageUpdaterProductReleaseMetadata',
     '\$head -ne \$build\.source_revision',
@@ -730,6 +737,7 @@ foreach ($token in @(
     'ExpectedPriorEnvelopeSha256',
     'ExpectPriorAbsent',
     'Refresh',
+    'MigrateGitHubPagesProjectOriginToCustomDomain',
     'authenticate_package_update_manifest',
     'artifacts\\sha256',
     'Assert-PackageUpdatePointerUnchanged',

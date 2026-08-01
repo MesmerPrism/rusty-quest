@@ -4,6 +4,14 @@ on:
   schedule:
     - cron: "17 */6 * * *"
   workflow_dispatch:
+    inputs:
+      migrate_github_pages_project_origin_to_custom_domain:
+        description: >-
+          One-time old project-origin to custom-domain migration after the
+          custom-domain updater has been released and installed
+        required: false
+        default: false
+        type: boolean
 
 concurrency:
   group: rusty-quest-package-update-labs-pages
@@ -180,11 +188,19 @@ jobs:
         working-directory: source
         env:
           GH_TOKEN: ${{ github.token }}
+          MIGRATE_GITHUB_PAGES_PROJECT_ORIGIN_TO_CUSTOM_DOMAIN: ${{ github.event_name == 'workflow_dispatch' && inputs.migrate_github_pages_project_origin_to_custom_domain == true }}
           RUSTY_QUEST_UPDATE_SIGNING_SEED_BASE64URL: ${{ secrets.PACKAGE_UPDATER_MANIFEST_SIGNING_SEED_BASE64URL }}
           UPDATE_KEY_ID: ${{ vars.PACKAGE_UPDATER_LABS_TRUSTED_KEY_ID }}
           UPDATE_PUBLIC_KEY: ${{ vars.PACKAGE_UPDATER_LABS_TRUSTED_PUBLIC_KEY_BASE64URL }}
         run: |
           $ErrorActionPreference = "Stop"
+          $authorizeOriginMigration =
+            $env:GITHUB_EVENT_NAME -ceq "workflow_dispatch" -and
+            $env:MIGRATE_GITHUB_PAGES_PROJECT_ORIGIN_TO_CUSTOM_DOMAIN -ceq "true"
+          if ($env:GITHUB_EVENT_NAME -cne "workflow_dispatch" -and
+            $env:MIGRATE_GITHUB_PAGES_PROJECT_ORIGIN_TO_CUSTOM_DOMAIN -cne "false") {
+            throw "A scheduled feed refresh cannot authorize an origin migration."
+          }
           $buildTools = Join-Path $env:ANDROID_SDK_ROOT `
             "build-tools\$env:ANDROID_BUILD_TOOLS_VERSION"
           $receipt = .\tools\Publish-PackageUpdateLabsPages.ps1 `
@@ -192,7 +208,8 @@ jobs:
             -TargetPath .\distribution\package-update-labs-target.json `
             -AndroidBuildToolsDirectory $buildTools `
             -TrustedKeyId $env:UPDATE_KEY_ID `
-            -TrustedPublicKeyBase64Url $env:UPDATE_PUBLIC_KEY
+            -TrustedPublicKeyBase64Url $env:UPDATE_PUBLIC_KEY `
+            -MigrateGitHubPagesProjectOriginToCustomDomain:$authorizeOriginMigration
           $receipt | ConvertTo-Json -Depth 8 -Compress | Out-Null
 
       - name: Commit feed state without rewriting history

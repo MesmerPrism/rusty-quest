@@ -271,6 +271,12 @@ jobs:
             ) -or $alphaSequence -lt 1) {
             throw "Release tag cannot derive a canonical Android version."
           }
+          if ($env:UPDATE_MANIFEST_URL -cne
+                "https://mesmerprism.com/rusty-quest/package-updates/" +
+                "rusty-kiosk/labs/current.json" -or
+              $env:UPDATE_HTTPS_ORIGIN -cne "https://mesmerprism.com") {
+            throw "Package Updater Labs release origin is not the canonical direct endpoint."
+          }
           $releaseVersion = $tagMatch.Groups["version"].Value
           $releaseRoot = Join-Path $env:RUNNER_TEMP "package-updater-release"
           New-Item -ItemType Directory -Path $releaseRoot | Out-Null

@@ -52,6 +52,8 @@ foreach ($token in @(
     'Remove-Item Env:\\SETTINGS_ATTESTATION_HMAC_BASE64',
     'PACKAGE_UPDATER_KEYSTORE_BASE64',
     'PACKAGE_UPDATER_LABS_MANIFEST_URL',
+    'https://mesmerprism\.com/rusty-quest/package-updates/',
+    'Package Updater Labs release origin is not the canonical direct endpoint',
     'PACKAGE_UPDATER_LABS_EXPECTED_SITE_BASE_PATH',
     'PACKAGE_UPDATER_LABS_EXPECTED_UPDATER_SIGNER_SHA256',
     '-ExpectedUpdaterSignerSha256 \$env:UPDATE_UPDATER_SIGNER',

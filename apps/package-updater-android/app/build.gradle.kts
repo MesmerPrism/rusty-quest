@@ -10,7 +10,7 @@ fun buildConfigString(value: String): String =
 
 val updateManifestUrl =
   providers.environmentVariable("RUSTY_QUEST_PACKAGE_UPDATER_MANIFEST_URL")
-    .orElse("https://mesmerprism.github.io/rusty-quest/package-updates/rusty-kiosk/labs/current.json")
+    .orElse("https://mesmerprism.com/rusty-quest/package-updates/rusty-kiosk/labs/current.json")
     .get()
 val trustedKeyId =
   providers.environmentVariable("RUSTY_QUEST_PACKAGE_UPDATER_TRUSTED_KEY_ID")
@@ -22,7 +22,7 @@ val trustedPublicKeyBase64 =
     .get()
 val expectedHttpsOrigin =
   providers.environmentVariable("RUSTY_QUEST_PACKAGE_UPDATER_EXPECTED_HTTPS_ORIGIN")
-    .orElse("https://mesmerprism.github.io")
+    .orElse("https://mesmerprism.com")
     .get()
 val expectedSiteBasePath =
   providers.environmentVariable("RUSTY_QUEST_PACKAGE_UPDATER_EXPECTED_SITE_BASE_PATH")
