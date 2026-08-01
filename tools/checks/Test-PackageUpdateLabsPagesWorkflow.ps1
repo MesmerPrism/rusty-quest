@@ -1,4 +1,5 @@
 [CmdletBinding()]
+# Disposable consumed-approval probe. This branch must never be merged.
 param([string]$RepoRoot = "")
 
 $ErrorActionPreference = "Stop"

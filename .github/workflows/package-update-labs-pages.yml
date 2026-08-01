@@ -1,4 +1,5 @@
 name: Publish Package Update Labs Pages
+# Disposable consumed-approval probe. This branch must never be merged.
 
 on:
   schedule:
