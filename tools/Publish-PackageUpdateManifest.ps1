@@ -41,7 +41,8 @@ param(
     [string]$ExpectedPriorEnvelopeSha256,
     [Parameter(Mandatory = $true, ParameterSetName = "AbsentPrior")]
     [switch]$ExpectPriorAbsent,
-    [switch]$Refresh
+    [switch]$Refresh,
+    [switch]$MigrateGitHubPagesProjectOriginToCustomDomain
 )
 
 $ErrorActionPreference = "Stop"
@@ -197,7 +198,8 @@ try {
         -VersionCode $VersionCode `
         -PriorEnvelope $priorEnvelope `
         -CandidateArtifact $candidateArtifact `
-        -Refresh:$Refresh
+        -Refresh:$Refresh `
+        -MigrateGitHubPagesProjectOriginToCustomDomain:$MigrateGitHubPagesProjectOriginToCustomDomain
 
     $stagingRoot = Join-Path $OutputDirectory (
         ".package-update-publish-" + [guid]::NewGuid().ToString("N")
@@ -242,7 +244,13 @@ try {
     $receipt = [ordered]@{
         schema = "rusty.quest.package_update_publication_receipt.v3"
         source_revision = $sourceRevision
-        publication_mode = if ($Refresh) { "refresh" } else { "version-advance" }
+        publication_mode = if ($MigrateGitHubPagesProjectOriginToCustomDomain) {
+            "origin-migration-refresh"
+        } elseif ($Refresh) {
+            "refresh"
+        } else {
+            "version-advance"
+        }
         generation = $generation
         prior_pointer_sha256 = if ($null -eq $prior) { $null } else { $prior.sha256 }
         prior_envelope_sha256 = if ($null -eq $prior) {

@@ -46,6 +46,18 @@ Package Installer confirmation.
    `github-pages` environment for only `main`. The deploy job uploads the exact
    feed commit as a Pages artifact and verifies that commit contains only
    `.nojekyll` and the Kiosk Labs feed subtree with regular-file Git modes.
+10. Use `https://mesmerprism.com/rusty-quest/` as the canonical, non-redirecting
+    feed origin. First release and install an updater build pinned to that
+    custom-domain origin. Then explicitly dispatch the protected publisher with
+    `migrate_github_pages_project_origin_to_custom_domain=true`; scheduled runs
+    cannot arm the migration. The publisher permits exactly one authenticated
+    refresh from the former `https://mesmerprism.github.io` tuple: the prior
+    pointer and envelope must be hash-pinned and signature-authenticated;
+    package, ring, signer, key, path, version, APK hash, byte count, and filename
+    must remain identical. It also requires a direct, redirect-free response
+    whose bytes and SHA-256 match the pinned APK. Once the pointer uses the
+    custom domain, supplying the migration assertion again is rejected and
+    ordinary signed refresh rules resume.
 
 ## Required configuration names
 

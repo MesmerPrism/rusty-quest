@@ -171,15 +171,16 @@ function Assert-PackageUpdatePrior {
         [uint64]$VersionCode,
         $PriorEnvelope,
         [Parameter(Mandatory = $true)]$CandidateArtifact,
-        [switch]$Refresh
+        [switch]$Refresh,
+        [switch]$MigrateGitHubPagesProjectOriginToCustomDomain
     )
     if ($ExpectPriorAbsent -eq (-not [string]::IsNullOrWhiteSpace(
             $ExpectedPriorPointerSha256))) {
         throw "Assert exactly one prior state: absent or pinned pointer."
     }
     if ($ExpectPriorAbsent) {
-        if ($Refresh) {
-            throw "A refresh requires one pinned prior generation."
+        if ($Refresh -or $MigrateGitHubPagesProjectOriginToCustomDomain) {
+            throw "A refresh or origin migration requires one pinned prior generation."
         }
         if ($null -ne $Prior) {
             throw "Expected the channel pointer to be absent."
@@ -196,9 +197,27 @@ function Assert-PackageUpdatePrior {
         $Prior.value.envelope_sha256 -ne $ExpectedPriorEnvelopeSha256) {
         throw "The current pointer does not match the caller-pinned prior state."
     }
-    if ((ConvertTo-PackageUpdateTupleIdentity $Prior.value) -ne
-        (ConvertTo-PackageUpdateTupleIdentity $Tuple)) {
-        throw "The current pointer closed tuple differs from the candidate."
+    $tupleMatches = (ConvertTo-PackageUpdateTupleIdentity $Prior.value) -eq
+        (ConvertTo-PackageUpdateTupleIdentity $Tuple)
+    $originMigration = -not $tupleMatches
+    if ($originMigration) {
+        if (-not $Refresh -or
+            -not $MigrateGitHubPagesProjectOriginToCustomDomain -or
+            [string]$Prior.value.https_origin -cne
+                "https://mesmerprism.github.io" -or
+            [string]$Tuple.https_origin -cne "https://mesmerprism.com") {
+            throw "The current pointer closed tuple differs from the candidate."
+        }
+        foreach ($field in @(
+            "channel", "package_name", "rollout_ring", "signer_sha256",
+            "key_id", "public_key", "site_base_path"
+        )) {
+            if ([string]$Prior.value[$field] -cne [string]$Tuple[$field]) {
+                throw "The origin migration changed closed tuple field '$field'."
+            }
+        }
+    } elseif ($MigrateGitHubPagesProjectOriginToCustomDomain) {
+        throw "An origin migration assertion requires exact origin drift."
     }
     if ($Sequence -le [uint64]$Prior.value.sequence) {
         throw "Sequence must strictly increase."
@@ -216,7 +235,7 @@ function Assert-PackageUpdatePrior {
         "v$($Prior.value.version_code)-" +
         "$(([string]$priorArtifact.apk_sha256).Substring(7,16))-" +
         "$(([string]$Prior.value.envelope_sha256).Substring(7,16))"
-    $expectedPriorApkUrl = "$($Tuple.https_origin)/$($Tuple.site_base_path)/" +
+    $expectedPriorApkUrl = "$($Prior.value.https_origin)/$($Tuple.site_base_path)/" +
         "package-updates/rusty-kiosk/labs/artifacts/sha256/" +
         "$(([string]$priorArtifact.apk_sha256).Substring(7))/" +
         "rusty-kiosk-$($priorArtifact.version_name).apk"
@@ -234,13 +253,24 @@ function Assert-PackageUpdatePrior {
             throw "A refresh must retain the exact prior version code."
         }
         foreach ($field in @(
-            "package_name", "version_code", "version_name", "apk_url",
-            "apk_sha256", "apk_size_bytes", "signer_sha256"
+            "package_name", "version_code", "version_name", "apk_sha256",
+            "apk_size_bytes", "signer_sha256"
         )) {
             if ([string]$priorArtifact[$field] -cne
                 [string]$CandidateArtifact[$field]) {
                 throw "A refresh changed immutable artifact field '$field'."
             }
+        }
+        $expectedCandidateApkUrl =
+            "$($Tuple.https_origin)/$($Tuple.site_base_path)/" +
+            "package-updates/rusty-kiosk/labs/artifacts/sha256/" +
+            "$(([string]$priorArtifact.apk_sha256).Substring(7))/" +
+            "rusty-kiosk-$($priorArtifact.version_name).apk"
+        if ([string]$CandidateArtifact.apk_url -cne $expectedCandidateApkUrl -or
+            (-not $originMigration -and
+                [string]$priorArtifact.apk_url -cne
+                    [string]$CandidateArtifact.apk_url)) {
+            throw "A refresh changed the APK route outside the exact origin migration."
         }
     } elseif ($VersionCode -le [uint64]$Prior.value.version_code) {
         throw "A new publication must strictly increase the version code."

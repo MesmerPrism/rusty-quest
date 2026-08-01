@@ -272,6 +272,168 @@ Assert-Rejected {
         -Tuple $tuple -Sequence 41 -VersionCode 100 `
         -PriorEnvelope $priorEnvelope -CandidateArtifact $driftArtifact -Refresh
 } "refresh artifact drift"
+
+$legacyOrigin = "https://mesmerprism.github.io"
+$canonicalOrigin = "https://mesmerprism.com"
+$legacyTuple = Get-PackageUpdateTuple `
+    -Channel $tuple.channel `
+    -PackageName $tuple.package_name `
+    -RolloutRing $tuple.rollout_ring `
+    -SignerSha256 $tuple.signer_sha256 `
+    -KeyId $tuple.key_id `
+    -PublicKey $tuple.public_key `
+    -HttpsOrigin $legacyOrigin `
+    -SiteBasePath $tuple.site_base_path
+$canonicalTuple = Get-PackageUpdateTuple `
+    -Channel $tuple.channel `
+    -PackageName $tuple.package_name `
+    -RolloutRing $tuple.rollout_ring `
+    -SignerSha256 $tuple.signer_sha256 `
+    -KeyId $tuple.key_id `
+    -PublicKey $tuple.public_key `
+    -HttpsOrigin $canonicalOrigin `
+    -SiteBasePath $tuple.site_base_path
+$migrationPointerValue = [ordered]@{}
+foreach ($entry in $pointerValue.GetEnumerator()) {
+    $migrationPointerValue[$entry.Key] = $entry.Value
+}
+$migrationPointerValue.https_origin = $legacyOrigin
+$migrationPointerBytes = [Text.Encoding]::UTF8.GetBytes(
+    ($migrationPointerValue | ConvertTo-Json -Compress)
+)
+$migrationPrior = [pscustomobject]@{
+    value = $migrationPointerValue
+    bytes = $migrationPointerBytes
+    sha256 = "sha256:" + (
+        [Convert]::ToHexString(
+            [Security.Cryptography.SHA256]::HashData($migrationPointerBytes)
+        ).ToLowerInvariant()
+    )
+}
+$migrationPriorArtifact = [ordered]@{}
+foreach ($entry in $priorArtifact.GetEnumerator()) {
+    $migrationPriorArtifact[$entry.Key] = $entry.Value
+}
+$migrationPriorArtifact.apk_url =
+    "$legacyOrigin/rusty-quest/package-updates/rusty-kiosk/labs/" +
+    "artifacts/sha256/$('a' * 64)/rusty-kiosk-0.6.5.apk"
+$migrationCandidateArtifact = [ordered]@{}
+foreach ($entry in $migrationPriorArtifact.GetEnumerator()) {
+    $migrationCandidateArtifact[$entry.Key] = $entry.Value
+}
+$migrationCandidateArtifact.apk_url =
+    "$canonicalOrigin/rusty-quest/package-updates/rusty-kiosk/labs/" +
+    "artifacts/sha256/$('a' * 64)/rusty-kiosk-0.6.5.apk"
+$migrationEnvelope = [ordered]@{
+    key_id = $legacyTuple.key_id
+    signed = [ordered]@{
+        sequence = 40
+        channel = $legacyTuple.channel
+        rollout_ring = $legacyTuple.rollout_ring
+        artifact = $migrationPriorArtifact
+    }
+}
+Assert-PackageUpdatePrior -Prior $migrationPrior `
+    -ExpectedPriorPointerSha256 $migrationPrior.sha256 `
+    -ExpectedPriorEnvelopeSha256 $migrationPointerValue.envelope_sha256 `
+    -Tuple $canonicalTuple -Sequence 41 -VersionCode 100 `
+    -PriorEnvelope $migrationEnvelope `
+    -CandidateArtifact $migrationCandidateArtifact -Refresh `
+    -MigrateGitHubPagesProjectOriginToCustomDomain
+Assert-Rejected {
+    Assert-PackageUpdatePrior -Prior $migrationPrior `
+        -ExpectedPriorPointerSha256 $migrationPrior.sha256 `
+        -ExpectedPriorEnvelopeSha256 $migrationPointerValue.envelope_sha256 `
+        -Tuple $canonicalTuple -Sequence 41 -VersionCode 100 `
+        -PriorEnvelope $migrationEnvelope `
+        -CandidateArtifact $migrationCandidateArtifact -Refresh
+} "origin drift without sealed migration"
+$alternatePublicKeyPrefix = if ($canonicalTuple.public_key.StartsWith("A")) {
+    "B"
+} else {
+    "A"
+}
+$tupleMigrationDamages = @(
+    [pscustomobject]@{ Field = "channel"; Value = "alternate-channel" },
+    [pscustomobject]@{ Field = "package_name"; Value = "io.github.mesmerprism.other" },
+    [pscustomobject]@{ Field = "rollout_ring"; Value = "canary" },
+    [pscustomobject]@{ Field = "signer_sha256"; Value = "sha256:" + ("9" * 64) },
+    [pscustomobject]@{ Field = "key_id"; Value = "release-manifest-2026-b" },
+    [pscustomobject]@{ Field = "public_key"; Value = $alternatePublicKeyPrefix + $canonicalTuple.public_key.Substring(1) },
+    [pscustomobject]@{ Field = "site_base_path"; Value = "rusty-quest-alt" }
+)
+foreach ($damage in $tupleMigrationDamages) {
+    $damagedMigrationTuple = [ordered]@{}
+    foreach ($entry in $canonicalTuple.GetEnumerator()) {
+        $damagedMigrationTuple[$entry.Key] = $entry.Value
+    }
+    $damagedMigrationTuple[$damage.Field] = $damage.Value
+    Assert-Rejected {
+        Assert-PackageUpdatePrior -Prior $migrationPrior `
+            -ExpectedPriorPointerSha256 $migrationPrior.sha256 `
+            -ExpectedPriorEnvelopeSha256 $migrationPointerValue.envelope_sha256 `
+            -Tuple $damagedMigrationTuple -Sequence 41 -VersionCode 100 `
+            -PriorEnvelope $migrationEnvelope `
+            -CandidateArtifact $migrationCandidateArtifact -Refresh `
+            -MigrateGitHubPagesProjectOriginToCustomDomain
+    } "origin migration tuple $($damage.Field) drift"
+}
+$artifactMigrationDamages = @(
+    [pscustomobject]@{ Field = "package_name"; Value = "io.github.mesmerprism.other" },
+    [pscustomobject]@{ Field = "version_code"; Value = 101L },
+    [pscustomobject]@{ Field = "version_name"; Value = "0.6.5-alt" },
+    [pscustomobject]@{ Field = "apk_sha256"; Value = "sha256:" + ("9" * 64) },
+    [pscustomobject]@{ Field = "apk_size_bytes"; Value = 524289L },
+    [pscustomobject]@{ Field = "signer_sha256"; Value = "sha256:" + ("8" * 64) }
+)
+foreach ($damage in $artifactMigrationDamages) {
+    $damagedMigrationArtifact = [ordered]@{}
+    foreach ($entry in $migrationCandidateArtifact.GetEnumerator()) {
+        $damagedMigrationArtifact[$entry.Key] = $entry.Value
+    }
+    $damagedMigrationArtifact[$damage.Field] = $damage.Value
+    Assert-Rejected {
+        Assert-PackageUpdatePrior -Prior $migrationPrior `
+            -ExpectedPriorPointerSha256 $migrationPrior.sha256 `
+            -ExpectedPriorEnvelopeSha256 $migrationPointerValue.envelope_sha256 `
+            -Tuple $canonicalTuple -Sequence 41 -VersionCode 100 `
+            -PriorEnvelope $migrationEnvelope `
+            -CandidateArtifact $damagedMigrationArtifact -Refresh `
+            -MigrateGitHubPagesProjectOriginToCustomDomain
+    } "origin migration artifact $($damage.Field) drift"
+}
+$damagedMigrationArtifact = [ordered]@{}
+foreach ($entry in $migrationCandidateArtifact.GetEnumerator()) {
+    $damagedMigrationArtifact[$entry.Key] = $entry.Value
+}
+$damagedMigrationArtifact.apk_url =
+    "https://evil.example.test/rusty-kiosk-0.6.5.apk"
+Assert-Rejected {
+    Assert-PackageUpdatePrior -Prior $migrationPrior `
+        -ExpectedPriorPointerSha256 $migrationPrior.sha256 `
+        -ExpectedPriorEnvelopeSha256 $migrationPointerValue.envelope_sha256 `
+        -Tuple $canonicalTuple -Sequence 41 -VersionCode 100 `
+        -PriorEnvelope $migrationEnvelope `
+        -CandidateArtifact $damagedMigrationArtifact -Refresh `
+        -MigrateGitHubPagesProjectOriginToCustomDomain
+} "origin migration route drift"
+Assert-Rejected {
+    Assert-PackageUpdatePrior -Prior $migrationPrior `
+        -ExpectedPriorPointerSha256 $migrationPrior.sha256 `
+        -ExpectedPriorEnvelopeSha256 $migrationPointerValue.envelope_sha256 `
+        -Tuple $canonicalTuple -Sequence 41 -VersionCode 101 `
+        -PriorEnvelope $migrationEnvelope `
+        -CandidateArtifact $candidateArtifact `
+        -MigrateGitHubPagesProjectOriginToCustomDomain
+} "origin migration without authenticated refresh"
+Assert-Rejected {
+    Assert-PackageUpdatePrior -Prior $prior `
+        -ExpectedPriorPointerSha256 $prior.sha256 `
+        -ExpectedPriorEnvelopeSha256 $pointerValue.envelope_sha256 `
+        -Tuple $tuple -Sequence 41 -VersionCode 100 `
+        -PriorEnvelope $priorEnvelope -CandidateArtifact $priorArtifact `
+        -Refresh -MigrateGitHubPagesProjectOriginToCustomDomain
+} "unnecessary origin migration assertion"
 Assert-Rejected {
     Assert-PackageUpdatePointerUnchanged -Initial $prior -Current $null
 } "interrupted pointer removal"
