@@ -1,0 +1,75 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mesmerprism.com/schemas/rusty.quest.fleet_agent_key_record_release_capsule.v1.schema.json",
+  "title": "Rusty Quest Fleet Agent key-record release capsule",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "capsule_version", "tool_contract", "source", "artifact", "distribution", "payload"],
+  "properties": {
+    "schema": { "const": "rusty.quest.fleet_agent_key_record_release_capsule.v1" },
+    "capsule_version": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$" },
+    "tool_contract": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema", "executable", "argument_contract", "output_schema"],
+      "properties": {
+        "schema": { "const": "rusty.quest.fleet_agent_key_record_tool_contract.v1" },
+        "executable": { "const": "fleet-agent-key-record.exe" },
+        "argument_contract": { "const": "--key-id <dotted-id> --seed-file <private-seed-file>" },
+        "output_schema": { "const": "rusty.quest.fleet_agent_key_record.v1" }
+      }
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repository_url", "commit", "tree", "provenance_path", "provenance_sha256"],
+      "properties": {
+        "repository_url": { "const": "https://github.com/MesmerPrism/rusty-quest" },
+        "commit": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+        "tree": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+        "provenance_path": { "const": "provenance.json" },
+        "provenance_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      }
+    },
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256", "size_bytes", "target", "profile"],
+      "properties": {
+        "path": { "const": "fleet-agent-key-record.exe" },
+        "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "size_bytes": { "type": "integer", "minimum": 1, "maximum": 134217728 },
+        "target": { "const": "x86_64-pc-windows-msvc" },
+        "profile": { "const": "release" }
+      }
+    },
+    "distribution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["portable", "supported", "inert_until_invoked", "install_contract", "private_material_included", "live_onboarding_claim"],
+      "properties": {
+        "portable": { "const": true },
+        "supported": { "const": true },
+        "inert_until_invoked": { "const": true },
+        "install_contract": { "const": "copy_capsule_byte_for_byte" },
+        "private_material_included": { "const": false },
+        "live_onboarding_claim": { "const": false }
+      }
+    },
+    "payload": {
+      "type": "array",
+      "minItems": 4,
+      "maxItems": 4,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["path", "sha256", "size_bytes"],
+        "properties": {
+          "path": { "enum": ["fleet-agent-key-record.exe", "provenance.json", "LICENSE", "SOURCE-NOTICE.md"] },
+          "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+          "size_bytes": { "type": "integer", "minimum": 1, "maximum": 134217728 }
+        }
+      }
+    }
+  }
+}

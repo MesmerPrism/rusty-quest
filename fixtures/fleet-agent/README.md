@@ -20,3 +20,11 @@ must never be used for enrollment or an installed agent.
 `fleet-agent.disabled.profile.json` is the default-inert example. Its
 fingerprint is intentionally not an enrollment record and its documentation
 endpoint is non-routable.
+
+`key-record-release-scenarios.valid.json` records the exact portable capsule
+file set and its non-claims. `key-record-release-scenarios.damaged.json` is the
+closed negative matrix for artifact/source/provenance substitution, secret
+leakage, extra repository/field/file damage, and stale version/target damage.
+The release self-test applies every mutation to generated owner bytes and
+requires rejection; fixture values contain no executable, seed, profile, Hub
+configuration, or private device evidence.

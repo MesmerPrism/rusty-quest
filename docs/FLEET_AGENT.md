@@ -10,6 +10,53 @@ live in `apps/fleet-agent-android`.
 The producer creates proposals. It does not accept Manifold peer state, Fleet
 device state, enrollment, commands, or capabilities.
 
+## Key-record helper release capsule
+
+`fleet-agent-key-record` derives one public enrollment record from an
+operator-owned private seed file. The existing
+`Build-FleetAgentKeyRecord.ps1` output remains machine-bound developer evidence
+for source and device tests. Its manifest contains local paths and is never a
+supported distribution input.
+
+`Build-FleetAgentKeyRecordRelease.ps1` is the separate owner release route. It
+requires an exact clean Rusty Quest source tree and locked dependencies, builds
+the release-profile Windows helper, and emits exactly:
+
+- `release-manifest.json` using
+  `rusty.quest.fleet_agent_key_record_release_capsule.v1`;
+- `provenance.json` with public repository URLs, exact commits/trees, the
+  closed dependency set, exact source-file hashes, and build identity;
+- `fleet-agent-key-record.exe`, `LICENSE`, `SOURCE-NOTICE.md`, and
+  `checksums.sha256`.
+
+The capsule version is `1.0.0`. Consumers must pin the owner identity, manifest
+SHA-256, helper SHA-256, exact source commit/tree, version, target, and payload
+set separately and preserve the owner bytes without augmentation. The owner
+validator rejects artifact or provenance substitution, unknown fields, extra
+repositories or files, stale/unsupported versions or targets, and detectable
+private or machine-local material.
+
+Rusty Quest has no release-signing or revocation authority for this helper
+capsule. The current contract therefore makes no signature claim: ownership is
+bound by the exact public repository identity, clean Git commit/tree, closed
+provenance, and downstream-pinned SHA-256 values. A downstream signed bundle
+may authenticate its own packaging, but must not relabel that signature as a
+Rusty Quest enrollment or capsule-revocation decision.
+
+Capsule validity proves packaging and helper provenance only. It does not
+enroll or activate a device, prove reachability, issue a lease, accept a peer,
+or authorize a Fleet/Manifold transition. Manifold remains the live enrollment
+and peer authority. No capsule contains a seed, profile, Hub configuration, or
+private inventory.
+
+Build and validate after committing the source:
+
+```powershell
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Build-FleetAgentKeyRecordRelease.ps1 -CapsuleVersion 1.0.0
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-FleetAgentKeyRecordRelease.ps1 -CapsuleRoot <owner-capsule>
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-FleetAgentKeyRecordReleaseSelfTest.ps1 -CapsuleRoot <owner-capsule>
+```
+
 ## Baseline boundary
 
 The first profile reports only low-rate facts that Quest owns:
@@ -107,6 +154,11 @@ cargo test -p rusty-quest-fleet-agent
 cargo clippy -p rusty-quest-fleet-agent --all-targets -- -D warnings
 pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-FleetAgentAndroid.ps1 -Tier Host
 ```
+
+The host gate also checks the release builder, validator, schema, and fixture
+matrix statically. The release builder's clean-source gate and the exact
+capsule validator run after the source commit exists; damaged-capsule self-tests
+run against those generated owner bytes.
 
 The public golden claims fixture under `fixtures/fleet-agent/` must reproduce
 Fleet's signing message and signature exactly. `-Tier Host` is the explicit

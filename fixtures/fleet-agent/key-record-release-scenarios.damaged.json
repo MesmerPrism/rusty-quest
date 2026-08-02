@@ -1,0 +1,14 @@
+{
+  "schema": "rusty.quest.fleet_agent_key_record_release_damage_matrix.v1",
+  "cases": [
+    { "name": "artifact-substitution", "mutation": "artifact.sha256", "expected": "reject" },
+    { "name": "source-commit-drift", "mutation": "source.commit", "expected": "reject" },
+    { "name": "provenance-substitution", "mutation": "source.provenance_sha256", "expected": "reject" },
+    { "name": "secret-leakage", "mutation": "add-signing-seed-marker", "expected": "reject" },
+    { "name": "extra-repository", "mutation": "provenance.source.repositories", "expected": "reject" },
+    { "name": "extra-field", "mutation": "manifest.private_path", "expected": "reject" },
+    { "name": "unsupported-version", "mutation": "capsule_version", "expected": "reject" },
+    { "name": "unsupported-target", "mutation": "artifact.target", "expected": "reject" },
+    { "name": "extra-package-file", "mutation": "capsule.files", "expected": "reject" }
+  ]
+}

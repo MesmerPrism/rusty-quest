@@ -1,0 +1,18 @@
+{
+  "schema": "rusty.quest.fleet_agent_key_record_release_fixture_matrix.v1",
+  "capsule_version": "1.0.0",
+  "valid_case": {
+    "name": "closed-portable-owner-capsule",
+    "expected": "pass",
+    "files": [
+      "fleet-agent-key-record.exe",
+      "provenance.json",
+      "LICENSE",
+      "SOURCE-NOTICE.md",
+      "release-manifest.json",
+      "checksums.sha256"
+    ],
+    "private_material_included": false,
+    "live_onboarding_claim": false
+  }
+}

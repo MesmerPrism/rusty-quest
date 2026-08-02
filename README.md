@@ -123,6 +123,12 @@ builds the matching Manifold low-rate peer-status proposal, and signs the
 domain-separated JCS claims with Ed25519. Its default profile is inert. It does
 not discover a Hub, enroll itself, accept authority, inspect arbitrary apps,
 listen for commands, or add ADB/File Manager/media capability.
+Its Windows public-key helper has two deliberately distinct outputs: the
+existing machine-bound developer manifest for local build/device tests, and a
+clean-source [portable owner release capsule](docs/FLEET_AGENT.md#key-record-helper-release-capsule)
+for supported downstream packaging. The latter is a closed set of manifest,
+provenance, executable, license, notice, and checksum bytes and contains no
+seed, device profile, Hub configuration, or enrollment authority.
 
 `crates/rusty-quest-package-updater` owns the fail-closed, one-APK signed
 manifest, exact policy, anti-rollback checkpoint, and deterministic receipt

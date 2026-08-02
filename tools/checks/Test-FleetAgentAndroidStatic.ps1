@@ -32,6 +32,12 @@ $paths = [ordered]@{
     device_smoke = Join-Path $RepoRoot "tools\Invoke-FleetAgentTwoQuestSmoke.ps1"
     key_record = Join-Path $RepoRoot "crates\rusty-quest-fleet-agent\src\bin\fleet-agent-key-record.rs"
     key_record_build = Join-Path $RepoRoot "tools\Build-FleetAgentKeyRecord.ps1"
+    key_record_release_build = Join-Path $RepoRoot "tools\Build-FleetAgentKeyRecordRelease.ps1"
+    key_record_release_test = Join-Path $RepoRoot "tools\Test-FleetAgentKeyRecordRelease.ps1"
+    key_record_release_self_test = Join-Path $RepoRoot "tools\Test-FleetAgentKeyRecordReleaseSelfTest.ps1"
+    key_record_release_schema = Join-Path $RepoRoot "schemas\rusty.quest.fleet_agent_key_record_release_capsule.v1.schema.json"
+    key_record_release_valid = Join-Path $RepoRoot "fixtures\fleet-agent\key-record-release-scenarios.valid.json"
+    key_record_release_damaged = Join-Path $RepoRoot "fixtures\fleet-agent\key-record-release-scenarios.damaged.json"
 }
 foreach ($entry in $paths.GetEnumerator()) {
     if (-not (Test-Path -LiteralPath $entry.Value)) {
@@ -66,6 +72,11 @@ $hostValidation = Get-Content -Raw -LiteralPath $paths.host_validation
 $deviceSmoke = Get-Content -Raw -LiteralPath $paths.device_smoke
 $keyRecord = Get-Content -Raw -LiteralPath $paths.key_record
 $keyRecordBuild = Get-Content -Raw -LiteralPath $paths.key_record_build
+$keyRecordReleaseBuild = Get-Content -Raw -LiteralPath $paths.key_record_release_build
+$keyRecordReleaseTest = Get-Content -Raw -LiteralPath $paths.key_record_release_test
+$keyRecordReleaseSchema = Get-Content -Raw -LiteralPath $paths.key_record_release_schema
+$keyRecordReleaseValid = Get-Content -Raw -LiteralPath $paths.key_record_release_valid | ConvertFrom-Json
+$keyRecordReleaseDamaged = Get-Content -Raw -LiteralPath $paths.key_record_release_damaged | ConvertFrom-Json
 
 Assert-Match $workspace '"crates/rusty-quest-fleet-agent"' "Workspace must include the Fleet Agent contract crate."
 Assert-Match $crate 'rev = "8181683be4a3abbc5daa0c4497c7aeb9e76316a8"' "Fleet contract dependency must remain pinned to the accepted public revision."
@@ -276,6 +287,41 @@ foreach ($token in @(
     'rusty\.quest\.fleet_agent_key_record_tool\.v1',
     'executable_sha256')) {
     Assert-Match $keyRecordBuild $token "Fleet Agent key-record build is missing token: $token"
+}
+
+foreach ($token in @(
+    'Fleet Agent key-record release requires a clean exact Rusty Quest source tree',
+    'cargo build --locked --release',
+    'rusty\.quest\.fleet_agent_key_record_release_capsule\.v1',
+    'copy_capsule_byte_for_byte',
+    'private_seed_included = \$false',
+    'live_onboarding_claim = \$false',
+    'https://github\.com/MesmerPrism/rusty-quest')) {
+    Assert-Match $keyRecordReleaseBuild $token "Fleet Agent key-record release build is missing boundary token: $token"
+}
+foreach ($token in @(
+    'Assert-ExactProperties',
+    'Fleet Agent key-record release provenance repository set is not closed',
+    'Fleet Agent key-record release capsule has an extra or missing file',
+    'contains prohibited private or machine-local material',
+    'ExpectedManifestSha256',
+    'ExpectedExecutableSha256')) {
+    Assert-Match $keyRecordReleaseTest ([regex]::Escape($token)) "Fleet Agent key-record release validator is missing boundary token: $token"
+}
+if ($keyRecordReleaseSchema -notmatch '"additionalProperties"\s*:\s*false' -or
+    $keyRecordReleaseValid.schema -ne "rusty.quest.fleet_agent_key_record_release_fixture_matrix.v1" -or
+    $keyRecordReleaseValid.valid_case.private_material_included -ne $false -or
+    $keyRecordReleaseValid.valid_case.live_onboarding_claim -ne $false -or
+    $keyRecordReleaseDamaged.schema -ne "rusty.quest.fleet_agent_key_record_release_damage_matrix.v1" -or
+    @($keyRecordReleaseDamaged.cases).Count -ne 9) {
+    throw "Fleet Agent key-record release schema or fixture matrix is incomplete."
+}
+$expectedDamageNames = @(
+    "artifact-substitution", "source-commit-drift", "provenance-substitution",
+    "secret-leakage", "extra-repository", "extra-field", "unsupported-version",
+    "unsupported-target", "extra-package-file")
+if (@(Compare-Object $expectedDamageNames @($keyRecordReleaseDamaged.cases.name)).Count -ne 0) {
+    throw "Fleet Agent key-record release damage matrix changed."
 }
 
 $appSource = @(

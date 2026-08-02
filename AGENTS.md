@@ -343,6 +343,12 @@ unless an explicitly participating app supplies its own evidence. The baseline
 must not add ADB, package-query, accessibility, storage, camera, microphone,
 media, or command-listener authority. Manifold accepts peer status and Fleet
 accepts the device projection; the Quest producer accepts neither.
+The supported Windows key-record helper release is a separate clean-source,
+portable, exact-file capsule. Keep its owner manifest, provenance, executable,
+license, notice, and checksums closed and byte-bound. It contains no private
+seed, profile, Hub configuration, enrollment, activation, reachability, lease,
+or peer-acceptance evidence. The machine-bound developer-tool manifest remains
+build/test evidence only and must never be consumed as a release capsule.
 
 Generic media adoption lives in `rusty-quest-media-stream`. Manifold owns the
 accepted session/stream descriptor; the Quest runtime owns only receiver-first
@@ -498,6 +504,7 @@ Run:
 pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\check_all.ps1
 pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\checks\Test-ApkRunIsolationStatic.ps1 -RepoRoot .
 pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-FleetAgentAndroid.ps1 -Tier Host
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-FleetAgentKeyRecordRelease.ps1 -CapsuleRoot <owner-capsule>
 ```
 
 The Spatial Camera Panel wrapper runs its focused workflow gate before the
