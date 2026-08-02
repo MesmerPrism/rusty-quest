@@ -26,7 +26,9 @@ that preserves Windows path-length headroom. Cargo uses only the materialized
 Quest and Manifold source plus a fresh checkout of the materialized Fleet
 dependency, locked dependencies, a dedicated Cargo home/target, an explicit
 Windows x64 target, cleared ambient Cargo/Rust profile overrides, stable path
-remapping, and stripped symbols.
+remapping, stripped symbols, and the MSVC `/Brepro` linker policy passed through
+Rust's encoded `-C link-arg` interface. Provenance records both that exact
+argument and the required `IMAGE_DEBUG_TYPE_REPRO` PE marker.
 
 Cargo parses every Quest workspace-member manifest before selecting the helper
 package. Those manifests reference sibling Rusty Lattice, Matter, and Optics
@@ -60,7 +62,13 @@ paths plus ordinary and extended UNC paths only when a UNC server and share are
 both present. The namespace-only Windows runtime marker `\\?\UNC\` is not a
 machine identity. The validator inspects ASCII and both byte alignments of
 little- and big-endian UTF-16 in the executable, so complete absolute host
-paths are release-blocking even when ordinary manifest text is clean.
+paths are release-blocking even when ordinary manifest text is clean. It also
+requires exactly one `IMAGE_DEBUG_TYPE_REPRO` debug-directory entry. Under the
+[Microsoft PE contract](https://learn.microsoft.com/en-us/windows/win32/debug/pe-format#debug-type),
+that marker means PE timestamp fields contain deterministic content-derived
+values rather than build time. Release acceptance still compares two clean-room
+builds byte-for-byte; the marker is necessary policy evidence, not a substitute
+for the A/B observation.
 
 Rusty Quest has no release-signing or revocation authority for this helper
 capsule. The current contract therefore makes no signature claim: ownership is
@@ -80,6 +88,7 @@ Build and validate after committing the source:
 ```powershell
 pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Build-FleetAgentKeyRecordRelease.ps1 -CapsuleVersion 1.0.0
 pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-FleetAgentKeyRecordRelease.ps1 -MachinePathPolicySelfTest
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-FleetAgentKeyRecordRelease.ps1 -PeReproPolicySelfTest
 pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-FleetAgentKeyRecordRelease.ps1 -CapsuleRoot <owner-capsule>
 pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-FleetAgentKeyRecordReleaseSelfTest.ps1 -CapsuleRoot <owner-capsule>
 ```

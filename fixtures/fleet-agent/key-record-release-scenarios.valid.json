@@ -14,6 +14,8 @@
     ],
     "target_dependency_repository_ids": ["rusty-fleet", "rusty-manifold", "rusty-quest"],
     "workspace_parse_only_repository_ids": ["rusty-lattice", "rusty-matter", "rusty-optics"],
+    "linker_reproducibility_argument": "/Brepro",
+    "pe_reproducibility_marker": "IMAGE_DEBUG_TYPE_REPRO",
     "portable_namespace_marker_cases": [
       "binary-unc-namespace-marker-ascii",
       "binary-unc-namespace-marker-utf16le-offset0",

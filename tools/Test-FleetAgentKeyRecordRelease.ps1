@@ -7,6 +7,8 @@ param(
     [string] $CapsuleRoot,
     [Parameter(Mandatory, ParameterSetName = "MachinePathPolicySelfTest")]
     [switch] $MachinePathPolicySelfTest,
+    [Parameter(Mandatory, ParameterSetName = "PeReproPolicySelfTest")]
+    [switch] $PeReproPolicySelfTest,
     [string] $ExpectedCapsuleVersion = "",
     [string] $ExpectedManifestSha256 = "",
     [string] $ExpectedExecutableSha256 = "",
@@ -159,6 +161,125 @@ function Assert-X64WindowsExecutable([string] $LiteralPath) {
     }
 }
 
+function Get-PeDebugDirectoryTypeOffsetList([byte[]] $Bytes) {
+    $peOffset = [BitConverter]::ToInt32($Bytes, 0x3c)
+    $sectionCount = [BitConverter]::ToUInt16($Bytes, $peOffset + 6)
+    $optionalHeaderSize = [BitConverter]::ToUInt16($Bytes, $peOffset + 20)
+    $optionalHeaderOffset = $peOffset + 24
+    if ($optionalHeaderSize -lt 168 -or
+        $optionalHeaderOffset + $optionalHeaderSize -gt $Bytes.Length -or
+        [BitConverter]::ToUInt16($Bytes, $optionalHeaderOffset) -ne 0x20b -or
+        [BitConverter]::ToUInt32($Bytes, $optionalHeaderOffset + 108) -le 6) {
+        throw "Fleet Agent key-record release PE optional header is invalid."
+    }
+    $debugDirectoryRva = [BitConverter]::ToUInt32($Bytes, $optionalHeaderOffset + 160)
+    $debugDirectorySize = [BitConverter]::ToUInt32($Bytes, $optionalHeaderOffset + 164)
+    if ($debugDirectoryRva -eq 0 -or $debugDirectorySize -lt 28 -or
+        ($debugDirectorySize % 28) -ne 0 -or $debugDirectorySize -gt 1792) {
+        throw "Fleet Agent key-record release PE debug directory is invalid."
+    }
+    $sectionTableOffset = $optionalHeaderOffset + $optionalHeaderSize
+    if ($sectionCount -lt 1 -or $sectionCount -gt 96 -or
+        $sectionTableOffset + (40 * $sectionCount) -gt $Bytes.Length) {
+        throw "Fleet Agent key-record release PE section table is invalid."
+    }
+    $debugDirectoryOffset = $null
+    for ($index = 0; $index -lt $sectionCount; $index++) {
+        $sectionOffset = $sectionTableOffset + (40 * $index)
+        $virtualSize = [uint64][BitConverter]::ToUInt32($Bytes, $sectionOffset + 8)
+        $virtualAddress = [uint64][BitConverter]::ToUInt32($Bytes, $sectionOffset + 12)
+        $rawSize = [uint64][BitConverter]::ToUInt32($Bytes, $sectionOffset + 16)
+        $rawOffset = [uint64][BitConverter]::ToUInt32($Bytes, $sectionOffset + 20)
+        $sectionSpan = [Math]::Max($virtualSize, $rawSize)
+        if ([uint64]$debugDirectoryRva -ge $virtualAddress -and
+            [uint64]$debugDirectoryRva -lt $virtualAddress + $sectionSpan) {
+            $relativeOffset = [uint64]$debugDirectoryRva - $virtualAddress
+            if ($relativeOffset + [uint64]$debugDirectorySize -gt $rawSize -or
+                $rawOffset + $relativeOffset + [uint64]$debugDirectorySize -gt
+                    [uint64]$Bytes.Length) {
+                throw "Fleet Agent key-record release PE debug directory escaped its section."
+            }
+            $debugDirectoryOffset = [int]($rawOffset + $relativeOffset)
+            break
+        }
+    }
+    if ($null -eq $debugDirectoryOffset) {
+        throw "Fleet Agent key-record release PE debug directory is not file-backed."
+    }
+    return @(0..([int]($debugDirectorySize / 28) - 1) | ForEach-Object {
+        $debugDirectoryOffset + ($_ * 28) + 12
+    })
+}
+
+function Assert-PeReproducible([string] $LiteralPath) {
+    $bytes = [IO.File]::ReadAllBytes($LiteralPath)
+    $reproEntries = @(Get-PeDebugDirectoryTypeOffsetList -Bytes $bytes | Where-Object {
+        [BitConverter]::ToUInt32($bytes, $_) -eq 16
+    })
+    if ($reproEntries.Count -ne 1) {
+        throw "Fleet Agent key-record release executable lacks one IMAGE_DEBUG_TYPE_REPRO marker."
+    }
+}
+
+function Get-PeReproPolicyProbeByteSequence([uint32] $DebugType) {
+    $bytes = [byte[]]::new(1024)
+    $bytes[0] = 0x4d
+    $bytes[1] = 0x5a
+    [Array]::Copy([BitConverter]::GetBytes([uint32]0x80), 0, $bytes, 0x3c, 4)
+    [Array]::Copy([byte[]](0x50, 0x45, 0, 0), 0, $bytes, 0x80, 4)
+    [Array]::Copy([BitConverter]::GetBytes([uint16]0x8664), 0, $bytes, 0x84, 2)
+    [Array]::Copy([BitConverter]::GetBytes([uint16]1), 0, $bytes, 0x86, 2)
+    [Array]::Copy([BitConverter]::GetBytes([uint16]240), 0, $bytes, 0x94, 2)
+    $optionalHeaderOffset = 0x98
+    [Array]::Copy([BitConverter]::GetBytes([uint16]0x20b), 0, $bytes, $optionalHeaderOffset, 2)
+    [Array]::Copy([BitConverter]::GetBytes([uint32]16), 0, $bytes, $optionalHeaderOffset + 108, 4)
+    [Array]::Copy([BitConverter]::GetBytes([uint32]0x1000), 0, $bytes, $optionalHeaderOffset + 160, 4)
+    [Array]::Copy([BitConverter]::GetBytes([uint32]28), 0, $bytes, $optionalHeaderOffset + 164, 4)
+    $sectionOffset = $optionalHeaderOffset + 240
+    [Array]::Copy([Text.Encoding]::ASCII.GetBytes(".rdata"), 0, $bytes, $sectionOffset, 6)
+    [Array]::Copy([BitConverter]::GetBytes([uint32]0x200), 0, $bytes, $sectionOffset + 8, 4)
+    [Array]::Copy([BitConverter]::GetBytes([uint32]0x1000), 0, $bytes, $sectionOffset + 12, 4)
+    [Array]::Copy([BitConverter]::GetBytes([uint32]0x200), 0, $bytes, $sectionOffset + 16, 4)
+    [Array]::Copy([BitConverter]::GetBytes([uint32]0x200), 0, $bytes, $sectionOffset + 20, 4)
+    [Array]::Copy([BitConverter]::GetBytes($DebugType), 0, $bytes, 0x20c, 4)
+    return $bytes
+}
+
+function Invoke-PeReproPolicySelfTest {
+    $probeRoot = Join-Path ([IO.Path]::GetTempPath()) (
+        "rusty-quest-key-record-pe-repro-policy-" + [guid]::NewGuid().ToString("N"))
+    try {
+        [void][IO.Directory]::CreateDirectory($probeRoot)
+        $probePath = Join-Path $probeRoot "probe.exe"
+        [IO.File]::WriteAllBytes($probePath, (Get-PeReproPolicyProbeByteSequence -DebugType 16))
+        Assert-X64WindowsExecutable -LiteralPath $probePath
+        Assert-PeReproducible -LiteralPath $probePath
+        [IO.File]::WriteAllBytes($probePath, (Get-PeReproPolicyProbeByteSequence -DebugType 2))
+        $rejected = $false
+        try {
+            Assert-PeReproducible -LiteralPath $probePath
+        }
+        catch {
+            if ($_.Exception.Message -notmatch 'IMAGE_DEBUG_TYPE_REPRO') { throw }
+            $rejected = $true
+        }
+        if (-not $rejected) {
+            throw "Fleet Agent key-record release PE reproducibility policy accepted a missing marker."
+        }
+    }
+    finally {
+        if (Test-Path -LiteralPath $probeRoot) {
+            Remove-Item -LiteralPath $probeRoot -Recurse -Force
+        }
+    }
+}
+
+if ($PeReproPolicySelfTest) {
+    Invoke-PeReproPolicySelfTest
+    Write-Output "Rusty Quest Fleet Agent key-record release PE reproducibility policy self-test passed"
+    return
+}
+
 $root = (Resolve-Path -LiteralPath $CapsuleRoot).Path
 $expectedFiles = @(
     "LICENSE",
@@ -242,6 +363,7 @@ if ((Get-Sha256 $artifactPath) -cne $manifest.artifact.sha256 -or
 Assert-BoundedFileSize -LiteralPath $artifactPath `
     -DeclaredSize ([long]$manifest.artifact.size_bytes) -Label "release artifact"
 Assert-X64WindowsExecutable -LiteralPath $artifactPath
+Assert-PeReproducible -LiteralPath $artifactPath
 Assert-NoMachineLocalPathByteSequence -LiteralPath $artifactPath
 
 $provenanceText = Get-Content -Raw -LiteralPath $provenancePath
@@ -254,7 +376,8 @@ Assert-ExactPropertySet $provenance.source @(
 Assert-ExactPropertySet $provenance.build @(
     "target", "profile", "rustc", "cargo", "locked_dependencies",
     "isolated_git_materializations", "post_build_identity_verified", "path_remap_root",
-    "symbols_stripped", "cargo_config_sha256") "provenance build"
+    "symbols_stripped", "linker_reproducibility_argument", "pe_reproducibility_marker",
+    "cargo_config_sha256") "provenance build"
 Assert-ExactPropertySet $provenance.claims @(
     "owner", "helper_only", "runtime_activation", "enrollment_authority",
     "device_authority", "private_seed_included", "profile_included",
@@ -274,6 +397,8 @@ if ($provenance.schema -cne
     $provenance.build.post_build_identity_verified -ne $true -or
     $provenance.build.path_remap_root -cne "/rusty-build" -or
     $provenance.build.symbols_stripped -ne $true -or
+    $provenance.build.linker_reproducibility_argument -cne "/Brepro" -or
+    $provenance.build.pe_reproducibility_marker -cne "IMAGE_DEBUG_TYPE_REPRO" -or
     $provenance.build.cargo_config_sha256 -cnotmatch '^[0-9a-f]{64}$' -or
     $provenance.claims.owner -cne "rusty-quest" -or
     $provenance.claims.helper_only -ne $true -or

@@ -440,6 +440,8 @@ git-fetch-with-cli = true
     }
     $remapArguments.Add("-C")
     $remapArguments.Add("strip=symbols")
+    $remapArguments.Add("-C")
+    $remapArguments.Add("link-arg=/Brepro")
     [Environment]::SetEnvironmentVariable(
         "CARGO_ENCODED_RUSTFLAGS", ($remapArguments -join [char]0x1f), "Process")
 
@@ -550,6 +552,8 @@ $provenance = [ordered]@{
         post_build_identity_verified = $true
         path_remap_root = "/rusty-build"
         symbols_stripped = $true
+        linker_reproducibility_argument = "/Brepro"
+        pe_reproducibility_marker = "IMAGE_DEBUG_TYPE_REPRO"
         cargo_config_sha256 = $cargoConfigSha256
     }
     claims = [ordered]@{

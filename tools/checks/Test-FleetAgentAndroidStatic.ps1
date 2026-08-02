@@ -307,6 +307,9 @@ foreach ($token in @(
     'Invoke-ProcessEnvironmentRemoval',
     'Assert-NullEnvironmentRemoval',
     '--remap-path-prefix=',
+    'link-arg=/Brepro',
+    'linker_reproducibility_argument = "/Brepro"',
+    'pe_reproducibility_marker = "IMAGE_DEBUG_TYPE_REPRO"',
     'build --locked --release --target \$targetTriple',
     'post_build_identity_verified = \$true',
     'rusty\.quest\.fleet_agent_key_record_release_capsule\.v1',
@@ -327,6 +330,10 @@ foreach ($token in @(
     '[Text.Encoding]::BigEndianUnicode',
     'MachinePathPolicySelfTest',
     'Get-MachinePathPolicyProbeByteSequence',
+    'PeReproPolicySelfTest',
+    'Get-PeDebugDirectoryTypeOffsetList',
+    'Assert-PeReproducible',
+    'IMAGE_DEBUG_TYPE_REPRO',
     'Assert-X64WindowsExecutable',
     'capsule_version -cne "1.0.0"',
     'Fleet Agent key-record release provenance repository set is not closed',
@@ -343,11 +350,18 @@ foreach ($token in @(
 if ($LASTEXITCODE -ne 0) {
     throw "Fleet Agent key-record release machine-path policy self-test failed."
 }
+& pwsh -NoProfile -ExecutionPolicy Bypass -File $paths.key_record_release_test `
+    -PeReproPolicySelfTest *> $null
+if ($LASTEXITCODE -ne 0) {
+    throw "Fleet Agent key-record release PE reproducibility policy self-test failed."
+}
 foreach ($token in @(
     'Sync-ProvenanceBinding',
     'Sync-PayloadBinding',
     'capsule_version = "0\.0\.0"',
     'parse-only-role-escalation',
+    'reproducibility-policy-drift',
+    'binary-repro-marker-removal',
     'binary-ascii-path-leakage',
     'binary-utf16-path-leakage',
     'binary-extended-drive-utf16be-offset1',
@@ -364,8 +378,10 @@ if ($keyRecordReleaseSchema -notmatch '"additionalProperties"\s*:\s*false' -or
     $keyRecordReleaseValid.schema -ne "rusty.quest.fleet_agent_key_record_release_fixture_matrix.v1" -or
     $keyRecordReleaseValid.valid_case.private_material_included -ne $false -or
     $keyRecordReleaseValid.valid_case.live_onboarding_claim -ne $false -or
+    $keyRecordReleaseValid.valid_case.linker_reproducibility_argument -cne "/Brepro" -or
+    $keyRecordReleaseValid.valid_case.pe_reproducibility_marker -cne "IMAGE_DEBUG_TYPE_REPRO" -or
     $keyRecordReleaseDamaged.schema -ne "rusty.quest.fleet_agent_key_record_release_damage_matrix.v1" -or
-    @($keyRecordReleaseDamaged.cases).Count -ne 30) {
+    @($keyRecordReleaseDamaged.cases).Count -ne 32) {
     throw "Fleet Agent key-record release schema or fixture matrix is incomplete."
 }
 $expectedTargetRepositoryIds = @("rusty-fleet", "rusty-manifold", "rusty-quest")
@@ -381,7 +397,8 @@ if (@(Compare-Object $expectedTargetRepositoryIds `
 $expectedDamageNames = @(
     "artifact-substitution", "source-commit-drift", "provenance-substitution",
     "secret-leakage", "extra-repository", "parse-only-role-escalation", "extra-field", "unsupported-version",
-    "unsupported-target", "extra-package-file", "binary-ascii-path-leakage",
+    "unsupported-target", "reproducibility-policy-drift", "extra-package-file",
+    "binary-repro-marker-removal", "binary-ascii-path-leakage",
     "binary-utf16-path-leakage", "binary-ordinary-drive-utf16le-offset1",
     "binary-ordinary-drive-utf16be-offset0", "binary-ordinary-drive-utf16be-offset1",
     "binary-extended-drive-ascii", "binary-extended-drive-utf16le-offset0",

@@ -16,7 +16,7 @@ $matrixPath = Join-Path (Resolve-Path (Join-Path $PSScriptRoot "..")).Path `
     "fixtures\fleet-agent\key-record-release-scenarios.damaged.json"
 $matrix = Get-Content -Raw -LiteralPath $matrixPath | ConvertFrom-Json
 if ($matrix.schema -cne "rusty.quest.fleet_agent_key_record_release_damage_matrix.v1" -or
-    @($matrix.cases).Count -ne 30) {
+    @($matrix.cases).Count -ne 32) {
     throw "Fleet Agent key-record release damage matrix is incomplete."
 }
 $sourceManifest = Get-Content -Raw -LiteralPath (Join-Path $source "release-manifest.json") |
@@ -165,6 +165,50 @@ function Add-EncodedArtifactText(
     Sync-PayloadBinding $Root "fleet-agent-key-record.exe"
 }
 
+function Get-PeReproMarkerTypeOffset([string] $LiteralPath) {
+    $bytes = [IO.File]::ReadAllBytes($LiteralPath)
+    $peOffset = [BitConverter]::ToInt32($bytes, 0x3c)
+    $sectionCount = [BitConverter]::ToUInt16($bytes, $peOffset + 6)
+    $optionalHeaderSize = [BitConverter]::ToUInt16($bytes, $peOffset + 20)
+    $optionalHeaderOffset = $peOffset + 24
+    $debugDirectoryRva = [BitConverter]::ToUInt32($bytes, $optionalHeaderOffset + 160)
+    $debugDirectorySize = [BitConverter]::ToUInt32($bytes, $optionalHeaderOffset + 164)
+    $sectionTableOffset = $optionalHeaderOffset + $optionalHeaderSize
+    $debugDirectoryOffset = $null
+    for ($index = 0; $index -lt $sectionCount; $index++) {
+        $sectionOffset = $sectionTableOffset + (40 * $index)
+        $virtualSize = [uint64][BitConverter]::ToUInt32($bytes, $sectionOffset + 8)
+        $virtualAddress = [uint64][BitConverter]::ToUInt32($bytes, $sectionOffset + 12)
+        $rawSize = [uint64][BitConverter]::ToUInt32($bytes, $sectionOffset + 16)
+        $rawOffset = [uint64][BitConverter]::ToUInt32($bytes, $sectionOffset + 20)
+        if ([uint64]$debugDirectoryRva -ge $virtualAddress -and
+            [uint64]$debugDirectoryRva -lt $virtualAddress + [Math]::Max($virtualSize, $rawSize)) {
+            $debugDirectoryOffset = [int]($rawOffset + [uint64]$debugDirectoryRva - $virtualAddress)
+            break
+        }
+    }
+    if ($null -eq $debugDirectoryOffset -or ($debugDirectorySize % 28) -ne 0) {
+        throw "self-test PE debug directory could not be resolved."
+    }
+    $reproOffsets = @(0..([int]($debugDirectorySize / 28) - 1) | ForEach-Object {
+        $typeOffset = $debugDirectoryOffset + ($_ * 28) + 12
+        if ([BitConverter]::ToUInt32($bytes, $typeOffset) -eq 16) { $typeOffset }
+    })
+    if ($reproOffsets.Count -ne 1) {
+        throw "self-test PE reproducibility marker is not unique."
+    }
+    return [int]$reproOffsets[0]
+}
+
+function Disable-PeReproducibilityMarker([string] $Root) {
+    $path = Join-Path $Root "fleet-agent-key-record.exe"
+    $bytes = [IO.File]::ReadAllBytes($path)
+    $typeOffset = Get-PeReproMarkerTypeOffset -LiteralPath $path
+    [Array]::Copy([BitConverter]::GetBytes([uint32]0), 0, $bytes, $typeOffset, 4)
+    [IO.File]::WriteAllBytes($path, $bytes)
+    Sync-PayloadBinding $Root "fleet-agent-key-record.exe"
+}
+
 & pwsh -NoProfile -ExecutionPolicy Bypass -File $validator -CapsuleRoot $source `
     -ExpectedCapsuleVersion ([string]$sourceManifest.capsule_version) `
     -ExpectedManifestSha256 (Get-Sha256 (Join-Path $source "release-manifest.json")) `
@@ -245,10 +289,22 @@ Invoke-MustReject "unsupported-target" {
     $value.artifact.target = "unsupported-target"
     Write-Json $path $value
 }
+Invoke-MustReject "reproducibility-policy-drift" {
+    param($root)
+    $path = Join-Path $root "provenance.json"
+    $value = Get-Content -Raw $path | ConvertFrom-Json
+    $value.build.linker_reproducibility_argument = "ambient-timestamp"
+    Write-Json $path $value
+    Sync-ProvenanceBinding $root
+}
 Invoke-MustReject "extra-package-file" {
     param($root)
     [IO.File]::WriteAllText((Join-Path $root "unexpected.bin"), "damage")
 }
+Invoke-MustReject "binary-repro-marker-removal" {
+    param($root)
+    Disable-PeReproducibilityMarker -Root $root
+} -WithoutExecutablePin
 $machinePathDamageCases = @(
     [pscustomobject]@{ Name = "binary-ascii-path-leakage"; Text = 'Q:\synthetic\artifact.obj'; Encoding = "ascii"; Offset = 0 },
     [pscustomobject]@{ Name = "binary-utf16-path-leakage"; Text = 'Q:\synthetic\artifact.obj'; Encoding = "utf16le"; Offset = 0 },
