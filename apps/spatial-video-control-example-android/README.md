@@ -54,6 +54,16 @@ It contains exactly:
 
 Selection never implies playback.
 
+## Spatial panel placement
+
+The wearer control panel is a one-sided Meta Spatial SDK UI surface. Its
+initial world pose uses Rusty Quest's known-facing 180-degree yaw fallback and
+emits `panelFacingConvention=static-panel-front-yaw-180` with
+`poseSource=static-fallback`. An identity quaternion can expose the back face
+and make an otherwise healthy panel appear black or absent. The convention is
+documented in [`../../docs/SPATIAL_SDK_PANEL_FACING.md`](../../docs/SPATIAL_SDK_PANEL_FACING.md);
+media-surface orientation remains a separate contract.
+
 ## Source layout
 
 - `contracts/`: canonical command and bundled-video registries.

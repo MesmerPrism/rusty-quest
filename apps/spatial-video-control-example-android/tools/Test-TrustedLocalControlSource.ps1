@@ -115,6 +115,14 @@ if ($activity -notmatch 'com\.meta\.spatial\.runtime\.ButtonBits' -or
     $activity -notmatch 'NativeManifoldAuthorityPort\.createOrNull') {
   throw 'Spatial SDK imports or native Manifold injection regressed.'
 }
+if ($activity -notmatch 'staticControlPanelFrontRotation\(\): Quaternion = Quaternion\(0\.0f, 180\.0f, 0\.0f\)' -or
+    $activity -notmatch 'panelFacingConvention=static-panel-front-yaw-180' -or
+    $activity -notmatch 'poseSource=static-fallback') {
+  throw 'The one-sided Spatial control panel lost its known-facing fallback or marker.'
+}
+if ($activity -match 'R\.id\.local_control_panel,[\s\S]{0,240}Quaternion\(\)') {
+  throw 'The one-sided Spatial control panel must not return to an identity quaternion.'
+}
 
 $lockPath = Join-Path $appRoot 'native\manifold-source.lock.json'
 $nativeLock = Get-Content -Raw -LiteralPath $lockPath | ConvertFrom-Json

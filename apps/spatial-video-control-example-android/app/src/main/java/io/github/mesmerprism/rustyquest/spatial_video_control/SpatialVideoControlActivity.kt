@@ -101,10 +101,20 @@ open class SpatialVideoControlActivity : AppSystemActivity() {
     controlPanel =
         Entity.createPanelEntity(
             R.id.local_control_panel,
-            Transform(Pose(Vector3(-0.65f, 1.25f, -2.0f), Quaternion())),
+            Transform(
+                Pose(
+                    Vector3(-0.65f, 1.25f, -2.0f),
+                    staticControlPanelFrontRotation(),
+                )
+            ),
             PanelDimensions(Vector2(0.80f, 0.58f)),
             Visible(true),
         )
+    android.util.Log.i(
+        PANEL_LOG_TAG,
+        "channel=trusted-local-http-v1 status=control-panel-spawned " +
+            "panelFacingConvention=static-panel-front-yaw-180 poseSource=static-fallback",
+    )
     videoPanel =
         Entity.create(
             Panel(R.id.video_surface_panel),
@@ -255,5 +265,12 @@ open class SpatialVideoControlActivity : AppSystemActivity() {
     if (!controllerState.listenerEnabled) {
       bindCandidate = resolvePrivateAddressCandidate()
     }
+  }
+
+  /** Known-facing fallback from the Rusty Quest one-sided Spatial UI-panel convention. */
+  private fun staticControlPanelFrontRotation(): Quaternion = Quaternion(0.0f, 180.0f, 0.0f)
+
+  private companion object {
+    const val PANEL_LOG_TAG = "RustyQuestVideoControl"
   }
 }
