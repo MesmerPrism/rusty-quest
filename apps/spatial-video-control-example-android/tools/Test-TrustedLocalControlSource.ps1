@@ -116,12 +116,32 @@ if ($activity -notmatch 'com\.meta\.spatial\.runtime\.ButtonBits' -or
   throw 'Spatial SDK imports or native Manifold injection regressed.'
 }
 if ($activity -notmatch 'staticControlPanelFrontRotation\(\): Quaternion = Quaternion\(0\.0f, 180\.0f, 0\.0f\)' -or
-    $activity -notmatch 'panelFacingConvention=static-panel-front-yaw-180' -or
-    $activity -notmatch 'poseSource=static-fallback') {
-  throw 'The one-sided Spatial control panel lost its known-facing fallback or marker.'
+    $activity -notmatch 'Quaternion\.lookRotationAroundY\(direction\)' -or
+    $activity -notmatch 'panelFacingConvention=meta-panel-front-look-rotation-around-y' -or
+    $activity -notmatch 'source = "static-fallback"' -or
+    $activity -notmatch 'source = "viewer-relative-recenter"') {
+  throw 'The one-sided Spatial control panel lost its viewer-relative facing route or known-facing fallback.'
 }
 if ($activity -match 'R\.id\.local_control_panel,[\s\S]{0,240}Quaternion\(\)') {
   throw 'The one-sided Spatial control panel must not return to an identity quaternion.'
+}
+if ($activity -notmatch 'CONTROL_PANEL_DISTANCE_METERS = 1\.0f' -or
+    $activity -notmatch 'GrabbableType\.PIVOT_Y' -or
+    $activity -notmatch 'rightControllerAActionAuthority=panel-toggle-arbiter') {
+  throw 'The comfortable grabbable panel or its right-A toggle authority regressed.'
+}
+$toggleSource = Get-Content -Raw -LiteralPath (
+  Join-Path $appRoot 'app\src\main\java\io\github\mesmerprism\rustyquest\spatial_video_control\RightControllerPanelToggle.kt'
+)
+if ($toggleSource -notmatch 'CROSS_ROUTE_DEDUPLICATION_MS = 350L' -or
+    $toggleSource -notmatch 'attachment == "right_controller"' -or
+    $toggleSource -notmatch 'ButtonBits\.ButtonA') {
+  throw 'The right-controller A edge arbiter or controller-side observation regressed.'
+}
+if ($activity -notmatch 'ButtonBits\.ButtonTriggerL' -or
+    $activity -notmatch 'ButtonBits\.ButtonTriggerR' -or
+    $activity -match 'ButtonBits\.ButtonA') {
+  throw 'Panel clicks must use triggers only; right A is reserved for toggle/recenter.'
 }
 
 $lockPath = Join-Path $appRoot 'native\manifold-source.lock.json'

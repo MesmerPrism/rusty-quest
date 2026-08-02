@@ -54,14 +54,24 @@ It contains exactly:
 
 Selection never implies playback.
 
-## Spatial panel placement
+## Spatial panel placement and input
 
 The wearer control panel is a one-sided Meta Spatial SDK UI surface. Its
-initial world pose uses Rusty Quest's known-facing 180-degree yaw fallback and
-emits `panelFacingConvention=static-panel-front-yaw-180` with
-`poseSource=static-fallback`. An identity quaternion can expose the back face
-and make an otherwise healthy panel appear black or absent. The convention is
-documented in [`../../docs/SPATIAL_SDK_PANEL_FACING.md`](../../docs/SPATIAL_SDK_PANEL_FACING.md);
+preferred pose is centered one meter along the current wearer view and uses
+the shared `lookRotationAroundY` front-face convention. If viewer pose is not
+yet available during scene creation, the app uses the known-facing 180-degree
+yaw fallback. An identity quaternion can expose the back face and make an
+otherwise healthy panel appear black or absent.
+
+The panel is a bounded `PIVOT_Y` grabbable surface. Either trigger selects its
+buttons. Right-controller A is excluded from panel click input and is reserved
+for one app-owned action: hide the panel, then show and recenter it on the next
+press. Spatial controller-component and Android key/motion observations feed
+one edge arbiter with bounded cross-route deduplication. The panel uses the
+public Rusty Morphovision graphite, high-contrast ink, cyan action, and amber
+revoke palette without importing that app or any private effect behavior. The
+facing convention is documented in
+[`../../docs/SPATIAL_SDK_PANEL_FACING.md`](../../docs/SPATIAL_SDK_PANEL_FACING.md);
 media-surface orientation remains a separate contract.
 
 ## Source layout
