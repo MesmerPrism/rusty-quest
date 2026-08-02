@@ -36,6 +36,7 @@ public final class TrustedLocalControlHostTest {
                 TrustedLocalControlPolicy.COMMANDS,
                 "runtime command set");
         testCanonicalEnvelopes();
+        testVideoCatalogProjectionProfiles();
         testTrustedBindAddressPolicy();
         testPrivateAddressSelection();
         testTransportResourceBounds();
@@ -47,6 +48,73 @@ public final class TrustedLocalControlHostTest {
         testLoopbackHttpAndWebSocket(appRoot);
         testOpenLanAdmissionIsExplicitAndSingleController(appRoot);
         System.out.println("trusted_local_http_v1 host tests passed");
+    }
+
+    private static void testVideoCatalogProjectionProfiles() {
+        VideoCatalog catalog = VideoCatalog.bundledSynthetic();
+        assertEquals(8, catalog.videos().size(), "public synthetic catalog size");
+        assertEquals(
+                java.util.Set.of(
+                        "flat/mono",
+                        "equirect-180/mono",
+                        "equirect-180/side-by-side-left-right",
+                        "equirect-180/top-bottom",
+                        "equirect-360/mono",
+                        "equirect-360/side-by-side-left-right",
+                        "equirect-360/top-bottom"),
+                catalog.videos().stream()
+                        .map(
+                                video ->
+                                        video.projectionShape().protocolName()
+                                                + "/"
+                                                + video.stereoLayout().protocolName())
+                        .collect(java.util.stream.Collectors.toSet()),
+                "flat and immersive projection/stereo matrix");
+        assertEquals(
+                1.0,
+                catalog.require("synthetic-180-sbs-lr").perEyeAspectRatio(),
+                "180 SBS per-eye aspect");
+        assertEquals(
+                2.0,
+                catalog.require("synthetic-360-top-bottom").perEyeAspectRatio(),
+                "360 TB per-eye aspect");
+        assertEquals(
+                3,
+                VideoCatalog.debugExternalTestSlots().videos().size(),
+                "fixed debug external slots");
+        assertTrue(
+                VideoCatalog.debugExternalTestSlots().videos().stream()
+                        .allMatch(
+                                video ->
+                                        video.sourceKind()
+                                                == VideoCatalog.SourceKind.DEBUG_EXTERNAL_TEST),
+                "debug slots cannot claim bundled provenance");
+        expectFailure(
+                () ->
+                        new VideoCatalog.Video(
+                                "invalid-sbs",
+                                "Invalid SBS",
+                                "invalid_sbs",
+                                1,
+                                641,
+                                320,
+                                VideoCatalog.ProjectionShape.EQUIRECT_180,
+                                VideoCatalog.StereoLayout.SIDE_BY_SIDE_LEFT_RIGHT,
+                                VideoCatalog.SourceKind.BUNDLED_CC0),
+                "odd SBS width rejected");
+        expectFailure(
+                () ->
+                        new VideoCatalog.Video(
+                                "invalid-tb",
+                                "Invalid TB",
+                                "invalid_tb",
+                                1,
+                                640,
+                                321,
+                                VideoCatalog.ProjectionShape.EQUIRECT_360,
+                                VideoCatalog.StereoLayout.TOP_BOTTOM,
+                                VideoCatalog.SourceKind.BUNDLED_CC0),
+                "odd top-bottom height rejected");
     }
 
     private static void testTrustedBindAddressPolicy() throws Exception {
@@ -631,6 +699,37 @@ public final class TrustedLocalControlHostTest {
                 assertContains(accepted, "\"event\":\"command_accepted\"", "WS accepted receipt");
                 assertContains(result, "\"event\":\"command_result\"", "WS query result");
                 assertContains(result, "\"protocol\":\"trusted_local_http_v1\"", "protocol described");
+
+                long describedRevision = numberField(result, "authority_revision");
+                CommandEnvelope listVideos =
+                        new CommandEnvelope(
+                                "list_videos",
+                                describedRevision,
+                                player.snapshot().revision(),
+                                null,
+                                "request-ws-list-videos");
+                writeMaskedText(output, listVideos.canonicalJson());
+                assertContains(
+                        readServerText(input),
+                        "\"event\":\"command_accepted\"",
+                        "catalog query accepted");
+                String catalogResult = readServerText(input);
+                assertContains(
+                        catalogResult,
+                        "\"projection_shape\":\"equirect-180\"",
+                        "180 projection metadata served");
+                assertContains(
+                        catalogResult,
+                        "\"projection_shape\":\"equirect-360\"",
+                        "360 projection metadata served");
+                assertContains(
+                        catalogResult,
+                        "\"stereo_layout\":\"side-by-side-left-right\"",
+                        "SBS stereo metadata served");
+                assertContains(
+                        catalogResult,
+                        "\"stereo_layout\":\"top-bottom\"",
+                        "top-bottom stereo metadata served");
             }
 
             try (Socket malformed = new Socket(endpoint.address(), endpoint.port())) {

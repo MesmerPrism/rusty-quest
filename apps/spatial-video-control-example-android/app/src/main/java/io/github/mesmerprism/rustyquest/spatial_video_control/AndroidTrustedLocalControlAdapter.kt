@@ -36,6 +36,7 @@ class AndroidTrustedLocalControlAdapter(
     private val context: Context,
     private val authority: ManifoldAuthorityPort,
     player: PlayerPort,
+    catalog: VideoCatalog,
     private val onState: (HeadsetControllerState) -> Unit,
 ) : Closeable {
   private companion object {
@@ -49,7 +50,7 @@ class AndroidTrustedLocalControlAdapter(
         mainHandler.post { publish(state.copy(discoveryStatus = nextStatus)) }
       }
   private val coordinator =
-      LocalControlCoordinator(authority, player, VideoCatalog.bundledSynthetic())
+      LocalControlCoordinator(authority, player, catalog)
   private var foreground = false
   private var server: TrustedLocalHttpServer? = null
   private var state = HeadsetControllerState()

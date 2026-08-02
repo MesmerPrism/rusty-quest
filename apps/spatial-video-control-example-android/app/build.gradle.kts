@@ -10,22 +10,31 @@ plugins {
 val generatedMediaRoot = layout.buildDirectory.dir("generated/synthetic-media/res")
 val generatedNativeRoot = layout.buildDirectory.dir("generated/native-jniLibs")
 val mediaSourceRoot = layout.projectDirectory.dir("src/main/media-source")
+val syntheticMediaNames =
+    listOf(
+        "synthetic_grid_1s",
+        "synthetic_blue_2s",
+        "synthetic_180_mono_1s",
+        "synthetic_180_sbs_lr_1s",
+        "synthetic_180_top_bottom_1s",
+        "synthetic_360_mono_1s",
+        "synthetic_360_sbs_lr_1s",
+        "synthetic_360_top_bottom_1s",
+    )
 
 val decodeSyntheticMedia by tasks.registering {
   group = "build setup"
-  description = "Decode the two deterministic CC0 synthetic MP4 source blobs."
-  inputs.files(
-    mediaSourceRoot.file("synthetic_grid_1s.mp4.base64"),
-    mediaSourceRoot.file("synthetic_blue_2s.mp4.base64"),
-  )
+  description = "Decode the deterministic flat/180/360 CC0 synthetic MP4 source blobs."
+  inputs.files(syntheticMediaNames.map { mediaSourceRoot.file("$it.mp4.base64") })
   outputs.files(
-    generatedMediaRoot.map { it.file("raw/synthetic_grid_1s.mp4") },
-    generatedMediaRoot.map { it.file("raw/synthetic_blue_2s.mp4") },
+      syntheticMediaNames.map { name ->
+        generatedMediaRoot.map { it.file("raw/$name.mp4") }
+      }
   )
   doLast {
     val raw = generatedMediaRoot.get().dir("raw").asFile
     raw.mkdirs()
-    listOf("synthetic_grid_1s", "synthetic_blue_2s").forEach { name ->
+    syntheticMediaNames.forEach { name ->
       val encoded = mediaSourceRoot.file("$name.mp4.base64").asFile.readText(Charsets.US_ASCII)
       raw.resolve("$name.mp4").writeBytes(Base64.getMimeDecoder().decode(encoded))
     }

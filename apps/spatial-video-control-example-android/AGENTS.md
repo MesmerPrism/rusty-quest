@@ -25,6 +25,16 @@ scripts, uploaded/runtime UI, arbitrary URLs or paths, shell/ADB/intent
 dispatch, executable discovery, plugin discovery, or generic command/MCP
 execution.
 
+The public catalog includes deterministic CC0 flat, equirect-180, and
+equirect-360 fixtures with mono, side-by-side-left-right, and top-bottom stereo
+coverage. Projection and stereo are immutable per video descriptor. Register
+one bounded Spatial SDK media panel per descriptor and switch only the video
+entity/decoder; do not reinterpret filenames or accept projection parameters
+from the browser. Debug builds may expose only the three fixed app-external
+device-test slots declared by `VideoCatalog.debugExternalTestSlots()`. Those
+slots discover no arbitrary file, path, or URL and must never enter release
+catalogs or source control.
+
 The debug provider is the sole exception to the general ADB exclusion: it lives
 only under `app/src/debug`, requires `android.permission.DUMP`, verifies UID
 2000, accepts no arguments, and maps exactly status/paired-enable/Open-LAN-enable/revoke

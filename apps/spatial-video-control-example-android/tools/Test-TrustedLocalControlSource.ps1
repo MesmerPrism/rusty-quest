@@ -37,14 +37,37 @@ if ($mediaRegistryRaw.Contains('PENDING_')) {
   throw 'Bundled media registry contains a pending placeholder.'
 }
 $mediaRegistry = $mediaRegistryRaw | ConvertFrom-Json -Depth 20
-if (@($mediaRegistry.items).Count -ne 2 -or $mediaRegistry.license -ne 'CC0-1.0') {
-  throw 'Expected exactly two CC0 synthetic media items.'
+if (@($mediaRegistry.items).Count -ne 8 -or $mediaRegistry.license -ne 'CC0-1.0') {
+  throw 'Expected exactly eight CC0 flat/immersive synthetic media items.'
+}
+$expectedMediaProfiles = @(
+  'flat/mono',
+  'equirect-180/mono',
+  'equirect-180/side-by-side-left-right',
+  'equirect-180/top-bottom',
+  'equirect-360/mono',
+  'equirect-360/side-by-side-left-right',
+  'equirect-360/top-bottom'
+) | Sort-Object
+$actualMediaProfiles = @(
+  $mediaRegistry.items | ForEach-Object { "$($_.projection_shape)/$($_.stereo_layout)" }
+) | Sort-Object -Unique
+if (($actualMediaProfiles -join ',') -ne ($expectedMediaProfiles -join ',')) {
+  throw "Bundled projection/stereo matrix mismatch: $($actualMediaProfiles -join ',')"
 }
 foreach ($item in $mediaRegistry.items) {
   if ([int]$item.width_px -lt 320 -or [int]$item.height_px -lt 180 -or
       [string]$item.generation_recipe -notmatch 'rate=30' -or
-      [string]$item.generation_recipe -notmatch 'constrained baseline level 1\.3') {
+      [string]$item.generation_recipe -notmatch 'constrained baseline level (1\.3|3\.1)') {
     throw "Bundled media is outside the Quest hardware-decoder compatibility profile: $($item.video_id)"
+  }
+  if ([string]$item.stereo_layout -eq 'side-by-side-left-right' -and
+      [int]$item.width_px % 2 -ne 0) {
+    throw "Bundled SBS media has an odd packed width: $($item.video_id)"
+  }
+  if ([string]$item.stereo_layout -eq 'top-bottom' -and
+      [int]$item.height_px % 2 -ne 0) {
+    throw "Bundled top-bottom media has an odd packed height: $($item.video_id)"
   }
   $sourcePath = Join-Path $appRoot ([string]$item.source_blob -replace '/', '\')
   if (-not (Test-Path -LiteralPath $sourcePath -PathType Leaf)) {
@@ -145,6 +168,23 @@ if ($activity -notmatch 'com\.meta\.spatial\.runtime\.ButtonBits' -or
     $activity -notmatch 'com\.meta\.spatial\.toolkit\.Panel' -or
     $activity -notmatch 'NativeManifoldAuthorityPort\.createOrNull') {
   throw 'Spatial SDK imports or native Manifold injection regressed.'
+}
+$videoPanelCoordinator = Get-Content -Raw -LiteralPath (
+  Join-Path $appRoot 'app\src\main\java\io\github\mesmerprism\rustyquest\spatial_video_control\SpatialVideoPanelCoordinator.kt'
+)
+if ($videoPanelCoordinator -notmatch 'Equirect180ShapeOptions\(radius = IMMERSIVE_RADIUS_METERS\)' -or
+    $videoPanelCoordinator -notmatch 'Equirect360ShapeOptions\(radius = IMMERSIVE_RADIUS_METERS\)' -or
+    $videoPanelCoordinator -notmatch 'StereoMode\.None' -or
+    $videoPanelCoordinator -notmatch 'StereoMode\.LeftRight' -or
+    $videoPanelCoordinator -notmatch 'StereoMode\.UpDown' -or
+    $videoPanelCoordinator -notmatch 'worldAnchored=true' -or
+    $videoPanelCoordinator -notmatch 'VIDEO_BACKGROUND_Z_INDEX = -40') {
+  throw 'The fixed flat/180/360 mono/SBS/TB Spatial carrier mapping regressed.'
+}
+if ($activity -notmatch 'VideoCatalog\.debugExternalTestSlots\(\)' -or
+    $activity -notmatch 'getExternalFilesDir\(Media3SpatialPlayerAdapter\.DEBUG_MEDIA_DIRECTORY\)' -or
+    $activity -match 'MANAGE_EXTERNAL_STORAGE') {
+  throw 'The closed debug-only external media slots regressed or gained broad storage access.'
 }
 if ($activity -notmatch 'staticControlPanelFrontRotation\(\): Quaternion = Quaternion\(0\.0f, 180\.0f, 0\.0f\)' -or
     $activity -notmatch 'Quaternion\.lookRotationAroundY\(direction\)' -or

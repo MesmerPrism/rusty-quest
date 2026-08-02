@@ -49,25 +49,22 @@ import com.meta.spatial.toolkit.AppSystemActivity
 import com.meta.spatial.toolkit.DpPerMeterDisplayOptions
 import com.meta.spatial.toolkit.Grabbable
 import com.meta.spatial.toolkit.GrabbableType
-import com.meta.spatial.toolkit.MediaPanelRenderOptions
-import com.meta.spatial.toolkit.MediaPanelSettings
 import com.meta.spatial.toolkit.Panel
 import com.meta.spatial.toolkit.PanelDimensions
 import com.meta.spatial.toolkit.PanelInputOptions
 import com.meta.spatial.toolkit.PanelRegistration
 import com.meta.spatial.toolkit.PanelRenderMode
 import com.meta.spatial.toolkit.PanelStyleOptions
-import com.meta.spatial.toolkit.PixelDisplayOptions
 import com.meta.spatial.toolkit.QuadShapeOptions
 import com.meta.spatial.toolkit.Transform
 import com.meta.spatial.toolkit.UIPanelRenderOptions
 import com.meta.spatial.toolkit.UIPanelSettings
-import com.meta.spatial.toolkit.VideoSurfacePanelRegistration
 import com.meta.spatial.toolkit.Visible
 import com.meta.spatial.toolkit.createPanelEntity
 import com.meta.spatial.vr.LocomotionControls
 import com.meta.spatial.vr.VRFeature
 import com.meta.spatial.vr.VrInputSystemType
+import java.io.File
 import kotlin.math.sqrt
 import org.json.JSONObject
 
@@ -92,6 +89,18 @@ private data class ControlPanelPose(
  */
 @OptIn(SpatialSDKExperimentalAPI::class)
 open class SpatialVideoControlActivity : AppSystemActivity(), DebugShellControlTarget {
+  private val panelDescriptorCatalog =
+      VideoCatalog(
+          VideoCatalog.bundledSynthetic().videos() +
+              VideoCatalog.debugExternalTestSlots().videos()
+      )
+  private val videoPanelCoordinator =
+      SpatialVideoPanelCoordinator(panelDescriptorCatalog) { videoId, surface ->
+        if (::player.isInitialized) {
+          player.attachVideoSurface(videoId, surface)
+        }
+      }
+  private lateinit var videoCatalog: VideoCatalog
   private lateinit var player: Media3SpatialPlayerAdapter
   private var control: AndroidTrustedLocalControlAdapter? = null
   private var controllerState by mutableStateOf(HeadsetControllerState())
@@ -101,7 +110,6 @@ open class SpatialVideoControlActivity : AppSystemActivity(), DebugShellControlT
   private var controlPanelSceneObject: PanelSceneObject? = null
   private var controlPanelComposeView: ComposeView? = null
   private var controlPanelVisible = true
-  private var videoPanel: Entity? = null
   private var nextControllerStateRefreshMs = 0L
   private var nextBindCandidateRefreshMs = 0L
   private var operatorForeground = false
@@ -129,10 +137,14 @@ open class SpatialVideoControlActivity : AppSystemActivity(), DebugShellControlT
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
     check(!BuildConfig.TRUSTED_LOCAL_HTTP_ENABLED_DEFAULT)
-    player = Media3SpatialPlayerAdapter(this)
+    videoCatalog = availableVideoCatalog()
+    player =
+        Media3SpatialPlayerAdapter(this, videoCatalog) { videoId ->
+          videoPanelCoordinator.select(videoId)
+        }
     control =
         manifoldAuthorityPort()?.let { authority ->
-          AndroidTrustedLocalControlAdapter(this, authority, player) { next ->
+          AndroidTrustedLocalControlAdapter(this, authority, player, videoCatalog) { next ->
             runOnUiThread { controllerState = next }
           }
         }
@@ -163,30 +175,22 @@ open class SpatialVideoControlActivity : AppSystemActivity(), DebugShellControlT
             "poseSource=${initialPose.source} panelDistanceMeters=$CONTROL_PANEL_DISTANCE_METERS " +
             "panelGrabbable=true panelGrabType=PIVOT_Y rightControllerA=toggle-and-recenter",
     )
-    videoPanel =
-        Entity.create(
-            Panel(R.id.video_surface_panel),
-            Transform(Pose(Vector3(0.55f, 1.30f, -2.25f), Quaternion())),
-            Visible(true),
-        )
+    val videoAnchor =
+        runCatching { scene.getViewerPose() }
+            .getOrElse {
+              Pose(
+                  Vector3(0.0f, VIDEO_ANCHOR_FALLBACK_Y_METERS, 0.0f),
+                  Quaternion(),
+              )
+            }
+    videoPanelCoordinator.spawnAtViewer(videoAnchor, player.snapshot().selectedVideoId())
   }
 
   override fun registerPanels(): List<PanelRegistration> =
-      listOf(
-          controlPanelRegistration(),
-          VideoSurfacePanelRegistration(
-              R.id.video_surface_panel,
-              surfaceConsumer = { _, surface -> player.attachVideoSurface(surface) },
-              settingsCreator = {
-                MediaPanelSettings(
-                    shape = QuadShapeOptions(width = 1.45f, height = 0.82f),
-                    display = PixelDisplayOptions(width = 320, height = 180),
-                    rendering = MediaPanelRenderOptions(),
-                    input = PanelInputOptions(0),
-                )
-              },
-          ),
-      )
+      buildList {
+        add(controlPanelRegistration())
+        addAll(videoPanelCoordinator.panelRegistrations())
+      }
 
   override fun onResume() {
     super.onResume()
@@ -225,7 +229,7 @@ open class SpatialVideoControlActivity : AppSystemActivity(), DebugShellControlT
     controlPanel = null
     controlPanelSceneObject = null
     controlPanelComposeView = null
-    videoPanel = null
+    videoPanelCoordinator.release()
     super.onDestroy()
   }
 
@@ -257,6 +261,7 @@ open class SpatialVideoControlActivity : AppSystemActivity(), DebugShellControlT
 
   private fun debugReceipt(action: String, confirmed: Boolean): String {
     val playerState = player.snapshot()
+    val selectedVideo = videoCatalog.require(playerState.selectedVideoId())
     return JSONObject()
         .put("schema", "rusty.quest.debug_local_control_receipt.v1")
         .put("action", action)
@@ -273,6 +278,11 @@ open class SpatialVideoControlActivity : AppSystemActivity(), DebugShellControlT
         .put("discovery_status", controllerState.discoveryStatus ?: JSONObject.NULL)
         .put("player_revision", playerState.revision())
         .put("selected_video_id", playerState.selectedVideoId() ?: JSONObject.NULL)
+        .put("projection_shape", selectedVideo.projectionShape().protocolName())
+        .put("stereo_layout", selectedVideo.stereoLayout().protocolName())
+        .put("packed_width_px", selectedVideo.widthPx())
+        .put("packed_height_px", selectedVideo.heightPx())
+        .put("media_source_kind", selectedVideo.sourceKind().protocolName())
         .put("playing", playerState.playing())
         .put("playback_state", playerState.playbackState())
         .put("position_ms", playerState.positionMs())
@@ -664,6 +674,22 @@ open class SpatialVideoControlActivity : AppSystemActivity(), DebugShellControlT
     }
   }
 
+  private fun availableVideoCatalog(): VideoCatalog {
+    val available = ArrayList(VideoCatalog.bundledSynthetic().videos())
+    if (BuildConfig.DEBUG) {
+      val root = getExternalFilesDir(Media3SpatialPlayerAdapter.DEBUG_MEDIA_DIRECTORY)
+      if (root != null) {
+        VideoCatalog.debugExternalTestSlots().videos().forEach { video ->
+          val source = File(root, "${video.resourceName()}.mp4")
+          if (source.isFile && source.length() > 0) {
+            available.add(video)
+          }
+        }
+      }
+    }
+    return VideoCatalog(available)
+  }
+
   /** Known-facing fallback from the Rusty Quest one-sided Spatial UI-panel convention. */
   private fun staticControlPanelFrontRotation(): Quaternion = Quaternion(0.0f, 180.0f, 0.0f)
 
@@ -676,5 +702,6 @@ open class SpatialVideoControlActivity : AppSystemActivity(), DebugShellControlT
     const val CONTROL_PANEL_DP_PER_METER = 720.0f
     const val CONTROL_PANEL_GRAB_MIN_HEIGHT_METERS = 0.55f
     const val CONTROL_PANEL_GRAB_MAX_HEIGHT_METERS = 2.50f
+    const val VIDEO_ANCHOR_FALLBACK_Y_METERS = 1.60f
   }
 }

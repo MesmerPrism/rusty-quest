@@ -7,6 +7,7 @@ const state = {
   hostRevision: 0,
   playerRevision: 0,
   selectedVideoId: null,
+  videosById: new Map(),
   socket: null,
   bootstrap: ["describe", "get_state", "list_videos"],
 };
@@ -22,6 +23,8 @@ const openLanButton = document.querySelector("#open-lan-button");
 const openLanStatus = document.querySelector("#open-lan-status");
 const connectionState = document.querySelector("#connection-state");
 const selectedVideo = document.querySelector("#selected-video");
+const projectionShape = document.querySelector("#projection-shape");
+const stereoLayout = document.querySelector("#stereo-layout");
 const playbackState = document.querySelector("#playback-state");
 const playerRevision = document.querySelector("#player-revision");
 const authorityRevision = document.querySelector("#authority-revision");
@@ -95,6 +98,7 @@ function updatePlayer(next) {
   }
   state.selectedVideoId = next.selected_video_id;
   selectedVideo.textContent = next.selected_video_id ?? "—";
+  updatePresentation(next.selected_video_id);
   playbackState.textContent = next.playing ? "Playing" : next.playback_state;
   playButton.disabled = !state.selectedVideoId || next.playing;
   pauseButton.disabled = !next.playing;
@@ -103,8 +107,15 @@ function updatePlayer(next) {
   });
 }
 
+function updatePresentation(videoId) {
+  const presentation = state.videosById.get(videoId);
+  projectionShape.textContent = presentation?.projection_shape ?? "—";
+  stereoLayout.textContent = presentation?.stereo_layout ?? "—";
+}
+
 function renderVideos(videos) {
   videoList.replaceChildren();
+  state.videosById = new Map(videos.map((video) => [video.video_id, video]));
   for (const video of videos) {
     const row = document.createElement("div");
     row.className = "video-row";
@@ -113,7 +124,11 @@ function renderVideos(videos) {
     const title = document.createElement("strong");
     title.textContent = video.title;
     const duration = document.createElement("small");
-    duration.textContent = `${Math.round(video.duration_ms / 1000)} seconds · bundled CC0 synthetic`;
+    const durationText =
+      video.duration_ms > 0 ? `${Math.round(video.duration_ms / 1000)} seconds` : "duration unavailable";
+    duration.textContent =
+      `${video.projection_shape} · ${video.stereo_layout} · ` +
+      `${video.width_px}×${video.height_px} · ${durationText} · ${video.license}`;
     const button = document.createElement("button");
     button.type = "button";
     button.textContent = "Select";
@@ -126,6 +141,7 @@ function renderVideos(videos) {
     row.append(meta, button);
     videoList.append(row);
   }
+  updatePresentation(state.selectedVideoId);
 }
 
 function send(command, payload = {}) {

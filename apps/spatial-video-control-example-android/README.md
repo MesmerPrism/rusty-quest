@@ -70,6 +70,36 @@ It contains exactly:
 
 Selection never implies playback.
 
+## Projection and stereo catalog
+
+Each closed catalog item declares its packed pixel dimensions, projection, and
+stereo layout. The public synthetic catalog covers:
+
+- flat mono;
+- 180° mono, side-by-side left/right, and top-bottom;
+- 360° mono, side-by-side left/right, and top-bottom.
+
+The app maps those declarations directly to Meta Spatial SDK
+`QuadShapeOptions`, `Equirect180ShapeOptions`, or
+`Equirect360ShapeOptions`, and to `StereoMode.None`, `LeftRight`, or `UpDown`.
+For SBS the left packed half is the left eye. For top-bottom the top packed
+half is the left eye. Eye swap is deliberately not offered.
+
+One immutable video-panel registration exists per closed descriptor. The
+initial viewer pose becomes the retained world anchor and orientation reference
+for 180°/360° media. Selecting another item replaces only the video entity and
+decoder surface; it does not restart the Activity or control panel. A select
+receipt is applied only after the matching surface is attached and a Media3
+callback observes that item in `READY` state.
+
+Debug builds also recognize three generic, fixed app-external slots for a
+temporary 180-SBS, 360-top-bottom, and 360-mono device test. A slot appears in
+`list_videos` only when its exact file exists when the process starts. The
+browser cannot supply filenames, paths, URLs, projection settings, or uploads.
+These slots are local test infrastructure: their media has unknown provenance,
+must not be redistributed, packaged, or committed, and must be deleted from
+the headset after the authorized run. Release builds ignore them.
+
 ## Spatial panel placement and input
 
 The wearer control panel is a one-sided Meta Spatial SDK UI surface. Its
@@ -100,9 +130,9 @@ media-surface orientation remains a separate contract.
 - `app/src/main/java/`: opt-in Android, Media3, and Spatial SDK adapter source.
 - `app/src/debug/`: debug-only shell-UID/DUMP operator provider.
 - `native/`: closed JNI operations and the exact Manifold source lock.
-- `app/src/main/media-source/`: deterministic CC0 320x180/30fps synthetic MP4
-  source blobs kept inside the Quest hardware-decoder compatibility profile
-  decoded only at Android build time.
+- `app/src/main/media-source/`: deterministic CC0 flat/180/360 30fps synthetic
+  MP4 source blobs kept inside a bounded Quest hardware-decoder compatibility
+  profile and decoded only at Android build time.
 
 ## Source-only validation
 

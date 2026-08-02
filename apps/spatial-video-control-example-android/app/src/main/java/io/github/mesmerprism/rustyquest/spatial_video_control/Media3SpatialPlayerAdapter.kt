@@ -9,30 +9,42 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
+import java.io.File
 
 /**
  * Quest owns this effective state. Revisions advance only inside a Media3
- * callback that observes the accepted effect.
+ * callback that observes the accepted effect. A selection is not applied until
+ * its matching Spatial carrier surface is attached and Media3 reaches READY.
  */
 class Media3SpatialPlayerAdapter(
     context: Context,
+    private val catalog: VideoCatalog,
+    private val requestPresentation: (String) -> Unit,
 ) : PlayerPort {
+  private val appContext = context.applicationContext
   private val mainHandler = Handler(Looper.getMainLooper())
   private val player = ExoPlayer.Builder(context).build()
   private val resourcesByVideoId =
       mapOf(
           "synthetic-grid-1s" to R.raw.synthetic_grid_1s,
           "synthetic-blue-2s" to R.raw.synthetic_blue_2s,
+          "synthetic-180-mono" to R.raw.synthetic_180_mono_1s,
+          "synthetic-180-sbs-lr" to R.raw.synthetic_180_sbs_lr_1s,
+          "synthetic-180-top-bottom" to R.raw.synthetic_180_top_bottom_1s,
+          "synthetic-360-mono" to R.raw.synthetic_360_mono_1s,
+          "synthetic-360-sbs-lr" to R.raw.synthetic_360_sbs_lr_1s,
+          "synthetic-360-top-bottom" to R.raw.synthetic_360_top_bottom_1s,
       )
   private val packageName = context.packageName
   private val lock = Any()
   private var listener: PlayerPort.Listener? = null
   private var pending: PlayerPort.AcceptedEffect? = null
+  private var activeSurfaceVideoId: String? = null
   private var released = false
   private var state =
       PlayerPort.Snapshot(
           0,
-          "synthetic-grid-1s",
+          INITIAL_VIDEO_ID,
           false,
           "idle",
           0,
@@ -51,6 +63,7 @@ class Media3SpatialPlayerAdapter(
       }
 
   init {
+    check(catalog.contains(INITIAL_VIDEO_ID))
     player.addListener(
         object : Player.Listener {
           override fun onEvents(player: Player, events: Player.Events) {
@@ -64,8 +77,6 @@ class Media3SpatialPlayerAdapter(
         }
     )
     player.repeatMode = Player.REPEAT_MODE_ONE
-    player.setMediaItem(mediaItem("synthetic-grid-1s"))
-    player.prepare()
   }
 
   override fun snapshot(): PlayerPort.Snapshot = synchronized(lock) { state }
@@ -76,10 +87,12 @@ class Media3SpatialPlayerAdapter(
 
   override fun selectVideo(effect: PlayerPort.AcceptedEffect) {
     require(effect.command() == "select_video")
+    catalog.require(requireNotNull(effect.videoId()))
     dispatch(effect) {
       player.pause()
-      player.setMediaItem(mediaItem(requireNotNull(effect.videoId())))
-      player.prepare()
+      player.clearVideoSurface()
+      synchronized(lock) { activeSurfaceVideoId = null }
+      requestPresentation(requireNotNull(effect.videoId()))
     }
   }
 
@@ -102,8 +115,26 @@ class Media3SpatialPlayerAdapter(
     }
   }
 
-  fun attachVideoSurface(surface: Surface) {
-    mainHandler.post { player.setVideoSurface(surface) }
+  /** Called only by the fixed registration that currently owns the active video entity. */
+  fun attachVideoSurface(videoId: String, surface: Surface) {
+    mainHandler.post {
+      if (released || !catalog.contains(videoId)) {
+        return@post
+      }
+      val desiredVideoId =
+          synchronized(lock) { pending?.videoId() ?: state.selectedVideoId() }
+      if (videoId != desiredVideoId) {
+        return@post
+      }
+      player.setVideoSurface(surface)
+      synchronized(lock) { activeSurfaceVideoId = videoId }
+      if (player.currentMediaItem?.mediaId != videoId) {
+        player.setMediaItem(mediaItem(videoId))
+      }
+      if (player.playbackState == Player.STATE_IDLE) {
+        player.prepare()
+      }
+    }
   }
 
   fun release() {
@@ -158,8 +189,11 @@ class Media3SpatialPlayerAdapter(
           effect != null &&
               when (effect.command()) {
                 "select_video" ->
-                    selected == effect.videoId() && !player.playWhenReady
-                "play" -> playing
+                    selected == effect.videoId() &&
+                        activeSurfaceVideoId == effect.videoId() &&
+                        !player.playWhenReady &&
+                        player.playbackState == Player.STATE_READY
+                "play" -> playing && activeSurfaceVideoId == selected
                 "pause" -> !playing && !player.playWhenReady
                 else -> false
               }
@@ -206,12 +240,27 @@ class Media3SpatialPlayerAdapter(
   }
 
   private fun mediaItem(videoId: String): MediaItem {
-    val resourceId =
-        resourcesByVideoId[videoId] ?: throw IllegalArgumentException("video id is not bundled")
-    return MediaItem.Builder()
-        .setMediaId(videoId)
-        .setUri(Uri.parse("android.resource://$packageName/$resourceId"))
-        .build()
+    val video = catalog.require(videoId)
+    val uri =
+        when (video.sourceKind()) {
+          VideoCatalog.SourceKind.BUNDLED_CC0 -> {
+            val resourceId =
+                resourcesByVideoId[videoId]
+                    ?: throw IllegalArgumentException("bundled video id has no resource")
+            Uri.parse("android.resource://$packageName/$resourceId")
+          }
+          VideoCatalog.SourceKind.DEBUG_EXTERNAL_TEST -> {
+            check(BuildConfig.DEBUG) { "external device-test media is debug-only" }
+            val root =
+                checkNotNull(appContext.getExternalFilesDir(DEBUG_MEDIA_DIRECTORY)) {
+                  "debug media root is unavailable"
+                }
+            val source = File(root, "${video.resourceName()}.mp4")
+            check(source.isFile && source.length() > 0) { "debug media slot is unavailable" }
+            Uri.fromFile(source)
+          }
+        }
+    return MediaItem.Builder().setMediaId(videoId).setUri(uri).build()
   }
 
   private fun playbackStateToken(value: Int): String =
@@ -223,7 +272,9 @@ class Media3SpatialPlayerAdapter(
         else -> "unknown"
       }
 
-  private companion object {
+  companion object {
+    const val INITIAL_VIDEO_ID = "synthetic-grid-1s"
+    const val DEBUG_MEDIA_DIRECTORY = "immersive-video-test"
     const val POSITION_OBSERVATION_INTERVAL_MS = 500L
   }
 }
