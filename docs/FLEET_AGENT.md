@@ -19,8 +19,15 @@ for source and device tests. Its manifest contains local paths and is never a
 supported distribution input.
 
 `Build-FleetAgentKeyRecordRelease.ps1` is the separate owner release route. It
-requires an exact clean Rusty Quest source tree and locked dependencies, builds
-the release-profile Windows helper, and emits exactly:
+requires an exact clean Rusty Quest source tree, resolves the closed dependency
+composition, and clones each exact Quest, Fleet, and Manifold commit/tree into
+an isolated no-hardlink clean room. Cargo uses only that materialized Quest and
+Manifold source plus a fresh checkout of the materialized Fleet dependency,
+locked dependencies, a dedicated Cargo home/target, an explicit Windows x64
+target, cleared ambient Cargo/Rust profile overrides, stable path remapping, and
+stripped symbols. The builder revalidates all
+three Git identities, clean states, and the Cargo composition after compilation
+before it emits exactly:
 
 - `release-manifest.json` using
   `rusty.quest.fleet_agent_key_record_release_capsule.v1`;
@@ -29,12 +36,15 @@ the release-profile Windows helper, and emits exactly:
 - `fleet-agent-key-record.exe`, `LICENSE`, `SOURCE-NOTICE.md`, and
   `checksums.sha256`.
 
-The capsule version is `1.0.0`. Consumers must pin the owner identity, manifest
+The only supported capsule version is `1.0.0`; both builder and validator reject
+every other value. Consumers must pin the owner identity, manifest
 SHA-256, helper SHA-256, exact source commit/tree, version, target, and payload
 set separately and preserve the owner bytes without augmentation. The owner
 validator rejects artifact or provenance substitution, unknown fields, extra
 repositories or files, stale/unsupported versions or targets, and detectable
-private or machine-local material.
+private or machine-local material. It inspects both ASCII and both byte
+alignments of little- and big-endian UTF-16 in the executable, so absolute host
+paths are release-blocking even when ordinary manifest text is clean.
 
 Rusty Quest has no release-signing or revocation authority for this helper
 capsule. The current contract therefore makes no signature claim: ownership is
@@ -158,7 +168,10 @@ pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-FleetAgentAndroid.ps1
 The host gate also checks the release builder, validator, schema, and fixture
 matrix statically. The release builder's clean-source gate and the exact
 capsule validator run after the source commit exists; damaged-capsule self-tests
-run against those generated owner bytes.
+run against those generated owner bytes. The negative matrix repairs linked
+hash/checksum fields around semantic mutations so version, repository closure,
+and private-path rejection are tested rather than passing through an unrelated
+digest mismatch.
 
 The public golden claims fixture under `fixtures/fleet-agent/` must reproduce
 Fleet's signing message and signature exactly. `-Tier Host` is the explicit

@@ -9,6 +9,8 @@
     { "name": "extra-field", "mutation": "manifest.private_path", "expected": "reject" },
     { "name": "unsupported-version", "mutation": "capsule_version", "expected": "reject" },
     { "name": "unsupported-target", "mutation": "artifact.target", "expected": "reject" },
-    { "name": "extra-package-file", "mutation": "capsule.files", "expected": "reject" }
+    { "name": "extra-package-file", "mutation": "capsule.files", "expected": "reject" },
+    { "name": "binary-ascii-path-leakage", "mutation": "artifact.ascii-machine-path", "expected": "reject" },
+    { "name": "binary-utf16-path-leakage", "mutation": "artifact.utf16-machine-path", "expected": "reject" }
   ]
 }

@@ -19,7 +19,7 @@ function Get-Sha256([string] $LiteralPath) {
     return (Get-FileHash -LiteralPath $LiteralPath -Algorithm SHA256).Hash.ToLowerInvariant()
 }
 
-function Assert-ExactProperties($Value, [string[]] $Names, [string] $Label) {
+function Assert-ExactPropertySet($Value, [string[]] $Names, [string] $Label) {
     $actual = @($Value.PSObject.Properties.Name | Sort-Object)
     $expected = @($Names | Sort-Object)
     if (@(Compare-Object $actual $expected -SyncWindow 0).Count -ne 0 -or
@@ -30,6 +30,50 @@ function Assert-ExactProperties($Value, [string[]] $Names, [string] $Label) {
 
 function Assert-Sha256([string] $Value, [string] $Label) {
     if ($Value -cnotmatch '^[0-9a-f]{64}$') { throw "$Label is not lowercase SHA-256." }
+}
+
+function Assert-BoundedFileSize([string] $LiteralPath, [long] $DeclaredSize, [string] $Label) {
+    $actualSize = [long](Get-Item -LiteralPath $LiteralPath).Length
+    if ($DeclaredSize -lt 1 -or $DeclaredSize -gt 134217728 -or $actualSize -ne $DeclaredSize) {
+        throw "$Label size is outside the supported capsule bound or drifted."
+    }
+}
+
+function Test-MachineLocalPathText([string] $Text) {
+    return [regex]::IsMatch(
+        $Text,
+        '(?i)(?:[A-Z]:[\\/](?![\\/])|\\\\(?:\?\\)?[A-Za-z0-9._$-]+[\\/])')
+}
+
+function Assert-NoMachineLocalPathByteSequence([string] $LiteralPath) {
+    $bytes = [IO.File]::ReadAllBytes($LiteralPath)
+    if (Test-MachineLocalPathText ([Text.Encoding]::Latin1.GetString($bytes))) {
+        throw "Fleet Agent key-record release executable contains a machine-local ASCII path."
+    }
+    foreach ($encoding in @([Text.Encoding]::Unicode, [Text.Encoding]::BigEndianUnicode)) {
+        foreach ($offset in @(0, 1)) {
+            $count = $bytes.Length - $offset
+            if ($count -lt 4) { continue }
+            if (($count % 2) -ne 0) { $count-- }
+            if (Test-MachineLocalPathText ($encoding.GetString($bytes, $offset, $count))) {
+                throw "Fleet Agent key-record release executable contains a machine-local UTF-16 path."
+            }
+        }
+    }
+}
+
+function Assert-X64WindowsExecutable([string] $LiteralPath) {
+    $bytes = [IO.File]::ReadAllBytes($LiteralPath)
+    if ($bytes.Length -lt 64 -or $bytes[0] -ne 0x4d -or $bytes[1] -ne 0x5a) {
+        throw "Fleet Agent key-record release artifact is not a Windows PE executable."
+    }
+    $peOffset = [BitConverter]::ToInt32($bytes, 0x3c)
+    if ($peOffset -lt 0 -or $peOffset + 6 -gt $bytes.Length -or
+        $bytes[$peOffset] -ne 0x50 -or $bytes[$peOffset + 1] -ne 0x45 -or
+        $bytes[$peOffset + 2] -ne 0 -or $bytes[$peOffset + 3] -ne 0 -or
+        [BitConverter]::ToUInt16($bytes, $peOffset + 4) -ne 0x8664) {
+        throw "Fleet Agent key-record release artifact target is not x86_64-pc-windows-msvc."
+    }
 }
 
 $root = (Resolve-Path -LiteralPath $CapsuleRoot).Path
@@ -56,21 +100,21 @@ if ($ExpectedManifestSha256 -and $manifestHash -cne $ExpectedManifestSha256) {
 }
 $manifestText = Get-Content -Raw -LiteralPath $manifestPath
 $manifest = $manifestText | ConvertFrom-Json -Depth 30
-Assert-ExactProperties $manifest @(
+Assert-ExactPropertySet $manifest @(
     "schema", "capsule_version", "tool_contract", "source", "artifact",
     "distribution", "payload") "release manifest"
-Assert-ExactProperties $manifest.tool_contract @(
+Assert-ExactPropertySet $manifest.tool_contract @(
     "schema", "executable", "argument_contract", "output_schema") "tool contract"
-Assert-ExactProperties $manifest.source @(
+Assert-ExactPropertySet $manifest.source @(
     "repository_url", "commit", "tree", "provenance_path", "provenance_sha256") "source"
-Assert-ExactProperties $manifest.artifact @(
+Assert-ExactPropertySet $manifest.artifact @(
     "path", "sha256", "size_bytes", "target", "profile") "artifact"
-Assert-ExactProperties $manifest.distribution @(
+Assert-ExactPropertySet $manifest.distribution @(
     "portable", "supported", "inert_until_invoked", "install_contract",
     "private_material_included", "live_onboarding_claim") "distribution"
 
 if ($manifest.schema -cne "rusty.quest.fleet_agent_key_record_release_capsule.v1" -or
-    $manifest.capsule_version -cnotmatch '^[0-9]+\.[0-9]+\.[0-9]+$' -or
+    $manifest.capsule_version -cne "1.0.0" -or
     ($ExpectedCapsuleVersion -and $manifest.capsule_version -cne $ExpectedCapsuleVersion) -or
     $manifest.tool_contract.schema -cne "rusty.quest.fleet_agent_key_record_tool_contract.v1" -or
     $manifest.tool_contract.executable -cne "fleet-agent-key-record.exe" -or
@@ -107,23 +151,28 @@ if (($ExpectedSourceCommit -and $manifest.source.commit -cne $ExpectedSourceComm
 $artifactPath = Join-Path $root "fleet-agent-key-record.exe"
 $provenancePath = Join-Path $root "provenance.json"
 if ((Get-Sha256 $artifactPath) -cne $manifest.artifact.sha256 -or
-    [long](Get-Item -LiteralPath $artifactPath).Length -ne [long]$manifest.artifact.size_bytes -or
     ($ExpectedExecutableSha256 -and
         (Get-Sha256 $artifactPath) -cne $ExpectedExecutableSha256) -or
     (Get-Sha256 $provenancePath) -cne $manifest.source.provenance_sha256) {
     throw "Fleet Agent key-record release artifact or provenance bytes drifted."
 }
+Assert-BoundedFileSize -LiteralPath $artifactPath `
+    -DeclaredSize ([long]$manifest.artifact.size_bytes) -Label "release artifact"
+Assert-X64WindowsExecutable -LiteralPath $artifactPath
+Assert-NoMachineLocalPathByteSequence -LiteralPath $artifactPath
 
 $provenanceText = Get-Content -Raw -LiteralPath $provenancePath
 $provenance = $provenanceText | ConvertFrom-Json -Depth 30
-Assert-ExactProperties $provenance @(
+Assert-ExactPropertySet $provenance @(
     "schema", "capsule_version", "source", "build", "claims") "provenance"
-Assert-ExactProperties $provenance.source @(
+Assert-ExactPropertySet $provenance.source @(
     "repository_url", "commit", "tree", "package", "composition_fingerprint",
     "repositories", "files") "provenance source"
-Assert-ExactProperties $provenance.build @(
-    "target", "profile", "rustc", "cargo", "locked_dependencies") "provenance build"
-Assert-ExactProperties $provenance.claims @(
+Assert-ExactPropertySet $provenance.build @(
+    "target", "profile", "rustc", "cargo", "locked_dependencies",
+    "isolated_git_materializations", "post_build_identity_verified", "path_remap_root",
+    "symbols_stripped", "cargo_config_sha256") "provenance build"
+Assert-ExactPropertySet $provenance.claims @(
     "owner", "helper_only", "runtime_activation", "enrollment_authority",
     "device_authority", "private_seed_included", "profile_included",
     "hub_configuration_included") "provenance claims"
@@ -138,6 +187,11 @@ if ($provenance.schema -cne
     $provenance.build.target -cne $manifest.artifact.target -or
     $provenance.build.profile -cne "release" -or
     $provenance.build.locked_dependencies -ne $true -or
+    $provenance.build.isolated_git_materializations -ne $true -or
+    $provenance.build.post_build_identity_verified -ne $true -or
+    $provenance.build.path_remap_root -cne "/rusty-build" -or
+    $provenance.build.symbols_stripped -ne $true -or
+    $provenance.build.cargo_config_sha256 -cnotmatch '^[0-9a-f]{64}$' -or
     $provenance.claims.owner -cne "rusty-quest" -or
     $provenance.claims.helper_only -ne $true -or
     $provenance.claims.runtime_activation -cne "explicit_fleet_onboard_invocation" -or
@@ -160,7 +214,7 @@ if ($repositories.Count -ne $expectedRepositories.Count) {
 }
 for ($index = 0; $index -lt $repositories.Count; $index++) {
     $repository = $repositories[$index]
-    Assert-ExactProperties $repository @(
+    Assert-ExactPropertySet $repository @(
         "repository_id", "role", "repository_url", "commit", "tree") "repository"
     $expected = $expectedRepositories[$index]
     if ($repository.repository_id -cne $expected[0] -or
@@ -177,14 +231,15 @@ $expectedSourcePaths = @(
     "crates/rusty-quest-fleet-agent/src/bin/fleet-agent-key-record.rs",
     "crates/rusty-quest-fleet-agent/src/lib.rs",
     "tools/Build-FleetAgentKeyRecordRelease.ps1",
-    "tools/Test-FleetAgentKeyRecordRelease.ps1")
+    "tools/Test-FleetAgentKeyRecordRelease.ps1",
+    "tools/lib/SourceComposition.psm1")
 $sourceFiles = @($provenance.source.files)
 if (@(Compare-Object @($sourceFiles.path) $expectedSourcePaths -SyncWindow 0).Count -ne 0 -or
     $sourceFiles.Count -ne $expectedSourcePaths.Count) {
     throw "Fleet Agent key-record release source-file set drifted."
 }
 foreach ($file in $sourceFiles) {
-    Assert-ExactProperties $file @("path", "sha256") "source file"
+    Assert-ExactPropertySet $file @("path", "sha256") "source file"
     Assert-Sha256 ([string]$file.sha256) "source file SHA-256"
 }
 
@@ -195,13 +250,14 @@ if (@(Compare-Object @($payload.path) $expectedPayloadPaths -SyncWindow 0).Count
     throw "Fleet Agent key-record release payload path set drifted."
 }
 foreach ($entry in $payload) {
-    Assert-ExactProperties $entry @("path", "sha256", "size_bytes") "payload entry"
+    Assert-ExactPropertySet $entry @("path", "sha256", "size_bytes") "payload entry"
     Assert-Sha256 ([string]$entry.sha256) "payload SHA-256"
     $path = Join-Path $root ([string]$entry.path)
-    if ((Get-Sha256 $path) -cne $entry.sha256 -or
-        [long](Get-Item -LiteralPath $path).Length -ne [long]$entry.size_bytes) {
+    if ((Get-Sha256 $path) -cne $entry.sha256) {
         throw "Fleet Agent key-record release payload bytes drifted."
     }
+    Assert-BoundedFileSize -LiteralPath $path -DeclaredSize ([long]$entry.size_bytes) `
+        -Label "payload entry"
 }
 
 $checksumLines = @(Get-Content -LiteralPath (Join-Path $root "checksums.sha256"))

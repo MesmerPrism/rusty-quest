@@ -349,6 +349,8 @@ license, notice, and checksums closed and byte-bound. It contains no private
 seed, profile, Hub configuration, enrollment, activation, reachability, lease,
 or peer-acceptance evidence. The machine-bound developer-tool manifest remains
 build/test evidence only and must never be consumed as a release capsule.
+Build it only from isolated exact Git-object materializations, and reject ASCII
+or UTF-16 machine-local paths in the executable before distribution.
 
 Generic media adoption lives in `rusty-quest-media-stream`. Manifold owns the
 accepted session/stream descriptor; the Quest runtime owns only receiver-first

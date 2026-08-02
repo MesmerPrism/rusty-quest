@@ -3,7 +3,7 @@
 
 [CmdletBinding()]
 param(
-    [ValidatePattern("^[0-9]+\.[0-9]+\.[0-9]+$")]
+    [ValidateSet("1.0.0")]
     [string] $CapsuleVersion = "1.0.0",
 
     [string] $OutputDirectory = ""
@@ -19,6 +19,12 @@ if ($PSVersionTable.PSEdition -ne "Core" -or
 
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 Import-Module (Join-Path $PSScriptRoot "lib\SourceComposition.psm1") -Force
+$supportedCapsuleVersion = "1.0.0"
+$targetTriple = "x86_64-pc-windows-msvc"
+
+if ($CapsuleVersion -cne $supportedCapsuleVersion) {
+    throw "Fleet Agent key-record release capsule version is unsupported."
+}
 
 function Get-Sha256([string] $LiteralPath) {
     return (Get-FileHash -LiteralPath $LiteralPath -Algorithm SHA256).Hash.ToLowerInvariant()
@@ -35,6 +41,105 @@ function Write-CanonicalJson([string] $LiteralPath, $Value) {
 function Write-CanonicalText([string] $LiteralPath, [string] $Value) {
     $text = ($Value -replace "`r`n", "`n").TrimEnd("`r", "`n") + "`n"
     [IO.File]::WriteAllText($LiteralPath, $text, [Text.UTF8Encoding]::new($false))
+}
+
+function Invoke-GitChecked {
+    param(
+        [Parameter(Mandatory)]
+        [string] $Root,
+        [Parameter(Mandatory)]
+        [string[]] $Arguments,
+        [string] $Failure = "Git command failed."
+    )
+    $output = @(& git -C $Root @Arguments 2>&1 | ForEach-Object { [string]$_ })
+    if ($LASTEXITCODE -ne 0) {
+        throw "$Failure`n$($output -join "`n")"
+    }
+    return @($output)
+}
+
+function Assert-ExactGitMaterialization {
+    param(
+        [Parameter(Mandatory)]
+        [string] $Root,
+        [Parameter(Mandatory)]
+        [string] $ExpectedCommit,
+        [Parameter(Mandatory)]
+        [string] $ExpectedTree,
+        [Parameter(Mandatory)]
+        [string] $Label
+    )
+    $commit = ([string]@(Invoke-GitChecked -Root $Root -Arguments @("rev-parse", "HEAD") `
+        -Failure "$Label materialization commit could not be resolved.")[0]).Trim().ToLowerInvariant()
+    $tree = ([string]@(Invoke-GitChecked -Root $Root -Arguments @("rev-parse", "HEAD^{tree}") `
+        -Failure "$Label materialization tree could not be resolved.")[0]).Trim().ToLowerInvariant()
+    $dirt = @(Invoke-GitChecked -Root $Root `
+        -Arguments @("status", "--porcelain=v1", "--untracked-files=all") `
+        -Failure "$Label materialization status could not be resolved.")
+    if ($commit -cne $ExpectedCommit -or $tree -cne $ExpectedTree -or $dirt.Count -ne 0) {
+        throw "$Label materialization is not the exact clean Git object set."
+    }
+}
+
+function Initialize-ExactGitMaterialization {
+    param(
+        [Parameter(Mandatory)]
+        [string] $SourceRoot,
+        [Parameter(Mandatory)]
+        [string] $Destination,
+        [Parameter(Mandatory)]
+        [string] $ExpectedCommit,
+        [Parameter(Mandatory)]
+        [string] $ExpectedTree,
+        [Parameter(Mandatory)]
+        [string] $Label
+    )
+    $cloneOutput = @(& git -c core.autocrlf=false clone --quiet --no-hardlinks `
+        --no-checkout --no-tags -- $SourceRoot $Destination 2>&1 | ForEach-Object { [string]$_ })
+    if ($LASTEXITCODE -ne 0) {
+        throw "$Label exact Git-object materialization failed.`n$($cloneOutput -join "`n")"
+    }
+    [void](Invoke-GitChecked -Root $Destination `
+        -Arguments @("-c", "core.autocrlf=false", "checkout", "--detach", $ExpectedCommit) `
+        -Failure "$Label exact commit checkout failed.")
+    Assert-ExactGitMaterialization -Root $Destination -ExpectedCommit $ExpectedCommit `
+        -ExpectedTree $ExpectedTree -Label $Label
+}
+
+function Assert-ExactComposition {
+    param(
+        [Parameter(Mandatory)]
+        $Composition,
+        [Parameter(Mandatory)]
+        [string] $QuestCommit,
+        [Parameter(Mandatory)]
+        [string] $QuestTree,
+        [Parameter(Mandatory)]
+        [string] $FleetCommit,
+        [Parameter(Mandatory)]
+        [string] $FleetTree,
+        [Parameter(Mandatory)]
+        [string] $ManifoldCommit,
+        [Parameter(Mandatory)]
+        [string] $ManifoldTree
+    )
+    $repositories = @($Composition.repositories)
+    $questMatches = @($repositories | Where-Object {
+        $_.repository_id -eq "rusty-quest" -and $_.role -eq "primary" -and
+        $_.commit -ceq $QuestCommit -and $_.tree -ceq $QuestTree
+    })
+    $fleetMatches = @($repositories | Where-Object {
+        $_.role -eq "path-dependency" -and
+        $_.commit -ceq $FleetCommit -and $_.tree -ceq $FleetTree
+    })
+    $manifoldMatches = @($repositories | Where-Object {
+        $_.repository_id -eq "rusty-manifold" -and $_.role -eq "path-dependency" -and
+        $_.commit -ceq $ManifoldCommit -and $_.tree -ceq $ManifoldTree
+    })
+    if ($repositories.Count -ne 3 -or $questMatches.Count -ne 1 -or
+        $fleetMatches.Count -ne 1 -or $manifoldMatches.Count -ne 1) {
+        throw "Fleet Agent key-record release source composition is not the exact closed owner set."
+    }
 }
 
 $dirt = @(& git -C $repoRoot status --porcelain=v1 --untracked-files=all)
@@ -65,21 +170,28 @@ if ($quest.Count -ne 1 -or $fleet.Count -ne 1 -or $manifold.Count -ne 1 -or
     $quest[0].commit -ne $sourceCommit -or $quest[0].tree -ne $sourceTree) {
     throw "Fleet Agent key-record release source composition is not the closed owner set."
 }
+$fleetCommit = ([string]$fleet[0].commit).ToLowerInvariant()
+$fleetTree = ([string]$fleet[0].tree).ToLowerInvariant()
+$manifoldCommit = ([string]$manifold[0].commit).ToLowerInvariant()
+$manifoldTree = ([string]$manifold[0].tree).ToLowerInvariant()
+Assert-ExactComposition -Composition $composition -QuestCommit $sourceCommit -QuestTree $sourceTree `
+    -FleetCommit $fleetCommit -FleetTree $fleetTree `
+    -ManifoldCommit $manifoldCommit -ManifoldTree $manifoldTree
 
 $publicRepositories = @(
     [ordered]@{
         repository_id = "rusty-fleet"
         role = "contract-dependency"
         repository_url = "https://github.com/MesmerPrism/rusty-fleet"
-        commit = [string]$fleet[0].commit
-        tree = [string]$fleet[0].tree
+        commit = $fleetCommit
+        tree = $fleetTree
     },
     [ordered]@{
         repository_id = "rusty-manifold"
         role = "contract-dependency"
         repository_url = "https://github.com/MesmerPrism/rusty-manifold"
-        commit = [string]$manifold[0].commit
-        tree = [string]$manifold[0].tree
+        commit = $manifoldCommit
+        tree = $manifoldTree
     },
     [ordered]@{
         repository_id = "rusty-quest"
@@ -99,18 +211,6 @@ if (Test-Path -LiteralPath $capsuleRoot) {
     throw "Fleet Agent key-record release output already exists."
 }
 
-& cargo build --locked --release `
-    --manifest-path (Join-Path $repoRoot "Cargo.toml") `
-    -p rusty-quest-fleet-agent `
-    --bin fleet-agent-key-record
-if ($LASTEXITCODE -ne 0) {
-    throw "Fleet Agent key-record release build failed."
-}
-$builtExecutable = Join-Path $repoRoot "target\release\fleet-agent-key-record.exe"
-if (-not (Test-Path -LiteralPath $builtExecutable -PathType Leaf)) {
-    throw "Fleet Agent key-record release executable is missing."
-}
-
 $sourcePaths = @(
     "Cargo.lock",
     "Cargo.toml",
@@ -118,25 +218,164 @@ $sourcePaths = @(
     "crates/rusty-quest-fleet-agent/src/bin/fleet-agent-key-record.rs",
     "crates/rusty-quest-fleet-agent/src/lib.rs",
     "tools/Build-FleetAgentKeyRecordRelease.ps1",
-    "tools/Test-FleetAgentKeyRecordRelease.ps1"
+    "tools/Test-FleetAgentKeyRecordRelease.ps1",
+    "tools/lib/SourceComposition.psm1"
 )
-$sourceFiles = @($sourcePaths | ForEach-Object {
-    $literal = Join-Path $repoRoot $_.Replace("/", "\")
-    if (-not (Test-Path -LiteralPath $literal -PathType Leaf)) {
-        throw "Fleet Agent key-record release source file is missing: $_"
+$materializationBase = [IO.Path]::GetFullPath((Join-Path $repoRoot "target\fleet-agent-key-record-materialization"))
+$cleanRoot = Join-Path $materializationBase "clean-room-v1"
+if (Test-Path -LiteralPath $cleanRoot) {
+    throw "Fleet Agent key-record release clean-room path already exists."
+}
+$cleanQuest = Join-Path $cleanRoot "workspace\rusty-quest"
+$cleanFleet = Join-Path $cleanRoot "workspace\rusty-fleet"
+$cleanManifold = Join-Path $cleanRoot "workspace\rusty-manifold"
+$cargoHome = Join-Path $cleanRoot "cargo-home"
+$buildTarget = Join-Path $cleanRoot "cargo-target"
+$cargoConfigPath = Join-Path $cargoHome "config.toml"
+$environmentNames = @(@(
+    "CARGO_HOME", "CARGO_TARGET_DIR", "CARGO_BUILD_TARGET", "CARGO_ENCODED_RUSTFLAGS",
+    "CARGO_NET_GIT_FETCH_WITH_CLI", "RUSTFLAGS", "RUSTC", "RUSTC_WRAPPER",
+    "RUSTC_WORKSPACE_WRAPPER", "GIT_CONFIG_COUNT", "GIT_CONFIG_KEY_0",
+    "GIT_CONFIG_VALUE_0", "GIT_CONFIG_KEY_1", "GIT_CONFIG_VALUE_1") +
+    @(Get-ChildItem Env: | Where-Object {
+        $_.Name -match '^(?:RUSTFLAGS|RUSTDOCFLAGS|RUSTC|RUSTC_WRAPPER|RUSTC_WORKSPACE_WRAPPER|CARGO_HOME|CARGO_TARGET_DIR|CARGO_BUILD_TARGET|CARGO_ENCODED_RUSTFLAGS|CARGO_ENCODED_RUSTDOCFLAGS|CARGO_PROFILE_.+|CARGO_TARGET_.+_(?:LINKER|RUSTFLAGS|RUNNER))$'
+    } | ForEach-Object { $_.Name }) | Sort-Object -Unique)
+$savedEnvironment = @{}
+foreach ($name in $environmentNames) {
+    $savedEnvironment[$name] = [Environment]::GetEnvironmentVariable($name, "Process")
+}
+
+$sourceFiles = @()
+$rustc = @()
+$cargo = ""
+$buildCompositionFingerprint = ""
+$cargoConfigSha256 = ""
+try {
+    [IO.Directory]::CreateDirectory($cleanRoot) | Out-Null
+    [IO.Directory]::CreateDirectory((Join-Path $cleanRoot "workspace")) | Out-Null
+    Initialize-ExactGitMaterialization -SourceRoot ([string]$quest[0].repository) `
+        -Destination $cleanQuest -ExpectedCommit $sourceCommit -ExpectedTree $sourceTree `
+        -Label "Rusty Quest"
+    Initialize-ExactGitMaterialization -SourceRoot ([string]$fleet[0].repository) `
+        -Destination $cleanFleet -ExpectedCommit $fleetCommit -ExpectedTree $fleetTree `
+        -Label "Rusty Fleet"
+    Initialize-ExactGitMaterialization -SourceRoot ([string]$manifold[0].repository) `
+        -Destination $cleanManifold -ExpectedCommit $manifoldCommit -ExpectedTree $manifoldTree `
+        -Label "Rusty Manifold"
+
+    [IO.Directory]::CreateDirectory($cargoHome) | Out-Null
+    Write-CanonicalText $cargoConfigPath @"
+[net]
+git-fetch-with-cli = true
+"@
+    $cargoConfigSha256 = Get-Sha256 $cargoConfigPath
+
+    $localFleetUrl = [Uri]::new($cleanFleet + [IO.Path]::DirectorySeparatorChar).AbsoluteUri
+    foreach ($name in $environmentNames) {
+        [Environment]::SetEnvironmentVariable($name, $null, "Process")
     }
-    [ordered]@{ path = $_; sha256 = Get-Sha256 $literal }
-})
+    [Environment]::SetEnvironmentVariable("CARGO_HOME", $cargoHome, "Process")
+    [Environment]::SetEnvironmentVariable("CARGO_TARGET_DIR", $buildTarget, "Process")
+    [Environment]::SetEnvironmentVariable("CARGO_BUILD_TARGET", $null, "Process")
+    [Environment]::SetEnvironmentVariable("CARGO_NET_GIT_FETCH_WITH_CLI", "true", "Process")
+    [Environment]::SetEnvironmentVariable("RUSTFLAGS", $null, "Process")
+    [Environment]::SetEnvironmentVariable("RUSTC", $null, "Process")
+    [Environment]::SetEnvironmentVariable("RUSTC_WRAPPER", $null, "Process")
+    [Environment]::SetEnvironmentVariable("RUSTC_WORKSPACE_WRAPPER", $null, "Process")
+    [Environment]::SetEnvironmentVariable("GIT_CONFIG_COUNT", "2", "Process")
+    [Environment]::SetEnvironmentVariable("GIT_CONFIG_KEY_0", "url.$localFleetUrl.insteadOf", "Process")
+    [Environment]::SetEnvironmentVariable("GIT_CONFIG_VALUE_0", "https://github.com/MesmerPrism/rusty-fleet", "Process")
+    [Environment]::SetEnvironmentVariable("GIT_CONFIG_KEY_1", "protocol.file.allow", "Process")
+    [Environment]::SetEnvironmentVariable("GIT_CONFIG_VALUE_1", "always", "Process")
 
-[IO.Directory]::CreateDirectory($capsuleRoot) | Out-Null
+    $rustcCommand = (Get-Command rustc -ErrorAction Stop).Source
+    $cargoCommand = (Get-Command cargo -ErrorAction Stop).Source
+    $rustSysroot = (& $rustcCommand --print sysroot).Trim()
+    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($rustSysroot)) {
+        throw "rustc sysroot could not be resolved."
+    }
+    $remapArguments = [Collections.Generic.List[string]]::new()
+    $remapArguments.Add("--remap-path-prefix=$cleanRoot=/rusty-build")
+    $remapArguments.Add("--remap-path-prefix=$rustSysroot=/rusty-toolchain")
+    if (-not [string]::IsNullOrWhiteSpace($env:USERPROFILE)) {
+        $remapArguments.Add("--remap-path-prefix=$env:USERPROFILE=/user-profile")
+    }
+    $remapArguments.Add("-C")
+    $remapArguments.Add("strip=symbols")
+    [Environment]::SetEnvironmentVariable(
+        "CARGO_ENCODED_RUSTFLAGS", ($remapArguments -join [char]0x1f), "Process")
+
+    $buildComposition = Get-QuestBuildSourceComposition `
+        -RepoRoot $cleanQuest `
+        -PackageName @("rusty-quest-fleet-agent")
+    Assert-ExactComposition -Composition $buildComposition `
+        -QuestCommit $sourceCommit -QuestTree $sourceTree `
+        -FleetCommit $fleetCommit -FleetTree $fleetTree `
+        -ManifoldCommit $manifoldCommit -ManifoldTree $manifoldTree
+    $buildCompositionFingerprint = [string]$buildComposition.fingerprint
+
+    & $cargoCommand build --locked --release --target $targetTriple `
+        --manifest-path (Join-Path $cleanQuest "Cargo.toml") `
+        -p rusty-quest-fleet-agent `
+        --bin fleet-agent-key-record
+    if ($LASTEXITCODE -ne 0) {
+        throw "Fleet Agent key-record release build failed."
+    }
+    $builtExecutable = Join-Path $buildTarget "$targetTriple\release\fleet-agent-key-record.exe"
+    if (-not (Test-Path -LiteralPath $builtExecutable -PathType Leaf)) {
+        throw "Fleet Agent key-record release executable is missing."
+    }
+
+    Assert-ExactGitMaterialization -Root $cleanQuest -ExpectedCommit $sourceCommit `
+        -ExpectedTree $sourceTree -Label "Rusty Quest"
+    Assert-ExactGitMaterialization -Root $cleanFleet -ExpectedCommit $fleetCommit `
+        -ExpectedTree $fleetTree -Label "Rusty Fleet"
+    Assert-ExactGitMaterialization -Root $cleanManifold -ExpectedCommit $manifoldCommit `
+        -ExpectedTree $manifoldTree -Label "Rusty Manifold"
+    $postBuildComposition = Get-QuestBuildSourceComposition `
+        -RepoRoot $cleanQuest `
+        -PackageName @("rusty-quest-fleet-agent")
+    Assert-ExactComposition -Composition $postBuildComposition `
+        -QuestCommit $sourceCommit -QuestTree $sourceTree `
+        -FleetCommit $fleetCommit -FleetTree $fleetTree `
+        -ManifoldCommit $manifoldCommit -ManifoldTree $manifoldTree
+    if ([string]$postBuildComposition.fingerprint -cne $buildCompositionFingerprint) {
+        throw "Fleet Agent key-record release source composition drifted during the build."
+    }
+
+    $sourceFiles = @($sourcePaths | ForEach-Object {
+        $literal = Join-Path $cleanQuest $_.Replace("/", "\")
+        if (-not (Test-Path -LiteralPath $literal -PathType Leaf)) {
+            throw "Fleet Agent key-record release source file is missing: $_"
+        }
+        [ordered]@{ path = $_; sha256 = Get-Sha256 $literal }
+    })
+    $rustc = @(& $rustcCommand -vV)
+    if ($LASTEXITCODE -ne 0) { throw "rustc identity could not be resolved." }
+    $cargo = (& $cargoCommand -V).Trim()
+    if ($LASTEXITCODE -ne 0) { throw "cargo identity could not be resolved." }
+
+    [IO.Directory]::CreateDirectory($capsuleRoot) | Out-Null
+    $artifactPath = Join-Path $capsuleRoot "fleet-agent-key-record.exe"
+    Copy-Item -LiteralPath $builtExecutable -Destination $artifactPath
+    Copy-Item -LiteralPath (Join-Path $cleanQuest "LICENSE") `
+        -Destination (Join-Path $capsuleRoot "LICENSE")
+}
+finally {
+    foreach ($name in $environmentNames) {
+        [Environment]::SetEnvironmentVariable($name, $savedEnvironment[$name], "Process")
+    }
+    if (Test-Path -LiteralPath $cleanRoot) {
+        $resolvedCleanRoot = [IO.Path]::GetFullPath($cleanRoot)
+        $expectedPrefix = $materializationBase.TrimEnd("\", "/") + [IO.Path]::DirectorySeparatorChar
+        if (-not $resolvedCleanRoot.StartsWith($expectedPrefix, [StringComparison]::OrdinalIgnoreCase)) {
+            throw "Fleet Agent key-record release clean-room cleanup target escaped its owner root."
+        }
+        Remove-Item -LiteralPath $resolvedCleanRoot -Recurse -Force
+    }
+}
+
 $artifactPath = Join-Path $capsuleRoot "fleet-agent-key-record.exe"
-Copy-Item -LiteralPath $builtExecutable -Destination $artifactPath
-Copy-Item -LiteralPath (Join-Path $repoRoot "LICENSE") -Destination (Join-Path $capsuleRoot "LICENSE")
-
-$rustc = @(& rustc -vV)
-if ($LASTEXITCODE -ne 0) { throw "rustc identity could not be resolved." }
-$cargo = (& cargo -V).Trim()
-if ($LASTEXITCODE -ne 0) { throw "cargo identity could not be resolved." }
 $provenance = [ordered]@{
     schema = "rusty.quest.fleet_agent_key_record_release_provenance.v1"
     capsule_version = $CapsuleVersion
@@ -145,16 +384,21 @@ $provenance = [ordered]@{
         commit = $sourceCommit
         tree = $sourceTree
         package = "rusty-quest-fleet-agent"
-        composition_fingerprint = [string]$composition.fingerprint
+        composition_fingerprint = $buildCompositionFingerprint
         repositories = $publicRepositories
         files = $sourceFiles
     }
     build = [ordered]@{
-        target = "x86_64-pc-windows-msvc"
+        target = $targetTriple
         profile = "release"
         rustc = ($rustc -join "`n")
         cargo = $cargo
         locked_dependencies = $true
+        isolated_git_materializations = $true
+        post_build_identity_verified = $true
+        path_remap_root = "/rusty-build"
+        symbols_stripped = $true
+        cargo_config_sha256 = $cargoConfigSha256
     }
     claims = [ordered]@{
         owner = "rusty-quest"
@@ -211,7 +455,7 @@ $manifest = [ordered]@{
         path = "fleet-agent-key-record.exe"
         sha256 = Get-Sha256 $artifactPath
         size_bytes = [long](Get-Item -LiteralPath $artifactPath).Length
-        target = "x86_64-pc-windows-msvc"
+        target = $targetTriple
         profile = "release"
     }
     distribution = [ordered]@{

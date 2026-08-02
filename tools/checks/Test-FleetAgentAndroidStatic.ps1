@@ -74,6 +74,7 @@ $keyRecord = Get-Content -Raw -LiteralPath $paths.key_record
 $keyRecordBuild = Get-Content -Raw -LiteralPath $paths.key_record_build
 $keyRecordReleaseBuild = Get-Content -Raw -LiteralPath $paths.key_record_release_build
 $keyRecordReleaseTest = Get-Content -Raw -LiteralPath $paths.key_record_release_test
+$keyRecordReleaseSelfTest = Get-Content -Raw -LiteralPath $paths.key_record_release_self_test
 $keyRecordReleaseSchema = Get-Content -Raw -LiteralPath $paths.key_record_release_schema
 $keyRecordReleaseValid = Get-Content -Raw -LiteralPath $paths.key_record_release_valid | ConvertFrom-Json
 $keyRecordReleaseDamaged = Get-Content -Raw -LiteralPath $paths.key_record_release_damaged | ConvertFrom-Json
@@ -291,7 +292,15 @@ foreach ($token in @(
 
 foreach ($token in @(
     'Fleet Agent key-record release requires a clean exact Rusty Quest source tree',
-    'cargo build --locked --release',
+    'ValidateSet\("1\.0\.0"\)',
+    'Initialize-ExactGitMaterialization',
+    '--no-hardlinks',
+    'Assert-ExactGitMaterialization',
+    'CARGO_ENCODED_RUSTFLAGS',
+    'CARGO_PROFILE_\.\+',
+    '--remap-path-prefix=',
+    'build --locked --release --target \$targetTriple',
+    'post_build_identity_verified = \$true',
     'rusty\.quest\.fleet_agent_key_record_release_capsule\.v1',
     'copy_capsule_byte_for_byte',
     'private_seed_included = \$false',
@@ -300,7 +309,12 @@ foreach ($token in @(
     Assert-Match $keyRecordReleaseBuild $token "Fleet Agent key-record release build is missing boundary token: $token"
 }
 foreach ($token in @(
-    'Assert-ExactProperties',
+    'Assert-ExactPropertySet',
+    'Assert-NoMachineLocalPathByteSequence',
+    '[Text.Encoding]::Unicode',
+    '[Text.Encoding]::BigEndianUnicode',
+    'Assert-X64WindowsExecutable',
+    'capsule_version -cne "1.0.0"',
     'Fleet Agent key-record release provenance repository set is not closed',
     'Fleet Agent key-record release capsule has an extra or missing file',
     'contains prohibited private or machine-local material',
@@ -308,18 +322,31 @@ foreach ($token in @(
     'ExpectedExecutableSha256')) {
     Assert-Match $keyRecordReleaseTest ([regex]::Escape($token)) "Fleet Agent key-record release validator is missing boundary token: $token"
 }
+foreach ($token in @(
+    'Sync-ProvenanceBinding',
+    'Sync-PayloadBinding',
+    'capsule_version = "0\.0\.0"',
+    'binary-ascii-path-leakage',
+    'binary-utf16-path-leakage',
+    'WithoutExecutablePin',
+    'WithoutVersionPin')) {
+    Assert-Match $keyRecordReleaseSelfTest $token "Fleet Agent key-record release self-test is missing adversarial token: $token"
+}
 if ($keyRecordReleaseSchema -notmatch '"additionalProperties"\s*:\s*false' -or
+    $keyRecordReleaseSchema -notmatch '"capsule_version"\s*:\s*\{\s*"const"\s*:\s*"1\.0\.0"' -or
+    $keyRecordReleaseSchema -notmatch '"uniqueItems"\s*:\s*true' -or
     $keyRecordReleaseValid.schema -ne "rusty.quest.fleet_agent_key_record_release_fixture_matrix.v1" -or
     $keyRecordReleaseValid.valid_case.private_material_included -ne $false -or
     $keyRecordReleaseValid.valid_case.live_onboarding_claim -ne $false -or
     $keyRecordReleaseDamaged.schema -ne "rusty.quest.fleet_agent_key_record_release_damage_matrix.v1" -or
-    @($keyRecordReleaseDamaged.cases).Count -ne 9) {
+    @($keyRecordReleaseDamaged.cases).Count -ne 11) {
     throw "Fleet Agent key-record release schema or fixture matrix is incomplete."
 }
 $expectedDamageNames = @(
     "artifact-substitution", "source-commit-drift", "provenance-substitution",
     "secret-leakage", "extra-repository", "extra-field", "unsupported-version",
-    "unsupported-target", "extra-package-file")
+    "unsupported-target", "extra-package-file", "binary-ascii-path-leakage",
+    "binary-utf16-path-leakage")
 if (@(Compare-Object $expectedDamageNames @($keyRecordReleaseDamaged.cases.name)).Count -ne 0) {
     throw "Fleet Agent key-record release damage matrix changed."
 }

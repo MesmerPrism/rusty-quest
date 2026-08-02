@@ -25,6 +25,7 @@ endpoint is non-routable.
 file set and its non-claims. `key-record-release-scenarios.damaged.json` is the
 closed negative matrix for artifact/source/provenance substitution, secret
 leakage, extra repository/field/file damage, and stale version/target damage.
-The release self-test applies every mutation to generated owner bytes and
-requires rejection; fixture values contain no executable, seed, profile, Hub
-configuration, or private device evidence.
+It also covers ASCII and UTF-16 machine-path leakage in the executable. The
+release self-test updates linked hashes and checksum projections where needed,
+then requires each semantic mutation to reject; fixture values contain no
+executable, seed, profile, Hub configuration, or private device evidence.

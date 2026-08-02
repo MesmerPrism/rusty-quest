@@ -128,7 +128,9 @@ existing machine-bound developer manifest for local build/device tests, and a
 clean-source [portable owner release capsule](docs/FLEET_AGENT.md#key-record-helper-release-capsule)
 for supported downstream packaging. The latter is a closed set of manifest,
 provenance, executable, license, notice, and checksum bytes and contains no
-seed, device profile, Hub configuration, or enrollment authority.
+seed, device profile, Hub configuration, or enrollment authority. It is built
+from isolated exact Git-object materializations and fails closed if the Windows
+binary retains an ASCII or UTF-16 machine-local path.
 
 `crates/rusty-quest-package-updater` owns the fail-closed, one-APK signed
 manifest, exact policy, anti-rollback checkpoint, and deterministic receipt
