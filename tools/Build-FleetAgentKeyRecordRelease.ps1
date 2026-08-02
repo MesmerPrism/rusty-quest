@@ -6,7 +6,9 @@ param(
     [ValidateSet("1.0.0")]
     [string] $CapsuleVersion = "1.0.0",
 
-    [string] $OutputDirectory = ""
+    [string] $OutputDirectory = "",
+
+    [switch] $EnvironmentSelfTest
 )
 
 Set-StrictMode -Version Latest
@@ -21,6 +23,7 @@ $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 Import-Module (Join-Path $PSScriptRoot "lib\SourceComposition.psm1") -Force
 $supportedCapsuleVersion = "1.0.0"
 $targetTriple = "x86_64-pc-windows-msvc"
+$nullEnvironmentValue = [System.Management.Automation.Language.NullString]::Value
 
 if ($CapsuleVersion -cne $supportedCapsuleVersion) {
     throw "Fleet Agent key-record release capsule version is unsupported."
@@ -203,6 +206,38 @@ function Assert-ClosedWorkspaceSiblingPathSet([string] $QuestRoot) {
     }
 }
 
+function Invoke-ProcessEnvironmentRemoval([string] $Name) {
+    [Environment]::SetEnvironmentVariable($Name, $nullEnvironmentValue, "Process")
+    if ((Test-Path -LiteralPath "Env:$Name") -or
+        $null -ne [Environment]::GetEnvironmentVariable($Name, "Process")) {
+        throw "Fleet Agent key-record release failed to remove a process environment variable."
+    }
+}
+
+function Assert-NullEnvironmentRemoval {
+    $probeName = "RUSTY_QUEST_RELEASE_NULL_ENVIRONMENT_PROBE"
+    $priorExists = Test-Path -LiteralPath "Env:$probeName"
+    $priorValue = [Environment]::GetEnvironmentVariable($probeName, "Process")
+    try {
+        [Environment]::SetEnvironmentVariable($probeName, "present", "Process")
+        Invoke-ProcessEnvironmentRemoval -Name $probeName
+    }
+    finally {
+        if ($priorExists) {
+            [Environment]::SetEnvironmentVariable($probeName, $priorValue, "Process")
+        }
+        else {
+            Invoke-ProcessEnvironmentRemoval -Name $probeName
+        }
+    }
+}
+
+if ($EnvironmentSelfTest) {
+    Assert-NullEnvironmentRemoval
+    Write-Output "Rusty Quest Fleet Agent key-record release environment self-test passed"
+    return
+}
+
 $dirt = @(& git -C $repoRoot status --porcelain=v1 --untracked-files=all)
 if ($LASTEXITCODE -ne 0 -or $dirt.Count -ne 0) {
     throw "Fleet Agent key-record release requires a clean exact Rusty Quest source tree."
@@ -375,16 +410,16 @@ git-fetch-with-cli = true
 
     $localFleetUrl = [Uri]::new($cleanFleet + [IO.Path]::DirectorySeparatorChar).AbsoluteUri
     foreach ($name in $environmentNames) {
-        [Environment]::SetEnvironmentVariable($name, $null, "Process")
+        Invoke-ProcessEnvironmentRemoval -Name $name
     }
     [Environment]::SetEnvironmentVariable("CARGO_HOME", $cargoHome, "Process")
     [Environment]::SetEnvironmentVariable("CARGO_TARGET_DIR", $buildTarget, "Process")
-    [Environment]::SetEnvironmentVariable("CARGO_BUILD_TARGET", $null, "Process")
+    Invoke-ProcessEnvironmentRemoval -Name "CARGO_BUILD_TARGET"
     [Environment]::SetEnvironmentVariable("CARGO_NET_GIT_FETCH_WITH_CLI", "true", "Process")
-    [Environment]::SetEnvironmentVariable("RUSTFLAGS", $null, "Process")
-    [Environment]::SetEnvironmentVariable("RUSTC", $null, "Process")
-    [Environment]::SetEnvironmentVariable("RUSTC_WRAPPER", $null, "Process")
-    [Environment]::SetEnvironmentVariable("RUSTC_WORKSPACE_WRAPPER", $null, "Process")
+    Invoke-ProcessEnvironmentRemoval -Name "RUSTFLAGS"
+    Invoke-ProcessEnvironmentRemoval -Name "RUSTC"
+    Invoke-ProcessEnvironmentRemoval -Name "RUSTC_WRAPPER"
+    Invoke-ProcessEnvironmentRemoval -Name "RUSTC_WORKSPACE_WRAPPER"
     [Environment]::SetEnvironmentVariable("GIT_CONFIG_COUNT", "2", "Process")
     [Environment]::SetEnvironmentVariable("GIT_CONFIG_KEY_0", "url.$localFleetUrl.insteadOf", "Process")
     [Environment]::SetEnvironmentVariable("GIT_CONFIG_VALUE_0", "https://github.com/MesmerPrism/rusty-fleet", "Process")
@@ -473,7 +508,13 @@ git-fetch-with-cli = true
 }
 finally {
     foreach ($name in $environmentNames) {
-        [Environment]::SetEnvironmentVariable($name, $savedEnvironment[$name], "Process")
+        $savedValue = $savedEnvironment[$name]
+        if ($null -eq $savedValue) {
+            Invoke-ProcessEnvironmentRemoval -Name $name
+        }
+        else {
+            [Environment]::SetEnvironmentVariable($name, $savedValue, "Process")
+        }
     }
     if (Test-Path -LiteralPath $cleanRoot) {
         $resolvedCleanRoot = [IO.Path]::GetFullPath($cleanRoot)

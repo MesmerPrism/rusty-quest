@@ -302,6 +302,10 @@ foreach ($token in @(
     'role = "workspace-parse-only"',
     'CARGO_ENCODED_RUSTFLAGS',
     'CARGO_PROFILE_\.\+',
+    'EnvironmentSelfTest',
+    'NullString',
+    'Invoke-ProcessEnvironmentRemoval',
+    'Assert-NullEnvironmentRemoval',
     '--remap-path-prefix=',
     'build --locked --release --target \$targetTriple',
     'post_build_identity_verified = \$true',
@@ -311,6 +315,10 @@ foreach ($token in @(
     'live_onboarding_claim = \$false',
     'https://github\.com/MesmerPrism/rusty-quest')) {
     Assert-Match $keyRecordReleaseBuild $token "Fleet Agent key-record release build is missing boundary token: $token"
+}
+& pwsh -NoProfile -ExecutionPolicy Bypass -File $paths.key_record_release_build -EnvironmentSelfTest *> $null
+if ($LASTEXITCODE -ne 0) {
+    throw "Fleet Agent key-record release build environment removal self-test failed."
 }
 foreach ($token in @(
     'Assert-ExactPropertySet',

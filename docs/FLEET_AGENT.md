@@ -179,7 +179,9 @@ pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-FleetAgentAndroid.ps1
 ```
 
 The host gate also checks the release builder, validator, schema, and fixture
-matrix statically. The release builder's clean-source gate and the exact
+matrix statically. It executes a no-build environment-removal self-test so an
+unset Cargo or Rust tool override cannot survive as an empty override. The
+release builder's clean-source gate and the exact
 capsule validator run after the source commit exists; damaged-capsule self-tests
 run against those generated owner bytes. The negative matrix repairs linked
 hash/checksum fields around semantic mutations so version, repository closure,
