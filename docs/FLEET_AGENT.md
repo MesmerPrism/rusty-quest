@@ -21,8 +21,10 @@ supported distribution input.
 `Build-FleetAgentKeyRecordRelease.ps1` is the separate owner release route. It
 requires an exact clean Rusty Quest source tree, resolves the closed dependency
 composition, and clones each exact Quest, Fleet, and Manifold commit/tree into
-an isolated no-hardlink clean room. Cargo uses only that materialized Quest and
-Manifold source plus a fresh checkout of the materialized Fleet dependency,
+an isolated no-hardlink clean room under a bounded short system-temporary root
+that preserves Windows path-length headroom. Cargo uses only the materialized
+Quest and Manifold source plus a fresh checkout of the materialized Fleet
+dependency,
 locked dependencies, a dedicated Cargo home/target, an explicit Windows x64
 target, cleared ambient Cargo/Rust profile overrides, stable path remapping, and
 stripped symbols. The builder revalidates all

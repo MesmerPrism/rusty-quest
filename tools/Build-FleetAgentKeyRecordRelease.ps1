@@ -221,8 +221,11 @@ $sourcePaths = @(
     "tools/Test-FleetAgentKeyRecordRelease.ps1",
     "tools/lib/SourceComposition.psm1"
 )
-$materializationBase = [IO.Path]::GetFullPath((Join-Path $repoRoot "target\fleet-agent-key-record-materialization"))
-$cleanRoot = Join-Path $materializationBase "clean-room-v1"
+$materializationBase = [IO.Path]::GetFullPath((Join-Path ([IO.Path]::GetTempPath()) "rusty-fkr"))
+$cleanRoot = Join-Path $materializationBase "clean-v1"
+if ($cleanRoot.Length -gt 96) {
+    throw "Fleet Agent key-record release clean-room root is too long for a portable Windows checkout."
+}
 if (Test-Path -LiteralPath $cleanRoot) {
     throw "Fleet Agent key-record release clean-room path already exists."
 }
