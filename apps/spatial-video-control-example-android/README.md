@@ -92,13 +92,29 @@ decoder surface; it does not restart the Activity or control panel. A select
 receipt is applied only after the matching surface is attached and a Media3
 callback observes that item in `READY` state.
 
-Debug builds also recognize three generic, fixed app-external slots for a
-temporary 180-SBS, 360-top-bottom, and 360-mono device test. A slot appears in
+Debug builds also recognize four generic, fixed app-external slots for a
+temporary 180-SBS, 360-top-bottom, 360-mono, or 4096x4096 HEVC60 360-top-bottom
+device test. A slot appears in
 `list_videos` only when its exact file exists when the process starts. The
 browser cannot supply filenames, paths, URLs, projection settings, or uploads.
 These slots are local test infrastructure: their media has unknown provenance,
 must not be redistributed, packaged, or committed, and must be deleted from
 the headset after the authorized run. Release builds ignore them.
+
+The dormant TB ODS qualification slot is fixed as follows:
+
+- video id: `device-test-360-top-bottom-4096x4096-hevc60`;
+- app-external filename:
+  `immersive-video-test/debug_test_360_top_bottom_4096x4096_hevc_60fps.mp4`;
+- packed dimensions: 4096x4096, interpreted as a 4096x2048 left-eye image on
+  top and a 4096x2048 right-eye image on the bottom;
+- carrier: world-anchored equirectangular 360° with `StereoMode.UpDown`;
+- expected qualification input: HEVC at 60 fps.
+
+The filename and slot describe the intended test profile; they do not inspect
+or certify the actual codec, frame rate, eye order, bitrate, bit depth, or
+projection of a supplied file. Media3 readiness and device decoder evidence
+remain required before claiming that a particular input plays correctly.
 
 ## Spatial panel placement and input
 

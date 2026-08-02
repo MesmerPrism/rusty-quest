@@ -79,9 +79,27 @@ public final class TrustedLocalControlHostTest {
                 catalog.require("synthetic-360-top-bottom").perEyeAspectRatio(),
                 "360 TB per-eye aspect");
         assertEquals(
-                3,
+                4,
                 VideoCatalog.debugExternalTestSlots().videos().size(),
                 "fixed debug external slots");
+        VideoCatalog.Video odsHevc60 =
+                VideoCatalog.debugExternalTestSlots()
+                        .require("device-test-360-top-bottom-4096x4096-hevc60");
+        assertEquals(4_096, odsHevc60.widthPx(), "ODS HEVC60 packed width");
+        assertEquals(4_096, odsHevc60.heightPx(), "ODS HEVC60 packed height");
+        assertEquals(
+                VideoCatalog.ProjectionShape.EQUIRECT_360,
+                odsHevc60.projectionShape(),
+                "ODS HEVC60 projection");
+        assertEquals(
+                VideoCatalog.StereoLayout.TOP_BOTTOM,
+                odsHevc60.stereoLayout(),
+                "ODS HEVC60 stereo layout");
+        assertEquals(2.0, odsHevc60.perEyeAspectRatio(), "ODS HEVC60 per-eye aspect");
+        assertEquals(
+                "debug_test_360_top_bottom_4096x4096_hevc_60fps",
+                odsHevc60.resourceName(),
+                "ODS HEVC60 fixed resource name");
         assertTrue(
                 VideoCatalog.debugExternalTestSlots().videos().stream()
                         .allMatch(

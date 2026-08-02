@@ -164,6 +164,9 @@ if ($versions -notmatch 'kotlin = "2\.2\.0"') {
 $activity = Get-Content -Raw -LiteralPath (
   Join-Path $appRoot 'app\src\main\java\io\github\mesmerprism\rustyquest\spatial_video_control\SpatialVideoControlActivity.kt'
 )
+$videoCatalog = Get-Content -Raw -LiteralPath (
+  Join-Path $appRoot 'host\src\main\java\io\github\mesmerprism\rustyquest\spatial_video_control\VideoCatalog.java'
+)
 if ($activity -notmatch 'com\.meta\.spatial\.runtime\.ButtonBits' -or
     $activity -notmatch 'com\.meta\.spatial\.toolkit\.Panel' -or
     $activity -notmatch 'NativeManifoldAuthorityPort\.createOrNull') {
@@ -185,6 +188,11 @@ if ($activity -notmatch 'VideoCatalog\.debugExternalTestSlots\(\)' -or
     $activity -notmatch 'getExternalFilesDir\(Media3SpatialPlayerAdapter\.DEBUG_MEDIA_DIRECTORY\)' -or
     $activity -match 'MANAGE_EXTERNAL_STORAGE') {
   throw 'The closed debug-only external media slots regressed or gained broad storage access.'
+}
+if ($videoCatalog -notmatch 'device-test-360-top-bottom-4096x4096-hevc60' -or
+    $videoCatalog -notmatch 'debug_test_360_top_bottom_4096x4096_hevc_60fps' -or
+    $videoCatalog -notmatch '4_096,\s*4_096,\s*ProjectionShape\.EQUIRECT_360,\s*StereoLayout\.TOP_BOTTOM') {
+  throw 'The fixed 4096x4096 HEVC60 360 top-bottom qualification slot regressed.'
 }
 if ($activity -notmatch 'staticControlPanelFrontRotation\(\): Quaternion = Quaternion\(0\.0f, 180\.0f, 0\.0f\)' -or
     $activity -notmatch 'Quaternion\.lookRotationAroundY\(direction\)' -or

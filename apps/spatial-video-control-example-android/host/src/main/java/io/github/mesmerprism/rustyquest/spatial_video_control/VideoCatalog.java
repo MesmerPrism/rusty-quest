@@ -237,6 +237,14 @@ public final class VideoCatalog {
                                 ProjectionShape.EQUIRECT_360,
                                 StereoLayout.TOP_BOTTOM),
                         debugExternal(
+                                "device-test-360-top-bottom-4096x4096-hevc60",
+                                "Device test: 360° TB ODS 4096x4096 HEVC60",
+                                "debug_test_360_top_bottom_4096x4096_hevc_60fps",
+                                4_096,
+                                4_096,
+                                ProjectionShape.EQUIRECT_360,
+                                StereoLayout.TOP_BOTTOM),
+                        debugExternal(
                                 "device-test-360-mono",
                                 "Device test: 360° mono",
                                 "debug_test_360_mono",

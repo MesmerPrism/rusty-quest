@@ -30,10 +30,12 @@ equirect-360 fixtures with mono, side-by-side-left-right, and top-bottom stereo
 coverage. Projection and stereo are immutable per video descriptor. Register
 one bounded Spatial SDK media panel per descriptor and switch only the video
 entity/decoder; do not reinterpret filenames or accept projection parameters
-from the browser. Debug builds may expose only the three fixed app-external
+from the browser. Debug builds may expose only the four fixed app-external
 device-test slots declared by `VideoCatalog.debugExternalTestSlots()`. Those
 slots discover no arbitrary file, path, or URL and must never enter release
-catalogs or source control.
+catalogs or source control. The 4096x4096 HEVC60 slot is a dormant qualification
+profile, not a claim that an uninspected file matches its expected codec or
+frame rate.
 
 The debug provider is the sole exception to the general ADB exclusion: it lives
 only under `app/src/debug`, requires `android.permission.DUMP`, verifies UID
