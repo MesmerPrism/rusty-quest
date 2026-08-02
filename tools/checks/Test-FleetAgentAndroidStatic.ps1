@@ -296,6 +296,10 @@ foreach ($token in @(
     'Initialize-ExactGitMaterialization',
     '--no-hardlinks',
     'Assert-ExactGitMaterialization',
+    'Get-ExactGitSourceRecord',
+    'Assert-ClosedWorkspaceSiblingPathSet',
+    'workspace_parse_only_repositories = \$workspaceParseOnlyRepositories',
+    'role = "workspace-parse-only"',
     'CARGO_ENCODED_RUSTFLAGS',
     'CARGO_PROFILE_\.\+',
     '--remap-path-prefix=',
@@ -316,6 +320,8 @@ foreach ($token in @(
     'Assert-X64WindowsExecutable',
     'capsule_version -cne "1.0.0"',
     'Fleet Agent key-record release provenance repository set is not closed',
+    'Fleet Agent key-record release workspace parse-only repository set is not closed',
+    'parse-only and target repository roles overlap',
     'Fleet Agent key-record release capsule has an extra or missing file',
     'contains prohibited private or machine-local material',
     'ExpectedManifestSha256',
@@ -326,6 +332,7 @@ foreach ($token in @(
     'Sync-ProvenanceBinding',
     'Sync-PayloadBinding',
     'capsule_version = "0\.0\.0"',
+    'parse-only-role-escalation',
     'binary-ascii-path-leakage',
     'binary-utf16-path-leakage',
     'WithoutExecutablePin',
@@ -339,12 +346,22 @@ if ($keyRecordReleaseSchema -notmatch '"additionalProperties"\s*:\s*false' -or
     $keyRecordReleaseValid.valid_case.private_material_included -ne $false -or
     $keyRecordReleaseValid.valid_case.live_onboarding_claim -ne $false -or
     $keyRecordReleaseDamaged.schema -ne "rusty.quest.fleet_agent_key_record_release_damage_matrix.v1" -or
-    @($keyRecordReleaseDamaged.cases).Count -ne 11) {
+    @($keyRecordReleaseDamaged.cases).Count -ne 12) {
     throw "Fleet Agent key-record release schema or fixture matrix is incomplete."
+}
+$expectedTargetRepositoryIds = @("rusty-fleet", "rusty-manifold", "rusty-quest")
+$expectedParseOnlyRepositoryIds = @("rusty-lattice", "rusty-matter", "rusty-optics")
+if (@(Compare-Object $expectedTargetRepositoryIds `
+        @($keyRecordReleaseValid.valid_case.target_dependency_repository_ids) -SyncWindow 0).Count -ne 0 -or
+    @($keyRecordReleaseValid.valid_case.target_dependency_repository_ids).Count -ne $expectedTargetRepositoryIds.Count -or
+    @(Compare-Object $expectedParseOnlyRepositoryIds `
+        @($keyRecordReleaseValid.valid_case.workspace_parse_only_repository_ids) -SyncWindow 0).Count -ne 0 -or
+    @($keyRecordReleaseValid.valid_case.workspace_parse_only_repository_ids).Count -ne $expectedParseOnlyRepositoryIds.Count) {
+    throw "Fleet Agent key-record release target and parse-only fixture roles drifted."
 }
 $expectedDamageNames = @(
     "artifact-substitution", "source-commit-drift", "provenance-substitution",
-    "secret-leakage", "extra-repository", "extra-field", "unsupported-version",
+    "secret-leakage", "extra-repository", "parse-only-role-escalation", "extra-field", "unsupported-version",
     "unsupported-target", "extra-package-file", "binary-ascii-path-leakage",
     "binary-utf16-path-leakage")
 if (@(Compare-Object $expectedDamageNames @($keyRecordReleaseDamaged.cases.name)).Count -ne 0) {

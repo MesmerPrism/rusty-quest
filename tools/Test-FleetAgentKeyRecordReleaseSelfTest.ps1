@@ -16,7 +16,7 @@ $matrixPath = Join-Path (Resolve-Path (Join-Path $PSScriptRoot "..")).Path `
     "fixtures\fleet-agent\key-record-release-scenarios.damaged.json"
 $matrix = Get-Content -Raw -LiteralPath $matrixPath | ConvertFrom-Json
 if ($matrix.schema -cne "rusty.quest.fleet_agent_key_record_release_damage_matrix.v1" -or
-    @($matrix.cases).Count -ne 11) {
+    @($matrix.cases).Count -ne 12) {
     throw "Fleet Agent key-record release damage matrix is incomplete."
 }
 $sourceManifest = Get-Content -Raw -LiteralPath (Join-Path $source "release-manifest.json") |
@@ -153,6 +153,14 @@ Invoke-MustReject "extra-repository" {
     $path = Join-Path $root "provenance.json"
     $value = Get-Content -Raw $path | ConvertFrom-Json
     $value.source.repositories = @($value.source.repositories) + $value.source.repositories[0]
+    Write-Json $path $value
+    Sync-ProvenanceBinding $root
+}
+Invoke-MustReject "parse-only-role-escalation" {
+    param($root)
+    $path = Join-Path $root "provenance.json"
+    $value = Get-Content -Raw $path | ConvertFrom-Json
+    $value.source.workspace_parse_only_repositories[0].role = "contract-dependency"
     Write-Json $path $value
     Sync-ProvenanceBinding $root
 }

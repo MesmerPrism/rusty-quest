@@ -12,6 +12,8 @@
       "release-manifest.json",
       "checksums.sha256"
     ],
+    "target_dependency_repository_ids": ["rusty-fleet", "rusty-manifold", "rusty-quest"],
+    "workspace_parse_only_repository_ids": ["rusty-lattice", "rusty-matter", "rusty-optics"],
     "private_material_included": false,
     "live_onboarding_claim": false
   }

@@ -6,6 +6,7 @@
     { "name": "provenance-substitution", "mutation": "source.provenance_sha256", "expected": "reject" },
     { "name": "secret-leakage", "mutation": "add-signing-seed-marker", "expected": "reject" },
     { "name": "extra-repository", "mutation": "provenance.source.repositories", "expected": "reject" },
+    { "name": "parse-only-role-escalation", "mutation": "provenance.source.workspace_parse_only_repositories.role", "expected": "reject" },
     { "name": "extra-field", "mutation": "manifest.private_path", "expected": "reject" },
     { "name": "unsupported-version", "mutation": "capsule_version", "expected": "reject" },
     { "name": "unsupported-target", "mutation": "artifact.target", "expected": "reject" },

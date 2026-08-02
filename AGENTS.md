@@ -351,6 +351,8 @@ or peer-acceptance evidence. The machine-bound developer-tool manifest remains
 build/test evidence only and must never be consumed as a release capsule.
 Build it only from isolated exact Git-object materializations, and reject ASCII
 or UTF-16 machine-local paths in the executable before distribution.
+Keep Cargo workspace parse-only sibling repositories in a separate closed
+provenance set; they never widen the helper's dependency or runtime authority.
 
 Generic media adoption lives in `rusty-quest-media-stream`. Manifold owns the
 accepted session/stream descriptor; the Quest runtime owns only receiver-first

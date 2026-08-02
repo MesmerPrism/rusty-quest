@@ -131,6 +131,9 @@ provenance, executable, license, notice, and checksum bytes and contains no
 seed, device profile, Hub configuration, or enrollment authority. It is built
 from isolated exact Git-object materializations and fails closed if the Windows
 binary retains an ASCII or UTF-16 machine-local path.
+Exact Lattice, Matter, and Optics siblings needed only while Cargo parses the
+Quest workspace are recorded separately as workspace-parse-only inputs; they do
+not widen the helper's three-repository target dependency composition.
 
 `crates/rusty-quest-package-updater` owns the fail-closed, one-APK signed
 manifest, exact policy, anti-rollback checkpoint, and deterministic receipt

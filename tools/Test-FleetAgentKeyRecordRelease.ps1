@@ -167,7 +167,7 @@ Assert-ExactPropertySet $provenance @(
     "schema", "capsule_version", "source", "build", "claims") "provenance"
 Assert-ExactPropertySet $provenance.source @(
     "repository_url", "commit", "tree", "package", "composition_fingerprint",
-    "repositories", "files") "provenance source"
+    "repositories", "workspace_parse_only_repositories", "files") "provenance source"
 Assert-ExactPropertySet $provenance.build @(
     "target", "profile", "rustc", "cargo", "locked_dependencies",
     "isolated_git_materializations", "post_build_identity_verified", "path_remap_root",
@@ -224,6 +224,36 @@ for ($index = 0; $index -lt $repositories.Count; $index++) {
         $repository.tree -cnotmatch '^[0-9a-f]{40}$') {
         throw "Fleet Agent key-record release provenance repository drifted."
     }
+}
+
+$expectedWorkspaceParseOnlyRepositories = @(
+    @("rusty-lattice", "https://github.com/MesmerPrism/rusty-lattice"),
+    @("rusty-matter", "https://github.com/MesmerPrism/rusty-matter"),
+    @("rusty-optics", "https://github.com/MesmerPrism/rusty-optics")
+)
+$workspaceParseOnlyRepositories = @($provenance.source.workspace_parse_only_repositories)
+if ($workspaceParseOnlyRepositories.Count -ne $expectedWorkspaceParseOnlyRepositories.Count) {
+    throw "Fleet Agent key-record release workspace parse-only repository set is not closed."
+}
+for ($index = 0; $index -lt $workspaceParseOnlyRepositories.Count; $index++) {
+    $repository = $workspaceParseOnlyRepositories[$index]
+    Assert-ExactPropertySet $repository @(
+        "repository_id", "role", "repository_url", "commit", "tree") `
+        "workspace parse-only repository"
+    $expected = $expectedWorkspaceParseOnlyRepositories[$index]
+    if ($repository.repository_id -cne $expected[0] -or
+        $repository.role -cne "workspace-parse-only" -or
+        $repository.repository_url -cne $expected[1] -or
+        $repository.commit -cnotmatch '^[0-9a-f]{40}$' -or
+        $repository.tree -cnotmatch '^[0-9a-f]{40}$') {
+        throw "Fleet Agent key-record release workspace parse-only repository drifted."
+    }
+}
+$targetRepositoryIds = @($repositories.repository_id)
+if (@($workspaceParseOnlyRepositories | Where-Object {
+    $targetRepositoryIds -ccontains [string]$_.repository_id
+}).Count -ne 0) {
+    throw "Fleet Agent key-record release parse-only and target repository roles overlap."
 }
 
 $expectedSourcePaths = @(

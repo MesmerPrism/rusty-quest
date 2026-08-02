@@ -24,17 +24,27 @@ composition, and clones each exact Quest, Fleet, and Manifold commit/tree into
 an isolated no-hardlink clean room under a bounded short system-temporary root
 that preserves Windows path-length headroom. Cargo uses only the materialized
 Quest and Manifold source plus a fresh checkout of the materialized Fleet
-dependency,
-locked dependencies, a dedicated Cargo home/target, an explicit Windows x64
-target, cleared ambient Cargo/Rust profile overrides, stable path remapping, and
-stripped symbols. The builder revalidates all
-three Git identities, clean states, and the Cargo composition after compilation
-before it emits exactly:
+dependency, locked dependencies, a dedicated Cargo home/target, an explicit
+Windows x64 target, cleared ambient Cargo/Rust profile overrides, stable path
+remapping, and stripped symbols.
+
+Cargo parses every Quest workspace-member manifest before selecting the helper
+package. Those manifests reference sibling Rusty Lattice, Matter, and Optics
+manifests even though the helper does not depend on or compile them. The builder
+therefore also captures and materializes the exact clean commits/trees of those
+three repositories under the same clean workspace. Provenance records them in
+the separate closed `workspace_parse_only_repositories` set with role
+`workspace-parse-only`. They never enter the three-repository target dependency
+set or its source-composition fingerprint and must not be presented as runtime,
+helper, packaging, or authority dependencies. The builder revalidates all six
+materialized Git identities and clean states plus the unchanged target Cargo
+composition after compilation before it emits exactly:
 
 - `release-manifest.json` using
   `rusty.quest.fleet_agent_key_record_release_capsule.v1`;
 - `provenance.json` with public repository URLs, exact commits/trees, the
-  closed dependency set, exact source-file hashes, and build identity;
+  distinct closed target-dependency and workspace-parse-only sets, exact
+  source-file hashes, and build identity;
 - `fleet-agent-key-record.exe`, `LICENSE`, `SOURCE-NOTICE.md`, and
   `checksums.sha256`.
 
@@ -43,7 +53,8 @@ every other value. Consumers must pin the owner identity, manifest
 SHA-256, helper SHA-256, exact source commit/tree, version, target, and payload
 set separately and preserve the owner bytes without augmentation. The owner
 validator rejects artifact or provenance substitution, unknown fields, extra
-repositories or files, stale/unsupported versions or targets, and detectable
+repositories or files, parse-only role escalation, stale/unsupported versions
+or targets, and detectable
 private or machine-local material. It inspects both ASCII and both byte
 alignments of little- and big-endian UTF-16 in the executable, so absolute host
 paths are release-blocking even when ordinary manifest text is clean.

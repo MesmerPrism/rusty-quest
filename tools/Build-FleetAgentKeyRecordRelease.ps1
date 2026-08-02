@@ -142,6 +142,67 @@ function Assert-ExactComposition {
     }
 }
 
+function Get-ExactGitSourceRecord {
+    param(
+        [Parameter(Mandatory)]
+        [string] $Root,
+        [Parameter(Mandatory)]
+        [string] $RepositoryId,
+        [Parameter(Mandatory)]
+        [string] $RepositoryUrl
+    )
+    $resolvedInput = (Resolve-Path -LiteralPath $Root).Path
+    $gitRoot = ([string]@(Invoke-GitChecked -Root $resolvedInput `
+        -Arguments @("rev-parse", "--show-toplevel") `
+        -Failure "$RepositoryId parse-only source root could not be resolved.")[0]).Trim()
+    if (-not [string]::Equals(
+        [IO.Path]::GetFullPath($gitRoot),
+        [IO.Path]::GetFullPath($resolvedInput),
+        [StringComparison]::OrdinalIgnoreCase)) {
+        throw "$RepositoryId parse-only source path is not an exact repository root."
+    }
+    $commit = ([string]@(Invoke-GitChecked -Root $gitRoot -Arguments @("rev-parse", "HEAD") `
+        -Failure "$RepositoryId parse-only source commit could not be resolved.")[0]).Trim().ToLowerInvariant()
+    $tree = ([string]@(Invoke-GitChecked -Root $gitRoot -Arguments @("rev-parse", "HEAD^{tree}") `
+        -Failure "$RepositoryId parse-only source tree could not be resolved.")[0]).Trim().ToLowerInvariant()
+    $dirt = @(Invoke-GitChecked -Root $gitRoot `
+        -Arguments @("status", "--porcelain=v1", "--untracked-files=all") `
+        -Failure "$RepositoryId parse-only source status could not be resolved.")
+    if ($commit -cnotmatch '^[0-9a-f]{40}$' -or $tree -cnotmatch '^[0-9a-f]{40}$' -or
+        $dirt.Count -ne 0) {
+        throw "$RepositoryId parse-only source is not an exact clean Git object set."
+    }
+    return [pscustomobject][ordered]@{
+        repository_id = $RepositoryId
+        role = "workspace-parse-only"
+        repository_url = $RepositoryUrl
+        repository = [IO.Path]::GetFullPath($gitRoot)
+        commit = $commit
+        tree = $tree
+    }
+}
+
+function Assert-ClosedWorkspaceSiblingPathSet([string] $QuestRoot) {
+    $manifestPaths = @(Invoke-GitChecked -Root $QuestRoot `
+        -Arguments @("ls-files", "--", "Cargo.toml", "crates/**/Cargo.toml", "apps/**/Cargo.toml") `
+        -Failure "Fleet Agent key-record release workspace manifest set could not be resolved.")
+    if ($manifestPaths.Count -eq 0) {
+        throw "Fleet Agent key-record release workspace manifest set is empty."
+    }
+    $repositoryIds = @($manifestPaths | ForEach-Object {
+        $relativePath = ([string]$_).Replace("/", "\")
+        $literal = Join-Path $QuestRoot $relativePath
+        $text = Get-Content -Raw -LiteralPath $literal
+        [regex]::Matches($text, 'path\s*=\s*"(?:(?:\.\.)[\\/])+(rusty-[a-z0-9-]+)[\\/]') |
+            ForEach-Object { $_.Groups[1].Value }
+    } | Sort-Object -Unique)
+    $expected = @("rusty-lattice", "rusty-manifold", "rusty-matter", "rusty-optics")
+    if (@(Compare-Object $repositoryIds $expected -SyncWindow 0).Count -ne 0 -or
+        $repositoryIds.Count -ne $expected.Count) {
+        throw "Fleet Agent key-record release workspace sibling parse closure changed."
+    }
+}
+
 $dirt = @(& git -C $repoRoot status --porcelain=v1 --untracked-files=all)
 if ($LASTEXITCODE -ne 0 -or $dirt.Count -ne 0) {
     throw "Fleet Agent key-record release requires a clean exact Rusty Quest source tree."
@@ -177,6 +238,38 @@ $manifoldTree = ([string]$manifold[0].tree).ToLowerInvariant()
 Assert-ExactComposition -Composition $composition -QuestCommit $sourceCommit -QuestTree $sourceTree `
     -FleetCommit $fleetCommit -FleetTree $fleetTree `
     -ManifoldCommit $manifoldCommit -ManifoldTree $manifoldTree
+Assert-ClosedWorkspaceSiblingPathSet -QuestRoot $repoRoot
+
+$workspaceParent = Split-Path -Parent $repoRoot
+$workspaceParseOnlySourceSpecifications = @(
+    [ordered]@{
+        repository_id = "rusty-lattice"
+        repository_url = "https://github.com/MesmerPrism/rusty-lattice"
+    },
+    [ordered]@{
+        repository_id = "rusty-matter"
+        repository_url = "https://github.com/MesmerPrism/rusty-matter"
+    },
+    [ordered]@{
+        repository_id = "rusty-optics"
+        repository_url = "https://github.com/MesmerPrism/rusty-optics"
+    }
+)
+$workspaceParseOnlySources = @($workspaceParseOnlySourceSpecifications | ForEach-Object {
+    Get-ExactGitSourceRecord `
+        -Root (Join-Path $workspaceParent ([string]$_.repository_id)) `
+        -RepositoryId ([string]$_.repository_id) `
+        -RepositoryUrl ([string]$_.repository_url)
+})
+$workspaceParseOnlyRepositories = @($workspaceParseOnlySources | ForEach-Object {
+    [ordered]@{
+        repository_id = [string]$_.repository_id
+        role = "workspace-parse-only"
+        repository_url = [string]$_.repository_url
+        commit = [string]$_.commit
+        tree = [string]$_.tree
+    }
+})
 
 $publicRepositories = @(
     [ordered]@{
@@ -265,6 +358,13 @@ try {
     Initialize-ExactGitMaterialization -SourceRoot ([string]$manifold[0].repository) `
         -Destination $cleanManifold -ExpectedCommit $manifoldCommit -ExpectedTree $manifoldTree `
         -Label "Rusty Manifold"
+    foreach ($source in $workspaceParseOnlySources) {
+        Initialize-ExactGitMaterialization -SourceRoot ([string]$source.repository) `
+            -Destination (Join-Path $cleanRoot "workspace\$([string]$source.repository_id)") `
+            -ExpectedCommit ([string]$source.commit) -ExpectedTree ([string]$source.tree) `
+            -Label ([string]$source.repository_id)
+    }
+    Assert-ClosedWorkspaceSiblingPathSet -QuestRoot $cleanQuest
 
     [IO.Directory]::CreateDirectory($cargoHome) | Out-Null
     Write-CanonicalText $cargoConfigPath @"
@@ -335,6 +435,13 @@ git-fetch-with-cli = true
         -ExpectedTree $fleetTree -Label "Rusty Fleet"
     Assert-ExactGitMaterialization -Root $cleanManifold -ExpectedCommit $manifoldCommit `
         -ExpectedTree $manifoldTree -Label "Rusty Manifold"
+    foreach ($source in $workspaceParseOnlySources) {
+        Assert-ExactGitMaterialization `
+            -Root (Join-Path $cleanRoot "workspace\$([string]$source.repository_id)") `
+            -ExpectedCommit ([string]$source.commit) -ExpectedTree ([string]$source.tree) `
+            -Label ([string]$source.repository_id)
+    }
+    Assert-ClosedWorkspaceSiblingPathSet -QuestRoot $cleanQuest
     $postBuildComposition = Get-QuestBuildSourceComposition `
         -RepoRoot $cleanQuest `
         -PackageName @("rusty-quest-fleet-agent")
@@ -389,6 +496,7 @@ $provenance = [ordered]@{
         package = "rusty-quest-fleet-agent"
         composition_fingerprint = $buildCompositionFingerprint
         repositories = $publicRepositories
+        workspace_parse_only_repositories = $workspaceParseOnlyRepositories
         files = $sourceFiles
     }
     build = [ordered]@{
