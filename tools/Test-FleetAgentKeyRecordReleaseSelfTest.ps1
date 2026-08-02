@@ -16,7 +16,7 @@ $matrixPath = Join-Path (Resolve-Path (Join-Path $PSScriptRoot "..")).Path `
     "fixtures\fleet-agent\key-record-release-scenarios.damaged.json"
 $matrix = Get-Content -Raw -LiteralPath $matrixPath | ConvertFrom-Json
 if ($matrix.schema -cne "rusty.quest.fleet_agent_key_record_release_damage_matrix.v1" -or
-    @($matrix.cases).Count -ne 12) {
+    @($matrix.cases).Count -ne 30) {
     throw "Fleet Agent key-record release damage matrix is incomplete."
 }
 $sourceManifest = Get-Content -Raw -LiteralPath (Join-Path $source "release-manifest.json") |
@@ -111,6 +111,60 @@ function Invoke-MustReject(
     }
 }
 
+function Invoke-MustAccept([string] $Name, [scriptblock] $Mutate) {
+    $root = Join-Path ([IO.Path]::GetTempPath()) (
+        "rusty-quest-key-record-release-selftest-" + [guid]::NewGuid().ToString("N"))
+    try {
+        Copy-Item -LiteralPath $source -Destination $root -Recurse
+        & $Mutate $root
+        $manifest = Get-Content -Raw -LiteralPath (Join-Path $root "release-manifest.json") |
+            ConvertFrom-Json
+        $validatorOutput = @(& pwsh -NoProfile -ExecutionPolicy Bypass -File $validator `
+            -CapsuleRoot $root `
+            -ExpectedCapsuleVersion ([string]$manifest.capsule_version) `
+            -ExpectedManifestSha256 (Get-Sha256 (Join-Path $root "release-manifest.json")) `
+            -ExpectedExecutableSha256 ([string]$manifest.artifact.sha256) `
+            -ExpectedSourceCommit ([string]$manifest.source.commit) `
+            -ExpectedSourceTree ([string]$manifest.source.tree) 2>&1)
+        if ($LASTEXITCODE -ne 0) {
+            throw "valid mutation case failed: $Name`n$($validatorOutput -join "`n")"
+        }
+    }
+    finally {
+        if (Test-Path -LiteralPath $root) {
+            Remove-Item -LiteralPath $root -Recurse -Force
+        }
+    }
+}
+
+function Add-EncodedArtifactText(
+    [string] $Root,
+    [string] $Text,
+    [ValidateSet("ascii", "utf16le", "utf16be")]
+    [string] $EncodingName,
+    [ValidateSet(0, 1)]
+    [int] $ByteOffset
+) {
+    $encoding = switch ($EncodingName) {
+        "ascii" { [Text.Encoding]::ASCII }
+        "utf16le" { [Text.Encoding]::Unicode }
+        "utf16be" { [Text.Encoding]::BigEndianUnicode }
+    }
+    $path = Join-Path $Root "fleet-agent-key-record.exe"
+    $stream = [IO.File]::Open($path, [IO.FileMode]::Append, [IO.FileAccess]::Write)
+    try {
+        if ($EncodingName -ne "ascii" -and ($stream.Length % 2) -ne $ByteOffset) {
+            $stream.WriteByte(0x7e)
+        }
+        $bytes = $encoding.GetBytes($Text)
+        $stream.Write($bytes, 0, $bytes.Length)
+    }
+    finally {
+        $stream.Dispose()
+    }
+    Sync-PayloadBinding $Root "fleet-agent-key-record.exe"
+}
+
 & pwsh -NoProfile -ExecutionPolicy Bypass -File $validator -CapsuleRoot $source `
     -ExpectedCapsuleVersion ([string]$sourceManifest.capsule_version) `
     -ExpectedManifestSha256 (Get-Sha256 (Join-Path $source "release-manifest.json")) `
@@ -195,26 +249,55 @@ Invoke-MustReject "extra-package-file" {
     param($root)
     [IO.File]::WriteAllText((Join-Path $root "unexpected.bin"), "damage")
 }
-Invoke-MustReject "binary-ascii-path-leakage" {
-    param($root)
-    [IO.File]::AppendAllText(
-        (Join-Path $root "fleet-agent-key-record.exe"),
-        "Z:\synthetic\artifact.obj",
-        [Text.Encoding]::ASCII)
-    Sync-PayloadBinding $root "fleet-agent-key-record.exe"
-} -WithoutExecutablePin
-Invoke-MustReject "binary-utf16-path-leakage" {
-    param($root)
-    $path = Join-Path $root "fleet-agent-key-record.exe"
-    $stream = [IO.File]::Open($path, [IO.FileMode]::Append, [IO.FileAccess]::Write)
-    try {
-        $bytes = [Text.Encoding]::Unicode.GetBytes("Y:\synthetic\artifact.pdb")
-        $stream.Write($bytes, 0, $bytes.Length)
-    }
-    finally {
-        $stream.Dispose()
-    }
-    Sync-PayloadBinding $root "fleet-agent-key-record.exe"
-} -WithoutExecutablePin
+$machinePathDamageCases = @(
+    [pscustomobject]@{ Name = "binary-ascii-path-leakage"; Text = 'Q:\synthetic\artifact.obj'; Encoding = "ascii"; Offset = 0 },
+    [pscustomobject]@{ Name = "binary-utf16-path-leakage"; Text = 'Q:\synthetic\artifact.obj'; Encoding = "utf16le"; Offset = 0 },
+    [pscustomobject]@{ Name = "binary-ordinary-drive-utf16le-offset1"; Text = 'Q:\synthetic\artifact.obj'; Encoding = "utf16le"; Offset = 1 },
+    [pscustomobject]@{ Name = "binary-ordinary-drive-utf16be-offset0"; Text = 'Q:\synthetic\artifact.obj'; Encoding = "utf16be"; Offset = 0 },
+    [pscustomobject]@{ Name = "binary-ordinary-drive-utf16be-offset1"; Text = 'Q:\synthetic\artifact.obj'; Encoding = "utf16be"; Offset = 1 },
+    [pscustomobject]@{ Name = "binary-extended-drive-ascii"; Text = '\\?\Q:\synthetic\artifact.obj'; Encoding = "ascii"; Offset = 0 },
+    [pscustomobject]@{ Name = "binary-extended-drive-utf16le-offset0"; Text = '\\?\Q:\synthetic\artifact.obj'; Encoding = "utf16le"; Offset = 0 },
+    [pscustomobject]@{ Name = "binary-extended-drive-utf16le-offset1"; Text = '\\?\Q:\synthetic\artifact.obj'; Encoding = "utf16le"; Offset = 1 },
+    [pscustomobject]@{ Name = "binary-extended-drive-utf16be-offset0"; Text = '\\?\Q:\synthetic\artifact.obj'; Encoding = "utf16be"; Offset = 0 },
+    [pscustomobject]@{ Name = "binary-extended-drive-utf16be-offset1"; Text = '\\?\Q:\synthetic\artifact.obj'; Encoding = "utf16be"; Offset = 1 },
+    [pscustomobject]@{ Name = "binary-ordinary-unc-ascii"; Text = '\\synthetic-host\synthetic-share\artifact.obj'; Encoding = "ascii"; Offset = 0 },
+    [pscustomobject]@{ Name = "binary-ordinary-unc-utf16le-offset0"; Text = '\\synthetic-host\synthetic-share\artifact.obj'; Encoding = "utf16le"; Offset = 0 },
+    [pscustomobject]@{ Name = "binary-ordinary-unc-utf16le-offset1"; Text = '\\synthetic-host\synthetic-share\artifact.obj'; Encoding = "utf16le"; Offset = 1 },
+    [pscustomobject]@{ Name = "binary-ordinary-unc-utf16be-offset0"; Text = '\\synthetic-host\synthetic-share\artifact.obj'; Encoding = "utf16be"; Offset = 0 },
+    [pscustomobject]@{ Name = "binary-ordinary-unc-utf16be-offset1"; Text = '\\synthetic-host\synthetic-share\artifact.obj'; Encoding = "utf16be"; Offset = 1 },
+    [pscustomobject]@{ Name = "binary-extended-unc-ascii"; Text = '\\?\UNC\synthetic-host\synthetic-share\artifact.obj'; Encoding = "ascii"; Offset = 0 },
+    [pscustomobject]@{ Name = "binary-extended-unc-utf16le-offset0"; Text = '\\?\UNC\synthetic-host\synthetic-share\artifact.obj'; Encoding = "utf16le"; Offset = 0 },
+    [pscustomobject]@{ Name = "binary-extended-unc-utf16le-offset1"; Text = '\\?\UNC\synthetic-host\synthetic-share\artifact.obj'; Encoding = "utf16le"; Offset = 1 },
+    [pscustomobject]@{ Name = "binary-extended-unc-utf16be-offset0"; Text = '\\?\UNC\synthetic-host\synthetic-share\artifact.obj'; Encoding = "utf16be"; Offset = 0 },
+    [pscustomobject]@{ Name = "binary-extended-unc-utf16be-offset1"; Text = '\\?\UNC\synthetic-host\synthetic-share\artifact.obj'; Encoding = "utf16be"; Offset = 1 }
+)
+foreach ($damageCase in $machinePathDamageCases) {
+    $caseText = [string]$damageCase.Text
+    $caseEncoding = [string]$damageCase.Encoding
+    $caseOffset = [int]$damageCase.Offset
+    $mutation = {
+        param($root)
+        Add-EncodedArtifactText -Root $root -Text $caseText `
+            -EncodingName $caseEncoding -ByteOffset $caseOffset
+    }.GetNewClosure()
+    Invoke-MustReject ([string]$damageCase.Name) $mutation -WithoutExecutablePin
+}
+
+foreach ($markerCase in @(
+        [pscustomobject]@{ Name = "binary-unc-namespace-marker-ascii"; Encoding = "ascii"; Offset = 0 },
+        [pscustomobject]@{ Name = "binary-unc-namespace-marker-utf16le-offset0"; Encoding = "utf16le"; Offset = 0 },
+        [pscustomobject]@{ Name = "binary-unc-namespace-marker-utf16le-offset1"; Encoding = "utf16le"; Offset = 1 },
+        [pscustomobject]@{ Name = "binary-unc-namespace-marker-utf16be-offset0"; Encoding = "utf16be"; Offset = 0 },
+        [pscustomobject]@{ Name = "binary-unc-namespace-marker-utf16be-offset1"; Encoding = "utf16be"; Offset = 1 }
+    )) {
+    $caseEncoding = [string]$markerCase.Encoding
+    $caseOffset = [int]$markerCase.Offset
+    $mutation = {
+        param($root)
+        Add-EncodedArtifactText -Root $root -Text '\\?\UNC\' `
+            -EncodingName $caseEncoding -ByteOffset $caseOffset
+    }.GetNewClosure()
+    Invoke-MustAccept ([string]$markerCase.Name) $mutation
+}
 
 Write-Output "Rusty Quest Fleet Agent key-record release self-test passed"

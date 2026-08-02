@@ -1,10 +1,12 @@
 # Copyright (C) 2026 Rusty Quest contributors
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
-[CmdletBinding()]
+[CmdletBinding(DefaultParameterSetName = "Capsule")]
 param(
-    [Parameter(Mandatory)]
+    [Parameter(Mandatory, ParameterSetName = "Capsule")]
     [string] $CapsuleRoot,
+    [Parameter(Mandatory, ParameterSetName = "MachinePathPolicySelfTest")]
+    [switch] $MachinePathPolicySelfTest,
     [string] $ExpectedCapsuleVersion = "",
     [string] $ExpectedManifestSha256 = "",
     [string] $ExpectedExecutableSha256 = "",
@@ -40,9 +42,17 @@ function Assert-BoundedFileSize([string] $LiteralPath, [long] $DeclaredSize, [st
 }
 
 function Test-MachineLocalPathText([string] $Text) {
-    return [regex]::IsMatch(
-        $Text,
-        '(?i)(?:[A-Z]:[\\/](?![\\/])|\\\\(?:\?\\)?[A-Za-z0-9._$-]+[\\/])')
+    $serverComponent = '[A-Za-z0-9][A-Za-z0-9._$-]*'
+    $shareComponent = '[\x20-\x7e-[\\/:<>:"|?*]]+'
+    $patterns = @(
+        '(?i)[A-Z]:[\\/](?![\\/])',
+        '(?i)\\\\\?\\[A-Z]:[\\/](?![\\/])',
+        ('(?i)\\\\(?!\?\\UNC(?:\\|$))' + $serverComponent +
+            '[\\/]' + $shareComponent + '(?=[\\/\x00]|$)'),
+        ('(?i)\\\\\?\\UNC\\' + $serverComponent +
+            '\\' + $shareComponent + '(?=[\\\x00]|$)')
+    )
+    return @($patterns | Where-Object { [regex]::IsMatch($Text, $_) }).Count -gt 0
 }
 
 function Assert-NoMachineLocalPathByteSequence([string] $LiteralPath) {
@@ -60,6 +70,79 @@ function Assert-NoMachineLocalPathByteSequence([string] $LiteralPath) {
             }
         }
     }
+}
+
+function Get-MachinePathPolicyProbeByteSequence(
+    [string] $Text,
+    [Text.Encoding] $Encoding,
+    [ValidateSet(0, 1)]
+    [int] $Offset
+) {
+    $payload = $Encoding.GetBytes($Text)
+    $bytes = [byte[]]::new($Offset + $payload.Length)
+    if ($Offset -eq 1) { $bytes[0] = 0x7e }
+    [Array]::Copy($payload, 0, $bytes, $Offset, $payload.Length)
+    return $bytes
+}
+
+function Invoke-MachinePathPolicySelfTest {
+    $pathForms = @(
+        'Q:\synthetic\artifact.obj',
+        '\\?\Q:\synthetic\artifact.obj',
+        '\\synthetic-host\synthetic-share\artifact.obj',
+        '\\?\UNC\synthetic-host\synthetic-share\artifact.obj'
+    )
+    $layouts = @(
+        [pscustomobject]@{ Name = "ascii"; Encoding = [Text.Encoding]::ASCII; Offset = 0 },
+        [pscustomobject]@{ Name = "utf16le-offset0"; Encoding = [Text.Encoding]::Unicode; Offset = 0 },
+        [pscustomobject]@{ Name = "utf16le-offset1"; Encoding = [Text.Encoding]::Unicode; Offset = 1 },
+        [pscustomobject]@{ Name = "utf16be-offset0"; Encoding = [Text.Encoding]::BigEndianUnicode; Offset = 0 },
+        [pscustomobject]@{ Name = "utf16be-offset1"; Encoding = [Text.Encoding]::BigEndianUnicode; Offset = 1 }
+    )
+    $probeRoot = Join-Path ([IO.Path]::GetTempPath()) (
+        "rusty-quest-key-record-path-policy-" + [guid]::NewGuid().ToString("N"))
+    try {
+        [void][IO.Directory]::CreateDirectory($probeRoot)
+        foreach ($pathForm in $pathForms) {
+            foreach ($layout in $layouts) {
+                $probePath = Join-Path $probeRoot ("reject-" + [guid]::NewGuid().ToString("N"))
+                [IO.File]::WriteAllBytes(
+                    $probePath,
+                    (Get-MachinePathPolicyProbeByteSequence `
+                        -Text $pathForm -Encoding $layout.Encoding -Offset $layout.Offset))
+                $rejected = $false
+                try {
+                    Assert-NoMachineLocalPathByteSequence -LiteralPath $probePath
+                }
+                catch {
+                    if ($_.Exception.Message -notmatch 'machine-local') { throw }
+                    $rejected = $true
+                }
+                if (-not $rejected) {
+                    throw "Fleet Agent key-record release path policy missed $($layout.Name)."
+                }
+            }
+        }
+        foreach ($layout in $layouts) {
+            $probePath = Join-Path $probeRoot ("accept-" + [guid]::NewGuid().ToString("N"))
+            [IO.File]::WriteAllBytes(
+                $probePath,
+                (Get-MachinePathPolicyProbeByteSequence `
+                    -Text '\\?\UNC\' -Encoding $layout.Encoding -Offset $layout.Offset))
+            Assert-NoMachineLocalPathByteSequence -LiteralPath $probePath
+        }
+    }
+    finally {
+        if (Test-Path -LiteralPath $probeRoot) {
+            Remove-Item -LiteralPath $probeRoot -Recurse -Force
+        }
+    }
+}
+
+if ($MachinePathPolicySelfTest) {
+    Invoke-MachinePathPolicySelfTest
+    Write-Output "Rusty Quest Fleet Agent key-record release machine-path policy self-test passed"
+    return
 }
 
 function Assert-X64WindowsExecutable([string] $LiteralPath) {

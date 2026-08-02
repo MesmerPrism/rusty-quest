@@ -55,8 +55,11 @@ set separately and preserve the owner bytes without augmentation. The owner
 validator rejects artifact or provenance substitution, unknown fields, extra
 repositories or files, parse-only role escalation, stale/unsupported versions
 or targets, and detectable
-private or machine-local material. It inspects both ASCII and both byte
-alignments of little- and big-endian UTF-16 in the executable, so absolute host
+private or machine-local material. It detects ordinary and extended drive
+paths plus ordinary and extended UNC paths only when a UNC server and share are
+both present. The namespace-only Windows runtime marker `\\?\UNC\` is not a
+machine identity. The validator inspects ASCII and both byte alignments of
+little- and big-endian UTF-16 in the executable, so complete absolute host
 paths are release-blocking even when ordinary manifest text is clean.
 
 Rusty Quest has no release-signing or revocation authority for this helper
@@ -76,6 +79,7 @@ Build and validate after committing the source:
 
 ```powershell
 pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Build-FleetAgentKeyRecordRelease.ps1 -CapsuleVersion 1.0.0
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-FleetAgentKeyRecordRelease.ps1 -MachinePathPolicySelfTest
 pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-FleetAgentKeyRecordRelease.ps1 -CapsuleRoot <owner-capsule>
 pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-FleetAgentKeyRecordReleaseSelfTest.ps1 -CapsuleRoot <owner-capsule>
 ```

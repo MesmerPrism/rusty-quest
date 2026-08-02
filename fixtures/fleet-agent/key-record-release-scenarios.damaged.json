@@ -11,7 +11,25 @@
     { "name": "unsupported-version", "mutation": "capsule_version", "expected": "reject" },
     { "name": "unsupported-target", "mutation": "artifact.target", "expected": "reject" },
     { "name": "extra-package-file", "mutation": "capsule.files", "expected": "reject" },
-    { "name": "binary-ascii-path-leakage", "mutation": "artifact.ascii-machine-path", "expected": "reject" },
-    { "name": "binary-utf16-path-leakage", "mutation": "artifact.utf16-machine-path", "expected": "reject" }
+    { "name": "binary-ascii-path-leakage", "mutation": "artifact.machine-path.ordinary-drive.ascii", "expected": "reject" },
+    { "name": "binary-utf16-path-leakage", "mutation": "artifact.machine-path.ordinary-drive.utf16le.offset0", "expected": "reject" },
+    { "name": "binary-ordinary-drive-utf16le-offset1", "mutation": "artifact.machine-path.ordinary-drive.utf16le.offset1", "expected": "reject" },
+    { "name": "binary-ordinary-drive-utf16be-offset0", "mutation": "artifact.machine-path.ordinary-drive.utf16be.offset0", "expected": "reject" },
+    { "name": "binary-ordinary-drive-utf16be-offset1", "mutation": "artifact.machine-path.ordinary-drive.utf16be.offset1", "expected": "reject" },
+    { "name": "binary-extended-drive-ascii", "mutation": "artifact.machine-path.extended-drive.ascii", "expected": "reject" },
+    { "name": "binary-extended-drive-utf16le-offset0", "mutation": "artifact.machine-path.extended-drive.utf16le.offset0", "expected": "reject" },
+    { "name": "binary-extended-drive-utf16le-offset1", "mutation": "artifact.machine-path.extended-drive.utf16le.offset1", "expected": "reject" },
+    { "name": "binary-extended-drive-utf16be-offset0", "mutation": "artifact.machine-path.extended-drive.utf16be.offset0", "expected": "reject" },
+    { "name": "binary-extended-drive-utf16be-offset1", "mutation": "artifact.machine-path.extended-drive.utf16be.offset1", "expected": "reject" },
+    { "name": "binary-ordinary-unc-ascii", "mutation": "artifact.machine-path.ordinary-unc.ascii", "expected": "reject" },
+    { "name": "binary-ordinary-unc-utf16le-offset0", "mutation": "artifact.machine-path.ordinary-unc.utf16le.offset0", "expected": "reject" },
+    { "name": "binary-ordinary-unc-utf16le-offset1", "mutation": "artifact.machine-path.ordinary-unc.utf16le.offset1", "expected": "reject" },
+    { "name": "binary-ordinary-unc-utf16be-offset0", "mutation": "artifact.machine-path.ordinary-unc.utf16be.offset0", "expected": "reject" },
+    { "name": "binary-ordinary-unc-utf16be-offset1", "mutation": "artifact.machine-path.ordinary-unc.utf16be.offset1", "expected": "reject" },
+    { "name": "binary-extended-unc-ascii", "mutation": "artifact.machine-path.extended-unc.ascii", "expected": "reject" },
+    { "name": "binary-extended-unc-utf16le-offset0", "mutation": "artifact.machine-path.extended-unc.utf16le.offset0", "expected": "reject" },
+    { "name": "binary-extended-unc-utf16le-offset1", "mutation": "artifact.machine-path.extended-unc.utf16le.offset1", "expected": "reject" },
+    { "name": "binary-extended-unc-utf16be-offset0", "mutation": "artifact.machine-path.extended-unc.utf16be.offset0", "expected": "reject" },
+    { "name": "binary-extended-unc-utf16be-offset1", "mutation": "artifact.machine-path.extended-unc.utf16be.offset1", "expected": "reject" }
   ]
 }

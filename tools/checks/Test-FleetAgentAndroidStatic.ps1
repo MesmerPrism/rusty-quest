@@ -325,6 +325,8 @@ foreach ($token in @(
     'Assert-NoMachineLocalPathByteSequence',
     '[Text.Encoding]::Unicode',
     '[Text.Encoding]::BigEndianUnicode',
+    'MachinePathPolicySelfTest',
+    'Get-MachinePathPolicyProbeByteSequence',
     'Assert-X64WindowsExecutable',
     'capsule_version -cne "1.0.0"',
     'Fleet Agent key-record release provenance repository set is not closed',
@@ -336,6 +338,11 @@ foreach ($token in @(
     'ExpectedExecutableSha256')) {
     Assert-Match $keyRecordReleaseTest ([regex]::Escape($token)) "Fleet Agent key-record release validator is missing boundary token: $token"
 }
+& pwsh -NoProfile -ExecutionPolicy Bypass -File $paths.key_record_release_test `
+    -MachinePathPolicySelfTest *> $null
+if ($LASTEXITCODE -ne 0) {
+    throw "Fleet Agent key-record release machine-path policy self-test failed."
+}
 foreach ($token in @(
     'Sync-ProvenanceBinding',
     'Sync-PayloadBinding',
@@ -343,6 +350,10 @@ foreach ($token in @(
     'parse-only-role-escalation',
     'binary-ascii-path-leakage',
     'binary-utf16-path-leakage',
+    'binary-extended-drive-utf16be-offset1',
+    'binary-ordinary-unc-utf16be-offset1',
+    'binary-extended-unc-utf16be-offset1',
+    'binary-unc-namespace-marker-utf16be-offset1',
     'WithoutExecutablePin',
     'WithoutVersionPin')) {
     Assert-Match $keyRecordReleaseSelfTest $token "Fleet Agent key-record release self-test is missing adversarial token: $token"
@@ -354,7 +365,7 @@ if ($keyRecordReleaseSchema -notmatch '"additionalProperties"\s*:\s*false' -or
     $keyRecordReleaseValid.valid_case.private_material_included -ne $false -or
     $keyRecordReleaseValid.valid_case.live_onboarding_claim -ne $false -or
     $keyRecordReleaseDamaged.schema -ne "rusty.quest.fleet_agent_key_record_release_damage_matrix.v1" -or
-    @($keyRecordReleaseDamaged.cases).Count -ne 12) {
+    @($keyRecordReleaseDamaged.cases).Count -ne 30) {
     throw "Fleet Agent key-record release schema or fixture matrix is incomplete."
 }
 $expectedTargetRepositoryIds = @("rusty-fleet", "rusty-manifold", "rusty-quest")
@@ -371,9 +382,26 @@ $expectedDamageNames = @(
     "artifact-substitution", "source-commit-drift", "provenance-substitution",
     "secret-leakage", "extra-repository", "parse-only-role-escalation", "extra-field", "unsupported-version",
     "unsupported-target", "extra-package-file", "binary-ascii-path-leakage",
-    "binary-utf16-path-leakage")
+    "binary-utf16-path-leakage", "binary-ordinary-drive-utf16le-offset1",
+    "binary-ordinary-drive-utf16be-offset0", "binary-ordinary-drive-utf16be-offset1",
+    "binary-extended-drive-ascii", "binary-extended-drive-utf16le-offset0",
+    "binary-extended-drive-utf16le-offset1", "binary-extended-drive-utf16be-offset0",
+    "binary-extended-drive-utf16be-offset1", "binary-ordinary-unc-ascii",
+    "binary-ordinary-unc-utf16le-offset0", "binary-ordinary-unc-utf16le-offset1",
+    "binary-ordinary-unc-utf16be-offset0", "binary-ordinary-unc-utf16be-offset1",
+    "binary-extended-unc-ascii", "binary-extended-unc-utf16le-offset0",
+    "binary-extended-unc-utf16le-offset1", "binary-extended-unc-utf16be-offset0",
+    "binary-extended-unc-utf16be-offset1")
 if (@(Compare-Object $expectedDamageNames @($keyRecordReleaseDamaged.cases.name)).Count -ne 0) {
     throw "Fleet Agent key-record release damage matrix changed."
+}
+$expectedPortableMarkerNames = @(
+    "binary-unc-namespace-marker-ascii", "binary-unc-namespace-marker-utf16le-offset0",
+    "binary-unc-namespace-marker-utf16le-offset1", "binary-unc-namespace-marker-utf16be-offset0",
+    "binary-unc-namespace-marker-utf16be-offset1")
+if (@(Compare-Object $expectedPortableMarkerNames `
+        @($keyRecordReleaseValid.valid_case.portable_namespace_marker_cases)).Count -ne 0) {
+    throw "Fleet Agent key-record release portable namespace marker matrix changed."
 }
 
 $appSource = @(
