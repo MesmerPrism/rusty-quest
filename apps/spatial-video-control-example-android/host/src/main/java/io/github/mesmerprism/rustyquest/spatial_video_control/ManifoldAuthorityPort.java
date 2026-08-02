@@ -9,6 +9,36 @@ import java.util.Set;
  * authority. Quest must not implement these decisions.
  */
 public interface ManifoldAuthorityPort {
+    enum AccessMode {
+        PAIRED("paired"),
+        OPEN_LAN_INSECURE("open_lan_insecure");
+
+        private final String protocolName;
+
+        AccessMode(String protocolName) {
+            this.protocolName = protocolName;
+        }
+
+        public String protocolName() {
+            return protocolName;
+        }
+    }
+
+    enum EnableActor {
+        WEARER("wearer"),
+        DEBUG_SHELL("debug_shell");
+
+        private final String protocolName;
+
+        EnableActor(String protocolName) {
+            this.protocolName = protocolName;
+        }
+
+        public String protocolName() {
+            return protocolName;
+        }
+    }
+
     record AuthorityRevisions(
             long localRevision,
             long admissionRevision,
@@ -28,7 +58,9 @@ public interface ManifoldAuthorityPort {
             String displayedAddress,
             Duration requestedWindow,
             Instant now,
-            boolean wearerForegroundAction) {}
+            boolean foregroundOperatorAction,
+            AccessMode accessMode,
+            EnableActor enableActor) {}
 
     record PairingOffer(
             boolean enabled,
@@ -39,12 +71,15 @@ public interface ManifoldAuthorityPort {
             String windowRequestId,
             String wearerEvidenceId,
             AuthorityRevisions revisions,
+            AccessMode accessMode,
             String reason) {}
 
     record PairAttempt(
             String remoteAddress,
             PairingRequest request,
             Instant now) {}
+
+    record OpenLanAttempt(String remoteAddress, String requestId, Instant now) {}
 
     record PairDecision(
             boolean accepted,
@@ -100,6 +135,7 @@ public interface ManifoldAuthorityPort {
 
     record AuthoritySnapshot(
             String state,
+            AccessMode accessMode,
             AuthorityRevisions revisions,
             String windowId,
             Instant windowExpiresAt,
@@ -125,6 +161,8 @@ public interface ManifoldAuthorityPort {
     PairingOffer beginWearerEnable(EnableRequest request);
 
     PairDecision pair(PairAttempt attempt);
+
+    PairDecision admitOpenLan(OpenLanAttempt attempt);
 
     SessionDecision inspectSession(String sessionCookie, String remoteAddress, Instant now);
 

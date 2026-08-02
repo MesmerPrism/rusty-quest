@@ -17,6 +17,7 @@ final class FakeManifoldAuthority implements ManifoldAuthorityPort {
     private String state = "disabled";
     private boolean pairingCodeUsed;
     private String displayedAddress;
+    private AccessMode accessMode;
     private String windowId;
     private Instant windowExpiresAt;
     private String controllerAddress;
@@ -31,8 +32,8 @@ final class FakeManifoldAuthority implements ManifoldAuthorityPort {
 
     @Override
     public synchronized PairingOffer beginWearerEnable(EnableRequest request) {
-        if (!request.wearerForegroundAction()) {
-            return rejectedOffer(request, "wearer_foreground_action_required");
+        if (!request.foregroundOperatorAction()) {
+            return rejectedOffer(request, "foreground_operator_action_required");
         }
         Duration window = request.requestedWindow();
         if (window.isNegative()
@@ -44,23 +45,28 @@ final class FakeManifoldAuthority implements ManifoldAuthorityPort {
         pairingCodeUsed = false;
         controllerAddress = null;
         displayedAddress = request.displayedAddress();
+        accessMode = request.accessMode();
         windowExpiresAt = request.now().plus(window);
         windowId = "window.local.test-" + localRevision;
         localRevision++;
         return new PairingOffer(
                 true,
                 displayedAddress,
-                TEST_CODE,
+                accessMode == AccessMode.PAIRED ? TEST_CODE : "",
                 windowExpiresAt,
                 windowId,
                 "request.local.window.open-" + localRevision,
                 "evidence.wearer.window.open-" + localRevision,
                 revisions(),
+                accessMode,
                 "wearer_enabled");
     }
 
     @Override
     public synchronized PairDecision pair(PairAttempt attempt) {
+        if (accessMode != AccessMode.PAIRED) {
+            return pairRejected("paired_mode_not_enabled");
+        }
         trim(pairAttempts, attempt.now(), Duration.ofMinutes(1));
         if (pairAttempts.size() >= TrustedLocalControlPolicy.MAX_PAIR_ATTEMPTS_PER_MINUTE) {
             return pairRejected("pair_rate_limited");
@@ -81,9 +87,29 @@ final class FakeManifoldAuthority implements ManifoldAuthorityPort {
             return pairRejected("request_replayed");
         }
         pairingCodeUsed = true;
-        controllerAddress = attempt.remoteAddress();
-        sessionExpiresAt = attempt.now().plus(TrustedLocalControlPolicy.MAX_SESSION_LIFETIME);
-        idleExpiresAt = attempt.now().plus(TrustedLocalControlPolicy.MAX_IDLE_LIFETIME);
+        return admit(attempt.remoteAddress(), attempt.request().requestId(), attempt.now(), "paired");
+    }
+
+    @Override
+    public synchronized PairDecision admitOpenLan(OpenLanAttempt attempt) {
+        if (accessMode != AccessMode.OPEN_LAN_INSECURE || !state.equals("pairing_window_open")) {
+            return pairRejected("open_lan_not_enabled");
+        }
+        if (!requestIds.add(attempt.requestId())) {
+            return pairRejected("request_replayed");
+        }
+        return admit(
+                attempt.remoteAddress(),
+                attempt.requestId(),
+                attempt.now(),
+                "open_lan_admitted");
+    }
+
+    private PairDecision admit(
+            String remoteAddress, String requestId, Instant now, String reason) {
+        controllerAddress = remoteAddress;
+        sessionExpiresAt = now.plus(TrustedLocalControlPolicy.MAX_SESSION_LIFETIME);
+        idleExpiresAt = now.plus(TrustedLocalControlPolicy.MAX_IDLE_LIFETIME);
         state = "controller_active";
         localRevision++;
         admissionRevision++;
@@ -94,10 +120,10 @@ final class FakeManifoldAuthority implements ManifoldAuthorityPort {
                 TEST_SESSION,
                 "controller.browser.local",
                 sessionExpiresAt,
-                "receipt.local_control.admission.test",
+                "receipt.local_control.admission." + requestId,
                 "lease.local_control.test",
                 revisions(),
-                "paired");
+                reason);
     }
 
     @Override
@@ -190,6 +216,7 @@ final class FakeManifoldAuthority implements ManifoldAuthorityPort {
     public synchronized AuthoritySnapshot snapshot() {
         return new AuthoritySnapshot(
                 state,
+                state.equals("disabled") ? null : accessMode,
                 revisions(),
                 windowId,
                 windowExpiresAt,
@@ -218,6 +245,8 @@ final class FakeManifoldAuthority implements ManifoldAuthorityPort {
     private void disable(boolean hadController) {
         state = "disabled";
         controllerAddress = null;
+        displayedAddress = null;
+        accessMode = null;
         windowId = null;
         windowExpiresAt = null;
         sessionExpiresAt = null;
@@ -241,6 +270,7 @@ final class FakeManifoldAuthority implements ManifoldAuthorityPort {
                 null,
                 null,
                 revisions(),
+                request.accessMode(),
                 reason);
     }
 

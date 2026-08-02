@@ -184,7 +184,7 @@ dependencies = [
 [[package]]
 name = "rusty-manifold-admission"
 version = "0.1.0"
-source = "git+https://github.com/MesmerPrism/rusty-manifold.git?rev=1fe0f786a10371334c00296a5b4deff493796af1#1fe0f786a10371334c00296a5b4deff493796af1"
+source = "git+https://github.com/MesmerPrism/rusty-manifold.git?rev=3bf721eaa2f0551b01b33d8264fb7afa5f72749d#3bf721eaa2f0551b01b33d8264fb7afa5f72749d"
 dependencies = [
  "rusty-manifold-model",
  "serde",
@@ -194,7 +194,7 @@ dependencies = [
 [[package]]
 name = "rusty-manifold-local-control"
 version = "0.1.0"
-source = "git+https://github.com/MesmerPrism/rusty-manifold.git?rev=1fe0f786a10371334c00296a5b4deff493796af1#1fe0f786a10371334c00296a5b4deff493796af1"
+source = "git+https://github.com/MesmerPrism/rusty-manifold.git?rev=3bf721eaa2f0551b01b33d8264fb7afa5f72749d#3bf721eaa2f0551b01b33d8264fb7afa5f72749d"
 dependencies = [
  "rusty-manifold-admission",
  "rusty-manifold-model",
@@ -205,7 +205,7 @@ dependencies = [
 [[package]]
 name = "rusty-manifold-model"
 version = "0.1.0"
-source = "git+https://github.com/MesmerPrism/rusty-manifold.git?rev=1fe0f786a10371334c00296a5b4deff493796af1#1fe0f786a10371334c00296a5b4deff493796af1"
+source = "git+https://github.com/MesmerPrism/rusty-manifold.git?rev=3bf721eaa2f0551b01b33d8264fb7afa5f72749d#3bf721eaa2f0551b01b33d8264fb7afa5f72749d"
 dependencies = [
  "serde",
 ]
@@ -213,7 +213,7 @@ dependencies = [
 [[package]]
 name = "rusty-manifold-runtime-host"
 version = "0.1.0"
-source = "git+https://github.com/MesmerPrism/rusty-manifold.git?rev=1fe0f786a10371334c00296a5b4deff493796af1#1fe0f786a10371334c00296a5b4deff493796af1"
+source = "git+https://github.com/MesmerPrism/rusty-manifold.git?rev=3bf721eaa2f0551b01b33d8264fb7afa5f72749d#3bf721eaa2f0551b01b33d8264fb7afa5f72749d"
 dependencies = [
  "rusty-manifold-model",
  "serde",

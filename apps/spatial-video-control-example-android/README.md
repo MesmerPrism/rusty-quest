@@ -6,18 +6,27 @@ same-origin web page intended for Safari or another modern browser on the same
 trusted LAN or private hotspot. The protocol authenticates a short local
 session; plain HTTP/WebSocket provides **no confidentiality**.
 
-The source slice is deliberately inert:
+The product remains deliberately inert by default:
 
 - local control is disabled at process start;
-- only a visible wearer action may request a bounded enable grant;
+- a visible wearer action may request a bounded paired or explicitly unsafe
+  Open LAN grant;
+- the debug APK additionally exposes a `DUMP`-protected, shell-UID-only
+  operator provider; the release manifest contains no provider;
 - the wearer must manually communicate the displayed IP/port and single-use
   pairing code;
 - only one controller lease can exist;
 - idle/session expiry, replay rejection, strict rates, and revoke are owned by
   the pinned process-local Rust Manifold composite;
-- QR and mDNS are optional future conveniences and are not implemented;
-- there is no relay, Fleet operation, arbitrary headset discovery, ADB,
-  intent/shell bridge, upload surface, or runtime-loaded UI.
+- DNS-SD advertises only a fixed service type and non-secret mode/path metadata
+  while the listener is active; it never advertises a code or bearer token;
+- there is no relay, Fleet operation, arbitrary command, intent/shell bridge,
+  upload surface, or runtime-loaded UI.
+
+Open LAN is intentionally **not secure**: it has neither authentication nor
+confidentiality. The first network peer to request control receives Manifold's
+one bounded controller lease; other peers are rejected until expiry or visible
+on-headset revoke. The browser and headset label this mode explicitly.
 
 ## Authority and effect boundary
 
@@ -34,10 +43,17 @@ diagnostics and receipt verification.
 `ManifoldAuthorityPort` is an adapter contract, not a second authority
 implementation. `FakeManifoldAuthority` exists under `host/src/test` only for
 offline tests. Android binds the typed JNI adapter under `native/` to exact
-Manifold commit `1fe0f786a10371334c00296a5b4deff493796af1`. Rust sources trusted
+Manifold commit `3bf721eaa2f0551b01b33d8264fb7afa5f72749d`. Rust sources trusted
 wall/monotonic clock observations and token entropy; Kotlin owns only the
 six-digit code, its one-use verification, the opaque HTTP cookie, and the
 remote-address transport binding.
+
+The optional debug-shell actor is a separately recorded authority fact. It is
+accepted only when the native policy was initialized from `BuildConfig.DEBUG`
+and Android's exported debug provider independently verifies the platform shell
+UID. It may open or revoke the fixed listener and read bounded app/player
+status; media commands still travel through the same HTTP/WebSocket and
+Manifold command path as the browser.
 
 ## Closed commands
 
@@ -82,6 +98,7 @@ media-surface orientation remains a separate contract.
 - `host/src/test/java/`: fake authority/player and loopback conformance tests.
 - `app/src/main/assets/control/`: packaged controller page; no external assets.
 - `app/src/main/java/`: opt-in Android, Media3, and Spatial SDK adapter source.
+- `app/src/debug/`: debug-only shell-UID/DUMP operator provider.
 - `native/`: closed JNI operations and the exact Manifold source lock.
 - `app/src/main/media-source/`: deterministic CC0 320x180/30fps synthetic MP4
   source blobs kept inside the Quest hardware-decoder compatibility profile
@@ -116,5 +133,21 @@ gradle :app:compileDebugKotlin :app:lintDebug :app:assembleDebug
 ```
 
 Gradle 8.13 is the validated runner. These commands build source only; they do
-not install, launch, bind a LAN socket, or use ADB. Manual address entry and the
-single-use code remain mandatory even if QR or mDNS is added later.
+not install, launch, bind a LAN socket, or use ADB.
+
+## Debug device operator
+
+Hostess owns the closed companion CLI at
+`tools/trusted_local_control_cli.py`. Its ADB actions accept an exact serial and
+are limited to `status`, `enable-paired`, `enable-open-lan`, `revoke`, and
+`test-media`; its network-only `discover` action resolves the fixed DNS-SD
+service without ADB. Pairing codes are redacted from CLI output by default and
+are retained only long enough to establish the paired session. `test-media`
+uses the real LAN route—no ADB
+forward/reverse—and verifies describe, state, catalog, separate select, play,
+pause, Media3-derived application effects, revision causality, and final revoke.
+
+Plain Safari/Chrome pages cannot enumerate Bonjour services. DNS-SD lets a
+native Apple client or host CLI discover and resolve the service; the resolved
+same-origin URL then opens the packaged browser UI. Manual IP remains the
+universal fallback.

@@ -13,6 +13,7 @@ public final class TrustedLocalControlPolicy {
     public static final int MAX_REQUESTS_PER_MINUTE = 20;
     public static final int MAX_PAIR_ATTEMPTS_PER_MINUTE = 6;
     public static final int MAX_CONCURRENT_CONNECTIONS = 8;
+    public static final int MAX_PENDING_WEBSOCKET_EVENTS = 32;
     public static final int MAX_MALFORMED_ATTEMPTS_PER_MINUTE = 12;
     public static final int MAX_TRACKED_REMOTE_ADDRESSES = 32;
     public static final int HTTP_READ_TIMEOUT_MS = 5_000;

@@ -81,6 +81,13 @@ public final class LocalControlCoordinator implements PlayerPort.Listener, AutoC
         return authority.pair(new ManifoldAuthorityPort.PairAttempt(remoteAddress, request, now));
     }
 
+    public ManifoldAuthorityPort.PairDecision admitOpenLan(
+            String remoteAddress, OpenLanRequest request, Instant now) {
+        enforceExpiry(now);
+        return authority.admitOpenLan(
+                new ManifoldAuthorityPort.OpenLanAttempt(remoteAddress, request.requestId(), now));
+    }
+
     public ManifoldAuthorityPort.SessionDecision inspectSession(
             String sessionCookie, String remoteAddress, Instant now) {
         enforceExpiry(now);

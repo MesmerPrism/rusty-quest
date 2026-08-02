@@ -45,6 +45,7 @@ public final class TrustedLocalControlHostTest {
         testPlayerEffectTimeoutDoesNotWedge();
         testAuthorityLimitsAndExpiry();
         testLoopbackHttpAndWebSocket(appRoot);
+        testOpenLanAdmissionIsExplicitAndSingleController(appRoot);
         System.out.println("trusted_local_http_v1 host tests passed");
     }
 
@@ -646,14 +647,97 @@ public final class TrustedLocalControlHostTest {
         }
     }
 
+    private static void testOpenLanAdmissionIsExplicitAndSingleController(Path appRoot)
+            throws Exception {
+        Instant now = Instant.now();
+        FakeManifoldAuthority authority = new FakeManifoldAuthority();
+        LocalControlCoordinator coordinator =
+                new LocalControlCoordinator(
+                        authority, new FakePlayer(), VideoCatalog.bundledSynthetic());
+        ManifoldAuthorityPort.PairingOffer offer =
+                enable(authority, now, ManifoldAuthorityPort.AccessMode.OPEN_LAN_INSECURE);
+        Path assets = appRoot.resolve(Path.of("app", "src", "main", "assets", "control"));
+        TrustedLocalHttpServer.AssetProvider provider =
+                path -> {
+                    Path file = assets.resolve(path.substring(1));
+                    return Files.isRegularFile(file)
+                            ? new TrustedLocalHttpServer.Asset(
+                                    path.endsWith(".js")
+                                            ? "text/javascript; charset=utf-8"
+                                            : path.endsWith(".css")
+                                                    ? "text/css; charset=utf-8"
+                                                    : "text/html; charset=utf-8",
+                                    Files.readAllBytes(file))
+                            : null;
+                };
+        try (TrustedLocalHttpServer server = new TrustedLocalHttpServer(coordinator, provider)) {
+            TrustedLocalHttpServer.BoundEndpoint endpoint =
+                    server.start(offer, InetAddress.getByName(LOOPBACK));
+            HttpResponse access =
+                    http(
+                            endpoint,
+                            "GET /v1/access HTTP/1.1\r\nHost: "
+                                    + endpoint.hostHeader()
+                                    + "\r\nConnection: close\r\n\r\n");
+            assertEquals(200, access.status(), "Open LAN access descriptor served");
+            assertContains(
+                    access.body(),
+                    "\"access_mode\":\"open_lan_insecure\"",
+                    "unsafe access mode explicit");
+            assertContains(
+                    access.body(),
+                    "\"authentication_required\":false",
+                    "Open LAN never claims authentication");
+
+            String pairBody =
+                    new PairingRequest("482731", "request-open-pair-denied").canonicalJson();
+            HttpResponse pairRejected =
+                    http(endpoint, post(endpoint, "/v1/pair", endpoint.origin(), pairBody));
+            assertEquals(409, pairRejected.status(), "pair endpoint disabled in Open LAN mode");
+
+            String openBody = new OpenLanRequest("request-open-lan-0001").canonicalJson();
+            HttpResponse admitted =
+                    http(
+                            endpoint,
+                            post(endpoint, "/v1/open-session", endpoint.origin(), openBody));
+            assertEquals(200, admitted.status(), "Open LAN controller admitted");
+            assertContains(admitted.body(), "\"paired\":false", "response never claims pairing");
+            assertContains(
+                    admitted.body(),
+                    "\"session_admitted\":true",
+                    "Manifold-backed session admitted");
+
+            HttpResponse second =
+                    http(
+                            endpoint,
+                            post(
+                                    endpoint,
+                                    "/v1/open-session",
+                                    endpoint.origin(),
+                                    new OpenLanRequest("request-open-lan-0002").canonicalJson()));
+            assertEquals(401, second.status(), "second controller lease rejected");
+        } finally {
+            coordinator.close();
+        }
+    }
+
     private static ManifoldAuthorityPort.PairingOffer enable(
             FakeManifoldAuthority authority, Instant now) {
+        return enable(authority, now, ManifoldAuthorityPort.AccessMode.PAIRED);
+    }
+
+    private static ManifoldAuthorityPort.PairingOffer enable(
+            FakeManifoldAuthority authority,
+            Instant now,
+            ManifoldAuthorityPort.AccessMode accessMode) {
         return authority.beginWearerEnable(
                 new ManifoldAuthorityPort.EnableRequest(
                         "127.0.0.1",
                         Duration.ofMinutes(2),
                         now,
-                        true));
+                        true,
+                        accessMode,
+                        ManifoldAuthorityPort.EnableActor.WEARER));
     }
 
     private static String post(

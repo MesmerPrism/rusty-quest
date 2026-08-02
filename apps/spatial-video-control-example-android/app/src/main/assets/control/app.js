@@ -12,10 +12,14 @@ const state = {
 };
 
 const pairingCard = document.querySelector("#pairing-card");
+const openLanCard = document.querySelector("#open-lan-card");
 const controllerCard = document.querySelector("#controller-card");
+const accessWarning = document.querySelector("#access-warning");
 const pairingForm = document.querySelector("#pairing-form");
 const pairingCode = document.querySelector("#pairing-code");
 const pairingStatus = document.querySelector("#pairing-status");
+const openLanButton = document.querySelector("#open-lan-button");
+const openLanStatus = document.querySelector("#open-lan-status");
 const connectionState = document.querySelector("#connection-state");
 const selectedVideo = document.querySelector("#selected-video");
 const playbackState = document.querySelector("#playback-state");
@@ -27,7 +31,10 @@ const playButton = document.querySelector("#play-button");
 const pauseButton = document.querySelector("#pause-button");
 
 function requestId() {
-  return crypto.randomUUID();
+  const bytes = new Uint8Array(16);
+  crypto.getRandomValues(bytes);
+  const token = Array.from(bytes, (value) => value.toString(16).padStart(2, "0")).join("");
+  return `browser-${token}`;
 }
 
 function canonicalPairingBody(code) {
@@ -35,6 +42,10 @@ function canonicalPairingBody(code) {
     pairing_code: code,
     request_id: requestId(),
   });
+}
+
+function canonicalOpenLanBody() {
+  return JSON.stringify({ request_id: requestId() });
 }
 
 function canonicalCommandBody(command, payload = {}) {
@@ -213,5 +224,65 @@ pairingForm.addEventListener("submit", async (event) => {
   }
 });
 
+openLanButton.addEventListener("click", async () => {
+  openLanButton.disabled = true;
+  openLanStatus.textContent = "Requesting the sole controller lease…";
+  try {
+    const response = await fetch("/v1/open-session", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: canonicalOpenLanBody(),
+    });
+    const body = await response.json();
+    if (!response.ok || body.session_admitted !== true || body.paired !== false) {
+      openLanStatus.textContent = "Control was rejected or another controller already holds the lease.";
+      openLanButton.disabled = false;
+      return;
+    }
+    updateRevisions(body);
+    openLanCard.hidden = true;
+    controllerCard.hidden = false;
+    connect();
+  } catch {
+    openLanStatus.textContent = "The headset did not answer.";
+    openLanButton.disabled = false;
+  }
+});
+
+async function loadAccessMode() {
+  try {
+    const response = await fetch("/v1/access", { credentials: "same-origin" });
+    const body = await response.json();
+    if (!response.ok) {
+      throw new Error("access mode rejected");
+    }
+    if (body.access_mode === "paired" && body.authentication_required === true) {
+      pairingCard.hidden = false;
+      openLanCard.hidden = true;
+      accessWarning.textContent =
+        "Trusted local network only. This connection is authenticated but not encrypted.";
+      return;
+    }
+    if (
+      body.access_mode === "open_lan_insecure" &&
+      body.authentication_required === false
+    ) {
+      pairingCard.hidden = true;
+      openLanCard.hidden = false;
+      accessWarning.textContent =
+        "UNSAFE OPEN LAN: no authentication and no encryption. Anyone on this network may request control.";
+      return;
+    }
+    throw new Error("unknown access mode");
+  } catch {
+    pairingCard.hidden = true;
+    openLanCard.hidden = true;
+    accessWarning.textContent = "The headset access mode could not be verified.";
+  }
+}
+
 playButton.addEventListener("click", () => send("play"));
 pauseButton.addEventListener("click", () => send("pause"));
+
+loadAccessMode();

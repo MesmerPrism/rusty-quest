@@ -22,11 +22,14 @@ internal object NativeManifoldBridge {
   external fun nativeInitialize(
       platformSubject: String,
       signingFingerprint: String,
+      allowDebugShellOperator: Boolean,
   ): String
 
   external fun nativeOpenPairingWindow(
       requestId: String,
       requestedWindowMs: Long,
+      accessMode: String,
+      enableActor: String,
   ): String
 
   external fun nativeAdmitController(requestId: String): String
@@ -62,12 +65,13 @@ internal class NativeManifoldAuthorityPort private constructor() : ManifoldAutho
   private var sessionCookieDigest: ByteArray? = null
   private var controllerRemoteAddress: String? = null
   private var controllerLeaseId: String? = null
+  private var activeAccessMode: ManifoldAuthorityPort.AccessMode? = null
 
   override fun beginWearerEnable(
       request: ManifoldAuthorityPort.EnableRequest
   ): ManifoldAuthorityPort.PairingOffer = synchronized(lock) {
-    if (!request.wearerForegroundAction()) {
-      return@synchronized rejectedOffer(request.displayedAddress(), "wearer_foreground_action_required")
+    if (!request.foregroundOperatorAction()) {
+      return@synchronized rejectedOffer(request.displayedAddress(), "foreground_operator_action_required")
     }
     if (request.requestedWindow().isZero ||
         request.requestedWindow().isNegative ||
@@ -83,6 +87,8 @@ internal class NativeManifoldAuthorityPort private constructor() : ManifoldAutho
             NativeManifoldBridge.nativeOpenPairingWindow(
                 externalRequestId,
                 request.requestedWindow().toMillis(),
+                request.accessMode().protocolName(),
+                request.enableActor().protocolName(),
             )
         )
     val receipt = root.getJSONObject("window_receipt")
@@ -98,13 +104,20 @@ internal class NativeManifoldAuthorityPort private constructor() : ManifoldAutho
           receipt.getString("request_id"),
           root.getString("wearer_evidence_id"),
           revisions,
+          request.accessMode(),
           receipt.optionalReason(),
       )
     }
-    val code = String.format(Locale.ROOT, "%06d", random.nextInt(1_000_000))
-    pairingCodeDigest = digest(code)
+    val code =
+        if (request.accessMode() == ManifoldAuthorityPort.AccessMode.PAIRED) {
+          String.format(Locale.ROOT, "%06d", random.nextInt(1_000_000))
+        } else {
+          ""
+        }
+    pairingCodeDigest = code.takeIf(String::isNotEmpty)?.let(::digest)
     pairingCodeUsed = false
     displayedAddress = request.displayedAddress()
+    activeAccessMode = request.accessMode()
     clearControllerTransport()
     ManifoldAuthorityPort.PairingOffer(
         true,
@@ -115,6 +128,7 @@ internal class NativeManifoldAuthorityPort private constructor() : ManifoldAutho
         receipt.getString("request_id"),
         root.getString("wearer_evidence_id"),
         revisions,
+        request.accessMode(),
         "wearer_enabled",
     )
   }
@@ -137,28 +151,45 @@ internal class NativeManifoldAuthorityPort private constructor() : ManifoldAutho
     if (!codeMatched) {
       return@synchronized pairRejected("pairing_code_rejected")
     }
-    val receipt =
-        strictJson(NativeManifoldBridge.nativeAdmitController(attempt.request().requestId()))
+    admitAndCreateSession(attempt.request().requestId(), attempt.remoteAddress(), paired = true)
+  }
+
+  override fun admitOpenLan(
+      attempt: ManifoldAuthorityPort.OpenLanAttempt
+  ): ManifoldAuthorityPort.PairDecision = synchronized(lock) {
+    val authority = safeStatus()
+    if (activeAccessMode != ManifoldAuthorityPort.AccessMode.OPEN_LAN_INSECURE ||
+        authority.accessMode() != ManifoldAuthorityPort.AccessMode.OPEN_LAN_INSECURE) {
+      return@synchronized pairRejected("open_lan_not_enabled", authority.revisions())
+    }
+    admitAndCreateSession(attempt.requestId(), attempt.remoteAddress(), paired = false)
+  }
+
+  private fun admitAndCreateSession(
+      requestId: String,
+      remoteAddress: String,
+      paired: Boolean,
+  ): ManifoldAuthorityPort.PairDecision {
+    val receipt = strictJson(NativeManifoldBridge.nativeAdmitController(requestId))
     val revisions = receipt.getJSONObject("resulting_revisions").toRevisions()
     if (!receipt.getBoolean("admitted")) {
-      return@synchronized pairRejected(receipt.optionalReason(), revisions)
+      return pairRejected(receipt.optionalReason(), revisions)
     }
     val authority = safeStatus()
     val sessionExpiresAt =
         authority.sessionExpiresAt()
-            ?: return@synchronized pairRejected("missing_session_expiry", revisions)
-    val leaseId = admissionLeaseId(receipt)
-        ?: return@synchronized pairRejected("missing_controller_lease", revisions)
+            ?: return pairRejected("missing_session_expiry", revisions)
+    val leaseId = admissionLeaseId(receipt) ?: return pairRejected("missing_controller_lease", revisions)
     val cookieBytes = ByteArray(32).also(random::nextBytes)
     val cookie = Base64.getUrlEncoder().withoutPadding().encodeToString(cookieBytes)
     cookieBytes.fill(0)
-    pairingCodeUsed = true
+    pairingCodeUsed = paired
     pairingCodeDigest?.fill(0)
     pairingCodeDigest = null
     sessionCookieDigest = digest(cookie)
-    controllerRemoteAddress = attempt.remoteAddress()
+    controllerRemoteAddress = remoteAddress
     controllerLeaseId = leaseId
-    ManifoldAuthorityPort.PairDecision(
+    return ManifoldAuthorityPort.PairDecision(
         true,
         cookie,
         authority.controllerId(),
@@ -166,7 +197,7 @@ internal class NativeManifoldAuthorityPort private constructor() : ManifoldAutho
         receipt.getString("receipt_id"),
         leaseId,
         revisions,
-        "paired",
+        if (paired) "paired" else "open_lan_admitted",
     )
   }
 
@@ -290,6 +321,7 @@ internal class NativeManifoldAuthorityPort private constructor() : ManifoldAutho
         null,
         null,
         authority.revisions(),
+        authority.accessMode() ?: ManifoldAuthorityPort.AccessMode.PAIRED,
         reason,
     )
   }
@@ -332,6 +364,7 @@ internal class NativeManifoldAuthorityPort private constructor() : ManifoldAutho
     pairingCodeDigest = null
     pairingCodeUsed = false
     displayedAddress = null
+    activeAccessMode = null
   }
 
   private fun clearControllerTransport() {
@@ -367,6 +400,7 @@ internal class NativeManifoldAuthorityPort private constructor() : ManifoldAutho
                   NativeManifoldBridge.nativeInitialize(
                       context.packageName,
                       fingerprint,
+                      BuildConfig.DEBUG,
                   )
               ).toAuthoritySnapshot()
               NativeManifoldAuthorityPort()
@@ -420,6 +454,7 @@ internal class NativeManifoldAuthorityPort private constructor() : ManifoldAutho
     private fun JSONObject.toAuthoritySnapshot(): ManifoldAuthorityPort.AuthoritySnapshot =
         ManifoldAuthorityPort.AuthoritySnapshot(
             getString("state"),
+            optionalString("access_mode")?.let(::accessMode),
             ManifoldAuthorityPort.AuthorityRevisions(
                 getLong("local_revision"),
                 getLong("admission_revision"),
@@ -433,6 +468,13 @@ internal class NativeManifoldAuthorityPort private constructor() : ManifoldAutho
             optionalInstant("idle_expires_at_ms"),
             optionalString("last_accepted_command_receipt_id"),
         )
+
+    private fun accessMode(value: String): ManifoldAuthorityPort.AccessMode =
+        when (value) {
+          "paired" -> ManifoldAuthorityPort.AccessMode.PAIRED
+          "open_lan_insecure" -> ManifoldAuthorityPort.AccessMode.OPEN_LAN_INSECURE
+          else -> error("unknown access mode")
+        }
 
     private fun JSONObject.optionalObject(name: String): JSONObject? =
         if (has(name) && !isNull(name)) getJSONObject(name) else null

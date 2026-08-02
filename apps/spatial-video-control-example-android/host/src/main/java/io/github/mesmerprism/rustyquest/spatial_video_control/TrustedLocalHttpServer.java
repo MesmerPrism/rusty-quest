@@ -21,6 +21,7 @@ import java.util.LinkedHashMap;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
+import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -39,6 +40,11 @@ public final class TrustedLocalHttpServer implements Closeable {
         Asset load(String path) throws IOException;
     }
 
+    @FunctionalInterface
+    public interface DiagnosticSink {
+        void record(String phase, String failureKind);
+    }
+
     public record Asset(String contentType, byte[] bytes) {
         public Asset {
             Objects.requireNonNull(contentType, "contentType");
@@ -53,6 +59,7 @@ public final class TrustedLocalHttpServer implements Closeable {
 
     private final LocalControlCoordinator coordinator;
     private final AssetProvider assets;
+    private final DiagnosticSink diagnostics;
     private final ExecutorService connections =
             Executors.newFixedThreadPool(
                     TrustedLocalControlPolicy.MAX_CONCURRENT_CONNECTIONS,
@@ -70,10 +77,19 @@ public final class TrustedLocalHttpServer implements Closeable {
     private volatile ServerSocket serverSocket;
     private volatile Thread acceptThread;
     private volatile BoundEndpoint endpoint;
+    private volatile ManifoldAuthorityPort.AccessMode accessMode;
 
     public TrustedLocalHttpServer(LocalControlCoordinator coordinator, AssetProvider assets) {
+        this(coordinator, assets, (phase, failureKind) -> {});
+    }
+
+    public TrustedLocalHttpServer(
+            LocalControlCoordinator coordinator,
+            AssetProvider assets,
+            DiagnosticSink diagnostics) {
         this.coordinator = Objects.requireNonNull(coordinator, "coordinator");
         this.assets = Objects.requireNonNull(assets, "assets");
+        this.diagnostics = Objects.requireNonNull(diagnostics, "diagnostics");
     }
 
     public synchronized BoundEndpoint start(
@@ -95,6 +111,7 @@ public final class TrustedLocalHttpServer implements Closeable {
         String host = address.contains(":") ? "[" + address + "]:" + port : address + ":" + port;
         this.serverSocket = socket;
         this.endpoint = new BoundEndpoint(host, "http://" + host, port, bindAddress);
+        this.accessMode = offer.accessMode();
         running.set(true);
         acceptThread = new Thread(this::acceptLoop, "trusted-local-http-accept");
         acceptThread.setDaemon(true);
@@ -212,7 +229,34 @@ public final class TrustedLocalHttpServer implements Closeable {
                     writeResponse(output, 403, "application/json; charset=utf-8", error("origin_required"), Map.of());
                     return;
                 }
+                if (accessMode != ManifoldAuthorityPort.AccessMode.PAIRED) {
+                    writeResponse(output, 409, "application/json; charset=utf-8", error("paired_mode_not_enabled"), Map.of());
+                    return;
+                }
                 handlePair(request, output, socket);
+                return;
+            }
+            if (request.method().equals("POST") && request.target().equals("/v1/open-session")) {
+                if (!bound.origin().equals(origin)) {
+                    writeResponse(output, 403, "application/json; charset=utf-8", error("origin_required"), Map.of());
+                    return;
+                }
+                if (accessMode != ManifoldAuthorityPort.AccessMode.OPEN_LAN_INSECURE) {
+                    writeResponse(output, 409, "application/json; charset=utf-8", error("open_lan_not_enabled"), Map.of());
+                    return;
+                }
+                handleOpenLan(request, output, socket);
+                return;
+            }
+            if (request.method().equals("GET") && request.target().equals("/v1/access")) {
+                Map<String, Object> body = new LinkedHashMap<>();
+                body.put("access_mode", accessMode.protocolName());
+                body.put("authentication_required", accessMode == ManifoldAuthorityPort.AccessMode.PAIRED);
+                body.put("confidentiality", false);
+                body.put("warning", accessMode == ManifoldAuthorityPort.AccessMode.OPEN_LAN_INSECURE
+                        ? "anyone_on_this_network_can_request_control"
+                        : "trusted_lan_plaintext_transport");
+                writeResponse(output, 200, "application/json; charset=utf-8", JsonStrings.object(body), Map.of("Cache-Control", "no-store"));
                 return;
             }
             if (request.method().equals("GET")) {
@@ -222,10 +266,24 @@ public final class TrustedLocalHttpServer implements Closeable {
             writeResponse(output, 404, "text/plain; charset=utf-8", "not found", Map.of());
         } catch (SocketTimeoutException ignored) {
             // Bounded inactivity closes the connection.
+            recordDiagnostic("connection_timeout", ignored);
         } catch (Exception ignored) {
             // A malformed/untrusted connection is closed without expanding the surface.
+            recordDiagnostic("connection_failure", ignored);
         } finally {
             openSockets.remove(socket);
+        }
+    }
+
+    private void recordDiagnostic(String phase, Exception failure) {
+        recordDiagnostic(phase, failure.getClass().getSimpleName());
+    }
+
+    private void recordDiagnostic(String phase, String failureKind) {
+        try {
+            diagnostics.record(phase, failureKind);
+        } catch (RuntimeException ignored) {
+            // Diagnostics never affect the listener authority or connection lifecycle.
         }
     }
 
@@ -260,6 +318,47 @@ public final class TrustedLocalHttpServer implements Closeable {
         }
         ManifoldAuthorityPort.PairDecision decision =
                 coordinator.pair(socket.getInetAddress().getHostAddress(), pairing, Instant.now());
+        writeAdmissionResponse(output, decision, true);
+    }
+
+    private void handleOpenLan(HttpRequest request, OutputStream output, Socket socket)
+            throws IOException {
+        if (!"application/json".equals(request.header("content-type"))) {
+            writeResponse(
+                    output,
+                    400,
+                    "application/json; charset=utf-8",
+                    error("application_json_required"),
+                    Map.of());
+            return;
+        }
+        OpenLanRequest openRequest;
+        try {
+            openRequest = OpenLanRequest.parseCanonical(request.body());
+        } catch (IllegalArgumentException error) {
+            boolean withinLimit =
+                    recordMalformedAttempt(
+                            socket.getInetAddress().getHostAddress(), Instant.now());
+            writeResponse(
+                    output,
+                    withinLimit ? 400 : 429,
+                    "application/json; charset=utf-8",
+                    error(
+                            withinLimit
+                                    ? "invalid_canonical_open_lan_request"
+                                    : "malformed_request_rate_limited"),
+                    Map.of());
+            return;
+        }
+        ManifoldAuthorityPort.PairDecision decision =
+                coordinator.admitOpenLan(
+                        socket.getInetAddress().getHostAddress(), openRequest, Instant.now());
+        writeAdmissionResponse(output, decision, false);
+    }
+
+    private static void writeAdmissionResponse(
+            OutputStream output, ManifoldAuthorityPort.PairDecision decision, boolean paired)
+            throws IOException {
         if (!decision.accepted()) {
             writeResponse(
                     output,
@@ -305,7 +404,9 @@ public final class TrustedLocalHttpServer implements Closeable {
                 "lease_authority_revision",
                 decision.revisions().leaseAuthorityRevision());
         body.put("local_revision", decision.revisions().localRevision());
-        body.put("paired", true);
+        body.put("access_mode", paired ? "paired" : "open_lan_insecure");
+        body.put("paired", paired);
+        body.put("session_admitted", true);
         body.put("session_expires_at", decision.sessionExpiresAt().toString());
         writeResponse(
                 output,
@@ -319,7 +420,7 @@ public final class TrustedLocalHttpServer implements Closeable {
         String path =
                 switch (target) {
                     case "/" -> "/index.html";
-                    case "/app.js", "/styles.css" -> target;
+                    case "/app.js", "/styles.css", "/favicon.svg" -> target;
                     default -> null;
                 };
         if (path == null) {
@@ -382,13 +483,38 @@ public final class TrustedLocalHttpServer implements Closeable {
                 Math.toIntExact(TrustedLocalControlPolicy.WEBSOCKET_READ_TIMEOUT.toMillis()));
 
         Object writeLock = new Object();
+        ArrayBlockingQueue<String> outbound =
+                new ArrayBlockingQueue<>(TrustedLocalControlPolicy.MAX_PENDING_WEBSOCKET_EVENTS);
+        AtomicBoolean websocketOpen = new AtomicBoolean(true);
+        Thread writerThread =
+                new Thread(
+                        () -> {
+                            while (websocketOpen.get() && !socket.isClosed()) {
+                                try {
+                                    String event = outbound.take();
+                                    synchronized (writeLock) {
+                                        writeTextFrame(output, event);
+                                    }
+                                } catch (InterruptedException ignored) {
+                                    Thread.currentThread().interrupt();
+                                    return;
+                                } catch (IOException failure) {
+                                    recordDiagnostic("websocket_write_failure", failure);
+                                    try {
+                                        socket.close();
+                                    } catch (IOException ignored) {
+                                        // Already closing.
+                                    }
+                                    return;
+                                }
+                            }
+                        },
+                        "trusted-local-http-websocket-writer");
+        writerThread.setDaemon(true);
         LocalControlCoordinator.EventSink sink =
                 event -> {
-                    try {
-                        synchronized (writeLock) {
-                            writeTextFrame(output, event);
-                        }
-                    } catch (IOException error) {
+                    if (!outbound.offer(event)) {
+                        recordDiagnostic("websocket_event_queue", "capacity_reached");
                         try {
                             socket.close();
                         } catch (IOException ignored) {
@@ -397,6 +523,7 @@ public final class TrustedLocalHttpServer implements Closeable {
                     }
                 };
         coordinator.addEventSink(sink);
+        writerThread.start();
         try {
             while (running.get() && !socket.isClosed()) {
                 WebSocketFrame frame = readFrame(input);
@@ -439,7 +566,9 @@ public final class TrustedLocalHttpServer implements Closeable {
                         session, socket.getInetAddress().getHostAddress(), command, Instant.now());
             }
         } finally {
+            websocketOpen.set(false);
             coordinator.removeEventSink(sink);
+            writerThread.interrupt();
         }
     }
 
@@ -705,6 +834,7 @@ public final class TrustedLocalHttpServer implements Closeable {
             malformedByRemote.clear();
         }
         endpoint = null;
+        accessMode = null;
     }
 
     boolean tryAcquireConnectionSlot() {

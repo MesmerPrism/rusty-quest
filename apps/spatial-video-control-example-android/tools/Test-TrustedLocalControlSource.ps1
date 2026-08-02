@@ -69,10 +69,19 @@ if ($index -match '(?i)https?://' -or $script -match '(?i)https?://') {
 if ($script -match '(?i)eval\s*\(|new\s+Function\s*\(') {
   throw 'Controller JavaScript must not evaluate runtime code.'
 }
+if ($script -match 'randomUUID\s*\(' -or $script -notmatch 'crypto\.getRandomValues\(') {
+  throw 'Browser request IDs must work on the intentional plaintext LAN origin.'
+}
 
 $runtimeSources =
   Get-ChildItem -Recurse -File -LiteralPath (Join-Path $appRoot 'host\src\main') |
     Where-Object Extension -in @('.java')
+$commandEnvelopeSource = Get-Content -Raw -LiteralPath (
+  Join-Path $appRoot 'host\src\main\java\io\github\mesmerprism\rustyquest\spatial_video_control\CommandEnvelope.java'
+)
+if (-not $commandEnvelopeSource.Contains('\"payload\":\\{\\},')) {
+  throw 'Empty command payload braces must remain escaped for the Android ICU regex engine.'
+}
 $assetAndRuntimeText =
   @($runtimeSources.FullName) +
   @(
@@ -93,6 +102,28 @@ if ($manifest -notmatch 'android\.permission\.INTERNET') {
 }
 if ($manifest -match 'CAMERA|RECORD_AUDIO|BLUETOOTH|QUERY_ALL_PACKAGES|MANAGE_EXTERNAL_STORAGE') {
   throw 'Android example gained an unrelated permission.'
+}
+if ($manifest -match 'DebugShellControlProvider|android\.permission\.DUMP') {
+  throw 'The release/main manifest must not expose the debug shell provider.'
+}
+$debugManifest = Get-Content -Raw -LiteralPath (Join-Path $appRoot 'app\src\debug\AndroidManifest.xml')
+$debugProvider = Get-Content -Raw -LiteralPath (
+  Join-Path $appRoot 'app\src\debug\java\io\github\mesmerprism\rustyquest\spatial_video_control\DebugShellControlProvider.kt'
+)
+if ($debugManifest -notmatch 'android\.permission\.DUMP' -or
+    $debugManifest -notmatch 'android:exported="true"' -or
+    $debugProvider -notmatch 'Binder\.getCallingUid\(\) == SHELL_UID' -or
+    $debugProvider -notmatch 'SHELL_UID = 2000') {
+  throw 'The debug-only provider lost its DUMP permission or exact shell-UID gate.'
+}
+$expectedDebugMethods = @('status', 'enable_paired', 'enable_open_lan', 'revoke')
+foreach ($method in $expectedDebugMethods) {
+  if ($debugProvider -notmatch ('"' + [regex]::Escape($method) + '"')) {
+    throw "Missing closed debug provider method: $method"
+  }
+}
+if ($debugProvider -match 'ProcessBuilder|Runtime\.exec|startActivity|sendBroadcast|Class\.forName') {
+  throw 'Debug provider gained a generic execution, component, or query route.'
 }
 $gradle = Get-Content -Raw -LiteralPath (Join-Path $appRoot 'app\build.gradle.kts')
 if ($gradle -notmatch 'TRUSTED_LOCAL_HTTP_ENABLED_DEFAULT", "false"') {
@@ -142,6 +173,19 @@ if ($activity -notmatch 'ButtonBits\.ButtonTriggerL' -or
     $activity -notmatch 'ButtonBits\.ButtonTriggerR' -or
     $activity -match 'ButtonBits\.ButtonA') {
   throw 'Panel clicks must use triggers only; right A is reserved for toggle/recenter.'
+}
+$androidAdapter = Get-Content -Raw -LiteralPath (
+  Join-Path $appRoot 'app\src\main\java\io\github\mesmerprism\rustyquest\spatial_video_control\AndroidTrustedLocalControlAdapter.kt'
+)
+$nsdAdvertiser = Get-Content -Raw -LiteralPath (
+  Join-Path $appRoot 'app\src\main\java\io\github\mesmerprism\rustyquest\spatial_video_control\LocalControlNsdAdvertiser.kt'
+)
+if ($activity -notmatch 'Open LAN \(unsafe\)' -or
+    $androidAdapter -notmatch 'enableFromDebugShell' -or
+    $androidAdapter -notmatch 'open_lan_insecure_anyone_can_connect' -or
+    $nsdAdvertiser -notmatch '_rustyquest-control\._tcp\.' -or
+    $nsdAdvertiser -match '(?i)pairing.?code|session.?cookie|token') {
+  throw 'Open LAN labelling, debug operator route, or secret-free DNS-SD contract regressed.'
 }
 
 $lockPath = Join-Path $appRoot 'native\manifold-source.lock.json'

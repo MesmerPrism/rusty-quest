@@ -13,10 +13,10 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 getrandom = "0.2"
 hex = "0.4"
-rusty-manifold-admission = { git = "https://github.com/MesmerPrism/rusty-manifold.git", rev = "1fe0f786a10371334c00296a5b4deff493796af1" }
-rusty-manifold-local-control = { git = "https://github.com/MesmerPrism/rusty-manifold.git", rev = "1fe0f786a10371334c00296a5b4deff493796af1" }
-rusty-manifold-model = { git = "https://github.com/MesmerPrism/rusty-manifold.git", rev = "1fe0f786a10371334c00296a5b4deff493796af1", features = ["serde"] }
-rusty-manifold-runtime-host = { git = "https://github.com/MesmerPrism/rusty-manifold.git", rev = "1fe0f786a10371334c00296a5b4deff493796af1" }
+rusty-manifold-admission = { git = "https://github.com/MesmerPrism/rusty-manifold.git", rev = "3bf721eaa2f0551b01b33d8264fb7afa5f72749d" }
+rusty-manifold-local-control = { git = "https://github.com/MesmerPrism/rusty-manifold.git", rev = "3bf721eaa2f0551b01b33d8264fb7afa5f72749d" }
+rusty-manifold-model = { git = "https://github.com/MesmerPrism/rusty-manifold.git", rev = "3bf721eaa2f0551b01b33d8264fb7afa5f72749d", features = ["serde"] }
+rusty-manifold-runtime-host = { git = "https://github.com/MesmerPrism/rusty-manifold.git", rev = "3bf721eaa2f0551b01b33d8264fb7afa5f72749d" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"

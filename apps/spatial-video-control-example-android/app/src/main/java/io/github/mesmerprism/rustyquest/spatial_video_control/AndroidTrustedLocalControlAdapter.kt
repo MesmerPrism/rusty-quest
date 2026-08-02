@@ -3,6 +3,7 @@ package io.github.mesmerprism.rustyquest.spatial_video_control
 import android.content.Context
 import android.os.Handler
 import android.os.Looper
+import android.util.Log
 import java.io.Closeable
 import java.net.InetAddress
 import java.time.Duration
@@ -13,6 +14,8 @@ data class HeadsetControllerState(
     val listenerEnabled: Boolean = false,
     val displayedAddress: String? = null,
     val pairingCode: String? = null,
+    val accessMode: ManifoldAuthorityPort.AccessMode? = null,
+    val discoveryStatus: String? = null,
     val enableExpiresAt: Instant? = null,
     val controllerConnected: Boolean = false,
     val controllerLabel: String? = null,
@@ -35,8 +38,16 @@ class AndroidTrustedLocalControlAdapter(
     player: PlayerPort,
     private val onState: (HeadsetControllerState) -> Unit,
 ) : Closeable {
+  private companion object {
+    const val TRANSPORT_DIAGNOSTIC_TAG = "RqLocalControl"
+  }
+
   private val mainHandler = Handler(Looper.getMainLooper())
   private val random = SecureRandom()
+  private val discovery =
+      LocalControlNsdAdvertiser(context) { nextStatus ->
+        mainHandler.post { publish(state.copy(discoveryStatus = nextStatus)) }
+      }
   private val coordinator =
       LocalControlCoordinator(authority, player, VideoCatalog.bundledSynthetic())
   private var foreground = false
@@ -61,6 +72,39 @@ class AndroidTrustedLocalControlAdapter(
   fun enableFromWearer(
       bindAddress: InetAddress,
       requestedWindow: Duration = Duration.ofMinutes(2),
+  ) = enable(
+      bindAddress,
+      requestedWindow,
+      ManifoldAuthorityPort.AccessMode.PAIRED,
+      ManifoldAuthorityPort.EnableActor.WEARER,
+  )
+
+  fun enableOpenLanFromWearer(
+      bindAddress: InetAddress,
+      requestedWindow: Duration = Duration.ofMinutes(2),
+  ) = enable(
+      bindAddress,
+      requestedWindow,
+      ManifoldAuthorityPort.AccessMode.OPEN_LAN_INSECURE,
+      ManifoldAuthorityPort.EnableActor.WEARER,
+  )
+
+  fun enableFromDebugShell(
+      bindAddress: InetAddress,
+      accessMode: ManifoldAuthorityPort.AccessMode,
+      requestedWindow: Duration = Duration.ofMinutes(2),
+  ) = enable(
+      bindAddress,
+      requestedWindow,
+      accessMode,
+      ManifoldAuthorityPort.EnableActor.DEBUG_SHELL,
+  )
+
+  private fun enable(
+      bindAddress: InetAddress,
+      requestedWindow: Duration,
+      accessMode: ManifoldAuthorityPort.AccessMode,
+      enableActor: ManifoldAuthorityPort.EnableActor,
   ) {
     check(Looper.myLooper() == Looper.getMainLooper()) {
       "wearer enable must run on the foreground UI thread"
@@ -84,6 +128,8 @@ class AndroidTrustedLocalControlAdapter(
                 requestedWindow,
                 now,
                 true,
+                accessMode,
+                enableActor,
             )
         )
     if (!offer.enabled()) {
@@ -96,29 +142,37 @@ class AndroidTrustedLocalControlAdapter(
       return
     }
     val nextServer =
-        TrustedLocalHttpServer(coordinator) { path ->
-          val assetName =
-              when (path) {
-                "/index.html" -> "control/index.html"
-                "/app.js" -> "control/app.js"
-                "/styles.css" -> "control/styles.css"
-                else -> null
+        TrustedLocalHttpServer(
+            coordinator,
+            { path ->
+              val assetName =
+                  when (path) {
+                    "/index.html" -> "control/index.html"
+                    "/app.js" -> "control/app.js"
+                    "/styles.css" -> "control/styles.css"
+                    "/favicon.svg" -> "control/favicon.svg"
+                    else -> null
+                  }
+              if (assetName == null) {
+                null
+              } else {
+                val contentType =
+                    when {
+                      path.endsWith(".js") -> "text/javascript; charset=utf-8"
+                      path.endsWith(".css") -> "text/css; charset=utf-8"
+                      path.endsWith(".svg") -> "image/svg+xml"
+                      else -> "text/html; charset=utf-8"
+                    }
+                TrustedLocalHttpServer.Asset(
+                    contentType,
+                    context.assets.open(assetName).use { it.readBytes() },
+                )
               }
-          if (assetName == null) {
-            null
-          } else {
-            val contentType =
-                when {
-                  path.endsWith(".js") -> "text/javascript; charset=utf-8"
-                  path.endsWith(".css") -> "text/css; charset=utf-8"
-                  else -> "text/html; charset=utf-8"
-                }
-            TrustedLocalHttpServer.Asset(
-                contentType,
-                context.assets.open(assetName).use { it.readBytes() },
-            )
-          }
-        }
+            },
+            { phase, failureKind ->
+              Log.w(TRANSPORT_DIAGNOSTIC_TAG, "$phase:$failureKind")
+            },
+        )
     val endpoint =
         runCatching { nextServer.start(offer, bindAddress) }
             .getOrElse { error ->
@@ -144,12 +198,19 @@ class AndroidTrustedLocalControlAdapter(
         HeadsetControllerState(
             listenerEnabled = true,
             displayedAddress = endpoint.origin(),
-            pairingCode = offer.singleUseCode(),
+            pairingCode = offer.singleUseCode().takeIf(String::isNotEmpty),
+            accessMode = accessMode,
             enableExpiresAt = offer.expiresAt(),
             authority = authority.snapshot(),
-            status = "awaiting_manual_pairing",
+            status =
+                if (accessMode == ManifoldAuthorityPort.AccessMode.PAIRED) {
+                  "awaiting_manual_pairing"
+                } else {
+                  "open_lan_insecure_anyone_can_connect"
+                },
         )
     )
+    discovery.start(endpoint.port(), accessMode)
     mainHandler.removeCallbacks(expiryAction)
     mainHandler.postDelayed(expiryAction, requestedWindow.toMillis())
   }
@@ -163,6 +224,7 @@ class AndroidTrustedLocalControlAdapter(
     )
     val authorityState = authority.snapshot()
     if (!authorityState.enabled() && state.listenerEnabled) {
+      discovery.close()
       server?.close()
       server = null
     }
@@ -172,7 +234,9 @@ class AndroidTrustedLocalControlAdapter(
             listenerEnabled = remainsEnabled,
             displayedAddress = if (remainsEnabled) state.displayedAddress else null,
             pairingCode =
-                if (remainsEnabled && !authorityState.controllerConnected()) {
+                if (remainsEnabled &&
+                    state.accessMode == ManifoldAuthorityPort.AccessMode.PAIRED &&
+                    !authorityState.controllerConnected()) {
                   state.pairingCode
                 } else {
                   null
@@ -184,6 +248,8 @@ class AndroidTrustedLocalControlAdapter(
                 when {
                   !remainsEnabled -> "disabled_or_expired"
                   authorityState.controllerConnected() -> "controller_connected"
+                  state.accessMode == ManifoldAuthorityPort.AccessMode.OPEN_LAN_INSECURE ->
+                      "open_lan_insecure_anyone_can_connect"
                   else -> "awaiting_manual_pairing"
                 },
         )
@@ -192,6 +258,7 @@ class AndroidTrustedLocalControlAdapter(
 
   fun revokeFromHeadset(reason: String = "wearer_revoke") {
     mainHandler.removeCallbacks(expiryAction)
+    discovery.close()
     server?.close()
     server = null
     val before = authority.snapshot()

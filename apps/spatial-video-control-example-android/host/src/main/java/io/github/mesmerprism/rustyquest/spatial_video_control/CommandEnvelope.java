@@ -19,7 +19,7 @@ public record CommandEnvelope(
     private static final Pattern NO_PAYLOAD =
             Pattern.compile(
                     "\\{\"command\":\"([a-z_]+)\",\"expected_authority_revision\":([0-9]{1,19}),"
-                            + "\"expected_player_revision\":([0-9]{1,19}),\"payload\":\\{},"
+                            + "\"expected_player_revision\":([0-9]{1,19}),\"payload\":\\{\\},"
                             + "\"request_id\":\"([a-z0-9][a-z0-9-]{15,63})\"\\}");
     private static final Pattern VIDEO_PAYLOAD =
             Pattern.compile(

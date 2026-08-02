@@ -11,7 +11,8 @@ use rusty_manifold_admission::{
     ManifoldClientIdentity, ADMISSION_SNAPSHOT_SCHEMA,
 };
 use rusty_manifold_local_control::{
-    ManifoldLocalControlAdmissionRequest, ManifoldLocalControlAuthority,
+    ManifoldLocalControlAccessMode, ManifoldLocalControlAdmissionRequest,
+    ManifoldLocalControlAuthority, ManifoldLocalControlEnableActor,
     ManifoldLocalControlCommandDescriptor, ManifoldLocalControlCommandRequest,
     ManifoldLocalControlDisableReceipt, ManifoldLocalControlDisableRequest,
     ManifoldLocalControlExpiryReceipt, ManifoldLocalControlExpiryRequest,
@@ -66,11 +67,19 @@ pub struct LocalControlEngine {
 }
 
 impl LocalControlEngine {
-    pub fn new(platform_subject: &str, signing_fingerprint: &str) -> Result<Self, String> {
+    pub fn new(
+        platform_subject: &str,
+        signing_fingerprint: &str,
+        allow_debug_shell_operator: bool,
+    ) -> Result<Self, String> {
         validate_platform_identity(platform_subject, signing_fingerprint)?;
         let clock_started = MonotonicInstant::now();
         let wall_ms = system_wall_ms()?;
-        let policy = policy(platform_subject, signing_fingerprint)?;
+        let policy = policy(
+            platform_subject,
+            signing_fingerprint,
+            allow_debug_shell_operator,
+        )?;
         let initial_clock = clock(1, wall_ms, 0, 0, ClockHealth::Healthy);
         let authority = ManifoldLocalControlAuthority::new(
             policy.clone(),
@@ -92,8 +101,15 @@ impl LocalControlEngine {
         })
     }
 
-    pub fn matches_identity(&self, platform_subject: &str, signing_fingerprint: &str) -> bool {
-        self.platform_subject == platform_subject && self.signing_fingerprint == signing_fingerprint
+    pub fn matches_identity(
+        &self,
+        platform_subject: &str,
+        signing_fingerprint: &str,
+        allow_debug_shell_operator: bool,
+    ) -> bool {
+        self.platform_subject == platform_subject
+            && self.signing_fingerprint == signing_fingerprint
+            && self.authority.policy().allow_debug_shell_operator == allow_debug_shell_operator
     }
 
     pub fn safe_status_json(&self) -> Result<String, String> {
@@ -104,6 +120,8 @@ impl LocalControlEngine {
         &mut self,
         external_request_id: &str,
         requested_window_ms: u64,
+        access_mode: &str,
+        enable_actor: &str,
     ) -> Result<String, String> {
         if requested_window_ms == 0 || requested_window_ms > MAX_WINDOW_MS {
             return Err("pairing_window_out_of_bounds".to_owned());
@@ -113,9 +131,24 @@ impl LocalControlEngine {
         let request_id = derived_external_id("request.local.window.open", external_request_id);
         let wearer_evidence_id =
             derived_external_id("evidence.wearer.window.open", external_request_id);
+        let access_mode = match access_mode {
+            "paired" => ManifoldLocalControlAccessMode::Paired,
+            "open_lan_insecure" => ManifoldLocalControlAccessMode::OpenLanInsecure,
+            _ => return Err("invalid_access_mode".to_owned()),
+        };
+        let enable_actor = match enable_actor {
+            "wearer" => ManifoldLocalControlEnableActor::Wearer,
+            "debug_shell" if self.authority.policy().allow_debug_shell_operator => {
+                ManifoldLocalControlEnableActor::DebugShell
+            }
+            "debug_shell" => return Err("debug_shell_operator_disabled".to_owned()),
+            _ => return Err("invalid_enable_actor".to_owned()),
+        };
         let request = ManifoldLocalControlWindowRequest {
             schema_id: schema(LOCAL_CONTROL_WINDOW_REQUEST_SCHEMA),
             window_id: derived_external_id("window.local", external_request_id),
+            access_mode,
+            enable_actor,
             expected_local_revision: status.local_revision,
             opened_at_ms: wall_ms,
             expires_at_ms: wall_ms.saturating_add(requested_window_ms),
@@ -139,6 +172,9 @@ impl LocalControlEngine {
         let window_expires_at_ms = status
             .window_expires_at_ms
             .ok_or_else(|| "pairing_window_not_open".to_owned())?;
+        let access_mode = status
+            .access_mode
+            .ok_or_else(|| "access_window_mode_missing".to_owned())?;
         let request_id = derived_external_id("request.local.controller.admit", external_request_id);
         let request = ManifoldLocalControlAdmissionRequest {
             schema_id: schema(LOCAL_CONTROL_ADMISSION_REQUEST_SCHEMA),
@@ -149,15 +185,19 @@ impl LocalControlEngine {
             expected_host_revision: status.host_revision,
             evidence: ManifoldLocalControllerEvidence {
                 schema_id: schema(LOCAL_CONTROL_CONTROLLER_EVIDENCE_SCHEMA),
-                evidence_id: derived_external_id(
-                    "evidence.local.code.verified",
-                    external_request_id,
-                ),
+                evidence_id: derived_external_id("evidence.local.admission", external_request_id),
                 adapter_id: id(ADAPTER_ID),
                 window_id,
                 controller_id: id(CONTROLLER_ID),
-                presentation: ManifoldLocalControlPairingPresentation::ManualEntry,
-                pairing_code_verified: true,
+                presentation: match access_mode {
+                    ManifoldLocalControlAccessMode::Paired => {
+                        ManifoldLocalControlPairingPresentation::ManualEntry
+                    }
+                    ManifoldLocalControlAccessMode::OpenLanInsecure => {
+                        ManifoldLocalControlPairingPresentation::OpenLanInsecure
+                    }
+                },
+                pairing_code_verified: access_mode == ManifoldLocalControlAccessMode::Paired,
                 observed_at_ms: wall_ms,
                 expires_at_ms: window_expires_at_ms,
             },
@@ -427,6 +467,7 @@ impl ExpiryBridgeOutcome {
 fn policy(
     platform_subject: &str,
     signing_fingerprint: &str,
+    allow_debug_shell_operator: bool,
 ) -> Result<ManifoldLocalControlPolicy, String> {
     Ok(ManifoldLocalControlPolicy {
         schema_id: schema(LOCAL_CONTROL_POLICY_SCHEMA),
@@ -446,6 +487,7 @@ fn policy(
         idle_timeout_ms: IDLE_MS,
         rate_window_ms: RATE_WINDOW_MS,
         max_commands_per_window: RATE_LIMIT,
+        allow_debug_shell_operator,
     })
 }
 
@@ -763,7 +805,7 @@ fn with_engine<T>(
 mod android_jni {
     use super::*;
     use jni::objects::{JClass, JString};
-    use jni::sys::{jlong, jstring};
+    use jni::sys::{jboolean, jlong, jstring};
     use jni::JNIEnv;
     use serde_json::json;
     use std::panic::{catch_unwind, AssertUnwindSafe};
@@ -798,6 +840,7 @@ mod android_jni {
         _class: JClass<'_>,
         platform_subject: JString<'_>,
         signing_fingerprint: JString<'_>,
+        allow_debug_shell_operator: jboolean,
     ) -> jstring {
         let result = guarded(|| {
             let platform_subject = java_string(&mut env, platform_subject)?;
@@ -807,12 +850,20 @@ mod android_jni {
                 .lock()
                 .map_err(|_| "native_authority_lock_poisoned".to_owned())?;
             if let Some(engine) = guard.as_mut() {
-                if !engine.matches_identity(&platform_subject, &signing_fingerprint) {
+                if !engine.matches_identity(
+                    &platform_subject,
+                    &signing_fingerprint,
+                    allow_debug_shell_operator != 0,
+                ) {
                     return Err("native_authority_identity_changed".to_owned());
                 }
                 return engine.safe_status_json();
             }
-            let engine = LocalControlEngine::new(&platform_subject, &signing_fingerprint)?;
+            let engine = LocalControlEngine::new(
+                &platform_subject,
+                &signing_fingerprint,
+                allow_debug_shell_operator != 0,
+            )?;
             let status = engine.safe_status_json()?;
             *guard = Some(engine);
             Ok(status)
@@ -826,12 +877,23 @@ mod android_jni {
         _class: JClass<'_>,
         request_id: JString<'_>,
         requested_window_ms: jlong,
+        access_mode: JString<'_>,
+        enable_actor: JString<'_>,
     ) -> jstring {
         let result = guarded(|| {
             let request_id = java_string(&mut env, request_id)?;
+            let access_mode = java_string(&mut env, access_mode)?;
+            let enable_actor = java_string(&mut env, enable_actor)?;
             let requested_window_ms = u64::try_from(requested_window_ms)
                 .map_err(|_| "invalid_window_lifetime".to_owned())?;
-            with_engine(|engine| engine.open_window_json(&request_id, requested_window_ms))
+            with_engine(|engine| {
+                engine.open_window_json(
+                    &request_id,
+                    requested_window_ms,
+                    &access_mode,
+                    &enable_actor,
+                )
+            })
         });
         result_string(&mut env, result)
     }
@@ -926,6 +988,7 @@ mod tests {
         LocalControlEngine::new(
             "io.github.mesmerprism.rustyquest.spatial_video_control_example",
             &format!("sha256:{}", "a1".repeat(32)),
+            true,
         )
         .expect("engine")
     }
@@ -959,7 +1022,7 @@ mod tests {
         let mut engine = engine();
         let open: Value = serde_json::from_str(
             &engine
-                .open_window_json("browser-open-0001", 60_000)
+                .open_window_json("browser-open-0001", 60_000, "paired", "wearer")
                 .expect("open"),
         )
         .expect("open json");
@@ -997,7 +1060,7 @@ mod tests {
     fn listener_failure_can_disable_before_admission() {
         let mut engine = engine();
         engine
-            .open_window_json("browser-open-0002", 60_000)
+            .open_window_json("browser-open-0002", 60_000, "paired", "wearer")
             .expect("open");
         let disabled: ManifoldLocalControlDisableReceipt = serde_json::from_str(
             &engine

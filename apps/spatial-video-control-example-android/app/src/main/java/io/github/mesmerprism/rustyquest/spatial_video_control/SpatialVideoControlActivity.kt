@@ -69,6 +69,7 @@ import com.meta.spatial.vr.LocomotionControls
 import com.meta.spatial.vr.VRFeature
 import com.meta.spatial.vr.VrInputSystemType
 import kotlin.math.sqrt
+import org.json.JSONObject
 
 private val PanelBackground = Color(0xFF141820)
 private val PanelSurface = Color(0xFF202634)
@@ -90,7 +91,7 @@ private data class ControlPanelPose(
  * remains disabled until the wearer reviews one unambiguous private address.
  */
 @OptIn(SpatialSDKExperimentalAPI::class)
-open class SpatialVideoControlActivity : AppSystemActivity() {
+open class SpatialVideoControlActivity : AppSystemActivity(), DebugShellControlTarget {
   private lateinit var player: Media3SpatialPlayerAdapter
   private var control: AndroidTrustedLocalControlAdapter? = null
   private var controllerState by mutableStateOf(HeadsetControllerState())
@@ -103,6 +104,7 @@ open class SpatialVideoControlActivity : AppSystemActivity() {
   private var videoPanel: Entity? = null
   private var nextControllerStateRefreshMs = 0L
   private var nextBindCandidateRefreshMs = 0L
+  private var operatorForeground = false
   private var lastSpatialRightPrimarySource: String? = null
   private val rightControllerPanelToggle =
       RightControllerPanelToggleArbiter(
@@ -134,6 +136,9 @@ open class SpatialVideoControlActivity : AppSystemActivity() {
             runOnUiThread { controllerState = next }
           }
         }
+    if (BuildConfig.DEBUG) {
+      DebugShellControlBridge.attach(this)
+    }
     refreshPrivateAddressCandidate()
   }
 
@@ -185,6 +190,7 @@ open class SpatialVideoControlActivity : AppSystemActivity() {
 
   override fun onResume() {
     super.onResume()
+    operatorForeground = true
     refreshPrivateAddressCandidate()
     control?.setWearerForeground(true)
     control?.refreshVisibleState()
@@ -205,11 +211,15 @@ open class SpatialVideoControlActivity : AppSystemActivity() {
   }
 
   override fun onPause() {
+    operatorForeground = false
     control?.setWearerForeground(false)
     super.onPause()
   }
 
   override fun onDestroy() {
+    if (BuildConfig.DEBUG) {
+      DebugShellControlBridge.detach(this)
+    }
     control?.close()
     player.release()
     controlPanel = null
@@ -217,6 +227,56 @@ open class SpatialVideoControlActivity : AppSystemActivity() {
     controlPanelComposeView = null
     videoPanel = null
     super.onDestroy()
+  }
+
+  override fun debugStatus(): String = debugReceipt("status", confirmed = true)
+
+  override fun debugEnable(accessMode: ManifoldAuthorityPort.AccessMode): String {
+    check(BuildConfig.DEBUG) { "debug_shell_operator_disabled" }
+    check(operatorForeground) { "foreground_activity_required" }
+    val address = bindCandidate.address() ?: error("private_bind_address_unavailable")
+    val adapter = control ?: error("manifold_authority_unavailable")
+    adapter.enableFromDebugShell(address, accessMode)
+    val confirmed =
+        controllerState.listenerEnabled && controllerState.accessMode == accessMode
+    return debugReceipt(
+        if (accessMode == ManifoldAuthorityPort.AccessMode.PAIRED) {
+          "enable_paired"
+        } else {
+          "enable_open_lan"
+        },
+        confirmed,
+    )
+  }
+
+  override fun debugRevoke(): String {
+    check(BuildConfig.DEBUG) { "debug_shell_operator_disabled" }
+    control?.revokeFromHeadset("debug_shell_revoke")
+    return debugReceipt("revoke", confirmed = !controllerState.listenerEnabled)
+  }
+
+  private fun debugReceipt(action: String, confirmed: Boolean): String {
+    val playerState = player.snapshot()
+    return JSONObject()
+        .put("schema", "rusty.quest.debug_local_control_receipt.v1")
+        .put("action", action)
+        .put("phase", if (confirmed) "confirmed" else "pending")
+        .put("confirmed", confirmed)
+        .put("foreground", operatorForeground)
+        .put("listener_enabled", controllerState.listenerEnabled)
+        .put("access_mode", controllerState.accessMode?.protocolName() ?: JSONObject.NULL)
+        .put("origin", controllerState.displayedAddress ?: JSONObject.NULL)
+        .put("pairing_code", controllerState.pairingCode ?: JSONObject.NULL)
+        .put("enable_expires_at", controllerState.enableExpiresAt?.toString() ?: JSONObject.NULL)
+        .put("controller_connected", controllerState.controllerConnected)
+        .put("authority_revision", controllerState.authorityRevision)
+        .put("discovery_status", controllerState.discoveryStatus ?: JSONObject.NULL)
+        .put("player_revision", playerState.revision())
+        .put("selected_video_id", playerState.selectedVideoId() ?: JSONObject.NULL)
+        .put("playing", playerState.playing())
+        .put("playback_state", playerState.playbackState())
+        .put("position_ms", playerState.positionMs())
+        .toString()
   }
 
   override fun dispatchKeyEvent(event: KeyEvent): Boolean {
@@ -344,7 +404,15 @@ open class SpatialVideoControlActivity : AppSystemActivity() {
                   if (controllerState.listenerEnabled) controllerState.status else "Listener disabled",
                   style = MaterialTheme.typography.titleMedium,
                   fontWeight = FontWeight.SemiBold,
-                  color = if (controllerState.listenerEnabled) PanelAccent else PanelInk,
+                  color =
+                      if (controllerState.accessMode ==
+                          ManifoldAuthorityPort.AccessMode.OPEN_LAN_INSECURE) {
+                        PanelWarm
+                      } else if (controllerState.listenerEnabled) {
+                        PanelAccent
+                      } else {
+                        PanelInk
+                      },
               )
               Text(
                   controllerState.displayedAddress
@@ -356,8 +424,14 @@ open class SpatialVideoControlActivity : AppSystemActivity() {
                   style = MaterialTheme.typography.bodyLarge,
               )
               Text(
-                  controllerState.pairingCode?.let { "Single-use code  $it" }
-                      ?: "No pairing code active",
+                  when {
+                    controllerState.pairingCode != null ->
+                        "Single-use code  ${controllerState.pairingCode}"
+                    controllerState.accessMode ==
+                        ManifoldAuthorityPort.AccessMode.OPEN_LAN_INSECURE ->
+                        "UNSAFE: no pairing code required"
+                    else -> "No pairing code active"
+                  },
                   style = MaterialTheme.typography.titleLarge,
                   fontWeight = FontWeight.Bold,
                   color = if (controllerState.pairingCode != null) PanelWarm else PanelMuted,
@@ -381,10 +455,24 @@ open class SpatialVideoControlActivity : AppSystemActivity() {
               )
             }
             Text(
-                "Trusted-LAN authentication only; traffic is not confidential.",
+                if (controllerState.accessMode ==
+                    ManifoldAuthorityPort.AccessMode.OPEN_LAN_INSECURE) {
+                  "UNSAFE OPEN LAN: anyone on this network may claim control. Traffic is not encrypted."
+                } else {
+                  "Trusted-LAN authentication only; traffic is not confidential."
+                },
                 style = MaterialTheme.typography.bodyMedium,
-                color = PanelMuted,
+                color =
+                    if (controllerState.accessMode ==
+                        ManifoldAuthorityPort.AccessMode.OPEN_LAN_INSECURE) {
+                      PanelWarm
+                    } else {
+                      PanelMuted
+                    },
             )
+            controllerState.discoveryStatus?.let { discovery ->
+              Text(discovery, style = MaterialTheme.typography.bodySmall, color = PanelMuted)
+            }
           }
           Row(
               modifier = Modifier.fillMaxWidth(),
@@ -409,11 +497,14 @@ open class SpatialVideoControlActivity : AppSystemActivity() {
                   bindCandidate.address()?.let { address -> control?.enableFromWearer(address) }
                 },
             ) {
-              Text("Enable for 2 minutes", fontWeight = FontWeight.SemiBold)
+              Text("Paired control", fontWeight = FontWeight.SemiBold)
             }
             Button(
                 modifier = Modifier.height(52.dp),
-                enabled = controllerState.listenerEnabled,
+                enabled =
+                    control != null &&
+                        bindCandidate.available() &&
+                        !controllerState.listenerEnabled,
                 shape = RoundedCornerShape(8.dp),
                 colors =
                     ButtonDefaults.buttonColors(
@@ -422,10 +513,29 @@ open class SpatialVideoControlActivity : AppSystemActivity() {
                         disabledContainerColor = PanelSurfaceAlt,
                         disabledContentColor = PanelMuted,
                     ),
-                onClick = { control?.revokeFromHeadset() },
+                onClick = {
+                  bindCandidate.address()?.let { address ->
+                    control?.enableOpenLanFromWearer(address)
+                  }
+                },
             ) {
-              Text("Revoke", fontWeight = FontWeight.SemiBold)
+              Text("Open LAN (unsafe)", fontWeight = FontWeight.SemiBold)
             }
+          }
+          Button(
+              modifier = Modifier.height(52.dp),
+              enabled = controllerState.listenerEnabled,
+              shape = RoundedCornerShape(8.dp),
+              colors =
+                  ButtonDefaults.buttonColors(
+                      containerColor = PanelSurfaceAlt,
+                      contentColor = PanelInk,
+                      disabledContainerColor = PanelSurfaceAlt,
+                      disabledContentColor = PanelMuted,
+                  ),
+              onClick = { control?.revokeFromHeadset() },
+          ) {
+            Text("Revoke network control", fontWeight = FontWeight.SemiBold)
           }
           Text(
               "Point and use either trigger. Hold a grip button to move the panel.",

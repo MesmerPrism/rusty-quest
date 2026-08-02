@@ -57,6 +57,21 @@ p {
   color: #c7d9dd;
 }
 
+.danger-card {
+  border-color: #f59e0b;
+  background: #2a1b08;
+}
+
+.danger-card h2,
+.danger-card strong {
+  color: #fbbf24;
+}
+
+.danger-card button {
+  background: #f59e0b;
+  color: #211100;
+}
+
 form {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
