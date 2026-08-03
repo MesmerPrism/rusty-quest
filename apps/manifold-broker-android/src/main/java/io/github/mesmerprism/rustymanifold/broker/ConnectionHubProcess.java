@@ -26,6 +26,18 @@ public final class ConnectionHubProcess {
 
     private ConnectionHubProcess(Context context) {
         this.context = context.getApplicationContext();
+        // Every Hub entry point (Activity, Service, Binder, or the debug-only
+        // shell provider) must establish the shared Manifold admission owner
+        // before the Hub authority derives its sealed product admission.
+        // Activity/Service callers already do this, but keeping the ordering
+        // here makes the process owner independently correct and idempotent.
+        try {
+            ManifoldRuntimeAuthorityBridge.initialize();
+        } catch (Exception error) {
+            throw new IllegalStateException(
+                    "Manifold broker authority initialization failed for Connection Hub",
+                    error);
+        }
         this.runtime = new ConnectionHubRuntime(
                 new ManifoldConnectionHubAuthority(),
                 new AndroidConnectionHubStateStore(this.context),

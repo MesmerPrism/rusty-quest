@@ -77,6 +77,11 @@ if ($server -notmatch 'synchronized \(socketSessions\)[\s\S]*runtime\.replaceTra
 }
 if ($server -match 'Access-Control-Allow-Origin' -or $server -match 'https?://[^\"]') { throw "Hub server enables CORS or ambient remote assets." }
 if ($process -notmatch 'new ManifoldConnectionHubAuthority\(\)' -or $process -match 'UnavailableManifold') { throw "Connection Hub process is not wired to the real Manifold JNI authority." }
+$runtimeOwnerIndex = $process.IndexOf('ManifoldRuntimeAuthorityBridge.initialize();', [StringComparison]::Ordinal)
+$hubOwnerIndex = $process.IndexOf('new ManifoldConnectionHubAuthority()', [StringComparison]::Ordinal)
+if ($runtimeOwnerIndex -lt 0 -or $hubOwnerIndex -lt 0 -or $runtimeOwnerIndex -ge $hubOwnerIndex) {
+    throw "Connection Hub process does not initialize the shared Manifold admission owner before the Hub authority."
+}
 if ($process -notmatch 'provider_effect_binding\.v1' -or
     $process -notmatch 'PROVIDER_EFFECT_RECEIPT_DEADLINE_MS' -or
     $process -notmatch 'completed\.compareAndSet\(false, true\)') {
