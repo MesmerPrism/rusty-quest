@@ -263,7 +263,7 @@ function Assert-StageReceiptSemantics([string]$Name, [object[]]$Receipts) {
         "debug-protocol-proof" { @("debug-protocol-proof|debug-shell-provider-gap|passed") }
         "real-hub-start" { @(
             "hub-real-service|android-foreground-service|passed",
-            "hub-start|real-activity-foreground-service|passed",
+            "hub-start|debug-shell-foreground-service|passed",
             "target-process-epoch|serial-scoped-adb-readback|passed") }
         "pair-hostess" { @("hostess-status|rusty-hostess|passed", "hostess-pair|rusty-hostess|passed") }
         "hostess-v2-simulation" { @("hostess-simulate-e2e|rusty-hostess|passed") }
@@ -1305,13 +1305,15 @@ function Invoke-DebugOperator([string]$Method) {
 
 function Hub-Action([string]$Method, $HubArtifact = $null) {
     $lifecycleActions = @{
-        start = "io.github.mesmerprism.rustymanifold.broker.action.DEBUG_START_CONNECTION_HUB"
-        stop = "io.github.mesmerprism.rustymanifold.broker.action.DEBUG_STOP_CONNECTION_HUB"
-        forget = "io.github.mesmerprism.rustymanifold.broker.action.DEBUG_FORGET_CONNECTION_HUB"
+        start = "io.github.mesmerprism.rustymanifold.broker.action.START_CONNECTION_HUB"
+        stop = "io.github.mesmerprism.rustymanifold.broker.action.STOP_CONNECTION_HUB"
+        forget = "io.github.mesmerprism.rustymanifold.broker.action.FORGET_CONNECTION_HUB"
     }
     if ($Method -in @("start", "stop", "forget")) {
-        [void](Invoke-Adb @("shell", "am", "start", "-W", "-n", $HubActivity, "-a", $lifecycleActions[$Method]) `
-            $QfmLifecycleGap "dispatch one fixed debug Activity action through the real foreground-service lifecycle")
+        [void](Invoke-Adb @(
+            "shell", "am", "start-foreground-service", "-n", "$HubPackage/.ConnectionHubStartService",
+            "-a", $lifecycleActions[$Method]) $QfmLifecycleGap `
+            "dispatch one fixed DUMP-gated debug foreground-service action")
     }
     $result = Invoke-DebugOperator "status"
     if ($Method -eq "start") {
@@ -1348,9 +1350,11 @@ function Hub-Action([string]$Method, $HubArtifact = $null) {
     }
     if ($Method -eq "start") { $script:HubStarted = $true }
     if ($Method -eq "stop") { $script:HubStarted = $false }
-    return Save-Receipt "hub-$Method" (New-Receipt "hub-$Method" "real-activity-foreground-service" "passed" ([ordered]@{
+    return Save-Receipt "hub-$Method" (New-Receipt "hub-$Method" "debug-shell-foreground-service" "passed" ([ordered]@{
         lifecycle_transport_gap=$QfmLifecycleGap
         observer=$result
+        debug_service_exported_with_dump_permission=$true
+        management_activity_validated_by_source_gate=$true
         debug_provider_performed_lifecycle_mutation=$false
     }))
 }

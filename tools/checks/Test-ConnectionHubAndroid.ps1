@@ -77,6 +77,12 @@ if ($server -notmatch 'synchronized \(socketSessions\)[\s\S]*runtime\.replaceTra
 }
 if ($server -match 'Access-Control-Allow-Origin' -or $server -match 'https?://[^\"]') { throw "Hub server enables CORS or ambient remote assets." }
 if ($process -notmatch 'new ManifoldConnectionHubAuthority\(\)' -or $process -match 'UnavailableManifold') { throw "Connection Hub process is not wired to the real Manifold JNI authority." }
+if ($buildScript -notmatch 'releaseHubService' -or
+    $buildScript -notmatch 'debugHubService' -or
+    $buildScript -notmatch 'android:permission="android\.permission\.DUMP"' -or
+    $buildScript -notmatch '\$manifestText\.Replace\(\$releaseHubService, \$debugHubService\)') {
+    throw "Connection Hub debug build does not expose only its exact service lifecycle behind DUMP."
+}
 $runtimeOwnerIndex = $process.IndexOf('ManifoldRuntimeAuthorityBridge.initialize();', [StringComparison]::Ordinal)
 $hubOwnerIndex = $process.IndexOf('new ManifoldConnectionHubAuthority()', [StringComparison]::Ordinal)
 if ($runtimeOwnerIndex -lt 0 -or $hubOwnerIndex -lt 0 -or $runtimeOwnerIndex -ge $hubOwnerIndex) {

@@ -39,6 +39,9 @@ Require ($cli.Contains('Installed-byte readback') -and $cli.Contains('Stage-Apk'
 Require ($cli.Contains('qfm-69b02f1.launch-export-parser')) "Known QFM launcher parser fallback is not labelled."
 Require ($cli.Contains('qfm-missing-typed-connection-hub-service-action-v1')) "Hub service provider gap is not labelled."
 Require ($cli.Contains('qfm-missing-typed-connection-hub-activity-action-v1')) "Real foreground-service lifecycle gap is not labelled."
+Require ($cli.Contains('"shell", "am", "start-foreground-service", "-n", "$HubPackage/.ConnectionHubStartService"') -and
+    $cli.Contains('debug-shell-foreground-service') -and
+    -not $cli.Contains('"shell", "am", "start", "-W", "-n", $HubActivity')) "Off-head Hub lifecycle must use the exact DUMP-gated debug service rather than a Sensor-Lock-blocked Activity."
 Require ($cli.Contains('qfm-missing-bounded-logcat-v1')) "Logcat provider gap is not labelled."
 Require ($cli.Contains('qfm-missing-typed-package-stop-v1')) "Package-stop provider gap is not labelled."
 Require ($cli.Contains('qfm-readonly-device-state-v1')) "Read-only device-state gap is not labelled."

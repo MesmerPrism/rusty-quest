@@ -704,6 +704,25 @@ if ($EnableConnectionHubDebugOperator) {
     if ([regex]::Matches($manifestText, [regex]::Escape($closingApplication)).Count -ne 1) {
         throw "Connection Hub Android manifest has an unexpected application boundary."
     }
+    $releaseHubService = @"
+        <service
+            android:name=".ConnectionHubStartService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync"
+            android:stopWithTask="false" />
+"@
+    $debugHubService = @"
+        <service
+            android:name=".ConnectionHubStartService"
+            android:exported="true"
+            android:permission="android.permission.DUMP"
+            android:foregroundServiceType="dataSync"
+            android:stopWithTask="false" />
+"@
+    if ([regex]::Matches($manifestText, [regex]::Escape($releaseHubService)).Count -ne 1) {
+        throw "Connection Hub debug build cannot identify the exact non-exported release service declaration."
+    }
+    $manifestText = $manifestText.Replace($releaseHubService, $debugHubService)
     $debugProvider = @"
         <provider
             android:name=".ConnectionHubDebugControlProvider"
