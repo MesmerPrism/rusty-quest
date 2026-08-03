@@ -123,6 +123,12 @@ $manifest = Get-Content -Raw -LiteralPath (Join-Path $appRoot 'app\src\main\Andr
 if ($manifest -notmatch 'android\.permission\.INTERNET') {
   throw 'Android adapter is missing its narrow listener permission.'
 }
+if ($manifest -notmatch 'oculus\.software\.handtracking' -or
+    $manifest -notmatch 'com\.oculus\.permission\.HAND_TRACKING' -or
+    $manifest -notmatch 'com\.oculus\.handtracking\.version' -or
+    $manifest -notmatch 'android:value="V2\.0"') {
+  throw 'Spatial adapter must retain optional hand tracking so controller absence does not block launch.'
+}
 if ($manifest -match 'CAMERA|RECORD_AUDIO|BLUETOOTH|QUERY_ALL_PACKAGES|MANAGE_EXTERNAL_STORAGE') {
   throw 'Android example gained an unrelated permission.'
 }

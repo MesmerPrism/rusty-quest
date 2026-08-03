@@ -132,6 +132,9 @@ press. Spatial controller-component and Android key/motion observations feed
 one edge arbiter with bounded cross-route deduplication. The panel uses the
 public Rusty Morphovision graphite, high-contrast ink, cyan action, and amber
 revoke palette without importing that app or any private effect behavior. The
+application declares optional Horizon hand tracking so controller absence does
+not make the app ineligible to launch; the controller-specific A-button
+shortcut remains available only when a controller is present. The
 facing convention is documented in
 [`../../docs/SPATIAL_SDK_PANEL_FACING.md`](../../docs/SPATIAL_SDK_PANEL_FACING.md);
 media-surface orientation remains a separate contract.
