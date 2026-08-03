@@ -55,9 +55,16 @@ Require ($cli.Contains('-Keystore $resolvedKeystore') -and $cli.Contains('RUSTY_
 Require ($cli.Contains('the three APK signers differ') -and $cli.Contains('ExpectedSignerSha256')) "Pre-install signer equality gate is missing."
 Require ($cli.Contains('surface.spatial_video_control.media') -and $cli.Contains('surface.connection_hub_sample.toggle')) "Both fixed provider surfaces must be in the command registry."
 Require ($cli.Contains('Capture-PreState') -and $cli.Contains('Restore-PreState') -and $cli.Contains('apk", "export"')) "Target pre-state preservation/restore is incomplete."
-Require ($cli.Contains('preexisting_running_hub_lifecycle_contract_unproven') -and
+Require ($cli.Contains('preexisting_hub_private_trust_state_has_no_exact_restore_contract') -and
     $cli.Contains('path=[string]$prior.retained_apk') -and
     $cli.Contains('$script:TargetMutationStarted')) "PreserveAndRestore does not fail closed for an unknown running Hub or launch restored provider bytes."
+Require ($cli.Contains('function Start-RunLogCapture') -and
+    $cli.Contains('function Record-TargetProcessEpoch') -and
+    $cli.Contains('function Stop-RunLogCapture') -and
+    $cli.Contains('Run-owned log capture coverage was incomplete') -and
+    $cli.Contains('target_fatal_count') -and $cli.Contains('target_anr_count')) "Run-bounded target fatal/ANR evidence is incomplete."
+Require ($cli.Contains('"Cleanup", "E2E"') -and
+    $cli.Contains('pre-existing Hub install because restoring APK bytes cannot restore its pairing/trust state')) "Cleanup QFM dependency or private-state fail-closed policy is missing."
 Require ($cli.Contains('Initialize-Checkpoint') -and $cli.Contains('Resume checkpoint artifact digest mismatch')) "Resume checkpoint identity binding is incomplete."
 Require ($cli.Contains('ProviderLifetimeSeconds') -and $cli.Contains('Wait-Surface "surface.spatial_video_control.media" $false')) "Sequential provider/lifetime oracle is incomplete."
 Require ($cli.Contains('authenticated_socket_open_before_revoke') -and

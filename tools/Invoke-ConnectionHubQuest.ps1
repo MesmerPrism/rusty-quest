@@ -100,6 +100,12 @@ $script:CheckpointPath = ""
 $script:CachedArtifacts = $null
 $script:CommandReceiptOrdinal = 0
 $script:TargetMutationStarted = $false
+$script:RunLogProcess = $null
+$script:RunLogMarker = ""
+$script:RunLogPath = ""
+$script:RunLogStderrPath = ""
+$script:ProcessEpochOrdinal = 0
+$script:ProcessEpochs = [System.Collections.Generic.List[object]]::new()
 
 function Get-Sha256([string]$Path) {
     return (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant()
@@ -345,6 +351,169 @@ function Invoke-Adb([string[]]$Arguments, [string]$GapId, [string]$Goal, [switch
     }
 }
 
+function Start-RunLogCapture {
+    if ($null -ne $script:RunLogProcess) { throw "Run log capture is already active." }
+    if ((Get-Sha256 $script:Adb) -ne $AdbSha256) { throw "ADB changed after the run lock was acquired." }
+    if ($script:Checkpoint.run_log_capture -and $script:Checkpoint.run_log_capture.active -eq $true) {
+        $saved = $script:Checkpoint.run_log_capture
+        $script:RunLogMarker = [string]$saved.marker
+        $script:RunLogPath = [System.IO.Path]::GetFullPath([string]$saved.stdout_path)
+        $script:RunLogStderrPath = [System.IO.Path]::GetFullPath([string]$saved.stderr_path)
+        $runPrefix = $script:RunDir.TrimEnd('\') + '\'
+        if (-not $script:RunLogPath.StartsWith($runPrefix, [StringComparison]::OrdinalIgnoreCase) -or
+                -not $script:RunLogStderrPath.StartsWith($runPrefix, [StringComparison]::OrdinalIgnoreCase)) {
+            throw "Checkpoint log capture paths escaped the exact run directory."
+        }
+        $process = Get-Process -Id ([int]$saved.pid) -ErrorAction SilentlyContinue
+        $processMetadata = Get-CimInstance Win32_Process -Filter ("ProcessId={0}" -f [int]$saved.pid) -ErrorAction SilentlyContinue
+        $expectedCommandFragment = "-s $Serial logcat -v epoch"
+        if ([string]$saved.adb_sha256 -ne $AdbSha256 -or [string]$saved.serial -ne $Serial -or
+                $null -eq $process -or $process.HasExited -or (Get-Sha256 $process.Path) -ne $AdbSha256 -or
+                $null -eq $processMetadata -or
+                -not ([string]$processMetadata.CommandLine).Contains($expectedCommandFragment, [StringComparison]::Ordinal)) {
+            throw "Run-bounded log capture was lost; this checkpoint cannot make an acceptance claim."
+        }
+        $script:RunLogProcess = $process
+        return Save-Receipt "run-log-capture-resume" (New-Receipt "run-log-capture-resume" "serial-scoped-streaming-adb" "passed" ([ordered]@{
+            pid=[int]$process.Id
+            marker_sha256=Get-TextSha256 $script:RunLogMarker
+            capture_process_preserved=true
+        }))
+    }
+    $script:RunLogMarker = "rq-connection-hub-" + [Guid]::NewGuid().ToString("N")
+    $script:RunLogPath = Join-Path $script:RunDir "run-logcat.txt"
+    $script:RunLogStderrPath = Join-Path $script:RunDir "run-logcat.stderr.txt"
+    $arguments = @(
+        "-s", $Serial, "logcat", "-v", "epoch",
+        "RQConnectionHubE2E:I", "RustyManifoldAdmission:V", "RustyManifoldRuntime:V",
+        "RqConnectionHub:V", "RustyQuestVideoControl:V", "AndroidRuntime:E",
+        "ActivityManager:I", "libc:F", "DEBUG:F", "*:S")
+    $process = Start-Process -FilePath $script:Adb -ArgumentList $arguments `
+        -RedirectStandardOutput $script:RunLogPath -RedirectStandardError $script:RunLogStderrPath `
+        -WindowStyle Hidden -PassThru
+    $script:RunLogProcess = $process
+    $script:Checkpoint.run_log_capture = [ordered]@{
+        active=$true
+        pid=[int]$process.Id
+        marker=$script:RunLogMarker
+        stdout_path=$script:RunLogPath
+        stderr_path=$script:RunLogStderrPath
+        adb_sha256=$AdbSha256
+        serial=$Serial
+    }
+    Write-Checkpoint
+    Start-Sleep -Milliseconds 300
+    if ($process.HasExited) { throw "Run-bounded logcat process exited before the acceptance marker was written." }
+    [void](Invoke-Adb @("shell", "log", "-t", "RQConnectionHubE2E", "START $($script:RunLogMarker)") $QfmLogGap "write the run-owned log capture marker")
+    return Save-Receipt "run-log-capture-start" (New-Receipt "run-log-capture-start" "serial-scoped-streaming-adb" "passed" ([ordered]@{
+        marker_sha256=Get-TextSha256 $script:RunLogMarker
+        capture_scope="fixed Hub/provider tags plus Android fatal/ANR authorities"
+        global_log_buffer_cleared=$false
+        run_owned_process=$true
+        resumable_process_id=[int]$process.Id
+    }))
+}
+
+function Record-TargetProcessEpoch([string]$Reason) {
+    $script:ProcessEpochOrdinal += 1
+    $rows = @()
+    foreach ($package in @($HubPackage, $SpatialPackage, $SamplePackage)) {
+        $uidRead = Invoke-Adb @("shell", "dumpsys", "package", $package) $QfmPackageStateGap "read target UID for run log binding" -AllowFailure
+        $uidMatch = [regex]::Match($uidRead.output, '(?m)^\s*userId=(\d+)\s*$')
+        $pidRead = Invoke-Adb @("shell", "pidof", $package) $QfmPackageStateGap "read target PID epoch for run log binding" -AllowFailure
+        $pids = @()
+        if ($pidRead.exit_code -eq 0) {
+            $pids = @($pidRead.output.Trim() -split '\s+' | Where-Object { $_ -match '^\d+$' } | ForEach-Object { [int]$_ })
+        }
+        $row = [ordered]@{
+            package=$package
+            uid=$(if($uidMatch.Success){[int]$uidMatch.Groups[1].Value}else{$null})
+            pids=$pids
+        }
+        $rows += $row
+        [void]$script:ProcessEpochs.Add([pscustomobject]@{reason=$Reason; package=$package; uid=$row.uid; pids=$pids})
+    }
+    $safeReason = $Reason -replace '[^a-z0-9]+','-'
+    return Save-Receipt ("process-epoch-{0}-{1}" -f $script:ProcessEpochOrdinal,$safeReason) (New-Receipt "target-process-epoch" "serial-scoped-adb-readback" "passed" ([ordered]@{
+        ordinal=$script:ProcessEpochOrdinal
+        reason=$Reason
+        targets=$rows
+    }))
+}
+
+function Stop-RunLogCapture([switch]$FailureCleanup) {
+    if ($null -eq $script:RunLogProcess) { return $null }
+    $process = $script:RunLogProcess
+    try {
+        if (-not $process.HasExited) {
+            $process.Kill($true)
+            [void]$process.WaitForExit(5000)
+        }
+    } finally {
+        $process.Dispose()
+        $script:RunLogProcess = $null
+    }
+    if ($script:Checkpoint.run_log_capture) {
+        $script:Checkpoint.run_log_capture.active = $false
+        Write-Checkpoint
+    }
+    $path = $script:RunLogPath
+    $stdout = if(Test-Path -LiteralPath $path -PathType Leaf){[System.IO.File]::ReadAllText($path)}else{""}
+    $stderr = if(Test-Path -LiteralPath $script:RunLogStderrPath -PathType Leaf){[System.IO.File]::ReadAllText($script:RunLogStderrPath)}else{""}
+    $captureWithinBound = $stdout.Length -le 16777216
+    $markerRetained = $stdout.Contains("START $($script:RunLogMarker)", [StringComparison]::Ordinal)
+    $targetPids = [System.Collections.Generic.HashSet[int]]::new()
+    $targetUids = [System.Collections.Generic.HashSet[int]]::new()
+    foreach ($epoch in $script:ProcessEpochs) {
+        if ($null -ne $epoch.uid) { [void]$targetUids.Add([int]$epoch.uid) }
+        foreach ($pid in @($epoch.pids)) { [void]$targetPids.Add([int]$pid) }
+    }
+    $targetPackages = @($HubPackage, $SpatialPackage, $SamplePackage)
+    $targetFatalLines = [System.Collections.Generic.List[string]]::new()
+    $targetAnrLines = [System.Collections.Generic.List[string]]::new()
+    foreach ($line in ($stdout -split "`r?`n")) {
+        $prefix = [regex]::Match($line, '^\s*\S+\s+(\d+)\s+(\d+)\s+')
+        $uid = if($prefix.Success){[int]$prefix.Groups[1].Value}else{-1}
+        $pid = if($prefix.Success){[int]$prefix.Groups[2].Value}else{-1}
+        $boundProcess = $targetUids.Contains($uid) -or $targetPids.Contains($pid)
+        $namesTarget = @($targetPackages | Where-Object { $line.Contains($_, [StringComparison]::Ordinal) }).Count -gt 0
+        if ($boundProcess -and ($line -match 'FATAL EXCEPTION|UnsatisfiedLinkError|\sE\s+AndroidRuntime\s*:')) {
+            [void]$targetFatalLines.Add($line)
+        }
+        if (($boundProcess -or $namesTarget) -and $line -match '(?i)\bANR\b|not responding') {
+            [void]$targetAnrLines.Add($line)
+        }
+    }
+    $coverageComplete = $captureWithinBound -and $markerRetained
+    $status = if($coverageComplete -and $targetFatalLines.Count -eq 0 -and $targetAnrLines.Count -eq 0 -and -not $FailureCleanup){"passed"}elseif($FailureCleanup){"diagnostic_only"}else{"failed"}
+    $receipt = Save-Receipt "run-logs" (New-Receipt "run-bounded-logs" "serial-scoped-streaming-adb" $status ([ordered]@{
+        provider_gap=$QfmLogGap
+        capture_sha256=Get-Sha256 $path
+        capture_size=(Get-Item -LiteralPath $path).Length
+        marker_sha256=Get-TextSha256 $script:RunLogMarker
+        marker_retained=$markerRetained
+        capture_within_16_mib_bound=$captureWithinBound
+        coverage_complete=$coverageComplete
+        target_uids=@($targetUids | Sort-Object)
+        target_pids=@($targetPids | Sort-Object)
+        process_epoch_count=$script:ProcessEpochs.Count
+        target_fatal_count=$targetFatalLines.Count
+        target_anr_count=$targetAnrLines.Count
+        target_fatal_lines_sha256=Get-TextSha256 ($targetFatalLines -join "`n")
+        target_anr_lines_sha256=Get-TextSha256 ($targetAnrLines -join "`n")
+        stderr_sha256=Get-TextSha256 $stderr
+        global_log_buffer_cleared=$false
+        failure_cleanup=[bool]$FailureCleanup
+    }))
+    if (-not $FailureCleanup -and -not $coverageComplete) {
+        throw "Run-owned log capture coverage was incomplete or exceeded its acceptance bound."
+    }
+    if (-not $FailureCleanup -and ($targetFatalLines.Count -ne 0 -or $targetAnrLines.Count -ne 0)) {
+        throw "Run-bounded target fatal/ANR scan failed."
+    }
+    return $receipt
+}
+
 function Get-DebugPairingSecret {
     # This is deliberately separate from Invoke-Adb and Save-Receipt. The
     # one-use wearer code exists only in zeroed process buffers and is never
@@ -577,13 +746,14 @@ function Capture-PreState($Artifacts) {
     $receipt = Save-Receipt "pre-state" (New-Receipt "pre-state" "qfm+serial-readback" "passed" $script:PreState)
     $script:Checkpoint.pre_state_receipt_sha256 = Get-Sha256 (Join-Path $script:RunDir "pre-state.json")
     Write-Checkpoint
-    if ($ExistingTargetPolicy -eq "PreserveAndRestore" -and $rows[0].running) {
+    if ($ExistingTargetPolicy -eq "PreserveAndRestore" -and $rows[0].installed) {
         [void](Save-Receipt "pre-state-restoration-preflight" (New-Receipt "pre-state-restoration-preflight" "operator-wrapper" "failed" ([ordered]@{
-            reason="preexisting_running_hub_lifecycle_contract_unproven"
+            reason="preexisting_hub_private_trust_state_has_no_exact_restore_contract"
+            prior_running=[bool]$rows[0].running
             mutation_started=$false
-            supported_resolution="stop the prior Hub before the run or use RetainCandidate"
+            supported_resolution="use RetainCandidate, or explicitly remove the prior Hub after separately preserving its private state"
         })))
-        throw "PreserveAndRestore cannot prove restart of a pre-existing running Hub with an unknown lifecycle contract."
+        throw "PreserveAndRestore refuses a pre-existing Hub install because restoring APK bytes cannot restore its pairing/trust state."
     }
     return $receipt
 }
@@ -1139,8 +1309,9 @@ function New-DryRunPlan {
             "process-death+start-sticky+provider-reregister+command", "wifi-rebind-or-explicit-safety-skip",
             "spatial-removed+sample-present+command", "sample-removed+spatial-returned+command",
             "hub-persists-across-app-switches",
-            "reconnect-epoch-assertion", "watch", "bounded-fatal-scan", "revoke+closed-socket-assertion",
+            "reconnect-epoch-assertion", "watch", "revoke+closed-socket-assertion",
             $(if($RequireBrowserE2E){"real-browser-sequential-surface-e2e"}else{"browser-e2e-explicitly-not-required"}),
+            "run-bounded-target-fatal-anr-scan",
             "target-only-pre-state-restore")
         checkpoint_resume = "serial+protocol+providers+artifacts+build-manifest+policy-bound"
         provider_lifetime_seconds = $ProviderLifetimeSeconds
@@ -1164,7 +1335,7 @@ if ([string]::IsNullOrWhiteSpace($ResumeCheckpoint)) {
     $script:RunDir = Join-Path $resolvedEvidenceRoot $runName
     New-Item -ItemType Directory -Path $script:RunDir | Out-Null
 }
-$needsQfm = $Action -in @("Prerequisites", "Inspect", "Install", "Start", "Status", "LaunchSpatial", "LaunchSample", "E2E")
+$needsQfm = $Action -in @("Prerequisites", "Inspect", "Install", "Start", "Status", "LaunchSpatial", "LaunchSample", "Cleanup", "E2E")
 $needsHostess = $Action -like "Hostess*" -or $Action -in @("WaitSurface", "WaitSurfaceAbsent", "E2E")
 $needsAdb = $Action -notin @("Build", "Inspect", "SimulateE2E")
 $needsPython = $needsHostess
@@ -1259,8 +1430,23 @@ try {
         Invoke-Stage "inspect" { [void](Inspect-All $a) }
         Invoke-Stage "capture-pre-state" { [void](Capture-PreState $a) }
         Invoke-Stage "install" { [void](Install-All $a) }
+        if (@($script:Checkpoint.completed_stages) -notcontains "logs") {
+            $captureCheckpoint = $script:Checkpoint.run_log_capture
+            $postInstallCompleted = @($script:Checkpoint.completed_stages | Where-Object {
+                $_ -in @("debug-protocol-proof", "real-hub-start", "pair-hostess", "spatial-first",
+                    "provider-lifetime-over-2m", "process-restart", "wifi-rebind", "sample-switch",
+                    "spatial-return", "reconnect", "watch", "revoke", "browser-e2e")
+            }).Count -gt 0
+            if ($postInstallCompleted -and ($null -eq $captureCheckpoint -or $captureCheckpoint.active -ne $true)) {
+                throw "Resume cannot prove the earlier target log window because its run-owned capture is not active."
+            }
+            [void](Start-RunLogCapture)
+        }
         Invoke-Stage "debug-protocol-proof" { [void](Prove-DebugProtocol) }
-        Invoke-Stage "real-hub-start" { [void](Hub-Action "start" $a[0]) }
+        Invoke-Stage "real-hub-start" {
+            [void](Hub-Action "start" $a[0])
+            [void](Record-TargetProcessEpoch "hub-started")
+        }
         if ([string]::IsNullOrWhiteSpace($Origin)) { $Origin = [string](Invoke-DebugOperator "status").owner_receipt.origin }
         Invoke-Stage "pair-hostess" {
             [void](Hostess-Action "status")
@@ -1272,6 +1458,7 @@ try {
             [void](Launch-Provider $a "spatial")
             [void](Wait-Surface "surface.spatial_video_control.media" $true)
             [void](Wait-Surface "surface.connection_hub_sample.toggle" $false)
+            [void](Record-TargetProcessEpoch "spatial-first")
             $SurfaceId="surface.spatial_video_control.media"; $CommandId="command.spatial_video_control.play"; [void](Hostess-Action "command")
             if ((Invoke-DebugOperator "status").owner_receipt.listener_running -ne $true) { throw "Hub stopped across Spatial app switch." }
         }
@@ -1292,6 +1479,7 @@ try {
             [void](Restart-HubProcess)
             [void](Hostess-Action "reconnect")
             [void](Wait-Surface "surface.spatial_video_control.media" $true)
+            [void](Record-TargetProcessEpoch "hub-restarted")
             $SurfaceId="surface.spatial_video_control.media"; $CommandId="command.spatial_video_control.play"; [void](Hostess-Action "command")
         }
         Invoke-Stage "wifi-rebind" {
@@ -1309,6 +1497,7 @@ try {
             [void](Launch-Provider $a "sample")
             [void](Wait-Surface "surface.spatial_video_control.media" $false)
             [void](Wait-Surface "surface.connection_hub_sample.toggle" $true)
+            [void](Record-TargetProcessEpoch "sample-switch")
             $SurfaceId="surface.connection_hub_sample.toggle"; $CommandId="command.connection_hub_sample.toggle"; [void](Hostess-Action "command")
             if ((Invoke-DebugOperator "status").owner_receipt.listener_running -ne $true) { throw "Hub stopped across Sample app switch." }
         }
@@ -1316,11 +1505,11 @@ try {
             [void](Launch-Provider $a "spatial")
             [void](Wait-Surface "surface.connection_hub_sample.toggle" $false)
             [void](Wait-Surface "surface.spatial_video_control.media" $true)
+            [void](Record-TargetProcessEpoch "spatial-return")
             $SurfaceId="surface.spatial_video_control.media"; $CommandId="command.spatial_video_control.play"; [void](Hostess-Action "command")
         }
         Invoke-Stage "reconnect" { [void](Hostess-Action "reconnect") }
         Invoke-Stage "watch" { [void](Hostess-Action "watch") }
-        Invoke-Stage "logs" { [void](Capture-Logs) }
         Invoke-Stage "revoke" { [void](Hostess-Action "revoke") }
         Invoke-Stage "browser-e2e" {
             if ($RequireBrowserE2E) {
@@ -1334,12 +1523,19 @@ try {
                 })))
             }
         }
+        Invoke-Stage "logs" {
+            [void](Record-TargetProcessEpoch "final")
+            [void](Stop-RunLogCapture)
+        }
         Invoke-Stage "restore-pre-state" { [void](Restore-PreState $a) }
     }
     $finalResult = "passed"
 } finally {
     if ($Action -eq "E2E" -and $finalResult -ne "passed") {
         $cleanupErrors = [System.Collections.Generic.List[string]]::new()
+        if ($null -ne $script:RunLogProcess) {
+            try { [void](Stop-RunLogCapture -FailureCleanup) } catch { [void]$cleanupErrors.Add("run_log_capture_cleanup_failed") }
+        }
         if ($script:HostessPaired -and (Test-Path -LiteralPath $SessionFile -PathType Leaf)) {
             try { [void](Hostess-Action "revoke") } catch { [void]$cleanupErrors.Add("hostess_revoke_failed") }
         }
