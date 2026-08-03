@@ -263,6 +263,7 @@ pub(crate) fn restore_state(state_json: &str) -> Result<String, String> {
 fn trust_and_open(owner: &mut HubOwner, proposal: &Value, now_ms: u64) -> Result<Value, String> {
     let request_id = text(proposal, "request_id")?;
     let identity_sha = sha256_field(proposal, "controller_identity_sha256")?;
+    let evidence = DottedId::new(VERIFIED_WEARER_EVIDENCE).map_err(|e| e.to_string())?;
     let existing = owner
         .authority
         .snapshot()
@@ -271,41 +272,56 @@ fn trust_and_open(owner: &mut HubOwner, proposal: &Value, now_ms: u64) -> Result
         .iter()
         .find(|item| item.public_identity_sha256 == identity_sha)
         .map(|item| item.controller_id.clone());
-    let controller_id = if let Some(value) = existing {
-        value
-    } else {
-        let id = epoch_derived(
+    if let Some(controller_id) = existing {
+        // A wearer-authorized pairing is an explicit trust rotation. Reusing
+        // the old controller would let its earlier deadline constrain the new
+        // session (or leave the old sessions alive). Forget it first so
+        // Manifold revokes those sessions and tombstones that trust generation.
+        let forget = request(
             owner,
-            "controller.hub",
-            // The public identity remains the durable trust lookup key, while
-            // the authority subject id identifies one trust generation. A
-            // controller that was expired/forgotten has a tombstoned subject
-            // id and must receive a fresh id when the wearer trusts the same
-            // public identity again.
-            request_id,
-        )?;
-        let evidence = DottedId::new(VERIFIED_WEARER_EVIDENCE).map_err(|e| e.to_string())?;
-        let trust = request(
-            owner,
-            &format!("{request_id}.trust"),
+            &format!("{request_id}.rotate"),
             now_ms,
-            ManifoldConnectionHubOperationRequest::TrustController {
-                controller_id: id.clone(),
-                public_identity_sha256: identity_sha.clone(),
-                capabilities: owner.config.policy.allowed_controller_capabilities.clone(),
+            ManifoldConnectionHubOperationRequest::ForgetController {
+                controller_id,
                 operator_evidence_id: evidence.clone(),
-                requested_ttl_ms: owner.config.policy.max_controller_ttl_ms,
+                reason: derived("reason.hub", "wearer-repair-rotation")?,
             },
         )?;
         let receipt = owner
             .authority
             .owner()
-            .apply_operator_decision(&trust, now_ms, &evidence);
+            .apply_operator_decision(&forget, now_ms, &evidence);
         if !receipt.applied {
             return Ok(native_receipt(receipt));
         }
-        id
-    };
+    }
+    let controller_id = epoch_derived(
+        owner,
+        "controller.hub",
+        // The public identity remains the durable trust lookup key, while the
+        // authority subject id identifies one trust generation. Pairing must
+        // therefore always receive a fresh id after expiry, forget, or rotate.
+        request_id,
+    )?;
+    let trust = request(
+        owner,
+        &format!("{request_id}.trust"),
+        now_ms,
+        ManifoldConnectionHubOperationRequest::TrustController {
+            controller_id: controller_id.clone(),
+            public_identity_sha256: identity_sha.clone(),
+            capabilities: owner.config.policy.allowed_controller_capabilities.clone(),
+            operator_evidence_id: evidence.clone(),
+            requested_ttl_ms: owner.config.policy.max_controller_ttl_ms,
+        },
+    )?;
+    let receipt = owner
+        .authority
+        .owner()
+        .apply_operator_decision(&trust, now_ms, &evidence);
+    if !receipt.applied {
+        return Ok(native_receipt(receipt));
+    }
     let session_id = epoch_derived(owner, "session.hub", request_id)?;
     let open = request(
         owner,
@@ -1119,6 +1135,42 @@ mod tests {
         .expect("re-pair receipt");
         assert_eq!(repaired["applied"], true);
         assert_ne!(repaired["logical_session_id"], opened["logical_session_id"]);
+        let repaired_session = repaired["logical_session_id"]
+            .as_str()
+            .expect("repaired session");
+        let rotated: Value = serde_json::from_str(
+            &execute(
+                &json!({
+                    "operation": "trust_and_open_session",
+                    "request_id": "request.hub.test.rotate",
+                    "controller_identity_sha256": "d".repeat(64)
+                })
+                .to_string(),
+                40_000,
+            )
+            .expect("rotate existing controller trust"),
+        )
+        .expect("rotation receipt");
+        assert_eq!(rotated["applied"], true);
+        assert_ne!(
+            rotated["logical_session_id"],
+            repaired["logical_session_id"]
+        );
+        let retired_session = execute(
+            &json!({
+                "operation": "replace_transport",
+                "request_id": "request.hub.test.retired-session",
+                "session_id": repaired_session,
+                "expected_transport_epoch": 1
+            })
+            .to_string(),
+            41_000,
+        )
+        .expect_err("rotated trust must retire its prior session");
+        assert_eq!(
+            retired_session,
+            "authenticated logical session is not active"
+        );
     }
 }
 
