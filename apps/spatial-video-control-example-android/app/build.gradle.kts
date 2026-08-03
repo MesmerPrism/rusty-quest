@@ -22,6 +22,60 @@ val syntheticMediaNames =
         "synthetic_360_top_bottom_1s",
     )
 
+val testConnectionHubDebugSurfaceSource by tasks.registering {
+  group = "verification"
+  description = "Verify the debug-only off-head Connection Hub surface boundary."
+  val debugManifest = layout.projectDirectory.file("src/debug/AndroidManifest.xml")
+  val releaseManifest = layout.projectDirectory.file("src/main/AndroidManifest.xml")
+  val serviceSource =
+      layout.projectDirectory.file(
+          "src/debug/java/io/github/mesmerprism/rustyquest/spatial_video_control/ConnectionHubDebugSurfaceService.kt"
+      )
+  val debugTargetSource =
+      layout.projectDirectory.file(
+          "src/debug/java/io/github/mesmerprism/rustyquest/spatial_video_control/DebugConnectionHubSurfaceTarget.kt"
+      )
+  val mediaTargetSource =
+      layout.projectDirectory.file(
+          "src/main/java/io/github/mesmerprism/rustyquest/spatial_video_control/Media3SpatialPlayerAdapter.kt"
+      )
+  inputs.files(debugManifest, releaseManifest, serviceSource, debugTargetSource, mediaTargetSource)
+  doLast {
+    val debug = debugManifest.asFile.readText()
+    val release = releaseManifest.asFile.readText()
+    val service = serviceSource.asFile.readText()
+    val debugTarget = debugTargetSource.asFile.readText()
+    val mediaTarget = mediaTargetSource.asFile.readText()
+    val requiredManifestFragments =
+        listOf(
+            "android:name=\".ConnectionHubDebugSurfaceService\"",
+            "android:exported=\"true\"",
+            "android:permission=\"android.permission.DUMP\"",
+            "android:foregroundServiceType=\"dataSync\"",
+            "android:stopWithTask=\"false\"",
+            "\${applicationId}.action.START_CONNECTION_HUB_DEBUG_SURFACE",
+            "\${applicationId}.action.STOP_CONNECTION_HUB_DEBUG_SURFACE",
+            "android.permission.FOREGROUND_SERVICE_DATA_SYNC",
+        )
+    requiredManifestFragments.forEach { fragment ->
+      check(debug.contains(fragment)) { "debug Connection Hub service is missing $fragment" }
+    }
+    check(!release.contains("ConnectionHubDebugSurfaceService")) {
+      "release manifest must not contain the debug Connection Hub service"
+    }
+    check(!release.contains("START_CONNECTION_HUB_DEBUG_SURFACE")) {
+      "release manifest must not expose the debug Connection Hub actions"
+    }
+    check(service.contains("ConnectionHubSurfaceClient(this, DebugConnectionHubSurfaceTarget())"))
+    check(!service.contains("SpatialVideoControlActivity")) {
+      "debug Connection Hub service must not launch or depend on the XR Activity"
+    }
+    check(debugTarget.contains(": ConnectionHubSurfaceTarget"))
+    check(debugTarget.contains("requireConnectionHubCommandAuthorization("))
+    check(mediaTarget.contains(": PlayerPort, ConnectionHubSurfaceTarget"))
+  }
+}
+
 val decodeSyntheticMedia by tasks.registering {
   group = "build setup"
   description = "Decode the deterministic flat/180/360 CC0 synthetic MP4 source blobs."

@@ -49,6 +49,7 @@ param(
     [switch]$RequireBrowserE2E,
     [switch]$RequireWifiRebindE2E,
     [switch]$UseBoundedVirtualProximity,
+    [switch]$UseOffHeadDebugProviders,
     [switch]$LegacyV1,
     [string]$Origin = "",
     [string]$SessionFile = "",
@@ -89,6 +90,7 @@ $QfmPackageStateGap = "qfm-readonly-package-state-v1"
 $QfmUninstallGap = "qfm-missing-typed-target-uninstall-v1"
 $QfmWifiGap = "qfm-missing-typed-wifi-rebind-v1"
 $QfmProximityGap = "qfm-missing-typed-bounded-virtual-proximity-v1"
+$QfmProviderDebugGap = "qfm-missing-typed-debug-provider-service-action-v1"
 $ReceiptSchema = "rusty.quest.connection_hub.operator_receipt.v1"
 $ManifestSchema = "rusty.quest.connection_hub.operator_evidence_manifest.v1"
 $CheckpointSchema = "rusty.quest.connection_hub.operator_checkpoint.v2"
@@ -252,6 +254,11 @@ function Assert-StageReceiptSemantics([string]$Name, [object[]]$Receipts) {
         return
     }
     if ($originatingAction -ne "E2E") { return }
+    $providerLaunchReceipt = if ([bool]$script:Checkpoint.use_off_head_debug_providers) {
+        "debug-shell-foreground-service"
+    } else {
+        "qfm-with-reviewed-fallback"
+    }
 
     $expected = switch ($Name) {
         "prerequisites" { @("prerequisites|typed-provider-discovery|passed") }
@@ -268,7 +275,7 @@ function Assert-StageReceiptSemantics([string]$Name, [object[]]$Receipts) {
         "pair-hostess" { @("hostess-status|rusty-hostess|passed", "hostess-pair|rusty-hostess|passed") }
         "hostess-v2-simulation" { @("hostess-simulate-e2e|rusty-hostess|passed") }
         "spatial-first" { @(
-            "launch-spatial|qfm-with-reviewed-fallback|passed",
+            "launch-spatial|$providerLaunchReceipt|passed",
             "wait-surface|rusty-hostess|passed", "wait-surface|rusty-hostess|passed",
             "target-process-epoch|serial-scoped-adb-readback|passed",
             "hostess-invoke-surface-command|rusty-hostess|passed") }
@@ -285,12 +292,12 @@ function Assert-StageReceiptSemantics([string]$Name, [object[]]$Receipts) {
             } else { @("wifi-rebind|optional-device-provider|not_run") }
         }
         "sample-switch" { @(
-            "launch-sample|qfm-with-reviewed-fallback|passed",
+            "launch-sample|$providerLaunchReceipt|passed",
             "wait-surface|rusty-hostess|passed", "wait-surface|rusty-hostess|passed",
             "target-process-epoch|serial-scoped-adb-readback|passed",
             "hostess-invoke-surface-command|rusty-hostess|passed") }
         "spatial-return" { @(
-            "launch-spatial|qfm-with-reviewed-fallback|passed",
+            "launch-spatial|$providerLaunchReceipt|passed",
             "wait-surface|rusty-hostess|passed", "wait-surface|rusty-hostess|passed",
             "target-process-epoch|serial-scoped-adb-readback|passed",
             "hostess-invoke-surface-command|rusty-hostess|passed") }
@@ -318,7 +325,7 @@ function Assert-StageReceiptSemantics([string]$Name, [object[]]$Receipts) {
             "target-process-epoch|serial-scoped-adb-readback|passed",
             "run-bounded-logs|serial-scoped-streaming-adb|passed") }
         "restore-pre-state" { @(
-            "stop-providers|raw-adb-fallback|passed", "hub-stop|real-activity-foreground-service|passed",
+            "stop-providers|raw-adb-fallback|passed", "hub-stop|debug-shell-foreground-service|passed",
             "restore-pre-state|target-only-cleanup|passed") }
         default { throw "Unknown E2E checkpoint stage cannot be accepted: $Name" }
     }
@@ -407,6 +414,7 @@ function Initialize-Checkpoint {
                     [bool]$checkpoint.require_browser_e2e -ne [bool]$RequireBrowserE2E -or
                     [bool]$checkpoint.require_wifi_rebind_e2e -ne [bool]$RequireWifiRebindE2E -or
                     [bool]$checkpoint.use_bounded_virtual_proximity -ne [bool]$UseBoundedVirtualProximity -or
+                    [bool]$checkpoint.use_off_head_debug_providers -ne [bool]$UseOffHeadDebugProviders -or
                     [bool]$checkpoint.legacy_v1 -ne [bool]$LegacyV1))) {
             throw "Resume checkpoint identity/protocol/policy mismatch."
         }
@@ -498,6 +506,7 @@ function Initialize-Checkpoint {
         require_browser_e2e = [bool]$RequireBrowserE2E
         require_wifi_rebind_e2e = [bool]$RequireWifiRebindE2E
         use_bounded_virtual_proximity = [bool]$UseBoundedVirtualProximity
+        use_off_head_debug_providers = [bool]$UseOffHeadDebugProviders
         legacy_v1 = [bool]$LegacyV1
         session_file = [System.IO.Path]::GetFullPath($SessionFile)
         artifact_build_manifest_path = $null
@@ -1571,14 +1580,64 @@ function Restore-BoundedVirtualProximity {
     }))
 }
 
-function Launch-Provider($Artifacts, [string]$ProviderName) {
+function Start-OffHeadDebugProvider([string]$ProviderName) {
     if ($ProviderName -eq "spatial") {
+        $package = $SpatialPackage
+        $otherPackage = $SamplePackage
+    } elseif ($ProviderName -eq "sample") {
+        $package = $SamplePackage
+        $otherPackage = $SpatialPackage
+    } else { throw "Unknown fixed debug provider." }
+    $component = "$package/.ConnectionHubDebugSurfaceService"
+    $action = "$package.action.START_CONNECTION_HUB_DEBUG_SURFACE"
+    $otherStop = Invoke-Adb @("shell", "am", "force-stop", $otherPackage) $QfmStopGap `
+        "stop the other fixed provider package before debug surface handoff"
+    $dispatch = Invoke-AdbBounded @(
+        "shell", "am", "start-foreground-service", "-n", $component, "-a", $action) `
+        $QfmProviderDebugGap "start one DUMP-gated debug provider surface" 10000
+    if ($dispatch.output -notmatch ('cmp=' + [regex]::Escape($component)) -or
+            $dispatch.output -match '(?i)\berror\b') {
+        throw "Debug provider service dispatch did not echo the exact fixed component."
+    }
+    $deadline = [DateTime]::UtcNow.AddSeconds(8)
+    $service = $null
+    do {
+        $service = Invoke-Adb @("shell", "dumpsys", "activity", "services", $package) `
+            $QfmProviderDebugGap "read exact debug provider foreground-service state"
+        if ($service.output -match 'ConnectionHubDebugSurfaceService' -and
+                $service.output -match 'isForeground=true') { break }
+        Start-Sleep -Milliseconds 300
+    } while ([DateTime]::UtcNow -lt $deadline)
+    if ($service.output -notmatch 'ConnectionHubDebugSurfaceService' -or
+            $service.output -notmatch 'isForeground=true') {
+        throw "Debug provider foreground service was not independently observed."
+    }
+    return [ordered]@{
+        package=$package
+        debug_only=$true
+        release_manifest_exclusion_source_gated=$true
+        service_component=$component
+        action=$action
+        other_provider_force_stop=$otherStop
+        dispatch=$dispatch
+        foreground_service_readback_sha256=Get-TextSha256 $service.output
+        completion_model="debug service process start; owner surface and effect are proven independently through the real Hub"
+    }
+}
+
+function Launch-Provider($Artifacts, [string]$ProviderName) {
+    if ($UseOffHeadDebugProviders) {
+        $row = Start-OffHeadDebugProvider $ProviderName
+        $receiptProvider = "debug-shell-foreground-service"
+    } elseif ($ProviderName -eq "spatial") {
         $row = Launch-Apk $Artifacts[1] $SpatialActivity
+        $receiptProvider = "qfm-with-reviewed-fallback"
     } elseif ($ProviderName -eq "sample") {
         $row = Launch-Apk $Artifacts[2] $SampleActivity
+        $receiptProvider = "qfm-with-reviewed-fallback"
     } else { throw "Unknown fixed provider." }
     $script:ProvidersLaunched = $true
-    return Save-Receipt "launch-$ProviderName" (New-Receipt "launch-$ProviderName" "qfm-with-reviewed-fallback" "passed" $row)
+    return Save-Receipt "launch-$ProviderName" (New-Receipt "launch-$ProviderName" $receiptProvider "passed" $row)
 }
 
 function Stop-Provider([string]$ProviderName) {
@@ -1970,6 +2029,7 @@ function Test-Prerequisites {
         rollover_safe=(-not [bool]$LegacyV1)
         existing_target_policy=$ExistingTargetPolicy
         browser_e2e_required=[bool]$RequireBrowserE2E
+        off_head_debug_providers=[bool]$UseOffHeadDebugProviders
     }
     if ($RequireBrowserE2E -or $Action -eq "BrowserE2E") {
         $packageJson = Assert-ExactFile $PlaywrightPackageJson $PlaywrightPackageJsonSha256 "Playwright package.json"
@@ -2019,7 +2079,7 @@ function New-DryRunPlan {
         reviewed_fallbacks = @(
             $QfmLaunchGap, $QfmLifecycleGap, $QfmServiceGap, $QfmStopGap,
             $QfmLogGap, $QfmDeviceStateGap, $QfmPackageStateGap,
-            $QfmUninstallGap, $QfmWifiGap, $QfmProximityGap)
+            $QfmUninstallGap, $QfmWifiGap, $QfmProximityGap, $QfmProviderDebugGap)
         hostess_secret_input = @("debug-shell-to-stdin-memory-only", "hidden-prompt", "stdin", "inherited-fd", "DPAPI-CurrentUser-session")
         e2e_sequence = @(
             "prerequisites+pre-state", "build", "inspect", "install+installed-byte-signer-readback",
@@ -2039,6 +2099,7 @@ function New-DryRunPlan {
         checkpoint_resume = "serial+protocol+providers+artifacts+build-manifest+policy-bound"
         provider_lifetime_seconds = $ProviderLifetimeSeconds
         bounded_virtual_proximity = [bool]$UseBoundedVirtualProximity
+        off_head_debug_providers = [bool]$UseOffHeadDebugProviders
         secrets_in_plan = $false
     }
 }

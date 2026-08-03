@@ -21,7 +21,7 @@ class Media3SpatialPlayerAdapter(
     context: Context,
     private val catalog: VideoCatalog,
     private val requestPresentation: (String) -> Unit,
-) : PlayerPort {
+) : PlayerPort, ConnectionHubSurfaceTarget {
   private val appContext = context.applicationContext
   private val mainHandler = Handler(Looper.getMainLooper())
   private val player = ExoPlayer.Builder(context).build()
@@ -152,30 +152,20 @@ class Media3SpatialPlayerAdapter(
    * status proves provider dispatch, not a Media3/render effect; effective
    * state is reported separately through the surface-state channel.
    */
-  fun enqueueHubAuthorizedCommand(
+  override fun enqueueHubAuthorizedCommand(
       requestId: String,
       surfaceId: String,
       command: String,
       args: JSONObject,
       authorityReceipt: JSONObject,
   ): String {
-    require(surfaceId == CONNECTION_HUB_SURFACE_ID)
-    require(
-        authorityReceipt.optString("\$schema") ==
-            "rusty.manifold.connection_hub.receipt.v2"
+    requireConnectionHubCommandAuthorization(
+        requestId,
+        surfaceId,
+        command,
+        args,
+        authorityReceipt,
     )
-    require(authorityReceipt.optBoolean("applied", false))
-    require(authorityReceipt.optString("operation") == "authorize_surface_command")
-    val authorization = authorityReceipt.getJSONObject("command_authorization")
-    require(!authorization.optBoolean("proves_application_effect", true))
-    require(authorization.optString("request_id") == requestId)
-    require(authorization.optString("surface_id") == surfaceId)
-    require(authorization.optString("command_id") == command)
-    require(
-        authorization.optString("typed_params_sha256") ==
-            "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
-    )
-    require(args.length() == 0)
     mainHandler.post {
       when (command) {
         "command.spatial_video_control.select_next",
@@ -200,7 +190,7 @@ class Media3SpatialPlayerAdapter(
     return "provider_dispatch_queued_effect_pending"
   }
 
-  fun hubSurfaceState(): JSONObject {
+  override fun hubSurfaceState(): JSONObject {
     val observed = snapshot()
     return JSONObject()
         .put("selected_video_id", observed.selectedVideoId())

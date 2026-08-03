@@ -44,13 +44,18 @@ $protocol = Get-Content -Raw -LiteralPath (Join-Path $javaRoot "ConnectionHubPro
 $process = Get-Content -Raw -LiteralPath (Join-Path $javaRoot "ConnectionHubProcess.java")
 $debugControl = Get-Content -Raw -LiteralPath (Join-Path $javaRoot "ConnectionHubDebugControlProvider.java")
 $spatialManifest = Get-Content -Raw -LiteralPath (Join-Path $spatial "app\src\main\AndroidManifest.xml")
+$spatialDebugManifestPath = Join-Path $spatial "app\src\debug\AndroidManifest.xml"
+$spatialDebugServicePath = Join-Path $spatial "app\src\debug\java\io\github\mesmerprism\rustyquest\spatial_video_control\ConnectionHubDebugSurfaceService.kt"
 $spatialClient = Get-Content -Raw -LiteralPath (Join-Path $spatial "app\src\main\java\io\github\mesmerprism\rustyquest\spatial_video_control\ConnectionHubSurfaceClient.kt")
 $spatialActivity = Get-Content -Raw -LiteralPath (Join-Path $spatial "app\src\main\java\io\github\mesmerprism\rustyquest\spatial_video_control\SpatialVideoControlActivity.kt")
 $buildScript = Get-Content -Raw -LiteralPath (Join-Path $RepoRoot "tools\Build-ManifoldBrokerAndroid.ps1")
 $productSource = Get-Content -Raw -LiteralPath (Join-Path $RepoRoot "crates\rusty-quest-broker-product\src\lib.rs")
 $nativeLock = Get-Content -Raw -LiteralPath (Join-Path $app "native\manifold-source.lock.json")
 $nativeHub = Get-Content -Raw -LiteralPath (Join-Path $app "native\src\connection_hub_jni.rs")
-$sampleProvider = Join-Path $spatial "hub-sample-provider\src\main\java\io\github\mesmerprism\rustyquest\connection_hub_sample\ConnectionHubSampleActivity.java"
+$sampleManifest = Join-Path $spatial "hub-sample-provider\src\main\AndroidManifest.xml"
+$sampleProvider = Join-Path $spatial "hub-sample-provider\src\main\java\io\github\mesmerprism\rustyquest\connection_hub_sample\ConnectionHubSampleProvider.java"
+$sampleDebugManifestPath = Join-Path $spatial "hub-sample-provider\src\debug\AndroidManifest.xml"
+$sampleDebugServicePath = Join-Path $spatial "hub-sample-provider\src\debug\java\io\github\mesmerprism\rustyquest\connection_hub_sample\ConnectionHubDebugSurfaceService.java"
 
 if ($activity -match 'LocalManifoldBrokerServer\.get\(\)\.start' -or $activity -notmatch 'ACTION_START_HUB') { throw "Management Activity owns hidden server startup or lacks explicit Start." }
 if ($service -notmatch 'START_STICKY' -or $service -notmatch 'ConnectionHubProcess' -or $service -notmatch 'ACTION_STOP_HUB') { throw "Foreground service does not own persistent Hub lifecycle." }
@@ -125,6 +130,33 @@ if ($spatialManifest -notmatch 'BROKER_ADMISSION' -or $spatialManifest -notmatch
 if ($spatialClient -notmatch 'MESSAGE_REGISTER_SURFACE' -or $spatialClient -notmatch 'MESSAGE_UNREGISTER_SURFACE' -or $spatialClient -match 'admitted_client_evidence_json') { throw "Spatial provider lifecycle or admission boundary is incorrect." }
 if ($spatialActivity -notmatch 'hubSurface.*\.start' -or $spatialActivity -notmatch 'hubSurface\?\.close') { throw "Spatial app does not register/unregister its Hub surface with lifecycle." }
 if (-not (Test-Path -LiteralPath $sampleProvider -PathType Leaf) -or (Get-Content -Raw -LiteralPath $sampleProvider) -notmatch 'surface\.connection_hub_sample\.toggle') { throw "Distinct second-package Hub provider is missing." }
+foreach ($debugPath in @($spatialDebugManifestPath, $spatialDebugServicePath, $sampleDebugManifestPath, $sampleDebugServicePath)) {
+    if (-not (Test-Path -LiteralPath $debugPath -PathType Leaf)) { throw "Off-head debug provider seam is missing: $debugPath" }
+}
+$spatialDebugManifest = Get-Content -Raw -LiteralPath $spatialDebugManifestPath
+$spatialDebugService = Get-Content -Raw -LiteralPath $spatialDebugServicePath
+$sampleDebugManifest = Get-Content -Raw -LiteralPath $sampleDebugManifestPath
+$sampleDebugService = Get-Content -Raw -LiteralPath $sampleDebugServicePath
+foreach ($manifest in @($spatialDebugManifest, $sampleDebugManifest)) {
+    if ($manifest -notmatch 'ConnectionHubDebugSurfaceService' -or
+        $manifest -notmatch 'android:exported="true"' -or
+        $manifest -notmatch 'android:permission="android\.permission\.DUMP"' -or
+        $manifest -notmatch 'android:foregroundServiceType="dataSync"' -or
+        $manifest -notmatch 'android:stopWithTask="false"') {
+        throw "Off-head provider service is not exact, DUMP-gated, and foreground-only."
+    }
+}
+foreach ($serviceSource in @($spatialDebugService, $sampleDebugService)) {
+    if ($serviceSource -notmatch 'START_CONNECTION_HUB_DEBUG_SURFACE' -or
+        $serviceSource -notmatch 'STOP_CONNECTION_HUB_DEBUG_SURFACE' -or
+        $serviceSource -notmatch 'startForeground' -or $serviceSource -match 'startActivity') {
+        throw "Off-head provider service does not expose only the fixed surface lifecycle."
+    }
+}
+if ($spatialManifest -match 'ConnectionHubDebugSurfaceService' -or
+    (Get-Content -Raw -LiteralPath $sampleManifest) -match 'ConnectionHubDebugSurfaceService') {
+    throw "Debug provider service escaped into a release-source manifest."
+}
 
 $node = (Get-Command node -ErrorAction Stop).Source
 & $node --check (Join-Path $assets "app.js")

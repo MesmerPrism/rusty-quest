@@ -23,7 +23,7 @@ import org.json.JSONObject
  */
 class ConnectionHubSurfaceClient(
     context: Context,
-    private val player: Media3SpatialPlayerAdapter,
+    private val target: ConnectionHubSurfaceTarget,
 ) : Closeable {
   private val appContext = context.applicationContext
   private val handler = ProviderHandler(Looper.getMainLooper())
@@ -174,7 +174,7 @@ class ConnectionHubSurfaceClient(
                     .put(command(COMMAND_SELECT_PREVIOUS, "Previous video", CAPABILITY_SELECT_PREVIOUS)),
             )
             .put("surface_contract_sha256", SURFACE_CONTRACT_SHA256)
-            .put("state", player.hubSurfaceState())
+            .put("state", target.hubSurfaceState())
     val data = Bundle()
     data.putString("surface_registration_json", registration.toString())
     send(MESSAGE_REGISTER_SURFACE, data)
@@ -183,7 +183,7 @@ class ConnectionHubSurfaceClient(
   private fun sendSurfaceState() {
     val data = Bundle()
     data.putString("surface_id", SURFACE_ID)
-    data.putString("state_json", player.hubSurfaceState().toString())
+    data.putString("state_json", target.hubSurfaceState().toString())
     send(MESSAGE_UPDATE_SURFACE_STATE, data)
   }
 
@@ -196,8 +196,8 @@ class ConnectionHubSurfaceClient(
           val args = JSONObject(message.data.getString("args_json", "{}"))
           val receipt =
               JSONObject(message.data.getString("authority_receipt_json", "{}"))
-          val before = player.hubSurfaceState()
-          player.enqueueHubAuthorizedCommand(
+          val before = target.hubSurfaceState()
+          target.enqueueHubAuthorizedCommand(
                   requestId,
                   surfaceId,
                   command,
@@ -212,7 +212,7 @@ class ConnectionHubSurfaceClient(
           result.putBoolean("provider_applied", false)
           result.putString("status", "provider_rejected_${error.javaClass.simpleName}")
           result.putString("effect_status", "rejected")
-          result.putString("state_json", player.hubSurfaceState().toString())
+          result.putString("state_json", target.hubSurfaceState().toString())
           sendEffectResponse(message, result)
         }
   }
@@ -227,7 +227,7 @@ class ConnectionHubSurfaceClient(
     val probe =
         object : Runnable {
           override fun run() {
-            val state = player.hubSurfaceState()
+            val state = target.hubSurfaceState()
             val observed =
                 when (command) {
                   COMMAND_PLAY -> state.optBoolean("playing", false)
