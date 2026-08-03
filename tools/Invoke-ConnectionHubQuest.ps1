@@ -864,7 +864,10 @@ function Get-DebugPairingSecret {
         if (-not $process.Start()) { throw "Unable to start the dedicated pairing-secret transport." }
         $stdoutCount = $process.StandardOutput.ReadBlock($stdout, 0, $stdout.Length)
         $stderrCount = $process.StandardError.ReadBlock($stderr, 0, $stderr.Length)
-        $process.WaitForExit(12000)
+        # WaitForExit(Int32) returns a Boolean. Suppress that implementation
+        # detail so this secret-returning function emits only the char buffer;
+        # otherwise PowerShell attempts to coerce the leading True into Char.
+        [void]$process.WaitForExit(12000)
         if (-not $process.HasExited) { $process.Kill($true); throw "Pairing-secret transport timed out." }
         if ($process.ExitCode -ne 0 -or $stderrCount -gt 0) { throw "Pairing-secret transport failed closed." }
         [char[]]$prefix = "secret_b64=".ToCharArray()
