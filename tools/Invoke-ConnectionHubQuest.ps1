@@ -88,7 +88,7 @@ $QfmUninstallGap = "qfm-missing-typed-target-uninstall-v1"
 $QfmWifiGap = "qfm-missing-typed-wifi-rebind-v1"
 $ReceiptSchema = "rusty.quest.connection_hub.operator_receipt.v1"
 $ManifestSchema = "rusty.quest.connection_hub.operator_evidence_manifest.v1"
-$CheckpointSchema = "rusty.quest.connection_hub.operator_checkpoint.v1"
+$CheckpointSchema = "rusty.quest.connection_hub.operator_checkpoint.v2"
 $ProtocolVectorPath = Join-Path $RepoRoot "apps\manifold-broker-android\contracts\connection-hub-protocol-v1.json"
 $script:Receipts = [System.Collections.Generic.List[string]]::new()
 $script:ProviderLocks = [System.Collections.Generic.List[System.IDisposable]]::new()
@@ -106,6 +106,7 @@ $script:RunLogPath = ""
 $script:RunLogStderrPath = ""
 $script:ProcessEpochOrdinal = 0
 $script:ProcessEpochs = [System.Collections.Generic.List[object]]::new()
+$script:UninstallPerformed = $false
 
 function Get-Sha256([string]$Path) {
     return (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant()
@@ -165,7 +166,7 @@ function Write-JsonFile([string]$Path, $Value) {
 function Save-Receipt([string]$Name, $Value) {
     $path = Join-Path $script:RunDir "$Name.json"
     Write-JsonFile $path $Value
-    [void]$script:Receipts.Add($path)
+    if (-not $script:Receipts.Contains($path)) { [void]$script:Receipts.Add($path) }
     return $Value
 }
 
@@ -179,6 +180,61 @@ function New-Receipt([string]$Operation, [string]$Provider, [string]$Status, $De
         observed_at_utc = [DateTime]::UtcNow.ToString("o")
         secrets_in_receipt = $false
         details = $Details
+    }
+}
+
+function Read-ValidatedReceipt([string]$Path, [string]$ExpectedSha256) {
+    $resolved = [System.IO.Path]::GetFullPath($Path)
+    $runPrefix = $script:RunDir.TrimEnd('\') + '\'
+    if (-not $resolved.StartsWith($runPrefix, [StringComparison]::OrdinalIgnoreCase) -or
+            -not (Test-Path -LiteralPath $resolved -PathType Leaf) -or
+            (Get-Sha256 $resolved) -ne $ExpectedSha256) {
+        throw "Checkpoint stage receipt path or digest mismatch."
+    }
+    $receipt = Get-Content -Raw -LiteralPath $resolved | ConvertFrom-Json
+    if ([string]$receipt.'$schema' -ne $ReceiptSchema -or
+            [string]$receipt.status -notin @("passed", "not_required", "not_run", "diagnostic_only")) {
+        throw "Checkpoint stage receipt schema or status is not acceptance-safe."
+    }
+    if (-not $script:Receipts.Contains($resolved)) { [void]$script:Receipts.Add($resolved) }
+    return $receipt
+}
+
+function Assert-CheckpointStageClosure {
+    $completed = @($script:Checkpoint.completed_stages)
+    $stageMap = $script:Checkpoint.stage_receipts
+    foreach ($name in $completed) {
+        if (-not $stageMap.Contains([string]$name)) {
+            throw "Checkpoint completed stage lacks a receipt closure: $name"
+        }
+        $entries = @($stageMap[[string]$name])
+        if ($entries.Count -eq 0) { throw "Checkpoint stage has an empty receipt closure: $name" }
+        foreach ($entry in $entries) {
+            $leaf = [string]$entry.name
+            if ([System.IO.Path]::GetFileName($leaf) -ne $leaf -or -not $leaf.EndsWith(".json", [StringComparison]::Ordinal)) {
+                throw "Checkpoint stage receipt name is not one exact JSON leaf."
+            }
+            [void](Read-ValidatedReceipt (Join-Path $script:RunDir $leaf) ([string]$entry.sha256))
+        }
+    }
+    foreach ($name in @($stageMap.Keys)) {
+        if ($completed -notcontains [string]$name) { throw "Checkpoint has receipts for an uncompleted stage: $name" }
+    }
+}
+
+function Restore-ProcessEpochsFromReceipts {
+    foreach ($path in @($script:Receipts)) {
+        try { $receipt = Get-Content -Raw -LiteralPath $path | ConvertFrom-Json } catch { continue }
+        if ([string]$receipt.operation -ne "target-process-epoch") { continue }
+        $script:ProcessEpochOrdinal = [Math]::Max($script:ProcessEpochOrdinal, [int]$receipt.details.ordinal)
+        foreach ($target in @($receipt.details.targets)) {
+            [void]$script:ProcessEpochs.Add([pscustomobject]@{
+                reason=[string]$receipt.details.reason
+                package=[string]$target.package
+                uid=$(if($null -eq $target.uid){$null}else{[int]$target.uid})
+                pids=@($target.pids | ForEach-Object { [int]$_ })
+            })
+        }
     }
 }
 
@@ -196,13 +252,14 @@ function Initialize-Checkpoint {
                 [string]$checkpoint.protocol_vectors_sha256 -ne $protocolSha -or
                 [string]$checkpoint.existing_target_policy -ne $ExistingTargetPolicy -or
                 [string]$checkpoint.adb_sha256 -ne [string]$script:AdbPin -or
-                [string]$checkpoint.python_sha256 -ne [string]$script:PythonPin -or
-                [string]$checkpoint.node_sha256 -ne [string]$script:NodePin -or
-                [string]$checkpoint.gradle_sha256 -ne [string]$script:GradlePin -or
                 [string]$checkpoint.adb_version -ne [string]$script:AdbVersion -or
+                [string]$checkpoint.python_sha256 -ne [string]$script:PythonPin -or
                 [string]$checkpoint.python_version -ne [string]$script:PythonVersion -or
-                [string]$checkpoint.node_version -ne [string]$script:NodeVersion -or
-                [string]$checkpoint.gradle_version -ne [string]$script:GradleVersion) {
+                ($Action -ne "Cleanup" -and (
+                    [string]$checkpoint.node_sha256 -ne [string]$script:NodePin -or
+                    [string]$checkpoint.gradle_sha256 -ne [string]$script:GradlePin -or
+                    [string]$checkpoint.node_version -ne [string]$script:NodeVersion -or
+                    [string]$checkpoint.gradle_version -ne [string]$script:GradleVersion))) {
             throw "Resume checkpoint identity/protocol/policy mismatch."
         }
         if (-not [string]::IsNullOrWhiteSpace($FileManagerSha256) -and
@@ -232,16 +289,33 @@ function Initialize-Checkpoint {
                 [ordered]@{ label=[string]$_.label; path=$artifactPath; sha256=[string]$_.sha256; size=[long]$_.size }
             })
         }
+        if (-not [string]::IsNullOrWhiteSpace([string]$checkpoint.artifact_build_manifest_sha256)) {
+            $manifestPath = [System.IO.Path]::GetFullPath([string]$checkpoint.artifact_build_manifest_path)
+            if (-not $manifestPath.StartsWith($artifactPrefix, [StringComparison]::OrdinalIgnoreCase) -or
+                    -not (Test-Path -LiteralPath $manifestPath -PathType Leaf) -or
+                    (Get-Sha256 $manifestPath) -ne [string]$checkpoint.artifact_build_manifest_sha256) {
+                throw "Resume checkpoint build manifest digest mismatch."
+            }
+        }
+        $stageMap = [ordered]@{}
+        if ($checkpoint.stage_receipts) {
+            foreach ($property in $checkpoint.stage_receipts.PSObject.Properties) {
+                $stageMap[$property.Name] = @($property.Value)
+            }
+        }
+        $script:Checkpoint.stage_receipts = $stageMap
+        Assert-CheckpointStageClosure
         foreach ($receipt in Get-ChildItem -LiteralPath $script:RunDir -Filter *.json -File) {
             if ($receipt.FullName -ne $script:CheckpointPath) {
                 try {
                     $candidate = Get-Content -Raw -LiteralPath $receipt.FullName | ConvertFrom-Json
                     if ([string]$candidate.'$schema' -eq $ReceiptSchema) {
-                        [void]$script:Receipts.Add($receipt.FullName)
+                        if (-not $script:Receipts.Contains($receipt.FullName)) { [void]$script:Receipts.Add($receipt.FullName) }
                     }
                 } catch { }
             }
         }
+        Restore-ProcessEpochsFromReceipts
         return
     }
     $script:CheckpointPath = Join-Path $script:RunDir "checkpoint.json"
@@ -261,9 +335,11 @@ function Initialize-Checkpoint {
         node_version = $script:NodeVersion
         gradle_sha256 = $script:GradlePin
         gradle_version = $script:GradleVersion
+        artifact_build_manifest_path = $null
         artifact_build_manifest_sha256 = $null
         artifacts = @()
         completed_stages = @()
+        stage_receipts = [ordered]@{}
         updated_at_utc = [DateTime]::UtcNow.ToString("o")
         secrets_in_checkpoint = $false
     }
@@ -282,7 +358,10 @@ function Set-CheckpointArtifacts($Artifacts) {
     })
     $manifestPath = Join-Path $RepoRoot "target\connection-hub-debug\build-manifest.json"
     if (Test-Path -LiteralPath $manifestPath -PathType Leaf) {
-        $script:Checkpoint.artifact_build_manifest_sha256 = Get-Sha256 $manifestPath
+        $retainedManifestPath = Join-Path $script:RunDir "artifacts\build-manifest.json"
+        Copy-Item -LiteralPath $manifestPath -Destination $retainedManifestPath -Force
+        $script:Checkpoint.artifact_build_manifest_path = $retainedManifestPath
+        $script:Checkpoint.artifact_build_manifest_sha256 = Get-Sha256 $retainedManifestPath
     }
     Write-Checkpoint
 }
@@ -291,7 +370,19 @@ function Invoke-Stage([string]$Name, [scriptblock]$Body) {
     if (@($script:Checkpoint.completed_stages) -contains $Name) {
         return
     }
+    $before = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    foreach ($path in @($script:Receipts)) { [void]$before.Add($path) }
     . $Body
+    $entries = @($script:Receipts | Where-Object { -not $before.Contains($_) } | ForEach-Object {
+        $receipt = Get-Content -Raw -LiteralPath $_ | ConvertFrom-Json
+        if ([string]$receipt.'$schema' -ne $ReceiptSchema -or
+                [string]$receipt.status -notin @("passed", "not_required", "not_run", "diagnostic_only")) {
+            throw "Completed stage emitted a non-acceptance receipt: $Name"
+        }
+        [ordered]@{ name=(Split-Path -Leaf $_); sha256=Get-Sha256 $_; status=[string]$receipt.status }
+    })
+    if ($entries.Count -eq 0) { throw "Completed stage emitted no receipt closure: $Name" }
+    $script:Checkpoint.stage_receipts[$Name] = $entries
     $script:Checkpoint.completed_stages = @($script:Checkpoint.completed_stages) + $Name
     Write-Checkpoint
 }
@@ -384,7 +475,7 @@ function Start-RunLogCapture {
     $script:RunLogPath = Join-Path $script:RunDir "run-logcat.txt"
     $script:RunLogStderrPath = Join-Path $script:RunDir "run-logcat.stderr.txt"
     $arguments = @(
-        "-s", $Serial, "logcat", "-v", "epoch",
+        "-s", $Serial, "logcat", "-v", "epoch", "-v", "uid",
         "RQConnectionHubE2E:I", "RustyManifoldAdmission:V", "RustyManifoldRuntime:V",
         "RqConnectionHub:V", "RustyQuestVideoControl:V", "AndroidRuntime:E",
         "ActivityManager:I", "libc:F", "DEBUG:F", "*:S")
@@ -441,12 +532,70 @@ function Record-TargetProcessEpoch([string]$Reason) {
     }))
 }
 
+function Measure-RunLogWindow(
+        [string]$Text,
+        [string]$Marker,
+        [object[]]$Epochs,
+        [bool]$CaptureWithinBound,
+        [bool]$CaptureProcessAliveAtEnd,
+        [int]$EndMarkerWriteExitCode) {
+    $startMarker = "START $Marker"
+    $endMarker = "END $Marker"
+    $startIndex = $Text.IndexOf($startMarker, [StringComparison]::Ordinal)
+    $endIndex = if($startIndex -ge 0){$Text.IndexOf($endMarker, $startIndex + $startMarker.Length, [StringComparison]::Ordinal)}else{-1}
+    $startMarkerRetained = $startIndex -ge 0
+    $endMarkerRetained = $endIndex -gt $startIndex
+    $runWindow = if($startMarkerRetained -and $endMarkerRetained){$Text.Substring($startIndex, $endIndex + $endMarker.Length - $startIndex)}else{""}
+    $targetPids = [System.Collections.Generic.HashSet[int]]::new()
+    $targetUids = [System.Collections.Generic.HashSet[int]]::new()
+    foreach ($epoch in $Epochs) {
+        if ($null -ne $epoch.uid) { [void]$targetUids.Add([int]$epoch.uid) }
+        foreach ($targetProcessId in @($epoch.pids)) { [void]$targetPids.Add([int]$targetProcessId) }
+    }
+    $targetPackages = @($HubPackage, $SpatialPackage, $SamplePackage)
+    $targetFatalLines = [System.Collections.Generic.List[string]]::new()
+    $targetAnrLines = [System.Collections.Generic.List[string]]::new()
+    foreach ($line in ($runWindow -split "`r?`n")) {
+        $prefix = [regex]::Match($line, '^\s*\S+\s+(\d+)\s+(\d+)\s+')
+        $uid = if($prefix.Success){[int]$prefix.Groups[1].Value}else{-1}
+        $lineProcessId = if($prefix.Success){[int]$prefix.Groups[2].Value}else{-1}
+        $boundProcess = $targetUids.Contains($uid) -or $targetPids.Contains($lineProcessId)
+        $namesTarget = @($targetPackages | Where-Object { $line.Contains($_, [StringComparison]::Ordinal) }).Count -gt 0
+        if (($boundProcess -or $namesTarget) -and
+                ($line -match 'FATAL EXCEPTION|UnsatisfiedLinkError|\sE\s+AndroidRuntime\s*:|Fatal signal|Abort message')) {
+            [void]$targetFatalLines.Add($line)
+        }
+        if (($boundProcess -or $namesTarget) -and $line -match '(?i)\bANR\b|not responding') {
+            [void]$targetAnrLines.Add($line)
+        }
+    }
+    return [ordered]@{
+        start_marker_retained=$startMarkerRetained
+        end_marker_retained=$endMarkerRetained
+        capture_process_alive_at_end=$CaptureProcessAliveAtEnd
+        end_marker_write_exit_code=$EndMarkerWriteExitCode
+        capture_within_bound=$CaptureWithinBound
+        coverage_complete=($CaptureWithinBound -and $CaptureProcessAliveAtEnd -and $EndMarkerWriteExitCode -eq 0 -and $startMarkerRetained -and $endMarkerRetained)
+        target_uids=@($targetUids | Sort-Object)
+        target_pids=@($targetPids | Sort-Object)
+        target_fatal_count=$targetFatalLines.Count
+        target_anr_count=$targetAnrLines.Count
+        target_fatal_lines_sha256=Get-TextSha256 ($targetFatalLines -join "`n")
+        target_anr_lines_sha256=Get-TextSha256 ($targetAnrLines -join "`n")
+    }
+}
+
 function Stop-RunLogCapture([switch]$FailureCleanup) {
     if ($null -eq $script:RunLogProcess) { return $null }
     $process = $script:RunLogProcess
+    $captureProcessAliveAtEnd = -not $process.HasExited
+    $endMarkerWriteExitCode = -1
     try {
-        if (-not $process.HasExited) {
-            $process.Kill($true)
+        if ($captureProcessAliveAtEnd) {
+            $endWrite = Invoke-Adb @("shell", "log", "-t", "RQConnectionHubE2E", "END $($script:RunLogMarker)") $QfmLogGap "write the run-owned log capture end marker" -AllowFailure
+            $endMarkerWriteExitCode = [int]$endWrite.exit_code
+            Start-Sleep -Milliseconds 300
+            if (-not $process.HasExited) { $process.Kill($true) }
             [void]$process.WaitForExit(5000)
         }
     } finally {
@@ -461,54 +610,35 @@ function Stop-RunLogCapture([switch]$FailureCleanup) {
     $stdout = if(Test-Path -LiteralPath $path -PathType Leaf){[System.IO.File]::ReadAllText($path)}else{""}
     $stderr = if(Test-Path -LiteralPath $script:RunLogStderrPath -PathType Leaf){[System.IO.File]::ReadAllText($script:RunLogStderrPath)}else{""}
     $captureWithinBound = $stdout.Length -le 16777216
-    $markerRetained = $stdout.Contains("START $($script:RunLogMarker)", [StringComparison]::Ordinal)
-    $targetPids = [System.Collections.Generic.HashSet[int]]::new()
-    $targetUids = [System.Collections.Generic.HashSet[int]]::new()
-    foreach ($epoch in $script:ProcessEpochs) {
-        if ($null -ne $epoch.uid) { [void]$targetUids.Add([int]$epoch.uid) }
-        foreach ($pid in @($epoch.pids)) { [void]$targetPids.Add([int]$pid) }
-    }
-    $targetPackages = @($HubPackage, $SpatialPackage, $SamplePackage)
-    $targetFatalLines = [System.Collections.Generic.List[string]]::new()
-    $targetAnrLines = [System.Collections.Generic.List[string]]::new()
-    foreach ($line in ($stdout -split "`r?`n")) {
-        $prefix = [regex]::Match($line, '^\s*\S+\s+(\d+)\s+(\d+)\s+')
-        $uid = if($prefix.Success){[int]$prefix.Groups[1].Value}else{-1}
-        $pid = if($prefix.Success){[int]$prefix.Groups[2].Value}else{-1}
-        $boundProcess = $targetUids.Contains($uid) -or $targetPids.Contains($pid)
-        $namesTarget = @($targetPackages | Where-Object { $line.Contains($_, [StringComparison]::Ordinal) }).Count -gt 0
-        if ($boundProcess -and ($line -match 'FATAL EXCEPTION|UnsatisfiedLinkError|\sE\s+AndroidRuntime\s*:')) {
-            [void]$targetFatalLines.Add($line)
-        }
-        if (($boundProcess -or $namesTarget) -and $line -match '(?i)\bANR\b|not responding') {
-            [void]$targetAnrLines.Add($line)
-        }
-    }
-    $coverageComplete = $captureWithinBound -and $markerRetained
-    $status = if($coverageComplete -and $targetFatalLines.Count -eq 0 -and $targetAnrLines.Count -eq 0 -and -not $FailureCleanup){"passed"}elseif($FailureCleanup){"diagnostic_only"}else{"failed"}
+    $analysis = Measure-RunLogWindow $stdout $script:RunLogMarker @($script:ProcessEpochs) $captureWithinBound $captureProcessAliveAtEnd $endMarkerWriteExitCode
+    $status = if($analysis.coverage_complete -and $analysis.target_fatal_count -eq 0 -and $analysis.target_anr_count -eq 0 -and -not $FailureCleanup){"passed"}elseif($FailureCleanup){"diagnostic_only"}else{"failed"}
     $receipt = Save-Receipt "run-logs" (New-Receipt "run-bounded-logs" "serial-scoped-streaming-adb" $status ([ordered]@{
         provider_gap=$QfmLogGap
         capture_sha256=Get-Sha256 $path
         capture_size=(Get-Item -LiteralPath $path).Length
         marker_sha256=Get-TextSha256 $script:RunLogMarker
-        marker_retained=$markerRetained
+        start_marker_retained=$analysis.start_marker_retained
+        end_marker_retained=$analysis.end_marker_retained
+        end_marker_write_exit_code=$endMarkerWriteExitCode
+        capture_process_alive_at_end=$captureProcessAliveAtEnd
+        backlog_before_start_excluded=$true
         capture_within_16_mib_bound=$captureWithinBound
-        coverage_complete=$coverageComplete
-        target_uids=@($targetUids | Sort-Object)
-        target_pids=@($targetPids | Sort-Object)
+        coverage_complete=$analysis.coverage_complete
+        target_uids=$analysis.target_uids
+        target_pids=$analysis.target_pids
         process_epoch_count=$script:ProcessEpochs.Count
-        target_fatal_count=$targetFatalLines.Count
-        target_anr_count=$targetAnrLines.Count
-        target_fatal_lines_sha256=Get-TextSha256 ($targetFatalLines -join "`n")
-        target_anr_lines_sha256=Get-TextSha256 ($targetAnrLines -join "`n")
+        target_fatal_count=$analysis.target_fatal_count
+        target_anr_count=$analysis.target_anr_count
+        target_fatal_lines_sha256=$analysis.target_fatal_lines_sha256
+        target_anr_lines_sha256=$analysis.target_anr_lines_sha256
         stderr_sha256=Get-TextSha256 $stderr
         global_log_buffer_cleared=$false
         failure_cleanup=[bool]$FailureCleanup
     }))
-    if (-not $FailureCleanup -and -not $coverageComplete) {
+    if (-not $FailureCleanup -and -not $analysis.coverage_complete) {
         throw "Run-owned log capture coverage was incomplete or exceeded its acceptance bound."
     }
-    if (-not $FailureCleanup -and ($targetFatalLines.Count -ne 0 -or $targetAnrLines.Count -ne 0)) {
+    if (-not $FailureCleanup -and ($analysis.target_fatal_count -ne 0 -or $analysis.target_anr_count -ne 0)) {
         throw "Run-bounded target fatal/ANR scan failed."
     }
     return $receipt
@@ -670,15 +800,29 @@ function Inspect-All($Artifacts) {
     }
     $rows = @()
     $signers = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
-    foreach ($artifact in $Artifacts) {
+    $packages = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    $artifactDigests = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    $expectedPackages = @($HubPackage, $SpatialPackage, $SamplePackage)
+    for ($index = 0; $index -lt $Artifacts.Count; $index++) {
+        $artifact = $Artifacts[$index]
         $response = Invoke-Qfm @("apk", "inspect", "--file", $artifact.path, "--json") "inspect $($artifact.label)"
         if ($null -eq $response.json -or ([string]$response.json.Sha256).ToLowerInvariant() -ne $artifact.sha256) {
             throw "File Manager inspection did not bind $($artifact.label) to its staged SHA-256."
+        }
+        $packageName = [string]$response.json.Identity.PackageName
+        if ($packageName -ne $expectedPackages[$index] -or $null -ne $response.json.Identity.SplitName) {
+            throw "File Manager inspection returned the wrong fixed package identity for $($artifact.label)."
+        }
+        if (-not $packages.Add($packageName) -or -not $artifactDigests.Add([string]$artifact.sha256)) {
+            throw "The Hub/provider artifact set must contain three distinct packages and APK byte digests."
         }
         $signer = ([string]$response.json.Identity.SignerSha256).ToLowerInvariant()
         if ($signer -notmatch '^[0-9a-f]{64}$') { throw "File Manager returned an invalid signer for $($artifact.label)." }
         [void]$signers.Add($signer)
         $rows += [ordered]@{ label=$artifact.label; sha256=$artifact.sha256; signer_sha256=$signer; identity=$response.json.Identity }
+    }
+    if ($packages.Count -ne 3 -or $artifactDigests.Count -ne 3) {
+        throw "The inspected artifact set is not the exact three distinct fixed applications."
     }
     if ($signers.Count -ne 1) { throw "Signature Binder permission would fail: the three APK signers differ." }
     $sharedSigner = @($signers)[0]
@@ -746,14 +890,16 @@ function Capture-PreState($Artifacts) {
     $receipt = Save-Receipt "pre-state" (New-Receipt "pre-state" "qfm+serial-readback" "passed" $script:PreState)
     $script:Checkpoint.pre_state_receipt_sha256 = Get-Sha256 (Join-Path $script:RunDir "pre-state.json")
     Write-Checkpoint
-    if ($ExistingTargetPolicy -eq "PreserveAndRestore" -and $rows[0].installed) {
+    $preexistingTargets = @($rows | Where-Object { $_.installed })
+    if ($ExistingTargetPolicy -eq "PreserveAndRestore" -and $preexistingTargets.Count -ne 0) {
         [void](Save-Receipt "pre-state-restoration-preflight" (New-Receipt "pre-state-restoration-preflight" "operator-wrapper" "failed" ([ordered]@{
-            reason="preexisting_hub_private_trust_state_has_no_exact_restore_contract"
-            prior_running=[bool]$rows[0].running
+            reason="preexisting_target_private_state_has_no_exact_restore_contract"
+            installed_target_packages=@($preexistingTargets.package)
+            running_target_packages=@($preexistingTargets | Where-Object { $_.running } | ForEach-Object { $_.package })
             mutation_started=$false
-            supported_resolution="use RetainCandidate, or explicitly remove the prior Hub after separately preserving its private state"
+            supported_resolution="use RetainCandidate, or explicitly remove every prior target after separately preserving private state"
         })))
-        throw "PreserveAndRestore refuses a pre-existing Hub install because restoring APK bytes cannot restore its pairing/trust state."
+        throw "PreserveAndRestore refuses every pre-existing target install because restoring APK bytes cannot restore app-private state."
     }
     return $receipt
 }
@@ -782,6 +928,7 @@ function Restore-PreState($Artifacts) {
                 }
             } else {
                 [void](Invoke-Adb @("shell", "pm", "uninstall", [string]$prior.package) $QfmUninstallGap "remove only a run-installed target package")
+                $script:UninstallPerformed = $true
             }
         }
         if ($prior.running -and ($ExistingTargetPolicy -eq "RetainCandidate" -or $prior.installed)) {
@@ -809,6 +956,34 @@ function Restore-PreState($Artifacts) {
         device_invariants_restored=$true
         unrelated_packages_touched=$false
     }))
+}
+
+function Invoke-StandaloneCleanup($Artifacts) {
+    if ([string]::IsNullOrWhiteSpace($ResumeCheckpoint)) {
+        throw "Standalone Cleanup requires the exact interrupted E2E -ResumeCheckpoint."
+    }
+    $errors = [System.Collections.Generic.List[string]]::new()
+    if ($script:Checkpoint.run_log_capture -and $script:Checkpoint.run_log_capture.active -eq $true) {
+        try {
+            [void](Start-RunLogCapture)
+            [void](Stop-RunLogCapture -FailureCleanup)
+        } catch {
+            [void]$errors.Add("run_log_capture_cleanup_failed")
+        }
+    }
+    if ($script:HostessPaired -and (Test-Path -LiteralPath $SessionFile -PathType Leaf)) {
+        try { [void](Hostess-Action "revoke") }
+        catch { [void]$errors.Add("hostess_revoke_failed") }
+    }
+    try { [void](Restore-PreState $Artifacts) }
+    catch { [void]$errors.Add("pre_state_restore_failed") }
+    [void](Save-Receipt "standalone-cleanup" (New-Receipt "standalone-cleanup" "checkpoint-bound-operator" $(if($errors.Count -eq 0){"passed"}else{"partial"}) ([ordered]@{
+        attempted=$true
+        errors=@($errors)
+        target_packages_only=$true
+        run_log_capture_active_after=($null -ne $script:RunLogProcess)
+    })))
+    if ($errors.Count -ne 0) { throw "Standalone cleanup was partial: $($errors -join ', ')." }
 }
 
 function Install-All($Artifacts) {
@@ -1271,6 +1446,11 @@ function Test-Prerequisites {
 
 function Write-EvidenceManifest([string]$Result) {
     $entries = @($script:Receipts | Sort-Object | ForEach-Object {
+        $receipt = Get-Content -Raw -LiteralPath $_ | ConvertFrom-Json
+        if ($Result -eq "passed" -and ([string]$receipt.'$schema' -ne $ReceiptSchema -or
+                [string]$receipt.status -in @("failed", "partial"))) {
+            throw "A passed evidence manifest cannot include a failed or untyped receipt."
+        }
         [ordered]@{ name=(Split-Path -Leaf $_); sha256=Get-Sha256 $_; size=(Get-Item $_).Length }
     })
     $manifest = [ordered]@{
@@ -1280,7 +1460,8 @@ function Write-EvidenceManifest([string]$Result) {
         result = $Result
         generated_at_utc = [DateTime]::UtcNow.ToString("o")
         receipts = $entries
-        cleanup = [ordered]@{ target_packages_only=$true; uninstall_performed=$false; adb_transport_changed=$false }
+        cleanup = [ordered]@{ target_packages_only=$true; uninstall_performed=[bool]$script:UninstallPerformed; adb_transport_changed=$false }
+        checkpoint_sha256=$(if(Test-Path -LiteralPath $script:CheckpointPath -PathType Leaf){Get-Sha256 $script:CheckpointPath}else{$null})
         secrets_in_manifest = $false
     }
     $path = Join-Path $script:RunDir "evidence-manifest.json"
@@ -1304,6 +1485,7 @@ function New-DryRunPlan {
         hostess_secret_input = @("debug-shell-to-stdin-memory-only", "hidden-prompt", "stdin", "inherited-fd", "DPAPI-CurrentUser-session")
         e2e_sequence = @(
             "prerequisites+pre-state", "build", "inspect", "install+installed-byte-signer-readback",
+            "run-log-capture-start",
             "debug-protocol-proof", "real-activity-foreground-service+notification", "pair",
             "spatial-present+command", "provider-lifetime-over-2m+command",
             "process-death+start-sticky+provider-reregister+command", "wifi-rebind-or-explicit-safety-skip",
@@ -1336,7 +1518,7 @@ if ([string]::IsNullOrWhiteSpace($ResumeCheckpoint)) {
     New-Item -ItemType Directory -Path $script:RunDir | Out-Null
 }
 $needsQfm = $Action -in @("Prerequisites", "Inspect", "Install", "Start", "Status", "LaunchSpatial", "LaunchSample", "Cleanup", "E2E")
-$needsHostess = $Action -like "Hostess*" -or $Action -in @("WaitSurface", "WaitSurfaceAbsent", "E2E")
+$needsHostess = $Action -like "Hostess*" -or $Action -in @("WaitSurface", "WaitSurfaceAbsent", "Cleanup", "E2E")
 $needsAdb = $Action -notin @("Build", "Inspect", "SimulateE2E")
 $needsPython = $needsHostess
 $needsNode = $Action -eq "BrowserE2E" -or ($Action -eq "E2E" -and $RequireBrowserE2E)
@@ -1380,6 +1562,23 @@ if (@($script:Checkpoint.completed_stages) -contains "real-hub-start") { $script
 $finalResult = "failed"
 try {
     if ($Action -eq "SimulateE2E") {
+        $syntheticMarker = "synthetic-window"
+        $syntheticEpochs = @([pscustomobject]@{uid=10123;pids=@(4242);package=$HubPackage})
+        $syntheticLog = @(
+            "1.000 10123 4242 4242 E AndroidRuntime: FATAL EXCEPTION: backlog",
+            "1.100 2000 88 88 I RQConnectionHubE2E: START $syntheticMarker",
+            "1.200 10123 4242 4999 E AndroidRuntime: FATAL EXCEPTION: worker",
+            "1.300 2000 77 77 F libc: Fatal signal 11 in $HubPackage",
+            "1.400 2000 88 88 I RQConnectionHubE2E: END $syntheticMarker") -join "`n"
+        $synthetic = Measure-RunLogWindow $syntheticLog $syntheticMarker $syntheticEpochs $true $true 0
+        if ($synthetic.coverage_complete -ne $true -or $synthetic.target_fatal_count -ne 2) {
+            throw "Synthetic UID/PID/native fatal classifier did not bind the exact START/END run window."
+        }
+        $missingEnd = Measure-RunLogWindow ($syntheticLog -replace "(?m)^.*END $syntheticMarker$", "") $syntheticMarker $syntheticEpochs $true $true 0
+        $deadCapture = Measure-RunLogWindow $syntheticLog $syntheticMarker $syntheticEpochs $true $false 0
+        if ($missingEnd.coverage_complete -ne $false -or $deadCapture.coverage_complete -ne $false) {
+            throw "Synthetic run-log coverage accepted a missing END marker or dead capture."
+        }
         foreach ($name in (New-DryRunPlan).e2e_sequence) {
             $safeName = $name -replace '[^a-z0-9]+','-'
             Invoke-Stage $safeName {
@@ -1422,7 +1621,7 @@ try {
         try { [void](Invoke-BrowserE2EWithSecret $browserSecret) }
         finally { [Array]::Clear($browserSecret, 0, $browserSecret.Length); $browserSecret=$null }
     } elseif ($Action -eq "Logs") { [void](Capture-Logs)
-    } elseif ($Action -eq "Cleanup") { $a=Resolve-Apks; [void](Restore-PreState $a)
+    } elseif ($Action -eq "Cleanup") { $a=Resolve-Apks; [void](Invoke-StandaloneCleanup $a)
     } elseif ($Action -eq "E2E") {
         Invoke-Stage "prerequisites" { [void](Test-Prerequisites) }
         Invoke-Stage "build" { [void](Build-All); [void](Resolve-Apks) }
@@ -1440,7 +1639,11 @@ try {
             if ($postInstallCompleted -and ($null -eq $captureCheckpoint -or $captureCheckpoint.active -ne $true)) {
                 throw "Resume cannot prove the earlier target log window because its run-owned capture is not active."
             }
-            [void](Start-RunLogCapture)
+            if (@($script:Checkpoint.completed_stages) -contains "run-log-capture-start") {
+                [void](Start-RunLogCapture)
+            } else {
+                Invoke-Stage "run-log-capture-start" { [void](Start-RunLogCapture) }
+            }
         }
         Invoke-Stage "debug-protocol-proof" { [void](Prove-DebugProtocol) }
         Invoke-Stage "real-hub-start" {
@@ -1529,6 +1732,7 @@ try {
         }
         Invoke-Stage "restore-pre-state" { [void](Restore-PreState $a) }
     }
+    if ($Action -in @("E2E", "SimulateE2E")) { Assert-CheckpointStageClosure }
     $finalResult = "passed"
 } finally {
     if ($Action -eq "E2E" -and $finalResult -ne "passed") {

@@ -55,16 +55,28 @@ Require ($cli.Contains('-Keystore $resolvedKeystore') -and $cli.Contains('RUSTY_
 Require ($cli.Contains('the three APK signers differ') -and $cli.Contains('ExpectedSignerSha256')) "Pre-install signer equality gate is missing."
 Require ($cli.Contains('surface.spatial_video_control.media') -and $cli.Contains('surface.connection_hub_sample.toggle')) "Both fixed provider surfaces must be in the command registry."
 Require ($cli.Contains('Capture-PreState') -and $cli.Contains('Restore-PreState') -and $cli.Contains('apk", "export"')) "Target pre-state preservation/restore is incomplete."
-Require ($cli.Contains('preexisting_hub_private_trust_state_has_no_exact_restore_contract') -and
+Require ($cli.Contains('preexisting_target_private_state_has_no_exact_restore_contract') -and
     $cli.Contains('path=[string]$prior.retained_apk') -and
     $cli.Contains('$script:TargetMutationStarted')) "PreserveAndRestore does not fail closed for an unknown running Hub or launch restored provider bytes."
 Require ($cli.Contains('function Start-RunLogCapture') -and
     $cli.Contains('function Record-TargetProcessEpoch') -and
     $cli.Contains('function Stop-RunLogCapture') -and
     $cli.Contains('Run-owned log capture coverage was incomplete') -and
+    $cli.Contains('"-v", "epoch", "-v", "uid"') -and
+    $cli.Contains('capture_process_alive_at_end') -and
+    $cli.Contains('end_marker_retained') -and
+    $cli.Contains('backlog_before_start_excluded') -and
     $cli.Contains('target_fatal_count') -and $cli.Contains('target_anr_count')) "Run-bounded target fatal/ANR evidence is incomplete."
 Require ($cli.Contains('"Cleanup", "E2E"') -and
-    $cli.Contains('pre-existing Hub install because restoring APK bytes cannot restore its pairing/trust state')) "Cleanup QFM dependency or private-state fail-closed policy is missing."
+    $cli.Contains('pre-existing target install because restoring APK bytes cannot restore app-private state') -and
+    $cli.Contains('function Invoke-StandaloneCleanup')) "Cleanup QFM dependency or private-state fail-closed policy is missing."
+Require ($cli.Contains('$packageName -ne $expectedPackages[$index]') -and
+    $cli.Contains('three distinct packages and APK byte digests')) "Exact-three artifact identity/distinctness gate is missing."
+Require ($cli.Contains('Assert-CheckpointStageClosure') -and
+    $cli.Contains('artifact_build_manifest_path') -and
+    $cli.Contains('Restore-ProcessEpochsFromReceipts')) "Resume stage/build/process evidence closure is incomplete."
+Require ($cli.Contains('function Measure-RunLogWindow') -and
+    $cli.Contains('Synthetic UID/PID/native fatal classifier')) "Behavioral run-log classifier simulation is missing."
 Require ($cli.Contains('Initialize-Checkpoint') -and $cli.Contains('Resume checkpoint artifact digest mismatch')) "Resume checkpoint identity binding is incomplete."
 Require ($cli.Contains('ProviderLifetimeSeconds') -and $cli.Contains('Wait-Surface "surface.spatial_video_control.media" $false')) "Sequential provider/lifetime oracle is incomplete."
 Require ($cli.Contains('authenticated_socket_open_before_revoke') -and
@@ -98,7 +110,7 @@ if ($LASTEXITCODE -ne 0) { throw "Operator dry-run failed." }
 $plan = $planText | ConvertFrom-Json
 Require ([string]$plan.'$schema' -eq 'rusty.quest.connection_hub.operator_plan.v1') "Dry-run schema mismatch."
 Require ($plan.qfm_first -eq $true -and $plan.qfm_exact_sha256_required -eq $true) "Dry-run lost QFM-first exact-pin policy."
-Require (@($plan.e2e_sequence).Count -eq 20 -and $plan.e2e_sequence[-1] -eq 'target-only-pre-state-restore') "Dry-run E2E sequence is incomplete."
+Require (@($plan.e2e_sequence).Count -eq 21 -and $plan.e2e_sequence[-1] -eq 'target-only-pre-state-restore') "Dry-run E2E sequence is incomplete."
 Require ($plan.provider_lifetime_seconds -gt 120 -and $plan.checkpoint_resume -match 'artifacts') "Dry-run omitted lifetime/checkpoint gates."
 Require ($plan.secrets_in_plan -eq $false) "Dry-run plan secret posture mismatch."
 
@@ -110,19 +122,23 @@ try {
     Require ($run.result -eq 'passed' -and $run.secrets_in_output -eq $false) "Simulation run posture mismatch."
     $manifest = Get-Content -Raw -LiteralPath $run.evidence_manifest | ConvertFrom-Json
     Require ([string]$manifest.'$schema' -eq 'rusty.quest.connection_hub.operator_evidence_manifest.v1') "Simulation evidence schema mismatch."
-    Require (@($manifest.receipts).Count -eq 20 -and $manifest.secrets_in_manifest -eq $false) "Simulation evidence closure mismatch."
+    Require (@($manifest.receipts).Count -eq 21 -and $manifest.secrets_in_manifest -eq $false) "Simulation evidence closure mismatch."
     foreach ($receipt in @($manifest.receipts)) {
         $path = Join-Path (Split-Path -Parent $run.evidence_manifest) ([string]$receipt.name)
         Require ((Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant() -eq [string]$receipt.sha256) "Simulation receipt digest mismatch."
     }
     $checkpointPath = Join-Path (Split-Path -Parent $run.evidence_manifest) "checkpoint.json"
     $checkpoint = Get-Content -Raw -LiteralPath $checkpointPath | ConvertFrom-Json
-    Require (@($checkpoint.completed_stages).Count -eq 20 -and $checkpoint.secrets_in_checkpoint -eq $false) "Simulation checkpoint closure mismatch."
+    Require (@($checkpoint.completed_stages).Count -eq 21 -and $checkpoint.secrets_in_checkpoint -eq $false) "Simulation checkpoint closure mismatch."
     $resumedText = & pwsh -NoProfile -File $cliPath -Action SimulateE2E -Serial SIMULATED123 -EvidenceRoot $tempRoot -ResumeCheckpoint $checkpointPath
     if ($LASTEXITCODE -ne 0) { throw "Operator resume simulation failed." }
     $resumed = $resumedText | ConvertFrom-Json
     $resumedManifest = Get-Content -Raw -LiteralPath $resumed.evidence_manifest | ConvertFrom-Json
-    Require (@($resumedManifest.receipts).Count -eq 20 -and $resumed.result -eq 'passed') "Resumed evidence closure mismatch."
+    Require (@($resumedManifest.receipts).Count -eq 21 -and $resumed.result -eq 'passed') "Resumed evidence closure mismatch."
+    $tamperedReceiptPath = Join-Path (Split-Path -Parent $run.evidence_manifest) ([string]$manifest.receipts[0].name)
+    [System.IO.File]::AppendAllText($tamperedReceiptPath, " ")
+    $tamperedOutput = & pwsh -NoProfile -File $cliPath -Action SimulateE2E -Serial SIMULATED123 -EvidenceRoot $tempRoot -ResumeCheckpoint $checkpointPath 2>&1
+    Require ($LASTEXITCODE -ne 0 -and ($tamperedOutput -join "`n") -match 'receipt path or digest') "Resume accepted a tampered completed-stage receipt."
     $mismatchOutput = & pwsh -NoProfile -File $cliPath -Action SimulateE2E -Serial DIFFERENT123 -EvidenceRoot $tempRoot -ResumeCheckpoint $checkpointPath 2>&1
     Require ($LASTEXITCODE -ne 0 -and ($mismatchOutput -join "`n") -match 'checkpoint identity') "Resume accepted a mismatched serial."
 } finally {
