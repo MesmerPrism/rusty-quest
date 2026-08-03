@@ -48,6 +48,7 @@ param(
     [string]$BrowserExecutableSha256 = "",
     [switch]$RequireBrowserE2E,
     [switch]$RequireWifiRebindE2E,
+    [switch]$LegacyV1,
     [string]$Origin = "",
     [string]$SessionFile = "",
     [ValidatePattern('^[0-9a-f]{64}$')]
@@ -89,7 +90,11 @@ $QfmWifiGap = "qfm-missing-typed-wifi-rebind-v1"
 $ReceiptSchema = "rusty.quest.connection_hub.operator_receipt.v1"
 $ManifestSchema = "rusty.quest.connection_hub.operator_evidence_manifest.v1"
 $CheckpointSchema = "rusty.quest.connection_hub.operator_checkpoint.v2"
-$ProtocolVectorPath = Join-Path $RepoRoot "apps\manifold-broker-android\contracts\connection-hub-protocol-v1.json"
+$ProtocolVectorPath = Join-Path $RepoRoot $(if($LegacyV1){
+    "apps\manifold-broker-android\contracts\connection-hub-protocol-v1.json"
+}else{
+    "apps\manifold-broker-android\contracts\connection-hub-protocol-v2.json"
+})
 $script:Receipts = [System.Collections.Generic.List[string]]::new()
 $script:ProviderLocks = [System.Collections.Generic.List[System.IDisposable]]::new()
 $script:HubStarted = $false
@@ -109,8 +114,20 @@ $script:ProcessEpochs = [System.Collections.Generic.List[object]]::new()
 $script:UninstallPerformed = $false
 $script:CurrentCheckpointStage = ""
 
+if ($LegacyV1 -and ($RequireBrowserE2E -or $Action -eq "BrowserE2E")) {
+    throw "The browser acceptance harness is v2-only; legacy v1 cannot claim browser E2E continuity."
+}
+
 function Get-Sha256([string]$Path) {
     return (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant()
+}
+
+function Test-ExactBoolean($Value, [bool]$Expected) {
+    return $Value -is [bool] -and $Value -eq $Expected
+}
+
+function Test-ExactJsonInteger($Value, [long]$Minimum) {
+    return ($Value -is [int] -or $Value -is [long]) -and [long]$Value -ge $Minimum
 }
 
 function Get-TextSha256([string]$Value) {
@@ -246,6 +263,7 @@ function Assert-StageReceiptSemantics([string]$Name, [object[]]$Receipts) {
             "hub-start|real-activity-foreground-service|passed",
             "target-process-epoch|serial-scoped-adb-readback|passed") }
         "pair-hostess" { @("hostess-status|rusty-hostess|passed", "hostess-pair|rusty-hostess|passed") }
+        "hostess-v2-simulation" { @("hostess-simulate-e2e|rusty-hostess|passed") }
         "spatial-first" { @(
             "launch-spatial|qfm-with-reviewed-fallback|passed",
             "wait-surface|rusty-hostess|passed", "wait-surface|rusty-hostess|passed",
@@ -274,7 +292,20 @@ function Assert-StageReceiptSemantics([string]$Name, [object[]]$Receipts) {
             "target-process-epoch|serial-scoped-adb-readback|passed",
             "hostess-invoke-surface-command|rusty-hostess|passed") }
         "reconnect" { @("hostess-list-surfaces|rusty-hostess|passed") }
-        "watch" { @("hostess-connect-watch|rusty-hostess|passed") }
+        "keepalive-renewal" {
+            if ([bool]$script:Checkpoint.legacy_v1) {
+                @("hostess-v2-keepalive-renewal|optional-v2-continuity|not_required")
+            } else { @("hostess-connect-watch|rusty-hostess|passed") }
+        }
+        "history-rollover" {
+            if ([bool]$script:Checkpoint.legacy_v1) {
+                @("history-rollover|optional-v2-continuity|not_required")
+            } else { @(
+                "hub-force-rollover|debug-shell-provider-gap|passed",
+                "hostess-list-surfaces|rusty-hostess|passed",
+                "hostess-invoke-surface-command|rusty-hostess|passed",
+                "history-rollover-continuity|hostess+quest-authority|passed") }
+        }
         "revoke" { @("hostess-revoke|rusty-hostess|passed") }
         "browser-e2e" {
             if ([bool]$script:Checkpoint.require_browser_e2e) { @("browser-e2e|playwright-real-browser|passed") }
@@ -371,7 +402,8 @@ function Initialize-Checkpoint {
                     [string]$checkpoint.node_version -ne [string]$script:NodeVersion -or
                     [string]$checkpoint.gradle_version -ne [string]$script:GradleVersion -or
                     [bool]$checkpoint.require_browser_e2e -ne [bool]$RequireBrowserE2E -or
-                    [bool]$checkpoint.require_wifi_rebind_e2e -ne [bool]$RequireWifiRebindE2E))) {
+                    [bool]$checkpoint.require_wifi_rebind_e2e -ne [bool]$RequireWifiRebindE2E -or
+                    [bool]$checkpoint.legacy_v1 -ne [bool]$LegacyV1))) {
             throw "Resume checkpoint identity/protocol/policy mismatch."
         }
         if (-not [string]::IsNullOrWhiteSpace($FileManagerSha256) -and
@@ -461,6 +493,7 @@ function Initialize-Checkpoint {
         gradle_version = $script:GradleVersion
         require_browser_e2e = [bool]$RequireBrowserE2E
         require_wifi_rebind_e2e = [bool]$RequireWifiRebindE2E
+        legacy_v1 = [bool]$LegacyV1
         session_file = [System.IO.Path]::GetFullPath($SessionFile)
         artifact_build_manifest_path = $null
         artifact_build_manifest_sha256 = $null
@@ -947,7 +980,7 @@ function Build-All {
         $env:RUSTY_CONNECTION_HUB_KEYSTORE = $previousConnectionHubKeystore
     }
     $manifest = Get-Content -Raw (Join-Path $RepoRoot "target\connection-hub-debug\build-manifest.json") | ConvertFrom-Json
-    if ($manifest.connection_hub_debug_operator -ne $true) { throw "Debug Hub build omitted its shell operator route." }
+    if (-not (Test-ExactBoolean $manifest.connection_hub_debug_operator $true)) { throw "Debug Hub build omitted its shell operator route." }
     return Save-Receipt "build" (New-Receipt "build" "project-build" "passed" ([ordered]@{
         hub_build_manifest_sha256 = Get-Sha256 (Join-Path $RepoRoot "target\connection-hub-debug\build-manifest.json")
         gradle_version = "8.13"
@@ -1252,11 +1285,11 @@ function Hub-Action([string]$Method, $HubArtifact = $null) {
     $result = Invoke-DebugOperator "status"
     if ($Method -eq "start") {
         $deadline = [DateTime]::UtcNow.AddSeconds(12)
-        while ($result.owner_receipt.listener_running -ne $true -and [DateTime]::UtcNow -lt $deadline) {
+        while (-not (Test-ExactBoolean $result.owner_receipt.listener_running $true) -and [DateTime]::UtcNow -lt $deadline) {
             Start-Sleep -Milliseconds 400
             $result = Invoke-DebugOperator "status"
         }
-        if ($result.owner_receipt.listener_running -ne $true) { throw "Hub listener did not confirm running." }
+        if (-not (Test-ExactBoolean $result.owner_receipt.listener_running $true)) { throw "Hub listener did not confirm running." }
         $service = Invoke-Adb @("shell", "dumpsys", "activity", "services", $HubPackage) `
             $QfmServiceGap "read exact Hub foreground-service state"
         $notification = Invoke-Adb @("shell", "dumpsys", "notification", "--noredact") `
@@ -1293,10 +1326,11 @@ function Hub-Action([string]$Method, $HubArtifact = $null) {
 
 function Prove-DebugProtocol {
     $start = Invoke-DebugOperator "start"
-    if ($start.owner_receipt.listener_running -ne $true) { throw "Debug protocol start proof failed." }
+    if (-not (Test-ExactBoolean $start.owner_receipt.listener_running $true)) { throw "Debug protocol start proof failed." }
     $status = Invoke-DebugOperator "status"
     $stop = Invoke-DebugOperator "stop"
-    if ($status.owner_receipt.listener_running -ne $true -or $stop.owner_receipt.listener_running -ne $false) {
+    if (-not (Test-ExactBoolean $status.owner_receipt.listener_running $true) -or
+            -not (Test-ExactBoolean $stop.owner_receipt.listener_running $false)) {
         throw "Debug protocol status/stop proof failed."
     }
     return Save-Receipt "debug-protocol-proof" (New-Receipt "debug-protocol-proof" "debug-shell-provider-gap" "passed" ([ordered]@{
@@ -1309,10 +1343,10 @@ function Prove-DebugProtocol {
 
 function Restart-HubProcess {
     $before = Invoke-DebugOperator "status"
-    if ($before.owner_receipt.listener_running -ne $true) { throw "Hub must be running before restart proof." }
+    if (-not (Test-ExactBoolean $before.owner_receipt.listener_running $true)) { throw "Hub must be running before restart proof." }
     $oldPid = [int]$before.owner_receipt.pid
     $scheduled = Invoke-DebugOperator "restart-process"
-    if ($scheduled.owner_receipt.process_restart_scheduled -ne $true -or [int]$scheduled.owner_receipt.pid -ne $oldPid) {
+    if (-not (Test-ExactBoolean $scheduled.owner_receipt.process_restart_scheduled $true) -or [int]$scheduled.owner_receipt.pid -ne $oldPid) {
         throw "Debug process-death injection was not scheduled for the observed PID."
     }
     $deadline = [DateTime]::UtcNow.AddSeconds(40)
@@ -1327,8 +1361,8 @@ function Restart-HubProcess {
     do {
         Start-Sleep -Milliseconds 500
         try { $status = Invoke-DebugOperator "status" } catch { $status=$null }
-    } while (($null -eq $status -or $status.owner_receipt.listener_running -ne $true) -and [DateTime]::UtcNow -lt $deadline)
-    if ($null -eq $status -or $status.owner_receipt.listener_running -ne $true -or
+    } while (($null -eq $status -or -not (Test-ExactBoolean $status.owner_receipt.listener_running $true)) -and [DateTime]::UtcNow -lt $deadline)
+    if ($null -eq $status -or -not (Test-ExactBoolean $status.owner_receipt.listener_running $true) -or
             [string]$status.owner_receipt.desired_connection_state -ne "running") {
         throw "Encrypted desired state did not restore the real Hub listener."
     }
@@ -1347,6 +1381,22 @@ function Restart-HubProcess {
         notification_restored=$true
         service_readback_sha256=Get-TextSha256 $service.output
         notification_readback_sha256=Get-TextSha256 $notification.output
+    }))
+}
+
+function Force-HistoryRollover {
+    if ($LegacyV1) { throw "Legacy v1 is explicitly not safe across authority-history rollover." }
+    $result = Invoke-DebugOperator "force-rollover"
+    if ([string]$result.owner_receipt.action -ne "force-rollover" -or
+            -not (Test-ExactBoolean $result.owner_receipt.applied $true) -or
+            [string]$result.owner_receipt.status -ne "applied" -or
+            -not (Test-ExactBoolean $result.owner_receipt.listener_running $true)) {
+        throw "Quest-owned forced history rollover was not applied while the Hub remained active."
+    }
+    return Save-Receipt "hub-force-rollover" (New-Receipt "hub-force-rollover" "debug-shell-provider-gap" "passed" ([ordered]@{
+        provider_gap=$QfmServiceGap
+        owner_receipt=$result.owner_receipt
+        legacy_v1=$false
     }))
 }
 
@@ -1372,8 +1422,8 @@ function Invoke-WifiRebindE2E {
         do {
             Start-Sleep -Seconds 1
             try { $status=Invoke-DebugOperator "status" } catch { $status=$null }
-        } while (($null -eq $status -or $status.owner_receipt.listener_running -ne $true -or [string]$status.owner_receipt.origin -eq "http://0.0.0.0:0") -and [DateTime]::UtcNow -lt $deadline)
-        if ($null -eq $status -or $status.owner_receipt.listener_running -ne $true) { throw "Hub did not rebind after Wi-Fi restoration." }
+        } while (($null -eq $status -or -not (Test-ExactBoolean $status.owner_receipt.listener_running $true) -or [string]$status.owner_receipt.origin -eq "http://0.0.0.0:0") -and [DateTime]::UtcNow -lt $deadline)
+        if ($null -eq $status -or -not (Test-ExactBoolean $status.owner_receipt.listener_running $true)) { throw "Hub did not rebind after Wi-Fi restoration." }
         return Save-Receipt "wifi-rebind" (New-Receipt "wifi-rebind" "exact-usb-transport" "passed" ([ordered]@{
             ran=$true
             wifi_pre_state=1
@@ -1430,7 +1480,16 @@ function Read-HostessSurfaces {
     if ((Get-Sha256 $script:Python) -ne $PythonSha256) { throw "Python changed after the run lock was acquired." }
     $result = Invoke-Captured $script:Python @($script:Hostess, "list-surfaces", "--session-file", $SessionFile) "Hostess list-surfaces"
     if ($result.exit_code -ne 0) { throw "Hostess list-surfaces failed: $($result.combined)" }
-    return ($result.output | ConvertFrom-Json)
+    $snapshot = $result.output | ConvertFrom-Json
+    Assert-HostessProtocolFlags $snapshot "rusty.hostess.connection_hub.surface_list_receipt.v2"
+    if ([string]$snapshot.status -ne "passed" -or
+            -not (Test-ExactJsonInteger $snapshot.transport_epoch 1) -or
+            (-not $LegacyV1 -and -not (Test-ExactJsonInteger $snapshot.next_external_request_sequence 1)) -or
+            ($LegacyV1 -and $null -ne $snapshot.next_external_request_sequence) -or
+            @($snapshot.surfaces).Count -gt 128) {
+        throw "Hostess surface snapshot did not satisfy the exact bounded list receipt contract."
+    }
+    return $snapshot
 }
 
 function Wait-Surface([string]$ExpectedSurfaceId, [bool]$Present) {
@@ -1465,12 +1524,14 @@ function Invoke-HostessPairWithSecret([char[]]$Secret) {
     $start.RedirectStandardInput = $true
     $start.RedirectStandardOutput = $true
     $start.RedirectStandardError = $true
-    foreach ($argument in @(
+    $pairArguments = @(
         $script:Hostess, "pair", "--origin", $Origin,
         "--transport-classification", "trusted_lan_experimental",
         "--allow-insecure-trusted-lan", "--pairing-code-stdin",
         "--controller-identity-sha256", $ControllerIdentitySha256,
-        "--session-file", $SessionFile)) {
+        "--session-file", $SessionFile)
+    if ($LegacyV1) { $pairArguments += "--legacy-v1" }
+    foreach ($argument in $pairArguments) {
         [void]$start.ArgumentList.Add($argument)
     }
     $process = [System.Diagnostics.Process]::new()
@@ -1489,9 +1550,13 @@ function Invoke-HostessPairWithSecret([char[]]$Secret) {
             throw "Hostess pair emitted a forbidden secret field."
         }
         $json = $stdout | ConvertFrom-Json
-        if ($json.session_redacted -ne $true -or $null -ne $json.server_receipt.session) {
+        if ([string]$json.'$schema' -ne "rusty.hostess.connection_hub.pair_receipt.v2" -or
+                [string]$json.status -ne "passed" -or
+                -not (Test-ExactBoolean $json.session_redacted $true) -or
+                $null -ne $json.server_receipt.session) {
             throw "Hostess pair did not attest a redacted session receipt."
         }
+        Assert-HostessProtocolFlags $json "rusty.hostess.connection_hub.pair_receipt.v2"
         $script:HostessPaired = $true
         return Save-Receipt "hostess-pair" (New-Receipt "hostess-pair" "rusty-hostess" "passed" $json)
     } finally {
@@ -1546,30 +1611,121 @@ function Invoke-BrowserE2EWithSecret([char[]]$Secret) {
     }
 }
 
+function Assert-HostessProtocolFlags($Details, [string]$ExpectedSchema) {
+    $expectedProtocol = if($LegacyV1){"rusty.quest.connection_hub.v1"}else{"rusty.quest.connection_hub.v2"}
+    if ([string]$Details.'$schema' -ne $ExpectedSchema -or
+            [string]$Details.socket_protocol -ne $expectedProtocol -or
+            $Details.rollover_safe -isnot [bool] -or
+            $Details.rollover_safe -ne (-not [bool]$LegacyV1)) {
+        throw "Hostess receipt did not preserve the exact selected socket protocol/rollover posture."
+    }
+}
+
+function Assert-HostessStatusReceipt($Details) {
+    if ([string]$Details.'$schema' -ne "rusty.hostess.connection_hub.status_receipt.v1" -or
+            [string]$Details.status -ne "passed" -or
+            $Details.hub.listener_enabled -isnot [bool] -or
+            $Details.hub.pairing_available -isnot [bool] -or
+            [string]$Details.hub.desired_connection_state -notin @("stopped", "running")) {
+        throw "Hostess status did not satisfy the exact safe-status receipt contract."
+    }
+}
+
 function Hostess-Action([string]$Kind) {
     if ($Kind -eq "status") {
-        return Invoke-Hostess "status" @("--origin", $Origin, "--transport-classification", "trusted_lan_experimental", "--allow-insecure-trusted-lan") "hostess-status"
+        $status = Invoke-Hostess "status" @("--origin", $Origin, "--transport-classification", "trusted_lan_experimental", "--allow-insecure-trusted-lan") "hostess-status"
+        Assert-HostessStatusReceipt $status.details
+        return $status
     }
     if ($Kind -eq "pair") {
         $args = @("--origin", $Origin, "--transport-classification", "trusted_lan_experimental", "--allow-insecure-trusted-lan", "--controller-identity-sha256", $ControllerIdentitySha256, "--session-file", $SessionFile)
+        if ($LegacyV1) { $args += "--legacy-v1" }
         if ($PairingCodeStdin) { $args += "--pairing-code-stdin" }
         elseif ($PairingCodeFd -ge 0) { $args += @("--pairing-code-fd", [string]$PairingCodeFd) }
         $receipt = Invoke-Hostess "pair" $args "hostess-pair"
+        Assert-HostessProtocolFlags $receipt.details "rusty.hostess.connection_hub.pair_receipt.v2"
+        if (-not (Test-ExactBoolean $receipt.details.session_redacted $true)) { throw "Hostess pair receipt was not secret-redacted." }
         $script:HostessPaired = $true
         return $receipt
     }
-    if ($Kind -eq "list") { return Invoke-Hostess "list-surfaces" @("--session-file", $SessionFile) "hostess-list" }
-    if ($Kind -eq "watch") { return Invoke-Hostess "connect-watch" @("--session-file", $SessionFile, "--seconds", [string]$WatchSeconds, "--max-events", "128") "hostess-watch" }
+    if ($Kind -eq "list") {
+        $list = Invoke-Hostess "list-surfaces" @("--session-file", $SessionFile) "hostess-list"
+        Assert-HostessProtocolFlags $list.details "rusty.hostess.connection_hub.surface_list_receipt.v2"
+        if ([string]$list.details.status -ne "passed") { throw "Hostess list receipt did not pass." }
+        return $list
+    }
+    if ($Kind -eq "watch") {
+        $watch = Invoke-Hostess "connect-watch" @("--session-file", $SessionFile, "--seconds", [string]$WatchSeconds, "--max-events", "128", "--keepalive-interval-seconds", "1") "hostess-watch"
+        Assert-HostessProtocolFlags $watch.details "rusty.hostess.connection_hub.watch_receipt.v2"
+        if (-not $LegacyV1 -and (
+                -not (Test-ExactJsonInteger $watch.details.keepalive_count 1) -or
+                -not (Test-ExactJsonInteger $watch.details.next_external_request_sequence 2))) {
+            throw "Hostess watch did not prove v2 keepalive activity."
+        }
+        return $watch
+    }
+    if ($Kind -eq "renewal") {
+        if ($LegacyV1) { throw "Legacy v1 has no sliding keepalive renewal contract." }
+        $before = Read-HostessSurfaces
+        Assert-HostessProtocolFlags $before "rusty.hostess.connection_hub.surface_list_receipt.v2"
+        $renewal = Invoke-Hostess "connect-watch" @("--session-file", $SessionFile, "--seconds", "3", "--max-events", "16", "--keepalive-interval-seconds", "1") "hostess-keepalive-renewal"
+        $proof = $renewal.details
+        Assert-HostessProtocolFlags $proof "rusty.hostess.connection_hub.watch_receipt.v2"
+        if (-not (Test-ExactBoolean $proof.transport_epoch_changed $true) -or
+                -not (Test-ExactJsonInteger $proof.keepalive_count 1) -or
+                -not (Test-ExactJsonInteger $before.next_external_request_sequence 1) -or
+                -not (Test-ExactJsonInteger $proof.next_external_request_sequence 1) -or
+                [long]$proof.next_external_request_sequence -ne
+                    ([long]$before.next_external_request_sequence + [int]$proof.keepalive_count)) {
+            throw "Hostess keepalive renewal did not prove exact next-sequence advancement."
+        }
+        return $renewal
+    }
     if ($Kind -eq "reconnect") {
         $before = Read-HostessSurfaces
         $after = Invoke-Hostess "list-surfaces" @("--session-file", $SessionFile) "hostess-reconnect"
-        $beforeEpochs = @([regex]::Matches(($before | ConvertTo-Json -Depth 20 -Compress), '"transport_epoch"\s*:\s*(\d+)') | ForEach-Object { [long]$_.Groups[1].Value })
-        $afterEpochs = @([regex]::Matches(($after | ConvertTo-Json -Depth 20 -Compress), '"transport_epoch"\s*:\s*(\d+)') | ForEach-Object { [long]$_.Groups[1].Value })
-        if ($beforeEpochs.Count -eq 0 -or $afterEpochs.Count -eq 0 -or
-                ($afterEpochs | Measure-Object -Maximum).Maximum -le ($beforeEpochs | Measure-Object -Maximum).Maximum) {
-            throw "Reconnect did not prove a strictly newer transport epoch."
+        $afterDetails = $after.details
+        Assert-HostessProtocolFlags $before "rusty.hostess.connection_hub.surface_list_receipt.v2"
+        Assert-HostessProtocolFlags $afterDetails "rusty.hostess.connection_hub.surface_list_receipt.v2"
+        if (-not (Test-ExactBoolean $afterDetails.transport_epoch_changed $true) -or
+                -not (Test-ExactJsonInteger $before.transport_epoch 1) -or
+                -not (Test-ExactJsonInteger $afterDetails.transport_epoch 1) -or
+                [long]$afterDetails.transport_epoch -le [long]$before.transport_epoch -or
+                (-not $LegacyV1 -and (
+                    [string]::IsNullOrWhiteSpace([string]$afterDetails.expires_at_utc) -or
+                    -not (Test-ExactJsonInteger $before.next_external_request_sequence 1) -or
+                    -not (Test-ExactJsonInteger $afterDetails.next_external_request_sequence 1) -or
+                    [long]$afterDetails.next_external_request_sequence -ne [long]$before.next_external_request_sequence))) {
+            throw "Reconnect did not prove a newer transport with unchanged v2 external sequence."
         }
         return $after
+    }
+    if ($Kind -eq "simulate") {
+        $simulation = Invoke-Hostess "simulate-e2e" @() "hostess-v2-simulation"
+        $requiredChecks = @(
+            "status_safe_and_labelled", "pair_secret_redacted",
+            "bearer_absent_from_websocket_url", "media_surface_appeared",
+            "media_command_scoped", "media_provider_applied", "replay_failed_closed",
+            "unknown_surface_failed_closed", "unknown_command_failed_closed",
+            "second_surface_appeared", "second_provider_command_scoped",
+            "keepalive_slid_session", "media_surface_removed", "logical_session_preserved",
+            "transport_epoch_advanced", "reconnect_resynced_next_sequence",
+            "restart_preserved_sequence_fence", "rollover_replay_failed_closed",
+            "rollover_replay_not_redispatched", "reconnect_snapshot_preserved_surfaces",
+            "post_reconnect_command_accepted", "explicit_revoke_applied",
+            "revoke_active_socket_closed", "revoke_stale_bearer_rejected",
+            "local_credentials_deleted", "revoke_terminated_socket",
+            "post_revoke_reconnect_rejected", "high_rate_data_plane_absent",
+            "dispatch_never_crossed_provider")
+        $observedChecks = @($simulation.details.checks.PSObject.Properties.Name)
+        $missingChecks = @($requiredChecks | Where-Object { $observedChecks -notcontains $_ })
+        if ([string]$simulation.details.'$schema' -ne "rusty.hostess.connection_hub.simulated_e2e_receipt.v2" -or
+                [string]$simulation.details.status -ne "passed" -or
+                $missingChecks.Count -ne 0 -or
+                @($simulation.details.checks.PSObject.Properties | Where-Object { -not (Test-ExactBoolean $_.Value $true) }).Count -ne 0) {
+            throw "Hostess v2 lost-receipt/rollover-replay simulation failed."
+        }
+        return $simulation
     }
     if ($Kind -eq "revoke") {
         $receipt = Invoke-Hostess "revoke" @("--session-file", $SessionFile) "hostess-revoke"
@@ -1580,8 +1736,9 @@ function Hostess-Action([string]$Kind) {
             "authenticated_socket_closed_within_deadline",
             "stale_bearer_auth_rejected",
             "credentials_deleted_after_negative_proof")) {
-            if ($proof.$field -ne $true) { throw "Hostess revoke did not prove $field." }
+            if (-not (Test-ExactBoolean $proof.$field $true)) { throw "Hostess revoke did not prove $field." }
         }
+        Assert-HostessProtocolFlags $proof "rusty.hostess.connection_hub.revoke_receipt.v2"
         $script:HostessPaired = $false
         return $receipt
     }
@@ -1600,11 +1757,21 @@ function Hostess-Action([string]$Kind) {
         if ([string]$effect.surface_id -ne $SurfaceId -or
                 [string]$effect.command -ne $CommandId -or
                 [string]::IsNullOrWhiteSpace([string]$effect.request_id) -or
-                $effect.request_binding_exact -ne $true -or
-                $effect.authority_accepted -ne $true -or
-                $effect.provider_applied -ne $true -or
+                -not (Test-ExactBoolean $effect.request_binding_exact $true) -or
+                -not (Test-ExactBoolean $effect.authority_accepted $true) -or
+                -not (Test-ExactBoolean $effect.provider_applied $true) -or
                 [string]$effect.status -ne "provider_effect_observed") {
             throw "Hostess command was authorized but did not prove the exact provider effect."
+        }
+        Assert-HostessProtocolFlags $effect "rusty.hostess.connection_hub.command_receipt.v2"
+        if ($LegacyV1) {
+            if ($null -ne $effect.request_sequence -or $null -ne $effect.next_external_request_sequence) {
+                throw "Legacy v1 command receipt falsely claimed sequenced rollover safety."
+            }
+        } elseif (-not (Test-ExactJsonInteger $effect.request_sequence 1) -or
+                -not (Test-ExactJsonInteger $effect.next_external_request_sequence 2) -or
+                [long]$effect.next_external_request_sequence -ne ([long]$effect.request_sequence + 1)) {
+            throw "V2 command receipt did not prove exact accepted next-sequence advancement."
         }
         return $receipt
     }
@@ -1642,6 +1809,8 @@ function Test-Prerequisites {
         qfm_path_sha256=$(if($script:Qfm){Get-Sha256 $script:Qfm}else{$null})
         hostess_path_sha256=$(if($script:Hostess){Get-Sha256 $script:Hostess}else{$null})
         protocol_vectors_sha256=Get-Sha256 $ProtocolVectorPath
+        socket_protocol=$(if($LegacyV1){"rusty.quest.connection_hub.v1"}else{"rusty.quest.connection_hub.v2"})
+        rollover_safe=(-not [bool]$LegacyV1)
         existing_target_policy=$ExistingTargetPolicy
         browser_e2e_required=[bool]$RequireBrowserE2E
     }
@@ -1688,6 +1857,8 @@ function New-DryRunPlan {
         qfm_first = $true
         qfm_exact_sha256_required = $true
         all_apk_signers_must_match_before_install = $true
+        socket_protocol = $(if($LegacyV1){"rusty.quest.connection_hub.v1"}else{"rusty.quest.connection_hub.v2"})
+        rollover_safe = (-not [bool]$LegacyV1)
         reviewed_fallbacks = @(
             $QfmLaunchGap, $QfmLifecycleGap, $QfmServiceGap, $QfmStopGap,
             $QfmLogGap, $QfmDeviceStateGap, $QfmPackageStateGap,
@@ -1697,11 +1868,14 @@ function New-DryRunPlan {
             "prerequisites+pre-state", "build", "inspect", "install+installed-byte-signer-readback",
             "run-log-capture-start",
             "debug-protocol-proof", "real-activity-foreground-service+notification", "pair",
+            "hostess-v2-lost-receipt+rollover-replay-simulation",
             "spatial-present+command", "provider-lifetime-over-2m+command",
             "process-death+start-sticky+provider-reregister+command", "wifi-rebind-or-explicit-safety-skip",
             "spatial-removed+sample-present+command", "sample-removed+spatial-returned+command",
             "hub-persists-across-app-switches",
-            "reconnect-epoch-assertion", "watch", "revoke+closed-socket-assertion",
+            "reconnect-epoch+sequence-assertion", "v2-keepalive-renewal-or-explicit-legacy-skip",
+            "quest-owned-rollover+resync+fresh-command-or-explicit-legacy-skip",
+            "revoke+closed-socket-assertion",
             $(if($RequireBrowserE2E){"real-browser-sequential-surface-e2e"}else{"browser-e2e-explicitly-not-required"}),
             "run-bounded-target-fatal-anr-scan",
             "target-only-pre-state-restore")
@@ -1787,7 +1961,7 @@ try {
             "1.300 2000 77 77 F libc: Fatal signal 11 in $HubPackage",
             "1.400 2000 88 88 I RQConnectionHubE2E: END $syntheticMarker") -join "`n"
         $synthetic = Measure-RunLogWindow $syntheticLog $syntheticMarker $syntheticEpochs $true $true 0
-        if ($synthetic.coverage_complete -ne $true -or $synthetic.target_fatal_count -ne 2) {
+        if (-not (Test-ExactBoolean $synthetic.coverage_complete $true) -or $synthetic.target_fatal_count -ne 2) {
             throw "Synthetic UID/PID/native fatal classifier did not bind the exact START/END run window."
         }
         $missingEnd = Measure-RunLogWindow ($syntheticLog -replace "(?m)^.*END $syntheticMarker$", "") $syntheticMarker $syntheticEpochs $true $true 0
@@ -1862,9 +2036,10 @@ try {
             $postInstallCompleted = @($script:Checkpoint.completed_stages | Where-Object {
                 $_ -in @("debug-protocol-proof", "real-hub-start", "pair-hostess", "spatial-first",
                     "provider-lifetime-over-2m", "process-restart", "wifi-rebind", "sample-switch",
-                    "spatial-return", "reconnect", "watch", "revoke", "browser-e2e")
+                    "spatial-return", "reconnect", "keepalive-renewal", "history-rollover",
+                    "hostess-v2-simulation", "revoke", "browser-e2e")
             }).Count -gt 0
-            if ($postInstallCompleted -and ($null -eq $captureCheckpoint -or $captureCheckpoint.active -ne $true)) {
+            if ($postInstallCompleted -and ($null -eq $captureCheckpoint -or -not (Test-ExactBoolean $captureCheckpoint.active $true))) {
                 throw "Resume cannot prove the earlier target log window because its run-owned capture is not active."
             }
             if (@($script:Checkpoint.completed_stages) -contains "run-log-capture-start") {
@@ -1885,20 +2060,21 @@ try {
             try { [void](Invoke-HostessPairWithSecret $pairingSecret) }
             finally { [Array]::Clear($pairingSecret, 0, $pairingSecret.Length); $pairingSecret = $null }
         }
+        Invoke-Stage "hostess-v2-simulation" { [void](Hostess-Action "simulate") }
         Invoke-Stage "spatial-first" {
             [void](Launch-Provider $a "spatial")
             [void](Wait-Surface "surface.spatial_video_control.media" $true)
             [void](Wait-Surface "surface.connection_hub_sample.toggle" $false)
             [void](Record-TargetProcessEpoch "spatial-first")
             $SurfaceId="surface.spatial_video_control.media"; $CommandId="command.spatial_video_control.play"; [void](Hostess-Action "command")
-            if ((Invoke-DebugOperator "status").owner_receipt.listener_running -ne $true) { throw "Hub stopped across Spatial app switch." }
+            if (-not (Test-ExactBoolean (Invoke-DebugOperator "status").owner_receipt.listener_running $true)) { throw "Hub stopped across Spatial app switch." }
         }
         Invoke-Stage "provider-lifetime-over-2m" {
             $deadline=[DateTime]::UtcNow.AddSeconds($ProviderLifetimeSeconds)
             $nextProbe=[DateTime]::UtcNow
             while ([DateTime]::UtcNow -lt $deadline) {
                 if ([DateTime]::UtcNow -ge $nextProbe) {
-                    if ((Invoke-DebugOperator "status").owner_receipt.listener_running -ne $true) { throw "Hub stopped during provider lifetime hold." }
+                    if (-not (Test-ExactBoolean (Invoke-DebugOperator "status").owner_receipt.listener_running $true)) { throw "Hub stopped during provider lifetime hold." }
                     [void](Read-HostessSurfaces)
                     $nextProbe=[DateTime]::UtcNow.AddSeconds(15)
                 }
@@ -1930,7 +2106,7 @@ try {
             [void](Wait-Surface "surface.connection_hub_sample.toggle" $true)
             [void](Record-TargetProcessEpoch "sample-switch")
             $SurfaceId="surface.connection_hub_sample.toggle"; $CommandId="command.connection_hub_sample.toggle"; [void](Hostess-Action "command")
-            if ((Invoke-DebugOperator "status").owner_receipt.listener_running -ne $true) { throw "Hub stopped across Sample app switch." }
+            if (-not (Test-ExactBoolean (Invoke-DebugOperator "status").owner_receipt.listener_running $true)) { throw "Hub stopped across Sample app switch." }
         }
         Invoke-Stage "spatial-return" {
             [void](Launch-Provider $a "spatial")
@@ -1940,7 +2116,64 @@ try {
             $SurfaceId="surface.spatial_video_control.media"; $CommandId="command.spatial_video_control.play"; [void](Hostess-Action "command")
         }
         Invoke-Stage "reconnect" { [void](Hostess-Action "reconnect") }
-        Invoke-Stage "watch" { [void](Hostess-Action "watch") }
+        Invoke-Stage "keepalive-renewal" {
+            if ($LegacyV1) {
+                [void](Save-Receipt "hostess-v2-keepalive-renewal" (New-Receipt "hostess-v2-keepalive-renewal" "optional-v2-continuity" "not_required" ([ordered]@{
+                    legacy_v1=$true
+                    rollover_safe=$false
+                    acceptance_claimed=$false
+                })))
+            } else { [void](Hostess-Action "renewal") }
+        }
+        Invoke-Stage "history-rollover" {
+            if ($LegacyV1) {
+                [void](Save-Receipt "history-rollover" (New-Receipt "history-rollover" "optional-v2-continuity" "not_required" ([ordered]@{
+                    legacy_v1=$true
+                    rollover_safe=$false
+                    acceptance_claimed=$false
+                })))
+            } else {
+                $beforeRollover = Read-HostessSurfaces
+                Assert-HostessProtocolFlags $beforeRollover "rusty.hostess.connection_hub.surface_list_receipt.v2"
+                if (-not (Test-ExactJsonInteger $beforeRollover.next_external_request_sequence 1) -or
+                        -not (Test-ExactJsonInteger $beforeRollover.transport_epoch 1)) {
+                    throw "Pre-rollover Hostess state did not contain a valid sequence and transport epoch."
+                }
+                $beforeSequence = [long]$beforeRollover.next_external_request_sequence
+                $beforeTransportEpoch = [long]$beforeRollover.transport_epoch
+                [void](Force-HistoryRollover)
+                $afterRollover = Hostess-Action "reconnect"
+                $afterDetails = $afterRollover.details
+                if (-not (Test-ExactJsonInteger $afterDetails.next_external_request_sequence 1) -or
+                        -not (Test-ExactJsonInteger $afterDetails.transport_epoch 1) -or
+                        [long]$afterDetails.next_external_request_sequence -ne $beforeSequence -or
+                        [long]$afterDetails.transport_epoch -le $beforeTransportEpoch) {
+                    throw "Post-rollover reconnect did not preserve the pre-rollover sequence on a newer transport."
+                }
+                $SurfaceId="surface.spatial_video_control.media"
+                $CommandId="command.spatial_video_control.pause"
+                $freshCommand = Hostess-Action "command"
+                $commandDetails = $freshCommand.details
+                if (-not (Test-ExactJsonInteger $commandDetails.request_sequence 1) -or
+                        -not (Test-ExactJsonInteger $commandDetails.next_external_request_sequence 2) -or
+                        [long]$commandDetails.request_sequence -ne $beforeSequence -or
+                        [long]$commandDetails.next_external_request_sequence -ne ($beforeSequence + 1)) {
+                    throw "Fresh post-rollover command was not bound to the exact pre-rollover next sequence."
+                }
+                [void](Save-Receipt "history-rollover-continuity" (New-Receipt "history-rollover-continuity" "hostess+quest-authority" "passed" ([ordered]@{
+                    legacy_v1=$false
+                    rollover_safe=$true
+                    pre_rollover_next_external_request_sequence=$beforeSequence
+                    pre_rollover_transport_epoch=$beforeTransportEpoch
+                    post_rollover_next_external_request_sequence=[long]$afterDetails.next_external_request_sequence
+                    post_rollover_transport_epoch=[long]$afterDetails.transport_epoch
+                    fresh_command_request_sequence=[long]$commandDetails.request_sequence
+                    fresh_command_next_external_request_sequence=[long]$commandDetails.next_external_request_sequence
+                    sequence_fence_preserved=$true
+                    fresh_command_advanced_exactly_once=$true
+                })))
+            }
+        }
         Invoke-Stage "revoke" { [void](Hostess-Action "revoke") }
         Invoke-Stage "browser-e2e" {
             if ($RequireBrowserE2E) {

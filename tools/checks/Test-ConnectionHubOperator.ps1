@@ -99,12 +99,51 @@ Require ($cli.Contains('authenticated_socket_open_before_revoke') -and
     $cli.Contains('stale_bearer_auth_rejected') -and
     $cli.Contains('credentials_deleted_after_negative_proof') -and
     -not $cli.Contains('function Assert-RevokedSocketClosed')) "Same-process revoke/closed-socket/stale-bearer proof is missing."
-Require ($cli.Contains('$effect.request_binding_exact -ne $true') -and
-    $cli.Contains('$effect.authority_accepted -ne $true') -and
-    $cli.Contains('$effect.provider_applied -ne $true') -and
+Require ($cli.Contains('Test-ExactBoolean $effect.request_binding_exact $true') -and
+    $cli.Contains('Test-ExactBoolean $effect.authority_accepted $true') -and
+    $cli.Contains('Test-ExactBoolean $effect.provider_applied $true') -and
     $cli.Contains('provider_effect_observed')) "Device command oracle does not require an exact observed provider effect."
 Require ($cli.Contains('Restart-HubProcess') -and $cli.Contains('START_STICKY did not produce a new Hub process')) "Process restart/FGS recovery oracle is missing."
 Require ($cli.Contains('not_run_safety_reason') -and $cli.Contains('RequireWifiRebindE2E')) "Wi-Fi rebind safety gate is missing."
+Require ($cli.Contains('connection-hub-protocol-v2.json') -and
+    $cli.Contains('[switch]$LegacyV1') -and $cli.Contains('"--legacy-v1"') -and
+    $cli.Contains('rusty.hostess.connection_hub.pair_receipt.v2') -and
+    $cli.Contains('rollover_safe')) "Default v2 and explicit non-rollover-safe legacy selection are incomplete."
+Require ($cli.Contains('Hostess keepalive renewal did not prove exact next-sequence advancement') -and
+    $cli.Contains('V2 command receipt did not prove exact accepted next-sequence advancement') -and
+    $cli.Contains('Reconnect did not prove a newer transport with unchanged v2 external sequence')) "V2 keepalive/command/reconnect sequence oracles are incomplete."
+Require ($cli.Contains('function Assert-HostessStatusReceipt') -and
+    $cli.Contains('Hostess surface snapshot did not satisfy the exact bounded list receipt contract') -and
+    $cli.Contains('$Details.rollover_safe -isnot [bool]')) "Hostess status/list protocol receipts are not validated without Boolean coercion."
+$operatorAst = [System.Management.Automation.Language.Parser]::ParseFile($cliPath, [ref]$null, [ref]$null)
+$exactBooleanFunction = $operatorAst.Find({
+    param($node)
+    $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Test-ExactBoolean'
+}, $true)
+Require ($null -ne $exactBooleanFunction) "Exact Boolean validator is missing."
+. ([scriptblock]::Create($exactBooleanFunction.Extent.Text))
+Require ((Test-ExactBoolean $true $true) -and (Test-ExactBoolean $false $false) -and
+    -not (Test-ExactBoolean 'true' $true) -and -not (Test-ExactBoolean 'false' $false) -and
+    -not (Test-ExactBoolean 1 $true) -and -not (Test-ExactBoolean 0 $false)) `
+    "Exact Boolean validator accepted a string or numeric impostor."
+$exactIntegerFunction = $operatorAst.Find({
+    param($node)
+    $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Test-ExactJsonInteger'
+}, $true)
+Require ($null -ne $exactIntegerFunction) "Exact JSON integer validator is missing."
+. ([scriptblock]::Create($exactIntegerFunction.Extent.Text))
+Require ((Test-ExactJsonInteger 1 1) -and (Test-ExactJsonInteger ([long]::MaxValue) 1) -and
+    -not (Test-ExactJsonInteger '1' 1) -and -not (Test-ExactJsonInteger 1.0 1) -and
+    -not (Test-ExactJsonInteger ([decimal]1) 1) -and -not (Test-ExactJsonInteger 0 1)) `
+    "Exact JSON integer validator accepted a string, fraction, decimal, or out-of-range value."
+Require ($cli.Contains('function Force-HistoryRollover') -and
+    $cli.Contains('Invoke-DebugOperator "force-rollover"') -and
+    $cli.Contains('Hostess v2 lost-receipt/rollover-replay simulation failed') -and
+    $cli.Contains('pre_rollover_next_external_request_sequence') -and
+    $cli.Contains('fresh_command_advanced_exactly_once')) "Quest-owned rollover continuity proof is incomplete."
+Require ($cli.Contains('"rollover_replay_failed_closed"') -and
+    $cli.Contains('"rollover_replay_not_redispatched"') -and
+    $cli.Contains('$missingChecks.Count -ne 0')) "Named lost-receipt/replay simulation checks are not required."
 Require (-not $cli.Contains('AdbArguments')) "A generic caller-supplied ADB argument surface is forbidden."
 
 Require ($build.Contains('[switch]$EnableConnectionHubDebugOperator')) "Debug operator build gate is missing."
@@ -125,9 +164,16 @@ if ($LASTEXITCODE -ne 0) { throw "Operator dry-run failed." }
 $plan = $planText | ConvertFrom-Json
 Require ([string]$plan.'$schema' -eq 'rusty.quest.connection_hub.operator_plan.v1') "Dry-run schema mismatch."
 Require ($plan.qfm_first -eq $true -and $plan.qfm_exact_sha256_required -eq $true) "Dry-run lost QFM-first exact-pin policy."
-Require (@($plan.e2e_sequence).Count -eq 21 -and $plan.e2e_sequence[-1] -eq 'target-only-pre-state-restore') "Dry-run E2E sequence is incomplete."
+Require (@($plan.e2e_sequence).Count -eq 23 -and $plan.e2e_sequence[-1] -eq 'target-only-pre-state-restore') "Dry-run E2E sequence is incomplete."
+Require ($plan.socket_protocol -eq 'rusty.quest.connection_hub.v2' -and $plan.rollover_safe -eq $true) "Dry-run did not default to rollover-safe v2."
 Require ($plan.provider_lifetime_seconds -gt 120 -and $plan.checkpoint_resume -match 'artifacts') "Dry-run omitted lifetime/checkpoint gates."
 Require ($plan.secrets_in_plan -eq $false) "Dry-run plan secret posture mismatch."
+$legacyPlanText = & pwsh -NoProfile -File $cliPath -Action E2E -Serial SIMULATED123 -DryRun -LegacyV1
+if ($LASTEXITCODE -ne 0) { throw "Legacy operator dry-run failed." }
+$legacyPlan = $legacyPlanText | ConvertFrom-Json
+Require ($legacyPlan.socket_protocol -eq 'rusty.quest.connection_hub.v1' -and $legacyPlan.rollover_safe -eq $false) "Legacy v1 was not explicit and non-rollover-safe."
+$legacyBrowserText = & pwsh -NoProfile -File $cliPath -Action BrowserE2E -Serial SIMULATED123 -DryRun -LegacyV1 2>$null
+Require ($LASTEXITCODE -ne 0 -and [string]::IsNullOrWhiteSpace(($legacyBrowserText -join ""))) "Standalone browser E2E must reject a legacy-v1 label."
 
 $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("connection-hub-operator-test-" + [Guid]::NewGuid().ToString("N"))
 try {
@@ -137,19 +183,19 @@ try {
     Require ($run.result -eq 'passed' -and $run.secrets_in_output -eq $false) "Simulation run posture mismatch."
     $manifest = Get-Content -Raw -LiteralPath $run.evidence_manifest | ConvertFrom-Json
     Require ([string]$manifest.'$schema' -eq 'rusty.quest.connection_hub.operator_evidence_manifest.v1') "Simulation evidence schema mismatch."
-    Require (@($manifest.receipts).Count -eq 21 -and $manifest.secrets_in_manifest -eq $false) "Simulation evidence closure mismatch."
+    Require (@($manifest.receipts).Count -eq 23 -and $manifest.secrets_in_manifest -eq $false) "Simulation evidence closure mismatch."
     foreach ($receipt in @($manifest.receipts)) {
         $path = Join-Path (Split-Path -Parent $run.evidence_manifest) ([string]$receipt.name)
         Require ((Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant() -eq [string]$receipt.sha256) "Simulation receipt digest mismatch."
     }
     $checkpointPath = Join-Path (Split-Path -Parent $run.evidence_manifest) "checkpoint.json"
     $checkpoint = Get-Content -Raw -LiteralPath $checkpointPath | ConvertFrom-Json
-    Require (@($checkpoint.completed_stages).Count -eq 21 -and $checkpoint.secrets_in_checkpoint -eq $false) "Simulation checkpoint closure mismatch."
+    Require (@($checkpoint.completed_stages).Count -eq 23 -and $checkpoint.secrets_in_checkpoint -eq $false) "Simulation checkpoint closure mismatch."
     $resumedText = & pwsh -NoProfile -File $cliPath -Action SimulateE2E -Serial SIMULATED123 -EvidenceRoot $tempRoot -ResumeCheckpoint $checkpointPath
     if ($LASTEXITCODE -ne 0) { throw "Operator resume simulation failed." }
     $resumed = $resumedText | ConvertFrom-Json
     $resumedManifest = Get-Content -Raw -LiteralPath $resumed.evidence_manifest | ConvertFrom-Json
-    Require (@($resumedManifest.receipts).Count -eq 21 -and $resumed.result -eq 'passed') "Resumed evidence closure mismatch."
+    Require (@($resumedManifest.receipts).Count -eq 23 -and $resumed.result -eq 'passed') "Resumed evidence closure mismatch."
     $checkpointJson = Get-Content -Raw -LiteralPath $checkpointPath
     $relabelled = $checkpointJson | ConvertFrom-Json
     $firstStage = [string]$relabelled.completed_stages[0]
