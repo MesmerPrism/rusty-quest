@@ -346,6 +346,30 @@ public final class ConnectionHubRuntime implements HubSurfaceRegistry.Listener {
                 providerInstanceId,
                 admissionUseRequestId,
                 clock.nowMs());
+        // A process-local registry is authoritative for currently reachable Binder
+        // endpoints. If it is empty, an identity collision can only be retained
+        // authority state from a provider process that disappeared before its death
+        // callback was durably committed. Reconcile that restart residue once and
+        // retry with the caller's fresh instance identity. Never do this while any
+        // live endpoint is known locally: a concurrent provider collision must stay
+        // fail-closed and must not evict another app's surface.
+        if (!providerReceipt.applied
+                && registry.snapshot().isEmpty()
+                && isProviderIdentityCollision(providerReceipt.status)) {
+            ConnectionHubAuthorityPort.Receipt reconciled = authority.reconcileAfterRestart(
+                    randomRequestId("provider-reconcile"),
+                    clock.nowMs());
+            if (!reconciled.applied) {
+                persist();
+                return reconciled;
+            }
+            providerReceipt = authority.registerProvider(
+                    randomRequestId("provider-retry"),
+                    identity,
+                    providerInstanceId,
+                    admissionUseRequestId,
+                    clock.nowMs());
+        }
         if (!providerReceipt.applied) {
             persist();
             return providerReceipt;
@@ -388,6 +412,11 @@ public final class ConnectionHubRuntime implements HubSurfaceRegistry.Listener {
             throw localFailure;
         }
         return surfaceReceipt;
+    }
+
+    private static boolean isProviderIdentityCollision(String status) {
+        return status != null
+                && status.toLowerCase(java.util.Locale.ROOT).contains("identitycollision");
     }
 
     public boolean unregisterSurface(

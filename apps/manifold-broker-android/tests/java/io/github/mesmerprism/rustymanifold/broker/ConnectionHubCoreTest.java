@@ -25,6 +25,38 @@ public final class ConnectionHubCoreTest {
         HubSurfaceRegistry firstRegistry = new HubSurfaceRegistry();
         ConnectionHubRuntime first = new ConnectionHubRuntime(
                 authority, store, firstRegistry, seededRandom());
+
+        FakeAuthority staleProviderAuthority = new FakeAuthority();
+        staleProviderAuthority.rejectNextProviderIdentityCollision = true;
+        HubSurfaceRegistry recoveredRegistry = new HubSurfaceRegistry();
+        ConnectionHubRuntime recoveredRuntime = new ConnectionHubRuntime(
+                staleProviderAuthority,
+                new InMemoryStore(),
+                recoveredRegistry,
+                seededRandom());
+        ConnectionHubAuthorityPort.Receipt recoveredProvider = recoveredRuntime.registerSurface(
+                PROVIDER,
+                "provider.instance.recovered.1",
+                "admission.recovered.1",
+                registration(),
+                immediateEndpoint());
+        assertTrue(recoveredProvider.applied,
+                "empty-registry stale provider collision was not reconciled");
+        assertEquals(1, staleProviderAuthority.reconcileCalls);
+        assertEquals(1, recoveredRegistry.snapshot().size());
+
+        staleProviderAuthority.rejectNextProviderIdentityCollision = true;
+        ConnectionHubAuthorityPort.Receipt liveCollision = recoveredRuntime.registerSurface(
+                PROVIDER,
+                "provider.instance.concurrent.1",
+                "admission.concurrent.1",
+                registration(),
+                immediateEndpoint());
+        assertTrue(!liveCollision.applied,
+                "live provider collision unexpectedly evicted an active surface");
+        assertEquals(1, staleProviderAuthority.reconcileCalls);
+        assertEquals(1, recoveredRegistry.snapshot().size());
+
         first.startRequested();
         first.noteListenerStarted();
         assertTrue(first.desiredRunning(), "explicit start did not persist desired state");
@@ -459,6 +491,8 @@ public final class ConnectionHubCoreTest {
         final Set<String> activeProviders = new HashSet<>();
         final Map<String, Long> leaseExpiries = new LinkedHashMap<>();
         int leaseAcquisitions;
+        int reconcileCalls;
+        boolean rejectNextProviderIdentityCollision;
         String lastExternalRequestSha256;
 
         @Override public Receipt trustAndOpenSession(String requestId, String controller, String evidence, long now) {
@@ -485,6 +519,10 @@ public final class ConnectionHubCoreTest {
         }
         @Override public Receipt registerProvider(String requestId, HubProviderIdentity identity, String instance, String admissionUseRequestId, long now) {
             if (admissionUseRequestId == null || admissionUseRequestId.isEmpty()) return Receipt.rejected("provider_not_admitted");
+            if (rejectNextProviderIdentityCollision) {
+                rejectNextProviderIdentityCollision = false;
+                return Receipt.rejected("rejected_some(identitycollision)");
+            }
             if (!activeProviders.add(instance)) return Receipt.rejected("rejected_identitycollision");
             revision += 1; return applied("register_provider", requestId, null, 0, null, null, null);
         }
@@ -537,6 +575,8 @@ public final class ConnectionHubCoreTest {
             return applied("expire", requestId, null, 0, null, null, null);
         }
         @Override public Receipt reconcileAfterRestart(String requestId, long now) {
+            reconcileCalls += 1;
+            activeProviders.clear();
             return applied("reconcile_restart", requestId, null, 0, null, null, null);
         }
         @Override public Receipt forceHistoryRollover(String requestId, long now) {
