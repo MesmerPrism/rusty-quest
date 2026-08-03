@@ -1255,11 +1255,34 @@ function Launch-Apk($Artifact, [string]$Component) {
     if ($launch.exit_code -eq 0) {
         return [ordered]@{ label=$Artifact.label; provider="questionable-file-manager"; receipt=$launch.json }
     }
-    if ($launch.combined -notmatch 'resolved launcher activity was not proven exported') {
+    $failure = $launch.json.failure
+    if ([string]$failure.code -ne "pre_dispatch_proof_rejected" -or
+            -not (Test-ExactBoolean $failure.dispatch_attempted $false)) {
         throw "File Manager launch failed outside the reviewed export-parser gap: $($launch.combined)"
     }
+    $separator = $Component.IndexOf('/')
+    if ($separator -le 0 -or $separator -ge $Component.Length - 1) {
+        throw "Reviewed launch fallback requires one exact package/component pair."
+    }
+    $package = $Component.Substring(0, $separator)
+    $resolver = Invoke-Adb @(
+        "shell", "cmd", "package", "query-activities", "--brief", "--components",
+        "-a", "android.intent.action.MAIN", "-c", "android.intent.category.LAUNCHER", $package) `
+        $QfmLaunchGap "prove one fixed exported launcher component"
+    $resolvedComponents = @($resolver.output -split "`r?`n" | ForEach-Object { $_.Trim() } |
+        Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+    if ($resolvedComponents.Count -ne 1 -or $resolvedComponents[0] -cne $Component) {
+        throw "File Manager launch fallback did not independently resolve the exact fixed component."
+    }
     $fallback = Invoke-Adb @("shell", "am", "start", "-W", "-n", $Component) $QfmLaunchGap "launch one fixed reviewed component"
-    return [ordered]@{ label=$Artifact.label; provider="raw-adb-fallback"; fallback=$fallback }
+    return [ordered]@{
+        label=$Artifact.label
+        provider="raw-adb-fallback"
+        qfm_failure=$launch.json
+        independently_resolved_component=$resolvedComponents[0]
+        resolver=$resolver
+        fallback=$fallback
+    }
 }
 
 function Invoke-DebugOperator([string]$Method) {

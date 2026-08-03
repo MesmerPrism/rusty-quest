@@ -45,6 +45,10 @@ Require ($cli.Contains('qfm-readonly-device-state-v1')) "Read-only device-state 
 Require ($cli.Contains('qfm-readonly-package-state-v1')) "Read-only package-state gap is not labelled."
 Require ($cli.Contains('qfm-missing-typed-target-uninstall-v1')) "Target-uninstall provider gap is not labelled."
 Require ($cli.Contains('qfm-missing-typed-wifi-rebind-v1')) "Wi-Fi rebind provider gap is not labelled."
+Require ($cli.Contains('pre_dispatch_proof_rejected') -and
+    $cli.Contains('dispatch_attempted') -and
+    $cli.Contains('cmd", "package", "query-activities", "--brief", "--components"') -and
+    $cli.Contains('$resolvedComponents.Count -ne 1 -or $resolvedComponents[0] -cne $Component')) "QFM launcher fallback is not independently bound to one exact fixed exported component."
 Require (-not $cli.Contains('PairingCode =')) "Pairing secrets must not be accepted as ordinary PowerShell values."
 Require ($cli.Contains('--pairing-code-stdin') -and $cli.Contains('--pairing-code-fd')) "Hostess secret-safe input routes are missing."
 Require ($cli.Contains('DPAPI-CurrentUser-session')) "Hostess DPAPI session ownership must be explicit."
