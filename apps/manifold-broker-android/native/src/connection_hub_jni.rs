@@ -271,7 +271,12 @@ fn trust_and_open(owner: &mut HubOwner, proposal: &Value, now_ms: u64) -> Result
         let id = epoch_derived(
             owner,
             "controller.hub",
-            identity_sha.trim_start_matches("sha256:"),
+            // The public identity remains the durable trust lookup key, while
+            // the authority subject id identifies one trust generation. A
+            // controller that was expired/forgotten has a tombstoned subject
+            // id and must receive a fresh id when the wearer trusts the same
+            // public identity again.
+            request_id,
         )?;
         let evidence = DottedId::new(VERIFIED_WEARER_EVIDENCE).map_err(|e| e.to_string())?;
         let trust = request(
@@ -1048,6 +1053,35 @@ mod tests {
         .expect("post-restore receipt");
         assert_eq!(after_restore["applied"], true);
         assert_eq!(after_restore["next_external_request_sequence"], 3);
+        let forgot: Value = serde_json::from_str(
+            &execute(
+                &json!({
+                    "operation": "forget_all",
+                    "request_id": "request.hub.test.forget",
+                    "reason": "wearer_test_reset"
+                })
+                .to_string(),
+                6_000,
+            )
+            .expect("forget controller"),
+        )
+        .expect("forget receipt");
+        assert_eq!(forgot["applied"], true);
+        let repaired: Value = serde_json::from_str(
+            &execute(
+                &json!({
+                    "operation": "trust_and_open_session",
+                    "request_id": "request.hub.test.repair",
+                    "controller_identity_sha256": "d".repeat(64)
+                })
+                .to_string(),
+                7_000,
+            )
+            .expect("re-pair same public identity"),
+        )
+        .expect("re-pair receipt");
+        assert_eq!(repaired["applied"], true);
+        assert_ne!(repaired["logical_session_id"], opened["logical_session_id"]);
     }
 }
 
