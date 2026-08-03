@@ -91,6 +91,17 @@ android {
     buildConfigField("boolean", "TRUSTED_LOCAL_HTTP_ENABLED_DEFAULT", "false")
   }
 
+  signingConfigs {
+    System.getenv("RUSTY_CONNECTION_HUB_KEYSTORE")?.takeIf { it.isNotBlank() }?.let { path ->
+      getByName("debug") {
+        storeFile = file(path)
+        storePassword = "android"
+        keyAlias = "androiddebugkey"
+        keyPassword = "android"
+      }
+    }
+  }
+
   buildFeatures {
     compose = true
     buildConfig = true

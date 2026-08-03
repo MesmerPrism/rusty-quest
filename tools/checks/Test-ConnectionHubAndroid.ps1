@@ -112,4 +112,6 @@ $androidSources = @(Get-ChildItem -Path $javaRoot -Filter *.java | ForEach-Objec
     @(Get-ChildItem -Path $generatedDir -Filter *.java | ForEach-Object { $_.FullName })
 & $javac -encoding UTF-8 -source 8 -target 8 -bootclasspath $androidJar -d $androidOut $androidSources
 if ($LASTEXITCODE -ne 0) { throw "Connection Hub complete Android Java source compile failed." }
+& pwsh -NoProfile -File (Join-Path $RepoRoot "tools\checks\Test-ConnectionHubOperator.ps1") -RepoRoot $RepoRoot
+if ($LASTEXITCODE -ne 0) { throw "Connection Hub operator CLI validation failed." }
 Write-Output "Rusty Connection Hub Android source and host validation passed"

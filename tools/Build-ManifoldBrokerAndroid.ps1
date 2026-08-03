@@ -5,8 +5,10 @@ param(
     [string]$Keystore = "",
     [string]$ProductSpecPath = "",
     [string]$ProductLockPath = "",
+    [string]$ManifoldSourceRoot = "",
     [string[]]$MediaSessionBindingPath = @(),
     [switch]$LegacyCameraP2pCompatibility,
+    [switch]$EnableConnectionHubDebugOperator,
     [switch]$PrepareOnly,
     [switch]$ValidateRuntimeConfigOnly
 )
@@ -396,7 +398,15 @@ $acceptedProductLock = $acceptedProductLockJson | ConvertFrom-Json
 $mediaSelected = @($acceptedProductLock.features | ForEach-Object { [string]$_ }) -contains "media_session"
 $connectionHubSelected = @($acceptedProductLock.features | ForEach-Object { [string]$_ }) -contains "connection_hub"
 if ($connectionHubSelected) {
-    $manifoldSourceRoot = Resolve-Path (Join-Path $repoRoot "..\rusty-manifold")
+    $manifoldSourceCandidate = if ([string]::IsNullOrWhiteSpace($ManifoldSourceRoot)) {
+        Join-Path $repoRoot "..\rusty-manifold"
+    } else {
+        $ManifoldSourceRoot
+    }
+    if (-not (Test-Path -LiteralPath $manifoldSourceCandidate -PathType Container)) {
+        throw "Connection Hub Manifold source root does not exist: $manifoldSourceCandidate"
+    }
+    $manifoldSourceRoot = (Resolve-Path -LiteralPath $manifoldSourceCandidate).Path
     $manifoldSourceLockPath = Join-Path $appRoot "native\manifold-source.lock.json"
     $manifoldSourceLock = Get-Content -Raw -LiteralPath $manifoldSourceLockPath | ConvertFrom-Json
     $manifoldRevision = (& git -C $manifoldSourceRoot rev-parse HEAD).Trim()
@@ -407,6 +417,9 @@ if ($connectionHubSelected) {
         $manifoldTree -ne [string]$manifoldSourceLock.tree) {
         throw "Connection Hub Manifold source does not match the exact clean native pin."
     }
+}
+if ($EnableConnectionHubDebugOperator -and -not $connectionHubSelected) {
+    throw "-EnableConnectionHubDebugOperator is valid only for the connection_hub product."
 }
 $mediaSessionBindings = @()
 $mediaBindingByRelativePath = @{}
@@ -655,8 +668,36 @@ final class GeneratedConnectionHubConfig {
         $generatedConnectionHubConfigSource,
         (New-Object System.Text.UTF8Encoding($false)))
 }
+$packagingManifestPath = $generatedManifestPath
+if ($EnableConnectionHubDebugOperator) {
+    $manifestText = [System.IO.File]::ReadAllText($generatedManifestPath)
+    $closingApplication = "    </application>"
+    if ([regex]::Matches($manifestText, [regex]::Escape($closingApplication)).Count -ne 1) {
+        throw "Connection Hub Android manifest has an unexpected application boundary."
+    }
+    $debugProvider = @"
+        <provider
+            android:name=".ConnectionHubDebugControlProvider"
+            android:authorities="io.github.mesmerprism.rustymanifold.broker.debug-connection-hub-control"
+            android:exported="true"
+            android:permission="android.permission.DUMP" />
+"@
+    $debugManifestDir = Join-Path $OutDir "debug-operator"
+    New-Item -ItemType Directory -Force -Path $debugManifestDir | Out-Null
+    $packagingManifestPath = Join-Path $debugManifestDir "AndroidManifest.xml"
+    $manifestText = $manifestText.Replace(
+        $closingApplication,
+        "$debugProvider`n$closingApplication")
+    [System.IO.File]::WriteAllText(
+        $packagingManifestPath,
+        $manifestText,
+        (New-Object System.Text.UTF8Encoding($false)))
+}
 $sourceFiles = Get-ChildItem -Path (Join-Path $appRoot "src\main\java") -Recurse -Filter *.java |
     Where-Object {
+        if ($_.Name -eq "ConnectionHubDebugControlProvider.java") {
+            return [bool]$EnableConnectionHubDebugOperator
+        }
         $connectionHubSelected -or
         ($_.Name -notlike "ConnectionHub*.java" -and
          $_.Name -notlike "AndroidConnectionHub*.java" -and
@@ -712,7 +753,7 @@ Copy-Item -LiteralPath $nativeSoSource -Destination $nativeSoPackaged
 Invoke-Checked "aapt2 link" $aapt2 @(
     "link",
     "-o", $apkUnsigned,
-    "--manifest", $generatedManifestPath,
+    "--manifest", $packagingManifestPath,
     "-I", $platformJar,
     "--min-sdk-version", "29",
     "--target-sdk-version", "34",
@@ -761,10 +802,10 @@ Invoke-Checked "apksigner verification" $apksigner @("verify", "--verbose", $apk
 $sha256 = Get-FileSha256Hex -Path $apkSigned
 $manifestProjection = Get-Content -Raw -LiteralPath $manifestProjectionPath | ConvertFrom-Json
 $androidPermissions = @($manifestProjection.permissions | ForEach-Object { [string]$_.name } | Sort-Object -Unique)
-[xml]$generatedAndroidManifest = [System.IO.File]::ReadAllText($generatedManifestPath)
+[xml]$generatedAndroidManifest = [System.IO.File]::ReadAllText($packagingManifestPath)
 $androidNamespace = "http://schemas.android.com/apk/res/android"
 $androidComponents = @()
-foreach ($kind in @("activity", "service")) {
+foreach ($kind in @("activity", "service", "provider")) {
     foreach ($node in @($generatedAndroidManifest.manifest.application.$kind)) {
         $component = [ordered]@{
             kind = $kind
@@ -785,12 +826,12 @@ foreach ($kind in @("activity", "service")) {
 $manifest = [ordered]@{
     '$schema' = "rusty.quest.manifold_broker_android.build_manifest.v2"
     package_name = "io.github.mesmerprism.rustymanifold.broker"
-    activity = "io.github.mesmerprism.rustymanifold.broker/.BrokerStartActivity"
+    activity = if ($connectionHubSelected) { "io.github.mesmerprism.rustymanifold.broker/.ConnectionHubStartActivity" } else { "io.github.mesmerprism.rustymanifold.broker/.BrokerStartActivity" }
     authority = "rusty.manifold"
     endpoint_path = "/manifold/v1/events"
     broker_port = 8765
     admission_permission = "io.github.mesmerprism.rustymanifold.permission.BROKER_ADMISSION"
-    admission_service = "io.github.mesmerprism.rustymanifold.broker/.ManifoldAdmissionService"
+    admission_service = if ($connectionHubSelected) { "io.github.mesmerprism.rustymanifold.broker/.ConnectionHubAdmissionService" } else { "io.github.mesmerprism.rustymanifold.broker/.ManifoldAdmissionService" }
     admission_decision_owner = "rusty.manifold.admission"
     admission_client_signing_certificate_sha256 = $certificateSha256
     admission_native_library_sha256 = Get-FileSha256Hex -Path $nativeSoPackaged
@@ -805,6 +846,8 @@ $manifest = [ordered]@{
     android_permissions = $androidPermissions
     android_components = $androidComponents
     generated_android_manifest_sha256 = [string]$productInputs.android_manifest_sha256
+    packaging_android_manifest_sha256 = Get-FileSha256Hex -Path $packagingManifestPath
+    connection_hub_debug_operator = [bool]$EnableConnectionHubDebugOperator
     generated_manifest_projection_sha256 = [string]$productInputs.manifest_projection_sha256
     generated_command_registry_sha256 = [string]$productInputs.command_registry_sha256
     broker_runtime_config_sha256 = Get-FileSha256Hex -Path $runtimeConfigPath

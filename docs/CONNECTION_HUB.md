@@ -1,5 +1,8 @@
 # Rusty Connection Hub
 
+The closed Quest operator and autonomous debug E2E contract are documented in
+[`CONNECTION_HUB_OPERATOR.md`](CONNECTION_HUB_OPERATOR.md).
+
 ## Decision
 
 The standalone `apps/manifold-broker-android` product is the native 2D Rusty
