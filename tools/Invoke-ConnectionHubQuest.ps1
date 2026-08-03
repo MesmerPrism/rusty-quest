@@ -1466,13 +1466,37 @@ function Stop-Providers {
     return Save-Receipt "stop-providers" (New-Receipt "stop-providers" "raw-adb-fallback" "passed" $rows)
 }
 
+function Test-JsonContainsUnredactedHostessSecret($Value) {
+    if ($null -eq $Value -or $Value -is [string] -or $Value.GetType().IsPrimitive) {
+        return $false
+    }
+    if ($Value -is [System.Collections.IEnumerable] -and $Value -isnot [pscustomobject]) {
+        foreach ($item in $Value) {
+            if (Test-JsonContainsUnredactedHostessSecret $item) { return $true }
+        }
+        return $false
+    }
+    foreach ($property in $Value.PSObject.Properties) {
+        $name = [string]$property.Name
+        if ($name -match '^(?i:pairing_code|bearer_token|session_bearer)$') {
+            return $true
+        }
+        if ($name -match '^(?i:pairing_code|bearer_token|session_bearer)_in_receipt$') {
+            if (-not (Test-ExactBoolean $property.Value $false)) { return $true }
+            continue
+        }
+        if (Test-JsonContainsUnredactedHostessSecret $property.Value) { return $true }
+    }
+    return $false
+}
+
 function Invoke-Hostess([string]$Verb, [string[]]$Arguments, [string]$ReceiptName) {
     if ((Get-Sha256 $script:Hostess) -ne $HostessCliSha256) { throw "Hostess CLI changed after run lock." }
     if ((Get-Sha256 $script:Python) -ne $PythonSha256) { throw "Python changed after the run lock was acquired." }
     $result = Invoke-Captured $script:Python (@($script:Hostess, $Verb) + $Arguments) "Hostess $Verb"
     if ($result.exit_code -ne 0) { throw "Hostess $Verb failed: $($result.combined)" }
     $json = $result.output | ConvertFrom-Json
-    if ($result.output -match '(?i)pairing_code|bearer_token' -and $result.output -notmatch 'secrets_in_receipt') {
+    if (Test-JsonContainsUnredactedHostessSecret $json) {
         throw "Hostess output may contain an unredacted secret."
     }
     return Save-Receipt $ReceiptName (New-Receipt "hostess-$Verb" "rusty-hostess" "passed" $json)

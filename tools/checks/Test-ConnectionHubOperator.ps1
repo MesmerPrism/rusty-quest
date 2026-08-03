@@ -52,6 +52,10 @@ Require ($cli.Contains('function Get-DebugPairingSecret') -and $cli.Contains('fu
 Require ($cli.Contains('[Array]::Clear($Secret') -and $cli.Contains('[Array]::Clear($stdout')) "Pairing secret buffers are not explicitly cleared."
 Require ($cli.Contains('$pairingSecret = Get-DebugPairingSecret') -and -not $cli.Contains('Save-Receipt "pair-code"')) "E2E must use the dedicated non-recording secret route."
 Require ($cli.Contains('[void]$process.WaitForExit(12000)')) "Pairing secret transport leaks the WaitForExit Boolean into the char-buffer result."
+Require ($cli.Contains('function Test-JsonContainsUnredactedHostessSecret') -and
+    $cli.Contains("'^(?i:pairing_code|bearer_token|session_bearer)$'") -and
+    $cli.Contains("'^(?i:pairing_code|bearer_token|session_bearer)_in_receipt$'") -and
+    -not $cli.Contains('$result.output -match')) "Hostess secret inspection must be parsed-field aware rather than raw-text based."
 Require ($cli.Contains('-Keystore $resolvedKeystore') -and $cli.Contains('RUSTY_CONNECTION_HUB_KEYSTORE')) "All APK builds must use one explicit keystore."
 Require ($cli.Contains('the three APK signers differ') -and $cli.Contains('ExpectedSignerSha256')) "Pre-install signer equality gate is missing."
 Require ($cli.Contains('surface.spatial_video_control.media') -and $cli.Contains('surface.connection_hub_sample.toggle')) "Both fixed provider surfaces must be in the command registry."
