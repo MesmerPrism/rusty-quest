@@ -418,20 +418,27 @@ function Stage-Apk([string]$Path, [string]$Label) {
 
 function Resolve-Apks {
     if ($null -ne $script:CachedArtifacts) {
-        foreach ($artifact in $script:CachedArtifacts) {
+        [object[]]$cached = @($script:CachedArtifacts)
+        if ($cached.Count -ne 3 -or ($cached.label -join "|") -ne "hub|spatial-provider|sample-provider") {
+            throw "Checkpoint must contain the exact three-artifact Hub/provider set."
+        }
+        foreach ($artifact in $cached) {
             if ((Get-Sha256 $artifact.path) -ne $artifact.sha256) {
                 throw "Checkpoint artifact changed: $($artifact.label)"
             }
         }
-        return @($script:CachedArtifacts)
+        return $cached
     }
     $hub = if ($HubApk) { $HubApk } else { Join-Path $RepoRoot "target\connection-hub-debug\rusty-manifold-broker.apk" }
     $spatial = if ($SpatialProviderApk) { $SpatialProviderApk } else { Join-Path $RepoRoot "apps\spatial-video-control-example-android\app\build\outputs\apk\debug\app-debug.apk" }
     $sample = if ($SampleProviderApk) { $SampleProviderApk } else { Join-Path $RepoRoot "apps\spatial-video-control-example-android\hub-sample-provider\build\outputs\apk\debug\hub-sample-provider-debug.apk" }
-    $artifacts = @(
-        Stage-Apk $hub "hub",
-        Stage-Apk $spatial "spatial-provider",
-        Stage-Apk $sample "sample-provider")
+    [object[]]$artifacts = @(
+        (Stage-Apk -Path $hub -Label "hub")
+        (Stage-Apk -Path $spatial -Label "spatial-provider")
+        (Stage-Apk -Path $sample -Label "sample-provider"))
+    if ($artifacts.Count -ne 3 -or ($artifacts.label -join "|") -ne "hub|spatial-provider|sample-provider") {
+        throw "Build must resolve the exact three-artifact Hub/provider set."
+    }
     if ($null -ne $script:Checkpoint) { Set-CheckpointArtifacts $artifacts }
     return $artifacts
 }
@@ -488,6 +495,10 @@ function Build-All {
 }
 
 function Inspect-All($Artifacts) {
+    [object[]]$Artifacts = @($Artifacts)
+    if ($Artifacts.Count -ne 3 -or ($Artifacts.label -join "|") -ne "hub|spatial-provider|sample-provider") {
+        throw "Inspection requires the exact three-artifact Hub/provider set."
+    }
     $rows = @()
     $signers = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
     foreach ($artifact in $Artifacts) {
@@ -631,6 +642,10 @@ function Restore-PreState($Artifacts) {
 }
 
 function Install-All($Artifacts) {
+    [object[]]$Artifacts = @($Artifacts)
+    if ($Artifacts.Count -ne 3 -or ($Artifacts.label -join "|") -ne "hub|spatial-provider|sample-provider") {
+        throw "Installation requires the exact three-artifact Hub/provider set."
+    }
     $script:TargetMutationStarted = $true
     $rows = @()
     foreach ($artifact in $Artifacts) {
