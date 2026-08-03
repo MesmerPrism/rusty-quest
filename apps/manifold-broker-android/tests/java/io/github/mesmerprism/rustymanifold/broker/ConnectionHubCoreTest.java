@@ -536,7 +536,8 @@ public final class ConnectionHubCoreTest {
             activeProviders.remove(instance);
             revision += 1; return applied("unregister_provider", requestId, null, 0, null, null, null);
         }
-        @Override public Receipt acquireSurfaceLease(String requestId, String session, long epoch, String surface, long now) {
+        @Override public Receipt acquireSurfaceLease(String requestId, String session, long epoch,
+                String providerInstanceId, String surface, long now) {
             revision += 1;
             leaseAcquisitions += 1;
             String leaseId = "lease.test.surface." + leaseAcquisitions;

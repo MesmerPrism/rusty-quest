@@ -133,7 +133,10 @@ pub(crate) fn execute(proposal_json: &str, now_ms: u64) -> Result<String, String
             &proposal,
             now_ms,
             ManifoldConnectionHubOperationRequest::UnregisterSurface {
-                surface_id: epoch_field(retained, &proposal, "surface_id")?,
+                surface_id: surface_instance_id(
+                    &epoch_field(retained, &proposal, "provider_instance_id")?,
+                    &dotted(&proposal, "surface_id")?,
+                )?,
                 provider_instance_id: epoch_field(retained, &proposal, "provider_instance_id")?,
                 reason: DottedId::new("reason.provider.lifecycle-end")
                     .map_err(|e| e.to_string())?,
@@ -148,7 +151,10 @@ pub(crate) fn execute(proposal_json: &str, now_ms: u64) -> Result<String, String
                 lease_id: epoch_derived(retained, "lease.hub", text(&proposal, "request_id")?)?,
                 session_id: epoch_field(retained, &proposal, "session_id")?,
                 expected_transport_epoch: u64_field(&proposal, "expected_transport_epoch")?,
-                surface_id: epoch_field(retained, &proposal, "surface_id")?,
+                surface_id: surface_instance_id(
+                    &epoch_field(retained, &proposal, "provider_instance_id")?,
+                    &dotted(&proposal, "surface_id")?,
+                )?,
                 requested_ttl_ms: retained.config.policy.max_surface_lease_ttl_ms,
             },
         )?,
@@ -516,7 +522,7 @@ fn register_provider(owner: &mut HubOwner, proposal: &Value, now_ms: u64) -> Res
 
 fn register_surface(owner: &mut HubOwner, proposal: &Value, now_ms: u64) -> Result<Value, String> {
     let instance = epoch_field(owner, proposal, "provider_instance_id")?;
-    let surface_id = epoch_field(owner, proposal, "surface_id")?;
+    let surface_id = surface_instance_id(&instance, &dotted(proposal, "surface_id")?)?;
     let provider_id = owner
         .authority
         .snapshot()
@@ -783,6 +789,18 @@ fn epoch_field(owner: &HubOwner, value: &Value, field: &str) -> Result<DottedId,
     epoch_derived(owner, field, raw)
 }
 
+fn surface_instance_id(
+    provider_instance_id: &DottedId,
+    stable_surface_id: &DottedId,
+) -> Result<DottedId, String> {
+    DottedId::new(format!(
+        "{}.surface-instance.{}",
+        provider_instance_id.as_str(),
+        stable_surface_id.as_str()
+    ))
+    .map_err(|e| e.to_string())
+}
+
 fn epoch_derived(owner: &HubOwner, prefix: &str, source: &str) -> Result<DottedId, String> {
     let epoch = owner.authority.snapshot().state.authority_epoch;
     let expected_prefix = format!("epoch-{epoch}.");
@@ -857,6 +875,25 @@ fn is_sha256(value: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn authority_surface_subject_is_bound_to_provider_incarnation() {
+        let stable = DottedId::new("surface.media.controls").expect("stable surface");
+        let first_provider =
+            DottedId::new("epoch-1.provider-instance.media.first").expect("first provider");
+        let second_provider =
+            DottedId::new("epoch-1.provider-instance.media.second").expect("second provider");
+        let first = surface_instance_id(&first_provider, &stable).expect("first surface");
+        let repeated = surface_instance_id(&first_provider, &stable).expect("repeat surface");
+        let second = surface_instance_id(&second_provider, &stable).expect("second surface");
+        assert_eq!(first, repeated);
+        assert_ne!(first, second);
+        assert_eq!(
+            first.as_str(),
+            "epoch-1.provider-instance.media.first.surface-instance.surface.media.controls"
+        );
+        assert!(first.as_str().starts_with("epoch-1."));
+    }
 
     #[test]
     fn retained_owner_opens_replaces_and_restores_one_logical_session() {

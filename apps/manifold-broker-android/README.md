@@ -92,8 +92,9 @@ but they do not independently redefine its wire shapes.
 Provider instances are single-lifecycle identities. Explicit surface removal or
 Binder death unregisters both the surface and its exact Manifold provider
 instance; a later app launch consumes fresh admission and receives a fresh
-instance. The Hub listener and controller session remain independent of that
-provider churn.
+instance and a fresh authority-only surface subject. The stable surface name
+on the browser protocol does not become an authority identity. The Hub listener
+and controller session remain independent of that provider churn.
 
 Each accepted WebSocket is installed atomically with its Manifold transport
 epoch. A late older handshake cannot displace a newer socket. Surface leases

@@ -85,10 +85,11 @@ public final class ManifoldConnectionHubAuthority implements ConnectionHubAuthor
     }
 
     @Override public Receipt acquireSurfaceLease(String requestId, String sessionId,
-            long epoch, String surfaceId, long nowMs) {
+            long epoch, String providerInstanceId, String surfaceId, long nowMs) {
         return execute(object(
                 "operation", "acquire_surface_lease", "request_id", requestId,
                 "session_id", sessionId, "expected_transport_epoch", epoch,
+                "provider_instance_id", providerInstanceId,
                 "surface_id", surfaceId), nowMs);
     }
 

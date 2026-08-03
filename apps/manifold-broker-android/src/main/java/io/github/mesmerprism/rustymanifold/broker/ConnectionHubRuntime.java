@@ -573,7 +573,7 @@ public final class ConnectionHubRuntime implements HubSurfaceRegistry.Listener {
             if (expiredLeaseObserved) { reconcileAuthorityExpiry(authorizationNow); }
             if (lease == null) {
                 ConnectionHubAuthorityPort.Receipt leaseReceipt = acquireSurfaceLease(
-                        leaseKey, session, surfaceId, authorizationNow);
+                        leaseKey, session, entry.providerInstanceId, surfaceId, authorizationNow);
                 if (!leaseReceipt.applied) {
                     sink.onReceipt(commandReceipt(
                             protocolV2, requestedSequence, session.nextExternalRequestSequence,
@@ -593,7 +593,7 @@ public final class ConnectionHubRuntime implements HubSurfaceRegistry.Listener {
                     if (surfaceLeases.get(leaseKey) == lease) { surfaceLeases.remove(leaseKey); }
                 }
                 ConnectionHubAuthorityPort.Receipt reacquired = acquireSurfaceLease(
-                        leaseKey, session, surfaceId, clock.nowMs());
+                        leaseKey, session, entry.providerInstanceId, surfaceId, clock.nowMs());
                 if (!reacquired.applied) {
                     sink.onReceipt(commandReceipt(
                             protocolV2, requestedSequence,
@@ -779,6 +779,7 @@ public final class ConnectionHubRuntime implements HubSurfaceRegistry.Listener {
     private ConnectionHubAuthorityPort.Receipt acquireSurfaceLease(
             String leaseKey,
             ConnectionHubStateStore.SessionProjection session,
+            String providerInstanceId,
             String surfaceId,
             long nowMs) {
         prepareMutation("acquire_surface_lease");
@@ -786,6 +787,7 @@ public final class ConnectionHubRuntime implements HubSurfaceRegistry.Listener {
                 randomRequestId("lease"),
                 session.logicalSessionId,
                 session.transportEpoch,
+                providerInstanceId,
                 surfaceId,
                 nowMs);
         if (receipt.applied && receipt.surfaceLeaseId != null && receipt.expiresAtMs > nowMs) {

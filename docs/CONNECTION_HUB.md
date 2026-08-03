@@ -65,6 +65,13 @@ and a scalar-only state object of at most 4096 UTF-8 bytes and 16 keys. It has
 no component, action, URI, flags, raw path, URL, shell command, arbitrary
 Intent extras, uploaded UI, or high-rate payload.
 
+The protocol `surface_id` is a stable app-facing name so the same control
+surface can disappear and reappear across app launches. The native adapter
+maps it to a distinct Manifold surface subject that is bound to the fresh
+provider-instance id. Manifold therefore never reuses a retired surface or
+provider identity: old leases and commands remain fenced to the prior
+incarnation, while browsers continue to address the stable app-facing name.
+
 At most 32 surfaces are live. Provider Binder death or explicit Activity stop
 removes only that provider's surfaces, never the Hub. Spatial Video Control
 registers `surface.spatial_video_control.media` on `onStart` and unregisters on

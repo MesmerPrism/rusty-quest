@@ -101,6 +101,7 @@ public interface ConnectionHubAuthorityPort {
             String requestId,
             String logicalSessionId,
             long transportEpoch,
+            String providerInstanceId,
             String surfaceId,
             long nowMs);
 
