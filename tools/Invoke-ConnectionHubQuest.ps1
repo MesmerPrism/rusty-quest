@@ -2087,8 +2087,8 @@ function New-DryRunPlan {
         e2e_sequence = @(
             "prerequisites+pre-state", "build", "inspect", "install+installed-byte-signer-readback",
             "run-log-capture-start",
-            "debug-protocol-proof", "real-activity-foreground-service+notification", "pair",
-            "hostess-v2-lost-receipt+rollover-replay-simulation",
+            "debug-protocol-proof", "real-activity-foreground-service+notification",
+            "hostess-v2-lost-receipt+rollover-replay-simulation", "pair",
             "spatial-present+command", "provider-lifetime-over-2m+command",
             "process-death+start-sticky+provider-reregister+command", "wifi-rebind-or-explicit-safety-skip",
             "spatial-removed+sample-present+command", "sample-removed+spatial-returned+command",
@@ -2276,13 +2276,13 @@ try {
             [void](Record-TargetProcessEpoch "hub-started")
         }
         if ([string]::IsNullOrWhiteSpace($Origin)) { $Origin = [string](Invoke-DebugOperator "status").owner_receipt.origin }
+        Invoke-Stage "hostess-v2-simulation" { [void](Hostess-Action "simulate") }
         Invoke-Stage "pair-hostess" {
             [void](Hostess-Action "status")
             [char[]]$pairingSecret = Get-DebugPairingSecret
             try { [void](Invoke-HostessPairWithSecret $pairingSecret) }
             finally { [Array]::Clear($pairingSecret, 0, $pairingSecret.Length); $pairingSecret = $null }
         }
-        Invoke-Stage "hostess-v2-simulation" { [void](Hostess-Action "simulate") }
         [void](Enable-BoundedVirtualProximity)
         Invoke-Stage "spatial-first" {
             [void](Launch-Provider $a "spatial")
