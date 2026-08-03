@@ -471,7 +471,6 @@ $clientLockInputs = @(
     }
 )
 if ($connectionHubSelected) {
-    Copy-Item -LiteralPath $connectionHubTypedParamsSchemaPath -Destination (Join-Path $productAssetDir "connection-hub-typed-params-empty.schema.json")
     $clientLockInputs += [ordered]@{
         grant_id = "grant.quest.spatial-video-control-example"
         input = Read-ValidatedClientLock -Path (Join-Path $repoRoot "fixtures\broker-clients\spatial-video-control-example.client.json")
@@ -788,6 +787,7 @@ Copy-Item -LiteralPath $manifestProjectionPath -Destination (Join-Path $productA
 Copy-Item -LiteralPath $runtimeConfigPath -Destination (Join-Path $productAssetDir "runtime-config.json")
 $connectionHubPackagedAssets = @()
 if ($connectionHubSelected) {
+    Copy-Item -LiteralPath $connectionHubTypedParamsSchemaPath -Destination (Join-Path $productAssetDir "connection-hub-typed-params-empty.schema.json")
     $connectionHubAssetSource = Join-Path $appRoot "src\main\assets\connection-hub"
     $connectionHubAssetTarget = Join-Path $productPackageRoot "assets\connection-hub"
     if (-not (Test-Path -LiteralPath $connectionHubAssetSource -PathType Container)) {
