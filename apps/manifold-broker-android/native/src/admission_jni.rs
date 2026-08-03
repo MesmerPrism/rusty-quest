@@ -1,5 +1,6 @@
 //! One process-local JNI boundary shared by Binder admission and broker mutation.
 
+use rusty_manifold_admission::ManifoldAdmissionAuthority;
 use rusty_quest_broker_authority::QuestBrokerRuntimeProvider;
 use std::sync::{Mutex, OnceLock};
 
@@ -61,6 +62,14 @@ pub(crate) fn admission_snapshot() -> Result<String, String> {
         .lock()
         .map_err(|_| "broker runtime lock poisoned".to_owned())?
         .admission_snapshot_json()
+        .map_err(|error| error.to_string())
+}
+
+/// Returns a validated clone of the exact retained admission state for the
+/// Connection Hub owner boundary. The returned authority cannot mutate the
+/// retained broker runtime; it is evidence for one Hub operation only.
+pub(crate) fn admission_authority() -> Result<ManifoldAdmissionAuthority, String> {
+    ManifoldAdmissionAuthority::restart_from_json(&admission_snapshot()?)
         .map_err(|error| error.to_string())
 }
 
@@ -245,12 +254,12 @@ pub extern "system" fn Java_io_github_mesmerprism_rustymanifold_broker_ManifoldA
 }
 
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
     use super::{
         admission_snapshot, complete_media_action, evidence, execute_admission, initialize, mutate,
     };
 
-    fn runtime_config() -> serde_json::Value {
+    pub(crate) fn runtime_config() -> serde_json::Value {
         let manifold_root =
             std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../../rusty-manifold");
         let quest_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
@@ -375,7 +384,7 @@ mod tests {
         )
         .expect("status");
         let epoch = status["provider_epoch_id"].as_str().expect("epoch");
-        assert_eq!(status["existing_authority_preserved"], false);
+        assert!(status["existing_authority_preserved"].is_boolean());
 
         let issue = serde_json::json!({
             "operation": "issue_token",

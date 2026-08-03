@@ -12,7 +12,17 @@ import android.widget.Button;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Set;
+
 public final class ConnectionHubStartActivity extends Activity {
+    public static final String ACTION_DEBUG_START_HUB =
+            "io.github.mesmerprism.rustymanifold.broker.action.DEBUG_START_CONNECTION_HUB";
+    public static final String ACTION_DEBUG_STOP_HUB =
+            "io.github.mesmerprism.rustymanifold.broker.action.DEBUG_STOP_CONNECTION_HUB";
+    public static final String ACTION_DEBUG_FORGET_HUB =
+            "io.github.mesmerprism.rustymanifold.broker.action.DEBUG_FORGET_CONNECTION_HUB";
     private static final int CAMERA_PERMISSION_REQUEST = 4202;
     private TextView status;
 
@@ -23,6 +33,7 @@ public final class ConnectionHubStartActivity extends Activity {
         requestCameraPermissionIfNeeded();
         writeLaunchEvidence();
         renderManagementUi();
+        dispatchDebugLifecycleAction(getIntent());
     }
 
     @Override
@@ -46,7 +57,8 @@ public final class ConnectionHubStartActivity extends Activity {
         TextView warning = new TextView(this);
         warning.setText(
                 "Trusted-LAN experimental mode. Pairing authenticates control but does not encrypt traffic. "
-                        + "Do not use on an untrusted network.");
+                        + "Do not use on an untrusted network. This Hub carries low-rate control and state only; "
+                        + "media, sensor, BLE, LSL, Fleet, and other high-rate data stay in dedicated providers.");
         warning.setTextSize(16.0f);
         warning.setPadding(0, 16, 0, 16);
         layout.addView(warning);
@@ -105,10 +117,26 @@ public final class ConnectionHubStartActivity extends Activity {
         text.append("\nAddress: ").append(hub.displayOrigin());
         text.append("\nConfidentiality: none (trusted LAN only)");
         text.append("\nProduction eligible: no");
+        text.append("\nSecurity mode: paired trusted-LAN experimental");
         if (code != null) {
             text.append("\nPairing code: ").append(code);
         }
-        text.append("\nSurfaces: ").append(runtime.registry().snapshot().size());
+        text.append("\nActive controller sessions: ").append(runtime.activeSessionCount());
+        List<HubSurfaceRegistry.Entry> surfaces = runtime.registry().snapshot();
+        Set<String> providerPackages = new LinkedHashSet<>();
+        for (HubSurfaceRegistry.Entry entry : surfaces) {
+            providerPackages.add(entry.descriptor.providerIdentity().packageName());
+        }
+        text.append("\nActive providers: ").append(providerPackages.size());
+        text.append("\nRegistered surfaces: ").append(surfaces.size());
+        for (HubSurfaceRegistry.Entry entry : surfaces) {
+            text.append("\n  • ").append(entry.descriptor.displayLabel())
+                    .append(" — ").append(entry.descriptor.providerIdentity().packageName());
+        }
+        if (surfaces.isEmpty()) {
+            text.append("\n  No foreground provider app is currently offering controls.");
+        }
+        text.append("\nTrusted-controller inventory: authority-owned; Forget revokes all trusted controllers.");
         text.append("\n\nLegacy local broker compatibility: ws://127.0.0.1:8765/manifold/v1/events");
         status.setText(text.toString());
     }
@@ -119,7 +147,20 @@ public final class ConnectionHubStartActivity extends Activity {
         initializeAuthority();
         requestCameraPermissionIfNeeded();
         writeLaunchEvidence();
+        dispatchDebugLifecycleAction(intent);
         refreshStatus();
+    }
+
+    private void dispatchDebugLifecycleAction(Intent intent) {
+        if (!GeneratedConnectionHubConfig.DEBUG_OPERATOR_ENABLED || intent == null) return;
+        String action = intent.getAction();
+        if (ACTION_DEBUG_START_HUB.equals(action)) {
+            startHubService(ConnectionHubStartService.ACTION_START_HUB);
+        } else if (ACTION_DEBUG_STOP_HUB.equals(action)) {
+            startHubService(ConnectionHubStartService.ACTION_STOP_HUB);
+        } else if (ACTION_DEBUG_FORGET_HUB.equals(action)) {
+            startHubService(ConnectionHubStartService.ACTION_FORGET_HUB);
+        }
     }
 
     private void initializeAuthority() {

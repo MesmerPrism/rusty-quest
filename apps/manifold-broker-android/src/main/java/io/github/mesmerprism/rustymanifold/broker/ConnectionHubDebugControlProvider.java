@@ -7,6 +7,8 @@ import android.net.Uri;
 import android.os.Binder;
 import android.os.Bundle;
 import android.os.Process;
+import android.os.Handler;
+import android.os.Looper;
 import android.util.Base64;
 
 import org.json.JSONObject;
@@ -32,6 +34,7 @@ public final class ConnectionHubDebugControlProvider extends ContentProvider {
                 && !"start".equals(method)
                 && !"stop".equals(method)
                 && !"forget".equals(method)
+                && !"restart-process".equals(method)
                 && !"pair-code".equals(method)) {
             throw new IllegalArgumentException("debug_operator_method_not_registered");
         }
@@ -72,16 +75,25 @@ public final class ConnectionHubDebugControlProvider extends ContentProvider {
             receipt.put("listener_running", hub.runtime().listenerEnabled());
             receipt.put("desired_connection_state",
                     safeStatus.getString("desired_connection_state"));
+            receipt.put("runtime_status", safeStatus.getString("status"));
             receipt.put("origin", hub.displayOrigin());
             receipt.put("confidentiality", "none");
             receipt.put("production_eligible", false);
             receipt.put("pairing_secret_in_receipt", false);
+            receipt.put("pid", Process.myPid());
+            receipt.put("process_restart_scheduled", "restart-process".equals(method));
             Bundle output = new Bundle();
             output.putString(
                     "receipt_b64",
                     Base64.encodeToString(
                             receipt.toString().getBytes(StandardCharsets.UTF_8),
                             Base64.NO_WRAP));
+            if ("restart-process".equals(method)) {
+                final int pid = Process.myPid();
+                new Handler(Looper.getMainLooper()).postDelayed(new Runnable() {
+                    @Override public void run() { Process.killProcess(pid); }
+                }, 350L);
+            }
             return output;
         } catch (Exception error) {
             throw new IllegalStateException("debug_operator_action_failed", error);

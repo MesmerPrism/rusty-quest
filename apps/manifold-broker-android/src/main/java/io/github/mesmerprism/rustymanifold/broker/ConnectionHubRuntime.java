@@ -32,6 +32,8 @@ public final class ConnectionHubRuntime implements HubSurfaceRegistry.Listener {
             new LinkedHashMap<>();
     private final List<EventSink> eventSinks = new ArrayList<>();
     private final Map<String, String> surfaceLeases = new LinkedHashMap<>();
+    private final Map<String, RateWindow> commandRateWindows = new LinkedHashMap<>();
+    private final Map<String, RateWindow> surfaceStateRateWindows = new LinkedHashMap<>();
     private boolean desiredRunning;
     private boolean listenerEnabled;
     private String pairingCode;
@@ -40,6 +42,9 @@ public final class ConnectionHubRuntime implements HubSurfaceRegistry.Listener {
     private long pairAttemptWindowStartedMs;
     private int pairAttempts;
     private long pairLockedUntilMs;
+    private long durableGeneration;
+    private boolean mutationPrepared;
+    private boolean durabilityFailed;
 
     public ConnectionHubRuntime(
             ConnectionHubAuthorityPort authority,
@@ -62,6 +67,7 @@ public final class ConnectionHubRuntime implements HubSurfaceRegistry.Listener {
     public synchronized boolean listenerEnabled() { return listenerEnabled; }
     public synchronized String pairingCodeForWearer() { return pairingCode; }
     public synchronized String transportEpoch() { return transportEpoch; }
+    public synchronized int activeSessionCount() { return sessions.size(); }
     public HubSurfaceRegistry registry() { return registry; }
 
     /** Explicit wearer action. Merely launching a provider cannot call this. */
@@ -99,15 +105,18 @@ public final class ConnectionHubRuntime implements HubSurfaceRegistry.Listener {
     }
 
     public synchronized ConnectionHubAuthorityPort.Receipt forgetRequested() {
+        prepareMutation("forget_all");
         ConnectionHubAuthorityPort.Receipt receipt = authority.forgetAll(
                 randomRequestId("forget"),
                 "wearer_forget",
                 System.currentTimeMillis());
         if (receipt.applied) {
-            closeAllSessions("wearer_forget");
             sessions.clear();
             surfaceLeases.clear();
             pairingCode = desiredRunning ? randomDigits(6) : null;
+            persist();
+            closeAllSessions("wearer_forget");
+        } else {
             persist();
         }
         lastStatus = receipt.status;
@@ -145,6 +154,7 @@ public final class ConnectionHubRuntime implements HubSurfaceRegistry.Listener {
             if (!controllerIdentitySha256.matches("[0-9a-f]{64}")) {
                 return pairReceipt(false, "controller_identity_invalid", null, 0);
             }
+            prepareMutation("trust_and_open_session");
             ConnectionHubAuthorityPort.Receipt authorityReceipt = authority.trustAndOpenSession(
                     randomRequestId("pair"),
                     controllerIdentitySha256,
@@ -153,11 +163,13 @@ public final class ConnectionHubRuntime implements HubSurfaceRegistry.Listener {
             if (!authorityReceipt.applied
                     || authorityReceipt.logicalSessionId == null
                     || authorityReceipt.transportEpoch < 1) {
+                persist();
                 return pairReceipt(false, authorityReceipt.status, null, 0);
             }
             String cookie = randomBase64Url(32);
             long expiresAtMs = authorityReceipt.expiresAtMs;
             if (expiresAtMs <= now) {
+                persist();
                 return pairReceipt(false, "authority_session_expiry_invalid", null, 0);
             }
             sessions.put(cookie, new ConnectionHubStateStore.SessionProjection(
@@ -173,6 +185,7 @@ public final class ConnectionHubRuntime implements HubSurfaceRegistry.Listener {
                     .put("transport_epoch", authorityReceipt.transportEpoch)
                     .put("authority_receipt", new JSONObject(authorityReceipt.authorityReceiptJson));
         } catch (Exception error) {
+            settlePreparedMutation();
             return pairReceipt(false, "invalid_pair_request", null, 0);
         }
     }
@@ -188,6 +201,7 @@ public final class ConnectionHubRuntime implements HubSurfaceRegistry.Listener {
             if (session == null) {
                 return revokeReceipt(false, "session_not_found");
             }
+            prepareMutation("revoke_session");
             ConnectionHubAuthorityPort.Receipt authorityReceipt = authority.revokeSession(
                     randomRequestId("revoke"),
                     session.logicalSessionId,
@@ -195,18 +209,22 @@ public final class ConnectionHubRuntime implements HubSurfaceRegistry.Listener {
                     System.currentTimeMillis());
             long revokedTransportEpoch = session.transportEpoch;
             if (authorityReceipt.applied) {
-                closeLogicalSession(session.logicalSessionId, "session_revoked");
                 sessions.remove(cookie);
+                commandRateWindows.remove(session.logicalSessionId);
                 removeSessionLeases(session.logicalSessionId);
                 if (sessions.isEmpty() && desiredRunning) {
                     pairingCode = randomDigits(6);
                 }
-                persist();
+            }
+            persist();
+            if (authorityReceipt.applied) {
+                closeLogicalSession(session.logicalSessionId, "session_revoked");
             }
             return revokeReceipt(authorityReceipt.applied, authorityReceipt.status)
                     .put("transport_epoch", revokedTransportEpoch)
                     .put("authority_receipt", new JSONObject(authorityReceipt.authorityReceiptJson));
         } catch (Exception error) {
+            settlePreparedMutation();
             return revokeReceipt(false, "invalid_revoke_request");
         }
     }
@@ -222,15 +240,16 @@ public final class ConnectionHubRuntime implements HubSurfaceRegistry.Listener {
     /** Every physical WebSocket connection is a new Manifold transport epoch. */
     public synchronized ConnectionHubStateStore.SessionProjection replaceTransport(String cookie) {
         ConnectionHubStateStore.SessionProjection current = requireSession(cookie);
+        prepareMutation("replace_transport");
         ConnectionHubAuthorityPort.Receipt receipt = authority.replaceTransport(
                 randomRequestId("transport"),
                 current.logicalSessionId,
                 current.transportEpoch,
                 System.currentTimeMillis());
         if (!receipt.applied || receipt.transportEpoch != current.transportEpoch + 1) {
+            persist();
             throw new SecurityException("transport_replacement_rejected");
         }
-        closeLogicalSession(current.logicalSessionId, "transport_replaced");
         ConnectionHubStateStore.SessionProjection next =
                 new ConnectionHubStateStore.SessionProjection(
                         current.logicalSessionId,
@@ -238,6 +257,7 @@ public final class ConnectionHubRuntime implements HubSurfaceRegistry.Listener {
                         current.expiresAtMs);
         sessions.put(cookie, next);
         persist();
+        closeLogicalSession(current.logicalSessionId, "transport_replaced");
         return next;
     }
 
@@ -264,17 +284,22 @@ public final class ConnectionHubRuntime implements HubSurfaceRegistry.Listener {
     public synchronized void expireNow() {
         long now = System.currentTimeMillis();
         List<String> expiredCookies = new ArrayList<>();
+        List<String> expiredLogicalSessions = new ArrayList<>();
         for (Map.Entry<String, ConnectionHubStateStore.SessionProjection> item : sessions.entrySet()) {
             if (item.getValue().expiresAtMs <= now) {
-                closeLogicalSession(item.getValue().logicalSessionId, "session_expired");
                 expiredCookies.add(item.getKey());
+                expiredLogicalSessions.add(item.getValue().logicalSessionId);
                 removeSessionLeases(item.getValue().logicalSessionId);
             }
         }
         for (String cookie : expiredCookies) { sessions.remove(cookie); }
+        prepareMutation("expire");
         ConnectionHubAuthorityPort.Receipt receipt = authority.expire(
                 randomRequestId("expire"), now);
-        if (receipt.applied || !expiredCookies.isEmpty()) { persist(); }
+        persist();
+        for (String logicalSessionId : expiredLogicalSessions) {
+            closeLogicalSession(logicalSessionId, "session_expired");
+        }
         if (sessions.isEmpty() && desiredRunning && pairingCode == null) {
             pairingCode = randomDigits(6);
         }
@@ -288,6 +313,7 @@ public final class ConnectionHubRuntime implements HubSurfaceRegistry.Listener {
             HubSurfaceRegistry.Endpoint endpoint) throws Exception {
         requireSchema(registration, ConnectionHubProtocol.SURFACE_REGISTRATION_SCHEMA);
         HubSurfaceDescriptor descriptor = parseDescriptor(registration, identity);
+        prepareMutation("register_provider_and_surface");
         ConnectionHubAuthorityPort.Receipt providerReceipt = authority.registerProvider(
                 randomRequestId("provider"),
                 identity,
@@ -295,6 +321,7 @@ public final class ConnectionHubRuntime implements HubSurfaceRegistry.Listener {
                 admissionUseRequestId,
                 System.currentTimeMillis());
         if (!providerReceipt.applied) {
+            persist();
             return providerReceipt;
         }
         ConnectionHubAuthorityPort.Receipt surfaceReceipt = authority.registerSurface(
@@ -311,6 +338,7 @@ public final class ConnectionHubRuntime implements HubSurfaceRegistry.Listener {
             persist();
             return surfaceReceipt;
         }
+        persist();
         JSONObject state = registration.optJSONObject("state");
         try {
             registry.register(
@@ -319,6 +347,7 @@ public final class ConnectionHubRuntime implements HubSurfaceRegistry.Listener {
                     providerInstanceId,
                     endpoint);
         } catch (RuntimeException localFailure) {
+            prepareMutation("rollback_local_provider_registration");
             authority.unregisterSurface(
                     randomRequestId("surface-rollback"),
                     providerInstanceId,
@@ -332,7 +361,6 @@ public final class ConnectionHubRuntime implements HubSurfaceRegistry.Listener {
             persist();
             throw localFailure;
         }
-        persist();
         return surfaceReceipt;
     }
 
@@ -341,14 +369,15 @@ public final class ConnectionHubRuntime implements HubSurfaceRegistry.Listener {
             String surfaceId,
             String reason) {
         HubSurfaceRegistry.Entry owned = registry.requireOwnedEntry(identity, surfaceId);
+        prepareMutation("unregister_surface");
         ConnectionHubAuthorityPort.Receipt receipt = authority.unregisterSurface(
                 randomRequestId("surface-remove"),
                 owned.providerInstanceId,
                 surfaceId,
                 System.currentTimeMillis());
+        persist();
         boolean removed = receipt.applied && registry.unregister(identity, surfaceId, reason);
         if (removed) { removeSurfaceLeases(surfaceId); }
-        persist();
         return removed;
     }
 
@@ -367,6 +396,7 @@ public final class ConnectionHubRuntime implements HubSurfaceRegistry.Listener {
                 removed += 1;
             }
         }
+        prepareMutation("unregister_provider");
         ConnectionHubAuthorityPort.Receipt providerReceipt = authority.unregisterProvider(
                 randomRequestId("provider-remove"),
                 providerInstanceId,
@@ -384,7 +414,21 @@ public final class ConnectionHubRuntime implements HubSurfaceRegistry.Listener {
             String surfaceId,
             JSONObject state) {
         requireBoundedFlatObject(state, "state");
-        registry.updateState(identity, surfaceId, state.toString());
+        String nextStateJson = state.toString();
+        if (registry.requireOwnedEntry(identity, surfaceId).stateJson.equals(nextStateJson)) {
+            return;
+        }
+        synchronized (this) {
+            if (!consumeRate(
+                    surfaceStateRateWindows,
+                    identity.stableKey() + "\n" + surfaceId,
+                    ConnectionHubProtocol.MAX_SURFACE_STATE_UPDATES_PER_WINDOW,
+                    ConnectionHubProtocol.SURFACE_STATE_RATE_WINDOW_MS,
+                    System.currentTimeMillis())) {
+                throw new IllegalStateException("surface_state_rate_limited");
+            }
+        }
+        registry.updateState(identity, surfaceId, nextStateJson);
     }
 
     public void handleCommand(
@@ -424,12 +468,24 @@ public final class ConnectionHubRuntime implements HubSurfaceRegistry.Listener {
                 if (session.transportEpoch != socketTransportEpoch) {
                     throw new SecurityException("stale_socket_transport_epoch");
                 }
+                if (!consumeRate(
+                        commandRateWindows,
+                        session.logicalSessionId,
+                        ConnectionHubProtocol.MAX_COMMANDS_PER_SESSION_PER_WINDOW,
+                        ConnectionHubProtocol.COMMAND_RATE_WINDOW_MS,
+                        System.currentTimeMillis())) {
+                    sink.onReceipt(commandReceipt(
+                            requestId, surfaceId, command, false,
+                            "command_rate_limited", false, "{}"));
+                    return;
+                }
                 entry = registry.require(surfaceId);
             }
             String leaseKey = leaseKey(session.logicalSessionId, surfaceId);
             String leaseId;
             synchronized (this) { leaseId = surfaceLeases.get(leaseKey); }
             if (leaseId == null) {
+                prepareMutation("acquire_surface_lease");
                 ConnectionHubAuthorityPort.Receipt leaseReceipt = authority.acquireSurfaceLease(
                         randomRequestId("lease"),
                         session.logicalSessionId,
@@ -437,10 +493,10 @@ public final class ConnectionHubRuntime implements HubSurfaceRegistry.Listener {
                         surfaceId,
                         System.currentTimeMillis());
                 if (!leaseReceipt.applied || leaseReceipt.surfaceLeaseId == null) {
+                    persist();
                     sink.onReceipt(commandReceipt(
                             requestId, surfaceId, command, false,
                             leaseReceipt.status, false, leaseReceipt.authorityReceiptJson));
-                    persist();
                     return;
                 }
                 leaseId = leaseReceipt.surfaceLeaseId;
@@ -448,6 +504,7 @@ public final class ConnectionHubRuntime implements HubSurfaceRegistry.Listener {
                 persist();
             }
             String commandParamsSha256 = canonicalParamsSha256(args);
+            prepareMutation("authorize_surface_command");
             ConnectionHubAuthorityPort.Receipt authorityReceipt = authority.authorizeCommand(
                     requestId,
                     session.logicalSessionId,
@@ -464,22 +521,50 @@ public final class ConnectionHubRuntime implements HubSurfaceRegistry.Listener {
                         authorityReceipt.status, false, authorityReceipt.authorityReceiptJson));
                 return;
             }
+            final HubSurfaceRegistry.Entry authorizedEntry = entry;
+            final long authorizedEpoch = session.transportEpoch;
+            final java.util.concurrent.atomic.AtomicBoolean effectCompleted =
+                    new java.util.concurrent.atomic.AtomicBoolean();
             registry.dispatch(
                     new HubSurfaceRegistry.CommandDispatch(
                             requestId,
                             surfaceId,
                             command,
                             args.toString(),
-                            authorityReceipt.authorityReceiptJson),
+                            authorityReceipt.authorityReceiptJson,
+                            authorizedEntry.providerInstanceId,
+                            authorizedEpoch,
+                            authorizedEntry.stateRevision,
+                            sha256Utf8(authorityReceipt.authorityReceiptJson)),
                     new HubSurfaceRegistry.CommandResultCallback() {
                         @Override
                         public void onResult(boolean applied, String status, String stateJson) {
+                            if (!effectCompleted.compareAndSet(false, true)) return;
+                            boolean observed = applied;
+                            String finalStatus = status;
+                            if (observed) {
+                                try {
+                                    JSONObject observedState = new JSONObject(stateJson);
+                                    requireBoundedFlatObject(observedState, "provider_effect_state");
+                                    registry.updateState(
+                                            authorizedEntry.descriptor.providerIdentity(),
+                                            surfaceId,
+                                            observedState.toString());
+                                    finalStatus = "provider_effect_observed";
+                                } catch (Exception invalidEffect) {
+                                    observed = false;
+                                    finalStatus = "provider_effect_receipt_invalid";
+                                }
+                            } else if ("provider_effect_queued".equals(status)) {
+                                finalStatus = "provider_effect_queued";
+                            }
                             sink.onReceipt(commandReceipt(
                                     requestId, surfaceId, command, true,
-                                    status, applied, authorityReceipt.authorityReceiptJson));
+                                    finalStatus, observed, authorityReceipt.authorityReceiptJson));
                         }
                     });
         } catch (Exception error) {
+            settlePreparedMutation();
             sink.onReceipt(commandReceipt(
                     request.optString("request_id", "request.invalid"),
                     request.optString("surface_id", "surface.invalid"),
@@ -544,6 +629,7 @@ public final class ConnectionHubRuntime implements HubSurfaceRegistry.Listener {
 
     private synchronized void restore() {
         ConnectionHubStateStore.State state = store.load();
+        durableGeneration = state.generation;
         desiredRunning = state.desiredRunning;
         sessions.putAll(state.sessionProjections);
         transportEpoch = desiredRunning ? randomHex(16) : "";
@@ -558,42 +644,92 @@ public final class ConnectionHubRuntime implements HubSurfaceRegistry.Listener {
                 persist();
                 return;
             }
-            authority.reconcileAfterRestart(
+            prepareMutation("restart_reconcile");
+            ConnectionHubAuthorityPort.Receipt reconciled = authority.reconcileAfterRestart(
                     randomRequestId("restart-reconcile"),
                     System.currentTimeMillis());
+            if (!reconciled.applied) {
+                desiredRunning = false;
+                sessions.clear();
+                lastStatus = "manifold_restart_reconcile_rejected";
+                persist();
+                return;
+            }
+            persist();
             expireNow();
             rotateSessionTransports();
             persist();
         }
         pairingCode = desiredRunning && sessions.isEmpty() ? randomDigits(6) : null;
-        lastStatus = desiredRunning ? "restart_pending_listener" : "disabled";
+        lastStatus = !state.pendingOperation.isEmpty()
+                ? "restart_reconciled_pending_" + state.pendingOperation
+                : (desiredRunning ? "restart_pending_listener" : "disabled");
     }
 
     private void rotateSessionTransports() {
-        Map<String, ConnectionHubStateStore.SessionProjection> rotated = new LinkedHashMap<>();
-        for (Map.Entry<String, ConnectionHubStateStore.SessionProjection> item : sessions.entrySet()) {
+        Map<String, ConnectionHubStateStore.SessionProjection> existing =
+                new LinkedHashMap<>(sessions);
+        for (Map.Entry<String, ConnectionHubStateStore.SessionProjection> item : existing.entrySet()) {
             ConnectionHubStateStore.SessionProjection old = item.getValue();
+            prepareMutation("restart_rotate_transport");
             ConnectionHubAuthorityPort.Receipt receipt = authority.replaceTransport(
                     randomRequestId("transport"),
                     old.logicalSessionId,
                     old.transportEpoch,
                     System.currentTimeMillis());
             if (receipt.applied && receipt.transportEpoch == old.transportEpoch + 1) {
-                rotated.put(item.getKey(), new ConnectionHubStateStore.SessionProjection(
+                sessions.put(item.getKey(), new ConnectionHubStateStore.SessionProjection(
                         old.logicalSessionId,
                         receipt.transportEpoch,
                         old.expiresAtMs));
+            } else {
+                sessions.remove(item.getKey());
             }
+            persist();
         }
-        sessions.clear();
-        sessions.putAll(rotated);
+    }
+
+    private synchronized void prepareMutation(String operation) {
+        if (durabilityFailed) throw new IllegalStateException("durability_fail_stop");
+        if (mutationPrepared) throw new IllegalStateException("nested_authority_mutation");
+        durableGeneration += 1;
+        try {
+            store.save(new ConnectionHubStateStore.State(
+                    desiredRunning,
+                    authority.exportOpaqueState(),
+                    sessions,
+                    durableGeneration,
+                    HubSurfaceDescriptor.requireToken(operation, 96, "pending_operation")));
+            mutationPrepared = true;
+        } catch (RuntimeException failure) {
+            durableGeneration -= 1;
+            throw failure;
+        }
+    }
+
+    private synchronized void settlePreparedMutation() {
+        if (mutationPrepared && !durabilityFailed) persist();
     }
 
     private synchronized void persist() {
-        store.save(new ConnectionHubStateStore.State(
-                desiredRunning,
-                authority.exportOpaqueState(),
-                sessions));
+        if (durabilityFailed) throw new IllegalStateException("durability_fail_stop");
+        if (!mutationPrepared) durableGeneration += 1;
+        try {
+            store.save(new ConnectionHubStateStore.State(
+                    desiredRunning,
+                    authority.exportOpaqueState(),
+                    sessions,
+                    durableGeneration,
+                    ""));
+            mutationPrepared = false;
+        } catch (RuntimeException failure) {
+            durabilityFailed = true;
+            listenerEnabled = false;
+            desiredRunning = false;
+            lastStatus = "durability_commit_failed_fail_stop";
+            closeAllSessions("durability_commit_failed");
+            throw new IllegalStateException("durability_commit_failed_fail_stop", failure);
+        }
     }
 
     private void closeLogicalSession(String logicalSessionId, String reason) {
@@ -654,6 +790,20 @@ public final class ConnectionHubRuntime implements HubSurfaceRegistry.Listener {
             }
             return output.toString();
         } catch (Exception error) { throw new IllegalArgumentException("args canonicalization failed", error); }
+    }
+
+    private static String sha256Utf8(String value) {
+        try {
+            byte[] digest = MessageDigest.getInstance("SHA-256")
+                    .digest(value.getBytes(StandardCharsets.UTF_8));
+            StringBuilder output = new StringBuilder("sha256:");
+            for (byte item : digest) {
+                output.append(String.format(java.util.Locale.ROOT, "%02x", item & 0xff));
+            }
+            return output.toString();
+        } catch (Exception impossible) {
+            throw new IllegalStateException(impossible);
+        }
     }
 
     private static String canonicalScalar(Object value) {
@@ -844,6 +994,31 @@ public final class ConnectionHubRuntime implements HubSurfaceRegistry.Listener {
             }
         } catch (org.json.JSONException error) {
             throw new IllegalArgumentException(name + " is malformed", error);
+        }
+    }
+
+    private static boolean consumeRate(
+            Map<String, RateWindow> windows,
+            String key,
+            int maximum,
+            long windowMs,
+            long nowMs) {
+        RateWindow window = windows.get(key);
+        if (window == null || nowMs - window.startedAtMs >= windowMs) {
+            windows.put(key, new RateWindow(nowMs, 1));
+            return true;
+        }
+        if (window.count >= maximum) return false;
+        window.count += 1;
+        return true;
+    }
+
+    private static final class RateWindow {
+        final long startedAtMs;
+        int count;
+        RateWindow(long startedAtMs, int count) {
+            this.startedAtMs = startedAtMs;
+            this.count = count;
         }
     }
 

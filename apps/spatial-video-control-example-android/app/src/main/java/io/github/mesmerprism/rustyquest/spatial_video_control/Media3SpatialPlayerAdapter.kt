@@ -162,7 +162,7 @@ class Media3SpatialPlayerAdapter(
     require(surfaceId == CONNECTION_HUB_SURFACE_ID)
     require(
         authorityReceipt.optString("\$schema") ==
-            "rusty.manifold.connection_hub.receipt.v1"
+            "rusty.manifold.connection_hub.receipt.v2"
     )
     require(authorityReceipt.optBoolean("applied", false))
     require(authorityReceipt.optString("operation") == "authorize_surface_command")

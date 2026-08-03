@@ -27,7 +27,8 @@ public final class AndroidConnectionHubStateStore implements ConnectionHubStateS
             "io.github.mesmerprism.rustymanifold.broker.connection_hub_state_v1";
     private static final String ENVELOPE_SCHEMA =
             "rusty.quest.connection_hub.encrypted_android_state.v1";
-    private static final String SCHEMA = "rusty.quest.connection_hub.android_state.v1";
+    private static final String SCHEMA = "rusty.quest.connection_hub.android_state.v2";
+    private static final String LEGACY_SCHEMA = "rusty.quest.connection_hub.android_state.v1";
     private final SharedPreferences preferences;
 
     public AndroidConnectionHubStateStore(Context context) {
@@ -53,7 +54,8 @@ public final class AndroidConnectionHubStateStore implements ConnectionHubStateS
             cipher.init(Cipher.DECRYPT_MODE, requireKey(), new GCMParameterSpec(128, iv));
             JSONObject value = new JSONObject(new String(
                     cipher.doFinal(ciphertext), StandardCharsets.UTF_8));
-            if (!SCHEMA.equals(value.optString("$schema", ""))) {
+            String schema = value.optString("$schema", "");
+            if (!SCHEMA.equals(schema) && !LEGACY_SCHEMA.equals(schema)) {
                 return State.stopped();
             }
             Map<String, SessionProjection> sessions = new LinkedHashMap<>();
@@ -74,7 +76,9 @@ public final class AndroidConnectionHubStateStore implements ConnectionHubStateS
             return new State(
                     value.optBoolean("desired_running", false),
                     value.optString("authority_envelope", ""),
-                    sessions);
+                    sessions,
+                    value.optLong("generation", 0),
+                    value.optString("pending_operation", ""));
         } catch (Exception damaged) {
             return State.stopped();
         }
@@ -87,6 +91,8 @@ public final class AndroidConnectionHubStateStore implements ConnectionHubStateS
             value.put("$schema", SCHEMA);
             value.put("desired_running", state.desiredRunning);
             value.put("authority_envelope", state.authorityEnvelope);
+            value.put("generation", state.generation);
+            value.put("pending_operation", state.pendingOperation);
             JSONArray rows = new JSONArray();
             for (Map.Entry<String, SessionProjection> item : state.sessionProjections.entrySet()) {
                 JSONObject row = new JSONObject();

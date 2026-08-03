@@ -29,18 +29,30 @@ public final class HubSurfaceRegistry {
         public final String command;
         public final String argsJson;
         public final String authorityReceiptJson;
+        public final String providerInstanceId;
+        public final long transportEpoch;
+        public final long authorizedStateRevision;
+        public final String authorityReceiptSha256;
 
         public CommandDispatch(
                 String requestId,
                 String surfaceId,
                 String command,
                 String argsJson,
-                String authorityReceiptJson) {
+                String authorityReceiptJson,
+                String providerInstanceId,
+                long transportEpoch,
+                long authorizedStateRevision,
+                String authorityReceiptSha256) {
             this.requestId = requestId;
             this.surfaceId = surfaceId;
             this.command = command;
             this.argsJson = argsJson;
             this.authorityReceiptJson = authorityReceiptJson;
+            this.providerInstanceId = providerInstanceId;
+            this.transportEpoch = transportEpoch;
+            this.authorizedStateRevision = authorizedStateRevision;
+            this.authorityReceiptSha256 = authorityReceiptSha256;
         }
     }
 
@@ -141,6 +153,9 @@ public final class HubSurfaceRegistry {
             String stateJson) {
         requireBoundedJson(stateJson, "state");
         Entry existing = requireOwned(identity, surfaceId);
+        if (existing.stateJson.equals(stateJson)) {
+            return revision;
+        }
         Entry next = new Entry(
                 existing.descriptor,
                 stateJson,

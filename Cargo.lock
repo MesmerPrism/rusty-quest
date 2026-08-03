@@ -579,6 +579,7 @@ name = "rusty-manifold-connection-hub"
 version = "0.1.0"
 dependencies = [
  "rusty-manifold-admission",
+ "rusty-manifold-broker-product",
  "rusty-manifold-model",
  "serde",
  "serde_json",
@@ -831,6 +832,7 @@ version = "0.1.0"
 dependencies = [
  "jni 0.22.4",
  "rusty-manifold-admission",
+ "rusty-manifold-broker-product",
  "rusty-manifold-connection-hub",
  "rusty-manifold-model",
  "rusty-quest-broker-admission",

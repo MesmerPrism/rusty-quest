@@ -12,6 +12,7 @@ import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.net.SocketTimeoutException;
 import java.net.URLDecoder;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
@@ -25,7 +26,12 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.Semaphore;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /** Fixed HTTP/WebSocket transport for low-rate Hub control surfaces. */
@@ -50,6 +56,9 @@ public final class ConnectionHubHttpServer
     private final ExecutorService clients = Executors.newFixedThreadPool(
             ConnectionHubProtocol.MAX_HTTP_CLIENTS);
     private final Semaphore clientSlots = new Semaphore(ConnectionHubProtocol.MAX_HTTP_CLIENTS);
+    private final Semaphore socketSlots = new Semaphore(ConnectionHubProtocol.MAX_SOCKET_SESSIONS);
+    private final ScheduledExecutorService writeWatchdog =
+            Executors.newSingleThreadScheduledExecutor();
     private final List<SocketSession> socketSessions = new ArrayList<>();
     private final AtomicBoolean closed = new AtomicBoolean();
     private ServerSocket serverSocket;
@@ -86,13 +95,18 @@ public final class ConnectionHubHttpServer
                     socket.close();
                     continue;
                 }
-                socket.setSoTimeout(30_000);
-                clients.execute(new Runnable() {
-                    @Override public void run() {
-                        try { handle(socket); }
-                        finally { clientSlots.release(); }
-                    }
-                });
+                socket.setSoTimeout(500);
+                try {
+                    clients.execute(new Runnable() {
+                        @Override public void run() {
+                            try { handle(socket); }
+                            finally { clientSlots.release(); }
+                        }
+                    });
+                } catch (RejectedExecutionException rejected) {
+                    clientSlots.release();
+                    socket.close();
+                }
             } catch (IOException error) {
                 if (!closed.get()) {
                     runtime.noteListenerFailure("listener_accept_failed");
@@ -106,7 +120,9 @@ public final class ConnectionHubHttpServer
         try (Socket client = socket) {
             InputStream input = client.getInputStream();
             OutputStream output = client.getOutputStream();
-            HttpRequest request = readRequest(input);
+            HttpRequest request = readRequest(
+                    input,
+                    deadlineAfterMs(ConnectionHubProtocol.HTTP_HEADER_DEADLINE_MS));
             String path = request.path;
             if ("GET".equals(request.method) && ConnectionHubProtocol.STATUS_PATH.equals(path)) {
                 writeJson(output, 200, runtime.status());
@@ -176,6 +192,22 @@ public final class ConnectionHubHttpServer
             HttpRequest request,
             InputStream input,
             OutputStream output) throws Exception {
+        if (!socketSlots.tryAcquire()) {
+            writeStatus(output, 503, "Busy", "text/plain; charset=utf-8", new byte[0]);
+            return;
+        }
+        try {
+            handleAdmittedSocket(socket, request, input, output);
+        } finally {
+            socketSlots.release();
+        }
+    }
+
+    private void handleAdmittedSocket(
+            Socket socket,
+            HttpRequest request,
+            InputStream input,
+            OutputStream output) throws Exception {
         String key = request.headers.get("sec-websocket-key");
         if (!hasSameOrigin(request)
                 || !"13".equals(request.headers.get("sec-websocket-version"))
@@ -184,12 +216,6 @@ public final class ConnectionHubHttpServer
                 || Base64.getDecoder().decode(key).length != 16) {
             writeStatus(output, 400, "Bad Request", "text/plain; charset=utf-8", new byte[0]);
             return;
-        }
-        synchronized (socketSessions) {
-            if (socketSessions.size() >= ConnectionHubProtocol.MAX_SOCKET_SESSIONS) {
-                writeStatus(output, 503, "Busy", "text/plain; charset=utf-8", new byte[0]);
-                return;
-            }
         }
         String accept = Base64.getEncoder().encodeToString(
                 MessageDigest.getInstance("SHA-1")
@@ -202,8 +228,10 @@ public final class ConnectionHubHttpServer
                 + "\r\n";
         output.write(response.getBytes(StandardCharsets.US_ASCII));
         output.flush();
-        socket.setSoTimeout(10_000);
-        Frame authenticationFrame = readFrame(input);
+        Frame authenticationFrame = readFrame(
+                input,
+                deadlineAfterMs(ConnectionHubProtocol.SOCKET_AUTH_DEADLINE_MS),
+                false);
         if (authenticationFrame.opcode != 1 || authenticationRateLimited()) {
             noteAuthenticationFailure();
             throw new SecurityException("socket_authentication_required");
@@ -227,21 +255,30 @@ public final class ConnectionHubHttpServer
             noteAuthenticationFailure();
             throw rejected;
         }
-        socket.setSoTimeout(30_000);
         final SocketSession session = new SocketSession(
                 socket,
                 output,
                 sessionProjection.logicalSessionId,
-                sessionProjection.transportEpoch);
-        synchronized (socketSessions) { socketSessions.add(session); }
+                sessionProjection.transportEpoch,
+                writeWatchdog);
+        synchronized (socketSessions) {
+            for (SocketSession existing : new ArrayList<>(socketSessions)) {
+                if (existing.logicalSessionId.equals(sessionProjection.logicalSessionId)) {
+                    existing.close();
+                    socketSessions.remove(existing);
+                }
+            }
+            socketSessions.add(session);
+        }
         try {
-            session.write(ConnectionHubProtocol.socketAuthenticationReceipt(
+            session.enqueue(ConnectionHubProtocol.socketAuthenticationReceipt(
                     sessionProjection.transportEpoch));
-            session.write(runtime.snapshotEvent());
+            session.enqueue(runtime.snapshotEvent());
             while (!socket.isClosed()) {
-                Frame frame = readFrame(input);
+                Frame frame = readFrame(input, Long.MAX_VALUE, true);
                 if (frame.opcode == 8) { return; }
-                if (frame.opcode == 9) { session.writeFrame(10, frame.payload); continue; }
+                if (frame.opcode == 9) { session.enqueueFrame(10, frame.payload); continue; }
+                if (frame.opcode == 10) { continue; }
                 if (frame.opcode != 1) { throw new IOException("text frames only"); }
                 final JSONObject command = new JSONObject(new String(frame.payload, StandardCharsets.UTF_8));
                 runtime.handleCommand(
@@ -250,7 +287,7 @@ public final class ConnectionHubHttpServer
                         command,
                         new ConnectionHubRuntime.CommandReceiptSink() {
                     @Override public void onReceipt(JSONObject receipt) {
-                        try { session.write(receipt); } catch (IOException ignored) { session.close(); }
+                        try { session.enqueue(receipt); } catch (IOException ignored) { session.close(); }
                     }
                 });
             }
@@ -297,7 +334,7 @@ public final class ConnectionHubHttpServer
         List<SocketSession> copy;
         synchronized (socketSessions) { copy = new ArrayList<>(socketSessions); }
         for (SocketSession session : copy) {
-            try { session.write(event); }
+            try { session.enqueue(event); }
             catch (IOException failure) {
                 session.close();
                 synchronized (socketSessions) { socketSessions.remove(session); }
@@ -338,13 +375,14 @@ public final class ConnectionHubHttpServer
             socketSessions.clear();
         }
         clients.shutdownNow();
+        writeWatchdog.shutdownNow();
     }
 
-    private static HttpRequest readRequest(InputStream input) throws IOException {
+    static HttpRequest readRequest(InputStream input, long deadlineNanos) throws IOException {
         ByteArrayOutputStream header = new ByteArrayOutputStream();
         int state = 0;
         while (header.size() < ConnectionHubProtocol.MAX_HTTP_HEADER_BYTES) {
-            int next = input.read();
+            int next = readByte(input, deadlineNanos);
             if (next < 0) { throw new EOFException(); }
             header.write(next);
             state = next == (state == 0 || state == 2 ? '\r' : '\n') ? state + 1 : (next == '\r' ? 1 : 0);
@@ -372,7 +410,10 @@ public final class ConnectionHubHttpServer
         if (length < 0 || length > ConnectionHubProtocol.MAX_HTTP_BODY_BYTES) {
             throw new IOException("body too large");
         }
-        byte[] body = readExact(input, length);
+        byte[] body = readExact(
+                input,
+                length,
+                deadlineAfterMs(ConnectionHubProtocol.HTTP_HEADER_DEADLINE_MS));
         String target = first[1];
         int question = target.indexOf('?');
         String path = question < 0 ? target : target.substring(0, question);
@@ -393,40 +434,87 @@ public final class ConnectionHubHttpServer
         return output;
     }
 
-    private static Frame readFrame(InputStream input) throws IOException {
-        int first = input.read(); int second = input.read();
+    static Frame readFrame(
+            InputStream input,
+            long firstByteDeadlineNanos,
+            boolean allowIdleBeforeFrame) throws IOException {
+        int first = allowIdleBeforeFrame
+                ? readIdleByte(input)
+                : readByte(input, firstByteDeadlineNanos);
+        long frameDeadline = deadlineAfterMs(
+                ConnectionHubProtocol.SOCKET_FRAME_ASSEMBLY_DEADLINE_MS);
+        if (firstByteDeadlineNanos != Long.MAX_VALUE) {
+            frameDeadline = Math.min(frameDeadline, firstByteDeadlineNanos);
+        }
+        int second = readByte(input, frameDeadline);
         if (first < 0 || second < 0) { throw new EOFException(); }
         if ((first & 0x80) == 0 || (first & 0x70) != 0 || (second & 0x80) == 0) {
             throw new IOException("invalid websocket framing");
         }
         long length = second & 0x7f;
         if (length == 126) {
-            byte[] extended = readExact(input, 2);
+            byte[] extended = readExact(input, 2, frameDeadline);
             length = ByteBuffer.wrap(new byte[] {0, 0, extended[0], extended[1]}).getInt() & 0xffffffffL;
+            if (length < 126) throw new IOException("non-minimal websocket length");
         } else if (length == 127) {
-            byte[] extended = readExact(input, 8);
+            byte[] extended = readExact(input, 8, frameDeadline);
             length = ByteBuffer.wrap(extended).getLong();
+            if (length <= 0xffff) throw new IOException("non-minimal websocket length");
+        }
+        int opcode = first & 0xf;
+        if ((opcode & 0x8) != 0 && length > 125) {
+            throw new IOException("websocket control payload too large");
         }
         if (length < 0 || length > ConnectionHubProtocol.MAX_SOCKET_FRAME_BYTES) {
             throw new IOException("websocket payload too large");
         }
-        byte[] mask = readExact(input, 4);
-        byte[] payload = readExact(input, (int) length);
+        byte[] mask = readExact(input, 4, frameDeadline);
+        byte[] payload = readExact(input, (int) length, frameDeadline);
         for (int index = 0; index < payload.length; index += 1) {
             payload[index] = (byte) (payload[index] ^ mask[index % 4]);
         }
-        return new Frame(first & 0xf, payload);
+        return new Frame(opcode, payload);
     }
 
-    private static byte[] readExact(InputStream input, int length) throws IOException {
+    private static byte[] readExact(InputStream input, int length, long deadlineNanos)
+            throws IOException {
         byte[] output = new byte[length];
         int offset = 0;
         while (offset < length) {
-            int count = input.read(output, offset, length - offset);
+            if (System.nanoTime() >= deadlineNanos) {
+                throw new SocketTimeoutException("absolute read deadline exceeded");
+            }
+            int count;
+            try {
+                count = input.read(output, offset, length - offset);
+            } catch (SocketTimeoutException timeout) {
+                continue;
+            }
             if (count < 0) { throw new EOFException(); }
             offset += count;
         }
         return output;
+    }
+
+    private static int readByte(InputStream input, long deadlineNanos) throws IOException {
+        while (System.nanoTime() < deadlineNanos) {
+            try { return input.read(); }
+            catch (SocketTimeoutException timeout) { /* absolute deadline remains authoritative */ }
+        }
+        throw new SocketTimeoutException("absolute read deadline exceeded");
+    }
+
+    private static int readIdleByte(InputStream input) throws IOException {
+        while (true) {
+            try { return input.read(); }
+            catch (SocketTimeoutException timeout) { /* authenticated sockets may remain idle */ }
+        }
+    }
+
+    static long deadlineAfterMs(long durationMs) {
+        long now = System.nanoTime();
+        long delta = TimeUnit.MILLISECONDS.toNanos(durationMs);
+        return now > Long.MAX_VALUE - delta ? Long.MAX_VALUE : now + delta;
     }
 
     private static void writeJson(OutputStream output, int code, JSONObject value) throws IOException {
@@ -466,43 +554,109 @@ public final class ConnectionHubHttpServer
         private final Socket socket;
         private final String logicalSessionId;
         private final long transportEpoch;
-        private boolean closed;
-        SocketSession(Socket socket, OutputStream output, String logicalSessionId, long transportEpoch) {
+        private final ScheduledExecutorService watchdog;
+        private final ArrayBlockingQueue<OutboundFrame> outbound =
+                new ArrayBlockingQueue<>(ConnectionHubProtocol.MAX_SOCKET_OUTBOUND_QUEUE);
+        private final AtomicBoolean sessionClosed = new AtomicBoolean();
+        private final Thread writerThread;
+        SocketSession(
+                Socket socket,
+                OutputStream output,
+                String logicalSessionId,
+                long transportEpoch,
+                ScheduledExecutorService watchdog) {
             this.socket = socket;
             this.output = output;
             this.logicalSessionId = logicalSessionId;
             this.transportEpoch = transportEpoch;
+            this.watchdog = watchdog;
+            this.writerThread = new Thread(new Runnable() {
+                @Override public void run() { writeLoop(); }
+            }, "rusty-connection-hub-writer");
+            this.writerThread.start();
         }
-        synchronized void write(JSONObject value) throws IOException {
+        void enqueue(JSONObject value) throws IOException {
             try {
                 JSONObject bound = new JSONObject(value.toString());
                 bound.put("transport_epoch", transportEpoch);
-                writeFrame(1, bound.toString().getBytes(StandardCharsets.UTF_8));
+                enqueueFrame(1, bound.toString().getBytes(StandardCharsets.UTF_8));
             } catch (org.json.JSONException error) {
                 throw new IOException("invalid Hub event", error);
             }
         }
-        synchronized void writeFrame(int opcode, byte[] payload) throws IOException {
-            if (closed) { throw new IOException("session closed"); }
+        void enqueueFrame(int opcode, byte[] payload) throws IOException {
+            validateOutboundFrame(opcode, payload.length);
+            if (sessionClosed.get() || !outbound.offer(new OutboundFrame(opcode, payload))) {
+                close();
+                throw new IOException("bounded outbound queue unavailable");
+            }
+        }
+        private void writeLoop() {
+            try {
+                while (!sessionClosed.get()) {
+                    OutboundFrame frame = outbound.take();
+                    ScheduledFuture<?> deadline = watchdog.schedule(new Runnable() {
+                        @Override public void run() { close(); }
+                    }, ConnectionHubProtocol.SOCKET_WRITE_DEADLINE_MS, TimeUnit.MILLISECONDS);
+                    try { writeFrameDirect(frame.opcode, frame.payload); }
+                    finally { deadline.cancel(false); }
+                }
+            } catch (InterruptedException ignored) {
+                Thread.currentThread().interrupt();
+            } catch (IOException failure) {
+                close();
+            } catch (RuntimeException failure) {
+                close();
+            }
+        }
+        private void writeFrameDirect(int opcode, byte[] payload) throws IOException {
+            validateOutboundFrame(opcode, payload.length);
             output.write(0x80 | opcode);
             if (payload.length < 126) { output.write(payload.length); }
-            else {
+            else if (payload.length <= 0xffff) {
                 output.write(126); output.write((payload.length >>> 8) & 0xff); output.write(payload.length & 0xff);
+            } else {
+                output.write(127);
+                long length = payload.length;
+                for (int shift = 56; shift >= 0; shift -= 8) {
+                    output.write((int) ((length >>> shift) & 0xff));
+                }
             }
             output.write(payload); output.flush();
         }
-        @Override public synchronized void close() {
-            closed = true;
+        @Override public void close() {
+            if (!sessionClosed.compareAndSet(false, true)) return;
+            writerThread.interrupt();
+            outbound.clear();
             try { socket.close(); } catch (IOException ignored) {}
         }
     }
 
-    private static final class Frame {
+    static void validateOutboundFrame(int opcode, int payloadLength) throws IOException {
+        if (payloadLength < 0
+                || payloadLength > ConnectionHubProtocol.MAX_SOCKET_OUTBOUND_FRAME_BYTES) {
+            throw new IOException("outbound websocket payload too large");
+        }
+        if ((opcode & 0x8) != 0 && payloadLength > 125) {
+            throw new IOException("outbound websocket control payload too large");
+        }
+    }
+
+    private static final class OutboundFrame {
+        final int opcode;
+        final byte[] payload;
+        OutboundFrame(int opcode, byte[] payload) {
+            this.opcode = opcode;
+            this.payload = payload.clone();
+        }
+    }
+
+    static final class Frame {
         final int opcode; final byte[] payload;
         Frame(int opcode, byte[] payload) { this.opcode = opcode; this.payload = payload; }
     }
 
-    private static final class HttpRequest {
+    static final class HttpRequest {
         final String method; final String path; final Map<String, String> headers;
         final Map<String, String> query; final String body;
         HttpRequest(String method, String path, Map<String, String> headers,

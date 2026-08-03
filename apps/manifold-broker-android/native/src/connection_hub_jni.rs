@@ -1,11 +1,11 @@
 //! JNI owner for the durable Manifold Connection Hub authority.
 
-use rusty_manifold_admission::ManifoldAdmissionSnapshot;
+use rusty_manifold_broker_product::ManifoldBrokerProductLock;
 use rusty_manifold_connection_hub::{
     ManifoldConnectionHubAuthority, ManifoldConnectionHubOperationRequest,
-    ManifoldConnectionHubOwnerContext, ManifoldConnectionHubPolicy, ManifoldConnectionHubReceipt,
-    ManifoldConnectionHubRequest, ManifoldConnectionHubSurface,
-    ManifoldConnectionHubSurfaceCommand, REQUEST_SCHEMA, SURFACE_SCHEMA,
+    ManifoldConnectionHubPolicy, ManifoldConnectionHubReceipt, ManifoldConnectionHubRequest,
+    ManifoldConnectionHubSurface, ManifoldConnectionHubSurfaceCommand, EMPTY_TYPED_PARAMS_SCHEMA,
+    REQUEST_SCHEMA, SURFACE_SCHEMA,
 };
 use rusty_manifold_model::{DottedId, SchemaId};
 use serde::Deserialize;
@@ -17,6 +17,10 @@ const STATE_SCHEMA: &str = "rusty.quest.connection_hub.native_state.v1";
 const RECEIPT_SCHEMA: &str = "rusty.quest.connection_hub.native_receipt.v1";
 const EXPECTED_PRODUCT_ID: &str = "broker.connection-hub.standalone";
 const VERIFIED_WEARER_EVIDENCE: &str = "evidence.operator.wearer-action";
+const EMPTY_TYPED_PARAMS_SCHEMA_SHA256: &str =
+    "sha256:7eedc1ccca80b83dbd121d1e4bae4f6a6c9c1561e1a08d6d5919c668d5406a51";
+const EXPECTED_MANIFOLD_REVISION: &str = "661bf0ad1d95f6d17715440c23d6085e4305adeb";
+const EXPECTED_MANIFOLD_TREE: &str = "22c0b9797500758c4af257eb3869e61ae229b2af";
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -26,6 +30,8 @@ struct HubConfig {
     product_id: String,
     product_lock_id: String,
     product_lock_sha256: String,
+    product_lock: ManifoldBrokerProductLock,
+    packaged_product_lock_json: String,
     manifold_revision: String,
     manifold_tree: String,
     policy: ManifoldConnectionHubPolicy,
@@ -48,19 +54,27 @@ pub(crate) fn initialize(config_json: &str) -> Result<String, String> {
         || config.product_id != EXPECTED_PRODUCT_ID
         || !is_sha256(&config.product_lock_sha256)
         || config.product_lock_id.as_str() != "lock.broker.connection-hub.standalone"
-        || config.manifold_revision != "645e99e5591496f0aaca3022f12f485551950ec9"
-        || config.manifold_tree != "06208b8ddef3c3fc708ab38df15310170a540e5a"
+        || config.manifold_revision != EXPECTED_MANIFOLD_REVISION
+        || config.manifold_tree != EXPECTED_MANIFOLD_TREE
     {
         return Err("connection hub product binding rejected".to_owned());
     }
-    let authority =
-        ManifoldConnectionHubAuthority::new(config.policy.clone()).map_err(|e| e.to_string())?;
+    let admission = crate::admission_jni::admission_authority()?;
+    let authority = ManifoldConnectionHubAuthority::new(
+        config.policy.clone(),
+        &admission,
+        &config.product_lock,
+        config.packaged_product_lock_json.as_bytes(),
+    )
+    .map_err(|e| e.to_string())?;
     let mut guard = owner()
         .lock()
         .map_err(|_| "hub owner lock poisoned".to_owned())?;
     if let Some(existing) = guard.as_ref() {
         if existing.config.product_id != config.product_id
             || existing.config.product_lock_sha256 != config.product_lock_sha256
+            || existing.config.product_lock != config.product_lock
+            || existing.config.packaged_product_lock_json != config.packaged_product_lock_json
             || existing.config.policy != config.policy
         {
             return Err("connection hub reinitialization substitution rejected".to_owned());
@@ -103,7 +117,7 @@ pub(crate) fn execute(proposal_json: &str, now_ms: u64) -> Result<String, String
             &proposal,
             now_ms,
             ManifoldConnectionHubOperationRequest::ReplaceTransport {
-                session_id: dotted(&proposal, "session_id")?,
+                session_id: epoch_field(retained, &proposal, "session_id")?,
                 expected_transport_epoch: u64_field(&proposal, "expected_transport_epoch")?,
                 transport: transport(&proposal, now_ms)?,
             },
@@ -115,8 +129,8 @@ pub(crate) fn execute(proposal_json: &str, now_ms: u64) -> Result<String, String
             &proposal,
             now_ms,
             ManifoldConnectionHubOperationRequest::UnregisterSurface {
-                surface_id: dotted(&proposal, "surface_id")?,
-                provider_instance_id: dotted(&proposal, "provider_instance_id")?,
+                surface_id: epoch_field(retained, &proposal, "surface_id")?,
+                provider_instance_id: epoch_field(retained, &proposal, "provider_instance_id")?,
                 reason: DottedId::new("reason.provider.lifecycle-end")
                     .map_err(|e| e.to_string())?,
             },
@@ -127,10 +141,10 @@ pub(crate) fn execute(proposal_json: &str, now_ms: u64) -> Result<String, String
             &proposal,
             now_ms,
             ManifoldConnectionHubOperationRequest::AcquireSurfaceLease {
-                lease_id: derived("lease.hub", text(&proposal, "request_id")?)?,
-                session_id: dotted(&proposal, "session_id")?,
+                lease_id: epoch_derived(retained, "lease.hub", text(&proposal, "request_id")?)?,
+                session_id: epoch_field(retained, &proposal, "session_id")?,
                 expected_transport_epoch: u64_field(&proposal, "expected_transport_epoch")?,
-                surface_id: dotted(&proposal, "surface_id")?,
+                surface_id: epoch_field(retained, &proposal, "surface_id")?,
                 requested_ttl_ms: retained.config.policy.max_surface_lease_ttl_ms,
             },
         )?,
@@ -139,8 +153,8 @@ pub(crate) fn execute(proposal_json: &str, now_ms: u64) -> Result<String, String
             &proposal,
             now_ms,
             ManifoldConnectionHubOperationRequest::ReleaseSurfaceLease {
-                lease_id: dotted(&proposal, "lease_id")?,
-                session_id: dotted(&proposal, "session_id")?,
+                lease_id: epoch_field(retained, &proposal, "lease_id")?,
+                session_id: epoch_field(retained, &proposal, "session_id")?,
                 reason: reason(&proposal)?,
             },
         )?,
@@ -149,10 +163,13 @@ pub(crate) fn execute(proposal_json: &str, now_ms: u64) -> Result<String, String
             &proposal,
             now_ms,
             ManifoldConnectionHubOperationRequest::AuthorizeSurfaceCommand {
-                session_id: dotted(&proposal, "session_id")?,
+                session_id: epoch_field(retained, &proposal, "session_id")?,
                 expected_transport_epoch: u64_field(&proposal, "expected_transport_epoch")?,
-                lease_id: dotted(&proposal, "lease_id")?,
+                lease_id: epoch_field(retained, &proposal, "lease_id")?,
                 command_id: dotted(&proposal, "command_id")?,
+                typed_params_schema_id: SchemaId::new(EMPTY_TYPED_PARAMS_SCHEMA)
+                    .map_err(|e| e.to_string())?,
+                typed_params_schema_sha256: EMPTY_TYPED_PARAMS_SCHEMA_SHA256.to_owned(),
                 typed_params_sha256: sha256_field(&proposal, "typed_params_sha256")?,
             },
         )?,
@@ -161,7 +178,7 @@ pub(crate) fn execute(proposal_json: &str, now_ms: u64) -> Result<String, String
             &proposal,
             now_ms,
             ManifoldConnectionHubOperationRequest::RevokeSession {
-                session_id: dotted(&proposal, "session_id")?,
+                session_id: epoch_field(retained, &proposal, "session_id")?,
                 reason: reason(&proposal)?,
             },
         )?,
@@ -228,8 +245,14 @@ pub(crate) fn restore_state(state_json: &str) -> Result<String, String> {
     let snapshot = state
         .get("authority_snapshot")
         .ok_or_else(|| "missing authority snapshot".to_owned())?;
-    retained.authority = ManifoldConnectionHubAuthority::restart_from_json(&snapshot.to_string())
-        .map_err(|e| e.to_string())?;
+    let admission = crate::admission_jni::admission_authority()?;
+    retained.authority = ManifoldConnectionHubAuthority::restart_from_json(
+        &snapshot.to_string(),
+        &admission,
+        &retained.config.product_lock,
+        retained.config.packaged_product_lock_json.as_bytes(),
+    )
+    .map_err(|e| e.to_string())?;
     Ok(json!({
         "$schema": RECEIPT_SCHEMA,
         "applied": true,
@@ -253,7 +276,11 @@ fn trust_and_open(owner: &mut HubOwner, proposal: &Value, now_ms: u64) -> Result
     let controller_id = if let Some(value) = existing {
         value
     } else {
-        let id = derived("controller.hub", identity_sha.trim_start_matches("sha256:"))?;
+        let id = epoch_derived(
+            owner,
+            "controller.hub",
+            identity_sha.trim_start_matches("sha256:"),
+        )?;
         let evidence = DottedId::new(VERIFIED_WEARER_EVIDENCE).map_err(|e| e.to_string())?;
         let trust = request(
             owner,
@@ -267,16 +294,16 @@ fn trust_and_open(owner: &mut HubOwner, proposal: &Value, now_ms: u64) -> Result
                 requested_ttl_ms: owner.config.policy.max_controller_ttl_ms,
             },
         )?;
-        let receipt = owner.authority.trust_controller(
-            &trust,
-            ManifoldConnectionHubOwnerContext::operator_decision(now_ms, &evidence),
-        );
+        let receipt = owner
+            .authority
+            .owner()
+            .apply_operator_decision(&trust, now_ms, &evidence);
         if !receipt.applied {
             return Ok(native_receipt(receipt));
         }
         id
     };
-    let session_id = derived("session.hub", request_id)?;
+    let session_id = epoch_derived(owner, "session.hub", request_id)?;
     let open = request(
         owner,
         &format!("{request_id}.open"),
@@ -289,19 +316,17 @@ fn trust_and_open(owner: &mut HubOwner, proposal: &Value, now_ms: u64) -> Result
             requested_ttl_ms: owner.config.policy.max_session_ttl_ms,
         },
     )?;
-    Ok(native_receipt(owner.authority.open_session(
-        &open,
-        ManifoldConnectionHubOwnerContext::lifecycle(now_ms),
-    )))
+    Ok(native_receipt(
+        owner.authority.owner().apply_lifecycle(&open, now_ms),
+    ))
 }
 
 fn register_provider(owner: &mut HubOwner, proposal: &Value, now_ms: u64) -> Result<Value, String> {
-    let admission_json = crate::admission_jni::admission_snapshot()?;
-    let admission: ManifoldAdmissionSnapshot =
-        serde_json::from_str(&admission_json).map_err(|e| e.to_string())?;
+    let admission = crate::admission_jni::admission_authority()?;
     let package_name = text(proposal, "package_name")?;
     let proposed_signer = sha256_field(proposal, "signer_sha256")?;
     let client_id = admission
+        .snapshot()
         .grants
         .iter()
         .find(|grant| {
@@ -324,37 +349,49 @@ fn register_provider(owner: &mut HubOwner, proposal: &Value, now_ms: u64) -> Res
         now_ms,
         ManifoldConnectionHubOperationRequest::RegisterProvider {
             provider_id,
-            provider_instance_id: dotted(proposal, "provider_instance_id")?,
+            provider_instance_id: epoch_field(owner, proposal, "provider_instance_id")?,
             admission_use_request_id: dotted(proposal, "admission_use_request_id")?,
         },
     )?;
-    Ok(native_receipt(owner.authority.register_provider(
-        &mutation,
-        ManifoldConnectionHubOwnerContext::provider_admission(now_ms, &admission),
-    )))
+    Ok(native_receipt(
+        owner
+            .authority
+            .owner()
+            .register_provider(&mutation, now_ms, &admission),
+    ))
 }
 
 fn register_surface(owner: &mut HubOwner, proposal: &Value, now_ms: u64) -> Result<Value, String> {
-    let instance = dotted(proposal, "provider_instance_id")?;
-    let provider = owner
+    let instance = epoch_field(owner, proposal, "provider_instance_id")?;
+    let surface_id = epoch_field(owner, proposal, "surface_id")?;
+    let provider_id = owner
         .authority
         .snapshot()
         .state
         .providers
         .iter()
         .find(|item| item.provider_instance_id == instance)
+        .map(|item| item.provider_id.clone())
         .ok_or_else(|| "provider instance is not active".to_owned())?;
-    let commands: Vec<ManifoldConnectionHubSurfaceCommand> = serde_json::from_value(
-        proposal
-            .get("commands")
-            .cloned()
-            .ok_or_else(|| "missing commands".to_owned())?,
-    )
-    .map_err(|e| e.to_string())?;
+    let commands = proposal
+        .get("commands")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "missing commands".to_owned())?
+        .iter()
+        .map(|command| {
+            Ok(ManifoldConnectionHubSurfaceCommand {
+                command_id: dotted(command, "command_id")?,
+                typed_params_schema_id: SchemaId::new(EMPTY_TYPED_PARAMS_SCHEMA)
+                    .map_err(|e| e.to_string())?,
+                typed_params_schema_sha256: EMPTY_TYPED_PARAMS_SCHEMA_SHA256.to_owned(),
+                required_controller_capability: dotted(command, "required_controller_capability")?,
+            })
+        })
+        .collect::<Result<Vec<_>, String>>()?;
     let surface = ManifoldConnectionHubSurface {
         schema_id: SchemaId::new(SURFACE_SCHEMA).map_err(|e| e.to_string())?,
-        surface_id: dotted(proposal, "surface_id")?,
-        provider_id: provider.provider_id.clone(),
+        surface_id,
+        provider_id,
         provider_instance_id: instance,
         display_label: text(proposal, "display_label")?.to_owned(),
         description: text(proposal, "description")?.to_owned(),
@@ -375,7 +412,7 @@ fn unregister_provider(
     proposal: &Value,
     now_ms: u64,
 ) -> Result<Value, String> {
-    let instance = dotted(proposal, "provider_instance_id")?;
+    let instance = epoch_field(owner, proposal, "provider_instance_id")?;
     let provider_id = owner
         .authority
         .snapshot()
@@ -419,10 +456,10 @@ fn forget_all(owner: &mut HubOwner, proposal: &Value, now_ms: u64) -> Result<Val
                 reason: reason(proposal)?,
             },
         )?;
-        let receipt = owner.authority.forget_controller(
-            &mutation,
-            ManifoldConnectionHubOwnerContext::operator_decision(now_ms, &evidence),
-        );
+        let receipt = owner
+            .authority
+            .owner()
+            .apply_operator_decision(&mutation, now_ms, &evidence);
         let applied = receipt.applied;
         receipts.push(serde_json::to_value(&receipt).map_err(|e| e.to_string())?);
         if !applied {
@@ -456,10 +493,7 @@ fn reconcile_restart(owner: &mut HubOwner, proposal: &Value, now_ms: u64) -> Res
                     .map_err(|e| e.to_string())?,
             },
         )?;
-        let receipt = owner.authority.apply_lifecycle(
-            &mutation,
-            ManifoldConnectionHubOwnerContext::lifecycle(now_ms),
-        );
+        let receipt = owner.authority.owner().apply_lifecycle(&mutation, now_ms);
         let applied = receipt.applied;
         receipts.push(serde_json::to_value(&receipt).map_err(|e| e.to_string())?);
         if !applied {
@@ -478,10 +512,9 @@ fn apply_lifecycle(
     operation: ManifoldConnectionHubOperationRequest,
 ) -> Result<Value, String> {
     let mutation = request(owner, text(proposal, "request_id")?, now_ms, operation)?;
-    Ok(native_receipt(owner.authority.apply_lifecycle(
-        &mutation,
-        ManifoldConnectionHubOwnerContext::lifecycle(now_ms),
-    )))
+    Ok(native_receipt(
+        owner.authority.owner().apply_lifecycle(&mutation, now_ms),
+    ))
 }
 
 fn request(
@@ -492,7 +525,8 @@ fn request(
 ) -> Result<ManifoldConnectionHubRequest, String> {
     Ok(ManifoldConnectionHubRequest {
         schema_id: SchemaId::new(REQUEST_SCHEMA).map_err(|e| e.to_string())?,
-        request_id: DottedId::new(request_id).map_err(|e| e.to_string())?,
+        request_id: epoch_derived(owner, "request", request_id)?,
+        authority_epoch: owner.authority.snapshot().state.authority_epoch,
         expected_authority_revision: owner.authority.snapshot().state.authority_revision,
         requested_at_ms: now_ms,
         operation,
@@ -544,6 +578,28 @@ fn transport(
 
 fn dotted(value: &Value, field: &str) -> Result<DottedId, String> {
     DottedId::new(text(value, field)?).map_err(|e| e.to_string())
+}
+
+fn epoch_field(owner: &HubOwner, value: &Value, field: &str) -> Result<DottedId, String> {
+    epoch_derived(owner, field, text(value, field)?)
+}
+
+fn epoch_derived(owner: &HubOwner, prefix: &str, source: &str) -> Result<DottedId, String> {
+    let epoch = owner.authority.snapshot().state.authority_epoch;
+    let expected_prefix = format!("epoch-{epoch}.");
+    if source.starts_with(&expected_prefix) {
+        return DottedId::new(source).map_err(|e| e.to_string());
+    }
+    let normalized_prefix = prefix.replace('_', "-");
+    let suffix: String = source
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || *c == '-')
+        .take(40)
+        .collect();
+    if suffix.is_empty() {
+        return Err("connection hub epoch identity source is empty".to_owned());
+    }
+    DottedId::new(format!("epoch-{epoch}.{normalized_prefix}.{suffix}")).map_err(|e| e.to_string())
 }
 
 fn derived(prefix: &str, source: &str) -> Result<DottedId, String> {
@@ -605,10 +661,38 @@ mod tests {
 
     #[test]
     fn retained_owner_opens_replaces_and_restores_one_logical_session() {
+        let runtime_config = crate::admission_jni::tests::runtime_config().to_string();
+        let runtime_config_sha =
+            rusty_quest_broker_authority::canonical_runtime_config_sha256(&runtime_config)
+                .expect("runtime config sha");
+        crate::admission_jni::initialize(
+            &runtime_config,
+            &runtime_config_sha,
+            &"31".repeat(32),
+            1_000,
+            1_000_000_000,
+        )
+        .expect("admission runtime");
+        let manifold_root =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../../rusty-manifold");
+        let product_lock_json = std::fs::read_to_string(
+            manifold_root.join("fixtures/broker-product/connection-hub-standalone.lock.json"),
+        )
+        .expect("connection hub product lock");
+        let product_lock: Value =
+            serde_json::from_str(&product_lock_json).expect("connection hub product lock json");
+        let product_lock_sha = format!(
+            "sha256:{}",
+            rusty_quest_broker_authority::packaged_json_sha256(&product_lock_json)
+        );
         let digest = format!("sha256:{}", "a".repeat(64));
         let policy = json!({
-            "$schema": "rusty.manifold.connection_hub.policy.v1",
+            "$schema": "rusty.manifold.connection_hub.policy.v2",
             "authority_id": "authority.connection-hub.quest",
+            "admission_authority_id": "authority.admission.quest",
+            "broker_product_lock_id": "lock.broker.connection-hub.standalone",
+            "broker_product_lock_fingerprint": product_lock["spec_fingerprint"],
+            "broker_product_lock_sha256": product_lock_sha.clone(),
             "trusted_operator_evidence_ids": [VERIFIED_WEARER_EVIDENCE],
             "allowed_controller_capabilities": ["capability.sample.toggle"],
             "provider_grants": [{
@@ -619,6 +703,8 @@ mod tests {
                 "surface_contract_sha256": format!("sha256:{}", "b".repeat(64)),
                 "allowed_commands": [{
                     "command_id": "command.sample.toggle",
+                    "typed_params_schema_id": EMPTY_TYPED_PARAMS_SCHEMA,
+                    "typed_params_schema_sha256": EMPTY_TYPED_PARAMS_SCHEMA_SHA256,
                     "required_controller_capability": "capability.sample.toggle"
                 }]
             }],
@@ -630,9 +716,11 @@ mod tests {
             "$schema": CONFIG_SCHEMA,
             "product_id": EXPECTED_PRODUCT_ID,
             "product_lock_id": "lock.broker.connection-hub.standalone",
-            "product_lock_sha256": format!("sha256:{}", "c".repeat(64)),
-            "manifold_revision": "645e99e5591496f0aaca3022f12f485551950ec9",
-            "manifold_tree": "06208b8ddef3c3fc708ab38df15310170a540e5a",
+            "product_lock_sha256": product_lock_sha,
+            "product_lock": product_lock,
+            "packaged_product_lock_json": product_lock_json,
+            "manifold_revision": EXPECTED_MANIFOLD_REVISION,
+            "manifold_tree": EXPECTED_MANIFOLD_TREE,
             "policy": policy
         });
         let initialized: Value =

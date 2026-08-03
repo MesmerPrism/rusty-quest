@@ -144,6 +144,8 @@ public final class ConnectionHubSampleActivity extends Activity {
 
     private void handleCommand(Message message) {
         Bundle result = new Bundle();
+        result.putString("effect_binding_json",
+                message.getData().getString("effect_binding_json", ""));
         try {
             String requestId = message.getData().getString("request_id", "");
             String surfaceId = message.getData().getString("surface_id", "");
@@ -169,10 +171,12 @@ public final class ConnectionHubSampleActivity extends Activity {
             publishState();
             result.putBoolean("provider_applied", true);
             result.putString("status", "toggle_applied");
+            result.putString("effect_status", "observed");
             result.putString("state_json", state().toString());
         } catch (Exception error) {
             result.putBoolean("provider_applied", false);
             result.putString("status", "toggle_rejected");
+            result.putString("effect_status", "rejected");
             result.putString("state_json", state().toString());
         }
         try {

@@ -18,17 +18,27 @@ separate TLS/WSS product slice is accepted.
 | `Build` | Builds the Hub, Spatial Video provider, and distinct sample provider with one explicit keystore. No device action. |
 | `Inspect` | Stages read-only content-addressed APK copies and inspects all three with one hash-locked File Manager executable. Signers must be identical. |
 | `Install` | Inspect, exact-serial install, and installed-base byte readback for all three APKs. It stops before launch on any mismatch. |
-| `Start`, `Status`, `Stop`, `Forget` | Uses the fixed debug Hub shell provider and records the missing QFM service-action capability. `Forget` remains a Manifold decision. |
-| `LaunchProviders`, `StopProviders` | Launches the two fixed providers through QFM, with only the reviewed revision-69b02f1 launcher-export fallback; stopping uses one fixed-package provider-gap fallback. |
+| `Prerequisites` | Binds exact serial/provider/protocol hashes and validates the optional browser provider. |
+| `Start`, `Status`, `Stop`, `Forget` | Dispatches a fixed debug Activity action through the real foreground service, then uses the shell provider only for observation. Start proves the ongoing notification and service. |
+| `DebugProtocolProof` | Separately proves the debug shell protocol start/status/stop route without claiming foreground-service coverage. |
+| `RestartProcess` | Schedules a receipt-first debug process death, then proves a new PID, START_STICKY service/notification/listener recovery, encrypted desired-state restore, reconnect, provider re-registration, and post-restart command in E2E. |
+| `WifiRebindE2E` | Opt-in only on a non-TCP ADB transport with Wi-Fi initially enabled; otherwise emits an explicit safety-skip receipt and makes no rebind claim. |
+| `LaunchSpatial`, `LaunchSample`, `StopSpatial`, `StopSample`, `WaitSurface`, `WaitSurfaceAbsent`, `StopProviders` | Drives and observes the fixed foreground-app surface lifecycle. It never expects both Activity-owned surfaces concurrently. |
 | `HostessStatus`, `HostessPair`, `HostessList`, `HostessWatch`, `HostessCommand`, `HostessReconnect`, `HostessRevoke` | Projects Hostess's existing closed Connection Hub controller CLI. Only the two checked-in surfaces and their registered commands are accepted. |
 | `Logs` | Captures at most 5,000 serial-scoped logcat lines and rejects `FATAL EXCEPTION`, `AndroidRuntime E`, or `UnsatisfiedLinkError`. |
-| `Cleanup` | Stops only the two provider packages and the Hub listener; it does not uninstall packages or alter device settings. |
-| `E2E` | Builds, inspects, checks shared signer, installs, starts, launches both providers, pairs, lists, invokes one command per provider, reconnects, watches, scans logs, revokes, and cleans up. |
+| `BrowserE2E` | Uses an exact Playwright package/browser pin and stdin-only pairing secret to exercise the packaged page, sequential Spatial→Sample→Spatial surfaces, commands, receipts, revoke, and zero console/page errors. |
+| `Cleanup` | Applies the recorded `RetainCandidate` or `PreserveAndRestore` policy, restores target running/listener state, and verifies power/proximity/autosleep/forward invariants. |
+| `E2E` | Resumable checkpointed transaction covering pre-state, exact install, real FGS, pairing, Spatial command, >2-minute provider lifetime, process restart, sequential Spatial→Sample→Spatial surfaces, reconnect epoch, optional safe Wi-Fi rebind, diagnostics, revoke/closed-socket negative, optional required real-browser leg, and target-only restoration. |
 | `SimulateE2E` | Writes deterministic no-device synthetic receipts and their hash-bound evidence manifest. |
 
 Every non-dry run writes private evidence outside the source checkout. The
 manifest binds each receipt by SHA-256 and records cleanup scope. APKs, serials,
 paths, logs, session metadata, and device receipts must not be committed.
+Before install it exports and inspects every pre-existing target APK and records
+its identity/version/digest and running state. `RetainCandidate` is an explicit
+receipt-bound policy; `PreserveAndRestore` reinstalls and re-observes exact prior
+bytes. Checkpoints bind serial, protocol, QFM/Hostess pins, artifact hashes,
+build-manifest hash, and policy, and refuse mismatched resume attempts.
 
 ## Exact providers and signing
 
@@ -68,16 +78,50 @@ negative boundary. Do not submit or publish the debug-operator APK.
 
 ## Reviewed ADB fallbacks
 
-The wrapper is QFM-first. Raw ADB is limited to four fixed gaps, always with
-`-s <serial>` and no caller-supplied component, package, method, or arguments:
+The wrapper is QFM-first. Every raw ADB use is selected from this fixed,
+receipt-visible gap registry, always with `-s <serial>` and no caller-supplied
+component, package, method, or arguments:
 
 - `qfm-69b02f1.launch-export-parser` — fixed launcher fallback only after the exact known parser error;
 - `qfm-missing-typed-connection-hub-service-action-v1` — fixed DUMP-protected Hub debug methods;
+- `qfm-missing-typed-connection-hub-activity-action-v1` — fixed debug Activity actions that enter the real foreground-service lifecycle;
 - `qfm-missing-typed-package-stop-v1` — force-stop only the two fixed sample providers;
-- `qfm-missing-bounded-logcat-v1` — bounded diagnostic log read and fatal scan.
+- `qfm-missing-bounded-logcat-v1` — bounded diagnostic log read and fatal scan;
+- `qfm-readonly-device-state-v1` — read-only stay-awake, timeout, and power/proximity facts for invariant checking;
+- `qfm-readonly-package-state-v1` — read-only installed/running state for the three fixed test targets;
+- `qfm-missing-typed-target-uninstall-v1` — uninstall only a fixed target that this run installed and must restore as absent;
+- `qfm-missing-typed-wifi-rebind-v1` — opt-in USB-only Wi-Fi disable/restore and origin-rebind validation.
 
-These receipts claim transport fallback only, never File Manager, Hostess,
-Manifold, or application acceptance.
+Each fallback result carries its stable gap id. These receipts claim transport
+fallback only, never File Manager, Hostess, Manifold, or application
+acceptance.
+
+## Sequential surface oracle
+
+Spatial Video registers only while its Activity is started. Launching the
+sample Activity must remove Spatial and add Sample; relaunching Spatial must
+remove Sample and add Spatial again. The Hub logical session and real
+foreground service persist across all three app switches. Concurrent presence
+is not required unless a future provider explicitly declares a background
+lifetime.
+
+Each device command gate requires the exact requested surface, command, and
+request binding plus `accepted=true`, `provider_applied=true`, and
+`status=provider_effect_observed`. An accepted-but-queued protocol receipt is
+valid transport output but is not application-effect acceptance. Revocation is
+proved inside one Hostess process: open authenticated socket, applied HTTP
+revoke, bounded close of that socket, fresh stale-bearer authentication
+rejection, then local credential deletion. Failure caused only by a previously
+deleted session file is not revocation evidence.
+
+## Real browser provider
+
+`tools/browser/connection-hub-browser-e2e.js` is separate from Hostess protocol
+testing. It accepts the one-use code only on stdin, never argv or a file. The
+operator binds the exact Playwright `package.json`, browser executable, and
+harness digests. `-RequireBrowserE2E` turns this optional provider into a
+required acceptance gate; otherwise the final evidence says `not_required`
+and makes no browser-device claim.
 
 ## Dry run and source validation
 

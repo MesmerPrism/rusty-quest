@@ -20,9 +20,11 @@ import java.security.MessageDigest;
 import java.security.SecureRandom;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /** Signature-scoped Binder projection. Manifold owns every grant/token decision. */
 public final class ConnectionHubAdmissionService extends Service {
+    private static final long ADMISSION_OPERATION_WINDOW_MS = 60_000L;
     public static final int MESSAGE_ISSUE_TOKEN = 1;
     public static final int MESSAGE_AUTHORIZE_USE = 2;
     public static final int MESSAGE_REVOKE_TOKEN = 3;
@@ -142,19 +144,13 @@ public final class ConnectionHubAdmissionService extends Service {
         if (admittedEvidence == null) {
             throw new SecurityException("current Manifold provider admission use is required");
         }
-        ConnectionHubAuthorityPort.Receipt receipt = ConnectionHubProcess.get(this).registerSurface(
-                identity,
-                providerInstanceId,
-                admittedEvidence,
-                registration,
-                message.replyTo);
-        if (receipt.applied) {
-            synchronized (activeHubProviderInstances) {
-                activeHubProviderInstances.put(identity.stableKey(), providerInstanceId);
-            }
-            final IBinder callbackBinder = message.replyTo.getBinder();
-            callbackBinder.linkToDeath(new IBinder.DeathRecipient() {
-                @Override public void binderDied() {
+        final IBinder callbackBinder = message.replyTo.getBinder();
+        final AtomicBoolean registrationCommitted = new AtomicBoolean();
+        final AtomicBoolean deathObserved = new AtomicBoolean();
+        final IBinder.DeathRecipient deathRecipient = new IBinder.DeathRecipient() {
+            @Override public void binderDied() {
+                deathObserved.set(true);
+                if (registrationCommitted.compareAndSet(true, false)) {
                     ConnectionHubProcess.get(ConnectionHubAdmissionService.this).unregisterProvider(
                             identity,
                             providerInstanceId,
@@ -162,9 +158,45 @@ public final class ConnectionHubAdmissionService extends Service {
                     synchronized (activeHubProviderInstances) {
                         activeHubProviderInstances.remove(identity.stableKey());
                     }
-                    callbackBinder.unlinkToDeath(this, 0);
                 }
-            }, 0);
+                callbackBinder.unlinkToDeath(this, 0);
+            }
+        };
+        callbackBinder.linkToDeath(deathRecipient, 0);
+        ConnectionHubAuthorityPort.Receipt receipt;
+        try {
+            receipt = ConnectionHubProcess.get(this).registerSurface(
+                    identity,
+                    providerInstanceId,
+                    admittedEvidence,
+                    registration,
+                    message.replyTo);
+        } catch (Exception failure) {
+            callbackBinder.unlinkToDeath(deathRecipient, 0);
+            throw failure;
+        }
+        if (receipt.applied && !deathObserved.get()) {
+            synchronized (activeHubProviderInstances) {
+                activeHubProviderInstances.put(identity.stableKey(), providerInstanceId);
+            }
+            registrationCommitted.set(true);
+            if (deathObserved.get() && registrationCommitted.compareAndSet(true, false)) {
+                ConnectionHubProcess.get(this).unregisterProvider(
+                        identity, providerInstanceId, "provider_binder_died_during_registration");
+                synchronized (activeHubProviderInstances) {
+                    activeHubProviderInstances.remove(identity.stableKey());
+                }
+                receipt = ConnectionHubAuthorityPort.Receipt.rejected(
+                        "provider_binder_died_during_registration");
+            }
+        } else {
+            callbackBinder.unlinkToDeath(deathRecipient, 0);
+            if (receipt.applied) {
+                ConnectionHubProcess.get(this).unregisterProvider(
+                        identity, providerInstanceId, "provider_binder_died_during_registration");
+                receipt = ConnectionHubAuthorityPort.Receipt.rejected(
+                        "provider_binder_died_during_registration");
+            }
         }
         return hubReceipt(receipt);
     }
@@ -247,7 +279,7 @@ public final class ConnectionHubAdmissionService extends Service {
             operation.put("requested_capabilities", csvArray(data.getString("capabilities", "")));
             operation.put("requested_token_ttl_ms", data.getLong("token_ttl_ms", 0));
             operation.put("issued_at_ms", now);
-            operation.put("expires_at_ms", now + 10_000L);
+            operation.put("expires_at_ms", now + ADMISSION_OPERATION_WINDOW_MS);
             byte[] entropy = new byte[32];
             secureRandom.nextBytes(entropy);
             operation.put("entropy_hex", hex(entropy));
@@ -256,7 +288,7 @@ public final class ConnectionHubAdmissionService extends Service {
             operation.put("token_id", data.getString("token_id", "token.invalid"));
             operation.put("capability_id", data.getString("capability_id", "capability.invalid"));
             operation.put("issued_at_ms", now);
-            operation.put("expires_at_ms", now + 10_000L);
+            operation.put("expires_at_ms", now + ADMISSION_OPERATION_WINDOW_MS);
         } else if (what == MESSAGE_REVOKE_TOKEN) {
             operation.put("operation", "revoke_token");
             operation.put("token_id", data.getString("token_id", "token.invalid"));

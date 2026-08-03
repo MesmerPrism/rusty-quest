@@ -188,8 +188,7 @@ class ConnectionHubSurfaceClient(
   }
 
   private fun handleSurfaceCommand(message: Message) {
-    val response = Message.obtain(null, MESSAGE_SURFACE_COMMAND)
-    val result = Bundle()
+    val effectBinding = message.data.getString("effect_binding_json", "")
     runCatching {
           val requestId = message.data.getString("request_id", "")
           val surfaceId = message.data.getString("surface_id", "")
@@ -197,26 +196,68 @@ class ConnectionHubSurfaceClient(
           val args = JSONObject(message.data.getString("args_json", "{}"))
           val receipt =
               JSONObject(message.data.getString("authority_receipt_json", "{}"))
-          val status =
-              player.enqueueHubAuthorizedCommand(
+          val before = player.hubSurfaceState()
+          player.enqueueHubAuthorizedCommand(
                   requestId,
                   surfaceId,
                   command,
                   args,
                   receipt,
               )
-          result.putBoolean("provider_applied", false)
-          result.putString("status", status)
-          result.putString("state_json", player.hubSurfaceState().toString())
-          handler.postDelayed({ if (surfaceRegistered) sendSurfaceState() }, 500L)
+          awaitObservedEffect(message, effectBinding, command, before)
         }
         .onFailure { error ->
+          val result = Bundle()
+          result.putString("effect_binding_json", effectBinding)
           result.putBoolean("provider_applied", false)
           result.putString("status", "provider_rejected_${error.javaClass.simpleName}")
+          result.putString("effect_status", "rejected")
           result.putString("state_json", player.hubSurfaceState().toString())
+          sendEffectResponse(message, result)
         }
+  }
+
+  private fun awaitObservedEffect(
+      request: Message,
+      effectBinding: String,
+      command: String,
+      before: JSONObject,
+  ) {
+    val deadline = android.os.SystemClock.uptimeMillis() + 3_000L
+    val probe =
+        object : Runnable {
+          override fun run() {
+            val state = player.hubSurfaceState()
+            val observed =
+                when (command) {
+                  COMMAND_PLAY -> state.optBoolean("playing", false)
+                  COMMAND_PAUSE -> !state.optBoolean("playing", true)
+                  COMMAND_SELECT_NEXT,
+                  COMMAND_SELECT_PREVIOUS ->
+                      state.optString("selected_video_id") != before.optString("selected_video_id")
+                  else -> false
+                }
+            if (observed || android.os.SystemClock.uptimeMillis() >= deadline) {
+              val result = Bundle()
+              result.putString("effect_binding_json", effectBinding)
+              result.putBoolean("provider_applied", observed)
+              result.putString("status", if (observed) "provider_effect_observed" else "provider_effect_timeout")
+              result.putString("effect_status", if (observed) "observed" else "rejected")
+              result.putString("state_json", state.toString())
+              sendEffectResponse(request, result)
+              if (observed && surfaceRegistered) sendSurfaceState()
+            } else {
+              handler.postDelayed(this, 50L)
+            }
+          }
+        }
+    handler.post(probe)
+  }
+
+  private fun sendEffectResponse(request: Message, result: Bundle) {
+    val response = Message.obtain(null, MESSAGE_SURFACE_COMMAND)
     response.data = result
-    runCatching { message.replyTo?.send(response) }
+    runCatching { request.replyTo?.send(response) }
   }
 
   private fun send(what: Int, data: Bundle) {

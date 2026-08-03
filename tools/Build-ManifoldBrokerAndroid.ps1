@@ -417,6 +417,11 @@ if ($connectionHubSelected) {
         $manifoldTree -ne [string]$manifoldSourceLock.tree) {
         throw "Connection Hub Manifold source does not match the exact clean native pin."
     }
+    $connectionHubTypedParamsSchemaPath = Join-Path $manifoldSourceRoot "fixtures\connection-hub\typed-params-empty.schema.json"
+    if (-not (Test-Path -LiteralPath $connectionHubTypedParamsSchemaPath -PathType Leaf) -or
+        (Get-FileSha256Hex -Path $connectionHubTypedParamsSchemaPath) -ne "7eedc1ccca80b83dbd121d1e4bae4f6a6c9c1561e1a08d6d5919c668d5406a51") {
+        throw "Connection Hub empty typed-parameter schema bytes do not match the sealed authority digest."
+    }
 }
 if ($EnableConnectionHubDebugOperator -and -not $connectionHubSelected) {
     throw "-EnableConnectionHubDebugOperator is valid only for the connection_hub product."
@@ -466,6 +471,7 @@ $clientLockInputs = @(
     }
 )
 if ($connectionHubSelected) {
+    Copy-Item -LiteralPath $connectionHubTypedParamsSchemaPath -Destination (Join-Path $productAssetDir "connection-hub-typed-params-empty.schema.json")
     $clientLockInputs += [ordered]@{
         grant_id = "grant.quest.spatial-video-control-example"
         input = Read-ValidatedClientLock -Path (Join-Path $repoRoot "fixtures\broker-clients\spatial-video-control-example.client.json")
@@ -541,21 +547,27 @@ if ($connectionHubSelected) {
         [string]$_.grant_id -eq "grant.quest.connection-hub-sample"
     })[0].input
     $connectionHubCommands = @(
-        [ordered]@{ command_id = "command.spatial_video_control.pause"; required_controller_capability = "capability.spatial_video_control.pause" },
-        [ordered]@{ command_id = "command.spatial_video_control.play"; required_controller_capability = "capability.spatial_video_control.play" },
-        [ordered]@{ command_id = "command.spatial_video_control.select_next"; required_controller_capability = "capability.spatial_video_control.select_next" },
-        [ordered]@{ command_id = "command.spatial_video_control.select_previous"; required_controller_capability = "capability.spatial_video_control.select_previous" }
+        [ordered]@{ command_id = "command.spatial_video_control.pause"; typed_params_schema_id = "rusty.manifold.connection_hub.typed_params.empty.v1"; typed_params_schema_sha256 = "sha256:7eedc1ccca80b83dbd121d1e4bae4f6a6c9c1561e1a08d6d5919c668d5406a51"; required_controller_capability = "capability.spatial_video_control.pause" },
+        [ordered]@{ command_id = "command.spatial_video_control.play"; typed_params_schema_id = "rusty.manifold.connection_hub.typed_params.empty.v1"; typed_params_schema_sha256 = "sha256:7eedc1ccca80b83dbd121d1e4bae4f6a6c9c1561e1a08d6d5919c668d5406a51"; required_controller_capability = "capability.spatial_video_control.play" },
+        [ordered]@{ command_id = "command.spatial_video_control.select_next"; typed_params_schema_id = "rusty.manifold.connection_hub.typed_params.empty.v1"; typed_params_schema_sha256 = "sha256:7eedc1ccca80b83dbd121d1e4bae4f6a6c9c1561e1a08d6d5919c668d5406a51"; required_controller_capability = "capability.spatial_video_control.select_next" },
+        [ordered]@{ command_id = "command.spatial_video_control.select_previous"; typed_params_schema_id = "rusty.manifold.connection_hub.typed_params.empty.v1"; typed_params_schema_sha256 = "sha256:7eedc1ccca80b83dbd121d1e4bae4f6a6c9c1561e1a08d6d5919c668d5406a51"; required_controller_capability = "capability.spatial_video_control.select_previous" }
     )
     $connectionHubNativeConfig = [ordered]@{
         '$schema' = "rusty.quest.connection_hub.native_config.v1"
         product_id = [string]$productInputs.product_id
         product_lock_id = [string]$productInputs.manifold_lock_id
         product_lock_sha256 = "sha256:$([string]$productInputs.manifold_lock_sha256)"
+        product_lock = $acceptedProductLock
+        packaged_product_lock_json = $acceptedProductLockJson
         manifold_revision = [string]$manifoldSourceLock.revision
         manifold_tree = [string]$manifoldSourceLock.tree
         policy = [ordered]@{
-            '$schema' = "rusty.manifold.connection_hub.policy.v1"
+            '$schema' = "rusty.manifold.connection_hub.policy.v2"
             authority_id = "authority.connection-hub.quest"
+            admission_authority_id = "authority.admission.quest"
+            broker_product_lock_id = [string]$productInputs.manifold_lock_id
+            broker_product_lock_fingerprint = [string]$productInputs.manifold_lock_fingerprint
+            broker_product_lock_sha256 = "sha256:$([string]$productInputs.manifold_lock_sha256)"
             trusted_operator_evidence_ids = @("evidence.operator.wearer-action")
             allowed_controller_capabilities = @(
                 "capability.connection_hub_sample.toggle",
@@ -574,6 +586,8 @@ if ($connectionHubSelected) {
                     allowed_commands = @(
                         [ordered]@{
                             command_id = "command.connection_hub_sample.toggle"
+                            typed_params_schema_id = "rusty.manifold.connection_hub.typed_params.empty.v1"
+                            typed_params_schema_sha256 = "sha256:7eedc1ccca80b83dbd121d1e4bae4f6a6c9c1561e1a08d6d5919c668d5406a51"
                             required_controller_capability = "capability.connection_hub_sample.toggle"
                         }
                     )
@@ -660,6 +674,7 @@ package io.github.mesmerprism.rustymanifold.broker;
 
 final class GeneratedConnectionHubConfig {
     static final String JSON = "$connectionHubConfigJava";
+    static final boolean DEBUG_OPERATOR_ENABLED = $($EnableConnectionHubDebugOperator.ToString().ToLowerInvariant());
     private GeneratedConnectionHubConfig() {}
 }
 "@
@@ -781,6 +796,7 @@ if ($connectionHubSelected) {
     New-Item -ItemType Directory -Force -Path $connectionHubAssetTarget | Out-Null
     Copy-Item -Path (Join-Path $connectionHubAssetSource "*") -Destination $connectionHubAssetTarget -Recurse
     $connectionHubPackagedAssets = @(
+        "assets/manifold/connection-hub-typed-params-empty.schema.json",
         "assets/connection-hub/index.html",
         "assets/connection-hub/protocol.js",
         "assets/connection-hub/app.js",
@@ -861,6 +877,8 @@ $manifest = [ordered]@{
     packaged_command_registry_asset = "assets/manifold/command-registry.json"
     packaged_manifest_projection_asset = "assets/manifold/manifest-projection.json"
     packaged_runtime_config_asset = "assets/manifold/runtime-config.json"
+    connection_hub_typed_params_schema_asset = if ($connectionHubSelected) { "assets/manifold/connection-hub-typed-params-empty.schema.json" } else { $null }
+    connection_hub_typed_params_schema_sha256 = if ($connectionHubSelected) { Get-FileSha256Hex -Path $connectionHubTypedParamsSchemaPath } else { $null }
     connection_hub_browser_assets = $connectionHubPackagedAssets
     legacy_camera_p2p_compatibility = [bool]$LegacyCameraP2pCompatibility
     apk_path = $apkSigned

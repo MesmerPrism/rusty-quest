@@ -51,7 +51,18 @@ public final class ConnectionHubProtocol {
     public static final int MAX_HTTP_CLIENTS = 8;
     public static final int MAX_PAIR_ATTEMPTS_PER_WINDOW = 5;
     public static final int MAX_SOCKET_AUTH_FAILURES_PER_WINDOW = 8;
+    public static final int MAX_COMMANDS_PER_SESSION_PER_WINDOW = 120;
+    public static final int MAX_SURFACE_STATE_UPDATES_PER_WINDOW = 240;
+    public static final int MAX_SOCKET_OUTBOUND_QUEUE = 64;
+    public static final int MAX_SOCKET_OUTBOUND_FRAME_BYTES = 262_144;
     public static final long AUTH_RATE_WINDOW_MS = 60_000L;
+    public static final long COMMAND_RATE_WINDOW_MS = 60_000L;
+    public static final long SURFACE_STATE_RATE_WINDOW_MS = 60_000L;
+    public static final long HTTP_HEADER_DEADLINE_MS = 10_000L;
+    public static final long SOCKET_AUTH_DEADLINE_MS = 10_000L;
+    public static final long SOCKET_FRAME_ASSEMBLY_DEADLINE_MS = 5_000L;
+    public static final long SOCKET_WRITE_DEADLINE_MS = 5_000L;
+    public static final long PROVIDER_EFFECT_RECEIPT_DEADLINE_MS = 5_000L;
 
     public static final String CONFIDENTIALITY = "none";
     public static final String SECURITY_MODE = "paired_trusted_lan_experimental";

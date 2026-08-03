@@ -68,6 +68,10 @@ public final class ConnectionHubCoreTest {
                 "{\"retained\":true}",
                 registration(),
                 immediateEndpoint());
+        long beforeCoalescedState = secondRegistry.revision();
+        second.updateSurfaceState(PROVIDER, descriptor.surfaceId(),
+                new JSONObject().put("playing", false));
+        assertEquals(beforeCoalescedState, secondRegistry.revision());
         JSONObject command = new JSONObject()
                 .put("$schema", ConnectionHubProtocol.SURFACE_COMMAND_SCHEMA)
                 .put("type", "surface.command")
@@ -85,6 +89,45 @@ public final class ConnectionHubCoreTest {
         second.handleCommand(cookie, 3, command, replay);
         assertTrue(!replay.value.getBoolean("accepted"), "replayed request was accepted");
         assertEquals("replayed_request", replay.value.getString("status"));
+
+        ReceiptCapture staleTransport = new ReceiptCapture();
+        second.handleCommand(cookie, 2,
+                new JSONObject(command.toString()).put("request_id", "request.stale.transport"),
+                staleTransport);
+        assertTrue(!staleTransport.value.getBoolean("accepted"),
+                "stale socket epoch re-entered after rotation");
+
+        for (int index = 0;
+                index < ConnectionHubProtocol.MAX_COMMANDS_PER_SESSION_PER_WINDOW - 2;
+                index += 1) {
+            ReceiptCapture allowed = new ReceiptCapture();
+            second.handleCommand(cookie, 3,
+                    new JSONObject(command.toString())
+                            .put("request_id", "request.rate." + index),
+                    allowed);
+            assertTrue(allowed.value.getBoolean("accepted"),
+                    "bounded command unexpectedly rejected at " + index);
+        }
+        ReceiptCapture rateLimited = new ReceiptCapture();
+        second.handleCommand(cookie, 3,
+                new JSONObject(command.toString()).put("request_id", "request.rate.blocked"),
+                rateLimited);
+        assertTrue(!rateLimited.value.getBoolean("accepted"),
+                "per-session command rate limit did not close");
+        assertEquals("command_rate_limited", rateLimited.value.getString("status"));
+
+        for (int index = 0;
+                index < ConnectionHubProtocol.MAX_SURFACE_STATE_UPDATES_PER_WINDOW;
+                index += 1) {
+            second.updateSurfaceState(PROVIDER, descriptor.surfaceId(),
+                    new JSONObject().put("tick", index));
+        }
+        expectIllegalState(new Runnable() {
+            @Override public void run() {
+                second.updateSurfaceState(PROVIDER, descriptor.surfaceId(),
+                        new JSONObject().put("tick", "blocked"));
+            }
+        });
 
         expectSecurity(new Runnable() {
             @Override public void run() {
@@ -131,6 +174,43 @@ public final class ConnectionHubCoreTest {
         JSONObject damagedPair = new JSONObject(pair.toString()).put("unexpected", true);
         assertTrue(!first.pair(damagedPair, "wearer.test.evidence").getBoolean("accepted"),
                 "unknown pair field was accepted");
+
+        FailingCommitStore failingPairStore = new FailingCommitStore();
+        FakeAuthority failingPairAuthority = new FakeAuthority();
+        ConnectionHubRuntime failingPairRuntime = new ConnectionHubRuntime(
+                failingPairAuthority, failingPairStore, new HubSurfaceRegistry(), seededRandom());
+        failingPairRuntime.startRequested();
+        failingPairRuntime.noteListenerStarted();
+        failingPairStore.failCommittedAfterPending = true;
+        JSONObject failedPair = failingPairRuntime.pair(new JSONObject()
+                .put("$schema", ConnectionHubProtocol.PAIR_REQUEST_SCHEMA)
+                .put("pairing_code", failingPairRuntime.pairingCodeForWearer())
+                .put("controller_identity_sha256", repeat("12", 32)), "wearer.test.evidence");
+        assertTrue(!failedPair.getBoolean("accepted"), "durability failure returned pair success");
+        assertTrue(!failingPairRuntime.listenerEnabled(), "durability failure did not fail-stop listener");
+        assertTrue(!failingPairStore.state.pendingOperation.isEmpty(), "write-ahead marker was not retained");
+        failingPairStore.failCommittedAfterPending = false;
+        ConnectionHubRuntime reconciled = new ConnectionHubRuntime(
+                new FakeAuthority(), failingPairStore, new HubSurfaceRegistry(), seededRandom());
+        assertTrue(reconciled.status().getString("status").startsWith("restart_reconciled_pending_"),
+                "startup did not report pending-generation reconciliation");
+
+        FailingCommitStore failingProviderStore = new FailingCommitStore();
+        HubSurfaceRegistry failingProviderRegistry = new HubSurfaceRegistry();
+        ConnectionHubRuntime failingProviderRuntime = new ConnectionHubRuntime(
+                new FakeAuthority(), failingProviderStore, failingProviderRegistry, seededRandom());
+        failingProviderStore.failCommittedAfterPending = true;
+        expectIllegalState(new Runnable() {
+            @Override public void run() {
+                try {
+                    failingProviderRuntime.registerSurface(
+                            PROVIDER, "provider.instance.fail", "admission.fail",
+                            registration(), immediateEndpoint());
+                } catch (RuntimeException runtime) { throw runtime; }
+                catch (Exception checked) { throw new IllegalStateException(checked); }
+            }
+        });
+        assertEquals(0, failingProviderRegistry.snapshot().size());
         expectSecurity(new Runnable() {
             @Override public void run() { second.requireSession(cookie); }
         });
@@ -202,6 +282,21 @@ public final class ConnectionHubCoreTest {
         State state = State.stopped();
         @Override public State load() { return state; }
         @Override public void save(State state) { this.state = state; }
+        @Override public void clear() { state = State.stopped(); }
+    }
+
+    private static final class FailingCommitStore implements ConnectionHubStateStore {
+        State state = State.stopped();
+        boolean failCommittedAfterPending;
+        @Override public State load() { return state; }
+        @Override public void save(State next) {
+            if (failCommittedAfterPending
+                    && !state.pendingOperation.isEmpty()
+                    && next.pendingOperation.isEmpty()) {
+                throw new IllegalStateException("injected committed-state failure");
+            }
+            state = next;
+        }
         @Override public void clear() { state = State.stopped(); }
     }
 
@@ -297,6 +392,10 @@ public final class ConnectionHubCoreTest {
     private static void expectIllegal(Runnable action) {
         try { action.run(); throw new AssertionError("expected IllegalArgumentException"); }
         catch (IllegalArgumentException expected) {}
+    }
+    private static void expectIllegalState(Runnable action) {
+        try { action.run(); throw new AssertionError("expected IllegalStateException"); }
+        catch (IllegalStateException expected) {}
     }
     private static void assertTrue(boolean value, String message) { if (!value) throw new AssertionError(message); }
     private static void assertEquals(long expected, long actual) { if (expected != actual) throw new AssertionError(expected + " != " + actual); }

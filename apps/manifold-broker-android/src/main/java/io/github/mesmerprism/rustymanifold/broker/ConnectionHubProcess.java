@@ -10,6 +10,7 @@ import org.json.JSONObject;
 import java.io.IOException;
 import java.net.InetAddress;
 import java.security.SecureRandom;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /** One process-local Hub adapter alongside the one Manifold Runtime Host. */
 public final class ConnectionHubProcess {
@@ -145,6 +146,17 @@ public final class ConnectionHubProcess {
                             HubSurfaceRegistry.CommandDispatch dispatch,
                             final HubSurfaceRegistry.CommandResultCallback callback) {
                         try {
+                            final JSONObject effectBinding = new JSONObject()
+                                    .put("$schema", "rusty.quest.connection_hub.provider_effect_binding.v1")
+                                    .put("request_id", dispatch.requestId)
+                                    .put("surface_id", dispatch.surfaceId)
+                                    .put("command", dispatch.command)
+                                    .put("provider_instance_id", dispatch.providerInstanceId)
+                                    .put("transport_epoch", dispatch.transportEpoch)
+                                    .put("authorized_state_revision", dispatch.authorizedStateRevision)
+                                    .put("authority_receipt_sha256", dispatch.authorityReceiptSha256);
+                            final String expectedEffectBinding = effectBinding.toString();
+                            final AtomicBoolean completed = new AtomicBoolean();
                             Message message = Message.obtain(null, ConnectionHubAdmissionService.MESSAGE_SURFACE_COMMAND);
                             Bundle data = new Bundle();
                             data.putString("request_id", dispatch.requestId);
@@ -152,17 +164,40 @@ public final class ConnectionHubProcess {
                             data.putString("command", dispatch.command);
                             data.putString("args_json", dispatch.argsJson);
                             data.putString("authority_receipt_json", dispatch.authorityReceiptJson);
+                            data.putString("effect_binding_json", expectedEffectBinding);
                             message.setData(data);
-                            message.replyTo = new Messenger(new android.os.Handler(android.os.Looper.getMainLooper()) {
+                            android.os.Handler responseHandler = new android.os.Handler(android.os.Looper.getMainLooper()) {
                                 @Override public void handleMessage(Message response) {
+                                    if (!completed.compareAndSet(false, true)) return;
                                     Bundle result = response.getData();
-                                    callback.onResult(
-                                            result.getBoolean("provider_applied", false),
-                                            result.getString("status", "provider_no_status"),
+                                    String returnedBinding = result.getString("effect_binding_json", "");
+                                    String effectStatus = result.getString("effect_status", "");
+                                    if (!expectedEffectBinding.equals(returnedBinding)
+                                            || !("queued".equals(effectStatus)
+                                                    || "observed".equals(effectStatus)
+                                                    || "rejected".equals(effectStatus))) {
+                                        callback.onResult(false, "provider_effect_receipt_invalid", "{}");
+                                        return;
+                                    }
+                                    boolean observed = "observed".equals(effectStatus)
+                                            && result.getBoolean("provider_applied", false);
+                                    callback.onResult(observed,
+                                            observed ? "provider_effect_observed"
+                                                    : ("queued".equals(effectStatus)
+                                                            ? "provider_effect_queued"
+                                                            : "provider_effect_rejected"),
                                             result.getString("state_json", "{}"));
                                 }
-                            });
+                            };
+                            message.replyTo = new Messenger(responseHandler);
                             provider.send(message);
+                            responseHandler.postDelayed(new Runnable() {
+                                @Override public void run() {
+                                    if (completed.compareAndSet(false, true)) {
+                                        callback.onResult(false, "provider_effect_receipt_timeout", "{}");
+                                    }
+                                }
+                            }, ConnectionHubProtocol.PROVIDER_EFFECT_RECEIPT_DEADLINE_MS);
                         } catch (Exception error) {
                             callback.onResult(false, "provider_dispatch_failed", "{}");
                         }

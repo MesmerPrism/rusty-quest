@@ -10,19 +10,32 @@ public interface ConnectionHubStateStore {
         public final boolean desiredRunning;
         public final String authorityEnvelope;
         public final Map<String, SessionProjection> sessionProjections;
+        public final long generation;
+        public final String pendingOperation;
 
         public State(
                 boolean desiredRunning,
                 String authorityEnvelope,
                 Map<String, SessionProjection> sessionProjections) {
+            this(desiredRunning, authorityEnvelope, sessionProjections, 0, "");
+        }
+
+        public State(
+                boolean desiredRunning,
+                String authorityEnvelope,
+                Map<String, SessionProjection> sessionProjections,
+                long generation,
+                String pendingOperation) {
             this.desiredRunning = desiredRunning;
             this.authorityEnvelope = authorityEnvelope == null ? "" : authorityEnvelope;
             this.sessionProjections = Collections.unmodifiableMap(
                     new LinkedHashMap<>(sessionProjections));
+            this.generation = Math.max(0, generation);
+            this.pendingOperation = pendingOperation == null ? "" : pendingOperation;
         }
 
         public static State stopped() {
-            return new State(false, "", Collections.<String, SessionProjection>emptyMap());
+            return new State(false, "", Collections.<String, SessionProjection>emptyMap(), 0, "");
         }
     }
 

@@ -16,6 +16,7 @@ crate-type = ["cdylib", "rlib"]
 rusty-quest-broker-authority = { path = "../../../crates/rusty-quest-broker-authority" }
 rusty-quest-broker-admission = { path = "../../../crates/rusty-quest-broker-admission" }
 rusty-manifold-admission = { path = "../../../../rusty-manifold/crates/rusty-manifold-admission" }
+rusty-manifold-broker-product = { path = "../../../../rusty-manifold/crates/rusty-manifold-broker-product" }
 rusty-manifold-connection-hub = { path = "../../../../rusty-manifold/crates/rusty-manifold-connection-hub" }
 rusty-manifold-model = { path = "../../../../rusty-manifold/crates/rusty-manifold-model", features = ["serde"] }
 serde = { version = "1", features = ["derive"] }
