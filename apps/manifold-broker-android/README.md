@@ -71,3 +71,13 @@ Native Renderer now packages and verifies its exact embedded config, client
 lock, signer-derived grant, and Android-authenticated local admission lifecycle.
 Absent capabilities or leases reject rather than restoring former
 unauthenticated compatibility behavior.
+
+## Connection Hub wire authority
+
+`contracts/connection-hub-protocol-v1.json` is the Rusty Quest-owned canonical
+wire schema/vector set for the standalone Connection Hub. The HTTP/WebSocket
+server host tests validate their emitted field sets against it, and the browser
+loads a checked-in projection whose tests must match the same owner bytes.
+Consumers must reject missing required fields, unknown fields, schema changes,
+and type changes. Downstream Hostess clients may copy or hash-bind this file,
+but they do not independently redefine its wire shapes.

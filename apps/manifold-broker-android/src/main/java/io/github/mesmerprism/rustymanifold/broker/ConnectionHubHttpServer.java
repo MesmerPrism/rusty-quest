@@ -155,6 +155,8 @@ public final class ConnectionHubHttpServer
             assetPath = "connection-hub/index.html";
         } else if ("/assets/app.js".equals(path)) {
             assetPath = "connection-hub/app.js";
+        } else if ("/assets/protocol.js".equals(path)) {
+            assetPath = "connection-hub/protocol.js";
         } else if ("/assets/styles.css".equals(path)) {
             assetPath = "connection-hub/styles.css";
         } else {
@@ -214,6 +216,9 @@ public final class ConnectionHubHttpServer
             noteAuthenticationFailure();
             throw new SecurityException("socket_authentication_invalid");
         }
+        ConnectionHubRuntime.requireExactKeys(authentication,
+                new String[] {"$schema", "type", "session"},
+                new String[0]);
         String cookie = authentication.optString("session", "");
         ConnectionHubStateStore.SessionProjection sessionProjection;
         try {
@@ -230,14 +235,8 @@ public final class ConnectionHubHttpServer
                 sessionProjection.transportEpoch);
         synchronized (socketSessions) { socketSessions.add(session); }
         try {
-            session.write(new JSONObject()
-                    .put("$schema", ConnectionHubProtocol.SOCKET_AUTHENTICATION_RECEIPT_SCHEMA)
-                    .put("type", "authentication_receipt")
-                    .put("accepted", true)
-                    .put("status", "authenticated")
-                    .put("transport_epoch", sessionProjection.transportEpoch)
-                    .put("confidentiality", ConnectionHubProtocol.CONFIDENTIALITY)
-                    .put("production_eligible", false));
+            session.write(ConnectionHubProtocol.socketAuthenticationReceipt(
+                    sessionProjection.transportEpoch));
             session.write(runtime.snapshotEvent());
             while (!socket.isClosed()) {
                 Frame frame = readFrame(input);

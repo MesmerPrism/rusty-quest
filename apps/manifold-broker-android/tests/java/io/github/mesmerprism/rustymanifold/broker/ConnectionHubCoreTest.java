@@ -18,6 +18,8 @@ public final class ConnectionHubCoreTest {
             repeat("ab", 32));
 
     public static void main(String[] args) throws Exception {
+        if (args.length != 1) throw new IllegalArgumentException("protocol vector path required");
+        ConnectionHubProtocolVectorsTest vectors = ConnectionHubProtocolVectorsTest.load(args[0]);
         InMemoryStore store = new InMemoryStore();
         FakeAuthority authority = new FakeAuthority();
         HubSurfaceRegistry firstRegistry = new HubSurfaceRegistry();
@@ -32,6 +34,8 @@ public final class ConnectionHubCoreTest {
                 .put("pairing_code", first.pairingCodeForWearer())
                 .put("controller_identity_sha256", repeat("cd", 32));
         JSONObject pairReceipt = first.pair(pair, "wearer.test.evidence");
+        vectors.validate("pair_request", pair);
+        vectors.validate("pair_receipt", pairReceipt);
         assertTrue(pairReceipt.getBoolean("accepted"), "pairing was rejected");
         String cookie = pairReceipt.getString("session");
         assertEquals(1L, pairReceipt.getLong("transport_epoch"));
@@ -71,8 +75,11 @@ public final class ConnectionHubCoreTest {
                 .put("surface_id", descriptor.surfaceId())
                 .put("command", "command.example.play")
                 .put("args", new JSONObject());
+        vectors.validate("surface_command", command);
+        vectors.validate("surface_snapshot", second.snapshotEvent());
         ReceiptCapture firstCommand = new ReceiptCapture();
         second.handleCommand(cookie, 3, command, firstCommand);
+        vectors.validate("command_receipt", firstCommand.value);
         assertTrue(firstCommand.value.getBoolean("accepted"), "first command was rejected");
         ReceiptCapture replay = new ReceiptCapture();
         second.handleCommand(cookie, 3, command, replay);
@@ -116,7 +123,14 @@ public final class ConnectionHubCoreTest {
                 .put("$schema", ConnectionHubProtocol.REVOKE_REQUEST_SCHEMA)
                 .put("session", cookie)
                 .put("reason", "test_complete");
-        assertTrue(second.revoke(revoke).getBoolean("applied"), "revoke failed");
+        vectors.validate("revoke_request", revoke);
+        JSONObject revokeReceipt = second.revoke(revoke);
+        vectors.validate("revoke_receipt", revokeReceipt);
+        assertTrue(revokeReceipt.getBoolean("applied"), "revoke failed");
+
+        JSONObject damagedPair = new JSONObject(pair.toString()).put("unexpected", true);
+        assertTrue(!first.pair(damagedPair, "wearer.test.evidence").getBoolean("accepted"),
+                "unknown pair field was accepted");
         expectSecurity(new Runnable() {
             @Override public void run() { second.requireSession(cookie); }
         });

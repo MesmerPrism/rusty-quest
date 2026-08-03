@@ -118,6 +118,9 @@ public final class ConnectionHubRuntime implements HubSurfaceRegistry.Listener {
         try {
             long now = System.currentTimeMillis();
             requireSchema(request, ConnectionHubProtocol.PAIR_REQUEST_SCHEMA);
+            requireExactKeys(request,
+                    new String[] {"$schema", "pairing_code", "controller_identity_sha256"},
+                    new String[0]);
             if (!listenerEnabled || pairingCode == null) {
                 return pairReceipt(false, "pairing_not_available", null, 0);
             }
@@ -177,6 +180,9 @@ public final class ConnectionHubRuntime implements HubSurfaceRegistry.Listener {
     public synchronized JSONObject revoke(JSONObject request) {
         try {
             requireSchema(request, ConnectionHubProtocol.REVOKE_REQUEST_SCHEMA);
+            requireExactKeys(request,
+                    new String[] {"$schema", "session"},
+                    new String[] {"reason"});
             String cookie = request.getString("session");
             ConnectionHubStateStore.SessionProjection session = sessions.get(cookie);
             if (session == null) {
@@ -388,6 +394,9 @@ public final class ConnectionHubRuntime implements HubSurfaceRegistry.Listener {
             final CommandReceiptSink sink) {
         try {
             requireSchema(request, ConnectionHubProtocol.SURFACE_COMMAND_SCHEMA);
+            requireExactKeys(request,
+                    new String[] {"$schema", "type", "request_id", "surface_id", "command", "args"},
+                    new String[0]);
             if (!"surface.command".equals(request.getString("type"))) {
                 throw new IllegalArgumentException("invalid command type");
             }
@@ -790,6 +799,27 @@ public final class ConnectionHubRuntime implements HubSurfaceRegistry.Listener {
     static void requireSchema(JSONObject value, String expected) throws Exception {
         if (!expected.equals(value.getString("$schema"))) {
             throw new IllegalArgumentException("schema mismatch");
+        }
+    }
+
+    static void requireExactKeys(
+            JSONObject value,
+            String[] required,
+            String[] optional) throws Exception {
+        java.util.LinkedHashSet<String> allowed = new java.util.LinkedHashSet<>();
+        java.util.Collections.addAll(allowed, required);
+        java.util.Collections.addAll(allowed, optional);
+        for (String key : required) {
+            if (!value.has(key)) {
+                throw new IllegalArgumentException("missing required field: " + key);
+            }
+        }
+        java.util.Iterator<String> keys = value.keys();
+        while (keys.hasNext()) {
+            String key = keys.next();
+            if (!allowed.contains(key)) {
+                throw new IllegalArgumentException("unknown field: " + key);
+            }
         }
     }
 

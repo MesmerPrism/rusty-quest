@@ -782,6 +782,7 @@ if ($connectionHubSelected) {
     Copy-Item -Path (Join-Path $connectionHubAssetSource "*") -Destination $connectionHubAssetTarget -Recurse
     $connectionHubPackagedAssets = @(
         "assets/connection-hub/index.html",
+        "assets/connection-hub/protocol.js",
         "assets/connection-hub/app.js",
         "assets/connection-hub/styles.css"
     )

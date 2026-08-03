@@ -5,6 +5,9 @@ $RepoRoot = (Resolve-Path $RepoRoot).Path
 $app = Join-Path $RepoRoot "apps\manifold-broker-android"
 $javaRoot = Join-Path $app "src\main\java\io\github\mesmerprism\rustymanifold\broker"
 $test = Join-Path $app "tests\java\io\github\mesmerprism\rustymanifold\broker\ConnectionHubCoreTest.java"
+$vectorTest = Join-Path $app "tests\java\io\github\mesmerprism\rustymanifold\broker\ConnectionHubProtocolVectorsTest.java"
+$browserTest = Join-Path $app "tests\js\connection-hub-browser-protocol.test.js"
+$vectors = Join-Path $app "contracts\connection-hub-protocol-v1.json"
 $assets = Join-Path $app "src\main\assets\connection-hub"
 $spatial = Join-Path $RepoRoot "apps\spatial-video-control-example-android"
 $required = @(
@@ -16,8 +19,12 @@ $required = @(
     (Join-Path $javaRoot "HubSurfaceDescriptor.java"),
     (Join-Path $javaRoot "HubSurfaceRegistry.java"),
     $test,
+    $vectorTest,
+    $browserTest,
+    $vectors,
     (Join-Path $assets "index.html"),
     (Join-Path $assets "app.js"),
+    (Join-Path $assets "protocol.js"),
     (Join-Path $assets "styles.css")
 )
 foreach ($path in $required) { if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "Missing Connection Hub path: $path" } }
@@ -55,6 +62,10 @@ if (-not (Test-Path -LiteralPath $sampleProvider -PathType Leaf) -or (Get-Conten
 $node = (Get-Command node -ErrorAction Stop).Source
 & $node --check (Join-Path $assets "app.js")
 if ($LASTEXITCODE -ne 0) { throw "Connection Hub browser JS syntax failed." }
+& $node --check (Join-Path $assets "protocol.js")
+if ($LASTEXITCODE -ne 0) { throw "Connection Hub browser protocol JS syntax failed." }
+& $node $browserTest $vectors (Join-Path $assets "protocol.js") (Join-Path $assets "app.js")
+if ($LASTEXITCODE -ne 0) { throw "Connection Hub browser protocol conformance failed." }
 $html = Get-Content -Raw -LiteralPath (Join-Path $assets "index.html")
 if ($html -match '<script[^>]+src="https?://' -or $html -match '<link[^>]+href="https?://') { throw "Browser page includes remote assets." }
 foreach ($token in @('surface_snapshot','surface_available','surface_removed','surface_state','command_receipt','surface.command','confidentiality')) {
@@ -74,13 +85,16 @@ $sources = @(
     (Join-Path $javaRoot "HubProviderIdentity.java"),
     (Join-Path $javaRoot "HubSurfaceDescriptor.java"),
     (Join-Path $javaRoot "HubSurfaceRegistry.java"),
-    $test
+    $test,
+    $vectorTest
 )
 $javac = (Get-Command javac -ErrorAction Stop).Source
 $java = (Get-Command java -ErrorAction Stop).Source
 & $javac -encoding UTF-8 -source 8 -target 8 -cp $jsonJar.FullName -d $out $sources
 if ($LASTEXITCODE -ne 0) { throw "Connection Hub host Java compile failed." }
-& $java -cp "$out;$($jsonJar.FullName)" io.github.mesmerprism.rustymanifold.broker.ConnectionHubCoreTest
+& $java -cp "$out;$($jsonJar.FullName)" io.github.mesmerprism.rustymanifold.broker.ConnectionHubProtocolVectorsTest $vectors
+if ($LASTEXITCODE -ne 0) { throw "Connection Hub protocol-vector tests failed." }
+& $java -cp "$out;$($jsonJar.FullName)" io.github.mesmerprism.rustymanifold.broker.ConnectionHubCoreTest $vectors
 if ($LASTEXITCODE -ne 0) { throw "Connection Hub host tests failed." }
 
 $androidJar = Join-Path $env:ANDROID_HOME "platforms\android-35\android.jar"

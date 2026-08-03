@@ -1,5 +1,7 @@
 (() => {
   "use strict";
+  const protocol = globalThis.RustyConnectionHubProtocol;
+  if (!protocol) throw new Error("Connection Hub protocol projection missing");
   const surfaces = new Map();
   const root = document.querySelector("#surfaces");
   const template = document.querySelector("#surface-template");
@@ -24,11 +26,11 @@
     pairButton.disabled = true;
     pairStatus.textContent = "Pairing…";
     try {
-      const response = await fetch("/v1/pair", {
+      const response = await fetch(protocol.routes.pair, {
         method: "POST",
         headers: {"Content-Type": "application/json"},
         body: JSON.stringify({
-          $schema: "rusty.quest.connection_hub.pair_request.v1",
+          $schema: protocol.schemas.pair_request,
           pairing_code: document.querySelector("#pairing-code").value.trim(),
           controller_identity_sha256: await controllerIdentity(),
         }),
@@ -48,11 +50,11 @@
     if (!session) return;
     if (socket) socket.close();
     const scheme = location.protocol === "https:" ? "wss" : "ws";
-    socket = new WebSocket(`${scheme}://${location.host}/v1/socket`);
+    socket = new WebSocket(`${scheme}://${location.host}${protocol.routes.socket}`);
     socket.addEventListener("open", () => {
       socket.send(JSON.stringify({
-        $schema: "rusty.quest.connection_hub.socket_authenticate.v1",
-        type: "authenticate",
+        $schema: protocol.schemas.socket_authenticate,
+        type: protocol.types.authenticate,
         session,
       }));
     });
@@ -65,28 +67,28 @@
   };
 
   const handle = message => {
-    if (message.type === "authentication_receipt") {
+    if (message.type === protocol.types.authentication_receipt) {
       pairStatus.textContent = "Connected";
       pairButton.disabled = false;
       disconnectButton.disabled = false;
-    } else if (message.type === "surface_snapshot") {
+    } else if (message.type === protocol.types.surface_snapshot) {
       surfaces.clear();
       message.surfaces.forEach(surface => surfaces.set(surface.surface_id, surface));
       render();
-    } else if (message.type === "surface_available") {
+    } else if (message.type === protocol.types.surface_available) {
       surfaces.set(message.surface.surface_id, message.surface);
       render();
-    } else if (message.type === "surface_removed") {
+    } else if (message.type === protocol.types.surface_removed) {
       surfaces.delete(message.surface_id);
       render();
-    } else if (message.type === "surface_state") {
+    } else if (message.type === protocol.types.surface_state) {
       const surface = surfaces.get(message.surface_id);
       if (surface) {
         surface.state = message.state;
         surface.state_revision = message.state_revision;
         render();
       }
-    } else if (message.type === "command_receipt") {
+    } else if (message.type === protocol.types.command_receipt) {
       const card = document.querySelector(`[data-surface-id="${CSS.escape(message.surface_id)}"]`);
       if (card) card.querySelector(".receipt").textContent = `${message.command}: ${message.status}`;
     }
@@ -133,8 +135,8 @@
     try {
       const args = {};
       socket.send(JSON.stringify({
-        $schema: "rusty.quest.connection_hub.surface_command.v1",
-        type: "surface.command",
+        $schema: protocol.schemas.surface_command,
+        type: protocol.types.surface_command,
         request_id: `browser.${crypto.randomUUID()}`,
         surface_id: surfaceId,
         command,
@@ -147,11 +149,11 @@
 
   const disconnect = async () => {
     if (session) {
-      await fetch("/v1/revoke", {
+      await fetch(protocol.routes.revoke, {
         method: "POST",
         headers: {"Content-Type": "application/json"},
         body: JSON.stringify({
-          $schema: "rusty.quest.connection_hub.revoke_request.v1",
+          $schema: protocol.schemas.revoke_request,
           session,
           reason: "user_request",
         }),

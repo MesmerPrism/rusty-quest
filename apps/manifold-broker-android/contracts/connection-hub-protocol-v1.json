@@ -1,0 +1,262 @@
+{
+  "$schema": "rusty.quest.connection_hub.protocol_vectors.v1",
+  "owner": "rusty-quest",
+  "protocol_id": "rusty.quest.connection_hub.v1",
+  "transport": {
+    "security_mode": "paired_trusted_lan_experimental",
+    "transport_classification": "trusted_lan_experimental",
+    "confidentiality": "none",
+    "production_eligible": false
+  },
+  "routes": {
+    "status": "/v1/status",
+    "pair": "/v1/pair",
+    "revoke": "/v1/revoke",
+    "socket": "/v1/socket"
+  },
+  "browser_projection": {
+    "routes": {
+      "pair": "/v1/pair",
+      "revoke": "/v1/revoke",
+      "socket": "/v1/socket"
+    },
+    "schemas": {
+      "pair_request": "rusty.quest.connection_hub.pair_request.v1",
+      "revoke_request": "rusty.quest.connection_hub.revoke_request.v1",
+      "socket_authenticate": "rusty.quest.connection_hub.socket_authenticate.v1",
+      "surface_command": "rusty.quest.connection_hub.surface_command.v1"
+    },
+    "types": {
+      "authenticate": "authenticate",
+      "authentication_receipt": "authentication_receipt",
+      "surface_snapshot": "surface_snapshot",
+      "surface_available": "surface_available",
+      "surface_removed": "surface_removed",
+      "surface_state": "surface_state",
+      "surface_command": "surface.command",
+      "command_receipt": "command_receipt"
+    }
+  },
+  "messages": {
+    "status": {
+      "schema": "rusty.quest.connection_hub.status.v1",
+      "required_fields": ["$schema", "listener_enabled", "desired_connection_state", "pairing_available", "status", "transport_classification", "confidentiality", "production_eligible"],
+      "optional_fields": [],
+      "example": {
+        "$schema": "rusty.quest.connection_hub.status.v1",
+        "listener_enabled": true,
+        "desired_connection_state": "running",
+        "pairing_available": true,
+        "status": "awaiting_pairing",
+        "transport_classification": "trusted_lan_experimental",
+        "confidentiality": "none",
+        "production_eligible": false
+      }
+    },
+    "pair_request": {
+      "schema": "rusty.quest.connection_hub.pair_request.v1",
+      "required_fields": ["$schema", "pairing_code", "controller_identity_sha256"],
+      "optional_fields": [],
+      "example": {
+        "$schema": "rusty.quest.connection_hub.pair_request.v1",
+        "pairing_code": "123456",
+        "controller_identity_sha256": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"
+      }
+    },
+    "pair_receipt": {
+      "schema": "rusty.quest.connection_hub.pair_receipt.v1",
+      "type": "pair_receipt",
+      "required_fields": ["$schema", "type", "transport_epoch", "listener_instance_id", "surface_revision", "transport_classification", "confidentiality", "production_eligible", "accepted", "status"],
+      "optional_fields": ["session", "expires_at_utc", "authority_receipt"],
+      "example": {
+        "$schema": "rusty.quest.connection_hub.pair_receipt.v1",
+        "type": "pair_receipt",
+        "transport_epoch": 1,
+        "listener_instance_id": "00112233445566778899aabbccddeeff",
+        "surface_revision": 0,
+        "transport_classification": "trusted_lan_experimental",
+        "confidentiality": "none",
+        "production_eligible": false,
+        "accepted": true,
+        "status": "paired",
+        "session": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        "expires_at_utc": "2030-01-01T00:00:00Z",
+        "authority_receipt": {}
+      }
+    },
+    "socket_authenticate": {
+      "schema": "rusty.quest.connection_hub.socket_authenticate.v1",
+      "type": "authenticate",
+      "required_fields": ["$schema", "type", "session"],
+      "optional_fields": [],
+      "example": {
+        "$schema": "rusty.quest.connection_hub.socket_authenticate.v1",
+        "type": "authenticate",
+        "session": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+      }
+    },
+    "socket_authentication_receipt": {
+      "schema": "rusty.quest.connection_hub.socket_authentication_receipt.v1",
+      "type": "authentication_receipt",
+      "required_fields": ["$schema", "type", "accepted", "status", "transport_epoch", "confidentiality", "production_eligible"],
+      "optional_fields": [],
+      "example": {
+        "$schema": "rusty.quest.connection_hub.socket_authentication_receipt.v1",
+        "type": "authentication_receipt",
+        "accepted": true,
+        "status": "authenticated",
+        "transport_epoch": 2,
+        "confidentiality": "none",
+        "production_eligible": false
+      }
+    },
+    "surface_snapshot": {
+      "schema": "rusty.quest.connection_hub.surface_snapshot.v1",
+      "type": "surface_snapshot",
+      "required_fields": ["$schema", "type", "transport_epoch", "listener_instance_id", "surface_revision", "transport_classification", "confidentiality", "production_eligible", "surfaces"],
+      "optional_fields": [],
+      "example": {
+        "$schema": "rusty.quest.connection_hub.surface_snapshot.v1",
+        "type": "surface_snapshot",
+        "transport_epoch": 2,
+        "listener_instance_id": "00112233445566778899aabbccddeeff",
+        "surface_revision": 0,
+        "transport_classification": "trusted_lan_experimental",
+        "confidentiality": "none",
+        "production_eligible": false,
+        "surfaces": []
+      }
+    },
+    "surface_available": {
+      "schema": "rusty.quest.connection_hub.surface_available.v1",
+      "type": "surface_available",
+      "required_fields": ["$schema", "type", "transport_epoch", "listener_instance_id", "surface_revision", "transport_classification", "confidentiality", "production_eligible", "surface"],
+      "optional_fields": [],
+      "example": {
+        "$schema": "rusty.quest.connection_hub.surface_available.v1",
+        "type": "surface_available",
+        "transport_epoch": 2,
+        "listener_instance_id": "00112233445566778899aabbccddeeff",
+        "surface_revision": 1,
+        "transport_classification": "trusted_lan_experimental",
+        "confidentiality": "none",
+        "production_eligible": false,
+        "surface": {
+          "schema_version": 1,
+          "surface_id": "surface.example.controls",
+          "display_label": "Example controls",
+          "description": "Host conformance provider",
+          "surface_contract_sha256": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+          "provider_package": "io.github.example.provider",
+          "provider_signer_sha256": "abababababababababababababababababababababababababababababababab",
+          "commands": [],
+          "state": {},
+          "state_revision": 1
+        }
+      }
+    },
+    "surface_removed": {
+      "schema": "rusty.quest.connection_hub.surface_removed.v1",
+      "type": "surface_removed",
+      "required_fields": ["$schema", "type", "transport_epoch", "listener_instance_id", "surface_revision", "transport_classification", "confidentiality", "production_eligible", "surface_id", "reason"],
+      "optional_fields": [],
+      "example": {
+        "$schema": "rusty.quest.connection_hub.surface_removed.v1",
+        "type": "surface_removed",
+        "transport_epoch": 2,
+        "listener_instance_id": "00112233445566778899aabbccddeeff",
+        "surface_revision": 2,
+        "transport_classification": "trusted_lan_experimental",
+        "confidentiality": "none",
+        "production_eligible": false,
+        "surface_id": "surface.example.controls",
+        "reason": "provider_lifecycle_end"
+      }
+    },
+    "surface_state": {
+      "schema": "rusty.quest.connection_hub.surface_state.v1",
+      "type": "surface_state",
+      "required_fields": ["$schema", "type", "transport_epoch", "listener_instance_id", "surface_revision", "transport_classification", "confidentiality", "production_eligible", "surface_id", "state_revision", "state"],
+      "optional_fields": [],
+      "example": {
+        "$schema": "rusty.quest.connection_hub.surface_state.v1",
+        "type": "surface_state",
+        "transport_epoch": 2,
+        "listener_instance_id": "00112233445566778899aabbccddeeff",
+        "surface_revision": 1,
+        "transport_classification": "trusted_lan_experimental",
+        "confidentiality": "none",
+        "production_eligible": false,
+        "surface_id": "surface.example.controls",
+        "state_revision": 2,
+        "state": {"playing": true}
+      }
+    },
+    "surface_command": {
+      "schema": "rusty.quest.connection_hub.surface_command.v1",
+      "type": "surface.command",
+      "required_fields": ["$schema", "type", "request_id", "surface_id", "command", "args"],
+      "optional_fields": [],
+      "example": {
+        "$schema": "rusty.quest.connection_hub.surface_command.v1",
+        "type": "surface.command",
+        "request_id": "request.example.1",
+        "surface_id": "surface.example.controls",
+        "command": "command.example.play",
+        "args": {}
+      }
+    },
+    "command_receipt": {
+      "schema": "rusty.quest.connection_hub.command_receipt.v1",
+      "type": "command_receipt",
+      "required_fields": ["$schema", "type", "transport_epoch", "listener_instance_id", "surface_revision", "transport_classification", "confidentiality", "production_eligible", "request_id", "surface_id", "command", "accepted", "provider_applied", "status", "authority_receipt"],
+      "optional_fields": [],
+      "example": {
+        "$schema": "rusty.quest.connection_hub.command_receipt.v1",
+        "type": "command_receipt",
+        "transport_epoch": 2,
+        "listener_instance_id": "00112233445566778899aabbccddeeff",
+        "surface_revision": 1,
+        "transport_classification": "trusted_lan_experimental",
+        "confidentiality": "none",
+        "production_eligible": false,
+        "request_id": "request.example.1",
+        "surface_id": "surface.example.controls",
+        "command": "command.example.play",
+        "accepted": true,
+        "provider_applied": true,
+        "status": "provider_applied",
+        "authority_receipt": {}
+      }
+    },
+    "revoke_request": {
+      "schema": "rusty.quest.connection_hub.revoke_request.v1",
+      "required_fields": ["$schema", "session"],
+      "optional_fields": ["reason"],
+      "example": {
+        "$schema": "rusty.quest.connection_hub.revoke_request.v1",
+        "session": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        "reason": "user_request"
+      }
+    },
+    "revoke_receipt": {
+      "schema": "rusty.quest.connection_hub.revoke_receipt.v1",
+      "type": "revoke_receipt",
+      "required_fields": ["$schema", "type", "transport_epoch", "listener_instance_id", "surface_revision", "transport_classification", "confidentiality", "production_eligible", "applied", "status"],
+      "optional_fields": ["authority_receipt"],
+      "example": {
+        "$schema": "rusty.quest.connection_hub.revoke_receipt.v1",
+        "type": "revoke_receipt",
+        "transport_epoch": 2,
+        "listener_instance_id": "00112233445566778899aabbccddeeff",
+        "surface_revision": 1,
+        "transport_classification": "trusted_lan_experimental",
+        "confidentiality": "none",
+        "production_eligible": false,
+        "applied": true,
+        "status": "applied",
+        "authority_receipt": {}
+      }
+    }
+  }
+}

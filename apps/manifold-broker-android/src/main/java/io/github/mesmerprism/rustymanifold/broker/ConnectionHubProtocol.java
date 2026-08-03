@@ -1,5 +1,7 @@
 package io.github.mesmerprism.rustymanifold.broker;
 
+import org.json.JSONObject;
+
 /** Fixed low-rate Connection Hub wire and Binder contract. */
 public final class ConnectionHubProtocol {
     public static final String PROTOCOL_SCHEMA = "rusty.quest.connection_hub.v1";
@@ -54,6 +56,21 @@ public final class ConnectionHubProtocol {
     public static final String CONFIDENTIALITY = "none";
     public static final String SECURITY_MODE = "paired_trusted_lan_experimental";
     public static final boolean PRODUCTION_ELIGIBLE = false;
+
+    public static JSONObject socketAuthenticationReceipt(long transportEpoch) {
+        try {
+            return new JSONObject()
+                    .put("$schema", SOCKET_AUTHENTICATION_RECEIPT_SCHEMA)
+                    .put("type", "authentication_receipt")
+                    .put("accepted", true)
+                    .put("status", "authenticated")
+                    .put("transport_epoch", transportEpoch)
+                    .put("confidentiality", CONFIDENTIALITY)
+                    .put("production_eligible", PRODUCTION_ELIGIBLE);
+        } catch (Exception impossible) {
+            throw new IllegalStateException(impossible);
+        }
+    }
 
     private ConnectionHubProtocol() {}
 }
