@@ -61,7 +61,8 @@ Require ($cli.Contains('[switch]$UseBoundedVirtualProximity') -and
 Require ($cli.Contains('[switch]$UseOffHeadDebugProviders') -and
     $cli.Contains('qfm-missing-typed-debug-provider-service-action-v1') -and
     $cli.Contains('$package.action.START_CONNECTION_HUB_DEBUG_SURFACE') -and
-    $cli.Contains('$package/.ConnectionHubDebugSurfaceService') -and
+    $cli.Contains('$SpatialDebugSurfaceService') -and
+    $cli.Contains('$SampleDebugSurfaceService') -and
     $cli.Contains('isForeground=true')) "Off-head E2E does not use the exact DUMP-gated debug provider FGS with independent readback."
 Require ($cli.Contains('pre_dispatch_proof_rejected') -and
     $cli.Contains('dispatch_attempted') -and

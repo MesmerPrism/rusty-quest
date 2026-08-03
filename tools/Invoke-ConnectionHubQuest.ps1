@@ -78,8 +78,10 @@ $HubActivity = "$HubPackage/.ConnectionHubStartActivity"
 $HubDebugAuthority = "$HubPackage.debug-connection-hub-control"
 $SpatialPackage = "io.github.mesmerprism.rustyquest.spatial_video_control_example"
 $SpatialActivity = "$SpatialPackage/io.github.mesmerprism.rustyquest.spatial_video_control.SpatialVideoControlActivity"
+$SpatialDebugSurfaceService = "$SpatialPackage/io.github.mesmerprism.rustyquest.spatial_video_control.ConnectionHubDebugSurfaceService"
 $SamplePackage = "io.github.mesmerprism.rustyquest.connection_hub_sample"
 $SampleActivity = "$SamplePackage/.ConnectionHubSampleActivity"
+$SampleDebugSurfaceService = "$SamplePackage/io.github.mesmerprism.rustyquest.connection_hub_sample.ConnectionHubDebugSurfaceService"
 $QfmLaunchGap = "qfm-69b02f1.launch-export-parser"
 $QfmServiceGap = "qfm-missing-typed-connection-hub-service-action-v1"
 $QfmLifecycleGap = "qfm-missing-typed-connection-hub-activity-action-v1"
@@ -1584,11 +1586,12 @@ function Start-OffHeadDebugProvider([string]$ProviderName) {
     if ($ProviderName -eq "spatial") {
         $package = $SpatialPackage
         $otherPackage = $SamplePackage
+        $component = $SpatialDebugSurfaceService
     } elseif ($ProviderName -eq "sample") {
         $package = $SamplePackage
         $otherPackage = $SpatialPackage
+        $component = $SampleDebugSurfaceService
     } else { throw "Unknown fixed debug provider." }
-    $component = "$package/.ConnectionHubDebugSurfaceService"
     $action = "$package.action.START_CONNECTION_HUB_DEBUG_SURFACE"
     $otherStop = Invoke-Adb @("shell", "am", "force-stop", $otherPackage) $QfmStopGap `
         "stop the other fixed provider package before debug surface handoff"
