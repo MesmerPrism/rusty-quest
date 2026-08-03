@@ -81,3 +81,26 @@ loads a checked-in projection whose tests must match the same owner bytes.
 Consumers must reject missing required fields, unknown fields, schema changes,
 and type changes. Downstream Hostess clients may copy or hash-bind this file,
 but they do not independently redefine its wire shapes.
+
+Provider instances are single-lifecycle identities. Explicit surface removal or
+Binder death unregisters both the surface and its exact Manifold provider
+instance; a later app launch consumes fresh admission and receives a fresh
+instance. The Hub listener and controller session remain independent of that
+provider churn.
+
+Each accepted WebSocket is installed atomically with its Manifold transport
+epoch. A late older handshake cannot displace a newer socket. Surface leases
+retain their authority expiry locally, are reacquired after expiry, and receive
+one bounded reacquire-and-authorize attempt when Manifold reports the cached
+lease inactive. Leases are intentionally rebuilt after process restart.
+
+Browser disconnect is fail closed: local bearer/socket state is cleared only
+after an exact applied revoke receipt. Network, HTTP, schema, or authority
+rejection retains the credential so the wearer can retry, while an accepted
+revoke closes the current socket and makes the stale bearer unusable.
+
+The sealed authority currently caps controller trust at 366 days and logical
+sessions at 30 days. Persistent sliding renewal and automatic audit-history
+rollover are not emulated in Android: they require new Manifold-owned,
+replay-preserving authority operations before adoption. This keeps wire v1 and
+the sole authority boundary intact.

@@ -18,6 +18,8 @@ import java.util.Map;
  * provider routing, bounded serialization, and transport credentials.
  */
 public final class ConnectionHubRuntime implements HubSurfaceRegistry.Listener {
+    interface Clock { long nowMs(); }
+
     public interface EventSink {
         void broadcast(JSONObject event);
         void closeLogicalSession(String logicalSessionId, String reason);
@@ -28,10 +30,11 @@ public final class ConnectionHubRuntime implements HubSurfaceRegistry.Listener {
     private final ConnectionHubStateStore store;
     private final HubSurfaceRegistry registry;
     private final SecureRandom random;
+    private final Clock clock;
     private final Map<String, ConnectionHubStateStore.SessionProjection> sessions =
             new LinkedHashMap<>();
     private final List<EventSink> eventSinks = new ArrayList<>();
-    private final Map<String, String> surfaceLeases = new LinkedHashMap<>();
+    private final Map<String, SurfaceLeaseProjection> surfaceLeases = new LinkedHashMap<>();
     private final Map<String, RateWindow> commandRateWindows = new LinkedHashMap<>();
     private final Map<String, RateWindow> surfaceStateRateWindows = new LinkedHashMap<>();
     private boolean desiredRunning;
@@ -51,10 +54,22 @@ public final class ConnectionHubRuntime implements HubSurfaceRegistry.Listener {
             ConnectionHubStateStore store,
             HubSurfaceRegistry registry,
             SecureRandom random) {
+        this(authority, store, registry, random, new Clock() {
+            @Override public long nowMs() { return System.currentTimeMillis(); }
+        });
+    }
+
+    ConnectionHubRuntime(
+            ConnectionHubAuthorityPort authority,
+            ConnectionHubStateStore store,
+            HubSurfaceRegistry registry,
+            SecureRandom random,
+            Clock clock) {
         this.authority = authority;
         this.store = store;
         this.registry = registry;
         this.random = random;
+        this.clock = clock;
         this.registry.addListener(this);
         restore();
     }
@@ -109,7 +124,7 @@ public final class ConnectionHubRuntime implements HubSurfaceRegistry.Listener {
         ConnectionHubAuthorityPort.Receipt receipt = authority.forgetAll(
                 randomRequestId("forget"),
                 "wearer_forget",
-                System.currentTimeMillis());
+                clock.nowMs());
         if (receipt.applied) {
             sessions.clear();
             surfaceLeases.clear();
@@ -125,7 +140,7 @@ public final class ConnectionHubRuntime implements HubSurfaceRegistry.Listener {
 
     public synchronized JSONObject pair(JSONObject request, String wearerEvidenceId) {
         try {
-            long now = System.currentTimeMillis();
+            long now = clock.nowMs();
             requireSchema(request, ConnectionHubProtocol.PAIR_REQUEST_SCHEMA);
             requireExactKeys(request,
                     new String[] {"$schema", "pairing_code", "controller_identity_sha256"},
@@ -159,7 +174,7 @@ public final class ConnectionHubRuntime implements HubSurfaceRegistry.Listener {
                     randomRequestId("pair"),
                     controllerIdentitySha256,
                     wearerEvidenceId,
-                    System.currentTimeMillis());
+                    clock.nowMs());
             if (!authorityReceipt.applied
                     || authorityReceipt.logicalSessionId == null
                     || authorityReceipt.transportEpoch < 1) {
@@ -206,7 +221,7 @@ public final class ConnectionHubRuntime implements HubSurfaceRegistry.Listener {
                     randomRequestId("revoke"),
                     session.logicalSessionId,
                     request.optString("reason", "user_request"),
-                    System.currentTimeMillis());
+                    clock.nowMs());
             long revokedTransportEpoch = session.transportEpoch;
             if (authorityReceipt.applied) {
                 sessions.remove(cookie);
@@ -231,7 +246,7 @@ public final class ConnectionHubRuntime implements HubSurfaceRegistry.Listener {
 
     public synchronized ConnectionHubStateStore.SessionProjection requireSession(String cookie) {
         ConnectionHubStateStore.SessionProjection projection = sessions.get(cookie);
-        if (projection == null || projection.expiresAtMs <= System.currentTimeMillis()) {
+        if (projection == null || projection.expiresAtMs <= clock.nowMs()) {
             throw new SecurityException("session_invalid_or_expired");
         }
         return projection;
@@ -245,7 +260,7 @@ public final class ConnectionHubRuntime implements HubSurfaceRegistry.Listener {
                 randomRequestId("transport"),
                 current.logicalSessionId,
                 current.transportEpoch,
-                System.currentTimeMillis());
+                clock.nowMs());
         if (!receipt.applied || receipt.transportEpoch != current.transportEpoch + 1) {
             persist();
             throw new SecurityException("transport_replacement_rejected");
@@ -269,7 +284,7 @@ public final class ConnectionHubRuntime implements HubSurfaceRegistry.Listener {
             value.put("listener_enabled", listenerEnabled);
             value.put("desired_connection_state", desiredRunning ? "running" : "stopped");
             value.put("pairing_available", pairingCode != null
-                    && System.currentTimeMillis() >= pairLockedUntilMs);
+                    && clock.nowMs() >= pairLockedUntilMs);
             value.put("status", lastStatus);
             value.put("transport_classification", "trusted_lan_experimental");
             value.put("confidentiality", ConnectionHubProtocol.CONFIDENTIALITY);
@@ -282,7 +297,7 @@ public final class ConnectionHubRuntime implements HubSurfaceRegistry.Listener {
 
     /** Trusted-clock expiry reconciliation; safe to call periodically. */
     public synchronized void expireNow() {
-        long now = System.currentTimeMillis();
+        long now = clock.nowMs();
         List<String> expiredCookies = new ArrayList<>();
         List<String> expiredLogicalSessions = new ArrayList<>();
         for (Map.Entry<String, ConnectionHubStateStore.SessionProjection> item : sessions.entrySet()) {
@@ -293,6 +308,11 @@ public final class ConnectionHubRuntime implements HubSurfaceRegistry.Listener {
             }
         }
         for (String cookie : expiredCookies) { sessions.remove(cookie); }
+        List<String> expiredLeaseKeys = new ArrayList<>();
+        for (Map.Entry<String, SurfaceLeaseProjection> item : surfaceLeases.entrySet()) {
+            if (item.getValue().expiresAtMs <= now) { expiredLeaseKeys.add(item.getKey()); }
+        }
+        for (String key : expiredLeaseKeys) { surfaceLeases.remove(key); }
         prepareMutation("expire");
         ConnectionHubAuthorityPort.Receipt receipt = authority.expire(
                 randomRequestId("expire"), now);
@@ -319,7 +339,7 @@ public final class ConnectionHubRuntime implements HubSurfaceRegistry.Listener {
                 identity,
                 providerInstanceId,
                 admissionUseRequestId,
-                System.currentTimeMillis());
+                clock.nowMs());
         if (!providerReceipt.applied) {
             persist();
             return providerReceipt;
@@ -328,13 +348,13 @@ public final class ConnectionHubRuntime implements HubSurfaceRegistry.Listener {
                 randomRequestId("surface"),
                 providerInstanceId,
                 descriptor,
-                System.currentTimeMillis());
+                clock.nowMs());
         if (!surfaceReceipt.applied) {
             authority.unregisterProvider(
                     randomRequestId("provider-rollback"),
                     providerInstanceId,
                     "surface_registration_rejected",
-                    System.currentTimeMillis());
+                    clock.nowMs());
             persist();
             return surfaceReceipt;
         }
@@ -352,12 +372,12 @@ public final class ConnectionHubRuntime implements HubSurfaceRegistry.Listener {
                     randomRequestId("surface-rollback"),
                     providerInstanceId,
                     descriptor.surfaceId(),
-                    System.currentTimeMillis());
+                    clock.nowMs());
             authority.unregisterProvider(
                     randomRequestId("provider-rollback"),
                     providerInstanceId,
                     "local_registration_failed",
-                    System.currentTimeMillis());
+                    clock.nowMs());
             persist();
             throw localFailure;
         }
@@ -374,7 +394,7 @@ public final class ConnectionHubRuntime implements HubSurfaceRegistry.Listener {
                 randomRequestId("surface-remove"),
                 owned.providerInstanceId,
                 surfaceId,
-                System.currentTimeMillis());
+                clock.nowMs());
         persist();
         boolean removed = receipt.applied && registry.unregister(identity, surfaceId, reason);
         if (removed) { removeSurfaceLeases(surfaceId); }
@@ -401,7 +421,7 @@ public final class ConnectionHubRuntime implements HubSurfaceRegistry.Listener {
                 randomRequestId("provider-remove"),
                 providerInstanceId,
                 reason,
-                System.currentTimeMillis());
+                clock.nowMs());
         persist();
         if (!providerReceipt.applied && removed > 0) {
             throw new IllegalStateException("provider descendant cleanup applied without provider cleanup");
@@ -424,7 +444,7 @@ public final class ConnectionHubRuntime implements HubSurfaceRegistry.Listener {
                     identity.stableKey() + "\n" + surfaceId,
                     ConnectionHubProtocol.MAX_SURFACE_STATE_UPDATES_PER_WINDOW,
                     ConnectionHubProtocol.SURFACE_STATE_RATE_WINDOW_MS,
-                    System.currentTimeMillis())) {
+                    clock.nowMs())) {
                 throw new IllegalStateException("surface_state_rate_limited");
             }
         }
@@ -473,7 +493,7 @@ public final class ConnectionHubRuntime implements HubSurfaceRegistry.Listener {
                         session.logicalSessionId,
                         ConnectionHubProtocol.MAX_COMMANDS_PER_SESSION_PER_WINDOW,
                         ConnectionHubProtocol.COMMAND_RATE_WINDOW_MS,
-                        System.currentTimeMillis())) {
+                        clock.nowMs())) {
                     sink.onReceipt(commandReceipt(
                             requestId, surfaceId, command, false,
                             "command_rate_limited", false, "{}"));
@@ -482,45 +502,57 @@ public final class ConnectionHubRuntime implements HubSurfaceRegistry.Listener {
                 entry = registry.require(surfaceId);
             }
             String leaseKey = leaseKey(session.logicalSessionId, surfaceId);
-            String leaseId;
-            synchronized (this) { leaseId = surfaceLeases.get(leaseKey); }
-            if (leaseId == null) {
-                prepareMutation("acquire_surface_lease");
-                ConnectionHubAuthorityPort.Receipt leaseReceipt = authority.acquireSurfaceLease(
-                        randomRequestId("lease"),
-                        session.logicalSessionId,
-                        session.transportEpoch,
-                        surfaceId,
-                        System.currentTimeMillis());
-                if (!leaseReceipt.applied || leaseReceipt.surfaceLeaseId == null) {
-                    persist();
+            long authorizationNow = clock.nowMs();
+            SurfaceLeaseProjection lease;
+            boolean expiredLeaseObserved = false;
+            synchronized (this) {
+                lease = surfaceLeases.get(leaseKey);
+                if (lease != null && lease.expiresAtMs <= authorizationNow) {
+                    surfaceLeases.remove(leaseKey);
+                    lease = null;
+                    expiredLeaseObserved = true;
+                }
+            }
+            if (expiredLeaseObserved) { reconcileAuthorityExpiry(authorizationNow); }
+            if (lease == null) {
+                ConnectionHubAuthorityPort.Receipt leaseReceipt = acquireSurfaceLease(
+                        leaseKey, session, surfaceId, authorizationNow);
+                if (!leaseReceipt.applied) {
                     sink.onReceipt(commandReceipt(
                             requestId, surfaceId, command, false,
                             leaseReceipt.status, false, leaseReceipt.authorityReceiptJson));
                     return;
                 }
-                leaseId = leaseReceipt.surfaceLeaseId;
-                synchronized (this) { surfaceLeases.put(leaseKey, leaseId); }
-                persist();
+                synchronized (this) { lease = surfaceLeases.get(leaseKey); }
             }
             String commandParamsSha256 = canonicalParamsSha256(args);
-            prepareMutation("authorize_surface_command");
-            ConnectionHubAuthorityPort.Receipt authorityReceipt = authority.authorizeCommand(
-                    requestId,
-                    session.logicalSessionId,
-                    session.transportEpoch,
-                    leaseId,
-                    surfaceId,
-                    command,
-                    commandParamsSha256,
-                    System.currentTimeMillis());
-            persist();
+            ConnectionHubAuthorityPort.Receipt authorityReceipt = authorizeSurfaceCommand(
+                    requestId, session, lease.leaseId, surfaceId, command,
+                    commandParamsSha256, authorizationNow);
+            if (!authorityReceipt.applied
+                    && "rejected_surfaceleasenotactive".equals(authorityReceipt.status)) {
+                synchronized (this) {
+                    if (surfaceLeases.get(leaseKey) == lease) { surfaceLeases.remove(leaseKey); }
+                }
+                ConnectionHubAuthorityPort.Receipt reacquired = acquireSurfaceLease(
+                        leaseKey, session, surfaceId, clock.nowMs());
+                if (!reacquired.applied) {
+                    sink.onReceipt(commandReceipt(
+                            requestId, surfaceId, command, false,
+                            reacquired.status, false, reacquired.authorityReceiptJson));
+                    return;
+                }
+                authorityReceipt = authorizeSurfaceCommand(
+                        requestId, session, reacquired.surfaceLeaseId, surfaceId, command,
+                        commandParamsSha256, clock.nowMs());
+            }
             if (!authorityReceipt.applied) {
                 sink.onReceipt(commandReceipt(
                         requestId, surfaceId, command, false,
                         authorityReceipt.status, false, authorityReceipt.authorityReceiptJson));
                 return;
             }
+            final ConnectionHubAuthorityPort.Receipt authorizedReceipt = authorityReceipt;
             final HubSurfaceRegistry.Entry authorizedEntry = entry;
             final long authorizedEpoch = session.transportEpoch;
             final java.util.concurrent.atomic.AtomicBoolean effectCompleted =
@@ -531,11 +563,11 @@ public final class ConnectionHubRuntime implements HubSurfaceRegistry.Listener {
                             surfaceId,
                             command,
                             args.toString(),
-                            authorityReceipt.authorityReceiptJson,
+                            authorizedReceipt.authorityReceiptJson,
                             authorizedEntry.providerInstanceId,
                             authorizedEpoch,
                             authorizedEntry.stateRevision,
-                            sha256Utf8(authorityReceipt.authorityReceiptJson)),
+                            sha256Utf8(authorizedReceipt.authorityReceiptJson)),
                     new HubSurfaceRegistry.CommandResultCallback() {
                         @Override
                         public void onResult(boolean applied, String status, String stateJson) {
@@ -560,7 +592,7 @@ public final class ConnectionHubRuntime implements HubSurfaceRegistry.Listener {
                             }
                             sink.onReceipt(commandReceipt(
                                     requestId, surfaceId, command, true,
-                                    finalStatus, observed, authorityReceipt.authorityReceiptJson));
+                                    finalStatus, observed, authorizedReceipt.authorityReceiptJson));
                         }
                     });
         } catch (Exception error) {
@@ -574,6 +606,59 @@ public final class ConnectionHubRuntime implements HubSurfaceRegistry.Listener {
                     false,
                     "{}"));
         }
+    }
+
+    private ConnectionHubAuthorityPort.Receipt acquireSurfaceLease(
+            String leaseKey,
+            ConnectionHubStateStore.SessionProjection session,
+            String surfaceId,
+            long nowMs) {
+        prepareMutation("acquire_surface_lease");
+        ConnectionHubAuthorityPort.Receipt receipt = authority.acquireSurfaceLease(
+                randomRequestId("lease"),
+                session.logicalSessionId,
+                session.transportEpoch,
+                surfaceId,
+                nowMs);
+        if (receipt.applied && receipt.surfaceLeaseId != null && receipt.expiresAtMs > nowMs) {
+            synchronized (this) {
+                surfaceLeases.put(leaseKey, new SurfaceLeaseProjection(
+                        receipt.surfaceLeaseId, receipt.expiresAtMs));
+            }
+        } else if (receipt.applied) {
+            persist();
+            throw new SecurityException("authority_surface_lease_projection_invalid");
+        }
+        persist();
+        return receipt;
+    }
+
+    private void reconcileAuthorityExpiry(long nowMs) {
+        prepareMutation("expire_before_lease_reacquire");
+        authority.expire(randomRequestId("expire-lease"), nowMs);
+        persist();
+    }
+
+    private ConnectionHubAuthorityPort.Receipt authorizeSurfaceCommand(
+            String requestId,
+            ConnectionHubStateStore.SessionProjection session,
+            String leaseId,
+            String surfaceId,
+            String command,
+            String commandParamsSha256,
+            long nowMs) {
+        prepareMutation("authorize_surface_command");
+        ConnectionHubAuthorityPort.Receipt receipt = authority.authorizeCommand(
+                requestId,
+                session.logicalSessionId,
+                session.transportEpoch,
+                leaseId,
+                surfaceId,
+                command,
+                commandParamsSha256,
+                nowMs);
+        persist();
+        return receipt;
     }
 
     public interface CommandReceiptSink { void onReceipt(JSONObject receipt); }
@@ -636,7 +721,7 @@ public final class ConnectionHubRuntime implements HubSurfaceRegistry.Listener {
         if (!state.authorityEnvelope.isEmpty()) {
             ConnectionHubAuthorityPort.Receipt restored = authority.restoreOpaqueState(
                     state.authorityEnvelope,
-                    System.currentTimeMillis());
+                    clock.nowMs());
             if (!restored.applied) {
                 desiredRunning = false;
                 sessions.clear();
@@ -647,7 +732,7 @@ public final class ConnectionHubRuntime implements HubSurfaceRegistry.Listener {
             prepareMutation("restart_reconcile");
             ConnectionHubAuthorityPort.Receipt reconciled = authority.reconcileAfterRestart(
                     randomRequestId("restart-reconcile"),
-                    System.currentTimeMillis());
+                    clock.nowMs());
             if (!reconciled.applied) {
                 desiredRunning = false;
                 sessions.clear();
@@ -676,7 +761,7 @@ public final class ConnectionHubRuntime implements HubSurfaceRegistry.Listener {
                     randomRequestId("transport"),
                     old.logicalSessionId,
                     old.transportEpoch,
-                    System.currentTimeMillis());
+                    clock.nowMs());
             if (receipt.applied && receipt.transportEpoch == old.transportEpoch + 1) {
                 sessions.put(item.getKey(), new ConnectionHubStateStore.SessionProjection(
                         old.logicalSessionId,
@@ -1019,6 +1104,15 @@ public final class ConnectionHubRuntime implements HubSurfaceRegistry.Listener {
         RateWindow(long startedAtMs, int count) {
             this.startedAtMs = startedAtMs;
             this.count = count;
+        }
+    }
+
+    private static final class SurfaceLeaseProjection {
+        final String leaseId;
+        final long expiresAtMs;
+        SurfaceLeaseProjection(String leaseId, long expiresAtMs) {
+            this.leaseId = leaseId;
+            this.expiresAtMs = expiresAtMs;
         }
     }
 

@@ -51,9 +51,19 @@ if ($activity -match 'LocalManifoldBrokerServer\.get\(\)\.start' -or $activity -
 if ($service -notmatch 'START_STICKY' -or $service -notmatch 'ConnectionHubProcess' -or $service -notmatch 'ACTION_STOP_HUB') { throw "Foreground service does not own persistent Hub lifecycle." }
 if ($binder -notmatch 'message\.sendingUid' -or $binder -notmatch 'GET_SIGNING_CERTIFICATES' -or $binder -notmatch 'MESSAGE_REGISTER_SURFACE') { throw "Binder provider API does not derive platform identity." }
 if ($binder -match 'data\.getString\("admitted_client_evidence_json"') { throw "Binder accepts caller-supplied admission evidence." }
+if ($binder -notmatch 'activeHubProviders' -or
+    $binder -notmatch 'registrationCommitted\.compareAndSet\(true, false\)' -or
+    $binder -notmatch 'unregisterProvider\(' -or
+    $binder -match 'existing == null\s*\?\s*"provider\.instance') {
+    throw "Provider lifecycle does not retire the exact instance before re-registration."
+}
 if ($stateStore -notmatch 'AndroidKeyStore' -or $stateStore -notmatch 'AES/GCM/NoPadding' -or $stateStore -match 'putString\(KEY_STATE, value\.toString') { throw "Durable session projections are not Keystore-encrypted." }
 if ($protocol -notmatch '/v1/status' -or $protocol -notmatch '/v1/pair' -or $protocol -notmatch '/v1/socket' -or $server -notmatch 'X-Rusty-Confidentiality' -or $server -notmatch 'sec-websocket-version' -or $server -notmatch 'hasSameOrigin') { throw "Fixed HTTP/WebSocket protocol or posture headers missing." }
 if ($server -match '/v1/socket\?session' -or $server -notmatch 'SOCKET_AUTHENTICATE_SCHEMA' -or $server -notmatch 'transport_epoch') { throw "WebSocket still uses a URL bearer or omits first-frame authentication." }
+if ($server -notmatch 'synchronized \(socketSessions\)[\s\S]*runtime\.replaceTransport\(cookie\)' -or
+    $server -notmatch 'isNewerTransportEpoch') {
+    throw "Authority transport replacement and socket installation are not atomic."
+}
 if ($server -match 'Access-Control-Allow-Origin' -or $server -match 'https?://[^\"]') { throw "Hub server enables CORS or ambient remote assets." }
 if ($process -notmatch 'new ManifoldConnectionHubAuthority\(\)' -or $process -match 'UnavailableManifold') { throw "Connection Hub process is not wired to the real Manifold JNI authority." }
 if ($process -notmatch 'provider_effect_binding\.v1' -or

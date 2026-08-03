@@ -64,4 +64,124 @@ for (const access of [
 ]) {
   if (!appSource.includes(access)) throw new Error(`app.js does not consume ${access}`);
 }
-console.log("Connection Hub browser protocol projection passed");
+
+class FakeElement {
+  constructor() {
+    this.textContent = "";
+    this.disabled = false;
+    this.value = "";
+    this.listeners = new Map();
+  }
+  addEventListener(type, listener) { this.listeners.set(type, listener); }
+  async click() {
+    const listener = this.listeners.get("click");
+    if (listener) await listener();
+  }
+  replaceChildren() {}
+  append() {}
+}
+
+const storage = initial => {
+  const values = new Map(Object.entries(initial));
+  return {
+    getItem: key => values.has(key) ? values.get(key) : null,
+    setItem: (key, value) => values.set(key, String(value)),
+    removeItem: key => values.delete(key),
+  };
+};
+
+const runDisconnect = async fetchImplementation => {
+  const elements = new Map([
+    ["#surfaces", new FakeElement()],
+    ["#surface-template", new FakeElement()],
+    ["#pair-status", new FakeElement()],
+    ["#pair-button", new FakeElement()],
+    ["#disconnect-button", new FakeElement()],
+    ["#pairing-code", new FakeElement()],
+  ]);
+  const sessionStore = storage({rustyHubSession: "stale-test-bearer"});
+  const sockets = [];
+  class FakeWebSocket {
+    static OPEN = 1;
+    constructor() {
+      this.readyState = FakeWebSocket.OPEN;
+      this.listeners = new Map();
+      this.closed = false;
+      sockets.push(this);
+    }
+    addEventListener(type, listener) { this.listeners.set(type, listener); }
+    send() {}
+    close() {
+      this.closed = true;
+      this.readyState = 3;
+      const listener = this.listeners.get("close");
+      if (listener) listener({code: 1000});
+    }
+  }
+  const context = vm.createContext({
+    RustyConnectionHubProtocol: actual,
+    document: {
+      querySelector: selector => elements.get(selector),
+      createElement: () => new FakeElement(),
+    },
+    sessionStorage: sessionStore,
+    localStorage: storage({}),
+    fetch: fetchImplementation,
+    crypto: require("crypto").webcrypto,
+    TextEncoder,
+    location: {protocol: "http:", host: "hub.test"},
+    WebSocket: FakeWebSocket,
+    CSS: {escape: value => value},
+  });
+  vm.runInContext(appSource, context, {filename: "app.js"});
+  await elements.get("#disconnect-button").click();
+  return {
+    status: elements.get("#pair-status").textContent,
+    bearer: sessionStore.getItem("rustyHubSession"),
+    socketClosed: sockets[0].closed,
+  };
+};
+
+const response = (ok, status, receipt) => ({
+  ok,
+  status,
+  json: async () => receipt,
+});
+
+(async () => {
+  const accepted = JSON.parse(JSON.stringify(vectors.messages.revoke_receipt.example));
+  const networkFailure = await runDisconnect(async () => { throw new Error("network unavailable"); });
+  if (networkFailure.bearer !== "stale-test-bearer"
+      || networkFailure.socketClosed
+      || !networkFailure.status.startsWith("Disconnect failed:")) {
+    throw new Error("fetch failure discarded the bearer or presented disconnect success");
+  }
+
+  const rejected = JSON.parse(JSON.stringify(accepted));
+  rejected.applied = false;
+  rejected.status = "session_not_found";
+  const rejection = await runDisconnect(async () => response(false, 403, rejected));
+  if (rejection.bearer !== "stale-test-bearer"
+      || rejection.socketClosed
+      || rejection.status !== "Disconnect failed: session_not_found") {
+    throw new Error("rejected revoke discarded the bearer or presented disconnect success");
+  }
+
+  const openReceipt = JSON.parse(JSON.stringify(accepted));
+  openReceipt.unexpected = true;
+  const openReceiptResult = await runDisconnect(async () => response(true, 200, openReceipt));
+  if (openReceiptResult.bearer !== "stale-test-bearer"
+      || openReceiptResult.socketClosed
+      || !openReceiptResult.status.startsWith("Disconnect failed:")) {
+    throw new Error("open revoke receipt shape was accepted");
+  }
+
+  const success = await runDisconnect(async () => response(true, 200, accepted));
+  if (success.bearer !== null || !success.socketClosed || success.status !== "Disconnected") {
+    throw new Error("exact applied revoke receipt did not clear the bearer and close the socket");
+  }
+  console.log("Connection Hub browser protocol and revoke behavior passed");
+})().catch(error => {
+  console.error(error.stack || error.message);
+  process.exitCode = 1;
+});

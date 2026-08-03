@@ -67,6 +67,23 @@ const main = async () => {
   const observations = [];
   try {
     const page = await browser.newPage({viewport: {width: 1280, height: 720}});
+    await page.addInitScript(() => {
+      const NativeWebSocket = globalThis.WebSocket;
+      globalThis.__rustyConnectionHubSocketWitnesses = [];
+      globalThis.WebSocket = new Proxy(NativeWebSocket, {
+        construct(Target, constructorArgs) {
+          const webSocket = Reflect.construct(Target, constructorArgs);
+          const witness = {opened: false, closed: false, close_code: null};
+          globalThis.__rustyConnectionHubSocketWitnesses.push(witness);
+          webSocket.addEventListener("open", () => { witness.opened = true; });
+          webSocket.addEventListener("close", event => {
+            witness.closed = true;
+            witness.close_code = event.code;
+          });
+          return webSocket;
+        },
+      });
+    });
     page.on("console", message => { if (message.type() === "error") consoleErrors.push(message.text()); });
     page.on("pageerror", error => pageErrors.push(error.message));
     await page.goto(args.get("--origin"), {waitUntil: "domcontentloaded", timeout: 20000});
@@ -74,6 +91,15 @@ const main = async () => {
     pairingSecret = null;
     await page.locator("#pair-button").click();
     await page.locator("#pair-status").filter({hasText: "Connected"}).waitFor({timeout: 15000});
+    const staleBearer = await page.evaluate(() => sessionStorage.getItem("rustyHubSession"));
+    if (typeof staleBearer !== "string" || staleBearer.length === 0) {
+      throw new Error("paired browser session bearer unavailable");
+    }
+    const authenticatedSocketIndex = await page.evaluate(() => {
+      const index = globalThis.__rustyConnectionHubSocketWitnesses.findIndex(entry => entry.opened);
+      if (index < 0) throw new Error("authenticated socket witness unavailable");
+      return index;
+    });
 
     const spatial = page.locator(`[data-surface-id="${fixed.spatialSurface}"]`);
     const sample = page.locator(`[data-surface-id="${fixed.sampleSurface}"]`);
@@ -103,6 +129,51 @@ const main = async () => {
 
     await page.locator("#disconnect-button").click();
     await page.locator("#pair-status").filter({hasText: "Disconnected"}).waitFor({timeout: 10000});
+    await page.waitForFunction(index => {
+      const witness = globalThis.__rustyConnectionHubSocketWitnesses[index];
+      return Boolean(witness && witness.opened && witness.closed);
+    }, authenticatedSocketIndex, {timeout: 10000});
+    if (await page.evaluate(() => sessionStorage.getItem("rustyHubSession") !== null)) {
+      throw new Error("accepted revoke retained browser session bearer");
+    }
+    observations.push("accepted-revoke-closed-authenticated-socket");
+
+    const staleAuthentication = await page.evaluate(({bearer}) => new Promise((resolve, reject) => {
+      const protocol = globalThis.RustyConnectionHubProtocol;
+      const scheme = location.protocol === "https:" ? "wss" : "ws";
+      const webSocket = new WebSocket(`${scheme}://${location.host}${protocol.routes.socket}`);
+      let authenticationReceiptObserved = false;
+      const timeout = setTimeout(() => {
+        webSocket.close();
+        reject(new Error("stale bearer authentication socket did not close"));
+      }, 10000);
+      webSocket.addEventListener("open", () => {
+        webSocket.send(JSON.stringify({
+          $schema: protocol.schemas.socket_authenticate,
+          type: protocol.types.authenticate,
+          session: bearer,
+        }));
+      });
+      webSocket.addEventListener("message", event => {
+        const message = JSON.parse(event.data);
+        if (message.type === protocol.types.authentication_receipt) {
+          authenticationReceiptObserved = true;
+        }
+      });
+      webSocket.addEventListener("error", () => {});
+      webSocket.addEventListener("close", event => {
+        clearTimeout(timeout);
+        resolve({
+          closed: true,
+          close_code: event.code,
+          authentication_receipt_observed: authenticationReceiptObserved,
+        });
+      });
+    }), {bearer: staleBearer});
+    if (!staleAuthentication.closed || staleAuthentication.authentication_receipt_observed) {
+      throw new Error("revoked stale bearer authenticated on a fresh socket");
+    }
+    observations.push("revoked-stale-bearer-fresh-auth-rejected");
     if (consoleErrors.length || pageErrors.length) throw new Error("browser console/page errors observed");
     process.stdout.write(JSON.stringify({
       $schema: "rusty.quest.connection_hub.browser_e2e_receipt.v1",

@@ -51,6 +51,15 @@ public final class ConnectionHubCoreTest {
         first.unregisterProvider(PROVIDER, "provider.instance.1", "provider_stopped");
         assertEquals(0, firstRegistry.snapshot().size());
         assertTrue(first.desiredRunning(), "provider stop incorrectly stopped Hub connection");
+        HubProviderIdentity sampleProvider = new HubProviderIdentity(
+                10083, "io.github.example.sample", repeat("bc", 32));
+        first.registerSurface(sampleProvider, "provider.instance.sample.1", "admission.sample.1",
+                registration(), immediateEndpoint());
+        first.unregisterProvider(sampleProvider, "provider.instance.sample.1", "provider_stopped");
+        first.registerSurface(PROVIDER, "provider.instance.3", "admission.spatial.2",
+                registration(), immediateEndpoint());
+        first.unregisterProvider(PROVIDER, "provider.instance.3", "provider_stopped");
+        assertEquals(0, firstRegistry.snapshot().size());
 
         // Simulated service process recreation: provider registry is empty, logical
         // session remains and Manifold replaces only its physical transport epoch.
@@ -214,6 +223,60 @@ public final class ConnectionHubCoreTest {
         expectSecurity(new Runnable() {
             @Override public void run() { second.requireSession(cookie); }
         });
+
+        // Lease projections expire independently of sessions. They are renewed
+        // after one hour, recover once from an authority-side inactive lease,
+        // and are deliberately rebuilt rather than persisted across restart.
+        ManualClock leaseClock = new ManualClock(1_000_000L);
+        InMemoryStore leaseStore = new InMemoryStore();
+        FakeAuthority leaseAuthority = new FakeAuthority();
+        HubSurfaceRegistry leaseRegistry = new HubSurfaceRegistry();
+        ConnectionHubRuntime leaseRuntime = new ConnectionHubRuntime(
+                leaseAuthority, leaseStore, leaseRegistry, seededRandom(), leaseClock);
+        leaseRuntime.startRequested();
+        leaseRuntime.noteListenerStarted();
+        JSONObject leasePair = leaseRuntime.pair(new JSONObject()
+                .put("$schema", ConnectionHubProtocol.PAIR_REQUEST_SCHEMA)
+                .put("pairing_code", leaseRuntime.pairingCodeForWearer())
+                .put("controller_identity_sha256", repeat("34", 32)), "wearer.test.evidence");
+        String leaseCookie = leasePair.getString("session");
+        leaseRuntime.registerSurface(PROVIDER, "provider.instance.lease.1", "admission.lease.1",
+                registration(), immediateEndpoint());
+        ReceiptCapture leaseInitial = new ReceiptCapture();
+        leaseRuntime.handleCommand(leaseCookie, 1,
+                new JSONObject(command.toString()).put("request_id", "request.lease.initial"),
+                leaseInitial);
+        assertTrue(leaseInitial.value.getBoolean("accepted"), "initial leased command rejected");
+        assertEquals(1, leaseAuthority.leaseAcquisitions);
+        leaseClock.advance(3_600_001L);
+        ReceiptCapture leaseRenewed = new ReceiptCapture();
+        leaseRuntime.handleCommand(leaseCookie, 1,
+                new JSONObject(command.toString()).put("request_id", "request.lease.renewed"),
+                leaseRenewed);
+        assertTrue(leaseRenewed.value.getBoolean("accepted"), "expired lease was not renewed");
+        assertEquals(2, leaseAuthority.leaseAcquisitions);
+        leaseAuthority.invalidateLeases();
+        ReceiptCapture leaseReconciled = new ReceiptCapture();
+        leaseRuntime.handleCommand(leaseCookie, 1,
+                new JSONObject(command.toString()).put("request_id", "request.lease.reconciled"),
+                leaseReconciled);
+        assertTrue(leaseReconciled.value.getBoolean("accepted"),
+                "inactive authority lease was not reacquired once");
+        assertEquals(3, leaseAuthority.leaseAcquisitions);
+        leaseRuntime.unregisterProvider(PROVIDER, "provider.instance.lease.1", "restart");
+        HubSurfaceRegistry restartedLeaseRegistry = new HubSurfaceRegistry();
+        ConnectionHubRuntime restartedLeaseRuntime = new ConnectionHubRuntime(
+                leaseAuthority, leaseStore, restartedLeaseRegistry, seededRandom(), leaseClock);
+        restartedLeaseRuntime.noteListenerStarted();
+        restartedLeaseRuntime.registerSurface(PROVIDER, "provider.instance.lease.2",
+                "admission.lease.2", registration(), immediateEndpoint());
+        ReceiptCapture leaseAfterRestart = new ReceiptCapture();
+        restartedLeaseRuntime.handleCommand(leaseCookie, 2,
+                new JSONObject(command.toString()).put("request_id", "request.lease.restart"),
+                leaseAfterRestart);
+        assertTrue(leaseAfterRestart.value.getBoolean("accepted"),
+                "restart did not rebuild an authority lease");
+        assertEquals(4, leaseAuthority.leaseAcquisitions);
         System.out.println("Connection Hub core tests passed");
     }
 
@@ -305,10 +368,15 @@ public final class ConnectionHubCoreTest {
         long transportEpoch = 1;
         boolean sessionActive;
         final Set<String> consumed = new HashSet<>();
+        final Set<String> activeProviders = new HashSet<>();
+        final Map<String, Long> leaseExpiries = new LinkedHashMap<>();
+        int leaseAcquisitions;
 
         @Override public Receipt trustAndOpenSession(String requestId, String controller, String evidence, long now) {
             sessionActive = true; revision += 1;
-            return applied("open_session", requestId, "session.test", transportEpoch, null, null, null);
+            Receipt base = applied("open_session", requestId, "session.test", transportEpoch, null, null, null);
+            return new Receipt(true, "applied", base.authorityReceiptJson, "session.test",
+                    transportEpoch, now + 30L * 24L * 60L * 60L * 1000L, null);
         }
         @Override public Receipt replaceTransport(String requestId, String session, long expected, long now) {
             if (!sessionActive || expected != transportEpoch) return Receipt.rejected("stale_transport_epoch");
@@ -317,6 +385,7 @@ public final class ConnectionHubCoreTest {
         }
         @Override public Receipt registerProvider(String requestId, HubProviderIdentity identity, String instance, String admissionUseRequestId, long now) {
             if (admissionUseRequestId == null || admissionUseRequestId.isEmpty()) return Receipt.rejected("provider_not_admitted");
+            if (!activeProviders.add(instance)) return Receipt.rejected("rejected_identitycollision");
             revision += 1; return applied("register_provider", requestId, null, 0, null, null, null);
         }
         @Override public Receipt registerSurface(String requestId, String instance, HubSurfaceDescriptor descriptor, long now) {
@@ -326,12 +395,17 @@ public final class ConnectionHubCoreTest {
             revision += 1; return applied("unregister_surface", requestId, null, 0, null, null, null);
         }
         @Override public Receipt unregisterProvider(String requestId, String instance, String reason, long now) {
+            activeProviders.remove(instance);
             revision += 1; return applied("unregister_provider", requestId, null, 0, null, null, null);
         }
         @Override public Receipt acquireSurfaceLease(String requestId, String session, long epoch, String surface, long now) {
             revision += 1;
+            leaseAcquisitions += 1;
+            String leaseId = "lease.test.surface." + leaseAcquisitions;
+            leaseExpiries.put(leaseId, now + 3_600_000L);
             Receipt base = applied("acquire_surface_lease", requestId, session, epoch, surface, null, null);
-            return new Receipt(true, "applied", base.authorityReceiptJson, session, epoch, now + 60_000L, "lease.test.surface");
+            return new Receipt(true, "applied", base.authorityReceiptJson, session, epoch,
+                    now + 3_600_000L, leaseId);
         }
         @Override public Receipt releaseSurfaceLease(String requestId, String session, String lease, String reason, long now) {
             revision += 1; return applied("release_surface_lease", requestId, session, transportEpoch, null, null, null);
@@ -339,6 +413,10 @@ public final class ConnectionHubCoreTest {
         @Override public Receipt authorizeCommand(String requestId, String session, long epoch, String lease, String surface, String command, String paramsSha256, long now) {
             if (!sessionActive) return Receipt.rejected("session_revoked");
             if (epoch != transportEpoch) return Receipt.rejected("stale_transport_epoch");
+            Long leaseExpiry = leaseExpiries.get(lease);
+            if (leaseExpiry == null || leaseExpiry <= now) {
+                return Receipt.rejected("rejected_surfaceleasenotactive");
+            }
             if (!consumed.add(requestId)) return Receipt.rejected("replayed_request");
             revision += 1; return applied("authorize_surface_command", requestId, session, epoch, surface, command, requestId);
         }
@@ -350,7 +428,10 @@ public final class ConnectionHubCoreTest {
             sessionActive = false; revision += 1;
             return applied("forget_controller", requestId, null, 0, null, null, null);
         }
-        @Override public Receipt expire(String requestId, long now) { return applied("expire", requestId, null, 0, null, null, null); }
+        @Override public Receipt expire(String requestId, long now) {
+            leaseExpiries.entrySet().removeIf(item -> item.getValue() <= now);
+            return applied("expire", requestId, null, 0, null, null, null);
+        }
         @Override public Receipt reconcileAfterRestart(String requestId, long now) {
             return applied("reconcile_restart", requestId, null, 0, null, null, null);
         }
@@ -360,6 +441,8 @@ public final class ConnectionHubCoreTest {
                     ? applied("restore", "restore.test", null, 0, null, null, null)
                     : Receipt.rejected("state_rejected");
         }
+
+        void invalidateLeases() { leaseExpiries.clear(); }
 
         private Receipt applied(String operation, String requestId, String session, long epoch,
                 String surface, String command, String authorizationRequest) {
@@ -383,6 +466,13 @@ public final class ConnectionHubCoreTest {
                     System.currentTimeMillis() + 60_000L, null);
             } catch (Exception error) { throw new AssertionError(error); }
         }
+    }
+
+    private static final class ManualClock implements ConnectionHubRuntime.Clock {
+        long nowMs;
+        ManualClock(long nowMs) { this.nowMs = nowMs; }
+        @Override public long nowMs() { return nowMs; }
+        void advance(long deltaMs) { nowMs += deltaMs; }
     }
 
     private static void expectSecurity(Runnable action) {

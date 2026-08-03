@@ -42,7 +42,7 @@ public final class ConnectionHubAdmissionService extends Service {
     private static final String OPERATION_SCHEMA = "rusty.quest.broker.admission_operation.v1";
     private final SecureRandom secureRandom = new SecureRandom();
     private final Map<String, String> retainedHubProviderAdmissions = new HashMap<>();
-    private final Map<String, String> activeHubProviderInstances = new HashMap<>();
+    private final Map<String, ActiveHubProvider> activeHubProviders = new HashMap<>();
     private final Messenger messenger = new Messenger(new AdmissionHandler(Looper.getMainLooper()));
 
     @Override
@@ -129,12 +129,11 @@ public final class ConnectionHubAdmissionService extends Service {
             throw new SecurityException("provider callback Messenger is required");
         }
         final HubProviderIdentity identity = caller.toHubIdentity();
-        final String providerInstanceId;
-        synchronized (activeHubProviderInstances) {
-            String existing = activeHubProviderInstances.get(identity.stableKey());
-            providerInstanceId = existing == null
-                    ? "provider.instance." + randomHex(16)
-                    : existing;
+        final String providerInstanceId = "provider.instance." + randomHex(16);
+        synchronized (activeHubProviders) {
+            if (activeHubProviders.containsKey(identity.stableKey())) {
+                throw new SecurityException("provider already has an active surface registration");
+            }
         }
         JSONObject registration = new JSONObject(data.getString("surface_registration_json", "{}"));
         String admittedEvidence;
@@ -147,6 +146,7 @@ public final class ConnectionHubAdmissionService extends Service {
         final IBinder callbackBinder = message.replyTo.getBinder();
         final AtomicBoolean registrationCommitted = new AtomicBoolean();
         final AtomicBoolean deathObserved = new AtomicBoolean();
+        final ActiveHubProvider[] activeHolder = new ActiveHubProvider[1];
         final IBinder.DeathRecipient deathRecipient = new IBinder.DeathRecipient() {
             @Override public void binderDied() {
                 deathObserved.set(true);
@@ -155,8 +155,8 @@ public final class ConnectionHubAdmissionService extends Service {
                             identity,
                             providerInstanceId,
                             "provider_binder_died");
-                    synchronized (activeHubProviderInstances) {
-                        activeHubProviderInstances.remove(identity.stableKey());
+                    synchronized (activeHubProviders) {
+                        activeHubProviders.remove(identity.stableKey(), activeHolder[0]);
                     }
                 }
                 callbackBinder.unlinkToDeath(this, 0);
@@ -176,15 +176,25 @@ public final class ConnectionHubAdmissionService extends Service {
             throw failure;
         }
         if (receipt.applied && !deathObserved.get()) {
-            synchronized (activeHubProviderInstances) {
-                activeHubProviderInstances.put(identity.stableKey(), providerInstanceId);
+            ActiveHubProvider active = new ActiveHubProvider(
+                    identity,
+                    providerInstanceId,
+                    registration.getString("surface_id"),
+                    callbackBinder,
+                    deathRecipient,
+                    registrationCommitted);
+            activeHolder[0] = active;
+            synchronized (activeHubProviders) {
+                if (activeHubProviders.put(identity.stableKey(), active) != null) {
+                    throw new IllegalStateException("provider registration ownership collision");
+                }
+                registrationCommitted.set(true);
             }
-            registrationCommitted.set(true);
             if (deathObserved.get() && registrationCommitted.compareAndSet(true, false)) {
                 ConnectionHubProcess.get(this).unregisterProvider(
                         identity, providerInstanceId, "provider_binder_died_during_registration");
-                synchronized (activeHubProviderInstances) {
-                    activeHubProviderInstances.remove(identity.stableKey());
+                synchronized (activeHubProviders) {
+                    activeHubProviders.remove(identity.stableKey(), active);
                 }
                 receipt = ConnectionHubAuthorityPort.Receipt.rejected(
                         "provider_binder_died_during_registration");
@@ -236,14 +246,53 @@ public final class ConnectionHubAdmissionService extends Service {
 
     private JSONObject unregisterSurface(QuestCaller caller, Bundle data) throws Exception {
         HubProviderIdentity identity = caller.toHubIdentity();
-        boolean applied = ConnectionHubProcess.get(this).runtime().unregisterSurface(
-                identity,
-                data.getString("surface_id", ""),
-                "provider_lifecycle_end");
+        String surfaceId = data.getString("surface_id", "");
+        ActiveHubProvider active;
+        synchronized (activeHubProviders) {
+            active = activeHubProviders.get(identity.stableKey());
+            if (active == null || !active.surfaceId.equals(surfaceId)
+                    || !active.registrationCommitted.compareAndSet(true, false)) {
+                active = null;
+            } else {
+                activeHubProviders.remove(identity.stableKey(), active);
+            }
+        }
+        boolean applied = active != null
+                && ConnectionHubProcess.get(this).unregisterProvider(
+                        identity,
+                        active.providerInstanceId,
+                        "provider_lifecycle_end") > 0;
+        if (active != null) {
+            active.callbackBinder.unlinkToDeath(active.deathRecipient, 0);
+        }
         return new JSONObject()
                 .put("$schema", "rusty.quest.connection_hub.provider_operation_receipt.v1")
                 .put("applied", applied)
                 .put("status", applied ? "surface_unregistered" : "surface_not_registered");
+    }
+
+    private static final class ActiveHubProvider {
+        final HubProviderIdentity identity;
+        final String providerInstanceId;
+        final String surfaceId;
+        final IBinder callbackBinder;
+        final IBinder.DeathRecipient deathRecipient;
+        final AtomicBoolean registrationCommitted;
+
+        ActiveHubProvider(
+                HubProviderIdentity identity,
+                String providerInstanceId,
+                String surfaceId,
+                IBinder callbackBinder,
+                IBinder.DeathRecipient deathRecipient,
+                AtomicBoolean registrationCommitted) {
+            this.identity = identity;
+            this.providerInstanceId = providerInstanceId;
+            this.surfaceId = surfaceId;
+            this.callbackBinder = callbackBinder;
+            this.deathRecipient = deathRecipient;
+            this.registrationCommitted = registrationCommitted;
+        }
     }
 
     private static String requireProviderInstanceId(String value) {

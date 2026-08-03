@@ -11,6 +11,46 @@
   let session = sessionStorage.getItem("rustyHubSession") || "";
   let socket = null;
 
+  const acceptedRevokeReceipt = (response, receipt) => {
+    const required = [
+      "$schema",
+      "type",
+      "transport_epoch",
+      "listener_instance_id",
+      "surface_revision",
+      "transport_classification",
+      "confidentiality",
+      "production_eligible",
+      "applied",
+      "status",
+    ];
+    const allowed = new Set([...required, "authority_receipt"]);
+    if (!response.ok || !receipt || typeof receipt !== "object" || Array.isArray(receipt)) return false;
+    if (Object.keys(receipt).some(key => !allowed.has(key))
+        || required.some(key => !Object.hasOwn(receipt, key))) return false;
+    const expectedSchema = protocol.schemas.revoke_request.replace(
+      ".revoke_request.v1",
+      ".revoke_receipt.v1",
+    );
+    return receipt.$schema === expectedSchema
+      && receipt.type === "revoke_receipt"
+      && Number.isSafeInteger(receipt.transport_epoch)
+      && receipt.transport_epoch >= 0
+      && typeof receipt.listener_instance_id === "string"
+      && /^[0-9a-f]{32}$/.test(receipt.listener_instance_id)
+      && Number.isSafeInteger(receipt.surface_revision)
+      && receipt.surface_revision >= 0
+      && receipt.transport_classification === "trusted_lan_experimental"
+      && receipt.confidentiality === "none"
+      && receipt.production_eligible === false
+      && receipt.applied === true
+      && receipt.status === "applied"
+      && (!Object.hasOwn(receipt, "authority_receipt")
+        || (receipt.authority_receipt !== null
+          && typeof receipt.authority_receipt === "object"
+          && !Array.isArray(receipt.authority_receipt)));
+  };
+
   const controllerIdentity = async () => {
     let seed = localStorage.getItem("rustyHubPublicControllerIdentity");
     if (!seed) {
@@ -148,8 +188,11 @@
   };
 
   const disconnect = async () => {
-    if (session) {
-      await fetch(protocol.routes.revoke, {
+    if (!session) return;
+    disconnectButton.disabled = true;
+    pairStatus.textContent = "Disconnecting…";
+    try {
+      const response = await fetch(protocol.routes.revoke, {
         method: "POST",
         headers: {"Content-Type": "application/json"},
         body: JSON.stringify({
@@ -157,7 +200,17 @@
           session,
           reason: "user_request",
         }),
-      }).catch(() => {});
+      });
+      const receipt = await response.json();
+      if (!acceptedRevokeReceipt(response, receipt)) {
+        throw new Error(receipt && typeof receipt.status === "string"
+          ? receipt.status
+          : `revoke rejected (${response.status})`);
+      }
+    } catch (error) {
+      pairStatus.textContent = `Disconnect failed: ${error.message}`;
+      disconnectButton.disabled = false;
+      return;
     }
     if (socket) socket.close();
     session = "";

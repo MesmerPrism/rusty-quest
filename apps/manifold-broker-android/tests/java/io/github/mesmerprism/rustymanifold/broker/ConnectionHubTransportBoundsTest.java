@@ -36,6 +36,13 @@ public final class ConnectionHubTransportBoundsTest {
         fragmented[0] = 0x01;
         expectFrameRejected(fragmented);
 
+        require(ConnectionHubHttpServer.isNewerTransportEpoch(3, 2),
+                "new transport epoch was rejected");
+        require(!ConnectionHubHttpServer.isNewerTransportEpoch(2, 3),
+                "out-of-order older handshake displaced the newer socket");
+        require(!ConnectionHubHttpServer.isNewerTransportEpoch(3, 3),
+                "duplicate transport epoch displaced the installed socket");
+
         long started = System.nanoTime();
         try {
             ConnectionHubHttpServer.readRequest(

@@ -248,27 +248,41 @@ public final class ConnectionHubHttpServer
                 new String[] {"$schema", "type", "session"},
                 new String[0]);
         String cookie = authentication.optString("session", "");
-        ConnectionHubStateStore.SessionProjection sessionProjection;
+        final ConnectionHubStateStore.SessionProjection sessionProjection;
+        final SocketSession session;
         try {
-            sessionProjection = runtime.replaceTransport(cookie);
+            /*
+             * Epoch replacement and socket installation are one critical section.
+             * Otherwise an older handshake can finish after a newer handshake and
+             * close the authoritative socket that superseded it.
+             */
+            synchronized (socketSessions) {
+                sessionProjection = runtime.replaceTransport(cookie);
+                for (SocketSession existing : socketSessions) {
+                    if (existing.logicalSessionId.equals(sessionProjection.logicalSessionId)
+                            && !isNewerTransportEpoch(
+                                    sessionProjection.transportEpoch,
+                                    existing.transportEpoch)) {
+                        throw new SecurityException("stale_transport_install_rejected");
+                    }
+                }
+                session = new SocketSession(
+                        socket,
+                        output,
+                        sessionProjection.logicalSessionId,
+                        sessionProjection.transportEpoch,
+                        writeWatchdog);
+                for (SocketSession existing : new ArrayList<>(socketSessions)) {
+                    if (existing.logicalSessionId.equals(sessionProjection.logicalSessionId)) {
+                        existing.close();
+                        socketSessions.remove(existing);
+                    }
+                }
+                socketSessions.add(session);
+            }
         } catch (RuntimeException rejected) {
             noteAuthenticationFailure();
             throw rejected;
-        }
-        final SocketSession session = new SocketSession(
-                socket,
-                output,
-                sessionProjection.logicalSessionId,
-                sessionProjection.transportEpoch,
-                writeWatchdog);
-        synchronized (socketSessions) {
-            for (SocketSession existing : new ArrayList<>(socketSessions)) {
-                if (existing.logicalSessionId.equals(sessionProjection.logicalSessionId)) {
-                    existing.close();
-                    socketSessions.remove(existing);
-                }
-            }
-            socketSessions.add(session);
         }
         try {
             session.enqueue(ConnectionHubProtocol.socketAuthenticationReceipt(
@@ -295,6 +309,10 @@ public final class ConnectionHubHttpServer
             synchronized (socketSessions) { socketSessions.remove(session); }
             session.close();
         }
+    }
+
+    static boolean isNewerTransportEpoch(long candidate, long installed) {
+        return candidate > installed;
     }
 
     private static boolean hasSameOrigin(HttpRequest request) {
