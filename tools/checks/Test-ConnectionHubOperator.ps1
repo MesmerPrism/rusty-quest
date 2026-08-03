@@ -45,6 +45,11 @@ Require ($cli.Contains('qfm-readonly-device-state-v1')) "Read-only device-state 
 Require ($cli.Contains('qfm-readonly-package-state-v1')) "Read-only package-state gap is not labelled."
 Require ($cli.Contains('qfm-missing-typed-target-uninstall-v1')) "Target-uninstall provider gap is not labelled."
 Require ($cli.Contains('qfm-missing-typed-wifi-rebind-v1')) "Wi-Fi rebind provider gap is not labelled."
+Require ($cli.Contains('[switch]$UseBoundedVirtualProximity') -and
+    $cli.Contains('com.oculus.vrpowermanager.prox_close') -and
+    $cli.Contains('"--ei", "duration", "600000"') -and
+    $cli.Contains('com.oculus.vrpowermanager.automation_disable') -and
+    $cli.Contains('virtual_proximity_restore_failed')) "Bounded off-head Quest validation does not restore normal proximity fail-closed."
 Require ($cli.Contains('pre_dispatch_proof_rejected') -and
     $cli.Contains('dispatch_attempted') -and
     $cli.Contains('cmd", "package", "query-activities", "--brief", "--components"') -and

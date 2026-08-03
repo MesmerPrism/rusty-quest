@@ -48,6 +48,7 @@ param(
     [string]$BrowserExecutableSha256 = "",
     [switch]$RequireBrowserE2E,
     [switch]$RequireWifiRebindE2E,
+    [switch]$UseBoundedVirtualProximity,
     [switch]$LegacyV1,
     [string]$Origin = "",
     [string]$SessionFile = "",
@@ -87,6 +88,7 @@ $QfmDeviceStateGap = "qfm-readonly-device-state-v1"
 $QfmPackageStateGap = "qfm-readonly-package-state-v1"
 $QfmUninstallGap = "qfm-missing-typed-target-uninstall-v1"
 $QfmWifiGap = "qfm-missing-typed-wifi-rebind-v1"
+$QfmProximityGap = "qfm-missing-typed-bounded-virtual-proximity-v1"
 $ReceiptSchema = "rusty.quest.connection_hub.operator_receipt.v1"
 $ManifestSchema = "rusty.quest.connection_hub.operator_evidence_manifest.v1"
 $CheckpointSchema = "rusty.quest.connection_hub.operator_checkpoint.v2"
@@ -112,6 +114,7 @@ $script:RunLogStderrPath = ""
 $script:ProcessEpochOrdinal = 0
 $script:ProcessEpochs = [System.Collections.Generic.List[object]]::new()
 $script:UninstallPerformed = $false
+$script:VirtualProximityEnabledByRun = $false
 $script:CurrentCheckpointStage = ""
 
 if ($LegacyV1 -and ($RequireBrowserE2E -or $Action -eq "BrowserE2E")) {
@@ -403,6 +406,7 @@ function Initialize-Checkpoint {
                     [string]$checkpoint.gradle_version -ne [string]$script:GradleVersion -or
                     [bool]$checkpoint.require_browser_e2e -ne [bool]$RequireBrowserE2E -or
                     [bool]$checkpoint.require_wifi_rebind_e2e -ne [bool]$RequireWifiRebindE2E -or
+                    [bool]$checkpoint.use_bounded_virtual_proximity -ne [bool]$UseBoundedVirtualProximity -or
                     [bool]$checkpoint.legacy_v1 -ne [bool]$LegacyV1))) {
             throw "Resume checkpoint identity/protocol/policy mismatch."
         }
@@ -493,6 +497,7 @@ function Initialize-Checkpoint {
         gradle_version = $script:GradleVersion
         require_browser_e2e = [bool]$RequireBrowserE2E
         require_wifi_rebind_e2e = [bool]$RequireWifiRebindE2E
+        use_bounded_virtual_proximity = [bool]$UseBoundedVirtualProximity
         legacy_v1 = [bool]$LegacyV1
         session_file = [System.IO.Path]::GetFullPath($SessionFile)
         artifact_build_manifest_path = $null
@@ -1464,6 +1469,39 @@ function Invoke-WifiRebindE2E {
     }
 }
 
+function Enable-BoundedVirtualProximity {
+    if (-not $UseBoundedVirtualProximity) { return $null }
+    $row = Invoke-Adb @(
+        "shell", "am", "broadcast", "-a", "com.oculus.vrpowermanager.prox_close",
+        "--ei", "duration", "600000") $QfmProximityGap `
+        "enable a ten-minute self-expiring virtual proximity window"
+    if ($row.output -notmatch 'Broadcast completed: result=0') {
+        throw "Virtual proximity window was not acknowledged by Horizon OS."
+    }
+    $script:VirtualProximityEnabledByRun = $true
+    return Save-Receipt "virtual-proximity-enable" (New-Receipt "virtual-proximity-enable" "bounded-horizon-broadcast" "passed" ([ordered]@{
+        duration_ms=600000
+        self_expiring=$true
+        explicit_restore_required=$true
+        command=$row
+    }))
+}
+
+function Restore-BoundedVirtualProximity {
+    if (-not $script:VirtualProximityEnabledByRun) { return $null }
+    $row = Invoke-Adb @(
+        "shell", "am", "broadcast", "-a", "com.oculus.vrpowermanager.automation_disable") `
+        $QfmProximityGap "restore normal physical proximity handling"
+    if ($row.output -notmatch 'Broadcast completed: result=0') {
+        throw "Normal physical proximity restoration was not acknowledged by Horizon OS."
+    }
+    $script:VirtualProximityEnabledByRun = $false
+    return Save-Receipt "virtual-proximity-restore" (New-Receipt "virtual-proximity-restore" "bounded-horizon-broadcast" "passed" ([ordered]@{
+        normal_physical_proximity_restored=$true
+        command=$row
+    }))
+}
+
 function Launch-Provider($Artifacts, [string]$ProviderName) {
     if ($ProviderName -eq "spatial") {
         $row = Launch-Apk $Artifacts[1] $SpatialActivity
@@ -1912,7 +1950,7 @@ function New-DryRunPlan {
         reviewed_fallbacks = @(
             $QfmLaunchGap, $QfmLifecycleGap, $QfmServiceGap, $QfmStopGap,
             $QfmLogGap, $QfmDeviceStateGap, $QfmPackageStateGap,
-            $QfmUninstallGap, $QfmWifiGap)
+            $QfmUninstallGap, $QfmWifiGap, $QfmProximityGap)
         hostess_secret_input = @("debug-shell-to-stdin-memory-only", "hidden-prompt", "stdin", "inherited-fd", "DPAPI-CurrentUser-session")
         e2e_sequence = @(
             "prerequisites+pre-state", "build", "inspect", "install+installed-byte-signer-readback",
@@ -1931,6 +1969,7 @@ function New-DryRunPlan {
             "target-only-pre-state-restore")
         checkpoint_resume = "serial+protocol+providers+artifacts+build-manifest+policy-bound"
         provider_lifetime_seconds = $ProviderLifetimeSeconds
+        bounded_virtual_proximity = [bool]$UseBoundedVirtualProximity
         secrets_in_plan = $false
     }
 }
@@ -2111,6 +2150,7 @@ try {
             finally { [Array]::Clear($pairingSecret, 0, $pairingSecret.Length); $pairingSecret = $null }
         }
         Invoke-Stage "hostess-v2-simulation" { [void](Hostess-Action "simulate") }
+        [void](Enable-BoundedVirtualProximity)
         Invoke-Stage "spatial-first" {
             [void](Launch-Provider $a "spatial")
             [void](Wait-Surface "surface.spatial_video_control.media" $true)
@@ -2237,6 +2277,7 @@ try {
                 })))
             }
         }
+        [void](Restore-BoundedVirtualProximity)
         Invoke-Stage "logs" {
             [void](Record-TargetProcessEpoch "final")
             [void](Stop-RunLogCapture)
@@ -2250,6 +2291,10 @@ try {
         $cleanupErrors = [System.Collections.Generic.List[string]]::new()
         if ($null -ne $script:RunLogProcess) {
             try { [void](Stop-RunLogCapture -FailureCleanup) } catch { [void]$cleanupErrors.Add("run_log_capture_cleanup_failed") }
+        }
+        if ($script:VirtualProximityEnabledByRun) {
+            try { [void](Restore-BoundedVirtualProximity) }
+            catch { [void]$cleanupErrors.Add("virtual_proximity_restore_failed") }
         }
         try { [void](Revoke-RunOwnedSessionIfPresent "failure-cleanup-hostess-revoke") }
         catch { [void]$cleanupErrors.Add("hostess_revoke_failed") }
