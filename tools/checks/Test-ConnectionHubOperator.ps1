@@ -37,6 +37,11 @@ Require ($cli.Contains('adb_version = $script:AdbVersion') -and
     $cli.Contains('gradle_version = $script:GradleVersion')) "Checkpoint does not bind executable versions."
 Require ($cli.Contains('Installed-byte readback') -and $cli.Contains('Stage-Apk')) "QFM transaction must stage and confirm exact APK bytes."
 Require ($cli.Contains('qfm-69b02f1.launch-export-parser')) "Known QFM launcher parser fallback is not labelled."
+Require ($cli.Contains('function Invoke-CapturedBounded') -and
+    $cli.Contains('function Invoke-AdbBounded') -and
+    $cli.Contains('@("shell", "am", "start", "-n", $Component)') -and
+    $cli.Contains('"dispatch one fixed reviewed component" 10000') -and
+    -not $cli.Contains('@("shell", "am", "start", "-W", "-n", $Component)')) "Reviewed Activity fallback must be bounded and must not wait behind Horizon Sensor Lock."
 Require ($cli.Contains('qfm-missing-typed-connection-hub-service-action-v1')) "Hub service provider gap is not labelled."
 Require ($cli.Contains('qfm-missing-typed-connection-hub-activity-action-v1')) "Real foreground-service lifecycle gap is not labelled."
 Require ($cli.Contains('"shell", "am", "start-foreground-service", "-n", "$HubPackage/.ConnectionHubStartService"') -and

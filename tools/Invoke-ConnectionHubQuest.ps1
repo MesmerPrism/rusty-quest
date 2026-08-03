@@ -587,6 +587,43 @@ function Invoke-Captured([string]$File, [string[]]$Arguments, [string]$Label) {
     }
 }
 
+function Invoke-CapturedBounded([string]$File, [string[]]$Arguments, [string]$Label, [int]$TimeoutMilliseconds) {
+    if ($TimeoutMilliseconds -lt 1000 -or $TimeoutMilliseconds -gt 30000) {
+        throw "Bounded process timeout must be between one and thirty seconds."
+    }
+    $start = [System.Diagnostics.ProcessStartInfo]::new()
+    $start.FileName = $File
+    $start.UseShellExecute = $false
+    $start.RedirectStandardOutput = $true
+    $start.RedirectStandardError = $true
+    foreach ($argument in $Arguments) { [void]$start.ArgumentList.Add($argument) }
+    $process = [System.Diagnostics.Process]::new()
+    $process.StartInfo = $start
+    try {
+        if (-not $process.Start()) { throw "Unable to start $Label." }
+        $stdoutTask = $process.StandardOutput.ReadToEndAsync()
+        $stderrTask = $process.StandardError.ReadToEndAsync()
+        if (-not $process.WaitForExit($TimeoutMilliseconds)) {
+            $process.Kill($true)
+            [void]$process.WaitForExit(5000)
+            throw "$Label timed out after $TimeoutMilliseconds milliseconds."
+        }
+        $stdoutText = $stdoutTask.GetAwaiter().GetResult().TrimEnd("`r", "`n")
+        $stderrText = $stderrTask.GetAwaiter().GetResult().TrimEnd("`r", "`n")
+        return [ordered]@{
+            label = $Label
+            exit_code = $process.ExitCode
+            output = $stdoutText
+            stderr = $stderrText
+            combined = (($stdoutText, $stderrText) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }) -join "`n"
+            timeout_milliseconds = $TimeoutMilliseconds
+            completed_within_timeout = $true
+        }
+    } finally {
+        $process.Dispose()
+    }
+}
+
 function Invoke-Qfm([string[]]$Arguments, [string]$Label, [switch]$AllowFailure) {
     if ((Get-Sha256 $script:Qfm) -ne $FileManagerSha256) {
         throw "File Manager changed after the run lock was acquired."
@@ -619,6 +656,28 @@ function Invoke-Adb([string[]]$Arguments, [string]$GapId, [string]$Goal, [switch
         command_shape = @("adb", "-s", "<explicit-serial>") + $Arguments
         exit_code = $result.exit_code
         output = $result.output
+        owner_acceptance_claimed = $false
+    }
+}
+
+function Invoke-AdbBounded([string[]]$Arguments, [string]$GapId, [string]$Goal, [int]$TimeoutMilliseconds) {
+    if ((Get-Sha256 $script:Adb) -ne $AdbSha256) { throw "ADB changed after the run lock was acquired." }
+    $all = @("-s", $Serial) + $Arguments
+    $result = Invoke-CapturedBounded $script:Adb $all "serial-scoped bounded ADB fallback" $TimeoutMilliseconds
+    if ($result.exit_code -ne 0) {
+        throw "Bounded ADB fallback failed for $Goal with exit code $($result.exit_code)."
+    }
+    return [ordered]@{
+        provider = "raw-adb-fallback"
+        provider_gap = $GapId
+        goal = $Goal
+        stop_condition = "bounded dispatch followed by independent owner readback"
+        cleanup = "target-package-only"
+        command_shape = @("adb", "-s", "<explicit-serial>") + $Arguments
+        exit_code = $result.exit_code
+        output = $result.output
+        timeout_milliseconds = $result.timeout_milliseconds
+        completed_within_timeout = $result.completed_within_timeout
         owner_acceptance_claimed = $false
     }
 }
@@ -1279,7 +1338,12 @@ function Launch-Apk($Artifact, [string]$Component) {
     if ($resolvedComponents.Count -ne 1 -or $resolvedComponents[0] -cne $Component) {
         throw "File Manager launch fallback did not independently resolve the exact fixed component."
     }
-    $fallback = Invoke-Adb @("shell", "am", "start", "-W", "-n", $Component) $QfmLaunchGap "launch one fixed reviewed component"
+    $fallback = Invoke-AdbBounded @("shell", "am", "start", "-n", $Component) $QfmLaunchGap `
+        "dispatch one fixed reviewed component" 10000
+    if ($fallback.output -notmatch ('cmp=' + [regex]::Escape($Component)) -or
+            $fallback.output -match '(?i)\berror\b') {
+        throw "Bounded launch dispatch did not echo the exact independently resolved component."
+    }
     return [ordered]@{
         label=$Artifact.label
         provider="raw-adb-fallback"
@@ -1287,6 +1351,7 @@ function Launch-Apk($Artifact, [string]$Component) {
         independently_resolved_component=$resolvedComponents[0]
         resolver=$resolver
         fallback=$fallback
+        completion_model="dispatch-only; owner surface is proven independently by the following bounded Hub query"
     }
 }
 
