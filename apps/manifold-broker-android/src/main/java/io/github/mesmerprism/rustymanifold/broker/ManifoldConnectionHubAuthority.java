@@ -33,6 +33,15 @@ public final class ManifoldConnectionHubAuthority implements ConnectionHubAuthor
                 "session_id", sessionId, "expected_transport_epoch", expectedEpoch), nowMs);
     }
 
+    @Override public Receipt refreshAuthenticatedActivity(String requestId, String sessionId,
+            long epoch, long sequence, String externalRequestSha256, long nowMs) {
+        return execute(object(
+                "operation", "refresh_authenticated_activity", "request_id", requestId,
+                "session_id", sessionId, "expected_transport_epoch", epoch,
+                "external_request_sequence", sequence,
+                "external_request_sha256", externalRequestSha256), nowMs);
+    }
+
     @Override public Receipt registerProvider(String requestId, HubProviderIdentity identity,
             String providerInstanceId, String admissionUseRequestId, long nowMs) {
         return execute(object(
@@ -92,12 +101,14 @@ public final class ManifoldConnectionHubAuthority implements ConnectionHubAuthor
 
     @Override public Receipt authorizeCommand(String requestId, String sessionId,
             long epoch, String leaseId, String surfaceId, String command,
-            String typedParamsSha256, long nowMs) {
+            String typedParamsSha256, long sequence, String externalRequestSha256, long nowMs) {
         return execute(object(
                 "operation", "authorize_surface_command", "request_id", requestId,
                 "session_id", sessionId, "expected_transport_epoch", epoch,
                 "lease_id", leaseId, "surface_id", surfaceId,
-                "command_id", command, "typed_params_sha256", typedParamsSha256), nowMs);
+                "command_id", command, "typed_params_sha256", typedParamsSha256,
+                "external_request_sequence", sequence,
+                "external_request_sha256", externalRequestSha256), nowMs);
     }
 
     @Override public Receipt revokeSession(String requestId, String sessionId,
@@ -118,6 +129,11 @@ public final class ManifoldConnectionHubAuthority implements ConnectionHubAuthor
 
     @Override public Receipt reconcileAfterRestart(String requestId, long nowMs) {
         return execute(object("operation", "reconcile_restart", "request_id", requestId), nowMs);
+    }
+
+    @Override public Receipt forceHistoryRollover(String requestId, long nowMs) {
+        return execute(object(
+                "operation", "force_rollover", "request_id", requestId), nowMs);
     }
 
     @Override public String exportOpaqueState() {
@@ -152,6 +168,7 @@ public final class ManifoldConnectionHubAuthority implements ConnectionHubAuthor
                 value.optString("logical_session_id", null),
                 value.optLong("transport_epoch", 0),
                 value.optLong("expires_at_ms", 0),
-                value.optString("surface_lease_id", null));
+                value.optString("surface_lease_id", null),
+                value.optLong("next_external_request_sequence", 0));
     }
 }

@@ -27,7 +27,8 @@ public final class AndroidConnectionHubStateStore implements ConnectionHubStateS
             "io.github.mesmerprism.rustymanifold.broker.connection_hub_state_v1";
     private static final String ENVELOPE_SCHEMA =
             "rusty.quest.connection_hub.encrypted_android_state.v1";
-    private static final String SCHEMA = "rusty.quest.connection_hub.android_state.v2";
+    private static final String SCHEMA = "rusty.quest.connection_hub.android_state.v3";
+    private static final String LEGACY_V2_SCHEMA = "rusty.quest.connection_hub.android_state.v2";
     private static final String LEGACY_SCHEMA = "rusty.quest.connection_hub.android_state.v1";
     private final SharedPreferences preferences;
 
@@ -55,7 +56,9 @@ public final class AndroidConnectionHubStateStore implements ConnectionHubStateS
             JSONObject value = new JSONObject(new String(
                     cipher.doFinal(ciphertext), StandardCharsets.UTF_8));
             String schema = value.optString("$schema", "");
-            if (!SCHEMA.equals(schema) && !LEGACY_SCHEMA.equals(schema)) {
+            if (!SCHEMA.equals(schema)
+                    && !LEGACY_V2_SCHEMA.equals(schema)
+                    && !LEGACY_SCHEMA.equals(schema)) {
                 return State.stopped();
             }
             Map<String, SessionProjection> sessions = new LinkedHashMap<>();
@@ -70,7 +73,8 @@ public final class AndroidConnectionHubStateStore implements ConnectionHubStateS
                     sessions.put(cookie, new SessionProjection(
                             row.getString("logical_session_id"),
                             row.getLong("transport_epoch"),
-                            row.getLong("expires_at_ms")));
+                            row.getLong("expires_at_ms"),
+                            row.optLong("next_external_request_sequence", 1)));
                 }
             }
             return new State(
@@ -100,6 +104,8 @@ public final class AndroidConnectionHubStateStore implements ConnectionHubStateS
                 row.put("logical_session_id", item.getValue().logicalSessionId);
                 row.put("transport_epoch", item.getValue().transportEpoch);
                 row.put("expires_at_ms", item.getValue().expiresAtMs);
+                row.put("next_external_request_sequence",
+                        item.getValue().nextExternalRequestSequence);
                 rows.put(row);
             }
             value.put("session_projections", rows);

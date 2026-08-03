@@ -177,7 +177,8 @@ public final class ConnectionHubRuntime implements HubSurfaceRegistry.Listener {
                     clock.nowMs());
             if (!authorityReceipt.applied
                     || authorityReceipt.logicalSessionId == null
-                    || authorityReceipt.transportEpoch < 1) {
+                    || authorityReceipt.transportEpoch < 1
+                    || authorityReceipt.nextExternalRequestSequence < 1) {
                 persist();
                 return pairReceipt(false, authorityReceipt.status, null, 0);
             }
@@ -190,7 +191,8 @@ public final class ConnectionHubRuntime implements HubSurfaceRegistry.Listener {
             sessions.put(cookie, new ConnectionHubStateStore.SessionProjection(
                     authorityReceipt.logicalSessionId,
                     authorityReceipt.transportEpoch,
-                    expiresAtMs));
+                    expiresAtMs,
+                    authorityReceipt.nextExternalRequestSequence));
             pairingCode = null;
             pairAttempts = 0;
             pairLockedUntilMs = 0;
@@ -261,7 +263,10 @@ public final class ConnectionHubRuntime implements HubSurfaceRegistry.Listener {
                 current.logicalSessionId,
                 current.transportEpoch,
                 clock.nowMs());
-        if (!receipt.applied || receipt.transportEpoch != current.transportEpoch + 1) {
+        if (!receipt.applied
+                || receipt.transportEpoch != current.transportEpoch + 1
+                || receipt.expiresAtMs <= clock.nowMs()
+                || receipt.nextExternalRequestSequence < 1) {
             persist();
             throw new SecurityException("transport_replacement_rejected");
         }
@@ -269,7 +274,8 @@ public final class ConnectionHubRuntime implements HubSurfaceRegistry.Listener {
                 new ConnectionHubStateStore.SessionProjection(
                         current.logicalSessionId,
                         receipt.transportEpoch,
-                        current.expiresAtMs);
+                        receipt.expiresAtMs,
+                        receipt.nextExternalRequestSequence);
         sessions.put(cookie, next);
         persist();
         closeLogicalSession(current.logicalSessionId, "transport_replaced");
@@ -456,10 +462,30 @@ public final class ConnectionHubRuntime implements HubSurfaceRegistry.Listener {
             long socketTransportEpoch,
             JSONObject request,
             final CommandReceiptSink sink) {
+        handleCommand(cookie, socketTransportEpoch, request, request.toString(), false, sink);
+    }
+
+    public void handleCommand(
+            final String cookie,
+            long socketTransportEpoch,
+            JSONObject request,
+            String rawFrame,
+            final boolean protocolV2,
+            final CommandReceiptSink sink) {
+        long requestedSequence = 0;
         try {
-            requireSchema(request, ConnectionHubProtocol.SURFACE_COMMAND_SCHEMA);
-            requireExactKeys(request,
-                    new String[] {"$schema", "type", "request_id", "surface_id", "command", "args"},
+            if (protocolV2) {
+                validateV2CommandFrame(request, rawFrame);
+                requestedSequence = requirePositiveSequence(request.getLong("request_sequence"));
+            }
+            requireSchema(request, protocolV2
+                    ? ConnectionHubProtocol.SURFACE_COMMAND_SCHEMA_V2
+                    : ConnectionHubProtocol.SURFACE_COMMAND_SCHEMA);
+            requireExactKeys(request, protocolV2
+                            ? new String[] {"$schema", "type", "request_sequence", "request_id",
+                                    "surface_id", "command", "args"}
+                            : new String[] {"$schema", "type", "request_id", "surface_id",
+                                    "command", "args"},
                     new String[0]);
             if (!"surface.command".equals(request.getString("type"))) {
                 throw new IllegalArgumentException("invalid command type");
@@ -488,6 +514,7 @@ public final class ConnectionHubRuntime implements HubSurfaceRegistry.Listener {
                 if (session.transportEpoch != socketTransportEpoch) {
                     throw new SecurityException("stale_socket_transport_epoch");
                 }
+                if (!protocolV2) { requestedSequence = session.nextExternalRequestSequence; }
                 if (!consumeRate(
                         commandRateWindows,
                         session.logicalSessionId,
@@ -495,6 +522,7 @@ public final class ConnectionHubRuntime implements HubSurfaceRegistry.Listener {
                         ConnectionHubProtocol.COMMAND_RATE_WINDOW_MS,
                         clock.nowMs())) {
                     sink.onReceipt(commandReceipt(
+                            protocolV2, requestedSequence, session.nextExternalRequestSequence,
                             requestId, surfaceId, command, false,
                             "command_rate_limited", false, "{}"));
                     return;
@@ -519,6 +547,7 @@ public final class ConnectionHubRuntime implements HubSurfaceRegistry.Listener {
                         leaseKey, session, surfaceId, authorizationNow);
                 if (!leaseReceipt.applied) {
                     sink.onReceipt(commandReceipt(
+                            protocolV2, requestedSequence, session.nextExternalRequestSequence,
                             requestId, surfaceId, command, false,
                             leaseReceipt.status, false, leaseReceipt.authorityReceiptJson));
                     return;
@@ -527,8 +556,8 @@ public final class ConnectionHubRuntime implements HubSurfaceRegistry.Listener {
             }
             String commandParamsSha256 = canonicalParamsSha256(args);
             ConnectionHubAuthorityPort.Receipt authorityReceipt = authorizeSurfaceCommand(
-                    requestId, session, lease.leaseId, surfaceId, command,
-                    commandParamsSha256, authorizationNow);
+                    cookie, requestId, session, lease.leaseId, surfaceId, command,
+                    commandParamsSha256, requestedSequence, sha256Utf8(rawFrame), authorizationNow);
             if (!authorityReceipt.applied
                     && "rejected_surfaceleasenotactive".equals(authorityReceipt.status)) {
                 synchronized (this) {
@@ -538,16 +567,20 @@ public final class ConnectionHubRuntime implements HubSurfaceRegistry.Listener {
                         leaseKey, session, surfaceId, clock.nowMs());
                 if (!reacquired.applied) {
                     sink.onReceipt(commandReceipt(
+                            protocolV2, requestedSequence,
+                            nextSequenceForCookie(cookie, session.nextExternalRequestSequence),
                             requestId, surfaceId, command, false,
                             reacquired.status, false, reacquired.authorityReceiptJson));
                     return;
                 }
                 authorityReceipt = authorizeSurfaceCommand(
-                        requestId, session, reacquired.surfaceLeaseId, surfaceId, command,
-                        commandParamsSha256, clock.nowMs());
+                        cookie, requestId, session, reacquired.surfaceLeaseId, surfaceId, command,
+                        commandParamsSha256, requestedSequence, sha256Utf8(rawFrame), clock.nowMs());
             }
             if (!authorityReceipt.applied) {
                 sink.onReceipt(commandReceipt(
+                        protocolV2, requestedSequence,
+                        nextSequenceForCookie(cookie, session.nextExternalRequestSequence),
                         requestId, surfaceId, command, false,
                         authorityReceipt.status, false, authorityReceipt.authorityReceiptJson));
                 return;
@@ -555,6 +588,8 @@ public final class ConnectionHubRuntime implements HubSurfaceRegistry.Listener {
             final ConnectionHubAuthorityPort.Receipt authorizedReceipt = authorityReceipt;
             final HubSurfaceRegistry.Entry authorizedEntry = entry;
             final long authorizedEpoch = session.transportEpoch;
+            final long authorizedRequestSequence = requestedSequence;
+            final long authorizedNextSequence = authorityReceipt.nextExternalRequestSequence;
             final java.util.concurrent.atomic.AtomicBoolean effectCompleted =
                     new java.util.concurrent.atomic.AtomicBoolean();
             registry.dispatch(
@@ -591,6 +626,7 @@ public final class ConnectionHubRuntime implements HubSurfaceRegistry.Listener {
                                 finalStatus = "provider_effect_queued";
                             }
                             sink.onReceipt(commandReceipt(
+                                    protocolV2, authorizedRequestSequence, authorizedNextSequence,
                                     requestId, surfaceId, command, true,
                                     finalStatus, observed, authorizedReceipt.authorityReceiptJson));
                         }
@@ -598,6 +634,9 @@ public final class ConnectionHubRuntime implements HubSurfaceRegistry.Listener {
         } catch (Exception error) {
             settlePreparedMutation();
             sink.onReceipt(commandReceipt(
+                    protocolV2,
+                    requestedSequence,
+                    nextSequenceForCookie(cookie, 1),
                     request.optString("request_id", "request.invalid"),
                     request.optString("surface_id", "surface.invalid"),
                     request.optString("command", "command.invalid"),
@@ -606,6 +645,106 @@ public final class ConnectionHubRuntime implements HubSurfaceRegistry.Listener {
                     false,
                     "{}"));
         }
+    }
+
+    public synchronized JSONObject handleKeepalive(
+            String cookie,
+            long socketTransportEpoch,
+            JSONObject request,
+            String rawFrame) {
+        long requestedSequence = 0;
+        ConnectionHubStateStore.SessionProjection session = null;
+        try {
+            validateV2KeepaliveFrame(request, rawFrame);
+            requireSchema(request, ConnectionHubProtocol.KEEPALIVE_SCHEMA_V2);
+            requireExactKeys(request,
+                    new String[] {"$schema", "type", "request_sequence"},
+                    new String[0]);
+            if (!"keepalive".equals(request.getString("type"))
+                    || !canonicalJson(request).equals(rawFrame)) {
+                throw new IllegalArgumentException("invalid v2 keepalive");
+            }
+            session = requireSession(cookie);
+            if (session.transportEpoch != socketTransportEpoch) {
+                throw new SecurityException("stale_socket_transport_epoch");
+            }
+            requestedSequence = requirePositiveSequence(request.getLong("request_sequence"));
+            if (!consumeRate(
+                    commandRateWindows,
+                    session.logicalSessionId,
+                    ConnectionHubProtocol.MAX_COMMANDS_PER_SESSION_PER_WINDOW,
+                    ConnectionHubProtocol.COMMAND_RATE_WINDOW_MS,
+                    clock.nowMs())) {
+                return keepaliveReceipt(
+                        requestedSequence, session.nextExternalRequestSequence, false,
+                        "keepalive_rate_limited", "{}");
+            }
+            prepareMutation("refresh_authenticated_activity");
+            ConnectionHubAuthorityPort.Receipt receipt = authority.refreshAuthenticatedActivity(
+                    randomRequestId("keepalive"),
+                    session.logicalSessionId,
+                    session.transportEpoch,
+                    requestedSequence,
+                    sha256Utf8(rawFrame),
+                    clock.nowMs());
+            applyAuthorityActivityProjection(cookie, session, receipt);
+            persist();
+            return keepaliveReceipt(
+                    requestedSequence,
+                    nextSequenceForCookie(cookie, session.nextExternalRequestSequence),
+                    receipt.applied,
+                    receipt.status,
+                    receipt.authorityReceiptJson);
+        } catch (Exception error) {
+            settlePreparedMutation();
+            return keepaliveReceipt(
+                    requestedSequence,
+                    nextSequenceForCookie(cookie,
+                            session == null ? 1 : session.nextExternalRequestSequence),
+                    false,
+                    "invalid_keepalive",
+                    "{}");
+        }
+    }
+
+    static void validateV2CommandFrame(JSONObject request, String rawFrame) throws Exception {
+        requireSchema(request, ConnectionHubProtocol.SURFACE_COMMAND_SCHEMA_V2);
+        requireExactKeys(request,
+                new String[] {"$schema", "type", "request_sequence", "request_id",
+                        "surface_id", "command", "args"},
+                new String[0]);
+        if (!"surface.command".equals(request.getString("type"))
+                || !canonicalJson(request).equals(rawFrame)) {
+            throw new IllegalArgumentException("invalid canonical v2 command");
+        }
+        requirePositiveSequence(request.getLong("request_sequence"));
+        HubSurfaceDescriptor.requireToken(
+                request.getString("request_id"),
+                ConnectionHubProtocol.MAX_REQUEST_ID_CHARS,
+                "request_id");
+        HubSurfaceDescriptor.requireToken(
+                request.getString("surface_id"),
+                ConnectionHubProtocol.MAX_SURFACE_ID_CHARS,
+                "surface_id");
+        HubSurfaceDescriptor.requireToken(
+                request.getString("command"),
+                ConnectionHubProtocol.MAX_COMMAND_ID_CHARS,
+                "command");
+        JSONObject args = request.optJSONObject("args");
+        if (args == null) throw new IllegalArgumentException("v2 args object required");
+        requireBoundedFlatObject(args, "args");
+    }
+
+    static void validateV2KeepaliveFrame(JSONObject request, String rawFrame) throws Exception {
+        requireSchema(request, ConnectionHubProtocol.KEEPALIVE_SCHEMA_V2);
+        requireExactKeys(request,
+                new String[] {"$schema", "type", "request_sequence"},
+                new String[0]);
+        if (!"keepalive".equals(request.getString("type"))
+                || !canonicalJson(request).equals(rawFrame)) {
+            throw new IllegalArgumentException("invalid canonical v2 keepalive");
+        }
+        requirePositiveSequence(request.getLong("request_sequence"));
     }
 
     private ConnectionHubAuthorityPort.Receipt acquireSurfaceLease(
@@ -640,12 +779,15 @@ public final class ConnectionHubRuntime implements HubSurfaceRegistry.Listener {
     }
 
     private ConnectionHubAuthorityPort.Receipt authorizeSurfaceCommand(
+            String cookie,
             String requestId,
             ConnectionHubStateStore.SessionProjection session,
             String leaseId,
             String surfaceId,
             String command,
             String commandParamsSha256,
+            long externalRequestSequence,
+            String externalRequestSha256,
             long nowMs) {
         prepareMutation("authorize_surface_command");
         ConnectionHubAuthorityPort.Receipt receipt = authority.authorizeCommand(
@@ -656,9 +798,60 @@ public final class ConnectionHubRuntime implements HubSurfaceRegistry.Listener {
                 surfaceId,
                 command,
                 commandParamsSha256,
+                externalRequestSequence,
+                externalRequestSha256,
                 nowMs);
+        applyAuthorityActivityProjection(cookie, session, receipt);
         persist();
         return receipt;
+    }
+
+    private synchronized void applyAuthorityActivityProjection(
+            String cookie,
+            ConnectionHubStateStore.SessionProjection previous,
+            ConnectionHubAuthorityPort.Receipt receipt) {
+        long nextSequence = receipt.nextExternalRequestSequence > 0
+                ? receipt.nextExternalRequestSequence
+                : previous.nextExternalRequestSequence;
+        long expiresAtMs = receipt.expiresAtMs > clock.nowMs()
+                ? receipt.expiresAtMs
+                : previous.expiresAtMs;
+        if (receipt.applied
+                && (receipt.nextExternalRequestSequence < 1 || receipt.expiresAtMs <= clock.nowMs())) {
+            throw new SecurityException("authority_activity_projection_invalid");
+        }
+        sessions.put(cookie, new ConnectionHubStateStore.SessionProjection(
+                previous.logicalSessionId,
+                previous.transportEpoch,
+                expiresAtMs,
+                nextSequence));
+    }
+
+    private synchronized long nextSequenceForCookie(String cookie, long fallback) {
+        ConnectionHubStateStore.SessionProjection session = sessions.get(cookie);
+        return session == null || session.nextExternalRequestSequence < 1
+                ? Math.max(1, fallback)
+                : session.nextExternalRequestSequence;
+    }
+
+    /** Debug-provider-only deterministic rollover hook; release config rejects in native authority. */
+    public synchronized ConnectionHubAuthorityPort.Receipt forceHistoryRolloverForDebug() {
+        prepareMutation("force_history_rollover");
+        ConnectionHubAuthorityPort.Receipt receipt = authority.forceHistoryRollover(
+                randomRequestId("force-rollover"), clock.nowMs());
+        persist();
+        return receipt;
+    }
+
+    public synchronized JSONObject protocolErrorV2(String cookie, String status) {
+        JSONObject value = eventBase(ConnectionHubProtocol.PROTOCOL_ERROR_SCHEMA_V2, "protocol_error");
+        try {
+            value.put("next_external_request_sequence", nextSequenceForCookie(cookie, 1));
+            value.put("status", status);
+        } catch (Exception impossible) {
+            throw new IllegalStateException(impossible);
+        }
+        return value;
     }
 
     public interface CommandReceiptSink { void onReceipt(JSONObject receipt); }
@@ -762,11 +955,15 @@ public final class ConnectionHubRuntime implements HubSurfaceRegistry.Listener {
                     old.logicalSessionId,
                     old.transportEpoch,
                     clock.nowMs());
-            if (receipt.applied && receipt.transportEpoch == old.transportEpoch + 1) {
+            if (receipt.applied
+                    && receipt.transportEpoch == old.transportEpoch + 1
+                    && receipt.expiresAtMs > clock.nowMs()
+                    && receipt.nextExternalRequestSequence > 0) {
                 sessions.put(item.getKey(), new ConnectionHubStateStore.SessionProjection(
                         old.logicalSessionId,
                         receipt.transportEpoch,
-                        old.expiresAtMs));
+                        receipt.expiresAtMs,
+                        receipt.nextExternalRequestSequence));
             } else {
                 sessions.remove(item.getKey());
             }
@@ -863,7 +1060,7 @@ public final class ConnectionHubRuntime implements HubSurfaceRegistry.Listener {
             for (int index = 0; index < keys.size(); index += 1) {
                 if (index > 0) { canonical.append(','); }
                 String key = keys.get(index);
-                canonical.append(JSONObject.quote(key)).append(':')
+                canonical.append(quoteAscii(key)).append(':')
                         .append(canonicalScalar(args.get(key)));
             }
             canonical.append('}');
@@ -875,6 +1072,47 @@ public final class ConnectionHubRuntime implements HubSurfaceRegistry.Listener {
             }
             return output.toString();
         } catch (Exception error) { throw new IllegalArgumentException("args canonicalization failed", error); }
+    }
+
+    static String canonicalJson(JSONObject value) {
+        return canonicalJsonValue(value);
+    }
+
+    private static String canonicalJsonValue(Object value) {
+        try {
+            if (value instanceof JSONObject) {
+                JSONObject object = (JSONObject) value;
+                List<String> keys = new ArrayList<>();
+                java.util.Iterator<String> iterator = object.keys();
+                while (iterator.hasNext()) { keys.add(iterator.next()); }
+                java.util.Collections.sort(keys);
+                StringBuilder output = new StringBuilder("{");
+                for (int index = 0; index < keys.size(); index += 1) {
+                    if (index > 0) { output.append(','); }
+                    String key = keys.get(index);
+                    output.append(quoteAscii(key)).append(':')
+                            .append(canonicalJsonValue(object.get(key)));
+                }
+                return output.append('}').toString();
+            }
+            if (value instanceof JSONArray) {
+                JSONArray array = (JSONArray) value;
+                StringBuilder output = new StringBuilder("[");
+                for (int index = 0; index < array.length(); index += 1) {
+                    if (index > 0) { output.append(','); }
+                    output.append(canonicalJsonValue(array.get(index)));
+                }
+                return output.append(']').toString();
+            }
+            return canonicalScalar(value);
+        } catch (Exception error) {
+            throw new IllegalArgumentException("canonical JSON failed", error);
+        }
+    }
+
+    private static long requirePositiveSequence(long value) {
+        if (value < 1) { throw new IllegalArgumentException("request_sequence must be positive"); }
+        return value;
     }
 
     private static String sha256Utf8(String value) {
@@ -893,7 +1131,7 @@ public final class ConnectionHubRuntime implements HubSurfaceRegistry.Listener {
 
     private static String canonicalScalar(Object value) {
         if (value == null || value == JSONObject.NULL) { return "null"; }
-        if (value instanceof String) { return JSONObject.quote((String) value); }
+        if (value instanceof String) { return quoteAscii((String) value); }
         if (value instanceof Boolean) { return ((Boolean) value) ? "true" : "false"; }
         if (value instanceof Number) {
             String encoded = String.valueOf(value);
@@ -904,6 +1142,21 @@ public final class ConnectionHubRuntime implements HubSurfaceRegistry.Listener {
             return encoded;
         }
         throw new IllegalArgumentException("unsupported command parameter scalar");
+    }
+
+    private static String quoteAscii(String value) {
+        String quoted = JSONObject.quote(value);
+        StringBuilder output = new StringBuilder(quoted.length());
+        for (int index = 0; index < quoted.length(); index += 1) {
+            char item = quoted.charAt(index);
+            if (item <= 0x7f) {
+                output.append(item);
+            } else {
+                output.append("\\u")
+                        .append(String.format(java.util.Locale.ROOT, "%04x", (int) item));
+            }
+        }
+        return output.toString();
     }
 
     private HubSurfaceDescriptor parseDescriptor(
@@ -1007,6 +1260,60 @@ public final class ConnectionHubRuntime implements HubSurfaceRegistry.Listener {
             value.put("status", status);
             value.put("authority_receipt", new JSONObject(authorityReceiptJson));
         } catch (Exception impossible) { throw new IllegalStateException(impossible); }
+        return value;
+    }
+
+    private JSONObject commandReceipt(
+            boolean protocolV2,
+            long requestSequence,
+            long nextExternalRequestSequence,
+            String requestId,
+            String surfaceId,
+            String command,
+            boolean accepted,
+            String status,
+            boolean providerApplied,
+            String authorityReceiptJson) {
+        if (!protocolV2) {
+            return commandReceipt(
+                    requestId, surfaceId, command, accepted, status,
+                    providerApplied, authorityReceiptJson);
+        }
+        JSONObject value = eventBase(ConnectionHubProtocol.COMMAND_RECEIPT_SCHEMA_V2, "command_receipt");
+        try {
+            value.put("request_sequence", requestSequence);
+            value.put("next_external_request_sequence", Math.max(1, nextExternalRequestSequence));
+            value.put("request_id", requestId);
+            value.put("surface_id", surfaceId);
+            value.put("command", command);
+            value.put("accepted", accepted);
+            value.put("provider_applied", providerApplied);
+            value.put("status", status);
+            value.put("authority_receipt", new JSONObject(authorityReceiptJson));
+        } catch (Exception impossible) {
+            throw new IllegalStateException(impossible);
+        }
+        return value;
+    }
+
+    private JSONObject keepaliveReceipt(
+            long requestSequence,
+            long nextExternalRequestSequence,
+            boolean accepted,
+            String status,
+            String authorityReceiptJson) {
+        JSONObject value = eventBase(
+                ConnectionHubProtocol.KEEPALIVE_RECEIPT_SCHEMA_V2,
+                "keepalive_receipt");
+        try {
+            value.put("request_sequence", requestSequence);
+            value.put("next_external_request_sequence", Math.max(1, nextExternalRequestSequence));
+            value.put("accepted", accepted);
+            value.put("status", status);
+            value.put("authority_receipt", new JSONObject(authorityReceiptJson));
+        } catch (Exception impossible) {
+            throw new IllegalStateException(impossible);
+        }
         return value;
     }
 

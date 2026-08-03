@@ -277,6 +277,92 @@ public final class ConnectionHubCoreTest {
         assertTrue(leaseAfterRestart.value.getBoolean("accepted"),
                 "restart did not rebuild an authority lease");
         assertEquals(4, leaseAuthority.leaseAcquisitions);
+
+        // Canonical v2 sequencing is authority-derived and remains exact across
+        // owner-history rollover, process restart/transport replacement, and
+        // authenticated keepalives beyond the original session deadline.
+        ManualClock v2Clock = new ManualClock(10_000_000L);
+        InMemoryStore v2Store = new InMemoryStore();
+        FakeAuthority v2Authority = new FakeAuthority();
+        HubSurfaceRegistry v2Registry = new HubSurfaceRegistry();
+        ConnectionHubRuntime v2Runtime = new ConnectionHubRuntime(
+                v2Authority, v2Store, v2Registry, seededRandom(), v2Clock);
+        v2Runtime.startRequested();
+        v2Runtime.noteListenerStarted();
+        JSONObject v2Pair = v2Runtime.pair(new JSONObject()
+                .put("$schema", ConnectionHubProtocol.PAIR_REQUEST_SCHEMA)
+                .put("pairing_code", v2Runtime.pairingCodeForWearer())
+                .put("controller_identity_sha256", repeat("56", 32)), "wearer.test.evidence");
+        String v2Cookie = v2Pair.getString("session");
+        v2Runtime.registerSurface(PROVIDER, "provider.instance.v2.1", "admission.v2.1",
+                registration(), immediateEndpoint());
+        JSONObject v2CommandOne = new JSONObject()
+                .put("$schema", ConnectionHubProtocol.SURFACE_COMMAND_SCHEMA_V2)
+                .put("type", "surface.command")
+                .put("request_sequence", 1)
+                .put("request_id", "request.example.1")
+                .put("surface_id", descriptor.surfaceId())
+                .put("command", "command.example.play")
+                .put("args", new JSONObject());
+        String v2CommandOneRaw = ConnectionHubRuntime.canonicalJson(v2CommandOne);
+        ReceiptCapture v2First = new ReceiptCapture();
+        v2Runtime.handleCommand(v2Cookie, 1, v2CommandOne, v2CommandOneRaw, true, v2First);
+        assertTrue(v2First.value.getBoolean("accepted"), "canonical v2 command rejected");
+        assertEquals(2, v2First.value.getLong("next_external_request_sequence"));
+        assertEquals("sha256:6cc14780d7cbe3c4d7ba5dcb2d39a7d4fe0dee95ec0bcb01bab84e263d90d69f",
+                v2Authority.lastExternalRequestSha256);
+        assertTrue(v2Runtime.forceHistoryRolloverForDebug().applied,
+                "debug owner-history rollover failed");
+        ReceiptCapture oldExactReplay = new ReceiptCapture();
+        v2Runtime.handleCommand(
+                v2Cookie, 1, v2CommandOne, v2CommandOneRaw, true, oldExactReplay);
+        assertTrue(!oldExactReplay.value.getBoolean("accepted"),
+                "exact old v2 frame replayed across owner-history rollover");
+        assertEquals(2, oldExactReplay.value.getLong("next_external_request_sequence"));
+        JSONObject v2CommandTwo = new JSONObject(v2CommandOne.toString())
+                .put("request_sequence", 2)
+                .put("request_id", "request.v2.two");
+        ReceiptCapture afterRollover = new ReceiptCapture();
+        v2Runtime.handleCommand(v2Cookie, 1, v2CommandTwo,
+                ConnectionHubRuntime.canonicalJson(v2CommandTwo), true, afterRollover);
+        assertTrue(afterRollover.value.getBoolean("accepted"),
+                "live provider/surface/lease failed across owner-history rollover");
+        assertEquals(3, afterRollover.value.getLong("next_external_request_sequence"));
+        v2Runtime.unregisterProvider(PROVIDER, "provider.instance.v2.1", "process_restart");
+        HubSurfaceRegistry v2RestartRegistry = new HubSurfaceRegistry();
+        ConnectionHubRuntime v2Restart = new ConnectionHubRuntime(
+                v2Authority, v2Store, v2RestartRegistry, seededRandom(), v2Clock);
+        v2Restart.noteListenerStarted();
+        assertEquals(2, v2Restart.requireSession(v2Cookie).transportEpoch);
+        assertEquals(3, v2Restart.requireSession(v2Cookie).nextExternalRequestSequence);
+        v2Restart.registerSurface(PROVIDER, "provider.instance.v2.2", "admission.v2.2",
+                registration(), immediateEndpoint());
+        JSONObject v2CommandThree = new JSONObject(v2CommandOne.toString())
+                .put("request_sequence", 3)
+                .put("request_id", "request.v2.three");
+        ReceiptCapture afterRestart = new ReceiptCapture();
+        v2Restart.handleCommand(v2Cookie, 2, v2CommandThree,
+                ConnectionHubRuntime.canonicalJson(v2CommandThree), true, afterRestart);
+        assertTrue(afterRestart.value.getBoolean("accepted"),
+                "v2 command failed after restart transport resynchronization");
+        v2Clock.advance(29L * 24L * 60L * 60L * 1000L);
+        JSONObject keepaliveFour = new JSONObject()
+                .put("$schema", ConnectionHubProtocol.KEEPALIVE_SCHEMA_V2)
+                .put("type", "keepalive")
+                .put("request_sequence", 4);
+        JSONObject keepaliveReceipt = v2Restart.handleKeepalive(
+                v2Cookie, 2, keepaliveFour, ConnectionHubRuntime.canonicalJson(keepaliveFour));
+        assertTrue(keepaliveReceipt.getBoolean("accepted"), "v2 keepalive rejected");
+        assertEquals(5, keepaliveReceipt.getLong("next_external_request_sequence"));
+        v2Clock.advance(2L * 24L * 60L * 60L * 1000L);
+        v2Restart.requireSession(v2Cookie);
+        JSONObject keepaliveFive = new JSONObject(keepaliveFour.toString())
+                .put("request_sequence", 5);
+        JSONObject beyondOriginalTtl = v2Restart.handleKeepalive(
+                v2Cookie, 2, keepaliveFive, ConnectionHubRuntime.canonicalJson(keepaliveFive));
+        assertTrue(beyondOriginalTtl.getBoolean("accepted"),
+                "keepalive did not slide the session beyond its original TTL");
+        assertEquals(6, beyondOriginalTtl.getLong("next_external_request_sequence"));
         System.out.println("Connection Hub core tests passed");
     }
 
@@ -366,22 +452,36 @@ public final class ConnectionHubCoreTest {
     private static final class FakeAuthority implements ConnectionHubAuthorityPort {
         long revision = 1;
         long transportEpoch = 1;
+        long nextExternalRequestSequence = 1;
+        long sessionExpiresAtMs;
         boolean sessionActive;
         final Set<String> consumed = new HashSet<>();
         final Set<String> activeProviders = new HashSet<>();
         final Map<String, Long> leaseExpiries = new LinkedHashMap<>();
         int leaseAcquisitions;
+        String lastExternalRequestSha256;
 
         @Override public Receipt trustAndOpenSession(String requestId, String controller, String evidence, long now) {
             sessionActive = true; revision += 1;
+            nextExternalRequestSequence = 1;
+            sessionExpiresAtMs = now + 30L * 24L * 60L * 60L * 1000L;
             Receipt base = applied("open_session", requestId, "session.test", transportEpoch, null, null, null);
             return new Receipt(true, "applied", base.authorityReceiptJson, "session.test",
-                    transportEpoch, now + 30L * 24L * 60L * 60L * 1000L, null);
+                    transportEpoch, sessionExpiresAtMs, null, nextExternalRequestSequence);
         }
         @Override public Receipt replaceTransport(String requestId, String session, long expected, long now) {
             if (!sessionActive || expected != transportEpoch) return Receipt.rejected("stale_transport_epoch");
             transportEpoch += 1; revision += 1;
-            return applied("replace_transport", requestId, session, transportEpoch, null, null, null);
+            sessionExpiresAtMs = now + 30L * 24L * 60L * 60L * 1000L;
+            Receipt base = applied("replace_transport", requestId, session, transportEpoch, null, null, null);
+            return new Receipt(true, "applied", base.authorityReceiptJson, session,
+                    transportEpoch, sessionExpiresAtMs, null, nextExternalRequestSequence);
+        }
+        @Override public Receipt refreshAuthenticatedActivity(String requestId, String session,
+                long epoch, long sequence, String externalSha256, long now) {
+            return applyAuthenticatedActivity(
+                    "refresh_authenticated_activity", requestId, session, epoch,
+                    sequence, externalSha256, now, null, null);
         }
         @Override public Receipt registerProvider(String requestId, HubProviderIdentity identity, String instance, String admissionUseRequestId, long now) {
             if (admissionUseRequestId == null || admissionUseRequestId.isEmpty()) return Receipt.rejected("provider_not_admitted");
@@ -410,15 +510,19 @@ public final class ConnectionHubCoreTest {
         @Override public Receipt releaseSurfaceLease(String requestId, String session, String lease, String reason, long now) {
             revision += 1; return applied("release_surface_lease", requestId, session, transportEpoch, null, null, null);
         }
-        @Override public Receipt authorizeCommand(String requestId, String session, long epoch, String lease, String surface, String command, String paramsSha256, long now) {
+        @Override public Receipt authorizeCommand(String requestId, String session, long epoch,
+                String lease, String surface, String command, String paramsSha256,
+                long sequence, String externalSha256, long now) {
             if (!sessionActive) return Receipt.rejected("session_revoked");
             if (epoch != transportEpoch) return Receipt.rejected("stale_transport_epoch");
             Long leaseExpiry = leaseExpiries.get(lease);
             if (leaseExpiry == null || leaseExpiry <= now) {
                 return Receipt.rejected("rejected_surfaceleasenotactive");
             }
-            if (!consumed.add(requestId)) return Receipt.rejected("replayed_request");
-            revision += 1; return applied("authorize_surface_command", requestId, session, epoch, surface, command, requestId);
+            if (!consumed.add(requestId)) return projectedRejection("replayed_request");
+            return applyAuthenticatedActivity(
+                    "authorize_surface_command", requestId, session, epoch,
+                    sequence, externalSha256, now, surface, command);
         }
         @Override public Receipt revokeSession(String requestId, String session, String reason, long now) {
             sessionActive = false; revision += 1;
@@ -435,6 +539,10 @@ public final class ConnectionHubCoreTest {
         @Override public Receipt reconcileAfterRestart(String requestId, long now) {
             return applied("reconcile_restart", requestId, null, 0, null, null, null);
         }
+        @Override public Receipt forceHistoryRollover(String requestId, long now) {
+            revision += 1;
+            return applied("history_rollover", requestId, null, 0, null, null, null);
+        }
         @Override public String exportOpaqueState() { return "fake-authority-state-v1"; }
         @Override public Receipt restoreOpaqueState(String state, long now) {
             return "fake-authority-state-v1".equals(state)
@@ -443,6 +551,39 @@ public final class ConnectionHubCoreTest {
         }
 
         void invalidateLeases() { leaseExpiries.clear(); }
+
+        private Receipt applyAuthenticatedActivity(
+                String operation,
+                String requestId,
+                String session,
+                long epoch,
+                long sequence,
+                String externalSha256,
+                long now,
+                String surface,
+                String command) {
+            if (!sessionActive || epoch != transportEpoch) {
+                return projectedRejection("stale_transport_epoch");
+            }
+            if (sequence != nextExternalRequestSequence
+                    || externalSha256 == null
+                    || !externalSha256.matches("sha256:[0-9a-f]{64}")) {
+                return projectedRejection("replayed_request");
+            }
+            lastExternalRequestSha256 = externalSha256;
+            nextExternalRequestSequence += 1;
+            sessionExpiresAtMs = now + 30L * 24L * 60L * 60L * 1000L;
+            revision += 1;
+            Receipt base = applied(operation, requestId, session, epoch, surface, command,
+                    command == null ? null : requestId);
+            return new Receipt(true, "applied", base.authorityReceiptJson, session, epoch,
+                    sessionExpiresAtMs, null, nextExternalRequestSequence);
+        }
+
+        private Receipt projectedRejection(String status) {
+            return new Receipt(false, status, "{}", "session.test", transportEpoch,
+                    sessionExpiresAtMs, null, nextExternalRequestSequence);
+        }
 
         private Receipt applied(String operation, String requestId, String session, long epoch,
                 String surface, String command, String authorizationRequest) {

@@ -1,7 +1,9 @@
 (() => {
   "use strict";
   const protocol = globalThis.RustyConnectionHubProtocol;
+  const canonicalJson = globalThis.RustyConnectionHubCanonicalJson;
   if (!protocol) throw new Error("Connection Hub protocol projection missing");
+  if (!canonicalJson) throw new Error("Connection Hub canonical JSON encoder missing");
   const surfaces = new Map();
   const root = document.querySelector("#surfaces");
   const template = document.querySelector("#surface-template");
@@ -10,6 +12,42 @@
   const disconnectButton = document.querySelector("#disconnect-button");
   let session = sessionStorage.getItem("rustyHubSession") || "";
   let socket = null;
+  let nextSequence = null;
+  let requestInFlight = false;
+  let keepaliveTimer = null;
+  let reconnectTimer = null;
+
+  const stopKeepalive = () => {
+    if (keepaliveTimer !== null) clearInterval(keepaliveTimer);
+    keepaliveTimer = null;
+  };
+
+  const applyNextSequence = message => {
+    if (!Number.isSafeInteger(message.next_external_request_sequence)
+        || message.next_external_request_sequence < 1) {
+      throw new Error("authority sequence projection missing");
+    }
+    nextSequence = message.next_external_request_sequence;
+    requestInFlight = false;
+  };
+
+  const sendSequenced = message => {
+    if (!socket || socket.readyState !== WebSocket.OPEN
+        || nextSequence === null || requestInFlight) return false;
+    requestInFlight = true;
+    socket.send(canonicalJson({...message, request_sequence: nextSequence}));
+    return true;
+  };
+
+  const startKeepalive = () => {
+    stopKeepalive();
+    keepaliveTimer = setInterval(() => {
+      sendSequenced({
+        $schema: protocol.schemas.keepalive,
+        type: protocol.types.keepalive,
+      });
+    }, 5000);
+  };
 
   const acceptedRevokeReceipt = (response, receipt) => {
     const required = [
@@ -88,26 +126,43 @@
 
   const connect = () => {
     if (!session) return;
-    if (socket) socket.close();
+    if (reconnectTimer !== null) clearTimeout(reconnectTimer);
+    reconnectTimer = null;
+    const previousSocket = socket;
+    socket = null;
+    if (previousSocket) previousSocket.close();
     const scheme = location.protocol === "https:" ? "wss" : "ws";
-    socket = new WebSocket(`${scheme}://${location.host}${protocol.routes.socket}`);
-    socket.addEventListener("open", () => {
-      socket.send(JSON.stringify({
+    const activeSocket = new WebSocket(`${scheme}://${location.host}${protocol.routes.socket}`);
+    socket = activeSocket;
+    activeSocket.addEventListener("open", () => {
+      activeSocket.send(canonicalJson({
         $schema: protocol.schemas.socket_authenticate,
         type: protocol.types.authenticate,
         session,
       }));
     });
-    socket.addEventListener("message", event => handle(JSON.parse(event.data)));
-    socket.addEventListener("close", () => {
+    activeSocket.addEventListener("message", event => handle(JSON.parse(event.data)));
+    activeSocket.addEventListener("close", () => {
+      if (socket !== activeSocket) return;
+      socket = null;
+      stopKeepalive();
+      nextSequence = null;
+      requestInFlight = false;
       pairStatus.textContent = "Connection closed";
       disconnectButton.disabled = true;
+      if (session) reconnectTimer = setTimeout(connect, 1000);
     });
-    socket.addEventListener("error", () => { pairStatus.textContent = "Connection error"; });
+    activeSocket.addEventListener("error", () => {
+      if (socket === activeSocket) pairStatus.textContent = "Connection error";
+    });
   };
 
   const handle = message => {
     if (message.type === protocol.types.authentication_receipt) {
+      if (message.$schema !== protocol.schemas.socket_authentication_receipt
+          || message.accepted !== true) throw new Error("authentication receipt rejected");
+      applyNextSequence(message);
+      startKeepalive();
       pairStatus.textContent = "Connected";
       pairButton.disabled = false;
       disconnectButton.disabled = false;
@@ -129,8 +184,20 @@
         render();
       }
     } else if (message.type === protocol.types.command_receipt) {
+      if (message.$schema !== protocol.schemas.command_receipt) {
+        throw new Error("command receipt schema mismatch");
+      }
+      applyNextSequence(message);
       const card = document.querySelector(`[data-surface-id="${CSS.escape(message.surface_id)}"]`);
       if (card) card.querySelector(".receipt").textContent = `${message.command}: ${message.status}`;
+    } else if (message.type === protocol.types.keepalive_receipt) {
+      if (message.$schema !== protocol.schemas.keepalive_receipt) {
+        throw new Error("keepalive receipt schema mismatch");
+      }
+      applyNextSequence(message);
+    } else if (message.type === protocol.types.protocol_error) {
+      applyNextSequence(message);
+      pairStatus.textContent = `Protocol error: ${message.status}`;
     }
   };
 
@@ -174,14 +241,16 @@
     if (!socket || socket.readyState !== WebSocket.OPEN) return;
     try {
       const args = {};
-      socket.send(JSON.stringify({
+      if (!sendSequenced({
         $schema: protocol.schemas.surface_command,
         type: protocol.types.surface_command,
         request_id: `browser.${crypto.randomUUID()}`,
         surface_id: surfaceId,
         command,
         args,
-      }));
+      })) {
+        card.querySelector(".receipt").textContent = "Command deferred until sequence resync";
+      }
     } catch (error) {
       card.querySelector(".receipt").textContent = `Arguments rejected: ${error.message}`;
     }
@@ -213,6 +282,11 @@
       return;
     }
     if (socket) socket.close();
+    stopKeepalive();
+    if (reconnectTimer !== null) clearTimeout(reconnectTimer);
+    reconnectTimer = null;
+    nextSequence = null;
+    requestInFlight = false;
     session = "";
     sessionStorage.removeItem("rustyHubSession");
     surfaces.clear();

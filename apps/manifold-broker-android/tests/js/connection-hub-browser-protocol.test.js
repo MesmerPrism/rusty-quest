@@ -1,17 +1,31 @@
 "use strict";
 
 const fs = require("fs");
+const nodeCrypto = require("crypto");
 const vm = require("vm");
 
-if (process.argv.length !== 5) {
-  throw new Error("usage: node test.js <vectors.json> <protocol.js> <app.js>");
+if (process.argv.length !== 6) {
+  throw new Error("usage: node test.js <v1.json> <v2.json> <protocol.js> <app.js>");
 }
-const vectors = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
-const protocolSource = fs.readFileSync(process.argv[3], "utf8");
-const appSource = fs.readFileSync(process.argv[4], "utf8");
+const legacyVectorBytes = fs.readFileSync(process.argv[2]);
+const legacyVectors = JSON.parse(legacyVectorBytes.toString("utf8"));
+const vectors = JSON.parse(fs.readFileSync(process.argv[3], "utf8"));
+const protocolSource = fs.readFileSync(process.argv[4], "utf8");
+const appSource = fs.readFileSync(process.argv[5], "utf8");
 const context = vm.createContext({});
 vm.runInContext(protocolSource, context, {filename: "protocol.js"});
 const actual = JSON.parse(JSON.stringify(context.RustyConnectionHubProtocol));
+const canonicalJsonEncoder = context.RustyConnectionHubCanonicalJson;
+const legacySha256 = nodeCrypto.createHash("sha256").update(legacyVectorBytes).digest("hex");
+if (vectors.legacy_protocol_sha256 !== `sha256:${legacySha256}`) {
+  throw new Error("v2 vector does not bind the exact legacy v1 vector bytes");
+}
+for (const frame of Object.values(vectors.canonical_frames)) {
+  const canonical = context.RustyConnectionHubCanonicalJson(JSON.parse(frame.utf8));
+  if (canonical !== frame.utf8) throw new Error("browser canonical JSON bytes differ");
+  const digest = nodeCrypto.createHash("sha256").update(canonical, "utf8").digest("hex");
+  if (frame.sha256 !== `sha256:${digest}`) throw new Error("browser canonical digest differs");
+}
 
 const exactKeySet = (actualValue, expectedValue, name) => {
   const actualKeys = Object.keys(actualValue).sort();
@@ -60,7 +74,9 @@ for (const access of [
   "protocol.schemas.revoke_request",
   "protocol.schemas.socket_authenticate",
   "protocol.schemas.surface_command",
+  "protocol.schemas.keepalive",
   "protocol.types.command_receipt",
+  "protocol.types.keepalive_receipt",
 ]) {
   if (!appSource.includes(access)) throw new Error(`app.js does not consume ${access}`);
 }
@@ -120,6 +136,7 @@ const runDisconnect = async fetchImplementation => {
   }
   const context = vm.createContext({
     RustyConnectionHubProtocol: actual,
+    RustyConnectionHubCanonicalJson: canonicalJsonEncoder,
     document: {
       querySelector: selector => elements.get(selector),
       createElement: () => new FakeElement(),
@@ -132,6 +149,10 @@ const runDisconnect = async fetchImplementation => {
     location: {protocol: "http:", host: "hub.test"},
     WebSocket: FakeWebSocket,
     CSS: {escape: value => value},
+    setInterval: () => 1,
+    clearInterval: () => {},
+    setTimeout: () => 1,
+    clearTimeout: () => {},
   });
   vm.runInContext(appSource, context, {filename: "app.js"});
   await elements.get("#disconnect-button").click();
@@ -148,8 +169,98 @@ const response = (ok, status, receipt) => ({
   json: async () => receipt,
 });
 
+const runV2SequenceFlow = () => {
+  const elements = new Map([
+    ["#surfaces", new FakeElement()],
+    ["#surface-template", new FakeElement()],
+    ["#pair-status", new FakeElement()],
+    ["#pair-button", new FakeElement()],
+    ["#disconnect-button", new FakeElement()],
+    ["#pairing-code", new FakeElement()],
+  ]);
+  const sockets = [];
+  const intervals = new Map();
+  const timeouts = new Map();
+  let timerId = 0;
+  class FakeWebSocket {
+    static OPEN = 1;
+    constructor() {
+      this.readyState = FakeWebSocket.OPEN;
+      this.listeners = new Map();
+      this.sent = [];
+      sockets.push(this);
+    }
+    addEventListener(type, listener) { this.listeners.set(type, listener); }
+    send(value) { this.sent.push(value); }
+    emit(type, value = {}) {
+      const listener = this.listeners.get(type);
+      if (listener) listener(value);
+    }
+    close() {
+      this.readyState = 3;
+      this.emit("close", {code: 1000});
+    }
+  }
+  const browserContext = vm.createContext({
+    RustyConnectionHubProtocol: actual,
+    RustyConnectionHubCanonicalJson: canonicalJsonEncoder,
+    document: {
+      querySelector: selector => elements.get(selector),
+      createElement: () => new FakeElement(),
+    },
+    sessionStorage: storage({rustyHubSession: "sequence-test-bearer"}),
+    localStorage: storage({}),
+    fetch: async () => { throw new Error("unexpected fetch"); },
+    crypto: require("crypto").webcrypto,
+    TextEncoder,
+    location: {protocol: "http:", host: "hub.test"},
+    WebSocket: FakeWebSocket,
+    CSS: {escape: value => value},
+    setInterval: callback => { const id = ++timerId; intervals.set(id, callback); return id; },
+    clearInterval: id => intervals.delete(id),
+    setTimeout: callback => { const id = ++timerId; timeouts.set(id, callback); return id; },
+    clearTimeout: id => timeouts.delete(id),
+  });
+  vm.runInContext(appSource, browserContext, {filename: "app.js"});
+  const first = sockets[0];
+  first.emit("open");
+  if (JSON.parse(first.sent[0]).$schema !== vectors.messages.socket_authenticate.schema) {
+    throw new Error("browser did not negotiate v2 authentication");
+  }
+  const authentication = JSON.parse(JSON.stringify(
+    vectors.messages.socket_authentication_receipt.example));
+  authentication.next_external_request_sequence = 7;
+  first.emit("message", {data: JSON.stringify(authentication)});
+  Array.from(intervals.values())[0]();
+  const firstKeepalive = first.sent[1];
+  if (firstKeepalive !== context.RustyConnectionHubCanonicalJson({
+    $schema: vectors.messages.keepalive.schema,
+    type: "keepalive",
+    request_sequence: 7,
+  })) throw new Error("keepalive did not use the exact authority sequence/canonical bytes");
+  const keepaliveReceipt = JSON.parse(JSON.stringify(vectors.messages.keepalive_receipt.example));
+  keepaliveReceipt.request_sequence = 7;
+  keepaliveReceipt.next_external_request_sequence = 8;
+  first.emit("message", {data: JSON.stringify(keepaliveReceipt)});
+  first.close();
+  const reconnect = Array.from(timeouts.values())[0];
+  if (!reconnect) throw new Error("authenticated close did not schedule reconnect");
+  reconnect();
+  const second = sockets[1];
+  second.emit("open");
+  const reauthentication = JSON.parse(JSON.stringify(authentication));
+  reauthentication.transport_epoch += 1;
+  reauthentication.next_external_request_sequence = 19;
+  second.emit("message", {data: JSON.stringify(reauthentication)});
+  Array.from(intervals.values())[0]();
+  if (JSON.parse(second.sent[1]).request_sequence !== 19) {
+    throw new Error("reconnect did not resynchronize the exact authority sequence");
+  }
+};
+
 (async () => {
-  const accepted = JSON.parse(JSON.stringify(vectors.messages.revoke_receipt.example));
+  runV2SequenceFlow();
+  const accepted = JSON.parse(JSON.stringify(legacyVectors.messages.revoke_receipt.example));
   const networkFailure = await runDisconnect(async () => { throw new Error("network unavailable"); });
   if (networkFailure.bearer !== "stale-test-bearer"
       || networkFailure.socketClosed

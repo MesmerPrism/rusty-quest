@@ -238,8 +238,10 @@ public final class ConnectionHubHttpServer
         }
         JSONObject authentication = new JSONObject(
                 new String(authenticationFrame.payload, StandardCharsets.UTF_8));
-        if (!ConnectionHubProtocol.SOCKET_AUTHENTICATE_SCHEMA.equals(
-                    authentication.optString("$schema", ""))
+        String authenticationSchema = authentication.optString("$schema", "");
+        final boolean protocolV2 =
+                ConnectionHubProtocol.SOCKET_AUTHENTICATE_SCHEMA_V2.equals(authenticationSchema);
+        if (!(protocolV2 || ConnectionHubProtocol.SOCKET_AUTHENTICATE_SCHEMA.equals(authenticationSchema))
                 || !"authenticate".equals(authentication.optString("type", ""))) {
             noteAuthenticationFailure();
             throw new SecurityException("socket_authentication_invalid");
@@ -285,8 +287,13 @@ public final class ConnectionHubHttpServer
             throw rejected;
         }
         try {
-            session.enqueue(ConnectionHubProtocol.socketAuthenticationReceipt(
-                    sessionProjection.transportEpoch));
+            session.enqueue(protocolV2
+                    ? ConnectionHubProtocol.socketAuthenticationReceiptV2(
+                            sessionProjection.transportEpoch,
+                            sessionProjection.nextExternalRequestSequence,
+                            sessionProjection.expiresAtMs)
+                    : ConnectionHubProtocol.socketAuthenticationReceipt(
+                            sessionProjection.transportEpoch));
             session.enqueue(runtime.snapshotEvent());
             while (!socket.isClosed()) {
                 Frame frame = readFrame(input, Long.MAX_VALUE, true);
@@ -294,16 +301,57 @@ public final class ConnectionHubHttpServer
                 if (frame.opcode == 9) { session.enqueueFrame(10, frame.payload); continue; }
                 if (frame.opcode == 10) { continue; }
                 if (frame.opcode != 1) { throw new IOException("text frames only"); }
-                final JSONObject command = new JSONObject(new String(frame.payload, StandardCharsets.UTF_8));
-                runtime.handleCommand(
-                        cookie,
-                        session.transportEpoch,
-                        command,
-                        new ConnectionHubRuntime.CommandReceiptSink() {
-                    @Override public void onReceipt(JSONObject receipt) {
-                        try { session.enqueue(receipt); } catch (IOException ignored) { session.close(); }
+                final String rawFrame = new String(frame.payload, StandardCharsets.UTF_8);
+                final JSONObject message;
+                try {
+                    message = new JSONObject(rawFrame);
+                } catch (Exception malformed) {
+                    if (protocolV2) {
+                        session.enqueueTerminal(runtime.protocolErrorV2(cookie, "invalid_json"));
+                        return;
                     }
-                });
+                    throw malformed;
+                }
+                String messageSchema = message.optString("$schema", "");
+                if (protocolV2 && ConnectionHubProtocol.KEEPALIVE_SCHEMA_V2.equals(messageSchema)) {
+                    try {
+                        ConnectionHubRuntime.validateV2KeepaliveFrame(message, rawFrame);
+                    } catch (Exception invalid) {
+                        session.enqueueTerminal(runtime.protocolErrorV2(cookie, "invalid_keepalive"));
+                        return;
+                    }
+                    session.enqueue(runtime.handleKeepalive(
+                            cookie, session.transportEpoch, message, rawFrame));
+                } else if ((protocolV2
+                                && ConnectionHubProtocol.SURFACE_COMMAND_SCHEMA_V2.equals(messageSchema))
+                        || (!protocolV2
+                                && ConnectionHubProtocol.SURFACE_COMMAND_SCHEMA.equals(messageSchema))) {
+                    if (protocolV2) {
+                        try {
+                            ConnectionHubRuntime.validateV2CommandFrame(message, rawFrame);
+                        } catch (Exception invalid) {
+                            session.enqueueTerminal(runtime.protocolErrorV2(cookie, "invalid_command"));
+                            return;
+                        }
+                    }
+                    runtime.handleCommand(
+                            cookie,
+                            session.transportEpoch,
+                            message,
+                            rawFrame,
+                            protocolV2,
+                            new ConnectionHubRuntime.CommandReceiptSink() {
+                        @Override public void onReceipt(JSONObject receipt) {
+                            try { session.enqueue(receipt); }
+                            catch (IOException ignored) { session.close(); }
+                        }
+                    });
+                } else if (protocolV2) {
+                    session.enqueueTerminal(runtime.protocolErrorV2(cookie, "unsupported_message"));
+                    return;
+                } else {
+                    throw new SecurityException("legacy_socket_message_invalid");
+                }
             }
         } finally {
             synchronized (socketSessions) { socketSessions.remove(session); }
@@ -602,6 +650,28 @@ public final class ConnectionHubHttpServer
                 throw new IOException("invalid Hub event", error);
             }
         }
+        void enqueueTerminal(JSONObject value) throws IOException {
+            java.util.concurrent.CountDownLatch completion =
+                    new java.util.concurrent.CountDownLatch(1);
+            try {
+                JSONObject bound = new JSONObject(value.toString());
+                bound.put("transport_epoch", transportEpoch);
+                byte[] payload = bound.toString().getBytes(StandardCharsets.UTF_8);
+                validateOutboundFrame(1, payload.length);
+                if (sessionClosed.get()
+                        || !outbound.offer(new OutboundFrame(1, payload, completion))) {
+                    throw new IOException("bounded outbound queue unavailable");
+                }
+                completion.await(
+                        ConnectionHubProtocol.SOCKET_WRITE_DEADLINE_MS,
+                        TimeUnit.MILLISECONDS);
+            } catch (org.json.JSONException malformed) {
+                throw new IOException("invalid Hub terminal event", malformed);
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                throw new IOException("terminal websocket write interrupted", interrupted);
+            }
+        }
         void enqueueFrame(int opcode, byte[] payload) throws IOException {
             validateOutboundFrame(opcode, payload.length);
             if (sessionClosed.get() || !outbound.offer(new OutboundFrame(opcode, payload))) {
@@ -617,7 +687,10 @@ public final class ConnectionHubHttpServer
                         @Override public void run() { close(); }
                     }, ConnectionHubProtocol.SOCKET_WRITE_DEADLINE_MS, TimeUnit.MILLISECONDS);
                     try { writeFrameDirect(frame.opcode, frame.payload); }
-                    finally { deadline.cancel(false); }
+                    finally {
+                        deadline.cancel(false);
+                        if (frame.completion != null) { frame.completion.countDown(); }
+                    }
                 }
             } catch (InterruptedException ignored) {
                 Thread.currentThread().interrupt();
@@ -664,9 +737,17 @@ public final class ConnectionHubHttpServer
         final int opcode;
         final byte[] payload;
         OutboundFrame(int opcode, byte[] payload) {
+            this(opcode, payload, null);
+        }
+        OutboundFrame(
+                int opcode,
+                byte[] payload,
+                java.util.concurrent.CountDownLatch completion) {
             this.opcode = opcode;
             this.payload = payload.clone();
+            this.completion = completion;
         }
+        final java.util.concurrent.CountDownLatch completion;
     }
 
     static final class Frame {

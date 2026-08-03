@@ -6,9 +6,11 @@ $app = Join-Path $RepoRoot "apps\manifold-broker-android"
 $javaRoot = Join-Path $app "src\main\java\io\github\mesmerprism\rustymanifold\broker"
 $test = Join-Path $app "tests\java\io\github\mesmerprism\rustymanifold\broker\ConnectionHubCoreTest.java"
 $vectorTest = Join-Path $app "tests\java\io\github\mesmerprism\rustymanifold\broker\ConnectionHubProtocolVectorsTest.java"
+$vectorV2Test = Join-Path $app "tests\java\io\github\mesmerprism\rustymanifold\broker\ConnectionHubProtocolV2VectorsTest.java"
 $transportTest = Join-Path $app "tests\java\io\github\mesmerprism\rustymanifold\broker\ConnectionHubTransportBoundsTest.java"
 $browserTest = Join-Path $app "tests\js\connection-hub-browser-protocol.test.js"
 $vectors = Join-Path $app "contracts\connection-hub-protocol-v1.json"
+$vectorsV2 = Join-Path $app "contracts\connection-hub-protocol-v2.json"
 $assets = Join-Path $app "src\main\assets\connection-hub"
 $spatial = Join-Path $RepoRoot "apps\spatial-video-control-example-android"
 $required = @(
@@ -21,9 +23,11 @@ $required = @(
     (Join-Path $javaRoot "HubSurfaceRegistry.java"),
     $test,
     $vectorTest,
+    $vectorV2Test,
     $transportTest,
     $browserTest,
     $vectors,
+    $vectorsV2,
     (Join-Path $assets "index.html"),
     (Join-Path $assets "app.js"),
     (Join-Path $assets "protocol.js"),
@@ -38,6 +42,7 @@ $stateStore = Get-Content -Raw -LiteralPath (Join-Path $javaRoot "AndroidConnect
 $server = Get-Content -Raw -LiteralPath (Join-Path $javaRoot "ConnectionHubHttpServer.java")
 $protocol = Get-Content -Raw -LiteralPath (Join-Path $javaRoot "ConnectionHubProtocol.java")
 $process = Get-Content -Raw -LiteralPath (Join-Path $javaRoot "ConnectionHubProcess.java")
+$debugControl = Get-Content -Raw -LiteralPath (Join-Path $javaRoot "ConnectionHubDebugControlProvider.java")
 $spatialManifest = Get-Content -Raw -LiteralPath (Join-Path $spatial "app\src\main\AndroidManifest.xml")
 $spatialClient = Get-Content -Raw -LiteralPath (Join-Path $spatial "app\src\main\java\io\github\mesmerprism\rustyquest\spatial_video_control\ConnectionHubSurfaceClient.kt")
 $spatialActivity = Get-Content -Raw -LiteralPath (Join-Path $spatial "app\src\main\java\io\github\mesmerprism\rustyquest\spatial_video_control\SpatialVideoControlActivity.kt")
@@ -60,6 +65,12 @@ if ($binder -notmatch 'activeHubProviders' -or
 if ($stateStore -notmatch 'AndroidKeyStore' -or $stateStore -notmatch 'AES/GCM/NoPadding' -or $stateStore -match 'putString\(KEY_STATE, value\.toString') { throw "Durable session projections are not Keystore-encrypted." }
 if ($protocol -notmatch '/v1/status' -or $protocol -notmatch '/v1/pair' -or $protocol -notmatch '/v1/socket' -or $server -notmatch 'X-Rusty-Confidentiality' -or $server -notmatch 'sec-websocket-version' -or $server -notmatch 'hasSameOrigin') { throw "Fixed HTTP/WebSocket protocol or posture headers missing." }
 if ($server -match '/v1/socket\?session' -or $server -notmatch 'SOCKET_AUTHENTICATE_SCHEMA' -or $server -notmatch 'transport_epoch') { throw "WebSocket still uses a URL bearer or omits first-frame authentication." }
+if ($server -notmatch 'SOCKET_AUTHENTICATE_SCHEMA_V2' -or
+    $server -notmatch 'validateV2CommandFrame' -or
+    $server -notmatch 'handleKeepalive' -or
+    $protocol -notmatch 'next_external_request_sequence') {
+    throw "WebSocket v2 canonical sequencing, resynchronization, or JSON keepalive is missing."
+}
 if ($server -notmatch 'synchronized \(socketSessions\)[\s\S]*runtime\.replaceTransport\(cookie\)' -or
     $server -notmatch 'isNewerTransportEpoch') {
     throw "Authority transport replacement and socket installation are not atomic."
@@ -71,18 +82,33 @@ if ($process -notmatch 'provider_effect_binding\.v1' -or
     $process -notmatch 'completed\.compareAndSet\(false, true\)') {
     throw "Provider effect receipts are not exact, one-shot, and deadline bounded."
 }
-if ($nativeLock -notmatch '661bf0ad1d95f6d17715440c23d6085e4305adeb' -or
-    $nativeLock -notmatch '22c0b9797500758c4af257eb3869e61ae229b2af' -or
+if ($nativeLock -notmatch 'd9d060f8c67199135a4c3e0a699ca408f6c64095' -or
+    $nativeLock -notmatch '23126eb8b6d0127dfbfa7b968c95ea8b8c7174be' -or
     $nativeHub -notmatch '\.owner\(\)' -or
     $nativeHub -notmatch 'EMPTY_TYPED_PARAMS_SCHEMA_SHA256' -or
     $nativeHub -notmatch 'authority_epoch') {
-    throw "Connection Hub JNI is not bound to the sealed v2 Manifold owner/epoch/typed-schema authority."
+    throw "Connection Hub JNI is not bound to the sealed v3 Manifold owner/epoch/typed-schema authority."
 }
 if (Test-Path -LiteralPath (Join-Path $javaRoot "UnavailableManifoldConnectionHubAuthority.java")) { throw "Fail-closed development authority stub remains in product source." }
 if ($buildScript -notmatch '\$connectionHubSelected' -or $buildScript -notmatch 'connectionHubPackagedAssets' -or $buildScript -notmatch 'ConnectionHub\*\.java' -or $productSource -notmatch '\.ConnectionHubStartActivity' -or $productSource -notmatch '\.BrokerStartActivity') { throw "Product lock does not gate Hub classes/assets/components while preserving legacy components." }
 if ($buildScript -notmatch 'connection-hub-typed-params-empty\.schema\.json' -or
     $buildScript -notmatch '7eedc1ccca80b83dbd121d1e4bae4f6a6c9c1561e1a08d6d5919c668d5406a51') {
     throw "Build does not package and bind the exact empty typed-parameter schema bytes."
+}
+if ((Get-FileHash -LiteralPath $vectors -Algorithm SHA256).Hash.ToLowerInvariant() -ne
+        'fa00d34511b2ee5576eebdd815e58ae032e37b10c209e41289cfd876c78c9c78' -or
+    $buildScript -notmatch 'connection-hub-protocol-v1\.json' -or
+    $buildScript -notmatch 'connection-hub-protocol-v2\.json' -or
+    $buildScript -notmatch 'connection_hub_protocol_v2_sha256') {
+    throw "Build does not preserve and package both exact Connection Hub protocol vectors."
+}
+if ($buildScript -notmatch 'rusty\.manifold\.connection_hub\.policy\.v3' -or
+    $buildScript -notmatch 'authenticated_activity_controller_ttl_ms' -or
+    $buildScript -notmatch 'authenticated_activity_session_ttl_ms' -or
+    $buildScript -notmatch 'debug_test_hooks_enabled' -or
+    $debugControl -notmatch 'force-rollover' -or
+    $debugControl -notmatch 'forceHistoryRolloverForDebug') {
+    throw "Manifold v3 activity deadlines or debug-only rollover validation hook is missing."
 }
 if ($spatialManifest -notmatch 'BROKER_ADMISSION' -or $spatialManifest -notmatch 'io\.github\.mesmerprism\.rustymanifold\.broker') { throw "Spatial provider does not bind the exact signature-scoped Broker." }
 if ($spatialClient -notmatch 'MESSAGE_REGISTER_SURFACE' -or $spatialClient -notmatch 'MESSAGE_UNREGISTER_SURFACE' -or $spatialClient -match 'admitted_client_evidence_json') { throw "Spatial provider lifecycle or admission boundary is incorrect." }
@@ -94,7 +120,7 @@ $node = (Get-Command node -ErrorAction Stop).Source
 if ($LASTEXITCODE -ne 0) { throw "Connection Hub browser JS syntax failed." }
 & $node --check (Join-Path $assets "protocol.js")
 if ($LASTEXITCODE -ne 0) { throw "Connection Hub browser protocol JS syntax failed." }
-& $node $browserTest $vectors (Join-Path $assets "protocol.js") (Join-Path $assets "app.js")
+& $node $browserTest $vectors $vectorsV2 (Join-Path $assets "protocol.js") (Join-Path $assets "app.js")
 if ($LASTEXITCODE -ne 0) { throw "Connection Hub browser protocol conformance failed." }
 $html = Get-Content -Raw -LiteralPath (Join-Path $assets "index.html")
 if ($html -match '<script[^>]+src="https?://' -or $html -match '<link[^>]+href="https?://') { throw "Browser page includes remote assets." }
@@ -118,6 +144,7 @@ $sources = @(
     (Join-Path $javaRoot "HubSurfaceRegistry.java"),
     $test,
     $vectorTest,
+    $vectorV2Test,
     $transportTest
 )
 $javac = (Get-Command javac -ErrorAction Stop).Source
@@ -126,6 +153,8 @@ $java = (Get-Command java -ErrorAction Stop).Source
 if ($LASTEXITCODE -ne 0) { throw "Connection Hub host Java compile failed." }
 & $java -cp "$out;$($jsonJar.FullName)" io.github.mesmerprism.rustymanifold.broker.ConnectionHubProtocolVectorsTest $vectors
 if ($LASTEXITCODE -ne 0) { throw "Connection Hub protocol-vector tests failed." }
+& $java -cp "$out;$($jsonJar.FullName)" io.github.mesmerprism.rustymanifold.broker.ConnectionHubProtocolV2VectorsTest $vectors $vectorsV2
+if ($LASTEXITCODE -ne 0) { throw "Connection Hub v2 protocol-vector tests failed." }
 & $java -cp "$out;$($jsonJar.FullName)" io.github.mesmerprism.rustymanifold.broker.ConnectionHubTransportBoundsTest
 if ($LASTEXITCODE -ne 0) { throw "Connection Hub transport-bound tests failed." }
 & $java -cp "$out;$($jsonJar.FullName)" io.github.mesmerprism.rustymanifold.broker.ConnectionHubCoreTest $vectors

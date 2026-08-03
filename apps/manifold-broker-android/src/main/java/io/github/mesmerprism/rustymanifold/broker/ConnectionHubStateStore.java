@@ -43,11 +43,26 @@ public interface ConnectionHubStateStore {
         public final String logicalSessionId;
         public final long transportEpoch;
         public final long expiresAtMs;
+        public final long nextExternalRequestSequence;
 
         public SessionProjection(String logicalSessionId, long transportEpoch, long expiresAtMs) {
+            this(logicalSessionId, transportEpoch, expiresAtMs, 1);
+        }
+
+        public SessionProjection(
+                String logicalSessionId,
+                long transportEpoch,
+                long expiresAtMs,
+                long nextExternalRequestSequence) {
+            if (logicalSessionId == null || logicalSessionId.isEmpty()
+                    || transportEpoch < 1 || expiresAtMs < 1
+                    || nextExternalRequestSequence < 1) {
+                throw new IllegalArgumentException("invalid durable session projection");
+            }
             this.logicalSessionId = logicalSessionId;
             this.transportEpoch = transportEpoch;
             this.expiresAtMs = expiresAtMs;
+            this.nextExternalRequestSequence = nextExternalRequestSequence;
         }
     }
 

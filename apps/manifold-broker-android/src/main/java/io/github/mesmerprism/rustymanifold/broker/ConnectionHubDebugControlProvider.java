@@ -34,6 +34,7 @@ public final class ConnectionHubDebugControlProvider extends ContentProvider {
                 && !"start".equals(method)
                 && !"stop".equals(method)
                 && !"forget".equals(method)
+                && !"force-rollover".equals(method)
                 && !"restart-process".equals(method)
                 && !"pair-code".equals(method)) {
             throw new IllegalArgumentException("debug_operator_method_not_registered");
@@ -63,6 +64,11 @@ public final class ConnectionHubDebugControlProvider extends ContentProvider {
                 operationStatus = "stopped";
             } else if ("forget".equals(method)) {
                 ConnectionHubAuthorityPort.Receipt authority = hub.forgetFromWearer();
+                applied = authority.applied;
+                operationStatus = authority.status;
+            } else if ("force-rollover".equals(method)) {
+                ConnectionHubAuthorityPort.Receipt authority =
+                        hub.runtime().forceHistoryRolloverForDebug();
                 applied = authority.applied;
                 operationStatus = authority.status;
             }

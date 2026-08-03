@@ -422,6 +422,18 @@ if ($connectionHubSelected) {
         (Get-FileSha256Hex -Path $connectionHubTypedParamsSchemaPath) -ne "7eedc1ccca80b83dbd121d1e4bae4f6a6c9c1561e1a08d6d5919c668d5406a51") {
         throw "Connection Hub empty typed-parameter schema bytes do not match the sealed authority digest."
     }
+    $connectionHubProtocolV1Path = Join-Path $appRoot "contracts\connection-hub-protocol-v1.json"
+    $connectionHubProtocolV2Path = Join-Path $appRoot "contracts\connection-hub-protocol-v2.json"
+    if ((Get-FileSha256Hex -Path $connectionHubProtocolV1Path) -ne
+            "fa00d34511b2ee5576eebdd815e58ae032e37b10c209e41289cfd876c78c9c78") {
+        throw "Connection Hub legacy v1 protocol vector bytes changed."
+    }
+    $connectionHubProtocolV2 = Get-Content -Raw -LiteralPath $connectionHubProtocolV2Path | ConvertFrom-Json
+    if ([string]$connectionHubProtocolV2.'$schema' -ne "rusty.quest.connection_hub.protocol_vectors.v2" -or
+        [string]$connectionHubProtocolV2.legacy_protocol_sha256 -ne
+            "sha256:fa00d34511b2ee5576eebdd815e58ae032e37b10c209e41289cfd876c78c9c78") {
+        throw "Connection Hub v2 protocol vector does not preserve the exact v1 compatibility bytes."
+    }
 }
 if ($EnableConnectionHubDebugOperator -and -not $connectionHubSelected) {
     throw "-EnableConnectionHubDebugOperator is valid only for the connection_hub product."
@@ -560,8 +572,9 @@ if ($connectionHubSelected) {
         packaged_product_lock_json = $acceptedProductLockJson
         manifold_revision = [string]$manifoldSourceLock.revision
         manifold_tree = [string]$manifoldSourceLock.tree
+        debug_test_hooks_enabled = [bool]$EnableConnectionHubDebugOperator
         policy = [ordered]@{
-            '$schema' = "rusty.manifold.connection_hub.policy.v2"
+            '$schema' = "rusty.manifold.connection_hub.policy.v3"
             authority_id = "authority.connection-hub.quest"
             admission_authority_id = "authority.admission.quest"
             broker_product_lock_id = [string]$productInputs.manifold_lock_id
@@ -600,9 +613,11 @@ if ($connectionHubSelected) {
                     allowed_commands = $connectionHubCommands
                 }
             )
-            max_controller_ttl_ms = 2592000000
-            max_session_ttl_ms = 86400000
-            max_surface_lease_ttl_ms = 3600000
+            max_controller_ttl_ms = if ($EnableConnectionHubDebugOperator) { 60000 } else { 31622400000 }
+            max_session_ttl_ms = if ($EnableConnectionHubDebugOperator) { 15000 } else { 2592000000 }
+            max_surface_lease_ttl_ms = if ($EnableConnectionHubDebugOperator) { 10000 } else { 86400000 }
+            authenticated_activity_controller_ttl_ms = if ($EnableConnectionHubDebugOperator) { 60000 } else { 31622400000 }
+            authenticated_activity_session_ttl_ms = if ($EnableConnectionHubDebugOperator) { 15000 } else { 2592000000 }
         }
     }
 }
@@ -788,6 +803,8 @@ Copy-Item -LiteralPath $runtimeConfigPath -Destination (Join-Path $productAssetD
 $connectionHubPackagedAssets = @()
 if ($connectionHubSelected) {
     Copy-Item -LiteralPath $connectionHubTypedParamsSchemaPath -Destination (Join-Path $productAssetDir "connection-hub-typed-params-empty.schema.json")
+    Copy-Item -LiteralPath $connectionHubProtocolV1Path -Destination (Join-Path $productAssetDir "connection-hub-protocol-v1.json")
+    Copy-Item -LiteralPath $connectionHubProtocolV2Path -Destination (Join-Path $productAssetDir "connection-hub-protocol-v2.json")
     $connectionHubAssetSource = Join-Path $appRoot "src\main\assets\connection-hub"
     $connectionHubAssetTarget = Join-Path $productPackageRoot "assets\connection-hub"
     if (-not (Test-Path -LiteralPath $connectionHubAssetSource -PathType Container)) {
@@ -797,6 +814,8 @@ if ($connectionHubSelected) {
     Copy-Item -Path (Join-Path $connectionHubAssetSource "*") -Destination $connectionHubAssetTarget -Recurse
     $connectionHubPackagedAssets = @(
         "assets/manifold/connection-hub-typed-params-empty.schema.json",
+        "assets/manifold/connection-hub-protocol-v1.json",
+        "assets/manifold/connection-hub-protocol-v2.json",
         "assets/connection-hub/index.html",
         "assets/connection-hub/protocol.js",
         "assets/connection-hub/app.js",
@@ -879,6 +898,8 @@ $manifest = [ordered]@{
     packaged_runtime_config_asset = "assets/manifold/runtime-config.json"
     connection_hub_typed_params_schema_asset = if ($connectionHubSelected) { "assets/manifold/connection-hub-typed-params-empty.schema.json" } else { $null }
     connection_hub_typed_params_schema_sha256 = if ($connectionHubSelected) { Get-FileSha256Hex -Path $connectionHubTypedParamsSchemaPath } else { $null }
+    connection_hub_protocol_v1_sha256 = if ($connectionHubSelected) { Get-FileSha256Hex -Path $connectionHubProtocolV1Path } else { $null }
+    connection_hub_protocol_v2_sha256 = if ($connectionHubSelected) { Get-FileSha256Hex -Path $connectionHubProtocolV2Path } else { $null }
     connection_hub_browser_assets = $connectionHubPackagedAssets
     legacy_camera_p2p_compatibility = [bool]$LegacyCameraP2pCompatibility
     apk_path = $apkSigned

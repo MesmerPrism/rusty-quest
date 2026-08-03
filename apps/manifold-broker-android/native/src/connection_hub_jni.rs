@@ -2,10 +2,11 @@
 
 use rusty_manifold_broker_product::ManifoldBrokerProductLock;
 use rusty_manifold_connection_hub::{
-    ManifoldConnectionHubAuthority, ManifoldConnectionHubOperationRequest,
-    ManifoldConnectionHubPolicy, ManifoldConnectionHubReceipt, ManifoldConnectionHubRequest,
-    ManifoldConnectionHubSurface, ManifoldConnectionHubSurfaceCommand, EMPTY_TYPED_PARAMS_SCHEMA,
-    REQUEST_SCHEMA, SURFACE_SCHEMA,
+    ManifoldConnectionHubAuthenticatedActivityEvidence,
+    ManifoldConnectionHubAuthenticatedTransportEvidence, ManifoldConnectionHubAuthority,
+    ManifoldConnectionHubOperationRequest, ManifoldConnectionHubPolicy,
+    ManifoldConnectionHubReceipt, ManifoldConnectionHubRequest, ManifoldConnectionHubSurface,
+    ManifoldConnectionHubSurfaceCommand, EMPTY_TYPED_PARAMS_SCHEMA, REQUEST_SCHEMA, SURFACE_SCHEMA,
 };
 use rusty_manifold_model::{DottedId, SchemaId};
 use serde::Deserialize;
@@ -19,8 +20,9 @@ const EXPECTED_PRODUCT_ID: &str = "broker.connection-hub.standalone";
 const VERIFIED_WEARER_EVIDENCE: &str = "evidence.operator.wearer-action";
 const EMPTY_TYPED_PARAMS_SCHEMA_SHA256: &str =
     "sha256:7eedc1ccca80b83dbd121d1e4bae4f6a6c9c1561e1a08d6d5919c668d5406a51";
-const EXPECTED_MANIFOLD_REVISION: &str = "661bf0ad1d95f6d17715440c23d6085e4305adeb";
-const EXPECTED_MANIFOLD_TREE: &str = "22c0b9797500758c4af257eb3869e61ae229b2af";
+const EXPECTED_MANIFOLD_REVISION: &str = "d9d060f8c67199135a4c3e0a699ca408f6c64095";
+const EXPECTED_MANIFOLD_TREE: &str = "23126eb8b6d0127dfbfa7b968c95ea8b8c7174be";
+const ORDINARY_AUDIT_ROLLOVER_THRESHOLD: usize = 3_800;
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -34,6 +36,7 @@ struct HubConfig {
     packaged_product_lock_json: String,
     manifold_revision: String,
     manifold_tree: String,
+    debug_test_hooks_enabled: bool,
     policy: ManifoldConnectionHubPolicy,
 }
 
@@ -110,18 +113,19 @@ pub(crate) fn execute(proposal_json: &str, now_ms: u64) -> Result<String, String
     let retained = guard
         .as_mut()
         .ok_or_else(|| "hub authority not initialized".to_owned())?;
+    if operation == "force_rollover" {
+        if !retained.config.debug_test_hooks_enabled {
+            return Err("connection hub debug rollover hook is disabled".to_owned());
+        }
+        return apply_history_rollover(retained, now_ms).map(|value| value.to_string());
+    }
+    maybe_rollover_history(retained, now_ms)?;
     let response = match operation {
         "trust_and_open_session" => trust_and_open(retained, &proposal, now_ms)?,
-        "replace_transport" => apply_lifecycle(
-            retained,
-            &proposal,
-            now_ms,
-            ManifoldConnectionHubOperationRequest::ReplaceTransport {
-                session_id: epoch_field(retained, &proposal, "session_id")?,
-                expected_transport_epoch: u64_field(&proposal, "expected_transport_epoch")?,
-                transport: transport(&proposal, now_ms)?,
-            },
-        )?,
+        "replace_transport" => replace_authenticated_transport(retained, &proposal, now_ms)?,
+        "refresh_authenticated_activity" => {
+            refresh_authenticated_activity(retained, &proposal, now_ms)?
+        }
         "register_provider" => register_provider(retained, &proposal, now_ms)?,
         "register_surface" => register_surface(retained, &proposal, now_ms)?,
         "unregister_surface" => apply_lifecycle(
@@ -158,21 +162,9 @@ pub(crate) fn execute(proposal_json: &str, now_ms: u64) -> Result<String, String
                 reason: reason(&proposal)?,
             },
         )?,
-        "authorize_surface_command" => apply_lifecycle(
-            retained,
-            &proposal,
-            now_ms,
-            ManifoldConnectionHubOperationRequest::AuthorizeSurfaceCommand {
-                session_id: epoch_field(retained, &proposal, "session_id")?,
-                expected_transport_epoch: u64_field(&proposal, "expected_transport_epoch")?,
-                lease_id: epoch_field(retained, &proposal, "lease_id")?,
-                command_id: dotted(&proposal, "command_id")?,
-                typed_params_schema_id: SchemaId::new(EMPTY_TYPED_PARAMS_SCHEMA)
-                    .map_err(|e| e.to_string())?,
-                typed_params_schema_sha256: EMPTY_TYPED_PARAMS_SCHEMA_SHA256.to_owned(),
-                typed_params_sha256: sha256_field(&proposal, "typed_params_sha256")?,
-            },
-        )?,
+        "authorize_surface_command" => {
+            authorize_authenticated_command(retained, &proposal, now_ms)?
+        }
         "revoke_session" => apply_lifecycle(
             retained,
             &proposal,
@@ -309,16 +301,172 @@ fn trust_and_open(owner: &mut HubOwner, proposal: &Value, now_ms: u64) -> Result
         &format!("{request_id}.open"),
         now_ms,
         ManifoldConnectionHubOperationRequest::OpenSession {
-            session_id,
+            session_id: session_id.clone(),
             controller_id,
             public_identity_sha256: identity_sha,
             transport: transport(proposal, now_ms)?,
             requested_ttl_ms: owner.config.policy.max_session_ttl_ms,
         },
     )?;
-    Ok(native_receipt(
-        owner.authority.owner().apply_lifecycle(&open, now_ms),
-    ))
+    let receipt = owner.authority.owner().apply_lifecycle(&open, now_ms);
+    Ok(native_receipt_for_session(owner, receipt, &session_id))
+}
+
+fn replace_authenticated_transport(
+    owner: &mut HubOwner,
+    proposal: &Value,
+    now_ms: u64,
+) -> Result<Value, String> {
+    let session_id = epoch_field(owner, proposal, "session_id")?;
+    let controller_id = controller_for_session(owner, &session_id)?;
+    let expected_transport_epoch = u64_field(proposal, "expected_transport_epoch")?;
+    let mutation = request(
+        owner,
+        text(proposal, "request_id")?,
+        now_ms,
+        ManifoldConnectionHubOperationRequest::ReplaceTransport {
+            session_id: session_id.clone(),
+            expected_transport_epoch,
+            transport: transport(proposal, now_ms)?,
+        },
+    )?;
+    let receipt = owner.authority.owner().replace_authenticated_transport(
+        &mutation,
+        ManifoldConnectionHubAuthenticatedTransportEvidence {
+            observed_at_ms: now_ms,
+            controller_id: &controller_id,
+            session_id: &session_id,
+            transport_epoch: expected_transport_epoch,
+        },
+    );
+    Ok(native_receipt_for_session(owner, receipt, &session_id))
+}
+
+fn refresh_authenticated_activity(
+    owner: &mut HubOwner,
+    proposal: &Value,
+    now_ms: u64,
+) -> Result<Value, String> {
+    let session_id = epoch_field(owner, proposal, "session_id")?;
+    let controller_id = controller_for_session(owner, &session_id)?;
+    let transport_epoch = u64_field(proposal, "expected_transport_epoch")?;
+    let external_request_sequence = u64_field(proposal, "external_request_sequence")?;
+    let external_request_sha256 = sha256_field(proposal, "external_request_sha256")?;
+    let mutation = request(
+        owner,
+        text(proposal, "request_id")?,
+        now_ms,
+        ManifoldConnectionHubOperationRequest::RefreshAuthenticatedActivity {
+            controller_id: controller_id.clone(),
+            session_id: session_id.clone(),
+            expected_transport_epoch: transport_epoch,
+            external_request_sequence,
+            external_request_sha256: external_request_sha256.clone(),
+        },
+    )?;
+    let receipt = owner.authority.owner().apply_authenticated_activity(
+        &mutation,
+        ManifoldConnectionHubAuthenticatedActivityEvidence {
+            observed_at_ms: now_ms,
+            controller_id: &controller_id,
+            session_id: &session_id,
+            transport_epoch,
+            external_request_sequence,
+            external_request_sha256: &external_request_sha256,
+        },
+    );
+    Ok(native_receipt_for_session(owner, receipt, &session_id))
+}
+
+fn authorize_authenticated_command(
+    owner: &mut HubOwner,
+    proposal: &Value,
+    now_ms: u64,
+) -> Result<Value, String> {
+    let session_id = epoch_field(owner, proposal, "session_id")?;
+    let controller_id = controller_for_session(owner, &session_id)?;
+    let transport_epoch = u64_field(proposal, "expected_transport_epoch")?;
+    let external_request_sequence = u64_field(proposal, "external_request_sequence")?;
+    let external_request_sha256 = sha256_field(proposal, "external_request_sha256")?;
+    let mutation = request(
+        owner,
+        text(proposal, "request_id")?,
+        now_ms,
+        ManifoldConnectionHubOperationRequest::AuthorizeSurfaceCommand {
+            session_id: session_id.clone(),
+            expected_transport_epoch: transport_epoch,
+            lease_id: epoch_field(owner, proposal, "lease_id")?,
+            command_id: dotted(proposal, "command_id")?,
+            typed_params_schema_id: SchemaId::new(EMPTY_TYPED_PARAMS_SCHEMA)
+                .map_err(|e| e.to_string())?,
+            typed_params_schema_sha256: EMPTY_TYPED_PARAMS_SCHEMA_SHA256.to_owned(),
+            typed_params_sha256: sha256_field(proposal, "typed_params_sha256")?,
+            external_request_sequence,
+            external_request_sha256: external_request_sha256.clone(),
+        },
+    )?;
+    let receipt = owner.authority.owner().apply_authenticated_activity(
+        &mutation,
+        ManifoldConnectionHubAuthenticatedActivityEvidence {
+            observed_at_ms: now_ms,
+            controller_id: &controller_id,
+            session_id: &session_id,
+            transport_epoch,
+            external_request_sequence,
+            external_request_sha256: &external_request_sha256,
+        },
+    );
+    Ok(native_receipt_for_session(owner, receipt, &session_id))
+}
+
+fn controller_for_session(owner: &HubOwner, session_id: &DottedId) -> Result<DottedId, String> {
+    owner
+        .authority
+        .snapshot()
+        .state
+        .sessions
+        .iter()
+        .find(|session| &session.session_id == session_id)
+        .map(|session| session.controller_id.clone())
+        .ok_or_else(|| "authenticated logical session is not active".to_owned())
+}
+
+fn maybe_rollover_history(owner: &mut HubOwner, now_ms: u64) -> Result<(), String> {
+    if owner.authority.snapshot().audit_events.len() < ORDINARY_AUDIT_ROLLOVER_THRESHOLD {
+        return Ok(());
+    }
+    let receipt = apply_history_rollover(owner, now_ms)?;
+    if receipt.get("applied").and_then(Value::as_bool) != Some(true) {
+        return Err("connection hub proactive history rollover rejected".to_owned());
+    }
+    Ok(())
+}
+
+fn apply_history_rollover(owner: &mut HubOwner, now_ms: u64) -> Result<Value, String> {
+    let admission = crate::admission_jni::admission_authority()?;
+    let snapshot = owner.authority.snapshot();
+    let current_epoch = snapshot.state.authority_epoch;
+    let request_id = format!(
+        "history-rollover-{}-{}",
+        current_epoch,
+        snapshot.state.authority_revision.get()
+    );
+    let mutation = request(
+        owner,
+        &request_id,
+        now_ms,
+        ManifoldConnectionHubOperationRequest::RolloverHistory {
+            next_authority_epoch: current_epoch
+                .checked_add(1)
+                .ok_or_else(|| "connection hub authority epoch exhausted".to_owned())?,
+            admission_authority_revision: admission.snapshot().authority_revision,
+        },
+    )?;
+    let receipt = owner
+        .authority
+        .owner()
+        .rollover_history(&mutation, now_ms, &admission);
+    Ok(native_receipt(receipt))
 }
 
 fn register_provider(owner: &mut HubOwner, proposal: &Value, now_ms: u64) -> Result<Value, String> {
@@ -555,9 +703,43 @@ fn native_receipt(receipt: ManifoldConnectionHubReceipt) -> Value {
         output["surface_lease_id"] = json!(lease.lease_id);
         output["expires_at_ms"] = json!(lease.expires_at_ms);
     }
+    if let Some(next_sequence) = receipt.next_external_request_sequence {
+        output["next_external_request_sequence"] = json!(next_sequence);
+    }
     if !receipt.applied {
         output["status"] =
             json!(format!("rejected_{:?}", receipt.rejection_reason).to_ascii_lowercase());
+    }
+    output
+}
+
+fn native_receipt_for_session(
+    owner: &HubOwner,
+    receipt: ManifoldConnectionHubReceipt,
+    session_id: &DottedId,
+) -> Value {
+    let mut output = native_receipt(receipt);
+    let snapshot = owner.authority.snapshot();
+    if let Some(session) = snapshot
+        .state
+        .sessions
+        .iter()
+        .find(|session| &session.session_id == session_id)
+    {
+        if output.get("next_external_request_sequence").is_none() {
+            let next = snapshot
+                .state
+                .external_request_fences
+                .iter()
+                .find(|fence| &fence.session_id == session_id)
+                .map_or(1, |fence| {
+                    fence.latest_external_request_sequence.saturating_add(1)
+                });
+            output["next_external_request_sequence"] = json!(next);
+        }
+        output["logical_session_id"] = json!(session.session_id);
+        output["transport_epoch"] = json!(session.transport_epoch);
+        output["expires_at_ms"] = json!(session.expires_at_ms);
     }
     output
 }
@@ -581,7 +763,19 @@ fn dotted(value: &Value, field: &str) -> Result<DottedId, String> {
 }
 
 fn epoch_field(owner: &HubOwner, value: &Value, field: &str) -> Result<DottedId, String> {
-    epoch_derived(owner, field, text(value, field)?)
+    let raw = text(value, field)?;
+    if let Some(rest) = raw.strip_prefix("epoch-") {
+        if let Some((epoch_text, _)) = rest.split_once('.') {
+            let epoch = epoch_text
+                .parse::<u64>()
+                .map_err(|_| format!("invalid prior-epoch {field}"))?;
+            if epoch == 0 || epoch > owner.authority.snapshot().state.authority_epoch {
+                return Err(format!("future or zero-epoch {field} rejected"));
+            }
+            return DottedId::new(raw).map_err(|e| e.to_string());
+        }
+    }
+    epoch_derived(owner, field, raw)
 }
 
 fn epoch_derived(owner: &HubOwner, prefix: &str, source: &str) -> Result<DottedId, String> {
@@ -687,7 +881,7 @@ mod tests {
         );
         let digest = format!("sha256:{}", "a".repeat(64));
         let policy = json!({
-            "$schema": "rusty.manifold.connection_hub.policy.v2",
+            "$schema": "rusty.manifold.connection_hub.policy.v3",
             "authority_id": "authority.connection-hub.quest",
             "admission_authority_id": "authority.admission.quest",
             "broker_product_lock_id": "lock.broker.connection-hub.standalone",
@@ -710,7 +904,9 @@ mod tests {
             }],
             "max_controller_ttl_ms": 100_000,
             "max_session_ttl_ms": 80_000,
-            "max_surface_lease_ttl_ms": 60_000
+            "max_surface_lease_ttl_ms": 60_000,
+            "authenticated_activity_controller_ttl_ms": 100_000,
+            "authenticated_activity_session_ttl_ms": 80_000
         });
         let config = json!({
             "$schema": CONFIG_SCHEMA,
@@ -721,6 +917,7 @@ mod tests {
             "packaged_product_lock_json": product_lock_json,
             "manifold_revision": EXPECTED_MANIFOLD_REVISION,
             "manifold_tree": EXPECTED_MANIFOLD_TREE,
+            "debug_test_hooks_enabled": true,
             "policy": policy
         });
         let initialized: Value =
@@ -742,6 +939,7 @@ mod tests {
         .expect("open receipt");
         assert_eq!(opened["applied"], true);
         assert_eq!(opened["transport_epoch"], 1);
+        assert_eq!(opened["next_external_request_sequence"], 1);
         let session = opened["logical_session_id"].as_str().expect("session");
         let replaced: Value = serde_json::from_str(
             &execute(
@@ -759,10 +957,97 @@ mod tests {
         .expect("replace receipt");
         assert_eq!(replaced["applied"], true);
         assert_eq!(replaced["transport_epoch"], 2);
+        assert_eq!(replaced["next_external_request_sequence"], 1);
+        let canonical_keepalive_sha = format!("sha256:{}", "6".repeat(64));
+        let keepalive: Value = serde_json::from_str(
+            &execute(
+                &json!({
+                    "operation": "refresh_authenticated_activity",
+                    "request_id": "request.hub.test.keepalive.1",
+                    "session_id": session,
+                    "expected_transport_epoch": 2,
+                    "external_request_sequence": 1,
+                    "external_request_sha256": canonical_keepalive_sha
+                })
+                .to_string(),
+                3_000,
+            )
+            .expect("keepalive"),
+        )
+        .expect("keepalive receipt");
+        assert_eq!(keepalive["applied"], true);
+        assert_eq!(keepalive["next_external_request_sequence"], 2);
+        assert!(keepalive["expires_at_ms"].as_u64().expect("slid expiry") > 3_000);
+        let rollover: Value = serde_json::from_str(
+            &execute(
+                &json!({
+                    "operation": "force_rollover",
+                    "request_id": "request.hub.test.rollover"
+                })
+                .to_string(),
+                3_500,
+            )
+            .expect("force rollover"),
+        )
+        .expect("rollover receipt");
+        assert_eq!(rollover["applied"], true);
+        let replay: Value = serde_json::from_str(
+            &execute(
+                &json!({
+                    "operation": "refresh_authenticated_activity",
+                    "request_id": "request.hub.test.keepalive.replay",
+                    "session_id": session,
+                    "expected_transport_epoch": 2,
+                    "external_request_sequence": 1,
+                    "external_request_sha256": format!("sha256:{}", "6".repeat(64))
+                })
+                .to_string(),
+                4_000,
+            )
+            .expect("replay receipt"),
+        )
+        .expect("replay json");
+        assert_eq!(replay["applied"], false);
+        assert_eq!(replay["next_external_request_sequence"], 2);
+        let post_rollover_transport: Value = serde_json::from_str(
+            &execute(
+                &json!({
+                    "operation": "replace_transport",
+                    "request_id": "request.hub.test.replace.post-rollover",
+                    "session_id": session,
+                    "expected_transport_epoch": 2
+                })
+                .to_string(),
+                4_500,
+            )
+            .expect("post-rollover replace"),
+        )
+        .expect("post-rollover replace receipt");
+        assert_eq!(post_rollover_transport["applied"], true);
+        assert_eq!(post_rollover_transport["transport_epoch"], 3);
+        assert_eq!(post_rollover_transport["next_external_request_sequence"], 2);
         let exported = export_state().expect("export");
         let restored: Value = serde_json::from_str(&restore_state(&exported).expect("restore"))
             .expect("restore receipt");
         assert_eq!(restored["applied"], true);
+        let after_restore: Value = serde_json::from_str(
+            &execute(
+                &json!({
+                    "operation": "refresh_authenticated_activity",
+                    "request_id": "request.hub.test.keepalive.2",
+                    "session_id": session,
+                    "expected_transport_epoch": 3,
+                    "external_request_sequence": 2,
+                    "external_request_sha256": format!("sha256:{}", "7".repeat(64))
+                })
+                .to_string(),
+                5_000,
+            )
+            .expect("post-restore keepalive"),
+        )
+        .expect("post-restore receipt");
+        assert_eq!(after_restore["applied"], true);
+        assert_eq!(after_restore["next_external_request_sequence"], 3);
     }
 }
 

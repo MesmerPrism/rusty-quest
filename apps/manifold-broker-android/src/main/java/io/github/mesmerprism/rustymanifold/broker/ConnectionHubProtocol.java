@@ -2,6 +2,8 @@ package io.github.mesmerprism.rustymanifold.broker;
 
 import org.json.JSONObject;
 
+import java.time.Instant;
+
 /** Fixed low-rate Connection Hub wire and Binder contract. */
 public final class ConnectionHubProtocol {
     public static final String PROTOCOL_SCHEMA = "rusty.quest.connection_hub.v1";
@@ -28,6 +30,20 @@ public final class ConnectionHubProtocol {
             "rusty.quest.connection_hub.surface_removed.v1";
     public static final String COMMAND_RECEIPT_SCHEMA =
             "rusty.quest.connection_hub.command_receipt.v1";
+    public static final String SOCKET_AUTHENTICATE_SCHEMA_V2 =
+            "rusty.quest.connection_hub.socket_authenticate.v2";
+    public static final String SOCKET_AUTHENTICATION_RECEIPT_SCHEMA_V2 =
+            "rusty.quest.connection_hub.socket_authentication_receipt.v2";
+    public static final String SURFACE_COMMAND_SCHEMA_V2 =
+            "rusty.quest.connection_hub.surface_command.v2";
+    public static final String COMMAND_RECEIPT_SCHEMA_V2 =
+            "rusty.quest.connection_hub.command_receipt.v2";
+    public static final String KEEPALIVE_SCHEMA_V2 =
+            "rusty.quest.connection_hub.keepalive.v2";
+    public static final String KEEPALIVE_RECEIPT_SCHEMA_V2 =
+            "rusty.quest.connection_hub.keepalive_receipt.v2";
+    public static final String PROTOCOL_ERROR_SCHEMA_V2 =
+            "rusty.quest.connection_hub.protocol_error.v2";
 
     public static final String STATUS_PATH = "/v1/status";
     public static final String PAIR_PATH = "/v1/pair";
@@ -76,6 +92,29 @@ public final class ConnectionHubProtocol {
                     .put("accepted", true)
                     .put("status", "authenticated")
                     .put("transport_epoch", transportEpoch)
+                    .put("confidentiality", CONFIDENTIALITY)
+                    .put("production_eligible", PRODUCTION_ELIGIBLE);
+        } catch (Exception impossible) {
+            throw new IllegalStateException(impossible);
+        }
+    }
+
+    public static JSONObject socketAuthenticationReceiptV2(
+            long transportEpoch,
+            long nextExternalRequestSequence,
+            long expiresAtMs) {
+        if (nextExternalRequestSequence < 1 || expiresAtMs < 1) {
+            throw new IllegalArgumentException("authenticated v2 projection is invalid");
+        }
+        try {
+            return new JSONObject()
+                    .put("$schema", SOCKET_AUTHENTICATION_RECEIPT_SCHEMA_V2)
+                    .put("type", "authentication_receipt")
+                    .put("accepted", true)
+                    .put("status", "authenticated")
+                    .put("transport_epoch", transportEpoch)
+                    .put("next_external_request_sequence", nextExternalRequestSequence)
+                    .put("expires_at_utc", Instant.ofEpochMilli(expiresAtMs).toString())
                     .put("confidentiality", CONFIDENTIALITY)
                     .put("production_eligible", PRODUCTION_ELIGIBLE);
         } catch (Exception impossible) {

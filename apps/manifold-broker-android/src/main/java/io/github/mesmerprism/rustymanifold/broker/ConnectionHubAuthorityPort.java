@@ -14,6 +14,7 @@ public interface ConnectionHubAuthorityPort {
         public final long transportEpoch;
         public final long expiresAtMs;
         public final String surfaceLeaseId;
+        public final long nextExternalRequestSequence;
 
         public Receipt(
                 boolean applied,
@@ -23,6 +24,19 @@ public interface ConnectionHubAuthorityPort {
                 long transportEpoch,
                 long expiresAtMs,
                 String surfaceLeaseId) {
+            this(applied, status, authorityReceiptJson, logicalSessionId, transportEpoch,
+                    expiresAtMs, surfaceLeaseId, 0);
+        }
+
+        public Receipt(
+                boolean applied,
+                String status,
+                String authorityReceiptJson,
+                String logicalSessionId,
+                long transportEpoch,
+                long expiresAtMs,
+                String surfaceLeaseId,
+                long nextExternalRequestSequence) {
             this.applied = applied;
             this.status = status;
             this.authorityReceiptJson = authorityReceiptJson;
@@ -30,6 +44,7 @@ public interface ConnectionHubAuthorityPort {
             this.transportEpoch = transportEpoch;
             this.expiresAtMs = expiresAtMs;
             this.surfaceLeaseId = surfaceLeaseId;
+            this.nextExternalRequestSequence = nextExternalRequestSequence;
         }
 
         public static Receipt rejected(String status) {
@@ -47,6 +62,14 @@ public interface ConnectionHubAuthorityPort {
             String requestId,
             String logicalSessionId,
             long expectedTransportEpoch,
+            long nowMs);
+
+    Receipt refreshAuthenticatedActivity(
+            String requestId,
+            String logicalSessionId,
+            long transportEpoch,
+            long externalRequestSequence,
+            String externalRequestSha256,
             long nowMs);
 
     Receipt registerProvider(
@@ -96,6 +119,8 @@ public interface ConnectionHubAuthorityPort {
             String surfaceId,
             String command,
             String commandParamsSha256,
+            long externalRequestSequence,
+            String externalRequestSha256,
             long nowMs);
 
     Receipt revokeSession(
@@ -109,6 +134,8 @@ public interface ConnectionHubAuthorityPort {
     Receipt expire(String requestId, long nowMs);
 
     Receipt reconcileAfterRestart(String requestId, long nowMs);
+
+    Receipt forceHistoryRollover(String requestId, long nowMs);
 
     /** Opaque Manifold-authored state envelope; Android persists but never edits it. */
     String exportOpaqueState();
