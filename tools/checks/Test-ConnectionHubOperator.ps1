@@ -77,6 +77,21 @@ Require ($cli.Contains('Assert-CheckpointStageClosure') -and
     $cli.Contains('Restore-ProcessEpochsFromReceipts')) "Resume stage/build/process evidence closure is incomplete."
 Require ($cli.Contains('function Measure-RunLogWindow') -and
     $cli.Contains('Synthetic UID/PID/native fatal classifier')) "Behavioral run-log classifier simulation is missing."
+Require ($cli.Contains('capture_process_exit_observed') -and
+    $cli.Contains('$captureProcessExitObserved = $process.WaitForExit(5000)') -and
+    $cli.Contains('Assert-RunLogProcessExitObserved $captureProcessExitObserved') -and
+    $cli.Contains('Synthetic failure cleanup accepted an uncontained log capture process')) "Run-owned capture termination is not positively observed or failure-cleanup enforced."
+Require ($cli.Contains('Get-TargetAbsenceCleanupDecision') -and
+    $cli.Contains('Synthetic target cleanup did not preserve idempotent already-absent behavior')) "Idempotent partial-install cleanup simulation is missing."
+Require ($cli.Contains('Assert-StageReceiptSemantics') -and
+    $cli.Contains('checkpoint_stage =') -and
+    $cli.Contains('operation=[string]$_.receipt.operation') -and
+    $cli.Contains('require_wifi_rebind_e2e')) "Stage semantic closure or Wi-Fi checkpoint policy binding is incomplete."
+Require ($cli.Contains('receipt operation/provider/status multiset is not exact') -and
+    $cli.Contains('"hub-real-service|android-foreground-service|passed"') -and
+    ([regex]::Matches($cli, '"wait-surface\|rusty-hostess\|passed", "wait-surface\|rusty-hostess\|passed"').Count -ge 3)) "Stage closure does not bind exact service and dual surface-oracle multiplicity."
+Require ($cli.Contains('Revoke-RunOwnedSessionIfPresent') -and
+    $cli.Contains('session_file = [System.IO.Path]::GetFullPath($SessionFile)')) "Interrupted pairing cleanup does not bind and revoke the run-owned session."
 Require ($cli.Contains('Initialize-Checkpoint') -and $cli.Contains('Resume checkpoint artifact digest mismatch')) "Resume checkpoint identity binding is incomplete."
 Require ($cli.Contains('ProviderLifetimeSeconds') -and $cli.Contains('Wait-Surface "surface.spatial_video_control.media" $false')) "Sequential provider/lifetime oracle is incomplete."
 Require ($cli.Contains('authenticated_socket_open_before_revoke') -and
@@ -135,6 +150,29 @@ try {
     $resumed = $resumedText | ConvertFrom-Json
     $resumedManifest = Get-Content -Raw -LiteralPath $resumed.evidence_manifest | ConvertFrom-Json
     Require (@($resumedManifest.receipts).Count -eq 21 -and $resumed.result -eq 'passed') "Resumed evidence closure mismatch."
+    $checkpointJson = Get-Content -Raw -LiteralPath $checkpointPath
+    $relabelled = $checkpointJson | ConvertFrom-Json
+    $firstStage = [string]$relabelled.completed_stages[0]
+    $secondStage = [string]$relabelled.completed_stages[1]
+    $firstEntries = $relabelled.stage_receipts.$firstStage
+    $relabelled.stage_receipts.$firstStage = $relabelled.stage_receipts.$secondStage
+    $relabelled.stage_receipts.$secondStage = $firstEntries
+    [System.IO.File]::WriteAllText($checkpointPath, ($relabelled | ConvertTo-Json -Depth 30), (New-Object System.Text.UTF8Encoding($false)))
+    $relabelOutput = & pwsh -NoProfile -File $cliPath -Action SimulateE2E -Serial SIMULATED123 -EvidenceRoot $tempRoot -ResumeCheckpoint $checkpointPath 2>&1
+    Require ($LASTEXITCODE -ne 0 -and ($relabelOutput -join "`n") -match 'relabeled or substituted') "Resume accepted a valid receipt relabeled to another completed stage."
+    [System.IO.File]::WriteAllText($checkpointPath, $checkpointJson, (New-Object System.Text.UTF8Encoding($false)))
+    $duplicated = $checkpointJson | ConvertFrom-Json
+    $duplicateStage = [string]$duplicated.completed_stages[0]
+    $originalStageEntry = $duplicated.stage_receipts.$duplicateStage
+    $duplicated.stage_receipts.$duplicateStage = @($originalStageEntry, $originalStageEntry)
+    [System.IO.File]::WriteAllText($checkpointPath, ($duplicated | ConvertTo-Json -Depth 30), (New-Object System.Text.UTF8Encoding($false)))
+    $duplicateOutput = & pwsh -NoProfile -File $cliPath -Action SimulateE2E -Serial SIMULATED123 -EvidenceRoot $tempRoot -ResumeCheckpoint $checkpointPath 2>&1
+    Require ($LASTEXITCODE -ne 0 -and ($duplicateOutput -join "`n") -match 'multiset is not exact') "Resume accepted duplicated stage receipt multiplicity."
+    [System.IO.File]::WriteAllText($checkpointPath, $checkpointJson, (New-Object System.Text.UTF8Encoding($false)))
+    $wifiMismatchOutput = & pwsh -NoProfile -File $cliPath -Action SimulateE2E -Serial SIMULATED123 -EvidenceRoot $tempRoot -ResumeCheckpoint $checkpointPath -RequireWifiRebindE2E 2>&1
+    Require ($LASTEXITCODE -ne 0 -and ($wifiMismatchOutput -join "`n") -match 'checkpoint identity') "Resume accepted a changed Wi-Fi-required policy."
+    $sessionMismatchOutput = & pwsh -NoProfile -File $cliPath -Action SimulateE2E -Serial SIMULATED123 -EvidenceRoot $tempRoot -ResumeCheckpoint $checkpointPath -SessionFile (Join-Path $tempRoot 'substituted-session.json') 2>&1
+    Require ($LASTEXITCODE -ne 0 -and ($sessionMismatchOutput -join "`n") -match 'session path mismatch') "Resume accepted a substituted Hostess session path."
     $tamperedReceiptPath = Join-Path (Split-Path -Parent $run.evidence_manifest) ([string]$manifest.receipts[0].name)
     [System.IO.File]::AppendAllText($tamperedReceiptPath, " ")
     $tamperedOutput = & pwsh -NoProfile -File $cliPath -Action SimulateE2E -Serial SIMULATED123 -EvidenceRoot $tempRoot -ResumeCheckpoint $checkpointPath 2>&1

@@ -107,6 +107,7 @@ $script:RunLogStderrPath = ""
 $script:ProcessEpochOrdinal = 0
 $script:ProcessEpochs = [System.Collections.Generic.List[object]]::new()
 $script:UninstallPerformed = $false
+$script:CurrentCheckpointStage = ""
 
 function Get-Sha256([string]$Path) {
     return (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant()
@@ -165,6 +166,16 @@ function Write-JsonFile([string]$Path, $Value) {
 
 function Save-Receipt([string]$Name, $Value) {
     $path = Join-Path $script:RunDir "$Name.json"
+    # A stage receipt is immutable once it has been admitted into the run.  A
+    # later observation with the same logical name gets a unique leaf instead
+    # of silently changing the digest that closed an earlier stage.
+    if ($script:Receipts.Contains($path)) {
+        $ordinal = 2
+        do {
+            $path = Join-Path $script:RunDir ("{0}-{1}.json" -f $Name,$ordinal)
+            $ordinal += 1
+        } while ($script:Receipts.Contains($path) -or (Test-Path -LiteralPath $path))
+    }
     Write-JsonFile $path $Value
     if (-not $script:Receipts.Contains($path)) { [void]$script:Receipts.Add($path) }
     return $Value
@@ -175,6 +186,7 @@ function New-Receipt([string]$Operation, [string]$Provider, [string]$Status, $De
         '$schema' = $ReceiptSchema
         operation = $Operation
         provider = $Provider
+        checkpoint_stage = $(if([string]::IsNullOrWhiteSpace($script:CurrentCheckpointStage)){$null}else{$script:CurrentCheckpointStage})
         serial = $Serial
         status = $Status
         observed_at_utc = [DateTime]::UtcNow.ToString("o")
@@ -200,6 +212,93 @@ function Read-ValidatedReceipt([string]$Path, [string]$ExpectedSha256) {
     return $receipt
 }
 
+function Assert-StageReceiptSemantics([string]$Name, [object[]]$Receipts) {
+    if ($Receipts.Count -eq 0) { throw "Checkpoint stage has no semantic receipt closure: $Name" }
+    $originatingAction = [string]$script:Checkpoint.originating_action
+    foreach ($receipt in $Receipts) {
+        if ([string]$receipt.checkpoint_stage -ne $Name) {
+            throw "Checkpoint stage receipt was relabeled or substituted: $Name"
+        }
+    }
+    if ($originatingAction -eq "SimulateE2E") {
+        if ($Receipts.Count -ne 1) { throw "Simulation stage receipt multiset is not exact: $Name" }
+        foreach ($receipt in $Receipts) {
+            $safeOperation = ([string]$receipt.operation) -replace '[^a-z0-9]+','-'
+            if ([string]$receipt.provider -ne "deterministic-simulation" -or
+                    [string]$receipt.status -ne "passed" -or $safeOperation -ne $Name) {
+                throw "Simulation stage receipt was relabeled or substituted: $Name"
+            }
+        }
+        return
+    }
+    if ($originatingAction -ne "E2E") { return }
+
+    $expected = switch ($Name) {
+        "prerequisites" { @("prerequisites|typed-provider-discovery|passed") }
+        "build" { @("build|project-build|passed") }
+        "inspect" { @("inspect|questionable-file-manager|passed") }
+        "capture-pre-state" { @("pre-state|qfm+serial-readback|passed") }
+        "install" { @("install|questionable-file-manager|passed") }
+        "run-log-capture-start" { @("run-log-capture-start|serial-scoped-streaming-adb|passed") }
+        "debug-protocol-proof" { @("debug-protocol-proof|debug-shell-provider-gap|passed") }
+        "real-hub-start" { @(
+            "hub-real-service|android-foreground-service|passed",
+            "hub-start|real-activity-foreground-service|passed",
+            "target-process-epoch|serial-scoped-adb-readback|passed") }
+        "pair-hostess" { @("hostess-status|rusty-hostess|passed", "hostess-pair|rusty-hostess|passed") }
+        "spatial-first" { @(
+            "launch-spatial|qfm-with-reviewed-fallback|passed",
+            "wait-surface|rusty-hostess|passed", "wait-surface|rusty-hostess|passed",
+            "target-process-epoch|serial-scoped-adb-readback|passed",
+            "hostess-invoke-surface-command|rusty-hostess|passed") }
+        "provider-lifetime-over-2m" { @("hostess-invoke-surface-command|rusty-hostess|passed") }
+        "process-restart" { @(
+            "hub-process-restart|debug-death+real-start-sticky|passed",
+            "hostess-list-surfaces|rusty-hostess|passed", "wait-surface|rusty-hostess|passed",
+            "target-process-epoch|serial-scoped-adb-readback|passed",
+            "hostess-invoke-surface-command|rusty-hostess|passed") }
+        "wifi-rebind" {
+            if ([bool]$script:Checkpoint.require_wifi_rebind_e2e) {
+                @("wifi-rebind|exact-usb-transport|passed", "hostess-list-surfaces|rusty-hostess|passed",
+                    "wait-surface|rusty-hostess|passed", "hostess-invoke-surface-command|rusty-hostess|passed")
+            } else { @("wifi-rebind|optional-device-provider|not_run") }
+        }
+        "sample-switch" { @(
+            "launch-sample|qfm-with-reviewed-fallback|passed",
+            "wait-surface|rusty-hostess|passed", "wait-surface|rusty-hostess|passed",
+            "target-process-epoch|serial-scoped-adb-readback|passed",
+            "hostess-invoke-surface-command|rusty-hostess|passed") }
+        "spatial-return" { @(
+            "launch-spatial|qfm-with-reviewed-fallback|passed",
+            "wait-surface|rusty-hostess|passed", "wait-surface|rusty-hostess|passed",
+            "target-process-epoch|serial-scoped-adb-readback|passed",
+            "hostess-invoke-surface-command|rusty-hostess|passed") }
+        "reconnect" { @("hostess-list-surfaces|rusty-hostess|passed") }
+        "watch" { @("hostess-connect-watch|rusty-hostess|passed") }
+        "revoke" { @("hostess-revoke|rusty-hostess|passed") }
+        "browser-e2e" {
+            if ([bool]$script:Checkpoint.require_browser_e2e) { @("browser-e2e|playwright-real-browser|passed") }
+            else { @("browser-e2e|optional-playwright-provider|not_required") }
+        }
+        "logs" { @(
+            "target-process-epoch|serial-scoped-adb-readback|passed",
+            "run-bounded-logs|serial-scoped-streaming-adb|passed") }
+        "restore-pre-state" { @(
+            "stop-providers|raw-adb-fallback|passed", "hub-stop|real-activity-foreground-service|passed",
+            "restore-pre-state|target-only-cleanup|passed") }
+        default { throw "Unknown E2E checkpoint stage cannot be accepted: $Name" }
+    }
+    $actual = @($Receipts | ForEach-Object {
+        "{0}|{1}|{2}" -f [string]$_.operation,[string]$_.provider,[string]$_.status
+    })
+    $expectedSorted = @($expected | Sort-Object)
+    $actualSorted = @($actual | Sort-Object)
+    if ($expectedSorted.Count -ne $actualSorted.Count -or
+            ($expectedSorted -join "`n") -cne ($actualSorted -join "`n")) {
+        throw "Checkpoint stage $Name receipt operation/provider/status multiset is not exact."
+    }
+}
+
 function Assert-CheckpointStageClosure {
     $completed = @($script:Checkpoint.completed_stages)
     $stageMap = $script:Checkpoint.stage_receipts
@@ -209,13 +308,21 @@ function Assert-CheckpointStageClosure {
         }
         $entries = @($stageMap[[string]$name])
         if ($entries.Count -eq 0) { throw "Checkpoint stage has an empty receipt closure: $name" }
-        foreach ($entry in $entries) {
+        $receipts = @($entries | ForEach-Object {
+            $entry = $_
             $leaf = [string]$entry.name
             if ([System.IO.Path]::GetFileName($leaf) -ne $leaf -or -not $leaf.EndsWith(".json", [StringComparison]::Ordinal)) {
                 throw "Checkpoint stage receipt name is not one exact JSON leaf."
             }
-            [void](Read-ValidatedReceipt (Join-Path $script:RunDir $leaf) ([string]$entry.sha256))
-        }
+            $receipt = Read-ValidatedReceipt (Join-Path $script:RunDir $leaf) ([string]$entry.sha256)
+            if ([string]$entry.operation -ne [string]$receipt.operation -or
+                    [string]$entry.provider -ne [string]$receipt.provider -or
+                    [string]$entry.status -ne [string]$receipt.status) {
+                throw "Checkpoint stage receipt metadata mismatch: $name/$leaf"
+            }
+            $receipt
+        })
+        Assert-StageReceiptSemantics ([string]$name) $receipts
     }
     foreach ($name in @($stageMap.Keys)) {
         if ($completed -notcontains [string]$name) { throw "Checkpoint has receipts for an uncompleted stage: $name" }
@@ -247,7 +354,10 @@ function Initialize-Checkpoint {
             throw "Resume checkpoint must be inside the exact EvidenceRoot."
         }
         $checkpoint = Get-Content -Raw -LiteralPath $resolved | ConvertFrom-Json
+        $originatingAction = [string]$checkpoint.originating_action
+        $actionMatches = if ($Action -eq "Cleanup") { $originatingAction -eq "E2E" } else { $originatingAction -eq $Action }
         if ([string]$checkpoint.'$schema' -ne $CheckpointSchema -or
+                -not $actionMatches -or
                 [string]$checkpoint.serial -ne $Serial -or
                 [string]$checkpoint.protocol_vectors_sha256 -ne $protocolSha -or
                 [string]$checkpoint.existing_target_policy -ne $ExistingTargetPolicy -or
@@ -259,7 +369,9 @@ function Initialize-Checkpoint {
                     [string]$checkpoint.node_sha256 -ne [string]$script:NodePin -or
                     [string]$checkpoint.gradle_sha256 -ne [string]$script:GradlePin -or
                     [string]$checkpoint.node_version -ne [string]$script:NodeVersion -or
-                    [string]$checkpoint.gradle_version -ne [string]$script:GradleVersion))) {
+                    [string]$checkpoint.gradle_version -ne [string]$script:GradleVersion -or
+                    [bool]$checkpoint.require_browser_e2e -ne [bool]$RequireBrowserE2E -or
+                    [bool]$checkpoint.require_wifi_rebind_e2e -ne [bool]$RequireWifiRebindE2E))) {
             throw "Resume checkpoint identity/protocol/policy mismatch."
         }
         if (-not [string]::IsNullOrWhiteSpace($FileManagerSha256) -and
@@ -277,6 +389,17 @@ function Initialize-Checkpoint {
                 $script:CheckpointPath -ne (Join-Path $script:RunDir "checkpoint.json")) {
             throw "Resume checkpoint run directory escaped EvidenceRoot or was substituted."
         }
+        if ([string]::IsNullOrWhiteSpace([string]$checkpoint.session_file)) {
+            throw "Resume checkpoint lacks a bound Hostess session path."
+        }
+        $boundSessionFile = [System.IO.Path]::GetFullPath([string]$checkpoint.session_file)
+        $expectedSessionFile = Join-Path $script:RunDir "hostess-session.json"
+        if (($originatingAction -eq "E2E" -and $boundSessionFile -ne $expectedSessionFile) -or
+                (-not [string]::IsNullOrWhiteSpace($SessionFile) -and
+                    [System.IO.Path]::GetFullPath($SessionFile) -ne $boundSessionFile)) {
+            throw "Resume checkpoint Hostess session path mismatch."
+        }
+        $script:SessionFile = $boundSessionFile
         $artifactPrefix = (Join-Path $script:RunDir "artifacts") + '\'
         if ($checkpoint.artifacts) {
             $script:CachedArtifacts = @($checkpoint.artifacts | ForEach-Object {
@@ -321,6 +444,7 @@ function Initialize-Checkpoint {
     $script:CheckpointPath = Join-Path $script:RunDir "checkpoint.json"
     $script:Checkpoint = [ordered]@{
         '$schema' = $CheckpointSchema
+        originating_action = $Action
         serial = $Serial
         run_directory = $script:RunDir
         existing_target_policy = $ExistingTargetPolicy
@@ -335,6 +459,9 @@ function Initialize-Checkpoint {
         node_version = $script:NodeVersion
         gradle_sha256 = $script:GradlePin
         gradle_version = $script:GradleVersion
+        require_browser_e2e = [bool]$RequireBrowserE2E
+        require_wifi_rebind_e2e = [bool]$RequireWifiRebindE2E
+        session_file = [System.IO.Path]::GetFullPath($SessionFile)
         artifact_build_manifest_path = $null
         artifact_build_manifest_sha256 = $null
         artifacts = @()
@@ -372,16 +499,32 @@ function Invoke-Stage([string]$Name, [scriptblock]$Body) {
     }
     $before = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
     foreach ($path in @($script:Receipts)) { [void]$before.Add($path) }
-    . $Body
-    $entries = @($script:Receipts | Where-Object { -not $before.Contains($_) } | ForEach-Object {
+    $priorStage = $script:CurrentCheckpointStage
+    try {
+        $script:CurrentCheckpointStage = $Name
+        . $Body
+    } finally {
+        $script:CurrentCheckpointStage = $priorStage
+    }
+    $stageReceipts = @($script:Receipts | Where-Object { -not $before.Contains($_) } | ForEach-Object {
         $receipt = Get-Content -Raw -LiteralPath $_ | ConvertFrom-Json
         if ([string]$receipt.'$schema' -ne $ReceiptSchema -or
                 [string]$receipt.status -notin @("passed", "not_required", "not_run", "diagnostic_only")) {
             throw "Completed stage emitted a non-acceptance receipt: $Name"
         }
-        [ordered]@{ name=(Split-Path -Leaf $_); sha256=Get-Sha256 $_; status=[string]$receipt.status }
+        [pscustomobject]@{ path=$_; receipt=$receipt }
     })
-    if ($entries.Count -eq 0) { throw "Completed stage emitted no receipt closure: $Name" }
+    if ($stageReceipts.Count -eq 0) { throw "Completed stage emitted no receipt closure: $Name" }
+    Assert-StageReceiptSemantics $Name @($stageReceipts.receipt)
+    $entries = @($stageReceipts | ForEach-Object {
+        [ordered]@{
+            name=(Split-Path -Leaf $_.path)
+            sha256=Get-Sha256 $_.path
+            operation=[string]$_.receipt.operation
+            provider=[string]$_.receipt.provider
+            status=[string]$_.receipt.status
+        }
+    })
     $script:Checkpoint.stage_receipts[$Name] = $entries
     $script:Checkpoint.completed_stages = @($script:Checkpoint.completed_stages) + $Name
     Write-Checkpoint
@@ -538,7 +681,8 @@ function Measure-RunLogWindow(
         [object[]]$Epochs,
         [bool]$CaptureWithinBound,
         [bool]$CaptureProcessAliveAtEnd,
-        [int]$EndMarkerWriteExitCode) {
+        [int]$EndMarkerWriteExitCode,
+        [bool]$CaptureProcessExitObserved = $true) {
     $startMarker = "START $Marker"
     $endMarker = "END $Marker"
     $startIndex = $Text.IndexOf($startMarker, [StringComparison]::Ordinal)
@@ -573,9 +717,11 @@ function Measure-RunLogWindow(
         start_marker_retained=$startMarkerRetained
         end_marker_retained=$endMarkerRetained
         capture_process_alive_at_end=$CaptureProcessAliveAtEnd
+        capture_process_exit_observed=$CaptureProcessExitObserved
         end_marker_write_exit_code=$EndMarkerWriteExitCode
         capture_within_bound=$CaptureWithinBound
-        coverage_complete=($CaptureWithinBound -and $CaptureProcessAliveAtEnd -and $EndMarkerWriteExitCode -eq 0 -and $startMarkerRetained -and $endMarkerRetained)
+        coverage_complete=($CaptureWithinBound -and $CaptureProcessAliveAtEnd -and $CaptureProcessExitObserved -and
+            $EndMarkerWriteExitCode -eq 0 -and $startMarkerRetained -and $endMarkerRetained)
         target_uids=@($targetUids | Sort-Object)
         target_pids=@($targetPids | Sort-Object)
         target_fatal_count=$targetFatalLines.Count
@@ -585,10 +731,17 @@ function Measure-RunLogWindow(
     }
 }
 
+function Assert-RunLogProcessExitObserved([bool]$Observed) {
+    if (-not $Observed) {
+        throw "Run-owned log capture process termination was not observed."
+    }
+}
+
 function Stop-RunLogCapture([switch]$FailureCleanup) {
     if ($null -eq $script:RunLogProcess) { return $null }
     $process = $script:RunLogProcess
     $captureProcessAliveAtEnd = -not $process.HasExited
+    $captureProcessExitObserved = $process.HasExited
     $endMarkerWriteExitCode = -1
     try {
         if ($captureProcessAliveAtEnd) {
@@ -596,13 +749,19 @@ function Stop-RunLogCapture([switch]$FailureCleanup) {
             $endMarkerWriteExitCode = [int]$endWrite.exit_code
             Start-Sleep -Milliseconds 300
             if (-not $process.HasExited) { $process.Kill($true) }
-            [void]$process.WaitForExit(5000)
+            $captureProcessExitObserved = $process.WaitForExit(5000)
+            if (-not $captureProcessExitObserved -and -not $process.HasExited) {
+                $process.Kill($true)
+                $captureProcessExitObserved = $process.WaitForExit(5000)
+            }
         }
     } finally {
-        $process.Dispose()
-        $script:RunLogProcess = $null
+        if ($captureProcessExitObserved) {
+            $process.Dispose()
+            $script:RunLogProcess = $null
+        }
     }
-    if ($script:Checkpoint.run_log_capture) {
+    if ($captureProcessExitObserved -and $script:Checkpoint.run_log_capture) {
         $script:Checkpoint.run_log_capture.active = $false
         Write-Checkpoint
     }
@@ -610,7 +769,7 @@ function Stop-RunLogCapture([switch]$FailureCleanup) {
     $stdout = if(Test-Path -LiteralPath $path -PathType Leaf){[System.IO.File]::ReadAllText($path)}else{""}
     $stderr = if(Test-Path -LiteralPath $script:RunLogStderrPath -PathType Leaf){[System.IO.File]::ReadAllText($script:RunLogStderrPath)}else{""}
     $captureWithinBound = $stdout.Length -le 16777216
-    $analysis = Measure-RunLogWindow $stdout $script:RunLogMarker @($script:ProcessEpochs) $captureWithinBound $captureProcessAliveAtEnd $endMarkerWriteExitCode
+    $analysis = Measure-RunLogWindow $stdout $script:RunLogMarker @($script:ProcessEpochs) $captureWithinBound $captureProcessAliveAtEnd $endMarkerWriteExitCode $captureProcessExitObserved
     $status = if($analysis.coverage_complete -and $analysis.target_fatal_count -eq 0 -and $analysis.target_anr_count -eq 0 -and -not $FailureCleanup){"passed"}elseif($FailureCleanup){"diagnostic_only"}else{"failed"}
     $receipt = Save-Receipt "run-logs" (New-Receipt "run-bounded-logs" "serial-scoped-streaming-adb" $status ([ordered]@{
         provider_gap=$QfmLogGap
@@ -621,6 +780,7 @@ function Stop-RunLogCapture([switch]$FailureCleanup) {
         end_marker_retained=$analysis.end_marker_retained
         end_marker_write_exit_code=$endMarkerWriteExitCode
         capture_process_alive_at_end=$captureProcessAliveAtEnd
+        capture_process_exit_observed=$captureProcessExitObserved
         backlog_before_start_excluded=$true
         capture_within_16_mib_bound=$captureWithinBound
         coverage_complete=$analysis.coverage_complete
@@ -635,6 +795,9 @@ function Stop-RunLogCapture([switch]$FailureCleanup) {
         global_log_buffer_cleared=$false
         failure_cleanup=[bool]$FailureCleanup
     }))
+    # A diagnostic-only fatal scan may be incomplete during failure cleanup,
+    # but it may never convert an uncontained child process into success.
+    Assert-RunLogProcessExitObserved $captureProcessExitObserved
     if (-not $FailureCleanup -and -not $analysis.coverage_complete) {
         throw "Run-owned log capture coverage was incomplete or exceeded its acceptance bound."
     }
@@ -904,6 +1067,17 @@ function Capture-PreState($Artifacts) {
     return $receipt
 }
 
+function Get-TargetAbsenceCleanupDecision([int]$ExitCode, [string]$Output, [string]$ErrorOutput) {
+    if ($ExitCode -eq 0 -and $Output -match '(?m)^package:') { return "installed" }
+    # Android's PackageManagerShellCommand displayPackageFilePath returns 1
+    # with no output for a package that is not installed.  Accept only that
+    # exact empty shape (plus the benign exit-0 empty variant); any diagnostic
+    # text or other exit code remains a read failure.
+    if ($ExitCode -in @(0,1) -and [string]::IsNullOrWhiteSpace($Output) -and
+            [string]::IsNullOrWhiteSpace($ErrorOutput)) { return "already_absent" }
+    return "presence_read_failed"
+}
+
 function Restore-PreState($Artifacts) {
     if ($null -eq $script:PreState) {
         $prePath = Join-Path $script:RunDir "pre-state.json"
@@ -913,6 +1087,7 @@ function Restore-PreState($Artifacts) {
     [void](Stop-Providers)
     try { [void](Hub-Action "stop") } catch { }
     $rows = @()
+    $restoreErrors = [System.Collections.Generic.List[string]]::new()
     for ($index = 0; $index -lt 3; $index++) {
         $prior = $script:PreState.packages[$index]
         $artifact = $Artifacts[$index]
@@ -927,8 +1102,31 @@ function Restore-PreState($Artifacts) {
                     throw "Restored $($prior.label) did not match pre-state bytes."
                 }
             } else {
-                [void](Invoke-Adb @("shell", "pm", "uninstall", [string]$prior.package) $QfmUninstallGap "remove only a run-installed target package")
-                $script:UninstallPerformed = $true
+                $presence = Invoke-Adb @("shell", "pm", "path", [string]$prior.package) $QfmPackageStateGap "read one fixed target before idempotent cleanup" -AllowFailure
+                $cleanupDecision = Get-TargetAbsenceCleanupDecision ([int]$presence.exit_code) ([string]$presence.output) ([string]$presence.stderr)
+                $wasPresent = $cleanupDecision -eq "installed"
+                $targetCleanupProven = $cleanupDecision -eq "already_absent"
+                if ($cleanupDecision -eq "presence_read_failed") {
+                    [void]$restoreErrors.Add("target_presence_read_failed:$($prior.label)")
+                } elseif ($wasPresent) {
+                    $uninstall = Invoke-Adb @("shell", "pm", "uninstall", [string]$prior.package) $QfmUninstallGap "remove only a run-installed target package" -AllowFailure
+                    $afterUninstall = Invoke-Adb @("shell", "pm", "path", [string]$prior.package) $QfmPackageStateGap "prove one fixed target is absent after cleanup" -AllowFailure
+                    $afterDecision = Get-TargetAbsenceCleanupDecision ([int]$afterUninstall.exit_code) ([string]$afterUninstall.output) ([string]$afterUninstall.stderr)
+                    if ($uninstall.exit_code -ne 0 -or $afterDecision -ne "already_absent") {
+                        [void]$restoreErrors.Add("target_uninstall_not_proven:$($prior.label)")
+                    } else {
+                        $script:UninstallPerformed = $true
+                        $targetCleanupProven = $true
+                    }
+                }
+                $rows += [ordered]@{
+                    package=$prior.package
+                    policy=$ExistingTargetPolicy
+                    prior_running=$prior.running
+                    prior_installed=$false
+                    cleanup=$(if($cleanupDecision -eq "already_absent"){"already_absent"}elseif($wasPresent -and $targetCleanupProven){"uninstalled_and_absence_proven"}else{"not_proven"})
+                }
+                continue
             }
         }
         if ($prior.running -and ($ExistingTargetPolicy -eq "RetainCandidate" -or $prior.installed)) {
@@ -948,13 +1146,27 @@ function Restore-PreState($Artifacts) {
     $after = Get-DeviceInvariantSnapshot
     foreach ($name in @("stay_on_while_plugged_in", "screen_off_timeout", "proximity_positive", "forwards_sha256")) {
         if ([string]$after[$name] -ne [string]$script:PreState.device_invariants.$name) {
-            throw "Device invariant changed during run: $name"
+            [void]$restoreErrors.Add("device_invariant_changed:$name")
         }
     }
-    return Save-Receipt "restore-pre-state" (New-Receipt "restore-pre-state" "target-only-cleanup" "passed" ([ordered]@{
+    $receipt = Save-Receipt "restore-pre-state" (New-Receipt "restore-pre-state" "target-only-cleanup" $(if($restoreErrors.Count -eq 0){"passed"}else{"partial"}) ([ordered]@{
         packages=$rows
-        device_invariants_restored=$true
+        device_invariants_restored=($restoreErrors.Count -eq 0)
+        errors=@($restoreErrors)
         unrelated_packages_touched=$false
+    }))
+    if ($restoreErrors.Count -ne 0) { throw "Target cleanup/restoration was partial." }
+    return $receipt
+}
+
+function Revoke-RunOwnedSessionIfPresent([string]$ReceiptName) {
+    if (Test-Path -LiteralPath $SessionFile -PathType Leaf) {
+        return Hostess-Action "revoke"
+    }
+    return Save-Receipt $ReceiptName (New-Receipt "hostess-revoke" "rusty-hostess" "not_required" ([ordered]@{
+        session_file_present=$false
+        credentials_already_absent=$true
+        run_owned_session_path_sha256=Get-TextSha256 ([System.IO.Path]::GetFullPath($SessionFile))
     }))
 }
 
@@ -971,10 +1183,8 @@ function Invoke-StandaloneCleanup($Artifacts) {
             [void]$errors.Add("run_log_capture_cleanup_failed")
         }
     }
-    if ($script:HostessPaired -and (Test-Path -LiteralPath $SessionFile -PathType Leaf)) {
-        try { [void](Hostess-Action "revoke") }
-        catch { [void]$errors.Add("hostess_revoke_failed") }
-    }
+    try { [void](Revoke-RunOwnedSessionIfPresent "cleanup-hostess-revoke") }
+    catch { [void]$errors.Add("hostess_revoke_failed") }
     try { [void](Restore-PreState $Artifacts) }
     catch { [void]$errors.Add("pre_state_restore_failed") }
     [void](Save-Receipt "standalone-cleanup" (New-Receipt "standalone-cleanup" "checkpoint-bound-operator" $(if($errors.Count -eq 0){"passed"}else{"partial"}) ([ordered]@{
@@ -1516,6 +1726,13 @@ if ([string]::IsNullOrWhiteSpace($ResumeCheckpoint)) {
     $runName = "connection-hub-{0}-{1}" -f $Action.ToLowerInvariant(), ([DateTime]::UtcNow.ToString("yyyyMMddTHHmmssfffZ"))
     $script:RunDir = Join-Path $resolvedEvidenceRoot $runName
     New-Item -ItemType Directory -Path $script:RunDir | Out-Null
+    $expectedSessionFile = Join-Path $script:RunDir "hostess-session.json"
+    if ([string]::IsNullOrWhiteSpace($SessionFile)) {
+        $SessionFile = $expectedSessionFile
+    } elseif ($Action -in @("E2E", "SimulateE2E") -and
+            [System.IO.Path]::GetFullPath($SessionFile) -ne $expectedSessionFile) {
+        throw "E2E Hostess session file must be the run-owned fixed session path."
+    }
 }
 $needsQfm = $Action -in @("Prerequisites", "Inspect", "Install", "Start", "Status", "LaunchSpatial", "LaunchSample", "Cleanup", "E2E")
 $needsHostess = $Action -like "Hostess*" -or $Action -in @("WaitSurface", "WaitSurfaceAbsent", "Cleanup", "E2E")
@@ -1552,7 +1769,6 @@ if ($needsGradle) {
     $script:GradleVersion = $v.combined.Trim()
 } else { $script:Gradle=$null; $script:GradleVersion=""; $script:GradlePin="" }
 Initialize-Checkpoint
-if ([string]::IsNullOrWhiteSpace($SessionFile)) { $SessionFile = Join-Path $script:RunDir "hostess-session.json" }
 
 if ($needsQfm) { $script:Qfm = Lock-ExactProvider $FileManagerCli $FileManagerSha256 "File Manager CLI" }
 if ($needsHostess) { $script:Hostess = Lock-ExactProvider $HostessCli $HostessCliSha256 "Hostess CLI" }
@@ -1578,6 +1794,18 @@ try {
         $deadCapture = Measure-RunLogWindow $syntheticLog $syntheticMarker $syntheticEpochs $true $false 0
         if ($missingEnd.coverage_complete -ne $false -or $deadCapture.coverage_complete -ne $false) {
             throw "Synthetic run-log coverage accepted a missing END marker or dead capture."
+        }
+        $nonTerminationRejected = $false
+        try { Assert-RunLogProcessExitObserved $false } catch { $nonTerminationRejected = $true }
+        if (-not $nonTerminationRejected) {
+            throw "Synthetic failure cleanup accepted an uncontained log capture process."
+        }
+        if ((Get-TargetAbsenceCleanupDecision 1 "" "") -ne "already_absent" -or
+                (Get-TargetAbsenceCleanupDecision 0 "" "") -ne "already_absent" -or
+                (Get-TargetAbsenceCleanupDecision 0 "package:/data/app/example/base.apk" "") -ne "installed" -or
+                (Get-TargetAbsenceCleanupDecision 1 "" "permission denied") -ne "presence_read_failed" -or
+                (Get-TargetAbsenceCleanupDecision 2 "" "") -ne "presence_read_failed") {
+            throw "Synthetic target cleanup did not preserve idempotent already-absent behavior."
         }
         foreach ($name in (New-DryRunPlan).e2e_sequence) {
             $safeName = $name -replace '[^a-z0-9]+','-'
@@ -1740,9 +1968,8 @@ try {
         if ($null -ne $script:RunLogProcess) {
             try { [void](Stop-RunLogCapture -FailureCleanup) } catch { [void]$cleanupErrors.Add("run_log_capture_cleanup_failed") }
         }
-        if ($script:HostessPaired -and (Test-Path -LiteralPath $SessionFile -PathType Leaf)) {
-            try { [void](Hostess-Action "revoke") } catch { [void]$cleanupErrors.Add("hostess_revoke_failed") }
-        }
+        try { [void](Revoke-RunOwnedSessionIfPresent "failure-cleanup-hostess-revoke") }
+        catch { [void]$cleanupErrors.Add("hostess_revoke_failed") }
         $preStatePath = Join-Path $script:RunDir "pre-state.json"
         if ($script:TargetMutationStarted -and (Test-Path -LiteralPath $preStatePath -PathType Leaf)) {
             try { $a=Resolve-Apks; [void](Restore-PreState $a) } catch { [void]$cleanupErrors.Add("pre_state_restore_failed") }
