@@ -1,0 +1,18 @@
+{
+  "schema": "rusty.quest.broker_client_spec.v1",
+  "client_id": "client.quest.spatial-video-control-example",
+  "package_name": "io.github.mesmerprism.rustyquest.spatial_video_control_example",
+  "feature_lock_id": "lock.broker-client.spatial-video-control-example.v1",
+  "marker_namespace": "RUSTY_QUEST_SPATIAL_VIDEO_CONNECTION_HUB",
+  "contract_families": [
+    "rusty.quest.connection_hub.surface_registration.v1"
+  ],
+  "capabilities": [
+    "capability.connection_hub.provider.register"
+  ],
+  "adapter_permissions": [
+    "io.github.mesmerprism.rustymanifold.permission.BROKER_ADMISSION"
+  ],
+  "runtime_properties": [],
+  "application_defaults": []
+}

@@ -16,3 +16,4 @@ dependencyResolutionManagement {
 
 rootProject.name = "RustyQuestSpatialVideoControlExample"
 include(":app")
+include(":hub-sample-provider")

@@ -10,6 +10,7 @@ import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
 import java.io.File
+import org.json.JSONObject
 
 /**
  * Quest owns this effective state. Revisions advance only inside a Media3
@@ -146,6 +147,69 @@ class Media3SpatialPlayerAdapter(
     }
   }
 
+  /**
+   * Applies only a Rust-authored Connection Hub authorization. The returned
+   * status proves provider dispatch, not a Media3/render effect; effective
+   * state is reported separately through the surface-state channel.
+   */
+  fun enqueueHubAuthorizedCommand(
+      requestId: String,
+      surfaceId: String,
+      command: String,
+      args: JSONObject,
+      authorityReceipt: JSONObject,
+  ): String {
+    require(surfaceId == CONNECTION_HUB_SURFACE_ID)
+    require(
+        authorityReceipt.optString("\$schema") ==
+            "rusty.manifold.connection_hub.receipt.v1"
+    )
+    require(authorityReceipt.optBoolean("applied", false))
+    require(authorityReceipt.optString("operation") == "authorize_surface_command")
+    val authorization = authorityReceipt.getJSONObject("command_authorization")
+    require(!authorization.optBoolean("proves_application_effect", true))
+    require(authorization.optString("request_id") == requestId)
+    require(authorization.optString("surface_id") == surfaceId)
+    require(authorization.optString("command_id") == command)
+    require(
+        authorization.optString("typed_params_sha256") ==
+            "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+    )
+    require(args.length() == 0)
+    mainHandler.post {
+      when (command) {
+        "command.spatial_video_control.select_next",
+        "command.spatial_video_control.select_previous" -> {
+          val videoIds = catalog.videos().map { it.id() }
+          val current = snapshot().selectedVideoId()
+          val currentIndex = videoIds.indexOf(current).coerceAtLeast(0)
+          val delta =
+              if (command == "command.spatial_video_control.select_next") 1 else -1
+          val videoId = videoIds[(currentIndex + delta + videoIds.size) % videoIds.size]
+          catalog.require(videoId)
+          player.pause()
+          player.clearVideoSurface()
+          synchronized(lock) { activeSurfaceVideoId = null }
+          requestPresentation(videoId)
+        }
+        "command.spatial_video_control.play" -> player.play()
+        "command.spatial_video_control.pause" -> player.pause()
+        else -> error("unregistered Hub media command")
+      }
+    }
+    return "provider_dispatch_queued_effect_pending"
+  }
+
+  fun hubSurfaceState(): JSONObject {
+    val observed = snapshot()
+    return JSONObject()
+        .put("selected_video_id", observed.selectedVideoId())
+        .put("playing", observed.playing())
+        .put("playback_state", observed.playbackState())
+        .put("position_ms", observed.positionMs())
+        .put("player_revision", observed.revision())
+  }
+
   private fun dispatch(effect: PlayerPort.AcceptedEffect, action: () -> Unit) {
     synchronized(lock) {
       check(pending == null) { "Manifold must not accept overlapping player effects" }
@@ -273,6 +337,7 @@ class Media3SpatialPlayerAdapter(
       }
 
   companion object {
+    const val CONNECTION_HUB_SURFACE_ID = "surface.spatial_video_control.media"
     const val INITIAL_VIDEO_ID = "synthetic-grid-1s"
     const val DEBUG_MEDIA_DIRECTORY = "immersive-video-test"
     const val POSITION_OBSERVATION_INTERVAL_MS = 500L

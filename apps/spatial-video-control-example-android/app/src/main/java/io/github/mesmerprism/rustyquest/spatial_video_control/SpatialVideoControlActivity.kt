@@ -103,6 +103,7 @@ open class SpatialVideoControlActivity : AppSystemActivity(), DebugShellControlT
   private lateinit var videoCatalog: VideoCatalog
   private lateinit var player: Media3SpatialPlayerAdapter
   private var control: AndroidTrustedLocalControlAdapter? = null
+  private var hubSurface: ConnectionHubSurfaceClient? = null
   private var controllerState by mutableStateOf(HeadsetControllerState())
   private var bindCandidate by
       mutableStateOf(PrivateAddressSelector.Candidate.unavailable())
@@ -186,6 +187,11 @@ open class SpatialVideoControlActivity : AppSystemActivity(), DebugShellControlT
     videoPanelCoordinator.spawnAtViewer(videoAnchor, player.snapshot().selectedVideoId())
   }
 
+  override fun onStart() {
+    super.onStart()
+    hubSurface = ConnectionHubSurfaceClient(this, player).also { it.start() }
+  }
+
   override fun registerPanels(): List<PanelRegistration> =
       buildList {
         add(controlPanelRegistration())
@@ -220,11 +226,19 @@ open class SpatialVideoControlActivity : AppSystemActivity(), DebugShellControlT
     super.onPause()
   }
 
+  override fun onStop() {
+    hubSurface?.close()
+    hubSurface = null
+    super.onStop()
+  }
+
   override fun onDestroy() {
     if (BuildConfig.DEBUG) {
       DebugShellControlBridge.detach(this)
     }
     control?.close()
+    hubSurface?.close()
+    hubSurface = null
     player.release()
     controlPanel = null
     controlPanelSceneObject = null

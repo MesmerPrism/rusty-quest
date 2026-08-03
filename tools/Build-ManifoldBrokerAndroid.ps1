@@ -95,6 +95,9 @@ function Get-ExactClientGrantCapabilities {
         $suffix = ([string]$commandId) -replace '^command\.', ''
         [void]$allowed.Add("capability.command.$suffix")
     }
+    if (@($ProductLock.features | ForEach-Object { [string]$_ }) -contains "connection_hub") {
+        [void]$allowed.Add("capability.connection_hub.provider.register")
+    }
     $features = @($ProductLock.features | ForEach-Object { [string]$_ })
     $commands = @($ProductLock.command_ids | ForEach-Object { [string]$_ })
     $streams = @($ProductLock.stream_ids | ForEach-Object { [string]$_ })
@@ -391,6 +394,20 @@ $acceptedProductLockJson = [System.IO.File]::ReadAllText($acceptedProductLockPat
 $acceptedProductSpecJson = [System.IO.File]::ReadAllText($canonicalProductSpecPath)
 $acceptedProductLock = $acceptedProductLockJson | ConvertFrom-Json
 $mediaSelected = @($acceptedProductLock.features | ForEach-Object { [string]$_ }) -contains "media_session"
+$connectionHubSelected = @($acceptedProductLock.features | ForEach-Object { [string]$_ }) -contains "connection_hub"
+if ($connectionHubSelected) {
+    $manifoldSourceRoot = Resolve-Path (Join-Path $repoRoot "..\rusty-manifold")
+    $manifoldSourceLockPath = Join-Path $appRoot "native\manifold-source.lock.json"
+    $manifoldSourceLock = Get-Content -Raw -LiteralPath $manifoldSourceLockPath | ConvertFrom-Json
+    $manifoldRevision = (& git -C $manifoldSourceRoot rev-parse HEAD).Trim()
+    $manifoldTree = (& git -C $manifoldSourceRoot rev-parse "$manifoldRevision`^{tree}").Trim()
+    $manifoldDirty = @(& git -C $manifoldSourceRoot status --porcelain)
+    if ($LASTEXITCODE -ne 0 -or $manifoldDirty.Count -ne 0 -or
+        $manifoldRevision -ne [string]$manifoldSourceLock.revision -or
+        $manifoldTree -ne [string]$manifoldSourceLock.tree) {
+        throw "Connection Hub Manifold source does not match the exact clean native pin."
+    }
+}
 $mediaSessionBindings = @()
 $mediaBindingByRelativePath = @{}
 if ($mediaSelected) {
@@ -435,6 +452,16 @@ $clientLockInputs = @(
         input = Read-ValidatedClientLock -Path (Join-Path $repoRoot "fixtures\broker-clients\spatial-camera-panel.client.json")
     }
 )
+if ($connectionHubSelected) {
+    $clientLockInputs += [ordered]@{
+        grant_id = "grant.quest.spatial-video-control-example"
+        input = Read-ValidatedClientLock -Path (Join-Path $repoRoot "fixtures\broker-clients\spatial-video-control-example.client.json")
+    }
+    $clientLockInputs += [ordered]@{
+        grant_id = "grant.quest.connection-hub-sample"
+        input = Read-ValidatedClientLock -Path (Join-Path $repoRoot "fixtures\broker-clients\connection-hub-sample.client.json")
+    }
+}
 $generatedGrants = @()
 $packagedClientLocks = @()
 foreach ($binding in $clientLockInputs) {
@@ -490,6 +517,67 @@ $admissionConfig = [ordered]@{
         reviewed_sweep_ids = @()
         audit_events = @()
         max_token_ttl_ms = 60000
+    }
+}
+$connectionHubNativeConfig = $null
+if ($connectionHubSelected) {
+    $spatialProviderInput = @($clientLockInputs | Where-Object {
+        [string]$_.grant_id -eq "grant.quest.spatial-video-control-example"
+    })[0].input
+    $sampleProviderInput = @($clientLockInputs | Where-Object {
+        [string]$_.grant_id -eq "grant.quest.connection-hub-sample"
+    })[0].input
+    $connectionHubCommands = @(
+        [ordered]@{ command_id = "command.spatial_video_control.pause"; required_controller_capability = "capability.spatial_video_control.pause" },
+        [ordered]@{ command_id = "command.spatial_video_control.play"; required_controller_capability = "capability.spatial_video_control.play" },
+        [ordered]@{ command_id = "command.spatial_video_control.select_next"; required_controller_capability = "capability.spatial_video_control.select_next" },
+        [ordered]@{ command_id = "command.spatial_video_control.select_previous"; required_controller_capability = "capability.spatial_video_control.select_previous" }
+    )
+    $connectionHubNativeConfig = [ordered]@{
+        '$schema' = "rusty.quest.connection_hub.native_config.v1"
+        product_id = [string]$productInputs.product_id
+        product_lock_id = [string]$productInputs.manifold_lock_id
+        product_lock_sha256 = "sha256:$([string]$productInputs.manifold_lock_sha256)"
+        manifold_revision = [string]$manifoldSourceLock.revision
+        manifold_tree = [string]$manifoldSourceLock.tree
+        policy = [ordered]@{
+            '$schema' = "rusty.manifold.connection_hub.policy.v1"
+            authority_id = "authority.connection-hub.quest"
+            trusted_operator_evidence_ids = @("evidence.operator.wearer-action")
+            allowed_controller_capabilities = @(
+                "capability.connection_hub_sample.toggle",
+                "capability.spatial_video_control.pause",
+                "capability.spatial_video_control.play",
+                "capability.spatial_video_control.select_next",
+                "capability.spatial_video_control.select_previous"
+            )
+            provider_grants = @(
+                [ordered]@{
+                    provider_id = "provider.quest.connection-hub-sample"
+                    client_id = [string]$sampleProviderInput.lock.client_id
+                    client_lock_id = [string]$sampleProviderInput.lock.feature_lock_id
+                    client_lock_sha256 = "sha256:$([string]$sampleProviderInput.sha256)"
+                    surface_contract_sha256 = "sha256:48019a4a7a00c9ee6d694927727f54093b6946c1f894b99214c5aeb5629472c4"
+                    allowed_commands = @(
+                        [ordered]@{
+                            command_id = "command.connection_hub_sample.toggle"
+                            required_controller_capability = "capability.connection_hub_sample.toggle"
+                        }
+                    )
+                },
+                [ordered]@{
+                    provider_id = "provider.quest.spatial-video-control-example"
+                    client_id = [string]$spatialProviderInput.lock.client_id
+                    client_lock_id = [string]$spatialProviderInput.lock.feature_lock_id
+                    client_lock_sha256 = "sha256:$([string]$spatialProviderInput.sha256)"
+                    surface_contract_sha256 = "sha256:099dab2723521655df0617b22a14f3a8021ecf75fc952587d619b944e8019e60"
+                    allowed_commands = $connectionHubCommands
+                }
+            )
+            max_controller_ttl_ms = 2592000000
+            max_session_ttl_ms = 86400000
+            max_surface_lease_ttl_ms = 3600000
+        }
     }
 }
 $runtimeConfig = [ordered]@{
@@ -549,9 +637,37 @@ final class GeneratedBrokerRuntimeConfig {
     $generatedRuntimeConfigPath,
     $generatedRuntimeConfigSource,
     (New-Object System.Text.UTF8Encoding($false)))
+$generatedConnectionHubConfigPath = $null
+if ($connectionHubSelected) {
+    $connectionHubConfigJson = $connectionHubNativeConfig | ConvertTo-Json -Depth 20 -Compress
+    $connectionHubConfigJava = $connectionHubConfigJson.Replace('\', '\\').Replace('"', '\"')
+    $generatedConnectionHubConfigPath = Join-Path $generatedPackageDir "GeneratedConnectionHubConfig.java"
+    $generatedConnectionHubConfigSource = @"
+package io.github.mesmerprism.rustymanifold.broker;
+
+final class GeneratedConnectionHubConfig {
+    static final String JSON = "$connectionHubConfigJava";
+    private GeneratedConnectionHubConfig() {}
+}
+"@
+    [System.IO.File]::WriteAllText(
+        $generatedConnectionHubConfigPath,
+        $generatedConnectionHubConfigSource,
+        (New-Object System.Text.UTF8Encoding($false)))
+}
 $sourceFiles = Get-ChildItem -Path (Join-Path $appRoot "src\main\java") -Recurse -Filter *.java |
+    Where-Object {
+        $connectionHubSelected -or
+        ($_.Name -notlike "ConnectionHub*.java" -and
+         $_.Name -notlike "AndroidConnectionHub*.java" -and
+         $_.Name -notlike "Hub*.java" -and
+         $_.Name -notlike "UnavailableManifoldConnectionHub*.java")
+    } |
     ForEach-Object { $_.FullName }
 $sourceFiles = @($sourceFiles) + @($generatedProductConfigPath, $generatedRuntimeConfigPath)
+if ($connectionHubSelected) {
+    $sourceFiles += $generatedConnectionHubConfigPath
+}
 if ($sourceFiles.Count -eq 0) {
     throw "No Java sources found under $appRoot"
 }
@@ -614,6 +730,21 @@ Copy-Item -LiteralPath $acceptedProductLockPath -Destination (Join-Path $product
 Copy-Item -LiteralPath $commandRegistryPath -Destination (Join-Path $productAssetDir "command-registry.json")
 Copy-Item -LiteralPath $manifestProjectionPath -Destination (Join-Path $productAssetDir "manifest-projection.json")
 Copy-Item -LiteralPath $runtimeConfigPath -Destination (Join-Path $productAssetDir "runtime-config.json")
+$connectionHubPackagedAssets = @()
+if ($connectionHubSelected) {
+    $connectionHubAssetSource = Join-Path $appRoot "src\main\assets\connection-hub"
+    $connectionHubAssetTarget = Join-Path $productPackageRoot "assets\connection-hub"
+    if (-not (Test-Path -LiteralPath $connectionHubAssetSource -PathType Container)) {
+        throw "Connection Hub fixed browser assets are missing: $connectionHubAssetSource"
+    }
+    New-Item -ItemType Directory -Force -Path $connectionHubAssetTarget | Out-Null
+    Copy-Item -Path (Join-Path $connectionHubAssetSource "*") -Destination $connectionHubAssetTarget -Recurse
+    $connectionHubPackagedAssets = @(
+        "assets/connection-hub/index.html",
+        "assets/connection-hub/app.js",
+        "assets/connection-hub/styles.css"
+    )
+}
 Invoke-Checked "jar product assets update" $jar @("uf", $apkUnaligned, "-C", $productPackageRoot, "assets")
 Invoke-Checked "zipalign" $zipalign @("-f", "4", $apkUnaligned, $apkAligned)
 
@@ -686,6 +817,7 @@ $manifest = [ordered]@{
     packaged_command_registry_asset = "assets/manifold/command-registry.json"
     packaged_manifest_projection_asset = "assets/manifold/manifest-projection.json"
     packaged_runtime_config_asset = "assets/manifold/runtime-config.json"
+    connection_hub_browser_assets = $connectionHubPackagedAssets
     legacy_camera_p2p_compatibility = [bool]$LegacyCameraP2pCompatibility
     apk_path = $apkSigned
     apk_sha256 = $sha256

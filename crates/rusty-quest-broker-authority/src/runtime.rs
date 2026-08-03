@@ -1820,6 +1820,9 @@ fn derive_grant_capabilities(
     let media_selected = product_lock
         .features
         .contains(&ManifoldBrokerFeature::MediaSession);
+    let connection_hub_selected = product_lock
+        .features
+        .contains(&ManifoldBrokerFeature::ConnectionHub);
     let peer_session_selected = product_lock.features.iter().any(|feature| {
         matches!(
             feature,
@@ -1838,6 +1841,8 @@ fn derive_grant_capabilities(
         .iter()
         .filter(|capability| {
             command_capabilities.contains(*capability)
+                || (connection_hub_selected
+                    && capability.as_str() == "capability.connection_hub.provider.register")
                 || (media_selected
                     && (capability.as_str() == "capability.media.session.observe"
                         || capability.as_str().starts_with("capability.sink.")))

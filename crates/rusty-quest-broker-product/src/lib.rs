@@ -350,6 +350,25 @@ fn render_standalone_android_manifest(
     } else {
         "dataSync"
     };
+    let app_label = if has_feature(lock, &ManifoldBrokerFeature::ConnectionHub) {
+        "Rusty Connection Hub"
+    } else {
+        "Rusty Manifold Broker"
+    };
+    let (activity_name, foreground_service_name, admission_service_name) =
+        if has_feature(lock, &ManifoldBrokerFeature::ConnectionHub) {
+            (
+                ".ConnectionHubStartActivity",
+                ".ConnectionHubStartService",
+                ".ConnectionHubAdmissionService",
+            )
+        } else {
+            (
+                ".BrokerStartActivity",
+                ".BrokerStartService",
+                ".ManifoldAdmissionService",
+            )
+        };
     let mut xml = format!(
         "<manifest xmlns:android=\"http://schemas.android.com/apk/res/android\"\n    package=\"{QUEST_BROKER_PACKAGE_NAME}\">\n\n    <permission\n        android:name=\"{QUEST_BROKER_ADMISSION_PERMISSION}\"\n        android:protectionLevel=\"signature\" />\n\n"
     );
@@ -370,7 +389,7 @@ fn render_standalone_android_manifest(
     }
     let _ = write!(
         xml,
-        "\n    <application\n        android:allowBackup=\"false\"\n        android:hasCode=\"true\"\n        android:label=\"Rusty Manifold Broker\"\n        android:theme=\"@android:style/Theme.Material.Light.NoActionBar\"\n        android:usesCleartextTraffic=\"false\">\n        <activity\n            android:name=\".BrokerStartActivity\"\n            android:exported=\"true\"\n            android:launchMode=\"singleTask\">\n            <intent-filter>\n                <action android:name=\"android.intent.action.MAIN\" />\n                <category android:name=\"android.intent.category.LAUNCHER\" />\n            </intent-filter>\n        </activity>\n        <service\n            android:name=\".BrokerStartService\"\n            android:exported=\"false\"\n            android:foregroundServiceType=\"{service_types}\"\n            android:stopWithTask=\"false\" />\n        <service\n            android:name=\".ManifoldAdmissionService\"\n            android:exported=\"true\"\n            android:permission=\"{QUEST_BROKER_ADMISSION_PERMISSION}\"\n            android:stopWithTask=\"false\" />\n    </application>\n</manifest>\n"
+        "\n    <application\n        android:allowBackup=\"false\"\n        android:hasCode=\"true\"\n        android:label=\"{app_label}\"\n        android:theme=\"@android:style/Theme.Material.Light.NoActionBar\"\n        android:usesCleartextTraffic=\"false\">\n        <activity\n            android:name=\"{activity_name}\"\n            android:exported=\"true\"\n            android:launchMode=\"singleTask\">\n            <intent-filter>\n                <action android:name=\"android.intent.action.MAIN\" />\n                <category android:name=\"android.intent.category.LAUNCHER\" />\n            </intent-filter>\n        </activity>\n        <service\n            android:name=\"{foreground_service_name}\"\n            android:exported=\"false\"\n            android:foregroundServiceType=\"{service_types}\"\n            android:stopWithTask=\"false\" />\n        <service\n            android:name=\"{admission_service_name}\"\n            android:exported=\"true\"\n            android:permission=\"{QUEST_BROKER_ADMISSION_PERMISSION}\"\n            android:stopWithTask=\"false\" />\n    </application>\n</manifest>\n"
     );
     xml
 }
@@ -383,7 +402,7 @@ fn render_generated_product_config(lock: &ManifoldBrokerProductLock) -> String {
         .collect::<Vec<_>>()
         .join(", ");
     format!(
-        "package io.github.mesmerprism.rustymanifold.broker;\n\nfinal class GeneratedBrokerProductConfig {{\n    static final String LOCK_ID = \"{}\";\n    static final String PRODUCT_ID = \"{}\";\n    static final String LOCK_FINGERPRINT = \"{}\";\n    static final boolean MEDIA_SESSION_ENABLED = {};\n    static final boolean CAMERA_MEDIA_ENABLED = {};\n    static final boolean DIRECT_P2P_ENABLED = {};\n    static final boolean BLE_RENDEZVOUS_ENABLED = {};\n    static final String[] COMMAND_IDS = new String[] {{{commands}}};\n\n    private GeneratedBrokerProductConfig() {{}}\n}}\n",
+        "package io.github.mesmerprism.rustymanifold.broker;\n\nfinal class GeneratedBrokerProductConfig {{\n    static final String LOCK_ID = \"{}\";\n    static final String PRODUCT_ID = \"{}\";\n    static final String LOCK_FINGERPRINT = \"{}\";\n    static final boolean MEDIA_SESSION_ENABLED = {};\n    static final boolean CAMERA_MEDIA_ENABLED = {};\n    static final boolean DIRECT_P2P_ENABLED = {};\n    static final boolean BLE_RENDEZVOUS_ENABLED = {};\n    static final boolean CONNECTION_HUB_ENABLED = {};\n    static final String[] COMMAND_IDS = new String[] {{{commands}}};\n\n    private GeneratedBrokerProductConfig() {{}}\n}}\n",
         lock.lock_id,
         lock.product_id,
         lock.spec_fingerprint,
@@ -391,6 +410,7 @@ fn render_generated_product_config(lock: &ManifoldBrokerProductLock) -> String {
         has_feature(lock, &ManifoldBrokerFeature::CameraMedia),
         has_feature(lock, &ManifoldBrokerFeature::DirectP2p),
         has_feature(lock, &ManifoldBrokerFeature::BleRendezvous),
+        has_feature(lock, &ManifoldBrokerFeature::ConnectionHub),
     )
 }
 
@@ -458,6 +478,7 @@ mod tests {
             "direct-p2p-standalone",
             "ble-embedded",
             "legacy-camera-p2p-standalone",
+            "connection-hub-standalone",
         ] {
             let (spec, lock, projection) = roots(name);
             assert_eq!(
@@ -605,6 +626,23 @@ mod tests {
         assert!(manifest.contains(
             "android:name=\".ManifoldAdmissionService\"\n            android:exported=\"true\"\n            android:permission=\"io.github.mesmerprism.rustymanifold.permission.BROKER_ADMISSION\""
         ));
+    }
+
+    #[test]
+    fn connection_hub_package_uses_only_connection_hub_entry_points() {
+        let (spec, lock, _) = roots("connection-hub-standalone");
+        let artifacts = prepare_standalone_android_package(&spec, &lock).expect("package");
+        let manifest = artifacts.android_manifest_xml;
+        assert!(manifest.contains("android:label=\"Rusty Connection Hub\""));
+        assert!(manifest.contains("android:name=\".ConnectionHubStartActivity\""));
+        assert!(manifest.contains("android:name=\".ConnectionHubStartService\""));
+        assert!(manifest.contains("android:name=\".ConnectionHubAdmissionService\""));
+        assert!(!manifest.contains("android:name=\".BrokerStartActivity\""));
+        assert!(!manifest.contains("android:name=\".BrokerStartService\""));
+        assert!(!manifest.contains("android:name=\".ManifoldAdmissionService\""));
+        assert!(artifacts
+            .generated_product_config_java
+            .contains("CONNECTION_HUB_ENABLED = true"));
     }
 
     #[test]

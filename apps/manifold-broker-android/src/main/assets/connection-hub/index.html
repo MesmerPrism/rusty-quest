@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="dark">
+    <title>Rusty Connection Hub</title>
+    <link rel="stylesheet" href="/assets/styles.css">
+    <script src="/assets/app.js" defer></script>
+  </head>
+  <body>
+    <main>
+      <header>
+        <p class="eyebrow">RUSTY CONNECTION HUB</p>
+        <h1>One connection, app-owned controls</h1>
+        <p id="transport-warning" class="warning">
+          Trusted-LAN experimental mode. Pairing authenticates commands but traffic is not encrypted.
+        </p>
+      </header>
+
+      <section id="pairing" aria-labelledby="pairing-title">
+        <h2 id="pairing-title">Pair this controller</h2>
+        <label for="pairing-code">Code shown on the headset</label>
+        <div class="pair-row">
+          <input id="pairing-code" inputmode="numeric" maxlength="6" autocomplete="one-time-code">
+          <button id="pair-button" type="button">Pair</button>
+        </div>
+        <p id="pair-status" role="status">Not connected</p>
+      </section>
+
+      <section aria-labelledby="surfaces-title">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">AVAILABLE NOW</p>
+            <h2 id="surfaces-title">App surfaces</h2>
+          </div>
+          <button id="disconnect-button" class="quiet" type="button" disabled>Disconnect</button>
+        </div>
+        <div id="surfaces" class="surface-grid">
+          <p class="empty">Pair to see controls from the app currently running on the headset.</p>
+        </div>
+      </section>
+    </main>
+    <template id="surface-template">
+      <article class="surface-card">
+        <div class="surface-heading">
+          <div>
+            <h3></h3>
+            <p class="description"></p>
+          </div>
+          <span class="provider"></span>
+        </div>
+        <dl class="state"></dl>
+        <div class="commands"></div>
+        <p class="receipt" role="status"></p>
+      </article>
+    </template>
+  </body>
+</html>
