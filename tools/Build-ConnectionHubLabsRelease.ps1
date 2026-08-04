@@ -97,7 +97,7 @@ $aapt2 = Join-Path $buildTools.FullName "aapt2.exe"
 $builtApk = (Resolve-Path -LiteralPath ([string]$buildManifest.apk_path)).Path
 $badging = @(& $aapt2 dump badging $builtApk 2>&1)
 if ($LASTEXITCODE -ne 0) { throw "Pinned aapt2 rejected the Connection Hub release APK." }
-$manifestTree = @(& $aapt2 dump xmltree $builtApk AndroidManifest.xml 2>&1)
+$manifestTree = @(& $aapt2 dump xmltree $builtApk --file AndroidManifest.xml 2>&1)
 if ($LASTEXITCODE -ne 0) { throw "Pinned aapt2 could not inspect the release manifest." }
 $badgingText = $badging -join "`n"
 $manifestText = $manifestTree -join "`n"

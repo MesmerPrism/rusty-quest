@@ -54,6 +54,7 @@ $spatialClient = Get-Content -Raw -LiteralPath (Join-Path $spatial "app\src\main
 $spatialTarget = Get-Content -Raw -LiteralPath (Join-Path $spatial "app\src\main\java\io\github\mesmerprism\rustyquest\spatial_video_control\ConnectionHubSurfaceTarget.kt")
 $spatialActivity = Get-Content -Raw -LiteralPath (Join-Path $spatial "app\src\main\java\io\github\mesmerprism\rustyquest\spatial_video_control\SpatialVideoControlActivity.kt")
 $buildScript = Get-Content -Raw -LiteralPath (Join-Path $RepoRoot "tools\Build-ManifoldBrokerAndroid.ps1")
+$releaseScript = Get-Content -Raw -LiteralPath (Join-Path $RepoRoot "tools\Build-ConnectionHubLabsRelease.ps1")
 $productSource = Get-Content -Raw -LiteralPath (Join-Path $RepoRoot "crates\rusty-quest-broker-product\src\lib.rs")
 $nativeLock = Get-Content -Raw -LiteralPath (Join-Path $app "native\manifold-source.lock.json")
 $nativeHubRoot = Join-Path $app "connection-hub-native"
@@ -111,6 +112,11 @@ if ($buildScript.IndexOf('$generatedAndroidManifest.SelectNodes("/manifest/appli
         [StringComparison]::Ordinal) -lt 0 -or
     $buildScript -match '\$generatedAndroidManifest\.manifest\.application\.\$kind') {
     throw "Android build-manifest projection does not safely enumerate a zero-provider release manifest."
+}
+if ($releaseScript.IndexOf('$aapt2 dump xmltree $builtApk --file AndroidManifest.xml',
+        [StringComparison]::Ordinal) -lt 0 -or
+    $releaseScript -match 'dump xmltree \$builtApk AndroidManifest\.xml') {
+    throw "Connection Hub release inspection does not use the pinned aapt2 xmltree file contract."
 }
 $runtimeOwnerIndex = $process.IndexOf('ManifoldRuntimeAuthorityBridge.initialize();', [StringComparison]::Ordinal)
 $hubOwnerIndex = $process.IndexOf('new ManifoldConnectionHubAuthority()', [StringComparison]::Ordinal)
