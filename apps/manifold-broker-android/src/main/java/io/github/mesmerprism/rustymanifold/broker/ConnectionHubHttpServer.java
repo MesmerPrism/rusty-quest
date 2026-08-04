@@ -773,6 +773,14 @@ public final class ConnectionHubHttpServer
                 bound.put("transport_epoch", transportEpoch);
                 lastEnqueuedSurfaceRevision = bindOutboundSurfaceRevision(
                         bound, lastEnqueuedSurfaceRevision);
+                if ("command_receipt".equals(bound.optString("type", ""))
+                        && !bound.optBoolean("accepted", false)) {
+                    String rejection = bound.optString("status", "missing");
+                    if (!rejection.matches("[a-z0-9_().:-]{1,192}")) {
+                        rejection = "invalid_or_unbounded_status";
+                    }
+                    diagnostics.onStatus("command_receipt_rejected", rejection);
+                }
                 enqueueFrame(
                         1,
                         bound.toString().getBytes(StandardCharsets.UTF_8),

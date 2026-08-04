@@ -182,6 +182,8 @@ Require ($provider.Contains('active_controller_sessions') -and
     $cli.Contains('Test-ExactJsonInteger $status.owner_receipt.active_controller_sessions 1')) "Process restart does not prove authenticated session restoration."
 Require ($cli.Contains('function Get-HostessTimeoutMilliseconds') -and
     $cli.Contains('function Get-SafeHostessFailureReason') -and
+    $cli.Contains("'rusty.hostess.connection_hub.cli_error.v1'") -and
+    $cli.Contains("'^command_rejected:[a-z0-9_().:-]{1,192}$'") -and
     $cli.Contains('output_retained=$false') -and
     $cli.Contains('pairing_secret_in_receipt=$false') -and
     $cli.Contains('bearer_token_in_receipt=$false') -and
@@ -218,6 +220,20 @@ Require ((Test-ExactJsonInteger 1 1) -and (Test-ExactJsonInteger ([long]::MaxVal
     -not (Test-ExactJsonInteger '1' 1) -and -not (Test-ExactJsonInteger 1.0 1) -and
     -not (Test-ExactJsonInteger ([decimal]1) 1) -and -not (Test-ExactJsonInteger 0 1)) `
     "Exact JSON integer validator accepted a string, fraction, decimal, or out-of-range value."
+$safeFailureFunction = $operatorAst.Find({
+    param($node)
+    $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Get-SafeHostessFailureReason'
+}, $true)
+Require ($null -ne $safeFailureFunction) "Safe Hostess failure reason projection is missing."
+. ([scriptblock]::Create($safeFailureFunction.Extent.Text))
+$typedCommandRejection = [pscustomobject]@{
+    completed_within_timeout=$true
+    output=''
+    stderr='{"$schema":"rusty.hostess.connection_hub.cli_error.v1","status":"failed","reason":"command_rejected:rejected_some(replay)","secrets_in_receipt":false}'
+}
+Require ((Get-SafeHostessFailureReason $typedCommandRejection) -eq
+    'command_rejected:rejected_some(replay)') `
+    "Safe Hostess failure projection discarded a bounded typed command rejection."
 $componentFunction = $operatorAst.Find({
     param($node)
     $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Test-ExactAndroidComponentEcho'

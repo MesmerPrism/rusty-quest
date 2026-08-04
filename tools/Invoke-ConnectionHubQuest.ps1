@@ -1873,6 +1873,14 @@ function Get-SafeHostessFailureReason($Result) {
         if ([string]::IsNullOrWhiteSpace($text)) { continue }
         try {
             $parsed = $text | ConvertFrom-Json
+            if ([string]$parsed.'$schema' -eq 'rusty.hostess.connection_hub.cli_error.v1' -and
+                    [string]$parsed.status -eq 'failed' -and
+                    (Test-ExactBoolean $parsed.secrets_in_receipt $false)) {
+                $structuredReason = [string]$parsed.reason
+                if ($structuredReason -match '^command_rejected:[a-z0-9_().:-]{1,192}$') {
+                    return $structuredReason
+                }
+            }
             foreach ($name in @("error_code", "reason", "status", "error")) {
                 $candidate = [string]$parsed.$name
                 if ($candidate -match '^[A-Za-z0-9_.:-]{1,128}$') { return $candidate }
