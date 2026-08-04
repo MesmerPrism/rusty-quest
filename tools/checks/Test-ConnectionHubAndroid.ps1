@@ -107,6 +107,11 @@ if ($buildScript -notmatch 'releaseHubService' -or
     $buildScript -notmatch '\$manifestText\.Replace\(\$releaseHubService, \$debugHubService\)') {
     throw "Connection Hub debug build does not expose only its exact service lifecycle behind DUMP."
 }
+if ($buildScript.IndexOf('$generatedAndroidManifest.SelectNodes("/manifest/application/$kind")',
+        [StringComparison]::Ordinal) -lt 0 -or
+    $buildScript -match '\$generatedAndroidManifest\.manifest\.application\.\$kind') {
+    throw "Android build-manifest projection does not safely enumerate a zero-provider release manifest."
+}
 $runtimeOwnerIndex = $process.IndexOf('ManifoldRuntimeAuthorityBridge.initialize();', [StringComparison]::Ordinal)
 $hubOwnerIndex = $process.IndexOf('new ManifoldConnectionHubAuthority()', [StringComparison]::Ordinal)
 if ($runtimeOwnerIndex -lt 0 -or $hubOwnerIndex -lt 0 -or $runtimeOwnerIndex -ge $hubOwnerIndex) {
