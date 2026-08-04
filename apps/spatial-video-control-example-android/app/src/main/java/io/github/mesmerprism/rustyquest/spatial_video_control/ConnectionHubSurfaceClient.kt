@@ -189,6 +189,8 @@ class ConnectionHubSurfaceClient(
 
   private fun handleSurfaceCommand(message: Message) {
     val effectBinding = message.data.getString("effect_binding_json", "")
+    val commandMarker = sanitize(message.data.getString("command", "missing"))
+    marker("command_received_$commandMarker")
     runCatching {
           val requestId = message.data.getString("request_id", "")
           val surfaceId = message.data.getString("surface_id", "")
@@ -207,6 +209,7 @@ class ConnectionHubSurfaceClient(
           awaitObservedEffect(message, effectBinding, command, before)
         }
         .onFailure { error ->
+          marker("command_rejected_${error.javaClass.simpleName}_$commandMarker")
           val result = Bundle()
           result.putString("effect_binding_json", effectBinding)
           result.putBoolean("provider_applied", false)
@@ -238,6 +241,10 @@ class ConnectionHubSurfaceClient(
                   else -> false
                 }
             if (observed || android.os.SystemClock.uptimeMillis() >= deadline) {
+              marker(
+                  if (observed) "effect_observed_${sanitize(command)}"
+                  else "effect_not_observed_${sanitize(command)}"
+              )
               val result = Bundle()
               result.putString("effect_binding_json", effectBinding)
               result.putBoolean("provider_applied", observed)
@@ -257,7 +264,10 @@ class ConnectionHubSurfaceClient(
   private fun sendEffectResponse(request: Message, result: Bundle) {
     val response = Message.obtain(null, MESSAGE_SURFACE_COMMAND)
     response.data = result
-    runCatching { request.replyTo?.send(response) }
+    val effectStatus = sanitize(result.getString("effect_status", "missing"))
+    runCatching { checkNotNull(request.replyTo).send(response) }
+        .onSuccess { marker("effect_response_sent_$effectStatus") }
+        .onFailure { marker("effect_response_failed_${it.javaClass.simpleName}_$effectStatus") }
   }
 
   private fun send(what: Int, data: Bundle) {

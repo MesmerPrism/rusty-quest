@@ -133,6 +133,11 @@ if ($buildScript -notmatch 'rusty\.manifold\.connection_hub\.policy\.v3' -or
 }
 if ($spatialManifest -notmatch 'BROKER_ADMISSION' -or $spatialManifest -notmatch 'io\.github\.mesmerprism\.rustymanifold\.broker') { throw "Spatial provider does not bind the exact signature-scoped Broker." }
 if ($spatialClient -notmatch 'MESSAGE_REGISTER_SURFACE' -or $spatialClient -notmatch 'MESSAGE_UNREGISTER_SURFACE' -or $spatialClient -match 'admitted_client_evidence_json') { throw "Spatial provider lifecycle or admission boundary is incorrect." }
+if ($spatialClient -notmatch 'command_received_' -or
+    $spatialClient -notmatch 'effect_response_sent_' -or
+    $spatialClient -match 'request\.replyTo\?\.send') {
+    throw "Spatial provider command/effect response is not positively observed or still silently accepts a missing reply channel."
+}
 foreach ($providerTarget in @($spatialTarget, $sampleProviderText)) {
     if ($providerTarget -notmatch 'rusty\.manifold\.connection_hub\.receipt\.v3' -or
         $providerTarget -notmatch 'surface-instance' -or
