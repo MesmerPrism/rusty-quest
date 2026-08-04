@@ -163,15 +163,18 @@ class ConnectionHubSurfaceClient(
             .put("\$schema", SURFACE_REGISTRATION_SCHEMA)
             .put("schema_version", 1)
             .put("surface_id", SURFACE_ID)
-            .put("display_label", "Spatial Video Control")
-            .put("description", "Select and control the active bundled immersive video")
+            .put("display_label", "Rusty Spatial Video Player")
+            .put(
+                "description",
+                "Control validated videos from the wearer-selected RustySpatialMedia folder",
+            )
             .put(
                 "commands",
                 JSONArray()
                     .put(command(COMMAND_PAUSE, "Pause", CAPABILITY_PAUSE))
                     .put(command(COMMAND_PLAY, "Play", CAPABILITY_PLAY))
-                    .put(command(COMMAND_SELECT_NEXT, "Next video", CAPABILITY_SELECT_NEXT))
-                    .put(command(COMMAND_SELECT_PREVIOUS, "Previous video", CAPABILITY_SELECT_PREVIOUS)),
+                    .put(command(COMMAND_SELECT_PREVIOUS, "Previous", CAPABILITY_SELECT_PREVIOUS))
+                    .put(command(COMMAND_SELECT_NEXT, "Next", CAPABILITY_SELECT_NEXT)),
             )
             .put("surface_contract_sha256", SURFACE_CONTRACT_SHA256)
             .put("state", target.hubSurfaceState())
@@ -327,7 +330,7 @@ class ConnectionHubSurfaceClient(
     const val CAPABILITY_SELECT_NEXT = "capability.spatial_video_control.select_next"
     const val CAPABILITY_SELECT_PREVIOUS = "capability.spatial_video_control.select_previous"
     const val SURFACE_CONTRACT_SHA256 =
-        "sha256:099dab2723521655df0617b22a14f3a8021ecf75fc952587d619b944e8019e60"
+        "sha256:b17bf913d4609c1ad3f89594f96c21c742916462d4854ed2efb7356ca92d13f2"
     const val MESSAGE_ISSUE_TOKEN = 1
     const val MESSAGE_AUTHORIZE_USE = 2
     const val MESSAGE_RUNTIME_EVIDENCE = 6

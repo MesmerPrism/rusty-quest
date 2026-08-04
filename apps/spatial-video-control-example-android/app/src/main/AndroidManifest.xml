@@ -26,7 +26,7 @@
 
     <application
         android:allowBackup="false"
-        android:label="Rusty Quest Video Control Example"
+        android:label="Rusty Spatial Video Player"
         android:theme="@android:style/Theme.Black.NoTitleBar.Fullscreen">
         <meta-data
             android:name="com.oculus.supportedDevices"

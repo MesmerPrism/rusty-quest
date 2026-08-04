@@ -192,8 +192,20 @@ class Media3SpatialPlayerAdapter(
 
   override fun hubSurfaceState(): JSONObject {
     val observed = snapshot()
+    val selected = catalog.require(observed.selectedVideoId())
     return JSONObject()
         .put("selected_video_id", observed.selectedVideoId())
+        .put("selected_video_title", selected.title())
+        .put("projection_shape", selected.projectionShape().protocolName())
+        .put("stereo_layout", selected.stereoLayout().protocolName())
+        .put("media_source_kind", selected.sourceKind().protocolName())
+        .put("catalog_size", catalog.videos().size)
+        .put(
+            "user_video_count",
+            catalog.videos().count {
+              it.sourceKind() == VideoCatalog.SourceKind.PERSISTED_DOCUMENT_TREE
+            },
+        )
         .put("playing", observed.playing())
         .put("playback_state", observed.playbackState())
         .put("position_ms", observed.positionMs())
@@ -312,6 +324,11 @@ class Media3SpatialPlayerAdapter(
             val source = File(root, "${video.resourceName()}.mp4")
             check(source.isFile && source.length() > 0) { "debug media slot is unavailable" }
             Uri.fromFile(source)
+          }
+          VideoCatalog.SourceKind.PERSISTED_DOCUMENT_TREE -> {
+            Uri.parse(video.contentUri()).also { source ->
+              check(source.scheme == "content") { "persisted media URI must use content" }
+            }
           }
         }
     return MediaItem.Builder().setMediaId(videoId).setUri(uri).build()

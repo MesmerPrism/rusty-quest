@@ -37,6 +37,7 @@ public final class TrustedLocalControlHostTest {
                 "runtime command set");
         testCanonicalEnvelopes();
         testVideoCatalogProjectionProfiles();
+        testPlainVideoPolicy();
         testTrustedBindAddressPolicy();
         testPrivateAddressSelection();
         testTransportResourceBounds();
@@ -133,6 +134,62 @@ public final class TrustedLocalControlHostTest {
                                 VideoCatalog.StereoLayout.TOP_BOTTOM,
                                 VideoCatalog.SourceKind.BUNDLED_CC0),
                 "odd top-bottom height rejected");
+    }
+
+    private static void testPlainVideoPolicy() {
+        PlainVideoPolicy.Declaration declaration =
+                PlainVideoPolicy.declaration("equirect-360", "top-bottom");
+        assertTrue(declaration != null, "360 top-bottom taxonomy resolves");
+        PlainVideoPolicy.Validation accepted =
+                PlainVideoPolicy.validate(
+                        declaration,
+                        new PlainVideoPolicy.Probe(
+                                4_096, 4_096, 0, 4_997, "video/mp4", 192, 192));
+        assertTrue(accepted.accepted(), "4096 square 360 top-bottom accepted");
+        assertEquals(2.0, accepted.perEyeAspectRatio(), "4096 TB per-eye aspect");
+        assertTrue(
+                !PlainVideoPolicy.validate(
+                                declaration,
+                                new PlainVideoPolicy.Probe(
+                                        4_096, 2_048, 0, 4_997, "video/mp4", 192, 96))
+                        .accepted(),
+                "contradictory 360 top-bottom geometry rejected");
+        assertTrue(
+                !PlainVideoPolicy.validate(
+                                declaration,
+                                new PlainVideoPolicy.Probe(
+                                        4_096, 4_096, 90, 4_997, "video/mp4", 192, 192))
+                        .accepted(),
+                "rotated media rejected");
+        assertTrue(
+                PlainVideoPolicy.declaration("equirect-360", "right-left") == null,
+                "unknown stereo taxonomy rejected");
+        VideoCatalog.Video userVideo =
+                VideoCatalog.userDocument(
+                        "user-video-0123456789abcdef",
+                        "Flower Tunnel · 360° · Top/bottom",
+                        "content://com.android.externalstorage.documents/tree/primary%3ADocuments",
+                        4_997,
+                        4_096,
+                        4_096,
+                        VideoCatalog.ProjectionShape.EQUIRECT_360,
+                        VideoCatalog.StereoLayout.TOP_BOTTOM);
+        assertEquals(
+                VideoCatalog.SourceKind.PERSISTED_DOCUMENT_TREE,
+                userVideo.sourceKind(),
+                "user media source kind");
+        expectFailure(
+                () ->
+                        VideoCatalog.userDocument(
+                                "user-video-fedcba9876543210",
+                                "Bad path",
+                                "file:///sdcard/arbitrary.mp4",
+                                1,
+                                4_096,
+                                4_096,
+                                VideoCatalog.ProjectionShape.EQUIRECT_360,
+                                VideoCatalog.StereoLayout.TOP_BOTTOM),
+                "non-SAF user media URI rejected");
     }
 
     private static void testTrustedBindAddressPolicy() throws Exception {

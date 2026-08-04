@@ -40,7 +40,8 @@ public final class VideoCatalog {
 
     public enum SourceKind {
         BUNDLED_CC0("bundled_cc0", "CC0-1.0"),
-        DEBUG_EXTERNAL_TEST("debug_external_test", "unknown-no-redistribution");
+        DEBUG_EXTERNAL_TEST("debug_external_test", "unknown-no-redistribution"),
+        PERSISTED_DOCUMENT_TREE("persisted_document_tree", "user-supplied");
 
         private final String protocolName;
         private final String license;
@@ -68,7 +69,31 @@ public final class VideoCatalog {
             int heightPx,
             ProjectionShape projectionShape,
             StereoLayout stereoLayout,
-            SourceKind sourceKind) {
+            SourceKind sourceKind,
+            String contentUri) {
+        public Video(
+                String id,
+                String title,
+                String resourceName,
+                long durationMs,
+                int widthPx,
+                int heightPx,
+                ProjectionShape projectionShape,
+                StereoLayout stereoLayout,
+                SourceKind sourceKind) {
+            this(
+                    id,
+                    title,
+                    resourceName,
+                    durationMs,
+                    widthPx,
+                    heightPx,
+                    projectionShape,
+                    stereoLayout,
+                    sourceKind,
+                    "");
+        }
+
         public Video {
             Objects.requireNonNull(id, "id");
             Objects.requireNonNull(title, "title");
@@ -76,6 +101,7 @@ public final class VideoCatalog {
             Objects.requireNonNull(projectionShape, "projectionShape");
             Objects.requireNonNull(stereoLayout, "stereoLayout");
             Objects.requireNonNull(sourceKind, "sourceKind");
+            Objects.requireNonNull(contentUri, "contentUri");
             if (!id.matches("^[a-z0-9][a-z0-9-]{1,47}$")) {
                 throw new IllegalArgumentException("invalid video id");
             }
@@ -96,6 +122,15 @@ public final class VideoCatalog {
             }
             if (stereoLayout == StereoLayout.TOP_BOTTOM && heightPx % 2 != 0) {
                 throw new IllegalArgumentException("top-bottom video requires an even height");
+            }
+            if (sourceKind == SourceKind.PERSISTED_DOCUMENT_TREE) {
+                if (!resourceName.equals("persisted_document")
+                        || !contentUri.startsWith("content://")
+                        || contentUri.length() > 2048) {
+                    throw new IllegalArgumentException("invalid persisted document source");
+                }
+            } else if (!contentUri.isEmpty()) {
+                throw new IllegalArgumentException("closed media source must not carry a URI");
             }
         }
 
@@ -267,6 +302,28 @@ public final class VideoCatalog {
                 .filter(item -> item.id().equals(videoId))
                 .findFirst()
                 .orElseThrow(() -> new IllegalArgumentException("video id is not in the catalog"));
+    }
+
+    public static Video userDocument(
+            String id,
+            String title,
+            String contentUri,
+            long durationMs,
+            int widthPx,
+            int heightPx,
+            ProjectionShape projectionShape,
+            StereoLayout stereoLayout) {
+        return new Video(
+                id,
+                title,
+                "persisted_document",
+                durationMs,
+                widthPx,
+                heightPx,
+                projectionShape,
+                stereoLayout,
+                SourceKind.PERSISTED_DOCUMENT_TREE,
+                contentUri);
     }
 
     private static Video bundled(

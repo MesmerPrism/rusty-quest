@@ -11,6 +11,7 @@ if ($PSVersionTable.PSVersion -lt [version]'7.6.0') {
 $appRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $registryPath = Join-Path $appRoot 'contracts\trusted_local_http_v1.commands.registry.json'
 $mediaRegistryPath = Join-Path $appRoot 'contracts\bundled-videos.registry.json'
+$hubMediaContractPath = Join-Path $appRoot 'contracts\connection-hub-media-surface.v1.json'
 
 $registry = Get-Content -Raw -LiteralPath $registryPath | ConvertFrom-Json -Depth 20
 $expectedCommands = @(
@@ -132,6 +133,10 @@ if ($manifest -notmatch 'oculus\.software\.handtracking' -or
 if ($manifest -match 'CAMERA|RECORD_AUDIO|BLUETOOTH|QUERY_ALL_PACKAGES|MANAGE_EXTERNAL_STORAGE') {
   throw 'Android example gained an unrelated permission.'
 }
+if ($manifest -notmatch 'Rusty Spatial Video Player' -or
+    $manifest -match 'READ_EXTERNAL_STORAGE|READ_MEDIA_VIDEO') {
+  throw 'The release app must use the persisted SAF tree without broad media/storage permission.'
+}
 if ($manifest -match 'DebugShellControlProvider|android\.permission\.DUMP') {
   throw 'The release/main manifest must not expose the debug shell provider.'
 }
@@ -157,6 +162,10 @@ if ($debugProvider -match 'ProcessBuilder|Runtime\.exec|startActivity|sendBroadc
 $gradle = Get-Content -Raw -LiteralPath (Join-Path $appRoot 'app\build.gradle.kts')
 if ($gradle -notmatch 'TRUSTED_LOCAL_HTTP_ENABLED_DEFAULT", "false"') {
   throw 'Android listener default must remain disabled.'
+}
+if ($gradle -notmatch 'RUSTY_QUEST_SPATIAL_VIDEO_CONTROL_BUILD_ROOT' -or
+    $gradle -notmatch 'RUSTY_SPATIAL_VIDEO_RELEASE_KEYSTORE') {
+  throw 'Spatial Video Player isolated build root or explicit release signer wiring regressed.'
 }
 if ($gradle -notmatch 'outputs\.upToDateWhen \{ false \}' -or
     $gradle -notmatch 'RUSTY_MANIFOLD_SOURCE_ROOT') {
@@ -194,6 +203,33 @@ if ($activity -notmatch 'VideoCatalog\.debugExternalTestSlots\(\)' -or
     $activity -notmatch 'getExternalFilesDir\(Media3SpatialPlayerAdapter\.DEBUG_MEDIA_DIRECTORY\)' -or
     $activity -match 'MANAGE_EXTERNAL_STORAGE') {
   throw 'The closed debug-only external media slots regressed or gained broad storage access.'
+}
+$sharedLibrary = Get-Content -Raw -LiteralPath (
+  Join-Path $appRoot 'app\src\main\java\io\github\mesmerprism\rustyquest\spatial_video_control\SharedPlainVideoLibrary.kt'
+)
+$plainPolicy = Get-Content -Raw -LiteralPath (
+  Join-Path $appRoot 'host\src\main\java\io\github\mesmerprism\rustyquest\spatial_video_control\PlainVideoPolicy.java'
+)
+if ($activity -notmatch 'Intent\.ACTION_OPEN_DOCUMENT_TREE' -or
+    $activity -notmatch 'SharedPlainVideoLibrary\.adoptTreeUri' -or
+    $sharedLibrary -notmatch 'takePersistableUriPermission' -or
+    $sharedLibrary -notmatch 'MediaMetadataRetriever' -or
+    $sharedLibrary -match 'FileInputStream|FileOutputStream|MANAGE_EXTERNAL_STORAGE|READ_MEDIA_VIDEO' -or
+    $plainPolicy -notmatch 'MAX_ACCEPTED_ITEMS = 11' -or
+    $plainPolicy -notmatch 'plain-video-declared-shape-geometry-mismatch') {
+  throw 'The bounded persisted-SAF user-media policy or independent geometry validation regressed.'
+}
+$hubMediaContractBytes = [IO.File]::ReadAllBytes($hubMediaContractPath)
+$hubMediaContractSha = [Convert]::ToHexString(
+  [Security.Cryptography.SHA256]::HashData($hubMediaContractBytes)
+).ToLowerInvariant()
+$hubSurfaceClient = Get-Content -Raw -LiteralPath (
+  Join-Path $appRoot 'app\src\main\java\io\github\mesmerprism\rustyquest\spatial_video_control\ConnectionHubSurfaceClient.kt'
+)
+if ($hubSurfaceClient -notmatch [regex]::Escape("sha256:$hubMediaContractSha") -or
+    $hubSurfaceClient -notmatch 'Rusty Spatial Video Player' -or
+    $hubSurfaceClient -notmatch 'RustySpatialMedia folder') {
+  throw 'The Connection Hub media surface is not bound to its exact contract.'
 }
 if ($videoCatalog -notmatch 'device-test-360-top-bottom-4096x4096-hevc60' -or
     $videoCatalog -notmatch 'debug_test_360_top_bottom_4096x4096_hevc_60fps' -or
