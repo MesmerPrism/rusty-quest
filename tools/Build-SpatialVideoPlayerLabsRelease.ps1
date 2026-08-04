@@ -80,9 +80,14 @@ $gradleVersion = @(& $gradlePath --version 2>&1) -join "`n"
 if ($LASTEXITCODE -ne 0 -or $gradleVersion -notmatch 'Gradle 8\.13') {
     throw 'Spatial Video Player Labs release requires exact Gradle 8.13.'
 }
-& $gradlePath '--no-daemon' '--console=plain' `
-    ':app:testConnectionHubDebugSurfaceSource' ':app:lintRelease' ':app:assembleRelease'
-if ($LASTEXITCODE -ne 0) { throw 'Spatial Video Player release build failed.' }
+Push-Location $appRoot
+try {
+    & $gradlePath '--no-daemon' '--console=plain' `
+        ':app:testConnectionHubDebugSurfaceSource' ':app:lintRelease' ':app:assembleRelease'
+    if ($LASTEXITCODE -ne 0) { throw 'Spatial Video Player release build failed.' }
+} finally {
+    Pop-Location
+}
 
 $builtApk = Join-Path $buildRoot 'app\outputs\apk\release\app-release.apk'
 if (-not (Test-Path -LiteralPath $builtApk -PathType Leaf)) {
