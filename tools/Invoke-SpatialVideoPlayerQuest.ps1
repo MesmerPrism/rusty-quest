@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory=$true)]
-    [ValidateSet('Inspect','StageVideo','Install','Launch','Observe','Status','Markers')]
+    [ValidateSet('Inspect','PrepareFolder','StageVideo','Install','Launch','Observe','Status','Markers')]
     [string]$Action,
     [string]$Serial = '',
     [string]$Apk = '',
@@ -14,6 +14,7 @@ param(
     [ValidatePattern('^[0-9a-f]{64}$')]
     [string]$FileManagerSha256 = '',
     [string]$Adb = 'adb',
+    [switch]$ConfirmAdbDirectoryFallback,
     [ValidateRange(100,10000)]
     [int]$LogcatLines = 3000
 )
@@ -65,6 +66,36 @@ switch ($Action) {
         $apkPath = Require-Apk
         $result = Invoke-Qfm @('apk','inspect','--file',$apkPath,'--json')
         $result
+    }
+    'PrepareFolder' {
+        Require-Serial
+        if (-not $ConfirmAdbDirectoryFallback) {
+            throw 'PrepareFolder requires -ConfirmAdbDirectoryFallback for the documented QFM directory-create gap.'
+        }
+        $paths = @(
+            '/sdcard/Documents/RustySpatialMedia',
+            '/sdcard/Documents/RustySpatialMedia/plain-videos/flat/mono',
+            '/sdcard/Documents/RustySpatialMedia/plain-videos/flat/side-by-side-left-right',
+            '/sdcard/Documents/RustySpatialMedia/plain-videos/flat/top-bottom',
+            '/sdcard/Documents/RustySpatialMedia/plain-videos/equirect-180/mono',
+            '/sdcard/Documents/RustySpatialMedia/plain-videos/equirect-180/side-by-side-left-right',
+            '/sdcard/Documents/RustySpatialMedia/plain-videos/equirect-180/top-bottom',
+            '/sdcard/Documents/RustySpatialMedia/plain-videos/equirect-360/mono',
+            '/sdcard/Documents/RustySpatialMedia/plain-videos/equirect-360/side-by-side-left-right',
+            '/sdcard/Documents/RustySpatialMedia/plain-videos/equirect-360/top-bottom'
+        )
+        $arguments = @('-s',$Serial,'shell','mkdir','-p') + $paths
+        $output = @(& $Adb @arguments 2>&1)
+        if ($LASTEXITCODE -ne 0) { throw ($output -join "`n") }
+        $readback = Invoke-Qfm @('files','list','--serial',$Serial,'--path','/sdcard/Documents/RustySpatialMedia','--json')
+        [ordered]@{
+            schema = $schema
+            action = 'prepare-folder'
+            serial = $Serial
+            provider_gap = 'qfm-missing-fixed-directory-taxonomy-create-v1'
+            exact_paths = $paths
+            readback = ($readback -join "`n") | ConvertFrom-Json
+        } | ConvertTo-Json -Depth 20
     }
     'StageVideo' {
         Require-Serial

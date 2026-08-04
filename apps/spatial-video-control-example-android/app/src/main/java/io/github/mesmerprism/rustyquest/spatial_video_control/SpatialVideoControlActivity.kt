@@ -109,6 +109,7 @@ open class SpatialVideoControlActivity : AppSystemActivity(), DebugShellControlT
   private var nextControllerStateRefreshMs = 0L
   private var nextBindCandidateRefreshMs = 0L
   private var operatorForeground = false
+  private var initialFolderPromptLaunched = false
   private var lastSpatialRightPrimarySource: String? = null
   private val rightControllerPanelToggle =
       RightControllerPanelToggleArbiter(
@@ -231,6 +232,10 @@ open class SpatialVideoControlActivity : AppSystemActivity(), DebugShellControlT
     refreshPrivateAddressCandidate()
     control?.setWearerForeground(true)
     control?.refreshVisibleState()
+    if (!libraryState.configured && !initialFolderPromptLaunched) {
+      initialFolderPromptLaunched = true
+      window.decorView.postDelayed(::chooseUserMediaFolder, INITIAL_FOLDER_PROMPT_DELAY_MS)
+    }
   }
 
   override fun onSceneTick() {
@@ -828,5 +833,6 @@ open class SpatialVideoControlActivity : AppSystemActivity(), DebugShellControlT
     const val CONTROL_PANEL_GRAB_MAX_HEIGHT_METERS = 2.50f
     const val VIDEO_ANCHOR_FALLBACK_Y_METERS = 1.60f
     const val USER_MEDIA_TREE_REQUEST = 7301
+    const val INITIAL_FOLDER_PROMPT_DELAY_MS = 750L
   }
 }

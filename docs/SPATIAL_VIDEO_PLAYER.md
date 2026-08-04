@@ -67,6 +67,8 @@ $common = @{
   FileManagerCli = '<pinned-questionable-file-manager.exe>'
   FileManagerSha256 = '<exact-sha256>'
 }
+pwsh -File .\tools\Invoke-SpatialVideoPlayerQuest.ps1 -Action PrepareFolder @common `
+  -ConfirmAdbDirectoryFallback
 pwsh -File .\tools\Invoke-SpatialVideoPlayerQuest.ps1 -Action StageVideo @common `
   -Video '<video.mp4>' -Shape equirect-360 -Stereo top-bottom
 pwsh -File .\tools\Invoke-SpatialVideoPlayerQuest.ps1 -Action Install @common `
@@ -76,6 +78,9 @@ pwsh -File .\tools\Invoke-SpatialVideoPlayerQuest.ps1 -Action Launch @common `
 ```
 
 The source video is never bundled into the APK or release.
+`PrepareFolder` is the one named fallback: current QFM has bounded file push but
+no fixed-taxonomy directory-create operation, so the CLI requires an explicit
+switch and dispatches only the ten hard-coded `mkdir -p` targets shown above.
 
 ## Security and lifecycle boundaries
 
