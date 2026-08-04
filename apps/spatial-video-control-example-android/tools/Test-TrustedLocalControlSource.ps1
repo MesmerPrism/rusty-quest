@@ -222,14 +222,25 @@ if ($activity -notmatch 'Intent\.ACTION_OPEN_DOCUMENT_TREE' -or
     $plainPolicy -notmatch 'plain-video-declared-shape-geometry-mismatch') {
   throw 'The bounded persisted-SAF user-media policy or independent geometry validation regressed.'
 }
-$hubMediaContractBytes = [IO.File]::ReadAllBytes($hubMediaContractPath)
-$hubMediaContractSha = [Convert]::ToHexString(
-  [Security.Cryptography.SHA256]::HashData($hubMediaContractBytes)
+$hubMediaContract = Get-Content -Raw -LiteralPath $hubMediaContractPath | ConvertFrom-Json
+$hubMediaCanonical = "v1`n$($hubMediaContract.surface_id)`n$($hubMediaContract.display_label)`n$($hubMediaContract.description)`n"
+$priorHubMediaCommand = $null
+foreach ($command in @($hubMediaContract.commands)) {
+  if ($null -ne $priorHubMediaCommand -and
+      [string]::CompareOrdinal($priorHubMediaCommand, [string]$command.command) -ge 0) {
+    throw 'Connection Hub media surface commands must stay ordinally sorted.'
+  }
+  $hubMediaCanonical += "$($command.command)|$($command.display_label)|$($command.required_controller_capability)`n"
+  $priorHubMediaCommand = [string]$command.command
+}
+$hubMediaCanonicalSha = 'sha256:' + [Convert]::ToHexString(
+  [Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($hubMediaCanonical))
 ).ToLowerInvariant()
 $hubSurfaceClient = Get-Content -Raw -LiteralPath (
   Join-Path $appRoot 'app\src\main\java\io\github\mesmerprism\rustyquest\spatial_video_control\ConnectionHubSurfaceClient.kt'
 )
-if ($hubSurfaceClient -notmatch [regex]::Escape("sha256:$hubMediaContractSha") -or
+if ([string]$hubMediaContract.canonical_contract_sha256 -cne $hubMediaCanonicalSha -or
+    $hubSurfaceClient -notmatch [regex]::Escape($hubMediaCanonicalSha) -or
     $hubSurfaceClient -notmatch 'Rusty Spatial Video Player' -or
     $hubSurfaceClient -notmatch 'RustySpatialMedia folder') {
   throw 'The Connection Hub media surface is not bound to its exact contract.'

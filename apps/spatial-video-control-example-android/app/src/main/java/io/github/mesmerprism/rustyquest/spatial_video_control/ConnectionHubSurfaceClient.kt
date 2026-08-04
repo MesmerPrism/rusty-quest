@@ -173,8 +173,8 @@ class ConnectionHubSurfaceClient(
                 JSONArray()
                     .put(command(COMMAND_PAUSE, "Pause", CAPABILITY_PAUSE))
                     .put(command(COMMAND_PLAY, "Play", CAPABILITY_PLAY))
-                    .put(command(COMMAND_SELECT_PREVIOUS, "Previous", CAPABILITY_SELECT_PREVIOUS))
-                    .put(command(COMMAND_SELECT_NEXT, "Next", CAPABILITY_SELECT_NEXT)),
+                    .put(command(COMMAND_SELECT_NEXT, "Next", CAPABILITY_SELECT_NEXT))
+                    .put(command(COMMAND_SELECT_PREVIOUS, "Previous", CAPABILITY_SELECT_PREVIOUS)),
             )
             .put("surface_contract_sha256", SURFACE_CONTRACT_SHA256)
             .put("state", target.hubSurfaceState())
@@ -330,7 +330,7 @@ class ConnectionHubSurfaceClient(
     const val CAPABILITY_SELECT_NEXT = "capability.spatial_video_control.select_next"
     const val CAPABILITY_SELECT_PREVIOUS = "capability.spatial_video_control.select_previous"
     const val SURFACE_CONTRACT_SHA256 =
-        "sha256:b17bf913d4609c1ad3f89594f96c21c742916462d4854ed2efb7356ca92d13f2"
+        "sha256:6cc91c34f46b4da96de9a5f817cdb7ee371e5ebbc7789b39bc53700e211725b1"
     const val MESSAGE_ISSUE_TOKEN = 1
     const val MESSAGE_AUTHORIZE_USE = 2
     const val MESSAGE_RUNTIME_EVIDENCE = 6
