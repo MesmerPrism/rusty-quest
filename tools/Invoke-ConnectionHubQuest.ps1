@@ -605,43 +605,36 @@ function Invoke-CapturedTimed([string]$File, [string[]]$Arguments, [string]$Labe
     if ($TimeoutMilliseconds -lt 1000 -or $TimeoutMilliseconds -gt 360000) {
         throw "Timed process timeout must be between one and 360 seconds."
     }
-    $start = [System.Diagnostics.ProcessStartInfo]::new()
-    $start.FileName = $File
-    $start.UseShellExecute = $false
-    $start.RedirectStandardOutput = $true
-    $start.RedirectStandardError = $true
-    foreach ($argument in $Arguments) { [void]$start.ArgumentList.Add($argument) }
-    $process = [System.Diagnostics.Process]::new()
-    $process.StartInfo = $start
-    try {
-        if (-not $process.Start()) { throw "Unable to start $Label." }
-        $completed = $process.WaitForExit($TimeoutMilliseconds)
-        if (-not $completed) {
-            $process.Kill($true)
-            [void]$process.WaitForExit(5000)
-        }
-        # Hostess receipts are deliberately small and bounded. Reading the
-        # closed pipes synchronously after process exit avoids a PowerShell
-        # runspace continuation deadlock observed with ReadToEndAsync while
-        # retaining the authoritative process deadline above. A child that
-        # fills a pipe cannot escape the deadline: it is killed before reads.
-        $stdoutText = $process.StandardOutput.ReadToEnd().TrimEnd("`r", "`n")
-        $stderrText = $process.StandardError.ReadToEnd().TrimEnd("`r", "`n")
-        if ([System.Text.Encoding]::UTF8.GetByteCount($stdoutText) -gt 1048576 -or
-                [System.Text.Encoding]::UTF8.GetByteCount($stderrText) -gt 1048576) {
-            throw "$Label exceeded the one MiB captured-output bound."
-        }
-        return [ordered]@{
-            label = $Label
-            exit_code = $(if($completed){$process.ExitCode}else{$null})
-            output = $stdoutText
-            stderr = $stderrText
-            combined = (($stdoutText, $stderrText) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }) -join "`n"
-            timeout_milliseconds = $TimeoutMilliseconds
-            completed_within_timeout = $completed
-        }
-    } finally {
-        $process.Dispose()
+    $captureSource = Join-Path $PSScriptRoot "ConnectionHubBoundedProcessCapture.cs"
+    if (-not (Test-Path -LiteralPath $captureSource -PathType Leaf)) {
+        throw "Missing bounded process-capture implementation."
+    }
+    if ($null -eq ('RustyQuest.ConnectionHub.Tools.BoundedProcessCapture' -as [type])) {
+        Add-Type -Path $captureSource
+    }
+    $capture = [RustyQuest.ConnectionHub.Tools.BoundedProcessCapture]::Run(
+        $File,
+        $Arguments,
+        $TimeoutMilliseconds,
+        1048576,
+        5000)
+    if (-not $capture.DrainCompleted) {
+        throw "$Label did not close both captured streams."
+    }
+    if ($capture.StandardOutputExceededLimit -or $capture.StandardErrorExceededLimit) {
+        throw "$Label exceeded the one MiB captured-output bound."
+    }
+    $strictUtf8 = [System.Text.UTF8Encoding]::new($false, $true)
+    $stdoutText = $strictUtf8.GetString($capture.StandardOutput).TrimEnd("`r", "`n")
+    $stderrText = $strictUtf8.GetString($capture.StandardError).TrimEnd("`r", "`n")
+    return [ordered]@{
+        label = $Label
+        exit_code = $capture.ExitCode
+        output = $stdoutText
+        stderr = $stderrText
+        combined = (($stdoutText, $stderrText) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }) -join "`n"
+        timeout_milliseconds = $TimeoutMilliseconds
+        completed_within_timeout = $capture.CompletedWithinTimeout
     }
 }
 

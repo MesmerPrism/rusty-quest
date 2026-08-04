@@ -291,7 +291,8 @@ public final class ConnectionHubHttpServer
                             output,
                             sessionProjection.logicalSessionId,
                             sessionProjection.transportEpoch,
-                            writeWatchdog);
+                            writeWatchdog,
+                            diagnostics);
                     for (SocketSession existing : new ArrayList<>(socketSessions)) {
                         if (existing.logicalSessionId.equals(sessionProjection.logicalSessionId)) {
                             existing.close();
@@ -742,6 +743,7 @@ public final class ConnectionHubHttpServer
         private final String logicalSessionId;
         private final long transportEpoch;
         private final ScheduledExecutorService watchdog;
+        private final DiagnosticSink diagnostics;
         private final ArrayBlockingQueue<OutboundFrame> outbound =
                 new ArrayBlockingQueue<>(ConnectionHubProtocol.MAX_SOCKET_OUTBOUND_QUEUE);
         private final AtomicBoolean sessionClosed = new AtomicBoolean();
@@ -752,12 +754,14 @@ public final class ConnectionHubHttpServer
                 OutputStream output,
                 String logicalSessionId,
                 long transportEpoch,
-                ScheduledExecutorService watchdog) {
+                ScheduledExecutorService watchdog,
+                DiagnosticSink diagnostics) {
             this.socket = socket;
             this.output = output;
             this.logicalSessionId = logicalSessionId;
             this.transportEpoch = transportEpoch;
             this.watchdog = watchdog;
+            this.diagnostics = diagnostics;
             this.writerThread = new Thread(new Runnable() {
                 @Override public void run() { writeLoop(); }
             }, "rusty-connection-hub-writer");
@@ -769,7 +773,12 @@ public final class ConnectionHubHttpServer
                 bound.put("transport_epoch", transportEpoch);
                 lastEnqueuedSurfaceRevision = bindOutboundSurfaceRevision(
                         bound, lastEnqueuedSurfaceRevision);
-                enqueueFrame(1, bound.toString().getBytes(StandardCharsets.UTF_8));
+                enqueueFrame(
+                        1,
+                        bound.toString().getBytes(StandardCharsets.UTF_8),
+                        "command_receipt".equals(bound.optString("type", ""))
+                                ? "command_receipt_written"
+                                : null);
             } catch (org.json.JSONException error) {
                 throw new IOException("invalid Hub event", error);
             }
@@ -799,8 +808,12 @@ public final class ConnectionHubHttpServer
             }
         }
         void enqueueFrame(int opcode, byte[] payload) throws IOException {
+            enqueueFrame(opcode, payload, null);
+        }
+        void enqueueFrame(int opcode, byte[] payload, String diagnosticStatus) throws IOException {
             validateOutboundFrame(opcode, payload.length);
-            if (sessionClosed.get() || !outbound.offer(new OutboundFrame(opcode, payload))) {
+            if (sessionClosed.get()
+                    || !outbound.offer(new OutboundFrame(opcode, payload, null, diagnosticStatus))) {
                 close();
                 throw new IOException("bounded outbound queue unavailable");
             }
@@ -812,7 +825,12 @@ public final class ConnectionHubHttpServer
                     ScheduledFuture<?> deadline = watchdog.schedule(new Runnable() {
                         @Override public void run() { close(); }
                     }, ConnectionHubProtocol.SOCKET_WRITE_DEADLINE_MS, TimeUnit.MILLISECONDS);
-                    try { writeFrameDirect(frame.opcode, frame.payload); }
+                    try {
+                        writeFrameDirect(frame.opcode, frame.payload);
+                        if (frame.diagnosticStatus != null) {
+                            diagnostics.onStatus(frame.diagnosticStatus, "none");
+                        }
+                    }
                     finally {
                         deadline.cancel(false);
                         if (frame.completion != null) { frame.completion.countDown(); }
@@ -863,17 +881,26 @@ public final class ConnectionHubHttpServer
         final int opcode;
         final byte[] payload;
         OutboundFrame(int opcode, byte[] payload) {
-            this(opcode, payload, null);
+            this(opcode, payload, null, null);
         }
         OutboundFrame(
                 int opcode,
                 byte[] payload,
                 java.util.concurrent.CountDownLatch completion) {
+            this(opcode, payload, completion, null);
+        }
+        OutboundFrame(
+                int opcode,
+                byte[] payload,
+                java.util.concurrent.CountDownLatch completion,
+                String diagnosticStatus) {
             this.opcode = opcode;
             this.payload = payload.clone();
             this.completion = completion;
+            this.diagnosticStatus = diagnosticStatus;
         }
         final java.util.concurrent.CountDownLatch completion;
+        final String diagnosticStatus;
     }
 
     static final class Frame {

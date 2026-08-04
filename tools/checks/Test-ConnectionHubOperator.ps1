@@ -28,6 +28,7 @@ $nativeAdapter = Read-Required "apps\manifold-broker-android\native\src\connecti
 $operatorGuide = Read-Required "docs\CONNECTION_HUB_OPERATOR.md"
 $releaseGuide = Read-Required "docs\CONNECTION_HUB_LABS_RELEASE.md"
 $releaseBuild = Read-Required "tools\Build-ConnectionHubLabsRelease.ps1"
+$processCapture = Read-Required "tools\ConnectionHubBoundedProcessCapture.cs"
 
 Require ($cli.Contains('[Parameter(Mandatory=$true)]') -and $cli.Contains('[string]$Serial')) "Operator CLI must require an explicit serial."
 Require ($cli.Contains('Lock-ExactProvider $FileManagerCli $FileManagerSha256')) "QFM must be held under one exact content pin."
@@ -91,6 +92,12 @@ Require ($cli.Contains('function Invoke-HostessCheckedRaw') -and
     $cli.Contains('Invoke-CapturedTimed $script:Python') -and
     -not $cli.Contains('Invoke-Captured $script:Python @($script:Hostess, "list-surfaces"') -and
     -not $cli.Contains('.ReadToEndAsync()') -and
+    $cli.Contains('ConnectionHubBoundedProcessCapture.cs') -and
+    $processCapture.Contains('stdoutThread.Start()') -and
+    $processCapture.Contains('stderrThread.Start()') -and
+    $processCapture.Contains('process.Kill(entireProcessTree: true)') -and
+    $processCapture.Contains('IsBackground = true') -and
+    $processCapture.Contains('DrainStream') -and
     $cli.Contains('exceeded the one MiB captured-output bound')) "Every ordinary Hostess route must use the shared deadline-controlled wrapper without async stream deadlock."
 Require ($cli.Contains('$wait.authentication_retry_count') -and
     $cli.Contains('[int]$wait.authentication_retry_count -gt 1')) "The bounded wait-surface authentication retry is not validated exactly."
@@ -277,6 +284,45 @@ $legacyPlan = $legacyPlanText | ConvertFrom-Json
 Require ($legacyPlan.socket_protocol -eq 'rusty.quest.connection_hub.v1' -and $legacyPlan.rollover_safe -eq $false) "Legacy v1 was not explicit and non-rollover-safe."
 $legacyBrowserText = & pwsh -NoProfile -File $cliPath -Action BrowserE2E -Serial SIMULATED123 -DryRun -LegacyV1 2>$null
 Require ($LASTEXITCODE -ne 0 -and [string]::IsNullOrWhiteSpace(($legacyBrowserText -join ""))) "Standalone browser E2E must reject a legacy-v1 label."
+
+if ($null -eq ('RustyQuest.ConnectionHub.Tools.BoundedProcessCapture' -as [type])) {
+    Add-Type -Path (Join-Path $RepoRoot "tools\ConnectionHubBoundedProcessCapture.cs")
+}
+$largeOutputCommand = @'
+$out = 'o' * 262144
+$err = 'e' * 131072
+[Console]::Out.Write($out)
+[Console]::Error.Write($err)
+'@
+$largeCapture = [RustyQuest.ConnectionHub.Tools.BoundedProcessCapture]::Run(
+    (Join-Path $PSHOME "pwsh.exe"),
+    @("-NoProfile", "-Command", $largeOutputCommand),
+    10000,
+    1048576,
+    5000)
+Require ($largeCapture.CompletedWithinTimeout -and $largeCapture.DrainCompleted -and
+    $largeCapture.ExitCode -eq 0 -and
+    $largeCapture.StandardOutput.Length -eq 262144 -and
+    $largeCapture.StandardError.Length -eq 131072 -and
+    -not $largeCapture.StandardOutputExceededLimit -and
+    -not $largeCapture.StandardErrorExceededLimit) `
+    "Bounded process capture did not drain simultaneous output larger than Windows pipe capacity."
+$timeoutCommand = @'
+[Console]::Out.Write('started')
+[Console]::Error.Write('waiting')
+Start-Sleep -Seconds 30
+'@
+$timeoutCapture = [RustyQuest.ConnectionHub.Tools.BoundedProcessCapture]::Run(
+    (Join-Path $PSHOME "pwsh.exe"),
+    @("-NoProfile", "-Command", $timeoutCommand),
+    1000,
+    1048576,
+    5000)
+Require (-not $timeoutCapture.CompletedWithinTimeout -and $timeoutCapture.DrainCompleted -and
+    $null -eq $timeoutCapture.ExitCode -and
+    [System.Text.Encoding]::UTF8.GetString($timeoutCapture.StandardOutput) -eq 'started' -and
+    [System.Text.Encoding]::UTF8.GetString($timeoutCapture.StandardError) -eq 'waiting') `
+    "Bounded process capture did not terminate and drain a timed-out process tree."
 
 $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("connection-hub-operator-test-" + [Guid]::NewGuid().ToString("N"))
 try {

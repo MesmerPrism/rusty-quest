@@ -115,6 +115,7 @@ if ($process -notmatch 'provider_effect_binding\.v1' -or
     $process -notmatch 'providerEffectResponseMessenger' -or
     $process -notmatch 'cancelProvider\(' -or
     $server -notmatch 'command_receipt_enqueued' -or
+    $server -notmatch 'command_receipt_written' -or
     $server -notmatch 'command_receipt_enqueue_failed') {
     throw "Provider effect receipts are not process-owned, exact, lifecycle bounded, and observable."
 }
