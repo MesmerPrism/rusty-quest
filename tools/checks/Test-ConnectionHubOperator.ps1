@@ -70,6 +70,11 @@ Require ($cli.Contains('[switch]$UseOffHeadDebugProviders') -and
     $cli.Contains('$SpatialDebugSurfaceService') -and
     $cli.Contains('$SampleDebugSurfaceService') -and
     $cli.Contains('isForeground=true')) "Off-head E2E does not use the exact DUMP-gated debug provider FGS with independent readback."
+Require ($cli.Contains('function Test-ExactAndroidComponentEcho') -and
+    $cli.Contains('Test-ExactAndroidComponentEcho $dispatch.output $component') -and
+    $cli.Contains('$matches.Count -ne 1') -and
+    $cli.Contains("StartsWith('.', [StringComparison]::Ordinal)")) `
+    "Debug provider dispatch does not compare Android's exact full and same-package shorthand component forms canonically."
 Require ($cli.Contains('pre_dispatch_proof_rejected') -and
     $cli.Contains('dispatch_attempted') -and
     $cli.Contains('cmd", "package", "query-activities", "--brief", "--components"') -and
@@ -213,6 +218,29 @@ Require ((Test-ExactJsonInteger 1 1) -and (Test-ExactJsonInteger ([long]::MaxVal
     -not (Test-ExactJsonInteger '1' 1) -and -not (Test-ExactJsonInteger 1.0 1) -and
     -not (Test-ExactJsonInteger ([decimal]1) 1) -and -not (Test-ExactJsonInteger 0 1)) `
     "Exact JSON integer validator accepted a string, fraction, decimal, or out-of-range value."
+$componentFunction = $operatorAst.Find({
+    param($node)
+    $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Test-ExactAndroidComponentEcho'
+}, $true)
+Require ($null -ne $componentFunction) "Exact Android component echo validator is missing."
+. ([scriptblock]::Create($componentFunction.Extent.Text))
+$expectedComponent = 'io.github.example/io.github.example.ConnectionHubDebugSurfaceService'
+Require ((Test-ExactAndroidComponentEcho `
+        'Starting service: Intent { cmp=io.github.example/io.github.example.ConnectionHubDebugSurfaceService }' `
+        $expectedComponent) -and
+    (Test-ExactAndroidComponentEcho `
+        'Starting service: Intent { cmp=io.github.example/.ConnectionHubDebugSurfaceService }' `
+        $expectedComponent) -and
+    -not (Test-ExactAndroidComponentEcho `
+        'Starting service: Intent { cmp=io.github.other/.ConnectionHubDebugSurfaceService }' `
+        $expectedComponent) -and
+    -not (Test-ExactAndroidComponentEcho `
+        'Starting service: Intent { cmp=io.github.example/.DifferentService }' `
+        $expectedComponent) -and
+    -not (Test-ExactAndroidComponentEcho `
+        'cmp=io.github.example/.ConnectionHubDebugSurfaceService cmp=io.github.example/.ConnectionHubDebugSurfaceService' `
+        $expectedComponent)) `
+    "Exact Android component echo validator accepted substitution or duplicate evidence."
 Require ($cli.Contains('function Force-HistoryRollover') -and
     $cli.Contains('Invoke-DebugOperator "force-rollover"') -and
     $cli.Contains('Hostess v2 lost-receipt/rollover-replay simulation failed') -and

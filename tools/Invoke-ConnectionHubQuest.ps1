@@ -1680,6 +1680,31 @@ function Restore-BoundedVirtualProximity {
     }))
 }
 
+function Test-ExactAndroidComponentEcho([string]$Output, [string]$ExpectedComponent) {
+    $slash = $ExpectedComponent.IndexOf('/')
+    if ($slash -le 0 -or $slash -ne $ExpectedComponent.LastIndexOf('/') -or
+            $slash -ge $ExpectedComponent.Length - 1) {
+        throw "Expected Android component must be one fixed fully qualified package/class pair."
+    }
+    $expectedPackage = $ExpectedComponent.Substring(0, $slash)
+    $expectedClass = $ExpectedComponent.Substring($slash + 1)
+    if ($expectedPackage -notmatch '^[A-Za-z0-9._]+$' -or
+            $expectedClass -notmatch '^[A-Za-z0-9._$]+$') {
+        throw "Expected Android component must be one fixed fully qualified package/class pair."
+    }
+    $matches = [regex]::Matches(
+        $Output,
+        '(?<![A-Za-z0-9._$])cmp=(?<package>[A-Za-z0-9._]+)/(?<class>\.?[A-Za-z0-9._$]+)(?![A-Za-z0-9._$])')
+    if ($matches.Count -ne 1) { return $false }
+    $actualPackage = $matches[0].Groups['package'].Value
+    $actualClass = $matches[0].Groups['class'].Value
+    if ($actualClass.StartsWith('.', [StringComparison]::Ordinal)) {
+        $actualClass = $actualPackage + $actualClass
+    }
+    return $actualPackage.Equals($expectedPackage, [StringComparison]::Ordinal) -and
+        $actualClass.Equals($expectedClass, [StringComparison]::Ordinal)
+}
+
 function Start-OffHeadDebugProvider([string]$ProviderName) {
     if ($ProviderName -eq "spatial") {
         $package = $SpatialPackage
@@ -1696,9 +1721,9 @@ function Start-OffHeadDebugProvider([string]$ProviderName) {
     $dispatch = Invoke-AdbBounded @(
         "shell", "am", "start-foreground-service", "-n", $component, "-a", $action) `
         $QfmProviderDebugGap "start one DUMP-gated debug provider surface" 10000
-    if ($dispatch.output -notmatch ('cmp=' + [regex]::Escape($component)) -or
+    if (-not (Test-ExactAndroidComponentEcho $dispatch.output $component) -or
             $dispatch.output -match '(?i)\berror\b') {
-        throw "Debug provider service dispatch did not echo the exact fixed component."
+        throw "Debug provider service dispatch did not echo the exact canonical fixed component."
     }
     $deadline = [DateTime]::UtcNow.AddSeconds(8)
     $service = $null
