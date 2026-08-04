@@ -601,9 +601,9 @@ function Invoke-Captured([string]$File, [string[]]$Arguments, [string]$Label) {
     }
 }
 
-function Invoke-CapturedBounded([string]$File, [string[]]$Arguments, [string]$Label, [int]$TimeoutMilliseconds) {
-    if ($TimeoutMilliseconds -lt 1000 -or $TimeoutMilliseconds -gt 30000) {
-        throw "Bounded process timeout must be between one and thirty seconds."
+function Invoke-CapturedTimed([string]$File, [string[]]$Arguments, [string]$Label, [int]$TimeoutMilliseconds) {
+    if ($TimeoutMilliseconds -lt 1000 -or $TimeoutMilliseconds -gt 360000) {
+        throw "Timed process timeout must be between one and 360 seconds."
     }
     $start = [System.Diagnostics.ProcessStartInfo]::new()
     $start.FileName = $File
@@ -617,25 +617,36 @@ function Invoke-CapturedBounded([string]$File, [string[]]$Arguments, [string]$La
         if (-not $process.Start()) { throw "Unable to start $Label." }
         $stdoutTask = $process.StandardOutput.ReadToEndAsync()
         $stderrTask = $process.StandardError.ReadToEndAsync()
-        if (-not $process.WaitForExit($TimeoutMilliseconds)) {
+        $completed = $process.WaitForExit($TimeoutMilliseconds)
+        if (-not $completed) {
             $process.Kill($true)
             [void]$process.WaitForExit(5000)
-            throw "$Label timed out after $TimeoutMilliseconds milliseconds."
         }
         $stdoutText = $stdoutTask.GetAwaiter().GetResult().TrimEnd("`r", "`n")
         $stderrText = $stderrTask.GetAwaiter().GetResult().TrimEnd("`r", "`n")
         return [ordered]@{
             label = $Label
-            exit_code = $process.ExitCode
+            exit_code = $(if($completed){$process.ExitCode}else{$null})
             output = $stdoutText
             stderr = $stderrText
             combined = (($stdoutText, $stderrText) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }) -join "`n"
             timeout_milliseconds = $TimeoutMilliseconds
-            completed_within_timeout = $true
+            completed_within_timeout = $completed
         }
     } finally {
         $process.Dispose()
     }
+}
+
+function Invoke-CapturedBounded([string]$File, [string[]]$Arguments, [string]$Label, [int]$TimeoutMilliseconds) {
+    if ($TimeoutMilliseconds -gt 30000) {
+        throw "Bounded process timeout must not exceed thirty seconds."
+    }
+    $result = Invoke-CapturedTimed $File $Arguments $Label $TimeoutMilliseconds
+    if (-not (Test-ExactBoolean $result.completed_within_timeout $true)) {
+        throw "$Label timed out after $TimeoutMilliseconds milliseconds."
+    }
+    return $result
 }
 
 function Invoke-Qfm([string[]]$Arguments, [string]$Label, [switch]$AllowFailure) {
@@ -1477,8 +1488,9 @@ function Restart-HubProcess {
         try { $status = Invoke-DebugOperator "status" } catch { $status=$null }
     } while (($null -eq $status -or -not (Test-ExactBoolean $status.owner_receipt.listener_running $true)) -and [DateTime]::UtcNow -lt $deadline)
     if ($null -eq $status -or -not (Test-ExactBoolean $status.owner_receipt.listener_running $true) -or
-            [string]$status.owner_receipt.desired_connection_state -ne "running") {
-        throw "Encrypted desired state did not restore the real Hub listener."
+            [string]$status.owner_receipt.desired_connection_state -ne "running" -or
+            -not (Test-ExactJsonInteger $status.owner_receipt.active_controller_sessions 1)) {
+        throw "Encrypted state did not restore the real Hub listener and authenticated controller session."
     }
     $service = Invoke-Adb @("shell", "dumpsys", "activity", "services", $HubPackage) $QfmServiceGap "read restarted FGS"
     $notification = Invoke-Adb @("shell", "dumpsys", "notification", "--noredact") $QfmServiceGap "read restarted notification"
@@ -1491,6 +1503,8 @@ function Restart-HubProcess {
         pid_changed=$true
         listener_restored=$true
         desired_state_restored=$true
+        active_controller_sessions=[int]$status.owner_receipt.active_controller_sessions
+        authenticated_controller_session_restored=$true
         foreground_service_restored=$true
         notification_restored=$true
         service_readback_sha256=Get-TextSha256 $service.output
@@ -1688,13 +1702,60 @@ function Test-JsonContainsUnredactedHostessSecret($Value) {
 function Invoke-Hostess([string]$Verb, [string[]]$Arguments, [string]$ReceiptName) {
     if ((Get-Sha256 $script:Hostess) -ne $HostessCliSha256) { throw "Hostess CLI changed after run lock." }
     if ((Get-Sha256 $script:Python) -ne $PythonSha256) { throw "Python changed after the run lock was acquired." }
-    $result = Invoke-Captured $script:Python (@($script:Hostess, $Verb) + $Arguments) "Hostess $Verb"
-    if ($result.exit_code -ne 0) { throw "Hostess $Verb failed: $($result.combined)" }
+    $timeoutMilliseconds = Get-HostessTimeoutMilliseconds $Verb $Arguments
+    $result = Invoke-CapturedTimed $script:Python (@($script:Hostess, $Verb) + $Arguments) "Hostess $Verb" $timeoutMilliseconds
+    if (-not (Test-ExactBoolean $result.completed_within_timeout $true) -or $result.exit_code -ne 0) {
+        $reason = Get-SafeHostessFailureReason $result
+        [void](Save-Receipt "$ReceiptName-failure" (New-Receipt "hostess-$Verb" "rusty-hostess" "failed" ([ordered]@{
+            reason=$reason
+            timed_out=(-not [bool]$result.completed_within_timeout)
+            timeout_milliseconds=$timeoutMilliseconds
+            exit_code=$result.exit_code
+            stdout_bytes=[System.Text.Encoding]::UTF8.GetByteCount([string]$result.output)
+            stdout_sha256=Get-TextSha256 ([string]$result.output)
+            stderr_bytes=[System.Text.Encoding]::UTF8.GetByteCount([string]$result.stderr)
+            stderr_sha256=Get-TextSha256 ([string]$result.stderr)
+            output_retained=$false
+            pairing_secret_in_receipt=$false
+            bearer_token_in_receipt=$false
+        })))
+        throw "Hostess $Verb failed closed: $reason"
+    }
     $json = $result.output | ConvertFrom-Json
     if (Test-JsonContainsUnredactedHostessSecret $json) {
         throw "Hostess output may contain an unredacted secret."
     }
     return Save-Receipt $ReceiptName (New-Receipt "hostess-$Verb" "rusty-hostess" "passed" $json)
+}
+
+function Get-HostessTimeoutMilliseconds([string]$Verb, [string[]]$Arguments) {
+    $seconds = 0
+    if ($Verb -in @("connect-watch", "wait-surface")) {
+        for ($index = 0; $index -lt ($Arguments.Count - 1); $index++) {
+            if ($Arguments[$index] -eq "--seconds" -and
+                    [int]::TryParse($Arguments[$index + 1], [ref]$seconds)) { break }
+        }
+    }
+    if ($seconds -gt 0) {
+        return [math]::Min(330000, (($seconds + 15) * 1000))
+    }
+    if ($Verb -eq "revoke") { return 45000 }
+    return 30000
+}
+
+function Get-SafeHostessFailureReason($Result) {
+    if (-not (Test-ExactBoolean $Result.completed_within_timeout $true)) { return "timeout" }
+    foreach ($text in @([string]$Result.output, [string]$Result.stderr)) {
+        if ([string]::IsNullOrWhiteSpace($text)) { continue }
+        try {
+            $parsed = $text | ConvertFrom-Json
+            foreach ($name in @("error_code", "reason", "status", "error")) {
+                $candidate = [string]$parsed.$name
+                if ($candidate -match '^[A-Za-z0-9_.:-]{1,128}$') { return $candidate }
+            }
+        } catch { }
+    }
+    return "nonzero_exit"
 }
 
 function Read-HostessSurfaces {

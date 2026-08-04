@@ -82,6 +82,7 @@ public final class ConnectionHubDebugControlProvider extends ContentProvider {
             receipt.put("desired_connection_state",
                     safeStatus.getString("desired_connection_state"));
             receipt.put("runtime_status", safeStatus.getString("status"));
+            receipt.put("active_controller_sessions", hub.runtime().activeSessionCount());
             receipt.put("origin", hub.displayOrigin());
             receipt.put("confidentiality", "none");
             receipt.put("production_eligible", false);

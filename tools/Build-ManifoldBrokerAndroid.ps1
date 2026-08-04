@@ -7,6 +7,10 @@ param(
     [string]$ProductLockPath = "",
     [string]$ManifoldSourceRoot = "",
     [string[]]$MediaSessionBindingPath = @(),
+    [ValidateRange(1, 2100000000)]
+    [int]$VersionCode = 1,
+    [ValidatePattern('^[0-9A-Za-z][0-9A-Za-z._+-]{0,63}$')]
+    [string]$VersionName = "0.1.0",
     [switch]$LegacyCameraP2pCompatibility,
     [switch]$EnableConnectionHubDebugOperator,
     [switch]$PrepareOnly,
@@ -805,8 +809,8 @@ Invoke-Checked "aapt2 link" $aapt2 @(
     "-I", $platformJar,
     "--min-sdk-version", "29",
     "--target-sdk-version", "34",
-    "--version-code", "1",
-    "--version-name", "0.1.0"
+    "--version-code", [string]$VersionCode,
+    "--version-name", $VersionName
 )
 
 Copy-Item $apkUnsigned $apkUnaligned
@@ -881,6 +885,8 @@ foreach ($kind in @("activity", "service", "provider")) {
 $manifest = [ordered]@{
     '$schema' = "rusty.quest.manifold_broker_android.build_manifest.v2"
     package_name = "io.github.mesmerprism.rustymanifold.broker"
+    version_code = $VersionCode
+    version_name = $VersionName
     activity = if ($connectionHubSelected) { "io.github.mesmerprism.rustymanifold.broker/.ConnectionHubStartActivity" } else { "io.github.mesmerprism.rustymanifold.broker/.BrokerStartActivity" }
     authority = "rusty.manifold"
     endpoint_path = "/manifold/v1/events"
@@ -923,6 +929,7 @@ $manifest = [ordered]@{
     legacy_camera_p2p_compatibility = [bool]$LegacyCameraP2pCompatibility
     apk_path = $apkSigned
     apk_sha256 = $sha256
+    apk_size = (Get-Item -LiteralPath $apkSigned).Length
     validation = [ordered]@{
         product_spec_lock_validated = $true
         generated_manifest_validated = $true

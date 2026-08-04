@@ -26,6 +26,8 @@ $browserHarness = Read-Required "tools\browser\connection-hub-browser-e2e.js"
 $releaseManifest = Read-Required "fixtures\broker-products\connection-hub-standalone.AndroidManifest.xml"
 $nativeAdapter = Read-Required "apps\manifold-broker-android\native\src\connection_hub_jni.rs"
 $operatorGuide = Read-Required "docs\CONNECTION_HUB_OPERATOR.md"
+$releaseGuide = Read-Required "docs\CONNECTION_HUB_LABS_RELEASE.md"
+$releaseBuild = Read-Required "tools\Build-ConnectionHubLabsRelease.ps1"
 
 Require ($cli.Contains('[Parameter(Mandatory=$true)]') -and $cli.Contains('[string]$Serial')) "Operator CLI must require an explicit serial."
 Require ($cli.Contains('Lock-ExactProvider $FileManagerCli $FileManagerSha256')) "QFM must be held under one exact content pin."
@@ -40,6 +42,7 @@ Require ($cli.Contains('adb_version = $script:AdbVersion') -and
 Require ($cli.Contains('Installed-byte readback') -and $cli.Contains('Stage-Apk')) "QFM transaction must stage and confirm exact APK bytes."
 Require ($cli.Contains('qfm-69b02f1.launch-export-parser')) "Known QFM launcher parser fallback is not labelled."
 Require ($cli.Contains('function Invoke-CapturedBounded') -and
+    $cli.Contains('function Invoke-CapturedTimed') -and
     $cli.Contains('function Invoke-AdbBounded') -and
     $cli.Contains('@("shell", "am", "start", "-n", $Component)') -and
     $cli.Contains('"dispatch one fixed reviewed component" 10000') -and
@@ -144,6 +147,15 @@ Require ($cli.Contains('Test-ExactBoolean $effect.request_binding_exact $true') 
     $cli.Contains('Test-ExactBoolean $effect.provider_applied $true') -and
     $cli.Contains('provider_effect_observed')) "Device command oracle does not require an exact observed provider effect."
 Require ($cli.Contains('Restart-HubProcess') -and $cli.Contains('START_STICKY did not produce a new Hub process')) "Process restart/FGS recovery oracle is missing."
+Require ($provider.Contains('active_controller_sessions') -and
+    $cli.Contains('authenticated_controller_session_restored') -and
+    $cli.Contains('Test-ExactJsonInteger $status.owner_receipt.active_controller_sessions 1')) "Process restart does not prove authenticated session restoration."
+Require ($cli.Contains('function Get-HostessTimeoutMilliseconds') -and
+    $cli.Contains('function Get-SafeHostessFailureReason') -and
+    $cli.Contains('output_retained=$false') -and
+    $cli.Contains('pairing_secret_in_receipt=$false') -and
+    $cli.Contains('bearer_token_in_receipt=$false') -and
+    $cli.Contains('Hostess $Verb failed closed')) "Hostess subprocesses are not bounded with secret-free failure receipts."
 Require ($cli.Contains('not_run_safety_reason') -and $cli.Contains('RequireWifiRebindE2E')) "Wi-Fi rebind safety gate is missing."
 Require ($cli.Contains('connection-hub-protocol-v2.json') -and
     $cli.Contains('[switch]$LegacyV1') -and $cli.Contains('"--legacy-v1"') -and
@@ -187,6 +199,11 @@ Require ($cli.Contains('"rollover_replay_failed_closed"') -and
 Require (-not $cli.Contains('AdbArguments')) "A generic caller-supplied ADB argument surface is forbidden."
 
 Require ($build.Contains('[switch]$EnableConnectionHubDebugOperator')) "Debug operator build gate is missing."
+Require ($build.Contains('[int]$VersionCode = 1') -and
+    $build.Contains('[string]$VersionName = "0.1.0"') -and
+    $build.Contains('"--version-code", [string]$VersionCode') -and
+    $build.Contains('"--version-name", $VersionName') -and
+    $build.Contains('apk_size = (Get-Item -LiteralPath $apkSigned).Length')) "Versioned Connection Hub artifact metadata is incomplete."
 Require ($build.Contains('if ($EnableConnectionHubDebugOperator)')) "Debug operator manifest must be conditional."
 Require ($build.Contains('return [bool]$EnableConnectionHubDebugOperator')) "Debug provider source must be excluded by default."
 Require ($build.Contains('connection_hub_debug_operator = [bool]$EnableConnectionHubDebugOperator')) "Build receipt must disclose debug operator inclusion."
@@ -198,6 +215,17 @@ Require (-not $releaseManifest.Contains('ConnectionHubDebugControlProvider')) "R
 Require ($activity.Contains('ACTION_DEBUG_START_HUB') -and $activity.Contains('startForegroundService')) "Typed real Activity-to-FGS lifecycle route is missing."
 Require ($browserHarness.Contains('process.stdin') -and $browserHarness.Contains('consoleErrors') -and $browserHarness.Contains('spatial-removed-sample-present-command-applied')) "Real browser sequential-surface E2E harness is incomplete."
 Require (-not $browserHarness.Contains('--pairing-code') -and -not $browserHarness.Contains('pairing_code:')) "Browser harness must not accept or emit a pairing-code argument/field."
+Require ($releaseBuild.Contains('rusty.quest.connection_hub_labs_release.v1') -and
+    $releaseBuild.Contains('Connection Hub Labs release requires a clean exact Rusty Quest worktree') -and
+    $releaseBuild.Contains('$buildManifest.connection_hub_debug_operator -ne $false') -and
+    $releaseBuild.Contains('transport_classification = "trusted_lan_experimental"') -and
+    $releaseBuild.Contains('confidentiality = "none"') -and
+    $releaseBuild.Contains('insecure_trusted_lan_requires_explicit_opt_in = $true')) "Connection Hub Labs release builder lost its clean-tree, release-only, or plaintext opt-in boundary."
+Require ($releaseGuide.Contains('`transport_classification=trusted_lan_experimental`') -and
+    $releaseGuide.Contains('`confidentiality=none`') -and
+    $releaseGuide.Contains('`production_eligible=false`') -and
+    $releaseGuide.Contains('--allow-insecure-trusted-lan') -and
+    $releaseGuide.Contains('release build excludes the shell-only')) "Connection Hub Labs release guide lost its security or operator boundary."
 foreach ($adapterStatus in @(
     'adapter_session_not_active',
     'adapter_missing_required_field',
