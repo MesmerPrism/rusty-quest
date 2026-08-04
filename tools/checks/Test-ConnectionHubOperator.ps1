@@ -193,6 +193,11 @@ foreach ($adapterStatus in @(
     'adapter_missing_required_field',
     'adapter_epoch_field_invalid',
     'adapter_digest_invalid',
+    'adapter_session_id_invalid',
+    'adapter_lease_id_invalid',
+    'adapter_command_id_invalid',
+    'adapter_request_id_invalid',
+    'adapter_schema_id_invalid',
     'adapter_identifier_invalid',
     'adapter_command_binding_invalid'
 )) {

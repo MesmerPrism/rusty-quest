@@ -433,7 +433,7 @@ fn authorize_authenticated_command(
             lease_id: epoch_field(owner, proposal, "lease_id")?,
             command_id: dotted(proposal, "command_id")?,
             typed_params_schema_id: SchemaId::new(EMPTY_TYPED_PARAMS_SCHEMA)
-                .map_err(|e| e.to_string())?,
+                .map_err(|_| "invalid typed_params_schema_id identifier".to_owned())?,
             typed_params_schema_sha256: EMPTY_TYPED_PARAMS_SCHEMA_SHA256.to_owned(),
             typed_params_sha256: sha256_field(proposal, "typed_params_sha256")?,
             external_request_sequence,
@@ -707,8 +707,10 @@ fn request(
     operation: ManifoldConnectionHubOperationRequest,
 ) -> Result<ManifoldConnectionHubRequest, String> {
     Ok(ManifoldConnectionHubRequest {
-        schema_id: SchemaId::new(REQUEST_SCHEMA).map_err(|e| e.to_string())?,
-        request_id: epoch_derived(owner, "request", request_id)?,
+        schema_id: SchemaId::new(REQUEST_SCHEMA)
+            .map_err(|_| "invalid request_schema_id identifier".to_owned())?,
+        request_id: epoch_derived(owner, "request", request_id)
+            .map_err(|_| "invalid request_id identifier".to_owned())?,
         authority_epoch: owner.authority.snapshot().state.authority_epoch,
         expected_authority_revision: owner.authority.snapshot().state.authority_revision,
         requested_at_ms: now_ms,
@@ -768,6 +770,18 @@ fn adapter_command_rejection(error: &str) -> Value {
         "adapter_epoch_field_invalid"
     } else if error.starts_with("invalid ") && error.ends_with("sha256") {
         "adapter_digest_invalid"
+    } else if error == "invalid session_id identifier" {
+        "adapter_session_id_invalid"
+    } else if error == "invalid lease_id identifier" {
+        "adapter_lease_id_invalid"
+    } else if error == "invalid command_id identifier" {
+        "adapter_command_id_invalid"
+    } else if error == "invalid request_id identifier" {
+        "adapter_request_id_invalid"
+    } else if error == "invalid typed_params_schema_id identifier"
+        || error == "invalid request_schema_id identifier"
+    {
+        "adapter_schema_id_invalid"
     } else if error.contains("dotted") || error.contains("identifier") {
         "adapter_identifier_invalid"
     } else {
@@ -833,7 +847,7 @@ fn transport(
 }
 
 fn dotted(value: &Value, field: &str) -> Result<DottedId, String> {
-    DottedId::new(text(value, field)?).map_err(|e| e.to_string())
+    DottedId::new(text(value, field)?).map_err(|_| format!("invalid {field} identifier"))
 }
 
 fn epoch_field(owner: &HubOwner, value: &Value, field: &str) -> Result<DottedId, String> {
@@ -846,7 +860,7 @@ fn epoch_field(owner: &HubOwner, value: &Value, field: &str) -> Result<DottedId,
             if epoch == 0 || epoch > owner.authority.snapshot().state.authority_epoch {
                 return Err(format!("future or zero-epoch {field} rejected"));
             }
-            return DottedId::new(raw).map_err(|e| e.to_string());
+            return DottedId::new(raw).map_err(|_| format!("invalid {field} identifier"));
         }
     }
     epoch_derived(owner, field, raw)
@@ -956,6 +970,34 @@ mod tests {
             "epoch-1.provider-instance.media.first.surface-instance.surface.media.controls"
         );
         assert!(first.as_str().starts_with("epoch-1."));
+    }
+
+    #[test]
+    fn command_adapter_identifier_rejections_are_field_specific_and_fail_closed() {
+        for (error, expected_status) in [
+            (
+                "invalid session_id identifier",
+                "adapter_session_id_invalid",
+            ),
+            ("invalid lease_id identifier", "adapter_lease_id_invalid"),
+            (
+                "invalid command_id identifier",
+                "adapter_command_id_invalid",
+            ),
+            (
+                "invalid request_id identifier",
+                "adapter_request_id_invalid",
+            ),
+            (
+                "invalid typed_params_schema_id identifier",
+                "adapter_schema_id_invalid",
+            ),
+        ] {
+            let receipt = adapter_command_rejection(error);
+            assert_eq!(receipt["status"], expected_status);
+            assert_eq!(receipt["applied"], false);
+            assert_eq!(receipt["authority_receipt"], json!({}));
+        }
     }
 
     #[test]

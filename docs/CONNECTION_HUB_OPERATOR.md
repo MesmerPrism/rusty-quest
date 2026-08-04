@@ -115,12 +115,16 @@ rejection, then local credential deletion. Failure caused only by a previously
 deleted session file is not revocation evidence.
 
 Native command-adapter precondition failures are returned as structured,
-fail-closed receipts with `applied=false` and no authority acceptance receipt. Stable status
-families distinguish an inactive logical session, a missing required field, an
-invalid epoch, digest, or identifier, and an otherwise invalid command binding:
+fail-closed receipts with `applied=false` and no authority acceptance receipt.
+Stable status families distinguish an inactive logical session, a missing
+required field, an invalid epoch or digest, field-specific invalid identifiers,
+and an otherwise invalid command binding:
 `adapter_session_not_active`, `adapter_missing_required_field`,
 `adapter_epoch_field_invalid`, `adapter_digest_invalid`,
-`adapter_identifier_invalid`, and `adapter_command_binding_invalid`. These
+`adapter_session_id_invalid`, `adapter_lease_id_invalid`,
+`adapter_command_id_invalid`, `adapter_request_id_invalid`,
+`adapter_schema_id_invalid`, `adapter_identifier_invalid`, and
+`adapter_command_binding_invalid`. These
 statuses describe rejection before Manifold command admission; they never claim
 that Manifold or the provider accepted the request.
 
