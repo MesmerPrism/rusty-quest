@@ -575,18 +575,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "rusty-manifold-connection-hub"
-version = "0.1.0"
-dependencies = [
- "rusty-manifold-admission",
- "rusty-manifold-broker-product",
- "rusty-manifold-model",
- "serde",
- "serde_json",
- "sha2",
-]
-
-[[package]]
 name = "rusty-manifold-media-session"
 version = "0.1.0"
 dependencies = [
@@ -831,13 +819,8 @@ name = "rusty-quest-manifold-broker-authority-native"
 version = "0.1.0"
 dependencies = [
  "jni 0.22.4",
- "rusty-manifold-admission",
- "rusty-manifold-broker-product",
- "rusty-manifold-connection-hub",
- "rusty-manifold-model",
  "rusty-quest-broker-admission",
  "rusty-quest-broker-authority",
- "serde",
  "serde_json",
 ]
 

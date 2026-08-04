@@ -56,7 +56,9 @@ $spatialActivity = Get-Content -Raw -LiteralPath (Join-Path $spatial "app\src\ma
 $buildScript = Get-Content -Raw -LiteralPath (Join-Path $RepoRoot "tools\Build-ManifoldBrokerAndroid.ps1")
 $productSource = Get-Content -Raw -LiteralPath (Join-Path $RepoRoot "crates\rusty-quest-broker-product\src\lib.rs")
 $nativeLock = Get-Content -Raw -LiteralPath (Join-Path $app "native\manifold-source.lock.json")
-$nativeHub = Get-Content -Raw -LiteralPath (Join-Path $app "native\src\connection_hub_jni.rs")
+$nativeHubRoot = Join-Path $app "connection-hub-native"
+$nativeHubManifest = Get-Content -Raw -LiteralPath (Join-Path $nativeHubRoot "Cargo.toml")
+$nativeHub = Get-Content -Raw -LiteralPath (Join-Path $nativeHubRoot "src\connection_hub_jni.rs")
 $sampleManifest = Join-Path $spatial "hub-sample-provider\src\main\AndroidManifest.xml"
 $sampleProvider = Join-Path $spatial "hub-sample-provider\src\main\java\io\github\mesmerprism\rustyquest\connection_hub_sample\ConnectionHubSampleProvider.java"
 $sampleProviderText = Get-Content -Raw -LiteralPath $sampleProvider
@@ -122,6 +124,10 @@ if ($process -notmatch 'provider_effect_binding\.v1' -or
 }
 if ($nativeLock -notmatch 'd9d060f8c67199135a4c3e0a699ca408f6c64095' -or
     $nativeLock -notmatch '23126eb8b6d0127dfbfa7b968c95ea8b8c7174be' -or
+    $nativeHubManifest -notmatch '(?m)^\[workspace\]$' -or
+    $nativeHubManifest -notmatch 'name = "rusty_quest_manifold_broker_authority"' -or
+    $buildScript -notmatch 'isolated Connection Hub native' -or
+    $buildScript -notmatch 'Connection Hub native dependency path does not equal the validated Manifold source root' -or
     $nativeHub -notmatch '\.owner\(\)' -or
     $nativeHub -notmatch 'EMPTY_TYPED_PARAMS_SCHEMA_SHA256' -or
     $nativeHub -notmatch 'authority_epoch') {
@@ -244,6 +250,9 @@ if ($LASTEXITCODE -ne 0) { throw "Connection Hub transport-bound tests failed." 
 if ($LASTEXITCODE -ne 0) { throw "Connection Hub provider-effect reply-router tests failed." }
 & $java -cp "$out;$($jsonJar.FullName)" io.github.mesmerprism.rustymanifold.broker.ConnectionHubCoreTest $vectors
 if ($LASTEXITCODE -ne 0) { throw "Connection Hub host tests failed." }
+
+& cargo test --locked --manifest-path (Join-Path $nativeHubRoot "Cargo.toml")
+if ($LASTEXITCODE -ne 0) { throw "Isolated Connection Hub native tests failed." }
 
 $androidJar = Join-Path $env:ANDROID_HOME "platforms\android-35\android.jar"
 if (-not (Test-Path -LiteralPath $androidJar -PathType Leaf)) {

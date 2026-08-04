@@ -118,6 +118,14 @@ old v2 frame is rejected after rollover and restart. A forced rollover hook and
 short activity deadlines exist only in the shell-UID debug operator product;
 release packaging omits the provider and disables the native hook.
 
+Connection Hub native authority is built from the standalone
+`connection-hub-native` Cargo workspace and its own committed lockfile. It
+shares the broker admission implementation as source inside the same resulting
+native library, but its independently pinned Manifold dependency graph does not
+change the repository-wide Cargo lock used by the package updater and other
+Quest products. The build rejects a Manifold path that differs from the exact
+clean source root validated by `native/manifold-source.lock.json`.
+
 Browser disconnect is fail closed: local bearer/socket state is cleared only
 after an exact applied revoke receipt. Network, HTTP, schema, or authority
 rejection retains the credential so the wearer can retry, while an accepted

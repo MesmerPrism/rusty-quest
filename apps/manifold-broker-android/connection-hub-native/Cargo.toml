@@ -1,0 +1,40 @@
+[package]
+name = "rusty-quest-connection-hub-native"
+description = "Isolated JNI owner for the standalone Rusty Connection Hub product."
+version = "0.1.0"
+edition = "2021"
+authors = ["Till Holzapfel"]
+license = "AGPL-3.0-or-later"
+rust-version = "1.80"
+publish = false
+
+[lib]
+name = "rusty_quest_manifold_broker_authority"
+crate-type = ["cdylib", "rlib"]
+
+[features]
+default = ["connection-hub-native"]
+connection-hub-native = []
+
+[dependencies]
+rusty-quest-broker-authority = { path = "../../../crates/rusty-quest-broker-authority" }
+rusty-quest-broker-admission = { path = "../../../crates/rusty-quest-broker-admission" }
+rusty-manifold-admission = { path = "../../../../rusty-manifold/crates/rusty-manifold-admission" }
+rusty-manifold-broker-product = { path = "../../../../rusty-manifold/crates/rusty-manifold-broker-product" }
+rusty-manifold-connection-hub = { path = "../../../../rusty-manifold/crates/rusty-manifold-connection-hub" }
+rusty-manifold-model = { path = "../../../../rusty-manifold/crates/rusty-manifold-model", features = ["serde"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[target.'cfg(target_os = "android")'.dependencies]
+jni = "0.22"
+
+[workspace]
+
+[lints.rust]
+unsafe_code = "allow"
+missing_docs = "allow"
+
+[lints.clippy]
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"

@@ -1,5 +1,6 @@
 //! One process-local JNI boundary shared by Binder admission and broker mutation.
 
+#[cfg(feature = "connection-hub-native")]
 use rusty_manifold_admission::ManifoldAdmissionAuthority;
 use rusty_quest_broker_authority::QuestBrokerRuntimeProvider;
 use std::sync::{Mutex, OnceLock};
@@ -68,6 +69,7 @@ pub(crate) fn admission_snapshot() -> Result<String, String> {
 /// Returns a validated clone of the exact retained admission state for the
 /// Connection Hub owner boundary. The returned authority cannot mutate the
 /// retained broker runtime; it is evidence for one Hub operation only.
+#[cfg(feature = "connection-hub-native")]
 pub(crate) fn admission_authority() -> Result<ManifoldAdmissionAuthority, String> {
     ManifoldAdmissionAuthority::restart_from_json(&admission_snapshot()?)
         .map_err(|error| error.to_string())
@@ -384,7 +386,11 @@ pub(super) mod tests {
         )
         .expect("status");
         let epoch = status["provider_epoch_id"].as_str().expect("epoch");
-        assert!(status["existing_authority_preserved"].is_boolean());
+        if cfg!(feature = "connection-hub-native") {
+            assert!(status["existing_authority_preserved"].is_boolean());
+        } else {
+            assert_eq!(status["existing_authority_preserved"], false);
+        }
 
         let issue = serde_json::json!({
             "operation": "issue_token",

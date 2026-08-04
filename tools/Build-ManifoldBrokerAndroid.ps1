@@ -411,6 +411,13 @@ if ($connectionHubSelected) {
         throw "Connection Hub Manifold source root does not exist: $manifoldSourceCandidate"
     }
     $manifoldSourceRoot = (Resolve-Path -LiteralPath $manifoldSourceCandidate).Path
+    $connectionHubNativeRoot = Join-Path $appRoot "connection-hub-native"
+    $nativeManifoldSourceRoot = (Resolve-Path -LiteralPath (
+        Join-Path $connectionHubNativeRoot "..\..\..\..\rusty-manifold"
+    )).Path
+    if ($nativeManifoldSourceRoot -cne $manifoldSourceRoot) {
+        throw "Connection Hub native dependency path does not equal the validated Manifold source root."
+    }
     $manifoldSourceLockPath = Join-Path $appRoot "native\manifold-source.lock.json"
     $manifoldSourceLock = Get-Content -Raw -LiteralPath $manifoldSourceLockPath | ConvertFrom-Json
     $manifoldRevision = (& git -C $manifoldSourceRoot rev-parse HEAD).Trim()
@@ -778,22 +785,37 @@ try {
     $env:CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER = $androidClang
     $env:CC_aarch64_linux_android = $androidClang
     $env:AR_aarch64_linux_android = $androidAr
-    Push-Location $repoRoot
-    try {
-        Invoke-Checked "standalone broker admission native" "cargo" @(
+    if ($connectionHubSelected) {
+        $connectionHubNativeTarget = Join-Path $OutDir "connection-hub-native-target"
+        Invoke-Checked "isolated Connection Hub native" "cargo" @(
             "build",
-            "--target", "aarch64-linux-android",
-            "-p", "rusty-quest-manifold-broker-authority-native"
+            "--locked",
+            "--manifest-path", (Join-Path $connectionHubNativeRoot "Cargo.toml"),
+            "--target-dir", $connectionHubNativeTarget,
+            "--target", "aarch64-linux-android"
         )
-    } finally {
-        Pop-Location
+    } else {
+        Push-Location $repoRoot
+        try {
+            Invoke-Checked "standalone broker admission native" "cargo" @(
+                "build",
+                "--target", "aarch64-linux-android",
+                "-p", "rusty-quest-manifold-broker-authority-native"
+            )
+        } finally {
+            Pop-Location
+        }
     }
 } finally {
     $env:CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER = $previousLinker
     $env:CC_aarch64_linux_android = $previousCc
     $env:AR_aarch64_linux_android = $previousAr
 }
-$nativeSoSource = Join-Path $repoRoot "target\aarch64-linux-android\debug\librusty_quest_manifold_broker_authority.so"
+$nativeSoSource = if ($connectionHubSelected) {
+    Join-Path $connectionHubNativeTarget "aarch64-linux-android\debug\librusty_quest_manifold_broker_authority.so"
+} else {
+    Join-Path $repoRoot "target\aarch64-linux-android\debug\librusty_quest_manifold_broker_authority.so"
+}
 if (-not (Test-Path -LiteralPath $nativeSoSource -PathType Leaf)) {
     throw "Standalone broker authority native library not found: $nativeSoSource"
 }

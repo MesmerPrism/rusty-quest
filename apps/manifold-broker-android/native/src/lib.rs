@@ -1,8 +1,6 @@
 //! Standalone Android JNI transport to one stateful Manifold broker runtime.
 
 mod admission_jni;
-#[cfg_attr(not(target_os = "android"), allow(dead_code))]
-mod connection_hub_jni;
 
 /// Initializes or rebinds the process-local runtime in host tests.
 pub fn initialize_for_host_test(
