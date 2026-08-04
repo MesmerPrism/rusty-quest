@@ -39,6 +39,11 @@ foreach ($path in $required) { if (-not (Test-Path -LiteralPath $path -PathType 
 
 $service = Get-Content -Raw -LiteralPath (Join-Path $javaRoot "ConnectionHubStartService.java")
 $activity = Get-Content -Raw -LiteralPath (Join-Path $javaRoot "ConnectionHubStartActivity.java")
+if ($activity -notmatch 'new ScrollView\(this\)' -or
+    $activity -notmatch 'scroll\.setFillViewport\(true\)' -or
+    $activity -notmatch 'scroll\.addView\(layout\)') {
+    throw 'Connection Hub management controls must remain inside a scrollable viewport.'
+}
 $binder = Get-Content -Raw -LiteralPath (Join-Path $javaRoot "ConnectionHubAdmissionService.java")
 $stateStore = Get-Content -Raw -LiteralPath (Join-Path $javaRoot "AndroidConnectionHubStateStore.java")
 $server = Get-Content -Raw -LiteralPath (Join-Path $javaRoot "ConnectionHubHttpServer.java")

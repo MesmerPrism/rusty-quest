@@ -10,6 +10,7 @@ import android.os.Bundle;
 import android.view.View;
 import android.widget.Button;
 import android.widget.LinearLayout;
+import android.widget.ScrollView;
 import android.widget.TextView;
 
 import java.util.LinkedHashSet;
@@ -84,7 +85,10 @@ public final class ConnectionHubStartActivity extends Activity {
                 startHubService(ConnectionHubStartService.ACTION_FORGET_HUB);
             }
         }));
-        setContentView(layout);
+        ScrollView scroll = new ScrollView(this);
+        scroll.setFillViewport(true);
+        scroll.addView(layout);
+        setContentView(scroll);
     }
 
     private Button button(String label, View.OnClickListener listener) {
