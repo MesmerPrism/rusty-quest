@@ -72,6 +72,11 @@ if ($activity -match 'LocalManifoldBrokerServer\.get\(\)\.start' -or $activity -
 if ($service -notmatch 'START_STICKY' -or $service -notmatch 'ConnectionHubProcess' -or $service -notmatch 'ACTION_STOP_HUB') { throw "Foreground service does not own persistent Hub lifecycle." }
 if ($binder -notmatch 'message\.sendingUid' -or $binder -notmatch 'GET_SIGNING_CERTIFICATES' -or $binder -notmatch 'MESSAGE_REGISTER_SURFACE') { throw "Binder provider API does not derive platform identity." }
 if ($binder -match 'data\.getString\("admitted_client_evidence_json"') { throw "Binder accepts caller-supplied admission evidence." }
+$binderRuntimeIndex = $binder.IndexOf('ManifoldRuntimeAuthorityBridge.initialize();', [StringComparison]::Ordinal)
+$binderHubIndex = $binder.IndexOf('ConnectionHubProcess.get(this);', [StringComparison]::Ordinal)
+if ($binderRuntimeIndex -lt 0 -or $binderHubIndex -lt 0 -or $binderRuntimeIndex -ge $binderHubIndex) {
+    throw "Binder service does not establish the Hub admission floor before provider token mutations."
+}
 if ($binder -notmatch 'activeHubProviders' -or
     $binder -notmatch 'registrationCommitted\.compareAndSet\(true, false\)' -or
     $binder -notmatch 'unregisterProvider\(' -or

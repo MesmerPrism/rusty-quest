@@ -59,6 +59,9 @@ Installing a release whose reviewed provider grants changed intentionally
 invalidates an older envelope, stops the listener, and discards the old
 controller projections. Open the Hub and pair once again after such an update;
 the app never carries stale provider authority into the new release.
+The Binder service establishes that authority before issuing the first provider
+token, so a compatible player may also be the first app launched after a cold
+start or policy-changing update.
 
 ## Release build
 

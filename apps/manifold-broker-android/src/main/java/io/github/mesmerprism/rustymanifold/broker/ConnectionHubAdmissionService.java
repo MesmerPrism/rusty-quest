@@ -50,6 +50,12 @@ public final class ConnectionHubAdmissionService extends Service {
         super.onCreate();
         try {
             JSONObject status = ManifoldRuntimeAuthorityBridge.initialize();
+            // Establish the Hub authority and restore (or fail-closed migrate)
+            // its durable envelope before this Binder can issue any provider
+            // token. Otherwise the first provider authorization after a cold
+            // start becomes the authority's admission floor and cannot prove
+            // itself strictly newer during registration.
+            ConnectionHubProcess.get(this);
             Log.i(TAG, "status=initialized adapter=android_signature_scoped_binder"
                     + " providerEpoch=" + status.optString("provider_epoch_id", "missing")
                     + " existingAuthorityPreserved="
