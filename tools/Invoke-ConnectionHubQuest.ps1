@@ -2311,11 +2311,16 @@ try {
             if (-not (Test-ExactBoolean (Invoke-DebugOperator "status").owner_receipt.listener_running $true)) { throw "Hub stopped across Spatial app switch." }
         }
         Invoke-Stage "provider-lifetime-over-2m" {
+            # One snapshot, roughly one state update/second, and 5-second
+            # keepalives exceeded the former 128-event cap before a 125-second
+            # watch completed. Keep a larger finite evidence bound so the
+            # duration oracle, rather than the collection cap, ends this stage.
+            $providerLifetimeMaxEvents = 256
             $watchStarted=[DateTime]::UtcNow
             $watch=Invoke-Hostess "connect-watch" @(
                 "--session-file", $SessionFile,
                 "--seconds", [string]$ProviderLifetimeSeconds,
-                "--max-events", "128",
+                "--max-events", [string]$providerLifetimeMaxEvents,
                 "--keepalive-interval-seconds", "5") "hostess-provider-lifetime-watch"
             $watchElapsed=([DateTime]::UtcNow-$watchStarted).TotalSeconds
             $watchDetails=$watch.details
@@ -2334,7 +2339,7 @@ try {
                     $initialJson -notmatch '"surface_id"\s*:\s*"surface\.spatial_video_control\.media"' -or
                     $removed.Count -ne 0 -or
                     -not (Test-ExactJsonInteger $watchDetails.event_count 1) -or
-                    [int]$watchDetails.event_count -gt 128 -or
+                    [int]$watchDetails.event_count -gt $providerLifetimeMaxEvents -or
                     -not (Test-ExactJsonInteger $watchDetails.keepalive_count $minimumKeepalives) -or
                     (-not $LegacyV1 -and [long]$watchDetails.next_external_request_sequence -le [long]$watchDetails.keepalive_count)) {
                 throw "The single-transport provider lifetime watch did not prove bounded continuous session health."
