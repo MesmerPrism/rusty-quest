@@ -145,7 +145,9 @@ if ($nativeLock -notmatch 'd9d060f8c67199135a4c3e0a699ca408f6c64095' -or
     $nativeHub -notmatch 'EMPTY_TYPED_PARAMS_SCHEMA_SHA256' -or
     $nativeHub -notmatch 'authority_epoch' -or
     $nativeHub -notmatch '"policy": retained\.config\.policy' -or
-    $nativeHub -notmatch 'restart product or policy substitution rejected') {
+    $nativeHub -notmatch 'restart product or policy substitution rejected' -or
+    $nativeHub -notmatch 'provider_admission_diagnostic' -or
+    $nativeHub -notmatch 'authorize_use_not_newer_than_floor') {
     throw "Connection Hub JNI is not bound to the sealed v3 Manifold owner/epoch/typed-schema authority."
 }
 if (Test-Path -LiteralPath (Join-Path $javaRoot "UnavailableManifoldConnectionHubAuthority.java")) { throw "Fail-closed development authority stub remains in product source." }

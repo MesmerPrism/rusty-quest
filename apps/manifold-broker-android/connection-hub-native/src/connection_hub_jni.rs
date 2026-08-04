@@ -1,11 +1,13 @@
 //! JNI owner for the durable Manifold Connection Hub authority.
 
+use rusty_manifold_admission::{ManifoldAdmissionAuthority, ManifoldAdmissionOperation};
 use rusty_manifold_broker_product::ManifoldBrokerProductLock;
 use rusty_manifold_connection_hub::{
     ManifoldConnectionHubAuthenticatedActivityEvidence,
     ManifoldConnectionHubAuthenticatedTransportEvidence, ManifoldConnectionHubAuthority,
     ManifoldConnectionHubOperationRequest, ManifoldConnectionHubPolicy,
-    ManifoldConnectionHubReceipt, ManifoldConnectionHubRequest, ManifoldConnectionHubSurface,
+    ManifoldConnectionHubReceipt, ManifoldConnectionHubRejectionReason,
+    ManifoldConnectionHubRequest, ManifoldConnectionHubSurface,
     ManifoldConnectionHubSurfaceCommand, EMPTY_TYPED_PARAMS_SCHEMA, REQUEST_SCHEMA, SURFACE_SCHEMA,
 };
 use rusty_manifold_model::{DottedId, SchemaId};
@@ -533,17 +535,97 @@ fn register_provider(owner: &mut HubOwner, proposal: &Value, now_ms: u64) -> Res
         text(proposal, "request_id")?,
         now_ms,
         ManifoldConnectionHubOperationRequest::RegisterProvider {
-            provider_id,
+            provider_id: provider_id.clone(),
             provider_instance_id: epoch_field(owner, proposal, "provider_instance_id")?,
             admission_use_request_id: dotted(proposal, "admission_use_request_id")?,
         },
     )?;
-    Ok(native_receipt(
-        owner
-            .authority
-            .owner()
-            .register_provider(&mutation, now_ms, &admission),
-    ))
+    let receipt = owner
+        .authority
+        .owner()
+        .register_provider(&mutation, now_ms, &admission);
+    let diagnostic = if receipt.rejection_reason
+        == Some(ManifoldConnectionHubRejectionReason::ProviderAdmissionRejected)
+    {
+        Some(provider_admission_diagnostic(
+            owner,
+            &admission,
+            &provider_id,
+            &mutation.operation,
+            now_ms,
+        ))
+    } else {
+        None
+    };
+    let mut output = native_receipt(receipt);
+    if let Some(reason) = diagnostic {
+        output["status"] = json!(format!("provider_admission_rejected_{reason}"));
+    }
+    Ok(output)
+}
+
+fn provider_admission_diagnostic(
+    owner: &HubOwner,
+    admission: &ManifoldAdmissionAuthority,
+    provider_id: &DottedId,
+    operation: &ManifoldConnectionHubOperationRequest,
+    now_ms: u64,
+) -> &'static str {
+    let use_request_id = match operation {
+        ManifoldConnectionHubOperationRequest::RegisterProvider {
+            admission_use_request_id,
+            ..
+        } => admission_use_request_id,
+        _ => return "adapter_operation_mismatch",
+    };
+    let snapshot = admission.snapshot();
+    let floor = owner.authority.snapshot().state.admission_revision_floor;
+    if snapshot.authority_id != owner.config.policy.admission_authority_id {
+        return "authority_id_mismatch";
+    }
+    if snapshot.authority_revision < floor {
+        return "authority_revision_below_floor";
+    }
+    let event = match snapshot.audit_events.iter().find(|event| {
+        event.applied
+            && event.operation == ManifoldAdmissionOperation::AuthorizeUse
+            && &event.request_id == use_request_id
+    }) {
+        Some(value) => value,
+        None => return "authorize_use_event_missing",
+    };
+    if event.resulting_authority_revision <= floor {
+        return "authorize_use_not_newer_than_floor";
+    }
+    let binding = match event.use_authorization.as_ref() {
+        Some(value) => value,
+        None => return "authorize_use_binding_missing",
+    };
+    if binding.request.capability_id.as_str() != "capability.connection_hub.provider.register" {
+        return "capability_mismatch";
+    }
+    if binding.request.identity != binding.token.identity {
+        return "identity_mismatch";
+    }
+    if binding.token.expires_at_ms <= now_ms {
+        return "token_expired";
+    }
+    if !snapshot
+        .active_tokens
+        .iter()
+        .any(|token| token == &binding.token)
+    {
+        return "token_not_active";
+    }
+    if !owner.config.policy.provider_grants.iter().any(|grant| {
+        &grant.provider_id == provider_id
+            && grant.client_id == binding.token.identity.client_id
+            && grant.client_lock_id == binding.token.client_lock_id
+            && grant.client_lock_sha256 == binding.token.client_lock_fingerprint
+    }) {
+        return "provider_grant_mismatch";
+    }
+    "unclassified"
 }
 
 fn register_surface(owner: &mut HubOwner, proposal: &Value, now_ms: u64) -> Result<Value, String> {
