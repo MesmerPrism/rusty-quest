@@ -176,10 +176,10 @@ switch ($Action) {
             }
             $launcherProof = $components[0]
             $dispatch = @(& $Adb -s $Serial shell am start -S -n $expectedComponent 2>&1)
-            if ($LASTEXITCODE -ne 0 -or $dispatch -notmatch 'Starting: Intent') {
-                throw ($dispatch -join "`n")
-            }
             $fallbackOutput = $dispatch -join "`n"
+            if ($LASTEXITCODE -ne 0 -or $fallbackOutput -notmatch 'Starting: Intent') {
+                throw $fallbackOutput
+            }
             $launchMode = 'adb-fixed-component-after-qfm-proof-gap'
         }
         [ordered]@{
