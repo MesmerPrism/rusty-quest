@@ -82,6 +82,9 @@ if ($server -notmatch 'synchronized \(socketSessions\)[\s\S]*runtime\.replaceTra
     $server -notmatch 'isNewerTransportEpoch') {
     throw "Authority transport replacement and socket installation are not atomic."
 }
+if ($server -notmatch 'session\.enqueue\(runtime\.snapshotEvent\(\)\);\s*socketSessions\.add\(session\);') {
+    throw "Authenticated sockets become broadcast-visible before their baseline surface snapshot is queued."
+}
 if ($server -match 'Access-Control-Allow-Origin' -or $server -match 'https?://[^\"]') { throw "Hub server enables CORS or ambient remote assets." }
 if ($process -notmatch 'new ManifoldConnectionHubAuthority\(\)' -or $process -match 'UnavailableManifold') { throw "Connection Hub process is not wired to the real Manifold JNI authority." }
 if ($buildScript -notmatch 'releaseHubService' -or

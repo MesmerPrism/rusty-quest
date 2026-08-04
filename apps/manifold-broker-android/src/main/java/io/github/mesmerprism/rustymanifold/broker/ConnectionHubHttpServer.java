@@ -280,6 +280,20 @@ public final class ConnectionHubHttpServer
                         socketSessions.remove(existing);
                     }
                 }
+                /*
+                 * Queue the authentication receipt and baseline snapshot before
+                 * making this socket visible to broadcasts. A provider event may
+                 * race this handshake, but it must be ordered after the baseline
+                 * rather than becoming the client's first protocol event.
+                 */
+                session.enqueue(protocolV2
+                        ? ConnectionHubProtocol.socketAuthenticationReceiptV2(
+                                sessionProjection.transportEpoch,
+                                sessionProjection.nextExternalRequestSequence,
+                                sessionProjection.expiresAtMs)
+                        : ConnectionHubProtocol.socketAuthenticationReceipt(
+                                sessionProjection.transportEpoch));
+                session.enqueue(runtime.snapshotEvent());
                 socketSessions.add(session);
             }
         } catch (RuntimeException rejected) {
@@ -287,14 +301,6 @@ public final class ConnectionHubHttpServer
             throw rejected;
         }
         try {
-            session.enqueue(protocolV2
-                    ? ConnectionHubProtocol.socketAuthenticationReceiptV2(
-                            sessionProjection.transportEpoch,
-                            sessionProjection.nextExternalRequestSequence,
-                            sessionProjection.expiresAtMs)
-                    : ConnectionHubProtocol.socketAuthenticationReceipt(
-                            sessionProjection.transportEpoch));
-            session.enqueue(runtime.snapshotEvent());
             while (!socket.isClosed()) {
                 Frame frame = readFrame(input, Long.MAX_VALUE, true);
                 if (frame.opcode == 8) { return; }

@@ -141,6 +141,11 @@ a truncation boundary from leaving a trailing separator that is illegal in a
 Manifold dotted identifier while preserving the external request digest as the
 full replay binding.
 
+On every authenticated socket, the Hub queues the authentication receipt and
+one baseline surface snapshot before adding that socket to the broadcast set.
+Provider lifecycle events racing the handshake therefore follow the snapshot
+and can be projected incrementally without making client bootstrap ambiguous.
+
 ## Real browser provider
 
 `tools/browser/connection-hub-browser-e2e.js` is separate from Hostess protocol
