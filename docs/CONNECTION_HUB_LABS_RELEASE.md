@@ -54,6 +54,12 @@ admission. The player can therefore come and go while a paired WebSocket stays
 connected, but it cannot register arbitrary commands or transfer media bytes,
 paths, or document URIs through the Hub.
 
+The encrypted restart envelope also binds the exact packaged Hub policy.
+Installing a release whose reviewed provider grants changed intentionally
+invalidates an older envelope, stops the listener, and discards the old
+controller projections. Open the Hub and pair once again after such an update;
+the app never carries stale provider authority into the new release.
+
 ## Release build
 
 `tools/Build-ConnectionHubLabsRelease.ps1` requires clean exact Rusty Quest and

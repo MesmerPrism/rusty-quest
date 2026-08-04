@@ -217,6 +217,7 @@ pub(crate) fn export_state() -> Result<String, String> {
         "product_lock_sha256": retained.config.product_lock_sha256,
         "manifold_revision": retained.config.manifold_revision,
         "manifold_tree": retained.config.manifold_tree,
+        "policy": retained.config.policy,
         "authority_snapshot": snapshot,
     })
     .to_string())
@@ -240,8 +241,9 @@ pub(crate) fn restore_state(state_json: &str) -> Result<String, String> {
             != Some(&retained.config.manifold_revision)
         || state.get("manifold_tree").and_then(Value::as_str)
             != Some(&retained.config.manifold_tree)
+        || state.get("policy") != Some(&json!(retained.config.policy))
     {
-        return Err("connection hub restart product substitution rejected".to_owned());
+        return Err("connection hub restart product or policy substitution rejected".to_owned());
     }
     let snapshot = state
         .get("authority_snapshot")
@@ -1191,6 +1193,12 @@ mod tests {
         assert_eq!(post_rollover_transport["transport_epoch"], 3);
         assert_eq!(post_rollover_transport["next_external_request_sequence"], 2);
         let exported = export_state().expect("export");
+        let exported_value: Value = serde_json::from_str(&exported).expect("exported state json");
+        assert_eq!(exported_value["policy"], policy);
+        let mut changed_policy = exported_value.clone();
+        changed_policy["policy"]["allowed_controller_capabilities"] =
+            json!(["capability.sample.changed"]);
+        assert!(restore_state(&changed_policy.to_string()).is_err());
         let restored: Value = serde_json::from_str(&restore_state(&exported).expect("restore"))
             .expect("restore receipt");
         assert_eq!(restored["applied"], true);
