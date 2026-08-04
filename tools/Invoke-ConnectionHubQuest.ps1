@@ -1699,14 +1699,14 @@ function Test-JsonContainsUnredactedHostessSecret($Value) {
     return $false
 }
 
-function Invoke-Hostess([string]$Verb, [string[]]$Arguments, [string]$ReceiptName) {
+function Invoke-HostessCheckedRaw([string]$Verb, [string[]]$Arguments, [string]$FailureReceiptName) {
     if ((Get-Sha256 $script:Hostess) -ne $HostessCliSha256) { throw "Hostess CLI changed after run lock." }
     if ((Get-Sha256 $script:Python) -ne $PythonSha256) { throw "Python changed after the run lock was acquired." }
     $timeoutMilliseconds = Get-HostessTimeoutMilliseconds $Verb $Arguments
     $result = Invoke-CapturedTimed $script:Python (@($script:Hostess, $Verb) + $Arguments) "Hostess $Verb" $timeoutMilliseconds
     if (-not (Test-ExactBoolean $result.completed_within_timeout $true) -or $result.exit_code -ne 0) {
         $reason = Get-SafeHostessFailureReason $result
-        [void](Save-Receipt "$ReceiptName-failure" (New-Receipt "hostess-$Verb" "rusty-hostess" "failed" ([ordered]@{
+        [void](Save-Receipt $FailureReceiptName (New-Receipt "hostess-$Verb" "rusty-hostess" "failed" ([ordered]@{
             reason=$reason
             timed_out=(-not [bool]$result.completed_within_timeout)
             timeout_milliseconds=$timeoutMilliseconds
@@ -1725,6 +1725,11 @@ function Invoke-Hostess([string]$Verb, [string[]]$Arguments, [string]$ReceiptNam
     if (Test-JsonContainsUnredactedHostessSecret $json) {
         throw "Hostess output may contain an unredacted secret."
     }
+    return $json
+}
+
+function Invoke-Hostess([string]$Verb, [string[]]$Arguments, [string]$ReceiptName) {
+    $json = Invoke-HostessCheckedRaw $Verb $Arguments "$ReceiptName-failure"
     return Save-Receipt $ReceiptName (New-Receipt "hostess-$Verb" "rusty-hostess" "passed" $json)
 }
 
@@ -1759,11 +1764,7 @@ function Get-SafeHostessFailureReason($Result) {
 }
 
 function Read-HostessSurfaces {
-    if ((Get-Sha256 $script:Hostess) -ne $HostessCliSha256) { throw "Hostess CLI changed after run lock." }
-    if ((Get-Sha256 $script:Python) -ne $PythonSha256) { throw "Python changed after the run lock was acquired." }
-    $result = Invoke-Captured $script:Python @($script:Hostess, "list-surfaces", "--session-file", $SessionFile) "Hostess list-surfaces"
-    if ($result.exit_code -ne 0) { throw "Hostess list-surfaces failed: $($result.combined)" }
-    $snapshot = $result.output | ConvertFrom-Json
+    $snapshot = Invoke-HostessCheckedRaw "list-surfaces" @("--session-file", $SessionFile) "surface-list-read-failure"
     Assert-HostessProtocolFlags $snapshot "rusty.hostess.connection_hub.surface_list_receipt.v2"
     if ([string]$snapshot.status -ne "passed" -or
             -not (Test-ExactJsonInteger $snapshot.transport_epoch 1) -or
@@ -1779,16 +1780,12 @@ function Wait-Surface([string]$ExpectedSurfaceId, [bool]$Present) {
     if ($ExpectedSurfaceId -notin @("surface.spatial_video_control.media", "surface.connection_hub_sample.toggle")) {
         throw "Wait surface is not in the fixed registry."
     }
-    if ((Get-Sha256 $script:Hostess) -ne $HostessCliSha256) { throw "Hostess CLI changed after run lock." }
-    if ((Get-Sha256 $script:Python) -ne $PythonSha256) { throw "Python changed after the run lock was acquired." }
     $presence = if ($Present) { "present" } else { "absent" }
-    $result = Invoke-Captured $script:Python @(
-        $script:Hostess, "wait-surface", "--session-file", $SessionFile,
+    $wait = Invoke-HostessCheckedRaw "wait-surface" @(
+        "--session-file", $SessionFile,
         "--surface-id", $ExpectedSurfaceId, "--presence", $presence,
         "--seconds", "20", "--max-events", "128",
-        "--keepalive-interval-seconds", "5") "Hostess wait-surface"
-    if ($result.exit_code -ne 0) { throw "Hostess wait-surface failed: $($result.combined)" }
-    $wait = $result.output | ConvertFrom-Json
+        "--keepalive-interval-seconds", "5") "surface-wait-$presence-failure"
     Assert-HostessProtocolFlags $wait "rusty.hostess.connection_hub.wait_surface_receipt.v1"
     $surfaceMatches = if ($Present) {
         $null -ne $wait.surface -and [string]$wait.surface.surface_id -eq $ExpectedSurfaceId
@@ -1803,6 +1800,8 @@ function Wait-Surface([string]$ExpectedSurfaceId, [bool]$Present) {
             -not (Test-ExactJsonInteger $wait.surface_revision 0) -or
             -not (Test-ExactJsonInteger $wait.event_count 1) -or
             [int]$wait.event_count -gt 128 -or
+            -not (Test-ExactJsonInteger $wait.authentication_retry_count 0) -or
+            [int]$wait.authentication_retry_count -gt 1 -or
             -not (Test-ExactJsonInteger $wait.keepalive_count 0) -or
             -not (Test-ExactJsonInteger $wait.elapsed_milliseconds 0) -or
             [double]$wait.timeout_seconds -ne 20 -or

@@ -84,6 +84,11 @@ Require ($cli.Contains('function Test-JsonContainsUnredactedHostessSecret') -and
     $cli.Contains("'^(?i:pairing_code|bearer_token|session_bearer)$'") -and
     $cli.Contains("'^(?i:pairing_code|bearer_token|session_bearer)_in_receipt$'") -and
     -not $cli.Contains('$result.output -match')) "Hostess secret inspection must be parsed-field aware rather than raw-text based."
+Require ($cli.Contains('function Invoke-HostessCheckedRaw') -and
+    $cli.Contains('Invoke-CapturedTimed $script:Python') -and
+    -not $cli.Contains('Invoke-Captured $script:Python @($script:Hostess, "list-surfaces"')) "Every ordinary Hostess route must use the shared deadline-controlled wrapper."
+Require ($cli.Contains('$wait.authentication_retry_count') -and
+    $cli.Contains('[int]$wait.authentication_retry_count -gt 1')) "The bounded wait-surface authentication retry is not validated exactly."
 Require ($cli.Contains('-Keystore $resolvedKeystore') -and $cli.Contains('RUSTY_CONNECTION_HUB_KEYSTORE')) "All APK builds must use one explicit keystore."
 Require ($cli.Contains('the three APK signers differ') -and $cli.Contains('ExpectedSignerSha256')) "Pre-install signer equality gate is missing."
 Require ($cli.Contains('surface.spatial_video_control.media') -and $cli.Contains('surface.connection_hub_sample.toggle')) "Both fixed provider surfaces must be in the command registry."
@@ -127,7 +132,8 @@ Require ($cli.Contains('Revoke-RunOwnedSessionIfPresent') -and
     $cli.Contains('session_file = [System.IO.Path]::GetFullPath($SessionFile)')) "Interrupted pairing cleanup does not bind and revoke the run-owned session."
 Require ($cli.Contains('Initialize-Checkpoint') -and $cli.Contains('Resume checkpoint artifact digest mismatch')) "Resume checkpoint identity binding is incomplete."
 Require ($cli.Contains('ProviderLifetimeSeconds') -and $cli.Contains('Wait-Surface "surface.spatial_video_control.media" $false')) "Sequential provider/lifetime oracle is incomplete."
-Require ($cli.Contains('"wait-surface", "--session-file"') -and
+Require ($cli.Contains('Invoke-HostessCheckedRaw "wait-surface" @(') -and
+    $cli.Contains('"--session-file", $SessionFile') -and
     $cli.Contains('"--max-events", "128"') -and
     $cli.Contains('"--keepalive-interval-seconds", "5"') -and
     $cli.Contains('$providerLifetimeMaxEvents = 256') -and
