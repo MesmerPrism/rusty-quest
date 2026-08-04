@@ -2334,14 +2334,37 @@ try {
                 [string]$_.type -eq "surface_removed" -and
                 [string]$_.surface_id -eq "surface.spatial_video_control.media"
             })
-            if ($watchElapsed -lt ($ProviderLifetimeSeconds - 2) -or
-                    [string]$initialEvent.type -ne "surface_snapshot" -or
-                    $initialJson -notmatch '"surface_id"\s*:\s*"surface\.spatial_video_control\.media"' -or
-                    $removed.Count -ne 0 -or
-                    -not (Test-ExactJsonInteger $watchDetails.event_count 1) -or
-                    [int]$watchDetails.event_count -gt $providerLifetimeMaxEvents -or
-                    -not (Test-ExactJsonInteger $watchDetails.keepalive_count $minimumKeepalives) -or
-                    (-not $LegacyV1 -and [long]$watchDetails.next_external_request_sequence -le [long]$watchDetails.keepalive_count)) {
+            $durationSatisfied = $watchElapsed -ge ($ProviderLifetimeSeconds - 2)
+            $initialSnapshotSatisfied = [string]$initialEvent.type -eq "surface_snapshot"
+            $initialProviderSatisfied = $initialJson -match '"surface_id"\s*:\s*"surface\.spatial_video_control\.media"'
+            $zeroRemovalSatisfied = $removed.Count -eq 0
+            $eventCountSatisfied = (Test-ExactJsonInteger $watchDetails.event_count 1) -and
+                [int]$watchDetails.event_count -le $providerLifetimeMaxEvents
+            $keepaliveCountSatisfied = Test-ExactJsonInteger $watchDetails.keepalive_count $minimumKeepalives
+            $sequenceSatisfied = $LegacyV1 -or
+                [long]$watchDetails.next_external_request_sequence -gt [long]$watchDetails.keepalive_count
+            if (-not ($durationSatisfied -and $initialSnapshotSatisfied -and
+                    $initialProviderSatisfied -and $zeroRemovalSatisfied -and
+                    $eventCountSatisfied -and $keepaliveCountSatisfied -and $sequenceSatisfied)) {
+                $failureDetails = [ordered]@{
+                    duration_satisfied = $durationSatisfied
+                    elapsed_seconds = [math]::Round($watchElapsed, 3)
+                    required_seconds = $ProviderLifetimeSeconds - 2
+                    initial_snapshot_satisfied = $initialSnapshotSatisfied
+                    initial_provider_satisfied = $initialProviderSatisfied
+                    zero_removal_satisfied = $zeroRemovalSatisfied
+                    removed_count = $removed.Count
+                    event_count_satisfied = $eventCountSatisfied
+                    event_count = [int]$watchDetails.event_count
+                    event_count_limit = $providerLifetimeMaxEvents
+                    keepalive_count_satisfied = $keepaliveCountSatisfied
+                    keepalive_count = [int]$watchDetails.keepalive_count
+                    minimum_keepalives = $minimumKeepalives
+                    sequence_satisfied = $sequenceSatisfied
+                    next_external_request_sequence = $(if($LegacyV1){$null}else{[long]$watchDetails.next_external_request_sequence})
+                }
+                $failureReceipt = New-Receipt "provider-lifetime-oracle" "operator-wrapper" "failed" $failureDetails
+                [void](Save-Receipt "provider-lifetime-oracle-failure" $failureReceipt)
                 throw "The single-transport provider lifetime watch did not prove bounded continuous session health."
             }
             [void](Wait-Surface "surface.spatial_video_control.media" $true)

@@ -129,7 +129,9 @@ Require ($cli.Contains('"wait-surface", "--session-file"') -and
     $cli.Contains('"--keepalive-interval-seconds", "5"') -and
     $cli.Contains('$providerLifetimeMaxEvents = 256') -and
     $cli.Contains('"--max-events", [string]$providerLifetimeMaxEvents') -and
-    $cli.Contains('[int]$watchDetails.event_count -gt $providerLifetimeMaxEvents') -and
+    $cli.Contains('[int]$watchDetails.event_count -le $providerLifetimeMaxEvents') -and
+    $cli.Contains('provider-lifetime-oracle-failure') -and
+    $cli.Contains('keepalive_count_satisfied = $keepaliveCountSatisfied') -and
     $cli.Contains('rusty.hostess.connection_hub.wait_surface_receipt.v1') -and
     $cli.Contains('single-transport provider lifetime watch')) "Surface/lifetime observation must use bounded single-transport Hostess routes."
 Require ($cli.Contains('authenticated_socket_open_before_revoke') -and
