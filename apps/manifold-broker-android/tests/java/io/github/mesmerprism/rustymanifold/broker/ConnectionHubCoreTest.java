@@ -9,6 +9,9 @@ import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 
 /** Host/JVM conformance for Hub lifecycle, identity, bounds, replay, and revoke. */
 public final class ConnectionHubCoreTest {
@@ -25,6 +28,7 @@ public final class ConnectionHubCoreTest {
         HubSurfaceRegistry firstRegistry = new HubSurfaceRegistry();
         ConnectionHubRuntime first = new ConnectionHubRuntime(
                 authority, store, firstRegistry, seededRandom());
+        testRegistryRuntimeLockOrder();
 
         FakeAuthority staleProviderAuthority = new FakeAuthority();
         staleProviderAuthority.rejectNextProviderIdentityCollision = true;
@@ -396,6 +400,77 @@ public final class ConnectionHubCoreTest {
                 "keepalive did not slide the session beyond its original TTL");
         assertEquals(6, beyondOriginalTtl.getLong("next_external_request_sequence"));
         System.out.println("Connection Hub core tests passed");
+    }
+
+    /**
+     * Reproduces the handshake/runtime -> registry edge against the provider
+     * registry -> runtime-listener edge. Event-sink delivery must remain
+     * lock-free or the two threads deadlock in this forced ordering.
+     */
+    private static void testRegistryRuntimeLockOrder() throws Exception {
+        final HubSurfaceRegistry registry = new HubSurfaceRegistry();
+        final ConnectionHubRuntime runtime = new ConnectionHubRuntime(
+                new FakeAuthority(), new InMemoryStore(), registry, seededRandom());
+        runtime.addEventSink(new ConnectionHubRuntime.EventSink() {
+            @Override public void broadcast(JSONObject event) {}
+            @Override public void closeLogicalSession(String logicalSessionId, String reason) {}
+            @Override public void closeAllSessions(String reason) {}
+        });
+        final CountDownLatch runtimeOwned = new CountDownLatch(1);
+        final CountDownLatch registryOwned = new CountDownLatch(1);
+        final CountDownLatch enterProviderCallback = new CountDownLatch(1);
+        final AtomicReference<Throwable> failure = new AtomicReference<>();
+
+        Thread handshake = new Thread(new Runnable() {
+            @Override public void run() {
+                try {
+                    synchronized (runtime) {
+                        runtimeOwned.countDown();
+                        if (!registryOwned.await(1, TimeUnit.SECONDS)) {
+                            throw new AssertionError("provider did not acquire registry monitor");
+                        }
+                        enterProviderCallback.countDown();
+                        synchronized (registry) {
+                            // Models the authenticated baseline snapshot boundary.
+                        }
+                    }
+                } catch (Throwable error) {
+                    failure.compareAndSet(null, error);
+                }
+            }
+        }, "hub-runtime-registry-order-test");
+        Thread provider = new Thread(new Runnable() {
+            @Override public void run() {
+                try {
+                    if (!runtimeOwned.await(1, TimeUnit.SECONDS)) {
+                        throw new AssertionError("handshake did not acquire runtime monitor");
+                    }
+                    synchronized (registry) {
+                        registryOwned.countDown();
+                        if (!enterProviderCallback.await(1, TimeUnit.SECONDS)) {
+                            throw new AssertionError("handshake did not start registry wait");
+                        }
+                        registry.register(
+                                descriptor(PROVIDER),
+                                "{}",
+                                "provider.instance.lock-order",
+                                immediateEndpoint());
+                    }
+                } catch (Throwable error) {
+                    failure.compareAndSet(null, error);
+                }
+            }
+        }, "hub-provider-registry-order-test");
+        handshake.setDaemon(true);
+        provider.setDaemon(true);
+        handshake.start();
+        provider.start();
+        handshake.join(2000);
+        provider.join(2000);
+        assertTrue(!handshake.isAlive() && !provider.isAlive(),
+                "runtime/registry event delivery lock inversion detected");
+        assertTrue(failure.get() == null,
+                "runtime/registry lock-order test failed: " + failure.get());
     }
 
     private static HubSurfaceDescriptor descriptor(HubProviderIdentity identity) {

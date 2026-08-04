@@ -114,6 +114,18 @@ Commands are rate-limited per logical session. Identical provider state is
 coalesced and distinct updates are bounded. Reconnect rotates and installs a
 new transport epoch before an older socket can dispatch again.
 
+Each socket serializes JSON events through one outbound revision watermark.
+Surface snapshot, availability, removal, and state deltas may never move that
+watermark backwards. A command, keepalive, or terminal protocol receipt that
+sampled the registry before a concurrently queued lifecycle delta is rebound
+to the already queued watermark before serialization; it never rewrites or
+reorders the lifecycle delta. A receipt sampled ahead of the queued projection
+fails closed rather than hiding a missed event. Snapshot construction and
+socket subscription share the registry lock, so each mutation is either in the
+baseline or delivered after subscription. Strict clients therefore observe a
+complete monotonic surface projection even when provider state changes during
+authority work.
+
 The public v1 wire carries only the closed command and bounded scalar argument
 object. The JNI owner derives the current Manifold authority epoch and binds
 every zero-argument v1 command to the packaged

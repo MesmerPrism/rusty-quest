@@ -11,6 +11,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CopyOnWriteArrayList;
 
 /**
  * Quest lifecycle/transport coordinator. All acceptance is delegated through
@@ -33,7 +34,7 @@ public final class ConnectionHubRuntime implements HubSurfaceRegistry.Listener {
     private final Clock clock;
     private final Map<String, ConnectionHubStateStore.SessionProjection> sessions =
             new LinkedHashMap<>();
-    private final List<EventSink> eventSinks = new ArrayList<>();
+    private final CopyOnWriteArrayList<EventSink> eventSinks = new CopyOnWriteArrayList<>();
     private final Map<String, SurfaceLeaseProjection> surfaceLeases = new LinkedHashMap<>();
     private final Map<String, RateWindow> commandRateWindows = new LinkedHashMap<>();
     private final Map<String, RateWindow> surfaceStateRateWindows = new LinkedHashMap<>();
@@ -74,7 +75,7 @@ public final class ConnectionHubRuntime implements HubSurfaceRegistry.Listener {
         restore();
     }
 
-    public synchronized void addEventSink(EventSink sink) {
+    public void addEventSink(EventSink sink) {
         eventSinks.add(sink);
     }
 
@@ -887,14 +888,21 @@ public final class ConnectionHubRuntime implements HubSurfaceRegistry.Listener {
 
     public interface CommandReceiptSink { void onReceipt(JSONObject receipt); }
 
+    Object registryLock() {
+        return registry;
+    }
+
     public JSONObject snapshotEvent() {
-        JSONObject event = eventBase(ConnectionHubProtocol.SURFACE_SNAPSHOT_SCHEMA, "surface_snapshot");
-        try {
-            event.put("surfaces", surfaceArray(registry.snapshot()));
-        } catch (Exception impossible) {
-            throw new IllegalStateException(impossible);
+        synchronized (registry) {
+            JSONObject event = eventBase(
+                    ConnectionHubProtocol.SURFACE_SNAPSHOT_SCHEMA, "surface_snapshot");
+            try {
+                event.put("surfaces", surfaceArray(registry.snapshot()));
+            } catch (Exception impossible) {
+                throw new IllegalStateException(impossible);
+            }
+            return event;
         }
-        return event;
     }
 
     @Override
@@ -1046,15 +1054,11 @@ public final class ConnectionHubRuntime implements HubSurfaceRegistry.Listener {
     }
 
     private void closeLogicalSession(String logicalSessionId, String reason) {
-        List<EventSink> sinks;
-        synchronized (this) { sinks = new ArrayList<>(eventSinks); }
-        for (EventSink sink : sinks) { sink.closeLogicalSession(logicalSessionId, reason); }
+        for (EventSink sink : eventSinks) { sink.closeLogicalSession(logicalSessionId, reason); }
     }
 
     private void closeAllSessions(String reason) {
-        List<EventSink> sinks;
-        synchronized (this) { sinks = new ArrayList<>(eventSinks); }
-        for (EventSink sink : sinks) { sink.closeAllSessions(reason); }
+        for (EventSink sink : eventSinks) { sink.closeAllSessions(reason); }
     }
 
     private synchronized void removeSessionLeases(String logicalSessionId) {
@@ -1364,9 +1368,7 @@ public final class ConnectionHubRuntime implements HubSurfaceRegistry.Listener {
     }
 
     private void broadcast(JSONObject event) {
-        List<EventSink> sinks;
-        synchronized (this) { sinks = new ArrayList<>(eventSinks); }
-        for (EventSink sink : sinks) { sink.broadcast(event); }
+        for (EventSink sink : eventSinks) { sink.broadcast(event); }
     }
 
     static void requireSchema(JSONObject value, String expected) throws Exception {

@@ -40,6 +40,8 @@ $activity = Get-Content -Raw -LiteralPath (Join-Path $javaRoot "ConnectionHubSta
 $binder = Get-Content -Raw -LiteralPath (Join-Path $javaRoot "ConnectionHubAdmissionService.java")
 $stateStore = Get-Content -Raw -LiteralPath (Join-Path $javaRoot "AndroidConnectionHubStateStore.java")
 $server = Get-Content -Raw -LiteralPath (Join-Path $javaRoot "ConnectionHubHttpServer.java")
+$runtime = Get-Content -Raw -LiteralPath (Join-Path $javaRoot "ConnectionHubRuntime.java")
+$coreTest = Get-Content -Raw -LiteralPath $test
 $protocol = Get-Content -Raw -LiteralPath (Join-Path $javaRoot "ConnectionHubProtocol.java")
 $process = Get-Content -Raw -LiteralPath (Join-Path $javaRoot "ConnectionHubProcess.java")
 $debugControl = Get-Content -Raw -LiteralPath (Join-Path $javaRoot "ConnectionHubDebugControlProvider.java")
@@ -78,12 +80,20 @@ if ($server -notmatch 'SOCKET_AUTHENTICATE_SCHEMA_V2' -or
     $protocol -notmatch 'next_external_request_sequence') {
     throw "WebSocket v2 canonical sequencing, resynchronization, or JSON keepalive is missing."
 }
-if ($server -notmatch 'synchronized \(socketSessions\)[\s\S]*runtime\.replaceTransport\(cookie\)' -or
+if ($server -notmatch 'synchronized \(runtime\)[\s\S]*synchronized \(socketSessions\)[\s\S]*runtime\.replaceTransport\(cookie\)' -or
     $server -notmatch 'isNewerTransportEpoch') {
     throw "Authority transport replacement and socket installation are not atomic."
 }
-if ($server -notmatch 'session\.enqueue\(runtime\.snapshotEvent\(\)\);\s*socketSessions\.add\(session\);') {
-    throw "Authenticated sockets become broadcast-visible before their baseline surface snapshot is queued."
+if ($server -notmatch 'installBaselineAndSubscribe\(' -or
+    $server -notmatch 'synchronized \(registryLock\)[\s\S]*subscription\.enqueueBaseline\(\);\s*subscription\.subscribe\(\);' -or
+    $server -notmatch 'CopyOnWriteArrayList' -or
+    $server -notmatch 'bindOutboundSurfaceRevision') {
+    throw "Authenticated sockets lack atomic baseline subscription or a serialized surface-revision watermark."
+}
+if ($runtime -notmatch 'CopyOnWriteArrayList<EventSink>' -or
+    $runtime -match 'synchronized \(this\) \{ sinks = new ArrayList<>\(eventSinks\); \}' -or
+    $coreTest -notmatch 'testRegistryRuntimeLockOrder\(\)') {
+    throw "Hub runtime event delivery can reintroduce the registry/runtime lock inversion."
 }
 if ($server -match 'Access-Control-Allow-Origin' -or $server -match 'https?://[^\"]') { throw "Hub server enables CORS or ambient remote assets." }
 if ($process -notmatch 'new ManifoldConnectionHubAuthority\(\)' -or $process -match 'UnavailableManifold') { throw "Connection Hub process is not wired to the real Manifold JNI authority." }

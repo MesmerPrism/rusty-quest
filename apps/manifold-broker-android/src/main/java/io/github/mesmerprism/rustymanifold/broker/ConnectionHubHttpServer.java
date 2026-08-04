@@ -27,6 +27,7 @@ import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.Semaphore;
@@ -59,7 +60,7 @@ public final class ConnectionHubHttpServer
     private final Semaphore socketSlots = new Semaphore(ConnectionHubProtocol.MAX_SOCKET_SESSIONS);
     private final ScheduledExecutorService writeWatchdog =
             Executors.newSingleThreadScheduledExecutor();
-    private final List<SocketSession> socketSessions = new ArrayList<>();
+    private final List<SocketSession> socketSessions = new CopyOnWriteArrayList<>();
     private final AtomicBoolean closed = new AtomicBoolean();
     private ServerSocket serverSocket;
     private Thread acceptThread;
@@ -254,47 +255,57 @@ public final class ConnectionHubHttpServer
         final SocketSession session;
         try {
             /*
-             * Epoch replacement and socket installation are one critical section.
-             * Otherwise an older handshake can finish after a newer handshake and
-             * close the authoritative socket that superseded it.
+             * Runtime authority, epoch replacement, and socket installation
+             * share one ordered critical section. Otherwise an older handshake
+             * can finish after a newer handshake, or a concurrent revoke can
+             * miss a not-yet-subscribed replacement socket.
              */
-            synchronized (socketSessions) {
-                sessionProjection = runtime.replaceTransport(cookie);
-                for (SocketSession existing : socketSessions) {
-                    if (existing.logicalSessionId.equals(sessionProjection.logicalSessionId)
-                            && !isNewerTransportEpoch(
+            synchronized (runtime) {
+                synchronized (socketSessions) {
+                    sessionProjection = runtime.replaceTransport(cookie);
+                    for (SocketSession existing : socketSessions) {
+                        if (existing.logicalSessionId.equals(sessionProjection.logicalSessionId)
+                                && !isNewerTransportEpoch(
+                                        sessionProjection.transportEpoch,
+                                        existing.transportEpoch)) {
+                            throw new SecurityException("stale_transport_install_rejected");
+                        }
+                    }
+                    session = new SocketSession(
+                            socket,
+                            output,
+                            sessionProjection.logicalSessionId,
+                            sessionProjection.transportEpoch,
+                            writeWatchdog);
+                    for (SocketSession existing : new ArrayList<>(socketSessions)) {
+                        if (existing.logicalSessionId.equals(sessionProjection.logicalSessionId)) {
+                            existing.close();
+                            socketSessions.remove(existing);
+                        }
+                    }
+                    /*
+                     * Queue authentication and the baseline before exposing the
+                     * socket. The registry boundary makes a concurrent provider
+                     * mutation part of the snapshot or a later broadcast.
+                     */
+                    session.enqueue(protocolV2
+                            ? ConnectionHubProtocol.socketAuthenticationReceiptV2(
                                     sessionProjection.transportEpoch,
-                                    existing.transportEpoch)) {
-                        throw new SecurityException("stale_transport_install_rejected");
-                    }
+                                    sessionProjection.nextExternalRequestSequence,
+                                    sessionProjection.expiresAtMs)
+                            : ConnectionHubProtocol.socketAuthenticationReceipt(
+                                    sessionProjection.transportEpoch));
+                    installBaselineAndSubscribe(
+                            runtime.registryLock(),
+                            new BaselineSubscription() {
+                                @Override public void enqueueBaseline() throws IOException {
+                                    session.enqueue(runtime.snapshotEvent());
+                                }
+                                @Override public void subscribe() {
+                                    socketSessions.add(session);
+                                }
+                            });
                 }
-                session = new SocketSession(
-                        socket,
-                        output,
-                        sessionProjection.logicalSessionId,
-                        sessionProjection.transportEpoch,
-                        writeWatchdog);
-                for (SocketSession existing : new ArrayList<>(socketSessions)) {
-                    if (existing.logicalSessionId.equals(sessionProjection.logicalSessionId)) {
-                        existing.close();
-                        socketSessions.remove(existing);
-                    }
-                }
-                /*
-                 * Queue the authentication receipt and baseline snapshot before
-                 * making this socket visible to broadcasts. A provider event may
-                 * race this handshake, but it must be ordered after the baseline
-                 * rather than becoming the client's first protocol event.
-                 */
-                session.enqueue(protocolV2
-                        ? ConnectionHubProtocol.socketAuthenticationReceiptV2(
-                                sessionProjection.transportEpoch,
-                                sessionProjection.nextExternalRequestSequence,
-                                sessionProjection.expiresAtMs)
-                        : ConnectionHubProtocol.socketAuthenticationReceipt(
-                                sessionProjection.transportEpoch));
-                session.enqueue(runtime.snapshotEvent());
-                socketSessions.add(session);
             }
         } catch (RuntimeException rejected) {
             noteAuthenticationFailure();
@@ -403,14 +414,87 @@ public final class ConnectionHubHttpServer
 
     @Override
     public void broadcast(JSONObject event) {
-        List<SocketSession> copy;
-        synchronized (socketSessions) { copy = new ArrayList<>(socketSessions); }
-        for (SocketSession session : copy) {
+        /*
+         * Provider callbacks enter here while the registry mutation lock is
+         * still held. A copy-on-write session set avoids taking the handshake
+         * lock in that direction; handshakes may safely take the session lock
+         * and then build one registry-consistent baseline snapshot.
+         */
+        for (SocketSession session : socketSessions) {
             try { session.enqueue(event); }
             catch (IOException failure) {
                 session.close();
-                synchronized (socketSessions) { socketSessions.remove(session); }
+                socketSessions.remove(session);
             }
+        }
+    }
+
+    static long bindOutboundSurfaceRevision(JSONObject value, long previousRevision)
+            throws IOException {
+        if (!value.has("surface_revision")) {
+            return previousRevision;
+        }
+        final long revision;
+        try {
+            revision = value.getLong("surface_revision");
+        } catch (org.json.JSONException malformed) {
+            throw new IOException("invalid Hub surface revision", malformed);
+        }
+        if (revision < 0) {
+            throw new IOException("invalid Hub surface revision");
+        }
+        String type = value.optString("type", "");
+        boolean projectionEvent = "surface_snapshot".equals(type)
+                || "surface_available".equals(type)
+                || "surface_removed".equals(type)
+                || "surface_state".equals(type);
+        if (projectionEvent) {
+            if (previousRevision >= 0 && revision < previousRevision) {
+                throw new IOException("Hub lifecycle surface revision regressed");
+            }
+            return revision;
+        }
+        if (!("command_receipt".equals(type)
+                || "keepalive_receipt".equals(type)
+                || "protocol_error".equals(type))
+                || previousRevision < 0) {
+            throw new IOException("Hub lifecycle surface revision regressed");
+        }
+        if (revision > previousRevision) {
+            throw new IOException("Hub control receipt advanced beyond queued projection");
+        }
+        if (revision == previousRevision) {
+            return revision;
+        }
+        try {
+            /*
+             * Control receipts sample the registry before they enter the
+             * per-socket queue. A provider lifecycle delta may reach that
+             * queue first. Bind a delayed non-projecting receipt to the
+             * already queued watermark; never rewrite a lifecycle delta.
+             */
+            value.put("surface_revision", previousRevision);
+        } catch (org.json.JSONException impossible) {
+            throw new IOException("could not bind Hub surface revision", impossible);
+        }
+        return previousRevision;
+    }
+
+    interface BaselineSubscription {
+        void enqueueBaseline() throws IOException;
+        void subscribe();
+    }
+
+    static void installBaselineAndSubscribe(
+            Object registryLock,
+            BaselineSubscription subscription) throws IOException {
+        synchronized (registryLock) {
+            /*
+             * A mutation is either included in the baseline or broadcasts
+             * after the COW subscription becomes visible. There is no gap.
+             */
+            subscription.enqueueBaseline();
+            subscription.subscribe();
         }
     }
 
@@ -631,6 +715,7 @@ public final class ConnectionHubHttpServer
                 new ArrayBlockingQueue<>(ConnectionHubProtocol.MAX_SOCKET_OUTBOUND_QUEUE);
         private final AtomicBoolean sessionClosed = new AtomicBoolean();
         private final Thread writerThread;
+        private long lastEnqueuedSurfaceRevision = -1L;
         SocketSession(
                 Socket socket,
                 OutputStream output,
@@ -647,21 +732,25 @@ public final class ConnectionHubHttpServer
             }, "rusty-connection-hub-writer");
             this.writerThread.start();
         }
-        void enqueue(JSONObject value) throws IOException {
+        synchronized void enqueue(JSONObject value) throws IOException {
             try {
                 JSONObject bound = new JSONObject(value.toString());
                 bound.put("transport_epoch", transportEpoch);
+                lastEnqueuedSurfaceRevision = bindOutboundSurfaceRevision(
+                        bound, lastEnqueuedSurfaceRevision);
                 enqueueFrame(1, bound.toString().getBytes(StandardCharsets.UTF_8));
             } catch (org.json.JSONException error) {
                 throw new IOException("invalid Hub event", error);
             }
         }
-        void enqueueTerminal(JSONObject value) throws IOException {
+        synchronized void enqueueTerminal(JSONObject value) throws IOException {
             java.util.concurrent.CountDownLatch completion =
                     new java.util.concurrent.CountDownLatch(1);
             try {
                 JSONObject bound = new JSONObject(value.toString());
                 bound.put("transport_epoch", transportEpoch);
+                lastEnqueuedSurfaceRevision = bindOutboundSurfaceRevision(
+                        bound, lastEnqueuedSurfaceRevision);
                 byte[] payload = bound.toString().getBytes(StandardCharsets.UTF_8);
                 validateOutboundFrame(1, payload.length);
                 if (sessionClosed.get()

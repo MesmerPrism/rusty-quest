@@ -1,10 +1,16 @@
 package io.github.mesmerprism.rustymanifold.broker;
 
+import org.json.JSONObject;
+
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.SocketTimeoutException;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 
 /** Host conformance for absolute deadlines and RFC6455 frame/output bounds. */
 public final class ConnectionHubTransportBoundsTest {
@@ -42,6 +48,110 @@ public final class ConnectionHubTransportBoundsTest {
                 "out-of-order older handshake displaced the newer socket");
         require(!ConnectionHubHttpServer.isNewerTransportEpoch(3, 3),
                 "duplicate transport epoch displaced the installed socket");
+
+        JSONObject authentication = new JSONObject()
+                .put("type", "authentication_receipt");
+        require(ConnectionHubHttpServer.bindOutboundSurfaceRevision(authentication, -1) == -1,
+                "authentication receipt unexpectedly changed the surface watermark");
+        JSONObject lifecycle = new JSONObject()
+                .put("type", "surface_state")
+                .put("surface_revision", 8);
+        require(ConnectionHubHttpServer.bindOutboundSurfaceRevision(lifecycle, 7) == 8,
+                "increasing lifecycle revision was rejected");
+        JSONObject equal = new JSONObject()
+                .put("type", "surface_available")
+                .put("surface_revision", 8);
+        require(ConnectionHubHttpServer.bindOutboundSurfaceRevision(equal, 8) == 8,
+                "equal lifecycle watermark was rejected");
+        for (String controlType : new String[] {
+                "keepalive_receipt", "command_receipt", "protocol_error"}) {
+            JSONObject delayedControl = new JSONObject()
+                    .put("type", controlType)
+                    .put("surface_revision", 7);
+            require(ConnectionHubHttpServer.bindOutboundSurfaceRevision(delayedControl, 8) == 8,
+                    "delayed control receipt did not retain the queued watermark");
+            require(delayedControl.getLong("surface_revision") == 8,
+                    "delayed control receipt serialized a regressed revision");
+            JSONObject futureSampledControl = new JSONObject()
+                    .put("type", controlType)
+                    .put("surface_revision", 11);
+            expectIo(new IoAction() {
+                @Override public void run() throws Exception {
+                    ConnectionHubHttpServer.bindOutboundSurfaceRevision(
+                            futureSampledControl, 8);
+                }
+            });
+        }
+        expectIo(new IoAction() {
+            @Override public void run() throws Exception {
+                ConnectionHubHttpServer.bindOutboundSurfaceRevision(
+                        new JSONObject()
+                                .put("type", "surface_removed")
+                                .put("surface_revision", 7),
+                        8);
+            }
+        });
+
+        final Object registryLock = new Object();
+        final CountDownLatch baselineEntered = new CountDownLatch(1);
+        final CountDownLatch allowSubscription = new CountDownLatch(1);
+        final CountDownLatch mutationStarted = new CountDownLatch(1);
+        final CountDownLatch mutationEntered = new CountDownLatch(1);
+        final AtomicBoolean subscribed = new AtomicBoolean();
+        final AtomicBoolean mutationBeatSubscription = new AtomicBoolean();
+        final AtomicReference<Throwable> installFailure = new AtomicReference<>();
+        Thread installer = new Thread(new Runnable() {
+            @Override public void run() {
+                try {
+                    ConnectionHubHttpServer.installBaselineAndSubscribe(
+                            registryLock,
+                            new ConnectionHubHttpServer.BaselineSubscription() {
+                                @Override public void enqueueBaseline() throws IOException {
+                                    baselineEntered.countDown();
+                                    try {
+                                        if (!allowSubscription.await(2, TimeUnit.SECONDS)) {
+                                            throw new IOException("subscription test timed out");
+                                        }
+                                    } catch (InterruptedException interrupted) {
+                                        Thread.currentThread().interrupt();
+                                        throw new IOException("subscription test interrupted", interrupted);
+                                    }
+                                }
+                                @Override public void subscribe() {
+                                    subscribed.set(true);
+                                }
+                            });
+                } catch (Throwable failure) {
+                    installFailure.set(failure);
+                }
+            }
+        }, "hub-baseline-install-test");
+        installer.start();
+        require(baselineEntered.await(1, TimeUnit.SECONDS),
+                "baseline installation did not enter its registry boundary");
+        Thread mutation = new Thread(new Runnable() {
+            @Override public void run() {
+                mutationStarted.countDown();
+                synchronized (registryLock) {
+                    mutationBeatSubscription.set(!subscribed.get());
+                    mutationEntered.countDown();
+                }
+            }
+        }, "hub-concurrent-mutation-test");
+        mutation.start();
+        require(mutationStarted.await(1, TimeUnit.SECONDS),
+                "concurrent mutation did not start");
+        require(!mutationEntered.await(100, TimeUnit.MILLISECONDS),
+                "mutation entered between baseline and subscription");
+        allowSubscription.countDown();
+        installer.join(2000);
+        mutation.join(2000);
+        require(!installer.isAlive() && !mutation.isAlive(),
+                "baseline subscription concurrency test did not terminate");
+        require(installFailure.get() == null,
+                "baseline subscription failed: " + installFailure.get());
+        require(subscribed.get() && !mutationBeatSubscription.get(),
+                "mutation was not serialized after subscription");
 
         long started = System.nanoTime();
         try {
