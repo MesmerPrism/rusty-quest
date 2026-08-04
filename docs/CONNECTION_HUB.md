@@ -136,6 +136,14 @@ state revision, and authority-receipt digest. A queued receipt remains distinct
 from separately observed state, and a missing, replayed, or substituted effect
 binding is rejected.
 
+The Android Hub owns one long-lived reply `Messenger` and a bounded table of at
+most 32 pending provider effects. Each entry is keyed by the external request
+id and the complete immutable effect binding. Response, timeout, dispatch
+failure, and provider unregister remove the exact entry once; duplicate, late,
+or cross-provider replies cannot complete a second command. Secret-free device
+markers distinguish provider reply receipt, runtime callback completion,
+command-receipt enqueue, and a bounded enqueue-failure class.
+
 ## Lifecycle
 
 1. Installing or launching a provider does not start the listener.

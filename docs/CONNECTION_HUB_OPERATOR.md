@@ -146,10 +146,14 @@ one baseline surface snapshot before adding that socket to the broadcast set.
 Provider lifecycle events racing the handshake therefore follow the snapshot
 and can be projected incrementally without making client bootstrap ambiguous.
 
-Asynchronous provider effect probes retain the immutable reply `Messenger`,
-not the inbound Android `Message`; the framework recycles the latter as soon as
-the handler returns and may clear its reply channel before the effect is
-observed.
+Asynchronous provider effect probes retain the immutable process-owned reply
+`Messenger`, not the inbound Android `Message`; the framework recycles the
+latter as soon as the handler returns and may clear its reply channel before
+the effect is observed. The Hub correlates each reply through a bounded pending
+table and emits `provider_effect_reply_*`,
+`provider_effect_runtime_callback_completed`, and
+`command_receipt_enqueue*` markers so a device receipt can distinguish provider
+execution, Binder delivery, runtime settlement, and WebSocket queueing.
 
 ## Real browser provider
 

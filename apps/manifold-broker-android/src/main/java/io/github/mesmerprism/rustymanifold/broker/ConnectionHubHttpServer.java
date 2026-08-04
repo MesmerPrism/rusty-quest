@@ -42,6 +42,10 @@ public final class ConnectionHubHttpServer
         Asset load(String path) throws IOException;
     }
 
+    public interface DiagnosticSink {
+        void onStatus(String status, String reason);
+    }
+
     public static final class Asset {
         public final String contentType;
         public final byte[] bytes;
@@ -54,6 +58,7 @@ public final class ConnectionHubHttpServer
     private static final String ACCEPT_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
     private final ConnectionHubRuntime runtime;
     private final AssetLoader assetLoader;
+    private final DiagnosticSink diagnostics;
     private final ExecutorService clients = Executors.newFixedThreadPool(
             ConnectionHubProtocol.MAX_HTTP_CLIENTS);
     private final Semaphore clientSlots = new Semaphore(ConnectionHubProtocol.MAX_HTTP_CLIENTS);
@@ -68,8 +73,18 @@ public final class ConnectionHubHttpServer
     private int socketAuthFailures;
 
     public ConnectionHubHttpServer(ConnectionHubRuntime runtime, AssetLoader assetLoader) {
+        this(runtime, assetLoader, new DiagnosticSink() {
+            @Override public void onStatus(String status, String reason) {}
+        });
+    }
+
+    public ConnectionHubHttpServer(
+            ConnectionHubRuntime runtime,
+            AssetLoader assetLoader,
+            DiagnosticSink diagnostics) {
         this.runtime = runtime;
         this.assetLoader = assetLoader;
+        this.diagnostics = diagnostics;
         runtime.addEventSink(this);
     }
 
@@ -359,8 +374,15 @@ public final class ConnectionHubHttpServer
                             protocolV2,
                             new ConnectionHubRuntime.CommandReceiptSink() {
                         @Override public void onReceipt(JSONObject receipt) {
-                            try { session.enqueue(receipt); }
-                            catch (IOException ignored) { session.close(); }
+                            try {
+                                session.enqueue(receipt);
+                                diagnostics.onStatus("command_receipt_enqueued", "none");
+                            } catch (IOException failure) {
+                                diagnostics.onStatus(
+                                        "command_receipt_enqueue_failed",
+                                        enqueueFailureReason(failure));
+                                session.close();
+                            }
                         }
                     });
                 } else if (protocolV2) {
@@ -374,6 +396,15 @@ public final class ConnectionHubHttpServer
             synchronized (socketSessions) { socketSessions.remove(session); }
             session.close();
         }
+    }
+
+    static String enqueueFailureReason(IOException failure) {
+        String message = failure == null ? "" : failure.getMessage();
+        if (message == null) { return "io_failure"; }
+        if (message.contains("surface revision")) { return "surface_revision"; }
+        if (message.contains("outbound queue")) { return "outbound_queue"; }
+        if (message.contains("payload too large")) { return "payload_too_large"; }
+        return "io_failure";
     }
 
     static boolean isNewerTransportEpoch(long candidate, long installed) {

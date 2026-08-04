@@ -8,6 +8,7 @@ $test = Join-Path $app "tests\java\io\github\mesmerprism\rustymanifold\broker\Co
 $vectorTest = Join-Path $app "tests\java\io\github\mesmerprism\rustymanifold\broker\ConnectionHubProtocolVectorsTest.java"
 $vectorV2Test = Join-Path $app "tests\java\io\github\mesmerprism\rustymanifold\broker\ConnectionHubProtocolV2VectorsTest.java"
 $transportTest = Join-Path $app "tests\java\io\github\mesmerprism\rustymanifold\broker\ConnectionHubTransportBoundsTest.java"
+$providerReplyTest = Join-Path $app "tests\java\io\github\mesmerprism\rustymanifold\broker\ProviderEffectReplyRouterTest.java"
 $browserTest = Join-Path $app "tests\js\connection-hub-browser-protocol.test.js"
 $vectors = Join-Path $app "contracts\connection-hub-protocol-v1.json"
 $vectorsV2 = Join-Path $app "contracts\connection-hub-protocol-v2.json"
@@ -25,6 +26,7 @@ $required = @(
     $vectorTest,
     $vectorV2Test,
     $transportTest,
+    $providerReplyTest,
     $browserTest,
     $vectors,
     $vectorsV2,
@@ -110,8 +112,11 @@ if ($runtimeOwnerIndex -lt 0 -or $hubOwnerIndex -lt 0 -or $runtimeOwnerIndex -ge
 }
 if ($process -notmatch 'provider_effect_binding\.v1' -or
     $process -notmatch 'PROVIDER_EFFECT_RECEIPT_DEADLINE_MS' -or
-    $process -notmatch 'completed\.compareAndSet\(false, true\)') {
-    throw "Provider effect receipts are not exact, one-shot, and deadline bounded."
+    $process -notmatch 'providerEffectResponseMessenger' -or
+    $process -notmatch 'cancelProvider\(' -or
+    $server -notmatch 'command_receipt_enqueued' -or
+    $server -notmatch 'command_receipt_enqueue_failed') {
+    throw "Provider effect receipts are not process-owned, exact, lifecycle bounded, and observable."
 }
 if ($nativeLock -notmatch 'd9d060f8c67199135a4c3e0a699ca408f6c64095' -or
     $nativeLock -notmatch '23126eb8b6d0127dfbfa7b968c95ea8b8c7174be' -or
@@ -216,10 +221,12 @@ $sources = @(
     (Join-Path $javaRoot "HubProviderIdentity.java"),
     (Join-Path $javaRoot "HubSurfaceDescriptor.java"),
     (Join-Path $javaRoot "HubSurfaceRegistry.java"),
+    (Join-Path $javaRoot "ProviderEffectReplyRouter.java"),
     $test,
     $vectorTest,
     $vectorV2Test,
-    $transportTest
+    $transportTest,
+    $providerReplyTest
 )
 $javac = (Get-Command javac -ErrorAction Stop).Source
 $java = (Get-Command java -ErrorAction Stop).Source
@@ -231,6 +238,8 @@ if ($LASTEXITCODE -ne 0) { throw "Connection Hub protocol-vector tests failed." 
 if ($LASTEXITCODE -ne 0) { throw "Connection Hub v2 protocol-vector tests failed." }
 & $java -cp "$out;$($jsonJar.FullName)" io.github.mesmerprism.rustymanifold.broker.ConnectionHubTransportBoundsTest
 if ($LASTEXITCODE -ne 0) { throw "Connection Hub transport-bound tests failed." }
+& $java -cp "$out;$($jsonJar.FullName)" io.github.mesmerprism.rustymanifold.broker.ProviderEffectReplyRouterTest
+if ($LASTEXITCODE -ne 0) { throw "Connection Hub provider-effect reply-router tests failed." }
 & $java -cp "$out;$($jsonJar.FullName)" io.github.mesmerprism.rustymanifold.broker.ConnectionHubCoreTest $vectors
 if ($LASTEXITCODE -ne 0) { throw "Connection Hub host tests failed." }
 

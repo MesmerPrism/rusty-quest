@@ -49,6 +49,16 @@ public final class ConnectionHubTransportBoundsTest {
         require(!ConnectionHubHttpServer.isNewerTransportEpoch(3, 3),
                 "duplicate transport epoch displaced the installed socket");
 
+        require("surface_revision".equals(ConnectionHubHttpServer.enqueueFailureReason(
+                        new IOException("Hub lifecycle surface revision regressed"))),
+                "surface revision enqueue failure was not classified");
+        require("outbound_queue".equals(ConnectionHubHttpServer.enqueueFailureReason(
+                        new IOException("bounded outbound queue unavailable"))),
+                "bounded queue enqueue failure was not classified");
+        require("io_failure".equals(ConnectionHubHttpServer.enqueueFailureReason(
+                        new IOException("socket closed"))),
+                "unknown enqueue failure leaked an unbounded diagnostic");
+
         JSONObject authentication = new JSONObject()
                 .put("type", "authentication_receipt");
         require(ConnectionHubHttpServer.bindOutboundSurfaceRevision(authentication, -1) == -1,
