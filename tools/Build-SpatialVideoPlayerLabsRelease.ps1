@@ -110,7 +110,7 @@ $certText = $certs -join "`n"
 if ($badgingText -notmatch "package: name='io\.github\.mesmerprism\.rustyquest\.spatial_video_control_example' versionCode='$VersionCode' versionName='$([regex]::Escape($VersionName))'") {
     throw 'Built APK identity/version does not match the requested release.'
 }
-if ($manifestText -match 'DebugShellControlProvider|ConnectionHubDebugSurfaceService|android\.permission\.DUMP') {
+if ($manifestText -match 'DebugShellControlProvider|ConnectionHubDebugSurfaceService|debug-local-control|START_CONNECTION_HUB_DEBUG_SURFACE') {
     throw 'Release manifest contains a debug operator surface.'
 }
 $normalizedCert = ($certText -replace '[^0-9A-Fa-f]', '').ToLowerInvariant()
