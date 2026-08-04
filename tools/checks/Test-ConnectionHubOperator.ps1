@@ -145,6 +145,10 @@ Require ($cli.Contains('Assert-StageReceiptSemantics') -and
 Require ($cli.Contains('receipt operation/provider/status multiset is not exact') -and
     $cli.Contains('"hub-real-service|android-foreground-service|passed"') -and
     ([regex]::Matches($cli, '"wait-surface\|rusty-hostess\|passed", "wait-surface\|rusty-hostess\|passed"').Count -ge 3)) "Stage closure does not bind exact service and dual surface-oracle multiplicity."
+Require ($cli.Contains('Restore stage must contain exactly one target restoration receipt.') -and
+    $cli.Contains('Restore stage target ordering or Hub identity is not exact.') -and
+    $cli.Contains('Test-ExactBoolean $restoredPackages[0].prior_running $true') -and
+    $cli.Contains('"hub-start|debug-shell-foreground-service|passed"')) "Restore-stage closure does not bind the conditional prior-running Hub restart receipts."
 Require ($cli.Contains('Revoke-RunOwnedSessionIfPresent') -and
     $cli.Contains('session_file = [System.IO.Path]::GetFullPath($SessionFile)') -and
     $cli.Contains('expired-session-negative-proof') -and

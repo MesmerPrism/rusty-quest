@@ -329,9 +329,30 @@ function Assert-StageReceiptSemantics([string]$Name, [object[]]$Receipts) {
         "logs" { @(
             "target-process-epoch|serial-scoped-adb-readback|passed",
             "run-bounded-logs|serial-scoped-streaming-adb|passed") }
-        "restore-pre-state" { @(
-            "stop-providers|raw-adb-fallback|passed", "hub-stop|debug-shell-foreground-service|passed",
-            "restore-pre-state|target-only-cleanup|passed") }
+        "restore-pre-state" {
+            $restoreReceipts = @($Receipts | Where-Object {
+                [string]$_.operation -eq "restore-pre-state" -and
+                [string]$_.provider -eq "target-only-cleanup"
+            })
+            if ($restoreReceipts.Count -ne 1) {
+                throw "Restore stage must contain exactly one target restoration receipt."
+            }
+            $restoredPackages = @($restoreReceipts[0].details.packages)
+            if ($restoredPackages.Count -ne 3 -or
+                    [string]$restoredPackages[0].package -ne $HubPackage) {
+                throw "Restore stage target ordering or Hub identity is not exact."
+            }
+            $restoreExpected = @(
+                "stop-providers|raw-adb-fallback|passed",
+                "hub-stop|debug-shell-foreground-service|passed",
+                "restore-pre-state|target-only-cleanup|passed")
+            if (Test-ExactBoolean $restoredPackages[0].prior_running $true) {
+                $restoreExpected += @(
+                    "hub-real-service|android-foreground-service|passed",
+                    "hub-start|debug-shell-foreground-service|passed")
+            }
+            $restoreExpected
+        }
         default { throw "Unknown E2E checkpoint stage cannot be accepted: $Name" }
     }
     $actual = @($Receipts | ForEach-Object {
