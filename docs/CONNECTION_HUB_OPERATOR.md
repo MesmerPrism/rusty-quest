@@ -128,6 +128,12 @@ and an otherwise invalid command binding:
 statuses describe rejection before Manifold command admission; they never claim
 that Manifold or the provider accepted the request.
 
+Opaque external request tokens are deterministically lowercased, filtered, and
+trimmed after the bounded 40-character epoch suffix is selected. This prevents
+a truncation boundary from leaving a trailing separator that is illegal in a
+Manifold dotted identifier while preserving the external request digest as the
+full replay binding.
+
 ## Real browser provider
 
 `tools/browser/connection-hub-browser-e2e.js` is separate from Hostess protocol

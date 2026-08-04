@@ -885,15 +885,23 @@ fn epoch_derived(owner: &HubOwner, prefix: &str, source: &str) -> Result<DottedI
         return DottedId::new(source).map_err(|e| e.to_string());
     }
     let normalized_prefix = prefix.replace('_', "-");
-    let suffix: String = source
+    let suffix = epoch_identity_suffix(source)?;
+    DottedId::new(format!("epoch-{epoch}.{normalized_prefix}.{suffix}")).map_err(|e| e.to_string())
+}
+
+fn epoch_identity_suffix(source: &str) -> Result<String, String> {
+    let suffix = source
         .chars()
-        .filter(|c| c.is_ascii_alphanumeric() || *c == '-')
+        .map(|character| character.to_ascii_lowercase())
+        .filter(|character| character.is_ascii_alphanumeric() || *character == '-')
         .take(40)
-        .collect();
+        .collect::<String>()
+        .trim_matches('-')
+        .to_owned();
     if suffix.is_empty() {
         return Err("connection hub epoch identity source is empty".to_owned());
     }
-    DottedId::new(format!("epoch-{epoch}.{normalized_prefix}.{suffix}")).map_err(|e| e.to_string())
+    Ok(suffix)
 }
 
 fn derived(prefix: &str, source: &str) -> Result<DottedId, String> {
@@ -998,6 +1006,15 @@ mod tests {
             assert_eq!(receipt["applied"], false);
             assert_eq!(receipt["authority_receipt"], json!({}));
         }
+    }
+
+    #[test]
+    fn epoch_request_derivation_keeps_long_hostess_tokens_valid() {
+        let suffix = epoch_identity_suffix("hostess-command-12345678-1234-1234-1234-123456789abc")
+            .expect("long Hostess request id");
+        assert_eq!(suffix, "hostess-command-12345678-1234-1234-1234");
+        DottedId::new(format!("epoch-1.request.{suffix}"))
+            .expect("derived request id must remain a valid dotted id");
     }
 
     #[test]
