@@ -124,6 +124,11 @@ Require ($cli.Contains('Revoke-RunOwnedSessionIfPresent') -and
     $cli.Contains('session_file = [System.IO.Path]::GetFullPath($SessionFile)')) "Interrupted pairing cleanup does not bind and revoke the run-owned session."
 Require ($cli.Contains('Initialize-Checkpoint') -and $cli.Contains('Resume checkpoint artifact digest mismatch')) "Resume checkpoint identity binding is incomplete."
 Require ($cli.Contains('ProviderLifetimeSeconds') -and $cli.Contains('Wait-Surface "surface.spatial_video_control.media" $false')) "Sequential provider/lifetime oracle is incomplete."
+Require ($cli.Contains('"wait-surface", "--session-file"') -and
+    $cli.Contains('"--max-events", "128"') -and
+    $cli.Contains('"--keepalive-interval-seconds", "5"') -and
+    $cli.Contains('rusty.hostess.connection_hub.wait_surface_receipt.v1') -and
+    $cli.Contains('single-transport provider lifetime watch')) "Surface/lifetime observation must use bounded single-transport Hostess routes."
 Require ($cli.Contains('authenticated_socket_open_before_revoke') -and
     $cli.Contains('authenticated_socket_closed_within_deadline') -and
     $cli.Contains('stale_bearer_auth_rejected') -and

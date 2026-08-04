@@ -281,7 +281,10 @@ function Assert-StageReceiptSemantics([string]$Name, [object[]]$Receipts) {
             "wait-surface|rusty-hostess|passed", "wait-surface|rusty-hostess|passed",
             "target-process-epoch|serial-scoped-adb-readback|passed",
             "hostess-invoke-surface-command|rusty-hostess|passed") }
-        "provider-lifetime-over-2m" { @("hostess-invoke-surface-command|rusty-hostess|passed") }
+        "provider-lifetime-over-2m" { @(
+            "hostess-connect-watch|rusty-hostess|passed",
+            "wait-surface|rusty-hostess|passed",
+            "hostess-invoke-surface-command|rusty-hostess|passed") }
         "process-restart" { @(
             "hub-process-restart|debug-death+real-start-sticky|passed",
             "hostess-list-surfaces|rusty-hostess|passed", "wait-surface|rusty-hostess|passed",
@@ -1715,24 +1718,39 @@ function Wait-Surface([string]$ExpectedSurfaceId, [bool]$Present) {
     if ($ExpectedSurfaceId -notin @("surface.spatial_video_control.media", "surface.connection_hub_sample.toggle")) {
         throw "Wait surface is not in the fixed registry."
     }
-    $deadline = [DateTime]::UtcNow.AddSeconds(20)
-    do {
-        $snapshot = Read-HostessSurfaces
-        $encoded = $snapshot | ConvertTo-Json -Depth 20 -Compress
-        $seen = $encoded -match ('"surface_id"\s*:\s*"' + [regex]::Escape($ExpectedSurfaceId) + '"')
-        if ($seen -eq $Present) {
-            $suffix = if ($Present) { "present" } else { "absent" }
-            $safeName = $ExpectedSurfaceId -replace '[^a-z0-9]+','-'
-            return Save-Receipt "surface-$safeName-$suffix" (New-Receipt "wait-surface" "rusty-hostess" "passed" ([ordered]@{
-                surface_id=$ExpectedSurfaceId
-                expected_present=$Present
-                observed_present=$seen
-                snapshot=$snapshot
-            }))
-        }
-        Start-Sleep -Milliseconds 400
-    } while ([DateTime]::UtcNow -lt $deadline)
-    throw "Timed out waiting for surface $ExpectedSurfaceId present=$Present."
+    if ((Get-Sha256 $script:Hostess) -ne $HostessCliSha256) { throw "Hostess CLI changed after run lock." }
+    if ((Get-Sha256 $script:Python) -ne $PythonSha256) { throw "Python changed after the run lock was acquired." }
+    $presence = if ($Present) { "present" } else { "absent" }
+    $result = Invoke-Captured $script:Python @(
+        $script:Hostess, "wait-surface", "--session-file", $SessionFile,
+        "--surface-id", $ExpectedSurfaceId, "--presence", $presence,
+        "--seconds", "20", "--max-events", "128",
+        "--keepalive-interval-seconds", "5") "Hostess wait-surface"
+    if ($result.exit_code -ne 0) { throw "Hostess wait-surface failed: $($result.combined)" }
+    $wait = $result.output | ConvertFrom-Json
+    Assert-HostessProtocolFlags $wait "rusty.hostess.connection_hub.wait_surface_receipt.v1"
+    $surfaceMatches = if ($Present) {
+        $null -ne $wait.surface -and [string]$wait.surface.surface_id -eq $ExpectedSurfaceId
+    } else { $null -eq $wait.surface }
+    if ([string]$wait.status -ne "passed" -or
+            [string]$wait.surface_id -ne $ExpectedSurfaceId -or
+            -not (Test-ExactBoolean $wait.expected_present $Present) -or
+            -not (Test-ExactBoolean $wait.observed_present $Present) -or
+            -not (Test-ExactBoolean $wait.condition_satisfied $true) -or
+            -not $surfaceMatches -or
+            -not (Test-ExactJsonInteger $wait.transport_epoch 1) -or
+            -not (Test-ExactJsonInteger $wait.surface_revision 0) -or
+            -not (Test-ExactJsonInteger $wait.event_count 1) -or
+            [int]$wait.event_count -gt 128 -or
+            -not (Test-ExactJsonInteger $wait.keepalive_count 0) -or
+            -not (Test-ExactJsonInteger $wait.elapsed_milliseconds 0) -or
+            [double]$wait.timeout_seconds -ne 20 -or
+            [int]$wait.max_events -ne 128) {
+        throw "Hostess wait-surface receipt did not prove the exact bounded condition."
+    }
+    $suffix = if ($Present) { "present" } else { "absent" }
+    $safeName = $ExpectedSurfaceId -replace '[^a-z0-9]+','-'
+    return Save-Receipt "surface-$safeName-$suffix" (New-Receipt "wait-surface" "rusty-hostess" "passed" $wait)
 }
 
 function Invoke-HostessPairWithSecret([char[]]$Secret) {
@@ -2293,16 +2311,36 @@ try {
             if (-not (Test-ExactBoolean (Invoke-DebugOperator "status").owner_receipt.listener_running $true)) { throw "Hub stopped across Spatial app switch." }
         }
         Invoke-Stage "provider-lifetime-over-2m" {
-            $deadline=[DateTime]::UtcNow.AddSeconds($ProviderLifetimeSeconds)
-            $nextProbe=[DateTime]::UtcNow
-            while ([DateTime]::UtcNow -lt $deadline) {
-                if ([DateTime]::UtcNow -ge $nextProbe) {
-                    if (-not (Test-ExactBoolean (Invoke-DebugOperator "status").owner_receipt.listener_running $true)) { throw "Hub stopped during provider lifetime hold." }
-                    [void](Read-HostessSurfaces)
-                    $nextProbe=[DateTime]::UtcNow.AddSeconds(15)
-                }
-                Start-Sleep -Seconds 1
+            $watchStarted=[DateTime]::UtcNow
+            $watch=Invoke-Hostess "connect-watch" @(
+                "--session-file", $SessionFile,
+                "--seconds", [string]$ProviderLifetimeSeconds,
+                "--max-events", "128",
+                "--keepalive-interval-seconds", "5") "hostess-provider-lifetime-watch"
+            $watchElapsed=([DateTime]::UtcNow-$watchStarted).TotalSeconds
+            $watchDetails=$watch.details
+            Assert-HostessProtocolFlags $watchDetails "rusty.hostess.connection_hub.watch_receipt.v2"
+            $minimumKeepalives = if ($LegacyV1) { 0 } else {
+                [math]::Max(1, [math]::Floor($ProviderLifetimeSeconds / 5) - 1)
             }
+            $initialEvent=@($watchDetails.events)[0]
+            $initialJson=$initialEvent | ConvertTo-Json -Depth 20 -Compress
+            $removed=@($watchDetails.events | Where-Object {
+                [string]$_.type -eq "surface_removed" -and
+                [string]$_.surface_id -eq "surface.spatial_video_control.media"
+            })
+            if ($watchElapsed -lt ($ProviderLifetimeSeconds - 2) -or
+                    [string]$initialEvent.type -ne "surface_snapshot" -or
+                    $initialJson -notmatch '"surface_id"\s*:\s*"surface\.spatial_video_control\.media"' -or
+                    $removed.Count -ne 0 -or
+                    -not (Test-ExactJsonInteger $watchDetails.event_count 1) -or
+                    [int]$watchDetails.event_count -gt 128 -or
+                    -not (Test-ExactJsonInteger $watchDetails.keepalive_count $minimumKeepalives) -or
+                    (-not $LegacyV1 -and [long]$watchDetails.next_external_request_sequence -le [long]$watchDetails.keepalive_count)) {
+                throw "The single-transport provider lifetime watch did not prove bounded continuous session health."
+            }
+            [void](Wait-Surface "surface.spatial_video_control.media" $true)
+            if (-not (Test-ExactBoolean (Invoke-DebugOperator "status").owner_receipt.listener_running $true)) { throw "Hub stopped during provider lifetime hold." }
             $SurfaceId="surface.spatial_video_control.media"; $CommandId="command.spatial_video_control.pause"; [void](Hostess-Action "command")
         }
         Invoke-Stage "process-restart" {
