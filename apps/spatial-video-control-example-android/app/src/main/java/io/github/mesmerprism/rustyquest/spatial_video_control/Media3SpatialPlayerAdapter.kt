@@ -40,6 +40,7 @@ class Media3SpatialPlayerAdapter(
   private val lock = Any()
   private var listener: PlayerPort.Listener? = null
   private var pending: PlayerPort.AcceptedEffect? = null
+  private var pendingHubVideoId: String? = null
   private var activeSurfaceVideoId: String? = null
   private var released = false
   private var state =
@@ -123,7 +124,9 @@ class Media3SpatialPlayerAdapter(
         return@post
       }
       val desiredVideoId =
-          synchronized(lock) { pending?.videoId() ?: state.selectedVideoId() }
+          synchronized(lock) {
+            pending?.videoId() ?: pendingHubVideoId ?: state.selectedVideoId()
+          }
       if (videoId != desiredVideoId) {
         return@post
       }
@@ -179,7 +182,10 @@ class Media3SpatialPlayerAdapter(
           catalog.require(videoId)
           player.pause()
           player.clearVideoSurface()
-          synchronized(lock) { activeSurfaceVideoId = null }
+          synchronized(lock) {
+            activeSurfaceVideoId = null
+            pendingHubVideoId = videoId
+          }
           requestPresentation(videoId)
         }
         "command.spatial_video_control.play" -> player.play()
@@ -237,6 +243,15 @@ class Media3SpatialPlayerAdapter(
       }
       val previous = state
       val selected = player.currentMediaItem?.mediaId ?: previous.selectedVideoId()
+      val hubSelectionReady =
+          pendingHubVideoId?.let { requested ->
+            selected == requested &&
+                activeSurfaceVideoId == requested &&
+                player.playbackState == Player.STATE_READY
+          } ?: true
+      // Media3 accepting an item is not enough: expose the Hub selection only
+      // after the matching Spatial carrier is attached and decoding is ready.
+      val effectiveSelected = if (hubSelectionReady) selected else previous.selectedVideoId()
       val playing = player.isPlaying
       val playbackState = playbackStateToken(player.playbackState)
       val position = player.currentPosition.coerceAtLeast(0)
@@ -244,7 +259,7 @@ class Media3SpatialPlayerAdapter(
           PlayerStateProjection.apply(
               previous,
               PlayerStateProjection.Observation(
-                  selected,
+                  effectiveSelected,
                   playing,
                   playbackState,
                   position,
@@ -265,6 +280,9 @@ class Media3SpatialPlayerAdapter(
               }
       if (next != previous) {
         state = next
+      }
+      if (pendingHubVideoId != null && hubSelectionReady) {
+        pendingHubVideoId = null
       }
       if (allowEffectReceipt && effectObserved) {
         pending = null

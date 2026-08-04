@@ -239,11 +239,25 @@ $hubMediaCanonicalSha = 'sha256:' + [Convert]::ToHexString(
 $hubSurfaceClient = Get-Content -Raw -LiteralPath (
   Join-Path $appRoot 'app\src\main\java\io\github\mesmerprism\rustyquest\spatial_video_control\ConnectionHubSurfaceClient.kt'
 )
+$hubMediaTarget = Get-Content -Raw -LiteralPath (
+  Join-Path $appRoot 'app\src\main\java\io\github\mesmerprism\rustyquest\spatial_video_control\Media3SpatialPlayerAdapter.kt'
+)
 if ([string]$hubMediaContract.canonical_contract_sha256 -cne $hubMediaCanonicalSha -or
     $hubSurfaceClient -notmatch [regex]::Escape($hubMediaCanonicalSha) -or
     $hubSurfaceClient -notmatch 'Rusty Spatial Video Player' -or
     $hubSurfaceClient -notmatch 'RustySpatialMedia folder') {
   throw 'The Connection Hub media surface is not bound to its exact contract.'
+}
+foreach ($needle in @(
+    'private var pendingHubVideoId: String? = null',
+    'pending?.videoId() ?: pendingHubVideoId ?: state.selectedVideoId()',
+    'player.playbackState == Player.STATE_READY',
+    'val effectiveSelected = if (hubSelectionReady) selected else previous.selectedVideoId()',
+    'pendingHubVideoId = null'
+  )) {
+  if (-not $hubMediaTarget.Contains($needle)) {
+    throw "Media3 Hub selection proof is missing: $needle"
+  }
 }
 if ($videoCatalog -notmatch 'device-test-360-top-bottom-4096x4096-hevc60' -or
     $videoCatalog -notmatch 'debug_test_360_top_bottom_4096x4096_hevc_60fps' -or

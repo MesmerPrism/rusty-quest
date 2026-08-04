@@ -169,6 +169,61 @@ const response = (ok, status, receipt) => ({
   json: async () => receipt,
 });
 
+const runPlainHttpPair = async () => {
+  const elements = new Map([
+    ["#surfaces", new FakeElement()],
+    ["#surface-template", new FakeElement()],
+    ["#pair-status", new FakeElement()],
+    ["#pair-button", new FakeElement()],
+    ["#disconnect-button", new FakeElement()],
+    ["#pairing-code", new FakeElement()],
+  ]);
+  elements.get("#pairing-code").value = "123456";
+  let pairRequest = null;
+  class FakeWebSocket {
+    static OPEN = 1;
+    constructor() { this.readyState = FakeWebSocket.OPEN; this.listeners = new Map(); }
+    addEventListener(type, listener) { this.listeners.set(type, listener); }
+    send() {}
+    close() { this.readyState = 3; }
+  }
+  const insecureCrypto = {
+    getRandomValues: bytes => { bytes.fill(0x2a); return bytes; },
+  };
+  const browserContext = vm.createContext({
+    RustyConnectionHubProtocol: actual,
+    RustyConnectionHubCanonicalJson: canonicalJsonEncoder,
+    document: {
+      querySelector: selector => elements.get(selector),
+      createElement: () => new FakeElement(),
+    },
+    sessionStorage: storage({}),
+    localStorage: storage({}),
+    fetch: async (_route, request) => {
+      pairRequest = JSON.parse(request.body);
+      return response(true, 200, {accepted: true, session: "plain-http-session"});
+    },
+    crypto: insecureCrypto,
+    TextEncoder,
+    Uint8Array,
+    location: {protocol: "http:", host: "hub.test"},
+    WebSocket: FakeWebSocket,
+    CSS: {escape: value => value},
+    setInterval: () => 1,
+    clearInterval: () => {},
+    setTimeout: () => 1,
+    clearTimeout: () => {},
+  });
+  vm.runInContext(appSource, browserContext, {filename: "app.js"});
+  await elements.get("#pair-button").click();
+  const seed = "2a".repeat(32);
+  const expectedIdentity = nodeCrypto.createHash("sha256").update(seed, "utf8").digest("hex");
+  if (!pairRequest || pairRequest.pairing_code !== "123456"
+      || pairRequest.controller_identity_sha256 !== expectedIdentity) {
+    throw new Error("plain-HTTP browser pairing did not derive the exact controller identity");
+  }
+};
+
 const runV2SequenceFlow = () => {
   const elements = new Map([
     ["#surfaces", new FakeElement()],
@@ -259,6 +314,7 @@ const runV2SequenceFlow = () => {
 };
 
 (async () => {
+  await runPlainHttpPair();
   runV2SequenceFlow();
   const accepted = JSON.parse(JSON.stringify(legacyVectors.messages.revoke_receipt.example));
   const networkFailure = await runDisconnect(async () => { throw new Error("network unavailable"); });
