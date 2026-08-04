@@ -292,7 +292,7 @@ fn trust_and_open(owner: &mut HubOwner, proposal: &Value, now_ms: u64) -> Result
             .owner()
             .apply_operator_decision(&forget, now_ms, &evidence);
         if !receipt.applied {
-            return Ok(native_receipt(receipt));
+            return Ok(native_receipt_for_stage(receipt, "controller_rotation"));
         }
     }
     let controller_id = epoch_derived(
@@ -320,7 +320,7 @@ fn trust_and_open(owner: &mut HubOwner, proposal: &Value, now_ms: u64) -> Result
         .owner()
         .apply_operator_decision(&trust, now_ms, &evidence);
     if !receipt.applied {
-        return Ok(native_receipt(receipt));
+        return Ok(native_receipt_for_stage(receipt, "controller_trust"));
     }
     let session_id = epoch_derived(owner, "session.hub", request_id)?;
     let open = request(
@@ -336,7 +336,12 @@ fn trust_and_open(owner: &mut HubOwner, proposal: &Value, now_ms: u64) -> Result
         },
     )?;
     let receipt = owner.authority.owner().apply_lifecycle(&open, now_ms);
-    Ok(native_receipt_for_session(owner, receipt, &session_id))
+    let applied = receipt.applied;
+    let mut output = native_receipt_for_session(owner, receipt, &session_id);
+    if !applied {
+        prefix_rejection_status(&mut output, "session_open");
+    }
+    Ok(output)
 }
 
 fn replace_authenticated_transport(
@@ -740,6 +745,21 @@ fn native_receipt(receipt: ManifoldConnectionHubReceipt) -> Value {
     output
 }
 
+fn native_receipt_for_stage(receipt: ManifoldConnectionHubReceipt, stage: &str) -> Value {
+    let applied = receipt.applied;
+    let mut output = native_receipt(receipt);
+    if !applied {
+        prefix_rejection_status(&mut output, stage);
+    }
+    output
+}
+
+fn prefix_rejection_status(output: &mut Value, stage: &str) {
+    if let Some(status) = output.get("status").and_then(Value::as_str) {
+        output["status"] = json!(format!("{stage}_{status}"));
+    }
+}
+
 fn native_receipt_for_session(
     owner: &HubOwner,
     receipt: ManifoldConnectionHubReceipt,
@@ -960,11 +980,11 @@ mod tests {
                     "required_controller_capability": "capability.sample.toggle"
                 }]
             }],
-            "max_controller_ttl_ms": 100_000,
-            "max_session_ttl_ms": 80_000,
+            "max_controller_ttl_ms": 60_000,
+            "max_session_ttl_ms": 30_000,
             "max_surface_lease_ttl_ms": 60_000,
-            "authenticated_activity_controller_ttl_ms": 100_000,
-            "authenticated_activity_session_ttl_ms": 80_000
+            "authenticated_activity_controller_ttl_ms": 60_000,
+            "authenticated_activity_session_ttl_ms": 30_000
         });
         let config = json!({
             "$schema": CONFIG_SCHEMA,
