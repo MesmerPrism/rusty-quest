@@ -614,10 +614,10 @@ if ($connectionHubSelected) {
                 }
             )
             max_controller_ttl_ms = if ($EnableConnectionHubDebugOperator) { 60000 } else { 31622400000 }
-            max_session_ttl_ms = if ($EnableConnectionHubDebugOperator) { 30000 } else { 2592000000 }
+            max_session_ttl_ms = if ($EnableConnectionHubDebugOperator) { 15000 } else { 2592000000 }
             max_surface_lease_ttl_ms = if ($EnableConnectionHubDebugOperator) { 10000 } else { 86400000 }
             authenticated_activity_controller_ttl_ms = if ($EnableConnectionHubDebugOperator) { 60000 } else { 31622400000 }
-            authenticated_activity_session_ttl_ms = if ($EnableConnectionHubDebugOperator) { 30000 } else { 2592000000 }
+            authenticated_activity_session_ttl_ms = if ($EnableConnectionHubDebugOperator) { 15000 } else { 2592000000 }
         }
     }
 }

@@ -981,10 +981,10 @@ mod tests {
                 }]
             }],
             "max_controller_ttl_ms": 60_000,
-            "max_session_ttl_ms": 30_000,
+            "max_session_ttl_ms": 15_000,
             "max_surface_lease_ttl_ms": 60_000,
             "authenticated_activity_controller_ttl_ms": 60_000,
-            "authenticated_activity_session_ttl_ms": 30_000
+            "authenticated_activity_session_ttl_ms": 15_000
         });
         let config = json!({
             "$schema": CONFIG_SCHEMA,
