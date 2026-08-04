@@ -86,7 +86,9 @@ Require ($cli.Contains('function Test-JsonContainsUnredactedHostessSecret') -and
     -not $cli.Contains('$result.output -match')) "Hostess secret inspection must be parsed-field aware rather than raw-text based."
 Require ($cli.Contains('function Invoke-HostessCheckedRaw') -and
     $cli.Contains('Invoke-CapturedTimed $script:Python') -and
-    -not $cli.Contains('Invoke-Captured $script:Python @($script:Hostess, "list-surfaces"')) "Every ordinary Hostess route must use the shared deadline-controlled wrapper."
+    -not $cli.Contains('Invoke-Captured $script:Python @($script:Hostess, "list-surfaces"') -and
+    -not $cli.Contains('.ReadToEndAsync()') -and
+    $cli.Contains('exceeded the one MiB captured-output bound')) "Every ordinary Hostess route must use the shared deadline-controlled wrapper without async stream deadlock."
 Require ($cli.Contains('$wait.authentication_retry_count') -and
     $cli.Contains('[int]$wait.authentication_retry_count -gt 1')) "The bounded wait-surface authentication retry is not validated exactly."
 Require ($cli.Contains('-Keystore $resolvedKeystore') -and $cli.Contains('RUSTY_CONNECTION_HUB_KEYSTORE')) "All APK builds must use one explicit keystore."

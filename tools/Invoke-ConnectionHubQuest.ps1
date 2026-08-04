@@ -615,15 +615,22 @@ function Invoke-CapturedTimed([string]$File, [string[]]$Arguments, [string]$Labe
     $process.StartInfo = $start
     try {
         if (-not $process.Start()) { throw "Unable to start $Label." }
-        $stdoutTask = $process.StandardOutput.ReadToEndAsync()
-        $stderrTask = $process.StandardError.ReadToEndAsync()
         $completed = $process.WaitForExit($TimeoutMilliseconds)
         if (-not $completed) {
             $process.Kill($true)
             [void]$process.WaitForExit(5000)
         }
-        $stdoutText = $stdoutTask.GetAwaiter().GetResult().TrimEnd("`r", "`n")
-        $stderrText = $stderrTask.GetAwaiter().GetResult().TrimEnd("`r", "`n")
+        # Hostess receipts are deliberately small and bounded. Reading the
+        # closed pipes synchronously after process exit avoids a PowerShell
+        # runspace continuation deadlock observed with ReadToEndAsync while
+        # retaining the authoritative process deadline above. A child that
+        # fills a pipe cannot escape the deadline: it is killed before reads.
+        $stdoutText = $process.StandardOutput.ReadToEnd().TrimEnd("`r", "`n")
+        $stderrText = $process.StandardError.ReadToEnd().TrimEnd("`r", "`n")
+        if ([System.Text.Encoding]::UTF8.GetByteCount($stdoutText) -gt 1048576 -or
+                [System.Text.Encoding]::UTF8.GetByteCount($stderrText) -gt 1048576) {
+            throw "$Label exceeded the one MiB captured-output bound."
+        }
         return [ordered]@{
             label = $Label
             exit_code = $(if($completed){$process.ExitCode}else{$null})
