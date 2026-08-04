@@ -887,7 +887,7 @@ $androidPermissions = @($manifestProjection.permissions | ForEach-Object { [stri
 $androidNamespace = "http://schemas.android.com/apk/res/android"
 $androidComponents = @()
 foreach ($kind in @("activity", "service", "provider")) {
-    foreach ($node in @($generatedAndroidManifest.manifest.application.$kind)) {
+    foreach ($node in @($generatedAndroidManifest.SelectNodes("/manifest/application/$kind"))) {
         $component = [ordered]@{
             kind = $kind
             name = [string]$node.GetAttribute("name", $androidNamespace)
