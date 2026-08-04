@@ -15,6 +15,7 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.security.SecureRandom;
+import java.util.Locale;
 
 /** Process-local provider lifecycle shared by the visible Activity and debug service. */
 final class ConnectionHubSampleProvider {
@@ -31,6 +32,11 @@ final class ConnectionHubSampleProvider {
     private static final String COMMAND_ID = "command.connection_hub_sample.toggle";
     private static final String PARAMS_SHA256 =
             "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a";
+    private static final String PARAMS_SCHEMA_ID =
+            "rusty.manifold.connection_hub.typed_params.empty.v1";
+    private static final String PARAMS_SCHEMA_SHA256 =
+            "sha256:7eedc1ccca80b83dbd121d1e4bae4f6a6c9c1561e1a08d6d5919c668d5406a51";
+    private static final String PROVIDER_ID = "provider.quest.connection-hub-sample";
     private static final String CONTRACT_SHA256 =
             "sha256:48019a4a7a00c9ee6d694927727f54093b6946c1f894b99214c5aeb5629472c4";
     private static final int ISSUE = 1;
@@ -170,15 +176,46 @@ final class ConnectionHubSampleProvider {
             JSONObject receipt = new JSONObject(
                     message.getData().getString("authority_receipt_json", "{}"));
             JSONObject authorization = receipt.getJSONObject("command_authorization");
-            if (!receipt.getBoolean("applied")
+            JSONObject audit = receipt.getJSONObject("audit_event");
+            JSONObject authorityRequest = audit.getJSONObject("request");
+            JSONObject operation = authorityRequest.getJSONObject("operation");
+            JSONObject details = operation.getJSONObject("details");
+            long authorityEpoch = audit.getLong("authority_epoch");
+            String authorityRequestId = deriveAuthorityRequestId(requestId, authorityEpoch);
+            String providerInstanceId = authorization.getString("provider_instance_id");
+            if (!"rusty.manifold.connection_hub.receipt.v3".equals(receipt.getString("$schema"))
+                    || !receipt.getBoolean("applied")
                     || !"authorize_surface_command".equals(receipt.getString("operation"))
-                    || !requestId.equals(authorization.getString("request_id"))
+                    || !"rusty.manifold.connection_hub.command_authorization.v2".equals(
+                            authorization.getString("$schema"))
+                    || !authorityRequestId.equals(receipt.getString("request_id"))
+                    || !authorityRequestId.equals(authorityRequest.getString("request_id"))
+                    || !authorityRequestId.equals(authorization.getString("request_id"))
                     || !SURFACE_ID.equals(surfaceId)
-                    || !SURFACE_ID.equals(authorization.getString("surface_id"))
+                    || !isDottedIdentifier(providerInstanceId)
+                    || !(providerInstanceId + ".surface-instance." + SURFACE_ID).equals(
+                            authorization.getString("surface_id"))
+                    || !PROVIDER_ID.equals(authorization.getString("provider_id"))
                     || !COMMAND_ID.equals(command)
                     || !COMMAND_ID.equals(authorization.getString("command_id"))
                     || !PARAMS_SHA256.equals(authorization.getString("typed_params_sha256"))
+                    || !PARAMS_SCHEMA_ID.equals(
+                            authorization.getString("typed_params_schema_id"))
+                    || !PARAMS_SCHEMA_SHA256.equals(
+                            authorization.getString("typed_params_schema_sha256"))
                     || authorization.getBoolean("proves_application_effect")
+                    || !"authorize_surface_command".equals(operation.getString("type"))
+                    || !COMMAND_ID.equals(details.getString("command_id"))
+                    || !authorization.getString("lease_id").equals(details.getString("lease_id"))
+                    || !authorization.getString("session_id").equals(
+                            details.getString("session_id"))
+                    || authorization.getLong("transport_epoch") !=
+                            details.getLong("expected_transport_epoch")
+                    || !PARAMS_SHA256.equals(details.getString("typed_params_sha256"))
+                    || !PARAMS_SCHEMA_ID.equals(details.getString("typed_params_schema_id"))
+                    || !PARAMS_SCHEMA_SHA256.equals(
+                            details.getString("typed_params_schema_sha256"))
+                    || !isSha256(details.getString("external_request_sha256"))
                     || args.length() != 0) {
                 throw new SecurityException("authorization binding mismatch");
             }
@@ -204,6 +241,59 @@ final class ConnectionHubSampleProvider {
         } catch (Exception ignored) {
             // A dead requester cannot change provider state.
         }
+    }
+
+    private static String deriveAuthorityRequestId(String externalRequestId, long authorityEpoch) {
+        if (authorityEpoch < 1) throw new SecurityException("invalid authority epoch");
+        String epochPrefix = "epoch-" + authorityEpoch + ".";
+        if (externalRequestId.startsWith(epochPrefix)) {
+            if (!isDottedIdentifier(externalRequestId)) {
+                throw new SecurityException("invalid epoch request id");
+            }
+            return externalRequestId;
+        }
+        String normalized = externalRequestId.toLowerCase(Locale.ROOT);
+        StringBuilder suffix = new StringBuilder(40);
+        for (int index = 0; index < normalized.length() && suffix.length() < 40; index++) {
+            char item = normalized.charAt(index);
+            if ((item >= 'a' && item <= 'z') || (item >= '0' && item <= '9') || item == '-') {
+                suffix.append(item);
+            }
+        }
+        while (suffix.length() > 0 && suffix.charAt(0) == '-') suffix.deleteCharAt(0);
+        while (suffix.length() > 0 && suffix.charAt(suffix.length() - 1) == '-') {
+            suffix.deleteCharAt(suffix.length() - 1);
+        }
+        if (suffix.length() == 0) throw new SecurityException("empty request id");
+        String derived = epochPrefix + "request." + suffix;
+        if (!isDottedIdentifier(derived)) throw new SecurityException("invalid derived request id");
+        return derived;
+    }
+
+    private static boolean isDottedIdentifier(String value) {
+        if (value == null || value.isEmpty()) return false;
+        for (String segment : value.split("\\.", -1)) {
+            if (segment.isEmpty() || !isEdgeCharacter(segment.charAt(0))
+                    || !isEdgeCharacter(segment.charAt(segment.length() - 1))) return false;
+            for (int index = 0; index < segment.length(); index++) {
+                char item = segment.charAt(index);
+                if (!isEdgeCharacter(item) && item != '_' && item != '-') return false;
+            }
+        }
+        return true;
+    }
+
+    private static boolean isEdgeCharacter(char value) {
+        return (value >= 'a' && value <= 'z') || (value >= '0' && value <= '9');
+    }
+
+    private static boolean isSha256(String value) {
+        if (value == null || value.length() != 71 || !value.startsWith("sha256:")) return false;
+        for (int index = 7; index < value.length(); index++) {
+            char item = value.charAt(index);
+            if (!((item >= '0' && item <= '9') || (item >= 'a' && item <= 'f'))) return false;
+        }
+        return true;
     }
 
     private Bundle registration() throws Exception {

@@ -47,6 +47,7 @@ $spatialManifest = Get-Content -Raw -LiteralPath (Join-Path $spatial "app\src\ma
 $spatialDebugManifestPath = Join-Path $spatial "app\src\debug\AndroidManifest.xml"
 $spatialDebugServicePath = Join-Path $spatial "app\src\debug\java\io\github\mesmerprism\rustyquest\spatial_video_control\ConnectionHubDebugSurfaceService.kt"
 $spatialClient = Get-Content -Raw -LiteralPath (Join-Path $spatial "app\src\main\java\io\github\mesmerprism\rustyquest\spatial_video_control\ConnectionHubSurfaceClient.kt")
+$spatialTarget = Get-Content -Raw -LiteralPath (Join-Path $spatial "app\src\main\java\io\github\mesmerprism\rustyquest\spatial_video_control\ConnectionHubSurfaceTarget.kt")
 $spatialActivity = Get-Content -Raw -LiteralPath (Join-Path $spatial "app\src\main\java\io\github\mesmerprism\rustyquest\spatial_video_control\SpatialVideoControlActivity.kt")
 $buildScript = Get-Content -Raw -LiteralPath (Join-Path $RepoRoot "tools\Build-ManifoldBrokerAndroid.ps1")
 $productSource = Get-Content -Raw -LiteralPath (Join-Path $RepoRoot "crates\rusty-quest-broker-product\src\lib.rs")
@@ -54,6 +55,7 @@ $nativeLock = Get-Content -Raw -LiteralPath (Join-Path $app "native\manifold-sou
 $nativeHub = Get-Content -Raw -LiteralPath (Join-Path $app "native\src\connection_hub_jni.rs")
 $sampleManifest = Join-Path $spatial "hub-sample-provider\src\main\AndroidManifest.xml"
 $sampleProvider = Join-Path $spatial "hub-sample-provider\src\main\java\io\github\mesmerprism\rustyquest\connection_hub_sample\ConnectionHubSampleProvider.java"
+$sampleProviderText = Get-Content -Raw -LiteralPath $sampleProvider
 $sampleDebugManifestPath = Join-Path $spatial "hub-sample-provider\src\debug\AndroidManifest.xml"
 $sampleDebugServicePath = Join-Path $spatial "hub-sample-provider\src\debug\java\io\github\mesmerprism\rustyquest\connection_hub_sample\ConnectionHubDebugSurfaceService.java"
 
@@ -128,8 +130,17 @@ if ($buildScript -notmatch 'rusty\.manifold\.connection_hub\.policy\.v3' -or
 }
 if ($spatialManifest -notmatch 'BROKER_ADMISSION' -or $spatialManifest -notmatch 'io\.github\.mesmerprism\.rustymanifold\.broker') { throw "Spatial provider does not bind the exact signature-scoped Broker." }
 if ($spatialClient -notmatch 'MESSAGE_REGISTER_SURFACE' -or $spatialClient -notmatch 'MESSAGE_UNREGISTER_SURFACE' -or $spatialClient -match 'admitted_client_evidence_json') { throw "Spatial provider lifecycle or admission boundary is incorrect." }
+foreach ($providerTarget in @($spatialTarget, $sampleProviderText)) {
+    if ($providerTarget -notmatch 'rusty\.manifold\.connection_hub\.receipt\.v3' -or
+        $providerTarget -notmatch 'surface-instance' -or
+        $providerTarget -notmatch 'external_request_sha256' -or
+        $providerTarget -notmatch 'deriveAuthorityRequestId' -or
+        $providerTarget -notmatch 'typed_params_schema_sha256') {
+        throw "Provider effect boundary does not bind the v3 authority receipt, internal surface incarnation, typed schema, and derived request id."
+    }
+}
 if ($spatialActivity -notmatch 'hubSurface.*\.start' -or $spatialActivity -notmatch 'hubSurface\?\.close') { throw "Spatial app does not register/unregister its Hub surface with lifecycle." }
-if (-not (Test-Path -LiteralPath $sampleProvider -PathType Leaf) -or (Get-Content -Raw -LiteralPath $sampleProvider) -notmatch 'surface\.connection_hub_sample\.toggle') { throw "Distinct second-package Hub provider is missing." }
+if (-not (Test-Path -LiteralPath $sampleProvider -PathType Leaf) -or $sampleProviderText -notmatch 'surface\.connection_hub_sample\.toggle') { throw "Distinct second-package Hub provider is missing." }
 foreach ($debugPath in @($spatialDebugManifestPath, $spatialDebugServicePath, $sampleDebugManifestPath, $sampleDebugServicePath)) {
     if (-not (Test-Path -LiteralPath $debugPath -PathType Leaf)) { throw "Off-head debug provider seam is missing: $debugPath" }
 }

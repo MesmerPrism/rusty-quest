@@ -114,6 +114,13 @@ revoke, bounded close of that socket, fresh stale-bearer authentication
 rejection, then local credential deletion. Failure caused only by a previously
 deleted session file is not revocation evidence.
 
+Providers validate the v3 Manifold receipt before applying an effect. The
+external stable surface id is mapped to the exact authority subject
+`<provider_instance_id>.surface-instance.<stable_surface_id>`; the provider
+also re-derives the bounded epoch request id from the external request token
+and binds the command, lease, session, transport epoch, empty typed-parameter
+schema and digest, and external-frame digest recorded by the audit request.
+
 Native command-adapter precondition failures are returned as structured,
 fail-closed receipts with `applied=false` and no authority acceptance receipt.
 Stable status families distinguish an inactive logical session, a missing
