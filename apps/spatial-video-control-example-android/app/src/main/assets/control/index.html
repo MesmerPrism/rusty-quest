@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="referrer" content="no-referrer">
+    <title>Quest video control</title>
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <main>
+      <header>
+        <p class="eyebrow">trusted_local_http_v1</p>
+        <h1>Quest video control</h1>
+        <p id="access-warning" class="warning">Checking headset access mode…</p>
+      </header>
+
+      <section id="pairing-card" aria-labelledby="pairing-title" hidden>
+        <h2 id="pairing-title">Pair with the headset</h2>
+        <p>Enter the six-digit single-use code shown inside the headset.</p>
+        <form id="pairing-form">
+          <label for="pairing-code">Pairing code</label>
+          <input
+            id="pairing-code"
+            name="pairing-code"
+            inputmode="numeric"
+            pattern="[0-9]{6}"
+            maxlength="6"
+            autocomplete="one-time-code"
+            required>
+          <button type="submit">Pair</button>
+        </form>
+        <p id="pairing-status" role="status">Not paired</p>
+      </section>
+
+      <section id="open-lan-card" class="danger-card" aria-labelledby="open-lan-title" hidden>
+        <h2 id="open-lan-title">Open LAN — not secure</h2>
+        <p><strong>Anyone on this network can request control.</strong> There is no pairing and the traffic is not encrypted.</p>
+        <button id="open-lan-button" type="button">Connect without authentication</button>
+        <p id="open-lan-status" role="status">Not connected</p>
+      </section>
+
+      <section id="controller-card" aria-labelledby="controller-title" hidden>
+        <div class="status-row">
+          <div>
+            <p class="eyebrow">Controller lease</p>
+            <h2 id="controller-title">Connected</h2>
+          </div>
+          <span id="connection-state" class="status-pill">Connecting</span>
+        </div>
+
+        <dl class="state-grid">
+          <div><dt>Selected</dt><dd id="selected-video">—</dd></div>
+          <div><dt>Projection</dt><dd id="projection-shape">—</dd></div>
+          <div><dt>Stereo</dt><dd id="stereo-layout">—</dd></div>
+          <div><dt>Playback</dt><dd id="playback-state">Idle</dd></div>
+          <div><dt>Player revision</dt><dd id="player-revision">0</dd></div>
+          <div><dt>Authority revision</dt><dd id="authority-revision">0</dd></div>
+        </dl>
+
+        <div class="transport-controls" aria-label="Playback controls">
+          <button id="play-button" type="button" disabled>Play</button>
+          <button id="pause-button" type="button" disabled>Pause</button>
+        </div>
+
+        <h3>Videos</h3>
+        <p>Selecting a video does not start it.</p>
+        <div id="video-list" class="video-list" aria-live="polite"></div>
+
+        <details>
+          <summary>Protocol events</summary>
+          <ol id="event-log"></ol>
+        </details>
+      </section>
+    </main>
+    <script src="/app.js" defer></script>
+  </body>
+</html>

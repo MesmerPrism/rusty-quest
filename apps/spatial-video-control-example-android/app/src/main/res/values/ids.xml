@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <item name="video_surface_panel_01" type="id" />
+    <item name="video_surface_panel_02" type="id" />
+    <item name="video_surface_panel_03" type="id" />
+    <item name="video_surface_panel_04" type="id" />
+    <item name="video_surface_panel_05" type="id" />
+    <item name="video_surface_panel_06" type="id" />
+    <item name="video_surface_panel_07" type="id" />
+    <item name="video_surface_panel_08" type="id" />
+    <item name="video_surface_panel_09" type="id" />
+    <item name="video_surface_panel_10" type="id" />
+    <item name="video_surface_panel_11" type="id" />
+    <item name="video_surface_panel_12" type="id" />
+    <item name="video_surface_panel_13" type="id" />
+    <item name="video_surface_panel_14" type="id" />
+    <item name="video_surface_panel_15" type="id" />
+    <item name="video_surface_panel_16" type="id" />
+    <item name="local_control_panel" type="id" />
+</resources>

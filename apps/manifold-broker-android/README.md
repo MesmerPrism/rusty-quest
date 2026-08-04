@@ -71,3 +71,68 @@ Native Renderer now packages and verifies its exact embedded config, client
 lock, signer-derived grant, and Android-authenticated local admission lifecycle.
 Absent capabilities or leases reject rather than restoring former
 unauthenticated compatibility behavior.
+
+## Connection Hub wire authority
+
+`contracts/connection-hub-protocol-v1.json` remains the byte-frozen legacy
+compatibility vector (SHA-256
+`fa00d34511b2ee5576eebdd815e58ae032e37b10c209e41289cfd876c78c9c78`).
+It is still accepted, but because its frames do not carry an authority sequence
+it is not claimed replay-safe across history rollover or a lost receipt.
+`contracts/connection-hub-protocol-v2.json` is the current Rusty Quest-owned
+canonical wire schema/vector set. It binds the legacy bytes and freezes the
+ASCII canonical-JSON algorithm plus exact command and keepalive frame digests.
+The HTTP/WebSocket server host tests validate emitted field sets against these
+vectors, and the browser loads a checked-in v2 projection whose tests must match
+the same owner bytes.
+Consumers must reject missing required fields, unknown fields, schema changes,
+and type changes. Downstream Hostess clients may copy or hash-bind this file,
+but they do not independently redefine its wire shapes.
+
+Provider instances are single-lifecycle identities. Explicit surface removal or
+Binder death unregisters both the surface and its exact Manifold provider
+instance; a later app launch consumes fresh admission and receives a fresh
+instance and a fresh authority-only surface subject. The stable surface name
+on the browser protocol does not become an authority identity. The Hub listener
+and controller session remain independent of that provider churn.
+
+Each accepted WebSocket is installed atomically with its Manifold transport
+epoch. A late older handshake cannot displace a newer socket. Surface leases
+retain their authority expiry locally, are reacquired after expiry, and receive
+one bounded reacquire-and-authorize attempt when Manifold reports the cached
+lease inactive. Leases are intentionally rebuilt after process restart.
+
+Authenticated v2 commands and JSON keepalives present the exact logical
+session, current transport epoch, positive next request sequence, and SHA-256 of
+the exact canonical raw frame to Manifold. Accepted activity consumes one
+sequence and slides controller/session deadlines; rejected activity returns the
+unchanged authority-derived next sequence. Transport replacement slides the
+deadlines without consuming a request sequence. The browser resynchronizes from
+each authentication or activity receipt and sends a bounded five-second JSON
+keepalive while connected.
+
+The native adapter rolls audit history proactively before capacity while
+retaining exact prior-epoch live controller/session/provider/surface/lease IDs.
+The external request fence remains attached to the logical session, so an exact
+old v2 frame is rejected after rollover and restart. A forced rollover hook and
+short activity deadlines exist only in the shell-UID debug operator product;
+release packaging omits the provider and disables the native hook.
+
+Connection Hub native authority is built from the standalone
+`connection-hub-native` Cargo workspace and its own committed lockfile. It
+shares the broker admission implementation as source inside the same resulting
+native library, but its independently pinned Manifold dependency graph does not
+change the repository-wide Cargo lock used by the package updater and other
+Quest products. The build rejects a Manifold path that differs from the exact
+clean source root validated by `native/manifold-source.lock.json`.
+
+Browser disconnect is fail closed: local bearer/socket state is cleared only
+after an exact applied revoke receipt. Network, HTTP, schema, or authority
+rejection retains the credential so the wearer can retry, while an accepted
+revoke closes the current socket and makes the stale bearer unusable.
+
+The sealed authority caps controller trust at 366 days, logical sessions at 30
+days, and a surface lease at 24 hours. Manifold remains the sole authority for
+renewal, transport replacement, replay fencing, expiry, revocation, and history
+rollover; Android persists only its opaque authority envelope and the minimum
+typed session projection required to reconnect.
