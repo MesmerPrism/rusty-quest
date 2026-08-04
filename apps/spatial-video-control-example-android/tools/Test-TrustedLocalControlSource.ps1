@@ -211,6 +211,8 @@ $plainPolicy = Get-Content -Raw -LiteralPath (
   Join-Path $appRoot 'host\src\main\java\io\github\mesmerprism\rustyquest\spatial_video_control\PlainVideoPolicy.java'
 )
 if ($activity -notmatch 'Intent\.ACTION_OPEN_DOCUMENT_TREE' -or
+    $activity -notmatch 'DocumentsContract\.EXTRA_INITIAL_URI' -or
+    $activity -notmatch 'primary%3ADocuments%2FRustySpatialMedia' -or
     $activity -notmatch 'INITIAL_FOLDER_PROMPT_DELAY_MS' -or
     $activity -notmatch 'SharedPlainVideoLibrary\.adoptTreeUri' -or
     $sharedLibrary -notmatch 'takePersistableUriPermission' -or

@@ -15,6 +15,7 @@ param(
     [string]$FileManagerSha256 = '',
     [string]$Adb = 'adb',
     [switch]$ConfirmAdbDirectoryFallback,
+    [switch]$ConfirmAdbLaunchFallback,
     [ValidateRange(100,10000)]
     [int]$LogcatLines = 3000
 )
@@ -136,14 +137,63 @@ switch ($Action) {
     'Launch' {
         Require-Serial
         $apkPath = Require-Apk
-        $launch = Invoke-Qfm @('apk','launch','--serial',$Serial,'--file',$apkPath,'--json')
+        $launchMode = 'qfm'
+        $providerReceipt = $null
+        $observation = $null
+        $launcherProof = $null
+        $fallbackOutput = $null
+        try {
+            $launch = Invoke-Qfm @('apk','launch','--serial',$Serial,'--file',$apkPath,'--json')
+            $providerReceipt = ($launch -join "`n") | ConvertFrom-Json
+        } catch {
+            $failure = $_.Exception.Message
+            if (-not $ConfirmAdbLaunchFallback -or
+                $failure -notmatch 'pre_dispatch_proof_rejected') {
+                throw
+            }
+
+            # QFM Alpha.14 rejects this Horizon OS launcher only because its
+            # dumpsys parser cannot see an exported field. Re-prove the exact
+            # installed artifact and unique fixed MAIN/LAUNCHER component
+            # before one serial-scoped, fixed-component dispatch.
+            $observed = Invoke-Qfm @('apk','observe','--serial',$Serial,'--file',$apkPath,'--json')
+            $observation = ($observed -join "`n") | ConvertFrom-Json
+            $expectedComponent = "$package/$activity"
+            $queryArguments = @(
+                '-s',$Serial,'shell','cmd','package','query-activities',
+                '--brief','--components','-a','android.intent.action.MAIN',
+                '-c','android.intent.category.LAUNCHER',$package
+            )
+            $queryOutput = @(& $Adb @queryArguments 2>&1)
+            if ($LASTEXITCODE -ne 0) { throw ($queryOutput -join "`n") }
+            $components = @(
+                $queryOutput |
+                    ForEach-Object { "$($_)".Trim() } |
+                    Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+            )
+            if ($components.Count -ne 1 -or $components[0] -cne $expectedComponent) {
+                throw 'The exact installed MAIN/LAUNCHER component was not uniquely proven.'
+            }
+            $launcherProof = $components[0]
+            $dispatch = @(& $Adb -s $Serial shell am start -S -n $expectedComponent 2>&1)
+            if ($LASTEXITCODE -ne 0 -or $dispatch -notmatch 'Starting: Intent') {
+                throw ($dispatch -join "`n")
+            }
+            $fallbackOutput = $dispatch -join "`n"
+            $launchMode = 'adb-fixed-component-after-qfm-proof-gap'
+        }
         [ordered]@{
             schema = $schema
             action = 'launch'
             serial = $Serial
             package_name = $package
             activity = $activity
-            provider_receipt = ($launch -join "`n") | ConvertFrom-Json
+            launch_mode = $launchMode
+            provider_receipt = $providerReceipt
+            qfm_failure_code = if ($launchMode -eq 'qfm') { $null } else { 'pre_dispatch_proof_rejected' }
+            artifact_observation = $observation
+            exact_launcher_component = $launcherProof
+            fallback_output = $fallbackOutput
         } | ConvertTo-Json -Depth 20
     }
     'Observe' {

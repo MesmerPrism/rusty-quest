@@ -38,8 +38,9 @@ on-headset revoke. The browser and headset label this mode explicitly.
 ## User video folder
 
 On first run, select the exact `Documents/RustySpatialMedia` folder in the
-Android folder picker. The app persists that narrow grant and, when write access
-is available, creates only this fixed taxonomy:
+Android folder picker. The app supplies that exact directory as Android's
+initial-location hint, persists only the wearer-confirmed narrow grant, and,
+when write access is available, creates only this fixed taxonomy:
 
 ```text
 RustySpatialMedia/

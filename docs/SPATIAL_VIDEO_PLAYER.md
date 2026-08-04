@@ -20,7 +20,8 @@ continues running when the player closes or another surface provider launches.
 ## Prepare the folder
 
 Create `Documents/RustySpatialMedia` on the headset. Launch the player, choose
-**Choose folder**, open that exact folder, and confirm **Use this folder**. If
+**Choose folder**; the system picker opens at that exact folder when Horizon OS
+honors Android's initial-location hint. Confirm **Use this folder**. If
 the provider supplies write permission, the app creates the complete fixed
 taxonomy without writing any video bytes.
 
@@ -57,7 +58,8 @@ it, then reload.
 `tools/Invoke-SpatialVideoPlayerQuest.ps1` supplies pinned, typed actions for
 APK inspection/install/launch/observation, fixed-taxonomy file staging, and
 bounded app/Hub marker capture. It uses QuestIonAble File Manager for APK and
-file mutations. The only direct ADB route is the read-only bounded log capture.
+file mutations. Direct ADB is restricted to read-only bounded log capture and
+two named, explicit fallbacks described below.
 
 Example for a 4096×4096, 60 fps, equirectangular 360° top/bottom MP4:
 
@@ -74,13 +76,18 @@ pwsh -File .\tools\Invoke-SpatialVideoPlayerQuest.ps1 -Action StageVideo @common
 pwsh -File .\tools\Invoke-SpatialVideoPlayerQuest.ps1 -Action Install @common `
   -Apk '<rusty-spatial-video-player.apk>'
 pwsh -File .\tools\Invoke-SpatialVideoPlayerQuest.ps1 -Action Launch @common `
-  -Apk '<rusty-spatial-video-player.apk>'
+  -Apk '<rusty-spatial-video-player.apk>' -ConfirmAdbLaunchFallback
 ```
 
 The source video is never bundled into the APK or release.
-`PrepareFolder` is the one named fallback: current QFM has bounded file push but
-no fixed-taxonomy directory-create operation, so the CLI requires an explicit
+`PrepareFolder` is a named fallback: current QFM has bounded file push but no
+fixed-taxonomy directory-create operation, so the CLI requires an explicit
 switch and dispatches only the ten hard-coded `mkdir -p` targets shown above.
+`Launch` normally uses QFM. With its separate confirmation switch it falls back
+only after QFM returns `pre_dispatch_proof_rejected`, the installed APK still
+matches the inspected artifact, and Android uniquely resolves the one fixed
+MAIN/LAUNCHER component. No caller-supplied component, action, URI, flag, or
+extra reaches that route.
 
 ## Security and lifecycle boundaries
 

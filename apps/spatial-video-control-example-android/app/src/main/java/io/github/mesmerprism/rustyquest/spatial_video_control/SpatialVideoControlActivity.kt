@@ -2,8 +2,10 @@ package io.github.mesmerprism.rustyquest.spatial_video_control
 
 import android.graphics.Color as AndroidColor
 import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
 import android.os.SystemClock
+import android.provider.DocumentsContract
 import android.view.InputDevice
 import android.view.KeyEvent
 import android.view.MotionEvent
@@ -786,6 +788,10 @@ open class SpatialVideoControlActivity : AppSystemActivity(), DebugShellControlT
   private fun chooseUserMediaFolder() {
     val intent =
         Intent(Intent.ACTION_OPEN_DOCUMENT_TREE)
+            .putExtra(
+                DocumentsContract.EXTRA_INITIAL_URI,
+                Uri.parse(USER_MEDIA_INITIAL_URI),
+            )
             .addFlags(
                 Intent.FLAG_GRANT_READ_URI_PERMISSION or
                     Intent.FLAG_GRANT_WRITE_URI_PERMISSION or
@@ -834,5 +840,7 @@ open class SpatialVideoControlActivity : AppSystemActivity(), DebugShellControlT
     const val VIDEO_ANCHOR_FALLBACK_Y_METERS = 1.60f
     const val USER_MEDIA_TREE_REQUEST = 7301
     const val INITIAL_FOLDER_PROMPT_DELAY_MS = 750L
+    const val USER_MEDIA_INITIAL_URI =
+        "content://com.android.externalstorage.documents/document/primary%3ADocuments%2FRustySpatialMedia"
   }
 }
