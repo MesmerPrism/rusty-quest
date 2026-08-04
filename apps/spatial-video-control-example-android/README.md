@@ -1,7 +1,14 @@
-# Rusty Quest Spatial Video Control Example
+# Rusty Spatial Video Player
 
-This additive public example shows the narrow `trusted_local_http_v1` control
-surface for a Meta Spatial SDK video player. The controller is a packaged,
+This public Meta Spatial SDK player reads validated wearer-owned videos from a
+dedicated `RustySpatialMedia` folder and registers a control surface with the
+standalone Rusty Connection Hub. A browser that is already connected to the Hub
+sees the player surface when the app starts and returns to the Hub unchanged
+when the app exits. High-rate media stays on the headset and never crosses the
+Hub WebSocket.
+
+The older, app-local `trusted_local_http_v1` control surface remains available
+as an explicitly enabled compatibility lab. Its controller is a packaged,
 same-origin web page intended for Safari or another modern browser on the same
 trusted LAN or private hotspot. The protocol authenticates a short local
 session; plain HTTP/WebSocket provides **no confidentiality**.
@@ -27,6 +34,41 @@ Open LAN is intentionally **not secure**: it has neither authentication nor
 confidentiality. The first network peer to request control receives Manifold's
 one bounded controller lease; other peers are rejected until expiry or visible
 on-headset revoke. The browser and headset label this mode explicitly.
+
+## User video folder
+
+On first run, select the exact `Documents/RustySpatialMedia` folder in the
+Android folder picker. The app supplies that exact directory as Android's
+initial-location hint, persists only the wearer-confirmed narrow grant, and,
+when write access is available, creates only this fixed taxonomy:
+
+```text
+RustySpatialMedia/
+  plain-videos/
+    flat/{mono,side-by-side-left-right,top-bottom}/
+    equirect-180/{mono,side-by-side-left-right,top-bottom}/
+    equirect-360/{mono,side-by-side-left-right,top-bottom}/
+```
+
+Copy `.mp4` files into the directory matching their actual projection and
+packing, then press **Reload** or relaunch the player. Directory placement is
+not sufficient by itself: the app verifies container dimensions, zero rotation,
+duration, MIME type, and a decoded sample. Contradictory or unreadable files are
+rejected. Top/bottom means top is left eye; side-by-side means left half is left
+eye. The app requests no broad storage permission and never copies video bytes.
+
+The complete friend/operator procedure is in
+[`../../docs/SPATIAL_VIDEO_PLAYER.md`](../../docs/SPATIAL_VIDEO_PLAYER.md).
+
+## Connection Hub surface
+
+Install Rusty Connection Hub first and enable either paired mode or the
+explicitly unsafe plaintext trusted-LAN option. Connect the browser once. When
+this player launches it registers `surface.spatial_video_control.media`; the Hub
+page immediately shows selected title, geometry, source kind, play state, and
+Previous/Play/Pause/Next controls. Closing or switching away from the player
+removes only its surface. The Hub listener and browser WebSocket stay alive and
+another compatible app can replace the surface without reconnecting.
 
 ## Authority and effect boundary
 

@@ -1,7 +1,7 @@
-# Spatial Video Control Example Agent Notes
+# Rusty Spatial Video Player Agent Notes
 
-This subtree is the complete source boundary for the public
-`trusted_local_http_v1` Spatial SDK example. Do not register it in another
+This subtree is the complete source boundary for the public Rusty Spatial Video
+Player and its legacy `trusted_local_http_v1` Spatial SDK example. Do not register it in another
 Quest app, change repository-root Gradle files, or borrow source from Spatial
 Camera Panel.
 
@@ -36,6 +36,26 @@ slots discover no arbitrary file, path, or URL and must never enter release
 catalogs or source control. The 4096x4096 HEVC60 slot is a dormant qualification
 profile, not a claim that an uninspected file matches its expected codec or
 frame rate.
+
+Release builds may additionally discover at most eleven wearer-owned videos
+through one persisted Android Storage Access Framework grant to the exact
+`RustySpatialMedia` folder. Discovery is confined to
+`plain-videos/<flat|equirect-180|equirect-360>/<mono|side-by-side-left-right|top-bottom>/`.
+Folder position declares operator intent, while container metadata and a
+decoded sample independently validate dimensions, rotation, duration, and
+per-eye geometry. Reject contradictions and unknown directories. Never infer
+projection/stereo from filenames, request broad storage/media permission, copy
+video bytes, scan outside the selected tree, or expose a content URI/path to a
+browser. A catalog refresh may restart only this Activity so immutable Spatial
+panel registrations can be rebuilt; it must not restart Connection Hub.
+
+The process-independent Connection Hub surface is the preferred remote-control
+route. Its contract is content-bound by
+`contracts/connection-hub-media-surface.v1.json`; it carries only bounded
+catalog/effective-state projection and four empty-argument commands. The Hub
+owns pairing, plaintext trusted-LAN opt-in, WebSocket continuity, leases, replay,
+and surface handoff. This player owns only media discovery, decode/render, and
+observed application effects. High-rate media bytes never enter Hub messages.
 
 The debug provider is the sole exception to the general ADB exclusion: it lives
 only under `app/src/debug`, requires `android.permission.DUMP`, verifies UID

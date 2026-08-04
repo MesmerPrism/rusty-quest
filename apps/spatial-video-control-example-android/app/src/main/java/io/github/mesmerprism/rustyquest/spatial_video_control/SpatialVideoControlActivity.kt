@@ -1,8 +1,11 @@
 package io.github.mesmerprism.rustyquest.spatial_video_control
 
 import android.graphics.Color as AndroidColor
+import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
 import android.os.SystemClock
+import android.provider.DocumentsContract
 import android.view.InputDevice
 import android.view.KeyEvent
 import android.view.MotionEvent
@@ -16,7 +19,9 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.HorizontalDivider
@@ -89,21 +94,13 @@ private data class ControlPanelPose(
  */
 @OptIn(SpatialSDKExperimentalAPI::class)
 open class SpatialVideoControlActivity : AppSystemActivity(), DebugShellControlTarget {
-  private val panelDescriptorCatalog =
-      VideoCatalog(
-          VideoCatalog.bundledSynthetic().videos() +
-              VideoCatalog.debugExternalTestSlots().videos()
-      )
-  private val videoPanelCoordinator =
-      SpatialVideoPanelCoordinator(panelDescriptorCatalog) { videoId, surface ->
-        if (::player.isInitialized) {
-          player.attachVideoSurface(videoId, surface)
-        }
-      }
+  private lateinit var panelDescriptorCatalog: VideoCatalog
+  private lateinit var videoPanelCoordinator: SpatialVideoPanelCoordinator
   private lateinit var videoCatalog: VideoCatalog
   private lateinit var player: Media3SpatialPlayerAdapter
   private var control: AndroidTrustedLocalControlAdapter? = null
   private var hubSurface: ConnectionHubSurfaceClient? = null
+  private var libraryState by mutableStateOf(SharedPlainVideoLibrary.emptySnapshot())
   private var controllerState by mutableStateOf(HeadsetControllerState())
   private var bindCandidate by
       mutableStateOf(PrivateAddressSelector.Candidate.unavailable())
@@ -114,6 +111,7 @@ open class SpatialVideoControlActivity : AppSystemActivity(), DebugShellControlT
   private var nextControllerStateRefreshMs = 0L
   private var nextBindCandidateRefreshMs = 0L
   private var operatorForeground = false
+  private var initialFolderPromptLaunched = false
   private var lastSpatialRightPrimarySource: String? = null
   private val rightControllerPanelToggle =
       RightControllerPanelToggleArbiter(
@@ -136,9 +134,16 @@ open class SpatialVideoControlActivity : AppSystemActivity(), DebugShellControlT
       )
 
   override fun onCreate(savedInstanceState: Bundle?) {
+    videoCatalog = availableVideoCatalog()
+    panelDescriptorCatalog = videoCatalog
+    videoPanelCoordinator =
+        SpatialVideoPanelCoordinator(panelDescriptorCatalog) { videoId, surface ->
+          if (::player.isInitialized) {
+            player.attachVideoSurface(videoId, surface)
+          }
+        }
     super.onCreate(savedInstanceState)
     check(!BuildConfig.TRUSTED_LOCAL_HTTP_ENABLED_DEFAULT)
-    videoCatalog = availableVideoCatalog()
     player =
         Media3SpatialPlayerAdapter(this, videoCatalog) { videoId ->
           videoPanelCoordinator.select(videoId)
@@ -153,6 +158,31 @@ open class SpatialVideoControlActivity : AppSystemActivity(), DebugShellControlT
       DebugShellControlBridge.attach(this)
     }
     refreshPrivateAddressCandidate()
+    logLibrarySnapshot("activity-created")
+  }
+
+  override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+    super.onActivityResult(requestCode, resultCode, data)
+    if (requestCode != USER_MEDIA_TREE_REQUEST || resultCode != RESULT_OK) return
+    val treeUri = data?.data ?: return
+    libraryState =
+        runCatching {
+              SharedPlainVideoLibrary.adoptTreeUri(
+                  this,
+                  treeUri,
+                  data.flags,
+              )
+            }
+            .getOrElse { error ->
+              android.util.Log.w(
+                  PANEL_LOG_TAG,
+                  "channel=rusty-spatial-video-library status=folder-rejected " +
+                      "reason=${error.javaClass.simpleName}",
+              )
+              SharedPlainVideoLibrary.emptySnapshot("select-exact-RustySpatialMedia-folder")
+            }
+    logLibrarySnapshot("folder-result")
+    if (libraryState.accessible) recreate()
   }
 
   override fun onSceneReady() {
@@ -204,6 +234,10 @@ open class SpatialVideoControlActivity : AppSystemActivity(), DebugShellControlT
     refreshPrivateAddressCandidate()
     control?.setWearerForeground(true)
     control?.refreshVisibleState()
+    if (!libraryState.configured && !initialFolderPromptLaunched) {
+      initialFolderPromptLaunched = true
+      window.decorView.postDelayed(::chooseUserMediaFolder, INITIAL_FOLDER_PROMPT_DELAY_MS)
+    }
   }
 
   override fun onSceneTick() {
@@ -399,21 +433,65 @@ open class SpatialVideoControlActivity : AppSystemActivity(), DebugShellControlT
             verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
           Text(
-              "Local browser control",
+              "Rusty Spatial Video Player",
               style = MaterialTheme.typography.headlineSmall,
               fontWeight = FontWeight.Bold,
           )
           Text(
-              "Right controller A hides this panel; A again recenters it.",
+              "Connection Hub discovers this player automatically. Right A hides or recenters.",
               style = MaterialTheme.typography.bodyMedium,
               color = PanelMuted,
           )
         }
         HorizontalDivider(color = PanelBorder)
         Column(
-            modifier = Modifier.fillMaxSize().padding(24.dp),
+            modifier =
+                Modifier.fillMaxSize()
+                    .verticalScroll(rememberScrollState())
+                    .padding(24.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
+          Surface(
+              modifier = Modifier.fillMaxWidth().border(1.dp, PanelBorder, RoundedCornerShape(8.dp)),
+              shape = RoundedCornerShape(8.dp),
+              color = PanelSurface,
+              contentColor = PanelInk,
+          ) {
+            Column(
+                modifier = Modifier.fillMaxWidth().padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+              Text("User video folder", style = MaterialTheme.typography.titleMedium)
+              Text(
+                  "${libraryState.folderLabel}: ${libraryState.status}; " +
+                      "${libraryState.acceptedItems.size} accepted, " +
+                      "${libraryState.rejectedCount} rejected",
+                  style = MaterialTheme.typography.bodyMedium,
+                  color = if (libraryState.acceptedItems.isNotEmpty()) PanelAccent else PanelMuted,
+              )
+              Text(
+                  "plain-videos/<flat|equirect-180|equirect-360>/" +
+                      "<mono|side-by-side-left-right|top-bottom>",
+                  style = MaterialTheme.typography.bodySmall,
+                  color = PanelMuted,
+              )
+              Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Button(onClick = ::chooseUserMediaFolder) { Text("Choose folder") }
+                Button(
+                    enabled = libraryState.configured,
+                    onClick = ::reloadUserMediaCatalog,
+                ) {
+                  Text("Reload")
+                }
+                Button(
+                    enabled = libraryState.configured,
+                    onClick = ::clearUserMediaFolder,
+                ) {
+                  Text("Forget")
+                }
+              }
+            }
+          }
           Surface(
               modifier = Modifier.fillMaxWidth().border(1.dp, PanelBorder, RoundedCornerShape(8.dp)),
               shape = RoundedCornerShape(8.dp),
@@ -689,19 +767,62 @@ open class SpatialVideoControlActivity : AppSystemActivity(), DebugShellControlT
   }
 
   private fun availableVideoCatalog(): VideoCatalog {
-    val available = ArrayList(VideoCatalog.bundledSynthetic().videos())
+    libraryState = SharedPlainVideoLibrary.snapshot(this)
+    val available = ArrayList<VideoCatalog.Video>()
+    available.add(VideoCatalog.bundledSynthetic().videos().first())
+    available.addAll(libraryState.acceptedItems)
     if (BuildConfig.DEBUG) {
       val root = getExternalFilesDir(Media3SpatialPlayerAdapter.DEBUG_MEDIA_DIRECTORY)
       if (root != null) {
         VideoCatalog.debugExternalTestSlots().videos().forEach { video ->
           val source = File(root, "${video.resourceName()}.mp4")
-          if (source.isFile && source.length() > 0) {
+          if (source.isFile && source.length() > 0 && available.size < 16) {
             available.add(video)
           }
         }
       }
     }
     return VideoCatalog(available)
+  }
+
+  private fun chooseUserMediaFolder() {
+    val intent =
+        Intent(Intent.ACTION_OPEN_DOCUMENT_TREE)
+            .putExtra(
+                DocumentsContract.EXTRA_INITIAL_URI,
+                Uri.parse(USER_MEDIA_INITIAL_URI),
+            )
+            .addFlags(
+                Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                    Intent.FLAG_GRANT_WRITE_URI_PERMISSION or
+                    Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION or
+                    Intent.FLAG_GRANT_PREFIX_URI_PERMISSION
+            )
+    startActivityForResult(intent, USER_MEDIA_TREE_REQUEST)
+  }
+
+  private fun reloadUserMediaCatalog() {
+    libraryState = SharedPlainVideoLibrary.snapshot(this)
+    logLibrarySnapshot("wearer-reload")
+    recreate()
+  }
+
+  private fun clearUserMediaFolder() {
+    SharedPlainVideoLibrary.clear(this)
+    libraryState = SharedPlainVideoLibrary.emptySnapshot()
+    logLibrarySnapshot("wearer-forget")
+    recreate()
+  }
+
+  private fun logLibrarySnapshot(reason: String) {
+    android.util.Log.i(
+        PANEL_LOG_TAG,
+        "channel=rusty-spatial-video-library status=${libraryState.status} reason=$reason " +
+            "configured=${libraryState.configured} accessible=${libraryState.accessible} " +
+            "writable=${libraryState.writable} taxonomyReady=${libraryState.taxonomyReady} " +
+            "acceptedCount=${libraryState.acceptedItems.size} " +
+            "rejectedCount=${libraryState.rejectedCount} probedCount=${libraryState.probedCount}",
+    )
   }
 
   /** Known-facing fallback from the Rusty Quest one-sided Spatial UI-panel convention. */
@@ -717,5 +838,9 @@ open class SpatialVideoControlActivity : AppSystemActivity(), DebugShellControlT
     const val CONTROL_PANEL_GRAB_MIN_HEIGHT_METERS = 0.55f
     const val CONTROL_PANEL_GRAB_MAX_HEIGHT_METERS = 2.50f
     const val VIDEO_ANCHOR_FALLBACK_Y_METERS = 1.60f
+    const val USER_MEDIA_TREE_REQUEST = 7301
+    const val INITIAL_FOLDER_PROMPT_DELAY_MS = 750L
+    const val USER_MEDIA_INITIAL_URI =
+        "content://com.android.externalstorage.documents/document/primary%3ADocuments%2FRustySpatialMedia"
   }
 }

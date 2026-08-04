@@ -73,6 +73,59 @@ function Get-FileSha256Hex {
     }
 }
 
+function Read-ValidatedSpatialVideoHubContract {
+    param([Parameter(Mandatory=$true)][string]$RepoRoot)
+
+    $path = Join-Path $RepoRoot "apps\spatial-video-control-example-android\contracts\connection-hub-media-surface.v1.json"
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+        throw "Spatial video Connection Hub surface contract does not exist: $path"
+    }
+    $contract = Get-Content -Raw -LiteralPath $path | ConvertFrom-Json
+    $expectedCommands = @(
+        [ordered]@{ command = "command.spatial_video_control.pause"; required_controller_capability = "capability.spatial_video_control.pause" },
+        [ordered]@{ command = "command.spatial_video_control.play"; required_controller_capability = "capability.spatial_video_control.play" },
+        [ordered]@{ command = "command.spatial_video_control.select_next"; required_controller_capability = "capability.spatial_video_control.select_next" },
+        [ordered]@{ command = "command.spatial_video_control.select_previous"; required_controller_capability = "capability.spatial_video_control.select_previous" }
+    )
+    if ([string]$contract.'$schema' -cne "rusty.quest.connection_hub.media_surface_contract.v1" -or
+        [string]$contract.provider_id -cne "provider.quest.spatial-video-control-example" -or
+        [string]$contract.surface_id -cne "surface.spatial_video_control.media" -or
+        [string]$contract.typed_params_schema -cne "rusty.manifold.connection_hub.typed_params.empty.v1" -or
+        @($contract.commands).Count -ne $expectedCommands.Count) {
+        throw "Spatial video Connection Hub surface contract changed outside its closed reviewed boundary."
+    }
+
+    $canonical = "v1`n$($contract.surface_id)`n$($contract.display_label)`n$($contract.description)`n"
+    $commands = @()
+    for ($index = 0; $index -lt $expectedCommands.Count; $index += 1) {
+        $actual = @($contract.commands)[$index]
+        $expected = $expectedCommands[$index]
+        if ([string]$actual.command -cne [string]$expected.command -or
+            [string]$actual.required_controller_capability -cne [string]$expected.required_controller_capability -or
+            [string]::IsNullOrWhiteSpace([string]$actual.display_label)) {
+            throw "Spatial video Connection Hub surface command $index is not the exact reviewed command."
+        }
+        $canonical += "$($actual.command)|$($actual.display_label)|$($actual.required_controller_capability)`n"
+        $commands += [ordered]@{
+            command_id = [string]$actual.command
+            typed_params_schema_id = "rusty.manifold.connection_hub.typed_params.empty.v1"
+            typed_params_schema_sha256 = "sha256:7eedc1ccca80b83dbd121d1e4bae4f6a6c9c1561e1a08d6d5919c668d5406a51"
+            required_controller_capability = [string]$actual.required_controller_capability
+        }
+    }
+    $canonicalSha256 = "sha256:" + [Convert]::ToHexString(
+        [Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($canonical))
+    ).ToLowerInvariant()
+    if ([string]$contract.canonical_contract_sha256 -cne $canonicalSha256) {
+        throw "Spatial video Connection Hub surface contract canonical hash is invalid."
+    }
+    return [pscustomobject]@{
+        path = (Resolve-Path -LiteralPath $path).Path
+        canonical_sha256 = $canonicalSha256
+        commands = $commands
+    }
+}
+
 function Resolve-ProductInputPath {
     param(
         [Parameter(Mandatory=$true)][string]$Path,
@@ -568,12 +621,8 @@ if ($connectionHubSelected) {
     $sampleProviderInput = @($clientLockInputs | Where-Object {
         [string]$_.grant_id -eq "grant.quest.connection-hub-sample"
     })[0].input
-    $connectionHubCommands = @(
-        [ordered]@{ command_id = "command.spatial_video_control.pause"; typed_params_schema_id = "rusty.manifold.connection_hub.typed_params.empty.v1"; typed_params_schema_sha256 = "sha256:7eedc1ccca80b83dbd121d1e4bae4f6a6c9c1561e1a08d6d5919c668d5406a51"; required_controller_capability = "capability.spatial_video_control.pause" },
-        [ordered]@{ command_id = "command.spatial_video_control.play"; typed_params_schema_id = "rusty.manifold.connection_hub.typed_params.empty.v1"; typed_params_schema_sha256 = "sha256:7eedc1ccca80b83dbd121d1e4bae4f6a6c9c1561e1a08d6d5919c668d5406a51"; required_controller_capability = "capability.spatial_video_control.play" },
-        [ordered]@{ command_id = "command.spatial_video_control.select_next"; typed_params_schema_id = "rusty.manifold.connection_hub.typed_params.empty.v1"; typed_params_schema_sha256 = "sha256:7eedc1ccca80b83dbd121d1e4bae4f6a6c9c1561e1a08d6d5919c668d5406a51"; required_controller_capability = "capability.spatial_video_control.select_next" },
-        [ordered]@{ command_id = "command.spatial_video_control.select_previous"; typed_params_schema_id = "rusty.manifold.connection_hub.typed_params.empty.v1"; typed_params_schema_sha256 = "sha256:7eedc1ccca80b83dbd121d1e4bae4f6a6c9c1561e1a08d6d5919c668d5406a51"; required_controller_capability = "capability.spatial_video_control.select_previous" }
-    )
+    $spatialVideoHubContract = Read-ValidatedSpatialVideoHubContract -RepoRoot $repoRoot
+    $connectionHubCommands = @($spatialVideoHubContract.commands)
     $connectionHubNativeConfig = [ordered]@{
         '$schema' = "rusty.quest.connection_hub.native_config.v1"
         product_id = [string]$productInputs.product_id
@@ -620,7 +669,7 @@ if ($connectionHubSelected) {
                     client_id = [string]$spatialProviderInput.lock.client_id
                     client_lock_id = [string]$spatialProviderInput.lock.feature_lock_id
                     client_lock_sha256 = "sha256:$([string]$spatialProviderInput.sha256)"
-                    surface_contract_sha256 = "sha256:099dab2723521655df0617b22a14f3a8021ecf75fc952587d619b944e8019e60"
+                    surface_contract_sha256 = [string]$spatialVideoHubContract.canonical_sha256
                     allowed_commands = $connectionHubCommands
                 }
             )

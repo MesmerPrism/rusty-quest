@@ -7,6 +7,10 @@ plugins {
   alias(libs.plugins.meta.spatial.plugin)
 }
 
+System.getenv("RUSTY_QUEST_SPATIAL_VIDEO_CONTROL_BUILD_ROOT")
+    ?.takeIf { it.isNotBlank() }
+    ?.let { layout.buildDirectory.set(file(it).resolve("app")) }
+
 val generatedMediaRoot = layout.buildDirectory.dir("generated/synthetic-media/res")
 val generatedNativeRoot = layout.buildDirectory.dir("generated/native-jniLibs")
 val mediaSourceRoot = layout.projectDirectory.dir("src/main/media-source")
@@ -21,6 +25,13 @@ val syntheticMediaNames =
         "synthetic_360_sbs_lr_1s",
         "synthetic_360_top_bottom_1s",
     )
+val labsReleaseKeystore =
+    System.getenv("RUSTY_SPATIAL_VIDEO_RELEASE_KEYSTORE")?.takeIf { it.isNotBlank() }
+val labsVersionCode =
+    System.getenv("RUSTY_SPATIAL_VIDEO_VERSION_CODE")?.toIntOrNull() ?: 2
+val labsVersionName =
+    System.getenv("RUSTY_SPATIAL_VIDEO_VERSION_NAME")?.takeIf { it.isNotBlank() }
+        ?: "0.2.0-alpha.1"
 
 val testConnectionHubDebugSurfaceSource by tasks.registering {
   group = "verification"
@@ -140,8 +151,8 @@ android {
     applicationId = "io.github.mesmerprism.rustyquest.spatial_video_control_example"
     minSdk = 34
     targetSdk = 34
-    versionCode = 1
-    versionName = "0.1.0"
+    versionCode = labsVersionCode
+    versionName = labsVersionName
     buildConfigField("boolean", "TRUSTED_LOCAL_HTTP_ENABLED_DEFAULT", "false")
   }
 
@@ -152,6 +163,23 @@ android {
         storePassword = "android"
         keyAlias = "androiddebugkey"
         keyPassword = "android"
+      }
+    }
+    labsReleaseKeystore?.let { path ->
+      create("labsRelease") {
+        storeFile = file(path)
+        storePassword = "android"
+        keyAlias = "androiddebugkey"
+        keyPassword = "android"
+      }
+    }
+  }
+
+  buildTypes {
+    getByName("release") {
+      isMinifyEnabled = false
+      if (labsReleaseKeystore != null) {
+        signingConfig = signingConfigs.getByName("labsRelease")
       }
     }
   }

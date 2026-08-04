@@ -45,6 +45,24 @@ and autonomous Quest validation are documented in
 `docs/CONNECTION_HUB_OPERATOR.md`. The release build excludes the shell-only
 debug operator used by the device evidence suite.
 
+Connection Hub `0.1.0-alpha.4` adds the reviewed provider grant for Rusty
+Spatial Video Player `0.2.0-alpha.1`. Its build derives the provider's exact
+surface hash and four empty-argument commands from
+`apps/spatial-video-control-example-android/contracts/connection-hub-media-surface.v1.json`;
+any metadata or command drift fails the Hub build instead of broadening
+admission. The player can therefore come and go while a paired WebSocket stays
+connected, but it cannot register arbitrary commands or transfer media bytes,
+paths, or document URIs through the Hub.
+
+The encrypted restart envelope also binds the exact packaged Hub policy.
+Installing a release whose reviewed provider grants changed intentionally
+invalidates an older envelope, stops the listener, and discards the old
+controller projections. Open the Hub and pair once again after such an update;
+the app never carries stale provider authority into the new release.
+The Binder service establishes that authority before issuing the first provider
+token, so a compatible player may also be the first app launched after a cold
+start or policy-changing update.
+
 ## Release build
 
 `tools/Build-ConnectionHubLabsRelease.ps1` requires clean exact Rusty Quest and

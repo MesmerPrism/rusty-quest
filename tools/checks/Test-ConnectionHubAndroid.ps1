@@ -39,6 +39,11 @@ foreach ($path in $required) { if (-not (Test-Path -LiteralPath $path -PathType 
 
 $service = Get-Content -Raw -LiteralPath (Join-Path $javaRoot "ConnectionHubStartService.java")
 $activity = Get-Content -Raw -LiteralPath (Join-Path $javaRoot "ConnectionHubStartActivity.java")
+if ($activity -notmatch 'new ScrollView\(this\)' -or
+    $activity -notmatch 'scroll\.setFillViewport\(true\)' -or
+    $activity -notmatch 'scroll\.addView\(layout\)') {
+    throw 'Connection Hub management controls must remain inside a scrollable viewport.'
+}
 $binder = Get-Content -Raw -LiteralPath (Join-Path $javaRoot "ConnectionHubAdmissionService.java")
 $stateStore = Get-Content -Raw -LiteralPath (Join-Path $javaRoot "AndroidConnectionHubStateStore.java")
 $server = Get-Content -Raw -LiteralPath (Join-Path $javaRoot "ConnectionHubHttpServer.java")
@@ -55,6 +60,8 @@ $spatialTarget = Get-Content -Raw -LiteralPath (Join-Path $spatial "app\src\main
 $spatialActivity = Get-Content -Raw -LiteralPath (Join-Path $spatial "app\src\main\java\io\github\mesmerprism\rustyquest\spatial_video_control\SpatialVideoControlActivity.kt")
 $buildScript = Get-Content -Raw -LiteralPath (Join-Path $RepoRoot "tools\Build-ManifoldBrokerAndroid.ps1")
 $releaseScript = Get-Content -Raw -LiteralPath (Join-Path $RepoRoot "tools\Build-ConnectionHubLabsRelease.ps1")
+$spatialContractPath = Join-Path $spatial "contracts\connection-hub-media-surface.v1.json"
+$spatialContract = Get-Content -Raw -LiteralPath $spatialContractPath | ConvertFrom-Json
 $productSource = Get-Content -Raw -LiteralPath (Join-Path $RepoRoot "crates\rusty-quest-broker-product\src\lib.rs")
 $nativeLock = Get-Content -Raw -LiteralPath (Join-Path $app "native\manifold-source.lock.json")
 $nativeHubRoot = Join-Path $app "connection-hub-native"
@@ -70,6 +77,11 @@ if ($activity -match 'LocalManifoldBrokerServer\.get\(\)\.start' -or $activity -
 if ($service -notmatch 'START_STICKY' -or $service -notmatch 'ConnectionHubProcess' -or $service -notmatch 'ACTION_STOP_HUB') { throw "Foreground service does not own persistent Hub lifecycle." }
 if ($binder -notmatch 'message\.sendingUid' -or $binder -notmatch 'GET_SIGNING_CERTIFICATES' -or $binder -notmatch 'MESSAGE_REGISTER_SURFACE') { throw "Binder provider API does not derive platform identity." }
 if ($binder -match 'data\.getString\("admitted_client_evidence_json"') { throw "Binder accepts caller-supplied admission evidence." }
+$binderRuntimeIndex = $binder.IndexOf('ManifoldRuntimeAuthorityBridge.initialize();', [StringComparison]::Ordinal)
+$binderHubIndex = $binder.IndexOf('ConnectionHubProcess.get(this);', [StringComparison]::Ordinal)
+if ($binderRuntimeIndex -lt 0 -or $binderHubIndex -lt 0 -or $binderRuntimeIndex -ge $binderHubIndex) {
+    throw "Binder service does not establish the Hub admission floor before provider token mutations."
+}
 if ($binder -notmatch 'activeHubProviders' -or
     $binder -notmatch 'registrationCommitted\.compareAndSet\(true, false\)' -or
     $binder -notmatch 'unregisterProvider\(' -or
@@ -141,7 +153,11 @@ if ($nativeLock -notmatch 'd9d060f8c67199135a4c3e0a699ca408f6c64095' -or
     $buildScript -notmatch 'Connection Hub native dependency path does not equal the validated Manifold source root' -or
     $nativeHub -notmatch '\.owner\(\)' -or
     $nativeHub -notmatch 'EMPTY_TYPED_PARAMS_SCHEMA_SHA256' -or
-    $nativeHub -notmatch 'authority_epoch') {
+    $nativeHub -notmatch 'authority_epoch' -or
+    $nativeHub -notmatch '"policy": retained\.config\.policy' -or
+    $nativeHub -notmatch 'restart product or policy substitution rejected' -or
+    $nativeHub -notmatch 'provider_admission_diagnostic' -or
+    $nativeHub -notmatch 'authorize_use_not_newer_than_floor') {
     throw "Connection Hub JNI is not bound to the sealed v3 Manifold owner/epoch/typed-schema authority."
 }
 if (Test-Path -LiteralPath (Join-Path $javaRoot "UnavailableManifoldConnectionHubAuthority.java")) { throw "Fail-closed development authority stub remains in product source." }
@@ -149,6 +165,12 @@ if ($buildScript -notmatch '\$connectionHubSelected' -or $buildScript -notmatch 
 if ($buildScript -notmatch 'connection-hub-typed-params-empty\.schema\.json' -or
     $buildScript -notmatch '7eedc1ccca80b83dbd121d1e4bae4f6a6c9c1561e1a08d6d5919c668d5406a51') {
     throw "Build does not package and bind the exact empty typed-parameter schema bytes."
+}
+if ([string]$spatialContract.canonical_contract_sha256 -cne 'sha256:6cc91c34f46b4da96de9a5f817cdb7ee371e5ebbc7789b39bc53700e211725b1' -or
+    $buildScript -notmatch 'Read-ValidatedSpatialVideoHubContract' -or
+    $buildScript -match '099dab2723521655df0617b22a14f3a8021ecf75fc952587d619b944e8019e60' -or
+    $buildScript -notmatch '\$spatialVideoHubContract\.canonical_sha256') {
+    throw "Hub packaging does not derive the exact reviewed spatial-player surface grant from its source contract."
 }
 if ((Get-FileHash -LiteralPath $vectors -Algorithm SHA256).Hash.ToLowerInvariant() -ne
         'fa00d34511b2ee5576eebdd815e58ae032e37b10c209e41289cfd876c78c9c78' -or
