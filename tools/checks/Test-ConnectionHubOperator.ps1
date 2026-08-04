@@ -83,6 +83,9 @@ Require ($cli.Contains('[void]$process.WaitForExit(12000)')) "Pairing secret tra
 Require ($cli.Contains('function Test-JsonContainsUnredactedHostessSecret') -and
     $cli.Contains("'^(?i:pairing_code|bearer_token|session_bearer)$'") -and
     $cli.Contains("'^(?i:pairing_code|bearer_token|session_bearer)_in_receipt$'") -and
+    $cli.Contains('Hostess JSON exceeded the maximum inspection depth') -and
+    $cli.Contains('Hostess output contained a non-JSON runtime value') -and
+    $cli.Contains('Synthetic Hostess secret inspection accepted a cyclic runtime object') -and
     -not $cli.Contains('$result.output -match')) "Hostess secret inspection must be parsed-field aware rather than raw-text based."
 Require ($cli.Contains('function Invoke-HostessCheckedRaw') -and
     $cli.Contains('Invoke-CapturedTimed $script:Python') -and
@@ -131,7 +134,14 @@ Require ($cli.Contains('receipt operation/provider/status multiset is not exact'
     $cli.Contains('"hub-real-service|android-foreground-service|passed"') -and
     ([regex]::Matches($cli, '"wait-surface\|rusty-hostess\|passed", "wait-surface\|rusty-hostess\|passed"').Count -ge 3)) "Stage closure does not bind exact service and dual surface-oracle multiplicity."
 Require ($cli.Contains('Revoke-RunOwnedSessionIfPresent') -and
-    $cli.Contains('session_file = [System.IO.Path]::GetFullPath($SessionFile)')) "Interrupted pairing cleanup does not bind and revoke the run-owned session."
+    $cli.Contains('session_file = [System.IO.Path]::GetFullPath($SessionFile)') -and
+    $cli.Contains('expired-session-negative-proof') -and
+    $cli.Contains('failure_reclassified_only_after_credential_closure') -and
+    $cli.Contains('Hostess authentication was rejected before locally recorded session expiry') -and
+    $cli.Contains('capture_process_absence_observed=$true')) "Interrupted pairing/log cleanup does not bind and close the run-owned resources."
+Require ($cli.Contains('$closedHistoricalFailureSha256') -and
+    $cli.Contains('historical_failure_closed=[bool]$historicalFailureClosed') -and
+    $cli.Contains('historical_failed_receipts_closed=$closedHistoricalFailureSha256.Count')) "Cleanup manifests do not preserve and explicitly close historical failed receipts."
 Require ($cli.Contains('Initialize-Checkpoint') -and $cli.Contains('Resume checkpoint artifact digest mismatch')) "Resume checkpoint identity binding is incomplete."
 Require ($cli.Contains('ProviderLifetimeSeconds') -and $cli.Contains('Wait-Surface "surface.spatial_video_control.media" $false')) "Sequential provider/lifetime oracle is incomplete."
 Require ($cli.Contains('Invoke-HostessCheckedRaw "wait-surface" @(') -and

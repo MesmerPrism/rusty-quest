@@ -1291,9 +1291,66 @@ function Restore-PreState($Artifacts) {
     return $receipt
 }
 
+function Close-ExpiredHostessRevokeFailureReceipt {
+    if (Test-Path -LiteralPath $SessionFile -PathType Leaf) {
+        throw "Hostess revoke failure cannot be reclassified while credentials remain."
+    }
+    $ordinal = 0
+    foreach ($failureFile in Get-ChildItem -LiteralPath $script:RunDir -File -Filter "hostess-revoke-failure*.json") {
+        $failure = Get-Content -Raw -LiteralPath $failureFile.FullName | ConvertFrom-Json -DateKind String
+        if ([string]$failure.status -ne "failed") { continue }
+        if ([string]$failure.'$schema' -ne $ReceiptSchema -or
+                [string]$failure.operation -ne "hostess-revoke" -or
+                [string]$failure.provider -ne "rusty-hostess" -or
+                [string]$failure.details.reason -ne "socket_authentication_rejected") {
+            throw "Hostess revoke failure was not the exact expired-session negative proof."
+        }
+        $ordinal += 1
+        $priorSha256 = Get-Sha256 $failureFile.FullName
+        [void](Save-Receipt "hostess-revoke-negative-proof-closure-$ordinal" (New-Receipt "hostess-revoke" "expired-session-negative-proof" "diagnostic_only" ([ordered]@{
+            original_failed_receipt_sha256=$priorSha256
+            server_authentication_rejected=$true
+            credentials_absent_after_expiry=$true
+            failure_reclassified_only_after_credential_closure=$true
+            pairing_secret_in_receipt=$false
+            bearer_token_in_receipt=$false
+        })))
+    }
+}
+
 function Revoke-RunOwnedSessionIfPresent([string]$ReceiptName) {
     if (Test-Path -LiteralPath $SessionFile -PathType Leaf) {
-        return Hostess-Action "revoke"
+        try {
+            return Hostess-Action "revoke"
+        } catch {
+            if (-not $_.Exception.Message.Contains("socket_authentication_rejected", [StringComparison]::Ordinal)) {
+                throw
+            }
+            $document = Get-Content -Raw -LiteralPath $SessionFile | ConvertFrom-Json -DateKind String
+            [DateTimeOffset]$expiresAt = [DateTimeOffset]::MinValue
+            $expiryValid = [string]$document.'$schema' -eq "rusty.hostess.connection_hub_session.v1" -and
+                [DateTimeOffset]::TryParse(
+                    [string]$document.expires_at_utc,
+                    [Globalization.CultureInfo]::InvariantCulture,
+                    [Globalization.DateTimeStyles]::AssumeUniversal,
+                    [ref]$expiresAt)
+            if (-not $expiryValid -or $expiresAt.ToUniversalTime() -gt [DateTimeOffset]::UtcNow) {
+                throw "Hostess authentication was rejected before locally recorded session expiry."
+            }
+            [System.IO.File]::Delete([System.IO.Path]::GetFullPath($SessionFile))
+            if (Test-Path -LiteralPath $SessionFile) { throw "Expired Hostess session credentials were not deleted." }
+            $script:HostessPaired = $false
+            Close-ExpiredHostessRevokeFailureReceipt
+            return Save-Receipt $ReceiptName (New-Receipt "hostess-revoke" "expired-session-negative-proof" "passed" ([ordered]@{
+                server_authentication_rejected=$true
+                locally_recorded_expiry_utc=$expiresAt.ToUniversalTime().ToString("O")
+                expiry_observed_before_deletion=$true
+                credentials_deleted=$true
+                http_revoke_not_required_after_expiry=$true
+                pairing_secret_in_receipt=$false
+                bearer_token_in_receipt=$false
+            }))
+        }
     }
     return Save-Receipt $ReceiptName (New-Receipt "hostess-revoke" "rusty-hostess" "not_required" ([ordered]@{
         session_file_present=$false
@@ -1312,11 +1369,35 @@ function Invoke-StandaloneCleanup($Artifacts) {
             [void](Start-RunLogCapture)
             [void](Stop-RunLogCapture -FailureCleanup)
         } catch {
-            [void]$errors.Add("run_log_capture_cleanup_failed")
+            $saved = $script:Checkpoint.run_log_capture
+            $savedProcess = Get-Process -Id ([int]$saved.pid) -ErrorAction SilentlyContinue
+            $stdoutPath = [System.IO.Path]::GetFullPath([string]$saved.stdout_path)
+            $stderrPath = [System.IO.Path]::GetFullPath([string]$saved.stderr_path)
+            $runPrefix = $script:RunDir.TrimEnd('\') + '\'
+            if ($null -ne $savedProcess -or
+                    -not $stdoutPath.StartsWith($runPrefix, [StringComparison]::OrdinalIgnoreCase) -or
+                    -not $stderrPath.StartsWith($runPrefix, [StringComparison]::OrdinalIgnoreCase)) {
+                [void]$errors.Add("run_log_capture_cleanup_failed")
+            } else {
+                $script:Checkpoint.run_log_capture.active = $false
+                Write-Checkpoint
+                [void](Save-Receipt "run-logs-interrupted" (New-Receipt "run-bounded-logs" "checkpoint-process-absence" "diagnostic_only" ([ordered]@{
+                    interrupted_capture_pid=[int]$saved.pid
+                    capture_process_absence_observed=$true
+                    capture_path_sha256=$(if(Test-Path -LiteralPath $stdoutPath){Get-Sha256 $stdoutPath}else{Get-TextSha256 ""})
+                    capture_size=$(if(Test-Path -LiteralPath $stdoutPath){(Get-Item -LiteralPath $stdoutPath).Length}else{0})
+                    acceptance_claimed=$false
+                    unrelated_process_killed=$false
+                })))
+            }
         }
     }
     try { [void](Revoke-RunOwnedSessionIfPresent "cleanup-hostess-revoke") }
     catch { [void]$errors.Add("hostess_revoke_failed") }
+    if (-not (Test-Path -LiteralPath $SessionFile -PathType Leaf)) {
+        try { Close-ExpiredHostessRevokeFailureReceipt }
+        catch { [void]$errors.Add("hostess_revoke_failure_receipt_closure_failed") }
+    }
     try { [void](Restore-PreState $Artifacts) }
     catch { [void]$errors.Add("pre_state_restore_failed") }
     [void](Save-Receipt "standalone-cleanup" (New-Receipt "standalone-cleanup" "checkpoint-bound-operator" $(if($errors.Count -eq 0){"passed"}else{"partial"}) ([ordered]@{
@@ -1682,17 +1763,30 @@ function Stop-Providers {
     return Save-Receipt "stop-providers" (New-Receipt "stop-providers" "raw-adb-fallback" "passed" $rows)
 }
 
-function Test-JsonContainsUnredactedHostessSecret($Value) {
-    if ($null -eq $Value -or $Value -is [string] -or $Value.GetType().IsPrimitive) {
+function Test-JsonContainsUnredactedHostessSecret($Value, [int]$Depth = 0) {
+    if ($Depth -gt 32) { throw "Hostess JSON exceeded the maximum inspection depth." }
+    if ($null -eq $Value -or $Value -is [string] -or $Value -is [bool] -or
+            $Value -is [byte] -or $Value -is [sbyte] -or
+            $Value -is [short] -or $Value -is [ushort] -or
+            $Value -is [int] -or $Value -is [uint] -or
+            $Value -is [long] -or $Value -is [ulong] -or
+            $Value -is [single] -or $Value -is [double] -or $Value -is [decimal] -or
+            $Value -is [datetime] -or $Value -is [datetimeoffset]) {
         return $false
     }
-    if ($Value -is [System.Collections.IEnumerable] -and $Value -isnot [pscustomobject]) {
+    if ($Value -is [array]) {
+        if ($Value.Count -gt 4096) { throw "Hostess JSON exceeded the maximum array width." }
         foreach ($item in $Value) {
-            if (Test-JsonContainsUnredactedHostessSecret $item) { return $true }
+            if (Test-JsonContainsUnredactedHostessSecret $item ($Depth + 1)) { return $true }
         }
         return $false
     }
-    foreach ($property in $Value.PSObject.Properties) {
+    if ($Value -isnot [pscustomobject]) {
+        throw "Hostess output contained a non-JSON runtime value."
+    }
+    $properties = @($Value.PSObject.Properties)
+    if ($properties.Count -gt 512) { throw "Hostess JSON exceeded the maximum object width." }
+    foreach ($property in $properties) {
         $name = [string]$property.Name
         if ($name -match '^(?i:pairing_code|bearer_token|session_bearer)$') {
             return $true
@@ -1701,7 +1795,7 @@ function Test-JsonContainsUnredactedHostessSecret($Value) {
             if (-not (Test-ExactBoolean $property.Value $false)) { return $true }
             continue
         }
-        if (Test-JsonContainsUnredactedHostessSecret $property.Value) { return $true }
+        if (Test-JsonContainsUnredactedHostessSecret $property.Value ($Depth + 1)) { return $true }
     }
     return $false
 }
@@ -1728,7 +1822,7 @@ function Invoke-HostessCheckedRaw([string]$Verb, [string[]]$Arguments, [string]$
         })))
         throw "Hostess $Verb failed closed: $reason"
     }
-    $json = $result.output | ConvertFrom-Json
+    $json = $result.output | ConvertFrom-Json -DateKind String
     if (Test-JsonContainsUnredactedHostessSecret $json) {
         throw "Hostess output may contain an unredacted secret."
     }
@@ -2129,13 +2223,53 @@ function Test-Prerequisites {
 }
 
 function Write-EvidenceManifest([string]$Result) {
+    $closedHistoricalFailureSha256 = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    $successfulStandaloneCleanupPresent = $false
+    if ($Action -eq "Cleanup" -and $Result -eq "passed") {
+        foreach ($candidatePath in $script:Receipts) {
+            $candidate = Get-Content -Raw -LiteralPath $candidatePath | ConvertFrom-Json -DateKind String
+            $digest = [string]$candidate.details.original_failed_receipt_sha256
+            if ([string]$candidate.'$schema' -eq $ReceiptSchema -and
+                    [string]$candidate.status -eq "diagnostic_only" -and
+                    [string]$candidate.provider -eq "expired-session-negative-proof" -and
+                    (Test-ExactBoolean $candidate.details.failure_reclassified_only_after_credential_closure $true) -and
+                    $digest -match '^[0-9a-f]{64}$') {
+                [void]$closedHistoricalFailureSha256.Add($digest)
+            }
+            if ([string]$candidate.'$schema' -eq $ReceiptSchema -and
+                    [string]$candidate.operation -eq "standalone-cleanup" -and
+                    [string]$candidate.provider -eq "checkpoint-bound-operator" -and
+                    [string]$candidate.status -eq "passed" -and
+                    @($candidate.details.errors).Count -eq 0) {
+                $successfulStandaloneCleanupPresent = $true
+            }
+        }
+    }
     $entries = @($script:Receipts | Sort-Object | ForEach-Object {
-        $receipt = Get-Content -Raw -LiteralPath $_ | ConvertFrom-Json
+        $receipt = Get-Content -Raw -LiteralPath $_ | ConvertFrom-Json -DateKind String
+        $receiptSha256 = Get-Sha256 $_
+        $expiredRevokeFailureClosed = $Action -eq "Cleanup" -and $Result -eq "passed" -and
+            [string]$receipt.operation -eq "hostess-revoke" -and
+            [string]$receipt.provider -eq "rusty-hostess" -and
+            [string]$receipt.status -eq "failed" -and
+            [string]$receipt.details.reason -eq "socket_authentication_rejected" -and
+            $closedHistoricalFailureSha256.Contains($receiptSha256)
+        $partialCleanupClosed = $Action -eq "Cleanup" -and $Result -eq "passed" -and
+            $successfulStandaloneCleanupPresent -and
+            [string]$receipt.operation -eq "standalone-cleanup" -and
+            [string]$receipt.provider -eq "checkpoint-bound-operator" -and
+            [string]$receipt.status -eq "partial"
+        $historicalFailureClosed = $expiredRevokeFailureClosed -or $partialCleanupClosed
         if ($Result -eq "passed" -and ([string]$receipt.'$schema' -ne $ReceiptSchema -or
-                [string]$receipt.status -in @("failed", "partial"))) {
+                ([string]$receipt.status -in @("failed", "partial") -and -not $historicalFailureClosed))) {
             throw "A passed evidence manifest cannot include a failed or untyped receipt."
         }
-        [ordered]@{ name=(Split-Path -Leaf $_); sha256=Get-Sha256 $_; size=(Get-Item $_).Length }
+        [ordered]@{
+            name=(Split-Path -Leaf $_)
+            sha256=$receiptSha256
+            size=(Get-Item $_).Length
+            historical_failure_closed=[bool]$historicalFailureClosed
+        }
     })
     $manifest = [ordered]@{
         '$schema' = $ManifestSchema
@@ -2144,7 +2278,12 @@ function Write-EvidenceManifest([string]$Result) {
         result = $Result
         generated_at_utc = [DateTime]::UtcNow.ToString("o")
         receipts = $entries
-        cleanup = [ordered]@{ target_packages_only=$true; uninstall_performed=[bool]$script:UninstallPerformed; adb_transport_changed=$false }
+        cleanup = [ordered]@{
+            target_packages_only=$true
+            uninstall_performed=[bool]$script:UninstallPerformed
+            adb_transport_changed=$false
+            historical_failed_receipts_closed=$closedHistoricalFailureSha256.Count
+        }
         checkpoint_sha256=$(if(Test-Path -LiteralPath $script:CheckpointPath -PathType Leaf){Get-Sha256 $script:CheckpointPath}else{$null})
         secrets_in_manifest = $false
     }
@@ -2259,6 +2398,17 @@ if (@($script:Checkpoint.completed_stages) -contains "real-hub-start") { $script
 $finalResult = "failed"
 try {
     if ($Action -eq "SimulateE2E") {
+        $safeHostessJson = '{"status":"passed","observed_at_utc":"2026-08-04T09:35:35Z","nested":[{"bearer_token_in_receipt":false}]}' | ConvertFrom-Json -DateKind String
+        $secretHostessJson = '{"status":"passed","nested":{"bearer_token":"must-not-pass"}}' | ConvertFrom-Json
+        if ((Test-JsonContainsUnredactedHostessSecret $safeHostessJson) -or
+                -not (Test-JsonContainsUnredactedHostessSecret $secretHostessJson)) {
+            throw "Synthetic Hostess secret inspection accepted a secret or rejected safe JSON."
+        }
+        $cyclicHostessObject = [pscustomobject]@{}
+        Add-Member -InputObject $cyclicHostessObject -NotePropertyName self -NotePropertyValue $cyclicHostessObject
+        $cycleRejected = $false
+        try { [void](Test-JsonContainsUnredactedHostessSecret $cyclicHostessObject) } catch { $cycleRejected = $true }
+        if (-not $cycleRejected) { throw "Synthetic Hostess secret inspection accepted a cyclic runtime object." }
         $syntheticMarker = "synthetic-window"
         $syntheticEpochs = @([pscustomobject]@{uid=10123;pids=@(4242);package=$HubPackage})
         $syntheticLog = @(
