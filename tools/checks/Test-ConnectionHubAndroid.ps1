@@ -55,6 +55,8 @@ $spatialTarget = Get-Content -Raw -LiteralPath (Join-Path $spatial "app\src\main
 $spatialActivity = Get-Content -Raw -LiteralPath (Join-Path $spatial "app\src\main\java\io\github\mesmerprism\rustyquest\spatial_video_control\SpatialVideoControlActivity.kt")
 $buildScript = Get-Content -Raw -LiteralPath (Join-Path $RepoRoot "tools\Build-ManifoldBrokerAndroid.ps1")
 $releaseScript = Get-Content -Raw -LiteralPath (Join-Path $RepoRoot "tools\Build-ConnectionHubLabsRelease.ps1")
+$spatialContractPath = Join-Path $spatial "contracts\connection-hub-media-surface.v1.json"
+$spatialContract = Get-Content -Raw -LiteralPath $spatialContractPath | ConvertFrom-Json
 $productSource = Get-Content -Raw -LiteralPath (Join-Path $RepoRoot "crates\rusty-quest-broker-product\src\lib.rs")
 $nativeLock = Get-Content -Raw -LiteralPath (Join-Path $app "native\manifold-source.lock.json")
 $nativeHubRoot = Join-Path $app "connection-hub-native"
@@ -149,6 +151,12 @@ if ($buildScript -notmatch '\$connectionHubSelected' -or $buildScript -notmatch 
 if ($buildScript -notmatch 'connection-hub-typed-params-empty\.schema\.json' -or
     $buildScript -notmatch '7eedc1ccca80b83dbd121d1e4bae4f6a6c9c1561e1a08d6d5919c668d5406a51') {
     throw "Build does not package and bind the exact empty typed-parameter schema bytes."
+}
+if ([string]$spatialContract.canonical_contract_sha256 -cne 'sha256:6cc91c34f46b4da96de9a5f817cdb7ee371e5ebbc7789b39bc53700e211725b1' -or
+    $buildScript -notmatch 'Read-ValidatedSpatialVideoHubContract' -or
+    $buildScript -match '099dab2723521655df0617b22a14f3a8021ecf75fc952587d619b944e8019e60' -or
+    $buildScript -notmatch '\$spatialVideoHubContract\.canonical_sha256') {
+    throw "Hub packaging does not derive the exact reviewed spatial-player surface grant from its source contract."
 }
 if ((Get-FileHash -LiteralPath $vectors -Algorithm SHA256).Hash.ToLowerInvariant() -ne
         'fa00d34511b2ee5576eebdd815e58ae032e37b10c209e41289cfd876c78c9c78' -or

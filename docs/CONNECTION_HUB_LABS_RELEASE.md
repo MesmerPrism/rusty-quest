@@ -45,6 +45,15 @@ and autonomous Quest validation are documented in
 `docs/CONNECTION_HUB_OPERATOR.md`. The release build excludes the shell-only
 debug operator used by the device evidence suite.
 
+Connection Hub `0.1.0-alpha.4` adds the reviewed provider grant for Rusty
+Spatial Video Player `0.2.0-alpha.1`. Its build derives the provider's exact
+surface hash and four empty-argument commands from
+`apps/spatial-video-control-example-android/contracts/connection-hub-media-surface.v1.json`;
+any metadata or command drift fails the Hub build instead of broadening
+admission. The player can therefore come and go while a paired WebSocket stays
+connected, but it cannot register arbitrary commands or transfer media bytes,
+paths, or document URIs through the Hub.
+
 ## Release build
 
 `tools/Build-ConnectionHubLabsRelease.ps1` requires clean exact Rusty Quest and
