@@ -169,7 +169,10 @@ pub(crate) fn execute(proposal_json: &str, now_ms: u64) -> Result<String, String
             },
         )?,
         "authorize_surface_command" => {
-            authorize_authenticated_command(retained, &proposal, now_ms)?
+            match authorize_authenticated_command(retained, &proposal, now_ms) {
+                Ok(receipt) => receipt,
+                Err(error) => adapter_command_rejection(&error),
+            }
         }
         "revoke_session" => apply_lifecycle(
             retained,
@@ -754,6 +757,30 @@ fn native_receipt_for_stage(receipt: ManifoldConnectionHubReceipt, stage: &str) 
     output
 }
 
+fn adapter_command_rejection(error: &str) -> Value {
+    let status = if error == "authenticated logical session is not active" {
+        "adapter_session_not_active"
+    } else if error.starts_with("missing ") {
+        "adapter_missing_required_field"
+    } else if error.starts_with("invalid prior-epoch ")
+        || error.starts_with("future or zero-epoch ")
+    {
+        "adapter_epoch_field_invalid"
+    } else if error.starts_with("invalid ") && error.ends_with("sha256") {
+        "adapter_digest_invalid"
+    } else if error.contains("dotted") || error.contains("identifier") {
+        "adapter_identifier_invalid"
+    } else {
+        "adapter_command_binding_invalid"
+    };
+    json!({
+        "$schema": RECEIPT_SCHEMA,
+        "applied": false,
+        "status": status,
+        "authority_receipt": {},
+    })
+}
+
 fn prefix_rejection_status(output: &mut Value, stage: &str) {
     if let Some(status) = output.get("status").and_then(Value::as_str) {
         output["status"] = json!(format!("{stage}_{status}"));
@@ -1176,7 +1203,28 @@ mod tests {
             rotated["logical_session_id"],
             repaired["logical_session_id"]
         );
-        let retired_session = execute(
+        let retired_session: Value = serde_json::from_str(
+            &execute(
+                &json!({
+                    "operation": "authorize_surface_command",
+                    "request_id": "request.hub.test.retired-session",
+                    "session_id": repaired_session,
+                    "expected_transport_epoch": 1,
+                    "lease_id": "epoch-1.lease.hub.retired",
+                    "command_id": "command.sample.toggle",
+                    "typed_params_sha256": "a".repeat(64),
+                    "external_request_sequence": 1,
+                    "external_request_sha256": "b".repeat(64)
+                })
+                .to_string(),
+                41_000,
+            )
+            .expect("retired session adapter receipt"),
+        )
+        .expect("retired session adapter json");
+        assert_eq!(retired_session["applied"], false);
+        assert_eq!(retired_session["status"], "adapter_session_not_active");
+        let retired_transport = execute(
             &json!({
                 "operation": "replace_transport",
                 "request_id": "request.hub.test.retired-session",
@@ -1186,9 +1234,9 @@ mod tests {
             .to_string(),
             41_000,
         )
-        .expect_err("rotated trust must retire its prior session");
+        .expect_err("rotated trust must retire its prior transport");
         assert_eq!(
-            retired_session,
+            retired_transport,
             "authenticated logical session is not active"
         );
     }
