@@ -10,6 +10,89 @@ live in `apps/fleet-agent-android`.
 The producer creates proposals. It does not accept Manifold peer state, Fleet
 device state, enrollment, commands, or capabilities.
 
+## Key-record helper release capsule
+
+`fleet-agent-key-record` derives one public enrollment record from an
+operator-owned private seed file. The existing
+`Build-FleetAgentKeyRecord.ps1` output remains machine-bound developer evidence
+for source and device tests. Its manifest contains local paths and is never a
+supported distribution input.
+
+`Build-FleetAgentKeyRecordRelease.ps1` is the separate owner release route. It
+requires an exact clean Rusty Quest source tree, resolves the closed dependency
+composition, and clones each exact Quest, Fleet, and Manifold commit/tree into
+an isolated no-hardlink clean room under a bounded short system-temporary root
+that preserves Windows path-length headroom. Cargo uses only the materialized
+Quest and Manifold source plus a fresh checkout of the materialized Fleet
+dependency, locked dependencies, a dedicated Cargo home/target, an explicit
+Windows x64 target, cleared ambient Cargo/Rust profile overrides, stable path
+remapping, stripped symbols, and the MSVC `/Brepro` linker policy passed through
+Rust's encoded `-C link-arg` interface. Provenance records both that exact
+argument and the required `IMAGE_DEBUG_TYPE_REPRO` PE marker.
+
+Cargo parses every Quest workspace-member manifest before selecting the helper
+package. Those manifests reference sibling Rusty Lattice, Matter, and Optics
+manifests even though the helper does not depend on or compile them. The builder
+therefore also captures and materializes the exact clean commits/trees of those
+three repositories under the same clean workspace. Provenance records them in
+the separate closed `workspace_parse_only_repositories` set with role
+`workspace-parse-only`. They never enter the three-repository target dependency
+set or its source-composition fingerprint and must not be presented as runtime,
+helper, packaging, or authority dependencies. The builder revalidates all six
+materialized Git identities and clean states plus the unchanged target Cargo
+composition after compilation before it emits exactly:
+
+- `release-manifest.json` using
+  `rusty.quest.fleet_agent_key_record_release_capsule.v1`;
+- `provenance.json` with public repository URLs, exact commits/trees, the
+  distinct closed target-dependency and workspace-parse-only sets, exact
+  source-file hashes, and build identity;
+- `fleet-agent-key-record.exe`, `LICENSE`, `SOURCE-NOTICE.md`, and
+  `checksums.sha256`.
+
+The only supported capsule version is `1.0.0`; both builder and validator reject
+every other value. Consumers must pin the owner identity, manifest
+SHA-256, helper SHA-256, exact source commit/tree, version, target, and payload
+set separately and preserve the owner bytes without augmentation. The owner
+validator rejects artifact or provenance substitution, unknown fields, extra
+repositories or files, parse-only role escalation, stale/unsupported versions
+or targets, and detectable
+private or machine-local material. It detects ordinary and extended drive
+paths plus ordinary and extended UNC paths only when a UNC server and share are
+both present. The namespace-only Windows runtime marker `\\?\UNC\` is not a
+machine identity. The validator inspects ASCII and both byte alignments of
+little- and big-endian UTF-16 in the executable, so complete absolute host
+paths are release-blocking even when ordinary manifest text is clean. It also
+requires exactly one `IMAGE_DEBUG_TYPE_REPRO` debug-directory entry. Under the
+[Microsoft PE contract](https://learn.microsoft.com/en-us/windows/win32/debug/pe-format#debug-type),
+that marker means PE timestamp fields contain deterministic content-derived
+values rather than build time. Release acceptance still compares two clean-room
+builds byte-for-byte; the marker is necessary policy evidence, not a substitute
+for the A/B observation.
+
+Rusty Quest has no release-signing or revocation authority for this helper
+capsule. The current contract therefore makes no signature claim: ownership is
+bound by the exact public repository identity, clean Git commit/tree, closed
+provenance, and downstream-pinned SHA-256 values. A downstream signed bundle
+may authenticate its own packaging, but must not relabel that signature as a
+Rusty Quest enrollment or capsule-revocation decision.
+
+Capsule validity proves packaging and helper provenance only. It does not
+enroll or activate a device, prove reachability, issue a lease, accept a peer,
+or authorize a Fleet/Manifold transition. Manifold remains the live enrollment
+and peer authority. No capsule contains a seed, profile, Hub configuration, or
+private inventory.
+
+Build and validate after committing the source:
+
+```powershell
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Build-FleetAgentKeyRecordRelease.ps1 -CapsuleVersion 1.0.0
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-FleetAgentKeyRecordRelease.ps1 -MachinePathPolicySelfTest
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-FleetAgentKeyRecordRelease.ps1 -PeReproPolicySelfTest
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-FleetAgentKeyRecordRelease.ps1 -CapsuleRoot <owner-capsule>
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-FleetAgentKeyRecordReleaseSelfTest.ps1 -CapsuleRoot <owner-capsule>
+```
+
 ## Baseline boundary
 
 The first profile reports only low-rate facts that Quest owns:
@@ -107,6 +190,16 @@ cargo test -p rusty-quest-fleet-agent
 cargo clippy -p rusty-quest-fleet-agent --all-targets -- -D warnings
 pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-FleetAgentAndroid.ps1 -Tier Host
 ```
+
+The host gate also checks the release builder, validator, schema, and fixture
+matrix statically. It executes a no-build environment-removal self-test so an
+unset Cargo or Rust tool override cannot survive as an empty override. The
+release builder's clean-source gate and the exact
+capsule validator run after the source commit exists; damaged-capsule self-tests
+run against those generated owner bytes. The negative matrix repairs linked
+hash/checksum fields around semantic mutations so version, repository closure,
+and private-path rejection are tested rather than passing through an unrelated
+digest mismatch.
 
 The public golden claims fixture under `fixtures/fleet-agent/` must reproduce
 Fleet's signing message and signature exactly. `-Tier Host` is the explicit

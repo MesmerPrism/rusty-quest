@@ -1,0 +1,29 @@
+{
+  "schema": "rusty.quest.fleet_agent_key_record_release_fixture_matrix.v1",
+  "capsule_version": "1.0.0",
+  "valid_case": {
+    "name": "closed-portable-owner-capsule",
+    "expected": "pass",
+    "files": [
+      "fleet-agent-key-record.exe",
+      "provenance.json",
+      "LICENSE",
+      "SOURCE-NOTICE.md",
+      "release-manifest.json",
+      "checksums.sha256"
+    ],
+    "target_dependency_repository_ids": ["rusty-fleet", "rusty-manifold", "rusty-quest"],
+    "workspace_parse_only_repository_ids": ["rusty-lattice", "rusty-matter", "rusty-optics"],
+    "linker_reproducibility_argument": "/Brepro",
+    "pe_reproducibility_marker": "IMAGE_DEBUG_TYPE_REPRO",
+    "portable_namespace_marker_cases": [
+      "binary-unc-namespace-marker-ascii",
+      "binary-unc-namespace-marker-utf16le-offset0",
+      "binary-unc-namespace-marker-utf16le-offset1",
+      "binary-unc-namespace-marker-utf16be-offset0",
+      "binary-unc-namespace-marker-utf16be-offset1"
+    ],
+    "private_material_included": false,
+    "live_onboarding_claim": false
+  }
+}

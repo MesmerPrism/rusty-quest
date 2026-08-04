@@ -32,6 +32,12 @@ $paths = [ordered]@{
     device_smoke = Join-Path $RepoRoot "tools\Invoke-FleetAgentTwoQuestSmoke.ps1"
     key_record = Join-Path $RepoRoot "crates\rusty-quest-fleet-agent\src\bin\fleet-agent-key-record.rs"
     key_record_build = Join-Path $RepoRoot "tools\Build-FleetAgentKeyRecord.ps1"
+    key_record_release_build = Join-Path $RepoRoot "tools\Build-FleetAgentKeyRecordRelease.ps1"
+    key_record_release_test = Join-Path $RepoRoot "tools\Test-FleetAgentKeyRecordRelease.ps1"
+    key_record_release_self_test = Join-Path $RepoRoot "tools\Test-FleetAgentKeyRecordReleaseSelfTest.ps1"
+    key_record_release_schema = Join-Path $RepoRoot "schemas\rusty.quest.fleet_agent_key_record_release_capsule.v1.schema.json"
+    key_record_release_valid = Join-Path $RepoRoot "fixtures\fleet-agent\key-record-release-scenarios.valid.json"
+    key_record_release_damaged = Join-Path $RepoRoot "fixtures\fleet-agent\key-record-release-scenarios.damaged.json"
 }
 foreach ($entry in $paths.GetEnumerator()) {
     if (-not (Test-Path -LiteralPath $entry.Value)) {
@@ -66,6 +72,12 @@ $hostValidation = Get-Content -Raw -LiteralPath $paths.host_validation
 $deviceSmoke = Get-Content -Raw -LiteralPath $paths.device_smoke
 $keyRecord = Get-Content -Raw -LiteralPath $paths.key_record
 $keyRecordBuild = Get-Content -Raw -LiteralPath $paths.key_record_build
+$keyRecordReleaseBuild = Get-Content -Raw -LiteralPath $paths.key_record_release_build
+$keyRecordReleaseTest = Get-Content -Raw -LiteralPath $paths.key_record_release_test
+$keyRecordReleaseSelfTest = Get-Content -Raw -LiteralPath $paths.key_record_release_self_test
+$keyRecordReleaseSchema = Get-Content -Raw -LiteralPath $paths.key_record_release_schema
+$keyRecordReleaseValid = Get-Content -Raw -LiteralPath $paths.key_record_release_valid | ConvertFrom-Json
+$keyRecordReleaseDamaged = Get-Content -Raw -LiteralPath $paths.key_record_release_damaged | ConvertFrom-Json
 
 Assert-Match $workspace '"crates/rusty-quest-fleet-agent"' "Workspace must include the Fleet Agent contract crate."
 Assert-Match $crate 'rev = "8181683be4a3abbc5daa0c4497c7aeb9e76316a8"' "Fleet contract dependency must remain pinned to the accepted public revision."
@@ -276,6 +288,137 @@ foreach ($token in @(
     'rusty\.quest\.fleet_agent_key_record_tool\.v1',
     'executable_sha256')) {
     Assert-Match $keyRecordBuild $token "Fleet Agent key-record build is missing token: $token"
+}
+
+foreach ($token in @(
+    'Fleet Agent key-record release requires a clean exact Rusty Quest source tree',
+    'ValidateSet\("1\.0\.0"\)',
+    'Initialize-ExactGitMaterialization',
+    '--no-hardlinks',
+    'Assert-ExactGitMaterialization',
+    'Get-ExactGitSourceRecord',
+    'Assert-ClosedWorkspaceSiblingPathSet',
+    'workspace_parse_only_repositories = \$workspaceParseOnlyRepositories',
+    'role = "workspace-parse-only"',
+    'CARGO_ENCODED_RUSTFLAGS',
+    'CARGO_PROFILE_\.\+',
+    'EnvironmentSelfTest',
+    'NullString',
+    'Invoke-ProcessEnvironmentRemoval',
+    'Assert-NullEnvironmentRemoval',
+    '--remap-path-prefix=',
+    'link-arg=/Brepro',
+    'linker_reproducibility_argument = "/Brepro"',
+    'pe_reproducibility_marker = "IMAGE_DEBUG_TYPE_REPRO"',
+    'build --locked --release --target \$targetTriple',
+    'post_build_identity_verified = \$true',
+    'rusty\.quest\.fleet_agent_key_record_release_capsule\.v1',
+    'copy_capsule_byte_for_byte',
+    'private_seed_included = \$false',
+    'live_onboarding_claim = \$false',
+    'https://github\.com/MesmerPrism/rusty-quest')) {
+    Assert-Match $keyRecordReleaseBuild $token "Fleet Agent key-record release build is missing boundary token: $token"
+}
+& pwsh -NoProfile -ExecutionPolicy Bypass -File $paths.key_record_release_build -EnvironmentSelfTest *> $null
+if ($LASTEXITCODE -ne 0) {
+    throw "Fleet Agent key-record release build environment removal self-test failed."
+}
+foreach ($token in @(
+    'Assert-ExactPropertySet',
+    'Assert-NoMachineLocalPathByteSequence',
+    '[Text.Encoding]::Unicode',
+    '[Text.Encoding]::BigEndianUnicode',
+    'MachinePathPolicySelfTest',
+    'Get-MachinePathPolicyProbeByteSequence',
+    'PeReproPolicySelfTest',
+    'Get-PeDebugDirectoryTypeOffsetList',
+    'Assert-PeReproducible',
+    'IMAGE_DEBUG_TYPE_REPRO',
+    'Assert-X64WindowsExecutable',
+    'capsule_version -cne "1.0.0"',
+    'Fleet Agent key-record release provenance repository set is not closed',
+    'Fleet Agent key-record release workspace parse-only repository set is not closed',
+    'parse-only and target repository roles overlap',
+    'Fleet Agent key-record release capsule has an extra or missing file',
+    'contains prohibited private or machine-local material',
+    'ExpectedManifestSha256',
+    'ExpectedExecutableSha256')) {
+    Assert-Match $keyRecordReleaseTest ([regex]::Escape($token)) "Fleet Agent key-record release validator is missing boundary token: $token"
+}
+& pwsh -NoProfile -ExecutionPolicy Bypass -File $paths.key_record_release_test `
+    -MachinePathPolicySelfTest *> $null
+if ($LASTEXITCODE -ne 0) {
+    throw "Fleet Agent key-record release machine-path policy self-test failed."
+}
+& pwsh -NoProfile -ExecutionPolicy Bypass -File $paths.key_record_release_test `
+    -PeReproPolicySelfTest *> $null
+if ($LASTEXITCODE -ne 0) {
+    throw "Fleet Agent key-record release PE reproducibility policy self-test failed."
+}
+foreach ($token in @(
+    'Sync-ProvenanceBinding',
+    'Sync-PayloadBinding',
+    'capsule_version = "0\.0\.0"',
+    'parse-only-role-escalation',
+    'reproducibility-policy-drift',
+    'binary-repro-marker-removal',
+    'binary-ascii-path-leakage',
+    'binary-utf16-path-leakage',
+    'binary-extended-drive-utf16be-offset1',
+    'binary-ordinary-unc-utf16be-offset1',
+    'binary-extended-unc-utf16be-offset1',
+    'binary-unc-namespace-marker-utf16be-offset1',
+    'WithoutExecutablePin',
+    'WithoutVersionPin')) {
+    Assert-Match $keyRecordReleaseSelfTest $token "Fleet Agent key-record release self-test is missing adversarial token: $token"
+}
+if ($keyRecordReleaseSchema -notmatch '"additionalProperties"\s*:\s*false' -or
+    $keyRecordReleaseSchema -notmatch '"capsule_version"\s*:\s*\{\s*"const"\s*:\s*"1\.0\.0"' -or
+    $keyRecordReleaseSchema -notmatch '"uniqueItems"\s*:\s*true' -or
+    $keyRecordReleaseValid.schema -ne "rusty.quest.fleet_agent_key_record_release_fixture_matrix.v1" -or
+    $keyRecordReleaseValid.valid_case.private_material_included -ne $false -or
+    $keyRecordReleaseValid.valid_case.live_onboarding_claim -ne $false -or
+    $keyRecordReleaseValid.valid_case.linker_reproducibility_argument -cne "/Brepro" -or
+    $keyRecordReleaseValid.valid_case.pe_reproducibility_marker -cne "IMAGE_DEBUG_TYPE_REPRO" -or
+    $keyRecordReleaseDamaged.schema -ne "rusty.quest.fleet_agent_key_record_release_damage_matrix.v1" -or
+    @($keyRecordReleaseDamaged.cases).Count -ne 32) {
+    throw "Fleet Agent key-record release schema or fixture matrix is incomplete."
+}
+$expectedTargetRepositoryIds = @("rusty-fleet", "rusty-manifold", "rusty-quest")
+$expectedParseOnlyRepositoryIds = @("rusty-lattice", "rusty-matter", "rusty-optics")
+if (@(Compare-Object $expectedTargetRepositoryIds `
+        @($keyRecordReleaseValid.valid_case.target_dependency_repository_ids) -SyncWindow 0).Count -ne 0 -or
+    @($keyRecordReleaseValid.valid_case.target_dependency_repository_ids).Count -ne $expectedTargetRepositoryIds.Count -or
+    @(Compare-Object $expectedParseOnlyRepositoryIds `
+        @($keyRecordReleaseValid.valid_case.workspace_parse_only_repository_ids) -SyncWindow 0).Count -ne 0 -or
+    @($keyRecordReleaseValid.valid_case.workspace_parse_only_repository_ids).Count -ne $expectedParseOnlyRepositoryIds.Count) {
+    throw "Fleet Agent key-record release target and parse-only fixture roles drifted."
+}
+$expectedDamageNames = @(
+    "artifact-substitution", "source-commit-drift", "provenance-substitution",
+    "secret-leakage", "extra-repository", "parse-only-role-escalation", "extra-field", "unsupported-version",
+    "unsupported-target", "reproducibility-policy-drift", "extra-package-file",
+    "binary-repro-marker-removal", "binary-ascii-path-leakage",
+    "binary-utf16-path-leakage", "binary-ordinary-drive-utf16le-offset1",
+    "binary-ordinary-drive-utf16be-offset0", "binary-ordinary-drive-utf16be-offset1",
+    "binary-extended-drive-ascii", "binary-extended-drive-utf16le-offset0",
+    "binary-extended-drive-utf16le-offset1", "binary-extended-drive-utf16be-offset0",
+    "binary-extended-drive-utf16be-offset1", "binary-ordinary-unc-ascii",
+    "binary-ordinary-unc-utf16le-offset0", "binary-ordinary-unc-utf16le-offset1",
+    "binary-ordinary-unc-utf16be-offset0", "binary-ordinary-unc-utf16be-offset1",
+    "binary-extended-unc-ascii", "binary-extended-unc-utf16le-offset0",
+    "binary-extended-unc-utf16le-offset1", "binary-extended-unc-utf16be-offset0",
+    "binary-extended-unc-utf16be-offset1")
+if (@(Compare-Object $expectedDamageNames @($keyRecordReleaseDamaged.cases.name)).Count -ne 0) {
+    throw "Fleet Agent key-record release damage matrix changed."
+}
+$expectedPortableMarkerNames = @(
+    "binary-unc-namespace-marker-ascii", "binary-unc-namespace-marker-utf16le-offset0",
+    "binary-unc-namespace-marker-utf16le-offset1", "binary-unc-namespace-marker-utf16be-offset0",
+    "binary-unc-namespace-marker-utf16be-offset1")
+if (@(Compare-Object $expectedPortableMarkerNames `
+        @($keyRecordReleaseValid.valid_case.portable_namespace_marker_cases)).Count -ne 0) {
+    throw "Fleet Agent key-record release portable namespace marker matrix changed."
 }
 
 $appSource = @(
