@@ -24,6 +24,8 @@ $provider = Read-Required "apps\manifold-broker-android\src\main\java\io\github\
 $activity = Read-Required "apps\manifold-broker-android\src\main\java\io\github\mesmerprism\rustymanifold\broker\ConnectionHubStartActivity.java"
 $browserHarness = Read-Required "tools\browser\connection-hub-browser-e2e.js"
 $releaseManifest = Read-Required "fixtures\broker-products\connection-hub-standalone.AndroidManifest.xml"
+$nativeAdapter = Read-Required "apps\manifold-broker-android\native\src\connection_hub_jni.rs"
+$operatorGuide = Read-Required "docs\CONNECTION_HUB_OPERATOR.md"
 
 Require ($cli.Contains('[Parameter(Mandatory=$true)]') -and $cli.Contains('[string]$Serial')) "Operator CLI must require an explicit serial."
 Require ($cli.Contains('Lock-ExactProvider $FileManagerCli $FileManagerSha256')) "QFM must be held under one exact content pin."
@@ -186,6 +188,18 @@ Require (-not $releaseManifest.Contains('ConnectionHubDebugControlProvider')) "R
 Require ($activity.Contains('ACTION_DEBUG_START_HUB') -and $activity.Contains('startForegroundService')) "Typed real Activity-to-FGS lifecycle route is missing."
 Require ($browserHarness.Contains('process.stdin') -and $browserHarness.Contains('consoleErrors') -and $browserHarness.Contains('spatial-removed-sample-present-command-applied')) "Real browser sequential-surface E2E harness is incomplete."
 Require (-not $browserHarness.Contains('--pairing-code') -and -not $browserHarness.Contains('pairing_code:')) "Browser harness must not accept or emit a pairing-code argument/field."
+foreach ($adapterStatus in @(
+    'adapter_session_not_active',
+    'adapter_missing_required_field',
+    'adapter_epoch_field_invalid',
+    'adapter_digest_invalid',
+    'adapter_identifier_invalid',
+    'adapter_command_binding_invalid'
+)) {
+    Require ($nativeAdapter.Contains('"' + $adapterStatus + '"')) "Native adapter is missing typed rejection $adapterStatus."
+    Require ($operatorGuide.Contains('`' + $adapterStatus + '`')) "Operator guide is missing typed rejection $adapterStatus."
+}
+Require ($nativeAdapter.Contains('"applied": false') -and $nativeAdapter.Contains('"authority_receipt": {}')) "Typed native adapter rejections must remain fail closed and carry no authority acceptance receipt."
 
 $planText = & pwsh -NoProfile -File $cliPath -Action E2E -Serial SIMULATED123 -DryRun
 if ($LASTEXITCODE -ne 0) { throw "Operator dry-run failed." }
