@@ -190,6 +190,7 @@ class ConnectionHubSurfaceClient(
   private fun handleSurfaceCommand(message: Message) {
     val effectBinding = message.data.getString("effect_binding_json", "")
     val commandMarker = sanitize(message.data.getString("command", "missing"))
+    val effectReplyTo = message.replyTo
     marker("command_received_$commandMarker")
     runCatching {
           val requestId = message.data.getString("request_id", "")
@@ -206,7 +207,7 @@ class ConnectionHubSurfaceClient(
                   args,
                   receipt,
               )
-          awaitObservedEffect(message, effectBinding, command, before)
+          awaitObservedEffect(effectReplyTo, effectBinding, command, before)
         }
         .onFailure { error ->
           marker("command_rejected_${error.javaClass.simpleName}_$commandMarker")
@@ -216,12 +217,12 @@ class ConnectionHubSurfaceClient(
           result.putString("status", "provider_rejected_${error.javaClass.simpleName}")
           result.putString("effect_status", "rejected")
           result.putString("state_json", target.hubSurfaceState().toString())
-          sendEffectResponse(message, result)
+          sendEffectResponse(effectReplyTo, result)
         }
   }
 
   private fun awaitObservedEffect(
-      request: Message,
+      effectReplyTo: Messenger?,
       effectBinding: String,
       command: String,
       before: JSONObject,
@@ -251,7 +252,7 @@ class ConnectionHubSurfaceClient(
               result.putString("status", if (observed) "provider_effect_observed" else "provider_effect_timeout")
               result.putString("effect_status", if (observed) "observed" else "rejected")
               result.putString("state_json", state.toString())
-              sendEffectResponse(request, result)
+              sendEffectResponse(effectReplyTo, result)
               if (observed && surfaceRegistered) sendSurfaceState()
             } else {
               handler.postDelayed(this, 50L)
@@ -261,11 +262,11 @@ class ConnectionHubSurfaceClient(
     handler.post(probe)
   }
 
-  private fun sendEffectResponse(request: Message, result: Bundle) {
+  private fun sendEffectResponse(effectReplyTo: Messenger?, result: Bundle) {
     val response = Message.obtain(null, MESSAGE_SURFACE_COMMAND)
     response.data = result
     val effectStatus = sanitize(result.getString("effect_status", "missing"))
-    runCatching { checkNotNull(request.replyTo).send(response) }
+    runCatching { checkNotNull(effectReplyTo).send(response) }
         .onSuccess { marker("effect_response_sent_$effectStatus") }
         .onFailure { marker("effect_response_failed_${it.javaClass.simpleName}_$effectStatus") }
   }

@@ -146,6 +146,11 @@ one baseline surface snapshot before adding that socket to the broadcast set.
 Provider lifecycle events racing the handshake therefore follow the snapshot
 and can be projected incrementally without making client bootstrap ambiguous.
 
+Asynchronous provider effect probes retain the immutable reply `Messenger`,
+not the inbound Android `Message`; the framework recycles the latter as soon as
+the handler returns and may clear its reply channel before the effect is
+observed.
+
 ## Real browser provider
 
 `tools/browser/connection-hub-browser-e2e.js` is separate from Hostess protocol
