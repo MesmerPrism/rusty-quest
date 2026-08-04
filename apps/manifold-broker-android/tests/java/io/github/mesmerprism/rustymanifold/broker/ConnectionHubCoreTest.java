@@ -97,6 +97,55 @@ public final class ConnectionHubCoreTest {
         first.unregisterProvider(PROVIDER, "provider.instance.3", "provider_stopped");
         assertEquals(0, firstRegistry.snapshot().size());
 
+        // Android reports provider Binder death on a Binder thread while the
+        // replacement provider registers through the admission-service main
+        // thread. The full durable unregister/register transitions must be
+        // serialized; otherwise the replacement observes a transient prepared
+        // write-ahead mutation and fails with nested_authority_mutation.
+        FakeAuthority handoffAuthority = new FakeAuthority();
+        HubSurfaceRegistry handoffRegistry = new HubSurfaceRegistry();
+        ConnectionHubRuntime handoffRuntime = new ConnectionHubRuntime(
+                handoffAuthority, new InMemoryStore(), handoffRegistry, seededRandom());
+        handoffRuntime.registerSurface(
+                PROVIDER, "provider.instance.handoff.spatial", "admission.handoff.spatial",
+                registration(), immediateEndpoint());
+        handoffAuthority.blockNextUnregisterSurface = true;
+        AtomicReference<Throwable> unregisterFailure = new AtomicReference<>();
+        AtomicReference<Throwable> replacementFailure = new AtomicReference<>();
+        Thread unregistering = new Thread(() -> {
+            try {
+                handoffRuntime.unregisterProvider(
+                        PROVIDER, "provider.instance.handoff.spatial", "provider_binder_died");
+            } catch (Throwable failure) { unregisterFailure.set(failure); }
+        }, "hub-provider-binder-death");
+        unregistering.start();
+        assertTrue(handoffAuthority.unregisterSurfaceEntered.await(2, TimeUnit.SECONDS),
+                "provider unregister did not reach the deterministic authority barrier");
+        Thread replacing = new Thread(() -> {
+            try {
+                handoffRuntime.registerSurface(
+                        sampleProvider,
+                        "provider.instance.handoff.sample",
+                        "admission.handoff.sample",
+                        registration(),
+                        immediateEndpoint());
+            } catch (Throwable failure) { replacementFailure.set(failure); }
+        }, "hub-provider-replacement");
+        replacing.start();
+        Thread.sleep(100);
+        assertTrue(replacing.isAlive(),
+                "replacement provider did not wait for the in-flight durable unregister");
+        handoffAuthority.allowUnregisterSurface.countDown();
+        unregistering.join(2000);
+        replacing.join(2000);
+        assertTrue(!unregistering.isAlive() && !replacing.isAlive(),
+                "serialized provider handoff did not terminate");
+        assertTrue(unregisterFailure.get() == null && replacementFailure.get() == null,
+                "serialized provider handoff returned a runtime failure");
+        assertEquals(1, handoffRegistry.snapshot().size());
+        assertEquals(sampleProvider.stableKey(),
+                handoffRegistry.snapshot().get(0).descriptor.providerIdentity().stableKey());
+
         // Simulated service process recreation: provider registry is empty, logical
         // session remains and Manifold replaces only its physical transport epoch.
         HubSurfaceRegistry secondRegistry = new HubSurfaceRegistry();
@@ -568,6 +617,9 @@ public final class ConnectionHubCoreTest {
         int leaseAcquisitions;
         int reconcileCalls;
         boolean rejectNextProviderIdentityCollision;
+        volatile boolean blockNextUnregisterSurface;
+        final CountDownLatch unregisterSurfaceEntered = new CountDownLatch(1);
+        final CountDownLatch allowUnregisterSurface = new CountDownLatch(1);
         String lastExternalRequestSha256;
 
         @Override public Receipt trustAndOpenSession(String requestId, String controller, String evidence, long now) {
@@ -605,6 +657,18 @@ public final class ConnectionHubCoreTest {
             revision += 1; return applied("register_surface", requestId, null, 0, null, null, null);
         }
         @Override public Receipt unregisterSurface(String requestId, String instance, String surface, long now) {
+            if (blockNextUnregisterSurface) {
+                blockNextUnregisterSurface = false;
+                unregisterSurfaceEntered.countDown();
+                try {
+                    if (!allowUnregisterSurface.await(5, TimeUnit.SECONDS)) {
+                        throw new IllegalStateException("timed out awaiting provider handoff test release");
+                    }
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                    throw new IllegalStateException("provider handoff test interrupted", interrupted);
+                }
+            }
             revision += 1; return applied("unregister_surface", requestId, null, 0, null, null, null);
         }
         @Override public Receipt unregisterProvider(String requestId, String instance, String reason, long now) {

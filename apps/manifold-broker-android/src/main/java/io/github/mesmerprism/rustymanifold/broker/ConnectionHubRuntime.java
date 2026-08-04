@@ -332,7 +332,7 @@ public final class ConnectionHubRuntime implements HubSurfaceRegistry.Listener {
         }
     }
 
-    public ConnectionHubAuthorityPort.Receipt registerSurface(
+    public synchronized ConnectionHubAuthorityPort.Receipt registerSurface(
             HubProviderIdentity identity,
             String providerInstanceId,
             String admissionUseRequestId,
@@ -420,7 +420,7 @@ public final class ConnectionHubRuntime implements HubSurfaceRegistry.Listener {
                 && status.toLowerCase(java.util.Locale.ROOT).contains("identitycollision");
     }
 
-    public boolean unregisterSurface(
+    public synchronized boolean unregisterSurface(
             HubProviderIdentity identity,
             String surfaceId,
             String reason) {
@@ -437,7 +437,7 @@ public final class ConnectionHubRuntime implements HubSurfaceRegistry.Listener {
         return removed;
     }
 
-    public int unregisterProvider(
+    public synchronized int unregisterProvider(
             HubProviderIdentity identity,
             String providerInstanceId,
             String reason) {
@@ -465,7 +465,7 @@ public final class ConnectionHubRuntime implements HubSurfaceRegistry.Listener {
         return removed;
     }
 
-    public void updateSurfaceState(
+    public synchronized void updateSurfaceState(
             HubProviderIdentity identity,
             String surfaceId,
             JSONObject state) {
