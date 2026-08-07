@@ -1,5 +1,9 @@
 package io.github.mesmerprism.rustymanifold.broker;
 
+import io.github.mesmerprism.rustyquest.broker_transport.BoundedWebSocketSession;
+import io.github.mesmerprism.rustyquest.broker_transport.DeadlineInputStream;
+import io.github.mesmerprism.rustyquest.broker_transport.Rfc6455Codec;
+
 import org.json.JSONObject;
 
 import java.io.ByteArrayOutputStream;
@@ -14,22 +18,15 @@ import java.net.ServerSocket;
 import java.net.Socket;
 import java.net.SocketTimeoutException;
 import java.net.URLDecoder;
-import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
-import java.time.Instant;
 import java.util.ArrayList;
-import java.util.Base64;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.CopyOnWriteArrayList;
-import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.RejectedExecutionException;
@@ -55,7 +52,6 @@ public final class ConnectionHubHttpServer
         }
     }
 
-    private static final String ACCEPT_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
     private final ConnectionHubRuntime runtime;
     private final AssetLoader assetLoader;
     private final DiagnosticSink diagnostics;
@@ -63,8 +59,6 @@ public final class ConnectionHubHttpServer
             ConnectionHubProtocol.MAX_HTTP_CLIENTS);
     private final Semaphore clientSlots = new Semaphore(ConnectionHubProtocol.MAX_HTTP_CLIENTS);
     private final Semaphore socketSlots = new Semaphore(ConnectionHubProtocol.MAX_SOCKET_SESSIONS);
-    private final ScheduledExecutorService writeWatchdog =
-            Executors.newSingleThreadScheduledExecutor();
     private final List<SocketSession> socketSessions = new CopyOnWriteArrayList<>();
     private final AtomicBoolean closed = new AtomicBoolean();
     private ServerSocket serverSocket;
@@ -224,18 +218,17 @@ public final class ConnectionHubHttpServer
             HttpRequest request,
             InputStream input,
             OutputStream output) throws Exception {
-        String key = request.headers.get("sec-websocket-key");
-        if (!hasSameOrigin(request)
-                || !"13".equals(request.headers.get("sec-websocket-version"))
-                || !headerContainsToken(request.headers.get("connection"), "upgrade")
-                || key == null
-                || Base64.getDecoder().decode(key).length != 16) {
+        if (!hasSameOrigin(request)) {
             writeStatus(output, 400, "Bad Request", "text/plain; charset=utf-8", new byte[0]);
             return;
         }
-        String accept = Base64.getEncoder().encodeToString(
-                MessageDigest.getInstance("SHA-1")
-                        .digest((key + ACCEPT_GUID).getBytes(StandardCharsets.US_ASCII)));
+        final String accept;
+        try {
+            accept = Rfc6455Codec.serverAccept("GET", "HTTP/1.1", request.headers);
+        } catch (IOException invalidUpgrade) {
+            writeStatus(output, 400, "Bad Request", "text/plain; charset=utf-8", new byte[0]);
+            return;
+        }
         String response = "HTTP/1.1 101 Switching Protocols\r\n"
                 + "Upgrade: websocket\r\n"
                 + "Connection: Upgrade\r\n"
@@ -244,11 +237,11 @@ public final class ConnectionHubHttpServer
                 + "\r\n";
         output.write(response.getBytes(StandardCharsets.US_ASCII));
         output.flush();
-        Frame authenticationFrame = readFrame(
-                input,
-                deadlineAfterMs(ConnectionHubProtocol.SOCKET_AUTH_DEADLINE_MS),
-                false);
-        if (authenticationFrame.opcode != 1 || authenticationRateLimited()) {
+        Rfc6455Codec.Frame authenticationFrame = readSocketFrame(
+                input, deadlineAfterMs(ConnectionHubProtocol.SOCKET_AUTH_DEADLINE_MS));
+        if (!authenticationFrame.fin
+                || authenticationFrame.opcode != Rfc6455Codec.OPCODE_TEXT
+                || authenticationRateLimited()) {
             noteAuthenticationFailure();
             throw new SecurityException("socket_authentication_required");
         }
@@ -291,7 +284,6 @@ public final class ConnectionHubHttpServer
                             output,
                             sessionProjection.logicalSessionId,
                             sessionProjection.transportEpoch,
-                            writeWatchdog,
                             diagnostics);
                     for (SocketSession existing : new ArrayList<>(socketSessions)) {
                         if (existing.logicalSessionId.equals(sessionProjection.logicalSessionId)) {
@@ -329,12 +321,33 @@ public final class ConnectionHubHttpServer
         }
         try {
             while (!socket.isClosed()) {
-                Frame frame = readFrame(input, Long.MAX_VALUE, true);
-                if (frame.opcode == 8) { return; }
-                if (frame.opcode == 9) { session.enqueueFrame(10, frame.payload); continue; }
-                if (frame.opcode == 10) { continue; }
-                if (frame.opcode != 1) { throw new IOException("text frames only"); }
-                final String rawFrame = new String(frame.payload, StandardCharsets.UTF_8);
+                final Rfc6455Codec.Frame frame;
+                try {
+                    frame = readSocketFrame(
+                            input,
+                            deadlineAfterMs(ConnectionHubProtocol.SOCKET_POLL_INTERVAL_MS));
+                } catch (SocketTimeoutException timeout) {
+                    String reason = timeout.getMessage();
+                    if (reason != null && reason.contains("first-byte")) {
+                        session.tick(System.nanoTime());
+                        continue;
+                    }
+                    throw timeout;
+                }
+                Rfc6455Codec.Event event = session.receive(frame, System.nanoTime());
+                if (event.kind == Rfc6455Codec.Event.Kind.NONE
+                        || event.kind == Rfc6455Codec.Event.Kind.PING
+                        || event.kind == Rfc6455Codec.Event.Kind.PONG) {
+                    continue;
+                }
+                if (event.kind == Rfc6455Codec.Event.Kind.CLOSE) {
+                    session.awaitClosed(ConnectionHubProtocol.SOCKET_WRITE_DEADLINE_MS);
+                    return;
+                }
+                if (event.kind != Rfc6455Codec.Event.Kind.TEXT) {
+                    throw new IOException("text messages only");
+                }
+                final String rawFrame = event.text;
                 final JSONObject message;
                 try {
                     message = new JSONObject(rawFrame);
@@ -563,7 +576,6 @@ public final class ConnectionHubHttpServer
             socketSessions.clear();
         }
         clients.shutdownNow();
-        writeWatchdog.shutdownNow();
     }
 
     static HttpRequest readRequest(InputStream input, long deadlineNanos) throws IOException {
@@ -622,46 +634,30 @@ public final class ConnectionHubHttpServer
         return output;
     }
 
+    private static Rfc6455Codec.Frame readSocketFrame(
+            InputStream input,
+            long firstByteDeadlineNanos) throws IOException {
+        return Rfc6455Codec.readFrame(
+                new DeadlineInputStream(
+                        input,
+                        firstByteDeadlineNanos,
+                        TimeUnit.MILLISECONDS.toNanos(
+                                ConnectionHubProtocol.SOCKET_FRAME_ASSEMBLY_DEADLINE_MS)),
+                true,
+                ConnectionHubProtocol.MAX_SOCKET_FRAME_BYTES);
+    }
+
+    /** Compatibility test seam; product sockets use the stateful shared session path above. */
     static Frame readFrame(
             InputStream input,
             long firstByteDeadlineNanos,
             boolean allowIdleBeforeFrame) throws IOException {
-        int first = allowIdleBeforeFrame
-                ? readIdleByte(input)
-                : readByte(input, firstByteDeadlineNanos);
-        long frameDeadline = deadlineAfterMs(
-                ConnectionHubProtocol.SOCKET_FRAME_ASSEMBLY_DEADLINE_MS);
-        if (firstByteDeadlineNanos != Long.MAX_VALUE) {
-            frameDeadline = Math.min(frameDeadline, firstByteDeadlineNanos);
+        long firstDeadline = allowIdleBeforeFrame ? Long.MAX_VALUE : firstByteDeadlineNanos;
+        Rfc6455Codec.Frame decoded = readSocketFrame(input, firstDeadline);
+        if (!decoded.fin) {
+            throw new IOException("compatibility frame seam requires one complete frame");
         }
-        int second = readByte(input, frameDeadline);
-        if (first < 0 || second < 0) { throw new EOFException(); }
-        if ((first & 0x80) == 0 || (first & 0x70) != 0 || (second & 0x80) == 0) {
-            throw new IOException("invalid websocket framing");
-        }
-        long length = second & 0x7f;
-        if (length == 126) {
-            byte[] extended = readExact(input, 2, frameDeadline);
-            length = ByteBuffer.wrap(new byte[] {0, 0, extended[0], extended[1]}).getInt() & 0xffffffffL;
-            if (length < 126) throw new IOException("non-minimal websocket length");
-        } else if (length == 127) {
-            byte[] extended = readExact(input, 8, frameDeadline);
-            length = ByteBuffer.wrap(extended).getLong();
-            if (length <= 0xffff) throw new IOException("non-minimal websocket length");
-        }
-        int opcode = first & 0xf;
-        if ((opcode & 0x8) != 0 && length > 125) {
-            throw new IOException("websocket control payload too large");
-        }
-        if (length < 0 || length > ConnectionHubProtocol.MAX_SOCKET_FRAME_BYTES) {
-            throw new IOException("websocket payload too large");
-        }
-        byte[] mask = readExact(input, 4, frameDeadline);
-        byte[] payload = readExact(input, (int) length, frameDeadline);
-        for (int index = 0; index < payload.length; index += 1) {
-            payload[index] = (byte) (payload[index] ^ mask[index % 4]);
-        }
-        return new Frame(opcode, payload);
+        return new Frame(decoded.opcode, decoded.payload);
     }
 
     private static byte[] readExact(InputStream input, int length, long deadlineNanos)
@@ -690,13 +686,6 @@ public final class ConnectionHubHttpServer
             catch (SocketTimeoutException timeout) { /* absolute deadline remains authoritative */ }
         }
         throw new SocketTimeoutException("absolute read deadline exceeded");
-    }
-
-    private static int readIdleByte(InputStream input) throws IOException {
-        while (true) {
-            try { return input.read(); }
-            catch (SocketTimeoutException timeout) { /* authenticated sockets may remain idle */ }
-        }
     }
 
     static long deadlineAfterMs(long durationMs) {
@@ -738,35 +727,66 @@ public final class ConnectionHubHttpServer
     }
 
     private static final class SocketSession implements Closeable {
-        private final OutputStream output;
         private final Socket socket;
         private final String logicalSessionId;
         private final long transportEpoch;
-        private final ScheduledExecutorService watchdog;
         private final DiagnosticSink diagnostics;
-        private final ArrayBlockingQueue<OutboundFrame> outbound =
-                new ArrayBlockingQueue<>(ConnectionHubProtocol.MAX_SOCKET_OUTBOUND_QUEUE);
-        private final AtomicBoolean sessionClosed = new AtomicBoolean();
-        private final Thread writerThread;
+        private final BoundedWebSocketSession transport;
         private long lastEnqueuedSurfaceRevision = -1L;
+
         SocketSession(
                 Socket socket,
                 OutputStream output,
                 String logicalSessionId,
                 long transportEpoch,
-                ScheduledExecutorService watchdog,
                 DiagnosticSink diagnostics) {
             this.socket = socket;
-            this.output = output;
             this.logicalSessionId = logicalSessionId;
             this.transportEpoch = transportEpoch;
-            this.watchdog = watchdog;
             this.diagnostics = diagnostics;
-            this.writerThread = new Thread(new Runnable() {
-                @Override public void run() { writeLoop(); }
-            }, "rusty-connection-hub-writer");
-            this.writerThread.start();
+            this.transport = new BoundedWebSocketSession(
+                    "rusty-connection-hub-writer",
+                    new BoundedWebSocketSession.FrameWriter() {
+                        @Override public void write(boolean fin, int opcode, byte[] payload)
+                                throws IOException {
+                            validateOutboundFrame(opcode, payload.length);
+                            Rfc6455Codec.writeFrame(output, fin, opcode, payload, null);
+                        }
+
+                        @Override public void close() throws IOException {
+                            socket.close();
+                        }
+                    },
+                    new BoundedWebSocketSession.Limits(
+                            ConnectionHubProtocol.MAX_SOCKET_OUTBOUND_QUEUE,
+                            ConnectionHubProtocol.MAX_SOCKET_OUTBOUND_QUEUE_BYTES,
+                            ConnectionHubProtocol.MAX_SOCKET_FRAME_BYTES,
+                            ConnectionHubProtocol.MAX_SOCKET_OUTBOUND_FRAME_BYTES,
+                            TimeUnit.MILLISECONDS.toNanos(
+                                    ConnectionHubProtocol.SOCKET_PING_INTERVAL_MS),
+                            TimeUnit.MILLISECONDS.toNanos(
+                                    ConnectionHubProtocol.SOCKET_PONG_DEADLINE_MS),
+                            TimeUnit.MILLISECONDS.toNanos(
+                                    ConnectionHubProtocol.SOCKET_IDLE_DEADLINE_MS)),
+                    System.nanoTime(),
+                    new BoundedWebSocketSession.CloseListener() {
+                        @Override public void onClosed(
+                                BoundedWebSocketSession.CloseReason reason) {
+                            diagnostics.onStatus("websocket_session_closed", reason.name());
+                        }
+                    },
+                    new BoundedWebSocketSession.TelemetrySink() {
+                        @Override public void onEvent(BoundedWebSocketSession.Telemetry event) {
+                            if (event.code == BoundedWebSocketSession.EventCode.QUEUE_SATURATED) {
+                                diagnostics.onStatus("websocket_queue_saturated", "bounded");
+                            } else if (event.code
+                                    == BoundedWebSocketSession.EventCode.WRITE_FAILED) {
+                                diagnostics.onStatus("websocket_write_failed", "io_failure");
+                            }
+                        }
+                    });
         }
+
         synchronized void enqueue(JSONObject value) throws IOException {
             try {
                 JSONObject bound = new JSONObject(value.toString());
@@ -781,33 +801,31 @@ public final class ConnectionHubHttpServer
                     }
                     diagnostics.onStatus("command_receipt_rejected", rejection);
                 }
-                enqueueFrame(
-                        1,
-                        bound.toString().getBytes(StandardCharsets.UTF_8),
+                transport.sendText(
+                        bound.toString(),
                         "command_receipt".equals(bound.optString("type", ""))
-                                ? "command_receipt_written"
+                                ? new Runnable() {
+                                    @Override public void run() {
+                                        diagnostics.onStatus("command_receipt_written", "none");
+                                    }
+                                }
                                 : null);
             } catch (org.json.JSONException error) {
                 throw new IOException("invalid Hub event", error);
             }
         }
+
         synchronized void enqueueTerminal(JSONObject value) throws IOException {
-            java.util.concurrent.CountDownLatch completion =
-                    new java.util.concurrent.CountDownLatch(1);
             try {
                 JSONObject bound = new JSONObject(value.toString());
                 bound.put("transport_epoch", transportEpoch);
                 lastEnqueuedSurfaceRevision = bindOutboundSurfaceRevision(
                         bound, lastEnqueuedSurfaceRevision);
-                byte[] payload = bound.toString().getBytes(StandardCharsets.UTF_8);
-                validateOutboundFrame(1, payload.length);
-                if (sessionClosed.get()
-                        || !outbound.offer(new OutboundFrame(1, payload, completion))) {
-                    throw new IOException("bounded outbound queue unavailable");
+                if (!transport.sendTextAndAwait(
+                        bound.toString(), ConnectionHubProtocol.SOCKET_WRITE_DEADLINE_MS)) {
+                    close();
+                    throw new IOException("terminal websocket write deadline exceeded");
                 }
-                completion.await(
-                        ConnectionHubProtocol.SOCKET_WRITE_DEADLINE_MS,
-                        TimeUnit.MILLISECONDS);
             } catch (org.json.JSONException malformed) {
                 throw new IOException("invalid Hub terminal event", malformed);
             } catch (InterruptedException interrupted) {
@@ -815,63 +833,22 @@ public final class ConnectionHubHttpServer
                 throw new IOException("terminal websocket write interrupted", interrupted);
             }
         }
-        void enqueueFrame(int opcode, byte[] payload) throws IOException {
-            enqueueFrame(opcode, payload, null);
+
+        Rfc6455Codec.Event receive(Rfc6455Codec.Frame frame, long nowNanos)
+                throws IOException {
+            return transport.receive(frame, nowNanos);
         }
-        void enqueueFrame(int opcode, byte[] payload, String diagnosticStatus) throws IOException {
-            validateOutboundFrame(opcode, payload.length);
-            if (sessionClosed.get()
-                    || !outbound.offer(new OutboundFrame(opcode, payload, null, diagnosticStatus))) {
-                close();
-                throw new IOException("bounded outbound queue unavailable");
-            }
+
+        void tick(long nowNanos) throws IOException {
+            transport.tick(nowNanos);
         }
-        private void writeLoop() {
-            try {
-                while (!sessionClosed.get()) {
-                    OutboundFrame frame = outbound.take();
-                    ScheduledFuture<?> deadline = watchdog.schedule(new Runnable() {
-                        @Override public void run() { close(); }
-                    }, ConnectionHubProtocol.SOCKET_WRITE_DEADLINE_MS, TimeUnit.MILLISECONDS);
-                    try {
-                        writeFrameDirect(frame.opcode, frame.payload);
-                        if (frame.diagnosticStatus != null) {
-                            diagnostics.onStatus(frame.diagnosticStatus, "none");
-                        }
-                    }
-                    finally {
-                        deadline.cancel(false);
-                        if (frame.completion != null) { frame.completion.countDown(); }
-                    }
-                }
-            } catch (InterruptedException ignored) {
-                Thread.currentThread().interrupt();
-            } catch (IOException failure) {
-                close();
-            } catch (RuntimeException failure) {
-                close();
-            }
+
+        boolean awaitClosed(long timeoutMillis) throws InterruptedException {
+            return transport.awaitClosed(timeoutMillis);
         }
-        private void writeFrameDirect(int opcode, byte[] payload) throws IOException {
-            validateOutboundFrame(opcode, payload.length);
-            output.write(0x80 | opcode);
-            if (payload.length < 126) { output.write(payload.length); }
-            else if (payload.length <= 0xffff) {
-                output.write(126); output.write((payload.length >>> 8) & 0xff); output.write(payload.length & 0xff);
-            } else {
-                output.write(127);
-                long length = payload.length;
-                for (int shift = 56; shift >= 0; shift -= 8) {
-                    output.write((int) ((length >>> shift) & 0xff));
-                }
-            }
-            output.write(payload); output.flush();
-        }
+
         @Override public void close() {
-            if (!sessionClosed.compareAndSet(false, true)) return;
-            writerThread.interrupt();
-            outbound.clear();
-            try { socket.close(); } catch (IOException ignored) {}
+            transport.close();
         }
     }
 
@@ -883,32 +860,6 @@ public final class ConnectionHubHttpServer
         if ((opcode & 0x8) != 0 && payloadLength > 125) {
             throw new IOException("outbound websocket control payload too large");
         }
-    }
-
-    private static final class OutboundFrame {
-        final int opcode;
-        final byte[] payload;
-        OutboundFrame(int opcode, byte[] payload) {
-            this(opcode, payload, null, null);
-        }
-        OutboundFrame(
-                int opcode,
-                byte[] payload,
-                java.util.concurrent.CountDownLatch completion) {
-            this(opcode, payload, completion, null);
-        }
-        OutboundFrame(
-                int opcode,
-                byte[] payload,
-                java.util.concurrent.CountDownLatch completion,
-                String diagnosticStatus) {
-            this.opcode = opcode;
-            this.payload = payload.clone();
-            this.completion = completion;
-            this.diagnosticStatus = diagnosticStatus;
-        }
-        final java.util.concurrent.CountDownLatch completion;
-        final String diagnosticStatus;
     }
 
     static final class Frame {

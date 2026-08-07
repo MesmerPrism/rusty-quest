@@ -1,37 +1,34 @@
 package io.github.mesmerprism.rustyquest.native_renderer;
 
 import android.app.Activity;
-import android.util.Base64;
 import android.util.Log;
+
+import io.github.mesmerprism.rustyquest.broker_transport.BoundedWebSocketSession;
+import io.github.mesmerprism.rustyquest.broker_transport.DeadlineInputStream;
+import io.github.mesmerprism.rustyquest.broker_transport.Rfc6455Codec;
 
 import org.json.JSONObject;
 
-import java.io.BufferedReader;
-import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
-import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.net.SocketTimeoutException;
 import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
 import java.time.Instant;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
-import java.util.Locale;
-import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.TimeUnit;
 
 public final class EmbeddedManifoldBrokerServer {
     private static final String TAG = "RQNativeRenderer";
     private static final String MARKER_PREFIX = "RUSTY_QUEST_NATIVE_RENDERER";
     private static final String CHANNEL = "manifold-embedded-broker";
-    private static final String ACCEPT_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
     private static final String COMMAND_SCHEMA = "rusty.manifold.command.envelope.v1";
     private static final String MUTATION_SCHEMA =
             "rusty.quest.broker.server_mutation_request.v1";
@@ -40,7 +37,15 @@ public final class EmbeddedManifoldBrokerServer {
     private static final String DEFAULT_PATH = "/manifold/v1/events";
     private static final int DEFAULT_MAX_FRAME_BYTES = 65536;
     private static final int MAX_READ_ONLY_CLIENTS = 4;
-    private static final int CLIENT_IDLE_TIMEOUT_MS = 15000;
+    private static final int CLIENT_POLL_TIMEOUT_MS = 250;
+    private static final int MAX_UPGRADE_HEADER_BYTES = 16 * 1024;
+    private static final long UPGRADE_DEADLINE_MS = 10_000L;
+    private static final long FRAME_ASSEMBLY_DEADLINE_MS = 5_000L;
+    private static final int MAX_OUTBOUND_MESSAGES = 64;
+    private static final int MAX_OUTBOUND_BYTES = 1024 * 1024;
+    private static final long PING_INTERVAL_MS = 15_000L;
+    private static final long PONG_DEADLINE_MS = 5_000L;
+    private static final long IDLE_DEADLINE_MS = 60_000L;
     private static final EmbeddedManifoldBrokerServer INSTANCE = new EmbeddedManifoldBrokerServer();
 
     private final Object lifecycleLock = new Object();
@@ -127,6 +132,14 @@ public final class EmbeddedManifoldBrokerServer {
                 // Closing an already-dead server socket is expected during process teardown.
             }
         }
+        List<BrokerSession> copy;
+        synchronized (sessionLock) {
+            copy = new ArrayList<>(sessions);
+            sessions.clear();
+        }
+        for (BrokerSession session : copy) {
+            session.close();
+        }
         marker("status=stopped " + settings.markerFields());
     }
 
@@ -162,16 +175,24 @@ public final class EmbeddedManifoldBrokerServer {
     private void handleClient(Socket client) {
         BrokerSession session = null;
         try (Socket socket = client) {
-            socket.setSoTimeout(CLIENT_IDLE_TIMEOUT_MS);
+            socket.setSoTimeout(CLIENT_POLL_TIMEOUT_MS);
             InputStream input = socket.getInputStream();
             OutputStream output = socket.getOutputStream();
-            Handshake handshake = readHandshake(input);
-            if (!settings.path.equals(handshake.path)) {
+            Rfc6455Codec.UpgradeRequest handshake = Rfc6455Codec.readUpgradeRequest(
+                    new DeadlineInputStream(
+                            input,
+                            deadlineAfterMs(UPGRADE_DEADLINE_MS),
+                            TimeUnit.MILLISECONDS.toNanos(FRAME_ASSEMBLY_DEADLINE_MS)),
+                    MAX_UPGRADE_HEADER_BYTES);
+            if (!settings.path.equals(handshake.target)) {
                 writeHttp(output, "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n");
                 return;
             }
-            String key = handshake.headers.get("sec-websocket-key");
-            if (key == null || key.isEmpty()) {
+            final String accept;
+            try {
+                accept = Rfc6455Codec.serverAccept(
+                        handshake.method, handshake.httpVersion, handshake.headers);
+            } catch (IOException invalidUpgrade) {
                 writeHttp(output, "HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\n\r\n");
                 return;
             }
@@ -179,29 +200,44 @@ public final class EmbeddedManifoldBrokerServer {
                 writeHttp(output, "HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\n\r\n");
                 return;
             }
-            writeWebSocketAccept(output, key);
-            session = new BrokerSession(output);
+            writeWebSocketAccept(output, accept);
+            session = new BrokerSession(socket, output, settings.maxFrameBytes);
             synchronized (sessionLock) {
                 sessions.add(session);
             }
             marker("status=client-connected activeClients=" + activeClientCount() + " " + settings.markerFields());
             while (!socket.isClosed()) {
-                Frame frame = readFrame(input, settings.maxFrameBytes);
-                if (frame == null || frame.opcode == 0x8) {
+                final Rfc6455Codec.Frame frame;
+                try {
+                    frame = Rfc6455Codec.readFrame(
+                            new DeadlineInputStream(
+                                    input,
+                                    deadlineAfterMs(CLIENT_POLL_TIMEOUT_MS),
+                                    TimeUnit.MILLISECONDS.toNanos(
+                                            FRAME_ASSEMBLY_DEADLINE_MS)),
+                            true,
+                            settings.maxFrameBytes);
+                } catch (SocketTimeoutException timeout) {
+                    String timeoutMessage = timeout.getMessage();
+                    if (timeoutMessage == null || !timeoutMessage.contains("first-byte")) {
+                        throw timeout;
+                    }
+                    session.tick(System.nanoTime());
+                    continue;
+                }
+                Rfc6455Codec.Event event = session.receive(frame, System.nanoTime());
+                if (event.kind == Rfc6455Codec.Event.Kind.CLOSE) {
+                    session.awaitClosed(1_000L);
                     return;
                 }
-                if (frame.opcode == 0x9) {
-                    writeFrame(output, frame.payload, 0xA);
-                    continue;
+                if (event.kind == Rfc6455Codec.Event.Kind.TEXT) {
+                    handleTextFrame(session, event.text);
                 }
-                if (frame.opcode != 0x1) {
-                    continue;
-                }
-                handleTextFrame(session, new String(frame.payload, StandardCharsets.UTF_8));
             }
-        } catch (FrameTooLargeException ex) {
+        } catch (IOException ex) {
             droppedEventCount += 1;
-            marker("status=frame-rejected reason=oversized maxFrameBytes=" + settings.maxFrameBytes);
+            marker("status=transport-rejected reason=" + markerToken(ex.getMessage())
+                    + " maxFrameBytes=" + settings.maxFrameBytes);
         } catch (Exception ignored) {
             // Client disconnects and malformed readiness probes are expected.
         } finally {
@@ -209,6 +245,7 @@ public final class EmbeddedManifoldBrokerServer {
                 synchronized (sessionLock) {
                     sessions.remove(session);
                 }
+                session.close();
                 marker("status=client-disconnected activeClients=" + activeClientCount());
             }
         }
@@ -356,36 +393,12 @@ public final class EmbeddedManifoldBrokerServer {
         return "";
     }
 
-    private static Handshake readHandshake(InputStream input) throws IOException {
-        BufferedReader reader = new BufferedReader(new InputStreamReader(input, StandardCharsets.US_ASCII));
-        String request = reader.readLine();
-        if (request == null) {
-            throw new IOException("missing HTTP request line");
-        }
-        String[] requestParts = request.split(" ");
-        String path = requestParts.length >= 2 ? requestParts[1] : "";
-        Map<String, String> headers = new HashMap<>();
-        String line;
-        while ((line = reader.readLine()) != null && !line.isEmpty()) {
-            int colon = line.indexOf(':');
-            if (colon > 0) {
-                headers.put(
-                        line.substring(0, colon).trim().toLowerCase(Locale.ROOT),
-                        line.substring(colon + 1).trim());
-            }
-        }
-        return new Handshake(path, headers);
-    }
-
     private static void writeHttp(OutputStream output, String response) throws IOException {
         output.write(response.getBytes(StandardCharsets.US_ASCII));
         output.flush();
     }
 
-    private static void writeWebSocketAccept(OutputStream output, String key) throws Exception {
-        MessageDigest digest = MessageDigest.getInstance("SHA-1");
-        byte[] sha1 = digest.digest((key + ACCEPT_GUID).getBytes(StandardCharsets.US_ASCII));
-        String accept = Base64.encodeToString(sha1, Base64.NO_WRAP);
+    private static void writeWebSocketAccept(OutputStream output, String accept) throws IOException {
         String response = "HTTP/1.1 101 Switching Protocols\r\n"
                 + "Upgrade: websocket\r\n"
                 + "Connection: Upgrade\r\n"
@@ -394,82 +407,14 @@ public final class EmbeddedManifoldBrokerServer {
         writeHttp(output, response);
     }
 
-    private static Frame readFrame(InputStream input, int maxFrameBytes) throws IOException, FrameTooLargeException {
-        int first = input.read();
-        if (first < 0) {
-            return null;
-        }
-        int second = readByte(input);
-        int opcode = first & 0x0F;
-        boolean masked = (second & 0x80) != 0;
-        long length = second & 0x7F;
-        if (length == 126) {
-            length = ((long) readByte(input) << 8) | readByte(input);
-        } else if (length == 127) {
-            length = 0;
-            for (int index = 0; index < 8; index++) {
-                length = (length << 8) | readByte(input);
-            }
-        }
-        if (length > maxFrameBytes) {
-            throw new FrameTooLargeException();
-        }
-        byte[] mask = masked ? readBytes(input, 4) : new byte[0];
-        byte[] payload = readBytes(input, (int) length);
-        if (masked) {
-            for (int index = 0; index < payload.length; index++) {
-                payload[index] = (byte) (payload[index] ^ mask[index % 4]);
-            }
-        }
-        return new Frame(opcode, payload);
-    }
-
-    private static int readByte(InputStream input) throws IOException {
-        int value = input.read();
-        if (value < 0) {
-            throw new IOException("unexpected EOF");
-        }
-        return value;
-    }
-
-    private static byte[] readBytes(InputStream input, int size) throws IOException {
-        byte[] bytes = new byte[size];
-        int offset = 0;
-        while (offset < size) {
-            int read = input.read(bytes, offset, size - offset);
-            if (read < 0) {
-                throw new IOException("unexpected EOF");
-            }
-            offset += read;
-        }
-        return bytes;
-    }
-
     private static void writeText(BrokerSession session, JSONObject object) throws IOException {
-        synchronized (session) {
-            writeFrame(session.output, object.toString().getBytes(StandardCharsets.UTF_8), 0x1);
-        }
+        session.sendText(object.toString());
     }
 
-    private static void writeFrame(OutputStream output, byte[] payload, int opcode) throws IOException {
-        ByteArrayOutputStream frame = new ByteArrayOutputStream();
-        frame.write(0x80 | (opcode & 0x0F));
-        int length = payload.length;
-        if (length < 126) {
-            frame.write(length);
-        } else if (length <= 0xFFFF) {
-            frame.write(126);
-            frame.write((length >> 8) & 0xFF);
-            frame.write(length & 0xFF);
-        } else {
-            frame.write(127);
-            for (int shift = 56; shift >= 0; shift -= 8) {
-                frame.write((length >> shift) & 0xFF);
-            }
-        }
-        frame.write(payload);
-        output.write(frame.toByteArray());
-        output.flush();
+    private static long deadlineAfterMs(long durationMs) {
+        long now = System.nanoTime();
+        long delta = TimeUnit.MILLISECONDS.toNanos(durationMs);
+        return now > Long.MAX_VALUE - delta ? Long.MAX_VALUE : now + delta;
     }
 
     private static void marker(String detail) {
@@ -577,35 +522,69 @@ public final class EmbeddedManifoldBrokerServer {
         }
     }
 
-    private static final class Handshake {
-        final String path;
-        final Map<String, String> headers;
-
-        Handshake(String path, Map<String, String> headers) {
-            this.path = path;
-            this.headers = headers;
-        }
-    }
-
-    private static final class Frame {
-        final int opcode;
-        final byte[] payload;
-
-        Frame(int opcode, byte[] payload) {
-            this.opcode = opcode;
-            this.payload = payload;
-        }
-    }
-
-    private static final class FrameTooLargeException extends Exception {
-    }
-
     private static final class BrokerSession {
-        final OutputStream output;
         final Set<String> subscriptions = new HashSet<>();
+        final BoundedWebSocketSession transport;
 
-        BrokerSession(OutputStream output) {
-            this.output = output;
+        BrokerSession(final Socket socket, final OutputStream output, int maxFrameBytes) {
+            BoundedWebSocketSession.Limits limits = new BoundedWebSocketSession.Limits(
+                    MAX_OUTBOUND_MESSAGES,
+                    Math.max(maxFrameBytes, MAX_OUTBOUND_BYTES),
+                    maxFrameBytes,
+                    TimeUnit.MILLISECONDS.toNanos(PING_INTERVAL_MS),
+                    TimeUnit.MILLISECONDS.toNanos(PONG_DEADLINE_MS),
+                    TimeUnit.MILLISECONDS.toNanos(IDLE_DEADLINE_MS));
+            transport = new BoundedWebSocketSession(
+                    "rusty-quest-embedded-websocket-writer",
+                    new BoundedWebSocketSession.FrameWriter() {
+                        @Override public void write(
+                                boolean fin, int opcode, byte[] payload) throws IOException {
+                            Rfc6455Codec.writeFrame(output, fin, opcode, payload, null);
+                        }
+
+                        @Override public void close() throws IOException {
+                            socket.close();
+                        }
+                    },
+                    limits,
+                    System.nanoTime(),
+                    null,
+                    new BoundedWebSocketSession.TelemetrySink() {
+                        @Override public void onEvent(BoundedWebSocketSession.Telemetry event) {
+                            if (event.code == BoundedWebSocketSession.EventCode.QUEUE_SATURATED
+                                    || event.code == BoundedWebSocketSession.EventCode.WRITE_FAILED
+                                    || event.code == BoundedWebSocketSession.EventCode.CLOSED) {
+                                marker("status=transport-lifecycle event=" + event.code.name()
+                                        + " closeReason="
+                                        + (event.closeReason == null
+                                                ? "none"
+                                                : event.closeReason.name())
+                                        + " queuedMessages=" + event.queuedMessages
+                                        + " queuedBytes=" + event.queuedBytes);
+                            }
+                        }
+                    });
+        }
+
+        void sendText(String value) throws IOException {
+            transport.sendText(value);
+        }
+
+        Rfc6455Codec.Event receive(Rfc6455Codec.Frame frame, long nowNanos)
+                throws IOException {
+            return transport.receive(frame, nowNanos);
+        }
+
+        void tick(long nowNanos) throws IOException {
+            transport.tick(nowNanos);
+        }
+
+        boolean awaitClosed(long timeoutMs) throws InterruptedException {
+            return transport.awaitClosed(timeoutMs);
+        }
+
+        void close() {
+            transport.close();
         }
 
         void subscribe(String stream) {

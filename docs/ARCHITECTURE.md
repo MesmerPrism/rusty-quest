@@ -685,6 +685,22 @@ Private visual layer implementations remain downstream extension-slot or
 private-particle payloads and are not part of the public source, fixture, or
 APK build manifest.
 
+## Shared Android WebSocket Transport
+
+`crates/rusty-quest-broker-transport` is the common RFC6455 transport core for
+the standalone Connection Hub and the Native Renderer embedded broker.
+`ConnectionHubHttpServer` and `EmbeddedManifoldBrokerServer` own placement and
+socket acceptance, then delegate upgrade/framing, bounded per-client queues,
+single-writer isolation, Ping/Pong/Close deadlines, cancellation, and sanitized
+telemetry to that core. Their build entrypoints compile the same sources, and
+host fixtures compare the two placements against the same transport outcomes.
+
+The core does not parse product JSON, derive Android/Binder identity, issue or
+interpret Manifold authorization, decide command outcomes or platform effects,
+or carry media. Those edges stay with the existing protocol, admission,
+authority, and media owners. A transport acknowledgement is never evidence of
+admission or application effect.
+
 ## Manifold Broker Android Package
 
 The Quest lane owns the Android package identity for the on-device Manifold

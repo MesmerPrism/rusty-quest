@@ -71,6 +71,7 @@ public final class ConnectionHubProtocol {
     public static final int MAX_SURFACE_STATE_UPDATES_PER_WINDOW = 240;
     public static final int MAX_SOCKET_OUTBOUND_QUEUE = 64;
     public static final int MAX_SOCKET_OUTBOUND_FRAME_BYTES = 262_144;
+    public static final int MAX_SOCKET_OUTBOUND_QUEUE_BYTES = 1_048_576;
     public static final long AUTH_RATE_WINDOW_MS = 60_000L;
     public static final long COMMAND_RATE_WINDOW_MS = 60_000L;
     public static final long SURFACE_STATE_RATE_WINDOW_MS = 60_000L;
@@ -78,6 +79,10 @@ public final class ConnectionHubProtocol {
     public static final long SOCKET_AUTH_DEADLINE_MS = 10_000L;
     public static final long SOCKET_FRAME_ASSEMBLY_DEADLINE_MS = 5_000L;
     public static final long SOCKET_WRITE_DEADLINE_MS = 5_000L;
+    public static final long SOCKET_POLL_INTERVAL_MS = 250L;
+    public static final long SOCKET_PING_INTERVAL_MS = 15_000L;
+    public static final long SOCKET_PONG_DEADLINE_MS = 5_000L;
+    public static final long SOCKET_IDLE_DEADLINE_MS = 60_000L;
     public static final long PROVIDER_EFFECT_RECEIPT_DEADLINE_MS = 5_000L;
 
     public static final String CONFIDENTIALITY = "none";
