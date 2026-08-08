@@ -198,6 +198,7 @@ android {
   sourceSets {
     getByName("main") {
       java.srcDir("../host/src/main/java")
+      java.srcDir("../../../crates/rusty-quest-broker-admission/android")
       jniLibs.srcDir(generatedNativeRoot)
       res.srcDir(generatedMediaRoot)
     }

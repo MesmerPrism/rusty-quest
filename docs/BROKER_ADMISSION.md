@@ -13,6 +13,10 @@ The service reads `Message.sendingUid`, resolves packages through
 `PackageManager`, and hashes the single APK signing certificate with SHA-256.
 UIDs that map to zero or multiple packages reject; the adapter never chooses
 one package from an ambiguous UID.
+The packaged authority must also map that package-and-signer subject to exactly
+one client grant. Duplicate subjects reject before token issue and before a
+runtime config is published; the caller cannot disambiguate them with a client
+id or capability request.
 It also supplies 256 bits from `SecureRandom`. Those are platform evidence and
 entropy, not admission decisions.
 
@@ -33,6 +37,10 @@ The co-resident Rust runtime checks the token, exact client, and command
 capability, consumes the use, then calls Runtime Host review/application.
 Neither localhost origin, the old
 embedded session token, nor a transport acknowledgement is authorization.
+
+Provider-client lifecycle, correlation, retry, equivalent registration, and
+ambiguous-effect rules are defined in
+[`CONNECTION_HUB_BINDER_ADMISSION.md`](CONNECTION_HUB_BINDER_ADMISSION.md).
 
 The embedded Native Renderer has no exported Binder hop for its local server.
 It instead derives its own installed package, process UID, and exactly one APK

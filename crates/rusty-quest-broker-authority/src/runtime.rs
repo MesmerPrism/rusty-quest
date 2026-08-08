@@ -741,7 +741,8 @@ impl QuestBrokerAuthorityRuntime {
                     schema_id: schema(ADMISSION_REQUEST_SCHEMA),
                     request_id,
                     expected_authority_revision,
-                    identity: project_binder_caller(runtime.admission_snapshot(), &caller),
+                    identity: project_binder_caller(runtime.admission_snapshot(), &caller)
+                        .map_err(QuestBrokerRuntimeError::AdmissionProjection)?,
                     requested_capabilities,
                     issued_at_ms,
                     expires_at_ms,
@@ -770,7 +771,8 @@ impl QuestBrokerAuthorityRuntime {
                     request_id,
                     expected_authority_revision,
                     token_id,
-                    identity: project_binder_caller(runtime.admission_snapshot(), &caller),
+                    identity: project_binder_caller(runtime.admission_snapshot(), &caller)
+                        .map_err(QuestBrokerRuntimeError::AdmissionProjection)?,
                     capability_id,
                     issued_at_ms,
                     expires_at_ms,
@@ -791,7 +793,8 @@ impl QuestBrokerAuthorityRuntime {
                     request_id,
                     expected_authority_revision,
                     token_id,
-                    identity: project_binder_caller(runtime.admission_snapshot(), &caller),
+                    identity: project_binder_caller(runtime.admission_snapshot(), &caller)
+                        .map_err(QuestBrokerRuntimeError::AdmissionProjection)?,
                     reason,
                 };
                 runtime.revoke_token(&request)
@@ -1386,6 +1389,7 @@ fn validate_packaged_authority(
 
     let mut seen_grants = BTreeSet::new();
     let mut seen_clients = BTreeSet::new();
+    let mut seen_platform_subjects = BTreeSet::new();
     let mut selected_media_clients = Vec::new();
     for packaged_client in &binding.client_locks {
         if sha256_hex(packaged_client.client_lock_json.as_bytes())
@@ -1399,6 +1403,7 @@ fn validate_packaged_authority(
         validate_client_lock(&client)?;
         if !seen_grants.insert(packaged_client.grant_id.clone())
             || !seen_clients.insert(client.client_id.clone())
+            || !seen_platform_subjects.insert(client.package_name.clone())
         {
             return Err(QuestBrokerRuntimeError::GrantClosureMismatch);
         }
@@ -3245,6 +3250,50 @@ mod tests {
                 Some(ManifoldRuntimeRejectionReason::StaleAuthorityRevision)
             );
         }
+    }
+
+    #[test]
+    fn packaged_android_subject_must_resolve_to_exactly_one_grant() {
+        let mut duplicate = config(
+            QuestBrokerAuthorityBridgeKind::StandaloneProcessJni,
+            vec![ManifoldBrokerFeature::MediaSession],
+            "command.media.session.start",
+            true,
+        );
+        let original_packaged = duplicate.packaged_authority.client_locks[0].clone();
+        let mut duplicate_client: QuestBrokerClientLockSpec =
+            serde_json::from_str(&original_packaged.client_lock_json).expect("client lock");
+        duplicate_client.client_id = id("client.quest.duplicate-subject");
+        duplicate_client.feature_lock_id = id("lock.broker-client.duplicate-subject.v1");
+        duplicate_client.marker_namespace = "RUSTY_QUEST_DUPLICATE_SUBJECT".to_owned();
+        let duplicate_client_json =
+            serde_json::to_string(&duplicate_client).expect("duplicate client lock");
+        let duplicate_client_sha256 = sha256_hex(duplicate_client_json.as_bytes());
+        duplicate
+            .packaged_authority
+            .client_locks
+            .push(QuestBrokerPackagedClientLock {
+                grant_id: id("grant.quest.duplicate-subject"),
+                client_lock_sha256: duplicate_client_sha256.clone(),
+                client_lock_json: duplicate_client_json,
+                media_lifecycle_authority: original_packaged.media_lifecycle_authority,
+            });
+        let mut duplicate_grant = duplicate.admission.snapshot.grants[0].clone();
+        duplicate_grant.grant_id = id("grant.quest.duplicate-subject");
+        duplicate_grant.identity.client_id = duplicate_client.client_id;
+        duplicate_grant.client_lock_id = duplicate_client.feature_lock_id;
+        duplicate_grant.client_lock_fingerprint = format!("sha256:{duplicate_client_sha256}");
+        duplicate.admission.snapshot.grants.push(duplicate_grant);
+
+        assert!(matches!(
+            QuestBrokerAuthorityRuntime::from_config(
+                duplicate,
+                &"61".repeat(32),
+                1_000,
+                1_000_000_000,
+            ),
+            Err(QuestBrokerRuntimeError::GrantClosureMismatch)
+        ));
     }
 
     #[test]

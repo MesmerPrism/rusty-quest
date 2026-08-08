@@ -297,6 +297,13 @@ Cross-app product admission uses the signature-scoped Binder service in
 caller UID, package, and signing-certificate SHA-256; Manifold owns the grant,
 256-bit opaque token, capability subset, revision, replay, expiry, revocation,
 and audit decision. The service must not contain capability/grant policy.
+Require exactly one packaged grant for the OS-derived package-and-signer
+subject; duplicate subjects fail before token issue or runtime-config
+publication. Drive each client through one serialized reducer with fenced
+process/binding/session generations, broker epoch, operation/attempt/correlation
+ids, bounded monotonic deadlines, and cleanup exactly once. Retry only read-only
+evidence or byte-equivalent registration; never blindly replay a relative
+effect. See `docs/CONNECTION_HUB_BINDER_ADMISSION.md`.
 Device validation requires a same-signer lifecycle, a differently signed
 permission denial, zero package fatals, and uninstall cleanup on every serial.
 

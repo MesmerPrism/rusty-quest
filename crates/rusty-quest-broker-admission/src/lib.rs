@@ -186,7 +186,7 @@ impl QuestBrokerAdmissionRuntime {
             } => {
                 check_operation_schema(&schema_id)?;
                 let now_ms = issued_at_ms;
-                let identity = project_binder_caller(self.authority.snapshot(), &caller);
+                let identity = project_binder_caller(self.authority.snapshot(), &caller)?;
                 let request = ManifoldAdmissionRequest {
                     schema_id: schema(ADMISSION_REQUEST_SCHEMA),
                     request_id,
@@ -216,7 +216,7 @@ impl QuestBrokerAdmissionRuntime {
                     request_id,
                     expected_authority_revision,
                     token_id,
-                    identity: project_binder_caller(self.authority.snapshot(), &caller),
+                    identity: project_binder_caller(self.authority.snapshot(), &caller)?,
                     capability_id,
                     issued_at_ms,
                     expires_at_ms,
@@ -238,7 +238,7 @@ impl QuestBrokerAdmissionRuntime {
                         request_id,
                         expected_authority_revision,
                         token_id,
-                        identity: project_binder_caller(self.authority.snapshot(), &caller),
+                        identity: project_binder_caller(self.authority.snapshot(), &caller)?,
                         reason,
                     })
             }
@@ -290,33 +290,37 @@ impl QuestBrokerAdmissionRuntime {
 /// The platform subject selects only a candidate client id. Manifold still
 /// compares the complete package/signature identity against the grant.
 ///
-/// # Panics
+/// # Errors
 ///
-/// Panics only if the static `client.android.uid` namespace cannot be combined
-/// with the platform-provided numeric UID into a dotted identifier.
-#[must_use]
+/// Rejects when more than one packaged grant names the same Android platform
+/// subject. Zero matches retain the synthetic unmatched identity so Manifold
+/// returns its normal identity-mismatch receipt.
 pub fn project_binder_caller(
     snapshot: &ManifoldAdmissionSnapshot,
     caller: &QuestAndroidBinderCaller,
-) -> ManifoldClientIdentity {
+) -> Result<ManifoldClientIdentity, QuestAdmissionError> {
     let fingerprint = normalize_fingerprint(&caller.signing_certificate_sha256);
-    if let Some(grant) = snapshot
+    let mut matches = snapshot
         .grants
         .iter()
-        .find(|grant| grant.identity.platform_subject == caller.package_name)
-    {
-        ManifoldClientIdentity {
+        .filter(|grant| grant.identity.platform_subject == caller.package_name);
+    let first = matches.next();
+    if matches.next().is_some() {
+        return Err(QuestAdmissionError::AmbiguousPlatformSubject);
+    }
+    if let Some(grant) = first {
+        Ok(ManifoldClientIdentity {
             client_id: grant.identity.client_id.clone(),
             platform_subject: caller.package_name.clone(),
             signing_fingerprint: fingerprint,
-        }
+        })
     } else {
-        ManifoldClientIdentity {
+        Ok(ManifoldClientIdentity {
             client_id: DottedId::new(format!("client.android.uid_{}", caller.sending_uid))
                 .expect("derived client id"),
             platform_subject: caller.package_name.clone(),
             signing_fingerprint: fingerprint,
-        }
+        })
     }
 }
 
@@ -366,6 +370,8 @@ pub enum QuestAdmissionError {
     SchemaMismatch,
     /// `SecureRandom` entropy was not exactly 256 bits of hex.
     InvalidEntropy,
+    /// More than one packaged grant names the OS-derived Android subject.
+    AmbiguousPlatformSubject,
     /// JSON input decode failed.
     Deserialize(serde_json::Error),
     /// JSON output encode failed.
@@ -380,6 +386,12 @@ impl fmt::Display for QuestAdmissionError {
             Self::SchemaMismatch => write!(formatter, "Quest admission schema mismatch"),
             Self::InvalidEntropy => {
                 write!(formatter, "Quest admission entropy must be 256-bit hex")
+            }
+            Self::AmbiguousPlatformSubject => {
+                write!(
+                    formatter,
+                    "Android platform subject maps to multiple packaged grants"
+                )
             }
             Self::Deserialize(error) => {
                 write!(formatter, "Quest admission JSON decode failed: {error}")
@@ -484,5 +496,18 @@ mod tests {
         let snapshot: ManifoldAdmissionSnapshot =
             serde_json::from_str(&runtime.snapshot_json().expect("snapshot")).expect("snapshot");
         assert_eq!(snapshot.authority_revision.get(), 1);
+    }
+
+    #[test]
+    fn duplicate_android_subject_fails_before_manifold_grant_selection() {
+        let mut snapshot = config().snapshot;
+        let mut duplicate = snapshot.grants[0].clone();
+        duplicate.grant_id = DottedId::new("grant.quest.duplicate_subject").expect("id");
+        duplicate.identity.client_id = DottedId::new("client.quest.duplicate_subject").expect("id");
+        snapshot.grants.push(duplicate);
+        assert!(matches!(
+            project_binder_caller(&snapshot, &caller(&"a1".repeat(32))),
+            Err(QuestAdmissionError::AmbiguousPlatformSubject)
+        ));
     }
 }

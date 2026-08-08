@@ -55,7 +55,8 @@ replaceable numeric transport epoch and the random listener-instance ID.
 `ConnectionHubAdmissionService` is the single exported signature-protected Binder
 service. Android derives the immediate Binder UID, unambiguous package, and
 single APK signing-certificate SHA-256. A provider cannot supply or substitute
-those fields. A provider first consumes an admission use accepted by the
+those fields. Exactly one packaged grant must match that OS-derived subject;
+duplicates reject before admission. A provider first consumes an admission use accepted by the
 retained Manifold admission authority; registration refers only to the
 Broker-retained use and never accepts caller-supplied admission evidence.
 
@@ -80,6 +81,10 @@ Binder death is linked before authority mutation. A live admitted provider is
 owned by that Binder lifecycle until explicit unregister, Binder death, or
 restart reconciliation; short-lived admission credentials authorize
 registration but do not silently expire a live provider.
+Clients fence that lifecycle with process/binding/session generations and the
+broker epoch. Registration has a stable id plus the digest of its exact bytes;
+only an exact same-session repetition is equivalent. See
+[`CONNECTION_HUB_BINDER_ADMISSION.md`](CONNECTION_HUB_BINDER_ADMISSION.md).
 
 ## Browser protocol
 

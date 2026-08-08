@@ -41,15 +41,18 @@ public final class ConnectionHubAdmissionService extends Service {
     private static final String TAG = "RustyManifoldAdmission";
     private static final String OPERATION_SCHEMA = "rusty.quest.broker.admission_operation.v1";
     private final SecureRandom secureRandom = new SecureRandom();
-    private final Map<String, String> retainedHubProviderAdmissions = new HashMap<>();
+    private final Map<String, RetainedHubProviderAdmission> retainedHubProviderAdmissions =
+            new HashMap<>();
     private final Map<String, ActiveHubProvider> activeHubProviders = new HashMap<>();
     private final Messenger messenger = new Messenger(new AdmissionHandler(Looper.getMainLooper()));
+    private volatile String brokerEpochId = "provider.epoch.unavailable";
 
     @Override
     public void onCreate() {
         super.onCreate();
         try {
             JSONObject status = ManifoldRuntimeAuthorityBridge.initialize();
+            brokerEpochId = status.optString("provider_epoch_id", brokerEpochId);
             // Establish the Hub authority and restore (or fail-closed migrate)
             // its durable envelope before this Binder can issue any provider
             // token. Otherwise the first provider authorization after a cold
@@ -79,9 +82,15 @@ public final class ConnectionHubAdmissionService extends Service {
 
         @Override
         public void handleMessage(Message message) {
+            Bundle data = message.getData();
+            String correlationId = data.getString("correlation_id", "correlation.missing");
+            long sessionGeneration = data.getLong("session_generation", 0L);
+            progress("broker_dequeue", message.sendingUid, "unresolved", correlationId,
+                    sessionGeneration);
             try {
                 QuestCaller caller = callerForUid(message.sendingUid);
-                Bundle data = message.getData();
+                progress("identity_derived", message.sendingUid, caller.packageName, correlationId,
+                        sessionGeneration);
                 JSONObject response;
                 JSONObject operation;
                 if (message.what == MESSAGE_REGISTER_SURFACE) {
@@ -109,7 +118,12 @@ public final class ConnectionHubAdmissionService extends Service {
                     response = ManifoldAdmissionNativeBridge.execute(operation);
                     retainHubProviderAdmissionIfApplied(message.what, caller, data, response);
                 }
-                reply(message, response.toString(), null);
+                progress("authority_returned", message.sendingUid, caller.packageName,
+                        correlationId, sessionGeneration);
+                reply(message, response.toString(), null, correlationId, sessionGeneration,
+                        "authority_returned");
+                progress("reply_enqueued", message.sendingUid, caller.packageName, correlationId,
+                        sessionGeneration);
                 JSONObject receipt = response.optJSONObject("receipt");
                 JSONObject mutationReceipt = response.optJSONObject("mutation_receipt");
                 Log.i(TAG, "status=receipt operation=" + operation.optString("operation", "runtime")
@@ -124,7 +138,8 @@ public final class ConnectionHubAdmissionService extends Service {
                         + " sendingUid=" + caller.uid);
             } catch (Exception error) {
                 Log.e(TAG, "status=error stage=handle reason=" + error.getClass().getSimpleName());
-                reply(message, null, error.getClass().getSimpleName());
+                reply(message, null, error.getClass().getSimpleName(), correlationId,
+                        sessionGeneration, "broker_rejected");
             }
         }
     }
@@ -135,21 +150,47 @@ public final class ConnectionHubAdmissionService extends Service {
             throw new SecurityException("provider callback Messenger is required");
         }
         final HubProviderIdentity identity = caller.toHubIdentity();
-        final String providerInstanceId = "provider.instance." + randomHex(16);
-        synchronized (activeHubProviders) {
-            if (activeHubProviders.containsKey(identity.stableKey())) {
-                throw new SecurityException("provider already has an active surface registration");
-            }
-        }
         JSONObject registration = new JSONObject(data.getString("surface_registration_json", "{}"));
-        String admittedEvidence;
-        synchronized (retainedHubProviderAdmissions) {
-            admittedEvidence = retainedHubProviderAdmissions.remove(identity.stableKey());
-        }
-        if (admittedEvidence == null) {
-            throw new SecurityException("current Manifold provider admission use is required");
+        final String registrationId = requireProviderInstanceId(
+                data.getString("registration_id", ""));
+        final String registrationFingerprint = requireSha256(
+                data.getString("registration_fingerprint_sha256", ""));
+        final String computedFingerprint = "sha256:" + sha256Hex(registration.toString());
+        if (!registrationFingerprint.equals(computedFingerprint)) {
+            throw new SecurityException("surface registration fingerprint mismatch");
         }
         final IBinder callbackBinder = message.replyTo.getBinder();
+        synchronized (activeHubProviders) {
+            ActiveHubProvider existing = activeHubProviders.get(identity.stableKey());
+            if (existing != null) {
+                if (existing.registrationId.equals(registrationId)
+                        && existing.registrationFingerprint.equals(registrationFingerprint)
+                        && existing.surfaceId.equals(registration.getString("surface_id"))
+                        && existing.sessionGeneration
+                                == data.getLong("session_generation", 0L)
+                        && existing.callbackBinder.equals(callbackBinder)) {
+                    return new JSONObject(existing.appliedReceiptJson)
+                            .put("status", "surface_registration_equivalent")
+                            .put("equivalent", true);
+                }
+                throw new SecurityException("conflicting active surface registration");
+            }
+        }
+        final String providerInstanceId = "provider.instance." + randomHex(16);
+        RetainedHubProviderAdmission admission;
+        synchronized (retainedHubProviderAdmissions) {
+            admission = retainedHubProviderAdmissions.remove(identity.stableKey());
+        }
+        if (admission == null) {
+            throw new SecurityException("current Manifold provider admission use is required");
+        }
+        if (admission.sessionGeneration != data.getLong("session_generation", 0L)) {
+            throw new SecurityException("provider admission session generation mismatch");
+        }
+        if (!admission.correlationId.equals(
+                data.getString("authorization_correlation_id", ""))) {
+            throw new SecurityException("provider authorization correlation mismatch");
+        }
         final AtomicBoolean registrationCommitted = new AtomicBoolean();
         final AtomicBoolean deathObserved = new AtomicBoolean();
         final ActiveHubProvider[] activeHolder = new ActiveHubProvider[1];
@@ -174,7 +215,7 @@ public final class ConnectionHubAdmissionService extends Service {
             receipt = ConnectionHubProcess.get(this).registerSurface(
                     identity,
                     providerInstanceId,
-                    admittedEvidence,
+                    admission.requestId,
                     registration,
                     message.replyTo);
         } catch (Exception failure) {
@@ -182,10 +223,19 @@ public final class ConnectionHubAdmissionService extends Service {
             throw failure;
         }
         if (receipt.applied && !deathObserved.get()) {
+            String appliedReceiptJson = hubReceipt(receipt)
+                    .put("registration_id", registrationId)
+                    .put("registration_fingerprint_sha256", registrationFingerprint)
+                    .put("equivalent", false)
+                    .toString();
             ActiveHubProvider active = new ActiveHubProvider(
                     identity,
                     providerInstanceId,
                     registration.getString("surface_id"),
+                    registrationId,
+                    registrationFingerprint,
+                    admission.sessionGeneration,
+                    appliedReceiptJson,
                     callbackBinder,
                     deathRecipient,
                     registrationCommitted);
@@ -214,7 +264,10 @@ public final class ConnectionHubAdmissionService extends Service {
                         "provider_binder_died_during_registration");
             }
         }
-        return hubReceipt(receipt);
+        return hubReceipt(receipt)
+                .put("registration_id", registrationId)
+                .put("registration_fingerprint_sha256", registrationFingerprint)
+                .put("equivalent", false);
     }
 
     private void retainHubProviderAdmissionIfApplied(
@@ -235,7 +288,10 @@ public final class ConnectionHubAdmissionService extends Service {
         synchronized (retainedHubProviderAdmissions) {
             retainedHubProviderAdmissions.put(
                     identity.stableKey(),
-                    request.getString("request_id", ""));
+                    new RetainedHubProviderAdmission(
+                            request.getString("request_id", ""),
+                            request.getString("correlation_id", ""),
+                            request.getLong("session_generation", 0L)));
         }
     }
 
@@ -281,6 +337,10 @@ public final class ConnectionHubAdmissionService extends Service {
         final HubProviderIdentity identity;
         final String providerInstanceId;
         final String surfaceId;
+        final String registrationId;
+        final String registrationFingerprint;
+        final long sessionGeneration;
+        final String appliedReceiptJson;
         final IBinder callbackBinder;
         final IBinder.DeathRecipient deathRecipient;
         final AtomicBoolean registrationCommitted;
@@ -289,20 +349,51 @@ public final class ConnectionHubAdmissionService extends Service {
                 HubProviderIdentity identity,
                 String providerInstanceId,
                 String surfaceId,
+                String registrationId,
+                String registrationFingerprint,
+                long sessionGeneration,
+                String appliedReceiptJson,
                 IBinder callbackBinder,
                 IBinder.DeathRecipient deathRecipient,
                 AtomicBoolean registrationCommitted) {
             this.identity = identity;
             this.providerInstanceId = providerInstanceId;
             this.surfaceId = surfaceId;
+            this.registrationId = registrationId;
+            this.registrationFingerprint = registrationFingerprint;
+            this.sessionGeneration = sessionGeneration;
+            this.appliedReceiptJson = appliedReceiptJson;
             this.callbackBinder = callbackBinder;
             this.deathRecipient = deathRecipient;
             this.registrationCommitted = registrationCommitted;
         }
     }
 
+    private static final class RetainedHubProviderAdmission {
+        final String requestId;
+        final String correlationId;
+        final long sessionGeneration;
+
+        RetainedHubProviderAdmission(
+                String requestId,
+                String correlationId,
+                long sessionGeneration) {
+            this.requestId = requestId;
+            this.correlationId = correlationId;
+            this.sessionGeneration = sessionGeneration;
+        }
+    }
+
     private static String requireProviderInstanceId(String value) {
         return HubSurfaceDescriptor.requireToken(value, 96, "provider_instance_id");
+    }
+
+    private static String requireSha256(String value) {
+        String normalized = value == null ? "" : value.trim().toLowerCase(java.util.Locale.ROOT);
+        if (!normalized.matches("sha256:[0-9a-f]{64}")) {
+            throw new IllegalArgumentException("registration fingerprint must be SHA-256");
+        }
+        return normalized;
     }
 
     private String randomHex(int byteCount) {
@@ -390,7 +481,13 @@ public final class ConnectionHubAdmissionService extends Service {
         return builder.toString();
     }
 
-    private static void reply(Message request, String responseJson, String error) {
+    private void reply(
+            Message request,
+            String responseJson,
+            String error,
+            String correlationId,
+            long sessionGeneration,
+            String brokerStage) {
         if (request.replyTo == null) {
             return;
         }
@@ -403,11 +500,39 @@ public final class ConnectionHubAdmissionService extends Service {
             if (error != null) {
                 bundle.putString("error", error);
             }
+            bundle.putString("correlation_id", correlationId);
+            bundle.putLong("session_generation", sessionGeneration);
+            bundle.putString("broker_epoch_id", brokerEpochId);
+            bundle.putString("broker_stage", brokerStage);
             response.setData(bundle);
             request.replyTo.send(response);
         } catch (Exception ignored) {
             // The calling process may have exited; Manifold audit remains authoritative.
         }
+    }
+
+    private static String sha256Hex(String value) throws Exception {
+        return hex(MessageDigest.getInstance("SHA-256")
+                .digest(value.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+    }
+
+    private static void progress(
+            String stage,
+            int uid,
+            String packageName,
+            String correlationId,
+            long sessionGeneration) {
+        Log.i(TAG, "status=progress stage=" + sanitizeMarker(stage)
+                + " correlationId=" + sanitizeMarker(correlationId)
+                + " sessionGeneration=" + sessionGeneration
+                + " callerPackage=" + sanitizeMarker(packageName)
+                + " sendingUid=" + uid);
+    }
+
+    private static String sanitizeMarker(String value) {
+        if (value == null) return "missing";
+        return value.replaceAll("[^A-Za-z0-9_.-]", "_").substring(
+                0, Math.min(96, value.length()));
     }
 
     private static final class QuestCaller {

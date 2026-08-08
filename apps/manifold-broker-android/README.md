@@ -63,6 +63,13 @@ Binder identity, Manifold authorization, and owner-confirmed effects remain
 outside transport. Validate the core and standalone/embedded parity on the host
 before building or using a device.
 
+The exported admission service derives UID/package/signer from Android and
+requires one matching packaged grant. Its Messenger replies carry the client
+correlation id, session generation, and broker epoch. Registration binds a
+stable registration id and exact canonical-byte digest; only an identical
+same-session replay returns the cached applied result. See
+`../../docs/CONNECTION_HUB_BINDER_ADMISSION.md`.
+
 The runtime config also contains exact product-spec, accepted-lock, and
 per-client lock bytes with hashes. Generated grants are the exact product/client
 intersection, and Rust verifies the canonical config digest before creating the

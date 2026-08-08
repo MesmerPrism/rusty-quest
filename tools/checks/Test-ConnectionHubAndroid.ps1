@@ -6,6 +6,9 @@ $app = Join-Path $RepoRoot "apps\manifold-broker-android"
 $javaRoot = Join-Path $app "src\main\java\io\github\mesmerprism\rustymanifold\broker"
 $sharedTransportRoot = Join-Path $RepoRoot "crates\rusty-quest-broker-transport\android"
 $sharedCodec = Join-Path $sharedTransportRoot "io\github\mesmerprism\rustyquest\broker_transport\Rfc6455Codec.java"
+$sharedAdmissionRoot = Join-Path $RepoRoot "crates\rusty-quest-broker-admission\android"
+$sharedAdmissionReducer = Join-Path $sharedAdmissionRoot "io\github\mesmerprism\rustyquest\broker_admission\ConnectionHubAdmissionSessionReducer.java"
+$sharedAdmissionTest = Join-Path $RepoRoot "crates\rusty-quest-broker-admission\tests\java\io\github\mesmerprism\rustyquest\broker_admission\ConnectionHubAdmissionSessionReducerTest.java"
 $test = Join-Path $app "tests\java\io\github\mesmerprism\rustymanifold\broker\ConnectionHubCoreTest.java"
 $vectorTest = Join-Path $app "tests\java\io\github\mesmerprism\rustymanifold\broker\ConnectionHubProtocolVectorsTest.java"
 $vectorV2Test = Join-Path $app "tests\java\io\github\mesmerprism\rustymanifold\broker\ConnectionHubProtocolV2VectorsTest.java"
@@ -29,6 +32,8 @@ $required = @(
     $vectorV2Test,
     $transportTest,
     $providerReplyTest,
+    $sharedAdmissionReducer,
+    $sharedAdmissionTest,
     $browserTest,
     $vectors,
     $vectorsV2,
@@ -192,6 +197,27 @@ if ($buildScript -notmatch 'rusty\.manifold\.connection_hub\.policy\.v3' -or
 }
 if ($spatialManifest -notmatch 'BROKER_ADMISSION' -or $spatialManifest -notmatch 'io\.github\.mesmerprism\.rustymanifold\.broker') { throw "Spatial provider does not bind the exact signature-scoped Broker." }
 if ($spatialClient -notmatch 'MESSAGE_REGISTER_SURFACE' -or $spatialClient -notmatch 'MESSAGE_UNREGISTER_SURFACE' -or $spatialClient -match 'admitted_client_evidence_json') { throw "Spatial provider lifecycle or admission boundary is incorrect." }
+if ($spatialClient -notmatch 'ConnectionHubAdmissionSessionReducer' -or
+    $spatialClient -notmatch 'onBindingDied' -or
+    $spatialClient -notmatch 'onNullBinding' -or
+    $spatialClient -notmatch 'linkToDeath' -or
+    $spatialClient -notmatch 'correlation_id' -or
+    $spatialClient -notmatch 'session_generation') {
+    throw "Spatial provider does not use the generation-fenced shared Binder admission reducer."
+}
+if ($binder -notmatch 'correlation_id' -or
+    $binder -notmatch 'broker_epoch_id' -or
+    $binder -notmatch 'registration_id' -or
+    $binder -notmatch 'registration_fingerprint_sha256' -or
+    $binder -notmatch 'authorization_correlation_id' -or
+    $spatialClient -notmatch 'authorization_correlation_id' -or
+    $binder -notmatch 'surface_registration_equivalent') {
+    throw "Binder broker does not correlate admission stages or implement equivalent registration."
+}
+if ($buildScript -notmatch 'sharedBrokerAdmissionJavaRoot' -or
+    (Get-Content -Raw -LiteralPath (Join-Path $spatial 'app\build.gradle.kts')) -notmatch 'rusty-quest-broker-admission/android') {
+    throw "Both Android placements do not compile the shared Binder admission source set."
+}
 if ($spatialClient -notmatch 'command_received_' -or
     $spatialClient -notmatch 'effect_response_sent_' -or
     $spatialClient -notmatch 'val effectReplyTo = message\.replyTo' -or
@@ -272,7 +298,8 @@ $sources = @(Get-ChildItem -Path $sharedTransportRoot -Recurse -Filter *.java |
     $vectorV2Test,
     $transportTest,
     $providerReplyTest
-)
+) + @(Get-ChildItem -Path $sharedAdmissionRoot -Recurse -Filter *.java |
+    ForEach-Object { $_.FullName }) + @($sharedAdmissionTest)
 $javac = (Get-Command javac -ErrorAction Stop).Source
 $java = (Get-Command java -ErrorAction Stop).Source
 & $javac -encoding UTF-8 -source 8 -target 8 -cp $jsonJar.FullName -d $out $sources
@@ -287,6 +314,8 @@ if ($LASTEXITCODE -ne 0) { throw "Connection Hub transport-bound tests failed." 
 if ($LASTEXITCODE -ne 0) { throw "Connection Hub provider-effect reply-router tests failed." }
 & $java -cp "$out;$($jsonJar.FullName)" io.github.mesmerprism.rustymanifold.broker.ConnectionHubCoreTest $vectors
 if ($LASTEXITCODE -ne 0) { throw "Connection Hub host tests failed." }
+& $java -cp "$out;$($jsonJar.FullName)" io.github.mesmerprism.rustyquest.broker_admission.ConnectionHubAdmissionSessionReducerTest
+if ($LASTEXITCODE -ne 0) { throw "Connection Hub admission-session reducer tests failed." }
 
 & cargo test --locked --manifest-path (Join-Path $nativeHubRoot "Cargo.toml")
 if ($LASTEXITCODE -ne 0) { throw "Isolated Connection Hub native tests failed." }
@@ -317,6 +346,7 @@ final class GeneratedConnectionHubConfig { static final String JSON="{}"; static
 $androidOut = Join-Path $out "android-classes"
 New-Item -ItemType Directory -Force -Path $androidOut | Out-Null
 $androidSources = @(Get-ChildItem -Path $sharedTransportRoot -Recurse -Filter *.java | ForEach-Object { $_.FullName }) +
+    @(Get-ChildItem -Path $sharedAdmissionRoot -Recurse -Filter *.java | ForEach-Object { $_.FullName }) +
     @(Get-ChildItem -Path $javaRoot -Filter *.java | ForEach-Object { $_.FullName }) +
     @(Get-ChildItem -Path $generatedDir -Filter *.java | ForEach-Object { $_.FullName })
 & $javac -encoding UTF-8 -source 8 -target 8 -bootclasspath $androidJar -d $androidOut $androidSources
