@@ -70,6 +70,14 @@ Previous/Play/Pause/Next controls. Closing or switching away from the player
 removes only its surface. The Hub listener and browser WebSocket stay alive and
 another compatible app can replace the surface without reconnecting.
 
+The provider client is a reducer-driven Binder session, not a callback-driven
+state machine. Process/binding/session generations fence stale callbacks and
+replies, broker epochs fence replacement, and registration retries reuse one
+id plus the digest of the exact registration JSON. Read-only evidence may retry
+within its fixed limit; token/use ambiguity closes the generation. Relative
+Previous/Next effects report `outcome_unknown` instead of replaying. See
+[`../../docs/CONNECTION_HUB_BINDER_ADMISSION.md`](../../docs/CONNECTION_HUB_BINDER_ADMISSION.md).
+
 ## Authority and effect boundary
 
 The browser sends one canonical command envelope at a time. The authority port

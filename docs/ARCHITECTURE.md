@@ -701,6 +701,24 @@ or carry media. Those edges stay with the existing protocol, admission,
 authority, and media owners. A transport acknowledgement is never evidence of
 admission or application effect.
 
+## Connection Hub Binder Admission Sessions
+
+Provider clients place Android Binder callbacks, replies, deaths, deadlines,
+and lifecycle events into one serialized reducer. Process, binding, and session
+generations plus the broker epoch fence stale work. Stable logical-operation and
+registration identities are separate from attempt and correlation identities.
+The broker echoes correlation/session/epoch values and emits bounded progress
+stages from dequeue through identity and authority to reply enqueue.
+
+Android derives the caller UID, unambiguous package, and sole signer; the
+packaged authority must map that subject to exactly one grant. Registration is
+idempotent only for the same session, registration id, canonical-byte digest,
+surface, and callback Binder. Read-only evidence and exact equivalent
+registration have bounded retry. Ambiguous token issue/use closes the session,
+and ambiguous relative commands report `outcome_unknown` rather than replaying.
+All terminal paths converge on cleanup exactly once. The canonical contract is
+[`CONNECTION_HUB_BINDER_ADMISSION.md`](CONNECTION_HUB_BINDER_ADMISSION.md).
+
 ## Manifold Broker Android Package
 
 The Quest lane owns the Android package identity for the on-device Manifold

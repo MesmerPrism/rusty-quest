@@ -823,7 +823,12 @@ Binder sending UID, resolved package, and signing-certificate SHA-256;
 one-time capability uses, revocation, expiry, revisions, and audit. The
 authorized device-test client is signed with the broker key; the unauthorized
 variant uses a different key and must fail at the Android permission boundary.
-See `docs/BROKER_ADMISSION.md`.
+The packaged closure rejects multiple grants for one OS-derived package and
+signer. Provider clients use a serialized, generation-fenced session reducer;
+read-only evidence and byte-equivalent registration have bounded retry, while
+ambiguous token/use and relative command effects never replay blindly. See
+`docs/BROKER_ADMISSION.md` and
+`docs/CONNECTION_HUB_BINDER_ADMISSION.md`.
 
 `crates/rusty-quest-broker-client` is the shared, policy-free consumer SDK for
 real product apps. Native Renderer and Spatial Camera Panel have different
