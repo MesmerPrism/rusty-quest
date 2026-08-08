@@ -764,6 +764,16 @@ See `docs/REMOTE_CAMERA_STREAMING.md`.
 
 ## Android Broker Package
 
+`crates/rusty-quest-broker-transport` supplies one Android-compatible RFC6455
+core to both the standalone Connection Hub and the Native Renderer embedded
+broker. It owns strict upgrade/framing, bounded per-client message and byte
+queues, isolated socket writers, liveness/close deadlines, deterministic
+cancellation, and payload-free telemetry. The app servers remain placement
+adapters; JSON protocol, Binder identity, Manifold authority, command effects,
+and media transport remain outside the core. Both Android build entrypoints
+compile the same source set, and `tools/checks/Test-RustyQuestBrokerTransport.ps1`
+plus the two placement gates prove host parity before device work.
+
 Broker packaging starts from an immutable Manifold product lock, not from a
 hand-maintained permission union. `crates/rusty-quest-broker-product` validates
 the exact spec/lock pair, projects its permission closure, renders the actual

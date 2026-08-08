@@ -813,6 +813,13 @@ $sourceFiles = Get-ChildItem -Path (Join-Path $appRoot "src\main\java") -Recurse
          $_.Name -notlike "UnavailableManifoldConnectionHub*.java")
     } |
     ForEach-Object { $_.FullName }
+$sharedBrokerTransportJavaRoot = Join-Path $repoRoot "crates\rusty-quest-broker-transport\android"
+$sharedBrokerTransportJava = Get-ChildItem -LiteralPath $sharedBrokerTransportJavaRoot -Recurse -Filter *.java |
+    ForEach-Object { $_.FullName }
+if ($sharedBrokerTransportJava.Count -lt 1) {
+    throw "Shared broker transport Android sources are incomplete: $sharedBrokerTransportJavaRoot"
+}
+$sourceFiles = @($sourceFiles) + @($sharedBrokerTransportJava)
 $sourceFiles = @($sourceFiles) + @($generatedProductConfigPath, $generatedRuntimeConfigPath)
 if ($connectionHubSelected) {
     $sourceFiles += $generatedConnectionHubConfigPath

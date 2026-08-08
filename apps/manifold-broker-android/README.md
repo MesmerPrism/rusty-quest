@@ -55,6 +55,14 @@ performs platform effects only after
 that Rust-authored receipt. The start service is package-private; admission is
 the only exported service and remains signature-protected.
 
+`ConnectionHubHttpServer` is the standalone HTTP/socket placement adapter over
+`crates/rusty-quest-broker-transport`. The shared core owns bounded RFC6455
+upgrade/framing, per-client queues and writer isolation, liveness/close, and
+cleanup; `ConnectionHubProtocol` retains JSON schema and command projection.
+Binder identity, Manifold authorization, and owner-confirmed effects remain
+outside transport. Validate the core and standalone/embedded parity on the host
+before building or using a device.
+
 The runtime config also contains exact product-spec, accepted-lock, and
 per-client lock bytes with hashes. Generated grants are the exact product/client
 intersection, and Rust verifies the canonical config digest before creating the

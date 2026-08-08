@@ -4,6 +4,8 @@ if ([string]::IsNullOrWhiteSpace($RepoRoot)) { $RepoRoot = Resolve-Path (Join-Pa
 $RepoRoot = (Resolve-Path $RepoRoot).Path
 $app = Join-Path $RepoRoot "apps\manifold-broker-android"
 $javaRoot = Join-Path $app "src\main\java\io\github\mesmerprism\rustymanifold\broker"
+$sharedTransportRoot = Join-Path $RepoRoot "crates\rusty-quest-broker-transport\android"
+$sharedCodec = Join-Path $sharedTransportRoot "io\github\mesmerprism\rustyquest\broker_transport\Rfc6455Codec.java"
 $test = Join-Path $app "tests\java\io\github\mesmerprism\rustymanifold\broker\ConnectionHubCoreTest.java"
 $vectorTest = Join-Path $app "tests\java\io\github\mesmerprism\rustymanifold\broker\ConnectionHubProtocolVectorsTest.java"
 $vectorV2Test = Join-Path $app "tests\java\io\github\mesmerprism\rustymanifold\broker\ConnectionHubProtocolV2VectorsTest.java"
@@ -89,7 +91,8 @@ if ($binder -notmatch 'activeHubProviders' -or
     throw "Provider lifecycle does not retire the exact instance before re-registration."
 }
 if ($stateStore -notmatch 'AndroidKeyStore' -or $stateStore -notmatch 'AES/GCM/NoPadding' -or $stateStore -match 'putString\(KEY_STATE, value\.toString') { throw "Durable session projections are not Keystore-encrypted." }
-if ($protocol -notmatch '/v1/status' -or $protocol -notmatch '/v1/pair' -or $protocol -notmatch '/v1/socket' -or $server -notmatch 'X-Rusty-Confidentiality' -or $server -notmatch 'sec-websocket-version' -or $server -notmatch 'hasSameOrigin') { throw "Fixed HTTP/WebSocket protocol or posture headers missing." }
+$sharedCodecText = Get-Content -Raw -LiteralPath $sharedCodec
+if ($protocol -notmatch '/v1/status' -or $protocol -notmatch '/v1/pair' -or $protocol -notmatch '/v1/socket' -or $server -notmatch 'X-Rusty-Confidentiality' -or $sharedCodecText -notmatch 'sec-websocket-version' -or $server -notmatch 'hasSameOrigin') { throw "Fixed HTTP/WebSocket protocol or posture headers missing." }
 if ($server -match '/v1/socket\?session' -or $server -notmatch 'SOCKET_AUTHENTICATE_SCHEMA' -or $server -notmatch 'transport_epoch') { throw "WebSocket still uses a URL bearer or omits first-frame authentication." }
 if ($server -notmatch 'SOCKET_AUTHENTICATE_SCHEMA_V2' -or
     $server -notmatch 'validateV2CommandFrame' -or
@@ -253,7 +256,8 @@ $jsonJar = Get-ChildItem -Path (Join-Path $env:USERPROFILE ".gradle\caches\modul
 if ($null -eq $jsonJar) { throw "Host org.json test dependency is unavailable." }
 $out = Join-Path $RepoRoot "target\connection-hub-host-tests"
 New-Item -ItemType Directory -Force -Path $out | Out-Null
-$sources = @(
+$sources = @(Get-ChildItem -Path $sharedTransportRoot -Recurse -Filter *.java |
+    ForEach-Object { $_.FullName }) + @(
     (Join-Path $javaRoot "ConnectionHubProtocol.java"),
     (Join-Path $javaRoot "ConnectionHubAuthorityPort.java"),
     (Join-Path $javaRoot "ConnectionHubStateStore.java"),
@@ -312,7 +316,8 @@ final class GeneratedConnectionHubConfig { static final String JSON="{}"; static
 '@)
 $androidOut = Join-Path $out "android-classes"
 New-Item -ItemType Directory -Force -Path $androidOut | Out-Null
-$androidSources = @(Get-ChildItem -Path $javaRoot -Filter *.java | ForEach-Object { $_.FullName }) +
+$androidSources = @(Get-ChildItem -Path $sharedTransportRoot -Recurse -Filter *.java | ForEach-Object { $_.FullName }) +
+    @(Get-ChildItem -Path $javaRoot -Filter *.java | ForEach-Object { $_.FullName }) +
     @(Get-ChildItem -Path $generatedDir -Filter *.java | ForEach-Object { $_.FullName })
 & $javac -encoding UTF-8 -source 8 -target 8 -bootclasspath $androidJar -d $androidOut $androidSources
 if ($LASTEXITCODE -ne 0) { throw "Connection Hub complete Android Java source compile failed." }

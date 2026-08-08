@@ -671,7 +671,13 @@ $sharedBrokerClientJava = Get-ChildItem -LiteralPath $sharedBrokerClientJavaRoot
 if ($sharedBrokerClientJava.Count -lt 2) {
     throw "Shared broker client Android adapter sources are incomplete: $sharedBrokerClientJavaRoot"
 }
-$sourceFiles = @($sourceFiles) + @($sharedBrokerClientJava) + @($generatedEmbeddedRuntimeConfigPath)
+$sharedBrokerTransportJavaRoot = Join-Path $repoRoot "crates\rusty-quest-broker-transport\android"
+$sharedBrokerTransportJava = Get-ChildItem -LiteralPath $sharedBrokerTransportJavaRoot -Recurse -Filter *.java |
+    ForEach-Object { $_.FullName }
+if ($sharedBrokerTransportJava.Count -lt 1) {
+    throw "Shared broker transport Android sources are incomplete: $sharedBrokerTransportJavaRoot"
+}
+$sourceFiles = @($sourceFiles) + @($sharedBrokerClientJava) + @($sharedBrokerTransportJava) + @($generatedEmbeddedRuntimeConfigPath)
 if ($sourceFiles.Count -eq 0) {
     throw "No Java sources found under $appRoot"
 }

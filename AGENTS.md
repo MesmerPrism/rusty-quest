@@ -258,6 +258,16 @@ platform effect before the Rust receipt applies. Same-provider rebind preserves
   pending use; revocation/expiry invalidates only uses derived from the exact
   affected token.
 
+`crates/rusty-quest-broker-transport` is the single Android-compatible
+RFC6455 transport owner for standalone and embedded brokers. Keep upgrade and
+frame validation, bounded per-client message/byte queues, one isolated writer
+per socket, Ping/Pong/Close deadlines, cancellation, cleanup-exactly-once, and
+sanitized transport telemetry there. Keep each app's HTTP/socket acceptor as a
+placement adapter. Do not move JSON semantics, Binder identity/admission,
+Manifold decisions, command outcomes or platform effects, or media payloads
+into the transport core. Run the focused transport gate and both placement
+gates on the host before any device work.
+
   Product runtime config is packaged authority, not a settings payload. Builds
   embed the exact accepted product spec/lock and exact client locks with their
   SHA-256 bindings, derive each grant from the product/client intersection, and

@@ -219,8 +219,51 @@ foreach ($token in @(
 }
 
 $regeneratedBindings = Join-Path $root "target\media-runtime-product-binding-regeneration"
-& cargo run --quiet -p rusty-quest-broker-authority --bin export_media_product_bindings -- $regeneratedBindings
-if ($LASTEXITCODE -ne 0) { throw "Media product binding regeneration failed." }
+$runnerRoot = Join-Path $root "target\quest-broker-authority-static-runner"
+$runnerSourceRoot = Join-Path $runnerRoot "src"
+$exporterSourcePath = Join-Path $root "crates\rusty-quest-broker-authority\src\bin\export_media_product_bindings.rs"
+$manifoldRoot = (Resolve-Path -LiteralPath (Join-Path $root "..\rusty-manifold")).Path
+New-Item -ItemType Directory -Path $runnerSourceRoot -Force | Out-Null
+$exporterSource = [IO.File]::ReadAllText($exporterSourcePath)
+$manifestRootLine = '    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");'
+$isolatedRootLine = '    let root = PathBuf::from(env!("RUSTY_QUEST_SOURCE_ROOT"));'
+if (-not $exporterSource.Contains($manifestRootLine)) {
+    throw "Media product binding exporter source-root seam drifted."
+}
+$isolatedExporterSource = $exporterSource.Replace($manifestRootLine, $isolatedRootLine)
+if ($isolatedExporterSource.IndexOf($manifestRootLine, [StringComparison]::Ordinal) -ge 0 -or
+    $isolatedExporterSource.IndexOf($isolatedRootLine, [StringComparison]::Ordinal) -ne
+        $isolatedExporterSource.LastIndexOf($isolatedRootLine, [StringComparison]::Ordinal)) {
+    throw "Media product binding exporter source-root seam was not replaced exactly once."
+}
+$questManifestRoot = $root.Replace("\", "/")
+$manifoldManifestRoot = $manifoldRoot.Replace("\", "/")
+$runnerManifest = @"
+[package]
+name = "rusty-quest-media-product-binding-static-runner"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+rusty-manifold-media-session = { path = "$manifoldManifestRoot/crates/rusty-manifold-media-session" }
+rusty-manifold-model = { path = "$manifoldManifestRoot/crates/rusty-manifold-model", features = ["serde"] }
+rusty-quest-broker-authority = { path = "$questManifestRoot/crates/rusty-quest-broker-authority" }
+rusty-quest-media-stream = { path = "$questManifestRoot/crates/rusty-quest-media-stream" }
+serde_json = "1"
+
+[workspace]
+"@
+[IO.File]::WriteAllText((Join-Path $runnerRoot "Cargo.toml"), $runnerManifest, [Text.UTF8Encoding]::new($false))
+[IO.File]::WriteAllText((Join-Path $runnerSourceRoot "main.rs"), $isolatedExporterSource, [Text.UTF8Encoding]::new($false))
+$previousSourceRoot = [Environment]::GetEnvironmentVariable("RUSTY_QUEST_SOURCE_ROOT", "Process")
+try {
+    [Environment]::SetEnvironmentVariable("RUSTY_QUEST_SOURCE_ROOT", $root, "Process")
+    & cargo run --quiet --manifest-path (Join-Path $runnerRoot "Cargo.toml") -- $regeneratedBindings
+    if ($LASTEXITCODE -ne 0) { throw "Media product binding regeneration failed." }
+} finally {
+    [Environment]::SetEnvironmentVariable("RUSTY_QUEST_SOURCE_ROOT", $previousSourceRoot, "Process")
+}
 foreach ($name in @("display-composite.binding.json", "camera2-surface.binding.json", "native-renderer-display.binding.json", "spatial-camera-panel-display.binding.json")) {
     $expected = Get-Content -Raw -LiteralPath (Join-Path $root "fixtures\media-runtime-products\$name")
     $actual = Get-Content -Raw -LiteralPath (Join-Path $regeneratedBindings $name)

@@ -13,6 +13,14 @@ passthrough composition, a solid-color XR background, resident GPU-skinned hand
 meshes, public blur processing, SDF hooks, or detailed timing markers without a
 Makepad runtime in the app.
 
+Its embedded broker routes accepted sockets through the same
+`crates/rusty-quest-broker-transport` RFC6455 core as the standalone Connection
+Hub. `EmbeddedManifoldBrokerServer` remains the placement adapter; bounded
+framing/queues, writer isolation, liveness/close, cancellation, and sanitized
+telemetry are shared. Embedded product JSON, Android/Binder identity, Manifold
+authority, command effects, and media ownership remain outside transport.
+Validate shared-core and placement parity on the host before device work.
+
 Runtime routes are selected by profile/property, not by separate APKs:
 
 The reusable particle-contract adapter is independently selectable with
