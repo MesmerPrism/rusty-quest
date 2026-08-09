@@ -94,6 +94,64 @@ public final class ConnectionHubProcess {
 
     public ConnectionHubRuntime runtime() { return runtime; }
 
+    public ConnectionHubOperatorController operatorController() {
+        return new ConnectionHubOperatorController(
+                new ConnectionHubOperatorController.Port() {
+                    @Override public JSONObject status() {
+                        JSONObject status = runtime.status();
+                        putJson(status, "active_controller_sessions", runtime.activeSessionCount());
+                        putJson(status, "origin", displayOrigin());
+                        return status;
+                    }
+
+                    @Override public void start() throws IOException {
+                        startFromWearer();
+                    }
+
+                    @Override public void stop() {
+                        stopFromWearer();
+                    }
+
+                    @Override public JSONObject pair(String code, String identity) {
+                        JSONObject request = new JSONObject();
+                        putJson(request, "$schema", ConnectionHubProtocol.PAIR_REQUEST_SCHEMA);
+                        putJson(request, "pairing_code", code);
+                        putJson(request, "controller_identity_sha256", identity);
+                        return runtime.pair(request, "evidence.operator.wearer-action");
+                    }
+
+                    @Override public JSONObject revoke(String session, String reason) {
+                        JSONObject request = new JSONObject();
+                        putJson(request, "$schema", ConnectionHubProtocol.REVOKE_REQUEST_SCHEMA);
+                        putJson(request, "session", session);
+                        putJson(request, "reason", reason);
+                        return runtime.revoke(request);
+                    }
+
+                    @Override public JSONObject forget() {
+                        ConnectionHubAuthorityPort.Receipt authority = forgetFromWearer();
+                        JSONObject result = new JSONObject();
+                        putJson(result, "applied", authority.applied);
+                        putJson(result, "status", authority.status);
+                        return result;
+                    }
+                },
+                new java.util.function.Supplier<String>() {
+                    @Override public String get() {
+                        return "operator." + Long.toUnsignedString(
+                                java.util.concurrent.ThreadLocalRandom.current().nextLong(), 16);
+                    }
+                });
+    }
+
+    private static void putJson(JSONObject target, String key, Object value) {
+        try {
+            target.put(key, value);
+        } catch (Exception error) {
+            throw new IllegalStateException("connection_hub_operator_json_encode_failed", error);
+        }
+    }
+
     public synchronized void startFromWearer() throws IOException {
         runtime.startRequested();
         wifiBinding.start();

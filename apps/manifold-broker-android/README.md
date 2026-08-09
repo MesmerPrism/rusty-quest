@@ -70,6 +70,17 @@ stable registration id and exact canonical-byte digest; only an identical
 same-session replay returns the cached applied result. See
 `../../docs/CONNECTION_HUB_BINDER_ADMISSION.md`.
 
+The selected normal Hub product packages
+`ConnectionHubOperatorProvider` at the fixed
+`io.github.mesmerprism.rustymanifold.broker.connection-hub-operator`
+authority. Android restricts it with `android.permission.DUMP`, and the
+provider additionally requires the shell UID. Its closed methods are `start`,
+`stop`, `status`, `pair`, `revoke`, and `forget`; all call the same
+`ConnectionHubOperatorController` used by wearer lifecycle actions and confirm
+effective state before returning. Pairing credentials are returned separately
+from secret-redacted receipts. The provider accepts no arbitrary action,
+component, path, client identity, grant, or capability.
+
 The runtime config also contains exact product-spec, accepted-lock, and
 per-client lock bytes with hashes. Generated grants are the exact product/client
 intersection, and Rust verifies the canonical config digest before creating the

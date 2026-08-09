@@ -2,7 +2,7 @@
 
 `tools/Invoke-ConnectionHubQuest.ps1` is the closed Quest-side build,
 deployment, lifecycle, provider, diagnostic, Hostess, cleanup, and evidence
-wrapper for the standalone Connection Hub development product. It requires an
+wrapper for full standalone Connection Hub validation. It requires an
 explicit Quest serial for every action and never changes the ADB daemon,
 wireless-debugging state, power policy, proximity, or unrelated packages.
 
@@ -10,6 +10,27 @@ The wrapper is for local debug validation. It does not make the current
 plaintext trusted-LAN transport production eligible. The Hub continues to
 advertise `confidentiality=none` and `production_eligible=false` until a
 separate TLS/WSS product slice is accepted.
+
+## Published ADB operator
+
+Every selected normal Connection Hub product packages the fixed content
+provider authority
+`io.github.mesmerprism.rustymanifold.broker.connection-hub-operator`. Android
+gates it with `android.permission.DUMP`, and the provider rejects any caller
+whose Binder UID is not the shell UID. Its only methods are `start`, `stop`,
+`status`, `pair`, `revoke`, and `forget`; use Android's serial-scoped
+`adb shell content call` as the CLI transport. No method accepts a component,
+path, intent, client identity, grant, capability, or arbitrary command.
+
+The provider routes wearer and ADB actions through one
+`ConnectionHubOperatorController`. Each mutation records sent and pending
+before confirmed, rejected, or `outcome_unknown`, based on effective Hub
+readback. Pair and revoke use fixed Base64 string extras; treat those values and
+the separately returned credential as secrets and keep them out of logs,
+receipts, shell history, and evidence manifests. Receipts contain
+`secrets_in_receipt=false`, `caller_selected_identity=false`, and
+`caller_selected_capability=false`. The optional debug provider remains a
+separate non-release E2E aid and is not a substitute for this published route.
 
 ## Closed actions
 

@@ -830,6 +830,13 @@ ambiguous token/use and relative command effects never replay blindly. See
 `docs/BROKER_ADMISSION.md` and
 `docs/CONNECTION_HUB_BINDER_ADMISSION.md`.
 
+The selected Connection Hub product also packages a fixed
+`android.permission.DUMP` provider for ADB-authorized `start`, `stop`, `status`,
+`pair`, `revoke`, and `forget`. That shell adapter invokes the same controller
+and effective-state readback as wearer actions, returns secret-redacted typed
+receipts, and accepts no component, path, identity, grant, capability, or
+free-form command. See `docs/CONNECTION_HUB_OPERATOR.md`.
+
 `crates/rusty-quest-broker-client` is the shared, policy-free consumer SDK for
 real product apps. Native Renderer and Spatial Camera Panel have different
 signature-scoped grants, client identities, feature locks, marker namespaces,

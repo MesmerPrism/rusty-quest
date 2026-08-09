@@ -14,11 +14,14 @@ $vectorTest = Join-Path $app "tests\java\io\github\mesmerprism\rustymanifold\bro
 $vectorV2Test = Join-Path $app "tests\java\io\github\mesmerprism\rustymanifold\broker\ConnectionHubProtocolV2VectorsTest.java"
 $transportTest = Join-Path $app "tests\java\io\github\mesmerprism\rustymanifold\broker\ConnectionHubTransportBoundsTest.java"
 $providerReplyTest = Join-Path $app "tests\java\io\github\mesmerprism\rustymanifold\broker\ProviderEffectReplyRouterTest.java"
+$operatorControllerTest = Join-Path $app "tests\java\io\github\mesmerprism\rustymanifold\broker\ConnectionHubOperatorControllerTest.java"
+$spatialCompositionTest = Join-Path $app "tests\java\io\github\mesmerprism\rustymanifold\broker\ConnectionHubSpatialCompositionTest.java"
 $browserTest = Join-Path $app "tests\js\connection-hub-browser-protocol.test.js"
 $vectors = Join-Path $app "contracts\connection-hub-protocol-v1.json"
 $vectorsV2 = Join-Path $app "contracts\connection-hub-protocol-v2.json"
 $assets = Join-Path $app "src\main\assets\connection-hub"
 $spatial = Join-Path $RepoRoot "apps\spatial-video-control-example-android"
+$spatialCameraPanel = Join-Path $RepoRoot "apps\spatial-camera-panel-android"
 $lockedPlaylistContractPath = Join-Path $app "contracts\spatial-camera-panel-locked-playlist-surface.v1.json"
 $spatialCameraPanelClientPath = Join-Path $RepoRoot "fixtures\broker-clients\spatial-camera-panel.client.json"
 $retiredLockedPlaylistClientPath = Join-Path $RepoRoot "fixtures\broker-clients\spatial-camera-panel-locked-playlist.client.json"
@@ -35,6 +38,8 @@ $required = @(
     $vectorV2Test,
     $transportTest,
     $providerReplyTest,
+    $operatorControllerTest,
+    $spatialCompositionTest,
     $sharedAdmissionReducer,
     $sharedAdmissionTest,
     $browserTest,
@@ -64,12 +69,16 @@ $coreTest = Get-Content -Raw -LiteralPath $test
 $protocol = Get-Content -Raw -LiteralPath (Join-Path $javaRoot "ConnectionHubProtocol.java")
 $process = Get-Content -Raw -LiteralPath (Join-Path $javaRoot "ConnectionHubProcess.java")
 $debugControl = Get-Content -Raw -LiteralPath (Join-Path $javaRoot "ConnectionHubDebugControlProvider.java")
+$operatorController = Get-Content -Raw -LiteralPath (Join-Path $javaRoot "ConnectionHubOperatorController.java")
+$operatorProvider = Get-Content -Raw -LiteralPath (Join-Path $javaRoot "ConnectionHubOperatorProvider.java")
 $spatialManifest = Get-Content -Raw -LiteralPath (Join-Path $spatial "app\src\main\AndroidManifest.xml")
 $spatialDebugManifestPath = Join-Path $spatial "app\src\debug\AndroidManifest.xml"
 $spatialDebugServicePath = Join-Path $spatial "app\src\debug\java\io\github\mesmerprism\rustyquest\spatial_video_control\ConnectionHubDebugSurfaceService.kt"
 $spatialClient = Get-Content -Raw -LiteralPath (Join-Path $spatial "app\src\main\java\io\github\mesmerprism\rustyquest\spatial_video_control\ConnectionHubSurfaceClient.kt")
 $spatialTarget = Get-Content -Raw -LiteralPath (Join-Path $spatial "app\src\main\java\io\github\mesmerprism\rustyquest\spatial_video_control\ConnectionHubSurfaceTarget.kt")
 $spatialActivity = Get-Content -Raw -LiteralPath (Join-Path $spatial "app\src\main\java\io\github\mesmerprism\rustyquest\spatial_video_control\SpatialVideoControlActivity.kt")
+$spatialCameraPanelManifest = Get-Content -Raw -LiteralPath (Join-Path $spatialCameraPanel "app\src\main\AndroidManifest.xml")
+$spatialCameraPanelClientSource = Get-Content -Raw -LiteralPath (Join-Path $spatialCameraPanel "app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\ConnectionHubSurfaceClient.kt")
 $buildScript = Get-Content -Raw -LiteralPath (Join-Path $RepoRoot "tools\Build-ManifoldBrokerAndroid.ps1")
 $releaseScript = Get-Content -Raw -LiteralPath (Join-Path $RepoRoot "tools\Build-ConnectionHubLabsRelease.ps1")
 $spatialContractPath = Join-Path $spatial "contracts\connection-hub-media-surface.v1.json"
@@ -91,6 +100,37 @@ if ($activity -match 'LocalManifoldBrokerServer\.get\(\)\.start' -or $activity -
 if ($service -notmatch 'START_STICKY' -or $service -notmatch 'ConnectionHubProcess' -or $service -notmatch 'ACTION_STOP_HUB') { throw "Foreground service does not own persistent Hub lifecycle." }
 if ($binder -notmatch 'message\.sendingUid' -or $binder -notmatch 'GET_SIGNING_CERTIFICATES' -or $binder -notmatch 'MESSAGE_REGISTER_SURFACE') { throw "Binder provider API does not derive platform identity." }
 if ($binder -match 'data\.getString\("admitted_client_evidence_json"') { throw "Binder accepts caller-supplied admission evidence." }
+foreach ($field in @(
+    'registration_id',
+    'registration_fingerprint_sha256',
+    'session_generation',
+    'authorization_correlation_id',
+    'surface_registration_json')) {
+    if ($spatialCameraPanelClientSource -notmatch [regex]::Escape($field)) {
+        throw "Spatial Camera Panel registration envelope is missing $field."
+    }
+}
+if ($spatialCameraPanelClientSource -notmatch 'ConnectionHubAdmissionSessionReducer' -or
+    $spatialCameraPanelClientSource -match 'sendingUid|signer_sha256|caller_package') {
+    throw "Spatial Camera Panel does not use the shared generation reducer or self-asserts Android identity."
+}
+if ($spatialCameraPanelManifest -notmatch 'BROKER_ADMISSION' -or
+    $spatialCameraPanelManifest -notmatch '<queries>' -or
+    $spatialCameraPanelManifest -notmatch 'io\.github\.mesmerprism\.rustymanifold\.broker') {
+    throw "Spatial Camera Panel manifest lacks the exact Binder admission permission/query."
+}
+if ($binder -notmatch 'surface registration fingerprint mismatch' -or
+    $binder -notmatch 'provider authorization correlation mismatch' -or
+    $binder -notmatch 'session_generation') {
+    throw "Hub Binder registration admission lost fingerprint, correlation, or generation rejection."
+}
+if ($operatorProvider -notmatch 'Binder\.getCallingUid\(\) != Process\.SHELL_UID' -or
+    $operatorProvider -match 'force-rollover|restart-process' -or
+    $operatorController -notmatch 'sent' -or
+    $operatorController -notmatch 'pending' -or
+    $operatorController -notmatch 'outcome_unknown') {
+    throw "Published typed operator lost shell gating, bounded method scope, or receipt transitions."
+}
 $binderRuntimeIndex = $binder.IndexOf('ManifoldRuntimeAuthorityBridge.initialize();', [StringComparison]::Ordinal)
 $binderHubIndex = $binder.IndexOf('ConnectionHubProcess.get(this);', [StringComparison]::Ordinal)
 if ($binderRuntimeIndex -lt 0 -or $binderHubIndex -lt 0 -or $binderRuntimeIndex -ge $binderHubIndex) {
@@ -410,11 +450,14 @@ $sources = @(Get-ChildItem -Path $sharedTransportRoot -Recurse -Filter *.java |
     (Join-Path $javaRoot "HubSurfaceDescriptor.java"),
     (Join-Path $javaRoot "HubSurfaceRegistry.java"),
     (Join-Path $javaRoot "ProviderEffectReplyRouter.java"),
+    (Join-Path $javaRoot "ConnectionHubOperatorController.java"),
     $test,
     $vectorTest,
     $vectorV2Test,
     $transportTest,
-    $providerReplyTest
+    $providerReplyTest,
+    $operatorControllerTest,
+    $spatialCompositionTest
 ) + @(Get-ChildItem -Path $sharedAdmissionRoot -Recurse -Filter *.java |
     ForEach-Object { $_.FullName }) + @($sharedAdmissionTest)
 $javac = (Get-Command javac -ErrorAction Stop).Source
@@ -429,6 +472,10 @@ if ($LASTEXITCODE -ne 0) { throw "Connection Hub v2 protocol-vector tests failed
 if ($LASTEXITCODE -ne 0) { throw "Connection Hub transport-bound tests failed." }
 & $java -cp "$out;$($jsonJar.FullName)" io.github.mesmerprism.rustymanifold.broker.ProviderEffectReplyRouterTest
 if ($LASTEXITCODE -ne 0) { throw "Connection Hub provider-effect reply-router tests failed." }
+& $java -cp "$out;$($jsonJar.FullName)" io.github.mesmerprism.rustymanifold.broker.ConnectionHubOperatorControllerTest
+if ($LASTEXITCODE -ne 0) { throw "Connection Hub operator controller tests failed." }
+& $java -cp "$out;$($jsonJar.FullName)" io.github.mesmerprism.rustymanifold.broker.ConnectionHubSpatialCompositionTest
+if ($LASTEXITCODE -ne 0) { throw "Connection Hub Spatial composition tests failed." }
 & $java -cp "$out;$($jsonJar.FullName)" io.github.mesmerprism.rustymanifold.broker.ConnectionHubCoreTest $vectors
 if ($LASTEXITCODE -ne 0) { throw "Connection Hub host tests failed." }
 & $java -cp "$out;$($jsonJar.FullName)" io.github.mesmerprism.rustyquest.broker_admission.ConnectionHubAdmissionSessionReducerTest

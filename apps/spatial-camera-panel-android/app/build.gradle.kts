@@ -276,6 +276,9 @@ android {
   sourceSets.getByName("main").java.srcDir(
     rootProject.file("../../crates/rusty-quest-broker-client/android"),
   )
+  sourceSets.getByName("main").java.srcDir(
+    rootProject.file("../../crates/rusty-quest-broker-admission/android"),
+  )
 
   packaging {
     resources.excludes.add("META-INF/LICENSE")
