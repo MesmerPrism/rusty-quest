@@ -96,6 +96,7 @@ import org.json.JSONObject
 class SpatialCameraPanelActivity : AppSystemActivity() {
   private val productPolicy = SpatialProductBuildPolicy.current
   private val presentationPolicy = SpatialPresentationBuildPolicy.current
+  private var connectionHubSurfaceClient: ConnectionHubSurfaceClient? = null
   private val immersiveVideoRouteResolution: SpatialImmersiveVideoRouteResolution by
       lazy(LazyThreadSafetyMode.NONE) {
         SpatialImmersiveVideoPanelCoordinator.resolveFromIntent(this, intent)
@@ -1965,6 +1966,19 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
   override fun onResume() {
     super.onResume()
     immersiveVideoPanelCoordinator.resume("activity-resume")
+  }
+
+  override fun onStart() {
+    super.onStart()
+    val target = SpatialConnectionHubSurfaceTargetLoader.load(::marker)
+    connectionHubSurfaceClient =
+        target?.let { ConnectionHubSurfaceClient(this, it).also(ConnectionHubSurfaceClient::start) }
+  }
+
+  override fun onStop() {
+    connectionHubSurfaceClient?.close()
+    connectionHubSurfaceClient = null
+    super.onStop()
   }
 
   override fun onPause() {

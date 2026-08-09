@@ -883,8 +883,32 @@ final class GeneratedConnectionHubConfig {
         (New-Object System.Text.UTF8Encoding($false)))
 }
 $packagingManifestPath = $generatedManifestPath
-if ($EnableConnectionHubDebugOperator) {
+if ($connectionHubSelected) {
     $manifestText = [System.IO.File]::ReadAllText($generatedManifestPath)
+    $closingApplication = "    </application>"
+    if ([regex]::Matches($manifestText, [regex]::Escape($closingApplication)).Count -ne 1) {
+        throw "Connection Hub Android manifest has an unexpected application boundary."
+    }
+    $operatorProvider = @"
+        <provider
+            android:name=".ConnectionHubOperatorProvider"
+            android:authorities="io.github.mesmerprism.rustymanifold.broker.connection-hub-operator"
+            android:exported="true"
+            android:permission="android.permission.DUMP" />
+"@
+    $operatorManifestDir = Join-Path $OutDir "operator"
+    New-Item -ItemType Directory -Force -Path $operatorManifestDir | Out-Null
+    $packagingManifestPath = Join-Path $operatorManifestDir "AndroidManifest.xml"
+    $manifestText = $manifestText.Replace(
+        $closingApplication,
+        "$operatorProvider`n$closingApplication")
+    [System.IO.File]::WriteAllText(
+        $packagingManifestPath,
+        $manifestText,
+        (New-Object System.Text.UTF8Encoding($false)))
+}
+if ($EnableConnectionHubDebugOperator) {
+    $manifestText = [System.IO.File]::ReadAllText($packagingManifestPath)
     $closingApplication = "    </application>"
     if ([regex]::Matches($manifestText, [regex]::Escape($closingApplication)).Count -ne 1) {
         throw "Connection Hub Android manifest has an unexpected application boundary."

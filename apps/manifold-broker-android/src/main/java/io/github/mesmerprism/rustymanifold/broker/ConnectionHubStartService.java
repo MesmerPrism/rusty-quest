@@ -12,6 +12,8 @@ import android.os.IBinder;
 import android.os.Handler;
 import android.os.Looper;
 
+import org.json.JSONObject;
+
 public final class ConnectionHubStartService extends Service {
     public static final String ACTION_START_HUB =
             "io.github.mesmerprism.rustymanifold.broker.action.START_CONNECTION_HUB";
@@ -36,18 +38,23 @@ public final class ConnectionHubStartService extends Service {
         startForegroundCompat(buildNotification());
         LocalManifoldBrokerServer.get().start(getApplicationContext());
         ConnectionHubProcess hub = ConnectionHubProcess.get(getApplicationContext());
+        ConnectionHubOperatorController operator =
+                hub.operatorController();
         expiryHandler.removeCallbacks(expiryTask);
         expiryHandler.postDelayed(expiryTask, EXPIRY_RECONCILE_INTERVAL_MS);
         String action = intent == null ? null : intent.getAction();
         try {
             if (ACTION_START_HUB.equals(action)) {
-                hub.startFromWearer();
+                requireConfirmed(operator.execute(
+                        ConnectionHubOperatorController.ACTION_START, new JSONObject()));
             } else if (ACTION_STOP_HUB.equals(action)) {
-                hub.stopFromWearer();
+                requireConfirmed(operator.execute(
+                        ConnectionHubOperatorController.ACTION_STOP, new JSONObject()));
                 stopForeground(true);
                 stopSelf();
             } else if (ACTION_FORGET_HUB.equals(action)) {
-                hub.forgetFromWearer();
+                requireConfirmed(operator.execute(
+                        ConnectionHubOperatorController.ACTION_FORGET, new JSONObject()));
             } else {
                 hub.resumeDesiredListener();
             }
@@ -60,6 +67,13 @@ public final class ConnectionHubStartService extends Service {
                 BrokerLaunchEvidence.SERVICE_NAME,
                 "foreground_service");
         return START_STICKY;
+    }
+
+    private static void requireConfirmed(ConnectionHubOperatorController.Result result) {
+        if (!result.receipt.optBoolean("applied", false)
+                || !"confirmed".equals(result.receipt.optString("effect_status"))) {
+            throw new IllegalStateException("connection_hub_operator_effect_not_confirmed");
+        }
     }
 
     @Override public void onDestroy() {

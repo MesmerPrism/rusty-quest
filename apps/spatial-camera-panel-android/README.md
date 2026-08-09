@@ -43,6 +43,22 @@ pwsh -NoProfile -ExecutionPolicy Bypass -File ..\..\tools\checks\Test-SpatialCam
 This workflow metadata does not itself activate a runtime route or add package
 permissions. Existing effective markers remain required.
 
+## Locked-playlist Connection Hub provider
+
+The app binds the signature-scoped Hub admission service and registers its
+public locked-playlist surface only while the private owner reports
+`locked=true` and `running=true`. One authorized generation retains the exact
+`registration_id`, registration fingerprint, session generation,
+authorization correlation id, and canonical surface JSON through retry or
+rebind. Stale generations and mismatched fingerprints/correlations reject;
+cleanup unregisters exactly once.
+
+The public surface projects only bounded scalar state and empty-argument
+Previous, Next, Pause, and Resume commands. Application effect confirmation is
+required after Binder dispatch. It exposes no ordered items, profile ids,
+private effects, caller-selected identity/capability, or arbitrary arguments.
+Validate the app and Hub composition together before any device run.
+
 The accepted `MOD-001` particle classification reuses
 `rusty.matter.surface_runtime.particle_snapshot.v1` and the existing Matter
 particle state/config/diagnostic/render-payload contracts. The Kotlin

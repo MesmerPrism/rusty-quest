@@ -338,6 +338,14 @@ arbitrary selectors, paths, profile ids, effect parameters, and downstream-
 private names remain outside the Hub product contract. A richer parameter or
 browser surface requires a separately reviewed Hub-owner contract evolution.
 
+The normal Connection Hub product must retain a fixed shell-UID operator
+provider for `start`, `stop`, `status`, `pair`, `revoke`, and `forget`. Route it
+through the same controller and effective-state confirmation used by wearer
+actions; accept no caller-selected component, identity, grant, capability, or
+arbitrary command. Keep credentials outside receipts and markers, and report
+mutations as sent, pending, then confirmed, rejected, or `outcome_unknown`.
+The optional debug provider remains a separate test-only surface.
+
 Product Wi-Fi Direct topology lives in `apps/direct-p2p-provider-android`.
 Android Wi-Fi P2P owns credentialed temporary group formation,
 `AndroidNetworkBindingProvider` reports whether the platform exposes a usable

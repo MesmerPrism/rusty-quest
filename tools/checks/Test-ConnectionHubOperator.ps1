@@ -21,6 +21,8 @@ $cliPath = Join-Path $RepoRoot "tools\Invoke-ConnectionHubQuest.ps1"
 $cli = Read-Required "tools\Invoke-ConnectionHubQuest.ps1"
 $build = Read-Required "tools\Build-ManifoldBrokerAndroid.ps1"
 $provider = Read-Required "apps\manifold-broker-android\src\main\java\io\github\mesmerprism\rustymanifold\broker\ConnectionHubDebugControlProvider.java"
+$publishedProvider = Read-Required "apps\manifold-broker-android\src\main\java\io\github\mesmerprism\rustymanifold\broker\ConnectionHubOperatorProvider.java"
+$operatorController = Read-Required "apps\manifold-broker-android\src\main\java\io\github\mesmerprism\rustymanifold\broker\ConnectionHubOperatorController.java"
 $activity = Read-Required "apps\manifold-broker-android\src\main\java\io\github\mesmerprism\rustymanifold\broker\ConnectionHubStartActivity.java"
 $browserHarness = Read-Required "tools\browser\connection-hub-browser-e2e.js"
 $releaseManifest = Read-Required "fixtures\broker-products\connection-hub-standalone.AndroidManifest.xml"
@@ -285,6 +287,22 @@ Require ($provider.Contains('Binder.getCallingUid() != Process.SHELL_UID')) "Deb
 Require ($provider.Contains('pairing_secret_in_receipt') -and -not $provider.Contains('receipt.put("pairing_code"')) "Debug receipt must prove secret exclusion."
 Require ($provider.Contains('"pair-code".equals(method)') -and $provider.Contains('secret_b64')) "Debug-only one-use secret projection is missing."
 Require (-not $releaseManifest.Contains('ConnectionHubDebugControlProvider')) "Release product fixture must exclude the debug operator."
+Require ($build.Contains('android:name=".ConnectionHubOperatorProvider"') -and
+    $build.Contains('android:permission="android.permission.DUMP"') -and
+    $build.Contains('if ($connectionHubSelected)')) "Selected normal Hub products must package the fixed DUMP-gated operator provider."
+Require ($publishedProvider.Contains('Binder.getCallingUid() != Process.SHELL_UID') -and
+    $publishedProvider.Contains('ConnectionHubOperatorController.ACTION_PAIR') -and
+    $publishedProvider.Contains('ConnectionHubOperatorController.ACTION_REVOKE') -and
+    -not $publishedProvider.Contains('client_id') -and
+    -not $publishedProvider.Contains('caller_selected_capability')) "Published operator identity or closed method boundary is incomplete."
+Require ($operatorController.Contains('transition("sent")') -and
+    $operatorController.Contains('transition("pending")') -and
+    $operatorController.Contains('"outcome_unknown"') -and
+    $operatorController.Contains('"secrets_in_receipt", false')) "Published operator receipt/effect confirmation state machine is incomplete."
+Require ($operatorGuide.Contains('## Published ADB operator') -and
+    $operatorGuide.Contains('`start`, `stop`,') -and
+    $operatorGuide.Contains('`pair`, `revoke`, and `forget`') -and
+    $operatorGuide.Contains('shell history')) "Published operator guide is incomplete or loses secret handling guidance."
 Require ($activity.Contains('ACTION_DEBUG_START_HUB') -and $activity.Contains('startForegroundService')) "Typed real Activity-to-FGS lifecycle route is missing."
 Require ($browserHarness.Contains('process.stdin') -and $browserHarness.Contains('consoleErrors') -and $browserHarness.Contains('spatial-removed-sample-present-command-applied')) "Real browser sequential-surface E2E harness is incomplete."
 Require (-not $browserHarness.Contains('--pairing-code') -and -not $browserHarness.Contains('pairing_code:')) "Browser harness must not accept or emit a pairing-code argument/field."
