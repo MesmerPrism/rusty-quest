@@ -1,0 +1,50 @@
+{
+  "$schema": "rusty.quest.connection_hub.locked_playlist_surface_contract.v1",
+  "canonical_version": "locked-playlist-v1",
+  "canonical_contract_sha256": "sha256:9e4c3794d8edbe123cd30cd3fc6abf0e14e71356c97fca2020334c5581b15e26",
+  "provider_id": "provider.quest.spatial-camera-panel-locked-playlist",
+  "surface_id": "surface.spatial_camera_panel.locked_playlist",
+  "display_label": "Spatial Camera Locked Playlist",
+  "description": "Control the active locked media sequence offered by Spatial Camera Panel.",
+  "typed_params_schema": "rusty.manifold.connection_hub.typed_params.empty.v1",
+  "availability": "effective_locked_playlist_only",
+  "lifecycle": "unregister_when_unavailable",
+  "direct_item_activation": "unsupported-alpha4-empty-args",
+  "ordered_item_list": "unsupported-alpha4-scalar-state",
+  "max_state_keys": 16,
+  "max_state_bytes": 4096,
+  "max_string_bytes": 256,
+  "commands": [
+    {
+      "command": "command.spatial_camera_panel.locked_playlist.next",
+      "display_label": "Next",
+      "required_controller_capability": "capability.spatial_camera_panel.locked_playlist.next"
+    },
+    {
+      "command": "command.spatial_camera_panel.locked_playlist.pause",
+      "display_label": "Pause",
+      "required_controller_capability": "capability.spatial_camera_panel.locked_playlist.pause"
+    },
+    {
+      "command": "command.spatial_camera_panel.locked_playlist.previous",
+      "display_label": "Previous",
+      "required_controller_capability": "capability.spatial_camera_panel.locked_playlist.previous"
+    },
+    {
+      "command": "command.spatial_camera_panel.locked_playlist.resume",
+      "display_label": "Resume",
+      "required_controller_capability": "capability.spatial_camera_panel.locked_playlist.resume"
+    }
+  ],
+  "state_keys": [
+    "active_index",
+    "active_label",
+    "item_count",
+    "paused",
+    "phase",
+    "playlist_title",
+    "progress",
+    "revision",
+    "running"
+  ]
+}

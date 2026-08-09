@@ -19,6 +19,9 @@ $vectors = Join-Path $app "contracts\connection-hub-protocol-v1.json"
 $vectorsV2 = Join-Path $app "contracts\connection-hub-protocol-v2.json"
 $assets = Join-Path $app "src\main\assets\connection-hub"
 $spatial = Join-Path $RepoRoot "apps\spatial-video-control-example-android"
+$lockedPlaylistContractPath = Join-Path $app "contracts\spatial-camera-panel-locked-playlist-surface.v1.json"
+$spatialCameraPanelClientPath = Join-Path $RepoRoot "fixtures\broker-clients\spatial-camera-panel.client.json"
+$retiredLockedPlaylistClientPath = Join-Path $RepoRoot "fixtures\broker-clients\spatial-camera-panel-locked-playlist.client.json"
 $required = @(
     (Join-Path $javaRoot "ConnectionHubProtocol.java"),
     (Join-Path $javaRoot "ConnectionHubAuthorityPort.java"),
@@ -37,6 +40,8 @@ $required = @(
     $browserTest,
     $vectors,
     $vectorsV2,
+    $lockedPlaylistContractPath,
+    $spatialCameraPanelClientPath,
     (Join-Path $assets "index.html"),
     (Join-Path $assets "app.js"),
     (Join-Path $assets "protocol.js"),
@@ -69,6 +74,8 @@ $buildScript = Get-Content -Raw -LiteralPath (Join-Path $RepoRoot "tools\Build-M
 $releaseScript = Get-Content -Raw -LiteralPath (Join-Path $RepoRoot "tools\Build-ConnectionHubLabsRelease.ps1")
 $spatialContractPath = Join-Path $spatial "contracts\connection-hub-media-surface.v1.json"
 $spatialContract = Get-Content -Raw -LiteralPath $spatialContractPath | ConvertFrom-Json
+$lockedPlaylistContract = Get-Content -Raw -LiteralPath $lockedPlaylistContractPath | ConvertFrom-Json
+$spatialCameraPanelClient = Get-Content -Raw -LiteralPath $spatialCameraPanelClientPath | ConvertFrom-Json
 $productSource = Get-Content -Raw -LiteralPath (Join-Path $RepoRoot "crates\rusty-quest-broker-product\src\lib.rs")
 $nativeLock = Get-Content -Raw -LiteralPath (Join-Path $app "native\manifold-source.lock.json")
 $nativeHubRoot = Join-Path $app "connection-hub-native"
@@ -180,6 +187,116 @@ if ([string]$spatialContract.canonical_contract_sha256 -cne 'sha256:6cc91c34f46b
     $buildScript -notmatch '\$spatialVideoHubContract\.canonical_sha256') {
     throw "Hub packaging does not derive the exact reviewed spatial-player surface grant from its source contract."
 }
+$expectedLockedCommands = @(
+    [ordered]@{ command = 'command.spatial_camera_panel.locked_playlist.next'; display_label = 'Next'; required_controller_capability = 'capability.spatial_camera_panel.locked_playlist.next' },
+    [ordered]@{ command = 'command.spatial_camera_panel.locked_playlist.pause'; display_label = 'Pause'; required_controller_capability = 'capability.spatial_camera_panel.locked_playlist.pause' },
+    [ordered]@{ command = 'command.spatial_camera_panel.locked_playlist.previous'; display_label = 'Previous'; required_controller_capability = 'capability.spatial_camera_panel.locked_playlist.previous' },
+    [ordered]@{ command = 'command.spatial_camera_panel.locked_playlist.resume'; display_label = 'Resume'; required_controller_capability = 'capability.spatial_camera_panel.locked_playlist.resume' }
+)
+$expectedLockedStateKeys = @(
+    'active_index', 'active_label', 'item_count', 'paused', 'phase',
+    'playlist_title', 'progress', 'revision', 'running'
+)
+if ([string]$lockedPlaylistContract.'$schema' -cne 'rusty.quest.connection_hub.locked_playlist_surface_contract.v1' -or
+    [string]$lockedPlaylistContract.canonical_version -cne 'locked-playlist-v1' -or
+    [string]$lockedPlaylistContract.canonical_contract_sha256 -cne 'sha256:9e4c3794d8edbe123cd30cd3fc6abf0e14e71356c97fca2020334c5581b15e26' -or
+    [string]$lockedPlaylistContract.provider_id -cne 'provider.quest.spatial-camera-panel-locked-playlist' -or
+    [string]$lockedPlaylistContract.surface_id -cne 'surface.spatial_camera_panel.locked_playlist' -or
+    [string]$lockedPlaylistContract.typed_params_schema -cne 'rusty.manifold.connection_hub.typed_params.empty.v1' -or
+    [string]$lockedPlaylistContract.availability -cne 'effective_locked_playlist_only' -or
+    [string]$lockedPlaylistContract.lifecycle -cne 'unregister_when_unavailable' -or
+    [string]$lockedPlaylistContract.direct_item_activation -cne 'unsupported-alpha4-empty-args' -or
+    [string]$lockedPlaylistContract.ordered_item_list -cne 'unsupported-alpha4-scalar-state' -or
+    [int]$lockedPlaylistContract.max_state_keys -ne 16 -or
+    [int]$lockedPlaylistContract.max_state_bytes -ne 4096 -or
+    [int]$lockedPlaylistContract.max_string_bytes -ne 256 -or
+    ((@($lockedPlaylistContract.commands | ForEach-Object { [string]$_.command })) -join "`n") -cne ((@($expectedLockedCommands | ForEach-Object { [string]$_.command })) -join "`n") -or
+    ((@($lockedPlaylistContract.state_keys | ForEach-Object { [string]$_ })) -join "`n") -cne ($expectedLockedStateKeys -join "`n")) {
+    throw "Spatial Camera Panel locked-playlist contract is outside the exact empty-args scalar boundary."
+}
+$lockedCanonical = "locked-playlist-v1`nprovider|$($lockedPlaylistContract.provider_id)`nsurface|$($lockedPlaylistContract.surface_id)`nlabel|$($lockedPlaylistContract.display_label)`ndescription|$($lockedPlaylistContract.description)`ntyped_params|$($lockedPlaylistContract.typed_params_schema)`navailability|$($lockedPlaylistContract.availability)`nlifecycle|$($lockedPlaylistContract.lifecycle)`ndirect_item_activation|$($lockedPlaylistContract.direct_item_activation)`nordered_item_list|$($lockedPlaylistContract.ordered_item_list)`nmax_state_keys|$($lockedPlaylistContract.max_state_keys)`nmax_state_bytes|$($lockedPlaylistContract.max_state_bytes)`nmax_string_bytes|$($lockedPlaylistContract.max_string_bytes)`n"
+for ($index = 0; $index -lt $expectedLockedCommands.Count; $index += 1) {
+    $actual = @($lockedPlaylistContract.commands)[$index]
+    $expected = $expectedLockedCommands[$index]
+    if ([string]$actual.display_label -cne [string]$expected.display_label -or
+        [string]$actual.required_controller_capability -cne [string]$expected.required_controller_capability) {
+        throw "Spatial Camera Panel locked-playlist command descriptor $index changed."
+    }
+    $lockedCanonical += "command|$($actual.command)|$($actual.display_label)|$($actual.required_controller_capability)`n"
+}
+foreach ($stateKey in $expectedLockedStateKeys) { $lockedCanonical += "state|$stateKey`n" }
+$lockedCanonicalSha256 = "sha256:" + [Convert]::ToHexString(
+    [Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($lockedCanonical))
+).ToLowerInvariant()
+if ($lockedCanonicalSha256 -cne [string]$lockedPlaylistContract.canonical_contract_sha256) {
+    throw "Spatial Camera Panel locked-playlist canonical contract hash is invalid."
+}
+$lockedPlaylistContractJson = $lockedPlaylistContract | ConvertTo-Json -Depth 16 -Compress
+foreach ($forbidden in @('select_index', 'profile_id', 'profile_path', 'ordered_items')) {
+    if ($lockedPlaylistContractJson -match [regex]::Escape($forbidden)) {
+        throw "Spatial Camera Panel locked-playlist contract exposes forbidden compatibility field: $forbidden"
+    }
+}
+if ([string]$spatialCameraPanelClient.schema -cne 'rusty.quest.broker_client_spec.v1' -or
+    [string]$spatialCameraPanelClient.client_id -cne 'client.quest.spatial-camera-panel' -or
+    [string]$spatialCameraPanelClient.package_name -cne 'io.github.mesmerprism.rustyquest.spatial_camera_panel' -or
+    [string]$spatialCameraPanelClient.feature_lock_id -cne 'lock.broker-client.spatial-camera-panel.v1' -or
+    [string]$spatialCameraPanelClient.marker_namespace -cne 'RUSTY_QUEST_SPATIAL_BROKER_CLIENT' -or
+    ((@($spatialCameraPanelClient.contract_families | ForEach-Object { [string]$_ })) -join "`n") -cne
+        "rusty.manifold.media.session_descriptor.v1`nrusty.manifold.peer.session_descriptor.v1" -or
+    ((@($spatialCameraPanelClient.capabilities | ForEach-Object { [string]$_ })) -join "`n") -cne
+        "capability.command.media.session.start`ncapability.command.media.session.stop`ncapability.command.session.list`ncapability.connection_hub.provider.register`ncapability.media.session.observe`ncapability.peer.session.observe`ncapability.sink.spatial-sdk" -or
+    @($spatialCameraPanelClient.adapter_permissions).Count -ne 1 -or
+    [string]@($spatialCameraPanelClient.adapter_permissions)[0] -cne 'io.github.mesmerprism.rustymanifold.permission.BROKER_ADMISSION' -or
+    @($spatialCameraPanelClient.runtime_properties).Count -ne 0 -or
+    @($spatialCameraPanelClient.application_defaults).Count -ne 0) {
+    throw "Spatial Camera Panel canonical client lock does not close over its selected-product Hub provider capability."
+}
+if (Test-Path -LiteralPath $retiredLockedPlaylistClientPath) {
+    throw "The duplicate same-package locked-playlist client lock must remain retired."
+}
+foreach ($token in @(
+    'Read-ValidatedSpatialCameraPanelLockedPlaylistHubContract',
+    'Assert-UniqueAndroidAdmissionSubjects',
+    'grant.quest.spatial-camera-panel',
+    'provider.quest.spatial-camera-panel-locked-playlist',
+    '$lockedPlaylistHubContract.canonical_sha256',
+    '$lockedPlaylistCommands'
+)) {
+    if ($buildScript -notmatch [regex]::Escape($token)) {
+        throw "Hub packaging is missing the locked-playlist enrollment token: $token"
+    }
+}
+if ($buildScript -match 'grant\.quest\.spatial-camera-panel-locked-playlist' -or
+    $buildScript -match 'spatial-camera-panel-locked-playlist\.client\.json') {
+    throw "Hub packaging still admits the ambiguous second grant for the Spatial Camera Panel Android subject."
+}
+$parseTokens = $null
+$parseErrors = $null
+$buildAst = [System.Management.Automation.Language.Parser]::ParseFile(
+    (Join-Path $RepoRoot 'tools\Build-ManifoldBrokerAndroid.ps1'),
+    [ref]$parseTokens,
+    [ref]$parseErrors
+)
+if (@($parseErrors).Count -ne 0) { throw "Hub build script does not parse for duplicate-subject negative testing." }
+$guardAst = $buildAst.Find({
+    param($node)
+    $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+        $node.Name -ceq 'Assert-UniqueAndroidAdmissionSubjects'
+}, $true)
+if ($null -eq $guardAst) { throw "Hub build script duplicate-subject guard is unavailable." }
+. ([scriptblock]::Create($guardAst.Extent.Text))
+$duplicateBindings = @(
+    [pscustomobject]@{ input = [pscustomobject]@{ lock = [pscustomobject]@{ package_name = 'io.example.same' } } },
+    [pscustomobject]@{ input = [pscustomobject]@{ lock = [pscustomobject]@{ package_name = 'io.example.same' } } }
+)
+$duplicateRejected = $false
+try {
+    Assert-UniqueAndroidAdmissionSubjects -ClientLockInputs $duplicateBindings -SigningFingerprint 'sha256:test'
+} catch {
+    $duplicateRejected = $_.Exception.Message -match 'Duplicate Android package\+signer admission subject is ambiguous'
+}
+if (-not $duplicateRejected) { throw "Hub build guard did not fail closed on a duplicate package+signer subject." }
 if ((Get-FileHash -LiteralPath $vectors -Algorithm SHA256).Hash.ToLowerInvariant() -ne
         'fa00d34511b2ee5576eebdd815e58ae032e37b10c209e41289cfd876c78c9c78' -or
     $buildScript -notmatch 'connection-hub-protocol-v1\.json' -or
