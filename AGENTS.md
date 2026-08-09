@@ -326,6 +326,18 @@ distinct Android app ids, no cross-marker/default/property bleed, zero
   dispatch/application receipts, and Java consumes only Rust-returned
   `effect_params` after acceptance.
 
+App-specific Connection Hub surfaces require an owner-packaged provider grant
+bound to the app's real Android package. One Android package-and-signer subject
+must map to exactly one canonical client lock and grant; a selected product may
+add that app's provider-registration capability to the canonical grant, but
+must not create a second indistinguishable subject or accept caller-supplied
+client identity. Never copy an example client, provider, surface, or marker
+identity. The locked-playlist compatibility surface registers only fixed
+empty-argument commands and bounded scalar state. Provider-private lists,
+arbitrary selectors, paths, profile ids, effect parameters, and downstream-
+private names remain outside the Hub product contract. A richer parameter or
+browser surface requires a separately reviewed Hub-owner contract evolution.
+
 Product Wi-Fi Direct topology lives in `apps/direct-p2p-provider-android`.
 Android Wi-Fi P2P owns credentialed temporary group formation,
 `AndroidNetworkBindingProvider` reports whether the platform exposes a usable

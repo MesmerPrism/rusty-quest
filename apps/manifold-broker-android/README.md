@@ -111,6 +111,21 @@ instance and a fresh authority-only surface subject. The stable surface name
 on the browser protocol does not become an authority identity. The Hub listener
 and controller session remain independent of that provider churn.
 
+The packaged locked-playlist surface for Spatial Camera Panel is enrolled on
+the canonical `client.quest.spatial-camera-panel` grant for the real
+`io.github.mesmerprism.rustyquest.spatial_camera_panel` package. The package-
+and-signer subject occurs exactly once; selecting the Hub product adds provider
+registration to that grant's capability intersection. Duplicate same-subject
+grants fail the build, and the app never supplies a client identity. The
+surface contract permits only empty-argument Next, Previous, Pause, and Resume
+commands and the scalar state keys `playlist_title`, `item_count`,
+`active_index`, `active_label`, `running`, `paused`, `phase`, `progress`, and
+`revision`. Availability is app-owned: the provider registers only while an
+effective locked playlist is active and unregisters when it is not. The
+compatibility contract exposes neither a typed item selector nor an ordered
+item array; either addition requires a separate Hub-owner schema, descriptor,
+browser, authorization, and negative-test change.
+
 Each accepted WebSocket is installed atomically with its Manifold transport
 epoch. A late older handshake cannot displace a newer socket. Surface leases
 retain their authority expiry locally, are reacquired after expiry, and receive
