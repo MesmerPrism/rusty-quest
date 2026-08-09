@@ -1,6 +1,7 @@
 package io.github.mesmerprism.rustyquest.spatial_camera_panel
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -11,9 +12,14 @@ class PrivateLayerZoneCompositorTest {
         PrivateLayerZoneCompositorModule.normalize(
             PrivateLayerZoneCompositor(
                 coverageMode = 99,
+                bufferGeometryMode = 99,
+                bufferStaticWidthUv = 4.0f,
+                bufferFillMode = 99,
+                stretchExtentMode = 99,
                 stretchSource = -4,
                 outerTargetMode = 99,
                 stretchMapping = 1,
+                stretchOptionFlags = 99,
                 edgeInsetUv = 0.4f,
                 maxInsetUv = 0.1f,
                 innerSignal = 99,
@@ -35,6 +41,23 @@ class PrivateLayerZoneCompositorTest {
             )
         )
     assertEquals(PrivateLayerZoneCompositorControls.coverageReplaceVideo, normalized.coverageMode)
+    assertEquals(
+        PrivateLayerZoneCompositorControls.regionContractIndependent,
+        normalized.regionContractVersion,
+    )
+    assertEquals(
+        PrivateLayerZoneCompositorControls.bufferGeometryDynamic,
+        normalized.bufferGeometryMode,
+    )
+    assertEquals(0.5f, normalized.bufferStaticWidthUv)
+    assertEquals(
+        PrivateLayerZoneCompositorControls.bufferFillStretch,
+        normalized.bufferFillMode,
+    )
+    assertEquals(
+        PrivateLayerZoneCompositorControls.stretchExtentReplaceOuter,
+        normalized.stretchExtentMode,
+    )
     assertEquals(PrivateLayerZoneCompositorControls.sourceRaw, normalized.stretchSource)
     assertEquals(
         PrivateLayerZoneCompositorControls.outerTargetTransparentSpatialVideo,
@@ -47,6 +70,7 @@ class PrivateLayerZoneCompositorTest {
     assertEquals(0.015f, normalized.edgeInsetUv)
     assertEquals(0.14f, normalized.maxInsetUv)
     assertEquals(1.6f, normalized.stretchCurve)
+    assertEquals(1, normalized.stretchOptionFlags)
     assertEquals(PrivateLayerZoneCompositorControls.signalDifference, normalized.innerSignal)
     assertEquals(0.25f, normalized.innerWidthUv)
     assertEquals(0.0f, normalized.innerThresholdR)
@@ -160,13 +184,137 @@ class PrivateLayerZoneCompositorTest {
         PrivateLayerZoneCompositorControls.presetToken(preset),
     )
     assertEquals(
-        PrivateLayerZoneCompositorControls.legacyOff,
+        PrivateLayerZoneCompositorControls.bufferOff,
         PrivateLayerZoneCompositorControls.presetForToken("unsupported"),
     )
   }
 
   @Test
-  fun unsampledSpatialVideoRouteFailsClosedInsteadOfSubstitutingAReadableSource() {
+  fun nativeAndOrganicStylesPreserveTransparentSpatialVideoUnderlay() {
+    val current =
+        PrivateLayerZoneCompositorControls.spatialVideoUnderlayBlendTest.copy(
+            outerWidthUv = 0.09f,
+        )
+
+    listOf(
+            PrivateLayerZoneCompositorControls.nativeBuffer,
+            PrivateLayerZoneCompositorControls.organicBuffer,
+        )
+        .forEach { style ->
+          val applied = PrivateLayerZoneCompositorControls.applyStretchStyle(current, style)
+          assertEquals(
+              PrivateLayerZoneCompositorControls.outerTargetTransparentSpatialVideo,
+              applied.outerTargetMode,
+          )
+          assertTrue(
+              PrivateLayerZoneCompositorControls.transparentSpatialVideoSupported(applied)
+          )
+          assertEquals(style.stretchSource, applied.stretchSource)
+          assertTrue(PrivateLayerZoneCompositorControls.matchesStretchStyle(applied, style))
+        }
+  }
+
+  @Test
+  fun nativeAndOrganicStylesPreserveReadableSameLayerVideo() {
+    val current =
+        PrivateLayerZoneCompositorControls.nativeBuffer.copy(
+            outerTargetMode = PrivateLayerZoneCompositorControls.outerTargetReadableColor,
+        )
+
+    listOf(
+            PrivateLayerZoneCompositorControls.nativeBuffer,
+            PrivateLayerZoneCompositorControls.organicBuffer,
+        )
+        .forEach { style ->
+          val applied = PrivateLayerZoneCompositorControls.applyStretchStyle(current, style)
+          assertEquals(
+              PrivateLayerZoneCompositorControls.outerTargetReadableColor,
+              applied.outerTargetMode,
+          )
+          assertTrue(
+              !PrivateLayerZoneCompositorControls.transparentSpatialVideoSupported(applied)
+          )
+          assertEquals(style.stretchSource, applied.stretchSource)
+          assertTrue(PrivateLayerZoneCompositorControls.matchesStretchStyle(applied, style))
+        }
+  }
+
+  @Test
+  fun disablingStretchPreservesDynamicBufferAndTransparentSpatialVideoUnderlay() {
+    val current = PrivateLayerZoneCompositorControls.spatialVideoUnderlayBlendTest
+
+    val disabled = PrivateLayerZoneCompositorControls.disableStretch(current)
+    assertEquals(
+        PrivateLayerZoneCompositorControls.bufferGeometryDynamic,
+        disabled.bufferGeometryMode,
+    )
+    assertEquals(
+        PrivateLayerZoneCompositorControls.bufferFillOuterContinuation,
+        disabled.bufferFillMode,
+    )
+    assertEquals(
+        PrivateLayerZoneCompositorControls.outerTargetTransparentSpatialVideo,
+        disabled.outerTargetMode,
+    )
+    assertTrue(PrivateLayerZoneCompositorControls.transparentSpatialVideoSupported(disabled))
+
+    listOf(
+            PrivateLayerZoneCompositorControls.nativeBuffer,
+            PrivateLayerZoneCompositorControls.organicBuffer,
+        )
+        .forEach { style ->
+          val restored = PrivateLayerZoneCompositorControls.applyStretchStyle(disabled, style)
+          assertEquals(
+              PrivateLayerZoneCompositorControls.outerTargetTransparentSpatialVideo,
+              restored.outerTargetMode,
+          )
+          assertTrue(
+              PrivateLayerZoneCompositorControls.transparentSpatialVideoSupported(restored)
+          )
+        }
+  }
+
+  @Test
+  fun disablingStretchPreservesExplicitReadableSameLayerVideoAndBufferGeometry() {
+    val current =
+        PrivateLayerZoneCompositorControls.organicBuffer.copy(
+            outerTargetMode = PrivateLayerZoneCompositorControls.outerTargetReadableColor,
+        )
+
+    val disabled = PrivateLayerZoneCompositorControls.disableStretch(current)
+    assertEquals(
+        PrivateLayerZoneCompositorControls.bufferGeometryDynamic,
+        disabled.bufferGeometryMode,
+    )
+    assertEquals(
+        PrivateLayerZoneCompositorControls.bufferFillOuterContinuation,
+        disabled.bufferFillMode,
+    )
+    assertEquals(
+        PrivateLayerZoneCompositorControls.outerTargetReadableColor,
+        disabled.outerTargetMode,
+    )
+    assertTrue(!PrivateLayerZoneCompositorControls.transparentSpatialVideoSupported(disabled))
+  }
+
+  @Test
+  fun selectingTransparentUnderlayWhileStretchIsOffDoesNotEnableStretch() {
+    val selected =
+        PrivateLayerZoneCompositorControls.withOuterTarget(
+            PrivateLayerZoneCompositorControls.legacyOff,
+            PrivateLayerZoneCompositorControls.outerTargetTransparentSpatialVideo,
+        )
+
+    assertEquals(PrivateLayerZoneCompositorControls.coverageOff, selected.coverageMode)
+    assertEquals(
+        PrivateLayerZoneCompositorControls.outerTargetTransparentSpatialVideo,
+        selected.outerTargetMode,
+    )
+    assertTrue(PrivateLayerZoneCompositorControls.transparentSpatialVideoSupported(selected))
+  }
+
+  @Test
+  fun independentSpatialVideoRouteSupportsTransitionVariantsWithoutSamplingVideo() {
     val invalid =
         PrivateLayerZoneCompositorModule.normalize(
             PrivateLayerZoneCompositorControls.spatialVideoUnderlayBlendTest.copy(
@@ -188,13 +336,96 @@ class PrivateLayerZoneCompositorTest {
         PrivateLayerZoneCompositorControls.blendSourceIncoming,
         invalid.outerChannelDynamics.sourceChoice,
     )
-    assertTrue(
-        !PrivateLayerZoneCompositorControls.transparentSpatialVideoSupported(invalid)
-    )
+    assertTrue(PrivateLayerZoneCompositorControls.transparentSpatialVideoSupported(invalid))
     val marker = PrivateLayerZoneCompositorModule.markerFields(invalid)
     assertTrue(marker.contains("projectionZoneOuterTarget=transparent-spatial-video"))
-    assertTrue(marker.contains("projectionZoneOuterUnderlaySupported=false"))
+    assertTrue(marker.contains("projectionZoneOuterUnderlaySupported=true"))
     assertTrue(marker.contains("projectionZoneUnsampledOuterData=true"))
+  }
+
+  @Test
+  fun bufferGeometryFillAndStretchExtentRemainOrthogonal() {
+    val base =
+        PrivateLayerZoneCompositorModule.normalize(
+            PrivateLayerZoneCompositorControls.organicBuffer.copy(
+                bufferGeometryMode = PrivateLayerZoneCompositorControls.bufferGeometryStatic,
+                bufferStaticWidthUv = 0.13f,
+                bufferFillMode =
+                    PrivateLayerZoneCompositorControls.bufferFillTransparentReveal,
+                stretchExtentMode =
+                    PrivateLayerZoneCompositorControls.stretchExtentReplaceOuter,
+            )
+        )
+    assertEquals(
+        PrivateLayerZoneCompositorControls.bufferGeometryStatic,
+        base.bufferGeometryMode,
+    )
+    assertEquals(0.13f, base.bufferStaticWidthUv)
+    assertEquals(
+        PrivateLayerZoneCompositorControls.bufferFillTransparentReveal,
+        base.bufferFillMode,
+    )
+    assertEquals(
+        PrivateLayerZoneCompositorControls.stretchExtentReplaceOuter,
+        base.stretchExtentMode,
+    )
+    assertEquals(PrivateLayerZoneCompositorControls.coverageDynamicBuffer, base.coverageMode)
+
+    val stretch =
+        PrivateLayerZoneCompositorModule.normalize(
+            PrivateLayerZoneCompositorControls.applyStretchStyle(
+                base,
+                PrivateLayerZoneCompositorControls.nativeBuffer,
+            )
+        )
+    assertEquals(base.bufferGeometryMode, stretch.bufferGeometryMode)
+    assertEquals(base.bufferStaticWidthUv, stretch.bufferStaticWidthUv)
+    assertEquals(base.stretchExtentMode, stretch.stretchExtentMode)
+    assertEquals(
+        PrivateLayerZoneCompositorControls.bufferFillStretch,
+        stretch.bufferFillMode,
+    )
+    assertEquals(PrivateLayerZoneCompositorControls.coverageReplaceVideo, stretch.coverageMode)
+  }
+
+  @Test
+  fun legacyCoverageProfilesMigrateToIndependentRegionContract() {
+    val off =
+        PrivateLayerZoneCompositorModule.normalize(
+            PrivateLayerZoneCompositorControls.legacyOff
+        )
+    assertEquals(
+        PrivateLayerZoneCompositorControls.regionContractIndependent,
+        off.regionContractVersion,
+    )
+    assertEquals(
+        PrivateLayerZoneCompositorControls.bufferGeometryOff,
+        off.bufferGeometryMode,
+    )
+    assertEquals(
+        PrivateLayerZoneCompositorControls.bufferFillOuterContinuation,
+        off.bufferFillMode,
+    )
+
+    val full =
+        PrivateLayerZoneCompositorModule.normalize(
+            PrivateLayerZoneCompositor(
+                coverageMode = PrivateLayerZoneCompositorControls.coverageReplaceVideo,
+                regionContractVersion = PrivateLayerZoneCompositorControls.regionContractLegacy,
+            )
+        )
+    assertEquals(
+        PrivateLayerZoneCompositorControls.bufferGeometryDynamic,
+        full.bufferGeometryMode,
+    )
+    assertEquals(
+        PrivateLayerZoneCompositorControls.bufferFillStretch,
+        full.bufferFillMode,
+    )
+    assertEquals(
+        PrivateLayerZoneCompositorControls.stretchExtentReplaceOuter,
+        full.stretchExtentMode,
+    )
   }
 
   @Test
@@ -211,5 +442,24 @@ class PrivateLayerZoneCompositorTest {
     assertTrue(marker.contains("projectionZoneInnerApplication=legacy"))
     assertTrue(marker.contains("projectionZoneInnerColorSource=midpoint"))
     assertTrue(marker.contains("projectionZoneOuterTarget=readable-color"))
+  }
+
+  @Test
+  fun transparentSpatialUnderlayIsTheOnlyUnconditionalZeroReadableVideoConsumer() {
+    assertFalse(
+        PrivateLayerZoneCompositorModule.readableVideoConsumerRequired(
+            PrivateLayerZoneCompositorControls.spatialVideoUnderlayBlendTest
+        )
+    )
+    assertTrue(
+        PrivateLayerZoneCompositorModule.readableVideoConsumerRequired(
+            PrivateLayerZoneCompositorControls.organicBuffer
+        )
+    )
+    assertTrue(
+        PrivateLayerZoneCompositorModule.readableVideoConsumerRequired(
+            PrivateLayerZoneCompositorControls.fullStretch
+        )
+    )
   }
 }
