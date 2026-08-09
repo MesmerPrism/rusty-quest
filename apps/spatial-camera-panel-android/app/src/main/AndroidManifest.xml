@@ -59,6 +59,21 @@
         <meta-data android:name="rusty.manifold.marker_namespace" android:value="${spatialMarkerNamespace}" />
         <meta-data android:name="rusty.manifold.contract_families" android:value="peer-session,media-session" />
         <meta-data android:name="rusty.manifold.capabilities" android:value="capability.command.media.session.start,capability.command.media.session.stop,capability.command.session.list,capability.media.session.observe,capability.peer.session.observe,capability.sink.spatial-sdk" />
+        <meta-data
+            android:name="rusty.quest.app_launch_options.schema"
+            android:value="rusty.quest.app_launch_options.v1" />
+        <meta-data
+            android:name="rusty.quest.app_launch_options.provider_authority"
+            android:value="${applicationId}.app-launch-options" />
+        <meta-data
+            android:name="rusty.quest.app_launch_options.owner_activity"
+            android:value="io.github.mesmerprism.rustyquest.spatial_camera_panel.SpatialCameraPanelActivity" />
+        <provider
+            android:name="io.github.mesmerprism.rustyquest.spatial_camera_panel.SpatialAppLaunchOptionsProvider"
+            android:authorities="${applicationId}.app-launch-options"
+            android:enabled="true"
+            android:exported="true"
+            android:grantUriPermissions="false" />
         <activity
             android:name="io.github.mesmerprism.rustyquest.broker_client.BrokerClientProbeActivity"
             android:exported="true"
