@@ -62,6 +62,24 @@ The client performs these steps in order:
 5. Authorize one exact capability use.
 6. Register one bounded surface using the retained authorized use.
 
+The evidence reply in step 3 is a transport compatibility document, not the
+full authority audit record. The broker first obtains and validates the full
+`rusty.quest.broker.runtime_evidence.v1` response, then returns
+`rusty.quest.broker.runtime_evidence.transport_projection.v1` on the Connection
+Hub Binder surface. The projection preserves `bridge_kind`,
+`decision_owner_id=module.runtime.host`, `local_acceptance_rules=false`, the
+provider epoch, and the exact Runtime Host and admission revisions consumed by
+existing clients. It also records the SHA-256 and UTF-8 byte length of the full
+response and identifies its nested Manifold evidence schema.
+
+The projection is limited to 32768 UTF-8 bytes and contains no token, grant,
+use, mutation, revocation, lifecycle, media, or other retained authority
+history. Those records remain available in the stateful Rust authority and are
+not deleted or truncated. Missing or malformed authority fields, an unexpected
+source schema or owner, local acceptance, invalid identifiers or revisions, or
+an oversized projected document fails closed before a Binder reply is sent.
+Pruned data must never be returned under the full-evidence schema.
+
 Registration binds the current provider session, a stable registration id, and
 the SHA-256 of the exact registration document. Repeating the same id, digest,
 surface, and callback Binder is equivalent and returns the cached applied

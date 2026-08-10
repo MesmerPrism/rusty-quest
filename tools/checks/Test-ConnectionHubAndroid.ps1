@@ -16,6 +16,7 @@ $transportTest = Join-Path $app "tests\java\io\github\mesmerprism\rustymanifold\
 $providerReplyTest = Join-Path $app "tests\java\io\github\mesmerprism\rustymanifold\broker\ProviderEffectReplyRouterTest.java"
 $operatorControllerTest = Join-Path $app "tests\java\io\github\mesmerprism\rustymanifold\broker\ConnectionHubOperatorControllerTest.java"
 $spatialCompositionTest = Join-Path $app "tests\java\io\github\mesmerprism\rustymanifold\broker\ConnectionHubSpatialCompositionTest.java"
+$runtimeEvidenceProjectionTest = Join-Path $app "tests\java\io\github\mesmerprism\rustymanifold\broker\ConnectionHubRuntimeEvidenceProjectionTest.java"
 $browserTest = Join-Path $app "tests\js\connection-hub-browser-protocol.test.js"
 $vectors = Join-Path $app "contracts\connection-hub-protocol-v1.json"
 $vectorsV2 = Join-Path $app "contracts\connection-hub-protocol-v2.json"
@@ -40,6 +41,7 @@ $required = @(
     $providerReplyTest,
     $operatorControllerTest,
     $spatialCompositionTest,
+    $runtimeEvidenceProjectionTest,
     $sharedAdmissionReducer,
     $sharedAdmissionTest,
     $browserTest,
@@ -72,6 +74,7 @@ $localBroker = Get-Content -Raw -LiteralPath (Join-Path $javaRoot "LocalManifold
 $debugControl = Get-Content -Raw -LiteralPath (Join-Path $javaRoot "ConnectionHubDebugControlProvider.java")
 $operatorController = Get-Content -Raw -LiteralPath (Join-Path $javaRoot "ConnectionHubOperatorController.java")
 $operatorProvider = Get-Content -Raw -LiteralPath (Join-Path $javaRoot "ConnectionHubOperatorProvider.java")
+$runtimeEvidenceProjection = Get-Content -Raw -LiteralPath (Join-Path $javaRoot "ConnectionHubRuntimeEvidenceProjection.java")
 $spatialManifest = Get-Content -Raw -LiteralPath (Join-Path $spatial "app\src\main\AndroidManifest.xml")
 $spatialDebugManifestPath = Join-Path $spatial "app\src\debug\AndroidManifest.xml"
 $spatialDebugServicePath = Join-Path $spatial "app\src\debug\java\io\github\mesmerprism\rustyquest\spatial_video_control\ConnectionHubDebugSurfaceService.kt"
@@ -102,6 +105,16 @@ if ($activity -match 'LocalManifoldBrokerServer\.get\(\)\.start' -or $activity -
 if ($service -notmatch 'START_STICKY' -or $service -notmatch 'ConnectionHubProcess' -or $service -notmatch 'ACTION_STOP_HUB') { throw "Foreground service does not own persistent Hub lifecycle." }
 if ($binder -notmatch 'message\.sendingUid' -or $binder -notmatch 'GET_SIGNING_CERTIFICATES' -or $binder -notmatch 'MESSAGE_REGISTER_SURFACE') { throw "Binder provider API does not derive platform identity." }
 if ($binder -match 'data\.getString\("admitted_client_evidence_json"') { throw "Binder accepts caller-supplied admission evidence." }
+if ($binder -notmatch 'ConnectionHubRuntimeEvidenceProjection\.project\(' -or
+    $binder -match 'response\s*=\s*ManifoldRuntimeAuthorityBridge\.evidence\(\)') {
+    throw "Connection Hub Binder runtime evidence bypasses the bounded projection."
+}
+if ($runtimeEvidenceProjection -notmatch 'rusty\.quest\.broker\.runtime_evidence\.transport_projection\.v1' -or
+    $runtimeEvidenceProjection -notmatch 'MAX_UTF8_BYTES\s*=\s*32\s*\*\s*1024' -or
+    $runtimeEvidenceProjection -notmatch 'authority_history_included' -or
+    $runtimeEvidenceProjection -notmatch 'full_evidence_retained_by_authority') {
+    throw "Connection Hub runtime-evidence projection lost its schema, bound, or retention declaration."
+}
 foreach ($field in @(
     'registration_id',
     'registration_fingerprint_sha256',
@@ -469,13 +482,15 @@ $sources = @(Get-ChildItem -Path $sharedTransportRoot -Recurse -Filter *.java |
     (Join-Path $javaRoot "HubSurfaceRegistry.java"),
     (Join-Path $javaRoot "ProviderEffectReplyRouter.java"),
     (Join-Path $javaRoot "ConnectionHubOperatorController.java"),
+    (Join-Path $javaRoot "ConnectionHubRuntimeEvidenceProjection.java"),
     $test,
     $vectorTest,
     $vectorV2Test,
     $transportTest,
     $providerReplyTest,
     $operatorControllerTest,
-    $spatialCompositionTest
+    $spatialCompositionTest,
+    $runtimeEvidenceProjectionTest
 ) + @(Get-ChildItem -Path $sharedAdmissionRoot -Recurse -Filter *.java |
     ForEach-Object { $_.FullName }) + @($sharedAdmissionTest)
 $javac = (Get-Command javac -ErrorAction Stop).Source
@@ -494,6 +509,8 @@ if ($LASTEXITCODE -ne 0) { throw "Connection Hub provider-effect reply-router te
 if ($LASTEXITCODE -ne 0) { throw "Connection Hub operator controller tests failed." }
 & $java -cp "$out;$($jsonJar.FullName)" io.github.mesmerprism.rustymanifold.broker.ConnectionHubSpatialCompositionTest
 if ($LASTEXITCODE -ne 0) { throw "Connection Hub Spatial composition tests failed." }
+& $java -cp "$out;$($jsonJar.FullName)" io.github.mesmerprism.rustymanifold.broker.ConnectionHubRuntimeEvidenceProjectionTest
+if ($LASTEXITCODE -ne 0) { throw "Connection Hub runtime-evidence projection tests failed." }
 & $java -cp "$out;$($jsonJar.FullName)" io.github.mesmerprism.rustymanifold.broker.ConnectionHubCoreTest $vectors
 if ($LASTEXITCODE -ne 0) { throw "Connection Hub host tests failed." }
 & $java -cp "$out;$($jsonJar.FullName)" io.github.mesmerprism.rustyquest.broker_admission.ConnectionHubAdmissionSessionReducerTest

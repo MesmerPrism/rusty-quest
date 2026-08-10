@@ -112,7 +112,8 @@ public final class ConnectionHubAdmissionService extends Service {
                     response = ManifoldRuntimeAuthorityBridge.completeMediaAction(operation);
                 } else if (message.what == MESSAGE_RUNTIME_EVIDENCE) {
                     operation = new JSONObject().put("operation", "runtime_evidence");
-                    response = ManifoldRuntimeAuthorityBridge.evidence();
+                    response = ConnectionHubRuntimeEvidenceProjection.project(
+                            ManifoldRuntimeAuthorityBridge.evidence());
                 } else {
                     operation = baseOperation(message.what, caller, data);
                     response = ManifoldAdmissionNativeBridge.execute(operation);
