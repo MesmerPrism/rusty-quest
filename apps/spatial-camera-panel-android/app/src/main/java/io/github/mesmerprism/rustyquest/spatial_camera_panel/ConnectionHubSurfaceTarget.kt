@@ -28,7 +28,7 @@ internal object ConnectionHubLockedPlaylistContract {
   const val DESCRIPTION =
       "Control the active locked media sequence offered by Spatial Camera Panel."
   const val SURFACE_CONTRACT_SHA256 =
-      "sha256:3eafe0fb1ff859a7848dfba8cf64a6eb532f98a39d0953fd628594792ca18d6e"
+      "sha256:9e4c3794d8edbe123cd30cd3fc6abf0e14e71356c97fca2020334c5581b15e26"
 
   const val COMMAND_NEXT = "command.spatial_camera_panel.locked_playlist.next"
   const val COMMAND_PAUSE = "command.spatial_camera_panel.locked_playlist.pause"

@@ -52,16 +52,39 @@ class ConnectionHubSurfaceClientTest {
     val commands = registration.getJSONArray("commands")
     val canonical =
         buildString {
-          append("v1\n")
-          append(registration.getString("surface_id")).append('\n')
-          append(registration.getString("display_label")).append('\n')
-          append(registration.getString("description")).append('\n')
+          append("locked-playlist-v1\n")
+          append("provider|")
+              .append(ConnectionHubLockedPlaylistContract.PROVIDER_ID)
+              .append('\n')
+          append("surface|").append(registration.getString("surface_id")).append('\n')
+          append("label|").append(registration.getString("display_label")).append('\n')
+          append("description|").append(registration.getString("description")).append('\n')
+          append("typed_params|rusty.manifold.connection_hub.typed_params.empty.v1\n")
+          append("availability|effective_locked_playlist_only\n")
+          append("lifecycle|unregister_when_unavailable\n")
+          append("direct_item_activation|unsupported-alpha4-empty-args\n")
+          append("ordered_item_list|unsupported-alpha4-scalar-state\n")
+          append("max_state_keys|16\n")
+          append("max_state_bytes|4096\n")
+          append("max_string_bytes|256\n")
           (0 until commands.length()).forEach { index ->
             val command = commands.getJSONObject(index)
-            append(command.getString("command")).append('|')
+            append("command|").append(command.getString("command")).append('|')
             append(command.getString("display_label")).append('|')
             append(command.getString("required_controller_capability")).append('\n')
           }
+          listOf(
+                  "active_index",
+                  "active_label",
+                  "item_count",
+                  "paused",
+                  "phase",
+                  "playlist_title",
+                  "progress",
+                  "revision",
+                  "running",
+              )
+              .forEach { stateKey -> append("state|").append(stateKey).append('\n') }
         }
     val digest =
         MessageDigest.getInstance("SHA-256")
