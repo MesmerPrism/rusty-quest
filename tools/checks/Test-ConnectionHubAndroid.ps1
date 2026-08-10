@@ -79,6 +79,7 @@ $spatialTarget = Get-Content -Raw -LiteralPath (Join-Path $spatial "app\src\main
 $spatialActivity = Get-Content -Raw -LiteralPath (Join-Path $spatial "app\src\main\java\io\github\mesmerprism\rustyquest\spatial_video_control\SpatialVideoControlActivity.kt")
 $spatialCameraPanelManifest = Get-Content -Raw -LiteralPath (Join-Path $spatialCameraPanel "app\src\main\AndroidManifest.xml")
 $spatialCameraPanelClientSource = Get-Content -Raw -LiteralPath (Join-Path $spatialCameraPanel "app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\ConnectionHubSurfaceClient.kt")
+$releaseManifest = Get-Content -Raw -LiteralPath (Join-Path $RepoRoot "fixtures\broker-products\connection-hub-standalone.AndroidManifest.xml")
 $buildScript = Get-Content -Raw -LiteralPath (Join-Path $RepoRoot "tools\Build-ManifoldBrokerAndroid.ps1")
 $releaseScript = Get-Content -Raw -LiteralPath (Join-Path $RepoRoot "tools\Build-ConnectionHubLabsRelease.ps1")
 $spatialContractPath = Join-Path $spatial "contracts\connection-hub-media-surface.v1.json"
@@ -169,11 +170,15 @@ if ($runtime -notmatch 'CopyOnWriteArrayList<EventSink>' -or
 }
 if ($server -match 'Access-Control-Allow-Origin' -or $server -match 'https?://[^\"]') { throw "Hub server enables CORS or ambient remote assets." }
 if ($process -notmatch 'new ManifoldConnectionHubAuthority\(\)' -or $process -match 'UnavailableManifold') { throw "Connection Hub process is not wired to the real Manifold JNI authority." }
-if ($buildScript -notmatch 'releaseHubService' -or
-    $buildScript -notmatch 'debugHubService' -or
-    $buildScript -notmatch 'android:permission="android\.permission\.DUMP"' -or
-    $buildScript -notmatch '\$manifestText\.Replace\(\$releaseHubService, \$debugHubService\)') {
-    throw "Connection Hub debug build does not expose only its exact service lifecycle behind DUMP."
+if ($releaseManifest -notmatch 'android:name="\.ConnectionHubStartService"[\s\S]*android:exported="true"[\s\S]*android:permission="android\.permission\.DUMP"' -or
+    $buildScript -notmatch '\$publishedHubService' -or
+    $buildScript -notmatch 'Connection Hub build requires the exact DUMP-gated published foreground service' -or
+    $buildScript -match 'releaseHubService|debugHubService') {
+    throw "Connection Hub normal product does not expose exactly its fixed DUMP-gated foreground service."
+}
+if ($buildScript -notmatch 'if \(\$EnableConnectionHubDebugOperator\)[\s\S]*\$debugProvider' -or
+    $buildScript -notmatch 'android:name="\.ConnectionHubDebugControlProvider"') {
+    throw "Connection Hub debug build does not limit its manifest delta to the debug provider."
 }
 if ($buildScript.IndexOf('$generatedAndroidManifest.SelectNodes("/manifest/application/$kind")',
         [StringComparison]::Ordinal) -lt 0 -or

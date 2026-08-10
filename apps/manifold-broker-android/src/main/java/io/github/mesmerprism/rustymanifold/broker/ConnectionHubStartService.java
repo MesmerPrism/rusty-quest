@@ -24,6 +24,7 @@ public final class ConnectionHubStartService extends Service {
     private static final String CHANNEL_ID = "rusty_manifold_broker";
     private static final int NOTIFICATION_ID = 82082;
     private static final long EXPIRY_RECONCILE_INTERVAL_MS = 60_000L;
+    private static volatile boolean foregroundReady;
     private final Handler expiryHandler = new Handler(Looper.getMainLooper());
     private final Runnable expiryTask = new Runnable() {
         @Override public void run() {
@@ -34,15 +35,20 @@ public final class ConnectionHubStartService extends Service {
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
+        String action = intent == null ? null : intent.getAction();
+        if (!isRegisteredAction(action)) {
+            stopSelf(startId);
+            return START_NOT_STICKY;
+        }
         initializeAuthority();
         startForegroundCompat(buildNotification());
+        foregroundReady = true;
         LocalManifoldBrokerServer.get().start(getApplicationContext());
         ConnectionHubProcess hub = ConnectionHubProcess.get(getApplicationContext());
         ConnectionHubOperatorController operator =
                 hub.operatorController();
         expiryHandler.removeCallbacks(expiryTask);
         expiryHandler.postDelayed(expiryTask, EXPIRY_RECONCILE_INTERVAL_MS);
-        String action = intent == null ? null : intent.getAction();
         try {
             if (ACTION_START_HUB.equals(action)) {
                 requireConfirmed(operator.execute(
@@ -69,6 +75,17 @@ public final class ConnectionHubStartService extends Service {
         return START_STICKY;
     }
 
+    static boolean isForegroundReady() {
+        return foregroundReady;
+    }
+
+    private static boolean isRegisteredAction(String action) {
+        return action == null
+                || ACTION_START_HUB.equals(action)
+                || ACTION_STOP_HUB.equals(action)
+                || ACTION_FORGET_HUB.equals(action);
+    }
+
     private static void requireConfirmed(ConnectionHubOperatorController.Result result) {
         if (!result.receipt.optBoolean("applied", false)
                 || !"confirmed".equals(result.receipt.optString("effect_status"))) {
@@ -77,7 +94,12 @@ public final class ConnectionHubStartService extends Service {
     }
 
     @Override public void onDestroy() {
+        boolean wasForegroundReady = foregroundReady;
+        foregroundReady = false;
         expiryHandler.removeCallbacks(expiryTask);
+        if (wasForegroundReady) {
+            ConnectionHubProcess.get(getApplicationContext()).stopFromWearer();
+        }
         super.onDestroy();
     }
 

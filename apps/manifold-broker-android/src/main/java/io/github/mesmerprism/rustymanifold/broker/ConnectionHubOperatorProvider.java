@@ -7,7 +7,6 @@ import android.content.Intent;
 import android.database.Cursor;
 import android.net.Uri;
 import android.os.Binder;
-import android.os.Build;
 import android.os.Bundle;
 import android.os.Process;
 import android.util.Base64;
@@ -49,9 +48,6 @@ public final class ConnectionHubOperatorProvider extends ContentProvider {
         Bundle safeExtras = extras == null ? Bundle.EMPTY : extras;
         JSONObject arguments = decodeArguments(method, safeExtras);
         Context context = requireAttachedContext();
-        if (ConnectionHubOperatorController.ACTION_START.equals(method)) {
-            ensureForegroundService(context);
-        }
         ConnectionHubOperatorController.Result result =
                 ConnectionHubProcess.get(context).operatorController().execute(method, arguments);
         if (ConnectionHubOperatorController.ACTION_STOP.equals(method)
@@ -120,15 +116,6 @@ public final class ConnectionHubOperatorProvider extends ContentProvider {
         } finally {
             Arrays.fill(encoded, (byte) 0);
             if (decoded != null) { Arrays.fill(decoded, (byte) 0); }
-        }
-    }
-
-    private static void ensureForegroundService(Context context) {
-        Intent service = new Intent(context, ConnectionHubStartService.class);
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            context.startForegroundService(service);
-        } else {
-            context.startService(service);
         }
     }
 

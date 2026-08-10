@@ -23,6 +23,8 @@ $build = Read-Required "tools\Build-ManifoldBrokerAndroid.ps1"
 $provider = Read-Required "apps\manifold-broker-android\src\main\java\io\github\mesmerprism\rustymanifold\broker\ConnectionHubDebugControlProvider.java"
 $publishedProvider = Read-Required "apps\manifold-broker-android\src\main\java\io\github\mesmerprism\rustymanifold\broker\ConnectionHubOperatorProvider.java"
 $operatorController = Read-Required "apps\manifold-broker-android\src\main\java\io\github\mesmerprism\rustymanifold\broker\ConnectionHubOperatorController.java"
+$hubProcess = Read-Required "apps\manifold-broker-android\src\main\java\io\github\mesmerprism\rustymanifold\broker\ConnectionHubProcess.java"
+$hubService = Read-Required "apps\manifold-broker-android\src\main\java\io\github\mesmerprism\rustymanifold\broker\ConnectionHubStartService.java"
 $activity = Read-Required "apps\manifold-broker-android\src\main\java\io\github\mesmerprism\rustymanifold\broker\ConnectionHubStartActivity.java"
 $browserHarness = Read-Required "tools\browser\connection-hub-browser-e2e.js"
 $releaseManifest = Read-Required "fixtures\broker-products\connection-hub-standalone.AndroidManifest.xml"
@@ -358,6 +360,24 @@ Require ($publishedProvider.Contains('Binder.getCallingUid() != Process.SHELL_UI
     $publishedProvider.Contains('ConnectionHubOperatorController.ACTION_REVOKE') -and
     -not $publishedProvider.Contains('client_id') -and
     -not $publishedProvider.Contains('caller_selected_capability')) "Published operator identity or closed method boundary is incomplete."
+Require (-not $publishedProvider.Contains('startForegroundService') -and
+    -not $publishedProvider.Contains('startService(')) "Published provider must never bootstrap a foreground service from its background app context."
+Require ($releaseManifest.Contains('android:name=".ConnectionHubStartService"') -and
+    $releaseManifest.Contains('android:exported="true"') -and
+    $releaseManifest.Contains('android:permission="android.permission.DUMP"')) "Published foreground-service shell boundary is missing."
+Require ($hubService.Contains('static boolean isForegroundReady()') -and
+    $hubService.Contains('if (!isRegisteredAction(action))') -and
+    $hubService.Contains('foregroundReady = true;') -and
+    $hubService.Contains('foregroundReady = false;')) "Foreground-service readiness or closed action lifecycle is incomplete."
+Require ($hubProcess.Contains('if (!ConnectionHubStartService.isForegroundReady())') -and
+    $hubProcess.Contains('stopFromWearer();') -and
+    $hubProcess.Contains('if (runtime.desiredRunning())')) "Direct-provider not-ready rejection or idempotent start is incomplete."
+Require ($cli.Contains('function Start-PublishedConnectionHubForegroundService') -and
+    $cli.Contains("'shell', 'am', 'start-foreground-service'") -and
+    $cli.Contains('$HubForegroundService = "$HubPackage/.ConnectionHubStartService"') -and
+    $cli.Contains('$HubForegroundStartAction = "$HubPackage.action.START_CONNECTION_HUB"') -and
+    $cli.Contains('Test-ExactAndroidComponentEcho $dispatch.combined $HubForegroundService') -and
+    $cli.Contains('$service.output.Contains(''isForeground=true'')')) "Published shell bootstrap is not fixed, acknowledged, and independently foreground-read back."
 Require ($operatorController.Contains('transition("sent")') -and
     $operatorController.Contains('transition("pending")') -and
     $operatorController.Contains('"outcome_unknown"') -and

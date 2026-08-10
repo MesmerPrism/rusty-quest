@@ -75,6 +75,8 @@ $ErrorActionPreference = "Stop"
 $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $HubPackage = "io.github.mesmerprism.rustymanifold.broker"
 $HubActivity = "$HubPackage/.ConnectionHubStartActivity"
+$HubForegroundService = "$HubPackage/.ConnectionHubStartService"
+$HubForegroundStartAction = "$HubPackage.action.START_CONNECTION_HUB"
 $HubDebugAuthority = "$HubPackage.debug-connection-hub-control"
 $HubOperatorAuthority = "$HubPackage.connection-hub-operator"
 $PublishedSpatialPackage = "io.github.mesmerprism.rustyquest.spatial_camera_panel"
@@ -978,7 +980,36 @@ function Close-PublishedBridge([bool]$CreatedByRun, [bool]$Preexisting) {
     return $saved
 }
 
+function Start-PublishedConnectionHubForegroundService {
+    $dispatch = Invoke-CapturedBounded $script:Adb @(
+        '-s', $Serial, 'shell', 'am', 'start-foreground-service',
+        '-n', $HubForegroundService, '-a', $HubForegroundStartAction) `
+        'published Connection Hub foreground-service bootstrap' 15000
+    if ($dispatch.exit_code -ne 0 -or
+            -not (Test-ExactAndroidComponentEcho $dispatch.combined $HubForegroundService) -or
+            [regex]::IsMatch($dispatch.combined, '(?i)\b(error|exception|permission denial)\b')) {
+        throw "Published Connection Hub foreground-service bootstrap was not acknowledged for the exact fixed component."
+    }
+    $deadline = [DateTime]::UtcNow.AddSeconds(12)
+    $service = $null
+    do {
+        $service = Invoke-CapturedBounded $script:Adb @(
+            '-s', $Serial, 'shell', 'dumpsys', 'activity', 'services', $HubPackage) `
+            'published Connection Hub foreground-service readback' 10000
+        if ($service.exit_code -eq 0 -and
+                $service.output.Contains('ConnectionHubStartService') -and
+                $service.output.Contains('isForeground=true')) {
+            return [ordered]@{ dispatch=$dispatch; service=$service }
+        }
+        Start-Sleep -Milliseconds 250
+    } while ([DateTime]::UtcNow -lt $deadline)
+    throw "Published Connection Hub foreground service did not reach independently observed foreground state."
+}
+
 function Invoke-PublishedOperator([ValidateSet('start', 'status', 'stop', 'forget')][string]$Method) {
+    $bootstrap = if ($Method -ceq 'start') {
+        Start-PublishedConnectionHubForegroundService
+    } else { $null }
     $result = Invoke-CapturedBounded $script:Adb @(
         '-s', $Serial, 'shell', 'content', 'call',
         '--uri', "content://$HubOperatorAuthority", '--method', $Method) `
@@ -1008,6 +1039,9 @@ function Invoke-PublishedOperator([ValidateSet('start', 'status', 'stop', 'forge
         'published-shell-operator' 'passed' ([ordered]@{
             operator_authority=$HubOperatorAuthority
             adb_executable_sha256=$AdbSha256
+            foreground_service_bootstrap=($null -ne $bootstrap)
+            foreground_service_dispatch_sha256=$(if($null -eq $bootstrap){''}else{Get-TextSha256 $bootstrap.dispatch.combined})
+            foreground_service_readback_sha256=$(if($null -eq $bootstrap){''}else{Get-TextSha256 $bootstrap.service.output})
             transport_acknowledged=$true
             owner_effect_confirmed=$true
             transport_only_acceptance=$false

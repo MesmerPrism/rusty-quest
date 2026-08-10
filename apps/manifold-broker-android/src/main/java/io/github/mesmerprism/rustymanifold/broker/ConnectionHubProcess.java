@@ -153,6 +153,14 @@ public final class ConnectionHubProcess {
     }
 
     public synchronized void startFromWearer() throws IOException {
+        if (!ConnectionHubStartService.isForegroundReady()) {
+            stopFromWearer();
+            return;
+        }
+        if (runtime.desiredRunning()) {
+            wifiBinding.start();
+            return;
+        }
         runtime.startRequested();
         wifiBinding.start();
     }
