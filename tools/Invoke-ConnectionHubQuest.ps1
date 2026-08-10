@@ -6,7 +6,7 @@ param(
         "DebugProtocolProof", "RestartProcess", "WifiRebindE2E", "LaunchSpatial", "LaunchSample", "StopSpatial", "StopSample",
         "WaitSurface", "WaitSurfaceAbsent", "StopProviders", "HostessStatus", "HostessPair",
         "HostessList", "HostessWatch", "HostessCommand", "HostessReconnect",
-        "HostessRevoke", "BrowserE2E", "Logs", "Cleanup", "E2E", "SimulateE2E")]
+        "HostessRevoke", "BrowserE2E", "PublishedBrowserE2E", "Logs", "Cleanup", "E2E", "SimulateE2E")]
     [string]$Action,
 
     [Parameter(Mandatory=$true)]
@@ -76,6 +76,18 @@ $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $HubPackage = "io.github.mesmerprism.rustymanifold.broker"
 $HubActivity = "$HubPackage/.ConnectionHubStartActivity"
 $HubDebugAuthority = "$HubPackage.debug-connection-hub-control"
+$HubOperatorAuthority = "$HubPackage.connection-hub-operator"
+$PublishedSpatialPackage = "io.github.mesmerprism.rustyquest.spatial_camera_panel"
+$PublishedLockedPlaylistSurface = "surface.spatial_camera_panel.locked_playlist"
+$PublishedLockedPlaylistCommands = @(
+    "command.spatial_camera_panel.locked_playlist.previous",
+    "command.spatial_camera_panel.locked_playlist.next",
+    "command.spatial_camera_panel.locked_playlist.pause",
+    "command.spatial_camera_panel.locked_playlist.resume")
+$PublishedBridgeHostEndpoint = "tcp:18765"
+$PublishedBridgeDeviceEndpoint = "tcp:8876"
+$PublishedBrowserOrigin = "http://127.0.0.1:18765"
+$PublishedBridgeSchema = "rusty.quest.connection_hub.typed_bridge_receipt.v1"
 $SpatialPackage = "io.github.mesmerprism.rustyquest.spatial_video_control_example"
 $SpatialActivity = "$SpatialPackage/io.github.mesmerprism.rustyquest.spatial_video_control.SpatialVideoControlActivity"
 $SpatialDebugSurfaceService = "$SpatialPackage/io.github.mesmerprism.rustyquest.spatial_video_control.ConnectionHubDebugSurfaceService"
@@ -121,8 +133,11 @@ $script:UninstallPerformed = $false
 $script:VirtualProximityEnabledByRun = $false
 $script:CurrentCheckpointStage = ""
 
-if ($LegacyV1 -and ($RequireBrowserE2E -or $Action -eq "BrowserE2E")) {
+if ($LegacyV1 -and ($RequireBrowserE2E -or $Action -in @("BrowserE2E", "PublishedBrowserE2E"))) {
     throw "The browser acceptance harness is v2-only; legacy v1 cannot claim browser E2E continuity."
+}
+if ($Action -eq "E2E" -and $RequireBrowserE2E) {
+    throw "The sample/debug browser stage is retired; run PublishedBrowserE2E through the normal product operator."
 }
 
 function Get-Sha256([string]$Path) {
@@ -726,6 +741,299 @@ function Invoke-AdbBounded([string[]]$Arguments, [string]$GapId, [string]$Goal, 
         completed_within_timeout = $result.completed_within_timeout
         owner_acceptance_claimed = $false
     }
+}
+
+function Read-PublishedBridgeRows([string]$Output) {
+    $rows = [System.Collections.Generic.List[object]]::new()
+    foreach ($line in @($Output -split "`r?`n")) {
+        if ([string]::IsNullOrWhiteSpace($line)) { continue }
+        $fields = @([regex]::Split($line.Trim(), '\s+'))
+        if ($fields.Count -ne 3) { throw "ADB bridge readback contained a malformed row." }
+        [void]$rows.Add([pscustomobject]@{
+            serial = [string]$fields[0]
+            host_endpoint = [string]$fields[1]
+            device_endpoint = [string]$fields[2]
+        })
+    }
+    return @($rows)
+}
+
+function Get-PublishedBridgeSelection([object[]]$Rows) {
+    return @($Rows | Where-Object {
+        [string]$_.serial -ceq $Serial -and
+        [string]$_.host_endpoint -ceq $PublishedBridgeHostEndpoint
+    })
+}
+
+function New-PublishedBridgeReceipt(
+        [ValidateSet("open", "cleanup")][string]$Operation,
+        [ValidateSet("confirmed", "rejected", "outcome_unknown")][string]$TerminalStatus,
+        [string]$SentAtUtc,
+        [string]$PendingAtUtc,
+        [string]$TerminalAtUtc,
+        [bool]$TransportAcknowledged,
+        [bool]$ReadbackConfirmed,
+        [bool]$CleanupReadback,
+        [bool]$Preexisting,
+        [bool]$CreatedByRun,
+        [string]$FailureCode = "") {
+    return [pscustomobject][ordered]@{
+        '$schema' = $PublishedBridgeSchema
+        operation = $Operation
+        provider_id = "android-platform-tools-adb"
+        provider_executable_sha256 = $AdbSha256
+        serial = $Serial
+        host_endpoint = $PublishedBridgeHostEndpoint
+        device_endpoint = $PublishedBridgeDeviceEndpoint
+        browser_origin = $PublishedBrowserOrigin
+        transitions = @(
+            [ordered]@{ state="sent"; observed_at_utc=$SentAtUtc },
+            [ordered]@{ state="pending"; observed_at_utc=$PendingAtUtc },
+            [ordered]@{ state=$TerminalStatus; observed_at_utc=$TerminalAtUtc })
+        terminal_status = $TerminalStatus
+        transport_acknowledged = $TransportAcknowledged
+        readback_confirmed = $ReadbackConfirmed
+        cleanup_readback = $CleanupReadback
+        preexisting = $Preexisting
+        created_by_run = $CreatedByRun
+        failure_code = $(if([string]::IsNullOrWhiteSpace($FailureCode)){$null}else{$FailureCode})
+        secrets_in_receipt = $false
+        caller_selected_endpoint = $false
+        caller_selected_identity = $false
+        caller_selected_capability = $false
+        owner_effect_claimed = $false
+    }
+}
+
+function Assert-PublishedBridgeReceipt(
+        $Receipt,
+        [ValidateSet("open", "cleanup")][string]$ExpectedOperation,
+        [ValidateSet("confirmed", "rejected", "outcome_unknown")][string]$ExpectedTerminalStatus) {
+    $expectedProperties = @(
+        '$schema', 'operation', 'provider_id', 'provider_executable_sha256', 'serial',
+        'host_endpoint', 'device_endpoint', 'browser_origin', 'transitions', 'terminal_status',
+        'transport_acknowledged', 'readback_confirmed', 'cleanup_readback',
+        'preexisting', 'created_by_run', 'failure_code', 'secrets_in_receipt',
+        'caller_selected_endpoint', 'caller_selected_identity',
+        'caller_selected_capability', 'owner_effect_claimed') | Sort-Object
+    $actualProperties = @($Receipt.PSObject.Properties.Name | Sort-Object)
+    $transitionPropertiesAreExact = @($Receipt.transitions).Count -eq 3 -and
+        @($Receipt.transitions | Where-Object {
+            $names = if ($_ -is [Collections.IDictionary]) {
+                @($_.Keys | ForEach-Object { [string]$_ } | Sort-Object)
+            } else {
+                @($_.PSObject.Properties.Name | Sort-Object)
+            }
+            ($names -join '|') -cne 'observed_at_utc|state'
+        }).Count -eq 0
+    $failureCode = if ($null -eq $Receipt.failure_code) { '' } else { [string]$Receipt.failure_code }
+    $allowedFailureCodes = @(
+        '', 'fixed_host_endpoint_already_bound', 'fixed_bridge_transport_rejected',
+        'fixed_bridge_transport_outcome_unknown', 'fixed_bridge_readback_unconfirmed',
+        'fixed_bridge_cleanup_readback_unconfirmed')
+    if (($actualProperties -join '|') -cne ($expectedProperties -join '|') -or
+            [string]$Receipt.'$schema' -cne $PublishedBridgeSchema -or
+            [string]$Receipt.operation -cne $ExpectedOperation -or
+            [string]$Receipt.provider_id -cne 'android-platform-tools-adb' -or
+            [string]$Receipt.provider_executable_sha256 -cne $AdbSha256 -or
+            [string]$Receipt.provider_executable_sha256 -notmatch '^[0-9a-f]{64}$' -or
+            [string]$Receipt.serial -cne $Serial -or
+            [string]$Receipt.host_endpoint -cne 'tcp:18765' -or
+            [string]$Receipt.device_endpoint -cne 'tcp:8876' -or
+            [string]$Receipt.browser_origin -cne 'http://127.0.0.1:18765' -or
+            [string]$Receipt.terminal_status -cne $ExpectedTerminalStatus -or
+            @($Receipt.transitions).Count -ne 3 -or
+            -not $transitionPropertiesAreExact -or
+            (@($Receipt.transitions | ForEach-Object { [string]$_.state }) -join '|') -cne
+                "sent|pending|$ExpectedTerminalStatus" -or
+            -not (Test-ExactBoolean $Receipt.transport_acknowledged ([bool]$Receipt.transport_acknowledged)) -or
+            -not (Test-ExactBoolean $Receipt.readback_confirmed ([bool]$Receipt.readback_confirmed)) -or
+            -not (Test-ExactBoolean $Receipt.cleanup_readback ([bool]$Receipt.cleanup_readback)) -or
+            -not (Test-ExactBoolean $Receipt.preexisting ([bool]$Receipt.preexisting)) -or
+            -not (Test-ExactBoolean $Receipt.created_by_run ([bool]$Receipt.created_by_run)) -or
+            -not (Test-ExactBoolean $Receipt.secrets_in_receipt $false) -or
+            -not (Test-ExactBoolean $Receipt.caller_selected_endpoint $false) -or
+            -not (Test-ExactBoolean $Receipt.caller_selected_identity $false) -or
+            -not (Test-ExactBoolean $Receipt.caller_selected_capability $false) -or
+            -not (Test-ExactBoolean $Receipt.owner_effect_claimed $false) -or
+            $failureCode -cnotin $allowedFailureCodes -or
+            ($ExpectedTerminalStatus -eq 'confirmed' -and -not [string]::IsNullOrEmpty($failureCode)) -or
+            ($ExpectedTerminalStatus -ne 'confirmed' -and [string]::IsNullOrEmpty($failureCode)) -or
+            ($ExpectedTerminalStatus -eq 'confirmed' -and
+                (Test-ExactBoolean $Receipt.preexisting $Receipt.created_by_run)) -or
+            ($ExpectedOperation -eq 'open' -and $ExpectedTerminalStatus -eq 'confirmed' -and
+                -not (Test-ExactBoolean $Receipt.cleanup_readback $false)) -or
+            ($ExpectedOperation -eq 'cleanup' -and $ExpectedTerminalStatus -eq 'confirmed' -and
+                -not (Test-ExactBoolean $Receipt.cleanup_readback $true))) {
+        throw "Published bridge receipt failed exact typed validation."
+    }
+    $timestamps = @($Receipt.transitions | ForEach-Object {
+        $parsed = [DateTimeOffset]::MinValue
+        if (-not [DateTimeOffset]::TryParseExact(
+                [string]$_.observed_at_utc,
+                'o',
+                [Globalization.CultureInfo]::InvariantCulture,
+                [Globalization.DateTimeStyles]::RoundtripKind,
+                [ref]$parsed)) {
+            throw "Published bridge receipt timestamp is invalid."
+        }
+        $parsed
+    })
+    if ($timestamps[1] -lt $timestamps[0] -or $timestamps[2] -lt $timestamps[1]) {
+        throw "Published bridge receipt transition chronology is invalid."
+    }
+    if ($ExpectedTerminalStatus -eq 'confirmed' -and -not (Test-ExactBoolean $Receipt.readback_confirmed $true)) {
+        throw "Published bridge confirmation requires independent readback."
+    }
+    return $Receipt
+}
+
+function Get-PublishedBridgeRows {
+    $result = Invoke-CapturedBounded $script:Adb @('-s', $Serial, 'forward', '--list') `
+        'published fixed bridge readback' 10000
+    if ($result.exit_code -ne 0) { throw "Published bridge readback failed." }
+    return @(Read-PublishedBridgeRows $result.output)
+}
+
+function Save-PublishedBridgeReceipt([string]$Name, $BridgeReceipt) {
+    [void](Assert-PublishedBridgeReceipt $BridgeReceipt ([string]$BridgeReceipt.operation) ([string]$BridgeReceipt.terminal_status))
+    $outerStatus = if ([string]$BridgeReceipt.terminal_status -eq 'confirmed') { 'passed' } else { 'failed' }
+    [void](Save-Receipt $Name (New-Receipt $Name 'published-fixed-adb-bridge' $outerStatus ([ordered]@{
+        bridge_receipt = $BridgeReceipt
+        bridge_receipt_sha256 = Get-TextSha256 ($BridgeReceipt | ConvertTo-Json -Depth 12 -Compress)
+    })))
+    return [pscustomobject]@{
+        path = [string]$script:Receipts[$script:Receipts.Count - 1]
+        receipt = $BridgeReceipt
+    }
+}
+
+function Open-PublishedBridge {
+    $sentAt = [DateTime]::UtcNow.ToString('o')
+    $beforeRows = @(Get-PublishedBridgeRows)
+    $before = @(Get-PublishedBridgeSelection $beforeRows)
+    if ($before.Count -gt 1 -or
+            ($before.Count -eq 1 -and [string]$before[0].device_endpoint -cne $PublishedBridgeDeviceEndpoint)) {
+        $receipt = New-PublishedBridgeReceipt 'open' 'rejected' $sentAt $sentAt ([DateTime]::UtcNow.ToString('o')) `
+            $false $false $false ($before.Count -eq 1) $false 'fixed_host_endpoint_already_bound'
+        [void](Save-PublishedBridgeReceipt 'published-bridge-open' $receipt)
+        throw "The fixed published bridge host endpoint is already bound to another target."
+    }
+    $preexisting = $before.Count -eq 1
+    $pendingAt = [DateTime]::UtcNow.ToString('o')
+    $transportAcknowledged = $false
+    $dispatchFailure = ''
+    if (-not $preexisting) {
+        try {
+            $dispatch = Invoke-CapturedBounded $script:Adb @(
+                '-s', $Serial, 'forward', $PublishedBridgeHostEndpoint, $PublishedBridgeDeviceEndpoint) `
+                'published fixed bridge open' 10000
+            $transportAcknowledged = $dispatch.exit_code -eq 0
+            if (-not $transportAcknowledged) { $dispatchFailure = 'fixed_bridge_transport_rejected' }
+        } catch {
+            $dispatchFailure = 'fixed_bridge_transport_outcome_unknown'
+        }
+    }
+    $after = @(Get-PublishedBridgeSelection @(Get-PublishedBridgeRows))
+    $confirmed = $after.Count -eq 1 -and
+        [string]$after[0].device_endpoint -ceq $PublishedBridgeDeviceEndpoint
+    $terminal = if ($confirmed) { 'confirmed' } else { 'outcome_unknown' }
+    $receipt = New-PublishedBridgeReceipt 'open' $terminal $sentAt $pendingAt ([DateTime]::UtcNow.ToString('o')) `
+        $transportAcknowledged $confirmed $false $preexisting (-not $preexisting) `
+        $(if($confirmed){''}elseif(-not [string]::IsNullOrWhiteSpace($dispatchFailure)){$dispatchFailure}else{'fixed_bridge_readback_unconfirmed'})
+    $saved = Save-PublishedBridgeReceipt 'published-bridge-open' $receipt
+    if (-not $confirmed) {
+        try {
+            [void](Close-PublishedBridge (-not $preexisting) $preexisting)
+        } catch {
+            throw "The fixed published bridge was unconfirmed and its cleanup readback also failed: $($_.Exception.Message)"
+        }
+        throw "The fixed published bridge did not reach independently confirmed state; cleanup was confirmed."
+    }
+    return $saved
+}
+
+function Close-PublishedBridge([bool]$CreatedByRun, [bool]$Preexisting) {
+    $sentAt = [DateTime]::UtcNow.ToString('o')
+    $pendingAt = [DateTime]::UtcNow.ToString('o')
+    $transportAcknowledged = $false
+    if ($CreatedByRun) {
+        $dispatch = Invoke-CapturedBounded $script:Adb @(
+            '-s', $Serial, 'forward', '--remove', $PublishedBridgeHostEndpoint) `
+            'published fixed bridge cleanup' 10000
+        $transportAcknowledged = $dispatch.exit_code -eq 0
+    }
+    $after = @(Get-PublishedBridgeSelection @(Get-PublishedBridgeRows))
+    $cleanupConfirmed = if ($Preexisting) {
+        $after.Count -eq 1 -and [string]$after[0].device_endpoint -ceq $PublishedBridgeDeviceEndpoint
+    } else {
+        $after.Count -eq 0
+    }
+    $terminal = if ($cleanupConfirmed) { 'confirmed' } else { 'outcome_unknown' }
+    $receipt = New-PublishedBridgeReceipt 'cleanup' $terminal $sentAt $pendingAt ([DateTime]::UtcNow.ToString('o')) `
+        $transportAcknowledged $cleanupConfirmed $cleanupConfirmed $Preexisting $CreatedByRun `
+        $(if($cleanupConfirmed){''}else{'fixed_bridge_cleanup_readback_unconfirmed'})
+    $saved = Save-PublishedBridgeReceipt 'published-bridge-cleanup' $receipt
+    if (-not $cleanupConfirmed) { throw "The fixed published bridge cleanup readback is unconfirmed." }
+    return $saved
+}
+
+function Invoke-PublishedOperator([ValidateSet('start', 'status', 'stop', 'forget')][string]$Method) {
+    $result = Invoke-CapturedBounded $script:Adb @(
+        '-s', $Serial, 'shell', 'content', 'call',
+        '--uri', "content://$HubOperatorAuthority", '--method', $Method) `
+        "published Connection Hub operator $Method" 15000
+    if ($result.exit_code -ne 0 -or [regex]::IsMatch($result.output, 'credential_b64=')) {
+        throw "Published Connection Hub operator transport failed or exposed a credential."
+    }
+    $match = [regex]::Match($result.output, 'receipt_b64=([A-Za-z0-9+/=]+)')
+    if (-not $match.Success) { throw "Published Connection Hub operator receipt is missing." }
+    $jsonBytes = [Convert]::FromBase64String($match.Groups[1].Value)
+    try {
+        $json = [Text.Encoding]::UTF8.GetString($jsonBytes) | ConvertFrom-Json
+    } finally { [Array]::Clear($jsonBytes, 0, $jsonBytes.Length) }
+    $transitionStates = @($json.transitions | ForEach-Object { [string]$_.state })
+    if ([string]$json.'$schema' -cne 'rusty.quest.connection_hub.operator_receipt.v1' -or
+            [string]$json.action -cne $Method -or
+            -not (Test-ExactBoolean $json.applied $true) -or
+            [string]$json.effect_status -cne 'confirmed' -or
+            $transitionStates.Count -ne 3 -or
+            ($transitionStates -join '|') -cne 'sent|pending|confirmed' -or
+            -not (Test-ExactBoolean $json.secrets_in_receipt $false) -or
+            -not (Test-ExactBoolean $json.caller_selected_identity $false) -or
+            -not (Test-ExactBoolean $json.caller_selected_capability $false)) {
+        throw "Published Connection Hub operator did not confirm the exact effective state."
+    }
+    return Save-Receipt "published-operator-$Method" (New-Receipt "published-operator-$Method" `
+        'published-shell-operator' 'passed' ([ordered]@{
+            operator_authority=$HubOperatorAuthority
+            adb_executable_sha256=$AdbSha256
+            transport_acknowledged=$true
+            owner_effect_confirmed=$true
+            transport_only_acceptance=$false
+            output_sha256=Get-TextSha256 $result.output
+            owner_receipt=$json
+        }))
+}
+
+function Read-PublishedPairingSecret {
+    if (-not $PairingCodeStdin) {
+        throw "Published browser E2E requires -PairingCodeStdin; pairing secrets are never accepted in argv or files."
+    }
+    $characters = [System.Collections.Generic.List[char]]::new(6)
+    while ($characters.Count -le 6) {
+        $value = [Console]::In.Read()
+        if ($value -lt 0 -or $value -eq 10) { break }
+        if ($value -eq 13) { continue }
+        [void]$characters.Add([char]$value)
+    }
+    $secret = $characters.ToArray()
+    $characters.Clear()
+    if ($secret.Length -ne 6 -or ($secret -join '') -notmatch '^\d{6}$') {
+        [Array]::Clear($secret, 0, $secret.Length)
+        throw "Published browser pairing secret input is invalid."
+    }
+    return $secret
 }
 
 function Start-RunLogCapture {
@@ -2010,9 +2318,13 @@ function Invoke-HostessPairWithSecret([char[]]$Secret) {
     }
 }
 
-function Invoke-BrowserE2EWithSecret([char[]]$Secret) {
+function Invoke-BrowserE2EWithSecret(
+        [char[]]$Secret,
+        [string]$BridgeReceiptPath,
+        [string]$BridgeReceiptSha256) {
     $packageJson = Assert-ExactFile $PlaywrightPackageJson $PlaywrightPackageJsonSha256 "Playwright package.json"
     $browser = Assert-ExactFile $BrowserExecutable $BrowserExecutableSha256 "Browser executable"
+    $bridgeReceipt = Assert-ExactFile $BridgeReceiptPath $BridgeReceiptSha256 "Published bridge receipt"
     $harness = Join-Path $RepoRoot "tools\browser\connection-hub-browser-e2e.js"
     $start = [System.Diagnostics.ProcessStartInfo]::new()
     $start.FileName = $script:Node
@@ -2021,8 +2333,9 @@ function Invoke-BrowserE2EWithSecret([char[]]$Secret) {
     $start.RedirectStandardOutput = $true
     $start.RedirectStandardError = $true
     foreach ($argument in @(
-        $harness, "--origin", $Origin, "--adb", $script:Adb, "--serial", $Serial,
-        "--playwright-package-json", $packageJson, "--browser-executable", $browser)) {
+        $harness, "--origin", $PublishedBrowserOrigin,
+        "--playwright-package-json", $packageJson, "--browser-executable", $browser,
+        "--bridge-receipt", $bridgeReceipt, "--bridge-receipt-sha256", $BridgeReceiptSha256)) {
         [void]$start.ArgumentList.Add($argument)
     }
     $process = [System.Diagnostics.Process]::new()
@@ -2040,6 +2353,13 @@ function Invoke-BrowserE2EWithSecret([char[]]$Secret) {
         $json = $stdout | ConvertFrom-Json
         if ([string]$json.'$schema' -ne "rusty.quest.connection_hub.browser_e2e_receipt.v1" -or
                 [string]$json.result -ne "pass" -or $json.pairing_secret_in_receipt -ne $false -or
+                [string]$json.provider_package -cne $PublishedSpatialPackage -or
+                [string]$json.surface_id -cne $PublishedLockedPlaylistSurface -or
+                (@($json.commands) -join '|') -cne ($PublishedLockedPlaylistCommands -join '|') -or
+                [string]$json.bridge_receipt_sha256 -cne $BridgeReceiptSha256 -or
+                [string]$json.browser_origin -cne $PublishedBrowserOrigin -or
+                -not (Test-ExactBoolean $json.owner_effect_confirmed $true) -or
+                -not (Test-ExactBoolean $json.transport_only_acceptance $false) -or
                 [int]$json.console_error_count -ne 0 -or [int]$json.page_error_count -ne 0) {
             throw "Browser E2E receipt failed closed validation."
         }
@@ -2047,6 +2367,7 @@ function Invoke-BrowserE2EWithSecret([char[]]$Secret) {
             provider_package_json_sha256=$PlaywrightPackageJsonSha256
             browser_executable_sha256=$BrowserExecutableSha256
             harness_sha256=Get-Sha256 $harness
+            bridge_receipt_sha256=$BridgeReceiptSha256
             receipt=$json
             pairing_secret_in_receipt=$false
         }))
@@ -2260,7 +2581,7 @@ function Test-Prerequisites {
         browser_e2e_required=[bool]$RequireBrowserE2E
         off_head_debug_providers=[bool]$UseOffHeadDebugProviders
     }
-    if ($RequireBrowserE2E -or $Action -eq "BrowserE2E") {
+    if ($RequireBrowserE2E -or $Action -in @("BrowserE2E", "PublishedBrowserE2E")) {
         $packageJson = Assert-ExactFile $PlaywrightPackageJson $PlaywrightPackageJsonSha256 "Playwright package.json"
         $browser = Assert-ExactFile $BrowserExecutable $BrowserExecutableSha256 "Browser executable"
         $details.playwright_package_json_sha256=Get-Sha256 $packageJson
@@ -2374,6 +2695,18 @@ function New-DryRunPlan {
         provider_lifetime_seconds = $ProviderLifetimeSeconds
         bounded_virtual_proximity = [bool]$UseBoundedVirtualProximity
         off_head_debug_providers = [bool]$UseOffHeadDebugProviders
+        published_browser = [ordered]@{
+            package = $PublishedSpatialPackage
+            surface_id = $PublishedLockedPlaylistSurface
+            commands = @($PublishedLockedPlaylistCommands)
+            operator_authority = $HubOperatorAuthority
+            bridge_host_endpoint = $PublishedBridgeHostEndpoint
+            bridge_device_endpoint = $PublishedBridgeDeviceEndpoint
+            browser_origin = $PublishedBrowserOrigin
+            bridge_receipt_schema = $PublishedBridgeSchema
+            sample_or_debug_substitution = $false
+            pairing_secret_transport = "stdin-only"
+        }
         secrets_in_plan = $false
     }
 }
@@ -2401,11 +2734,11 @@ if ([string]::IsNullOrWhiteSpace($ResumeCheckpoint)) {
         throw "E2E Hostess session file must be the run-owned fixed session path."
     }
 }
-$needsQfm = $Action -in @("Prerequisites", "Inspect", "Install", "Start", "Status", "LaunchSpatial", "LaunchSample", "Cleanup", "E2E")
+$needsQfm = $Action -in @("Prerequisites", "Inspect", "Install", "Start", "Status", "LaunchSpatial", "LaunchSample", "PublishedBrowserE2E", "Cleanup", "E2E")
 $needsHostess = $Action -like "Hostess*" -or $Action -in @("WaitSurface", "WaitSurfaceAbsent", "Cleanup", "E2E")
 $needsAdb = $Action -notin @("Build", "Inspect", "SimulateE2E")
 $needsPython = $needsHostess
-$needsNode = $Action -eq "BrowserE2E" -or ($Action -eq "E2E" -and $RequireBrowserE2E)
+$needsNode = $Action -in @("BrowserE2E", "PublishedBrowserE2E") -or ($Action -eq "E2E" -and $RequireBrowserE2E)
 $needsGradle = $Action -in @("Build", "E2E")
 if ($needsAdb) {
     $script:Adb = Lock-ExactExecutable $Adb $AdbSha256 "ADB executable"
@@ -2521,11 +2854,64 @@ try {
     } elseif ($Action -eq "HostessReconnect") { [void](Hostess-Action "reconnect")
     } elseif ($Action -eq "HostessRevoke") { [void](Hostess-Action "revoke")
     } elseif ($Action -eq "BrowserE2E") {
+        throw "The sample/debug browser path is retired; use PublishedBrowserE2E with the normal product operator."
+    } elseif ($Action -eq "PublishedBrowserE2E") {
         [void](Test-Prerequisites)
-        if ([string]::IsNullOrWhiteSpace($Origin)) { $Origin = [string](Invoke-DebugOperator "status").owner_receipt.origin }
-        [char[]]$browserSecret = Get-DebugPairingSecret
-        try { [void](Invoke-BrowserE2EWithSecret $browserSecret) }
-        finally { [Array]::Clear($browserSecret, 0, $browserSecret.Length); $browserSecret=$null }
+        $startedByRun = $false
+        $bridge = $null
+        $runFailure = $null
+        $cleanupFailures = [Collections.Generic.List[string]]::new()
+        try {
+            $prior = Invoke-PublishedOperator 'status'
+            $wasRunning = [string]$prior.details.owner_receipt.effective_state.desired_connection_state -ceq 'running'
+            $status = if ($wasRunning) { $prior } else {
+                $startedByRun = $true
+                Invoke-PublishedOperator 'start'
+            }
+            $publishedHubOrigin = [string]$status.details.owner_receipt.effective_state.origin
+            $publishedHubUri = $null
+            if (-not [Uri]::TryCreate($publishedHubOrigin, [UriKind]::Absolute, [ref]$publishedHubUri) -or
+                    $publishedHubUri.Scheme -cne 'http' -or $publishedHubUri.Port -ne 8876 -or
+                    -not [string]::IsNullOrEmpty($publishedHubUri.UserInfo) -or
+                    -not [string]::IsNullOrEmpty($publishedHubUri.Query) -or
+                    -not [string]::IsNullOrEmpty($publishedHubUri.Fragment)) {
+                throw "Published Connection Hub operator did not provide the fixed browser service on tcp:8876."
+            }
+            if (-not [string]::IsNullOrWhiteSpace($Origin) -and $Origin -cne $PublishedBrowserOrigin) {
+                throw "Published browser origin is fixed and caller substitution is forbidden."
+            }
+            $Origin = $PublishedBrowserOrigin
+            $bridge = Open-PublishedBridge
+            [char[]]$browserSecret = Read-PublishedPairingSecret
+            try {
+                [void](Invoke-BrowserE2EWithSecret $browserSecret $bridge.path (Get-Sha256 $bridge.path))
+            } finally {
+                if ($null -ne $browserSecret) {
+                    [Array]::Clear($browserSecret, 0, $browserSecret.Length)
+                    $browserSecret = $null
+                }
+            }
+        } catch {
+            $runFailure = $_
+        } finally {
+            if ($null -ne $bridge) {
+                try {
+                    [void](Close-PublishedBridge `
+                        ([bool]$bridge.receipt.created_by_run) `
+                        ([bool]$bridge.receipt.preexisting))
+                } catch { $cleanupFailures.Add("bridge: $($_.Exception.Message)") }
+            }
+            if ($startedByRun) {
+                try { [void](Invoke-PublishedOperator 'stop') }
+                catch { $cleanupFailures.Add("hub: $($_.Exception.Message)") }
+            }
+        }
+        if ($cleanupFailures.Count -gt 0) {
+            throw "Published browser cleanup failed: $([string]::Join('; ', $cleanupFailures))"
+        }
+        if ($null -ne $runFailure) {
+            throw $runFailure
+        }
     } elseif ($Action -eq "Logs") { [void](Capture-Logs)
     } elseif ($Action -eq "Cleanup") { $a=Resolve-Apks; [void](Invoke-StandaloneCleanup $a)
     } elseif ($Action -eq "E2E") {

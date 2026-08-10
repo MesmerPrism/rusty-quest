@@ -2,36 +2,73 @@
 
 const fs = require("fs");
 const path = require("path");
-const {spawnSync} = require("child_process");
+const crypto = require("crypto");
 
 const args = new Map();
 for (let index = 2; index < process.argv.length; index += 2) {
   const key = process.argv[index];
   const value = process.argv[index + 1];
   if (!key || !key.startsWith("--") || value === undefined) throw new Error("closed argument pairs required");
+  if (args.has(key)) throw new Error("duplicate argument rejected");
   args.set(key, value);
 }
-for (const required of ["--origin", "--adb", "--serial", "--playwright-package-json", "--browser-executable"]) {
+const allowedArguments = new Set([
+  "--origin",
+  "--playwright-package-json",
+  "--browser-executable",
+  "--bridge-receipt",
+  "--bridge-receipt-sha256",
+]);
+if ([...args.keys()].some(key => !allowedArguments.has(key))) throw new Error("unknown argument rejected");
+for (const required of allowedArguments) {
   if (!args.has(required)) throw new Error(`missing ${required}`);
 }
 
 const fixed = Object.freeze({
-  spatialSurface: "surface.spatial_video_control.media",
-  sampleSurface: "surface.connection_hub_sample.toggle",
-  spatialPlay: "command.spatial_video_control.play",
-  spatialPause: "command.spatial_video_control.pause",
-  sampleToggle: "command.connection_hub_sample.toggle",
-  spatialComponent: "io.github.mesmerprism.rustyquest.spatial_video_control_example/io.github.mesmerprism.rustyquest.spatial_video_control.SpatialVideoControlActivity",
-  sampleComponent: "io.github.mesmerprism.rustyquest.connection_hub_sample/.ConnectionHubSampleActivity",
+  providerPackage: "io.github.mesmerprism.rustyquest.spatial_camera_panel",
+  surface: "surface.spatial_camera_panel.locked_playlist",
+  previous: "command.spatial_camera_panel.locked_playlist.previous",
+  next: "command.spatial_camera_panel.locked_playlist.next",
+  pause: "command.spatial_camera_panel.locked_playlist.pause",
+  resume: "command.spatial_camera_panel.locked_playlist.resume",
+  bridgeSchema: "rusty.quest.connection_hub.typed_bridge_receipt.v1",
+  bridgeHostEndpoint: "tcp:18765",
+  bridgeDeviceEndpoint: "tcp:8876",
+  browserOrigin: "http://127.0.0.1:18765",
 });
 
-const adbStart = component => {
-  const result = spawnSync(args.get("--adb"), ["-s", args.get("--serial"), "shell", "am", "start", "-W", "-n", component], {
-    encoding: "utf8",
-    windowsHide: true,
-    timeout: 20000,
-  });
-  if (result.status !== 0) throw new Error(`fixed provider launch failed (${result.status})`);
+if (args.get("--origin") !== fixed.browserOrigin) throw new Error("browser origin substitution rejected");
+
+const sha256 = value => crypto.createHash("sha256").update(value).digest("hex");
+
+const readBridgeReceipt = () => {
+  const bytes = fs.readFileSync(args.get("--bridge-receipt"));
+  if (sha256(bytes) !== args.get("--bridge-receipt-sha256")) {
+    throw new Error("bridge receipt digest mismatch");
+  }
+  const outer = JSON.parse(bytes.toString("utf8"));
+  const receipt = outer?.details?.bridge_receipt;
+  if (outer?.$schema !== "rusty.quest.connection_hub.operator_receipt.v1"
+      || outer?.operation !== "published-bridge-open"
+      || outer?.provider !== "published-fixed-adb-bridge"
+      || outer?.status !== "passed"
+      || receipt?.$schema !== fixed.bridgeSchema
+      || receipt?.operation !== "open"
+      || receipt?.provider_id !== "android-platform-tools-adb"
+      || !/^[0-9a-f]{64}$/.test(receipt?.provider_executable_sha256 || "")
+      || receipt?.host_endpoint !== fixed.bridgeHostEndpoint
+      || receipt?.device_endpoint !== fixed.bridgeDeviceEndpoint
+      || receipt?.browser_origin !== fixed.browserOrigin
+      || receipt?.terminal_status !== "confirmed"
+      || receipt?.readback_confirmed !== true
+      || receipt?.secrets_in_receipt !== false
+      || receipt?.caller_selected_endpoint !== false
+      || receipt?.caller_selected_identity !== false
+      || receipt?.caller_selected_capability !== false
+      || receipt?.owner_effect_claimed !== false) {
+    throw new Error("bridge receipt failed closed validation");
+  }
+  return receipt;
 };
 
 const readPairingSecret = async () => {
@@ -54,6 +91,7 @@ const readPairingSecret = async () => {
 };
 
 const main = async () => {
+  const bridgeReceipt = readBridgeReceipt();
   const packageJson = JSON.parse(fs.readFileSync(args.get("--playwright-package-json"), "utf8"));
   const playwright = require(path.dirname(args.get("--playwright-package-json")));
   if (!playwright.chromium || typeof packageJson.version !== "string") throw new Error("Playwright provider invalid");
@@ -101,31 +139,52 @@ const main = async () => {
       return index;
     });
 
-    const spatial = page.locator(`[data-surface-id="${fixed.spatialSurface}"]`);
-    const sample = page.locator(`[data-surface-id="${fixed.sampleSurface}"]`);
-    adbStart(fixed.spatialComponent);
+    const spatial = page.locator(`[data-surface-id="${fixed.surface}"]`);
     await spatial.waitFor({state: "visible", timeout: 20000});
-    await sample.waitFor({state: "detached", timeout: 20000});
-    await spatial.getByRole("button", {name: "Play", exact: true}).click();
-    await spatial.locator(".receipt").filter({hasText: `${fixed.spatialPlay}: provider_effect_observed`}).waitFor({timeout: 10000});
-    await spatial.locator(".state").filter({hasText: /playing\s*true/i}).waitFor({timeout: 10000});
-    observations.push("spatial-present-command-applied");
+    if ((await spatial.locator(".provider").textContent())?.trim() !== fixed.providerPackage) {
+      throw new Error("locked-playlist provider package mismatch");
+    }
 
-    adbStart(fixed.sampleComponent);
-    await spatial.waitFor({state: "detached", timeout: 20000});
-    await sample.waitFor({state: "visible", timeout: 20000});
-    await sample.getByRole("button", {name: "Toggle", exact: true}).click();
-    await sample.locator(".receipt").filter({hasText: `${fixed.sampleToggle}: provider_effect_observed`}).waitFor({timeout: 10000});
-    await sample.locator(".state").filter({hasText: /toggled\s*true/i}).waitFor({timeout: 10000});
-    observations.push("spatial-removed-sample-present-command-applied");
+    const readState = key => spatial.evaluate((card, stateKey) => {
+      const label = stateKey.replaceAll("_", " ");
+      const row = [...card.querySelectorAll(".state div")]
+        .find(candidate => candidate.querySelector("dt")?.textContent === label);
+      return row?.querySelector("dd")?.textContent ?? null;
+    }, key);
+    const readRevision = async () => {
+      const value = Number(await readState("revision"));
+      if (!Number.isSafeInteger(value) || value < 0) throw new Error("locked-playlist revision invalid");
+      return value;
+    };
+    const waitForState = (key, expected) => page.waitForFunction(({surfaceId, stateKey, expectedValue}) => {
+      const card = document.querySelector(`[data-surface-id="${CSS.escape(surfaceId)}"]`);
+      const label = stateKey.replaceAll("_", " ");
+      const row = [...(card?.querySelectorAll(".state div") || [])]
+        .find(candidate => candidate.querySelector("dt")?.textContent === label);
+      return row?.querySelector("dd")?.textContent === expectedValue;
+    }, {surfaceId: fixed.surface, stateKey: key, expectedValue: expected}, {timeout: 10000});
+    const issue = async (label, command, expectedState = null) => {
+      const beforeRevision = await readRevision();
+      await spatial.getByRole("button", {name: label, exact: true}).click();
+      await spatial.locator(".receipt")
+        .filter({hasText: `${command}: provider_effect_observed`})
+        .waitFor({timeout: 10000});
+      await page.waitForFunction(({surfaceId, minimum}) => {
+        const card = document.querySelector(`[data-surface-id="${CSS.escape(surfaceId)}"]`);
+        const row = [...(card?.querySelectorAll(".state div") || [])]
+          .find(candidate => candidate.querySelector("dt")?.textContent === "revision");
+        const value = Number(row?.querySelector("dd")?.textContent);
+        return Number.isSafeInteger(value) && value > minimum;
+      }, {surfaceId: fixed.surface, minimum: beforeRevision}, {timeout: 10000});
+      if (expectedState) await waitForState(expectedState.key, expectedState.value);
+      observations.push(`${label.toLowerCase()}-owner-effect-confirmed-once`);
+    };
 
-    adbStart(fixed.spatialComponent);
-    await sample.waitFor({state: "detached", timeout: 20000});
-    await spatial.waitFor({state: "visible", timeout: 20000});
-    await spatial.getByRole("button", {name: "Pause", exact: true}).click();
-    await spatial.locator(".receipt").filter({hasText: `${fixed.spatialPause}: provider_effect_observed`}).waitFor({timeout: 10000});
-    await spatial.locator(".state").filter({hasText: /playing\s*false/i}).waitFor({timeout: 10000});
-    observations.push("sample-removed-spatial-returned-command-applied");
+    if (await readState("running") !== "true") throw new Error("locked playlist is not effectively running");
+    await issue("Previous", fixed.previous);
+    await issue("Next", fixed.next);
+    await issue("Pause", fixed.pause, {key: "paused", value: "true"});
+    await issue("Resume", fixed.resume, {key: "paused", value: "false"});
 
     await page.locator("#disconnect-button").click();
     await page.locator("#pair-status").filter({hasText: "Disconnected"}).waitFor({timeout: 10000});
@@ -179,10 +238,18 @@ const main = async () => {
       $schema: "rusty.quest.connection_hub.browser_e2e_receipt.v1",
       result: "pass",
       playwright_version: packageJson.version,
+      provider_package: fixed.providerPackage,
+      surface_id: fixed.surface,
+      commands: [fixed.previous, fixed.next, fixed.pause, fixed.resume],
+      bridge_receipt_sha256: args.get("--bridge-receipt-sha256"),
+      bridge_provider_id: bridgeReceipt.provider_id,
+      browser_origin: fixed.browserOrigin,
       observations,
       console_error_count: 0,
       page_error_count: 0,
       pairing_secret_in_receipt: false,
+      owner_effect_confirmed: true,
+      transport_only_acceptance: false,
     }));
   } finally {
     pairingSecret = null;
