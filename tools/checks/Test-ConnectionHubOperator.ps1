@@ -216,6 +216,69 @@ Require ((Test-ExactBoolean $true $true) -and (Test-ExactBoolean $false $false) 
     -not (Test-ExactBoolean 'true' $true) -and -not (Test-ExactBoolean 'false' $false) -and
     -not (Test-ExactBoolean 1 $true) -and -not (Test-ExactBoolean 0 $false)) `
     "Exact Boolean validator accepted a string or numeric impostor."
+$PublishedBridgeSchema = 'rusty.quest.connection_hub.typed_bridge_receipt.v1'
+$PublishedBridgeHostEndpoint = 'tcp:18765'
+$PublishedBridgeDeviceEndpoint = 'tcp:8876'
+$PublishedBrowserOrigin = 'http://127.0.0.1:18765'
+$AdbSha256 = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+$Serial = 'SIMULATED123'
+foreach ($functionName in @(
+    'Read-PublishedBridgeRows',
+    'Get-PublishedBridgeSelection',
+    'New-PublishedBridgeReceipt',
+    'Assert-PublishedBridgeReceipt')) {
+    $definition = $operatorAst.Find({
+        param($node)
+        $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+        $node.Name -eq $functionName
+    }, $true)
+    Require ($null -ne $definition) "Published bridge helper is missing: $functionName"
+    . ([scriptblock]::Create($definition.Extent.Text))
+}
+$bridgeRows = @(Read-PublishedBridgeRows "SIMULATED123 tcp:18765 tcp:8876`nOTHER123 tcp:18000 tcp:8000")
+$bridgeSelection = @(Get-PublishedBridgeSelection $bridgeRows)
+Require ($bridgeRows.Count -eq 2 -and $bridgeSelection.Count -eq 1 -and
+    $bridgeSelection[0].device_endpoint -eq 'tcp:8876') "Fixed bridge readback parser selected the wrong serial or endpoint."
+$malformedBridgeRejected = $false
+try { [void](Read-PublishedBridgeRows 'SIMULATED123 tcp:18765') } catch { $malformedBridgeRejected = $true }
+Require $malformedBridgeRejected "Fixed bridge readback parser accepted a malformed row."
+$bridgeSent = '2026-08-10T00:00:00.0000000Z'
+$bridgePending = '2026-08-10T00:00:01.0000000Z'
+$bridgeConfirmed = '2026-08-10T00:00:02.0000000Z'
+$validBridge = New-PublishedBridgeReceipt 'open' 'confirmed' `
+    $bridgeSent $bridgePending $bridgeConfirmed $true $true $false $false $true
+[void](Assert-PublishedBridgeReceipt $validBridge 'open' 'confirmed')
+function Require-DamagedBridgeRejected([scriptblock]$Damage, [string]$Message) {
+    $damaged = $validBridge | ConvertTo-Json -Depth 12 | ConvertFrom-Json
+    . $Damage $damaged
+    $rejected = $false
+    try { [void](Assert-PublishedBridgeReceipt $damaged 'open' 'confirmed') } catch { $rejected = $true }
+    Require $rejected $Message
+}
+Require-DamagedBridgeRejected { param($value) $value.host_endpoint = 'tcp:18766' } `
+    'Published bridge receipt accepted an arbitrary host endpoint.'
+Require-DamagedBridgeRejected { param($value) $value.browser_origin = 'http://127.0.0.1:18766' } `
+    'Published bridge receipt accepted an arbitrary browser origin.'
+Require-DamagedBridgeRejected { param($value) $value.provider_executable_sha256 = '' } `
+    'Published bridge receipt accepted a missing provider hash.'
+Require-DamagedBridgeRejected { param($value) $value.secrets_in_receipt = $true } `
+    'Published bridge receipt accepted a secret-bearing result.'
+Require-DamagedBridgeRejected { param($value) $value.caller_selected_identity = $true } `
+    'Published bridge receipt accepted caller-selected identity.'
+Require-DamagedBridgeRejected { param($value) $value.caller_selected_capability = $true } `
+    'Published bridge receipt accepted caller-selected capability.'
+Require-DamagedBridgeRejected { param($value) $value.readback_confirmed = $false } `
+    'Published bridge receipt treated transport acknowledgement as confirmation.'
+Require-DamagedBridgeRejected { param($value) $value.cleanup_readback = $true } `
+    'Published bridge open receipt accepted cleanup confirmation.'
+Require-DamagedBridgeRejected { param($value) $value.failure_code = 'credential=secret' } `
+    'Published bridge receipt accepted an unsanitized failure detail.'
+Require-DamagedBridgeRejected { param($value) Add-Member -InputObject $value.transitions[0] -NotePropertyName detail -NotePropertyValue secret } `
+    'Published bridge receipt accepted an extra transition detail.'
+Require-DamagedBridgeRejected { param($value) $value.transitions[2].observed_at_utc = '2026-08-09T23:59:59.0000000Z' } `
+    'Published bridge receipt accepted non-monotonic transition chronology.'
+Require-DamagedBridgeRejected { param($value) Add-Member -InputObject $value -NotePropertyName arbitrary_port -NotePropertyValue 18766 } `
+    'Published bridge receipt accepted an extra endpoint property.'
 $exactIntegerFunction = $operatorAst.Find({
     param($node)
     $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Test-ExactJsonInteger'
@@ -304,7 +367,38 @@ Require ($operatorGuide.Contains('## Published ADB operator') -and
     $operatorGuide.Contains('`pair`, `revoke`, and `forget`') -and
     $operatorGuide.Contains('shell history')) "Published operator guide is incomplete or loses secret handling guidance."
 Require ($activity.Contains('ACTION_DEBUG_START_HUB') -and $activity.Contains('startForegroundService')) "Typed real Activity-to-FGS lifecycle route is missing."
-Require ($browserHarness.Contains('process.stdin') -and $browserHarness.Contains('consoleErrors') -and $browserHarness.Contains('spatial-removed-sample-present-command-applied')) "Real browser sequential-surface E2E harness is incomplete."
+Require ($cli.Contains('"PublishedBrowserE2E"') -and
+    $cli.Contains('$HubOperatorAuthority = "$HubPackage.connection-hub-operator"') -and
+    $cli.Contains('$PublishedBridgeHostEndpoint = "tcp:18765"') -and
+    $cli.Contains('$PublishedBridgeDeviceEndpoint = "tcp:8876"') -and
+    $cli.Contains('$PublishedBrowserOrigin = "http://127.0.0.1:18765"') -and
+    $cli.Contains('$publishedHubUri.Port -ne 8876') -and
+    $cli.Contains('function Open-PublishedBridge') -and
+    $cli.Contains('function Close-PublishedBridge') -and
+    $cli.Contains('function Invoke-PublishedOperator') -and
+    $cli.Contains('function Read-PublishedPairingSecret') -and
+    $cli.Contains('Close-PublishedBridge (-not $preexisting) $preexisting') -and
+    $cli.Contains('$cleanupFailures.Add("bridge: $($_.Exception.Message)")') -and
+    $cli.Contains('$cleanupFailures.Add("hub: $($_.Exception.Message)")') -and
+    -not $cli.Contains('[string]$BridgeHostEndpoint') -and
+    -not $cli.Contains('[string]$BridgeDeviceEndpoint')) "Published operator/browser wrapper lost its fixed authority, bridge, or stdin-only boundary."
+Require ($browserHarness.Contains('process.stdin') -and
+    $browserHarness.Contains('consoleErrors') -and
+    $browserHarness.Contains('io.github.mesmerprism.rustyquest.spatial_camera_panel') -and
+    $browserHarness.Contains('surface.spatial_camera_panel.locked_playlist') -and
+    $browserHarness.Contains('command.spatial_camera_panel.locked_playlist.previous') -and
+    $browserHarness.Contains('command.spatial_camera_panel.locked_playlist.next') -and
+    $browserHarness.Contains('command.spatial_camera_panel.locked_playlist.pause') -and
+    $browserHarness.Contains('command.spatial_camera_panel.locked_playlist.resume') -and
+    $browserHarness.Contains('rusty.quest.connection_hub.typed_bridge_receipt.v1') -and
+    $browserHarness.Contains('browserOrigin: "http://127.0.0.1:18765"') -and
+    $browserHarness.Contains('browser origin substitution rejected') -and
+    $browserHarness.Contains('owner_effect_confirmed: true') -and
+    $browserHarness.Contains('transport_only_acceptance: false') -and
+    -not $browserHarness.Contains('spatial_video_control_example') -and
+    -not $browserHarness.Contains('connection_hub_sample') -and
+    -not $browserHarness.Contains('spawnSync') -and
+    -not $browserHarness.Contains('debug-connection-hub-control')) "Published locked-playlist browser E2E harness is incomplete or retains sample/debug substitution."
 Require (-not $browserHarness.Contains('--pairing-code') -and -not $browserHarness.Contains('pairing_code:')) "Browser harness must not accept or emit a pairing-code argument/field."
 Require ($releaseBuild.Contains('rusty.quest.connection_hub_labs_release.v1') -and
     $releaseBuild.Contains('Connection Hub Labs release requires a clean exact Rusty Quest worktree') -and
@@ -350,6 +444,17 @@ $legacyPlan = $legacyPlanText | ConvertFrom-Json
 Require ($legacyPlan.socket_protocol -eq 'rusty.quest.connection_hub.v1' -and $legacyPlan.rollover_safe -eq $false) "Legacy v1 was not explicit and non-rollover-safe."
 $legacyBrowserText = & pwsh -NoProfile -File $cliPath -Action BrowserE2E -Serial SIMULATED123 -DryRun -LegacyV1 2>$null
 Require ($LASTEXITCODE -ne 0 -and [string]::IsNullOrWhiteSpace(($legacyBrowserText -join ""))) "Standalone browser E2E must reject a legacy-v1 label."
+$publishedPlanText = & pwsh -NoProfile -File $cliPath -Action PublishedBrowserE2E -Serial SIMULATED123 -DryRun
+if ($LASTEXITCODE -ne 0) { throw "Published browser operator dry-run failed." }
+$publishedPlan = $publishedPlanText | ConvertFrom-Json
+Require ($publishedPlan.published_browser.package -eq 'io.github.mesmerprism.rustyquest.spatial_camera_panel' -and
+    $publishedPlan.published_browser.surface_id -eq 'surface.spatial_camera_panel.locked_playlist' -and
+    @($publishedPlan.published_browser.commands).Count -eq 4 -and
+    $publishedPlan.published_browser.bridge_host_endpoint -eq 'tcp:18765' -and
+    $publishedPlan.published_browser.bridge_device_endpoint -eq 'tcp:8876' -and
+    $publishedPlan.published_browser.browser_origin -eq 'http://127.0.0.1:18765' -and
+    $publishedPlan.published_browser.sample_or_debug_substitution -eq $false -and
+    $publishedPlan.secrets_in_plan -eq $false) "Published browser dry-run lost its real-product, fixed-bridge, or secret-free boundary."
 
 if ($null -eq ('RustyQuest.ConnectionHub.Tools.BoundedProcessCapture' -as [type])) {
     Add-Type -Path (Join-Path $RepoRoot "tools\ConnectionHubBoundedProcessCapture.cs")

@@ -32,6 +32,28 @@ receipts, shell history, and evidence manifests. Receipts contain
 `caller_selected_capability=false`. The optional debug provider remains a
 separate non-release E2E aid and is not a substitute for this published route.
 
+`PublishedBrowserE2E` is the corresponding published-product browser harness.
+It starts and reads the Hub only through that normal operator, preserves an
+already-running Hub, and never calls the debug operator. It accepts the pairing
+code only on stdin. The target package and surface are fixed to
+`io.github.mesmerprism.rustyquest.spatial_camera_panel` and
+`surface.spatial_camera_panel.locked_playlist`; its only commands are Previous,
+Next, Pause, and Resume. Kiosk or another owner-approved launcher must already
+have made the locked playlist effective. The harness does not launch an
+arbitrary package, component, activity, profile, or option.
+
+The action owns one fixed temporary bridge from host `tcp:18765` to the real
+Hub browser service at device `tcp:8876`, and opens only
+`http://127.0.0.1:18765`. Port 8765 is not part of browser acceptance. The
+action refuses a conflicting pre-existing mapping, preserves an exact
+pre-existing mapping, and removes only a mapping that it created. Dispatch
+success is pending evidence only. A
+`rusty.quest.connection_hub.typed_bridge_receipt.v1` becomes confirmed only
+after exact `adb forward --list` readback and later cleanup readback. The
+receipt binds the serial, fixed endpoints, exact ADB executable SHA-256, and
+sent/pending/terminal chronology while explicitly denying endpoint, identity,
+capability, or owner-effect selection.
+
 ## Closed actions
 
 | Action | Effect and evidence |
@@ -47,7 +69,8 @@ separate non-release E2E aid and is not a substitute for this published route.
 | `LaunchSpatial`, `LaunchSample`, `StopSpatial`, `StopSample`, `WaitSurface`, `WaitSurfaceAbsent`, `StopProviders` | Drives and observes the fixed foreground-app surface lifecycle. It never expects both Activity-owned surfaces concurrently. |
 | `HostessStatus`, `HostessPair`, `HostessList`, `HostessWatch`, `HostessCommand`, `HostessReconnect`, `HostessRevoke` | Projects Hostess's existing closed Connection Hub controller CLI. Only the two checked-in surfaces and their registered commands are accepted. |
 | `Logs` | Captures at most 5,000 serial-scoped logcat lines and rejects `FATAL EXCEPTION`, `AndroidRuntime E`, or `UnsatisfiedLinkError`. |
-| `BrowserE2E` | Uses an exact Playwright package/browser pin and stdin-only pairing secret to exercise the packaged page, sequential Spatial→Sample→Spatial surfaces, commands, receipts, revoke, and zero console/page errors. |
+| `PublishedBrowserE2E` | Uses exact QFM, ADB, Playwright package, and browser pins plus a stdin-only pairing secret and hash-bound fixed bridge receipt. It exercises the published locked-playlist surface, Previous/Next/Pause/Resume, owner-confirmed receipts and revisions, revoke, cleanup, and zero console/page errors. |
+| `BrowserE2E` | Retired sample/debug browser entry point. It fails closed and directs callers to `PublishedBrowserE2E`. |
 | `Cleanup` | Applies the recorded `RetainCandidate` or `PreserveAndRestore` policy, restores target running/listener state, and verifies power/proximity/autosleep/forward invariants. |
 | `E2E` | Resumable checkpointed transaction covering pre-state, exact install, real FGS, pairing, Spatial command, >2-minute provider lifetime, process restart, sequential Spatial→Sample→Spatial surfaces, reconnect epoch, optional safe Wi-Fi rebind, diagnostics, revoke/closed-socket negative, optional required real-browser leg, and target-only restoration. |
 | `SimulateE2E` | Writes deterministic no-device synthetic receipts and their hash-bound evidence manifest. |
@@ -180,10 +203,14 @@ execution, Binder delivery, runtime settlement, and WebSocket queueing.
 
 `tools/browser/connection-hub-browser-e2e.js` is separate from Hostess protocol
 testing. It accepts the one-use code only on stdin, never argv or a file. The
-operator binds the exact Playwright `package.json`, browser executable, and
-harness digests. `-RequireBrowserE2E` turns this optional provider into a
-required acceptance gate; otherwise the final evidence says `not_required`
-and makes no browser-device claim.
+operator binds the exact QFM provider, ADB executable, Playwright
+`package.json`, browser executable, harness, and typed bridge-receipt digests.
+The browser validates the real Spatial Camera Panel provider package before
+issuing each of the four fixed commands exactly once. Every command must
+advance the state revision and end in `provider_effect_observed`; Pause and
+Resume must additionally confirm the effective paused state. An accepted or
+queued transport receipt is never owner-effect acceptance. The old sample and
+debug-operator browser composition is not supported.
 
 ## Dry run and source validation
 
@@ -194,6 +221,9 @@ pwsh -NoProfile -File tools\Invoke-ConnectionHubQuest.ps1 `
 pwsh -NoProfile -File tools\Invoke-ConnectionHubQuest.ps1 `
   -Action SimulateE2E -Serial SIMULATED123 `
   -EvidenceRoot C:\private\rusty-connection-hub-evidence
+
+pwsh -NoProfile -File tools\Invoke-ConnectionHubQuest.ps1 `
+  -Action PublishedBrowserE2E -Serial SIMULATED123 -DryRun
 
 pwsh -NoProfile -File tools\checks\Test-ConnectionHubOperator.ps1 -RepoRoot .
 ```
