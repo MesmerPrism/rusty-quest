@@ -10,6 +10,7 @@ public final class ConnectionHubOperatorControllerTest {
         testLifecycleAndStatusConfirmation();
         testPairAndRevokeRedactCredentials();
         testTypedArgumentsFailClosed();
+        testStartWithoutForegroundReadinessIsRejected();
         testAmbiguousMutationIsNotRetriedOrClaimed();
         testEffectiveReadbackCanConfirmAfterTransportFailure();
         System.out.println("Connection Hub operator controller tests passed");
@@ -84,6 +85,17 @@ public final class ConnectionHubOperatorControllerTest {
         requireTransitions(receipt, "sent", "pending", "outcome_unknown");
     }
 
+    private static void testStartWithoutForegroundReadinessIsRejected() {
+        FakePort port = new FakePort();
+        port.startLeavesStopped = true;
+        JSONObject receipt = controller(port).execute("start", new JSONObject()).receipt;
+        require(!receipt.getBoolean("applied"), "not-ready start was claimed");
+        require("rejected".equals(receipt.getString("effect_status")),
+                "not-ready start terminal status mismatch");
+        require(port.startCalls == 1, "not-ready start was retried");
+        requireTransitions(receipt, "sent", "pending", "rejected");
+    }
+
     private static void testEffectiveReadbackCanConfirmAfterTransportFailure() {
         FakePort port = new FakePort();
         port.startThrowsAfterState = true;
@@ -130,6 +142,7 @@ public final class ConnectionHubOperatorControllerTest {
         boolean running;
         boolean startThrowsBeforeState;
         boolean startThrowsAfterState;
+        boolean startLeavesStopped;
         int startCalls;
         int forgetCalls;
 
@@ -148,6 +161,7 @@ public final class ConnectionHubOperatorControllerTest {
         @Override public void start() throws Exception {
             startCalls += 1;
             if (startThrowsBeforeState) throw new Exception("before-state");
+            if (startLeavesStopped) return;
             running = true;
             if (startThrowsAfterState) throw new Exception("after-state");
         }

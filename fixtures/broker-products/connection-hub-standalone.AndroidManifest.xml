@@ -28,7 +28,8 @@
         </activity>
         <service
             android:name=".ConnectionHubStartService"
-            android:exported="false"
+            android:exported="true"
+            android:permission="android.permission.DUMP"
             android:foregroundServiceType="dataSync"
             android:stopWithTask="false" />
         <service

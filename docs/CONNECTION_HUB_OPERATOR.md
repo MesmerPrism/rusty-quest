@@ -22,6 +22,14 @@ whose Binder UID is not the shell UID. Its only methods are `start`, `stop`,
 `adb shell content call` as the CLI transport. No method accepts a component,
 path, intent, client identity, grant, capability, or arbitrary command.
 
+For `start`, the serial-scoped wrapper first dispatches the fixed exported
+`ConnectionHubStartService` and fixed START action as the OS shell, then
+independently observes its foreground state before calling the provider. The
+service and provider are both protected by `android.permission.DUMP`. The
+provider never calls `startForegroundService`; a direct provider start without
+that ready service returns a typed rejected receipt and cannot leave a
+non-foreground listener running.
+
 The provider routes wearer and ADB actions through one
 `ConnectionHubOperatorController`. Each mutation records sent and pending
 before confirmed, rejected, or `outcome_unknown`, based on effective Hub
@@ -62,7 +70,7 @@ capability, or owner-effect selection.
 | `Inspect` | Stages read-only content-addressed APK copies and inspects all three with one hash-locked File Manager executable. Signers must be identical. |
 | `Install` | Inspect, exact-serial install, and installed-base byte readback for all three APKs. It stops before launch on any mismatch. |
 | `Prerequisites` | Binds exact serial/provider/protocol hashes and validates the optional browser provider. |
-| `Start`, `Status`, `Stop`, `Forget` | Dispatches a fixed debug Activity action through the real foreground service, then uses the shell provider only for observation. Start proves the ongoing notification and service. |
+| `Start`, `Status`, `Stop`, `Forget` | Start dispatches the fixed DUMP-gated foreground service as the serial-scoped shell, proves foreground readback, then uses the typed provider. Status/Stop/Forget use that same closed provider; Start cannot fall back to a background provider service launch. |
 | `DebugProtocolProof` | Separately proves the debug shell protocol start/status/stop route without claiming foreground-service coverage. |
 | `RestartProcess` | Schedules a receipt-first debug process death, then proves a new PID, START_STICKY service/notification/listener recovery, encrypted desired-state restore, reconnect, provider re-registration, and post-restart command in E2E. |
 | `WifiRebindE2E` | Opt-in only on a non-TCP ADB transport with Wi-Fi initially enabled; otherwise emits an explicit safety-skip receipt and makes no rebind claim. |

@@ -81,6 +81,13 @@ effective state before returning. Pairing credentials are returned separately
 from secret-redacted receipts. The provider accepts no arbitrary action,
 component, path, client identity, grant, or capability.
 
+The published CLI starts the fixed exported `ConnectionHubStartService` with
+the fixed START action through serial-scoped shell transport before invoking
+the typed `start` method. Both components require `android.permission.DUMP`.
+The provider never starts a service from its background application context;
+without a ready foreground service its controller receipt terminates as
+rejected and the listener remains stopped.
+
 The runtime config also contains exact product-spec, accepted-lock, and
 per-client lock bytes with hashes. Generated grants are the exact product/client
 intersection, and Rust verifies the canonical config digest before creating the
