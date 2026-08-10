@@ -28,7 +28,7 @@ internal object ConnectionHubLockedPlaylistContract {
   const val DESCRIPTION =
       "Control the active locked media sequence offered by Spatial Camera Panel."
   const val SURFACE_CONTRACT_SHA256 =
-      "sha256:9e4c3794d8edbe123cd30cd3fc6abf0e14e71356c97fca2020334c5581b15e26"
+      "sha256:3eafe0fb1ff859a7848dfba8cf64a6eb532f98a39d0953fd628594792ca18d6e"
 
   const val COMMAND_NEXT = "command.spatial_camera_panel.locked_playlist.next"
   const val COMMAND_PAUSE = "command.spatial_camera_panel.locked_playlist.pause"
@@ -174,4 +174,3 @@ private const val EMPTY_TYPED_PARAMS_SCHEMA_ID =
     "rusty.manifold.connection_hub.typed_params.empty.v1"
 private const val EMPTY_TYPED_PARAMS_SCHEMA_SHA256 =
     "sha256:7eedc1ccca80b83dbd121d1e4bae4f6a6c9c1561e1a08d6d5919c668d5406a51"
-
