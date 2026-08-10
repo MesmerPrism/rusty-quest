@@ -1051,23 +1051,7 @@ function Invoke-PublishedOperator([ValidateSet('start', 'status', 'stop', 'forge
 }
 
 function Read-PublishedPairingSecret {
-    if (-not $PairingCodeStdin) {
-        throw "Published browser E2E requires -PairingCodeStdin; pairing secrets are never accepted in argv or files."
-    }
-    $characters = [System.Collections.Generic.List[char]]::new(6)
-    while ($characters.Count -le 6) {
-        $value = [Console]::In.Read()
-        if ($value -lt 0 -or $value -eq 10) { break }
-        if ($value -eq 13) { continue }
-        [void]$characters.Add([char]$value)
-    }
-    $secret = $characters.ToArray()
-    $characters.Clear()
-    if ($secret.Length -ne 6 -or ($secret -join '') -notmatch '^\d{6}$') {
-        [Array]::Clear($secret, 0, $secret.Length)
-        throw "Published browser pairing secret input is invalid."
-    }
-    return $secret
+    return Get-ShellProviderPairingSecret -Route "published"
 }
 
 function Start-RunLogCapture {
@@ -1292,11 +1276,12 @@ function Stop-RunLogCapture([switch]$FailureCleanup) {
     return $receipt
 }
 
-function Get-DebugPairingSecret {
+function Get-ShellProviderPairingSecret([ValidateSet("published", "debug")][string]$Route) {
     # This is deliberately separate from Invoke-Adb and Save-Receipt. The
     # one-use wearer code exists only in zeroed process buffers and is never
     # written to argv, a temporary file, a receipt, a log, or the manifest.
     if ((Get-Sha256 $script:Adb) -ne $AdbSha256) { throw "ADB changed after the run lock was acquired." }
+    $authority = if ($Route -ceq "published") { $HubOperatorAuthority } else { $HubDebugAuthority }
     $start = [System.Diagnostics.ProcessStartInfo]::new()
     $start.FileName = $script:Adb
     $start.UseShellExecute = $false
@@ -1304,7 +1289,7 @@ function Get-DebugPairingSecret {
     $start.RedirectStandardError = $true
     foreach ($argument in @(
         "-s", $Serial, "shell", "content", "call", "--uri",
-        "content://$HubDebugAuthority", "--method", "pair-code")) {
+        "content://$authority", "--method", "pair-code")) {
         [void]$start.ArgumentList.Add($argument)
     }
     $process = [System.Diagnostics.Process]::new()
@@ -1350,6 +1335,10 @@ function Get-DebugPairingSecret {
         [Array]::Clear($stderr, 0, $stderr.Length)
         $process.Dispose()
     }
+}
+
+function Get-DebugPairingSecret {
+    return Get-ShellProviderPairingSecret -Route "debug"
 }
 
 function Stage-Apk([string]$Path, [string]$Label) {

@@ -44,7 +44,10 @@ gate. Loopback or ADB forwarding can prove protocol behavior, never LAN
 confidentiality.
 
 Pairing codes are process-memory wearer evidence and are never returned by the
-status API or persisted. Controller cookies are 256-bit random transport
+status API or persisted. The only host projection is the normal operator's
+exact `pair-code` call, protected by `android.permission.DUMP` and an exact
+shell-UID check; it accepts no argument or extras and bypasses generic receipts.
+Controller cookies are 256-bit random transport
 credentials. Durable state is AES-GCM encrypted with a non-exportable Android
 Keystore key. Android persists the Manifold state envelope byte-for-byte and
 does not interpret it. Logical Manifold session identity is distinct from a
