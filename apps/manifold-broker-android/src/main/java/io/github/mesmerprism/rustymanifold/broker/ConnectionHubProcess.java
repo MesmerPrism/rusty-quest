@@ -198,7 +198,7 @@ public final class ConnectionHubProcess {
                     }
                 });
         try {
-            int port = next.start(bindAddress, PORT);
+            int port = next.start(PORT);
             server = next;
             listenerAddress = bindAddress;
             discovery.start(port);

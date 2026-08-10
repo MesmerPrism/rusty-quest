@@ -68,6 +68,7 @@ $runtime = Get-Content -Raw -LiteralPath (Join-Path $javaRoot "ConnectionHubRunt
 $coreTest = Get-Content -Raw -LiteralPath $test
 $protocol = Get-Content -Raw -LiteralPath (Join-Path $javaRoot "ConnectionHubProtocol.java")
 $process = Get-Content -Raw -LiteralPath (Join-Path $javaRoot "ConnectionHubProcess.java")
+$localBroker = Get-Content -Raw -LiteralPath (Join-Path $javaRoot "LocalManifoldBrokerServer.java")
 $debugControl = Get-Content -Raw -LiteralPath (Join-Path $javaRoot "ConnectionHubDebugControlProvider.java")
 $operatorController = Get-Content -Raw -LiteralPath (Join-Path $javaRoot "ConnectionHubOperatorController.java")
 $operatorProvider = Get-Content -Raw -LiteralPath (Join-Path $javaRoot "ConnectionHubOperatorProvider.java")
@@ -167,6 +168,18 @@ if ($runtime -notmatch 'CopyOnWriteArrayList<EventSink>' -or
     $runtime -match 'synchronized \(this\) \{ sinks = new ArrayList<>\(eventSinks\); \}' -or
     $coreTest -notmatch 'testRegistryRuntimeLockOrder\(\)') {
     throw "Hub runtime event delivery can reintroduce the registry/runtime lock inversion."
+}
+if ($server -notmatch 'next\.bind\(new InetSocketAddress\(lanAndLoopbackBindAddress\(\), requestedPort\)\)' -or
+    $server -notmatch 'InetAddress\.getByAddress\(new byte\[\] \{0, 0, 0, 0\}\)' -or
+    $process -notmatch 'public static final int PORT = 8876' -or
+    $process -notmatch 'int port = next\.start\(PORT\);' -or
+    $process -notmatch 'listenerAddress = bindAddress' -or
+    $process -notmatch '"http://" \+ host \+ ":" \+ PORT' -or
+    $coreTest -notmatch 'testLanAndLoopbackListener\(\)' -or
+    $coreTest -notmatch 'firstNonLoopbackIpv4Address\(\)' -or
+    $localBroker -notmatch 'public static final int PORT = 8765' -or
+    $localBroker -notmatch 'InetAddress\.getByName\("127\.0\.0\.1"\), PORT') {
+    throw "Hub 8876 LAN-plus-loopback listener, Wi-Fi display origin, or local 8765 separation contract is missing."
 }
 if ($server -match 'Access-Control-Allow-Origin' -or $server -match 'https?://[^\"]') { throw "Hub server enables CORS or ambient remote assets." }
 if ($process -notmatch 'new ManifoldConnectionHubAuthority\(\)' -or $process -match 'UnavailableManifold') { throw "Connection Hub process is not wired to the real Manifold JNI authority." }

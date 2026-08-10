@@ -82,19 +82,23 @@ public final class ConnectionHubHttpServer
         runtime.addEventSink(this);
     }
 
-    public synchronized int start(InetAddress bindAddress, int requestedPort) throws IOException {
+    public synchronized int start(int requestedPort) throws IOException {
         if (serverSocket != null) {
             return serverSocket.getLocalPort();
         }
         ServerSocket next = new ServerSocket();
         next.setReuseAddress(true);
-        next.bind(new InetSocketAddress(bindAddress, requestedPort));
+        next.bind(new InetSocketAddress(lanAndLoopbackBindAddress(), requestedPort));
         serverSocket = next;
         acceptThread = new Thread(new Runnable() {
             @Override public void run() { acceptLoop(); }
         }, "rusty-connection-hub-accept");
         acceptThread.start();
         return next.getLocalPort();
+    }
+
+    static InetAddress lanAndLoopbackBindAddress() throws IOException {
+        return InetAddress.getByAddress(new byte[] {0, 0, 0, 0});
     }
 
     private void acceptLoop() {

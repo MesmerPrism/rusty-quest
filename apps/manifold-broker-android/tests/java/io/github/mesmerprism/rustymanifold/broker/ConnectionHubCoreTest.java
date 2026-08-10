@@ -2,9 +2,17 @@ package io.github.mesmerprism.rustymanifold.broker;
 
 import org.json.JSONObject;
 
+import java.io.ByteArrayOutputStream;
+import java.net.Inet4Address;
+import java.net.InetAddress;
+import java.net.InetSocketAddress;
+import java.net.NetworkInterface;
+import java.net.Socket;
+import java.nio.charset.StandardCharsets;
 import java.security.SecureRandom;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.Enumeration;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -29,6 +37,7 @@ public final class ConnectionHubCoreTest {
         ConnectionHubRuntime first = new ConnectionHubRuntime(
                 authority, store, firstRegistry, seededRandom());
         testRegistryRuntimeLockOrder();
+        testLanAndLoopbackListener();
 
         FakeAuthority staleProviderAuthority = new FakeAuthority();
         staleProviderAuthority.rejectNextProviderIdentityCollision = true;
@@ -520,6 +529,70 @@ public final class ConnectionHubCoreTest {
                 "runtime/registry event delivery lock inversion detected");
         assertTrue(failure.get() == null,
                 "runtime/registry lock-order test failed: " + failure.get());
+    }
+
+    private static void testLanAndLoopbackListener() throws Exception {
+        ConnectionHubRuntime runtime = new ConnectionHubRuntime(
+                new FakeAuthority(), new InMemoryStore(), new HubSurfaceRegistry(), seededRandom());
+        ConnectionHubHttpServer server = new ConnectionHubHttpServer(
+                runtime,
+                new ConnectionHubHttpServer.AssetLoader() {
+                    @Override public ConnectionHubHttpServer.Asset load(String path) {
+                        return new ConnectionHubHttpServer.Asset(
+                                "text/plain; charset=utf-8",
+                                "test".getBytes(StandardCharsets.UTF_8));
+                    }
+                });
+        assertTrue(ConnectionHubHttpServer.lanAndLoopbackBindAddress().isAnyLocalAddress(),
+                "Hub listener bind address is not the IPv4 wildcard");
+        int port = server.start(0);
+        try {
+            assertStatusReachable(InetAddress.getByName("127.0.0.1"), port, "loopback");
+            assertStatusReachable(firstNonLoopbackIpv4Address(), port, "LAN");
+        } finally {
+            server.close();
+        }
+    }
+
+    private static InetAddress firstNonLoopbackIpv4Address() throws Exception {
+        Enumeration<NetworkInterface> interfaces = NetworkInterface.getNetworkInterfaces();
+        while (interfaces.hasMoreElements()) {
+            NetworkInterface network = interfaces.nextElement();
+            if (!network.isUp() || network.isLoopback()) continue;
+            Enumeration<InetAddress> addresses = network.getInetAddresses();
+            while (addresses.hasMoreElements()) {
+                InetAddress address = addresses.nextElement();
+                if (address instanceof Inet4Address
+                        && !address.isAnyLocalAddress()
+                        && !address.isLoopbackAddress()) {
+                    return address;
+                }
+            }
+        }
+        throw new AssertionError("host has no non-loopback IPv4 address for LAN listener proof");
+    }
+
+    private static void assertStatusReachable(InetAddress address, int port, String route)
+            throws Exception {
+        try (Socket socket = new Socket()) {
+            socket.connect(new InetSocketAddress(address, port), 2000);
+            socket.setSoTimeout(2000);
+            socket.getOutputStream().write((
+                    "GET /v1/status HTTP/1.1\r\n"
+                    + "Host: localhost\r\n"
+                    + "Connection: close\r\n\r\n").getBytes(StandardCharsets.US_ASCII));
+            socket.getOutputStream().flush();
+            ByteArrayOutputStream response = new ByteArrayOutputStream();
+            byte[] buffer = new byte[512];
+            int count;
+            while ((count = socket.getInputStream().read(buffer)) >= 0) {
+                response.write(buffer, 0, count);
+            }
+            String raw = new String(response.toByteArray(), StandardCharsets.UTF_8);
+            assertTrue(raw.startsWith("HTTP/1.1 200 OK"),
+                    "Hub status was not reachable through " + route + " address "
+                            + address.getHostAddress());
+        }
     }
 
     private static HubSurfaceDescriptor descriptor(HubProviderIdentity identity) {
