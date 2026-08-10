@@ -2044,6 +2044,9 @@ function Test-ExactAndroidComponentEcho([string]$Output, [string]$ExpectedCompon
             $expectedClass -notmatch '^[A-Za-z0-9._$]+$') {
         throw "Expected Android component must be one fixed fully qualified package/class pair."
     }
+    if ($expectedClass.StartsWith('.', [StringComparison]::Ordinal)) {
+        $expectedClass = $expectedPackage + $expectedClass
+    }
     $matches = [regex]::Matches(
         $Output,
         '(?<![A-Za-z0-9._$])cmp=(?<package>[A-Za-z0-9._]+)/(?<class>\.?[A-Za-z0-9._$]+)(?![A-Za-z0-9._$])')
@@ -2881,6 +2884,7 @@ try {
     } elseif ($Action -eq "PublishedBrowserE2E") {
         [void](Test-Prerequisites)
         $startedByRun = $false
+        $pairingAttempted = $false
         $bridge = $null
         $runFailure = $null
         $cleanupFailures = [Collections.Generic.List[string]]::new()
@@ -2906,6 +2910,7 @@ try {
             $Origin = $PublishedBrowserOrigin
             $bridge = Open-PublishedBridge
             [char[]]$browserSecret = Read-PublishedPairingSecret
+            $pairingAttempted = $true
             try {
                 [void](Invoke-BrowserE2EWithSecret $browserSecret $bridge.path (Get-Sha256 $bridge.path))
             } finally {
@@ -2925,7 +2930,12 @@ try {
                 } catch { $cleanupFailures.Add("bridge: $($_.Exception.Message)") }
             }
             if ($startedByRun) {
-                try { [void](Invoke-PublishedOperator 'stop') }
+                try {
+                    $cleanupMethod = if ($null -ne $runFailure -and $pairingAttempted) {
+                        'forget'
+                    } else { 'stop' }
+                    [void](Invoke-PublishedOperator $cleanupMethod)
+                }
                 catch { $cleanupFailures.Add("hub: $($_.Exception.Message)") }
             }
         }

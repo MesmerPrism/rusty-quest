@@ -320,12 +320,16 @@ $componentFunction = $operatorAst.Find({
 Require ($null -ne $componentFunction) "Exact Android component echo validator is missing."
 . ([scriptblock]::Create($componentFunction.Extent.Text))
 $expectedComponent = 'io.github.example/io.github.example.ConnectionHubDebugSurfaceService'
+$expectedShorthandComponent = 'io.github.example/.ConnectionHubDebugSurfaceService'
 Require ((Test-ExactAndroidComponentEcho `
         'Starting service: Intent { cmp=io.github.example/io.github.example.ConnectionHubDebugSurfaceService }' `
         $expectedComponent) -and
     (Test-ExactAndroidComponentEcho `
         'Starting service: Intent { cmp=io.github.example/.ConnectionHubDebugSurfaceService }' `
         $expectedComponent) -and
+    (Test-ExactAndroidComponentEcho `
+        'Starting service: Intent { cmp=io.github.example/.ConnectionHubDebugSurfaceService }' `
+        $expectedShorthandComponent) -and
     -not (Test-ExactAndroidComponentEcho `
         'Starting service: Intent { cmp=io.github.other/.ConnectionHubDebugSurfaceService }' `
         $expectedComponent) -and
@@ -414,6 +418,9 @@ Require ($cli.Contains('"PublishedBrowserE2E"') -and
     $cli.Contains('function Invoke-PublishedOperator') -and
     $cli.Contains('function Read-PublishedPairingSecret') -and
     $cli.Contains('Close-PublishedBridge (-not $preexisting) $preexisting') -and
+    $cli.Contains('$pairingAttempted = $true') -and
+    $cli.Contains('$null -ne $runFailure -and $pairingAttempted') -and
+    $cli.Contains("'forget'") -and
     $cli.Contains('$cleanupFailures.Add("bridge: $($_.Exception.Message)")') -and
     $cli.Contains('$cleanupFailures.Add("hub: $($_.Exception.Message)")') -and
     -not $cli.Contains('[string]$BridgeHostEndpoint') -and
