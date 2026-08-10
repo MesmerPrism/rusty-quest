@@ -271,6 +271,7 @@ $expectedLockedStateKeys = @(
 if ([string]$lockedPlaylistContract.'$schema' -cne 'rusty.quest.connection_hub.locked_playlist_surface_contract.v1' -or
     [string]$lockedPlaylistContract.canonical_version -cne 'locked-playlist-v1' -or
     [string]$lockedPlaylistContract.canonical_contract_sha256 -cne 'sha256:9e4c3794d8edbe123cd30cd3fc6abf0e14e71356c97fca2020334c5581b15e26' -or
+    [string]$lockedPlaylistContract.runtime_surface_contract_sha256 -cne 'sha256:3eafe0fb1ff859a7848dfba8cf64a6eb532f98a39d0953fd628594792ca18d6e' -or
     [string]$lockedPlaylistContract.provider_id -cne 'provider.quest.spatial-camera-panel-locked-playlist' -or
     [string]$lockedPlaylistContract.surface_id -cne 'surface.spatial_camera_panel.locked_playlist' -or
     [string]$lockedPlaylistContract.typed_params_schema -cne 'rusty.manifold.connection_hub.typed_params.empty.v1' -or
@@ -286,6 +287,7 @@ if ([string]$lockedPlaylistContract.'$schema' -cne 'rusty.quest.connection_hub.l
     throw "Spatial Camera Panel locked-playlist contract is outside the exact empty-args scalar boundary."
 }
 $lockedCanonical = "locked-playlist-v1`nprovider|$($lockedPlaylistContract.provider_id)`nsurface|$($lockedPlaylistContract.surface_id)`nlabel|$($lockedPlaylistContract.display_label)`ndescription|$($lockedPlaylistContract.description)`ntyped_params|$($lockedPlaylistContract.typed_params_schema)`navailability|$($lockedPlaylistContract.availability)`nlifecycle|$($lockedPlaylistContract.lifecycle)`ndirect_item_activation|$($lockedPlaylistContract.direct_item_activation)`nordered_item_list|$($lockedPlaylistContract.ordered_item_list)`nmax_state_keys|$($lockedPlaylistContract.max_state_keys)`nmax_state_bytes|$($lockedPlaylistContract.max_state_bytes)`nmax_string_bytes|$($lockedPlaylistContract.max_string_bytes)`n"
+$lockedRuntimeCanonical = "v1`n$($lockedPlaylistContract.surface_id)`n$($lockedPlaylistContract.display_label)`n$($lockedPlaylistContract.description)`n"
 for ($index = 0; $index -lt $expectedLockedCommands.Count; $index += 1) {
     $actual = @($lockedPlaylistContract.commands)[$index]
     $expected = $expectedLockedCommands[$index]
@@ -294,6 +296,7 @@ for ($index = 0; $index -lt $expectedLockedCommands.Count; $index += 1) {
         throw "Spatial Camera Panel locked-playlist command descriptor $index changed."
     }
     $lockedCanonical += "command|$($actual.command)|$($actual.display_label)|$($actual.required_controller_capability)`n"
+    $lockedRuntimeCanonical += "$($actual.command)|$($actual.display_label)|$($actual.required_controller_capability)`n"
 }
 foreach ($stateKey in $expectedLockedStateKeys) { $lockedCanonical += "state|$stateKey`n" }
 $lockedCanonicalSha256 = "sha256:" + [Convert]::ToHexString(
@@ -301,6 +304,12 @@ $lockedCanonicalSha256 = "sha256:" + [Convert]::ToHexString(
 ).ToLowerInvariant()
 if ($lockedCanonicalSha256 -cne [string]$lockedPlaylistContract.canonical_contract_sha256) {
     throw "Spatial Camera Panel locked-playlist canonical contract hash is invalid."
+}
+$lockedRuntimeSha256 = "sha256:" + [Convert]::ToHexString(
+    [Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($lockedRuntimeCanonical))
+).ToLowerInvariant()
+if ($lockedRuntimeSha256 -cne [string]$lockedPlaylistContract.runtime_surface_contract_sha256) {
+    throw "Spatial Camera Panel locked-playlist runtime surface hash is invalid."
 }
 $lockedPlaylistContractJson = $lockedPlaylistContract | ConvertTo-Json -Depth 16 -Compress
 foreach ($forbidden in @('select_index', 'profile_id', 'profile_path', 'ordered_items')) {
@@ -331,7 +340,7 @@ foreach ($token in @(
     'Assert-UniqueAndroidAdmissionSubjects',
     'grant.quest.spatial-camera-panel',
     'provider.quest.spatial-camera-panel-locked-playlist',
-    '$lockedPlaylistHubContract.canonical_sha256',
+    '$lockedPlaylistHubContract.runtime_sha256',
     '$lockedPlaylistCommands'
 )) {
     if ($buildScript -notmatch [regex]::Escape($token)) {

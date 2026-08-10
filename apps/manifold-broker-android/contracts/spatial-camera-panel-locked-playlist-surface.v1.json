@@ -2,6 +2,7 @@
   "$schema": "rusty.quest.connection_hub.locked_playlist_surface_contract.v1",
   "canonical_version": "locked-playlist-v1",
   "canonical_contract_sha256": "sha256:9e4c3794d8edbe123cd30cd3fc6abf0e14e71356c97fca2020334c5581b15e26",
+  "runtime_surface_contract_sha256": "sha256:3eafe0fb1ff859a7848dfba8cf64a6eb532f98a39d0953fd628594792ca18d6e",
   "provider_id": "provider.quest.spatial-camera-panel-locked-playlist",
   "surface_id": "surface.spatial_camera_panel.locked_playlist",
   "display_label": "Spatial Camera Locked Playlist",
