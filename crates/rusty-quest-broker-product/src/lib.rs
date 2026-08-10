@@ -345,30 +345,35 @@ fn render_standalone_android_manifest(
     projection: &QuestBrokerAndroidManifestProjection,
 ) -> String {
     let camera = has_feature(lock, &ManifoldBrokerFeature::CameraMedia);
+    let connection_hub = has_feature(lock, &ManifoldBrokerFeature::ConnectionHub);
     let service_types = if camera {
         "dataSync|camera"
     } else {
         "dataSync"
     };
-    let app_label = if has_feature(lock, &ManifoldBrokerFeature::ConnectionHub) {
+    let app_label = if connection_hub {
         "Rusty Connection Hub"
     } else {
         "Rusty Manifold Broker"
     };
-    let (activity_name, foreground_service_name, admission_service_name) =
-        if has_feature(lock, &ManifoldBrokerFeature::ConnectionHub) {
-            (
-                ".ConnectionHubStartActivity",
-                ".ConnectionHubStartService",
-                ".ConnectionHubAdmissionService",
-            )
-        } else {
-            (
-                ".BrokerStartActivity",
-                ".BrokerStartService",
-                ".ManifoldAdmissionService",
-            )
-        };
+    let (activity_name, foreground_service_name, admission_service_name) = if connection_hub {
+        (
+            ".ConnectionHubStartActivity",
+            ".ConnectionHubStartService",
+            ".ConnectionHubAdmissionService",
+        )
+    } else {
+        (
+            ".BrokerStartActivity",
+            ".BrokerStartService",
+            ".ManifoldAdmissionService",
+        )
+    };
+    let foreground_service_access = if connection_hub {
+        "android:exported=\"true\"\n            android:permission=\"android.permission.DUMP\""
+    } else {
+        "android:exported=\"false\""
+    };
     let mut xml = format!(
         "<manifest xmlns:android=\"http://schemas.android.com/apk/res/android\"\n    package=\"{QUEST_BROKER_PACKAGE_NAME}\">\n\n    <permission\n        android:name=\"{QUEST_BROKER_ADMISSION_PERMISSION}\"\n        android:protectionLevel=\"signature\" />\n\n"
     );
@@ -389,7 +394,7 @@ fn render_standalone_android_manifest(
     }
     let _ = write!(
         xml,
-        "\n    <application\n        android:allowBackup=\"false\"\n        android:hasCode=\"true\"\n        android:label=\"{app_label}\"\n        android:theme=\"@android:style/Theme.Material.Light.NoActionBar\"\n        android:usesCleartextTraffic=\"false\">\n        <activity\n            android:name=\"{activity_name}\"\n            android:exported=\"true\"\n            android:launchMode=\"singleTask\">\n            <intent-filter>\n                <action android:name=\"android.intent.action.MAIN\" />\n                <category android:name=\"android.intent.category.LAUNCHER\" />\n            </intent-filter>\n        </activity>\n        <service\n            android:name=\"{foreground_service_name}\"\n            android:exported=\"false\"\n            android:foregroundServiceType=\"{service_types}\"\n            android:stopWithTask=\"false\" />\n        <service\n            android:name=\"{admission_service_name}\"\n            android:exported=\"true\"\n            android:permission=\"{QUEST_BROKER_ADMISSION_PERMISSION}\"\n            android:stopWithTask=\"false\" />\n    </application>\n</manifest>\n"
+        "\n    <application\n        android:allowBackup=\"false\"\n        android:hasCode=\"true\"\n        android:label=\"{app_label}\"\n        android:theme=\"@android:style/Theme.Material.Light.NoActionBar\"\n        android:usesCleartextTraffic=\"false\">\n        <activity\n            android:name=\"{activity_name}\"\n            android:exported=\"true\"\n            android:launchMode=\"singleTask\">\n            <intent-filter>\n                <action android:name=\"android.intent.action.MAIN\" />\n                <category android:name=\"android.intent.category.LAUNCHER\" />\n            </intent-filter>\n        </activity>\n        <service\n            android:name=\"{foreground_service_name}\"\n            {foreground_service_access}\n            android:foregroundServiceType=\"{service_types}\"\n            android:stopWithTask=\"false\" />\n        <service\n            android:name=\"{admission_service_name}\"\n            android:exported=\"true\"\n            android:permission=\"{QUEST_BROKER_ADMISSION_PERMISSION}\"\n            android:stopWithTask=\"false\" />\n    </application>\n</manifest>\n"
     );
     xml
 }
@@ -635,7 +640,9 @@ mod tests {
         let manifest = artifacts.android_manifest_xml;
         assert!(manifest.contains("android:label=\"Rusty Connection Hub\""));
         assert!(manifest.contains("android:name=\".ConnectionHubStartActivity\""));
-        assert!(manifest.contains("android:name=\".ConnectionHubStartService\""));
+        assert!(manifest.contains(
+            "android:name=\".ConnectionHubStartService\"\n            android:exported=\"true\"\n            android:permission=\"android.permission.DUMP\"\n            android:foregroundServiceType=\"dataSync\"\n            android:stopWithTask=\"false\""
+        ));
         assert!(manifest.contains("android:name=\".ConnectionHubAdmissionService\""));
         assert!(!manifest.contains("android:name=\".BrokerStartActivity\""));
         assert!(!manifest.contains("android:name=\".BrokerStartService\""));
