@@ -222,6 +222,77 @@ const runPlainHttpPair = async () => {
       || pairRequest.controller_identity_sha256 !== expectedIdentity) {
     throw new Error("plain-HTTP browser pairing did not derive the exact controller identity");
   }
+  if (elements.get("#pairing-code").value !== "") {
+    throw new Error("accepted browser pairing retained the one-use pairing code");
+  }
+};
+
+const runStoredSessionRecovery = () => {
+  const elements = new Map([
+    ["#surfaces", new FakeElement()],
+    ["#surface-template", new FakeElement()],
+    ["#pair-status", new FakeElement()],
+    ["#pair-button", new FakeElement()],
+    ["#disconnect-button", new FakeElement()],
+    ["#pairing-code", new FakeElement()],
+  ]);
+  const sessionStore = storage({rustyHubSession: "expired-test-bearer"});
+  const sockets = [];
+  const timeouts = new Map();
+  let timerId = 0;
+  class FakeWebSocket {
+    static CONNECTING = 0;
+    static OPEN = 1;
+    static CLOSING = 2;
+    static CLOSED = 3;
+    constructor() {
+      this.readyState = FakeWebSocket.OPEN;
+      this.listeners = new Map();
+      sockets.push(this);
+    }
+    addEventListener(type, listener) { this.listeners.set(type, listener); }
+    send() {}
+    emit(type, value = {}) {
+      const listener = this.listeners.get(type);
+      if (listener) listener(value);
+    }
+    close() {
+      this.readyState = FakeWebSocket.CLOSED;
+      this.emit("close", {code: 1000});
+    }
+  }
+  const browserContext = vm.createContext({
+    RustyConnectionHubProtocol: actual,
+    RustyConnectionHubCanonicalJson: canonicalJsonEncoder,
+    document: {
+      querySelector: selector => elements.get(selector),
+      createElement: () => new FakeElement(),
+    },
+    sessionStorage: sessionStore,
+    localStorage: storage({}),
+    fetch: async () => { throw new Error("unexpected fetch"); },
+    crypto: require("crypto").webcrypto,
+    TextEncoder,
+    location: {protocol: "http:", host: "hub.test"},
+    WebSocket: FakeWebSocket,
+    CSS: {escape: value => value},
+    setInterval: () => 1,
+    clearInterval: () => {},
+    setTimeout: callback => { const id = ++timerId; timeouts.set(id, callback); return id; },
+    clearTimeout: id => timeouts.delete(id),
+  });
+  vm.runInContext(appSource, browserContext, {filename: "app.js"});
+  if (!elements.get("#pair-button").disabled) {
+    throw new Error("stored-session reconnect left pairing enabled");
+  }
+  sockets[0].close();
+  if (sessionStore.getItem("rustyHubSession") !== null
+      || elements.get("#pair-button").disabled
+      || !elements.get("#disconnect-button").disabled
+      || elements.get("#pair-status").textContent !== "Stored session unavailable. Pair again."
+      || timeouts.size !== 0) {
+    throw new Error("unconfirmed stored session did not return to clean pairing state");
+  }
 };
 
 const runV2SequenceFlow = () => {
@@ -286,6 +357,10 @@ const runV2SequenceFlow = () => {
     vectors.messages.socket_authentication_receipt.example));
   authentication.next_external_request_sequence = 7;
   first.emit("message", {data: JSON.stringify(authentication)});
+  if (!elements.get("#pair-button").disabled
+      || elements.get("#disconnect-button").disabled) {
+    throw new Error("authenticated browser did not lock pairing and enable disconnect");
+  }
   Array.from(intervals.values())[0]();
   const firstKeepalive = first.sent[1];
   if (firstKeepalive !== context.RustyConnectionHubCanonicalJson({
@@ -315,6 +390,7 @@ const runV2SequenceFlow = () => {
 
 (async () => {
   await runPlainHttpPair();
+  runStoredSessionRecovery();
   runV2SequenceFlow();
   const accepted = JSON.parse(JSON.stringify(legacyVectors.messages.revoke_receipt.example));
   const networkFailure = await runDisconnect(async () => { throw new Error("network unavailable"); });

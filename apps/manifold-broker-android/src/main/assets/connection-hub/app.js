@@ -16,6 +16,8 @@
   let requestInFlight = false;
   let keepaliveTimer = null;
   let reconnectTimer = null;
+  let authenticatedInPage = false;
+  let unconfirmedReconnects = 0;
 
   // crypto.subtle is intentionally unavailable to ordinary HTTP pages in
   // Chromium. Trusted-LAN experimental mode is explicitly HTTP/plaintext, so
@@ -91,6 +93,27 @@
   const stopKeepalive = () => {
     if (keepaliveTimer !== null) clearInterval(keepaliveTimer);
     keepaliveTimer = null;
+  };
+
+  const resetSession = status => {
+    const activeSocket = socket;
+    socket = null;
+    stopKeepalive();
+    if (reconnectTimer !== null) clearTimeout(reconnectTimer);
+    reconnectTimer = null;
+    nextSequence = null;
+    requestInFlight = false;
+    authenticatedInPage = false;
+    unconfirmedReconnects = 0;
+    session = "";
+    sessionStorage.removeItem("rustyHubSession");
+    if (activeSocket && (activeSocket.readyState === WebSocket.CONNECTING
+        || activeSocket.readyState === WebSocket.OPEN)) activeSocket.close();
+    surfaces.clear();
+    render();
+    pairButton.disabled = false;
+    disconnectButton.disabled = true;
+    pairStatus.textContent = status;
   };
 
   const applyNextSequence = message => {
@@ -187,6 +210,9 @@
       if (!receipt.accepted) throw new Error(receipt.status || "pairing rejected");
       session = receipt.session;
       sessionStorage.setItem("rustyHubSession", session);
+      document.querySelector("#pairing-code").value = "";
+      authenticatedInPage = false;
+      unconfirmedReconnects = 0;
       connect();
     } catch (error) {
       pairStatus.textContent = `Pairing failed: ${error.message}`;
@@ -203,6 +229,7 @@
     if (previousSocket) previousSocket.close();
     const scheme = location.protocol === "https:" ? "wss" : "ws";
     const activeSocket = new WebSocket(`${scheme}://${location.host}${protocol.routes.socket}`);
+    let activeSocketAuthenticated = false;
     socket = activeSocket;
     activeSocket.addEventListener("open", () => {
       activeSocket.send(canonicalJson({
@@ -211,15 +238,25 @@
         session,
       }));
     });
-    activeSocket.addEventListener("message", event => handle(JSON.parse(event.data)));
+    activeSocket.addEventListener("message", event => {
+      if (handle(JSON.parse(event.data))) activeSocketAuthenticated = true;
+    });
     activeSocket.addEventListener("close", () => {
       if (socket !== activeSocket) return;
       socket = null;
       stopKeepalive();
       nextSequence = null;
       requestInFlight = false;
-      pairStatus.textContent = "Connection closed";
       disconnectButton.disabled = true;
+      if (!activeSocketAuthenticated) {
+        unconfirmedReconnects += 1;
+        const retryLimit = authenticatedInPage ? 3 : 1;
+        if (unconfirmedReconnects >= retryLimit) {
+          resetSession("Stored session unavailable. Pair again.");
+          return;
+        }
+      }
+      pairStatus.textContent = "Connection closed; retrying…";
       if (session) reconnectTimer = setTimeout(connect, 1000);
     });
     activeSocket.addEventListener("error", () => {
@@ -229,12 +266,19 @@
 
   const handle = message => {
     if (message.type === protocol.types.authentication_receipt) {
-      if (message.$schema !== protocol.schemas.socket_authentication_receipt
-          || message.accepted !== true) throw new Error("authentication receipt rejected");
+      if (message.$schema !== protocol.schemas.socket_authentication_receipt) {
+        throw new Error("authentication receipt schema mismatch");
+      }
+      if (message.accepted !== true) {
+        resetSession("Stored session rejected. Pair again.");
+        return false;
+      }
+      authenticatedInPage = true;
+      unconfirmedReconnects = 0;
       applyNextSequence(message);
       startKeepalive();
       pairStatus.textContent = "Connected";
-      pairButton.disabled = false;
+      pairButton.disabled = true;
       disconnectButton.disabled = false;
     } else if (message.type === protocol.types.surface_snapshot) {
       surfaces.clear();
@@ -269,6 +313,7 @@
       applyNextSequence(message);
       pairStatus.textContent = `Protocol error: ${message.status}`;
     }
+    return message.type === protocol.types.authentication_receipt;
   };
 
   const render = () => {
@@ -351,20 +396,13 @@
       disconnectButton.disabled = false;
       return;
     }
-    if (socket) socket.close();
-    stopKeepalive();
-    if (reconnectTimer !== null) clearTimeout(reconnectTimer);
-    reconnectTimer = null;
-    nextSequence = null;
-    requestInFlight = false;
-    session = "";
-    sessionStorage.removeItem("rustyHubSession");
-    surfaces.clear();
-    render();
-    pairStatus.textContent = "Disconnected";
+    resetSession("Disconnected");
   };
 
   pairButton.addEventListener("click", pair);
   disconnectButton.addEventListener("click", disconnect);
-  if (session) connect();
+  if (session) {
+    pairButton.disabled = true;
+    connect();
+  }
 })();
