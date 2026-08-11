@@ -469,7 +469,7 @@ if ($LASTEXITCODE -ne 0) { throw "Connection Hub browser protocol JS syntax fail
 & $node $browserTest $vectors $vectorsV2 (Join-Path $assets "protocol.js") (Join-Path $assets "app.js")
 if ($LASTEXITCODE -ne 0) { throw "Connection Hub browser protocol conformance failed." }
 $html = Get-Content -Raw -LiteralPath (Join-Path $assets "index.html")
-if ($html.IndexOf('<link rel="icon" href="data:,">', [StringComparison]::Ordinal) -lt 0) {
+if ($html.IndexOf('<link rel="icon" href="">', [StringComparison]::Ordinal) -lt 0) {
     throw "Browser page does not declare its local empty favicon."
 }
 if ($html -match '<script[^>]+src="https?://' -or $html -match '<link[^>]+href="https?://') { throw "Browser page includes remote assets." }
