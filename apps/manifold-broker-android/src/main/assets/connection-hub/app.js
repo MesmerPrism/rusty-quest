@@ -9,6 +9,7 @@
   const template = document.querySelector("#surface-template");
   const pairStatus = document.querySelector("#pair-status");
   const pairButton = document.querySelector("#pair-button");
+  const pairingCode = document.querySelector("#pairing-code");
   const disconnectButton = document.querySelector("#disconnect-button");
   let session = sessionStorage.getItem("rustyHubSession") || "";
   let socket = null;
@@ -95,6 +96,12 @@
     keepaliveTimer = null;
   };
 
+  const validPairingCode = () => /^[0-9]{6}$/.test(pairingCode.value);
+
+  const syncPairingControl = () => {
+    pairButton.disabled = Boolean(session) || !validPairingCode();
+  };
+
   const resetSession = status => {
     const activeSocket = socket;
     socket = null;
@@ -111,7 +118,7 @@
         || activeSocket.readyState === WebSocket.OPEN)) activeSocket.close();
     surfaces.clear();
     render();
-    pairButton.disabled = false;
+    syncPairingControl();
     disconnectButton.disabled = true;
     pairStatus.textContent = status;
   };
@@ -194,6 +201,12 @@
   };
 
   const pair = async () => {
+    if (!validPairingCode()) {
+      pairStatus.textContent = "Enter the six-digit headset code.";
+      syncPairingControl();
+      return;
+    }
+    const code = pairingCode.value;
     pairButton.disabled = true;
     pairStatus.textContent = "Pairing…";
     try {
@@ -202,7 +215,7 @@
         headers: {"Content-Type": "application/json"},
         body: JSON.stringify({
           $schema: protocol.schemas.pair_request,
-          pairing_code: document.querySelector("#pairing-code").value.trim(),
+          pairing_code: code,
           controller_identity_sha256: controllerIdentity(),
         }),
       });
@@ -210,13 +223,13 @@
       if (!receipt.accepted) throw new Error(receipt.status || "pairing rejected");
       session = receipt.session;
       sessionStorage.setItem("rustyHubSession", session);
-      document.querySelector("#pairing-code").value = "";
+      pairingCode.value = "";
       authenticatedInPage = false;
       unconfirmedReconnects = 0;
       connect();
     } catch (error) {
       pairStatus.textContent = `Pairing failed: ${error.message}`;
-      pairButton.disabled = false;
+      syncPairingControl();
     }
   };
 
@@ -278,7 +291,7 @@
       applyNextSequence(message);
       startKeepalive();
       pairStatus.textContent = "Connected";
-      pairButton.disabled = true;
+      syncPairingControl();
       disconnectButton.disabled = false;
     } else if (message.type === protocol.types.surface_snapshot) {
       surfaces.clear();
@@ -400,9 +413,19 @@
   };
 
   pairButton.addEventListener("click", pair);
+  pairingCode.addEventListener("input", () => {
+    pairingCode.value = pairingCode.value.replace(/[^0-9]/g, "").slice(0, 6);
+    syncPairingControl();
+  });
+  pairingCode.addEventListener("keydown", event => {
+    if (event.key === "Enter" && !pairButton.disabled) {
+      event.preventDefault();
+      return pair();
+    }
+  });
   disconnectButton.addEventListener("click", disconnect);
+  syncPairingControl();
   if (session) {
-    pairButton.disabled = true;
     connect();
   }
 })();
