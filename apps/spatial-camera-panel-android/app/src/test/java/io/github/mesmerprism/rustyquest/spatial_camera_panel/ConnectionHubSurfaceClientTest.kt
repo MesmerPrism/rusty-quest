@@ -1,6 +1,7 @@
 
 package io.github.mesmerprism.rustyquest.spatial_camera_panel
 
+import java.security.MessageDigest
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -44,5 +45,31 @@ class ConnectionHubSurfaceClientTest {
       assertFalse(descriptor.has("parameters"))
     }
   }
-}
 
+  @Test
+  fun declaredRuntimeSurfaceDigestMatchesIndependentlyRecomputedCanonicalBytes() {
+    val registration = connectionHubSurfaceRegistration(JSONObject().put("revision", 1))
+    val commands = registration.getJSONArray("commands")
+    val canonical =
+        buildString {
+          append("v1\n")
+          append(registration.getString("surface_id")).append('\n')
+          append(registration.getString("display_label")).append('\n')
+          append(registration.getString("description")).append('\n')
+          (0 until commands.length()).forEach { index ->
+            val command = commands.getJSONObject(index)
+            append(command.getString("command")).append('|')
+            append(command.getString("display_label")).append('|')
+            append(command.getString("required_controller_capability")).append('\n')
+          }
+        }
+    val digest =
+        MessageDigest.getInstance("SHA-256")
+            .digest(canonical.toByteArray(Charsets.UTF_8))
+            .joinToString("") { "%02x".format(it) }
+    val recomputed = "sha256:$digest"
+
+    assertEquals(recomputed, registration.getString("surface_contract_sha256"))
+    assertEquals(recomputed, ConnectionHubLockedPlaylistContract.SURFACE_CONTRACT_SHA256)
+  }
+}

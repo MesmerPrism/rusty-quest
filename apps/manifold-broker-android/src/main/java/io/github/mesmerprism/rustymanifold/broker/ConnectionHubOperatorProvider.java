@@ -27,13 +27,15 @@ import java.util.Set;
 public final class ConnectionHubOperatorProvider extends ContentProvider {
     public static final String AUTHORITY =
             "io.github.mesmerprism.rustymanifold.broker.connection-hub-operator";
+    private static final String METHOD_PAIR_CODE = "pair-code";
     private static final Set<String> METHODS = new HashSet<>(Arrays.asList(
             ConnectionHubOperatorController.ACTION_START,
             ConnectionHubOperatorController.ACTION_STOP,
             ConnectionHubOperatorController.ACTION_STATUS,
             ConnectionHubOperatorController.ACTION_PAIR,
             ConnectionHubOperatorController.ACTION_REVOKE,
-            ConnectionHubOperatorController.ACTION_FORGET));
+            ConnectionHubOperatorController.ACTION_FORGET,
+            METHOD_PAIR_CODE));
 
     @Override public boolean onCreate() { return true; }
 
@@ -46,8 +48,19 @@ public final class ConnectionHubOperatorProvider extends ContentProvider {
             throw new IllegalArgumentException("connection_hub_operator_method_not_registered");
         }
         Bundle safeExtras = extras == null ? Bundle.EMPTY : extras;
-        JSONObject arguments = decodeArguments(method, safeExtras);
         Context context = requireAttachedContext();
+        if (METHOD_PAIR_CODE.equals(method)) {
+            requireOnly(safeExtras);
+            ConnectionHubRuntime runtime = ConnectionHubProcess.get(context).runtime();
+            String code = runtime.pairingCodeForWearer();
+            if (!runtime.listenerEnabled() || !isAsciiPairingCode(code)) {
+                throw new IllegalStateException("connection_hub_pairing_secret_not_available");
+            }
+            Bundle secret = new Bundle();
+            secret.putString("secret_b64", encode(code));
+            return secret;
+        }
+        JSONObject arguments = decodeArguments(method, safeExtras);
         ConnectionHubOperatorController.Result result =
                 ConnectionHubProcess.get(context).operatorController().execute(method, arguments);
         if (ConnectionHubOperatorController.ACTION_STOP.equals(method)
@@ -60,6 +73,15 @@ public final class ConnectionHubOperatorProvider extends ContentProvider {
             output.putString("credential_b64", encode(result.credential));
         }
         return output;
+    }
+
+    private static boolean isAsciiPairingCode(String value) {
+        if (value == null || value.length() != 6) { return false; }
+        for (int index = 0; index < value.length(); index++) {
+            char codeUnit = value.charAt(index);
+            if (codeUnit < '0' || codeUnit > '9') { return false; }
+        }
+        return true;
     }
 
     private static JSONObject decodeArguments(String method, Bundle extras) {

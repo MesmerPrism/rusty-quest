@@ -1051,23 +1051,7 @@ function Invoke-PublishedOperator([ValidateSet('start', 'status', 'stop', 'forge
 }
 
 function Read-PublishedPairingSecret {
-    if (-not $PairingCodeStdin) {
-        throw "Published browser E2E requires -PairingCodeStdin; pairing secrets are never accepted in argv or files."
-    }
-    $characters = [System.Collections.Generic.List[char]]::new(6)
-    while ($characters.Count -le 6) {
-        $value = [Console]::In.Read()
-        if ($value -lt 0 -or $value -eq 10) { break }
-        if ($value -eq 13) { continue }
-        [void]$characters.Add([char]$value)
-    }
-    $secret = $characters.ToArray()
-    $characters.Clear()
-    if ($secret.Length -ne 6 -or ($secret -join '') -notmatch '^\d{6}$') {
-        [Array]::Clear($secret, 0, $secret.Length)
-        throw "Published browser pairing secret input is invalid."
-    }
-    return $secret
+    return Get-ShellProviderPairingSecret -Route "published"
 }
 
 function Start-RunLogCapture {
@@ -1292,11 +1276,12 @@ function Stop-RunLogCapture([switch]$FailureCleanup) {
     return $receipt
 }
 
-function Get-DebugPairingSecret {
+function Get-ShellProviderPairingSecret([ValidateSet("published", "debug")][string]$Route) {
     # This is deliberately separate from Invoke-Adb and Save-Receipt. The
     # one-use wearer code exists only in zeroed process buffers and is never
     # written to argv, a temporary file, a receipt, a log, or the manifest.
     if ((Get-Sha256 $script:Adb) -ne $AdbSha256) { throw "ADB changed after the run lock was acquired." }
+    $authority = if ($Route -ceq "published") { $HubOperatorAuthority } else { $HubDebugAuthority }
     $start = [System.Diagnostics.ProcessStartInfo]::new()
     $start.FileName = $script:Adb
     $start.UseShellExecute = $false
@@ -1304,7 +1289,7 @@ function Get-DebugPairingSecret {
     $start.RedirectStandardError = $true
     foreach ($argument in @(
         "-s", $Serial, "shell", "content", "call", "--uri",
-        "content://$HubDebugAuthority", "--method", "pair-code")) {
+        "content://$authority", "--method", "pair-code")) {
         [void]$start.ArgumentList.Add($argument)
     }
     $process = [System.Diagnostics.Process]::new()
@@ -1350,6 +1335,10 @@ function Get-DebugPairingSecret {
         [Array]::Clear($stderr, 0, $stderr.Length)
         $process.Dispose()
     }
+}
+
+function Get-DebugPairingSecret {
+    return Get-ShellProviderPairingSecret -Route "debug"
 }
 
 function Stage-Apk([string]$Path, [string]$Label) {
@@ -2054,6 +2043,9 @@ function Test-ExactAndroidComponentEcho([string]$Output, [string]$ExpectedCompon
     if ($expectedPackage -notmatch '^[A-Za-z0-9._]+$' -or
             $expectedClass -notmatch '^[A-Za-z0-9._$]+$') {
         throw "Expected Android component must be one fixed fully qualified package/class pair."
+    }
+    if ($expectedClass.StartsWith('.', [StringComparison]::Ordinal)) {
+        $expectedClass = $expectedPackage + $expectedClass
     }
     $matches = [regex]::Matches(
         $Output,
@@ -2892,6 +2884,7 @@ try {
     } elseif ($Action -eq "PublishedBrowserE2E") {
         [void](Test-Prerequisites)
         $startedByRun = $false
+        $pairingAttempted = $false
         $bridge = $null
         $runFailure = $null
         $cleanupFailures = [Collections.Generic.List[string]]::new()
@@ -2917,6 +2910,7 @@ try {
             $Origin = $PublishedBrowserOrigin
             $bridge = Open-PublishedBridge
             [char[]]$browserSecret = Read-PublishedPairingSecret
+            $pairingAttempted = $true
             try {
                 [void](Invoke-BrowserE2EWithSecret $browserSecret $bridge.path (Get-Sha256 $bridge.path))
             } finally {
@@ -2936,7 +2930,12 @@ try {
                 } catch { $cleanupFailures.Add("bridge: $($_.Exception.Message)") }
             }
             if ($startedByRun) {
-                try { [void](Invoke-PublishedOperator 'stop') }
+                try {
+                    $cleanupMethod = if ($null -ne $runFailure -and $pairingAttempted) {
+                        'forget'
+                    } else { 'stop' }
+                    [void](Invoke-PublishedOperator $cleanupMethod)
+                }
                 catch { $cleanupFailures.Add("hub: $($_.Exception.Message)") }
             }
         }

@@ -70,16 +70,27 @@ stable registration id and exact canonical-byte digest; only an identical
 same-session replay returns the cached applied result. See
 `../../docs/CONNECTION_HUB_BINDER_ADMISSION.md`.
 
+Runtime-evidence replies on this Connection Hub Binder surface use
+`rusty.quest.broker.runtime_evidence.transport_projection.v1`, a compatibility
+projection capped at 32 KiB. It preserves the Rust authority owner, provider
+epoch, Runtime Host revision, and admission revision, and binds the exact full
+authority response by SHA-256 and UTF-8 byte length. It never relabels pruned
+data as full `rusty.quest.broker.runtime_evidence.v1` evidence. The full audit
+histories remain inside the Rust authority; Java adds no acceptance policy.
+
 The selected normal Hub product packages
 `ConnectionHubOperatorProvider` at the fixed
 `io.github.mesmerprism.rustymanifold.broker.connection-hub-operator`
 authority. Android restricts it with `android.permission.DUMP`, and the
 provider additionally requires the shell UID. Its closed methods are `start`,
-`stop`, `status`, `pair`, `revoke`, and `forget`; all call the same
-`ConnectionHubOperatorController` used by wearer lifecycle actions and confirm
-effective state before returning. Pairing credentials are returned separately
-from secret-redacted receipts. The provider accepts no arbitrary action,
-component, path, client identity, grant, or capability.
+`stop`, `status`, `pair`, `revoke`, `forget`, and `pair-code`. The lifecycle and
+session methods call the same `ConnectionHubOperatorController` used by wearer
+actions and confirm effective state before returning. `pair-code` is the one
+narrow exception: it accepts no argument or extras, requires a running listener
+and an exact six-ASCII-digit process-memory wearer code, and returns only
+`secret_b64` without constructing a receipt. Pairing credentials are returned
+separately from secret-redacted receipts. The provider accepts no arbitrary
+action, component, path, client identity, grant, or capability.
 
 The published CLI starts the fixed exported `ConnectionHubStartService` with
 the fixed START action through serial-scoped shell transport before invoking

@@ -86,9 +86,17 @@ Require ($cli.Contains('pre_dispatch_proof_rejected') -and
 Require (-not $cli.Contains('PairingCode =')) "Pairing secrets must not be accepted as ordinary PowerShell values."
 Require ($cli.Contains('--pairing-code-stdin') -and $cli.Contains('--pairing-code-fd')) "Hostess secret-safe input routes are missing."
 Require ($cli.Contains('DPAPI-CurrentUser-session')) "Hostess DPAPI session ownership must be explicit."
-Require ($cli.Contains('function Get-DebugPairingSecret') -and $cli.Contains('function Invoke-HostessPairWithSecret')) "Autonomous secret transport is missing."
+Require ($cli.Contains('function Get-ShellProviderPairingSecret([ValidateSet("published", "debug")][string]$Route)') -and
+    $cli.Contains('function Read-PublishedPairingSecret') -and
+    $cli.Contains('Get-ShellProviderPairingSecret -Route "published"') -and
+    $cli.Contains('function Get-DebugPairingSecret') -and
+    $cli.Contains('Get-ShellProviderPairingSecret -Route "debug"') -and
+    $cli.Contains('function Invoke-HostessPairWithSecret')) "Closed published/debug autonomous secret transport is missing."
 Require ($cli.Contains('[Array]::Clear($Secret') -and $cli.Contains('[Array]::Clear($stdout')) "Pairing secret buffers are not explicitly cleared."
 Require ($cli.Contains('$pairingSecret = Get-DebugPairingSecret') -and -not $cli.Contains('Save-Receipt "pair-code"')) "E2E must use the dedicated non-recording secret route."
+Require ($cli.Contains('$authority = if ($Route -ceq "published") { $HubOperatorAuthority } else { $HubDebugAuthority }') -and
+    $cli.Contains('"content://$authority", "--method", "pair-code"') -and
+    -not $cli.Contains('[Console]::In.Read()')) "Published pairing retrieval must select only a fixed provider route and must not depend on wearer stdin."
 Require ($cli.Contains('[void]$process.WaitForExit(12000)')) "Pairing secret transport leaks the WaitForExit Boolean into the char-buffer result."
 Require ($cli.Contains('function Test-JsonContainsUnredactedHostessSecret') -and
     $cli.Contains("'^(?i:pairing_code|bearer_token|session_bearer)$'") -and
@@ -312,12 +320,16 @@ $componentFunction = $operatorAst.Find({
 Require ($null -ne $componentFunction) "Exact Android component echo validator is missing."
 . ([scriptblock]::Create($componentFunction.Extent.Text))
 $expectedComponent = 'io.github.example/io.github.example.ConnectionHubDebugSurfaceService'
+$expectedShorthandComponent = 'io.github.example/.ConnectionHubDebugSurfaceService'
 Require ((Test-ExactAndroidComponentEcho `
         'Starting service: Intent { cmp=io.github.example/io.github.example.ConnectionHubDebugSurfaceService }' `
         $expectedComponent) -and
     (Test-ExactAndroidComponentEcho `
         'Starting service: Intent { cmp=io.github.example/.ConnectionHubDebugSurfaceService }' `
         $expectedComponent) -and
+    (Test-ExactAndroidComponentEcho `
+        'Starting service: Intent { cmp=io.github.example/.ConnectionHubDebugSurfaceService }' `
+        $expectedShorthandComponent) -and
     -not (Test-ExactAndroidComponentEcho `
         'Starting service: Intent { cmp=io.github.other/.ConnectionHubDebugSurfaceService }' `
         $expectedComponent) -and
@@ -360,6 +372,14 @@ Require ($publishedProvider.Contains('Binder.getCallingUid() != Process.SHELL_UI
     $publishedProvider.Contains('ConnectionHubOperatorController.ACTION_REVOKE') -and
     -not $publishedProvider.Contains('client_id') -and
     -not $publishedProvider.Contains('caller_selected_capability')) "Published operator identity or closed method boundary is incomplete."
+Require ($publishedProvider.Contains('private static final String METHOD_PAIR_CODE = "pair-code";') -and
+    $publishedProvider.Contains('METHOD_PAIR_CODE.equals(method)') -and
+    $publishedProvider.Contains('requireOnly(safeExtras);') -and
+    $publishedProvider.Contains('runtime.pairingCodeForWearer()') -and
+    $publishedProvider.Contains('isAsciiPairingCode(code)') -and
+    $publishedProvider.Contains('secret.putString("secret_b64", encode(code));') -and
+    $publishedProvider.Contains('value.length() != 6') -and
+    $publishedProvider.Contains("codeUnit < '0' || codeUnit > '9'")) "Published pair-code projection is not fixed, empty-input-only, listener-bound, or six-ASCII-digit validated."
 Require (-not $publishedProvider.Contains('startForegroundService') -and
     -not $publishedProvider.Contains('startService(')) "Published provider must never bootstrap a foreground service from its background app context."
 Require ($releaseManifest.Contains('android:name=".ConnectionHubStartService"') -and
@@ -398,10 +418,13 @@ Require ($cli.Contains('"PublishedBrowserE2E"') -and
     $cli.Contains('function Invoke-PublishedOperator') -and
     $cli.Contains('function Read-PublishedPairingSecret') -and
     $cli.Contains('Close-PublishedBridge (-not $preexisting) $preexisting') -and
+    $cli.Contains('$pairingAttempted = $true') -and
+    $cli.Contains('$null -ne $runFailure -and $pairingAttempted') -and
+    $cli.Contains("'forget'") -and
     $cli.Contains('$cleanupFailures.Add("bridge: $($_.Exception.Message)")') -and
     $cli.Contains('$cleanupFailures.Add("hub: $($_.Exception.Message)")') -and
     -not $cli.Contains('[string]$BridgeHostEndpoint') -and
-    -not $cli.Contains('[string]$BridgeDeviceEndpoint')) "Published operator/browser wrapper lost its fixed authority, bridge, or stdin-only boundary."
+    -not $cli.Contains('[string]$BridgeDeviceEndpoint')) "Published operator/browser wrapper lost its fixed authority, bridge, or shell-only secret boundary."
 Require ($browserHarness.Contains('process.stdin') -and
     $browserHarness.Contains('consoleErrors') -and
     $browserHarness.Contains('io.github.mesmerprism.rustyquest.spatial_camera_panel') -and

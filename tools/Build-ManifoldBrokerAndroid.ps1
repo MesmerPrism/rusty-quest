@@ -139,7 +139,7 @@ function Read-ValidatedSpatialCameraPanelLockedPlaylistHubContract {
         'commands', 'description', 'direct_item_activation', 'display_label',
         'lifecycle', 'max_state_bytes', 'max_state_keys', 'max_string_bytes',
         'ordered_item_list', 'provider_id', 'state_keys', 'surface_id',
-        'typed_params_schema'
+        'typed_params_schema', 'runtime_surface_contract_sha256'
     )
     $actualProperties = @($contract.PSObject.Properties.Name | Sort-Object)
     if (($actualProperties -join "`n") -cne (($expectedProperties | Sort-Object) -join "`n")) {
@@ -175,6 +175,7 @@ function Read-ValidatedSpatialCameraPanelLockedPlaylistHubContract {
     }
 
     $canonical = "locked-playlist-v1`nprovider|$($contract.provider_id)`nsurface|$($contract.surface_id)`nlabel|$($contract.display_label)`ndescription|$($contract.description)`ntyped_params|$($contract.typed_params_schema)`navailability|$($contract.availability)`nlifecycle|$($contract.lifecycle)`ndirect_item_activation|$($contract.direct_item_activation)`nordered_item_list|$($contract.ordered_item_list)`nmax_state_keys|$($contract.max_state_keys)`nmax_state_bytes|$($contract.max_state_bytes)`nmax_string_bytes|$($contract.max_string_bytes)`n"
+    $runtimeCanonical = "v1`n$($contract.surface_id)`n$($contract.display_label)`n$($contract.description)`n"
     $commands = @()
     for ($index = 0; $index -lt $expectedCommands.Count; $index += 1) {
         $actual = @($contract.commands)[$index]
@@ -187,6 +188,7 @@ function Read-ValidatedSpatialCameraPanelLockedPlaylistHubContract {
             throw "Spatial Camera Panel locked-playlist Hub surface command $index is not the exact reviewed command."
         }
         $canonical += "command|$($actual.command)|$($actual.display_label)|$($actual.required_controller_capability)`n"
+        $runtimeCanonical += "$($actual.command)|$($actual.display_label)|$($actual.required_controller_capability)`n"
         $commands += [ordered]@{
             command_id = [string]$actual.command
             typed_params_schema_id = "rusty.manifold.connection_hub.typed_params.empty.v1"
@@ -207,9 +209,16 @@ function Read-ValidatedSpatialCameraPanelLockedPlaylistHubContract {
     if ([string]$contract.canonical_contract_sha256 -cne $canonicalSha256) {
         throw "Spatial Camera Panel locked-playlist Hub surface contract canonical hash is invalid."
     }
+    $runtimeSha256 = "sha256:" + [Convert]::ToHexString(
+        [Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($runtimeCanonical))
+    ).ToLowerInvariant()
+    if ([string]$contract.runtime_surface_contract_sha256 -cne $runtimeSha256) {
+        throw "Spatial Camera Panel locked-playlist Hub runtime surface hash is invalid."
+    }
     return [pscustomobject]@{
         path = (Resolve-Path -LiteralPath $path).Path
         canonical_sha256 = $canonicalSha256
+        runtime_sha256 = $runtimeSha256
         commands = $commands
         state_keys = $expectedStateKeys
     }
@@ -786,7 +795,7 @@ if ($connectionHubSelected) {
                     client_id = [string]$lockedPlaylistProviderInput.lock.client_id
                     client_lock_id = [string]$lockedPlaylistProviderInput.lock.feature_lock_id
                     client_lock_sha256 = "sha256:$([string]$lockedPlaylistProviderInput.sha256)"
-                    surface_contract_sha256 = [string]$lockedPlaylistHubContract.canonical_sha256
+                    surface_contract_sha256 = [string]$lockedPlaylistHubContract.runtime_sha256
                     allowed_commands = $lockedPlaylistCommands
                 },
                 [ordered]@{

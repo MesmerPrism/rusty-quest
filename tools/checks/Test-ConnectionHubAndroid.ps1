@@ -16,6 +16,7 @@ $transportTest = Join-Path $app "tests\java\io\github\mesmerprism\rustymanifold\
 $providerReplyTest = Join-Path $app "tests\java\io\github\mesmerprism\rustymanifold\broker\ProviderEffectReplyRouterTest.java"
 $operatorControllerTest = Join-Path $app "tests\java\io\github\mesmerprism\rustymanifold\broker\ConnectionHubOperatorControllerTest.java"
 $spatialCompositionTest = Join-Path $app "tests\java\io\github\mesmerprism\rustymanifold\broker\ConnectionHubSpatialCompositionTest.java"
+$runtimeEvidenceProjectionTest = Join-Path $app "tests\java\io\github\mesmerprism\rustymanifold\broker\ConnectionHubRuntimeEvidenceProjectionTest.java"
 $browserTest = Join-Path $app "tests\js\connection-hub-browser-protocol.test.js"
 $vectors = Join-Path $app "contracts\connection-hub-protocol-v1.json"
 $vectorsV2 = Join-Path $app "contracts\connection-hub-protocol-v2.json"
@@ -40,6 +41,7 @@ $required = @(
     $providerReplyTest,
     $operatorControllerTest,
     $spatialCompositionTest,
+    $runtimeEvidenceProjectionTest,
     $sharedAdmissionReducer,
     $sharedAdmissionTest,
     $browserTest,
@@ -72,6 +74,7 @@ $localBroker = Get-Content -Raw -LiteralPath (Join-Path $javaRoot "LocalManifold
 $debugControl = Get-Content -Raw -LiteralPath (Join-Path $javaRoot "ConnectionHubDebugControlProvider.java")
 $operatorController = Get-Content -Raw -LiteralPath (Join-Path $javaRoot "ConnectionHubOperatorController.java")
 $operatorProvider = Get-Content -Raw -LiteralPath (Join-Path $javaRoot "ConnectionHubOperatorProvider.java")
+$runtimeEvidenceProjection = Get-Content -Raw -LiteralPath (Join-Path $javaRoot "ConnectionHubRuntimeEvidenceProjection.java")
 $spatialManifest = Get-Content -Raw -LiteralPath (Join-Path $spatial "app\src\main\AndroidManifest.xml")
 $spatialDebugManifestPath = Join-Path $spatial "app\src\debug\AndroidManifest.xml"
 $spatialDebugServicePath = Join-Path $spatial "app\src\debug\java\io\github\mesmerprism\rustyquest\spatial_video_control\ConnectionHubDebugSurfaceService.kt"
@@ -102,6 +105,16 @@ if ($activity -match 'LocalManifoldBrokerServer\.get\(\)\.start' -or $activity -
 if ($service -notmatch 'START_STICKY' -or $service -notmatch 'ConnectionHubProcess' -or $service -notmatch 'ACTION_STOP_HUB') { throw "Foreground service does not own persistent Hub lifecycle." }
 if ($binder -notmatch 'message\.sendingUid' -or $binder -notmatch 'GET_SIGNING_CERTIFICATES' -or $binder -notmatch 'MESSAGE_REGISTER_SURFACE') { throw "Binder provider API does not derive platform identity." }
 if ($binder -match 'data\.getString\("admitted_client_evidence_json"') { throw "Binder accepts caller-supplied admission evidence." }
+if ($binder -notmatch 'ConnectionHubRuntimeEvidenceProjection\.project\(' -or
+    $binder -match 'response\s*=\s*ManifoldRuntimeAuthorityBridge\.evidence\(\)') {
+    throw "Connection Hub Binder runtime evidence bypasses the bounded projection."
+}
+if ($runtimeEvidenceProjection -notmatch 'rusty\.quest\.broker\.runtime_evidence\.transport_projection\.v1' -or
+    $runtimeEvidenceProjection -notmatch 'MAX_UTF8_BYTES\s*=\s*32\s*\*\s*1024' -or
+    $runtimeEvidenceProjection -notmatch 'authority_history_included' -or
+    $runtimeEvidenceProjection -notmatch 'full_evidence_retained_by_authority') {
+    throw "Connection Hub runtime-evidence projection lost its schema, bound, or retention declaration."
+}
 foreach ($field in @(
     'registration_id',
     'registration_fingerprint_sha256',
@@ -258,6 +271,7 @@ $expectedLockedStateKeys = @(
 if ([string]$lockedPlaylistContract.'$schema' -cne 'rusty.quest.connection_hub.locked_playlist_surface_contract.v1' -or
     [string]$lockedPlaylistContract.canonical_version -cne 'locked-playlist-v1' -or
     [string]$lockedPlaylistContract.canonical_contract_sha256 -cne 'sha256:9e4c3794d8edbe123cd30cd3fc6abf0e14e71356c97fca2020334c5581b15e26' -or
+    [string]$lockedPlaylistContract.runtime_surface_contract_sha256 -cne 'sha256:3eafe0fb1ff859a7848dfba8cf64a6eb532f98a39d0953fd628594792ca18d6e' -or
     [string]$lockedPlaylistContract.provider_id -cne 'provider.quest.spatial-camera-panel-locked-playlist' -or
     [string]$lockedPlaylistContract.surface_id -cne 'surface.spatial_camera_panel.locked_playlist' -or
     [string]$lockedPlaylistContract.typed_params_schema -cne 'rusty.manifold.connection_hub.typed_params.empty.v1' -or
@@ -273,6 +287,7 @@ if ([string]$lockedPlaylistContract.'$schema' -cne 'rusty.quest.connection_hub.l
     throw "Spatial Camera Panel locked-playlist contract is outside the exact empty-args scalar boundary."
 }
 $lockedCanonical = "locked-playlist-v1`nprovider|$($lockedPlaylistContract.provider_id)`nsurface|$($lockedPlaylistContract.surface_id)`nlabel|$($lockedPlaylistContract.display_label)`ndescription|$($lockedPlaylistContract.description)`ntyped_params|$($lockedPlaylistContract.typed_params_schema)`navailability|$($lockedPlaylistContract.availability)`nlifecycle|$($lockedPlaylistContract.lifecycle)`ndirect_item_activation|$($lockedPlaylistContract.direct_item_activation)`nordered_item_list|$($lockedPlaylistContract.ordered_item_list)`nmax_state_keys|$($lockedPlaylistContract.max_state_keys)`nmax_state_bytes|$($lockedPlaylistContract.max_state_bytes)`nmax_string_bytes|$($lockedPlaylistContract.max_string_bytes)`n"
+$lockedRuntimeCanonical = "v1`n$($lockedPlaylistContract.surface_id)`n$($lockedPlaylistContract.display_label)`n$($lockedPlaylistContract.description)`n"
 for ($index = 0; $index -lt $expectedLockedCommands.Count; $index += 1) {
     $actual = @($lockedPlaylistContract.commands)[$index]
     $expected = $expectedLockedCommands[$index]
@@ -281,6 +296,7 @@ for ($index = 0; $index -lt $expectedLockedCommands.Count; $index += 1) {
         throw "Spatial Camera Panel locked-playlist command descriptor $index changed."
     }
     $lockedCanonical += "command|$($actual.command)|$($actual.display_label)|$($actual.required_controller_capability)`n"
+    $lockedRuntimeCanonical += "$($actual.command)|$($actual.display_label)|$($actual.required_controller_capability)`n"
 }
 foreach ($stateKey in $expectedLockedStateKeys) { $lockedCanonical += "state|$stateKey`n" }
 $lockedCanonicalSha256 = "sha256:" + [Convert]::ToHexString(
@@ -288,6 +304,12 @@ $lockedCanonicalSha256 = "sha256:" + [Convert]::ToHexString(
 ).ToLowerInvariant()
 if ($lockedCanonicalSha256 -cne [string]$lockedPlaylistContract.canonical_contract_sha256) {
     throw "Spatial Camera Panel locked-playlist canonical contract hash is invalid."
+}
+$lockedRuntimeSha256 = "sha256:" + [Convert]::ToHexString(
+    [Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($lockedRuntimeCanonical))
+).ToLowerInvariant()
+if ($lockedRuntimeSha256 -cne [string]$lockedPlaylistContract.runtime_surface_contract_sha256) {
+    throw "Spatial Camera Panel locked-playlist runtime surface hash is invalid."
 }
 $lockedPlaylistContractJson = $lockedPlaylistContract | ConvertTo-Json -Depth 16 -Compress
 foreach ($forbidden in @('select_index', 'profile_id', 'profile_path', 'ordered_items')) {
@@ -318,7 +340,7 @@ foreach ($token in @(
     'Assert-UniqueAndroidAdmissionSubjects',
     'grant.quest.spatial-camera-panel',
     'provider.quest.spatial-camera-panel-locked-playlist',
-    '$lockedPlaylistHubContract.canonical_sha256',
+    '$lockedPlaylistHubContract.runtime_sha256',
     '$lockedPlaylistCommands'
 )) {
     if ($buildScript -notmatch [regex]::Escape($token)) {
@@ -447,6 +469,9 @@ if ($LASTEXITCODE -ne 0) { throw "Connection Hub browser protocol JS syntax fail
 & $node $browserTest $vectors $vectorsV2 (Join-Path $assets "protocol.js") (Join-Path $assets "app.js")
 if ($LASTEXITCODE -ne 0) { throw "Connection Hub browser protocol conformance failed." }
 $html = Get-Content -Raw -LiteralPath (Join-Path $assets "index.html")
+if ($html.IndexOf('<link rel="icon" href="#">', [StringComparison]::Ordinal) -lt 0) {
+    throw "Browser page does not declare its local fragment favicon."
+}
 if ($html -match '<script[^>]+src="https?://' -or $html -match '<link[^>]+href="https?://') { throw "Browser page includes remote assets." }
 foreach ($token in @('surface_snapshot','surface_available','surface_removed','surface_state','command_receipt','surface.command','confidentiality')) {
     $combined = "$html`n$(Get-Content -Raw -LiteralPath (Join-Path $assets 'app.js'))`n$server"
@@ -469,13 +494,15 @@ $sources = @(Get-ChildItem -Path $sharedTransportRoot -Recurse -Filter *.java |
     (Join-Path $javaRoot "HubSurfaceRegistry.java"),
     (Join-Path $javaRoot "ProviderEffectReplyRouter.java"),
     (Join-Path $javaRoot "ConnectionHubOperatorController.java"),
+    (Join-Path $javaRoot "ConnectionHubRuntimeEvidenceProjection.java"),
     $test,
     $vectorTest,
     $vectorV2Test,
     $transportTest,
     $providerReplyTest,
     $operatorControllerTest,
-    $spatialCompositionTest
+    $spatialCompositionTest,
+    $runtimeEvidenceProjectionTest
 ) + @(Get-ChildItem -Path $sharedAdmissionRoot -Recurse -Filter *.java |
     ForEach-Object { $_.FullName }) + @($sharedAdmissionTest)
 $javac = (Get-Command javac -ErrorAction Stop).Source
@@ -494,6 +521,8 @@ if ($LASTEXITCODE -ne 0) { throw "Connection Hub provider-effect reply-router te
 if ($LASTEXITCODE -ne 0) { throw "Connection Hub operator controller tests failed." }
 & $java -cp "$out;$($jsonJar.FullName)" io.github.mesmerprism.rustymanifold.broker.ConnectionHubSpatialCompositionTest
 if ($LASTEXITCODE -ne 0) { throw "Connection Hub Spatial composition tests failed." }
+& $java -cp "$out;$($jsonJar.FullName)" io.github.mesmerprism.rustymanifold.broker.ConnectionHubRuntimeEvidenceProjectionTest
+if ($LASTEXITCODE -ne 0) { throw "Connection Hub runtime-evidence projection tests failed." }
 & $java -cp "$out;$($jsonJar.FullName)" io.github.mesmerprism.rustymanifold.broker.ConnectionHubCoreTest $vectors
 if ($LASTEXITCODE -ne 0) { throw "Connection Hub host tests failed." }
 & $java -cp "$out;$($jsonJar.FullName)" io.github.mesmerprism.rustyquest.broker_admission.ConnectionHubAdmissionSessionReducerTest

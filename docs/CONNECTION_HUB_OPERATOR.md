@@ -42,8 +42,9 @@ separate non-release E2E aid and is not a substitute for this published route.
 
 `PublishedBrowserE2E` is the corresponding published-product browser harness.
 It starts and reads the Hub only through that normal operator, preserves an
-already-running Hub, and never calls the debug operator. It accepts the pairing
-code only on stdin. The target package and surface are fixed to
+already-running Hub, and never calls the debug operator. It retrieves the
+one-use pairing code through the normal operator's fixed `pair-code` call. The
+target package and surface are fixed to
 `io.github.mesmerprism.rustyquest.spatial_camera_panel` and
 `surface.spatial_camera_panel.locked_playlist`; its only commands are Previous,
 Next, Pause, and Resume. Kiosk or another owner-approved launcher must already
@@ -77,7 +78,7 @@ capability, or owner-effect selection.
 | `LaunchSpatial`, `LaunchSample`, `StopSpatial`, `StopSample`, `WaitSurface`, `WaitSurfaceAbsent`, `StopProviders` | Drives and observes the fixed foreground-app surface lifecycle. It never expects both Activity-owned surfaces concurrently. |
 | `HostessStatus`, `HostessPair`, `HostessList`, `HostessWatch`, `HostessCommand`, `HostessReconnect`, `HostessRevoke` | Projects Hostess's existing closed Connection Hub controller CLI. Only the two checked-in surfaces and their registered commands are accepted. |
 | `Logs` | Captures at most 5,000 serial-scoped logcat lines and rejects `FATAL EXCEPTION`, `AndroidRuntime E`, or `UnsatisfiedLinkError`. |
-| `PublishedBrowserE2E` | Uses exact QFM, ADB, Playwright package, and browser pins plus a stdin-only pairing secret and hash-bound fixed bridge receipt. It exercises the published locked-playlist surface, Previous/Next/Pause/Resume, owner-confirmed receipts and revisions, revoke, cleanup, and zero console/page errors. |
+| `PublishedBrowserE2E` | Uses exact QFM, ADB, Playwright package, and browser pins plus the fixed shell-only published pairing-secret projection and hash-bound fixed bridge receipt. It exercises the published locked-playlist surface, Previous/Next/Pause/Resume, owner-confirmed receipts and revisions, revoke, cleanup, and zero console/page errors. |
 | `BrowserE2E` | Retired sample/debug browser entry point. It fails closed and directs callers to `PublishedBrowserE2E`. |
 | `Cleanup` | Applies the recorded `RetainCandidate` or `PreserveAndRestore` policy, restores target running/listener state, and verifies power/proximity/autosleep/forward invariants. |
 | `E2E` | Resumable checkpointed transaction covering pre-state, exact install, real FGS, pairing, Spatial command, >2-minute provider lifetime, process restart, sequential Spatial→Sample→Spatial surfaces, reconnect epoch, optional safe Wi-Fi rebind, diagnostics, revoke/closed-socket negative, optional required real-browser leg, and target-only restoration. |
@@ -114,13 +115,21 @@ checkout. Gradle must be the validated 8.13 distribution.
 Manual `HostessPair` supports Hostess's hidden prompt, `-PairingCodeStdin`, or
 `-PairingCodeFd`. There is no ordinary pairing-code argument.
 
-`E2E` is autonomous after ADB authorization. Its explicitly debug-only
-`pair-code` call is protected by `android.permission.DUMP` and an exact shell
-UID check. The returned one-use code bypasses generic receipt handling: it is
-decoded into bounded buffers, written character-by-character to Hostess stdin,
-and zeroed. It never enters argv, a temporary file, stdout, a receipt, logcat,
-or the evidence manifest. Hostess stores only the established session through
-Windows DPAPI `CurrentUser` and emits secret-redacted evidence.
+`PublishedBrowserE2E` and `E2E` are autonomous after ADB authorization. The
+normal operator and explicitly debug-only provider each expose the same exact
+`pair-code` method behind `android.permission.DUMP` and an exact shell UID
+check. The host helper selects only `published` or `debug`; callers cannot
+supply an authority, URI, method, component, or package. The returned one-use
+code bypasses generic receipt handling: it is decoded into bounded buffers,
+written character-by-character to Hostess or browser stdin, and zeroed. It
+never enters argv, a temporary file, wrapper stdout, a receipt, logcat, or the
+evidence manifest. Hostess stores only the established session through Windows
+DPAPI `CurrentUser` and emits secret-redacted evidence.
+
+The normal operator's `pair-code` method accepts no argument or extras and
+returns only `secret_b64`; unlike `pair`, it does not call the controller or
+construct an operator receipt. It fails closed unless the listener is running
+and the process-memory wearer code is exactly six ASCII digits.
 
 `ConnectionHubDebugControlProvider` is packaged only when
 `Build-ManifoldBrokerAndroid.ps1 -EnableConnectionHubDebugOperator` is
