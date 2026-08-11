@@ -93,6 +93,10 @@ class FakeElement {
     const listener = this.listeners.get("click");
     if (listener) await listener();
   }
+  async dispatch(type, event = {}) {
+    const listener = this.listeners.get(type);
+    if (listener) await listener(event);
+  }
   replaceChildren() {}
   append() {}
 }
@@ -178,7 +182,7 @@ const runPlainHttpPair = async () => {
     ["#disconnect-button", new FakeElement()],
     ["#pairing-code", new FakeElement()],
   ]);
-  elements.get("#pairing-code").value = "123456";
+  elements.get("#pairing-code").value = "12a 3456";
   let pairRequest = null;
   class FakeWebSocket {
     static OPEN = 1;
@@ -215,7 +219,24 @@ const runPlainHttpPair = async () => {
     clearTimeout: () => {},
   });
   vm.runInContext(appSource, browserContext, {filename: "app.js"});
-  await elements.get("#pair-button").click();
+  await elements.get("#pairing-code").dispatch("keydown", {
+    key: "Enter",
+    preventDefault: () => { throw new Error("invalid pairing input prevented default"); },
+  });
+  if (pairRequest !== null || !elements.get("#pair-button").disabled) {
+    throw new Error("invalid pairing code remained submit-capable");
+  }
+  await elements.get("#pairing-code").dispatch("input");
+  if (elements.get("#pairing-code").value !== "123456"
+      || elements.get("#pair-button").disabled) {
+    throw new Error("pairing input was not normalized into a submit-capable code");
+  }
+  let prevented = false;
+  await elements.get("#pairing-code").dispatch("keydown", {
+    key: "Enter",
+    preventDefault: () => { prevented = true; },
+  });
+  if (!prevented) throw new Error("valid pairing Enter key was not consumed");
   const seed = "2a".repeat(32);
   const expectedIdentity = nodeCrypto.createHash("sha256").update(seed, "utf8").digest("hex");
   if (!pairRequest || pairRequest.pairing_code !== "123456"
@@ -287,7 +308,7 @@ const runStoredSessionRecovery = () => {
   }
   sockets[0].close();
   if (sessionStore.getItem("rustyHubSession") !== null
-      || elements.get("#pair-button").disabled
+      || !elements.get("#pair-button").disabled
       || !elements.get("#disconnect-button").disabled
       || elements.get("#pair-status").textContent !== "Stored session unavailable. Pair again."
       || timeouts.size !== 0) {

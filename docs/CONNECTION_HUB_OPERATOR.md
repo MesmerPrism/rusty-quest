@@ -45,8 +45,9 @@ It starts and reads the Hub only through that normal operator, preserves an
 already-running Hub, and never calls the debug operator. It retrieves the
 one-use pairing code through the normal operator's fixed `pair-code` call. The
 browser clears that code after an accepted pair, disables re-pairing while the
-session is authenticated, and discards an unconfirmed stored session instead
-of entering an unbounded reconnect loop. The
+session is authenticated, accepts Enter only for a normalized six-digit code,
+and discards an unconfirmed stored session instead of entering an unbounded
+reconnect loop. The
 target package and surface are fixed to
 `io.github.mesmerprism.rustyquest.spatial_camera_panel` and
 `surface.spatial_camera_panel.locked_playlist`; its only commands are Previous,

@@ -24,8 +24,8 @@
         <h2 id="pairing-title">Pair this controller</h2>
         <label for="pairing-code">Code shown on the headset</label>
         <div class="pair-row">
-          <input id="pairing-code" inputmode="numeric" maxlength="6" autocomplete="one-time-code">
-          <button id="pair-button" type="button">Pair</button>
+          <input id="pairing-code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code">
+          <button id="pair-button" type="button" disabled>Pair</button>
         </div>
         <p id="pair-status" role="status">Not connected</p>
       </section>
