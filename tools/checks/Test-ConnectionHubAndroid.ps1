@@ -63,6 +63,13 @@ if ($activity -notmatch 'new ScrollView\(this\)' -or
     $activity -notmatch 'scroll\.addView\(layout\)') {
     throw 'Connection Hub management controls must remain inside a scrollable viewport.'
 }
+if ($activity -notmatch 'layout\.setOrientation\(LinearLayout\.HORIZONTAL\)' -or
+    $activity -notmatch 'weightedPane\(0\.9f\)' -or
+    $activity -notmatch 'weightedPane\(1\.1f\)' -or
+    $activity -notmatch 'roundedBackground\(COLOR_SURFACE, COLOR_BORDER, 14\)' -or
+    $activity -notmatch 'pairingCode\.setLetterSpacing\(0\.14f\)') {
+    throw 'Connection Hub wearer UI is not the locked landscape split-view console.'
+}
 $binder = Get-Content -Raw -LiteralPath (Join-Path $javaRoot "ConnectionHubAdmissionService.java")
 $stateStore = Get-Content -Raw -LiteralPath (Join-Path $javaRoot "AndroidConnectionHubStateStore.java")
 $server = Get-Content -Raw -LiteralPath (Join-Path $javaRoot "ConnectionHubHttpServer.java")
@@ -84,6 +91,10 @@ $spatialActivity = Get-Content -Raw -LiteralPath (Join-Path $spatial "app\src\ma
 $spatialCameraPanelManifest = Get-Content -Raw -LiteralPath (Join-Path $spatialCameraPanel "app\src\main\AndroidManifest.xml")
 $spatialCameraPanelClientSource = Get-Content -Raw -LiteralPath (Join-Path $spatialCameraPanel "app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\ConnectionHubSurfaceClient.kt")
 $releaseManifest = Get-Content -Raw -LiteralPath (Join-Path $RepoRoot "fixtures\broker-products\connection-hub-standalone.AndroidManifest.xml")
+if ($releaseManifest -notmatch 'android:theme="@android:style/Theme\.Material\.NoActionBar"' -or
+    $releaseManifest -notmatch 'android:name="\.ConnectionHubStartActivity"[\s\S]*android:screenOrientation="landscape"') {
+    throw 'Connection Hub product does not lock its dark landscape wearer presentation.'
+}
 $buildScript = Get-Content -Raw -LiteralPath (Join-Path $RepoRoot "tools\Build-ManifoldBrokerAndroid.ps1")
 $releaseScript = Get-Content -Raw -LiteralPath (Join-Path $RepoRoot "tools\Build-ConnectionHubLabsRelease.ps1")
 $spatialContractPath = Join-Path $spatial "contracts\connection-hub-media-surface.v1.json"
