@@ -129,8 +129,13 @@ $manifestTree = @(& $aapt2 dump xmltree $builtApk --file AndroidManifest.xml 2>&
 if ($LASTEXITCODE -ne 0) { throw "Pinned aapt2 could not inspect the release manifest." }
 $badgingText = $badging -join "`n"
 $manifestText = $manifestTree -join "`n"
+$dumpPermissionCount = [regex]::Matches($manifestText, 'android\.permission\.DUMP').Count
 if ($badgingText -notmatch "package: name='io\.github\.mesmerprism\.rustymanifold\.broker' versionCode='$VersionCode' versionName='$([regex]::Escape($VersionName))'" -or
-        $manifestText -match 'ConnectionHubDebugControlProvider|android\.permission\.DUMP') {
+        $manifestText -match 'ConnectionHubDebugControlProvider' -or
+        $dumpPermissionCount -ne 2 -or
+        $manifestText -notmatch 'ConnectionHubStartService[\s\S]{0,800}android\.permission\.DUMP' -or
+        $manifestText -notmatch 'ConnectionHubOperatorProvider[\s\S]{0,800}android\.permission\.DUMP' -or
+        $manifestText -notmatch 'screenOrientation[\s\S]{0,120}landscape') {
     throw "Independent APK inspection rejected the release package/version/debug boundary."
 }
 
