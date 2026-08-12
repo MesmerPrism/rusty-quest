@@ -224,9 +224,6 @@ $intentArguments = @(
     "--es",
     "surface_target_id",
     $SurfaceTargetId,
-    "--es",
-    "profile_title",
-    $ProfileTitle,
     "--ef",
     "private_layer_override",
     (Format-InvariantNumber ([Math]::Max(-1.0, [Math]::Min(8.0, $PrivateLayerOverride)))),
@@ -298,6 +295,9 @@ if ($Action -eq "profile-save-current" -and
 }
 if (-not [string]::IsNullOrWhiteSpace($VideoPackId)) {
     $intentArguments += @("--es", "video_pack_id", $VideoPackId.Trim())
+}
+if (-not [string]::IsNullOrWhiteSpace($ProfileTitle)) {
+    $intentArguments += @("--es", "profile_title", $ProfileTitle.Trim())
 }
 
 $launch = Invoke-AdbCommand -Name "run Spatial Camera Panel UI action $Action" -Arguments $intentArguments
