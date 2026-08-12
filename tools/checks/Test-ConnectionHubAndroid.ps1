@@ -227,11 +227,11 @@ if ($releaseScript.IndexOf('$aapt2 dump xmltree $builtApk --file AndroidManifest
     $releaseScript -match 'dump xmltree \$builtApk AndroidManifest\.xml') {
     throw "Connection Hub release inspection does not use the pinned aapt2 xmltree file contract."
 }
-if ($releaseScript -notmatch '\$dumpPermissionCount\s*=.*android\\\.permission\\\.DUMP' -or
+if ($releaseScript -notmatch 'android:permission\[\^\\r\\n\]\*android\\\.permission\\\.DUMP' -or
     $releaseScript -notmatch 'ConnectionHubStartService\[\\s\\S\]\{0,800\}android\\\.permission\\\.DUMP' -or
     $releaseScript -notmatch 'ConnectionHubOperatorProvider\[\\s\\S\]\{0,800\}android\\\.permission\\\.DUMP' -or
     $releaseScript -notmatch 'ConnectionHubDebugControlProvider' -or
-    $releaseScript -notmatch 'screenOrientation\[\\s\\S\]\{0,120\}landscape') {
+    $releaseScript -notmatch 'screenOrientation\\\(0x0101001e\\\)=0') {
     throw "Connection Hub release inspection does not enforce its exact published-shell and landscape boundary."
 }
 if ($releaseScript -notmatch 'keystore-signer-preflight\.der' -or
