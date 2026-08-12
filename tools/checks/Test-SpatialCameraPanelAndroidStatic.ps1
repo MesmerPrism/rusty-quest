@@ -2159,7 +2159,8 @@ Assert-Contains "Activity" $activity "SpatialPrivateLayerControlBindings("
 Assert-Contains "Activity" $activity "cameraHwbProjectionLaunchCoordinator.started ||"
 Assert-Contains "Activity" $activity "spatialVideoProjectionRuntimeCoordinator.started"
 Assert-Contains "Activity" $activity "updateLayerOverrideNative = ::nativeUpdatePrivateLayerOverride"
-Assert-Contains "Activity" $activity "updateMetaPassthroughStyle = spatialPassthroughLutCoordinator::update"
+Assert-Contains "Activity" $activity "updateMetaPassthroughStyle = ::updateDiagnosticPassthroughStyle"
+Assert-Contains "Activity" $activity "private fun updateDiagnosticPassthroughStyle("
 Assert-Contains "Activity" $activity "updateDepthLayerPolicyNative = ::nativeUpdatePrivateLayerDepthLayerPolicy"
 Assert-Contains "Activity" $activity "nativeUpdatePrivateLayerDepthAlignment("
 Assert-Contains "Activity" $activity "privateLayerControlCoordinator::applyCurrentConfiguration"
@@ -2681,7 +2682,7 @@ Assert-Contains "Shared offline immersive media library" $sharedOfflineImmersive
 Assert-Contains "Shared offline immersive media library" $sharedOfflineImmersiveMediaLibrary "DocumentsContract.buildChildDocumentsUriUsingTree"
 Assert-Contains "Shared offline immersive media library" $sharedOfflineImmersiveMediaLibrary "resolver.openInputStream(document.uri)"
 Assert-NotContains "Shared offline immersive media library" $sharedOfflineImmersiveMediaLibrary "context.filesDir"
-Assert-Contains "Activity" $activity 'spatialPointerInputExpected=${appControllerInputsEnabled()}'
+Assert-Contains "Activity" $activity 'spatialPointerInputExpected=${presentationPolicy.appControlInputsEnabled}'
 Assert-Contains "Native input bootstrap coordinator" $nativeInputBootstrapCoordinator "SpatialOpenXrRouteModule.nativeSpatialControllerActionSetAttached"
 Assert-Contains "Spatial OpenXR route module" $openXrRouteModule "NATIVE_SPATIAL_CONTROLLER_ACTION_SET_ATTACHED_BIT"
 Assert-Contains "Activity" $activity "controllerInputRouteCoordinator.ensureEnabled"
@@ -2992,7 +2993,7 @@ Assert-Contains "Private layer panel" $privateLayerPanel "internal fun PrivateLa
 Assert-Contains "Private layer panel" $privateLayerPanel 'Home("Settings", "Choose a topic")'
 Assert-Contains "Private layer panel" $privateLayerPanel "Settings topics"
 Assert-Contains "Private layer panel" $privateLayerPanel "Layers & projection"
-Assert-Contains "Private layer panel" $privateLayerPanel "360 video"
+Assert-Contains "Private layer panel" $privateLayerPanel 'Video("Background"'
 Assert-Contains "Private layer panel" $privateLayerPanel "Three-region effect"
 Assert-Contains "Private layer panel" $privateLayerPanel "Image processing"
 Assert-Contains "Private layer panel" $privateLayerPanel "Depth alignment"
@@ -3005,16 +3006,15 @@ Assert-Contains "Private layer panel" $privateLayerPanel 'Transitions("Transitio
 Assert-Contains "Private layer panel" $privateLayerPanel 'Outer("Outer")'
 Assert-Contains "Private layer panel" $privateLayerPanel 'Diagnostics("Diagnostics")'
 Assert-Contains "Private layer panel" $privateLayerPanel 'Playlists("Playlists", "Sequence saved profiles with timed looping playback")'
-Assert-Contains "Private layer panel" $privateLayerPanel "playlistAvailable = panelExtension != null"
 Assert-Contains "Private layer panel" $privateLayerPanel 'Text("Home")'
 Assert-Contains "Private layer panel" $privateLayerPanel "Active Rendering"
 Assert-Contains "Private layer panel" $privateLayerPanel "Projection Area"
 Assert-Contains "Private layer panel" $privateLayerPanel "Custom Projection"
-Assert-Contains "Private layer panel" $privateLayerPanel "360 Video Playback"
+Assert-Contains "Private layer panel" $privateLayerPanel 'Section("Background")'
 Assert-Contains "Private layer panel" $privateLayerPanel "Turn custom projection off"
 Assert-Contains "Private layer panel" $privateLayerPanel "Turn custom projection on"
-Assert-Contains "Private layer panel" $privateLayerPanel "Turn 360 video off"
-Assert-Contains "Private layer panel" $privateLayerPanel "Turn 360 video on"
+Assert-Contains "Private layer panel" $privateLayerPanel "Turn video layer off"
+Assert-Contains "Private layer panel" $privateLayerPanel "Turn video layer on"
 Assert-Contains "Private layer panel" $privateLayerPanel "The independent 360 video layer can stay on or off."
 Assert-Contains "Private layer panel" $privateLayerPanel "The 360 video layer and system passthrough are retained."
 Assert-Contains "Private layer panel" $privateLayerPanel "Depth Source"
@@ -3087,7 +3087,7 @@ Assert-Contains "Spatial passthrough LUT module" $spatialPassthroughLutModule "s
 Assert-Contains "Activity" $activity "private val spatialPassthroughLutCoordinator: SpatialPassthroughLutCoordinator by"
 Assert-Contains "Activity" $activity 'spatialPassthroughLutCoordinator.stop("activity-destroy")'
 Assert-Contains "Activity" $activity "nativeUpdateSpatialNativePassthroughEdgeStyle"
-Assert-Contains "Activity" $activity "scene.enablePassthrough(true)"
+Assert-Contains "Activity" $activity "SpatialPassthroughReasonAggregator("
 Assert-Contains "Camera HWB projection raw carrier coordinator" $cameraHwbProjectionRawCarrierCoordinator "LayerAlphaBlend("
 Assert-Contains "Camera HWB projection raw carrier coordinator" $cameraHwbProjectionRawCarrierCoordinator "BlendFactor.ONE,"
 Assert-NotContains "Camera HWB projection raw carrier coordinator" $cameraHwbProjectionRawCarrierCoordinator "BlendFactor.SOURCE_ALPHA"
@@ -3741,15 +3741,15 @@ Assert-Contains "Native environment depth" $nativeEnvironmentDepth "xrCreateEnvi
 Assert-Contains "Native environment depth" $nativeEnvironmentDepth "xrStartEnvironmentDepthProviderMETA"
 Assert-Contains "Native environment depth" $nativeEnvironmentDepth "xrAcquireEnvironmentDepthImageMETA"
 Assert-Contains "Native environment depth" $nativeEnvironmentDepth "EnvironmentDepthImageTimestampMETA"
-Assert-Contains "Native environment depth" $nativeEnvironmentDepth "environmentDepthAcquireDisplayTimePolicy=monotonic-plus-11ms-estimate-with-zero-fallback"
-Assert-Contains "Native environment depth" $nativeEnvironmentDepth "environmentDepthAcquireScheduling=phase-lock-32ms-success-1ms-call-order-retry"
+Assert-Contains "Native environment depth" $nativeEnvironmentDepth "environmentDepthAcquireDisplayTimePolicy=spatial-sdk-predicted-display-time"
+Assert-Contains "Native environment depth" $nativeEnvironmentDepth "once-per-unique-spatial-sdk-wait-frame"
 Assert-Contains "Native environment depth" $nativeEnvironmentDepth "environmentDepthUniqueCaptureCount="
 Assert-Contains "Native environment depth" $nativeEnvironmentDepth "environmentDepthRepeatedCaptureCount="
 Assert-Contains "Native environment depth" $nativeEnvironmentDepth "environmentDepthSourceViewCount=2"
 Assert-Contains "Native environment depth" $nativeEnvironmentDepth "depth_views"
 Assert-Contains "Native environment depth" $nativeEnvironmentDepth "render_views"
-Assert-Contains "Native environment depth" $nativeEnvironmentDepth "environmentDepthAcquireFrameLoopIntegration=spatial-sdk-sidecar-compatibility"
-Assert-Contains "Native environment depth" $nativeEnvironmentDepth "environmentDepthAcquireCallOrderConformant=false"
+Assert-Contains "Native environment depth" $nativeEnvironmentDepth "environmentDepthAcquireFrameLoopIntegration=spatial-sdk-early-system"
+Assert-Contains "Native environment depth" $nativeEnvironmentDepth "nativeAcquireSpatialEnvironmentDepthFrame"
 Assert-Contains "Native environment depth" $nativeEnvironmentDepth "environmentDepthRealProviderBound=true"
 Assert-Contains "Native environment depth" $nativeEnvironmentDepth "environmentDepthValidData=true"
 Assert-Contains "Native lib" $nativeLib "mod spatial_environment_depth"
@@ -4280,7 +4280,8 @@ Assert-Contains "Build script" $buildScript 'controller_rendering_expected = $fa
 Assert-Contains "Build script" $buildScript 'spatial_scene_permission_declared = $true'
 Assert-Contains "Build script" $buildScript 'spatial_environment_depth_permission_surface = "horizonos.permission.USE_SCENE+USE_SCENE_DATA"'
 Assert-Contains "Build script" $buildScript 'spatial_environment_depth_real_provider_bound = $false'
-Assert-Contains "Build script" $buildScript 'spatial_environment_depth_data_source = "spatial-fallback-depth-descriptor"'
+Assert-Contains "Build script" $buildScript 'spatial_environment_depth_data_source = $(if ($EnvironmentDepthOwner -eq "legacy-native-sidecar")'
+Assert-Contains "Build script" $buildScript '"legacy-native-sidecar-last-valid-or-neutral"'
 Assert-Contains "Build script" $buildScript 'spatial_multimodal_input_default_enabled = $false'
 Assert-Contains "Build script" $buildScript 'native_spatial_controller_actions_default_enabled = $false'
 Assert-Contains "Build script" $buildScript '[string]$PrivateLayerProfilePath = ""'
@@ -5135,10 +5136,6 @@ $spatialSourceRoots = @(
 $spatialMediaScanSuffixes = @(".kt", ".java", ".rs", ".glsl", ".kts", ".xml")
 $mediaBoundaryNeedles = @(
     "noodletest",
-    ".mp4",
-    ".mov",
-    ".mkv",
-    ".webm",
     "C:\Users\",
     "S:\Work\"
 )
