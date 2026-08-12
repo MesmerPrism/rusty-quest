@@ -1204,8 +1204,8 @@ DepthGpuEnqueueOutcome DepthGpuHandoffVulkan::enqueue(
         2);
   }
 
-  // Production never copies depth back to host memory. The real Morphovision
-  // fragment pass is the consumer; the isolated diagnostic readback stays off.
+  // Production never copies depth back to host memory. The downstream fragment
+  // pass is the consumer; the isolated diagnostic readback stays off.
   slot.diagnosticRequested = false;
   const VkImageLayout consumerFinalLayout = slot.diagnosticRequested
                                                  ? VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL
