@@ -1,6 +1,7 @@
 package io.github.mesmerprism.rustyquest.spatial_camera_panel
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -441,5 +442,24 @@ class PrivateLayerZoneCompositorTest {
     assertTrue(marker.contains("projectionZoneInnerApplication=legacy"))
     assertTrue(marker.contains("projectionZoneInnerColorSource=midpoint"))
     assertTrue(marker.contains("projectionZoneOuterTarget=readable-color"))
+  }
+
+  @Test
+  fun transparentSpatialUnderlayIsTheOnlyUnconditionalZeroReadableVideoConsumer() {
+    assertFalse(
+        PrivateLayerZoneCompositorModule.readableVideoConsumerRequired(
+            PrivateLayerZoneCompositorControls.spatialVideoUnderlayBlendTest
+        )
+    )
+    assertTrue(
+        PrivateLayerZoneCompositorModule.readableVideoConsumerRequired(
+            PrivateLayerZoneCompositorControls.organicBuffer
+        )
+    )
+    assertTrue(
+        PrivateLayerZoneCompositorModule.readableVideoConsumerRequired(
+            PrivateLayerZoneCompositorControls.fullStretch
+        )
+    )
   }
 }

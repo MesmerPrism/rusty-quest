@@ -248,24 +248,19 @@ class SpatialCameraControlProfileTest {
   }
 
   @Test
-  fun independentOuterRegionAcceptsIncomingColorForSpatialVideoUnderlay() {
-    val profile = validProfile()
-    val zone = profile.getJSONObject("quest_controls").getJSONObject("zone_compositor")
-    zone.put("region_contract", "v2")
+  fun unsampledOuterVideoRouteRejectsUnsupportedIncomingColor() {
+    val invalid = validProfile()
+    val zone = invalid.getJSONObject("quest_controls").getJSONObject("zone_compositor")
     zone.put("outer_target_mode", "transparent-spatial-video")
     zone
         .getJSONObject("outer")
         .getJSONObject("channel_dynamics")
         .put("source_choice", "incoming")
-    val parsed = SpatialCameraControlProfileContract.parse(profile.toString().toByteArray())
-    assertEquals(
-        PrivateLayerZoneCompositorControls.blendSourceIncoming,
-        parsed.zoneCompositor.outerChannelDynamics.sourceChoice,
-    )
-    assertEquals(
-        PrivateLayerZoneCompositorControls.outerTargetTransparentSpatialVideo,
-        parsed.zoneCompositor.outerTargetMode,
-    )
+    val error =
+        assertThrows(IllegalArgumentException::class.java) {
+          SpatialCameraControlProfileContract.parse(invalid.toString().toByteArray())
+        }
+    assertEquals("unsupported_transparent_spatial_video_blend", error.message)
   }
 
   private fun validProfile(): JSONObject {

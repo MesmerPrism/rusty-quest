@@ -9,15 +9,19 @@ import java.io.IOException
 internal data class SharedOfflineImmersiveMediaLibrarySnapshot(
     val configured: Boolean,
     val accessible: Boolean,
+    val writable: Boolean,
+    val plainVideoTaxonomyReady: Boolean,
     val folderLabel: String,
     val packCount: Int,
+    val plainVideoCount: Int,
+    val rejectedPlainVideoCount: Int,
     val status: String,
 )
 
 /**
- * Persisted, read-only access to an encrypted media library chosen with Android's Storage Access
- * Framework. Ciphertext remains outside the app sandbox and is decrypted only by the existing
- * authenticated chunk reader.
+ * Persisted access to a media library chosen with Android's Storage Access Framework. Media reads
+ * remain direct and read-only. An optional write grant is used only to create the fixed plain-video
+ * directory taxonomy; the app never writes or copies video bytes.
  */
 internal object SharedOfflineImmersiveMediaLibrary {
   const val EXPECTED_FOLDER_NAME = "RustySpatialMedia"
@@ -27,12 +31,23 @@ internal object SharedOfflineImmersiveMediaLibrary {
   private const val MAX_DISCOVERED_PACKS = 32
   private val packIdPattern = Regex("^[a-z0-9][a-z0-9._-]{0,95}$")
 
-  fun adoptTreeUri(context: Context, treeUri: Uri): SharedOfflineImmersiveMediaLibrarySnapshot {
+  fun adoptTreeUri(
+      context: Context,
+      treeUri: Uri,
+      returnedGrantFlags: Int,
+  ): SharedOfflineImmersiveMediaLibrarySnapshot {
+    val takeFlags =
+        Intent.FLAG_GRANT_READ_URI_PERMISSION or
+            (returnedGrantFlags and Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
     context.contentResolver.takePersistableUriPermission(
         treeUri,
-        Intent.FLAG_GRANT_READ_URI_PERMISSION,
+        takeFlags,
     )
     preferences(context).edit().putString(TREE_URI_KEY, treeUri.toString()).apply()
+    if ((takeFlags and Intent.FLAG_GRANT_WRITE_URI_PERMISSION) != 0) {
+      runCatching { SharedDocumentTree(context, treeUri).ensurePlainVideoTaxonomy() }
+    }
+    SharedPlainImmersiveMediaLibrary.invalidate()
     return snapshot(context)
   }
 
@@ -40,13 +55,18 @@ internal object SharedOfflineImmersiveMediaLibrary {
     val uri = persistedTreeUri(context)
     if (uri != null) {
       runCatching {
-        context.contentResolver.releasePersistableUriPermission(
-            uri,
-            Intent.FLAG_GRANT_READ_URI_PERMISSION,
-        )
+        val flags =
+            Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                if (hasPersistedWritePermission(context, uri)) {
+                  Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+                } else {
+                  0
+                }
+        context.contentResolver.releasePersistableUriPermission(uri, flags)
       }
     }
     preferences(context).edit().remove(TREE_URI_KEY).apply()
+    SharedPlainImmersiveMediaLibrary.invalidate()
   }
 
   fun persistedTreeUri(context: Context): Uri? =
@@ -60,27 +80,46 @@ internal object SharedOfflineImmersiveMediaLibrary {
         ?: return SharedOfflineImmersiveMediaLibrarySnapshot(
             configured = false,
             accessible = false,
+            writable = false,
+            plainVideoTaxonomyReady = false,
             folderLabel = EXPECTED_FOLDER_NAME,
             packCount = 0,
+            plainVideoCount = 0,
+            rejectedPlainVideoCount = 0,
             status = "folder-not-selected",
         )
     return runCatching {
           val tree = SharedDocumentTree(context, treeUri)
           val packIds = tree.packIds()
+          val plain = SharedPlainImmersiveMediaLibrary.discover(context)
+          val writable = hasPersistedWritePermission(context, treeUri)
           SharedOfflineImmersiveMediaLibrarySnapshot(
               configured = true,
               accessible = true,
+              writable = writable,
+              plainVideoTaxonomyReady = tree.plainVideoTaxonomyReady(),
               folderLabel = tree.rootName.ifBlank { EXPECTED_FOLDER_NAME },
               packCount = packIds.size,
-              status = if (packIds.isEmpty()) "folder-readable-no-packs" else "ready",
+              plainVideoCount = plain.items.size,
+              rejectedPlainVideoCount = plain.rejectedCount,
+              status =
+                  if (packIds.isEmpty() && plain.items.isEmpty()) {
+                    "folder-readable-no-media"
+                  } else {
+                    "ready"
+                  },
           )
         }
         .getOrElse {
           SharedOfflineImmersiveMediaLibrarySnapshot(
               configured = true,
               accessible = false,
+              writable = false,
+              plainVideoTaxonomyReady = false,
               folderLabel = EXPECTED_FOLDER_NAME,
               packCount = 0,
+              plainVideoCount = 0,
+              rejectedPlainVideoCount = 0,
               status = "persisted-folder-unavailable",
           )
         }
@@ -120,6 +159,11 @@ internal object SharedOfflineImmersiveMediaLibrary {
   private fun preferences(context: Context) =
       context.getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)
 
+  private fun hasPersistedWritePermission(context: Context, treeUri: Uri): Boolean =
+      context.contentResolver.persistedUriPermissions.any { permission ->
+        permission.uri == treeUri && permission.isWritePermission
+      }
+
   private class SharedDocumentTree(
       private val context: Context,
       private val treeUri: Uri,
@@ -157,6 +201,32 @@ internal object SharedOfflineImmersiveMediaLibrary {
           .toList()
     }
 
+    fun plainVideoTaxonomyReady(): Boolean {
+      val plainRoot = plainRoot() ?: return false
+      return PlainImmersiveMediaPolicy.SHAPE_DIRECTORY_NAMES.all { shapeName ->
+        val shape = child(plainRoot, shapeName) ?: return@all false
+        shape.mimeType == DocumentsContract.Document.MIME_TYPE_DIR &&
+            PlainImmersiveMediaPolicy.STEREO_DIRECTORY_NAMES.all { stereoName ->
+              child(shape, stereoName)?.mimeType == DocumentsContract.Document.MIME_TYPE_DIR
+            }
+      }
+    }
+
+    fun ensurePlainVideoTaxonomy() {
+      val plainRoot =
+          if (root.name == PlainImmersiveMediaPolicy.ROOT_DIRECTORY_NAME) {
+            root
+          } else {
+            ensureDirectory(root, PlainImmersiveMediaPolicy.ROOT_DIRECTORY_NAME)
+          }
+      for (shapeName in PlainImmersiveMediaPolicy.SHAPE_DIRECTORY_NAMES) {
+        val shape = ensureDirectory(plainRoot, shapeName)
+        for (stereoName in PlainImmersiveMediaPolicy.STEREO_DIRECTORY_NAMES) {
+          ensureDirectory(shape, stereoName)
+        }
+      }
+    }
+
     fun packSource(requestedPackId: String): OfflineImmersiveMediaPackSource? {
       val packId = requestedPackId.trim().lowercase()
       if (!packIdPattern.matches(packId)) return null
@@ -172,6 +242,36 @@ internal object SharedOfflineImmersiveMediaLibrary {
       if (root.name == PACKS_DIRECTORY_NAME) return root
       return child(root, PACKS_DIRECTORY_NAME)
           ?.takeIf { it.mimeType == DocumentsContract.Document.MIME_TYPE_DIR }
+    }
+
+    private fun plainRoot(): SharedDocument? {
+      if (root.name == PlainImmersiveMediaPolicy.ROOT_DIRECTORY_NAME) return root
+      return child(root, PlainImmersiveMediaPolicy.ROOT_DIRECTORY_NAME)
+          ?.takeIf { it.mimeType == DocumentsContract.Document.MIME_TYPE_DIR }
+    }
+
+    private fun ensureDirectory(parent: SharedDocument, name: String): SharedDocument {
+      child(parent, name)?.let { existing ->
+        if (existing.mimeType != DocumentsContract.Document.MIME_TYPE_DIR) {
+          throw IOException("plain-video-taxonomy-name-conflict")
+        }
+        return existing
+      }
+      val createdUri =
+          DocumentsContract.createDocument(
+              resolver,
+              parent.uri,
+              DocumentsContract.Document.MIME_TYPE_DIR,
+              name,
+          ) ?: throw IOException("plain-video-taxonomy-create-failed")
+      val documentId = DocumentsContract.getDocumentId(createdUri)
+      return SharedDocument(
+          documentId = documentId,
+          uri = DocumentsContract.buildDocumentUriUsingTree(treeUri, documentId),
+          name = name,
+          mimeType = DocumentsContract.Document.MIME_TYPE_DIR,
+          sizeBytes = 0L,
+      )
     }
 
     private fun child(parent: SharedDocument, name: String): SharedDocument? =

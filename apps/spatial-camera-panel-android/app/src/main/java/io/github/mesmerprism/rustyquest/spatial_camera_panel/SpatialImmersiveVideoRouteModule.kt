@@ -46,12 +46,25 @@ internal data class SpatialImmersiveVideoConfig(
     val loop: Boolean,
     val radiusMeters: Float,
     val offlinePack: OfflineImmersiveMediaPack? = null,
+    val plainMedia: SharedPlainImmersiveMediaItem? = null,
 ) {
   val isGrantedContentUri: Boolean
     get() = path.startsWith("content://")
 
   val isEncryptedOfflinePack: Boolean
     get() = offlinePack != null
+
+  val isSharedPlainVideo: Boolean
+    get() = plainMedia != null
+
+  val catalogLabel: String
+    get() =
+        plainMedia?.catalogLabel
+            ?: PlainImmersiveMediaPolicy.mediaLabel(
+                "encrypted-offline-pack",
+                shape,
+                stereoLayout,
+            )
 
   val perEyeAspectRatio: Float
     get() =
@@ -78,16 +91,22 @@ internal data class SpatialImmersiveVideoConfig(
           "directToSurface=true readableSurface=false zIndex=$zIndex " +
           "autoplay=$autoplay loop=$loop " +
           "offlineEncryptedPack=$isEncryptedOfflinePack embeddedKeyPrototype=$isEncryptedOfflinePack " +
+          "sharedPlainVideo=$isSharedPlainVideo mediaId=${plainMedia?.mediaId ?: "none"} " +
+          "mediaClassification=container-metadata-plus-sampled-frame-and-folder-declaration " +
           "encryptedMediaPackagedInApk=${offlinePack?.packagedInApk == true} " +
           "encryptedMediaStorage=${offlinePack?.storageKind ?: "none"} " +
           "sharedEncryptedMedia=${offlinePack?.storageKind == "shared-document-tree"} " +
+          "plainMediaStorage=${if (isSharedPlainVideo) "shared-document-tree" else "none"} " +
           "plaintextFileWritten=false"
 }
 
 internal sealed class SpatialImmersiveVideoRouteResolution {
   data object Disabled : SpatialImmersiveVideoRouteResolution()
 
-  data class Ready(val config: SpatialImmersiveVideoConfig) :
+  data class Ready(
+      val config: SpatialImmersiveVideoConfig,
+      val playbackInitiallyEnabled: Boolean = true,
+  ) :
       SpatialImmersiveVideoRouteResolution()
 
   data class Rejected(val reason: String) : SpatialImmersiveVideoRouteResolution()
@@ -244,6 +263,67 @@ internal object SpatialImmersiveVideoRouteModule {
     )
   }
 
+  fun resolvePlainMedia(
+      item: SharedPlainImmersiveMediaItem,
+      autoplay: String?,
+      loop: String?,
+      radiusMeters: String?,
+  ): SpatialImmersiveVideoRouteResolution {
+    val autoplayValue =
+        parseBooleanOrDefault(autoplay, true)
+            ?: return SpatialImmersiveVideoRouteResolution.Rejected("autoplay-not-boolean")
+    val loopValue =
+        parseBooleanOrDefault(loop, true)
+            ?: return SpatialImmersiveVideoRouteResolution.Rejected("loop-not-boolean")
+    val radiusValue =
+        if (radiusMeters.isNullOrBlank()) {
+          DEFAULT_RADIUS_METERS
+        } else {
+          radiusMeters.toFloatOrNull()
+              ?: return SpatialImmersiveVideoRouteResolution.Rejected("radius-invalid")
+        }
+    if (!radiusValue.isFinite() || radiusValue !in 1.0f..100.0f) {
+      return SpatialImmersiveVideoRouteResolution.Rejected("radius-out-of-range")
+    }
+    return SpatialImmersiveVideoRouteResolution.Ready(
+        SpatialImmersiveVideoConfig(
+            path = item.contentUri,
+            shape = item.shape,
+            stereoLayout = item.stereoLayout,
+            widthPx = item.widthPx,
+            heightPx = item.heightPx,
+            autoplay = autoplayValue,
+            loop = loopValue,
+            radiusMeters = radiusValue,
+            plainMedia = item,
+        )
+    )
+  }
+
+  /**
+   * Seeds the selectable media catalog without changing the launch-time playback default. This is
+   * used by key-free builds whose only media comes from the persisted shared folder.
+   */
+  fun resolveAvailablePlainMedia(
+      item: SharedPlainImmersiveMediaItem,
+      autoplay: String?,
+      loop: String?,
+      radiusMeters: String?,
+  ): SpatialImmersiveVideoRouteResolution =
+      when (
+          val resolution =
+              resolvePlainMedia(
+                  item = item,
+                  autoplay = autoplay,
+                  loop = loop,
+                  radiusMeters = radiusMeters,
+              )
+      ) {
+        is SpatialImmersiveVideoRouteResolution.Ready ->
+            resolution.copy(playbackInitiallyEnabled = false)
+        else -> resolution
+      }
+
   fun routePolicyMarker(resolution: SpatialImmersiveVideoRouteResolution): String =
       when (resolution) {
         SpatialImmersiveVideoRouteResolution.Disabled ->
@@ -252,7 +332,9 @@ internal object SpatialImmersiveVideoRouteModule {
             "channel=spatial-immersive-video status=route-rejected explicitOptIn=true " +
                 "reason=${activityMarkerToken(resolution.reason)} failClosed=true"
         is SpatialImmersiveVideoRouteResolution.Ready ->
-            "channel=spatial-immersive-video status=route-ready explicitOptIn=true " +
+            "channel=spatial-immersive-video status=route-ready " +
+                "explicitOptIn=${resolution.playbackInitiallyEnabled} " +
+                "initialPlaybackEnabled=${resolution.playbackInitiallyEnabled} " +
                 resolution.config.markerFields()
       }
 

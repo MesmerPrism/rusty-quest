@@ -16,6 +16,7 @@ internal object PrivateLayerControlHelp {
       listOf(
           "Custom projection",
           "Rendering layer",
+          "Background",
           "Shared media folder",
           "Video playback",
           "Video presentation",
@@ -55,12 +56,14 @@ internal object PrivateLayerControlHelp {
               "Shows or hides the head-mounted custom projection without disabling the separate immersive-video carrier."
           normalized == "rendering layer" ->
               "Chooses which intermediate or final render target is shown on the custom projection."
+          normalized == "background" ->
+              "Black keeps an opaque backing behind the video layer; Passthrough reveals the system camera layer; LUT passthrough applies the existing animated Spatial SDK color LUT."
           normalized == "shared media folder" ->
-              "Grants persistent read access to an external RustySpatialMedia folder. Encrypted chunks stay outside the app, so thin APK updates do not duplicate the video library."
+              "Grants persistent access to an external RustySpatialMedia folder. If the provider permits it, the app creates only the fixed plain-video folder taxonomy; it never writes video bytes. Encrypted packs stay under offline-media-packs. Plain files use plain-videos/<shape>/<stereo>; the app checks container metadata and a sampled frame before listing them. Nothing is copied into the APK."
           normalized == "video playback" ->
               "Starts or pauses the current immersive video without changing its selected item or projection settings."
           normalized == "video presentation" ->
-              "World anchored keeps the immersive carrier fixed in space; head-fixed border keeps it attached to the viewer."
+              "World anchored keeps the immersive carrier fixed in space; head-fixed border keeps it attached to the viewer. Packed top-bottom video remains split into top-left-eye and bottom-right-eye views in either mode."
           normalized == "active video" ->
               "Moves to the previous or next catalog item. Stored tuning profiles intentionally do not change this selection."
           normalized == "projection scale" ->

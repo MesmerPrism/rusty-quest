@@ -36,7 +36,7 @@ class ProjectionSurfaceTilingTest {
     assertEquals("continuous", ProjectionSurfaceTilingControls.topologyToken(value.topology))
     assertEquals(0.45f, value.gapNormalized)
     assertEquals(1.0f, value.depthFlexibility)
-    assertEquals(ProjectionSurfaceTilingControls.scopeCoreAndStretch, value.scope)
+    assertEquals(ProjectionSurfaceTilingControls.scopeInnerAndBuffer, value.scope)
     assertEquals("inner-and-buffer", ProjectionSurfaceTilingControls.scopeToken(value.scope))
   }
 

@@ -27,6 +27,9 @@ use crate::{
     android_hardware_buffer::{AndroidHardwareBufferDescriptor, AndroidHardwareBufferHandle},
     marker_token,
     spatial_video_projection_marker::log_spatial_video_projection_marker as log_marker,
+    spatial_video_projection_settings::{
+        should_drop_spatial_video_projection_timestamp, should_log_spatial_video_projection_frame,
+    },
 };
 
 static SPATIAL_VIDEO_PROJECTION_STREAM: Mutex<Option<NativeSpatialVideoProjectionStream>> =
@@ -258,10 +261,11 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1pa
         5 => "format",
         6 => "frame",
         7 => "loop-restarted",
+        8 => "decoder-handoff-blocked",
         _ => "unknown",
     };
     log_marker(format!(
-        "status={} stream=stereo_video sourceAuthority=android-mediacodec-surface-decoder resultCode={} width={} height={} maxImages={} fpsCap={} looping={} mediaCodecStarted={} decodedFrameEvent={} nativeImageReader=true javaHardwareBufferBridge=false rawCamera=false passthroughTexture=false environmentDepth=false geometryWitness=false highRateJsonPayload=false",
+        "status={} stream=stereo_video sourceAuthority=android-mediacodec-surface-decoder resultCode={} width={} height={} maxImages={} fpsCap={} looping={} mediaCodecStarted={} decodedFrameEvent={} decoderHandoffBlocked={} decoderOverlapPrevented={} nativeImageReader=true javaHardwareBufferBridge=false rawCamera=false passthroughTexture=false environmentDepth=false geometryWitness=false highRateJsonPayload=false",
         event_name,
         result_code,
         width,
@@ -270,7 +274,9 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1pa
         fps_cap,
         looping != 0,
         event_code == 2,
-        event_code == 6
+        event_code == 6,
+        event_code == 8,
+        event_code == 8
     ));
 }
 
@@ -483,33 +489,35 @@ unsafe extern "C" fn spatial_video_projection_on_image_available(
     if let Ok(mut latest) = SPATIAL_VIDEO_PROJECTION_LATEST_FRAME.lock() {
         *latest = Some(frame.clone());
     }
-    log_marker(format!(
-        "status=decoded-frame-acquired stream=stereo_video frameIndex={} importSequence={} timestampNs={} descriptorWidth={} descriptorHeight={} descriptorLayers={} descriptorFormat={} descriptorUsage={} descriptorStride={} hardwareBufferId={} hardwareBufferIdStatus={} configuredWidth={} configuredHeight={} maxImages={} fpsCap={} droppedFrames={} bufferRemovedCount={} packedStereo={} stereoPairId={} leftSourceFrame={} rightSourceFrame={} leftSensorTimestampNs={} rightSensorTimestampNs={} pairDeltaNs={} imageAcquireApi=AImageReader_acquireLatestImage imageReleaseApi=AImage_delete descriptorShape=android-hardware-buffer-private sourceAuthority=android-mediacodec-surface-decoder rawCamera=false passthroughTexture=false environmentDepth=false geometryWitness=false highRateJsonPayload=false nativeImageReader=true nativeImageReaderCount=1 javaHardwareBufferBridge=false cpuPixelCopy=false ahbHandleRetained=true latestFramePublished=true videoProjectionGpuImportReady=false videoProjectionGpuAdoptionPath=android-mediacodec-surface-aimage-reader-ahardwarebuffer-to-vulkan-sampled-image",
-        frame_index,
-        import_sequence,
-        timestamp_ns,
-        descriptor.width,
-        descriptor.height,
-        descriptor.layers,
-        descriptor.format,
-        descriptor.usage,
-        descriptor.stride,
-        descriptor.hardware_buffer_id,
-        descriptor.hardware_buffer_id_status,
-        reader_context.width,
-        reader_context.height,
-        reader_context.max_images,
-        reader_context.fps_cap,
-        dropped,
-        buffer_removed_count
-        ,packed_pair.is_some()
-        ,packed_pair.map(|pair| pair.pair_id).unwrap_or(0)
-        ,packed_pair.map(|pair| pair.left_source_frame).unwrap_or(0)
-        ,packed_pair.map(|pair| pair.right_source_frame).unwrap_or(0)
-        ,packed_pair.map(|pair| pair.left_sensor_timestamp_ns).unwrap_or(0)
-        ,packed_pair.map(|pair| pair.right_sensor_timestamp_ns).unwrap_or(0)
-        ,packed_pair.map(|pair| pair.pair_delta_ns).unwrap_or(0)
-    ));
+    if should_log_spatial_video_projection_frame(frame_index) {
+        log_marker(format!(
+            "status=decoded-frame-acquired stream=stereo_video frameIndex={} importSequence={} timestampNs={} descriptorWidth={} descriptorHeight={} descriptorLayers={} descriptorFormat={} descriptorUsage={} descriptorStride={} hardwareBufferId={} hardwareBufferIdStatus={} configuredWidth={} configuredHeight={} maxImages={} fpsCap={} droppedFrames={} bufferRemovedCount={} packedStereo={} stereoPairId={} leftSourceFrame={} rightSourceFrame={} leftSensorTimestampNs={} rightSensorTimestampNs={} pairDeltaNs={} receiptSampling=first-and-every-60 imageAcquireApi=AImageReader_acquireLatestImage imageReleaseApi=AImage_delete descriptorShape=android-hardware-buffer-private sourceAuthority=android-mediacodec-surface-decoder rawCamera=false passthroughTexture=false environmentDepth=false geometryWitness=false highRateJsonPayload=false nativeImageReader=true nativeImageReaderCount=1 javaHardwareBufferBridge=false cpuPixelCopy=false ahbHandleRetained=true latestFramePublished=true videoProjectionGpuImportReady=false videoProjectionGpuAdoptionPath=android-mediacodec-surface-aimage-reader-ahardwarebuffer-to-vulkan-sampled-image",
+            frame_index,
+            import_sequence,
+            timestamp_ns,
+            descriptor.width,
+            descriptor.height,
+            descriptor.layers,
+            descriptor.format,
+            descriptor.usage,
+            descriptor.stride,
+            descriptor.hardware_buffer_id,
+            descriptor.hardware_buffer_id_status,
+            reader_context.width,
+            reader_context.height,
+            reader_context.max_images,
+            reader_context.fps_cap,
+            dropped,
+            buffer_removed_count,
+            packed_pair.is_some(),
+            packed_pair.map(|pair| pair.pair_id).unwrap_or(0),
+            packed_pair.map(|pair| pair.left_source_frame).unwrap_or(0),
+            packed_pair.map(|pair| pair.right_source_frame).unwrap_or(0),
+            packed_pair.map(|pair| pair.left_sensor_timestamp_ns).unwrap_or(0),
+            packed_pair.map(|pair| pair.right_sensor_timestamp_ns).unwrap_or(0),
+            packed_pair.map(|pair| pair.pair_delta_ns).unwrap_or(0)
+        ));
+    }
     AImage_delete(image);
 }
 
@@ -549,11 +557,14 @@ fn should_drop_for_fps_cap(
     if timestamp_ns <= 0 {
         return false;
     }
-    let minimum_gap_ns = 1_000_000_000_i64 / i64::from(reader_context.fps_cap.max(1));
     let previous = reader_context
         .last_accepted_timestamp_ns
         .load(Ordering::Relaxed);
-    if previous > 0 && timestamp_ns.saturating_sub(previous) < minimum_gap_ns {
+    if should_drop_spatial_video_projection_timestamp(
+        previous,
+        timestamp_ns,
+        reader_context.fps_cap,
+    ) {
         return true;
     }
     reader_context

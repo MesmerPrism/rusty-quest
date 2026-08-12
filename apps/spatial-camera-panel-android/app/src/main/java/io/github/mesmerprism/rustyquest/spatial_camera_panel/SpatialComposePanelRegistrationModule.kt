@@ -28,6 +28,10 @@ internal data class SpatialPrivateLayerPanelRegistrationBindings(
     val projectionInnerAlpha: ProjectionInnerAlpha,
     val videoSession: () -> SpatialImmersiveVideoSessionSnapshot,
     val sharedMediaLibrary: () -> SharedOfflineImmersiveMediaLibrarySnapshot,
+    val environmentDepthUnavailableWarning: () -> String?,
+    val environmentDepthRecoveryPolicy: () -> SpatialEnvironmentDepthRecoveryPolicy,
+    val updateEnvironmentDepthRecoveryPolicy:
+        (SpatialEnvironmentDepthRecoveryPolicy, String) -> SpatialEnvironmentDepthRecoveryPolicy,
     val setLayerOverride: (Float, String) -> Float,
     val setProjectionPanelEnabled: (Boolean, String) -> Boolean,
     val setVideoPlaybackEnabled:
@@ -50,13 +54,14 @@ internal data class SpatialPrivateLayerPanelRegistrationBindings(
     val selectNextVideo: () -> SpatialImmersiveVideoSessionSnapshot,
     val setVideoPresentationMode:
         (SpatialImmersiveVideoPresentationMode) -> SpatialImmersiveVideoSessionSnapshot,
+    val setBackgroundMode: (SpatialBackgroundMode) -> SpatialImmersiveVideoSessionSnapshot,
     val chooseSharedMediaFolder: () -> Unit,
     val profileLibrary: () -> SpatialCameraPanelProfileLibrarySnapshot,
-    val panelExtension: SpatialPrivatePanelExtension?,
     val saveStoredProfile: (String) -> SpatialCameraPanelProfileOperationResult,
     val loadStoredProfile: (String) -> SpatialCameraPanelProfileOperationResult,
     val deleteStoredProfile: (String) -> SpatialCameraPanelProfileOperationResult,
     val importStagedProfiles: () -> SpatialCameraPanelProfileOperationResult,
+    val panelExtension: SpatialPrivatePanelExtension?,
     val closePanel: () -> Unit,
     val settings: (Entity) -> PanelSettings,
     val onPanelSetup: (PanelSceneObject) -> Unit,
@@ -106,6 +111,11 @@ internal object SpatialComposePanelRegistrationModule {
                       projectionInnerAlpha = bindings.projectionInnerAlpha,
                       videoSession = bindings.videoSession,
                       sharedMediaLibrary = bindings.sharedMediaLibrary,
+                      environmentDepthUnavailableWarning =
+                          bindings.environmentDepthUnavailableWarning,
+                      environmentDepthRecoveryPolicy = bindings.environmentDepthRecoveryPolicy,
+                      updateEnvironmentDepthRecoveryPolicy =
+                          bindings.updateEnvironmentDepthRecoveryPolicy,
                       setLayerOverride = bindings.setLayerOverride,
                       setProjectionPanelEnabled = bindings.setProjectionPanelEnabled,
                       setVideoPlaybackEnabled = bindings.setVideoPlaybackEnabled,
@@ -121,13 +131,14 @@ internal object SpatialComposePanelRegistrationModule {
                       selectPreviousVideo = bindings.selectPreviousVideo,
                       selectNextVideo = bindings.selectNextVideo,
                       setVideoPresentationMode = bindings.setVideoPresentationMode,
+                      setBackgroundMode = bindings.setBackgroundMode,
                       chooseSharedMediaFolder = bindings.chooseSharedMediaFolder,
                       profileLibrary = bindings.profileLibrary,
-                      panelExtension = bindings.panelExtension,
                       saveStoredProfile = bindings.saveStoredProfile,
                       loadStoredProfile = bindings.loadStoredProfile,
                       deleteStoredProfile = bindings.deleteStoredProfile,
                       importStagedProfiles = bindings.importStagedProfiles,
+                      panelExtension = bindings.panelExtension,
                       closePanel = bindings.closePanel,
                   )
                 }

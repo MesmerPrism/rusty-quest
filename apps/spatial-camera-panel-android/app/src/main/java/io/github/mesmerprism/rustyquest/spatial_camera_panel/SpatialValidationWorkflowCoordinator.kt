@@ -16,8 +16,13 @@ internal data class SpatialValidationWorkflowBindings(
     val setProjectionPanelEnabled: (Boolean, String) -> Unit,
     val changeImmersiveVideo: (String, String?, String) -> Unit,
     val recenterImmersiveVideo: (String, String) -> Unit,
+    val setImmersiveVideoPlaybackEnabled: (Boolean, String) -> Unit,
     val setImmersiveVideoPresentationMode:
         (SpatialImmersiveVideoPresentationMode, String) -> Unit,
+    val setBackgroundMode: (SpatialBackgroundMode, String) -> Unit,
+    val chooseSharedMediaFolder: () -> Unit,
+    val updateEnvironmentDepthRecoveryPolicy:
+        (SpatialEnvironmentDepthRecoveryPolicy, String) -> Unit,
     val currentParticleControls: () -> SurfaceParticleControlState,
     val updateSurfaceParticleControls: (SurfaceParticleControlState, String) -> Unit,
     val applyRemoteParticleLayerTargetDistance: (Intent, String) -> Unit,
@@ -154,9 +159,30 @@ internal class SpatialValidationWorkflowCoordinator(
                 source,
                 "remoteUiAction=video-recenter controllerInputRequired=false",
             )
+        "video-playback-off" ->
+            bindings.setImmersiveVideoPlaybackEnabled(false, source)
+        "video-playback-on" ->
+            bindings.setImmersiveVideoPlaybackEnabled(true, source)
         "video-world-anchored" ->
             bindings.setImmersiveVideoPresentationMode(
                 SpatialImmersiveVideoPresentationMode.WorldAnchored,
+                source,
+            )
+        "background-black" ->
+            bindings.setBackgroundMode(SpatialBackgroundMode.Black, source)
+        "background-passthrough" ->
+            bindings.setBackgroundMode(SpatialBackgroundMode.Passthrough, source)
+        "background-lut-passthrough" ->
+            bindings.setBackgroundMode(SpatialBackgroundMode.LutPassthrough, source)
+        "choose-shared-media-folder" -> bindings.chooseSharedMediaFolder()
+        "environment-depth-recovery-bounded" ->
+            bindings.updateEnvironmentDepthRecoveryPolicy(
+                SpatialEnvironmentDepthRecoveryPolicy.Bounded,
+                source,
+            )
+        "environment-depth-recovery-aggressive" ->
+            bindings.updateEnvironmentDepthRecoveryPolicy(
+                SpatialEnvironmentDepthRecoveryPolicy.Aggressive,
                 source,
             )
         "video-head-fixed-border" ->

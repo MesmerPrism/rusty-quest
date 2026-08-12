@@ -1,12 +1,16 @@
 #![cfg_attr(not(target_os = "android"), allow(dead_code))]
 
-use std::sync::{LazyLock, Mutex};
+use std::sync::{
+    atomic::{AtomicU64, Ordering},
+    LazyLock, Mutex,
+};
 
 use crate::marker_token;
 use crate::spatial_video_projection_marker::log_spatial_video_projection_marker as log_marker;
 
 static SPATIAL_VIDEO_PROJECTION_SETTINGS: LazyLock<Mutex<SpatialVideoProjectionSettings>> =
     LazyLock::new(|| Mutex::new(SpatialVideoProjectionSettings::default()));
+static SPATIAL_VIDEO_MEDIA_SOURCE_GENERATION: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Clone, Debug)]
 pub(crate) struct SpatialVideoProjectionSettings {
@@ -125,6 +129,13 @@ pub(crate) fn spatial_video_projection_settings() -> SpatialVideoProjectionSetti
 
 pub(crate) fn configure_spatial_video_projection(settings: SpatialVideoProjectionSettings) {
     if let Ok(mut guard) = SPATIAL_VIDEO_PROJECTION_SETTINGS.lock() {
+        if guard.path != settings.path
+            || guard.stereo_layout != settings.stereo_layout
+            || guard.width != settings.width
+            || guard.height != settings.height
+        {
+            SPATIAL_VIDEO_MEDIA_SOURCE_GENERATION.fetch_add(1, Ordering::AcqRel);
+        }
         *guard = settings.clone();
     }
     log_marker(format!(
@@ -132,6 +143,10 @@ pub(crate) fn configure_spatial_video_projection(settings: SpatialVideoProjectio
         settings.active(),
         settings.marker_fields()
     ));
+}
+
+pub(crate) fn spatial_video_media_source_generation() -> u64 {
+    SPATIAL_VIDEO_MEDIA_SOURCE_GENERATION.load(Ordering::Acquire)
 }
 
 fn rect_token(rect: [f32; 4]) -> String {
@@ -143,6 +158,40 @@ fn rect_token(rect: [f32; 4]) -> String {
 
 fn normalized_token(value: &str) -> String {
     value.trim().to_ascii_lowercase().replace('_', "-")
+}
+
+pub(crate) fn spatial_video_projection_import_cache_limit(max_images: i32) -> usize {
+    max_images.clamp(2, 6) as usize
+}
+
+pub(crate) fn should_log_spatial_video_projection_frame(frame_index: u64) -> bool {
+    frame_index == 1 || frame_index % 60 == 0
+}
+
+pub(crate) fn should_log_spatial_video_projection_import(
+    import_miss_count: u64,
+    import_cache_limit: usize,
+) -> bool {
+    import_miss_count == 1
+        || import_miss_count == import_cache_limit.saturating_add(1) as u64
+        || import_miss_count % 60 == 0
+}
+
+const FPS_CAP_TIMESTAMP_ROUNDING_TOLERANCE_NS: i64 = 1_000;
+
+pub(crate) fn should_drop_spatial_video_projection_timestamp(
+    previous_timestamp_ns: i64,
+    timestamp_ns: i64,
+    fps_cap: i32,
+) -> bool {
+    if previous_timestamp_ns <= 0 || timestamp_ns <= 0 {
+        return false;
+    }
+    let minimum_gap_ns = 1_000_000_000_i64 / i64::from(fps_cap.max(1));
+    timestamp_ns
+        .saturating_sub(previous_timestamp_ns)
+        .saturating_add(FPS_CAP_TIMESTAMP_ROUNDING_TOLERANCE_NS)
+        < minimum_gap_ns
 }
 
 #[cfg(target_os = "android")]
@@ -253,5 +302,67 @@ mod tests {
         assert!(settings
             .marker_fields()
             .contains("videoProjectionStereoLayout=top-bottom-left-right"));
+    }
+
+    #[test]
+    fn import_cache_never_retains_more_buffers_than_the_configured_reader_queue() {
+        assert_eq!(spatial_video_projection_import_cache_limit(1), 2);
+        assert_eq!(spatial_video_projection_import_cache_limit(2), 2);
+        assert_eq!(spatial_video_projection_import_cache_limit(3), 3);
+        assert_eq!(spatial_video_projection_import_cache_limit(6), 6);
+        assert_eq!(spatial_video_projection_import_cache_limit(12), 6);
+    }
+
+    #[test]
+    fn decoded_frame_receipts_keep_first_frame_and_one_periodic_witness() {
+        assert!(should_log_spatial_video_projection_frame(1));
+        assert!(!should_log_spatial_video_projection_frame(2));
+        assert!(!should_log_spatial_video_projection_frame(59));
+        assert!(should_log_spatial_video_projection_frame(60));
+        assert!(should_log_spatial_video_projection_frame(120));
+    }
+
+    #[test]
+    fn import_receipts_keep_first_import_first_eviction_and_periodic_witnesses() {
+        assert!(should_log_spatial_video_projection_import(1, 8));
+        assert!(!should_log_spatial_video_projection_import(8, 8));
+        assert!(should_log_spatial_video_projection_import(9, 8));
+        assert!(!should_log_spatial_video_projection_import(10, 8));
+        assert!(should_log_spatial_video_projection_import(60, 8));
+    }
+
+    #[test]
+    fn thirty_fps_microsecond_timestamps_are_not_dropped() {
+        let timestamps = [
+            1_000_000_000_i64,
+            1_033_333_000,
+            1_066_667_000,
+            1_100_000_000,
+        ];
+        let mut previous = 0_i64;
+        for timestamp in timestamps {
+            assert!(!should_drop_spatial_video_projection_timestamp(
+                previous, timestamp, 30,
+            ));
+            previous = timestamp;
+        }
+    }
+
+    #[test]
+    fn thirty_fps_cap_still_drops_intermediate_sixty_fps_timestamps() {
+        let first = 1_000_000_000_i64;
+        assert!(!should_drop_spatial_video_projection_timestamp(
+            0, first, 30
+        ));
+        assert!(should_drop_spatial_video_projection_timestamp(
+            first,
+            1_016_667_000,
+            30,
+        ));
+        assert!(!should_drop_spatial_video_projection_timestamp(
+            first,
+            1_033_333_000,
+            30,
+        ));
     }
 }

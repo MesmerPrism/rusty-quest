@@ -52,13 +52,35 @@ internal val LayerPanelAccent = Color(0xFF63D2FF)
 internal val LayerPanelWarm = Color(0xFFFFC857)
 internal val LayerPanelBorder = Color(0xFF3B465A)
 
+internal object SpatialVideoCadencePanelBridge {
+  private var resolve: () -> SpatialVideoCadenceMode = { SpatialVideoCadenceMode.Fps30 }
+  private var update: (SpatialVideoCadenceMode) -> SpatialVideoCadenceMode = { it }
+
+  fun bind(
+      resolve: () -> SpatialVideoCadenceMode,
+      update: (SpatialVideoCadenceMode) -> SpatialVideoCadenceMode,
+  ) {
+    this.resolve = resolve
+    this.update = update
+  }
+
+  fun clear() {
+    resolve = { SpatialVideoCadenceMode.Fps30 }
+    update = { it }
+  }
+
+  fun current(): SpatialVideoCadenceMode = resolve()
+
+  fun select(mode: SpatialVideoCadenceMode): SpatialVideoCadenceMode = update(mode)
+}
+
 private enum class PrivateLayerPanelPage(
     val title: String,
     val subtitle: String,
 ) {
   Home("Settings", "Choose a topic"),
   Layers("Layers & projection", "Visibility, rendering layer, and projection size"),
-  Video("360 video", "Playback, presentation, and active video"),
+  Video("Background", "Background style, video playback, presentation, and active video"),
   Regions("Three-region effect", "Core, dynamic buffer, and outer-region behavior"),
   Image("Image processing", "Depth warp, RGB transform, sampling, and guide blur"),
   Depth("Depth alignment", "Depth source and per-eye fine tuning"),
@@ -90,6 +112,10 @@ internal fun PrivateLayerControlPanel(
     projectionInnerAlpha: ProjectionInnerAlpha,
     videoSession: () -> SpatialImmersiveVideoSessionSnapshot,
     sharedMediaLibrary: () -> SharedOfflineImmersiveMediaLibrarySnapshot,
+    environmentDepthUnavailableWarning: () -> String?,
+    environmentDepthRecoveryPolicy: () -> SpatialEnvironmentDepthRecoveryPolicy,
+    updateEnvironmentDepthRecoveryPolicy:
+        (SpatialEnvironmentDepthRecoveryPolicy, String) -> SpatialEnvironmentDepthRecoveryPolicy,
     setLayerOverride: (Float, String) -> Float,
     setProjectionPanelEnabled: (Boolean, String) -> Boolean,
     setVideoPlaybackEnabled: (Boolean) -> SpatialImmersiveVideoSessionSnapshot,
@@ -110,13 +136,14 @@ internal fun PrivateLayerControlPanel(
     selectNextVideo: () -> SpatialImmersiveVideoSessionSnapshot,
     setVideoPresentationMode:
         (SpatialImmersiveVideoPresentationMode) -> SpatialImmersiveVideoSessionSnapshot,
+    setBackgroundMode: (SpatialBackgroundMode) -> SpatialImmersiveVideoSessionSnapshot,
     chooseSharedMediaFolder: () -> Unit,
     profileLibrary: () -> SpatialCameraPanelProfileLibrarySnapshot,
-    panelExtension: SpatialPrivatePanelExtension?,
     saveStoredProfile: (String) -> SpatialCameraPanelProfileOperationResult,
     loadStoredProfile: (String) -> SpatialCameraPanelProfileOperationResult,
     deleteStoredProfile: (String) -> SpatialCameraPanelProfileOperationResult,
     importStagedProfiles: () -> SpatialCameraPanelProfileOperationResult,
+    panelExtension: SpatialPrivatePanelExtension?,
     closePanel: () -> Unit,
 ) {
   var localLayerOverride by remember(layerOverride) { mutableStateOf(layerOverride) }
@@ -139,7 +166,12 @@ internal fun PrivateLayerControlPanel(
   var currentPage by remember { mutableStateOf(PrivateLayerPanelPage.Home) }
   var currentRegionTab by remember { mutableStateOf(RegionSettingsTab.Buffer) }
   var localVideoSession by remember { mutableStateOf(videoSession()) }
+  var localVideoCadenceMode by remember { mutableStateOf(SpatialVideoCadencePanelBridge.current()) }
   var localSharedMediaLibrary by remember { mutableStateOf(sharedMediaLibrary()) }
+  var localEnvironmentDepthUnavailableWarning by
+      remember { mutableStateOf(environmentDepthUnavailableWarning()) }
+  var localEnvironmentDepthRecoveryPolicy by
+      remember { mutableStateOf(environmentDepthRecoveryPolicy()) }
   var localProfileLibrary by remember { mutableStateOf(profileLibrary()) }
   var localProfileName by remember { mutableStateOf("") }
   var profileStatus by remember { mutableStateOf(localProfileLibrary.loadStatus) }
@@ -164,9 +196,22 @@ internal fun PrivateLayerControlPanel(
       if (latestVideoSession != localVideoSession) {
         localVideoSession = latestVideoSession
       }
+      val latestVideoCadenceMode = SpatialVideoCadencePanelBridge.current()
+      if (latestVideoCadenceMode != localVideoCadenceMode) {
+        localVideoCadenceMode = latestVideoCadenceMode
+      }
       val latestSharedMediaLibrary = sharedMediaLibrary()
       if (latestSharedMediaLibrary != localSharedMediaLibrary) {
         localSharedMediaLibrary = latestSharedMediaLibrary
+      }
+      val latestEnvironmentDepthUnavailableWarning = environmentDepthUnavailableWarning()
+      if (latestEnvironmentDepthUnavailableWarning !=
+          localEnvironmentDepthUnavailableWarning) {
+        localEnvironmentDepthUnavailableWarning = latestEnvironmentDepthUnavailableWarning
+      }
+      val latestEnvironmentDepthRecoveryPolicy = environmentDepthRecoveryPolicy()
+      if (latestEnvironmentDepthRecoveryPolicy != localEnvironmentDepthRecoveryPolicy) {
+        localEnvironmentDepthRecoveryPolicy = latestEnvironmentDepthRecoveryPolicy
       }
     }
   }
@@ -184,7 +229,7 @@ internal fun PrivateLayerControlPanel(
       Column(modifier = Modifier.fillMaxSize().background(LayerPanelBackground)) {
         PersistentPanelHeader(
             currentPage = currentPage,
-            playlistAvailable = panelExtension != null,
+            panelExtension = panelExtension,
             selectedHelp = selectedHelp,
             onSelectPage = { currentPage = it },
             onDismissHelp = { selectedHelp = null },
@@ -275,20 +320,85 @@ internal fun PrivateLayerControlPanel(
       }
 
       if (currentPage == PrivateLayerPanelPage.Video) {
-        Section("Shared Encrypted Media") {
+        Section("Background") {
+          HelpLabel("Background")
+          Text(
+              "Choose what fills the scene behind the video layer. This setting is independent of video playback.",
+              style = MaterialTheme.typography.bodySmall,
+              color = LayerPanelMuted,
+          )
+          Row(
+              horizontalArrangement = Arrangement.spacedBy(10.dp),
+              modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+          ) {
+            ChoiceButton(
+                label = "Black",
+                selected = localVideoSession.backgroundMode == SpatialBackgroundMode.Black,
+            ) {
+              localVideoSession = setBackgroundMode(SpatialBackgroundMode.Black)
+            }
+            ChoiceButton(
+                label = "Passthrough",
+                selected = localVideoSession.backgroundMode == SpatialBackgroundMode.Passthrough,
+            ) {
+              localVideoSession = setBackgroundMode(SpatialBackgroundMode.Passthrough)
+            }
+            ChoiceButton(
+                label = "LUT passthrough",
+                selected =
+                    localVideoSession.backgroundMode == SpatialBackgroundMode.LutPassthrough,
+            ) {
+              localVideoSession = setBackgroundMode(SpatialBackgroundMode.LutPassthrough)
+            }
+          }
+        }
+        Section("Shared Media") {
           HelpLabel("Shared media folder")
           Text(
               when {
                 localSharedMediaLibrary.accessible ->
-                    "${localSharedMediaLibrary.folderLabel}: ${localSharedMediaLibrary.packCount} encrypted video pack(s) available."
+                    "${localSharedMediaLibrary.folderLabel}: " +
+                        "${localSharedMediaLibrary.packCount} encrypted pack(s), " +
+                        "${localSharedMediaLibrary.plainVideoCount} validated plain video(s)."
                 localSharedMediaLibrary.configured ->
                     "The previously selected folder is no longer readable. Select it again."
                 else ->
-                    "Select RustySpatialMedia once. The encrypted files stay outside the app and remain available to future thin APK updates."
+                    "Select RustySpatialMedia once. Encrypted packs and plain videos stay outside the app and remain available to future thin APK updates."
               },
               style = MaterialTheme.typography.bodySmall,
               color = LayerPanelMuted,
           )
+          Text(
+              "Plain videos: plain-videos/<flat|equirect-180|equirect-360>/<mono|side-by-side-left-right|top-bottom>/. The app verifies container dimensions and a sampled frame before listing them.",
+              style = MaterialTheme.typography.bodySmall,
+              color = LayerPanelMuted,
+          )
+          if (localSharedMediaLibrary.configured && localSharedMediaLibrary.accessible) {
+            Text(
+                when {
+                  localSharedMediaLibrary.plainVideoTaxonomyReady ->
+                      "The standard plain-video folders are ready for File Manager uploads."
+                  localSharedMediaLibrary.writable ->
+                      "The standard plain-video folders could not be created. Select the folder again or create the documented taxonomy manually."
+                  else ->
+                      "This provider granted read-only access. Create the documented taxonomy manually before uploading videos."
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color =
+                    if (localSharedMediaLibrary.plainVideoTaxonomyReady) {
+                      LayerPanelAccent
+                    } else {
+                      LayerPanelWarm
+                    },
+            )
+          }
+          if (localSharedMediaLibrary.rejectedPlainVideoCount > 0) {
+            Text(
+                "${localSharedMediaLibrary.rejectedPlainVideoCount} plain video(s) were rejected because their declared type could not be validated.",
+                style = MaterialTheme.typography.bodySmall,
+                color = LayerPanelWarm,
+            )
+          }
           Button(
               modifier = Modifier.fillMaxWidth().height(52.dp),
               onClick = chooseSharedMediaFolder,
@@ -307,11 +417,12 @@ internal fun PrivateLayerControlPanel(
             )
           }
         }
-        Section("360 Video Playback") {
+        Section("Video layer") {
           HelpLabel("Video playback")
           Text(
               if (localVideoSession.available) {
-                "Active video ${localVideoSession.activeOrdinal} of ${localVideoSession.itemCount}"
+                "Active video ${localVideoSession.activeOrdinal} of ${localVideoSession.itemCount}: " +
+                    (localVideoSession.activeMediaLabel ?: "Unknown type")
               } else {
                 "No compatible offline video is available."
               },
@@ -338,9 +449,9 @@ internal fun PrivateLayerControlPanel(
           ) {
             Text(
                 if (localVideoSession.playbackEnabled) {
-                  "Turn 360 video off"
+                  "Turn video layer off"
                 } else {
-                  "Turn 360 video on"
+                  "Turn video layer on"
                 }
             )
           }
@@ -353,6 +464,38 @@ internal fun PrivateLayerControlPanel(
               style = MaterialTheme.typography.bodySmall,
               color = LayerPanelMuted,
           )
+          HelpLabel("Playback cadence")
+          Text(
+              "Choose the file-decoder cadence before MediaCodec output reaches the Surface. Source leaves that gate disabled; the native 90 fps safety fallback remains active.",
+              style = MaterialTheme.typography.bodySmall,
+              color = LayerPanelMuted,
+          )
+          Row(
+              horizontalArrangement = Arrangement.spacedBy(10.dp),
+              modifier = Modifier.fillMaxWidth(),
+          ) {
+            ChoiceButton(
+                label = "30 fps",
+                selected = localVideoCadenceMode == SpatialVideoCadenceMode.Fps30,
+            ) {
+              localVideoCadenceMode =
+                  SpatialVideoCadencePanelBridge.select(SpatialVideoCadenceMode.Fps30)
+            }
+            ChoiceButton(
+                label = "60 fps",
+                selected = localVideoCadenceMode == SpatialVideoCadenceMode.Fps60,
+            ) {
+              localVideoCadenceMode =
+                  SpatialVideoCadencePanelBridge.select(SpatialVideoCadenceMode.Fps60)
+            }
+            ChoiceButton(
+                label = "Source",
+                selected = localVideoCadenceMode == SpatialVideoCadenceMode.Source,
+            ) {
+              localVideoCadenceMode =
+                  SpatialVideoCadencePanelBridge.select(SpatialVideoCadenceMode.Source)
+            }
+          }
           Text(
               if (localVideoSession.presentationMode ==
                   SpatialImmersiveVideoPresentationMode.WorldAnchored) {
@@ -506,7 +649,7 @@ internal fun PrivateLayerControlPanel(
 
       Section("Surface Topology") {
         Text(
-            "Keeps the same rest-space content coordinates while selecting a continuous or tiled tessellated surface. Depth flexibility moves from one depth value per tile at 0 to the per-vertex depth path at 1.",
+            "Keeps the same rest-space content coordinates while selecting a continuous grid or separated tiles. Depth flexibility moves from one depth value per tile at 0 to the per-vertex depth path at 1.",
             style = MaterialTheme.typography.bodySmall,
             color = LayerPanelMuted,
         )
@@ -519,7 +662,7 @@ internal fun PrivateLayerControlPanel(
                 )
           }
           ChoiceButton(
-              "Continuous",
+              "Continuous grid",
               localProjectionSurfaceTiling.enabled &&
                   localProjectionSurfaceTiling.topology ==
                       ProjectionSurfaceTilingControls.topologyContinuous,
@@ -564,7 +707,9 @@ internal fun PrivateLayerControlPanel(
                 )
           }
         }
-        if (localProjectionSurfaceTiling.enabled) {
+        if (localProjectionSurfaceTiling.enabled &&
+            localProjectionSurfaceTiling.topology !=
+                ProjectionSurfaceTilingControls.topologyContinuous) {
           DepthSlider(
               "Tile gap",
               localProjectionSurfaceTiling.gapNormalized,
@@ -576,6 +721,8 @@ internal fun PrivateLayerControlPanel(
                     "private-layer-surface-tile-gap",
                 )
           }
+        }
+        if (localProjectionSurfaceTiling.enabled) {
           DepthSlider(
               "Depth flexibility",
               localProjectionSurfaceTiling.depthFlexibility,
@@ -1137,7 +1284,37 @@ internal fun PrivateLayerControlPanel(
       }
 
       if (currentPage == PrivateLayerPanelPage.Depth) {
+      Section("Depth Recovery") {
+        Text(
+            "Bounded recovery reduces invalid-call pressure. Maximum freshness keeps trying on every eligible Spatial tick and may produce runtime error spam. Both retain the last valid depth frame.",
+            style = MaterialTheme.typography.bodySmall,
+            color = LayerPanelMuted,
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+          SpatialEnvironmentDepthRecoveryPolicy.entries.forEach { policy ->
+            ChoiceButton(
+                label = policy.panelLabel,
+                selected = localEnvironmentDepthRecoveryPolicy == policy,
+            ) {
+              localEnvironmentDepthRecoveryPolicy =
+                  updateEnvironmentDepthRecoveryPolicy(
+                      policy,
+                      "private-layer-control-panel-depth-recovery",
+                  )
+            }
+          }
+        }
+      }
+
       Section("Depth Source") {
+        localEnvironmentDepthUnavailableWarning?.let { warning ->
+          Text(
+              warning,
+              style = MaterialTheme.typography.bodyMedium,
+              fontWeight = FontWeight.SemiBold,
+              color = LayerPanelWarm,
+          )
+        }
         Text(
             "Active: ${PrivateLayerControls.labelForDepthLayerPolicy(localDepthLayerPolicy)}",
             style = MaterialTheme.typography.bodyMedium,
@@ -1361,7 +1538,7 @@ internal fun PrivateLayerControlPanel(
 @Composable
 private fun PersistentPanelHeader(
     currentPage: PrivateLayerPanelPage,
-    playlistAvailable: Boolean,
+    panelExtension: SpatialPrivatePanelExtension?,
     selectedHelp: PrivateLayerControlHelpEntry?,
     onSelectPage: (PrivateLayerPanelPage) -> Unit,
     onDismissHelp: () -> Unit,
@@ -1389,12 +1566,20 @@ private fun PersistentPanelHeader(
           PanelGrabHandle()
           Column {
             Text(
-                currentPage.title,
+                if (currentPage == PrivateLayerPanelPage.Playlists) {
+                  panelExtension?.pageTitle ?: currentPage.title
+                } else {
+                  currentPage.title
+                },
                 style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.Bold,
             )
             Text(
-                currentPage.subtitle,
+                if (currentPage == PrivateLayerPanelPage.Playlists) {
+                  panelExtension?.pageSubtitle ?: currentPage.subtitle
+                } else {
+                  currentPage.subtitle
+                },
                 style = MaterialTheme.typography.bodySmall,
                 color = LayerPanelMuted,
             )
@@ -1437,14 +1622,18 @@ private fun PersistentPanelHeader(
         ) {
           Text("Home")
         }
-        PrivateLayerPanelPage.entries
-            .filterNot {
+        PrivateLayerPanelPage.entries.filterNot {
               it == PrivateLayerPanelPage.Home ||
-                  (it == PrivateLayerPanelPage.Playlists && !playlistAvailable)
+                  (it == PrivateLayerPanelPage.Playlists && panelExtension == null)
             }
             .forEach { page ->
           HeaderPageButton(
-              label = page.title,
+              label =
+                  if (page == PrivateLayerPanelPage.Playlists) {
+                    panelExtension?.pageTitle ?: page.title
+                  } else {
+                    page.title
+                  },
               selected = currentPage == page,
               onClick = { onSelectPage(page) },
           )
@@ -1983,7 +2172,7 @@ private fun RegionSettingsPage(
               )
             }
             ChoiceButton(
-                "Continuous",
+                "Continuous grid",
                 surfaceTiling.enabled &&
                     surfaceTiling.topology == ProjectionSurfaceTilingControls.topologyContinuous,
             ) {
@@ -2023,13 +2212,16 @@ private fun RegionSettingsPage(
               )
             }
           }
-          if (surfaceTiling.enabled) {
+          if (surfaceTiling.enabled &&
+              surfaceTiling.topology != ProjectionSurfaceTilingControls.topologyContinuous) {
             DepthSlider("Tile gap", surfaceTiling.gapNormalized, 0.0f..0.45f) {
               onSurfaceTilingChange(
                   surfaceTiling.copy(gapNormalized = it),
                   "private-layer-region-effects-tile-gap",
               )
             }
+          }
+          if (surfaceTiling.enabled) {
             DepthSlider("Tile depth flexibility", surfaceTiling.depthFlexibility, 0.0f..1.0f) {
               onSurfaceTilingChange(
                   surfaceTiling.copy(depthFlexibility = it),

@@ -134,9 +134,8 @@ internal object SpatialCameraControlProfileContract {
     val edgeInset = json.requireFloat("edge_inset_uv", 0.0f, 0.49f)
     val inner = parseZoneBand(json.requireObject("inner"))
     val outer = parseZoneBand(json.requireObject("outer"))
-    val normalized =
-        PrivateLayerZoneCompositorModule.normalize(
-            PrivateLayerZoneCompositor(
+    val requested =
+        PrivateLayerZoneCompositor(
             coverageMode =
                 when (json.requireToken("coverage_mode", "off", "buffer", "full")) {
                   "buffer" -> PrivateLayerZoneCompositorControls.coverageDynamicBuffer
@@ -264,8 +263,16 @@ internal object SpatialCameraControlProfileContract {
             outerMotionGain = outer.motionGain,
             innerChannelDynamics = inner.channelDynamics,
             outerChannelDynamics = outer.channelDynamics,
-            )
         )
+    if (
+        requested.outerTargetMode ==
+            PrivateLayerZoneCompositorControls.outerTargetTransparentSpatialVideo
+    ) {
+      require(PrivateLayerZoneCompositorControls.transparentSpatialVideoSupported(requested)) {
+        "unsupported_transparent_spatial_video_blend"
+      }
+    }
+    val normalized = PrivateLayerZoneCompositorModule.normalize(requested)
     if (
         normalized.outerTargetMode ==
             PrivateLayerZoneCompositorControls.outerTargetTransparentSpatialVideo

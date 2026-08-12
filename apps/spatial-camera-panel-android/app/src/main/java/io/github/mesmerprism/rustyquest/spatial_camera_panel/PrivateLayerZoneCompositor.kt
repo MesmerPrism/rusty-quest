@@ -430,6 +430,14 @@ internal object PrivateLayerZoneCompositorControls {
 }
 
 internal object PrivateLayerZoneCompositorModule {
+  /**
+   * A transparent Spatial-video underlay never samples or draws the custom decoder surface.
+   * Other routes keep the readable consumer because they either sample it or retain it as the
+   * native fallback when a replacement pipeline is unavailable.
+   */
+  fun readableVideoConsumerRequired(configuration: PrivateLayerZoneCompositor): Boolean =
+      normalize(configuration).outerTargetMode != PrivateLayerZoneCompositorControls.outerTargetTransparentSpatialVideo
+
   fun normalize(requested: PrivateLayerZoneCompositor): PrivateLayerZoneCompositor {
     val migratingLegacy =
         requested.regionContractVersion <
