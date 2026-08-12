@@ -21,6 +21,7 @@ input, textarea { width: 100%; border: 1px solid #3f6267; border-radius: 9px; pa
 input { max-width: 240px; font-size: 1.3rem; letter-spacing: .2em; }
 button { border: 0; border-radius: 999px; padding: 11px 18px; color: #061113; background: #88efde; font-weight: 800; cursor: pointer; }
 button.quiet { border: 1px solid #43666b; color: #cae3e5; background: transparent; }
+button.playback-toggle[aria-pressed="true"] { color: #ffe2a6; background: #2d210d; box-shadow: inset 0 0 0 1px #a87b2f; }
 button:disabled { opacity: .4; cursor: default; }
 .surface-grid { display: grid; gap: 14px; }
 .surface-card { padding: 18px; border: 1px solid #2d5157; border-radius: 13px; background: #0d2529; }

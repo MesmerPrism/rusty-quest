@@ -20,6 +20,8 @@
   let authenticatedInPage = false;
   let unconfirmedReconnects = 0;
   const LOCKED_PLAYLIST_SURFACE_ID = "surface.spatial_camera_panel.locked_playlist";
+  const LOCKED_PLAYLIST_PAUSE_COMMAND = "command.spatial_camera_panel.locked_playlist.pause";
+  const LOCKED_PLAYLIST_RESUME_COMMAND = "command.spatial_camera_panel.locked_playlist.resume";
 
   const formatDuration = value => {
     if (value === null || value === undefined || value === "") return "–:––";
@@ -50,7 +52,6 @@
       {label: "Playlist", value: state.playlist_title || "Untitled playlist", wide: true},
       {label: "Current item", value: position},
       {label: "Item", value: state.active_label || "Unnamed item"},
-      {label: "Status", value: state.paused === true ? "Paused" : phase},
       {
         label: "Item time",
         value: `${formatDuration(safeElapsed)} / ${formatDuration(safeDuration)}`,
@@ -58,6 +59,33 @@
         wide: true,
       },
     ];
+  };
+
+  const surfaceCommandPresentations = surface => {
+    const commands = Array.isArray(surface.commands) ? surface.commands : [];
+    if (surface.surface_id !== LOCKED_PLAYLIST_SURFACE_ID) {
+      return commands.map(descriptor => ({descriptor, label: descriptor.display_label}));
+    }
+    const paused = surface.state && surface.state.paused === true;
+    const desiredCommand = paused
+      ? LOCKED_PLAYLIST_RESUME_COMMAND : LOCKED_PLAYLIST_PAUSE_COMMAND;
+    const phase = surface.state && surface.state.phase === "transition"
+      ? "Transitioning" : "Playing";
+    const toggle = commands.find(descriptor => descriptor.command === desiredCommand);
+    let toggleAdded = false;
+    return commands.flatMap(descriptor => {
+      const isPlaybackCommand = descriptor.command === LOCKED_PLAYLIST_PAUSE_COMMAND
+        || descriptor.command === LOCKED_PLAYLIST_RESUME_COMMAND;
+      if (!isPlaybackCommand) return [{descriptor, label: descriptor.display_label}];
+      if (toggleAdded || !toggle) return [];
+      toggleAdded = true;
+      return [{
+        descriptor: toggle,
+        label: paused ? "Resume · Paused" : `Pause · ${phase}`,
+        playbackToggle: true,
+        paused,
+      }];
+    });
   };
 
   const surfaceStateRows = surface => {
@@ -75,6 +103,7 @@
     Object.assign(globalThis.RustyConnectionHubTestHooks, {
       formatDuration,
       lockedPlaylistStateRows,
+      surfaceCommandPresentations,
     });
   }
 
@@ -420,11 +449,19 @@
         }
         state.append(row);
       });
-      surface.commands.forEach(descriptor => {
+      surfaceCommandPresentations(surface).forEach(presentation => {
         const button = document.createElement("button");
         button.type = "button";
-        button.textContent = descriptor.display_label;
-        button.addEventListener("click", () => sendCommand(card, surface.surface_id, descriptor.command));
+        button.textContent = presentation.label;
+        if (presentation.playbackToggle) {
+          button.className = "playback-toggle";
+          button.setAttribute("aria-pressed", String(presentation.paused));
+        }
+        button.addEventListener("click", () => sendCommand(
+          card,
+          surface.surface_id,
+          presentation.descriptor.command,
+        ));
         card.querySelector(".commands").append(button);
       });
       root.append(card);

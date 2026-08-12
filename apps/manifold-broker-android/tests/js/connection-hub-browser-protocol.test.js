@@ -163,12 +163,43 @@ const runPresentationHelpers = () => {
   if (values.Playlist !== "Night sequence"
       || values["Current item"] !== "2 of 3"
       || values.Item !== "Second view"
-      || values.Status !== "Playing"
       || values["Item time"] !== "1:23 / 5:00") {
     throw new Error("locked-playlist state was not projected into operator-readable rows");
   }
+  if (Object.hasOwn(values, "Status")) {
+    throw new Error("locked-playlist status was not consolidated into the playback toggle");
+  }
   if (rows.some(row => row.label === "progress" || String(row.value).includes("0.276666"))) {
     throw new Error("raw locked-playlist progress leaked into the operator presentation");
+  }
+
+  const commands = [
+    {command: "command.spatial_camera_panel.locked_playlist.next", display_label: "Next"},
+    {command: "command.spatial_camera_panel.locked_playlist.pause", display_label: "Pause"},
+    {command: "command.spatial_camera_panel.locked_playlist.previous", display_label: "Previous"},
+    {command: "command.spatial_camera_panel.locked_playlist.resume", display_label: "Resume"},
+  ];
+  const playingCommands = JSON.parse(JSON.stringify(hooks.surfaceCommandPresentations({
+    surface_id: "surface.spatial_camera_panel.locked_playlist",
+    state: {paused: false, phase: "dwell"},
+    commands,
+  })));
+  const pausedCommands = JSON.parse(JSON.stringify(hooks.surfaceCommandPresentations({
+    surface_id: "surface.spatial_camera_panel.locked_playlist",
+    state: {paused: true, phase: "dwell"},
+    commands,
+  })));
+  const playingToggle = playingCommands.find(command => command.playbackToggle);
+  const pausedToggle = pausedCommands.find(command => command.playbackToggle);
+  if (playingCommands.length !== 3
+      || playingToggle.label !== "Pause · Playing"
+      || playingToggle.descriptor.command !== "command.spatial_camera_panel.locked_playlist.pause"
+      || playingToggle.paused !== false
+      || pausedCommands.length !== 3
+      || pausedToggle.label !== "Resume · Paused"
+      || pausedToggle.descriptor.command !== "command.spatial_camera_panel.locked_playlist.resume"
+      || pausedToggle.paused !== true) {
+    throw new Error("pause/resume commands were not consolidated into one stateful toggle");
   }
 };
 

@@ -152,7 +152,9 @@ commands and the scalar state keys `playlist_title`, `item_count`,
 `item_duration_seconds`, `running`, `paused`, `phase`, `progress`, and
 `revision`. The browser presents the zero-based active index as “item N of M”
 and elapsed/total seconds as a clock instead of exposing raw normalized
-progress. Availability is app-owned: the provider registers only while an
+progress. It presents Pause/Resume and the effective playback status as one
+stateful toggle rather than duplicate command buttons plus a separate status
+row. Availability is app-owned: the provider registers only while an
 effective locked playlist is active and unregisters when it is not. The
 compatibility contract exposes neither a typed item selector nor an ordered
 item array; either addition requires a separate Hub-owner schema, descriptor,
