@@ -47,7 +47,7 @@ Assert-Contains "runtime profile" $profileTool '[ValidateSet("ProfileOwned", "Co
 Assert-Contains "runtime profile" $profileTool 'property_scope_mode = $PropertyScopeMode'
 foreach ($needle in @("target\apk-r", "Get-QuestRunCapsuleInstallApk", "Local\RustyMorphospaceQuestRun-", "property_snapshot", "Clear-QuestRunIsolationProperties", "complete_property_clear", "Exit-QuestRunIsolation", "force-stop", "property_restore")) { Assert-Contains "run isolation module" $isolationModule $needle }
 foreach ($text in @($nativeSmoke, $spatialSmoke)) { Assert-Contains "smoke wrapper short APK staging" $text "Get-QuestRunCapsuleInstallApk" }
-foreach ($needle in @("cargo metadata --format-version 1 --locked", "path-dependency", "tracked_worktree_clean", "rusty.quest.apk_source_composition_identity.v1")) { Assert-Contains "source composition module" $sourceCompositionModule $needle }
+foreach ($needle in @("cargo metadata --format-version 1 --locked", "path-dependency", "tracked_worktree_clean", "worktree_overlay_sha256", "AllowWorkingTreeChanges", "apk_source_composition_identity.v")) { Assert-Contains "source composition module" $sourceCompositionModule $needle }
 foreach ($text in @($nativeBuild, $spatialBuild)) {
     Assert-Contains "APK builder" $text "Get-QuestBuildSourceComposition"
     Assert-Contains "APK builder" $text "source_composition_fingerprint"
@@ -55,6 +55,8 @@ foreach ($text in @($nativeBuild, $spatialBuild)) {
     Assert-Contains "APK builder" $text '"--locked"'
     Assert-Contains "APK builder" $text "apk-i"
 }
+Assert-Contains "Spatial iteration build" $spatialBuild "-AllowWorkingTreeChanges:(-not [bool]`$PublicationBuild)"
+Assert-Contains "Spatial publication build" $spatialBuild '[switch]$PublicationBuild'
 
 $temp = Join-Path ([IO.Path]::GetTempPath()) ("rusty-quest-run-capsule-test-" + [guid]::NewGuid().ToString("N"))
 try {
