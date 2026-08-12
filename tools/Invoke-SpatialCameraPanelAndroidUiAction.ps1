@@ -32,6 +32,7 @@ param(
         "background-black",
         "background-passthrough",
         "background-lut-passthrough",
+        "profile-save-current",
         "choose-shared-media-folder",
         "environment-depth-recovery-bounded",
         "environment-depth-recovery-aggressive",
@@ -48,6 +49,8 @@ param(
     [string]$SurfaceTargetId = "real-hands",
 
     [string]$VideoPackId = "",
+
+    [string]$ProfileTitle = "",
 
     [double]$PrivateLayerOverride = 0.0,
 
@@ -221,6 +224,9 @@ $intentArguments = @(
     "--es",
     "surface_target_id",
     $SurfaceTargetId,
+    "--es",
+    "profile_title",
+    $ProfileTitle,
     "--ef",
     "private_layer_override",
     (Format-InvariantNumber ([Math]::Max(-1.0, [Math]::Min(8.0, $PrivateLayerOverride)))),
@@ -286,6 +292,10 @@ $intentArguments = @(
 if ($Action -eq "video-select" -and [string]::IsNullOrWhiteSpace($VideoPackId)) {
     throw "-VideoPackId is required when -Action video-select is requested."
 }
+if ($Action -eq "profile-save-current" -and
+    ([string]::IsNullOrWhiteSpace($ProfileTitle) -or $ProfileTitle.Trim() -cne $ProfileTitle -or $ProfileTitle.Length -gt 96)) {
+    throw "-ProfileTitle must contain 1 to 96 trimmed characters when -Action profile-save-current is requested."
+}
 if (-not [string]::IsNullOrWhiteSpace($VideoPackId)) {
     $intentArguments += @("--es", "video_pack_id", $VideoPackId.Trim())
 }
@@ -312,6 +322,7 @@ if ($ReadMarkers) {
     action = $Action
     surface_target_id = $SurfaceTargetId
     video_pack_id = $VideoPackId
+    profile_title = $ProfileTitle
     pid = $targetPid
     launch_exit_code = $launch.exit_code
     launch_output = $launch.output

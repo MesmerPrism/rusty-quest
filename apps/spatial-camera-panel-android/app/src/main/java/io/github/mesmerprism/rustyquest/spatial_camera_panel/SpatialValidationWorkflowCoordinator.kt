@@ -20,6 +20,7 @@ internal data class SpatialValidationWorkflowBindings(
     val setImmersiveVideoPresentationMode:
         (SpatialImmersiveVideoPresentationMode, String) -> Unit,
     val setBackgroundMode: (SpatialBackgroundMode, String) -> Unit,
+    val saveStoredProfile: (String) -> SpatialCameraPanelProfileOperationResult,
     val chooseSharedMediaFolder: () -> Unit,
     val updateEnvironmentDepthRecoveryPolicy:
         (SpatialEnvironmentDepthRecoveryPolicy, String) -> Unit,
@@ -174,6 +175,14 @@ internal class SpatialValidationWorkflowCoordinator(
             bindings.setBackgroundMode(SpatialBackgroundMode.Passthrough, source)
         "background-lut-passthrough" ->
             bindings.setBackgroundMode(SpatialBackgroundMode.LutPassthrough, source)
+        "profile-save-current" -> {
+          val title =
+              intent.getStringExtra(EXTRA_PROFILE_TITLE)?.trim()?.takeIf {
+                it.isNotEmpty() && it.length <= 96
+              } ?: error("profile_title_invalid")
+          val result = bindings.saveStoredProfile(title)
+          check(result.status == "profile-saved") { result.status }
+        }
         "choose-shared-media-folder" -> bindings.chooseSharedMediaFolder()
         "environment-depth-recovery-bounded" ->
             bindings.updateEnvironmentDepthRecoveryPolicy(
@@ -318,6 +327,7 @@ internal class SpatialValidationWorkflowCoordinator(
     private const val EXTRA_UI_ACTION = "ui_action"
     private const val EXTRA_PRIVATE_LAYER_OVERRIDE = "private_layer_override"
     private const val EXTRA_IMMERSIVE_VIDEO_PACK_ID = "video_pack_id"
+    private const val EXTRA_PROFILE_TITLE = "profile_title"
     private const val EXTRA_DRIVER0 = "driver0"
     private const val EXTRA_DRIVER1 = "driver1"
     private const val EXTRA_DRIVER2 = "driver2"

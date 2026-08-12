@@ -975,6 +975,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
               setSpatialBackgroundMode(mode, source)
               Unit
             },
+            saveStoredProfile = ::saveStoredProfile,
             chooseSharedMediaFolder = ::chooseSharedMediaFolderFromValidation,
             updateEnvironmentDepthRecoveryPolicy = { policy, source ->
               cameraHwbProjectionDepthPrerequisiteCoordinator.updateEnvironmentDepthRecoveryPolicy(
