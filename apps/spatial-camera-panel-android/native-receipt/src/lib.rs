@@ -50,8 +50,17 @@ mod replay_hands;
 mod rgb_channel_transform;
 #[cfg(target_os = "android")]
 mod spatial_controller_actions;
-#[cfg(target_os = "android")]
+#[cfg(all(
+    target_os = "android",
+    rq_environment_depth_legacy_native_sidecar
+))]
 mod spatial_environment_depth;
+#[cfg(any(
+    all(target_os = "android", rq_environment_depth_spatial_sdk_api_layer),
+    test
+))]
+mod spatial_sdk_depth_handoff;
+mod spatial_environment_depth_policy;
 mod spatial_guide_processing;
 #[cfg(target_os = "android")]
 mod spatial_multimodal_input;

@@ -7,6 +7,10 @@ param(
     [string]$RecordedHandCaptureDir = "",
     [int]$RecordedHandFrameLimit = 24,
     [string]$PrivateLayerProfilePath = "",
+    [ValidateRange(-0.25, 0.25)][double]$DepthAlignmentDefaultLeftX = 0.0,
+    [ValidateRange(-0.25, 0.25)][double]$DepthAlignmentDefaultLeftY = 0.0,
+    [ValidateRange(-0.25, 0.25)][double]$DepthAlignmentDefaultRightX = 0.0,
+    [ValidateRange(-0.25, 0.25)][double]$DepthAlignmentDefaultRightY = 0.0,
     [string]$OpaqueGuideShader = "",
     [string]$OpaqueProjectionShader = "",
     [string]$OpaqueProjectionVertexShader = "",
@@ -28,6 +32,8 @@ param(
     [string]$StartInParticleViewDefault = "false",
     [string]$PanelLauncherVisibleDefault = "true",
     [switch]$CameraProjectionDefaultEnabled,
+    [ValidateSet("disabled", "legacy-native-sidecar", "spatial-sdk-api-layer")]
+    [string]$EnvironmentDepthOwner = "legacy-native-sidecar",
     [switch]$ImmersiveVideoDefaultEnabled,
     [string]$ImmersiveVideoDefaultOfflinePackId = "",
     [string]$OfflineMediaPackAssetDir = $env:RUSTY_QUEST_OFFLINE_MEDIA_PACK_ASSET_DIR,
@@ -400,6 +406,33 @@ function Test-ProjectionEffectValue {
     return $true
 }
 
+function Resolve-DepthAlignmentDefaultValue {
+    param(
+        [Parameter(Mandatory=$true)][object]$Value,
+        [Parameter(Mandatory=$true)][string]$Label
+    )
+    $parsed = 0.0
+    if ($Value -is [string]) {
+        if (-not [double]::TryParse(
+                [string]$Value,
+                [System.Globalization.NumberStyles]::Float,
+                [System.Globalization.CultureInfo]::InvariantCulture,
+                [ref]$parsed)) {
+            throw "$Label must be numeric."
+        }
+    } else {
+        try {
+            $parsed = [Convert]::ToDouble($Value, [System.Globalization.CultureInfo]::InvariantCulture)
+        } catch {
+            throw "$Label must be numeric."
+        }
+    }
+    if ([double]::IsNaN($parsed) -or [double]::IsInfinity($parsed) -or $parsed -lt -0.25 -or $parsed -gt 0.25) {
+        throw "$Label must be finite and between -0.25 and 0.25."
+    }
+    return $parsed
+}
+
 function Resolve-SpatialProductId {
     param([string]$Value)
     if ([string]::IsNullOrWhiteSpace($Value)) {
@@ -594,6 +627,14 @@ if (-not [string]::IsNullOrWhiteSpace($RecordedHandCaptureDir)) {
 }
 $resolvedRecordedHandFrameLimit = [Math]::Max(1, [Math]::Min(120, $RecordedHandFrameLimit))
 $resolvedPrivateLayerProfilePath = Resolve-OptionalFilePath -Path $PrivateLayerProfilePath -Label "Private layer profile"
+$depthAlignmentDefaultLeftXExplicit = $PSBoundParameters.ContainsKey("DepthAlignmentDefaultLeftX")
+$depthAlignmentDefaultLeftYExplicit = $PSBoundParameters.ContainsKey("DepthAlignmentDefaultLeftY")
+$depthAlignmentDefaultRightXExplicit = $PSBoundParameters.ContainsKey("DepthAlignmentDefaultRightX")
+$depthAlignmentDefaultRightYExplicit = $PSBoundParameters.ContainsKey("DepthAlignmentDefaultRightY")
+$resolvedDepthAlignmentDefaultLeftX = Resolve-DepthAlignmentDefaultValue -Value $DepthAlignmentDefaultLeftX -Label "DepthAlignmentDefaultLeftX"
+$resolvedDepthAlignmentDefaultLeftY = Resolve-DepthAlignmentDefaultValue -Value $DepthAlignmentDefaultLeftY -Label "DepthAlignmentDefaultLeftY"
+$resolvedDepthAlignmentDefaultRightX = Resolve-DepthAlignmentDefaultValue -Value $DepthAlignmentDefaultRightX -Label "DepthAlignmentDefaultRightX"
+$resolvedDepthAlignmentDefaultRightY = Resolve-DepthAlignmentDefaultValue -Value $DepthAlignmentDefaultRightY -Label "DepthAlignmentDefaultRightY"
 $projectionSurfaceUniformAbiVersionExplicit =
     $PSBoundParameters.ContainsKey("ProjectionSurfaceUniformAbiVersion")
 $resolvedProjectionSurfaceUniformAbiVersion = $ProjectionSurfaceUniformAbiVersion
@@ -616,6 +657,26 @@ if (-not [string]::IsNullOrWhiteSpace($resolvedPrivateLayerProfilePath)) {
         $null -ne $privateLayerProfile.required_public_bridge.projection_surface_uniform_abi_version) {
         $resolvedProjectionSurfaceUniformAbiVersion =
             [int]$privateLayerProfile.required_public_bridge.projection_surface_uniform_abi_version
+    }
+    if ($null -ne $privateLayerProfile.depth_alignment_defaults) {
+        $depthDefaults = $privateLayerProfile.depth_alignment_defaults
+        foreach ($property in @("left_x", "left_y", "right_x", "right_y")) {
+            if ($null -eq $depthDefaults.PSObject.Properties[$property]) {
+                throw "Private layer profile depth_alignment_defaults is missing $property."
+            }
+        }
+        if (-not $depthAlignmentDefaultLeftXExplicit) {
+            $resolvedDepthAlignmentDefaultLeftX = Resolve-DepthAlignmentDefaultValue -Value $depthDefaults.left_x -Label "Private layer profile depth_alignment_defaults.left_x"
+        }
+        if (-not $depthAlignmentDefaultLeftYExplicit) {
+            $resolvedDepthAlignmentDefaultLeftY = Resolve-DepthAlignmentDefaultValue -Value $depthDefaults.left_y -Label "Private layer profile depth_alignment_defaults.left_y"
+        }
+        if (-not $depthAlignmentDefaultRightXExplicit) {
+            $resolvedDepthAlignmentDefaultRightX = Resolve-DepthAlignmentDefaultValue -Value $depthDefaults.right_x -Label "Private layer profile depth_alignment_defaults.right_x"
+        }
+        if (-not $depthAlignmentDefaultRightYExplicit) {
+            $resolvedDepthAlignmentDefaultRightY = Resolve-DepthAlignmentDefaultValue -Value $depthDefaults.right_y -Label "Private layer profile depth_alignment_defaults.right_y"
+        }
     }
 }
 if ($resolvedProjectionSurfaceUniformAbiVersion -notin @(1, 2)) {
@@ -707,6 +768,7 @@ $buildInputDescriptor = [ordered]@{
     android_build_type = $buildTypeLower
     locked_final_presentation = $lockedFinalPresentationEnabled
     camera_projection_default_enabled = [bool]$CameraProjectionDefaultEnabled
+    environment_depth_owner = $EnvironmentDepthOwner
     immersive_video_default_enabled = [bool]$ImmersiveVideoDefaultEnabled
     immersive_video_default_offline_pack_id = $resolvedImmersiveVideoDefaultOfflinePackId
     zone_compositor_default_preset = $ZoneCompositorDefaultPreset
@@ -739,6 +801,12 @@ $buildInputDescriptor = [ordered]@{
         panel_launcher_visible = $PanelLauncherVisibleDefault; hand_alignment_enabled = $HandAlignmentEnabledDefault
         hand_alignment_viewer_markers = $HandAlignmentViewerMarkersEnabledDefault; hand_alignment_mapping_profile = $HandAlignmentMappingProfileDefault
         hand_billboard_flock_enabled = $HandBillboardFlockEnabledDefault; hand_billboard_source = $HandBillboardSourceDefault
+        depth_alignment = [ordered]@{
+            left_x = $resolvedDepthAlignmentDefaultLeftX
+            left_y = $resolvedDepthAlignmentDefaultLeftY
+            right_x = $resolvedDepthAlignmentDefaultRightX
+            right_y = $resolvedDepthAlignmentDefaultRightY
+        }
     }
 }
 $buildInputFingerprint = Get-StringSha256 -Value ($buildInputDescriptor | ConvertTo-Json -Depth 20 -Compress)
@@ -824,6 +892,7 @@ $previousPrivateSurfaceParticleProfile = $env:RUSTY_QUEST_SPATIAL_SURFACE_PRIVAT
 $previousPrivateSurfaceParticleShader = $env:RUSTY_QUEST_SPATIAL_SURFACE_PRIVATE_PARTICLE_SHADER
 $previousPrivateSurfaceParticlePayloadDir = $env:RUSTY_QUEST_SPATIAL_SURFACE_PRIVATE_PARTICLE_PAYLOAD_DIR
 $previousPrivateSurfaceParticleMarkerPrefix = $env:RUSTY_QUEST_SPATIAL_SURFACE_PRIVATE_PARTICLE_MARKER_PREFIX
+$previousEnvironmentDepthOwnerForCargo = $env:RUSTY_QUEST_SPATIAL_ENVIRONMENT_DEPTH_OWNER
 try {
     $env:ANDROID_HOME = $AndroidHome
     $env:ANDROID_NDK_HOME = $NdkHome
@@ -831,6 +900,7 @@ try {
     $env:CC_aarch64_linux_android = $nativeReceiptLinker
     $env:RUSTY_QUEST_SPATIAL_LOCKED_FINAL_PRESENTATION = $lockedFinalPresentationEnabled.ToString().ToLowerInvariant()
     $env:RUSTY_QUEST_SPATIAL_DISTORTION_SPEED_SCALE = $resolvedDistortionSpeedScale.ToString([System.Globalization.CultureInfo]::InvariantCulture)
+    $env:RUSTY_QUEST_SPATIAL_ENVIRONMENT_DEPTH_OWNER = $EnvironmentDepthOwner
     $env:RUSTY_QUEST_SPATIAL_CAMERA_PANEL_PROJECTION_SURFACE_UNIFORM_ABI_VERSION =
         $resolvedProjectionSurfaceUniformAbiVersion.ToString([System.Globalization.CultureInfo]::InvariantCulture)
     if ([string]::IsNullOrWhiteSpace($resolvedRecordedHandCaptureDir)) {
@@ -911,6 +981,11 @@ try {
         Remove-Item Env:\CC_aarch64_linux_android -ErrorAction SilentlyContinue
     } else {
         $env:CC_aarch64_linux_android = $previousCcForCargo
+    }
+    if ($null -eq $previousEnvironmentDepthOwnerForCargo) {
+        Remove-Item Env:\RUSTY_QUEST_SPATIAL_ENVIRONMENT_DEPTH_OWNER -ErrorAction SilentlyContinue
+    } else {
+        $env:RUSTY_QUEST_SPATIAL_ENVIRONMENT_DEPTH_OWNER = $previousEnvironmentDepthOwnerForCargo
     }
     if ($null -eq $previousRecordedHandCaptureDir) {
         Remove-Item Env:\RUSTY_QUEST_NATIVE_RECORDED_HAND_CAPTURE_DIR -ErrorAction SilentlyContinue
@@ -1032,7 +1107,12 @@ try {
     $env:RUSTY_QUEST_SPATIAL_APP_LABEL = $resolvedAppLabel
     $env:RUSTY_QUEST_SPATIAL_LOCKED_FINAL_PRESENTATION = $lockedFinalPresentationEnabled.ToString().ToLowerInvariant()
     $env:RUSTY_QUEST_SPATIAL_DISTORTION_SPEED_SCALE = $resolvedDistortionSpeedScale.ToString([System.Globalization.CultureInfo]::InvariantCulture)
+    $env:RUSTY_QUEST_SPATIAL_DEPTH_ALIGNMENT_DEFAULT_LEFT_X = $resolvedDepthAlignmentDefaultLeftX.ToString([System.Globalization.CultureInfo]::InvariantCulture)
+    $env:RUSTY_QUEST_SPATIAL_DEPTH_ALIGNMENT_DEFAULT_LEFT_Y = $resolvedDepthAlignmentDefaultLeftY.ToString([System.Globalization.CultureInfo]::InvariantCulture)
+    $env:RUSTY_QUEST_SPATIAL_DEPTH_ALIGNMENT_DEFAULT_RIGHT_X = $resolvedDepthAlignmentDefaultRightX.ToString([System.Globalization.CultureInfo]::InvariantCulture)
+    $env:RUSTY_QUEST_SPATIAL_DEPTH_ALIGNMENT_DEFAULT_RIGHT_Y = $resolvedDepthAlignmentDefaultRightY.ToString([System.Globalization.CultureInfo]::InvariantCulture)
     $env:RUSTY_QUEST_SPATIAL_CAMERA_PROJECTION_DEFAULT_ENABLED = ([bool]$CameraProjectionDefaultEnabled).ToString().ToLowerInvariant()
+    $env:RUSTY_QUEST_SPATIAL_ENVIRONMENT_DEPTH_OWNER = $EnvironmentDepthOwner
     $env:RUSTY_QUEST_SPATIAL_IMMERSIVE_VIDEO_DEFAULT_ENABLED = ([bool]$ImmersiveVideoDefaultEnabled).ToString().ToLowerInvariant()
     $env:RUSTY_QUEST_SPATIAL_IMMERSIVE_VIDEO_DEFAULT_OFFLINE_PACK_ID = $resolvedImmersiveVideoDefaultOfflinePackId
     $env:RUSTY_QUEST_SPATIAL_ZONE_COMPOSITOR_DEFAULT_PRESET = $ZoneCompositorDefaultPreset
@@ -1234,8 +1314,9 @@ $manifest = [ordered]@{
     spatial_scene_permission_declared = $true
     spatial_openxr_permission_declared = $true
     spatial_environment_depth_permission_surface = "horizonos.permission.USE_SCENE+USE_SCENE_DATA"
+    spatial_environment_depth_owner = $EnvironmentDepthOwner
     spatial_environment_depth_real_provider_bound = $false
-    spatial_environment_depth_data_source = "spatial-fallback-depth-descriptor"
+    spatial_environment_depth_data_source = $(if ($EnvironmentDepthOwner -eq "legacy-native-sidecar") { "legacy-native-sidecar-last-valid-or-neutral" } elseif ($EnvironmentDepthOwner -eq "disabled") { "neutral-disabled" } else { "spatial-sdk-api-layer-device-local-d16-ring" })
     spatial_environment_depth_diagnostic_policy = "distinguish-permission-pregrant-provider-binding-acquire-valid-sample"
     spatial_multimodal_input_default_enabled = $false
     native_spatial_controller_actions_default_enabled = $false
@@ -1406,8 +1487,20 @@ $manifest = [ordered]@{
         "RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OPAQUE_PROJECTION_SHADER",
         "RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OPAQUE_PROJECTION_VERTEX_SHADER",
         "RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OPAQUE_PROJECTION_EFFECT",
-        "RUSTY_QUEST_SPATIAL_CAMERA_PANEL_PROJECTION_SURFACE_UNIFORM_ABI_VERSION"
+        "RUSTY_QUEST_SPATIAL_CAMERA_PANEL_PROJECTION_SURFACE_UNIFORM_ABI_VERSION",
+        "RUSTY_QUEST_SPATIAL_DEPTH_ALIGNMENT_DEFAULT_LEFT_X",
+        "RUSTY_QUEST_SPATIAL_DEPTH_ALIGNMENT_DEFAULT_LEFT_Y",
+        "RUSTY_QUEST_SPATIAL_DEPTH_ALIGNMENT_DEFAULT_RIGHT_X",
+        "RUSTY_QUEST_SPATIAL_DEPTH_ALIGNMENT_DEFAULT_RIGHT_Y"
     )
+    spatial_public_depth_alignment_defaults = [ordered]@{
+        left_x = $resolvedDepthAlignmentDefaultLeftX
+        left_y = $resolvedDepthAlignmentDefaultLeftY
+        right_x = $resolvedDepthAlignmentDefaultRightX
+        right_y = $resolvedDepthAlignmentDefaultRightY
+        other_alignment_fields = "unchanged-runtime-defaults"
+        named_profile_default = $false
+    }
     spatial_public_multistack_private_layer_profile_sha256 = $(if ([string]::IsNullOrWhiteSpace($resolvedPrivateLayerProfilePath)) { "" } else { Get-FileSha256 -Path $resolvedPrivateLayerProfilePath })
     spatial_public_multistack_opaque_guide_shader_sha256 = $(if ([string]::IsNullOrWhiteSpace($resolvedOpaqueGuideShader)) { "" } else { Get-FileSha256 -Path $resolvedOpaqueGuideShader })
     spatial_public_multistack_opaque_projection_shader_sha256 = $(if ([string]::IsNullOrWhiteSpace($resolvedOpaqueProjectionShader)) { "" } else { Get-FileSha256 -Path $resolvedOpaqueProjectionShader })

@@ -7,10 +7,10 @@ internal data class PrivateLayerChoice(
 )
 
 internal data class PrivateLayerDepthAlignment(
-    val leftX: Float = 0.0f,
-    val leftY: Float = 0.0f,
-    val rightX: Float = 0.0f,
-    val rightY: Float = 0.0f,
+    val leftX: Float = BuildConfig.DEPTH_ALIGNMENT_DEFAULT_LEFT_X,
+    val leftY: Float = BuildConfig.DEPTH_ALIGNMENT_DEFAULT_LEFT_Y,
+    val rightX: Float = BuildConfig.DEPTH_ALIGNMENT_DEFAULT_RIGHT_X,
+    val rightY: Float = BuildConfig.DEPTH_ALIGNMENT_DEFAULT_RIGHT_Y,
     val sampleScale: Float = 1.0f,
     val sampleScaleY: Float = 1.0f,
     val rollDegrees: Float = 0.0f,
@@ -85,6 +85,20 @@ internal object PrivateLayerControls {
 
   fun metaPassthroughEdgeWindowSelected(layerOverride: Float): Boolean =
       layerOverride.toInt() == metaPassthroughEdgeWindowOverride.toInt()
+
+  /**
+   * Mirrors the private projection shader's environment-depth reads. Cycle can visit a
+   * depth-consuming layer, while Final, Opaque projection, and Public depth diagnostic sample
+   * environment depth directly. The remaining fixed diagnostic layers cannot be changed by
+   * depth, so keeping the provider alive for them is pure background work.
+   */
+  fun environmentDepthConsumerRequired(layerOverride: Float): Boolean {
+    if (layerOverride < 0.0f) return true
+    return when (layerOverride.toInt()) {
+      0, 5, 6 -> true
+      else -> false
+    }
+  }
 
   fun normalizeDepthLayerPolicy(policy: Int): Int =
       depthSourcePolicies.firstOrNull { it.code == policy }?.code ?: defaultDepthLayerPolicy

@@ -10,6 +10,7 @@ internal data class SpatialPrivateLayerControlBindings(
     val projectionTargetScale: () -> Float,
     val updatePlacement: (String, Boolean) -> Unit,
     val updateLayerOverrideNative: (Float) -> Long,
+    val updateEnvironmentDepthConsumerRequired: (Boolean, String) -> Unit,
     val updateMetaPassthroughStyle: (Boolean, String) -> SpatialPassthroughLutUpdate,
     val projectionPanelEnabled: () -> Boolean,
     val refreshProjectionAfterPassthroughActivation: (String) -> Unit,
@@ -17,6 +18,7 @@ internal data class SpatialPrivateLayerControlBindings(
     val updateDepthAlignmentNative: (PrivateLayerDepthAlignment) -> Long,
     val updateGuideProcessingNative: (PrivateLayerGuideProcessing) -> Long,
     val updateZoneCompositorNative: (PrivateLayerZoneCompositor) -> Long,
+    val updateReadableVideoConsumerRequired: (Boolean, String) -> Unit,
     val updateRgbChannelTransformNative: (RgbChannelTransform) -> Long,
     val updateProjectionSurfaceDisplacementNative:
         (ProjectionSurfaceDisplacement) -> Long,
@@ -38,11 +40,15 @@ internal class SpatialPrivateLayerControlCoordinator(
   var depthLayerPolicy: Int = PrivateLayerControls.defaultDepthLayerPolicy
     private set
 
+  private var depthLayerPolicyExplicitlyUpdated: Boolean = false
+
   var depthAlignment: PrivateLayerDepthAlignment = PrivateLayerDepthAlignment()
     private set
 
   var guideProcessing: PrivateLayerGuideProcessing = PrivateLayerControls.nativeParityGuideProcessing
     private set
+
+  private var guideProcessingExplicitlyUpdated: Boolean = false
 
   var zoneCompositor: PrivateLayerZoneCompositor =
       PrivateLayerZoneCompositorModule.normalize(initialZoneCompositor)
@@ -62,10 +68,12 @@ internal class SpatialPrivateLayerControlCoordinator(
     private set
 
   fun initializeDepthLayerPolicy(policy: Int) {
-    depthLayerPolicy = policy
+    if (depthLayerPolicyExplicitlyUpdated) return
+    depthLayerPolicy = PrivateLayerPanelControlModule.normalizeDepthLayerPolicy(policy)
   }
 
   fun initializeGuideProcessing(processing: PrivateLayerGuideProcessing) {
+    if (guideProcessingExplicitlyUpdated) return
     guideProcessing = PrivateLayerPanelControlModule.normalizeGuideProcessing(processing)
   }
 
@@ -152,6 +160,10 @@ internal class SpatialPrivateLayerControlCoordinator(
             projectionTargetScale = bindings.projectionTargetScale(),
         )
     )
+    bindings.updateEnvironmentDepthConsumerRequired(
+        PrivateLayerControls.environmentDepthConsumerRequired(updatedOverride),
+        "private-layer-${activityMarkerToken(source)}",
+    )
     bindings.updatePlacement("private-layer-override-panel", true)
     val projectionRefreshRequested = enteringEdgeWindow && bindings.projectionPanelEnabled()
     bindings.marker(
@@ -179,6 +191,7 @@ internal class SpatialPrivateLayerControlCoordinator(
     val previousPolicy = depthLayerPolicy
     val updatedPolicy = PrivateLayerPanelControlModule.normalizeDepthLayerPolicy(requestedPolicy)
     depthLayerPolicy = updatedPolicy
+    depthLayerPolicyExplicitlyUpdated = true
     bindings.marker(
         PrivateLayerPanelControlModule.depthLayerPolicySelectedMarker(
             source = source,
@@ -253,6 +266,7 @@ internal class SpatialPrivateLayerControlCoordinator(
     val updatedProcessing =
         PrivateLayerPanelControlModule.normalizeGuideProcessing(requestedProcessing)
     guideProcessing = updatedProcessing
+    guideProcessingExplicitlyUpdated = true
     val updateMask =
         runCatching { bindings.updateGuideProcessingNative(updatedProcessing) }
             .getOrElse { throwable ->
@@ -302,6 +316,10 @@ internal class SpatialPrivateLayerControlCoordinator(
             "source=${activityMarkerToken(source)} transport=jni-live-queue updateMask=$updateMask " +
             "previousProjectionZoneMode=${PrivateLayerZoneCompositorControls.coverageToken(previous.coverageMode)} " +
             "${PrivateLayerZoneCompositorModule.markerFields(updated)} runtimeCrash=false"
+    )
+    bindings.updateReadableVideoConsumerRequired(
+        PrivateLayerZoneCompositorModule.readableVideoConsumerRequired(updated),
+        "private-layer-${activityMarkerToken(source)}",
     )
     return updated
   }

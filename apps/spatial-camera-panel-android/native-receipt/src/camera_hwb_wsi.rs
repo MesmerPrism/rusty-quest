@@ -50,6 +50,7 @@ pub(crate) struct ProjectionZoneRenderStats {
     pub(crate) rendered: bool,
     pub(crate) native_video_drawn: bool,
     pub(crate) native_video_suppressed: bool,
+    pub(crate) readable_video_consumer_required: bool,
     pub(crate) transparent_underlay_requested: bool,
     pub(crate) transparent_underlay_supported: bool,
     pub(crate) synthetic_displacement_suppressed: bool,
@@ -59,7 +60,7 @@ pub(crate) struct ProjectionZoneRenderStats {
 impl ProjectionZoneRenderStats {
     pub(crate) fn marker_fields(self) -> String {
         format!(
-            "projectionZoneRequestedMode={} projectionZonePreparedVideoReady={} projectionZonePublicProjectionReady={} projectionZonePipelineReady={} projectionZoneRendered={} projectionZoneNativeVideoDrawn={} projectionZoneNativeVideoSuppressed={} projectionZoneTransparentUnderlayRequested={} projectionZoneTransparentUnderlaySupported={} projectionZoneSyntheticDisplacementSuppressed={} projectionZoneDescriptorSource={}",
+            "projectionZoneRequestedMode={} projectionZonePreparedVideoReady={} projectionZonePublicProjectionReady={} projectionZonePipelineReady={} projectionZoneRendered={} projectionZoneNativeVideoDrawn={} projectionZoneNativeVideoSuppressed={} readableVideoConsumerRequired={} projectionZoneTransparentUnderlayRequested={} projectionZoneTransparentUnderlaySupported={} projectionZoneSyntheticDisplacementSuppressed={} projectionZoneDescriptorSource={}",
             self.requested_mode,
             bool_token(self.prepared_video_ready),
             bool_token(self.public_projection_ready),
@@ -67,6 +68,7 @@ impl ProjectionZoneRenderStats {
             bool_token(self.rendered),
             bool_token(self.native_video_drawn),
             bool_token(self.native_video_suppressed),
+            bool_token(self.readable_video_consumer_required),
             bool_token(self.transparent_underlay_requested),
             bool_token(self.transparent_underlay_supported),
             bool_token(self.synthetic_displacement_suppressed),
@@ -552,10 +554,27 @@ pub(crate) unsafe fn record_camera_hwb_probe_command_buffer(
         && latency_settings.isolation_mode == CameraLatencyIsolationMode::FreshFrameOnlyPulse;
     let camera_projection_visible =
         !fresh_frame_only_pulse || transition_left_camera_image || transition_right_camera_image;
+    let projection_zone_frame = camera_hwb_projection_zone_frame(
+        projection_guard_band.footprint_scale,
+        projection_guard_band.source_overscan_uv,
+        elapsed_seconds,
+        [
+            video_settings.source_rect_for_eye(0),
+            video_settings.source_rect_for_eye(1),
+        ],
+    );
+    // Transparent-underlay composition derives alpha from the processed camera/buffer output and
+    // reveals the separate Spatial video layer. It never samples or draws the custom decoded
+    // surface, so importing that frame into Vulkan cannot affect a pixel.
+    let readable_video_consumer_required = projection_zone_frame
+        .settings
+        .readable_video_consumer_required();
     let mut video_stats = SpatialVideoProjectionFrameStats::unavailable(
         video_settings,
         if opaque_camera_only {
             "camera-only-isolation"
+        } else if !readable_video_consumer_required {
+            "no-readable-video-consumer"
         } else if video_settings.active() {
             "waiting-for-decoded-frame"
         } else {
@@ -563,7 +582,11 @@ pub(crate) unsafe fn record_camera_hwb_probe_command_buffer(
         },
     );
     let prepared_video = match (video_renderer, video_frame) {
-        (Some(renderer), Some(frame)) if video_settings.active() && !opaque_camera_only => {
+        (Some(renderer), Some(frame))
+            if video_settings.active()
+                && !opaque_camera_only
+                && readable_video_consumer_required =>
+        {
             match renderer.prepare_frame(device, command_buffer, frame_slot, frame, video_settings)
             {
                 Ok(Some(prepared)) => {
@@ -587,16 +610,6 @@ pub(crate) unsafe fn record_camera_hwb_probe_command_buffer(
         }
         _ => None,
     };
-    let projection_zone_frame = camera_hwb_projection_zone_frame(
-        projection_guard_band.footprint_scale,
-        projection_guard_band.source_overscan_uv,
-        elapsed_seconds,
-        [
-            video_settings.source_rect_for_eye(0),
-            video_settings.source_rect_for_eye(1),
-        ],
-    );
-
     let mut public_guide_targets = public_guide_targets;
     let edge_window_selected = spatial_public_meta_passthrough_edge_window_selected();
     let raw_custom_projection_selected = spatial_public_raw_custom_projection_selected();
@@ -682,7 +695,7 @@ pub(crate) unsafe fn record_camera_hwb_probe_command_buffer(
         opaque_camera_only,
     );
     let mut native_video_drawn = false;
-    let mut native_video_suppressed = false;
+    let mut native_video_suppressed = !readable_video_consumer_required;
     if let Some((renderer, prepared)) = prepared_video.as_ref() {
         if !projection_zone_frame
             .settings
@@ -767,6 +780,7 @@ pub(crate) unsafe fn record_camera_hwb_probe_command_buffer(
             rendered: projection_zone_rendered,
             native_video_drawn,
             native_video_suppressed,
+            readable_video_consumer_required,
             transparent_underlay_requested: projection_zone_frame
                 .settings
                 .transparent_underlay_requested(),
@@ -1132,5 +1146,4 @@ mod tests {
             vk::CompositeAlphaFlagsKHR::OPAQUE
         );
     }
-
 }

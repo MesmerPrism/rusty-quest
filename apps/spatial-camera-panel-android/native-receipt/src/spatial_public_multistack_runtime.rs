@@ -10,8 +10,13 @@ use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 use ash::vk::{self, Handle};
 
-use crate::camera_hwb_projection_target::{CameraHwbProjectionZoneFrame, ProjectionZoneUniform};
-use crate::camera_latency_diagnostics::CameraLatencyStereoReprojection;
+use crate::camera_hwb_projection_target::{
+    camera_hwb_projection_depth_target_mapping, CameraHwbProjectionDepthTargetMapping,
+    CameraHwbProjectionZoneFrame, ProjectionZoneUniform,
+};
+use crate::camera_latency_diagnostics::{
+    current_camera_latency_settings, CameraLatencyStereoReprojection,
+};
 use crate::projection_surface_displacement::{
     current_projection_surface_displacement_settings, PROJECTION_SURFACE_GRID_VERTEX_COUNT,
 };
@@ -181,6 +186,15 @@ struct SpatialPublicDepthUvAffine {
     metadata_applied: bool,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct SpatialPublicDepthUvComposition {
+    packed_to_eye: SpatialPublicDepthUvAffine,
+    target_reference: SpatialPublicDepthUvAffine,
+    metadata: SpatialPublicDepthUvAffine,
+    final_affine: SpatialPublicDepthUvAffine,
+    target_mapping: CameraHwbProjectionDepthTargetMapping,
+}
+
 impl SpatialPublicDepthUvAffine {
     fn identity() -> Self {
         Self {
@@ -208,23 +222,53 @@ impl SpatialPublicDepthAlignment {
         policy: SpatialPublicDepthLayerPolicy,
         depth_binding: SpatialPublicDepthBinding,
     ) -> SpatialPublicDepthUvAffine {
+        self.depth_uv_composition_for_eye(
+            eye_index,
+            policy,
+            depth_binding,
+            current_camera_latency_settings().reprojection_footprint_scale(),
+        )
+        .final_affine
+    }
+
+    fn depth_uv_composition_for_eye(
+        self,
+        eye_index: usize,
+        policy: SpatialPublicDepthLayerPolicy,
+        depth_binding: SpatialPublicDepthBinding,
+        footprint_scale: f32,
+    ) -> SpatialPublicDepthUvComposition {
+        let eye_index = eye_index.min(SPATIAL_PUBLIC_PACKED_EYE_COUNT - 1);
         let offset = if eye_index == 0 {
             self.left_offset_uv
         } else {
             self.right_offset_uv
         };
+        let target_mapping = camera_hwb_projection_depth_target_mapping(eye_index, footprint_scale);
+        let packed_to_eye = spatial_public_packed_surface_to_eye_affine(eye_index);
+        let target_reference = spatial_public_target_reference_depth_affine(target_mapping);
         let metadata_affine = if self.metadata_auto_align {
             spatial_public_metadata_depth_affine(eye_index, policy, depth_binding)
         } else {
             SpatialPublicDepthUvAffine::identity()
         };
-        compose_spatial_public_manual_depth_alignment(
-            metadata_affine,
+        let target_domain = compose_spatial_public_depth_uv_affine(target_reference, packed_to_eye);
+        let metadata_domain =
+            compose_spatial_public_depth_uv_affine(metadata_affine, target_domain);
+        let final_affine = compose_spatial_public_manual_depth_alignment(
+            metadata_domain,
             offset,
             self.sample_scale,
             self.sample_scale_y,
             self.roll_degrees,
-        )
+        );
+        SpatialPublicDepthUvComposition {
+            packed_to_eye,
+            target_reference,
+            metadata: metadata_affine,
+            final_affine,
+            target_mapping,
+        }
     }
 }
 
@@ -503,6 +547,8 @@ impl SpatialPublicGuideTargets {
             .marker_fields(self.opaque_projection_displacement_pipeline.is_some())
         + " "
         + &self.projection_surface_feature_marker_fields()
+        + " "
+        + &spatial_public_guide_pass_execution_marker_fields()
     }
 
     pub(crate) fn frame_marker_fields(
@@ -540,6 +586,8 @@ impl SpatialPublicGuideTargets {
             .marker_fields(self.opaque_projection_displacement_pipeline.is_some())
         + " "
         + &self.projection_surface_feature_marker_fields()
+        + " "
+        + &spatial_public_guide_pass_execution_marker_fields()
     }
 
     pub(crate) fn compact_projection_evidence_marker_fields(
@@ -583,6 +631,8 @@ impl SpatialPublicGuideTargets {
             .marker_fields(self.opaque_projection_displacement_pipeline.is_some())
         + " "
         + &self.projection_surface_feature_marker_fields()
+        + " "
+        + &spatial_public_guide_pass_execution_marker_fields()
     }
 
     pub(crate) fn compact_depth_evidence_marker_fields(&self) -> Option<String> {
@@ -593,10 +643,11 @@ impl SpatialPublicGuideTargets {
         let snapshot = current_spatial_environment_depth_frame_snapshot()?;
         let alignment = current_spatial_public_depth_alignment();
         let policy = current_spatial_public_depth_layer_policy();
-        let left_affine = alignment.depth_uv_affine_for_eye(0, policy, current);
-        let right_affine = alignment.depth_uv_affine_for_eye(1, policy, current);
+        let footprint_scale = current_camera_latency_settings().reprojection_footprint_scale();
+        let left = alignment.depth_uv_composition_for_eye(0, policy, current, footprint_scale);
+        let right = alignment.depth_uv_composition_for_eye(1, policy, current, footprint_scale);
         Some(format!(
-            "publicMultiStackDepthRealDescriptorBound=true publicMultiStackDepthCurrentDescriptorSource=xr-meta-environment-depth publicMultiStackDepthDescriptorShape=single-combined-d16-array-sampler publicMultiStackDepthDescriptorAcquiredFrameCount={} publicMultiStackDepthCurrentSwapchainIndex={} publicMultiStackDepthCurrentImageSize={}x{} publicMultiStackDepthLayerPolicy={} publicMultiStackDepthLeftSourceView={} publicMultiStackDepthRightSourceView={} publicMultiStackDepthMetadataAutoAlignRequested={} publicMultiStackDepthMetadataAutoAlignLeftApplied={} publicMultiStackDepthMetadataAutoAlignRightApplied={}",
+            "publicMultiStackDepthRealDescriptorBound=true publicMultiStackDepthCurrentDescriptorSource=xr-meta-environment-depth publicMultiStackDepthDescriptorShape=single-combined-d16-array-sampler publicMultiStackDepthDescriptorAcquiredFrameCount={} publicMultiStackDepthCurrentSwapchainIndex={} publicMultiStackDepthCurrentImageSize={}x{} publicMultiStackDepthLayerPolicy={} publicMultiStackDepthLeftSourceView={} publicMultiStackDepthRightSourceView={} publicMultiStackDepthStaticUvRepairApplied=true publicMultiStackDepthUvDomainChain=packed-stereo-surface-uv+eye-local-full-eye-uv+effective-target-to-reference-target+metadata-render-eye-to-depth-eye+manual-residual-last publicMultiStackDepthMetadataAutoAlignRequested={} publicMultiStackDepthMetadataAutoAlignLeftApplied={} publicMultiStackDepthMetadataAutoAlignRightApplied={}",
             snapshot.acquired_frame_count,
             snapshot.swapchain_index,
             snapshot.width,
@@ -605,8 +656,8 @@ impl SpatialPublicGuideTargets {
             policy.source_view_index_for_eye(0),
             policy.source_view_index_for_eye(1),
             bool_marker(alignment.metadata_auto_align),
-            bool_marker(left_affine.metadata_applied),
-            bool_marker(right_affine.metadata_applied),
+            bool_marker(left.metadata.metadata_applied),
+            bool_marker(right.metadata.metadata_applied),
         ))
     }
 
@@ -617,10 +668,41 @@ impl SpatialPublicGuideTargets {
         }
         let alignment = current_spatial_public_depth_alignment();
         let policy = current_spatial_public_depth_layer_policy();
-        let left_affine = alignment.depth_uv_affine_for_eye(0, policy, current);
-        let right_affine = alignment.depth_uv_affine_for_eye(1, policy, current);
+        let footprint_scale = current_camera_latency_settings().reprojection_footprint_scale();
+        let left = alignment.depth_uv_composition_for_eye(0, policy, current, footprint_scale);
+        let right = alignment.depth_uv_composition_for_eye(1, policy, current, footprint_scale);
+        let left_affine = left.final_affine;
+        let right_affine = right.final_affine;
         Some(format!(
-            "publicMultiStackDepthMetadataAlignmentModel=fov+orientation-center-jacobian-affine publicMultiStackDepthMetadataTranslationPolicy=manual-residual-only publicMultiStackDepthLeftUvAffine={:.6},{:.6},{:.6};{:.6},{:.6},{:.6} publicMultiStackDepthRightUvAffine={:.6},{:.6},{:.6};{:.6},{:.6},{:.6} publicMultiStackDepthAlignmentLeftOffsetUv={:.6},{:.6} publicMultiStackDepthAlignmentRightOffsetUv={:.6},{:.6} publicMultiStackDepthAlignmentSampleScale={:.4} publicMultiStackDepthAlignmentSampleScaleY={:.4} publicMultiStackDepthAlignmentRollDegrees={:.3}",
+            "publicMultiStackDepthStaticUvRepairApplied=true publicMultiStackDepthUvCompositionOrder=packed-to-eye>target-reference>metadata>manual-residual publicMultiStackDepthPackedToEyeLeftAffine={:.6},{:.6},{:.6};{:.6},{:.6},{:.6} publicMultiStackDepthPackedToEyeRightAffine={:.6},{:.6},{:.6};{:.6},{:.6},{:.6} publicMultiStackDepthLeftReferenceTargetRect={} publicMultiStackDepthRightReferenceTargetRect={} publicMultiStackDepthLeftEffectiveEyeTargetRect={} publicMultiStackDepthRightEffectiveEyeTargetRect={} publicMultiStackDepthLeftTargetReferenceAffine={:.6},{:.6},{:.6};{:.6},{:.6},{:.6} publicMultiStackDepthRightTargetReferenceAffine={:.6},{:.6},{:.6};{:.6},{:.6},{:.6} publicMultiStackDepthMetadataAlignmentModel=fov+orientation-center-jacobian-affine publicMultiStackDepthMetadataTranslationPolicy=measured-not-applied publicMultiStackDepthCamera2RgbDepthCalibration=not-implemented publicMultiStackDepthPoseTranslationParallax=not-implemented publicMultiStackDepthLeftUvAffine={:.6},{:.6},{:.6};{:.6},{:.6},{:.6} publicMultiStackDepthRightUvAffine={:.6},{:.6},{:.6};{:.6},{:.6},{:.6} publicMultiStackDepthAlignmentLeftOffsetUv={:.6},{:.6} publicMultiStackDepthAlignmentRightOffsetUv={:.6},{:.6} publicMultiStackDepthAlignmentSampleScale={:.4} publicMultiStackDepthAlignmentSampleScaleY={:.4} publicMultiStackDepthAlignmentRollDegrees={:.3}",
+            left.packed_to_eye.row0[0],
+            left.packed_to_eye.row0[1],
+            left.packed_to_eye.row0[2],
+            left.packed_to_eye.row1[0],
+            left.packed_to_eye.row1[1],
+            left.packed_to_eye.row1[2],
+            right.packed_to_eye.row0[0],
+            right.packed_to_eye.row0[1],
+            right.packed_to_eye.row0[2],
+            right.packed_to_eye.row1[0],
+            right.packed_to_eye.row1[1],
+            right.packed_to_eye.row1[2],
+            left.target_mapping.reference_rect.marker_token(),
+            right.target_mapping.reference_rect.marker_token(),
+            left.target_mapping.effective_rect.marker_token(),
+            right.target_mapping.effective_rect.marker_token(),
+            left.target_reference.row0[0],
+            left.target_reference.row0[1],
+            left.target_reference.row0[2],
+            left.target_reference.row1[0],
+            left.target_reference.row1[1],
+            left.target_reference.row1[2],
+            right.target_reference.row0[0],
+            right.target_reference.row0[1],
+            right.target_reference.row0[2],
+            right.target_reference.row1[0],
+            right.target_reference.row1[1],
+            right.target_reference.row1[2],
             left_affine.row0[0],
             left_affine.row0[1],
             left_affine.row0[2],
@@ -660,7 +742,9 @@ impl SpatialPublicGuideTargets {
 
     fn projection_surface_feature_marker_fields(&self) -> String {
         let abi_v2 = PROJECTION_SURFACE_UNIFORM_ABI_VERSION >= 2;
+        let displacement = current_projection_surface_displacement_settings();
         current_projection_surface_feature_settings().marker_fields(
+            displacement,
             abi_v2 && self.opaque_projection_displacement_pipeline.is_some(),
             abi_v2 && self.opaque_projection_pipeline.is_some(),
             PROJECTION_SURFACE_UNIFORM_ABI_VERSION,
@@ -684,7 +768,12 @@ impl SpatialPublicGuideTargets {
         if !self.guide_pass_execution_available() {
             return Ok(false);
         }
-        for step in SPATIAL_PUBLIC_GUIDE_PASS_SCHEDULE {
+        let guide_pass_count =
+            spatial_public_guide_pass_count_for_layer_override(opaque_projection_layer_override());
+        for step in SPATIAL_PUBLIC_GUIDE_PASS_SCHEDULE
+            .iter()
+            .take(guide_pass_count)
+        {
             match step.kind {
                 SpatialPublicGuidePassKind::Opaque { pipeline_index } => {
                     self.record_opaque_guide_pass_for_stereo(
@@ -821,17 +910,11 @@ impl SpatialPublicGuideTargets {
             .update(device, &current_rgb_channel_transform_settings().uniform())?;
         self.rgb_channel_transform_uniform
             .update_displacement(device, &surface_features.uniform(displacement, draw_rects))?;
-        let displacement_effective =
-            displacement.effective(self.opaque_projection_displacement_pipeline.is_some());
-        let tiling_effective = surface_features.tiling.effective(
+        let tessellated_effective = surface_features.tessellated_effective(
+            displacement,
             PROJECTION_SURFACE_UNIFORM_ABI_VERSION >= 2
                 && self.opaque_projection_displacement_pipeline.is_some(),
         );
-        let tessellated_effective = if displacement_effective {
-            true
-        } else {
-            tiling_effective
-        };
         for eye_index in 0..SPATIAL_PUBLIC_PACKED_EYE_COUNT {
             let target_rect = draw_rects[eye_index];
             set_packed_projection_target_view(device, command_buffer, extent, target_rect);
@@ -907,14 +990,12 @@ impl SpatialPublicGuideTargets {
             device,
             &surface_features.uniform(displacement, zone_frame.draw_rects),
         )?;
-        let displacement_effective = !zone_frame.settings.synthetic_diagnostic()
-            && displacement.effective(pipeline.displacement_pipeline.is_some());
-        let tiling_effective = !zone_frame.settings.synthetic_diagnostic()
-            && surface_features.tiling.effective(
+        let tessellated_effective = !zone_frame.settings.synthetic_diagnostic()
+            && surface_features.tessellated_effective(
+                displacement,
                 PROJECTION_SURFACE_UNIFORM_ABI_VERSION >= 2
                     && pipeline.displacement_pipeline.is_some(),
             );
-        let tessellated_effective = displacement_effective || tiling_effective;
         for eye_index in 0..SPATIAL_PUBLIC_PACKED_EYE_COUNT {
             set_packed_projection_target_view(
                 device,
@@ -1238,8 +1319,14 @@ impl OpaqueProjectionPush {
         let layer_override = opaque_projection_layer_override();
         let depth_alignment = current_spatial_public_depth_alignment();
         let depth_layer_policy = current_spatial_public_depth_layer_policy();
-        let depth_uv_affine =
-            depth_alignment.depth_uv_affine_for_eye(eye_index, depth_layer_policy, depth_binding);
+        let depth_uv_affine = depth_alignment
+            .depth_uv_composition_for_eye(
+                eye_index,
+                depth_layer_policy,
+                depth_binding,
+                footprint_scale,
+            )
+            .final_affine;
         let depth_near_z = depth_binding.near_z.max(0.001);
         let depth_far_z = if depth_binding.far_z.is_finite() && depth_binding.far_z > depth_near_z {
             depth_binding.far_z
@@ -1605,6 +1692,81 @@ fn clamp_depth_alignment_roll_degrees(value: f32) -> f32 {
     }
 }
 
+fn spatial_public_packed_surface_to_eye_affine(eye_index: usize) -> SpatialPublicDepthUvAffine {
+    SpatialPublicDepthUvAffine {
+        row0: [
+            SPATIAL_PUBLIC_PACKED_EYE_COUNT as f32,
+            0.0,
+            -(eye_index.min(SPATIAL_PUBLIC_PACKED_EYE_COUNT - 1) as f32),
+        ],
+        row1: [0.0, 1.0, 0.0],
+        metadata_applied: false,
+    }
+}
+
+fn spatial_public_target_reference_depth_affine(
+    mapping: CameraHwbProjectionDepthTargetMapping,
+) -> SpatialPublicDepthUvAffine {
+    let reference = mapping.reference_rect;
+    let effective = mapping.effective_rect;
+    if ![
+        reference.x,
+        reference.y,
+        reference.width,
+        reference.height,
+        effective.x,
+        effective.y,
+        effective.width,
+        effective.height,
+    ]
+    .iter()
+    .all(|value| value.is_finite())
+        || reference.width <= f32::EPSILON
+        || reference.height <= f32::EPSILON
+        || effective.width <= f32::EPSILON
+        || effective.height <= f32::EPSILON
+    {
+        return SpatialPublicDepthUvAffine::identity();
+    }
+    let scale_x = reference.width / effective.width;
+    let scale_y = reference.height / effective.height;
+    SpatialPublicDepthUvAffine {
+        row0: [scale_x, 0.0, reference.x - effective.x * scale_x],
+        row1: [0.0, scale_y, reference.y - effective.y * scale_y],
+        metadata_applied: false,
+    }
+}
+
+fn compose_spatial_public_depth_uv_affine(
+    outer: SpatialPublicDepthUvAffine,
+    inner: SpatialPublicDepthUvAffine,
+) -> SpatialPublicDepthUvAffine {
+    SpatialPublicDepthUvAffine {
+        row0: [
+            outer.row0[0] * inner.row0[0] + outer.row0[1] * inner.row1[0],
+            outer.row0[0] * inner.row0[1] + outer.row0[1] * inner.row1[1],
+            outer.row0[0] * inner.row0[2] + outer.row0[1] * inner.row1[2] + outer.row0[2],
+        ],
+        row1: [
+            outer.row1[0] * inner.row0[0] + outer.row1[1] * inner.row1[0],
+            outer.row1[0] * inner.row0[1] + outer.row1[1] * inner.row1[1],
+            outer.row1[0] * inner.row0[2] + outer.row1[1] * inner.row1[2] + outer.row1[2],
+        ],
+        metadata_applied: outer.metadata_applied || inner.metadata_applied,
+    }
+}
+
+#[cfg(test)]
+fn apply_spatial_public_depth_uv_affine(
+    affine: SpatialPublicDepthUvAffine,
+    uv: [f32; 2],
+) -> [f32; 2] {
+    [
+        affine.row0[0] * uv[0] + affine.row0[1] * uv[1] + affine.row0[2],
+        affine.row1[0] * uv[0] + affine.row1[1] * uv[1] + affine.row1[2],
+    ]
+}
+
 fn spatial_public_metadata_depth_affine(
     render_eye_index: usize,
     policy: SpatialPublicDepthLayerPolicy,
@@ -1882,6 +2044,31 @@ const SPATIAL_PUBLIC_GUIDE_PASS_SCHEDULE: [SpatialPublicGuidePassStep; 6] = [
     },
 ];
 
+fn spatial_public_guide_pass_count_for_layer_override(layer_override: f32) -> usize {
+    if layer_override < 0.0 {
+        return SPATIAL_PUBLIC_GUIDE_PASS_SCHEDULE.len();
+    }
+    match layer_override.round() as u32 {
+        // Raw camera brightness and the public depth diagnostic both consume
+        // only guide target 0. Preblur and raw-strength consume exact prefixes
+        // of the dependency-ordered schedule. Final, blurred-strength, and
+        // displacement retain the complete graph.
+        1 | 6 => 1,
+        2 => 3,
+        3 => 4,
+        _ => SPATIAL_PUBLIC_GUIDE_PASS_SCHEDULE.len(),
+    }
+}
+
+fn spatial_public_guide_pass_execution_marker_fields() -> String {
+    let layer_override = opaque_projection_layer_override();
+    let pass_count = spatial_public_guide_pass_count_for_layer_override(layer_override);
+    format!(
+        "publicMultiStackGuidePassesRecordedPerFrame={} publicMultiStackGuidePassExecutionPolicy=active-layer-dependency-prefix",
+        pass_count,
+    )
+}
+
 struct SpatialPublicGuideTarget {
     image: vk::Image,
     memory: vk::DeviceMemory,
@@ -1999,20 +2186,37 @@ impl SpatialPublicDepthResources {
         let Some(snapshot) = current_spatial_environment_depth_frame_snapshot() else {
             return;
         };
-        if snapshot.image_handles.is_empty()
-            || self.real_image_handles == snapshot.image_handles
-            || !self.real_image_handles.is_empty()
-        {
+        if snapshot.image_handles.is_empty() {
             return;
         }
-        if snapshot.image_handles.len().saturating_add(1)
+        #[cfg(rq_environment_depth_spatial_sdk_api_layer)]
+        let new_image_handles = snapshot
+            .image_handles
+            .iter()
+            .copied()
+            .filter(|handle| !self.real_image_handles.contains(handle))
+            .collect::<Vec<_>>();
+        #[cfg(not(rq_environment_depth_spatial_sdk_api_layer))]
+        let new_image_handles = if self.real_image_handles.is_empty() {
+            snapshot.image_handles.clone()
+        } else {
+            Vec::new()
+        };
+        if new_image_handles.is_empty() {
+            return;
+        }
+        if self
+            .real_image_handles
+            .len()
+            .saturating_add(new_image_handles.len())
+            .saturating_add(1)
             > SPATIAL_PUBLIC_MAX_DEPTH_DESCRIPTOR_SETS as usize
         {
             return;
         }
 
-        let mut image_views = Vec::with_capacity(snapshot.image_handles.len());
-        for image_handle in snapshot.image_handles.iter().copied() {
+        let mut image_views = Vec::with_capacity(new_image_handles.len());
+        for image_handle in new_image_handles.iter().copied() {
             let image = vk::Image::from_raw(image_handle);
             match device.create_image_view(
                 &vk::ImageViewCreateInfo::default()
@@ -2051,16 +2255,23 @@ impl SpatialPublicDepthResources {
         {
             write_depth_descriptor_set(device, descriptor_set, self.sampler, *image_view);
         }
-        self.real_image_views = image_views;
-        self.real_descriptor_sets = descriptor_sets;
-        self.real_image_handles = snapshot.image_handles;
+        self.real_image_views.extend(image_views);
+        self.real_descriptor_sets.extend(descriptor_sets);
+        self.real_image_handles.extend(new_image_handles);
     }
 
     fn current_binding(&self) -> SpatialPublicDepthBinding {
         if let Some(snapshot) = current_spatial_environment_depth_frame_snapshot() {
+            #[cfg(rq_environment_depth_spatial_sdk_api_layer)]
+            let descriptor_index = snapshot
+                .image_handles
+                .first()
+                .and_then(|handle| self.real_image_handles.iter().position(|item| item == handle));
+            #[cfg(not(rq_environment_depth_spatial_sdk_api_layer))]
+            let descriptor_index = Some(snapshot.swapchain_index as usize);
             if let Some(descriptor_set) = self
                 .real_descriptor_sets
-                .get(snapshot.swapchain_index as usize)
+                .get(descriptor_index.unwrap_or(usize::MAX))
                 .copied()
             {
                 return SpatialPublicDepthBinding {
@@ -2120,7 +2331,7 @@ impl SpatialPublicDepthResources {
         let right_translation_delta_m =
             spatial_public_depth_pose_translation_delta_m(1, policy, current);
         format!(
-            "publicMultiStackDepthRealDescriptorBound={} publicMultiStackDepthCurrentDescriptorSource={} publicMultiStackDepthDescriptorAcquiredFrameCount={} publicMultiStackDepthCurrentSwapchainIndex={} publicMultiStackDepthCurrentImageSize={} publicMultiStackDepthDescriptorShape=single-combined-d16-array-sampler publicMultiStackDepthSourceViewCount=2 publicMultiStackDepthDepthViewValidMask={} publicMultiStackDepthRenderViewValidMask={} publicMultiStackDepthCaptureTimeNs={} publicMultiStackDepthAcquireDisplayTimeNs={} publicMultiStackDepthMetadataAutoAlignRequested={} publicMultiStackDepthMetadataAutoAlignLeftApplied={} publicMultiStackDepthMetadataAutoAlignRightApplied={} publicMultiStackDepthMetadataAlignmentModel=fov+orientation-center-jacobian-affine publicMultiStackDepthMetadataTranslationPolicy=manual-residual-only publicMultiStackDepthLeftPoseTranslationDeltaM={:.6} publicMultiStackDepthRightPoseTranslationDeltaM={:.6} publicMultiStackDepthLeftUvAffine={:.6},{:.6},{:.6};{:.6},{:.6},{:.6} publicMultiStackDepthRightUvAffine={:.6},{:.6},{:.6};{:.6},{:.6},{:.6} publicMultiStackDepthFallbackDescriptorBound={} publicMultiStackDepthFallbackReady={} publicMultiStackDepthFallbackFormat={:?} publicMultiStackDepthRealDescriptorSets={} publicMultiStackDepthRealImageViews={}",
+            "publicMultiStackDepthRealDescriptorBound={} publicMultiStackDepthCurrentDescriptorSource={} publicMultiStackDepthDescriptorAcquiredFrameCount={} publicMultiStackDepthCurrentSwapchainIndex={} publicMultiStackDepthCurrentImageSize={} publicMultiStackDepthDescriptorShape=single-combined-d16-array-sampler publicMultiStackDepthSourceViewCount=2 publicMultiStackDepthDepthViewValidMask={} publicMultiStackDepthRenderViewValidMask={} publicMultiStackDepthCaptureTimeNs={} publicMultiStackDepthAcquireDisplayTimeNs={} publicMultiStackDepthStaticUvRepairApplied=true publicMultiStackDepthUvCompositionOrder=packed-to-eye>target-reference>metadata>manual-residual publicMultiStackDepthMetadataAutoAlignRequested={} publicMultiStackDepthMetadataAutoAlignLeftApplied={} publicMultiStackDepthMetadataAutoAlignRightApplied={} publicMultiStackDepthMetadataAlignmentModel=fov+orientation-center-jacobian-affine publicMultiStackDepthMetadataTranslationPolicy=measured-not-applied publicMultiStackDepthCamera2RgbDepthCalibration=not-implemented publicMultiStackDepthPoseTranslationParallax=not-implemented publicMultiStackDepthLeftPoseTranslationDeltaM={:.6} publicMultiStackDepthRightPoseTranslationDeltaM={:.6} publicMultiStackDepthLeftUvAffine={:.6},{:.6},{:.6};{:.6},{:.6},{:.6} publicMultiStackDepthRightUvAffine={:.6},{:.6},{:.6};{:.6},{:.6},{:.6} publicMultiStackDepthFallbackDescriptorBound={} publicMultiStackDepthFallbackReady={} publicMultiStackDepthFallbackFormat={:?} publicMultiStackDepthRealDescriptorSets={} publicMultiStackDepthRealImageViews={}",
             bool_marker(current.real_depth_bound),
             if current.real_depth_bound {
                 "xr-meta-environment-depth"
@@ -2196,7 +2407,10 @@ impl SpatialPublicDepthResources {
     }
 }
 
-#[cfg(target_os = "android")]
+#[cfg(all(
+    target_os = "android",
+    rq_environment_depth_legacy_native_sidecar
+))]
 fn current_spatial_environment_depth_frame_snapshot(
 ) -> Option<SpatialPublicEnvironmentDepthSnapshot> {
     crate::spatial_environment_depth::spatial_environment_depth_frame_snapshot().map(|snapshot| {
@@ -2244,7 +2458,54 @@ fn current_spatial_environment_depth_frame_snapshot(
     })
 }
 
-#[cfg(not(target_os = "android"))]
+#[cfg(all(target_os = "android", rq_environment_depth_spatial_sdk_api_layer))]
+fn current_spatial_environment_depth_frame_snapshot(
+) -> Option<SpatialPublicEnvironmentDepthSnapshot> {
+    crate::spatial_sdk_depth_handoff::spatial_environment_depth_frame_snapshot().map(
+        |snapshot| SpatialPublicEnvironmentDepthSnapshot {
+            image_handles: vec![snapshot.image_handle],
+            swapchain_index: snapshot.ring_index,
+            width: snapshot.width,
+            height: snapshot.height,
+            near_z: snapshot.near_z,
+            far_z: snapshot.far_z,
+            acquired_frame_count: snapshot.generation,
+            capture_time_ns: snapshot.capture_time_ns,
+            acquire_display_time_ns: snapshot.display_time_ns,
+            depth_views: snapshot.depth_views.map(|view| SpatialPublicDepthViewSnapshot {
+                fov: SpatialPublicDepthFovSnapshot {
+                    angle_left: view.fov[0],
+                    angle_right: view.fov[1],
+                    angle_up: view.fov[2],
+                    angle_down: view.fov[3],
+                },
+                pose: SpatialPublicDepthPoseSnapshot {
+                    orientation: view.orientation,
+                    position: view.position,
+                },
+            }),
+            render_views: snapshot.render_views.map(|view| SpatialPublicDepthViewSnapshot {
+                fov: SpatialPublicDepthFovSnapshot {
+                    angle_left: view.fov[0],
+                    angle_right: view.fov[1],
+                    angle_up: view.fov[2],
+                    angle_down: view.fov[3],
+                },
+                pose: SpatialPublicDepthPoseSnapshot {
+                    orientation: view.orientation,
+                    position: view.position,
+                },
+            }),
+            depth_view_valid_mask: snapshot.depth_view_valid_mask,
+            render_view_valid_mask: snapshot.render_view_valid_mask,
+        },
+    )
+}
+
+#[cfg(any(
+    not(target_os = "android"),
+    all(target_os = "android", rq_environment_depth_disabled)
+))]
 fn current_spatial_environment_depth_frame_snapshot(
 ) -> Option<SpatialPublicEnvironmentDepthSnapshot> {
     None
@@ -2885,28 +3146,51 @@ pub(crate) fn public_guide_targets_pending_marker_fields(reason: &str) -> String
     )
     + " "
     + &current_projection_surface_feature_settings().marker_fields(
+        current_projection_surface_displacement_settings(),
         false,
         false,
         PROJECTION_SURFACE_UNIFORM_ABI_VERSION,
     )
 }
 
-#[cfg(target_os = "android")]
+#[cfg(all(
+    target_os = "android",
+    rq_environment_depth_legacy_native_sidecar
+))]
 fn spatial_environment_depth_marker_fields() -> String {
     crate::spatial_environment_depth::spatial_environment_depth_marker_fields()
 }
 
-#[cfg(target_os = "android")]
+#[cfg(all(
+    target_os = "android",
+    rq_environment_depth_legacy_native_sidecar
+))]
 fn spatial_environment_depth_compact_marker_fields() -> String {
     crate::spatial_environment_depth::spatial_environment_depth_compact_marker_fields()
 }
 
-#[cfg(not(target_os = "android"))]
+#[cfg(all(target_os = "android", rq_environment_depth_spatial_sdk_api_layer))]
+fn spatial_environment_depth_marker_fields() -> String {
+    crate::spatial_sdk_depth_handoff::spatial_environment_depth_marker_fields()
+}
+
+#[cfg(all(target_os = "android", rq_environment_depth_spatial_sdk_api_layer))]
+fn spatial_environment_depth_compact_marker_fields() -> String {
+    crate::spatial_sdk_depth_handoff::spatial_environment_depth_compact_marker_fields()
+}
+
+#[cfg(any(
+    not(target_os = "android"),
+    all(target_os = "android", rq_environment_depth_disabled)
+))]
 fn spatial_environment_depth_marker_fields() -> String {
     "publicMultiStackDepthSource=spatial-fallback-depth-descriptor publicMultiStackDepthProviderRequested=false publicMultiStackDepthRealProviderBound=false publicMultiStackDepthValidData=false publicMultiStackDepthPermissionSurface=horizonos.permission.USE_SCENE+USE_SCENE_DATA environmentDepthSource=spatial-fallback-depth-descriptor environmentDepthProviderState=not-bound environmentDepthProviderAvailable=false environmentDepthRealProviderBound=false environmentDepthAcquireStatus=not-attempted-provider-not-bound environmentDepthValidData=false environmentDepthDebugValidSampleCount=0 environmentDepthAcquiredFrameCount=0".to_string()
 }
 
-#[cfg(not(target_os = "android"))]
+#[cfg(any(
+    not(target_os = "android"),
+    all(target_os = "android", rq_environment_depth_disabled)
+))]
 fn spatial_environment_depth_compact_marker_fields() -> String {
     "environmentDepthSourceViewCount=2 environmentDepthDepthViewValidMask=0 environmentDepthRenderViewValidMask=0 environmentDepthCaptureTimeNs=0 environmentDepthAcquireDisplayTimeNs=0 environmentDepthAcquireDisplayTimePolicy=unavailable environmentDepthAcquireFrameLoopIntegration=unavailable environmentDepthAcquireCallOrderConformant=false environmentDepthAcquireCallOrderErrorCount=0".to_string()
 }
@@ -4446,6 +4730,113 @@ mod tests {
         assert_eq!(affine.row1, [0.0, 0.5, 0.23]);
     }
 
+    fn assert_depth_uv_close(actual: [f32; 2], expected: [f32; 2]) {
+        assert!(
+            (actual[0] - expected[0]).abs() < 0.00001,
+            "x {} != {}",
+            actual[0],
+            expected[0]
+        );
+        assert!(
+            (actual[1] - expected[1]).abs() < 0.00001,
+            "y {} != {}",
+            actual[1],
+            expected[1]
+        );
+    }
+
+    fn packed_surface_uv_for_eye_local(eye_index: usize, eye_uv: [f32; 2]) -> [f32; 2] {
+        [
+            (eye_index.min(1) as f32 + eye_uv[0]) / SPATIAL_PUBLIC_PACKED_EYE_COUNT as f32,
+            eye_uv[1],
+        ]
+    }
+
+    #[test]
+    fn packed_target_centers_and_corners_map_to_each_full_eye_depth_layer() {
+        let alignment = SpatialPublicDepthAlignment {
+            left_offset_uv: [0.0; 2],
+            right_offset_uv: [0.0; 2],
+            sample_scale: 1.0,
+            sample_scale_y: 1.0,
+            roll_degrees: 0.0,
+            metadata_auto_align: false,
+        };
+        let samples = [[0.0, 0.0], [0.5, 0.5], [1.0, 1.0], [0.0, 1.0], [1.0, 0.0]];
+        for eye_index in 0..SPATIAL_PUBLIC_PACKED_EYE_COUNT {
+            let composition = alignment.depth_uv_composition_for_eye(
+                eye_index,
+                SpatialPublicDepthLayerPolicy::EyeIndex,
+                fallback_depth_binding(),
+                1.0,
+            );
+            let effective = composition.target_mapping.effective_rect;
+            let reference = composition.target_mapping.reference_rect;
+            assert_eq!(
+                SpatialPublicDepthLayerPolicy::EyeIndex.source_layer_for_eye(eye_index),
+                eye_index as f32
+            );
+            for content_uv in samples {
+                let eye_uv = [
+                    effective.x + effective.width * content_uv[0],
+                    effective.y + effective.height * content_uv[1],
+                ];
+                let packed_uv = packed_surface_uv_for_eye_local(eye_index, eye_uv);
+                let mapped =
+                    apply_spatial_public_depth_uv_affine(composition.final_affine, packed_uv);
+                let expected = [
+                    reference.x + reference.width * content_uv[0],
+                    reference.y + reference.height * content_uv[1],
+                ];
+                assert_depth_uv_close(mapped, expected);
+            }
+        }
+    }
+
+    #[test]
+    fn depth_uv_chain_applies_metadata_after_domains_and_manual_residual_last() {
+        let mut binding = test_real_depth_binding();
+        binding.depth_views[1] = test_depth_view(2.0, 2.0);
+        let alignment = SpatialPublicDepthAlignment {
+            left_offset_uv: [0.0; 2],
+            right_offset_uv: [0.013, -0.021],
+            sample_scale: 1.07,
+            sample_scale_y: 0.93,
+            roll_degrees: 4.0,
+            metadata_auto_align: true,
+        };
+        let composition = alignment.depth_uv_composition_for_eye(
+            1,
+            SpatialPublicDepthLayerPolicy::EyeIndex,
+            binding,
+            0.8,
+        );
+        assert!(composition.metadata.metadata_applied);
+        let effective = composition.target_mapping.effective_rect;
+        let eye_uv = [
+            effective.x + effective.width * 0.23,
+            effective.y + effective.height * 0.81,
+        ];
+        let packed_uv = packed_surface_uv_for_eye_local(1, eye_uv);
+        let eye_local = apply_spatial_public_depth_uv_affine(composition.packed_to_eye, packed_uv);
+        let reference =
+            apply_spatial_public_depth_uv_affine(composition.target_reference, eye_local);
+        let metadata = apply_spatial_public_depth_uv_affine(composition.metadata, reference);
+        let manual_only = compose_spatial_public_manual_depth_alignment(
+            SpatialPublicDepthUvAffine::identity(),
+            alignment.right_offset_uv,
+            alignment.sample_scale,
+            alignment.sample_scale_y,
+            alignment.roll_degrees,
+        );
+        let sequential = apply_spatial_public_depth_uv_affine(manual_only, metadata);
+        let composed = apply_spatial_public_depth_uv_affine(composition.final_affine, packed_uv);
+        assert_depth_uv_close(composed, sequential);
+        assert!((composition.packed_to_eye.row0[0] - 2.0).abs() < f32::EPSILON);
+        assert!((composition.packed_to_eye.row0[2] + 1.0).abs() < f32::EPSILON);
+        assert!(composition.target_reference.row0[0] > 1.0);
+    }
+
     #[test]
     fn opaque_projection_push_defaults_to_layer_cycle_without_android_property() {
         assert_eq!(
@@ -4532,6 +4923,20 @@ mod tests {
         assert!(public_guide_pass_schedule_marker().contains("public-preblur-vertical"));
         assert!(public_guide_pass_schedule_marker().contains("public-postblur-horizontal"));
         assert!(public_guide_pass_schedule_marker().contains("public-postblur-vertical"));
+    }
+
+    #[test]
+    fn diagnostic_layers_record_only_their_dependency_prefix() {
+        assert_eq!(spatial_public_guide_pass_count_for_layer_override(-1.0), 6);
+        assert_eq!(spatial_public_guide_pass_count_for_layer_override(0.0), 6);
+        assert_eq!(spatial_public_guide_pass_count_for_layer_override(1.0), 1);
+        assert_eq!(spatial_public_guide_pass_count_for_layer_override(2.0), 3);
+        assert_eq!(spatial_public_guide_pass_count_for_layer_override(3.0), 4);
+        assert_eq!(spatial_public_guide_pass_count_for_layer_override(4.0), 6);
+        assert_eq!(spatial_public_guide_pass_count_for_layer_override(5.0), 6);
+        assert_eq!(spatial_public_guide_pass_count_for_layer_override(6.0), 1);
+        assert_eq!(spatial_public_guide_pass_count_for_layer_override(7.0), 6);
+        assert_eq!(spatial_public_guide_pass_count_for_layer_override(8.0), 6);
     }
 
     #[test]

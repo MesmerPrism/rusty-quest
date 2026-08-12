@@ -174,6 +174,28 @@ impl ProjectionSurfaceTilingSettings {
     pub(crate) fn effective(self, supported: bool) -> bool {
         self.requested() && supported
     }
+
+    pub(crate) fn geometry_contributes(self) -> bool {
+        let normalized = self.normalized();
+        normalized.enabled
+            && normalized.topology != ProjectionSurfaceTopology::Continuous
+            && normalized.gap > 0.0
+    }
+
+    pub(crate) fn depth_grouping_contributes(
+        self,
+        displacement: ProjectionSurfaceDisplacementSettings,
+    ) -> bool {
+        let normalized = self.normalized();
+        normalized.enabled && displacement.requested_active() && normalized.depth_flexibility < 1.0
+    }
+
+    pub(crate) fn visual_contribution(
+        self,
+        displacement: ProjectionSurfaceDisplacementSettings,
+    ) -> bool {
+        self.geometry_contributes() || self.depth_grouping_contributes(displacement)
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -250,7 +272,7 @@ impl ProjectionSurfaceFeatureSettings {
         self,
         displacement: ProjectionSurfaceDisplacementSettings,
     ) -> bool {
-        displacement.requested_active() || self.tiling.requested()
+        displacement.requested_active() || self.tiling.geometry_contributes()
     }
 
     pub(crate) fn tessellated_effective(
@@ -263,16 +285,23 @@ impl ProjectionSurfaceFeatureSettings {
 
     pub(crate) fn marker_fields(
         self,
+        displacement: ProjectionSurfaceDisplacementSettings,
         tiling_supported: bool,
         inner_alpha_supported: bool,
         provider_abi_version: u32,
     ) -> String {
         format!(
-            "projectionSurfaceTilingContract={} projectionSurfaceTilingRequested={} projectionSurfaceTilingSupported={} projectionSurfaceTilingEffective={} projectionSurfaceTopology={} projectionSurfaceTileGapNormalized={:.4} projectionSurfaceDepthFlexibility={:.4} projectionSurfaceTilingScope={} projectionSurfaceRestUvPolicy=preserve-content-identity projectionInnerAlphaContract={} projectionInnerAlphaRequested={} projectionInnerAlphaSupported={} projectionInnerAlphaEffective={} projectionInnerAlphaInput=processed-core projectionInnerAlphaDriver={} projectionInnerAlphaThreshold={:.4} projectionInnerAlphaSoftness={:.4} projectionInnerAlphaAmount={:.4} projectionInnerAlphaInvert={} projectionInnerAlphaStretchPolicy={} projectionInnerAlphaStretchObeysExactProjectionMask={} projectionInnerAlphaComposition=premultiplied-multiply-existing-outer-underlay-alpha projectionSurfaceFeatureRevision={} projectionSurfaceFeatureUniformAbiRequested={} projectionSurfaceFeatureUniformAbiProvided={}",
+            "projectionSurfaceTilingContract={} projectionSurfaceTilingRequested={} projectionSurfaceTilingSupported={} projectionSurfaceTilingEffective={} projectionSurfaceTilingVisualContribution={} projectionSurfaceTilingGeometryContribution={} projectionSurfaceTilingDepthGroupingContribution={} projectionSurfaceTessellatedDrawRequested={} projectionSurfaceTessellatedDrawSupported={} projectionSurfaceTessellatedDrawEffective={} projectionSurfaceTopology={} projectionSurfaceTileGapNormalized={:.4} projectionSurfaceDepthFlexibility={:.4} projectionSurfaceTilingScope={} projectionSurfaceRestUvPolicy=preserve-content-identity projectionInnerAlphaContract={} projectionInnerAlphaRequested={} projectionInnerAlphaSupported={} projectionInnerAlphaEffective={} projectionInnerAlphaInput=processed-core projectionInnerAlphaDriver={} projectionInnerAlphaThreshold={:.4} projectionInnerAlphaSoftness={:.4} projectionInnerAlphaAmount={:.4} projectionInnerAlphaInvert={} projectionInnerAlphaStretchPolicy={} projectionInnerAlphaStretchObeysExactProjectionMask={} projectionInnerAlphaComposition=premultiplied-multiply-existing-outer-underlay-alpha projectionSurfaceFeatureRevision={} projectionSurfaceFeatureUniformAbiRequested={} projectionSurfaceFeatureUniformAbiProvided={}",
             PROJECTION_SURFACE_TILING_CONTRACT_ID,
             bool_marker(self.tiling.requested()),
             bool_marker(tiling_supported),
             bool_marker(self.tiling.effective(tiling_supported)),
+            bool_marker(self.tiling.visual_contribution(displacement)),
+            bool_marker(self.tiling.geometry_contributes()),
+            bool_marker(self.tiling.depth_grouping_contributes(displacement)),
+            bool_marker(self.tessellated_requested(displacement)),
+            bool_marker(tiling_supported),
+            bool_marker(self.tessellated_effective(displacement, tiling_supported)),
             self.tiling.topology.marker_token(),
             self.tiling.gap,
             self.tiling.depth_flexibility,
@@ -514,26 +543,103 @@ mod tests {
         assert!(settings.inner_alpha.requested());
         assert!(!settings.tiling.effective(false));
         assert!(settings.inner_alpha.effective(true));
-        let markers = settings.marker_fields(false, true, 2);
+        let markers = settings.marker_fields(
+            ProjectionSurfaceDisplacementSettings::default(),
+            false,
+            true,
+            2,
+        );
         assert!(markers.contains("projectionSurfaceTilingEffective=false"));
+        assert!(markers.contains("projectionSurfaceTilingGeometryContribution=true"));
+        assert!(markers.contains("projectionSurfaceTessellatedDrawRequested=true"));
         assert!(markers.contains("projectionInnerAlphaEffective=true"));
     }
 
     #[test]
-    fn tiling_selects_tessellated_path_without_depth_displacement() {
-        let settings = ProjectionSurfaceFeatureSettings {
+    fn identity_topology_settings_fold_to_the_base_projection_path() {
+        let continuous = ProjectionSurfaceFeatureSettings {
+            tiling: ProjectionSurfaceTilingSettings {
+                enabled: true,
+                ..ProjectionSurfaceTilingSettings::default()
+            },
+            ..ProjectionSurfaceFeatureSettings::default()
+        }
+        .normalized();
+        let zero_gap_tiles = ProjectionSurfaceFeatureSettings {
             tiling: ProjectionSurfaceTilingSettings {
                 enabled: true,
                 topology: ProjectionSurfaceTopology::Tiled,
+                gap: 0.0,
                 ..ProjectionSurfaceTilingSettings::default()
             },
             ..ProjectionSurfaceFeatureSettings::default()
         }
         .normalized();
         let displacement = ProjectionSurfaceDisplacementSettings::default();
-        assert!(settings.tessellated_requested(displacement));
-        assert!(!settings.tessellated_effective(displacement, false));
-        assert!(settings.tessellated_effective(displacement, true));
+        assert!(!continuous.tiling.visual_contribution(displacement));
+        assert!(!zero_gap_tiles.tiling.visual_contribution(displacement));
+        assert!(!continuous.tessellated_requested(displacement));
+        assert!(!zero_gap_tiles.tessellated_requested(displacement));
+    }
+
+    #[test]
+    fn positive_gap_tiles_or_active_displacement_select_the_grid_path() {
+        let tiled = ProjectionSurfaceFeatureSettings {
+            tiling: ProjectionSurfaceTilingSettings {
+                enabled: true,
+                topology: ProjectionSurfaceTopology::Tiled,
+                gap: 0.08,
+                ..ProjectionSurfaceTilingSettings::default()
+            },
+            ..ProjectionSurfaceFeatureSettings::default()
+        }
+        .normalized();
+        let continuous = ProjectionSurfaceFeatureSettings {
+            tiling: ProjectionSurfaceTilingSettings {
+                enabled: true,
+                topology: ProjectionSurfaceTopology::Continuous,
+                depth_flexibility: 1.0,
+                ..ProjectionSurfaceTilingSettings::default()
+            },
+            ..ProjectionSurfaceFeatureSettings::default()
+        }
+        .normalized();
+        let disabled_displacement = ProjectionSurfaceDisplacementSettings::default();
+        let active_displacement = ProjectionSurfaceDisplacementSettings {
+            enabled: true,
+            max_displacement_m: 0.1,
+            ..ProjectionSurfaceDisplacementSettings::default()
+        };
+
+        assert!(tiled.tiling.geometry_contributes());
+        assert!(tiled.tessellated_requested(disabled_displacement));
+        assert!(!tiled.tessellated_effective(disabled_displacement, false));
+        assert!(tiled.tessellated_effective(disabled_displacement, true));
+        assert!(!continuous.tiling.visual_contribution(active_displacement));
+        assert!(continuous.tessellated_requested(active_displacement));
+        assert!(continuous.tessellated_effective(active_displacement, true));
+    }
+
+    #[test]
+    fn rigid_tile_depth_grouping_contributes_only_below_full_flexibility() {
+        let active_displacement = ProjectionSurfaceDisplacementSettings {
+            enabled: true,
+            max_displacement_m: 0.1,
+            ..ProjectionSurfaceDisplacementSettings::default()
+        };
+        let rigid = ProjectionSurfaceTilingSettings {
+            enabled: true,
+            topology: ProjectionSurfaceTopology::Continuous,
+            depth_flexibility: 0.0,
+            ..ProjectionSurfaceTilingSettings::default()
+        };
+        let fully_flexible = ProjectionSurfaceTilingSettings {
+            depth_flexibility: 1.0,
+            ..rigid
+        };
+        assert!(rigid.depth_grouping_contributes(active_displacement));
+        assert!(!fully_flexible.depth_grouping_contributes(active_displacement));
+        assert!(!rigid.depth_grouping_contributes(ProjectionSurfaceDisplacementSettings::default()));
     }
 
     #[test]
@@ -556,7 +662,12 @@ mod tests {
         );
         assert_eq!(uniform.tiling[1], 2.0);
         assert!(settings
-            .marker_fields(true, false, 2)
+            .marker_fields(
+                ProjectionSurfaceDisplacementSettings::default(),
+                true,
+                false,
+                2,
+            )
             .contains("projectionSurfaceTopology=triangle-tiles"));
         assert_eq!(
             crate::projection_surface_displacement::PROJECTION_SURFACE_GRID_VERTEX_COUNT,
