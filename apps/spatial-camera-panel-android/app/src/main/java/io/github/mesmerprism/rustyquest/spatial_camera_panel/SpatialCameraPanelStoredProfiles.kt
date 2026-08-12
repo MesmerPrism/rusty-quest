@@ -7,6 +7,27 @@ import com.google.gson.JsonObject
 import com.google.gson.JsonParser
 import java.io.File
 
+/**
+ * Playlist interchange vocabulary retained for forward-compatible profile payloads.
+ *
+ * Unit 023 remains the runtime authority for background composition, so this recovery lane stores
+ * and transitions the optional token without applying the later black-backing policy.
+ */
+internal enum class SpatialBackgroundMode(val token: String) {
+  Black("black"),
+  Passthrough("passthrough"),
+  LutPassthrough("lut-passthrough");
+
+  companion object {
+    fun fromToken(token: String?): SpatialBackgroundMode =
+        when (token?.trim()?.lowercase()?.replace('_', '-')) {
+          Passthrough.token -> Passthrough
+          LutPassthrough.token, "lut", "poster-lut", "posterized-passthrough" -> LutPassthrough
+          else -> Black
+        }
+  }
+}
+
 internal data class SpatialCameraPanelControlSnapshot(
     val projectionPanelEnabled: Boolean,
     val layerOverride: Float,
@@ -21,6 +42,7 @@ internal data class SpatialCameraPanelControlSnapshot(
     val projectionInnerAlpha: ProjectionInnerAlpha,
     val videoPlaybackEnabled: Boolean,
     val videoPresentationMode: String,
+    val backgroundMode: String? = null,
 ) {
   fun normalized(): SpatialCameraPanelControlSnapshot =
       copy(
@@ -51,6 +73,7 @@ internal data class SpatialCameraPanelControlSnapshot(
                     SpatialImmersiveVideoPresentationMode.HeadFixedBorder.token
                 else -> SpatialImmersiveVideoPresentationMode.WorldAnchored.token
               },
+          backgroundMode = backgroundMode?.let { SpatialBackgroundMode.fromToken(it).token },
       )
 
   fun presentationMode(): SpatialImmersiveVideoPresentationMode =
@@ -59,6 +82,9 @@ internal data class SpatialCameraPanelControlSnapshot(
       } else {
         SpatialImmersiveVideoPresentationMode.WorldAnchored
       }
+
+  fun resolvedBackgroundMode(): SpatialBackgroundMode =
+      SpatialBackgroundMode.fromToken(backgroundMode)
 }
 
 internal data class SpatialCameraPanelProfileEntry(

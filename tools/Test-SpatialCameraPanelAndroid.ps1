@@ -4,6 +4,10 @@ param(
     [string]$AndroidHome = $env:ANDROID_HOME,
     [string]$JavaHome = $env:JAVA_HOME,
     [string]$GradleVersion = "9.4.1",
+    [string]$PrivateFeatureSourceDir = $env:RUSTY_QUEST_SPATIAL_PRIVATE_FEATURE_SRC_DIR,
+    [string]$PrivateFeatureResourceDir = $env:RUSTY_QUEST_SPATIAL_PRIVATE_FEATURE_RES_DIR,
+    [string]$PrivateFeatureTestSourceDir = $env:RUSTY_QUEST_SPATIAL_PRIVATE_FEATURE_TEST_SRC_DIR,
+    [string]$PrivateFeatureTestResourceDir = $env:RUSTY_QUEST_SPATIAL_PRIVATE_FEATURE_TEST_RES_DIR,
     [string]$PrivateLayerProfilePath = $env:RUSTY_QUEST_SPATIAL_CAMERA_PANEL_PRIVATE_LAYER_PROFILE,
     [string]$OpaqueGuideShader = $env:RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OPAQUE_GUIDE_SHADER,
     [string]$OpaqueProjectionShader = $env:RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OPAQUE_PROJECTION_SHADER,
@@ -115,6 +119,10 @@ $previousJavaHome = $env:JAVA_HOME
 $previousGradleUserHome = $env:GRADLE_USER_HOME
 $previousAppBuildDir = $env:RUSTY_QUEST_SPATIAL_APP_BUILD_DIR
 $previousRootBuildDir = $env:RUSTY_QUEST_SPATIAL_ROOT_BUILD_DIR
+$previousPrivateFeatureSourceDir = $env:RUSTY_QUEST_SPATIAL_PRIVATE_FEATURE_SRC_DIR
+$previousPrivateFeatureResourceDir = $env:RUSTY_QUEST_SPATIAL_PRIVATE_FEATURE_RES_DIR
+$previousPrivateFeatureTestSourceDir = $env:RUSTY_QUEST_SPATIAL_PRIVATE_FEATURE_TEST_SRC_DIR
+$previousPrivateFeatureTestResourceDir = $env:RUSTY_QUEST_SPATIAL_PRIVATE_FEATURE_TEST_RES_DIR
 try {
     $env:ANDROID_HOME = (Resolve-Path -LiteralPath $AndroidHome).Path
     $env:JAVA_HOME = (Resolve-Path -LiteralPath $JavaHome).Path
@@ -123,6 +131,10 @@ try {
         Join-Path $repoRootPath "local-artifacts\spatial-camera-panel-host\app"
     $env:RUSTY_QUEST_SPATIAL_ROOT_BUILD_DIR =
         Join-Path $repoRootPath "local-artifacts\spatial-camera-panel-host\root"
+    $env:RUSTY_QUEST_SPATIAL_PRIVATE_FEATURE_SRC_DIR = $PrivateFeatureSourceDir
+    $env:RUSTY_QUEST_SPATIAL_PRIVATE_FEATURE_RES_DIR = $PrivateFeatureResourceDir
+    $env:RUSTY_QUEST_SPATIAL_PRIVATE_FEATURE_TEST_SRC_DIR = $PrivateFeatureTestSourceDir
+    $env:RUSTY_QUEST_SPATIAL_PRIVATE_FEATURE_TEST_RES_DIR = $PrivateFeatureTestResourceDir
     & $gradleBat `
         --no-daemon `
         --console=plain `
@@ -138,6 +150,10 @@ try {
     $env:GRADLE_USER_HOME = $previousGradleUserHome
     $env:RUSTY_QUEST_SPATIAL_APP_BUILD_DIR = $previousAppBuildDir
     $env:RUSTY_QUEST_SPATIAL_ROOT_BUILD_DIR = $previousRootBuildDir
+    $env:RUSTY_QUEST_SPATIAL_PRIVATE_FEATURE_SRC_DIR = $previousPrivateFeatureSourceDir
+    $env:RUSTY_QUEST_SPATIAL_PRIVATE_FEATURE_RES_DIR = $previousPrivateFeatureResourceDir
+    $env:RUSTY_QUEST_SPATIAL_PRIVATE_FEATURE_TEST_SRC_DIR = $previousPrivateFeatureTestSourceDir
+    $env:RUSTY_QUEST_SPATIAL_PRIVATE_FEATURE_TEST_RES_DIR = $previousPrivateFeatureTestResourceDir
 }
 
 Push-Location -LiteralPath $repoRootPath
@@ -178,6 +194,8 @@ if ($Build) {
         -PrivateSurfaceParticlePayloadDir $PrivateSurfaceParticlePayloadDir `
         -PrivateSurfaceParticleMarkerPrefix $PrivateSurfaceParticleMarkerPrefix `
         -HandMeshRigAssetDir $HandMeshRigAssetDir `
+        -PrivateFeatureSourceDir $PrivateFeatureSourceDir `
+        -PrivateFeatureResourceDir $PrivateFeatureResourceDir `
         -ProductId $ProductId `
         -AppId $AppId `
         -AppLabel $AppLabel `

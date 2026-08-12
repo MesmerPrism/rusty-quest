@@ -96,6 +96,7 @@ import org.json.JSONObject
 class SpatialCameraPanelActivity : AppSystemActivity() {
   private val productPolicy = SpatialProductBuildPolicy.current
   private val presentationPolicy = SpatialPresentationBuildPolicy.current
+  private var connectionHubSurfaceClient: ConnectionHubSurfaceClient? = null
   private val immersiveVideoRouteResolution: SpatialImmersiveVideoRouteResolution by
       lazy(LazyThreadSafetyMode.NONE) {
         SpatialImmersiveVideoPanelCoordinator.resolveFromIntent(this, intent)
@@ -134,6 +135,33 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             )
         )
       }
+  private val privatePanelExtension: SpatialPrivatePanelExtension? by
+      lazy(LazyThreadSafetyMode.NONE) {
+        SpatialPrivatePanelExtensionLoader.load(
+            SpatialPrivatePanelExtensionHost(
+                context = this,
+                elapsedRealtimeMs = SystemClock::elapsedRealtime,
+                wallClockNowMs = System::currentTimeMillis,
+                profileLibrary = storedProfileAuthority::snapshot,
+                applyProfile = { profile, source ->
+                  applyStoredProfileControls(profile.controls, source)
+                },
+                captureControls = ::captureStoredProfileControls,
+                applyControls = ::applyStoredProfileControls,
+                recenterVideo = ::recenterImmersiveVideo,
+                notifyLaunchOptionsChanged = {
+                  contentResolver.notifyChange(
+                      SpatialAppLaunchOptionsContract.contentUri(BuildConfig.APPLICATION_ID),
+                      null,
+                  )
+                },
+                marker = ::marker,
+            )
+        )
+      }
+  private var unavailableLaunchOptionInputLocked = false
+  private var privatePanelLaunchStatus = "none"
+  private var privatePanelInputPolicyApplied = false
   private var privateLayerPanelEntity: Entity? = null
   private var privateLayerPanelSceneObject: PanelSceneObject? = null
   private var surfaceTargetId: String = SpatialValidationCommandModule.DEFAULT_SURFACE_TARGET_ID
@@ -1557,7 +1585,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
         listOf<SpatialFeature>(
             SpatialInteractionInputOnlyFeature(this, ::marker),
             SpatialControllerInputLateFeature {
-              if (presentationPolicy.appControlInputsEnabled) {
+              if (appControllerInputsEnabled()) {
                 controllerPollingCoordinator.pollSpatialInput()
               }
             },
@@ -1587,6 +1615,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
 
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
+    handlePrivatePanelLaunchIntent(intent, "activity-create")
     PrivateLayerZoneCompositorPanelBridge.bind(
         initial = privateLayerControlCoordinator.zoneCompositor,
         submit = privateLayerControlCoordinator::updateZoneCompositor,
@@ -1617,7 +1646,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             "highRateJsonPayload=false hand_rendering_expected=false " +
             "controller_rendering_expected=false controllerVisualModelsEnabled=false " +
             "controllerRenderModelManifest=false " +
-            "spatialPointerInputExpected=${presentationPolicy.appControlInputsEnabled} " +
+            "spatialPointerInputExpected=${appControllerInputsEnabled()} " +
             "locomotionSystemRegistered=false teleportLocomotionEnabled=false " +
             "joystickLocomotionEnabled=false gripPanelGrabEnabled=true " +
             "panelRightPrimaryClickEnabled=false " +
@@ -1664,27 +1693,39 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             "spatialSdk3dAssetHighRateJsonPayload=false " +
             "${productPolicy.markerFields()} " +
             "layerControlPanel=spatial-private-layer-panel " +
+            "privatePanelExtensionLoaded=${privatePanelExtension != null} " +
+            "appLaunchOptionSchema=${SpatialAppLaunchOptionsContract.SCHEMA} " +
+            "appLaunchOptionStatus=${activityMarkerToken(privatePanelLaunchStatus)} " +
+            "privatePanelInputLocked=${privatePanelInputLocked()} " +
+            "metaHomeSystemEscapeRetained=true " +
             "${presentationPolicy.markerFields()} " +
             "spatialSdkLaneBoundaries=${SpatialSdkLaneBoundaries.summaryToken()}"
     )
     if (productPolicy.cameraPanelRoutesEnabled) {
       runSpatialVirtualRoomIfRequested("activity-created")
       surfaceParticleLifecycleDiagnosticsCoordinator.schedule("activity-created")
-      validationWorkflowCoordinator.dispatchIfRequested(intent)
+      if (!privatePanelInputLocked()) {
+        validationWorkflowCoordinator.dispatchIfRequested(intent)
+      }
     }
   }
 
   override fun onNewIntent(intent: Intent) {
     super.onNewIntent(intent)
     setIntent(intent)
+    handlePrivatePanelLaunchIntent(intent, "new-intent")
     if (productPolicy.cameraPanelRoutesEnabled) {
       suppressParticleLayerIfCameraProjectionRequested("new-intent")
       deactivateControlPanelForCameraStack("new-intent")
       deactivatePanelShellIfRequested("new-intent")
-      validationWorkflowCoordinator.dispatchIfRequested(intent)
+      if (!privatePanelInputLocked()) {
+        validationWorkflowCoordinator.dispatchIfRequested(intent)
+      }
       runSpatialStagedAssetIfRequested(intent, "new-intent")
       runSpatialVirtualRoomIfRequested("new-intent")
-      controlProfileHotloader.poll(force = true)
+      if (!privatePanelInputLocked()) {
+        controlProfileHotloader.poll(force = true)
+      }
     }
   }
 
@@ -1734,7 +1775,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
   }
 
   override fun dispatchKeyEvent(event: KeyEvent): Boolean {
-    if (!presentationPolicy.appControlInputsEnabled) {
+    if (!appControllerInputsEnabled()) {
       return super.dispatchKeyEvent(event)
     }
     if (androidControllerEventRouter.dispatchKeyEvent(event)) {
@@ -1868,7 +1909,9 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
       configureSpatialVirtualRoomScene("scene-ready")
       runSpatialStagedAssetIfRequested(intent, "scene-ready")
     }
-    controllerInputRouteCoordinator.ensureEnabled("scene-ready", forceLog = true)
+    if (appControllerInputsEnabled()) {
+      controllerInputRouteCoordinator.ensureEnabled("scene-ready", forceLog = true)
+    }
     privateLayerPanelEntity =
         if (!productPolicy.cameraPanelRoutesEnabled) {
           null
@@ -1953,6 +1996,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
       spatialVideoProjectionProbeCoordinator.runIfRequested("scene-ready")
       cameraHwbProjectionLaunchCoordinator.runIfRequested("scene-ready")
     }
+    enforcePrivatePanelInputPolicy()
   }
 
   override fun onVRReady() {
@@ -1960,7 +2004,9 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     if (directImmersiveVideoPanelRequested()) {
       immersiveVideoPanelCoordinator.resume("vr-ready")
     }
-    controllerInputRouteCoordinator.ensureEnabled("vr-ready", forceLog = true)
+    if (appControllerInputsEnabled()) {
+      controllerInputRouteCoordinator.ensureEnabled("vr-ready", forceLog = true)
+    }
     if (productPolicy.cameraPanelRoutesEnabled) {
       updateLayerControlPanelPoseFromViewer(reason = "vr-ready", forceLog = true)
       updateParticleLayerProjectionFromViewer(reason = "vr-ready", forceLog = true)
@@ -1980,20 +2026,25 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
 
   override fun onSceneTick() {
     super.onSceneTick()
+    privatePanelExtension?.tick(spatialSceneReady)
+    connectionHubSurfaceClient?.refresh()
+    enforcePrivatePanelInputPolicy()
     if (directImmersiveVideoPanelRequested()) {
       runCatching { scene.getViewerPose() }
           .onSuccess(immersiveVideoPanelCoordinator::updateFromViewer)
     }
     if (productPolicy.cameraPanelRoutesEnabled) {
-      controlProfileHotloader.poll()
+      if (!privatePanelInputLocked()) {
+        controlProfileHotloader.poll()
+      }
       updateLayerControlPanelPoseFromViewer(reason = "scene-tick", forceLog = false)
       updateParticleLayerProjectionFromViewer(reason = "scene-tick", forceLog = false)
       cameraHwbProjectionPlacementUpdateCoordinator.update("scene-tick", false)
       spatialFragmentProbeCoordinator.onSceneTick()
       spatialStimulusVolumeCoordinator.onSceneTick()
     }
-    controllerInputRouteCoordinator.ensureEnabled("scene-tick", forceLog = false)
-    if (presentationPolicy.appControlInputsEnabled) {
+    if (appControllerInputsEnabled()) {
+      controllerInputRouteCoordinator.ensureEnabled("scene-tick", forceLog = false)
       controllerPollingCoordinator.pollNativeInput()
     }
   }
@@ -2047,6 +2098,59 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
         source,
     )
     return captureStoredProfileControls()
+  }
+
+  private fun appControllerInputsEnabled(): Boolean =
+      presentationPolicy.appControlInputsEnabled && !privatePanelInputLocked()
+
+  private fun privatePanelInputLocked(): Boolean =
+      unavailableLaunchOptionInputLocked || (privatePanelExtension?.inputLocked() == true)
+
+  private fun handlePrivatePanelLaunchIntent(request: Intent, source: String) {
+    val wasLocked = privatePanelInputLocked()
+    val optionPresent = SpatialAppLaunchOptionsContract.hasLaunchOption(request)
+    val optionId = SpatialAppLaunchOptionsContract.requestedOptionId(request)
+    val result =
+        privatePanelExtension?.handleLaunchOption(optionPresent, optionId, source)
+            ?: SpatialPrivatePanelLaunchResult(
+                status = if (optionPresent) "private-extension-unavailable" else "normal-launch",
+                inputLocked = optionPresent,
+            )
+    unavailableLaunchOptionInputLocked = privatePanelExtension == null && result.inputLocked
+    privatePanelLaunchStatus = result.status
+    if (privatePanelInputLocked()) {
+      nativeInputBootstrapCoordinator.disableControllerActions()
+    } else {
+      privatePanelInputPolicyApplied = false
+      if (wasLocked) {
+        controlProfileHotloader.arm()
+        if (spatialSceneReady) {
+          runCatching {
+            scene.spatialInterface.enableInput(presentationPolicy.appControlInputsEnabled)
+          }
+        }
+      }
+    }
+    marker(
+        "channel=spatial-app-launch-option status=${activityMarkerToken(result.status)} " +
+            "source=${activityMarkerToken(source)} optionPresent=$optionPresent " +
+            "opaqueOptionIdAccepted=${result.optionAccepted} " +
+            "appControllerInputsEnabled=${appControllerInputsEnabled()} " +
+            "metaHomeSystemEscapeRetained=true deviceOwner=false lockTask=false"
+    )
+  }
+
+  private fun enforcePrivatePanelInputPolicy() {
+    if (!privatePanelInputLocked() || !spatialSceneReady || privatePanelInputPolicyApplied) return
+    setPrivateLayerPanelVisible(false, focus = false, source = "locked-app-launch-option")
+    runCatching { scene.spatialInterface.enableInput(false) }
+    nativeInputBootstrapCoordinator.disableControllerActions()
+    privatePanelInputPolicyApplied = true
+    marker(
+        "channel=spatial-app-launch-option status=input-policy-applied " +
+            "appControllerInputsEnabled=false lockedExtensionInputsEnabled=false " +
+            "metaHomeSystemEscapeRetained=true deviceOwner=false lockTask=false"
+    )
   }
 
   private fun saveStoredProfile(title: String): SpatialCameraPanelProfileOperationResult {
@@ -2137,7 +2241,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
   }
 
   override fun dispatchGenericMotionEvent(event: MotionEvent): Boolean {
-    if (!presentationPolicy.appControlInputsEnabled) {
+    if (!appControllerInputsEnabled()) {
       return super.dispatchGenericMotionEvent(event)
     }
     if (androidControllerEventRouter.dispatchMotionButtonEvent(event)) {
@@ -2154,12 +2258,28 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     immersiveVideoPanelCoordinator.resume("activity-resume")
   }
 
+  override fun onStart() {
+    super.onStart()
+    val target = SpatialConnectionHubSurfaceTargetLoader.load(::marker, privatePanelExtension)
+    connectionHubSurfaceClient =
+        target?.let { ConnectionHubSurfaceClient(this, it).also { client -> client.start() } }
+  }
+
+  override fun onStop() {
+    connectionHubSurfaceClient?.close()
+    connectionHubSurfaceClient = null
+    super.onStop()
+  }
+
   override fun onPause() {
     immersiveVideoPanelCoordinator.pause("activity-pause")
     super.onPause()
   }
 
   override fun onDestroy() {
+    connectionHubSurfaceClient?.close()
+    connectionHubSurfaceClient = null
+    privatePanelExtension?.shutdown()
     immersiveVideoPanelCoordinator.destroy("activity-destroy")
     spatialPassthroughLutCoordinator.stop("activity-destroy")
     if (nativeInteropCoordinator.receiptLibraryLoaded) {
@@ -2259,6 +2379,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
                       chooseSharedMediaFolder()
                     },
                     profileLibrary = storedProfileAuthority::snapshot,
+                    panelExtension = privatePanelExtension,
                     saveStoredProfile = ::saveStoredProfile,
                     loadStoredProfile = ::loadStoredProfile,
                     deleteStoredProfile = ::deleteStoredProfile,
@@ -2712,7 +2833,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
       focus: Boolean,
       source: String,
   ): PanelPlacement {
-    val requestedVisible = visible && presentationPolicy.appControlInputsEnabled
+    val requestedVisible = visible && appControllerInputsEnabled()
     if (requestedVisible && !panelShellVisible()) {
       deactivatePanelShellIfRequested(source)
       marker(

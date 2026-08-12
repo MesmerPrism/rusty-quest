@@ -20,7 +20,9 @@ function Assert-Contains {
 }
 
 Assert-Contains $panel 'PersistentPanelHeader(' 'The Spatial Camera Panel is missing its persistent header.'
-Assert-Contains $panel 'PrivateLayerPanelPage.entries.filterNot' 'The fixed header does not expose every non-home page.'
+Assert-Contains $panel 'PrivateLayerPanelPage.entries' 'The fixed header does not enumerate the panel pages.'
+Assert-Contains $panel 'it == PrivateLayerPanelPage.Home' 'The fixed header does not exclude Home from the page buttons.'
+Assert-Contains $panel 'it == PrivateLayerPanelPage.Playlists && !playlistAvailable' 'The fixed header does not gate the optional private playlist page.'
 Assert-Contains $panel 'PrivateLayerPanelPage.Profiles' 'The permanent navigation does not include Profiles.'
 Assert-Contains $panel 'HelpLabel(label)' 'Slider labels are not connected to contextual help.'
 Assert-Contains $panel 'Import staged bundle' 'The Profiles page does not expose staged PC import.'

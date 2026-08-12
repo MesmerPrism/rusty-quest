@@ -372,6 +372,12 @@ Assert-NotContains "Activity" $activity "import com.meta.spatial.runtime.PanelSu
 Assert-NotContains "Activity" $activity "import com.meta.spatial.runtime.SamplerConfig"
 Assert-NotContains "Android manifest" $manifest 'com.oculus.feature.RENDER_MODEL'
 Assert-NotContains "Android manifest" $manifest 'com.oculus.permission.RENDER_MODEL'
+Assert-Contains "Android manifest" $manifest 'rusty.quest.app_launch_options.v1'
+Assert-Contains "Android manifest" $manifest 'SpatialAppLaunchOptionsProvider'
+Assert-Contains "Activity" $activity 'handlePrivatePanelLaunchIntent(intent, "activity-create")'
+Assert-Contains "Activity" $activity 'handlePrivatePanelLaunchIntent(intent, "new-intent")'
+Assert-Contains "Activity" $activity 'privatePanelExtension?.handleLaunchOption(optionPresent, optionId, source)'
+Assert-Contains "Activity" $activity 'scene.spatialInterface.enableInput(false)'
 Assert-Contains "Interaction input-only feature" $spatialInteractionInputOnlyFeature "IsdkSystems(context)"
 Assert-Contains "Interaction input-only feature" $spatialInteractionInputOnlyFeature "locomotionSystemRegistered=false"
 Assert-NotContains "Interaction input-only feature" $spatialInteractionInputOnlyFeature "LocomotionSystem("
@@ -2675,7 +2681,7 @@ Assert-Contains "Shared offline immersive media library" $sharedOfflineImmersive
 Assert-Contains "Shared offline immersive media library" $sharedOfflineImmersiveMediaLibrary "DocumentsContract.buildChildDocumentsUriUsingTree"
 Assert-Contains "Shared offline immersive media library" $sharedOfflineImmersiveMediaLibrary "resolver.openInputStream(document.uri)"
 Assert-NotContains "Shared offline immersive media library" $sharedOfflineImmersiveMediaLibrary "context.filesDir"
-Assert-Contains "Activity" $activity 'spatialPointerInputExpected=${presentationPolicy.appControlInputsEnabled}'
+Assert-Contains "Activity" $activity 'spatialPointerInputExpected=${appControllerInputsEnabled()}'
 Assert-Contains "Native input bootstrap coordinator" $nativeInputBootstrapCoordinator "SpatialOpenXrRouteModule.nativeSpatialControllerActionSetAttached"
 Assert-Contains "Spatial OpenXR route module" $openXrRouteModule "NATIVE_SPATIAL_CONTROLLER_ACTION_SET_ATTACHED_BIT"
 Assert-Contains "Activity" $activity "controllerInputRouteCoordinator.ensureEnabled"
@@ -2990,6 +2996,16 @@ Assert-Contains "Private layer panel" $privateLayerPanel "360 video"
 Assert-Contains "Private layer panel" $privateLayerPanel "Three-region effect"
 Assert-Contains "Private layer panel" $privateLayerPanel "Image processing"
 Assert-Contains "Private layer panel" $privateLayerPanel "Depth alignment"
+Assert-Contains "Private layer panel" $privateLayerPanel "PersistentPanelHeader("
+Assert-Contains "Private layer panel" $privateLayerPanel "private enum class RegionSettingsTab"
+Assert-Contains "Private layer panel" $privateLayerPanel 'Buffer("Buffer")'
+Assert-Contains "Private layer panel" $privateLayerPanel 'Effects("Effects")'
+Assert-Contains "Private layer panel" $privateLayerPanel 'Stretch("Stretch")'
+Assert-Contains "Private layer panel" $privateLayerPanel 'Transitions("Transitions")'
+Assert-Contains "Private layer panel" $privateLayerPanel 'Outer("Outer")'
+Assert-Contains "Private layer panel" $privateLayerPanel 'Diagnostics("Diagnostics")'
+Assert-Contains "Private layer panel" $privateLayerPanel 'Playlists("Playlists", "Sequence saved profiles with timed looping playback")'
+Assert-Contains "Private layer panel" $privateLayerPanel "playlistAvailable = panelExtension != null"
 Assert-Contains "Private layer panel" $privateLayerPanel 'Text("Home")'
 Assert-Contains "Private layer panel" $privateLayerPanel "Active Rendering"
 Assert-Contains "Private layer panel" $privateLayerPanel "Projection Area"

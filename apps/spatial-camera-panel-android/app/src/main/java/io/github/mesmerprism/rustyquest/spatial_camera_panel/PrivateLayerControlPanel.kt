@@ -43,14 +43,14 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
 
-private val LayerPanelBackground = Color(0xFF141820)
-private val LayerPanelSurface = Color(0xFF202634)
-private val LayerPanelSurfaceAlt = Color(0xFF293142)
-private val LayerPanelInk = Color(0xFFF4F7FA)
-private val LayerPanelMuted = Color(0xFFAAB3C2)
-private val LayerPanelAccent = Color(0xFF63D2FF)
-private val LayerPanelWarm = Color(0xFFFFC857)
-private val LayerPanelBorder = Color(0xFF3B465A)
+internal val LayerPanelBackground = Color(0xFF141820)
+internal val LayerPanelSurface = Color(0xFF202634)
+internal val LayerPanelSurfaceAlt = Color(0xFF293142)
+internal val LayerPanelInk = Color(0xFFF4F7FA)
+internal val LayerPanelMuted = Color(0xFFAAB3C2)
+internal val LayerPanelAccent = Color(0xFF63D2FF)
+internal val LayerPanelWarm = Color(0xFFFFC857)
+internal val LayerPanelBorder = Color(0xFF3B465A)
 
 private enum class PrivateLayerPanelPage(
     val title: String,
@@ -63,6 +63,7 @@ private enum class PrivateLayerPanelPage(
   Image("Image processing", "Depth warp, RGB transform, sampling, and guide blur"),
   Depth("Depth alignment", "Depth source and per-eye fine tuning"),
   Profiles("Profiles", "Save, restore, and exchange complete tuning setups"),
+  Playlists("Playlists", "Sequence saved profiles with timed looping playback"),
 }
 
 private enum class RegionSettingsTab(val label: String) {
@@ -111,6 +112,7 @@ internal fun PrivateLayerControlPanel(
         (SpatialImmersiveVideoPresentationMode) -> SpatialImmersiveVideoSessionSnapshot,
     chooseSharedMediaFolder: () -> Unit,
     profileLibrary: () -> SpatialCameraPanelProfileLibrarySnapshot,
+    panelExtension: SpatialPrivatePanelExtension?,
     saveStoredProfile: (String) -> SpatialCameraPanelProfileOperationResult,
     loadStoredProfile: (String) -> SpatialCameraPanelProfileOperationResult,
     deleteStoredProfile: (String) -> SpatialCameraPanelProfileOperationResult,
@@ -182,6 +184,7 @@ internal fun PrivateLayerControlPanel(
       Column(modifier = Modifier.fillMaxSize().background(LayerPanelBackground)) {
         PersistentPanelHeader(
             currentPage = currentPage,
+            playlistAvailable = panelExtension != null,
             selectedHelp = selectedHelp,
             onSelectPage = { currentPage = it },
             onDismissHelp = { selectedHelp = null },
@@ -221,6 +224,7 @@ internal fun PrivateLayerControlPanel(
                 "${PrivateLayerControls.labelForDepthLayerPolicy(localDepthLayerPolicy)} · " +
                     (if (localDepthAlignment.metadataAutoAlign) "auto align" else "manual"),
             profileSummary = "${localProfileLibrary.profiles.size} saved · JSON PC transfer",
+            playlistSummary = panelExtension?.homeSummary(),
             onSelect = { currentPage = it },
         )
       }
@@ -1342,6 +1346,12 @@ internal fun PrivateLayerControlPanel(
           }
         }
       }
+      if (currentPage == PrivateLayerPanelPage.Playlists) {
+        panelExtension?.PanelContent(
+            profileLibrary = profileLibrary,
+            onControlsApplied = ::adoptProfileControls,
+        )
+      }
         }
       }
     }
@@ -1351,6 +1361,7 @@ internal fun PrivateLayerControlPanel(
 @Composable
 private fun PersistentPanelHeader(
     currentPage: PrivateLayerPanelPage,
+    playlistAvailable: Boolean,
     selectedHelp: PrivateLayerControlHelpEntry?,
     onSelectPage: (PrivateLayerPanelPage) -> Unit,
     onDismissHelp: () -> Unit,
@@ -1426,7 +1437,12 @@ private fun PersistentPanelHeader(
         ) {
           Text("Home")
         }
-        PrivateLayerPanelPage.entries.filterNot { it == PrivateLayerPanelPage.Home }.forEach { page ->
+        PrivateLayerPanelPage.entries
+            .filterNot {
+              it == PrivateLayerPanelPage.Home ||
+                  (it == PrivateLayerPanelPage.Playlists && !playlistAvailable)
+            }
+            .forEach { page ->
           HeaderPageButton(
               label = page.title,
               selected = currentPage == page,
@@ -1494,7 +1510,7 @@ private fun HeaderPageButton(
 }
 
 @Composable
-private fun HelpLabel(label: String) {
+internal fun HelpLabel(label: String) {
   val requestHelp = LocalPrivateLayerControlHelpRequest.current
   Row(
       verticalAlignment = Alignment.CenterVertically,
@@ -1524,6 +1540,7 @@ private fun PanelTopicMenu(
     imageSummary: String,
     depthSummary: String,
     profileSummary: String,
+    playlistSummary: String?,
     onSelect: (PrivateLayerPanelPage) -> Unit,
 ) {
   Section("Settings topics") {
@@ -1557,6 +1574,13 @@ private fun PanelTopicMenu(
         summary = profileSummary,
         onClick = { onSelect(PrivateLayerPanelPage.Profiles) },
     )
+    playlistSummary?.let { summary ->
+      TopicNavigationButton(
+          title = PrivateLayerPanelPage.Playlists.title,
+          summary = summary,
+          onClick = { onSelect(PrivateLayerPanelPage.Playlists) },
+      )
+    }
   }
 }
 
@@ -1673,7 +1697,7 @@ private fun PreviewBand() {
 }
 
 @Composable
-private fun Section(title: String, content: @Composable () -> Unit) {
+internal fun Section(title: String, content: @Composable () -> Unit) {
   Column(
       modifier =
           Modifier
@@ -2833,7 +2857,7 @@ private fun DepthSlider(
 }
 
 @Composable
-private fun OperatorButton(label: String, onClick: () -> Unit) {
+internal fun OperatorButton(label: String, onClick: () -> Unit) {
   Button(
       onClick = onClick,
       colors =
