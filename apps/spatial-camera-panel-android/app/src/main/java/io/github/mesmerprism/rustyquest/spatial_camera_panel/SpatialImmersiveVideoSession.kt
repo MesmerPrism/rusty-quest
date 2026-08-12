@@ -176,4 +176,17 @@ internal object SpatialImmersiveVideoSessionPolicy {
 
   fun wrappedIndex(requestedIndex: Int, itemCount: Int): Int =
       if (itemCount <= 0) -1 else Math.floorMod(requestedIndex, itemCount)
+
+  fun fadeOpacity(
+      from: Float,
+      to: Float,
+      elapsedMs: Long,
+      durationMs: Long,
+  ): Float {
+    if (durationMs <= 0L) {
+      return to.coerceIn(0.0f, 1.0f)
+    }
+    val progress = (elapsedMs.toFloat() / durationMs.toFloat()).coerceIn(0.0f, 1.0f)
+    return (from + ((to - from) * progress)).coerceIn(0.0f, 1.0f)
+  }
 }

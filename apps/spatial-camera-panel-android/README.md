@@ -43,32 +43,6 @@ pwsh -NoProfile -ExecutionPolicy Bypass -File ..\..\tools\checks\Test-SpatialCam
 This workflow metadata does not itself activate a runtime route or add package
 permissions. Existing effective markers remain required.
 
-## Locked-playlist Connection Hub provider
-
-The app binds the signature-scoped Hub admission service and registers its
-public locked-playlist surface only while the private owner reports
-`locked=true` and `running=true`. One authorized generation retains the exact
-`registration_id`, registration fingerprint, session generation,
-authorization correlation id, and canonical surface JSON through retry or
-rebind. Stale generations and mismatched fingerprints/correlations reject;
-cleanup unregisters exactly once.
-
-The public surface projects only bounded scalar state and empty-argument
-Previous, Next, Pause, and Resume commands. Its current-item projection includes
-the item count, one-based browser presentation of the active index, and integer
-elapsed/total seconds. State publication is bounded to one update per second;
-command results are still published immediately. Application effect
-confirmation is required after Binder dispatch. It exposes no ordered items,
-profile ids, private effects, caller-selected identity/capability, or arbitrary
-arguments. Validate the app and Hub composition together before any device run.
-
-Private capsule JVM tests can stay in their owning private repository. Pass
-their directories to `tools/Test-SpatialCameraPanelAndroid.ps1` with
-`-PrivateFeatureSourceDir`, `-PrivateFeatureResourceDir`,
-`-PrivateFeatureTestSourceDir`, and `-PrivateFeatureTestResourceDir`; the test
-wrapper mounts them as Gradle source sets without copying private source into
-this public repository.
-
 The accepted `MOD-001` particle classification reuses
 `rusty.matter.surface_runtime.particle_snapshot.v1` and the existing Matter
 particle state/config/diagnostic/render-payload contracts. The Kotlin
@@ -138,6 +112,13 @@ app-local. Stopping the bridge is the rollback and leaves the adapter inert.
   playback toggle, so either carrier can be isolated without conflating their
   lifecycle. Turning custom projection back on rebuilds the same carrier and
   resumes the captured video settings.
+- Compatible video selection now retains the custom planar projection carrier
+  and private configuration. The direct 180/360 layer fades to transparent,
+  performs one hidden ExoPlayer/media-panel swap, waits for the replacement's
+  first frame, and fades back in. Previously imported encrypted packs can be
+  used by code-only APK rebuilds that omit the multi-gigabyte asset root, as
+  long as the APK is installed with data-preserving `adb install -r`; an
+  unseeded app fails closed.
 - Camera-latency diagnosis has a revisioned, serial-scoped A/B control plane in
   `tools/Set-SpatialCameraPanelCameraLatencyDiagnostic.ps1`. `Baseline`,
   `FrozenWorld`, `NonBlocking`, `FrozenNonBlocking`, `StrictPair`, `MonoLeft`,
@@ -236,9 +217,17 @@ app-local. Stopping the bridge is the rollback and leaves the adapter inert.
   snapshot as the projection guard band, in this fixed order:
   `user scale -> dynamic core -> stretch/seams -> video carrier`. Right-stick
   projection scaling therefore changes the outer projection boundary before
-  the motion-driven guard contracts the visible core. `Off` remains the exact
-  legacy projection-over-video path. `Native stretch` fills only the area
-  around the guarded core and leaves the ordinary video draw behind it. Its
+  the motion-driven guard contracts the visible core. `Off` disables stretch
+  without changing the explicit outer target. With a transparent 180/360
+  underlay target, it keeps the same-surface video draw suppressed and renders
+  only the custom core; with an explicitly selected readable same-layer target,
+  it retains the legacy head-fixed video composition. `Native stretch` fills
+  only the area around the guarded core. Off, Native, and Organic are stretch
+  choices, not layer-composition choices: selecting any of them preserves the
+  explicit outer target. A world-anchored 180/360 underlay therefore remains
+  an independent transparent-underlay layer, while explicitly selected
+  readable same-layer video remains available for the head-anchored
+  composition. Its
   default mapping id selects the original native graded edge-trail treatment:
   samples begin at the corresponding projection border and move progressively
   deeper into that same side under a nonlinear distance curve. The rounded
@@ -465,10 +454,10 @@ When it is not actively grabbed, the app reapplies the stored placement so
 right-stick/default SDK nudges do not teleport it; while grabbed, the SDK
 transform is accepted and synced back into the stored placement.
 
-For the accepted no-room default, right secondary/B is deliberately disabled
-and consumed as a no-op; markers use
-`cameraProjectionWallToggleInput=disabled-right-secondary-noop` and
-`cameraProjectionWallToggleEnabled=false`. Earlier room diagnostics used the
+For the accepted no-room default, right secondary/B recenters the current
+direct video from the latest viewer pose. The existing entity, decoder,
+Activity, and separate custom projection carrier are retained; validation can
+invoke the same route with `video-recenter`. Earlier room diagnostics used the
 right secondary/B button to toggle the raw camera projection quad between a
 fixed virtual wall pose inside the packaged room and the full-field
 viewer-locked pose. With the room enabled, the accepted live surface carrier is
@@ -538,11 +527,9 @@ until a headset run proves controller-ray targeting, button clickability, and
 layer-button effect changes in the actual app.
 
 For controller modality, this APK follows the official Spatial SDK panel sample
-shape: optional hands-and-controllers declarations are present and the default
-VR input backend is Interaction SDK pointer mode. Avatar controller render
-models are hidden by default without disabling controller input; the debug
-property `debug.rustyquest.spatial.avatar_controllers.visible=true` enables them
-for comparison runs. The debug property
+shape: optional hands-and-controllers declarations are present, controller
+render models are requested, and the default VR input backend is Interaction
+SDK pointer mode. The debug property
 `debug.rustyquest.spatial_camera_panel.vr_input_system=simple_controller` can
 still be used for controlled headset A/B tests, but the normal path is
 `interaction_sdk`. If no local `AvatarBody` hand entity reports an active
@@ -974,12 +961,10 @@ Interaction SDK pointer input without native multimodal extension forcing.
   native-interop receipt, and low-rate control state models used by the
   Activity facade and panel UI.
 - `app/src/main/.../SpatialAvatarHandVisualFeature.kt` owns the built-in Meta
-  avatar hand and controller visual policy. The default keeps both hidden while
-  leaving controller input active, so native/public visuals remain explicit; set
+  avatar hand visual policy. The default keeps hands hidden so native/public
+  hand visuals remain explicit; set
   `debug.rustyquest.spatial.avatar_hands.visible=true` on a headset to enable
-  the Spatial SDK `AvatarSystem` hand visual or
-  `debug.rustyquest.spatial.avatar_controllers.visible=true` to enable its
-  controller models for comparison runs.
+  the Spatial SDK `AvatarSystem` hand visual for comparison runs.
 - `app/src/main/.../SpatialAvatarHandInvestigationFeature.kt` owns the
   read-only Spatial SDK hand investigation probe. Enable it with
   `debug.rustyquest.spatial.avatar_hand_probe.enabled=true`; it samples
@@ -1275,9 +1260,11 @@ and screenshot dimensions. It does not require
 physical controller input.
 
 Build and launch each project with a distinct package and content-addressed
-output. The builder rejects tracked source drift, ignores ambient
-`RUSTY_QUEST_SPATIAL_*` feature inputs, isolates Gradle/Cargo intermediates,
-and writes a validated run capsule:
+output. The default iteration build fingerprints the base commit/tree and exact
+observed working-tree overlay, ignores ambient `RUSTY_QUEST_SPATIAL_*` feature
+inputs, isolates Gradle/Cargo intermediates, and writes a validated run capsule.
+Use `-PublicationBuild` only when intentionally preparing a publication
+candidate; it rejects any tracked or untracked source drift:
 
 ```powershell
 pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Build-SpatialCameraPanelAndroid.ps1 `
@@ -1562,3 +1549,26 @@ projection. Its result is premultiplied and multiplicatively composes with the
 existing outer-underlay alpha. It does not add per-pixel transparency to the
 direct Spatial 180/360 video carrier. See
 `docs/SPATIAL_CAMERA_CONTROL_PROFILES.md`.
+
+## Independent region controls
+
+The projection-zone transport now has an additive independent-v2 contract
+without enlarging its 368-byte uniform. Buffer geometry (`off`, `static`, or
+`dynamic`), buffer content (`outer-continuation`, `transparent-reveal`, or
+`stretch`), and Stretch extent (`buffer-only` or `replace-outer`) occupy
+reserved high flag bits; static width uses the reserved `inner_shape.w` float.
+The existing coverage field remains a derived v1 compatibility projection.
+Profiles without `region_contract: "v2"` migrate deterministically: Off maps
+to Buffer Off + Outer continuation, Buffer maps to Dynamic + Stretch +
+buffer-only, and Full maps to Dynamic + Stretch + replace-Outer.
+
+The Regions panel presents a pinned effective topology and local Buffer,
+Effects, Stretch, Transitions, Outer, and Diagnostics pages. General surface
+effects use Inner or Inner + buffer scope regardless of whether the buffer is
+filled by Outer continuation, transparency, or Stretch. Stretch source,
+insets, curve, attachment A/B, and extent remain in the Stretch page. The
+Transitions page exposes only effective adjacent boundaries; turning the
+buffer off produces a direct Inner-to-Outer transition, while replace-Outer
+Stretch removes the separate buffer-to-Outer transition. Changing a Stretch
+style preserves buffer geometry, transition tuning, and the selected
+same-layer or 180/360-underlay Outer target.

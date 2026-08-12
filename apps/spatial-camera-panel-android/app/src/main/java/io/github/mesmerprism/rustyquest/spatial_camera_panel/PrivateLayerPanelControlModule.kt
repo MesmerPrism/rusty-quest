@@ -218,7 +218,8 @@ internal object PrivateLayerPanelControlModule {
   ): String =
       "channel=private-layer-panel status=layer-button-selected " +
           "source=${activityMarkerToken(source)} spatialPrivateLayerControlPanel=true " +
-          "privateLayerPanelInputButtons=button-a+trigger-l+trigger-r " +
+          "privateLayerPanelInputButtons=trigger-l+trigger-r " +
+          "privateLayerPanelRightPrimarySelectEnabled=false " +
           "privateLayerPanelTriggerSelectEnabled=true " +
           "requestedPublicMultiStackOpaqueProjectionLayerOverride=${activityMarkerFloat(requestedLayerOverride)} " +
           "previousPublicMultiStackOpaqueProjectionLayerOverride=${activityMarkerFloat(previousOverride)} " +

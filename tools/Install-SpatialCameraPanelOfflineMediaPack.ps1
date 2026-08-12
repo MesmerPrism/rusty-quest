@@ -9,6 +9,7 @@ param(
     [string]$AdbServerPort = $env:RUSTY_QUEST_ADB_SERVER_PORT,
     [string]$PackageName = "io.github.mesmerprism.rustyquest.spatial_camera_panel",
     [string]$ActivityName = "io.github.mesmerprism.rustyquest.spatial_camera_panel.SpatialCameraPanelActivity",
+    [string]$SharedMediaRoot = "/sdcard/Documents/RustySpatialMedia",
     [switch]$Launch,
     [ValidateRange(3, 60)]
     [int]$ObserveSeconds = 20,
@@ -67,6 +68,9 @@ function Invoke-Adb {
 
 if ([string]::IsNullOrWhiteSpace($Serial)) {
     throw "-Serial or RUSTY_QUEST_SERIAL is required; device work must use adb -s <serial>."
+}
+if ($SharedMediaRoot -notmatch '^/(sdcard|storage/emulated/0)/Documents/[A-Za-z0-9._-]+$') {
+    throw "-SharedMediaRoot must be one bounded folder directly under shared Documents."
 }
 if (-not (Test-Path -LiteralPath $ApkPath -PathType Leaf)) {
     throw "APK not found: $ApkPath"
@@ -214,7 +218,7 @@ $commands.Add((Invoke-Adb -Name "adb get-state" -Arguments @("get-state")))
 $commands.Add((Invoke-Adb -Name "install exact APK" -Arguments @("install", "-r", $resolvedApk)))
 $verifiedFiles = 0
 if (-not $PackagedInApk) {
-    $remoteRoot = "/sdcard/Android/obb/$PackageName/morphovision-media"
+    $remoteRoot = "$($SharedMediaRoot.TrimEnd('/'))/offline-media-packs"
     $remotePack = "$remoteRoot/$packId"
     $remoteManifestProbe = Invoke-Adb `
         -Name "probe existing remote pack" `
@@ -296,6 +300,12 @@ if ($Launch) {
         "status=first-frame-rendered",
         "advancing=true"
     )
+    if (-not $PackagedInApk) {
+        $requiredMarkers += @(
+            "encryptedMediaStorage=shared-document-tree",
+            "sharedEncryptedMedia=true"
+        )
+    }
     foreach ($required in $requiredMarkers) {
         if (-not $markerOutput.Contains($required)) {
             throw "Bounded playback validation is missing marker: $required"
@@ -309,7 +319,7 @@ if ($Launch) {
 }
 
 $receipt = [ordered]@{
-    schema = "rusty.quest.offline_immersive_media_pack.install_receipt.v1"
+    schema = "rusty.quest.offline_immersive_media_pack.install_receipt.v2"
     created_at = [DateTimeOffset]::UtcNow.ToString("o")
     package = $PackageName
     apk_path = $resolvedApk
@@ -319,6 +329,9 @@ $receipt = [ordered]@{
     pack_files_verified = $verifiedFiles
     pack_files_verified_inside_apk = $embeddedFilesVerified
     encrypted_pack_remote_root = $(if ($PackagedInApk) { "app-private-import-from-apk-assets" } else { $remotePack })
+    shared_media_root = $(if ($PackagedInApk) { "" } else { $SharedMediaRoot })
+    storage_access_framework_selection_required = [bool](-not $PackagedInApk)
+    survives_app_uninstall = [bool](-not $PackagedInApk)
     encrypted_media_packaged_in_apk = [bool]$PackagedInApk
     plaintext_files_staged = 0
     key_transferred_separately = $false

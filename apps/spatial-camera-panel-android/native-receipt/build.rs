@@ -104,12 +104,21 @@ fn main() {
         "fragment",
         &["-DPRIVATE_LAYER_VIDEO_COMPOSITOR=0".to_string()],
     );
-    let opaque_projection_vertex_shader = compile_optional_shader_env(
+    let opaque_projection_vertex_shader = compile_optional_shader_env_with_args(
         &glslc,
         &out_dir,
         "RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OPAQUE_PROJECTION_VERTEX_SHADER",
         "spatial_opaque_projection.vert.spv",
         "vertex",
+        &["-DPRIVATE_LAYER_VIDEO_COMPOSITOR=0".to_string()],
+    );
+    let _opaque_projection_video_compositor_vertex_shader = compile_optional_shader_env_with_args(
+        &glslc,
+        &out_dir,
+        "RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OPAQUE_PROJECTION_VERTEX_SHADER",
+        "spatial_opaque_projection_video_compositor.vert.spv",
+        "vertex",
+        &["-DPRIVATE_LAYER_VIDEO_COMPOSITOR=1".to_string()],
     );
     let opaque_projection_video_compositor_shader = compile_optional_shader_env_with_args(
         &glslc,

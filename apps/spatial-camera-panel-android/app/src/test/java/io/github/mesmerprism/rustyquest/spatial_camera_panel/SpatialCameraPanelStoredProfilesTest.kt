@@ -25,30 +25,6 @@ class SpatialCameraPanelStoredProfilesTest {
     assertTrue(encoded.contains("World underlay tuning"))
     assertEquals(listOf(profile), decoded)
     assertEquals("world-anchored", decoded.single().controls.videoPresentationMode)
-    assertEquals("lut-passthrough", decoded.single().controls.backgroundMode)
-  }
-
-  @Test
-  fun legacyProfileWithoutBackgroundModeMigratesToBlackWithoutChangingSchema() {
-    val encoded =
-        SpatialCameraPanelProfileBundleCodec.encode(
-            listOf(
-                SpatialCameraPanelProfileEntry(
-                    id = "profile-legacy",
-                    title = "Legacy profile",
-                    createdAtEpochMs = 5L,
-                    controls = sampleControls().copy(backgroundMode = SpatialBackgroundMode.Black.token),
-                )
-            )
-        )
-    val legacyPayload = encoded.replace(Regex(",\\s*\\\"backgroundMode\\\": \\\"black\\\""), "")
-
-    val decoded = SpatialCameraPanelProfileBundleCodec.decode(legacyPayload)
-
-    assertEquals(SpatialCameraPanelProfileBundleCodec.FORMAT_VERSION, 1)
-    assertEquals(null, decoded.single().controls.backgroundMode)
-    assertEquals(SpatialBackgroundMode.Black, decoded.single().controls.resolvedBackgroundMode())
-    assertEquals(legacyPayload, SpatialCameraPanelProfileBundleCodec.encode(decoded))
   }
 
   @Test
@@ -165,7 +141,7 @@ class SpatialCameraPanelStoredProfilesTest {
               projectionSurfaceTiling =
                   ProjectionSurfaceTiling(
                       enabled = true,
-                      topology = ProjectionSurfaceTilingControls.topologyTiled,
+                      topology = ProjectionSurfaceTilingControls.topologyTriangleTiles,
                       gapNormalized = 0.08f,
                       depthFlexibility = 0.7f,
                   ),
@@ -179,7 +155,6 @@ class SpatialCameraPanelStoredProfilesTest {
                   ),
               videoPlaybackEnabled = true,
               videoPresentationMode = SpatialImmersiveVideoPresentationMode.WorldAnchored.token,
-              backgroundMode = SpatialBackgroundMode.LutPassthrough.token,
           )
           .normalized()
 }

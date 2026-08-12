@@ -924,7 +924,8 @@ internal object CameraHwbProjectionModule {
       "channel=camera-hwb-spatial-probe status=projection-placement-toggle-ignored " +
           "controllerInput=right-secondary-button inputSource=${activityMarkerToken(inputSource)} " +
           "${detail.trim()} placementMode=${placementMode.markerToken} " +
-          "cameraProjectionWallToggleInput=disabled-right-secondary-noop " +
+          "cameraProjectionWallToggleInput=disabled-unassigned " +
+          "rightSecondaryInput=direct-video-recenter " +
           "cameraProjectionWallToggleEnabled=false " +
           "toggleGuard=disabled-no-room-distance-diagnostic " +
           "projectionStartsInFullFov=true runtimeCrash=false"
@@ -976,7 +977,8 @@ internal object CameraHwbProjectionModule {
           "projectionDisplaySurface=${displayRoleForPlacement(placementMode)} " +
           "projectionRoomRenderOrder=$roomRenderOrderToken " +
           "cameraVideoProjectionLayerZIndex=${zIndexForPlacement(carrierMode, placementMode)} " +
-          "cameraProjectionWallToggleInput=disabled-right-secondary-noop " +
+          "cameraProjectionWallToggleInput=disabled-unassigned " +
+          "rightSecondaryInput=direct-video-recenter " +
           "cameraProjectionWallToggleEnabled=false " +
           "virtualRoomWallCenterM=$CAMERA_HWB_PROJECTION_WALL_CENTER_MARKER " +
           "virtualRoomWallSizeM=$CAMERA_HWB_PROJECTION_WALL_SIZE_MARKER " +
@@ -1032,7 +1034,8 @@ internal object CameraHwbProjectionModule {
         "viewerLockedPlacementMode=$CAMERA_HWB_PROJECTION_PLACEMENT_MODE " +
         "virtualRoomWallPlacementMode=$CAMERA_HWB_PROJECTION_WALL_PLACEMENT_MODE " +
         "virtualRoomWallPlacementActive=${input.placementMode == CameraHwbProjectionPlacementMode.VirtualRoomWall} " +
-        "cameraProjectionWallToggleInput=disabled-right-secondary-noop " +
+        "cameraProjectionWallToggleInput=disabled-unassigned " +
+        "rightSecondaryInput=direct-video-recenter " +
         "cameraProjectionWallToggleEnabled=false " +
         "virtualRoomWallCenterM=$CAMERA_HWB_PROJECTION_WALL_CENTER_MARKER " +
         "virtualRoomWallSizeM=$CAMERA_HWB_PROJECTION_WALL_SIZE_MARKER " +

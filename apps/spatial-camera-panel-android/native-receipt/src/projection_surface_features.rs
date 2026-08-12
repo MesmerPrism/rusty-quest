@@ -29,14 +29,15 @@ pub(crate) enum ProjectionSurfaceTopology {
     #[default]
     Continuous = 0,
     Tiled = 1,
+    TriangleTiles = 2,
 }
 
 impl ProjectionSurfaceTopology {
     pub(crate) fn from_raw(value: i32) -> Self {
-        if value == Self::Tiled as i32 {
-            Self::Tiled
-        } else {
-            Self::Continuous
+        match value {
+            value if value == Self::Tiled as i32 => Self::Tiled,
+            value if value == Self::TriangleTiles as i32 => Self::TriangleTiles,
+            _ => Self::Continuous,
         }
     }
 
@@ -44,6 +45,7 @@ impl ProjectionSurfaceTopology {
         match self {
             Self::Continuous => "continuous",
             Self::Tiled => "tiled",
+            Self::TriangleTiles => "triangle-tiles",
         }
     }
 }
@@ -532,5 +534,33 @@ mod tests {
         assert!(settings.tessellated_requested(displacement));
         assert!(!settings.tessellated_effective(displacement, false));
         assert!(settings.tessellated_effective(displacement, true));
+    }
+
+    #[test]
+    fn triangle_tiles_round_trip_as_topology_two_without_changing_the_draw_size() {
+        let settings = ProjectionSurfaceFeatureSettings {
+            tiling: ProjectionSurfaceTilingSettings {
+                enabled: true,
+                topology: ProjectionSurfaceTopology::TriangleTiles,
+                gap: 0.08,
+                depth_flexibility: 0.0,
+                ..ProjectionSurfaceTilingSettings::default()
+            },
+            revision: 9,
+            ..ProjectionSurfaceFeatureSettings::default()
+        }
+        .normalized();
+        let uniform = settings.uniform(
+            ProjectionSurfaceDisplacementSettings::default(),
+            [[0.0, 0.0, 0.5, 1.0], [0.5, 0.0, 0.5, 1.0]],
+        );
+        assert_eq!(uniform.tiling[1], 2.0);
+        assert!(settings
+            .marker_fields(true, false, 2)
+            .contains("projectionSurfaceTopology=triangle-tiles"));
+        assert_eq!(
+            crate::projection_surface_displacement::PROJECTION_SURFACE_GRID_VERTEX_COUNT,
+            6144
+        );
     }
 }

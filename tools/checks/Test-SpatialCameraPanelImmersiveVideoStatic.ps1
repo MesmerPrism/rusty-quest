@@ -52,6 +52,7 @@ $panelCarrier = Read-RequiredText "apps\spatial-camera-panel-android\app\src\mai
 $validationWorkflow = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\SpatialValidationWorkflowCoordinator.kt"
 $uiActionTool = Read-RequiredText "tools\Invoke-SpatialCameraPanelAndroidUiAction.ps1"
 $offlinePack = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\OfflineImmersiveMediaPack.kt"
+$sharedOfflineLibrary = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\SharedOfflineImmersiveMediaLibrary.kt"
 $activity = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\SpatialCameraPanelActivity.kt"
 $routeTest = Read-RequiredText "apps\spatial-camera-panel-android\app\src\test\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\SpatialImmersiveVideoRouteModuleTest.kt"
 $stageTool = Read-RequiredText "tools\Stage-SpatialCameraPanelImmersiveVideo.ps1"
@@ -121,10 +122,17 @@ Assert-Contains "Offline immersive pack" $offlinePack "chunk-authentication-fail
 Assert-Contains "Offline immersive pack" $offlinePack "plaintextFileWritten=false"
 Assert-Contains "Offline immersive pack" $offlinePack "BaseDataSource(false)"
 Assert-Contains "Offline immersive pack" $offlinePack "PackagedOfflineImmersiveMediaPackImporter"
+Assert-Contains "Offline immersive pack" $offlinePack "fun installedPackIds(context: Context)"
+Assert-Contains "Offline immersive pack" $offlinePack "MAX_DISCOVERED_PACKS = 32"
 Assert-Contains "Offline immersive pack" $offlinePack "OfflineImmersiveMediaExtractorDataSource"
 Assert-Contains "Offline immersive pack" $offlinePack "MediaDataSource()"
 Assert-Contains "Offline immersive pack" $offlinePack '"offline-media-packs"'
 Assert-NotContains "Offline immersive pack" $offlinePack "FileOutputStream"
+Assert-Contains "Shared offline library" $sharedOfflineLibrary "takePersistableUriPermission"
+Assert-Contains "Shared offline library" $sharedOfflineLibrary 'PACKS_DIRECTORY_NAME = "offline-media-packs"'
+Assert-Contains "Shared offline library" $sharedOfflineLibrary "OfflineImmersiveMediaPackLoader.resolve("
+Assert-Contains "Shared offline library" $sharedOfflineLibrary "resolver.openInputStream(document.uri)"
+Assert-NotContains "Shared offline library" $sharedOfflineLibrary "context.filesDir"
 
 Assert-Contains "Activity" $activity "immersiveVideoPanelCoordinator.requested"
 Assert-Contains "Activity" $activity "directImmersiveVideoPanelRequested()"
@@ -132,12 +140,20 @@ Assert-Contains "Activity" $activity "status=layered-carriers-adopted"
 Assert-Contains "Activity" $activity "customProjectionCarrierShape=planar-quad"
 Assert-Contains "Activity" $activity "immersiveVideoPanelCoordinator::updateFromViewer"
 Assert-NotContains "Activity" $activity "usesImmersiveVideoAsCustomProjectionSource()"
-Assert-NotContains "Activity" $activity "spatialVideoProjectionRuntimeCoordinator.replaceMediaSource("
+Assert-Contains "Activity" $activity "spatialVideoProjectionRuntimeCoordinator.replaceMediaSource("
+Assert-NotContains "Activity" $activity "projectionPanelVisibilityCoordinator.restartWith("
 Assert-NotContains "Activity" $activity "return listOfNotNull(immersiveVideoPanelCoordinator.panelRegistrationOrNull())"
 Assert-Contains "Activity" $activity 'immersiveVideoPanelCoordinator.destroy("activity-destroy")'
 Assert-Contains "Immersive coordinator" $coordinator "DIRECT_VIDEO_BACKGROUND_Z_INDEX = -40"
 Assert-Contains "Immersive coordinator" $coordinator "HEAD_FIXED_VIDEO_DISTANCE_METERS = 2.05f"
 Assert-Contains "Immersive coordinator" $coordinator "spatialPanelRebuilt="
+Assert-Contains "Immersive coordinator" $coordinator "status=direct-layer-fade-out-started"
+Assert-Contains "Immersive coordinator" $coordinator "status=direct-layer-source-swap"
+Assert-Contains "Immersive coordinator" $coordinator "status=direct-layer-fade-in-started"
+Assert-Contains "Immersive coordinator" $coordinator "reason=transition-in-progress"
+Assert-Contains "Immersive coordinator" $coordinator "fun recenterAtViewer("
+Assert-Contains "Immersive coordinator" $coordinator "customProjectionCarrierRetained=true"
+Assert-Contains "Immersive coordinator" $coordinator "retainedPackDiscovery=true"
 
 Assert-Contains "Immersive session" $session "compatibleWithSession("
 Assert-Contains "Immersive session" $session 'CUSTOM_PROJECTION_SOURCE = "encrypted-offline-pack"'
@@ -152,8 +168,10 @@ Assert-Contains "Immersive panel carrier" $panelCarrier "world-anchored-transfor
 Assert-Contains "Immersive panel carrier" $panelCarrier "fun rebuild("
 Assert-Contains "Immersive validation workflow" $validationWorkflow '"video-world-anchored"'
 Assert-Contains "Immersive validation workflow" $validationWorkflow '"video-head-fixed-border"'
+Assert-Contains "Immersive validation workflow" $validationWorkflow '"video-recenter"'
 Assert-Contains "Immersive UI action tool" $uiActionTool '"video-world-anchored"'
 Assert-Contains "Immersive UI action tool" $uiActionTool '"video-head-fixed-border"'
+Assert-Contains "Immersive UI action tool" $uiActionTool '"video-recenter"'
 Assert-Contains "Immersive coordinator" $coordinator "fun selectPrevious("
 Assert-Contains "Immersive coordinator" $coordinator "fun selectNext("
 Assert-Contains "Immersive coordinator" $coordinator "status=catalog-ready"
@@ -191,7 +209,9 @@ Assert-Contains "Offline pack tool" $packTool "plaintext_files_written = `$false
 Assert-NotContains "Offline pack tool" $packTool "Write-Output `$KeyHex"
 
 Assert-Contains "Offline pack installer" $installPackTool '@("-s", $script:Serial)'
-Assert-Contains "Offline pack installer" $installPackTool "/sdcard/Android/obb/`$PackageName/morphovision-media"
+Assert-Contains "Offline pack installer" $installPackTool '"/sdcard/Documents/RustySpatialMedia"'
+Assert-Contains "Offline pack installer" $installPackTool 'storage_access_framework_selection_required'
+Assert-NotContains "Offline pack installer" $installPackTool "/sdcard/Android/obb/`$PackageName"
 Assert-Contains "Offline pack installer" $installPackTool "IMMERSIVE_VIDEO_OFFLINE_PACK_ID"
 Assert-Contains "Offline pack installer" $installPackTool "key_transferred_separately = `$false"
 Assert-Contains "Offline pack installer" $installPackTool "plaintext_files_staged = 0"
@@ -211,5 +231,7 @@ Assert-Contains "Spatial Camera Panel build tool" $buildTool 'offline_media_key_
 Assert-Contains "Spatial Camera Panel build tool" $buildTool 'offline_media_key_value_recorded = $false'
 Assert-Contains "Spatial Camera Panel build tool" $buildTool 'offline_immersive_media_packaged_assets = $offlineMediaPackagedAssets'
 Assert-Contains "Spatial Camera Panel build tool" $buildTool 'offline_immersive_media_plaintext_file_written = $false'
+Assert-Contains "Spatial Camera Panel build tool" $buildTool 'camera_hwb_projection_right_secondary_behavior = "direct-video-recenter-existing-entity"'
+Assert-Contains "Spatial Camera Panel build tool" $buildTool '"video-recenter"'
 
 Write-Host "Spatial Camera Panel immersive-video static checks passed"

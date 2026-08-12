@@ -21,18 +21,33 @@ import org.json.JSONObject
 internal const val OFFLINE_IMMERSIVE_MEDIA_PACK_SCHEMA =
     "rusty.quest.offline_immersive_media_pack.v1"
 
+internal interface OfflineImmersiveMediaCiphertextSource {
+  val location: String
+  val sizeBytes: Long
+
+  @Throws(IOException::class) fun readBytes(): ByteArray
+}
+
+internal interface OfflineImmersiveMediaPackSource {
+  val manifestLocation: String
+
+  @Throws(IOException::class) fun readManifestBytes(): ByteArray
+
+  fun chunkSource(name: String): OfflineImmersiveMediaCiphertextSource?
+}
+
 internal data class OfflineImmersiveMediaChunk(
     val index: Int,
     val plaintextOffset: Long,
     val plaintextLength: Int,
-    val file: File,
+    val ciphertextSource: OfflineImmersiveMediaCiphertextSource,
     val nonce: ByteArray,
     val ciphertextSha256: String,
 )
 
 internal data class OfflineImmersiveMediaPack(
     val packId: String,
-    val manifestFile: File,
+    val manifestFile: File?,
     val sourceSizeBytes: Long,
     val sourceSha256: String,
     val chunkSizeBytes: Int,
@@ -43,6 +58,8 @@ internal data class OfflineImmersiveMediaPack(
     val chunks: List<OfflineImmersiveMediaChunk>,
     val key: ByteArray,
     val packagedInApk: Boolean,
+    val storageKind: String = if (manifestFile == null) "shared-document-tree" else "file",
+    val manifestLocation: String = manifestFile?.path ?: "shared-document-tree",
 ) {
   val virtualUriString: String
     get() = "rusty-offline-media://$packId/video"
@@ -88,8 +105,51 @@ internal object OfflineImmersiveMediaPackLoader {
       packagedInApk: Boolean = false,
   ): OfflineImmersiveMediaPackResolution =
       try {
+        val packId = requestedPackId(packId)
+        val canonicalRoot = mediaPackRoot.canonicalFile
+        val packDirectory = File(canonicalRoot, packId).canonicalFile
+        requirePack(
+            packDirectory.path.startsWith(canonicalRoot.path + File.separator),
+            "offline-pack-path-outside-root",
+        )
+        val manifestFile = File(packDirectory, "manifest.json").canonicalFile
+        requirePack(
+            manifestFile.path.startsWith(packDirectory.path + File.separator) &&
+                manifestFile.isFile,
+            "offline-pack-manifest-missing",
+        )
         OfflineImmersiveMediaPackResolution.Ready(
-            load(mediaPackRoot, packId, keyHex, packagedInApk)
+            load(
+                requestedPackId = packId,
+                keyHex = keyHex,
+                packagedInApk = packagedInApk,
+                manifestFile = manifestFile,
+                source = FileOfflineImmersiveMediaPackSource(packDirectory, manifestFile),
+                storageKind = "file",
+            )
+        )
+      } catch (error: OfflineImmersiveMediaPackException) {
+        OfflineImmersiveMediaPackResolution.Rejected(error.reason)
+      } catch (_: Exception) {
+        OfflineImmersiveMediaPackResolution.Rejected("offline-pack-invalid")
+      }
+
+  fun resolve(
+      packId: String,
+      keyHex: String,
+      source: OfflineImmersiveMediaPackSource,
+      storageKind: String = "shared-document-tree",
+  ): OfflineImmersiveMediaPackResolution =
+      try {
+        OfflineImmersiveMediaPackResolution.Ready(
+            load(
+                requestedPackId = requestedPackId(packId),
+                keyHex = keyHex,
+                packagedInApk = false,
+                manifestFile = null,
+                source = source,
+                storageKind = storageKind,
+            )
         )
       } catch (error: OfflineImmersiveMediaPackException) {
         OfflineImmersiveMediaPackResolution.Rejected(error.reason)
@@ -98,29 +158,17 @@ internal object OfflineImmersiveMediaPackLoader {
       }
 
   private fun load(
-      mediaPackRoot: File,
       requestedPackId: String,
       keyHex: String,
       packagedInApk: Boolean,
+      manifestFile: File?,
+      source: OfflineImmersiveMediaPackSource,
+      storageKind: String,
   ): OfflineImmersiveMediaPack {
-    val packId = requestedPackId.trim().lowercase()
-    requirePack(packIdPattern.matches(packId), "offline-pack-id-invalid")
+    val packId = requestedPackId(packId = requestedPackId)
     requirePack(keyHex.matches(Regex("^[a-fA-F0-9]{64}$")), "embedded-key-missing")
     val key = keyHex.chunked(2).map { it.toInt(16).toByte() }.toByteArray()
-
-    val canonicalRoot = mediaPackRoot.canonicalFile
-    val packDirectory = File(canonicalRoot, packId).canonicalFile
-    requirePack(
-        packDirectory.path.startsWith(canonicalRoot.path + File.separator),
-        "offline-pack-path-outside-root",
-    )
-    val manifestFile = File(packDirectory, "manifest.json").canonicalFile
-    requirePack(
-        manifestFile.path.startsWith(packDirectory.path + File.separator) &&
-            manifestFile.isFile,
-        "offline-pack-manifest-missing",
-    )
-    val manifest = JSONObject(manifestFile.readText(StandardCharsets.UTF_8))
+    val manifest = JSONObject(String(source.readManifestBytes(), StandardCharsets.UTF_8))
     requirePack(
         manifest.optString("schema") == OFFLINE_IMMERSIVE_MEDIA_PACK_SCHEMA,
         "offline-pack-schema-unsupported",
@@ -135,16 +183,16 @@ internal object OfflineImmersiveMediaPackLoader {
             encryption.optInt("tag_bytes") == GCM_TAG_SIZE_BYTES,
         "offline-pack-encryption-unsupported",
     )
-    val source = manifest.getJSONObject("source")
-    val sourceSizeBytes = source.getLong("size_bytes")
-    val sourceSha256 = source.getString("sha256")
-    val widthPx = source.getInt("width_px")
-    val heightPx = source.getInt("height_px")
+    val sourceMetadata = manifest.getJSONObject("source")
+    val sourceSizeBytes = sourceMetadata.getLong("size_bytes")
+    val sourceSha256 = sourceMetadata.getString("sha256")
+    val widthPx = sourceMetadata.getInt("width_px")
+    val heightPx = sourceMetadata.getInt("height_px")
     val shape =
-        SpatialImmersiveVideoShape.fromToken(source.getString("projection_shape"))
+        SpatialImmersiveVideoShape.fromToken(sourceMetadata.getString("projection_shape"))
             ?: throw OfflineImmersiveMediaPackException("projection-shape-unknown")
     val stereoLayout =
-        SpatialImmersiveVideoStereoLayout.fromToken(source.getString("stereo_layout"))
+        SpatialImmersiveVideoStereoLayout.fromToken(sourceMetadata.getString("stereo_layout"))
             ?: throw OfflineImmersiveMediaPackException("stereo-layout-unknown")
     requirePack(sourceSizeBytes > 0L, "offline-pack-source-size-invalid")
     requirePack(sha256Pattern.matches(sourceSha256), "offline-pack-source-sha256-invalid")
@@ -194,11 +242,10 @@ internal object OfflineImmersiveMediaPackLoader {
           item.getString("file") == expectedFileName,
           "offline-pack-chunk-name-invalid",
       )
-      val chunkFile = File(packDirectory, expectedFileName).canonicalFile
+      val ciphertextSource = source.chunkSource(expectedFileName)
       requirePack(
-          chunkFile.path.startsWith(packDirectory.path + File.separator) &&
-              chunkFile.isFile &&
-              chunkFile.length() == plaintextLength.toLong() + GCM_TAG_SIZE_BYTES,
+          ciphertextSource != null &&
+              ciphertextSource.sizeBytes == plaintextLength.toLong() + GCM_TAG_SIZE_BYTES,
           "offline-pack-chunk-file-invalid",
       )
       val nonce = Base64.decode(item.getString("nonce_base64"), Base64.NO_WRAP)
@@ -213,7 +260,7 @@ internal object OfflineImmersiveMediaPackLoader {
               index = index,
               plaintextOffset = plaintextOffset,
               plaintextLength = plaintextLength,
-              file = chunkFile,
+              ciphertextSource = ciphertextSource!!,
               nonce = nonce,
               ciphertextSha256 = ciphertextSha256,
           )
@@ -234,7 +281,15 @@ internal object OfflineImmersiveMediaPackLoader {
         chunks = chunks,
         key = key,
         packagedInApk = packagedInApk,
+        storageKind = storageKind,
+        manifestLocation = source.manifestLocation,
     )
+  }
+
+  private fun requestedPackId(packId: String): String {
+    val normalized = packId.trim().lowercase()
+    requirePack(packIdPattern.matches(normalized), "offline-pack-id-invalid")
+    return normalized
   }
 
   private fun requirePack(condition: Boolean, reason: String) {
@@ -244,10 +299,32 @@ internal object OfflineImmersiveMediaPackLoader {
   }
 }
 
+private class FileOfflineImmersiveMediaPackSource(
+    private val packDirectory: File,
+    private val manifestFile: File,
+) : OfflineImmersiveMediaPackSource {
+  override val manifestLocation: String = manifestFile.path
+
+  override fun readManifestBytes(): ByteArray = manifestFile.readBytes()
+
+  override fun chunkSource(name: String): OfflineImmersiveMediaCiphertextSource? {
+    val candidate = File(packDirectory, name).canonicalFile
+    if (!candidate.path.startsWith(packDirectory.path + File.separator) || !candidate.isFile) {
+      return null
+    }
+    return object : OfflineImmersiveMediaCiphertextSource {
+      override val location: String = candidate.path
+      override val sizeBytes: Long = candidate.length()
+
+      override fun readBytes(): ByteArray = candidate.readBytes()
+    }
+  }
+}
+
 internal object PackagedOfflineImmersiveMediaPackImporter {
   private val packIdPattern = Regex("^[a-z0-9][a-z0-9._-]{0,95}$")
   private val chunkNamePattern = Regex("^chunk-[0-9]{6}\\.bin$")
-  private const val MAX_PACKAGED_PACKS = 32
+  private const val MAX_DISCOVERED_PACKS = 32
 
   fun packagedPackIds(context: Context): List<String> =
       if (!BuildConfig.OFFLINE_MEDIA_PACKAGED_ASSETS) {
@@ -263,11 +340,31 @@ internal object PackagedOfflineImmersiveMediaPackImporter {
                   .filter(packIdPattern::matches)
                   .distinct()
                   .sorted()
-                  .take(MAX_PACKAGED_PACKS)
+                  .take(MAX_DISCOVERED_PACKS)
                   .toList()
             }
             .getOrDefault(emptyList())
       }
+
+  fun installedPackIds(context: Context): List<String> =
+      installedPackIds(File(context.filesDir, "offline-media-packs"))
+
+  internal fun installedPackIds(mediaPackRoot: File): List<String> =
+      runCatching {
+            mediaPackRoot
+                .listFiles()
+                .orEmpty()
+                .asSequence()
+                .filter(File::isDirectory)
+                .map(File::getName)
+                .filter(packIdPattern::matches)
+                .filter { packId -> File(mediaPackRoot, "$packId/manifest.json").isFile }
+                .distinct()
+                .sorted()
+                .take(MAX_DISCOVERED_PACKS)
+                .toList()
+          }
+          .getOrDefault(emptyList())
 
   fun ensureImported(context: Context, requestedPackId: String): Boolean {
     val packId = requestedPackId.trim().lowercase()
@@ -377,7 +474,7 @@ internal class OfflineImmersiveMediaChunkReader(
       return cachedPlaintext ?: throw IOException("offline-pack-cache-invalid")
     }
     cachedPlaintext?.fill(0)
-    val encrypted = chunk.file.readBytes()
+    val encrypted = chunk.ciphertextSource.readBytes()
     val actualSha256 = MessageDigest.getInstance("SHA-256").digest(encrypted).toHex()
     if (actualSha256 != chunk.ciphertextSha256) {
       throw IOException("offline-pack-ciphertext-sha256-mismatch")

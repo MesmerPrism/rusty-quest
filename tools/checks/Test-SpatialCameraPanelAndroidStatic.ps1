@@ -115,6 +115,8 @@ $spatialVirtualRoomModule = Read-RequiredText "apps\spatial-camera-panel-android
 $stagedAssetModule = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\SpatialStagedAssetModule.kt"
 $spatialStereoVideoPlayback = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\SpatialStereoVideoPlayback.java"
 $offlineImmersiveMediaPack = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\OfflineImmersiveMediaPack.kt"
+$sharedOfflineImmersiveMediaLibrary = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\SharedOfflineImmersiveMediaLibrary.kt"
+$spatialInteractionInputOnlyFeature = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\SpatialInteractionInputOnlyFeature.kt"
 $immersiveVideoPanelCoordinator = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\SpatialImmersiveVideoPanelCoordinator.kt"
 $immersiveVideoSession = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\SpatialImmersiveVideoSession.kt"
 $laneBoundary = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\SpatialSdkLaneBoundary.kt"
@@ -151,7 +153,6 @@ $cameraHwbProjectionSyntheticRenderer = Read-RequiredText "apps\spatial-camera-p
 $cameraHwbProjectionCarrierStateCoordinator = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\SpatialCameraHwbProjectionCarrierStateCoordinator.kt"
 $cameraHwbProjectionGeometryCoordinator = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\SpatialCameraHwbProjectionGeometryCoordinator.kt"
 $avatarFeature = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\SpatialAvatarHandVisualFeature.kt"
-$connectionHubSurfaceClient = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\ConnectionHubSurfaceClient.kt"
 $avatarProbeFeature = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\SpatialAvatarHandInvestigationFeature.kt"
 $handBillboardFeature = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\SpatialHandBillboardFlockFeature.kt"
 $liveSkinnedHandSurface = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\SpatialLiveSkinnedHandSurface.kt"
@@ -227,8 +228,6 @@ Assert-Contains "Gradle app" $appGradle 'applicationId = spatialApplicationId.ge
 Assert-Contains "Gradle app" $appGradle 'RUSTY_QUEST_SPATIAL_APP_LABEL'
 Assert-Contains "Gradle app" $appGradle 'manifestPlaceholders["spatialAppLabel"] = spatialAppLabel.get()'
 Assert-Contains "Gradle app" $appGradle 'RUSTY_QUEST_SPATIAL_LOCKED_FINAL_PRESENTATION'
-Assert-Contains "Gradle app" $appGradle 'RUSTY_QUEST_SPATIAL_PRIVATE_FEATURE_TEST_SRC_DIR'
-Assert-Contains "Gradle app" $appGradle 'RUSTY_QUEST_SPATIAL_PRIVATE_FEATURE_TEST_RES_DIR'
 Assert-Contains "Gradle app" $appGradle 'RUSTY_QUEST_SPATIAL_DISTORTION_SPEED_SCALE'
 Assert-Contains "Gradle app" $appGradle '"LOCKED_FINAL_PRESENTATION"'
 Assert-Contains "Gradle app" $appGradle '"DISTORTION_SPEED_SCALE"'
@@ -371,8 +370,11 @@ Assert-NotContains "Activity" $activity "private fun recordNativeInteropReceipt"
 Assert-NotContains "Activity" $activity "private fun createNoRenderSurfaceProbe"
 Assert-NotContains "Activity" $activity "import com.meta.spatial.runtime.PanelSurface"
 Assert-NotContains "Activity" $activity "import com.meta.spatial.runtime.SamplerConfig"
-Assert-Contains "Android manifest" $manifest 'com.oculus.feature.RENDER_MODEL'
-Assert-Contains "Android manifest" $manifest 'com.oculus.permission.RENDER_MODEL'
+Assert-NotContains "Android manifest" $manifest 'com.oculus.feature.RENDER_MODEL'
+Assert-NotContains "Android manifest" $manifest 'com.oculus.permission.RENDER_MODEL'
+Assert-Contains "Interaction input-only feature" $spatialInteractionInputOnlyFeature "IsdkSystems(context)"
+Assert-Contains "Interaction input-only feature" $spatialInteractionInputOnlyFeature "locomotionSystemRegistered=false"
+Assert-NotContains "Interaction input-only feature" $spatialInteractionInputOnlyFeature "LocomotionSystem("
 Assert-Contains "Android manifest" $manifest 'horizonos.permission.USE_SCENE'
 Assert-Contains "Android manifest" $manifest 'org.khronos.openxr.permission.OPENXR'
 Assert-Contains "Android manifest" $manifest 'org.khronos.openxr.permission.OPENXR_SYSTEM'
@@ -1273,7 +1275,7 @@ Assert-Contains "Activity" $activity "stopNativeProbe = ::nativeStopSpatialVideo
 Assert-Contains "Activity" $activity "SpatialStereoVideoPlayback.start("
 Assert-Contains "Activity" $activity "SpatialStereoVideoPlayback.stop()"
 Assert-Contains "Activity" $activity "spatialVideoProjectionRuntimeCoordinator.adoptSettings("
-Assert-NotContains "Activity" $activity "spatialVideoProjectionRuntimeCoordinator.replaceMediaSource("
+Assert-Contains "Activity" $activity "spatialVideoProjectionRuntimeCoordinator.replaceMediaSource("
 Assert-Contains "Activity" $activity "directSpatialPanelActive=true customProjectionStackActive=true"
 Assert-Contains "Activity" $activity "spatialVideoProjectionRuntimeCoordinator::configure"
 Assert-Contains "Activity" $activity "spatialVideoProjectionRuntimeCoordinator::start"
@@ -1554,8 +1556,9 @@ Assert-Contains "Activity" $activity "secondaryToggleEnabled = { false }"
 Assert-Contains "Activity" $activity "reapplyPrivateLayerOverride = ::nativeUpdatePrivateLayerOverride"
 Assert-Contains "Activity" $activity "cameraHwbProjectionPlacementUpdateCoordinator.resetMarkerCadence()"
 Assert-NotContains "Activity" $activity "cameraHwbProjectionPlacementUpdateCoordinator::resetMarkerCadence"
-Assert-Contains "Activity" $activity "cameraHwbProjectionCarrierStateCoordinator.togglePlacementMode("
-Assert-Contains "Activity" $activity "cameraHwbProjectionCarrierStateCoordinator.armSecondaryToggle("
+Assert-NotContains "Activity" $activity "cameraHwbProjectionCarrierStateCoordinator.togglePlacementMode("
+Assert-NotContains "Activity" $activity "cameraHwbProjectionCarrierStateCoordinator.armSecondaryToggle("
+Assert-Contains "Activity" $activity "recenterVideo = ::recenterImmersiveVideo"
 Assert-Contains "Activity" $activity "cameraHwbProjectionCarrierStateCoordinator.resetForLaunch()"
 Assert-NotContains "Activity" $activity "private var cameraHwbProjectionPlacementMode"
 Assert-NotContains "Activity" $activity "private var cameraHwbProjectionCarrierMode"
@@ -1674,7 +1677,7 @@ Assert-Contains "Activity" $activity 'suppressParticleLayerIfCameraProjectionReq
 Assert-Contains "Activity" $activity 'suppressParticleLayerForCameraStack("camera-hwb-projection-probe")'
 Assert-Contains "Activity" $activity "panelJoystickArbitrationCoordinator.handle("
 Assert-NotContains "Activity" $activity "private fun applyCameraHwbProjectionScaleJoystickInput"
-Assert-Contains "Activity" $activity "cameraHwbProjectionCarrierStateCoordinator.togglePlacementMode("
+Assert-Contains "Activity" $activity "recenterImmersiveVideo(inputSource, detail)"
 Assert-Contains "Controller snapshot adapter" $controllerSnapshotAdapter "ButtonBits.ButtonB"
 Assert-Contains "Camera HWB projection module" $cameraProjectionModule "controllerInput=right-secondary-button"
 Assert-Contains "Activity" $activity "nativePollSpatialControllerRightButtonA"
@@ -1815,7 +1818,8 @@ Assert-NotContains "Activity" $activity "channel=camera-hwb-spatial-probe status
 Assert-NotContains "Activity" $activity "channel=camera-hwb-spatial-probe status=manual-panel-carrier-surface-failed"
 Assert-NotContains "Activity" $activity "channel=camera-hwb-spatial-probe status=manual-panel-carrier-add-failed"
 Assert-NotContains "Activity" $activity "channel=camera-hwb-spatial-probe status=manual-panel-carrier-ready"
-Assert-Contains "Camera HWB projection module" $cameraProjectionModule "cameraProjectionWallToggleInput=disabled-right-secondary-noop"
+Assert-Contains "Camera HWB projection module" $cameraProjectionModule "cameraProjectionWallToggleInput=disabled-unassigned"
+Assert-Contains "Camera HWB projection module" $cameraProjectionModule "rightSecondaryInput=direct-video-recenter"
 Assert-Contains "Camera HWB projection module" $cameraProjectionModule "cameraProjectionWallToggleEnabled=false"
 Assert-Contains "Camera HWB projection module" $cameraProjectionModule "virtualRoomWallPlacementMode"
 Assert-Contains "Camera HWB projection module" $cameraProjectionModule "virtualRoomWallCenterM="
@@ -2199,14 +2203,16 @@ Assert-NotContains "Private layer panel" $privateLayerPanel "dragPanel("
 Assert-Contains "Panel placement module" $panelPlacementModule "privateLayerPanelRenderMode=spatial-sdk-layer"
 Assert-Contains "Panel placement module" $panelPlacementModule "privateLayerPanelWorldSpace=true"
 Assert-Contains "Panel placement module" $panelPlacementModule "privateLayerPanelPoseSource=initial-headset-facing-world-space-then-stored-placement-unless-grabbed"
-Assert-Contains "Panel placement module" $panelPlacementModule "privateLayerPanelDistanceMode=left-stick-stored-placement"
+Assert-Contains "Panel placement module" $panelPlacementModule "privateLayerPanelDistanceMode=grip-only-placement"
 Assert-Contains "Panel placement module" $panelPlacementModule "privateLayerPanelForcedDistanceDisabled=false"
-Assert-Contains "Panel placement module" $panelPlacementModule "privateLayerPanelDistanceControl=left-stick-y-private-panel-free-transform-distance"
+Assert-Contains "Panel placement module" $panelPlacementModule "privateLayerPanelDistanceControl=disabled"
 Assert-Contains "Panel placement module" $panelPlacementModule "privateLayerPanelDistancePersistsAcrossToggle=true"
 Assert-Contains "Panel placement module" $panelPlacementModule "rightStickSideFlickPanelMoveDisabled=true"
 Assert-Contains "Camera HWB projection geometry coordinator" $cameraHwbProjectionGeometryCoordinator "PanelInputOptions(0)"
-Assert-Contains "Panel placement module" $panelPlacementModule "ButtonBits.ButtonA or ButtonBits.ButtonTriggerL or ButtonBits.ButtonTriggerR"
-Assert-Contains "Panel placement module" $panelPlacementModule "privateLayerPanelInputButtons=button-a+trigger-l+trigger-r"
+Assert-Contains "Panel placement module" $panelPlacementModule "ButtonBits.ButtonTriggerL or ButtonBits.ButtonTriggerR"
+Assert-NotContains "Panel placement module" $panelPlacementModule "ButtonBits.ButtonA or ButtonBits.ButtonTriggerL"
+Assert-Contains "Panel placement module" $panelPlacementModule "privateLayerPanelInputButtons=trigger-l+trigger-r"
+Assert-Contains "Panel placement module" $panelPlacementModule "privateLayerPanelRightPrimarySelectEnabled=false"
 Assert-Contains "Panel placement module" $panelPlacementModule "privateLayerPanelTriggerSelectEnabled=true"
 Assert-Contains "Panel placement module" $panelPlacementModule "privateLayerPanelGrabButton=controller-squeeze"
 Assert-Contains "Private layer panel layer coordinator" $privateLayerPanelLayerCoordinator "internal data class SpatialPrivateLayerPanelLayerBindings"
@@ -2433,7 +2439,7 @@ Assert-Contains "Controller polling coordinator" $controllerPollingCoordinator "
 Assert-Contains "Controller polling coordinator" $controllerPollingCoordinator "runCatching(bindings.captureSpatialSnapshot)"
 Assert-Contains "Controller polling coordinator" $controllerPollingCoordinator "controllerInputRouteReadyMarker"
 Assert-Contains "Controller polling coordinator" $controllerPollingCoordinator "rightTriggerParticleRecenterDetail"
-Assert-Contains "Controller polling coordinator" $controllerPollingCoordinator "rightSecondaryPlacementToggleDetail"
+Assert-Contains "Controller polling coordinator" $controllerPollingCoordinator "rightSecondaryVideoRecenterDetail"
 Assert-Contains "Controller polling coordinator" $controllerPollingCoordinator "rightPrimaryPanelToggleDetail"
 Assert-NotContains "Controller polling coordinator" $controllerPollingCoordinator "nativePollSpatialController"
 Assert-NotContains "Controller polling coordinator" $controllerPollingCoordinator "external fun"
@@ -2506,7 +2512,8 @@ Assert-Contains "Controller Android event router" $controllerAndroidEventRouter 
 Assert-Contains "Controller Android event router" $controllerAndroidEventRouter "MotionEvent.BUTTON_PRIMARY"
 Assert-Contains "Controller Android event router" $controllerAndroidEventRouter "CONTROLLER_TRIGGER_PRESS_THRESHOLD"
 Assert-Contains "Controller Android event router" $controllerAndroidEventRouter "releaseWithoutSeenDown"
-Assert-Contains "Controller Android event router" $controllerAndroidEventRouter "armSecondaryToggle("
+Assert-Contains "Controller Android event router" $controllerAndroidEventRouter "recenterVideo("
+Assert-NotContains "Controller Android event router" $controllerAndroidEventRouter "armSecondaryToggle("
 Assert-Contains "Controller Android event router" $controllerAndroidEventRouter '"android-key-event"'
 Assert-Contains "Controller Android event router" $controllerAndroidEventRouter '"android-generic-motion-button"'
 Assert-Contains "Controller Android event router" $controllerAndroidEventRouter '"android-generic-motion-trigger"'
@@ -2550,6 +2557,7 @@ Assert-Contains "Controller routing module" $controllerRoutingModule "controller
 Assert-Contains "Controller routing module" $controllerRoutingModule "right-trigger-particle-recenter"
 Assert-Contains "Activity" $activity "nativeRecenterSurfaceParticleSphereOnViewer"
 Assert-Contains "Spatial validation workflow coordinator" $validationWorkflowCoordinator '"particle-recenter" ->'
+Assert-Contains "Spatial validation workflow coordinator" $validationWorkflowCoordinator '"video-recenter" ->'
 Assert-Contains "Spatial validation workflow coordinator" $validationWorkflowCoordinator "controllerInputRequired=false"
 Assert-Contains "Activity" $activity "particleLayerVisibleForPanelMode()"
 Assert-Contains "Surface particle route module" $surfaceParticleRouteModule "privateSurfaceParticleRecenterChangesCoordinateMapping=false"
@@ -2659,7 +2667,14 @@ Assert-Contains "Spatial OpenXR route module" $openXrRouteModule "XR_META_detach
 Assert-Contains "Activity" $activity "spatialRequiredOpenXrExtensions="
 Assert-Contains "Spatial OpenXR route module" $openXrRouteModule "SPATIAL_MULTIMODAL_INPUT_DEFAULT_ENABLED = false"
 Assert-Contains "Activity" $activity "spatialControllerOnlyMode=false"
-Assert-Contains "Activity" $activity "spatialHandsAndControllersManifest=true"
+Assert-Contains "Activity" $activity "spatialControllerInputManifest=true"
+Assert-Contains "Activity" $activity "controllerVisualModelsEnabled=false"
+Assert-Contains "Activity" $activity "locomotionSystemRegistered=false"
+Assert-Contains "Activity" $activity "panelRightPrimaryClickEnabled=false"
+Assert-Contains "Shared offline immersive media library" $sharedOfflineImmersiveMediaLibrary "takePersistableUriPermission"
+Assert-Contains "Shared offline immersive media library" $sharedOfflineImmersiveMediaLibrary "DocumentsContract.buildChildDocumentsUriUsingTree"
+Assert-Contains "Shared offline immersive media library" $sharedOfflineImmersiveMediaLibrary "resolver.openInputStream(document.uri)"
+Assert-NotContains "Shared offline immersive media library" $sharedOfflineImmersiveMediaLibrary "context.filesDir"
 Assert-Contains "Activity" $activity 'spatialPointerInputExpected=${presentationPolicy.appControlInputsEnabled}'
 Assert-Contains "Native input bootstrap coordinator" $nativeInputBootstrapCoordinator "SpatialOpenXrRouteModule.nativeSpatialControllerActionSetAttached"
 Assert-Contains "Spatial OpenXR route module" $openXrRouteModule "NATIVE_SPATIAL_CONTROLLER_ACTION_SET_ATTACHED_BIT"
@@ -2873,7 +2888,7 @@ Assert-Contains "Immersive video panel coordinator" $immersiveVideoPanelCoordina
 Assert-Contains "Immersive video panel coordinator" $immersiveVideoPanelCoordinator "BuildConfig.IMMERSIVE_VIDEO_DEFAULT_OFFLINE_PACK_ID"
 Assert-Contains "Activity" $activity "directImmersiveVideoPanelRequested()"
 Assert-Contains "Activity" $activity "setImmersiveVideoPlaybackEnabled("
-Assert-Contains "Activity" $activity "projectionPanelVisibilityCoordinator.restartWith("
+Assert-NotContains "Activity" $activity "projectionPanelVisibilityCoordinator.restartWith("
 Assert-Contains "Activity" $activity "BuildConfig.CAMERA_PROJECTION_DEFAULT_ENABLED"
 Assert-Contains `
     "Activity" `
@@ -3243,16 +3258,10 @@ Assert-Contains "Panel models" $panelModels "data class SpatialNativeInteropProb
 Assert-Contains "Avatar feature" $avatarFeature "internal class SpatialAvatarHandVisualFeature"
 Assert-Contains "Avatar feature" $avatarFeature "SpatialAvatarHandVisualPolicySystem"
 Assert-Contains "Avatar feature" $avatarFeature "debug.rustyquest.spatial.avatar_hands.visible"
-Assert-Contains "Avatar feature" $avatarFeature "debug.rustyquest.spatial.avatar_controllers.visible"
-Assert-Contains "Avatar feature" $avatarFeature "avatarSystem.setShowControllers(showControllers)"
-Assert-NotContains "Avatar feature" $avatarFeature "avatarSystem.setShowControllers(true)"
 Assert-Contains "Avatar feature" $avatarFeature "avatarSystem.setShowHands(showHands)"
 Assert-Contains "Avatar feature" $avatarFeature "builtInMetaHandVisualPolicy=pending"
 Assert-Contains "Avatar feature" $avatarFeature "builtInMetaHandMaterialPolicy=sdk-owned-no-public-material-surface"
-Assert-Contains "Avatar feature" $avatarFeature 'builtInMetaHandVisualPolicy=$handPolicy'
-Assert-Contains "Avatar feature" $avatarFeature 'builtInMetaControllerVisualPolicy=$controllerPolicy'
-Assert-Contains "Connection Hub surface client" $connectionHubSurfaceClient "const val STATE_PUBLISH_INTERVAL_MS = 1_000L"
-Assert-NotContains "Connection Hub surface client" $connectionHubSurfaceClient "else if (shouldPublish && sessionState.isRegistered)"
+Assert-Contains "Avatar feature" $avatarFeature 'builtInMetaHandVisualPolicy=$policy'
 Assert-Contains "Avatar hand probe feature" $avatarProbeFeature "internal class SpatialAvatarHandInvestigationFeature"
 Assert-Contains "Avatar hand probe feature" $avatarProbeFeature "rusty.quest.spatial.avatar_hand_investigation.v1"
 Assert-Contains "Avatar hand probe feature" $avatarProbeFeature "debug.rustyquest.spatial.avatar_hand_probe.enabled"
@@ -4247,9 +4256,11 @@ Assert-Contains "Replay hands" $replayHands "height_meters: 4.0"
 Assert-Contains "Build script" $buildScript "libspatial_camera_panel_native_receipt.so"
 Assert-Contains "Build script" $buildScript 'spatial_input_mode = $(if ($lockedFinalPresentationEnabled)'
 Assert-Contains "Build script" $buildScript '"disabled-presentation-output-only"'
-Assert-Contains "Build script" $buildScript '"interaction-sdk-hands-and-controllers"'
+Assert-Contains "Build script" $buildScript '"interaction-sdk-input-only-no-locomotion"'
 Assert-Contains "Build script" $buildScript 'spatial_handtracking_manifest_declared = $true'
-Assert-Contains "Build script" $buildScript 'spatial_render_model_manifest_declared = $true'
+Assert-Contains "Build script" $buildScript 'spatial_render_model_manifest_declared = $false'
+Assert-Contains "Build script" $buildScript 'spatial_render_model_permission_declared = $false'
+Assert-Contains "Build script" $buildScript 'controller_rendering_expected = $false'
 Assert-Contains "Build script" $buildScript 'spatial_scene_permission_declared = $true'
 Assert-Contains "Build script" $buildScript 'spatial_environment_depth_permission_surface = "horizonos.permission.USE_SCENE+USE_SCENE_DATA"'
 Assert-Contains "Build script" $buildScript 'spatial_environment_depth_real_provider_bound = $false'
@@ -4483,7 +4494,7 @@ Assert-NotContains "Build script" $buildScript 'camera_hwb_projection_quad_defau
 Assert-Contains "Build script" $buildScript 'spatial_sdk_virtual_room_default_enabled = $false'
 Assert-Contains "Build script" $buildScript 'spatial_sdk_skybox_default_enabled = $false'
 Assert-Contains "Build script" $buildScript 'camera_hwb_projection_accepted_no_room_default = $true'
-Assert-Contains "Build script" $buildScript 'camera_hwb_projection_right_secondary_behavior = "disabled-consumed-no-op"'
+Assert-Contains "Build script" $buildScript 'camera_hwb_projection_right_secondary_behavior = "direct-video-recenter-existing-entity"'
 Assert-Contains "Build script" $buildScript 'camera_hwb_projection_right_primary_behavior = "open-generic-layer-control-panel"'
 Assert-Contains "Build script" $buildScript 'camera_hwb_projection_layer_control_panel_default_distance_meters = 1.0'
 Assert-Contains "Build script" $buildScript 'camera_hwb_projection_staged_asset_default_requested = $false'
@@ -4526,6 +4537,7 @@ Assert-Contains "UI action wrapper" $uiActionWrapper "private-layer-zone-video-u
 Assert-Contains "UI action wrapper" $uiActionWrapper "private-layer-zone-off"
 Assert-Contains "UI action wrapper" $uiActionWrapper "projection-panel-off"
 Assert-Contains "UI action wrapper" $uiActionWrapper "projection-panel-on"
+Assert-Contains "UI action wrapper" $uiActionWrapper "video-recenter"
 Assert-Contains "UI action wrapper" $uiActionWrapper '[double]$PrivateLayerOverride'
 Assert-Contains "UI action wrapper" $uiActionWrapper '[Math]::Min(8.0, $PrivateLayerOverride)'
 Assert-Contains "UI action wrapper" $uiActionWrapper '"private_layer_override"'
@@ -4541,7 +4553,8 @@ Assert-Contains "Private layer zone compositor" $privateLayerZoneCompositor "out
 Assert-Contains "Private layer zone compositor" $privateLayerZoneCompositor "transparentSpatialVideoSupported"
 Assert-Contains "Private layer zone compositor" $privateLayerZoneCompositor "applicationMode = applicationRegion"
 Assert-Contains "Private layer zone compositor" $privateLayerZoneCompositor "sourceChoice = blendSourceOutgoing"
-Assert-Contains "Private layer panel" $privateLayerPanel "Component, midpoint, incoming, difference, and synthetic-debug choices are disabled."
+Assert-Contains "Private layer panel" $privateLayerPanel "Transition controls shape blending between adjacent regions. They do not create the buffer or choose Stretch sampling."
+Assert-Contains "Private layer panel" $privateLayerPanel "The Outer target does not choose Buffer content."
 Assert-Contains "Private layer panel" $privateLayerPanel "ProjectionSurfaceDisplacementControls.off"
 Assert-Contains "Camera projection target" $cameraProjectionTarget "transparent_underlay_requested"
 Assert-Contains "Camera projection target" $cameraProjectionTarget "transparent_underlay_supported"

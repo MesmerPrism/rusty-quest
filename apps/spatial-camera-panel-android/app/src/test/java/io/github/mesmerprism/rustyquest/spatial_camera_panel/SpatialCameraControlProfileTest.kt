@@ -153,6 +153,7 @@ class SpatialCameraControlProfileTest {
         profile.zoneCompositor.coverageMode,
     )
     assertFalse(profile.zoneCompositor.projectionEffectEdgeGuardEnabled)
+    assertEquals(24, profile.zoneCompositor.stretchOptionFlags)
     assertEquals(
         RgbChannelTransformControls.modeIndependent,
         profile.rgbChannelTransform.mode,
@@ -247,17 +248,24 @@ class SpatialCameraControlProfileTest {
   }
 
   @Test
-  fun unsampledOuterVideoRouteRejectsUnsupportedIncomingColor() {
-    val invalid = validProfile()
-    val zone = invalid.getJSONObject("quest_controls").getJSONObject("zone_compositor")
+  fun independentOuterRegionAcceptsIncomingColorForSpatialVideoUnderlay() {
+    val profile = validProfile()
+    val zone = profile.getJSONObject("quest_controls").getJSONObject("zone_compositor")
+    zone.put("region_contract", "v2")
     zone.put("outer_target_mode", "transparent-spatial-video")
     zone
         .getJSONObject("outer")
         .getJSONObject("channel_dynamics")
         .put("source_choice", "incoming")
-    assertThrows(IllegalArgumentException::class.java) {
-      SpatialCameraControlProfileContract.parse(invalid.toString().toByteArray())
-    }
+    val parsed = SpatialCameraControlProfileContract.parse(profile.toString().toByteArray())
+    assertEquals(
+        PrivateLayerZoneCompositorControls.blendSourceIncoming,
+        parsed.zoneCompositor.outerChannelDynamics.sourceChoice,
+    )
+    assertEquals(
+        PrivateLayerZoneCompositorControls.outerTargetTransparentSpatialVideo,
+        parsed.zoneCompositor.outerTargetMode,
+    )
   }
 
   private fun validProfile(): JSONObject {
@@ -271,6 +279,7 @@ class SpatialCameraControlProfileTest {
             .put("outer_target_mode", "readable-color")
             .put("stretch_mapping", "graded-edge-trail-native")
             .put("projection_effect_edge_guard_enabled", false)
+            .put("stretch_option_flags", 24)
             .put("edge_inset_uv", 0.015)
             .put("max_inset_uv", 0.14)
             .put("stretch_curve", 1.6)

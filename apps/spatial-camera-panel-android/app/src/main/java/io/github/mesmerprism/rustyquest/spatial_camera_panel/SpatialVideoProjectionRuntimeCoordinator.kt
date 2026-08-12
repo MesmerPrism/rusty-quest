@@ -96,6 +96,7 @@ internal class SpatialVideoProjectionRuntimeCoordinator(
     bindings.marker(
         "channel=spatial-video-projection status=source-switch-applied " +
             "reason=${activityMarkerToken(reason)} mediaDecoderRestarted=true " +
+            "customProjectionCarrierRetained=true projectionEntityRestarted=false " +
             "customProjectionStackRestarted=false cameraRuntimeRestarted=false " +
             "activityRestarted=false ${markerFields(settings)}"
     )

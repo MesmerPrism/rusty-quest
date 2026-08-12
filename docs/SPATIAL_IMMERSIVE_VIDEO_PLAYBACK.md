@@ -8,7 +8,11 @@ are not packaged into the ordinary APK, and the app requests no broad media
 access.
 
 For offline sideload bundles, the same route can instead read an authenticated
-encrypted media pack. The prototype APK may package encrypted chunks as assets
+encrypted media pack. The preferred thin-APK route keeps packs in the shared
+`Documents/RustySpatialMedia/offline-media-packs/` library and asks the user to
+select `RustySpatialMedia` once with Android's Storage Access Framework. The
+persisted read grant lets updates read ciphertext directly without copying it
+into app storage. A prototype APK may still package encrypted chunks as assets
 and import only that ciphertext into app-private storage on first launch.
 Media3 receives a seekable virtual byte stream backed by independently
 encrypted AES-256-GCM chunks. Each chunk is decrypted in memory on demand; the
@@ -59,8 +63,10 @@ current mesh/layer known issue. The app therefore does not request
 Projection inner-alpha controls do not change this boundary. They apply to the
 custom processed-core projection and its optional stretch output, not to
 individual pixels of the direct 180/360 video carrier. Whole-layer video
-opacity remains a possible later, focused adapter experiment and is not part
-of the current control or shader ABI.
+opacity is adapter-owned only for the bounded selection transition: the direct
+carrier fades out, one decoder/panel source is swapped while hidden, and the
+replacement fades in after its first rendered frame. This is not a persistent
+opacity control and does not extend the custom projection or shader ABI.
 
 Reference implementation and API guidance:
 
@@ -75,10 +81,14 @@ current official media samples when this route was introduced.
 ## Switchable offline sessions
 
 Packaged pack directories are discovered only under the fixed
-`offline-media-packs/` asset namespace. The importer validates a maximum of 32
-pack IDs and each pack's authenticated manifest before exposing it to the
-session coordinator. Raw filenames and private playlist labels are not part of
-the public contract.
+`offline-media-packs/` asset namespace. Previously imported encrypted packs
+may also be discovered under the fixed app-private
+`files/offline-media-packs/` directory. The selected shared document tree is
+also searched only beneath its fixed `offline-media-packs/` child. Discovery
+admits at most 32 valid pack directory tokens with a manifest; the loader still
+validates the complete authenticated manifest and chunks before exposing a
+pack to the session.
+Raw filenames and private playlist labels are not part of the public contract.
 
 One custom-projection session may contain authenticated SBS and top-bottom
 stereo packs with different declared shapes, per-eye aspect ratios, and encoded
@@ -107,15 +117,21 @@ multiple items. Both Spatial SDK controller-component input and Android
 joystick fallback input feed the same latch.
 
 Validation clients may also send `video-previous`, `video-next`,
-`video-select`, `video-world-anchored`, or `video-head-fixed-border` through
-the existing `RUN_UI_COMMAND` action; `video-select` carries an opaque
-`video_pack_id`. A direct Spatial SDK selection rebuilds only its media-panel
-entity and ExoPlayer, retaining the Activity and its initial world-space
-center. The custom route changes only the decoder when the next item uses the
-same carrier profile. A shape, output-extent, or presentation-mode change
-rebinds the video-surface carrier and native compositor, then reapplies the
-current private configuration without recreating the Activity or control
-state.
+`video-select`, `video-recenter`, `video-world-anchored`, or
+`video-head-fixed-border` through the existing `RUN_UI_COMMAND` action;
+`video-select` carries an opaque `video_pack_id`. Right-controller secondary/B
+invokes the same recenter operation and applies a fresh viewer-derived pose to
+the existing direct-video entity without recreating its player, entity, the
+Activity, or the custom projection carrier.
+
+A selection fades only the direct Spatial SDK video layer to transparent,
+rebuilds its one media-panel entity and ExoPlayer while hidden, waits for the
+new first-frame callback, and fades that layer back to opaque. A second
+selection during this transition is rejected deterministically. The custom
+projection route replaces only its media decoder/source; its planar carrier,
+camera runtime, private configuration, Activity, and control state remain
+alive. Presentation-mode changes remain explicit carrier changes rather than
+part of ordinary source selection.
 
 Performance validation must use the non-debuggable release variant:
 
@@ -182,10 +198,25 @@ pwsh -NoProfile -File .\tools\New-SpatialCameraPanelOfflineMediaPack.ps1 `
   -Stereo side-by-side-left-right
 ```
 
-Place the pack directory under
+For the preferred thin-APK workflow, build with the key but without
+`RUSTY_QUEST_OFFLINE_MEDIA_PACK_ASSET_DIR`. The installer stages ciphertext in
+the shared Documents library:
+
+```powershell
+pwsh -NoProfile -File .\tools\Install-SpatialCameraPanelOfflineMediaPack.ps1 `
+  -Serial <quest-serial> `
+  -ApkPath <thin-release.apk> `
+  -PackDirectory <local-bundle-media-directory\pack-id>
+```
+
+In the app's Video page, choose `RustySpatialMedia` once. Android retains the
+folder and its ciphertext across app uninstall/reinstall, but a full uninstall
+removes the app's persisted URI grant, so the surviving folder must be selected
+again. In-place APK updates retain the grant.
+
+For a self-contained prototype instead, place the pack directory under
 `offline-media-packs/<pack-id>/` in an ignored asset root, set
-`RUSTY_QUEST_OFFLINE_MEDIA_PACK_ASSET_DIR` to that root, and build the APK in
-the same process environment. Then install and optionally validate it:
+`RUSTY_QUEST_OFFLINE_MEDIA_PACK_ASSET_DIR` to that root, and use:
 
 ```powershell
 pwsh -NoProfile -File .\tools\Install-SpatialCameraPanelOfflineMediaPack.ps1 `
@@ -212,11 +243,16 @@ hardening pass should replace it with user- or device-provisioned key material
 and Android Keystore wrapping.
 
 The shareable prototype bundle can consist of only the self-contained APK and
-an installer helper. It does not require a server, network connection, live
-streaming, or separately exposed raw media. Packaging large libraries this way
-does make the APK correspondingly large and requires an APK rebuild to replace
-content; the separate-pack contract remains useful for a later provisioned-key
-distribution path.
+an installer helper. Packaging large libraries this way makes the APK
+correspondingly large and requires an APK rebuild to replace content. The
+shared document-tree route avoids both costs while preserving authenticated,
+in-memory chunk decryption.
+
+For ordinary development rebuilds, keep the same key input, omit the packaged
+asset directory, and reinstall the thin APK with `adb install -r`. The bounded
+catalog discovers and authenticates the already staged shared packs at runtime.
+A clean installation without a selected folder or valid pack fails closed
+instead of synthesizing a catalog.
 
 ## Fail-closed behavior
 
@@ -234,10 +270,11 @@ An invalid request registers no panel and emits
 It never falls back to a guessed projection or the normal camera presentation.
 Only a readable, explicitly granted MediaStore video URI or a canonical file
 inside the app-owned `immersive-video` directory is accepted. The offline
-variant additionally accepts a validated pack ID rooted under the app-private
-`files/offline-media-packs` directory. Packaged assets are imported only from
-the fixed `offline-media-packs/<validated-pack-id>/` namespace; arbitrary
-manifest paths are not accepted.
+variant additionally accepts a validated pack ID rooted under app-private
+`files/offline-media-packs` or the persisted shared document tree's fixed
+`offline-media-packs` child. Packaged assets are imported only from the fixed
+`offline-media-packs/<validated-pack-id>/` namespace; arbitrary manifest paths
+are not accepted.
 
 Useful runtime markers include:
 
@@ -253,6 +290,11 @@ Useful runtime markers include:
 - `status=catalog-ready`
 - `status=controller-flick-selection`
 - `status=selection-applied`
+- `status=direct-layer-fade-out-started`
+- `status=direct-layer-source-swap`
+- `status=direct-layer-fade-in-started`
+- `status=direct-layer-transition-complete`
+- `status=recenter-applied`
 - `status=source-switch-applied`
 - `status=presentation-mode-applied`
 - `status=custom-carrier-rebuilt`

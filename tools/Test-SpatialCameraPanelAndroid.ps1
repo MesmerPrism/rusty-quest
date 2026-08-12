@@ -19,10 +19,6 @@ param(
     [string]$AppId = $env:RUSTY_QUEST_SPATIAL_APP_ID,
     [string]$AppLabel = $env:RUSTY_QUEST_SPATIAL_APP_LABEL,
     [string]$ApkFileName = $env:RUSTY_QUEST_SPATIAL_APK_FILE_NAME,
-    [string]$PrivateFeatureSourceDir = $env:RUSTY_QUEST_SPATIAL_PRIVATE_FEATURE_SRC_DIR,
-    [string]$PrivateFeatureResourceDir = $env:RUSTY_QUEST_SPATIAL_PRIVATE_FEATURE_RES_DIR,
-    [string]$PrivateFeatureTestSourceDir = $env:RUSTY_QUEST_SPATIAL_PRIVATE_FEATURE_TEST_SRC_DIR,
-    [string]$PrivateFeatureTestResourceDir = $env:RUSTY_QUEST_SPATIAL_PRIVATE_FEATURE_TEST_RES_DIR,
     [string]$OutDir = ""
 )
 
@@ -39,6 +35,7 @@ $rgbChannelTransformCheckPath = Join-Path $PSScriptRoot "checks\Test-SpatialCame
 $projectionSurfaceDisplacementCheckPath = Join-Path $PSScriptRoot "checks\Test-SpatialCameraPanelProjectionSurfaceDisplacementStatic.ps1"
 $controlProfileCheckPath = Join-Path $PSScriptRoot "checks\Test-SpatialCameraPanelControlProfileStatic.ps1"
 $controlProfileHostTestPath = Join-Path $PSScriptRoot "checks\Test-InstallSpatialCameraPanelControlProfileHost.ps1"
+$profileLibraryCheckPath = Join-Path $PSScriptRoot "checks\Test-SpatialCameraPanelProfileLibraryStatic.ps1"
 $cameraLatencyCheckPath = Join-Path $PSScriptRoot "checks\Test-SpatialCameraPanelCameraLatencyDiagnosticStatic.ps1"
 $fragmentProbeCheckPath = Join-Path $PSScriptRoot "checks\Test-SpatialFragmentProbeStatic.ps1"
 $vrStrobeCheckPath = Join-Path $PSScriptRoot "checks\Test-SpatialVrStrobeStatic.ps1"
@@ -67,6 +64,9 @@ if (-not (Test-Path -LiteralPath $controlProfileCheckPath)) {
 if (-not (Test-Path -LiteralPath $controlProfileHostTestPath)) {
     throw "Missing Spatial Camera Panel control-profile host test: $controlProfileHostTestPath"
 }
+if (-not (Test-Path -LiteralPath $profileLibraryCheckPath)) {
+    throw "Missing Spatial Camera Panel profile-library static check: $profileLibraryCheckPath"
+}
 if (-not (Test-Path -LiteralPath $cameraLatencyCheckPath)) {
     throw "Missing Spatial Camera Panel camera latency diagnostic check: $cameraLatencyCheckPath"
 }
@@ -93,6 +93,7 @@ if (-not (Test-Path -LiteralPath $buildPath)) {
 & $projectionSurfaceDisplacementCheckPath -RepoRoot $repoRootPath
 & $controlProfileCheckPath -RepoRoot $repoRootPath
 & $controlProfileHostTestPath -RepoRoot $repoRootPath
+& $profileLibraryCheckPath -RepoRoot $repoRootPath
 & $cameraLatencyCheckPath -RepoRoot $repoRootPath
 & $fragmentProbeCheckPath -RepoRoot $repoRootPath
 & $vrStrobeCheckPath -RepoRoot $repoRootPath
@@ -114,10 +115,6 @@ $previousJavaHome = $env:JAVA_HOME
 $previousGradleUserHome = $env:GRADLE_USER_HOME
 $previousAppBuildDir = $env:RUSTY_QUEST_SPATIAL_APP_BUILD_DIR
 $previousRootBuildDir = $env:RUSTY_QUEST_SPATIAL_ROOT_BUILD_DIR
-$previousPrivateFeatureSourceDir = $env:RUSTY_QUEST_SPATIAL_PRIVATE_FEATURE_SRC_DIR
-$previousPrivateFeatureResourceDir = $env:RUSTY_QUEST_SPATIAL_PRIVATE_FEATURE_RES_DIR
-$previousPrivateFeatureTestSourceDir = $env:RUSTY_QUEST_SPATIAL_PRIVATE_FEATURE_TEST_SRC_DIR
-$previousPrivateFeatureTestResourceDir = $env:RUSTY_QUEST_SPATIAL_PRIVATE_FEATURE_TEST_RES_DIR
 try {
     $env:ANDROID_HOME = (Resolve-Path -LiteralPath $AndroidHome).Path
     $env:JAVA_HOME = (Resolve-Path -LiteralPath $JavaHome).Path
@@ -126,19 +123,6 @@ try {
         Join-Path $repoRootPath "local-artifacts\spatial-camera-panel-host\app"
     $env:RUSTY_QUEST_SPATIAL_ROOT_BUILD_DIR =
         Join-Path $repoRootPath "local-artifacts\spatial-camera-panel-host\root"
-    foreach ($binding in @(
-        @{ Name = 'RUSTY_QUEST_SPATIAL_PRIVATE_FEATURE_SRC_DIR'; Value = $PrivateFeatureSourceDir },
-        @{ Name = 'RUSTY_QUEST_SPATIAL_PRIVATE_FEATURE_RES_DIR'; Value = $PrivateFeatureResourceDir },
-        @{ Name = 'RUSTY_QUEST_SPATIAL_PRIVATE_FEATURE_TEST_SRC_DIR'; Value = $PrivateFeatureTestSourceDir },
-        @{ Name = 'RUSTY_QUEST_SPATIAL_PRIVATE_FEATURE_TEST_RES_DIR'; Value = $PrivateFeatureTestResourceDir }
-    )) {
-        if ([string]::IsNullOrWhiteSpace([string]$binding.Value)) {
-            [Environment]::SetEnvironmentVariable([string]$binding.Name, $null, 'Process')
-        } else {
-            $resolved = (Resolve-Path -LiteralPath ([string]$binding.Value)).Path
-            [Environment]::SetEnvironmentVariable([string]$binding.Name, $resolved, 'Process')
-        }
-    }
     & $gradleBat `
         --no-daemon `
         --console=plain `
@@ -154,10 +138,6 @@ try {
     $env:GRADLE_USER_HOME = $previousGradleUserHome
     $env:RUSTY_QUEST_SPATIAL_APP_BUILD_DIR = $previousAppBuildDir
     $env:RUSTY_QUEST_SPATIAL_ROOT_BUILD_DIR = $previousRootBuildDir
-    $env:RUSTY_QUEST_SPATIAL_PRIVATE_FEATURE_SRC_DIR = $previousPrivateFeatureSourceDir
-    $env:RUSTY_QUEST_SPATIAL_PRIVATE_FEATURE_RES_DIR = $previousPrivateFeatureResourceDir
-    $env:RUSTY_QUEST_SPATIAL_PRIVATE_FEATURE_TEST_SRC_DIR = $previousPrivateFeatureTestSourceDir
-    $env:RUSTY_QUEST_SPATIAL_PRIVATE_FEATURE_TEST_RES_DIR = $previousPrivateFeatureTestResourceDir
 }
 
 Push-Location -LiteralPath $repoRootPath

@@ -26,9 +26,7 @@ private class SpatialControllerInputLateSystem(
   }
 }
 
-internal const val AVATAR_HANDS_VISIBLE_PROPERTY = "debug.rustyquest.spatial.avatar_hands.visible"
-internal const val AVATAR_CONTROLLERS_VISIBLE_PROPERTY =
-    "debug.rustyquest.spatial.avatar_controllers.visible"
+private const val AVATAR_HANDS_VISIBLE_PROPERTY = "debug.rustyquest.spatial.avatar_hands.visible"
 
 private val androidSystemPropertyGetMethod by lazy(LazyThreadSafetyMode.PUBLICATION) {
   runCatching {
@@ -43,11 +41,9 @@ private class SpatialAvatarHandVisualPolicySystem(
 ) : SystemBase() {
   private var pendingLogged = false
   private var lastLoggedShowHands: Boolean? = null
-  private var lastLoggedShowControllers: Boolean? = null
 
   override fun execute() {
     val showHands = readBooleanSystemProperty(AVATAR_HANDS_VISIBLE_PROPERTY) ?: false
-    val showControllers = readBooleanSystemProperty(AVATAR_CONTROLLERS_VISIBLE_PROPERTY) ?: false
     val avatarSystem =
         runCatching { systemManager.tryFindSystem(AvatarSystem::class) }.getOrNull()
     if (avatarSystem == null) {
@@ -58,8 +54,6 @@ private class SpatialAvatarHandVisualPolicySystem(
                 "system=AvatarSystem systemFound=false policySystem=SpatialAvatarHandVisualPolicySystem " +
                 "avatarHandsVisibleProperty=$AVATAR_HANDS_VISIBLE_PROPERTY " +
                 "avatarHandsVisibleDefault=false requestedShowHands=$showHands " +
-                "avatarControllersVisibleProperty=$AVATAR_CONTROLLERS_VISIBLE_PROPERTY " +
-                "avatarControllersVisibleDefault=false requestedShowControllers=$showControllers " +
                 "builtInMetaHandVisualPolicy=pending builtInMetaHandMaterialPolicy=sdk-owned-no-public-material-surface " +
                 "nativeBaseHandMeshPolicy=explicit-only"
         )
@@ -68,19 +62,15 @@ private class SpatialAvatarHandVisualPolicySystem(
     }
 
     avatarSystem.setShowHands(showHands)
-    avatarSystem.setShowControllers(showControllers)
-    if (lastLoggedShowHands != showHands || lastLoggedShowControllers != showControllers) {
+    avatarSystem.setShowControllers(true)
+    if (lastLoggedShowHands != showHands) {
       lastLoggedShowHands = showHands
-      lastLoggedShowControllers = showControllers
-      val handPolicy = if (showHands) "enabled" else "disabled"
-      val controllerPolicy = if (showControllers) "enabled" else "disabled"
+      val policy = if (showHands) "enabled" else "disabled"
       marker(
-          "channel=spatial-sdk-avatar-visual status=policy-applied " +
+          "channel=spatial-sdk-avatar-visual status=$policy " +
               "system=AvatarSystem systemFound=true policySystem=SpatialAvatarHandVisualPolicySystem " +
-              "showHands=$showHands showControllers=$showControllers " +
-              "builtInMetaHandVisualPolicy=$handPolicy builtInMetaControllerVisualPolicy=$controllerPolicy " +
+              "showHands=$showHands showControllers=true builtInMetaHandVisualPolicy=$policy " +
               "avatarHandsVisibleProperty=$AVATAR_HANDS_VISIBLE_PROPERTY " +
-              "avatarControllersVisibleProperty=$AVATAR_CONTROLLERS_VISIBLE_PROPERTY " +
               "builtInMetaHandMaterialPolicy=sdk-owned-no-public-material-surface " +
               "nativeBaseHandMeshPolicy=explicit-only"
       )

@@ -73,7 +73,7 @@ Assert-Contains "Activity integration" $activity "controlProfileHotloader.poll()
 Assert-Contains "Activity integration" $activity "applyControlProfile"
 Assert-Contains "Profile tests" $tests "validProfileCarriesStructuredDesktopControlsIntoQuestTypes"
 Assert-Contains "Profile tests" $tests "damagedAndExpandedProfilesFailClosed"
-Assert-Contains "Profile tests" $tests "unsampledOuterVideoRouteRejectsUnsupportedIncomingColor"
+Assert-Contains "Profile tests" $tests "independentOuterRegionAcceptsIncomingColorForSpatialVideoUnderlay"
 Assert-Contains "Profile tests" $tests "desktopPreviewMustBeAnObjectWhenPresent"
 Assert-Contains "Profile tests" $tests "desktopPreviewRejectsUnknownMalformedAndOutOfRangeFields"
 Assert-Contains "Profile tests" $tests "malformedUtf8InOtherwiseValidStringFailsClosed"

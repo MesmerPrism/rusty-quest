@@ -5,6 +5,7 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.view.Surface
 import android.view.View
 import androidx.media3.common.MediaItem
@@ -16,6 +17,9 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import com.meta.spatial.core.Entity
 import com.meta.spatial.core.Pose
+import com.meta.spatial.core.Vector4
+import com.meta.spatial.runtime.BlendFactor
+import com.meta.spatial.runtime.LayerAlphaBlend
 import com.meta.spatial.runtime.PanelSceneObject
 import com.meta.spatial.runtime.StereoMode
 import com.meta.spatial.toolkit.Equirect180ShapeOptions
@@ -48,6 +52,11 @@ internal class SpatialImmersiveVideoPanelCoordinator(
   private var activeIndex = 0
   private var presentationMode = SpatialImmersiveVideoPresentationMode.WorldAnchored
   private val progressHandler = Handler(Looper.getMainLooper())
+  private val transitionHandler = Handler(Looper.getMainLooper())
+  private var transitionGeneration = 0L
+  private var transitionTargetIndex: Int? = null
+  private var transitionSource = ""
+  private var incomingFadeGeneration = -1L
   private val initialConfig: SpatialImmersiveVideoConfig?
     get() = (resolution as? SpatialImmersiveVideoRouteResolution.Ready)?.config
   private val catalog: List<SpatialImmersiveVideoConfig> by
@@ -104,6 +113,9 @@ internal class SpatialImmersiveVideoPanelCoordinator(
       source: String,
   ): SpatialImmersiveVideoSessionSnapshot {
     val changed = presentationMode != requestedMode
+    if (changed) {
+      cancelSelectionTransition("presentation-change")
+    }
     presentationMode = requestedMode
     val panelRebuilt = changed && rebuildActiveEntity("presentation-change")
     val presentation = customCarrierPresentation
@@ -159,6 +171,7 @@ internal class SpatialImmersiveVideoPanelCoordinator(
       return sessionSnapshot()
     }
     playbackEnabled = effectiveEnabled
+    cancelSelectionTransition("playback-visibility-change")
     if (!playbackEnabled) {
       releasePlayer()
       surface = null
@@ -197,6 +210,9 @@ internal class SpatialImmersiveVideoPanelCoordinator(
             panelSetup = { panel, _ ->
               if (index == activeIndex) {
                 panelSceneObject = panel
+                if (transitionTargetIndex == index) {
+                  applyDirectLayerOpacity(0.0f)
+                }
                 emitMarker(
                     "channel=spatial-immersive-video status=panel-ready " +
                         "registrationOrdinal=${index + 1} " +
@@ -224,6 +240,40 @@ internal class SpatialImmersiveVideoPanelCoordinator(
     entity?.setComponent(Transform(headFixedPose(viewerPose)))
   }
 
+  fun recenterAtViewer(
+      viewerPose: Pose,
+      source: String,
+      detail: String,
+  ): Boolean {
+    val currentEntity = entity
+    val config = activeConfig
+    if (!playbackEnabled || currentEntity == null || config == null) {
+      emitMarker(
+          "channel=spatial-immersive-video status=recenter-rejected " +
+              "reason=no-active-direct-video source=${activityMarkerToken(source)} " +
+              "detail=${activityMarkerToken(detail)} activityRestarted=false"
+      )
+      return false
+    }
+    spawnPose = Pose(viewerPose.t, viewerPose.q)
+    latestViewerPose = Pose(viewerPose.t, viewerPose.q)
+    val recenteredPose =
+        if (presentationMode == SpatialImmersiveVideoPresentationMode.HeadFixedBorder) {
+          headFixedPose(viewerPose)
+        } else {
+          Pose(viewerPose.t, viewerPose.q)
+        }
+    currentEntity.setComponent(Transform(recenteredPose))
+    emitMarker(
+        "channel=spatial-immersive-video status=recenter-applied " +
+            "source=${activityMarkerToken(source)} detail=${activityMarkerToken(detail)} " +
+            "videoCarrierPresentation=${presentationMode.token} entityRetained=true " +
+            "decoderRetained=true customProjectionCarrierRetained=true " +
+            "customProjectionStackRestarted=false activityRestarted=false ${config.markerFields()}"
+    )
+    return true
+  }
+
   fun pause(reason: String) {
     val currentPlayer = player ?: return
     resumeAfterPause = currentPlayer.playWhenReady
@@ -249,6 +299,8 @@ internal class SpatialImmersiveVideoPanelCoordinator(
 
   fun destroy(reason: String) {
     progressHandler.removeCallbacksAndMessages(null)
+    cancelSelectionTransition("destroy")
+    transitionHandler.removeCallbacksAndMessages(null)
     releasePlayer()
     surface = null
     spawnPose = null
@@ -270,31 +322,240 @@ internal class SpatialImmersiveVideoPanelCoordinator(
     if (catalog.isEmpty()) {
       return SpatialImmersiveVideoSelection(sessionSnapshot(), null, false)
     }
+    if (transitionTargetIndex != null) {
+      emitMarker(
+          "channel=spatial-immersive-video status=selection-rejected " +
+              "reason=transition-in-progress source=${activityMarkerToken(source)} " +
+              "activeOrdinal=${activeIndex + 1} itemCount=${catalog.size} " +
+              "activityRestarted=false"
+      )
+      return SpatialImmersiveVideoSelection(sessionSnapshot(), activeConfig, false)
+    }
     val normalizedIndex =
         SpatialImmersiveVideoSessionPolicy.wrappedIndex(requestedIndex, catalog.size)
     val changed = normalizedIndex != activeIndex
     val hadDirectPanelEntity = entity != null
-    if (changed && hadDirectPanelEntity) {
+    activeIndex = normalizedIndex
+    val config = activeConfig
+    if (changed && config != null) {
+      if (hadDirectPanelEntity) {
+        beginSelectionTransition(source)
+      } else if (playbackEnabled && spawnPose != null) {
+        spawnActiveEntity("selection-change-without-active-entity")
+      }
+      emitMarker(
+          "channel=spatial-immersive-video status=selection-applied " +
+              "source=${activityMarkerToken(source)} activeOrdinal=${activeIndex + 1} " +
+              "itemCount=${catalog.size} decoderRestartDeferred=$hadDirectPanelEntity " +
+              "directSpatialPanelRebuildDeferred=$hadDirectPanelEntity " +
+              "directLayerFadeTransition=$hadDirectPanelEntity " +
+              "customProjectionCarrierRetained=true customProjectionStackRestarted=false " +
+              "activityRestarted=false ${config.markerFields()}"
+      )
+    }
+    return SpatialImmersiveVideoSelection(sessionSnapshot(), config, changed)
+  }
+
+  private fun beginSelectionTransition(source: String) {
+    transitionGeneration += 1L
+    val generation = transitionGeneration
+    transitionTargetIndex = activeIndex
+    transitionSource = source
+    incomingFadeGeneration = -1L
+    emitMarker(
+        "channel=spatial-immersive-video status=direct-layer-fade-out-started " +
+            "source=${activityMarkerToken(source)} durationMs=$DIRECT_VIDEO_FADE_DURATION_MS " +
+            "singleDecoderSwap=true customProjectionCarrierRetained=true"
+    )
+    animateDirectLayerOpacity(
+        from = 1.0f,
+        to = 0.0f,
+        generation = generation,
+        phase = "fade-out",
+    ) {
+      if (generation != transitionGeneration || transitionTargetIndex == null) {
+        return@animateDirectLayerOpacity
+      }
       releasePlayer()
       surface = null
       panelSceneObject = null
       entity?.destroy()
       entity = null
-    }
-    activeIndex = normalizedIndex
-    val config = activeConfig
-    if (changed && config != null) {
-      if (hadDirectPanelEntity) {
-        spawnActiveEntity("selection-change")
-      }
       emitMarker(
-          "channel=spatial-immersive-video status=selection-applied " +
-              "source=${activityMarkerToken(source)} activeOrdinal=${activeIndex + 1} " +
-              "itemCount=${catalog.size} decoderRestarted=$hadDirectPanelEntity " +
-              "spatialPanelRebuilt=$hadDirectPanelEntity activityRestarted=false ${config.markerFields()}"
+          "channel=spatial-immersive-video status=direct-layer-source-swap " +
+              "source=${activityMarkerToken(source)} oldLayerHidden=true " +
+              "decoderRestarted=true directSpatialPanelRebuilt=true " +
+              "customProjectionCarrierRetained=true customProjectionStackRestarted=false " +
+              "activityRestarted=false"
+      )
+      spawnActiveEntity("selection-change-hidden-swap")
+      transitionHandler.postDelayed(
+          {
+            if (generation == transitionGeneration && transitionTargetIndex != null) {
+              applyDirectLayerOpacity(1.0f)
+              emitMarker(
+                  "channel=spatial-immersive-video status=direct-layer-fade-timeout " +
+                      "source=${activityMarkerToken(source)} firstFrameObserved=false " +
+                      "failOpenVisible=true customProjectionCarrierRetained=true"
+              )
+              completeSelectionTransition(generation, "first-frame-timeout")
+            }
+          },
+          DIRECT_VIDEO_FIRST_FRAME_TIMEOUT_MS,
       )
     }
-    return SpatialImmersiveVideoSelection(sessionSnapshot(), config, changed)
+  }
+
+  private fun beginIncomingFade(
+      config: SpatialImmersiveVideoConfig,
+      layerReadyAttempt: Int = 0,
+  ) {
+    val targetIndex = transitionTargetIndex ?: return
+    if (targetIndex != activeIndex || config.path != activeConfig?.path) {
+      return
+    }
+    val generation = transitionGeneration
+    if (layerReadyAttempt == 0) {
+      if (incomingFadeGeneration == generation) {
+        return
+      }
+      incomingFadeGeneration = generation
+    }
+    if (panelSceneObject?.layer == null) {
+      if (layerReadyAttempt < DIRECT_VIDEO_LAYER_READY_MAX_ATTEMPTS) {
+        transitionHandler.postDelayed(
+            {
+              if (generation == transitionGeneration && transitionTargetIndex != null) {
+                beginIncomingFade(config, layerReadyAttempt + 1)
+              }
+            },
+            DIRECT_VIDEO_FADE_FRAME_INTERVAL_MS,
+        )
+      } else {
+        emitMarker(
+            "channel=spatial-immersive-video status=direct-layer-fade-unavailable " +
+                "phase=fade-in directLayerAvailable=false firstFrameObserved=true " +
+                "customProjectionCarrierRetained=true"
+        )
+        completeSelectionTransition(generation, "incoming-layer-unavailable")
+      }
+      return
+    }
+    emitMarker(
+        "channel=spatial-immersive-video status=direct-layer-fade-in-started " +
+            "source=${activityMarkerToken(transitionSource)} firstFrameObserved=true " +
+            "durationMs=$DIRECT_VIDEO_FADE_DURATION_MS customProjectionCarrierRetained=true"
+    )
+    animateDirectLayerOpacity(
+        from = 0.0f,
+        to = 1.0f,
+        generation = generation,
+        phase = "fade-in",
+    ) {
+      completeSelectionTransition(generation, "first-frame-fade-complete")
+    }
+  }
+
+  private fun animateDirectLayerOpacity(
+      from: Float,
+      to: Float,
+      generation: Long,
+      phase: String,
+      onComplete: () -> Unit,
+  ) {
+    if (!applyDirectLayerOpacity(from)) {
+      emitMarker(
+          "channel=spatial-immersive-video status=direct-layer-fade-unavailable " +
+              "phase=${activityMarkerToken(phase)} directLayerAvailable=false " +
+              "customProjectionCarrierRetained=true"
+      )
+      onComplete()
+      return
+    }
+    val startedAtMs = SystemClock.uptimeMillis()
+    val step =
+        object : Runnable {
+          override fun run() {
+            if (generation != transitionGeneration || transitionTargetIndex == null) {
+              return
+            }
+            val elapsedMs = SystemClock.uptimeMillis() - startedAtMs
+            val opacity =
+                SpatialImmersiveVideoSessionPolicy.fadeOpacity(
+                    from,
+                    to,
+                    elapsedMs,
+                    DIRECT_VIDEO_FADE_DURATION_MS,
+                )
+            if (!applyDirectLayerOpacity(opacity)) {
+              emitMarker(
+                  "channel=spatial-immersive-video status=direct-layer-fade-failed " +
+                      "phase=${activityMarkerToken(phase)} " +
+                      "customProjectionCarrierRetained=true"
+              )
+              onComplete()
+              return
+            }
+            if (elapsedMs >= DIRECT_VIDEO_FADE_DURATION_MS) {
+              onComplete()
+            } else {
+              transitionHandler.postDelayed(this, DIRECT_VIDEO_FADE_FRAME_INTERVAL_MS)
+            }
+          }
+        }
+    transitionHandler.post(step)
+  }
+
+  private fun applyDirectLayerOpacity(opacity: Float): Boolean {
+    val layer = panelSceneObject?.layer ?: return false
+    return runCatching {
+          layer.setAlphaBlend(
+              LayerAlphaBlend(
+                  BlendFactor.SOURCE_ALPHA,
+                  BlendFactor.ONE_MINUS_SOURCE_ALPHA,
+                  BlendFactor.ONE,
+                  BlendFactor.ONE_MINUS_SOURCE_ALPHA,
+              )
+          )
+          layer.setColorScaleBias(
+              Vector4(1.0f, 1.0f, 1.0f, opacity.coerceIn(0.0f, 1.0f)),
+              Vector4(0.0f),
+          )
+        }
+        .isSuccess
+  }
+
+  private fun completeSelectionTransition(generation: Long, reason: String) {
+    if (generation != transitionGeneration || transitionTargetIndex == null) {
+      return
+    }
+    applyDirectLayerOpacity(1.0f)
+    transitionTargetIndex = null
+    val completedSource = transitionSource
+    transitionSource = ""
+    incomingFadeGeneration = -1L
+    emitMarker(
+        "channel=spatial-immersive-video status=direct-layer-transition-complete " +
+            "source=${activityMarkerToken(completedSource)} reason=${activityMarkerToken(reason)} " +
+            "directLayerOpacity=1.0 customProjectionCarrierRetained=true " +
+            "customProjectionStackRestarted=false activityRestarted=false"
+    )
+  }
+
+  private fun cancelSelectionTransition(reason: String) {
+    if (transitionTargetIndex == null) {
+      return
+    }
+    transitionGeneration += 1L
+    applyDirectLayerOpacity(1.0f)
+    transitionTargetIndex = null
+    transitionSource = ""
+    incomingFadeGeneration = -1L
+    emitMarker(
+        "channel=spatial-immersive-video status=direct-layer-transition-cancelled " +
+            "reason=${activityMarkerToken(reason)} directLayerOpacity=1.0 " +
+            "customProjectionCarrierRetained=true"
+    )
   }
 
   private fun rebuildActiveEntity(reason: String): Boolean {
@@ -350,26 +611,45 @@ internal class SpatialImmersiveVideoPanelCoordinator(
     val anchor = initialConfig ?: return emptyList()
     val anchorPack = anchor.offlinePack ?: return listOf(anchor)
     val mediaPackRoot = File(context.filesDir, "offline-media-packs")
+    val packagedPackIds =
+        PackagedOfflineImmersiveMediaPackImporter.packagedPackIds(context)
+    val retainedPackIds =
+        PackagedOfflineImmersiveMediaPackImporter.installedPackIds(context)
+    val sharedPackIds = SharedOfflineImmersiveMediaLibrary.packIds(context)
+    val candidatePackIds =
+        (sharedPackIds + packagedPackIds + retainedPackIds)
+            .asSequence()
+            .filter { it != anchorPack.packId }
+            .distinct()
+            .sorted()
+            .take(MAX_SESSION_PACKS - 1)
+            .toList()
     val candidates = ArrayList<SpatialImmersiveVideoConfig>()
     candidates += anchor
     var rejectedCount = 0
-    for (packId in PackagedOfflineImmersiveMediaPackImporter.packagedPackIds(context)) {
-      if (packId == anchorPack.packId) {
-        continue
-      }
-      if (!PackagedOfflineImmersiveMediaPackImporter.ensureImported(context, packId)) {
-        rejectedCount += 1
-        continue
-      }
+    for (packId in candidatePackIds) {
       val pack =
           when (
-              val packResolution =
-                  OfflineImmersiveMediaPackLoader.resolve(
-                      mediaPackRoot = mediaPackRoot,
-                      packId = packId,
-                      keyHex = BuildConfig.OFFLINE_MEDIA_KEY_HEX,
-                      packagedInApk = true,
-                  )
+              val packResolution = if (sharedPackIds.contains(packId)) {
+                SharedOfflineImmersiveMediaLibrary.resolve(
+                    context = context,
+                    packId = packId,
+                    keyHex = BuildConfig.OFFLINE_MEDIA_KEY_HEX,
+                ) ?: OfflineImmersiveMediaPackResolution.Rejected(
+                    "shared-offline-media-unavailable"
+                )
+              } else {
+                if (!PackagedOfflineImmersiveMediaPackImporter.ensureImported(context, packId)) {
+                  rejectedCount += 1
+                  continue
+                }
+                OfflineImmersiveMediaPackLoader.resolve(
+                    mediaPackRoot = mediaPackRoot,
+                    packId = packId,
+                    keyHex = BuildConfig.OFFLINE_MEDIA_KEY_HEX,
+                    packagedInApk = packagedPackIds.contains(packId),
+                )
+              }
           ) {
             is OfflineImmersiveMediaPackResolution.Ready -> packResolution.pack
             is OfflineImmersiveMediaPackResolution.Rejected -> {
@@ -397,7 +677,11 @@ internal class SpatialImmersiveVideoPanelCoordinator(
     emitMarker(
         "channel=spatial-immersive-video status=catalog-ready " +
             "itemCount=${result.size} rejectedCount=$rejectedCount " +
-            "boundedCatalog=true maxPackagedPacks=32 projectionClassLocked=false " +
+            "boundedCatalog=true maxSessionPacks=$MAX_SESSION_PACKS " +
+            "packagedCandidateCount=${packagedPackIds.size} " +
+            "retainedCandidateCount=${retainedPackIds.size} retainedPackDiscovery=true " +
+            "sharedCandidateCount=${sharedPackIds.size} sharedDocumentTreeDiscovery=true " +
+            "projectionClassLocked=false " +
             "encryptedStereoCatalog=true shapeAndStereoLayoutMayVary=true " +
             "resolutionMayVary=true rawMediaNamesExposed=false"
     )
@@ -494,6 +778,7 @@ internal class SpatialImmersiveVideoPanelCoordinator(
               "channel=spatial-immersive-video status=first-frame-rendered " +
                   "${config.markerFields()}"
           )
+          beginIncomingFade(config)
           progressHandler.postDelayed(
               {
                 val currentPositionMs = player?.currentPosition ?: firstFramePositionMs
@@ -518,6 +803,10 @@ internal class SpatialImmersiveVideoPanelCoordinator(
         }
 
         override fun onPlayerError(error: PlaybackException) {
+          if (transitionTargetIndex != null && config.path == activeConfig?.path) {
+            applyDirectLayerOpacity(1.0f)
+            completeSelectionTransition(transitionGeneration, "incoming-player-error")
+          }
           emitMarker(
               "channel=spatial-immersive-video status=playback-error " +
                   "errorCode=${error.errorCode} error=${activityMarkerToken(error.javaClass.simpleName)} " +
@@ -566,6 +855,11 @@ internal class SpatialImmersiveVideoPanelCoordinator(
   companion object {
     private const val HEAD_FIXED_VIDEO_DISTANCE_METERS = 2.05f
     private const val DIRECT_VIDEO_BACKGROUND_Z_INDEX = -40
+    private const val MAX_SESSION_PACKS = 32
+    private const val DIRECT_VIDEO_FADE_DURATION_MS = 300L
+    private const val DIRECT_VIDEO_FADE_FRAME_INTERVAL_MS = 16L
+    private const val DIRECT_VIDEO_LAYER_READY_MAX_ATTEMPTS = 60
+    private const val DIRECT_VIDEO_FIRST_FRAME_TIMEOUT_MS = 8_000L
     private const val EXTRA_OFFLINE_PACK_ID =
         "io.github.mesmerprism.rustyquest.extra.IMMERSIVE_VIDEO_OFFLINE_PACK_ID"
 
@@ -655,8 +949,10 @@ internal class SpatialImmersiveVideoPanelCoordinator(
           )
         }
         val mediaPackRoot = File(context.filesDir, "offline-media-packs")
+        val sharedPackIds = SharedOfflineImmersiveMediaLibrary.packIds(context)
         val packagedImportReady =
-            if (BuildConfig.OFFLINE_MEDIA_PACKAGED_ASSETS) {
+            if (!sharedPackIds.contains(offlinePackId) &&
+                BuildConfig.OFFLINE_MEDIA_PACKAGED_ASSETS) {
               PackagedOfflineImmersiveMediaPackImporter.ensureImported(
                   context,
                   offlinePackId,
@@ -666,12 +962,22 @@ internal class SpatialImmersiveVideoPanelCoordinator(
             }
         return when (
             val packResolution =
-                OfflineImmersiveMediaPackLoader.resolve(
-                    mediaPackRoot = mediaPackRoot,
-                    packId = offlinePackId,
-                    keyHex = BuildConfig.OFFLINE_MEDIA_KEY_HEX,
-                    packagedInApk = packagedImportReady,
-                )
+                if (sharedPackIds.contains(offlinePackId)) {
+                  SharedOfflineImmersiveMediaLibrary.resolve(
+                      context = context,
+                      packId = offlinePackId,
+                      keyHex = BuildConfig.OFFLINE_MEDIA_KEY_HEX,
+                  ) ?: OfflineImmersiveMediaPackResolution.Rejected(
+                      "shared-offline-media-unavailable"
+                  )
+                } else {
+                  OfflineImmersiveMediaPackLoader.resolve(
+                      mediaPackRoot = mediaPackRoot,
+                      packId = offlinePackId,
+                      keyHex = BuildConfig.OFFLINE_MEDIA_KEY_HEX,
+                      packagedInApk = packagedImportReady,
+                  )
+                }
         ) {
           is OfflineImmersiveMediaPackResolution.Rejected ->
               SpatialImmersiveVideoRouteResolution.Rejected(packResolution.reason)

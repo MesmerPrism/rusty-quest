@@ -7,55 +7,6 @@ import com.google.gson.JsonObject
 import com.google.gson.JsonParser
 import java.io.File
 
-internal enum class SpatialBackgroundMode(val token: String) {
-  Black("black"),
-  Passthrough("passthrough"),
-  LutPassthrough("lut-passthrough");
-
-  companion object {
-    fun fromToken(token: String?): SpatialBackgroundMode =
-        when (token?.trim()?.lowercase()?.replace('_', '-')) {
-          Passthrough.token -> Passthrough
-          LutPassthrough.token, "lut", "poster-lut", "posterized-passthrough" -> LutPassthrough
-          else -> Black
-        }
-  }
-}
-
-internal data class SpatialBackgroundEffects(
-    val blackBackingVisible: Boolean,
-    val systemPassthroughRequested: Boolean,
-    val passthroughLutRequested: Boolean,
-)
-
-internal object SpatialBackgroundModePolicy {
-  fun resolve(
-      mode: SpatialBackgroundMode,
-      diagnosticLutRequested: Boolean,
-  ): SpatialBackgroundEffects =
-      SpatialBackgroundEffects(
-          blackBackingVisible = mode == SpatialBackgroundMode.Black,
-          systemPassthroughRequested =
-              mode != SpatialBackgroundMode.Black || diagnosticLutRequested,
-          passthroughLutRequested =
-              mode == SpatialBackgroundMode.LutPassthrough || diagnosticLutRequested,
-      )
-
-  fun marker(
-      mode: SpatialBackgroundMode,
-      diagnosticLutRequested: Boolean,
-      effects: SpatialBackgroundEffects,
-      source: String,
-  ): String =
-      "channel=spatial-background status=mode-applied " +
-          "source=${activityMarkerToken(source)} backgroundMode=${mode.token} " +
-          "backgroundBlackBackingVisible=${effects.blackBackingVisible} " +
-          "backgroundSystemPassthroughRequested=${effects.systemPassthroughRequested} " +
-          "backgroundPassthroughLutRequested=${effects.passthroughLutRequested} " +
-          "diagnosticPassthroughLutRequested=$diagnosticLutRequested " +
-          "passthroughLutOwner=spatial-sdk-system-passthrough"
-}
-
 internal data class SpatialCameraPanelControlSnapshot(
     val projectionPanelEnabled: Boolean,
     val layerOverride: Float,
@@ -70,10 +21,6 @@ internal data class SpatialCameraPanelControlSnapshot(
     val projectionInnerAlpha: ProjectionInnerAlpha,
     val videoPlaybackEnabled: Boolean,
     val videoPresentationMode: String,
-    // Null is the v1 on-disk representation for profiles created before Background existed.
-    // Keep that representation stable so exact profile fingerprints used by playlists and
-    // Kiosk launch options do not change merely because a newer app reads the profile.
-    val backgroundMode: String? = null,
 ) {
   fun normalized(): SpatialCameraPanelControlSnapshot =
       copy(
@@ -104,8 +51,6 @@ internal data class SpatialCameraPanelControlSnapshot(
                     SpatialImmersiveVideoPresentationMode.HeadFixedBorder.token
                 else -> SpatialImmersiveVideoPresentationMode.WorldAnchored.token
               },
-          backgroundMode =
-              backgroundMode?.let { SpatialBackgroundMode.fromToken(it).token },
       )
 
   fun presentationMode(): SpatialImmersiveVideoPresentationMode =
@@ -114,9 +59,6 @@ internal data class SpatialCameraPanelControlSnapshot(
       } else {
         SpatialImmersiveVideoPresentationMode.WorldAnchored
       }
-
-  fun resolvedBackgroundMode(): SpatialBackgroundMode =
-      SpatialBackgroundMode.fromToken(backgroundMode)
 }
 
 internal data class SpatialCameraPanelProfileEntry(
@@ -342,13 +284,7 @@ internal object SpatialCameraPanelProfileBundleCodec {
     }
     require(profile.createdAtEpochMs >= 0L) { "profile-bundle-time-invalid" }
     val normalizedControls = profile.controls.normalized()
-    val legacyBlackBackground =
-        profile.controls.backgroundMode == null &&
-            profile.controls.copy(backgroundMode = SpatialBackgroundMode.Black.token) ==
-                normalizedControls
-    require(profile.controls == normalizedControls || legacyBlackBackground) {
-      "profile-bundle-controls-out-of-bounds"
-    }
+    require(profile.controls == normalizedControls) { "profile-bundle-controls-out-of-bounds" }
     return profile.copy(controls = normalizedControls)
   }
 
@@ -389,4 +325,3 @@ internal object SpatialCameraPanelProfileFiles {
           }
           .getOrDefault(false)
 }
-

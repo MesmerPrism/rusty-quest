@@ -37,7 +37,7 @@ class ProjectionSurfaceTilingTest {
     assertEquals(0.45f, value.gapNormalized)
     assertEquals(1.0f, value.depthFlexibility)
     assertEquals(ProjectionSurfaceTilingControls.scopeCoreAndStretch, value.scope)
-    assertEquals("core-and-stretch", ProjectionSurfaceTilingControls.scopeToken(value.scope))
+    assertEquals("inner-and-buffer", ProjectionSurfaceTilingControls.scopeToken(value.scope))
   }
 
   @Test
@@ -57,6 +57,31 @@ class ProjectionSurfaceTilingTest {
     assertEquals(0.0f, value.gapNormalized)
     assertEquals(0.0f, value.depthFlexibility)
     assertEquals("core-only", ProjectionSurfaceTilingControls.scopeToken(value.scope))
+  }
+
+  @Test
+  fun triangleTilesAreAnExplicitThirdTopologyWithoutChangingSquareTiles() {
+    val triangleTiles =
+        ProjectionSurfaceTilingModule.normalize(
+            ProjectionSurfaceTiling(
+                enabled = true,
+                topology = ProjectionSurfaceTilingControls.topologyTriangleTiles,
+                gapNormalized = 0.08f,
+                depthFlexibility = 0.0f,
+            )
+        )
+    assertEquals(
+        ProjectionSurfaceTilingControls.topologyTriangleTiles,
+        triangleTiles.topology,
+    )
+    assertEquals("triangle-tiles", ProjectionSurfaceTilingControls.topologyToken(triangleTiles.topology))
+
+    val squareTiles =
+        ProjectionSurfaceTilingModule.normalize(
+            triangleTiles.copy(topology = ProjectionSurfaceTilingControls.topologyTiled)
+        )
+    assertEquals(ProjectionSurfaceTilingControls.topologyTiled, squareTiles.topology)
+    assertEquals("tiled", ProjectionSurfaceTilingControls.topologyToken(squareTiles.topology))
   }
 
   @Test

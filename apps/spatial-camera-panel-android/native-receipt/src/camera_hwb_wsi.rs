@@ -684,11 +684,9 @@ pub(crate) unsafe fn record_camera_hwb_probe_command_buffer(
     let mut native_video_drawn = false;
     let mut native_video_suppressed = false;
     if let Some((renderer, prepared)) = prepared_video.as_ref() {
-        if !(projection_zone_ready
-            && (projection_zone_frame.settings.replaces_video()
-                || projection_zone_frame
-                    .settings
-                    .transparent_underlay_requested()))
+        if !projection_zone_frame
+            .settings
+            .suppresses_same_surface_video(projection_zone_ready)
         {
             renderer.record_video_eye(device, command_buffer, extent, 0, video_settings, prepared);
             renderer.record_video_eye(device, command_buffer, extent, 1, video_settings, prepared);
@@ -1134,4 +1132,5 @@ mod tests {
             vk::CompositeAlphaFlagsKHR::OPAQUE
         );
     }
+
 }

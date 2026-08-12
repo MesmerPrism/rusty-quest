@@ -52,6 +52,7 @@ param(
     [string]$Keystore = "",
     [string]$OutDir = "",
     [switch]$AllowSharedDevelopmentPackage,
+    [switch]$PublicationBuild,
     [switch]$ReplaceExistingOutput
 )
 
@@ -149,6 +150,38 @@ function Test-ZipEntry {
     $zip = [System.IO.Compression.ZipFile]::OpenRead((Resolve-Path -LiteralPath $ZipPath).Path)
     try {
         return [bool]($zip.Entries | Where-Object { $_.FullName -eq $EntryName } | Select-Object -First 1)
+    } finally {
+        $zip.Dispose()
+    }
+}
+
+function Test-ApkDexDescriptor {
+    param(
+        [Parameter(Mandatory=$true)][string]$ApkPath,
+        [Parameter(Mandatory=$true)][string]$Descriptor
+    )
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $zip = [System.IO.Compression.ZipFile]::OpenRead(
+        (Resolve-Path -LiteralPath $ApkPath).Path
+    )
+    try {
+        foreach ($entry in @($zip.Entries | Where-Object {
+            $_.FullName -match '^classes[0-9]*\.dex$'
+        })) {
+            $stream = $entry.Open()
+            $memory = [IO.MemoryStream]::new()
+            try {
+                $stream.CopyTo($memory)
+                $dexText = [Text.Encoding]::ASCII.GetString($memory.ToArray())
+                if ($dexText.Contains($Descriptor, [StringComparison]::Ordinal)) {
+                    return $true
+                }
+            } finally {
+                $memory.Dispose()
+                $stream.Dispose()
+            }
+        }
+        return $false
     } finally {
         $zip.Dispose()
     }
@@ -496,17 +529,18 @@ if ([bool]$ImmersiveVideoDefaultEnabled -and
     throw "ImmersiveVideoDefaultOfflinePackId is required when ImmersiveVideoDefaultEnabled is selected."
 }
 if ([bool]$ImmersiveVideoDefaultEnabled) {
-    if ([string]::IsNullOrWhiteSpace($resolvedOfflineMediaPackAssetDir) -or
-        [string]::IsNullOrWhiteSpace($resolvedOfflineMediaKeyHex)) {
-        throw "A packaged offline media asset root and key are required when ImmersiveVideoDefaultEnabled is selected."
+    if ([string]::IsNullOrWhiteSpace($resolvedOfflineMediaKeyHex)) {
+        throw "An offline media key is required when ImmersiveVideoDefaultEnabled is selected."
     }
-    $defaultPackManifest = Join-Path $resolvedOfflineMediaPackAssetDir "offline-media-packs\$resolvedImmersiveVideoDefaultOfflinePackId\manifest.json"
-    if (-not (Test-Path -LiteralPath $defaultPackManifest -PathType Leaf)) {
-        throw "Default immersive video pack manifest not found: $defaultPackManifest"
-    }
-    $defaultPack = Get-Content -LiteralPath $defaultPackManifest -Raw | ConvertFrom-Json
-    if ([string]$defaultPack.pack_id -ne $resolvedImmersiveVideoDefaultOfflinePackId) {
-        throw "Default immersive video pack manifest id does not match ImmersiveVideoDefaultOfflinePackId."
+    if (-not [string]::IsNullOrWhiteSpace($resolvedOfflineMediaPackAssetDir)) {
+        $defaultPackManifest = Join-Path $resolvedOfflineMediaPackAssetDir "offline-media-packs\$resolvedImmersiveVideoDefaultOfflinePackId\manifest.json"
+        if (-not (Test-Path -LiteralPath $defaultPackManifest -PathType Leaf)) {
+            throw "Default immersive video pack manifest not found: $defaultPackManifest"
+        }
+        $defaultPack = Get-Content -LiteralPath $defaultPackManifest -Raw | ConvertFrom-Json
+        if ([string]$defaultPack.pack_id -ne $resolvedImmersiveVideoDefaultOfflinePackId) {
+            throw "Default immersive video pack manifest id does not match ImmersiveVideoDefaultOfflinePackId."
+        }
     }
 }
 $buildTypeLower = $BuildType.ToLowerInvariant()
@@ -610,14 +644,26 @@ $repoRoot = Resolve-Path $RepoRoot
 $appRoot = Resolve-Path (Join-Path $repoRoot "apps\spatial-camera-panel-android")
 $targetRoot = Join-Path $repoRoot "target"
 Import-Module (Join-Path $PSScriptRoot "lib\SourceComposition.psm1") -Force
-$sourceComposition = Get-QuestBuildSourceComposition -RepoRoot ([string]$repoRoot) -PackageName @("spatial-camera-panel-native-receipt")
+$sourceComposition = Get-QuestBuildSourceComposition `
+    -RepoRoot ([string]$repoRoot) `
+    -PackageName @("spatial-camera-panel-native-receipt") `
+    -AllowWorkingTreeChanges:(-not [bool]$PublicationBuild)
 $primarySource = @($sourceComposition.repositories | Where-Object { $_.role -eq "primary" })
 if ($primarySource.Count -ne 1) { throw "Spatial APK source composition did not resolve exactly one primary Rusty Quest repository." }
 $sourceHead = [string]$primarySource[0].commit
 $sourceTree = [string]$primarySource[0].tree
+$sourceTrackedWorktreeClean = [bool]$primarySource[0].tracked_worktree_clean
+$sourceWorktreeOverlaySha256 = [string]$primarySource[0].worktree_overlay_sha256
 $sourceDependencies = @($sourceComposition.repositories | Where-Object { $_.role -eq "path-dependency" })
 $sourceDependencyIdentities = @($sourceDependencies | ForEach-Object {
-    [ordered]@{ repository_id = [string]$_.repository_id; role = [string]$_.role; commit = [string]$_.commit; tree = [string]$_.tree }
+    [ordered]@{
+        repository_id = [string]$_.repository_id
+        role = [string]$_.role
+        commit = [string]$_.commit
+        tree = [string]$_.tree
+        tracked_worktree_clean = [bool]$_.tracked_worktree_clean
+        worktree_overlay_sha256 = [string]$_.worktree_overlay_sha256
+    }
 })
 $assetConformanceLockRelativePath = "legacy-workspaces/mixed-integration-v1/conformance-locks/spatial-asset-model.feature.lock.json"
 $assetConformanceLockPath = Join-Path $appRoot $assetConformanceLockRelativePath
@@ -648,7 +694,10 @@ $buildInputDescriptor = [ordered]@{
     schema = "rusty.quest.spatial_camera_panel.build_input_lock.v1"
     source_commit = $sourceHead
     source_tree = $sourceTree
+    source_tracked_worktree_clean = $sourceTrackedWorktreeClean
+    source_worktree_overlay_sha256 = $sourceWorktreeOverlaySha256
     source_composition_fingerprint = [string]$sourceComposition.fingerprint
+    build_mode = $(if ([bool]$PublicationBuild) { "publication" } else { "iteration" })
     source_dependencies = $sourceDependencyIdentities
     product_id = $resolvedProductId
     application_id = $resolvedAppId
@@ -1127,6 +1176,13 @@ $nativeReceiptLibraryPackaged = Test-ZipEntry -ZipPath $apkOut -EntryName $nativ
 if (-not $nativeReceiptLibraryPackaged) {
     throw "APK is missing native receipt library entry: $nativeReceiptApkEntry"
 }
+$launcherClassDescriptor =
+    'Lio/github/mesmerprism/rustyquest/spatial_camera_panel/SpatialCameraPanelActivity;'
+if (-not (Test-ApkDexDescriptor `
+    -ApkPath $apkOut `
+    -Descriptor $launcherClassDescriptor)) {
+    throw "APK is missing launcher class DEX descriptor: $launcherClassDescriptor"
+}
 
 $offlineMediaEmbeddedKeyEnabled =
     -not [string]::IsNullOrWhiteSpace($resolvedOfflineMediaKeyHex)
@@ -1140,13 +1196,15 @@ $manifest = [ordered]@{
     build_input_lock_sha256 = Get-FileSha256 -Path $buildInputLockPath
     source_commit = $sourceHead
     source_tree = $sourceTree
-    source_tracked_worktree_clean = $true
+    source_tracked_worktree_clean = $sourceTrackedWorktreeClean
+    source_worktree_overlay_sha256 = $sourceWorktreeOverlaySha256
     source_composition_fingerprint = [string]$sourceComposition.fingerprint
     source_dependencies = $sourceDependencies
     property_manifest_path = $propertyManifestPath
     property_manifest_sha256 = Get-FileSha256 -Path $propertyManifestPath
     property_manifest_count = $propertyNames.Count
-    output_policy = "content-addressed-explicit-input-lock"
+    output_policy = $(if ([bool]$PublicationBuild) { "content-addressed-explicit-input-lock-clean-publication" } else { "content-addressed-explicit-input-lock-observed-worktree-iteration" })
+    build_mode = $(if ([bool]$PublicationBuild) { "publication" } else { "iteration" })
     ambient_spatial_feature_environment_ignored = $ignoredAmbientSpatialFeatureVariables
     package_name = $resolvedAppId
     application_id = $resolvedAppId
@@ -1166,13 +1224,13 @@ $manifest = [ordered]@{
     gradle_project_cache_dir = $gradleProjectCacheDir
     authority = "rusty.quest.spatial_camera_panel_sdk_panel"
     target_runtime = "quest-spatial-sdk-appsystemactivity-panel"
-    spatial_input_mode = $(if ($lockedFinalPresentationEnabled) { "disabled-presentation-output-only" } else { "interaction-sdk-hands-and-controllers" })
+    spatial_input_mode = $(if ($lockedFinalPresentationEnabled) { "disabled-presentation-output-only" } else { "interaction-sdk-input-only-no-locomotion" })
     spatial_vr_input_system_default = "interaction_sdk"
     spatial_should_consume_left_right_input_default = $false
     spatial_handtracking_manifest_declared = $true
     spatial_handtracking_permission_declared = $true
-    spatial_render_model_manifest_declared = $true
-    spatial_render_model_permission_declared = $true
+    spatial_render_model_manifest_declared = $false
+    spatial_render_model_permission_declared = $false
     spatial_scene_permission_declared = $true
     spatial_openxr_permission_declared = $true
     spatial_environment_depth_permission_surface = "horizonos.permission.USE_SCENE+USE_SCENE_DATA"
@@ -1199,7 +1257,7 @@ $manifest = [ordered]@{
     immersive_video_default_offline_pack_id = $resolvedImmersiveVideoDefaultOfflinePackId
     immersive_video_default_activation_policy = "explicit-intent-or-product-build-default"
     projection_zone_compositor_default_preset = $ZoneCompositorDefaultPreset
-    immersive_video_source_policy = "explicit-single-grant-media-content-uri-app-owned-file-or-authenticated-obb-pack"
+    immersive_video_source_policy = "explicit-single-grant-media-content-uri-app-owned-file-authenticated-packaged-pack-or-persisted-shared-document-tree"
     immersive_video_shape_tokens = @("flat", "equirect-180", "equirect-360")
     immersive_video_stereo_tokens = @("mono", "side-by-side-left-right", "top-bottom")
     immersive_video_render_path = "VideoSurfacePanelRegistration-direct-to-surface"
@@ -1422,7 +1480,7 @@ $manifest = [ordered]@{
     camera_hwb_projection_quad_default_target_distance_meters = 2.0
     camera_hwb_projection_accepted_no_room_default = $true
     camera_hwb_projection_default_placement_mode = "viewer-pose-projection-locked-quad"
-    camera_hwb_projection_right_secondary_behavior = "disabled-consumed-no-op"
+    camera_hwb_projection_right_secondary_behavior = "direct-video-recenter-existing-entity"
     camera_hwb_projection_right_primary_behavior = "open-generic-layer-control-panel"
     camera_hwb_projection_layer_control_panel_default_distance_meters = 1.0
     camera_hwb_projection_staged_asset_default_requested = $false
@@ -1647,6 +1705,12 @@ $manifest = [ordered]@{
         "private-layer-zone-video-underlay-blend-test",
         "projection-panel-on",
         "projection-panel-off",
+        "video-previous",
+        "video-next",
+        "video-select",
+        "video-recenter",
+        "video-world-anchored",
+        "video-head-fixed-border",
         "particle-controls",
         "particle-panel-distance",
         "particle-panel-view-yaw",
@@ -1661,7 +1725,7 @@ $manifest = [ordered]@{
     spatial_private_layer_panel_render_mode = "spatial-sdk-layer-world-space-high-z"
     spatial_private_layer_panel_pose_mode = "initial-headset-facing-world-space-then-stored-placement-unless-grabbed"
     spatial_private_layer_panel_movement_authority = "app-stored-placement-with-spatial-sdk-grabbable-pivot-y-and-left-stick-y-distance"
-    spatial_private_layer_panel_input_buttons = "button-a+trigger-l+trigger-r-select; controller-squeeze-grab"
+    spatial_private_layer_panel_input_buttons = "trigger-l+trigger-r-select; controller-squeeze-grab; right-primary-select-disabled"
     spatial_private_layer_panel_compose_drag_movement = $false
     spatial_private_layer_panel_default_pose_meters = "0.0;0.0;1.00"
     spatial_private_layer_panel_projection_input_order = "manual-custom-mesh-projection-noninteractive-private-layer-panel-layer-input"
@@ -1699,7 +1763,6 @@ $manifest = [ordered]@{
     high_rate_json_payload = $false
     hand_rendering_expected = $false
     controller_rendering_expected = $false
-    controller_rendering_opt_in_property = 'debug.rustyquest.spatial.avatar_controllers.visible'
     spatial_pointer_input_expected = (-not $lockedFinalPresentationEnabled)
     apk_path = $apkOut
     apk_sha256 = $sha256
@@ -1714,7 +1777,7 @@ $runCapsule = [ordered]@{
     app_id = $resolvedAppId
     app_lane = "spatial-camera-panel-android"
     source = [ordered]@{
-        repository = [string]$repoRoot; commit = $sourceHead; tree = $sourceTree; tracked_worktree_clean = $true
+        repository = [string]$repoRoot; commit = $sourceHead; tree = $sourceTree; tracked_worktree_clean = $sourceTrackedWorktreeClean; worktree_overlay_sha256 = $sourceWorktreeOverlaySha256
         composition_fingerprint = [string]$sourceComposition.fingerprint; packages = @($sourceComposition.packages); dependencies = $sourceDependencies
     }
     build_lock = [ordered]@{

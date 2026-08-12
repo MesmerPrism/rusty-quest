@@ -276,9 +276,6 @@ android {
   sourceSets.getByName("main").java.srcDir(
     rootProject.file("../../crates/rusty-quest-broker-client/android"),
   )
-  sourceSets.getByName("main").java.srcDir(
-    rootProject.file("../../crates/rusty-quest-broker-admission/android"),
-  )
 
   packaging {
     resources.excludes.add("META-INF/LICENSE")
@@ -329,14 +326,6 @@ android {
       providers.environmentVariable("RUSTY_QUEST_SPATIAL_PRIVATE_FEATURE_RES_DIR").orNull
         ?.takeIf { it.isNotBlank() }
         ?.let { res.srcDir(it) }
-    }
-    getByName("test") {
-      providers.environmentVariable("RUSTY_QUEST_SPATIAL_PRIVATE_FEATURE_TEST_SRC_DIR").orNull
-        ?.takeIf { it.isNotBlank() }
-        ?.let { java.srcDir(it) }
-      providers.environmentVariable("RUSTY_QUEST_SPATIAL_PRIVATE_FEATURE_TEST_RES_DIR").orNull
-        ?.takeIf { it.isNotBlank() }
-        ?.let { resources.srcDir(it) }
     }
   }
 

@@ -23,6 +23,7 @@ param(
         "projection-panel-on",
         "video-previous",
         "video-next",
+        "video-recenter",
         "video-select",
         "video-world-anchored",
         "video-head-fixed-border",

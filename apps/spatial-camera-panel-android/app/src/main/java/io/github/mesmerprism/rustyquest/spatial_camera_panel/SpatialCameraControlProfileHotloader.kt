@@ -230,6 +230,20 @@ internal class SpatialCameraControlProfileHotloader(
                 else -> "off"
               },
           )
+          .put("region_contract", "v2")
+          .put(
+              "buffer_geometry",
+              PrivateLayerZoneCompositorControls.bufferGeometryToken(value.bufferGeometryMode),
+          )
+          .put("buffer_static_width_uv", value.bufferStaticWidthUv)
+          .put(
+              "buffer_fill",
+              PrivateLayerZoneCompositorControls.bufferFillToken(value.bufferFillMode),
+          )
+          .put(
+              "stretch_extent",
+              PrivateLayerZoneCompositorControls.stretchExtentToken(value.stretchExtentMode),
+          )
           .put(
               "stretch_source",
               when (value.stretchSource) {
@@ -262,6 +276,7 @@ internal class SpatialCameraControlProfileHotloader(
               "projection_effect_edge_guard_enabled",
               value.projectionEffectEdgeGuardEnabled,
           )
+          .put("stretch_option_flags", value.stretchOptionFlags)
           .put("edge_inset_uv", value.edgeInsetUv)
           .put("max_inset_uv", value.maxInsetUv)
           .put("stretch_curve", value.stretchCurve)

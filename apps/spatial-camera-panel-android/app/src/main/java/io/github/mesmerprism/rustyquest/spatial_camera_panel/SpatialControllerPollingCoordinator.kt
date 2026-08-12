@@ -25,8 +25,7 @@ internal data class SpatialControllerPollingBindings(
     val applyProjectionScale: (Float, String, String, String) -> Unit,
     val applyPanelDistance: (Float, String, String, String) -> Unit,
     val recenterParticleSphere: (String, String) -> Boolean,
-    val armSecondaryToggle: (String) -> Unit,
-    val toggleSecondary: (String, String) -> Unit,
+    val recenterVideo: (String, String) -> Unit,
     val openPrimary: (String, String) -> Unit,
     val marker: (String) -> Unit,
 )
@@ -138,11 +137,8 @@ internal class SpatialControllerPollingCoordinator(
             }
     val rightButtonBPressedEdge = rightButtonBDown && !nativeSecondaryDown
     nativeSecondaryDown = rightButtonBDown
-    if (!rightButtonBDown) {
-      bindings.armSecondaryToggle("native-openxr-action")
-    }
     if (rightButtonBPressedEdge) {
-      bindings.toggleSecondary(
+      bindings.recenterVideo(
           "native-openxr-action",
           "rightButtonBDown=true nativeRightButtonBAction=true " +
               "nativeControllerActionStartMask=${state.actionStartMask}",
@@ -239,13 +235,10 @@ internal class SpatialControllerPollingCoordinator(
     val secondaryPressedEdge =
         snapshot.secondaryPressed || (snapshot.secondaryDown && !spatialSecondaryDown)
     spatialSecondaryDown = snapshot.secondaryDown
-    if (!snapshot.secondaryDown) {
-      bindings.armSecondaryToggle(snapshot.rightInputSource)
-    }
     if (secondaryPressedEdge) {
-      bindings.toggleSecondary(
+      bindings.recenterVideo(
           snapshot.rightInputSource,
-          SpatialControllerRoutingModule.rightSecondaryPlacementToggleDetail(snapshot),
+          SpatialControllerRoutingModule.rightSecondaryVideoRecenterDetail(snapshot),
       )
       return
     }

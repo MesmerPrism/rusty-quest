@@ -8,12 +8,14 @@ internal data class SpatialValidationWorkflowBindings(
     val setPrivateLayerPanelVisible: (Boolean, Boolean, String) -> Unit,
     val privateLayerPanelVisible: () -> Boolean,
     val updatePrivateLayerOverride: (Float, String) -> Unit,
+    val currentPrivateLayerZoneCompositor: () -> PrivateLayerZoneCompositor,
     val updatePrivateLayerZoneCompositor: (PrivateLayerZoneCompositor, String) -> Unit,
     val updateRgbChannelTransform: (RgbChannelTransform, String) -> Unit,
     val updateProjectionSurfaceDisplacement:
         (ProjectionSurfaceDisplacement, String) -> Unit,
     val setProjectionPanelEnabled: (Boolean, String) -> Unit,
     val changeImmersiveVideo: (String, String?, String) -> Unit,
+    val recenterImmersiveVideo: (String, String) -> Unit,
     val setImmersiveVideoPresentationMode:
         (SpatialImmersiveVideoPresentationMode, String) -> Unit,
     val currentParticleControls: () -> SurfaceParticleControlState,
@@ -63,22 +65,33 @@ internal class SpatialValidationWorkflowCoordinator(
             )
         "private-layer-zone-off" ->
             bindings.updatePrivateLayerZoneCompositor(
-                PrivateLayerZoneCompositorControls.legacyOff,
+                PrivateLayerZoneCompositorControls.disableStretch(
+                    bindings.currentPrivateLayerZoneCompositor(),
+                ),
                 source,
             )
         "private-layer-zone-native-buffer" ->
             bindings.updatePrivateLayerZoneCompositor(
-                PrivateLayerZoneCompositorControls.nativeBuffer,
+                PrivateLayerZoneCompositorControls.applyStretchStyle(
+                    bindings.currentPrivateLayerZoneCompositor(),
+                    PrivateLayerZoneCompositorControls.nativeBuffer,
+                ),
                 source,
             )
         "private-layer-zone-linear-buffer" ->
             bindings.updatePrivateLayerZoneCompositor(
-                PrivateLayerZoneCompositorControls.nativeBuffer,
+                PrivateLayerZoneCompositorControls.applyStretchStyle(
+                    bindings.currentPrivateLayerZoneCompositor(),
+                    PrivateLayerZoneCompositorControls.nativeBuffer,
+                ),
                 source,
             )
         "private-layer-zone-organic-buffer" ->
             bindings.updatePrivateLayerZoneCompositor(
-                PrivateLayerZoneCompositorControls.organicBuffer,
+                PrivateLayerZoneCompositorControls.applyStretchStyle(
+                    bindings.currentPrivateLayerZoneCompositor(),
+                    PrivateLayerZoneCompositorControls.organicBuffer,
+                ),
                 source,
             )
         "private-layer-zone-full-stretch" ->
@@ -136,6 +149,11 @@ internal class SpatialValidationWorkflowCoordinator(
         "projection-panel-on" -> bindings.setProjectionPanelEnabled(true, source)
         "video-previous" -> bindings.changeImmersiveVideo("previous", null, source)
         "video-next" -> bindings.changeImmersiveVideo("next", null, source)
+        "video-recenter" ->
+            bindings.recenterImmersiveVideo(
+                source,
+                "remoteUiAction=video-recenter controllerInputRequired=false",
+            )
         "video-world-anchored" ->
             bindings.setImmersiveVideoPresentationMode(
                 SpatialImmersiveVideoPresentationMode.WorldAnchored,

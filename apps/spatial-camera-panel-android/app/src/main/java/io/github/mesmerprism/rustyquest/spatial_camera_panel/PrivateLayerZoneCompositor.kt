@@ -24,7 +24,7 @@ internal data class PrivateLayerZoneChannelDynamics(
 
 internal data class PrivateLayerZoneCompositor(
     val coverageMode: Int = PrivateLayerZoneCompositorControls.coverageOff,
-    val regionContractVersion: Int = PrivateLayerZoneCompositorControls.regionContractLegacy,
+    val regionContractVersion: Int = PrivateLayerZoneCompositorControls.regionContractIndependent,
     val bufferGeometryMode: Int = PrivateLayerZoneCompositorControls.bufferGeometryOff,
     val bufferStaticWidthUv: Float = 0.08f,
     val bufferFillMode: Int = PrivateLayerZoneCompositorControls.bufferFillOuterContinuation,
@@ -121,14 +121,10 @@ internal object PrivateLayerZoneCompositorControls {
       PrivateLayerZoneCompositor(
           regionContractVersion = regionContractLegacy,
       )
-  val bufferOff =
-      PrivateLayerZoneCompositor(
-          regionContractVersion = regionContractIndependent,
-      )
+  val bufferOff = PrivateLayerZoneCompositor()
   val nativeBuffer =
       PrivateLayerZoneCompositor(
           coverageMode = coverageDynamicBuffer,
-          regionContractVersion = regionContractIndependent,
           bufferGeometryMode = bufferGeometryDynamic,
           bufferFillMode = bufferFillStretch,
           stretchSource = sourceProcessed,
@@ -432,25 +428,12 @@ internal object PrivateLayerZoneCompositorControls {
         normalized.processedMix == style.processedMix
   }
 }
-internal object PrivateLayerZoneCompositorModule {
-  /**
-   * A transparent Spatial-video underlay never samples or draws the custom decoder surface.
-   * Other routes keep the readable consumer because they either sample it or retain it as the
-   * native fallback when a replacement pipeline is unavailable.
-   */
-  fun readableVideoConsumerRequired(configuration: PrivateLayerZoneCompositor): Boolean =
-      normalize(configuration).outerTargetMode != PrivateLayerZoneCompositorControls.outerTargetTransparentSpatialVideo
 
+internal object PrivateLayerZoneCompositorModule {
   fun normalize(requested: PrivateLayerZoneCompositor): PrivateLayerZoneCompositor {
     val migratingLegacy =
         requested.regionContractVersion <
             PrivateLayerZoneCompositorControls.regionContractIndependent
-    if (migratingLegacy &&
-        requested.outerTargetMode ==
-            PrivateLayerZoneCompositorControls.outerTargetTransparentSpatialVideo &&
-        !PrivateLayerZoneCompositorControls.transparentSpatialVideoSupported(requested)) {
-      throw IllegalArgumentException("unsupported_transparent_spatial_video")
-    }
     val bufferGeometryMode =
         if (migratingLegacy) {
           if (requested.coverageMode == PrivateLayerZoneCompositorControls.coverageOff) {

@@ -2780,6 +2780,10 @@ pub(crate) unsafe fn allocate_spatial_public_guide_targets(
         opaque_projection_pipeline_layout,
         include_bytes!(concat!(
             env!("OUT_DIR"),
+            "/spatial_opaque_projection.vert.spv"
+        )),
+        include_bytes!(concat!(
+            env!("OUT_DIR"),
             "/spatial_opaque_projection.frag.spv"
         )),
         "spatial-public-opaque-projection-displacement",
@@ -3522,6 +3526,10 @@ unsafe fn create_projection_zone_video_pipeline(
         device,
         render_pass,
         pipeline_layout,
+        include_bytes!(concat!(
+            env!("OUT_DIR"),
+            "/spatial_opaque_projection_video_compositor.vert.spv"
+        )),
         fragment_spirv,
         "spatial-public-projection-zone-video-compositor-displacement",
         true,
@@ -3912,6 +3920,7 @@ unsafe fn create_projection_displacement_pipeline(
     device: &ash::Device,
     render_pass: vk::RenderPass,
     pipeline_layout: vk::PipelineLayout,
+    vertex_spirv: &[u8],
     fragment_spirv: &[u8],
     label: &str,
     premultiplied_alpha_blend: bool,
@@ -3923,10 +3932,7 @@ unsafe fn create_projection_displacement_pipeline(
         device,
         render_pass,
         pipeline_layout,
-        include_bytes!(concat!(
-            env!("OUT_DIR"),
-            "/spatial_opaque_projection.vert.spv"
-        )),
+        vertex_spirv,
         fragment_spirv,
         label,
         premultiplied_alpha_blend,

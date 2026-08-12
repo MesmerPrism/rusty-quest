@@ -79,6 +79,8 @@ internal data class SpatialImmersiveVideoConfig(
           "autoplay=$autoplay loop=$loop " +
           "offlineEncryptedPack=$isEncryptedOfflinePack embeddedKeyPrototype=$isEncryptedOfflinePack " +
           "encryptedMediaPackagedInApk=${offlinePack?.packagedInApk == true} " +
+          "encryptedMediaStorage=${offlinePack?.storageKind ?: "none"} " +
+          "sharedEncryptedMedia=${offlinePack?.storageKind == "shared-document-tree"} " +
           "plaintextFileWritten=false"
 }
 

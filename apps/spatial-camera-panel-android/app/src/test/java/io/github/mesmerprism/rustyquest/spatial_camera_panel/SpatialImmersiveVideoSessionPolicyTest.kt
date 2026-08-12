@@ -144,6 +144,15 @@ class SpatialImmersiveVideoSessionPolicyTest {
   }
 
   @Test
+  fun directVideoFadeOpacityIsBoundedAndDeterministic() {
+    assertEquals(1.0f, SpatialImmersiveVideoSessionPolicy.fadeOpacity(1.0f, 0.0f, -1L, 300L))
+    assertEquals(0.5f, SpatialImmersiveVideoSessionPolicy.fadeOpacity(1.0f, 0.0f, 150L, 300L))
+    assertEquals(0.0f, SpatialImmersiveVideoSessionPolicy.fadeOpacity(1.0f, 0.0f, 600L, 300L))
+    assertEquals(1.0f, SpatialImmersiveVideoSessionPolicy.fadeOpacity(0.0f, 1.0f, 300L, 300L))
+    assertEquals(0.25f, SpatialImmersiveVideoSessionPolicy.fadeOpacity(0.0f, 0.25f, 1L, 0L))
+  }
+
+  @Test
   fun worldAnchored360UsesEquirectCarrierWithTwoToOnePerEyeOutput() {
     val stereo360 =
         config(

@@ -52,11 +52,17 @@ pub(crate) struct CameraHwbProjectionTargetRects {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct ProjectionZoneCompositorSettings {
     pub(crate) coverage_mode: u32,
+    pub(crate) region_contract_version: u32,
+    pub(crate) buffer_geometry_mode: u32,
+    pub(crate) buffer_static_width_uv: f32,
+    pub(crate) buffer_fill_mode: u32,
+    pub(crate) stretch_extent_mode: u32,
     pub(crate) stretch_source: u32,
     pub(crate) debug_mode: u32,
     pub(crate) outer_target_mode: u32,
     pub(crate) stretch_mapping: u32,
     pub(crate) projection_effect_edge_guard_enabled: bool,
+    pub(crate) stretch_option_flags: u32,
     pub(crate) edge_inset_uv: f32,
     pub(crate) max_inset_uv: f32,
     pub(crate) stretch_curve: f32,
@@ -99,11 +105,17 @@ impl Default for ProjectionZoneCompositorSettings {
     fn default() -> Self {
         Self {
             coverage_mode: 0,
+            region_contract_version: 1,
+            buffer_geometry_mode: 0,
+            buffer_static_width_uv: 0.08,
+            buffer_fill_mode: 0,
+            stretch_extent_mode: 0,
             stretch_source: 1,
             debug_mode: 0,
             outer_target_mode: 0,
             stretch_mapping: 0,
             projection_effect_edge_guard_enabled: true,
+            stretch_option_flags: 0,
             edge_inset_uv: 0.015,
             max_inset_uv: 0.14,
             stretch_curve: 1.6,
@@ -146,11 +158,17 @@ impl Default for ProjectionZoneCompositorSettings {
 
 impl ProjectionZoneCompositorSettings {
     pub(crate) fn active(self) -> bool {
-        self.coverage_mode != 0
+        self.region_contract_version >= 2 || self.coverage_mode != 0
     }
 
     pub(crate) fn replaces_video(self) -> bool {
-        self.coverage_mode == 2
+        if self.region_contract_version >= 2 {
+            self.buffer_geometry_mode != 0
+                && self.buffer_fill_mode == 2
+                && self.stretch_extent_mode == 1
+        } else {
+            self.coverage_mode == 2
+        }
     }
 
     pub(crate) fn synthetic_diagnostic(self) -> bool {
@@ -163,20 +181,33 @@ impl ProjectionZoneCompositorSettings {
 
     pub(crate) fn transparent_underlay_supported(self) -> bool {
         self.transparent_underlay_requested()
-            && self.coverage_mode == 1
-            && self.debug_mode == 0
-            && self.outer_signal != 4
-            && self.outer_application_mode == 2
-            && self.outer_source_choice == 0
+            && (self.region_contract_version >= 2
+                || self.coverage_mode == 0
+                || (self.coverage_mode == 1
+                    && self.debug_mode == 0
+                    && self.outer_signal != 4
+                    && self.outer_application_mode == 2
+                    && self.outer_source_choice == 0))
+    }
+
+    pub(crate) fn suppresses_same_surface_video(self, projection_zone_ready: bool) -> bool {
+        self.transparent_underlay_requested()
+            || (projection_zone_ready && self.replaces_video())
     }
 
     pub(crate) fn marker_fields(self) -> String {
         let base = format!(
-            "projectionZoneCompositorMode={} projectionZoneStretchSource={} projectionZoneStretchMapping={} projectionZoneEffectEdgeGuardEnabled={} projectionZoneStretchParameterA={:.4} projectionZoneStretchParameterB={:.4} projectionZoneStretchParameterC={:.3} projectionZoneProcessedMix={:.3} projectionZoneInnerSignal={} projectionZoneInnerWidthUv={:.4} projectionZoneInnerThresholdRgb={:.3},{:.3},{:.3} projectionZoneInnerSoftness={:.3} projectionZoneInnerStrength={:.3} projectionZoneInnerCycleAmplitude={:.3} projectionZoneInnerCycleHz={:.3} projectionZoneInnerMotionGain={:.3} projectionZoneOuterSignal={} projectionZoneOuterWidthUv={:.4} projectionZoneOuterThresholdRgb={:.3},{:.3},{:.3} projectionZoneOuterSoftness={:.3} projectionZoneOuterStrength={:.3} projectionZoneOuterCycleAmplitude={:.3} projectionZoneOuterCycleHz={:.3} projectionZoneOuterMotionGain={:.3} projectionZoneDebugMode={}",
+            "projectionZoneCompositorMode={} projectionRegionContract=v{} projectionBufferGeometry={} projectionBufferStaticWidthUv={:.4} projectionBufferFill={} projectionStretchExtent={} projectionZoneStretchSource={} projectionZoneStretchMapping={} projectionZoneEffectEdgeGuardEnabled={} projectionZoneStretchOptionFlags={} projectionZoneStretchParameterA={:.4} projectionZoneStretchParameterB={:.4} projectionZoneStretchParameterC={:.3} projectionZoneProcessedMix={:.3} projectionZoneInnerSignal={} projectionZoneInnerWidthUv={:.4} projectionZoneInnerThresholdRgb={:.3},{:.3},{:.3} projectionZoneInnerSoftness={:.3} projectionZoneInnerStrength={:.3} projectionZoneInnerCycleAmplitude={:.3} projectionZoneInnerCycleHz={:.3} projectionZoneInnerMotionGain={:.3} projectionZoneOuterSignal={} projectionZoneOuterWidthUv={:.4} projectionZoneOuterThresholdRgb={:.3},{:.3},{:.3} projectionZoneOuterSoftness={:.3} projectionZoneOuterStrength={:.3} projectionZoneOuterCycleAmplitude={:.3} projectionZoneOuterCycleHz={:.3} projectionZoneOuterMotionGain={:.3} projectionZoneDebugMode={}",
             coverage_mode_token(self.coverage_mode),
+            self.region_contract_version,
+            buffer_geometry_token(self.buffer_geometry_mode),
+            self.buffer_static_width_uv,
+            buffer_fill_token(self.buffer_fill_mode),
+            stretch_extent_token(self.stretch_extent_mode),
             stretch_source_token(self.stretch_source),
             stretch_mapping_token(self.stretch_mapping),
             self.projection_effect_edge_guard_enabled,
+            self.stretch_option_flags,
             self.edge_inset_uv,
             self.max_inset_uv,
             self.stretch_curve,
@@ -338,11 +369,17 @@ pub(crate) fn current_projection_zone_compositor_settings() -> ProjectionZoneCom
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn update_projection_zone_compositor_settings(
     coverage_mode: u32,
+    region_contract_version: u32,
+    buffer_geometry_mode: u32,
+    buffer_static_width_uv: f32,
+    buffer_fill_mode: u32,
+    stretch_extent_mode: u32,
     stretch_source: u32,
     debug_mode: u32,
     outer_target_mode: u32,
     stretch_mapping: u32,
     projection_effect_edge_guard_enabled: bool,
+    stretch_option_flags: u32,
     edge_inset_uv: f32,
     max_inset_uv: f32,
     stretch_curve: f32,
@@ -379,11 +416,17 @@ pub(crate) fn update_projection_zone_compositor_settings(
         );
     let settings = ProjectionZoneCompositorSettings {
         coverage_mode: coverage_mode.min(2),
+        region_contract_version: region_contract_version.clamp(1, 2),
+        buffer_geometry_mode: buffer_geometry_mode.min(2),
+        buffer_static_width_uv: finite_or(buffer_static_width_uv, 0.08).clamp(0.0, 0.5),
+        buffer_fill_mode: buffer_fill_mode.min(2),
+        stretch_extent_mode: stretch_extent_mode.min(1),
         stretch_source: stretch_source.min(2),
         debug_mode: debug_mode.min(2),
         outer_target_mode: outer_target_mode.min(1),
         stretch_mapping,
         projection_effect_edge_guard_enabled,
+        stretch_option_flags: stretch_option_flags & 0x1d,
         edge_inset_uv: parameter_a,
         max_inset_uv: parameter_b,
         stretch_curve: parameter_c,
@@ -505,6 +548,26 @@ fn coverage_mode_token(mode: u32) -> &'static str {
         2 => "replace-video",
         _ => "off",
     }
+}
+
+fn buffer_geometry_token(mode: u32) -> &'static str {
+    match mode {
+        1 => "static",
+        2 => "dynamic",
+        _ => "off",
+    }
+}
+
+fn buffer_fill_token(mode: u32) -> &'static str {
+    match mode {
+        1 => "transparent-reveal",
+        2 => "stretch",
+        _ => "outer-continuation",
+    }
+}
+
+fn stretch_extent_token(mode: u32) -> &'static str {
+    if mode == 1 { "replace-outer" } else { "buffer-only" }
 }
 
 fn stretch_source_token(source: u32) -> &'static str {
@@ -762,19 +825,67 @@ fn camera_hwb_projection_zone_frame_with_settings(
         packed_right_rect(right_core).as_push(),
     ];
     let carrier_rects = [[0.0, 0.0, 0.5, 1.0], [0.5, 0.0, 0.5, 1.0]];
-    let draw_rects = match settings.coverage_mode {
-        1 => [
-            expand_packed_rect_within(user_rects[0], settings.outer_width_uv, carrier_rects[0]),
-            expand_packed_rect_within(user_rects[1], settings.outer_width_uv, carrier_rects[1]),
-        ],
-        2 => carrier_rects,
-        _ => core_rects,
+    let buffer_rects = if settings.region_contract_version >= 2 {
+        match settings.buffer_geometry_mode {
+            1 => [
+                expand_packed_rect_within(
+                    core_rects[0],
+                    settings.buffer_static_width_uv,
+                    user_rects[0],
+                ),
+                expand_packed_rect_within(
+                    core_rects[1],
+                    settings.buffer_static_width_uv,
+                    user_rects[1],
+                ),
+            ],
+            2 => user_rects,
+            _ => core_rects,
+        }
+    } else {
+        user_rects
+    };
+    let draw_rects = if settings.region_contract_version >= 2 {
+        if settings.replaces_video() {
+            carrier_rects
+        } else {
+            let transition_width = if settings.buffer_geometry_mode == 0 {
+                settings.inner_width_uv.max(settings.outer_width_uv)
+            } else {
+                settings.outer_width_uv
+            };
+            [
+                expand_packed_rect_within(
+                    buffer_rects[0],
+                    transition_width,
+                    carrier_rects[0],
+                ),
+                expand_packed_rect_within(
+                    buffer_rects[1],
+                    transition_width,
+                    carrier_rects[1],
+                ),
+            ]
+        }
+    } else {
+        match settings.coverage_mode {
+            1 => [
+                expand_packed_rect_within(user_rects[0], settings.outer_width_uv, carrier_rects[0]),
+                expand_packed_rect_within(user_rects[1], settings.outer_width_uv, carrier_rects[1]),
+            ],
+            2 => carrier_rects,
+            _ => core_rects,
+        }
     };
     let motion_envelope = ((1.0 - footprint_scale.clamp(0.0, 1.0)) / 0.2)
         .max(source_overscan_uv.clamp(0.0, 0.2) / 0.2)
         .clamp(0.0, 1.0);
     let uniform = ProjectionZoneUniform {
-        user_rects,
+        user_rects: if settings.region_contract_version >= 2 {
+            buffer_rects
+        } else {
+            user_rects
+        },
         carrier_rects,
         video_source_rects,
         zone: [
@@ -788,10 +899,19 @@ fn camera_hwb_projection_zone_frame_with_settings(
             settings.max_inset_uv,
             settings.stretch_curve,
             (settings.stretch_mapping
+                | settings.stretch_option_flags
                 | if settings.projection_effect_edge_guard_enabled {
                     0
                 } else {
                     1 << 1
+                }
+                | if settings.region_contract_version >= 2 {
+                    (1 << 8)
+                        | ((settings.buffer_geometry_mode & 0x3) << 9)
+                        | ((settings.buffer_fill_mode & 0x3) << 11)
+                        | ((settings.stretch_extent_mode & 0x1) << 13)
+                } else {
+                    0
                 }) as f32,
         ],
         frame: [
@@ -816,7 +936,7 @@ fn camera_hwb_projection_zone_frame_with_settings(
             settings.inner_signal as f32,
             settings.inner_width_uv,
             settings.inner_curve,
-            0.0,
+            settings.buffer_static_width_uv,
         ],
         outer_threshold: [
             settings.outer_threshold_rgb[0],
@@ -1325,6 +1445,33 @@ mod tests {
     }
 
     #[test]
+    fn stretch_off_keeps_transparent_underlay_supported_without_an_outer_seam() {
+        let settings = ProjectionZoneCompositorSettings {
+            coverage_mode: 0,
+            outer_target_mode: 1,
+            ..ProjectionZoneCompositorSettings::default()
+        };
+        assert!(!settings.active());
+        assert!(settings.transparent_underlay_requested());
+        assert!(settings.transparent_underlay_supported());
+        let marker = settings.marker_fields();
+        assert!(marker.contains("projectionZoneCompositorMode=off"));
+        assert!(marker.contains("projectionZoneOuterTarget=transparent-spatial-video"));
+        assert!(marker.contains("projectionZoneOuterUnderlaySupported=true"));
+        assert!(settings.suppresses_same_surface_video(false));
+    }
+
+    #[test]
+    fn readable_replacement_suppresses_video_only_when_its_pipeline_is_ready() {
+        let settings = ProjectionZoneCompositorSettings {
+            coverage_mode: 2,
+            ..ProjectionZoneCompositorSettings::default()
+        };
+        assert!(settings.suppresses_same_surface_video(true));
+        assert!(!settings.suppresses_same_surface_video(false));
+    }
+
+    #[test]
     fn transparent_underlay_mode_is_packed_without_expanding_the_uniform_abi() {
         let settings = ProjectionZoneCompositorSettings {
             coverage_mode: 1,
@@ -1397,6 +1544,103 @@ mod tests {
             .settings
             .marker_fields()
             .contains("projectionZoneEffectEdgeGuardEnabled=false"));
+    }
+
+    #[test]
+    fn projection_zone_stretch_option_flags_are_packed_without_expanding_the_uniform_abi() {
+        let settings = ProjectionZoneCompositorSettings {
+            coverage_mode: 1,
+            stretch_option_flags: 0x1d,
+            ..ProjectionZoneCompositorSettings::default()
+        };
+        let frame = camera_hwb_projection_zone_frame_with_settings(
+            1.0,
+            0.0,
+            0.0,
+            [[0.0, 0.0, 0.5, 1.0], [0.5, 0.0, 0.5, 1.0]],
+            settings,
+        );
+        assert_eq!(frame.uniform.stretch[3], 29.0);
+        assert!(frame
+            .settings
+            .marker_fields()
+            .contains("projectionZoneStretchOptionFlags=29"));
+    }
+
+    #[test]
+    fn independent_region_contract_packs_orthogonal_modes_without_expanding_uniform_abi() {
+        let settings = ProjectionZoneCompositorSettings {
+            coverage_mode: 1,
+            region_contract_version: 2,
+            buffer_geometry_mode: 1,
+            buffer_static_width_uv: 0.12,
+            buffer_fill_mode: 2,
+            stretch_extent_mode: 1,
+            stretch_option_flags: 0x08,
+            ..ProjectionZoneCompositorSettings::default()
+        };
+        let frame = camera_hwb_projection_zone_frame_with_settings(
+            0.8,
+            0.0,
+            0.0,
+            [[0.0, 0.0, 0.5, 1.0], [0.5, 0.0, 0.5, 1.0]],
+            settings,
+        );
+        let expected_flags = (1 << 8) | (1 << 9) | (2 << 11) | (1 << 13) | 0x08;
+        assert_eq!(std::mem::size_of::<ProjectionZoneUniform>(), 23 * 16);
+        assert_eq!(frame.uniform.stretch[3], expected_flags as f32);
+        assert_eq!(frame.uniform.inner_shape[3], 0.12);
+        assert!(frame.settings.active());
+        assert!(frame.settings.replaces_video());
+        assert_eq!(frame.draw_rects[0], [0.0, 0.0, 0.5, 1.0]);
+        assert_eq!(frame.draw_rects[1], [0.5, 0.0, 0.5, 1.0]);
+        let marker = frame.settings.marker_fields();
+        assert!(marker.contains("projectionRegionContract=v2"));
+        assert!(marker.contains("projectionBufferGeometry=static"));
+        assert!(marker.contains("projectionBufferFill=stretch"));
+        assert!(marker.contains("projectionStretchExtent=replace-outer"));
+    }
+
+    #[test]
+    fn independent_static_buffer_has_fixed_boundary_and_off_still_runs_direct_transition() {
+        let static_settings = ProjectionZoneCompositorSettings {
+            coverage_mode: 1,
+            region_contract_version: 2,
+            buffer_geometry_mode: 1,
+            buffer_static_width_uv: 0.10,
+            buffer_fill_mode: 0,
+            ..ProjectionZoneCompositorSettings::default()
+        };
+        let static_frame = camera_hwb_projection_zone_frame_with_settings(
+            0.8,
+            0.0,
+            0.0,
+            [[0.0, 0.0, 0.5, 1.0], [0.5, 0.0, 0.5, 1.0]],
+            static_settings,
+        );
+        for eye in 0..2 {
+            assert!(static_frame.uniform.user_rects[eye][2] > static_frame.core_rects[eye][2]);
+            assert!(static_frame.uniform.user_rects[eye][2] < static_frame.user_rects[eye][2]);
+        }
+
+        let off_settings = ProjectionZoneCompositorSettings {
+            coverage_mode: 0,
+            region_contract_version: 2,
+            buffer_geometry_mode: 0,
+            buffer_fill_mode: 2,
+            stretch_extent_mode: 1,
+            ..ProjectionZoneCompositorSettings::default()
+        };
+        let off_frame = camera_hwb_projection_zone_frame_with_settings(
+            0.8,
+            0.0,
+            0.0,
+            [[0.0, 0.0, 0.5, 1.0], [0.5, 0.0, 0.5, 1.0]],
+            off_settings,
+        );
+        assert!(off_frame.settings.active());
+        assert!(!off_frame.settings.replaces_video());
+        assert_eq!(off_frame.uniform.user_rects, off_frame.core_rects);
     }
 
     #[test]

@@ -150,6 +150,7 @@ class HostessReplayControlStateConverterTest {
     assertEquals(0.015f, profile.zoneCompositor.edgeInsetUv)
     assertEquals(0.14f, profile.zoneCompositor.maxInsetUv)
     assertEquals(0.68f, profile.zoneCompositor.processedMix)
+    assertEquals(0, profile.zoneCompositor.stretchOptionFlags)
     assertEquals(0.018f, profile.rgbChannelTransform.red.displacementStrengthUv)
     assertEquals(-0.13f, profile.rgbChannelTransform.blue.directionRateHz)
     assertEquals(true, profile.projectionSurfaceDisplacement.enabled)
@@ -185,6 +186,40 @@ class HostessReplayControlStateConverterTest {
         profile.projectionInnerAlpha.stretchPolicy,
     )
     assertTrue(profile.projectionInnerAlpha.stretchObeysExactProjectionMask)
+  }
+
+  @Test
+  fun additiveSurfaceFeatureUniformExportsTriangleTileTopology() {
+    val state = stateWithSurfaceFeatures()
+    state
+        .getJSONObject("projection")
+        .getJSONArray("surface_feature_uniform_f32")
+        .put(17, 2.0)
+    val profile =
+        SpatialCameraControlProfileContract.parse(
+            HostessReplayControlStateConverter.export(state.toString().toByteArray())
+        )
+    assertEquals(
+        ProjectionSurfaceTilingControls.topologyTriangleTiles,
+        profile.projectionSurfaceTiling.topology,
+    )
+    assertEquals(
+        "triangle-tiles",
+        ProjectionSurfaceTilingControls.topologyToken(profile.projectionSurfaceTiling.topology),
+    )
+  }
+
+  @Test
+  fun zoneUniformPreservesOpaqueStretchOptionsSeparatelyFromEdgeGuard() {
+    val state = validState()
+    state.getJSONObject("projection").getJSONArray("zone_uniform_f32").put(31, 26.0)
+    val profile =
+        SpatialCameraControlProfileContract.parse(
+            HostessReplayControlStateConverter.export(state.toString().toByteArray())
+        )
+
+    assertEquals(24, profile.zoneCompositor.stretchOptionFlags)
+    assertEquals(false, profile.zoneCompositor.projectionEffectEdgeGuardEnabled)
   }
 
   @Test
