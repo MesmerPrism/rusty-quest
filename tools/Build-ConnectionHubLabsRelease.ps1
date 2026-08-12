@@ -67,6 +67,34 @@ foreach ($required in @($keystorePath, $spec, $lock)) {
     if (-not (Test-Path -LiteralPath $required -PathType Leaf)) { throw "Required release input is missing: $required" }
 }
 
+$keytool = if ([string]::IsNullOrWhiteSpace($JavaHome)) {
+    (Get-Command keytool -ErrorAction Stop).Source
+} else {
+    Join-Path $JavaHome "bin\keytool.exe"
+}
+if (-not (Test-Path -LiteralPath $keytool -PathType Leaf)) {
+    throw "Java keytool is unavailable for the pre-build signer check: $keytool"
+}
+$signerProbe = Join-Path $out "keystore-signer-preflight.der"
+try {
+    & $keytool -exportcert `
+        -keystore $keystorePath `
+        -storepass android `
+        -alias androiddebugkey `
+        -file $signerProbe
+    if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $signerProbe -PathType Leaf)) {
+        throw "Could not export the Connection Hub signing certificate before build."
+    }
+    $actualSignerSha256 = Get-Sha256 $signerProbe
+    if ($actualSignerSha256 -cne $ExpectedSignerSha256) {
+        throw "Keystore signer mismatch before build: expected $ExpectedSignerSha256, got $actualSignerSha256. Use the stable accepted Hub keystore so the APK can update the installed app."
+    }
+} finally {
+    if (Test-Path -LiteralPath $signerProbe -PathType Leaf) {
+        Remove-Item -LiteralPath $signerProbe -Force
+    }
+}
+
 $buildOut = Join-Path $out "build"
 & (Join-Path $repoRoot "tools\Build-ManifoldBrokerAndroid.ps1") `
     -AndroidHome $AndroidHome `

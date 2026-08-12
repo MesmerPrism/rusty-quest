@@ -227,6 +227,12 @@ if ($releaseScript.IndexOf('$aapt2 dump xmltree $builtApk --file AndroidManifest
     $releaseScript -match 'dump xmltree \$builtApk AndroidManifest\.xml') {
     throw "Connection Hub release inspection does not use the pinned aapt2 xmltree file contract."
 }
+if ($releaseScript -notmatch 'keystore-signer-preflight\.der' -or
+    $releaseScript -notmatch 'Keystore signer mismatch before build' -or
+    $releaseScript.IndexOf('$actualSignerSha256 = Get-Sha256 $signerProbe',
+        [StringComparison]::Ordinal) -lt 0) {
+    throw "Connection Hub release build does not reject a mismatched update signer before compilation."
+}
 $runtimeOwnerIndex = $process.IndexOf('ManifoldRuntimeAuthorityBridge.initialize();', [StringComparison]::Ordinal)
 $hubOwnerIndex = $process.IndexOf('new ManifoldConnectionHubAuthority()', [StringComparison]::Ordinal)
 if ($runtimeOwnerIndex -lt 0 -or $hubOwnerIndex -lt 0 -or $runtimeOwnerIndex -ge $hubOwnerIndex) {
