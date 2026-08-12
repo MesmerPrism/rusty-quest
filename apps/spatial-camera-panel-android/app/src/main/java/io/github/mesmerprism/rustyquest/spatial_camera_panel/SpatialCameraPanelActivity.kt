@@ -1738,7 +1738,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
 
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
-    handlePrivatePanelLaunchIntent(intent, "activity-created")
+    handlePrivatePanelLaunchIntent(intent, "activity-create")
     PrivateLayerZoneCompositorPanelBridge.bind(
         initial = privateLayerControlCoordinator.zoneCompositor,
         submit = privateLayerControlCoordinator::updateZoneCompositor,
@@ -2471,7 +2471,10 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
       return
     }
     setPrivateLayerPanelVisible(false, focus = false, source = "locked-app-launch-option")
-    runCatching { scene.spatialInterface.enableInput(lockedExtensionInputsEnabled) }
+    runCatching { scene.spatialInterface.enableInput(false) }
+    if (lockedExtensionInputsEnabled) {
+      runCatching { scene.spatialInterface.enableInput(true) }
+    }
     if (nativeInteropCoordinator.receiptLibraryLoaded) {
       runCatching { nativeStopSpatialControllerActions() }
     }
