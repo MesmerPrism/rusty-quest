@@ -46,6 +46,8 @@ internal object ConnectionHubLockedPlaylistContract {
           "active_index",
           "active_label",
           "item_count",
+          "item_duration_seconds",
+          "item_elapsed_seconds",
           "paused",
           "phase",
           "playlist_title",

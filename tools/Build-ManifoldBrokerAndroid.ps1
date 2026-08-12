@@ -152,11 +152,12 @@ function Read-ValidatedSpatialCameraPanelLockedPlaylistHubContract {
         [ordered]@{ command = "command.spatial_camera_panel.locked_playlist.resume"; display_label = "Resume"; required_controller_capability = "capability.spatial_camera_panel.locked_playlist.resume" }
     )
     $expectedStateKeys = @(
-        "active_index", "active_label", "item_count", "paused", "phase",
+        "active_index", "active_label", "item_count", "item_duration_seconds",
+        "item_elapsed_seconds", "paused", "phase",
         "playlist_title", "progress", "revision", "running"
     )
     if ([string]$contract.'$schema' -cne "rusty.quest.connection_hub.locked_playlist_surface_contract.v1" -or
-        [string]$contract.canonical_version -cne "locked-playlist-v1" -or
+        [string]$contract.canonical_version -cne "locked-playlist-v2" -or
         [string]$contract.provider_id -cne "provider.quest.spatial-camera-panel-locked-playlist" -or
         [string]$contract.surface_id -cne "surface.spatial_camera_panel.locked_playlist" -or
         [string]$contract.display_label -cne "Spatial Camera Locked Playlist" -or
@@ -174,7 +175,7 @@ function Read-ValidatedSpatialCameraPanelLockedPlaylistHubContract {
         throw "Spatial Camera Panel locked-playlist Hub surface contract changed outside its closed reviewed boundary."
     }
 
-    $canonical = "locked-playlist-v1`nprovider|$($contract.provider_id)`nsurface|$($contract.surface_id)`nlabel|$($contract.display_label)`ndescription|$($contract.description)`ntyped_params|$($contract.typed_params_schema)`navailability|$($contract.availability)`nlifecycle|$($contract.lifecycle)`ndirect_item_activation|$($contract.direct_item_activation)`nordered_item_list|$($contract.ordered_item_list)`nmax_state_keys|$($contract.max_state_keys)`nmax_state_bytes|$($contract.max_state_bytes)`nmax_string_bytes|$($contract.max_string_bytes)`n"
+    $canonical = "locked-playlist-v2`nprovider|$($contract.provider_id)`nsurface|$($contract.surface_id)`nlabel|$($contract.display_label)`ndescription|$($contract.description)`ntyped_params|$($contract.typed_params_schema)`navailability|$($contract.availability)`nlifecycle|$($contract.lifecycle)`ndirect_item_activation|$($contract.direct_item_activation)`nordered_item_list|$($contract.ordered_item_list)`nmax_state_keys|$($contract.max_state_keys)`nmax_state_bytes|$($contract.max_state_bytes)`nmax_string_bytes|$($contract.max_string_bytes)`n"
     $runtimeCanonical = "v1`n$($contract.surface_id)`n$($contract.display_label)`n$($contract.description)`n"
     $commands = @()
     for ($index = 0; $index -lt $expectedCommands.Count; $index += 1) {

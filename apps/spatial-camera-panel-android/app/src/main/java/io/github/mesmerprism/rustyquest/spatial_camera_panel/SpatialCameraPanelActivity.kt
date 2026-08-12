@@ -1688,7 +1688,8 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
         "channel=activity status=created package=${BuildConfig.APPLICATION_ID} " +
             "sourceNamespace=io.github.mesmerprism.rustyquest.spatial_camera_panel " +
             "highRateJsonPayload=false hand_rendering_expected=false " +
-            "controller_rendering_expected=${presentationPolicy.appControlInputsEnabled} " +
+            "controller_rendering_expected=false " +
+            "controllerRenderingOptInProperty=$AVATAR_CONTROLLERS_VISIBLE_PROPERTY " +
             "spatialPointerInputExpected=${presentationPolicy.appControlInputsEnabled} " +
             "nativeSurfaceParticleLayerExpected=true " +
             "spatialVrInputSystem=${currentSpatialVrInputSystemToken()} " +
@@ -2363,6 +2364,8 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
                     projectionInnerAlpha =
                         privateLayerControlCoordinator.projectionInnerAlpha,
                     videoSession = immersiveVideoPanelCoordinator::sessionSnapshot,
+                    profileLibrary = storedProfileAuthority::snapshot,
+                    panelExtension = privatePanelExtension,
                     setLayerOverride = privateLayerControlCoordinator::updateLayerOverride,
                     setProjectionPanelEnabled = ::setProjectionPanelEnabled,
                     setVideoPlaybackEnabled = { enabled ->

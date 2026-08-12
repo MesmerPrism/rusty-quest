@@ -19,6 +19,64 @@
   let reconnectTimer = null;
   let authenticatedInPage = false;
   let unconfirmedReconnects = 0;
+  const LOCKED_PLAYLIST_SURFACE_ID = "surface.spatial_camera_panel.locked_playlist";
+
+  const formatDuration = value => {
+    if (value === null || value === undefined || value === "") return "–:––";
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric) || numeric < 0) return "–:––";
+    const totalSeconds = Math.floor(numeric);
+    const seconds = totalSeconds % 60;
+    const totalMinutes = Math.floor(totalSeconds / 60);
+    if (totalMinutes < 60) return `${totalMinutes}:${String(seconds).padStart(2, "0")}`;
+    const hours = Math.floor(totalMinutes / 60);
+    const minutes = totalMinutes % 60;
+    return `${hours}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+  };
+
+  const lockedPlaylistStateRows = state => {
+    const itemCount = Number.isSafeInteger(state.item_count) && state.item_count >= 0
+      ? state.item_count : 0;
+    const activeIndex = Number.isSafeInteger(state.active_index) ? state.active_index : -1;
+    const position = activeIndex >= 0 && activeIndex < itemCount
+      ? `${activeIndex + 1} of ${itemCount}` : itemCount > 0 ? `— of ${itemCount}` : "No items";
+    const duration = Number(state.item_duration_seconds);
+    const elapsed = Number(state.item_elapsed_seconds);
+    const safeDuration = Number.isFinite(duration) && duration >= 0 ? duration : null;
+    const safeElapsed = Number.isFinite(elapsed) && elapsed >= 0
+      ? (safeDuration === null ? elapsed : Math.min(elapsed, safeDuration)) : null;
+    const phase = state.phase === "transition" ? "Transitioning" : "Playing";
+    return [
+      {label: "Playlist", value: state.playlist_title || "Untitled playlist", wide: true},
+      {label: "Current item", value: position},
+      {label: "Item", value: state.active_label || "Unnamed item"},
+      {label: "Status", value: state.paused === true ? "Paused" : phase},
+      {
+        label: "Item time",
+        value: `${formatDuration(safeElapsed)} / ${formatDuration(safeDuration)}`,
+        progress: safeDuration > 0 && safeElapsed !== null ? safeElapsed / safeDuration : null,
+        wide: true,
+      },
+    ];
+  };
+
+  const surfaceStateRows = surface => {
+    if (surface.surface_id === LOCKED_PLAYLIST_SURFACE_ID) {
+      return lockedPlaylistStateRows(surface.state || {});
+    }
+    return Object.entries(surface.state || {}).map(([name, value]) => ({
+      label: name.replaceAll("_", " "),
+      value: String(value),
+    }));
+  };
+
+  if (globalThis.RustyConnectionHubTestHooks
+      && typeof globalThis.RustyConnectionHubTestHooks === "object") {
+    Object.assign(globalThis.RustyConnectionHubTestHooks, {
+      formatDuration,
+      lockedPlaylistStateRows,
+    });
+  }
 
   // crypto.subtle is intentionally unavailable to ordinary HTTP pages in
   // Chromium. Trusted-LAN experimental mode is explicitly HTTP/plaintext, so
@@ -345,13 +403,21 @@
       card.querySelector(".description").textContent = surface.description;
       card.querySelector(".provider").textContent = surface.provider_package;
       const state = card.querySelector(".state");
-      Object.entries(surface.state || {}).forEach(([name, value]) => {
+      surfaceStateRows(surface).forEach(presentation => {
         const row = document.createElement("div");
         const term = document.createElement("dt");
         const detail = document.createElement("dd");
-        term.textContent = name.replaceAll("_", " ");
-        detail.textContent = String(value);
+        term.textContent = presentation.label;
+        detail.textContent = presentation.value;
+        if (presentation.wide) row.classList.add("wide");
         row.append(term, detail);
+        if (presentation.progress !== null && presentation.progress !== undefined) {
+          const progress = document.createElement("progress");
+          progress.max = 1;
+          progress.value = Math.max(0, Math.min(1, presentation.progress));
+          progress.setAttribute("aria-label", presentation.label);
+          row.append(progress);
+        }
         state.append(row);
       });
       surface.commands.forEach(descriptor => {

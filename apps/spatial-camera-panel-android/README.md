@@ -54,10 +54,20 @@ rebind. Stale generations and mismatched fingerprints/correlations reject;
 cleanup unregisters exactly once.
 
 The public surface projects only bounded scalar state and empty-argument
-Previous, Next, Pause, and Resume commands. Application effect confirmation is
-required after Binder dispatch. It exposes no ordered items, profile ids,
-private effects, caller-selected identity/capability, or arbitrary arguments.
-Validate the app and Hub composition together before any device run.
+Previous, Next, Pause, and Resume commands. Its current-item projection includes
+the item count, one-based browser presentation of the active index, and integer
+elapsed/total seconds. State publication is bounded to one update per second;
+command results are still published immediately. Application effect
+confirmation is required after Binder dispatch. It exposes no ordered items,
+profile ids, private effects, caller-selected identity/capability, or arbitrary
+arguments. Validate the app and Hub composition together before any device run.
+
+Private capsule JVM tests can stay in their owning private repository. Pass
+their directories to `tools/Test-SpatialCameraPanelAndroid.ps1` with
+`-PrivateFeatureSourceDir`, `-PrivateFeatureResourceDir`,
+`-PrivateFeatureTestSourceDir`, and `-PrivateFeatureTestResourceDir`; the test
+wrapper mounts them as Gradle source sets without copying private source into
+this public repository.
 
 The accepted `MOD-001` particle classification reuses
 `rusty.matter.surface_runtime.particle_snapshot.v1` and the existing Matter
@@ -528,9 +538,11 @@ until a headset run proves controller-ray targeting, button clickability, and
 layer-button effect changes in the actual app.
 
 For controller modality, this APK follows the official Spatial SDK panel sample
-shape: optional hands-and-controllers declarations are present, controller
-render models are requested, and the default VR input backend is Interaction
-SDK pointer mode. The debug property
+shape: optional hands-and-controllers declarations are present and the default
+VR input backend is Interaction SDK pointer mode. Avatar controller render
+models are hidden by default without disabling controller input; the debug
+property `debug.rustyquest.spatial.avatar_controllers.visible=true` enables them
+for comparison runs. The debug property
 `debug.rustyquest.spatial_camera_panel.vr_input_system=simple_controller` can
 still be used for controlled headset A/B tests, but the normal path is
 `interaction_sdk`. If no local `AvatarBody` hand entity reports an active
@@ -962,10 +974,12 @@ Interaction SDK pointer input without native multimodal extension forcing.
   native-interop receipt, and low-rate control state models used by the
   Activity facade and panel UI.
 - `app/src/main/.../SpatialAvatarHandVisualFeature.kt` owns the built-in Meta
-  avatar hand visual policy. The default keeps hands hidden so native/public
-  hand visuals remain explicit; set
+  avatar hand and controller visual policy. The default keeps both hidden while
+  leaving controller input active, so native/public visuals remain explicit; set
   `debug.rustyquest.spatial.avatar_hands.visible=true` on a headset to enable
-  the Spatial SDK `AvatarSystem` hand visual for comparison runs.
+  the Spatial SDK `AvatarSystem` hand visual or
+  `debug.rustyquest.spatial.avatar_controllers.visible=true` to enable its
+  controller models for comparison runs.
 - `app/src/main/.../SpatialAvatarHandInvestigationFeature.kt` owns the
   read-only Spatial SDK hand investigation probe. Enable it with
   `debug.rustyquest.spatial.avatar_hand_probe.enabled=true`; it samples

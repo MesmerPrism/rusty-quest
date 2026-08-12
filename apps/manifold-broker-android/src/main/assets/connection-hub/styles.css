@@ -29,8 +29,10 @@ button:disabled { opacity: .4; cursor: default; }
 .provider { max-width: 260px; color: #7fa4aa; font-size: .72rem; overflow-wrap: anywhere; }
 .state { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; margin: 16px 0; }
 .state div { padding: 9px; border-radius: 8px; background: #081a1d; }
+.state div.wide { grid-column: 1 / -1; }
 .state dt { color: #8aa8ad; font-size: .7rem; text-transform: uppercase; }
 .state dd { margin: 4px 0 0; overflow-wrap: anywhere; }
+.state progress { display: block; width: 100%; height: 8px; margin-top: 9px; accent-color: #88efde; }
 .commands { display: flex; flex-wrap: wrap; gap: 8px; }
 .receipt { min-height: 1.2em; margin: 12px 0 0; color: #8ed8d8; font-size: .85rem; }
 @media (max-width: 620px) { .pair-row, .section-heading, .surface-heading { align-items: stretch; flex-direction: column; } input { max-width: none; } }

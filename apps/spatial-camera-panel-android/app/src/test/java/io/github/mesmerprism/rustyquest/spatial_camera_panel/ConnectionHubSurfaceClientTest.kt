@@ -15,6 +15,8 @@ class ConnectionHubSurfaceClientTest {
             .put("active_index", 1)
             .put("active_label", "Second")
             .put("item_count", 3)
+            .put("item_duration_seconds", 90)
+            .put("item_elapsed_seconds", 23)
             .put("paused", false)
             .put("phase", "dwell")
             .put("playlist_title", "Sequence")

@@ -27,6 +27,8 @@ internal data class SpatialPrivateLayerPanelRegistrationBindings(
     val projectionSurfaceTiling: ProjectionSurfaceTiling,
     val projectionInnerAlpha: ProjectionInnerAlpha,
     val videoSession: () -> SpatialImmersiveVideoSessionSnapshot,
+    val profileLibrary: () -> SpatialCameraPanelProfileLibrarySnapshot,
+    val panelExtension: SpatialPrivatePanelExtension?,
     val setLayerOverride: (Float, String) -> Float,
     val setProjectionPanelEnabled: (Boolean, String) -> Boolean,
     val setVideoPlaybackEnabled:
@@ -97,6 +99,8 @@ internal object SpatialComposePanelRegistrationModule {
                       projectionSurfaceTiling = bindings.projectionSurfaceTiling,
                       projectionInnerAlpha = bindings.projectionInnerAlpha,
                       videoSession = bindings.videoSession,
+                      profileLibrary = bindings.profileLibrary,
+                      panelExtension = bindings.panelExtension,
                       setLayerOverride = bindings.setLayerOverride,
                       setProjectionPanelEnabled = bindings.setProjectionPanelEnabled,
                       setVideoPlaybackEnabled = bindings.setVideoPlaybackEnabled,

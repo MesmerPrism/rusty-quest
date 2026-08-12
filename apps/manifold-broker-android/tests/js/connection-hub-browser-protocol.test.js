@@ -110,6 +110,68 @@ const storage = initial => {
   };
 };
 
+const runPresentationHelpers = () => {
+  const elements = new Map([
+    ["#surfaces", new FakeElement()],
+    ["#surface-template", new FakeElement()],
+    ["#pair-status", new FakeElement()],
+    ["#pair-button", new FakeElement()],
+    ["#disconnect-button", new FakeElement()],
+    ["#pairing-code", new FakeElement()],
+  ]);
+  const hooks = {};
+  const browserContext = vm.createContext({
+    RustyConnectionHubProtocol: actual,
+    RustyConnectionHubCanonicalJson: canonicalJsonEncoder,
+    RustyConnectionHubTestHooks: hooks,
+    document: {
+      querySelector: selector => elements.get(selector),
+      createElement: () => new FakeElement(),
+    },
+    sessionStorage: storage({}),
+    localStorage: storage({}),
+    fetch: async () => { throw new Error("unexpected fetch"); },
+    crypto: require("crypto").webcrypto,
+    TextEncoder,
+    location: {protocol: "http:", host: "hub.test"},
+    WebSocket: class {},
+    CSS: {escape: value => value},
+    setInterval: () => 1,
+    clearInterval: () => {},
+    setTimeout: () => 1,
+    clearTimeout: () => {},
+  });
+  vm.runInContext(appSource, browserContext, {filename: "app.js"});
+  if (hooks.formatDuration(0) !== "0:00"
+      || hooks.formatDuration(83.91) !== "1:23"
+      || hooks.formatDuration(3723) !== "1:02:03"
+      || hooks.formatDuration(Number.NaN) !== "–:––") {
+    throw new Error("playlist duration formatter is not stable and human-readable");
+  }
+  const rows = JSON.parse(JSON.stringify(hooks.lockedPlaylistStateRows({
+    playlist_title: "Night sequence",
+    item_count: 3,
+    active_index: 1,
+    active_label: "Second view",
+    paused: false,
+    phase: "dwell",
+    item_elapsed_seconds: 83,
+    item_duration_seconds: 300,
+    progress: 0.27666666666666667,
+  })));
+  const values = Object.fromEntries(rows.map(row => [row.label, row.value]));
+  if (values.Playlist !== "Night sequence"
+      || values["Current item"] !== "2 of 3"
+      || values.Item !== "Second view"
+      || values.Status !== "Playing"
+      || values["Item time"] !== "1:23 / 5:00") {
+    throw new Error("locked-playlist state was not projected into operator-readable rows");
+  }
+  if (rows.some(row => row.label === "progress" || String(row.value).includes("0.276666"))) {
+    throw new Error("raw locked-playlist progress leaked into the operator presentation");
+  }
+};
+
 const runDisconnect = async fetchImplementation => {
   const elements = new Map([
     ["#surfaces", new FakeElement()],
@@ -410,6 +472,7 @@ const runV2SequenceFlow = () => {
 };
 
 (async () => {
+  runPresentationHelpers();
   await runPlainHttpPair();
   runStoredSessionRecovery();
   runV2SequenceFlow();

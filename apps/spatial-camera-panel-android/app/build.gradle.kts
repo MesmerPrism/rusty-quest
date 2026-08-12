@@ -330,6 +330,14 @@ android {
         ?.takeIf { it.isNotBlank() }
         ?.let { res.srcDir(it) }
     }
+    getByName("test") {
+      providers.environmentVariable("RUSTY_QUEST_SPATIAL_PRIVATE_FEATURE_TEST_SRC_DIR").orNull
+        ?.takeIf { it.isNotBlank() }
+        ?.let { java.srcDir(it) }
+      providers.environmentVariable("RUSTY_QUEST_SPATIAL_PRIVATE_FEATURE_TEST_RES_DIR").orNull
+        ?.takeIf { it.isNotBlank() }
+        ?.let { resources.srcDir(it) }
+    }
   }
 
   compileOptions {

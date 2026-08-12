@@ -151,6 +151,7 @@ $cameraHwbProjectionSyntheticRenderer = Read-RequiredText "apps\spatial-camera-p
 $cameraHwbProjectionCarrierStateCoordinator = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\SpatialCameraHwbProjectionCarrierStateCoordinator.kt"
 $cameraHwbProjectionGeometryCoordinator = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\SpatialCameraHwbProjectionGeometryCoordinator.kt"
 $avatarFeature = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\SpatialAvatarHandVisualFeature.kt"
+$connectionHubSurfaceClient = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\ConnectionHubSurfaceClient.kt"
 $avatarProbeFeature = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\SpatialAvatarHandInvestigationFeature.kt"
 $handBillboardFeature = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\SpatialHandBillboardFlockFeature.kt"
 $liveSkinnedHandSurface = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\SpatialLiveSkinnedHandSurface.kt"
@@ -226,6 +227,8 @@ Assert-Contains "Gradle app" $appGradle 'applicationId = spatialApplicationId.ge
 Assert-Contains "Gradle app" $appGradle 'RUSTY_QUEST_SPATIAL_APP_LABEL'
 Assert-Contains "Gradle app" $appGradle 'manifestPlaceholders["spatialAppLabel"] = spatialAppLabel.get()'
 Assert-Contains "Gradle app" $appGradle 'RUSTY_QUEST_SPATIAL_LOCKED_FINAL_PRESENTATION'
+Assert-Contains "Gradle app" $appGradle 'RUSTY_QUEST_SPATIAL_PRIVATE_FEATURE_TEST_SRC_DIR'
+Assert-Contains "Gradle app" $appGradle 'RUSTY_QUEST_SPATIAL_PRIVATE_FEATURE_TEST_RES_DIR'
 Assert-Contains "Gradle app" $appGradle 'RUSTY_QUEST_SPATIAL_DISTORTION_SPEED_SCALE'
 Assert-Contains "Gradle app" $appGradle '"LOCKED_FINAL_PRESENTATION"'
 Assert-Contains "Gradle app" $appGradle '"DISTORTION_SPEED_SCALE"'
@@ -3240,10 +3243,16 @@ Assert-Contains "Panel models" $panelModels "data class SpatialNativeInteropProb
 Assert-Contains "Avatar feature" $avatarFeature "internal class SpatialAvatarHandVisualFeature"
 Assert-Contains "Avatar feature" $avatarFeature "SpatialAvatarHandVisualPolicySystem"
 Assert-Contains "Avatar feature" $avatarFeature "debug.rustyquest.spatial.avatar_hands.visible"
+Assert-Contains "Avatar feature" $avatarFeature "debug.rustyquest.spatial.avatar_controllers.visible"
+Assert-Contains "Avatar feature" $avatarFeature "avatarSystem.setShowControllers(showControllers)"
+Assert-NotContains "Avatar feature" $avatarFeature "avatarSystem.setShowControllers(true)"
 Assert-Contains "Avatar feature" $avatarFeature "avatarSystem.setShowHands(showHands)"
 Assert-Contains "Avatar feature" $avatarFeature "builtInMetaHandVisualPolicy=pending"
 Assert-Contains "Avatar feature" $avatarFeature "builtInMetaHandMaterialPolicy=sdk-owned-no-public-material-surface"
-Assert-Contains "Avatar feature" $avatarFeature 'builtInMetaHandVisualPolicy=$policy'
+Assert-Contains "Avatar feature" $avatarFeature 'builtInMetaHandVisualPolicy=$handPolicy'
+Assert-Contains "Avatar feature" $avatarFeature 'builtInMetaControllerVisualPolicy=$controllerPolicy'
+Assert-Contains "Connection Hub surface client" $connectionHubSurfaceClient "const val STATE_PUBLISH_INTERVAL_MS = 1_000L"
+Assert-NotContains "Connection Hub surface client" $connectionHubSurfaceClient "else if (shouldPublish && sessionState.isRegistered)"
 Assert-Contains "Avatar hand probe feature" $avatarProbeFeature "internal class SpatialAvatarHandInvestigationFeature"
 Assert-Contains "Avatar hand probe feature" $avatarProbeFeature "rusty.quest.spatial.avatar_hand_investigation.v1"
 Assert-Contains "Avatar hand probe feature" $avatarProbeFeature "debug.rustyquest.spatial.avatar_hand_probe.enabled"

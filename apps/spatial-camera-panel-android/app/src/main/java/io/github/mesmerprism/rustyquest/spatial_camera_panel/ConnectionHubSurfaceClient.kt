@@ -89,8 +89,6 @@ internal class ConnectionHubSurfaceClient(
         sessionState.phase != ConnectionHubAdmissionSessionReducer.Phase.IDLE &&
         sessionState.phase != ConnectionHubAdmissionSessionReducer.Phase.CLOSED) {
       close()
-    } else if (shouldPublish && sessionState.isRegistered) {
-      sendSurfaceState()
     }
   }
 
