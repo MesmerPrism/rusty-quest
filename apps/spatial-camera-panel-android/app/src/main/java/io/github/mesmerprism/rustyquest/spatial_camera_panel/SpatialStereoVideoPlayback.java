@@ -19,6 +19,7 @@ import java.util.Locale;
 public final class SpatialStereoVideoPlayback {
     private static final String LOG_TAG = "RQSpatialCamera";
     private static final String SOURCE_BROKER_RMANVID1 = "broker-rmanvid1";
+    private static final String SOURCE_PEER_PACKED_STEREO = "peer-packed-stereo";
     private static final String SOURCE_ENCRYPTED_OFFLINE_PACK = "encrypted-offline-pack";
     private static final String SOURCE_SHARED_PLAIN_VIDEO = "shared-plain-video";
     private static final int EVENT_START_REQUESTED = 1;
@@ -62,7 +63,12 @@ public final class SpatialStereoVideoPlayback {
         String brokerHost,
         int brokerPort,
         int brokerConnectTimeoutMs,
-        String mediaLayout
+        String mediaLayout,
+        String peerRouteKind,
+        String peerSessionId,
+        String peerRelayChannel,
+        String peerTlsServerName,
+        String peerAuthToken
     ) {
         int requestedWidth = clamp(width, 320, 4096);
         int requestedHeight = clamp(height, 240, 4096);
@@ -71,7 +77,8 @@ public final class SpatialStereoVideoPlayback {
         int requestedFpsCap =
             nativeFallbackFpsForSurfaceCadence(requestedSurfaceCadenceFps);
         String resolvedPath = resolvePath(context, path);
-        boolean brokerSource = SOURCE_BROKER_RMANVID1.equals(source);
+        boolean brokerSource = SOURCE_BROKER_RMANVID1.equals(source)
+            || SOURCE_PEER_PACKED_STEREO.equals(source);
         boolean encryptedOfflinePackSource = SOURCE_ENCRYPTED_OFFLINE_PACK.equals(source);
         boolean sharedPlainVideoSource = SOURCE_SHARED_PLAIN_VIDEO.equals(source);
 
@@ -182,6 +189,11 @@ public final class SpatialStereoVideoPlayback {
                             brokerPort,
                             brokerConnectTimeoutMs,
                             mediaLayout,
+                            peerRouteKind,
+                            peerSessionId,
+                            peerRelayChannel,
+                            peerTlsServerName,
+                            peerAuthToken,
                             surface,
                             requestedWidth,
                             requestedHeight,
@@ -434,6 +446,11 @@ public final class SpatialStereoVideoPlayback {
         int port,
         int connectTimeoutMs,
         String mediaLayout,
+        String peerRouteKind,
+        String peerSessionId,
+        String peerRelayChannel,
+        String peerTlsServerName,
+        String peerAuthToken,
         Surface surface,
         int width,
         int height,
@@ -447,6 +464,11 @@ public final class SpatialStereoVideoPlayback {
                 port,
                 connectTimeoutMs,
                 mediaLayout,
+                peerRouteKind,
+                peerSessionId,
+                peerRelayChannel,
+                peerTlsServerName,
+                peerAuthToken,
                 surface,
                 width,
                 height,

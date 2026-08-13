@@ -19,6 +19,14 @@ private const val CAMERA_HWB_PROJECTION_VIDEO_BROKER_PORT_PROPERTY =
     "debug.rustyquest.spatial.camera_hwb_projection_probe.video.broker.port"
 private const val CAMERA_HWB_PROJECTION_VIDEO_BROKER_CONNECT_TIMEOUT_MS_PROPERTY =
     "debug.rustyquest.spatial.camera_hwb_projection_probe.video.broker.connect_timeout_ms"
+private const val CAMERA_HWB_PROJECTION_VIDEO_PEER_ROUTE_KIND_PROPERTY =
+    "debug.rustyquest.spatial.camera_hwb_projection_probe.video.peer.route_kind"
+private const val CAMERA_HWB_PROJECTION_VIDEO_PEER_SESSION_ID_PROPERTY =
+    "debug.rustyquest.spatial.camera_hwb_projection_probe.video.peer.session_id"
+private const val CAMERA_HWB_PROJECTION_VIDEO_PEER_RELAY_CHANNEL_PROPERTY =
+    "debug.rustyquest.spatial.camera_hwb_projection_probe.video.peer.relay_channel"
+private const val CAMERA_HWB_PROJECTION_VIDEO_PEER_TLS_SERVER_NAME_PROPERTY =
+    "debug.rustyquest.spatial.camera_hwb_projection_probe.video.peer.tls_server_name"
 private const val CAMERA_HWB_PROJECTION_VIDEO_MEDIA_LAYOUT_PROPERTY =
     "debug.rustyquest.spatial.camera_hwb_projection_probe.video.media_layout"
 private const val CAMERA_HWB_PROJECTION_VIDEO_STEREO_LAYOUT_PROPERTY =
@@ -52,6 +60,16 @@ private const val EXTRA_VIDEO_PROJECTION_BROKER_PORT =
     "rustyquest.spatial.camera_hwb_projection_probe.video.broker.port"
 private const val EXTRA_VIDEO_PROJECTION_BROKER_CONNECT_TIMEOUT_MS =
     "rustyquest.spatial.camera_hwb_projection_probe.video.broker.connect_timeout_ms"
+private const val EXTRA_VIDEO_PROJECTION_PEER_ROUTE_KIND =
+    "rustyquest.spatial.camera_hwb_projection_probe.video.peer.route_kind"
+private const val EXTRA_VIDEO_PROJECTION_PEER_SESSION_ID =
+    "rustyquest.spatial.camera_hwb_projection_probe.video.peer.session_id"
+private const val EXTRA_VIDEO_PROJECTION_PEER_RELAY_CHANNEL =
+    "rustyquest.spatial.camera_hwb_projection_probe.video.peer.relay_channel"
+private const val EXTRA_VIDEO_PROJECTION_PEER_TLS_SERVER_NAME =
+    "rustyquest.spatial.camera_hwb_projection_probe.video.peer.tls_server_name"
+private const val EXTRA_VIDEO_PROJECTION_PEER_AUTH_TOKEN =
+    "rustyquest.spatial.camera_hwb_projection_probe.video.peer.auth_token"
 private const val EXTRA_VIDEO_PROJECTION_MEDIA_LAYOUT =
     "rustyquest.spatial.camera_hwb_projection_probe.video.media_layout"
 private const val EXTRA_VIDEO_PROJECTION_STEREO_LAYOUT =
@@ -96,6 +114,22 @@ private const val CAMERA_HWB_PROJECTION_VIDEO_MAX_FPS = 90
 private const val CAMERA_HWB_PROJECTION_VIDEO_DEFAULT_LOOPING = true
 private const val CAMERA_HWB_PROJECTION_VIDEO_DEFAULT_OPACITY = 1.0f
 private const val CAMERA_HWB_PROJECTION_VIDEO_DEFAULT_HIGH_RATE_JSON_PAYLOAD = false
+
+internal enum class SpatialPeerStereoRouteKind(val token: String, val encrypted: Boolean) {
+  InfrastructureLan("direct_tcp_connect", false),
+  WifiDirect("direct_p2p_tcp", false),
+  AuthenticatedTlsRelay("relay_tls_client", true),
+  ;
+
+  companion object {
+    fun fromToken(value: String?): SpatialPeerStereoRouteKind =
+        when (value?.trim()?.lowercase(Locale.US)?.replace("-", "_")) {
+          "direct_p2p_tcp", "wifi_direct", "qcl100" -> WifiDirect
+          "relay_tls_client", "relay_tls", "authenticated_tls_relay" -> AuthenticatedTlsRelay
+          else -> InfrastructureLan
+        }
+  }
+}
 
 internal enum class SpatialVideoCadenceMode(
     val token: String,
@@ -146,9 +180,26 @@ internal data class SpatialVideoProjectionSettings(
     val looping: Boolean,
     val opacity: Float,
     val highRateJsonPayload: Boolean,
+    val peerRouteKind: SpatialPeerStereoRouteKind = SpatialPeerStereoRouteKind.InfrastructureLan,
+    val peerSessionId: String = "",
+    val peerRelayChannel: String = "",
+    val peerTlsServerName: String = "",
+    val peerAuthToken: String = "",
 ) {
   val active: Boolean
-    get() = enabled && (if (source == "broker-rmanvid1") brokerPort > 0 else path.isNotBlank())
+    get() =
+        enabled &&
+            (if (source == "broker-rmanvid1") {
+              brokerPort > 0
+            } else if (source == "peer-packed-stereo") {
+              brokerPort > 0 && peerSessionId.isNotBlank() &&
+                  (peerRouteKind != SpatialPeerStereoRouteKind.AuthenticatedTlsRelay ||
+                      (peerRelayChannel.isNotBlank() &&
+                          peerTlsServerName.isNotBlank() &&
+                          peerAuthToken.isNotBlank()))
+            } else {
+              path.isNotBlank()
+            })
 
   val surfaceOutputCadenceFps: Int
     get() = cadenceMode.surfaceGateFps
@@ -172,6 +223,11 @@ internal data class SpatialVideoProjectionSettings(
             looping = CAMERA_HWB_PROJECTION_VIDEO_DEFAULT_LOOPING,
             opacity = CAMERA_HWB_PROJECTION_VIDEO_DEFAULT_OPACITY,
             highRateJsonPayload = CAMERA_HWB_PROJECTION_VIDEO_DEFAULT_HIGH_RATE_JSON_PAYLOAD,
+            peerRouteKind = SpatialPeerStereoRouteKind.InfrastructureLan,
+            peerSessionId = "",
+            peerRelayChannel = "",
+            peerTlsServerName = "",
+            peerAuthToken = "",
         )
   }
 }
@@ -222,6 +278,29 @@ internal object SpatialVideoProjectionRouteModule {
                 100,
                 60000,
             )
+    val peerRouteKind =
+        SpatialPeerStereoRouteKind.fromToken(
+            activityReadOptionalStringIntentExtra(intent, EXTRA_VIDEO_PROJECTION_PEER_ROUTE_KIND)
+                ?: activityReadSystemProperty(CAMERA_HWB_PROJECTION_VIDEO_PEER_ROUTE_KIND_PROPERTY)
+        )
+    val peerSessionId =
+        (activityReadOptionalStringIntentExtra(intent, EXTRA_VIDEO_PROJECTION_PEER_SESSION_ID)
+                ?: activityReadSystemProperty(CAMERA_HWB_PROJECTION_VIDEO_PEER_SESSION_ID_PROPERTY))
+            .trim()
+    val peerRelayChannel =
+        (activityReadOptionalStringIntentExtra(intent, EXTRA_VIDEO_PROJECTION_PEER_RELAY_CHANNEL)
+                ?: activityReadSystemProperty(CAMERA_HWB_PROJECTION_VIDEO_PEER_RELAY_CHANNEL_PROPERTY))
+            .trim()
+    val peerTlsServerName =
+        (activityReadOptionalStringIntentExtra(intent, EXTRA_VIDEO_PROJECTION_PEER_TLS_SERVER_NAME)
+                ?: activityReadSystemProperty(CAMERA_HWB_PROJECTION_VIDEO_PEER_TLS_SERVER_NAME_PROPERTY))
+            .trim()
+    // The relay bearer is deliberately intent-only. It is never stored in a system property,
+    // marker, profile, Hub surface, Manifold/Fleet JSON, or serialized status snapshot.
+    val peerAuthToken =
+        activityReadOptionalStringIntentExtra(intent, EXTRA_VIDEO_PROJECTION_PEER_AUTH_TOKEN)
+            ?.trim()
+            .orEmpty()
     val mediaLayout =
         normalizeMediaLayout(
             activityReadOptionalStringIntentExtra(intent, EXTRA_VIDEO_PROJECTION_MEDIA_LAYOUT)
@@ -330,6 +409,11 @@ internal object SpatialVideoProjectionRouteModule {
         looping = looping,
         opacity = opacity,
         highRateJsonPayload = highRateJsonPayload,
+        peerRouteKind = peerRouteKind,
+        peerSessionId = peerSessionId,
+        peerRelayChannel = peerRelayChannel,
+        peerTlsServerName = peerTlsServerName,
+        peerAuthToken = peerAuthToken,
     )
   }
 
@@ -343,6 +427,7 @@ internal object SpatialVideoProjectionRouteModule {
 
   fun normalizeSource(value: String): String =
       when (value.trim().lowercase(Locale.US).replace("_", "-")) {
+        "peer-packed-stereo", "peer-stereo", "packed-stereo-peer" -> "peer-packed-stereo"
         "broker-rmanvid1", "rmanvid1" -> "broker-rmanvid1"
         "encrypted-offline-pack", "offline-pack" ->
             SpatialImmersiveVideoSessionPolicy.CUSTOM_PROJECTION_SOURCE
@@ -370,6 +455,20 @@ internal object SpatialVideoProjectionRouteModule {
               "0.000000,0.000000,0.500000,1.000000" to
                   "0.500000,0.000000,0.500000,1.000000"
         }
+    val endpointMarker =
+        if (settings.source == "peer-packed-stereo") {
+          "videoProjectionPeerEndpointProvided=${settings.brokerPort > 0} " +
+              "videoProjectionPeerRouteKind=${settings.peerRouteKind.token} " +
+              "videoProjectionPeerTransportEncrypted=${settings.peerRouteKind.encrypted} " +
+              "videoProjectionPeerSessionAccepted=${settings.peerSessionId.isNotBlank()} " +
+              "videoProjectionPeerRelayChannelProvided=${settings.peerRelayChannel.isNotBlank()} " +
+              "videoProjectionPeerTlsServerNameProvided=${settings.peerTlsServerName.isNotBlank()} " +
+              "videoProjectionPeerAuthenticationProvided=${settings.peerAuthToken.isNotBlank()} " +
+              "peerEndpointRedacted=true peerSecretSerialized=false"
+        } else {
+          "videoProjectionBrokerHost=${activityMarkerToken(settings.brokerHost)} " +
+              "videoProjectionBrokerPort=${settings.brokerPort}"
+        }
     return "videoProjectionEnabled=${settings.enabled} " +
           "spatialVideoProjectionEnabled=${settings.enabled} " +
           "spatialVideoProjectionActive=${settings.active} " +
@@ -387,8 +486,7 @@ internal object SpatialVideoProjectionRouteModule {
           "videoProjectionPathIntentExtra=$EXTRA_VIDEO_PROJECTION_PATH " +
           "videoProjectionSource=${settings.source} " +
           "videoProjectionMediaLayout=${settings.mediaLayout} " +
-          "videoProjectionBrokerHost=${activityMarkerToken(settings.brokerHost)} " +
-          "videoProjectionBrokerPort=${settings.brokerPort} " +
+          "$endpointMarker " +
           "videoProjectionBrokerConnectTimeoutMs=${settings.brokerConnectTimeoutMs} " +
           "videoProjectionWidth=${settings.width} videoProjectionHeight=${settings.height} " +
           "videoProjectionMaxImages=${settings.maxImages} videoProjectionFpsCap=${settings.fpsCap} " +
@@ -406,6 +504,7 @@ internal object SpatialVideoProjectionRouteModule {
           "videoProjectionStream=stereo_video " +
           "videoProjectionSourceAuthority=${when (settings.source) {
             "broker-rmanvid1" -> "manifold-broker-rmanvid1-packed-camera2-h264"
+            "peer-packed-stereo" -> "rusty-quest-peer-packed-stereo-camera2-h264"
             SpatialImmersiveVideoSessionPolicy.CUSTOM_PROJECTION_SOURCE ->
                 "authenticated-aes-gcm-random-access-mediadatasource"
             SpatialImmersiveVideoSessionPolicy.PLAIN_CUSTOM_PROJECTION_SOURCE ->

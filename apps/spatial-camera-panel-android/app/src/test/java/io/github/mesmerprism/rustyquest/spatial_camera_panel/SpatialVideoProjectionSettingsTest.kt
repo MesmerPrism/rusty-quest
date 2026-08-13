@@ -42,4 +42,34 @@ class SpatialVideoProjectionSettingsTest {
     assertTrue(marker.contains("videoProjectionSurfaceCadenceFps=0"))
     assertTrue(marker.contains("videoProjectionNativeCadenceFallbackFps=90"))
   }
+
+  @Test
+  fun peerStereoIsFirstClassAndTlsActivationFailsClosedWithoutPrivateInputs() {
+    val lan =
+        SpatialVideoProjectionSettings.disabled().copy(
+            enabled = true,
+            source = "peer-packed-stereo",
+            brokerPort = 9079,
+            peerRouteKind = SpatialPeerStereoRouteKind.InfrastructureLan,
+            peerSessionId = "accepted-session",
+        )
+    assertTrue(lan.active)
+    assertTrue(SpatialVideoProjectionRouteModule.markerFields(lan).contains("peerEndpointRedacted=true"))
+    assertFalse(lan.copy(peerSessionId = "").active)
+
+    val missingSecret = lan.copy(peerRouteKind = SpatialPeerStereoRouteKind.AuthenticatedTlsRelay)
+    assertFalse(missingSecret.active)
+    val relay =
+        missingSecret.copy(
+            peerRelayChannel = "stereo-a-to-b",
+            peerTlsServerName = "relay.invalid",
+            peerAuthToken = "private-runtime-only",
+        )
+    assertTrue(relay.active)
+    val marker = SpatialVideoProjectionRouteModule.markerFields(relay)
+    assertTrue(marker.contains("videoProjectionPeerTransportEncrypted=true"))
+    assertFalse(marker.contains("private-runtime-only"))
+    assertFalse(marker.contains("relay.invalid"))
+    assertFalse(marker.contains("accepted-session"))
+  }
 }

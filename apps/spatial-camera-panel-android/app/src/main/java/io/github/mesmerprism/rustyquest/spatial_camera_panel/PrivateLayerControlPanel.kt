@@ -352,6 +352,24 @@ internal fun PrivateLayerControlPanel(
             }
           }
         }
+        Section("Peer stereo") {
+          HelpLabel("Quest-to-Quest stereo")
+          Text(
+              "A receiver-first accepted media session can feed one packed stereo stream into the same custom projection. LAN, Wi-Fi Direct, and authenticated TLS relay routes share the decoder and render path.",
+              style = MaterialTheme.typography.bodySmall,
+              color = LayerPanelMuted,
+          )
+          Text(
+              SpatialPeerStereoStatus.snapshotSummary(),
+              style = MaterialTheme.typography.bodyMedium,
+              color = LayerPanelAccent,
+          )
+          Text(
+              "Targets and relay credentials are run-owned inputs and are never saved in profiles, playlists, Hub, or Fleet. Broker route endpoints remain private run evidence and are redacted from this UI and log markers.",
+              style = MaterialTheme.typography.bodySmall,
+              color = LayerPanelMuted,
+          )
+        }
         Section("Shared Media") {
           HelpLabel("Shared media folder")
           Text(

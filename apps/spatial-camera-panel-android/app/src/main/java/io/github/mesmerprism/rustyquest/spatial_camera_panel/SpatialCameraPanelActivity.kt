@@ -1065,6 +1065,11 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
                   settings.brokerPort,
                   settings.brokerConnectTimeoutMs,
                   settings.mediaLayout,
+                  settings.peerRouteKind.token,
+                  settings.peerSessionId,
+                  settings.peerRelayChannel,
+                  settings.peerTlsServerName,
+                  settings.peerAuthToken,
               )
             },
             stopPlayback = { SpatialStereoVideoPlayback.stop() },
