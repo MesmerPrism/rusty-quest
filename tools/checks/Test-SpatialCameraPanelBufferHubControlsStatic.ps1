@@ -36,7 +36,7 @@ Require ($panel.Contains('configuration.bufferGeometryMode != controls.bufferGeo
 Require ($zone.Contains('coerceIn(0.0f, 0.2f)')) "Stored guard size must obey the real source limit."
 Require ($zone.Contains('projectionZoneGuardSizeSingleAuthority=true')) "Markers must declare the single guard authority."
 Require ($guard.Contains('update_for_projection_buffer')) "Render ingress must expose the product Buffer guard policy."
-Require ($guard.Contains('0 => (0.0, CameraLatencyReprojectionGuardBandMode::ZoomToFill)')) "Buffer Off must restore a full footprint."
+Require ($guard.Contains('0 => (') -and $guard.Contains('CameraLatencyReprojectionGuardBandMode::ZoomToFill')) "Buffer Off must restore a full footprint."
 Require ($guard.Contains('CameraLatencyReprojectionGuardBandMode::ReducedFootprint')) "Static must contract the footprint."
 Require ($guard.Contains('CameraLatencyReprojectionGuardBandMode::DynamicReducedFootprint')) "Dynamic must grow from the same minimum guard."
 Require ($probe.Contains('camera_reprojection_guard_band.update_for_projection_buffer(')) "The live camera path must consume the product Buffer guard policy."

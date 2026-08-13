@@ -2900,7 +2900,7 @@ Assert-Contains "Activity" $activity "BuildConfig.CAMERA_PROJECTION_DEFAULT_ENAB
 Assert-Contains `
     "Activity" `
     $activity `
-    "projectionPanelRuntimeEnabled &&"
+    "projectionPanelRuntimeEnabled ||"
 Assert-Contains "Activity" $activity "BuildConfig.ZONE_COMPOSITOR_DEFAULT_PRESET"
 Assert-Contains "Activity" $activity "status=layered-carriers-adopted"
 Assert-Contains "Activity" $activity "customProjectionCarrierShape=planar-quad"
@@ -2992,9 +2992,11 @@ Assert-NotContains "Activity" $activity "ComposeViewPanelRegistration("
 Assert-Contains "Private layer panel" $privateLayerPanel "internal fun PrivateLayerControlPanel("
 Assert-Contains "Private layer panel" $privateLayerPanel 'Home("Settings", "Choose a topic")'
 Assert-Contains "Private layer panel" $privateLayerPanel "Settings topics"
-Assert-Contains "Private layer panel" $privateLayerPanel "Layers & projection"
-Assert-Contains "Private layer panel" $privateLayerPanel 'Video("Background"'
-Assert-Contains "Private layer panel" $privateLayerPanel "Three-region effect"
+Assert-Contains "Private layer panel" $privateLayerPanel 'Center("Center region"'
+Assert-Contains "Private layer panel" $privateLayerPanel 'Middle("Middle buffer"'
+Assert-Contains "Private layer panel" $privateLayerPanel 'Outer("Outer region"'
+Assert-Contains "Private layer panel" $privateLayerPanel 'Transitions("Transitions"'
+Assert-Contains "Private layer panel" $privateLayerPanel 'Media("Media library"'
 Assert-Contains "Private layer panel" $privateLayerPanel "Image processing"
 Assert-Contains "Private layer panel" $privateLayerPanel "Depth alignment"
 Assert-Contains "Private layer panel" $privateLayerPanel "PersistentPanelHeader("
@@ -3007,9 +3009,9 @@ Assert-Contains "Private layer panel" $privateLayerPanel 'Outer("Outer")'
 Assert-Contains "Private layer panel" $privateLayerPanel 'Diagnostics("Diagnostics")'
 Assert-Contains "Private layer panel" $privateLayerPanel 'Playlists("Playlists", "Sequence saved profiles with timed looping playback")'
 Assert-Contains "Private layer panel" $privateLayerPanel 'Text("Home")'
-Assert-Contains "Private layer panel" $privateLayerPanel "Active Rendering"
+Assert-Contains "Private layer panel" $privateLayerPanel 'Section("Center content")'
 Assert-Contains "Private layer panel" $privateLayerPanel "Projection Area"
-Assert-Contains "Private layer panel" $privateLayerPanel "Custom Projection"
+Assert-Contains "Private layer panel" $privateLayerPanel 'Section("Projection")'
 Assert-Contains "Private layer panel" $privateLayerPanel 'Section("Background")'
 Assert-Contains "Private layer panel" $privateLayerPanel "Turn custom projection off"
 Assert-Contains "Private layer panel" $privateLayerPanel "Turn custom projection on"
@@ -3023,7 +3025,7 @@ Assert-Contains "Private layer panel" $privateLayerPanel "Guide Processing A/B"
 Assert-Contains "Private layer panel" $privateLayerPanel "Native target"
 Assert-Contains "Private layer panel" $privateLayerPanel "Gaussian + RGB"
 Assert-Contains "Private layer panel" $privateLayerPanel "Preserve RGB"
-Assert-Contains "Private layer panel" $privateLayerPanel "PrivateLayerControls.layers"
+Assert-Contains "Private layer panel" $privateLayerPanel "PrivateLayerControls.centerContentLayers"
 Assert-Contains "Private layer panel" $privateLayerPanel "PrivateLayerControls.depthSourcePolicies"
 Assert-Contains "Private layer panel" $privateLayerPanel "updateDepthLayerPolicy"
 Assert-Contains "Private layer panel" $privateLayerPanel "Auto metadata: On"
@@ -3035,15 +3037,15 @@ Assert-NotContains "Private layer panel" $privateLayerPanel "internal object Pri
 Assert-NotContains "Private layer panel" $privateLayerPanel "internal data class PrivateLayerDepthAlignment"
 Assert-NotContains "Private layer panel" $privateLayerPanel "status=layer-button-selected"
 Assert-NotContains "Private layer panel" $privateLayerPanel "status=depth-alignment-submitted"
-Assert-Contains "Private layer panel control module" $privateLayerPanelControlModule 'PrivateLayerChoice(0, "Final", "final")'
-Assert-Contains "Private layer panel control module" $privateLayerPanelControlModule 'PrivateLayerChoice(1, "Opaque analysis 0", "opaque-analysis0-slot")'
-Assert-Contains "Private layer panel control module" $privateLayerPanelControlModule 'PrivateLayerChoice(2, "Public guide blur", "public-guide-blur")'
-Assert-Contains "Private layer panel control module" $privateLayerPanelControlModule 'PrivateLayerChoice(3, "Opaque analysis 1", "opaque-analysis1-slot")'
-Assert-Contains "Private layer panel control module" $privateLayerPanelControlModule 'PrivateLayerChoice(4, "Public post-blur guide", "public-post-blur-guide")'
-Assert-Contains "Private layer panel control module" $privateLayerPanelControlModule 'PrivateLayerChoice(5, "Opaque projection", "opaque-projection-slot")'
-Assert-Contains "Private layer panel control module" $privateLayerPanelControlModule 'PrivateLayerChoice(6, "Public depth diagnostic", "public-depth-diagnostic")'
+Assert-Contains "Private layer panel control module" $privateLayerPanelControlModule 'PrivateLayerChoice(0, "Final composition", "final-composition")'
+Assert-Contains "Private layer panel control module" $privateLayerPanelControlModule 'PrivateLayerChoice(1, "Camera brightness", "camera-brightness")'
+Assert-Contains "Private layer panel control module" $privateLayerPanelControlModule 'PrivateLayerChoice(2, "Brightness after first blur", "brightness-after-first-blur")'
+Assert-Contains "Private layer panel control module" $privateLayerPanelControlModule '"Distortion strength · before smoothing"'
+Assert-Contains "Private layer panel control module" $privateLayerPanelControlModule '"Distortion strength · smoothed"'
+Assert-Contains "Private layer panel control module" $privateLayerPanelControlModule '"Distortion strength · depth adjusted"'
+Assert-Contains "Private layer panel control module" $privateLayerPanelControlModule 'PrivateLayerChoice(6, "Meta depth diagnostic", "meta-depth-diagnostic")'
 Assert-Contains "Private layer panel control module" $privateLayerPanelControlModule 'PrivateLayerChoice(7, "Meta poster LUT", "meta-passthrough-edge-window")'
-Assert-Contains "Private layer panel control module" $privateLayerPanelControlModule 'PrivateLayerChoice(8, "Raw custom projection", "raw-custom-projection")'
+Assert-Contains "Private layer panel control module" $privateLayerPanelControlModule 'PrivateLayerChoice(8, "Raw camera projection", "raw-camera-projection")'
 Assert-Contains "Private layer panel control module" $privateLayerPanelControlModule 'passthroughActivationOrder=system-style-before-native-projection-cutout'
 Assert-Contains "Private layer panel control module" $privateLayerPanelControlModule 'PrivateLayerDepthSourceChoice(depthPolicyMonoLayer0, "Mono 0", "mono-layer0")'
 Assert-Contains "Private layer panel control module" $privateLayerPanelControlModule 'PrivateLayerDepthSourceChoice(depthPolicyMonoLayer1, "Mono 1", "mono-layer1")'
@@ -4583,6 +4585,9 @@ Assert-Contains "Spatial validation workflow coordinator" $validationWorkflowCoo
 Assert-Contains "Spatial validation workflow coordinator" $validationWorkflowCoordinator '"projection-panel-off" -> bindings.setProjectionPanelEnabled(false, source)'
 Assert-Contains "Spatial validation workflow coordinator" $validationWorkflowCoordinator '"projection-panel-on" -> bindings.setProjectionPanelEnabled(true, source)'
 Assert-Contains "Projection panel visibility coordinator" $projectionPanelVisibilityCoordinator "internal class SpatialProjectionPanelVisibilityCoordinator"
+Assert-Contains "Projection panel visibility coordinator" $projectionPanelVisibilityCoordinator "initiallyEnabled: Boolean = true"
+Assert-Contains "Projection panel visibility coordinator" $projectionPanelVisibilityCoordinator 'bindings.restartProjectionPanel(resumeVideoSettings, "projection-panel-toggle-on")'
+Assert-Contains "Projection panel visibility coordinator" $projectionPanelVisibilityCoordinator "projectionRestartRequested = true"
 Assert-Contains "Projection panel visibility coordinator" $projectionPanelVisibilityCoordinator "projectionCarrierVisible=false customProjectionEnabled=false"
 Assert-Contains "Projection panel visibility coordinator" $projectionPanelVisibilityCoordinator "fun restartWith("
 Assert-Contains "Projection panel visibility coordinator" $projectionPanelVisibilityCoordinator "directImmersiveVideoActive"

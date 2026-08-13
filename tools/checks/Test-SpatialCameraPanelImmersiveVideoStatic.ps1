@@ -353,7 +353,7 @@ Assert-Contains "Background policy" $background 'Black("black")'
 Assert-Contains "Background policy" $background 'Passthrough("passthrough")'
 Assert-Contains "Background policy" $background 'LutPassthrough("lut-passthrough")'
 Assert-Contains "Background policy" $background "diagnosticLutRequested"
-Assert-Contains "Background controls" $controlPanel 'Video("Background"'
+Assert-Contains "Background controls" $controlPanel 'Media("Media library"'
 Assert-Contains "Background controls" $controlPanel 'Section("Background")'
 Assert-Contains "Background controls" $controlPanel 'label = "LUT passthrough"'
 Assert-Contains "Background profiles" $profiles "backgroundMode: String? = null"

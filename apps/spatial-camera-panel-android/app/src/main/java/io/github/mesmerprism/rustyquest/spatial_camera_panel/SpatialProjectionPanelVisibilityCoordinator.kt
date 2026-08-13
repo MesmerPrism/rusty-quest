@@ -23,8 +23,9 @@ internal data class SpatialProjectionPanelVisibilityBindings(
 
 internal class SpatialProjectionPanelVisibilityCoordinator(
     private val bindings: SpatialProjectionPanelVisibilityBindings,
+    initiallyEnabled: Boolean = true,
 ) {
-  var enabled: Boolean by mutableStateOf(true)
+  var enabled: Boolean by mutableStateOf(initiallyEnabled)
     private set
 
   private var resumeProjectionOnEnable = false
@@ -73,14 +74,12 @@ internal class SpatialProjectionPanelVisibilityCoordinator(
     enabled = true
     val systemPassthroughEnabled =
         runCatching { bindings.enableSystemPassthrough() }.getOrDefault(false)
-    if (resumeProjectionOnEnable) {
-      bindings.restartProjectionPanel(resumeVideoSettings, "projection-panel-toggle-on")
-    }
+    bindings.restartProjectionPanel(resumeVideoSettings, "projection-panel-toggle-on")
     bindings.marker(
         SpatialProjectionPanelVisibilityModule.enabledMarker(
             source = source,
-            projectionRestartRequested = resumeProjectionOnEnable,
-            videoRestartRequested = resumeProjectionOnEnable && resumeVideoSettings.active,
+            projectionRestartRequested = true,
+            videoRestartRequested = resumeVideoSettings.active,
             systemPassthroughEnabled = systemPassthroughEnabled,
         )
     )

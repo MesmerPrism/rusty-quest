@@ -1339,7 +1339,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     )
   }
 
-  private var projectionPanelRuntimeEnabled = true
+  private var projectionPanelRuntimeEnabled = BuildConfig.CAMERA_PROJECTION_DEFAULT_ENABLED
 
   private val cameraHwbProjectionLaunchCoordinator by lazy(LazyThreadSafetyMode.NONE) {
     SpatialCameraHwbProjectionLaunchCoordinator(
@@ -1347,12 +1347,11 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             state = {
               SpatialCameraHwbProjectionLaunchState(
                   enabled =
-                      projectionPanelRuntimeEnabled &&
-                          (presentationPolicy.lockedFinalPresentation ||
-                              BuildConfig.CAMERA_PROJECTION_DEFAULT_ENABLED ||
-                              activityReadOptionalBooleanSystemProperty(
-                                  CAMERA_HWB_PROJECTION_PROBE_PROPERTY
-                              ) == true),
+                      presentationPolicy.lockedFinalPresentation ||
+                          projectionPanelRuntimeEnabled ||
+                          activityReadOptionalBooleanSystemProperty(
+                              CAMERA_HWB_PROJECTION_PROBE_PROPERTY
+                          ) == true,
                   sceneReady = spatialSceneReady,
                   virtualRoomEnabled = spatialVirtualRoomEnabled(),
                   virtualRoomLoaded = spatialVirtualRoomLoaded(),
@@ -1397,7 +1396,8 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
               )
             },
             marker = ::marker,
-        )
+        ),
+        initiallyEnabled = customStereoProjectionRequested(),
     )
   }
   private val cameraHwbProjectionSyntheticRenderer by lazy(LazyThreadSafetyMode.NONE) {
@@ -1975,9 +1975,8 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
 
   private fun customStereoProjectionRequested(): Boolean =
       productPolicy.cameraPanelRoutesEnabled &&
-          projectionPanelRuntimeEnabled &&
           (presentationPolicy.lockedFinalPresentation ||
-              BuildConfig.CAMERA_PROJECTION_DEFAULT_ENABLED ||
+              projectionPanelRuntimeEnabled ||
               activityReadOptionalBooleanSystemProperty(
                   CAMERA_HWB_PROJECTION_PROBE_PROPERTY
               ) == true)
