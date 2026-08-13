@@ -87,6 +87,17 @@ Require 'Debug operator' $debugProvider 'remote_camera_debug_peer_host_not_priva
 Require 'Debug operator' $debugProvider 'remote_camera_debug_wifi_direct_local_bind_address_required'
 Require 'Debug operator' $debugProvider 'sender_camera_ids", "left:50,right:51"'
 Require 'Debug operator' $debugProvider 'stereoRoute\('
+Require 'Debug duplex operator' $debugProvider '!"start-duplex"\.equals\(method\)'
+Require 'Debug duplex operator' $debugProvider 'receiver_local_stream_port'
+Require 'Debug duplex operator' $debugProvider 'sender_local_stream_port'
+Require 'Debug duplex operator' $debugProvider 'runtimeCommand\("start-receiver", receiverExtras, false\)'
+Require 'Debug duplex operator' $debugProvider 'runtimeCommand\("start-sender", senderExtras, false\)'
+Require 'Debug duplex operator' $debugProvider 'rusty\.quest\.remote_camera\.duplex_start\.v1'
+Require 'Debug duplex operator' $debugProvider 'duplex_sender_barrier_delay_ms", 500, 5000'
+if ($debugProvider.IndexOf('runtimeCommand("start-receiver", receiverExtras, false)') -gt
+        $debugProvider.IndexOf('runtimeCommand("start-sender", senderExtras, false)')) {
+    throw 'Debug duplex operator no longer arms the receiver before the sender.'
+}
 Require 'Broker build' $brokerBuild 'EnableRemoteCameraDebugOperator'
 Require 'Broker build' $brokerBuild 'debug-remote-camera-control'
 Require 'Broker build' $brokerBuild 'android:permission="android\.permission\.DUMP"'

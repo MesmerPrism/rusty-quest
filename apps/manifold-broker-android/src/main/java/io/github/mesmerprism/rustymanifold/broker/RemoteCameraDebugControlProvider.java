@@ -45,6 +45,7 @@ public final class RemoteCameraDebugControlProvider extends ContentProvider {
                 && !"start-diagnostic-synthetic".equals(method)
                 && !"start-receiver".equals(method)
                 && !"start-sender".equals(method)
+                && !"start-duplex".equals(method)
                 && !"status".equals(method)
                 && !"stop".equals(method)
                 && !"stop-diagnostic".equals(method)
@@ -57,12 +58,39 @@ public final class RemoteCameraDebugControlProvider extends ContentProvider {
             boolean diagnostic = "start-diagnostic-synthetic".equals(method);
             if ("start-receiver".equals(method)
                     || "start-sender".equals(method)
+                    || "start-duplex".equals(method)
                     || "stop".equals(method)) {
                 String operation = "stop".equals(method) ? "stop" : "start";
                 requirePendingAction(authority, operation);
-                runtime = RemoteCameraSessionRuntime.handleCommand(
-                        getContext(), runtimeCommand(method, extras, diagnostic));
-                requireRuntimeApplied(method, runtime);
+                if ("start-duplex".equals(method)) {
+                    Bundle receiverExtras = new Bundle(extras);
+                    receiverExtras.putString("local_stream_port",
+                            requireText(extras, "receiver_local_stream_port", 10));
+                    Bundle senderExtras = new Bundle(extras);
+                    senderExtras.putString("local_stream_port",
+                            requireText(extras, "sender_local_stream_port", 10));
+                    JSONObject receiverRuntime = RemoteCameraSessionRuntime.handleCommand(
+                            getContext(), runtimeCommand("start-receiver", receiverExtras, false));
+                    requireRuntimeApplied("start-receiver", receiverRuntime);
+                    int senderBarrierDelayMs = requireDecimal(
+                            extras, "duplex_sender_barrier_delay_ms", 500, 5000);
+                    Thread.sleep(senderBarrierDelayMs);
+                    JSONObject senderRuntime = RemoteCameraSessionRuntime.handleCommand(
+                            getContext(), runtimeCommand("start-sender", senderExtras, false));
+                    requireRuntimeApplied("start-sender", senderRuntime);
+                    runtime = new JSONObject()
+                            .put("schema", "rusty.quest.remote_camera.duplex_start.v1")
+                            .put("status", "duplex_runtime_started")
+                            .put("receiver_ready", true)
+                            .put("media_socket_runtime_started", true)
+                            .put("sender_barrier_delay_ms", senderBarrierDelayMs)
+                            .put("receiver_runtime", receiverRuntime)
+                            .put("sender_runtime", senderRuntime);
+                } else {
+                    runtime = RemoteCameraSessionRuntime.handleCommand(
+                            getContext(), runtimeCommand(method, extras, diagnostic));
+                    requireRuntimeApplied(method, runtime);
+                }
             } else if (diagnostic) {
                 runtime = RemoteCameraSessionRuntime.handleCommand(
                         getContext(), runtimeCommand(method, extras, true));
@@ -89,6 +117,7 @@ public final class RemoteCameraDebugControlProvider extends ContentProvider {
                     diagnostic || "stop-diagnostic".equals(method));
             receipt.put("manifold_pending_action_required",
                     "start-receiver".equals(method) || "start-sender".equals(method)
+                            || "start-duplex".equals(method)
                             || "stop".equals(method) || "complete-pending".equals(method));
             receipt.put("manifold_decision_owner",
                     authority.optString("decision_owner_id", ""));
