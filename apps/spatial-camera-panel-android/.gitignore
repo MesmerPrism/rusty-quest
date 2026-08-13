@@ -2,5 +2,6 @@
 .kotlin/
 build/
 app/build/
+app/.cxx/
 target/
 local.properties

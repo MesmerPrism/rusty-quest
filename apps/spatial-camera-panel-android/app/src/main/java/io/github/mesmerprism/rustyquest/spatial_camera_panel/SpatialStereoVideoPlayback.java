@@ -477,10 +477,38 @@ public final class SpatialStereoVideoPlayback {
             );
             nativeStereoVideoLifecycleEvent(EVENT_STOPPED, 0, width, height, maxImages, fpsCap, 0);
         } catch (RuntimeException | IOException error) {
+            Log.e(
+                LOG_TAG,
+                "RUSTY_QUEST_SPATIAL_CAMERA_PANEL channel=spatial-peer-stereo "
+                    + "status=playback-error failureType="
+                    + error.getClass().getSimpleName()
+                    + " failureDetail="
+                    + safeBrokerPlaybackFailureDetail(error)
+                    + " peerEndpointRedacted=true peerSecretSerialized=false"
+            );
             nativeStereoVideoLifecycleEvent(EVENT_ERROR, -1, width, height, maxImages, fpsCap, 0);
         } finally {
             releasePlaybackOwnershipWithoutLock(surface);
         }
+    }
+
+    private static String safeBrokerPlaybackFailureDetail(Throwable error) {
+        if (error instanceof MediaCodec.CodecException) {
+            String diagnostic = ((MediaCodec.CodecException) error).getDiagnosticInfo();
+            return diagnostic == null || diagnostic.trim().isEmpty()
+                ? "mediacodec-codec-exception"
+                : diagnostic.replaceAll("[^A-Za-z0-9._-]", "_");
+        }
+        String message = error.getMessage();
+        if (message != null && (
+                message.startsWith("Spatial ")
+                    || message.startsWith("invalid Spatial ")
+                    || message.startsWith("malformed Spatial ")
+                    || message.startsWith("Peer stereo ")
+                    || message.startsWith("Authenticated TLS relay "))) {
+            return message.replaceAll("[^A-Za-z0-9._-]", "_");
+        }
+        return "redacted";
     }
 
     private static void releasePlaybackOwnershipWithoutLock(Surface surface) {

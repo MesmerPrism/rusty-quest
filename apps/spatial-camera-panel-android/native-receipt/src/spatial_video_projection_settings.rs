@@ -15,6 +15,7 @@ static SPATIAL_VIDEO_MEDIA_SOURCE_GENERATION: AtomicU64 = AtomicU64::new(1);
 #[derive(Clone, Debug)]
 pub(crate) struct SpatialVideoProjectionSettings {
     pub(crate) enabled: bool,
+    pub(crate) source: SpatialVideoProjectionSource,
     pub(crate) path: String,
     pub(crate) stereo_layout: SpatialVideoProjectionStereoLayout,
     pub(crate) width: u32,
@@ -30,6 +31,7 @@ impl Default for SpatialVideoProjectionSettings {
     fn default() -> Self {
         Self {
             enabled: false,
+            source: SpatialVideoProjectionSource::FileBacked,
             path: String::new(),
             stereo_layout: SpatialVideoProjectionStereoLayout::SideBySideLeftRight,
             width: 3840,
@@ -45,7 +47,9 @@ impl Default for SpatialVideoProjectionSettings {
 
 impl SpatialVideoProjectionSettings {
     pub(crate) fn active(&self) -> bool {
-        self.enabled && !self.high_rate_json_payload && !self.path.trim().is_empty()
+        self.enabled
+            && !self.high_rate_json_payload
+            && (self.source.stream_backed() || !self.path.trim().is_empty())
     }
 
     pub(crate) fn source_rect_for_eye(&self, eye_index: usize) -> [f32; 4] {
@@ -62,9 +66,11 @@ impl SpatialVideoProjectionSettings {
 
     pub(crate) fn marker_fields(&self) -> String {
         format!(
-            "videoProjectionEnabled={} spatialVideoProjectionEnabled={} videoProjectionSource=app-private-or-device-local-file videoProjectionPath={} videoProjectionPathProvided={} videoProjectionWidth={} videoProjectionHeight={} videoProjectionMaxImages={} videoProjectionFpsCap={} videoProjectionLooping={} videoProjectionStereoLayout={} videoProjectionTarget=packed-sbs-full-eye videoProjectionOpacity={:.3} videoProjectionHighRateJsonPayload={} videoProjectionStream=stereo_video videoProjectionSourceAuthority=android-mediacodec-surface-decoder videoProjectionTransport=mediacodec-surface-to-ndk-aimage-reader-ahardwarebuffer videoProjectionFramePlane=media-data-plane videoProjectionControlPlane=spatial-activity-runtime-property-or-intent-extra videoProjectionDecodePath=MediaCodec-to-Surface videoProjectionFormat=private videoProjectionLeftSourceUvRect={} videoProjectionRightSourceUvRect={} videoProjectionLeftTargetPackedUvRect={} videoProjectionRightTargetPackedUvRect={} spatialVideoProjectionSameSurfaceComposition=true videoProjectionComposedBeforeCamera=true cameraProjectionAlignmentPreserved=true nativeImageReader=true javaHardwareBufferBridge=false cpuPixelCopy=false highRateJsonPayload={} rawCamera=false passthroughTexture=false environmentDepth=false geometryWitness=false",
+            "videoProjectionEnabled={} spatialVideoProjectionEnabled={} videoProjectionSource={} videoProjectionStreamBacked={} videoProjectionPath={} videoProjectionPathProvided={} videoProjectionWidth={} videoProjectionHeight={} videoProjectionMaxImages={} videoProjectionFpsCap={} videoProjectionLooping={} videoProjectionStereoLayout={} videoProjectionTarget=packed-sbs-full-eye videoProjectionOpacity={:.3} videoProjectionHighRateJsonPayload={} videoProjectionStream=stereo_video videoProjectionSourceAuthority=android-mediacodec-surface-decoder videoProjectionTransport=mediacodec-surface-to-ndk-aimage-reader-ahardwarebuffer videoProjectionFramePlane=media-data-plane videoProjectionControlPlane=spatial-activity-runtime-property-or-intent-extra videoProjectionDecodePath=MediaCodec-to-Surface videoProjectionFormat=private videoProjectionLeftSourceUvRect={} videoProjectionRightSourceUvRect={} videoProjectionLeftTargetPackedUvRect={} videoProjectionRightTargetPackedUvRect={} spatialVideoProjectionSameSurfaceComposition=true videoProjectionComposedBeforeCamera=true cameraProjectionAlignmentPreserved=true nativeImageReader=true javaHardwareBufferBridge=false cpuPixelCopy=false highRateJsonPayload={} rawCamera=false passthroughTexture=false environmentDepth=false geometryWitness=false",
             self.enabled,
             self.enabled,
+            self.source.marker_value(),
+            self.source.stream_backed(),
             marker_token(&self.path),
             !self.path.trim().is_empty(),
             self.width,
@@ -81,6 +87,35 @@ impl SpatialVideoProjectionSettings {
             rect_token(self.target_rect_for_eye(1)),
             self.high_rate_json_payload
         )
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum SpatialVideoProjectionSource {
+    FileBacked,
+    BrokerRmanvid1,
+    PeerPackedStereo,
+}
+
+impl SpatialVideoProjectionSource {
+    fn from_token(value: &str) -> Self {
+        match normalized_token(value).as_str() {
+            "broker-rmanvid1" => Self::BrokerRmanvid1,
+            "peer-packed-stereo" => Self::PeerPackedStereo,
+            _ => Self::FileBacked,
+        }
+    }
+
+    fn stream_backed(self) -> bool {
+        matches!(self, Self::BrokerRmanvid1 | Self::PeerPackedStereo)
+    }
+
+    fn marker_value(self) -> &'static str {
+        match self {
+            Self::FileBacked => "app-private-or-device-local-file",
+            Self::BrokerRmanvid1 => "broker-rmanvid1",
+            Self::PeerPackedStereo => "peer-packed-stereo",
+        }
     }
 }
 
@@ -129,7 +164,8 @@ pub(crate) fn spatial_video_projection_settings() -> SpatialVideoProjectionSetti
 
 pub(crate) fn configure_spatial_video_projection(settings: SpatialVideoProjectionSettings) {
     if let Ok(mut guard) = SPATIAL_VIDEO_PROJECTION_SETTINGS.lock() {
-        if guard.path != settings.path
+        if guard.source != settings.source
+            || guard.path != settings.path
             || guard.stereo_layout != settings.stereo_layout
             || guard.width != settings.width
             || guard.height != settings.height
@@ -201,6 +237,7 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1pa
     env: *mut jni::sys::JNIEnv,
     _thiz: jni::sys::jobject,
     enabled: jni::sys::jboolean,
+    source: jni::sys::jstring,
     path: jni::sys::jstring,
     stereo_layout: jni::sys::jstring,
     width: jni::sys::jint,
@@ -212,6 +249,7 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1pa
     high_rate_json_payload: jni::sys::jboolean,
 ) -> i64 {
     let mut mask = 1_i64;
+    let source = SpatialVideoProjectionSource::from_token(&jstring_to_string(env, source));
     let path = jstring_to_string(env, path);
     let stereo_layout_token = jstring_to_string(env, stereo_layout);
     if enabled != 0 {
@@ -220,8 +258,12 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1pa
     if !path.trim().is_empty() {
         mask |= 1 << 2;
     }
+    if source.stream_backed() {
+        mask |= 1 << 4;
+    }
     let settings = SpatialVideoProjectionSettings {
         enabled: enabled != 0,
+        source,
         path,
         stereo_layout: SpatialVideoProjectionStereoLayout::from_token(&stereo_layout_token),
         width: (width.max(320) as u32).min(4096),
@@ -267,6 +309,32 @@ mod tests {
         assert!(settings
             .marker_fields()
             .contains("videoProjectionPathProvided=false"));
+    }
+
+    #[test]
+    fn peer_stream_is_active_without_a_file_path() {
+        let settings = SpatialVideoProjectionSettings {
+            enabled: true,
+            source: SpatialVideoProjectionSource::from_token("peer-packed-stereo"),
+            ..SpatialVideoProjectionSettings::default()
+        };
+        assert!(settings.active());
+        assert!(settings
+            .marker_fields()
+            .contains("videoProjectionSource=peer-packed-stereo"));
+        assert!(settings
+            .marker_fields()
+            .contains("videoProjectionStreamBacked=true"));
+    }
+
+    #[test]
+    fn unknown_source_without_a_file_path_stays_inactive() {
+        let settings = SpatialVideoProjectionSettings {
+            enabled: true,
+            source: SpatialVideoProjectionSource::from_token("unknown-source"),
+            ..SpatialVideoProjectionSettings::default()
+        };
+        assert!(!settings.active());
     }
 
     #[test]

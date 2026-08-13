@@ -1037,6 +1037,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             configureNative = { settings ->
               nativeConfigureSpatialVideoProjection(
                   settings.enabled,
+                  settings.source,
                   settings.path,
                   settings.stereoLayout,
                   settings.width,
@@ -1257,6 +1258,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
                       activityReadOptionalBooleanSystemProperty(
                           SPATIAL_VIDEO_PROJECTION_PROBE_PROPERTY
                       ) == true,
+                  cameraProjectionEnabled = customStereoProjectionRequested(),
                   sceneReady = spatialSceneReady,
                   virtualRoomEnabled = spatialVirtualRoomEnabled(),
                   virtualRoomLoaded = spatialVirtualRoomLoaded(),
@@ -4230,6 +4232,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
 
   private external fun nativeConfigureSpatialVideoProjection(
       enabled: Boolean,
+      source: String,
       path: String,
       stereoLayout: String,
       width: Int,

@@ -146,6 +146,9 @@ internal object SpatialImmersiveVideoSessionPolicy {
       base: SpatialVideoProjectionSettings,
       config: SpatialImmersiveVideoConfig?,
   ): SpatialVideoProjectionSettings? {
+    if (base.source == "broker-rmanvid1" || base.source == "peer-packed-stereo") {
+      return null
+    }
     config ?: return null
     if (!config.isEncryptedOfflinePack && !config.isSharedPlainVideo) return null
     val dimensions = customProjectionDimensions(config) ?: return null

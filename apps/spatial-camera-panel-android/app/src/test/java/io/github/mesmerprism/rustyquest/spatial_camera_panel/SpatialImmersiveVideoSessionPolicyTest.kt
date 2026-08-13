@@ -5,6 +5,7 @@ import java.io.File
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class SpatialImmersiveVideoSessionPolicyTest {
@@ -182,6 +183,29 @@ class SpatialImmersiveVideoSessionPolicyTest {
     assertEquals(3640, settings.width)
     assertEquals(4096, settings.height)
     assertTrue(settings.looping)
+  }
+
+  @Test
+  fun persistedImmersiveSelectionDoesNotReplaceExplicitPeerStream() {
+    val selected =
+        config(
+            pack(
+                "persisted-360",
+                3840,
+                4320,
+                shape = SpatialImmersiveVideoShape.Equirect360,
+                stereoLayout = SpatialImmersiveVideoStereoLayout.TopBottom,
+            )
+        )
+    val peer =
+        SpatialVideoProjectionSettings.disabled().copy(
+            enabled = true,
+            source = "peer-packed-stereo",
+            brokerPort = 8879,
+            peerSessionId = "session.current-run",
+        )
+
+    assertNull(SpatialImmersiveVideoSessionPolicy.customProjectionSettings(peer, selected))
   }
 
   @Test
