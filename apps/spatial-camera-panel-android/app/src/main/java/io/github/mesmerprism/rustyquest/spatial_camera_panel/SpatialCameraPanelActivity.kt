@@ -162,6 +162,16 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
   private var connectionHubSurfaceClient: ConnectionHubSurfaceClient? = null
   private var connectionHubSurfaceTarget: ConnectionHubSurfaceTarget? = null
   private var connectionHubActivityStarted: Boolean = false
+  private var controlProfileHotloaderStarted: Boolean = false
+  private val activityMarkerRecorder: SpatialActivityMarkerRecorder by
+      lazy(LazyThreadSafetyMode.NONE) {
+        SpatialActivityMarkerRecorder(
+            markerFile = File(filesDir, ACTIVITY_MARKERS_FILE),
+            tag = TAG,
+            markerPrefix = MARKER_PREFIX,
+            persistToFile = activityMarkerFilePersistenceEnabled(),
+        )
+      }
   private val connectionHubWearerControlClient: ConnectionHubWearerControlClient by
       lazy(LazyThreadSafetyMode.NONE) {
         ConnectionHubWearerControlClient(
@@ -1761,9 +1771,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
         initial = privateLayerControlCoordinator.zoneCompositor,
         submit = privateLayerControlCoordinator::updateZoneCompositor,
     )
-    if (!privatePanelInputLocked()) {
-      controlProfileHotloader.arm()
-    }
+    armControlProfileHotloaderIfEnabled()
     if (productPolicy.cameraPanelRoutesEnabled) {
       nativeInteropCoordinator.loadReceiptLibrary()
       if (nativeInteropCoordinator.receiptLibraryLoaded) {
@@ -1867,7 +1875,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
       }
       runSpatialStagedAssetIfRequested(intent, "new-intent")
       runSpatialVirtualRoomIfRequested("new-intent")
-      if (!privatePanelInputLocked()) {
+      if (!privatePanelInputLocked() && controlProfileHotloaderStarted) {
         controlProfileHotloader.poll(force = true)
       }
     }
@@ -2376,9 +2384,6 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
           .onSuccess(immersiveVideoPanelCoordinator::updateFromViewer)
     }
     if (productPolicy.cameraPanelRoutesEnabled) {
-      if (!privatePanelInputLocked()) {
-        controlProfileHotloader.poll()
-      }
       updateLayerControlPanelPoseFromViewer(reason = "scene-tick", forceLog = false)
       updateParticleLayerProjectionFromViewer(reason = "scene-tick", forceLog = false)
       cameraHwbProjectionPlacementUpdateCoordinator.update("scene-tick", false)
@@ -2457,7 +2462,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     } else {
       privatePanelInputPolicyApplied = false
       privatePanelLockedExtensionInputApplied = null
-      if (wasLocked) controlProfileHotloader.arm()
+      if (wasLocked) armControlProfileHotloaderIfEnabled()
       if (spatialSceneReady) {
         runCatching { scene.spatialInterface.enableInput(true) }
         controllerInputRouteCoordinator.ensureEnabled("private-panel-unlocked", forceLog = true)
@@ -2773,6 +2778,8 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     stagedAssetModule.destroy("activity-destroy")
     destroySpatialVirtualRoom("activity-destroy")
     surfaceParticleRuntimeCoordinator.stop()
+    if (controlProfileHotloaderStarted) controlProfileHotloader.close()
+    activityMarkerRecorder.close()
     super.onDestroy()
   }
 
@@ -3952,12 +3959,24 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
       )
 
   private fun marker(detail: String) {
-    val line = "$MARKER_PREFIX $detail"
-    Log.i(TAG, line)
-    runCatching {
-      File(filesDir, ACTIVITY_MARKERS_FILE).appendText("${System.currentTimeMillis()} $line\n", Charsets.UTF_8)
-    }
+    activityMarkerRecorder.record(detail)
   }
+
+  private fun armControlProfileHotloaderIfEnabled() {
+    if (
+        controlProfileHotloaderStarted ||
+            privatePanelInputLocked() ||
+            activityReadOptionalBooleanSystemProperty(CONTROL_PROFILE_HOTLOAD_ENABLED_PROPERTY) !=
+                true
+    ) {
+      return
+    }
+    controlProfileHotloader.arm()
+    controlProfileHotloaderStarted = true
+  }
+
+  private fun activityMarkerFilePersistenceEnabled(): Boolean =
+      activityReadOptionalBooleanSystemProperty(ACTIVITY_MARKER_FILE_ENABLED_PROPERTY) == true
 
   private external fun nativeRecordNoRenderInteropReceipt(
       openXrInstanceHandle: Long,
@@ -4397,6 +4416,10 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
         "content://com.android.externalstorage.documents/document/primary%3ADocuments"
     private const val MARKER_PREFIX = "RUSTY_QUEST_SPATIAL_CAMERA_PANEL"
     private const val ACTIVITY_MARKERS_FILE = "spatial_camera_panel_activity_markers.log"
+    private const val ACTIVITY_MARKER_FILE_ENABLED_PROPERTY =
+        "debug.rustyquest.spatial_camera_panel.activity_marker_file.enabled"
+    private const val CONTROL_PROFILE_HOTLOAD_ENABLED_PROPERTY =
+        "debug.rustyquest.spatial_camera_panel.control_profile_hotload.enabled"
     private const val PANEL_SHELL_VISIBLE_PROPERTY =
         "debug.rustyquest.spatial.panel_shell.visible"
     private val SUPPORTED_SURFACE_TARGET_IDS =

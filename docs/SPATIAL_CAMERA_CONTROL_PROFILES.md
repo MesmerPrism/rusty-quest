@@ -170,7 +170,10 @@ catalog IDs, keys, captures, or device identifiers.
 
 ## Runtime Behavior
 
-The app watches this app-specific external-files location:
+The hotloader is disabled on a normal launch. Explicit diagnostic runs enable
+`debug.rustyquest.spatial_camera_panel.control_profile_hotload.enabled=true`
+before launching the app; only then does the app watch this app-specific
+external-files location:
 
 `control-profiles/active.profile.json`
 
@@ -178,7 +181,8 @@ The absolute device path is normally:
 
 `/sdcard/Android/data/<package>/files/control-profiles/active.profile.json`
 
-On launch, the app arms the watcher and snapshots any file already present.
+On an explicitly enabled launch, the app arms the watcher and snapshots any
+file already present.
 That stale file is not applied. Only an atomic replacement made after the
 watcher is armed can change the running controls. This keeps the APK's normal
 startup configuration authoritative and prevents an old test profile from
@@ -195,12 +199,14 @@ When a new file arrives:
 
 Malformed or unsupported profiles are rejected without resetting the previous
 effective controls. Removing the active file also retains the current
-controls. The app polls at 250 ms and the file is limited to 64 KiB; no
-high-rate data crosses this path.
+controls. Change detection uses the Android file observer and performs no
+scene-tick polling. The file is limited to 64 KiB; no high-rate data crosses
+this path.
 
 ## Manual Hotload
 
-Keep the app running, then use the serial-scoped helper:
+Enable the diagnostic property, launch the app, then use the serial-scoped
+helper:
 
 ```powershell
 pwsh -NoProfile -ExecutionPolicy Bypass `

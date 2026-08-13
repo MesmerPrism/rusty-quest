@@ -1,7 +1,9 @@
 package io.github.mesmerprism.rustyquest.spatial_camera_panel
 
 import android.content.Context
-import android.os.SystemClock
+import android.os.FileObserver
+import android.os.Handler
+import android.os.Looper
 import java.io.File
 import java.security.MessageDigest
 import org.json.JSONArray
@@ -38,7 +40,8 @@ internal class SpatialCameraControlProfileHotloader(
   private var armed = false
   private var observedSignature: FileSignature? = null
   private var pendingSignature: FileSignature? = null
-  private var lastPollMs = 0L
+  private val mainHandler = Handler(Looper.getMainLooper())
+  private var fileObserver: FileObserver? = null
 
   fun arm() {
     if (armed) return
@@ -46,25 +49,29 @@ internal class SpatialCameraControlProfileHotloader(
     observedSignature = signature()
     pendingSignature = null
     armed = true
+    fileObserver =
+        object :
+            FileObserver(
+                directory,
+                CLOSE_WRITE or CREATE or DELETE or MOVED_FROM or MOVED_TO,
+            ) {
+          override fun onEvent(event: Int, path: String?) {
+            if (path != SpatialCameraControlProfileContract.ACTIVE_PROFILE_FILE) return
+            mainHandler.post { poll(force = true) }
+          }
+        }
+    fileObserver?.startWatching()
     marker(
         "channel=control-profile-hotload status=armed " +
             "schema=${SpatialCameraControlProfileContract.SCHEMA} " +
             "profilePath=external-files/${SpatialCameraControlProfileContract.PROFILE_DIRECTORY}/${SpatialCameraControlProfileContract.ACTIVE_PROFILE_FILE} " +
-            "staleProfileApplied=false pollIntervalMs=${SpatialCameraControlProfileContract.POLL_INTERVAL_MS}"
+            "staleProfileApplied=false changeDetection=file-observer sceneTickPolling=false"
     )
   }
 
   fun poll(force: Boolean = false) {
     if (!armed) return
-    val now = SystemClock.elapsedRealtime()
-    if (
-        !force &&
-            now - lastPollMs <
-                SpatialCameraControlProfileContract.POLL_INTERVAL_MS
-    ) {
-      return
-    }
-    lastPollMs = now
+    if (!force) return
     val current = signature()
     if (current == observedSignature) {
       pendingSignature = null
@@ -137,6 +144,12 @@ internal class SpatialCameraControlProfileHotloader(
             "projectionInnerAlphaRequested=${ProjectionInnerAlphaModule.requested(effective.projectionInnerAlpha)} " +
             "runtimeCrash=false"
     )
+  }
+
+  fun close() {
+    armed = false
+    fileObserver?.stopWatching()
+    fileObserver = null
   }
 
   private fun reject(
