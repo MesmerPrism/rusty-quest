@@ -344,11 +344,11 @@ class SpatialImmersiveVideoSessionPolicyTest {
     )
     assertEquals(5.40f, PARTICLE_LAYER_WIDTH_METERS, 0.0001f)
     assertEquals(4.00f, PARTICLE_LAYER_HEIGHT_METERS, 0.0001f)
-    assertEquals(1.10f, HEAD_FIXED_VIDEO_COVER_OVERSCAN_SCALE, 0.0001f)
-    assertEquals(6.0885f, requireNotNull(quadGeometry.coverageTargetWidthMeters), 0.0001f)
-    assertEquals(4.51f, requireNotNull(quadGeometry.coverageTargetHeightMeters), 0.0001f)
-    assertEquals(4.51f * (16.0f / 9.0f), quadGeometry.widthMeters, 0.0001f)
-    assertEquals(4.51f, quadGeometry.heightMeters, 0.0001f)
+    assertEquals(1.20f, HEAD_FIXED_VIDEO_COVER_OVERSCAN_SCALE, 0.0001f)
+    assertEquals(6.642f, requireNotNull(quadGeometry.coverageTargetWidthMeters), 0.0001f)
+    assertEquals(4.92f, requireNotNull(quadGeometry.coverageTargetHeightMeters), 0.0001f)
+    assertEquals(4.92f * (16.0f / 9.0f), quadGeometry.widthMeters, 0.0001f)
+    assertEquals(4.92f, quadGeometry.heightMeters, 0.0001f)
     assertEquals(
         presentation.perEyeAspectRatio,
         quadGeometry.widthMeters / quadGeometry.heightMeters,
@@ -371,8 +371,8 @@ class SpatialImmersiveVideoSessionPolicyTest {
     assertEquals(1.0f, StereoMode.UpDown.viewScaleX, 0.0001f)
     assertEquals(0.5f, StereoMode.UpDown.viewScaleY, 0.0001f)
     assertTrue(presentation.markerFields().contains("directVideoQuadScaleMode=aspect-preserving-cover"))
-    assertTrue(presentation.markerFields().contains("directVideoCoverageTargetMeters=6.0885x4.5100"))
-    assertTrue(presentation.markerFields().contains("directVideoCoverageOverscanScale=1.1000"))
+    assertTrue(presentation.markerFields().contains("directVideoCoverageTargetMeters=6.6420x4.9200"))
+    assertTrue(presentation.markerFields().contains("directVideoCoverageOverscanScale=1.2000"))
     assertTrue(
         presentation.markerFields().contains(
             "directVideoCarrierGeometryOwner=head-fixed-outer-video-panel"

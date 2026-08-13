@@ -227,7 +227,7 @@ app-local. Stopping the bridge is the rollback and leaves the adapter inert.
   explicit outer target. A world-anchored 180/360 underlay therefore remains
   an independent transparent-underlay layer, while explicitly selected
   readable same-layer video remains available for the head-anchored
-  composition. The head-fixed direct-video quad applies a symmetric 1.10x
+  composition. The head-fixed direct-video quad applies a symmetric 1.20x
   cover overscan around that outer-video footprint so the underlying
   passthrough treatment cannot appear as narrow top/bottom bands. This changes
   only the head-fixed outer-video panel: the video keeps its per-eye source

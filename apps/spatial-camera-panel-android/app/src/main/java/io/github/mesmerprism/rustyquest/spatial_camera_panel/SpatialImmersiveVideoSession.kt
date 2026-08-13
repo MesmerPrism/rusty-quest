@@ -33,7 +33,7 @@ internal enum class SpatialImmersiveVideoCarrierShape {
 }
 
 internal const val HEAD_FIXED_VIDEO_DISTANCE_METERS = 2.05f
-internal const val HEAD_FIXED_VIDEO_COVER_OVERSCAN_SCALE = 1.10f
+internal const val HEAD_FIXED_VIDEO_COVER_OVERSCAN_SCALE = 1.20f
 
 internal enum class SpatialImmersiveVideoQuadScaleMode(val token: String) {
   SourceAspect("source-aspect"),
