@@ -180,6 +180,12 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             ::onConnectionHubEffectiveSnapshotChanged,
         )
       }
+  private val sharedMediaLibraryClientDelegate =
+      lazy(LazyThreadSafetyMode.NONE) {
+        SharedMediaLibrarySnapshotClient(applicationContext)
+      }
+  private val sharedMediaLibraryClient: SharedMediaLibrarySnapshotClient by
+      sharedMediaLibraryClientDelegate
   private var videoCadenceModeOverride: SpatialVideoCadenceMode? = null
   private var unavailableLaunchOptionInputLocked: Boolean = false
   private var privatePanelLaunchStatus: String = "none"
@@ -1892,14 +1898,10 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
       )
       return
     }
-    runCatching {
-          SharedOfflineImmersiveMediaLibrary.adoptTreeUri(
-              this,
-              treeUri,
-              data?.flags ?: 0,
-          )
-        }
-        .onSuccess { snapshot ->
+    sharedMediaLibraryClient.adoptTreeUri(
+        treeUri = treeUri,
+        returnedGrantFlags = data?.flags ?: 0,
+        onSuccess = { snapshot ->
           marker(
               "channel=spatial-immersive-video status=shared-media-folder-adopted " +
                   "persistedReadGrant=true persistedWriteGrant=${snapshot.writable} " +
@@ -1911,14 +1913,15 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
                   "plaintextFileWritten=false"
           )
           recreate()
-        }
-        .onFailure { error ->
+        },
+        onFailure = { error ->
           marker(
               "channel=spatial-immersive-video status=shared-media-folder-rejected " +
                   "reason=${activityMarkerToken(error.javaClass.simpleName)} " +
                   "rawFolderUriExposed=false failClosed=true"
           )
-        }
+        },
+    )
   }
 
   @Suppress("DEPRECATION")
@@ -2758,6 +2761,9 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     connectionHubSurfaceClient?.close()
     connectionHubSurfaceClient = null
     connectionHubWearerControlClient.close()
+    if (sharedMediaLibraryClientDelegate.isInitialized()) {
+      sharedMediaLibraryClient.close()
+    }
     SpatialVideoCadencePanelBridge.clear()
     privatePanelExtension?.shutdown()
     immersiveVideoPanelCoordinator.destroy("activity-destroy")
@@ -2813,9 +2819,9 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
                     projectionInnerAlpha =
                         privateLayerControlCoordinator.projectionInnerAlpha,
                     videoSession = immersiveVideoPanelCoordinator::sessionSnapshot,
-                    sharedMediaLibrary = {
-                      SharedOfflineImmersiveMediaLibrary.snapshot(this)
-                    },
+                    sharedMediaLibraryStatus = sharedMediaLibraryClient::status,
+                    observeSharedMediaLibrary = sharedMediaLibraryClient::observe,
+                    refreshSharedMediaLibrary = sharedMediaLibraryClient::refresh,
                     connectionHubStatus = connectionHubWearerControlClient::status,
                     observeConnectionHub = connectionHubWearerControlClient::observe,
                     refreshConnectionHub = connectionHubWearerControlClient::refresh,

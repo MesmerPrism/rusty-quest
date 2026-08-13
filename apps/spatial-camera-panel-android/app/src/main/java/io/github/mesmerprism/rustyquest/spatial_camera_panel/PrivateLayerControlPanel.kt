@@ -114,7 +114,10 @@ internal fun PrivateLayerControlPanel(
     projectionSurfaceTiling: ProjectionSurfaceTiling,
     projectionInnerAlpha: ProjectionInnerAlpha,
     videoSession: () -> SpatialImmersiveVideoSessionSnapshot,
-    sharedMediaLibrary: () -> SharedOfflineImmersiveMediaLibrarySnapshot,
+    sharedMediaLibraryStatus: () -> SharedOfflineImmersiveMediaLibrarySnapshot,
+    observeSharedMediaLibrary:
+        ((SharedOfflineImmersiveMediaLibrarySnapshot) -> Unit) -> Closeable,
+    refreshSharedMediaLibrary: () -> SharedOfflineImmersiveMediaLibrarySnapshot,
     connectionHubStatus: () -> ConnectionHubWearerControlSnapshot,
     observeConnectionHub:
         ((ConnectionHubWearerControlSnapshot) -> Unit) -> Closeable,
@@ -176,7 +179,7 @@ internal fun PrivateLayerControlPanel(
   var currentRegionTab by remember { mutableStateOf(RegionSettingsTab.Buffer) }
   var localVideoSession by remember { mutableStateOf(videoSession()) }
   var localVideoCadenceMode by remember { mutableStateOf(SpatialVideoCadencePanelBridge.current()) }
-  var localSharedMediaLibrary by remember { mutableStateOf(sharedMediaLibrary()) }
+  var localSharedMediaLibrary by remember { mutableStateOf(sharedMediaLibraryStatus()) }
   var localConnectionHub by remember { mutableStateOf(connectionHubStatus()) }
   var localEnvironmentDepthUnavailableWarning by
       remember { mutableStateOf(environmentDepthUnavailableWarning()) }
@@ -203,6 +206,11 @@ internal fun PrivateLayerControlPanel(
     val subscription = observeConnectionHub { snapshot -> localConnectionHub = snapshot }
     onDispose(subscription::close)
   }
+  DisposableEffect(Unit) {
+    val subscription =
+        observeSharedMediaLibrary { snapshot -> localSharedMediaLibrary = snapshot }
+    onDispose(subscription::close)
+  }
   LaunchedEffect(Unit) {
     while (true) {
       delay(500L)
@@ -213,10 +221,6 @@ internal fun PrivateLayerControlPanel(
       val latestVideoCadenceMode = SpatialVideoCadencePanelBridge.current()
       if (latestVideoCadenceMode != localVideoCadenceMode) {
         localVideoCadenceMode = latestVideoCadenceMode
-      }
-      val latestSharedMediaLibrary = sharedMediaLibrary()
-      if (latestSharedMediaLibrary != localSharedMediaLibrary) {
-        localSharedMediaLibrary = latestSharedMediaLibrary
       }
       val latestEnvironmentDepthUnavailableWarning = environmentDepthUnavailableWarning()
       if (latestEnvironmentDepthUnavailableWarning !=
@@ -393,6 +397,9 @@ internal fun PrivateLayerControlPanel(
                     "${localSharedMediaLibrary.folderLabel}: " +
                         "${localSharedMediaLibrary.packCount} encrypted pack(s), " +
                         "${localSharedMediaLibrary.plainVideoCount} validated plain video(s)."
+                localSharedMediaLibrary.status in
+                    setOf("refresh-required", "refresh-pending", "folder-adoption-pending") ->
+                    "The shared media folder is configured. Refresh only when you want to rescan external media."
                 localSharedMediaLibrary.configured ->
                     "The previously selected folder is no longer readable. Select it again."
                 else ->
@@ -431,6 +438,30 @@ internal fun PrivateLayerControlPanel(
                 style = MaterialTheme.typography.bodySmall,
                 color = LayerPanelWarm,
             )
+          }
+          if (localSharedMediaLibrary.configured) {
+            Button(
+                modifier = Modifier.fillMaxWidth().height(52.dp),
+                enabled =
+                    localSharedMediaLibrary.status !in
+                        setOf("refresh-pending", "folder-adoption-pending"),
+                onClick = {
+                  localSharedMediaLibrary = refreshSharedMediaLibrary()
+                },
+                colors =
+                    ButtonDefaults.buttonColors(
+                        containerColor = LayerPanelAccent,
+                        contentColor = Color(0xFF04111A),
+                    ),
+            ) {
+              Text(
+                  if (localSharedMediaLibrary.status == "refresh-pending") {
+                    "Refreshing media library…"
+                  } else {
+                    "Refresh media library"
+                  }
+              )
+            }
           }
           Button(
               modifier = Modifier.fillMaxWidth().height(52.dp),

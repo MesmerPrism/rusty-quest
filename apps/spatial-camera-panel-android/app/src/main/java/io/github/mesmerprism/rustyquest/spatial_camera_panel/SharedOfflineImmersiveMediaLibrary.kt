@@ -18,6 +18,21 @@ internal data class SharedOfflineImmersiveMediaLibrarySnapshot(
     val status: String,
 )
 
+internal fun sharedOfflineImmersiveMediaInitialSnapshot(
+    configured: Boolean,
+): SharedOfflineImmersiveMediaLibrarySnapshot =
+    SharedOfflineImmersiveMediaLibrarySnapshot(
+        configured = configured,
+        accessible = false,
+        writable = false,
+        plainVideoTaxonomyReady = false,
+        folderLabel = SharedOfflineImmersiveMediaLibrary.EXPECTED_FOLDER_NAME,
+        packCount = 0,
+        plainVideoCount = 0,
+        rejectedPlainVideoCount = 0,
+        status = if (configured) "refresh-required" else "folder-not-selected",
+    )
+
 /**
  * Persisted access to a media library chosen with Android's Storage Access Framework. Media reads
  * remain direct and read-only. An optional write grant is used only to create the fixed plain-video
@@ -75,19 +90,13 @@ internal object SharedOfflineImmersiveMediaLibrary {
           ?.takeIf(String::isNotBlank)
           ?.let(Uri::parse)
 
+  /** Local-only status readback. This never contacts a document provider. */
+  fun statusWithoutScan(context: Context): SharedOfflineImmersiveMediaLibrarySnapshot =
+      sharedOfflineImmersiveMediaInitialSnapshot(persistedTreeUri(context) != null)
+
   fun snapshot(context: Context): SharedOfflineImmersiveMediaLibrarySnapshot {
     val treeUri = persistedTreeUri(context)
-        ?: return SharedOfflineImmersiveMediaLibrarySnapshot(
-            configured = false,
-            accessible = false,
-            writable = false,
-            plainVideoTaxonomyReady = false,
-            folderLabel = EXPECTED_FOLDER_NAME,
-            packCount = 0,
-            plainVideoCount = 0,
-            rejectedPlainVideoCount = 0,
-            status = "folder-not-selected",
-        )
+        ?: return sharedOfflineImmersiveMediaInitialSnapshot(configured = false)
     return runCatching {
           val tree = SharedDocumentTree(context, treeUri)
           val packIds = tree.packIds()

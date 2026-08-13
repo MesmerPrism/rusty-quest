@@ -46,6 +46,7 @@ $vrStrobeCheckPath = Join-Path $PSScriptRoot "checks\Test-SpatialVrStrobeStatic.
 $panelFacingCheckPath = Join-Path $PSScriptRoot "checks\Test-SpatialSdkPanelFacingStatic.ps1"
 $productIsolationCheckPath = Join-Path $PSScriptRoot "checks\Test-SpatialProductIsolationStatic.ps1"
 $bufferHubControlsCheckPath = Join-Path $PSScriptRoot "checks\Test-SpatialCameraPanelBufferHubControlsStatic.ps1"
+$sharedMediaQuiescenceCheckPath = Join-Path $PSScriptRoot "checks\Test-SpatialCameraPanelSharedMediaQuiescenceStatic.ps1"
 $buildPath = Join-Path $PSScriptRoot "Build-SpatialCameraPanelAndroid.ps1"
 
 if (-not (Test-Path -LiteralPath $workflowCheckPath)) {
@@ -90,6 +91,9 @@ if (-not (Test-Path -LiteralPath $productIsolationCheckPath)) {
 if (-not (Test-Path -LiteralPath $bufferHubControlsCheckPath)) {
     throw "Missing Spatial Camera Panel Buffer/Hub controls check: $bufferHubControlsCheckPath"
 }
+if (-not (Test-Path -LiteralPath $sharedMediaQuiescenceCheckPath)) {
+    throw "Missing Spatial Camera Panel shared-media quiescence check: $sharedMediaQuiescenceCheckPath"
+}
 if (-not (Test-Path -LiteralPath $buildPath)) {
     throw "Missing Spatial Camera Panel build wrapper: $buildPath"
 }
@@ -108,6 +112,7 @@ if (-not (Test-Path -LiteralPath $buildPath)) {
 & $panelFacingCheckPath -RepoRoot $repoRootPath
 & $productIsolationCheckPath -RepoRoot $repoRootPath
 & $bufferHubControlsCheckPath -RepoRoot $repoRootPath
+& $sharedMediaQuiescenceCheckPath -RepoRoot $repoRootPath
 
 $gradleBat = Join-Path $repoRootPath "local-artifacts\tools\gradle-$GradleVersion\bin\gradle.bat"
 if (-not (Test-Path -LiteralPath $gradleBat -PathType Leaf)) {

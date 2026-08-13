@@ -81,7 +81,8 @@ Assert-Contains "Native contract" $native "projectionSurfaceDisplacementDisabled
 Assert-Contains "Vulkan runtime" $runtime "opaque_projection_displacement_pipeline"
 Assert-Contains "Vulkan runtime" $runtime "create_projection_displacement_pipeline"
 Assert-Contains "Vulkan runtime" $runtime "PROJECTION_SURFACE_GRID_VERTEX_COUNT"
-Assert-Contains "Vulkan runtime" $runtime "if displacement_effective"
+Assert-Contains "Vulkan runtime" $runtime ".tessellated_effective("
+Assert-Contains "Vulkan runtime" $runtime "if tessellated_effective"
 Assert-Contains "Vulkan runtime" $runtime "dst_binding(1)"
 Assert-Contains "Vulkan runtime" $runtime "vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT"
 Assert-Contains "Vulkan runtime" $runtime '"/spatial_opaque_projection.vert.spv"'

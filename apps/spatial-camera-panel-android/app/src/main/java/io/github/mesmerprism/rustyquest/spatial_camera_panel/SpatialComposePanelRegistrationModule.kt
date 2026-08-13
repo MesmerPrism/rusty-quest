@@ -28,7 +28,10 @@ internal data class SpatialPrivateLayerPanelRegistrationBindings(
     val projectionSurfaceTiling: ProjectionSurfaceTiling,
     val projectionInnerAlpha: ProjectionInnerAlpha,
     val videoSession: () -> SpatialImmersiveVideoSessionSnapshot,
-    val sharedMediaLibrary: () -> SharedOfflineImmersiveMediaLibrarySnapshot,
+    val sharedMediaLibraryStatus: () -> SharedOfflineImmersiveMediaLibrarySnapshot,
+    val observeSharedMediaLibrary:
+        ((SharedOfflineImmersiveMediaLibrarySnapshot) -> Unit) -> Closeable,
+    val refreshSharedMediaLibrary: () -> SharedOfflineImmersiveMediaLibrarySnapshot,
     val connectionHubStatus: () -> ConnectionHubWearerControlSnapshot,
     val observeConnectionHub:
         ((ConnectionHubWearerControlSnapshot) -> Unit) -> Closeable,
@@ -117,7 +120,9 @@ internal object SpatialComposePanelRegistrationModule {
                       projectionSurfaceTiling = bindings.projectionSurfaceTiling,
                       projectionInnerAlpha = bindings.projectionInnerAlpha,
                       videoSession = bindings.videoSession,
-                      sharedMediaLibrary = bindings.sharedMediaLibrary,
+                      sharedMediaLibraryStatus = bindings.sharedMediaLibraryStatus,
+                      observeSharedMediaLibrary = bindings.observeSharedMediaLibrary,
+                      refreshSharedMediaLibrary = bindings.refreshSharedMediaLibrary,
                       connectionHubStatus = bindings.connectionHubStatus,
                       observeConnectionHub = bindings.observeConnectionHub,
                       refreshConnectionHub = bindings.refreshConnectionHub,
