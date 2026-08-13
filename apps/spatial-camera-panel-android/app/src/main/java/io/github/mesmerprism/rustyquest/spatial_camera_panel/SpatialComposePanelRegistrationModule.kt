@@ -62,6 +62,7 @@ internal data class SpatialPrivateLayerPanelRegistrationBindings(
         (ProjectionInnerAlpha, String) -> ProjectionInnerAlpha,
     val selectPreviousVideo: () -> SpatialImmersiveVideoSessionSnapshot,
     val selectNextVideo: () -> SpatialImmersiveVideoSessionSnapshot,
+    val selectVideo: (Int) -> SpatialImmersiveVideoSessionSnapshot,
     val setVideoPresentationMode:
         (SpatialImmersiveVideoPresentationMode) -> SpatialImmersiveVideoSessionSnapshot,
     val setBackgroundMode: (SpatialBackgroundMode) -> SpatialImmersiveVideoSessionSnapshot,
@@ -147,6 +148,7 @@ internal object SpatialComposePanelRegistrationModule {
                       updateProjectionInnerAlpha = bindings.updateProjectionInnerAlpha,
                       selectPreviousVideo = bindings.selectPreviousVideo,
                       selectNextVideo = bindings.selectNextVideo,
+                      selectVideo = bindings.selectVideo,
                       setVideoPresentationMode = bindings.setVideoPresentationMode,
                       setBackgroundMode = bindings.setBackgroundMode,
                       chooseSharedMediaFolder = bindings.chooseSharedMediaFolder,

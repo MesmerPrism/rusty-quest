@@ -55,16 +55,33 @@ internal object PrivateLayerControls {
 
   val layers =
       listOf(
-          PrivateLayerChoice(0, "Final", "final"),
-          PrivateLayerChoice(1, "Opaque analysis 0", "opaque-analysis0-slot"),
-          PrivateLayerChoice(2, "Public guide blur", "public-guide-blur"),
-          PrivateLayerChoice(3, "Opaque analysis 1", "opaque-analysis1-slot"),
-          PrivateLayerChoice(4, "Public post-blur guide", "public-post-blur-guide"),
-          PrivateLayerChoice(5, "Opaque projection", "opaque-projection-slot"),
-          PrivateLayerChoice(6, "Public depth diagnostic", "public-depth-diagnostic"),
+          PrivateLayerChoice(0, "Final composition", "final-composition"),
+          PrivateLayerChoice(1, "Camera brightness", "camera-brightness"),
+          PrivateLayerChoice(2, "Brightness after first blur", "brightness-after-first-blur"),
+          PrivateLayerChoice(
+              3,
+              "Distortion strength · before smoothing",
+              "distortion-strength-before-smoothing",
+          ),
+          PrivateLayerChoice(
+              4,
+              "Distortion strength · smoothed",
+              "distortion-strength-smoothed",
+          ),
+          PrivateLayerChoice(
+              5,
+              "Distortion strength · depth adjusted",
+              "distortion-strength-depth-adjusted",
+          ),
+          PrivateLayerChoice(6, "Meta depth diagnostic", "meta-depth-diagnostic"),
           PrivateLayerChoice(7, "Meta poster LUT", "meta-passthrough-edge-window"),
-          PrivateLayerChoice(8, "Raw custom projection", "raw-custom-projection"),
+          PrivateLayerChoice(8, "Raw camera projection", "raw-camera-projection"),
       )
+
+  val centerContentLayers =
+      listOf(0, 8, 1, 2, 3, 4, 5, 6).map { index ->
+        layers.first { it.index == index }
+      }
 
   val depthSourcePolicies =
       listOf(
@@ -88,7 +105,7 @@ internal object PrivateLayerControls {
 
   /**
    * Mirrors the private projection shader's environment-depth reads. Cycle can visit a
-   * depth-consuming layer, while Final, Opaque projection, and Public depth diagnostic sample
+   * depth-consuming layer, while Final, depth-adjusted strength, and Meta depth diagnostic sample
    * environment depth directly. The remaining fixed diagnostic layers cannot be changed by
    * depth, so keeping the provider alive for them is pure background work.
    */

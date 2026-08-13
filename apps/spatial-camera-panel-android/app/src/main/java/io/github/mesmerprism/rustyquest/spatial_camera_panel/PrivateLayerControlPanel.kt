@@ -81,9 +81,11 @@ private enum class PrivateLayerPanelPage(
     val subtitle: String,
 ) {
   Home("Settings", "Choose a topic"),
-  Layers("Layers & projection", "Visibility, rendering layer, and projection size"),
-  Video("Background", "Background style, video playback, presentation, and active video"),
-  Regions("Three-region effect", "Core, dynamic buffer, and outer-region behavior"),
+  Center("Center region", "Projection size and the center region's rendered content"),
+  Middle("Middle buffer", "Off, static, or speed-driven guard with region-owned content"),
+  Outer("Outer region", "Video, independent stretch, or transparent passthrough"),
+  Transitions("Transitions", "Center-to-middle and middle-to-outer boundaries"),
+  Media("Media library", "Background, playback, cadence, presentation, and active media"),
   Image("Image processing", "Depth warp, RGB transform, sampling, and guide blur"),
   Depth("Depth alignment", "Depth source and per-eye fine tuning"),
   Profiles("Profiles", "Save, restore, and exchange complete tuning setups"),
@@ -146,6 +148,7 @@ internal fun PrivateLayerControlPanel(
         (ProjectionInnerAlpha, String) -> ProjectionInnerAlpha,
     selectPreviousVideo: () -> SpatialImmersiveVideoSessionSnapshot,
     selectNextVideo: () -> SpatialImmersiveVideoSessionSnapshot,
+    selectVideo: (Int) -> SpatialImmersiveVideoSessionSnapshot,
     setVideoPresentationMode:
         (SpatialImmersiveVideoPresentationMode) -> SpatialImmersiveVideoSessionSnapshot,
     setBackgroundMode: (SpatialBackgroundMode) -> SpatialImmersiveVideoSessionSnapshot,
@@ -176,7 +179,6 @@ internal fun PrivateLayerControlPanel(
   var localProjectionInnerAlpha by
       remember(projectionInnerAlpha) { mutableStateOf(projectionInnerAlpha) }
   var currentPage by remember { mutableStateOf(PrivateLayerPanelPage.Home) }
-  var currentRegionTab by remember { mutableStateOf(RegionSettingsTab.Buffer) }
   var localVideoSession by remember { mutableStateOf(videoSession()) }
   var localVideoCadenceMode by remember { mutableStateOf(SpatialVideoCadencePanelBridge.current()) }
   var localSharedMediaLibrary by remember { mutableStateOf(sharedMediaLibraryStatus()) }
@@ -292,8 +294,8 @@ internal fun PrivateLayerControlPanel(
             onSelect = { currentPage = it },
         )
       }
-      if (currentPage == PrivateLayerPanelPage.Layers) {
-      Section("Custom Projection") {
+      if (currentPage == PrivateLayerPanelPage.Center) {
+      Section("Projection") {
         Text(
             if (localProjectionPanelEnabled) {
               "Custom camera/effect projection: On. The independent 360 video layer can stay on or off."
@@ -328,7 +330,12 @@ internal fun PrivateLayerControlPanel(
           )
         }
       }
-      Section("Active Rendering") {
+      Section("Center content") {
+        Text(
+            "Choose the actual center-region output or a named diagnostic stage. The depth-adjusted distortion strength is the smoothed strength after Meta depth modulation; Meta depth diagnostic shows the aligned depth input itself.",
+            style = MaterialTheme.typography.bodySmall,
+            color = LayerPanelMuted,
+        )
         LayerButtonGrid(
             selectedLayerOverride = localLayerOverride,
             onSelect = { override ->
@@ -338,7 +345,7 @@ internal fun PrivateLayerControlPanel(
       }
       }
 
-      if (currentPage == PrivateLayerPanelPage.Video) {
+      if (currentPage == PrivateLayerPanelPage.Media) {
         Section("Background") {
           HelpLabel("Background")
           Text(
@@ -599,6 +606,47 @@ internal fun PrivateLayerControlPanel(
             }
           }
           HelpLabel("Active video")
+          if (localVideoSession.items.isEmpty()) {
+            Text(
+                "Refresh the media library to discover encrypted packs and validated plain videos.",
+                style = MaterialTheme.typography.bodySmall,
+                color = LayerPanelMuted,
+            )
+          } else {
+            localVideoSession.items.forEach { item ->
+              Button(
+                  modifier = Modifier.fillMaxWidth().height(68.dp),
+                  onClick = { localVideoSession = selectVideo(item.index) },
+                  colors =
+                      ButtonDefaults.buttonColors(
+                          containerColor =
+                              if (item.index == localVideoSession.activeIndex) {
+                                LayerPanelAccent
+                              } else {
+                                LayerPanelSurfaceAlt
+                              },
+                          contentColor =
+                              if (item.index == localVideoSession.activeIndex) {
+                                Color(0xFF04111A)
+                              } else {
+                                LayerPanelInk
+                              },
+                      ),
+              ) {
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalAlignment = Alignment.Start,
+                ) {
+                  Text(item.label, fontWeight = FontWeight.SemiBold)
+                  Text(
+                      "${item.sourceLabel} · ${item.projectionLabel} · " +
+                          "${item.stereoLabel} · ${item.dimensionsLabel}",
+                      style = MaterialTheme.typography.bodySmall,
+                  )
+                }
+              }
+            }
+          }
           Row(
               horizontalArrangement = Arrangement.spacedBy(10.dp),
               modifier = Modifier.fillMaxWidth(),
@@ -707,7 +755,7 @@ internal fun PrivateLayerControlPanel(
         }
       }
 
-      if (currentPage == PrivateLayerPanelPage.Layers) {
+      if (currentPage == PrivateLayerPanelPage.Center) {
       Section("Projection Area") {
         HelpLabel("Projection scale")
         Text(
@@ -1224,29 +1272,36 @@ internal fun PrivateLayerControlPanel(
       }
       }
 
-      if (currentPage == PrivateLayerPanelPage.Regions) {
-        RegionSettingsPage(
-            selectedTab = currentRegionTab,
-            onSelectTab = { currentRegionTab = it },
+      if (currentPage == PrivateLayerPanelPage.Middle) {
+        MiddleRegionPage(
             configuration = localZoneCompositor,
-            surfaceTiling = localProjectionSurfaceTiling,
-            innerAlpha = localProjectionInnerAlpha,
-            onConfigurationChange = { requested, source ->
-              PrivateLayerZoneCompositorPanelBridge.submit(requested, source)
+            videoSession = localVideoSession,
+            videoCadenceMode = localVideoCadenceMode,
+            onConfigurationChange = PrivateLayerZoneCompositorPanelBridge::submit,
+            onSelectVideo = { index -> localVideoSession = selectVideo(index) },
+            onSelectCadence = { mode ->
+              localVideoCadenceMode = SpatialVideoCadencePanelBridge.select(mode)
             },
-            onSurfaceTilingChange = { requested, source ->
-              localProjectionSurfaceTiling = updateProjectionSurfaceTiling(requested, source)
+        )
+      }
+
+      if (currentPage == PrivateLayerPanelPage.Outer) {
+        OuterRegionPage(
+            configuration = localZoneCompositor,
+            videoSession = localVideoSession,
+            videoCadenceMode = localVideoCadenceMode,
+            onConfigurationChange = PrivateLayerZoneCompositorPanelBridge::submit,
+            onSelectVideo = { index -> localVideoSession = selectVideo(index) },
+            onSelectCadence = { mode ->
+              localVideoCadenceMode = SpatialVideoCadencePanelBridge.select(mode)
             },
-            onInnerAlphaChange = { requested, source ->
-              localProjectionInnerAlpha = updateProjectionInnerAlpha(requested, source)
-            },
-            disableSurfaceDisplacement = {
-              localProjectionSurfaceDisplacement =
-                  updateProjectionSurfaceDisplacement(
-                      ProjectionSurfaceDisplacementControls.off,
-                      "private-layer-zone-synthetic-displacement-off",
-                  )
-            },
+        )
+      }
+
+      if (currentPage == PrivateLayerPanelPage.Transitions) {
+        RegionTransitionsPage(
+            configuration = localZoneCompositor,
+            onConfigurationChange = PrivateLayerZoneCompositorPanelBridge::submit,
         )
       }
 
@@ -1875,19 +1930,29 @@ private fun PanelTopicMenu(
 ) {
   Section("Settings topics") {
     TopicNavigationButton(
-        title = PrivateLayerPanelPage.Layers.title,
+        title = PrivateLayerPanelPage.Center.title,
         summary = projectionSummary,
-        onClick = { onSelect(PrivateLayerPanelPage.Layers) },
+        onClick = { onSelect(PrivateLayerPanelPage.Center) },
     )
     TopicNavigationButton(
-        title = PrivateLayerPanelPage.Video.title,
+        title = PrivateLayerPanelPage.Middle.title,
+        summary = "Geometry and content · $regionSummary",
+        onClick = { onSelect(PrivateLayerPanelPage.Middle) },
+    )
+    TopicNavigationButton(
+        title = PrivateLayerPanelPage.Outer.title,
+        summary = "Video, stretch, or transparent · $regionSummary",
+        onClick = { onSelect(PrivateLayerPanelPage.Outer) },
+    )
+    TopicNavigationButton(
+        title = PrivateLayerPanelPage.Transitions.title,
+        summary = "Two independent region boundaries",
+        onClick = { onSelect(PrivateLayerPanelPage.Transitions) },
+    )
+    TopicNavigationButton(
+        title = PrivateLayerPanelPage.Media.title,
         summary = videoSummary,
-        onClick = { onSelect(PrivateLayerPanelPage.Video) },
-    )
-    TopicNavigationButton(
-        title = PrivateLayerPanelPage.Regions.title,
-        summary = regionSummary,
-        onClick = { onSelect(PrivateLayerPanelPage.Regions) },
+        onClick = { onSelect(PrivateLayerPanelPage.Media) },
     )
     TopicNavigationButton(
         title = PrivateLayerPanelPage.Image.title,
@@ -2065,7 +2130,7 @@ private fun LayerButtonGrid(
         selectedLayerOverride = selectedLayerOverride,
         onSelect = onSelect,
     )
-    PrivateLayerControls.layers.drop(1).chunked(2).forEach { row ->
+    PrivateLayerControls.centerContentLayers.drop(1).chunked(2).forEach { row ->
       LayerButtonRow(row, selectedLayerOverride, onSelect)
     }
   }
@@ -2131,6 +2196,438 @@ private fun DepthSourceButtonGrid(
         }
       }
     }
+  }
+}
+
+@Composable
+private fun MiddleRegionPage(
+    configuration: PrivateLayerZoneCompositor,
+    videoSession: SpatialImmersiveVideoSessionSnapshot,
+    videoCadenceMode: SpatialVideoCadenceMode,
+    onConfigurationChange: (PrivateLayerZoneCompositor, String) -> Unit,
+    onSelectVideo: (Int) -> Unit,
+    onSelectCadence: (SpatialVideoCadenceMode) -> Unit,
+) {
+  val controls = PrivateLayerZoneCompositorControls
+  val bufferActive = configuration.bufferGeometryMode != controls.bufferGeometryOff
+  Section("Middle buffer geometry") {
+    Text(
+        "The buffer is the guard border outside the visible center projection. It contracts the visible center without changing projection scale, leaving source content available while the headset moves.",
+        style = MaterialTheme.typography.bodySmall,
+        color = LayerPanelMuted,
+    )
+    Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+      ChoiceButton("Off", configuration.bufferGeometryMode == controls.bufferGeometryOff) {
+        onConfigurationChange(
+            configuration.copy(bufferGeometryMode = controls.bufferGeometryOff),
+            "private-layer-middle-geometry-off",
+        )
+      }
+      ChoiceButton("Static", configuration.bufferGeometryMode == controls.bufferGeometryStatic) {
+        onConfigurationChange(
+            configuration.copy(bufferGeometryMode = controls.bufferGeometryStatic),
+            "private-layer-middle-geometry-static",
+        )
+      }
+      ChoiceButton("Dynamic", configuration.bufferGeometryMode == controls.bufferGeometryDynamic) {
+        onConfigurationChange(
+            configuration.copy(bufferGeometryMode = controls.bufferGeometryDynamic),
+            "private-layer-middle-geometry-dynamic",
+        )
+      }
+    }
+    when (configuration.bufferGeometryMode) {
+      controls.bufferGeometryStatic ->
+          DepthSlider("Buffer size", configuration.bufferStaticWidthUv, 0.0f..0.30f) {
+            onConfigurationChange(
+                configuration.copy(bufferStaticWidthUv = it),
+                "private-layer-middle-static-size",
+            )
+          }
+      controls.bufferGeometryDynamic -> {
+        DepthSlider("Minimum buffer", configuration.bufferMinimumWidthUv, 0.0f..0.30f) {
+          onConfigurationChange(
+              configuration.copy(
+                  bufferMinimumWidthUv = it,
+                  bufferMaximumWidthUv = maxOf(it, configuration.bufferMaximumWidthUv),
+              ),
+              "private-layer-middle-dynamic-minimum",
+          )
+        }
+        DepthSlider("Maximum buffer", configuration.bufferMaximumWidthUv, 0.0f..0.30f) {
+          onConfigurationChange(
+              configuration.copy(
+                  bufferMaximumWidthUv = it,
+                  bufferMinimumWidthUv = minOf(it, configuration.bufferMinimumWidthUv),
+              ),
+              "private-layer-middle-dynamic-maximum",
+          )
+        }
+        DepthSlider(
+            "Headset speed for maximum buffer (m/s)",
+            configuration.bufferMaximumSpeedMetersPerSecond,
+            0.05f..3.0f,
+        ) {
+          onConfigurationChange(
+              configuration.copy(bufferMaximumSpeedMetersPerSecond = it),
+              "private-layer-middle-dynamic-maximum-speed",
+          )
+        }
+        Text(
+            "At rest the buffer uses Minimum. It reaches Maximum at the selected tracked headset speed; faster motion remains capped at Maximum.",
+            style = MaterialTheme.typography.bodySmall,
+            color = LayerPanelMuted,
+        )
+      }
+    }
+  }
+
+  Section("Middle content") {
+    Text(
+        if (bufferActive) "Choose what is drawn in the active middle region."
+        else "The choice is retained while the buffer is Off and becomes visible when Static or Dynamic is selected.",
+        style = MaterialTheme.typography.bodySmall,
+        color = if (bufferActive) LayerPanelAccent else LayerPanelMuted,
+    )
+    Row(
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+    ) {
+      ChoiceButton(
+          "Continue Outer",
+          configuration.bufferFillMode == controls.bufferFillOuterContinuation,
+      ) {
+        onConfigurationChange(
+            configuration.copy(bufferFillMode = controls.bufferFillOuterContinuation),
+            "private-layer-middle-content-outer",
+        )
+      }
+      ChoiceButton("Video", configuration.bufferFillMode == controls.bufferFillVideo) {
+        onConfigurationChange(
+            configuration.copy(bufferFillMode = controls.bufferFillVideo),
+            "private-layer-middle-content-video",
+        )
+      }
+      ChoiceButton("Stretch", configuration.bufferFillMode == controls.bufferFillStretch) {
+        onConfigurationChange(
+            configuration.copy(bufferFillMode = controls.bufferFillStretch),
+            "private-layer-middle-content-stretch",
+        )
+      }
+      ChoiceButton(
+          "Transparent",
+          configuration.bufferFillMode == controls.bufferFillTransparentReveal,
+      ) {
+        onConfigurationChange(
+            configuration.copy(bufferFillMode = controls.bufferFillTransparentReveal),
+            "private-layer-middle-content-transparent",
+        )
+      }
+    }
+  }
+
+  if (configuration.bufferFillMode == controls.bufferFillStretch) {
+    RegionStretchSettings(
+        title = "Middle stretch settings",
+        configuration = configuration,
+        outer = false,
+        onConfigurationChange = onConfigurationChange,
+    )
+  }
+  if (configuration.bufferFillMode == controls.bufferFillVideo) {
+    RegionVideoSettings(
+        title = "Middle video settings",
+        videoSession = videoSession,
+        videoCadenceMode = videoCadenceMode,
+        onSelectVideo = onSelectVideo,
+        onSelectCadence = onSelectCadence,
+    )
+  }
+}
+
+@Composable
+private fun OuterRegionPage(
+    configuration: PrivateLayerZoneCompositor,
+    videoSession: SpatialImmersiveVideoSessionSnapshot,
+    videoCadenceMode: SpatialVideoCadenceMode,
+    onConfigurationChange: (PrivateLayerZoneCompositor, String) -> Unit,
+    onSelectVideo: (Int) -> Unit,
+    onSelectCadence: (SpatialVideoCadenceMode) -> Unit,
+) {
+  val controls = PrivateLayerZoneCompositorControls
+  Section("Outer content") {
+    Text(
+        "The outer region is independent of the middle buffer. In particular, Outer Stretch remains active when the buffer is Off.",
+        style = MaterialTheme.typography.bodySmall,
+        color = LayerPanelMuted,
+    )
+    Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+      ChoiceButton("Video", configuration.outerContentMode == controls.outerContentVideo) {
+        onConfigurationChange(
+            configuration.copy(outerContentMode = controls.outerContentVideo),
+            "private-layer-outer-content-video",
+        )
+      }
+      ChoiceButton("Stretch", configuration.outerContentMode == controls.outerContentStretch) {
+        onConfigurationChange(
+            configuration.copy(outerContentMode = controls.outerContentStretch),
+            "private-layer-outer-content-stretch",
+        )
+      }
+      ChoiceButton(
+          "Transparent",
+          configuration.outerContentMode == controls.outerContentTransparent,
+      ) {
+        onConfigurationChange(
+            configuration.copy(outerContentMode = controls.outerContentTransparent),
+            "private-layer-outer-content-transparent",
+        )
+      }
+    }
+    if (configuration.outerContentMode == controls.outerContentTransparent) {
+      Text(
+          "Transparent reveals the selected Black, Passthrough, or LUT passthrough background behind the custom projection carrier.",
+          style = MaterialTheme.typography.bodySmall,
+          color = LayerPanelMuted,
+      )
+    }
+  }
+  if (configuration.outerContentMode == controls.outerContentStretch) {
+    RegionStretchSettings(
+        title = "Outer stretch settings",
+        configuration = configuration,
+        outer = true,
+        onConfigurationChange = onConfigurationChange,
+    )
+  }
+  if (configuration.outerContentMode == controls.outerContentVideo) {
+    RegionVideoSettings(
+        title = "Outer video settings",
+        videoSession = videoSession,
+        videoCadenceMode = videoCadenceMode,
+        onSelectVideo = onSelectVideo,
+        onSelectCadence = onSelectCadence,
+    )
+  }
+}
+
+@Composable
+private fun RegionStretchSettings(
+    title: String,
+    configuration: PrivateLayerZoneCompositor,
+    outer: Boolean,
+    onConfigurationChange: (PrivateLayerZoneCompositor, String) -> Unit,
+) {
+  val controls = PrivateLayerZoneCompositorControls
+  val source = if (outer) configuration.outerStretchSource else configuration.stretchSource
+  val optionFlags =
+      if (outer) configuration.outerStretchOptionFlags else configuration.stretchOptionFlags
+  val edgeInset = if (outer) configuration.outerEdgeInsetUv else configuration.edgeInsetUv
+  val maxInset = if (outer) configuration.outerMaxInsetUv else configuration.maxInsetUv
+  val curve = if (outer) configuration.outerStretchCurve else configuration.stretchCurve
+  val processedMix =
+      if (outer) configuration.outerProcessedMix else configuration.processedMix
+  val prefix = if (outer) "outer" else "middle"
+  fun withSource(value: Int) =
+      if (outer) configuration.copy(outerStretchSource = value)
+      else configuration.copy(stretchSource = value)
+  fun withFlags(value: Int) =
+      if (outer) configuration.copy(outerStretchOptionFlags = value)
+      else configuration.copy(stretchOptionFlags = value)
+
+  Section(title) {
+    HelpLabel("Stretch source")
+    Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+      ChoiceButton("Raw camera", source == controls.sourceRaw) {
+        onConfigurationChange(withSource(controls.sourceRaw), "private-layer-$prefix-stretch-raw")
+      }
+      ChoiceButton("Processed", source == controls.sourceProcessed) {
+        onConfigurationChange(
+            withSource(controls.sourceProcessed),
+            "private-layer-$prefix-stretch-processed",
+        )
+      }
+      ChoiceButton("Mix", source == controls.sourceMixed) {
+        onConfigurationChange(withSource(controls.sourceMixed), "private-layer-$prefix-stretch-mix")
+      }
+    }
+    DepthSlider("Edge inset", edgeInset, 0.0f..0.49f) {
+      onConfigurationChange(
+          if (outer) configuration.copy(outerEdgeInsetUv = it)
+          else configuration.copy(edgeInsetUv = it),
+          "private-layer-$prefix-stretch-edge-inset",
+      )
+    }
+    DepthSlider("Maximum inset", maxInset, 0.0f..0.49f) {
+      onConfigurationChange(
+          if (outer) configuration.copy(outerMaxInsetUv = it)
+          else configuration.copy(maxInsetUv = it),
+          "private-layer-$prefix-stretch-maximum-inset",
+      )
+    }
+    DepthSlider("Stretch curve", curve, 0.25f..6.0f) {
+      onConfigurationChange(
+          if (outer) configuration.copy(outerStretchCurve = it)
+          else configuration.copy(stretchCurve = it),
+          "private-layer-$prefix-stretch-curve",
+      )
+    }
+    if (source == controls.sourceMixed) {
+      DepthSlider("Processed source mix", processedMix, 0.0f..1.0f) {
+        onConfigurationChange(
+            if (outer) configuration.copy(outerProcessedMix = it)
+            else configuration.copy(processedMix = it),
+            "private-layer-$prefix-stretch-processed-mix",
+        )
+      }
+    }
+    HelpLabel("Stretch attachment")
+    val attachmentFlags = optionFlags and 0x1c
+    Row(
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+    ) {
+      listOf(
+              "Standard" to 0x00,
+              "Sample warp" to 0x04,
+              "Smooth radial" to 0x08,
+              "Seamless" to 0x10,
+          )
+          .forEach { (label, flag) ->
+            ChoiceButton(label, attachmentFlags == flag) {
+              onConfigurationChange(
+                  withFlags((optionFlags and 0x1c.inv()) or flag),
+                  "private-layer-$prefix-stretch-attachment-${label.lowercase().replace(' ', '-')}",
+              )
+            }
+          }
+    }
+  }
+}
+
+@Composable
+private fun RegionVideoSettings(
+    title: String,
+    videoSession: SpatialImmersiveVideoSessionSnapshot,
+    videoCadenceMode: SpatialVideoCadenceMode,
+    onSelectVideo: (Int) -> Unit,
+    onSelectCadence: (SpatialVideoCadenceMode) -> Unit,
+) {
+  Section(title) {
+    Text(
+        "All video regions intentionally share the one active media source and decoder. Select the source here or on Media library; the selection remains playlist- and Hub-controllable.",
+        style = MaterialTheme.typography.bodySmall,
+        color = LayerPanelMuted,
+    )
+    Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+      SpatialVideoCadenceMode.entries.forEach { mode ->
+        ChoiceButton(mode.token, videoCadenceMode == mode) { onSelectCadence(mode) }
+      }
+    }
+    videoSession.items.forEach { item ->
+      Row(modifier = Modifier.fillMaxWidth()) {
+        ChoiceButton(
+            "${item.label} · ${item.sourceLabel} · ${item.stereoLabel}",
+            videoSession.activeIndex == item.index,
+        ) {
+          onSelectVideo(item.index)
+        }
+      }
+    }
+    if (videoSession.items.isEmpty()) {
+      Text(
+          "No catalog items are loaded. Use Media library to choose or refresh the shared folder.",
+          style = MaterialTheme.typography.bodySmall,
+          color = LayerPanelWarm,
+      )
+    }
+  }
+}
+
+@Composable
+private fun RegionTransitionsPage(
+    configuration: PrivateLayerZoneCompositor,
+    onConfigurationChange: (PrivateLayerZoneCompositor, String) -> Unit,
+) {
+  val controls = PrivateLayerZoneCompositorControls
+  Section(controls.innerBoundaryLabel(configuration)) {
+    Text(
+        "Shapes the boundary leaving the center. When the middle buffer is Off, the incoming content is the outer region.",
+        style = MaterialTheme.typography.bodySmall,
+        color = LayerPanelMuted,
+    )
+    DepthSlider("Transition width", configuration.innerWidthUv, 0.0f..0.25f) {
+      onConfigurationChange(
+          configuration.copy(innerWidthUv = it),
+          "private-layer-transition-center-width",
+      )
+    }
+    DepthSlider("Transition curve", configuration.innerCurve, 0.25f..6.0f) {
+      onConfigurationChange(
+          configuration.copy(innerCurve = it),
+          "private-layer-transition-center-curve",
+      )
+    }
+    RegionTransitionSignalChoices(configuration.innerSignal) { signal ->
+      onConfigurationChange(
+          configuration.copy(innerSignal = signal),
+          "private-layer-transition-center-signal",
+      )
+    }
+  }
+  Section(controls.outerBoundaryLabel(configuration)) {
+    Text(
+        if (controls.outerBoundaryActive(configuration)) {
+          "Shapes the boundary from the middle buffer into the outer region."
+        } else {
+          "Inactive while the middle buffer is Off; settings remain stored."
+        },
+        style = MaterialTheme.typography.bodySmall,
+        color =
+            if (controls.outerBoundaryActive(configuration)) LayerPanelAccent else LayerPanelMuted,
+    )
+    DepthSlider("Transition width", configuration.outerWidthUv, 0.0f..0.25f) {
+      onConfigurationChange(
+          configuration.copy(outerWidthUv = it),
+          "private-layer-transition-outer-width",
+      )
+    }
+    DepthSlider("Transition curve", configuration.outerCurve, 0.25f..6.0f) {
+      onConfigurationChange(
+          configuration.copy(outerCurve = it),
+          "private-layer-transition-outer-curve",
+      )
+    }
+    RegionTransitionSignalChoices(configuration.outerSignal) { signal ->
+      onConfigurationChange(
+          configuration.copy(outerSignal = signal),
+          "private-layer-transition-outer-signal",
+      )
+    }
+  }
+}
+
+@Composable
+private fun RegionTransitionSignalChoices(
+    selected: Int,
+    onSelect: (Int) -> Unit,
+) {
+  val controls = PrivateLayerZoneCompositorControls
+  HelpLabel("Transition modulation")
+  Row(
+      horizontalArrangement = Arrangement.spacedBy(10.dp),
+      modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+  ) {
+    listOf(
+            "Plain" to controls.signalFlat,
+            "RGB" to controls.signalRgb,
+            "Brightness" to controls.signalLuma,
+            "Color" to controls.signalChroma,
+            "Difference" to controls.signalDifference,
+        )
+        .forEach { (label, signal) ->
+          ChoiceButton(label, selected == signal) { onSelect(signal) }
+        }
   }
 }
 

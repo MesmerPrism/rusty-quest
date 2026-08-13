@@ -212,25 +212,22 @@ app-local. Stopping the bridge is the rollback and leaves the adapter inert.
   and the
   [motion iteration report](../../docs/SPATIAL_CAMERA_MOTION_ITERATION_REPORT.md)
   for the complete A/B sequence and remaining limitations.
-- The private-layer panel now includes an optional peripheral stretch and
-  zone-blend compositor. Its geometry is recomputed from the same display-frame
-  snapshot as the projection guard band, in this fixed order:
-  `user scale -> dynamic core -> stretch/seams -> video carrier`. Right-stick
-  projection scaling therefore changes the outer projection boundary before
-  the motion-driven guard contracts the visible core. `Off` disables stretch
-  without changing the explicit outer target. With a transparent 180/360
-  underlay target, it keeps the same-surface video draw suppressed and renders
-  only the custom core; with an explicitly selected readable same-layer target,
-  it retains the legacy head-fixed video composition. `Native stretch` fills
-  only the area around the guarded core. Off, Native, and Organic are stretch
-  choices, not layer-composition choices: selecting any of them preserves the
-  explicit outer target. A world-anchored 180/360 underlay therefore remains
-  an independent transparent-underlay layer, while explicitly selected
-  readable same-layer video remains available for the head-anchored
-  composition. The head-fixed direct-video quad applies a symmetric 1.20x
+- The private-layer panel exposes the custom projection as three owned regions:
+  Center, optional Middle buffer, and Outer. Its geometry is recomputed from the
+  same display-frame snapshot as the projection guard band, in this fixed order:
+  `user scale -> effective guard contraction -> region content/transitions -> video carrier`.
+  Right-stick projection scaling therefore remains independent of the Buffer.
+  Static Buffer has one guard size. Dynamic Buffer interpolates from its
+  configured minimum to maximum guard and reaches the maximum at the configured
+  tracked headset speed. The effective guard jointly retains the source border
+  and contracts the visible center; there is no second hidden size authority.
+  Middle content can continue Outer, use the active video, stretch camera
+  content, or reveal transparency. Outer independently selects video, stretch,
+  or transparency, so Outer Stretch works even when Buffer is Off. The
+  head-fixed direct-video quad applies a symmetric 1.20x
   cover overscan around that outer-video footprint so the underlying
   passthrough treatment cannot appear as narrow top/bottom bands. This changes
-  only the head-fixed outer-video panel: the video keeps its per-eye source
+  only the head-fixed video panel: the video keeps its per-eye source
   aspect, the custom projection's 5.40 m x 4.00 m target remains unchanged,
   and world-anchored flat/180/360 carriers retain their declared geometry. Its
   default mapping id selects the original native graded edge-trail treatment:
@@ -238,13 +235,9 @@ app-local. Stopping the bridge is the rollback and leaves the adapter inert.
   deeper into that same side under a nonlinear distance curve. The rounded
   target footprint supplies the corner treatment. The later cross-center lens
   effect is not part of this route; old requests for it normalize to the graded
-  edge-trail defaults. `Full stretch`
-  expands the treatment to the full stereo carrier and suppresses the separate
-  video draw only after the video-aware compositor pipeline is ready; a missing
-  video frame or pipeline falls back to the legacy path. `Organic stretch` is an
-  A/B preset for RGB/difference-responsive seams with bounded sine and motion
-  modulation. Raw-camera, processed-layer, and mixed stretch sources remain
-  selectable. The public adapter owns only rectangles, the numeric mapping id,
+  edge-trail defaults. Middle and Outer each retain independent raw-camera,
+  processed-layer, or mixed stretch source plus inset, curve, and attachment
+  controls. The public adapter owns only rectangles, the numeric mapping id,
   three bounded family parameters, descriptors, and rollback; the lens formula
   and downstream color/effect formulas stay in the private downstream shader.
   Device validation can select the same bounded presets without controller
@@ -1543,8 +1536,9 @@ markers keep requested, supported, and effective state separate.
 
 The existing descriptor-set-3/binding-1 displacement block remains the first
 64 bytes. Uniform ABI v2 appends a 64-byte neutral suffix; existing ABI-v1
-shader payloads can continue reading only the prefix. The 368-byte zone block
-also remains unchanged. A v2-consuming build declares
+shader payloads can continue reading only the prefix. The region-owned zone
+block is 400 bytes: the v2 prefix remains byte-compatible and two appended vec4
+values carry Outer Stretch parameters and content choice. A v2-consuming build declares
 `-ProjectionSurfaceUniformAbiVersion 2` (or the matching public build
 environment value), and the optional vertex and fragment payloads remain
 responsible for consuming the neutral controls.
@@ -1557,31 +1551,26 @@ direct Spatial 180/360 video carrier. See
 
 ## Independent region controls
 
-The projection-zone transport now has an additive independent-v2 contract
-without enlarging its 368-byte uniform. Buffer geometry (`off`, `static`, or
-`dynamic`), buffer content (`outer-continuation`, `transparent-reveal`, or
-`stretch`), and Stretch extent (`buffer-only` or `replace-outer`) occupy
-reserved high flag bits. The historical `buffer_static_width_uv` profile/ABI
-slot now carries the one guard-size value: it jointly reserves the source
-border and contracts the visible target footprint. Static holds that guard;
-Dynamic uses it as the minimum for motion-derived growth. Buffer Off selects
-zero guard and the full configured projection scale. There is no independent
-Buffer-region size authority, and projection scale remains separate.
-The existing coverage field remains a derived v1 compatibility projection.
-Profiles without `region_contract: "v2"` migrate deterministically: Off maps
-to Buffer Off + Outer continuation, Buffer maps to Dynamic + Stretch +
-buffer-only, and Full maps to Dynamic + Stretch + replace-Outer.
+The projection-zone transport uses the additive region-owned v3 contract.
+Buffer geometry (`off`, `static`, or `dynamic`) and content
+(`outer-continuation`, `transparent-reveal`, `stretch`, or `video`) remain in
+the compatible packed flag lane. The appended Outer lane selects video,
+stretch, or transparency and carries independent Outer Stretch settings.
+Dynamic profiles persist `buffer_minimum_width_uv`,
+`buffer_maximum_width_uv`, and
+`buffer_maximum_speed_meters_per_second`; Static continues to use
+`buffer_static_width_uv`. Buffer Off selects zero guard and the full configured
+projection scale. v1/v2 profiles migrate deterministically into v3 without
+changing their accepted output.
 
-The Regions panel presents a pinned effective topology and local Buffer,
-Effects, Stretch, Transitions, Outer, and Diagnostics pages. General surface
-effects use Inner or Inner + buffer scope regardless of whether the buffer is
-filled by Outer continuation, transparency, or Stretch. Stretch source,
-insets, curve, attachment A/B, and extent remain in the Stretch page. The
-Transitions page exposes only effective adjacent boundaries; turning the
-buffer off produces a direct Inner-to-Outer transition, while replace-Outer
-Stretch removes the separate buffer-to-Outer transition. Changing a Stretch
-style preserves buffer geometry, transition tuning, and the selected
-same-layer or 180/360-underlay Outer target.
+The panel presents Center region, Middle buffer, Outer region, and Transitions
+as top-level pages. Center content uses accurate stage names for camera
+brightness, the first blur, distortion strength before and after smoothing,
+depth-adjusted strength, and the aligned Meta depth diagnostic. Middle and
+Outer show their Stretch or Video settings only when that content is selected.
+The Media library lists sanitized selectable encrypted-pack and shared-plain
+items; it never exposes storage paths. Turning the Buffer off produces a direct
+Center-to-Outer transition while retaining the dormant Middle settings.
 
 ## Connection Hub runtime isolation
 

@@ -321,7 +321,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
                   )
                 },
                 updateZoneCompositorNative = { configuration ->
-                  nativeUpdatePrivateLayerZoneCompositor(
+                  val baseMask = nativeUpdatePrivateLayerZoneCompositor(
                       configuration.coverageMode,
                       configuration.regionContractVersion,
                       configuration.bufferGeometryMode,
@@ -361,7 +361,20 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
                       configuration.outerCycleHz,
                       configuration.outerMotionGain,
                   )
-                  nativeUpdatePrivateLayerZoneChannelDynamics(
+                  val layoutMask = nativeUpdatePrivateLayerRegionLayout(
+                      configuration.bufferMinimumWidthUv,
+                      configuration.bufferMaximumWidthUv,
+                      configuration.bufferMaximumSpeedMetersPerSecond,
+                      configuration.bufferFillMode,
+                      configuration.outerContentMode,
+                      configuration.outerStretchSource,
+                      configuration.outerStretchOptionFlags,
+                      configuration.outerEdgeInsetUv,
+                      configuration.outerMaxInsetUv,
+                      configuration.outerStretchCurve,
+                      configuration.outerProcessedMix,
+                  )
+                  val dynamicsMask = nativeUpdatePrivateLayerZoneChannelDynamics(
                       configuration.innerChannelDynamics.applicationMode,
                       configuration.innerChannelDynamics.sourceChoice,
                       configuration.innerChannelDynamics.regionDriver,
@@ -393,6 +406,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
                       configuration.outerChannelDynamics.cyclePhaseG,
                       configuration.outerChannelDynamics.cyclePhaseB,
                   )
+                  baseMask or layoutMask or dynamicsMask
                 },
                 updateReadableVideoConsumerRequired = ::updateVideoDecoderOwnership,
                 updateRgbChannelTransformNative = { configuration ->
@@ -2036,6 +2050,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
       action: String,
       requestedPackId: String?,
       source: String,
+      requestedIndex: Int? = null,
   ): SpatialImmersiveVideoSessionSnapshot {
     val selection =
         when (action) {
@@ -2044,6 +2059,11 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
           "select" ->
               immersiveVideoPanelCoordinator.selectPack(
                   requestedPackId.orEmpty(),
+                  source,
+              )
+          "index" ->
+              immersiveVideoPanelCoordinator.selectCatalogIndex(
+                  requestedIndex ?: -1,
                   source,
               )
           else -> error("unknown_immersive_video_action_$action")
@@ -2872,6 +2892,14 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
                           "next",
                           null,
                           "private-layer-control-panel-video-next",
+                      )
+                    },
+                    selectVideo = { index ->
+                      changeImmersiveVideo(
+                          "index",
+                          null,
+                          "private-layer-control-panel-video-index",
+                          index,
                       )
                     },
                     setVideoPresentationMode = { mode ->
@@ -4235,6 +4263,20 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
       outerCyclePhaseR: Float,
       outerCyclePhaseG: Float,
       outerCyclePhaseB: Float,
+  ): Long
+
+  private external fun nativeUpdatePrivateLayerRegionLayout(
+      bufferMinimumWidthUv: Float,
+      bufferMaximumWidthUv: Float,
+      bufferMaximumSpeedMetersPerSecond: Float,
+      bufferFillMode: Int,
+      outerContentMode: Int,
+      outerStretchSource: Int,
+      outerStretchOptionFlags: Int,
+      outerEdgeInsetUv: Float,
+      outerMaxInsetUv: Float,
+      outerStretchCurve: Float,
+      outerProcessedMix: Float,
   ): Long
 
   private external fun nativeUpdateRgbChannelTransform(

@@ -14,6 +14,9 @@ class PrivateLayerZoneCompositorTest {
                 coverageMode = 99,
                 bufferGeometryMode = 99,
                 bufferStaticWidthUv = 4.0f,
+                bufferMinimumWidthUv = -2.0f,
+                bufferMaximumWidthUv = 4.0f,
+                bufferMaximumSpeedMetersPerSecond = 30.0f,
                 bufferFillMode = 99,
                 stretchExtentMode = 99,
                 stretchSource = -4,
@@ -22,6 +25,11 @@ class PrivateLayerZoneCompositorTest {
                 stretchOptionFlags = 99,
                 edgeInsetUv = 0.4f,
                 maxInsetUv = 0.1f,
+                outerContentMode = 99,
+                outerStretchSource = -4,
+                outerStretchOptionFlags = 99,
+                outerEdgeInsetUv = 0.4f,
+                outerMaxInsetUv = 0.1f,
                 innerSignal = 99,
                 innerWidthUv = 2.0f,
                 innerThresholdR = -1.0f,
@@ -40,9 +48,9 @@ class PrivateLayerZoneCompositorTest {
                     ),
             )
         )
-    assertEquals(PrivateLayerZoneCompositorControls.coverageReplaceVideo, normalized.coverageMode)
+    assertEquals(PrivateLayerZoneCompositorControls.coverageDynamicBuffer, normalized.coverageMode)
     assertEquals(
-        PrivateLayerZoneCompositorControls.regionContractIndependent,
+        PrivateLayerZoneCompositorControls.regionContractRegionOwned,
         normalized.regionContractVersion,
     )
     assertEquals(
@@ -50,12 +58,15 @@ class PrivateLayerZoneCompositorTest {
         normalized.bufferGeometryMode,
     )
     assertEquals(0.2f, normalized.bufferStaticWidthUv)
+    assertEquals(0.0f, normalized.bufferMinimumWidthUv)
+    assertEquals(0.2f, normalized.bufferMaximumWidthUv)
+    assertEquals(3.0f, normalized.bufferMaximumSpeedMetersPerSecond)
     assertEquals(
-        PrivateLayerZoneCompositorControls.bufferFillStretch,
+        PrivateLayerZoneCompositorControls.bufferFillVideo,
         normalized.bufferFillMode,
     )
     assertEquals(
-        PrivateLayerZoneCompositorControls.stretchExtentReplaceOuter,
+        PrivateLayerZoneCompositorControls.stretchExtentBufferOnly,
         normalized.stretchExtentMode,
     )
     assertEquals(PrivateLayerZoneCompositorControls.sourceRaw, normalized.stretchSource)
@@ -71,6 +82,14 @@ class PrivateLayerZoneCompositorTest {
     assertEquals(0.14f, normalized.maxInsetUv)
     assertEquals(1.6f, normalized.stretchCurve)
     assertEquals(1, normalized.stretchOptionFlags)
+    assertEquals(
+        PrivateLayerZoneCompositorControls.outerContentTransparent,
+        normalized.outerContentMode,
+    )
+    assertEquals(PrivateLayerZoneCompositorControls.sourceRaw, normalized.outerStretchSource)
+    assertEquals(1, normalized.outerStretchOptionFlags)
+    assertEquals(0.4f, normalized.outerEdgeInsetUv)
+    assertEquals(0.4f, normalized.outerMaxInsetUv)
     assertEquals(PrivateLayerZoneCompositorControls.signalDifference, normalized.innerSignal)
     assertEquals(0.25f, normalized.innerWidthUv)
     assertEquals(0.0f, normalized.innerThresholdR)
@@ -366,7 +385,7 @@ class PrivateLayerZoneCompositorTest {
         base.bufferFillMode,
     )
     assertEquals(
-        PrivateLayerZoneCompositorControls.stretchExtentReplaceOuter,
+        PrivateLayerZoneCompositorControls.stretchExtentBufferOnly,
         base.stretchExtentMode,
     )
     assertEquals(PrivateLayerZoneCompositorControls.coverageDynamicBuffer, base.coverageMode)
@@ -385,17 +404,17 @@ class PrivateLayerZoneCompositorTest {
         PrivateLayerZoneCompositorControls.bufferFillStretch,
         stretch.bufferFillMode,
     )
-    assertEquals(PrivateLayerZoneCompositorControls.coverageReplaceVideo, stretch.coverageMode)
+    assertEquals(PrivateLayerZoneCompositorControls.coverageDynamicBuffer, stretch.coverageMode)
   }
 
   @Test
-  fun legacyCoverageProfilesMigrateToIndependentRegionContract() {
+  fun legacyCoverageProfilesMigrateToRegionOwnedContract() {
     val off =
         PrivateLayerZoneCompositorModule.normalize(
             PrivateLayerZoneCompositorControls.legacyOff
         )
     assertEquals(
-        PrivateLayerZoneCompositorControls.regionContractIndependent,
+        PrivateLayerZoneCompositorControls.regionContractRegionOwned,
         off.regionContractVersion,
     )
     assertEquals(
@@ -425,6 +444,10 @@ class PrivateLayerZoneCompositorTest {
     assertEquals(
         PrivateLayerZoneCompositorControls.stretchExtentReplaceOuter,
         full.stretchExtentMode,
+    )
+    assertEquals(
+        PrivateLayerZoneCompositorControls.outerContentStretch,
+        full.outerContentMode,
     )
   }
 
@@ -456,10 +479,37 @@ class PrivateLayerZoneCompositorTest {
             PrivateLayerZoneCompositorControls.organicBuffer
         )
     )
-    assertTrue(
+    assertFalse(
         PrivateLayerZoneCompositorModule.readableVideoConsumerRequired(
             PrivateLayerZoneCompositorControls.fullStretch
         )
     )
+  }
+
+  @Test
+  fun outerStretchAndMiddleVideoRemainIndependentAcrossBufferModes() {
+    for (geometry in 0..2) {
+      val normalized =
+          PrivateLayerZoneCompositorModule.normalize(
+              PrivateLayerZoneCompositor(
+                  bufferGeometryMode = geometry,
+                  bufferFillMode = PrivateLayerZoneCompositorControls.bufferFillVideo,
+                  outerContentMode = PrivateLayerZoneCompositorControls.outerContentStretch,
+                  outerStretchSource = PrivateLayerZoneCompositorControls.sourceMixed,
+                  outerProcessedMix = 0.42f,
+              )
+          )
+      assertEquals(geometry, normalized.bufferGeometryMode)
+      assertEquals(
+          PrivateLayerZoneCompositorControls.bufferFillVideo,
+          normalized.bufferFillMode,
+      )
+      assertEquals(
+          PrivateLayerZoneCompositorControls.outerContentStretch,
+          normalized.outerContentMode,
+      )
+      assertEquals(PrivateLayerZoneCompositorControls.sourceMixed, normalized.outerStretchSource)
+      assertEquals(0.42f, normalized.outerProcessedMix)
+    }
   }
 }

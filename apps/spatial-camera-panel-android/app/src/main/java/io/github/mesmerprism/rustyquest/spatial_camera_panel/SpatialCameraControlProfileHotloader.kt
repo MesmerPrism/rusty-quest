@@ -243,12 +243,18 @@ internal class SpatialCameraControlProfileHotloader(
                 else -> "off"
               },
           )
-          .put("region_contract", "v2")
+          .put("region_contract", "v3")
           .put(
               "buffer_geometry",
               PrivateLayerZoneCompositorControls.bufferGeometryToken(value.bufferGeometryMode),
           )
           .put("buffer_static_width_uv", value.bufferStaticWidthUv)
+          .put("buffer_minimum_width_uv", value.bufferMinimumWidthUv)
+          .put("buffer_maximum_width_uv", value.bufferMaximumWidthUv)
+          .put(
+              "buffer_maximum_speed_meters_per_second",
+              value.bufferMaximumSpeedMetersPerSecond,
+          )
           .put(
               "buffer_fill",
               PrivateLayerZoneCompositorControls.bufferFillToken(value.bufferFillMode),
@@ -294,6 +300,23 @@ internal class SpatialCameraControlProfileHotloader(
           .put("max_inset_uv", value.maxInsetUv)
           .put("stretch_curve", value.stretchCurve)
           .put("processed_mix", value.processedMix)
+          .put(
+              "outer_content",
+              PrivateLayerZoneCompositorControls.outerContentToken(value.outerContentMode),
+          )
+          .put(
+              "outer_stretch_source",
+              when (value.outerStretchSource) {
+                PrivateLayerZoneCompositorControls.sourceProcessed -> "processed"
+                PrivateLayerZoneCompositorControls.sourceMixed -> "mix"
+                else -> "raw"
+              },
+          )
+          .put("outer_stretch_option_flags", value.outerStretchOptionFlags)
+          .put("outer_edge_inset_uv", value.outerEdgeInsetUv)
+          .put("outer_max_inset_uv", value.outerMaxInsetUv)
+          .put("outer_stretch_curve", value.outerStretchCurve)
+          .put("outer_processed_mix", value.outerProcessedMix)
           .put("inner", zoneBandJson(value, true))
           .put("outer", zoneBandJson(value, false))
 

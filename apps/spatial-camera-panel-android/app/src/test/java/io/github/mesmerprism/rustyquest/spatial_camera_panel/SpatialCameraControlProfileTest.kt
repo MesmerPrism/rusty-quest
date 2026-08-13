@@ -186,6 +186,43 @@ class SpatialCameraControlProfileTest {
   }
 
   @Test
+  fun regionOwnedProfileCarriesDynamicBufferAndIndependentOuterStretch() {
+    val document = validProfile()
+    val zone = document.getJSONObject("quest_controls").getJSONObject("zone_compositor")
+    zone
+        .put("region_contract", "v3")
+        .put("buffer_geometry", "dynamic")
+        .put("buffer_static_width_uv", 0.09)
+        .put("buffer_minimum_width_uv", 0.04)
+        .put("buffer_maximum_width_uv", 0.17)
+        .put("buffer_maximum_speed_meters_per_second", 0.75)
+        .put("buffer_fill", "video")
+        .put("stretch_extent", "buffer-only")
+        .put("outer_content", "stretch")
+        .put("outer_stretch_source", "mix")
+        .put("outer_stretch_option_flags", 16)
+        .put("outer_edge_inset_uv", 0.02)
+        .put("outer_max_inset_uv", 0.19)
+        .put("outer_stretch_curve", 2.2)
+        .put("outer_processed_mix", 0.65)
+
+    val parsed = SpatialCameraControlProfileContract.parse(document.toString().toByteArray())
+    val value = parsed.zoneCompositor
+    assertEquals(PrivateLayerZoneCompositorControls.regionContractRegionOwned, value.regionContractVersion)
+    assertEquals(0.04f, value.bufferMinimumWidthUv)
+    assertEquals(0.17f, value.bufferMaximumWidthUv)
+    assertEquals(0.75f, value.bufferMaximumSpeedMetersPerSecond)
+    assertEquals(PrivateLayerZoneCompositorControls.bufferFillVideo, value.bufferFillMode)
+    assertEquals(PrivateLayerZoneCompositorControls.outerContentStretch, value.outerContentMode)
+    assertEquals(PrivateLayerZoneCompositorControls.sourceMixed, value.outerStretchSource)
+    assertEquals(16, value.outerStretchOptionFlags)
+    assertEquals(0.02f, value.outerEdgeInsetUv)
+    assertEquals(0.19f, value.outerMaxInsetUv)
+    assertEquals(2.2f, value.outerStretchCurve)
+    assertEquals(0.65f, value.outerProcessedMix)
+  }
+
+  @Test
   fun damagedAndExpandedProfilesFailClosed() {
     val unknown = validProfile().put("ambient_command", "adb shell anything")
     assertThrows(IllegalArgumentException::class.java) {

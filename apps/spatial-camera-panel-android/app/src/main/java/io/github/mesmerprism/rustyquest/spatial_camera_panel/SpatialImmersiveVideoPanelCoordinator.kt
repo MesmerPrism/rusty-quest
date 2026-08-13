@@ -142,6 +142,18 @@ internal class SpatialImmersiveVideoPanelCoordinator(
             ) != null,
         presentationMode = presentationMode,
         backgroundMode = backgroundMode,
+        items =
+            catalog.mapIndexed { index, item ->
+              SpatialImmersiveVideoCatalogItemSnapshot(
+                  index = index,
+                  label = item.catalogLabel,
+                  sourceLabel =
+                      if (item.isEncryptedOfflinePack) "Encrypted pack" else "Shared plain video",
+                  projectionLabel = item.shape.token,
+                  stereoLabel = item.stereoLayout.token,
+                  dimensionsLabel = "${item.widthPx} × ${item.heightPx}",
+              )
+            },
     )
   }
 
@@ -235,6 +247,9 @@ internal class SpatialImmersiveVideoPanelCoordinator(
 
   fun selectNext(source: String): SpatialImmersiveVideoSelection =
       selectIndex(activeIndex + 1, source)
+
+  fun selectCatalogIndex(index: Int, source: String): SpatialImmersiveVideoSelection =
+      selectIndex(index, source)
 
   fun selectPack(packId: String, source: String): SpatialImmersiveVideoSelection {
     val normalizedPackId = packId.trim().lowercase()

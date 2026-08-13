@@ -24,9 +24,12 @@ internal data class PrivateLayerZoneChannelDynamics(
 
 internal data class PrivateLayerZoneCompositor(
     val coverageMode: Int = PrivateLayerZoneCompositorControls.coverageOff,
-    val regionContractVersion: Int = PrivateLayerZoneCompositorControls.regionContractIndependent,
+    val regionContractVersion: Int = PrivateLayerZoneCompositorControls.regionContractRegionOwned,
     val bufferGeometryMode: Int = PrivateLayerZoneCompositorControls.bufferGeometryOff,
     val bufferStaticWidthUv: Float = 0.08f,
+    val bufferMinimumWidthUv: Float = 0.06f,
+    val bufferMaximumWidthUv: Float = 0.18f,
+    val bufferMaximumSpeedMetersPerSecond: Float = 0.80f,
     val bufferFillMode: Int = PrivateLayerZoneCompositorControls.bufferFillOuterContinuation,
     val stretchExtentMode: Int = PrivateLayerZoneCompositorControls.stretchExtentBufferOnly,
     val stretchSource: Int = PrivateLayerZoneCompositorControls.sourceProcessed,
@@ -39,6 +42,13 @@ internal data class PrivateLayerZoneCompositor(
     val maxInsetUv: Float = 0.14f,
     val stretchCurve: Float = 1.6f,
     val processedMix: Float = 1.0f,
+    val outerContentMode: Int = PrivateLayerZoneCompositorControls.outerContentVideo,
+    val outerStretchSource: Int = PrivateLayerZoneCompositorControls.sourceProcessed,
+    val outerStretchOptionFlags: Int = 0,
+    val outerEdgeInsetUv: Float = 0.015f,
+    val outerMaxInsetUv: Float = 0.14f,
+    val outerStretchCurve: Float = 1.6f,
+    val outerProcessedMix: Float = 1.0f,
     val innerSignal: Int = PrivateLayerZoneCompositorControls.signalFlat,
     val innerWidthUv: Float = 0.04f,
     val innerCurve: Float = 1.6f,
@@ -74,6 +84,7 @@ internal data class PrivateLayerZoneCompositor(
 internal object PrivateLayerZoneCompositorControls {
   const val regionContractLegacy = 1
   const val regionContractIndependent = 2
+  const val regionContractRegionOwned = 3
 
   const val coverageOff = 0
   const val coverageDynamicBuffer = 1
@@ -86,6 +97,11 @@ internal object PrivateLayerZoneCompositorControls {
   const val bufferFillOuterContinuation = 0
   const val bufferFillTransparentReveal = 1
   const val bufferFillStretch = 2
+  const val bufferFillVideo = 3
+
+  const val outerContentVideo = 0
+  const val outerContentStretch = 1
+  const val outerContentTransparent = 2
 
   const val stretchExtentBufferOnly = 0
   const val stretchExtentReplaceOuter = 1
@@ -149,6 +165,13 @@ internal object PrivateLayerZoneCompositorControls {
       nativeBuffer.copy(
           coverageMode = coverageReplaceVideo,
           stretchExtentMode = stretchExtentReplaceOuter,
+          outerContentMode = outerContentStretch,
+          outerStretchSource = nativeBuffer.stretchSource,
+          outerStretchOptionFlags = nativeBuffer.stretchOptionFlags,
+          outerEdgeInsetUv = nativeBuffer.edgeInsetUv,
+          outerMaxInsetUv = nativeBuffer.maxInsetUv,
+          outerStretchCurve = nativeBuffer.stretchCurve,
+          outerProcessedMix = nativeBuffer.processedMix,
           outerSignal = signalFlat,
           outerStrength = 0.0f,
           outerCycleAmplitude = 0.0f,
@@ -210,6 +233,7 @@ internal object PrivateLayerZoneCompositorControls {
           coverageMode = coverageDynamicBuffer,
           debugMode = debugOff,
           outerTargetMode = outerTargetTransparentSpatialVideo,
+          outerContentMode = outerContentTransparent,
           outerSignal = signalRgb,
           innerWidthUv = 0.14f,
           outerWidthUv = 0.14f,
@@ -260,7 +284,15 @@ internal object PrivateLayerZoneCompositorControls {
       when (mode) {
         bufferFillTransparentReveal -> "transparent-reveal"
         bufferFillStretch -> "stretch"
+        bufferFillVideo -> "video"
         else -> "outer-continuation"
+      }
+
+  fun outerContentToken(mode: Int): String =
+      when (mode) {
+        outerContentStretch -> "stretch"
+        outerContentTransparent -> "transparent"
+        else -> "video"
       }
 
   fun stretchExtentToken(mode: Int): String =
@@ -273,12 +305,9 @@ internal object PrivateLayerZoneCompositorControls {
       when (configuration.bufferFillMode) {
         bufferFillTransparentReveal -> "Transparent reveal"
         bufferFillStretch -> "Stretch"
+        bufferFillVideo -> "Video"
         else ->
-            if (configuration.outerTargetMode == outerTargetTransparentSpatialVideo) {
-              "World-video reveal"
-            } else {
-              "Outer continuation"
-            }
+            "Outer continuation"
       }
 
   fun innerBoundaryLabel(configuration: PrivateLayerZoneCompositor): String =
@@ -292,9 +321,7 @@ internal object PrivateLayerZoneCompositorControls {
       "${bufferContentLabel(configuration)} ↔ Outer"
 
   fun outerBoundaryActive(configuration: PrivateLayerZoneCompositor): Boolean =
-      configuration.bufferGeometryMode != bufferGeometryOff &&
-          !(configuration.bufferFillMode == bufferFillStretch &&
-              configuration.stretchExtentMode == stretchExtentReplaceOuter)
+      configuration.bufferGeometryMode != bufferGeometryOff
 
   fun coverageToken(mode: Int): String =
       when (mode) {
@@ -352,7 +379,7 @@ internal object PrivateLayerZoneCompositorControls {
       }
 
   fun transparentSpatialVideoSupported(configuration: PrivateLayerZoneCompositor): Boolean =
-      configuration.outerTargetMode == outerTargetTransparentSpatialVideo &&
+      configuration.outerContentMode == outerContentTransparent &&
           (configuration.regionContractVersion >= regionContractIndependent ||
               configuration.coverageMode == coverageOff ||
               (configuration.coverageMode == coverageDynamicBuffer &&
@@ -365,12 +392,20 @@ internal object PrivateLayerZoneCompositorControls {
       configuration: PrivateLayerZoneCompositor,
       target: Int,
   ): PrivateLayerZoneCompositor =
-      if (configuration.regionContractVersion >= regionContractIndependent) {
+      if (configuration.regionContractVersion >= regionContractRegionOwned) {
+        configuration.copy(
+            outerTargetMode = target.coerceIn(0, 1),
+            outerContentMode =
+                if (target == outerTargetTransparentSpatialVideo) outerContentTransparent
+                else outerContentVideo,
+        )
+      } else if (configuration.regionContractVersion >= regionContractIndependent) {
         configuration.copy(outerTargetMode = target.coerceIn(0, 1))
       } else if (target == outerTargetTransparentSpatialVideo) {
         configuration.copy(
             debugMode = debugOff,
             outerTargetMode = outerTargetTransparentSpatialVideo,
+            outerContentMode = outerContentTransparent,
             outerSignal =
                 if (configuration.outerSignal == signalDifference) signalRgb
                 else configuration.outerSignal,
@@ -412,6 +447,34 @@ internal object PrivateLayerZoneCompositorControls {
           processedMix = style.processedMix,
       )
 
+  fun applyOuterStretchStyle(
+      current: PrivateLayerZoneCompositor,
+      style: PrivateLayerZoneCompositor,
+  ): PrivateLayerZoneCompositor =
+      current.copy(
+          outerContentMode = outerContentStretch,
+          outerStretchSource = style.stretchSource,
+          outerStretchOptionFlags = style.stretchOptionFlags,
+          outerEdgeInsetUv = style.edgeInsetUv,
+          outerMaxInsetUv = style.maxInsetUv,
+          outerStretchCurve = style.stretchCurve,
+          outerProcessedMix = style.processedMix,
+      )
+
+  fun matchesOuterStretchStyle(
+      configuration: PrivateLayerZoneCompositor,
+      style: PrivateLayerZoneCompositor,
+  ): Boolean {
+    val normalized = PrivateLayerZoneCompositorModule.normalize(configuration)
+    return normalized.outerContentMode == outerContentStretch &&
+        normalized.outerStretchSource == style.stretchSource &&
+        normalized.outerStretchOptionFlags == style.stretchOptionFlags &&
+        normalized.outerEdgeInsetUv == style.edgeInsetUv &&
+        normalized.outerMaxInsetUv == style.maxInsetUv &&
+        normalized.outerStretchCurve == style.stretchCurve &&
+        normalized.outerProcessedMix == style.processedMix
+  }
+
   fun matchesStretchStyle(
       configuration: PrivateLayerZoneCompositor,
       style: PrivateLayerZoneCompositor,
@@ -436,7 +499,15 @@ internal object PrivateLayerZoneCompositorModule {
    * native fallback when a replacement pipeline is unavailable.
    */
   fun readableVideoConsumerRequired(configuration: PrivateLayerZoneCompositor): Boolean =
-      normalize(configuration).outerTargetMode != PrivateLayerZoneCompositorControls.outerTargetTransparentSpatialVideo
+      normalize(configuration).let { value ->
+        value.outerContentMode == PrivateLayerZoneCompositorControls.outerContentVideo ||
+            (value.bufferGeometryMode != PrivateLayerZoneCompositorControls.bufferGeometryOff &&
+                (value.bufferFillMode == PrivateLayerZoneCompositorControls.bufferFillVideo ||
+                    (value.bufferFillMode ==
+                        PrivateLayerZoneCompositorControls.bufferFillOuterContinuation &&
+                        value.outerContentMode ==
+                            PrivateLayerZoneCompositorControls.outerContentVideo)))
+      }
 
   fun normalize(requested: PrivateLayerZoneCompositor): PrivateLayerZoneCompositor {
     val migratingLegacy =
@@ -460,7 +531,7 @@ internal object PrivateLayerZoneCompositorModule {
             PrivateLayerZoneCompositorControls.bufferFillStretch
           }
         } else {
-          requested.bufferFillMode.coerceIn(0, 2)
+          requested.bufferFillMode.coerceIn(0, 3)
         }
     val stretchExtentMode =
         if (migratingLegacy &&
@@ -469,13 +540,33 @@ internal object PrivateLayerZoneCompositorModule {
         } else {
           requested.stretchExtentMode.coerceIn(0, 1)
         }
+    val migratingRegionOwned =
+        requested.regionContractVersion <
+            PrivateLayerZoneCompositorControls.regionContractRegionOwned
+    val outerContentMode =
+        if (migratingRegionOwned) {
+          when {
+            requested.outerTargetMode ==
+                PrivateLayerZoneCompositorControls.outerTargetTransparentSpatialVideo ->
+                PrivateLayerZoneCompositorControls.outerContentTransparent
+            bufferFillMode == PrivateLayerZoneCompositorControls.bufferFillStretch &&
+                stretchExtentMode ==
+                    PrivateLayerZoneCompositorControls.stretchExtentReplaceOuter ->
+                PrivateLayerZoneCompositorControls.outerContentStretch
+            else -> PrivateLayerZoneCompositorControls.outerContentVideo
+          }
+        } else {
+          requested.outerContentMode.coerceIn(0, 2)
+        }
     val compatibilityCoverage =
         when {
           bufferGeometryMode == PrivateLayerZoneCompositorControls.bufferGeometryOff ->
-              PrivateLayerZoneCompositorControls.coverageOff
-          bufferFillMode == PrivateLayerZoneCompositorControls.bufferFillStretch &&
-              stretchExtentMode ==
-                  PrivateLayerZoneCompositorControls.stretchExtentReplaceOuter ->
+              if (outerContentMode == PrivateLayerZoneCompositorControls.outerContentStretch) {
+                PrivateLayerZoneCompositorControls.coverageReplaceVideo
+              } else {
+                PrivateLayerZoneCompositorControls.coverageOff
+              }
+          outerContentMode == PrivateLayerZoneCompositorControls.outerContentStretch ->
               PrivateLayerZoneCompositorControls.coverageReplaceVideo
           else -> PrivateLayerZoneCompositorControls.coverageDynamicBuffer
         }
@@ -492,15 +583,38 @@ internal object PrivateLayerZoneCompositorModule {
         else requested.stretchCurve.finiteOr(1.6f).coerceIn(0.25f, 6.0f)
     return requested.copy(
         coverageMode = compatibilityCoverage,
-        regionContractVersion = PrivateLayerZoneCompositorControls.regionContractIndependent,
+        regionContractVersion = PrivateLayerZoneCompositorControls.regionContractRegionOwned,
         bufferGeometryMode = bufferGeometryMode,
         bufferStaticWidthUv =
             requested.bufferStaticWidthUv.finiteOr(0.08f).coerceIn(0.0f, 0.2f),
-        bufferFillMode = bufferFillMode,
-        stretchExtentMode = stretchExtentMode,
+        bufferMinimumWidthUv =
+            requested.bufferMinimumWidthUv.finiteOr(0.06f).coerceIn(0.0f, 0.2f),
+        bufferMaximumWidthUv =
+            requested.bufferMaximumWidthUv
+                .finiteOr(0.18f)
+                .coerceIn(
+                    requested.bufferMinimumWidthUv.finiteOr(0.06f).coerceIn(0.0f, 0.2f),
+                    0.2f,
+                ),
+        bufferMaximumSpeedMetersPerSecond =
+            requested.bufferMaximumSpeedMetersPerSecond
+                .finiteOr(0.80f)
+                .coerceIn(0.05f, 3.0f),
+        bufferFillMode = bufferFillMode.coerceIn(0, 3),
+        stretchExtentMode =
+            if (outerContentMode == PrivateLayerZoneCompositorControls.outerContentStretch) {
+              PrivateLayerZoneCompositorControls.stretchExtentReplaceOuter
+            } else {
+              PrivateLayerZoneCompositorControls.stretchExtentBufferOnly
+            },
         stretchSource = requested.stretchSource.coerceIn(0, 2),
         debugMode = requested.debugMode.coerceIn(0, 2),
-        outerTargetMode = requested.outerTargetMode.coerceIn(0, 1),
+        outerTargetMode =
+            if (outerContentMode == PrivateLayerZoneCompositorControls.outerContentTransparent) {
+              PrivateLayerZoneCompositorControls.outerTargetTransparentSpatialVideo
+            } else {
+              PrivateLayerZoneCompositorControls.outerTargetReadableColor
+            },
         stretchMapping = PrivateLayerZoneCompositorControls.mappingGradedEdgeTrail,
         stretchOptionFlags =
             requested.stretchOptionFlags and PrivateLayerZoneCompositorControls.stretchOptionMask,
@@ -508,6 +622,35 @@ internal object PrivateLayerZoneCompositorModule {
         maxInsetUv = parameterB,
         stretchCurve = parameterC,
         processedMix = requested.processedMix.finiteOr(1.0f).coerceIn(0.0f, 1.0f),
+        outerContentMode = outerContentMode,
+        outerStretchSource =
+            if (migratingRegionOwned) requested.stretchSource.coerceIn(0, 2)
+            else requested.outerStretchSource.coerceIn(0, 2),
+        outerStretchOptionFlags =
+            (if (migratingRegionOwned) requested.stretchOptionFlags
+            else requested.outerStretchOptionFlags) and
+                PrivateLayerZoneCompositorControls.stretchOptionMask,
+        outerEdgeInsetUv =
+            (if (migratingRegionOwned) parameterA else requested.outerEdgeInsetUv)
+                .finiteOr(0.015f)
+                .coerceIn(0.0f, 0.49f),
+        outerMaxInsetUv =
+            (if (migratingRegionOwned) parameterB else requested.outerMaxInsetUv)
+                .finiteOr(0.14f)
+                .coerceIn(
+                    (if (migratingRegionOwned) parameterA else requested.outerEdgeInsetUv)
+                        .finiteOr(0.015f)
+                        .coerceIn(0.0f, 0.49f),
+                    0.49f,
+                ),
+        outerStretchCurve =
+            (if (migratingRegionOwned) parameterC else requested.outerStretchCurve)
+                .finiteOr(1.6f)
+                .coerceIn(0.25f, 6.0f),
+        outerProcessedMix =
+            (if (migratingRegionOwned) requested.processedMix else requested.outerProcessedMix)
+                .finiteOr(1.0f)
+                .coerceIn(0.0f, 1.0f),
         innerSignal = requested.innerSignal.coerceIn(0, 4),
         innerWidthUv = requested.innerWidthUv.finiteOr(0.04f).coerceIn(0.0f, 0.25f),
         innerCurve = requested.innerCurve.finiteOr(1.6f).coerceIn(0.25f, 6.0f),
@@ -544,6 +687,9 @@ internal object PrivateLayerZoneCompositorModule {
         "projectionRegionContract=v${value.regionContractVersion} " +
         "projectionBufferGeometry=${PrivateLayerZoneCompositorControls.bufferGeometryToken(value.bufferGeometryMode)} " +
         "projectionBufferGuardSizeUv=${value.bufferStaticWidthUv} " +
+        "projectionBufferMinimumGuardSizeUv=${value.bufferMinimumWidthUv} " +
+        "projectionBufferMaximumGuardSizeUv=${value.bufferMaximumWidthUv} " +
+        "projectionBufferMaximumSpeedMetersPerSecond=${value.bufferMaximumSpeedMetersPerSecond} " +
         "projectionBufferFill=${PrivateLayerZoneCompositorControls.bufferFillToken(value.bufferFillMode)} " +
         "projectionStretchExtent=${PrivateLayerZoneCompositorControls.stretchExtentToken(value.stretchExtentMode)} " +
         "projectionZoneStretchSource=${PrivateLayerZoneCompositorControls.sourceToken(value.stretchSource)} " +
@@ -553,6 +699,8 @@ internal object PrivateLayerZoneCompositorModule {
         "projectionZoneInnerSignal=${PrivateLayerZoneCompositorControls.signalToken(value.innerSignal)} " +
         "projectionZoneOuterSignal=${PrivateLayerZoneCompositorControls.signalToken(value.outerSignal)} " +
         "projectionZoneOuterTarget=${PrivateLayerZoneCompositorControls.outerTargetToken(value.outerTargetMode)} " +
+        "projectionZoneOuterContent=${PrivateLayerZoneCompositorControls.outerContentToken(value.outerContentMode)} " +
+        "projectionZoneOuterStretchSource=${PrivateLayerZoneCompositorControls.sourceToken(value.outerStretchSource)} " +
         "projectionZoneOuterUnderlaySupported=${PrivateLayerZoneCompositorControls.transparentSpatialVideoSupported(value)} " +
         "projectionZoneOuterAlphaDriver=${PrivateLayerZoneCompositorControls.regionDriverToken(value.outerChannelDynamics.regionDriver)} " +
         channelMarkerFields("Inner", value.innerChannelDynamics) +

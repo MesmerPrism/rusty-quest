@@ -61,6 +61,9 @@ pub(crate) struct ProjectionZoneCompositorSettings {
     pub(crate) region_contract_version: u32,
     pub(crate) buffer_geometry_mode: u32,
     pub(crate) buffer_static_width_uv: f32,
+    pub(crate) buffer_minimum_width_uv: f32,
+    pub(crate) buffer_maximum_width_uv: f32,
+    pub(crate) buffer_maximum_speed_meters_per_second: f32,
     pub(crate) buffer_fill_mode: u32,
     pub(crate) stretch_extent_mode: u32,
     pub(crate) stretch_source: u32,
@@ -73,6 +76,13 @@ pub(crate) struct ProjectionZoneCompositorSettings {
     pub(crate) max_inset_uv: f32,
     pub(crate) stretch_curve: f32,
     pub(crate) processed_mix: f32,
+    pub(crate) outer_content_mode: u32,
+    pub(crate) outer_stretch_source: u32,
+    pub(crate) outer_stretch_option_flags: u32,
+    pub(crate) outer_edge_inset_uv: f32,
+    pub(crate) outer_max_inset_uv: f32,
+    pub(crate) outer_stretch_curve: f32,
+    pub(crate) outer_processed_mix: f32,
     pub(crate) inner_signal: u32,
     pub(crate) inner_width_uv: f32,
     pub(crate) inner_curve: f32,
@@ -114,6 +124,9 @@ impl Default for ProjectionZoneCompositorSettings {
             region_contract_version: 1,
             buffer_geometry_mode: 0,
             buffer_static_width_uv: 0.08,
+            buffer_minimum_width_uv: 0.06,
+            buffer_maximum_width_uv: 0.18,
+            buffer_maximum_speed_meters_per_second: 0.80,
             buffer_fill_mode: 0,
             stretch_extent_mode: 0,
             stretch_source: 1,
@@ -126,6 +139,13 @@ impl Default for ProjectionZoneCompositorSettings {
             max_inset_uv: 0.14,
             stretch_curve: 1.6,
             processed_mix: 1.0,
+            outer_content_mode: 0,
+            outer_stretch_source: 1,
+            outer_stretch_option_flags: 0,
+            outer_edge_inset_uv: 0.015,
+            outer_max_inset_uv: 0.14,
+            outer_stretch_curve: 1.6,
+            outer_processed_mix: 1.0,
             inner_signal: 0,
             inner_width_uv: 0.04,
             inner_curve: 1.6,
@@ -168,7 +188,9 @@ impl ProjectionZoneCompositorSettings {
     }
 
     pub(crate) fn replaces_video(self) -> bool {
-        if self.region_contract_version >= 2 {
+        if self.region_contract_version >= 3 {
+            self.outer_content_mode == 1
+        } else if self.region_contract_version >= 2 {
             self.buffer_geometry_mode != 0
                 && self.buffer_fill_mode == 2
                 && self.stretch_extent_mode == 1
@@ -182,7 +204,11 @@ impl ProjectionZoneCompositorSettings {
     }
 
     pub(crate) fn transparent_underlay_requested(self) -> bool {
-        self.outer_target_mode == 1
+        if self.region_contract_version >= 3 {
+            self.outer_content_mode == 2
+        } else {
+            self.outer_target_mode == 1
+        }
     }
 
     pub(crate) fn transparent_underlay_supported(self) -> bool {
@@ -201,16 +227,26 @@ impl ProjectionZoneCompositorSettings {
     }
 
     pub(crate) fn readable_video_consumer_required(self) -> bool {
-        !self.transparent_underlay_requested()
+        if self.region_contract_version >= 3 {
+            self.outer_content_mode == 0
+                || (self.buffer_geometry_mode != 0
+                    && (self.buffer_fill_mode == 3
+                        || (self.buffer_fill_mode == 0 && self.outer_content_mode == 0)))
+        } else {
+            !self.transparent_underlay_requested()
+        }
     }
 
     pub(crate) fn marker_fields(self) -> String {
         let base = format!(
-            "projectionZoneCompositorMode={} projectionRegionContract=v{} projectionBufferGeometry={} projectionBufferGuardSizeUv={:.4} projectionBufferFill={} projectionStretchExtent={} projectionZoneStretchSource={} projectionZoneStretchMapping={} projectionZoneEffectEdgeGuardEnabled={} projectionZoneStretchOptionFlags={} projectionZoneStretchParameterA={:.4} projectionZoneStretchParameterB={:.4} projectionZoneStretchParameterC={:.3} projectionZoneProcessedMix={:.3} projectionZoneInnerSignal={} projectionZoneInnerWidthUv={:.4} projectionZoneInnerThresholdRgb={:.3},{:.3},{:.3} projectionZoneInnerSoftness={:.3} projectionZoneInnerStrength={:.3} projectionZoneInnerCycleAmplitude={:.3} projectionZoneInnerCycleHz={:.3} projectionZoneInnerMotionGain={:.3} projectionZoneOuterSignal={} projectionZoneOuterWidthUv={:.4} projectionZoneOuterThresholdRgb={:.3},{:.3},{:.3} projectionZoneOuterSoftness={:.3} projectionZoneOuterStrength={:.3} projectionZoneOuterCycleAmplitude={:.3} projectionZoneOuterCycleHz={:.3} projectionZoneOuterMotionGain={:.3} projectionZoneDebugMode={}",
+            "projectionZoneCompositorMode={} projectionRegionContract=v{} projectionBufferGeometry={} projectionBufferGuardSizeUv={:.4} projectionBufferMinimumGuardSizeUv={:.4} projectionBufferMaximumGuardSizeUv={:.4} projectionBufferMaximumSpeedMetersPerSecond={:.3} projectionBufferFill={} projectionStretchExtent={} projectionZoneStretchSource={} projectionZoneStretchMapping={} projectionZoneEffectEdgeGuardEnabled={} projectionZoneStretchOptionFlags={} projectionZoneStretchParameterA={:.4} projectionZoneStretchParameterB={:.4} projectionZoneStretchParameterC={:.3} projectionZoneProcessedMix={:.3} projectionZoneOuterContent={} projectionZoneOuterStretchSource={} projectionZoneOuterStretchOptionFlags={} projectionZoneOuterStretchParameterA={:.4} projectionZoneOuterStretchParameterB={:.4} projectionZoneOuterStretchParameterC={:.3} projectionZoneOuterProcessedMix={:.3} projectionZoneInnerSignal={} projectionZoneInnerWidthUv={:.4} projectionZoneInnerThresholdRgb={:.3},{:.3},{:.3} projectionZoneInnerSoftness={:.3} projectionZoneInnerStrength={:.3} projectionZoneInnerCycleAmplitude={:.3} projectionZoneInnerCycleHz={:.3} projectionZoneInnerMotionGain={:.3} projectionZoneOuterSignal={} projectionZoneOuterWidthUv={:.4} projectionZoneOuterThresholdRgb={:.3},{:.3},{:.3} projectionZoneOuterSoftness={:.3} projectionZoneOuterStrength={:.3} projectionZoneOuterCycleAmplitude={:.3} projectionZoneOuterCycleHz={:.3} projectionZoneOuterMotionGain={:.3} projectionZoneDebugMode={}",
             coverage_mode_token(self.coverage_mode),
             self.region_contract_version,
             buffer_geometry_token(self.buffer_geometry_mode),
             self.buffer_static_width_uv,
+            self.buffer_minimum_width_uv,
+            self.buffer_maximum_width_uv,
+            self.buffer_maximum_speed_meters_per_second,
             buffer_fill_token(self.buffer_fill_mode),
             stretch_extent_token(self.stretch_extent_mode),
             stretch_source_token(self.stretch_source),
@@ -221,6 +257,13 @@ impl ProjectionZoneCompositorSettings {
             self.max_inset_uv,
             self.stretch_curve,
             self.processed_mix,
+            outer_content_token(self.outer_content_mode),
+            stretch_source_token(self.outer_stretch_source),
+            self.outer_stretch_option_flags,
+            self.outer_edge_inset_uv,
+            self.outer_max_inset_uv,
+            self.outer_stretch_curve,
+            self.outer_processed_mix,
             blend_signal_token(self.inner_signal),
             self.inner_width_uv,
             self.inner_threshold_rgb[0],
@@ -308,9 +351,11 @@ pub(crate) struct ProjectionZoneUniform {
     pub(crate) outer_channel_amplitude_source: [f32; 4],
     pub(crate) outer_channel_hz_driver: [f32; 4],
     pub(crate) outer_channel_phase: [f32; 4],
+    pub(crate) outer_stretch: [f32; 4],
+    pub(crate) outer_stretch_options: [f32; 4],
 }
 
-const _: () = assert!(std::mem::size_of::<ProjectionZoneUniform>() == 368);
+const _: () = assert!(std::mem::size_of::<ProjectionZoneUniform>() == 400);
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct CameraHwbProjectionZoneFrame {
@@ -439,12 +484,12 @@ pub(crate) fn update_projection_zone_compositor_settings(
         );
     let settings = ProjectionZoneCompositorSettings {
         coverage_mode: coverage_mode.min(2),
-        region_contract_version: region_contract_version.clamp(1, 2),
+        region_contract_version: region_contract_version.clamp(1, 3),
         buffer_geometry_mode: buffer_geometry_mode.min(2),
         // This existing ABI slot now carries the single guard size instead of an independently
         // expandable Buffer-region width.
         buffer_static_width_uv: finite_or(buffer_static_width_uv, 0.08).clamp(0.0, 0.2),
-        buffer_fill_mode: buffer_fill_mode.min(2),
+        buffer_fill_mode: buffer_fill_mode.min(3),
         stretch_extent_mode: stretch_extent_mode.min(1),
         stretch_source: stretch_source.min(2),
         debug_mode: debug_mode.min(2),
@@ -474,6 +519,50 @@ pub(crate) fn update_projection_zone_compositor_settings(
         outer_cycle_amplitude: finite_or(outer_cycle_amplitude, 0.0).clamp(0.0, 0.5),
         outer_cycle_hz: finite_or(outer_cycle_hz, 0.10).clamp(0.0, 4.0),
         outer_motion_gain: finite_or(outer_motion_gain, 0.0).clamp(-0.5, 0.5),
+        ..current_projection_zone_compositor_settings()
+    };
+    if let Ok(mut current) = projection_zone_compositor_settings_lock().write() {
+        *current = settings;
+    }
+    settings
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn update_projection_zone_region_layout_settings(
+    buffer_minimum_width_uv: f32,
+    buffer_maximum_width_uv: f32,
+    buffer_maximum_speed_meters_per_second: f32,
+    buffer_fill_mode: u32,
+    outer_content_mode: u32,
+    outer_stretch_source: u32,
+    outer_stretch_option_flags: u32,
+    outer_edge_inset_uv: f32,
+    outer_max_inset_uv: f32,
+    outer_stretch_curve: f32,
+    outer_processed_mix: f32,
+) -> ProjectionZoneCompositorSettings {
+    let minimum = finite_or(buffer_minimum_width_uv, 0.06).clamp(0.0, 0.2);
+    let maximum = finite_or(buffer_maximum_width_uv, 0.18).clamp(minimum, 0.2);
+    let outer_edge = finite_or(outer_edge_inset_uv, 0.015).clamp(0.0, 0.49);
+    let settings = ProjectionZoneCompositorSettings {
+        region_contract_version: 3,
+        buffer_minimum_width_uv: minimum,
+        buffer_maximum_width_uv: maximum,
+        buffer_maximum_speed_meters_per_second: finite_or(
+            buffer_maximum_speed_meters_per_second,
+            0.80,
+        )
+        .clamp(0.05, 3.0),
+        buffer_fill_mode: buffer_fill_mode.min(3),
+        outer_content_mode: outer_content_mode.min(2),
+        outer_target_mode: if outer_content_mode.min(2) == 2 { 1 } else { 0 },
+        stretch_extent_mode: if outer_content_mode.min(2) == 1 { 1 } else { 0 },
+        outer_stretch_source: outer_stretch_source.min(2),
+        outer_stretch_option_flags: outer_stretch_option_flags & 0x1d,
+        outer_edge_inset_uv: outer_edge,
+        outer_max_inset_uv: finite_or(outer_max_inset_uv, 0.14).clamp(outer_edge, 0.49),
+        outer_stretch_curve: finite_or(outer_stretch_curve, 1.6).clamp(0.25, 6.0),
+        outer_processed_mix: finite_or(outer_processed_mix, 1.0).clamp(0.0, 1.0),
         ..current_projection_zone_compositor_settings()
     };
     if let Ok(mut current) = projection_zone_compositor_settings_lock().write() {
@@ -587,7 +676,16 @@ fn buffer_fill_token(mode: u32) -> &'static str {
     match mode {
         1 => "transparent-reveal",
         2 => "stretch",
+        3 => "video",
         _ => "outer-continuation",
+    }
+}
+
+fn outer_content_token(mode: u32) -> &'static str {
+    match mode {
+        1 => "stretch",
+        2 => "transparent",
+        _ => "video",
     }
 }
 
@@ -957,6 +1055,11 @@ fn camera_hwb_projection_zone_frame_with_settings(
                         | ((settings.buffer_geometry_mode & 0x3) << 9)
                         | ((settings.buffer_fill_mode & 0x3) << 11)
                         | ((settings.stretch_extent_mode & 0x1) << 13)
+                        | if settings.region_contract_version >= 3 {
+                            1 << 14
+                        } else {
+                            0
+                        }
                 } else {
                     0
                 }) as f32,
@@ -1050,6 +1153,18 @@ fn camera_hwb_projection_zone_frame_with_settings(
             settings.outer_cycle_phase_rgb[1],
             settings.outer_cycle_phase_rgb[2],
             1.0,
+        ],
+        outer_stretch: [
+            settings.outer_edge_inset_uv,
+            settings.outer_max_inset_uv,
+            settings.outer_stretch_curve,
+            (settings.outer_stretch_option_flags & 0x1d) as f32,
+        ],
+        outer_stretch_options: [
+            settings.outer_stretch_source as f32,
+            settings.outer_processed_mix,
+            settings.outer_content_mode as f32,
+            settings.buffer_maximum_speed_meters_per_second,
         ],
     };
     CameraHwbProjectionZoneFrame {
@@ -1588,7 +1703,7 @@ mod tests {
             [[0.0, 0.0, 0.5, 1.0], [0.5, 0.0, 0.5, 1.0]],
             settings,
         );
-        assert_eq!(std::mem::size_of::<ProjectionZoneUniform>(), 23 * 16);
+        assert_eq!(std::mem::size_of::<ProjectionZoneUniform>(), 25 * 16);
         assert_eq!(frame.uniform.outer_shape[3], 1.0);
     }
 
@@ -1687,7 +1802,7 @@ mod tests {
             settings,
         );
         let expected_flags = (1 << 8) | (1 << 9) | (2 << 11) | (1 << 13) | 0x08;
-        assert_eq!(std::mem::size_of::<ProjectionZoneUniform>(), 23 * 16);
+        assert_eq!(std::mem::size_of::<ProjectionZoneUniform>(), 25 * 16);
         assert_eq!(frame.uniform.stretch[3], expected_flags as f32);
         assert_eq!(frame.uniform.inner_shape[3], 0.12);
         assert!(frame.settings.active());
@@ -1699,6 +1814,47 @@ mod tests {
         assert!(marker.contains("projectionBufferGeometry=static"));
         assert!(marker.contains("projectionBufferFill=stretch"));
         assert!(marker.contains("projectionStretchExtent=replace-outer"));
+    }
+
+    #[test]
+    fn region_owned_contract_keeps_outer_stretch_independent_of_buffer_geometry() {
+        let settings = ProjectionZoneCompositorSettings {
+            region_contract_version: 3,
+            buffer_geometry_mode: 0,
+            buffer_fill_mode: 0,
+            buffer_minimum_width_uv: 0.04,
+            buffer_maximum_width_uv: 0.17,
+            buffer_maximum_speed_meters_per_second: 0.75,
+            outer_content_mode: 1,
+            outer_stretch_source: 2,
+            outer_stretch_option_flags: 0x10,
+            outer_edge_inset_uv: 0.02,
+            outer_max_inset_uv: 0.19,
+            outer_stretch_curve: 2.2,
+            outer_processed_mix: 0.65,
+            ..ProjectionZoneCompositorSettings::default()
+        };
+        let frame = camera_hwb_projection_zone_frame_with_settings(
+            1.0,
+            0.0,
+            0.0,
+            [[0.0, 0.0, 0.5, 1.0], [0.5, 0.0, 0.5, 1.0]],
+            settings,
+        );
+
+        assert_eq!(std::mem::size_of::<ProjectionZoneUniform>(), 25 * 16);
+        assert_ne!((frame.uniform.stretch[3] as u32) & (1 << 14), 0);
+        assert_eq!(frame.uniform.outer_stretch, [0.02, 0.19, 2.2, 16.0]);
+        assert_eq!(frame.uniform.outer_stretch_options, [2.0, 0.65, 1.0, 0.75]);
+        assert!(frame.settings.replaces_video());
+        assert!(!frame.settings.readable_video_consumer_required());
+        assert_eq!(frame.uniform.user_rects, frame.core_rects);
+        assert_eq!(frame.draw_rects[0], [0.0, 0.0, 0.5, 1.0]);
+        assert_eq!(frame.draw_rects[1], [0.5, 0.0, 0.5, 1.0]);
+        let marker = frame.settings.marker_fields();
+        assert!(marker.contains("projectionRegionContract=v3"));
+        assert!(marker.contains("projectionZoneOuterContent=stretch"));
+        assert!(marker.contains("projectionBufferMaximumSpeedMetersPerSecond=0.750"));
     }
 
     #[test]
@@ -1791,7 +1947,7 @@ mod tests {
 
     #[test]
     fn projection_zone_uniform_layout_is_vec4_aligned() {
-        assert_eq!(std::mem::size_of::<ProjectionZoneUniform>(), 23 * 16);
+        assert_eq!(std::mem::size_of::<ProjectionZoneUniform>(), 25 * 16);
         assert_eq!(std::mem::align_of::<ProjectionZoneUniform>(), 4);
     }
 

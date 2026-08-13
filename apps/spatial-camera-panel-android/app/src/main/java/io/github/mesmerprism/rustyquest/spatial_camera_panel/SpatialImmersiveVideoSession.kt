@@ -15,10 +15,20 @@ internal data class SpatialImmersiveVideoSessionSnapshot(
     val customProjectionCompatible: Boolean,
     val presentationMode: SpatialImmersiveVideoPresentationMode,
     val backgroundMode: SpatialBackgroundMode,
+    val items: List<SpatialImmersiveVideoCatalogItemSnapshot> = emptyList(),
 ) {
   val activeOrdinal: Int
     get() = if (activeIndex >= 0) activeIndex + 1 else 0
 }
+
+internal data class SpatialImmersiveVideoCatalogItemSnapshot(
+    val index: Int,
+    val label: String,
+    val sourceLabel: String,
+    val projectionLabel: String,
+    val stereoLabel: String,
+    val dimensionsLabel: String,
+)
 
 internal enum class SpatialImmersiveVideoPresentationMode(val token: String) {
   WorldAnchored("world-anchored"),

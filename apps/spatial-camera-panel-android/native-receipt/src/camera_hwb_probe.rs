@@ -19,6 +19,7 @@ use crate::camera_hwb_projection_target::{
     update_camera_hwb_projection_stereo_horizontal_offset_uv,
     update_camera_hwb_projection_target_live_scale,
     update_projection_zone_channel_dynamics_settings, update_projection_zone_compositor_settings,
+    update_projection_zone_region_layout_settings,
 };
 use crate::camera_hwb_stream::{
     CameraProbeFrame, CameraProbeFrameSet, CameraProbeRuntime, CameraProbeStreamMode,
@@ -57,9 +58,9 @@ use crate::spatial_public_multistack_runtime::{
 };
 use crate::spatial_video_projection::SpatialVideoProjectionRenderer;
 use crate::spatial_video_projection_native_stream::latest_spatial_video_projection_frame;
-use crate::spatial_video_projection_settings::spatial_video_projection_settings;
 #[cfg(rq_environment_depth_spatial_sdk_api_layer)]
 use crate::spatial_video_projection_settings::spatial_video_media_source_generation;
+use crate::spatial_video_projection_settings::spatial_video_projection_settings;
 use crate::{bool_token, marker_token};
 
 const CAMERA_HWB_PROBE_WAIT_FRAME_MS: u64 = 5000;
@@ -476,6 +477,43 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1pa
         applied.marker_fields(),
     ));
     1
+}
+
+#[no_mangle]
+#[allow(non_snake_case, clippy::too_many_arguments)]
+pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1panel_SpatialCameraPanelActivity_nativeUpdatePrivateLayerRegionLayout(
+    _env: *mut c_void,
+    _thiz: *mut c_void,
+    buffer_minimum_width_uv: c_float,
+    buffer_maximum_width_uv: c_float,
+    buffer_maximum_speed_meters_per_second: c_float,
+    buffer_fill_mode: c_int,
+    outer_content_mode: c_int,
+    outer_stretch_source: c_int,
+    outer_stretch_option_flags: c_int,
+    outer_edge_inset_uv: c_float,
+    outer_max_inset_uv: c_float,
+    outer_stretch_curve: c_float,
+    outer_processed_mix: c_float,
+) -> i64 {
+    let applied = update_projection_zone_region_layout_settings(
+        buffer_minimum_width_uv as f32,
+        buffer_maximum_width_uv as f32,
+        buffer_maximum_speed_meters_per_second as f32,
+        buffer_fill_mode.max(0) as u32,
+        outer_content_mode.max(0) as u32,
+        outer_stretch_source.max(0) as u32,
+        outer_stretch_option_flags.max(0) as u32,
+        outer_edge_inset_uv as f32,
+        outer_max_inset_uv as f32,
+        outer_stretch_curve as f32,
+        outer_processed_mix as f32,
+    );
+    log_marker(format!(
+        "status=private-layer-region-layout-updated rawCameraProjectionProbe=true updateMask=2 spatialPrivateLayerControlPanel=true {} runtimeCrash=false",
+        applied.marker_fields(),
+    ));
+    2
 }
 
 #[no_mangle]
@@ -900,7 +938,8 @@ unsafe fn render_camera_hwb_probe(
     let sdk_binding = {
         let deadline = Instant::now() + Duration::from_secs(5);
         loop {
-            if let Some(binding) = crate::spatial_sdk_depth_handoff::spatial_depth_device_binding() {
+            if let Some(binding) = crate::spatial_sdk_depth_handoff::spatial_depth_device_binding()
+            {
                 break binding;
             }
             if Instant::now() >= deadline {
@@ -963,7 +1002,9 @@ unsafe fn render_camera_hwb_probe(
         format!("enumerate-physical-devices-{error:?}")
     })?;
     #[cfg(rq_environment_depth_spatial_sdk_api_layer)]
-    let physical_devices = [vk::PhysicalDevice::from_raw(sdk_binding.physical_device_handle)];
+    let physical_devices = [vk::PhysicalDevice::from_raw(
+        sdk_binding.physical_device_handle,
+    )];
     let (physical_device, queue_family_index, extension_status) =
         select_camera_surface_device(&instance, &surface_loader, surface, &physical_devices)
             .ok_or_else(|| {
@@ -1543,10 +1584,7 @@ unsafe fn render_camera_hwb_probe(
                         }
                     }
                     Ok(_) => retirement.observe_not_ready(),
-                    Err(status)
-                        if status
-                            == crate::spatial_sdk_depth_handoff::STATUS_NOT_READY =>
-                    {
+                    Err(status) if status == crate::spatial_sdk_depth_handoff::STATUS_NOT_READY => {
                         retirement.observe_not_ready();
                     }
                     Err(status) => {
@@ -1587,7 +1625,8 @@ unsafe fn render_camera_hwb_probe(
                     thread::yield_now();
                     continue;
                 }
-                crate::spatial_sdk_depth_handoff::SpatialSubmitRetirementAction::ReleaseSuccess => {}
+                crate::spatial_sdk_depth_handoff::SpatialSubmitRetirementAction::ReleaseSuccess => {
+                }
                 failure_action => {
                     let request_id = retirement.request_id;
                     let broker_status = retirement.broker_status.unwrap_or(1);
@@ -1996,6 +2035,9 @@ unsafe fn render_camera_hwb_probe(
             observed_latency_settings,
             projection_zone_settings.buffer_geometry_mode,
             projection_zone_settings.buffer_static_width_uv,
+            projection_zone_settings.buffer_minimum_width_uv,
+            projection_zone_settings.buffer_maximum_width_uv,
+            projection_zone_settings.buffer_maximum_speed_meters_per_second,
             camera_reprojection,
             boottime_now_ns(),
         );
@@ -2087,9 +2129,8 @@ unsafe fn render_camera_hwb_probe(
             );
             if enqueue_status != 3 && enqueue_status != 0 {
                 if let Some(lease) = current_depth_lease {
-                    let _ = crate::spatial_sdk_depth_handoff::release_spatial_depth_render_lease(
-                        lease,
-                    );
+                    let _ =
+                        crate::spatial_sdk_depth_handoff::release_spatial_depth_render_lease(lease);
                 }
                 return Err(format!("spatial-sdk-queue-broker-enqueue-{enqueue_status}"));
             }
@@ -2357,9 +2398,8 @@ unsafe fn render_camera_hwb_probe(
         .map_err(|error| format!("device-wait-idle-{error:?}"))?;
     #[cfg(rq_environment_depth_spatial_sdk_api_layer)]
     if let Some(completed_lease) = submitted_depth_lease.take() {
-        let _ = crate::spatial_sdk_depth_handoff::release_spatial_depth_render_lease(
-            completed_lease,
-        );
+        let _ =
+            crate::spatial_sdk_depth_handoff::release_spatial_depth_render_lease(completed_lease);
     }
     if let Some(mut capture) = camera_replay_capture {
         capture.retire_completed(&device)?;

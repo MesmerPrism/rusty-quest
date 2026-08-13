@@ -116,6 +116,9 @@ internal object SpatialCameraControlProfileContract {
         "region_contract",
         "buffer_geometry",
         "buffer_static_width_uv",
+        "buffer_minimum_width_uv",
+        "buffer_maximum_width_uv",
+        "buffer_maximum_speed_meters_per_second",
         "buffer_fill",
         "stretch_extent",
         "stretch_source",
@@ -128,6 +131,13 @@ internal object SpatialCameraControlProfileContract {
         "max_inset_uv",
         "stretch_curve",
         "processed_mix",
+        "outer_content",
+        "outer_stretch_source",
+        "outer_stretch_option_flags",
+        "outer_edge_inset_uv",
+        "outer_max_inset_uv",
+        "outer_stretch_curve",
+        "outer_processed_mix",
         "inner",
         "outer",
     )
@@ -144,7 +154,8 @@ internal object SpatialCameraControlProfileContract {
                 },
             regionContractVersion =
                 if (json.has("region_contract")) {
-                  when (json.requireToken("region_contract", "v2")) {
+                  when (json.requireToken("region_contract", "v2", "v3")) {
+                    "v3" -> PrivateLayerZoneCompositorControls.regionContractRegionOwned
                     else -> PrivateLayerZoneCompositorControls.regionContractIndependent
                   }
                 } else {
@@ -166,6 +177,24 @@ internal object SpatialCameraControlProfileContract {
                 } else {
                   0.08f
                 },
+            bufferMinimumWidthUv =
+                if (json.has("buffer_minimum_width_uv")) {
+                  json.requireFloat("buffer_minimum_width_uv", 0.0f, 0.5f)
+                } else {
+                  0.06f
+                },
+            bufferMaximumWidthUv =
+                if (json.has("buffer_maximum_width_uv")) {
+                  json.requireFloat("buffer_maximum_width_uv", 0.0f, 0.5f)
+                } else {
+                  0.18f
+                },
+            bufferMaximumSpeedMetersPerSecond =
+                if (json.has("buffer_maximum_speed_meters_per_second")) {
+                  json.requireFloat("buffer_maximum_speed_meters_per_second", 0.05f, 5.0f)
+                } else {
+                  0.80f
+                },
             bufferFillMode =
                 if (json.has("buffer_fill")) {
                   when (
@@ -174,11 +203,13 @@ internal object SpatialCameraControlProfileContract {
                           "outer-continuation",
                           "transparent-reveal",
                           "stretch",
+                          "video",
                       )
                   ) {
                     "transparent-reveal" ->
                         PrivateLayerZoneCompositorControls.bufferFillTransparentReveal
                     "stretch" -> PrivateLayerZoneCompositorControls.bufferFillStretch
+                    "video" -> PrivateLayerZoneCompositorControls.bufferFillVideo
                     else -> PrivateLayerZoneCompositorControls.bufferFillOuterContinuation
                   }
                 } else {
@@ -239,6 +270,56 @@ internal object SpatialCameraControlProfileContract {
             maxInsetUv = json.requireFloat("max_inset_uv", edgeInset, 0.49f),
             stretchCurve = json.requireFloat("stretch_curve", 0.25f, 6.0f),
             processedMix = json.requireFloat("processed_mix", 0.0f, 1.0f),
+            outerContentMode =
+                if (json.has("outer_content")) {
+                  when (json.requireToken("outer_content", "video", "stretch", "transparent")) {
+                    "stretch" -> PrivateLayerZoneCompositorControls.outerContentStretch
+                    "transparent" -> PrivateLayerZoneCompositorControls.outerContentTransparent
+                    else -> PrivateLayerZoneCompositorControls.outerContentVideo
+                  }
+                } else {
+                  PrivateLayerZoneCompositorControls.outerContentVideo
+                },
+            outerStretchSource =
+                if (json.has("outer_stretch_source")) {
+                  when (json.requireToken("outer_stretch_source", "raw", "processed", "mix")) {
+                    "processed" -> PrivateLayerZoneCompositorControls.sourceProcessed
+                    "mix" -> PrivateLayerZoneCompositorControls.sourceMixed
+                    else -> PrivateLayerZoneCompositorControls.sourceRaw
+                  }
+                } else {
+                  PrivateLayerZoneCompositorControls.sourceProcessed
+                },
+            outerStretchOptionFlags =
+                if (json.has("outer_stretch_option_flags")) {
+                  json.requireLong("outer_stretch_option_flags", 0L, 31L).toInt()
+                } else {
+                  0
+                },
+            outerEdgeInsetUv =
+                if (json.has("outer_edge_inset_uv")) {
+                  json.requireFloat("outer_edge_inset_uv", 0.0f, 0.49f)
+                } else {
+                  0.015f
+                },
+            outerMaxInsetUv =
+                if (json.has("outer_max_inset_uv")) {
+                  json.requireFloat("outer_max_inset_uv", 0.0f, 0.49f)
+                } else {
+                  0.14f
+                },
+            outerStretchCurve =
+                if (json.has("outer_stretch_curve")) {
+                  json.requireFloat("outer_stretch_curve", 0.25f, 6.0f)
+                } else {
+                  1.6f
+                },
+            outerProcessedMix =
+                if (json.has("outer_processed_mix")) {
+                  json.requireFloat("outer_processed_mix", 0.0f, 1.0f)
+                } else {
+                  1.0f
+                },
             innerSignal = inner.signal,
             innerWidthUv = inner.widthUv,
             innerCurve = inner.curve,
