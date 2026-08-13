@@ -15,11 +15,9 @@ use crate::{
     spatial_video_projection_native_stream::SpatialVideoProjectionFrame,
     spatial_video_projection_settings::{
         should_log_spatial_video_projection_import, spatial_video_projection_import_cache_limit,
-        SpatialVideoProjectionSettings,
+        SpatialVideoProjectionSettings, SPATIAL_VIDEO_PROJECTION_IMPORT_CACHE_LIMIT,
     },
 };
-
-const SPATIAL_VIDEO_PROJECTION_IMPORT_CACHE_HARD_LIMIT: usize = 8;
 
 #[derive(Clone, Debug)]
 pub(crate) struct SpatialVideoProjectionFrameStats {
@@ -687,12 +685,12 @@ unsafe fn create_spatial_video_projection_resources(
     };
     let pool_sizes = [vk::DescriptorPoolSize::default()
         .ty(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
-        .descriptor_count(SPATIAL_VIDEO_PROJECTION_IMPORT_CACHE_HARD_LIMIT as u32 * 2)];
+        .descriptor_count(SPATIAL_VIDEO_PROJECTION_IMPORT_CACHE_LIMIT as u32 * 2)];
     let descriptor_pool = match device.create_descriptor_pool(
         &vk::DescriptorPoolCreateInfo::default()
             .flags(vk::DescriptorPoolCreateFlags::FREE_DESCRIPTOR_SET)
             .pool_sizes(&pool_sizes)
-            .max_sets(SPATIAL_VIDEO_PROJECTION_IMPORT_CACHE_HARD_LIMIT as u32 * 2),
+            .max_sets(SPATIAL_VIDEO_PROJECTION_IMPORT_CACHE_LIMIT as u32 * 2),
         None,
     ) {
         Ok(pool) => pool,

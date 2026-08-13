@@ -196,8 +196,10 @@ fn normalized_token(value: &str) -> String {
     value.trim().to_ascii_lowercase().replace('_', "-")
 }
 
-pub(crate) fn spatial_video_projection_import_cache_limit(max_images: i32) -> usize {
-    max_images.clamp(2, 6) as usize
+pub(crate) const SPATIAL_VIDEO_PROJECTION_IMPORT_CACHE_LIMIT: usize = 8;
+
+pub(crate) fn spatial_video_projection_import_cache_limit(_max_images: i32) -> usize {
+    SPATIAL_VIDEO_PROJECTION_IMPORT_CACHE_LIMIT
 }
 
 pub(crate) fn should_log_spatial_video_projection_frame(frame_index: u64) -> bool {
@@ -373,12 +375,12 @@ mod tests {
     }
 
     #[test]
-    fn import_cache_never_retains_more_buffers_than_the_configured_reader_queue() {
-        assert_eq!(spatial_video_projection_import_cache_limit(1), 2);
-        assert_eq!(spatial_video_projection_import_cache_limit(2), 2);
-        assert_eq!(spatial_video_projection_import_cache_limit(3), 3);
-        assert_eq!(spatial_video_projection_import_cache_limit(6), 6);
-        assert_eq!(spatial_video_projection_import_cache_limit(12), 6);
+    fn import_cache_preserves_the_proven_eight_entry_rotating_bound() {
+        assert_eq!(spatial_video_projection_import_cache_limit(1), 8);
+        assert_eq!(spatial_video_projection_import_cache_limit(2), 8);
+        assert_eq!(spatial_video_projection_import_cache_limit(3), 8);
+        assert_eq!(spatial_video_projection_import_cache_limit(6), 8);
+        assert_eq!(spatial_video_projection_import_cache_limit(12), 8);
     }
 
     #[test]
