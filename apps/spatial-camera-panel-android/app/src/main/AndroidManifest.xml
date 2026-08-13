@@ -75,6 +75,11 @@
             android:exported="true"
             android:excludeFromRecents="true"
             android:noHistory="true" />
+        <provider
+            android:name=".MediaActionDebugControlProvider"
+            android:authorities="${applicationId}.debug-media-action-control"
+            android:exported="true"
+            android:permission="android.permission.DUMP" />
         <meta-data
             android:name="com.oculus.supportedDevices"
             android:value="quest2|questpro|quest3|quest3s" />

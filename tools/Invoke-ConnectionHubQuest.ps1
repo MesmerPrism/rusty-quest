@@ -21,8 +21,8 @@ param(
     [ValidatePattern('^[0-9a-f]{64}$')]
     [string]$GradleSha256 = "",
     [string]$Keystore = "",
-    [ValidatePattern('^[0-9a-f]{64}$')]
-    [string]$ExpectedSignerSha256 = "",
+    [ValidatePattern('^722f1f3dcb921918d2e02f39f1b1bd8f9ff2812e07757c5fc665f6b8f7ee32a8$')]
+    [string]$ExpectedSignerSha256 = "722f1f3dcb921918d2e02f39f1b1bd8f9ff2812e07757c5fc665f6b8f7ee32a8",
     [string]$HubManifoldSourceRoot = "",
     [string]$SpatialManifoldSourceRoot = "",
     [string]$HubApk = "",
@@ -1407,6 +1407,7 @@ function Build-All {
         -ProductLockPath $lock `
         -ManifoldSourceRoot $hubRoot `
         -Keystore $resolvedKeystore `
+        -RequireSharedMorphovisionSigner `
         -EnableConnectionHubDebugOperator
     if ($LASTEXITCODE -ne 0) { throw "Hub APK build failed." }
     $previousManifold = $env:RUSTY_MANIFOLD_SOURCE_ROOT
@@ -1425,10 +1426,16 @@ function Build-All {
     }
     $manifest = Get-Content -Raw (Join-Path $RepoRoot "target\connection-hub-debug\build-manifest.json") | ConvertFrom-Json
     if (-not (Test-ExactBoolean $manifest.connection_hub_debug_operator $true)) { throw "Debug Hub build omitted its shell operator route." }
+    if (-not (Test-ExactBoolean $manifest.shared_morphovision_signer_required $true) -or
+        [string]$manifest.expected_shared_morphovision_signer_sha256 -ne $ExpectedSignerSha256 -or
+        [string]$manifest.artifact_signer_sha256 -ne $ExpectedSignerSha256) {
+        throw "Hub build did not prove the intended shared Morphovision signer."
+    }
     return Save-Receipt "build" (New-Receipt "build" "project-build" "passed" ([ordered]@{
         hub_build_manifest_sha256 = Get-Sha256 (Join-Path $RepoRoot "target\connection-hub-debug\build-manifest.json")
         gradle_version = "8.13"
-        keystore_sha256 = Get-Sha256 $resolvedKeystore
+        expected_signer_sha256 = $ExpectedSignerSha256
+        artifact_signer_sha256 = [string]$manifest.artifact_signer_sha256
         device_touched = $false
     }))
 }
@@ -1466,7 +1473,7 @@ function Inspect-All($Artifacts) {
     }
     if ($signers.Count -ne 1) { throw "Signature Binder permission would fail: the three APK signers differ." }
     $sharedSigner = @($signers)[0]
-    if (-not [string]::IsNullOrWhiteSpace($ExpectedSignerSha256) -and $sharedSigner -ne $ExpectedSignerSha256) {
+    if ($sharedSigner -ne $ExpectedSignerSha256) {
         throw "Shared APK signer does not match -ExpectedSignerSha256."
     }
     return Save-Receipt "inspect" (New-Receipt "inspect" "questionable-file-manager" "passed" $rows)

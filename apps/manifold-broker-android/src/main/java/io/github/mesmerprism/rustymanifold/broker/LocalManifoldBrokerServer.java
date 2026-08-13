@@ -175,6 +175,32 @@ public final class LocalManifoldBrokerServer {
             return;
         }
 
+        if ("command".equals(type)) {
+            String transportCommand = message.optString(
+                    "command_id",
+                    message.optString("command", ""));
+            if (isSubscribeCommand(transportCommand)) {
+                JSONObject transportParams = message.getJSONObject("params");
+                String stream = firstNonEmpty(
+                        transportParams.optString("stream", ""),
+                        transportParams.optString("stream_id", ""),
+                        transportParams.optString("value", ""));
+                JSONObject reply = new JSONObject();
+                reply.put("type", "transport_subscription_status");
+                reply.put("schema", "rusty.quest.broker.transport_subscription_status.v1");
+                reply.put("request_id", message.optString("request_id", ""));
+                reply.put("stream", stream);
+                reply.put("subscribed", !stream.isEmpty());
+                reply.put("mutation_authority_applied", false);
+                reply.put("time_utc", Instant.now().toString());
+                if (!stream.isEmpty()) {
+                    session.subscribe(stream);
+                }
+                writeText(session, reply);
+                return;
+            }
+        }
+
         if ("command".equals(type)
                 || COMMAND_SCHEMA.equals(message.optString("schema", ""))
                 || MUTATION_SCHEMA.equals(message.optString("$schema", ""))) {
@@ -267,6 +293,12 @@ public final class LocalManifoldBrokerServer {
         reply.put("schema", "rusty.quest.broker.transport_rejection.v1");
         reply.put("reason", "unsupported_transport_message");
         writeText(session, reply);
+    }
+
+    private static boolean isSubscribeCommand(String command) {
+        return "subscribe".equals(command)
+                || "stream.subscribe".equals(command)
+                || "manifold.stream.subscribe".equals(command);
     }
 
     private static String requestId(JSONObject authorityResponse) {

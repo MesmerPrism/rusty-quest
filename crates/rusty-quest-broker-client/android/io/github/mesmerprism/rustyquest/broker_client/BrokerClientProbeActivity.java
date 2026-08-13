@@ -63,6 +63,8 @@ public final class BrokerClientProbeActivity extends Activity {
     private String providerEpochId;
     private String recoveryProbeMode;
     private String overrideProviderEpochId;
+    private boolean holdMediaActionBeforeCompletion;
+    private String requestedMediaOperation;
 
     @Override
     protected void onCreate(Bundle state) {
@@ -80,6 +82,22 @@ public final class BrokerClientProbeActivity extends Activity {
             if (initialRevision <= 0L) throw new IllegalArgumentException("missing authority revision");
             recoveryProbeMode = getIntent().getStringExtra("recovery_probe_mode");
             overrideProviderEpochId = getIntent().getStringExtra("override_provider_epoch_id");
+            holdMediaActionBeforeCompletion = getIntent().getBooleanExtra(
+                    "hold_media_action_before_completion", false);
+            requestedMediaOperation = getIntent().getStringExtra("media_operation");
+            if (requestedMediaOperation == null || requestedMediaOperation.trim().isEmpty()) {
+                requestedMediaOperation = "start";
+            } else {
+                requestedMediaOperation = requestedMediaOperation.trim();
+            }
+            if (!"start".equals(requestedMediaOperation)
+                    && !"stop".equals(requestedMediaOperation)) {
+                throw new IllegalArgumentException("invalid media operation");
+            }
+            if ("stop".equals(requestedMediaOperation)
+                    && !holdMediaActionBeforeCompletion) {
+                throw new IllegalArgumentException("stop operation requires held completion");
+            }
             Intent intent = new Intent();
             intent.setComponent(new ComponentName(
                     "io.github.mesmerprism.rustymanifold.broker",
@@ -158,22 +176,36 @@ public final class BrokerClientProbeActivity extends Activity {
                         cleanupAndFinish();
                     } else {
                         stage = 5;
-                        sendIssue(admissionRevision, "capability.command.media.session.start");
+                        sendIssue(admissionRevision, operationCapability());
                     }
                 } else if (stage == 5) {
                     tokenId = receipt.getJSONObject("token").getString("token_id");
                     admissionRevision = revision;
-                    activeCommandId = "command.media.session.start";
-                    activeUseRequestId = requestId("media-start-use");
+                    activeCommandId = "start".equals(requestedMediaOperation)
+                            ? "command.media.session.start"
+                            : "command.media.session.stop";
+                    activeUseRequestId = requestId("media-" + requestedMediaOperation + "-use");
                     stage = 6;
-                    sendUse(activeUseRequestId, revision, "capability.command.media.session.start");
+                    sendUse(activeUseRequestId, revision, operationCapability());
                 } else if (stage == 6) {
                     admissionRevision = revision;
                     stage = 7;
                     sendMutation(activeCommandId, activeUseRequestId, tokenId, runtimeRevision, admissionRevision);
                 } else if (stage == 7) {
-                    startApplied = response.optBoolean("accepted", false);
+                    boolean applied = response.optBoolean("accepted", false);
+                    if ("start".equals(requestedMediaOperation)) startApplied = applied;
+                    else stopApplied = applied;
                     runtimeRevision = mutationResultingRuntimeRevision(response);
+                    if (holdMediaActionBeforeCompletion) {
+                        marker("status=media_action_pending operation=" + requestedMediaOperation
+                                + " applied=" + applied
+                                + " admissionRevision=" + admissionRevision
+                                + " runtimeRevision=" + runtimeRevision
+                                + " providerEpoch=" + providerEpochId
+                                + " platformCompletionSeparate=true localPolicy=false");
+                        cleanupAndFinish();
+                        return;
+                    }
                     stage = 8;
                     sendCompletion();
                 } else if (stage == 8) {
@@ -258,6 +290,10 @@ public final class BrokerClientProbeActivity extends Activity {
 
     private String requestId(String suffix) {
         return requestNamespace.requestId(clientId, suffix);
+    }
+
+    private String operationCapability() {
+        return "capability.command.media.session." + requestedMediaOperation;
     }
 
     private void sendIssue(long revision) {
