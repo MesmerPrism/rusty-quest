@@ -963,6 +963,7 @@ $sourceFiles = Get-ChildItem -Path (Join-Path $appRoot "src\main\java") -Recurse
         $connectionHubSelected -or
         ($_.Name -notlike "ConnectionHub*.java" -and
          $_.Name -notlike "AndroidConnectionHub*.java" -and
+         $_.Name -notlike "ManifoldConnectionHub*.java" -and
          $_.Name -notlike "Hub*.java" -and
          $_.Name -notlike "UnavailableManifoldConnectionHub*.java")
     } |

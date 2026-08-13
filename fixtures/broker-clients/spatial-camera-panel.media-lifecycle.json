@@ -5,7 +5,7 @@
   "broker_client_lock_id":"lock.broker-client.spatial-camera-panel.v1",
   "marker_namespace":"RUSTY_QUEST_SPATIAL_BROKER_CLIENT",
   "project_id":"spatial-camera-panel",
-  "product_ids":["broker.media_session.standalone"],
+  "product_ids":["broker.legacy_camera_p2p.standalone","broker.media_session.standalone"],
   "app_feature_lock_id":"lock.app.spatial-camera-panel.broker-media-client.v1",
   "app_feature_lock_path":"apps/spatial-camera-panel-android/morphospace/conformance-locks/broker-media-client.feature.lock.json",
   "app_feature_lock_fingerprint":"sha256:d68952b3cc5ebc8c23d85a1ab610e3005ee6c7197da0355f61a923809d252d5a",

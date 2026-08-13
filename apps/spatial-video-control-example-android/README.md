@@ -180,7 +180,7 @@ buttons. Right-controller A is excluded from panel click input and is reserved
 for one app-owned action: hide the panel, then show and recenter it on the next
 press. Spatial controller-component and Android key/motion observations feed
 one edge arbiter with bounded cross-route deduplication. The panel uses the
-public Rusty Morphovision graphite, high-contrast ink, cyan action, and amber
+public Rusty spatial graphite, high-contrast ink, cyan action, and amber
 revoke palette without importing that app or any private effect behavior. The
 application declares optional Horizon hand tracking so controller absence does
 not make the app ineligible to launch; the controller-specific A-button
