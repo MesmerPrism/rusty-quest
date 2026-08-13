@@ -13,6 +13,7 @@ import com.meta.spatial.core.Entity
 import com.meta.spatial.runtime.PanelSceneObject
 import com.meta.spatial.toolkit.PanelRegistration
 import com.meta.spatial.toolkit.PanelSettings
+import java.io.Closeable
 
 internal data class SpatialPrivateLayerPanelRegistrationBindings(
     val layerOverride: () -> Float,
@@ -29,6 +30,9 @@ internal data class SpatialPrivateLayerPanelRegistrationBindings(
     val videoSession: () -> SpatialImmersiveVideoSessionSnapshot,
     val sharedMediaLibrary: () -> SharedOfflineImmersiveMediaLibrarySnapshot,
     val connectionHubStatus: () -> ConnectionHubWearerControlSnapshot,
+    val observeConnectionHub:
+        ((ConnectionHubWearerControlSnapshot) -> Unit) -> Closeable,
+    val refreshConnectionHub: () -> ConnectionHubWearerControlSnapshot,
     val startConnectionHub: () -> ConnectionHubWearerControlSnapshot,
     val stopConnectionHub: () -> ConnectionHubWearerControlSnapshot,
     val environmentDepthUnavailableWarning: () -> String?,
@@ -115,6 +119,8 @@ internal object SpatialComposePanelRegistrationModule {
                       videoSession = bindings.videoSession,
                       sharedMediaLibrary = bindings.sharedMediaLibrary,
                       connectionHubStatus = bindings.connectionHubStatus,
+                      observeConnectionHub = bindings.observeConnectionHub,
+                      refreshConnectionHub = bindings.refreshConnectionHub,
                       startConnectionHub = bindings.startConnectionHub,
                       stopConnectionHub = bindings.stopConnectionHub,
                       environmentDepthUnavailableWarning =

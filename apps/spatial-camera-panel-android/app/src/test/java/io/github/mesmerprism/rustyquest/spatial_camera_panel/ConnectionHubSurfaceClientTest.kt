@@ -5,9 +5,56 @@ import java.security.MessageDigest
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ConnectionHubSurfaceClientTest {
+  @Test
+  fun inactiveOrPausedHubOwnsNoSurfaceClientOrPublicationTimer() {
+    val stopped =
+        ConnectionHubWearerControlSnapshot(
+            available = true,
+            listenerEnabled = false,
+            desiredConnectionState = "stopped",
+            pairingAvailable = false,
+            activeControllerSessions = 0,
+            transportClassification = "private-lan",
+            confidentiality = "encrypted-session",
+            productionEligible = true,
+            status = "ok",
+        )
+    assertFalse(connectionHubShouldOwnSurfaceClient(activityStarted = true, stopped))
+    assertFalse(
+        connectionHubShouldOwnSurfaceClient(
+            activityStarted = true,
+            stopped.copy(listenerEnabled = true, status = "stop-pending"),
+        )
+    )
+    assertTrue(
+        connectionHubShouldOwnSurfaceClient(
+            activityStarted = true,
+            stopped.copy(listenerEnabled = true),
+        )
+    )
+
+    val advancing = JSONObject().put("running", true).put("paused", false)
+    assertNull(connectionHubSurfaceStatePublishDelayMs(surfaceAvailable = false, advancing))
+    assertNull(
+        connectionHubSurfaceStatePublishDelayMs(
+            surfaceAvailable = true,
+            advancing.put("paused", true),
+        )
+    )
+    assertEquals(
+        1_000L,
+        connectionHubSurfaceStatePublishDelayMs(
+            surfaceAvailable = true,
+            advancing.put("paused", false),
+        ),
+    )
+  }
+
   @Test
   fun registrationUsesTheCanonicalAlpha4ContractAndFourEmptyArgumentCommands() {
     val state =

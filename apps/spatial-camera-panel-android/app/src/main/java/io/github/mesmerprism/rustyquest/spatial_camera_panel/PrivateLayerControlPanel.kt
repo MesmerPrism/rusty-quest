@@ -29,6 +29,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -41,6 +42,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import java.io.Closeable
 import kotlinx.coroutines.delay
 
 internal val LayerPanelBackground = Color(0xFF141820)
@@ -114,6 +116,9 @@ internal fun PrivateLayerControlPanel(
     videoSession: () -> SpatialImmersiveVideoSessionSnapshot,
     sharedMediaLibrary: () -> SharedOfflineImmersiveMediaLibrarySnapshot,
     connectionHubStatus: () -> ConnectionHubWearerControlSnapshot,
+    observeConnectionHub:
+        ((ConnectionHubWearerControlSnapshot) -> Unit) -> Closeable,
+    refreshConnectionHub: () -> ConnectionHubWearerControlSnapshot,
     startConnectionHub: () -> ConnectionHubWearerControlSnapshot,
     stopConnectionHub: () -> ConnectionHubWearerControlSnapshot,
     environmentDepthUnavailableWarning: () -> String?,
@@ -194,6 +199,10 @@ internal fun PrivateLayerControlPanel(
     localProjectionInnerAlpha = controls.projectionInnerAlpha
     localVideoSession = videoSession()
   }
+  DisposableEffect(Unit) {
+    val subscription = observeConnectionHub { snapshot -> localConnectionHub = snapshot }
+    onDispose(subscription::close)
+  }
   LaunchedEffect(Unit) {
     while (true) {
       delay(500L)
@@ -208,10 +217,6 @@ internal fun PrivateLayerControlPanel(
       val latestSharedMediaLibrary = sharedMediaLibrary()
       if (latestSharedMediaLibrary != localSharedMediaLibrary) {
         localSharedMediaLibrary = latestSharedMediaLibrary
-      }
-      val latestConnectionHub = connectionHubStatus()
-      if (latestConnectionHub != localConnectionHub) {
-        localConnectionHub = latestConnectionHub
       }
       val latestEnvironmentDepthUnavailableWarning = environmentDepthUnavailableWarning()
       if (latestEnvironmentDepthUnavailableWarning !=
@@ -648,7 +653,7 @@ internal fun PrivateLayerControlPanel(
             }
             Button(
                 modifier = Modifier.weight(1.0f),
-                onClick = { localConnectionHub = connectionHubStatus() },
+                onClick = { localConnectionHub = refreshConnectionHub() },
                 colors =
                     ButtonDefaults.buttonColors(
                         containerColor = LayerPanelSurfaceAlt,
@@ -659,7 +664,7 @@ internal fun PrivateLayerControlPanel(
             }
           }
           Text(
-              "Stopping the Hub closes its network listener and WebSocket work only. Headset controller input, panel reopening, projection, video, profiles, and playlists remain active.",
+              "Stopping the Hub also quiesces app-side Hub registration, polling, timers, and state publication. Headset controller input, panel reopening, projection, video, profiles, and playlists remain active.",
               style = MaterialTheme.typography.bodySmall,
               color = LayerPanelMuted,
           )

@@ -160,8 +160,16 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
         )
       }
   private var connectionHubSurfaceClient: ConnectionHubSurfaceClient? = null
+  private var connectionHubSurfaceTarget: ConnectionHubSurfaceTarget? = null
+  private var connectionHubActivityStarted: Boolean = false
   private val connectionHubWearerControlClient: ConnectionHubWearerControlClient by
-      lazy(LazyThreadSafetyMode.NONE) { ConnectionHubWearerControlClient(this, ::marker) }
+      lazy(LazyThreadSafetyMode.NONE) {
+        ConnectionHubWearerControlClient(
+            this,
+            ::marker,
+            ::onConnectionHubEffectiveSnapshotChanged,
+        )
+      }
   private var videoCadenceModeOverride: SpatialVideoCadenceMode? = null
   private var unavailableLaunchOptionInputLocked: Boolean = false
   private var privatePanelLaunchStatus: String = "none"
@@ -2362,7 +2370,6 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
   override fun onSceneTick() {
     super.onSceneTick()
     privatePanelExtension?.tick(spatialSceneReady)
-    connectionHubSurfaceClient?.refresh()
     enforcePrivatePanelInputPolicy()
     if (directImmersiveVideoPanelRequested()) {
       runCatching { scene.getViewerPose() }
@@ -2700,6 +2707,22 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     return super.dispatchGenericMotionEvent(event)
   }
 
+  private fun onConnectionHubEffectiveSnapshotChanged(
+      snapshot: ConnectionHubWearerControlSnapshot,
+  ) {
+    val shouldOwnSurfaceClient =
+        connectionHubShouldOwnSurfaceClient(connectionHubActivityStarted, snapshot)
+    if (!shouldOwnSurfaceClient) {
+      connectionHubSurfaceClient?.close()
+      connectionHubSurfaceClient = null
+      return
+    }
+    if (connectionHubSurfaceClient != null) return
+    val target = connectionHubSurfaceTarget ?: return
+    connectionHubSurfaceClient =
+        ConnectionHubSurfaceClient(this, target).also(ConnectionHubSurfaceClient::start)
+  }
+
   override fun onResume() {
     super.onResume()
     immersiveVideoPanelCoordinator.resume("activity-resume")
@@ -2707,9 +2730,11 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
 
   override fun onStart() {
     super.onStart()
-    val target = SpatialConnectionHubSurfaceTargetLoader.load(::marker, privatePanelExtension)
-    connectionHubSurfaceClient =
-        target?.let { ConnectionHubSurfaceClient(this, it).also { client -> client.start() } }
+    connectionHubActivityStarted = true
+    connectionHubSurfaceTarget =
+        SpatialConnectionHubSurfaceTargetLoader.load(::marker, privatePanelExtension)
+    onConnectionHubEffectiveSnapshotChanged(connectionHubWearerControlClient.status())
+    connectionHubWearerControlClient.refresh()
   }
   override fun onPause() {
     immersiveVideoPanelCoordinator.pause("activity-pause")
@@ -2717,14 +2742,17 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
   }
 
   override fun onStop() {
+    connectionHubActivityStarted = false
     connectionHubSurfaceClient?.close()
     connectionHubSurfaceClient = null
+    connectionHubSurfaceTarget = null
     super.onStop()
   }
 
   override fun onDestroy() {
     connectionHubSurfaceClient?.close()
     connectionHubSurfaceClient = null
+    connectionHubWearerControlClient.close()
     SpatialVideoCadencePanelBridge.clear()
     privatePanelExtension?.shutdown()
     immersiveVideoPanelCoordinator.destroy("activity-destroy")
@@ -2782,6 +2810,8 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
                       SharedOfflineImmersiveMediaLibrary.snapshot(this)
                     },
                     connectionHubStatus = connectionHubWearerControlClient::status,
+                    observeConnectionHub = connectionHubWearerControlClient::observe,
+                    refreshConnectionHub = connectionHubWearerControlClient::refresh,
                     startConnectionHub = connectionHubWearerControlClient::start,
                     stopConnectionHub = connectionHubWearerControlClient::stop,
                     environmentDepthUnavailableWarning =

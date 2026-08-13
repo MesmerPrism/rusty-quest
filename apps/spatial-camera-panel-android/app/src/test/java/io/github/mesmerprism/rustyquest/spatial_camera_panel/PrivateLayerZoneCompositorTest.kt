@@ -436,7 +436,7 @@ class PrivateLayerZoneCompositorTest {
         )
     assertTrue(marker.contains("projectionZoneDynamicGuardAware=true"))
     assertTrue(marker.contains("projectionZoneProjectionScaleAware=true"))
-    assertTrue(marker.contains("projectionZoneGeometryOrder=user-scale-then-dynamic-core"))
+    assertTrue(marker.contains("projectionZoneGeometryOrder=user-scale-then-guard-contraction"))
     assertTrue(marker.contains("projectionZoneStretchMapping=graded-edge-trail-native"))
     assertTrue(marker.contains("projectionZoneEffectEdgeGuardEnabled=true"))
     assertTrue(marker.contains("projectionZoneInnerApplication=legacy"))

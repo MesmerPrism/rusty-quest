@@ -1582,3 +1582,21 @@ buffer off produces a direct Inner-to-Outer transition, while replace-Outer
 Stretch removes the separate buffer-to-Outer transition. Changing a Stretch
 style preserves buffer geometry, transition tuning, and the selected
 same-layer or 180/360-underlay Outer target.
+
+## Connection Hub runtime isolation
+
+The wearer Start/Stop controls own both sides of the optional integration.
+When the listener is stopped, Spatial Camera Panel owns no Hub surface client,
+broker binding, state publisher, availability timer, or recurring provider
+status call; controller input and all local projection, video, profile, and
+playlist behavior remain independent. Opening the app performs one bounded
+background status reconciliation, and the panel Refresh button requests another
+explicit readback.
+
+When enabled, synchronous provider calls, Binder session reduction, JSON
+serialization, registration, and state publication run on dedicated background
+workers. The Compose panel observes an in-process snapshot, and the XR scene
+tick performs no Hub refresh. The private locked-playlist owner signals only
+availability or revision changes; advancing unpaused progress is coalesced at
+one update per second on the Hub worker, while paused or unavailable surfaces
+retain no publication timer.

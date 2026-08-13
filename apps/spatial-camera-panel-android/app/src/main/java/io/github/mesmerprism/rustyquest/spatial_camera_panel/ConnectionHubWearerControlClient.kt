@@ -3,6 +3,13 @@ package io.github.mesmerprism.rustyquest.spatial_camera_panel
 import android.content.Context
 import android.net.Uri
 import android.os.Bundle
+import android.os.Handler
+import android.os.HandlerThread
+import android.os.Looper
+import android.os.Process
+import java.io.Closeable
+import java.util.concurrent.CopyOnWriteArraySet
+import java.util.concurrent.atomic.AtomicBoolean
 
 internal data class ConnectionHubWearerControlSnapshot(
     val available: Boolean,
@@ -39,20 +46,62 @@ internal data class ConnectionHubWearerControlSnapshot(
   }
 }
 
+internal fun connectionHubShouldOwnSurfaceClient(
+    activityStarted: Boolean,
+    snapshot: ConnectionHubWearerControlSnapshot,
+): Boolean =
+    activityStarted && snapshot.listenerEnabled && snapshot.status != "stop-pending"
+
 /** Bounded same-signer adapter; it never requests or receives pairing/session secrets. */
 internal class ConnectionHubWearerControlClient(
     context: Context,
     private val marker: (String) -> Unit,
-) {
+    private val onEffectiveSnapshotChanged: (ConnectionHubWearerControlSnapshot) -> Unit = {},
+) : Closeable {
   private val resolver = context.applicationContext.contentResolver
+  private val mainHandler = Handler(Looper.getMainLooper())
+  private val workerThread =
+      HandlerThread(WORKER_THREAD_NAME, Process.THREAD_PRIORITY_BACKGROUND).apply { start() }
+  private val workerHandler = Handler(workerThread.looper)
+  private val observers =
+      CopyOnWriteArraySet<(ConnectionHubWearerControlSnapshot) -> Unit>()
+  private val closed = AtomicBoolean(false)
+  @Volatile
+  private var latestSnapshot =
+      ConnectionHubWearerControlSnapshot.unavailable("status-not-requested")
 
-  fun status(): ConnectionHubWearerControlSnapshot = invoke(METHOD_STATUS)
+  /** Returns the latest local readback only. This method never performs Binder/provider work. */
+  fun status(): ConnectionHubWearerControlSnapshot = latestSnapshot
 
-  fun start(): ConnectionHubWearerControlSnapshot = invoke(METHOD_START)
+  fun refresh(): ConnectionHubWearerControlSnapshot =
+      enqueue(METHOD_STATUS, pendingStatus = "status-pending")
 
-  fun stop(): ConnectionHubWearerControlSnapshot = invoke(METHOD_STOP)
+  fun start(): ConnectionHubWearerControlSnapshot =
+      enqueue(METHOD_START, pendingStatus = "start-pending")
 
-  private fun invoke(method: String): ConnectionHubWearerControlSnapshot =
+  fun stop(): ConnectionHubWearerControlSnapshot =
+      enqueue(METHOD_STOP, pendingStatus = "stop-pending")
+
+  fun observe(observer: (ConnectionHubWearerControlSnapshot) -> Unit): Closeable {
+    if (closed.get()) return Closeable {}
+    observers += observer
+    mainHandler.post {
+      if (!closed.get() && observer in observers) observer(latestSnapshot)
+    }
+    return Closeable { observers -= observer }
+  }
+
+  private fun enqueue(method: String, pendingStatus: String): ConnectionHubWearerControlSnapshot {
+    if (closed.get()) return latestSnapshot
+    val pending = latestSnapshot.copy(status = pendingStatus)
+    publish(pending)
+    workerHandler.post {
+      if (!closed.get()) publish(invokeBlocking(method))
+    }
+    return pending
+  }
+
+  private fun invokeBlocking(method: String): ConnectionHubWearerControlSnapshot =
       runCatching {
             val response =
                 requireNotNull(resolver.call(CONTENT_URI, method, null, Bundle.EMPTY)) {
@@ -83,6 +132,7 @@ internal class ConnectionHubWearerControlClient(
                     "available=${snapshot.available} listenerEnabled=${snapshot.listenerEnabled} " +
                     "desiredState=${snapshot.desiredConnectionState} " +
                     "activeControllerSessions=${snapshot.activeControllerSessions} " +
+                    "workerThread=${Thread.currentThread().name} " +
                     "secretsInSnapshot=false controllerInputIndependent=true"
             )
           }
@@ -90,12 +140,30 @@ internal class ConnectionHubWearerControlClient(
             val reason = error.javaClass.simpleName.take(48)
             marker(
                 "status=connection-hub-wearer-control-unavailable action=$method " +
-                    "reason=$reason secretsInSnapshot=false controllerInputIndependent=true"
+                    "reason=$reason workerThread=${Thread.currentThread().name} " +
+                    "secretsInSnapshot=false controllerInputIndependent=true"
             )
             ConnectionHubWearerControlSnapshot.unavailable(reason)
           }
 
+  private fun publish(snapshot: ConnectionHubWearerControlSnapshot) {
+    latestSnapshot = snapshot
+    mainHandler.post {
+      if (closed.get()) return@post
+      onEffectiveSnapshotChanged(snapshot)
+      observers.forEach { observer -> observer(snapshot) }
+    }
+  }
+
+  override fun close() {
+    if (!closed.compareAndSet(false, true)) return
+    observers.clear()
+    mainHandler.removeCallbacksAndMessages(null)
+    workerThread.quitSafely()
+  }
+
   private companion object {
+    const val WORKER_THREAD_NAME = "RqConnectionHubControl"
     const val AUTHORITY =
         "io.github.mesmerprism.rustymanifold.broker.connection-hub-wearer-control"
     val CONTENT_URI: Uri = Uri.parse("content://$AUTHORITY")
