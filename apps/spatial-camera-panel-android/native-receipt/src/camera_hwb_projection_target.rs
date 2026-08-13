@@ -206,7 +206,7 @@ impl ProjectionZoneCompositorSettings {
 
     pub(crate) fn marker_fields(self) -> String {
         let base = format!(
-            "projectionZoneCompositorMode={} projectionRegionContract=v{} projectionBufferGeometry={} projectionBufferStaticWidthUv={:.4} projectionBufferFill={} projectionStretchExtent={} projectionZoneStretchSource={} projectionZoneStretchMapping={} projectionZoneEffectEdgeGuardEnabled={} projectionZoneStretchOptionFlags={} projectionZoneStretchParameterA={:.4} projectionZoneStretchParameterB={:.4} projectionZoneStretchParameterC={:.3} projectionZoneProcessedMix={:.3} projectionZoneInnerSignal={} projectionZoneInnerWidthUv={:.4} projectionZoneInnerThresholdRgb={:.3},{:.3},{:.3} projectionZoneInnerSoftness={:.3} projectionZoneInnerStrength={:.3} projectionZoneInnerCycleAmplitude={:.3} projectionZoneInnerCycleHz={:.3} projectionZoneInnerMotionGain={:.3} projectionZoneOuterSignal={} projectionZoneOuterWidthUv={:.4} projectionZoneOuterThresholdRgb={:.3},{:.3},{:.3} projectionZoneOuterSoftness={:.3} projectionZoneOuterStrength={:.3} projectionZoneOuterCycleAmplitude={:.3} projectionZoneOuterCycleHz={:.3} projectionZoneOuterMotionGain={:.3} projectionZoneDebugMode={}",
+            "projectionZoneCompositorMode={} projectionRegionContract=v{} projectionBufferGeometry={} projectionBufferGuardSizeUv={:.4} projectionBufferFill={} projectionStretchExtent={} projectionZoneStretchSource={} projectionZoneStretchMapping={} projectionZoneEffectEdgeGuardEnabled={} projectionZoneStretchOptionFlags={} projectionZoneStretchParameterA={:.4} projectionZoneStretchParameterB={:.4} projectionZoneStretchParameterC={:.3} projectionZoneProcessedMix={:.3} projectionZoneInnerSignal={} projectionZoneInnerWidthUv={:.4} projectionZoneInnerThresholdRgb={:.3},{:.3},{:.3} projectionZoneInnerSoftness={:.3} projectionZoneInnerStrength={:.3} projectionZoneInnerCycleAmplitude={:.3} projectionZoneInnerCycleHz={:.3} projectionZoneInnerMotionGain={:.3} projectionZoneOuterSignal={} projectionZoneOuterWidthUv={:.4} projectionZoneOuterThresholdRgb={:.3},{:.3},{:.3} projectionZoneOuterSoftness={:.3} projectionZoneOuterStrength={:.3} projectionZoneOuterCycleAmplitude={:.3} projectionZoneOuterCycleHz={:.3} projectionZoneOuterMotionGain={:.3} projectionZoneDebugMode={}",
             coverage_mode_token(self.coverage_mode),
             self.region_contract_version,
             buffer_geometry_token(self.buffer_geometry_mode),
@@ -441,7 +441,9 @@ pub(crate) fn update_projection_zone_compositor_settings(
         coverage_mode: coverage_mode.min(2),
         region_contract_version: region_contract_version.clamp(1, 2),
         buffer_geometry_mode: buffer_geometry_mode.min(2),
-        buffer_static_width_uv: finite_or(buffer_static_width_uv, 0.08).clamp(0.0, 0.5),
+        // This existing ABI slot now carries the single guard size instead of an independently
+        // expandable Buffer-region width.
+        buffer_static_width_uv: finite_or(buffer_static_width_uv, 0.08).clamp(0.0, 0.2),
         buffer_fill_mode: buffer_fill_mode.min(2),
         stretch_extent_mode: stretch_extent_mode.min(1),
         stretch_source: stretch_source.min(2),

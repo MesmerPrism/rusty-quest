@@ -160,6 +160,8 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
         )
       }
   private var connectionHubSurfaceClient: ConnectionHubSurfaceClient? = null
+  private val connectionHubWearerControlClient: ConnectionHubWearerControlClient by
+      lazy(LazyThreadSafetyMode.NONE) { ConnectionHubWearerControlClient(this, ::marker) }
   private var videoCadenceModeOverride: SpatialVideoCadenceMode? = null
   private var unavailableLaunchOptionInputLocked: Boolean = false
   private var privatePanelLaunchStatus: String = "none"
@@ -2779,6 +2781,9 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
                     sharedMediaLibrary = {
                       SharedOfflineImmersiveMediaLibrary.snapshot(this)
                     },
+                    connectionHubStatus = connectionHubWearerControlClient::status,
+                    startConnectionHub = connectionHubWearerControlClient::start,
+                    stopConnectionHub = connectionHubWearerControlClient::stop,
                     environmentDepthUnavailableWarning =
                         cameraHwbProjectionDepthPrerequisiteCoordinator::environmentDepthUnavailableWarning,
                     environmentDepthRecoveryPolicy =

@@ -28,6 +28,9 @@ internal data class SpatialPrivateLayerPanelRegistrationBindings(
     val projectionInnerAlpha: ProjectionInnerAlpha,
     val videoSession: () -> SpatialImmersiveVideoSessionSnapshot,
     val sharedMediaLibrary: () -> SharedOfflineImmersiveMediaLibrarySnapshot,
+    val connectionHubStatus: () -> ConnectionHubWearerControlSnapshot,
+    val startConnectionHub: () -> ConnectionHubWearerControlSnapshot,
+    val stopConnectionHub: () -> ConnectionHubWearerControlSnapshot,
     val environmentDepthUnavailableWarning: () -> String?,
     val environmentDepthRecoveryPolicy: () -> SpatialEnvironmentDepthRecoveryPolicy,
     val updateEnvironmentDepthRecoveryPolicy:
@@ -111,6 +114,9 @@ internal object SpatialComposePanelRegistrationModule {
                       projectionInnerAlpha = bindings.projectionInnerAlpha,
                       videoSession = bindings.videoSession,
                       sharedMediaLibrary = bindings.sharedMediaLibrary,
+                      connectionHubStatus = bindings.connectionHubStatus,
+                      startConnectionHub = bindings.startConnectionHub,
+                      stopConnectionHub = bindings.stopConnectionHub,
                       environmentDepthUnavailableWarning =
                           bindings.environmentDepthUnavailableWarning,
                       environmentDepthRecoveryPolicy = bindings.environmentDepthRecoveryPolicy,

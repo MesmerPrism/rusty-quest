@@ -1561,7 +1561,12 @@ The projection-zone transport now has an additive independent-v2 contract
 without enlarging its 368-byte uniform. Buffer geometry (`off`, `static`, or
 `dynamic`), buffer content (`outer-continuation`, `transparent-reveal`, or
 `stretch`), and Stretch extent (`buffer-only` or `replace-outer`) occupy
-reserved high flag bits; static width uses the reserved `inner_shape.w` float.
+reserved high flag bits. The historical `buffer_static_width_uv` profile/ABI
+slot now carries the one guard-size value: it jointly reserves the source
+border and contracts the visible target footprint. Static holds that guard;
+Dynamic uses it as the minimum for motion-derived growth. Buffer Off selects
+zero guard and the full configured projection scale. There is no independent
+Buffer-region size authority, and projection scale remains separate.
 The existing coverage field remains a derived v1 compatibility projection.
 Profiles without `region_contract: "v2"` migrate deterministically: Off maps
 to Buffer Off + Outer continuation, Buffer maps to Dynamic + Stretch +

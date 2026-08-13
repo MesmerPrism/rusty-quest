@@ -943,6 +943,11 @@ if ($connectionHubSelected) {
             android:authorities="io.github.mesmerprism.rustymanifold.broker.connection-hub-operator"
             android:exported="true"
             android:permission="android.permission.DUMP" />
+        <provider
+            android:name=".ConnectionHubWearerControlProvider"
+            android:authorities="io.github.mesmerprism.rustymanifold.broker.connection-hub-wearer-control"
+            android:exported="true"
+            android:permission="io.github.mesmerprism.rustymanifold.permission.BROKER_ADMISSION" />
 "@
     $operatorManifestDir = Join-Path $OutDir "operator"
     New-Item -ItemType Directory -Force -Path $operatorManifestDir | Out-Null

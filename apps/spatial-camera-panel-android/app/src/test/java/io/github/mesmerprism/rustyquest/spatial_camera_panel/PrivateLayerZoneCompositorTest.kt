@@ -49,7 +49,7 @@ class PrivateLayerZoneCompositorTest {
         PrivateLayerZoneCompositorControls.bufferGeometryDynamic,
         normalized.bufferGeometryMode,
     )
-    assertEquals(0.5f, normalized.bufferStaticWidthUv)
+    assertEquals(0.2f, normalized.bufferStaticWidthUv)
     assertEquals(
         PrivateLayerZoneCompositorControls.bufferFillStretch,
         normalized.bufferFillMode,

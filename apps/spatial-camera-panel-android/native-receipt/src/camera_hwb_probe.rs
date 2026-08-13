@@ -15,7 +15,8 @@ use crate::ahardware_buffer_vulkan::{
 };
 use crate::camera_hwb_marker::log_camera_hwb_marker as log_marker;
 use crate::camera_hwb_projection_target::{
-    camera_hwb_projection_marker_fields, update_camera_hwb_projection_stereo_horizontal_offset_uv,
+    camera_hwb_projection_marker_fields, current_projection_zone_compositor_settings,
+    update_camera_hwb_projection_stereo_horizontal_offset_uv,
     update_camera_hwb_projection_target_live_scale,
     update_projection_zone_channel_dynamics_settings, update_projection_zone_compositor_settings,
 };
@@ -1990,8 +1991,11 @@ unsafe fn render_camera_hwb_probe(
             current_left_frame.capture_viewer_basis,
             current_right_frame.capture_viewer_basis,
         );
-        let projection_guard_band = camera_reprojection_guard_band.update(
+        let projection_zone_settings = current_projection_zone_compositor_settings();
+        let projection_guard_band = camera_reprojection_guard_band.update_for_projection_buffer(
             observed_latency_settings,
+            projection_zone_settings.buffer_geometry_mode,
+            projection_zone_settings.buffer_static_width_uv,
             camera_reprojection,
             boottime_now_ns(),
         );

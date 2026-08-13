@@ -81,15 +81,61 @@ impl CameraReprojectionGuardBandController {
         reprojection: CameraLatencyStereoReprojection,
         now_ns: i64,
     ) -> CameraReprojectionGuardBandFrame {
-        let minimum_margin_uv = settings.reprojection_source_overscan_uv();
-        if settings.reprojection_guard_band_mode
-            != CameraLatencyReprojectionGuardBandMode::DynamicReducedFootprint
-        {
+        self.update_with_policy(
+            settings.reprojection_source_overscan_uv(),
+            settings.reprojection_guard_band_mode,
+            reprojection,
+            now_ns,
+        )
+    }
+
+    /// Applies the product Buffer contract. The single guard-size value owns both the retained
+    /// source border and the visible projection contraction; there is no second Buffer-width
+    /// authority. The older latency-diagnostic policy remains available for legacy callers.
+    pub(crate) fn update_for_projection_buffer(
+        &mut self,
+        settings: CameraLatencySettings,
+        buffer_geometry_mode: u32,
+        buffer_guard_size_uv: f32,
+        reprojection: CameraLatencyStereoReprojection,
+        now_ns: i64,
+    ) -> CameraReprojectionGuardBandFrame {
+        let guard_size_uv = if buffer_guard_size_uv.is_finite() {
+            buffer_guard_size_uv.clamp(0.0, MAX_MARGIN_UV)
+        } else {
+            0.08
+        };
+        let (minimum_margin_uv, mode) = match buffer_geometry_mode {
+            0 => (0.0, CameraLatencyReprojectionGuardBandMode::ZoomToFill),
+            1 => (
+                guard_size_uv,
+                CameraLatencyReprojectionGuardBandMode::ReducedFootprint,
+            ),
+            2 => (
+                guard_size_uv,
+                CameraLatencyReprojectionGuardBandMode::DynamicReducedFootprint,
+            ),
+            _ => (
+                settings.reprojection_source_overscan_uv(),
+                settings.reprojection_guard_band_mode,
+            ),
+        };
+        self.update_with_policy(minimum_margin_uv, mode, reprojection, now_ns)
+    }
+
+    fn update_with_policy(
+        &mut self,
+        minimum_margin_uv: f32,
+        mode: CameraLatencyReprojectionGuardBandMode,
+        reprojection: CameraLatencyStereoReprojection,
+        now_ns: i64,
+    ) -> CameraReprojectionGuardBandFrame {
+        if mode != CameraLatencyReprojectionGuardBandMode::DynamicReducedFootprint {
             self.dynamic_active = false;
             self.applied_margin_uv = minimum_margin_uv;
             self.last_update_ns = now_ns;
             self.hold_until_ns = now_ns;
-            let footprint_scale = match settings.reprojection_guard_band_mode {
+            let footprint_scale = match mode {
                 CameraLatencyReprojectionGuardBandMode::ZoomToFill => 1.0,
                 CameraLatencyReprojectionGuardBandMode::ReducedFootprint
                 | CameraLatencyReprojectionGuardBandMode::DynamicReducedFootprint => {
@@ -395,6 +441,27 @@ mod tests {
         assert_eq!(reduced.source_overscan_uv, 0.1);
         assert!((reduced.footprint_scale - 0.8).abs() < f32::EPSILON);
         assert_eq!(reduced.phase, CameraReprojectionGuardBandPhase::Fixed);
+    }
+
+    #[test]
+    fn projection_buffer_guard_is_the_single_crop_and_footprint_authority() {
+        let idle = stereo(eye_with_yaw(0.0, 31.0), eye_with_yaw(0.0, 31.0));
+        let diagnostics = settings(CameraLatencyReprojectionGuardBandMode::ZoomToFill, 3);
+        let mut controller = CameraReprojectionGuardBandController::default();
+
+        let off = controller.update_for_projection_buffer(diagnostics, 0, 0.12, idle, 1);
+        assert_eq!(off.source_overscan_uv, 0.0);
+        assert_eq!(off.footprint_scale, 1.0);
+
+        let fixed = controller.update_for_projection_buffer(diagnostics, 1, 0.12, idle, 2);
+        assert_eq!(fixed.source_overscan_uv, 0.12);
+        assert!((fixed.footprint_scale - 0.76).abs() < f32::EPSILON);
+        assert_eq!(fixed.minimum_margin_uv, 0.12);
+
+        let dynamic = controller.update_for_projection_buffer(diagnostics, 2, 0.12, idle, 3);
+        assert_eq!(dynamic.source_overscan_uv, 0.12);
+        assert!((dynamic.footprint_scale - 0.76).abs() < f32::EPSILON);
+        assert_eq!(dynamic.phase, CameraReprojectionGuardBandPhase::Baseline);
     }
 
     #[test]

@@ -495,7 +495,7 @@ internal object PrivateLayerZoneCompositorModule {
         regionContractVersion = PrivateLayerZoneCompositorControls.regionContractIndependent,
         bufferGeometryMode = bufferGeometryMode,
         bufferStaticWidthUv =
-            requested.bufferStaticWidthUv.finiteOr(0.08f).coerceIn(0.0f, 0.5f),
+            requested.bufferStaticWidthUv.finiteOr(0.08f).coerceIn(0.0f, 0.2f),
         bufferFillMode = bufferFillMode,
         stretchExtentMode = stretchExtentMode,
         stretchSource = requested.stretchSource.coerceIn(0, 2),
@@ -543,7 +543,7 @@ internal object PrivateLayerZoneCompositorModule {
     return "projectionZoneCompositorMode=${PrivateLayerZoneCompositorControls.coverageToken(value.coverageMode)} " +
         "projectionRegionContract=v${value.regionContractVersion} " +
         "projectionBufferGeometry=${PrivateLayerZoneCompositorControls.bufferGeometryToken(value.bufferGeometryMode)} " +
-        "projectionBufferStaticWidthUv=${value.bufferStaticWidthUv} " +
+        "projectionBufferGuardSizeUv=${value.bufferStaticWidthUv} " +
         "projectionBufferFill=${PrivateLayerZoneCompositorControls.bufferFillToken(value.bufferFillMode)} " +
         "projectionStretchExtent=${PrivateLayerZoneCompositorControls.stretchExtentToken(value.stretchExtentMode)} " +
         "projectionZoneStretchSource=${PrivateLayerZoneCompositorControls.sourceToken(value.stretchSource)} " +
@@ -558,7 +558,8 @@ internal object PrivateLayerZoneCompositorModule {
         channelMarkerFields("Inner", value.innerChannelDynamics) +
         channelMarkerFields("Outer", value.outerChannelDynamics) +
         "projectionZoneDynamicGuardAware=true projectionZoneProjectionScaleAware=true " +
-        "projectionZoneGeometryOrder=user-scale-then-dynamic-core " +
+        "projectionZoneGuardSizeSingleAuthority=true " +
+        "projectionZoneGeometryOrder=user-scale-then-guard-contraction " +
         "projectionZoneSyntheticSourceIsolation=${value.debugMode == PrivateLayerZoneCompositorControls.debugRegions} " +
         "projectionZoneSyntheticDisplacementSuppressed=${value.debugMode == PrivateLayerZoneCompositorControls.debugRegions} " +
         "projectionZoneUnsampledOuterData=${transparentUnderlayRequested}"

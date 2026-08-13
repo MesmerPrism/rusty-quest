@@ -77,7 +77,7 @@ Assert-Contains $controls "bufferFillTransparentReveal = 1" "The buffer content 
 Assert-Contains $controls "stretchExtentReplaceOuter = 1" "Stretch extent must independently select Outer replacement."
 Assert-Contains $controls "applicationMode = applicationRegion" "The underlay preset must use one scalar region alpha."
 Assert-Contains $controls "sourceChoice = blendSourceOutgoing" "The underlay preset must derive alpha from the readable outgoing buffer."
-Assert-Contains $controls "projectionZoneGeometryOrder=user-scale-then-dynamic-core" "Panel markers must state the scale-before-guard geometry order."
+Assert-Contains $controls "projectionZoneGeometryOrder=user-scale-then-guard-contraction" "Panel markers must state the scale-before-guard geometry order."
 Assert-Contains $panel "private fun RegionSettingsPage(" "The panel must expose a dedicated navigable Regions page."
 Assert-Contains $panel 'Buffer("Buffer")' "Regions navigation must include Buffer geometry and content."
 Assert-Contains $panel 'Effects("Effects")' "Regions navigation must separate general region effects."

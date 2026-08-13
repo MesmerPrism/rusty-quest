@@ -86,6 +86,7 @@ private enum class PrivateLayerPanelPage(
   Depth("Depth alignment", "Depth source and per-eye fine tuning"),
   Profiles("Profiles", "Save, restore, and exchange complete tuning setups"),
   Playlists("Playlists", "Sequence saved profiles with timed looping playback"),
+  ExternalControl("External control", "Connection Hub listener and WebSocket availability"),
 }
 
 private enum class RegionSettingsTab(val label: String) {
@@ -112,6 +113,9 @@ internal fun PrivateLayerControlPanel(
     projectionInnerAlpha: ProjectionInnerAlpha,
     videoSession: () -> SpatialImmersiveVideoSessionSnapshot,
     sharedMediaLibrary: () -> SharedOfflineImmersiveMediaLibrarySnapshot,
+    connectionHubStatus: () -> ConnectionHubWearerControlSnapshot,
+    startConnectionHub: () -> ConnectionHubWearerControlSnapshot,
+    stopConnectionHub: () -> ConnectionHubWearerControlSnapshot,
     environmentDepthUnavailableWarning: () -> String?,
     environmentDepthRecoveryPolicy: () -> SpatialEnvironmentDepthRecoveryPolicy,
     updateEnvironmentDepthRecoveryPolicy:
@@ -168,6 +172,7 @@ internal fun PrivateLayerControlPanel(
   var localVideoSession by remember { mutableStateOf(videoSession()) }
   var localVideoCadenceMode by remember { mutableStateOf(SpatialVideoCadencePanelBridge.current()) }
   var localSharedMediaLibrary by remember { mutableStateOf(sharedMediaLibrary()) }
+  var localConnectionHub by remember { mutableStateOf(connectionHubStatus()) }
   var localEnvironmentDepthUnavailableWarning by
       remember { mutableStateOf(environmentDepthUnavailableWarning()) }
   var localEnvironmentDepthRecoveryPolicy by
@@ -203,6 +208,10 @@ internal fun PrivateLayerControlPanel(
       val latestSharedMediaLibrary = sharedMediaLibrary()
       if (latestSharedMediaLibrary != localSharedMediaLibrary) {
         localSharedMediaLibrary = latestSharedMediaLibrary
+      }
+      val latestConnectionHub = connectionHubStatus()
+      if (latestConnectionHub != localConnectionHub) {
+        localConnectionHub = latestConnectionHub
       }
       val latestEnvironmentDepthUnavailableWarning = environmentDepthUnavailableWarning()
       if (latestEnvironmentDepthUnavailableWarning !=
@@ -270,6 +279,7 @@ internal fun PrivateLayerControlPanel(
                     (if (localDepthAlignment.metadataAutoAlign) "auto align" else "manual"),
             profileSummary = "${localProfileLibrary.profiles.size} saved · JSON PC transfer",
             playlistSummary = panelExtension?.homeSummary(),
+            externalControlSummary = localConnectionHub.summary,
             onSelect = { currentPage = it },
         )
       }
@@ -582,6 +592,82 @@ internal fun PrivateLayerControlPanel(
               Text("Next")
             }
           }
+        }
+      }
+
+      if (currentPage == PrivateLayerPanelPage.ExternalControl) {
+        Section("Connection Hub") {
+          Text(
+              when {
+                !localConnectionHub.available ->
+                    "The same-signer Connection Hub companion is unavailable."
+                localConnectionHub.listenerEnabled ->
+                    "On — WebSocket control is available to paired clients."
+                else -> "Off — no Hub listener or WebSocket is exposed."
+              },
+              style = MaterialTheme.typography.bodyMedium,
+              color =
+                  if (localConnectionHub.listenerEnabled) LayerPanelAccent else LayerPanelMuted,
+          )
+          Text(
+              "Effective state: ${localConnectionHub.desiredConnectionState} · " +
+                  "controllers: ${localConnectionHub.activeControllerSessions} · " +
+                  "transport: ${localConnectionHub.transportClassification}",
+              style = MaterialTheme.typography.bodySmall,
+              color = LayerPanelMuted,
+          )
+          Row(
+              horizontalArrangement = Arrangement.spacedBy(10.dp),
+              modifier = Modifier.fillMaxWidth(),
+          ) {
+            Button(
+                modifier = Modifier.weight(1.0f),
+                enabled = !localConnectionHub.listenerEnabled,
+                onClick = { localConnectionHub = startConnectionHub() },
+                colors =
+                    ButtonDefaults.buttonColors(
+                        containerColor = LayerPanelAccent,
+                        contentColor = Color(0xFF04111A),
+                    ),
+            ) {
+              Text("Start Hub")
+            }
+            Button(
+                modifier = Modifier.weight(1.0f),
+                enabled =
+                    localConnectionHub.listenerEnabled ||
+                        localConnectionHub.desiredConnectionState == "running",
+                onClick = { localConnectionHub = stopConnectionHub() },
+                colors =
+                    ButtonDefaults.buttonColors(
+                        containerColor = LayerPanelWarm,
+                        contentColor = Color(0xFF04111A),
+                    ),
+            ) {
+              Text("Stop Hub")
+            }
+            Button(
+                modifier = Modifier.weight(1.0f),
+                onClick = { localConnectionHub = connectionHubStatus() },
+                colors =
+                    ButtonDefaults.buttonColors(
+                        containerColor = LayerPanelSurfaceAlt,
+                        contentColor = LayerPanelInk,
+                    ),
+            ) {
+              Text("Refresh")
+            }
+          }
+          Text(
+              "Stopping the Hub closes its network listener and WebSocket work only. Headset controller input, panel reopening, projection, video, profiles, and playlists remain active.",
+              style = MaterialTheme.typography.bodySmall,
+              color = LayerPanelMuted,
+          )
+          Text(
+              "Current transport reports confidentiality=${localConnectionHub.confidentiality} and productionEligible=${localConnectionHub.productionEligible}.",
+              style = MaterialTheme.typography.bodySmall,
+              color = LayerPanelMuted,
+          )
         }
       }
 
@@ -1748,6 +1834,7 @@ private fun PanelTopicMenu(
     depthSummary: String,
     profileSummary: String,
     playlistSummary: String?,
+    externalControlSummary: String,
     onSelect: (PrivateLayerPanelPage) -> Unit,
 ) {
   Section("Settings topics") {
@@ -1788,6 +1875,11 @@ private fun PanelTopicMenu(
           onClick = { onSelect(PrivateLayerPanelPage.Playlists) },
       )
     }
+    TopicNavigationButton(
+        title = PrivateLayerPanelPage.ExternalControl.title,
+        summary = externalControlSummary,
+        onClick = { onSelect(PrivateLayerPanelPage.ExternalControl) },
+    )
   }
 }
 
@@ -2107,21 +2199,21 @@ private fun RegionSettingsPage(
               )
             }
           }
-          if (configuration.bufferGeometryMode == controls.bufferGeometryStatic) {
-            DepthSlider("Static buffer width", configuration.bufferStaticWidthUv, 0.0f..0.5f) {
+          if (configuration.bufferGeometryMode != controls.bufferGeometryOff) {
+            DepthSlider("Guard size", configuration.bufferStaticWidthUv, 0.0f..0.2f) {
               onConfigurationChange(
                   configuration.copy(bufferStaticWidthUv = it),
-                  "private-layer-buffer-static-width",
+                  "private-layer-buffer-guard-size",
               )
             }
           }
           Text(
               if (configuration.bufferGeometryMode == controls.bufferGeometryDynamic) {
-                "Dynamic uses the released margin between the motion-guarded Inner footprint and the current projection area. Anti-image-drag contraction therefore changes its size."
+                "Guard size is the minimum retained source border and visible projection contraction. Dynamic may grow that same guard from current head motion, then releases back to this value."
               } else if (configuration.bufferGeometryMode == controls.bufferGeometryStatic) {
-                "Static expands from the Inner boundary by a fixed normalized width, clipped to the projection area."
+                "Guard size reserves that source border and contracts the visible custom projection by the matching amount. Projection scale stays independent."
               } else {
-                "With Buffer Off, the Inner transition connects directly to Outer."
+                "With Buffer Off, no source guard is reserved and the visible custom projection returns to its full configured scale."
               },
               style = MaterialTheme.typography.bodySmall,
               color = LayerPanelMuted,
