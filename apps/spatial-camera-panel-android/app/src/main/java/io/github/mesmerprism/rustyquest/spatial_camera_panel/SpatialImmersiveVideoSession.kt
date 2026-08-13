@@ -33,6 +33,7 @@ internal enum class SpatialImmersiveVideoCarrierShape {
 }
 
 internal const val HEAD_FIXED_VIDEO_DISTANCE_METERS = 2.05f
+internal const val HEAD_FIXED_VIDEO_COVER_OVERSCAN_SCALE = 1.10f
 
 internal enum class SpatialImmersiveVideoQuadScaleMode(val token: String) {
   SourceAspect("source-aspect"),
@@ -51,7 +52,11 @@ internal data class SpatialImmersiveVideoQuadGeometry(
         if (coverageTargetWidthMeters != null && coverageTargetHeightMeters != null) {
           " directVideoCoverageTargetMeters=" +
               "${formatMarkerFloat(coverageTargetWidthMeters)}x" +
-              formatMarkerFloat(coverageTargetHeightMeters)
+              formatMarkerFloat(coverageTargetHeightMeters) +
+              " directVideoCoverageOverscanScale=" +
+              formatMarkerFloat(HEAD_FIXED_VIDEO_COVER_OVERSCAN_SCALE) +
+              " directVideoCarrierGeometryOwner=head-fixed-outer-video-panel" +
+              " customProjectionGeometryUnchanged=true"
         } else {
           ""
         }
@@ -303,8 +308,10 @@ internal object SpatialImmersiveVideoSessionPolicy {
   ): SpatialImmersiveVideoQuadGeometry {
     val distanceScale =
         HEAD_FIXED_VIDEO_DISTANCE_METERS / PARTICLE_LAYER_TARGET_DISTANCE_METERS
-    val targetWidthMeters = PARTICLE_LAYER_WIDTH_METERS * distanceScale
-    val targetHeightMeters = PARTICLE_LAYER_HEIGHT_METERS * distanceScale
+    val targetWidthMeters =
+        PARTICLE_LAYER_WIDTH_METERS * distanceScale * HEAD_FIXED_VIDEO_COVER_OVERSCAN_SCALE
+    val targetHeightMeters =
+        PARTICLE_LAYER_HEIGHT_METERS * distanceScale * HEAD_FIXED_VIDEO_COVER_OVERSCAN_SCALE
     val targetAspectRatio = targetWidthMeters / targetHeightMeters
     val (widthMeters, heightMeters) =
         if (perEyeAspectRatio >= targetAspectRatio) {

@@ -227,7 +227,12 @@ app-local. Stopping the bridge is the rollback and leaves the adapter inert.
   explicit outer target. A world-anchored 180/360 underlay therefore remains
   an independent transparent-underlay layer, while explicitly selected
   readable same-layer video remains available for the head-anchored
-  composition. Its
+  composition. The head-fixed direct-video quad applies a symmetric 1.10x
+  cover overscan around that outer-video footprint so the underlying
+  passthrough treatment cannot appear as narrow top/bottom bands. This changes
+  only the head-fixed outer-video panel: the video keeps its per-eye source
+  aspect, the custom projection's 5.40 m x 4.00 m target remains unchanged,
+  and world-anchored flat/180/360 carriers retain their declared geometry. Its
   default mapping id selects the original native graded edge-trail treatment:
   samples begin at the corresponding projection border and move progressively
   deeper into that same side under a nonlinear distance curve. The rounded
