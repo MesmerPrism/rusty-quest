@@ -12,6 +12,7 @@ public final class BrokerStartActivity extends Activity {
     @Override
     protected void onCreate(Bundle bundle) {
         super.onCreate(bundle);
+        RemoteCameraRelayCredential.adopt(getIntent());
         initializeAuthority();
         requestCameraPermissionIfNeeded();
         LocalManifoldBrokerServer.get().start(getApplicationContext());
@@ -31,6 +32,7 @@ public final class BrokerStartActivity extends Activity {
     @Override
     protected void onNewIntent(android.content.Intent intent) {
         super.onNewIntent(intent);
+        RemoteCameraRelayCredential.adopt(intent);
         initializeAuthority();
         requestCameraPermissionIfNeeded();
         LocalManifoldBrokerServer.get().start(getApplicationContext());
