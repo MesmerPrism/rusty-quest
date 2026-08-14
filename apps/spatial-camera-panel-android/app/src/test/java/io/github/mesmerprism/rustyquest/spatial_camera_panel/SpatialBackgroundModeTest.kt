@@ -13,6 +13,7 @@ class SpatialBackgroundModeTest {
         SpatialBackgroundMode.LutPassthrough,
         SpatialBackgroundMode.fromToken("lut_passthrough"),
     )
+    assertEquals(SpatialBackgroundMode.Video, SpatialBackgroundMode.fromToken("world_video"))
   }
 
   @Test
@@ -28,6 +29,10 @@ class SpatialBackgroundModeTest {
     assertEquals(
         SpatialBackgroundEffects(false, true, true),
         SpatialBackgroundModePolicy.resolve(SpatialBackgroundMode.LutPassthrough, false),
+    )
+    assertEquals(
+        SpatialBackgroundEffects(true, true, false),
+        SpatialBackgroundModePolicy.resolve(SpatialBackgroundMode.Video, false),
     )
   }
 

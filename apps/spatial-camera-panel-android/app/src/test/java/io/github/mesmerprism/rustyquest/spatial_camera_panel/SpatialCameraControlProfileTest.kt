@@ -212,7 +212,10 @@ class SpatialCameraControlProfileTest {
     assertEquals(0.04f, value.bufferMinimumWidthUv)
     assertEquals(0.17f, value.bufferMaximumWidthUv)
     assertEquals(0.75f, value.bufferMaximumSpeedMetersPerSecond)
-    assertEquals(PrivateLayerZoneCompositorControls.bufferFillVideo, value.bufferFillMode)
+    assertEquals(
+        PrivateLayerZoneCompositorControls.bufferFillOuterContinuation,
+        value.bufferFillMode,
+    )
     assertEquals(PrivateLayerZoneCompositorControls.outerContentStretch, value.outerContentMode)
     assertEquals(PrivateLayerZoneCompositorControls.sourceMixed, value.outerStretchSource)
     assertEquals(16, value.outerStretchOptionFlags)

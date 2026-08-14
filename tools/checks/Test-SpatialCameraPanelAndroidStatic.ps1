@@ -3096,7 +3096,8 @@ Assert-Contains "Private layer panel control module" $privateLayerPanelControlMo
 Assert-Contains "Spatial passthrough LUT module" $spatialPassthroughLutModule 'const val MODULE_ID = "spatial-passthrough-lut"'
 Assert-Contains "Spatial passthrough LUT module" $spatialPassthroughLutModule "Scene.setPassthroughLUT"
 Assert-Contains "Spatial passthrough LUT module" $spatialPassthroughLutModule "LUT_DIMENSION = 16"
-Assert-Contains "Spatial passthrough LUT module" $spatialPassthroughLutModule "passthroughStyleMode=animated-posterized-mono-to-rgba-gradient"
+Assert-Contains "Spatial passthrough LUT module" $spatialPassthroughLutModule "passthroughStyleMode=animated-continuous-mono-to-rgba-gradient"
+Assert-Contains "Spatial passthrough LUT module" $spatialPassthroughLutModule "const val UPDATE_HZ = 30.0f"
 Assert-Contains "Spatial passthrough LUT module" $spatialPassthroughLutModule "AMPLITUDE_OSCILLATOR_HZ = 1.35f"
 Assert-Contains "Spatial passthrough LUT module" $spatialPassthroughLutModule "COLOR_PHASE_HZ = 0.125f"
 Assert-Contains "Spatial passthrough LUT module" $spatialPassthroughLutModule "BLACK_LEVEL_CUTOFF = 0.055f"

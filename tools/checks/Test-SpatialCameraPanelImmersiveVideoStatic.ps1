@@ -203,7 +203,8 @@ Assert-Contains "Activity" $activity "immersiveVideoPanelCoordinator.requested"
 Assert-Contains "Activity" $activity "directImmersiveVideoPanelRequested()"
 Assert-Contains "Activity" $activity "status=layered-carriers-adopted"
 Assert-Contains "Activity" $activity "customProjectionCarrierShape=planar-quad"
-Assert-Contains "Activity" $activity "immersiveVideoPanelCoordinator::updateFromViewer"
+Assert-Contains "Activity" $activity "immersiveVideoPanelCoordinator.updateFromViewer(viewerPose)"
+Assert-Contains "Activity" $activity "backgroundImmersiveVideoPanelCoordinator.updateFromViewer(viewerPose)"
 Assert-NotContains "Activity" $activity "usesImmersiveVideoAsCustomProjectionSource()"
 Assert-Contains "Activity" $activity "spatialVideoProjectionRuntimeCoordinator.replaceMediaSource("
 Assert-NotContains "Activity" $activity "projectionPanelVisibilityCoordinator.restartWith("
@@ -228,7 +229,7 @@ Assert-Contains "Immersive coordinator" $coordinator 'releasePlayer("selection-h
 Assert-Contains "Immersive coordinator" $coordinator "decoderOverlap=false"
 Assert-Contains "Immersive coordinator" $coordinator "fun setBackgroundMode("
 Assert-Contains "Immersive coordinator" $coordinator "playback-disabled-background-retained"
-Assert-Contains "Immersive coordinator" $coordinator "backgroundMode != SpatialBackgroundMode.Black"
+Assert-Contains "Immersive coordinator" $coordinator "backgroundMode.usesOpaqueVideoBacking()"
 
 Assert-Contains "Immersive session" $session "compatibleWithSession("
 Assert-Contains "Immersive session" $session 'CUSTOM_PROJECTION_SOURCE = "encrypted-offline-pack"'
@@ -317,6 +318,7 @@ Assert-Contains "Decoder lifecycle ownership" $activity "stopBeforeStart=true"
 Assert-Contains "Decoder lifecycle tests" $decoderLifecycleTest "failedOldDecoderStopBlocksReplacementInsteadOfOverlapping"
 Assert-Contains "Decoder lifecycle tests" $decoderLifecycleTest "transparentUnderlayNeverStartsTheZeroContributionCustomDecoder"
 Assert-Contains "Decoder lifecycle tests" $decoderLifecycleTest "losingTheReadableConsumerStopsBeforeLaterSourceChanges"
+Assert-Contains "Decoder lifecycle tests" $decoderLifecycleTest "coldStereoLayoutSwitchConfiguresCompleteGenerationBeforeDecoderStart"
 Assert-Contains "Decoder cadence tests" $decoderLifecycleTest "codecOutputCadenceKeepsMicrosecondQuantizedThirtyFpsFrames"
 Assert-Contains "Decoder cadence tests" $decoderLifecycleTest "codecOutputCadenceSkipsIntermediateSixtyFpsSurfaceFrames"
 Assert-Contains "Decoder cadence tests" $decoderLifecycleTest "codecOutputCadenceRestartsSafelyForANonMonotonicTimeline"
@@ -366,6 +368,7 @@ Assert-Contains "Immersive route tests" $routeTest "rejectsUnknownProjectionInst
 Assert-Contains "Background policy" $background 'Black("black")'
 Assert-Contains "Background policy" $background 'Passthrough("passthrough")'
 Assert-Contains "Background policy" $background 'LutPassthrough("lut-passthrough")'
+Assert-Contains "Background policy" $background 'Video("world-video")'
 Assert-Contains "Background policy" $background "diagnosticLutRequested"
 Assert-Contains "Background controls" $controlPanel 'Background("Background"'
 Assert-Contains "Background controls" $controlPanel 'Section("Background")'
@@ -383,7 +386,15 @@ Assert-Contains "Background activity" $activity "diagnosticPassthroughLutRequest
 Assert-Contains "Background LUT" $passthroughLut "Scene.setPassthroughLUT"
 Assert-Contains "Background LUT" $passthroughLut "data class SpatialPassthroughLutSettings"
 Assert-Contains "Background LUT" $passthroughLut "while (isActive && lutApplied && settings.animationEnabled)"
+Assert-Contains "Background LUT" $passthroughLut "const val UPDATE_HZ = 30.0f"
+Assert-Contains "Background LUT" $passthroughLut "interpolatedSaturatedColor"
 Assert-Contains "Background LUT tests" $passthroughLutSettingsTest "staticModeProducesOneStableFullAmplitudeSnapshot"
+Assert-Contains "Background LUT tests" $passthroughLutSettingsTest "colorStopsInterpolateContinuouslyAndUpdateAtVideoCadence"
+Assert-Contains "Video ownership controls" $controlPanel 'label = "World video"'
+Assert-Contains "Video ownership controls" $controlPanel 'ChoiceButton("Head-locked video"'
+Assert-Contains "Video ownership controls" $controlPanel 'label = "Use in Background"'
+Assert-Contains "Video ownership controls" $controlPanel 'label = "Use in Outer"'
+Assert-NotContains "Video ownership controls" $controlPanel 'ChoiceButton("Video", configuration.bufferFillMode'
 Assert-Contains "Background tests" $backgroundTest "eachBackgroundModeResolvesOneExplicitCompositionPolicy"
 Assert-Contains "Background tests" $backgroundTest "retainedDiagnosticLutComposesWithTheSelectedBackground"
 

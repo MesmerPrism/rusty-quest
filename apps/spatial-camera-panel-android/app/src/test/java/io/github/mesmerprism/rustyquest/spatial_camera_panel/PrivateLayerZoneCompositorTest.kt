@@ -62,7 +62,7 @@ class PrivateLayerZoneCompositorTest {
     assertEquals(0.2f, normalized.bufferMaximumWidthUv)
     assertEquals(3.0f, normalized.bufferMaximumSpeedMetersPerSecond)
     assertEquals(
-        PrivateLayerZoneCompositorControls.bufferFillVideo,
+        PrivateLayerZoneCompositorControls.bufferFillStretch,
         normalized.bufferFillMode,
     )
     assertEquals(
@@ -487,7 +487,7 @@ class PrivateLayerZoneCompositorTest {
   }
 
   @Test
-  fun outerStretchAndMiddleVideoRemainIndependentAcrossBufferModes() {
+  fun legacyMiddleVideoMigratesToContinueOuterAcrossBufferModes() {
     for (geometry in 0..2) {
       val normalized =
           PrivateLayerZoneCompositorModule.normalize(
@@ -501,7 +501,7 @@ class PrivateLayerZoneCompositorTest {
           )
       assertEquals(geometry, normalized.bufferGeometryMode)
       assertEquals(
-          PrivateLayerZoneCompositorControls.bufferFillVideo,
+          PrivateLayerZoneCompositorControls.bufferFillOuterContinuation,
           normalized.bufferFillMode,
       )
       assertEquals(

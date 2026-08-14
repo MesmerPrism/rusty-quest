@@ -47,14 +47,14 @@ internal data class SpatialPassthroughLutSettings(
 internal object SpatialPassthroughLutModule {
   const val MODULE_ID = "spatial-passthrough-lut"
   const val LUT_DIMENSION = 16
-  const val UPDATE_HZ = 5.0f
+  const val UPDATE_HZ = 30.0f
   const val COLOR_PHASE_HZ = 0.125f
   const val AMPLITUDE_OSCILLATOR_HZ = 1.35f
   const val MIN_COLOR_AMPLITUDE = 0.90f
   const val MAX_COLOR_AMPLITUDE = 1.00f
   const val BLACK_LEVEL_CUTOFF = 0.055f
   const val SATURATED_COLOR_BAND_COUNT = 6
-  const val UPDATE_PERIOD_MS = 200L
+  const val UPDATE_PERIOD_MS = 33L
   const val MARKER_INTERVAL_MS = 2_000L
 
   private val saturatedColorStops =
@@ -98,10 +98,11 @@ internal object SpatialPassthroughLutModule {
 
   /**
    * Reproduces the generic visual structure of the older mono-to-RGBA diagnostic:
-   * a fixed black floor followed by hard, saturated, phase-shifted luminance bands.
+   * a fixed black floor followed by saturated, continuously interpolated, phase-shifted color
+   * bands.
    *
-   * A point LUT cannot perform neighborhood edge detection, but these hard band boundaries make
-   * scene contours visually obvious and are deliberately unlike normal camera passthrough.
+   * A point LUT cannot perform neighborhood edge detection. Interpolating adjacent stops keeps
+   * the diagnostic contours while preventing temporal jumps as phase crosses a stop boundary.
    */
   fun createPosterizedColorLut(
       snapshot: Snapshot,
@@ -142,7 +143,7 @@ internal object SpatialPassthroughLutModule {
           "source=${activityMarkerToken(source)} " +
           "passthroughStyleOwner=spatial-sdk-system-passthrough " +
           "passthroughStyleApi=Scene.setPassthroughLUT " +
-          "passthroughStyleMode=animated-posterized-mono-to-rgba-gradient " +
+          "passthroughStyleMode=animated-continuous-mono-to-rgba-gradient " +
           "passthroughLutDimension=$LUT_DIMENSION passthroughLutEntryCount=${LUT_DIMENSION * LUT_DIMENSION * LUT_DIMENSION} " +
           "passthroughColorMapStops=black-green-yellow-red-magenta-blue-cyan " +
           "passthroughBlackLevelCutoff=${markerFloat(settings.blackLevelCutoff)} " +
@@ -196,11 +197,7 @@ internal object SpatialPassthroughLutModule {
         ((luma - settings.blackLevelCutoff) / (1.0f - settings.blackLevelCutoff))
             .coerceIn(0.0f, 1.0f)
     val shifted = (normalized + snapshot.phase).mod(1.0f)
-    val bandIndex =
-        floor(shifted * SATURATED_COLOR_BAND_COUNT)
-            .toInt()
-            .coerceIn(0, SATURATED_COLOR_BAND_COUNT - 1)
-    val stop = saturatedColorStops[bandIndex]
+    val stop = interpolatedSaturatedColor(shifted)
     val brightness = snapshot.amplitude * (0.88f + 0.12f * normalized)
     val monochrome = (normalized * 255.0f).roundToInt().coerceIn(0, 255)
     val colorMix = settings.colorIntensity
@@ -215,6 +212,20 @@ internal object SpatialPassthroughLutModule {
             .roundToInt()
             .coerceIn(0, 255),
     )
+  }
+
+  internal fun interpolatedSaturatedColor(phase: Float): FloatArray {
+    val wrapped = phase.mod(1.0f)
+    val scaled = wrapped * SATURATED_COLOR_BAND_COUNT
+    val lowerIndex =
+        floor(scaled).toInt().coerceIn(0, SATURATED_COLOR_BAND_COUNT - 1)
+    val upperIndex = (lowerIndex + 1) % SATURATED_COLOR_BAND_COUNT
+    val fraction = scaled - floor(scaled)
+    val lower = saturatedColorStops[lowerIndex]
+    val upper = saturatedColorStops[upperIndex]
+    return FloatArray(3) { channel ->
+      lower[channel] + (upper[channel] - lower[channel]) * fraction
+    }
   }
 
   private fun markerFloat(value: Float): String = String.format(Locale.US, "%.3f", value)

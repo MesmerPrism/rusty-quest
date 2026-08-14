@@ -52,6 +52,12 @@ internal class SpatialImmersiveVideoPanelCoordinator(
     private val resolution: SpatialImmersiveVideoRouteResolution,
     private val emitMarker: (String) -> Unit,
     private val recenterAfterNewVideoLoad: (String, String) -> Boolean,
+    private val layerOwner: SpatialImmersiveVideoLayerOwner =
+        SpatialImmersiveVideoLayerOwner.Outer,
+    initialPresentationMode: SpatialImmersiveVideoPresentationMode =
+        SpatialImmersiveVideoPresentationMode.HeadFixedBorder,
+    initialBackgroundMode: SpatialBackgroundMode = SpatialBackgroundMode.Passthrough,
+    directVideoConsumerInitiallyRequired: Boolean = true,
 ) {
   private var entity: Entity? = null
   private var blackBackdropEntity: Entity? = null
@@ -69,7 +75,8 @@ internal class SpatialImmersiveVideoPanelCoordinator(
   @Volatile private var directDecoderActive = false
   private var surface: Surface? = null
   private var playerSurface: Surface? = null
-  @Volatile private var directVideoConsumerRequired = true
+  @Volatile
+  private var directVideoConsumerRequired = directVideoConsumerInitiallyRequired
   private var directResumePositionMs = 0L
   private var directSuspendedAtRealtimeMs: Long? = null
   private var pendingDirectResumeTargetMs: Long? = null
@@ -80,8 +87,8 @@ internal class SpatialImmersiveVideoPanelCoordinator(
       (resolution as? SpatialImmersiveVideoRouteResolution.Ready)
           ?.playbackInitiallyEnabled == true
   private var activeIndex = 0
-  private var presentationMode = SpatialImmersiveVideoPresentationMode.WorldAnchored
-  private var backgroundMode = SpatialBackgroundMode.Black
+  private var presentationMode = initialPresentationMode
+  private var backgroundMode = initialBackgroundMode
   private val transitionHandler = Handler(Looper.getMainLooper())
   private var transitionGeneration = 0L
   private var transitionTargetIndex: Int? = null
@@ -132,7 +139,8 @@ internal class SpatialImmersiveVideoPanelCoordinator(
         )
 
   fun routePolicyMarker(): String =
-      SpatialImmersiveVideoRouteModule.routePolicyMarker(resolution)
+      SpatialImmersiveVideoRouteModule.routePolicyMarker(resolution) +
+          " videoLayerOwner=${layerOwner.token}"
 
   fun sessionSnapshot(): SpatialImmersiveVideoSessionSnapshot {
     val config = activeConfig
@@ -151,6 +159,7 @@ internal class SpatialImmersiveVideoPanelCoordinator(
             ) != null,
         presentationMode = presentationMode,
         backgroundMode = backgroundMode,
+        layerOwner = layerOwner,
         items =
             catalog.mapIndexed { index, item ->
               SpatialImmersiveVideoCatalogItemSnapshot(
@@ -197,7 +206,7 @@ internal class SpatialImmersiveVideoPanelCoordinator(
     val changed = backgroundMode != requestedMode
     backgroundMode = requestedMode
     if (changed) {
-      if (requestedMode == SpatialBackgroundMode.Black) {
+      if (requestedMode.usesOpaqueVideoBacking()) {
         spawnBlackBackdropIfReady("background-mode-black")
       } else {
         blackBackdropEntity?.destroy()
@@ -258,6 +267,19 @@ internal class SpatialImmersiveVideoPanelCoordinator(
   fun selectCatalogIndex(index: Int, source: String): SpatialImmersiveVideoSelection =
       selectIndex(index, source)
 
+  fun catalogConfig(index: Int): SpatialImmersiveVideoConfig? = catalog.getOrNull(index)
+
+  fun wrappedCatalogIndex(index: Int): Int =
+      SpatialImmersiveVideoSessionPolicy.wrappedIndex(index, catalog.size)
+
+  fun catalogIndexForPack(packId: String): Int {
+    val normalizedPackId = packId.trim().lowercase()
+    return catalog.indexOfFirst { it.offlinePack?.packId == normalizedPackId }
+  }
+
+  fun canCommitCatalogIndex(index: Int): Boolean =
+      transitionTargetIndex == null && catalog.getOrNull(index) != null
+
   fun selectPack(packId: String, source: String): SpatialImmersiveVideoSelection {
     val normalizedPackId = packId.trim().lowercase()
     val requestedIndex =
@@ -298,7 +320,7 @@ internal class SpatialImmersiveVideoPanelCoordinator(
       // visual contribution while MediaCodec teardown proceeds on the player looper.
       entity?.setComponent(Visible(false))
       releasePlayer("playback-disabled-zero-contribution", preserveResumePosition = true)
-      if (backgroundMode == SpatialBackgroundMode.Black) {
+      if (backgroundMode.usesOpaqueVideoBacking()) {
         if (blackBackdropEntity == null) {
           spawnBlackBackdropIfReady("playback-disabled-background-retained")
         }
@@ -890,7 +912,7 @@ internal class SpatialImmersiveVideoPanelCoordinator(
             "videoBlackBacking=${blackBackdropEntity != null} videoBlackBackingZIndex=$DIRECT_VIDEO_BLACK_BACKING_Z_INDEX " +
             "videoBlackBackingShape=${SpatialImmersiveVideoBlackBackingPolicy.shapeToken(config, presentationMode)} " +
             "backgroundMode=${backgroundMode.token} " +
-            "uncoveredVideoPixelsRevealPassthrough=${backgroundMode != SpatialBackgroundMode.Black} " +
+            "uncoveredVideoPixelsRevealPassthrough=${!backgroundMode.usesOpaqueVideoBacking()} " +
             "${SpatialImmersiveVideoSessionPolicy.directPanelPresentation(config, presentationMode).markerFields()} " +
             (presentation?.markerFields()
                 ?: "videoCarrierPresentation=${presentationMode.token}")
@@ -898,7 +920,7 @@ internal class SpatialImmersiveVideoPanelCoordinator(
   }
 
   private fun spawnBlackBackdropIfReady(reason: String, explicitPose: Pose? = null) {
-    if (backgroundMode != SpatialBackgroundMode.Black) {
+    if (!backgroundMode.usesOpaqueVideoBacking()) {
       blackBackdropEntity?.destroy()
       blackBackdropEntity = null
       return
@@ -936,6 +958,9 @@ internal class SpatialImmersiveVideoPanelCoordinator(
           viewerPose.t + viewerPose.forward() * HEAD_FIXED_VIDEO_DISTANCE_METERS,
           viewerPose.q,
       )
+
+  private fun SpatialBackgroundMode.usesOpaqueVideoBacking(): Boolean =
+      this == SpatialBackgroundMode.Black || this == SpatialBackgroundMode.Video
 
   private fun loadCompatibleCatalog(): List<SpatialImmersiveVideoConfig> {
     val anchor = initialConfig ?: return emptyList()

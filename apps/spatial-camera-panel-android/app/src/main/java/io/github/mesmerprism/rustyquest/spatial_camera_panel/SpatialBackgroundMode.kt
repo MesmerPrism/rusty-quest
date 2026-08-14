@@ -3,13 +3,15 @@ package io.github.mesmerprism.rustyquest.spatial_camera_panel
 internal enum class SpatialBackgroundMode(val token: String) {
   Black("black"),
   Passthrough("passthrough"),
-  LutPassthrough("lut-passthrough");
+  LutPassthrough("lut-passthrough"),
+  Video("world-video");
 
   companion object {
     fun fromToken(token: String?): SpatialBackgroundMode =
         when (token?.trim()?.lowercase()?.replace('_', '-')) {
           Passthrough.token -> Passthrough
           LutPassthrough.token, "lut", "poster-lut", "posterized-passthrough" -> LutPassthrough
+          Video.token, "video" -> Video
           else -> Black
         }
   }
@@ -28,7 +30,8 @@ internal object SpatialBackgroundModePolicy {
       diagnosticLutRequested: Boolean,
   ): SpatialBackgroundEffects =
       SpatialBackgroundEffects(
-          blackBackingVisible = mode == SpatialBackgroundMode.Black,
+          blackBackingVisible =
+              mode == SpatialBackgroundMode.Black || mode == SpatialBackgroundMode.Video,
           systemPassthroughRequested = true,
           passthroughLutRequested =
               mode == SpatialBackgroundMode.LutPassthrough || diagnosticLutRequested,

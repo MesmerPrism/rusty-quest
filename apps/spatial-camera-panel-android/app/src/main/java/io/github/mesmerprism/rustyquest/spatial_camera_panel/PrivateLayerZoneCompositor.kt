@@ -500,13 +500,7 @@ internal object PrivateLayerZoneCompositorModule {
    */
   fun readableVideoConsumerRequired(configuration: PrivateLayerZoneCompositor): Boolean =
       normalize(configuration).let { value ->
-        value.outerContentMode == PrivateLayerZoneCompositorControls.outerContentVideo ||
-            (value.bufferGeometryMode != PrivateLayerZoneCompositorControls.bufferGeometryOff &&
-                (value.bufferFillMode == PrivateLayerZoneCompositorControls.bufferFillVideo ||
-                    (value.bufferFillMode ==
-                        PrivateLayerZoneCompositorControls.bufferFillOuterContinuation &&
-                        value.outerContentMode ==
-                            PrivateLayerZoneCompositorControls.outerContentVideo)))
+        value.outerContentMode == PrivateLayerZoneCompositorControls.outerContentVideo
       }
 
   fun normalize(requested: PrivateLayerZoneCompositor): PrivateLayerZoneCompositor {
@@ -531,7 +525,11 @@ internal object PrivateLayerZoneCompositorModule {
             PrivateLayerZoneCompositorControls.bufferFillStretch
           }
         } else {
-          requested.bufferFillMode.coerceIn(0, 3)
+          if (requested.bufferFillMode == PrivateLayerZoneCompositorControls.bufferFillVideo) {
+            PrivateLayerZoneCompositorControls.bufferFillOuterContinuation
+          } else {
+            requested.bufferFillMode.coerceIn(0, 2)
+          }
         }
     val stretchExtentMode =
         if (migratingLegacy &&
@@ -600,7 +598,7 @@ internal object PrivateLayerZoneCompositorModule {
             requested.bufferMaximumSpeedMetersPerSecond
                 .finiteOr(0.80f)
                 .coerceIn(0.05f, 3.0f),
-        bufferFillMode = bufferFillMode.coerceIn(0, 3),
+        bufferFillMode = bufferFillMode.coerceIn(0, 2),
         stretchExtentMode =
             if (outerContentMode == PrivateLayerZoneCompositorControls.outerContentStretch) {
               PrivateLayerZoneCompositorControls.stretchExtentReplaceOuter

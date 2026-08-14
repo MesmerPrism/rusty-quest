@@ -49,4 +49,20 @@ class SpatialPassthroughLutSettingsTest {
     assertTrue(slow.phase in 0.0f..1.0f)
     assertTrue(fast.phase in 0.0f..1.0f)
   }
+
+  @Test
+  fun colorStopsInterpolateContinuouslyAndUpdateAtVideoCadence() {
+    val atGreen = SpatialPassthroughLutModule.interpolatedSaturatedColor(0.0f)
+    val halfwayToYellow =
+        SpatialPassthroughLutModule.interpolatedSaturatedColor(
+            0.5f / SpatialPassthroughLutModule.SATURATED_COLOR_BAND_COUNT
+        )
+
+    assertEquals(0.0f, atGreen[0], 0.001f)
+    assertEquals(255.0f, atGreen[1], 0.001f)
+    assertTrue(halfwayToYellow[0] in 126.0f..129.0f)
+    assertEquals(255.0f, halfwayToYellow[1], 0.001f)
+    assertTrue(SpatialPassthroughLutModule.UPDATE_HZ >= 30.0f)
+    assertTrue(SpatialPassthroughLutModule.UPDATE_PERIOD_MS <= 34L)
+  }
 }

@@ -110,6 +110,23 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             resolution = immersiveVideoRouteResolution,
             emitMarker = ::marker,
             recenterAfterNewVideoLoad = ::recenterImmersiveVideo,
+            layerOwner = SpatialImmersiveVideoLayerOwner.Outer,
+            initialPresentationMode = SpatialImmersiveVideoPresentationMode.HeadFixedBorder,
+            initialBackgroundMode = SpatialBackgroundMode.Passthrough,
+            directVideoConsumerInitiallyRequired = false,
+        )
+      }
+  private val backgroundImmersiveVideoPanelCoordinator: SpatialImmersiveVideoPanelCoordinator by
+      lazy(LazyThreadSafetyMode.NONE) {
+        SpatialImmersiveVideoPanelCoordinator(
+            context = this,
+            resolution = immersiveVideoRouteResolution,
+            emitMarker = ::marker,
+            recenterAfterNewVideoLoad = ::recenterImmersiveVideo,
+            layerOwner = SpatialImmersiveVideoLayerOwner.Background,
+            initialPresentationMode = SpatialImmersiveVideoPresentationMode.WorldAnchored,
+            initialBackgroundMode = SpatialBackgroundMode.Black,
+            directVideoConsumerInitiallyRequired = false,
         )
       }
   private val storedProfileAuthority: SpatialCameraPanelProfileLibraryAuthority by
@@ -1991,6 +2008,11 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
                 refreshedCatalog,
                 source,
             )
+        val backgroundVideoSnapshot =
+            backgroundImmersiveVideoPanelCoordinator.applyRefreshedCatalog(
+                refreshedCatalog,
+                "$source-background",
+            )
         marker(
             "channel=spatial-immersive-video status=shared-media-library-refreshed " +
                 "source=${activityMarkerToken(source)} " +
@@ -1999,6 +2021,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
                 "packCount=${snapshot.packCount} plainVideoCount=${snapshot.plainVideoCount} " +
                 "rejectedPlainVideoCount=${snapshot.rejectedPlainVideoCount} " +
                 "liveCatalogItemCount=${videoSnapshot.itemCount} " +
+                "backgroundCatalogItemCount=${backgroundVideoSnapshot.itemCount} " +
                 "activityRecreatedForCatalog=false panelRegistrationSlotsRetained=true " +
                 "rawFolderUriExposed=false"
         )
@@ -2094,23 +2117,27 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
       source: String,
       requestedIndex: Int? = null,
   ): SpatialImmersiveVideoSessionSnapshot {
-    val selection =
+    val current = immersiveVideoPanelCoordinator.sessionSnapshot()
+    val targetIndex =
         when (action) {
-          "previous" -> immersiveVideoPanelCoordinator.selectPrevious(source)
-          "next" -> immersiveVideoPanelCoordinator.selectNext(source)
-          "select" ->
-              immersiveVideoPanelCoordinator.selectPack(
-                  requestedPackId.orEmpty(),
-                  source,
-              )
-          "index" ->
-              immersiveVideoPanelCoordinator.selectCatalogIndex(
-                  requestedIndex ?: -1,
-                  source,
-              )
+          "previous" -> immersiveVideoPanelCoordinator.wrappedCatalogIndex(current.activeIndex - 1)
+          "next" -> immersiveVideoPanelCoordinator.wrappedCatalogIndex(current.activeIndex + 1)
+          "select" -> immersiveVideoPanelCoordinator.catalogIndexForPack(requestedPackId.orEmpty())
+          "index" -> requestedIndex ?: -1
           else -> error("unknown_immersive_video_action_$action")
         }
-    if (selection.changed &&
+    if (targetIndex == current.activeIndex) return current
+    val targetConfig = immersiveVideoPanelCoordinator.catalogConfig(targetIndex)
+    if (targetConfig == null || !immersiveVideoPanelCoordinator.canCommitCatalogIndex(targetIndex)) {
+      marker(
+          "channel=spatial-immersive-video status=selection-rejected " +
+              "reason=invalid-or-transition-in-progress source=${activityMarkerToken(source)} " +
+              "requestedIndex=$targetIndex activityRestarted=false"
+      )
+      return current
+    }
+    var replacementStarted = false
+    if (
         projectionPanelVisibilityCoordinator.enabled &&
         cameraHwbProjectionLaunchCoordinator.started) {
       val replacementSettings =
@@ -2118,37 +2145,55 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
               presentationPolicy.videoSettings(
                   resolvedVideoProjectionSettings()
               ),
-              selection.config,
+              targetConfig,
           )
-      val replacementPack = selection.config?.offlinePack
       if (replacementSettings != null) {
         val replacement = spatialVideoProjectionRuntimeCoordinator.replaceMediaSource(
             replacementSettings,
-            replacementPack,
+            targetConfig.offlinePack,
             "$source-video-selection",
         )
-        if (replacement.decoderStarted) {
-          selection.config?.let(
-              immersiveVideoPanelCoordinator::notifyCustomProjectionVideoLoaded
+        if (!replacement.applied) {
+          marker(
+              "channel=spatial-immersive-video status=selection-rejected " +
+                  "reason=atomic-source-handoff-failed source=${activityMarkerToken(source)} " +
+                  "requestedIndex=$targetIndex selectionRetained=true stereoLayoutRetained=true"
           )
+          return current
         }
-        if (!replacement.decoderStarted &&
-            replacementSettings.active &&
-            !spatialVideoProjectionRuntimeCoordinator.started) {
-          immersiveVideoPanelCoordinator.setDirectVideoConsumerRequired(
-              true,
-              "$source-custom-decoder-fallback",
-          )
-        }
+        replacementStarted = replacement.decoderStarted
       }
+    }
+    val selection = immersiveVideoPanelCoordinator.selectCatalogIndex(targetIndex, source)
+    if (replacementStarted) {
+      immersiveVideoPanelCoordinator.notifyCustomProjectionVideoLoaded(targetConfig)
+    }
+    if (!replacementStarted &&
+        projectionPanelVisibilityCoordinator.enabled &&
+        cameraHwbProjectionLaunchCoordinator.started &&
+        !spatialVideoProjectionRuntimeCoordinator.started) {
+      immersiveVideoPanelCoordinator.setDirectVideoConsumerRequired(
+          true,
+          "$source-custom-decoder-fallback",
+      )
     }
     return selection.snapshot
   }
 
+  private fun changeBackgroundImmersiveVideo(
+      requestedIndex: Int,
+      source: String,
+  ): SpatialImmersiveVideoSessionSnapshot =
+      backgroundImmersiveVideoPanelCoordinator
+          .selectCatalogIndex(requestedIndex, source)
+          .snapshot
+
   private fun updateVideoDecoderOwnership(
-      customDecoderRequired: Boolean,
+      outerVideoRequested: Boolean,
       source: String,
   ) {
+    val customDecoderRequired =
+        outerVideoRequested && projectionPanelVisibilityCoordinator.enabled
     if (customDecoderRequired) {
       // Release the outgoing decoder before the custom decoder is allowed to start.
       immersiveVideoPanelCoordinator.setDirectVideoConsumerRequired(false, source)
@@ -2163,7 +2208,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     } else {
       spatialVideoProjectionRuntimeCoordinator.updateReadableVideoConsumer(false, source)
       immersiveVideoPanelCoordinator.setDirectVideoConsumerRequired(
-          !spatialVideoProjectionRuntimeCoordinator.started,
+          outerVideoRequested,
           source,
       )
     }
@@ -2171,7 +2216,8 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     val customActive = spatialVideoProjectionRuntimeCoordinator.started
     marker(
         "channel=spatial-video-decoder-ownership status=applied " +
-            "source=${activityMarkerToken(source)} customDecoderRequired=$customDecoderRequired " +
+            "source=${activityMarkerToken(source)} outerVideoRequested=$outerVideoRequested " +
+            "customDecoderRequired=$customDecoderRequired " +
             "directDecoderActive=$directActive customDecoderActive=$customActive " +
             "activeDecoderCount=${listOf(directActive, customActive).count { it }} " +
             "decoderOverlap=${directActive && customActive} stopBeforeStart=true"
@@ -2249,7 +2295,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
   ): SpatialPassthroughLutUpdate {
     diagnosticPassthroughLutRequested = enabled
     return applySpatialBackgroundEffects(
-        immersiveVideoPanelCoordinator.sessionSnapshot().backgroundMode,
+        backgroundImmersiveVideoPanelCoordinator.sessionSnapshot().backgroundMode,
         source,
     )
   }
@@ -2258,14 +2304,19 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
       mode: SpatialBackgroundMode,
       source: String,
   ): SpatialImmersiveVideoSessionSnapshot {
+    val videoVisible = mode == SpatialBackgroundMode.Video
+    backgroundImmersiveVideoPanelCoordinator.setDirectVideoConsumerRequired(
+        videoVisible,
+        "$source-world-video-contribution",
+    )
     val snapshot =
-        if (mode == SpatialBackgroundMode.Black) {
-          immersiveVideoPanelCoordinator.setBackgroundMode(mode, source).also {
+        if (mode == SpatialBackgroundMode.Black || mode == SpatialBackgroundMode.Video) {
+          backgroundImmersiveVideoPanelCoordinator.setBackgroundMode(mode, source).also {
             applySpatialBackgroundEffects(mode, source)
           }
         } else {
           applySpatialBackgroundEffects(mode, source)
-          immersiveVideoPanelCoordinator.setBackgroundMode(mode, source)
+          backgroundImmersiveVideoPanelCoordinator.setBackgroundMode(mode, source)
         }
     return snapshot
   }
@@ -2308,8 +2359,10 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     passthroughReasonAggregator.reconcile("scene-ready-always-on")
     if (directImmersiveVideoPanelRequested()) {
       marker(immersiveVideoPanelCoordinator.routePolicyMarker())
+      marker(backgroundImmersiveVideoPanelCoordinator.routePolicyMarker())
       val viewerPose = runCatching { scene.getViewerPose() }.getOrElse { Pose() }
       immersiveVideoPanelCoordinator.spawnAtViewer(viewerPose)
+      backgroundImmersiveVideoPanelCoordinator.spawnAtViewer(viewerPose)
       if (customStereoProjectionRequested()) {
         marker(
             "channel=spatial-immersive-video status=layered-carriers-adopted " +
@@ -2424,6 +2477,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     super.onVRReady()
     if (directImmersiveVideoPanelRequested()) {
       immersiveVideoPanelCoordinator.resume("vr-ready")
+      backgroundImmersiveVideoPanelCoordinator.resume("vr-ready")
     }
     if (appControllerInputsEnabled()) {
       controllerInputRouteCoordinator.ensureEnabled("vr-ready", forceLog = true)
@@ -2451,7 +2505,10 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     enforcePrivatePanelInputPolicy()
     if (directImmersiveVideoPanelRequested()) {
       runCatching { scene.getViewerPose() }
-          .onSuccess(immersiveVideoPanelCoordinator::updateFromViewer)
+          .onSuccess { viewerPose ->
+            immersiveVideoPanelCoordinator.updateFromViewer(viewerPose)
+            backgroundImmersiveVideoPanelCoordinator.updateFromViewer(viewerPose)
+          }
     }
     if (productPolicy.cameraPanelRoutesEnabled) {
       updateLayerControlPanelPoseFromViewer(reason = "scene-tick", forceLog = false)
@@ -2468,6 +2525,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
 
   private fun captureStoredProfileControls(): SpatialCameraPanelControlSnapshot {
     val video = immersiveVideoPanelCoordinator.sessionSnapshot()
+    val backgroundVideo = backgroundImmersiveVideoPanelCoordinator.sessionSnapshot()
     return SpatialCameraPanelControlSnapshot(
             projectionPanelEnabled = projectionPanelVisibilityCoordinator.enabled,
             layerOverride = privateLayerControlCoordinator.layerOverride,
@@ -2483,7 +2541,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             projectionInnerAlpha = privateLayerControlCoordinator.projectionInnerAlpha,
             videoPlaybackEnabled = video.playbackEnabled,
             videoPresentationMode = video.presentationMode.token,
-            backgroundMode = video.backgroundMode.token,
+            backgroundMode = backgroundVideo.backgroundMode.token,
         )
         .normalized()
   }
@@ -2801,6 +2859,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
   override fun onResume() {
     super.onResume()
     immersiveVideoPanelCoordinator.resume("activity-resume")
+    backgroundImmersiveVideoPanelCoordinator.resume("activity-resume")
   }
 
   override fun onStart() {
@@ -2813,6 +2872,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
   }
   override fun onPause() {
     immersiveVideoPanelCoordinator.pause("activity-pause")
+    backgroundImmersiveVideoPanelCoordinator.pause("activity-pause")
     super.onPause()
   }
 
@@ -2834,6 +2894,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     SpatialVideoCadencePanelBridge.clear()
     privatePanelExtension?.shutdown()
     immersiveVideoPanelCoordinator.destroy("activity-destroy")
+    backgroundImmersiveVideoPanelCoordinator.destroy("activity-destroy")
     spatialPassthroughLutCoordinator.stop("activity-destroy")
     if (nativeInteropCoordinator.receiptLibraryLoaded) {
       runCatching { nativeStopSpatialControllerActions() }
@@ -2859,6 +2920,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
   override fun registerPanels(): List<PanelRegistration> {
     if (immersiveVideoPanelCoordinator.requested) {
       marker(immersiveVideoPanelCoordinator.routePolicyMarker())
+      marker(backgroundImmersiveVideoPanelCoordinator.routePolicyMarker())
     }
     SpatialVideoCadencePanelBridge.bind(
         resolve = { resolvedVideoProjectionSettings().cadenceMode },
@@ -2887,6 +2949,8 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
                         privateLayerControlCoordinator.projectionInnerAlpha,
                     passthroughLutSettings =
                         spatialPassthroughLutCoordinator::settingsSnapshot,
+                    backgroundVideoSession =
+                        backgroundImmersiveVideoPanelCoordinator::sessionSnapshot,
                     videoSession = immersiveVideoPanelCoordinator::sessionSnapshot,
                     sharedMediaLibraryStatus = sharedMediaLibraryClient::status,
                     observeSharedMediaLibrary = sharedMediaLibraryClient::observe,
@@ -2908,6 +2972,12 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
                       setImmersiveVideoPlaybackEnabled(
                           enabled,
                           "private-layer-control-panel-video-toggle",
+                      )
+                    },
+                    setBackgroundVideoPlaybackEnabled = { enabled ->
+                      backgroundImmersiveVideoPanelCoordinator.setPlaybackEnabled(
+                          enabled,
+                          "private-layer-control-panel-background-video-toggle",
                       )
                     },
                     updateProjectionScale = { scale, source ->
@@ -2951,6 +3021,12 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
                           null,
                           "private-layer-control-panel-video-index",
                           index,
+                      )
+                    },
+                    selectBackgroundVideo = { index ->
+                      changeBackgroundImmersiveVideo(
+                          index,
+                          "private-layer-control-panel-background-video-index",
                       )
                     },
                     setVideoPresentationMode = { mode ->
@@ -3003,7 +3079,8 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
         )
     val immersiveVideoPanels =
         if (directImmersiveVideoPanelRequested()) {
-          immersiveVideoPanelCoordinator.panelRegistrations()
+          immersiveVideoPanelCoordinator.panelRegistrations() +
+              backgroundImmersiveVideoPanelCoordinator.panelRegistrations()
         } else {
           emptyList()
         }
@@ -3398,10 +3475,17 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
   private fun setProjectionPanelEnabled(enabled: Boolean, source: String): Boolean {
     val effectiveEnabled = enabled || presentationPolicy.lockedFinalPresentation
     projectionPanelRuntimeEnabled = effectiveEnabled
-    return projectionPanelVisibilityCoordinator.setEnabled(
+    val applied = projectionPanelVisibilityCoordinator.setEnabled(
         requestedEnabled = effectiveEnabled,
         source = source,
     )
+    updateVideoDecoderOwnership(
+        PrivateLayerZoneCompositorModule.readableVideoConsumerRequired(
+            privateLayerControlCoordinator.zoneCompositor
+        ),
+        "$source-projection-visibility",
+    )
+    return applied
   }
 
   private fun selectSurfaceTarget(requestedTargetId: String, source: String): String {

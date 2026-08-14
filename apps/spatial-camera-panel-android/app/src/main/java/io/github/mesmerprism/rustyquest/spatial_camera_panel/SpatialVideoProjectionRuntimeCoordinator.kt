@@ -18,6 +18,7 @@ internal data class SpatialVideoProjectionRuntimeBindings(
 internal data class SpatialVideoProjectionSourceSwitchResult(
     val applied: Boolean,
     val decoderStarted: Boolean,
+    val sourceGeneration: Long = 0L,
 )
 
 internal class SpatialVideoProjectionRuntimeCoordinator(
@@ -30,6 +31,7 @@ internal class SpatialVideoProjectionRuntimeCoordinator(
     private set
   private var offlinePack: OfflineImmersiveMediaPack? = null
   private var readableVideoConsumerRequired = true
+  private var sourceGeneration = 0L
 
   fun resolveSettings(intent: Intent?): SpatialVideoProjectionSettings =
       SpatialVideoProjectionRouteModule.currentSettings(intent)
@@ -114,6 +116,7 @@ internal class SpatialVideoProjectionRuntimeCoordinator(
       this.settings = settings
       this.offlinePack = offlinePack
       configure(settings, "$reason-source-switch")
+      sourceGeneration += 1L
       started = false
       bindings.marker(
           "channel=spatial-video-projection status=source-switch-applied " +
@@ -124,15 +127,41 @@ internal class SpatialVideoProjectionRuntimeCoordinator(
               "projectionEntityRestarted=false customProjectionStackRestarted=false " +
               "cameraRuntimeRestarted=false activityRestarted=false ${markerFields(settings)}"
       )
-      return SpatialVideoProjectionSourceSwitchResult(applied = true, decoderStarted = false)
+      return SpatialVideoProjectionSourceSwitchResult(
+          applied = true,
+          decoderStarted = false,
+          sourceGeneration = sourceGeneration,
+      )
     }
-    if (!started || !settings.active) {
+    if (!settings.active) {
       bindings.marker(
           "channel=spatial-video-projection status=source-switch-rejected " +
               "reason=${activityMarkerToken(reason)} projectionStarted=$started " +
               "sourceActive=${settings.active} activityRestarted=false"
       )
       return SpatialVideoProjectionSourceSwitchResult(applied = false, decoderStarted = false)
+    }
+    if (!started) {
+      this.settings = settings
+      this.offlinePack = offlinePack
+      configure(settings, "$reason-source-switch")
+      sourceGeneration += 1L
+      start(settings, "$reason-source-switch")
+      bindings.marker(
+          "channel=spatial-video-projection status=source-switch-applied " +
+              "reason=${activityMarkerToken(reason)} mediaDecoderRestarted=$started " +
+              "decoderHandoffComplete=true oldDecoderStoppedBeforeNew=true " +
+              "newDecoderStarted=$started decoderOverlap=false sourceGeneration=$sourceGeneration " +
+              "stereoLayoutGenerationAtomic=true eyeCropGenerationAtomic=true " +
+              "customProjectionCarrierRetained=true projectionEntityRestarted=false " +
+              "customProjectionStackRestarted=false cameraRuntimeRestarted=false " +
+              "activityRestarted=false ${markerFields(settings)}"
+      )
+      return SpatialVideoProjectionSourceSwitchResult(
+          applied = true,
+          decoderStarted = started,
+          sourceGeneration = sourceGeneration,
+      )
     }
     val previousStopped = runCatching { bindings.stopPlayback() }.getOrDefault(false)
     if (!previousStopped) {
@@ -146,6 +175,7 @@ internal class SpatialVideoProjectionRuntimeCoordinator(
     this.settings = settings
     this.offlinePack = offlinePack
     configure(settings, "$reason-source-switch")
+    sourceGeneration += 1L
     val replacementStarted =
         runCatching { bindings.startPlayback(settings, offlinePack) }.getOrDefault(false)
     started = replacementStarted
@@ -154,6 +184,8 @@ internal class SpatialVideoProjectionRuntimeCoordinator(
             "reason=${activityMarkerToken(reason)} mediaDecoderRestarted=$replacementStarted " +
             "decoderHandoffComplete=true oldDecoderStoppedBeforeNew=true " +
             "newDecoderStarted=$replacementStarted decoderOverlap=false " +
+            "sourceGeneration=$sourceGeneration stereoLayoutGenerationAtomic=true " +
+            "eyeCropGenerationAtomic=true " +
             "customProjectionCarrierRetained=true projectionEntityRestarted=false " +
             "customProjectionStackRestarted=false cameraRuntimeRestarted=false " +
             "activityRestarted=false ${markerFields(settings)}"
@@ -161,6 +193,7 @@ internal class SpatialVideoProjectionRuntimeCoordinator(
     return SpatialVideoProjectionSourceSwitchResult(
         applied = true,
         decoderStarted = replacementStarted,
+        sourceGeneration = sourceGeneration,
     )
   }
 

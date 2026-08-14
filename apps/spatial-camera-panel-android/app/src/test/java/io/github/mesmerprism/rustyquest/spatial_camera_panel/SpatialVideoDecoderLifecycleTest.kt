@@ -138,6 +138,33 @@ class SpatialVideoDecoderLifecycleTest {
     assertEquals(second, coordinator.settings)
   }
 
+  @Test
+  fun coldStereoLayoutSwitchConfiguresCompleteGenerationBeforeDecoderStart() {
+    val calls = ArrayList<String>()
+    val coordinator =
+        SpatialVideoProjectionRuntimeCoordinator(
+            bindings(calls = calls, stopResult = true, startResult = true)
+        )
+    val sideBySide =
+        activeSettings("content://plain/side-by-side").copy(
+            stereoLayout = "side-by-side-left-right",
+            mediaLayout = "side-by-side-left-right",
+            width = 4096,
+            height = 2048,
+        )
+
+    val switched = coordinator.replaceMediaSource(sideBySide, null, "cold-selection")
+
+    assertTrue(switched.applied)
+    assertTrue(switched.decoderStarted)
+    assertEquals(1L, switched.sourceGeneration)
+    assertEquals(
+        listOf("configure:content://plain/side-by-side", "start:content://plain/side-by-side"),
+        calls,
+    )
+    assertEquals("side-by-side-left-right", coordinator.settings.stereoLayout)
+  }
+
   private fun bindings(
       calls: MutableList<String>,
       stopResult: Boolean,

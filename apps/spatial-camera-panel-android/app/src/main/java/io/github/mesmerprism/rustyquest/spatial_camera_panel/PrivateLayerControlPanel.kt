@@ -53,6 +53,7 @@ internal val LayerPanelMuted = Color(0xFFAAB3C2)
 internal val LayerPanelAccent = Color(0xFF63D2FF)
 internal val LayerPanelWarm = Color(0xFFFFC857)
 internal val LayerPanelBorder = Color(0xFF3B465A)
+private const val LEGACY_GLOBAL_VIDEO_CONTROLS_VISIBLE = false
 
 internal object SpatialVideoCadencePanelBridge {
   private var resolve: () -> SpatialVideoCadenceMode = { SpatialVideoCadenceMode.Fps30 }
@@ -83,10 +84,10 @@ private enum class PrivateLayerPanelPage(
   Home("Settings", "Choose a topic"),
   Center("Center region", "Projection size and the center region's rendered content"),
   Middle("Middle buffer", "Off, static, or speed-driven guard with region-owned content"),
-  Outer("Outer region", "Video, independent stretch, or transparent passthrough"),
+  Outer("Outer region", "Head-locked video, independent stretch, or transparent Background"),
   Transitions("Transitions", "Center-to-middle and middle-to-outer boundaries"),
-  Background("Background", "System passthrough, opaque backing, and LUT appearance"),
-  Media("Media library", "Video selection, playback, cadence, and presentation"),
+  Background("Background", "System background and its world-locked video"),
+  Media("Media library", "Discover, validate, and assign media sources"),
   Image("Image processing", "Depth warp, RGB transform, sampling, and guide blur"),
   Depth("Depth alignment", "Depth source and per-eye fine tuning"),
   Profiles("Profiles", "Save, restore, and exchange complete tuning setups"),
@@ -117,6 +118,7 @@ internal fun PrivateLayerControlPanel(
     projectionSurfaceTiling: ProjectionSurfaceTiling,
     projectionInnerAlpha: ProjectionInnerAlpha,
     passthroughLutSettings: () -> SpatialPassthroughLutSettings,
+    backgroundVideoSession: () -> SpatialImmersiveVideoSessionSnapshot,
     videoSession: () -> SpatialImmersiveVideoSessionSnapshot,
     sharedMediaLibraryStatus: () -> SharedOfflineImmersiveMediaLibrarySnapshot,
     observeSharedMediaLibrary:
@@ -135,6 +137,7 @@ internal fun PrivateLayerControlPanel(
     setLayerOverride: (Float, String) -> Float,
     setProjectionPanelEnabled: (Boolean, String) -> Boolean,
     setVideoPlaybackEnabled: (Boolean) -> SpatialImmersiveVideoSessionSnapshot,
+    setBackgroundVideoPlaybackEnabled: (Boolean) -> SpatialImmersiveVideoSessionSnapshot,
     updateProjectionScale: (Float, String) -> Float,
     updateDepthLayerPolicy: (Int, String) -> Int,
     updateDepthAlignment: (PrivateLayerDepthAlignment, String) -> PrivateLayerDepthAlignment,
@@ -153,6 +156,7 @@ internal fun PrivateLayerControlPanel(
     selectPreviousVideo: () -> SpatialImmersiveVideoSessionSnapshot,
     selectNextVideo: () -> SpatialImmersiveVideoSessionSnapshot,
     selectVideo: (Int) -> SpatialImmersiveVideoSessionSnapshot,
+    selectBackgroundVideo: (Int) -> SpatialImmersiveVideoSessionSnapshot,
     setVideoPresentationMode:
         (SpatialImmersiveVideoPresentationMode) -> SpatialImmersiveVideoSessionSnapshot,
     setBackgroundMode: (SpatialBackgroundMode) -> SpatialImmersiveVideoSessionSnapshot,
@@ -185,6 +189,7 @@ internal fun PrivateLayerControlPanel(
   var localPassthroughLutSettings by
       remember { mutableStateOf(passthroughLutSettings()) }
   var currentPage by remember { mutableStateOf(PrivateLayerPanelPage.Home) }
+  var localBackgroundVideoSession by remember { mutableStateOf(backgroundVideoSession()) }
   var localVideoSession by remember { mutableStateOf(videoSession()) }
   var localVideoCadenceMode by remember { mutableStateOf(SpatialVideoCadencePanelBridge.current()) }
   var localSharedMediaLibrary by remember { mutableStateOf(sharedMediaLibraryStatus()) }
@@ -208,6 +213,7 @@ internal fun PrivateLayerControlPanel(
     localProjectionSurfaceDisplacement = controls.projectionSurfaceDisplacement
     localProjectionSurfaceTiling = controls.projectionSurfaceTiling
     localProjectionInnerAlpha = controls.projectionInnerAlpha
+    localBackgroundVideoSession = backgroundVideoSession()
     localVideoSession = videoSession()
   }
   DisposableEffect(Unit) {
@@ -225,6 +231,10 @@ internal fun PrivateLayerControlPanel(
       val latestVideoSession = videoSession()
       if (latestVideoSession != localVideoSession) {
         localVideoSession = latestVideoSession
+      }
+      val latestBackgroundVideoSession = backgroundVideoSession()
+      if (latestBackgroundVideoSession != localBackgroundVideoSession) {
+        localBackgroundVideoSession = latestBackgroundVideoSession
       }
       val latestVideoCadenceMode = SpatialVideoCadencePanelBridge.current()
       if (latestVideoCadenceMode != localVideoCadenceMode) {
@@ -284,7 +294,7 @@ internal fun PrivateLayerControlPanel(
                   "No packaged video available"
                 },
             backgroundSummary =
-                when (localVideoSession.backgroundMode) {
+                when (localBackgroundVideoSession.backgroundMode) {
                   SpatialBackgroundMode.Black -> "Opaque black backing"
                   SpatialBackgroundMode.Passthrough -> "System passthrough"
                   SpatialBackgroundMode.LutPassthrough ->
@@ -294,6 +304,9 @@ internal fun PrivateLayerControlPanel(
                           } else {
                             "static"
                           }
+                  SpatialBackgroundMode.Video ->
+                      "World video · " +
+                          (localBackgroundVideoSession.activeMediaLabel ?: "no source")
                 },
             regionSummary =
                 "${PrivateLayerZoneCompositorControls.presetToken(localZoneCompositor)} · " +
@@ -410,7 +423,7 @@ internal fun PrivateLayerControlPanel(
         Section("Background") {
           HelpLabel("Background")
           Text(
-              "System passthrough stays active underneath the scene. Black adds an opaque carrier; Transparent removes it; LUT removes it and styles passthrough. Video independently occludes whichever background is selected.",
+              "Meta system passthrough stays active underneath the scene. Passthrough and LUT reveal it, World video and Black cover it. World-locked video is owned here rather than by Media library.",
               style = MaterialTheme.typography.bodySmall,
               color = LayerPanelMuted,
           )
@@ -420,26 +433,50 @@ internal fun PrivateLayerControlPanel(
           ) {
             ChoiceButton(
                 label = "Black",
-                selected = localVideoSession.backgroundMode == SpatialBackgroundMode.Black,
+                selected = localBackgroundVideoSession.backgroundMode == SpatialBackgroundMode.Black,
             ) {
-              localVideoSession = setBackgroundMode(SpatialBackgroundMode.Black)
+              localBackgroundVideoSession = setBackgroundMode(SpatialBackgroundMode.Black)
             }
             ChoiceButton(
-                label = "Transparent",
-                selected = localVideoSession.backgroundMode == SpatialBackgroundMode.Passthrough,
+                label = "Passthrough",
+                selected = localBackgroundVideoSession.backgroundMode == SpatialBackgroundMode.Passthrough,
             ) {
-              localVideoSession = setBackgroundMode(SpatialBackgroundMode.Passthrough)
+              localBackgroundVideoSession = setBackgroundMode(SpatialBackgroundMode.Passthrough)
             }
             ChoiceButton(
                 label = "LUT passthrough",
                 selected =
-                    localVideoSession.backgroundMode == SpatialBackgroundMode.LutPassthrough,
+                    localBackgroundVideoSession.backgroundMode == SpatialBackgroundMode.LutPassthrough,
             ) {
-              localVideoSession = setBackgroundMode(SpatialBackgroundMode.LutPassthrough)
+              localBackgroundVideoSession = setBackgroundMode(SpatialBackgroundMode.LutPassthrough)
+            }
+            ChoiceButton(
+                label = "World video",
+                selected = localBackgroundVideoSession.backgroundMode == SpatialBackgroundMode.Video,
+            ) {
+              localBackgroundVideoSession = setBackgroundMode(SpatialBackgroundMode.Video)
             }
           }
         }
-        if (localVideoSession.backgroundMode == SpatialBackgroundMode.LutPassthrough) {
+        if (localBackgroundVideoSession.backgroundMode == SpatialBackgroundMode.Video) {
+          LayerVideoSettings(
+              title = "World video",
+              placement = "World-locked · fixed by Background",
+              description =
+                  "The selected validated 180°, 360°, or flat source remains fixed in the scene. Background and Outer keep independent media assignments.",
+              videoSession = localBackgroundVideoSession,
+              videoCadenceMode = SpatialVideoCadenceMode.Source,
+              cadenceEnabled = false,
+              onSelectVideo = { index ->
+                localBackgroundVideoSession = selectBackgroundVideo(index)
+              },
+              onSelectCadence = {},
+              onSetPlaybackEnabled = { enabled ->
+                localBackgroundVideoSession = setBackgroundVideoPlaybackEnabled(enabled)
+              },
+          )
+        }
+        if (localBackgroundVideoSession.backgroundMode == SpatialBackgroundMode.LutPassthrough) {
           Section("LUT appearance") {
             HelpLabel("Passthrough LUT")
             Text(
@@ -646,47 +683,49 @@ internal fun PrivateLayerControlPanel(
               if (localVideoSession.items.isEmpty()) {
                 "No selectable videos are loaded yet. Refresh the shared folder above."
               } else {
-                "${localVideoSession.items.size} selectable video(s). The selected item is used by every video region and remains controllable by profiles, playlists, and Connection Hub."
+                "${localVideoSession.items.size} validated video(s). Assign each source to Background or Outer; the library does not own presentation or playback."
               },
               style = MaterialTheme.typography.bodySmall,
               color =
                   if (localVideoSession.items.isEmpty()) LayerPanelWarm else LayerPanelAccent,
           )
           localVideoSession.items.forEach { item ->
-            Button(
-                modifier = Modifier.fillMaxWidth().height(68.dp),
-                onClick = { localVideoSession = selectVideo(item.index) },
-                colors =
-                    ButtonDefaults.buttonColors(
-                        containerColor =
-                            if (item.index == localVideoSession.activeIndex) {
-                              LayerPanelAccent
-                            } else {
-                              LayerPanelSurfaceAlt
-                            },
-                        contentColor =
-                            if (item.index == localVideoSession.activeIndex) {
-                              Color(0xFF04111A)
-                            } else {
-                              LayerPanelInk
-                            },
-                    ),
+            Column(
+                modifier =
+                    Modifier.fillMaxWidth()
+                        .background(LayerPanelSurfaceAlt, RoundedCornerShape(10.dp))
+                        .padding(12.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-              Column(
+              Text(item.label, fontWeight = FontWeight.SemiBold, color = LayerPanelInk)
+              Text(
+                  "${item.sourceLabel} · ${item.projectionLabel} · " +
+                      "${item.stereoLabel} · ${item.dimensionsLabel}",
+                  style = MaterialTheme.typography.bodySmall,
+                  color = LayerPanelMuted,
+              )
+              Row(
+                  horizontalArrangement = Arrangement.spacedBy(10.dp),
                   modifier = Modifier.fillMaxWidth(),
-                  horizontalAlignment = Alignment.Start,
               ) {
-                Text(item.label, fontWeight = FontWeight.SemiBold)
-                Text(
-                    "${item.sourceLabel} · ${item.projectionLabel} · " +
-                        "${item.stereoLabel} · ${item.dimensionsLabel}",
-                    style = MaterialTheme.typography.bodySmall,
-                )
+                ChoiceButton(
+                    label = "Use in Background",
+                    selected = item.index == localBackgroundVideoSession.activeIndex,
+                ) {
+                  localBackgroundVideoSession = selectBackgroundVideo(item.index)
+                }
+                ChoiceButton(
+                    label = "Use in Outer",
+                    selected = item.index == localVideoSession.activeIndex,
+                ) {
+                  localVideoSession = selectVideo(item.index)
+                }
               }
             }
           }
         }
-        Section("Video layer") {
+        if (LEGACY_GLOBAL_VIDEO_CONTROLS_VISIBLE) {
+          Section("Legacy global video controls") {
           HelpLabel("Video playback")
           Text(
               if (localVideoSession.available) {
@@ -873,6 +912,7 @@ internal fun PrivateLayerControlPanel(
             ) {
               Text("Next")
             }
+          }
           }
         }
       }
@@ -1473,13 +1513,7 @@ internal fun PrivateLayerControlPanel(
       if (currentPage == PrivateLayerPanelPage.Middle) {
         MiddleRegionPage(
             configuration = localZoneCompositor,
-            videoSession = localVideoSession,
-            videoCadenceMode = localVideoCadenceMode,
             onConfigurationChange = PrivateLayerZoneCompositorPanelBridge::submit,
-            onSelectVideo = { index -> localVideoSession = selectVideo(index) },
-            onSelectCadence = { mode ->
-              localVideoCadenceMode = SpatialVideoCadencePanelBridge.select(mode)
-            },
         )
       }
 
@@ -1490,6 +1524,9 @@ internal fun PrivateLayerControlPanel(
             videoCadenceMode = localVideoCadenceMode,
             onConfigurationChange = PrivateLayerZoneCompositorPanelBridge::submit,
             onSelectVideo = { index -> localVideoSession = selectVideo(index) },
+            onSetPlaybackEnabled = { enabled ->
+              localVideoSession = setVideoPlaybackEnabled(enabled)
+            },
             onSelectCadence = { mode ->
               localVideoCadenceMode = SpatialVideoCadencePanelBridge.select(mode)
             },
@@ -2406,11 +2443,7 @@ private fun DepthSourceButtonGrid(
 @Composable
 private fun MiddleRegionPage(
     configuration: PrivateLayerZoneCompositor,
-    videoSession: SpatialImmersiveVideoSessionSnapshot,
-    videoCadenceMode: SpatialVideoCadenceMode,
     onConfigurationChange: (PrivateLayerZoneCompositor, String) -> Unit,
-    onSelectVideo: (Int) -> Unit,
-    onSelectCadence: (SpatialVideoCadenceMode) -> Unit,
 ) {
   val controls = PrivateLayerZoneCompositorControls
   val bufferActive = configuration.bufferGeometryMode != controls.bufferGeometryOff
@@ -2506,12 +2539,6 @@ private fun MiddleRegionPage(
             "private-layer-middle-content-outer",
         )
       }
-      ChoiceButton("Video", configuration.bufferFillMode == controls.bufferFillVideo) {
-        onConfigurationChange(
-            configuration.copy(bufferFillMode = controls.bufferFillVideo),
-            "private-layer-middle-content-video",
-        )
-      }
       ChoiceButton("Stretch", configuration.bufferFillMode == controls.bufferFillStretch) {
         onConfigurationChange(
             configuration.copy(bufferFillMode = controls.bufferFillStretch),
@@ -2519,8 +2546,8 @@ private fun MiddleRegionPage(
         )
       }
       ChoiceButton(
-          "Transparent",
-          configuration.bufferFillMode == controls.bufferFillTransparentReveal,
+          label = "Transparent",
+          selected = configuration.bufferFillMode == controls.bufferFillTransparentReveal,
       ) {
         onConfigurationChange(
             configuration.copy(bufferFillMode = controls.bufferFillTransparentReveal),
@@ -2538,14 +2565,22 @@ private fun MiddleRegionPage(
         onConfigurationChange = onConfigurationChange,
     )
   }
-  if (configuration.bufferFillMode == controls.bufferFillVideo) {
-    RegionVideoSettings(
-        title = "Middle video settings",
-        videoSession = videoSession,
-        videoCadenceMode = videoCadenceMode,
-        onSelectVideo = onSelectVideo,
-        onSelectCadence = onSelectCadence,
-    )
+  if (configuration.bufferFillMode == controls.bufferFillOuterContinuation) {
+    Section("Continue Outer") {
+      Text(
+          "The Outer region's current content continues inward. There is no separate Middle video source or decoder.",
+          style = MaterialTheme.typography.bodySmall,
+          color = LayerPanelMuted,
+      )
+    }
+  } else if (configuration.bufferFillMode == controls.bufferFillTransparentReveal) {
+    Section("Transparent middle") {
+      Text(
+          "The Middle buffer contributes no pixels and directly reveals the selected Background content.",
+          style = MaterialTheme.typography.bodySmall,
+          color = LayerPanelMuted,
+      )
+    }
   }
 }
 
@@ -2557,6 +2592,7 @@ private fun OuterRegionPage(
     onConfigurationChange: (PrivateLayerZoneCompositor, String) -> Unit,
     onSelectVideo: (Int) -> Unit,
     onSelectCadence: (SpatialVideoCadenceMode) -> Unit,
+    onSetPlaybackEnabled: (Boolean) -> Unit,
 ) {
   val controls = PrivateLayerZoneCompositorControls
   Section("Outer content") {
@@ -2566,7 +2602,7 @@ private fun OuterRegionPage(
         color = LayerPanelMuted,
     )
     Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
-      ChoiceButton("Video", configuration.outerContentMode == controls.outerContentVideo) {
+      ChoiceButton("Head-locked video", configuration.outerContentMode == controls.outerContentVideo) {
         onConfigurationChange(
             configuration.copy(outerContentMode = controls.outerContentVideo),
             "private-layer-outer-content-video",
@@ -2590,7 +2626,7 @@ private fun OuterRegionPage(
     }
     if (configuration.outerContentMode == controls.outerContentTransparent) {
       Text(
-          "Transparent reveals the selected Black, Passthrough, or LUT passthrough background behind the custom projection carrier.",
+          "Transparent reveals the selected Background, including its world-locked video. No Outer decoder or stretch contribution remains active.",
           style = MaterialTheme.typography.bodySmall,
           color = LayerPanelMuted,
       )
@@ -2605,12 +2641,17 @@ private fun OuterRegionPage(
     )
   }
   if (configuration.outerContentMode == controls.outerContentVideo) {
-    RegionVideoSettings(
-        title = "Outer video settings",
+    LayerVideoSettings(
+        title = "Head-locked video",
+        placement = "Head-locked · fixed by Outer region",
+        description =
+            "This source follows the headset and covers the field around the center projection while preserving its validated aspect and stereo packing.",
         videoSession = videoSession,
         videoCadenceMode = videoCadenceMode,
+        cadenceEnabled = true,
         onSelectVideo = onSelectVideo,
         onSelectCadence = onSelectCadence,
+        onSetPlaybackEnabled = onSetPlaybackEnabled,
     )
   }
 }
@@ -2710,23 +2751,54 @@ private fun RegionStretchSettings(
 }
 
 @Composable
-private fun RegionVideoSettings(
+private fun LayerVideoSettings(
     title: String,
+    placement: String,
+    description: String,
     videoSession: SpatialImmersiveVideoSessionSnapshot,
     videoCadenceMode: SpatialVideoCadenceMode,
+    cadenceEnabled: Boolean,
     onSelectVideo: (Int) -> Unit,
     onSelectCadence: (SpatialVideoCadenceMode) -> Unit,
+    onSetPlaybackEnabled: (Boolean) -> Unit,
 ) {
   Section(title) {
     Text(
-        "All video regions intentionally share the one active media source and decoder. Select the source here or on Media library; the selection remains playlist- and Hub-controllable.",
+        placement,
+        style = MaterialTheme.typography.bodyMedium,
+        color = LayerPanelAccent,
+    )
+    Text(
+        description,
         style = MaterialTheme.typography.bodySmall,
         color = LayerPanelMuted,
     )
-    Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
-      SpatialVideoCadenceMode.entries.forEach { mode ->
-        ChoiceButton(mode.token, videoCadenceMode == mode) { onSelectCadence(mode) }
+    HelpLabel("Playback cadence")
+    if (cadenceEnabled) {
+      Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+        SpatialVideoCadenceMode.entries.forEach { mode ->
+          ChoiceButton(mode.token, videoCadenceMode == mode) { onSelectCadence(mode) }
+        }
       }
+    } else {
+      Text(
+          "Source cadence · the Spatial video carrier owns presentation timing.",
+          style = MaterialTheme.typography.bodySmall,
+          color = LayerPanelMuted,
+      )
+    }
+    Button(
+        modifier = Modifier.fillMaxWidth().height(52.dp),
+        enabled = videoSession.available,
+        onClick = { onSetPlaybackEnabled(!videoSession.playbackEnabled) },
+        colors =
+            ButtonDefaults.buttonColors(
+                containerColor =
+                    if (videoSession.playbackEnabled) LayerPanelWarm else LayerPanelAccent,
+                contentColor = Color(0xFF04111A),
+            ),
+    ) {
+      Text(if (videoSession.playbackEnabled) "Playing · turn off" else "Off · turn on")
     }
     videoSession.items.forEach { item ->
       Row(modifier = Modifier.fillMaxWidth()) {

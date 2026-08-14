@@ -15,10 +15,16 @@ internal data class SpatialImmersiveVideoSessionSnapshot(
     val customProjectionCompatible: Boolean,
     val presentationMode: SpatialImmersiveVideoPresentationMode,
     val backgroundMode: SpatialBackgroundMode,
+    val layerOwner: SpatialImmersiveVideoLayerOwner = SpatialImmersiveVideoLayerOwner.Outer,
     val items: List<SpatialImmersiveVideoCatalogItemSnapshot> = emptyList(),
 ) {
   val activeOrdinal: Int
     get() = if (activeIndex >= 0) activeIndex + 1 else 0
+}
+
+internal enum class SpatialImmersiveVideoLayerOwner(val token: String) {
+  Background("background-world-video"),
+  Outer("outer-head-locked-video"),
 }
 
 internal data class SpatialImmersiveVideoCatalogItemSnapshot(

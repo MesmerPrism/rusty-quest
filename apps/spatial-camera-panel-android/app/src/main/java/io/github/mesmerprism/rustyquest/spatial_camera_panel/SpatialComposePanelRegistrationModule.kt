@@ -28,6 +28,7 @@ internal data class SpatialPrivateLayerPanelRegistrationBindings(
     val projectionSurfaceTiling: ProjectionSurfaceTiling,
     val projectionInnerAlpha: ProjectionInnerAlpha,
     val passthroughLutSettings: () -> SpatialPassthroughLutSettings,
+    val backgroundVideoSession: () -> SpatialImmersiveVideoSessionSnapshot,
     val videoSession: () -> SpatialImmersiveVideoSessionSnapshot,
     val sharedMediaLibraryStatus: () -> SharedOfflineImmersiveMediaLibrarySnapshot,
     val observeSharedMediaLibrary:
@@ -46,6 +47,8 @@ internal data class SpatialPrivateLayerPanelRegistrationBindings(
     val setLayerOverride: (Float, String) -> Float,
     val setProjectionPanelEnabled: (Boolean, String) -> Boolean,
     val setVideoPlaybackEnabled:
+        (Boolean) -> SpatialImmersiveVideoSessionSnapshot,
+    val setBackgroundVideoPlaybackEnabled:
         (Boolean) -> SpatialImmersiveVideoSessionSnapshot,
     val updateProjectionScale: (Float, String) -> Float,
     val updateDepthLayerPolicy: (Int, String) -> Int,
@@ -66,6 +69,7 @@ internal data class SpatialPrivateLayerPanelRegistrationBindings(
     val selectPreviousVideo: () -> SpatialImmersiveVideoSessionSnapshot,
     val selectNextVideo: () -> SpatialImmersiveVideoSessionSnapshot,
     val selectVideo: (Int) -> SpatialImmersiveVideoSessionSnapshot,
+    val selectBackgroundVideo: (Int) -> SpatialImmersiveVideoSessionSnapshot,
     val setVideoPresentationMode:
         (SpatialImmersiveVideoPresentationMode) -> SpatialImmersiveVideoSessionSnapshot,
     val setBackgroundMode: (SpatialBackgroundMode) -> SpatialImmersiveVideoSessionSnapshot,
@@ -124,6 +128,7 @@ internal object SpatialComposePanelRegistrationModule {
                       projectionSurfaceTiling = bindings.projectionSurfaceTiling,
                       projectionInnerAlpha = bindings.projectionInnerAlpha,
                       passthroughLutSettings = bindings.passthroughLutSettings,
+                      backgroundVideoSession = bindings.backgroundVideoSession,
                       videoSession = bindings.videoSession,
                       sharedMediaLibraryStatus = bindings.sharedMediaLibraryStatus,
                       observeSharedMediaLibrary = bindings.observeSharedMediaLibrary,
@@ -141,6 +146,8 @@ internal object SpatialComposePanelRegistrationModule {
                       setLayerOverride = bindings.setLayerOverride,
                       setProjectionPanelEnabled = bindings.setProjectionPanelEnabled,
                       setVideoPlaybackEnabled = bindings.setVideoPlaybackEnabled,
+                      setBackgroundVideoPlaybackEnabled =
+                          bindings.setBackgroundVideoPlaybackEnabled,
                       updateProjectionScale = bindings.updateProjectionScale,
                       updateDepthLayerPolicy = bindings.updateDepthLayerPolicy,
                       updateDepthAlignment = bindings.updateDepthAlignment,
@@ -154,6 +161,7 @@ internal object SpatialComposePanelRegistrationModule {
                       selectPreviousVideo = bindings.selectPreviousVideo,
                       selectNextVideo = bindings.selectNextVideo,
                       selectVideo = bindings.selectVideo,
+                      selectBackgroundVideo = bindings.selectBackgroundVideo,
                       setVideoPresentationMode = bindings.setVideoPresentationMode,
                       setBackgroundMode = bindings.setBackgroundMode,
                       chooseSharedMediaFolder = bindings.chooseSharedMediaFolder,
