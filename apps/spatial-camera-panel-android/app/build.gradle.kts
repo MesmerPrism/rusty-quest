@@ -191,6 +191,15 @@ val spatialHandMeshRigPackaged =
 val spatialSigningKeystore =
   providers.environmentVariable("RUSTY_QUEST_SPATIAL_SIGNING_KEYSTORE")
 
+val spatialSigningKeyAlias =
+  providers.environmentVariable("RUSTY_QUEST_SPATIAL_SIGNING_KEY_ALIAS")
+
+val spatialSigningStorePassword =
+  providers.environmentVariable("RUSTY_QUEST_SPATIAL_SIGNING_STORE_PASSWORD")
+
+val spatialSigningKeyPassword =
+  providers.environmentVariable("RUSTY_QUEST_SPATIAL_SIGNING_KEY_PASSWORD")
+
 val offlineMediaKeyHex =
   providers.environmentVariable("RUSTY_QUEST_OFFLINE_MEDIA_KEY_HEX")
     .map { raw ->
@@ -379,9 +388,9 @@ android {
     ?.let { keystorePath ->
       signingConfigs.getByName("debug") {
         storeFile = file(keystorePath)
-        storePassword = "android"
-        keyAlias = "androiddebugkey"
-        keyPassword = "android"
+        storePassword = spatialSigningStorePassword.get()
+        keyAlias = spatialSigningKeyAlias.get()
+        keyPassword = spatialSigningKeyPassword.get()
       }
     }
 

@@ -176,6 +176,9 @@ pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-SpatialCameraPanelAnd
 pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-SpatialCameraPanelAndroid.ps1 -Build
 ```
 
+Morphovision APK builds use the stable short-cache and frozen-candidate
+contracts documented in [MORPHOVISION_FAST_BUILD_WORKFLOW.md](MORPHOVISION_FAST_BUILD_WORKFLOW.md).
+
 Panel-facing changes also run the focused guard directly when diagnosing a
 black or missing one-sided Compose panel:
 
