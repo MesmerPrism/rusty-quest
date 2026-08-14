@@ -842,7 +842,10 @@ $propertyManifest = [ordered]@{
     properties = @($propertyNames | ForEach-Object { [ordered]@{ name = [string]$_ } })
 }
 $propertyManifest | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $propertyManifestPath -Encoding UTF8
-$intermediateRoot = Join-Path $targetRoot ("apk-i\s\{0}" -f $buildInputFingerprint.Substring(0, 16))
+# Keep this path deliberately shallow. Gradle launches AAPT2 directly and the
+# transformed executable can otherwise cross the legacy Windows MAX_PATH
+# boundary when the repository lives in a named isolated worktree.
+$intermediateRoot = Join-Path $targetRoot ("apk-i\{0}" -f $buildInputFingerprint.Substring(0, 16))
 $spatialBuildRoot = Join-Path $intermediateRoot "gradle"
 
 $nativeReceiptRoot = Join-Path $appRoot "native-receipt"

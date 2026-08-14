@@ -57,6 +57,7 @@ foreach ($text in @($nativeBuild, $spatialBuild)) {
 }
 Assert-Contains "Spatial iteration build" $spatialBuild "-AllowWorkingTreeChanges:(-not [bool]`$PublicationBuild)"
 Assert-Contains "Spatial publication build" $spatialBuild '[switch]$PublicationBuild'
+Assert-Contains "Spatial short Windows intermediate path" $spatialBuild '("apk-i\{0}" -f $buildInputFingerprint.Substring(0, 16))'
 
 $temp = Join-Path ([IO.Path]::GetTempPath()) ("rusty-quest-run-capsule-test-" + [guid]::NewGuid().ToString("N"))
 try {
