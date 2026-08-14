@@ -58,6 +58,7 @@ foreach ($token in @(
     'cargo_observed_fresh',
     'cargo_compile_unit_count',
     'gradle_observed_outcomes',
+    'TimeUnit.NANOSECONDS.toMillis',
     'from_cache',
     'BUILD_PHASE zipalign-sign-inspection',
     'zipalign "-c" "-P" "16"',

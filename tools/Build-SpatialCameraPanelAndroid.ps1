@@ -891,7 +891,7 @@ gradle.taskGraph.beforeTask { task ->
 }
 gradle.taskGraph.afterTask { task, state ->
     def started = rustyQuestTaskStarts.remove(task.path)
-    def durationMs = started == null ? 0L : (System.nanoTime() - started) / 1000000L
+    def durationMs = started == null ? 0L : java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started)
     def outcome = state.failure != null ? "FAILED" :
         (state.noSource ? "NO_SOURCE" :
         (state.upToDate ? "UP_TO_DATE" :
