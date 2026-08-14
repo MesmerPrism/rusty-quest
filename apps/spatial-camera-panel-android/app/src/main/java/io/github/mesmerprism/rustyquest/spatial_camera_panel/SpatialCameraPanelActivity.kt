@@ -63,6 +63,7 @@ import com.meta.spatial.core.Vector3
 import com.meta.spatial.core.Vector4
 import com.meta.spatial.runtime.BlendFactor
 import com.meta.spatial.runtime.LayerAlphaBlend
+import java.util.concurrent.Executors
 import com.meta.spatial.runtime.LayerFilters
 import com.meta.spatial.runtime.PanelSceneObject
 import com.meta.spatial.runtime.ReferenceSpace
@@ -393,6 +394,8 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
                       configuration.outerMaxInsetUv,
                       configuration.outerStretchCurve,
                       configuration.outerProcessedMix,
+                      configuration.centerContentMode,
+                      configuration.centerProjectionMix,
                   )
                   val dynamicsMask = nativeUpdatePrivateLayerZoneChannelDynamics(
                       configuration.innerChannelDynamics.applicationMode,
@@ -1090,6 +1093,13 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
         )
     )
   }
+  private val videoDecoderLifecycleExecutor =
+      Executors.newSingleThreadExecutor { runnable ->
+        Thread(runnable, "RQSpatialVideoLifecycle").apply {
+          priority = Thread.NORM_PRIORITY
+          isDaemon = true
+        }
+      }
   private val spatialVideoProjectionRuntimeCoordinator by lazy(LazyThreadSafetyMode.NONE) {
     SpatialVideoProjectionRuntimeCoordinator(
         SpatialVideoProjectionRuntimeBindings(
@@ -1140,6 +1150,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             stopPlayback = { SpatialStereoVideoPlayback.stop() },
             stopNativeProbe = ::nativeStopSpatialVideoProjectionProbe,
             marker = ::marker,
+            dispatchDecoderLifecycle = { action -> videoDecoderLifecycleExecutor.execute(action) },
         )
     )
   }
@@ -2189,26 +2200,19 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
           .snapshot
 
   private fun updateVideoDecoderOwnership(
-      outerVideoRequested: Boolean,
+      compositorVideoRequested: Boolean,
       source: String,
   ) {
     val customDecoderRequired =
-        outerVideoRequested && projectionPanelVisibilityCoordinator.enabled
+        compositorVideoRequested && projectionPanelVisibilityCoordinator.enabled
     if (customDecoderRequired) {
       // Release the outgoing decoder before the custom decoder is allowed to start.
       immersiveVideoPanelCoordinator.setDirectVideoConsumerRequired(false, source)
       spatialVideoProjectionRuntimeCoordinator.updateReadableVideoConsumer(true, source)
-      if (spatialVideoProjectionRuntimeCoordinator.settings.active &&
-          !spatialVideoProjectionRuntimeCoordinator.started) {
-        immersiveVideoPanelCoordinator.setDirectVideoConsumerRequired(
-            true,
-            "$source-custom-decoder-fallback",
-        )
-      }
     } else {
       spatialVideoProjectionRuntimeCoordinator.updateReadableVideoConsumer(false, source)
       immersiveVideoPanelCoordinator.setDirectVideoConsumerRequired(
-          outerVideoRequested,
+          compositorVideoRequested,
           source,
       )
     }
@@ -2216,7 +2220,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     val customActive = spatialVideoProjectionRuntimeCoordinator.started
     marker(
         "channel=spatial-video-decoder-ownership status=applied " +
-            "source=${activityMarkerToken(source)} outerVideoRequested=$outerVideoRequested " +
+            "source=${activityMarkerToken(source)} compositorVideoRequested=$compositorVideoRequested " +
             "customDecoderRequired=$customDecoderRequired " +
             "directDecoderActive=$directActive customDecoderActive=$customActive " +
             "activeDecoderCount=${listOf(directActive, customActive).count { it }} " +
@@ -2904,6 +2908,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
       runCatching { nativeStopSpatialVideoProjectionProbe() }
     }
     spatialVideoProjectionRuntimeCoordinator.stop("activity-destroy")
+    videoDecoderLifecycleExecutor.shutdownNow()
     cameraHwbProjectionPanelCarrierCoordinator.cleanup("activity-destroy")
     spatialFragmentProbeCoordinator.destroy("activity-destroy")
     spatialStimulusVolumeCoordinator.destroy("activity-destroy")
@@ -4414,6 +4419,8 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
       outerMaxInsetUv: Float,
       outerStretchCurve: Float,
       outerProcessedMix: Float,
+      centerContentMode: Int,
+      centerProjectionMix: Float,
   ): Long
 
   private external fun nativeUpdateRgbChannelTransform(

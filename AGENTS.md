@@ -405,16 +405,18 @@ encrypted pack catalog generic, bounded, opt-in, and free of private media
 names. In direct video-only mode, each item owns its ideal Spatial SDK shape
 and stereo mode; switching may rebuild only that world-centered media surface
 and decoder, never head-lock an immersive surface, and must require neutral
-rearm between right-stick selection flicks. When video and the custom camera
-projection are both active, keep them on coordinated carriers: the video uses
-its declared world-anchored flat/180/360 surface or an explicitly selected
-legacy head-fixed background quad, while the custom camera/effect compositor
-retains its planar stereo carrier and camera mapping. The video carrier uses a
-strictly lower Spatial SDK z-index than the custom projection, and the control
-panel remains above both. Video selection or
-presentation changes may rebuild only the video surface and decoder; they must
-retain the Activity, planar camera carrier, control state, and current private
-configuration.
+rearm between right-stick selection flicks. World-anchored video continues to
+use its declared flat/180/360 Spatial SDK surface. Supported head-fixed stereo
+instead feeds the existing planar Vulkan camera/effect carrier: Center
+independently selects Projection, Video, Projection+Video, or Transparent;
+Middle selects Continue Outer, Stretch, or Transparent; Outer selects Video,
+Stretch, or Transparent. Full head-fixed video is therefore the same
+compositor surface with Center Video, Buffer Off, and Outer Video, not an
+additional panel. The direct head-fixed Spatial panel is retained only as a
+bounded fallback/diagnostic route for unsupported input or compositor
+unavailability. Video selection must retain the Activity, carrier, control
+state, and current private configuration; zero-contribution decoder teardown
+must never join on the Activity/XR thread.
 
 The reusable RGB-channel spatial transform is documented in
 `docs/RGB_CHANNEL_TRANSFORM.md`. Rusty Quest owns only its bounded neutral

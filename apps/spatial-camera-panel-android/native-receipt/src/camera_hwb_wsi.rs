@@ -563,9 +563,8 @@ pub(crate) unsafe fn record_camera_hwb_probe_command_buffer(
             video_settings.source_rect_for_eye(1),
         ],
     );
-    // Transparent-underlay composition derives alpha from the processed camera/buffer output and
-    // reveals the separate Spatial video layer. It never samples or draws the custom decoded
-    // surface, so importing that frame into Vulkan cannot affect a pixel.
+    // Import decoded video only while at least one compositor-owned region can contribute it.
+    // Transparent regions reveal the always-available system background without a decoder.
     let readable_video_consumer_required = projection_zone_frame
         .settings
         .readable_video_consumer_required();
@@ -636,37 +635,35 @@ pub(crate) unsafe fn record_camera_hwb_probe_command_buffer(
             targets.prepare_spatial_public_projection_sampling(device, command_buffer);
         if sampling_ready {
             let synthetic_diagnostic = projection_zone_frame.settings.synthetic_diagnostic();
-            let transparent_underlay = projection_zone_frame
-                .settings
-                .transparent_underlay_requested();
-            let projection_zone_descriptor = if projection_zone_frame.settings.replaces_video()
-                || synthetic_diagnostic
-                || transparent_underlay
-            {
-                // These routes never sample u_video_projection. Bind the already-valid camera
-                // descriptor at the otherwise-compatible slot: full stretch replaces video,
-                // the deterministic diagnostic supplies three readable synthetic sources, and
-                // transparent underlay derives alpha only from the outgoing buffer source.
-                Some((
-                    resources.descriptor_set_layout,
-                    descriptor_set,
-                    if synthetic_diagnostic {
-                        "synthetic-diagnostic-fallback-unused"
-                    } else if transparent_underlay {
-                        "transparent-underlay-fallback-unused"
-                    } else {
-                        "camera-fallback-unused"
-                    },
-                ))
-            } else {
-                prepared_video.as_ref().map(|(_, prepared)| {
-                    (
-                        prepared.descriptor_set_layout,
-                        prepared.descriptor_set,
-                        "prepared-video",
-                    )
-                })
-            };
+            let projection_zone_descriptor =
+                if synthetic_diagnostic || !readable_video_consumer_required {
+                    // These routes never sample u_video_projection. Bind the already-valid camera
+                    // descriptor at the otherwise-compatible slot. The deterministic diagnostic
+                    // supplies synthetic sources; projection/stretch/transparent-only layouts need
+                    // no decoded video descriptor.
+                    Some((
+                        resources.descriptor_set_layout,
+                        descriptor_set,
+                        if synthetic_diagnostic {
+                            "synthetic-diagnostic-fallback-unused"
+                        } else if projection_zone_frame
+                            .settings
+                            .transparent_underlay_requested()
+                        {
+                            "transparent-underlay-fallback-unused"
+                        } else {
+                            "camera-fallback-unused"
+                        },
+                    ))
+                } else {
+                    prepared_video.as_ref().map(|(_, prepared)| {
+                        (
+                            prepared.descriptor_set_layout,
+                            prepared.descriptor_set,
+                            "prepared-video",
+                        )
+                    })
+                };
             if let Some((descriptor_set_layout, zone_descriptor_set, descriptor_source)) =
                 projection_zone_descriptor
             {

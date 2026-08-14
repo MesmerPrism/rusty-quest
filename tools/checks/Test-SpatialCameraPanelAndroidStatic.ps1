@@ -3019,9 +3019,9 @@ Assert-Contains "Private layer panel" $privateLayerPanel 'Outer("Outer")'
 Assert-Contains "Private layer panel" $privateLayerPanel 'Diagnostics("Diagnostics")'
 Assert-Contains "Private layer panel" $privateLayerPanel 'Playlists("Playlists", "Sequence saved profiles with timed looping playback")'
 Assert-Contains "Private layer panel" $privateLayerPanel 'Text("Home")'
-Assert-Contains "Private layer panel" $privateLayerPanel 'Section("Center content")'
+Assert-Contains "Private layer panel" $privateLayerPanel 'Section("Center output")'
 Assert-Contains "Private layer panel" $privateLayerPanel "Projection Area"
-Assert-Contains "Private layer panel" $privateLayerPanel 'Section("Projection")'
+Assert-Contains "Private layer panel" $privateLayerPanel 'Section("Projection effect")'
 Assert-Contains "Private layer panel" $privateLayerPanel 'Section("Background")'
 Assert-Contains "Private layer panel" $privateLayerPanel 'Section("LUT appearance")'
 Assert-Contains "Private layer panel" $privateLayerPanel 'label = "Color strength"'
@@ -3031,12 +3031,12 @@ Assert-Contains "Private layer panel" $privateLayerPanel 'Section("Advanced dist
 Assert-Contains "Private layer panel" $privateLayerPanel 'HelpLabel("Protect projection edges")'
 Assert-Contains "Private layer panel" $privateLayerPanel 'Section("Available videos")'
 Assert-Contains "Private layer panel" $privateLayerPanel 'label = "Transparent"'
-Assert-Contains "Private layer panel" $privateLayerPanel "Turn custom projection off"
-Assert-Contains "Private layer panel" $privateLayerPanel "Turn custom projection on"
+Assert-Contains "Private layer panel" $privateLayerPanel "Disable compositor carrier (diagnostic)"
+Assert-Contains "Private layer panel" $privateLayerPanel "Restore compositor carrier"
 Assert-Contains "Private layer panel" $privateLayerPanel "Turn video layer off"
 Assert-Contains "Private layer panel" $privateLayerPanel "Turn video layer on"
-Assert-Contains "Private layer panel" $privateLayerPanel "The independent 360 video layer can stay on or off."
-Assert-Contains "Private layer panel" $privateLayerPanel "The 360 video layer and system passthrough are retained."
+Assert-Contains "Private layer panel" $privateLayerPanel "Center blending does not create another Spatial panel or decoder."
+Assert-Contains "Private layer panel" $privateLayerPanel "same head-locked Vulkan compositor"
 Assert-Contains "Private layer panel" $privateLayerPanel "Depth Source"
 Assert-Contains "Private layer panel" $privateLayerPanel "Depth Alignment"
 Assert-Contains "Private layer panel" $privateLayerPanel "Guide Processing A/B"

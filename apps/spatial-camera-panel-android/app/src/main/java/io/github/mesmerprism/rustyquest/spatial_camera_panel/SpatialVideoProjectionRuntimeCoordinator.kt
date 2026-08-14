@@ -13,6 +13,7 @@ internal data class SpatialVideoProjectionRuntimeBindings(
     val stopPlayback: () -> Boolean,
     val stopNativeProbe: () -> Unit,
     val marker: (String) -> Unit,
+    val dispatchDecoderLifecycle: ((() -> Unit) -> Unit) = { action -> action() },
 )
 
 internal data class SpatialVideoProjectionSourceSwitchResult(
@@ -27,11 +28,13 @@ internal class SpatialVideoProjectionRuntimeCoordinator(
   var settings = SpatialVideoProjectionSettings.disabled()
     private set
 
-  var started = false
+  @Volatile var started = false
     private set
   private var offlinePack: OfflineImmersiveMediaPack? = null
-  private var readableVideoConsumerRequired = true
+  @Volatile private var readableVideoConsumerRequired = true
   private var sourceGeneration = 0L
+  private val consumerLifecycleLock = Any()
+  private var consumerLifecycleGeneration = 0L
 
   fun resolveSettings(intent: Intent?): SpatialVideoProjectionSettings =
       SpatialVideoProjectionRouteModule.currentSettings(intent)
@@ -198,33 +201,99 @@ internal class SpatialVideoProjectionRuntimeCoordinator(
   }
 
   fun updateReadableVideoConsumer(required: Boolean, reason: String) {
-    val previousRequired = readableVideoConsumerRequired
-    readableVideoConsumerRequired = required
+    val transition =
+        synchronized(consumerLifecycleLock) {
+          val previousRequired = readableVideoConsumerRequired
+          readableVideoConsumerRequired = required
+          consumerLifecycleGeneration += 1L
+          Triple(previousRequired, consumerLifecycleGeneration, settings)
+        }
+    val previousRequired = transition.first
+    val generation = transition.second
+    val requestedSettings = transition.third
     if (!required) {
-      val playbackStopped =
-          if (started) runCatching { bindings.stopPlayback() }.getOrDefault(false) else true
-      if (playbackStopped) {
-        started = false
-      }
       bindings.marker(
-          "channel=spatial-video-projection status=consumer-policy-applied " +
+          "channel=spatial-video-projection status=consumer-policy-requested " +
               "reason=${activityMarkerToken(reason)} previousReadableVideoConsumerRequired=$previousRequired " +
-              "readableVideoConsumerRequired=false playbackStopped=$playbackStopped " +
-              "visualContribution=false activeDecoderCount=${if (started) 1 else 0} " +
-              "zeroContributionDecodeWorkSkipped=${!started} decoderOverlap=false"
+              "readableVideoConsumerRequired=false lifecycleGeneration=$generation " +
+              "uiThreadBlocked=false visualContribution=false"
       )
+      bindings.dispatchDecoderLifecycle {
+        val stillRequested =
+            synchronized(consumerLifecycleLock) {
+              consumerLifecycleGeneration == generation && !readableVideoConsumerRequired
+            }
+        if (!stillRequested) {
+          bindings.marker(
+              "channel=spatial-video-projection status=consumer-policy-stale-skipped " +
+                  "reason=${activityMarkerToken(reason)} lifecycleGeneration=$generation"
+          )
+          return@dispatchDecoderLifecycle
+        }
+        val playbackStopped =
+            if (started) runCatching { bindings.stopPlayback() }.getOrDefault(false) else true
+        if (playbackStopped) started = false
+        bindings.marker(
+            "channel=spatial-video-projection status=consumer-policy-applied " +
+                "reason=${activityMarkerToken(reason)} readableVideoConsumerRequired=false " +
+                "lifecycleGeneration=$generation playbackStopped=$playbackStopped " +
+                "visualContribution=false activeDecoderCount=${if (started) 1 else 0} " +
+                "zeroContributionDecodeWorkSkipped=${!started} decoderOverlap=false"
+        )
+      }
       return
     }
 
     val shouldStart = !previousRequired && !started && settings.active
     if (shouldStart) {
-      start(settings, "$reason-consumer-required")
+      val requestedOfflinePack = offlinePack
+      bindings.dispatchDecoderLifecycle {
+        val stillRequested =
+            synchronized(consumerLifecycleLock) {
+              consumerLifecycleGeneration == generation &&
+                  readableVideoConsumerRequired &&
+                  settings == requestedSettings
+            }
+        if (!stillRequested) {
+          bindings.marker(
+              "channel=spatial-video-projection status=consumer-policy-stale-skipped " +
+                  "reason=${activityMarkerToken(reason)} lifecycleGeneration=$generation"
+          )
+          return@dispatchDecoderLifecycle
+        }
+        bindings.marker(
+            SpatialVideoProjectionRouteModule.startRequestedMarker(
+                "$reason-consumer-required",
+                requestedSettings,
+            )
+        )
+        val playbackStarted =
+            runCatching { bindings.startPlayback(requestedSettings, requestedOfflinePack) }
+                .getOrDefault(false)
+        val retainStarted =
+            synchronized(consumerLifecycleLock) {
+              consumerLifecycleGeneration == generation &&
+                  readableVideoConsumerRequired &&
+                  settings == requestedSettings
+            }
+        started = playbackStarted && retainStarted
+        if (playbackStarted && !retainStarted) {
+          runCatching { bindings.stopPlayback() }
+        }
+        bindings.marker(
+            "channel=spatial-video-projection status=decoder-start-result " +
+                "reason=${activityMarkerToken(reason)} started=$started " +
+                "lifecycleGeneration=$generation uiThreadBlocked=false " +
+                "activeDecoderCount=${if (started) 1 else 0} decoderOverlap=false"
+        )
+      }
     }
     bindings.marker(
-        "channel=spatial-video-projection status=consumer-policy-applied " +
+        "channel=spatial-video-projection status=consumer-policy-requested " +
             "reason=${activityMarkerToken(reason)} previousReadableVideoConsumerRequired=$previousRequired " +
             "readableVideoConsumerRequired=true decoderStartRequested=$shouldStart " +
-            "visualContribution=true activeDecoderCount=${if (started) 1 else 0} decoderOverlap=false"
+            "lifecycleGeneration=$generation uiThreadBlocked=false visualContribution=true " +
+            "activeDecoderCount=${if (started) 1 else 0} decoderOverlap=false"
     )
   }
 
@@ -246,6 +315,10 @@ internal class SpatialVideoProjectionRuntimeCoordinator(
   }
 
   fun stop(reason: String) {
+    synchronized(consumerLifecycleLock) {
+      consumerLifecycleGeneration += 1L
+      readableVideoConsumerRequired = false
+    }
     if (!started && !settings.enabled) {
       return
     }

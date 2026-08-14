@@ -243,7 +243,12 @@ internal class SpatialCameraControlProfileHotloader(
                 else -> "off"
               },
           )
-          .put("region_contract", "v3")
+          .put("region_contract", "v4")
+          .put(
+              "center_content",
+              PrivateLayerZoneCompositorControls.centerContentToken(value.centerContentMode),
+          )
+          .put("center_projection_mix", value.centerProjectionMix)
           .put(
               "buffer_geometry",
               PrivateLayerZoneCompositorControls.bufferGeometryToken(value.bufferGeometryMode),

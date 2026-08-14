@@ -105,13 +105,12 @@ app-local. Stopping the bridge is the rollback and leaves the adapter inert.
   box5/luma/box5 at `384x384` per eye. Gaussian five-tap and RGB-preserving
   input remain independently selectable from the private-layer panel for later
   experiments; these public policies do not contain downstream effect formulas.
-- The private layer panel also exposes a separate projection-panel isolation
-  toggle. Turning it off stops native custom projection and destroys only the
-  custom Spatial projection carrier. The independent Spatial SDK 360 video
-  layer and system passthrough remain available. The video page has its own
-  playback toggle, so either carrier can be isolated without conflating their
-  lifecycle. Turning custom projection back on rebuilds the same carrier and
-  resumes the captured video settings.
+- The private layer panel exposes Center output as Projection, Video,
+  Projection + Video, or Transparent on one retained planar Vulkan carrier.
+  Buffer Off plus Center Video and Outer Video produces full head-fixed video
+  without creating a second Spatial panel. Whole-carrier disable remains an
+  explicit diagnostic operation; ordinary content changes retain the carrier,
+  Activity, controls, and current private settings.
 - Compatible video selection now retains the custom planar projection carrier
   and private configuration. The direct 180/360 layer fades to transparent,
   performs one hidden ExoPlayer/media-panel swap, waits for the replacement's
@@ -1357,17 +1356,14 @@ for the shape matrix, failure policy, lifecycle, and validation markers.
 
 Sideload-only builds may instead embed authenticated encrypted packs. One live
 catalog can mix SBS and top-bottom stereo items, including different
-flat/180°/360° source classifications. When the custom camera projection is
-also active, the video remains on its ideal world-anchored Spatial SDK surface
-below a separate planar custom-projection carrier. `Head-fixed border` rebuilds
-only the direct video as a viewer-following background quad. Selecting another
-encrypted stereo item rebuilds the direct video for its own shape and
-atomically restarts only the planar custom-projection carrier with the selected
-pack's layout and dimensions; it does not restart the Activity or the control
-panel. The video and custom-projection toggles remain independent, and the
-control panel stays ordered above both visual layers. Mono items follow the
-same ideal direct Spatial SDK media-panel route and are not adopted by the
-custom stereo projection carrier.
+flat/180°/360° source classifications. World-anchored playback retains the
+item's ideal Spatial SDK surface. Supported head-fixed stereo feeds the retained
+planar Vulkan compositor, where Center, Middle, and Outer choose their content
+independently and Center may blend projection with video. Selecting another
+encrypted stereo item stops the outgoing decoder, applies its complete layout
+and dimensions, and starts one new generation without restarting the Activity,
+control panel, or carrier. Mono items follow the ideal direct Spatial SDK
+media-panel route unless a compatible custom-compositor adapter is added.
 
 To include a generic Spatial SDK staged 3D asset, provide a staged mesh URI or
 let the wrapper stage a local GLB/GLTF source. Raw FBX sources must be converted
@@ -1537,8 +1533,9 @@ markers keep requested, supported, and effective state separate.
 The existing descriptor-set-3/binding-1 displacement block remains the first
 64 bytes. Uniform ABI v2 appends a 64-byte neutral suffix; existing ABI-v1
 shader payloads can continue reading only the prefix. The region-owned zone
-block is 400 bytes: the v2 prefix remains byte-compatible and two appended vec4
-values carry Outer Stretch parameters and content choice. A v2-consuming build declares
+block is 416 bytes: its original v3 400-byte prefix remains byte-compatible
+and one appended vec4 carries compositor-owned Center content and
+projection/video mix. A v2-consuming build declares
 `-ProjectionSurfaceUniformAbiVersion 2` (or the matching public build
 environment value), and the optional vertex and fragment payloads remain
 responsible for consuming the neutral controls.
@@ -1551,7 +1548,7 @@ direct Spatial 180/360 video carrier. See
 
 ## Independent region controls
 
-The projection-zone transport uses the additive region-owned v3 contract.
+The projection-zone transport uses the additive region-owned v4 contract.
 Buffer geometry (`off`, `static`, or `dynamic`) and content
 (`outer-continuation`, `transparent-reveal`, `stretch`, or `video`) remain in
 the compatible packed flag lane. The appended Outer lane selects video,
@@ -1560,8 +1557,10 @@ Dynamic profiles persist `buffer_minimum_width_uv`,
 `buffer_maximum_width_uv`, and
 `buffer_maximum_speed_meters_per_second`; Static continues to use
 `buffer_static_width_uv`. Buffer Off selects zero guard and the full configured
-projection scale. v1/v2 profiles migrate deterministically into v3 without
-changing their accepted output.
+projection scale. Center independently selects Projection, Video,
+Projection + Video, or Transparent. v1/v2/v3 profiles migrate
+deterministically into v4 with Center Projection, without changing their
+accepted output.
 
 The panel presents Center region, Middle buffer, Outer region, and Transitions
 as top-level pages. Center content uses accurate stage names for camera

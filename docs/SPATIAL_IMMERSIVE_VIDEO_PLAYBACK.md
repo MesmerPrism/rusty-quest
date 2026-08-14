@@ -99,15 +99,18 @@ The source manifest keeps its ideal direct Spatial SDK shape and stereo mode;
 the private compositor always normalizes its result to packed SBS before the
 Spatial SDK carrier presents it.
 
-The combined route uses two coordinated carriers. The selected video keeps its
-ideal Spatial SDK surface below the custom projection layer. `World anchored`
-uses the source's declared flat, equirectangular 180°, or equirectangular 360°
-surface and retains its initial world-space pose as the viewer turns.
-`Head-fixed border` rebuilds only the video as a viewer-following background
-quad. The custom camera/effect compositor remains on the original planar stereo
-carrier in both modes, so camera-ray mapping, blend zones, displacement, and
-private tuning are never wrapped onto an equirectangular surface. The control
-panel remains above both visual carriers.
+`World anchored` uses the source's declared flat, equirectangular 180°, or
+equirectangular 360° Spatial SDK surface and retains its initial world-space
+pose as the viewer turns. Supported `Head-fixed` stereo instead enters the
+existing planar Vulkan camera/effect compositor. Center independently selects
+Projection, Video, Projection + Video, or Transparent; Middle selects Continue
+Outer, Stretch, or Transparent; Outer selects Video, Stretch, or Transparent.
+Full head-fixed video is Center Video plus Buffer Off and Outer Video on that
+same carrier. Camera-ray mapping, blend zones, displacement, and private tuning
+therefore stay planar and video can blend with projection without a second
+panel or decoder. The direct head-fixed Spatial panel remains a bounded
+fallback/diagnostic route when the compositor cannot accept a source. The
+control panel remains above the visual carrier.
 
 The Media library shows a sanitized selectable row for every accepted encrypted
 pack and shared plain video, plus Previous and Next actions. It exposes source
@@ -131,11 +134,12 @@ cycle speed, and black cutoff. LUT construction runs off the main thread and
 only the final Spatial SDK scene mutation returns to the main scope; static LUT
 mode applies once and schedules no periodic LUT update.
 
-Turning ordinary video playback off hides but retains the registered Spatial
-video carrier and its Surface. It releases the zero-contribution decoder on a
-dedicated Media3 looper, never on the Activity/XR thread. Turning playback back
-on reuses that carrier when its Surface remains valid; only explicit source or
-presentation changes rebuild the video carrier.
+Turning ordinary video playback off retains the registered carrier and its
+Surface. It releases the zero-contribution decoder on a dedicated lifecycle
+executor/Media3 looper, never on the Activity/XR thread. A rapid off/on change
+generation-fences the stale stop and keeps the live decoder. Turning playback
+back on reuses the carrier when its Surface remains valid; only explicit source
+or presentation changes may rebuild the direct fallback carrier.
 
 Validation clients may also send `video-previous`, `video-next`,
 `video-select`, `video-recenter`, `video-world-anchored`, or

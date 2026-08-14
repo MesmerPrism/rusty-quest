@@ -495,6 +495,8 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1pa
     outer_max_inset_uv: c_float,
     outer_stretch_curve: c_float,
     outer_processed_mix: c_float,
+    center_content_mode: c_int,
+    center_projection_mix: c_float,
 ) -> i64 {
     let applied = update_projection_zone_region_layout_settings(
         buffer_minimum_width_uv as f32,
@@ -508,6 +510,8 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1pa
         outer_max_inset_uv as f32,
         outer_stretch_curve as f32,
         outer_processed_mix as f32,
+        center_content_mode.max(0) as u32,
+        center_projection_mix as f32,
     );
     log_marker(format!(
         "status=private-layer-region-layout-updated rawCameraProjectionProbe=true updateMask=2 spatialPrivateLayerControlPanel=true {} runtimeCrash=false",

@@ -24,7 +24,10 @@ internal data class PrivateLayerZoneChannelDynamics(
 
 internal data class PrivateLayerZoneCompositor(
     val coverageMode: Int = PrivateLayerZoneCompositorControls.coverageOff,
-    val regionContractVersion: Int = PrivateLayerZoneCompositorControls.regionContractRegionOwned,
+    val regionContractVersion: Int =
+        PrivateLayerZoneCompositorControls.regionContractCompositorOwned,
+    val centerContentMode: Int = PrivateLayerZoneCompositorControls.centerContentProjection,
+    val centerProjectionMix: Float = 1.0f,
     val bufferGeometryMode: Int = PrivateLayerZoneCompositorControls.bufferGeometryOff,
     val bufferStaticWidthUv: Float = 0.08f,
     val bufferMinimumWidthUv: Float = 0.06f,
@@ -85,6 +88,12 @@ internal object PrivateLayerZoneCompositorControls {
   const val regionContractLegacy = 1
   const val regionContractIndependent = 2
   const val regionContractRegionOwned = 3
+  const val regionContractCompositorOwned = 4
+
+  const val centerContentProjection = 0
+  const val centerContentVideo = 1
+  const val centerContentBlend = 2
+  const val centerContentTransparent = 3
 
   const val coverageOff = 0
   const val coverageDynamicBuffer = 1
@@ -295,6 +304,14 @@ internal object PrivateLayerZoneCompositorControls {
         else -> "video"
       }
 
+  fun centerContentToken(mode: Int): String =
+      when (mode) {
+        centerContentVideo -> "video"
+        centerContentBlend -> "projection-video-blend"
+        centerContentTransparent -> "transparent"
+        else -> "projection"
+      }
+
   fun stretchExtentToken(mode: Int): String =
       when (mode) {
         stretchExtentReplaceOuter -> "replace-outer"
@@ -493,14 +510,16 @@ internal object PrivateLayerZoneCompositorControls {
 }
 
 internal object PrivateLayerZoneCompositorModule {
-  /**
-   * A transparent Spatial-video underlay never samples or draws the custom decoder surface.
-   * Other routes keep the readable consumer because they either sample it or retain it as the
-   * native fallback when a replacement pipeline is unavailable.
-   */
+  /** True only while at least one compositor-owned region can contribute decoded video. */
   fun readableVideoConsumerRequired(configuration: PrivateLayerZoneCompositor): Boolean =
       normalize(configuration).let { value ->
-        value.outerContentMode == PrivateLayerZoneCompositorControls.outerContentVideo
+        val controls = PrivateLayerZoneCompositorControls
+        value.centerContentMode == controls.centerContentVideo ||
+            value.centerContentMode == controls.centerContentBlend ||
+            value.outerContentMode == controls.outerContentVideo ||
+            (value.bufferGeometryMode != controls.bufferGeometryOff &&
+                value.bufferFillMode == controls.bufferFillOuterContinuation &&
+                value.outerContentMode == controls.outerContentVideo)
       }
 
   fun normalize(requested: PrivateLayerZoneCompositor): PrivateLayerZoneCompositor {
@@ -541,6 +560,9 @@ internal object PrivateLayerZoneCompositorModule {
     val migratingRegionOwned =
         requested.regionContractVersion <
             PrivateLayerZoneCompositorControls.regionContractRegionOwned
+    val migratingCompositorOwned =
+        requested.regionContractVersion <
+            PrivateLayerZoneCompositorControls.regionContractCompositorOwned
     val outerContentMode =
         if (migratingRegionOwned) {
           when {
@@ -581,7 +603,15 @@ internal object PrivateLayerZoneCompositorModule {
         else requested.stretchCurve.finiteOr(1.6f).coerceIn(0.25f, 6.0f)
     return requested.copy(
         coverageMode = compatibilityCoverage,
-        regionContractVersion = PrivateLayerZoneCompositorControls.regionContractRegionOwned,
+        regionContractVersion = PrivateLayerZoneCompositorControls.regionContractCompositorOwned,
+        centerContentMode =
+            if (migratingCompositorOwned) {
+              PrivateLayerZoneCompositorControls.centerContentProjection
+            } else {
+              requested.centerContentMode.coerceIn(0, 3)
+            },
+        centerProjectionMix =
+            requested.centerProjectionMix.finiteOr(1.0f).coerceIn(0.0f, 1.0f),
         bufferGeometryMode = bufferGeometryMode,
         bufferStaticWidthUv =
             requested.bufferStaticWidthUv.finiteOr(0.08f).coerceIn(0.0f, 0.2f),
@@ -683,6 +713,8 @@ internal object PrivateLayerZoneCompositorModule {
             PrivateLayerZoneCompositorControls.outerTargetTransparentSpatialVideo
     return "projectionZoneCompositorMode=${PrivateLayerZoneCompositorControls.coverageToken(value.coverageMode)} " +
         "projectionRegionContract=v${value.regionContractVersion} " +
+        "projectionZoneCenterContent=${PrivateLayerZoneCompositorControls.centerContentToken(value.centerContentMode)} " +
+        "projectionZoneCenterProjectionMix=${value.centerProjectionMix} " +
         "projectionBufferGeometry=${PrivateLayerZoneCompositorControls.bufferGeometryToken(value.bufferGeometryMode)} " +
         "projectionBufferGuardSizeUv=${value.bufferStaticWidthUv} " +
         "projectionBufferMinimumGuardSizeUv=${value.bufferMinimumWidthUv} " +

@@ -139,6 +139,53 @@ class SpatialVideoDecoderLifecycleTest {
   }
 
   @Test
+  fun regionVisibilityChangeNeverRunsTheBoundedDecoderJoinOnTheCallerThread() {
+    val calls = ArrayList<String>()
+    val pending = ArrayList<() -> Unit>()
+    val coordinator =
+        SpatialVideoProjectionRuntimeCoordinator(
+            bindings(calls = calls, stopResult = true, startResult = true).copy(
+                dispatchDecoderLifecycle = { action -> pending += action }
+            )
+        )
+    val settings = activeSettings("content://plain/nonblocking")
+    coordinator.adoptSettings(settings)
+    coordinator.start(settings, "initial")
+    calls.clear()
+
+    coordinator.updateReadableVideoConsumer(false, "outer-transparent")
+
+    assertTrue(calls.isEmpty())
+    assertEquals(1, pending.size)
+    pending.removeAt(0).invoke()
+    assertEquals(listOf("stop"), calls)
+    assertFalse(coordinator.started)
+  }
+
+  @Test
+  fun rapidVideoOffOnSkipsTheStaleStopAndKeepsTheExistingDecoder() {
+    val calls = ArrayList<String>()
+    val pending = ArrayList<() -> Unit>()
+    val coordinator =
+        SpatialVideoProjectionRuntimeCoordinator(
+            bindings(calls = calls, stopResult = true, startResult = true).copy(
+                dispatchDecoderLifecycle = { action -> pending += action }
+            )
+        )
+    val settings = activeSettings("content://plain/retained")
+    coordinator.adoptSettings(settings)
+    coordinator.start(settings, "initial")
+    calls.clear()
+
+    coordinator.updateReadableVideoConsumer(false, "outer-transparent")
+    coordinator.updateReadableVideoConsumer(true, "outer-video")
+    pending.forEach { it.invoke() }
+
+    assertTrue(calls.isEmpty())
+    assertTrue(coordinator.started)
+  }
+
+  @Test
   fun coldStereoLayoutSwitchConfiguresCompleteGenerationBeforeDecoderStart() {
     val calls = ArrayList<String>()
     val coordinator =
@@ -163,6 +210,45 @@ class SpatialVideoDecoderLifecycleTest {
         calls,
     )
     assertEquals("side-by-side-left-right", coordinator.settings.stereoLayout)
+  }
+
+  @Test
+  fun hotTopBottomToSideBySideSwitchStopsAndReconfiguresBeforeRestart() {
+    val calls = ArrayList<String>()
+    val coordinator =
+        SpatialVideoProjectionRuntimeCoordinator(
+            bindings(calls = calls, stopResult = true, startResult = true)
+        )
+    val topBottom = activeSettings("content://plain/top-bottom")
+    val sideBySide =
+        activeSettings("content://plain/side-by-side").copy(
+            stereoLayout = "side-by-side-left-right",
+            mediaLayout = "side-by-side-left-right",
+            width = 4096,
+            height = 2048,
+        )
+    coordinator.adoptSettings(topBottom)
+    coordinator.start(topBottom, "initial-top-bottom")
+    calls.clear()
+
+    val switched = coordinator.replaceMediaSource(sideBySide, null, "hot-stereo-layout-switch")
+
+    assertTrue(switched.applied)
+    assertTrue(switched.decoderStarted)
+    assertEquals(1L, switched.sourceGeneration)
+    assertEquals(
+        listOf(
+            "stop",
+            "configure:content://plain/side-by-side",
+            "start:content://plain/side-by-side",
+        ),
+        calls,
+    )
+    assertEquals("side-by-side-left-right", coordinator.settings.stereoLayout)
+    assertEquals("side-by-side-left-right", coordinator.settings.mediaLayout)
+    assertEquals(4096, coordinator.settings.width)
+    assertEquals(2048, coordinator.settings.height)
+    assertTrue(coordinator.started)
   }
 
   private fun bindings(

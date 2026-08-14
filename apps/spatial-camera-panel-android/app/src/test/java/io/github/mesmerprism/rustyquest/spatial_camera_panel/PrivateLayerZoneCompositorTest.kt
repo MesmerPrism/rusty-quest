@@ -12,6 +12,8 @@ class PrivateLayerZoneCompositorTest {
         PrivateLayerZoneCompositorModule.normalize(
             PrivateLayerZoneCompositor(
                 coverageMode = 99,
+                centerContentMode = 99,
+                centerProjectionMix = -2.0f,
                 bufferGeometryMode = 99,
                 bufferStaticWidthUv = 4.0f,
                 bufferMinimumWidthUv = -2.0f,
@@ -50,9 +52,11 @@ class PrivateLayerZoneCompositorTest {
         )
     assertEquals(PrivateLayerZoneCompositorControls.coverageDynamicBuffer, normalized.coverageMode)
     assertEquals(
-        PrivateLayerZoneCompositorControls.regionContractRegionOwned,
+        PrivateLayerZoneCompositorControls.regionContractCompositorOwned,
         normalized.regionContractVersion,
     )
+    assertEquals(PrivateLayerZoneCompositorControls.centerContentTransparent, normalized.centerContentMode)
+    assertEquals(0.0f, normalized.centerProjectionMix)
     assertEquals(
         PrivateLayerZoneCompositorControls.bufferGeometryDynamic,
         normalized.bufferGeometryMode,
@@ -408,14 +412,18 @@ class PrivateLayerZoneCompositorTest {
   }
 
   @Test
-  fun legacyCoverageProfilesMigrateToRegionOwnedContract() {
+  fun legacyCoverageProfilesMigrateToCompositorOwnedContract() {
     val off =
         PrivateLayerZoneCompositorModule.normalize(
             PrivateLayerZoneCompositorControls.legacyOff
         )
     assertEquals(
-        PrivateLayerZoneCompositorControls.regionContractRegionOwned,
+        PrivateLayerZoneCompositorControls.regionContractCompositorOwned,
         off.regionContractVersion,
+    )
+    assertEquals(
+        PrivateLayerZoneCompositorControls.centerContentProjection,
+        off.centerContentMode,
     )
     assertEquals(
         PrivateLayerZoneCompositorControls.bufferGeometryOff,
@@ -482,6 +490,14 @@ class PrivateLayerZoneCompositorTest {
     assertFalse(
         PrivateLayerZoneCompositorModule.readableVideoConsumerRequired(
             PrivateLayerZoneCompositorControls.fullStretch
+        )
+    )
+    assertTrue(
+        PrivateLayerZoneCompositorModule.readableVideoConsumerRequired(
+            PrivateLayerZoneCompositorControls.fullStretch.copy(
+                centerContentMode = PrivateLayerZoneCompositorControls.centerContentBlend,
+                centerProjectionMix = 0.5f,
+            )
         )
     )
   }

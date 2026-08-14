@@ -326,42 +326,106 @@ internal fun PrivateLayerControlPanel(
         )
       }
       if (currentPage == PrivateLayerPanelPage.Center) {
-      Section("Projection") {
+      Section("Center output") {
         Text(
-            if (localProjectionPanelEnabled) {
-              "Custom camera/effect projection: On. The independent 360 video layer can stay on or off."
-            } else {
-              "Custom camera/effect projection: Off. The 360 video layer and system passthrough are retained."
-            },
-            style = MaterialTheme.typography.bodyMedium,
+            "The Center is owned by the same head-locked Vulkan compositor as the Middle and Outer regions. Choose projection, the head-locked video source, a live blend of both, or transparency to the Background.",
+            style = MaterialTheme.typography.bodySmall,
             color = LayerPanelMuted,
         )
-        Button(
-            modifier = Modifier.fillMaxWidth().height(52.dp),
-            onClick = {
-              localProjectionPanelEnabled =
-                  setProjectionPanelEnabled(
-                      !localProjectionPanelEnabled,
-                      "private-layer-control-panel-projection-toggle",
-                  )
-            },
-            colors =
-                ButtonDefaults.buttonColors(
-                    containerColor =
-                        if (localProjectionPanelEnabled) LayerPanelWarm else LayerPanelAccent,
-                    contentColor = Color(0xFF04111A),
-                ),
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
         ) {
-          Text(
-              if (localProjectionPanelEnabled) {
-                "Turn custom projection off"
-              } else {
-                "Turn custom projection on"
-              }
-          )
+          ChoiceButton(
+              "Projection",
+              localZoneCompositor.centerContentMode ==
+                  PrivateLayerZoneCompositorControls.centerContentProjection,
+          ) {
+            if (!localProjectionPanelEnabled) {
+              localProjectionPanelEnabled =
+                  setProjectionPanelEnabled(true, "private-layer-center-carrier-enable")
+            }
+            PrivateLayerZoneCompositorPanelBridge.submit(
+                localZoneCompositor.copy(
+                    centerContentMode =
+                        PrivateLayerZoneCompositorControls.centerContentProjection
+                ),
+                "private-layer-center-content-projection",
+            )
+          }
+          ChoiceButton(
+              "Video",
+              localZoneCompositor.centerContentMode ==
+                  PrivateLayerZoneCompositorControls.centerContentVideo,
+          ) {
+            if (!localProjectionPanelEnabled) {
+              localProjectionPanelEnabled =
+                  setProjectionPanelEnabled(true, "private-layer-center-carrier-enable")
+            }
+            PrivateLayerZoneCompositorPanelBridge.submit(
+                localZoneCompositor.copy(
+                    centerContentMode = PrivateLayerZoneCompositorControls.centerContentVideo
+                ),
+                "private-layer-center-content-video",
+            )
+          }
+          ChoiceButton(
+              "Projection + video",
+              localZoneCompositor.centerContentMode ==
+                  PrivateLayerZoneCompositorControls.centerContentBlend,
+          ) {
+            if (!localProjectionPanelEnabled) {
+              localProjectionPanelEnabled =
+                  setProjectionPanelEnabled(true, "private-layer-center-carrier-enable")
+            }
+            PrivateLayerZoneCompositorPanelBridge.submit(
+                localZoneCompositor.copy(
+                    centerContentMode = PrivateLayerZoneCompositorControls.centerContentBlend
+                ),
+                "private-layer-center-content-blend",
+            )
+          }
+          ChoiceButton(
+              "Transparent",
+              localZoneCompositor.centerContentMode ==
+                  PrivateLayerZoneCompositorControls.centerContentTransparent,
+          ) {
+            if (!localProjectionPanelEnabled) {
+              localProjectionPanelEnabled =
+                  setProjectionPanelEnabled(true, "private-layer-center-carrier-enable")
+            }
+            PrivateLayerZoneCompositorPanelBridge.submit(
+                localZoneCompositor.copy(
+                    centerContentMode =
+                        PrivateLayerZoneCompositorControls.centerContentTransparent
+                ),
+                "private-layer-center-content-transparent",
+            )
+          }
+        }
+        if (
+            localZoneCompositor.centerContentMode ==
+                PrivateLayerZoneCompositorControls.centerContentBlend
+        ) {
+          DepthSlider(
+              "Projection share",
+              localZoneCompositor.centerProjectionMix,
+              0.0f..1.0f,
+          ) { value ->
+            PrivateLayerZoneCompositorPanelBridge.submit(
+                localZoneCompositor.copy(centerProjectionMix = value),
+                "private-layer-center-projection-video-mix",
+            )
+          }
         }
       }
-      Section("Center content") {
+      if (
+          localZoneCompositor.centerContentMode ==
+              PrivateLayerZoneCompositorControls.centerContentProjection ||
+              localZoneCompositor.centerContentMode ==
+                  PrivateLayerZoneCompositorControls.centerContentBlend
+      ) {
+      Section("Projection effect") {
         Text(
             "Choose the actual center-region output or a named diagnostic stage. The depth-adjusted distortion strength is the smoothed strength after Meta depth modulation; Meta depth diagnostic shows the aligned depth input itself.",
             style = MaterialTheme.typography.bodySmall,
@@ -371,6 +435,30 @@ internal fun PrivateLayerControlPanel(
             selectedLayerOverride = localLayerOverride,
             onSelect = { override ->
               localLayerOverride = setLayerOverride(override, "private-layer-control-panel")
+            },
+        )
+      }
+      }
+      if (
+          localZoneCompositor.centerContentMode ==
+              PrivateLayerZoneCompositorControls.centerContentVideo ||
+              localZoneCompositor.centerContentMode ==
+                  PrivateLayerZoneCompositorControls.centerContentBlend
+      ) {
+        LayerVideoSettings(
+            title = "Head-locked compositor video",
+            placement = "Head-locked · shared by Center and Outer",
+            description =
+                "The decoded stereo source is sampled directly in this compositor. Center blending does not create another Spatial panel or decoder.",
+            videoSession = localVideoSession,
+            videoCadenceMode = localVideoCadenceMode,
+            cadenceEnabled = true,
+            onSelectVideo = { index -> localVideoSession = selectVideo(index) },
+            onSelectCadence = { mode ->
+              localVideoCadenceMode = SpatialVideoCadencePanelBridge.select(mode)
+            },
+            onSetPlaybackEnabled = { enabled ->
+              localVideoSession = setVideoPlaybackEnabled(enabled)
             },
         )
       }
@@ -413,6 +501,35 @@ internal fun PrivateLayerControlPanel(
                 "Protection on · tap to disable"
               } else {
                 "Protection off · tap to enable"
+              }
+          )
+        }
+        Text(
+            "The compositor carrier normally stays on even when Center projection is not selected. The control below is a diagnostic fallback that disables the whole Center/Middle/Outer Vulkan surface.",
+            style = MaterialTheme.typography.bodySmall,
+            color = LayerPanelMuted,
+        )
+        Button(
+            modifier = Modifier.fillMaxWidth().height(52.dp),
+            onClick = {
+              localProjectionPanelEnabled =
+                  setProjectionPanelEnabled(
+                      !localProjectionPanelEnabled,
+                      "private-layer-control-panel-carrier-toggle",
+                  )
+            },
+            colors =
+                ButtonDefaults.buttonColors(
+                    containerColor =
+                        if (localProjectionPanelEnabled) LayerPanelSurfaceAlt else LayerPanelWarm,
+                    contentColor = LayerPanelInk,
+                ),
+        ) {
+          Text(
+              if (localProjectionPanelEnabled) {
+                "Disable compositor carrier (diagnostic)"
+              } else {
+                "Restore compositor carrier"
               }
           )
         }

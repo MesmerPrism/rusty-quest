@@ -208,7 +208,14 @@ class SpatialCameraControlProfileTest {
 
     val parsed = SpatialCameraControlProfileContract.parse(document.toString().toByteArray())
     val value = parsed.zoneCompositor
-    assertEquals(PrivateLayerZoneCompositorControls.regionContractRegionOwned, value.regionContractVersion)
+    assertEquals(
+        PrivateLayerZoneCompositorControls.regionContractCompositorOwned,
+        value.regionContractVersion,
+    )
+    assertEquals(
+        PrivateLayerZoneCompositorControls.centerContentProjection,
+        value.centerContentMode,
+    )
     assertEquals(0.04f, value.bufferMinimumWidthUv)
     assertEquals(0.17f, value.bufferMaximumWidthUv)
     assertEquals(0.75f, value.bufferMaximumSpeedMetersPerSecond)
@@ -223,6 +230,26 @@ class SpatialCameraControlProfileTest {
     assertEquals(0.19f, value.outerMaxInsetUv)
     assertEquals(2.2f, value.outerStretchCurve)
     assertEquals(0.65f, value.outerProcessedMix)
+  }
+
+  @Test
+  fun compositorOwnedProfileCarriesCenterVideoBlend() {
+    val document = validProfile()
+    document
+        .getJSONObject("quest_controls")
+        .getJSONObject("zone_compositor")
+        .put("region_contract", "v4")
+        .put("center_content", "projection-video-blend")
+        .put("center_projection_mix", 0.35)
+
+    val value =
+        SpatialCameraControlProfileContract.parse(document.toString().toByteArray()).zoneCompositor
+    assertEquals(
+        PrivateLayerZoneCompositorControls.regionContractCompositorOwned,
+        value.regionContractVersion,
+    )
+    assertEquals(PrivateLayerZoneCompositorControls.centerContentBlend, value.centerContentMode)
+    assertEquals(0.35f, value.centerProjectionMix)
   }
 
   @Test

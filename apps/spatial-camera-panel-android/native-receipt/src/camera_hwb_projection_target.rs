@@ -59,6 +59,8 @@ pub(crate) struct CameraHwbProjectionDepthTargetMapping {
 pub(crate) struct ProjectionZoneCompositorSettings {
     pub(crate) coverage_mode: u32,
     pub(crate) region_contract_version: u32,
+    pub(crate) center_content_mode: u32,
+    pub(crate) center_projection_mix: f32,
     pub(crate) buffer_geometry_mode: u32,
     pub(crate) buffer_static_width_uv: f32,
     pub(crate) buffer_minimum_width_uv: f32,
@@ -122,6 +124,8 @@ impl Default for ProjectionZoneCompositorSettings {
         Self {
             coverage_mode: 0,
             region_contract_version: 1,
+            center_content_mode: 0,
+            center_projection_mix: 1.0,
             buffer_geometry_mode: 0,
             buffer_static_width_uv: 0.08,
             buffer_minimum_width_uv: 0.06,
@@ -199,6 +203,10 @@ impl ProjectionZoneCompositorSettings {
         }
     }
 
+    pub(crate) fn owns_full_carrier(self) -> bool {
+        self.region_contract_version >= 4 && self.outer_content_mode != 2 || self.replaces_video()
+    }
+
     pub(crate) fn synthetic_diagnostic(self) -> bool {
         self.debug_mode == 1
     }
@@ -223,11 +231,20 @@ impl ProjectionZoneCompositorSettings {
     }
 
     pub(crate) fn suppresses_same_surface_video(self, projection_zone_ready: bool) -> bool {
-        self.transparent_underlay_requested() || (projection_zone_ready && self.replaces_video())
+        self.transparent_underlay_requested()
+            || (projection_zone_ready
+                && (self.region_contract_version >= 4 || self.replaces_video()))
     }
 
     pub(crate) fn readable_video_consumer_required(self) -> bool {
-        if self.region_contract_version >= 3 {
+        if self.region_contract_version >= 4 {
+            self.center_content_mode == 1
+                || self.center_content_mode == 2
+                || self.outer_content_mode == 0
+                || (self.buffer_geometry_mode != 0
+                    && (self.buffer_fill_mode == 3
+                        || (self.buffer_fill_mode == 0 && self.outer_content_mode == 0)))
+        } else if self.region_contract_version >= 3 {
             self.outer_content_mode == 0
                 || (self.buffer_geometry_mode != 0
                     && (self.buffer_fill_mode == 3
@@ -287,7 +304,9 @@ impl ProjectionZoneCompositorSettings {
             debug_mode_token(self.debug_mode),
         );
         format!(
-            "{base} projectionZoneInnerApplication={} projectionZoneInnerColorSource={} projectionZoneInnerRegionDriver={} projectionZoneInnerStrengthRgb={:.3},{:.3},{:.3} projectionZoneInnerCycleAmplitudeRgb={:.3},{:.3},{:.3} projectionZoneInnerCycleHzRgb={:.3},{:.3},{:.3} projectionZoneInnerCyclePhaseTurnsRgb={:.3},{:.3},{:.3} projectionZoneOuterApplication={} projectionZoneOuterColorSource={} projectionZoneOuterRegionDriver={} projectionZoneOuterStrengthRgb={:.3},{:.3},{:.3} projectionZoneOuterCycleAmplitudeRgb={:.3},{:.3},{:.3} projectionZoneOuterCycleHzRgb={:.3},{:.3},{:.3} projectionZoneOuterCyclePhaseTurnsRgb={:.3},{:.3},{:.3} projectionZoneOuterTarget={} projectionZoneOuterUnderlaySupported={} projectionZoneOuterAlphaDriver={} projectionZoneSyntheticSourceIsolation={} projectionZoneSyntheticDisplacementSuppressed={} projectionZoneUnsampledOuterData={}",
+            "{base} projectionZoneCenterContent={} projectionZoneCenterProjectionMix={:.3} projectionZoneInnerApplication={} projectionZoneInnerColorSource={} projectionZoneInnerRegionDriver={} projectionZoneInnerStrengthRgb={:.3},{:.3},{:.3} projectionZoneInnerCycleAmplitudeRgb={:.3},{:.3},{:.3} projectionZoneInnerCycleHzRgb={:.3},{:.3},{:.3} projectionZoneInnerCyclePhaseTurnsRgb={:.3},{:.3},{:.3} projectionZoneOuterApplication={} projectionZoneOuterColorSource={} projectionZoneOuterRegionDriver={} projectionZoneOuterStrengthRgb={:.3},{:.3},{:.3} projectionZoneOuterCycleAmplitudeRgb={:.3},{:.3},{:.3} projectionZoneOuterCycleHzRgb={:.3},{:.3},{:.3} projectionZoneOuterCyclePhaseTurnsRgb={:.3},{:.3},{:.3} projectionZoneOuterTarget={} projectionZoneOuterUnderlaySupported={} projectionZoneOuterAlphaDriver={} projectionZoneSyntheticSourceIsolation={} projectionZoneSyntheticDisplacementSuppressed={} projectionZoneUnsampledOuterData={}",
+            center_content_token(self.center_content_mode),
+            self.center_projection_mix,
             blend_application_token(self.inner_application_mode),
             blend_source_choice_token(self.inner_source_choice),
             blend_region_driver_token(self.inner_region_driver),
@@ -353,9 +372,10 @@ pub(crate) struct ProjectionZoneUniform {
     pub(crate) outer_channel_phase: [f32; 4],
     pub(crate) outer_stretch: [f32; 4],
     pub(crate) outer_stretch_options: [f32; 4],
+    pub(crate) center_content: [f32; 4],
 }
 
-const _: () = assert!(std::mem::size_of::<ProjectionZoneUniform>() == 400);
+const _: () = assert!(std::mem::size_of::<ProjectionZoneUniform>() == 416);
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct CameraHwbProjectionZoneFrame {
@@ -540,12 +560,16 @@ pub(crate) fn update_projection_zone_region_layout_settings(
     outer_max_inset_uv: f32,
     outer_stretch_curve: f32,
     outer_processed_mix: f32,
+    center_content_mode: u32,
+    center_projection_mix: f32,
 ) -> ProjectionZoneCompositorSettings {
     let minimum = finite_or(buffer_minimum_width_uv, 0.06).clamp(0.0, 0.2);
     let maximum = finite_or(buffer_maximum_width_uv, 0.18).clamp(minimum, 0.2);
     let outer_edge = finite_or(outer_edge_inset_uv, 0.015).clamp(0.0, 0.49);
     let settings = ProjectionZoneCompositorSettings {
-        region_contract_version: 3,
+        region_contract_version: 4,
+        center_content_mode: center_content_mode.min(3),
+        center_projection_mix: finite_or(center_projection_mix, 1.0).clamp(0.0, 1.0),
         buffer_minimum_width_uv: minimum,
         buffer_maximum_width_uv: maximum,
         buffer_maximum_speed_meters_per_second: finite_or(
@@ -686,6 +710,15 @@ fn outer_content_token(mode: u32) -> &'static str {
         1 => "stretch",
         2 => "transparent",
         _ => "video",
+    }
+}
+
+fn center_content_token(mode: u32) -> &'static str {
+    match mode {
+        1 => "video",
+        2 => "projection-video-blend",
+        3 => "transparent",
+        _ => "projection",
     }
 }
 
@@ -999,7 +1032,7 @@ fn camera_hwb_projection_zone_frame_with_settings(
         user_rects
     };
     let draw_rects = if settings.region_contract_version >= 2 {
-        if settings.replaces_video() {
+        if settings.owns_full_carrier() {
             carrier_rects
         } else {
             let transition_width = if settings.buffer_geometry_mode == 0 {
@@ -1056,7 +1089,12 @@ fn camera_hwb_projection_zone_frame_with_settings(
                         | ((settings.buffer_fill_mode & 0x3) << 11)
                         | ((settings.stretch_extent_mode & 0x1) << 13)
                         | if settings.region_contract_version >= 3 {
-                            1 << 14
+                            (1 << 14)
+                                | if settings.region_contract_version >= 4 {
+                                    1 << 15
+                                } else {
+                                    0
+                                }
                         } else {
                             0
                         }
@@ -1165,6 +1203,12 @@ fn camera_hwb_projection_zone_frame_with_settings(
             settings.outer_processed_mix,
             settings.outer_content_mode as f32,
             settings.buffer_maximum_speed_meters_per_second,
+        ],
+        center_content: [
+            settings.center_content_mode as f32,
+            settings.center_projection_mix,
+            0.0,
+            1.0,
         ],
     };
     CameraHwbProjectionZoneFrame {
@@ -1703,7 +1747,7 @@ mod tests {
             [[0.0, 0.0, 0.5, 1.0], [0.5, 0.0, 0.5, 1.0]],
             settings,
         );
-        assert_eq!(std::mem::size_of::<ProjectionZoneUniform>(), 25 * 16);
+        assert_eq!(std::mem::size_of::<ProjectionZoneUniform>(), 26 * 16);
         assert_eq!(frame.uniform.outer_shape[3], 1.0);
     }
 
@@ -1802,7 +1846,7 @@ mod tests {
             settings,
         );
         let expected_flags = (1 << 8) | (1 << 9) | (2 << 11) | (1 << 13) | 0x08;
-        assert_eq!(std::mem::size_of::<ProjectionZoneUniform>(), 25 * 16);
+        assert_eq!(std::mem::size_of::<ProjectionZoneUniform>(), 26 * 16);
         assert_eq!(frame.uniform.stretch[3], expected_flags as f32);
         assert_eq!(frame.uniform.inner_shape[3], 0.12);
         assert!(frame.settings.active());
@@ -1842,7 +1886,7 @@ mod tests {
             settings,
         );
 
-        assert_eq!(std::mem::size_of::<ProjectionZoneUniform>(), 25 * 16);
+        assert_eq!(std::mem::size_of::<ProjectionZoneUniform>(), 26 * 16);
         assert_ne!((frame.uniform.stretch[3] as u32) & (1 << 14), 0);
         assert_eq!(frame.uniform.outer_stretch, [0.02, 0.19, 2.2, 16.0]);
         assert_eq!(frame.uniform.outer_stretch_options, [2.0, 0.65, 1.0, 0.75]);
@@ -1900,6 +1944,60 @@ mod tests {
     }
 
     #[test]
+    fn compositor_owned_center_video_and_blend_share_the_full_carrier() {
+        let full_video = ProjectionZoneCompositorSettings {
+            region_contract_version: 4,
+            center_content_mode: 1,
+            center_projection_mix: 0.0,
+            buffer_geometry_mode: 0,
+            outer_content_mode: 0,
+            ..ProjectionZoneCompositorSettings::default()
+        };
+        let frame = camera_hwb_projection_zone_frame_with_settings(
+            1.0,
+            0.0,
+            0.0,
+            [[0.0, 0.0, 0.5, 1.0], [0.5, 0.0, 0.5, 1.0]],
+            full_video,
+        );
+        assert_eq!(
+            frame.draw_rects,
+            [[0.0, 0.0, 0.5, 1.0], [0.5, 0.0, 0.5, 1.0]]
+        );
+        assert_eq!(frame.uniform.center_content, [1.0, 0.0, 0.0, 1.0]);
+        assert!(frame.settings.owns_full_carrier());
+        assert!(frame.settings.readable_video_consumer_required());
+        assert!(frame.settings.suppresses_same_surface_video(true));
+        assert!(!frame.settings.suppresses_same_surface_video(false));
+
+        let blend = ProjectionZoneCompositorSettings {
+            center_content_mode: 2,
+            center_projection_mix: 0.35,
+            ..full_video
+        };
+        assert!(blend.readable_video_consumer_required());
+        assert!(blend
+            .marker_fields()
+            .contains("projectionZoneCenterContent=projection-video-blend"));
+        assert!(blend
+            .marker_fields()
+            .contains("projectionZoneCenterProjectionMix=0.350"));
+    }
+
+    #[test]
+    fn compositor_owned_projection_with_transparent_outer_needs_no_video_decoder() {
+        let settings = ProjectionZoneCompositorSettings {
+            region_contract_version: 4,
+            center_content_mode: 0,
+            buffer_geometry_mode: 0,
+            outer_content_mode: 2,
+            ..ProjectionZoneCompositorSettings::default()
+        };
+        assert!(!settings.readable_video_consumer_required());
+        assert!(!settings.owns_full_carrier());
+    }
+
+    #[test]
     fn projection_zone_legacy_lens_request_is_coerced_to_native_edge_trail() {
         let settings = ProjectionZoneCompositorSettings {
             coverage_mode: 1,
@@ -1947,7 +2045,7 @@ mod tests {
 
     #[test]
     fn projection_zone_uniform_layout_is_vec4_aligned() {
-        assert_eq!(std::mem::size_of::<ProjectionZoneUniform>(), 25 * 16);
+        assert_eq!(std::mem::size_of::<ProjectionZoneUniform>(), 26 * 16);
         assert_eq!(std::mem::align_of::<ProjectionZoneUniform>(), 4);
     }
 

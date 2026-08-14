@@ -114,6 +114,8 @@ internal object SpatialCameraControlProfileContract {
     json.requireOnlyKeys(
         "coverage_mode",
         "region_contract",
+        "center_content",
+        "center_projection_mix",
         "buffer_geometry",
         "buffer_static_width_uv",
         "buffer_minimum_width_uv",
@@ -154,12 +156,39 @@ internal object SpatialCameraControlProfileContract {
                 },
             regionContractVersion =
                 if (json.has("region_contract")) {
-                  when (json.requireToken("region_contract", "v2", "v3")) {
+                  when (json.requireToken("region_contract", "v2", "v3", "v4")) {
+                    "v4" -> PrivateLayerZoneCompositorControls.regionContractCompositorOwned
                     "v3" -> PrivateLayerZoneCompositorControls.regionContractRegionOwned
                     else -> PrivateLayerZoneCompositorControls.regionContractIndependent
                   }
                 } else {
                   PrivateLayerZoneCompositorControls.regionContractLegacy
+                },
+            centerContentMode =
+                if (json.has("center_content")) {
+                  when (
+                      json.requireToken(
+                          "center_content",
+                          "projection",
+                          "video",
+                          "projection-video-blend",
+                          "transparent",
+                      )
+                  ) {
+                    "video" -> PrivateLayerZoneCompositorControls.centerContentVideo
+                    "projection-video-blend" ->
+                        PrivateLayerZoneCompositorControls.centerContentBlend
+                    "transparent" -> PrivateLayerZoneCompositorControls.centerContentTransparent
+                    else -> PrivateLayerZoneCompositorControls.centerContentProjection
+                  }
+                } else {
+                  PrivateLayerZoneCompositorControls.centerContentProjection
+                },
+            centerProjectionMix =
+                if (json.has("center_projection_mix")) {
+                  json.requireFloat("center_projection_mix", 0.0f, 1.0f)
+                } else {
+                  1.0f
                 },
             bufferGeometryMode =
                 if (json.has("buffer_geometry")) {
