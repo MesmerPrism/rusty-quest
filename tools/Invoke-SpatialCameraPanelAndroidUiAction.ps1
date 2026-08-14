@@ -34,6 +34,7 @@ param(
         "background-lut-passthrough",
         "profile-save-current",
         "choose-shared-media-folder",
+        "refresh-shared-media-library",
         "environment-depth-recovery-bounded",
         "environment-depth-recovery-aggressive",
         "particle-controls",

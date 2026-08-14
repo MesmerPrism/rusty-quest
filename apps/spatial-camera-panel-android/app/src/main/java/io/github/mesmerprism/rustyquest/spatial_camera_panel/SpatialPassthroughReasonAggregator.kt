@@ -20,11 +20,13 @@ internal data class SpatialPassthroughReasonState(
 /** Keeps visible Background selection independent from the internal depth prerequisite. */
 internal class SpatialPassthroughReasonAggregator(
     private val setSystemPassthrough: (Boolean) -> Unit,
+    private val readSystemPassthrough: () -> Boolean,
     private val setEnvironmentDepthMode: (EnvironmentDepthMode) -> Unit,
     private val marker: (String) -> Unit,
 ) {
   private var reasons = SpatialPassthroughReasons()
   private var appliedSystemPassthrough = false
+  private var systemPassthroughRequestIssued = false
   private var appliedDepthMode = EnvironmentDepthMode.OFF
 
   fun updateVisibleReasons(
@@ -60,18 +62,21 @@ internal class SpatialPassthroughReasonAggregator(
     val requestedDepthMode =
         if (updated.environmentDepth) EnvironmentDepthMode.TEXTURE_ONLY else EnvironmentDepthMode.OFF
 
-    if (updated.systemPassthroughRequired && !appliedSystemPassthrough) {
+    val passthroughReadbackBefore = readSystemPassthrough()
+    if (updated.systemPassthroughRequired && !passthroughReadbackBefore) {
       setSystemPassthrough(true)
-      appliedSystemPassthrough = true
+      systemPassthroughRequestIssued = true
     }
     if (requestedDepthMode != appliedDepthMode) {
       setEnvironmentDepthMode(requestedDepthMode)
       appliedDepthMode = requestedDepthMode
     }
-    if (!updated.systemPassthroughRequired && appliedSystemPassthrough) {
+    if (!updated.systemPassthroughRequired &&
+        (systemPassthroughRequestIssued || passthroughReadbackBefore)) {
       setSystemPassthrough(false)
-      appliedSystemPassthrough = false
+      systemPassthroughRequestIssued = false
     }
+    appliedSystemPassthrough = readSystemPassthrough()
 
     marker(
         "channel=spatial-passthrough-reasons status=applied " +
@@ -81,6 +86,8 @@ internal class SpatialPassthroughReasonAggregator(
             "environmentDepthReason=${updated.environmentDepth} " +
             "previousEnvironmentDepthReason=${previous.environmentDepth} " +
             "systemPassthroughRequested=${updated.systemPassthroughRequired} " +
+            "systemPassthroughRequestIssued=$systemPassthroughRequestIssued " +
+            "systemPassthroughReadback=$appliedSystemPassthrough " +
             "environmentDepthMode=${appliedDepthMode.name} " +
             "backgroundSelectionIndependent=true cachedPassthroughReadbackUsed=false runtimeCrash=false"
     )

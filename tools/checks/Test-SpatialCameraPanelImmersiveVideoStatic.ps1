@@ -328,6 +328,7 @@ Assert-Contains "Immersive validation workflow" $validationWorkflow '"background
 Assert-Contains "Immersive validation workflow" $validationWorkflow '"background-passthrough"'
 Assert-Contains "Immersive validation workflow" $validationWorkflow '"background-lut-passthrough"'
 Assert-Contains "Immersive validation workflow" $validationWorkflow '"choose-shared-media-folder"'
+Assert-Contains "Immersive validation workflow" $validationWorkflow '"refresh-shared-media-library"'
 Assert-Contains "Immersive validation workflow" $validationWorkflow 'bindings.chooseSharedMediaFolder()'
 Assert-Contains "Immersive UI action tool" $uiActionTool '"video-world-anchored"'
 Assert-Contains "Immersive UI action tool" $uiActionTool '"video-head-fixed-border"'
@@ -338,6 +339,7 @@ Assert-Contains "Immersive UI action tool" $uiActionTool '"background-black"'
 Assert-Contains "Immersive UI action tool" $uiActionTool '"background-passthrough"'
 Assert-Contains "Immersive UI action tool" $uiActionTool '"background-lut-passthrough"'
 Assert-Contains "Immersive UI action tool" $uiActionTool '"choose-shared-media-folder"'
+Assert-Contains "Immersive UI action tool" $uiActionTool '"refresh-shared-media-library"'
 Assert-Contains "Immersive coordinator" $coordinator "fun selectPrevious("
 Assert-Contains "Immersive coordinator" $coordinator "fun selectNext("
 Assert-Contains "Immersive coordinator" $coordinator "status=catalog-ready"

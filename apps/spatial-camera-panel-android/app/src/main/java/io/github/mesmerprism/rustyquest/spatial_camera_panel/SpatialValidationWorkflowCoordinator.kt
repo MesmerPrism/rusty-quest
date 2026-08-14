@@ -22,6 +22,7 @@ internal data class SpatialValidationWorkflowBindings(
     val setBackgroundMode: (SpatialBackgroundMode, String) -> Unit,
     val saveStoredProfile: (String) -> SpatialCameraPanelProfileOperationResult,
     val chooseSharedMediaFolder: () -> Unit,
+    val refreshSharedMediaLibrary: () -> Unit,
     val updateEnvironmentDepthRecoveryPolicy:
         (SpatialEnvironmentDepthRecoveryPolicy, String) -> Unit,
     val currentParticleControls: () -> SurfaceParticleControlState,
@@ -39,8 +40,9 @@ internal data class SpatialValidationWorkflowBindings(
 internal class SpatialValidationWorkflowCoordinator(
     private val bindings: SpatialValidationWorkflowBindings,
 ) {
-  fun dispatchIfRequested(intent: Intent?): Boolean =
-      when (intent?.action) {
+  fun dispatchIfRequested(intent: Intent?): Boolean {
+    val handled =
+        when (intent?.action) {
         ACTION_RUN_UI_COMMAND -> {
           runUiCommand(intent)
           true
@@ -51,6 +53,12 @@ internal class SpatialValidationWorkflowCoordinator(
         }
         else -> false
       }
+    if (handled && intent != null) {
+      intent.action = null
+      intent.removeExtra(EXTRA_UI_ACTION)
+    }
+    return handled
+  }
 
   private fun runUiCommand(intent: Intent) {
     val uiAction =
@@ -184,6 +192,7 @@ internal class SpatialValidationWorkflowCoordinator(
           check(result.status == "profile-saved") { result.status }
         }
         "choose-shared-media-folder" -> bindings.chooseSharedMediaFolder()
+        "refresh-shared-media-library" -> bindings.refreshSharedMediaLibrary()
         "environment-depth-recovery-bounded" ->
             bindings.updateEnvironmentDepthRecoveryPolicy(
                 SpatialEnvironmentDepthRecoveryPolicy.Bounded,

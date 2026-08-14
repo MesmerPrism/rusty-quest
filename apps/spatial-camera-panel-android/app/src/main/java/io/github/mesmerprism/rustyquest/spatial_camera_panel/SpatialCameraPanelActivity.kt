@@ -90,6 +90,9 @@ import com.meta.spatial.vr.VrInputSystemType
 import java.io.File
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -192,6 +195,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
   private var privatePanelInputPolicyApplied: Boolean = false
   private var privatePanelLockedExtensionInputApplied: Boolean? = null
   private var diagnosticPassthroughLutRequested: Boolean = false
+  private var spatialBackgroundRetryJob: Job? = null
   private var privateLayerPanelEntity: Entity? = null
   private var privateLayerPanelSceneObject: PanelSceneObject? = null
   private var surfaceTargetId: String = SpatialValidationCommandModule.DEFAULT_SURFACE_TARGET_ID
@@ -1017,6 +1021,10 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             },
             saveStoredProfile = ::saveStoredProfile,
             chooseSharedMediaFolder = ::chooseSharedMediaFolderFromValidation,
+            refreshSharedMediaLibrary = {
+              refreshSharedMediaLibraryFromPanel()
+              Unit
+            },
             updateEnvironmentDepthRecoveryPolicy = { policy, source ->
               cameraHwbProjectionDepthPrerequisiteCoordinator.updateEnvironmentDepthRecoveryPolicy(
                   policy,
@@ -1408,6 +1416,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
   private val passthroughReasonAggregator by lazy(LazyThreadSafetyMode.NONE) {
     SpatialPassthroughReasonAggregator(
         setSystemPassthrough = scene::enablePassthrough,
+        readSystemPassthrough = scene::isSystemPassthroughEnabled,
         setEnvironmentDepthMode = scene::setEnvironmentDepthMode,
         marker = ::marker,
     )
@@ -1795,6 +1804,9 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     if (productPolicy.cameraPanelRoutesEnabled) {
       nativeInteropCoordinator.loadReceiptLibrary()
       if (nativeInteropCoordinator.receiptLibraryLoaded) {
+        nativeSetMarkerFilePersistenceEnabled(
+            activityReadOptionalBooleanSystemProperty(NATIVE_MARKER_FILE_ENABLED_PROPERTY) == true
+        )
         val cameraReplayCapture = SpatialCameraReplayCaptureModule.resolve(this)
         val cameraReplayCaptureReceipt =
             nativeConfigureCameraReplayCapture(
@@ -1962,6 +1974,19 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
         }
     startActivityForResult(chooser, SHARED_MEDIA_FOLDER_REQUEST_CODE)
   }
+
+  private fun refreshSharedMediaLibraryFromPanel(): SharedOfflineImmersiveMediaLibrarySnapshot =
+      sharedMediaLibraryClient.refresh { snapshot ->
+        marker(
+            "channel=spatial-immersive-video status=shared-media-library-refreshed " +
+                "accessible=${snapshot.accessible} writable=${snapshot.writable} " +
+                "plainVideoTaxonomyReady=${snapshot.plainVideoTaxonomyReady} " +
+                "packCount=${snapshot.packCount} plainVideoCount=${snapshot.plainVideoCount} " +
+                "rejectedPlainVideoCount=${snapshot.rejectedPlainVideoCount} " +
+                "activityRecreatedForCatalog=true rawFolderUriExposed=false"
+        )
+        recreate()
+      }
 
   override fun dispatchKeyEvent(event: KeyEvent): Boolean {
     if (!controllerRouteInputsEnabled()) {
@@ -2232,7 +2257,13 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
       source: String,
   ): SpatialPassthroughLutUpdate {
     val effects = SpatialBackgroundModePolicy.resolve(mode, diagnosticPassthroughLutRequested)
-    passthroughReasonAggregator.updateVisibleReasons(mode, diagnosticPassthroughLutRequested, source)
+    val passthroughState =
+        passthroughReasonAggregator.updateVisibleReasons(
+            mode,
+            diagnosticPassthroughLutRequested,
+            source,
+        )
+    scheduleSpatialBackgroundReadbackRetry(mode, source, passthroughState)
     val update =
         spatialPassthroughLutCoordinator.update(effects.passthroughLutRequested, source)
     marker(
@@ -2244,6 +2275,40 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
         )
     )
     return update
+  }
+
+  private fun scheduleSpatialBackgroundReadbackRetry(
+      mode: SpatialBackgroundMode,
+      source: String,
+      initialState: SpatialPassthroughReasonState,
+  ) {
+    spatialBackgroundRetryJob?.cancel()
+    spatialBackgroundRetryJob = null
+    if (mode == SpatialBackgroundMode.Black || initialState.systemPassthroughEnabled) return
+
+    spatialBackgroundRetryJob =
+        activityScope.launch {
+          var state = initialState
+          var attempt = 0
+          while (!state.systemPassthroughEnabled &&
+              attempt < SPATIAL_BACKGROUND_PASSTHROUGH_MAX_RETRIES) {
+            delay(SPATIAL_BACKGROUND_PASSTHROUGH_RETRY_MS)
+            if (immersiveVideoPanelCoordinator.sessionSnapshot().backgroundMode != mode) {
+              return@launch
+            }
+            attempt += 1
+            state =
+                passthroughReasonAggregator.reconcile(
+                    "$source-readback-retry-$attempt"
+                )
+          }
+          marker(
+              "channel=spatial-background status=passthrough-readback-settled " +
+                  "source=${activityMarkerToken(source)} backgroundMode=${mode.token} " +
+                  "attempts=$attempt systemPassthroughReadback=" +
+                  "${state.systemPassthroughEnabled} boundedRetry=true runtimeCrash=false"
+          )
+        }
   }
 
   private fun setImmersiveVideoPresentationMode(
@@ -2777,6 +2842,8 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
   }
 
   override fun onDestroy() {
+    spatialBackgroundRetryJob?.cancel()
+    spatialBackgroundRetryJob = null
     connectionHubSurfaceClient?.close()
     connectionHubSurfaceClient = null
     connectionHubWearerControlClient.close()
@@ -2840,7 +2907,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
                     videoSession = immersiveVideoPanelCoordinator::sessionSnapshot,
                     sharedMediaLibraryStatus = sharedMediaLibraryClient::status,
                     observeSharedMediaLibrary = sharedMediaLibraryClient::observe,
-                    refreshSharedMediaLibrary = sharedMediaLibraryClient::refresh,
+                    refreshSharedMediaLibrary = ::refreshSharedMediaLibraryFromPanel,
                     connectionHubStatus = connectionHubWearerControlClient::status,
                     observeConnectionHub = connectionHubWearerControlClient::observe,
                     refreshConnectionHub = connectionHubWearerControlClient::refresh,
@@ -4018,6 +4085,8 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
       surfaceValid: Boolean,
   ): Long
 
+  private external fun nativeSetMarkerFilePersistenceEnabled(enabled: Boolean)
+
   private external fun nativeStartSpatialNativePassthrough(
       openXrInstanceHandle: Long,
       openXrSessionHandle: Long,
@@ -4465,8 +4534,12 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     private const val ACTIVITY_MARKERS_FILE = "spatial_camera_panel_activity_markers.log"
     private const val ACTIVITY_MARKER_FILE_ENABLED_PROPERTY =
         "debug.rustyquest.spatial_camera_panel.activity_marker_file.enabled"
+    private const val NATIVE_MARKER_FILE_ENABLED_PROPERTY =
+        "debug.rustyquest.spatial_camera_panel.native_marker_file.enabled"
     private const val CONTROL_PROFILE_HOTLOAD_ENABLED_PROPERTY =
         "debug.rustyquest.spatial_camera_panel.control_profile_hotload.enabled"
+    private const val SPATIAL_BACKGROUND_PASSTHROUGH_MAX_RETRIES = 12
+    private const val SPATIAL_BACKGROUND_PASSTHROUGH_RETRY_MS = 250L
     private const val PANEL_SHELL_VISIBLE_PROPERTY =
         "debug.rustyquest.spatial.panel_shell.visible"
     private val SUPPORTED_SURFACE_TARGET_IDS =

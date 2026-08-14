@@ -7,6 +7,19 @@ import org.junit.Test
 
 class SharedOfflineImmersiveMediaLibraryTest {
   @Test
+  fun questDocumentDirectoriesAcceptCanonicalMimeProviderMimeAndCreateFlag() {
+    assertTrue(
+        sharedDocumentRepresentsDirectory(
+            "vnd.android.document/directory",
+            0L,
+        )
+    )
+    assertTrue(sharedDocumentRepresentsDirectory("inode/directory", 0L))
+    assertTrue(sharedDocumentRepresentsDirectory("", 1L shl 3))
+    assertFalse(sharedDocumentRepresentsDirectory("video/mp4", 0L))
+  }
+
+  @Test
   fun localInitialStatusRequiresExplicitRefreshWithoutClaimingProviderAccess() {
     val configured = sharedOfflineImmersiveMediaInitialSnapshot(configured = true)
     assertTrue(configured.configured)

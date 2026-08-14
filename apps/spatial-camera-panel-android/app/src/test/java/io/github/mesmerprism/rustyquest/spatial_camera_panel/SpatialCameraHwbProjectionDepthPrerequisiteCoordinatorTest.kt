@@ -10,6 +10,8 @@ class SpatialCameraHwbProjectionDepthPrerequisiteCoordinatorTest {
   fun unusedDepthProviderNeverStartsAndActiveProviderStopsAtConsumerBoundary() {
     var starts = 0
     var stops = 0
+    var passthroughStarts = 0
+    var passthroughStops = 0
     var frameAcquires = 0
     val markers = ArrayList<String>()
     val coordinator =
@@ -30,8 +32,14 @@ class SpatialCameraHwbProjectionDepthPrerequisiteCoordinatorTest {
                 },
                 requiredOpenXrExtensions = { "XR_META_environment_depth" },
                 projectionEntityPresent = { true },
-                startNativePassthrough = { _, _, _ -> 0L },
-                stopNativePassthrough = { 0L },
+                startNativePassthrough = { _, _, _ ->
+                  passthroughStarts += 1
+                  1L shl 10
+                },
+                stopNativePassthrough = {
+                  passthroughStops += 1
+                  1L
+                },
                 startNativeEnvironmentDepth = { _, _, _ ->
                   starts += 1
                   (1L shl 22) or (1L shl 23)
@@ -45,7 +53,9 @@ class SpatialCameraHwbProjectionDepthPrerequisiteCoordinatorTest {
         )
 
     assertEquals(0L, coordinator.startEnvironmentDepth("unused"))
+    assertEquals(0L, coordinator.startPassthrough("unused"))
     assertEquals(0, starts)
+    assertEquals(0, passthroughStarts)
     coordinator.acquireEnvironmentDepthFrameIfRequired(1_000L) { _, _ ->
       frameAcquires += 1
       1L
@@ -55,6 +65,7 @@ class SpatialCameraHwbProjectionDepthPrerequisiteCoordinatorTest {
     coordinator.updateEnvironmentDepthConsumer(true, "depth-layer")
     coordinator.startEnvironmentDepth("depth-layer-retained")
     assertEquals(1, starts)
+    assertEquals(1, passthroughStarts)
     coordinator.acquireEnvironmentDepthFrameIfRequired(2_000L) { _, _ ->
       frameAcquires += 1
       1L
@@ -63,12 +74,14 @@ class SpatialCameraHwbProjectionDepthPrerequisiteCoordinatorTest {
 
     coordinator.updateEnvironmentDepthConsumer(false, "analysis-layer")
     assertEquals(1, stops)
+    assertEquals(1, passthroughStops)
     coordinator.acquireEnvironmentDepthFrameIfRequired(3_000L) { _, _ ->
       frameAcquires += 1
       1L
     }
     assertEquals(1, frameAcquires)
     assertTrue(markers.any { it.contains("environmentDepthZeroContributionWorkSkipped=true") })
+    assertTrue(markers.any { it.contains("systemPassthroughConflictAvoided=true") })
     assertFalse(markers.any { it.contains("runtimeCrash=true") })
   }
 

@@ -10,10 +10,15 @@ class SpatialPassthroughReasonAggregatorTest {
   @Test
   fun blackRetainsOpaqueSelectionWhileDepthKeepsPassthroughInternally() {
     val passthroughWrites = mutableListOf<Boolean>()
+    var passthroughReadback = false
     val depthWrites = mutableListOf<EnvironmentDepthMode>()
     val aggregator =
         SpatialPassthroughReasonAggregator(
-            setSystemPassthrough = passthroughWrites::add,
+            setSystemPassthrough = { enabled ->
+              passthroughWrites += enabled
+              passthroughReadback = enabled
+            },
+            readSystemPassthrough = { passthroughReadback },
             setEnvironmentDepthMode = depthWrites::add,
             marker = {},
         )
@@ -32,9 +37,14 @@ class SpatialPassthroughReasonAggregatorTest {
   @Test
   fun visiblePassthroughSurvivesDepthDisableAndAllReasonsClearInOrder() {
     val writes = mutableListOf<String>()
+    var passthroughReadback = false
     val aggregator =
         SpatialPassthroughReasonAggregator(
-            setSystemPassthrough = { writes += "passthrough=$it" },
+            setSystemPassthrough = {
+              writes += "passthrough=$it"
+              passthroughReadback = it
+            },
+            readSystemPassthrough = { passthroughReadback },
             setEnvironmentDepthMode = { writes += "depth=${it.name}" },
             marker = {},
         )
@@ -56,9 +66,14 @@ class SpatialPassthroughReasonAggregatorTest {
   @Test
   fun projectionLifecycleReconcileDoesNotCreateAnUntrackedReason() {
     val passthroughWrites = mutableListOf<Boolean>()
+    var passthroughReadback = false
     val aggregator =
         SpatialPassthroughReasonAggregator(
-            setSystemPassthrough = passthroughWrites::add,
+            setSystemPassthrough = { enabled ->
+              passthroughWrites += enabled
+              passthroughReadback = enabled
+            },
+            readSystemPassthrough = { passthroughReadback },
             setEnvironmentDepthMode = {},
             marker = {},
         )
@@ -71,5 +86,25 @@ class SpatialPassthroughReasonAggregatorTest {
     val depthRequired = aggregator.reconcile("projection-on-depth")
     assertTrue(depthRequired.systemPassthroughEnabled)
     assertEquals(listOf(true), passthroughWrites)
+  }
+
+  @Test
+  fun failedEnableReadbackIsRetriedInsteadOfCachedAsApplied() {
+    val passthroughWrites = mutableListOf<Boolean>()
+    val aggregator =
+        SpatialPassthroughReasonAggregator(
+            setSystemPassthrough = passthroughWrites::add,
+            readSystemPassthrough = { false },
+            setEnvironmentDepthMode = {},
+            marker = {},
+        )
+
+    val initial =
+        aggregator.updateVisibleReasons(SpatialBackgroundMode.Passthrough, false, "initial")
+    val retry = aggregator.reconcile("retry")
+
+    assertFalse(initial.systemPassthroughEnabled)
+    assertFalse(retry.systemPassthroughEnabled)
+    assertEquals(listOf(true, true), passthroughWrites)
   }
 }

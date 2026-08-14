@@ -94,13 +94,20 @@ internal object SharedOfflineImmersiveMediaLibrary {
   fun statusWithoutScan(context: Context): SharedOfflineImmersiveMediaLibrarySnapshot =
       sharedOfflineImmersiveMediaInitialSnapshot(persistedTreeUri(context) != null)
 
-  fun snapshot(context: Context): SharedOfflineImmersiveMediaLibrarySnapshot {
+  fun snapshot(
+      context: Context,
+      forceRefresh: Boolean = false,
+  ): SharedOfflineImmersiveMediaLibrarySnapshot {
     val treeUri = persistedTreeUri(context)
         ?: return sharedOfflineImmersiveMediaInitialSnapshot(configured = false)
     return runCatching {
           val tree = SharedDocumentTree(context, treeUri)
           val packIds = tree.packIds()
-          val plain = SharedPlainImmersiveMediaLibrary.discover(context)
+          val plain =
+              SharedPlainImmersiveMediaLibrary.discover(
+                  context,
+                  forceRefresh = forceRefresh,
+              )
           val writable = hasPersistedWritePermission(context, treeUri)
           SharedOfflineImmersiveMediaLibrarySnapshot(
               configured = true,
@@ -187,6 +194,7 @@ internal object SharedOfflineImmersiveMediaLibrary {
                 DocumentsContract.buildDocumentUriUsingTree(treeUri, treeDocumentId)
             ),
             mimeType = DocumentsContract.Document.MIME_TYPE_DIR,
+            flags = DocumentsContract.Document.FLAG_DIR_SUPPORTS_CREATE.toLong(),
             sizeBytes = 0L,
         )
 
@@ -197,7 +205,7 @@ internal object SharedOfflineImmersiveMediaLibrary {
       val packsRoot = packsRoot() ?: return emptyList()
       return children(packsRoot)
           .asSequence()
-          .filter { it.mimeType == DocumentsContract.Document.MIME_TYPE_DIR }
+          .filter(SharedDocument::isDirectory)
           .map { it.name.trim().lowercase() }
           .filter(packIdPattern::matches)
           .filter { packId ->
@@ -214,9 +222,9 @@ internal object SharedOfflineImmersiveMediaLibrary {
       val plainRoot = plainRoot() ?: return false
       return PlainImmersiveMediaPolicy.SHAPE_DIRECTORY_NAMES.all { shapeName ->
         val shape = child(plainRoot, shapeName) ?: return@all false
-        shape.mimeType == DocumentsContract.Document.MIME_TYPE_DIR &&
+        shape.isDirectory &&
             PlainImmersiveMediaPolicy.STEREO_DIRECTORY_NAMES.all { stereoName ->
-              child(shape, stereoName)?.mimeType == DocumentsContract.Document.MIME_TYPE_DIR
+              child(shape, stereoName)?.isDirectory == true
             }
       }
     }
@@ -241,7 +249,7 @@ internal object SharedOfflineImmersiveMediaLibrary {
       if (!packIdPattern.matches(packId)) return null
       val packsRoot = packsRoot() ?: return null
       val packDirectory = child(packsRoot, packId)
-          ?.takeIf { it.mimeType == DocumentsContract.Document.MIME_TYPE_DIR }
+          ?.takeIf(SharedDocument::isDirectory)
           ?: return null
       val manifest = child(packDirectory, "manifest.json") ?: return null
       return SharedDocumentPackSource(packDirectory, manifest)
@@ -250,18 +258,22 @@ internal object SharedOfflineImmersiveMediaLibrary {
     private fun packsRoot(): SharedDocument? {
       if (root.name == PACKS_DIRECTORY_NAME) return root
       return child(root, PACKS_DIRECTORY_NAME)
-          ?.takeIf { it.mimeType == DocumentsContract.Document.MIME_TYPE_DIR }
+          ?.takeIf(SharedDocument::isDirectory)
+          ?: fixedExternalStorageDirectory(listOf(PACKS_DIRECTORY_NAME))
     }
 
     private fun plainRoot(): SharedDocument? {
       if (root.name == PlainImmersiveMediaPolicy.ROOT_DIRECTORY_NAME) return root
       return child(root, PlainImmersiveMediaPolicy.ROOT_DIRECTORY_NAME)
-          ?.takeIf { it.mimeType == DocumentsContract.Document.MIME_TYPE_DIR }
+          ?.takeIf(SharedDocument::isDirectory)
+          ?: fixedExternalStorageDirectory(
+              listOf(PlainImmersiveMediaPolicy.ROOT_DIRECTORY_NAME)
+          )
     }
 
     private fun ensureDirectory(parent: SharedDocument, name: String): SharedDocument {
       child(parent, name)?.let { existing ->
-        if (existing.mimeType != DocumentsContract.Document.MIME_TYPE_DIR) {
+        if (!existing.isDirectory) {
           throw IOException("plain-video-taxonomy-name-conflict")
         }
         return existing
@@ -279,12 +291,44 @@ internal object SharedOfflineImmersiveMediaLibrary {
           uri = DocumentsContract.buildDocumentUriUsingTree(treeUri, documentId),
           name = name,
           mimeType = DocumentsContract.Document.MIME_TYPE_DIR,
+          flags = DocumentsContract.Document.FLAG_DIR_SUPPORTS_CREATE.toLong(),
           sizeBytes = 0L,
       )
     }
 
     private fun child(parent: SharedDocument, name: String): SharedDocument? =
-        children(parent).firstOrNull { it.name == name }
+        children(parent).firstOrNull {
+          it.name.trim().equals(name.trim(), ignoreCase = true)
+        }
+            ?: fixedExternalStorageChild(parent, name)
+
+    private fun fixedExternalStorageChild(
+        parent: SharedDocument,
+        name: String,
+    ): SharedDocument? {
+      if (treeUri.authority != EXTERNAL_STORAGE_DOCUMENTS_AUTHORITY ||
+          name.isBlank() ||
+          '/' in name ||
+          '\\' in name) {
+        return null
+      }
+      val documentId = "${parent.documentId.trimEnd('/')}/$name"
+      val uri = DocumentsContract.buildDocumentUriUsingTree(treeUri, documentId)
+      return runCatching { queryDocument(documentId, uri) }.getOrNull()
+    }
+
+    private fun fixedExternalStorageDirectory(relativeSegments: List<String>): SharedDocument? {
+      if (treeUri.authority != EXTERNAL_STORAGE_DOCUMENTS_AUTHORITY ||
+          relativeSegments.any { it.isBlank() || '/' in it || '\\' in it }) {
+        return null
+      }
+      val documentId =
+          (listOf(treeDocumentId.trimEnd('/')) + relativeSegments).joinToString("/")
+      val uri = DocumentsContract.buildDocumentUriUsingTree(treeUri, documentId)
+      return runCatching { queryDocument(documentId, uri) }
+          .getOrNull()
+          ?.takeIf(SharedDocument::isDirectory)
+    }
 
     private fun children(parent: SharedDocument): List<SharedDocument> {
       val childrenUri =
@@ -294,13 +338,15 @@ internal object SharedOfflineImmersiveMediaLibrary {
               DocumentsContract.Document.COLUMN_DOCUMENT_ID,
               DocumentsContract.Document.COLUMN_DISPLAY_NAME,
               DocumentsContract.Document.COLUMN_MIME_TYPE,
+              DocumentsContract.Document.COLUMN_FLAGS,
               DocumentsContract.Document.COLUMN_SIZE,
           )
       return resolver.query(childrenUri, projection, null, null, null)?.use { cursor ->
         val idColumn = cursor.getColumnIndexOrThrow(projection[0])
         val nameColumn = cursor.getColumnIndexOrThrow(projection[1])
         val typeColumn = cursor.getColumnIndexOrThrow(projection[2])
-        val sizeColumn = cursor.getColumnIndexOrThrow(projection[3])
+        val flagsColumn = cursor.getColumnIndexOrThrow(projection[3])
+        val sizeColumn = cursor.getColumnIndexOrThrow(projection[4])
         buildList {
           while (cursor.`moveToNext`()) {
             val documentId = cursor.getString(idColumn)
@@ -310,12 +356,34 @@ internal object SharedOfflineImmersiveMediaLibrary {
                     uri = DocumentsContract.buildDocumentUriUsingTree(treeUri, documentId),
                     name = cursor.getString(nameColumn).orEmpty(),
                     mimeType = cursor.getString(typeColumn).orEmpty(),
+                    flags = if (cursor.isNull(flagsColumn)) 0L else cursor.getLong(flagsColumn),
                     sizeBytes = if (cursor.isNull(sizeColumn)) -1L else cursor.getLong(sizeColumn),
                 )
             )
           }
         }
       } ?: emptyList()
+    }
+
+    private fun queryDocument(documentId: String, uri: Uri): SharedDocument {
+      val projection =
+          arrayOf(
+              DocumentsContract.Document.COLUMN_DISPLAY_NAME,
+              DocumentsContract.Document.COLUMN_MIME_TYPE,
+              DocumentsContract.Document.COLUMN_FLAGS,
+              DocumentsContract.Document.COLUMN_SIZE,
+          )
+      return resolver.query(uri, projection, null, null, null)?.use { cursor ->
+        if (!cursor.moveToFirst()) throw IOException("shared-media-document-unreadable")
+        SharedDocument(
+            documentId = documentId,
+            uri = uri,
+            name = cursor.getString(0).orEmpty(),
+            mimeType = cursor.getString(1).orEmpty(),
+            flags = if (cursor.isNull(2)) 0L else cursor.getLong(2),
+            sizeBytes = if (cursor.isNull(3)) -1L else cursor.getLong(3),
+        )
+      } ?: throw IOException("shared-media-document-unreadable")
     }
 
     private fun queryName(uri: Uri): String =
@@ -340,8 +408,7 @@ internal object SharedOfflineImmersiveMediaLibrary {
 
       override fun chunkSource(name: String): OfflineImmersiveMediaCiphertextSource? {
         val document = child(packDirectory, name) ?: return null
-        if (document.mimeType == DocumentsContract.Document.MIME_TYPE_DIR ||
-            document.sizeBytes < 0L) {
+        if (document.isDirectory || document.sizeBytes < 0L) {
           return null
         }
         return object : OfflineImmersiveMediaCiphertextSource {
@@ -368,6 +435,13 @@ internal object SharedOfflineImmersiveMediaLibrary {
       val uri: Uri,
       val name: String,
       val mimeType: String,
+      val flags: Long,
       val sizeBytes: Long,
-  )
+  ) {
+    val isDirectory: Boolean
+      get() = sharedDocumentRepresentsDirectory(mimeType, flags)
+  }
+
+  private const val EXTERNAL_STORAGE_DOCUMENTS_AUTHORITY =
+      "com.android.externalstorage.documents"
 }

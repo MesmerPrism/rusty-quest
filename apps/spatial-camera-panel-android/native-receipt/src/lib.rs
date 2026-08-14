@@ -6,6 +6,7 @@ use std::io::Write;
 use std::os::raw::c_int;
 use std::os::raw::{c_char, c_void};
 use std::ptr;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use ash::vk;
@@ -85,6 +86,7 @@ mod surface_particle_projection;
 const ANDROID_LOG_INFO: c_int = 4;
 const NATIVE_MARKER_FILE: &str =
     "/data/data/io.github.mesmerprism.rustyquest.spatial_camera_panel/files/spatial_camera_panel_native_markers.log";
+static NATIVE_MARKER_FILE_PERSISTENCE_ENABLED: AtomicBool = AtomicBool::new(false);
 const RECEIPT_RECEIVED: i64 = 1 << 0;
 const RECEIPT_OPENXR_INSTANCE_NONZERO: i64 = 1 << 1;
 const RECEIPT_OPENXR_SESSION_NONZERO: i64 = 1 << 2;
@@ -111,6 +113,16 @@ const RECEIPT_VK_OBJECTS_DESTROYED: i64 = 1 << 20;
 #[link(name = "log")]
 extern "C" {
     fn __android_log_print(prio: c_int, tag: *const c_char, fmt: *const c_char, ...) -> c_int;
+}
+
+#[no_mangle]
+#[allow(non_snake_case)]
+pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1panel_SpatialCameraPanelActivity_nativeSetMarkerFilePersistenceEnabled(
+    _env: *mut c_void,
+    _thiz: *mut c_void,
+    enabled: u8,
+) {
+    NATIVE_MARKER_FILE_PERSISTENCE_ENABLED.store(enabled != 0, Ordering::Release);
 }
 
 #[no_mangle]
@@ -771,6 +783,9 @@ pub(crate) fn android_log_info(_tag: &str, message: &str) {
 }
 
 fn append_native_marker_file(message: &str) {
+    if !NATIVE_MARKER_FILE_PERSISTENCE_ENABLED.load(Ordering::Acquire) {
+        return;
+    }
     let timestamp_ms = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_millis())

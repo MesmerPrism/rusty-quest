@@ -23,6 +23,7 @@ internal data class SpatialCameraHwbProjectionDepthPrerequisiteBindings(
 internal class SpatialCameraHwbProjectionDepthPrerequisiteCoordinator(
     private val bindings: SpatialCameraHwbProjectionDepthPrerequisiteBindings,
 ) {
+  private var nativePassthroughStartMask = 0L
   private var environmentDepthStartMask = 0L
   private var environmentDepthConsumerRequired = false
   @Volatile
@@ -66,6 +67,16 @@ internal class SpatialCameraHwbProjectionDepthPrerequisiteCoordinator(
     if (!bindings.routeActive()) {
       return 0L
     }
+    if (!environmentDepthConsumerRequired) {
+      bindings.marker(
+          "channel=spatial-native-passthrough status=start-skipped " +
+              "source=${activityMarkerToken(source)} environmentDepthConsumerRequired=false " +
+              "nativePassthroughRequested=false nativePassthroughLayerActive=false " +
+              "systemPassthroughConflictAvoided=true zeroContributionWorkSkipped=true runtimeCrash=false"
+      )
+      nativePassthroughStartMask = 0L
+      return 0L
+    }
     if (bindings.environmentDepthOwner() == SpatialEnvironmentDepthOwner.SpatialSdkApiLayer) {
       bindings.marker(
           "channel=spatial-environment-depth status=native-passthrough-skipped " +
@@ -73,6 +84,15 @@ internal class SpatialCameraHwbProjectionDepthPrerequisiteCoordinator(
               "passthroughOwner=spatial-sdk-reason-aggregator nativeFbPassthroughStarted=false runtimeCrash=false"
       )
       return 0L
+    }
+    if (SpatialOpenXrRouteModule.nativePassthroughLayerActive(nativePassthroughStartMask)) {
+      bindings.marker(
+          "channel=spatial-native-passthrough status=start-retained " +
+              "source=${activityMarkerToken(source)} environmentDepthConsumerRequired=true " +
+              "nativePassthroughRequested=true nativePassthroughLayerActive=true " +
+              "nativePassthroughStartMask=$nativePassthroughStartMask runtimeCrash=false"
+      )
+      return nativePassthroughStartMask
     }
     val nativeState = bindings.nativeState()
     if (!nativeState.receiptLibraryLoaded) {
@@ -117,6 +137,7 @@ internal class SpatialCameraHwbProjectionDepthPrerequisiteCoordinator(
               )
               0L
             }
+    nativePassthroughStartMask = mask
     bindings.marker(
         SpatialOpenXrRouteModule.nativePassthroughStartRequestedMarker(
             source,
@@ -246,6 +267,9 @@ internal class SpatialCameraHwbProjectionDepthPrerequisiteCoordinator(
       bindings.updateSdkEnvironmentDepthDemand(required, source)
     }
     if (required) {
+      if (owner.ownsLegacyProvider) {
+        startPassthrough(source)
+      }
       val mask = startEnvironmentDepth(source)
       bindings.marker(
           "channel=spatial-environment-depth status=consumer-policy-applied " +
@@ -270,6 +294,16 @@ internal class SpatialCameraHwbProjectionDepthPrerequisiteCoordinator(
         } else {
           0L
         }
+    val passthroughStopRequested = nativePassthroughStartMask != 0L
+    val passthroughStopMask =
+        if (passthroughStopRequested &&
+            owner.ownsLegacyProvider &&
+            bindings.nativeState().receiptLibraryLoaded) {
+          runCatching { bindings.stopNativePassthrough() }.getOrDefault(0L)
+        } else {
+          0L
+        }
+    nativePassthroughStartMask = 0L
     environmentDepthStartMask = 0L
     environmentDepthLastValidFrameObserved = false
     environmentDepthLastRecoverableError = "none"
@@ -279,7 +313,9 @@ internal class SpatialCameraHwbProjectionDepthPrerequisiteCoordinator(
             "source=${activityMarkerToken(source)} previousEnvironmentDepthConsumerRequired=$previousRequired " +
             "environmentDepthConsumerRequired=false environmentDepthProviderRequested=false " +
             "environmentDepthProviderState=stopped environmentDepthStopRequested=$stopRequested " +
-            "environmentDepthStopMask=$stopMask environmentDepthZeroContributionWorkSkipped=true " +
+            "environmentDepthStopMask=$stopMask nativePassthroughStopRequested=$passthroughStopRequested " +
+            "nativePassthroughStopMask=$passthroughStopMask systemPassthroughConflictAvoided=true " +
+            "environmentDepthZeroContributionWorkSkipped=true " +
             "runtimeCrash=false"
     )
   }
@@ -351,6 +387,7 @@ internal class SpatialCameraHwbProjectionDepthPrerequisiteCoordinator(
 
   fun stop() {
     environmentDepthConsumerRequired = false
+    nativePassthroughStartMask = 0L
     environmentDepthStartMask = 0L
     environmentDepthLastValidFrameObserved = false
     environmentDepthLastRecoverableError = "none"

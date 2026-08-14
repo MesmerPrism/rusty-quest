@@ -48,7 +48,9 @@ internal class SharedMediaLibrarySnapshotClient(
   }
 
   /** A user-requested, coalesced full scan on a background-priority thread. */
-  fun refresh(): SharedOfflineImmersiveMediaLibrarySnapshot {
+  fun refresh(
+      onSuccess: ((SharedOfflineImmersiveMediaLibrarySnapshot) -> Unit)? = null,
+  ): SharedOfflineImmersiveMediaLibrarySnapshot {
     if (closed.get() || !latestSnapshot.configured) return latestSnapshot
     if (!refreshInFlight.compareAndSet(false, true)) return latestSnapshot
     val pending = latestSnapshot.copy(status = "refresh-pending")
@@ -56,7 +58,15 @@ internal class SharedMediaLibrarySnapshotClient(
     if (!postToWorker {
           try {
             if (!closed.get()) {
-              publish(SharedOfflineImmersiveMediaLibrary.snapshot(appContext))
+              val snapshot =
+                  SharedOfflineImmersiveMediaLibrary.snapshot(
+                      appContext,
+                      forceRefresh = true,
+                  )
+              publish(snapshot)
+              if (onSuccess != null) {
+                mainHandler.post { if (!closed.get()) onSuccess(snapshot) }
+              }
             }
           } finally {
             refreshInFlight.set(false)
