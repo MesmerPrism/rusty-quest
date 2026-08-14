@@ -2891,10 +2891,19 @@ Assert-Contains "Immersive video panel coordinator" $immersiveVideoPanelCoordina
 Assert-Contains "Immersive video panel coordinator" $immersiveVideoPanelCoordinator "fun selectNext("
 Assert-Contains "Immersive video panel coordinator" $immersiveVideoPanelCoordinator "fun setPlaybackEnabled("
 Assert-Contains "Immersive video panel coordinator" $immersiveVideoPanelCoordinator "playbackEnabled = effectiveEnabled"
+Assert-Contains "Immersive video panel coordinator" $immersiveVideoPanelCoordinator "fun discoverCatalogForRefresh()"
+Assert-Contains "Immersive video panel coordinator" $immersiveVideoPanelCoordinator "fun applyRefreshedCatalog("
+Assert-Contains "Immersive video panel coordinator" $immersiveVideoPanelCoordinator "List(MAX_SESSION_PACKS) { View.generateViewId() }"
+Assert-Contains "Immersive video panel coordinator" $immersiveVideoPanelCoordinator "activityRestarted=false fixedRegistrationCapacity=`$MAX_SESSION_PACKS"
 Assert-Contains "Immersive video panel coordinator" $immersiveVideoPanelCoordinator "BuildConfig.IMMERSIVE_VIDEO_DEFAULT_ENABLED"
 Assert-Contains "Immersive video panel coordinator" $immersiveVideoPanelCoordinator "BuildConfig.IMMERSIVE_VIDEO_DEFAULT_OFFLINE_PACK_ID"
 Assert-Contains "Activity" $activity "directImmersiveVideoPanelRequested()"
 Assert-Contains "Activity" $activity "setImmersiveVideoPlaybackEnabled("
+Assert-Contains "Activity" $activity 'passthroughReasonAggregator.reconcile("scene-ready-always-on")'
+Assert-Contains "Activity" $activity "immersiveVideoPanelCoordinator.applyRefreshedCatalog("
+Assert-Contains "Activity" $activity "activityRecreatedForCatalog=false panelRegistrationSlotsRetained=true"
+Assert-NotContains "Activity" $activity "recreate()"
+Assert-NotContains "Activity" $activity "passthrough-readback-retry"
 Assert-NotContains "Activity" $activity "projectionPanelVisibilityCoordinator.restartWith("
 Assert-Contains "Activity" $activity "BuildConfig.CAMERA_PROJECTION_DEFAULT_ENABLED"
 Assert-Contains `
@@ -3013,6 +3022,10 @@ Assert-Contains "Private layer panel" $privateLayerPanel 'Section("Center conten
 Assert-Contains "Private layer panel" $privateLayerPanel "Projection Area"
 Assert-Contains "Private layer panel" $privateLayerPanel 'Section("Projection")'
 Assert-Contains "Private layer panel" $privateLayerPanel 'Section("Background")'
+Assert-Contains "Private layer panel" $privateLayerPanel 'Section("Advanced distortion safety")'
+Assert-Contains "Private layer panel" $privateLayerPanel 'HelpLabel("Protect projection edges")'
+Assert-Contains "Private layer panel" $privateLayerPanel 'Section("Available videos")'
+Assert-Contains "Private layer panel" $privateLayerPanel 'label = "Transparent"'
 Assert-Contains "Private layer panel" $privateLayerPanel "Turn custom projection off"
 Assert-Contains "Private layer panel" $privateLayerPanel "Turn custom projection on"
 Assert-Contains "Private layer panel" $privateLayerPanel "Turn video layer off"
@@ -3084,6 +3097,8 @@ Assert-Contains "Spatial passthrough LUT module" $spatialPassthroughLutModule "C
 Assert-Contains "Spatial passthrough LUT module" $spatialPassthroughLutModule "BLACK_LEVEL_CUTOFF = 0.055f"
 Assert-Contains "Spatial passthrough LUT module" $spatialPassthroughLutModule "passthroughColorMapStops=black-green-yellow-red-magenta-blue-cyan"
 Assert-Contains "Spatial passthrough LUT module" $spatialPassthroughLutModule "passthroughLutRetainedByCoordinator=true"
+Assert-Contains "Spatial passthrough LUT module" $spatialPassthroughLutModule "withContext(Dispatchers.Default)"
+Assert-Contains "Spatial passthrough LUT module" $spatialPassthroughLutModule "lutConstructionThread=background sceneMutationThread=main"
 Assert-Contains "Spatial passthrough LUT module" $spatialPassthroughLutModule "activeLut = lut"
 Assert-Contains "Spatial passthrough LUT module" $spatialPassthroughLutModule "scene.setPassthroughLUT(null)"
 Assert-Contains "Activity" $activity "private val spatialPassthroughLutCoordinator: SpatialPassthroughLutCoordinator by"

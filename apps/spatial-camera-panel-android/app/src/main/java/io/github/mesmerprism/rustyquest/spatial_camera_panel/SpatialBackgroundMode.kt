@@ -29,8 +29,7 @@ internal object SpatialBackgroundModePolicy {
   ): SpatialBackgroundEffects =
       SpatialBackgroundEffects(
           blackBackingVisible = mode == SpatialBackgroundMode.Black,
-          systemPassthroughRequested =
-              mode != SpatialBackgroundMode.Black || diagnosticLutRequested,
+          systemPassthroughRequested = true,
           passthroughLutRequested =
               mode == SpatialBackgroundMode.LutPassthrough || diagnosticLutRequested,
       )
@@ -47,5 +46,6 @@ internal object SpatialBackgroundModePolicy {
           "backgroundSystemPassthroughRequested=${effects.systemPassthroughRequested} " +
           "backgroundPassthroughLutRequested=${effects.passthroughLutRequested} " +
           "diagnosticPassthroughLutRequested=$diagnosticLutRequested " +
-          "passthroughLutOwner=spatial-sdk-system-passthrough"
+          "passthroughLutOwner=spatial-sdk-system-passthrough " +
+          "passthroughSessionPolicy=always-on opaqueBackgroundCarrierVisible=${effects.blackBackingVisible}"
 }

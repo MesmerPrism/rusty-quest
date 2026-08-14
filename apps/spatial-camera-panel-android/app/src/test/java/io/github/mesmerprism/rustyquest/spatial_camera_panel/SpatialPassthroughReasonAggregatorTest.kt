@@ -35,7 +35,7 @@ class SpatialPassthroughReasonAggregatorTest {
   }
 
   @Test
-  fun visiblePassthroughSurvivesDepthDisableAndAllReasonsClearInOrder() {
+  fun systemPassthroughRemainsOnWhenVisibleAndDepthReasonsClear() {
     val writes = mutableListOf<String>()
     var passthroughReadback = false
     val aggregator =
@@ -56,15 +56,15 @@ class SpatialPassthroughReasonAggregatorTest {
     assertEquals(EnvironmentDepthMode.OFF, depthOff.environmentDepthMode)
 
     val allOff = aggregator.updateVisibleReasons(SpatialBackgroundMode.Black, false, "visible-off")
-    assertFalse(allOff.systemPassthroughEnabled)
+    assertTrue(allOff.systemPassthroughEnabled)
     assertEquals(
-        listOf("passthrough=true", "depth=TEXTURE_ONLY", "depth=OFF", "passthrough=false"),
+        listOf("passthrough=true", "depth=TEXTURE_ONLY", "depth=OFF"),
         writes,
     )
   }
 
   @Test
-  fun projectionLifecycleReconcileDoesNotCreateAnUntrackedReason() {
+  fun projectionLifecycleReconcileRequestsTheAlwaysOnSubstrateExactlyOnce() {
     val passthroughWrites = mutableListOf<Boolean>()
     var passthroughReadback = false
     val aggregator =
@@ -79,8 +79,8 @@ class SpatialPassthroughReasonAggregatorTest {
         )
 
     val black = aggregator.reconcile("projection-off-black")
-    assertFalse(black.systemPassthroughEnabled)
-    assertTrue(passthroughWrites.isEmpty())
+    assertTrue(black.systemPassthroughEnabled)
+    assertEquals(listOf(true), passthroughWrites)
 
     aggregator.updateEnvironmentDepthRequired(true, "depth-on")
     val depthRequired = aggregator.reconcile("projection-on-depth")
@@ -89,7 +89,7 @@ class SpatialPassthroughReasonAggregatorTest {
   }
 
   @Test
-  fun failedEnableReadbackIsRetriedInsteadOfCachedAsApplied() {
+  fun falsePlatformReadbackDoesNotRepeatTheExpensiveSceneMutation() {
     val passthroughWrites = mutableListOf<Boolean>()
     val aggregator =
         SpatialPassthroughReasonAggregator(
@@ -101,10 +101,12 @@ class SpatialPassthroughReasonAggregatorTest {
 
     val initial =
         aggregator.updateVisibleReasons(SpatialBackgroundMode.Passthrough, false, "initial")
-    val retry = aggregator.reconcile("retry")
+    val reconcile = aggregator.reconcile("reconcile")
 
-    assertFalse(initial.systemPassthroughEnabled)
-    assertFalse(retry.systemPassthroughEnabled)
-    assertEquals(listOf(true, true), passthroughWrites)
+    assertTrue(initial.systemPassthroughEnabled)
+    assertFalse(initial.systemPassthroughObserved)
+    assertTrue(reconcile.systemPassthroughEnabled)
+    assertFalse(reconcile.systemPassthroughObserved)
+    assertEquals(listOf(true), passthroughWrites)
   }
 }

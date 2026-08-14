@@ -109,12 +109,23 @@ carrier in both modes, so camera-ray mapping, blend zones, displacement, and
 private tuning are never wrapped onto an equirectangular surface. The control
 panel remains above both visual carriers.
 
-The layer control panel shows only an ordinal (`Video 1 of N`) and offers
-Previous and Next actions. A horizontal right-stick flick selects the previous
-item on the left or the next item on the right. The stick must return near
-neutral before another selection, which prevents a held stick from skipping
-multiple items. Both Spatial SDK controller-component input and Android
-joystick fallback input feed the same latch.
+The Media library shows a sanitized selectable row for every accepted encrypted
+pack and shared plain video, plus Previous and Next actions. It exposes source
+kind, shape, stereo layout, and dimensions but never storage paths or raw media
+names. Refresh scans and validates on a background worker, then adopts the
+bounded catalog through fixed registration slots without recreating the
+Activity, control panel, current carrier, or current decoder. A horizontal
+right-stick flick selects the previous item on the left or the next item on the
+right. The stick must return near neutral before another selection, which
+prevents a held stick from skipping multiple items. Both Spatial SDK
+controller-component input and Android joystick fallback input feed the same
+latch.
+
+Meta system passthrough is an always-on scene substrate. Black and video panels
+occlude it; Transparent removes the opaque black backing; LUT does the same and
+styles only the system passthrough layer. Background selection never disables
+or repeatedly re-enables system passthrough. LUT construction runs off the main
+thread and only the final Spatial SDK scene mutation returns to the main scope.
 
 Validation clients may also send `video-previous`, `video-next`,
 `video-select`, `video-recenter`, `video-world-anchored`, or

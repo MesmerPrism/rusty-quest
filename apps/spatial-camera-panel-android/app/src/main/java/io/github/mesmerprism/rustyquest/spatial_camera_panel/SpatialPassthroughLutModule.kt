@@ -8,10 +8,12 @@ import kotlin.math.floor
 import kotlin.math.roundToInt
 import kotlin.math.sin
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 internal data class SpatialPassthroughLutUpdate(
     val requested: Boolean,
@@ -110,7 +112,8 @@ internal object SpatialPassthroughLutModule {
           "passthroughAmplitudeOscillatorHz=${markerFloat(AMPLITUDE_OSCILLATOR_HZ)} " +
           "passthroughLutUpdateHz=${markerFloat(UPDATE_HZ)} " +
           "metaSystemPassthroughEnabled=$systemPassthroughEnabled " +
-          "passthroughLutRetainedByCoordinator=true initialLutClearBeforeApply=true " +
+          "passthroughLutRetainedByCoordinator=true initialLutClearBeforeApply=false " +
+          "lutConstructionThread=background sceneMutationThread=main " +
           "nativeFbEdgeLayerVisualAuthority=false runtimeCrash=false"
 
   fun clearedMarker(source: String, systemPassthroughEnabled: Boolean): String =
@@ -180,7 +183,6 @@ internal class SpatialPassthroughLutCoordinator(
       )
     }
 
-    scene.enablePassthrough(true)
     val existingJob = updateJob
     if (existingJob != null && existingJob.isActive && lutApplied) {
       return currentUpdate(requested = true)
@@ -189,18 +191,14 @@ internal class SpatialPassthroughLutCoordinator(
     existingJob?.cancel()
     enabledAtMs = elapsedRealtimeMs()
     lastMarkerAtMs = Long.MIN_VALUE
-    runCatching { scene.setPassthroughLUT(null) }
-        .onFailure { marker(SpatialPassthroughLutModule.failedMarker("$source-initial-clear", it)) }
-    lutApplied = applyCurrentLut(source, forceMarker = true)
-    if (lutApplied) {
-      updateJob =
-          scope.launch {
-            while (isActive) {
-              delay(SpatialPassthroughLutModule.UPDATE_PERIOD_MS)
-              applyCurrentLut("$source-oscillator", forceMarker = false)
-            }
+    updateJob =
+        scope.launch {
+          lutApplied = applyCurrentLut(source, forceMarker = true)
+          while (isActive && lutApplied) {
+            delay(SpatialPassthroughLutModule.UPDATE_PERIOD_MS)
+            lutApplied = applyCurrentLut("$source-oscillator", forceMarker = false)
           }
-    }
+        }
     return currentUpdate(requested = true)
   }
 
@@ -213,11 +211,15 @@ internal class SpatialPassthroughLutCoordinator(
     activeLut = null
   }
 
-  private fun applyCurrentLut(source: String, forceMarker: Boolean): Boolean {
+  private suspend fun applyCurrentLut(source: String, forceMarker: Boolean): Boolean {
     val nowMs = elapsedRealtimeMs()
     lastSnapshot = SpatialPassthroughLutModule.snapshot(nowMs - enabledAtMs)
+    val snapshot = lastSnapshot
     return runCatching {
-          val lut = SpatialPassthroughLutModule.createPosterizedColorLut(lastSnapshot)
+          val lut =
+              withContext(Dispatchers.Default) {
+                SpatialPassthroughLutModule.createPosterizedColorLut(snapshot)
+              }
           activeLut = lut
           scene.setPassthroughLUT(lut)
           val shouldMark =
@@ -229,7 +231,7 @@ internal class SpatialPassthroughLutCoordinator(
             marker(
                 SpatialPassthroughLutModule.appliedMarker(
                     source,
-                    lastSnapshot,
+                    snapshot,
                     scene.isSystemPassthroughEnabled(),
                 )
             )

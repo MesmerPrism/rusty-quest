@@ -7,13 +7,18 @@ internal data class SpatialPassthroughReasons(
     val diagnosticLut: Boolean = false,
     val environmentDepth: Boolean = false,
 ) {
+  /**
+   * This product keeps Meta system passthrough alive for the whole scene session. Opaque black and
+   * video carriers occlude it when requested; background selection never tears the substrate down.
+   */
   val systemPassthroughRequired: Boolean
-    get() = visibleBackground || diagnosticLut || environmentDepth
+    get() = true
 }
 
 internal data class SpatialPassthroughReasonState(
     val reasons: SpatialPassthroughReasons,
     val systemPassthroughEnabled: Boolean,
+    val systemPassthroughObserved: Boolean,
     val environmentDepthMode: EnvironmentDepthMode,
 )
 
@@ -49,7 +54,12 @@ internal class SpatialPassthroughReasonAggregator(
       applyReasons(reasons.copy(environmentDepth = required), source)
 
   fun snapshot(): SpatialPassthroughReasonState =
-      SpatialPassthroughReasonState(reasons, appliedSystemPassthrough, appliedDepthMode)
+      SpatialPassthroughReasonState(
+          reasons,
+          appliedSystemPassthrough,
+          readSystemPassthrough(),
+          appliedDepthMode,
+      )
 
   fun reconcile(source: String): SpatialPassthroughReasonState = applyReasons(reasons, source)
 
@@ -63,7 +73,7 @@ internal class SpatialPassthroughReasonAggregator(
         if (updated.environmentDepth) EnvironmentDepthMode.TEXTURE_ONLY else EnvironmentDepthMode.OFF
 
     val passthroughReadbackBefore = readSystemPassthrough()
-    if (updated.systemPassthroughRequired && !passthroughReadbackBefore) {
+    if (!systemPassthroughRequestIssued) {
       setSystemPassthrough(true)
       systemPassthroughRequestIssued = true
     }
@@ -71,12 +81,11 @@ internal class SpatialPassthroughReasonAggregator(
       setEnvironmentDepthMode(requestedDepthMode)
       appliedDepthMode = requestedDepthMode
     }
-    if (!updated.systemPassthroughRequired &&
-        (systemPassthroughRequestIssued || passthroughReadbackBefore)) {
-      setSystemPassthrough(false)
-      systemPassthroughRequestIssued = false
-    }
-    appliedSystemPassthrough = readSystemPassthrough()
+    val passthroughReadbackAfter = readSystemPassthrough()
+    // Scene.isSystemPassthroughEnabled() is a false-negative on supported Quest builds even after
+    // enablePassthrough(true) has visibly taken effect. The accepted dispatch is therefore the
+    // session policy readback; the platform getter remains separately observable diagnostics.
+    appliedSystemPassthrough = systemPassthroughRequestIssued
 
     marker(
         "channel=spatial-passthrough-reasons status=applied " +
@@ -87,9 +96,11 @@ internal class SpatialPassthroughReasonAggregator(
             "previousEnvironmentDepthReason=${previous.environmentDepth} " +
             "systemPassthroughRequested=${updated.systemPassthroughRequired} " +
             "systemPassthroughRequestIssued=$systemPassthroughRequestIssued " +
-            "systemPassthroughReadback=$appliedSystemPassthrough " +
+            "systemPassthroughReadback=$passthroughReadbackAfter " +
             "environmentDepthMode=${appliedDepthMode.name} " +
-            "backgroundSelectionIndependent=true cachedPassthroughReadbackUsed=false runtimeCrash=false"
+            "backgroundSelectionIndependent=true passthroughSessionPolicy=always-on " +
+            "opaqueCarriersOwnOcclusion=true platformReadbackAdvisory=true " +
+            "passthroughReadbackBefore=$passthroughReadbackBefore runtimeCrash=false"
     )
     return snapshot()
   }

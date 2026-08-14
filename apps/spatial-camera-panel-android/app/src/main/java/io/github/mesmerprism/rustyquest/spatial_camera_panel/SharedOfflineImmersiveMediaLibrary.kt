@@ -102,13 +102,18 @@ internal object SharedOfflineImmersiveMediaLibrary {
         ?: return sharedOfflineImmersiveMediaInitialSnapshot(configured = false)
     return runCatching {
           val tree = SharedDocumentTree(context, treeUri)
+          val writable = hasPersistedWritePermission(context, treeUri)
+          if (forceRefresh && writable) {
+            // Refresh is the explicit user-owned repair route for an older or partially-created
+            // shared library. Only the fixed app taxonomy is created; media bytes remain untouched.
+            runCatching { tree.ensurePlainVideoTaxonomy() }
+          }
           val packIds = tree.packIds()
           val plain =
               SharedPlainImmersiveMediaLibrary.discover(
                   context,
                   forceRefresh = forceRefresh,
               )
-          val writable = hasPersistedWritePermission(context, treeUri)
           SharedOfflineImmersiveMediaLibrarySnapshot(
               configured = true,
               accessible = true,

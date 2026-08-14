@@ -18,7 +18,7 @@ class SpatialBackgroundModeTest {
   @Test
   fun eachBackgroundModeResolvesOneExplicitCompositionPolicy() {
     assertEquals(
-        SpatialBackgroundEffects(true, false, false),
+        SpatialBackgroundEffects(true, true, false),
         SpatialBackgroundModePolicy.resolve(SpatialBackgroundMode.Black, false),
     )
     assertEquals(

@@ -195,7 +195,6 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
   private var privatePanelInputPolicyApplied: Boolean = false
   private var privatePanelLockedExtensionInputApplied: Boolean? = null
   private var diagnosticPassthroughLutRequested: Boolean = false
-  private var spatialBackgroundRetryJob: Job? = null
   private var privateLayerPanelEntity: Entity? = null
   private var privateLayerPanelSceneObject: PanelSceneObject? = null
   private var surfaceTargetId: String = SpatialValidationCommandModule.DEFAULT_SURFACE_TARGET_ID
@@ -1938,7 +1937,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
                   "rawFolderUriExposed=false " +
                   "plaintextFileWritten=false"
           )
-          recreate()
+          refreshImmersiveVideoCatalog(snapshot, "shared-media-folder-adoption")
         },
         onFailure = { error ->
           marker(
@@ -1977,16 +1976,35 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
 
   private fun refreshSharedMediaLibraryFromPanel(): SharedOfflineImmersiveMediaLibrarySnapshot =
       sharedMediaLibraryClient.refresh { snapshot ->
+        refreshImmersiveVideoCatalog(snapshot, "shared-media-library-refresh")
+      }
+
+  private fun refreshImmersiveVideoCatalog(
+      snapshot: SharedOfflineImmersiveMediaLibrarySnapshot,
+      source: String,
+  ) {
+    activityScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+      val refreshedCatalog = immersiveVideoPanelCoordinator.discoverCatalogForRefresh()
+      kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main.immediate) {
+        val videoSnapshot =
+            immersiveVideoPanelCoordinator.applyRefreshedCatalog(
+                refreshedCatalog,
+                source,
+            )
         marker(
             "channel=spatial-immersive-video status=shared-media-library-refreshed " +
+                "source=${activityMarkerToken(source)} " +
                 "accessible=${snapshot.accessible} writable=${snapshot.writable} " +
                 "plainVideoTaxonomyReady=${snapshot.plainVideoTaxonomyReady} " +
                 "packCount=${snapshot.packCount} plainVideoCount=${snapshot.plainVideoCount} " +
                 "rejectedPlainVideoCount=${snapshot.rejectedPlainVideoCount} " +
-                "activityRecreatedForCatalog=true rawFolderUriExposed=false"
+                "liveCatalogItemCount=${videoSnapshot.itemCount} " +
+                "activityRecreatedForCatalog=false panelRegistrationSlotsRetained=true " +
+                "rawFolderUriExposed=false"
         )
-        recreate()
       }
+    }
+  }
 
   override fun dispatchKeyEvent(event: KeyEvent): Boolean {
     if (!controllerRouteInputsEnabled()) {
@@ -2257,13 +2275,11 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
       source: String,
   ): SpatialPassthroughLutUpdate {
     val effects = SpatialBackgroundModePolicy.resolve(mode, diagnosticPassthroughLutRequested)
-    val passthroughState =
-        passthroughReasonAggregator.updateVisibleReasons(
-            mode,
-            diagnosticPassthroughLutRequested,
-            source,
-        )
-    scheduleSpatialBackgroundReadbackRetry(mode, source, passthroughState)
+    passthroughReasonAggregator.updateVisibleReasons(
+        mode,
+        diagnosticPassthroughLutRequested,
+        source,
+    )
     val update =
         spatialPassthroughLutCoordinator.update(effects.passthroughLutRequested, source)
     marker(
@@ -2275,40 +2291,6 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
         )
     )
     return update
-  }
-
-  private fun scheduleSpatialBackgroundReadbackRetry(
-      mode: SpatialBackgroundMode,
-      source: String,
-      initialState: SpatialPassthroughReasonState,
-  ) {
-    spatialBackgroundRetryJob?.cancel()
-    spatialBackgroundRetryJob = null
-    if (mode == SpatialBackgroundMode.Black || initialState.systemPassthroughEnabled) return
-
-    spatialBackgroundRetryJob =
-        activityScope.launch {
-          var state = initialState
-          var attempt = 0
-          while (!state.systemPassthroughEnabled &&
-              attempt < SPATIAL_BACKGROUND_PASSTHROUGH_MAX_RETRIES) {
-            delay(SPATIAL_BACKGROUND_PASSTHROUGH_RETRY_MS)
-            if (immersiveVideoPanelCoordinator.sessionSnapshot().backgroundMode != mode) {
-              return@launch
-            }
-            attempt += 1
-            state =
-                passthroughReasonAggregator.reconcile(
-                    "$source-readback-retry-$attempt"
-                )
-          }
-          marker(
-              "channel=spatial-background status=passthrough-readback-settled " +
-                  "source=${activityMarkerToken(source)} backgroundMode=${mode.token} " +
-                  "attempts=$attempt systemPassthroughReadback=" +
-                  "${state.systemPassthroughEnabled} boundedRetry=true runtimeCrash=false"
-          )
-        }
   }
 
   private fun setImmersiveVideoPresentationMode(
@@ -2323,6 +2305,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     scene.setReferenceSpace(ReferenceSpace.LOCAL_FLOOR)
     scene.setViewOrigin(0.0f, 0.0f, 2.0f, 180.0f)
     spatialSceneReady = true
+    passthroughReasonAggregator.reconcile("scene-ready-always-on")
     if (directImmersiveVideoPanelRequested()) {
       marker(immersiveVideoPanelCoordinator.routePolicyMarker())
       val viewerPose = runCatching { scene.getViewerPose() }.getOrElse { Pose() }
@@ -2842,8 +2825,6 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
   }
 
   override fun onDestroy() {
-    spatialBackgroundRetryJob?.cancel()
-    spatialBackgroundRetryJob = null
     connectionHubSurfaceClient?.close()
     connectionHubSurfaceClient = null
     connectionHubWearerControlClient.close()
@@ -4538,8 +4519,6 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
         "debug.rustyquest.spatial_camera_panel.native_marker_file.enabled"
     private const val CONTROL_PROFILE_HOTLOAD_ENABLED_PROPERTY =
         "debug.rustyquest.spatial_camera_panel.control_profile_hotload.enabled"
-    private const val SPATIAL_BACKGROUND_PASSTHROUGH_MAX_RETRIES = 12
-    private const val SPATIAL_BACKGROUND_PASSTHROUGH_RETRY_MS = 250L
     private const val PANEL_SHELL_VISIBLE_PROPERTY =
         "debug.rustyquest.spatial.panel_shell.visible"
     private val SUPPORTED_SURFACE_TARGET_IDS =

@@ -1566,11 +1566,23 @@ changing their accepted output.
 The panel presents Center region, Middle buffer, Outer region, and Transitions
 as top-level pages. Center content uses accurate stage names for camera
 brightness, the first blur, distortion strength before and after smoothing,
-depth-adjusted strength, and the aligned Meta depth diagnostic. Middle and
-Outer show their Stretch or Video settings only when that content is selected.
-The Media library lists sanitized selectable encrypted-pack and shared-plain
-items; it never exposes storage paths. Turning the Buffer off produces a direct
-Center-to-Outer transition while retaining the dormant Middle settings.
+depth-adjusted strength, and the aligned Meta depth diagnostic. Its advanced
+distortion safety section exposes the existing profile-backed projection edge
+guard without changing projection or region geometry. Middle and Outer show
+their Stretch or Video settings only when that content is selected. The Media
+library lists sanitized selectable encrypted-pack and shared-plain items; it
+never exposes storage paths. An explicit refresh scans on a background worker
+and adopts the bounded catalog through pre-registered slots without recreating
+the Activity, control panel, selected carrier, or selected decoder. Turning the
+Buffer off produces a direct Center-to-Outer transition while retaining the
+dormant Middle settings.
+
+Meta system passthrough stays enabled for the scene session. Black and video
+carriers occlude it, Transparent removes the opaque black carrier, and LUT
+removes that carrier while styling the underlying passthrough. Background
+selection never retries the platform's advisory passthrough getter. Animated
+LUT construction runs away from the main thread; only the final Scene update is
+submitted on the main scope.
 
 ## Connection Hub runtime isolation
 

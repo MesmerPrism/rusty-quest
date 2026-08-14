@@ -80,19 +80,18 @@ internal class SpatialImmersiveVideoPanelCoordinator(
   private val autoRecenterGate = SpatialImmersiveVideoAutoRecenterGate()
   private val initialConfig: SpatialImmersiveVideoConfig?
     get() = (resolution as? SpatialImmersiveVideoRouteResolution.Ready)?.config
-  private val catalog: List<SpatialImmersiveVideoConfig> by
-      lazy(LazyThreadSafetyMode.NONE, ::loadCompatibleCatalog)
+  private var catalog: List<SpatialImmersiveVideoConfig> = loadCompatibleCatalog()
   private val panelRegistrationIds: Map<SpatialImmersiveVideoPresentationMode, List<Int>> by
       lazy(LazyThreadSafetyMode.NONE) {
         SpatialImmersiveVideoPresentationMode.entries.associateWith {
-          catalog.map { View.generateViewId() }
+          List(MAX_SESSION_PACKS) { View.generateViewId() }
         }
       }
   private val blackBackdropRegistrationIds:
       Map<SpatialImmersiveVideoPresentationMode, List<Int>> by
       lazy(LazyThreadSafetyMode.NONE) {
         SpatialImmersiveVideoPresentationMode.entries.associateWith {
-          catalog.map { View.generateViewId() }
+          List(MAX_SESSION_PACKS) { View.generateViewId() }
         }
       }
 
@@ -323,20 +322,29 @@ internal class SpatialImmersiveVideoPanelCoordinator(
 
   fun panelRegistrations(): List<PanelRegistration> =
       SpatialImmersiveVideoPresentationMode.entries.flatMap { registeredMode ->
-        catalog.flatMapIndexed { index, config ->
+        (0 until MAX_SESSION_PACKS).flatMap { index ->
           listOf(
-              blackBackdropPanelRegistration(index, config, registeredMode),
+              blackBackdropPanelRegistration(index, registeredMode),
               VideoSurfacePanelRegistration(
                   requireNotNull(panelRegistrationIds[registeredMode]).get(index),
                   surfaceConsumer = { _, videoSurface ->
                     if (index == activeIndex && registeredMode == presentationMode) {
+                      val config = catalog.getOrNull(index) ?: return@VideoSurfacePanelRegistration
                       surface = videoSurface
                       startPlayer(config, videoSurface)
                     }
                   },
-                  settingsCreator = { mediaPanelSettings(config, registeredMode) },
+                  settingsCreator = {
+                    mediaPanelSettings(
+                        requireNotNull(catalog.getOrNull(index)) {
+                          "immersive-video-registration-slot-without-catalog-item"
+                        },
+                        registeredMode,
+                    )
+                  },
                   panelSetup = { panel, _ ->
                     if (index == activeIndex && registeredMode == presentationMode) {
+                      val config = catalog.getOrNull(index) ?: return@VideoSurfacePanelRegistration
                       panelSceneObject = panel
                       if (transitionTargetIndex == index) {
                         applyDirectLayerOpacity(0.0f)
@@ -357,7 +365,6 @@ internal class SpatialImmersiveVideoPanelCoordinator(
 
   private fun blackBackdropPanelRegistration(
       index: Int,
-      config: SpatialImmersiveVideoConfig,
       registeredMode: SpatialImmersiveVideoPresentationMode,
   ): PanelRegistration =
       ComposeViewPanelRegistration(
@@ -373,8 +380,16 @@ internal class SpatialImmersiveVideoPanelCoordinator(
               }
             }
           },
-          settingsCreator = { blackBackdropMediaPanelSettings(config, registeredMode) },
+          settingsCreator = {
+            blackBackdropMediaPanelSettings(
+                requireNotNull(catalog.getOrNull(index)) {
+                  "immersive-video-black-registration-slot-without-catalog-item"
+                },
+                registeredMode,
+            )
+          },
           panelSetupWithComposeView = { _, _, _ ->
+            val config = catalog.getOrNull(index) ?: return@ComposeViewPanelRegistration
             emitMarker(
                 "channel=spatial-immersive-video status=black-backing-panel-ready " +
                     "backingOpaque=true backingColor=black " +
@@ -385,6 +400,61 @@ internal class SpatialImmersiveVideoPanelCoordinator(
             )
           },
       )
+
+  /** Runs the document/provider portion on the caller's background worker. */
+  fun discoverCatalogForRefresh(): List<SpatialImmersiveVideoConfig> = loadCompatibleCatalog()
+
+  /**
+   * Atomically adopts a bounded refreshed catalog without rebuilding the Activity or control panel.
+   * The fixed registration slots were created during registerPanels(); adding an item therefore
+   * changes only the in-memory catalog. The current carrier and decoder are retained when the
+   * selected media identity still exists.
+   */
+  fun applyRefreshedCatalog(
+      refreshedCatalog: List<SpatialImmersiveVideoConfig>,
+      source: String,
+  ): SpatialImmersiveVideoSessionSnapshot {
+    val bounded = refreshedCatalog.take(MAX_SESSION_PACKS)
+    val previousConfig = activeConfig
+    val previousIdentity = previousConfig?.let(::catalogIdentity)
+    val previousIndex = activeIndex
+    val previousItemCount = catalog.size
+    val nextIndex =
+        previousIdentity?.let { identity ->
+          bounded.indexOfFirst { catalogIdentity(it) == identity }.takeIf { it >= 0 }
+        } ?: if (bounded.isEmpty()) -1 else 0
+    val catalogChanged = catalog.map(::catalogIdentity) != bounded.map(::catalogIdentity)
+    val activeChanged = previousIdentity != bounded.getOrNull(nextIndex)?.let(::catalogIdentity)
+
+    catalog = bounded
+    activeIndex = nextIndex
+    if (activeChanged) {
+      cancelSelectionTransition("catalog-refresh-active-change")
+      releasePlayer("catalog-refresh-active-change")
+      surface = null
+      panelSceneObject = null
+      entity?.destroy()
+      entity = null
+      blackBackdropEntity?.destroy()
+      blackBackdropEntity = null
+      if (activeIndex >= 0 && spawnPose != null) {
+        spawnActiveEntity("catalog-refresh-active-change")
+      }
+    }
+    emitMarker(
+        "channel=spatial-immersive-video status=catalog-refreshed " +
+            "source=${activityMarkerToken(source)} changed=$catalogChanged " +
+            "previousItemCount=$previousItemCount " +
+            "itemCount=${catalog.size} previousActiveIndex=$previousIndex activeIndex=$activeIndex " +
+            "activeMediaChanged=$activeChanged currentCarrierRetained=${!activeChanged} " +
+            "currentDecoderRetained=${!activeChanged && player != null} " +
+            "activityRestarted=false fixedRegistrationCapacity=$MAX_SESSION_PACKS"
+    )
+    return sessionSnapshot()
+  }
+
+  private fun catalogIdentity(config: SpatialImmersiveVideoConfig): String =
+      config.offlinePack?.packId ?: config.plainMedia?.mediaId ?: config.path
 
   fun spawnAtViewer(viewerPose: Pose) {
     spawnPose = Pose(viewerPose.t, viewerPose.q)

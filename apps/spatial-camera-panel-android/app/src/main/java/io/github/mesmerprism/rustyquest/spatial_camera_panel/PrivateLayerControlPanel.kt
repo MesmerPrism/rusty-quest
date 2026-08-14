@@ -343,13 +343,56 @@ internal fun PrivateLayerControlPanel(
             },
         )
       }
+      Section("Advanced distortion safety") {
+        HelpLabel("Protect projection edges")
+        Text(
+            "Fades displacement back to the undistorted camera near the projection boundary. Disable it only to inspect the full distortion field; projection size and region geometry do not change.",
+            style = MaterialTheme.typography.bodySmall,
+            color = LayerPanelMuted,
+        )
+        Button(
+            modifier = Modifier.fillMaxWidth().height(52.dp),
+            onClick = {
+              PrivateLayerZoneCompositorPanelBridge.submit(
+                  localZoneCompositor.copy(
+                      projectionEffectEdgeGuardEnabled =
+                          !localZoneCompositor.projectionEffectEdgeGuardEnabled
+                  ),
+                  "private-layer-center-edge-guard",
+              )
+            },
+            colors =
+                ButtonDefaults.buttonColors(
+                    containerColor =
+                        if (localZoneCompositor.projectionEffectEdgeGuardEnabled) {
+                          LayerPanelAccent
+                        } else {
+                          LayerPanelSurfaceAlt
+                        },
+                    contentColor =
+                        if (localZoneCompositor.projectionEffectEdgeGuardEnabled) {
+                          Color(0xFF04111A)
+                        } else {
+                          LayerPanelInk
+                        },
+                ),
+        ) {
+          Text(
+              if (localZoneCompositor.projectionEffectEdgeGuardEnabled) {
+                "Protection on · tap to disable"
+              } else {
+                "Protection off · tap to enable"
+              }
+          )
+        }
+      }
       }
 
       if (currentPage == PrivateLayerPanelPage.Media) {
         Section("Background") {
           HelpLabel("Background")
           Text(
-              "Choose what fills the scene behind the video layer. This setting is independent of video playback.",
+              "System passthrough stays active underneath the scene. Black adds an opaque carrier; Transparent removes it; LUT removes it and styles passthrough. Video independently occludes whichever background is selected.",
               style = MaterialTheme.typography.bodySmall,
               color = LayerPanelMuted,
           )
@@ -364,7 +407,7 @@ internal fun PrivateLayerControlPanel(
               localVideoSession = setBackgroundMode(SpatialBackgroundMode.Black)
             }
             ChoiceButton(
-                label = "Passthrough",
+                label = "Transparent",
                 selected = localVideoSession.backgroundMode == SpatialBackgroundMode.Passthrough,
             ) {
               localVideoSession = setBackgroundMode(SpatialBackgroundMode.Passthrough)
@@ -486,6 +529,51 @@ internal fun PrivateLayerControlPanel(
                   "Choose shared media folder"
                 }
             )
+          }
+        }
+        Section("Available videos") {
+          Text(
+              if (localVideoSession.items.isEmpty()) {
+                "No selectable videos are loaded yet. Refresh the shared folder above."
+              } else {
+                "${localVideoSession.items.size} selectable video(s). The selected item is used by every video region and remains controllable by profiles, playlists, and Connection Hub."
+              },
+              style = MaterialTheme.typography.bodySmall,
+              color =
+                  if (localVideoSession.items.isEmpty()) LayerPanelWarm else LayerPanelAccent,
+          )
+          localVideoSession.items.forEach { item ->
+            Button(
+                modifier = Modifier.fillMaxWidth().height(68.dp),
+                onClick = { localVideoSession = selectVideo(item.index) },
+                colors =
+                    ButtonDefaults.buttonColors(
+                        containerColor =
+                            if (item.index == localVideoSession.activeIndex) {
+                              LayerPanelAccent
+                            } else {
+                              LayerPanelSurfaceAlt
+                            },
+                        contentColor =
+                            if (item.index == localVideoSession.activeIndex) {
+                              Color(0xFF04111A)
+                            } else {
+                              LayerPanelInk
+                            },
+                    ),
+            ) {
+              Column(
+                  modifier = Modifier.fillMaxWidth(),
+                  horizontalAlignment = Alignment.Start,
+              ) {
+                Text(item.label, fontWeight = FontWeight.SemiBold)
+                Text(
+                    "${item.sourceLabel} · ${item.projectionLabel} · " +
+                        "${item.stereoLabel} · ${item.dimensionsLabel}",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+              }
+            }
           }
         }
         Section("Video layer") {
