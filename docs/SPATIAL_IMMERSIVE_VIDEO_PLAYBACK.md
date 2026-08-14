@@ -124,8 +124,18 @@ latch.
 Meta system passthrough is an always-on scene substrate. Black and video panels
 occlude it; Transparent removes the opaque black backing; LUT does the same and
 styles only the system passthrough layer. Background selection never disables
-or repeatedly re-enables system passthrough. LUT construction runs off the main
-thread and only the final Spatial SDK scene mutation returns to the main scope.
+or repeatedly re-enables system passthrough. Background has its own panel page;
+the Media library is limited to video files, selection, presentation, cadence,
+and playback. The Background page exposes LUT animation, color strength, color
+cycle speed, and black cutoff. LUT construction runs off the main thread and
+only the final Spatial SDK scene mutation returns to the main scope; static LUT
+mode applies once and schedules no periodic LUT update.
+
+Turning ordinary video playback off hides but retains the registered Spatial
+video carrier and its Surface. It releases the zero-contribution decoder on a
+dedicated Media3 looper, never on the Activity/XR thread. Turning playback back
+on reuses that carrier when its Surface remains valid; only explicit source or
+presentation changes rebuild the video carrier.
 
 Validation clients may also send `video-previous`, `video-next`,
 `video-select`, `video-recenter`, `video-world-anchored`, or

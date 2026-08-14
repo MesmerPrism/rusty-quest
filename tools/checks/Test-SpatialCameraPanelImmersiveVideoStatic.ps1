@@ -67,6 +67,7 @@ $activity = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\ja
 $routeTest = Read-RequiredText "apps\spatial-camera-panel-android\app\src\test\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\SpatialImmersiveVideoRouteModuleTest.kt"
 $sessionTest = Read-RequiredText "apps\spatial-camera-panel-android\app\src\test\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\SpatialImmersiveVideoSessionPolicyTest.kt"
 $backgroundTest = Read-RequiredText "apps\spatial-camera-panel-android\app\src\test\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\SpatialBackgroundModeTest.kt"
+$passthroughLutSettingsTest = Read-RequiredText "apps\spatial-camera-panel-android\app\src\test\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\SpatialPassthroughLutSettingsTest.kt"
 $plainLibraryTest = Read-RequiredText "apps\spatial-camera-panel-android\app\src\test\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\SharedPlainImmersiveMediaLibraryPolicyTest.kt"
 $decoderLifecycleTest = Read-RequiredText "apps\spatial-camera-panel-android\app\src\test\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\SpatialVideoDecoderLifecycleTest.kt"
 $stageTool = Read-RequiredText "tools\Stage-SpatialCameraPanelImmersiveVideo.ps1"
@@ -299,7 +300,16 @@ Assert-Contains "Decoder lifecycle runtime" $videoRuntime "readableVideoConsumer
 Assert-Contains "Decoder lifecycle runtime" $videoRuntime "zeroContributionDecodeWorkSkipped=true"
 Assert-Contains "Decoder lifecycle runtime" $videoRuntime "fun updateReadableVideoConsumer(required: Boolean, reason: String)"
 Assert-Contains "Decoder lifecycle direct route" $coordinator "fun setDirectVideoConsumerRequired(required: Boolean, source: String)"
-Assert-Contains "Decoder lifecycle direct route" $coordinator 'releasePlayer("direct-zero-contribution")'
+Assert-Contains "Decoder lifecycle direct route" $coordinator 'releasePlayer("direct-zero-contribution", preserveResumePosition = true)'
+Assert-Contains "Decoder lifecycle direct player thread" $coordinator 'HandlerThread(DIRECT_PLAYER_THREAD_NAME, Process.THREAD_PRIORITY_DEFAULT)'
+Assert-Contains "Decoder lifecycle direct player looper" $coordinator 'ExoPlayer.Builder(context).setLooper(directPlayerThread.looper)'
+Assert-Contains "Decoder lifecycle nonblocking release" $coordinator 'directPlayerHandler.post {'
+Assert-Contains "Decoder lifecycle nonblocking release marker" $coordinator 'xrActivityThreadBlocked=false'
+Assert-Contains "Decoder lifecycle release thread marker" $coordinator 'releaseThread=$DIRECT_PLAYER_THREAD_NAME'
+Assert-Contains "Decoder lifecycle playback-off preserved resume" $coordinator 'releasePlayer("playback-disabled-zero-contribution", preserveResumePosition = true)'
+Assert-Contains "Decoder lifecycle retained carrier" $coordinator 'directVideoCarrierRetained=${entity != null}'
+Assert-Contains "Decoder lifecycle retained carrier reuse" $coordinator 'directVideoCarrierReused=$retainedCarrierReady'
+Assert-NotContains "Decoder lifecycle main-thread progress reads" $coordinator 'private val progressHandler = Handler(Looper.getMainLooper())'
 Assert-Contains "Decoder lifecycle direct route" $coordinator "hiddenClockAdvanced=true"
 Assert-Contains "Decoder lifecycle ownership" $activity "fun updateVideoDecoderOwnership("
 Assert-Contains "Decoder lifecycle ownership" $activity "fun startCustomVideoProjectionWithDecoderOwnership("
@@ -357,9 +367,13 @@ Assert-Contains "Background policy" $background 'Black("black")'
 Assert-Contains "Background policy" $background 'Passthrough("passthrough")'
 Assert-Contains "Background policy" $background 'LutPassthrough("lut-passthrough")'
 Assert-Contains "Background policy" $background "diagnosticLutRequested"
-Assert-Contains "Background controls" $controlPanel 'Media("Media library"'
+Assert-Contains "Background controls" $controlPanel 'Background("Background"'
 Assert-Contains "Background controls" $controlPanel 'Section("Background")'
 Assert-Contains "Background controls" $controlPanel 'label = "LUT passthrough"'
+Assert-Contains "Background LUT controls" $controlPanel 'Section("LUT appearance")'
+Assert-Contains "Background LUT controls" $controlPanel 'label = "Color strength"'
+Assert-Contains "Background LUT controls" $controlPanel 'label = "Color cycle speed (Hz)"'
+Assert-Contains "Background LUT controls" $controlPanel 'label = "Black cutoff"'
 Assert-Contains "Background profiles" $profiles "backgroundMode: String? = null"
 Assert-Contains "Background profiles" $profiles "backgroundMode?.let { SpatialBackgroundMode.fromToken(it).token }"
 Assert-Contains "Background profiles" $profiles "SpatialBackgroundMode.fromToken(backgroundMode)"
@@ -367,6 +381,9 @@ Assert-Contains "Background profiles" $profiles "legacyBlackBackground"
 Assert-Contains "Background activity" $activity "fun setSpatialBackgroundMode("
 Assert-Contains "Background activity" $activity "diagnosticPassthroughLutRequested"
 Assert-Contains "Background LUT" $passthroughLut "Scene.setPassthroughLUT"
+Assert-Contains "Background LUT" $passthroughLut "data class SpatialPassthroughLutSettings"
+Assert-Contains "Background LUT" $passthroughLut "while (isActive && lutApplied && settings.animationEnabled)"
+Assert-Contains "Background LUT tests" $passthroughLutSettingsTest "staticModeProducesOneStableFullAmplitudeSnapshot"
 Assert-Contains "Background tests" $backgroundTest "eachBackgroundModeResolvesOneExplicitCompositionPolicy"
 Assert-Contains "Background tests" $backgroundTest "retainedDiagnosticLutComposesWithTheSelectedBackground"
 

@@ -23,6 +23,20 @@ internal data class SpatialPassthroughLutUpdate(
     val amplitude: Float,
 )
 
+internal data class SpatialPassthroughLutSettings(
+    val animationEnabled: Boolean = true,
+    val colorIntensity: Float = 1.0f,
+    val colorPhaseHz: Float = SpatialPassthroughLutModule.COLOR_PHASE_HZ,
+    val blackLevelCutoff: Float = SpatialPassthroughLutModule.BLACK_LEVEL_CUTOFF,
+) {
+  fun normalized(): SpatialPassthroughLutSettings =
+      copy(
+          colorIntensity = colorIntensity.coerceIn(0.0f, 1.0f),
+          colorPhaseHz = colorPhaseHz.coerceIn(0.0f, 0.5f),
+          blackLevelCutoff = blackLevelCutoff.coerceIn(0.0f, 0.20f),
+      )
+}
+
 /**
  * Public, effect-agnostic diagnostic styling for the passthrough layer owned by Spatial SDK.
  *
@@ -55,12 +69,30 @@ internal object SpatialPassthroughLutModule {
 
   internal data class Snapshot(val phase: Float, val amplitude: Float)
 
-  fun snapshot(elapsedMs: Long): Snapshot {
+  fun snapshot(
+      elapsedMs: Long,
+      settings: SpatialPassthroughLutSettings = SpatialPassthroughLutSettings(),
+  ): Snapshot {
+    val effectiveSettings = settings.normalized()
     val elapsedSeconds = elapsedMs.coerceAtLeast(0L).toDouble() / 1_000.0
-    val phase = ((elapsedSeconds * COLOR_PHASE_HZ) % 1.0).toFloat()
-    val oscillator =
-        (0.5 + 0.5 * sin(elapsedSeconds * AMPLITUDE_OSCILLATOR_HZ * 2.0 * PI)).toFloat()
-    val amplitude = MIN_COLOR_AMPLITUDE + (MAX_COLOR_AMPLITUDE - MIN_COLOR_AMPLITUDE) * oscillator
+    val phase =
+        if (effectiveSettings.animationEnabled) {
+          ((elapsedSeconds * effectiveSettings.colorPhaseHz) % 1.0).toFloat()
+        } else {
+          0.0f
+        }
+    val amplitude =
+        if (effectiveSettings.animationEnabled) {
+          val oscillator =
+              (0.5 +
+                      0.5 *
+                          sin(elapsedSeconds * AMPLITUDE_OSCILLATOR_HZ * 2.0 * PI))
+                  .toFloat()
+          MIN_COLOR_AMPLITUDE +
+              (MAX_COLOR_AMPLITUDE - MIN_COLOR_AMPLITUDE) * oscillator
+        } else {
+          MAX_COLOR_AMPLITUDE
+        }
     return Snapshot(phase = phase, amplitude = amplitude)
   }
 
@@ -71,7 +103,11 @@ internal object SpatialPassthroughLutModule {
    * A point LUT cannot perform neighborhood edge detection, but these hard band boundaries make
    * scene contours visually obvious and are deliberately unlike normal camera passthrough.
    */
-  fun createPosterizedColorLut(snapshot: Snapshot): Lut {
+  fun createPosterizedColorLut(
+      snapshot: Snapshot,
+      settings: SpatialPassthroughLutSettings = SpatialPassthroughLutSettings(),
+  ): Lut {
+    val effectiveSettings = settings.normalized()
     val lut = Lut(LUT_DIMENSION)
     val denominator = (LUT_DIMENSION - 1).toFloat()
     for (sourceBlue in 0 until LUT_DIMENSION) {
@@ -81,7 +117,7 @@ internal object SpatialPassthroughLutModule {
           val green = sourceGreen / denominator
           val blue = sourceBlue / denominator
           val luma = (0.2126f * red + 0.7152f * green + 0.0722f * blue).coerceIn(0.0f, 1.0f)
-          val output = posterizedColor(luma, snapshot)
+          val output = posterizedColor(luma, snapshot, effectiveSettings)
           lut.setMapping(
               sourceRed,
               sourceGreen,
@@ -96,7 +132,12 @@ internal object SpatialPassthroughLutModule {
     return lut
   }
 
-  fun appliedMarker(source: String, snapshot: Snapshot, systemPassthroughEnabled: Boolean): String =
+  fun appliedMarker(
+      source: String,
+      snapshot: Snapshot,
+      settings: SpatialPassthroughLutSettings,
+      systemPassthroughEnabled: Boolean,
+  ): String =
       "channel=spatial-passthrough-lut status=applied " +
           "source=${activityMarkerToken(source)} " +
           "passthroughStyleOwner=spatial-sdk-system-passthrough " +
@@ -104,11 +145,13 @@ internal object SpatialPassthroughLutModule {
           "passthroughStyleMode=animated-posterized-mono-to-rgba-gradient " +
           "passthroughLutDimension=$LUT_DIMENSION passthroughLutEntryCount=${LUT_DIMENSION * LUT_DIMENSION * LUT_DIMENSION} " +
           "passthroughColorMapStops=black-green-yellow-red-magenta-blue-cyan " +
-          "passthroughBlackLevelCutoff=${markerFloat(BLACK_LEVEL_CUTOFF)} " +
+          "passthroughBlackLevelCutoff=${markerFloat(settings.blackLevelCutoff)} " +
           "passthroughSaturatedColorBandCount=$SATURATED_COLOR_BAND_COUNT " +
+          "passthroughColorIntensity=${markerFloat(settings.colorIntensity)} " +
+          "passthroughLutAnimationEnabled=${settings.animationEnabled} " +
           "passthroughColorPhase=${markerFloat(snapshot.phase)} " +
           "passthroughColorAmplitude=${markerFloat(snapshot.amplitude)} " +
-          "passthroughColorPhaseHz=${markerFloat(COLOR_PHASE_HZ)} " +
+          "passthroughColorPhaseHz=${markerFloat(settings.colorPhaseHz)} " +
           "passthroughAmplitudeOscillatorHz=${markerFloat(AMPLITUDE_OSCILLATOR_HZ)} " +
           "passthroughLutUpdateHz=${markerFloat(UPDATE_HZ)} " +
           "metaSystemPassthroughEnabled=$systemPassthroughEnabled " +
@@ -129,11 +172,29 @@ internal object SpatialPassthroughLutModule {
           "error=${activityMarkerToken(error.javaClass.simpleName)} " +
           "message=${activityMarkerToken(error.message ?: "none")} runtimeCrash=false"
 
-  private fun posterizedColor(luma: Float, snapshot: Snapshot): IntArray {
-    if (luma <= BLACK_LEVEL_CUTOFF) return intArrayOf(0, 0, 0)
+  fun settingsMarker(
+      source: String,
+      settings: SpatialPassthroughLutSettings,
+      lutActive: Boolean,
+  ): String =
+      "channel=spatial-passthrough-lut status=settings-applied " +
+          "source=${activityMarkerToken(source)} " +
+          "passthroughLutAnimationEnabled=${settings.animationEnabled} " +
+          "passthroughColorIntensity=${markerFloat(settings.colorIntensity)} " +
+          "passthroughColorPhaseHz=${markerFloat(settings.colorPhaseHz)} " +
+          "passthroughBlackLevelCutoff=${markerFloat(settings.blackLevelCutoff)} " +
+          "passthroughLutActive=$lutActive runtimeCrash=false"
+
+  private fun posterizedColor(
+      luma: Float,
+      snapshot: Snapshot,
+      settings: SpatialPassthroughLutSettings,
+  ): IntArray {
+    if (luma <= settings.blackLevelCutoff) return intArrayOf(0, 0, 0)
 
     val normalized =
-        ((luma - BLACK_LEVEL_CUTOFF) / (1.0f - BLACK_LEVEL_CUTOFF)).coerceIn(0.0f, 1.0f)
+        ((luma - settings.blackLevelCutoff) / (1.0f - settings.blackLevelCutoff))
+            .coerceIn(0.0f, 1.0f)
     val shifted = (normalized + snapshot.phase).mod(1.0f)
     val bandIndex =
         floor(shifted * SATURATED_COLOR_BAND_COUNT)
@@ -141,10 +202,18 @@ internal object SpatialPassthroughLutModule {
             .coerceIn(0, SATURATED_COLOR_BAND_COUNT - 1)
     val stop = saturatedColorStops[bandIndex]
     val brightness = snapshot.amplitude * (0.88f + 0.12f * normalized)
+    val monochrome = (normalized * 255.0f).roundToInt().coerceIn(0, 255)
+    val colorMix = settings.colorIntensity
     return intArrayOf(
-        (stop[0] * brightness).roundToInt().coerceIn(0, 255),
-        (stop[1] * brightness).roundToInt().coerceIn(0, 255),
-        (stop[2] * brightness).roundToInt().coerceIn(0, 255),
+        (((monochrome * (1.0f - colorMix)) + (stop[0] * colorMix)) * brightness)
+            .roundToInt()
+            .coerceIn(0, 255),
+        (((monochrome * (1.0f - colorMix)) + (stop[1] * colorMix)) * brightness)
+            .roundToInt()
+            .coerceIn(0, 255),
+        (((monochrome * (1.0f - colorMix)) + (stop[2] * colorMix)) * brightness)
+            .roundToInt()
+            .coerceIn(0, 255),
     )
   }
 
@@ -161,6 +230,7 @@ internal class SpatialPassthroughLutCoordinator(
   private var enabledAtMs: Long = 0L
   private var lastMarkerAtMs: Long = Long.MIN_VALUE
   private var lastSnapshot = SpatialPassthroughLutModule.Snapshot(phase = 0.0f, amplitude = 1.0f)
+  private var settings = SpatialPassthroughLutSettings()
   private var activeLut: Lut? = null
   private var lutApplied = false
 
@@ -191,15 +261,29 @@ internal class SpatialPassthroughLutCoordinator(
     existingJob?.cancel()
     enabledAtMs = elapsedRealtimeMs()
     lastMarkerAtMs = Long.MIN_VALUE
-    updateJob =
-        scope.launch {
-          lutApplied = applyCurrentLut(source, forceMarker = true)
-          while (isActive && lutApplied) {
-            delay(SpatialPassthroughLutModule.UPDATE_PERIOD_MS)
-            lutApplied = applyCurrentLut("$source-oscillator", forceMarker = false)
-          }
-        }
+    updateJob = launchUpdateJob(source)
     return currentUpdate(requested = true)
+  }
+
+  fun settingsSnapshot(): SpatialPassthroughLutSettings = settings
+
+  fun updateSettings(
+      requested: SpatialPassthroughLutSettings,
+      source: String,
+  ): SpatialPassthroughLutSettings {
+    val normalized = requested.normalized()
+    val changed = normalized != settings
+    settings = normalized
+    val lutActive = updateJob?.isActive == true || lutApplied
+    marker(SpatialPassthroughLutModule.settingsMarker(source, normalized, lutActive))
+    if (changed && lutActive) {
+      updateJob?.cancel()
+      updateJob = null
+      enabledAtMs = elapsedRealtimeMs()
+      lastMarkerAtMs = Long.MIN_VALUE
+      updateJob = launchUpdateJob("$source-settings")
+    }
+    return settings
   }
 
   fun stop(source: String) {
@@ -211,14 +295,24 @@ internal class SpatialPassthroughLutCoordinator(
     activeLut = null
   }
 
+  private fun launchUpdateJob(source: String): Job =
+      scope.launch {
+        lutApplied = applyCurrentLut(source, forceMarker = true)
+        while (isActive && lutApplied && settings.animationEnabled) {
+          delay(SpatialPassthroughLutModule.UPDATE_PERIOD_MS)
+          lutApplied = applyCurrentLut("$source-oscillator", forceMarker = false)
+        }
+      }
+
   private suspend fun applyCurrentLut(source: String, forceMarker: Boolean): Boolean {
     val nowMs = elapsedRealtimeMs()
-    lastSnapshot = SpatialPassthroughLutModule.snapshot(nowMs - enabledAtMs)
+    val currentSettings = settings
+    lastSnapshot = SpatialPassthroughLutModule.snapshot(nowMs - enabledAtMs, currentSettings)
     val snapshot = lastSnapshot
     return runCatching {
           val lut =
               withContext(Dispatchers.Default) {
-                SpatialPassthroughLutModule.createPosterizedColorLut(snapshot)
+                SpatialPassthroughLutModule.createPosterizedColorLut(snapshot, currentSettings)
               }
           activeLut = lut
           scene.setPassthroughLUT(lut)
@@ -232,6 +326,7 @@ internal class SpatialPassthroughLutCoordinator(
                 SpatialPassthroughLutModule.appliedMarker(
                     source,
                     snapshot,
+                    currentSettings,
                     scene.isSystemPassthroughEnabled(),
                 )
             )

@@ -27,6 +27,7 @@ internal data class SpatialPrivateLayerPanelRegistrationBindings(
     val projectionSurfaceDisplacement: ProjectionSurfaceDisplacement,
     val projectionSurfaceTiling: ProjectionSurfaceTiling,
     val projectionInnerAlpha: ProjectionInnerAlpha,
+    val passthroughLutSettings: () -> SpatialPassthroughLutSettings,
     val videoSession: () -> SpatialImmersiveVideoSessionSnapshot,
     val sharedMediaLibraryStatus: () -> SharedOfflineImmersiveMediaLibrarySnapshot,
     val observeSharedMediaLibrary:
@@ -60,6 +61,8 @@ internal data class SpatialPrivateLayerPanelRegistrationBindings(
         (ProjectionSurfaceTiling, String) -> ProjectionSurfaceTiling,
     val updateProjectionInnerAlpha:
         (ProjectionInnerAlpha, String) -> ProjectionInnerAlpha,
+    val updatePassthroughLutSettings:
+        (SpatialPassthroughLutSettings, String) -> SpatialPassthroughLutSettings,
     val selectPreviousVideo: () -> SpatialImmersiveVideoSessionSnapshot,
     val selectNextVideo: () -> SpatialImmersiveVideoSessionSnapshot,
     val selectVideo: (Int) -> SpatialImmersiveVideoSessionSnapshot,
@@ -120,6 +123,7 @@ internal object SpatialComposePanelRegistrationModule {
                       projectionSurfaceDisplacement = bindings.projectionSurfaceDisplacement,
                       projectionSurfaceTiling = bindings.projectionSurfaceTiling,
                       projectionInnerAlpha = bindings.projectionInnerAlpha,
+                      passthroughLutSettings = bindings.passthroughLutSettings,
                       videoSession = bindings.videoSession,
                       sharedMediaLibraryStatus = bindings.sharedMediaLibraryStatus,
                       observeSharedMediaLibrary = bindings.observeSharedMediaLibrary,
@@ -146,6 +150,7 @@ internal object SpatialComposePanelRegistrationModule {
                           bindings.updateProjectionSurfaceDisplacement,
                       updateProjectionSurfaceTiling = bindings.updateProjectionSurfaceTiling,
                       updateProjectionInnerAlpha = bindings.updateProjectionInnerAlpha,
+                      updatePassthroughLutSettings = bindings.updatePassthroughLutSettings,
                       selectPreviousVideo = bindings.selectPreviousVideo,
                       selectNextVideo = bindings.selectNextVideo,
                       selectVideo = bindings.selectVideo,

@@ -85,7 +85,8 @@ private enum class PrivateLayerPanelPage(
   Middle("Middle buffer", "Off, static, or speed-driven guard with region-owned content"),
   Outer("Outer region", "Video, independent stretch, or transparent passthrough"),
   Transitions("Transitions", "Center-to-middle and middle-to-outer boundaries"),
-  Media("Media library", "Background, playback, cadence, presentation, and active media"),
+  Background("Background", "System passthrough, opaque backing, and LUT appearance"),
+  Media("Media library", "Video selection, playback, cadence, and presentation"),
   Image("Image processing", "Depth warp, RGB transform, sampling, and guide blur"),
   Depth("Depth alignment", "Depth source and per-eye fine tuning"),
   Profiles("Profiles", "Save, restore, and exchange complete tuning setups"),
@@ -115,6 +116,7 @@ internal fun PrivateLayerControlPanel(
     projectionSurfaceDisplacement: ProjectionSurfaceDisplacement,
     projectionSurfaceTiling: ProjectionSurfaceTiling,
     projectionInnerAlpha: ProjectionInnerAlpha,
+    passthroughLutSettings: () -> SpatialPassthroughLutSettings,
     videoSession: () -> SpatialImmersiveVideoSessionSnapshot,
     sharedMediaLibraryStatus: () -> SharedOfflineImmersiveMediaLibrarySnapshot,
     observeSharedMediaLibrary:
@@ -146,6 +148,8 @@ internal fun PrivateLayerControlPanel(
         (ProjectionSurfaceTiling, String) -> ProjectionSurfaceTiling,
     updateProjectionInnerAlpha:
         (ProjectionInnerAlpha, String) -> ProjectionInnerAlpha,
+    updatePassthroughLutSettings:
+        (SpatialPassthroughLutSettings, String) -> SpatialPassthroughLutSettings,
     selectPreviousVideo: () -> SpatialImmersiveVideoSessionSnapshot,
     selectNextVideo: () -> SpatialImmersiveVideoSessionSnapshot,
     selectVideo: (Int) -> SpatialImmersiveVideoSessionSnapshot,
@@ -178,6 +182,8 @@ internal fun PrivateLayerControlPanel(
       remember(projectionSurfaceTiling) { mutableStateOf(projectionSurfaceTiling) }
   var localProjectionInnerAlpha by
       remember(projectionInnerAlpha) { mutableStateOf(projectionInnerAlpha) }
+  var localPassthroughLutSettings by
+      remember { mutableStateOf(passthroughLutSettings()) }
   var currentPage by remember { mutableStateOf(PrivateLayerPanelPage.Home) }
   var localVideoSession by remember { mutableStateOf(videoSession()) }
   var localVideoCadenceMode by remember { mutableStateOf(SpatialVideoCadencePanelBridge.current()) }
@@ -276,6 +282,18 @@ internal fun PrivateLayerControlPanel(
                       "${localVideoSession.activeOrdinal} of ${localVideoSession.itemCount}"
                 } else {
                   "No packaged video available"
+                },
+            backgroundSummary =
+                when (localVideoSession.backgroundMode) {
+                  SpatialBackgroundMode.Black -> "Opaque black backing"
+                  SpatialBackgroundMode.Passthrough -> "System passthrough"
+                  SpatialBackgroundMode.LutPassthrough ->
+                      "LUT passthrough · " +
+                          if (localPassthroughLutSettings.animationEnabled) {
+                            "animated"
+                          } else {
+                            "static"
+                          }
                 },
             regionSummary =
                 "${PrivateLayerZoneCompositorControls.presetToken(localZoneCompositor)} · " +
@@ -388,7 +406,7 @@ internal fun PrivateLayerControlPanel(
       }
       }
 
-      if (currentPage == PrivateLayerPanelPage.Media) {
+      if (currentPage == PrivateLayerPanelPage.Background) {
         Section("Background") {
           HelpLabel("Background")
           Text(
@@ -421,6 +439,98 @@ internal fun PrivateLayerControlPanel(
             }
           }
         }
+        if (localVideoSession.backgroundMode == SpatialBackgroundMode.LutPassthrough) {
+          Section("LUT appearance") {
+            HelpLabel("Passthrough LUT")
+            Text(
+                "The LUT styles Meta system passthrough; it does not start a second camera or passthrough layer. Static mode builds one LUT and performs no periodic LUT updates.",
+                style = MaterialTheme.typography.bodySmall,
+                color = LayerPanelMuted,
+            )
+            Button(
+                modifier = Modifier.fillMaxWidth().height(52.dp),
+                onClick = {
+                  localPassthroughLutSettings =
+                      updatePassthroughLutSettings(
+                          localPassthroughLutSettings.copy(
+                              animationEnabled =
+                                  !localPassthroughLutSettings.animationEnabled
+                          ),
+                          "private-layer-control-panel-lut-animation",
+                      )
+                },
+                colors =
+                    ButtonDefaults.buttonColors(
+                        containerColor =
+                            if (localPassthroughLutSettings.animationEnabled) {
+                              LayerPanelWarm
+                            } else {
+                              LayerPanelAccent
+                            },
+                        contentColor = Color(0xFF04111A),
+                    ),
+            ) {
+              Text(
+                  if (localPassthroughLutSettings.animationEnabled) {
+                    "Animated color cycle on · tap for static"
+                  } else {
+                    "Static LUT · tap to animate"
+                  }
+              )
+            }
+            CommittedSlider(
+                label = "Color strength",
+                value = localPassthroughLutSettings.colorIntensity,
+                range = 0.0f..1.0f,
+                onValueChange = { value ->
+                  localPassthroughLutSettings =
+                      localPassthroughLutSettings.copy(colorIntensity = value)
+                },
+                onValueChangeFinished = {
+                  localPassthroughLutSettings =
+                      updatePassthroughLutSettings(
+                          localPassthroughLutSettings,
+                          "private-layer-control-panel-lut-color-strength",
+                      )
+                },
+            )
+            CommittedSlider(
+                label = "Color cycle speed (Hz)",
+                value = localPassthroughLutSettings.colorPhaseHz,
+                range = 0.0f..0.5f,
+                onValueChange = { value ->
+                  localPassthroughLutSettings =
+                      localPassthroughLutSettings.copy(colorPhaseHz = value)
+                },
+                onValueChangeFinished = {
+                  localPassthroughLutSettings =
+                      updatePassthroughLutSettings(
+                          localPassthroughLutSettings,
+                          "private-layer-control-panel-lut-cycle-speed",
+                      )
+                },
+            )
+            CommittedSlider(
+                label = "Black cutoff",
+                value = localPassthroughLutSettings.blackLevelCutoff,
+                range = 0.0f..0.20f,
+                onValueChange = { value ->
+                  localPassthroughLutSettings =
+                      localPassthroughLutSettings.copy(blackLevelCutoff = value)
+                },
+                onValueChangeFinished = {
+                  localPassthroughLutSettings =
+                      updatePassthroughLutSettings(
+                          localPassthroughLutSettings,
+                          "private-layer-control-panel-lut-black-cutoff",
+                      )
+                },
+            )
+          }
+        }
+      }
+
+      if (currentPage == PrivateLayerPanelPage.Media) {
         Section("Peer stereo") {
           HelpLabel("Quest-to-Quest stereo")
           Text(
@@ -2008,6 +2118,7 @@ internal fun HelpLabel(label: String) {
 private fun PanelTopicMenu(
     projectionSummary: String,
     videoSummary: String,
+    backgroundSummary: String,
     regionSummary: String,
     imageSummary: String,
     depthSummary: String,
@@ -2036,6 +2147,11 @@ private fun PanelTopicMenu(
         title = PrivateLayerPanelPage.Transitions.title,
         summary = "Two independent region boundaries",
         onClick = { onSelect(PrivateLayerPanelPage.Transitions) },
+    )
+    TopicNavigationButton(
+        title = PrivateLayerPanelPage.Background.title,
+        summary = backgroundSummary,
+        onClick = { onSelect(PrivateLayerPanelPage.Background) },
     )
     TopicNavigationButton(
         title = PrivateLayerPanelPage.Media.title,
@@ -3776,6 +3892,28 @@ private fun DepthSlider(
       Text("%.3f".format(value), style = MaterialTheme.typography.bodyMedium, color = LayerPanelMuted)
     }
     Slider(value = value, onValueChange = onChange, valueRange = range)
+  }
+}
+
+@Composable
+private fun CommittedSlider(
+    label: String,
+    value: Float,
+    range: ClosedFloatingPointRange<Float>,
+    onValueChange: (Float) -> Unit,
+    onValueChangeFinished: () -> Unit,
+) {
+  Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+      Text(label, style = MaterialTheme.typography.bodyMedium, color = LayerPanelInk)
+      Text("%.3f".format(value), style = MaterialTheme.typography.bodyMedium, color = LayerPanelMuted)
+    }
+    Slider(
+        value = value,
+        onValueChange = onValueChange,
+        onValueChangeFinished = onValueChangeFinished,
+        valueRange = range,
+    )
   }
 }
 

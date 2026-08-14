@@ -3005,6 +3005,7 @@ Assert-Contains "Private layer panel" $privateLayerPanel 'Center("Center region"
 Assert-Contains "Private layer panel" $privateLayerPanel 'Middle("Middle buffer"'
 Assert-Contains "Private layer panel" $privateLayerPanel 'Outer("Outer region"'
 Assert-Contains "Private layer panel" $privateLayerPanel 'Transitions("Transitions"'
+Assert-Contains "Private layer panel" $privateLayerPanel 'Background("Background"'
 Assert-Contains "Private layer panel" $privateLayerPanel 'Media("Media library"'
 Assert-Contains "Private layer panel" $privateLayerPanel "Image processing"
 Assert-Contains "Private layer panel" $privateLayerPanel "Depth alignment"
@@ -3022,6 +3023,10 @@ Assert-Contains "Private layer panel" $privateLayerPanel 'Section("Center conten
 Assert-Contains "Private layer panel" $privateLayerPanel "Projection Area"
 Assert-Contains "Private layer panel" $privateLayerPanel 'Section("Projection")'
 Assert-Contains "Private layer panel" $privateLayerPanel 'Section("Background")'
+Assert-Contains "Private layer panel" $privateLayerPanel 'Section("LUT appearance")'
+Assert-Contains "Private layer panel" $privateLayerPanel 'label = "Color strength"'
+Assert-Contains "Private layer panel" $privateLayerPanel 'label = "Color cycle speed (Hz)"'
+Assert-Contains "Private layer panel" $privateLayerPanel 'label = "Black cutoff"'
 Assert-Contains "Private layer panel" $privateLayerPanel 'Section("Advanced distortion safety")'
 Assert-Contains "Private layer panel" $privateLayerPanel 'HelpLabel("Protect projection edges")'
 Assert-Contains "Private layer panel" $privateLayerPanel 'Section("Available videos")'

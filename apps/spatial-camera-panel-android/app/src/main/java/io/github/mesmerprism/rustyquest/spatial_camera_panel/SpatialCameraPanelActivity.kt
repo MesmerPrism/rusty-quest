@@ -2885,6 +2885,8 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
                         privateLayerControlCoordinator.projectionSurfaceTiling,
                     projectionInnerAlpha =
                         privateLayerControlCoordinator.projectionInnerAlpha,
+                    passthroughLutSettings =
+                        spatialPassthroughLutCoordinator::settingsSnapshot,
                     videoSession = immersiveVideoPanelCoordinator::sessionSnapshot,
                     sharedMediaLibraryStatus = sharedMediaLibraryClient::status,
                     observeSharedMediaLibrary = sharedMediaLibraryClient::observe,
@@ -2927,6 +2929,8 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
                         privateLayerControlCoordinator::updateProjectionSurfaceTiling,
                     updateProjectionInnerAlpha =
                         privateLayerControlCoordinator::updateProjectionInnerAlpha,
+                    updatePassthroughLutSettings =
+                        spatialPassthroughLutCoordinator::updateSettings,
                     selectPreviousVideo = {
                       changeImmersiveVideo(
                           "previous",

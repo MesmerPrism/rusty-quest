@@ -1577,12 +1577,21 @@ the Activity, control panel, selected carrier, or selected decoder. Turning the
 Buffer off produces a direct Center-to-Outer transition while retaining the
 dormant Middle settings.
 
+Background is a separate top-level page rather than a Media subsection. Media
+owns video discovery, selection, presentation, cadence, and playback; Background
+owns Black, system passthrough, and LUT passthrough plus LUT animation, color
+strength, cycle speed, and black-cutoff controls. Ordinary video off/on hides
+and reuses the registered Spatial carrier and Surface. Decoder stop/release and
+replacement are serialized on a dedicated Media3 looper so no codec teardown
+blocks the Activity/XR thread.
+
 Meta system passthrough stays enabled for the scene session. Black and video
 carriers occlude it, Transparent removes the opaque black carrier, and LUT
 removes that carrier while styling the underlying passthrough. Background
 selection never retries the platform's advisory passthrough getter. Animated
 LUT construction runs away from the main thread; only the final Scene update is
-submitted on the main scope.
+submitted on the main scope. Static LUT mode applies once with no recurring LUT
+job.
 
 ## Connection Hub runtime isolation
 
