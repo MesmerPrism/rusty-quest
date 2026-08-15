@@ -1344,6 +1344,28 @@ with inactive high-water two per eye and no cache disable. These are sanitized
 results; raw device evidence remains private. None of these changes adds a
 visual-quality option or changes rendered output.
 
+### Whole-frame GPU-regression isolation
+
+A fixed-capacity follow-up rebuilt the older unified-compositor control, the
+NativeBox5/timestamp parent, and the retained CPU/import-cache build with the
+same Spatial SDK API-layer owner. Every 25-second Quest trace asserted CPU/GPU
+levels 4/4. Non-video stress movement was large enough that no winner was
+supported. In two decoder-valid runs per build, however, Maximum blend averaged
+about 88.8 FPS on the older control and 86.4/86.2 FPS on the two newer builds.
+The Unit 046 caches reduced internal work and small CPU aggregates relative to
+their direct parent, but did not recover that display-rate difference.
+
+All relevant `status=gpu-timestamp-config` markers reported
+`gpuTimestampRequested=false` and `gpuTimestampActive=false`; active query work
+is therefore not a valid explanation. The bounded follow-up keeps the Unit 046
+caches and independently compares two public factors: the three-linear-read
+NativeBox5 implementation versus the prior five-physical-read equivalent, and
+the presence versus removal of disabled timestamp scaffolding. It starts with
+the decoder-valid Maximum-blend profile and runs the full matrix only for a
+repeatable winner. The existing packed-eye numeric oracle remains mandatory,
+Gaussian5 must remain unchanged, and neither factor is exposed as a visual
+quality option.
+
 Run the raw camera projection headset smoke with:
 
 ```powershell
