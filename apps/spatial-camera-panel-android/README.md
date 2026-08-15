@@ -1357,14 +1357,22 @@ their direct parent, but did not recover that display-rate difference.
 
 All relevant `status=gpu-timestamp-config` markers reported
 `gpuTimestampRequested=false` and `gpuTimestampActive=false`; active query work
-is therefore not a valid explanation. The bounded follow-up keeps the Unit 046
-caches and independently compares two public factors: the three-linear-read
-NativeBox5 implementation versus the prior five-physical-read equivalent, and
-the presence versus removal of disabled timestamp scaffolding. It starts with
-the decoder-valid Maximum-blend profile and runs the full matrix only for a
-repeatable winner. The existing packed-eye numeric oracle remains mandatory,
-Gaussian5 must remain unchanged, and neither factor is exposed as a visual
-quality option.
+was therefore not a valid explanation. The bounded follow-up kept the Unit 046
+caches and independently tested the prior five-physical-read NativeBox5
+equivalent and a build that compiled the timestamp module and all of its
+startup/hot-path calls out of the native library. Binary string inspection
+confirmed the timing factor was absent from that candidate.
+
+Neither factor won its two fixed-level matched brackets. The five-read build
+was 2.10 and 1.68 FPS slower than its neighboring controls and used slightly
+more mean GPU; its tear delta changed sign. The timing-out build was 0.68 and
+0.44 FPS slower, also used slightly more mean GPU, and its tear delta changed
+sign. All ten traces stayed at 40 C with zero trace packet loss, depth
+call-order errors, fatal exceptions, or ANRs. Because neither narrow candidate
+passed, the full matrix was not run and no visual-quality A/B option is
+eligible. Retain the three-linear-read NativeBox5 fold, retain the
+disabled-by-default timestamp implementation, and direct subsequent work at
+actual Maximum-blend compositor sampling rather than these rejected factors.
 
 Run the raw camera projection headset smoke with:
 
