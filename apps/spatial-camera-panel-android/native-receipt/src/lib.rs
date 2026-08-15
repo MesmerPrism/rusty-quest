@@ -30,6 +30,7 @@ mod camera_hwb_probe;
 mod camera_hwb_projection_target;
 #[cfg(target_os = "android")]
 mod camera_hwb_stream;
+mod camera_hwb_timing;
 #[cfg(target_os = "android")]
 mod camera_hwb_wsi;
 #[cfg(any(target_os = "android", test))]
@@ -51,16 +52,8 @@ mod replay_hands;
 mod rgb_channel_transform;
 #[cfg(target_os = "android")]
 mod spatial_controller_actions;
-#[cfg(all(
-    target_os = "android",
-    rq_environment_depth_legacy_native_sidecar
-))]
+#[cfg(all(target_os = "android", rq_environment_depth_legacy_native_sidecar))]
 mod spatial_environment_depth;
-#[cfg(any(
-    all(target_os = "android", rq_environment_depth_spatial_sdk_api_layer),
-    test
-))]
-mod spatial_sdk_depth_handoff;
 mod spatial_environment_depth_policy;
 mod spatial_guide_processing;
 #[cfg(target_os = "android")]
@@ -70,6 +63,11 @@ mod spatial_native_passthrough;
 mod spatial_presentation_policy;
 mod spatial_public_multistack;
 mod spatial_public_multistack_runtime;
+#[cfg(any(
+    all(target_os = "android", rq_environment_depth_spatial_sdk_api_layer),
+    test
+))]
+mod spatial_sdk_depth_handoff;
 #[cfg(target_os = "android")]
 mod spatial_video_projection;
 mod spatial_video_projection_marker;

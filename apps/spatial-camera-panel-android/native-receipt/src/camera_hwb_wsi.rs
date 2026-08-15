@@ -16,6 +16,7 @@ use crate::camera_hwb_projection_target::{
     camera_hwb_projection_zone_frame, CameraHwbProjectionEyePush,
 };
 use crate::camera_hwb_stream::CameraProbeFrame;
+use crate::camera_hwb_timing::{CameraHwbGpuTimestampStage, CameraHwbGpuTimestampTracker};
 use crate::camera_latency_diagnostics::{
     CameraLatencyIsolationMode, CameraLatencySettings, CameraLatencyStereoReprojection,
 };
@@ -509,7 +510,9 @@ pub(crate) unsafe fn record_camera_hwb_probe_command_buffer(
     video_renderer: Option<&mut SpatialVideoProjectionRenderer>,
     video_frame: Option<&SpatialVideoProjectionFrame>,
     video_settings: &SpatialVideoProjectionSettings,
+    gpu_timestamps: &mut CameraHwbGpuTimestampTracker,
     frame_slot: usize,
+    frame_id: u64,
     camera_reprojection: CameraLatencyStereoReprojection,
     projection_guard_band: CameraReprojectionGuardBandFrame,
     latency_settings: CameraLatencySettings,
@@ -523,6 +526,7 @@ pub(crate) unsafe fn record_camera_hwb_probe_command_buffer(
     device
         .begin_command_buffer(command_buffer, &vk::CommandBufferBeginInfo::default())
         .map_err(|error| format!("begin-command-buffer-{error:?}"))?;
+    gpu_timestamps.begin_frame(device, command_buffer, frame_slot, frame_id);
     if transition_left_camera_image {
         transition_ahb_sampled_image_to_shader_read(
             device,
@@ -626,6 +630,8 @@ pub(crate) unsafe fn record_camera_hwb_probe_command_buffer(
         targets.record_spatial_public_guide_passes(
             device,
             command_buffer,
+            gpu_timestamps,
+            frame_slot,
             descriptor_set,
             elapsed_seconds,
             camera_reprojection,
@@ -683,6 +689,12 @@ pub(crate) unsafe fn record_camera_hwb_probe_command_buffer(
         false
     };
 
+    gpu_timestamps.write_stage_start(
+        device,
+        command_buffer,
+        frame_slot,
+        CameraHwbGpuTimestampStage::FinalCompositor,
+    );
     begin_camera_hwb_final_render_pass(
         device,
         command_buffer,
@@ -762,6 +774,13 @@ pub(crate) unsafe fn record_camera_hwb_probe_command_buffer(
         );
     }
     device.cmd_end_render_pass(command_buffer);
+    gpu_timestamps.write_stage_end(
+        device,
+        command_buffer,
+        frame_slot,
+        CameraHwbGpuTimestampStage::FinalCompositor,
+    );
+    gpu_timestamps.finish_frame(device, command_buffer, frame_slot);
     device
         .end_command_buffer(command_buffer)
         .map_err(|error| format!("end-command-buffer-{error:?}"))?;

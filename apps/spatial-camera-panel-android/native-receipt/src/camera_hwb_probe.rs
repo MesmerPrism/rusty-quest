@@ -24,6 +24,7 @@ use crate::camera_hwb_projection_target::{
 use crate::camera_hwb_stream::{
     CameraProbeFrame, CameraProbeFrameSet, CameraProbeRuntime, CameraProbeStreamMode,
 };
+use crate::camera_hwb_timing::CameraHwbGpuTimestampTracker;
 use crate::camera_hwb_wsi::{
     allocate_camera_hwb_probe_descriptor_set, choose_composite_alpha, choose_extent,
     choose_surface_format, create_camera_hwb_probe_resources, create_framebuffers,
@@ -1179,6 +1180,26 @@ unsafe fn render_camera_hwb_probe(
             None,
         )
         .map_err(|error| format!("create-frame-fence-{error:?}"))?;
+    let timestamp_valid_bits = instance
+        .get_physical_device_queue_family_properties(physical_device)
+        .get(queue_family_index as usize)
+        .map(|family| family.timestamp_valid_bits)
+        .unwrap_or(0);
+    let timestamp_period_ns = instance
+        .get_physical_device_properties(physical_device)
+        .limits
+        .timestamp_period as f64;
+    let mut gpu_timestamps = CameraHwbGpuTimestampTracker::new(
+        &device,
+        images.len(),
+        CameraHwbGpuTimestampTracker::requested_from_runtime(),
+        timestamp_valid_bits,
+        timestamp_period_ns,
+    );
+    log_marker(format!(
+        "status=gpu-timestamp-config {} runtimeCrash=false",
+        gpu_timestamps.config_marker_fields(),
+    ));
 
     #[cfg(rq_environment_depth_spatial_sdk_api_layer)]
     log_marker(format!(
@@ -1439,6 +1460,7 @@ unsafe fn render_camera_hwb_probe(
     let mut transition_left_camera_image = true;
     let mut transition_right_camera_image = matches!(mode, CameraHwbProbeMode::RawColorProjection);
     let mut frames_presented = 0_u32;
+    let mut last_submitted_frame_slot: Option<usize> = None;
     let mut camera_reprojection_guard_band = CameraReprojectionGuardBandController::default();
     let mut spatial_video_projection_rendered_marker_logged = false;
     let mut last_projection_zone_render_stats = None;
@@ -1690,6 +1712,17 @@ unsafe fn render_camera_hwb_probe(
             }
             if release_status != 0 {
                 return Err(format!("spatial-depth-lease-release-{release_status}"));
+            }
+        }
+        if let Some(retired_frame_slot) = last_submitted_frame_slot.take() {
+            if let Some(sample) = gpu_timestamps.read_retired_slot(&device, retired_frame_slot) {
+                if sample.frame_id <= 4 || sample.frame_id % 300 == 0 {
+                    log_marker(format!(
+                        "status=gpu-timestamp-sample {} {} runtimeCrash=false",
+                        sample.marker_fields(),
+                        gpu_timestamps.summary_marker_fields(),
+                    ));
+                }
             }
         }
         if let Some(capture) = camera_replay_capture.as_mut() {
@@ -2063,7 +2096,9 @@ unsafe fn render_camera_hwb_probe(
             video_renderer.as_mut(),
             latest_video_frame.as_ref(),
             &video_settings,
+            &mut gpu_timestamps,
             image_index as usize,
+            u64::from(frames_presented) + 1,
             camera_reprojection,
             projection_guard_band,
             observed_latency_settings,
@@ -2144,6 +2179,7 @@ unsafe fn render_camera_hwb_probe(
             );
             submitted_broker_failure_observed_at = None;
         }
+        last_submitted_frame_slot = Some(image_index as usize);
         frame_timing.submit = submit_started.elapsed();
         #[cfg(not(rq_environment_depth_spatial_sdk_api_layer))]
         let swapchains = [swapchain];
@@ -2400,6 +2436,18 @@ unsafe fn render_camera_hwb_probe(
     device
         .device_wait_idle()
         .map_err(|error| format!("device-wait-idle-{error:?}"))?;
+    if let Some(retired_frame_slot) = last_submitted_frame_slot.take() {
+        if let Some(sample) = gpu_timestamps.read_retired_slot(&device, retired_frame_slot) {
+            log_marker(format!(
+                "status=gpu-timestamp-final-sample {} runtimeCrash=false",
+                sample.marker_fields(),
+            ));
+        }
+    }
+    log_marker(format!(
+        "status=gpu-timestamp-summary {} runtimeCrash=false",
+        gpu_timestamps.summary_marker_fields(),
+    ));
     #[cfg(rq_environment_depth_spatial_sdk_api_layer)]
     if let Some(completed_lease) = submitted_depth_lease.take() {
         let _ =
@@ -2425,6 +2473,7 @@ unsafe fn render_camera_hwb_probe(
     if let Some(public_guide_targets) = public_guide_targets {
         public_guide_targets.destroy(&device);
     }
+    gpu_timestamps.destroy(&device);
     device.destroy_fence(frame_fence, None);
     device.destroy_semaphore(render_finished, None);
     device.destroy_semaphore(image_available, None);

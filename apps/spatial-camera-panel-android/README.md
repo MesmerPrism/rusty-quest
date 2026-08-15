@@ -1281,6 +1281,32 @@ All camera-projection wrapper examples below require that capsule. The wrapper
 serializes by headset serial, stops only the capsule package, and restores the
 complete pre-run property state. See `docs/APK_RUN_ISOLATION.md`.
 
+### Optional Vulkan GPU timestamp telemetry
+
+Set
+`debug.rustyquest.spatial.camera_hwb_projection_probe.gpu_timestamps=true`
+to enable disabled-by-default GPU timestamp telemetry for the camera projection
+renderer. One query pair measures the full recorded frame, six pairs measure
+the ordered public guide passes, and one pair measures the final compositor
+render pass. The renderer reads only a retired frame slot, requests query
+availability without `WAIT`, handles the device timestamp valid-bit width and
+timestamp period, and fails open when timestamp support, query creation, or a
+query result is unavailable. Instrumentation therefore must not make projection
+startup or rendering depend on timing data.
+
+The runtime emits low-rate `status=gpu-timestamp-config`,
+`status=gpu-timestamp-sample`, and `status=gpu-timestamp-summary` markers. The
+summary reports attempted, ready, partial, not-ready, and failed query-set
+counts plus ring occupancy/overwrite counts. Samples are stored in one fixed
+4096-entry ring allocated at tracker creation; the active render loop performs
+no timing-related heap allocation. Treat a marker as measurement evidence only
+when `gpuTimestampActive=true` and the corresponding
+`gpuTimestampQuerySetReady=true`. Controlled comparisons must use the same APK
+and scene with the property disabled/enabled/disabled, preserve exact run-capsule
+and property closure, and record contamination or readiness failures rather
+than silently discarding them. The camera-projection smoke wrapper exposes that
+switch as `-GpuTimestamps $false` or `-GpuTimestamps $true`.
+
 Run the raw camera projection headset smoke with:
 
 ```powershell

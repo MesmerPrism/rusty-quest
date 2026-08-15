@@ -1882,8 +1882,11 @@ if (-not (Test-Path -LiteralPath $apkSource)) {
 $apkOut = Join-Path $OutDir $resolvedApkFileName
 $apkCopied = Copy-FileIfChanged -Source $apkSource -Destination $apkOut
 $sha256 = Get-FileSha256 -Path $apkOut
+$apkInspectionRoot = Join-Path $BuildCacheRoot "apk-v"
+$apkInspectionPath = Join-Path $apkInspectionRoot "$sha256.apk"
+$null = Copy-FileIfChanged -Source $apkOut -Destination $apkInspectionPath
 $inspectionStopwatch = [Diagnostics.Stopwatch]::StartNew()
-$signerInspection = @(& $apksigner "verify" "--verbose" "--print-certs" $apkOut 2>&1)
+$signerInspection = @(& $apksigner "verify" "--verbose" "--print-certs" $apkInspectionPath 2>&1)
 if ($LASTEXITCODE -ne 0) {
     throw "Produced APK failed apksigner verification."
 }
@@ -1896,9 +1899,9 @@ if (-not [string]::IsNullOrWhiteSpace($normalizedExpectedSignerSha256) -and
     $artifactSignerSha256 -cne $normalizedExpectedSignerSha256) {
     throw "Produced APK signer differs from the preflight signer contract."
 }
-& $zipalign "-c" "-P" "16" "-v" "4" $apkOut | Out-Null
+& $zipalign "-c" "-P" "16" "-v" "4" $apkInspectionPath | Out-Null
 if ($LASTEXITCODE -ne 0) { throw "Produced APK failed 16-KiB-aware zip alignment verification." }
-$badging = @(& $shortAapt2 "dump" "badging" $apkOut 2>&1)
+$badging = @(& $shortAapt2 "dump" "badging" $apkInspectionPath 2>&1)
 if ($LASTEXITCODE -ne 0) { throw "Produced APK failed AAPT2 badging inspection." }
 $badgingText = $badging -join "`n"
 if ($badgingText -notmatch ("package:\s+name='" + [regex]::Escape($resolvedAppId) + "'") -or

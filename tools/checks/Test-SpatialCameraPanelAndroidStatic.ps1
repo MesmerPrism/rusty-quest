@@ -164,6 +164,7 @@ $privateFeatureLoader = Read-RequiredText "apps\spatial-camera-panel-android\app
 $nativeLib = Read-RequiredText "apps\spatial-camera-panel-android\native-receipt\src\lib.rs"
 $nativeBuildScript = Read-RequiredText "apps\spatial-camera-panel-android\native-receipt\build.rs"
 $cameraProbe = Read-RequiredText "apps\spatial-camera-panel-android\native-receipt\src\camera_hwb_probe.rs"
+$cameraTiming = Read-RequiredText "apps\spatial-camera-panel-android\native-receipt\src\camera_hwb_timing.rs"
 $cameraProjectionTarget = Read-RequiredText "apps\spatial-camera-panel-android\native-receipt\src\camera_hwb_projection_target.rs"
 $nativeMultiStack = Read-RequiredText "apps\spatial-camera-panel-android\native-receipt\src\spatial_public_multistack.rs"
 $nativeMultiStackRuntime = Read-RequiredText "apps\spatial-camera-panel-android\native-receipt\src\spatial_public_multistack_runtime.rs"
@@ -3404,6 +3405,7 @@ Assert-Contains "Native receipt" $nativeLib "mod spatial_public_multistack_runti
 Assert-Contains "Native receipt" $nativeLib "mod spatial_video_projection"
 Assert-Contains "Native receipt" $nativeLib "mod spatial_video_projection_native_stream"
 Assert-Contains "Native receipt" $nativeLib "mod spatial_video_projection_settings"
+Assert-Contains "Native receipt" $nativeLib "mod camera_hwb_timing"
 Assert-Contains "Native receipt build script" $nativeBuildScript "public_guide_blur.frag.glsl"
 Assert-Contains "Native receipt build script" $nativeBuildScript "spatial_video_projection.vert.glsl"
 Assert-Contains "Native receipt build script" $nativeBuildScript "spatial_video_projection.frag.glsl"
@@ -3528,6 +3530,20 @@ Assert-Contains "Camera HWB probe" $cameraProbe "status=spatial-video-projection
 Assert-Contains "Camera HWB probe" $cameraProbe "videoComposedBeforeCamera=true"
 Assert-Contains "Camera HWB probe" $cameraProbe "sameSurfaceComposition=true"
 Assert-Contains "Camera HWB probe" $cameraProbe "cameraProjectionAlignmentPreserved=true"
+Assert-Contains "Camera HWB probe" $cameraProbe "read_retired_slot"
+Assert-Contains "Camera HWB probe" $cameraProbe "status=gpu-timestamp-config"
+Assert-Contains "Camera HWB probe" $cameraProbe "status=gpu-timestamp-summary"
+Assert-Contains "Camera HWB GPU timing" $cameraTiming "debug.rustyquest.spatial.camera_hwb_projection_probe.gpu_timestamps"
+Assert-Contains "Camera HWB GPU timing" $cameraTiming "cmd_reset_query_pool"
+Assert-Contains "Camera HWB GPU timing" $cameraTiming "cmd_write_timestamp"
+Assert-Contains "Camera HWB GPU timing" $cameraTiming "QueryResultFlags::WITH_AVAILABILITY"
+Assert-Contains "Camera HWB GPU timing" $cameraTiming "const TELEMETRY_CAPACITY: usize = 4096"
+Assert-Contains "Camera HWB GPU timing" $cameraTiming "gpuTimestampQuerySetsReady="
+Assert-Contains "Camera HWB GPU timing" $cameraTiming "gpuTimestampPerFrameAllocation=false"
+Assert-Contains "Camera HWB GPU timing" $cameraTiming "gpuTimestampReadPolicy=retired-slot-availability-no-wait"
+Assert-NotContains "Camera HWB GPU timing" $cameraTiming "QueryResultFlags::WAIT"
+Assert-Contains "Native public multi-stack runtime" $nativeMultiStackRuntime "CameraHwbGpuTimestampStage::from_guide_pass_index"
+Assert-Contains "Camera HWB WSI" $cameraWsi "CameraHwbGpuTimestampStage::FinalCompositor"
 Assert-Contains "Spatial video settings" $spatialVideoSettings "nativeConfigureSpatialVideoProjection"
 Assert-Contains "Spatial video settings" $spatialVideoSettings "SpatialVideoProjectionSettings"
 Assert-Contains "Spatial video settings" $spatialVideoSettings "videoProjectionEnabled={}"
@@ -3789,12 +3805,21 @@ Assert-Contains "Public guide blur shader" $publicGuideBlurShader "sourceRect"
 Assert-Contains "Public guide blur shader" $publicGuideBlurShader "guideTexture"
 Assert-Contains "Public guide blur shader" $publicGuideBlurShader "vec4 processing"
 Assert-Contains "Public guide blur shader" $publicGuideBlurShader "vec4 publicGuideInput"
+Assert-Contains "Public guide blur shader" $publicGuideBlurShader "publicGuideGaussianWeight"
+Assert-Contains "Public guide blur shader" $publicGuideBlurShader "sourceUv - 1.5 * stepUv"
+Assert-Contains "Public guide blur shader" $publicGuideBlurShader "0.4 * publicGuideInput(negativeUv)"
+Assert-Contains "Public guide blur shader" $publicGuideBlurShader "0.2 * publicGuideInput(centerUv)"
+Assert-Contains "Public guide blur shader" $publicGuideBlurShader "0.4 * publicGuideInput(positiveUv)"
+Assert-Contains "Public guide blur shader" $publicGuideBlurShader "Gaussian5 intentionally retains its original five physical reads"
+Assert-Contains "Spatial guide processing" $spatialGuideProcessing "publicGuideNativeBox5PhysicalFetches=3"
+Assert-Contains "Spatial guide processing" $spatialGuideProcessing "publicGuideGaussian5PhysicalFetches=5"
+Assert-Contains "Spatial guide processing" $spatialGuideProcessing "publicGuideNativeBox5LinearFoldEquivalent=true"
 Assert-Contains "Public guide blur shader" $publicGuideBlurShader "pc.processing.z"
 Assert-Contains "Public guide blur shader" $publicGuideBlurShader "sampleColor.a"
 Assert-Contains "Public guide blur shader" $publicGuideBlurShader "float auxiliary"
 Assert-Contains "Public guide blur shader" $publicGuideBlurShader "outColor = clamp(color"
 Assert-NotContains "Public guide blur shader" $publicGuideBlurShader "outColor = vec4(color, 1.0)"
-Assert-Contains "Public guide blur shader" $publicGuideBlurShader "return 0.2"
+Assert-NotContains "Public guide blur shader" $publicGuideBlurShader "return 0.2"
 Assert-Contains "Public guide blur shader" $publicGuideBlurShader "0.38774"
 Assert-Contains "Public guide blur shader" $publicGuideBlurShader "0.2126"
 Assert-Contains "Spatial guide processing" $spatialGuideProcessing "SpatialGuideBlurKernel"
@@ -4309,6 +4334,11 @@ Assert-Contains "Build script" $buildScript 'spatial_scene_permission_declared =
 Assert-Contains "Build script" $buildScript 'spatial_environment_depth_permission_surface = "horizonos.permission.USE_SCENE+USE_SCENE_DATA"'
 Assert-Contains "Build script" $buildScript 'spatial_environment_depth_real_provider_bound = $false'
 Assert-Contains "Build script" $buildScript 'spatial_environment_depth_data_source = $(if ($EnvironmentDepthOwner -eq "legacy-native-sidecar")'
+Assert-Contains "Build script" $buildScript '$apkInspectionRoot = Join-Path $BuildCacheRoot "apk-v"'
+Assert-Contains "Build script" $buildScript '$apkInspectionPath = Join-Path $apkInspectionRoot "$sha256.apk"'
+Assert-Contains "Build script" $buildScript 'Copy-FileIfChanged -Source $apkOut -Destination $apkInspectionPath'
+Assert-Contains "Build script" $buildScript 'zipalign "-c" "-P" "16" "-v" "4" $apkInspectionPath'
+Assert-Contains "Build script" $buildScript '$shortAapt2 "dump" "badging" $apkInspectionPath'
 Assert-Contains "Build script" $buildScript '"legacy-native-sidecar-last-valid-or-neutral"'
 Assert-Contains "Build script" $buildScript 'spatial_multimodal_input_default_enabled = $false'
 Assert-Contains "Build script" $buildScript 'native_spatial_controller_actions_default_enabled = $false'
@@ -4453,6 +4483,15 @@ Assert-Contains "Camera projection smoke wrapper" $cameraProjectionSmoke "permis
 Assert-Contains "Camera projection smoke wrapper" $cameraProjectionSmoke "spatial_scene_permission_declared"
 Assert-Contains "Camera projection smoke wrapper" $cameraProjectionSmoke "spatial_scene_data_appop_mode"
 Assert-Contains "Camera projection smoke wrapper" $cameraProjectionSmoke "app-private-staged-source"
+Assert-Contains "Camera projection smoke wrapper" $cameraProjectionSmoke '[bool]$GpuTimestamps = $false'
+Assert-Contains "Camera projection smoke wrapper" $cameraProjectionSmoke 'gpu_timestamps_requested = [bool]$GpuTimestamps'
+Assert-Contains "Camera projection smoke wrapper" $cameraProjectionSmoke 'debug.rustyquest.spatial.camera_hwb_projection_probe.gpu_timestamps'
+Assert-Contains "Camera projection smoke wrapper" $cameraProjectionSmoke 'spatialControllerInputManifest=true'
+Assert-NotContains "Camera projection smoke wrapper" $cameraProjectionSmoke 'spatialHandsAndControllersManifest=true'
+Assert-Contains "Camera projection smoke wrapper" $cameraProjectionSmoke '$capsuleBuildManifest.spatial_environment_depth_owner'
+Assert-Contains "Camera projection smoke wrapper" $cameraProjectionSmoke '$environmentDepthOwner -ceq "spatial-sdk-api-layer"'
+Assert-Contains "Camera projection smoke wrapper" $cameraProjectionSmoke 'spatial_sdk_environment_depth_owner'
+Assert-Contains "Camera projection smoke wrapper" $cameraProjectionSmoke 'spatial_native_passthrough_layer_inactive'
 Assert-Contains "Camera projection smoke wrapper" $cameraProjectionSmoke "spatial_video_projection_source_path"
 Assert-Contains "Camera projection smoke wrapper" $cameraProjectionSmoke "spatial_video_projection_path_transport"
 Assert-Contains "Camera projection smoke wrapper" $cameraProjectionSmoke "spatial-video-stage.json"

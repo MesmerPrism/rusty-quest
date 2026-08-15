@@ -14,6 +14,7 @@ use crate::camera_hwb_projection_target::{
     camera_hwb_projection_depth_target_mapping, CameraHwbProjectionDepthTargetMapping,
     CameraHwbProjectionZoneFrame, ProjectionZoneUniform,
 };
+use crate::camera_hwb_timing::{CameraHwbGpuTimestampStage, CameraHwbGpuTimestampTracker};
 use crate::camera_latency_diagnostics::{
     current_camera_latency_settings, CameraLatencyStereoReprojection,
 };
@@ -755,6 +756,8 @@ impl SpatialPublicGuideTargets {
         &self,
         device: &ash::Device,
         command_buffer: vk::CommandBuffer,
+        gpu_timestamps: &mut CameraHwbGpuTimestampTracker,
+        frame_slot: usize,
         camera_descriptor_set: vk::DescriptorSet,
         elapsed_seconds: f32,
         camera_reprojection: CameraLatencyStereoReprojection,
@@ -770,10 +773,14 @@ impl SpatialPublicGuideTargets {
         }
         let guide_pass_count =
             spatial_public_guide_pass_count_for_layer_override(opaque_projection_layer_override());
-        for step in SPATIAL_PUBLIC_GUIDE_PASS_SCHEDULE
+        for (pass_index, step) in SPATIAL_PUBLIC_GUIDE_PASS_SCHEDULE
             .iter()
             .take(guide_pass_count)
+            .enumerate()
         {
+            let timestamp_stage = CameraHwbGpuTimestampStage::from_guide_pass_index(pass_index)
+                .expect("six-pass guide schedule has one timestamp stage per pass");
+            gpu_timestamps.write_stage_start(device, command_buffer, frame_slot, timestamp_stage);
             match step.kind {
                 SpatialPublicGuidePassKind::Opaque { pipeline_index } => {
                     self.record_opaque_guide_pass_for_stereo(
@@ -802,6 +809,7 @@ impl SpatialPublicGuideTargets {
                     )?;
                 }
             }
+            gpu_timestamps.write_stage_end(device, command_buffer, frame_slot, timestamp_stage);
         }
         Ok(true)
     }
@@ -2263,10 +2271,11 @@ impl SpatialPublicDepthResources {
     fn current_binding(&self) -> SpatialPublicDepthBinding {
         if let Some(snapshot) = current_spatial_environment_depth_frame_snapshot() {
             #[cfg(rq_environment_depth_spatial_sdk_api_layer)]
-            let descriptor_index = snapshot
-                .image_handles
-                .first()
-                .and_then(|handle| self.real_image_handles.iter().position(|item| item == handle));
+            let descriptor_index = snapshot.image_handles.first().and_then(|handle| {
+                self.real_image_handles
+                    .iter()
+                    .position(|item| item == handle)
+            });
             #[cfg(not(rq_environment_depth_spatial_sdk_api_layer))]
             let descriptor_index = Some(snapshot.swapchain_index as usize);
             if let Some(descriptor_set) = self
@@ -2407,10 +2416,7 @@ impl SpatialPublicDepthResources {
     }
 }
 
-#[cfg(all(
-    target_os = "android",
-    rq_environment_depth_legacy_native_sidecar
-))]
+#[cfg(all(target_os = "android", rq_environment_depth_legacy_native_sidecar))]
 fn current_spatial_environment_depth_frame_snapshot(
 ) -> Option<SpatialPublicEnvironmentDepthSnapshot> {
     crate::spatial_environment_depth::spatial_environment_depth_frame_snapshot().map(|snapshot| {
@@ -2461,8 +2467,8 @@ fn current_spatial_environment_depth_frame_snapshot(
 #[cfg(all(target_os = "android", rq_environment_depth_spatial_sdk_api_layer))]
 fn current_spatial_environment_depth_frame_snapshot(
 ) -> Option<SpatialPublicEnvironmentDepthSnapshot> {
-    crate::spatial_sdk_depth_handoff::spatial_environment_depth_frame_snapshot().map(
-        |snapshot| SpatialPublicEnvironmentDepthSnapshot {
+    crate::spatial_sdk_depth_handoff::spatial_environment_depth_frame_snapshot().map(|snapshot| {
+        SpatialPublicEnvironmentDepthSnapshot {
             image_handles: vec![snapshot.image_handle],
             swapchain_index: snapshot.ring_index,
             width: snapshot.width,
@@ -2472,34 +2478,38 @@ fn current_spatial_environment_depth_frame_snapshot(
             acquired_frame_count: snapshot.generation,
             capture_time_ns: snapshot.capture_time_ns,
             acquire_display_time_ns: snapshot.display_time_ns,
-            depth_views: snapshot.depth_views.map(|view| SpatialPublicDepthViewSnapshot {
-                fov: SpatialPublicDepthFovSnapshot {
-                    angle_left: view.fov[0],
-                    angle_right: view.fov[1],
-                    angle_up: view.fov[2],
-                    angle_down: view.fov[3],
-                },
-                pose: SpatialPublicDepthPoseSnapshot {
-                    orientation: view.orientation,
-                    position: view.position,
-                },
-            }),
-            render_views: snapshot.render_views.map(|view| SpatialPublicDepthViewSnapshot {
-                fov: SpatialPublicDepthFovSnapshot {
-                    angle_left: view.fov[0],
-                    angle_right: view.fov[1],
-                    angle_up: view.fov[2],
-                    angle_down: view.fov[3],
-                },
-                pose: SpatialPublicDepthPoseSnapshot {
-                    orientation: view.orientation,
-                    position: view.position,
-                },
-            }),
+            depth_views: snapshot
+                .depth_views
+                .map(|view| SpatialPublicDepthViewSnapshot {
+                    fov: SpatialPublicDepthFovSnapshot {
+                        angle_left: view.fov[0],
+                        angle_right: view.fov[1],
+                        angle_up: view.fov[2],
+                        angle_down: view.fov[3],
+                    },
+                    pose: SpatialPublicDepthPoseSnapshot {
+                        orientation: view.orientation,
+                        position: view.position,
+                    },
+                }),
+            render_views: snapshot
+                .render_views
+                .map(|view| SpatialPublicDepthViewSnapshot {
+                    fov: SpatialPublicDepthFovSnapshot {
+                        angle_left: view.fov[0],
+                        angle_right: view.fov[1],
+                        angle_up: view.fov[2],
+                        angle_down: view.fov[3],
+                    },
+                    pose: SpatialPublicDepthPoseSnapshot {
+                        orientation: view.orientation,
+                        position: view.position,
+                    },
+                }),
             depth_view_valid_mask: snapshot.depth_view_valid_mask,
             render_view_valid_mask: snapshot.render_view_valid_mask,
-        },
-    )
+        }
+    })
 }
 
 #[cfg(any(
@@ -3153,18 +3163,12 @@ pub(crate) fn public_guide_targets_pending_marker_fields(reason: &str) -> String
     )
 }
 
-#[cfg(all(
-    target_os = "android",
-    rq_environment_depth_legacy_native_sidecar
-))]
+#[cfg(all(target_os = "android", rq_environment_depth_legacy_native_sidecar))]
 fn spatial_environment_depth_marker_fields() -> String {
     crate::spatial_environment_depth::spatial_environment_depth_marker_fields()
 }
 
-#[cfg(all(
-    target_os = "android",
-    rq_environment_depth_legacy_native_sidecar
-))]
+#[cfg(all(target_os = "android", rq_environment_depth_legacy_native_sidecar))]
 fn spatial_environment_depth_compact_marker_fields() -> String {
     crate::spatial_environment_depth::spatial_environment_depth_compact_marker_fields()
 }
@@ -4564,6 +4568,44 @@ mod tests {
     fn packed_eye_source_rects_split_guide_texture() {
         assert_eq!(packed_eye_source_rect(0), [0.0, 0.0, 0.5, 1.0]);
         assert_eq!(packed_eye_source_rect(1), [0.5, 0.0, 0.5, 1.0]);
+        let extent = spatial_public_guide_target_extent();
+        let horizontal_step = PublicGuideBlurDirection::Horizontal.step_and_extent(extent)[0];
+        assert_eq!(horizontal_step, 1.0 / 768.0);
+        assert_eq!(packed_eye_source_rect(0)[2] / horizontal_step, 384.0);
+        assert_eq!(packed_eye_source_rect(1)[2] / horizontal_step, 384.0);
+    }
+
+    #[test]
+    fn native_box5_three_linear_reads_match_five_clamped_texel_reads() {
+        fn clamped_texel(values: &[f64], index: isize) -> f64 {
+            values[index.clamp(0, values.len() as isize - 1) as usize]
+        }
+
+        fn linear_sample(values: &[f64], center_coordinate: f64) -> f64 {
+            let clamped = center_coordinate.clamp(0.5, values.len() as f64 - 0.5);
+            let texel_coordinate = clamped - 0.5;
+            let left = texel_coordinate.floor() as usize;
+            let right = (left + 1).min(values.len() - 1);
+            let fraction = texel_coordinate - left as f64;
+            values[left] * (1.0 - fraction) + values[right] * fraction
+        }
+
+        for length in 1..=16 {
+            let values = (0..length)
+                .map(|index| (index * index + 3 * index + 7) as f64)
+                .collect::<Vec<_>>();
+            for index in 0..length {
+                let explicit = (-2..=2)
+                    .map(|offset| clamped_texel(&values, index as isize + offset))
+                    .sum::<f64>()
+                    * 0.2;
+                let center = index as f64 + 0.5;
+                let folded = 0.4 * linear_sample(&values, center - 1.5)
+                    + 0.2 * linear_sample(&values, center)
+                    + 0.4 * linear_sample(&values, center + 1.5);
+                assert!((explicit - folded).abs() < 1.0e-12);
+            }
+        }
     }
 
     #[test]

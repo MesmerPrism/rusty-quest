@@ -12,6 +12,7 @@ param(
     [ValidateRange(1, 1800)][int]$RunIsolationMutexTimeoutSeconds = 120,
     [int]$ReaderMaxImages = 4,
     [bool]$PanelShellVisible = $true,
+    [bool]$GpuTimestamps = $false,
     [string]$VideoPath = "",
     [string]$VideoSourcePath = "",
     [string]$VideoDestinationRelativePath = "v.mp4",
@@ -381,6 +382,7 @@ if ([string]::IsNullOrWhiteSpace($RepoRoot)) {
 $repoRootPath = Resolve-Path -LiteralPath $RepoRoot
 $capsule = $null
 $capsuleValidation = $null
+$environmentDepthOwner = "legacy-native-sidecar"
 if ([string]::IsNullOrWhiteSpace($RunCapsule)) {
     if (-not $AllowLegacyLooseInputs) {
         throw "-RunCapsule is required for an isolated Spatial APK launch. Use -AllowLegacyLooseInputs only for explicit historical compatibility."
@@ -394,6 +396,8 @@ if ([string]::IsNullOrWhiteSpace($RunCapsule)) {
     $ApkPath = [string]$capsule.apk.path
     $PackageName = [string]$capsule.android.package_name
     $Activity = [string]$capsule.android.activity
+    $capsuleBuildManifest = Get-Content -LiteralPath ([string]$capsule.build_manifest.path) -Raw | ConvertFrom-Json
+    $environmentDepthOwner = [string]$capsuleBuildManifest.spatial_environment_depth_owner
 }
 $assetConformanceLockResolved = if ([string]::IsNullOrWhiteSpace($AssetConformanceLockPath)) {
     Join-Path $repoRootPath "apps\spatial-camera-panel-android\legacy-workspaces\mixed-integration-v1\conformance-locks\spatial-asset-model.feature.lock.json"
@@ -588,6 +592,9 @@ $summary = [ordered]@{
     panel_shell_property = "debug.rustyquest.spatial.panel_shell.visible"
     panel_shell_property_value = ""
     panel_shell_effective = $false
+    gpu_timestamps_requested = [bool]$GpuTimestamps
+    gpu_timestamps_property = "debug.rustyquest.spatial.camera_hwb_projection_probe.gpu_timestamps"
+    environment_depth_owner = $environmentDepthOwner
     panel_shell_runtime_marker = $false
     spatial_video_projection_requested = $videoProjectionRequested
     spatial_video_projection_path = $videoPathTrimmed
@@ -837,6 +844,7 @@ try {
     $setpropResults += Invoke-AdbCommand -Name "disable luma camera HWB probe" -Arguments @("shell", "setprop", "debug.rustyquest.spatial.camera_hwb_probe", "0")
     $setpropResults += Invoke-AdbCommand -Name "clear Spatial skybox mode" -Arguments @("shell", "setprop", "debug.rustyquest.spatial.skybox.mode", "none")
     $setpropResults += Invoke-AdbCommand -Name "configure raw camera projection probe" -Arguments @("shell", "setprop", "debug.rustyquest.spatial.camera_hwb_projection_probe", $(if ($VideoOnly) { "0" } else { "1" }))
+    $setpropResults += Invoke-AdbCommand -Name "configure camera projection GPU timestamps" -Arguments @("shell", "setprop", "debug.rustyquest.spatial.camera_hwb_projection_probe.gpu_timestamps", $(if ($GpuTimestamps) { "1" } else { "0" }))
     $setpropResults += Invoke-AdbCommand -Name "configure synthetic carrier visual probe" -Arguments @("shell", "setprop", "debug.rustyquest.spatial.camera_hwb_projection_probe.synthetic_visual", $(if ($SyntheticVisualProbe) { "1" } else { "0" }))
     $setpropResults += Invoke-AdbCommand -Name "configure Spatial video-only projection probe" -Arguments @("shell", "setprop", "debug.rustyquest.spatial.video_projection_probe", $(if ($VideoOnly) { "1" } else { "0" }))
     $setpropResults += Invoke-AdbCommand -Name "set raw camera projection reader max images" -Arguments @("shell", "setprop", "debug.rustyquest.spatial.camera_hwb_projection_probe.reader_max_images", $readerMaxImagesClamped.ToString())
@@ -1092,7 +1100,7 @@ try {
     $summary.mono_duplicated_false = Test-TextContains $evidenceText "monoDuplicated=false"
     $summary.private_shader_stack_false = Test-TextContains $evidenceText "privateShaderStack=false"
     $summary.custom_projection_stack_false = Test-TextContains $evidenceText "customProjectionStack=false"
-    $summary.spatial_hands_and_controllers_manifest = Test-TextContains $evidenceText "spatialHandsAndControllersManifest=true"
+    $summary.spatial_hands_and_controllers_manifest = Test-TextContains $evidenceText "spatialControllerInputManifest=true"
     $summary.spatial_interaction_sdk_backend = Test-TextContains $evidenceText "spatialVrInputSystem=interaction_sdk"
     $summary.spatial_pointer_input_expected = Test-TextContains $evidenceText "spatialPointerInputExpected=true"
     $summary.spatial_controller_actions_disabled = Test-TextContains $evidenceText "nativeControllerActionBridge=false"
@@ -1134,6 +1142,7 @@ try {
     $summary.spatial_environment_depth_acquired = Test-TextContains $evidenceText "environmentDepthAcquireStatus=acquired"
     $summary.spatial_environment_depth_valid_data = Test-TextContains $evidenceText "environmentDepthValidData=true"
     $summary.spatial_environment_depth_valid_sample_count_nonzero = $evidenceText -match "environmentDepthDebugValidSampleCount=([1-9][0-9]*)"
+    $summary.spatial_sdk_environment_depth_owner = Test-TextContains $evidenceText "environmentDepthOwner=spatial-sdk-api-layer"
     $summary.spatial_native_passthrough_layer_active = Test-TextContains $evidenceText "nativePassthroughLayerActive=true"
     $summary.spatial_native_passthrough_layer_inactive = Test-TextContains $evidenceText "nativePassthroughLayerActive=false"
     $summary.spatial_native_passthrough_prerequisite_active = Test-TextContains $evidenceText "environmentDepthPassthroughPrerequisite=active"
@@ -1376,15 +1385,6 @@ try {
             "public_multistack_opaque_payload_execution_ready",
             "spatial_required_openxr_includes_passthrough",
             "spatial_required_openxr_includes_environment_depth",
-            "spatial_native_passthrough_layer_active",
-            "spatial_native_passthrough_prerequisite_active",
-            "spatial_environment_depth_start_requested",
-            "spatial_environment_depth_provider_created",
-            "spatial_environment_depth_provider_bound",
-            "spatial_environment_depth_acquire_thread_started",
-            "spatial_environment_depth_first_frame",
-            "spatial_environment_depth_valid_data",
-            "spatial_environment_depth_valid_sample_count_nonzero",
             "public_multistack_depth_descriptor_shape_real",
             "public_multistack_depth_real_descriptor_bound",
             "public_multistack_depth_current_source_real",
@@ -1401,6 +1401,24 @@ try {
             "public_multistack_opaque_projection_left_target_rect",
             "public_multistack_opaque_projection_right_target_rect"
         )
+        if ($environmentDepthOwner -ceq "spatial-sdk-api-layer") {
+            $requiredFlags += @(
+                "spatial_sdk_environment_depth_owner",
+                "spatial_native_passthrough_layer_inactive"
+            )
+        } else {
+            $requiredFlags += @(
+                "spatial_native_passthrough_layer_active",
+                "spatial_native_passthrough_prerequisite_active",
+                "spatial_environment_depth_start_requested",
+                "spatial_environment_depth_provider_created",
+                "spatial_environment_depth_provider_bound",
+                "spatial_environment_depth_acquire_thread_started",
+                "spatial_environment_depth_first_frame",
+                "spatial_environment_depth_valid_data",
+                "spatial_environment_depth_valid_sample_count_nonzero"
+            )
+        }
     }
     if ($RequireSpatialVideoProjection) {
         if ($VideoOnly) {

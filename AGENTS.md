@@ -134,6 +134,16 @@ apps in this repo. Keep reusable hand, space, mesh, visual, command, and report
 contracts in Lattice, Matter, Optics, Manifold, GUI, and Hostess before adding
 Quest adapters.
 
+For `spatial-camera-panel-android` performance work, this public adapter owns
+allocation-free, nonblocking Vulkan timestamp-query instrumentation and
+public, output-equivalent guide-kernel optimizations. Timestamp readback must
+use a retired frame slot plus availability results and must never introduce a
+query-result `WAIT` into the render loop. A NativeBox5 reduction is admissible
+only when the packed-eye texel domain proves that the three filtered reads are
+equivalent to the existing five physical-texel taps. Keep Gaussian5 unchanged.
+Private effect formulas, private shader source, and unsanitized headset evidence
+remain outside this repository.
+
 Do not add new Makepad compatibility shims, profile surfaces, or Quest-Makepad
 parity work here unless the user explicitly asks for Makepad migration,
 regression repair, or historical evidence replay. When old Makepad evidence is
