@@ -1307,6 +1307,43 @@ and property closure, and record contamination or readiness failures rather
 than silently discarding them. The camera-projection smoke wrapper exposes that
 switch as `-GpuTimestamps $false` or `-GpuTimestamps $true`.
 
+### Output-neutral CPU and hardware-buffer import performance
+
+The public renderer keeps its host-coherent RGB-transform, projection-zone, and
+surface-displacement uniform buffers persistently mapped for their resource
+lifetime. An update copies bytes only when the typed value differs from the last
+uploaded value. Teardown unmaps each allocation before freeing it. Low-rate
+markers report `uniformUploadPolicy=persistent-mapped-value-equality`; the hot
+path does not allocate telemetry or log per frame.
+
+The Spatial-video import cache tests its stable hardware-buffer identity,
+stream generation, complete AHardwareBuffer descriptor, and Vulkan-format key
+before requesting Vulkan hardware-buffer properties. A hit therefore avoids
+both the property query and a new import. A miss still queries, validates, and
+imports through the existing exact path. Its low-rate sample marker reports
+`videoProjectionImportQueryPolicy=cache-hit-before-property-query`.
+
+Raw stereo camera imports use separate, generation-aware caches per eye. An
+entry is reusable only when stream generation, eye, camera, stable
+AHardwareBuffer ID, complete descriptor, and Vulkan-format identity match. The
+active image is retired only after the existing frame fence. Each eye permits at
+most `readerMaxImages + 1` inactive entries plus one active import. The
+AImageReader buffer-removal listener evicts matching inactive entries and
+tombstones an active removal until fence retirement. A removal queue or
+tombstone overflow disables reuse fail-safely for that stream. The runtime emits
+low-rate `status=camera-import-cache-ready`,
+`status=camera-import-performance-sample`, and
+`status=camera-import-performance-summary` markers with
+`policy=bounded-generation-aware-ahb-vulkan-import-cache`.
+
+Controlled Quest A-B-A measurements retained these three exact-output changes:
+uniform update-pair CPU time fell about 44%, Spatial-video accumulated property
+query time fell about 95-97%, and repeated camera query/import work fell about
+99.89%. A five-minute camera run needed five imports across 30,861 adoptions,
+with inactive high-water two per eye and no cache disable. These are sanitized
+results; raw device evidence remains private. None of these changes adds a
+visual-quality option or changes rendered output.
+
 Run the raw camera projection headset smoke with:
 
 ```powershell

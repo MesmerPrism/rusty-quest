@@ -1,5 +1,7 @@
+use std::collections::HashSet;
 use std::ffi::{CStr, CString};
 use std::mem;
+use std::time::Instant;
 
 use ash::vk;
 
@@ -40,6 +42,327 @@ pub(crate) struct CameraHwbRecordResult {
     pub(crate) camera_projection_visible: bool,
     pub(crate) video_stats: SpatialVideoProjectionFrameStats,
     pub(crate) projection_zone_stats: ProjectionZoneRenderStats,
+}
+
+#[derive(Default)]
+pub(crate) struct CameraHwbImportPerformanceStats {
+    attempts: u64,
+    hits: u64,
+    misses: u64,
+    property_query_calls: u64,
+    property_query_total_ns: u64,
+    property_query_max_ns: u64,
+    vulkan_import_calls: u64,
+    vulkan_import_total_ns: u64,
+    vulkan_import_max_ns: u64,
+    evictions: u64,
+    removal_signals: u64,
+    removal_evictions: u64,
+    removal_overflows: u64,
+    cache_disabled: bool,
+    cache_entries: usize,
+    cache_high_water: usize,
+    cache_inactive_limit: usize,
+}
+
+impl CameraHwbImportPerformanceStats {
+    pub(crate) fn with_cache_inactive_limit(cache_inactive_limit: usize) -> Self {
+        Self {
+            cache_inactive_limit,
+            ..Self::default()
+        }
+    }
+
+    fn record_hit(&mut self) {
+        self.attempts = self.attempts.saturating_add(1);
+        self.hits = self.hits.saturating_add(1);
+    }
+
+    fn record_miss(&mut self) {
+        self.attempts = self.attempts.saturating_add(1);
+        self.misses = self.misses.saturating_add(1);
+    }
+
+    fn record_property_query(&mut self, started_at: Instant) {
+        let elapsed_ns = u64::try_from(started_at.elapsed().as_nanos()).unwrap_or(u64::MAX);
+        self.property_query_calls = self.property_query_calls.saturating_add(1);
+        self.property_query_total_ns = self.property_query_total_ns.saturating_add(elapsed_ns);
+        self.property_query_max_ns = self.property_query_max_ns.max(elapsed_ns);
+    }
+
+    fn record_vulkan_import(&mut self, started_at: Instant) {
+        let elapsed_ns = u64::try_from(started_at.elapsed().as_nanos()).unwrap_or(u64::MAX);
+        self.vulkan_import_calls = self.vulkan_import_calls.saturating_add(1);
+        self.vulkan_import_total_ns = self.vulkan_import_total_ns.saturating_add(elapsed_ns);
+        self.vulkan_import_max_ns = self.vulkan_import_max_ns.max(elapsed_ns);
+    }
+
+    fn record_cache_state(&mut self, entries: usize) {
+        self.cache_entries = entries;
+        self.cache_high_water = self.cache_high_water.max(entries);
+    }
+
+    fn record_eviction(&mut self, removed: bool) {
+        self.evictions = self.evictions.saturating_add(1);
+        if removed {
+            self.removal_evictions = self.removal_evictions.saturating_add(1);
+        }
+    }
+
+    fn record_removal_signals(&mut self, count: usize) {
+        self.removal_signals = self
+            .removal_signals
+            .saturating_add(u64::try_from(count).unwrap_or(u64::MAX));
+    }
+
+    fn record_removal_overflow(&mut self) {
+        self.removal_overflows = self.removal_overflows.saturating_add(1);
+        self.cache_disabled = true;
+    }
+
+    pub(crate) fn marker_fields(&self, eye: &str) -> String {
+        format!(
+            "eye={eye} attempts={} hits={} misses={} propertyQueries={} propertyQueryTotalNs={} propertyQueryMaxNs={} vulkanImports={} vulkanImportTotalNs={} vulkanImportMaxNs={} evictions={} removalSignals={} removalEvictions={} removalOverflows={} cacheDisabled={} cacheEntries={} cacheHighWater={} cacheInactiveLimit={}",
+            self.attempts,
+            self.hits,
+            self.misses,
+            self.property_query_calls,
+            self.property_query_total_ns,
+            self.property_query_max_ns,
+            self.vulkan_import_calls,
+            self.vulkan_import_total_ns,
+            self.vulkan_import_max_ns,
+            self.evictions,
+            self.removal_signals,
+            self.removal_evictions,
+            self.removal_overflows,
+            self.cache_disabled,
+            self.cache_entries,
+            self.cache_high_water,
+            self.cache_inactive_limit,
+        )
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct CameraHwbImportCacheKey {
+    stream_generation: u64,
+    hardware_buffer_id: u64,
+    width: u32,
+    height: u32,
+    layers: u32,
+    native_format: u32,
+    usage: u64,
+    stride: u32,
+    format_key: AhbVulkanFormatKey,
+}
+
+impl CameraHwbImportCacheKey {
+    fn from_frame(
+        stream_generation: u64,
+        frame: &CameraProbeFrame,
+        format_key: AhbVulkanFormatKey,
+    ) -> Self {
+        Self {
+            stream_generation,
+            hardware_buffer_id: frame.descriptor.hardware_buffer_id,
+            width: frame.descriptor.width,
+            height: frame.descriptor.height,
+            layers: frame.descriptor.layers,
+            native_format: frame.descriptor.format,
+            usage: frame.descriptor.usage,
+            stride: frame.descriptor.stride,
+            format_key,
+        }
+    }
+
+    fn cacheable(self, hardware_buffer_id_status: i32) -> bool {
+        self.hardware_buffer_id != 0 && hardware_buffer_id_status == 0
+    }
+}
+
+struct CameraHwbCachedImport {
+    key: CameraHwbImportCacheKey,
+    image: AhbVulkanSampledImage,
+}
+
+pub(crate) struct CameraHwbImportCache {
+    stream_generation: u64,
+    side_label: &'static str,
+    camera_id: String,
+    inactive_limit: usize,
+    removal_tombstone_limit: usize,
+    entries: Vec<CameraHwbCachedImport>,
+    removed_hardware_buffer_ids: HashSet<u64>,
+    disabled: bool,
+}
+
+impl CameraHwbImportCache {
+    pub(crate) fn new(
+        stream_generation: u64,
+        initial_frame: &CameraProbeFrame,
+        inactive_limit: usize,
+    ) -> Self {
+        Self {
+            stream_generation,
+            side_label: initial_frame.side_label,
+            camera_id: initial_frame.camera_id.clone(),
+            inactive_limit,
+            removal_tombstone_limit: inactive_limit.saturating_mul(4).max(16),
+            entries: Vec::with_capacity(inactive_limit),
+            removed_hardware_buffer_ids: HashSet::new(),
+            disabled: false,
+        }
+    }
+
+    fn key_for_frame(
+        &self,
+        frame: &CameraProbeFrame,
+        expected_format_key: AhbVulkanFormatKey,
+    ) -> Result<CameraHwbImportCacheKey, String> {
+        if frame.side_label != self.side_label || frame.camera_id != self.camera_id {
+            return Err(format!(
+                "camera-import-cache-source-changed-expected-side-{}-camera-{}-actual-side-{}-camera-{}",
+                self.side_label, self.camera_id, frame.side_label, frame.camera_id,
+            ));
+        }
+        Ok(CameraHwbImportCacheKey::from_frame(
+            self.stream_generation,
+            frame,
+            expected_format_key,
+        ))
+    }
+
+    pub(crate) unsafe fn acquire(
+        &mut self,
+        device: &ash::Device,
+        memory_properties: &vk::PhysicalDeviceMemoryProperties,
+        ahb_device: &ash::android::external_memory_android_hardware_buffer::Device,
+        resources: &CameraHwbProbeResources,
+        expected_format_key: AhbVulkanFormatKey,
+        frame: &CameraProbeFrame,
+        stats: &mut CameraHwbImportPerformanceStats,
+    ) -> Result<AhbVulkanSampledImage, String> {
+        let key = self.key_for_frame(frame, expected_format_key)?;
+        if !self.disabled
+            && key.cacheable(frame.descriptor.hardware_buffer_id_status)
+            && !self
+                .removed_hardware_buffer_ids
+                .contains(&key.hardware_buffer_id)
+        {
+            if let Some(index) = self.entries.iter().position(|entry| entry.key == key) {
+                let cached = self.entries.remove(index);
+                stats.record_hit();
+                stats.record_cache_state(self.entries.len());
+                return Ok(cached.image);
+            }
+        }
+        import_replacement_camera_frame_uncached(
+            device,
+            memory_properties,
+            ahb_device,
+            resources,
+            expected_format_key,
+            frame,
+            stats,
+        )
+    }
+
+    pub(crate) unsafe fn retire(
+        &mut self,
+        device: &ash::Device,
+        expected_format_key: AhbVulkanFormatKey,
+        frame: &CameraProbeFrame,
+        image: AhbVulkanSampledImage,
+        stats: &mut CameraHwbImportPerformanceStats,
+    ) -> Result<(), String> {
+        let key = self.key_for_frame(frame, expected_format_key)?;
+        let removed = self
+            .removed_hardware_buffer_ids
+            .contains(&key.hardware_buffer_id);
+        if self.disabled
+            || self.inactive_limit == 0
+            || !key.cacheable(frame.descriptor.hardware_buffer_id_status)
+            || removed
+        {
+            image.destroy(device);
+            if removed {
+                stats.record_eviction(true);
+            }
+            return Ok(());
+        }
+        if let Some(index) = self.entries.iter().position(|entry| entry.key == key) {
+            let duplicate = self.entries.remove(index);
+            duplicate.image.destroy(device);
+            stats.record_eviction(false);
+        }
+        if self.entries.len() >= self.inactive_limit {
+            let evicted = self.entries.remove(0);
+            evicted.image.destroy(device);
+            stats.record_eviction(false);
+        }
+        self.entries.push(CameraHwbCachedImport { key, image });
+        stats.record_cache_state(self.entries.len());
+        Ok(())
+    }
+
+    pub(crate) unsafe fn process_removed_hardware_buffer_ids(
+        &mut self,
+        device: &ash::Device,
+        ids: &[u64],
+        queue_overflowed: bool,
+        stats: &mut CameraHwbImportPerformanceStats,
+    ) {
+        stats.record_removal_signals(ids.len());
+        if queue_overflowed {
+            self.disable_after_removal_overflow(device, stats);
+            return;
+        }
+        for hardware_buffer_id in ids.iter().copied().filter(|id| *id != 0) {
+            if !self
+                .removed_hardware_buffer_ids
+                .contains(&hardware_buffer_id)
+                && self.removed_hardware_buffer_ids.len() >= self.removal_tombstone_limit
+            {
+                self.disable_after_removal_overflow(device, stats);
+                return;
+            }
+            self.removed_hardware_buffer_ids.insert(hardware_buffer_id);
+            let mut index = 0;
+            while index < self.entries.len() {
+                if self.entries[index].key.hardware_buffer_id == hardware_buffer_id {
+                    let removed = self.entries.remove(index);
+                    removed.image.destroy(device);
+                    stats.record_eviction(true);
+                } else {
+                    index += 1;
+                }
+            }
+        }
+        stats.record_cache_state(self.entries.len());
+    }
+
+    unsafe fn disable_after_removal_overflow(
+        &mut self,
+        device: &ash::Device,
+        stats: &mut CameraHwbImportPerformanceStats,
+    ) {
+        if !self.disabled {
+            for entry in self.entries.drain(..) {
+                entry.image.destroy(device);
+                stats.record_eviction(true);
+            }
+        }
+        self.disabled = true;
+        stats.record_removal_overflow();
+        stats.record_cache_state(0);
+    }
+
+    pub(crate) unsafe fn destroy(self, device: &ash::Device) {
+        for entry in self.entries {
+            entry.image.destroy(device);
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -364,16 +687,20 @@ pub(crate) unsafe fn update_camera_hwb_probe_descriptor_set(
     device.update_descriptor_sets(&writes, &[]);
 }
 
-pub(crate) unsafe fn import_replacement_camera_frame(
+unsafe fn import_replacement_camera_frame_uncached(
     device: &ash::Device,
     memory_properties: &vk::PhysicalDeviceMemoryProperties,
     ahb_device: &ash::android::external_memory_android_hardware_buffer::Device,
     resources: &CameraHwbProbeResources,
     expected_format_key: AhbVulkanFormatKey,
     frame: &CameraProbeFrame,
+    stats: &mut CameraHwbImportPerformanceStats,
 ) -> Result<AhbVulkanSampledImage, String> {
-    let (import_properties, _format_props) =
-        query_ahb_vulkan_import_properties(ahb_device, &frame.hardware_buffer)?;
+    stats.record_miss();
+    let query_started_at = Instant::now();
+    let query_result = query_ahb_vulkan_import_properties(ahb_device, &frame.hardware_buffer);
+    stats.record_property_query(query_started_at);
+    let (import_properties, _format_props) = query_result?;
     if import_properties.format_key != expected_format_key {
         return Err(format!(
             "format-key-changed-expected-external-{}-vk-{:?}-actual-external-{}-vk-{:?}",
@@ -383,6 +710,7 @@ pub(crate) unsafe fn import_replacement_camera_frame(
             import_properties.format_key.format,
         ));
     }
+    let import_started_at = Instant::now();
     let sampled_image = import_ahb_sampled_image(
         device,
         memory_properties,
@@ -400,7 +728,9 @@ pub(crate) unsafe fn import_replacement_camera_frame(
                 "camera-hwb-raw-projection-left-frame"
             },
         },
-    )?;
+    );
+    stats.record_vulkan_import(import_started_at);
+    let sampled_image = sampled_image?;
     Ok(sampled_image)
 }
 
@@ -1160,6 +1490,62 @@ mod tests {
         assert_eq!(
             choose_composite_alpha(vk::CompositeAlphaFlagsKHR::OPAQUE),
             vk::CompositeAlphaFlagsKHR::OPAQUE
+        );
+    }
+
+    #[test]
+    fn camera_import_cache_identity_is_generation_and_descriptor_exact() {
+        let key = CameraHwbImportCacheKey {
+            stream_generation: 7,
+            hardware_buffer_id: 42,
+            width: 1280,
+            height: 1280,
+            layers: 1,
+            native_format: 35,
+            usage: 0x100,
+            stride: 1280,
+            format_key: AhbVulkanFormatKey {
+                format: vk::Format::UNDEFINED,
+                external_format: 99,
+            },
+        };
+        assert!(key.cacheable(0));
+        assert!(!CameraHwbImportCacheKey {
+            hardware_buffer_id: 0,
+            ..key
+        }
+        .cacheable(0));
+        assert!(!key.cacheable(-1));
+        assert_ne!(
+            key,
+            CameraHwbImportCacheKey {
+                stream_generation: 8,
+                ..key
+            }
+        );
+        assert_ne!(
+            key,
+            CameraHwbImportCacheKey {
+                hardware_buffer_id: 43,
+                ..key
+            }
+        );
+        assert_ne!(
+            key,
+            CameraHwbImportCacheKey {
+                stride: 1344,
+                ..key
+            }
+        );
+        assert_ne!(
+            key,
+            CameraHwbImportCacheKey {
+                format_key: AhbVulkanFormatKey {
+                    format: vk::Format::UNDEFINED,
+                    external_format: 100,
+                },
+                ..key
+            }
         );
     }
 }

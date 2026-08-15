@@ -1,8 +1,8 @@
 #[cfg(target_os = "android")]
 use std::ffi::{c_char, c_void};
-use std::mem::size_of;
 #[cfg(test)]
 use std::mem::align_of;
+use std::mem::size_of;
 use std::sync::{Mutex, OnceLock};
 
 const ABI_V1: u32 = 1;
@@ -13,8 +13,7 @@ const STATUS_PENDING: i32 = 3;
 pub(crate) const QUALIFICATION_QUEUE_SUBMIT_ACCEPTED: u32 = 1 << 0;
 const D16_UNORM: u32 = 124;
 const EYE_ORDER_LEFT_RIGHT: u32 = 1;
-const LAYER_LIBRARY: &[u8] =
-    b"libXR_APILAYER_MESMERPRISM_spatial_sdk_depth_handoff.so\0";
+const LAYER_LIBRARY: &[u8] = b"libXR_APILAYER_MESMERPRISM_spatial_sdk_depth_handoff.so\0";
 const API_SYMBOL: &[u8] = b"rq_spatial_depth_get_api_v2\0";
 
 #[repr(C)]
@@ -304,7 +303,7 @@ fn api() -> Option<&'static SpatialDepthApiV2> {
             && api.poll_request.is_some()
             && api.release_lease.is_some()
             && api.request_shutdown.is_some())
-            .then_some(api)
+        .then_some(api)
     })
     .as_ref()
 }
@@ -400,18 +399,11 @@ pub(crate) fn release_spatial_depth_render_lease(lease: SpatialDepthRenderLease)
     let Some(release) = api.release_lease else {
         return -6;
     };
-    let status = unsafe {
-        release(
-            lease.snapshot.session_generation,
-            lease.snapshot.lease_id,
-        )
-    };
+    let status = unsafe { release(lease.snapshot.session_generation, lease.snapshot.lease_id) };
     if let Ok(mut state) = STATE.lock() {
         state.last_status = status;
         if status == STATUS_OK {
-            if state.current.map(|current| current.lease_id)
-                == Some(lease.snapshot.lease_id)
-            {
+            if state.current.map(|current| current.lease_id) == Some(lease.snapshot.lease_id) {
                 state.current = None;
             }
             state.released_count = state.released_count.saturating_add(1);
@@ -472,9 +464,7 @@ pub(crate) fn poll_spatial_submit_request(
         abi_version: ABI_V1,
         ..Default::default()
     };
-    let status = unsafe {
-        (api.poll_request.unwrap())(request_id, std::ptr::addr_of_mut!(result))
-    };
+    let status = unsafe { (api.poll_request.unwrap())(request_id, std::ptr::addr_of_mut!(result)) };
     if status == STATUS_OK
         || status == STATUS_PENDING
         || (status < 0 && result.request_id == request_id && result.status == status)
@@ -568,7 +558,10 @@ mod tests {
         )));
         assert_eq!(state.action(), SpatialSubmitRetirementAction::Wait);
         state.observe_fence();
-        assert_eq!(state.action(), SpatialSubmitRetirementAction::ReleaseSuccess);
+        assert_eq!(
+            state.action(),
+            SpatialSubmitRetirementAction::ReleaseSuccess
+        );
         assert_eq!(state.terminal_consume_count, 1);
     }
 
@@ -581,7 +574,10 @@ mod tests {
             STATUS_OK,
             QUALIFICATION_QUEUE_SUBMIT_ACCEPTED,
         )));
-        assert_eq!(state.action(), SpatialSubmitRetirementAction::ReleaseSuccess);
+        assert_eq!(
+            state.action(),
+            SpatialSubmitRetirementAction::ReleaseSuccess
+        );
     }
 
     #[test]
@@ -614,10 +610,7 @@ mod tests {
     #[test]
     fn submitted_failure_and_session_replacement_keep_lease_until_fence() {
         let mut state = SpatialSubmitRetirementState::new(17);
-        assert!(state.observe_terminal(terminal_result(
-            -9,
-            QUALIFICATION_QUEUE_SUBMIT_ACCEPTED,
-        )));
+        assert!(state.observe_terminal(terminal_result(-9, QUALIFICATION_QUEUE_SUBMIT_ACCEPTED,)));
         assert_eq!(state.action(), SpatialSubmitRetirementAction::Wait);
         state.observe_fence();
         assert_eq!(

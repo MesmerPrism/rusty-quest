@@ -1,5 +1,6 @@
 #![cfg_attr(not(target_os = "android"), allow(dead_code))]
 
+use std::cell::Cell;
 #[cfg(target_os = "android")]
 use std::ffi::CStr;
 use std::ffi::CString;
@@ -7,6 +8,7 @@ use std::mem;
 #[cfg(target_os = "android")]
 use std::os::raw::{c_char, c_int};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::time::Instant;
 
 use ash::vk::{self, Handle};
 
@@ -348,68 +350,130 @@ pub(crate) struct SpatialPublicGuideTargets {
 struct SpatialProjectionZoneUniformResources {
     buffer: vk::Buffer,
     memory: vk::DeviceMemory,
+    mapped: *mut u8,
     descriptor_set_layout: vk::DescriptorSetLayout,
     descriptor_pool: vk::DescriptorPool,
     descriptor_set: vk::DescriptorSet,
+    last_uniform: Cell<Option<ProjectionZoneUniform>>,
+    upload_stats: SpatialUniformUploadStats,
 }
 
 struct SpatialRgbChannelTransformUniformResources {
     buffer: vk::Buffer,
     memory: vk::DeviceMemory,
+    mapped: *mut u8,
     displacement_buffer: vk::Buffer,
     displacement_memory: vk::DeviceMemory,
+    displacement_mapped: *mut u8,
     descriptor_set_layout: vk::DescriptorSetLayout,
     descriptor_pool: vk::DescriptorPool,
     descriptor_set: vk::DescriptorSet,
+    last_rgb_uniform: Cell<Option<RgbChannelTransformUniform>>,
+    last_displacement_uniform: Cell<Option<ProjectionSurfaceFeatureUniformV2>>,
+    rgb_upload_stats: SpatialUniformUploadStats,
+    displacement_upload_stats: SpatialUniformUploadStats,
+}
+
+#[derive(Default)]
+struct SpatialUniformUploadStats {
+    attempts: Cell<u64>,
+    writes: Cell<u64>,
+    skips: Cell<u64>,
+    map_calls: Cell<u64>,
+    total_ns: Cell<u64>,
+    max_ns: Cell<u64>,
+}
+
+impl SpatialUniformUploadStats {
+    fn record_persistent_map(&self, started_at: Instant) {
+        let elapsed_ns = u64::try_from(started_at.elapsed().as_nanos()).unwrap_or(u64::MAX);
+        self.map_calls.set(self.map_calls.get().saturating_add(1));
+        self.record_elapsed(elapsed_ns);
+    }
+
+    fn record_write(&self, started_at: Instant) {
+        let elapsed_ns = u64::try_from(started_at.elapsed().as_nanos()).unwrap_or(u64::MAX);
+        self.attempts.set(self.attempts.get().saturating_add(1));
+        self.writes.set(self.writes.get().saturating_add(1));
+        self.record_elapsed(elapsed_ns);
+    }
+
+    fn record_skip(&self, started_at: Instant) {
+        let elapsed_ns = u64::try_from(started_at.elapsed().as_nanos()).unwrap_or(u64::MAX);
+        self.attempts.set(self.attempts.get().saturating_add(1));
+        self.skips.set(self.skips.get().saturating_add(1));
+        self.record_elapsed(elapsed_ns);
+    }
+
+    fn record_elapsed(&self, elapsed_ns: u64) {
+        self.total_ns
+            .set(self.total_ns.get().saturating_add(elapsed_ns));
+        self.max_ns.set(self.max_ns.get().max(elapsed_ns));
+    }
+
+    fn marker_fields(&self, prefix: &str) -> String {
+        format!(
+            "{prefix}Attempts={} {prefix}Writes={} {prefix}Skips={} {prefix}MapCalls={} {prefix}TotalNs={} {prefix}MaxNs={}",
+            self.attempts.get(),
+            self.writes.get(),
+            self.skips.get(),
+            self.map_calls.get(),
+            self.total_ns.get(),
+            self.max_ns.get(),
+        )
+    }
 }
 
 impl SpatialRgbChannelTransformUniformResources {
     unsafe fn update(
         &self,
-        device: &ash::Device,
+        _device: &ash::Device,
         uniform: &RgbChannelTransformUniform,
     ) -> Result<(), String> {
+        let started_at = Instant::now();
+        if self.last_rgb_uniform.get().as_ref() == Some(uniform) {
+            self.rgb_upload_stats.record_skip(started_at);
+            return Ok(());
+        }
         let size = mem::size_of::<RgbChannelTransformUniform>() as vk::DeviceSize;
-        let mapped = device
-            .map_memory(self.memory, 0, size, vk::MemoryMapFlags::empty())
-            .map_err(|error| format!("map-rgb-channel-transform-uniform-{error:?}"))?;
         std::ptr::copy_nonoverlapping(
             (uniform as *const RgbChannelTransformUniform).cast::<u8>(),
-            mapped.cast::<u8>(),
+            self.mapped,
             size as usize,
         );
-        device.unmap_memory(self.memory);
+        self.last_rgb_uniform.set(Some(*uniform));
+        self.rgb_upload_stats.record_write(started_at);
         Ok(())
     }
 
     unsafe fn update_displacement(
         &self,
-        device: &ash::Device,
+        _device: &ash::Device,
         uniform: &ProjectionSurfaceFeatureUniformV2,
     ) -> Result<(), String> {
+        let started_at = Instant::now();
+        if self.last_displacement_uniform.get().as_ref() == Some(uniform) {
+            self.displacement_upload_stats.record_skip(started_at);
+            return Ok(());
+        }
         let size = mem::size_of::<ProjectionSurfaceFeatureUniformV2>() as vk::DeviceSize;
-        let mapped = device
-            .map_memory(
-                self.displacement_memory,
-                0,
-                size,
-                vk::MemoryMapFlags::empty(),
-            )
-            .map_err(|error| format!("map-projection-surface-displacement-uniform-{error:?}"))?;
         std::ptr::copy_nonoverlapping(
             (uniform as *const ProjectionSurfaceFeatureUniformV2).cast::<u8>(),
-            mapped.cast::<u8>(),
+            self.displacement_mapped,
             size as usize,
         );
-        device.unmap_memory(self.displacement_memory);
+        self.last_displacement_uniform.set(Some(*uniform));
+        self.displacement_upload_stats.record_write(started_at);
         Ok(())
     }
 
     unsafe fn destroy(self, device: &ash::Device) {
         device.destroy_descriptor_pool(self.descriptor_pool, None);
         device.destroy_descriptor_set_layout(self.descriptor_set_layout, None);
+        device.unmap_memory(self.displacement_memory);
         device.destroy_buffer(self.displacement_buffer, None);
         device.free_memory(self.displacement_memory, None);
+        device.unmap_memory(self.memory);
         device.destroy_buffer(self.buffer, None);
         device.free_memory(self.memory, None);
     }
@@ -418,25 +482,29 @@ impl SpatialRgbChannelTransformUniformResources {
 impl SpatialProjectionZoneUniformResources {
     unsafe fn update(
         &self,
-        device: &ash::Device,
+        _device: &ash::Device,
         uniform: &ProjectionZoneUniform,
     ) -> Result<(), String> {
+        let started_at = Instant::now();
+        if self.last_uniform.get().as_ref() == Some(uniform) {
+            self.upload_stats.record_skip(started_at);
+            return Ok(());
+        }
         let size = mem::size_of::<ProjectionZoneUniform>() as vk::DeviceSize;
-        let mapped = device
-            .map_memory(self.memory, 0, size, vk::MemoryMapFlags::empty())
-            .map_err(|error| format!("map-projection-zone-uniform-{error:?}"))?;
         std::ptr::copy_nonoverlapping(
             (uniform as *const ProjectionZoneUniform).cast::<u8>(),
-            mapped.cast::<u8>(),
+            self.mapped,
             size as usize,
         );
-        device.unmap_memory(self.memory);
+        self.last_uniform.set(Some(*uniform));
+        self.upload_stats.record_write(started_at);
         Ok(())
     }
 
     unsafe fn destroy(self, device: &ash::Device) {
         device.destroy_descriptor_pool(self.descriptor_pool, None);
         device.destroy_descriptor_set_layout(self.descriptor_set_layout, None);
+        device.unmap_memory(self.memory);
         device.destroy_buffer(self.buffer, None);
         device.free_memory(self.memory, None);
     }
@@ -460,6 +528,21 @@ impl SpatialProjectionZoneVideoPipeline {
 }
 
 impl SpatialPublicGuideTargets {
+    pub(crate) fn uniform_upload_summary_marker_fields(&self) -> String {
+        format!(
+            "{} {} {} uniformUploadPolicy=persistent-mapped-value-equality uniformUploadTelemetryAllocation=scalar uniformUploadTelemetryPerFrameLog=false",
+            self.rgb_channel_transform_uniform
+                .rgb_upload_stats
+                .marker_fields("uniformUploadRgb"),
+            self.rgb_channel_transform_uniform
+                .displacement_upload_stats
+                .marker_fields("uniformUploadDisplacement"),
+            self.projection_zone_uniform
+                .upload_stats
+                .marker_fields("uniformUploadZone"),
+        )
+    }
+
     pub(crate) unsafe fn destroy(self, device: &ash::Device) {
         for pipeline in self.opaque_guide_pipelines {
             device.destroy_pipeline(pipeline, None);
@@ -3538,10 +3621,10 @@ unsafe fn create_rgb_channel_transform_uniform_resources(
         Ok(mut sets) => sets.remove(0),
         Err(error) => {
             device.destroy_descriptor_pool(descriptor_pool, None);
-            device.free_memory(displacement_memory, None);
             device.destroy_buffer(displacement_buffer, None);
-            device.free_memory(memory, None);
+            device.free_memory(displacement_memory, None);
             device.destroy_buffer(buffer, None);
+            device.free_memory(memory, None);
             device.destroy_descriptor_set_layout(descriptor_set_layout, None);
             return Err(format!(
                 "allocate-rgb-channel-transform-uniform-set-{error:?}"
@@ -3569,14 +3652,60 @@ unsafe fn create_rgb_channel_transform_uniform_resources(
             .buffer_info(&displacement_buffer_info),
     ];
     device.update_descriptor_sets(&writes, &[]);
+    let rgb_upload_stats = SpatialUniformUploadStats::default();
+    let rgb_map_started_at = Instant::now();
+    let mapped = match device.map_memory(memory, 0, size, vk::MemoryMapFlags::empty()) {
+        Ok(mapped) => mapped.cast::<u8>(),
+        Err(error) => {
+            device.destroy_descriptor_pool(descriptor_pool, None);
+            device.free_memory(displacement_memory, None);
+            device.destroy_buffer(displacement_buffer, None);
+            device.free_memory(memory, None);
+            device.destroy_buffer(buffer, None);
+            device.destroy_descriptor_set_layout(descriptor_set_layout, None);
+            return Err(format!(
+                "map-rgb-channel-transform-uniform-persistent-{error:?}"
+            ));
+        }
+    };
+    rgb_upload_stats.record_persistent_map(rgb_map_started_at);
+    let displacement_upload_stats = SpatialUniformUploadStats::default();
+    let displacement_map_started_at = Instant::now();
+    let displacement_mapped = match device.map_memory(
+        displacement_memory,
+        0,
+        displacement_size,
+        vk::MemoryMapFlags::empty(),
+    ) {
+        Ok(mapped) => mapped.cast::<u8>(),
+        Err(error) => {
+            device.unmap_memory(memory);
+            device.destroy_descriptor_pool(descriptor_pool, None);
+            device.destroy_buffer(displacement_buffer, None);
+            device.free_memory(displacement_memory, None);
+            device.destroy_buffer(buffer, None);
+            device.free_memory(memory, None);
+            device.destroy_descriptor_set_layout(descriptor_set_layout, None);
+            return Err(format!(
+                "map-projection-surface-displacement-uniform-persistent-{error:?}"
+            ));
+        }
+    };
+    displacement_upload_stats.record_persistent_map(displacement_map_started_at);
     let resources = SpatialRgbChannelTransformUniformResources {
         buffer,
         memory,
+        mapped,
         displacement_buffer,
         displacement_memory,
+        displacement_mapped,
         descriptor_set_layout,
         descriptor_pool,
         descriptor_set,
+        last_rgb_uniform: Cell::new(None),
+        last_displacement_uniform: Cell::new(None),
+        rgb_upload_stats,
+        displacement_upload_stats,
     };
     if let Err(error) = resources.update(
         device,
@@ -3736,8 +3865,8 @@ unsafe fn create_projection_zone_uniform_resources(
         Ok(mut sets) => sets.remove(0),
         Err(error) => {
             device.destroy_descriptor_pool(descriptor_pool, None);
-            device.free_memory(memory, None);
             device.destroy_buffer(buffer, None);
+            device.free_memory(memory, None);
             device.destroy_descriptor_set_layout(descriptor_set_layout, None);
             return Err(format!("allocate-projection-zone-uniform-set-{error:?}"));
         }
@@ -3752,12 +3881,28 @@ unsafe fn create_projection_zone_uniform_resources(
         .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER)
         .buffer_info(&buffer_info)];
     device.update_descriptor_sets(&writes, &[]);
+    let upload_stats = SpatialUniformUploadStats::default();
+    let map_started_at = Instant::now();
+    let mapped = match device.map_memory(memory, 0, size, vk::MemoryMapFlags::empty()) {
+        Ok(mapped) => mapped.cast::<u8>(),
+        Err(error) => {
+            device.destroy_descriptor_pool(descriptor_pool, None);
+            device.free_memory(memory, None);
+            device.destroy_buffer(buffer, None);
+            device.destroy_descriptor_set_layout(descriptor_set_layout, None);
+            return Err(format!("map-projection-zone-uniform-persistent-{error:?}"));
+        }
+    };
+    upload_stats.record_persistent_map(map_started_at);
     Ok(SpatialProjectionZoneUniformResources {
         buffer,
         memory,
+        mapped,
         descriptor_set_layout,
         descriptor_pool,
         descriptor_set,
+        last_uniform: Cell::new(None),
+        upload_stats,
     })
 }
 

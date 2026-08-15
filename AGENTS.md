@@ -136,13 +136,22 @@ Quest adapters.
 
 For `spatial-camera-panel-android` performance work, this public adapter owns
 allocation-free, nonblocking Vulkan timestamp-query instrumentation and
-public, output-equivalent guide-kernel optimizations. Timestamp readback must
-use a retired frame slot plus availability results and must never introduce a
-query-result `WAIT` into the render loop. A NativeBox5 reduction is admissible
-only when the packed-eye texel domain proves that the three filtered reads are
-equivalent to the existing five physical-texel taps. Keep Gaussian5 unchanged.
-Private effect formulas, private shader source, and unsanitized headset evidence
-remain outside this repository.
+public, output-equivalent guide-kernel, host-upload, and hardware-buffer import
+optimizations. Timestamp readback must use a retired frame slot plus
+availability results and must never introduce a query-result `WAIT` into the
+render loop. A NativeBox5 reduction is admissible only when the packed-eye texel
+domain proves that the three filtered reads are equivalent to the existing five
+physical-texel taps. Keep Gaussian5 unchanged. Host-coherent uniform buffers may
+remain persistently mapped through resource lifetime, must be unmapped before
+free, and may skip a write only on exact value equality. Video imports must test
+their exact stable-ID/generation/descriptor cache key before querying Vulkan
+hardware-buffer properties. Camera imports may be reused only within one stream
+generation and exact eye, camera, stable hardware-buffer ID, descriptor, and
+Vulkan-format identity; retire active images only after the existing fence,
+bound inactive entries, consume AImageReader buffer-removal notifications, and
+disable reuse fail-safely if removal bookkeeping overflows. Keep performance
+telemetry scalar and low-rate. Private effect formulas, private shader source,
+and unsanitized headset evidence remain outside this repository.
 
 Do not add new Makepad compatibility shims, profile surfaces, or Quest-Makepad
 parity work here unless the user explicitly asks for Makepad migration,

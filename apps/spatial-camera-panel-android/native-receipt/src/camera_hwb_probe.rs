@@ -2,7 +2,7 @@ use std::ffi::c_void;
 #[cfg(not(rq_environment_depth_spatial_sdk_api_layer))]
 use std::ffi::CString;
 use std::os::raw::{c_float, c_int};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -28,9 +28,9 @@ use crate::camera_hwb_timing::CameraHwbGpuTimestampTracker;
 use crate::camera_hwb_wsi::{
     allocate_camera_hwb_probe_descriptor_set, choose_composite_alpha, choose_extent,
     choose_surface_format, create_camera_hwb_probe_resources, create_framebuffers,
-    create_image_views, create_render_pass, import_replacement_camera_frame,
-    record_camera_hwb_probe_command_buffer, select_camera_surface_device,
-    update_camera_hwb_probe_descriptor_set,
+    create_image_views, create_render_pass, record_camera_hwb_probe_command_buffer,
+    select_camera_surface_device, update_camera_hwb_probe_descriptor_set, CameraHwbImportCache,
+    CameraHwbImportPerformanceStats,
 };
 use crate::camera_latency_diagnostics::{
     boottime_now_ns, camera_latency_strict_pair_decision, current_camera_latency_settings,
@@ -68,6 +68,7 @@ const CAMERA_HWB_PROBE_WAIT_FRAME_MS: u64 = 5000;
 const CAMERA_HWB_PROBE_MAX_FRAMES: u32 = 1800;
 
 static STOP_CAMERA_HWB_PROBE: AtomicBool = AtomicBool::new(false);
+static NEXT_CAMERA_IMPORT_STREAM_GENERATION: AtomicU64 = AtomicU64::new(1);
 #[cfg(rq_environment_depth_spatial_sdk_api_layer)]
 static NEXT_SDK_SURFACE_GENERATION: std::sync::atomic::AtomicU64 =
     std::sync::atomic::AtomicU64::new(1);
@@ -1229,6 +1230,11 @@ unsafe fn render_camera_hwb_probe(
     ));
 
     let camera_runtime = CameraProbeRuntime::start(reader_max_images, mode.stream_mode())?;
+    let camera_import_stream_generation =
+        NEXT_CAMERA_IMPORT_STREAM_GENERATION.fetch_add(1, Ordering::AcqRel);
+    let camera_import_inactive_limit = usize::try_from(reader_max_images)
+        .unwrap_or(3)
+        .saturating_add(1);
     let initial_frames = if matches!(mode, CameraHwbProbeMode::RawColorProjection) {
         camera_runtime
             .wait_for_first_stereo_frame(Duration::from_millis(CAMERA_HWB_PROBE_WAIT_FRAME_MS))
@@ -1448,6 +1454,23 @@ unsafe fn render_camera_hwb_probe(
     let mut broker_terminal_consumed_total = 0_u64;
     #[cfg(rq_environment_depth_spatial_sdk_api_layer)]
     let mut submit_retired_total = 0_u64;
+    let mut left_camera_import_cache = CameraHwbImportCache::new(
+        camera_import_stream_generation,
+        &initial_frames.left,
+        camera_import_inactive_limit,
+    );
+    let mut right_camera_import_cache = CameraHwbImportCache::new(
+        camera_import_stream_generation,
+        &initial_frames.right,
+        camera_import_inactive_limit,
+    );
+    log_marker(format!(
+        "status=camera-import-cache-ready streamGeneration={} inactiveLimitPerEye={} totalImportBoundPerEye={} readerMaxImages={} framesInFlight=1 cacheIdentity=stream-generation-eye-camera-ahb-id-descriptor-vulkan-format removalPolicy=listener-tombstone-disable-on-overflow runtimeCrash=false",
+        camera_import_stream_generation,
+        camera_import_inactive_limit,
+        camera_import_inactive_limit.saturating_add(1),
+        reader_max_images,
+    ));
     let mut current_left_frame = initial_frames.left;
     let mut current_right_frame = initial_frames.right;
     let mut last_polled_left_hwb_import_sequence = current_left_frame.hwb_import_sequence;
@@ -1461,6 +1484,10 @@ unsafe fn render_camera_hwb_probe(
     let mut transition_right_camera_image = matches!(mode, CameraHwbProbeMode::RawColorProjection);
     let mut frames_presented = 0_u32;
     let mut last_submitted_frame_slot: Option<usize> = None;
+    let mut left_camera_import_stats =
+        CameraHwbImportPerformanceStats::with_cache_inactive_limit(camera_import_inactive_limit);
+    let mut right_camera_import_stats =
+        CameraHwbImportPerformanceStats::with_cache_inactive_limit(camera_import_inactive_limit);
     let mut camera_reprojection_guard_band = CameraReprojectionGuardBandController::default();
     let mut spatial_video_projection_rendered_marker_logged = false;
     let mut last_projection_zone_render_stats = None;
@@ -1714,6 +1741,19 @@ unsafe fn render_camera_hwb_probe(
                 return Err(format!("spatial-depth-lease-release-{release_status}"));
             }
         }
+        let (left_removed, right_removed) = camera_runtime.drain_removed_hardware_buffer_ids();
+        left_camera_import_cache.process_removed_hardware_buffer_ids(
+            &device,
+            &left_removed.0,
+            left_removed.1,
+            &mut left_camera_import_stats,
+        );
+        right_camera_import_cache.process_removed_hardware_buffer_ids(
+            &device,
+            &right_removed.0,
+            right_removed.1,
+            &mut right_camera_import_stats,
+        );
         if let Some(retired_frame_slot) = last_submitted_frame_slot.take() {
             if let Some(sample) = gpu_timestamps.read_retired_slot(&device, retired_frame_slot) {
                 if sample.frame_id <= 4 || sample.frame_id % 300 == 0 {
@@ -1721,6 +1761,23 @@ unsafe fn render_camera_hwb_probe(
                         "status=gpu-timestamp-sample {} {} runtimeCrash=false",
                         sample.marker_fields(),
                         gpu_timestamps.summary_marker_fields(),
+                    ));
+                    if let Some(targets) = public_guide_targets.as_ref() {
+                        log_marker(format!(
+                            "status=cpu-import-sample sampleFrameId={} {} runtimeCrash=false",
+                            sample.frame_id,
+                            targets.uniform_upload_summary_marker_fields(),
+                        ));
+                    }
+                    log_marker(format!(
+                        "status=camera-import-performance-sample sampleFrameId={} {} policy=bounded-generation-aware-ahb-vulkan-import-cache telemetryAllocation=scalar telemetryPerFrameLog=false runtimeCrash=false",
+                        sample.frame_id,
+                        left_camera_import_stats.marker_fields("left"),
+                    ));
+                    log_marker(format!(
+                        "status=camera-import-performance-sample sampleFrameId={} {} policy=bounded-generation-aware-ahb-vulkan-import-cache telemetryAllocation=scalar telemetryPerFrameLog=false runtimeCrash=false",
+                        sample.frame_id,
+                        right_camera_import_stats.marker_fields("right"),
                     ));
                 }
             }
@@ -1757,13 +1814,14 @@ unsafe fn render_camera_hwb_probe(
                     if let Some(next_frame) = next_left_frame {
                         last_polled_left_hwb_import_sequence = next_frame.hwb_import_sequence;
                         let import_started = Instant::now();
-                        match import_replacement_camera_frame(
+                        match left_camera_import_cache.acquire(
                             &device,
                             &memory_properties,
                             &ahb_device,
                             &camera_resources,
                             format_key,
                             &next_frame,
+                            &mut left_camera_import_stats,
                         ) {
                             Ok(next_sampled_image) => {
                                 update_camera_hwb_probe_descriptor_set(
@@ -1775,8 +1833,15 @@ unsafe fn render_camera_hwb_probe(
                                     mode,
                                 );
                                 log_fence_held_frame_retirement(&current_left_frame, "left");
-                                sampled_left_image.destroy(&device);
-                                sampled_left_image = next_sampled_image;
+                                let previous_image =
+                                    std::mem::replace(&mut sampled_left_image, next_sampled_image);
+                                left_camera_import_cache.retire(
+                                    &device,
+                                    format_key,
+                                    &current_left_frame,
+                                    previous_image,
+                                    &mut left_camera_import_stats,
+                                )?;
                                 current_left_frame = next_frame;
                                 transition_left_camera_image = true;
                                 left_imported = true;
@@ -1796,13 +1861,14 @@ unsafe fn render_camera_hwb_probe(
                     if let Some(next_frame) = next_right_frame {
                         last_polled_right_hwb_import_sequence = next_frame.hwb_import_sequence;
                         let import_started = Instant::now();
-                        match import_replacement_camera_frame(
+                        match right_camera_import_cache.acquire(
                             &device,
                             &memory_properties,
                             &ahb_device,
                             &camera_resources,
                             format_key,
                             &next_frame,
+                            &mut right_camera_import_stats,
                         ) {
                             Ok(next_sampled_image) => {
                                 update_camera_hwb_probe_descriptor_set(
@@ -1814,10 +1880,16 @@ unsafe fn render_camera_hwb_probe(
                                     mode,
                                 );
                                 log_fence_held_frame_retirement(&current_right_frame, "right");
-                                if let Some(previous) = sampled_right_image.take() {
-                                    previous.destroy(&device);
-                                }
-                                sampled_right_image = Some(next_sampled_image);
+                                let previous_image = sampled_right_image
+                                    .replace(next_sampled_image)
+                                    .expect("raw projection has right sampled image");
+                                right_camera_import_cache.retire(
+                                    &device,
+                                    format_key,
+                                    &current_right_frame,
+                                    previous_image,
+                                    &mut right_camera_import_stats,
+                                )?;
                                 current_right_frame = next_frame;
                                 transition_right_camera_image = true;
                                 right_imported = true;
@@ -1839,13 +1911,14 @@ unsafe fn render_camera_hwb_probe(
                     if let Some(next_frame) = next_left_frame {
                         last_polled_left_hwb_import_sequence = next_frame.hwb_import_sequence;
                         let import_started = Instant::now();
-                        match import_replacement_camera_frame(
+                        match left_camera_import_cache.acquire(
                             &device,
                             &memory_properties,
                             &ahb_device,
                             &camera_resources,
                             format_key,
                             &next_frame,
+                            &mut left_camera_import_stats,
                         ) {
                             Ok(next_sampled_image) => {
                                 update_camera_hwb_probe_descriptor_set(
@@ -1860,8 +1933,15 @@ unsafe fn render_camera_hwb_probe(
                                     &current_left_frame,
                                     "left-mono-source",
                                 );
-                                sampled_left_image.destroy(&device);
-                                sampled_left_image = next_sampled_image;
+                                let previous_image =
+                                    std::mem::replace(&mut sampled_left_image, next_sampled_image);
+                                left_camera_import_cache.retire(
+                                    &device,
+                                    format_key,
+                                    &current_left_frame,
+                                    previous_image,
+                                    &mut left_camera_import_stats,
+                                )?;
                                 current_left_frame = next_frame;
                                 current_right_frame = current_left_frame.clone();
                                 transition_left_camera_image = true;
@@ -1911,21 +1991,23 @@ unsafe fn render_camera_hwb_probe(
                             let next_left = pending_strict_left.take().expect("left checked");
                             let next_right = pending_strict_right.take().expect("right checked");
                             let import_started = Instant::now();
-                            let next_left_image = import_replacement_camera_frame(
+                            let next_left_image = left_camera_import_cache.acquire(
                                 &device,
                                 &memory_properties,
                                 &ahb_device,
                                 &camera_resources,
                                 format_key,
                                 &next_left,
+                                &mut left_camera_import_stats,
                             );
-                            let next_right_image = import_replacement_camera_frame(
+                            let next_right_image = right_camera_import_cache.acquire(
                                 &device,
                                 &memory_properties,
                                 &ahb_device,
                                 &camera_resources,
                                 format_key,
                                 &next_right,
+                                &mut right_camera_import_stats,
                             );
                             match (next_left_image, next_right_image) {
                                 (Ok(left_image), Ok(right_image)) => {
@@ -1945,12 +2027,25 @@ unsafe fn render_camera_hwb_probe(
                                         &current_right_frame,
                                         "right-strict-pair",
                                     );
-                                    sampled_left_image.destroy(&device);
-                                    if let Some(previous) = sampled_right_image.take() {
-                                        previous.destroy(&device);
-                                    }
-                                    sampled_left_image = left_image;
-                                    sampled_right_image = Some(right_image);
+                                    let previous_left_image =
+                                        std::mem::replace(&mut sampled_left_image, left_image);
+                                    let previous_right_image = sampled_right_image
+                                        .replace(right_image)
+                                        .expect("raw projection has right sampled image");
+                                    left_camera_import_cache.retire(
+                                        &device,
+                                        format_key,
+                                        &current_left_frame,
+                                        previous_left_image,
+                                        &mut left_camera_import_stats,
+                                    )?;
+                                    right_camera_import_cache.retire(
+                                        &device,
+                                        format_key,
+                                        &current_right_frame,
+                                        previous_right_image,
+                                        &mut right_camera_import_stats,
+                                    )?;
                                     current_left_frame = next_left;
                                     current_right_frame = next_right;
                                     transition_left_camera_image = true;
@@ -2383,6 +2478,23 @@ unsafe fn render_camera_hwb_probe(
                 spatial_video_projection_rendered_marker_logged = true;
             }
         }
+        if mode.should_stream_latest_frame()
+            && record_result.video_stats.rendered
+            && (frames_presented <= 4 || frames_presented % 300 == 0)
+        {
+            log_marker(format!(
+                "status=spatial-video-import-performance-sample framesPresented={} videoProjectionFrameIndex={} videoProjectionImportCacheHits={} videoProjectionImportCacheMisses={} videoProjectionImportCacheEntries={} videoProjectionImportPropertyQueryCalls={} videoProjectionImportPropertyQueryTotalNs={} videoProjectionImportPropertyQueryMaxNs={} videoProjectionCacheHitsBeforePropertyQuery={} videoProjectionImportQueryPolicy=cache-hit-before-property-query videoProjectionImportTelemetryAllocation=scalar videoProjectionImportTelemetryPerFrameLog=false runtimeCrash=false",
+                frames_presented,
+                record_result.video_stats.frame_index,
+                record_result.video_stats.import_cache_hits,
+                record_result.video_stats.import_cache_misses,
+                record_result.video_stats.import_cache_entries,
+                record_result.video_stats.import_property_query_calls,
+                record_result.video_stats.import_property_query_total_ns,
+                record_result.video_stats.import_property_query_max_ns,
+                record_result.video_stats.cache_hits_before_property_query,
+            ));
+        }
         if frames_presented == 1 {
             log_marker(format!(
                 "status=first-camera-frame-presented leftCameraId={} rightCameraId={} leftFrameIndex={} rightFrameIndex={} leftHardwareBufferId={} rightHardwareBufferId={} leftHwbImportSequence={} rightHwbImportSequence={} pairDeltaNs={} carrier=scenequadlayer-createAsAndroid-vulkan-wsi vkGetAhbPropertiesResult=success sampledCameraTexture=true sampledLeftCameraTexture=true sampledRightCameraTexture={} samplerMode={} outputMode={} rawCameraProjectionProbe={} privateShaderStack=false customProjectionStack=false leftTimestampNs={} rightTimestampNs={} leftWidth={} leftHeight={} rightWidth={} rightHeight={} leftFormat={} rightFormat={} leftUsage=0x{:x} rightUsage=0x{:x} leftStride={} rightStride={} noRepeatedRawHwbSampling={} stereoSource={} runtimeCrash=false {}",
@@ -2448,6 +2560,20 @@ unsafe fn render_camera_hwb_probe(
         "status=gpu-timestamp-summary {} runtimeCrash=false",
         gpu_timestamps.summary_marker_fields(),
     ));
+    if let Some(targets) = public_guide_targets.as_ref() {
+        log_marker(format!(
+            "status=cpu-import-summary {} runtimeCrash=false",
+            targets.uniform_upload_summary_marker_fields(),
+        ));
+    }
+    log_marker(format!(
+        "status=camera-import-performance-summary {} policy=bounded-generation-aware-ahb-vulkan-import-cache runtimeCrash=false",
+        left_camera_import_stats.marker_fields("left"),
+    ));
+    log_marker(format!(
+        "status=camera-import-performance-summary {} policy=bounded-generation-aware-ahb-vulkan-import-cache runtimeCrash=false",
+        right_camera_import_stats.marker_fields("right"),
+    ));
     #[cfg(rq_environment_depth_spatial_sdk_api_layer)]
     if let Some(completed_lease) = submitted_depth_lease.take() {
         let _ =
@@ -2466,6 +2592,8 @@ unsafe fn render_camera_hwb_probe(
         sampled_right_image.destroy(&device);
     }
     sampled_left_image.destroy(&device);
+    right_camera_import_cache.destroy(&device);
+    left_camera_import_cache.destroy(&device);
     if let Some(mut video_renderer) = video_renderer {
         video_renderer.destroy(&device);
     }

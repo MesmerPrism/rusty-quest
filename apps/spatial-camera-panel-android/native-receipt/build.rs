@@ -167,9 +167,9 @@ fn emit_environment_depth_owner_cfg() {
         "disabled" => "rq_environment_depth_disabled",
         "legacy-native-sidecar" => "rq_environment_depth_legacy_native_sidecar",
         "spatial-sdk-api-layer" => "rq_environment_depth_spatial_sdk_api_layer",
-        _ => panic!(
-            "{OWNER_ENV} must be disabled, legacy-native-sidecar, or spatial-sdk-api-layer"
-        ),
+        _ => {
+            panic!("{OWNER_ENV} must be disabled, legacy-native-sidecar, or spatial-sdk-api-layer")
+        }
     };
     println!("cargo:rustc-cfg={cfg_name}");
 }
