@@ -1400,6 +1400,15 @@ admitted traces there was no Perfetto packet loss, fatal exception, ANR,
 environment-depth call-order error, decoder overlap, or OpenXR/Vulkan loss. The
 public runtime remains unchanged and no visual A/B control is exposed.
 
+A later private distinct-pipeline packaging candidate was not retained. Its
+authorized device proof produced no admitted sample and no performance trace:
+one attempt stopped at the provider's missing source-grant capability, and a
+bounded follow-up grant reached the already-created activity as a normal new
+intent without activating the source. No FPS, tear, GPU, CPU, frame-time,
+memory, or PSS conclusion follows. The public adapter and the retained prior
+runtime remain unchanged. A typed inspected source-launch route or explicit
+app new-intent activation contract is a separate future ownership slice.
+
 Run the raw camera projection headset smoke with:
 
 ```powershell
