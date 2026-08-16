@@ -1374,6 +1374,32 @@ eligible. Retain the three-linear-read NativeBox5 fold, retain the
 disabled-by-default timestamp implementation, and direct subsequent work at
 actual Maximum-blend compositor sampling rather than these rejected factors.
 
+### Private Maximum-blend endpoint-demand result
+
+A subsequent private, exact-output compositor candidate retained the public
+CPU/import caches and Android runtime unchanged. Its final selector activates
+only for the measured decoder-valid Maximum-blend workload; all other public
+diagnostic profiles use the original compositor route. Dense host equivalence
+oracles cover exact endpoints and transition-band behavior, so the candidate is
+not a visual-quality option.
+
+On Quest at asserted CPU/GPU levels 4/4, a decoder-valid A/B/A/B/A bracket used
+25-second traces after an eight-second offset. Candidate windows averaged 90.58
+FPS with a 90 FPS minimum, 324 VrApi tear increments, and 78.5% GPU. Neighboring
+controls averaged 90.27 FPS with 87-88 minimum, 439.7 tear increments, and 80.5%
+GPU. App CPU was effectively unchanged. A playlist-context B/A/B repeated the
+Maximum-blend result: candidate windows averaged 90.32 FPS and 402.5 tears;
+the intervening control reached 87.48 FPS and 710 tears at effectively equal GPU
+and app CPU.
+
+The scoped shader module adds a bounded approximately 17-18 MiB application
+footprint because it carries both original and gated bodies. A smaller globally
+applied form avoided that footprint but did not clear the unaffected-profile
+regression burden under observed run drift, so it was not retained. Across 40
+admitted traces there was no Perfetto packet loss, fatal exception, ANR,
+environment-depth call-order error, decoder overlap, or OpenXR/Vulkan loss. The
+public runtime remains unchanged and no visual A/B control is exposed.
+
 Run the raw camera projection headset smoke with:
 
 ```powershell
