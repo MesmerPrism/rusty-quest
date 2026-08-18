@@ -382,6 +382,7 @@ unsafe fn run_projection_loop_inner(
         runtime_options.stimulus_volume_settings,
         runtime_options.projection_target_settings.clone(),
         runtime_options.private_particle_breath_state_driver_settings,
+        runtime_options.same_apk_panel_action_settings,
         runtime_options.environment_depth_alignment_settings,
         runtime_options
             .render_mode
@@ -1257,6 +1258,7 @@ unsafe fn run_projection_loop_inner(
         queue,
         cmd_pool,
         runtime_options.private_particle_breath_state_driver_settings,
+        runtime_options.private_particle_heartbeat_pulse_adapter_settings,
         runtime_options.manifold_scalar_driver_settings.clone(),
     ) {
         Ok(renderer) => renderer,
@@ -2249,6 +2251,7 @@ unsafe fn run_projection_frames(
             );
         }
 
+        let mut private_particle_breath_sample = None;
         if let Some(actions) = stimulus_actions.as_deref_mut() {
             let controller_events = actions.sync_and_poll(
                 session,
@@ -2264,13 +2267,7 @@ unsafe fn run_projection_frames(
             for input in controller_events.environment_depth_alignment_inputs {
                 environment_depth_alignment_state.apply_input(input);
             }
-            if let Some(renderer) = gpu_private_particle_renderer.as_deref_mut() {
-                renderer.update_breath_state_driver(
-                    controller_events.native_controller_breath_sample,
-                    dt_seconds,
-                    frame_count,
-                );
-            }
+            private_particle_breath_sample = controller_events.native_controller_breath_sample;
             if controller_events.stimulus_randomize_triggered {
                 if crate::native_renderer_panel_bridge::right_primary_opens_control_panel() {
                     crate::native_renderer_panel_bridge::open_control_panel(
@@ -2283,13 +2280,27 @@ unsafe fn run_projection_frames(
                 }
             }
             if controller_events.panel_toggle_triggered {
-                crate::native_renderer_panel_bridge::toggle_control_panel(app, frame_count);
+                crate::native_renderer_panel_bridge::toggle_control_panel(
+                    app,
+                    frame_count,
+                    controller_events
+                        .panel_toggle_source
+                        .unwrap_or("controller-action"),
+                );
             }
             if controller_events.private_particle_recenter_triggered
                 && gpu_private_particle_renderer.is_some()
             {
                 private_particle_world_anchor.recenter(particle_sort_eye_projection, frame_count);
             }
+        }
+        if let Some(renderer) = gpu_private_particle_renderer.as_deref_mut() {
+            renderer.update_breath_state_driver(
+                private_particle_breath_sample,
+                dt_seconds,
+                frame_count,
+            );
+            renderer.update_heartbeat_pulse_adapter(dt_seconds, frame_count);
         }
         if let Some(bridge) = breath_bridge.as_mut() {
             if let Some(input) = bridge.poll_input(dt_seconds, frame_count) {

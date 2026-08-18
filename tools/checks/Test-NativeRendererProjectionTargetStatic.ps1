@@ -91,7 +91,7 @@ Assert-ContainsTokens "$nativeLib`n$nativeRendererOptionSurface`n$projectionTarg
     'subscribe',
     'right_thumbstick_y',
     'right_primary_reset',
-    'right_secondary_scale_driver_toggle',
+    'right_secondary_action',
     'right_grip_pose',
     'right_breath_haptic',
     'create_space',

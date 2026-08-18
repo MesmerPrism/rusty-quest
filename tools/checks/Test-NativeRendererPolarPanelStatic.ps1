@@ -38,6 +38,11 @@ $javaRoot = Join-Path $appRoot "src\main\java\io\github\mesmerprism\rustyquest\n
 $manifest = Read-RequiredText (Join-Path $appRoot "AndroidManifest.xml") "Android manifest"
 $controlPanel = Read-RequiredText (Join-Path $javaRoot "ControlPanelActivity.java") "control panel"
 $polarPanel = Read-RequiredText (Join-Path $javaRoot "PolarSensorPanel.java") "Polar panel"
+$polarAdapters = Read-RequiredText (Join-Path $appRoot "native\src\polar_composition_adapters.rs") "Polar composition adapters"
+$breathAdapter = Read-RequiredText (Join-Path $appRoot "native\src\private_particle_breath_state_driver.rs") "breath-state adapter"
+$heartbeatAdapter = Read-RequiredText (Join-Path $appRoot "native\src\private_particle_heartbeat_pulse_adapter.rs") "heartbeat-pulse adapter"
+$panelAction = Read-RequiredText (Join-Path $appRoot "native\src\same_apk_panel_action.rs") "same-APK panel action"
+$panelBridge = Read-RequiredText (Join-Path $appRoot "native\src\native_renderer_panel_bridge.rs") "same-APK panel bridge"
 $feature = Read-RequiredText (Join-Path $repoRootPath "fixtures\native-app-features\sensors\polar-h10-ble\sensor.polar_h10_ble.feature.json") "Polar feature"
 $propertyManifest = Read-RequiredText (Join-Path $repoRootPath "fixtures\native-renderer\native-renderer-property-manifest.json") "property manifest"
 $resolver = Read-RequiredText (Join-Path $repoRootPath "tools\Resolve-NativeAppBuild.ps1") "native app-build resolver"
@@ -81,9 +86,29 @@ Assert-ContainsTokens $polarPanel @(
     'decodeAcc',
     'decodeEcg',
     'buildStartCommand',
+    'nativeSubmitPolarRrMeasurement',
+    'nativeSubmitPolarAccMeasurement',
     'RUSTY_QUEST_NATIVE_RENDERER',
     'polar-sensor-panel'
 ) "Polar BLE panel implementation"
+
+Assert-ContainsTokens "$polarAdapters`n$breathAdapter`n$heartbeatAdapter`n$panelAction`n$panelBridge" @(
+    'PolarAccBreathSource',
+    'PolarRrPulseSource',
+    'RR_QUEUE_CAPACITY',
+    'SourceState::Disabled',
+    'SourceState::Missing',
+    'SourceState::Malformed',
+    'SourceState::Stale',
+    'polar_acc_synthetic_conformance_maps_configured_axis',
+    'polar_acc_output_is_bounded',
+    'rr_synthetic_conformance_emits_one_normalized_pulse',
+    'valid_event_emits_one_bounded_frame_then_returns_to_zero',
+    'right-secondary-triple-press-toggle',
+    'exactly_three_press_edges_trigger_one_deterministic_action',
+    'timeout_discards_incomplete_sequence',
+    'ControlPanelActivity'
+) "disabled-by-default Polar composition adapters"
 
 foreach ($forbidden in @('WebView', 'addJavascriptInterface', 'androidx', 'AppSystemActivity', 'VrActivity', 'GLXF')) {
     if ($polarPanel -match $forbidden) {

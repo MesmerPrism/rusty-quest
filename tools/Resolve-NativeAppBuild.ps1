@@ -3,14 +3,16 @@ param(
     [string]$AppSpec,
     [string]$FeatureDir = "fixtures\native-app-features",
     [string]$OutputRoot = "local-artifacts\native-app-builds",
+    [string]$ResultJsonPath,
     [switch]$DryRun
 )
 
 $ErrorActionPreference = "Stop"
-$ResolverVersion = "native-app-build-resolver.ps1.v1"
+$ResolverVersion = "native-app-build-resolver.ps1.v2"
 $FeatureSchema = "rusty.quest.native_app_feature.v1"
 $AppBuildSchema = "rusty.quest.native_app_build.v1"
 $FeatureLockSchema = "rusty.quest.native_app_feature_lock.v1"
+$ResolutionResultSchema = "rusty.quest.native_app_build_resolution_result.v1"
 $NativeAppSettingsSchema = "rusty.quest.native_app_settings.v1"
 $RuntimeProfileSchema = "rusty.quest.runtime_profile.v1"
 $NativeRendererPropertyManifestSchema = "rusty.quest.native_renderer_property_manifest.v2"
@@ -61,6 +63,21 @@ function Get-RepoRelativePath {
         return $full.Substring($root.Length).TrimStart("\", "/").Replace("\", "/")
     }
     return $full.Replace("\", "/")
+}
+
+function Assert-CanonicalPathInsideRoot {
+    param(
+        [Parameter(Mandatory=$true)][string]$Path,
+        [Parameter(Mandatory=$true)][string]$Root,
+        [Parameter(Mandatory=$true)][string]$Label
+    )
+    $canonicalPath = [System.IO.Path]::GetFullPath($Path)
+    $canonicalRoot = [System.IO.Path]::GetFullPath($Root).TrimEnd("\", "/")
+    $relative = [System.IO.Path]::GetRelativePath($canonicalRoot, $canonicalPath)
+    if ([System.IO.Path]::IsPathRooted($relative) -or $relative -eq ".." -or $relative.StartsWith("..\") -or $relative.StartsWith("../")) {
+        throw "$Label must resolve inside requested output root. Path=$canonicalPath root=$canonicalRoot"
+    }
+    return $canonicalPath
 }
 
 function Read-JsonFile {
@@ -646,6 +663,12 @@ $repoRootText = [string]$RepoRoot
 $appSpecPath = Resolve-RepoPath -Path $AppSpec -RepoRoot $repoRootText
 $featureDirPath = Resolve-RepoPath -Path $FeatureDir -RepoRoot $repoRootText
 $outputRootPath = Resolve-RepoPath -Path $OutputRoot -RepoRoot $repoRootText
+$resultJsonCanonicalPath = if ([string]::IsNullOrWhiteSpace($ResultJsonPath)) {
+    $null
+} else {
+    $candidate = Resolve-RepoPath -Path $ResultJsonPath -RepoRoot $repoRootText
+    Assert-CanonicalPathInsideRoot -Path $candidate -Root $outputRootPath -Label "Structured resolution result"
+}
 $manifestPath = Resolve-RepoPath -Path $NativeRendererPropertyManifestRelativePath -RepoRoot $repoRootText
 
 $propertyManifest = Get-NativeRendererPropertyManifest -Path $manifestPath
@@ -801,6 +824,23 @@ function Add-AppPrivateParticlePayloadBuildEnv {
             if ($null -ne $mask.PSObject.Properties[$field] -and -not [string]::IsNullOrWhiteSpace([string]$mask.$field)) {
                 Add-BuildEnvValue -EnvByName $EnvByName -Name ([string]$optional.name) -Value ([string]$mask.$field) -Source $source
             }
+        }
+    }
+
+    if ($null -ne $payload.PSObject.Properties["build_env"]) {
+        foreach ($envEntry in @($payload.build_env)) {
+            if ($null -eq $envEntry.PSObject.Properties["name"] -or $null -eq $envEntry.PSObject.Properties["value"]) {
+                throw "App payload $payloadId build_env entries require explicit name and value fields"
+            }
+            $name = [string]$envEntry.name
+            if ($name -notmatch '^RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_[A-Z0-9_]+$') {
+                throw "App payload $payloadId build_env name is outside the generic private-particle namespace: $name"
+            }
+            Add-BuildEnvValue `
+                -EnvByName $EnvByName `
+                -Name $name `
+                -Value ([string]$envEntry.value) `
+                -Source $source
         }
     }
 }
@@ -1295,7 +1335,24 @@ $audit = [ordered]@{
 }
 Write-JsonArtifact -Value $audit -Path $auditPath
 
+if ($null -ne $resultJsonCanonicalPath) {
+    $resolutionResult = [ordered]@{
+        schema = $ResolutionResultSchema
+        app_id = [string]$app.app_id
+        resolution_fingerprint = $resolutionFingerprint
+        output_root = [System.IO.Path]::GetFullPath($outputRootPath)
+        feature_lock_path = [System.IO.Path]::GetFullPath($featureLockPath)
+        feature_lock_sha256 = Get-FileSha256 -Path $featureLockPath
+        audit_path = [System.IO.Path]::GetFullPath($auditPath)
+        audit_sha256 = Get-FileSha256 -Path $auditPath
+    }
+    Write-JsonArtifact -Value $resolutionResult -Path $resultJsonCanonicalPath
+}
+
 Write-Output "native app-build dry-run accepted: $($app.app_id)"
 Write-Output "resolution fingerprint: $resolutionFingerprint"
 Write-Output "feature lock: $featureLockPath"
 Write-Output "audit report: $auditPath"
+if ($null -ne $resultJsonCanonicalPath) {
+    Write-Output "structured result: $resultJsonCanonicalPath"
+}

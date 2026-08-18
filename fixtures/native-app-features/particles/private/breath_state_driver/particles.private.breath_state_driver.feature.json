@@ -18,7 +18,7 @@
   ],
   "incompatible_with": [],
   "exclusive_groups": {
-    "private_particle_driver_input": "native-controller-breath-state"
+    "private_particle_breath_source": "native-controller-breath-state"
   },
   "android_manifest": {
     "permissions": [],

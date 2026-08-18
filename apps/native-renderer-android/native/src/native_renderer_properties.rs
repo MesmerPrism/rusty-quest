@@ -268,6 +268,24 @@ pub(crate) const PROP_PRIVATE_PARTICLES_BREATH_STATE_DRIVER_INHALE_SECONDS: &str
     "debug.rustyquest.native_renderer.private_particles.breath_state_driver.inhale.seconds.min_to_max";
 pub(crate) const PROP_PRIVATE_PARTICLES_BREATH_STATE_DRIVER_EXHALE_SECONDS: &str =
     "debug.rustyquest.native_renderer.private_particles.breath_state_driver.exhale.seconds.max_to_min";
+pub(crate) const PROP_PRIVATE_PARTICLES_BREATH_STATE_DRIVER_ACC_AXIS: &str =
+    "debug.rustyquest.native_renderer.private_particles.breath_state_driver.acc.axis";
+pub(crate) const PROP_PRIVATE_PARTICLES_BREATH_STATE_DRIVER_ACC_MIN_MG: &str =
+    "debug.rustyquest.native_renderer.private_particles.breath_state_driver.acc.min_mg";
+pub(crate) const PROP_PRIVATE_PARTICLES_BREATH_STATE_DRIVER_ACC_MAX_MG: &str =
+    "debug.rustyquest.native_renderer.private_particles.breath_state_driver.acc.max_mg";
+pub(crate) const PROP_PRIVATE_PARTICLES_BREATH_STATE_DRIVER_ACC_STALE_SECONDS: &str =
+    "debug.rustyquest.native_renderer.private_particles.breath_state_driver.acc.stale_seconds";
+pub(crate) const PROP_PRIVATE_PARTICLES_HEARTBEAT_PULSE_MODE: &str =
+    "debug.rustyquest.native_renderer.private_particles.heartbeat_pulse.mode";
+pub(crate) const PROP_PRIVATE_PARTICLES_HEARTBEAT_PULSE_TARGET_SLOT: &str =
+    "debug.rustyquest.native_renderer.private_particles.heartbeat_pulse.target_slot";
+pub(crate) const PROP_PRIVATE_PARTICLES_HEARTBEAT_PULSE_STALE_SECONDS: &str =
+    "debug.rustyquest.native_renderer.private_particles.heartbeat_pulse.stale_seconds";
+pub(crate) const PROP_PRIVATE_PARTICLES_HEARTBEAT_PULSE_MIN_RR_MS: &str =
+    "debug.rustyquest.native_renderer.private_particles.heartbeat_pulse.min_rr_ms";
+pub(crate) const PROP_PRIVATE_PARTICLES_HEARTBEAT_PULSE_MAX_RR_MS: &str =
+    "debug.rustyquest.native_renderer.private_particles.heartbeat_pulse.max_rr_ms";
 pub(crate) const PROP_PRIVATE_PARTICLES_MANIFOLD_DRIVER_BROKER_HOST: &str =
     "debug.rustyquest.native_renderer.private_particles.manifold_driver.broker.host";
 pub(crate) const PROP_PRIVATE_PARTICLES_MANIFOLD_DRIVER_BROKER_PATH: &str =
@@ -412,6 +430,10 @@ pub(crate) const PROP_STIMULUS_VOLUME_SAFETY_ACK: &str =
     "debug.rustyquest.native_renderer.stimulus_volume.safety_ack";
 pub(crate) const PROP_CONTROL_PANEL_MODE: &str =
     "debug.rustyquest.native_renderer.control_panel.mode";
+pub(crate) const PROP_CONTROL_PANEL_RIGHT_SECONDARY_ACTION_MODE: &str =
+    "debug.rustyquest.native_renderer.control_panel.right_secondary_action.mode";
+pub(crate) const PROP_CONTROL_PANEL_RIGHT_SECONDARY_ACTION_WINDOW_SECONDS: &str =
+    "debug.rustyquest.native_renderer.control_panel.right_secondary_action.window_seconds";
 pub(crate) const PROP_PROCESSING_LAYER: &str = "debug.rustyquest.native_renderer.processing.layer";
 pub(crate) const PROP_PROJECTION_BORDER_POLICY: &str =
     "debug.rustyquest.native_renderer.projection.border.policy";

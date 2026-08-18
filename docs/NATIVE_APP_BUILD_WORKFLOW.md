@@ -90,6 +90,12 @@ as a generic private-particle payload:
   compute shader, static position/normal buffers, graph/aux buffers, mask
   texture, marker prefix, and profile meanings. Rusty Quest owns the Vulkan
   slot, sorting, mask sampler, low-rate scalar transport, and public markers.
+  A `private_particle` app payload may declare additional compile inputs as
+  explicit `{name, value}` entries in `build_env`. Names are restricted to the
+  generic `RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_*` namespace, are
+  sorted into the resolved build environment, and become part of the
+  resolution fingerprint. Ambient values are not revision authority; the app
+  spec must declare every private-particle compile input it expects.
 - Live hand surfaces should use `hand_anchor_particles` when the particles are
   attached to the resident GPU-skinned hand mesh. `hand_mesh_live_input` owns
   the compact live Meta/OpenXR hand input and resident skinning substrate, while

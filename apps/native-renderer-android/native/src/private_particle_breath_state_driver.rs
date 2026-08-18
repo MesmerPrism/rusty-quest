@@ -7,12 +7,19 @@
 use crate::{
     native_controller_breath_state::{NativeControllerBreathPhase, NativeControllerBreathSample},
     native_renderer_properties::{
+        PROP_PRIVATE_PARTICLES_BREATH_STATE_DRIVER_ACC_AXIS,
+        PROP_PRIVATE_PARTICLES_BREATH_STATE_DRIVER_ACC_MAX_MG,
+        PROP_PRIVATE_PARTICLES_BREATH_STATE_DRIVER_ACC_MIN_MG,
+        PROP_PRIVATE_PARTICLES_BREATH_STATE_DRIVER_ACC_STALE_SECONDS,
         PROP_PRIVATE_PARTICLES_BREATH_STATE_DRIVER_EXHALE_SECONDS,
         PROP_PRIVATE_PARTICLES_BREATH_STATE_DRIVER_INHALE_SECONDS,
         PROP_PRIVATE_PARTICLES_BREATH_STATE_DRIVER_MODE,
         PROP_PRIVATE_PARTICLES_BREATH_STATE_DRIVER_TARGET_SLOT,
     },
     native_renderer_property_values::{f32_clamped_value, normalized_property, u32_value},
+    polar_composition_adapters::{
+        latest_polar_acc_after, PolarAccAxis, PolarAccBreathSource, PolarAccBreathSourceSettings,
+    },
 };
 
 const DEFAULT_RAMP_SECONDS: f32 = 4.0;
@@ -22,6 +29,7 @@ const DRIVER_SLOT_COUNT: usize = 8;
 pub(crate) enum PrivateParticleBreathStateDriverMode {
     Disabled,
     DirectControllerState,
+    PolarAccNormalized,
 }
 
 impl PrivateParticleBreathStateDriverMode {
@@ -31,6 +39,7 @@ impl PrivateParticleBreathStateDriverMode {
             | "native-controller-state"
             | "local-controller-state"
             | "fixed-controller-state" => Self::DirectControllerState,
+            "polar-acc-normalized" => Self::PolarAccNormalized,
             _ => Self::Disabled,
         }
     }
@@ -39,11 +48,16 @@ impl PrivateParticleBreathStateDriverMode {
         match self {
             Self::Disabled => "disabled",
             Self::DirectControllerState => "direct-controller-state",
+            Self::PolarAccNormalized => "polar-acc-normalized",
         }
     }
 
     fn uses_native_controller_state(self) -> bool {
         matches!(self, Self::DirectControllerState)
+    }
+
+    fn uses_polar_acc(self) -> bool {
+        matches!(self, Self::PolarAccNormalized)
     }
 }
 
@@ -53,6 +67,10 @@ pub(crate) struct PrivateParticleBreathStateDriverSettings {
     target_slot: usize,
     inhale_seconds_min_to_max: f32,
     exhale_seconds_max_to_min: f32,
+    acc_axis: PolarAccAxis,
+    acc_min_mg: f32,
+    acc_max_mg: f32,
+    acc_stale_seconds: f32,
 }
 
 impl PrivateParticleBreathStateDriverSettings {
@@ -81,6 +99,27 @@ impl PrivateParticleBreathStateDriverSettings {
             ) as usize,
             inhale_seconds_min_to_max,
             exhale_seconds_max_to_min,
+            acc_axis: PolarAccAxis::from_token(&normalized_property(lookup(
+                PROP_PRIVATE_PARTICLES_BREATH_STATE_DRIVER_ACC_AXIS,
+            ))),
+            acc_min_mg: f32_clamped_value(
+                lookup(PROP_PRIVATE_PARTICLES_BREATH_STATE_DRIVER_ACC_MIN_MG),
+                -2000.0,
+                -16_000.0,
+                16_000.0,
+            ),
+            acc_max_mg: f32_clamped_value(
+                lookup(PROP_PRIVATE_PARTICLES_BREATH_STATE_DRIVER_ACC_MAX_MG),
+                2000.0,
+                -16_000.0,
+                16_000.0,
+            ),
+            acc_stale_seconds: f32_clamped_value(
+                lookup(PROP_PRIVATE_PARTICLES_BREATH_STATE_DRIVER_ACC_STALE_SECONDS),
+                2.0,
+                0.016,
+                120.0,
+            ),
         }
     }
 
@@ -90,6 +129,10 @@ impl PrivateParticleBreathStateDriverSettings {
             target_slot: 0,
             inhale_seconds_min_to_max: DEFAULT_RAMP_SECONDS,
             exhale_seconds_max_to_min: DEFAULT_RAMP_SECONDS,
+            acc_axis: PolarAccAxis::X,
+            acc_min_mg: -2000.0,
+            acc_max_mg: 2000.0,
+            acc_stale_seconds: 2.0,
         }
     }
 
@@ -99,6 +142,7 @@ impl PrivateParticleBreathStateDriverSettings {
 
     pub(crate) fn enabled(self) -> bool {
         self.uses_native_controller_state()
+            || (self.mode.uses_polar_acc() && self.acc_max_mg > self.acc_min_mg)
     }
 
     pub(crate) fn target_slot(self) -> usize {
@@ -111,16 +155,33 @@ impl PrivateParticleBreathStateDriverSettings {
             PrivateParticleBreathStateDriverMode::DirectControllerState => {
                 "native-controller-breath-state-driver"
             }
+            PrivateParticleBreathStateDriverMode::PolarAccNormalized => {
+                "polar-acc-normalized-breath-source"
+            }
+        }
+    }
+
+    fn polar_acc_source_settings(self) -> PolarAccBreathSourceSettings {
+        PolarAccBreathSourceSettings {
+            enabled: self.mode.uses_polar_acc() && self.acc_max_mg > self.acc_min_mg,
+            axis: self.acc_axis,
+            input_min_mg: self.acc_min_mg,
+            input_max_mg: self.acc_max_mg,
+            stale_seconds: self.acc_stale_seconds,
         }
     }
 
     pub(crate) fn marker_fields(self) -> String {
         format!(
-            "privateParticleBreathStateDriverMode={} privateParticleBreathStateDriverTargetSlot={} privateParticleBreathStateDriverInhaleSecondsMinToMax={:.3} privateParticleBreathStateDriverExhaleSecondsMaxToMin={:.3} privateParticleBreathStateDriverSourceAuthority={}",
+            "privateParticleBreathStateDriverMode={} privateParticleBreathStateDriverTargetSlot={} privateParticleBreathStateDriverInhaleSecondsMinToMax={:.3} privateParticleBreathStateDriverExhaleSecondsMaxToMin={:.3} privateParticleBreathStateDriverAccAxis={} privateParticleBreathStateDriverAccMinMg={:.3} privateParticleBreathStateDriverAccMaxMg={:.3} privateParticleBreathStateDriverAccStaleSeconds={:.3} privateParticleBreathStateDriverSourceAuthority={}",
             self.mode.marker_value(),
             self.target_slot,
             self.inhale_seconds_min_to_max,
             self.exhale_seconds_max_to_min,
+            self.acc_axis.marker_value(),
+            self.acc_min_mg,
+            self.acc_max_mg,
+            self.acc_stale_seconds,
             self.parameter_source(),
         )
     }
@@ -140,6 +201,8 @@ pub(crate) struct PrivateParticleBreathStateDriver {
     last_sequence_id: Option<u64>,
     received_samples: u64,
     age_seconds: f32,
+    polar_acc_source: PolarAccBreathSource,
+    last_polar_acc_transport_sequence_id: Option<u64>,
 }
 
 impl PrivateParticleBreathStateDriver {
@@ -154,6 +217,8 @@ impl PrivateParticleBreathStateDriver {
             last_sequence_id: None,
             received_samples: 0,
             age_seconds: 0.0,
+            polar_acc_source: PolarAccBreathSource::new(settings.polar_acc_source_settings()),
+            last_polar_acc_transport_sequence_id: None,
         }
     }
 
@@ -166,7 +231,9 @@ impl PrivateParticleBreathStateDriver {
     }
 
     pub(crate) fn apply_sample(&mut self, sample: NativeControllerBreathSample) {
-        if !self.enabled() || self.last_sequence_id == Some(sample.sequence_id) {
+        if !self.settings.uses_native_controller_state()
+            || self.last_sequence_id == Some(sample.sequence_id)
+        {
             return;
         }
         self.phase = sample.phase;
@@ -181,6 +248,22 @@ impl PrivateParticleBreathStateDriver {
         }
         let dt_seconds = sanitize_dt(dt_seconds);
         self.age_seconds = (self.age_seconds + dt_seconds).min(3600.0);
+        if self.settings.mode.uses_polar_acc() {
+            if let Some(measurement) =
+                latest_polar_acc_after(self.last_polar_acc_transport_sequence_id)
+            {
+                self.last_polar_acc_transport_sequence_id = Some(measurement.sequence_id);
+                if self.polar_acc_source.push(measurement) {
+                    if let Some(sample) = self.polar_acc_source.sample() {
+                        self.value01 = sample.value01;
+                        self.received_samples = self.received_samples.saturating_add(1);
+                        self.age_seconds = 0.0;
+                    }
+                }
+            }
+            self.polar_acc_source.advance(dt_seconds);
+            return;
+        }
         match self.phase {
             NativeControllerBreathPhase::Inhale => {
                 self.value01 = (self.value01
@@ -212,7 +295,7 @@ impl PrivateParticleBreathStateDriver {
 
     pub(crate) fn marker_fields(self) -> String {
         format!(
-            "{} privateParticleBreathStateDriverValue01={:.3} privateParticleBreathStateDriverPhase={} privateParticleBreathStateDriverLastSequenceId={} privateParticleBreathStateDriverAgeMs={} privateParticleBreathStateDriverReceivedSamples={}",
+            "{} privateParticleBreathStateDriverValue01={:.3} privateParticleBreathStateDriverPhase={} privateParticleBreathStateDriverLastSequenceId={} privateParticleBreathStateDriverAgeMs={} privateParticleBreathStateDriverReceivedSamples={} privateParticleBreathStateDriverLastPolarAccTransportSequenceId={} {}",
             self.settings.marker_fields(),
             self.value01,
             self.phase.marker_value(),
@@ -221,6 +304,10 @@ impl PrivateParticleBreathStateDriver {
                 .unwrap_or_else(|| "none".to_owned()),
             (self.age_seconds * 1000.0).round() as u64,
             self.received_samples,
+            self.last_polar_acc_transport_sequence_id
+                .map(|sequence_id| sequence_id.to_string())
+                .unwrap_or_else(|| "none".to_owned()),
+            self.polar_acc_source.marker_fields(),
         )
     }
 }
@@ -259,6 +346,10 @@ mod tests {
             target_slot: 0,
             inhale_seconds_min_to_max: 4.0,
             exhale_seconds_max_to_min: 2.0,
+            acc_axis: PolarAccAxis::X,
+            acc_min_mg: -100.0,
+            acc_max_mg: 100.0,
+            acc_stale_seconds: 1.0,
         }
     }
 

@@ -19,6 +19,7 @@ use crate::{
     native_renderer_options::NativeStimulusVolumeSettings,
     private_particle_breath_state_driver::PrivateParticleBreathStateDriverSettings,
     projection_target_state::{ProjectionTargetInput, ProjectionTargetSettings},
+    same_apk_panel_action::{SameApkPanelAction, SameApkPanelActionSettings},
 };
 
 const RIGHT_HAND_HAPTIC_OUTPUT_PATH: &str = "/user/hand/right/output/haptic";
@@ -34,7 +35,7 @@ pub(crate) struct StimulusVolumeActions {
     right_trigger_panel_toggle: xr::Action<f32>,
     right_select_panel_toggle: xr::Action<bool>,
     right_primary_reset: xr::Action<bool>,
-    right_secondary_scale_driver_toggle: xr::Action<bool>,
+    right_secondary_action: xr::Action<bool>,
     right_thumbstick_y: xr::Action<f32>,
     left_thumbstick_x: xr::Action<f32>,
     left_thumbstick_y: xr::Action<f32>,
@@ -56,7 +57,7 @@ pub(crate) struct StimulusVolumeActions {
     previous_right_trigger_panel_toggle_pressed: bool,
     previous_right_select_panel_toggle_pressed: bool,
     previous_right_primary_reset_pressed: bool,
-    previous_right_secondary_scale_driver_toggle_pressed: bool,
+    previous_right_secondary_pressed: bool,
     suggested_binding_count: usize,
     stimulus_settings: NativeStimulusVolumeSettings,
     projection_target_settings: ProjectionTargetSettings,
@@ -65,12 +66,14 @@ pub(crate) struct StimulusVolumeActions {
     private_particle_recenter_enabled: bool,
     right_primary_control_panel_enabled: bool,
     right_primary_reset_enabled: bool,
+    same_apk_panel_action: SameApkPanelAction,
 }
 
 #[derive(Debug, Default)]
 pub(crate) struct NativeRendererControllerEvents {
     pub(crate) stimulus_randomize_triggered: bool,
     pub(crate) panel_toggle_triggered: bool,
+    pub(crate) panel_toggle_source: Option<&'static str>,
     pub(crate) private_particle_recenter_triggered: bool,
     pub(crate) projection_target_inputs: Vec<ProjectionTargetInput>,
     pub(crate) environment_depth_alignment_inputs: Vec<EnvironmentDepthAlignmentInput>,
@@ -114,6 +117,7 @@ impl StimulusVolumeActions {
         stimulus_settings: NativeStimulusVolumeSettings,
         projection_target_settings: ProjectionTargetSettings,
         private_particle_breath_state_driver_settings: PrivateParticleBreathStateDriverSettings,
+        same_apk_panel_action_settings: SameApkPanelActionSettings,
         environment_depth_alignment_settings: EnvironmentDepthAlignmentSettings,
         private_particle_recenter_enabled: bool,
     ) -> Result<Option<Self>, String> {
@@ -121,6 +125,7 @@ impl StimulusVolumeActions {
             && !projection_target_settings.controls_enabled
             && !environment_depth_alignment_settings.controls_enabled
             && !private_particle_breath_state_driver_settings.uses_native_controller_state()
+            && !same_apk_panel_action_settings.enabled()
             && !private_particle_recenter_enabled
         {
             crate::marker(
@@ -161,10 +166,10 @@ impl StimulusVolumeActions {
         let right_primary_reset = action_set
             .create_action::<bool>("right_primary_reset", "Right Primary Reset", &[])
             .map_err(|error| format!("create projection target reset action: {error}"))?;
-        let right_secondary_scale_driver_toggle = action_set
+        let right_secondary_action = action_set
             .create_action::<bool>(
-                "right_secondary_scale_driver_toggle",
-                "Right Secondary Scale Driver Toggle",
+                "right_secondary_action",
+                "Right Secondary Composition Action",
                 &[],
             )
             .map_err(|error| {
@@ -196,6 +201,9 @@ impl StimulusVolumeActions {
             && stimulus_settings.randomize_enabled)
             || right_primary_control_panel_binding_enabled;
         let projection_controls_enabled = projection_target_settings.controls_enabled;
+        let right_secondary_panel_action_enabled = same_apk_panel_action_settings.enabled();
+        let right_secondary_binding_enabled =
+            projection_controls_enabled || right_secondary_panel_action_enabled;
         let primary_recenter_binding_enabled = (projection_controls_enabled
             || private_particle_recenter_enabled)
             && !right_primary_control_panel_binding_enabled;
@@ -265,11 +273,8 @@ impl StimulusVolumeActions {
                 let input = instance.string_to_path(input_path).map_err(|error| {
                     format!("create OpenXR path for secondary input {input_path}: {error}")
                 })?;
-                if projection_controls_enabled {
-                    bindings.push(xr::Binding::new(
-                        &right_secondary_scale_driver_toggle,
-                        input,
-                    ));
+                if right_secondary_binding_enabled {
+                    bindings.push(xr::Binding::new(&right_secondary_action, input));
                 }
             }
             if let Some(input_path) = profile.right_thumbstick_y_path {
@@ -338,7 +343,7 @@ impl StimulusVolumeActions {
                             profile.left_thumbstick_y_path.is_some()
                                 && depth_alignment_joystick_binding_enabled,
                             profile.right_primary_path.is_some() && primary_recenter_binding_enabled,
-                            profile.right_secondary_path.is_some() && projection_controls_enabled,
+                            profile.right_secondary_path.is_some() && right_secondary_binding_enabled,
                             profile.right_grip_pose_path.is_some() && right_grip_pose_binding_enabled,
                             profile.right_haptic_output_path.is_some() && breath_haptics_configured,
                         ),
@@ -386,6 +391,14 @@ impl StimulusVolumeActions {
             ),
         );
         crate::marker(
+            "same-apk-panel-action",
+            format!(
+                "status=config rightSecondaryBindingEnabled={} {}",
+                right_secondary_binding_enabled,
+                same_apk_panel_action_settings.marker_fields(),
+            ),
+        );
+        crate::marker(
             "environment-depth-alignment-input",
             format!(
                 "status=config actionSet=stimulus_volume environmentDepthAlignmentControlsEnabled={} leftThumbstickXAction={} leftThumbstickYAction={} leftControllerThumbstickX=/user/hand/left/input/thumbstick/x leftControllerThumbstickY=/user/hand/left/input/thumbstick/y actionSetAttached=false",
@@ -426,7 +439,7 @@ impl StimulusVolumeActions {
             right_trigger_panel_toggle,
             right_select_panel_toggle,
             right_primary_reset,
-            right_secondary_scale_driver_toggle,
+            right_secondary_action,
             right_thumbstick_y,
             left_thumbstick_x,
             left_thumbstick_y,
@@ -448,7 +461,7 @@ impl StimulusVolumeActions {
             previous_right_trigger_panel_toggle_pressed: false,
             previous_right_select_panel_toggle_pressed: false,
             previous_right_primary_reset_pressed: false,
-            previous_right_secondary_scale_driver_toggle_pressed: false,
+            previous_right_secondary_pressed: false,
             suggested_binding_count,
             stimulus_settings,
             projection_target_settings,
@@ -457,6 +470,7 @@ impl StimulusVolumeActions {
             private_particle_recenter_enabled,
             right_primary_control_panel_enabled: right_primary_control_panel_binding_enabled,
             right_primary_reset_enabled: primary_recenter_binding_enabled,
+            same_apk_panel_action: SameApkPanelAction::new(same_apk_panel_action_settings),
         }))
     }
 
@@ -574,6 +588,9 @@ impl StimulusVolumeActions {
 
         events.stimulus_randomize_triggered = self.poll_primary_randomize(session, frame_count);
         events.panel_toggle_triggered = self.poll_panel_toggle(session, frame_count);
+        if events.panel_toggle_triggered {
+            events.panel_toggle_source = Some("right-trigger-or-select");
+        }
         if self.poll_primary_reset(session, frame_count) {
             if self.projection_target_settings.controls_enabled {
                 events
@@ -591,7 +608,13 @@ impl StimulusVolumeActions {
                 );
             }
         }
-        if let Some(input) = self.poll_scale_driver_toggle(session, frame_count) {
+        let (secondary_panel_toggle, secondary_projection_input) =
+            self.poll_right_secondary_action(session, frame_count, dt_seconds);
+        events.panel_toggle_triggered |= secondary_panel_toggle;
+        if secondary_panel_toggle {
+            events.panel_toggle_source = Some("right-secondary-triple-press");
+        }
+        if let Some(input) = secondary_projection_input {
             events.projection_target_inputs.push(input);
         }
         if let Some(input) = self.poll_thumbstick_y(session, frame_count, dt_seconds) {
@@ -1217,18 +1240,18 @@ impl StimulusVolumeActions {
         false
     }
 
-    fn poll_scale_driver_toggle<G>(
+    fn poll_right_secondary_action<G>(
         &mut self,
         session: &xr::Session<G>,
         frame_count: u64,
-    ) -> Option<ProjectionTargetInput> {
-        if !self.projection_target_settings.controls_enabled {
-            return None;
-        }
-        let state = match self
-            .right_secondary_scale_driver_toggle
-            .state(session, xr::Path::NULL)
+        dt_seconds: f32,
+    ) -> (bool, Option<ProjectionTargetInput>) {
+        if !self.projection_target_settings.controls_enabled
+            && !self.same_apk_panel_action.enabled()
         {
+            return (false, None);
+        }
+        let state = match self.right_secondary_action.state(session, xr::Path::NULL) {
             Ok(state) => state,
             Err(error) => {
                 if frame_count == 0 || frame_count % 120 == 0 {
@@ -1241,13 +1264,29 @@ impl StimulusVolumeActions {
                         ),
                     );
                 }
-                return None;
+                return (false, None);
             }
         };
         let pressed = state.is_active && state.current_state;
-        let triggered = pressed && !self.previous_right_secondary_scale_driver_toggle_pressed;
-        self.previous_right_secondary_scale_driver_toggle_pressed = pressed;
-        if triggered {
+        let rising_edge = pressed && !self.previous_right_secondary_pressed;
+        self.previous_right_secondary_pressed = pressed;
+        let panel_toggle = self.same_apk_panel_action.update(dt_seconds, pressed);
+        if panel_toggle {
+            crate::marker(
+                "same-apk-panel-action",
+                format!(
+                    "event=right-secondary-panel-toggle status=triggered frame={} actionActive={} changedSinceLastSync={} {}",
+                    frame_count,
+                    state.is_active,
+                    state.changed_since_last_sync,
+                    self.same_apk_panel_action.marker_fields(),
+                ),
+            );
+        }
+        if rising_edge
+            && self.projection_target_settings.controls_enabled
+            && !self.same_apk_panel_action.enabled()
+        {
             crate::marker(
                 "projection-target-input",
                 format!(
@@ -1257,9 +1296,9 @@ impl StimulusVolumeActions {
                     state.changed_since_last_sync
                 ),
             );
-            return Some(ProjectionTargetInput::ToggleScaleDriver);
+            return (false, Some(ProjectionTargetInput::ToggleScaleDriver));
         }
-        None
+        (panel_toggle, None)
     }
 
     fn poll_thumbstick_y<G>(

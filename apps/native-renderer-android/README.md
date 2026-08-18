@@ -182,6 +182,18 @@ current direct PMD route keeps one PMD stream active at a time, so the page
 defaults to ACC and lets the operator switch the active PMD stream to ECG while
 HR/RR notifications remain subscribed.
 
+Three composition adapters remain inert unless their native app-build features
+are requested. `particles.private.polar_acc_breath_source` maps one selected ACC
+axis or magnitude into a bounded normalized driver value;
+`particles.private.polar_rr_heartbeat_pulse` emits one normalized event frame
+for each admitted RR interval; and
+`input.right_secondary_same_apk_panel_triple_press` toggles the existing
+`ControlPanelActivity` after three B/right-secondary press edges in the
+configured window. The public adapters own only bounded admission, stale and
+malformed-input state, and generic action dispatch. Downstream app specs own
+the selected driver slots, ACC range, RR range, pulse envelope, panel mode, and
+all visual interpretation.
+
 The Rust core proves Android package, NativeActivity entry, NDK camera/HWB
 acquisition shape, native timing counters, OpenXR loader packaging, an
 OpenXR/Vulkan prerequisite probe, Vulkan external-HWB import boundary strings,

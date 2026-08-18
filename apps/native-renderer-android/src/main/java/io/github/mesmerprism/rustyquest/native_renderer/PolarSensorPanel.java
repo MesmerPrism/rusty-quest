@@ -1029,6 +1029,12 @@ final class PolarSensorPanel {
                     latestBpm = reading.bpm;
                     rrIntervals += reading.rrIntervalsMs.size();
                 }
+                long hostTimeNs = System.nanoTime();
+                for (Float rrIntervalMs : reading.rrIntervalsMs) {
+                    if (rrIntervalMs != null) {
+                        nativeSubmitPolarRrMeasurement(hostTimeNs, rrIntervalMs.floatValue());
+                    }
+                }
                 appendHrEvent(reading);
             } else if (PMD_CONTROL_POINT.equals(uuid)) {
                 ControlRecord record = PolarProtocol.parseControl(value);
@@ -1044,6 +1050,15 @@ final class PolarSensorPanel {
                     synchronized (countersLock) {
                         accFrames += 1L;
                         accSamples += frame.sampleCount;
+                    }
+                    if (!frame.accSamples.isEmpty()) {
+                        AccSample latest = frame.accSamples.get(frame.accSamples.size() - 1);
+                        nativeSubmitPolarAccMeasurement(
+                            frame.hostTimeNs,
+                            frame.sensorTimestampNs,
+                            latest.xMg,
+                            latest.yMg,
+                            latest.zMg);
                     }
                     appendAccEvent(frame);
                 } else if (measurementType == 0x00) {
@@ -1135,6 +1150,17 @@ final class PolarSensorPanel {
             marker("status=event-write-failed stream=hr_rr");
         }
     }
+
+    private static native void nativeSubmitPolarAccMeasurement(
+        long hostTimeNs,
+        long sensorTimeNs,
+        int xMg,
+        int yMg,
+        int zMg);
+
+    private static native void nativeSubmitPolarRrMeasurement(
+        long hostTimeNs,
+        float rrIntervalMs);
 
     private void appendAccEvent(PmdFrameMetric frame) {
         try {

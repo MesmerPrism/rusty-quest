@@ -85,6 +85,7 @@ foreach ($path in @(
     (Join-Path $schemaDir "rusty.quest.native_app_feature.v1.schema.json"),
     (Join-Path $schemaDir "rusty.quest.native_app_build.v1.schema.json"),
     (Join-Path $schemaDir "rusty.quest.native_app_feature_lock.v1.schema.json"),
+    (Join-Path $schemaDir "rusty.quest.native_app_build_resolution_result.v1.schema.json"),
     (Join-Path $schemaDir "rusty.quest.native_app_settings.v1.schema.json"),
     $resolver,
     $permissionTool,
@@ -148,6 +149,8 @@ foreach ($requiredResolverNeedle in @(
     "app-private-revision-sidecar",
     "RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_MASK_TEXTURE_R8",
     "mask_texture is missing required",
+    "build_env entries require explicit name and value fields",
+    "outside the generic private-particle namespace",
     "app_spec_sha256",
     "feature_descriptors",
     "PROJECT_MEDIA",
@@ -162,7 +165,10 @@ foreach ($requiredResolverNeedle in @(
     'android:defaultHeight="720dp"',
     'android:defaultWidth="960dp"',
     'android:defaultWidth="1040dp"',
-    "com.oculus.intent.category.2D"
+    "com.oculus.intent.category.2D",
+    "ResultJsonPath",
+    "rusty.quest.native_app_build_resolution_result.v1",
+    "Assert-CanonicalPathInsideRoot"
 )) {
     if ($resolverText -notmatch [regex]::Escape($requiredResolverNeedle)) {
         throw "Native app-build resolver is missing workflow guardrail: $requiredResolverNeedle"
@@ -209,6 +215,9 @@ foreach ($requiredFeature in @(
     "particles.anchor_echo.rows",
     "particles.private.manifold_scalar_driver",
     "particles.private.breath_state_driver",
+    "particles.private.polar_acc_breath_source",
+    "particles.private.polar_rr_heartbeat_pulse",
+    "input.right_secondary_same_apk_panel_triple_press",
     "input.right_primary_private_particle_recenter",
     "camera.hwb",
     "display_composite",
@@ -303,6 +312,139 @@ if (-not [string]::IsNullOrWhiteSpace(($trackedGenerated -join "`n"))) {
 & pwsh -NoProfile -ExecutionPolicy Bypass -File $profileGate -RepoRoot $repoRootPath
 if ($LASTEXITCODE -ne 0) {
     throw "Native app-build profile gate failed with exit code $LASTEXITCODE"
+}
+
+$structuredResultRoot = Join-Path $repoRootPath ("local-artifacts\native-app-builds\structured-result-static-" + [guid]::NewGuid().ToString("N"))
+$structuredResultPath = Join-Path $structuredResultRoot "resolution-result.json"
+try {
+    & pwsh -NoProfile -ExecutionPolicy Bypass -File $resolver `
+        -AppSpec "fixtures\native-app-builds\private-particle-solid-black-canary.app.json" `
+        -OutputRoot $structuredResultRoot `
+        -ResultJsonPath $structuredResultPath `
+        -DryRun | Out-Host
+    if ($LASTEXITCODE -ne 0) {
+        throw "Native app-build structured resolver probe failed with exit code $LASTEXITCODE"
+    }
+    $structuredResult = Read-Json -Path $structuredResultPath
+    if ([string]$structuredResult.schema -ne "rusty.quest.native_app_build_resolution_result.v1") {
+        throw "Native app-build structured resolver probe returned the wrong schema"
+    }
+    $canonicalOutputRoot = [System.IO.Path]::GetFullPath($structuredResultRoot).TrimEnd("\", "/")
+    foreach ($artifactPath in @([string]$structuredResult.feature_lock_path, [string]$structuredResult.audit_path)) {
+        $canonicalArtifactPath = [System.IO.Path]::GetFullPath($artifactPath)
+        $relativeArtifactPath = [System.IO.Path]::GetRelativePath($canonicalOutputRoot, $canonicalArtifactPath)
+        if ([System.IO.Path]::IsPathRooted($relativeArtifactPath) -or $relativeArtifactPath -eq ".." -or $relativeArtifactPath.StartsWith("..\") -or $relativeArtifactPath.StartsWith("../")) {
+            throw "Structured resolver artifact escaped requested output root: $canonicalArtifactPath"
+        }
+        if (-not (Test-Path -LiteralPath $canonicalArtifactPath -PathType Leaf)) {
+            throw "Structured resolver artifact is missing: $canonicalArtifactPath"
+        }
+    }
+
+    $payloadInputDir = Join-Path $structuredResultRoot "synthetic-private-particle-payload"
+    $payloadDataDir = Join-Path $payloadInputDir "data"
+    New-Item -ItemType Directory -Force -Path $payloadDataDir | Out-Null
+    $payloadShaderPath = Join-Path $payloadInputDir "synthetic.comp.glsl"
+    $payloadMaskPath = Join-Path $payloadInputDir "synthetic-mask.r8.bin"
+    Set-Content -LiteralPath $payloadShaderPath -Value "#version 450`nvoid main() {}" -Encoding utf8
+    [System.IO.File]::WriteAllBytes($payloadMaskPath, [byte[]]@(0))
+
+    $payloadApp = Read-Json -Path (Join-Path $appBuildDir "private-particle-solid-black-canary.app.json")
+    $payloadApp.app_id = "private_particle_build_env_static"
+    $payloadApp.package_name = "io.github.example.rustyquest.private_particle_build_env_static"
+    $payloadApp.payloads = @([ordered]@{
+        kind = "private_particle"
+        payload_id = "synthetic-private-particle"
+        data_dir = $payloadDataDir
+        shader = $payloadShaderPath
+        particle_kind = "synthetic-static"
+        marker_prefix = "RUSTY_QUEST_SYNTHETIC"
+        marker_fields = "syntheticPrivateParticleBuildEnv=true"
+        mask_texture = [ordered]@{
+            path = $payloadMaskPath
+            width = 1
+            height = 1
+            layers = 1
+        }
+        build_env = @(
+            [ordered]@{ name = "RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_Z_STATIC_TEST"; value = "0.625" },
+            [ordered]@{ name = "RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_A_STATIC_TEST"; value = "synthetic" }
+        )
+    })
+    $payloadAppPath = Join-Path $payloadInputDir "synthetic-private-particle.app.json"
+    $payloadApp | ConvertTo-Json -Depth 100 | Set-Content -LiteralPath $payloadAppPath -Encoding utf8
+    $payloadResultPath = Join-Path $structuredResultRoot "payload-resolution-result.json"
+    & pwsh -NoProfile -ExecutionPolicy Bypass -File $resolver `
+        -AppSpec $payloadAppPath `
+        -OutputRoot $structuredResultRoot `
+        -ResultJsonPath $payloadResultPath `
+        -DryRun | Out-Host
+    if ($LASTEXITCODE -ne 0) {
+        throw "Native app-build private-particle build_env probe failed with exit code $LASTEXITCODE"
+    }
+    $payloadResult = Read-Json -Path $payloadResultPath
+    $payloadFeatureLock = Read-Json -Path ([string]$payloadResult.feature_lock_path)
+    $payloadBuildEnvPath = [string]$payloadFeatureLock.generated_outputs.build_env
+    if (-not [System.IO.Path]::IsPathRooted($payloadBuildEnvPath)) {
+        $payloadBuildEnvPath = Join-Path $repoRootPath $payloadBuildEnvPath
+    }
+    $payloadBuildEnv = Read-Json -Path $payloadBuildEnvPath
+    $payloadEnvEntries = @($payloadBuildEnv.env)
+    $payloadEnvNames = @($payloadEnvEntries | ForEach-Object { [string]$_.name })
+    $sortedPayloadEnvNames = @($payloadEnvNames | Sort-Object)
+    if (($payloadEnvNames -join "`n") -cne ($sortedPayloadEnvNames -join "`n")) {
+        throw "Native app-build private-particle build_env output is not deterministic by name"
+    }
+    foreach ($expectedPayloadEnv in @(
+        @{ name = "RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_A_STATIC_TEST"; value = "synthetic" },
+        @{ name = "RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_Z_STATIC_TEST"; value = "0.625" }
+    )) {
+        $matches = @($payloadEnvEntries | Where-Object { [string]$_.name -eq [string]$expectedPayloadEnv.name })
+        if ($matches.Count -ne 1 -or [string]$matches[0].value -cne [string]$expectedPayloadEnv.value -or [string]$matches[0].source -cne "app-payload:private_particle_build_env_static:synthetic-private-particle") {
+            throw "Native app-build private-particle build_env did not preserve the declared value and source for $($expectedPayloadEnv.name)"
+        }
+    }
+
+    $payloadRepeatResultPath = Join-Path $structuredResultRoot "payload-resolution-result-repeat.json"
+    & pwsh -NoProfile -ExecutionPolicy Bypass -File $resolver `
+        -AppSpec $payloadAppPath `
+        -OutputRoot $structuredResultRoot `
+        -ResultJsonPath $payloadRepeatResultPath `
+        -DryRun | Out-Host
+    if ($LASTEXITCODE -ne 0) {
+        throw "Native app-build repeated private-particle build_env probe failed with exit code $LASTEXITCODE"
+    }
+    $payloadRepeatResult = Read-Json -Path $payloadRepeatResultPath
+    if ([string]$payloadRepeatResult.resolution_fingerprint -cne [string]$payloadResult.resolution_fingerprint -or [string]$payloadRepeatResult.feature_lock_sha256 -cne [string]$payloadResult.feature_lock_sha256) {
+        throw "Native app-build private-particle build_env resolution is not deterministic"
+    }
+
+    foreach ($malformedCase in @(
+        @{ name = "missing-value"; entry = [ordered]@{ name = "RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_STATIC_TEST" }; expected = "build_env entries require explicit name and value fields" },
+        @{ name = "wrong-namespace"; entry = [ordered]@{ name = "RUSTY_QUEST_PRIVATE_STATIC_TEST"; value = "synthetic" }; expected = "build_env name is outside the generic private-particle namespace: RUSTY_QUEST_PRIVATE_STATIC_TEST" }
+    )) {
+        $malformedApp = Read-Json -Path $payloadAppPath
+        $malformedApp.app_id = "private_particle_build_env_$($malformedCase.name.Replace('-', '_'))"
+        $malformedApp.payloads[0].build_env = @($malformedCase.entry)
+        $malformedAppPath = Join-Path $payloadInputDir "$($malformedCase.name).app.json"
+        $malformedApp | ConvertTo-Json -Depth 100 | Set-Content -LiteralPath $malformedAppPath -Encoding utf8
+        $malformedOutput = @(& pwsh -NoProfile -ExecutionPolicy Bypass -File $resolver `
+            -AppSpec $malformedAppPath `
+            -OutputRoot $structuredResultRoot `
+            -DryRun 2>&1 | ForEach-Object { $_.ToString() })
+        $malformedExitCode = $LASTEXITCODE
+        if ($malformedExitCode -eq 0) {
+            throw "Native app-build accepted malformed private-particle build_env case: $($malformedCase.name)"
+        }
+        $normalizedMalformedOutput = ((($malformedOutput -join " ") -replace '\s*\|\s*', ' ') -replace '\s+', ' ').Trim()
+        if (-not $normalizedMalformedOutput.Contains([string]$malformedCase.expected, [System.StringComparison]::Ordinal)) {
+            throw "Native app-build malformed private-particle build_env case returned the wrong error: $($malformedCase.name) output=$normalizedMalformedOutput"
+        }
+    }
+} finally {
+    if (Test-Path -LiteralPath $structuredResultRoot) {
+        Remove-Item -LiteralPath $structuredResultRoot -Recurse -Force
+    }
 }
 
 Write-Host "Rusty Quest native app-build static validation passed"

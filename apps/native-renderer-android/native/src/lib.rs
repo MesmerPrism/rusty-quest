@@ -107,14 +107,17 @@ mod openxr_passthrough_style;
 #[cfg(target_os = "android")]
 mod openxr_stimulus_actions;
 mod particle_adapter_consumer;
+mod polar_composition_adapters;
 #[cfg(target_os = "android")]
 mod private_extension_slot;
 mod private_particle_breath_state_driver;
+mod private_particle_heartbeat_pulse_adapter;
 mod projection_rect;
 mod projection_target_state;
 mod recorded_hand_replay;
 #[cfg(target_os = "android")]
 mod remote_camera_projection_native_stream;
+mod same_apk_panel_action;
 #[cfg(target_os = "android")]
 mod video_projection;
 mod video_projection_metadata;
