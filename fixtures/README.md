@@ -20,8 +20,12 @@
 - `breath-contract/`: source-neutral deterministic lifecycle replay for the
   pure Reset/Configure/Start/Cancel/Observe contract. The accepted fixture
   covers generation fencing and distinct missing/stale/malformed/order/time
-  outcomes; the damaged fixture proves over-limit replay rejection. Neither
-  fixture activates an adapter or carries application interpretation.
+  outcomes; the damaged fixture proves over-limit replay rejection. The
+  calibration fixture set covers deterministic principal, diagonal, rotated,
+  and XZ models; bias, noise, spike and inversion handling; typed stationary,
+  insufficient-motion, degenerate-axis, insufficient-span, and timeout
+  failures; bounded adaptive limits; and live response between analysis ticks.
+  No fixture activates an adapter or carries application interpretation.
 - `spatial-hand-alignment/`: sanitized OpenXR-to-Spatial SDK mapping fixtures.
   The accepted viewer-world basis registration remains the rollback default;
   mirror/reflection candidates stay explicit until a separate live headset

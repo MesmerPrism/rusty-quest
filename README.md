@@ -398,9 +398,12 @@ the meaning of the selected slot.
 future breath adapters. It owns only the deterministic
 Reset/Configure/Start/Cancel/Observe lifecycle, injected microsecond time,
 fresh-generation fencing, bounded normalized sample admission, neutral
-telemetry, and a bounded replay harness. It starts disabled and has no Android,
-JNI, OpenXR, renderer, broker, source-estimation, calibration, phase, or
-application-mapping behavior.
+telemetry, and a bounded replay harness. Its separate accepted-frame
+calibration module owns useful-signal and motion admission, analysis capped at
+10 Hz, deterministic PCA with XZ support, robust bounds, live filtering, and
+bounded adaptive limits. The live path remains input-cadence responsive after
+calibration. The crate starts disabled and has no Android, JNI, OpenXR,
+renderer, broker, source acquisition, phase, or application-mapping behavior.
 
 New native APK variants must start from the source-only native app-build
 workflow instead of hand-editing runtime profiles, Android manifest

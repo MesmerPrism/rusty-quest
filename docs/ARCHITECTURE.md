@@ -64,10 +64,19 @@ Normalized value and quality inputs are finite and bounded, replay length is
 bounded, and missing, stale, malformed, out-of-order, backwards-time, and
 forward-discontinuity outcomes remain distinct in neutral low-rate telemetry.
 
-The crate owns no source acquisition, calibration, phase estimator, UI,
-transport, platform lifecycle, rendering, or application interpretation.
-Adapters may consume the contract only in later explicit feature slices; crate
-presence alone activates nothing.
+The crate's calibration module accepts only source-neutral timed three-vector
+frames. It separates at-most-10-Hz analysis admission from the live response
+path, counts accepted motion frames, uses a virtual-time watchdog, and fits a
+deterministically directed PCA model over all coordinates or XZ. Fifth and
+ninety-fifth percentiles define initial bounds; median-of-five plus EMA handles
+live filtering, and adaptive expansion/contraction is step- and extent-bounded.
+Generation, lifecycle, malformed input, timeout cause, degenerate axis, and
+insufficient span all remain typed and fail closed.
+
+The crate owns no source acquisition, source-specific units or deadbands,
+phase estimator, UI, transport, platform lifecycle, rendering, or application
+interpretation. Adapters may consume the contract only in later explicit
+feature slices; crate presence alone activates nothing.
 
 ## Attended Package Updater
 

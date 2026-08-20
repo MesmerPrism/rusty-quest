@@ -42,8 +42,13 @@ Its unit and fixture tests cover disabled construction, configuration and
 normalized-input bounds, Reset/Configure/Start/Cancel/Observe transitions,
 injected-time regression and discontinuity, generation isolation, missing,
 stale, malformed and out-of-order input, deterministic bounded replay,
-over-limit replay rejection, and downstream-material absence. This gate does
-not execute Android, JNI, OpenXR, Gradle, rendering, APK, ADB, or device work.
+over-limit replay rejection, and downstream-material absence. Calibration
+fixtures add principal, diagonal, rotated, XZ, bias, noise, spike, stationary,
+insufficient-motion, degenerate-axis, insufficient-span, virtual-time timeout,
+inversion, adaptive-limit, and rapid-live-response cases. The rapid case proves
+a valid post-calibration frame updates filtered bounded output before the next
+10 Hz analysis tick. This gate does not execute Android, JNI, OpenXR, Gradle,
+rendering, APK, ADB, or device work.
 
 When a pull request changes `.github/` or a package-updater validation or
 publication authority path, use

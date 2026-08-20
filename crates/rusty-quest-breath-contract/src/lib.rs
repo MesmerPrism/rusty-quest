@@ -3,6 +3,8 @@
 //! The contract has no clock, thread, platform, transport, sensor, or renderer
 //! dependency. Callers inject timestamps and explicit lifecycle actions.
 
+pub mod calibration;
+
 /// Observation schema emitted by this contract.
 pub const BREATH_CONTRACT_OBSERVATION_SCHEMA_ID: &str =
     "rusty.quest.breath_contract.observation.v1";
