@@ -9,9 +9,10 @@ use rusty_quest_breath_contract::{
     assessment::BreathAssessmentObservation,
     calibration::CalibrationObservation,
     composition::{
-        BreathCompositionAction, BreathCompositionAuthority, BreathCompositionCapabilities,
-        BreathCompositionMapping, BreathCompositionRequest, BreathCompositionSnapshot,
-        BreathCompositionSource, ControllerProjectionSelection, PolarProjectionSelection,
+        BreathCompositionAction, BreathCompositionAuthority, BreathCompositionBinding,
+        BreathCompositionCapabilities, BreathCompositionMapping, BreathCompositionRequest,
+        BreathCompositionSnapshot, BreathCompositionSource, ControllerProjectionSelection,
+        PolarProjectionSelection,
     },
     BreathGeneration, BreathTimestampMicros,
 };
@@ -41,11 +42,14 @@ pub(crate) const RESPONSE_SCHEMA_ID: &str = "rusty.quest.breath_composition.resp
 const MAX_COMMAND_BYTES: usize = 4_096;
 const MAX_PENDING_ACTIONS: usize = 16;
 const DEFAULT_STALE_MILLIS: u64 = 500;
+const PACKAGED_ACTIVATION_BINDING_SHA256: Option<&str> =
+    option_env!("RUSTY_QUEST_NATIVE_RENDERER_BREATH_COMPOSITION_EXPECTED_BINDING_SHA256");
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct BreathCompositionRuntimeConfig {
     pub(crate) enabled: bool,
-    pub(crate) activation_binding_sha256: [u8; 32],
+    pub(crate) packaged_activation_binding: BreathCompositionBinding,
+    pub(crate) runtime_activation_binding: BreathCompositionBinding,
     pub(crate) capabilities: BreathCompositionCapabilities,
     pub(crate) initial_request: Option<BreathCompositionRequest>,
     pub(crate) stale_after_micros: u64,
@@ -55,7 +59,8 @@ impl Default for BreathCompositionRuntimeConfig {
     fn default() -> Self {
         Self {
             enabled: false,
-            activation_binding_sha256: [0; 32],
+            packaged_activation_binding: BreathCompositionBinding::Missing,
+            runtime_activation_binding: BreathCompositionBinding::Missing,
             capabilities: BreathCompositionCapabilities::default(),
             initial_request: None,
             stale_after_micros: DEFAULT_STALE_MILLIS * 1_000,
@@ -96,10 +101,10 @@ impl BreathCompositionRuntimeConfig {
             .unwrap_or(DEFAULT_STALE_MILLIS);
         Self {
             enabled,
-            activation_binding_sha256: get(PROP_BREATH_COMPOSITION_ACTIVATION_BINDING_SHA256)
-                .as_deref()
-                .and_then(parse_sha256)
-                .unwrap_or([0; 32]),
+            packaged_activation_binding: parse_binding(PACKAGED_ACTIVATION_BINDING_SHA256),
+            runtime_activation_binding: parse_binding(
+                get(PROP_BREATH_COMPOSITION_ACTIVATION_BINDING_SHA256).as_deref(),
+            ),
             capabilities,
             initial_request,
             stale_after_micros: stale_millis * 1_000,
@@ -147,17 +152,15 @@ struct CalibrationPanelReadback {
 
 impl BreathCompositionRuntime {
     pub(crate) fn new(config: BreathCompositionRuntimeConfig) -> Self {
-        let controller_adapter_available = config.enabled
-            && config.activation_binding_sha256 != [0; 32]
-            && config.capabilities.controller_assessment
-            && config.stale_after_micros > 0
-            && config.stale_after_micros <= rusty_quest_breath_contract::MAX_STALE_AFTER_MICROS;
         let mut authority = BreathCompositionAuthority::new(
             config.enabled,
-            config.activation_binding_sha256,
+            config.packaged_activation_binding,
+            config.runtime_activation_binding,
             config.capabilities,
             config.stale_after_micros,
         );
+        let controller_adapter_available =
+            authority.snapshot().feature_lock_active && config.capabilities.controller_assessment;
         if config.initial_request.is_some() {
             authority.select(config.initial_request);
         }
@@ -232,44 +235,76 @@ impl BreathCompositionRuntime {
                         .ok_or("invalid-inverted")?,
                 )?;
                 let before = self.authority.snapshot();
-                let after = self.authority.select(Some(request));
+                let mut candidate = self.authority.clone();
+                let after = candidate.select(Some(request));
+                let hard_reset =
+                    after.telemetry.hard_reset_count > before.telemetry.hard_reset_count;
+                let actions = if hard_reset {
+                    let target = (after.effective == Some(request)).then_some(request.source);
+                    reset_actions(before.effective.map(|value| value.source), target)
+                } else {
+                    Vec::new()
+                };
+                self.commit_transition(candidate, &actions, hard_reset)?;
                 if after.effective != Some(request) {
                     return Err(after
                         .rejection
                         .map_or("selection-rejected", |reason| reason.as_str()));
-                }
-                if after.telemetry.hard_reset_count > before.telemetry.hard_reset_count {
-                    self.queue_reset(before.effective.map(|value| value.source));
-                    self.queue_reset(Some(request.source));
                 }
                 Ok(())
             }
             "disable" => {
                 require_fields(object, &["schema", "operation"])?;
                 let before = self.authority.snapshot();
-                self.authority.select(None);
-                self.queue_reset(before.effective.map(|value| value.source));
+                let mut candidate = self.authority.clone();
+                let after = candidate.select(None);
+                let hard_reset =
+                    after.telemetry.hard_reset_count > before.telemetry.hard_reset_count;
+                let actions = if hard_reset {
+                    reset_actions(before.effective.map(|value| value.source), None)
+                } else {
+                    Vec::new()
+                };
+                self.commit_transition(candidate, &actions, true)?;
                 Ok(())
             }
             "configure" => {
                 require_fields(object, &["schema", "operation"])?;
                 let source = self.effective_source()?;
-                let after = self.authority.action(BreathCompositionAction::Configure);
+                let mut candidate = self.authority.clone();
+                let after = candidate.action(BreathCompositionAction::Configure);
                 if after.rejection.is_some() {
+                    self.authority = candidate;
                     return Err("invalid-action");
                 }
-                self.queue(source, AdapterAction::Configure);
+                self.commit_transition(
+                    candidate,
+                    &[PendingAdapterAction {
+                        source,
+                        action: AdapterAction::Configure,
+                    }],
+                    true,
+                )?;
                 Ok(())
             }
             "start" => {
                 require_fields(object, &["schema", "operation"])?;
                 let source = self.effective_source()?;
-                let after = self.authority.action(BreathCompositionAction::Start);
-                let generation = after.generation.ok_or("invalid-action")?;
+                let mut candidate = self.authority.clone();
+                let after = candidate.action(BreathCompositionAction::Start);
                 if after.rejection.is_some() {
+                    self.authority = candidate;
                     return Err("invalid-action");
                 }
-                self.queue(source, AdapterAction::Start(generation));
+                let generation = after.generation.ok_or("invalid-action")?;
+                self.commit_transition(
+                    candidate,
+                    &[PendingAdapterAction {
+                        source,
+                        action: AdapterAction::Start(generation),
+                    }],
+                    false,
+                )?;
                 Ok(())
             }
             "cancel" => {
@@ -280,20 +315,39 @@ impl BreathCompositionRuntime {
                     .and_then(Value::as_u64)
                     .and_then(|value| BreathGeneration::new(value).ok())
                     .ok_or("invalid-generation")?;
-                let after = self
-                    .authority
-                    .action(BreathCompositionAction::Cancel(generation));
+                let mut candidate = self.authority.clone();
+                let after = candidate.action(BreathCompositionAction::Cancel(generation));
                 if after.rejection.is_some() {
+                    self.authority = candidate;
                     return Err("invalid-action");
                 }
-                self.queue(source, AdapterAction::Cancel(generation));
+                self.commit_transition(
+                    candidate,
+                    &[PendingAdapterAction {
+                        source,
+                        action: AdapterAction::Cancel(generation),
+                    }],
+                    false,
+                )?;
                 Ok(())
             }
             "reset" => {
                 require_fields(object, &["schema", "operation"])?;
                 let source = self.effective_source()?;
-                self.authority.action(BreathCompositionAction::Reset);
-                self.queue(source, AdapterAction::Reset);
+                let mut candidate = self.authority.clone();
+                let after = candidate.action(BreathCompositionAction::Reset);
+                if after.rejection.is_some() {
+                    self.authority = candidate;
+                    return Err("invalid-action");
+                }
+                self.commit_transition(
+                    candidate,
+                    &[PendingAdapterAction {
+                        source,
+                        action: AdapterAction::Reset,
+                    }],
+                    true,
+                )?;
                 Ok(())
             }
             "status" => require_fields(object, &["schema", "operation"]),
@@ -309,18 +363,21 @@ impl BreathCompositionRuntime {
             .ok_or("no-effective-selection")
     }
 
-    fn queue_reset(&mut self, source: Option<BreathCompositionSource>) {
-        if let Some(source) = source {
-            self.queue(source, AdapterAction::Reset);
+    fn commit_transition(
+        &mut self,
+        candidate: BreathCompositionAuthority,
+        actions: &[PendingAdapterAction],
+        clear_calibration: bool,
+    ) -> Result<(), &'static str> {
+        if self.pending_actions.len().saturating_add(actions.len()) > MAX_PENDING_ACTIONS {
+            return Err("action-queue-full");
         }
-    }
-
-    fn queue(&mut self, source: BreathCompositionSource, action: AdapterAction) {
-        if self.pending_actions.len() == MAX_PENDING_ACTIONS {
-            self.pending_actions.pop_front();
+        self.authority = candidate;
+        self.pending_actions.extend(actions.iter().copied());
+        if clear_calibration {
+            self.latest_calibration = None;
         }
-        self.pending_actions
-            .push_back(PendingAdapterAction { source, action });
+        Ok(())
     }
 
     pub(crate) fn take_action(&mut self, source: BreathCompositionSource) -> Option<AdapterAction> {
@@ -345,6 +402,14 @@ impl BreathCompositionRuntime {
         source: BreathCompositionSource,
         observation: &CalibrationObservation,
     ) {
+        if self
+            .authority
+            .snapshot()
+            .effective
+            .is_none_or(|request| request.source != source)
+        {
+            return;
+        }
         self.latest_calibration = Some(CalibrationPanelReadback {
             source,
             lifecycle: observation.lifecycle.as_str(),
@@ -375,27 +440,37 @@ impl BreathCompositionRuntime {
                         continue;
                     };
                     let mut adapter = PolarAccBreathAdapter::new(settings);
-                    adapter.configure(at);
+                    let calibration = adapter.configure(at);
                     self.polar_adapter = Some(adapter);
                     self.last_polar_sequence_id = None;
                     self.last_polar_observed_at = None;
                     self.polar_missing_reported = false;
+                    self.submit_calibration(BreathCompositionSource::PolarAcc, &calibration);
                 }
                 AdapterAction::Start(generation) => {
-                    if let Some(adapter) = self.polar_adapter.as_mut() {
-                        adapter.start(at, generation);
+                    let calibration = self
+                        .polar_adapter
+                        .as_mut()
+                        .map(|adapter| adapter.start(at, generation));
+                    if let Some(calibration) = calibration {
                         self.last_polar_observed_at = Some(at);
                         self.polar_missing_reported = false;
+                        self.submit_calibration(BreathCompositionSource::PolarAcc, &calibration);
                     }
                 }
                 AdapterAction::Cancel(generation) => {
-                    if let Some(adapter) = self.polar_adapter.as_mut() {
-                        adapter.cancel(at, generation);
+                    let calibration = self
+                        .polar_adapter
+                        .as_mut()
+                        .map(|adapter| adapter.cancel(at, generation));
+                    if let Some(calibration) = calibration {
+                        self.submit_calibration(BreathCompositionSource::PolarAcc, &calibration);
                     }
                 }
                 AdapterAction::Reset => {
-                    if let Some(adapter) = self.polar_adapter.as_mut() {
-                        adapter.reset(at);
+                    let calibration = self.polar_adapter.as_mut().map(|adapter| adapter.reset(at));
+                    if let Some(calibration) = calibration {
+                        self.submit_calibration(BreathCompositionSource::PolarAcc, &calibration);
                     }
                     self.last_polar_sequence_id = None;
                     self.last_polar_observed_at = None;
@@ -471,6 +546,26 @@ impl BreathCompositionRuntime {
             .effective
             .is_some_and(|selection| selection.source == BreathCompositionSource::Controller)
     }
+}
+
+fn reset_actions(
+    previous: Option<BreathCompositionSource>,
+    target: Option<BreathCompositionSource>,
+) -> Vec<PendingAdapterAction> {
+    let mut actions = Vec::with_capacity(2);
+    for source in [previous, target].into_iter().flatten() {
+        if actions
+            .iter()
+            .any(|pending: &PendingAdapterAction| pending.source == source)
+        {
+            continue;
+        }
+        actions.push(PendingAdapterAction {
+            source,
+            action: AdapterAction::Reset,
+        });
+    }
+    actions
 }
 
 fn runtime() -> &'static Mutex<BreathCompositionRuntime> {
@@ -573,6 +668,9 @@ fn snapshot_value(
         "schema": snapshot.schema_id,
         "feature_lock_active": snapshot.feature_lock_active,
         "activation_binding_sha256": hex_sha256(snapshot.feature_lock_sha256),
+        "packaged_activation_binding_sha256": hex_sha256(snapshot.packaged_feature_lock_sha256),
+        "activation_binding_matches": snapshot.feature_lock_active
+            && snapshot.feature_lock_sha256 == snapshot.packaged_feature_lock_sha256,
         "requested": snapshot.requested.map(request_value),
         "effective": snapshot.effective.map(request_value),
         "status": snapshot.status.as_str(),
@@ -621,8 +719,10 @@ fn snapshot_value(
 
 fn marker_fields(snapshot: BreathCompositionSnapshot) -> String {
     format!(
-        "featureLockActive={} requestedSource={} requestedMapping={} effectiveSource={} effectiveMapping={} status={} generation={} outputVolume01={} outputPhase={} rejection={} transport=same-process-direct",
+        "featureLockActive={} activationBindingMatches={} requestedSource={} requestedMapping={} effectiveSource={} effectiveMapping={} status={} generation={} outputVolume01={} outputPhase={} rejection={} transport=same-process-direct",
         snapshot.feature_lock_active,
+        snapshot.feature_lock_active
+            && snapshot.feature_lock_sha256 == snapshot.packaged_feature_lock_sha256,
         snapshot.requested.map_or("none", |value| value.source.as_str()),
         snapshot.requested.map_or("none", |value| value.mapping.as_str()),
         snapshot.effective.map_or("none", |value| value.source.as_str()),
@@ -730,6 +830,16 @@ fn parse_sha256(value: &str) -> Option<[u8; 32]> {
     Some(bytes)
 }
 
+fn parse_binding(value: Option<&str>) -> BreathCompositionBinding {
+    let Some(value) = value.map(str::trim).filter(|value| !value.is_empty()) else {
+        return BreathCompositionBinding::Missing;
+    };
+    match parse_sha256(value) {
+        Some(digest) if digest != [0; 32] => BreathCompositionBinding::Digest(digest),
+        Some(_) | None => BreathCompositionBinding::Malformed,
+    }
+}
+
 fn hex_sha256(bytes: [u8; 32]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
@@ -785,7 +895,8 @@ mod tests {
     fn runtime() -> BreathCompositionRuntime {
         BreathCompositionRuntime::new(BreathCompositionRuntimeConfig {
             enabled: true,
-            activation_binding_sha256: [0x6b; 32],
+            packaged_activation_binding: BreathCompositionBinding::Digest([0x6b; 32]),
+            runtime_activation_binding: BreathCompositionBinding::Digest([0x6b; 32]),
             capabilities: BreathCompositionCapabilities {
                 controller_assessment: true,
                 polar_acc_assessment: true,
@@ -908,17 +1019,256 @@ mod tests {
     }
 
     #[test]
-    fn lock_binding_parser_is_exact_and_nonzero_activation_is_required() {
+    fn lock_binding_parser_and_exact_packaged_match_are_required() {
         assert_eq!(parse_sha256(&"ab".repeat(32)), Some([0xab; 32]));
         assert_eq!(parse_sha256("abc"), None);
-        let runtime = BreathCompositionRuntime::new(BreathCompositionRuntimeConfig {
+        assert_eq!(parse_binding(None), BreathCompositionBinding::Missing);
+        assert_eq!(
+            parse_binding(Some(&"00".repeat(32))),
+            BreathCompositionBinding::Malformed
+        );
+        for (packaged, observed, reason) in [
+            (
+                BreathCompositionBinding::Missing,
+                BreathCompositionBinding::Digest([1; 32]),
+                "missing-packaged-binding",
+            ),
+            (
+                BreathCompositionBinding::Digest([1; 32]),
+                BreathCompositionBinding::Missing,
+                "missing-runtime-binding",
+            ),
+            (
+                BreathCompositionBinding::Digest([1; 32]),
+                BreathCompositionBinding::Malformed,
+                "malformed-runtime-binding",
+            ),
+            (
+                BreathCompositionBinding::Digest([1; 32]),
+                BreathCompositionBinding::Digest([2; 32]),
+                "activation-binding-mismatch",
+            ),
+        ] {
+            let runtime = BreathCompositionRuntime::new(BreathCompositionRuntimeConfig {
+                enabled: true,
+                packaged_activation_binding: packaged,
+                runtime_activation_binding: observed,
+                capabilities: BreathCompositionCapabilities::default(),
+                initial_request: None,
+                stale_after_micros: 500_000,
+            });
+            let snapshot = runtime.snapshot();
+            assert!(!snapshot.feature_lock_active);
+            assert_eq!(snapshot.rejection.map(|value| value.as_str()), Some(reason));
+        }
+        assert!(runtime().snapshot().feature_lock_active);
+    }
+
+    #[test]
+    fn rejected_unavailable_selection_resets_the_prior_adapter_only() {
+        let capabilities = BreathCompositionCapabilities {
+            controller_assessment: true,
+            polar_acc_assessment: true,
+            volume_mapping: true,
+            state_mapping: false,
+            same_apk_panel: true,
+        };
+        let mut runtime = BreathCompositionRuntime::new(BreathCompositionRuntimeConfig {
             enabled: true,
-            activation_binding_sha256: [0; 32],
-            capabilities: BreathCompositionCapabilities::default(),
+            packaged_activation_binding: BreathCompositionBinding::Digest([0x6b; 32]),
+            runtime_activation_binding: BreathCompositionBinding::Digest([0x6b; 32]),
+            capabilities,
             initial_request: None,
             stale_after_micros: 500_000,
         });
-        assert!(!runtime.snapshot().feature_lock_active);
+        runtime.apply_command(&select("controller", "volume"));
+        runtime.apply_command(
+            &json!({"schema": COMMAND_SCHEMA_ID, "operation": "configure"}).to_string(),
+        );
+        runtime
+            .apply_command(&json!({"schema": COMMAND_SCHEMA_ID, "operation": "start"}).to_string());
+        while runtime
+            .take_action(BreathCompositionSource::Controller)
+            .is_some()
+        {}
+
+        let rejected: Value =
+            serde_json::from_str(&runtime.apply_command(&select("polar-acc", "state")))
+                .expect("response");
+        assert_eq!(rejected["reason_code"], "unavailable-selection");
+        assert!(runtime.snapshot().effective.is_none());
+        assert_eq!(
+            runtime.take_action(BreathCompositionSource::Controller),
+            Some(AdapterAction::Reset)
+        );
+        assert_eq!(runtime.take_action(BreathCompositionSource::PolarAcc), None);
+    }
+
+    #[test]
+    fn queue_capacity_rejects_before_mutation_and_preserves_action_order() {
+        let mut runtime = runtime();
+        runtime.apply_command(&select("controller", "volume"));
+        runtime.apply_command(
+            &json!({"schema": COMMAND_SCHEMA_ID, "operation": "configure"}).to_string(),
+        );
+        runtime
+            .apply_command(&json!({"schema": COMMAND_SCHEMA_ID, "operation": "start"}).to_string());
+        runtime.pending_actions.clear();
+        for _ in 0..(MAX_PENDING_ACTIONS - 2) {
+            runtime.pending_actions.push_back(PendingAdapterAction {
+                source: BreathCompositionSource::Controller,
+                action: AdapterAction::Configure,
+            });
+        }
+
+        let switched: Value =
+            serde_json::from_str(&runtime.apply_command(&select("polar-acc", "volume")))
+                .expect("response");
+        assert_eq!(switched["command_status"], "accepted");
+        assert_eq!(runtime.pending_actions.len(), MAX_PENDING_ACTIONS);
+        let selected = runtime.snapshot();
+
+        let rejected: Value = serde_json::from_str(&runtime.apply_command(
+            &json!({"schema": COMMAND_SCHEMA_ID, "operation": "configure"}).to_string(),
+        ))
+        .expect("response");
+        assert_eq!(rejected["reason_code"], "action-queue-full");
+        assert_eq!(runtime.snapshot(), selected);
+        assert_eq!(runtime.pending_actions.len(), MAX_PENDING_ACTIONS);
+
+        for _ in 0..(MAX_PENDING_ACTIONS - 2) {
+            assert_eq!(
+                runtime.pending_actions.pop_front(),
+                Some(PendingAdapterAction {
+                    source: BreathCompositionSource::Controller,
+                    action: AdapterAction::Configure,
+                })
+            );
+        }
+        assert_eq!(
+            runtime.take_action(BreathCompositionSource::Controller),
+            Some(AdapterAction::Reset)
+        );
+        assert_eq!(
+            runtime.take_action(BreathCompositionSource::PolarAcc),
+            Some(AdapterAction::Reset)
+        );
+        runtime.apply_command(
+            &json!({"schema": COMMAND_SCHEMA_ID, "operation": "configure"}).to_string(),
+        );
+        runtime
+            .apply_command(&json!({"schema": COMMAND_SCHEMA_ID, "operation": "start"}).to_string());
+        assert_eq!(
+            runtime.take_action(BreathCompositionSource::PolarAcc),
+            Some(AdapterAction::Configure)
+        );
+        assert!(matches!(
+            runtime.take_action(BreathCompositionSource::PolarAcc),
+            Some(AdapterAction::Start(_))
+        ));
+
+        runtime.pending_actions.clear();
+        runtime.apply_command(&select("controller", "volume"));
+        while runtime
+            .take_action(BreathCompositionSource::PolarAcc)
+            .is_some()
+        {}
+        while runtime
+            .take_action(BreathCompositionSource::Controller)
+            .is_some()
+        {}
+        for _ in 0..(MAX_PENDING_ACTIONS - 1) {
+            runtime.pending_actions.push_back(PendingAdapterAction {
+                source: BreathCompositionSource::Controller,
+                action: AdapterAction::Configure,
+            });
+        }
+        runtime.latest_calibration = Some(CalibrationPanelReadback {
+            source: BreathCompositionSource::Controller,
+            lifecycle: "ready",
+            progress01: 1.0,
+            accepted_frames: 12,
+            target_frames: Some(12),
+            watchdog_age_micros: Some(0),
+            failure_code: None,
+        });
+        let before_atomic_rejection = runtime.snapshot();
+        let calibration_before_atomic_rejection = runtime.latest_calibration.clone();
+        let pending_before_atomic_rejection = runtime.pending_actions.clone();
+        let rejected_switch: Value =
+            serde_json::from_str(&runtime.apply_command(&select("polar-acc", "volume")))
+                .expect("response");
+        assert_eq!(rejected_switch["reason_code"], "action-queue-full");
+        assert_eq!(runtime.snapshot(), before_atomic_rejection);
+        assert_eq!(
+            runtime.latest_calibration,
+            calibration_before_atomic_rejection
+        );
+        assert_eq!(runtime.pending_actions, pending_before_atomic_rejection);
+    }
+
+    #[test]
+    fn reset_and_hard_source_change_clear_stale_calibration_readback() {
+        let mut runtime = runtime();
+        runtime.apply_command(&select("polar-acc", "volume"));
+        runtime.apply_command(
+            &json!({"schema": COMMAND_SCHEMA_ID, "operation": "configure"}).to_string(),
+        );
+        runtime.poll_polar(BreathTimestampMicros::new(10));
+        assert!(runtime.latest_calibration.is_some());
+
+        runtime
+            .latest_calibration
+            .as_mut()
+            .expect("readback")
+            .lifecycle = "ready";
+        runtime.apply_command(
+            &json!({"schema": COMMAND_SCHEMA_ID, "operation": "configure"}).to_string(),
+        );
+        assert!(runtime.latest_calibration.is_none());
+        runtime.poll_polar(BreathTimestampMicros::new(15));
+        runtime
+            .latest_calibration
+            .as_mut()
+            .expect("configured readback")
+            .lifecycle = "ready";
+        runtime
+            .apply_command(&json!({"schema": COMMAND_SCHEMA_ID, "operation": "reset"}).to_string());
+        assert!(runtime.latest_calibration.is_none());
+        runtime.poll_polar(BreathTimestampMicros::new(20));
+        assert_eq!(
+            runtime
+                .latest_calibration
+                .as_ref()
+                .map(|value| value.lifecycle),
+            Some("disabled")
+        );
+
+        runtime.apply_command(&select("controller", "volume"));
+        assert!(runtime.latest_calibration.is_none());
+        runtime.poll_polar(BreathTimestampMicros::new(25));
+        assert!(runtime.latest_calibration.is_none());
+        runtime.latest_calibration = Some(CalibrationPanelReadback {
+            source: BreathCompositionSource::Controller,
+            lifecycle: "ready",
+            progress01: 1.0,
+            accepted_frames: 12,
+            target_frames: Some(12),
+            watchdog_age_micros: Some(0),
+            failure_code: None,
+        });
+        runtime.apply_command(
+            &json!({"schema": COMMAND_SCHEMA_ID, "operation": "disable"}).to_string(),
+        );
+        assert!(runtime.latest_calibration.is_none());
+        let reset_at = BreathTimestampMicros::new(30);
+        let late_reset = runtime
+            .polar_adapter
+            .as_mut()
+            .expect("configured adapter")
+            .reset(reset_at);
+        runtime.submit_calibration(BreathCompositionSource::Controller, &late_reset);
+        assert!(runtime.latest_calibration.is_none());
     }
 
     #[test]

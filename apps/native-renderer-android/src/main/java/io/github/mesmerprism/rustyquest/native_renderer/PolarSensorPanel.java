@@ -158,6 +158,14 @@ final class PolarSensorPanel {
     }
 
     View buildView() {
+        return buildView(true);
+    }
+
+    View buildEmbeddedAcquisitionView() {
+        return buildView(false);
+    }
+
+    private View buildView(boolean includeCloseButton) {
         ScrollView scroll = new ScrollView(activity);
         scroll.setBackgroundColor(PANEL_BG);
         LinearLayout root = new LinearLayout(activity);
@@ -170,15 +178,17 @@ final class PolarSensorPanel {
         TextView title = text("Polar Sensor Panel", 22, PANEL_FG);
         title.setGravity(Gravity.CENTER_VERTICAL);
         header.addView(title, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
-        Button close = button("Close");
-        close.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View view) {
-                stop();
-                host.closePanelAndReturnToImmersive();
-            }
-        });
-        header.addView(close);
+        if (includeCloseButton) {
+            Button close = button("Close");
+            close.setOnClickListener(new View.OnClickListener() {
+                @Override
+                public void onClick(View view) {
+                    stop();
+                    host.closePanelAndReturnToImmersive();
+                }
+            });
+            header.addView(close);
+        }
         root.addView(header);
         root.addView(text("Direct BLE intake for Polar H10 streams.", 13, PANEL_MUTED));
 

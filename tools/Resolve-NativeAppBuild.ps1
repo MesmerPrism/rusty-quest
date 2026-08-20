@@ -21,6 +21,7 @@ $NativeRendererPropertyPrefix = "debug.rustyquest.native_renderer."
 $RenderModeProperty = "debug.rustyquest.native_renderer.render.mode"
 $BreathCompositionFeatureId = "breath.composition.closed_world"
 $BreathCompositionActivationBindingProperty = "debug.rustyquest.native_renderer.breath_composition.activation.binding_sha256"
+$BreathCompositionExpectedBindingBuildEnv = "RUSTY_QUEST_NATIVE_RENDERER_BREATH_COMPOSITION_EXPECTED_BINDING_SHA256"
 $EnvironmentDepthModeProperty = "debug.rustyquest.native_renderer.environment_depth.mode"
 $EnvironmentDepthSourceProperty = "debug.rustyquest.native_renderer.environment_depth.source"
 $EnvironmentDepthNativePassthroughRequiredProperty = "debug.rustyquest.native_renderer.environment_depth.native_passthrough.required"
@@ -970,30 +971,6 @@ if ($expectedRenderModes.Count -gt 0 -and $expectedRenderModes -cnotcontains $re
     throw "Resolved render mode $renderMode is not allowed by selected feature expected_render_modes: $($expectedRenderModes -join ', ')"
 }
 
-$ownedPropertiesSet = @{}
-foreach ($propertyName in $runtimeSet.Keys) {
-    $ownedPropertiesSet[[string]$propertyName] = $true
-}
-foreach ($family in $clearFamilies) {
-    if (-not $nativeRendererPropertiesByFamily.ContainsKey($family)) {
-        throw "Selected feature declared unknown native renderer property family for clearing: $family"
-    }
-    foreach ($propertyName in @($nativeRendererPropertiesByFamily[$family])) {
-        $ownedPropertiesSet[[string]$propertyName] = $true
-    }
-}
-$ownedProperties = @(Get-SortedSet -Set $ownedPropertiesSet)
-
-$setProperties = @()
-foreach ($propertyName in @($runtimeSet.Keys | Sort-Object)) {
-    $settingId = ConvertTo-NativeRendererSettingId -PropertyName $propertyName
-    $setProperties += [ordered]@{
-        name = [string]$propertyName
-        value = [string]$runtimeSet[$propertyName]
-        source_setting_id = $settingId
-    }
-}
-
 $featureDescriptorRecords = @()
 foreach ($featureId in $selectedFeatureIds) {
     $featureDescriptorRecords += [ordered]@{
@@ -1025,6 +1002,39 @@ if ($selectedFeatureIds -contains $BreathCompositionFeatureId) {
     }
     $runtimeSet[$BreathCompositionActivationBindingProperty] = $breathCompositionActivationBinding
     $runtimeSources[$BreathCompositionActivationBindingProperty] = "resolver:$BreathCompositionFeatureId"
+    if ($envByName.Contains($BreathCompositionExpectedBindingBuildEnv)) {
+        throw "Breath composition packaged binding build env is resolver-derived and must not be supplied by a feature or payload"
+    }
+    $envByName[$BreathCompositionExpectedBindingBuildEnv] = [ordered]@{
+        name = $BreathCompositionExpectedBindingBuildEnv
+        value = $breathCompositionActivationBinding
+    }
+}
+
+# Materialize executable property adapters only after all resolver-derived
+# values have entered the authoritative runtime set.
+$ownedPropertiesSet = @{}
+foreach ($propertyName in $runtimeSet.Keys) {
+    $ownedPropertiesSet[[string]$propertyName] = $true
+}
+foreach ($family in $clearFamilies) {
+    if (-not $nativeRendererPropertiesByFamily.ContainsKey($family)) {
+        throw "Selected feature declared unknown native renderer property family for clearing: $family"
+    }
+    foreach ($propertyName in @($nativeRendererPropertiesByFamily[$family])) {
+        $ownedPropertiesSet[[string]$propertyName] = $true
+    }
+}
+$ownedProperties = @(Get-SortedSet -Set $ownedPropertiesSet)
+
+$setProperties = @()
+foreach ($propertyName in @($runtimeSet.Keys | Sort-Object)) {
+    $settingId = ConvertTo-NativeRendererSettingId -PropertyName $propertyName
+    $setProperties += [ordered]@{
+        name = [string]$propertyName
+        value = [string]$runtimeSet[$propertyName]
+        source_setting_id = $settingId
+    }
 }
 $resolutionInputs = [ordered]@{
     resolver_version = $ResolverVersion

@@ -23,12 +23,28 @@ function Assert-Tokens {
     }
 }
 
+function Resolve-GeneratedOutputPath {
+    param([string]$Value)
+    if ([System.IO.Path]::IsPathRooted($Value)) {
+        return [System.IO.Path]::GetFullPath($Value)
+    }
+    return [System.IO.Path]::GetFullPath((Join-Path $repo $Value))
+}
+
+function Get-ArtifactSha256 {
+    param([string]$Path)
+    return (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant()
+}
+
 $corePath = Join-Path $repo "crates\rusty-quest-breath-contract\src\composition.rs"
 $runtimePath = Join-Path $repo "apps\native-renderer-android\native\src\breath_composition_runtime.rs"
 $controllerPath = Join-Path $repo "apps\native-renderer-android\native\src\openxr_stimulus_actions.rs"
 $polarPath = Join-Path $repo "apps\native-renderer-android\native\src\polar_acc_breath_adapter.rs"
 $ingressPath = Join-Path $repo "apps\native-renderer-android\native\src\polar_composition_adapters.rs"
 $panelPath = Join-Path $repo "apps\native-renderer-android\src\main\java\io\github\mesmerprism\rustyquest\native_renderer\ControlPanelActivity.java"
+$polarPanelPath = Join-Path $repo "apps\native-renderer-android\src\main\java\io\github\mesmerprism\rustyquest\native_renderer\PolarSensorPanel.java"
+$nativeBuildScriptPath = Join-Path $repo "apps\native-renderer-android\native\build.rs"
+$androidBuildPath = Join-Path $repo "tools\Build-NativeRendererAndroid.ps1"
 $resolverPath = Join-Path $repo "tools\Resolve-NativeAppBuild.ps1"
 $appSpecPath = Join-Path $repo "fixtures\native-app-builds\native-breath-four-way-conformance.app.json"
 $featurePaths = @(
@@ -46,6 +62,9 @@ $controller = Read-RequiredText $controllerPath "OpenXR adapter composition"
 $polar = Read-RequiredText $polarPath "Polar ACC adapter"
 $ingress = Read-RequiredText $ingressPath "Polar ingress"
 $panel = Read-RequiredText $panelPath "same-APK panel"
+$polarPanel = Read-RequiredText $polarPanelPath "sole Polar acquisition panel"
+$nativeBuildScript = Read-RequiredText $nativeBuildScriptPath "native build script"
+$androidBuild = Read-RequiredText $androidBuildPath "Android build wrapper"
 $resolver = Read-RequiredText $resolverPath "structured resolver"
 $appSpec = Read-RequiredText $appSpecPath "conformance app"
 $features = ($featurePaths | ForEach-Object { Read-RequiredText $_ "feature descriptor" }) -join [Environment]::NewLine
@@ -62,6 +81,10 @@ Assert-Tokens $runtime @(
     "rusty.quest.breath_composition.command.v1",
     "rusty.quest.breath_composition.response.v1",
     "activation_binding_sha256",
+    "packaged_activation_binding_sha256",
+    "activation_binding_matches",
+    "activation-binding-mismatch",
+    "action-queue-full",
     "take_adapter_action",
     "latest_polar_acc_after",
     "controller_adapter_available",
@@ -74,8 +97,10 @@ Assert-Tokens $runtime @(
 Assert-Tokens $controller @(
     "apply_composition_controller_actions",
     "BreathCompositionSource::Controller",
-    "composition_controller_available",
+    "controller_adapter_available",
     "composition_controller_enabled",
+    "observe_composition_controller_missing",
+    "poll_polar(observed_at)",
     "submit_assessment"
 ) "single OpenXR assessment owner"
 Assert-Tokens ($polar + [Environment]::NewLine + $ingress) @(
@@ -90,14 +115,28 @@ Assert-Tokens $panel @(
     "Direct Breath Mapping",
     "Start calibration",
     "native-effective readback",
+    "buildEmbeddedAcquisitionView",
     "nativeApplyBreathCompositionCommand",
     "nativeReadBreathCompositionStatus"
 ) "same-APK panel mode"
+Assert-Tokens $polarPanel @(
+    "buildEmbeddedAcquisitionView",
+    "buildView(false)",
+    'Button scan = button("Scan")',
+    'Button connect = button("Connect")',
+    'Button startPmd = button("Start PMD")'
+) "sole embedded Polar acquisition owner"
 Assert-Tokens $resolver @(
     "rusty.quest.native_app_build_resolution_result.v1",
     "breath_composition_activation_sha256",
+    "RUSTY_QUEST_NATIVE_RENDERER_BREATH_COMPOSITION_EXPECTED_BINDING_SHA256",
     "Assert-CanonicalPathInsideRoot"
 ) "structured resolver"
+Assert-Tokens ($nativeBuildScript + [Environment]::NewLine + $androidBuild) @(
+    "RUSTY_QUEST_NATIVE_RENDERER_BREATH_COMPOSITION_EXPECTED_BINDING_SHA256",
+    '$breathActivation.Value.sha256',
+    "does not exactly match feature-lock activation"
+) "packaged exact-binding build route"
 Assert-Tokens ($features + [Environment]::NewLine + $appSpec) @(
     "breath.composition.closed_world",
     "input.breath.controller_assessment",
@@ -119,6 +158,20 @@ foreach ($text in @($core, $runtime, $features)) {
 if ($runtime -match 'polar_rr_after\s*\(') {
     throw "Breath composition runtime must not consume the RR queue"
 }
+
+$syncErrorIndex = $controller.IndexOf("if let Err(error) = session.sync_actions")
+if ($syncErrorIndex -lt 0) {
+    throw "OpenXR composition adapter is missing the sync_actions error branch"
+}
+$syncErrorReturnIndex = $controller.IndexOf("return events;", $syncErrorIndex)
+if ($syncErrorReturnIndex -lt 0) {
+    throw "OpenXR sync_actions error branch has no bounded return"
+}
+$syncErrorBlock = $controller.Substring($syncErrorIndex, $syncErrorReturnIndex - $syncErrorIndex)
+Assert-Tokens $syncErrorBlock @(
+    "observe_composition_controller_missing(",
+    "poll_polar(observed_at)"
+) "sync_actions error clearing before early return"
 
 $runRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("rusty-quest-breath-i6-" + [guid]::NewGuid().ToString("N"))
 $resultPath = Join-Path $runRoot "result.json"
@@ -165,6 +218,50 @@ try {
     }
     if ([string]$lock.breath_composition_activation.sha256 -ne [string]$result.breath_composition_activation_sha256) {
         throw "Feature lock and structured result activation bindings disagree"
+    }
+    $bindingProperty = "debug.rustyquest.native_renderer.breath_composition.activation.binding_sha256"
+    $bindingSetting = "native_renderer.breath_composition.activation.binding_sha256"
+    $bindingBuildEnv = "RUSTY_QUEST_NATIVE_RENDERER_BREATH_COMPOSITION_EXPECTED_BINDING_SHA256"
+    $binding = [string]$result.breath_composition_activation_sha256
+    $runtimeProfilePath = Resolve-GeneratedOutputPath ([string]$lock.generated_outputs.runtime_profile)
+    $nativeAppSettingsPath = Resolve-GeneratedOutputPath ([string]$lock.generated_outputs.native_app_settings)
+    $propertyWritePlanPath = Resolve-GeneratedOutputPath ([string]$lock.generated_outputs.property_write_plan)
+    $buildEnvPath = Resolve-GeneratedOutputPath ([string]$lock.generated_outputs.build_env)
+    $buildManifestPath = Resolve-GeneratedOutputPath ([string]$lock.generated_outputs.build_manifest)
+    $runtimeProfile = Get-Content -Raw -LiteralPath $runtimeProfilePath | ConvertFrom-Json
+    $nativeAppSettings = Get-Content -Raw -LiteralPath $nativeAppSettingsPath | ConvertFrom-Json
+    $propertyWritePlan = Get-Content -Raw -LiteralPath $propertyWritePlanPath | ConvertFrom-Json
+    $buildEnv = Get-Content -Raw -LiteralPath $buildEnvPath | ConvertFrom-Json
+    $buildManifest = Get-Content -Raw -LiteralPath $buildManifestPath | ConvertFrom-Json
+
+    $runtimeOwnedBinding = @($runtimeProfile.owned_android_properties | Where-Object { [string]$_ -eq $bindingProperty })
+    $runtimeSetBinding = @($runtimeProfile.set_properties | Where-Object { [string]$_.name -eq $bindingProperty })
+    if ($runtimeOwnedBinding.Count -ne 1 -or $runtimeSetBinding.Count -ne 1 -or [string]$runtimeSetBinding[0].value -ne $binding) {
+        throw "Runtime profile did not retain exactly one executable activation binding"
+    }
+    $settingsBindingProperty = $nativeAppSettings.values.PSObject.Properties[$bindingSetting]
+    $settingsAdapterBinding = @($nativeAppSettings.adapters.android_properties | Where-Object { [string]$_.name -eq $bindingProperty })
+    if ($null -eq $settingsBindingProperty -or [string]$settingsBindingProperty.Value.value -ne $binding -or
+        $settingsAdapterBinding.Count -ne 1 -or [string]$settingsAdapterBinding[0].value -ne $binding) {
+        throw "Native settings authority/adapters did not retain the exact activation binding"
+    }
+    $planBinding = @($propertyWritePlan.operations | Where-Object { [string]$_.kind -eq "set" -and [string]$_.name -eq $bindingProperty })
+    if ($planBinding.Count -ne 1 -or [string]$planBinding[0].value -ne $binding) {
+        throw "Executable property write plan did not retain the exact activation binding"
+    }
+    $buildBinding = @($buildEnv.env | Where-Object { [string]$_.name -eq $bindingBuildEnv })
+    if ($buildBinding.Count -ne 1 -or [string]$buildBinding[0].value -ne $binding) {
+        throw "Resolver build environment did not package the exact activation binding"
+    }
+    foreach ($artifact in @(
+        @{ Label = "runtime profile"; Path = $runtimeProfilePath; Expected = [string]$buildManifest.runtime_profile_sha256 },
+        @{ Label = "native app settings"; Path = $nativeAppSettingsPath; Expected = [string]$buildManifest.native_app_settings_sha256 },
+        @{ Label = "property write plan"; Path = $propertyWritePlanPath; Expected = [string]$buildManifest.property_write_plan_sha256 },
+        @{ Label = "build env"; Path = $buildEnvPath; Expected = [string]$buildManifest.build_env_sha256 }
+    )) {
+        if ((Get-ArtifactSha256 $artifact.Path) -ne $artifact.Expected) {
+            throw "Build manifest hash drifted for $($artifact.Label)"
+        }
     }
     if ([string]$lock.android_manifest.package_name -ne "io.github.mesmerprism.rustyquest.native_renderer.breath_matrix") {
         throw "Breath composition package identity drifted"

@@ -507,7 +507,12 @@ public final class ControlPanelActivity extends Activity {
     }
 
     private void rebuildContentViewForCurrentMode() {
-        if (polarSensorPanel != null && !"driver-profile-session".equals(readControlPanelMode())) {
+        String panelMode = readControlPanelMode();
+        boolean polarOwnerRetained = "polar-sensor".equals(panelMode)
+            || "breath-mapping".equals(panelMode)
+            || "driver-profile-panel".equals(panelMode)
+            || "driver-profile-session".equals(panelMode);
+        if (polarSensorPanel != null && !polarOwnerRetained) {
             polarSensorPanel.stop();
             polarSensorPanel = null;
         }
@@ -692,8 +697,8 @@ public final class ControlPanelActivity extends Activity {
             title,
             new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
         );
-        Button close = button("Close");
-        close.setOnClickListener(view -> closePanelAndReturnToImmersive());
+        Button close = button("Return to VR");
+        close.setOnClickListener(view -> launchImmersiveRenderer());
         header.addView(close);
         root.addView(header);
         root.addView(
@@ -790,6 +795,15 @@ public final class ControlPanelActivity extends Activity {
                 PANEL_MUTED
             )
         );
+        root.addView(sectionTitle("Polar ACC acquisition"));
+        root.addView(
+            text(
+                "The existing Polar owner is embedded below. Scan, connect, select ACC, and start PMD here; Return to VR keeps this Activity and its single BLE owner alive in the background.",
+                12,
+                PANEL_MUTED
+            )
+        );
+        root.addView(ensurePolarSensorPanel().buildEmbeddedAcquisitionView());
         refreshBreathCompositionReadback(readback);
         return scroll;
     }
@@ -863,6 +877,8 @@ public final class ControlPanelActivity extends Activity {
             .append(response.optString("reason_code", "none"));
         lines.append("\nlock active=")
             .append(snapshot.optBoolean("feature_lock_active", false))
+            .append(" binding match=")
+            .append(snapshot.optBoolean("activation_binding_matches", false))
             .append(" status=")
             .append(snapshot.optString("status", "unknown"))
             .append(" generation=")
@@ -5344,6 +5360,7 @@ public final class ControlPanelActivity extends Activity {
         handledPolarSensorPanelCommandToken = token;
         String panelMode = readControlPanelMode();
         if (!"polar-sensor".equals(panelMode)
+                && !"breath-mapping".equals(panelMode)
                 && !"driver-profile-panel".equals(panelMode)
                 && !"driver-profile-session".equals(panelMode)) {
             setStatusText("Polar command ignored; panel mode does not expose Polar controls.");

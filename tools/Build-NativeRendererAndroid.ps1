@@ -345,6 +345,18 @@ if (-not [string]::IsNullOrWhiteSpace($AppBuildLock)) {
         }
         $appBuildEnvByName[$name] = if ($null -ne $entry.PSObject.Properties["value"]) { [string]$entry.value } else { "" }
     }
+    $breathExpectedBindingEnvName = "RUSTY_QUEST_NATIVE_RENDERER_BREATH_COMPOSITION_EXPECTED_BINDING_SHA256"
+    $breathActivation = $appBuildLockObject.PSObject.Properties["breath_composition_activation"]
+    if ($null -ne $breathActivation -and $null -ne $breathActivation.Value) {
+        $expectedBreathBinding = [string]$breathActivation.Value.sha256
+        if ([string]::IsNullOrWhiteSpace($expectedBreathBinding) -or
+            -not $appBuildEnvByName.ContainsKey($breathExpectedBindingEnvName) -or
+            [string]$appBuildEnvByName[$breathExpectedBindingEnvName] -cne $expectedBreathBinding) {
+            throw "Native app-build packaged breath binding does not exactly match feature-lock activation"
+        }
+    } elseif ($appBuildEnvByName.ContainsKey($breathExpectedBindingEnvName)) {
+        throw "Native app-build env carries a breath binding without a feature-lock activation"
+    }
 
     $undeclaredAmbient = @(Get-ChildItem Env: | Where-Object {
         $_.Name -like "RUSTY_QUEST_NATIVE_RENDERER_*" -and

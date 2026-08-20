@@ -35,7 +35,9 @@ Volume or State through an exact capability closure. It owns requested versus
 effective readback, ordered calibration actions, generation fencing, mapping
 changes that retain a running calibration, source/projection changes that hard
 reset it, and fail-closed admission of only the selected assessment. It still
-defines no acquisition, transport, UI, or consuming effect.
+requires an exact match between a resolver-derived packaged binding and its
+runtime-observed binding before activation, and defines no acquisition,
+transport, UI, or consuming effect.
 
 Source acquisition, source-specific units and policy, platform adapters, UI,
 transport, rendering, and application interpretation are deliberately outside

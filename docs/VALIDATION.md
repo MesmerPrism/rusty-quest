@@ -73,7 +73,11 @@ The composition gates add all four source/mapping combinations, ordered panel
 actions, requested/effective proof, mapping-change calibration retention,
 source-change hard reset, stale/malformed/unselected assessment rejection,
 exact structured resolver output, canonical output-root containment, exact
-closed-world feature closure, a resolver-derived activation binding, unique
+closed-world feature closure, exact resolver-binding propagation through the
+runtime profile, settings/property adapters, locked build environment and
+artifact hashes, packaged/observed binding match and mismatch behavior,
+transactional action-queue admission, calibration-readback reset, sync-error
+clearing order, sole Polar acquisition-owner reuse, unique
 package/property/marker namespaces, and an absence scan for downstream effect
 material. The Android-target Cargo check validates the JNI/OpenXR/PMD
 composition surface without Gradle or packaging.

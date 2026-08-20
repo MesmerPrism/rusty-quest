@@ -428,9 +428,17 @@ right-secondary triple-press action. The panel submits bounded Configure,
 Start, Cancel, Reset, and selection commands, then renders native-effective
 generation, calibration, tracking, quality, age, phase/value, and admission
 readback. Mapping-only changes preserve calibration; source, projection, and
-direction changes hard-reset retained state. The resolver derives and records
-an activation binding from the exact app spec, descriptors, feature closure,
-and pre-binding runtime settings. RR remains outside this composition.
+direction changes hard-reset retained state. The panel embeds the existing
+Polar acquisition owner for scan, connect, and ACC PMD start rather than
+creating a second owner. Adapter actions use transactional bounded admission:
+commands reject before authority mutation when their ordered actions cannot be
+retained. OpenXR action-sync failures still poll Polar and clear Controller
+input as missing. The resolver derives an activation binding from the exact app
+spec, descriptors, feature closure, and pre-binding runtime settings, places it
+in every executable property adapter, and packages the same expected digest
+through the locked build environment. Runtime activation requires the observed
+property to equal that packaged digest exactly. RR remains outside this
+composition.
 
 New native APK variants must start from the source-only native app-build
 workflow instead of hand-editing runtime profiles, Android manifest

@@ -14,10 +14,31 @@ use crate::{
 pub const BREATH_COMPOSITION_SNAPSHOT_SCHEMA_ID: &str =
     "rusty.quest.breath_composition.snapshot.v1";
 
+/// One packaged or runtime-supplied activation-binding input.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum BreathCompositionBinding {
+    /// No binding was supplied.
+    #[default]
+    Missing,
+    /// A supplied binding was not an exact non-zero SHA-256 digest.
+    Malformed,
+    /// One exact non-zero SHA-256 digest.
+    Digest([u8; 32]),
+}
+
+impl BreathCompositionBinding {
+    const fn digest_or_zero(self) -> [u8; 32] {
+        match self {
+            Self::Digest(value) => value,
+            Self::Missing | Self::Malformed => [0; 32],
+        }
+    }
+}
+
 /// Direct assessment source selected inside one APK.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BreathCompositionSource {
-    /// OpenXR controller-pose assessment.
+    /// `OpenXR` controller-pose assessment.
     Controller,
     /// Polar acceleration assessment from the existing Android PMD/JNI owner.
     PolarAcc,
@@ -112,6 +133,7 @@ pub struct BreathCompositionRequest {
 }
 
 /// Closed-world capability closure resolved from the exact feature lock.
+#[allow(clippy::struct_excessive_bools)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct BreathCompositionCapabilities {
     /// Controller assessment adapter is selected.
@@ -191,6 +213,16 @@ pub enum BreathCompositionAction {
 pub enum BreathCompositionRejection {
     /// Activation was disabled or lacked an exact non-zero lock binding.
     InactiveFeatureLock,
+    /// The APK did not package a resolver-derived expected binding.
+    MissingPackagedBinding,
+    /// The APK packaged a malformed or all-zero expected binding.
+    MalformedPackagedBinding,
+    /// The runtime property surface omitted the observed binding.
+    MissingRuntimeBinding,
+    /// The runtime property surface supplied a malformed or all-zero binding.
+    MalformedRuntimeBinding,
+    /// The observed runtime binding did not match the packaged expected digest.
+    ActivationBindingMismatch,
     /// The requested source/mapping was outside the selected feature closure.
     UnavailableSelection,
     /// The action is invalid in the current composition state.
@@ -213,6 +245,11 @@ impl BreathCompositionRejection {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::InactiveFeatureLock => "inactive-feature-lock",
+            Self::MissingPackagedBinding => "missing-packaged-binding",
+            Self::MalformedPackagedBinding => "malformed-packaged-binding",
+            Self::MissingRuntimeBinding => "missing-runtime-binding",
+            Self::MalformedRuntimeBinding => "malformed-runtime-binding",
+            Self::ActivationBindingMismatch => "activation-binding-mismatch",
             Self::UnavailableSelection => "unavailable-selection",
             Self::InvalidAction => "invalid-action",
             Self::UnselectedSource => "unselected-source",
@@ -271,6 +308,8 @@ pub struct BreathCompositionSnapshot {
     pub feature_lock_active: bool,
     /// Exact lock digest supplied by the resolver/application boundary.
     pub feature_lock_sha256: [u8; 32],
+    /// Resolver-derived digest packaged into this specific native library.
+    pub packaged_feature_lock_sha256: [u8; 32],
     /// Latest requested selection, including rejected requests.
     pub requested: Option<BreathCompositionRequest>,
     /// Native-effective selection.
@@ -294,6 +333,8 @@ pub struct BreathCompositionSnapshot {
 pub struct BreathCompositionAuthority {
     feature_lock_active: bool,
     feature_lock_sha256: [u8; 32],
+    packaged_feature_lock_sha256: [u8; 32],
+    activation_rejection: Option<BreathCompositionRejection>,
     capabilities: BreathCompositionCapabilities,
     requested: Option<BreathCompositionRequest>,
     effective: Option<BreathCompositionRequest>,
@@ -312,17 +353,52 @@ impl BreathCompositionAuthority {
     #[must_use]
     pub fn new(
         enabled: bool,
-        feature_lock_sha256: [u8; 32],
+        packaged_binding: BreathCompositionBinding,
+        runtime_binding: BreathCompositionBinding,
         capabilities: BreathCompositionCapabilities,
         stale_after_micros: u64,
     ) -> Self {
-        let feature_lock_active = enabled
-            && feature_lock_sha256 != [0; 32]
-            && stale_after_micros > 0
-            && stale_after_micros <= crate::MAX_STALE_AFTER_MICROS;
+        let activation_rejection = if !enabled {
+            None
+        } else if stale_after_micros == 0 || stale_after_micros > crate::MAX_STALE_AFTER_MICROS {
+            Some(BreathCompositionRejection::InactiveFeatureLock)
+        } else {
+            match (packaged_binding, runtime_binding) {
+                (BreathCompositionBinding::Missing, _) => {
+                    Some(BreathCompositionRejection::MissingPackagedBinding)
+                }
+                (BreathCompositionBinding::Malformed, _) => {
+                    Some(BreathCompositionRejection::MalformedPackagedBinding)
+                }
+                (BreathCompositionBinding::Digest(value), _) if value == [0; 32] => {
+                    Some(BreathCompositionRejection::MalformedPackagedBinding)
+                }
+                (_, BreathCompositionBinding::Missing) => {
+                    Some(BreathCompositionRejection::MissingRuntimeBinding)
+                }
+                (_, BreathCompositionBinding::Malformed) => {
+                    Some(BreathCompositionRejection::MalformedRuntimeBinding)
+                }
+                (_, BreathCompositionBinding::Digest(value)) if value == [0; 32] => {
+                    Some(BreathCompositionRejection::MalformedRuntimeBinding)
+                }
+                (
+                    BreathCompositionBinding::Digest(expected),
+                    BreathCompositionBinding::Digest(observed),
+                ) if expected != observed => {
+                    Some(BreathCompositionRejection::ActivationBindingMismatch)
+                }
+                (BreathCompositionBinding::Digest(_), BreathCompositionBinding::Digest(_)) => None,
+            }
+        };
+        let feature_lock_active = enabled && activation_rejection.is_none();
+        let feature_lock_sha256 = runtime_binding.digest_or_zero();
+        let packaged_feature_lock_sha256 = packaged_binding.digest_or_zero();
         Self {
             feature_lock_active,
             feature_lock_sha256,
+            packaged_feature_lock_sha256,
+            activation_rejection,
             capabilities,
             requested: None,
             effective: None,
@@ -331,8 +407,7 @@ impl BreathCompositionAuthority {
             next_generation: 1,
             output: None,
             latest_assessment: None,
-            rejection: (!feature_lock_active && enabled)
-                .then_some(BreathCompositionRejection::InactiveFeatureLock),
+            rejection: activation_rejection,
             telemetry: BreathCompositionTelemetry::default(),
             stale_after_micros,
         }
@@ -345,6 +420,7 @@ impl BreathCompositionAuthority {
             schema_id: BREATH_COMPOSITION_SNAPSHOT_SCHEMA_ID,
             feature_lock_active: self.feature_lock_active,
             feature_lock_sha256: self.feature_lock_sha256,
+            packaged_feature_lock_sha256: self.packaged_feature_lock_sha256,
             requested: self.requested,
             effective: self.effective,
             status: self.status,
@@ -376,7 +452,9 @@ impl BreathCompositionAuthority {
             self.effective = None;
             self.hard_reset();
             self.status = BreathCompositionStatus::Disabled;
-            self.rejection = Some(BreathCompositionRejection::InactiveFeatureLock);
+            self.rejection = self
+                .activation_rejection
+                .or(Some(BreathCompositionRejection::InactiveFeatureLock));
             return self.snapshot();
         }
         if !self.capabilities.supports(request) {
@@ -414,7 +492,9 @@ impl BreathCompositionAuthority {
     pub fn action(&mut self, action: BreathCompositionAction) -> BreathCompositionSnapshot {
         self.rejection = None;
         if !self.feature_lock_active || self.effective.is_none() {
-            self.rejection = Some(BreathCompositionRejection::InactiveFeatureLock);
+            self.rejection = self
+                .activation_rejection
+                .or(Some(BreathCompositionRejection::InactiveFeatureLock));
             return self.snapshot();
         }
         match action {
@@ -588,7 +668,13 @@ mod tests {
     }
 
     fn authority() -> BreathCompositionAuthority {
-        BreathCompositionAuthority::new(true, [0x5a; 32], capabilities(), 250_000)
+        BreathCompositionAuthority::new(
+            true,
+            BreathCompositionBinding::Digest([0x5a; 32]),
+            BreathCompositionBinding::Digest([0x5a; 32]),
+            capabilities(),
+            250_000,
+        )
     }
 
     fn start(
@@ -671,7 +757,13 @@ mod tests {
             BreathCompositionSource::PolarAcc,
             BreathCompositionMapping::State,
         );
-        let mut disabled = BreathCompositionAuthority::new(false, [0; 32], capabilities(), 250_000);
+        let mut disabled = BreathCompositionAuthority::new(
+            false,
+            BreathCompositionBinding::Missing,
+            BreathCompositionBinding::Missing,
+            capabilities(),
+            250_000,
+        );
         let snapshot = disabled.select(Some(requested));
         assert_eq!(snapshot.effective, None);
         assert_eq!(
@@ -681,13 +773,68 @@ mod tests {
 
         let mut incomplete = capabilities();
         incomplete.state_mapping = false;
-        let mut authority = BreathCompositionAuthority::new(true, [1; 32], incomplete, 250_000);
+        let mut authority = BreathCompositionAuthority::new(
+            true,
+            BreathCompositionBinding::Digest([1; 32]),
+            BreathCompositionBinding::Digest([1; 32]),
+            incomplete,
+            250_000,
+        );
         let snapshot = authority.select(Some(requested));
         assert_eq!(snapshot.requested, Some(requested));
         assert_eq!(snapshot.effective, None);
         assert_eq!(
             snapshot.status,
             BreathCompositionStatus::RejectedUnavailable
+        );
+    }
+
+    #[test]
+    fn activation_requires_an_exact_packaged_runtime_binding_match() {
+        let requested = request(
+            BreathCompositionSource::Controller,
+            BreathCompositionMapping::Volume,
+        );
+        for (packaged, runtime, expected) in [
+            (
+                BreathCompositionBinding::Missing,
+                BreathCompositionBinding::Digest([1; 32]),
+                BreathCompositionRejection::MissingPackagedBinding,
+            ),
+            (
+                BreathCompositionBinding::Malformed,
+                BreathCompositionBinding::Digest([1; 32]),
+                BreathCompositionRejection::MalformedPackagedBinding,
+            ),
+            (
+                BreathCompositionBinding::Digest([1; 32]),
+                BreathCompositionBinding::Missing,
+                BreathCompositionRejection::MissingRuntimeBinding,
+            ),
+            (
+                BreathCompositionBinding::Digest([1; 32]),
+                BreathCompositionBinding::Malformed,
+                BreathCompositionRejection::MalformedRuntimeBinding,
+            ),
+            (
+                BreathCompositionBinding::Digest([1; 32]),
+                BreathCompositionBinding::Digest([2; 32]),
+                BreathCompositionRejection::ActivationBindingMismatch,
+            ),
+        ] {
+            let mut authority =
+                BreathCompositionAuthority::new(true, packaged, runtime, capabilities(), 250_000);
+            let snapshot = authority.select(Some(requested));
+            assert!(!snapshot.feature_lock_active);
+            assert_eq!(snapshot.effective, None);
+            assert_eq!(snapshot.rejection, Some(expected));
+        }
+
+        let active = authority();
+        assert!(active.snapshot().feature_lock_active);
+        assert_eq!(
+            active.snapshot().feature_lock_sha256,
+            active.snapshot().packaged_feature_lock_sha256
         );
     }
 

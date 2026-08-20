@@ -653,20 +653,67 @@ impl StimulusVolumeActions {
                     };
                     self.native_controller_breath_assessment
                         .replace_volume_settings(at, settings);
-                    self.native_controller_breath_assessment.configure(at);
+                    let calibration = self.native_controller_breath_assessment.configure(at);
+                    crate::breath_composition_runtime::submit_calibration(
+                        BreathCompositionSource::Controller,
+                        &calibration,
+                    );
                 }
                 AdapterAction::Start(generation) => {
-                    self.native_controller_breath_assessment
+                    let calibration = self
+                        .native_controller_breath_assessment
                         .start(at, generation);
+                    crate::breath_composition_runtime::submit_calibration(
+                        BreathCompositionSource::Controller,
+                        &calibration,
+                    );
                 }
                 AdapterAction::Cancel(generation) => {
-                    self.native_controller_breath_assessment
+                    let calibration = self
+                        .native_controller_breath_assessment
                         .cancel(at, generation);
+                    crate::breath_composition_runtime::submit_calibration(
+                        BreathCompositionSource::Controller,
+                        &calibration,
+                    );
                 }
                 AdapterAction::Reset => {
-                    self.native_controller_breath_assessment.reset(at);
+                    let calibration = self.native_controller_breath_assessment.reset(at);
+                    crate::breath_composition_runtime::submit_calibration(
+                        BreathCompositionSource::Controller,
+                        &calibration,
+                    );
                 }
             }
+        }
+    }
+
+    fn observe_composition_controller_missing(
+        &mut self,
+        at: BreathTimestampMicros,
+        sequence_id: u64,
+    ) {
+        if !crate::breath_composition_runtime::controller_selected() {
+            return;
+        }
+        let Some(generation) = self.native_controller_breath_assessment.active_generation() else {
+            return;
+        };
+        let result = self.native_controller_breath_assessment.observe(
+            at,
+            generation,
+            OpenXrControllerPoseInput::Missing { sequence_id },
+        );
+        crate::breath_composition_runtime::submit_calibration(
+            BreathCompositionSource::Controller,
+            &result.calibration,
+        );
+        if let Some(assessment) = result.assessment {
+            crate::breath_composition_runtime::submit_assessment(
+                at,
+                BreathCompositionSource::Controller,
+                assessment,
+            );
         }
     }
 
@@ -680,7 +727,13 @@ impl StimulusVolumeActions {
         breath_haptics_enabled: bool,
     ) -> NativeRendererControllerEvents {
         let mut events = NativeRendererControllerEvents::default();
+        let observed_at = xr_time_micros(predicted_display_time);
+        if crate::breath_composition_runtime::controller_adapter_available() {
+            self.apply_composition_controller_actions(observed_at);
+        }
         if let Err(error) = session.sync_actions(&[(&self.action_set).into()]) {
+            self.observe_composition_controller_missing(observed_at, frame_count.saturating_add(1));
+            crate::breath_composition_runtime::poll_polar(observed_at);
             if frame_count == 0 || frame_count % 120 == 0 {
                 crate::marker(
                         "projection-target-input",
@@ -763,17 +816,11 @@ impl StimulusVolumeActions {
         let private_particle_breath_assessment_enabled = self
             .private_particle_breath_state_driver_settings
             .uses_native_controller_assessment();
-        let composition_controller_available =
-            crate::breath_composition_runtime::controller_adapter_available();
         let composition_controller_enabled =
             crate::breath_composition_runtime::controller_selected();
         let native_controller_breath_enabled = projection_native_controller_breath_enabled
             || private_particle_breath_assessment_enabled
             || composition_controller_enabled;
-        let observed_at = xr_time_micros(predicted_display_time);
-        if composition_controller_available {
-            self.apply_composition_controller_actions(observed_at);
-        }
         let right_grip_pose_sample = if breath_haptics_enabled || native_controller_breath_enabled {
             self.locate_right_grip_pose_sample(
                 reference_space,

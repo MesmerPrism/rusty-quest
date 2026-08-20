@@ -95,9 +95,14 @@ direction changes clear it. Native Renderer owns the single-process adapter:
 the existing OpenXR action owner supplies controller assessments, the existing
 PMD/JNI owner supplies Polar ACC, and RR is never consumed by the breath
 runtime. `ControlPanelActivity` submits low-rate requests and displays only
-native-effective readback. The source-only resolver records the exact feature
-closure and a deterministic activation binding; unselected descriptors remain
-inert.
+native-effective readback while reusing its sole Polar acquisition owner for
+the ACC scan/connect/start path. Adapter action admission is bounded and
+transactional, and action-sync failure still advances missing/stale clearing.
+The source-only resolver records the exact feature closure and a deterministic
+activation binding in the runtime profile, settings/property adapters, and
+locked build environment. The native runtime activates only when the observed
+property equals the resolver-derived digest packaged into that specific build;
+missing, malformed, mismatched, disabled, and unselected closures remain inert.
 
 The crate owns no source acquisition, source-specific units or deadbands,
 UI, transport, platform lifecycle, rendering, or application interpretation.
