@@ -456,15 +456,15 @@ mod tests {
         ManifoldBrokerProductLock,
         QuestBrokerAndroidManifestProjection,
     ) {
-        let active = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
-        let spec = active.join(format!(
-            "rusty-manifold/fixtures/broker-product/{name}.json"
+        let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let spec = manifest_dir.join(format!(
+            "../../../rusty-manifold/fixtures/broker-product/{name}.json"
         ));
-        let lock = active.join(format!(
-            "rusty-manifold/fixtures/broker-product/{name}.lock.json"
+        let lock = manifest_dir.join(format!(
+            "../../../rusty-manifold/fixtures/broker-product/{name}.lock.json"
         ));
-        let projection = active.join(format!(
-            "rusty-quest/fixtures/broker-products/{name}.manifest.json"
+        let projection = manifest_dir.join(format!(
+            "../../fixtures/broker-products/{name}.manifest.json"
         ));
         (
             serde_json::from_str(&std::fs::read_to_string(spec).expect("spec")).expect("spec"),
