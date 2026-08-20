@@ -73,10 +73,16 @@ live filtering, and adaptive expansion/contraction is step- and extent-bounded.
 Generation, lifecycle, malformed input, timeout cause, degenerate axis, and
 insufficient span all remain typed and fail closed.
 
+The crate's common assessment boundary carries optional bounded volume, a
+minimal normalized phase, calibration lifecycle, tracking state, and quality.
+It defines no classifier policy. Native Renderer owns the separate controller
+adapter that validates OpenXR pose frames, preserves the existing
+rotation/motion/tracking guards, selects fixed-orientation or dynamic-axis
+calibration, and emits concurrent phase and volume without application mapping.
+
 The crate owns no source acquisition, source-specific units or deadbands,
 phase estimator, UI, transport, platform lifecycle, rendering, or application
-interpretation. Adapters may consume the contract only in later explicit
-feature slices; crate presence alone activates nothing.
+interpretation. Crate presence alone activates nothing.
 
 ## Attended Package Updater
 

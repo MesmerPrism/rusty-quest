@@ -25,6 +25,11 @@ Median-of-five plus EMA filtering runs for every valid ready-state frame;
 bounded adaptive-limit maintenance runs only on analysis ticks. A synthetic
 fixture proves a rapid live change is visible before the next analysis tick.
 
+The `assessment` module provides a minimal source-neutral observation boundary
+for concurrent optional volume and normalized phase plus calibration lifecycle,
+tracking state, and bounded quality. It deliberately defines no classifier,
+hysteresis, dwell, endpoint, source, or application policy.
+
 Source acquisition, source-specific units and policy, phase estimation, UI,
 transport, rendering, and application interpretation are deliberately outside
 this crate.

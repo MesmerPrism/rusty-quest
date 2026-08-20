@@ -102,6 +102,7 @@ mod native_renderer_stimulus_volume_options;
 mod native_renderer_timing;
 mod native_renderer_video_projection_options;
 mod native_renderer_visual_options;
+mod openxr_controller_breath_adapter;
 #[cfg(target_os = "android")]
 mod openxr_environment_depth;
 #[cfg(target_os = "android")]

@@ -195,13 +195,17 @@ the selected driver slots, ACC range, RR range, pulse envelope, panel mode, and
 all visual interpretation.
 
 Direct breath selection treats source and mapping as independent dimensions.
-The current public matrix accepts `controller` + `state` and `polar-acc` +
-`volume`. `controller` + `volume` and `polar-acc` + `state` are typed
-unavailable combinations until their estimators exist. Unknown, incomplete,
-unavailable, stale, malformed, denied, and unselected requests remain inert;
-none are silently reclassified as ordinary disabled state or routed through a
-broker. Native-effective markers report the requested source, mapping, and
-selection status separately from the legacy combined mode marker.
+The current public matrix accepts `controller` + `state`, `controller` +
+`volume`, and `polar-acc` + `volume`; `polar-acc` + `state` remains a typed
+unavailable combination. The controller assessment adapts the existing OpenXR
+right-grip pose into fixed-orientation or dynamic-motion-axis accepted-frame
+calibration and emits bounded volume concurrently with the normalized current
+phase classifier. This assessment does not itself map volume into a private
+driver. Unknown, incomplete, unavailable, stale, malformed, denied, and
+unselected requests remain inert; none are silently reclassified as ordinary
+disabled state or routed through a broker. Native-effective markers report the
+requested source, mapping, estimator generation, tracking state, calibration,
+and selection status separately from the legacy combined mode marker.
 
 The Rust core proves Android package, NativeActivity entry, NDK camera/HWB
 acquisition shape, native timing counters, OpenXR loader packaging, an

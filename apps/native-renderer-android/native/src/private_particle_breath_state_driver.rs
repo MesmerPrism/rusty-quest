@@ -4,9 +4,11 @@
 //! breath phase is integrated into one normalized driver-bank value. Private
 //! payloads own the downstream meaning of the selected slot.
 
+use rusty_quest_breath_contract::assessment::CommonBreathPhase;
+
 use crate::{
-    breath_input_selection::BreathInputSelection,
-    native_controller_breath_state::{NativeControllerBreathPhase, NativeControllerBreathSample},
+    breath_input_selection::{BreathInputSelection, ControllerVolumeKind},
+    native_controller_breath_state::NativeControllerBreathSample,
     native_renderer_properties::{
         PROP_PRIVATE_PARTICLES_BREATH_STATE_DRIVER_ACC_AXIS,
         PROP_PRIVATE_PARTICLES_BREATH_STATE_DRIVER_ACC_MAX_MG,
@@ -105,6 +107,14 @@ impl PrivateParticleBreathStateDriverSettings {
         self.selection.uses_controller_state()
     }
 
+    pub(crate) fn uses_native_controller_assessment(self) -> bool {
+        self.selection.uses_controller_state() || self.selection.uses_controller_volume()
+    }
+
+    pub(crate) fn controller_volume_kind(self) -> Option<ControllerVolumeKind> {
+        self.selection.controller_volume_kind()
+    }
+
     pub(crate) fn enabled(self) -> bool {
         self.uses_native_controller_state()
             || (self.selection.uses_polar_acc_volume() && self.acc_max_mg > self.acc_min_mg)
@@ -117,6 +127,8 @@ impl PrivateParticleBreathStateDriverSettings {
     pub(crate) fn parameter_source(self) -> &'static str {
         if self.selection.uses_controller_state() {
             "native-controller-breath-state-driver"
+        } else if self.selection.uses_controller_volume() {
+            "native-controller-breath-volume-assessment"
         } else if self.selection.uses_polar_acc_volume() {
             "polar-acc-normalized-breath-source"
         } else if self.selection.status_marker() == "disabled" {
@@ -165,7 +177,7 @@ impl Default for PrivateParticleBreathStateDriverSettings {
 pub(crate) struct PrivateParticleBreathStateDriver {
     settings: PrivateParticleBreathStateDriverSettings,
     value01: f32,
-    phase: NativeControllerBreathPhase,
+    phase: CommonBreathPhase,
     last_sequence_id: Option<u64>,
     received_samples: u64,
     age_seconds: f32,
@@ -181,7 +193,7 @@ impl PrivateParticleBreathStateDriver {
         Self {
             settings,
             value01: initial_value01.clamp(0.0, 1.0),
-            phase: NativeControllerBreathPhase::Unknown,
+            phase: CommonBreathPhase::Unknown,
             last_sequence_id: None,
             received_samples: 0,
             age_seconds: 0.0,
@@ -233,19 +245,19 @@ impl PrivateParticleBreathStateDriver {
             return;
         }
         match self.phase {
-            NativeControllerBreathPhase::Inhale => {
+            CommonBreathPhase::Inhale => {
                 self.value01 = (self.value01
                     + delta_for_seconds(dt_seconds, self.settings.inhale_seconds_min_to_max))
                 .clamp(0.0, 1.0);
             }
-            NativeControllerBreathPhase::Exhale => {
+            CommonBreathPhase::Exhale => {
                 self.value01 = (self.value01
                     - delta_for_seconds(dt_seconds, self.settings.exhale_seconds_max_to_min))
                 .clamp(0.0, 1.0);
             }
-            NativeControllerBreathPhase::Unknown
-            | NativeControllerBreathPhase::Pause
-            | NativeControllerBreathPhase::BadTracking => {}
+            CommonBreathPhase::Unknown
+            | CommonBreathPhase::Hold
+            | CommonBreathPhase::BadTracking => {}
         }
     }
 
@@ -266,7 +278,7 @@ impl PrivateParticleBreathStateDriver {
             "{} privateParticleBreathStateDriverValue01={:.3} privateParticleBreathStateDriverPhase={} privateParticleBreathStateDriverLastSequenceId={} privateParticleBreathStateDriverAgeMs={} privateParticleBreathStateDriverReceivedSamples={} privateParticleBreathStateDriverLastPolarAccTransportSequenceId={} {}",
             self.settings.marker_fields(),
             self.value01,
-            self.phase.marker_value(),
+            self.phase.as_str(),
             self.last_sequence_id
                 .map(|sequence_id| sequence_id.to_string())
                 .unwrap_or_else(|| "none".to_owned()),
@@ -343,12 +355,7 @@ mod tests {
 
     #[test]
     fn unavailable_and_unknown_modes_are_rejected_and_inert() {
-        for mode in [
-            "direct-controller-volume-fixed-orientation",
-            "direct-controller-volume-dynamic-motion-axis",
-            "polar-acc-state",
-            "unknown-mode",
-        ] {
+        for mode in ["polar-acc-state", "unknown-mode"] {
             let settings = PrivateParticleBreathStateDriverSettings::from_property_lookup(|name| {
                 (name == "debug.rustyquest.native_renderer.private_particles.breath_state_driver.mode")
                     .then(|| mode.to_owned())
@@ -368,17 +375,42 @@ mod tests {
     }
 
     #[test]
+    fn controller_volume_assessment_is_selected_without_private_driver_mapping() {
+        for mode in [
+            "direct-controller-volume-fixed-orientation",
+            "direct-controller-volume-dynamic-motion-axis",
+        ] {
+            let settings = PrivateParticleBreathStateDriverSettings::from_property_lookup(|name| {
+                (name == "debug.rustyquest.native_renderer.private_particles.breath_state_driver.mode")
+                    .then(|| mode.to_owned())
+            });
+            assert!(settings.uses_native_controller_assessment());
+            assert!(settings.controller_volume_kind().is_some());
+            assert!(!settings.enabled());
+            assert_eq!(
+                settings.parameter_source(),
+                "native-controller-breath-volume-assessment"
+            );
+
+            let driver = PrivateParticleBreathStateDriver::new(settings, 0.5);
+            let mut values = [0.25; 8];
+            assert!(!driver.apply_to_driver_values(&mut values));
+            assert_eq!(values, [0.25; 8]);
+        }
+    }
+
+    #[test]
     fn state_ramp_is_time_based_and_writes_selected_slot() {
         let mut driver = PrivateParticleBreathStateDriver::new(settings(), 0.5);
         driver.apply_sample(NativeControllerBreathSample {
-            phase: NativeControllerBreathPhase::Inhale,
+            phase: CommonBreathPhase::Inhale,
             sequence_id: 1,
         });
         driver.update_frame(1.0);
         assert!((driver.value01() - 0.75).abs() < 0.0001);
 
         driver.apply_sample(NativeControllerBreathSample {
-            phase: NativeControllerBreathPhase::Exhale,
+            phase: CommonBreathPhase::Exhale,
             sequence_id: 2,
         });
         driver.update_frame(0.5);
@@ -392,10 +424,7 @@ mod tests {
     #[test]
     fn pause_and_bad_tracking_hold_last_value() {
         let mut driver = PrivateParticleBreathStateDriver::new(settings(), 0.25);
-        for phase in [
-            NativeControllerBreathPhase::Pause,
-            NativeControllerBreathPhase::BadTracking,
-        ] {
+        for phase in [CommonBreathPhase::Hold, CommonBreathPhase::BadTracking] {
             driver.apply_sample(NativeControllerBreathSample {
                 phase,
                 sequence_id: 10,

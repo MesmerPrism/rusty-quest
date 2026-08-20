@@ -28,6 +28,13 @@ pub(crate) enum BreathMappingKind {
     State,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum ControllerVolumeKind {
+    FixedOrientation,
+    #[default]
+    DynamicMotionAxis,
+}
+
 impl BreathMappingKind {
     pub(crate) fn marker_value(self) -> &'static str {
         match self {
@@ -66,6 +73,7 @@ impl BreathSelectionStatus {
 pub(crate) struct BreathInputSelection {
     source: Option<BreathSourceKind>,
     mapping: Option<BreathMappingKind>,
+    controller_volume: Option<ControllerVolumeKind>,
     status: BreathSelectionStatus,
 }
 
@@ -83,6 +91,7 @@ impl BreathInputSelection {
             return Self {
                 source: parse_source(&source),
                 mapping: parse_mapping(&mapping),
+                controller_volume: None,
                 status: BreathSelectionStatus::RejectedIncomplete,
             };
         }
@@ -91,6 +100,7 @@ impl BreathInputSelection {
             return Self {
                 source: None,
                 mapping: parse_mapping(&mapping),
+                controller_volume: None,
                 status: BreathSelectionStatus::RejectedUnsupportedSource,
             };
         };
@@ -98,6 +108,7 @@ impl BreathInputSelection {
             return Self {
                 source: Some(source),
                 mapping: None,
+                controller_volume: None,
                 status: BreathSelectionStatus::RejectedUnsupportedMapping,
             };
         };
@@ -117,10 +128,11 @@ impl BreathInputSelection {
             "polar-acc-normalized" => {
                 Self::from_pair(BreathSourceKind::PolarAcc, BreathMappingKind::Volume)
             }
-            "direct-controller-volume-fixed-orientation"
-            | "direct-controller-volume-dynamic-motion-axis"
-            | "controller-volume" => {
-                Self::from_pair(BreathSourceKind::Controller, BreathMappingKind::Volume)
+            "direct-controller-volume-fixed-orientation" => {
+                Self::controller_volume(ControllerVolumeKind::FixedOrientation)
+            }
+            "direct-controller-volume-dynamic-motion-axis" | "controller-volume" => {
+                Self::controller_volume(ControllerVolumeKind::DynamicMotionAxis)
             }
             "polar-acc-state" => {
                 Self::from_pair(BreathSourceKind::PolarAcc, BreathMappingKind::State)
@@ -128,6 +140,7 @@ impl BreathInputSelection {
             _ => Self {
                 source: None,
                 mapping: None,
+                controller_volume: None,
                 status: BreathSelectionStatus::RejectedUnsupportedMode,
             },
         }
@@ -136,6 +149,7 @@ impl BreathInputSelection {
     fn from_pair(source: BreathSourceKind, mapping: BreathMappingKind) -> Self {
         let status = match (source, mapping) {
             (BreathSourceKind::Controller, BreathMappingKind::State)
+            | (BreathSourceKind::Controller, BreathMappingKind::Volume)
             | (BreathSourceKind::PolarAcc, BreathMappingKind::Volume) => {
                 BreathSelectionStatus::Accepted
             }
@@ -144,7 +158,19 @@ impl BreathInputSelection {
         Self {
             source: Some(source),
             mapping: Some(mapping),
+            controller_volume: (source == BreathSourceKind::Controller
+                && mapping == BreathMappingKind::Volume)
+                .then_some(ControllerVolumeKind::DynamicMotionAxis),
             status,
+        }
+    }
+
+    fn controller_volume(kind: ControllerVolumeKind) -> Self {
+        Self {
+            source: Some(BreathSourceKind::Controller),
+            mapping: Some(BreathMappingKind::Volume),
+            controller_volume: Some(kind),
+            status: BreathSelectionStatus::Accepted,
         }
     }
 
@@ -152,6 +178,7 @@ impl BreathInputSelection {
         Self {
             source: None,
             mapping: None,
+            controller_volume: None,
             status: BreathSelectionStatus::Disabled,
         }
     }
@@ -170,6 +197,17 @@ impl BreathInputSelection {
         self.accepted()
             && self.source == Some(BreathSourceKind::PolarAcc)
             && self.mapping == Some(BreathMappingKind::Volume)
+    }
+
+    pub(crate) fn uses_controller_volume(self) -> bool {
+        self.accepted()
+            && self.source == Some(BreathSourceKind::Controller)
+            && self.mapping == Some(BreathMappingKind::Volume)
+    }
+
+    pub(crate) fn controller_volume_kind(self) -> Option<ControllerVolumeKind> {
+        self.uses_controller_volume()
+            .then_some(self.controller_volume.unwrap_or_default())
     }
 
     pub(crate) fn source_marker(self) -> &'static str {
@@ -191,6 +229,10 @@ impl BreathInputSelection {
     pub(crate) fn effective_mode_marker(self) -> &'static str {
         if self.uses_controller_state() {
             "direct-controller-state"
+        } else if self.controller_volume_kind() == Some(ControllerVolumeKind::FixedOrientation) {
+            "direct-controller-volume-fixed-orientation"
+        } else if self.uses_controller_volume() {
+            "direct-controller-volume-dynamic-motion-axis"
         } else if self.uses_polar_acc_volume() {
             "polar-acc-normalized"
         } else {
@@ -230,9 +272,10 @@ mod tests {
     #[test]
     fn source_and_mapping_form_an_independent_four_way_matrix() {
         assert!(select("controller", "state").accepted());
+        assert!(select("controller", "volume").accepted());
         assert!(select("polar-acc", "volume").accepted());
 
-        for selection in [select("controller", "volume"), select("polar-acc", "state")] {
+        for selection in [select("polar-acc", "state")] {
             assert!(!selection.accepted());
             assert_eq!(
                 selection.status,
@@ -242,19 +285,27 @@ mod tests {
     }
 
     #[test]
-    fn unavailable_legacy_modes_are_rejected_instead_of_disabled() {
-        for mode in [
-            "direct-controller-volume-fixed-orientation",
-            "direct-controller-volume-dynamic-motion-axis",
-            "polar-acc-state",
+    fn controller_volume_variants_are_explicit_and_polar_state_remains_unavailable() {
+        for (mode, kind) in [
+            (
+                "direct-controller-volume-fixed-orientation",
+                ControllerVolumeKind::FixedOrientation,
+            ),
+            (
+                "direct-controller-volume-dynamic-motion-axis",
+                ControllerVolumeKind::DynamicMotionAxis,
+            ),
         ] {
             let selection = BreathInputSelection::from_legacy_mode_property(Some(mode.to_owned()));
-            assert_eq!(
-                selection.status,
-                BreathSelectionStatus::RejectedUnavailableCombination
-            );
-            assert_ne!(selection.status, BreathSelectionStatus::Disabled);
+            assert!(selection.accepted());
+            assert_eq!(selection.controller_volume_kind(), Some(kind));
         }
+        let unavailable =
+            BreathInputSelection::from_legacy_mode_property(Some("polar-acc-state".to_owned()));
+        assert_eq!(
+            unavailable.status,
+            BreathSelectionStatus::RejectedUnavailableCombination
+        );
     }
 
     #[test]
@@ -278,5 +329,17 @@ mod tests {
         assert!(!disabled.accepted());
         assert_eq!(disabled.source_marker(), "none");
         assert_eq!(disabled.mapping_marker(), "none");
+    }
+
+    #[test]
+    fn source_switching_does_not_leave_controller_assessment_selected() {
+        let controller = select("controller", "volume");
+        assert!(controller.uses_controller_volume());
+        assert!(!controller.uses_polar_acc_volume());
+
+        let polar = select("polar-acc", "volume");
+        assert!(!polar.uses_controller_volume());
+        assert_eq!(polar.controller_volume_kind(), None);
+        assert!(polar.uses_polar_acc_volume());
     }
 }

@@ -14,6 +14,7 @@ name = "rusty_quest_native_renderer"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
+rusty-quest-breath-contract = { path = "../../../crates/rusty-quest-breath-contract" }
 rusty-quest-native-renderer-contracts = { package = "rusty-quest-native-renderer", path = "../../../crates/rusty-quest-native-renderer" }
 rusty-quest-particle-adapter = { path = "../../../crates/rusty-quest-particle-adapter" }
 rusty-quest-hand-adapter = { path = "../../../crates/rusty-quest-hand-adapter" }

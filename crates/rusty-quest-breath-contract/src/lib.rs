@@ -3,6 +3,7 @@
 //! The contract has no clock, thread, platform, transport, sensor, or renderer
 //! dependency. Callers inject timestamps and explicit lifecycle actions.
 
+pub mod assessment;
 pub mod calibration;
 
 /// Observation schema emitted by this contract.

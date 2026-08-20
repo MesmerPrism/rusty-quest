@@ -36,6 +36,8 @@ The pure breath lifecycle has a dependency-free focused gate:
 
 ```powershell
 cargo test -p rusty-quest-breath-contract --locked
+cargo test -p rusty-quest-native-renderer-android-native openxr_controller_breath_adapter --locked
+cargo test -p rusty-quest-native-renderer-android-native native_controller_breath_state --locked
 ```
 
 Its unit and fixture tests cover disabled construction, configuration and
@@ -47,8 +49,12 @@ fixtures add principal, diagonal, rotated, XZ, bias, noise, spike, stationary,
 insufficient-motion, degenerate-axis, insufficient-span, virtual-time timeout,
 inversion, adaptive-limit, and rapid-live-response cases. The rapid case proves
 a valid post-calibration frame updates filtered bounded output before the next
-10 Hz analysis tick. This gate does not execute Android, JNI, OpenXR, Gradle,
-rendering, APK, ADB, or device work.
+10 Hz analysis tick. The native controller gates cover fixed and dynamic pose
+projection, rotated axes, calibration travel, rotation/motion/tracking guards,
+admission failures, missing/stale/malformed/disabled input, reset and generation
+fencing, variable cadence, 72/90/120 Hz phase parity, and concurrent phase plus
+volume. They exercise the host-testable adapter without acquiring an OpenXR
+session. These gates do not execute Gradle, rendering, APK, ADB, or device work.
 
 When a pull request changes `.github/` or a package-updater validation or
 publication authority path, use

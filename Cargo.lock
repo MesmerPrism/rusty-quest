@@ -864,6 +864,7 @@ dependencies = [
  "jni 0.22.4",
  "ndk-sys",
  "openxr",
+ "rusty-quest-breath-contract",
  "rusty-quest-broker-authority",
  "rusty-quest-hand-adapter",
  "rusty-quest-native-renderer",

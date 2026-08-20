@@ -24,6 +24,10 @@ fn forbidden_terms() -> Vec<String> {
 }
 
 fn collect_files(root: &Path, files: &mut Vec<std::path::PathBuf>) {
+    if root.is_file() {
+        files.push(root.to_path_buf());
+        return;
+    }
     for entry in fs::read_dir(root).expect("scan directory") {
         let path = entry.expect("scan entry").path();
         if path.is_dir() {
@@ -44,6 +48,10 @@ fn contract_and_fixtures_contain_no_downstream_material() {
     let roots = [
         manifest_root.to_path_buf(),
         repository_root.join("fixtures/breath-contract"),
+        repository_root
+            .join("apps/native-renderer-android/native/src/openxr_controller_breath_adapter.rs"),
+        repository_root
+            .join("apps/native-renderer-android/native/src/native_controller_breath_state.rs"),
     ];
     let mut files = Vec::new();
     for root in roots {

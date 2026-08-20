@@ -402,8 +402,13 @@ telemetry, and a bounded replay harness. Its separate accepted-frame
 calibration module owns useful-signal and motion admission, analysis capped at
 10 Hz, deterministic PCA with XZ support, robust bounds, live filtering, and
 bounded adaptive limits. The live path remains input-cadence responsive after
-calibration. The crate starts disabled and has no Android, JNI, OpenXR,
-renderer, broker, source acquisition, phase, or application-mapping behavior.
+calibration. A minimal common assessment vocabulary combines optional bounded
+volume with a normalized phase, calibration lifecycle, tracking state, and
+quality; source-specific classifiers remain outside the crate. The native
+renderer has a separate host-testable adapter that converts OpenXR right-grip
+poses into fixed-orientation or dynamically calibrated controller assessment.
+The crate starts disabled and has no Android, JNI, OpenXR, renderer, broker,
+source acquisition, phase-estimation, or application-mapping behavior.
 
 New native APK variants must start from the source-only native app-build
 workflow instead of hand-editing runtime profiles, Android manifest
