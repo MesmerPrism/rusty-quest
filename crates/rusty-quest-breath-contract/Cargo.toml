@@ -1,0 +1,15 @@
+[package]
+name = "rusty-quest-breath-contract"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Pure deterministic lifecycle and observation contract for bounded breath inputs."
+
+[dev-dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[lints]
+workspace = true

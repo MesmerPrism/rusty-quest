@@ -394,6 +394,14 @@ driver-bank slot. Rusty Quest owns only the controller classifier,
 driver-slot transport, and effective markers; downstream private payloads own
 the meaning of the selected slot.
 
+`crates/rusty-quest-breath-contract` is the source-neutral host core beneath
+future breath adapters. It owns only the deterministic
+Reset/Configure/Start/Cancel/Observe lifecycle, injected microsecond time,
+fresh-generation fencing, bounded normalized sample admission, neutral
+telemetry, and a bounded replay harness. It starts disabled and has no Android,
+JNI, OpenXR, renderer, broker, source-estimation, calibration, phase, or
+application-mapping behavior.
+
 New native APK variants must start from the source-only native app-build
 workflow instead of hand-editing runtime profiles, Android manifest
 permissions, or build wrapper environment variables. App-build specs under

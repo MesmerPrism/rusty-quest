@@ -54,6 +54,21 @@ apps.
   device-owner installation, Store launcher authority, and Android Package
   Installer confirmation on the wearer's behalf.
 
+## Pure Breath Contract
+
+`crates/rusty-quest-breath-contract` owns a source-neutral, dependency-free
+control core. Callers inject every timestamp and explicitly invoke
+Reset/Configure/Start/Cancel/Observe. A successful Start issues a fresh
+generation; old-generation actions cannot mutate the current generation.
+Normalized value and quality inputs are finite and bounded, replay length is
+bounded, and missing, stale, malformed, out-of-order, backwards-time, and
+forward-discontinuity outcomes remain distinct in neutral low-rate telemetry.
+
+The crate owns no source acquisition, calibration, phase estimator, UI,
+transport, platform lifecycle, rendering, or application interpretation.
+Adapters may consume the contract only in later explicit feature slices; crate
+presence alone activates nothing.
+
 ## Attended Package Updater
 
 `crates/rusty-quest-package-updater` owns the strict

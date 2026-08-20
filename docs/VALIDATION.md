@@ -32,6 +32,19 @@ Validate the host contract before a focused or aggregate run:
 pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-PowerShellHost.ps1 -SelfTest
 ```
 
+The pure breath lifecycle has a dependency-free focused gate:
+
+```powershell
+cargo test -p rusty-quest-breath-contract --locked
+```
+
+Its unit and fixture tests cover disabled construction, configuration and
+normalized-input bounds, Reset/Configure/Start/Cancel/Observe transitions,
+injected-time regression and discontinuity, generation isolation, missing,
+stale, malformed and out-of-order input, deterministic bounded replay,
+over-limit replay rejection, and downstream-material absence. This gate does
+not execute Android, JNI, OpenXR, Gradle, rendering, APK, ADB, or device work.
+
 When a pull request changes `.github/` or a package-updater validation or
 publication authority path, use
 [`EXTERNAL_VALIDATION_AUTHORITY.md`](EXTERNAL_VALIDATION_AUTHORITY.md). Run the
