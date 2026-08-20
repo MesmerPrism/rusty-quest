@@ -75,14 +75,22 @@ insufficient span all remain typed and fail closed.
 
 The crate's common assessment boundary carries optional bounded volume, a
 minimal normalized phase, calibration lifecycle, tracking state, and quality.
-It defines no classifier policy. Native Renderer owns the separate controller
-adapter that validates OpenXR pose frames, preserves the existing
+The separate pure phase owner accepts only a bounded normalized scalar and
+injected timestamps. It owns derivative-per-second filtering, enter/exit
+hysteresis, confirmation, minimum dwell, genuine Hold, inversion, candidate
+telemetry, and typed history reset; it owns no source acquisition. Native
+Renderer owns the separate controller adapter that validates OpenXR pose
+frames, preserves the existing
 rotation/motion/tracking guards, selects fixed-orientation or dynamic-axis
-calibration, and emits concurrent phase and volume without application mapping.
+calibration, normalizes its established classifier into the common vocabulary,
+and emits concurrent phase and volume without application mapping. Its Polar
+adapter translates typed PMD/JNI ACC frames into calibrated XZ or 3D volume and
+feeds only ready calibrated volume to the pure phase owner. RR never enters
+that path.
 
 The crate owns no source acquisition, source-specific units or deadbands,
-phase estimator, UI, transport, platform lifecycle, rendering, or application
-interpretation. Crate presence alone activates nothing.
+UI, transport, platform lifecycle, rendering, runtime activation, or
+application interpretation. Crate presence alone activates nothing.
 
 ## Attended Package Updater
 

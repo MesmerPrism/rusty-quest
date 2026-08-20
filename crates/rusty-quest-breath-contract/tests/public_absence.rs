@@ -52,6 +52,7 @@ fn contract_and_fixtures_contain_no_downstream_material() {
             .join("apps/native-renderer-android/native/src/openxr_controller_breath_adapter.rs"),
         repository_root
             .join("apps/native-renderer-android/native/src/native_controller_breath_state.rs"),
+        repository_root.join("apps/native-renderer-android/native/src/polar_acc_breath_adapter.rs"),
     ];
     let mut files = Vec::new();
     for root in roots {

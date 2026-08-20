@@ -5,6 +5,7 @@
 
 pub mod assessment;
 pub mod calibration;
+pub mod phase;
 
 /// Observation schema emitted by this contract.
 pub const BREATH_CONTRACT_OBSERVATION_SCHEMA_ID: &str =

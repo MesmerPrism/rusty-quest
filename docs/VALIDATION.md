@@ -50,7 +50,11 @@ fixtures add principal, diagonal, rotated, XZ, bias, noise, spike, stationary,
 insufficient-motion, degenerate-axis, insufficient-span, virtual-time timeout,
 inversion, adaptive-limit, and rapid-live-response cases. The rapid case proves
 a valid post-calibration frame updates filtered bounded output before the next
-10 Hz analysis tick. The native controller gates cover fixed and dynamic pose
+10 Hz analysis tick. Phase fixtures add timestamp-aware derivative filtering,
+entry/exit hysteresis, directional and Hold confirmation, minimum dwell,
+asymmetric rates, endpoint holds, drift, shallow/noisy input, variable/dropped
+samples, stale reconnect, discontinuity, source reset, inversion, deterministic
+replay, and 72/90/120 Hz parity. The native controller gates cover fixed and dynamic pose
 projection, rotated axes, calibration travel, rotation/motion/tracking guards,
 admission failures, missing/stale/malformed/disabled input, reset and generation
 fencing, variable cadence, 72/90/120 Hz phase parity, and concurrent phase plus
@@ -59,8 +63,8 @@ session. The Polar adapter gate covers typed PMD/JNI translation, independent
 ACC/RR sequencing, timestamp and unit normalization, XZ-default and explicit
 3D calibration, realistic gravity and rotated motion, bounded fast live
 volume, adaptive limits, stale/missing/malformed/out-of-order input, retry,
-reset, and deterministic actions. Polar phase remains unknown until its
-separate timestamp-aware classifier is present. These gates do not execute
+reset, deterministic actions, ready-calibrated phase progression, genuine
+Hold, and fail-closed phase reset. These gates do not execute
 Gradle, rendering, APK, ADB, or device work.
 
 When a pull request changes `.github/` or a package-updater validation or

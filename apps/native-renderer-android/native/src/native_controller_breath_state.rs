@@ -168,6 +168,7 @@ pub(crate) struct NativeControllerBreathStateEstimator {
     sequence_id: u64,
     emitted_samples: u64,
     tracking_loss_samples: u64,
+    last_phase: CommonBreathPhase,
 }
 
 impl NativeControllerBreathStateEstimator {
@@ -178,6 +179,7 @@ impl NativeControllerBreathStateEstimator {
             sequence_id: 0,
             emitted_samples: 0,
             tracking_loss_samples: 0,
+            last_phase: CommonBreathPhase::Unknown,
         }
     }
 
@@ -202,6 +204,7 @@ impl NativeControllerBreathStateEstimator {
         };
         self.sequence_id = self.sequence_id.saturating_add(1);
         self.emitted_samples = self.emitted_samples.saturating_add(1);
+        self.last_phase = phase;
         NativeControllerBreathSample {
             phase,
             sequence_id: self.sequence_id,
@@ -210,12 +213,16 @@ impl NativeControllerBreathStateEstimator {
 
     pub(crate) fn reset_history(&mut self) {
         self.classifier.reset();
+        self.last_phase = CommonBreathPhase::Unknown;
     }
 
     pub(crate) fn marker_fields(&self) -> String {
         format!(
-            "nativeControllerBreathSamples={} nativeControllerBreathTrackingLossSamples={} nativeControllerBreathLastSequenceId={}",
-            self.emitted_samples, self.tracking_loss_samples, self.sequence_id
+            "nativeControllerBreathSamples={} nativeControllerBreathTrackingLossSamples={} nativeControllerBreathLastSequenceId={} nativeControllerBreathPhase={}",
+            self.emitted_samples,
+            self.tracking_loss_samples,
+            self.sequence_id,
+            self.last_phase.as_str(),
         )
     }
 }
@@ -555,6 +562,29 @@ mod tests {
             input_state(estimator.push_pose_sample(Some(sample_at(0.2, 0.004, true)))),
             ProjectionTargetBreathState::Pause
         );
+    }
+
+    #[test]
+    fn controller_outputs_the_normalized_common_phase_vocabulary_and_genuine_hold() {
+        let mut estimator = NativeControllerBreathStateEstimator::new(test_settings());
+        let hold = estimator.push_breath_sample(Some(sample_at(0.0, 0.0, true)));
+        assert_eq!(hold.phase, CommonBreathPhase::Hold);
+        assert!(matches!(
+            hold.projection_target_input(),
+            ProjectionTargetInput::BreathState {
+                state: ProjectionTargetBreathState::Pause,
+                sequence_id: Some(1),
+            }
+        ));
+        assert!(estimator
+            .marker_fields()
+            .contains("nativeControllerBreathPhase=hold"));
+        estimator.reset_history();
+        assert!(estimator
+            .marker_fields()
+            .contains("nativeControllerBreathPhase=unknown"));
+        let bad = estimator.push_breath_sample(None);
+        assert_eq!(bad.phase, CommonBreathPhase::BadTracking);
     }
 
     #[test]

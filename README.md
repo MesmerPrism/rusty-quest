@@ -402,19 +402,23 @@ telemetry, and a bounded replay harness. Its separate accepted-frame
 calibration module owns useful-signal and motion admission, analysis capped at
 10 Hz, deterministic PCA with XZ support, robust bounds, live filtering, and
 bounded adaptive limits. The live path remains input-cadence responsive after
-calibration. A minimal common assessment vocabulary combines optional bounded
-volume with a normalized phase, calibration lifecycle, tracking state, and
-quality; source-specific classifiers remain outside the crate. The native
+calibration. Its phase module classifies a normalized signal using
+timestamp-aware derivative, filtering, enter/exit hysteresis, confirmation,
+minimum dwell, genuine Hold, inversion, and typed history resets. A minimal
+common assessment vocabulary combines optional bounded volume with a
+normalized phase, calibration lifecycle, tracking state, and quality. The native
 renderer has a separate host-testable adapter that converts OpenXR right-grip
 poses into fixed-orientation or dynamically calibrated controller assessment.
 The native renderer also has a separate host-testable Polar ACC adapter that
 translates the existing typed PMD/JNI milligravity measurements, normalizes
 host and sensor monotonic timestamps plus acceleration units, and produces
-calibrated XZ-default or explicit 3D volume and quality. RR remains on its
-independent pulse lane, configured fixed ranges remain diagnostic-only, and
-Polar directional phase classification remains a later adapter-owned step.
-The crate starts disabled and has no Android, JNI, OpenXR, renderer, broker,
-source acquisition, phase-estimation, or application-mapping behavior.
+calibrated XZ-default or explicit 3D volume and quality, then feeds only ready
+normalized volume into the pure phase owner. Missing, stale, malformed,
+out-of-order, calibration, lifecycle, and timestamp-discontinuity boundaries
+clear retained phase history. RR remains on its independent pulse lane and
+configured fixed ranges remain diagnostic-only. The crate starts inert and has
+no Android, JNI, OpenXR, renderer, broker, source acquisition, runtime
+selection, or application-mapping behavior.
 
 New native APK variants must start from the source-only native app-build
 workflow instead of hand-editing runtime profiles, Android manifest

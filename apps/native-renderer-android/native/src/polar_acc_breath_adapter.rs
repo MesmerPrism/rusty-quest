@@ -2,8 +2,8 @@
 //!
 //! The existing Android PMD/JNI path remains the acquisition owner. This
 //! module translates its typed, monotonic, milligravity measurements into the
-//! source-neutral calibration contract. Application mappings and robust phase
-//! classification remain outside this boundary.
+//! source-neutral calibration and common phase contracts. Application mappings
+//! remain outside this boundary.
 
 use rusty_quest_breath_contract::{
     assessment::{
@@ -15,6 +15,10 @@ use rusty_quest_breath_contract::{
         CalibrationInputError, CalibrationLifecycle, CalibrationMotionFrame,
         CalibrationObservation, CalibrationParameters, CalibrationProjectionSpace,
         CalibrationRejection,
+    },
+    phase::{
+        CommonPhaseClassifier, CommonPhaseConfiguration, CommonPhaseConfigurationError,
+        CommonPhaseInput, CommonPhaseObservation, CommonPhaseParameters, CommonPhaseResetReason,
     },
     BreathGeneration, BreathTimestampMicros,
 };
@@ -153,6 +157,7 @@ pub(crate) struct PolarAccVolumeSettings {
     enabled: bool,
     projection: PolarAccProjection,
     calibration: CalibrationConfiguration,
+    phase: CommonPhaseConfiguration,
 }
 
 impl PolarAccVolumeSettings {
@@ -164,11 +169,23 @@ impl PolarAccVolumeSettings {
         calibration_parameters.projection_space = projection.calibration_space();
         let calibration = CalibrationConfiguration::new(calibration_parameters)
             .map_err(PolarAccVolumeSettingsError::InvalidCalibration)?;
+        let phase = CommonPhaseConfiguration::new(CommonPhaseParameters::default())
+            .map_err(PolarAccVolumeSettingsError::InvalidPhase)?;
         Ok(Self {
             enabled,
             projection,
             calibration,
+            phase,
         })
+    }
+
+    pub(crate) fn with_phase_parameters(
+        mut self,
+        parameters: CommonPhaseParameters,
+    ) -> Result<Self, PolarAccVolumeSettingsError> {
+        self.phase = CommonPhaseConfiguration::new(parameters)
+            .map_err(PolarAccVolumeSettingsError::InvalidPhase)?;
+        Ok(self)
     }
 }
 
@@ -176,6 +193,7 @@ impl PolarAccVolumeSettings {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) enum PolarAccVolumeSettingsError {
     InvalidCalibration(rusty_quest_breath_contract::calibration::CalibrationConfigurationError),
+    InvalidPhase(CommonPhaseConfigurationError),
 }
 
 /// Typed rejection while translating PMD/JNI ingress into the pure contract.
@@ -216,6 +234,7 @@ pub(crate) struct PolarAccAdapterTelemetry {
 pub(crate) struct PolarAccAssessmentResult {
     pub(crate) assessment: Option<BreathAssessmentObservation>,
     pub(crate) calibration: CalibrationObservation,
+    pub(crate) phase: Option<CommonPhaseObservation>,
     pub(crate) rejection: Option<PolarAccAssessmentRejection>,
     pub(crate) telemetry: PolarAccAdapterTelemetry,
 }
@@ -225,20 +244,24 @@ pub(crate) struct PolarAccAssessmentResult {
 pub(crate) struct PolarAccBreathAdapter {
     settings: PolarAccVolumeSettings,
     calibration: AcceptedFrameCalibration,
+    phase: CommonPhaseClassifier,
     generation: Option<BreathGeneration>,
     next_runtime_generation: u64,
     last_sensor_monotonic_time_ns: Option<u64>,
+    last_phase_observation: Option<CommonPhaseObservation>,
     telemetry: PolarAccAdapterTelemetry,
 }
 
 impl PolarAccBreathAdapter {
     pub(crate) fn new(settings: PolarAccVolumeSettings) -> Self {
         Self {
+            phase: CommonPhaseClassifier::new(settings.phase),
             settings,
             calibration: AcceptedFrameCalibration::new(),
             generation: None,
             next_runtime_generation: 1,
             last_sensor_monotonic_time_ns: None,
+            last_phase_observation: None,
             telemetry: PolarAccAdapterTelemetry::default(),
         }
     }
@@ -246,6 +269,7 @@ impl PolarAccBreathAdapter {
     pub(crate) fn configure(&mut self, at: BreathTimestampMicros) -> CalibrationObservation {
         self.generation = None;
         self.last_sensor_monotonic_time_ns = None;
+        self.reset_phase(at, CommonPhaseResetReason::CalibrationChanged);
         if !self.settings.enabled {
             return self.calibration.snapshot();
         }
@@ -273,6 +297,7 @@ impl PolarAccBreathAdapter {
                 .next_runtime_generation
                 .max(generation.get().saturating_add(1));
             self.last_sensor_monotonic_time_ns = None;
+            self.reset_phase(at, CommonPhaseResetReason::LifecycleChanged);
         }
         observation
     }
@@ -308,6 +333,7 @@ impl PolarAccBreathAdapter {
         if observation.lifecycle == CalibrationLifecycle::Cancelled {
             self.generation = None;
             self.last_sensor_monotonic_time_ns = None;
+            self.reset_phase(at, CommonPhaseResetReason::LifecycleChanged);
         }
         observation
     }
@@ -315,6 +341,7 @@ impl PolarAccBreathAdapter {
     pub(crate) fn reset(&mut self, at: BreathTimestampMicros) -> CalibrationObservation {
         self.generation = None;
         self.last_sensor_monotonic_time_ns = None;
+        self.last_phase_observation = Some(self.phase.reset(at));
         self.telemetry = PolarAccAdapterTelemetry::default();
         self.calibration.reset(at)
     }
@@ -329,6 +356,7 @@ impl PolarAccBreathAdapter {
             return PolarAccAssessmentResult {
                 assessment: None,
                 calibration: self.calibration.snapshot(),
+                phase: None,
                 rejection: Some(if self.generation.is_none() {
                     PolarAccAssessmentRejection::Disabled
                 } else {
@@ -473,6 +501,24 @@ impl PolarAccBreathAdapter {
         let quality01 = calibration
             .model
             .map_or(0.0, |model| model.axis_dominance01.clamp(0.0, 1.0));
+        let phase_observation = if tracking == BreathTrackingState::Valid {
+            calibration.live.map(|live| {
+                self.phase.observe(
+                    observed_at,
+                    CommonPhaseInput::Sample {
+                        sequence_id: live.sequence_id,
+                        sampled_at: live.sampled_at,
+                        value01: live.volume01,
+                    },
+                )
+            })
+        } else {
+            let reason = phase_reset_reason(tracking);
+            Some(self.phase.reset_history(observed_at, reason))
+        };
+        if let Some(observation) = phase_observation {
+            self.last_phase_observation = Some(observation);
+        }
         let phase = if matches!(
             tracking,
             BreathTrackingState::Malformed
@@ -481,7 +527,7 @@ impl PolarAccBreathAdapter {
         ) {
             CommonBreathPhase::BadTracking
         } else {
-            CommonBreathPhase::Unknown
+            phase_observation.map_or(CommonBreathPhase::Unknown, |observation| observation.phase)
         };
         let assessment = BreathAssessmentObservation::new(BreathAssessmentFields {
             generation,
@@ -504,6 +550,7 @@ impl PolarAccBreathAdapter {
         PolarAccAssessmentResult {
             assessment,
             calibration,
+            phase: phase_observation,
             rejection,
             telemetry: self.telemetry,
         }
@@ -511,7 +558,7 @@ impl PolarAccBreathAdapter {
 
     pub(crate) fn marker_fields(&self) -> String {
         format!(
-            "polarAccAssessmentEnabled={} polarAccAssessmentProjection={} polarAccAssessmentGeneration={} polarAccAssessmentReceivedInputs={} polarAccAssessmentNormalizedFrames={} polarAccAssessmentRejectedInputs={} polarAccAssessmentInputUnit=typed",
+            "polarAccAssessmentEnabled={} polarAccAssessmentProjection={} polarAccAssessmentGeneration={} polarAccAssessmentReceivedInputs={} polarAccAssessmentNormalizedFrames={} polarAccAssessmentRejectedInputs={} polarAccAssessmentInputUnit=typed polarAccPhase={} polarAccPhaseCandidate={} polarAccPhaseFilteredDerivativePerSecond={} polarAccPhaseCandidateAgeMicros={} polarAccPhaseDwellMicros={} polarAccPhaseTransitions={} polarAccPhaseHoldTransitions={}",
             self.settings.enabled,
             self.settings.projection.marker_value(),
             self.generation
@@ -520,7 +567,41 @@ impl PolarAccBreathAdapter {
             self.telemetry.received_input_count,
             self.telemetry.normalized_frame_count,
             self.telemetry.rejected_input_count,
+            self.last_phase_observation
+                .map_or(CommonBreathPhase::Unknown.as_str(), |value| value.phase.as_str()),
+            self.last_phase_observation
+                .map_or(CommonBreathPhase::Unknown.as_str(), |value| value.candidate.as_str()),
+            self.last_phase_observation
+                .and_then(|value| value.filtered_derivative_per_second)
+                .map_or_else(|| "none".to_owned(), |value| format!("{value:.6}")),
+            self.last_phase_observation
+                .and_then(|value| value.candidate_age_micros)
+                .map_or_else(|| "none".to_owned(), |value| value.to_string()),
+            self.last_phase_observation
+                .and_then(|value| value.phase_dwell_micros)
+                .map_or_else(|| "none".to_owned(), |value| value.to_string()),
+            self.phase.telemetry().phase_transition_count,
+            self.phase.telemetry().hold_transition_count,
         )
+    }
+
+    fn reset_phase(&mut self, at: BreathTimestampMicros, reason: CommonPhaseResetReason) {
+        let observation = self.phase.reset_history(at, reason);
+        self.last_phase_observation = Some(observation);
+    }
+}
+
+fn phase_reset_reason(tracking: BreathTrackingState) -> CommonPhaseResetReason {
+    match tracking {
+        BreathTrackingState::Calibrating => CommonPhaseResetReason::CalibrationChanged,
+        BreathTrackingState::Missing => CommonPhaseResetReason::Missing,
+        BreathTrackingState::Stale => CommonPhaseResetReason::Stale,
+        BreathTrackingState::OutOfOrder => CommonPhaseResetReason::OutOfOrder,
+        BreathTrackingState::Malformed
+        | BreathTrackingState::RejectedMotion
+        | BreathTrackingState::RejectedRotation => CommonPhaseResetReason::Malformed,
+        BreathTrackingState::Disabled => CommonPhaseResetReason::LifecycleChanged,
+        BreathTrackingState::Valid => CommonPhaseResetReason::Explicit,
     }
 }
 
@@ -824,6 +905,107 @@ mod tests {
         assert!(!live.analysis_admitted);
         assert!(volume < ready_volume);
         assert!((0.0..=1.0).contains(&volume));
+    }
+
+    #[test]
+    fn calibrated_projection_drives_confirmed_exhale_hold_inhale_and_resets_on_missing() {
+        let settings = PolarAccVolumeSettings::new(true, PolarAccProjection::Xz, test_parameters())
+            .expect("valid settings")
+            .with_phase_parameters(CommonPhaseParameters {
+                enter_derivative_per_second: 0.12,
+                exit_derivative_per_second: 0.04,
+                derivative_filter_alpha: 0.6,
+                directional_confirmation_micros: 80_000,
+                hold_confirmation_micros: 100_000,
+                minimum_phase_dwell_micros: 100_000,
+                stale_after_micros: 100_000,
+                discontinuity_after_micros: 800_000,
+                inverted: false,
+            })
+            .expect("valid phase settings");
+        let mut adapter = PolarAccBreathAdapter::new(settings);
+        start(&mut adapter, 1_000_000, 1);
+        let ready = calibrate_line(&mut adapter, 1, 1_000_000, [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]);
+        assert_eq!(
+            ready.phase.expect("ready phase").status,
+            rusty_quest_breath_contract::phase::CommonPhaseStatus::Primed
+        );
+
+        let mut observed_phases = Vec::new();
+        let mut sequence = 9_u64;
+        let mut at = 1_750_000_u64;
+        let mut sensor_ns = 750_010_000_u64;
+        for x in (0..12).map(|index| 0.21 - f64::from(index) * 0.025) {
+            let result = adapter.observe(
+                timestamp(at),
+                generation(1),
+                frame(
+                    sequence,
+                    at,
+                    sensor_ns,
+                    [x, 1.0, 0.0],
+                    PolarAccelerationUnit::StandardGravity,
+                ),
+            );
+            observed_phases.push(result.assessment.expect("exhale assessment").phase);
+            sequence += 1;
+            at += 50_000;
+            sensor_ns += 50_000_000;
+        }
+        for _ in 0..12 {
+            let result = adapter.observe(
+                timestamp(at),
+                generation(1),
+                frame(
+                    sequence,
+                    at,
+                    sensor_ns,
+                    [-0.065, 1.0, 0.0],
+                    PolarAccelerationUnit::StandardGravity,
+                ),
+            );
+            observed_phases.push(result.assessment.expect("hold assessment").phase);
+            sequence += 1;
+            at += 50_000;
+            sensor_ns += 50_000_000;
+        }
+        for x in (0..12).map(|index| -0.065 + f64::from(index) * 0.025) {
+            let result = adapter.observe(
+                timestamp(at),
+                generation(1),
+                frame(
+                    sequence,
+                    at,
+                    sensor_ns,
+                    [x, 1.0, 0.0],
+                    PolarAccelerationUnit::StandardGravity,
+                ),
+            );
+            observed_phases.push(result.assessment.expect("inhale assessment").phase);
+            sequence += 1;
+            at += 50_000;
+            sensor_ns += 50_000_000;
+        }
+        assert!(observed_phases.contains(&CommonBreathPhase::Exhale));
+        assert!(observed_phases.contains(&CommonBreathPhase::Hold));
+        assert_eq!(observed_phases.last(), Some(&CommonBreathPhase::Inhale));
+        let missing = adapter.observe(
+            timestamp(at),
+            generation(1),
+            PolarAccInput::Missing {
+                sequence_id: sequence,
+            },
+        );
+        assert_eq!(
+            missing.assessment.expect("missing assessment").phase,
+            CommonBreathPhase::Unknown
+        );
+        assert_eq!(
+            missing.phase.expect("missing reset").status,
+            rusty_quest_breath_contract::phase::CommonPhaseStatus::Reset(
+                CommonPhaseResetReason::Missing
+            )
+        );
     }
 
     #[test]

@@ -8,8 +8,9 @@ pub const BREATH_ASSESSMENT_OBSERVATION_SCHEMA_ID: &str =
 
 /// Minimal common phase vocabulary.
 ///
-/// This boundary normalizes existing classifiers. It deliberately does not
-/// define hysteresis, derivative, dwell, or endpoint policy.
+/// This boundary normalizes existing classifiers. Reusable derivative,
+/// hysteresis, dwell, and endpoint policy lives in the separate pure `phase`
+/// module; platform adapters remain free to retain a proven classifier.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum CommonBreathPhase {
     /// No phase has been established.

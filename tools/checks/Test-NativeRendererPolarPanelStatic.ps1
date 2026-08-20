@@ -120,6 +120,11 @@ Assert-ContainsTokens $polarAccBreathAdapter @(
     'CalibrationProjectionSpace::Full3d',
     'PolarAccelerationUnit',
     'SensorTimestampOutOfOrder',
+    'CommonPhaseClassifier',
+    'CommonPhaseResetReason',
+    'polarAccPhaseCandidate',
+    'polarAccPhaseFilteredDerivativePerSecond',
+    'calibrated_projection_drives_confirmed_exhale_hold_inhale_and_resets_on_missing',
     'ready_volume_is_bounded_and_responds_before_the_next_analysis_tick',
     'calibration_failure_can_retry_with_a_fresh_generation',
     'deterministic_action_replay_is_value_equal_in_memory'
