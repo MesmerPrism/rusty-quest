@@ -5,6 +5,7 @@
 //! payloads own the downstream meaning of the selected slot.
 
 use crate::{
+    breath_input_selection::BreathInputSelection,
     native_controller_breath_state::{NativeControllerBreathPhase, NativeControllerBreathSample},
     native_renderer_properties::{
         PROP_PRIVATE_PARTICLES_BREATH_STATE_DRIVER_ACC_AXIS,
@@ -25,45 +26,9 @@ use crate::{
 const DEFAULT_RAMP_SECONDS: f32 = 4.0;
 const DRIVER_SLOT_COUNT: usize = 8;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum PrivateParticleBreathStateDriverMode {
-    Disabled,
-    DirectControllerState,
-    PolarAccNormalized,
-}
-
-impl PrivateParticleBreathStateDriverMode {
-    fn from_property(value: Option<String>) -> Self {
-        match normalized_property(value).as_str() {
-            "direct-controller-state"
-            | "native-controller-state"
-            | "local-controller-state"
-            | "fixed-controller-state" => Self::DirectControllerState,
-            "polar-acc-normalized" => Self::PolarAccNormalized,
-            _ => Self::Disabled,
-        }
-    }
-
-    pub(crate) fn marker_value(self) -> &'static str {
-        match self {
-            Self::Disabled => "disabled",
-            Self::DirectControllerState => "direct-controller-state",
-            Self::PolarAccNormalized => "polar-acc-normalized",
-        }
-    }
-
-    fn uses_native_controller_state(self) -> bool {
-        matches!(self, Self::DirectControllerState)
-    }
-
-    fn uses_polar_acc(self) -> bool {
-        matches!(self, Self::PolarAccNormalized)
-    }
-}
-
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct PrivateParticleBreathStateDriverSettings {
-    mode: PrivateParticleBreathStateDriverMode,
+    selection: BreathInputSelection,
     target_slot: usize,
     inhale_seconds_min_to_max: f32,
     exhale_seconds_max_to_min: f32,
@@ -88,7 +53,7 @@ impl PrivateParticleBreathStateDriverSettings {
             120.0,
         ));
         Self {
-            mode: PrivateParticleBreathStateDriverMode::from_property(lookup(
+            selection: BreathInputSelection::from_legacy_mode_property(lookup(
                 PROP_PRIVATE_PARTICLES_BREATH_STATE_DRIVER_MODE,
             )),
             target_slot: u32_value(
@@ -125,7 +90,7 @@ impl PrivateParticleBreathStateDriverSettings {
 
     pub(crate) fn disabled() -> Self {
         Self {
-            mode: PrivateParticleBreathStateDriverMode::Disabled,
+            selection: BreathInputSelection::disabled(),
             target_slot: 0,
             inhale_seconds_min_to_max: DEFAULT_RAMP_SECONDS,
             exhale_seconds_max_to_min: DEFAULT_RAMP_SECONDS,
@@ -137,12 +102,12 @@ impl PrivateParticleBreathStateDriverSettings {
     }
 
     pub(crate) fn uses_native_controller_state(self) -> bool {
-        self.mode.uses_native_controller_state()
+        self.selection.uses_controller_state()
     }
 
     pub(crate) fn enabled(self) -> bool {
         self.uses_native_controller_state()
-            || (self.mode.uses_polar_acc() && self.acc_max_mg > self.acc_min_mg)
+            || (self.selection.uses_polar_acc_volume() && self.acc_max_mg > self.acc_min_mg)
     }
 
     pub(crate) fn target_slot(self) -> usize {
@@ -150,20 +115,20 @@ impl PrivateParticleBreathStateDriverSettings {
     }
 
     pub(crate) fn parameter_source(self) -> &'static str {
-        match self.mode {
-            PrivateParticleBreathStateDriverMode::Disabled => "particle-payload-build-env",
-            PrivateParticleBreathStateDriverMode::DirectControllerState => {
-                "native-controller-breath-state-driver"
-            }
-            PrivateParticleBreathStateDriverMode::PolarAccNormalized => {
-                "polar-acc-normalized-breath-source"
-            }
+        if self.selection.uses_controller_state() {
+            "native-controller-breath-state-driver"
+        } else if self.selection.uses_polar_acc_volume() {
+            "polar-acc-normalized-breath-source"
+        } else if self.selection.status_marker() == "disabled" {
+            "particle-payload-build-env"
+        } else {
+            "inert-rejected-breath-selection"
         }
     }
 
     fn polar_acc_source_settings(self) -> PolarAccBreathSourceSettings {
         PolarAccBreathSourceSettings {
-            enabled: self.mode.uses_polar_acc() && self.acc_max_mg > self.acc_min_mg,
+            enabled: self.selection.uses_polar_acc_volume() && self.acc_max_mg > self.acc_min_mg,
             axis: self.acc_axis,
             input_min_mg: self.acc_min_mg,
             input_max_mg: self.acc_max_mg,
@@ -173,8 +138,11 @@ impl PrivateParticleBreathStateDriverSettings {
 
     pub(crate) fn marker_fields(self) -> String {
         format!(
-            "privateParticleBreathStateDriverMode={} privateParticleBreathStateDriverTargetSlot={} privateParticleBreathStateDriverInhaleSecondsMinToMax={:.3} privateParticleBreathStateDriverExhaleSecondsMaxToMin={:.3} privateParticleBreathStateDriverAccAxis={} privateParticleBreathStateDriverAccMinMg={:.3} privateParticleBreathStateDriverAccMaxMg={:.3} privateParticleBreathStateDriverAccStaleSeconds={:.3} privateParticleBreathStateDriverSourceAuthority={}",
-            self.mode.marker_value(),
+            "privateParticleBreathStateDriverMode={} privateParticleBreathInputSource={} privateParticleBreathMapping={} privateParticleBreathSelectionStatus={} privateParticleBreathStateDriverTargetSlot={} privateParticleBreathStateDriverInhaleSecondsMinToMax={:.3} privateParticleBreathStateDriverExhaleSecondsMaxToMin={:.3} privateParticleBreathStateDriverAccAxis={} privateParticleBreathStateDriverAccMinMg={:.3} privateParticleBreathStateDriverAccMaxMg={:.3} privateParticleBreathStateDriverAccStaleSeconds={:.3} privateParticleBreathStateDriverSourceAuthority={}",
+            self.selection.effective_mode_marker(),
+            self.selection.source_marker(),
+            self.selection.mapping_marker(),
+            self.selection.status_marker(),
             self.target_slot,
             self.inhale_seconds_min_to_max,
             self.exhale_seconds_max_to_min,
@@ -248,7 +216,7 @@ impl PrivateParticleBreathStateDriver {
         }
         let dt_seconds = sanitize_dt(dt_seconds);
         self.age_seconds = (self.age_seconds + dt_seconds).min(3600.0);
-        if self.settings.mode.uses_polar_acc() {
+        if self.settings.selection.uses_polar_acc_volume() {
             if let Some(measurement) =
                 latest_polar_acc_after(self.last_polar_acc_transport_sequence_id)
             {
@@ -342,7 +310,10 @@ mod tests {
 
     fn settings() -> PrivateParticleBreathStateDriverSettings {
         PrivateParticleBreathStateDriverSettings {
-            mode: PrivateParticleBreathStateDriverMode::DirectControllerState,
+            selection: BreathInputSelection::from_parts(
+                Some("controller".to_owned()),
+                Some("state".to_owned()),
+            ),
             target_slot: 0,
             inhale_seconds_min_to_max: 4.0,
             exhale_seconds_max_to_min: 2.0,
@@ -368,6 +339,32 @@ mod tests {
         });
         assert!(settings.uses_native_controller_state());
         assert_eq!(settings.target_slot(), 7);
+    }
+
+    #[test]
+    fn unavailable_and_unknown_modes_are_rejected_and_inert() {
+        for mode in [
+            "direct-controller-volume-fixed-orientation",
+            "direct-controller-volume-dynamic-motion-axis",
+            "polar-acc-state",
+            "unknown-mode",
+        ] {
+            let settings = PrivateParticleBreathStateDriverSettings::from_property_lookup(|name| {
+                (name == "debug.rustyquest.native_renderer.private_particles.breath_state_driver.mode")
+                    .then(|| mode.to_owned())
+            });
+            assert!(!settings.enabled());
+            assert_ne!(settings.selection.status_marker(), "disabled");
+            assert_eq!(
+                settings.parameter_source(),
+                "inert-rejected-breath-selection"
+            );
+
+            let driver = PrivateParticleBreathStateDriver::new(settings, 0.5);
+            let mut values = [0.25; 8];
+            assert!(!driver.apply_to_driver_values(&mut values));
+            assert_eq!(values, [0.25; 8]);
+        }
     }
 
     #[test]

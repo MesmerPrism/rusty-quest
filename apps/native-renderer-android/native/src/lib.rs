@@ -11,6 +11,8 @@ const PLAN_JSON: &str =
     include_str!("../../../../fixtures/native-renderer/native-hwb-blur-sdf-public.plan.json");
 const MARKER_PREFIX: &str = "RUSTY_QUEST_NATIVE_RENDERER";
 
+mod breath_input_selection;
+
 #[cfg(target_os = "android")]
 mod acamera_sys;
 #[cfg(target_os = "android")]

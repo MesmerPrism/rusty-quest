@@ -45,6 +45,9 @@
   "markers": {
     "required": [
       "privateParticleBreathStateDriverMode=polar-acc-normalized",
+      "privateParticleBreathInputSource=polar-acc",
+      "privateParticleBreathMapping=volume",
+      "privateParticleBreathSelectionStatus=accepted",
       "polarAccBreathSourceEnabled=true"
     ],
     "forbidden": []

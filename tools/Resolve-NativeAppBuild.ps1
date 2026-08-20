@@ -1340,6 +1340,7 @@ if ($null -ne $resultJsonCanonicalPath) {
         schema = $ResolutionResultSchema
         app_id = [string]$app.app_id
         resolution_fingerprint = $resolutionFingerprint
+        resolved_feature_ids = $selectedFeatureIds
         output_root = [System.IO.Path]::GetFullPath($outputRootPath)
         feature_lock_path = [System.IO.Path]::GetFullPath($featureLockPath)
         feature_lock_sha256 = Get-FileSha256 -Path $featureLockPath

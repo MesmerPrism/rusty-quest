@@ -194,6 +194,15 @@ malformed-input state, and generic action dispatch. Downstream app specs own
 the selected driver slots, ACC range, RR range, pulse envelope, panel mode, and
 all visual interpretation.
 
+Direct breath selection treats source and mapping as independent dimensions.
+The current public matrix accepts `controller` + `state` and `polar-acc` +
+`volume`. `controller` + `volume` and `polar-acc` + `state` are typed
+unavailable combinations until their estimators exist. Unknown, incomplete,
+unavailable, stale, malformed, denied, and unselected requests remain inert;
+none are silently reclassified as ordinary disabled state or routed through a
+broker. Native-effective markers report the requested source, mapping, and
+selection status separately from the legacy combined mode marker.
+
 The Rust core proves Android package, NativeActivity entry, NDK camera/HWB
 acquisition shape, native timing counters, OpenXR loader packaging, an
 OpenXR/Vulkan prerequisite probe, Vulkan external-HWB import boundary strings,

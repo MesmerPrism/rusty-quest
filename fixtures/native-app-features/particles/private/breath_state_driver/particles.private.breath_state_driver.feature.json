@@ -50,6 +50,9 @@
   "markers": {
     "required": [
       "privateParticleBreathStateDriverMode=direct-controller-state",
+      "privateParticleBreathInputSource=controller",
+      "privateParticleBreathMapping=state",
+      "privateParticleBreathSelectionStatus=accepted",
       "privateParticleBreathStateDriverTargetSlot=0",
       "nativeControllerBreathStateEnabled=true",
       "privateParticleDriverParameterSource=native-controller-breath-state-driver"
