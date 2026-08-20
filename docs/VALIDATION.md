@@ -38,6 +38,7 @@ The pure breath lifecycle has a dependency-free focused gate:
 cargo test -p rusty-quest-breath-contract --locked
 cargo test -p rusty-quest-native-renderer-android-native openxr_controller_breath_adapter --locked
 cargo test -p rusty-quest-native-renderer-android-native native_controller_breath_state --locked
+cargo test -p rusty-quest-native-renderer-android-native polar_acc_breath_adapter --locked
 ```
 
 Its unit and fixture tests cover disabled construction, configuration and
@@ -54,7 +55,13 @@ projection, rotated axes, calibration travel, rotation/motion/tracking guards,
 admission failures, missing/stale/malformed/disabled input, reset and generation
 fencing, variable cadence, 72/90/120 Hz phase parity, and concurrent phase plus
 volume. They exercise the host-testable adapter without acquiring an OpenXR
-session. These gates do not execute Gradle, rendering, APK, ADB, or device work.
+session. The Polar adapter gate covers typed PMD/JNI translation, independent
+ACC/RR sequencing, timestamp and unit normalization, XZ-default and explicit
+3D calibration, realistic gravity and rotated motion, bounded fast live
+volume, adaptive limits, stale/missing/malformed/out-of-order input, retry,
+reset, and deterministic actions. Polar phase remains unknown until its
+separate timestamp-aware classifier is present. These gates do not execute
+Gradle, rendering, APK, ADB, or device work.
 
 When a pull request changes `.github/` or a package-updater validation or
 publication authority path, use

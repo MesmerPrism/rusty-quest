@@ -407,6 +407,12 @@ volume with a normalized phase, calibration lifecycle, tracking state, and
 quality; source-specific classifiers remain outside the crate. The native
 renderer has a separate host-testable adapter that converts OpenXR right-grip
 poses into fixed-orientation or dynamically calibrated controller assessment.
+The native renderer also has a separate host-testable Polar ACC adapter that
+translates the existing typed PMD/JNI milligravity measurements, normalizes
+host and sensor monotonic timestamps plus acceleration units, and produces
+calibrated XZ-default or explicit 3D volume and quality. RR remains on its
+independent pulse lane, configured fixed ranges remain diagnostic-only, and
+Polar directional phase classification remains a later adapter-owned step.
 The crate starts disabled and has no Android, JNI, OpenXR, renderer, broker,
 source acquisition, phase-estimation, or application-mapping behavior.
 

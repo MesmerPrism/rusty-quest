@@ -122,7 +122,7 @@ Assert-ContainsTokens $polarAccBreathAdapter @(
     'SensorTimestampOutOfOrder',
     'ready_volume_is_bounded_and_responds_before_the_next_analysis_tick',
     'calibration_failure_can_retry_with_a_fresh_generation',
-    'deterministic_action_replay_is_byte_for_byte_equal_in_memory'
+    'deterministic_action_replay_is_value_equal_in_memory'
 ) "calibrated Polar ACC assessment adapter"
 
 foreach ($forbidden in @('WebView', 'addJavascriptInterface', 'androidx', 'AppSystemActivity', 'VrActivity', 'GLXF')) {

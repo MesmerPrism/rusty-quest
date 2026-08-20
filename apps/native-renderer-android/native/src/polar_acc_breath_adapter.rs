@@ -1035,7 +1035,7 @@ mod tests {
     }
 
     #[test]
-    fn deterministic_action_replay_is_byte_for_byte_equal_in_memory() {
+    fn deterministic_action_replay_is_value_equal_in_memory() {
         fn run() -> Vec<PolarAccAssessmentResult> {
             let mut adapter = adapter(PolarAccProjection::Xz);
             start(&mut adapter, 1_000_000, 1);
