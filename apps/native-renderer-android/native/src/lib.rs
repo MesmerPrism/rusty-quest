@@ -110,6 +110,7 @@ mod openxr_passthrough_style;
 #[cfg(target_os = "android")]
 mod openxr_stimulus_actions;
 mod particle_adapter_consumer;
+mod polar_acc_breath_adapter;
 mod polar_composition_adapters;
 #[cfg(target_os = "android")]
 mod private_extension_slot;

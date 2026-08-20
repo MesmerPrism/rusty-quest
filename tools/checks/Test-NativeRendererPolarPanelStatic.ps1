@@ -39,6 +39,7 @@ $manifest = Read-RequiredText (Join-Path $appRoot "AndroidManifest.xml") "Androi
 $controlPanel = Read-RequiredText (Join-Path $javaRoot "ControlPanelActivity.java") "control panel"
 $polarPanel = Read-RequiredText (Join-Path $javaRoot "PolarSensorPanel.java") "Polar panel"
 $polarAdapters = Read-RequiredText (Join-Path $appRoot "native\src\polar_composition_adapters.rs") "Polar composition adapters"
+$polarAccBreathAdapter = Read-RequiredText (Join-Path $appRoot "native\src\polar_acc_breath_adapter.rs") "calibrated Polar ACC adapter"
 $breathAdapter = Read-RequiredText (Join-Path $appRoot "native\src\private_particle_breath_state_driver.rs") "breath-state adapter"
 $heartbeatAdapter = Read-RequiredText (Join-Path $appRoot "native\src\private_particle_heartbeat_pulse_adapter.rs") "heartbeat-pulse adapter"
 $panelAction = Read-RequiredText (Join-Path $appRoot "native\src\same_apk_panel_action.rs") "same-APK panel action"
@@ -109,6 +110,20 @@ Assert-ContainsTokens "$polarAdapters`n$breathAdapter`n$heartbeatAdapter`n$panel
     'timeout_discards_incomplete_sequence',
     'ControlPanelActivity'
 ) "disabled-by-default Polar composition adapters"
+
+Assert-ContainsTokens $polarAccBreathAdapter @(
+    'PolarAccBreathAdapter',
+    'TimedPolarAccFrame',
+    'from_pmd_measurement',
+    'PolarAccProjection',
+    'CalibrationProjectionSpace::Xz',
+    'CalibrationProjectionSpace::Full3d',
+    'PolarAccelerationUnit',
+    'SensorTimestampOutOfOrder',
+    'ready_volume_is_bounded_and_responds_before_the_next_analysis_tick',
+    'calibration_failure_can_retry_with_a_fresh_generation',
+    'deterministic_action_replay_is_byte_for_byte_equal_in_memory'
+) "calibrated Polar ACC assessment adapter"
 
 foreach ($forbidden in @('WebView', 'addJavascriptInterface', 'androidx', 'AppSystemActivity', 'VrActivity', 'GLXF')) {
     if ($polarPanel -match $forbidden) {

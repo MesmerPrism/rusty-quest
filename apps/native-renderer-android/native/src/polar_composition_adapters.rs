@@ -28,20 +28,26 @@ pub(crate) struct PolarRrMeasurement {
 
 #[derive(Debug, Default)]
 struct PolarMeasurementIngress {
-    next_sequence_id: u64,
+    next_acc_sequence_id: u64,
+    next_rr_sequence_id: u64,
     latest_acc: Option<PolarAccMeasurement>,
     rr_measurements: VecDeque<PolarRrMeasurement>,
     dropped_rr_measurements: u64,
 }
 
 impl PolarMeasurementIngress {
-    fn next_sequence_id(&mut self) -> u64 {
-        self.next_sequence_id = self.next_sequence_id.saturating_add(1);
-        self.next_sequence_id
+    fn next_acc_sequence_id(&mut self) -> u64 {
+        self.next_acc_sequence_id = self.next_acc_sequence_id.saturating_add(1);
+        self.next_acc_sequence_id
+    }
+
+    fn next_rr_sequence_id(&mut self) -> u64 {
+        self.next_rr_sequence_id = self.next_rr_sequence_id.saturating_add(1);
+        self.next_rr_sequence_id
     }
 
     fn submit_acc(&mut self, host_time_ns: u64, sensor_time_ns: u64, xyz_mg: [f32; 3]) {
-        let sequence_id = self.next_sequence_id();
+        let sequence_id = self.next_acc_sequence_id();
         self.latest_acc = Some(PolarAccMeasurement {
             sequence_id,
             host_time_ns,
@@ -51,7 +57,7 @@ impl PolarMeasurementIngress {
     }
 
     fn submit_rr(&mut self, host_time_ns: u64, rr_interval_ms: f32) {
-        let sequence_id = self.next_sequence_id();
+        let sequence_id = self.next_rr_sequence_id();
         if self.rr_measurements.len() == RR_QUEUE_CAPACITY {
             self.rr_measurements.pop_front();
             self.dropped_rr_measurements = self.dropped_rr_measurements.saturating_add(1);
@@ -146,6 +152,10 @@ impl PolarAccAxis {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
+/// Compatibility-only configured-range diagnostic source.
+///
+/// Calibrated volume is owned by `PolarAccBreathAdapter`; this source must not
+/// be represented as calibrated assessment evidence.
 pub(crate) struct PolarAccBreathSourceSettings {
     pub(crate) enabled: bool,
     pub(crate) axis: PolarAccAxis,
@@ -192,6 +202,7 @@ pub(crate) struct NormalizedSourceSample {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
+/// Compatibility-only fixed-range diagnostic normalization.
 pub(crate) struct PolarAccBreathSource {
     settings: PolarAccBreathSourceSettings,
     latest: Option<NormalizedSourceSample>,
@@ -583,16 +594,22 @@ mod tests {
     }
 
     #[test]
-    fn ingress_is_bounded_and_latest_acc_wins() {
+    fn ingress_is_bounded_and_rr_cannot_contaminate_the_acc_lane() {
         let mut ingress = PolarMeasurementIngress::default();
         ingress.submit_acc(1, 1, [1.0, 0.0, 0.0]);
         let first = ingress.latest_acc.unwrap();
+        assert_eq!(first.sequence_id, 1);
+        for index in 0..3 {
+            ingress.submit_rr((index + 1) as u64, 1000.0);
+        }
+        assert_eq!(ingress.latest_acc, Some(first));
         ingress.submit_acc(2, 2, [2.0, 0.0, 0.0]);
-        assert!(ingress.latest_acc.unwrap().sequence_id > first.sequence_id);
+        assert_eq!(ingress.latest_acc.unwrap().sequence_id, 2);
         for index in 0..(RR_QUEUE_CAPACITY + 3) {
             ingress.submit_rr((index + 1) as u64, 1000.0);
         }
         assert_eq!(ingress.rr_measurements.len(), RR_QUEUE_CAPACITY);
-        assert_eq!(ingress.dropped_rr_measurements, 3);
+        assert_eq!(ingress.dropped_rr_measurements, 6);
+        assert_eq!(ingress.latest_acc.unwrap().sequence_id, 2);
     }
 }

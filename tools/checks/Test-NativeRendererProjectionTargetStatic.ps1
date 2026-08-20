@@ -36,9 +36,23 @@ function Assert-ContainsTokens {
     }
 }
 
+function Assert-NotContainsTokens {
+    param(
+        [string]$Text,
+        [string[]]$Tokens,
+        [string]$Label
+    )
+    foreach ($token in $Tokens) {
+        if ($Text -match [regex]::Escape($token)) {
+            throw "Native renderer projection-target static check failed for ${Label}: forbidden token: $token"
+        }
+    }
+}
+
 $nativeLib = Read-RequiredText (Join-Path $srcRoot "lib.rs") "native lib"
 $projectionTargetState = Read-RequiredText (Join-Path $srcRoot "projection_target_state.rs") "projection target state"
 $nativeControllerBreathState = Read-RequiredText (Join-Path $srcRoot "native_controller_breath_state.rs") "native controller breath state"
+$polarAccBreathAdapter = Read-RequiredText (Join-Path $srcRoot "polar_acc_breath_adapter.rs") "Polar ACC breath adapter"
 $manifoldBreathBridge = Read-RequiredText (Join-Path $srcRoot "manifold_breath_bridge.rs") "Manifold breath bridge"
 $manifoldPosePublisher = Read-RequiredText (Join-Path $srcRoot "manifold_pose_publisher.rs") "Manifold pose publisher"
 $openxrStimulusActions = Read-RequiredText (Join-Path $srcRoot "openxr_stimulus_actions.rs") "OpenXR stimulus actions"
@@ -60,9 +74,10 @@ $xrVulkanSurface = @(
     (Read-RequiredText (Join-Path $srcRoot "xr_vulkan\scorecard.rs") "xr_vulkan scorecard")
 ) -join "`n"
 
-Assert-ContainsTokens "$nativeLib`n$nativeRendererOptionSurface`n$projectionTargetState`n$nativeControllerBreathState`n$manifoldBreathBridge`n$manifoldPosePublisher`n$openxrStimulusActions`n$xrVulkanSurface" @(
+Assert-ContainsTokens "$nativeLib`n$nativeRendererOptionSurface`n$projectionTargetState`n$nativeControllerBreathState`n$polarAccBreathAdapter`n$manifoldBreathBridge`n$manifoldPosePublisher`n$openxrStimulusActions`n$xrVulkanSurface" @(
     'mod projection_target_state',
     'mod native_controller_breath_state',
+    'mod polar_acc_breath_adapter',
     'mod manifold_breath_bridge',
     'mod manifold_pose_publisher',
     'ProjectionTargetState',
@@ -73,6 +88,16 @@ Assert-ContainsTokens "$nativeLib`n$nativeRendererOptionSurface`n$projectionTarg
     'BreathBridgeMode',
     'NativeControllerBreathStateEstimator',
     'NativeControllerBreathPoseSample',
+    'PolarAccBreathAdapter',
+    'TimedPolarAccFrame',
+    'PolarAccProjection',
+    'Milligravity',
+    'MetersPerSecondSquared',
+    'CalibrationProjectionSpace::Xz',
+    'CalibrationProjectionSpace::Full3d',
+    'PolarAccTranslationError',
+    'SensorTimestampOutOfOrder',
+    'polarAccAssessmentInputUnit=typed',
     'fixed-controller-orientation',
     'direct-controller-state',
     'ManifoldBreathBridge',
@@ -130,5 +155,16 @@ Assert-ContainsTokens "$nativeLib`n$nativeRendererOptionSurface`n$projectionTarg
     'highRatePoseViaAndroidProperties=false',
     'debug.rustyquest.native_renderer.projection.target.breath.high_rate_json_payload'
 ) "Breathing Room projection-target route"
+
+Assert-NotContainsTokens $polarAccBreathAdapter @(
+    'Viscereality',
+    'viscereality',
+    'icosphere',
+    'orbit',
+    'sphere radius',
+    'shader',
+    'WebSocket',
+    'Manifold'
+) "public Polar ACC adapter absence boundary"
 
 Write-Host "Rusty Quest native renderer projection-target static validation passed"
