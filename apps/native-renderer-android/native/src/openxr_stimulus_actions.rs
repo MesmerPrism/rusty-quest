@@ -1,9 +1,14 @@
 //! OpenXR action boundary for native renderer controller controls.
 
 use openxr as xr;
-use rusty_quest_breath_contract::{assessment::BreathAssessmentObservation, BreathTimestampMicros};
+use rusty_quest_breath_contract::{
+    assessment::BreathAssessmentObservation,
+    composition::{BreathCompositionSource, ControllerProjectionSelection},
+    BreathTimestampMicros,
+};
 
 use crate::{
+    breath_composition_runtime::AdapterAction,
     breath_input_selection::ControllerVolumeKind,
     environment_depth_alignment_state::{
         EnvironmentDepthAlignmentInput, EnvironmentDepthAlignmentSettings,
@@ -137,6 +142,7 @@ impl StimulusVolumeActions {
             && !environment_depth_alignment_settings.controls_enabled
             && !private_particle_breath_state_driver_settings.uses_native_controller_assessment()
             && !same_apk_panel_action_settings.enabled()
+            && !crate::breath_composition_runtime::controller_adapter_available()
             && !private_particle_recenter_enabled
         {
             crate::marker(
@@ -236,13 +242,29 @@ impl StimulusVolumeActions {
         let private_particle_breath_assessment_configured =
             private_particle_breath_state_driver_settings.uses_native_controller_assessment();
         let native_controller_breath_configured = projection_native_controller_breath_configured
-            || private_particle_breath_assessment_configured;
+            || private_particle_breath_assessment_configured
+            || crate::breath_composition_runtime::controller_adapter_available();
         let manifold_pose_config =
             manifold_pose_config_from_projection_settings(&projection_target_settings);
         let right_grip_pose_binding_enabled = breath_haptics_configured
             || native_controller_breath_configured
             || manifold_pose_config.enabled;
-        let volume_projection =
+        let composition_request = crate::breath_composition_runtime::effective_request();
+        let volume_projection = if composition_request
+            .is_some_and(|request| request.source == BreathCompositionSource::Controller)
+        {
+            match composition_request
+                .expect("checked composition request")
+                .controller_projection
+            {
+                ControllerProjectionSelection::FixedOrientation => {
+                    ControllerVolumeProjection::FixedOrientation
+                }
+                ControllerProjectionSelection::DynamicAxis => {
+                    ControllerVolumeProjection::DynamicMotionAxis
+                }
+            }
+        } else {
             match private_particle_breath_state_driver_settings.controller_volume_kind() {
                 Some(ControllerVolumeKind::DynamicMotionAxis) => {
                     ControllerVolumeProjection::DynamicMotionAxis
@@ -250,13 +272,19 @@ impl StimulusVolumeActions {
                 Some(ControllerVolumeKind::FixedOrientation) | None => {
                     ControllerVolumeProjection::FixedOrientation
                 }
-            };
+            }
+        };
         let phase_settings = projection_target_settings.native_controller_breath_settings;
+        let mut calibration_parameters =
+            rusty_quest_breath_contract::calibration::CalibrationParameters::default();
+        calibration_parameters.inverted = composition_request.is_some_and(|request| {
+            request.source == BreathCompositionSource::Controller && request.inverted
+        });
         let volume_settings = ControllerVolumeSettings::new(
             volume_projection,
             phase_settings.orientation_axis.map(f64::from),
             f64::from(phase_settings.rotation_guard_degrees),
-            rusty_quest_breath_contract::calibration::CalibrationParameters::default(),
+            calibration_parameters,
         )
         .map_err(|error| format!("configure controller breath assessment: {error:?}"))?;
         let native_controller_breath_assessment =
@@ -591,6 +619,57 @@ impl StimulusVolumeActions {
         );
     }
 
+    fn apply_composition_controller_actions(&mut self, at: BreathTimestampMicros) {
+        while let Some(action) = crate::breath_composition_runtime::take_adapter_action(
+            BreathCompositionSource::Controller,
+        ) {
+            match action {
+                AdapterAction::Configure => {
+                    let Some(request) = crate::breath_composition_runtime::effective_request()
+                    else {
+                        continue;
+                    };
+                    let projection = match request.controller_projection {
+                        ControllerProjectionSelection::FixedOrientation => {
+                            ControllerVolumeProjection::FixedOrientation
+                        }
+                        ControllerProjectionSelection::DynamicAxis => {
+                            ControllerVolumeProjection::DynamicMotionAxis
+                        }
+                    };
+                    let phase_settings = self
+                        .projection_target_settings
+                        .native_controller_breath_settings;
+                    let mut calibration_parameters =
+                        rusty_quest_breath_contract::calibration::CalibrationParameters::default();
+                    calibration_parameters.inverted = request.inverted;
+                    let Ok(settings) = ControllerVolumeSettings::new(
+                        projection,
+                        phase_settings.orientation_axis.map(f64::from),
+                        f64::from(phase_settings.rotation_guard_degrees),
+                        calibration_parameters,
+                    ) else {
+                        continue;
+                    };
+                    self.native_controller_breath_assessment
+                        .replace_volume_settings(at, settings);
+                    self.native_controller_breath_assessment.configure(at);
+                }
+                AdapterAction::Start(generation) => {
+                    self.native_controller_breath_assessment
+                        .start(at, generation);
+                }
+                AdapterAction::Cancel(generation) => {
+                    self.native_controller_breath_assessment
+                        .cancel(at, generation);
+                }
+                AdapterAction::Reset => {
+                    self.native_controller_breath_assessment.reset(at);
+                }
+            }
+        }
+    }
+
     pub(crate) fn sync_and_poll<G>(
         &mut self,
         session: &xr::Session<G>,
@@ -684,8 +763,17 @@ impl StimulusVolumeActions {
         let private_particle_breath_assessment_enabled = self
             .private_particle_breath_state_driver_settings
             .uses_native_controller_assessment();
+        let composition_controller_available =
+            crate::breath_composition_runtime::controller_adapter_available();
+        let composition_controller_enabled =
+            crate::breath_composition_runtime::controller_selected();
         let native_controller_breath_enabled = projection_native_controller_breath_enabled
-            || private_particle_breath_assessment_enabled;
+            || private_particle_breath_assessment_enabled
+            || composition_controller_enabled;
+        let observed_at = xr_time_micros(predicted_display_time);
+        if composition_controller_available {
+            self.apply_composition_controller_actions(observed_at);
+        }
         let right_grip_pose_sample = if breath_haptics_enabled || native_controller_breath_enabled {
             self.locate_right_grip_pose_sample(
                 reference_space,
@@ -701,11 +789,13 @@ impl StimulusVolumeActions {
         events.right_grip_pose_tracked =
             right_grip_pose_sample.is_some_and(|sample| sample.tracked);
         if native_controller_breath_enabled {
-            let observed_at = xr_time_micros(predicted_display_time);
-            if let Some(generation) = self
-                .native_controller_breath_assessment
-                .ensure_running(observed_at)
-            {
+            let generation = if composition_controller_enabled {
+                self.native_controller_breath_assessment.active_generation()
+            } else {
+                self.native_controller_breath_assessment
+                    .ensure_running(observed_at)
+            };
+            if let Some(generation) = generation {
                 let input = right_grip_pose_sample.map_or(
                     OpenXrControllerPoseInput::Missing {
                         sequence_id: frame_count.saturating_add(1),
@@ -723,7 +813,22 @@ impl StimulusVolumeActions {
                     generation,
                     input,
                 );
+                if composition_controller_enabled {
+                    crate::breath_composition_runtime::submit_calibration(
+                        BreathCompositionSource::Controller,
+                        &result.calibration,
+                    );
+                }
                 events.native_controller_breath_assessment = result.assessment;
+                if composition_controller_enabled {
+                    if let Some(assessment) = result.assessment {
+                        crate::breath_composition_runtime::submit_assessment(
+                            observed_at,
+                            BreathCompositionSource::Controller,
+                            assessment,
+                        );
+                    }
+                }
                 if let Some(sample) = result.phase_sample {
                     if projection_native_controller_breath_enabled {
                         events
@@ -761,6 +866,7 @@ impl StimulusVolumeActions {
                 }
             }
         }
+        crate::breath_composition_runtime::poll_polar(observed_at);
         self.publish_right_grip_pose(
             reference_space,
             predicted_display_time,

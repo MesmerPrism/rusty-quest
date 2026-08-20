@@ -1,0 +1,139 @@
+{
+  "schema": "rusty.quest.native_app_build.v1",
+  "app_id": "native_breath_four_way_conformance",
+  "owner_repo": "rusty-quest",
+  "package_policy": "app-specific-package",
+  "package_name": "io.github.mesmerprism.rustyquest.native_renderer.breath_matrix",
+  "requested_features": [
+    "breath.composition.closed_world",
+    "renderer.background.solid_black"
+  ],
+  "denied_features": [
+    "camera.hwb",
+    "display_composite",
+    "environment_depth",
+    "environment_depth.projection_sampler",
+    "hand_anchor_particles",
+    "hand_mesh_live_input",
+    "hand_mesh_visual",
+    "input.right_primary_private_particle_recenter",
+    "lsl.inlet",
+    "lsl.outlet",
+    "makepad_runtime",
+    "manifold.bridge",
+    "manifold.embedded_broker",
+    "particles.anchor_echo.rows",
+    "particles.hand_anchor.ordering.gpu_index_remap",
+    "particles.private.breath_state_driver",
+    "particles.private.manifold_scalar_driver",
+    "particles.private.mask.r8_texture",
+    "particles.private.ordering.gpu_index_remap",
+    "particles.private.payload_slot",
+    "particles.private.placeholder_compute",
+    "particles.private.polar_acc_breath_source",
+    "particles.private.polar_rr_heartbeat_pulse",
+    "particles.tracers.snapshot_rows",
+    "private_layer",
+    "projection_target.breathing_room",
+    "renderer.background.native_passthrough",
+    "renderer.private_particles",
+    "renderer.stimulus_volume",
+    "sdf_visual",
+    "ui.same_apk_questionnaire_panel",
+    "video_projection"
+  ],
+  "payloads": [],
+  "runtime_profile": {
+    "set": {
+      "debug.rustyquest.native_renderer.hand_anchor_particles.enabled": "false",
+      "debug.rustyquest.native_renderer.hand_mesh.graft_copies.enabled": "false",
+      "debug.rustyquest.native_renderer.hand_mesh.input.source": "disabled",
+      "debug.rustyquest.native_renderer.hand_mesh.real_hands.visible": "false",
+      "debug.rustyquest.native_renderer.hand_mesh.visual.diagnostic.enabled": "false",
+      "debug.rustyquest.native_renderer.render.mode": "solid-black-hands-and-grafts"
+    }
+  },
+  "permission_allowlist": [],
+  "declared_manifest": {
+    "permissions": [
+      "android.permission.ACCESS_FINE_LOCATION",
+      "android.permission.BLUETOOTH",
+      "android.permission.BLUETOOTH_ADMIN",
+      "android.permission.BLUETOOTH_CONNECT",
+      "android.permission.BLUETOOTH_SCAN",
+      "com.oculus.permission.HAND_TRACKING",
+      "org.khronos.openxr.permission.OPENXR",
+      "org.khronos.openxr.permission.OPENXR_SYSTEM"
+    ],
+    "uses_features": [
+      "android.hardware.bluetooth_le",
+      "android.hardware.vr.headtracking",
+      "android.opengl.gles.3.1",
+      "oculus.software.handtracking"
+    ],
+    "activities": [
+      "ControlPanelActivity",
+      "android.app.NativeActivity"
+    ],
+    "services": []
+  },
+  "expected_render_mode": "solid-black-hands-and-grafts",
+  "settings_assertions": {
+    "required_values": {
+      "native_renderer.breath_composition.controller_assessment.enabled": "true",
+      "native_renderer.breath_composition.controller_projection": "dynamic-axis",
+      "native_renderer.breath_composition.enabled": "true",
+      "native_renderer.breath_composition.inverted": "false",
+      "native_renderer.breath_composition.mapping": "volume",
+      "native_renderer.breath_composition.panel.enabled": "true",
+      "native_renderer.breath_composition.polar_acc_assessment.enabled": "true",
+      "native_renderer.breath_composition.polar_projection": "xz",
+      "native_renderer.breath_composition.source": "controller",
+      "native_renderer.breath_composition.stale_millis": "500",
+      "native_renderer.breath_composition.state_mapping.enabled": "true",
+      "native_renderer.breath_composition.volume_mapping.enabled": "true",
+      "native_renderer.control_panel.mode": "breath-mapping",
+      "native_renderer.control_panel.right_secondary_action.mode": "right-secondary-triple-press-toggle",
+      "native_renderer.render.mode": "solid-black-hands-and-grafts"
+    },
+    "required_disabled_modules": [],
+    "required_modules": [
+      "background/solid-black",
+      "breath/composition",
+      "breath/controller-assessment",
+      "breath/mapping/state",
+      "breath/mapping/volume",
+      "breath/polar-acc-assessment",
+      "core/openxr-vulkan",
+      "input/controllers-and-hands",
+      "input/same-apk-panel/right-secondary-triple-press",
+      "sensor/polar-h10-ble",
+      "ui/breath-mapping-panel",
+      "ui/control-panel"
+    ],
+    "forbidden_modules": [
+      "camera/hwb",
+      "display/composite",
+      "environment/depth",
+      "makepad/runtime",
+      "manifold/bridge",
+      "particles/private/breath_state_driver",
+      "particles/private/polar_acc_breath_source",
+      "particles/private/polar_rr_heartbeat_pulse",
+      "particles/private/renderer",
+      "private-layer",
+      "projection-target/breathing-room",
+      "stimulus/volume",
+      "video/projection"
+    ]
+  },
+  "expected_markers": {
+    "required": [],
+    "forbidden": [
+      "breathBridgeMode=manifold-state",
+      "breathBridgeMode=manifold-value",
+      "privateParticleBreathStateDriverEnabled=true"
+    ]
+  },
+  "validation_tier": "quick"
+}

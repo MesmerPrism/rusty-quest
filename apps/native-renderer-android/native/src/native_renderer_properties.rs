@@ -5,6 +5,32 @@
 
 pub(crate) const PROP_ENABLE_SDF_VISUAL: &str =
     "debug.rustyquest.native_renderer.sdf.visual.enabled";
+pub(crate) const PROP_BREATH_COMPOSITION_ENABLED: &str =
+    "debug.rustyquest.native_renderer.breath_composition.enabled";
+pub(crate) const PROP_BREATH_COMPOSITION_ACTIVATION_BINDING_SHA256: &str =
+    "debug.rustyquest.native_renderer.breath_composition.activation.binding_sha256";
+pub(crate) const PROP_BREATH_COMPOSITION_CONTROLLER_ASSESSMENT_ENABLED: &str =
+    "debug.rustyquest.native_renderer.breath_composition.controller_assessment.enabled";
+pub(crate) const PROP_BREATH_COMPOSITION_POLAR_ACC_ASSESSMENT_ENABLED: &str =
+    "debug.rustyquest.native_renderer.breath_composition.polar_acc_assessment.enabled";
+pub(crate) const PROP_BREATH_COMPOSITION_VOLUME_MAPPING_ENABLED: &str =
+    "debug.rustyquest.native_renderer.breath_composition.volume_mapping.enabled";
+pub(crate) const PROP_BREATH_COMPOSITION_STATE_MAPPING_ENABLED: &str =
+    "debug.rustyquest.native_renderer.breath_composition.state_mapping.enabled";
+pub(crate) const PROP_BREATH_COMPOSITION_PANEL_ENABLED: &str =
+    "debug.rustyquest.native_renderer.breath_composition.panel.enabled";
+pub(crate) const PROP_BREATH_COMPOSITION_SOURCE: &str =
+    "debug.rustyquest.native_renderer.breath_composition.source";
+pub(crate) const PROP_BREATH_COMPOSITION_MAPPING: &str =
+    "debug.rustyquest.native_renderer.breath_composition.mapping";
+pub(crate) const PROP_BREATH_COMPOSITION_CONTROLLER_PROJECTION: &str =
+    "debug.rustyquest.native_renderer.breath_composition.controller_projection";
+pub(crate) const PROP_BREATH_COMPOSITION_POLAR_PROJECTION: &str =
+    "debug.rustyquest.native_renderer.breath_composition.polar_projection";
+pub(crate) const PROP_BREATH_COMPOSITION_INVERTED: &str =
+    "debug.rustyquest.native_renderer.breath_composition.inverted";
+pub(crate) const PROP_BREATH_COMPOSITION_STALE_MILLIS: &str =
+    "debug.rustyquest.native_renderer.breath_composition.stale_millis";
 pub(crate) const PROP_PARTICLE_ADAPTER_ENABLED: &str =
     "debug.rustyquest.native_renderer.particle_adapter.enabled";
 pub(crate) const PROP_PARTICLE_ADAPTER_PROFILE_ID: &str =

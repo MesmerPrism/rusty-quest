@@ -30,6 +30,13 @@ for concurrent optional volume and normalized phase plus calibration lifecycle,
 tracking state, and bounded quality. It deliberately defines no classifier,
 hysteresis, dwell, endpoint, source, or application policy.
 
-Source acquisition, source-specific units and policy, phase estimation, UI,
+The `composition` module independently selects Controller or Polar ACC and
+Volume or State through an exact capability closure. It owns requested versus
+effective readback, ordered calibration actions, generation fencing, mapping
+changes that retain a running calibration, source/projection changes that hard
+reset it, and fail-closed admission of only the selected assessment. It still
+defines no acquisition, transport, UI, or consuming effect.
+
+Source acquisition, source-specific units and policy, platform adapters, UI,
 transport, rendering, and application interpretation are deliberately outside
 this crate.

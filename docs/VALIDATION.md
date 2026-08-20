@@ -39,6 +39,8 @@ cargo test -p rusty-quest-breath-contract --locked
 cargo test -p rusty-quest-native-renderer-android-native openxr_controller_breath_adapter --locked
 cargo test -p rusty-quest-native-renderer-android-native native_controller_breath_state --locked
 cargo test -p rusty-quest-native-renderer-android-native polar_acc_breath_adapter --locked
+cargo test -p rusty-quest-native-renderer-android-native breath_composition_runtime --locked
+pwsh -NoProfile -File .\tools\checks\Test-NativeRendererBreathCompositionStatic.ps1 -RepoRoot .
 ```
 
 Its unit and fixture tests cover disabled construction, configuration and
@@ -66,6 +68,15 @@ volume, adaptive limits, stale/missing/malformed/out-of-order input, retry,
 reset, deterministic actions, ready-calibrated phase progression, genuine
 Hold, and fail-closed phase reset. These gates do not execute
 Gradle, rendering, APK, ADB, or device work.
+
+The composition gates add all four source/mapping combinations, ordered panel
+actions, requested/effective proof, mapping-change calibration retention,
+source-change hard reset, stale/malformed/unselected assessment rejection,
+exact structured resolver output, canonical output-root containment, exact
+closed-world feature closure, a resolver-derived activation binding, unique
+package/property/marker namespaces, and an absence scan for downstream effect
+material. The Android-target Cargo check validates the JNI/OpenXR/PMD
+composition surface without Gradle or packaging.
 
 When a pull request changes `.github/` or a package-updater validation or
 publication authority path, use

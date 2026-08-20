@@ -19,6 +19,8 @@ $NativeRendererPropertyManifestSchema = "rusty.quest.native_renderer_property_ma
 $NativeRendererPropertyManifestRelativePath = "fixtures\native-renderer\native-renderer-property-manifest.json"
 $NativeRendererPropertyPrefix = "debug.rustyquest.native_renderer."
 $RenderModeProperty = "debug.rustyquest.native_renderer.render.mode"
+$BreathCompositionFeatureId = "breath.composition.closed_world"
+$BreathCompositionActivationBindingProperty = "debug.rustyquest.native_renderer.breath_composition.activation.binding_sha256"
 $EnvironmentDepthModeProperty = "debug.rustyquest.native_renderer.environment_depth.mode"
 $EnvironmentDepthSourceProperty = "debug.rustyquest.native_renderer.environment_depth.source"
 $EnvironmentDepthNativePassthroughRequiredProperty = "debug.rustyquest.native_renderer.environment_depth.native_passthrough.required"
@@ -1002,6 +1004,28 @@ foreach ($featureId in $selectedFeatureIds) {
         sha256 = [string]$features[$featureId].sha256
     }
 }
+$breathCompositionActivationBinding = $null
+if ($selectedFeatureIds -contains $BreathCompositionFeatureId) {
+    $bindingInputs = [ordered]@{
+        schema = "rusty.quest.breath_composition.activation_binding_inputs.v1"
+        app_spec_sha256 = Get-FileSha256 -Path $appSpecPath
+        feature_descriptors = $featureDescriptorRecords
+        selected_feature_ids = $selectedFeatureIds
+        runtime_set_without_binding = @($runtimeSet.Keys | Sort-Object | ForEach-Object {
+            [ordered]@{ name = [string]$_; value = [string]$runtimeSet[$_] }
+        })
+    }
+    $breathCompositionActivationBinding = Get-StringSha256 -Value ($bindingInputs | ConvertTo-Json -Depth 20 -Compress)
+    Assert-NativeRendererPropertyValue `
+        -Name $BreathCompositionActivationBindingProperty `
+        -Value $breathCompositionActivationBinding `
+        -ManifestByName $nativeRendererPropertyByName
+    if ($runtimeSet.Contains($BreathCompositionActivationBindingProperty)) {
+        throw "Breath composition activation binding is resolver-derived and must not be supplied by a feature or app spec"
+    }
+    $runtimeSet[$BreathCompositionActivationBindingProperty] = $breathCompositionActivationBinding
+    $runtimeSources[$BreathCompositionActivationBindingProperty] = "resolver:$BreathCompositionFeatureId"
+}
 $resolutionInputs = [ordered]@{
     resolver_version = $ResolverVersion
     app_spec_sha256 = Get-FileSha256 -Path $appSpecPath
@@ -1225,6 +1249,13 @@ $featureLock = [ordered]@{
     denied_feature_ids = @(Get-StringArray $app.denied_features | Sort-Object)
     feature_descriptors = $featureDescriptorRecords
     dependency_reasons = $dependencyReasons
+    breath_composition_activation = if ($null -ne $breathCompositionActivationBinding) {
+        [ordered]@{
+            schema = "rusty.quest.breath_composition.activation_binding.v1"
+            property = $BreathCompositionActivationBindingProperty
+            sha256 = $breathCompositionActivationBinding
+        }
+    } else { $null }
     exclusive_groups = $exclusiveGroups
     android_manifest = [ordered]@{
         permissions = $permissions
@@ -1344,6 +1375,7 @@ if ($null -ne $resultJsonCanonicalPath) {
         output_root = [System.IO.Path]::GetFullPath($outputRootPath)
         feature_lock_path = [System.IO.Path]::GetFullPath($featureLockPath)
         feature_lock_sha256 = Get-FileSha256 -Path $featureLockPath
+        breath_composition_activation_sha256 = $breathCompositionActivationBinding
         audit_path = [System.IO.Path]::GetFullPath($auditPath)
         audit_sha256 = Get-FileSha256 -Path $auditPath
     }

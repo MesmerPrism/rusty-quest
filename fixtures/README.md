@@ -26,6 +26,11 @@
   insufficient-motion, degenerate-axis, insufficient-span, and timeout
   failures; bounded adaptive limits; and live response between analysis ticks.
   No fixture activates an adapter or carries application interpretation.
+- `native-app-builds/native-breath-four-way-conformance.app.json`: exact
+  source-only closure for Controller/Polar ACC by Volume/State composition. It
+  selects the existing same-APK panel and generic triple-press action, records
+  a resolver-derived activation binding, uses a distinct package identity, and
+  denies unrelated effect, transport, and renderer features.
 - `spatial-hand-alignment/`: sanitized OpenXR-to-Spatial SDK mapping fixtures.
   The accepted viewer-world basis registration remains the rollback default;
   mirror/reflection candidates stay explicit until a separate live headset

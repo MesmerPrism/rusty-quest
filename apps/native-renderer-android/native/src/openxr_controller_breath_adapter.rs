@@ -196,6 +196,15 @@ impl OpenXrControllerBreathAdapter {
         }
     }
 
+    pub(crate) fn replace_volume_settings(
+        &mut self,
+        at: BreathTimestampMicros,
+        settings: ControllerVolumeSettings,
+    ) -> CalibrationObservation {
+        self.volume_settings = settings;
+        self.reset(at)
+    }
+
     pub(crate) fn configure(&mut self, at: BreathTimestampMicros) -> CalibrationObservation {
         self.phase_estimator.reset_history();
         self.last_orientation = None;
@@ -239,6 +248,10 @@ impl OpenXrControllerBreathAdapter {
         let generation = BreathGeneration::new(self.next_runtime_generation).ok()?;
         let started = self.start(at, generation);
         (started.generation == Some(generation)).then_some(generation)
+    }
+
+    pub(crate) fn active_generation(&self) -> Option<BreathGeneration> {
+        self.generation
     }
 
     pub(crate) fn cancel(

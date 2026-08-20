@@ -20,7 +20,7 @@ $manifest = $manifestText | ConvertFrom-Json
 if ($manifest.schema -ne "rusty.quest.native_renderer_property_manifest.v2") {
     throw "Native renderer property manifest has an unexpected schema."
 }
-$expectedPropertyCount = 279
+$expectedPropertyCount = 292
 if ($manifest.property_count -ne $expectedPropertyCount -or $manifest.properties.Count -ne $expectedPropertyCount) {
     throw "Native renderer property manifest must cover the current $expectedPropertyCount-property runtime surface."
 }
@@ -37,6 +37,19 @@ foreach ($entry in @($manifest.properties)) {
 }
 
 foreach ($token in @(
+    'debug.rustyquest.native_renderer.breath_composition.activation.binding_sha256',
+    'debug.rustyquest.native_renderer.breath_composition.enabled',
+    'debug.rustyquest.native_renderer.breath_composition.controller_assessment.enabled',
+    'debug.rustyquest.native_renderer.breath_composition.polar_acc_assessment.enabled',
+    'debug.rustyquest.native_renderer.breath_composition.volume_mapping.enabled',
+    'debug.rustyquest.native_renderer.breath_composition.state_mapping.enabled',
+    'debug.rustyquest.native_renderer.breath_composition.panel.enabled',
+    'debug.rustyquest.native_renderer.breath_composition.source',
+    'debug.rustyquest.native_renderer.breath_composition.mapping',
+    'debug.rustyquest.native_renderer.breath_composition.controller_projection',
+    'debug.rustyquest.native_renderer.breath_composition.polar_projection',
+    'debug.rustyquest.native_renderer.breath_composition.inverted',
+    'debug.rustyquest.native_renderer.breath_composition.stale_millis',
     'debug.rustyquest.native_renderer.hand_adapter.enabled',
     'debug.rustyquest.native_renderer.hand_adapter.profile_id',
     'debug.rustyquest.native_renderer.hand_adapter.project_id',

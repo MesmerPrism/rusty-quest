@@ -417,8 +417,20 @@ normalized volume into the pure phase owner. Missing, stale, malformed,
 out-of-order, calibration, lifecycle, and timestamp-discontinuity boundaries
 clear retained phase history. RR remains on its independent pulse lane and
 configured fixed ranges remain diagnostic-only. The crate starts inert and has
-no Android, JNI, OpenXR, renderer, broker, source acquisition, runtime
-selection, or application-mapping behavior.
+no Android, JNI, OpenXR, renderer, source acquisition, or
+application-mapping behavior.
+
+The pure composition module and Native Renderer adapter expose the complete
+direct four-way Controller/Polar ACC by Volume/State matrix. The exact
+`breath.composition.closed_world` feature closure selects both assessment
+adapters, both mappings, the existing same-APK panel shell, and the generic
+right-secondary triple-press action. The panel submits bounded Configure,
+Start, Cancel, Reset, and selection commands, then renders native-effective
+generation, calibration, tracking, quality, age, phase/value, and admission
+readback. Mapping-only changes preserve calibration; source, projection, and
+direction changes hard-reset retained state. The resolver derives and records
+an activation binding from the exact app spec, descriptors, feature closure,
+and pre-binding runtime settings. RR remains outside this composition.
 
 New native APK variants must start from the source-only native app-build
 workflow instead of hand-editing runtime profiles, Android manifest

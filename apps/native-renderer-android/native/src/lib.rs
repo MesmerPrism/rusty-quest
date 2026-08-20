@@ -11,6 +11,7 @@ const PLAN_JSON: &str =
     include_str!("../../../../fixtures/native-renderer/native-hwb-blur-sdf-public.plan.json");
 const MARKER_PREFIX: &str = "RUSTY_QUEST_NATIVE_RENDERER";
 
+mod breath_composition_runtime;
 mod breath_input_selection;
 
 #[cfg(target_os = "android")]
@@ -152,6 +153,7 @@ fn android_on_create(_state: &android_activity::OnCreateState) {
         "activity-created",
         "entrypoint=NativeActivity rustNativeActivity=true javaPackaged=true panelActivity=ControlPanelActivity",
     );
+    breath_composition_runtime::install_from_android_properties();
     let particle_adapter_input = particle_adapter_consumer::load_runtime_input();
     let particle_adapter_decision =
         particle_adapter_consumer::resolve_activation(&particle_adapter_input);

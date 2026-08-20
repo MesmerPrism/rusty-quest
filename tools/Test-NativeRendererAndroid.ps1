@@ -28,6 +28,7 @@ $gpuSdfStaticCheckPath = Join-Path $PSScriptRoot "checks\Test-NativeRendererGpuS
 $cameraGuideStaticCheckPath = Join-Path $PSScriptRoot "checks\Test-NativeRendererCameraGuideStatic.ps1"
 $openXrVulkanStaticCheckPath = Join-Path $PSScriptRoot "checks\Test-NativeRendererOpenXrVulkanStatic.ps1"
 $polarPanelStaticCheckPath = Join-Path $PSScriptRoot "checks\Test-NativeRendererPolarPanelStatic.ps1"
+$breathCompositionStaticCheckPath = Join-Path $PSScriptRoot "checks\Test-NativeRendererBreathCompositionStatic.ps1"
 $nativeRendererPropertyManifestPath = Join-Path $repoRoot "fixtures\native-renderer\native-renderer-property-manifest.json"
 $runtimeEvidenceFixturePath = Join-Path $repoRoot "fixtures\native-renderer\native-renderer-replay-visual-proof.logcat.txt"
 $liveHandDiagnosticPendingFixturePath = Join-Path $repoRoot "fixtures\native-renderer\native-renderer-live-hand-visual-diagnostic-pending.logcat.txt"
@@ -46,7 +47,7 @@ $requiredPaths = @(
     $videoProjectionStaticCheckPath,
     $projectionTargetStaticCheckPath, $handVisualStaticCheckPath, $gpuSdfStaticCheckPath,
     $cameraGuideStaticCheckPath, $openXrVulkanStaticCheckPath,
-    $polarPanelStaticCheckPath,
+    $polarPanelStaticCheckPath, $breathCompositionStaticCheckPath,
     $nativeRendererPropertyManifestPath, $runtimeEvidenceFixturePath, $liveHandDiagnosticPendingFixturePath,
     $environmentDepthParticlesEvidenceFixturePath, $environmentDepthSurfaceSupportEvidenceFixturePath,
     $runtimeEvidenceDamagedPath, $runtimeEvidenceDamagedPerformancePath,
@@ -77,6 +78,7 @@ foreach ($path in $requiredPaths) {
 & $cameraGuideStaticCheckPath -RepoRoot $repoRoot
 & $openXrVulkanStaticCheckPath -RepoRoot $repoRoot
 & $polarPanelStaticCheckPath -RepoRoot $repoRoot
+& $breathCompositionStaticCheckPath -RepoRoot $repoRoot
 
 if (-not $SkipProfileMatrix) {
     & $profileMatrixToolPath | Out-Null

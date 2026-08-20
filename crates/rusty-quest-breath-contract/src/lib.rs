@@ -5,6 +5,7 @@
 
 pub mod assessment;
 pub mod calibration;
+pub mod composition;
 pub mod phase;
 
 /// Observation schema emitted by this contract.

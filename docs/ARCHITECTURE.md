@@ -88,9 +88,20 @@ adapter translates typed PMD/JNI ACC frames into calibrated XZ or 3D volume and
 feeds only ready calibrated volume to the pure phase owner. RR never enters
 that path.
 
+The pure composition boundary selects one assessment source and one mapping
+independently through an exact capability closure. A mapping-only change
+retains the active generation and calibrated estimator; source, projection, or
+direction changes clear it. Native Renderer owns the single-process adapter:
+the existing OpenXR action owner supplies controller assessments, the existing
+PMD/JNI owner supplies Polar ACC, and RR is never consumed by the breath
+runtime. `ControlPanelActivity` submits low-rate requests and displays only
+native-effective readback. The source-only resolver records the exact feature
+closure and a deterministic activation binding; unselected descriptors remain
+inert.
+
 The crate owns no source acquisition, source-specific units or deadbands,
-UI, transport, platform lifecycle, rendering, runtime activation, or
-application interpretation. Crate presence alone activates nothing.
+UI, transport, platform lifecycle, rendering, or application interpretation.
+Crate presence alone activates nothing.
 
 ## Attended Package Updater
 
