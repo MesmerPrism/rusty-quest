@@ -97,7 +97,8 @@ PMD/JNI owner supplies Polar ACC, and RR is never consumed by the breath
 runtime. `ControlPanelActivity` submits low-rate requests and displays only
 native-effective readback while reusing its sole Polar acquisition owner for
 the ACC scan/connect/start path. Adapter action admission is bounded and
-transactional, and action-sync failure still advances missing/stale clearing.
+transactional; calibration readback is fenced by the exact running source and
+generation, and action-sync failure still advances missing/stale clearing.
 The source-only resolver records the exact feature closure and a deterministic
 activation binding in the runtime profile, settings/property adapters, and
 locked build environment. The native runtime activates only when the observed

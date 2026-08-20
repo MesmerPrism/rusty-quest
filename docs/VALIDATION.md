@@ -77,7 +77,8 @@ closed-world feature closure, exact resolver-binding propagation through the
 runtime profile, settings/property adapters, locked build environment and
 artifact hashes, packaged/observed binding match and mismatch behavior,
 transactional action-queue admission, calibration-readback reset, sync-error
-clearing order, sole Polar acquisition-owner reuse, unique
+clearing order, exact running-source/generation calibration fencing, sole Polar
+acquisition-owner reuse, unique
 package/property/marker namespaces, and an absence scan for downstream effect
 material. The Android-target Cargo check validates the JNI/OpenXR/PMD
 composition surface without Gradle or packaging.

@@ -893,6 +893,8 @@ public final class ControlPanelActivity extends Activity {
             .append(effective == null ? "none" : effective.optString("source") + "/" + effective.optString("mapping"));
         lines.append("\ncalibration=")
             .append(calibration == null ? "none" : calibration.optString("lifecycle", "none"))
+            .append(" generation=")
+            .append(calibration == null ? "none" : calibration.opt("generation"))
             .append(" progress=")
             .append(calibration == null ? "none" : calibration.opt("progress01"))
             .append(" frames=")

@@ -7,12 +7,12 @@ use std::{
 
 use rusty_quest_breath_contract::{
     assessment::BreathAssessmentObservation,
-    calibration::CalibrationObservation,
+    calibration::{CalibrationLifecycle, CalibrationObservation, CalibrationStatus},
     composition::{
         BreathCompositionAction, BreathCompositionAuthority, BreathCompositionBinding,
         BreathCompositionCapabilities, BreathCompositionMapping, BreathCompositionRequest,
-        BreathCompositionSnapshot, BreathCompositionSource, ControllerProjectionSelection,
-        PolarProjectionSelection,
+        BreathCompositionSnapshot, BreathCompositionSource, BreathCompositionStatus,
+        ControllerProjectionSelection, PolarProjectionSelection,
     },
     BreathGeneration, BreathTimestampMicros,
 };
@@ -142,6 +142,7 @@ pub(crate) struct BreathCompositionRuntime {
 #[derive(Clone, Debug, PartialEq)]
 struct CalibrationPanelReadback {
     source: BreathCompositionSource,
+    generation: BreathGeneration,
     lifecycle: &'static str,
     progress01: f64,
     accepted_frames: usize,
@@ -327,7 +328,7 @@ impl BreathCompositionRuntime {
                         source,
                         action: AdapterAction::Cancel(generation),
                     }],
-                    false,
+                    true,
                 )?;
                 Ok(())
             }
@@ -402,16 +403,36 @@ impl BreathCompositionRuntime {
         source: BreathCompositionSource,
         observation: &CalibrationObservation,
     ) {
-        if self
-            .authority
-            .snapshot()
-            .effective
-            .is_none_or(|request| request.source != source)
+        let snapshot = self.authority.snapshot();
+        let Some(selection) = snapshot.effective else {
+            return;
+        };
+        let Some(active_generation) = snapshot.generation else {
+            return;
+        };
+        if snapshot.status != BreathCompositionStatus::Running
+            || selection.source != source
+            || observation.generation != Some(active_generation)
+            || !matches!(
+                observation.lifecycle,
+                CalibrationLifecycle::Collecting
+                    | CalibrationLifecycle::Ready
+                    | CalibrationLifecycle::Failed
+            )
+            || matches!(
+                observation.status,
+                CalibrationStatus::Disabled
+                    | CalibrationStatus::Reset
+                    | CalibrationStatus::Configured
+                    | CalibrationStatus::Cancelled
+                    | CalibrationStatus::ActionRejected
+            )
         {
             return;
         }
         self.latest_calibration = Some(CalibrationPanelReadback {
             source,
+            generation: active_generation,
             lifecycle: observation.lifecycle.as_str(),
             progress01: observation.progress01,
             accepted_frames: observation.accepted_frames,
@@ -697,6 +718,7 @@ fn snapshot_value(
         })),
         "calibration_readback": calibration.map(|value| json!({
             "source": value.source.as_str(),
+            "generation": value.generation.get(),
             "lifecycle": value.lifecycle,
             "progress01": value.progress01,
             "accepted_frames": value.accepted_frames,
@@ -1185,6 +1207,7 @@ mod tests {
         }
         runtime.latest_calibration = Some(CalibrationPanelReadback {
             source: BreathCompositionSource::Controller,
+            generation: BreathGeneration::new(99).expect("test generation"),
             lifecycle: "ready",
             progress01: 1.0,
             accepted_frames: 12,
@@ -1208,66 +1231,116 @@ mod tests {
     }
 
     #[test]
-    fn reset_and_hard_source_change_clear_stale_calibration_readback() {
+    fn calibration_readback_requires_the_running_source_and_exact_generation() {
         let mut runtime = runtime();
         runtime.apply_command(&select("polar-acc", "volume"));
         runtime.apply_command(
             &json!({"schema": COMMAND_SCHEMA_ID, "operation": "configure"}).to_string(),
         );
         runtime.poll_polar(BreathTimestampMicros::new(10));
-        assert!(runtime.latest_calibration.is_some());
+        assert!(runtime.latest_calibration.is_none());
 
         runtime
-            .latest_calibration
-            .as_mut()
-            .expect("readback")
-            .lifecycle = "ready";
-        runtime.apply_command(
-            &json!({"schema": COMMAND_SCHEMA_ID, "operation": "configure"}).to_string(),
-        );
-        assert!(runtime.latest_calibration.is_none());
-        runtime.poll_polar(BreathTimestampMicros::new(15));
-        runtime
-            .latest_calibration
-            .as_mut()
-            .expect("configured readback")
-            .lifecycle = "ready";
-        runtime
-            .apply_command(&json!({"schema": COMMAND_SCHEMA_ID, "operation": "reset"}).to_string());
-        assert!(runtime.latest_calibration.is_none());
+            .apply_command(&json!({"schema": COMMAND_SCHEMA_ID, "operation": "start"}).to_string());
+        let first_generation = runtime.snapshot().generation.expect("first generation");
         runtime.poll_polar(BreathTimestampMicros::new(20));
         assert_eq!(
             runtime
                 .latest_calibration
                 .as_ref()
-                .map(|value| value.lifecycle),
-            Some("disabled")
+                .map(|value| value.generation),
+            Some(first_generation)
+        );
+        let first_readback = runtime.latest_calibration.clone();
+        let delayed_first_generation = runtime
+            .polar_adapter
+            .as_mut()
+            .expect("running adapter")
+            .observe(
+                BreathTimestampMicros::new(30),
+                first_generation,
+                PolarAccInput::Missing { sequence_id: 1 },
+            )
+            .calibration;
+
+        runtime.submit_calibration(
+            BreathCompositionSource::Controller,
+            &delayed_first_generation,
+        );
+        assert_eq!(runtime.latest_calibration, first_readback);
+        let mut missing_generation = delayed_first_generation.clone();
+        missing_generation.generation = None;
+        runtime.submit_calibration(BreathCompositionSource::PolarAcc, &missing_generation);
+        assert_eq!(runtime.latest_calibration, first_readback);
+        let mut rejected_status = delayed_first_generation.clone();
+        rejected_status.status = CalibrationStatus::ActionRejected;
+        runtime.submit_calibration(BreathCompositionSource::PolarAcc, &rejected_status);
+        assert_eq!(runtime.latest_calibration, first_readback);
+
+        runtime.apply_command(
+            &json!({
+                "schema": COMMAND_SCHEMA_ID,
+                "operation": "cancel",
+                "generation": first_generation.get()
+            })
+            .to_string(),
+        );
+        assert!(runtime.latest_calibration.is_none());
+        runtime.submit_calibration(BreathCompositionSource::PolarAcc, &delayed_first_generation);
+        assert!(runtime.latest_calibration.is_none());
+
+        runtime
+            .apply_command(&json!({"schema": COMMAND_SCHEMA_ID, "operation": "reset"}).to_string());
+        runtime.submit_calibration(BreathCompositionSource::PolarAcc, &delayed_first_generation);
+        assert!(runtime.latest_calibration.is_none());
+        runtime.apply_command(
+            &json!({"schema": COMMAND_SCHEMA_ID, "operation": "configure"}).to_string(),
+        );
+        runtime.submit_calibration(BreathCompositionSource::PolarAcc, &delayed_first_generation);
+        assert!(runtime.latest_calibration.is_none());
+        runtime
+            .apply_command(&json!({"schema": COMMAND_SCHEMA_ID, "operation": "start"}).to_string());
+        let second_generation = runtime.snapshot().generation.expect("second generation");
+        assert_ne!(second_generation, first_generation);
+        runtime.submit_calibration(BreathCompositionSource::PolarAcc, &delayed_first_generation);
+        assert!(runtime.latest_calibration.is_none());
+        runtime.poll_polar(BreathTimestampMicros::new(40));
+        assert_eq!(
+            runtime
+                .latest_calibration
+                .as_ref()
+                .map(|value| value.generation),
+            Some(second_generation)
+        );
+        let status: Value = serde_json::from_str(&runtime.apply_command(
+            &json!({"schema": COMMAND_SCHEMA_ID, "operation": "status"}).to_string(),
+        ))
+        .expect("status response");
+        assert_eq!(
+            status["snapshot"]["calibration_readback"]["generation"],
+            second_generation.get()
         );
 
-        runtime.apply_command(&select("controller", "volume"));
-        assert!(runtime.latest_calibration.is_none());
-        runtime.poll_polar(BreathTimestampMicros::new(25));
-        assert!(runtime.latest_calibration.is_none());
-        runtime.latest_calibration = Some(CalibrationPanelReadback {
-            source: BreathCompositionSource::Controller,
-            lifecycle: "ready",
-            progress01: 1.0,
-            accepted_frames: 12,
-            target_frames: Some(12),
-            watchdog_age_micros: Some(0),
-            failure_code: None,
-        });
+        let second_generation_observation = runtime
+            .polar_adapter
+            .as_mut()
+            .expect("second running adapter")
+            .observe(
+                BreathTimestampMicros::new(50),
+                second_generation,
+                PolarAccInput::Missing {
+                    sequence_id: u64::MAX,
+                },
+            )
+            .calibration;
         runtime.apply_command(
             &json!({"schema": COMMAND_SCHEMA_ID, "operation": "disable"}).to_string(),
         );
         assert!(runtime.latest_calibration.is_none());
-        let reset_at = BreathTimestampMicros::new(30);
-        let late_reset = runtime
-            .polar_adapter
-            .as_mut()
-            .expect("configured adapter")
-            .reset(reset_at);
-        runtime.submit_calibration(BreathCompositionSource::Controller, &late_reset);
+        runtime.submit_calibration(
+            BreathCompositionSource::PolarAcc,
+            &second_generation_observation,
+        );
         assert!(runtime.latest_calibration.is_none());
     }
 

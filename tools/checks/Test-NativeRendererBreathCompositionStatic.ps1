@@ -85,6 +85,9 @@ Assert-Tokens $runtime @(
     "activation_binding_matches",
     "activation-binding-mismatch",
     "action-queue-full",
+    '"generation": value.generation.get()',
+    "observation.generation != Some(active_generation)",
+    "BreathCompositionStatus::Running",
     "take_adapter_action",
     "latest_polar_acc_after",
     "controller_adapter_available",
@@ -115,6 +118,7 @@ Assert-Tokens $panel @(
     "Direct Breath Mapping",
     "Start calibration",
     "native-effective readback",
+    'calibration.opt("generation")',
     "buildEmbeddedAcquisitionView",
     "nativeApplyBreathCompositionCommand",
     "nativeReadBreathCompositionStatus"
