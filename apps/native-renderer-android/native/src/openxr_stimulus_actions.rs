@@ -47,6 +47,15 @@ fn xr_time_micros(value: xr::Time) -> BreathTimestampMicros {
     BreathTimestampMicros::new(u64::try_from(nanos).unwrap_or_default() / 1_000)
 }
 
+fn right_thumbstick_binding_enabled(
+    projection_controls_enabled: bool,
+    projection_joystick_controls_enabled: bool,
+    capture_annotation_feature_active: bool,
+) -> bool {
+    (projection_controls_enabled && projection_joystick_controls_enabled)
+        || capture_annotation_feature_active
+}
+
 pub(crate) struct StimulusVolumeActions {
     action_set: xr::ActionSet,
     right_primary_randomize: xr::Action<bool>,
@@ -78,6 +87,7 @@ pub(crate) struct StimulusVolumeActions {
     previous_right_primary_reset_pressed: bool,
     previous_right_secondary_pressed: bool,
     suggested_binding_count: usize,
+    right_thumbstick_binding_enabled: bool,
     stimulus_settings: NativeStimulusVolumeSettings,
     projection_target_settings: ProjectionTargetSettings,
     private_particle_breath_state_driver_settings: PrivateParticleBreathStateDriverSettings,
@@ -170,12 +180,15 @@ impl StimulusVolumeActions {
         let breath_calibration_controller_action_selected =
             breath_calibration_controller_action_settings.enabled()
                 && crate::breath_composition_runtime::feature_lock_active();
+        let controller_capture_annotation_feature_active =
+            crate::breath_composition_runtime::feature_lock_active();
         if !stimulus_settings.enabled
             && !projection_target_settings.controls_enabled
             && !environment_depth_alignment_settings.controls_enabled
             && !private_particle_breath_state_driver_settings.uses_native_controller_assessment()
             && !same_apk_panel_action_settings.enabled()
             && !breath_calibration_controller_action_selected
+            && !controller_capture_annotation_feature_active
             && !crate::breath_composition_runtime::controller_adapter_available()
             && !private_particle_recenter_enabled
         {
@@ -185,7 +198,11 @@ impl StimulusVolumeActions {
             );
             crate::marker(
                 "projection-target-input",
-                "status=disabled reason=projection-target-controls-disabled actionSetAttached=false rightThumbstickYAction=false rightPrimaryResetAction=false rightSecondaryScaleDriverToggleAction=false rightGripPoseAction=false",
+                format!(
+                    "status=disabled reason=projection-target-controls-disabled actionSetAttached=false rightThumbstickYAction={} controllerCaptureAnnotationFeatureActive={} rightPrimaryResetAction=false rightSecondaryScaleDriverToggleAction=false rightGripPoseAction=false",
+                    controller_capture_annotation_feature_active,
+                    controller_capture_annotation_feature_active,
+                ),
             );
         }
 
@@ -263,6 +280,11 @@ impl StimulusVolumeActions {
             && !right_primary_control_panel_binding_enabled;
         let projection_joystick_binding_enabled =
             projection_controls_enabled && projection_target_settings.joystick_controls_enabled;
+        let right_thumbstick_binding_enabled = right_thumbstick_binding_enabled(
+            projection_controls_enabled,
+            projection_target_settings.joystick_controls_enabled,
+            controller_capture_annotation_feature_active,
+        );
         let depth_alignment_joystick_binding_enabled = environment_depth_alignment_settings
             .controls_enabled
             && environment_depth_alignment_settings.joystick_controls_enabled;
@@ -375,7 +397,7 @@ impl StimulusVolumeActions {
                 let input = instance.string_to_path(input_path).map_err(|error| {
                     format!("create OpenXR path for thumbstick Y input {input_path}: {error}")
                 })?;
-                if projection_joystick_binding_enabled {
+                if right_thumbstick_binding_enabled {
                     bindings.push(xr::Binding::new(&right_thumbstick_y, input));
                 }
             }
@@ -431,7 +453,7 @@ impl StimulusVolumeActions {
                             profile.right_trigger_value_path.is_some(),
                             profile.right_select_fallback_path.is_some(),
                             profile.right_thumbstick_y_path.is_some()
-                                && projection_joystick_binding_enabled,
+                                && right_thumbstick_binding_enabled,
                             profile.left_thumbstick_x_path.is_some()
                                 && depth_alignment_joystick_binding_enabled,
                             profile.left_thumbstick_y_path.is_some()
@@ -469,7 +491,7 @@ impl StimulusVolumeActions {
             format!(
                 "status=config actionSet=stimulus_volume projectionTargetControlsEnabled={} rightThumbstickYAction={} rightControllerThumbstickY=/user/hand/right/input/thumbstick/y rightPrimaryResetAction={} rightControllerPrimaryReset=/user/hand/right/input/a/click rightSecondaryScaleDriverToggleAction={} rightControllerSecondaryScaleDriverToggle=/user/hand/right/input/b/click rightGripPoseAction={} optionalRightGripPose=/user/hand/right/input/grip/pose nativeControllerBreathStateConfigured={} nativeControllerBreathStateSource=right-grip-pose privateParticleBreathStateDriverConfigured={} rightBreathHapticAction={} rightBreathHaptic={} rightBreathHapticSubaction={} breathHapticsConfigured={} breathHapticRequiresScaleDriver=pmb breathHapticRequiresRightGripTracked=true breathHapticPulseHz={:.3} breathHapticAmplitude={:.3} breathHapticDurationMs={} breathHapticFrequencyHz=runtime-default actionSetAttached=false highRatePoseViaAndroidProperties=false highRateBreathViaAndroidProperties=false",
                 projection_target_settings.controls_enabled,
-                projection_joystick_binding_enabled,
+                right_thumbstick_binding_enabled,
                 primary_recenter_binding_enabled,
                 projection_controls_enabled,
                 right_grip_pose_binding_enabled,
@@ -559,6 +581,7 @@ impl StimulusVolumeActions {
             previous_right_primary_reset_pressed: false,
             previous_right_secondary_pressed: false,
             suggested_binding_count,
+            right_thumbstick_binding_enabled,
             stimulus_settings,
             projection_target_settings,
             private_particle_breath_state_driver_settings,
@@ -616,8 +639,7 @@ impl StimulusVolumeActions {
             format!(
                 "status=attached actionSet=stimulus_volume actionSetAttached=true suggestedBindingCount={} rightThumbstickYAction={} rightPrimaryResetAction={} rightSecondaryScaleDriverToggleAction={} rightGripPoseAction={} rightBreathHapticAction={}",
                 self.suggested_binding_count,
-                self.projection_target_settings.controls_enabled
-                    && self.projection_target_settings.joystick_controls_enabled,
+                self.right_thumbstick_binding_enabled,
                 self.right_primary_reset_enabled,
                 self.projection_target_settings.controls_enabled,
                 self.projection_target_settings.controls_enabled
@@ -780,6 +802,16 @@ impl StimulusVolumeActions {
         if let Err(error) = session.sync_actions(&[(&self.action_set).into()]) {
             self.observe_composition_controller_missing(observed_at, frame_count.saturating_add(1));
             crate::breath_composition_runtime::poll_polar(observed_at);
+            if crate::breath_capture::active() {
+                crate::breath_capture::record_controller_right_thumbstick(
+                    frame_count.saturating_add(1),
+                    observed_at.get(),
+                    predicted_display_time.as_nanos(),
+                    false,
+                    None,
+                    "sync-unavailable",
+                );
+            }
             if frame_count == 0 || frame_count % 120 == 0 {
                 crate::marker(
                         "projection-target-input",
@@ -904,6 +936,12 @@ impl StimulusVolumeActions {
                     observed_at.get(),
                 );
             }
+            self.record_capture_right_thumbstick(
+                session,
+                frame_count.saturating_add(1),
+                observed_at.get(),
+                predicted_display_time.as_nanos(),
+            );
         }
         if native_controller_breath_enabled {
             let generation = if composition_controller_enabled {
@@ -1676,6 +1714,33 @@ impl StimulusVolumeActions {
         None
     }
 
+    fn record_capture_right_thumbstick<G>(
+        &self,
+        session: &xr::Session<G>,
+        frame_sequence_id: u64,
+        observed_at_micros: u64,
+        xr_time_ns: i64,
+    ) {
+        match self.right_thumbstick_y.state(session, xr::Path::NULL) {
+            Ok(state) => crate::breath_capture::record_controller_right_thumbstick(
+                frame_sequence_id,
+                observed_at_micros,
+                xr_time_ns,
+                state.is_active,
+                Some(state.current_state),
+                "available",
+            ),
+            Err(_) => crate::breath_capture::record_controller_right_thumbstick(
+                frame_sequence_id,
+                observed_at_micros,
+                xr_time_ns,
+                false,
+                None,
+                "state-unavailable",
+            ),
+        }
+    }
+
     fn poll_depth_alignment_thumbstick<G>(
         &self,
         session: &xr::Session<G>,
@@ -1841,8 +1906,8 @@ const INTERACTION_PROFILES: &[InteractionProfileBindings] = &[
 #[cfg(test)]
 mod tests {
     use super::{
-        manifold_pose_config_from_projection_settings, BreathHapticCadence,
-        BREATH_HAPTIC_PULSE_PERIOD_SECONDS,
+        manifold_pose_config_from_projection_settings, right_thumbstick_binding_enabled,
+        BreathHapticCadence, BREATH_HAPTIC_PULSE_PERIOD_SECONDS,
     };
     use crate::projection_target_state::{BreathBridgeMode, ProjectionTargetSettings};
 
@@ -1879,5 +1944,12 @@ mod tests {
         settings.breath_bridge_mode = BreathBridgeMode::DirectControllerState;
 
         assert!(!manifold_pose_config_from_projection_settings(&settings).enabled);
+    }
+
+    #[test]
+    fn capture_annotation_binds_right_thumbstick_without_projection_controls() {
+        assert!(right_thumbstick_binding_enabled(false, false, true));
+        assert!(!right_thumbstick_binding_enabled(false, false, false));
+        assert!(right_thumbstick_binding_enabled(true, true, false));
     }
 }

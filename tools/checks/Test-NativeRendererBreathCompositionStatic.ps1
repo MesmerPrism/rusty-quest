@@ -43,6 +43,7 @@ $polarPath = Join-Path $repo "apps\native-renderer-android\native\src\polar_acc_
 $ingressPath = Join-Path $repo "apps\native-renderer-android\native\src\polar_composition_adapters.rs"
 $capturePath = Join-Path $repo "apps\native-renderer-android\native\src\breath_capture.rs"
 $captureAnalyzerPath = Join-Path $repo "tools\Analyze-NativeRendererBreathCapture.ps1"
+$captureFixturePath = Join-Path $repo "fixtures\native-renderer-breath-capture\synthetic-parallel-session"
 $panelPath = Join-Path $repo "apps\native-renderer-android\src\main\java\io\github\mesmerprism\rustyquest\native_renderer\ControlPanelActivity.java"
 $polarPanelPath = Join-Path $repo "apps\native-renderer-android\src\main\java\io\github\mesmerprism\rustyquest\native_renderer\PolarSensorPanel.java"
 $calibrationActionPath = Join-Path $repo "apps\native-renderer-android\native\src\breath_calibration_controller_action.rs"
@@ -121,6 +122,10 @@ Assert-Tokens $controller @(
     "BreathCompositionSource::Controller",
     "controller_adapter_available",
     "composition_controller_enabled",
+    "right_thumbstick_binding_enabled",
+    "record_capture_right_thumbstick",
+    "controller_right_thumbstick",
+    "capture_annotation_binds_right_thumbstick_without_projection_controls",
     "observe_composition_controller_missing",
     "poll_polar(observed_at)",
     "submit_assessment"
@@ -142,10 +147,16 @@ Assert-Tokens ($polar + [Environment]::NewLine + $ingress) @(
 Assert-Tokens $capture @(
     "rusty.quest.breath_source_capture.v1",
     "QUEUE_CAPACITY",
+    "FIXED_CAPTURE_DURATION_MILLIS",
     "breath-capture-writer",
+    "breath-capture-watchdog",
+    "capture.active.json",
+    "breath_source_samples.partial.jsonl",
+    "duration-elapsed",
     "polar_acc_sample",
     "polar_ecg_sample",
     "controller_pose",
+    "controller_right_thumbstick",
     "driver_apply",
     "rr_consumed_by_breath",
     "same-process-direct"
@@ -156,6 +167,9 @@ Assert-Tokens $captureAnalyzer @(
     "capture_receipt.json",
     "polar_acc_sample_to_frame_receipt",
     "polar_acc_frame_to_jni_submit",
+    "controller_right_thumbstick_interval",
+    "RightStickHoldDeadzone",
+    "manual_breath_annotation",
     "assessment_source_sample_to_driver_apply",
     "breath_capture_timeline.csv"
 ) "host-only capture analysis"
@@ -276,7 +290,9 @@ if ($syncErrorReturnIndex -lt 0) {
 $syncErrorBlock = $controller.Substring($syncErrorIndex, $syncErrorReturnIndex - $syncErrorIndex)
 Assert-Tokens $syncErrorBlock @(
     "observe_composition_controller_missing(",
-    "poll_polar(observed_at)"
+    "poll_polar(observed_at)",
+    "record_controller_right_thumbstick(",
+    "sync-unavailable"
 ) "sync_actions error clearing before early return"
 
 $runRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("rusty-quest-breath-i6-" + [guid]::NewGuid().ToString("N"))
@@ -378,6 +394,25 @@ try {
     }
     if ([string]$lock.android_manifest.package_name -ne "io.github.mesmerprism.rustyquest.native_renderer.breath_matrix") {
         throw "Breath composition package identity drifted"
+    }
+    $captureAnalysisRoot = Join-Path $runRoot "capture-analysis"
+    & pwsh -NoProfile -File $captureAnalyzerPath -CaptureDirectory $captureFixturePath -OutputDirectory $captureAnalysisRoot | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        throw "Synthetic fixed-duration capture analysis failed with exit $LASTEXITCODE"
+    }
+    $captureAnalysisPath = Join-Path $captureAnalysisRoot "breath_capture_analysis.json"
+    $captureAnalysis = Get-Content -Raw -LiteralPath $captureAnalysisPath | ConvertFrom-Json
+    if ([Int64]$captureAnalysis.target_duration_millis -ne 120000 -or
+        [string]$captureAnalysis.receipt.stop_reason -ne "duration-elapsed" -or
+        [Int64]$captureAnalysis.record_counts.controller_right_thumbstick -ne 1) {
+        throw "Synthetic capture analysis lost the fixed duration, automatic completion, or right-thumbstick channel"
+    }
+    $captureTimeline = Import-Csv -LiteralPath (Join-Path $captureAnalysisRoot "breath_capture_timeline.csv")
+    $annotation = @($captureTimeline | Where-Object {
+        [string]$_.kind -eq "controller_right_thumbstick"
+    })
+    if ($annotation.Count -ne 1 -or [string]$annotation[0].manual_breath_annotation -ne "inhaling") {
+        throw "Synthetic capture analysis did not derive the expected host-only right-stick annotation"
     }
 } finally {
     if (Test-Path -LiteralPath $runRoot) {

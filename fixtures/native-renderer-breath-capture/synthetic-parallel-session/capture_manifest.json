@@ -2,5 +2,20 @@
   "schema": "rusty.quest.breath_source_capture_manifest.v1",
   "capture_schema": "rusty.quest.breath_source_capture.v1",
   "session_id": "synthetic-parallel-session",
-  "generation": 1
+  "generation": 1,
+  "started_at_monotonic_ns": 1000000000,
+  "target_duration_millis": 120000,
+  "queue_capacity": 32768,
+  "checkpoint_record_interval": 256,
+  "streams": [
+    "controller_pose",
+    "controller_right_thumbstick",
+    "polar_acc_frame",
+    "polar_acc_sample",
+    "polar_ecg_sample",
+    "breath_assessment",
+    "driver_apply"
+  ],
+  "rr_consumed_by_breath": false,
+  "transport": "same-process-direct"
 }

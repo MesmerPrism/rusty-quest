@@ -23,6 +23,7 @@ import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.ParcelUuid;
+import android.os.SystemClock;
 import android.util.Log;
 import android.view.Gravity;
 import android.view.View;
@@ -708,7 +709,11 @@ final class PolarSensorPanel {
         }
         captureSessionId = "breath_capture_" + System.currentTimeMillis();
         File directory = new File(new File(activity.getFilesDir(), "breath_source_captures"), captureSessionId);
-        String response = nativeStartParallelBreathCapture(directory.getAbsolutePath(), captureSessionId);
+        long startedAtElapsedRealtimeNs = SystemClock.elapsedRealtimeNanos();
+        String response = nativeStartParallelBreathCapture(
+            directory.getAbsolutePath(),
+            captureSessionId,
+            startedAtElapsedRealtimeNs);
         try {
             JSONObject result = new JSONObject(response == null ? "{}" : response);
             if (!"started".equals(result.optString("status", ""))) {
@@ -717,7 +722,14 @@ final class PolarSensorPanel {
                 return;
             }
             marker("status=capture-started session=" + markerToken(captureSessionId));
-            setStatus("Synchronized controller/Polar capture started.");
+            setStatus("Two-minute synchronized controller/Polar capture started.");
+            final String startedCaptureSessionId = captureSessionId;
+            handler.postDelayed(new Runnable() {
+                @Override
+                public void run() {
+                    refreshCaptureCompletion(startedCaptureSessionId);
+                }
+            }, 120000L);
         } catch (Exception error) {
             captureSessionId = "none";
             setStatus("Capture start returned malformed status.");
@@ -736,9 +748,40 @@ final class PolarSensorPanel {
                 + " written=" + result.optLong("written_records", 0L)
                 + " dropped=" + result.optLong("dropped_records", 0L));
             captureSessionId = "none";
-            setStatus("Synchronized capture stopped and flushed.");
+            setStatus(result.optBoolean("complete", false)
+                ? "Synchronized capture stopped and finalized."
+                : "Capture stopped incomplete; retain it only for transport diagnosis.");
         } catch (Exception error) {
             setStatus("Capture stop returned malformed status.");
+        }
+    }
+
+    private void refreshCaptureCompletion(String expectedSessionId) {
+        if (!expectedSessionId.equals(captureSessionId)) {
+            return;
+        }
+        try {
+            JSONObject result = new JSONObject(nativeReadParallelBreathCaptureStatus());
+            if (result.optBoolean("active", false)) {
+                handler.postDelayed(new Runnable() {
+                    @Override
+                    public void run() {
+                        refreshCaptureCompletion(expectedSessionId);
+                    }
+                }, 250L);
+                return;
+            }
+            String stopReason = result.optString("stop_reason", "unknown");
+            boolean complete = result.optBoolean("complete", false);
+            captureSessionId = "none";
+            marker("status=capture-auto-complete reason=" + markerToken(stopReason)
+                + " complete=" + complete);
+            setStatus(complete
+                ? "Two-minute capture finalized."
+                : "Two-minute capture incomplete; retain it only for transport diagnosis.");
+            updateCounters();
+        } catch (Exception error) {
+            setStatus("Capture completion status was malformed.");
         }
     }
 
@@ -1642,7 +1685,10 @@ final class PolarSensorPanel {
         long hostTimeNs,
         float rrIntervalMs);
 
-    private static native String nativeStartParallelBreathCapture(String directory, String sessionId);
+    private static native String nativeStartParallelBreathCapture(
+        String directory,
+        String sessionId,
+        long startedAtElapsedRealtimeNs);
 
     private static native String nativeStopParallelBreathCapture();
 
