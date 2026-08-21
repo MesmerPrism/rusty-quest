@@ -371,29 +371,35 @@ impl BreathCompositionRuntime {
     fn start_calibration_inner(&mut self) -> Result<(), &'static str> {
         let source = self.effective_source()?;
         let mut candidate = self.authority.clone();
+        let mut actions = Vec::with_capacity(3);
+        if candidate.snapshot().status == BreathCompositionStatus::Running {
+            let reset = candidate.action(BreathCompositionAction::Reset);
+            if reset.rejection.is_some() {
+                return Err("invalid-action");
+            }
+            actions.push(PendingAdapterAction {
+                source,
+                action: AdapterAction::Reset,
+            });
+        }
         let configured = candidate.action(BreathCompositionAction::Configure);
         if configured.rejection.is_some() {
             return Err("invalid-action");
         }
+        actions.push(PendingAdapterAction {
+            source,
+            action: AdapterAction::Configure,
+        });
         let started = candidate.action(BreathCompositionAction::Start);
         if started.rejection.is_some() {
             return Err("invalid-action");
         }
         let generation = started.generation.ok_or("invalid-action")?;
-        self.commit_transition(
-            candidate,
-            &[
-                PendingAdapterAction {
-                    source,
-                    action: AdapterAction::Configure,
-                },
-                PendingAdapterAction {
-                    source,
-                    action: AdapterAction::Start(generation),
-                },
-            ],
-            true,
-        )
+        actions.push(PendingAdapterAction {
+            source,
+            action: AdapterAction::Start(generation),
+        });
+        self.commit_transition(candidate, &actions, true)
     }
 
     fn commit_transition(
@@ -1119,6 +1125,92 @@ mod tests {
         assert_eq!(response["reason_code"], "no-effective-selection");
         assert_eq!(runtime.snapshot(), before);
         assert!(runtime.pending_actions.is_empty());
+    }
+
+    #[test]
+    fn start_calibration_restarts_running_ready_and_failed_generations_atomically() {
+        let mut runtime = runtime();
+        runtime.apply_command(&select("controller", "volume"));
+        runtime.apply_command(
+            &json!({"schema": COMMAND_SCHEMA_ID, "operation": "start_calibration"}).to_string(),
+        );
+        let first_generation = runtime.snapshot().generation.expect("first generation");
+        runtime.pending_actions.clear();
+
+        for lifecycle in ["ready", "failed"] {
+            runtime.latest_calibration = Some(CalibrationPanelReadback {
+                source: BreathCompositionSource::Controller,
+                generation: runtime.snapshot().generation.expect("running generation"),
+                lifecycle,
+                progress01: if lifecycle == "ready" { 1.0 } else { 0.4 },
+                accepted_frames: 8,
+                target_frames: Some(12),
+                watchdog_age_micros: Some(20),
+                failure_code: (lifecycle == "failed").then(|| "Timeout".to_owned()),
+            });
+            let response: Value = serde_json::from_str(&runtime.apply_command(
+                &json!({"schema": COMMAND_SCHEMA_ID, "operation": "start_calibration"}).to_string(),
+            ))
+            .expect("response");
+            assert_eq!(response["command_status"], "accepted");
+            assert_eq!(response["snapshot"]["status"], "running");
+            assert!(runtime.latest_calibration.is_none());
+            assert_eq!(
+                runtime.take_action(BreathCompositionSource::Controller),
+                Some(AdapterAction::Reset)
+            );
+            assert_eq!(
+                runtime.take_action(BreathCompositionSource::Controller),
+                Some(AdapterAction::Configure)
+            );
+            assert!(matches!(
+                runtime.take_action(BreathCompositionSource::Controller),
+                Some(AdapterAction::Start(_))
+            ));
+        }
+        assert_ne!(
+            runtime.snapshot().generation.expect("latest generation"),
+            first_generation
+        );
+    }
+
+    #[test]
+    fn running_calibration_restart_rejects_before_any_mutation_when_queue_is_full() {
+        let mut runtime = runtime();
+        runtime.apply_command(&select("controller", "volume"));
+        runtime.apply_command(
+            &json!({"schema": COMMAND_SCHEMA_ID, "operation": "start_calibration"}).to_string(),
+        );
+        runtime.pending_actions.clear();
+        for _ in 0..(MAX_PENDING_ACTIONS - 2) {
+            runtime.pending_actions.push_back(PendingAdapterAction {
+                source: BreathCompositionSource::Controller,
+                action: AdapterAction::Configure,
+            });
+        }
+        runtime.latest_calibration = Some(CalibrationPanelReadback {
+            source: BreathCompositionSource::Controller,
+            generation: runtime.snapshot().generation.expect("generation"),
+            lifecycle: "ready",
+            progress01: 1.0,
+            accepted_frames: 12,
+            target_frames: Some(12),
+            watchdog_age_micros: Some(0),
+            failure_code: None,
+        });
+        let before = runtime.snapshot();
+        let pending_before = runtime.pending_actions.clone();
+        let calibration_before = runtime.latest_calibration.clone();
+
+        let response: Value = serde_json::from_str(&runtime.apply_command(
+            &json!({"schema": COMMAND_SCHEMA_ID, "operation": "start_calibration"}).to_string(),
+        ))
+        .expect("response");
+        assert_eq!(response["command_status"], "rejected");
+        assert_eq!(response["reason_code"], "action-queue-full");
+        assert_eq!(runtime.snapshot(), before);
+        assert_eq!(runtime.pending_actions, pending_before);
+        assert_eq!(runtime.latest_calibration, calibration_before);
     }
 
     #[test]

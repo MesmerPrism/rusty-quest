@@ -92,6 +92,7 @@ use crate::{
     },
     openxr_stimulus_actions::StimulusVolumeActions,
     private_extension_slot::{PrivateExtensionSlotFrameStats, PrivateExtensionSlotRuntime},
+    private_particle_world_basis::PrivateParticleFrameEyeProjections,
     projection_target_state::{ProjectionTargetSettings, ProjectionTargetState},
     recorded_hand_replay::{
         RecordedHandReplaySet, RecordedHandReplaySummary, RecordedHandSkinningFrame,
@@ -3128,7 +3129,10 @@ unsafe fn run_projection_frames(
                     cmd,
                     gpu_timestamp_tracker,
                     frame_slot,
-                    private_particle_world_anchor.compute_basis_transport(),
+                    PrivateParticleFrameEyeProjections::new(
+                        private_particle_world_anchor.compute_basis_transport(),
+                        particle_sort_eye_projection,
+                    ),
                     private_particle_world_anchor.world_center_scale(),
                     private_particle_world_anchor.scale_parameter_source(),
                     private_particle_world_anchor.world_forward_axis(),

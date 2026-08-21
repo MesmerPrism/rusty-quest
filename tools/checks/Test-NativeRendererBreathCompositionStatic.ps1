@@ -46,6 +46,7 @@ $polarPanelPath = Join-Path $repo "apps\native-renderer-android\src\main\java\io
 $calibrationActionPath = Join-Path $repo "apps\native-renderer-android\native\src\breath_calibration_controller_action.rs"
 $worldBasisPath = Join-Path $repo "apps\native-renderer-android\native\src\private_particle_world_basis.rs"
 $xrVulkanPath = Join-Path $repo "apps\native-renderer-android\native\src\xr_vulkan.rs"
+$gpuPrivateParticlesPath = Join-Path $repo "apps\native-renderer-android\native\src\gpu_private_particles.rs"
 $operatorPath = Join-Path $repo "tools\Invoke-NativeRendererBreathOperator.ps1"
 $nativeBuildScriptPath = Join-Path $repo "apps\native-renderer-android\native\build.rs"
 $androidBuildPath = Join-Path $repo "tools\Build-NativeRendererAndroid.ps1"
@@ -70,6 +71,7 @@ $polarPanel = Read-RequiredText $polarPanelPath "sole Polar acquisition panel"
 $calibrationAction = Read-RequiredText $calibrationActionPath "controller calibration action"
 $worldBasis = Read-RequiredText $worldBasisPath "captured private-particle world basis"
 $xrVulkan = Read-RequiredText $xrVulkanPath "native OpenXR/Vulkan composition"
+$gpuPrivateParticles = Read-RequiredText $gpuPrivateParticlesPath "private particle compute/sort routing"
 $operator = Read-RequiredText $operatorPath "fixed breath operator CLI"
 $nativeBuildScript = Read-RequiredText $nativeBuildScriptPath "native build script"
 $androidBuild = Read-RequiredText $androidBuildPath "Android build wrapper"
@@ -105,6 +107,9 @@ Assert-Tokens $runtime @(
     "nativeReadBreathCompositionStatus",
     "start_calibration_inner",
     '"start_calibration"',
+    "AdapterAction::Reset",
+    "start_calibration_restarts_running_ready_and_failed_generations_atomically",
+    "running_calibration_restart_rejects_before_any_mutation_when_queue_is_full",
     "source_change_queues_hard_resets_but_mapping_change_does_not"
 ) "native command/readback authority"
 Assert-Tokens $controller @(
@@ -168,10 +173,15 @@ Assert-Tokens ($calibrationAction + [Environment]::NewLine + $controller) @(
     'start_calibration("right-secondary-hold")',
     "cancel_pending_sequence"
 ) "controller calibration action"
-Assert-Tokens ($worldBasis + [Environment]::NewLine + $xrVulkan) @(
+Assert-Tokens ($worldBasis + [Environment]::NewLine + $xrVulkan + [Environment]::NewLine + $gpuPrivateParticles) @(
     "captured_compute_basis_does_not_follow_later_head_motion",
     "recenter_recaptures_right_up_and_forward_axes_together",
     "compute_basis_transport()",
+    "PrivateParticleFrameEyeProjections::new(",
+    "particle_sort_eye_projection",
+    "eye_projections.compute_basis",
+    "eye_projections.sort_eye",
+    "captured_compute_basis_stays_fixed_while_live_sort_eye_follows_head_motion",
     "privateParticleComputeBasisSource=captured-world-anchor",
     "privateParticleComputeBasisFollowCamera=false"
 ) "captured private-particle compute basis"

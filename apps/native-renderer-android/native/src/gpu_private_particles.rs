@@ -34,6 +34,7 @@ use crate::private_particle_breath_state_driver::{
 use crate::private_particle_heartbeat_pulse_adapter::{
     PrivateParticleHeartbeatPulseAdapter, PrivateParticleHeartbeatPulseAdapterSettings,
 };
+use crate::private_particle_world_basis::PrivateParticleFrameEyeProjections;
 
 include!(concat!(
     env!("OUT_DIR"),
@@ -1829,7 +1830,10 @@ impl GpuPrivateParticleRenderer {
         cmd: vk::CommandBuffer,
         gpu_timestamp_tracker: &GpuTimestampTracker,
         frame_slot: usize,
-        eye_projection: HandMeshVisualEyeProjection,
+        eye_projections: PrivateParticleFrameEyeProjections<
+            HandMeshVisualEyeProjection,
+            HandMeshVisualEyeProjection,
+        >,
         world_center_scale: [f32; 4],
         world_anchor_scale_parameter_source: &'static str,
         world_anchor_forward_axis: [f32; 4],
@@ -1892,7 +1896,7 @@ impl GpuPrivateParticleRenderer {
             draw_count,
             self.tracer_max_count,
             runtime_settings,
-            eye_projection,
+            eye_projections.compute_basis,
             world_center_scale,
             frame_count,
             phase_reset,
@@ -1992,7 +1996,8 @@ impl GpuPrivateParticleRenderer {
                 frame_slot,
                 GpuTimestampStage::PrivateParticleSort,
             );
-            let sort_count = self.record_sort_frame(device, cmd, eye_projection, draw_count);
+            let sort_count =
+                self.record_sort_frame(device, cmd, eye_projections.sort_eye, draw_count);
             gpu_timestamp_tracker.write_stage_end(
                 device,
                 cmd,

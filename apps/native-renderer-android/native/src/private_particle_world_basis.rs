@@ -7,6 +7,21 @@ pub(crate) struct CapturedWorldBasis {
     pub(crate) forward: [f32; 3],
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct PrivateParticleFrameEyeProjections<ComputeBasis, SortEye> {
+    pub(crate) compute_basis: ComputeBasis,
+    pub(crate) sort_eye: SortEye,
+}
+
+impl<ComputeBasis, SortEye> PrivateParticleFrameEyeProjections<ComputeBasis, SortEye> {
+    pub(crate) fn new(compute_basis: ComputeBasis, sort_eye: SortEye) -> Self {
+        Self {
+            compute_basis,
+            sort_eye,
+        }
+    }
+}
+
 impl Default for CapturedWorldBasis {
     fn default() -> Self {
         Self {
@@ -85,5 +100,30 @@ mod tests {
         assert_ne!(after.right, before.right);
         assert_ne!(after.up, before.up);
         assert_ne!(after.forward, before.forward);
+    }
+
+    #[test]
+    fn captured_compute_basis_stays_fixed_while_live_sort_eye_follows_head_motion() {
+        let captured = CapturedWorldBasis::from_orientation_xyzw([0.0, 0.0, 0.0, 1.0]);
+        let first = PrivateParticleFrameEyeProjections::new(
+            captured,
+            ([0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 1.0]),
+        );
+        let later = PrivateParticleFrameEyeProjections::new(
+            captured,
+            (
+                [0.5, 1.5, -2.0],
+                [
+                    0.0,
+                    std::f32::consts::FRAC_1_SQRT_2,
+                    0.0,
+                    std::f32::consts::FRAC_1_SQRT_2,
+                ],
+            ),
+        );
+
+        assert_eq!(first.compute_basis, later.compute_basis);
+        assert_ne!(first.sort_eye, later.sort_eye);
+        assert_eq!(later.sort_eye.0, [0.5, 1.5, -2.0]);
     }
 }

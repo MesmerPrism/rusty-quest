@@ -134,6 +134,7 @@ final class PolarSensorPanel {
     private boolean commandInFlight;
     private boolean pmdReady;
     private boolean pmdRunning;
+    private boolean connected;
     private boolean closing;
     private int pendingBleAction;
     private String pendingCommand = "";
@@ -160,6 +161,8 @@ final class PolarSensorPanel {
     private int batteryPercent = -1;
     private String connectedLabel = "none";
     private String connectedDeviceInstanceId = "none";
+    private String pendingConnectionLabel = "none";
+    private String pendingConnectionDeviceInstanceId = "none";
     private String statusState = "idle";
     private String statusDetail = "panel-created";
 
@@ -291,7 +294,7 @@ final class PolarSensorPanel {
         status.setPadding(0, dp(16), 0, 0);
         root.addView(status);
         updateCounters();
-        writeStatus("ready", "panel-created");
+        setStatusState("ready", "panel-created");
         marker("status=ready");
         return scroll;
     }
@@ -319,7 +322,7 @@ final class PolarSensorPanel {
         closing = true;
         stopScan();
         closeGatt();
-        writeStatus("stopped", "panel-closed");
+        setStatusState("stopped", "panel-closed");
         marker("status=stopped");
     }
 
@@ -483,22 +486,30 @@ final class PolarSensorPanel {
         accSettings = PmdSettings.EMPTY;
         ecgSettings = PmdSettings.EMPTY;
         pendingPmdMode = selectedPmdMode();
-        connectedLabel = entry.label();
-        connectedDeviceInstanceId = entry.instanceId();
+        pendingConnectionLabel = entry.label();
+        pendingConnectionDeviceInstanceId = entry.instanceId();
         try {
             if (Build.VERSION.SDK_INT >= 23) {
                 gatt = entry.device.connectGatt(activity, false, gattCallback, BluetoothDevice.TRANSPORT_LE);
             } else {
                 gatt = entry.device.connectGatt(activity, false, gattCallback);
             }
+            if (gatt == null) {
+                closeGatt();
+                setStatusState("connection-failed", "BLE connect returned no transport handle.");
+                marker("status=error reason=connect-null-gatt");
+                return;
+            }
             setStatusState("connecting", "Connecting to selected Polar device.");
             marker("status=connecting deviceInstanceId=" + markerToken(entry.instanceId())
                 + " rawDeviceIdentifierLogged=false");
         } catch (SecurityException ex) {
-            setStatus("BLE connect permission is missing.");
+            closeGatt();
+            setStatusState("permission-required", "BLE connect permission is missing.");
             marker("status=error reason=connect-security-exception");
         } catch (RuntimeException ex) {
-            setStatus("BLE connect failed to start.");
+            closeGatt();
+            setStatusState("connection-failed", "BLE connect failed to start.");
             marker("status=error reason=connect-start-failed");
         }
     }
@@ -506,8 +517,6 @@ final class PolarSensorPanel {
     private void disconnect() {
         stopScan();
         closeGatt();
-        connectedLabel = "none";
-        connectedDeviceInstanceId = "none";
         setStatusState("disconnected", "Disconnected from Polar device.");
         marker("status=disconnected");
         updateCounters();
@@ -518,7 +527,7 @@ final class PolarSensorPanel {
             return;
         }
         pendingBleAction = PENDING_BLE_NONE;
-        if (gatt == null || pmdControlCharacteristic == null) {
+        if (!connected || gatt == null || pmdControlCharacteristic == null) {
             setStatus("PMD control point is not available.");
             return;
         }
@@ -728,32 +737,33 @@ final class PolarSensorPanel {
     }
 
     private void handleConnectionState(BluetoothGatt callbackGatt, int statusCode, int newState) {
-        if (closing) {
+        if (closing || callbackGatt != gatt) {
             return;
         }
         if (statusCode != BluetoothGatt.GATT_SUCCESS) {
-            setStatus("Connection failed: " + statusCode);
-            writeStatus("connection_failed", String.valueOf(statusCode));
-            marker("status=connection-failed statusCode=" + statusCode);
             closeGatt();
+            setStatusState("connection-failed", "Connection failed: " + statusCode);
+            marker("status=connection-failed statusCode=" + statusCode);
             return;
         }
         if (newState == BluetoothProfile.STATE_CONNECTED) {
-            setStatus("Connected. Discovering services.");
-            writeStatus("connected", connectedLabel);
+            connected = true;
+            connectedLabel = pendingConnectionLabel;
+            connectedDeviceInstanceId = pendingConnectionDeviceInstanceId;
+            pendingConnectionLabel = "none";
+            pendingConnectionDeviceInstanceId = "none";
+            setStatusState("connected", "Connected. Discovering services.");
             marker("status=connected");
             try {
                 callbackGatt.requestConnectionPriority(BluetoothGatt.CONNECTION_PRIORITY_HIGH);
                 callbackGatt.discoverServices();
             } catch (SecurityException ex) {
-                setStatus("BLE service discovery permission is missing.");
+                setStatusState("permission-required", "BLE service discovery permission is missing.");
                 marker("status=error reason=discover-security-exception");
             }
         } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
-            pmdRunning = false;
-            activePmdMode = "none";
-            setStatus("Polar device disconnected.");
-            writeStatus("disconnected", connectedLabel);
+            closeGatt();
+            setStatusState("disconnected", "Polar device disconnected.");
             marker("status=device-disconnected");
             updateCounters();
         }
@@ -1354,7 +1364,7 @@ final class PolarSensorPanel {
                 .put("candidate_count", devices.size())
                 .put("selected_device_instance_id", selectedDeviceInstanceId())
                 .put("connected_device_instance_id", connectedDeviceInstanceId)
-                .put("connected", gatt != null)
+                .put("connected", connected)
                 .put("pmd_ready", pmdReady)
                 .put("pmd_running", pmdRunning)
                 .put("pmd_mode", activePmdMode)
@@ -1484,21 +1494,28 @@ final class PolarSensorPanel {
     }
 
     private void closeGatt() {
-        if (gatt != null) {
+        BluetoothGatt currentGatt = gatt;
+        gatt = null;
+        connected = false;
+        connectedLabel = "none";
+        connectedDeviceInstanceId = "none";
+        pendingConnectionLabel = "none";
+        pendingConnectionDeviceInstanceId = "none";
+        if (currentGatt != null) {
             try {
-                gatt.disconnect();
+                currentGatt.disconnect();
             } catch (SecurityException ignored) {
             } catch (RuntimeException ignored) {
             }
             try {
-                gatt.close();
+                currentGatt.close();
             } catch (RuntimeException ignored) {
             }
-            gatt = null;
         }
         descriptorTasks.clear();
         descriptorsStarted = false;
         commandInFlight = false;
+        pmdReady = false;
         pmdRunning = false;
         activePmdMode = "none";
         batteryCharacteristic = null;

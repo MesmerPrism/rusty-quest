@@ -107,6 +107,20 @@ Assert-ContainsTokens "$polarPanel`n$polarRuntimeSupport" @(
     'rawDeviceIdentifierLogged=false'
 ) "Quest Polar discovery and structured readback"
 
+Assert-ContainsTokens $polarPanel @(
+    'private boolean connected;',
+    'callbackGatt != gatt',
+    'setStatusState\("connected", "Connected\. Discovering services\."\);',
+    'setStatusState\("connection-failed", "Connection failed: " \+ statusCode\);',
+    'setStatusState\("disconnected", "Polar device disconnected\."\);',
+    '\.put\("connected", connected\)',
+    'connectedDeviceInstanceId = "none";',
+    'pendingConnectionDeviceInstanceId = "none";'
+) "authoritative Polar connection lifecycle"
+if ($polarPanel.Contains('.put("connected", gatt != null)')) {
+    throw "Polar structured readback must not infer connection state from a non-null GATT handle"
+}
+
 Assert-ContainsTokens "$polarAdapters`n$breathAdapter`n$heartbeatAdapter`n$panelAction`n$panelBridge" @(
     'PolarAccBreathSource',
     'PolarRrPulseSource',
