@@ -41,6 +41,8 @@ $runtimePath = Join-Path $repo "apps\native-renderer-android\native\src\breath_c
 $controllerPath = Join-Path $repo "apps\native-renderer-android\native\src\openxr_stimulus_actions.rs"
 $polarPath = Join-Path $repo "apps\native-renderer-android\native\src\polar_acc_breath_adapter.rs"
 $ingressPath = Join-Path $repo "apps\native-renderer-android\native\src\polar_composition_adapters.rs"
+$capturePath = Join-Path $repo "apps\native-renderer-android\native\src\breath_capture.rs"
+$captureAnalyzerPath = Join-Path $repo "tools\Analyze-NativeRendererBreathCapture.ps1"
 $panelPath = Join-Path $repo "apps\native-renderer-android\src\main\java\io\github\mesmerprism\rustyquest\native_renderer\ControlPanelActivity.java"
 $polarPanelPath = Join-Path $repo "apps\native-renderer-android\src\main\java\io\github\mesmerprism\rustyquest\native_renderer\PolarSensorPanel.java"
 $calibrationActionPath = Join-Path $repo "apps\native-renderer-android\native\src\breath_calibration_controller_action.rs"
@@ -66,6 +68,8 @@ $runtime = Read-RequiredText $runtimePath "native runtime"
 $controller = Read-RequiredText $controllerPath "OpenXR adapter composition"
 $polar = Read-RequiredText $polarPath "Polar ACC adapter"
 $ingress = Read-RequiredText $ingressPath "Polar ingress"
+$capture = Read-RequiredText $capturePath "synchronized source capture"
+$captureAnalyzer = Read-RequiredText $captureAnalyzerPath "host capture analyzer"
 $panel = Read-RequiredText $panelPath "same-APK panel"
 $polarPanel = Read-RequiredText $polarPanelPath "sole Polar acquisition panel"
 $calibrationAction = Read-RequiredText $calibrationActionPath "controller calibration action"
@@ -99,7 +103,7 @@ Assert-Tokens $runtime @(
     "observation.generation != Some(active_generation)",
     "BreathCompositionStatus::Running",
     "take_adapter_action",
-    "latest_polar_acc_after",
+    "polar_acc_for_presentation",
     "controller_adapter_available",
     "controller_selected",
     "bounded_polar_silence_emits_one_missing_observation_and_clears_output",
@@ -125,9 +129,36 @@ Assert-Tokens ($polar + [Environment]::NewLine + $ingress) @(
     "TimedPolarAccFrame::from_pmd_measurement",
     "CommonPhaseClassifier",
     "latest_polar_acc_after",
+    "PolarAccPresentationMode",
+    "LowLatencySmooth",
+    "TimestampFaithful",
+    "POLAR_ACC_PRESENTATION_DELAY_NS",
+    "POLAR_ACC_SMOOTHING_TIME_CONSTANT_NS",
+    "timestamped_acc_batches_resample_at_render_cadence_with_one_batch_delay",
+    "low_latency_presentation_uses_the_freshest_target_and_eases_at_render_cadence",
     "polar_rr_after",
     "rr_measurements"
 ) "separate Polar ACC/RR owners"
+Assert-Tokens $capture @(
+    "rusty.quest.breath_source_capture.v1",
+    "QUEUE_CAPACITY",
+    "breath-capture-writer",
+    "polar_acc_sample",
+    "polar_ecg_sample",
+    "controller_pose",
+    "driver_apply",
+    "rr_consumed_by_breath",
+    "same-process-direct"
+) "bounded synchronized source capture"
+Assert-Tokens $captureAnalyzer @(
+    "rusty.quest.breath_source_capture_analysis.v1",
+    "capture_manifest.json",
+    "capture_receipt.json",
+    "polar_acc_sample_to_frame_receipt",
+    "polar_acc_frame_to_jni_submit",
+    "assessment_source_sample_to_driver_apply",
+    "breath_capture_timeline.csv"
+) "host-only capture analysis"
 Assert-Tokens $panel @(
     "breath-mapping",
     "Direct Breath Mapping",

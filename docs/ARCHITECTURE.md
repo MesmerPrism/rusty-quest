@@ -111,6 +111,15 @@ locked build environment. The native runtime activates only when the observed
 property equals the resolver-derived digest packaged into that specific build;
 missing, malformed, mismatched, disabled, and unselected closures remain inert.
 
+The Native Renderer also owns a bounded app-private synchronized capture sink
+for its existing controller/OpenXR and Polar PMD/JNI owners. It records source
+samples, neutral assessments, and generic driver applies with their distinct
+clocks, but it does not select a source, own a sensor, or interpret a driver
+slot. ACC presentation is an adapter-local choice between newest-target
+frame-cadence smoothing and a short timestamp-faithful buffer; both retain the
+same raw samples. `docs/BREATH_SOURCE_CAPTURE.md` defines the private capture
+and host-only analysis contract.
+
 The crate owns no source acquisition, source-specific units or deadbands,
 UI, transport, platform lifecycle, rendering, or application interpretation.
 Crate presence alone activates nothing.

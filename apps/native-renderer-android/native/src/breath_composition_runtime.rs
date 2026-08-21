@@ -34,7 +34,7 @@ use crate::{
         PolarAccBreathAdapter, PolarAccInput, PolarAccProjection, PolarAccVolumeSettings,
         TimedPolarAccFrame,
     },
-    polar_composition_adapters::latest_polar_acc_after,
+    polar_composition_adapters::polar_acc_for_presentation,
 };
 
 pub(crate) const COMMAND_SCHEMA_ID: &str = "rusty.quest.breath_composition.command.v1";
@@ -547,7 +547,10 @@ impl BreathCompositionRuntime {
         {
             return;
         }
-        let Some(measurement) = latest_polar_acc_after(self.last_polar_sequence_id) else {
+        let Some(measurement) = polar_acc_for_presentation(
+            at.get().saturating_mul(1_000),
+            self.stale_after_micros.saturating_mul(1_000),
+        ) else {
             self.observe_polar_missing_if_due(at, generation);
             return;
         };
@@ -564,8 +567,14 @@ impl BreathCompositionRuntime {
         );
         self.submit_calibration(BreathCompositionSource::PolarAcc, &result.calibration);
         if let Some(assessment) = result.assessment {
-            self.authority
-                .observe(at, BreathCompositionSource::PolarAcc, assessment);
+            let snapshot =
+                self.authority
+                    .observe(at, BreathCompositionSource::PolarAcc, assessment);
+            crate::breath_capture::record_assessment(
+                BreathCompositionSource::PolarAcc,
+                assessment,
+                snapshot,
+            );
         }
     }
 
@@ -590,8 +599,14 @@ impl BreathCompositionRuntime {
         self.polar_missing_reported = true;
         self.submit_calibration(BreathCompositionSource::PolarAcc, &result.calibration);
         if let Some(assessment) = result.assessment {
-            self.authority
-                .observe(at, BreathCompositionSource::PolarAcc, assessment);
+            let snapshot =
+                self.authority
+                    .observe(at, BreathCompositionSource::PolarAcc, assessment);
+            crate::breath_capture::record_assessment(
+                BreathCompositionSource::PolarAcc,
+                assessment,
+                snapshot,
+            );
         }
     }
 
@@ -675,7 +690,9 @@ pub(crate) fn submit_assessment(
     source: BreathCompositionSource,
     assessment: BreathAssessmentObservation,
 ) -> BreathCompositionSnapshot {
-    lock_runtime().submit_assessment(at, source, assessment)
+    let snapshot = lock_runtime().submit_assessment(at, source, assessment);
+    crate::breath_capture::record_assessment(source, assessment, snapshot);
+    snapshot
 }
 
 pub(crate) fn submit_calibration(

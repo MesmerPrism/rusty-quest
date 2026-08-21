@@ -26,6 +26,11 @@
   insufficient-motion, degenerate-axis, insufficient-span, and timeout
   failures; bounded adaptive limits; and live response between analysis ticks.
   No fixture activates an adapter or carries application interpretation.
+- `native-renderer-breath-capture/`: synthetic, receipt-complete controller
+  and Polar ACC/ECG capture rows for the host-only cadence analyzer. The
+  fixture carries no device identity or real sensor data and proves that
+  source-frame, sample, assessment, and driver timing remain separately
+  measurable.
 - `native-app-builds/native-breath-four-way-conformance.app.json`: exact
   source-only closure for Controller/Polar ACC by Volume/State composition. It
   selects the existing same-APK panel, generic triple-press action, and exact

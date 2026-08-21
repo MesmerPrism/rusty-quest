@@ -1,0 +1,6 @@
+{
+  "schema": "rusty.quest.breath_source_capture_manifest.v1",
+  "capture_schema": "rusty.quest.breath_source_capture.v1",
+  "session_id": "synthetic-parallel-session",
+  "generation": 1
+}

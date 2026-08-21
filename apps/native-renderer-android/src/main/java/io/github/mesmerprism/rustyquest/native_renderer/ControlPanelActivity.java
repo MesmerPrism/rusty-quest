@@ -96,6 +96,9 @@ public final class ControlPanelActivity extends Activity {
         "driver_profile_panel_status.json";
     private static final String BREATH_COMPOSITION_OPERATOR_STATUS_FILE =
         "breath_composition_operator_status.json";
+    private static final String POLAR_SENSOR_OPERATOR_STATUS_FILE =
+        "polar_sensor_operator_status.json";
+    private static final String POLAR_SENSOR_STATUS_FILE = "polar_sensor_status.json";
     private static final String PROFILE_SCHEMA = "rusty.quest.stimulus_volume.profile.v1";
     private static final String PRIVATE_LAYER_SELECTION_SCHEMA =
         "rusty.quest.native_renderer.private_layer_selection.v1";
@@ -5527,6 +5530,7 @@ public final class ControlPanelActivity extends Activity {
                 && !"driver-profile-panel".equals(panelMode)
                 && !"driver-profile-session".equals(panelMode)) {
             setStatusText("Polar command ignored; panel mode does not expose Polar controls.");
+            writePolarSensorOperatorReceipt(token, "", "rejected", "panel-mode-inactive");
             return;
         }
         if ("driver-profile-panel".equals(panelMode)) {
@@ -5536,9 +5540,41 @@ public final class ControlPanelActivity extends Activity {
         } else {
             ensurePolarSensorPanel();
         }
-        polarSensorPanel.handleCommand(
-            intent.getStringExtra(EXTRA_POLAR_SENSOR_PANEL_COMMAND)
-        );
+        String command = intent.getStringExtra(EXTRA_POLAR_SENSOR_PANEL_COMMAND);
+        polarSensorPanel.handleCommand(command);
+        writePolarSensorOperatorReceipt(token, command, "sent", "none");
+    }
+
+    private void writePolarSensorOperatorReceipt(
+        String token,
+        String command,
+        String dispatchStatus,
+        String reasonCode
+    ) {
+        try {
+            JSONObject receipt = new JSONObject()
+                .put("schema", "rusty.quest.native_renderer.polar_sensor_operator_status.v1")
+                .put("token", token == null ? "" : token)
+                .put("command", command == null ? "" : command)
+                .put("dispatch_status", dispatchStatus == null ? "unknown" : dispatchStatus)
+                .put("reason_code", reasonCode == null ? "unknown" : reasonCode)
+                .put("updated_at_elapsed_realtime_ns", SystemClock.elapsedRealtimeNanos());
+            try {
+                String statusText = readFile(POLAR_SENSOR_STATUS_FILE);
+                if (statusText.length() > 0) {
+                    receipt.put("polar_status", new JSONObject(statusText));
+                }
+            } catch (Exception ignored) {
+                receipt.put("polar_status", JSONObject.NULL);
+            }
+            writeFile(POLAR_SENSOR_OPERATOR_STATUS_FILE, receipt.toString(2));
+        } catch (Exception error) {
+            Log.i(
+                TAG,
+                MARKER_PREFIX + " channel=polar-sensor-operator status=receipt-write-failed reason="
+                    + markerToken(error.getMessage())
+            );
+        }
     }
 
     private void handleBreathCompositionCommandIntent(Intent intent) {

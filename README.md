@@ -450,6 +450,15 @@ through the locked build environment. Runtime activation requires the observed
 property to equal that packaged digest exactly. RR remains outside this
 composition.
 
+For synchronized post-session tuning, the Native Renderer can write a bounded
+app-private capture of controller poses, typed Polar PMD ACC/ECG samples,
+HR/RR observations, normalized assessments, and generic driver applies. ACC
+presentation is selectable between low-latency frame-cadence smoothing and a
+short timestamp-faithful interpolation buffer; neither policy discards the raw
+capture path. `docs/BREATH_SOURCE_CAPTURE.md` defines the capture/clock/receipt
+contract and the host-only cadence analyzer. Raw captures stay private local
+artifacts and RR remains outside the breath assessment path.
+
 Private-particle compute receives the right/up/forward basis captured with the
 world anchor rather than the later live eye pose. Live eye data remains the
 draw/sort input only, and recentering recaptures the complete compute basis.

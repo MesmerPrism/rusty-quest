@@ -125,6 +125,10 @@ impl BreathCompositionDriverSettings {
         self.requested_enabled && self.config_valid
     }
 
+    pub(crate) const fn target_slot(self) -> usize {
+        self.target_slot
+    }
+
     pub(crate) fn marker_fields(self) -> String {
         format!(
             "breathCompositionDriverRequested={} breathCompositionDriverTargetSlot={} breathCompositionDriverInhaleRatePerSecond={:.6} breathCompositionDriverExhaleRatePerSecond={:.6} breathCompositionDriverHoldPolicy={} breathCompositionDriverLossValue01={:.6} breathCompositionDriverStaleMillis={}",
@@ -386,7 +390,6 @@ impl BreathCompositionDriver {
         wrote
     }
 
-    #[cfg(test)]
     pub(crate) const fn value01(&self) -> f32 {
         self.integrator.value01()
     }

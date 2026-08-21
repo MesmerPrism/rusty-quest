@@ -49,6 +49,7 @@ $feature = Read-RequiredText (Join-Path $repoRootPath "fixtures\native-app-featu
 $propertyManifest = Read-RequiredText (Join-Path $repoRootPath "fixtures\native-renderer\native-renderer-property-manifest.json") "property manifest"
 $resolver = Read-RequiredText (Join-Path $repoRootPath "tools\Resolve-NativeAppBuild.ps1") "native app-build resolver"
 $pregrant = Read-RequiredText (Join-Path $repoRootPath "tools\Grant-NativeRendererPermissions.ps1") "permission pregrant"
+$polarOperator = Read-RequiredText (Join-Path $repoRootPath "tools\Invoke-NativeRendererPolarOperator.ps1") "fixed Polar operator"
 
 Assert-ContainsTokens $manifest @(
     'android\.hardware\.bluetooth_le',
@@ -108,7 +109,7 @@ Assert-ContainsTokens "$polarPanel`n$polarRuntimeSupport" @(
 ) "Quest Polar discovery and structured readback"
 
 Assert-ContainsTokens $polarPanel @(
-    'private boolean connected;',
+    'private volatile boolean connected;',
     'private ScanCallback activeScanCallback;',
     'private long scanGeneration;',
     'createScanCallback\(final long generation\)',
@@ -135,6 +136,47 @@ Assert-ContainsTokens $polarPanel @(
     'connectedDeviceInstanceId = "none";',
     'pendingConnectionDeviceInstanceId = "none";'
 ) "authoritative Polar connection lifecycle"
+
+Assert-ContainsTokens $polarPanel @(
+    'Button startAll = button\("Start ACC \+ ECG"\)',
+    'startAllPmd\(\)',
+    'stopAllPmd\(\)',
+    'accPmdRunning',
+    'ecgPmdRunning',
+    'activePmdMode = accPmdRunning && ecgPmdRunning',
+    'nativeSubmitPolarEcgMeasurement',
+    'nativeSubmitPolarPmdFrame',
+    'nativeSubmitPolarHeartRateMeasurement',
+    'sampleTimeNs',
+    'nativeStartParallelBreathCapture',
+    'nativeStopParallelBreathCapture',
+    'breath_source_captures',
+    'Executors\.newSingleThreadExecutor',
+    'nativeSetPolarAccPresentationMode',
+    'nativeReadPolarAccPresentationStatus',
+    'presentation_low_latency',
+    'presentation_timestamp_faithful',
+    'low-latency-smooth',
+    'timestamp-faithful',
+    'acc_presentation_delay_ms',
+    'acc_smoothing_time_constant_ms'
+) "parallel Polar streams, synchronized capture, and sample-time presentation"
+Assert-ContainsTokens "$controlPanel`n$polarOperator" @(
+    "polar_sensor_operator_status.json",
+    "rusty.quest.native_renderer.polar_sensor_operator_status.v1",
+    "dispatch_status",
+    "polar_status",
+    "POLAR_SENSOR_PANEL_COMMAND",
+    "presentation_low_latency",
+    "presentation_timestamp_faithful",
+    'screenshot_required = \$false'
+) "fixed Polar operator and app-owned readback"
+if ($polarPanel.Contains('AccSample latest = frame.accSamples.get(frame.accSamples.size() - 1)')) {
+    throw "Polar ACC composition must not discard every PMD sample except the batch tail"
+}
+if ($polarPanel -notmatch 'for \(int sampleIndex = 0; sampleIndex < frame\.accSamples\.size\(\); sampleIndex\+\+\)') {
+    throw "Polar ACC composition must submit every decoded PMD sample"
+}
 if ($polarPanel.Contains('.put("connected", gatt != null)')) {
     throw "Polar structured readback must not infer connection state from a non-null GATT handle"
 }

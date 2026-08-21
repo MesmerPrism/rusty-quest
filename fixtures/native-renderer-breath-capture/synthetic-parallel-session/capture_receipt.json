@@ -1,0 +1,10 @@
+{
+  "schema": "rusty.quest.breath_source_capture_receipt.v1",
+  "session_id": "synthetic-parallel-session",
+  "generation": 1,
+  "enqueued_records": 7,
+  "written_records": 7,
+  "dropped_records": 0,
+  "write_failures": 0,
+  "complete": true
+}

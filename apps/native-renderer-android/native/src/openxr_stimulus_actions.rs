@@ -866,10 +866,14 @@ impl StimulusVolumeActions {
             .uses_native_controller_assessment();
         let composition_controller_enabled =
             crate::breath_composition_runtime::controller_selected();
+        let controller_capture_enabled = crate::breath_capture::active();
         let native_controller_breath_enabled = projection_native_controller_breath_enabled
             || private_particle_breath_assessment_enabled
             || composition_controller_enabled;
-        let right_grip_pose_sample = if breath_haptics_enabled || native_controller_breath_enabled {
+        let right_grip_pose_sample = if breath_haptics_enabled
+            || native_controller_breath_enabled
+            || controller_capture_enabled
+        {
             self.locate_right_grip_pose_sample(
                 reference_space,
                 predicted_display_time,
@@ -883,6 +887,24 @@ impl StimulusVolumeActions {
         };
         events.right_grip_pose_tracked =
             right_grip_pose_sample.is_some_and(|sample| sample.tracked);
+        if controller_capture_enabled {
+            if let Some(sample) = right_grip_pose_sample {
+                crate::breath_capture::record_controller_pose(
+                    frame_count.saturating_add(1),
+                    observed_at.get(),
+                    predicted_display_time.as_nanos(),
+                    sample.position_m,
+                    sample.orientation_xyzw,
+                    sample.active,
+                    sample.tracked,
+                );
+            } else {
+                crate::breath_capture::record_controller_missing(
+                    frame_count.saturating_add(1),
+                    observed_at.get(),
+                );
+            }
+        }
         if native_controller_breath_enabled {
             let generation = if composition_controller_enabled {
                 self.native_controller_breath_assessment.active_generation()

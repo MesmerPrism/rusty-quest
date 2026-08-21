@@ -9,7 +9,41 @@ use std::{
     sync::{Mutex, MutexGuard, OnceLock},
 };
 
+use serde_json::{json, Value};
+
 const RR_QUEUE_CAPACITY: usize = 64;
+const ACC_QUEUE_CAPACITY: usize = 2_048;
+pub(crate) const POLAR_ACC_PRESENTATION_DELAY_NS: u64 = 180_000_000;
+const POLAR_ACC_SMOOTHING_TIME_CONSTANT_NS: u64 = 120_000_000;
+
+/// Render-side ACC presentation policy. Both policies retain every decoded
+/// sample for capture and calibration; they differ only in how a frame-time
+/// observation is presented to the live composition.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum PolarAccPresentationMode {
+    /// Follow the newest received sample and ease toward it at render cadence.
+    #[default]
+    LowLatencySmooth,
+    /// Hold one short sample-time buffer and linearly interpolate real samples.
+    TimestampFaithful,
+}
+
+impl PolarAccPresentationMode {
+    pub(crate) fn from_token(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "low-latency-smooth" | "low_latency_smooth" => Some(Self::LowLatencySmooth),
+            "timestamp-faithful" | "timestamp_faithful" => Some(Self::TimestampFaithful),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::LowLatencySmooth => "low-latency-smooth",
+            Self::TimestampFaithful => "timestamp-faithful",
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct PolarAccMeasurement {
@@ -29,8 +63,15 @@ pub(crate) struct PolarRrMeasurement {
 #[derive(Debug, Default)]
 struct PolarMeasurementIngress {
     next_acc_sequence_id: u64,
+    next_acc_presentation_sequence_id: u64,
     next_rr_sequence_id: u64,
     latest_acc: Option<PolarAccMeasurement>,
+    acc_measurements: VecDeque<PolarAccMeasurement>,
+    presentation_mode: PolarAccPresentationMode,
+    last_acc_presentation_target_ns: Option<u64>,
+    last_low_latency_presentation_at_ns: Option<u64>,
+    low_latency_smoothed_acc: Option<[f32; 3]>,
+    dropped_acc_measurements: u64,
     rr_measurements: VecDeque<PolarRrMeasurement>,
     dropped_rr_measurements: u64,
 }
@@ -48,12 +89,25 @@ impl PolarMeasurementIngress {
 
     fn submit_acc(&mut self, host_time_ns: u64, sensor_time_ns: u64, xyz_mg: [f32; 3]) {
         let sequence_id = self.next_acc_sequence_id();
-        self.latest_acc = Some(PolarAccMeasurement {
+        let measurement = PolarAccMeasurement {
             sequence_id,
             host_time_ns,
             sensor_time_ns,
             xyz_mg,
-        });
+        };
+        if self
+            .latest_acc
+            .is_some_and(|latest| host_time_ns <= latest.host_time_ns)
+        {
+            self.dropped_acc_measurements = self.dropped_acc_measurements.saturating_add(1);
+            return;
+        }
+        if self.acc_measurements.len() == ACC_QUEUE_CAPACITY {
+            self.acc_measurements.pop_front();
+            self.dropped_acc_measurements = self.dropped_acc_measurements.saturating_add(1);
+        }
+        self.acc_measurements.push_back(measurement);
+        self.latest_acc = Some(measurement);
     }
 
     fn submit_rr(&mut self, host_time_ns: u64, rr_interval_ms: f32) {
@@ -67,6 +121,105 @@ impl PolarMeasurementIngress {
             host_time_ns,
             rr_interval_ms,
         });
+    }
+
+    fn resample_acc(&mut self, target_host_time_ns: u64) -> Option<PolarAccMeasurement> {
+        if self
+            .last_acc_presentation_target_ns
+            .is_some_and(|previous| target_host_time_ns <= previous)
+        {
+            return None;
+        }
+        while self.acc_measurements.len() >= 2
+            && self.acc_measurements[1].host_time_ns <= target_host_time_ns
+        {
+            self.acc_measurements.pop_front();
+        }
+        let left = *self.acc_measurements.front()?;
+        let right = *self.acc_measurements.get(1)?;
+        if target_host_time_ns < left.host_time_ns || target_host_time_ns > right.host_time_ns {
+            return None;
+        }
+        let span_ns = right.host_time_ns.saturating_sub(left.host_time_ns);
+        if span_ns == 0 {
+            return None;
+        }
+        let alpha = target_host_time_ns.saturating_sub(left.host_time_ns) as f32 / span_ns as f32;
+        let mut xyz_mg = [0.0; 3];
+        for axis in 0..3 {
+            xyz_mg[axis] = left.xyz_mg[axis] + (right.xyz_mg[axis] - left.xyz_mg[axis]) * alpha;
+        }
+        let sensor_time_ns = left.sensor_time_ns.saturating_add(
+            ((right.sensor_time_ns.saturating_sub(left.sensor_time_ns)) as f64 * f64::from(alpha))
+                as u64,
+        );
+        self.next_acc_presentation_sequence_id =
+            self.next_acc_presentation_sequence_id.saturating_add(1);
+        self.last_acc_presentation_target_ns = Some(target_host_time_ns);
+        Some(PolarAccMeasurement {
+            sequence_id: self.next_acc_presentation_sequence_id,
+            host_time_ns: target_host_time_ns,
+            sensor_time_ns,
+            xyz_mg,
+        })
+    }
+
+    fn reset_presentation_state(&mut self) {
+        self.last_acc_presentation_target_ns = None;
+        self.last_low_latency_presentation_at_ns = None;
+        self.low_latency_smoothed_acc = None;
+    }
+
+    fn present_low_latency_acc(
+        &mut self,
+        observed_host_time_ns: u64,
+        stale_after_ns: u64,
+    ) -> Option<PolarAccMeasurement> {
+        let target = self.latest_acc?;
+        if observed_host_time_ns.saturating_sub(target.host_time_ns) > stale_after_ns {
+            return None;
+        }
+        if self
+            .last_low_latency_presentation_at_ns
+            .is_some_and(|previous| observed_host_time_ns <= previous)
+        {
+            return None;
+        }
+        let dt_ns = self
+            .last_low_latency_presentation_at_ns
+            .map(|previous| observed_host_time_ns.saturating_sub(previous))
+            .unwrap_or(0);
+        let alpha = if self.low_latency_smoothed_acc.is_none() {
+            1.0
+        } else {
+            let ratio = dt_ns as f32 / POLAR_ACC_SMOOTHING_TIME_CONSTANT_NS as f32;
+            (1.0 - (-ratio).exp()).clamp(0.0, 1.0)
+        };
+        let mut xyz_mg = self.low_latency_smoothed_acc.unwrap_or(target.xyz_mg);
+        for axis in 0..3 {
+            xyz_mg[axis] += (target.xyz_mg[axis] - xyz_mg[axis]) * alpha;
+        }
+        self.low_latency_smoothed_acc = Some(xyz_mg);
+        self.last_low_latency_presentation_at_ns = Some(observed_host_time_ns);
+        self.next_acc_presentation_sequence_id =
+            self.next_acc_presentation_sequence_id.saturating_add(1);
+        Some(PolarAccMeasurement {
+            sequence_id: self.next_acc_presentation_sequence_id,
+            host_time_ns: observed_host_time_ns,
+            sensor_time_ns: target.sensor_time_ns,
+            xyz_mg,
+        })
+    }
+
+    fn presentation_status(&self) -> Value {
+        json!({
+            "mode": self.presentation_mode.as_str(),
+            "timestamp_faithful_delay_ms": POLAR_ACC_PRESENTATION_DELAY_NS / 1_000_000,
+            "low_latency_smoothing_time_constant_ms": POLAR_ACC_SMOOTHING_TIME_CONSTANT_NS / 1_000_000,
+            "queued_acc_samples": self.acc_measurements.len(),
+            "dropped_acc_samples": self.dropped_acc_measurements,
+            "latest_acc_sequence_id": self.latest_acc.map(|sample| sample.sequence_id)
+        })
     }
 }
 
@@ -95,9 +248,39 @@ pub(crate) fn submit_polar_acc_measurement_and_advance_composition(
     xyz_mg: [f32; 3],
 ) {
     submit_polar_acc_measurement(host_time_ns, sensor_time_ns, xyz_mg);
-    crate::breath_composition_runtime::poll_polar(
-        rusty_quest_breath_contract::BreathTimestampMicros::new(host_time_ns / 1_000),
-    );
+}
+
+pub(crate) fn polar_acc_for_presentation(
+    observed_host_time_ns: u64,
+    stale_after_ns: u64,
+) -> Option<PolarAccMeasurement> {
+    let mut state = lock_ingress();
+    match state.presentation_mode {
+        PolarAccPresentationMode::LowLatencySmooth => {
+            state.present_low_latency_acc(observed_host_time_ns, stale_after_ns)
+        }
+        PolarAccPresentationMode::TimestampFaithful => {
+            let target = observed_host_time_ns.saturating_sub(POLAR_ACC_PRESENTATION_DELAY_NS);
+            state.resample_acc(target)
+        }
+    }
+}
+
+pub(crate) fn set_polar_acc_presentation_mode(value: &str) -> Result<Value, &'static str> {
+    let mode = PolarAccPresentationMode::from_token(value).ok_or("presentation-mode-invalid")?;
+    let mut state = lock_ingress();
+    if state.presentation_mode != mode {
+        state.presentation_mode = mode;
+        state.reset_presentation_state();
+    }
+    let status = state.presentation_status();
+    drop(state);
+    crate::breath_capture::record_polar_acc_presentation(status.clone());
+    Ok(status)
+}
+
+pub(crate) fn polar_acc_presentation_status() -> Value {
+    lock_ingress().presentation_status()
 }
 
 pub(crate) fn submit_polar_rr_measurement(host_time_ns: u64, rr_interval_ms: f32) {
@@ -121,6 +304,10 @@ pub(crate) fn polar_rr_after(sequence_id: Option<u64>) -> Vec<PolarRrMeasurement
 
 pub(crate) fn dropped_polar_rr_measurements() -> u64 {
     lock_ingress().dropped_rr_measurements
+}
+
+pub(crate) fn dropped_polar_acc_measurements() -> u64 {
+    lock_ingress().dropped_acc_measurements
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -439,17 +626,98 @@ fn sanitize_dt(dt_seconds: f32) -> f32 {
 pub extern "system" fn Java_io_github_mesmerprism_rustyquest_native_1renderer_PolarSensorPanel_nativeSubmitPolarAccMeasurement(
     _env: jni::EnvUnowned,
     _class: jni::objects::JClass,
-    host_time_ns: jni::sys::jlong,
-    sensor_time_ns: jni::sys::jlong,
+    sample_host_time_ns: jni::sys::jlong,
+    sample_sensor_time_ns: jni::sys::jlong,
+    frame_host_receipt_time_ns: jni::sys::jlong,
+    frame_sequence_id: jni::sys::jlong,
+    sample_index: jni::sys::jint,
+    sample_count: jni::sys::jint,
+    jni_submit_time_ns: jni::sys::jlong,
     x_mg: jni::sys::jint,
     y_mg: jni::sys::jint,
     z_mg: jni::sys::jint,
 ) {
     submit_polar_acc_measurement_and_advance_composition(
-        host_time_ns.max(0) as u64,
-        sensor_time_ns.max(0) as u64,
+        sample_host_time_ns.max(0) as u64,
+        sample_sensor_time_ns.max(0) as u64,
         [x_mg as f32, y_mg as f32, z_mg as f32],
     );
+    crate::breath_capture::record_polar_acc_sample(
+        frame_sequence_id.max(0) as u64,
+        sample_index.max(0) as usize,
+        sample_count.max(0) as usize,
+        frame_host_receipt_time_ns.max(0) as u64,
+        sample_host_time_ns.max(0) as u64,
+        sample_sensor_time_ns.max(0) as u64,
+        jni_submit_time_ns.max(0) as u64,
+        [x_mg as f32, y_mg as f32, z_mg as f32],
+    );
+}
+
+#[cfg(target_os = "android")]
+#[no_mangle]
+pub extern "system" fn Java_io_github_mesmerprism_rustyquest_native_1renderer_PolarSensorPanel_nativeSubmitPolarEcgMeasurement(
+    _env: jni::EnvUnowned,
+    _class: jni::objects::JClass,
+    sample_host_time_ns: jni::sys::jlong,
+    sample_sensor_time_ns: jni::sys::jlong,
+    frame_host_receipt_time_ns: jni::sys::jlong,
+    frame_sequence_id: jni::sys::jlong,
+    sample_index: jni::sys::jint,
+    sample_count: jni::sys::jint,
+    jni_submit_time_ns: jni::sys::jlong,
+    microvolts: jni::sys::jint,
+) {
+    crate::breath_capture::record_polar_ecg_sample(
+        frame_sequence_id.max(0) as u64,
+        sample_index.max(0) as usize,
+        sample_count.max(0) as usize,
+        frame_host_receipt_time_ns.max(0) as u64,
+        sample_host_time_ns.max(0) as u64,
+        sample_sensor_time_ns.max(0) as u64,
+        jni_submit_time_ns.max(0) as u64,
+        microvolts,
+    );
+}
+
+#[cfg(target_os = "android")]
+#[no_mangle]
+pub extern "system" fn Java_io_github_mesmerprism_rustyquest_native_1renderer_PolarSensorPanel_nativeSubmitPolarPmdFrame(
+    _env: jni::EnvUnowned,
+    _class: jni::objects::JClass,
+    measurement_type: jni::sys::jint,
+    frame_sequence_id: jni::sys::jlong,
+    host_receipt_time_ns: jni::sys::jlong,
+    sensor_frame_time_ns: jni::sys::jlong,
+    sample_rate_hz: jni::sys::jint,
+    sample_count: jni::sys::jint,
+    previous_receipt_delta_ns: jni::sys::jlong,
+) {
+    let kind = if measurement_type == 0 {
+        "polar_ecg_frame"
+    } else {
+        "polar_acc_frame"
+    };
+    crate::breath_capture::record_polar_frame(
+        kind,
+        frame_sequence_id.max(0) as u64,
+        host_receipt_time_ns.max(0) as u64,
+        sensor_frame_time_ns.max(0) as u64,
+        sample_rate_hz.max(0) as u32,
+        sample_count.max(0) as usize,
+        (previous_receipt_delta_ns > 0).then_some(previous_receipt_delta_ns as u64),
+    );
+}
+
+#[cfg(target_os = "android")]
+#[no_mangle]
+pub extern "system" fn Java_io_github_mesmerprism_rustyquest_native_1renderer_PolarSensorPanel_nativeSubmitPolarHeartRateMeasurement(
+    _env: jni::EnvUnowned,
+    _class: jni::objects::JClass,
+    host_time_ns: jni::sys::jlong,
+    bpm: jni::sys::jint,
+) {
+    crate::breath_capture::record_polar_hr(host_time_ns.max(0) as u64, bpm.max(0) as u32);
 }
 
 #[cfg(target_os = "android")]
@@ -461,6 +729,49 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_native_1renderer_Po
     rr_interval_ms: jni::sys::jfloat,
 ) {
     submit_polar_rr_measurement(host_time_ns.max(0) as u64, rr_interval_ms);
+    crate::breath_capture::record_polar_rr(host_time_ns.max(0) as u64, rr_interval_ms);
+}
+
+#[cfg(target_os = "android")]
+fn jni_string_response(mut env: jni::EnvUnowned, value: Value) -> jni::sys::jstring {
+    match env
+        .with_env(|env| {
+            env.new_string(value.to_string())
+                .map(|value| value.into_raw())
+        })
+        .into_outcome()
+    {
+        jni::Outcome::Ok(value) => value,
+        jni::Outcome::Err(_) | jni::Outcome::Panic(_) => std::ptr::null_mut(),
+    }
+}
+
+#[cfg(target_os = "android")]
+#[no_mangle]
+pub extern "system" fn Java_io_github_mesmerprism_rustyquest_native_1renderer_PolarSensorPanel_nativeSetPolarAccPresentationMode(
+    mut env: jni::EnvUnowned,
+    _class: jni::objects::JClass,
+    mode: jni::objects::JString,
+) -> jni::sys::jstring {
+    let value = match env.with_env(|env| mode.try_to_string(env)).into_outcome() {
+        jni::Outcome::Ok(mode) => match set_polar_acc_presentation_mode(&mode) {
+            Ok(presentation) => json!({"status":"accepted", "presentation":presentation}),
+            Err(reason) => json!({"status":"rejected", "reason_code":reason}),
+        },
+        jni::Outcome::Err(_) | jni::Outcome::Panic(_) => {
+            json!({"status":"rejected", "reason_code":"jni-string-invalid"})
+        }
+    };
+    jni_string_response(env, value)
+}
+
+#[cfg(target_os = "android")]
+#[no_mangle]
+pub extern "system" fn Java_io_github_mesmerprism_rustyquest_native_1renderer_PolarSensorPanel_nativeReadPolarAccPresentationStatus(
+    env: jni::EnvUnowned,
+    _class: jni::objects::JClass,
+) -> jni::sys::jstring {
+    jni_string_response(env, polar_acc_presentation_status())
 }
 
 #[cfg(test)]
@@ -484,6 +795,77 @@ mod tests {
             max_rr_ms: 3000.0,
             stale_seconds: 1.0,
         }
+    }
+
+    #[test]
+    fn timestamped_acc_batches_resample_at_render_cadence_with_one_batch_delay() {
+        let mut ingress = PolarMeasurementIngress::default();
+        for index in 0..=36_u64 {
+            ingress.submit_acc(
+                1_000_000_000 + index * 5_000_000,
+                2_000_000_000 + index * 5_000_000,
+                [index as f32, 0.0, 0.0],
+            );
+        }
+        let first = ingress
+            .resample_acc(1_002_500_000)
+            .expect("bracketed sample");
+        let second = ingress
+            .resample_acc(1_016_388_889)
+            .expect("next render sample");
+        assert!((first.xyz_mg[0] - 0.5).abs() < 0.001);
+        assert!((second.xyz_mg[0] - 3.277_777_7).abs() < 0.001);
+        assert!(second.host_time_ns > first.host_time_ns);
+        assert!(second.sequence_id > first.sequence_id);
+    }
+
+    #[test]
+    fn presentation_resampler_does_not_invent_future_samples_or_repeat_time() {
+        let mut ingress = PolarMeasurementIngress::default();
+        ingress.submit_acc(100, 200, [0.0, 0.0, 0.0]);
+        ingress.submit_acc(200, 300, [1.0, 0.0, 0.0]);
+        assert!(ingress.resample_acc(99).is_none());
+        assert!(ingress.resample_acc(150).is_some());
+        assert!(ingress.resample_acc(150).is_none());
+        assert!(ingress.resample_acc(201).is_none());
+    }
+
+    #[test]
+    fn low_latency_presentation_uses_the_freshest_target_and_eases_at_render_cadence() {
+        let mut ingress = PolarMeasurementIngress::default();
+        ingress.submit_acc(1_000_000_000, 2_000_000_000, [0.0, 0.0, 0.0]);
+        let first = ingress
+            .present_low_latency_acc(1_000_000_000, 500_000_000)
+            .expect("initial frame");
+        assert_eq!(first.xyz_mg, [0.0, 0.0, 0.0]);
+
+        ingress.submit_acc(1_010_000_000, 2_010_000_000, [100.0, 0.0, 0.0]);
+        let second = ingress
+            .present_low_latency_acc(1_010_000_000, 500_000_000)
+            .expect("fresh target frame");
+        let third = ingress
+            .present_low_latency_acc(1_020_000_000, 500_000_000)
+            .expect("next render frame");
+        assert!(second.xyz_mg[0] > 7.5 && second.xyz_mg[0] < 8.5);
+        assert!(third.xyz_mg[0] > second.xyz_mg[0]);
+        assert_eq!(second.sensor_time_ns, 2_010_000_000);
+        assert!(third.sequence_id > second.sequence_id);
+    }
+
+    #[test]
+    fn low_latency_presentation_stales_and_mode_switch_resets_interpolation() {
+        let mut ingress = PolarMeasurementIngress::default();
+        ingress.submit_acc(1_000, 2_000, [5.0, 0.0, 0.0]);
+        assert!(ingress.present_low_latency_acc(1_000, 100).is_some());
+        assert!(ingress.present_low_latency_acc(1_101, 100).is_none());
+
+        ingress.presentation_mode = PolarAccPresentationMode::TimestampFaithful;
+        ingress.reset_presentation_state();
+        ingress.submit_acc(1_200, 2_200, [10.0, 0.0, 0.0]);
+        ingress.submit_acc(1_300, 2_300, [20.0, 0.0, 0.0]);
+        let interpolated = ingress.resample_acc(1_250).expect("bracketed sample");
+        assert!((interpolated.xyz_mg[0] - 15.0).abs() < 0.001);
+        assert_eq!(ingress.presentation_mode.as_str(), "timestamp-faithful");
     }
 
     #[test]

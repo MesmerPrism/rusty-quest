@@ -1812,6 +1812,13 @@ impl GpuPrivateParticleRenderer {
         let settings = self.breath_composition_driver.settings();
         self.breath_composition_driver
             .update_frame(settings, snapshot, observed_at, dt_seconds);
+        crate::breath_capture::record_driver_apply(
+            frame_count,
+            observed_at.get(),
+            settings.target_slot(),
+            self.breath_composition_driver.value01(),
+            snapshot,
+        );
         if frame_count == 0 || frame_count % 120 == 0 {
             crate::marker(
                 "breath-composition-driver",
