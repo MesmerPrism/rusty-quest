@@ -109,6 +109,11 @@ Assert-ContainsTokens "$polarPanel`n$polarRuntimeSupport" @(
 
 Assert-ContainsTokens $polarPanel @(
     'private boolean connected;',
+    'private ScanCallback activeScanCallback;',
+    'private long scanGeneration;',
+    'createScanCallback\(final long generation\)',
+    'if \(!isCurrentScanGeneration\(generation\)\)',
+    'currentScanner\.stopScan\(currentCallback\);',
     'callbackGatt != gatt',
     'private boolean isCurrentConnectedGatt\(BluetoothGatt callbackGatt\)',
     'return !closing && connected && callbackGatt != null && callbackGatt == gatt;',
@@ -119,7 +124,11 @@ Assert-ContainsTokens $polarPanel @(
     'setStatusState\("connected", "Connected\. Discovering services\."\);',
     'setStatusState\("connection-failed", "Connection failed: " \+ statusCode\);',
     'setStatusState\("disconnected", "Polar device disconnected\."\);',
-    'setStatusState\("candidate-found", "Found " \+ entry\.label\(\)\);',
+    'setStatusState\("candidate-found", "A compatible Polar candidate was found\."\);',
+    'scheduleBatteryRead\(callbackGatt, batteryCharacteristic\);',
+    'readBatteryIfIdle\(callbackGatt, callbackBatteryCharacteristic\);',
+    'callbackBatteryCharacteristic != batteryCharacteristic',
+    'callbackGatt\.readCharacteristic\(callbackBatteryCharacteristic\)',
     '\.put\("connected", connected\)',
     'pmdFlowGeneration \+= 1L;',
     'pendingCommandGeneration = pmdFlowGeneration;',
@@ -131,6 +140,12 @@ if ($polarPanel.Contains('.put("connected", gatt != null)')) {
 }
 if ($polarPanel.Contains('writeStatus("candidate-found"')) {
     throw "Polar candidate discovery must update the cached structured status"
+}
+if ($polarPanel.Contains('setStatusState("candidate-found", "Found " + entry.label())')) {
+    throw "Polar structured candidate detail must not expose the raw device label"
+}
+if ($polarPanel.Contains('scanner.stopScan(scanCallback)')) {
+    throw "Polar scan shutdown must target the exact generation-owned callback"
 }
 $currentGattFenceCount = [regex]::Matches(
     $polarPanel,

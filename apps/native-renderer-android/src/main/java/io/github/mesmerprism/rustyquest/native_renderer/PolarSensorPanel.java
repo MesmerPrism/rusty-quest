@@ -123,6 +123,7 @@ final class PolarSensorPanel {
     private TextView linkStatus;
 
     private BluetoothLeScanner scanner;
+    private ScanCallback activeScanCallback;
     private BluetoothGatt gatt;
     private BluetoothGattCharacteristic batteryCharacteristic;
     private BluetoothGattCharacteristic hrCharacteristic;
@@ -136,6 +137,7 @@ final class PolarSensorPanel {
     private boolean pmdRunning;
     private boolean connected;
     private boolean closing;
+    private long scanGeneration;
     private int pendingBleAction;
     private String pendingCommand = "";
     private String pendingPmdMode = "acc";
@@ -428,6 +430,8 @@ final class PolarSensorPanel {
         devices.clear();
         updateDeviceAdapter();
         scanner = nextScanner;
+        final long generation = scanGeneration;
+        activeScanCallback = createScanCallback(generation);
         scanning = true;
         try {
             scanner.startScan(
@@ -435,15 +439,15 @@ final class PolarSensorPanel {
                 new ScanSettings.Builder()
                     .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
                     .build(),
-                scanCallback
+                activeScanCallback
             );
         } catch (SecurityException ex) {
-            scanning = false;
+            stopScan();
             setStatusState("permission-required", "BLE scan permission is missing.");
             marker("status=error reason=scan-security-exception");
             return;
         } catch (RuntimeException ex) {
-            scanning = false;
+            stopScan();
             setStatusState("scan-start-failed", "BLE scan failed to start.");
             marker("status=error reason=scan-start-failed");
             return;
@@ -453,7 +457,7 @@ final class PolarSensorPanel {
         handler.postDelayed(new Runnable() {
             @Override
             public void run() {
-                if (scanning) {
+                if (isCurrentScanGeneration(generation)) {
                     stopScan();
                     setStatusState("scan-finished", "Scan finished. Devices found: " + devices.size());
                     marker("status=scan-finished deviceCount=" + devices.size());
@@ -577,54 +581,74 @@ final class PolarSensorPanel {
         marker("status=counters-reset");
     }
 
-    private final ScanCallback scanCallback = new ScanCallback() {
-        @Override
-        public void onScanResult(int callbackType, ScanResult result) {
-            if (result == null || result.getDevice() == null) {
-                return;
-            }
-            String discoveredName = safeName(result.getDevice());
-            if ((discoveredName == null || discoveredName.trim().isEmpty())
-                    && result.getScanRecord() != null
-                    && result.getScanRecord().getDeviceName() != null) {
-                discoveredName = result.getScanRecord().getDeviceName();
-            }
-            boolean hasHeartRateService = scanRecordHasService(
-                result.getScanRecord(),
-                HEART_RATE_SERVICE
-            );
-            boolean hasPmdService = scanRecordHasService(result.getScanRecord(), PMD_SERVICE);
-            final DeviceEntry entry = new DeviceEntry(
-                result.getDevice(),
-                discoveredName,
-                safeAddress(result.getDevice()),
-                result.getRssi(),
-                hasHeartRateService,
-                hasPmdService
-            );
-            if (!entry.looksLikePolar() && !hasHeartRateService && !hasPmdService) {
-                return;
-            }
-            activity.runOnUiThread(new Runnable() {
-                @Override
-                public void run() {
-                    addOrUpdateDevice(entry);
+    private ScanCallback createScanCallback(final long generation) {
+        return new ScanCallback() {
+            @Override
+            public void onScanResult(int callbackType, ScanResult result) {
+                if (result == null || result.getDevice() == null) {
+                    return;
                 }
-            });
-        }
+                String discoveredName = safeName(result.getDevice());
+                if ((discoveredName == null || discoveredName.trim().isEmpty())
+                        && result.getScanRecord() != null
+                        && result.getScanRecord().getDeviceName() != null) {
+                    discoveredName = result.getScanRecord().getDeviceName();
+                }
+                boolean hasHeartRateService = scanRecordHasService(
+                    result.getScanRecord(),
+                    HEART_RATE_SERVICE
+                );
+                boolean hasPmdService = scanRecordHasService(result.getScanRecord(), PMD_SERVICE);
+                final DeviceEntry entry = new DeviceEntry(
+                    result.getDevice(),
+                    discoveredName,
+                    safeAddress(result.getDevice()),
+                    result.getRssi(),
+                    hasHeartRateService,
+                    hasPmdService
+                );
+                if (!entry.looksLikePolar() && !hasHeartRateService && !hasPmdService) {
+                    return;
+                }
+                activity.runOnUiThread(new Runnable() {
+                    @Override
+                    public void run() {
+                        if (!isCurrentScanGeneration(generation)) {
+                            return;
+                        }
+                        addOrUpdateDevice(entry);
+                    }
+                });
+            }
 
-        @Override
-        public void onScanFailed(final int errorCode) {
-            activity.runOnUiThread(new Runnable() {
-                @Override
-                public void run() {
-                    scanning = false;
-                    setStatusState("scan-failed", "BLE scan failed with code " + errorCode + ".");
-                    marker("status=scan-failed errorCode=" + errorCode);
-                }
-            });
+            @Override
+            public void onScanFailed(final int errorCode) {
+                activity.runOnUiThread(new Runnable() {
+                    @Override
+                    public void run() {
+                        if (!isCurrentScanGeneration(generation)) {
+                            return;
+                        }
+                        invalidateScanGeneration(generation);
+                        setStatusState("scan-failed", "BLE scan failed with code " + errorCode + ".");
+                        marker("status=scan-failed errorCode=" + errorCode);
+                    }
+                });
+            }
+        };
+    }
+
+    private boolean isCurrentScanGeneration(long generation) {
+        return !closing && scanning && generation == scanGeneration;
+    }
+
+    private void invalidateScanGeneration(long generation) {
+        if (generation == scanGeneration) {
+            scanning = false;
+            activeScanCallback = null;
+            scanGeneration += 1L;
         }
-    };
+    }
 
     private final BluetoothGattCallback gattCallback = new BluetoothGattCallback() {
         @Override
@@ -832,7 +856,7 @@ final class PolarSensorPanel {
         }
         DescriptorTask task = descriptorTasks.poll();
         if (task == null) {
-            beginStreams();
+            beginStreams(callbackGatt);
             return;
         }
         BluetoothGattDescriptor descriptor = task.characteristic.getDescriptor(CCCD);
@@ -858,9 +882,12 @@ final class PolarSensorPanel {
         }
     }
 
-    private void beginStreams() {
+    private void beginStreams(BluetoothGatt callbackGatt) {
+        if (!isCurrentConnectedGatt(callbackGatt)) {
+            return;
+        }
         appendStatusEvent("subscribed");
-        scheduleBatteryRead();
+        scheduleBatteryRead(callbackGatt, batteryCharacteristic);
         if (pmdControlCharacteristic != null && pmdDataCharacteristic != null) {
             pmdReady = true;
             marker("status=pmd-ready");
@@ -1087,24 +1114,33 @@ final class PolarSensorPanel {
         return targetGatt.writeCharacteristic(characteristic);
     }
 
-    private void scheduleBatteryRead() {
-        if (batteryCharacteristic == null) {
+    private void scheduleBatteryRead(
+        final BluetoothGatt callbackGatt,
+        final BluetoothGattCharacteristic callbackBatteryCharacteristic
+    ) {
+        if (!isCurrentConnectedGatt(callbackGatt) || callbackBatteryCharacteristic == null) {
             return;
         }
         handler.postDelayed(new Runnable() {
             @Override
             public void run() {
-                readBatteryIfIdle();
+                readBatteryIfIdle(callbackGatt, callbackBatteryCharacteristic);
             }
         }, 1500L);
     }
 
-    private void readBatteryIfIdle() {
-        if (gatt == null || batteryCharacteristic == null || commandInFlight) {
+    private void readBatteryIfIdle(
+        BluetoothGatt callbackGatt,
+        BluetoothGattCharacteristic callbackBatteryCharacteristic
+    ) {
+        if (!isCurrentConnectedGatt(callbackGatt)
+                || callbackBatteryCharacteristic == null
+                || callbackBatteryCharacteristic != batteryCharacteristic
+                || commandInFlight) {
             return;
         }
         try {
-            if (!gatt.readCharacteristic(batteryCharacteristic)) {
+            if (!callbackGatt.readCharacteristic(callbackBatteryCharacteristic)) {
                 marker("status=battery-read-not-started");
             }
         } catch (SecurityException ex) {
@@ -1489,7 +1525,7 @@ final class PolarSensorPanel {
         devices.add(entry);
         Collections.sort(devices);
         updateDeviceAdapter();
-        setStatusState("candidate-found", "Found " + entry.label());
+        setStatusState("candidate-found", "A compatible Polar candidate was found.");
         marker("status=device-found deviceInstanceId=" + markerToken(entry.instanceId())
             + " matchScore=" + entry.matchScore + " rawDeviceIdentifierLogged=false");
     }
@@ -1507,14 +1543,20 @@ final class PolarSensorPanel {
     }
 
     private void stopScan() {
-        if (scanner != null && scanning) {
+        BluetoothLeScanner currentScanner = scanner;
+        ScanCallback currentCallback = activeScanCallback;
+        boolean wasScanning = scanning;
+        scanner = null;
+        activeScanCallback = null;
+        scanning = false;
+        scanGeneration += 1L;
+        if (currentScanner != null && wasScanning && currentCallback != null) {
             try {
-                scanner.stopScan(scanCallback);
+                currentScanner.stopScan(currentCallback);
             } catch (SecurityException ignored) {
             } catch (RuntimeException ignored) {
             }
         }
-        scanning = false;
     }
 
     private void closeGatt() {
