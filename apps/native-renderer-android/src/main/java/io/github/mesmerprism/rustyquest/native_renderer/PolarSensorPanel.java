@@ -480,7 +480,6 @@ final class PolarSensorPanel {
         pmdReady = false;
         pmdRunning = false;
         activePmdMode = "none";
-        pmdFlowGeneration += 1L;
         pmdSettingsAttempts = 0;
         pmdStartAttempts = 0;
         accSettings = PmdSettings.EMPTY;
@@ -643,6 +642,9 @@ final class PolarSensorPanel {
             activity.runOnUiThread(new Runnable() {
                 @Override
                 public void run() {
+                    if (!isCurrentConnectedGatt(callbackGatt)) {
+                        return;
+                    }
                     if (statusCode != BluetoothGatt.GATT_SUCCESS) {
                         setStatus("Service discovery failed: " + statusCode);
                         marker("status=error reason=service-discovery statusCode=" + statusCode);
@@ -672,6 +674,9 @@ final class PolarSensorPanel {
             activity.runOnUiThread(new Runnable() {
                 @Override
                 public void run() {
+                    if (!isCurrentConnectedGatt(callbackGatt)) {
+                        return;
+                    }
                     setupAfterMtu(callbackGatt);
                 }
             });
@@ -682,6 +687,9 @@ final class PolarSensorPanel {
             activity.runOnUiThread(new Runnable() {
                 @Override
                 public void run() {
+                    if (!isCurrentConnectedGatt(callbackGatt)) {
+                        return;
+                    }
                     commandInFlight = false;
                     if (statusCode != BluetoothGatt.GATT_SUCCESS) {
                         malformedFrames += 1L;
@@ -693,22 +701,28 @@ final class PolarSensorPanel {
         }
 
         @Override
-        public void onCharacteristicWrite(BluetoothGatt callbackGatt, BluetoothGattCharacteristic characteristic, final int statusCode) {
+        public void onCharacteristicWrite(final BluetoothGatt callbackGatt, BluetoothGattCharacteristic characteristic, final int statusCode) {
             activity.runOnUiThread(new Runnable() {
                 @Override
                 public void run() {
+                    if (!isCurrentConnectedGatt(callbackGatt)) {
+                        return;
+                    }
                     handleCharacteristicWrite(statusCode);
                 }
             });
         }
 
         @Override
-        public void onCharacteristicRead(BluetoothGatt callbackGatt, BluetoothGattCharacteristic characteristic, int statusCode) {
+        public void onCharacteristicRead(final BluetoothGatt callbackGatt, BluetoothGattCharacteristic characteristic, int statusCode) {
             if (statusCode == BluetoothGatt.GATT_SUCCESS && BATTERY_LEVEL.equals(characteristic.getUuid())) {
                 final byte[] value = characteristic.getValue();
                 activity.runOnUiThread(new Runnable() {
                     @Override
                     public void run() {
+                        if (!isCurrentConnectedGatt(callbackGatt)) {
+                            return;
+                        }
                         handleBattery(value);
                     }
                 });
@@ -717,23 +731,34 @@ final class PolarSensorPanel {
 
         @Override
         public void onCharacteristicChanged(BluetoothGatt callbackGatt, BluetoothGattCharacteristic characteristic) {
-            dispatchCharacteristic(characteristic, characteristic.getValue());
+            dispatchCharacteristic(callbackGatt, characteristic, characteristic.getValue());
         }
 
         @Override
         public void onCharacteristicChanged(BluetoothGatt callbackGatt, BluetoothGattCharacteristic characteristic, byte[] value) {
-            dispatchCharacteristic(characteristic, value);
+            dispatchCharacteristic(callbackGatt, characteristic, value);
         }
     };
 
-    private void dispatchCharacteristic(final BluetoothGattCharacteristic characteristic, byte[] value) {
+    private void dispatchCharacteristic(
+        final BluetoothGatt callbackGatt,
+        final BluetoothGattCharacteristic characteristic,
+        byte[] value
+    ) {
         final byte[] copy = value == null ? null : value.clone();
         activity.runOnUiThread(new Runnable() {
             @Override
             public void run() {
+                if (!isCurrentConnectedGatt(callbackGatt)) {
+                    return;
+                }
                 handleCharacteristic(characteristic, copy);
             }
         });
+    }
+
+    private boolean isCurrentConnectedGatt(BluetoothGatt callbackGatt) {
+        return !closing && connected && callbackGatt != null && callbackGatt == gatt;
     }
 
     private void handleConnectionState(BluetoothGatt callbackGatt, int statusCode, int newState) {
@@ -770,7 +795,7 @@ final class PolarSensorPanel {
     }
 
     private void setupAfterMtu(BluetoothGatt callbackGatt) {
-        if (descriptorsStarted || callbackGatt == null) {
+        if (!isCurrentConnectedGatt(callbackGatt) || descriptorsStarted) {
             return;
         }
         descriptorsStarted = true;
@@ -802,7 +827,7 @@ final class PolarSensorPanel {
     }
 
     private void writeNextDescriptorOrBegin(BluetoothGatt callbackGatt) {
-        if (commandInFlight || callbackGatt == null) {
+        if (!isCurrentConnectedGatt(callbackGatt) || commandInFlight) {
             return;
         }
         DescriptorTask task = descriptorTasks.poll();
@@ -1464,8 +1489,7 @@ final class PolarSensorPanel {
         devices.add(entry);
         Collections.sort(devices);
         updateDeviceAdapter();
-        setStatus("Found " + entry.label());
-        writeStatus("candidate-found", "A compatible Polar candidate was found.");
+        setStatusState("candidate-found", "Found " + entry.label());
         marker("status=device-found deviceInstanceId=" + markerToken(entry.instanceId())
             + " matchScore=" + entry.matchScore + " rawDeviceIdentifierLogged=false");
     }
@@ -1497,6 +1521,7 @@ final class PolarSensorPanel {
         BluetoothGatt currentGatt = gatt;
         gatt = null;
         connected = false;
+        pmdFlowGeneration += 1L;
         connectedLabel = "none";
         connectedDeviceInstanceId = "none";
         pendingConnectionLabel = "none";
@@ -1515,6 +1540,8 @@ final class PolarSensorPanel {
         descriptorTasks.clear();
         descriptorsStarted = false;
         commandInFlight = false;
+        pendingCommand = "none";
+        pendingCommandGeneration = pmdFlowGeneration;
         pmdReady = false;
         pmdRunning = false;
         activePmdMode = "none";

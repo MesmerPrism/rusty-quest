@@ -110,15 +110,34 @@ Assert-ContainsTokens "$polarPanel`n$polarRuntimeSupport" @(
 Assert-ContainsTokens $polarPanel @(
     'private boolean connected;',
     'callbackGatt != gatt',
+    'private boolean isCurrentConnectedGatt\(BluetoothGatt callbackGatt\)',
+    'return !closing && connected && callbackGatt != null && callbackGatt == gatt;',
+    'dispatchCharacteristic\(callbackGatt, characteristic, characteristic\.getValue\(\)\);',
+    'dispatchCharacteristic\(callbackGatt, characteristic, value\);',
+    'if \(!isCurrentConnectedGatt\(callbackGatt\) \|\| descriptorsStarted\)',
+    'if \(!isCurrentConnectedGatt\(callbackGatt\) \|\| commandInFlight\)',
     'setStatusState\("connected", "Connected\. Discovering services\."\);',
     'setStatusState\("connection-failed", "Connection failed: " \+ statusCode\);',
     'setStatusState\("disconnected", "Polar device disconnected\."\);',
+    'setStatusState\("candidate-found", "Found " \+ entry\.label\(\)\);',
     '\.put\("connected", connected\)',
+    'pmdFlowGeneration \+= 1L;',
+    'pendingCommandGeneration = pmdFlowGeneration;',
     'connectedDeviceInstanceId = "none";',
     'pendingConnectionDeviceInstanceId = "none";'
 ) "authoritative Polar connection lifecycle"
 if ($polarPanel.Contains('.put("connected", gatt != null)')) {
     throw "Polar structured readback must not infer connection state from a non-null GATT handle"
+}
+if ($polarPanel.Contains('writeStatus("candidate-found"')) {
+    throw "Polar candidate discovery must update the cached structured status"
+}
+$currentGattFenceCount = [regex]::Matches(
+    $polarPanel,
+    'if \(!isCurrentConnectedGatt\(callbackGatt\)\)'
+).Count
+if ($currentGattFenceCount -lt 6) {
+    throw "Polar async callbacks must reject stale connection generations; found only $currentGattFenceCount current-GATT fences"
 }
 
 Assert-ContainsTokens "$polarAdapters`n$breathAdapter`n$heartbeatAdapter`n$panelAction`n$panelBridge" @(
