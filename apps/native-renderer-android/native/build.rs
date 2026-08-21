@@ -167,6 +167,9 @@ fn main() {
         "cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RENDERER_BREATH_COMPOSITION_EXPECTED_BINDING_SHA256"
     );
     println!(
+        "cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RENDERER_BREATH_COMPOSITION_DRIVER_EXPECTED_BINDING_SHA256"
+    );
+    println!(
         "cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RENDERER_SIMULTANEOUS_HANDS_CONTROLLERS_EXPECTED_BINDING_SHA256"
     );
 

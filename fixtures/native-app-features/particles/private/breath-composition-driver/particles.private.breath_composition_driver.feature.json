@@ -61,7 +61,7 @@
   "validation": {
     "quick": [
       "cargo test -p rusty-quest-native-renderer-android-native breath_composition_driver --locked",
-      "powershell -NoProfile -ExecutionPolicy Bypass -File tools/Apply-RuntimeProfile.ps1 -ProfilePath <generated-profile> -DryRun -Out <generated-property-plan>"
+      "pwsh -NoProfile -File tools/Apply-RuntimeProfile.ps1 -ProfilePath <generated-profile> -DryRun -Out <generated-property-plan>"
     ],
     "standard": [],
     "device": []

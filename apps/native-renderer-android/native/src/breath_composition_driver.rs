@@ -33,11 +33,14 @@ const DRIVER_SLOT_COUNT: usize = 8;
 const DEFAULT_STALE_MILLIS: u64 = 500;
 const DEFAULT_RATE_PER_SECOND: f32 = 0.25;
 const DEFAULT_LOSS_VALUE01: f32 = 0.5;
+const PACKAGED_ACTIVATION_BINDING_SHA256: Option<&str> =
+    option_env!("RUSTY_QUEST_NATIVE_RENDERER_BREATH_COMPOSITION_DRIVER_EXPECTED_BINDING_SHA256");
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct BreathCompositionDriverSettings {
     requested_enabled: bool,
     config_valid: bool,
+    packaged_activation_binding_sha256: Option<[u8; 32]>,
     activation_binding_sha256: Option<[u8; 32]>,
     target_slot: usize,
     inhale_rate_per_second: f32,
@@ -84,6 +87,7 @@ impl BreathCompositionDriverSettings {
         Self {
             requested_enabled,
             config_valid,
+            packaged_activation_binding_sha256: parse_sha256(PACKAGED_ACTIVATION_BINDING_SHA256),
             activation_binding_sha256: parse_sha256(
                 lookup(PROP_PRIVATE_PARTICLES_BREATH_COMPOSITION_DRIVER_ACTIVATION_BINDING_SHA256)
                     .as_deref(),
@@ -106,6 +110,7 @@ impl BreathCompositionDriverSettings {
         Self {
             requested_enabled: false,
             config_valid: false,
+            packaged_activation_binding_sha256: None,
             activation_binding_sha256: None,
             target_slot: 0,
             inhale_rate_per_second: DEFAULT_RATE_PER_SECOND,
@@ -233,13 +238,18 @@ impl BreathCompositionDriver {
             self.reject("malformed-or-missing-config");
             return;
         }
-        let Some(expected_binding) = self.settings.activation_binding_sha256 else {
+        let Some(packaged_binding) = self.settings.packaged_activation_binding_sha256 else {
+            self.reject("unlisted-or-missing-packaged-binding");
+            return;
+        };
+        let Some(runtime_binding) = self.settings.activation_binding_sha256 else {
             self.reject("missing-activation-binding");
             return;
         };
-        if !snapshot.feature_lock_active
-            || snapshot.feature_lock_sha256 != expected_binding
-            || snapshot.packaged_feature_lock_sha256 != expected_binding
+        if packaged_binding != runtime_binding
+            || !snapshot.feature_lock_active
+            || snapshot.feature_lock_sha256 != packaged_binding
+            || snapshot.packaged_feature_lock_sha256 != packaged_binding
         {
             self.reject("activation-binding-mismatch");
             return;
@@ -473,6 +483,7 @@ mod tests {
         BreathCompositionDriverSettings {
             requested_enabled: true,
             config_valid: true,
+            packaged_activation_binding_sha256: Some(BINDING),
             activation_binding_sha256: Some(BINDING),
             target_slot: 2,
             inhale_rate_per_second: 0.5,
@@ -583,6 +594,46 @@ mod tests {
             });
             assert!(!candidate.enabled());
         }
+    }
+
+    #[test]
+    fn unlisted_app_with_ambient_matching_composition_binding_is_inert() {
+        let ambient = BreathCompositionDriverSettings::from_property_lookup(|name| {
+            match name {
+            "debug.rustyquest.native_renderer.private_particles.breath_composition_driver.enabled" => Some("true".to_owned()),
+            "debug.rustyquest.native_renderer.private_particles.breath_composition_driver.activation.binding_sha256" => Some("5a".repeat(32)),
+            "debug.rustyquest.native_renderer.private_particles.breath_composition_driver.target_slot" => Some("2".to_owned()),
+            "debug.rustyquest.native_renderer.private_particles.breath_composition_driver.inhale.rate_per_second" => Some("0.5".to_owned()),
+            "debug.rustyquest.native_renderer.private_particles.breath_composition_driver.exhale.rate_per_second" => Some("0.25".to_owned()),
+            "debug.rustyquest.native_renderer.private_particles.breath_composition_driver.hold.policy" => Some("hold".to_owned()),
+            "debug.rustyquest.native_renderer.private_particles.breath_composition_driver.loss.value01" => Some("0.2".to_owned()),
+            _ => None,
+        }
+        });
+        assert_eq!(ambient.packaged_activation_binding_sha256, None);
+        assert_eq!(ambient.activation_binding_sha256, Some(BINDING));
+
+        let mut driver = BreathCompositionDriver::new(ambient);
+        driver.update_frame(
+            ambient,
+            running_snapshot(
+                BreathCompositionSource::Controller,
+                BreathCompositionMapping::Volume,
+                1,
+                1,
+                100,
+                Some(0.9),
+                None,
+            ),
+            BreathTimestampMicros::new(100),
+            0.01,
+        );
+        let mut values = [0.4; DRIVER_SLOT_COUNT];
+        assert!(!driver.apply_to_driver_values(&mut values));
+        assert_eq!(values, [0.4; DRIVER_SLOT_COUNT]);
+        assert!(driver
+            .marker_fields()
+            .contains("unlisted-or-missing-packaged-binding"));
     }
 
     #[test]

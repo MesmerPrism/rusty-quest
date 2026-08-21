@@ -24,6 +24,7 @@ $BreathCompositionActivationBindingProperty = "debug.rustyquest.native_renderer.
 $BreathCompositionExpectedBindingBuildEnv = "RUSTY_QUEST_NATIVE_RENDERER_BREATH_COMPOSITION_EXPECTED_BINDING_SHA256"
 $BreathCompositionDriverFeatureId = "particles.private.breath_composition_driver"
 $BreathCompositionDriverActivationBindingProperty = "debug.rustyquest.native_renderer.private_particles.breath_composition_driver.activation.binding_sha256"
+$BreathCompositionDriverExpectedBindingBuildEnv = "RUSTY_QUEST_NATIVE_RENDERER_BREATH_COMPOSITION_DRIVER_EXPECTED_BINDING_SHA256"
 $SimultaneousHandsControllersFeatureId = "input.simultaneous_hands_and_controllers"
 $SimultaneousHandsControllersEnabledProperty = "debug.rustyquest.native_renderer.simultaneous_hands_controllers.enabled"
 $SimultaneousHandsControllersActivationBindingProperty = "debug.rustyquest.native_renderer.simultaneous_hands_controllers.activation.binding_sha256"
@@ -1065,6 +1066,13 @@ if ($selectedFeatureIds -contains $BreathCompositionFeatureId) {
         }
         $runtimeSet[$BreathCompositionDriverActivationBindingProperty] = $breathCompositionActivationBinding
         $runtimeSources[$BreathCompositionDriverActivationBindingProperty] = "resolver:$BreathCompositionDriverFeatureId"
+        if ($envByName.Contains($BreathCompositionDriverExpectedBindingBuildEnv)) {
+            throw "Breath composition driver packaged binding build env is resolver-derived and must not be supplied by a feature or payload"
+        }
+        $envByName[$BreathCompositionDriverExpectedBindingBuildEnv] = [ordered]@{
+            name = $BreathCompositionDriverExpectedBindingBuildEnv
+            value = $breathCompositionActivationBinding
+        }
     }
 }
 $simultaneousHandsControllersActivationBinding = $null
