@@ -46,6 +46,7 @@ Assert-Tokens $pure @(
     "LifecycleCommand::Pause",
     "stale-session-generation",
     "resume-session-loss-pending",
+    "pause_failure_is_one_shot_and_clears_effective_readiness",
     "simultaneousHandsControllersReady=",
     "hands-only must not pass",
     "controller-only must not pass"
@@ -67,6 +68,7 @@ Assert-Tokens $xrVulkan @(
     "select_extension",
     "OpenXrSimultaneousHandsControllers::new",
     "simultaneous_hands_controllers.resume",
+    "simultaneous_hands_controllers.resume(xr_instance, session)",
     "session-stopping",
     "hard_reset_session_loss",
     "hand_tracker_ready: live_hand_stats.tracker_ready",

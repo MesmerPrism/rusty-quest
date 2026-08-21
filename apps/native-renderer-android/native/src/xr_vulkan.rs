@@ -2115,6 +2115,7 @@ unsafe fn run_projection_frames(
                     );
                     match event.state() {
                         xr::SessionState::READY => {
+                            simultaneous_hands_controllers.resume(xr_instance, session)?;
                             session
                                 .begin(VIEW_TYPE)
                                 .map_err(|error| format!("begin OpenXR session: {error}"))?;

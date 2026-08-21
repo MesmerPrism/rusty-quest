@@ -143,8 +143,10 @@ impl OpenXrSimultaneousHandsControllers {
                 .session_generation()
                 .ok_or_else(|| "current session generation is missing".to_owned())?
         } else {
-            if let Some(previous_generation) = self.lifecycle.session_generation() {
-                self.lifecycle.hard_reset(previous_generation);
+            if self.session_handle.is_some() {
+                if let Some(previous_generation) = self.lifecycle.session_generation() {
+                    self.lifecycle.hard_reset(previous_generation);
+                }
             }
             self.session_handle = Some(session_handle);
             NEXT_SESSION_GENERATION.fetch_add(1, Ordering::Relaxed)
@@ -192,6 +194,8 @@ impl OpenXrSimultaneousHandsControllers {
             .meta_simultaneous_hands_and_controllers
             .as_ref()
         else {
+            self.lifecycle.hard_reset(session_generation);
+            self.session_handle = None;
             crate::marker(
                 "simultaneous-hands-controllers",
                 format!(
@@ -210,6 +214,7 @@ impl OpenXrSimultaneousHandsControllers {
         };
         let result = platform_result(raw_result);
         let record = self.lifecycle.record_pause(session_generation, result);
+        self.session_handle = None;
         crate::marker(
             "simultaneous-hands-controllers",
             format!(

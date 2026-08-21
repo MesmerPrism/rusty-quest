@@ -239,6 +239,7 @@ pub(crate) struct SimultaneousHandsControllersLifecycle {
     session_generation: Option<u64>,
     resume_attempted_generation: Option<u64>,
     resumed_generation: Option<u64>,
+    pause_attempted_generation: Option<u64>,
     pause_completed_generation: Option<u64>,
     last_resume_result: Option<PlatformCallResult>,
     last_pause_result: Option<PlatformCallResult>,
@@ -306,6 +307,7 @@ impl SimultaneousHandsControllersLifecycle {
         if self.session_generation != Some(generation) {
             self.resume_attempted_generation = None;
             self.resumed_generation = None;
+            self.pause_attempted_generation = None;
             self.pause_completed_generation = None;
             self.last_resume_result = None;
             self.last_pause_result = None;
@@ -340,14 +342,16 @@ impl SimultaneousHandsControllersLifecycle {
         }
     }
 
-    pub(crate) fn request_pause(&self) -> Option<LifecycleCommand> {
+    pub(crate) fn request_pause(&mut self) -> Option<LifecycleCommand> {
         let generation = self.session_generation?;
         if !self.selected
             || self.resumed_generation != Some(generation)
+            || self.pause_attempted_generation == Some(generation)
             || self.pause_completed_generation == Some(generation)
         {
             return None;
         }
+        self.pause_attempted_generation = Some(generation);
         Some(LifecycleCommand::Pause {
             session_generation: generation,
         })
@@ -367,13 +371,18 @@ impl SimultaneousHandsControllersLifecycle {
             PlatformCallResult::Success => {
                 self.pause_completed_generation = Some(generation);
                 self.resumed_generation = None;
+                self.readiness = IndependentInputReadiness::default();
                 Ok(())
             }
             PlatformCallResult::SessionLossPending => {
                 self.hard_reset(generation);
                 Err("pause-session-loss-pending")
             }
-            PlatformCallResult::Failure => Err("pause-failed"),
+            PlatformCallResult::Failure => {
+                self.resumed_generation = None;
+                self.readiness = IndependentInputReadiness::default();
+                Err("pause-failed")
+            }
         }
     }
 
@@ -382,6 +391,7 @@ impl SimultaneousHandsControllersLifecycle {
             self.session_generation = None;
             self.resume_attempted_generation = None;
             self.resumed_generation = None;
+            self.pause_attempted_generation = None;
             self.pause_completed_generation = None;
             self.readiness = IndependentInputReadiness::default();
             self.hard_reset_count = self.hard_reset_count.saturating_add(1);
@@ -415,7 +425,7 @@ impl SimultaneousHandsControllersLifecycle {
 
     pub(crate) fn marker_fields(&self) -> String {
         format!(
-            "simultaneousHandsControllersSelected={} extensionRequested={} extensionAvailable={} extensionEnabled={} systemSupported={} functionsResolved={} sessionGeneration={} resumeAttemptedGeneration={} resumedGeneration={} pauseCompletedGeneration={} resumeResult={} pauseResult={} resumeCallCount={} pauseCallCount={} hardResetCount={} handAdapterApplied={} handTrackerReady={} handFrameReady={} handActive={} handsReady={} controllerActionSetReady={} controllerProfileReady={} controllerActionReady={} controllersReady={} simultaneousHandsControllersReady={}",
+            "simultaneousHandsControllersSelected={} extensionRequested={} extensionAvailable={} extensionEnabled={} systemSupported={} functionsResolved={} sessionGeneration={} resumeAttemptedGeneration={} resumedGeneration={} pauseAttemptedGeneration={} pauseCompletedGeneration={} resumeResult={} pauseResult={} resumeCallCount={} pauseCallCount={} hardResetCount={} handAdapterApplied={} handTrackerReady={} handFrameReady={} handActive={} handsReady={} controllerActionSetReady={} controllerProfileReady={} controllerActionReady={} controllersReady={} simultaneousHandsControllersReady={}",
             self.selected,
             self.extension_requested,
             self.extension_available,
@@ -425,6 +435,7 @@ impl SimultaneousHandsControllersLifecycle {
             optional_u64(self.session_generation),
             optional_u64(self.resume_attempted_generation),
             optional_u64(self.resumed_generation),
+            optional_u64(self.pause_attempted_generation),
             optional_u64(self.pause_completed_generation),
             self.last_resume_result.map_or("not-attempted", PlatformCallResult::as_str),
             self.last_pause_result.map_or("not-attempted", PlatformCallResult::as_str),
@@ -610,6 +621,8 @@ mod tests {
         lifecycle
             .record_resume(11, PlatformCallResult::Success)
             .unwrap();
+        lifecycle.observe_readiness(full_readiness());
+        assert!(lifecycle.combined_ready());
         assert_eq!(
             lifecycle.request_pause(),
             Some(LifecycleCommand::Pause {
@@ -620,6 +633,7 @@ mod tests {
             .record_pause(11, PlatformCallResult::Success)
             .unwrap();
         assert_eq!(lifecycle.request_pause(), None);
+        assert!(!lifecycle.combined_ready());
 
         lifecycle.begin_session(12).unwrap();
         lifecycle
@@ -628,6 +642,25 @@ mod tests {
         lifecycle.hard_reset(12);
         assert_eq!(lifecycle.request_pause(), None);
         assert!(!lifecycle.combined_ready());
+    }
+
+    #[test]
+    fn pause_failure_is_one_shot_and_clears_effective_readiness() {
+        let mut lifecycle = platform_ready();
+        lifecycle.begin_session(13).unwrap();
+        lifecycle
+            .record_resume(13, PlatformCallResult::Success)
+            .unwrap();
+        lifecycle.observe_readiness(full_readiness());
+        assert!(lifecycle.combined_ready());
+
+        lifecycle.request_pause().unwrap();
+        assert_eq!(
+            lifecycle.record_pause(13, PlatformCallResult::Failure),
+            Err("pause-failed")
+        );
+        assert!(!lifecycle.combined_ready());
+        assert_eq!(lifecycle.request_pause(), None);
     }
 
     #[test]
