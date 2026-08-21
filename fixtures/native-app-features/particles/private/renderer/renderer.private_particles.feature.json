@@ -18,7 +18,6 @@
     "quest.native.openxr_vulkan_base",
     "renderer.background.solid_black",
     "particles.private.payload_slot",
-    "particles.private.placeholder_compute",
     "particles.private.ordering.gpu_index_remap",
     "particles.private.mask.r8_texture"
   ],

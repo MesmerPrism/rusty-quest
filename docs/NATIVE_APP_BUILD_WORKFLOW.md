@@ -42,6 +42,12 @@ cannot bleed into unrelated apps.
      generated build artifacts. The APK build refuses stale locks; re-run the
      resolver after changing a spec, copied downstream feature descriptor,
      generated manifest, generated settings file, or build-env file.
+   - `build_inputs.private_particle_payload_linkage`: the resolver-owned,
+     private-free linkage mode and exact payload-inventory digest. A selected
+     private-particle renderer with no complete payload receives the public
+     no-op placeholder and unlinked markers. Exactly one complete payload
+     excludes that placeholder and requires the linked marker; partial,
+     ambiguous, or multiple payload inventories fail closed.
 5. Build from the lock:
 
    ```powershell
@@ -96,6 +102,9 @@ as a generic private-particle payload:
   sorted into the resolved build environment, and become part of the
   resolution fingerprint. Ambient values are not revision authority; the app
   spec must declare every private-particle compile input it expects.
+  Do not request the public placeholder for a linked payload. The resolver
+  selects it only for the zero-payload no-op closure and rejects contradictory
+  linked/unlinked marker expectations.
 - Live hand surfaces should use `hand_anchor_particles` when the particles are
   attached to the resident GPU-skinned hand mesh. `hand_mesh_live_input` owns
   the compact live Meta/OpenXR hand input and resident skinning substrate, while

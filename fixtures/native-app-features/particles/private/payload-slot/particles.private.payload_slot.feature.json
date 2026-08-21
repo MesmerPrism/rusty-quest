@@ -39,8 +39,7 @@
   },
   "markers": {
     "required": [
-      "RUSTY_QUEST_NATIVE_RENDERER channel=private-particle-slot",
-      "privateParticlePayloadLinked=false"
+      "RUSTY_QUEST_NATIVE_RENDERER channel=private-particle-slot"
     ],
     "forbidden": []
   },

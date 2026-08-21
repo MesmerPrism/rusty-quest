@@ -8,7 +8,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$ResolverVersion = "native-app-build-resolver.ps1.v2"
+$ResolverVersion = "native-app-build-resolver.ps1.v3"
 $FeatureSchema = "rusty.quest.native_app_feature.v1"
 $AppBuildSchema = "rusty.quest.native_app_build.v1"
 $FeatureLockSchema = "rusty.quest.native_app_feature_lock.v1"
@@ -25,6 +25,14 @@ $BreathCompositionExpectedBindingBuildEnv = "RUSTY_QUEST_NATIVE_RENDERER_BREATH_
 $BreathCompositionDriverFeatureId = "particles.private.breath_composition_driver"
 $BreathCompositionDriverActivationBindingProperty = "debug.rustyquest.native_renderer.private_particles.breath_composition_driver.activation.binding_sha256"
 $BreathCompositionDriverExpectedBindingBuildEnv = "RUSTY_QUEST_NATIVE_RENDERER_BREATH_COMPOSITION_DRIVER_EXPECTED_BINDING_SHA256"
+$PrivateParticleRendererFeatureId = "renderer.private_particles"
+$PrivateParticlePlaceholderFeatureId = "particles.private.placeholder_compute"
+$PrivateParticleLinkedMarker = "privateParticlePayloadLinked=true"
+$PrivateParticleUnlinkedMarkers = @(
+    "privateParticlePayloadLinked=false",
+    "privateParticlePublicAbiOnly=true",
+    "privateParticleVisualAcceptance=not-applicable-public-noop"
+)
 $SimultaneousHandsControllersFeatureId = "input.simultaneous_hands_and_controllers"
 $SimultaneousHandsControllersEnabledProperty = "debug.rustyquest.native_renderer.simultaneous_hands_controllers.enabled"
 $SimultaneousHandsControllersActivationBindingProperty = "debug.rustyquest.native_renderer.simultaneous_hands_controllers.activation.binding_sha256"
@@ -348,6 +356,120 @@ function Assert-AppSpecShape {
     }
     if ($null -ne $Spec.PSObject.Properties["runtime_profile"]) {
         Assert-RequiredProperty -Object $Spec.runtime_profile -Name "set" -Label "$label runtime_profile"
+    }
+}
+
+function Resolve-PrivateParticlePayloadInventory {
+    param(
+        [Parameter(Mandatory=$true)]$App
+    )
+
+    $payloads = @($App.payloads)
+    foreach ($payload in $payloads) {
+        if ($null -eq $payload -or
+            $null -eq $payload.PSObject.Properties["kind"] -or
+            [string]::IsNullOrWhiteSpace([string]$payload.kind)) {
+            throw "App $($App.app_id) payload inventory contains an ambiguous entry without a non-empty kind"
+        }
+    }
+
+    $privateParticlePayloads = @($payloads | Where-Object { [string]$_.kind -eq "private_particle" })
+    if ($privateParticlePayloads.Count -gt 1) {
+        throw "App $($App.app_id) declares multiple private_particle payloads; exactly zero or one is allowed"
+    }
+
+    $identityPayloads = @()
+    $payload = $null
+    if ($privateParticlePayloads.Count -eq 1) {
+        $payload = $privateParticlePayloads[0]
+        $payloadId = if ($null -ne $payload.PSObject.Properties["payload_id"]) {
+            [string]$payload.payload_id
+        } else {
+            ""
+        }
+        $legacyId = if ($null -ne $payload.PSObject.Properties["id"]) {
+            [string]$payload.id
+        } else {
+            ""
+        }
+        if (-not [string]::IsNullOrWhiteSpace($payloadId) -and
+            -not [string]::IsNullOrWhiteSpace($legacyId) -and
+            $payloadId -cne $legacyId) {
+            throw "App $($App.app_id) private_particle payload has ambiguous payload_id and id values"
+        }
+        $effectivePayloadId = if (-not [string]::IsNullOrWhiteSpace($payloadId)) { $payloadId } else { $legacyId }
+        if ([string]::IsNullOrWhiteSpace($effectivePayloadId)) {
+            throw "App $($App.app_id) private_particle payload is partial; missing required payload_id"
+        }
+        foreach ($field in @("data_dir", "shader", "particle_kind", "marker_prefix", "marker_fields")) {
+            if ($null -eq $payload.PSObject.Properties[$field] -or
+                [string]::IsNullOrWhiteSpace([string]$payload.$field)) {
+                throw "App $($App.app_id) private_particle payload $effectivePayloadId is partial; missing required field: $field"
+            }
+        }
+
+        $maskIdentity = $null
+        if ($null -ne $payload.PSObject.Properties["mask_texture"]) {
+            $mask = $payload.mask_texture
+            if ($null -eq $mask) {
+                throw "App $($App.app_id) private_particle payload $effectivePayloadId has a partial mask_texture"
+            }
+            foreach ($field in @("width", "height", "layers")) {
+                if ($null -eq $mask.PSObject.Properties[$field] -or
+                    [string]::IsNullOrWhiteSpace([string]$mask.$field)) {
+                    throw "App $($App.app_id) private_particle payload $effectivePayloadId has a partial mask_texture; missing required field: $field"
+                }
+            }
+            $maskIdentity = [ordered]@{
+                path = if ($null -ne $mask.PSObject.Properties["path"]) { [string]$mask.path } else { "" }
+                width = [string]$mask.width
+                height = [string]$mask.height
+                layers = [string]$mask.layers
+                mode = if ($null -ne $mask.PSObject.Properties["mode"]) { [string]$mask.mode } else { "" }
+                mip_mode = if ($null -ne $mask.PSObject.Properties["mip_mode"]) { [string]$mask.mip_mode } else { "" }
+                discard_mode = if ($null -ne $mask.PSObject.Properties["discard_mode"]) { [string]$mask.discard_mode } else { "" }
+                alpha_cutoff = if ($null -ne $mask.PSObject.Properties["alpha_cutoff"]) { [string]$mask.alpha_cutoff } else { "" }
+            }
+        }
+
+        $buildEnvIdentity = @()
+        if ($null -ne $payload.PSObject.Properties["build_env"]) {
+            foreach ($entry in @($payload.build_env | Sort-Object { [string]$_.name }, { [string]$_.value })) {
+                if ($null -eq $entry -or
+                    $null -eq $entry.PSObject.Properties["name"] -or
+                    $null -eq $entry.PSObject.Properties["value"]) {
+                    throw "App payload $effectivePayloadId build_env entries require explicit name and value fields"
+                }
+                $buildEnvIdentity += [ordered]@{
+                    name = [string]$entry.name
+                    value = [string]$entry.value
+                }
+            }
+        }
+
+        $identityPayloads += [ordered]@{
+            kind = "private_particle"
+            payload_id = $effectivePayloadId
+            data_dir = [string]$payload.data_dir
+            shader = [string]$payload.shader
+            particle_kind = [string]$payload.particle_kind
+            marker_prefix = [string]$payload.marker_prefix
+            marker_fields = [string]$payload.marker_fields
+            mask_texture = $maskIdentity
+            build_env = $buildEnvIdentity
+        }
+    }
+
+    $identity = [ordered]@{
+        schema = "rusty.quest.private_particle_payload_inventory.v1"
+        payloads = $identityPayloads
+    }
+    return [ordered]@{
+        schema = "rusty.quest.private_particle_payload_linkage.v1"
+        mode = if ($privateParticlePayloads.Count -eq 0) { "unlinked-placeholder" } else { "linked-app-payload" }
+        complete_payload_count = $privateParticlePayloads.Count
+        inventory_sha256 = Get-StringSha256 -Value ($identity | ConvertTo-Json -Depth 20 -Compress)
+        payload = $payload
     }
 }
 
@@ -687,12 +809,29 @@ $nativeRendererPropertiesByFamily = $propertyManifest.by_family
 $app = Read-JsonFile -Path $appSpecPath
 Assert-AppSpecShape -Spec $app -Path (Get-RepoRelativePath -RepoRoot $repoRootText -Path $appSpecPath)
 $features = Read-FeatureLibrary -FeatureDirPath $featureDirPath -RepoRoot $repoRootText -ManifestByName $nativeRendererPropertyByName
+$privateParticlePayloadLinkage = Resolve-PrivateParticlePayloadInventory -App $app
 
 $denied = @{}
 Add-StringsToSet -Set $denied -Values $app.denied_features
 $state = New-FeatureResolverState
 foreach ($requestedFeature in Get-StringArray $app.requested_features) {
     Resolve-FeatureClosure -FeatureId $requestedFeature -Reason "requested by app spec" -Features $features -Denied $denied -State $state
+}
+$privateParticleRendererSelected = $state.selected.ContainsKey($PrivateParticleRendererFeatureId)
+if ([string]$privateParticlePayloadLinkage.mode -eq "linked-app-payload") {
+    if (-not $privateParticleRendererSelected) {
+        throw "App $($app.app_id) declares a complete private_particle payload without selecting $PrivateParticleRendererFeatureId"
+    }
+    if ($state.selected.ContainsKey($PrivateParticlePlaceholderFeatureId)) {
+        throw "App $($app.app_id) links a private_particle payload but also selects the unlinked placeholder feature $PrivateParticlePlaceholderFeatureId"
+    }
+} elseif ($privateParticleRendererSelected) {
+    Resolve-FeatureClosure `
+        -FeatureId $PrivateParticlePlaceholderFeatureId `
+        -Reason "resolver-selected for zero complete private_particle payloads" `
+        -Features $features `
+        -Denied $denied `
+        -State $state
 }
 $selectedFeatureIds = @(Get-SortedSet -Set $state.selected)
 
@@ -765,20 +904,15 @@ function Add-AppPrivateParticlePayloadBuildEnv {
     param(
         [object]$App,
         [string]$AppSpecPath,
+        [object]$PrivateParticlePayloadLinkage,
         [System.Collections.Specialized.OrderedDictionary]$EnvByName
     )
 
-    $privateParticlePayloads = @($App.payloads | Where-Object {
-        $null -ne $_.PSObject.Properties["kind"] -and [string]$_.kind -eq "private_particle"
-    })
-    if ($privateParticlePayloads.Count -gt 1) {
-        throw "App $($App.app_id) may declare at most one private_particle payload"
-    }
-    if ($privateParticlePayloads.Count -eq 0) {
+    if ([string]$PrivateParticlePayloadLinkage.mode -ne "linked-app-payload") {
         return
     }
 
-    $payload = $privateParticlePayloads[0]
+    $payload = $PrivateParticlePayloadLinkage.payload
     $payloadId = if ($null -ne $payload.PSObject.Properties["payload_id"]) {
         [string]$payload.payload_id
     } elseif ($null -ne $payload.PSObject.Properties["id"]) {
@@ -904,7 +1038,11 @@ foreach ($featureId in $selectedFeatureIds) {
             -Source $envEntrySource
     }
 }
-Add-AppPrivateParticlePayloadBuildEnv -App $app -AppSpecPath $appSpecPath -EnvByName $envByName
+Add-AppPrivateParticlePayloadBuildEnv `
+    -App $app `
+    -AppSpecPath $appSpecPath `
+    -PrivateParticlePayloadLinkage $privateParticlePayloadLinkage `
+    -EnvByName $envByName
 Add-AppRuntimeSet `
     -RuntimeSet $runtimeSet `
     -RuntimeSources $runtimeSources `
@@ -914,6 +1052,24 @@ Add-AppRuntimeSet `
 Add-StringsToSet -Set $permissionsSet -Values $app.permission_allowlist
 Add-StringsToSet -Set $requiredMarkerSet -Values $app.expected_markers.required
 Add-StringsToSet -Set $forbiddenMarkerSet -Values $app.expected_markers.forbidden
+
+if ($selectedFeatureIds -contains $PrivateParticleRendererFeatureId) {
+    if ([string]$privateParticlePayloadLinkage.mode -eq "linked-app-payload") {
+        $requiredMarkerSet[$PrivateParticleLinkedMarker] = $true
+        foreach ($marker in $PrivateParticleUnlinkedMarkers) {
+            $forbiddenMarkerSet[$marker] = $true
+        }
+    } else {
+        $requiredMarkerSet[$PrivateParticleUnlinkedMarkers[0]] = $true
+        $forbiddenMarkerSet[$PrivateParticleLinkedMarker] = $true
+    }
+}
+
+foreach ($marker in @($requiredMarkerSet.Keys)) {
+    if ($forbiddenMarkerSet.ContainsKey([string]$marker)) {
+        throw "Resolved marker contract is contradictory; marker is both required and forbidden: $marker"
+    }
+}
 
 $permissions = @(Get-SortedSet -Set $permissionsSet)
 $usesFeatures = @(Get-SortedSet -Set $usesFeaturesSet)
@@ -994,6 +1150,12 @@ foreach ($featureId in $selectedFeatureIds) {
         path = Get-RepoRelativePath -RepoRoot $repoRootText -Path $features[$featureId].path
         sha256 = [string]$features[$featureId].sha256
     }
+}
+$privateParticlePayloadLinkageReceipt = [ordered]@{
+    schema = [string]$privateParticlePayloadLinkage.schema
+    mode = [string]$privateParticlePayloadLinkage.mode
+    complete_payload_count = [int]$privateParticlePayloadLinkage.complete_payload_count
+    inventory_sha256 = [string]$privateParticlePayloadLinkage.inventory_sha256
 }
 $runtimeSetWithoutResolverBindings = @($runtimeSet.Keys | Sort-Object | ForEach-Object {
     [ordered]@{ name = [string]$_; value = [string]$runtimeSet[$_] }
@@ -1132,6 +1294,7 @@ $resolutionInputs = [ordered]@{
     resolver_version = $ResolverVersion
     app_spec_sha256 = Get-FileSha256 -Path $appSpecPath
     feature_descriptors = $featureDescriptorRecords
+    private_particle_payload_linkage = $privateParticlePayloadLinkageReceipt
     build_env = @($envByName.Keys | Sort-Object | ForEach-Object { $envByName[$_] })
     runtime_set = @($runtimeSet.Keys | Sort-Object | ForEach-Object { [ordered]@{ name = [string]$_; value = [string]$runtimeSet[$_] } })
 }
@@ -1403,6 +1566,7 @@ $featureLock = [ordered]@{
         assets = @(Get-SortedSet -Set $assetSet)
         shaders = @(Get-SortedSet -Set $shaderSet)
         payloads = @($app.payloads)
+        private_particle_payload_linkage = $privateParticlePayloadLinkageReceipt
     }
     expected_markers = [ordered]@{
         required = $requiredMarkers
@@ -1476,6 +1640,7 @@ $audit = [ordered]@{
     settings_authority = $NativeAppSettingsSchema
     settings_hotload = $settingsHotload
     permission_pregrant = $permissionPregrant
+    private_particle_payload_linkage = $privateParticlePayloadLinkageReceipt
     generated_outputs = $generatedOutputs
     artifact_hashes = $buildManifest
     result = "accepted"

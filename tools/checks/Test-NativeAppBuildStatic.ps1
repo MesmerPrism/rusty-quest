@@ -118,7 +118,10 @@ foreach ($requiredWorkflowNeedle in @(
     "Source modules may",
     "remain inert until",
     "feature descriptor, runtime profile, app spec, Android property, or intent",
-    "deny known-nearby feature families"
+    "deny known-nearby feature families",
+    "build_inputs.private_particle_payload_linkage",
+    "requires the linked marker; partial,",
+    "ambiguous, or multiple payload inventories fail closed"
 )) {
     if ($workflowText -notmatch [regex]::Escape($requiredWorkflowNeedle)) {
         throw "Native app-build workflow is missing explicit feature opt-in guardrail: $requiredWorkflowNeedle"
@@ -151,6 +154,11 @@ foreach ($requiredResolverNeedle in @(
     "mask_texture is missing required",
     "build_env entries require explicit name and value fields",
     "outside the generic private-particle namespace",
+    "rusty.quest.private_particle_payload_linkage.v1",
+    "unlinked-placeholder",
+    "linked-app-payload",
+    "resolver-selected for zero complete private_particle payloads",
+    "Resolved marker contract is contradictory",
     "app_spec_sha256",
     "feature_descriptors",
     "PROJECT_MEDIA",
@@ -245,6 +253,13 @@ foreach ($requiredFeature in @(
 }
 
 $privateParticleFeature = Read-Json -Path (Join-Path $featureDir "particles\private\renderer\renderer.private_particles.feature.json")
+if (@($privateParticleFeature.depends_on) -contains "particles.private.placeholder_compute") {
+    throw "Private particle renderer must not unconditionally depend on the unlinked placeholder"
+}
+$privateParticlePayloadSlotFeature = Read-Json -Path (Join-Path $featureDir "particles\private\payload-slot\particles.private.payload_slot.feature.json")
+if (@($privateParticlePayloadSlotFeature.markers.required) -contains "privateParticlePayloadLinked=false") {
+    throw "Generic private-particle payload slot must remain linkage-state-neutral"
+}
 foreach ($marker in @(
     "RUSTY_QUEST_NATIVE_RENDERER channel=private-particle-anchor",
     "privateParticleWorldAnchorForwardAxis=",
@@ -340,6 +355,29 @@ try {
             throw "Structured resolver artifact is missing: $canonicalArtifactPath"
         }
     }
+    $unlinkedFeatureLock = Read-Json -Path ([string]$structuredResult.feature_lock_path)
+    $unlinkedLinkage = $unlinkedFeatureLock.build_inputs.private_particle_payload_linkage
+    if ([string]$unlinkedLinkage.schema -cne "rusty.quest.private_particle_payload_linkage.v1" -or
+        [string]$unlinkedLinkage.mode -cne "unlinked-placeholder" -or
+        [int]$unlinkedLinkage.complete_payload_count -ne 0 -or
+        [string]$unlinkedLinkage.inventory_sha256 -notmatch '^[a-f0-9]{64}$') {
+        throw "Native app-build unlinked private-particle linkage receipt is incomplete or malformed"
+    }
+    if (@($unlinkedFeatureLock.selected_feature_ids) -cnotcontains "particles.private.placeholder_compute") {
+        throw "Native app-build zero-payload private-particle closure must select the placeholder"
+    }
+    foreach ($marker in @(
+        "privateParticlePayloadLinked=false",
+        "privateParticlePublicAbiOnly=true",
+        "privateParticleVisualAcceptance=not-applicable-public-noop"
+    )) {
+        if (@($unlinkedFeatureLock.expected_markers.required) -cnotcontains $marker) {
+            throw "Native app-build unlinked private-particle closure is missing required marker: $marker"
+        }
+    }
+    if (@($unlinkedFeatureLock.expected_markers.forbidden) -cnotcontains "privateParticlePayloadLinked=true") {
+        throw "Native app-build unlinked private-particle closure must forbid the linked marker"
+    }
 
     $payloadInputDir = Join-Path $structuredResultRoot "synthetic-private-particle-payload"
     $payloadDataDir = Join-Path $payloadInputDir "data"
@@ -352,6 +390,8 @@ try {
     $payloadApp = Read-Json -Path (Join-Path $appBuildDir "private-particle-solid-black-canary.app.json")
     $payloadApp.app_id = "private_particle_build_env_static"
     $payloadApp.package_name = "io.github.example.rustyquest.private_particle_build_env_static"
+    $payloadApp.settings_assertions.required_modules = @($payloadApp.settings_assertions.required_modules | Where-Object { [string]$_ -ne "particles/private/placeholder" })
+    $payloadApp.settings_assertions.forbidden_modules = @($payloadApp.settings_assertions.forbidden_modules) + "particles/private/placeholder"
     $payloadApp.payloads = @([ordered]@{
         kind = "private_particle"
         payload_id = "synthetic-private-particle"
@@ -384,6 +424,34 @@ try {
     }
     $payloadResult = Read-Json -Path $payloadResultPath
     $payloadFeatureLock = Read-Json -Path ([string]$payloadResult.feature_lock_path)
+    $linkedLinkage = $payloadFeatureLock.build_inputs.private_particle_payload_linkage
+    if ([string]$linkedLinkage.schema -cne "rusty.quest.private_particle_payload_linkage.v1" -or
+        [string]$linkedLinkage.mode -cne "linked-app-payload" -or
+        [int]$linkedLinkage.complete_payload_count -ne 1 -or
+        [string]$linkedLinkage.inventory_sha256 -notmatch '^[a-f0-9]{64}$') {
+        throw "Native app-build linked private-particle linkage receipt is incomplete or malformed"
+    }
+    if ([string]$linkedLinkage.inventory_sha256 -ceq [string]$unlinkedLinkage.inventory_sha256) {
+        throw "Native app-build linked and unlinked private-particle inventories must have distinct identities"
+    }
+    if (@($payloadFeatureLock.selected_feature_ids) -ccontains "particles.private.placeholder_compute") {
+        throw "Native app-build linked private-particle closure must exclude the placeholder"
+    }
+    if (@($payloadFeatureLock.build_inputs.shaders) -ccontains "apps/native-renderer-android/native/shaders/private_particles_placeholder.comp.glsl") {
+        throw "Native app-build linked private-particle build inputs must exclude the placeholder shader"
+    }
+    if (@($payloadFeatureLock.expected_markers.required) -cnotcontains "privateParticlePayloadLinked=true") {
+        throw "Native app-build linked private-particle closure must require the linked marker"
+    }
+    foreach ($marker in @(
+        "privateParticlePayloadLinked=false",
+        "privateParticlePublicAbiOnly=true",
+        "privateParticleVisualAcceptance=not-applicable-public-noop"
+    )) {
+        if (@($payloadFeatureLock.expected_markers.forbidden) -cnotcontains $marker) {
+            throw "Native app-build linked private-particle closure must forbid unlinked marker: $marker"
+        }
+    }
     $payloadBuildEnvPath = [string]$payloadFeatureLock.generated_outputs.build_env
     if (-not [System.IO.Path]::IsPathRooted($payloadBuildEnvPath)) {
         $payloadBuildEnvPath = Join-Path $repoRootPath $payloadBuildEnvPath
@@ -417,6 +485,73 @@ try {
     $payloadRepeatResult = Read-Json -Path $payloadRepeatResultPath
     if ([string]$payloadRepeatResult.resolution_fingerprint -cne [string]$payloadResult.resolution_fingerprint -or [string]$payloadRepeatResult.feature_lock_sha256 -cne [string]$payloadResult.feature_lock_sha256) {
         throw "Native app-build private-particle build_env resolution is not deterministic"
+    }
+    $payloadRepeatFeatureLock = Read-Json -Path ([string]$payloadRepeatResult.feature_lock_path)
+    if ([string]$payloadRepeatFeatureLock.build_inputs.private_particle_payload_linkage.inventory_sha256 -cne [string]$linkedLinkage.inventory_sha256 -or
+        (@($payloadRepeatFeatureLock.selected_feature_ids) -join "`n") -cne (@($payloadFeatureLock.selected_feature_ids) -join "`n")) {
+        throw "Native app-build private-particle linkage identity or closure is not deterministic"
+    }
+
+    $changedInventoryApp = Read-Json -Path $payloadAppPath
+    $changedInventoryApp.payloads[0].marker_fields = "syntheticPrivateParticleBuildEnv=true;inventoryVariant=2"
+    $changedInventoryAppPath = Join-Path $payloadInputDir "changed-inventory.app.json"
+    $changedInventoryApp | ConvertTo-Json -Depth 100 | Set-Content -LiteralPath $changedInventoryAppPath -Encoding utf8
+    $changedInventoryResultPath = Join-Path $structuredResultRoot "changed-inventory-resolution-result.json"
+    & pwsh -NoProfile -ExecutionPolicy Bypass -File $resolver `
+        -AppSpec $changedInventoryAppPath `
+        -OutputRoot $structuredResultRoot `
+        -ResultJsonPath $changedInventoryResultPath `
+        -DryRun | Out-Host
+    if ($LASTEXITCODE -ne 0) {
+        throw "Native app-build changed private-particle inventory probe failed with exit code $LASTEXITCODE"
+    }
+    $changedInventoryResult = Read-Json -Path $changedInventoryResultPath
+    $changedInventoryFeatureLock = Read-Json -Path ([string]$changedInventoryResult.feature_lock_path)
+    if ([string]$changedInventoryResult.resolution_fingerprint -ceq [string]$payloadResult.resolution_fingerprint -or
+        [string]$changedInventoryFeatureLock.build_inputs.private_particle_payload_linkage.inventory_sha256 -ceq [string]$linkedLinkage.inventory_sha256) {
+        throw "Native app-build private-particle inventory identity is not bound into the resolution fingerprint"
+    }
+
+    foreach ($inventoryDamage in @(
+        @{ name = "partial"; expected = "is partial; missing required field: shader"; mutate = "partial" },
+        @{ name = "multiple"; expected = "declares multiple private_particle payloads; exactly zero or one is allowed"; mutate = "multiple" },
+        @{ name = "ambiguous-identity"; expected = "has ambiguous payload_id and id values"; mutate = "ambiguous-identity" },
+        @{ name = "linked-placeholder"; expected = "links a private_particle payload but also selects the unlinked placeholder feature"; mutate = "linked-placeholder" },
+        @{ name = "contradictory-marker"; expected = "Resolved marker contract is contradictory; marker is both required and forbidden: privateParticlePayloadLinked=false"; mutate = "contradictory-marker" }
+    )) {
+        $damagedInventoryApp = Read-Json -Path $payloadAppPath
+        switch ([string]$inventoryDamage.mutate) {
+            "partial" {
+                $damagedInventoryApp.payloads[0].PSObject.Properties.Remove("shader")
+            }
+            "multiple" {
+                $damagedInventoryApp.payloads = @($damagedInventoryApp.payloads[0], $damagedInventoryApp.payloads[0])
+            }
+            "ambiguous-identity" {
+                $damagedInventoryApp.payloads[0] | Add-Member -NotePropertyName id -NotePropertyValue "different-synthetic-payload"
+            }
+            "linked-placeholder" {
+                $damagedInventoryApp.requested_features = @($damagedInventoryApp.requested_features) + "particles.private.placeholder_compute"
+            }
+            "contradictory-marker" {
+                $damagedInventoryApp.expected_markers.required = @($damagedInventoryApp.expected_markers.required) + "privateParticlePayloadLinked=false"
+            }
+        }
+        $damagedInventoryApp.app_id = "private_particle_inventory_$($inventoryDamage.name.Replace('-', '_'))"
+        $damagedInventoryAppPath = Join-Path $payloadInputDir "$($inventoryDamage.name).app.json"
+        $damagedInventoryApp | ConvertTo-Json -Depth 100 | Set-Content -LiteralPath $damagedInventoryAppPath -Encoding utf8
+        $damagedInventoryOutput = @(& pwsh -NoProfile -ExecutionPolicy Bypass -File $resolver `
+            -AppSpec $damagedInventoryAppPath `
+            -OutputRoot $structuredResultRoot `
+            -DryRun 2>&1 | ForEach-Object { $_.ToString() })
+        $damagedInventoryExitCode = $LASTEXITCODE
+        if ($damagedInventoryExitCode -eq 0) {
+            throw "Native app-build accepted damaged private-particle inventory case: $($inventoryDamage.name)"
+        }
+        $normalizedDamagedInventoryOutput = ((($damagedInventoryOutput -join " ") -replace '\s*\|\s*', ' ') -replace '\s+', ' ').Trim()
+        if (-not $normalizedDamagedInventoryOutput.Contains([string]$inventoryDamage.expected, [System.StringComparison]::Ordinal)) {
+            throw "Native app-build damaged private-particle inventory case returned the wrong error: $($inventoryDamage.name) output=$normalizedDamagedInventoryOutput"
+        }
     }
 
     foreach ($malformedCase in @(
