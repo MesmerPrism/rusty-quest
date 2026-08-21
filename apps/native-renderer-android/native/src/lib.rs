@@ -11,6 +11,8 @@ const PLAN_JSON: &str =
     include_str!("../../../../fixtures/native-renderer/native-hwb-blur-sdf-public.plan.json");
 const MARKER_PREFIX: &str = "RUSTY_QUEST_NATIVE_RENDERER";
 
+mod bounded_breath_phase_integrator;
+mod breath_composition_driver;
 mod breath_composition_runtime;
 mod breath_input_selection;
 

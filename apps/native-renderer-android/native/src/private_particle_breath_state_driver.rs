@@ -7,6 +7,7 @@
 use rusty_quest_breath_contract::assessment::CommonBreathPhase;
 
 use crate::{
+    bounded_breath_phase_integrator::{BoundedBreathPhaseIntegrator, BreathHoldPolicy},
     breath_input_selection::{BreathInputSelection, ControllerVolumeKind},
     native_controller_breath_state::NativeControllerBreathSample,
     native_renderer_properties::{
@@ -176,7 +177,7 @@ impl Default for PrivateParticleBreathStateDriverSettings {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct PrivateParticleBreathStateDriver {
     settings: PrivateParticleBreathStateDriverSettings,
-    value01: f32,
+    integrator: BoundedBreathPhaseIntegrator,
     phase: CommonBreathPhase,
     last_sequence_id: Option<u64>,
     received_samples: u64,
@@ -192,7 +193,7 @@ impl PrivateParticleBreathStateDriver {
     ) -> Self {
         Self {
             settings,
-            value01: initial_value01.clamp(0.0, 1.0),
+            integrator: BoundedBreathPhaseIntegrator::new(initial_value01),
             phase: CommonBreathPhase::Unknown,
             last_sequence_id: None,
             received_samples: 0,
@@ -235,7 +236,7 @@ impl PrivateParticleBreathStateDriver {
                 self.last_polar_acc_transport_sequence_id = Some(measurement.sequence_id);
                 if self.polar_acc_source.push(measurement) {
                     if let Some(sample) = self.polar_acc_source.sample() {
-                        self.value01 = sample.value01;
+                        self.integrator.reset(sample.value01);
                         self.received_samples = self.received_samples.saturating_add(1);
                         self.age_seconds = 0.0;
                     }
@@ -244,40 +245,33 @@ impl PrivateParticleBreathStateDriver {
             self.polar_acc_source.advance(dt_seconds);
             return;
         }
-        match self.phase {
-            CommonBreathPhase::Inhale => {
-                self.value01 = (self.value01
-                    + delta_for_seconds(dt_seconds, self.settings.inhale_seconds_min_to_max))
-                .clamp(0.0, 1.0);
-            }
-            CommonBreathPhase::Exhale => {
-                self.value01 = (self.value01
-                    - delta_for_seconds(dt_seconds, self.settings.exhale_seconds_max_to_min))
-                .clamp(0.0, 1.0);
-            }
-            CommonBreathPhase::Unknown
-            | CommonBreathPhase::Hold
-            | CommonBreathPhase::BadTracking => {}
-        }
+        self.integrator.update(
+            self.phase,
+            dt_seconds,
+            rate_for_seconds(self.settings.inhale_seconds_min_to_max),
+            rate_for_seconds(self.settings.exhale_seconds_max_to_min),
+            BreathHoldPolicy::Hold,
+            self.integrator.value01(),
+        );
     }
 
     pub(crate) fn apply_to_driver_values(&self, values01: &mut [f32]) -> bool {
         if !self.enabled() || self.settings.target_slot >= values01.len() {
             return false;
         }
-        values01[self.settings.target_slot] = self.value01;
+        values01[self.settings.target_slot] = self.integrator.value01();
         true
     }
 
     pub(crate) fn value01(self) -> f32 {
-        self.value01
+        self.integrator.value01()
     }
 
     pub(crate) fn marker_fields(self) -> String {
         format!(
             "{} privateParticleBreathStateDriverValue01={:.3} privateParticleBreathStateDriverPhase={} privateParticleBreathStateDriverLastSequenceId={} privateParticleBreathStateDriverAgeMs={} privateParticleBreathStateDriverReceivedSamples={} privateParticleBreathStateDriverLastPolarAccTransportSequenceId={} {}",
             self.settings.marker_fields(),
-            self.value01,
+            self.integrator.value01(),
             self.phase.as_str(),
             self.last_sequence_id
                 .map(|sequence_id| sequence_id.to_string())
@@ -308,9 +302,9 @@ fn sanitize_dt(dt_seconds: f32) -> f32 {
     }
 }
 
-fn delta_for_seconds(dt_seconds: f32, seconds: f32) -> f32 {
+fn rate_for_seconds(seconds: f32) -> f32 {
     if seconds.is_finite() && seconds > 0.0 {
-        dt_seconds / seconds
+        1.0 / seconds
     } else {
         0.0
     }

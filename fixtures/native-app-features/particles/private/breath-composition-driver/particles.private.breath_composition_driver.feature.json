@@ -1,0 +1,70 @@
+{
+  "schema": "rusty.quest.native_app_feature.v1",
+  "feature_id": "particles.private.breath_composition_driver",
+  "module_path": "particles/private/breath-composition-driver",
+  "module_kind": "closed-world-neutral-driver-adapter",
+  "settings_surface": {
+    "authority": "rusty.quest.native_app_settings.v1",
+    "adapter": "runtime_profile"
+  },
+  "owner_lane": "rusty-quest",
+  "status": "public-substrate",
+  "description": "Exact-lock breath composition output to one bounded generic particle-driver slot.",
+  "provides": [
+    "input.private_particle_driver.breath_composition_closed_world"
+  ],
+  "depends_on": [
+    "breath.composition.closed_world",
+    "renderer.private_particles"
+  ],
+  "incompatible_with": [
+    "particles.private.breath_state_driver",
+    "particles.private.manifold_scalar_driver",
+    "particles.private.polar_acc_breath_source",
+    "particles.private.polar_rr_heartbeat_pulse"
+  ],
+  "exclusive_groups": {
+    "private_particle_breath_source": "breath-composition-closed-world"
+  },
+  "android_manifest": {
+    "permissions": [],
+    "uses_features": [],
+    "activities": [],
+    "services": [],
+    "queries": []
+  },
+  "runtime_profile": {
+    "set": {
+      "debug.rustyquest.native_renderer.private_particles.breath_composition_driver.enabled": "true"
+    },
+    "clear_families": [],
+    "expected_render_modes": [
+      "solid-black-private-particles"
+    ]
+  },
+  "build_inputs": {
+    "env": [],
+    "assets": [],
+    "shaders": []
+  },
+  "markers": {
+    "required": [
+      "RUSTY_QUEST_NATIVE_RENDERER channel=breath-composition-driver",
+      "breathCompositionDriverRequested=true",
+      "breathCompositionDriverRrConsumed=false"
+    ],
+    "forbidden": [
+      "privateParticleDriverParameterSource=manifold-scalar-stream",
+      "privateParticleHeartbeatPulseMode=polar-rr-event"
+    ]
+  },
+  "validation": {
+    "quick": [
+      "cargo test -p rusty-quest-native-renderer-android-native breath_composition_driver --locked",
+      "powershell -NoProfile -ExecutionPolicy Bypass -File tools/Apply-RuntimeProfile.ps1 -ProfilePath <generated-profile> -DryRun -Out <generated-property-plan>"
+    ],
+    "standard": [],
+    "device": []
+  },
+  "public_private_boundary": "Rusty Quest owns only exact-lock admission and a bounded neutral slot value; downstream applications own rates, fallback values, response meaning, and visual interpretation."
+}

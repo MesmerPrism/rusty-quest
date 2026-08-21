@@ -443,6 +443,17 @@ through the locked build environment. Runtime activation requires the observed
 property to equal that packaged digest exactly. RR remains outside this
 composition.
 
+The optional `particles.private.breath_composition_driver` feature is the
+disabled-by-default handoff from that exact composition output to one bounded
+generic particle-driver slot. It accepts only a current `Running` generation
+whose runtime and packaged activation bindings match. Volume is applied on the
+accepted frame; State uses the shared source-neutral bounded phase integrator
+with application-supplied rates and explicit Hold/loss policy. Source,
+generation, mapping, slot, configuration, stale/missing input, and timestamp
+boundaries reset the slot to the declared neutral loss value. The adapter has
+no sensor acquisition, RR, broker, permission, payload, or downstream visual
+meaning.
+
 The four-way conformance app additionally selects the generic
 `input.simultaneous_hands_and_controllers` feature. That disabled-by-default
 native-renderer adapter enables only

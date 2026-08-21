@@ -620,6 +620,10 @@ pub(crate) fn effective_request() -> Option<BreathCompositionRequest> {
     lock_runtime().snapshot().effective
 }
 
+pub(crate) fn snapshot() -> BreathCompositionSnapshot {
+    lock_runtime().snapshot()
+}
+
 pub(crate) fn take_adapter_action(source: BreathCompositionSource) -> Option<AdapterAction> {
     lock_runtime().take_action(source)
 }

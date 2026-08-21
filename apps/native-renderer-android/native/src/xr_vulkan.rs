@@ -1314,6 +1314,7 @@ unsafe fn run_projection_loop_inner(
         queue,
         cmd_pool,
         runtime_options.private_particle_breath_state_driver_settings,
+        runtime_options.private_particle_breath_composition_driver_settings,
         runtime_options.private_particle_heartbeat_pulse_adapter_settings,
         runtime_options.manifold_scalar_driver_settings.clone(),
     ) {
@@ -2369,6 +2370,7 @@ unsafe fn run_projection_frames(
         }
 
         let mut private_particle_breath_sample = None;
+        let mut breath_observed_at = None;
         let mut controller_readiness = Default::default();
         if let Some(actions) = stimulus_actions.as_deref_mut() {
             let controller_events = actions.sync_and_poll(
@@ -2381,6 +2383,7 @@ unsafe fn run_projection_frames(
                 projection_target_state.breath_haptics_enabled(),
             );
             controller_readiness = controller_events.controller_readiness.clone();
+            breath_observed_at = controller_events.breath_observed_at;
             for input in controller_events.projection_target_inputs {
                 projection_target_state.apply_input(input);
             }
@@ -2420,6 +2423,14 @@ unsafe fn run_projection_frames(
                 dt_seconds,
                 frame_count,
             );
+            if let Some(observed_at) = breath_observed_at {
+                renderer.update_breath_composition_driver(
+                    crate::breath_composition_runtime::snapshot(),
+                    observed_at,
+                    dt_seconds,
+                    frame_count,
+                );
+            }
             renderer.update_heartbeat_pulse_adapter(dt_seconds, frame_count);
         }
         if let Some(bridge) = breath_bridge.as_mut() {

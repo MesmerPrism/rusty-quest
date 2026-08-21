@@ -87,6 +87,7 @@ pub(crate) struct StimulusVolumeActions {
 
 #[derive(Debug, Default)]
 pub(crate) struct NativeRendererControllerEvents {
+    pub(crate) breath_observed_at: Option<BreathTimestampMicros>,
     pub(crate) stimulus_randomize_triggered: bool,
     pub(crate) panel_toggle_triggered: bool,
     pub(crate) panel_toggle_source: Option<&'static str>,
@@ -754,6 +755,7 @@ impl StimulusVolumeActions {
     ) -> NativeRendererControllerEvents {
         let mut events = NativeRendererControllerEvents::default();
         let observed_at = xr_time_micros(predicted_display_time);
+        events.breath_observed_at = Some(observed_at);
         if crate::breath_composition_runtime::controller_adapter_available() {
             self.apply_composition_controller_actions(observed_at);
         }

@@ -40,7 +40,9 @@ cargo test -p rusty-quest-native-renderer-android-native openxr_controller_breat
 cargo test -p rusty-quest-native-renderer-android-native native_controller_breath_state --locked
 cargo test -p rusty-quest-native-renderer-android-native polar_acc_breath_adapter --locked
 cargo test -p rusty-quest-native-renderer-android-native breath_composition_runtime --locked
+cargo test -p rusty-quest-native-renderer-android-native breath_composition_driver --locked
 pwsh -NoProfile -File .\tools\checks\Test-NativeRendererBreathCompositionStatic.ps1 -RepoRoot .
+pwsh -NoProfile -File .\tools\checks\Test-NativeRendererBreathCompositionDriverStatic.ps1 -RepoRoot .
 ```
 
 The native simultaneous hands/controllers adapter has an additional focused

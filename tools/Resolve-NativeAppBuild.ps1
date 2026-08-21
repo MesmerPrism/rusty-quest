@@ -22,6 +22,8 @@ $RenderModeProperty = "debug.rustyquest.native_renderer.render.mode"
 $BreathCompositionFeatureId = "breath.composition.closed_world"
 $BreathCompositionActivationBindingProperty = "debug.rustyquest.native_renderer.breath_composition.activation.binding_sha256"
 $BreathCompositionExpectedBindingBuildEnv = "RUSTY_QUEST_NATIVE_RENDERER_BREATH_COMPOSITION_EXPECTED_BINDING_SHA256"
+$BreathCompositionDriverFeatureId = "particles.private.breath_composition_driver"
+$BreathCompositionDriverActivationBindingProperty = "debug.rustyquest.native_renderer.private_particles.breath_composition_driver.activation.binding_sha256"
 $SimultaneousHandsControllersFeatureId = "input.simultaneous_hands_and_controllers"
 $SimultaneousHandsControllersEnabledProperty = "debug.rustyquest.native_renderer.simultaneous_hands_controllers.enabled"
 $SimultaneousHandsControllersActivationBindingProperty = "debug.rustyquest.native_renderer.simultaneous_hands_controllers.activation.binding_sha256"
@@ -1053,6 +1055,17 @@ if ($selectedFeatureIds -contains $BreathCompositionFeatureId) {
         name = $BreathCompositionExpectedBindingBuildEnv
         value = $breathCompositionActivationBinding
     }
+    if ($selectedFeatureIds -contains $BreathCompositionDriverFeatureId) {
+        Assert-NativeRendererPropertyValue `
+            -Name $BreathCompositionDriverActivationBindingProperty `
+            -Value $breathCompositionActivationBinding `
+            -ManifestByName $nativeRendererPropertyByName
+        if ($runtimeSet.Contains($BreathCompositionDriverActivationBindingProperty)) {
+            throw "Breath composition driver activation binding is resolver-derived and must not be supplied by a feature or app spec"
+        }
+        $runtimeSet[$BreathCompositionDriverActivationBindingProperty] = $breathCompositionActivationBinding
+        $runtimeSources[$BreathCompositionDriverActivationBindingProperty] = "resolver:$BreathCompositionDriverFeatureId"
+    }
 }
 $simultaneousHandsControllersActivationBinding = $null
 if ($simultaneousHandsControllersSelected) {
@@ -1337,6 +1350,13 @@ $featureLock = [ordered]@{
             sha256 = $breathCompositionActivationBinding
         }
     } else { $null }
+    breath_composition_driver_activation = if ($selectedFeatureIds -contains $BreathCompositionDriverFeatureId) {
+        [ordered]@{
+            schema = "rusty.quest.breath_composition_driver.activation_binding.v1"
+            property = $BreathCompositionDriverActivationBindingProperty
+            sha256 = $breathCompositionActivationBinding
+        }
+    } else { $null }
     simultaneous_hands_controllers_activation = if ($null -ne $simultaneousHandsControllersActivationBinding) {
         [ordered]@{
             schema = "rusty.quest.simultaneous_hands_controllers.activation_binding.v1"
@@ -1464,6 +1484,7 @@ if ($null -ne $resultJsonCanonicalPath) {
         feature_lock_path = [System.IO.Path]::GetFullPath($featureLockPath)
         feature_lock_sha256 = Get-FileSha256 -Path $featureLockPath
         breath_composition_activation_sha256 = $breathCompositionActivationBinding
+        breath_composition_driver_activation_sha256 = if ($selectedFeatureIds -contains $BreathCompositionDriverFeatureId) { $breathCompositionActivationBinding } else { $null }
         simultaneous_hands_controllers_activation_sha256 = $simultaneousHandsControllersActivationBinding
         audit_path = [System.IO.Path]::GetFullPath($auditPath)
         audit_sha256 = Get-FileSha256 -Path $auditPath

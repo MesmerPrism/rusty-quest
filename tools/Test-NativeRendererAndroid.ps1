@@ -29,6 +29,7 @@ $cameraGuideStaticCheckPath = Join-Path $PSScriptRoot "checks\Test-NativeRendere
 $openXrVulkanStaticCheckPath = Join-Path $PSScriptRoot "checks\Test-NativeRendererOpenXrVulkanStatic.ps1"
 $polarPanelStaticCheckPath = Join-Path $PSScriptRoot "checks\Test-NativeRendererPolarPanelStatic.ps1"
 $breathCompositionStaticCheckPath = Join-Path $PSScriptRoot "checks\Test-NativeRendererBreathCompositionStatic.ps1"
+$breathCompositionDriverStaticCheckPath = Join-Path $PSScriptRoot "checks\Test-NativeRendererBreathCompositionDriverStatic.ps1"
 $simultaneousHandsControllersStaticCheckPath = Join-Path $PSScriptRoot "checks\Test-NativeRendererSimultaneousHandsControllersStatic.ps1"
 $nativeRendererPropertyManifestPath = Join-Path $repoRoot "fixtures\native-renderer\native-renderer-property-manifest.json"
 $runtimeEvidenceFixturePath = Join-Path $repoRoot "fixtures\native-renderer\native-renderer-replay-visual-proof.logcat.txt"
@@ -48,7 +49,8 @@ $requiredPaths = @(
     $videoProjectionStaticCheckPath,
     $projectionTargetStaticCheckPath, $handVisualStaticCheckPath, $gpuSdfStaticCheckPath,
     $cameraGuideStaticCheckPath, $openXrVulkanStaticCheckPath,
-    $polarPanelStaticCheckPath, $breathCompositionStaticCheckPath, $simultaneousHandsControllersStaticCheckPath,
+    $polarPanelStaticCheckPath, $breathCompositionStaticCheckPath, $breathCompositionDriverStaticCheckPath,
+    $simultaneousHandsControllersStaticCheckPath,
     $nativeRendererPropertyManifestPath, $runtimeEvidenceFixturePath, $liveHandDiagnosticPendingFixturePath,
     $environmentDepthParticlesEvidenceFixturePath, $environmentDepthSurfaceSupportEvidenceFixturePath,
     $runtimeEvidenceDamagedPath, $runtimeEvidenceDamagedPerformancePath,
@@ -80,6 +82,7 @@ foreach ($path in $requiredPaths) {
 & $openXrVulkanStaticCheckPath -RepoRoot $repoRoot
 & $polarPanelStaticCheckPath -RepoRoot $repoRoot
 & $breathCompositionStaticCheckPath -RepoRoot $repoRoot
+& $breathCompositionDriverStaticCheckPath -RepoRoot $repoRoot
 & $simultaneousHandsControllersStaticCheckPath -RepoRoot $repoRoot
 
 if (-not $SkipProfileMatrix) {
