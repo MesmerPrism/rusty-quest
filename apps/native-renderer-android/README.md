@@ -36,6 +36,17 @@ validates provider/basis/hand/rig identity and CPU-prepared parity; OpenXR
 acquisition, GPU buffers, shaders, material choice, and hand visibility remain
 native-renderer policy. Setting the property to `false` restores the prior path.
 
+The separate `input.simultaneous_hands_and_controllers` native app feature is
+the only route that requests `XR_META_simultaneous_hands_and_controllers`.
+It requires the exact hand-adapter conformance lock plus live hand input and
+visual descriptors, then uses this renderer's existing OpenXR
+instance/system/session and action set. Extension enablement, system support,
+function resolution, resume/pause generation, live hand readiness, and
+controller profile/action readiness are reported independently. The aggregate
+combined status cannot be satisfied by hands-only, controller-only, or a
+successful resume without live input. The adapter does not request
+`XR_META_detached_controllers` and adds no Android permission.
+
 | Profile | Background | Visible hand content | Camera2/HWB projection |
 | --- | --- | --- | --- |
 | `quest-native-renderer-direct-hwb-camera-quality.profile.json` | Custom direct camera projection | Hand/SDF overlays disabled for raw camera inspection | Enabled, forced direct `AHardwareBuffer` sample with Android-suggested YCbCr, UNORM swapchain preference, and clean border |

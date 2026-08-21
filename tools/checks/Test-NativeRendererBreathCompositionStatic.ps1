@@ -225,10 +225,13 @@ try {
     $lock = Get-Content -Raw -LiteralPath $lockCanonical | ConvertFrom-Json
     $expected = @(
         "breath.composition.closed_world",
+        "hand_mesh_live_input",
+        "hand_mesh_visual",
         "input.breath.controller_assessment",
         "input.breath.polar_acc_assessment",
         "input.controllers_and_hands_optional",
         "input.right_secondary_same_apk_panel_triple_press",
+        "input.simultaneous_hands_and_controllers",
         "mapping.breath.state",
         "mapping.breath.volume",
         "quest.native.openxr_vulkan_base",

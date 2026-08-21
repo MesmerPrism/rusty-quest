@@ -22,6 +22,10 @@ $RenderModeProperty = "debug.rustyquest.native_renderer.render.mode"
 $BreathCompositionFeatureId = "breath.composition.closed_world"
 $BreathCompositionActivationBindingProperty = "debug.rustyquest.native_renderer.breath_composition.activation.binding_sha256"
 $BreathCompositionExpectedBindingBuildEnv = "RUSTY_QUEST_NATIVE_RENDERER_BREATH_COMPOSITION_EXPECTED_BINDING_SHA256"
+$SimultaneousHandsControllersFeatureId = "input.simultaneous_hands_and_controllers"
+$SimultaneousHandsControllersEnabledProperty = "debug.rustyquest.native_renderer.simultaneous_hands_controllers.enabled"
+$SimultaneousHandsControllersActivationBindingProperty = "debug.rustyquest.native_renderer.simultaneous_hands_controllers.activation.binding_sha256"
+$SimultaneousHandsControllersExpectedBindingBuildEnv = "RUSTY_QUEST_NATIVE_RENDERER_SIMULTANEOUS_HANDS_CONTROLLERS_EXPECTED_BINDING_SHA256"
 $EnvironmentDepthModeProperty = "debug.rustyquest.native_renderer.environment_depth.mode"
 $EnvironmentDepthSourceProperty = "debug.rustyquest.native_renderer.environment_depth.source"
 $EnvironmentDepthNativePassthroughRequiredProperty = "debug.rustyquest.native_renderer.environment_depth.native_passthrough.required"
@@ -917,6 +921,13 @@ $clearFamilies = @(Get-SortedSet -Set $clearFamiliesSet)
 $expectedRenderModes = @(Get-SortedSet -Set $expectedRenderModesSet)
 $requiredMarkers = @(Get-SortedSet -Set $requiredMarkerSet)
 $forbiddenMarkers = @(Get-SortedSet -Set $forbiddenMarkerSet)
+$claimsSimultaneousHandsControllers = @($requiredMarkers | Where-Object {
+    [string]$_ -match 'simultaneousHandsControllers(Selected|Ready)=true'
+}).Count -gt 0
+if ($claimsSimultaneousHandsControllers -and
+    $selectedFeatureIds -cnotcontains $SimultaneousHandsControllersFeatureId) {
+    throw "Hands-only or controller-only selection cannot claim simultaneous hands/controllers activation"
+}
 
 Assert-SetEquals -Label "Android permission surface" -Expected (Get-StringArray $app.declared_manifest.permissions) -Actual $permissions
 Assert-SetEquals -Label "Android uses-feature surface" -Expected (Get-StringArray $app.declared_manifest.uses_features) -Actual $usesFeatures
@@ -981,6 +992,41 @@ foreach ($featureId in $selectedFeatureIds) {
         sha256 = [string]$features[$featureId].sha256
     }
 }
+$runtimeSetWithoutResolverBindings = @($runtimeSet.Keys | Sort-Object | ForEach-Object {
+    [ordered]@{ name = [string]$_; value = [string]$runtimeSet[$_] }
+})
+$simultaneousHandsControllersSelected = $selectedFeatureIds -contains $SimultaneousHandsControllersFeatureId
+$simultaneousHandsControllersEnabled =
+    $runtimeSet.Contains($SimultaneousHandsControllersEnabledProperty) -and
+    [string]$runtimeSet[$SimultaneousHandsControllersEnabledProperty] -eq "true"
+if ($simultaneousHandsControllersSelected -ne $simultaneousHandsControllersEnabled) {
+    throw "Simultaneous hands/controllers runtime selection must exactly match $SimultaneousHandsControllersFeatureId"
+}
+if ($simultaneousHandsControllersSelected) {
+    foreach ($requiredFeature in @(
+        "input.controllers_and_hands_optional",
+        "hand_mesh_live_input",
+        "hand_mesh_visual"
+    )) {
+        if ($selectedFeatureIds -cnotcontains $requiredFeature) {
+            throw "Simultaneous hands/controllers selection is missing required feature: $requiredFeature"
+        }
+    }
+    $requiredHandBinding = [ordered]@{
+        "debug.rustyquest.native_renderer.hand_adapter.enabled" = "true"
+        "debug.rustyquest.native_renderer.hand_adapter.profile_id" = "profile.quest.native_renderer.hand_adapter_conformance"
+        "debug.rustyquest.native_renderer.hand_adapter.project_id" = "native-renderer"
+        "debug.rustyquest.native_renderer.hand_adapter.feature_id" = "hand-adapter-consumer"
+        "debug.rustyquest.native_renderer.hand_adapter.lock_revision" = "1"
+        "debug.rustyquest.native_renderer.hand_adapter.lock_sha256" = "A1391A7EF2C41F072032283E485F5A9EB58CAB3B74681F150CE24CD9262CF91D"
+    }
+    foreach ($entry in $requiredHandBinding.GetEnumerator()) {
+        if (-not $runtimeSet.Contains([string]$entry.Key) -or
+            [string]$runtimeSet[[string]$entry.Key] -cne [string]$entry.Value) {
+            throw "Simultaneous hands/controllers selection requires exact applied hand-adapter binding property: $($entry.Key)"
+        }
+    }
+}
 $breathCompositionActivationBinding = $null
 if ($selectedFeatureIds -contains $BreathCompositionFeatureId) {
     $bindingInputs = [ordered]@{
@@ -988,9 +1034,7 @@ if ($selectedFeatureIds -contains $BreathCompositionFeatureId) {
         app_spec_sha256 = Get-FileSha256 -Path $appSpecPath
         feature_descriptors = $featureDescriptorRecords
         selected_feature_ids = $selectedFeatureIds
-        runtime_set_without_binding = @($runtimeSet.Keys | Sort-Object | ForEach-Object {
-            [ordered]@{ name = [string]$_; value = [string]$runtimeSet[$_] }
-        })
+        runtime_set_without_binding = $runtimeSetWithoutResolverBindings
     }
     $breathCompositionActivationBinding = Get-StringSha256 -Value ($bindingInputs | ConvertTo-Json -Depth 20 -Compress)
     Assert-NativeRendererPropertyValue `
@@ -1008,6 +1052,33 @@ if ($selectedFeatureIds -contains $BreathCompositionFeatureId) {
     $envByName[$BreathCompositionExpectedBindingBuildEnv] = [ordered]@{
         name = $BreathCompositionExpectedBindingBuildEnv
         value = $breathCompositionActivationBinding
+    }
+}
+$simultaneousHandsControllersActivationBinding = $null
+if ($simultaneousHandsControllersSelected) {
+    $bindingInputs = [ordered]@{
+        schema = "rusty.quest.simultaneous_hands_controllers.activation_binding_inputs.v1"
+        app_spec_sha256 = Get-FileSha256 -Path $appSpecPath
+        feature_descriptors = $featureDescriptorRecords
+        selected_feature_ids = $selectedFeatureIds
+        runtime_set_without_binding = $runtimeSetWithoutResolverBindings
+    }
+    $simultaneousHandsControllersActivationBinding = Get-StringSha256 -Value ($bindingInputs | ConvertTo-Json -Depth 20 -Compress)
+    Assert-NativeRendererPropertyValue `
+        -Name $SimultaneousHandsControllersActivationBindingProperty `
+        -Value $simultaneousHandsControllersActivationBinding `
+        -ManifestByName $nativeRendererPropertyByName
+    if ($runtimeSet.Contains($SimultaneousHandsControllersActivationBindingProperty)) {
+        throw "Simultaneous hands/controllers activation binding is resolver-derived and must not be supplied by a feature or app spec"
+    }
+    $runtimeSet[$SimultaneousHandsControllersActivationBindingProperty] = $simultaneousHandsControllersActivationBinding
+    $runtimeSources[$SimultaneousHandsControllersActivationBindingProperty] = "resolver:$SimultaneousHandsControllersFeatureId"
+    if ($envByName.Contains($SimultaneousHandsControllersExpectedBindingBuildEnv)) {
+        throw "Simultaneous hands/controllers packaged binding build env is resolver-derived and must not be supplied by a feature or payload"
+    }
+    $envByName[$SimultaneousHandsControllersExpectedBindingBuildEnv] = [ordered]@{
+        name = $SimultaneousHandsControllersExpectedBindingBuildEnv
+        value = $simultaneousHandsControllersActivationBinding
     }
 }
 
@@ -1266,6 +1337,13 @@ $featureLock = [ordered]@{
             sha256 = $breathCompositionActivationBinding
         }
     } else { $null }
+    simultaneous_hands_controllers_activation = if ($null -ne $simultaneousHandsControllersActivationBinding) {
+        [ordered]@{
+            schema = "rusty.quest.simultaneous_hands_controllers.activation_binding.v1"
+            property = $SimultaneousHandsControllersActivationBindingProperty
+            sha256 = $simultaneousHandsControllersActivationBinding
+        }
+    } else { $null }
     exclusive_groups = $exclusiveGroups
     android_manifest = [ordered]@{
         permissions = $permissions
@@ -1386,6 +1464,7 @@ if ($null -ne $resultJsonCanonicalPath) {
         feature_lock_path = [System.IO.Path]::GetFullPath($featureLockPath)
         feature_lock_sha256 = Get-FileSha256 -Path $featureLockPath
         breath_composition_activation_sha256 = $breathCompositionActivationBinding
+        simultaneous_hands_controllers_activation_sha256 = $simultaneousHandsControllersActivationBinding
         audit_path = [System.IO.Path]::GetFullPath($auditPath)
         audit_sha256 = Get-FileSha256 -Path $auditPath
     }

@@ -28,9 +28,12 @@
   No fixture activates an adapter or carries application interpretation.
 - `native-app-builds/native-breath-four-way-conformance.app.json`: exact
   source-only closure for Controller/Polar ACC by Volume/State composition. It
-  selects the existing same-APK panel and generic triple-press action, records
-  a resolver-derived activation binding, uses a distinct package identity, and
-  denies unrelated effect, transport, and renderer features.
+  selects the existing same-APK panel, generic triple-press action, and exact
+  simultaneous-hands/controllers descriptor with live hand visual plus hand
+  adapter binding. Separate resolver-derived breath and combined-input
+  activation bindings use a distinct package identity; RR and unrelated
+  effect, transport, and renderer features remain denied. Damaged app fixtures
+  reject an unapplied hand lock and hands-only/controller-only combined claims.
 - `spatial-hand-alignment/`: sanitized OpenXR-to-Spatial SDK mapping fixtures.
   The accepted viewer-world basis registration remains the rollback default;
   mirror/reflection candidates stay explicit until a separate live headset

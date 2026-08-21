@@ -55,6 +55,10 @@ pub(crate) const PROP_HAND_ADAPTER_LOCK_REVISION: &str =
     "debug.rustyquest.native_renderer.hand_adapter.lock_revision";
 pub(crate) const PROP_HAND_ADAPTER_LOCK_SHA256: &str =
     "debug.rustyquest.native_renderer.hand_adapter.lock_sha256";
+pub(crate) const PROP_SIMULTANEOUS_HANDS_CONTROLLERS_ENABLED: &str =
+    "debug.rustyquest.native_renderer.simultaneous_hands_controllers.enabled";
+pub(crate) const PROP_SIMULTANEOUS_HANDS_CONTROLLERS_ACTIVATION_BINDING_SHA256: &str =
+    "debug.rustyquest.native_renderer.simultaneous_hands_controllers.activation.binding_sha256";
 pub(crate) const PROP_SDF_FIELD_VISUAL_ENABLED: &str =
     "debug.rustyquest.native_renderer.sdf.field_visual.enabled";
 pub(crate) const PROP_RENDER_MODE: &str = "debug.rustyquest.native_renderer.render.mode";

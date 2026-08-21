@@ -43,6 +43,29 @@ cargo test -p rusty-quest-native-renderer-android-native breath_composition_runt
 pwsh -NoProfile -File .\tools\checks\Test-NativeRendererBreathCompositionStatic.ps1 -RepoRoot .
 ```
 
+The native simultaneous hands/controllers adapter has an additional focused
+host/static and Android-target gate:
+
+```powershell
+cargo test -p rusty-quest-native-renderer-android-native simultaneous_hands_controllers --locked
+cargo clippy --manifest-path apps/native-renderer-android/native/Cargo.toml --lib --no-deps -- -D warnings -A clippy::manual_checked_ops -A clippy::field_reassign_with_default -A clippy::incompatible_msrv -A clippy::collapsible_str_replace -A clippy::too_many_arguments -A clippy::derivable_impls -A clippy::match_single_binding -A clippy::manual_contains -A clippy::enum_variant_names -A clippy::manual_pattern_char_comparison
+pwsh -NoProfile -File .\tools\checks\Test-NativeRendererSimultaneousHandsControllersStatic.ps1 -RepoRoot .
+pwsh -NoProfile -File .\tools\Test-NativeAppBuildProfile.ps1
+cargo check -p rusty-quest-native-renderer-android-native --target aarch64-linux-android --lib
+```
+
+The Clippy command keeps the accepted native-renderer baseline lint classes as
+invocation-scoped exclusions; `-D warnings` still rejects every other finding,
+including findings introduced by the simultaneous-mode adapter.
+
+Damaged app fixtures reject a combined claim without the selected feature,
+hands-only and controller-only substitution, and a selected combined feature
+whose exact hand-adapter lock is disabled or unapplied. Pure lifecycle tests
+cover unavailable extension, false system support, unresolved functions,
+resume failure/session-loss-pending, stale generations, duplicate resume,
+idempotent pause/teardown, and independent live-readiness conjunction. These
+host gates neither create an OpenXR session nor infer wearer-visible readiness.
+
 Its unit and fixture tests cover disabled construction, configuration and
 normalized-input bounds, Reset/Configure/Start/Cancel/Observe transitions,
 injected-time regression and discontinuity, generation isolation, missing,

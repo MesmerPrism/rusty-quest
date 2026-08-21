@@ -402,6 +402,37 @@ public SDF/hand-resource hooks. New examples should stay inside this route
 unless they specifically need a Makepad UI shell or a Manifold-controlled
 operator app.
 
+### Simultaneous hands and controllers
+
+`input.simultaneous_hands_and_controllers` is a closed, disabled-by-default
+native-renderer feature. Its resolver-derived binding covers the app spec,
+selected descriptor closure, and pre-binding runtime settings. Runtime
+admission additionally requires the exact existing hand-adapter lock; a
+property-only, stale, malformed, or unapplied selection remains inert before
+scene or input effects.
+
+The adapter uses the renderer's existing instance, system, session, function
+loader, action set, and frame loop. When selected it alone enables the
+[`XR_META_simultaneous_hands_and_controllers`](https://registry.khronos.org/OpenXR/specs/1.1/man/html/XR_META_simultaneous_hands_and_controllers.html)
+instance extension, which is revision 1 and not ratified. It chains
+[`XrSystemSimultaneousHandsAndControllersPropertiesMETA`](https://registry.khronos.org/OpenXR/specs/1.1/man/html/XrSystemSimultaneousHandsAndControllersPropertiesMETA.html)
+into `xrGetSystemProperties`, requires support, resolves the extension function
+table, and calls
+[`xrResumeSimultaneousHandsAndControllersTrackingMETA`](https://registry.khronos.org/OpenXR/specs/1.1/man/html/xrResumeSimultaneousHandsAndControllersTrackingMETA.html)
+once for the current session generation. Duplicate lifecycle application is
+inert. Normal deactivation and safe teardown use the idempotent
+[`xrPauseSimultaneousHandsAndControllersTrackingMETA`](https://registry.khronos.org/OpenXR/specs/1.1/man/html/xrPauseSimultaneousHandsAndControllersTrackingMETA.html);
+session or instance loss hard-resets generation state without calling stale
+handles. `XR_META_detached_controllers` is outside this adapter.
+
+Evidence keeps extension enablement/support/resume separate from input truth.
+Hand readiness requires the applied hand lock, a ready tracker, a current
+compact frame, and an active visualizable hand. Controller readiness requires
+the attached action set, a recognized controller interaction profile, and an
+active controller action. Only their current-generation conjunction may emit
+`simultaneousHandsControllersReady=true`; neither hands-only nor
+controller-only can substitute for combined mode.
+
 The package is a Quest platform adapter. It consumes the validated public
 native-renderer plan fixture as an APK asset, requests Android/headset/spatial
 camera permissions, launches the immersive renderer through Android framework

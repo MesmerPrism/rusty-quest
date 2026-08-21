@@ -58,6 +58,7 @@ pub(crate) struct StimulusVolumeActions {
     right_breath_haptic: xr::Action<xr::Haptic>,
     right_hand_subaction_path: xr::Path,
     right_grip_space: Option<xr::Space>,
+    action_set_attached: bool,
     native_controller_breath_assessment: OpenXrControllerBreathAdapter,
     breath_haptic_cadence: BreathHapticCadence,
     breath_haptic_pulse_count: u64,
@@ -96,6 +97,28 @@ pub(crate) struct NativeRendererControllerEvents {
     pub(crate) native_controller_breath_assessment: Option<BreathAssessmentObservation>,
     pub(crate) right_grip_pose_active: bool,
     pub(crate) right_grip_pose_tracked: bool,
+    pub(crate) controller_readiness: ControllerActionReadiness,
+}
+
+#[derive(Clone, Debug, Default)]
+pub(crate) struct ControllerActionReadiness {
+    pub(crate) action_set_ready: bool,
+    pub(crate) interaction_profile_ready: bool,
+    pub(crate) action_ready: bool,
+    pub(crate) interaction_profile: String,
+}
+
+impl ControllerActionReadiness {
+    pub(crate) fn marker_fields(&self) -> String {
+        format!(
+            "controllerActionSetReady={} controllerInteractionProfileReady={} controllerActionReady={} controllerInteractionProfile={} controllerPhysicalInputObserved={} handsCannotSubstituteController=true",
+            self.action_set_ready,
+            self.interaction_profile_ready,
+            self.action_ready,
+            crate::sanitize(&self.interaction_profile),
+            self.action_ready,
+        )
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -504,6 +527,7 @@ impl StimulusVolumeActions {
             right_breath_haptic,
             right_hand_subaction_path,
             right_grip_space: None,
+            action_set_attached: false,
             native_controller_breath_assessment,
             breath_haptic_cadence: BreathHapticCadence::new_ready(),
             breath_haptic_pulse_count: 0,
@@ -535,6 +559,7 @@ impl StimulusVolumeActions {
         session
             .attach_action_sets(&[&self.action_set])
             .map_err(|error| format!("attach native renderer OpenXR action set: {error}"))?;
+        self.action_set_attached = true;
         match self
             .right_grip_pose
             .create_space(session, xr::Path::NULL, xr::Posef::IDENTITY)
@@ -719,6 +744,7 @@ impl StimulusVolumeActions {
 
     pub(crate) fn sync_and_poll<G>(
         &mut self,
+        instance: &xr::Instance,
         session: &xr::Session<G>,
         reference_space: &xr::Space,
         predicted_display_time: xr::Time,
@@ -804,6 +830,8 @@ impl StimulusVolumeActions {
                 false
             }
         };
+        events.controller_readiness =
+            self.controller_readiness(instance, session, events.right_grip_pose_active);
         let projection_native_controller_breath_enabled =
             self.projection_target_settings.controls_enabled
                 && self
@@ -966,6 +994,33 @@ impl StimulusVolumeActions {
             );
         }
         events
+    }
+
+    fn controller_readiness<G>(
+        &self,
+        instance: &xr::Instance,
+        session: &xr::Session<G>,
+        right_grip_pose_active: bool,
+    ) -> ControllerActionReadiness {
+        let interaction_profile = session
+            .current_interaction_profile(self.right_hand_subaction_path)
+            .ok()
+            .filter(|path| *path != xr::Path::NULL)
+            .and_then(|path| instance.path_to_string(path).ok())
+            .unwrap_or_else(|| "none".to_owned());
+        let interaction_profile_ready = INTERACTION_PROFILES
+            .iter()
+            .any(|profile| profile.profile_path == interaction_profile);
+        let action_set_ready = self.action_set_attached && self.suggested_binding_count > 0;
+        ControllerActionReadiness {
+            action_set_ready,
+            interaction_profile_ready,
+            action_ready: action_set_ready
+                && interaction_profile_ready
+                && self.right_grip_space.is_some()
+                && right_grip_pose_active,
+            interaction_profile,
+        }
     }
 
     fn locate_right_grip_pose_sample(

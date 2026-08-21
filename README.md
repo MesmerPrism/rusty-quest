@@ -443,6 +443,17 @@ through the locked build environment. Runtime activation requires the observed
 property to equal that packaged digest exactly. RR remains outside this
 composition.
 
+The four-way conformance app additionally selects the generic
+`input.simultaneous_hands_and_controllers` feature. That disabled-by-default
+native-renderer adapter enables only
+`XR_META_simultaneous_hands_and_controllers`, binds the exact existing hand
+adapter lock, and requires the existing live hand input/visual plus controller
+action closure. It queries system support, resolves the two extension
+functions, resumes once for the current OpenXR session generation, and pauses
+before safe teardown. Aggregate readiness remains false until a current live
+hand frame and a current controller interaction profile/action are proven
+independently; resume success alone is not physical-input evidence.
+
 New native APK variants must start from the source-only native app-build
 workflow instead of hand-editing runtime profiles, Android manifest
 permissions, or build wrapper environment variables. App-build specs under

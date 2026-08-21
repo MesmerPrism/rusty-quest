@@ -12,6 +12,7 @@ use crate::private_particle_breath_state_driver::PrivateParticleBreathStateDrive
 use crate::private_particle_heartbeat_pulse_adapter::PrivateParticleHeartbeatPulseAdapterSettings;
 use crate::projection_target_state::ProjectionTargetSettings;
 use crate::same_apk_panel_action::SameApkPanelActionSettings;
+use crate::simultaneous_hands_controllers::SimultaneousHandsControllersSettings;
 
 pub(crate) use crate::native_renderer_camera_options::{
     NativeCameraOutputMode, NativeCameraQualityProfile, NativeCameraResolutionProfile,
@@ -124,6 +125,7 @@ pub(crate) struct NativeRendererRuntimeOptions {
     pub(crate) private_particle_heartbeat_pulse_adapter_settings:
         PrivateParticleHeartbeatPulseAdapterSettings,
     pub(crate) same_apk_panel_action_settings: SameApkPanelActionSettings,
+    pub(crate) simultaneous_hands_controllers_settings: SimultaneousHandsControllersSettings,
     pub(crate) manifold_scalar_driver_settings: ManifoldScalarDriverBridgeSettings,
     pub(crate) projection_border_stretch_settings: NativeProjectionBorderStretchSettings,
     pub(crate) private_layer_settings: NativePrivateLayerSettings,
@@ -211,6 +213,8 @@ impl NativeRendererRuntimeOptions {
             PrivateParticleHeartbeatPulseAdapterSettings::from_property_lookup(&mut lookup);
         let same_apk_panel_action_settings =
             SameApkPanelActionSettings::from_property_lookup(&mut lookup);
+        let simultaneous_hands_controllers_settings =
+            SimultaneousHandsControllersSettings::from_property_lookup(&mut lookup);
         let manifold_scalar_driver_settings =
             ManifoldScalarDriverBridgeSettings::from_property_lookup(&mut lookup);
         let projection_border_stretch_settings =
@@ -258,6 +262,7 @@ impl NativeRendererRuntimeOptions {
             private_particle_breath_state_driver_settings,
             private_particle_heartbeat_pulse_adapter_settings,
             same_apk_panel_action_settings,
+            simultaneous_hands_controllers_settings,
             manifold_scalar_driver_settings,
             projection_border_stretch_settings,
             private_layer_settings,
