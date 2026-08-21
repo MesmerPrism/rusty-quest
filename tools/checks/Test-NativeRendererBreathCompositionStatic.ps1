@@ -123,6 +123,30 @@ Assert-Tokens $panel @(
     "nativeApplyBreathCompositionCommand",
     "nativeReadBreathCompositionStatus"
 ) "same-APK panel mode"
+$breathPanelStart = $panel.IndexOf("private View buildBreathMappingPanelView()")
+$breathPanelEnd = $panel.IndexOf("private void applyBreathCompositionOperation(", $breathPanelStart)
+if ($breathPanelStart -lt 0 -or $breathPanelEnd -le $breathPanelStart) {
+    throw "Breath composition static check could not isolate the same-APK breath panel method"
+}
+$breathPanelMethod = $panel.Substring($breathPanelStart, $breathPanelEnd - $breathPanelStart)
+$listenerCount = [regex]::Matches(
+    $breathPanelMethod,
+    [regex]::Escape("new View.OnClickListener()")
+).Count
+if ($listenerCount -ne 7) {
+    throw "Same-APK breath panel must retain seven explicit Android-compatible click listeners; found $listenerCount"
+}
+if ($breathPanelMethod -match 'setOnClickListener\s*\([^;]*?->') {
+    throw "Same-APK breath panel must not use lambda click listeners with the Android boot classpath"
+}
+Assert-Tokens $breathPanelMethod @(
+    "launchImmersiveRenderer();",
+    'applyBreathCompositionOperation("configure", readback, false);',
+    'applyBreathCompositionOperation("start", readback, false);',
+    'applyBreathCompositionOperation("cancel", readback, true);',
+    'applyBreathCompositionOperation("reset", readback, false);',
+    "refreshBreathCompositionReadback(readback);"
+) "Android-compatible breath panel click behavior"
 Assert-Tokens $polarPanel @(
     "buildEmbeddedAcquisitionView",
     "buildView(false)",

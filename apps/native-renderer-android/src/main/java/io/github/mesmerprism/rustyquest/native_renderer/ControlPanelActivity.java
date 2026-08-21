@@ -698,7 +698,12 @@ public final class ControlPanelActivity extends Activity {
             new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
         );
         Button close = button("Return to VR");
-        close.setOnClickListener(view -> launchImmersiveRenderer());
+        close.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                launchImmersiveRenderer();
+            }
+        });
         header.addView(close);
         root.addView(header);
         root.addView(
@@ -730,54 +735,71 @@ public final class ControlPanelActivity extends Activity {
 
         final TextView readback = text("Native-effective readback pending.", 13, PANEL_FG);
         Button applySelection = button("Apply selection");
-        applySelection.setOnClickListener(view -> {
-            try {
-                JSONObject command = new JSONObject()
-                    .put("schema", BREATH_COMPOSITION_COMMAND_SCHEMA)
-                    .put("operation", "select")
-                    .put(
-                        "source",
-                        "Controller".equals(selected(source)) ? "controller" : "polar-acc"
-                    )
-                    .put(
-                        "mapping",
-                        "Volume".equals(selected(mapping)) ? "volume" : "state"
-                    )
-                    .put(
-                        "controller_projection",
-                        "Fixed orientation".equals(selected(controllerProjection))
-                            ? "fixed-orientation"
-                            : "dynamic-axis"
-                    )
-                    .put(
-                        "polar_projection",
-                        "3D".equals(selected(polarProjection)) ? "3d" : "xz"
-                    )
-                    .put("inverted", inverted.isChecked());
-                applyBreathCompositionCommand(command, readback);
-            } catch (Exception error) {
-                readback.setText("Selection request failed: " + markerToken(error.getMessage()));
+        applySelection.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                try {
+                    JSONObject command = new JSONObject()
+                        .put("schema", BREATH_COMPOSITION_COMMAND_SCHEMA)
+                        .put("operation", "select")
+                        .put(
+                            "source",
+                            "Controller".equals(selected(source)) ? "controller" : "polar-acc"
+                        )
+                        .put(
+                            "mapping",
+                            "Volume".equals(selected(mapping)) ? "volume" : "state"
+                        )
+                        .put(
+                            "controller_projection",
+                            "Fixed orientation".equals(selected(controllerProjection))
+                                ? "fixed-orientation"
+                                : "dynamic-axis"
+                        )
+                        .put(
+                            "polar_projection",
+                            "3D".equals(selected(polarProjection)) ? "3d" : "xz"
+                        )
+                        .put("inverted", inverted.isChecked());
+                    applyBreathCompositionCommand(command, readback);
+                } catch (Exception error) {
+                    readback.setText(
+                        "Selection request failed: " + markerToken(error.getMessage())
+                    );
+                }
             }
         });
         root.addView(applySelection);
 
         root.addView(sectionTitle("Calibration lifecycle"));
         Button configure = button("Configure");
-        configure.setOnClickListener(
-            view -> applyBreathCompositionOperation("configure", readback, false)
-        );
+        configure.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                applyBreathCompositionOperation("configure", readback, false);
+            }
+        });
         Button start = button("Start calibration");
-        start.setOnClickListener(
-            view -> applyBreathCompositionOperation("start", readback, false)
-        );
+        start.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                applyBreathCompositionOperation("start", readback, false);
+            }
+        });
         Button cancel = button("Cancel");
-        cancel.setOnClickListener(
-            view -> applyBreathCompositionOperation("cancel", readback, true)
-        );
+        cancel.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                applyBreathCompositionOperation("cancel", readback, true);
+            }
+        });
         Button reset = button("Reset");
-        reset.setOnClickListener(
-            view -> applyBreathCompositionOperation("reset", readback, false)
-        );
+        reset.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                applyBreathCompositionOperation("reset", readback, false);
+            }
+        });
         root.addView(configure);
         root.addView(start);
         root.addView(cancel);
@@ -786,7 +808,12 @@ public final class ControlPanelActivity extends Activity {
         root.addView(sectionTitle("Native-effective readback"));
         root.addView(readback);
         Button refresh = button("Refresh readback");
-        refresh.setOnClickListener(view -> refreshBreathCompositionReadback(readback));
+        refresh.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                refreshBreathCompositionReadback(readback);
+            }
+        });
         root.addView(refresh);
         root.addView(
             text(
