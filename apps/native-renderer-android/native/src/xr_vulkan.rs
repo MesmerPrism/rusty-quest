@@ -653,6 +653,7 @@ unsafe fn run_projection_loop_inner(
         runtime_options.projection_target_settings.clone(),
         runtime_options.private_particle_breath_state_driver_settings,
         runtime_options.same_apk_panel_action_settings,
+        runtime_options.breath_calibration_controller_action_settings,
         runtime_options.environment_depth_alignment_settings,
         runtime_options
             .render_mode
@@ -3127,7 +3128,7 @@ unsafe fn run_projection_frames(
                     cmd,
                     gpu_timestamp_tracker,
                     frame_slot,
-                    particle_sort_eye_projection,
+                    private_particle_world_anchor.compute_basis_transport(),
                     private_particle_world_anchor.world_center_scale(),
                     private_particle_world_anchor.scale_parameter_source(),
                     private_particle_world_anchor.world_forward_axis(),
@@ -5276,6 +5277,8 @@ fn hand_forward_depth_m(
 #[derive(Clone, Copy, Debug)]
 struct PrivateParticleWorldAnchor {
     center_scale: [f32; 4],
+    right_axis: [f32; 4],
+    up_axis: [f32; 4],
     forward_axis: [f32; 4],
     initialized: bool,
     scale_parameter_source: &'static str,
@@ -5292,6 +5295,8 @@ impl PrivateParticleWorldAnchor {
                 -PRIVATE_PARTICLE_WORLD_ANCHOR_DISTANCE_M,
                 PRIVATE_PARTICLE_WORLD_ANCHOR_SCALE_M,
             ],
+            right_axis: [1.0, 0.0, 0.0, 0.0],
+            up_axis: [0.0, 1.0, 0.0, 0.0],
             forward_axis: [0.0, 0.0, -1.0, 1.0],
             initialized: false,
             scale_parameter_source: "particle-world-anchor-default",
@@ -5329,6 +5334,14 @@ impl PrivateParticleWorldAnchor {
 
     fn world_forward_axis(&self) -> [f32; 4] {
         self.forward_axis
+    }
+
+    fn compute_basis_transport(&self) -> HandMeshVisualEyeProjection {
+        HandMeshVisualEyeProjection {
+            position: self.right_axis,
+            orientation_xyzw: self.up_axis,
+            fov_tangents: self.forward_axis,
+        }
     }
 
     fn scale_parameter_source(&self) -> &'static str {
@@ -5446,18 +5459,34 @@ impl PrivateParticleWorldAnchor {
         } else {
             normalize3(forward_offset)
         };
+        let compute_basis =
+            crate::private_particle_world_basis::CapturedWorldBasis::from_orientation_xyzw(
+                eye_projection.orientation_xyzw,
+            );
         self.center_scale = [
             eye_projection.position[0] + forward_offset[0],
             eye_projection.position[1] + forward_offset[1],
             eye_projection.position[2] + forward_offset[2],
             self.center_scale[3],
         ];
+        self.right_axis = [
+            compute_basis.right[0],
+            compute_basis.right[1],
+            compute_basis.right[2],
+            0.0,
+        ];
+        self.up_axis = [
+            compute_basis.up[0],
+            compute_basis.up[1],
+            compute_basis.up[2],
+            0.0,
+        ];
         self.forward_axis = [forward_axis[0], forward_axis[1], forward_axis[2], 1.0];
         self.initialized = true;
         crate::marker(
             "private-particle-anchor",
             format!(
-                "status=captured frame={} reason={} privateParticleWorldAnchorInitialized=true privateParticleWorldAnchorFollowCamera=false privateParticleWorldAnchorCenter={:.4},{:.4},{:.4} privateParticleWorldAnchorScaleM={:.3} privateParticleWorldAnchorScaleParameterSource={} privateParticleWorldAnchorScalePollIntervalFrames={} privateParticleWorldAnchorDistanceM={:.3} privateParticleWorldAnchorForwardAxis={:.4},{:.4},{:.4} privateParticleComputeFovTangentPayload=world-anchor-forward-axis",
+                "status=captured frame={} reason={} privateParticleWorldAnchorInitialized=true privateParticleWorldAnchorFollowCamera=false privateParticleWorldAnchorCenter={:.4},{:.4},{:.4} privateParticleWorldAnchorScaleM={:.3} privateParticleWorldAnchorScaleParameterSource={} privateParticleWorldAnchorScalePollIntervalFrames={} privateParticleWorldAnchorDistanceM={:.3} privateParticleWorldAnchorForwardAxis={:.4},{:.4},{:.4} privateParticleComputeBasisSource=captured-world-anchor privateParticleComputeBasisFollowCamera=false privateParticleComputePositionPayload=world-anchor-right-axis privateParticleComputeOrientationPayload=world-anchor-up-axis privateParticleComputeFovTangentPayload=world-anchor-forward-axis",
                 frame_count,
                 reason,
                 self.center_scale[0],
@@ -6297,5 +6326,67 @@ mod tests {
         assert!(should_draw_base_hand_meshes(true, false, off));
         assert!(should_draw_base_hand_meshes(false, true, off));
         assert!(should_draw_base_hand_meshes(false, false, diagnostic));
+    }
+
+    fn eye_projection(
+        position: [f32; 3],
+        orientation_xyzw: [f32; 4],
+    ) -> HandMeshVisualEyeProjection {
+        HandMeshVisualEyeProjection {
+            position: [position[0], position[1], position[2], 0.0],
+            orientation_xyzw,
+            fov_tangents: [-0.8, 0.8, -0.7, 0.7],
+        }
+    }
+
+    #[test]
+    fn private_particle_compute_basis_does_not_follow_later_head_motion() {
+        let mut anchor = PrivateParticleWorldAnchor::new();
+        let startup = eye_projection([0.0, 1.6, 0.0], [0.0, 0.0, 0.0, 1.0]);
+        anchor.capture_startup_if_needed(startup, 1);
+        let captured = anchor.compute_basis_transport();
+
+        let later_head = eye_projection(
+            [2.0, 1.2, -3.0],
+            [
+                0.0,
+                std::f32::consts::FRAC_1_SQRT_2,
+                0.0,
+                std::f32::consts::FRAC_1_SQRT_2,
+            ],
+        );
+        anchor.capture_startup_if_needed(later_head, 2);
+        let after = anchor.compute_basis_transport();
+
+        assert_eq!(after.position, captured.position);
+        assert_eq!(after.orientation_xyzw, captured.orientation_xyzw);
+        assert_eq!(after.fov_tangents, captured.fov_tangents);
+        assert_ne!(
+            after.position[..3],
+            rotate_by_quat(later_head.orientation_xyzw, [1.0, 0.0, 0.0])
+        );
+    }
+
+    #[test]
+    fn private_particle_recenter_recaptures_the_complete_world_basis() {
+        let mut anchor = PrivateParticleWorldAnchor::new();
+        anchor.capture_startup_if_needed(eye_projection([0.0, 1.6, 0.0], [0.0, 0.0, 0.0, 1.0]), 1);
+        let before = anchor.compute_basis_transport();
+        anchor.recenter(
+            eye_projection(
+                [1.0, 1.6, 1.0],
+                [
+                    0.0,
+                    std::f32::consts::FRAC_1_SQRT_2,
+                    0.0,
+                    std::f32::consts::FRAC_1_SQRT_2,
+                ],
+            ),
+            2,
+        );
+        let after = anchor.compute_basis_transport();
+        assert_ne!(after.position, before.position);
+        assert_ne!(after.orientation_xyzw, before.orientation_xyzw);
+        assert_ne!(after.fov_tangents, before.fov_tangents);
     }
 }

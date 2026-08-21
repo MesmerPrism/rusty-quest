@@ -38,6 +38,7 @@ $javaRoot = Join-Path $appRoot "src\main\java\io\github\mesmerprism\rustyquest\n
 $manifest = Read-RequiredText (Join-Path $appRoot "AndroidManifest.xml") "Android manifest"
 $controlPanel = Read-RequiredText (Join-Path $javaRoot "ControlPanelActivity.java") "control panel"
 $polarPanel = Read-RequiredText (Join-Path $javaRoot "PolarSensorPanel.java") "Polar panel"
+$polarRuntimeSupport = Read-RequiredText (Join-Path $javaRoot "PolarBleRuntimeSupport.java") "Polar runtime support"
 $polarAdapters = Read-RequiredText (Join-Path $appRoot "native\src\polar_composition_adapters.rs") "Polar composition adapters"
 $polarAccBreathAdapter = Read-RequiredText (Join-Path $appRoot "native\src\polar_acc_breath_adapter.rs") "calibrated Polar ACC adapter"
 $breathAdapter = Read-RequiredText (Join-Path $appRoot "native\src\private_particle_breath_state_driver.rs") "breath-state adapter"
@@ -51,6 +52,7 @@ $pregrant = Read-RequiredText (Join-Path $repoRootPath "tools\Grant-NativeRender
 
 Assert-ContainsTokens $manifest @(
     'android\.hardware\.bluetooth_le',
+    'android\.permission\.ACCESS_COARSE_LOCATION',
     'android\.permission\.ACCESS_FINE_LOCATION',
     'android\.permission\.BLUETOOTH',
     'android\.permission\.BLUETOOTH_ADMIN',
@@ -65,7 +67,7 @@ Assert-ContainsTokens $controlPanel @(
     'closePanelAndReturnToImmersive'
 ) "ControlPanelActivity Polar mode"
 
-Assert-ContainsTokens $polarPanel @(
+Assert-ContainsTokens "$polarPanel`n$polarRuntimeSupport" @(
     'final class PolarSensorPanel',
     'BluetoothLeScanner',
     'ScanCallback',
@@ -73,6 +75,7 @@ Assert-ContainsTokens $polarPanel @(
     'requestPermissions',
     'BLUETOOTH_SCAN',
     'BLUETOOTH_CONNECT',
+    'ACCESS_COARSE_LOCATION',
     'ACCESS_FINE_LOCATION',
     'HEART_RATE_MEASUREMENT',
     'PMD_CONTROL_POINT',
@@ -92,6 +95,17 @@ Assert-ContainsTokens $polarPanel @(
     'RUSTY_QUEST_NATIVE_RENDERER',
     'polar-sensor-panel'
 ) "Polar BLE panel implementation"
+
+Assert-ContainsTokens "$polarPanel`n$polarRuntimeSupport" @(
+    'SCAN_MODE_LOW_LATENCY',
+    'platformFilter=empty',
+    'PENDING_BLE_SCAN',
+    'resumePendingBleAction',
+    'quest-nearby-devices-plus-location',
+    'polar_sensor_status\.v2',
+    'rr_consumed_by_breath',
+    'rawDeviceIdentifierLogged=false'
+) "Quest Polar discovery and structured readback"
 
 Assert-ContainsTokens "$polarAdapters`n$breathAdapter`n$heartbeatAdapter`n$panelAction`n$panelBridge" @(
     'PolarAccBreathSource',
@@ -140,6 +154,7 @@ Assert-ContainsTokens $feature @(
     '"feature_id": "sensor\.polar_h10_ble"',
     '"module_path": "sensor/polar-h10-ble"',
     '"ui\.same_apk_control_panel"',
+    '"android\.permission\.ACCESS_COARSE_LOCATION"',
     '"android\.permission\.BLUETOOTH_SCAN"',
     '"android\.permission\.BLUETOOTH_CONNECT"',
     '"android\.hardware\.bluetooth_le"',
@@ -150,6 +165,7 @@ Assert-ContainsTokens $feature @(
 ) "Polar native app feature"
 
 Assert-ContainsTokens "$resolver`n$pregrant" @(
+    'android\.permission\.ACCESS_COARSE_LOCATION',
     'android\.permission\.ACCESS_FINE_LOCATION',
     'android\.permission\.BLUETOOTH_CONNECT',
     'android\.permission\.BLUETOOTH_SCAN'

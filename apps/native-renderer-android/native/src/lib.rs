@@ -12,6 +12,7 @@ const PLAN_JSON: &str =
 const MARKER_PREFIX: &str = "RUSTY_QUEST_NATIVE_RENDERER";
 
 mod bounded_breath_phase_integrator;
+mod breath_calibration_controller_action;
 mod breath_composition_driver;
 mod breath_composition_runtime;
 mod breath_input_selection;
@@ -121,6 +122,7 @@ mod polar_composition_adapters;
 mod private_extension_slot;
 mod private_particle_breath_state_driver;
 mod private_particle_heartbeat_pulse_adapter;
+mod private_particle_world_basis;
 mod projection_rect;
 mod projection_target_state;
 mod recorded_hand_replay;

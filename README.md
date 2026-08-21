@@ -424,13 +424,20 @@ The pure composition module and Native Renderer adapter expose the complete
 direct four-way Controller/Polar ACC by Volume/State matrix. The exact
 `breath.composition.closed_world` feature closure selects both assessment
 adapters, both mappings, the existing same-APK panel shell, and the generic
-right-secondary triple-press action. The panel submits bounded Configure,
-Start, Cancel, Reset, and selection commands, then renders native-effective
-generation, calibration, tracking, quality, age, phase/value, and admission
-readback. Mapping-only changes preserve calibration; source, projection, and
+right-secondary triple-press action. An additional explicit feature may bind a
+long right-secondary hold to the atomic Configure+Start calibration action;
+the triple press remains the panel toggle. The panel organizes requested and
+effective selection, calibration progress, live output, Polar connection, and
+structured diagnostics as separate status cards. The fixed
+`Invoke-NativeRendererBreathOperator.ps1` action surface performs the same
+selection/lifecycle operations and reads a correlated app-private JSON receipt,
+so operator validation does not depend on screenshots. Mapping-only changes preserve calibration; source, projection, and
 direction changes hard-reset retained state. The panel embeds the existing
 Polar acquisition owner for scan, connect, and ACC PMD start rather than
-creating a second owner. Adapter actions use transactional bounded admission:
+creating a second owner. Quest BLE admission retains nearby-device plus fine
+and coarse location permission checks, resumes the exact pending action after
+wearer approval, and uses an unfiltered low-latency scan before app-owned
+Polar/PMD candidate ranking. Adapter actions use transactional bounded admission:
 commands reject before authority mutation when their ordered actions cannot be
 retained. Calibration readback accepts only the exact active source and
 generation while composition is running; cancel, reset, reconfigure, and late
@@ -442,6 +449,10 @@ in every executable property adapter, and packages the same expected digest
 through the locked build environment. Runtime activation requires the observed
 property to equal that packaged digest exactly. RR remains outside this
 composition.
+
+Private-particle compute receives the right/up/forward basis captured with the
+world anchor rather than the later live eye pose. Live eye data remains the
+draw/sort input only, and recentering recaptures the complete compute basis.
 
 The optional `particles.private.breath_composition_driver` feature is the
 disabled-by-default handoff from that exact composition output to one bounded

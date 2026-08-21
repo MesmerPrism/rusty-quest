@@ -31,6 +31,10 @@ pub(crate) const PROP_BREATH_COMPOSITION_INVERTED: &str =
     "debug.rustyquest.native_renderer.breath_composition.inverted";
 pub(crate) const PROP_BREATH_COMPOSITION_STALE_MILLIS: &str =
     "debug.rustyquest.native_renderer.breath_composition.stale_millis";
+pub(crate) const PROP_BREATH_CALIBRATION_RIGHT_SECONDARY_ACTION_MODE: &str =
+    "debug.rustyquest.native_renderer.breath_composition.calibration.right_secondary_action.mode";
+pub(crate) const PROP_BREATH_CALIBRATION_RIGHT_SECONDARY_ACTION_HOLD_SECONDS: &str =
+    "debug.rustyquest.native_renderer.breath_composition.calibration.right_secondary_action.hold_seconds";
 pub(crate) const PROP_PARTICLE_ADAPTER_ENABLED: &str =
     "debug.rustyquest.native_renderer.particle_adapter.enabled";
 pub(crate) const PROP_PARTICLE_ADAPTER_PROFILE_ID: &str =

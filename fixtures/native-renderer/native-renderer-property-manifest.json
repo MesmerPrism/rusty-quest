@@ -7,6 +7,7 @@
     "apps/native-renderer-android/native/src/native_renderer_projection_swapchain_options.rs",
     "apps/native-renderer-android/native/src/native_controller_breath_state.rs",
     "apps/native-renderer-android/native/src/breath_composition_runtime.rs",
+    "apps/native-renderer-android/native/src/breath_calibration_controller_action.rs",
     "apps/native-renderer-android/native/src/breath_composition_driver.rs",
     "apps/native-renderer-android/native/src/embedded_manifold_broker_bridge.rs",
     "apps/native-renderer-android/native/src/private_particle_breath_state_driver.rs",
@@ -23,7 +24,7 @@
     "apps/native-renderer-android/native/src/manifold_scalar_driver_bridge.rs",
     "apps/native-renderer-android/native/src/lsl_transport_bridge.rs"
   ],
-  "property_count": 301,
+  "property_count": 303,
   "properties": [
     {
       "name": "debug.rustyquest.native_renderer.breath_composition.activation.binding_sha256",
@@ -391,6 +392,44 @@
       "range": {
         "min": 0.25,
         "max": 30.0
+      },
+      "validators": [
+        "runtime-parser",
+        "profile-matrix",
+        "rusty-quest-profile",
+        "Apply-RuntimeProfile.ps1"
+      ]
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.breath_composition.calibration.right_secondary_action.mode",
+      "family": "breath_composition",
+      "runtime_owner": "breath_calibration_controller_action",
+      "lifecycle": "startup-effective",
+      "clear_behavior": "profile-owned-explicit-set",
+      "default_behavior": "runtime-owner-default-when-unset",
+      "value_kind": "token",
+      "allowed_values": [
+        "disabled",
+        "right-secondary-hold-start"
+      ],
+      "validators": [
+        "runtime-parser",
+        "profile-matrix",
+        "rusty-quest-profile",
+        "Apply-RuntimeProfile.ps1"
+      ]
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.breath_composition.calibration.right_secondary_action.hold_seconds",
+      "family": "breath_composition",
+      "runtime_owner": "breath_calibration_controller_action",
+      "lifecycle": "startup-effective",
+      "clear_behavior": "profile-owned-explicit-set",
+      "default_behavior": "runtime-owner-default-when-unset",
+      "value_kind": "f32",
+      "range": {
+        "min": 0.5,
+        "max": 5.0
       },
       "validators": [
         "runtime-parser",

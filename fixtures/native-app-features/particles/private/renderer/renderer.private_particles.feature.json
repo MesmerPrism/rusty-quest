@@ -94,6 +94,8 @@
       "RUSTY_QUEST_NATIVE_RENDERER channel=private-particle-anchor",
       "privateParticleWorldAnchorForwardAxis=",
       "privateParticleComputeFovTangentPayload=world-anchor-forward-axis",
+      "privateParticleComputeBasisSource=captured-world-anchor",
+      "privateParticleComputeBasisFollowCamera=false",
       "privateParticleDiagnosticStorageBinding=9",
       "privateParticleDiagnosticWords=24",
       "privateParticleDiagnosticTracerSpawnedCount=",

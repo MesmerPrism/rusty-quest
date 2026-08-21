@@ -8,6 +8,9 @@ use rusty_quest_breath_contract::{
 };
 
 use crate::{
+    breath_calibration_controller_action::{
+        BreathCalibrationControllerAction, BreathCalibrationControllerActionSettings,
+    },
     breath_composition_runtime::AdapterAction,
     breath_input_selection::ControllerVolumeKind,
     environment_depth_alignment_state::{
@@ -83,6 +86,8 @@ pub(crate) struct StimulusVolumeActions {
     right_primary_control_panel_enabled: bool,
     right_primary_reset_enabled: bool,
     same_apk_panel_action: SameApkPanelAction,
+    breath_calibration_controller_action: BreathCalibrationControllerAction,
+    breath_calibration_controller_action_selected: bool,
 }
 
 #[derive(Debug, Default)]
@@ -158,14 +163,19 @@ impl StimulusVolumeActions {
         projection_target_settings: ProjectionTargetSettings,
         private_particle_breath_state_driver_settings: PrivateParticleBreathStateDriverSettings,
         same_apk_panel_action_settings: SameApkPanelActionSettings,
+        breath_calibration_controller_action_settings: BreathCalibrationControllerActionSettings,
         environment_depth_alignment_settings: EnvironmentDepthAlignmentSettings,
         private_particle_recenter_enabled: bool,
     ) -> Result<Option<Self>, String> {
+        let breath_calibration_controller_action_selected =
+            breath_calibration_controller_action_settings.enabled()
+                && crate::breath_composition_runtime::feature_lock_active();
         if !stimulus_settings.enabled
             && !projection_target_settings.controls_enabled
             && !environment_depth_alignment_settings.controls_enabled
             && !private_particle_breath_state_driver_settings.uses_native_controller_assessment()
             && !same_apk_panel_action_settings.enabled()
+            && !breath_calibration_controller_action_selected
             && !crate::breath_composition_runtime::controller_adapter_available()
             && !private_particle_recenter_enabled
         {
@@ -243,8 +253,11 @@ impl StimulusVolumeActions {
             || right_primary_control_panel_binding_enabled;
         let projection_controls_enabled = projection_target_settings.controls_enabled;
         let right_secondary_panel_action_enabled = same_apk_panel_action_settings.enabled();
-        let right_secondary_binding_enabled =
-            projection_controls_enabled || right_secondary_panel_action_enabled;
+        let right_secondary_calibration_action_enabled =
+            breath_calibration_controller_action_selected;
+        let right_secondary_binding_enabled = projection_controls_enabled
+            || right_secondary_panel_action_enabled
+            || right_secondary_calibration_action_enabled;
         let primary_recenter_binding_enabled = (projection_controls_enabled
             || private_particle_recenter_enabled)
             && !right_primary_control_panel_binding_enabled;
@@ -474,9 +487,10 @@ impl StimulusVolumeActions {
         crate::marker(
             "same-apk-panel-action",
             format!(
-                "status=config rightSecondaryBindingEnabled={} {}",
+                "status=config rightSecondaryBindingEnabled={} {} {}",
                 right_secondary_binding_enabled,
                 same_apk_panel_action_settings.marker_fields(),
+                breath_calibration_controller_action_settings.marker_fields(),
             ),
         );
         crate::marker(
@@ -553,6 +567,10 @@ impl StimulusVolumeActions {
             right_primary_control_panel_enabled: right_primary_control_panel_binding_enabled,
             right_primary_reset_enabled: primary_recenter_binding_enabled,
             same_apk_panel_action: SameApkPanelAction::new(same_apk_panel_action_settings),
+            breath_calibration_controller_action: BreathCalibrationControllerAction::new(
+                breath_calibration_controller_action_settings,
+            ),
+            breath_calibration_controller_action_selected,
         }))
     }
 
@@ -1526,6 +1544,7 @@ impl StimulusVolumeActions {
     ) -> (bool, Option<ProjectionTargetInput>) {
         if !self.projection_target_settings.controls_enabled
             && !self.same_apk_panel_action.enabled()
+            && !self.breath_calibration_controller_action_selected
         {
             return (false, None);
         }
@@ -1548,6 +1567,25 @@ impl StimulusVolumeActions {
         let pressed = state.is_active && state.current_state;
         let rising_edge = pressed && !self.previous_right_secondary_pressed;
         self.previous_right_secondary_pressed = pressed;
+        let calibration_started = self.breath_calibration_controller_action_selected
+            && self
+                .breath_calibration_controller_action
+                .update(dt_seconds, pressed);
+        if calibration_started {
+            self.same_apk_panel_action.cancel_pending_sequence(pressed);
+            let _response =
+                crate::breath_composition_runtime::start_calibration("right-secondary-hold");
+            crate::marker(
+                "breath-calibration-action",
+                format!(
+                    "event=right-secondary-hold frame={} actionActive={} changedSinceLastSync={} requestDispatched=true {}",
+                    frame_count,
+                    state.is_active,
+                    state.changed_since_last_sync,
+                    self.breath_calibration_controller_action.marker_fields(),
+                ),
+            );
+        }
         let panel_toggle = self.same_apk_panel_action.update(dt_seconds, pressed);
         if panel_toggle {
             crate::marker(
@@ -1564,6 +1602,7 @@ impl StimulusVolumeActions {
         if rising_edge
             && self.projection_target_settings.controls_enabled
             && !self.same_apk_panel_action.enabled()
+            && !self.breath_calibration_controller_action_selected
         {
             crate::marker(
                 "projection-target-input",

@@ -6,6 +6,7 @@
   "package_name": "io.github.mesmerprism.rustyquest.native_renderer.breath_matrix",
   "requested_features": [
     "breath.composition.closed_world",
+    "input.right_secondary_breath_calibration_hold",
     "input.simultaneous_hands_and_controllers",
     "renderer.background.solid_black"
   ],
@@ -52,6 +53,7 @@
   "permission_allowlist": [],
   "declared_manifest": {
     "permissions": [
+      "android.permission.ACCESS_COARSE_LOCATION",
       "android.permission.ACCESS_FINE_LOCATION",
       "android.permission.BLUETOOTH",
       "android.permission.BLUETOOTH_ADMIN",
@@ -76,6 +78,8 @@
   "expected_render_mode": "solid-black-hands-and-grafts",
   "settings_assertions": {
     "required_values": {
+      "native_renderer.breath_composition.calibration.right_secondary_action.hold_seconds": "1.25",
+      "native_renderer.breath_composition.calibration.right_secondary_action.mode": "right-secondary-hold-start",
       "native_renderer.breath_composition.controller_assessment.enabled": "true",
       "native_renderer.breath_composition.controller_projection": "dynamic-axis",
       "native_renderer.breath_composition.enabled": "true",
@@ -116,6 +120,7 @@
       "core/openxr-vulkan",
       "hand/live-input",
       "hand/mesh",
+      "input/breath-calibration/right-secondary-hold",
       "input/controllers-and-hands",
       "input/simultaneous-hands-and-controllers",
       "input/same-apk-panel/right-secondary-triple-press",

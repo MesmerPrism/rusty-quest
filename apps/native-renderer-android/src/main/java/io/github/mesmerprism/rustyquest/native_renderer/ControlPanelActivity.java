@@ -26,6 +26,7 @@ import android.widget.CheckBox;
 import android.widget.EditText;
 import android.widget.GridLayout;
 import android.widget.LinearLayout;
+import android.widget.ProgressBar;
 import android.widget.ScrollView;
 import android.widget.SeekBar;
 import android.widget.Spinner;
@@ -58,9 +59,25 @@ public final class ControlPanelActivity extends Activity {
         "io.github.mesmerprism.rustyquest.native_renderer.action.POLAR_SENSOR_PANEL_COMMAND";
     public static final String ACTION_DRIVER_PROFILE_PANEL_COMMAND =
         "io.github.mesmerprism.rustyquest.native_renderer.action.DRIVER_PROFILE_PANEL_COMMAND";
+    public static final String ACTION_BREATH_COMPOSITION_PANEL_COMMAND =
+        "io.github.mesmerprism.rustyquest.native_renderer.action.BREATH_COMPOSITION_PANEL_COMMAND";
     public static final String EXTRA_POLAR_SENSOR_PANEL_COMMAND = "polar_sensor_panel_command";
     public static final String EXTRA_POLAR_SENSOR_PANEL_COMMAND_TOKEN =
         "polar_sensor_panel_command_token";
+    public static final String EXTRA_BREATH_COMPOSITION_OPERATION =
+        "breath_composition_operation";
+    public static final String EXTRA_BREATH_COMPOSITION_SOURCE = "breath_composition_source";
+    public static final String EXTRA_BREATH_COMPOSITION_MAPPING = "breath_composition_mapping";
+    public static final String EXTRA_BREATH_COMPOSITION_CONTROLLER_PROJECTION =
+        "breath_composition_controller_projection";
+    public static final String EXTRA_BREATH_COMPOSITION_POLAR_PROJECTION =
+        "breath_composition_polar_projection";
+    public static final String EXTRA_BREATH_COMPOSITION_INVERTED =
+        "breath_composition_inverted";
+    public static final String EXTRA_BREATH_COMPOSITION_RETURN_TO_IMMERSIVE =
+        "breath_composition_return_to_immersive";
+    public static final String EXTRA_BREATH_COMPOSITION_COMMAND_TOKEN =
+        "breath_composition_command_token";
     public static final String EXTRA_DRIVER_PROFILE_SURFACE_TARGET = "driver_profile_surface_target";
     public static final String EXTRA_DRIVER_PROFILE_ID = "driver_profile_id";
     public static final String EXTRA_DRIVER_PROFILE_RETURN_TO_IMMERSIVE =
@@ -77,6 +94,8 @@ public final class ControlPanelActivity extends Activity {
         "private_particle_dynamics_status.json";
     private static final String DRIVER_PROFILE_PANEL_STATUS_FILE =
         "driver_profile_panel_status.json";
+    private static final String BREATH_COMPOSITION_OPERATOR_STATUS_FILE =
+        "breath_composition_operator_status.json";
     private static final String PROFILE_SCHEMA = "rusty.quest.stimulus_volume.profile.v1";
     private static final String PRIVATE_LAYER_SELECTION_SCHEMA =
         "rusty.quest.native_renderer.private_layer_selection.v1";
@@ -358,6 +377,7 @@ public final class ControlPanelActivity extends Activity {
     private String handledDiagnosticIntentToken = "";
     private String handledDisplayCompositeIntentToken = "";
     private String handledPolarSensorPanelCommandToken = "";
+    private String handledBreathCompositionCommandToken = "";
     private String handledDriverProfileMeshPanelCommandToken = "";
     private boolean displayCompositeRequestInFlight;
     private Button[] patternButtons = new Button[0];
@@ -440,6 +460,12 @@ public final class ControlPanelActivity extends Activity {
     private Runnable pendingDriverProfileMeshPanelApply;
     private String lastScheduledDriverProfileMeshPanelApplyKey = "";
     private long breathCompositionGeneration;
+    private TextView breathOverviewReadback;
+    private TextView breathCalibrationReadback;
+    private TextView breathOutputReadback;
+    private TextView breathDiagnosticsReadback;
+    private ProgressBar breathCalibrationProgress;
+    private Runnable breathCompositionRefresh;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -451,6 +477,7 @@ public final class ControlPanelActivity extends Activity {
         handleDisplayCompositeIntent(getIntent());
         handleDiagnosticIntent(getIntent());
         handlePolarSensorPanelCommandIntent(getIntent());
+        handleBreathCompositionCommandIntent(getIntent());
         handleDriverProfileMeshPanelCommandIntent(getIntent());
         recordSpatialCameraPanelEvent(
             "panel_activity_created",
@@ -492,6 +519,7 @@ public final class ControlPanelActivity extends Activity {
             handleDisplayCompositeIntent(intent);
             handleDiagnosticIntent(intent);
             handlePolarSensorPanelCommandIntent(intent);
+            handleBreathCompositionCommandIntent(intent);
             handleDriverProfileMeshPanelCommandIntent(intent);
             recordSpatialCameraPanelEvent(
                 "panel_open_command_applied",
@@ -502,6 +530,7 @@ public final class ControlPanelActivity extends Activity {
             handleDisplayCompositeIntent(intent);
             handleDiagnosticIntent(intent);
             handlePolarSensorPanelCommandIntent(intent);
+            handleBreathCompositionCommandIntent(intent);
             handleDriverProfileMeshPanelCommandIntent(intent);
         }
     }
@@ -548,6 +577,14 @@ public final class ControlPanelActivity extends Activity {
         super.onResume();
         handleDisplayCompositeIntent(getIntent());
         handleDiagnosticIntent(getIntent());
+        if ("breath-mapping".equals(readControlPanelMode())) {
+            breathOperatorMarker(
+                "status=panel-foreground panelVisibility=foreground "
+                    + "controllerPoseOwner=openxr-session controllerPanelForegroundProof=pending-device "
+                    + "polarAccCompositionAdvance=jni-same-process"
+            );
+            scheduleBreathCompositionRefresh();
+        }
         recordSpatialCameraPanelEvent(
             "panel_visible",
             "open",
@@ -557,6 +594,13 @@ public final class ControlPanelActivity extends Activity {
 
     @Override
     protected void onPause() {
+        cancelBreathCompositionRefresh();
+        if ("breath-mapping".equals(readControlPanelMode())) {
+            breathOperatorMarker(
+                "status=panel-background panelVisibility=background "
+                    + "calibrationStateOwner=native-process-shared polarOwnerRetained=true"
+            );
+        }
         recordSpatialCameraPanelEvent(
             "panel_hidden",
             "hidden",
@@ -706,15 +750,26 @@ public final class ControlPanelActivity extends Activity {
         });
         header.addView(close);
         root.addView(header);
-        root.addView(
-            text(
-                "Controller or Polar ACC assessment runs in this APK. Selection and mapping are independent; this panel requests changes and displays native-effective state.",
-                13,
-                PANEL_MUTED
-            )
-        );
+        root.addView(text("Four-way direct breath control · same process · RR excluded", 13, PANEL_MUTED));
 
-        root.addView(sectionTitle("Selection"));
+        LinearLayout statusCard = panelCard("Active status");
+        breathOverviewReadback = text("Reading native-effective selection…", 15, PANEL_FG);
+        breathCalibrationReadback = text("Calibration: waiting for readback", 13, PANEL_MUTED);
+        breathCalibrationProgress = new ProgressBar(
+            this,
+            null,
+            android.R.attr.progressBarStyleHorizontal
+        );
+        breathCalibrationProgress.setMax(1000);
+        breathCalibrationProgress.setProgress(0);
+        breathOutputReadback = text("Live output: none", 13, PANEL_MUTED);
+        statusCard.addView(breathOverviewReadback);
+        statusCard.addView(breathCalibrationReadback);
+        statusCard.addView(breathCalibrationProgress);
+        statusCard.addView(breathOutputReadback);
+        root.addView(statusCard);
+
+        LinearLayout mappingCard = panelCard("Mapping");
         final Spinner source = spinner(new String[] {"Controller", "Polar ACC"}, 0);
         final Spinner mapping = spinner(new String[] {"Volume", "State"}, 0);
         final Spinner controllerProjection = spinner(
@@ -723,17 +778,18 @@ public final class ControlPanelActivity extends Activity {
         );
         final Spinner polarProjection = spinner(new String[] {"XZ", "3D"}, 0);
         final CheckBox inverted = checkBox("Invert assessed direction", false);
-        root.addView(label("Source"));
-        root.addView(source);
-        root.addView(label("Mapping"));
-        root.addView(mapping);
-        root.addView(label("Controller projection"));
-        root.addView(controllerProjection);
-        root.addView(label("Polar projection (XZ default)"));
-        root.addView(polarProjection);
-        root.addView(inverted);
+        mappingCard.addView(label("Input source"));
+        mappingCard.addView(source);
+        mappingCard.addView(label("Movement mapping"));
+        mappingCard.addView(mapping);
+        mappingCard.addView(label("Controller volume calibration"));
+        mappingCard.addView(controllerProjection);
+        mappingCard.addView(label("Polar ACC calibration space"));
+        mappingCard.addView(polarProjection);
+        mappingCard.addView(inverted);
 
-        final TextView readback = text("Native-effective readback pending.", 13, PANEL_FG);
+        final TextView readback = text("Structured diagnostics pending.", 12, PANEL_MUTED);
+        breathDiagnosticsReadback = readback;
         Button applySelection = button("Apply selection");
         applySelection.setOnClickListener(new View.OnClickListener() {
             @Override
@@ -769,21 +825,22 @@ public final class ControlPanelActivity extends Activity {
                 }
             }
         });
-        root.addView(applySelection);
+        mappingCard.addView(applySelection);
+        root.addView(mappingCard);
 
-        root.addView(sectionTitle("Calibration lifecycle"));
-        Button configure = button("Configure");
-        configure.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View view) {
-                applyBreathCompositionOperation("configure", readback, false);
-            }
-        });
+        LinearLayout calibrationCard = panelCard("Calibration");
+        calibrationCard.addView(
+            text(
+                "Move through a comfortable full breath range. Start here or hold the right B button for 1.25 seconds. The same native calibration state remains authoritative when this panel closes.",
+                12,
+                PANEL_MUTED
+            )
+        );
         Button start = button("Start calibration");
         start.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
-                applyBreathCompositionOperation("start", readback, false);
+                applyBreathCompositionOperation("start_calibration", readback, false);
             }
         });
         Button cancel = button("Cancel");
@@ -800,13 +857,16 @@ public final class ControlPanelActivity extends Activity {
                 applyBreathCompositionOperation("reset", readback, false);
             }
         });
-        root.addView(configure);
-        root.addView(start);
-        root.addView(cancel);
-        root.addView(reset);
+        LinearLayout calibrationActions = new LinearLayout(this);
+        calibrationActions.setOrientation(LinearLayout.HORIZONTAL);
+        calibrationActions.addView(start, rowButtonParams());
+        calibrationActions.addView(cancel, rowButtonParams());
+        calibrationActions.addView(reset, rowButtonParams());
+        calibrationCard.addView(calibrationActions);
+        root.addView(calibrationCard);
 
-        root.addView(sectionTitle("Native-effective readback"));
-        root.addView(readback);
+        LinearLayout diagnosticsCard = panelCard("Diagnostics");
+        diagnosticsCard.addView(readback);
         Button refresh = button("Refresh readback");
         refresh.setOnClickListener(new View.OnClickListener() {
             @Override
@@ -814,24 +874,28 @@ public final class ControlPanelActivity extends Activity {
                 refreshBreathCompositionReadback(readback);
             }
         });
-        root.addView(refresh);
-        root.addView(
+        diagnosticsCard.addView(refresh);
+        diagnosticsCard.addView(
             text(
                 "Polar raw acquisition remains owned by the existing same-APK Polar sensor path. RR/heartbeat events are separate and never enter this breath composition.",
                 12,
                 PANEL_MUTED
             )
         );
-        root.addView(sectionTitle("Polar ACC acquisition"));
-        root.addView(
+        root.addView(diagnosticsCard);
+
+        LinearLayout polarCard = panelCard("Polar connection");
+        polarCard.addView(
             text(
-                "The existing Polar owner is embedded below. Scan, connect, select ACC, and start PMD here; Return to VR keeps this Activity and its single BLE owner alive in the background.",
+                "Scan, connect, select ACC, and start PMD. Return to VR keeps this Activity's single BLE owner alive in the background. Bluetooth/location readiness and PMD state are written as structured app-owned status.",
                 12,
                 PANEL_MUTED
             )
         );
-        root.addView(ensurePolarSensorPanel().buildEmbeddedAcquisitionView());
+        polarCard.addView(ensurePolarSensorPanel().buildEmbeddedAcquisitionView());
+        root.addView(polarCard);
         refreshBreathCompositionReadback(readback);
+        scheduleBreathCompositionRefresh();
         return scroll;
     }
 
@@ -862,9 +926,12 @@ public final class ControlPanelActivity extends Activity {
 
     private void applyBreathCompositionCommand(JSONObject command, TextView readback) {
         try {
-            renderBreathCompositionResponse(
-                nativeApplyBreathCompositionCommand(command.toString()),
-                readback
+            String response = nativeApplyBreathCompositionCommand(command.toString());
+            renderBreathCompositionResponse(response, readback);
+            writeBreathCompositionOperatorReceipt(
+                "ui-" + SystemClock.elapsedRealtimeNanos(),
+                command.optString("operation", "unknown"),
+                response
             );
         } catch (Throwable error) {
             readback.setText("Native command unavailable: " + markerToken(error.getMessage()));
@@ -897,6 +964,49 @@ public final class ControlPanelActivity extends Activity {
         JSONObject assessment = snapshot.optJSONObject("latest_assessment");
         JSONObject calibration = snapshot.optJSONObject("calibration_readback");
         JSONObject telemetry = snapshot.optJSONObject("telemetry");
+        String requestedSummary = requested == null
+            ? "none"
+            : requested.optString("source") + " × " + requested.optString("mapping");
+        String effectiveSummary = effective == null
+            ? "none"
+            : effective.optString("source") + " × " + effective.optString("mapping");
+        if (breathOverviewReadback != null) {
+            breathOverviewReadback.setText(
+                "Active: " + effectiveSummary
+                    + "\nRequested: " + requestedSummary
+                    + " · status " + snapshot.optString("status", "unknown")
+                    + " · generation " + (breathCompositionGeneration > 0L
+                        ? String.valueOf(breathCompositionGeneration)
+                        : "none")
+            );
+        }
+        double progress01 = calibration == null ? 0.0 : calibration.optDouble("progress01", 0.0);
+        progress01 = Math.max(0.0, Math.min(1.0, progress01));
+        if (breathCalibrationProgress != null) {
+            breathCalibrationProgress.setProgress((int) Math.round(progress01 * 1000.0));
+        }
+        if (breathCalibrationReadback != null) {
+            breathCalibrationReadback.setText(
+                calibration == null
+                    ? "Calibration: not started · hold right B or use Start calibration"
+                    : "Calibration: " + calibration.optString("lifecycle", "unknown")
+                        + " · " + Math.round(progress01 * 100.0) + "% · "
+                        + calibration.opt("accepted_frames") + "/"
+                        + calibration.opt("target_frames") + " accepted frames"
+                        + (calibration.isNull("failure_code")
+                            ? ""
+                            : " · " + calibration.optString("failure_code"))
+            );
+        }
+        if (breathOutputReadback != null) {
+            breathOutputReadback.setText(
+                output == null
+                    ? "Live output: none"
+                    : "Live output: volume " + output.opt("volume01")
+                        + " · phase " + output.opt("phase")
+                        + " · sequence " + output.opt("sequence_id")
+            );
+        }
         StringBuilder lines = new StringBuilder();
         lines.append("command=")
             .append(response.optString("command_status", "unknown"))
@@ -946,6 +1056,30 @@ public final class ControlPanelActivity extends Activity {
             .append(telemetry == null ? "0/0" : telemetry.optLong("accepted_assessments") + "/" + telemetry.optLong("rejected_assessments"));
         lines.append(" rejection=").append(snapshot.optString("rejection", "none"));
         readback.setText(lines.toString());
+    }
+
+    private void scheduleBreathCompositionRefresh() {
+        if (liveApplyHandler == null || !"breath-mapping".equals(readControlPanelMode())) {
+            return;
+        }
+        cancelBreathCompositionRefresh();
+        breathCompositionRefresh = new Runnable() {
+            @Override
+            public void run() {
+                if (breathDiagnosticsReadback != null && !isFinishing()) {
+                    refreshBreathCompositionReadback(breathDiagnosticsReadback);
+                    liveApplyHandler.postDelayed(this, 500L);
+                }
+            }
+        };
+        liveApplyHandler.postDelayed(breathCompositionRefresh, 500L);
+    }
+
+    private void cancelBreathCompositionRefresh() {
+        if (liveApplyHandler != null && breathCompositionRefresh != null) {
+            liveApplyHandler.removeCallbacks(breathCompositionRefresh);
+        }
+        breathCompositionRefresh = null;
     }
 
     private View buildStimulusPanelView() {
@@ -5407,6 +5541,110 @@ public final class ControlPanelActivity extends Activity {
         );
     }
 
+    private void handleBreathCompositionCommandIntent(Intent intent) {
+        if (intent == null || !ACTION_BREATH_COMPOSITION_PANEL_COMMAND.equals(intent.getAction())) {
+            return;
+        }
+        String token = intent.getStringExtra(EXTRA_BREATH_COMPOSITION_COMMAND_TOKEN);
+        if (token == null || token.length() == 0) {
+            token = intent.toUri(0);
+        }
+        if (token.equals(handledBreathCompositionCommandToken)) {
+            return;
+        }
+        handledBreathCompositionCommandToken = token;
+        if (!"breath-mapping".equals(readControlPanelMode())) {
+            setStatusText("Breath command ignored; breath-mapping panel mode is not active.");
+            breathOperatorMarker(
+                "status=rejected reason=panel-mode-inactive token=" + markerToken(token)
+            );
+            return;
+        }
+        String operation = markerToken(
+            intent.getStringExtra(EXTRA_BREATH_COMPOSITION_OPERATION)
+        ).toLowerCase(Locale.US);
+        try {
+            JSONObject command = new JSONObject()
+                .put("schema", BREATH_COMPOSITION_COMMAND_SCHEMA)
+                .put("operation", operation);
+            if ("select".equals(operation)) {
+                command
+                    .put("source", intent.getStringExtra(EXTRA_BREATH_COMPOSITION_SOURCE))
+                    .put("mapping", intent.getStringExtra(EXTRA_BREATH_COMPOSITION_MAPPING))
+                    .put(
+                        "controller_projection",
+                        intent.getStringExtra(EXTRA_BREATH_COMPOSITION_CONTROLLER_PROJECTION)
+                    )
+                    .put(
+                        "polar_projection",
+                        intent.getStringExtra(EXTRA_BREATH_COMPOSITION_POLAR_PROJECTION)
+                    )
+                    .put(
+                        "inverted",
+                        intent.getBooleanExtra(EXTRA_BREATH_COMPOSITION_INVERTED, false)
+                    );
+            } else if ("cancel".equals(operation)) {
+                JSONObject statusResponse = new JSONObject(nativeReadBreathCompositionStatus());
+                JSONObject snapshot = statusResponse.optJSONObject("snapshot");
+                long generation = snapshot == null ? 0L : snapshot.optLong("generation", 0L);
+                if (generation <= 0L) {
+                    throw new IllegalStateException("no-effective-generation");
+                }
+                command.put("generation", generation);
+            } else if (!"start_calibration".equals(operation)
+                    && !"reset".equals(operation)
+                    && !"disable".equals(operation)
+                    && !"status".equals(operation)) {
+                throw new IllegalArgumentException("unsupported-operation");
+            }
+            String response = "status".equals(operation)
+                ? nativeReadBreathCompositionStatus()
+                : nativeApplyBreathCompositionCommand(command.toString());
+            renderBreathCompositionResponse(response, breathDiagnosticsReadback);
+            writeBreathCompositionOperatorReceipt(token, operation, response);
+            JSONObject responseObject = new JSONObject(response);
+            breathOperatorMarker(
+                "status=" + markerToken(responseObject.optString("command_status", "unknown"))
+                    + " reason=" + markerToken(responseObject.optString("reason_code", "none"))
+                    + " operation=" + markerToken(operation)
+                    + " token=" + markerToken(token)
+                    + " structuredReadback=true screenshotRequired=false"
+            );
+            if (intent.getBooleanExtra(EXTRA_BREATH_COMPOSITION_RETURN_TO_IMMERSIVE, false)) {
+                launchImmersiveRenderer();
+            }
+        } catch (Exception error) {
+            String response = "{\"schema\":\"rusty.quest.breath_composition.response.v1\","
+                + "\"command_status\":\"rejected\",\"reason_code\":\"operator-command-error\"}";
+            writeBreathCompositionOperatorReceipt(token, operation, response);
+            breathOperatorMarker(
+                "status=rejected reason=operator-command-error operation="
+                    + markerToken(operation) + " token=" + markerToken(token)
+                    + " detail=" + markerToken(error.getMessage())
+            );
+        }
+    }
+
+    private void writeBreathCompositionOperatorReceipt(
+        String token,
+        String operation,
+        String responseJson
+    ) {
+        try {
+            JSONObject receipt = new JSONObject()
+                .put("schema", "rusty.quest.native_renderer.breath_operator_status.v1")
+                .put("token", token == null ? "" : token)
+                .put("operation", operation == null ? "" : operation)
+                .put("response", new JSONObject(responseJson == null ? "{}" : responseJson))
+                .put("updated_at_elapsed_realtime_ns", SystemClock.elapsedRealtimeNanos());
+            writeFile(BREATH_COMPOSITION_OPERATOR_STATUS_FILE, receipt.toString(2));
+        } catch (Exception error) {
+            breathOperatorMarker(
+                "status=receipt-write-failed reason=" + markerToken(error.getMessage())
+            );
+        }
+    }
+
     private void handleDriverProfileMeshPanelCommandIntent(Intent intent) {
         if (intent == null || !ACTION_DRIVER_PROFILE_PANEL_COMMAND.equals(intent.getAction())) {
             return;
@@ -5585,6 +5823,15 @@ public final class ControlPanelActivity extends Activity {
         );
     }
 
+    private static void breathOperatorMarker(String detail) {
+        Log.i(
+            TAG,
+            MARKER_PREFIX
+                + " channel=breath-operator "
+                + String.valueOf(detail).replace('\n', ' ').replace('\r', ' ')
+        );
+    }
+
     private static String markerToken(String raw) {
         if (raw == null || raw.length() == 0) {
             return "none";
@@ -5611,6 +5858,28 @@ public final class ControlPanelActivity extends Activity {
         TextView view = text(value, 17, PANEL_FG);
         view.setPadding(0, dp(18), 0, dp(6));
         return view;
+    }
+
+    private LinearLayout panelCard(String title) {
+        LinearLayout card = new LinearLayout(this);
+        card.setOrientation(LinearLayout.VERTICAL);
+        int padding = dp(12);
+        card.setPadding(padding, padding, padding, padding);
+        GradientDrawable background = new GradientDrawable();
+        background.setCornerRadius(dp(8));
+        background.setStroke(dp(1), Color.rgb(72, 79, 91));
+        background.setColor(PANEL_SURFACE);
+        card.setBackground(background);
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT,
+            LinearLayout.LayoutParams.WRAP_CONTENT
+        );
+        params.setMargins(0, dp(8), 0, dp(8));
+        card.setLayoutParams(params);
+        TextView heading = text(title, 17, PANEL_FG);
+        heading.setPadding(0, 0, 0, dp(8));
+        card.addView(heading);
+        return card;
     }
 
     private CheckBox checkBox(String value, boolean checked) {

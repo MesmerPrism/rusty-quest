@@ -89,6 +89,17 @@ pub(crate) fn submit_polar_acc_measurement(
     lock_ingress().submit_acc(host_time_ns, sensor_time_ns, xyz_mg);
 }
 
+pub(crate) fn submit_polar_acc_measurement_and_advance_composition(
+    host_time_ns: u64,
+    sensor_time_ns: u64,
+    xyz_mg: [f32; 3],
+) {
+    submit_polar_acc_measurement(host_time_ns, sensor_time_ns, xyz_mg);
+    crate::breath_composition_runtime::poll_polar(
+        rusty_quest_breath_contract::BreathTimestampMicros::new(host_time_ns / 1_000),
+    );
+}
+
 pub(crate) fn submit_polar_rr_measurement(host_time_ns: u64, rr_interval_ms: f32) {
     lock_ingress().submit_rr(host_time_ns, rr_interval_ms);
 }
@@ -434,7 +445,7 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_native_1renderer_Po
     y_mg: jni::sys::jint,
     z_mg: jni::sys::jint,
 ) {
-    submit_polar_acc_measurement(
+    submit_polar_acc_measurement_and_advance_composition(
         host_time_ns.max(0) as u64,
         sensor_time_ns.max(0) as u64,
         [x_mg as f32, y_mg as f32, z_mg as f32],

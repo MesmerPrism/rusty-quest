@@ -308,6 +308,10 @@ impl BreathCompositionRuntime {
                 )?;
                 Ok(())
             }
+            "start_calibration" => {
+                require_fields(object, &["schema", "operation"])?;
+                self.start_calibration_inner()
+            }
             "cancel" => {
                 require_fields(object, &["schema", "operation", "generation"])?;
                 let source = self.effective_source()?;
@@ -362,6 +366,34 @@ impl BreathCompositionRuntime {
             .effective
             .map(|request| request.source)
             .ok_or("no-effective-selection")
+    }
+
+    fn start_calibration_inner(&mut self) -> Result<(), &'static str> {
+        let source = self.effective_source()?;
+        let mut candidate = self.authority.clone();
+        let configured = candidate.action(BreathCompositionAction::Configure);
+        if configured.rejection.is_some() {
+            return Err("invalid-action");
+        }
+        let started = candidate.action(BreathCompositionAction::Start);
+        if started.rejection.is_some() {
+            return Err("invalid-action");
+        }
+        let generation = started.generation.ok_or("invalid-action")?;
+        self.commit_transition(
+            candidate,
+            &[
+                PendingAdapterAction {
+                    source,
+                    action: AdapterAction::Configure,
+                },
+                PendingAdapterAction {
+                    source,
+                    action: AdapterAction::Start(generation),
+                },
+            ],
+            true,
+        )
     }
 
     fn commit_transition(
@@ -624,6 +656,10 @@ pub(crate) fn snapshot() -> BreathCompositionSnapshot {
     lock_runtime().snapshot()
 }
 
+pub(crate) fn feature_lock_active() -> bool {
+    lock_runtime().snapshot().feature_lock_active
+}
+
 pub(crate) fn take_adapter_action(source: BreathCompositionSource) -> Option<AdapterAction> {
     lock_runtime().take_action(source)
 }
@@ -659,6 +695,38 @@ pub(crate) fn status_json() -> String {
 
 pub(crate) fn apply_command_json(command_json: &str) -> String {
     lock_runtime().apply_command(command_json)
+}
+
+pub(crate) fn start_calibration(trigger_source: &str) -> String {
+    let mut state = lock_runtime();
+    let result = state.start_calibration_inner();
+    let (status, reason) = match result {
+        Ok(()) => ("accepted", "none"),
+        Err(reason) => ("rejected", reason),
+    };
+    let snapshot = state.snapshot();
+    #[cfg(target_os = "android")]
+    {
+        crate::marker(
+            "breath-calibration-action",
+            format!(
+                "status={status} reason={} trigger={} generation={} lifecycle={} source={} mapping={}",
+                marker_token(reason),
+                marker_token(trigger_source),
+                snapshot.generation.map_or(0, BreathGeneration::get),
+                snapshot.status.as_str(),
+                snapshot
+                    .effective
+                    .map_or("none", |request| request.source.as_str()),
+                snapshot
+                    .effective
+                    .map_or("none", |request| request.mapping.as_str()),
+            ),
+        );
+    }
+    #[cfg(not(target_os = "android"))]
+    let _ = trigger_source;
+    response_json(status, reason, snapshot, state.latest_calibration.as_ref())
 }
 
 fn response_json(
@@ -870,6 +938,26 @@ fn hex_sha256(bytes: [u8; 32]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
+fn marker_token(value: &str) -> String {
+    let token = value
+        .trim()
+        .chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() || matches!(character, '-' | '_' | '.') {
+                character
+            } else {
+                '_'
+            }
+        })
+        .take(96)
+        .collect::<String>();
+    if token.is_empty() {
+        "none".to_owned()
+    } else {
+        token
+    }
+}
+
 #[cfg(target_os = "android")]
 fn jni_response(mut env: jni::EnvUnowned, response: String) -> jni::sys::jstring {
     match env
@@ -997,6 +1085,40 @@ mod tests {
             runtime.take_action(BreathCompositionSource::PolarAcc),
             Some(AdapterAction::Start(_))
         ));
+    }
+
+    #[test]
+    fn start_calibration_is_atomic_and_queues_configure_before_start() {
+        let mut runtime = runtime();
+        runtime.apply_command(&select("controller", "volume"));
+        let response: Value = serde_json::from_str(&runtime.apply_command(
+            &json!({"schema": COMMAND_SCHEMA_ID, "operation": "start_calibration"}).to_string(),
+        ))
+        .expect("response");
+        assert_eq!(response["command_status"], "accepted");
+        assert_eq!(response["snapshot"]["status"], "running");
+        assert_eq!(
+            runtime.take_action(BreathCompositionSource::Controller),
+            Some(AdapterAction::Configure)
+        );
+        assert!(matches!(
+            runtime.take_action(BreathCompositionSource::Controller),
+            Some(AdapterAction::Start(_))
+        ));
+    }
+
+    #[test]
+    fn start_calibration_without_an_effective_selection_is_inert() {
+        let mut runtime = runtime();
+        let before = runtime.snapshot();
+        let response: Value = serde_json::from_str(&runtime.apply_command(
+            &json!({"schema": COMMAND_SCHEMA_ID, "operation": "start_calibration"}).to_string(),
+        ))
+        .expect("response");
+        assert_eq!(response["command_status"], "rejected");
+        assert_eq!(response["reason_code"], "no-effective-selection");
+        assert_eq!(runtime.snapshot(), before);
+        assert!(runtime.pending_actions.is_empty());
     }
 
     #[test]

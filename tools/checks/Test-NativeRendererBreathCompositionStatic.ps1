@@ -43,6 +43,10 @@ $polarPath = Join-Path $repo "apps\native-renderer-android\native\src\polar_acc_
 $ingressPath = Join-Path $repo "apps\native-renderer-android\native\src\polar_composition_adapters.rs"
 $panelPath = Join-Path $repo "apps\native-renderer-android\src\main\java\io\github\mesmerprism\rustyquest\native_renderer\ControlPanelActivity.java"
 $polarPanelPath = Join-Path $repo "apps\native-renderer-android\src\main\java\io\github\mesmerprism\rustyquest\native_renderer\PolarSensorPanel.java"
+$calibrationActionPath = Join-Path $repo "apps\native-renderer-android\native\src\breath_calibration_controller_action.rs"
+$worldBasisPath = Join-Path $repo "apps\native-renderer-android\native\src\private_particle_world_basis.rs"
+$xrVulkanPath = Join-Path $repo "apps\native-renderer-android\native\src\xr_vulkan.rs"
+$operatorPath = Join-Path $repo "tools\Invoke-NativeRendererBreathOperator.ps1"
 $nativeBuildScriptPath = Join-Path $repo "apps\native-renderer-android\native\build.rs"
 $androidBuildPath = Join-Path $repo "tools\Build-NativeRendererAndroid.ps1"
 $resolverPath = Join-Path $repo "tools\Resolve-NativeAppBuild.ps1"
@@ -63,6 +67,10 @@ $polar = Read-RequiredText $polarPath "Polar ACC adapter"
 $ingress = Read-RequiredText $ingressPath "Polar ingress"
 $panel = Read-RequiredText $panelPath "same-APK panel"
 $polarPanel = Read-RequiredText $polarPanelPath "sole Polar acquisition panel"
+$calibrationAction = Read-RequiredText $calibrationActionPath "controller calibration action"
+$worldBasis = Read-RequiredText $worldBasisPath "captured private-particle world basis"
+$xrVulkan = Read-RequiredText $xrVulkanPath "native OpenXR/Vulkan composition"
+$operator = Read-RequiredText $operatorPath "fixed breath operator CLI"
 $nativeBuildScript = Read-RequiredText $nativeBuildScriptPath "native build script"
 $androidBuild = Read-RequiredText $androidBuildPath "Android build wrapper"
 $resolver = Read-RequiredText $resolverPath "structured resolver"
@@ -95,6 +103,8 @@ Assert-Tokens $runtime @(
     "bounded_polar_silence_emits_one_missing_observation_and_clears_output",
     "nativeApplyBreathCompositionCommand",
     "nativeReadBreathCompositionStatus",
+    "start_calibration_inner",
+    '"start_calibration"',
     "source_change_queues_hard_resets_but_mapping_change_does_not"
 ) "native command/readback authority"
 Assert-Tokens $controller @(
@@ -117,6 +127,12 @@ Assert-Tokens $panel @(
     "breath-mapping",
     "Direct Breath Mapping",
     "Start calibration",
+    "Active status",
+    "Mapping",
+    "Calibration",
+    "Diagnostics",
+    "Polar connection",
+    "breath_composition_operator_status.json",
     "native-effective readback",
     'calibration.opt("generation")',
     "buildEmbeddedAcquisitionView",
@@ -133,20 +149,40 @@ $listenerCount = [regex]::Matches(
     $breathPanelMethod,
     [regex]::Escape("new View.OnClickListener()")
 ).Count
-if ($listenerCount -ne 7) {
-    throw "Same-APK breath panel must retain seven explicit Android-compatible click listeners; found $listenerCount"
+if ($listenerCount -ne 6) {
+    throw "Same-APK breath panel must retain six explicit Android-compatible click listeners; found $listenerCount"
 }
 if ($breathPanelMethod -match 'setOnClickListener\s*\([^;]*?->') {
     throw "Same-APK breath panel must not use lambda click listeners with the Android boot classpath"
 }
 Assert-Tokens $breathPanelMethod @(
     "launchImmersiveRenderer();",
-    'applyBreathCompositionOperation("configure", readback, false);',
-    'applyBreathCompositionOperation("start", readback, false);',
+    'applyBreathCompositionOperation("start_calibration", readback, false);',
     'applyBreathCompositionOperation("cancel", readback, true);',
     'applyBreathCompositionOperation("reset", readback, false);',
     "refreshBreathCompositionReadback(readback);"
 ) "Android-compatible breath panel click behavior"
+Assert-Tokens ($calibrationAction + [Environment]::NewLine + $controller) @(
+    "right-secondary-hold-start",
+    "hold_triggers_once_until_release_and_rearms",
+    'start_calibration("right-secondary-hold")',
+    "cancel_pending_sequence"
+) "controller calibration action"
+Assert-Tokens ($worldBasis + [Environment]::NewLine + $xrVulkan) @(
+    "captured_compute_basis_does_not_follow_later_head_motion",
+    "recenter_recaptures_right_up_and_forward_axes_together",
+    "compute_basis_transport()",
+    "privateParticleComputeBasisSource=captured-world-anchor",
+    "privateParticleComputeBasisFollowCamera=false"
+) "captured private-particle compute basis"
+Assert-Tokens ($operator + [Environment]::NewLine + $panel) @(
+    "BREATH_COMPOSITION_PANEL_COMMAND",
+    "start_calibration",
+    "breath_composition_operator_status.json",
+    "screenshot_required",
+    "structuredReadback=true",
+    "run-as"
+) "fixed operator command and structured readback"
 Assert-Tokens $polarPanel @(
     "buildEmbeddedAcquisitionView",
     "buildView(false)",
@@ -173,6 +209,7 @@ Assert-Tokens ($features + [Environment]::NewLine + $appSpec) @(
     "mapping.breath.state",
     "ui.same_apk_breath_mapping_panel",
     "input.right_secondary_same_apk_panel_triple_press",
+    "input.right_secondary_breath_calibration_hold",
     "io.github.mesmerprism.rustyquest.native_renderer.breath_matrix"
 ) "closed-world feature and lane identities"
 
@@ -230,6 +267,7 @@ try {
         "input.breath.controller_assessment",
         "input.breath.polar_acc_assessment",
         "input.controllers_and_hands_optional",
+        "input.right_secondary_breath_calibration_hold",
         "input.right_secondary_same_apk_panel_triple_press",
         "input.simultaneous_hands_and_controllers",
         "mapping.breath.state",
@@ -243,6 +281,9 @@ try {
     $actual = @($result.resolved_feature_ids | Sort-Object)
     if (($actual -join [Environment]::NewLine) -ne (($expected | Sort-Object) -join [Environment]::NewLine)) {
         throw "Resolved feature closure was not exact. Actual: $($actual -join ', ')"
+    }
+    if (@($lock.android_manifest.permissions) -notcontains "android.permission.ACCESS_COARSE_LOCATION") {
+        throw "Quest Polar composition closure omitted coarse location permission"
     }
     if ([string]::IsNullOrWhiteSpace([string]$result.breath_composition_activation_sha256)) {
         throw "Structured resolver omitted breath composition activation binding"

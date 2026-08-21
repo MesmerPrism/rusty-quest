@@ -3,6 +3,7 @@
 //! This module keeps Android property parsing separate from the OpenXR/Vulkan
 //! frame loop so replay-proof, live-hand, and SDF visual modes stay testable.
 
+use crate::breath_calibration_controller_action::BreathCalibrationControllerActionSettings;
 use crate::breath_composition_driver::BreathCompositionDriverSettings;
 pub(crate) use crate::environment_depth_alignment_state::EnvironmentDepthAlignmentSettings;
 use crate::manifold_scalar_driver_bridge::ManifoldScalarDriverBridgeSettings;
@@ -127,6 +128,8 @@ pub(crate) struct NativeRendererRuntimeOptions {
     pub(crate) private_particle_heartbeat_pulse_adapter_settings:
         PrivateParticleHeartbeatPulseAdapterSettings,
     pub(crate) same_apk_panel_action_settings: SameApkPanelActionSettings,
+    pub(crate) breath_calibration_controller_action_settings:
+        BreathCalibrationControllerActionSettings,
     pub(crate) simultaneous_hands_controllers_settings: SimultaneousHandsControllersSettings,
     pub(crate) manifold_scalar_driver_settings: ManifoldScalarDriverBridgeSettings,
     pub(crate) projection_border_stretch_settings: NativeProjectionBorderStretchSettings,
@@ -217,6 +220,8 @@ impl NativeRendererRuntimeOptions {
             PrivateParticleHeartbeatPulseAdapterSettings::from_property_lookup(&mut lookup);
         let same_apk_panel_action_settings =
             SameApkPanelActionSettings::from_property_lookup(&mut lookup);
+        let breath_calibration_controller_action_settings =
+            BreathCalibrationControllerActionSettings::from_property_lookup(&mut lookup);
         let simultaneous_hands_controllers_settings =
             SimultaneousHandsControllersSettings::from_property_lookup(&mut lookup);
         let manifold_scalar_driver_settings =
@@ -267,6 +272,7 @@ impl NativeRendererRuntimeOptions {
             private_particle_breath_composition_driver_settings,
             private_particle_heartbeat_pulse_adapter_settings,
             same_apk_panel_action_settings,
+            breath_calibration_controller_action_settings,
             simultaneous_hands_controllers_settings,
             manifold_scalar_driver_settings,
             projection_border_stretch_settings,

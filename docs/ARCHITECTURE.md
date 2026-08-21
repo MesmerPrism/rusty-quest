@@ -96,7 +96,13 @@ the existing OpenXR action owner supplies controller assessments, the existing
 PMD/JNI owner supplies Polar ACC, and RR is never consumed by the breath
 runtime. `ControlPanelActivity` submits low-rate requests and displays only
 native-effective readback while reusing its sole Polar acquisition owner for
-the ACC scan/connect/start path. Adapter action admission is bounded and
+the ACC scan/connect/start path. The organized panel, fixed operator action,
+and optional right-secondary hold all dispatch the same atomic calibration
+start operation; app-private correlated JSON and neutral markers are the
+readback authority. Polar ACC JNI ingress advances this shared native state
+even while the Android panel is foreground, while controller pose evidence
+remains owned by the OpenXR session and must be proven separately for
+foreground/background focus. Adapter action admission is bounded and
 transactional; calibration readback is fenced by the exact running source and
 generation, and action-sync failure still advances missing/stale clearing.
 The source-only resolver records the exact feature closure and a deterministic

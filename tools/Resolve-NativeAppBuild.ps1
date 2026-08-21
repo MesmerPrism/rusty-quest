@@ -44,6 +44,7 @@ $UseScenePermission = "horizonos.permission.USE_SCENE"
 $PassthroughFeature = "com.oculus.feature.PASSTHROUGH"
 $UseSceneDataAppOp = "USE_SCENE_DATA"
 $RuntimeDangerousPermissionNames = @(
+    "android.permission.ACCESS_COARSE_LOCATION",
     "android.permission.ACCESS_FINE_LOCATION",
     "android.permission.BLUETOOTH_CONNECT",
     "android.permission.BLUETOOTH_SCAN",

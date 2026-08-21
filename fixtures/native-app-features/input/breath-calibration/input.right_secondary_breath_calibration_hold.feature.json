@@ -1,0 +1,57 @@
+{
+  "schema": "rusty.quest.native_app_feature.v1",
+  "feature_id": "input.right_secondary_breath_calibration_hold",
+  "module_path": "input/breath-calibration/right-secondary-hold",
+  "module_kind": "input-composition-adapter",
+  "settings_surface": {
+    "authority": "rusty.quest.native_app_settings.v1",
+    "adapter": "runtime_profile"
+  },
+  "owner_lane": "rusty-quest",
+  "status": "public-substrate",
+  "description": "Generic right-secondary hold action that starts the current effective breath calibration lifecycle.",
+  "provides": [
+    "input.right_secondary.breath_calibration_start"
+  ],
+  "depends_on": [
+    "breath.composition.closed_world",
+    "input.controllers_and_hands_optional"
+  ],
+  "incompatible_with": [],
+  "exclusive_groups": {},
+  "android_manifest": {
+    "permissions": [],
+    "uses_features": [],
+    "activities": [],
+    "services": [],
+    "queries": []
+  },
+  "runtime_profile": {
+    "set": {
+      "debug.rustyquest.native_renderer.breath_composition.calibration.right_secondary_action.mode": "right-secondary-hold-start",
+      "debug.rustyquest.native_renderer.breath_composition.calibration.right_secondary_action.hold_seconds": "1.25"
+    },
+    "clear_families": [],
+    "expected_render_modes": []
+  },
+  "build_inputs": {
+    "env": [],
+    "assets": [],
+    "shaders": []
+  },
+  "markers": {
+    "required": [
+      "breathCalibrationControllerActionMode=right-secondary-hold-start",
+      "channel=breath-calibration-action"
+    ],
+    "forbidden": []
+  },
+  "validation": {
+    "quick": [
+      "cargo test --manifest-path apps/native-renderer-android/native/Cargo.toml breath_calibration_controller_action"
+    ],
+    "standard": [],
+    "device": []
+  },
+  "public_private_boundary": "Rusty Quest owns only generic gesture recognition and the generic breath lifecycle action. Downstream apps own interpretation and visual mapping."
+}

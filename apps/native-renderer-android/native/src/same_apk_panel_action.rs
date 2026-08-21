@@ -106,6 +106,10 @@ impl SameApkPanelAction {
         self.settings.enabled()
     }
 
+    pub(crate) fn cancel_pending_sequence(&mut self, pressed: bool) {
+        self.reset(pressed);
+    }
+
     pub(crate) fn update(&mut self, dt_seconds: f32, pressed: bool) -> bool {
         if !self.enabled() {
             self.reset(false);
@@ -211,5 +215,15 @@ mod tests {
         assert!(!action.update(1.0, true));
         assert!(!action.update(1.0, true));
         assert_eq!(action.press_count, 1);
+    }
+
+    #[test]
+    fn calibration_hold_can_cancel_pending_triple_press_state() {
+        let mut action = SameApkPanelAction::new(settings(true));
+        assert!(!action.update(0.0, true));
+        assert_eq!(action.press_count, 1);
+        action.cancel_pending_sequence(true);
+        assert_eq!(action.press_count, 0);
+        assert!(!action.update(0.0, true));
     }
 }
