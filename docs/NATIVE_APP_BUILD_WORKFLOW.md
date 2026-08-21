@@ -47,7 +47,9 @@ cannot bleed into unrelated apps.
      private-particle renderer with no complete payload receives the public
      no-op placeholder and unlinked markers. Exactly one complete payload
      excludes that placeholder and requires the linked marker; partial,
-     ambiguous, or multiple payload inventories fail closed.
+     ambiguous, or multiple payload inventories fail closed. Apps that select
+     neither the renderer nor a payload remain `inactive` and receive no
+     private-particle marker contract.
 5. Build from the lock:
 
    ```powershell

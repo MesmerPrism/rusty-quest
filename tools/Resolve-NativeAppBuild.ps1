@@ -466,7 +466,7 @@ function Resolve-PrivateParticlePayloadInventory {
     }
     return [ordered]@{
         schema = "rusty.quest.private_particle_payload_linkage.v1"
-        mode = if ($privateParticlePayloads.Count -eq 0) { "unlinked-placeholder" } else { "linked-app-payload" }
+        mode = "pending-feature-closure"
         complete_payload_count = $privateParticlePayloads.Count
         inventory_sha256 = Get-StringSha256 -Value ($identity | ConvertTo-Json -Depth 20 -Compress)
         payload = $payload
@@ -818,20 +818,29 @@ foreach ($requestedFeature in Get-StringArray $app.requested_features) {
     Resolve-FeatureClosure -FeatureId $requestedFeature -Reason "requested by app spec" -Features $features -Denied $denied -State $state
 }
 $privateParticleRendererSelected = $state.selected.ContainsKey($PrivateParticleRendererFeatureId)
-if ([string]$privateParticlePayloadLinkage.mode -eq "linked-app-payload") {
-    if (-not $privateParticleRendererSelected) {
+if ($privateParticleRendererSelected) {
+    if ([int]$privateParticlePayloadLinkage.complete_payload_count -eq 1) {
+        $privateParticlePayloadLinkage.mode = "linked-app-payload"
+        if ($state.selected.ContainsKey($PrivateParticlePlaceholderFeatureId)) {
+            throw "App $($app.app_id) links a private_particle payload but also selects the unlinked placeholder feature $PrivateParticlePlaceholderFeatureId"
+        }
+    } else {
+        $privateParticlePayloadLinkage.mode = "unlinked-placeholder"
+        Resolve-FeatureClosure `
+            -FeatureId $PrivateParticlePlaceholderFeatureId `
+            -Reason "resolver-selected for zero complete private_particle payloads" `
+            -Features $features `
+            -Denied $denied `
+            -State $state
+    }
+} else {
+    if ([int]$privateParticlePayloadLinkage.complete_payload_count -eq 1) {
         throw "App $($app.app_id) declares a complete private_particle payload without selecting $PrivateParticleRendererFeatureId"
     }
     if ($state.selected.ContainsKey($PrivateParticlePlaceholderFeatureId)) {
-        throw "App $($app.app_id) links a private_particle payload but also selects the unlinked placeholder feature $PrivateParticlePlaceholderFeatureId"
+        throw "App $($app.app_id) selects $PrivateParticlePlaceholderFeatureId without selecting $PrivateParticleRendererFeatureId"
     }
-} elseif ($privateParticleRendererSelected) {
-    Resolve-FeatureClosure `
-        -FeatureId $PrivateParticlePlaceholderFeatureId `
-        -Reason "resolver-selected for zero complete private_particle payloads" `
-        -Features $features `
-        -Denied $denied `
-        -State $state
+    $privateParticlePayloadLinkage.mode = "inactive"
 }
 $selectedFeatureIds = @(Get-SortedSet -Set $state.selected)
 

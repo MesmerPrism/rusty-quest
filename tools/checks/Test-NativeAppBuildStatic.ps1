@@ -157,6 +157,7 @@ foreach ($requiredResolverNeedle in @(
     "rusty.quest.private_particle_payload_linkage.v1",
     "unlinked-placeholder",
     "linked-app-payload",
+    'mode = "inactive"',
     "resolver-selected for zero complete private_particle payloads",
     "Resolved marker contract is contradictory",
     "app_spec_sha256",
@@ -379,6 +380,32 @@ try {
         throw "Native app-build unlinked private-particle closure must forbid the linked marker"
     }
 
+    $inactiveResultPath = Join-Path $structuredResultRoot "inactive-resolution-result.json"
+    & pwsh -NoProfile -ExecutionPolicy Bypass -File $resolver `
+        -AppSpec "fixtures\native-app-builds\native-stimulus-volume-panel.app.json" `
+        -OutputRoot $structuredResultRoot `
+        -ResultJsonPath $inactiveResultPath `
+        -DryRun | Out-Host
+    if ($LASTEXITCODE -ne 0) {
+        throw "Native app-build inactive private-particle linkage probe failed with exit code $LASTEXITCODE"
+    }
+    $inactiveResult = Read-Json -Path $inactiveResultPath
+    $inactiveFeatureLock = Read-Json -Path ([string]$inactiveResult.feature_lock_path)
+    $inactiveLinkage = $inactiveFeatureLock.build_inputs.private_particle_payload_linkage
+    if ([string]$inactiveLinkage.mode -cne "inactive" -or
+        [int]$inactiveLinkage.complete_payload_count -ne 0 -or
+        [string]$inactiveLinkage.inventory_sha256 -notmatch '^[a-f0-9]{64}$') {
+        throw "Native app-build unrelated app must report an inactive private-particle linkage receipt"
+    }
+    foreach ($featureId in @("renderer.private_particles", "particles.private.placeholder_compute")) {
+        if (@($inactiveFeatureLock.selected_feature_ids) -ccontains $featureId) {
+            throw "Native app-build unrelated app must not select private-particle feature: $featureId"
+        }
+    }
+    if (@($inactiveFeatureLock.expected_markers.required + $inactiveFeatureLock.expected_markers.forbidden | Where-Object { [string]$_ -like "privateParticlePayloadLinked=*" }).Count -ne 0) {
+        throw "Native app-build unrelated app must not receive a private-particle linkage marker contract"
+    }
+
     $payloadInputDir = Join-Path $structuredResultRoot "synthetic-private-particle-payload"
     $payloadDataDir = Join-Path $payloadInputDir "data"
     New-Item -ItemType Directory -Force -Path $payloadDataDir | Out-Null
@@ -551,6 +578,34 @@ try {
         $normalizedDamagedInventoryOutput = ((($damagedInventoryOutput -join " ") -replace '\s*\|\s*', ' ') -replace '\s+', ' ').Trim()
         if (-not $normalizedDamagedInventoryOutput.Contains([string]$inventoryDamage.expected, [System.StringComparison]::Ordinal)) {
             throw "Native app-build damaged private-particle inventory case returned the wrong error: $($inventoryDamage.name) output=$normalizedDamagedInventoryOutput"
+        }
+    }
+
+    foreach ($rendererAbsentDamage in @(
+        @{ name = "payload-without-renderer"; expected = "declares a complete private_particle payload without selecting renderer.private_particles" },
+        @{ name = "placeholder-without-renderer"; expected = "selects particles.private.placeholder_compute without selecting renderer.private_particles" }
+    )) {
+        $rendererAbsentApp = Read-Json -Path (Join-Path $appBuildDir "native-stimulus-volume-panel.app.json")
+        $rendererAbsentApp.app_id = "private_particle_$($rendererAbsentDamage.name.Replace('-', '_'))"
+        $rendererAbsentApp.package_name = "io.github.example.rustyquest.$($rendererAbsentApp.app_id)"
+        if ([string]$rendererAbsentDamage.name -eq "payload-without-renderer") {
+            $rendererAbsentApp.payloads = @($payloadApp.payloads)
+        } else {
+            $rendererAbsentApp.requested_features = @($rendererAbsentApp.requested_features) + "particles.private.placeholder_compute"
+        }
+        $rendererAbsentAppPath = Join-Path $payloadInputDir "$($rendererAbsentDamage.name).app.json"
+        $rendererAbsentApp | ConvertTo-Json -Depth 100 | Set-Content -LiteralPath $rendererAbsentAppPath -Encoding utf8
+        $rendererAbsentOutput = @(& pwsh -NoProfile -ExecutionPolicy Bypass -File $resolver `
+            -AppSpec $rendererAbsentAppPath `
+            -OutputRoot $structuredResultRoot `
+            -DryRun 2>&1 | ForEach-Object { $_.ToString() })
+        $rendererAbsentExitCode = $LASTEXITCODE
+        if ($rendererAbsentExitCode -eq 0) {
+            throw "Native app-build accepted renderer-absent private-particle case: $($rendererAbsentDamage.name)"
+        }
+        $normalizedRendererAbsentOutput = ((($rendererAbsentOutput -join " ") -replace '\s*\|\s*', ' ') -replace '\s+', ' ').Trim()
+        if (-not $normalizedRendererAbsentOutput.Contains([string]$rendererAbsentDamage.expected, [System.StringComparison]::Ordinal)) {
+            throw "Native app-build renderer-absent private-particle case returned the wrong error: $($rendererAbsentDamage.name) output=$normalizedRendererAbsentOutput"
         }
     }
 
