@@ -111,12 +111,36 @@ function Assert-ExternalOwnerBootstrapRequest {
     }
 }
 
+function Assert-ExternalOwnerBootstrapGeneratedMergeEquivalence {
+    param(
+        [Parameter(Mandatory)][object]$Request,
+        [Parameter(Mandatory)][object]$ObservedGeneratedMerge
+    )
+    $properties = if ($ObservedGeneratedMerge -is [Collections.IDictionary]) {
+        @($ObservedGeneratedMerge.Keys | ForEach-Object { [string]$_ } |
+            Sort-Object -CaseSensitive)
+    } else {
+        @($ObservedGeneratedMerge.PSObject.Properties.Name |
+            Sort-Object -CaseSensitive)
+    }
+    if (($properties -join ",") -cne "commit,ordered_parents,tree" -or
+        [string]$ObservedGeneratedMerge.commit -cnotmatch "^[0-9a-f]{40}$" -or
+        [string]$ObservedGeneratedMerge.tree -cne [string]$Request.head.tree -or
+        @($ObservedGeneratedMerge.ordered_parents).Count -ne 2 -or
+        [string]$ObservedGeneratedMerge.ordered_parents[0] -cne [string]$Request.base.commit -or
+        [string]$ObservedGeneratedMerge.ordered_parents[1] -cne [string]$Request.head.commit) {
+        throw "Bootstrap generated-merge observation is not stably equivalent to the signed base/head topology."
+    }
+}
+
 function Test-ExternalOwnerBootstrapAuthorizationComment {
     param(
         [Parameter(Mandatory)][object[]]$Comments,
         [Parameter(Mandatory)][object]$ExpectedRequest,
         [Parameter(Mandatory)][object]$ExpectedPolicy,
-        [Parameter(Mandatory)][datetimeoffset]$Now
+        [Parameter(Mandatory)][object]$ObservedGeneratedMerge,
+        [Parameter(Mandatory)][datetimeoffset]$Now,
+        [AllowEmptyCollection()][string[]]$ConsumedAuditIds = @()
     )
     if ($Comments.Count -gt [int]$ExpectedPolicy.maximum_comments) {
         throw "Bootstrap comment count exceeds the configured bound."
@@ -145,6 +169,8 @@ function Test-ExternalOwnerBootstrapAuthorizationComment {
     }
     $payload = $document.payload
     Assert-ExternalOwnerBootstrapRequest -Request $payload.request -ExpectedPolicy $ExpectedPolicy
+    Assert-ExternalOwnerBootstrapGeneratedMergeEquivalence -Request $payload.request `
+        -ObservedGeneratedMerge $ObservedGeneratedMerge
     if ([string]$payload.issuer_id -cne [string]$ExpectedPolicy.issuer_id -or
         [string]$payload.key_id -cne [string]$ExpectedPolicy.key_id -or
         [string]$document.signature.algorithm -cne "RSA-PSS-SHA256" -or
@@ -155,6 +181,11 @@ function Test-ExternalOwnerBootstrapAuthorizationComment {
         (@((Get-CanonicalAuthorizationBytes $payload.request)) -join ",") -cne
             (@((Get-CanonicalAuthorizationBytes $ExpectedRequest)) -join ",")) {
         throw "Bootstrap authorization evidence differs from its exact pinned request."
+    }
+    if (@($ConsumedAuditIds | Where-Object {
+        [string]$_ -ceq [string]$payload.audit_id
+    }).Count -ne 0) {
+        throw "Bootstrap authorization audit identity is already consumed."
     }
     try {
         $issued = [datetimeoffset]::ParseExact(
@@ -206,7 +237,7 @@ try {
         pull_request_number = 55
         base = [ordered]@{ commit = ("1" * 40); tree = ("2" * 40) }
         head = [ordered]@{ commit = ("3" * 40); tree = ("4" * 40) }
-        generated_merge = [ordered]@{ event_merge_observation = $null; commit = ("5" * 40); tree = ("4" * 40); ordered_parents = @(("1" * 40), ("3" * 40)) }
+        generated_merge = [ordered]@{ observed_commit = ("5" * 40); tree = ("4" * 40); ordered_parents = @(("1" * 40), ("3" * 40)) }
         changed_artifact_count = 2
         protected_artifact_count = 1
         inventory_digest = [ordered]@{ algorithm = "SHA-256"; domain = "rusty.quest.external_owner_bootstrap_inventory.v1"; encoding = "UTF-8"; line_ending = "LF"; field_separator = "TAB"; field_order = @("path", "protected_classification", "state", "mode", "size_bytes", "sha256"); absent_field_sentinel = "-"; value = ("0" * 64) }
@@ -239,7 +270,11 @@ try {
         signature = [ordered]@{ algorithm = "RSA-PSS-SHA256"; public_key_spki_sha256 = [string]$testPolicy.public_key_spki_sha256; value_base64 = [Convert]::ToBase64String($signature) }
     }
     $comment = [ordered]@{ id = 55; created_at = "2026-08-22T15:59:00Z"; updated_at = "2026-08-22T15:59:00Z"; user = [ordered]@{ login = "MesmerPrism" }; body = [string]$testPolicy.bootstrap_comment_marker + "`n" + ($document | ConvertTo-Json -Depth 40 -Compress) }
-    $null = Test-ExternalOwnerBootstrapAuthorizationComment -Comments @($comment) -ExpectedRequest $request -ExpectedPolicy $testPolicy -Now $now
+    $observedMerge = [ordered]@{ commit = ("5" * 40); tree = ("4" * 40); ordered_parents = @(("1" * 40), ("3" * 40)) }
+    $null = Test-ExternalOwnerBootstrapAuthorizationComment -Comments @($comment) -ExpectedRequest $request -ExpectedPolicy $testPolicy -ObservedGeneratedMerge $observedMerge -Now $now
+    $laterSyntheticMerge = Copy-ExternalOwnerBootstrapValue $observedMerge
+    $laterSyntheticMerge.commit = ("6" * 40)
+    $null = Test-ExternalOwnerBootstrapAuthorizationComment -Comments @($comment) -ExpectedRequest $request -ExpectedPolicy $testPolicy -ObservedGeneratedMerge $laterSyntheticMerge -Now $now
 
     $changedRequest = Copy-ExternalOwnerBootstrapValue $request
     $changedRequest.changed_artifacts[0].sha256 = ("d" * 64)
@@ -280,17 +315,20 @@ try {
     $expiryComment.body = [string]$testPolicy.bootstrap_comment_marker + "`n" + ($expiryDocument | ConvertTo-Json -Depth 40 -Compress)
 
     foreach ($case in @(
-        [pscustomobject]@{ name = "duplicate"; comments = @($comment, $comment); expected = $request; at = $now },
-        [pscustomobject]@{ name = "changed-artifact"; comments = @($changedComment); expected = $request; at = $now },
-        [pscustomobject]@{ name = "stale"; comments = @($comment); expected = $request; at = $now.AddDays(2) },
-        [pscustomobject]@{ name = "future"; comments = @($comment); expected = $request; at = $now.AddDays(-1) },
-        [pscustomobject]@{ name = "wrong-key"; comments = @($wrongKeyComment); expected = $request; at = $now },
-        [pscustomobject]@{ name = "offset-timestamp"; comments = @($offsetComment); expected = $request; at = $now },
-        [pscustomobject]@{ name = "expiry-at-read-time"; comments = @($expiryComment); expected = $request; at = $now }
+        [pscustomobject]@{ name = "duplicate"; comments = @($comment, $comment); expected = $request; at = $now; consumed = @() },
+        [pscustomobject]@{ name = "changed-artifact"; comments = @($changedComment); expected = $request; at = $now; consumed = @() },
+        [pscustomobject]@{ name = "stale"; comments = @($comment); expected = $request; at = $now.AddDays(2); consumed = @() },
+        [pscustomobject]@{ name = "future"; comments = @($comment); expected = $request; at = $now.AddDays(-1); consumed = @() },
+        [pscustomobject]@{ name = "wrong-key"; comments = @($wrongKeyComment); expected = $request; at = $now; consumed = @() },
+        [pscustomobject]@{ name = "offset-timestamp"; comments = @($offsetComment); expected = $request; at = $now; consumed = @() },
+        [pscustomobject]@{ name = "expiry-at-read-time"; comments = @($expiryComment); expected = $request; at = $now; consumed = @() },
+        [pscustomobject]@{ name = "consumed-audit"; comments = @($comment); expected = $request; at = $now; consumed = @([string]$payload.audit_id) }
     )) {
         Assert-BootstrapDamageRejected $case.name {
             $null = Test-ExternalOwnerBootstrapAuthorizationComment -Comments $case.comments `
-                -ExpectedRequest $case.expected -ExpectedPolicy $testPolicy -Now $case.at
+                -ExpectedRequest $case.expected -ExpectedPolicy $testPolicy `
+                -ObservedGeneratedMerge $observedMerge -Now $case.at `
+                -ConsumedAuditIds $case.consumed
         }
     }
     $runtimeDamage = Copy-ExternalOwnerBootstrapValue $request
@@ -307,6 +345,32 @@ try {
     $parentDamage.generated_merge.ordered_parents[1] = ("f" * 40)
     Assert-BootstrapDamageRejected "merge-parent" {
         Assert-ExternalOwnerBootstrapRequest -Request $parentDamage -ExpectedPolicy $testPolicy
+    }
+    $baseDamage = Copy-ExternalOwnerBootstrapValue $request
+    $baseDamage.base.commit = ("f" * 40)
+    Assert-BootstrapDamageRejected "request-base" {
+        Assert-ExternalOwnerBootstrapRequest -Request $baseDamage -ExpectedPolicy $testPolicy
+    }
+    $headDamage = Copy-ExternalOwnerBootstrapValue $request
+    $headDamage.head.commit = ("f" * 40)
+    Assert-BootstrapDamageRejected "request-head" {
+        Assert-ExternalOwnerBootstrapRequest -Request $headDamage -ExpectedPolicy $testPolicy
+    }
+    foreach ($case in @(
+        [pscustomobject]@{ name = "observed-merge-tree"; value = [ordered]@{ commit = ("6" * 40); tree = ("f" * 40); ordered_parents = @(("1" * 40), ("3" * 40)) } },
+        [pscustomobject]@{ name = "observed-merge-base"; value = [ordered]@{ commit = ("6" * 40); tree = ("4" * 40); ordered_parents = @(("f" * 40), ("3" * 40)) } },
+        [pscustomobject]@{ name = "observed-merge-head"; value = [ordered]@{ commit = ("6" * 40); tree = ("4" * 40); ordered_parents = @(("1" * 40), ("f" * 40)) } },
+        [pscustomobject]@{ name = "observed-merge-parent-order"; value = [ordered]@{ commit = ("6" * 40); tree = ("4" * 40); ordered_parents = @(("3" * 40), ("1" * 40)) } }
+    )) {
+        Assert-BootstrapDamageRejected $case.name {
+            Assert-ExternalOwnerBootstrapGeneratedMergeEquivalence -Request $request `
+                -ObservedGeneratedMerge $case.value
+        }
+    }
+    $authorityFlagDamage = Copy-ExternalOwnerBootstrapValue $request
+    $authorityFlagDamage.limitations[4] = "publication_authority=true"
+    Assert-BootstrapDamageRejected "bootstrap-publication-authority" {
+        Assert-ExternalOwnerBootstrapRequest -Request $authorityFlagDamage -ExpectedPolicy $testPolicy
     }
     $duplicatePathDamage = Copy-ExternalOwnerBootstrapValue $request
     $duplicatePathDamage.changed_artifacts = @($duplicatePathDamage.changed_artifacts[0], $duplicatePathDamage.changed_artifacts[0])

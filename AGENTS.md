@@ -102,7 +102,10 @@ one-time independent review, never a normal runtime assessment. The permanent
 runtime adapter rejects that marker and it cannot satisfy the normal fallback,
 PR #53, or any future candidate. It is a durable non-reusable review receipt,
 not static-admission, test, acceptance, merge, release, settings, or device
-authority.
+authority. Its GitHub synthetic merge SHA is observational only: consumption
+requires the exact signed base/head commits and trees, generated tree, ordered
+base/head parents, artifact inventories, and digest; a regenerated synthetic
+SHA is admissible only when all of those stable fields remain exact.
 
 Configure admission from
 `config/external-validation-authority-settings.json`. Rusty Quest is user-owned;

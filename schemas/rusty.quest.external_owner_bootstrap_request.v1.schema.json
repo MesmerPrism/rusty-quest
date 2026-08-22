@@ -17,10 +17,9 @@
     "generated_merge": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["event_merge_observation", "commit", "tree", "ordered_parents"],
+      "required": ["observed_commit", "tree", "ordered_parents"],
       "properties": {
-        "event_merge_observation": { "anyOf": [{ "$ref": "#/$defs/objectId" }, { "type": "null" }] },
-        "commit": { "$ref": "#/$defs/objectId" },
+        "observed_commit": { "$ref": "#/$defs/objectId" },
         "tree": { "$ref": "#/$defs/objectId" },
         "ordered_parents": { "type": "array", "minItems": 2, "maxItems": 2, "items": { "$ref": "#/$defs/objectId" } }
       }

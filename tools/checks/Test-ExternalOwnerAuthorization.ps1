@@ -113,8 +113,23 @@ try {
     $changed = $payload | ConvertTo-Json -Depth 30 | ConvertFrom-Json -Depth 30
     $changed.head.commit = ("0" * 40)
     $duplicate = @($comment, $comment)
+    [byte[]]$originalSignatureBytes = [Convert]::FromBase64String(
+        [string]$document.signature.value_base64
+    )
+    [byte[]]$wrongSignatureBytes = [byte[]]$originalSignatureBytes.Clone()
+    $wrongSignatureBytes[0] = $wrongSignatureBytes[0] -bxor 1
+    if ([Security.Cryptography.CryptographicOperations]::FixedTimeEquals(
+        $originalSignatureBytes, $wrongSignatureBytes
+    )) {
+        throw "Wrong-signature damage did not mutate the signature bytes."
+    }
+    $wrongSignatureDocument = $document | ConvertTo-Json -Depth 30 |
+        ConvertFrom-Json -Depth 30
+    $wrongSignatureDocument.signature.value_base64 =
+        [Convert]::ToBase64String($wrongSignatureBytes)
     $wrongSignature = $comment | ConvertTo-Json -Depth 30 | ConvertFrom-Json -Depth 30
-    $wrongSignature.body = $testPolicy.comment_marker + "`n" + (($document | ConvertTo-Json -Depth 30 -Compress) -replace '"value_base64":".', '"value_base64":"A')
+    $wrongSignature.body = $testPolicy.comment_marker + "`n" +
+        ($wrongSignatureDocument | ConvertTo-Json -Depth 30 -Compress)
     foreach ($case in @(
         [pscustomobject]@{ name = "duplicate"; comments = $duplicate; expected = $payload; at = $now },
         [pscustomobject]@{ name = "changed-evidence"; comments = @($comment); expected = $changed; at = $now },

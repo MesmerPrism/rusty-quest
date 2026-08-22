@@ -100,12 +100,19 @@ signs the closed JSON from the schemas and canonical/RSA primitive; it never
 executes candidate helper code.
 
 The record binds the repository and PR; exact base and head commits and trees;
-the generated-merge observation (which may be null), generated tree, and its
-ordered base/head parents; full changed and protected artifact arrays; both
-counts; and a separate `inventory_digest`. Every artifact is a present Git
-blob with exact portable path, mode, byte length, and lowercase SHA-256. The
-arrays must be ordinally sorted, unique, complete, and have identical metadata
-where a protected artifact occurs in the changed inventory.
+the generated merge tree and its ordered base/head parents; full changed and
+protected artifact arrays; both counts; and a separate `inventory_digest`.
+`generated_merge.observed_commit` records the synthetic GitHub merge commit
+seen during the independent review, but is observation only. On the one-time
+consumption readback, a different synthetic merge SHA is admissible only when
+its exact tree remains the signed head tree and its ordered parents remain the
+signed base commit followed by the signed head commit. The new observed SHA is
+still required to be a canonical full object ID; this exception applies only to
+that synthetic generated-merge observation, never to the base, head, artifact,
+or other commit identities. Every artifact is a present Git blob with exact
+portable path, mode, byte length, and lowercase SHA-256. The arrays must be
+ordinally sorted, unique, complete, and have identical metadata where a
+protected artifact occurs in the changed inventory.
 
 `inventory_digest` is SHA-256 over the following exact domain, named
 `rusty.quest.external_owner_bootstrap_inventory.v1`: for every changed
@@ -136,13 +143,15 @@ PR #53 nor any future candidate, static admission, testing, acceptance, merge,
 release, settings, or device work.
 
 The permanent runtime adapter must reject a bootstrap marker and never parses
-either bootstrap schema. Duplicate markers, stale or future timestamps, wrong
-keys, malformed or noncanonical JSON, changed artifacts, different inventory
-digests, altered merge objects, or any attempt to add runtime identity fields
-reject. This extraordinary record is consumed only by the orchestrator's
-already user-authorized, exact-head admin merge of this trust-root PR. It is a
-durable review receipt, not retained or reusable base authority; no later
-protected proposal may cite it.
+either bootstrap schema. Duplicate markers, a previously consumed audit id,
+stale or future timestamps, wrong keys, malformed or noncanonical JSON,
+changed artifacts, different inventory digests, a changed base/head, a changed
+merge tree, reordered merge parents, or any attempt to add runtime identity
+fields reject. A regenerated synthetic SHA with the same exact stable topology
+is the sole allowed observation change. This extraordinary record is consumed
+only by the orchestrator's already user-authorized, exact-head admin merge of
+this trust-root PR. It is a durable review receipt, not retained or reusable
+base authority; no later protected proposal may cite it.
 
 GitHub required status checks match a context and optional GitHub App source;
 they do not bind a workflow path, matrix, or event. A candidate workflow can
