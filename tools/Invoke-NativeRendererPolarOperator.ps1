@@ -22,9 +22,9 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $adb = (Get-Command adb -ErrorAction Stop).Source
-$action = 'io.github.mesmerprism.rustyquest.native_renderer.action.POLAR_SENSOR_PANEL_COMMAND'
-$activityClass = 'io.github.mesmerprism.rustyquest.native_renderer.ControlPanelActivity'
-$component = "$PackageName/$activityClass"
+$action = 'io.github.mesmerprism.rustyquest.native_renderer.action.POLAR_SENSOR_RUNTIME_COMMAND'
+$receiverClass = 'io.github.mesmerprism.rustyquest.native_renderer.PolarSensorCommandReceiver'
+$component = "$PackageName/$receiverClass"
 $token = [Guid]::NewGuid().ToString('N')
 $receiptPath = 'files/polar_sensor_operator_status.json'
 
@@ -33,17 +33,19 @@ if ($LASTEXITCODE -ne 0 -or $deviceState -ne 'device') {
     throw "Serial-scoped ADB target is not ready: $Serial ($deviceState)"
 }
 
+# This is an explicit component broadcast. It never starts ControlPanelActivity,
+# NativeActivity, or another OpenXR/session owner.
 $arguments = @(
     '-s', $Serial,
-    'shell', 'am', 'start', '-W',
+    'shell', 'am', 'broadcast',
     '-n', $component,
     '-a', $action,
-    '--es', 'polar_sensor_panel_command', $Command,
-    '--es', 'polar_sensor_panel_command_token', $token
+    '--es', 'polar_sensor_runtime_command', $Command,
+    '--es', 'polar_sensor_runtime_command_token', $token
 )
-$launchOutput = (& $adb @arguments 2>&1 | Out-String).Trim()
+$dispatchOutput = (& $adb @arguments 2>&1 | Out-String).Trim()
 if ($LASTEXITCODE -ne 0) {
-    throw "Fixed Polar operator action failed to launch: $launchOutput"
+    throw "Fixed headless Polar operator broadcast failed: $dispatchOutput"
 }
 
 $deadline = [DateTimeOffset]::UtcNow.AddSeconds($TimeoutSeconds)
@@ -53,7 +55,8 @@ do {
     if ($LASTEXITCODE -eq 0 -and -not [string]::IsNullOrWhiteSpace($raw)) {
         try {
             $candidate = $raw | ConvertFrom-Json -Depth 32
-            if ([string]$candidate.token -eq $token) {
+            if ([string]$candidate.schema -eq 'rusty.quest.native_renderer.polar_sensor_operator_status.v2' -and
+                [string]$candidate.token -eq $token) {
                 $receipt = $candidate
                 break
             }
@@ -64,31 +67,25 @@ do {
 } while ([DateTimeOffset]::UtcNow -lt $deadline)
 
 if ($null -eq $receipt) {
-    throw "Timed out waiting for correlated app-owned Polar receipt token $token"
+    throw "Timed out waiting for correlated headless Polar receipt token $token"
 }
-
-if ($Command -eq 'start_capture') {
-    if ([string]$receipt.dispatch_status -ne 'accepted') {
-        throw "start_capture dispatch was not accepted: $([string]$receipt.reason_code)"
-    }
-    if ([long]$receipt.operation_generation -lt 1) {
-        throw 'start_capture app receipt did not publish a fresh operation generation.'
-    }
-    if ([string]$receipt.effect_status -ne 'started' -or [string]$receipt.capture_session_id -eq 'none') {
-        throw "start_capture was accepted but did not confirm a current capture session: $([string]$receipt.effect_status)"
-    }
+if ([string]$receipt.command_origin -ne 'cli-receiver') {
+    throw "Polar command receipt did not prove the headless receiver route: $([string]$receipt.command_origin)"
+}
+if ([string]$receipt.dispatch_status -ne 'accepted') {
+    throw "Polar command was not accepted: $([string]$receipt.reason_code)"
 }
 
 [pscustomobject]@{
-    schema = 'rusty.quest.native_renderer.polar_sensor_operator_invocation.v1'
+    schema = 'rusty.quest.native_renderer.polar_sensor_operator_invocation.v2'
     serial = $Serial
     package = $PackageName
     component = $component
     token = $token
     command = $Command
-    launch_transport = 'serial-scoped-fixed-adb-activity-action'
+    dispatch_transport = 'serial-scoped-fixed-adb-broadcast'
+    foreground_activity_changed = $false
     screenshot_required = $false
-    effect_confirmation_required = ($Command -eq 'start_capture')
     app_receipt = $receipt
-    launch_output = $launchOutput
+    dispatch_output = $dispatchOutput
 } | ConvertTo-Json -Depth 32

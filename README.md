@@ -462,6 +462,15 @@ capture path. `docs/BREATH_SOURCE_CAPTURE.md` defines the capture/clock/receipt
 contract and the host-only cadence analyzer. Raw captures stay private local
 artifacts and RR remains outside the breath assessment path.
 
+The Polar acquisition/capture runtime is process-owned and can be operated
+without foregrounding the optional same-APK panel. Its fixed shell/self-only
+receiver is used by `Invoke-NativeRendererPolarOperator.ps1`; the companion
+`Invoke-NativeRendererBreathCapture.ps1` runs connectivity, controller, and
+two-minute recording gates through correlated app-private receipts and capture
+rows. That route leaves the immersive NativeActivity foregrounded, records
+HR/RR/ACC/ECG concurrently, and rejects permission, candidate, stream, or
+controller-readiness ambiguity rather than opening a UI or guessing.
+
 Private-particle compute receives the right/up/forward basis captured with the
 world anchor rather than the later live eye pose. Live eye data remains the
 draw/sort input only, and recentering recaptures the complete compute basis.

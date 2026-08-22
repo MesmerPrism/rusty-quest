@@ -108,8 +108,13 @@ final class PolarSensorPanel {
         void onPolarStreamEvent(JSONObject event);
     }
 
-    private final Activity activity;
-    private final Host host;
+    /*
+     * Acquisition is process-owned.  A panel can attach to observe/control it,
+     * but must never become the lifetime owner of BLE, PMD, or a capture.
+     */
+    private final Context appContext;
+    private Activity activity;
+    private Host host;
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final ArrayList<DeviceEntry> devices = new ArrayList<DeviceEntry>();
     private final Object countersLock = new Object();
@@ -179,12 +184,43 @@ final class PolarSensorPanel {
     private String connectedDeviceInstanceId = "none";
     private String pendingConnectionLabel = "none";
     private String pendingConnectionDeviceInstanceId = "none";
+    private int selectedDeviceIndex = -1;
+    private String selectedPmdMode = "acc";
     private String statusState = "idle";
     private String statusDetail = "panel-created";
 
-    PolarSensorPanel(Activity activity, Host host) {
-        this.activity = activity;
-        this.host = host;
+    PolarSensorPanel(Context context) {
+        this.appContext = context.getApplicationContext();
+    }
+
+    void attachPanel(Activity panelActivity, Host panelHost) {
+        this.activity = panelActivity;
+        this.host = panelHost;
+        closing = false;
+        updateCounters();
+        writeStatus(statusState, statusDetail);
+    }
+
+    void detachPanel(Activity panelActivity) {
+        if (activity != panelActivity) {
+            return;
+        }
+        activity = null;
+        host = null;
+        deviceAdapter = null;
+        deviceSpinner = null;
+        pmdSpinner = null;
+        status = null;
+        selectedDevice = null;
+        hrStatus = null;
+        accStatus = null;
+        ecgStatus = null;
+        linkStatus = null;
+        writeStatus(statusState, statusDetail);
+    }
+
+    boolean isPanelAttached() {
+        return activity != null;
     }
 
     View buildView() {
@@ -213,8 +249,10 @@ final class PolarSensorPanel {
             close.setOnClickListener(new View.OnClickListener() {
                 @Override
                 public void onClick(View view) {
-                    stop();
-                    host.closePanelAndReturnToImmersive();
+                    Host currentHost = host;
+                    if (currentHost != null) {
+                        currentHost.closePanelAndReturnToImmersive();
+                    }
                 }
             });
             header.addView(close);
@@ -384,7 +422,7 @@ final class PolarSensorPanel {
             resumePendingBleAction();
         } else {
             String missing = PolarBleRuntimeSupport.join(
-                PolarBleRuntimeSupport.missingPermissions(activity),
+                PolarBleRuntimeSupport.missingPermissions(appContext),
                 ","
             );
             setStatusState("permission-required", "BLE/location permissions missing: " + missing);
@@ -393,11 +431,11 @@ final class PolarSensorPanel {
         }
     }
 
-    void stop() {
+    void shutdown() {
         closing = true;
         stopScan();
         closeGatt();
-        setStatusState("stopped", "panel-closed");
+        setStatusState("stopped", "runtime-shutdown");
         marker("status=stopped");
     }
 
@@ -629,7 +667,15 @@ final class PolarSensorPanel {
             return;
         }
         pendingBleAction = PENDING_BLE_NONE;
-        int index = deviceSpinner == null ? -1 : deviceSpinner.getSelectedItemPosition();
+        if (activity == null && devices.size() != 1) {
+            setStatusState(
+                "candidate-ambiguous",
+                "Headless connect requires exactly one compatible Polar candidate."
+            );
+            marker("status=connection-rejected reason=headless-candidate-count count=" + devices.size());
+            return;
+        }
+        int index = selectedDeviceIndex();
         if (index < 0 || index >= devices.size()) {
             setStatus("No Polar device selected.");
             return;
@@ -654,9 +700,9 @@ final class PolarSensorPanel {
         pendingConnectionDeviceInstanceId = entry.instanceId();
         try {
             if (Build.VERSION.SDK_INT >= 23) {
-                gatt = entry.device.connectGatt(activity, false, gattCallback, BluetoothDevice.TRANSPORT_LE);
+                gatt = entry.device.connectGatt(appContext, false, gattCallback, BluetoothDevice.TRANSPORT_LE);
             } else {
-                gatt = entry.device.connectGatt(activity, false, gattCallback);
+                gatt = entry.device.connectGatt(appContext, false, gattCallback);
             }
             if (gatt == null) {
                 closeGatt();
@@ -763,7 +809,7 @@ final class PolarSensorPanel {
             return "rejected-already-active";
         }
         captureSessionId = "breath_capture_" + System.currentTimeMillis();
-        File directory = new File(new File(activity.getFilesDir(), "breath_source_captures"), captureSessionId);
+        File directory = new File(new File(appContext.getFilesDir(), "breath_source_captures"), captureSessionId);
         long startedAtElapsedRealtimeNs = SystemClock.elapsedRealtimeNanos();
         String response = nativeStartParallelBreathCapture(
             directory.getAbsolutePath(),
@@ -895,7 +941,7 @@ final class PolarSensorPanel {
             lastAccFrameReceiptNs = 0L;
             lastEcgFrameReceiptNs = 0L;
         }
-        File events = new File(activity.getFilesDir(), STREAM_EVENTS_FILE);
+        File events = new File(appContext.getFilesDir(), STREAM_EVENTS_FILE);
         if (events.exists() && !events.delete()) {
             setStatus("Counters reset; stream-event file could not be removed.");
         } else {
@@ -935,7 +981,7 @@ final class PolarSensorPanel {
                 if (!entry.looksLikePolar() && !hasHeartRateService && !hasPmdService) {
                     return;
                 }
-                activity.runOnUiThread(new Runnable() {
+                handler.post(new Runnable() {
                     @Override
                     public void run() {
                         if (!isCurrentScanGeneration(generation)) {
@@ -948,7 +994,7 @@ final class PolarSensorPanel {
 
             @Override
             public void onScanFailed(final int errorCode) {
-                activity.runOnUiThread(new Runnable() {
+                handler.post(new Runnable() {
                     @Override
                     public void run() {
                         if (!isCurrentScanGeneration(generation)) {
@@ -978,7 +1024,7 @@ final class PolarSensorPanel {
     private final BluetoothGattCallback gattCallback = new BluetoothGattCallback() {
         @Override
         public void onConnectionStateChange(final BluetoothGatt callbackGatt, final int statusCode, final int newState) {
-            activity.runOnUiThread(new Runnable() {
+            handler.post(new Runnable() {
                 @Override
                 public void run() {
                     handleConnectionState(callbackGatt, statusCode, newState);
@@ -988,7 +1034,7 @@ final class PolarSensorPanel {
 
         @Override
         public void onServicesDiscovered(final BluetoothGatt callbackGatt, final int statusCode) {
-            activity.runOnUiThread(new Runnable() {
+            handler.post(new Runnable() {
                 @Override
                 public void run() {
                     if (!isCurrentConnectedGatt(callbackGatt)) {
@@ -1020,7 +1066,7 @@ final class PolarSensorPanel {
 
         @Override
         public void onMtuChanged(final BluetoothGatt callbackGatt, int mtu, int statusCode) {
-            activity.runOnUiThread(new Runnable() {
+            handler.post(new Runnable() {
                 @Override
                 public void run() {
                     if (!isCurrentConnectedGatt(callbackGatt)) {
@@ -1033,7 +1079,7 @@ final class PolarSensorPanel {
 
         @Override
         public void onDescriptorWrite(final BluetoothGatt callbackGatt, BluetoothGattDescriptor descriptor, final int statusCode) {
-            activity.runOnUiThread(new Runnable() {
+            handler.post(new Runnable() {
                 @Override
                 public void run() {
                     if (!isCurrentConnectedGatt(callbackGatt)) {
@@ -1051,7 +1097,7 @@ final class PolarSensorPanel {
 
         @Override
         public void onCharacteristicWrite(final BluetoothGatt callbackGatt, BluetoothGattCharacteristic characteristic, final int statusCode) {
-            activity.runOnUiThread(new Runnable() {
+            handler.post(new Runnable() {
                 @Override
                 public void run() {
                     if (!isCurrentConnectedGatt(callbackGatt)) {
@@ -1066,7 +1112,7 @@ final class PolarSensorPanel {
         public void onCharacteristicRead(final BluetoothGatt callbackGatt, BluetoothGattCharacteristic characteristic, int statusCode) {
             if (statusCode == BluetoothGatt.GATT_SUCCESS && BATTERY_LEVEL.equals(characteristic.getUuid())) {
                 final byte[] value = characteristic.getValue();
-                activity.runOnUiThread(new Runnable() {
+                handler.post(new Runnable() {
                     @Override
                     public void run() {
                         if (!isCurrentConnectedGatt(callbackGatt)) {
@@ -1102,7 +1148,7 @@ final class PolarSensorPanel {
             }
             return;
         }
-        activity.runOnUiThread(new Runnable() {
+        handler.post(new Runnable() {
             @Override
             public void run() {
                 if (!isCurrentConnectedGatt(callbackGatt)) {
@@ -1862,7 +1908,7 @@ final class PolarSensorPanel {
             @Override
             public void run() {
                 try {
-                    FileOutputStream out = activity.openFileOutput(STREAM_EVENTS_FILE, Context.MODE_APPEND);
+                    FileOutputStream out = appContext.openFileOutput(STREAM_EVENTS_FILE, Context.MODE_APPEND);
                     try {
                         out.write(line.getBytes(StandardCharsets.UTF_8));
                         out.write('\n');
@@ -1876,7 +1922,10 @@ final class PolarSensorPanel {
                         @Override
                         public void run() {
                             try {
-                                host.onPolarStreamEvent(event);
+                                Host currentHost = host;
+                                if (currentHost != null) {
+                                    currentHost.onPolarStreamEvent(event);
+                                }
                             } catch (RuntimeException ignored) {
                             }
                         }
@@ -1894,6 +1943,7 @@ final class PolarSensorPanel {
             long accSampleCount;
             long ecgFrameCount;
             long ecgSampleCount;
+            long hrCount;
             long rrCount;
             long accReceiptDeltaNs;
             long ecgReceiptDeltaNs;
@@ -1902,6 +1952,7 @@ final class PolarSensorPanel {
                 accSampleCount = accSamples;
                 ecgFrameCount = ecgFrames;
                 ecgSampleCount = ecgSamples;
+                hrCount = heartRateEvents;
                 rrCount = rrIntervals;
                 accReceiptDeltaNs = lastAccFrameReceiptNs;
                 ecgReceiptDeltaNs = lastEcgFrameReceiptNs;
@@ -1912,7 +1963,7 @@ final class PolarSensorPanel {
                 .put("schema", "rusty.quest.native_renderer.polar_sensor_status.v2")
                 .put("status", state)
                 .put("detail", detail == null ? "" : detail)
-                .put("ble_runtime", PolarBleRuntimeSupport.statusJson(activity))
+                .put("ble_runtime", PolarBleRuntimeSupport.statusJson(appContext))
                 .put("scanning", scanning)
                 .put("candidate_count", devices.size())
                 .put("selected_device_instance_id", selectedDeviceInstanceId())
@@ -1931,6 +1982,7 @@ final class PolarSensorPanel {
                 .put("ecg_samples", ecgSampleCount)
                 .put("acc_last_receipt_time_ns", accReceiptDeltaNs)
                 .put("ecg_last_receipt_time_ns", ecgReceiptDeltaNs)
+                .put("heart_rate_events_observed", hrCount)
                 .put("rr_intervals_observed", rrCount)
                 .put("rr_consumed_by_breath", false)
                 .put("acc_direct_same_process", true)
@@ -1941,7 +1993,7 @@ final class PolarSensorPanel {
                 .put("capture", new JSONObject(nativeReadParallelBreathCaptureStatus()))
                 .put("stream_events_file", STREAM_EVENTS_FILE)
                 .put("updated_at_unix_ms", System.currentTimeMillis());
-            FileOutputStream out = activity.openFileOutput(STATUS_FILE, Context.MODE_PRIVATE);
+            FileOutputStream out = appContext.openFileOutput(STATUS_FILE, Context.MODE_PRIVATE);
             try {
                 out.write(body.toString(2).getBytes(StandardCharsets.UTF_8));
                 out.flush();
@@ -1955,7 +2007,7 @@ final class PolarSensorPanel {
     }
 
     private void updateCountersOnUiThread() {
-        activity.runOnUiThread(new Runnable() {
+        handler.post(new Runnable() {
             @Override
             public void run() {
                 updateCounters();
@@ -2018,7 +2070,7 @@ final class PolarSensorPanel {
     }
 
     private String selectedDeviceLabel() {
-        int index = deviceSpinner == null ? -1 : deviceSpinner.getSelectedItemPosition();
+        int index = selectedDeviceIndex();
         if (index >= 0 && index < devices.size()) {
             return devices.get(index).label();
         }
@@ -2026,17 +2078,20 @@ final class PolarSensorPanel {
     }
 
     private void addOrUpdateDevice(DeviceEntry entry) {
+        String selectedBefore = selectedDeviceInstanceId();
         for (int i = 0; i < devices.size(); i++) {
             DeviceEntry existing = devices.get(i);
             if (existing.sameDevice(entry)) {
                 devices.set(i, entry);
                 Collections.sort(devices);
+                restoreOrChooseHeadlessCandidate(selectedBefore);
                 updateDeviceAdapter();
                 return;
             }
         }
         devices.add(entry);
         Collections.sort(devices);
+        restoreOrChooseHeadlessCandidate(selectedBefore);
         updateDeviceAdapter();
         setStatusState("candidate-found", "A compatible Polar candidate was found.");
         marker("status=device-found deviceInstanceId=" + markerToken(entry.instanceId())
@@ -2052,6 +2107,9 @@ final class PolarSensorPanel {
             deviceAdapter.add(device.label());
         }
         deviceAdapter.notifyDataSetChanged();
+        if (deviceSpinner != null && selectedDeviceIndex >= 0 && selectedDeviceIndex < devices.size()) {
+            deviceSpinner.setSelection(selectedDeviceIndex);
+        }
         updateCounters();
     }
 
@@ -2110,7 +2168,7 @@ final class PolarSensorPanel {
     }
 
     private BluetoothAdapter bluetoothAdapter() {
-        BluetoothManager manager = (BluetoothManager) activity.getSystemService(Context.BLUETOOTH_SERVICE);
+        BluetoothManager manager = (BluetoothManager) appContext.getSystemService(Context.BLUETOOTH_SERVICE);
         return manager == null ? null : manager.getAdapter();
     }
 
@@ -2119,9 +2177,15 @@ final class PolarSensorPanel {
             return true;
         }
         pendingBleAction = pendingAction;
+        if (activity == null) {
+            pendingBleAction = PENDING_BLE_NONE;
+            setStatusState("permission-required", "BLE/location permission is required; attach the panel to respond.");
+            marker("status=permission-required origin=headless pendingAction=" + pendingAction);
+            return false;
+        }
         PolarBleRuntimeSupport.ensureReady(activity, REQUEST_BLE_PERMISSIONS);
         String missing = PolarBleRuntimeSupport.join(
-            PolarBleRuntimeSupport.missingPermissions(activity),
+            PolarBleRuntimeSupport.missingPermissions(appContext),
             ","
         );
         setStatusState("permission-required", "Requesting BLE/location permissions.");
@@ -2131,7 +2195,7 @@ final class PolarSensorPanel {
     }
 
     private boolean hasRequiredPermissions() {
-        return PolarBleRuntimeSupport.hasRequiredPermissions(activity);
+        return PolarBleRuntimeSupport.hasRequiredPermissions(appContext);
     }
 
     private void resumePendingBleAction() {
@@ -2147,15 +2211,20 @@ final class PolarSensorPanel {
     }
 
     private String selectedPmdMode() {
-        int index = pmdSpinner == null ? 0 : pmdSpinner.getSelectedItemPosition();
-        return index == 1 ? "ecg" : "acc";
+        if (pmdSpinner != null) {
+            int index = pmdSpinner.getSelectedItemPosition();
+            if (index == 0 || index == 1) {
+                selectedPmdMode = index == 1 ? "ecg" : "acc";
+            }
+        }
+        return selectedPmdMode;
     }
 
     private void setSelectedPmdMode(String mode) {
-        if (pmdSpinner == null) {
-            return;
+        selectedPmdMode = "ecg".equals(mode) ? "ecg" : "acc";
+        if (pmdSpinner != null) {
+            pmdSpinner.setSelection("ecg".equals(selectedPmdMode) ? 1 : 0);
         }
-        pmdSpinner.setSelection("ecg".equals(mode) ? 1 : 0);
     }
 
     private byte[] buildGetSettingsCommand(String mode) {
@@ -2277,11 +2346,36 @@ final class PolarSensorPanel {
     }
 
     private String selectedDeviceInstanceId() {
-        int index = deviceSpinner == null ? -1 : deviceSpinner.getSelectedItemPosition();
+        int index = selectedDeviceIndex();
         if (index >= 0 && index < devices.size()) {
             return devices.get(index).instanceId();
         }
         return "none";
+    }
+
+    private int selectedDeviceIndex() {
+        if (deviceSpinner != null) {
+            int uiIndex = deviceSpinner.getSelectedItemPosition();
+            if (uiIndex >= 0 && uiIndex < devices.size()) {
+                selectedDeviceIndex = uiIndex;
+            }
+        }
+        return selectedDeviceIndex;
+    }
+
+    private void restoreOrChooseHeadlessCandidate(String selectedBefore) {
+        selectedDeviceIndex = -1;
+        if (selectedBefore != null && !"none".equals(selectedBefore)) {
+            for (int index = 0; index < devices.size(); index++) {
+                if (selectedBefore.equals(devices.get(index).instanceId())) {
+                    selectedDeviceIndex = index;
+                    return;
+                }
+            }
+        }
+        if (devices.size() == 1) {
+            selectedDeviceIndex = 0;
+        }
     }
 
     private LinearLayout row() {

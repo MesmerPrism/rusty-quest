@@ -342,6 +342,16 @@ try {
     if (@($lock.android_manifest.permissions) -notcontains "android.permission.ACCESS_COARSE_LOCATION") {
         throw "Quest Polar composition closure omitted coarse location permission"
     }
+    if ((@($lock.android_manifest.receivers | Sort-Object) -join [Environment]::NewLine) -cne "PolarSensorCommandReceiver") {
+        throw "Quest Polar composition closure must select exactly the fixed headless Polar receiver"
+    }
+    $generatedManifestPath = Resolve-GeneratedOutputPath ([string]$lock.generated_outputs.android_manifest)
+    $generatedManifest = Get-Content -Raw -LiteralPath $generatedManifestPath
+    if ($generatedManifest -notmatch 'PolarSensorCommandReceiver' -or
+        $generatedManifest -notmatch 'POLAR_SENSOR_RUNTIME_COMMAND' -or
+        $generatedManifest -notmatch 'android:exported="true"') {
+        throw "Generated Android manifest omitted the exact headless Polar command receiver"
+    }
     if ([string]::IsNullOrWhiteSpace([string]$result.breath_composition_activation_sha256)) {
         throw "Structured resolver omitted breath composition activation binding"
     }

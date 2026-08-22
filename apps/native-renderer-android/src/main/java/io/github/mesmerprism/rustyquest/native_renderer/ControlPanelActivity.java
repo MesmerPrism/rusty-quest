@@ -545,7 +545,7 @@ public final class ControlPanelActivity extends Activity {
             || "driver-profile-panel".equals(panelMode)
             || "driver-profile-session".equals(panelMode);
         if (polarSensorPanel != null && !polarOwnerRetained) {
-            polarSensorPanel.stop();
+            PolarSensorRuntime.forApplication(getApplicationContext()).detachPanel(this);
             polarSensorPanel = null;
         }
         setContentView(buildContentView());
@@ -620,7 +620,7 @@ public final class ControlPanelActivity extends Activity {
             "control_panel_on_destroy"
         );
         if (polarSensorPanel != null) {
-            polarSensorPanel.stop();
+            PolarSensorRuntime.forApplication(getApplicationContext()).detachPanel(this);
             polarSensorPanel = null;
         }
         super.onDestroy();
@@ -1487,7 +1487,7 @@ public final class ControlPanelActivity extends Activity {
 
     private PolarSensorPanel ensurePolarSensorPanel() {
         if (polarSensorPanel == null) {
-            polarSensorPanel = new PolarSensorPanel(this, new PolarSensorPanel.Host() {
+            polarSensorPanel = PolarSensorRuntime.forApplication(getApplicationContext()).attachPanel(this, new PolarSensorPanel.Host() {
                 @Override
                 public void closePanelAndReturnToImmersive() {
                     ControlPanelActivity.this.closePanelAndReturnToImmersive();
@@ -5541,8 +5541,7 @@ public final class ControlPanelActivity extends Activity {
             ensurePolarSensorPanel();
         }
         String command = intent.getStringExtra(EXTRA_POLAR_SENSOR_PANEL_COMMAND);
-        PolarSensorPanel.OperatorCommandStatus commandStatus = polarSensorPanel.handleCommand(command);
-        writePolarSensorOperatorReceipt(token, commandStatus);
+        PolarSensorRuntime.forApplication(getApplicationContext()).dispatchFromPanel(command, token);
     }
 
     private void writePolarSensorOperatorReceipt(

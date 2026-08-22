@@ -35,6 +35,9 @@
       "android.hardware.bluetooth_le"
     ],
     "activities": [],
+    "receivers": [
+      "PolarSensorCommandReceiver"
+    ],
     "services": [],
     "queries": []
   },

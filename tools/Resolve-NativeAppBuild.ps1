@@ -662,6 +662,7 @@ function New-GeneratedAndroidManifestText {
         [string[]]$Permissions,
         [string[]]$UsesFeatures,
         [string[]]$Activities,
+        [string[]]$Receivers,
         [string[]]$Services,
         [string[]]$Queries
     )
@@ -760,6 +761,13 @@ function New-GeneratedAndroidManifestText {
         [void]$lines.Add('            </intent-filter>')
         [void]$lines.Add('        </activity>')
     }
+    if ($Receivers -contains "PolarSensorCommandReceiver") {
+        [void]$lines.Add('        <receiver android:name="io.github.mesmerprism.rustyquest.native_renderer.PolarSensorCommandReceiver" android:exported="true">')
+        [void]$lines.Add('            <intent-filter>')
+        [void]$lines.Add('                <action android:name="io.github.mesmerprism.rustyquest.native_renderer.action.POLAR_SENSOR_RUNTIME_COMMAND" />')
+        [void]$lines.Add('            </intent-filter>')
+        [void]$lines.Add('        </receiver>')
+    }
     if ($Services -contains "DisplayCompositeProjectionService") {
         [void]$lines.Add('        <service android:name="io.github.mesmerprism.rustyquest.native_renderer.DisplayCompositeProjectionService" android:exported="false" android:foregroundServiceType="mediaProjection" />')
     }
@@ -857,6 +865,7 @@ foreach ($featureId in $selectedFeatureIds) {
 $permissionsSet = @{}
 $usesFeaturesSet = @{}
 $activitiesSet = @{}
+$receiversSet = @{}
 $servicesSet = @{}
 $queriesSet = @{}
 $clearFamiliesSet = @{}
@@ -1004,6 +1013,9 @@ foreach ($featureId in $selectedFeatureIds) {
     Add-StringsToSet -Set $permissionsSet -Values $feature.android_manifest.permissions
     Add-StringsToSet -Set $usesFeaturesSet -Values $feature.android_manifest.uses_features
     Add-StringsToSet -Set $activitiesSet -Values $feature.android_manifest.activities
+    if ($feature.android_manifest.PSObject.Properties.Name -contains "receivers") {
+        Add-StringsToSet -Set $receiversSet -Values $feature.android_manifest.receivers
+    }
     Add-StringsToSet -Set $servicesSet -Values $feature.android_manifest.services
     Add-StringsToSet -Set $queriesSet -Values $feature.android_manifest.queries
     Add-StringsToSet -Set $clearFamiliesSet -Values $feature.runtime_profile.clear_families
@@ -1084,12 +1096,18 @@ foreach ($marker in @($requiredMarkerSet.Keys)) {
 $permissions = @(Get-SortedSet -Set $permissionsSet)
 $usesFeatures = @(Get-SortedSet -Set $usesFeaturesSet)
 $activities = @(Get-SortedSet -Set $activitiesSet)
+$receivers = @(Get-SortedSet -Set $receiversSet)
 $services = @(Get-SortedSet -Set $servicesSet)
 $queries = @(Get-SortedSet -Set $queriesSet)
 $clearFamilies = @(Get-SortedSet -Set $clearFamiliesSet)
 $expectedRenderModes = @(Get-SortedSet -Set $expectedRenderModesSet)
 $requiredMarkers = @(Get-SortedSet -Set $requiredMarkerSet)
 $forbiddenMarkers = @(Get-SortedSet -Set $forbiddenMarkerSet)
+foreach ($receiver in $receivers) {
+    if ($receiver -notin @("PolarSensorCommandReceiver")) {
+        throw "Android receiver surface contains an unsupported closed-world receiver: $receiver"
+    }
+}
 $claimsSimultaneousHandsControllers = @($requiredMarkers | Where-Object {
     [string]$_ -match 'simultaneousHandsControllers(Selected|Ready)=true'
 }).Count -gt 0
@@ -1101,6 +1119,7 @@ if ($claimsSimultaneousHandsControllers -and
 Assert-SetEquals -Label "Android permission surface" -Expected (Get-StringArray $app.declared_manifest.permissions) -Actual $permissions
 Assert-SetEquals -Label "Android uses-feature surface" -Expected (Get-StringArray $app.declared_manifest.uses_features) -Actual $usesFeatures
 Assert-SetEquals -Label "Android activity surface" -Expected (Get-StringArray $app.declared_manifest.activities) -Actual $activities
+Assert-SetEquals -Label "Android receiver surface" -Expected (Get-StringArray $app.declared_manifest.receivers) -Actual $receivers
 Assert-SetEquals -Label "Android service surface" -Expected (Get-StringArray $app.declared_manifest.services) -Actual $services
 
 $environmentDepthMode = if ($runtimeSet.Contains($EnvironmentDepthModeProperty)) { [string]$runtimeSet[$EnvironmentDepthModeProperty] } else { "" }
@@ -1550,6 +1569,7 @@ $featureLock = [ordered]@{
         permissions = $permissions
         uses_features = $usesFeatures
         activities = $activities
+        receivers = $receivers
         services = $services
         queries = $queries
         package_name = [string]$app.package_name
@@ -1605,7 +1625,7 @@ if ($LASTEXITCODE -ne 0) {
     throw "Generated runtime profile failed Apply-RuntimeProfile.ps1 dry-run"
 }
 
-$manifestText = New-GeneratedAndroidManifestText -PackageName ([string]$app.package_name) -Permissions $permissions -UsesFeatures $usesFeatures -Activities $activities -Services $services -Queries $queries
+$manifestText = New-GeneratedAndroidManifestText -PackageName ([string]$app.package_name) -Permissions $permissions -UsesFeatures $usesFeatures -Activities $activities -Receivers $receivers -Services $services -Queries $queries
 New-Item -ItemType Directory -Path (Split-Path -Parent $androidManifestPath) -Force | Out-Null
 Set-Content -LiteralPath $androidManifestPath -Value $manifestText -Encoding UTF8
 

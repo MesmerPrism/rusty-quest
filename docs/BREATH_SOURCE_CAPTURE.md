@@ -2,9 +2,10 @@
 
 `apps/native-renderer-android` can record a bounded, app-private synchronized
 source session for host-only analysis. Capture is disabled until the operator
-starts it from the same-APK Polar panel or its fixed operator command. It is an
-observation sink: it does not own acquisition, composition selection,
-calibration, or the driver bank.
+starts it through the same process-owned Polar runtime. The panel is an
+optional view onto that runtime; it is not an acquisition or capture owner. It
+is an observation sink: it does not own composition selection, calibration, or
+the driver bank.
 
 ## Contents and clocks
 
@@ -40,12 +41,22 @@ investigating capture transport itself. The panel only projects native status;
 opening or closing it does not create a second capture or controller-input
 owner.
 
-The fixed operator command reports dispatch and effect separately. In
-particular, `start_capture` first reports an accepted command generation and
-then requires the same app-owned receipt to name a current capture session with
-`effect_status=started`. A prior panel/status snapshot is never treated as a
-failed start, and an operator must not reissue a relative start command merely
-because a stale receipt predates the current operation.
+`Invoke-NativeRendererPolarOperator.ps1` uses an explicit shell/self-only
+broadcast receiver, not an Activity launch. It leaves the immersive
+`NativeActivity` foregrounded and emits a correlated v2 app-private receipt
+with dispatch, effect, operation generation, current status, and whether a
+panel happens to be attached. The receiver accepts only the fixed command
+vocabulary and never prompts for permissions. A missing permission therefore
+fails closed until the wearer explicitly uses the optional panel.
+
+`Invoke-NativeRendererBreathCapture.ps1` provides all-CLI connectivity and
+recording paths: `ConnectivityPreflight` requires exactly one candidate, live
+HR/RR notifications, and advancing ACC plus ECG streams; `ControllerPreflight`
+uses a deliberately incomplete diagnostic capture to require tracked/action-
+active pose and right-thumbstick rows; `FullRecording` performs those gates and
+then retains the fixed 120-second finalized capture. None foregrounds the panel
+or relies on a screenshot. An ambiguous candidate, stale status, inactive
+controller row, or absent stream is a rejection, never a best-effort guess.
 
 ## ACC presentation policies
 

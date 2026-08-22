@@ -97,6 +97,13 @@
             android:exported="true"
             android:excludeFromRecents="true"
             android:noHistory="true" />
+        <receiver
+            android:name=".PolarSensorCommandReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="io.github.mesmerprism.rustyquest.native_renderer.action.POLAR_SENSOR_RUNTIME_COMMAND" />
+            </intent-filter>
+        </receiver>
         <service
             android:name=".DisplayCompositeProjectionService"
             android:exported="false"

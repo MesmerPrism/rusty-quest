@@ -38,6 +38,8 @@ $javaRoot = Join-Path $appRoot "src\main\java\io\github\mesmerprism\rustyquest\n
 $manifest = Read-RequiredText (Join-Path $appRoot "AndroidManifest.xml") "Android manifest"
 $controlPanel = Read-RequiredText (Join-Path $javaRoot "ControlPanelActivity.java") "control panel"
 $polarPanel = Read-RequiredText (Join-Path $javaRoot "PolarSensorPanel.java") "Polar panel"
+$polarRuntime = Read-RequiredText (Join-Path $javaRoot "PolarSensorRuntime.java") "headless Polar runtime"
+$polarReceiver = Read-RequiredText (Join-Path $javaRoot "PolarSensorCommandReceiver.java") "headless Polar receiver"
 $polarRuntimeSupport = Read-RequiredText (Join-Path $javaRoot "PolarBleRuntimeSupport.java") "Polar runtime support"
 $polarAdapters = Read-RequiredText (Join-Path $appRoot "native\src\polar_composition_adapters.rs") "Polar composition adapters"
 $polarAccBreathAdapter = Read-RequiredText (Join-Path $appRoot "native\src\polar_acc_breath_adapter.rs") "calibrated Polar ACC adapter"
@@ -50,6 +52,7 @@ $propertyManifest = Read-RequiredText (Join-Path $repoRootPath "fixtures\native-
 $resolver = Read-RequiredText (Join-Path $repoRootPath "tools\Resolve-NativeAppBuild.ps1") "native app-build resolver"
 $pregrant = Read-RequiredText (Join-Path $repoRootPath "tools\Grant-NativeRendererPermissions.ps1") "permission pregrant"
 $polarOperator = Read-RequiredText (Join-Path $repoRootPath "tools\Invoke-NativeRendererPolarOperator.ps1") "fixed Polar operator"
+$breathCaptureOperator = Read-RequiredText (Join-Path $repoRootPath "tools\Invoke-NativeRendererBreathCapture.ps1") "headless breath capture operator"
 
 Assert-ContainsTokens $manifest @(
     'android\.hardware\.bluetooth_le',
@@ -58,7 +61,10 @@ Assert-ContainsTokens $manifest @(
     'android\.permission\.BLUETOOTH',
     'android\.permission\.BLUETOOTH_ADMIN',
     'android\.permission\.BLUETOOTH_CONNECT',
-    'android\.permission\.BLUETOOTH_SCAN'
+    'android\.permission\.BLUETOOTH_SCAN',
+    'PolarSensorCommandReceiver',
+    'POLAR_SENSOR_RUNTIME_COMMAND',
+    'android:exported="true"'
 ) "development manifest BLE surface"
 
 Assert-ContainsTokens $controlPanel @(
@@ -164,21 +170,45 @@ Assert-ContainsTokens $polarPanel @(
     'acc_presentation_delay_ms',
     'acc_smoothing_time_constant_ms'
 ) "parallel Polar streams, synchronized capture, and sample-time presentation"
-Assert-ContainsTokens "$controlPanel`n$polarPanel`n$polarOperator" @(
+Assert-ContainsTokens "$controlPanel`n$polarPanel`n$polarRuntime`n$polarReceiver`n$polarOperator`n$breathCaptureOperator" @(
     "polar_sensor_operator_status.json",
-    "rusty.quest.native_renderer.polar_sensor_operator_status.v1",
+    "rusty.quest.native_renderer.polar_sensor_operator_status.v2",
     "dispatch_status",
     "effect_status",
     "operation_generation",
     "capture_session_id",
     "finishOperatorCommand",
-    "start_capture app receipt did not publish a fresh operation generation",
     "polar_status",
-    "POLAR_SENSOR_PANEL_COMMAND",
+    "POLAR_SENSOR_RUNTIME_COMMAND",
+    "PolarSensorCommandReceiver",
+    "PolarSensorRuntime",
+    "attachPanel",
+    "detachPanel",
+    "appContext",
+    "Process.SHELL_UID",
+    "getSendingUid",
+    "am', 'broadcast",
+    'foreground_activity_changed = \$false',
+    "ConnectivityPreflight",
+    "ControllerPreflight",
+    "FullRecording",
+    "controller_right_thumbstick",
+    "diagnostic-incomplete-not-recording",
+    "rr_consumed_by_breath",
     "presentation_low_latency",
     "presentation_timestamp_faithful",
     'screenshot_required = \$false'
 ) "fixed Polar operator and app-owned readback"
+if ($polarReceiver -match 'startActivity|ControlPanelActivity') {
+    throw "Headless Polar receiver must not foreground a panel or Activity"
+}
+if ($controlPanel -match 'polarSensorPanel\.stop\(\)') {
+    throw "ControlPanelActivity must detach, not stop, process-owned Polar acquisition"
+}
+if ($polarPanel -notmatch 'activity == null && devices\.size\(\) != 1' -or
+    $breathCaptureOperator -notmatch 'Headless connection requires exactly one compatible candidate') {
+    throw "Headless Polar selection must auto-select exactly one candidate and reject ambiguity"
+}
 if ($polarPanel.Contains('AccSample latest = frame.accSamples.get(frame.accSamples.size() - 1)')) {
     throw "Polar ACC composition must not discard every PMD sample except the batch tail"
 }
