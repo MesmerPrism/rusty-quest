@@ -245,6 +245,9 @@ substrates. It validates Lattice provider/frame identity, maps joints into the
 Matter rig, checks prepared rows against the Matter CPU oracle, and preserves
 Optics provider/frame/rig/hand identity. Native and Spatial acquisition and app
 policy stay local; provider, basis, hand, rig, or joint substitution fails closed.
+The native renderer's optional simultaneous hands/controllers adapter must use
+its existing OpenXR lifecycle, the exact applied hand lock, and independent
+live hand plus controller readiness; it must not request detached controllers.
 
 `crates/rusty-quest-broker-product` is only the Android projection boundary for
 accepted Manifold broker product locks. Manifold owns product feature resolution,

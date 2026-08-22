@@ -163,6 +163,15 @@ fn main() {
     );
     println!("cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RENDERER_LSL_ANDROID");
     println!("cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RENDERER_LSL_LIB_DIR");
+    println!(
+        "cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RENDERER_BREATH_COMPOSITION_EXPECTED_BINDING_SHA256"
+    );
+    println!(
+        "cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RENDERER_BREATH_COMPOSITION_DRIVER_EXPECTED_BINDING_SHA256"
+    );
+    println!(
+        "cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RENDERER_SIMULTANEOUS_HANDS_CONTROLLERS_EXPECTED_BINDING_SHA256"
+    );
 
     let out_dir = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR is set by Cargo"));
     write_recorded_hand_replay_source(&out_dir);

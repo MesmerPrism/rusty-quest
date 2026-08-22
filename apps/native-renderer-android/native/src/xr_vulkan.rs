@@ -87,12 +87,17 @@ use crate::{
         OpenXrEnvironmentDepthFrame, OpenXrEnvironmentDepthProperties,
         OpenXrEnvironmentDepthRuntime,
     },
+    openxr_simultaneous_hands_controllers::{
+        self, OpenXrSimultaneousHandsControllers, SimultaneousHandsControllersProbe,
+    },
     openxr_stimulus_actions::StimulusVolumeActions,
     private_extension_slot::{PrivateExtensionSlotFrameStats, PrivateExtensionSlotRuntime},
+    private_particle_world_basis::PrivateParticleFrameEyeProjections,
     projection_target_state::{ProjectionTargetSettings, ProjectionTargetState},
     recorded_hand_replay::{
         RecordedHandReplaySet, RecordedHandReplaySummary, RecordedHandSkinningFrame,
     },
+    simultaneous_hands_controllers::{ActivationDecision, IndependentInputReadiness},
     video_projection::{
         PreparedVideoProjection, VideoProjectionFrameStats, VideoProjectionRenderer,
     },
@@ -132,12 +137,19 @@ pub(crate) struct XrVulkanReadiness {
     pub(crate) live_hand_tracking_mesh_extension_available: bool,
     pub(crate) live_hand_tracking_mesh_extension_enabled: bool,
     pub(crate) live_hand_tracking_system_supported: bool,
+    pub(crate) simultaneous_hands_controllers_selected: bool,
+    pub(crate) simultaneous_hands_controllers_extension_requested: bool,
+    pub(crate) simultaneous_hands_controllers_extension_available: bool,
+    pub(crate) simultaneous_hands_controllers_extension_enabled: bool,
+    pub(crate) simultaneous_hands_controllers_functions_resolved: bool,
+    pub(crate) simultaneous_hands_controllers_system_supported: bool,
+    pub(crate) simultaneous_hands_controllers_probe_ready: bool,
 }
 
 impl XrVulkanReadiness {
     pub(crate) fn marker_fields(&self) -> String {
         format!(
-            "androidOpenxrLoaderReady={} openxrInstanceReady={} vulkanInstanceReady={} externalHwbExtensionReady={} samplerYcbcrExtensionReady={} samplerYcbcrFeatureReady={} fragmentDensityMapExtensionReady={} fragmentDensityMap2ExtensionReady={} fragmentDensityMapFeatureReady={} fragmentDensityMapFormatReady={} vulkanExternalImportPrereqsReady={} liveMetaHandTrackingExtensionAvailable={} liveMetaHandTrackingExtensionEnabled={} liveMetaHandTrackingMeshExtensionAvailable={} liveMetaHandTrackingMeshExtensionEnabled={} liveMetaHandTrackingSystemSupported={} openxrSubmitReady=false vulkanExternalImportReady=false",
+            "androidOpenxrLoaderReady={} openxrInstanceReady={} vulkanInstanceReady={} externalHwbExtensionReady={} samplerYcbcrExtensionReady={} samplerYcbcrFeatureReady={} fragmentDensityMapExtensionReady={} fragmentDensityMap2ExtensionReady={} fragmentDensityMapFeatureReady={} fragmentDensityMapFormatReady={} vulkanExternalImportPrereqsReady={} liveMetaHandTrackingExtensionAvailable={} liveMetaHandTrackingExtensionEnabled={} liveMetaHandTrackingMeshExtensionAvailable={} liveMetaHandTrackingMeshExtensionEnabled={} liveMetaHandTrackingSystemSupported={} simultaneousHandsControllersSelected={} simultaneousHandsControllersExtensionRequested={} simultaneousHandsControllersExtensionAvailable={} simultaneousHandsControllersExtensionEnabled={} simultaneousHandsControllersFunctionsResolved={} simultaneousHandsControllersSystemSupported={} simultaneousHandsControllersProbeReady={} openxrSubmitReady=false vulkanExternalImportReady=false",
             self.android_loader_ready,
             self.openxr_instance_ready,
             self.vulkan_instance_ready,
@@ -153,7 +165,14 @@ impl XrVulkanReadiness {
             self.live_hand_tracking_extension_enabled,
             self.live_hand_tracking_mesh_extension_available,
             self.live_hand_tracking_mesh_extension_enabled,
-            self.live_hand_tracking_system_supported
+            self.live_hand_tracking_system_supported,
+            self.simultaneous_hands_controllers_selected,
+            self.simultaneous_hands_controllers_extension_requested,
+            self.simultaneous_hands_controllers_extension_available,
+            self.simultaneous_hands_controllers_extension_enabled,
+            self.simultaneous_hands_controllers_functions_resolved,
+            self.simultaneous_hands_controllers_system_supported,
+            self.simultaneous_hands_controllers_probe_ready,
         )
     }
 }
@@ -206,10 +225,13 @@ impl ProjectionFoveationVulkanSupport {
     }
 }
 
-pub(crate) fn probe(app: &android_activity::AndroidApp) -> XrVulkanReadiness {
+pub(crate) fn probe(
+    app: &android_activity::AndroidApp,
+    simultaneous_decision: ActivationDecision,
+) -> XrVulkanReadiness {
     let started = Instant::now();
     let mut readiness = XrVulkanReadiness::default();
-    match unsafe { probe_inner(app, &mut readiness) } {
+    match unsafe { probe_inner(app, &mut readiness, simultaneous_decision) } {
         Ok(()) => {
             crate::marker(
                 "xr-vulkan-probe",
@@ -239,6 +261,7 @@ pub(crate) fn run_projection_loop(
     app: &android_activity::AndroidApp,
     camera_runtime: Option<&NativeCameraRuntime>,
     runtime_options: NativeRendererRuntimeOptions,
+    simultaneous_decision: ActivationDecision,
 ) -> Result<(), String> {
     let replay_set = RecordedHandReplaySet::load()?;
     let projection_metadata = CameraProjectionMetadata::load();
@@ -282,6 +305,7 @@ pub(crate) fn run_projection_loop(
             app,
             camera_runtime,
             runtime_options,
+            simultaneous_decision,
             replay_set,
             projection_metadata,
             display_composite_projection_metadata,
@@ -305,6 +329,7 @@ unsafe fn run_projection_loop_inner(
     app: &android_activity::AndroidApp,
     camera_runtime: Option<&NativeCameraRuntime>,
     runtime_options: NativeRendererRuntimeOptions,
+    simultaneous_decision: ActivationDecision,
     replay_set: RecordedHandReplaySet,
     projection_metadata: CameraProjectionMetadata,
     display_composite_projection_metadata: DisplayCompositeProjectionMetadata,
@@ -354,6 +379,11 @@ unsafe fn run_projection_loop_inner(
         foveation_vulkan_fdm_requested && available_extensions.fb_swapchain_update_state_vulkan;
     enabled_extensions.meta_vulkan_swapchain_create_info =
         foveation_vulkan_fdm_requested && available_extensions.meta_vulkan_swapchain_create_info;
+    openxr_simultaneous_hands_controllers::select_extension(
+        simultaneous_decision,
+        &available_extensions,
+        &mut enabled_extensions,
+    )?;
     if runtime_options
         .environment_depth_settings
         .runtime_provider_requested()
@@ -377,35 +407,26 @@ unsafe fn run_projection_loop_inner(
         &enabled_extensions,
         &[],
     )?;
-    let mut stimulus_actions = match StimulusVolumeActions::new(
-        &xr_instance,
-        runtime_options.stimulus_volume_settings,
-        runtime_options.projection_target_settings.clone(),
-        runtime_options.private_particle_breath_state_driver_settings,
-        runtime_options.environment_depth_alignment_settings,
-        runtime_options
-            .render_mode
-            .requests_private_particle_recenter_input(),
-    ) {
-        Ok(actions) => actions,
-        Err(error) => {
-            crate::marker(
-                "stimulus-volume-input",
-                format!(
-                    "status=unavailable reason={} actionSetAttached=false rightControllerPrimaryButtonRandomize=false",
-                    crate::sanitize(&error)
-                ),
-            );
-            None
-        }
-    };
-
     let properties = xr_instance
         .properties()
         .map_err(|error| format!("read OpenXR properties: {error}"))?;
     let system = xr_instance
         .system(xr::FormFactor::HEAD_MOUNTED_DISPLAY)
         .map_err(|error| format!("get HMD system: {error}"))?;
+    let mut simultaneous_hands_controllers = OpenXrSimultaneousHandsControllers::new(
+        simultaneous_decision,
+        &available_extensions,
+        &enabled_extensions,
+        &xr_instance,
+        system,
+    )?;
+    crate::marker(
+        "simultaneous-hands-controllers",
+        format!(
+            "status=system-observed {}",
+            simultaneous_hands_controllers.marker_fields()
+        ),
+    );
     let environment_depth_properties = OpenXrEnvironmentDepthRuntime::query_properties(
         &xr_instance,
         system,
@@ -626,8 +647,46 @@ unsafe fn run_projection_loop_inner(
             },
         )
         .map_err(|error| format!("create OpenXR Vulkan session: {error}"))?;
+    simultaneous_hands_controllers.resume(&xr_instance, &session)?;
+    let mut stimulus_actions = match StimulusVolumeActions::new(
+        &xr_instance,
+        runtime_options.stimulus_volume_settings,
+        runtime_options.projection_target_settings.clone(),
+        runtime_options.private_particle_breath_state_driver_settings,
+        runtime_options.same_apk_panel_action_settings,
+        runtime_options.breath_calibration_controller_action_settings,
+        runtime_options.environment_depth_alignment_settings,
+        runtime_options
+            .render_mode
+            .requests_private_particle_recenter_input(),
+    ) {
+        Ok(actions) => actions,
+        Err(error) if simultaneous_decision.is_selected() => {
+            return Err(format!(
+                "combined-mode controller action creation failed: {error}"
+            ));
+        }
+        Err(error) => {
+            crate::marker(
+                "stimulus-volume-input",
+                format!(
+                    "status=unavailable reason={} actionSetAttached=false rightControllerPrimaryButtonRandomize=false",
+                    crate::sanitize(&error)
+                ),
+            );
+            None
+        }
+    };
+    if simultaneous_decision.is_selected() && stimulus_actions.is_none() {
+        return Err("combined-mode controller action set is unavailable".to_owned());
+    }
     if let Some(actions) = stimulus_actions.as_mut() {
         if let Err(error) = actions.attach_session(&session) {
+            if simultaneous_decision.is_selected() {
+                return Err(format!(
+                    "combined-mode controller action attachment failed: {error}"
+                ));
+            }
             crate::marker(
                 "stimulus-volume-input",
                 format!(
@@ -1257,6 +1316,8 @@ unsafe fn run_projection_loop_inner(
         queue,
         cmd_pool,
         runtime_options.private_particle_breath_state_driver_settings,
+        runtime_options.private_particle_breath_composition_driver_settings,
+        runtime_options.private_particle_heartbeat_pulse_adapter_settings,
         runtime_options.manifold_scalar_driver_settings.clone(),
     ) {
         Ok(renderer) => renderer,
@@ -1347,6 +1408,7 @@ unsafe fn run_projection_loop_inner(
         &mut live_hand_compact,
         &mut hand_joint_capture_recorder,
         &mut hand_mesh_capture_recorder,
+        &mut simultaneous_hands_controllers,
         compact_hand_input_source_mode,
         replay_visual_proof_enabled,
         sdf_visual_enabled,
@@ -1386,6 +1448,12 @@ unsafe fn run_projection_loop_inner(
         &projection_metadata,
         &display_composite_projection_metadata,
         &video_projection_metadata,
+    );
+
+    simultaneous_hands_controllers.pause_best_effort(
+        &xr_instance,
+        &session,
+        "projection-loop-finished",
     );
     hand_joint_capture_recorder.finish_active("projection-loop-ended");
     hand_mesh_capture_recorder.finish_active("projection-loop-ended");
@@ -1448,6 +1516,7 @@ unsafe fn run_projection_loop_inner(
 unsafe fn probe_inner(
     app: &android_activity::AndroidApp,
     readiness: &mut XrVulkanReadiness,
+    simultaneous_decision: ActivationDecision,
 ) -> Result<(), String> {
     let entry = xr::Entry::load().map_err(|error| format!("load OpenXR: {error}"))?;
     initialize_android_loader(&entry, app)?;
@@ -1459,6 +1528,11 @@ unsafe fn probe_inner(
     readiness.live_hand_tracking_extension_available = available_extensions.ext_hand_tracking;
     readiness.live_hand_tracking_mesh_extension_available =
         available_extensions.fb_hand_tracking_mesh;
+    readiness.simultaneous_hands_controllers_selected = simultaneous_decision.is_selected();
+    readiness.simultaneous_hands_controllers_extension_requested =
+        simultaneous_decision.is_selected();
+    readiness.simultaneous_hands_controllers_extension_available =
+        available_extensions.meta_simultaneous_hands_and_controllers;
     if !available_extensions.khr_android_create_instance {
         return Err("OpenXR runtime does not expose XR_KHR_android_create_instance".to_string());
     }
@@ -1472,8 +1546,15 @@ unsafe fn probe_inner(
     enabled_extensions.ext_hand_tracking = available_extensions.ext_hand_tracking;
     enabled_extensions.fb_hand_tracking_mesh =
         enabled_extensions.ext_hand_tracking && available_extensions.fb_hand_tracking_mesh;
+    openxr_simultaneous_hands_controllers::select_extension(
+        simultaneous_decision,
+        &available_extensions,
+        &mut enabled_extensions,
+    )?;
     readiness.live_hand_tracking_extension_enabled = enabled_extensions.ext_hand_tracking;
     readiness.live_hand_tracking_mesh_extension_enabled = enabled_extensions.fb_hand_tracking_mesh;
+    readiness.simultaneous_hands_controllers_extension_enabled =
+        enabled_extensions.meta_simultaneous_hands_and_controllers;
     let xr_instance = create_android_instance(
         &entry,
         app,
@@ -1500,6 +1581,24 @@ unsafe fn probe_inner(
     } else {
         false
     };
+    let simultaneous_probe = openxr_simultaneous_hands_controllers::probe_instance_system(
+        simultaneous_decision,
+        &available_extensions,
+        &enabled_extensions,
+        &xr_instance,
+        system,
+    )?;
+    apply_simultaneous_probe(readiness, &simultaneous_probe);
+    crate::marker(
+        "simultaneous-hands-controllers",
+        format!("status=probe {}", simultaneous_probe.marker_fields()),
+    );
+    if !simultaneous_probe.ready() {
+        return Err(format!(
+            "simultaneous hands/controllers probe rejected: {}",
+            simultaneous_probe.marker_fields()
+        ));
+    }
     let requirements = xr_instance
         .graphics_requirements::<xr::Vulkan>(system)
         .map_err(|error| format!("read Vulkan graphics requirements: {error}"))?;
@@ -1556,6 +1655,19 @@ unsafe fn probe_inner(
     );
 
     Ok(())
+}
+
+fn apply_simultaneous_probe(
+    readiness: &mut XrVulkanReadiness,
+    probe: &SimultaneousHandsControllersProbe,
+) {
+    readiness.simultaneous_hands_controllers_selected = probe.selected;
+    readiness.simultaneous_hands_controllers_extension_requested = probe.extension_requested;
+    readiness.simultaneous_hands_controllers_extension_available = probe.extension_available;
+    readiness.simultaneous_hands_controllers_extension_enabled = probe.extension_enabled;
+    readiness.simultaneous_hands_controllers_functions_resolved = probe.functions_resolved;
+    readiness.simultaneous_hands_controllers_system_supported = probe.system_supported;
+    readiness.simultaneous_hands_controllers_probe_ready = probe.ready();
 }
 
 fn initialize_android_loader(
@@ -1887,6 +1999,7 @@ unsafe fn run_projection_frames(
     live_hand_compact: &mut LiveHandCompactInput,
     hand_joint_capture_recorder: &mut LiveHandJointCaptureRecorder,
     hand_mesh_capture_recorder: &mut LiveHandMeshCaptureRecorder,
+    simultaneous_hands_controllers: &mut OpenXrSimultaneousHandsControllers,
     compact_hand_input_source_mode: CompactHandInputSourceMode,
     replay_visual_proof_enabled: bool,
     sdf_visual_enabled: bool,
@@ -2005,6 +2118,7 @@ unsafe fn run_projection_frames(
                     );
                     match event.state() {
                         xr::SessionState::READY => {
+                            simultaneous_hands_controllers.resume(xr_instance, session)?;
                             session
                                 .begin(VIEW_TYPE)
                                 .map_err(|error| format!("begin OpenXR session: {error}"))?;
@@ -2012,6 +2126,11 @@ unsafe fn run_projection_frames(
                             crate::marker("openxr-session", "event=begin viewType=PRIMARY_STEREO");
                         }
                         xr::SessionState::STOPPING => {
+                            simultaneous_hands_controllers.pause_best_effort(
+                                xr_instance,
+                                session,
+                                "session-stopping",
+                            );
                             session
                                 .end()
                                 .map_err(|error| format!("end OpenXR session: {error}"))?;
@@ -2019,6 +2138,8 @@ unsafe fn run_projection_frames(
                             crate::marker("openxr-session", "event=end");
                         }
                         xr::SessionState::EXITING | xr::SessionState::LOSS_PENDING => {
+                            simultaneous_hands_controllers
+                                .hard_reset_session_loss("session-exiting-or-loss-pending");
                             if let Some(swapchain) = swapchain.take() {
                                 swapchain.destroy(vk_device);
                             }
@@ -2028,6 +2149,7 @@ unsafe fn run_projection_frames(
                     }
                 }
                 xr::Event::InstanceLossPending(_) => {
+                    simultaneous_hands_controllers.hard_reset_session_loss("instance-loss-pending");
                     if let Some(swapchain) = swapchain.take() {
                         swapchain.destroy(vk_device);
                     }
@@ -2249,8 +2371,12 @@ unsafe fn run_projection_frames(
             );
         }
 
+        let mut private_particle_breath_sample = None;
+        let mut breath_observed_at = None;
+        let mut controller_readiness = Default::default();
         if let Some(actions) = stimulus_actions.as_deref_mut() {
             let controller_events = actions.sync_and_poll(
+                xr_instance,
                 session,
                 reference_space,
                 frame_state.predicted_display_time,
@@ -2258,19 +2384,15 @@ unsafe fn run_projection_frames(
                 dt_seconds,
                 projection_target_state.breath_haptics_enabled(),
             );
+            controller_readiness = controller_events.controller_readiness.clone();
+            breath_observed_at = controller_events.breath_observed_at;
             for input in controller_events.projection_target_inputs {
                 projection_target_state.apply_input(input);
             }
             for input in controller_events.environment_depth_alignment_inputs {
                 environment_depth_alignment_state.apply_input(input);
             }
-            if let Some(renderer) = gpu_private_particle_renderer.as_deref_mut() {
-                renderer.update_breath_state_driver(
-                    controller_events.native_controller_breath_sample,
-                    dt_seconds,
-                    frame_count,
-                );
-            }
+            private_particle_breath_sample = controller_events.native_controller_breath_sample;
             if controller_events.stimulus_randomize_triggered {
                 if crate::native_renderer_panel_bridge::right_primary_opens_control_panel() {
                     crate::native_renderer_panel_bridge::open_control_panel(
@@ -2283,13 +2405,35 @@ unsafe fn run_projection_frames(
                 }
             }
             if controller_events.panel_toggle_triggered {
-                crate::native_renderer_panel_bridge::toggle_control_panel(app, frame_count);
+                crate::native_renderer_panel_bridge::toggle_control_panel(
+                    app,
+                    frame_count,
+                    controller_events
+                        .panel_toggle_source
+                        .unwrap_or("controller-action"),
+                );
             }
             if controller_events.private_particle_recenter_triggered
                 && gpu_private_particle_renderer.is_some()
             {
                 private_particle_world_anchor.recenter(particle_sort_eye_projection, frame_count);
             }
+        }
+        if let Some(renderer) = gpu_private_particle_renderer.as_deref_mut() {
+            renderer.update_breath_state_driver(
+                private_particle_breath_sample,
+                dt_seconds,
+                frame_count,
+            );
+            if let Some(observed_at) = breath_observed_at {
+                renderer.update_breath_composition_driver(
+                    crate::breath_composition_runtime::snapshot(),
+                    observed_at,
+                    dt_seconds,
+                    frame_count,
+                );
+            }
+            renderer.update_heartbeat_pulse_adapter(dt_seconds, frame_count);
         }
         if let Some(bridge) = breath_bridge.as_mut() {
             if let Some(input) = bridge.poll_input(dt_seconds, frame_count) {
@@ -2610,6 +2754,27 @@ unsafe fn run_projection_frames(
                 };
                 (LiveHandCompactFrameSet::default(), stats)
             };
+        simultaneous_hands_controllers.observe_readiness(IndependentInputReadiness {
+            hand_adapter_applied: simultaneous_hands_controllers.is_selected(),
+            hand_tracker_ready: live_hand_stats.tracker_ready,
+            hand_frame_ready: live_hand_stats.frame_ready,
+            hand_active: live_hand_stats.active_hand_count > 0
+                && live_hand_stats.visualizable_hand_count > 0,
+            controller_action_set_ready: controller_readiness.action_set_ready,
+            controller_profile_ready: controller_readiness.interaction_profile_ready,
+            controller_action_ready: controller_readiness.action_ready,
+        });
+        if frame_count == 0 || frame_count % 120 == 0 {
+            crate::marker(
+                "simultaneous-hands-controllers",
+                format!(
+                    "status=readiness frame={} {} {}",
+                    frame_count,
+                    controller_readiness.marker_fields(),
+                    simultaneous_hands_controllers.marker_fields(),
+                ),
+            );
+        }
         frame_timings.live_hand_ms = elapsed_ms(stage_started);
         hand_joint_capture_recorder.update_and_record(
             frame_count,
@@ -2964,7 +3129,10 @@ unsafe fn run_projection_frames(
                     cmd,
                     gpu_timestamp_tracker,
                     frame_slot,
-                    particle_sort_eye_projection,
+                    PrivateParticleFrameEyeProjections::new(
+                        private_particle_world_anchor.compute_basis_transport(),
+                        particle_sort_eye_projection,
+                    ),
                     private_particle_world_anchor.world_center_scale(),
                     private_particle_world_anchor.scale_parameter_source(),
                     private_particle_world_anchor.world_forward_axis(),
@@ -5113,6 +5281,8 @@ fn hand_forward_depth_m(
 #[derive(Clone, Copy, Debug)]
 struct PrivateParticleWorldAnchor {
     center_scale: [f32; 4],
+    right_axis: [f32; 4],
+    up_axis: [f32; 4],
     forward_axis: [f32; 4],
     initialized: bool,
     scale_parameter_source: &'static str,
@@ -5129,6 +5299,8 @@ impl PrivateParticleWorldAnchor {
                 -PRIVATE_PARTICLE_WORLD_ANCHOR_DISTANCE_M,
                 PRIVATE_PARTICLE_WORLD_ANCHOR_SCALE_M,
             ],
+            right_axis: [1.0, 0.0, 0.0, 0.0],
+            up_axis: [0.0, 1.0, 0.0, 0.0],
             forward_axis: [0.0, 0.0, -1.0, 1.0],
             initialized: false,
             scale_parameter_source: "particle-world-anchor-default",
@@ -5166,6 +5338,14 @@ impl PrivateParticleWorldAnchor {
 
     fn world_forward_axis(&self) -> [f32; 4] {
         self.forward_axis
+    }
+
+    fn compute_basis_transport(&self) -> HandMeshVisualEyeProjection {
+        HandMeshVisualEyeProjection {
+            position: self.right_axis,
+            orientation_xyzw: self.up_axis,
+            fov_tangents: self.forward_axis,
+        }
     }
 
     fn scale_parameter_source(&self) -> &'static str {
@@ -5283,18 +5463,34 @@ impl PrivateParticleWorldAnchor {
         } else {
             normalize3(forward_offset)
         };
+        let compute_basis =
+            crate::private_particle_world_basis::CapturedWorldBasis::from_orientation_xyzw(
+                eye_projection.orientation_xyzw,
+            );
         self.center_scale = [
             eye_projection.position[0] + forward_offset[0],
             eye_projection.position[1] + forward_offset[1],
             eye_projection.position[2] + forward_offset[2],
             self.center_scale[3],
         ];
+        self.right_axis = [
+            compute_basis.right[0],
+            compute_basis.right[1],
+            compute_basis.right[2],
+            0.0,
+        ];
+        self.up_axis = [
+            compute_basis.up[0],
+            compute_basis.up[1],
+            compute_basis.up[2],
+            0.0,
+        ];
         self.forward_axis = [forward_axis[0], forward_axis[1], forward_axis[2], 1.0];
         self.initialized = true;
         crate::marker(
             "private-particle-anchor",
             format!(
-                "status=captured frame={} reason={} privateParticleWorldAnchorInitialized=true privateParticleWorldAnchorFollowCamera=false privateParticleWorldAnchorCenter={:.4},{:.4},{:.4} privateParticleWorldAnchorScaleM={:.3} privateParticleWorldAnchorScaleParameterSource={} privateParticleWorldAnchorScalePollIntervalFrames={} privateParticleWorldAnchorDistanceM={:.3} privateParticleWorldAnchorForwardAxis={:.4},{:.4},{:.4} privateParticleComputeFovTangentPayload=world-anchor-forward-axis",
+                "status=captured frame={} reason={} privateParticleWorldAnchorInitialized=true privateParticleWorldAnchorFollowCamera=false privateParticleWorldAnchorCenter={:.4},{:.4},{:.4} privateParticleWorldAnchorScaleM={:.3} privateParticleWorldAnchorScaleParameterSource={} privateParticleWorldAnchorScalePollIntervalFrames={} privateParticleWorldAnchorDistanceM={:.3} privateParticleWorldAnchorForwardAxis={:.4},{:.4},{:.4} privateParticleComputeBasisSource=captured-world-anchor privateParticleComputeBasisFollowCamera=false privateParticleComputePositionPayload=world-anchor-right-axis privateParticleComputeOrientationPayload=world-anchor-up-axis privateParticleComputeFovTangentPayload=world-anchor-forward-axis",
                 frame_count,
                 reason,
                 self.center_scale[0],
@@ -6134,5 +6330,67 @@ mod tests {
         assert!(should_draw_base_hand_meshes(true, false, off));
         assert!(should_draw_base_hand_meshes(false, true, off));
         assert!(should_draw_base_hand_meshes(false, false, diagnostic));
+    }
+
+    fn eye_projection(
+        position: [f32; 3],
+        orientation_xyzw: [f32; 4],
+    ) -> HandMeshVisualEyeProjection {
+        HandMeshVisualEyeProjection {
+            position: [position[0], position[1], position[2], 0.0],
+            orientation_xyzw,
+            fov_tangents: [-0.8, 0.8, -0.7, 0.7],
+        }
+    }
+
+    #[test]
+    fn private_particle_compute_basis_does_not_follow_later_head_motion() {
+        let mut anchor = PrivateParticleWorldAnchor::new();
+        let startup = eye_projection([0.0, 1.6, 0.0], [0.0, 0.0, 0.0, 1.0]);
+        anchor.capture_startup_if_needed(startup, 1);
+        let captured = anchor.compute_basis_transport();
+
+        let later_head = eye_projection(
+            [2.0, 1.2, -3.0],
+            [
+                0.0,
+                std::f32::consts::FRAC_1_SQRT_2,
+                0.0,
+                std::f32::consts::FRAC_1_SQRT_2,
+            ],
+        );
+        anchor.capture_startup_if_needed(later_head, 2);
+        let after = anchor.compute_basis_transport();
+
+        assert_eq!(after.position, captured.position);
+        assert_eq!(after.orientation_xyzw, captured.orientation_xyzw);
+        assert_eq!(after.fov_tangents, captured.fov_tangents);
+        assert_ne!(
+            after.position[..3],
+            rotate_by_quat(later_head.orientation_xyzw, [1.0, 0.0, 0.0])
+        );
+    }
+
+    #[test]
+    fn private_particle_recenter_recaptures_the_complete_world_basis() {
+        let mut anchor = PrivateParticleWorldAnchor::new();
+        anchor.capture_startup_if_needed(eye_projection([0.0, 1.6, 0.0], [0.0, 0.0, 0.0, 1.0]), 1);
+        let before = anchor.compute_basis_transport();
+        anchor.recenter(
+            eye_projection(
+                [1.0, 1.6, 1.0],
+                [
+                    0.0,
+                    std::f32::consts::FRAC_1_SQRT_2,
+                    0.0,
+                    std::f32::consts::FRAC_1_SQRT_2,
+                ],
+            ),
+            2,
+        );
+        let after = anchor.compute_basis_transport();
+        assert_ne!(after.position, before.position);
+        assert_ne!(after.orientation_xyzw, before.orientation_xyzw);
+        assert_ne!(after.fov_tangents, before.fov_tangents);
     }
 }

@@ -6,8 +6,15 @@
     "apps/native-renderer-android/native/src/native_renderer_properties.rs",
     "apps/native-renderer-android/native/src/native_renderer_projection_swapchain_options.rs",
     "apps/native-renderer-android/native/src/native_controller_breath_state.rs",
+    "apps/native-renderer-android/native/src/breath_composition_runtime.rs",
+    "apps/native-renderer-android/native/src/breath_calibration_controller_action.rs",
+    "apps/native-renderer-android/native/src/breath_composition_driver.rs",
     "apps/native-renderer-android/native/src/embedded_manifold_broker_bridge.rs",
     "apps/native-renderer-android/native/src/private_particle_breath_state_driver.rs",
+    "apps/native-renderer-android/native/src/private_particle_heartbeat_pulse_adapter.rs",
+    "apps/native-renderer-android/native/src/polar_composition_adapters.rs",
+    "apps/native-renderer-android/native/src/same_apk_panel_action.rs",
+    "apps/native-renderer-android/native/src/simultaneous_hands_controllers.rs",
     "apps/native-renderer-android/native/src/native_renderer_display_composite_options.rs",
     "apps/native-renderer-android/native/src/native_renderer_foveation_options.rs",
     "apps/native-renderer-android/native/src/native_renderer_passthrough_style_options.rs",
@@ -17,8 +24,182 @@
     "apps/native-renderer-android/native/src/manifold_scalar_driver_bridge.rs",
     "apps/native-renderer-android/native/src/lsl_transport_bridge.rs"
   ],
-  "property_count": 268,
+  "property_count": 303,
   "properties": [
+    {
+      "name": "debug.rustyquest.native_renderer.breath_composition.activation.binding_sha256",
+      "family": "breath_composition",
+      "runtime_owner": "breath_composition_runtime",
+      "lifecycle": "startup-effective",
+      "clear_behavior": "profile-owned-explicit-set",
+      "default_behavior": "runtime-owner-default-when-unset",
+      "value_kind": "string",
+      "non_empty": true,
+      "validators": ["runtime-parser", "profile-matrix", "rusty-quest-profile", "Apply-RuntimeProfile.ps1"]
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.breath_composition.calibration.right_secondary_action.hold_seconds",
+      "family": "breath_composition",
+      "runtime_owner": "breath_calibration_controller_action",
+      "lifecycle": "startup-effective",
+      "clear_behavior": "profile-owned-explicit-set",
+      "default_behavior": "runtime-owner-default-when-unset",
+      "value_kind": "f32",
+      "range": {
+        "min": 0.5,
+        "max": 5.0
+      },
+      "validators": [
+        "runtime-parser",
+        "profile-matrix",
+        "rusty-quest-profile",
+        "Apply-RuntimeProfile.ps1"
+      ]
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.breath_composition.calibration.right_secondary_action.mode",
+      "family": "breath_composition",
+      "runtime_owner": "breath_calibration_controller_action",
+      "lifecycle": "startup-effective",
+      "clear_behavior": "profile-owned-explicit-set",
+      "default_behavior": "runtime-owner-default-when-unset",
+      "value_kind": "token",
+      "allowed_values": [
+        "disabled",
+        "right-secondary-hold-start"
+      ],
+      "validators": [
+        "runtime-parser",
+        "profile-matrix",
+        "rusty-quest-profile",
+        "Apply-RuntimeProfile.ps1"
+      ]
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.breath_composition.controller_assessment.enabled",
+      "family": "breath_composition",
+      "runtime_owner": "breath_composition_runtime",
+      "lifecycle": "startup-effective",
+      "clear_behavior": "profile-owned-explicit-set",
+      "default_behavior": "runtime-owner-default-when-unset",
+      "value_kind": "bool",
+      "validators": ["runtime-parser", "profile-matrix", "rusty-quest-profile", "Apply-RuntimeProfile.ps1"]
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.breath_composition.controller_projection",
+      "family": "breath_composition",
+      "runtime_owner": "breath_composition_runtime",
+      "lifecycle": "startup-effective",
+      "clear_behavior": "profile-owned-explicit-set",
+      "default_behavior": "runtime-owner-default-when-unset",
+      "value_kind": "token",
+      "allowed_values": ["fixed-orientation", "dynamic-axis"],
+      "validators": ["runtime-parser", "profile-matrix", "rusty-quest-profile", "Apply-RuntimeProfile.ps1"]
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.breath_composition.enabled",
+      "family": "breath_composition",
+      "runtime_owner": "breath_composition_runtime",
+      "lifecycle": "startup-effective",
+      "clear_behavior": "profile-owned-explicit-set",
+      "default_behavior": "runtime-owner-default-when-unset",
+      "value_kind": "bool",
+      "validators": ["runtime-parser", "profile-matrix", "rusty-quest-profile", "Apply-RuntimeProfile.ps1"]
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.breath_composition.inverted",
+      "family": "breath_composition",
+      "runtime_owner": "breath_composition_runtime",
+      "lifecycle": "startup-effective",
+      "clear_behavior": "profile-owned-explicit-set",
+      "default_behavior": "runtime-owner-default-when-unset",
+      "value_kind": "bool",
+      "validators": ["runtime-parser", "profile-matrix", "rusty-quest-profile", "Apply-RuntimeProfile.ps1"]
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.breath_composition.mapping",
+      "family": "breath_composition",
+      "runtime_owner": "breath_composition_runtime",
+      "lifecycle": "startup-effective",
+      "clear_behavior": "profile-owned-explicit-set",
+      "default_behavior": "runtime-owner-default-when-unset",
+      "value_kind": "token",
+      "allowed_values": ["volume", "state"],
+      "validators": ["runtime-parser", "profile-matrix", "rusty-quest-profile", "Apply-RuntimeProfile.ps1"]
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.breath_composition.panel.enabled",
+      "family": "breath_composition",
+      "runtime_owner": "breath_composition_runtime",
+      "lifecycle": "startup-effective",
+      "clear_behavior": "profile-owned-explicit-set",
+      "default_behavior": "runtime-owner-default-when-unset",
+      "value_kind": "bool",
+      "validators": ["runtime-parser", "profile-matrix", "rusty-quest-profile", "Apply-RuntimeProfile.ps1"]
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.breath_composition.polar_acc_assessment.enabled",
+      "family": "breath_composition",
+      "runtime_owner": "breath_composition_runtime",
+      "lifecycle": "startup-effective",
+      "clear_behavior": "profile-owned-explicit-set",
+      "default_behavior": "runtime-owner-default-when-unset",
+      "value_kind": "bool",
+      "validators": ["runtime-parser", "profile-matrix", "rusty-quest-profile", "Apply-RuntimeProfile.ps1"]
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.breath_composition.polar_projection",
+      "family": "breath_composition",
+      "runtime_owner": "breath_composition_runtime",
+      "lifecycle": "startup-effective",
+      "clear_behavior": "profile-owned-explicit-set",
+      "default_behavior": "runtime-owner-default-when-unset",
+      "value_kind": "token",
+      "allowed_values": ["xz", "3d"],
+      "validators": ["runtime-parser", "profile-matrix", "rusty-quest-profile", "Apply-RuntimeProfile.ps1"]
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.breath_composition.source",
+      "family": "breath_composition",
+      "runtime_owner": "breath_composition_runtime",
+      "lifecycle": "startup-effective",
+      "clear_behavior": "profile-owned-explicit-set",
+      "default_behavior": "runtime-owner-default-when-unset",
+      "value_kind": "token",
+      "allowed_values": ["controller", "polar-acc"],
+      "validators": ["runtime-parser", "profile-matrix", "rusty-quest-profile", "Apply-RuntimeProfile.ps1"]
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.breath_composition.stale_millis",
+      "family": "breath_composition",
+      "runtime_owner": "breath_composition_runtime",
+      "lifecycle": "startup-effective",
+      "clear_behavior": "profile-owned-explicit-set",
+      "default_behavior": "runtime-owner-default-when-unset",
+      "value_kind": "u64",
+      "range": {"min": 1, "max": 60000},
+      "validators": ["runtime-parser", "profile-matrix", "rusty-quest-profile", "Apply-RuntimeProfile.ps1"]
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.breath_composition.state_mapping.enabled",
+      "family": "breath_composition",
+      "runtime_owner": "breath_composition_runtime",
+      "lifecycle": "startup-effective",
+      "clear_behavior": "profile-owned-explicit-set",
+      "default_behavior": "runtime-owner-default-when-unset",
+      "value_kind": "bool",
+      "validators": ["runtime-parser", "profile-matrix", "rusty-quest-profile", "Apply-RuntimeProfile.ps1"]
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.breath_composition.volume_mapping.enabled",
+      "family": "breath_composition",
+      "runtime_owner": "breath_composition_runtime",
+      "lifecycle": "startup-effective",
+      "clear_behavior": "profile-owned-explicit-set",
+      "default_behavior": "runtime-owner-default-when-unset",
+      "value_kind": "bool",
+      "validators": ["runtime-parser", "profile-matrix", "rusty-quest-profile", "Apply-RuntimeProfile.ps1"]
+    },
     {
       "name": "debug.rustyquest.native_renderer.camera.direct_border.opacity",
       "family": "camera",
@@ -209,8 +390,47 @@
         "private-particle-config",
         "driver-profile-panel",
         "driver-profile-session",
-        "polar-sensor"
+        "polar-sensor",
+        "breath-mapping"
       ],
+      "validators": [
+        "runtime-parser",
+        "profile-matrix",
+        "rusty-quest-profile",
+        "Apply-RuntimeProfile.ps1"
+      ]
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.control_panel.right_secondary_action.mode",
+      "family": "control_panel",
+      "runtime_owner": "same_apk_panel_action",
+      "lifecycle": "startup-effective",
+      "clear_behavior": "profile-owned-explicit-set",
+      "default_behavior": "runtime-owner-default-when-unset",
+      "value_kind": "token",
+      "allowed_values": [
+        "disabled",
+        "right-secondary-triple-press-toggle"
+      ],
+      "validators": [
+        "runtime-parser",
+        "profile-matrix",
+        "rusty-quest-profile",
+        "Apply-RuntimeProfile.ps1"
+      ]
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.control_panel.right_secondary_action.window_seconds",
+      "family": "control_panel",
+      "runtime_owner": "same_apk_panel_action",
+      "lifecycle": "startup-effective",
+      "clear_behavior": "profile-owned-explicit-set",
+      "default_behavior": "runtime-owner-default-when-unset",
+      "value_kind": "f32",
+      "range": {
+        "min": 0.25,
+        "max": 30.0
+      },
       "validators": [
         "runtime-parser",
         "profile-matrix",
@@ -3045,6 +3265,195 @@
       ]
     },
     {
+      "name": "debug.rustyquest.native_renderer.private_particles.breath_composition_driver.activation.binding_sha256",
+      "family": "private_particles",
+      "runtime_owner": "breath_composition_driver",
+      "lifecycle": "startup-effective",
+      "clear_behavior": "profile-owned-explicit-set",
+      "default_behavior": "runtime-owner-default-when-unset",
+      "value_kind": "string",
+      "non_empty": true,
+      "validators": [
+        "runtime-parser",
+        "profile-matrix",
+        "rusty-quest-profile",
+        "Apply-RuntimeProfile.ps1"
+      ]
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.private_particles.breath_composition_driver.enabled",
+      "family": "private_particles",
+      "runtime_owner": "breath_composition_driver",
+      "lifecycle": "startup-effective",
+      "clear_behavior": "profile-owned-explicit-set",
+      "default_behavior": "runtime-owner-default-when-unset",
+      "value_kind": "bool",
+      "validators": [
+        "runtime-parser",
+        "profile-matrix",
+        "rusty-quest-profile",
+        "Apply-RuntimeProfile.ps1"
+      ]
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.private_particles.breath_composition_driver.exhale.rate_per_second",
+      "family": "private_particles",
+      "runtime_owner": "breath_composition_driver",
+      "lifecycle": "startup-effective",
+      "clear_behavior": "profile-owned-explicit-set",
+      "default_behavior": "runtime-owner-default-when-unset",
+      "value_kind": "f32",
+      "range": {"min": 0.0, "max": 62.5},
+      "validators": [
+        "runtime-parser",
+        "profile-matrix",
+        "rusty-quest-profile",
+        "Apply-RuntimeProfile.ps1"
+      ]
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.private_particles.breath_composition_driver.hold.policy",
+      "family": "private_particles",
+      "runtime_owner": "breath_composition_driver",
+      "lifecycle": "startup-effective",
+      "clear_behavior": "profile-owned-explicit-set",
+      "default_behavior": "runtime-owner-default-when-unset",
+      "value_kind": "token",
+      "allowed_values": ["hold", "reset-to-loss"],
+      "validators": [
+        "runtime-parser",
+        "profile-matrix",
+        "rusty-quest-profile",
+        "Apply-RuntimeProfile.ps1"
+      ]
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.private_particles.breath_composition_driver.inhale.rate_per_second",
+      "family": "private_particles",
+      "runtime_owner": "breath_composition_driver",
+      "lifecycle": "startup-effective",
+      "clear_behavior": "profile-owned-explicit-set",
+      "default_behavior": "runtime-owner-default-when-unset",
+      "value_kind": "f32",
+      "range": {"min": 0.0, "max": 62.5},
+      "validators": [
+        "runtime-parser",
+        "profile-matrix",
+        "rusty-quest-profile",
+        "Apply-RuntimeProfile.ps1"
+      ]
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.private_particles.breath_composition_driver.loss.value01",
+      "family": "private_particles",
+      "runtime_owner": "breath_composition_driver",
+      "lifecycle": "startup-effective",
+      "clear_behavior": "profile-owned-explicit-set",
+      "default_behavior": "runtime-owner-default-when-unset",
+      "value_kind": "f32",
+      "range": {"min": 0.0, "max": 1.0},
+      "validators": [
+        "runtime-parser",
+        "profile-matrix",
+        "rusty-quest-profile",
+        "Apply-RuntimeProfile.ps1"
+      ]
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.private_particles.breath_composition_driver.target_slot",
+      "family": "private_particles",
+      "runtime_owner": "breath_composition_driver",
+      "lifecycle": "startup-effective",
+      "clear_behavior": "profile-owned-explicit-set",
+      "default_behavior": "runtime-owner-default-when-unset",
+      "value_kind": "u32",
+      "range": {"min": 0, "max": 7},
+      "validators": [
+        "runtime-parser",
+        "profile-matrix",
+        "rusty-quest-profile",
+        "Apply-RuntimeProfile.ps1"
+      ]
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.private_particles.breath_state_driver.acc.axis",
+      "family": "private_particles",
+      "runtime_owner": "private_particle_breath_state_driver",
+      "lifecycle": "startup-effective",
+      "clear_behavior": "profile-owned-explicit-set",
+      "default_behavior": "runtime-owner-default-when-unset",
+      "value_kind": "token",
+      "allowed_values": [
+        "x",
+        "y",
+        "z",
+        "magnitude"
+      ],
+      "validators": [
+        "runtime-parser",
+        "profile-matrix",
+        "rusty-quest-profile",
+        "Apply-RuntimeProfile.ps1"
+      ]
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.private_particles.breath_state_driver.acc.max_mg",
+      "family": "private_particles",
+      "runtime_owner": "private_particle_breath_state_driver",
+      "lifecycle": "startup-effective",
+      "clear_behavior": "profile-owned-explicit-set",
+      "default_behavior": "runtime-owner-default-when-unset",
+      "value_kind": "f32",
+      "range": {
+        "min": -16000.0,
+        "max": 16000.0
+      },
+      "validators": [
+        "runtime-parser",
+        "profile-matrix",
+        "rusty-quest-profile",
+        "Apply-RuntimeProfile.ps1"
+      ]
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.private_particles.breath_state_driver.acc.min_mg",
+      "family": "private_particles",
+      "runtime_owner": "private_particle_breath_state_driver",
+      "lifecycle": "startup-effective",
+      "clear_behavior": "profile-owned-explicit-set",
+      "default_behavior": "runtime-owner-default-when-unset",
+      "value_kind": "f32",
+      "range": {
+        "min": -16000.0,
+        "max": 16000.0
+      },
+      "validators": [
+        "runtime-parser",
+        "profile-matrix",
+        "rusty-quest-profile",
+        "Apply-RuntimeProfile.ps1"
+      ]
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.private_particles.breath_state_driver.acc.stale_seconds",
+      "family": "private_particles",
+      "runtime_owner": "private_particle_breath_state_driver",
+      "lifecycle": "startup-effective",
+      "clear_behavior": "profile-owned-explicit-set",
+      "default_behavior": "runtime-owner-default-when-unset",
+      "value_kind": "f32",
+      "range": {
+        "min": 0.016,
+        "max": 120.0
+      },
+      "validators": [
+        "runtime-parser",
+        "profile-matrix",
+        "rusty-quest-profile",
+        "Apply-RuntimeProfile.ps1"
+      ]
+    },
+    {
       "name": "debug.rustyquest.native_renderer.private_particles.breath_state_driver.exhale.seconds.max_to_min",
       "family": "private_particles",
       "runtime_owner": "private_particle_breath_state_driver",
@@ -3280,6 +3689,101 @@
       "range": {
         "min": 0.0,
         "max": 1.0
+      },
+      "validators": [
+        "runtime-parser",
+        "profile-matrix",
+        "rusty-quest-profile",
+        "Apply-RuntimeProfile.ps1"
+      ]
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.private_particles.heartbeat_pulse.max_rr_ms",
+      "family": "private_particles",
+      "runtime_owner": "private_particle_heartbeat_pulse_adapter",
+      "lifecycle": "startup-effective",
+      "clear_behavior": "profile-owned-explicit-set",
+      "default_behavior": "runtime-owner-default-when-unset",
+      "value_kind": "f32",
+      "range": {
+        "min": 1.0,
+        "max": 60000.0
+      },
+      "validators": [
+        "runtime-parser",
+        "profile-matrix",
+        "rusty-quest-profile",
+        "Apply-RuntimeProfile.ps1"
+      ]
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.private_particles.heartbeat_pulse.min_rr_ms",
+      "family": "private_particles",
+      "runtime_owner": "private_particle_heartbeat_pulse_adapter",
+      "lifecycle": "startup-effective",
+      "clear_behavior": "profile-owned-explicit-set",
+      "default_behavior": "runtime-owner-default-when-unset",
+      "value_kind": "f32",
+      "range": {
+        "min": 1.0,
+        "max": 60000.0
+      },
+      "validators": [
+        "runtime-parser",
+        "profile-matrix",
+        "rusty-quest-profile",
+        "Apply-RuntimeProfile.ps1"
+      ]
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.private_particles.heartbeat_pulse.mode",
+      "family": "private_particles",
+      "runtime_owner": "private_particle_heartbeat_pulse_adapter",
+      "lifecycle": "startup-effective",
+      "clear_behavior": "profile-owned-explicit-set",
+      "default_behavior": "runtime-owner-default-when-unset",
+      "value_kind": "token",
+      "allowed_values": [
+        "disabled",
+        "polar-rr-event"
+      ],
+      "validators": [
+        "runtime-parser",
+        "profile-matrix",
+        "rusty-quest-profile",
+        "Apply-RuntimeProfile.ps1"
+      ]
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.private_particles.heartbeat_pulse.stale_seconds",
+      "family": "private_particles",
+      "runtime_owner": "private_particle_heartbeat_pulse_adapter",
+      "lifecycle": "startup-effective",
+      "clear_behavior": "profile-owned-explicit-set",
+      "default_behavior": "runtime-owner-default-when-unset",
+      "value_kind": "f32",
+      "range": {
+        "min": 0.016,
+        "max": 120.0
+      },
+      "validators": [
+        "runtime-parser",
+        "profile-matrix",
+        "rusty-quest-profile",
+        "Apply-RuntimeProfile.ps1"
+      ]
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.private_particles.heartbeat_pulse.target_slot",
+      "family": "private_particles",
+      "runtime_owner": "private_particle_heartbeat_pulse_adapter",
+      "lifecycle": "startup-effective",
+      "clear_behavior": "profile-owned-explicit-set",
+      "default_behavior": "runtime-owner-default-when-unset",
+      "value_kind": "u32",
+      "range": {
+        "min": 0,
+        "max": 7
       },
       "validators": [
         "runtime-parser",
@@ -4277,6 +4781,37 @@
       "name": "debug.rustyquest.native_renderer.sdf.visual.enabled",
       "family": "sdf",
       "runtime_owner": "native_renderer_options",
+      "lifecycle": "startup-effective",
+      "clear_behavior": "profile-owned-explicit-set",
+      "default_behavior": "runtime-owner-default-when-unset",
+      "value_kind": "bool",
+      "validators": [
+        "runtime-parser",
+        "profile-matrix",
+        "rusty-quest-profile",
+        "Apply-RuntimeProfile.ps1"
+      ]
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.simultaneous_hands_controllers.activation.binding_sha256",
+      "family": "simultaneous_hands_controllers",
+      "runtime_owner": "simultaneous_hands_controllers",
+      "lifecycle": "startup-effective",
+      "clear_behavior": "profile-owned-explicit-set",
+      "default_behavior": "runtime-owner-default-when-unset",
+      "value_kind": "string",
+      "non_empty": true,
+      "validators": [
+        "runtime-parser",
+        "profile-matrix",
+        "rusty-quest-profile",
+        "Apply-RuntimeProfile.ps1"
+      ]
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.simultaneous_hands_controllers.enabled",
+      "family": "simultaneous_hands_controllers",
+      "runtime_owner": "simultaneous_hands_controllers",
       "lifecycle": "startup-effective",
       "clear_behavior": "profile-owned-explicit-set",
       "default_behavior": "runtime-owner-default-when-unset",

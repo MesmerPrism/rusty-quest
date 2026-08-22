@@ -4,6 +4,7 @@ use std::{ffi::CString, mem};
 
 use ash::vk;
 
+use crate::breath_composition_driver::{BreathCompositionDriver, BreathCompositionDriverSettings};
 use crate::gpu_hand_mesh_visual::HandMeshVisualEyeProjection;
 use crate::manifold_scalar_driver_bridge::{
     ManifoldScalarDriverBridge, ManifoldScalarDriverBridgeSettings,
@@ -30,6 +31,10 @@ use crate::native_renderer_timing::{GpuTimestampStage, GpuTimestampTracker};
 use crate::private_particle_breath_state_driver::{
     PrivateParticleBreathStateDriver, PrivateParticleBreathStateDriverSettings,
 };
+use crate::private_particle_heartbeat_pulse_adapter::{
+    PrivateParticleHeartbeatPulseAdapter, PrivateParticleHeartbeatPulseAdapterSettings,
+};
+use crate::private_particle_world_basis::PrivateParticleFrameEyeProjections;
 
 include!(concat!(
     env!("OUT_DIR"),
@@ -992,6 +997,10 @@ pub(crate) struct GpuPrivateParticleRenderer {
     manifold_driver_connected_marker_emitted: bool,
     breath_state_driver: PrivateParticleBreathStateDriver,
     breath_state_driver_connected_marker_emitted: bool,
+    breath_composition_driver: BreathCompositionDriver,
+    breath_composition_driver_connected_marker_emitted: bool,
+    heartbeat_pulse_adapter: PrivateParticleHeartbeatPulseAdapter,
+    heartbeat_pulse_adapter_connected_marker_emitted: bool,
 }
 
 impl GpuPrivateParticleRenderer {
@@ -1002,6 +1011,8 @@ impl GpuPrivateParticleRenderer {
         queue: vk::Queue,
         command_pool: vk::CommandPool,
         breath_state_driver_settings: PrivateParticleBreathStateDriverSettings,
+        breath_composition_driver_settings: BreathCompositionDriverSettings,
+        heartbeat_pulse_adapter_settings: PrivateParticleHeartbeatPulseAdapterSettings,
         manifold_scalar_driver_settings: ManifoldScalarDriverBridgeSettings,
     ) -> Result<Option<Self>, String> {
         if !PRIVATE_PARTICLE_PAYLOAD_LINKED {
@@ -1145,6 +1156,10 @@ impl GpuPrivateParticleRenderer {
             breath_state_driver_settings,
             runtime_settings.driver_values01[breath_state_driver_settings.target_slot()],
         );
+        let heartbeat_pulse_adapter =
+            PrivateParticleHeartbeatPulseAdapter::new(heartbeat_pulse_adapter_settings);
+        let breath_composition_driver =
+            BreathCompositionDriver::new(breath_composition_driver_settings);
         let driver_bank_rows = private_particle_driver_bank_rows(runtime_settings);
         let driver_bank_buffer = match OwnedBuffer::new_with_data(
             device,
@@ -1605,6 +1620,17 @@ impl GpuPrivateParticleRenderer {
             "private-particle-breath-driver",
             format!("status=config {}", breath_state_driver.marker_fields()),
         );
+        crate::marker(
+            "breath-composition-driver",
+            format!(
+                "status=config {}",
+                breath_composition_driver.marker_fields()
+            ),
+        );
+        crate::marker(
+            "private-particle-heartbeat-pulse",
+            format!("status=config {}", heartbeat_pulse_adapter.marker_fields()),
+        );
         let startup_world_anchor_stats = GpuPrivateParticleFrameStats::default();
         log_private_marker(
             "created",
@@ -1669,6 +1695,10 @@ impl GpuPrivateParticleRenderer {
             manifold_driver_connected_marker_emitted: false,
             breath_state_driver,
             breath_state_driver_connected_marker_emitted: false,
+            breath_composition_driver,
+            breath_composition_driver_connected_marker_emitted: false,
+            heartbeat_pulse_adapter,
+            heartbeat_pulse_adapter_connected_marker_emitted: false,
         }))
     }
 
@@ -1755,13 +1785,62 @@ impl GpuPrivateParticleRenderer {
         }
     }
 
+    pub(crate) fn update_heartbeat_pulse_adapter(&mut self, dt_seconds: f32, frame_count: u64) {
+        if !self.heartbeat_pulse_adapter.enabled() {
+            return;
+        }
+        self.heartbeat_pulse_adapter.update_frame(dt_seconds);
+        if frame_count == 0 || frame_count % 120 == 0 {
+            crate::marker(
+                "private-particle-heartbeat-pulse",
+                format!(
+                    "status=updated frame={} {}",
+                    frame_count,
+                    self.heartbeat_pulse_adapter.marker_fields()
+                ),
+            );
+        }
+    }
+
+    pub(crate) fn update_breath_composition_driver(
+        &mut self,
+        snapshot: rusty_quest_breath_contract::composition::BreathCompositionSnapshot,
+        observed_at: rusty_quest_breath_contract::BreathTimestampMicros,
+        dt_seconds: f32,
+        frame_count: u64,
+    ) {
+        let settings = self.breath_composition_driver.settings();
+        self.breath_composition_driver
+            .update_frame(settings, snapshot, observed_at, dt_seconds);
+        crate::breath_capture::record_driver_apply(
+            frame_count,
+            observed_at.get(),
+            settings.target_slot(),
+            self.breath_composition_driver.value01(),
+            snapshot,
+        );
+        if frame_count == 0 || frame_count % 120 == 0 {
+            crate::marker(
+                "breath-composition-driver",
+                format!(
+                    "status=updated frame={} {}",
+                    frame_count,
+                    self.breath_composition_driver.marker_fields()
+                ),
+            );
+        }
+    }
+
     pub(crate) unsafe fn record_compute_frame(
         &mut self,
         device: &ash::Device,
         cmd: vk::CommandBuffer,
         gpu_timestamp_tracker: &GpuTimestampTracker,
         frame_slot: usize,
-        eye_projection: HandMeshVisualEyeProjection,
+        eye_projections: PrivateParticleFrameEyeProjections<
+            HandMeshVisualEyeProjection,
+            HandMeshVisualEyeProjection,
+        >,
         world_center_scale: [f32; 4],
         world_anchor_scale_parameter_source: &'static str,
         world_anchor_forward_axis: [f32; 4],
@@ -1824,7 +1903,7 @@ impl GpuPrivateParticleRenderer {
             draw_count,
             self.tracer_max_count,
             runtime_settings,
-            eye_projection,
+            eye_projections.compute_basis,
             world_center_scale,
             frame_count,
             phase_reset,
@@ -1924,7 +2003,8 @@ impl GpuPrivateParticleRenderer {
                 frame_slot,
                 GpuTimestampStage::PrivateParticleSort,
             );
-            let sort_count = self.record_sort_frame(device, cmd, eye_projection, draw_count);
+            let sort_count =
+                self.record_sort_frame(device, cmd, eye_projections.sort_eye, draw_count);
             gpu_timestamp_tracker.write_stage_end(
                 device,
                 cmd,
@@ -2057,6 +2137,37 @@ impl GpuPrivateParticleRenderer {
         self.breath_state_driver_connected_marker_emitted = true;
     }
 
+    fn emit_heartbeat_pulse_adapter_connected_marker(&mut self, frame_count: u64) {
+        if self.heartbeat_pulse_adapter_connected_marker_emitted {
+            return;
+        }
+        crate::marker(
+            "private-particle-heartbeat-pulse",
+            format!(
+                "status=connected frame={} privateParticleDriverParameterSource={} privateParticleHeartbeatPulseReceipt=render-thread-applied-event {}",
+                frame_count,
+                crate::sanitize(self.heartbeat_pulse_adapter.settings().parameter_source()),
+                self.heartbeat_pulse_adapter.marker_fields(),
+            ),
+        );
+        self.heartbeat_pulse_adapter_connected_marker_emitted = true;
+    }
+
+    fn emit_breath_composition_driver_connected_marker(&mut self, frame_count: u64) {
+        if self.breath_composition_driver_connected_marker_emitted {
+            return;
+        }
+        crate::marker(
+            "breath-composition-driver",
+            format!(
+                "status=connected frame={} breathCompositionDriverReceipt=render-thread-applied-neutral-slot {}",
+                frame_count,
+                self.breath_composition_driver.marker_fields(),
+            ),
+        );
+        self.breath_composition_driver_connected_marker_emitted = true;
+    }
+
     fn runtime_settings(&mut self, frame_count: u64) -> PrivateParticleRuntimeSettings {
         let has_input_driver = self
             .panel_settings_override
@@ -2092,6 +2203,21 @@ impl GpuPrivateParticleRenderer {
             {
                 driver_parameter_source = self.breath_state_driver.settings().parameter_source();
                 self.emit_breath_state_driver_connected_marker(frame_count);
+            }
+            if self
+                .breath_composition_driver
+                .apply_to_driver_values(&mut next.driver_values01)
+            {
+                driver_parameter_source = "breath-composition-closed-world";
+                self.emit_breath_composition_driver_connected_marker(frame_count);
+            }
+            if self
+                .heartbeat_pulse_adapter
+                .apply_to_driver_values(&mut next.driver_values01)
+            {
+                driver_parameter_source =
+                    self.heartbeat_pulse_adapter.settings().parameter_source();
+                self.emit_heartbeat_pulse_adapter_connected_marker(frame_count);
             }
             next.apply_driver_source_values(next.driver_values01, driver_parameter_source);
             self.driver_source_values01 = next.driver_bank_values01;
@@ -2129,7 +2255,11 @@ impl GpuPrivateParticleRenderer {
             }
             self.runtime_settings = next;
             self.runtime_settings_last_poll_frame = frame_count;
-        } else if has_input_driver || self.breath_state_driver.enabled() {
+        } else if has_input_driver
+            || self.breath_state_driver.enabled()
+            || self.breath_composition_driver.settings().enabled()
+            || self.heartbeat_pulse_adapter.enabled()
+        {
             let mut next = self.runtime_settings;
             let mut driver_parameter_source = next.driver_parameter_source;
             if let Some(bridge) = self.manifold_driver_bridge.as_ref() {
@@ -2143,6 +2273,21 @@ impl GpuPrivateParticleRenderer {
             {
                 driver_parameter_source = self.breath_state_driver.settings().parameter_source();
                 self.emit_breath_state_driver_connected_marker(frame_count);
+            }
+            if self
+                .breath_composition_driver
+                .apply_to_driver_values(&mut self.driver_source_values01)
+            {
+                driver_parameter_source = "breath-composition-closed-world";
+                self.emit_breath_composition_driver_connected_marker(frame_count);
+            }
+            if self
+                .heartbeat_pulse_adapter
+                .apply_to_driver_values(&mut self.driver_source_values01)
+            {
+                driver_parameter_source =
+                    self.heartbeat_pulse_adapter.settings().parameter_source();
+                self.emit_heartbeat_pulse_adapter_connected_marker(frame_count);
             }
             next.apply_driver_source_values(self.driver_source_values01, driver_parameter_source);
             if let Some(panel_override) = self.panel_settings_override {

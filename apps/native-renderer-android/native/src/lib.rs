@@ -11,6 +11,13 @@ const PLAN_JSON: &str =
     include_str!("../../../../fixtures/native-renderer/native-hwb-blur-sdf-public.plan.json");
 const MARKER_PREFIX: &str = "RUSTY_QUEST_NATIVE_RENDERER";
 
+mod bounded_breath_phase_integrator;
+mod breath_calibration_controller_action;
+mod breath_capture;
+mod breath_composition_driver;
+mod breath_composition_runtime;
+mod breath_input_selection;
+
 #[cfg(target_os = "android")]
 mod acamera_sys;
 #[cfg(target_os = "android")]
@@ -100,21 +107,30 @@ mod native_renderer_stimulus_volume_options;
 mod native_renderer_timing;
 mod native_renderer_video_projection_options;
 mod native_renderer_visual_options;
+mod openxr_controller_breath_adapter;
 #[cfg(target_os = "android")]
 mod openxr_environment_depth;
 #[cfg(target_os = "android")]
 mod openxr_passthrough_style;
 #[cfg(target_os = "android")]
+mod openxr_simultaneous_hands_controllers;
+#[cfg(target_os = "android")]
 mod openxr_stimulus_actions;
 mod particle_adapter_consumer;
+mod polar_acc_breath_adapter;
+mod polar_composition_adapters;
 #[cfg(target_os = "android")]
 mod private_extension_slot;
 mod private_particle_breath_state_driver;
+mod private_particle_heartbeat_pulse_adapter;
+mod private_particle_world_basis;
 mod projection_rect;
 mod projection_target_state;
 mod recorded_hand_replay;
 #[cfg(target_os = "android")]
 mod remote_camera_projection_native_stream;
+mod same_apk_panel_action;
+mod simultaneous_hands_controllers;
 #[cfg(target_os = "android")]
 mod video_projection;
 mod video_projection_metadata;
@@ -145,6 +161,7 @@ fn android_on_create(_state: &android_activity::OnCreateState) {
         "activity-created",
         "entrypoint=NativeActivity rustNativeActivity=true javaPackaged=true panelActivity=ControlPanelActivity",
     );
+    breath_composition_runtime::install_from_android_properties();
     let particle_adapter_input = particle_adapter_consumer::load_runtime_input();
     let particle_adapter_decision =
         particle_adapter_consumer::resolve_activation(&particle_adapter_input);
@@ -160,6 +177,23 @@ fn android_on_create(_state: &android_activity::OnCreateState) {
     );
     let runtime_options =
         native_renderer_options::NativeRendererRuntimeOptions::load_from_android_properties();
+    let simultaneous_hands_controllers_decision =
+        simultaneous_hands_controllers::resolve_activation(
+            runtime_options.simultaneous_hands_controllers_settings,
+            hand_adapter_decision.is_applied(),
+        );
+    marker(
+        "simultaneous-hands-controllers-activation",
+        simultaneous_hands_controllers_decision
+            .marker_fields(runtime_options.simultaneous_hands_controllers_settings),
+    );
+    if simultaneous_hands_controllers_decision.is_rejected() {
+        marker(
+            "adapter-lock-admission",
+            "status=rejected reason=simultaneous-hands-controllers-activation-rejected effectsStarted=false permissionsRequested=false sceneStarted=false inputStarted=false mediaStarted=false",
+        );
+        return;
+    }
     let particle_effect_request = particle_adapter_effect_request(&runtime_options);
     let hand_effect_request = hand_adapter_effect_request(&runtime_options);
     if !particle_adapter_consumer::effects_authorized(
@@ -359,6 +393,24 @@ fn android_main(app: android_activity::AndroidApp) {
         );
     let runtime_options =
         native_renderer_stimulus_panel::apply_app_private_candidate(&app, runtime_options);
+    let simultaneous_hands_controllers_decision =
+        simultaneous_hands_controllers::resolve_activation(
+            runtime_options.simultaneous_hands_controllers_settings,
+            hand_adapter_decision.is_applied(),
+        );
+    marker(
+        "simultaneous-hands-controllers-activation",
+        simultaneous_hands_controllers_decision
+            .marker_fields(runtime_options.simultaneous_hands_controllers_settings),
+    );
+    if simultaneous_hands_controllers_decision.is_rejected() {
+        marker(
+            "adapter-lock-admission",
+            "status=rejected reason=simultaneous-hands-controllers-activation-rejected effectsStarted=false permissionsRequested=false sceneStarted=false inputStarted=false mediaStarted=false",
+        );
+        keep_activity_alive_after_error(app);
+        return;
+    }
     let particle_effect_request = particle_adapter_effect_request(&runtime_options);
     let hand_effect_request = hand_adapter_effect_request(&runtime_options);
     if !particle_adapter_consumer::effects_authorized(
@@ -376,6 +428,17 @@ fn android_main(app: android_activity::AndroidApp) {
         marker(
             "adapter-lock-admission",
             "status=rejected reason=hand-effects-require-applied-lock effectsStarted=false permissionsRequested=false sceneStarted=false inputStarted=false mediaStarted=false",
+        );
+        keep_activity_alive_after_error(app);
+        return;
+    }
+    let xr_vulkan_readiness = xr_vulkan::probe(&app, simultaneous_hands_controllers_decision);
+    if simultaneous_hands_controllers_decision.is_selected()
+        && !xr_vulkan_readiness.simultaneous_hands_controllers_probe_ready
+    {
+        marker(
+            "simultaneous-hands-controllers",
+            "status=rejected reason=probe-preconditions-failed effectsStarted=false sceneStarted=false inputStarted=false mediaStarted=false",
         );
         keep_activity_alive_after_error(app);
         return;
@@ -470,8 +533,6 @@ fn android_main(app: android_activity::AndroidApp) {
         &runtime_options.video_projection_settings,
     );
 
-    let xr_vulkan_readiness = xr_vulkan::probe(&app);
-
     let camera_runtime = if runtime_options.render_mode.uses_custom_stereo_projection()
         && runtime_options.camera_output_mode.camera_import_enabled()
     {
@@ -538,7 +599,12 @@ fn android_main(app: android_activity::AndroidApp) {
         ),
     );
 
-    match xr_vulkan::run_projection_loop(&app, camera_runtime.as_ref(), runtime_options) {
+    match xr_vulkan::run_projection_loop(
+        &app,
+        camera_runtime.as_ref(),
+        runtime_options,
+        simultaneous_hands_controllers_decision,
+    ) {
         Ok(()) => marker(
             "render-loop",
             "status=stopped reason=openxr-projection-loop-finished",

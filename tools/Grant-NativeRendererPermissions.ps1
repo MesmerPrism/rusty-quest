@@ -113,6 +113,7 @@ if (-not [string]::IsNullOrWhiteSpace($outDir)) {
 }
 
 $defaultPermissions = @(
+    "android.permission.ACCESS_COARSE_LOCATION",
     "android.permission.ACCESS_FINE_LOCATION",
     "android.permission.BLUETOOTH",
     "android.permission.BLUETOOTH_ADMIN",

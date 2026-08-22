@@ -54,6 +54,76 @@ apps.
   device-owner installation, Store launcher authority, and Android Package
   Installer confirmation on the wearer's behalf.
 
+## Pure Breath Contract
+
+`crates/rusty-quest-breath-contract` owns a source-neutral, dependency-free
+control core. Callers inject every timestamp and explicitly invoke
+Reset/Configure/Start/Cancel/Observe. A successful Start issues a fresh
+generation; old-generation actions cannot mutate the current generation.
+Normalized value and quality inputs are finite and bounded, replay length is
+bounded, and missing, stale, malformed, out-of-order, backwards-time, and
+forward-discontinuity outcomes remain distinct in neutral low-rate telemetry.
+
+The crate's calibration module accepts only source-neutral timed three-vector
+frames. It separates at-most-10-Hz analysis admission from the live response
+path, counts accepted motion frames, uses a virtual-time watchdog, and fits a
+deterministically directed PCA model over all coordinates or XZ. Fifth and
+ninety-fifth percentiles define initial bounds; median-of-five plus EMA handles
+live filtering, and adaptive expansion/contraction is step- and extent-bounded.
+Generation, lifecycle, malformed input, timeout cause, degenerate axis, and
+insufficient span all remain typed and fail closed.
+
+The crate's common assessment boundary carries optional bounded volume, a
+minimal normalized phase, calibration lifecycle, tracking state, and quality.
+The separate pure phase owner accepts only a bounded normalized scalar and
+injected timestamps. It owns derivative-per-second filtering, enter/exit
+hysteresis, confirmation, minimum dwell, genuine Hold, inversion, candidate
+telemetry, and typed history reset; it owns no source acquisition. Native
+Renderer owns the separate controller adapter that validates OpenXR pose
+frames, preserves the existing
+rotation/motion/tracking guards, selects fixed-orientation or dynamic-axis
+calibration, normalizes its established classifier into the common vocabulary,
+and emits concurrent phase and volume without application mapping. Its Polar
+adapter translates typed PMD/JNI ACC frames into calibrated XZ or 3D volume and
+feeds only ready calibrated volume to the pure phase owner. RR never enters
+that path.
+
+The pure composition boundary selects one assessment source and one mapping
+independently through an exact capability closure. A mapping-only change
+retains the active generation and calibrated estimator; source, projection, or
+direction changes clear it. Native Renderer owns the single-process adapter:
+the existing OpenXR action owner supplies controller assessments, the existing
+PMD/JNI owner supplies Polar ACC, and RR is never consumed by the breath
+runtime. `ControlPanelActivity` submits low-rate requests and displays only
+native-effective readback while reusing its sole Polar acquisition owner for
+the ACC scan/connect/start path. The organized panel, fixed operator action,
+and optional right-secondary hold all dispatch the same atomic calibration
+start operation; app-private correlated JSON and neutral markers are the
+readback authority. Polar ACC JNI ingress advances this shared native state
+even while the Android panel is foreground, while controller pose evidence
+remains owned by the OpenXR session and must be proven separately for
+foreground/background focus. Adapter action admission is bounded and
+transactional; calibration readback is fenced by the exact running source and
+generation, and action-sync failure still advances missing/stale clearing.
+The source-only resolver records the exact feature closure and a deterministic
+activation binding in the runtime profile, settings/property adapters, and
+locked build environment. The native runtime activates only when the observed
+property equals the resolver-derived digest packaged into that specific build;
+missing, malformed, mismatched, disabled, and unselected closures remain inert.
+
+The Native Renderer also owns a bounded app-private synchronized capture sink
+for its existing controller/OpenXR and Polar PMD/JNI owners. It records source
+samples, neutral assessments, and generic driver applies with their distinct
+clocks, but it does not select a source, own a sensor, or interpret a driver
+slot. ACC presentation is an adapter-local choice between newest-target
+frame-cadence smoothing and a short timestamp-faithful buffer; both retain the
+same raw samples. `docs/BREATH_SOURCE_CAPTURE.md` defines the private capture
+and host-only analysis contract.
+
+The crate owns no source acquisition, source-specific units or deadbands,
+UI, transport, platform lifecycle, rendering, or application interpretation.
+Crate presence alone activates nothing.
+
 ## Attended Package Updater
 
 `crates/rusty-quest-package-updater` owns the strict
@@ -346,6 +416,37 @@ background projection, resident GPU hand meshes, public blur processing, or
 public SDF/hand-resource hooks. New examples should stay inside this route
 unless they specifically need a Makepad UI shell or a Manifold-controlled
 operator app.
+
+### Simultaneous hands and controllers
+
+`input.simultaneous_hands_and_controllers` is a closed, disabled-by-default
+native-renderer feature. Its resolver-derived binding covers the app spec,
+selected descriptor closure, and pre-binding runtime settings. Runtime
+admission additionally requires the exact existing hand-adapter lock; a
+property-only, stale, malformed, or unapplied selection remains inert before
+scene or input effects.
+
+The adapter uses the renderer's existing instance, system, session, function
+loader, action set, and frame loop. When selected it alone enables the
+[`XR_META_simultaneous_hands_and_controllers`](https://registry.khronos.org/OpenXR/specs/1.1/man/html/XR_META_simultaneous_hands_and_controllers.html)
+instance extension, which is revision 1 and not ratified. It chains
+[`XrSystemSimultaneousHandsAndControllersPropertiesMETA`](https://registry.khronos.org/OpenXR/specs/1.1/man/html/XrSystemSimultaneousHandsAndControllersPropertiesMETA.html)
+into `xrGetSystemProperties`, requires support, resolves the extension function
+table, and calls
+[`xrResumeSimultaneousHandsAndControllersTrackingMETA`](https://registry.khronos.org/OpenXR/specs/1.1/man/html/xrResumeSimultaneousHandsAndControllersTrackingMETA.html)
+once for the current session generation. Duplicate lifecycle application is
+inert. Normal deactivation and safe teardown use the idempotent
+[`xrPauseSimultaneousHandsAndControllersTrackingMETA`](https://registry.khronos.org/OpenXR/specs/1.1/man/html/xrPauseSimultaneousHandsAndControllersTrackingMETA.html);
+session or instance loss hard-resets generation state without calling stale
+handles. `XR_META_detached_controllers` is outside this adapter.
+
+Evidence keeps extension enablement/support/resume separate from input truth.
+Hand readiness requires the applied hand lock, a ready tracker, a current
+compact frame, and an active visualizable hand. Controller readiness requires
+the attached action set, a recognized controller interaction profile, and an
+active controller action. Only their current-generation conjunction may emit
+`simultaneousHandsControllersReady=true`; neither hands-only nor
+controller-only can substitute for combined mode.
 
 The package is a Quest platform adapter. It consumes the validated public
 native-renderer plan fixture as an APK asset, requests Android/headset/spatial

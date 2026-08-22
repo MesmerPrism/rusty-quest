@@ -1,8 +1,18 @@
 //! OpenXR action boundary for native renderer controller controls.
 
 use openxr as xr;
+use rusty_quest_breath_contract::{
+    assessment::BreathAssessmentObservation,
+    composition::{BreathCompositionSource, ControllerProjectionSelection},
+    BreathTimestampMicros,
+};
 
 use crate::{
+    breath_calibration_controller_action::{
+        BreathCalibrationControllerAction, BreathCalibrationControllerActionSettings,
+    },
+    breath_composition_runtime::AdapterAction,
+    breath_input_selection::ControllerVolumeKind,
     environment_depth_alignment_state::{
         EnvironmentDepthAlignmentInput, EnvironmentDepthAlignmentSettings,
     },
@@ -14,11 +24,15 @@ use crate::{
     },
     native_controller_breath_state::{
         NativeControllerBreathPoseSample, NativeControllerBreathSample,
-        NativeControllerBreathStateEstimator,
     },
     native_renderer_options::NativeStimulusVolumeSettings,
+    openxr_controller_breath_adapter::{
+        ControllerVolumeProjection, ControllerVolumeSettings, OpenXrControllerBreathAdapter,
+        OpenXrControllerPoseFrame, OpenXrControllerPoseInput,
+    },
     private_particle_breath_state_driver::PrivateParticleBreathStateDriverSettings,
     projection_target_state::{ProjectionTargetInput, ProjectionTargetSettings},
+    same_apk_panel_action::{SameApkPanelAction, SameApkPanelActionSettings},
 };
 
 const RIGHT_HAND_HAPTIC_OUTPUT_PATH: &str = "/user/hand/right/output/haptic";
@@ -28,13 +42,27 @@ const BREATH_HAPTIC_PULSE_DURATION_MS: i64 = 100;
 const BREATH_HAPTIC_PULSE_DURATION_NANOS: i64 = BREATH_HAPTIC_PULSE_DURATION_MS * 1_000_000;
 const BREATH_HAPTIC_AMPLITUDE: f32 = 0.45;
 
+fn xr_time_micros(value: xr::Time) -> BreathTimestampMicros {
+    let nanos = value.as_nanos();
+    BreathTimestampMicros::new(u64::try_from(nanos).unwrap_or_default() / 1_000)
+}
+
+fn right_thumbstick_binding_enabled(
+    projection_controls_enabled: bool,
+    projection_joystick_controls_enabled: bool,
+    capture_annotation_feature_active: bool,
+) -> bool {
+    (projection_controls_enabled && projection_joystick_controls_enabled)
+        || capture_annotation_feature_active
+}
+
 pub(crate) struct StimulusVolumeActions {
     action_set: xr::ActionSet,
     right_primary_randomize: xr::Action<bool>,
     right_trigger_panel_toggle: xr::Action<f32>,
     right_select_panel_toggle: xr::Action<bool>,
     right_primary_reset: xr::Action<bool>,
-    right_secondary_scale_driver_toggle: xr::Action<bool>,
+    right_secondary_action: xr::Action<bool>,
     right_thumbstick_y: xr::Action<f32>,
     left_thumbstick_x: xr::Action<f32>,
     left_thumbstick_y: xr::Action<f32>,
@@ -42,7 +70,8 @@ pub(crate) struct StimulusVolumeActions {
     right_breath_haptic: xr::Action<xr::Haptic>,
     right_hand_subaction_path: xr::Path,
     right_grip_space: Option<xr::Space>,
-    native_controller_breath_state: NativeControllerBreathStateEstimator,
+    action_set_attached: bool,
+    native_controller_breath_assessment: OpenXrControllerBreathAdapter,
     breath_haptic_cadence: BreathHapticCadence,
     breath_haptic_pulse_count: u64,
     breath_haptic_error_count: u64,
@@ -56,8 +85,9 @@ pub(crate) struct StimulusVolumeActions {
     previous_right_trigger_panel_toggle_pressed: bool,
     previous_right_select_panel_toggle_pressed: bool,
     previous_right_primary_reset_pressed: bool,
-    previous_right_secondary_scale_driver_toggle_pressed: bool,
+    previous_right_secondary_pressed: bool,
     suggested_binding_count: usize,
+    right_thumbstick_binding_enabled: bool,
     stimulus_settings: NativeStimulusVolumeSettings,
     projection_target_settings: ProjectionTargetSettings,
     private_particle_breath_state_driver_settings: PrivateParticleBreathStateDriverSettings,
@@ -65,18 +95,46 @@ pub(crate) struct StimulusVolumeActions {
     private_particle_recenter_enabled: bool,
     right_primary_control_panel_enabled: bool,
     right_primary_reset_enabled: bool,
+    same_apk_panel_action: SameApkPanelAction,
+    breath_calibration_controller_action: BreathCalibrationControllerAction,
+    breath_calibration_controller_action_selected: bool,
 }
 
 #[derive(Debug, Default)]
 pub(crate) struct NativeRendererControllerEvents {
+    pub(crate) breath_observed_at: Option<BreathTimestampMicros>,
     pub(crate) stimulus_randomize_triggered: bool,
     pub(crate) panel_toggle_triggered: bool,
+    pub(crate) panel_toggle_source: Option<&'static str>,
     pub(crate) private_particle_recenter_triggered: bool,
     pub(crate) projection_target_inputs: Vec<ProjectionTargetInput>,
     pub(crate) environment_depth_alignment_inputs: Vec<EnvironmentDepthAlignmentInput>,
     pub(crate) native_controller_breath_sample: Option<NativeControllerBreathSample>,
+    pub(crate) native_controller_breath_assessment: Option<BreathAssessmentObservation>,
     pub(crate) right_grip_pose_active: bool,
     pub(crate) right_grip_pose_tracked: bool,
+    pub(crate) controller_readiness: ControllerActionReadiness,
+}
+
+#[derive(Clone, Debug, Default)]
+pub(crate) struct ControllerActionReadiness {
+    pub(crate) action_set_ready: bool,
+    pub(crate) interaction_profile_ready: bool,
+    pub(crate) action_ready: bool,
+    pub(crate) interaction_profile: String,
+}
+
+impl ControllerActionReadiness {
+    pub(crate) fn marker_fields(&self) -> String {
+        format!(
+            "controllerActionSetReady={} controllerInteractionProfileReady={} controllerActionReady={} controllerInteractionProfile={} controllerPhysicalInputObserved={} handsCannotSubstituteController=true",
+            self.action_set_ready,
+            self.interaction_profile_ready,
+            self.action_ready,
+            crate::sanitize(&self.interaction_profile),
+            self.action_ready,
+        )
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -114,13 +172,24 @@ impl StimulusVolumeActions {
         stimulus_settings: NativeStimulusVolumeSettings,
         projection_target_settings: ProjectionTargetSettings,
         private_particle_breath_state_driver_settings: PrivateParticleBreathStateDriverSettings,
+        same_apk_panel_action_settings: SameApkPanelActionSettings,
+        breath_calibration_controller_action_settings: BreathCalibrationControllerActionSettings,
         environment_depth_alignment_settings: EnvironmentDepthAlignmentSettings,
         private_particle_recenter_enabled: bool,
     ) -> Result<Option<Self>, String> {
+        let breath_calibration_controller_action_selected =
+            breath_calibration_controller_action_settings.enabled()
+                && crate::breath_composition_runtime::feature_lock_active();
+        let controller_capture_annotation_feature_active =
+            crate::breath_composition_runtime::feature_lock_active();
         if !stimulus_settings.enabled
             && !projection_target_settings.controls_enabled
             && !environment_depth_alignment_settings.controls_enabled
-            && !private_particle_breath_state_driver_settings.uses_native_controller_state()
+            && !private_particle_breath_state_driver_settings.uses_native_controller_assessment()
+            && !same_apk_panel_action_settings.enabled()
+            && !breath_calibration_controller_action_selected
+            && !controller_capture_annotation_feature_active
+            && !crate::breath_composition_runtime::controller_adapter_available()
             && !private_particle_recenter_enabled
         {
             crate::marker(
@@ -129,7 +198,11 @@ impl StimulusVolumeActions {
             );
             crate::marker(
                 "projection-target-input",
-                "status=disabled reason=projection-target-controls-disabled actionSetAttached=false rightThumbstickYAction=false rightPrimaryResetAction=false rightSecondaryScaleDriverToggleAction=false rightGripPoseAction=false",
+                format!(
+                    "status=disabled reason=projection-target-controls-disabled actionSetAttached=false rightThumbstickYAction={} controllerCaptureAnnotationFeatureActive={} rightPrimaryResetAction=false rightSecondaryScaleDriverToggleAction=false rightGripPoseAction=false",
+                    controller_capture_annotation_feature_active,
+                    controller_capture_annotation_feature_active,
+                ),
             );
         }
 
@@ -161,10 +234,10 @@ impl StimulusVolumeActions {
         let right_primary_reset = action_set
             .create_action::<bool>("right_primary_reset", "Right Primary Reset", &[])
             .map_err(|error| format!("create projection target reset action: {error}"))?;
-        let right_secondary_scale_driver_toggle = action_set
+        let right_secondary_action = action_set
             .create_action::<bool>(
-                "right_secondary_scale_driver_toggle",
-                "Right Secondary Scale Driver Toggle",
+                "right_secondary_action",
+                "Right Secondary Composition Action",
                 &[],
             )
             .map_err(|error| {
@@ -196,11 +269,22 @@ impl StimulusVolumeActions {
             && stimulus_settings.randomize_enabled)
             || right_primary_control_panel_binding_enabled;
         let projection_controls_enabled = projection_target_settings.controls_enabled;
+        let right_secondary_panel_action_enabled = same_apk_panel_action_settings.enabled();
+        let right_secondary_calibration_action_enabled =
+            breath_calibration_controller_action_selected;
+        let right_secondary_binding_enabled = projection_controls_enabled
+            || right_secondary_panel_action_enabled
+            || right_secondary_calibration_action_enabled;
         let primary_recenter_binding_enabled = (projection_controls_enabled
             || private_particle_recenter_enabled)
             && !right_primary_control_panel_binding_enabled;
         let projection_joystick_binding_enabled =
             projection_controls_enabled && projection_target_settings.joystick_controls_enabled;
+        let right_thumbstick_binding_enabled = right_thumbstick_binding_enabled(
+            projection_controls_enabled,
+            projection_target_settings.joystick_controls_enabled,
+            controller_capture_annotation_feature_active,
+        );
         let depth_alignment_joystick_binding_enabled = environment_depth_alignment_settings
             .controls_enabled
             && environment_depth_alignment_settings.joystick_controls_enabled;
@@ -212,18 +296,58 @@ impl StimulusVolumeActions {
             && projection_target_settings
                 .breath_bridge_mode
                 .uses_native_controller_state();
-        let private_particle_breath_configured =
+        let private_particle_breath_state_configured =
             private_particle_breath_state_driver_settings.uses_native_controller_state();
-        let native_controller_breath_configured =
-            projection_native_controller_breath_configured || private_particle_breath_configured;
+        let private_particle_breath_assessment_configured =
+            private_particle_breath_state_driver_settings.uses_native_controller_assessment();
+        let native_controller_breath_configured = projection_native_controller_breath_configured
+            || private_particle_breath_assessment_configured
+            || crate::breath_composition_runtime::controller_adapter_available();
         let manifold_pose_config =
             manifold_pose_config_from_projection_settings(&projection_target_settings);
         let right_grip_pose_binding_enabled = breath_haptics_configured
             || native_controller_breath_configured
             || manifold_pose_config.enabled;
-        let native_controller_breath_state = NativeControllerBreathStateEstimator::new(
-            projection_target_settings.native_controller_breath_settings,
-        );
+        let composition_request = crate::breath_composition_runtime::effective_request();
+        let volume_projection = if composition_request
+            .is_some_and(|request| request.source == BreathCompositionSource::Controller)
+        {
+            match composition_request
+                .expect("checked composition request")
+                .controller_projection
+            {
+                ControllerProjectionSelection::FixedOrientation => {
+                    ControllerVolumeProjection::FixedOrientation
+                }
+                ControllerProjectionSelection::DynamicAxis => {
+                    ControllerVolumeProjection::DynamicMotionAxis
+                }
+            }
+        } else {
+            match private_particle_breath_state_driver_settings.controller_volume_kind() {
+                Some(ControllerVolumeKind::DynamicMotionAxis) => {
+                    ControllerVolumeProjection::DynamicMotionAxis
+                }
+                Some(ControllerVolumeKind::FixedOrientation) | None => {
+                    ControllerVolumeProjection::FixedOrientation
+                }
+            }
+        };
+        let phase_settings = projection_target_settings.native_controller_breath_settings;
+        let mut calibration_parameters =
+            rusty_quest_breath_contract::calibration::CalibrationParameters::default();
+        calibration_parameters.inverted = composition_request.is_some_and(|request| {
+            request.source == BreathCompositionSource::Controller && request.inverted
+        });
+        let volume_settings = ControllerVolumeSettings::new(
+            volume_projection,
+            phase_settings.orientation_axis.map(f64::from),
+            f64::from(phase_settings.rotation_guard_degrees),
+            calibration_parameters,
+        )
+        .map_err(|error| format!("configure controller breath assessment: {error:?}"))?;
+        let native_controller_breath_assessment =
+            OpenXrControllerBreathAdapter::new(phase_settings, volume_settings);
 
         let mut suggested_binding_count = 0_usize;
         for profile in INTERACTION_PROFILES {
@@ -265,18 +389,15 @@ impl StimulusVolumeActions {
                 let input = instance.string_to_path(input_path).map_err(|error| {
                     format!("create OpenXR path for secondary input {input_path}: {error}")
                 })?;
-                if projection_controls_enabled {
-                    bindings.push(xr::Binding::new(
-                        &right_secondary_scale_driver_toggle,
-                        input,
-                    ));
+                if right_secondary_binding_enabled {
+                    bindings.push(xr::Binding::new(&right_secondary_action, input));
                 }
             }
             if let Some(input_path) = profile.right_thumbstick_y_path {
                 let input = instance.string_to_path(input_path).map_err(|error| {
                     format!("create OpenXR path for thumbstick Y input {input_path}: {error}")
                 })?;
-                if projection_joystick_binding_enabled {
+                if right_thumbstick_binding_enabled {
                     bindings.push(xr::Binding::new(&right_thumbstick_y, input));
                 }
             }
@@ -332,13 +453,13 @@ impl StimulusVolumeActions {
                             profile.right_trigger_value_path.is_some(),
                             profile.right_select_fallback_path.is_some(),
                             profile.right_thumbstick_y_path.is_some()
-                                && projection_joystick_binding_enabled,
+                                && right_thumbstick_binding_enabled,
                             profile.left_thumbstick_x_path.is_some()
                                 && depth_alignment_joystick_binding_enabled,
                             profile.left_thumbstick_y_path.is_some()
                                 && depth_alignment_joystick_binding_enabled,
                             profile.right_primary_path.is_some() && primary_recenter_binding_enabled,
-                            profile.right_secondary_path.is_some() && projection_controls_enabled,
+                            profile.right_secondary_path.is_some() && right_secondary_binding_enabled,
                             profile.right_grip_pose_path.is_some() && right_grip_pose_binding_enabled,
                             profile.right_haptic_output_path.is_some() && breath_haptics_configured,
                         ),
@@ -370,12 +491,12 @@ impl StimulusVolumeActions {
             format!(
                 "status=config actionSet=stimulus_volume projectionTargetControlsEnabled={} rightThumbstickYAction={} rightControllerThumbstickY=/user/hand/right/input/thumbstick/y rightPrimaryResetAction={} rightControllerPrimaryReset=/user/hand/right/input/a/click rightSecondaryScaleDriverToggleAction={} rightControllerSecondaryScaleDriverToggle=/user/hand/right/input/b/click rightGripPoseAction={} optionalRightGripPose=/user/hand/right/input/grip/pose nativeControllerBreathStateConfigured={} nativeControllerBreathStateSource=right-grip-pose privateParticleBreathStateDriverConfigured={} rightBreathHapticAction={} rightBreathHaptic={} rightBreathHapticSubaction={} breathHapticsConfigured={} breathHapticRequiresScaleDriver=pmb breathHapticRequiresRightGripTracked=true breathHapticPulseHz={:.3} breathHapticAmplitude={:.3} breathHapticDurationMs={} breathHapticFrequencyHz=runtime-default actionSetAttached=false highRatePoseViaAndroidProperties=false highRateBreathViaAndroidProperties=false",
                 projection_target_settings.controls_enabled,
-                projection_joystick_binding_enabled,
+                right_thumbstick_binding_enabled,
                 primary_recenter_binding_enabled,
                 projection_controls_enabled,
                 right_grip_pose_binding_enabled,
                 native_controller_breath_configured,
-                private_particle_breath_configured,
+                private_particle_breath_state_configured,
                 breath_haptics_configured,
                 RIGHT_HAND_HAPTIC_OUTPUT_PATH,
                 RIGHT_HAND_SUBACTION_PATH,
@@ -383,6 +504,15 @@ impl StimulusVolumeActions {
                 breath_haptic_pulse_hz(),
                 BREATH_HAPTIC_AMPLITUDE,
                 BREATH_HAPTIC_PULSE_DURATION_MS,
+            ),
+        );
+        crate::marker(
+            "same-apk-panel-action",
+            format!(
+                "status=config rightSecondaryBindingEnabled={} {} {}",
+                right_secondary_binding_enabled,
+                same_apk_panel_action_settings.marker_fields(),
+                breath_calibration_controller_action_settings.marker_fields(),
             ),
         );
         crate::marker(
@@ -426,7 +556,7 @@ impl StimulusVolumeActions {
             right_trigger_panel_toggle,
             right_select_panel_toggle,
             right_primary_reset,
-            right_secondary_scale_driver_toggle,
+            right_secondary_action,
             right_thumbstick_y,
             left_thumbstick_x,
             left_thumbstick_y,
@@ -434,7 +564,8 @@ impl StimulusVolumeActions {
             right_breath_haptic,
             right_hand_subaction_path,
             right_grip_space: None,
-            native_controller_breath_state,
+            action_set_attached: false,
+            native_controller_breath_assessment,
             breath_haptic_cadence: BreathHapticCadence::new_ready(),
             breath_haptic_pulse_count: 0,
             breath_haptic_error_count: 0,
@@ -448,8 +579,9 @@ impl StimulusVolumeActions {
             previous_right_trigger_panel_toggle_pressed: false,
             previous_right_select_panel_toggle_pressed: false,
             previous_right_primary_reset_pressed: false,
-            previous_right_secondary_scale_driver_toggle_pressed: false,
+            previous_right_secondary_pressed: false,
             suggested_binding_count,
+            right_thumbstick_binding_enabled,
             stimulus_settings,
             projection_target_settings,
             private_particle_breath_state_driver_settings,
@@ -457,6 +589,11 @@ impl StimulusVolumeActions {
             private_particle_recenter_enabled,
             right_primary_control_panel_enabled: right_primary_control_panel_binding_enabled,
             right_primary_reset_enabled: primary_recenter_binding_enabled,
+            same_apk_panel_action: SameApkPanelAction::new(same_apk_panel_action_settings),
+            breath_calibration_controller_action: BreathCalibrationControllerAction::new(
+                breath_calibration_controller_action_settings,
+            ),
+            breath_calibration_controller_action_selected,
         }))
     }
 
@@ -464,6 +601,7 @@ impl StimulusVolumeActions {
         session
             .attach_action_sets(&[&self.action_set])
             .map_err(|error| format!("attach native renderer OpenXR action set: {error}"))?;
+        self.action_set_attached = true;
         match self
             .right_grip_pose
             .create_space(session, xr::Path::NULL, xr::Posef::IDENTITY)
@@ -501,8 +639,7 @@ impl StimulusVolumeActions {
             format!(
                 "status=attached actionSet=stimulus_volume actionSetAttached=true suggestedBindingCount={} rightThumbstickYAction={} rightPrimaryResetAction={} rightSecondaryScaleDriverToggleAction={} rightGripPoseAction={} rightBreathHapticAction={}",
                 self.suggested_binding_count,
-                self.projection_target_settings.controls_enabled
-                    && self.projection_target_settings.joystick_controls_enabled,
+                self.right_thumbstick_binding_enabled,
                 self.right_primary_reset_enabled,
                 self.projection_target_settings.controls_enabled,
                 self.projection_target_settings.controls_enabled
@@ -548,8 +685,107 @@ impl StimulusVolumeActions {
         );
     }
 
+    fn apply_composition_controller_actions(&mut self, at: BreathTimestampMicros) {
+        while let Some(action) = crate::breath_composition_runtime::take_adapter_action(
+            BreathCompositionSource::Controller,
+        ) {
+            match action {
+                AdapterAction::Configure => {
+                    let Some(request) = crate::breath_composition_runtime::effective_request()
+                    else {
+                        continue;
+                    };
+                    let projection = match request.controller_projection {
+                        ControllerProjectionSelection::FixedOrientation => {
+                            ControllerVolumeProjection::FixedOrientation
+                        }
+                        ControllerProjectionSelection::DynamicAxis => {
+                            ControllerVolumeProjection::DynamicMotionAxis
+                        }
+                    };
+                    let phase_settings = self
+                        .projection_target_settings
+                        .native_controller_breath_settings;
+                    let mut calibration_parameters =
+                        rusty_quest_breath_contract::calibration::CalibrationParameters::default();
+                    calibration_parameters.inverted = request.inverted;
+                    let Ok(settings) = ControllerVolumeSettings::new(
+                        projection,
+                        phase_settings.orientation_axis.map(f64::from),
+                        f64::from(phase_settings.rotation_guard_degrees),
+                        calibration_parameters,
+                    ) else {
+                        continue;
+                    };
+                    self.native_controller_breath_assessment
+                        .replace_volume_settings(at, settings);
+                    let calibration = self.native_controller_breath_assessment.configure(at);
+                    crate::breath_composition_runtime::submit_calibration(
+                        BreathCompositionSource::Controller,
+                        &calibration,
+                    );
+                }
+                AdapterAction::Start(generation) => {
+                    let calibration = self
+                        .native_controller_breath_assessment
+                        .start(at, generation);
+                    crate::breath_composition_runtime::submit_calibration(
+                        BreathCompositionSource::Controller,
+                        &calibration,
+                    );
+                }
+                AdapterAction::Cancel(generation) => {
+                    let calibration = self
+                        .native_controller_breath_assessment
+                        .cancel(at, generation);
+                    crate::breath_composition_runtime::submit_calibration(
+                        BreathCompositionSource::Controller,
+                        &calibration,
+                    );
+                }
+                AdapterAction::Reset => {
+                    let calibration = self.native_controller_breath_assessment.reset(at);
+                    crate::breath_composition_runtime::submit_calibration(
+                        BreathCompositionSource::Controller,
+                        &calibration,
+                    );
+                }
+            }
+        }
+    }
+
+    fn observe_composition_controller_missing(
+        &mut self,
+        at: BreathTimestampMicros,
+        sequence_id: u64,
+    ) {
+        if !crate::breath_composition_runtime::controller_selected() {
+            return;
+        }
+        let Some(generation) = self.native_controller_breath_assessment.active_generation() else {
+            return;
+        };
+        let result = self.native_controller_breath_assessment.observe(
+            at,
+            generation,
+            OpenXrControllerPoseInput::Missing { sequence_id },
+        );
+        crate::breath_composition_runtime::submit_calibration(
+            BreathCompositionSource::Controller,
+            &result.calibration,
+        );
+        if let Some(assessment) = result.assessment {
+            crate::breath_composition_runtime::submit_assessment(
+                at,
+                BreathCompositionSource::Controller,
+                assessment,
+            );
+        }
+    }
+
     pub(crate) fn sync_and_poll<G>(
         &mut self,
+        instance: &xr::Instance,
         session: &xr::Session<G>,
         reference_space: &xr::Space,
         predicted_display_time: xr::Time,
@@ -558,7 +794,24 @@ impl StimulusVolumeActions {
         breath_haptics_enabled: bool,
     ) -> NativeRendererControllerEvents {
         let mut events = NativeRendererControllerEvents::default();
+        let observed_at = xr_time_micros(predicted_display_time);
+        events.breath_observed_at = Some(observed_at);
+        if crate::breath_composition_runtime::controller_adapter_available() {
+            self.apply_composition_controller_actions(observed_at);
+        }
         if let Err(error) = session.sync_actions(&[(&self.action_set).into()]) {
+            self.observe_composition_controller_missing(observed_at, frame_count.saturating_add(1));
+            crate::breath_composition_runtime::poll_polar(observed_at);
+            if crate::breath_capture::active() {
+                crate::breath_capture::record_controller_right_thumbstick(
+                    frame_count.saturating_add(1),
+                    observed_at.get(),
+                    predicted_display_time.as_nanos(),
+                    false,
+                    None,
+                    "sync-unavailable",
+                );
+            }
             if frame_count == 0 || frame_count % 120 == 0 {
                 crate::marker(
                         "projection-target-input",
@@ -574,6 +827,9 @@ impl StimulusVolumeActions {
 
         events.stimulus_randomize_triggered = self.poll_primary_randomize(session, frame_count);
         events.panel_toggle_triggered = self.poll_panel_toggle(session, frame_count);
+        if events.panel_toggle_triggered {
+            events.panel_toggle_source = Some("right-trigger-or-select");
+        }
         if self.poll_primary_reset(session, frame_count) {
             if self.projection_target_settings.controls_enabled {
                 events
@@ -591,7 +847,13 @@ impl StimulusVolumeActions {
                 );
             }
         }
-        if let Some(input) = self.poll_scale_driver_toggle(session, frame_count) {
+        let (secondary_panel_toggle, secondary_projection_input) =
+            self.poll_right_secondary_action(session, frame_count, dt_seconds);
+        events.panel_toggle_triggered |= secondary_panel_toggle;
+        if secondary_panel_toggle {
+            events.panel_toggle_source = Some("right-secondary-triple-press");
+        }
+        if let Some(input) = secondary_projection_input {
             events.projection_target_inputs.push(input);
         }
         if let Some(input) = self.poll_thumbstick_y(session, frame_count, dt_seconds) {
@@ -620,18 +882,30 @@ impl StimulusVolumeActions {
                 false
             }
         };
+        events.controller_readiness =
+            self.controller_readiness(instance, session, events.right_grip_pose_active);
         let projection_native_controller_breath_enabled =
             self.projection_target_settings.controls_enabled
                 && self
                     .projection_target_settings
                     .breath_bridge_mode
                     .uses_native_controller_state();
-        let private_particle_breath_enabled = self
+        let private_particle_breath_state_enabled = self
             .private_particle_breath_state_driver_settings
             .uses_native_controller_state();
-        let native_controller_breath_enabled =
-            projection_native_controller_breath_enabled || private_particle_breath_enabled;
-        let right_grip_pose_sample = if breath_haptics_enabled || native_controller_breath_enabled {
+        let private_particle_breath_assessment_enabled = self
+            .private_particle_breath_state_driver_settings
+            .uses_native_controller_assessment();
+        let composition_controller_enabled =
+            crate::breath_composition_runtime::controller_selected();
+        let controller_capture_enabled = crate::breath_capture::active();
+        let native_controller_breath_enabled = projection_native_controller_breath_enabled
+            || private_particle_breath_assessment_enabled
+            || composition_controller_enabled;
+        let right_grip_pose_sample = if breath_haptics_enabled
+            || native_controller_breath_enabled
+            || controller_capture_enabled
+        {
             self.locate_right_grip_pose_sample(
                 reference_space,
                 predicted_display_time,
@@ -645,31 +919,109 @@ impl StimulusVolumeActions {
         };
         events.right_grip_pose_tracked =
             right_grip_pose_sample.is_some_and(|sample| sample.tracked);
-        if native_controller_breath_enabled {
-            let sample = self
-                .native_controller_breath_state
-                .push_breath_sample(right_grip_pose_sample);
-            events.native_controller_breath_sample = Some(sample);
-            if projection_native_controller_breath_enabled {
-                events
-                    .projection_target_inputs
-                    .push(sample.projection_target_input());
-            }
-            if frame_count == 0 || frame_count % 120 == 0 {
-                crate::marker(
-                    "native-controller-breath-state",
-                    format!(
-                        "status=sampled frame={} rightGripPoseActive={} rightGripPoseTracked={} nativeControllerBreathStateEnabled=true privateParticleBreathStateDriverEnabled={} nativeControllerBreathPhase={} {}",
-                        frame_count,
-                        events.right_grip_pose_active,
-                        events.right_grip_pose_tracked,
-                        private_particle_breath_enabled,
-                        sample.phase.marker_value(),
-                        self.native_controller_breath_state.marker_fields(),
-                    ),
+        if controller_capture_enabled {
+            if let Some(sample) = right_grip_pose_sample {
+                crate::breath_capture::record_controller_pose(
+                    frame_count.saturating_add(1),
+                    observed_at.get(),
+                    predicted_display_time.as_nanos(),
+                    sample.position_m,
+                    sample.orientation_xyzw,
+                    sample.active,
+                    sample.tracked,
+                );
+            } else {
+                crate::breath_capture::record_controller_missing(
+                    frame_count.saturating_add(1),
+                    observed_at.get(),
                 );
             }
+            self.record_capture_right_thumbstick(
+                session,
+                frame_count.saturating_add(1),
+                observed_at.get(),
+                predicted_display_time.as_nanos(),
+            );
         }
+        if native_controller_breath_enabled {
+            let generation = if composition_controller_enabled {
+                self.native_controller_breath_assessment.active_generation()
+            } else {
+                self.native_controller_breath_assessment
+                    .ensure_running(observed_at)
+            };
+            if let Some(generation) = generation {
+                let input = right_grip_pose_sample.map_or(
+                    OpenXrControllerPoseInput::Missing {
+                        sequence_id: frame_count.saturating_add(1),
+                    },
+                    |sample| {
+                        OpenXrControllerPoseInput::Frame(OpenXrControllerPoseFrame::from_native(
+                            frame_count.saturating_add(1),
+                            observed_at,
+                            sample,
+                        ))
+                    },
+                );
+                let result = self.native_controller_breath_assessment.observe(
+                    observed_at,
+                    generation,
+                    input,
+                );
+                if composition_controller_enabled {
+                    crate::breath_composition_runtime::submit_calibration(
+                        BreathCompositionSource::Controller,
+                        &result.calibration,
+                    );
+                }
+                events.native_controller_breath_assessment = result.assessment;
+                if composition_controller_enabled {
+                    if let Some(assessment) = result.assessment {
+                        crate::breath_composition_runtime::submit_assessment(
+                            observed_at,
+                            BreathCompositionSource::Controller,
+                            assessment,
+                        );
+                    }
+                }
+                if let Some(sample) = result.phase_sample {
+                    if projection_native_controller_breath_enabled {
+                        events
+                            .projection_target_inputs
+                            .push(sample.projection_target_input());
+                    }
+                    if private_particle_breath_state_enabled {
+                        events.native_controller_breath_sample = Some(sample);
+                    }
+                }
+                if frame_count == 0 || frame_count % 120 == 0 {
+                    let assessment = result.assessment;
+                    crate::marker(
+                        "native-controller-breath-assessment",
+                        format!(
+                            "status=sampled frame={} rightGripPoseActive={} rightGripPoseTracked={} nativeControllerBreathAssessmentEnabled=true privateParticleBreathStateDriverEnabled={} tracking={} phase={} volume01={} calibration={} rejection={} {}",
+                            frame_count,
+                            events.right_grip_pose_active,
+                            events.right_grip_pose_tracked,
+                            private_particle_breath_state_enabled,
+                            assessment.map_or("none", |value| value.tracking.as_str()),
+                            assessment.map_or("unknown", |value| value.phase.as_str()),
+                            assessment
+                                .and_then(|value| value.volume01)
+                                .map(|value| format!("{value:.6}"))
+                                .unwrap_or_else(|| "none".to_owned()),
+                            result.calibration.lifecycle.as_str(),
+                            result
+                                .rejection
+                                .map(|value| format!("{value:?}"))
+                                .unwrap_or_else(|| "none".to_owned()),
+                            self.native_controller_breath_assessment.marker_fields(),
+                        ),
+                    );
+                }
+            }
+        }
+        crate::breath_composition_runtime::poll_polar(observed_at);
         self.publish_right_grip_pose(
             reference_space,
             predicted_display_time,
@@ -698,7 +1050,7 @@ impl StimulusVolumeActions {
                     events.right_grip_pose_active,
                     events.right_grip_pose_tracked,
                     native_controller_breath_enabled,
-                    private_particle_breath_enabled,
+                    private_particle_breath_state_enabled,
                     self.manifold_pose_config.enabled,
                     self.manifold_pose_published_count,
                     self.manifold_pose_dropped_count,
@@ -722,6 +1074,33 @@ impl StimulusVolumeActions {
             );
         }
         events
+    }
+
+    fn controller_readiness<G>(
+        &self,
+        instance: &xr::Instance,
+        session: &xr::Session<G>,
+        right_grip_pose_active: bool,
+    ) -> ControllerActionReadiness {
+        let interaction_profile = session
+            .current_interaction_profile(self.right_hand_subaction_path)
+            .ok()
+            .filter(|path| *path != xr::Path::NULL)
+            .and_then(|path| instance.path_to_string(path).ok())
+            .unwrap_or_else(|| "none".to_owned());
+        let interaction_profile_ready = INTERACTION_PROFILES
+            .iter()
+            .any(|profile| profile.profile_path == interaction_profile);
+        let action_set_ready = self.action_set_attached && self.suggested_binding_count > 0;
+        ControllerActionReadiness {
+            action_set_ready,
+            interaction_profile_ready,
+            action_ready: action_set_ready
+                && interaction_profile_ready
+                && self.right_grip_space.is_some()
+                && right_grip_pose_active,
+            interaction_profile,
+        }
     }
 
     fn locate_right_grip_pose_sample(
@@ -1217,18 +1596,19 @@ impl StimulusVolumeActions {
         false
     }
 
-    fn poll_scale_driver_toggle<G>(
+    fn poll_right_secondary_action<G>(
         &mut self,
         session: &xr::Session<G>,
         frame_count: u64,
-    ) -> Option<ProjectionTargetInput> {
-        if !self.projection_target_settings.controls_enabled {
-            return None;
-        }
-        let state = match self
-            .right_secondary_scale_driver_toggle
-            .state(session, xr::Path::NULL)
+        dt_seconds: f32,
+    ) -> (bool, Option<ProjectionTargetInput>) {
+        if !self.projection_target_settings.controls_enabled
+            && !self.same_apk_panel_action.enabled()
+            && !self.breath_calibration_controller_action_selected
         {
+            return (false, None);
+        }
+        let state = match self.right_secondary_action.state(session, xr::Path::NULL) {
             Ok(state) => state,
             Err(error) => {
                 if frame_count == 0 || frame_count % 120 == 0 {
@@ -1241,13 +1621,49 @@ impl StimulusVolumeActions {
                         ),
                     );
                 }
-                return None;
+                return (false, None);
             }
         };
         let pressed = state.is_active && state.current_state;
-        let triggered = pressed && !self.previous_right_secondary_scale_driver_toggle_pressed;
-        self.previous_right_secondary_scale_driver_toggle_pressed = pressed;
-        if triggered {
+        let rising_edge = pressed && !self.previous_right_secondary_pressed;
+        self.previous_right_secondary_pressed = pressed;
+        let calibration_started = self.breath_calibration_controller_action_selected
+            && self
+                .breath_calibration_controller_action
+                .update(dt_seconds, pressed);
+        if calibration_started {
+            self.same_apk_panel_action.cancel_pending_sequence(pressed);
+            let _response =
+                crate::breath_composition_runtime::start_calibration("right-secondary-hold");
+            crate::marker(
+                "breath-calibration-action",
+                format!(
+                    "event=right-secondary-hold frame={} actionActive={} changedSinceLastSync={} requestDispatched=true {}",
+                    frame_count,
+                    state.is_active,
+                    state.changed_since_last_sync,
+                    self.breath_calibration_controller_action.marker_fields(),
+                ),
+            );
+        }
+        let panel_toggle = self.same_apk_panel_action.update(dt_seconds, pressed);
+        if panel_toggle {
+            crate::marker(
+                "same-apk-panel-action",
+                format!(
+                    "event=right-secondary-panel-toggle status=triggered frame={} actionActive={} changedSinceLastSync={} {}",
+                    frame_count,
+                    state.is_active,
+                    state.changed_since_last_sync,
+                    self.same_apk_panel_action.marker_fields(),
+                ),
+            );
+        }
+        if rising_edge
+            && self.projection_target_settings.controls_enabled
+            && !self.same_apk_panel_action.enabled()
+            && !self.breath_calibration_controller_action_selected
+        {
             crate::marker(
                 "projection-target-input",
                 format!(
@@ -1257,9 +1673,9 @@ impl StimulusVolumeActions {
                     state.changed_since_last_sync
                 ),
             );
-            return Some(ProjectionTargetInput::ToggleScaleDriver);
+            return (false, Some(ProjectionTargetInput::ToggleScaleDriver));
         }
-        None
+        (panel_toggle, None)
     }
 
     fn poll_thumbstick_y<G>(
@@ -1296,6 +1712,33 @@ impl StimulusVolumeActions {
             });
         }
         None
+    }
+
+    fn record_capture_right_thumbstick<G>(
+        &self,
+        session: &xr::Session<G>,
+        frame_sequence_id: u64,
+        observed_at_micros: u64,
+        xr_time_ns: i64,
+    ) {
+        match self.right_thumbstick_y.state(session, xr::Path::NULL) {
+            Ok(state) => crate::breath_capture::record_controller_right_thumbstick(
+                frame_sequence_id,
+                observed_at_micros,
+                xr_time_ns,
+                state.is_active,
+                Some(state.current_state),
+                "available",
+            ),
+            Err(_) => crate::breath_capture::record_controller_right_thumbstick(
+                frame_sequence_id,
+                observed_at_micros,
+                xr_time_ns,
+                false,
+                None,
+                "state-unavailable",
+            ),
+        }
     }
 
     fn poll_depth_alignment_thumbstick<G>(
@@ -1463,8 +1906,8 @@ const INTERACTION_PROFILES: &[InteractionProfileBindings] = &[
 #[cfg(test)]
 mod tests {
     use super::{
-        manifold_pose_config_from_projection_settings, BreathHapticCadence,
-        BREATH_HAPTIC_PULSE_PERIOD_SECONDS,
+        manifold_pose_config_from_projection_settings, right_thumbstick_binding_enabled,
+        BreathHapticCadence, BREATH_HAPTIC_PULSE_PERIOD_SECONDS,
     };
     use crate::projection_target_state::{BreathBridgeMode, ProjectionTargetSettings};
 
@@ -1501,5 +1944,12 @@ mod tests {
         settings.breath_bridge_mode = BreathBridgeMode::DirectControllerState;
 
         assert!(!manifold_pose_config_from_projection_settings(&settings).enabled);
+    }
+
+    #[test]
+    fn capture_annotation_binds_right_thumbstick_without_projection_controls() {
+        assert!(right_thumbstick_binding_enabled(false, false, true));
+        assert!(!right_thumbstick_binding_enabled(false, false, false));
+        assert!(right_thumbstick_binding_enabled(true, true, false));
     }
 }

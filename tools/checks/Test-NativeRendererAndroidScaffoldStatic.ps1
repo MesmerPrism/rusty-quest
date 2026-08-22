@@ -319,7 +319,7 @@ Assert-ContainsTokens $panelBridge @(
     'FLAG_ACTIVITY_REORDER_TO_FRONT',
     'FLAG_ACTIVITY_SINGLE_TOP',
     'startActivity',
-    'event=right-trigger-panel-toggle status=intent-sent'
+    'event=control-panel-toggle status=intent-sent'
 ) "Rust panel JNI toggle bridge"
 
 Assert-ContainsTokens $stimulusPanel @(

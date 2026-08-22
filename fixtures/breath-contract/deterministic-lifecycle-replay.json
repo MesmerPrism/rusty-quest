@@ -1,0 +1,94 @@
+{
+  "schema": "rusty.quest.breath_contract_replay.v1",
+  "fixture_id": "bounded-lifecycle-replay",
+  "max_actions": 32,
+  "configuration": {
+    "stale_after_micros": 100,
+    "discontinuity_after_micros": 1000
+  },
+  "actions": [
+    { "kind": "reset", "at_micros": 0 },
+    { "kind": "configure", "at_micros": 10 },
+    { "kind": "start", "at_micros": 20 },
+    {
+      "kind": "observe-current",
+      "at_micros": 30,
+      "input": { "kind": "sample", "sampled_at_micros": 30, "value01": 0.25, "quality01": 0.8 }
+    },
+    { "kind": "observe-current", "at_micros": 40, "input": { "kind": "missing" } },
+    { "kind": "cancel-current", "at_micros": 50 },
+    { "kind": "start", "at_micros": 60 },
+    { "kind": "observe-exact", "at_micros": 100, "generation": 1, "input": { "kind": "missing" } },
+    {
+      "kind": "observe-current",
+      "at_micros": 110,
+      "input": { "kind": "sample", "sampled_at_micros": 110, "value01": 0.75, "quality01": 0.9 }
+    },
+    {
+      "kind": "observe-current",
+      "at_micros": 300,
+      "input": { "kind": "sample", "sampled_at_micros": 150, "value01": 0.5, "quality01": 1.0 }
+    },
+    {
+      "kind": "observe-current",
+      "at_micros": 310,
+      "input": { "kind": "sample", "sampled_at_micros": 310, "value01": 0.5, "quality01": 1.0 }
+    },
+    {
+      "kind": "observe-current",
+      "at_micros": 2000,
+      "input": { "kind": "sample", "sampled_at_micros": 2000, "value01": 0.6, "quality01": 1.0 }
+    },
+    {
+      "kind": "observe-current",
+      "at_micros": 2010,
+      "input": { "kind": "sample", "sampled_at_micros": 2010, "value01": 0.6, "quality01": 1.0 }
+    },
+    {
+      "kind": "observe-current",
+      "at_micros": 2020,
+      "input": { "kind": "sample", "sampled_at_micros": 2009, "value01": 0.7, "quality01": 1.0 }
+    },
+    {
+      "kind": "observe-current",
+      "at_micros": 2030,
+      "input": { "kind": "sample", "sampled_at_micros": 2030, "value01": 2.0, "quality01": 1.0 }
+    },
+    { "kind": "observe-current", "at_micros": 2040, "input": { "kind": "missing" } },
+    {
+      "kind": "observe-current",
+      "at_micros": 2050,
+      "input": { "kind": "sample", "sampled_at_micros": 2050, "value01": 0.4, "quality01": 0.7 }
+    }
+  ],
+  "expected_statuses": [
+    "reset",
+    "configured",
+    "started",
+    "sample-accepted",
+    "missing-input",
+    "cancelled",
+    "started",
+    "rejected-generation",
+    "sample-accepted",
+    "stale-input",
+    "sample-accepted",
+    "time-discontinuity",
+    "sample-accepted",
+    "rejected-out-of-order-input",
+    "rejected-malformed-input",
+    "missing-input",
+    "sample-accepted"
+  ],
+  "expected_final": {
+    "lifecycle": "running",
+    "generation": 2,
+    "accepted_sample_count": 5,
+    "missing_input_count": 2,
+    "stale_input_count": 1,
+    "malformed_input_count": 1,
+    "out_of_order_input_count": 1,
+    "generation_rejection_count": 1,
+    "discontinuity_count": 1
+  }
+}

@@ -3,13 +3,18 @@
 //! This module keeps Android property parsing separate from the OpenXR/Vulkan
 //! frame loop so replay-proof, live-hand, and SDF visual modes stay testable.
 
+use crate::breath_calibration_controller_action::BreathCalibrationControllerActionSettings;
+use crate::breath_composition_driver::BreathCompositionDriverSettings;
 pub(crate) use crate::environment_depth_alignment_state::EnvironmentDepthAlignmentSettings;
 use crate::manifold_scalar_driver_bridge::ManifoldScalarDriverBridgeSettings;
 use crate::native_renderer_property_values::{
     bool_value, f32_clamped_value, f32_pair_value, f32_value, u32_value, u64_value,
 };
 use crate::private_particle_breath_state_driver::PrivateParticleBreathStateDriverSettings;
+use crate::private_particle_heartbeat_pulse_adapter::PrivateParticleHeartbeatPulseAdapterSettings;
 use crate::projection_target_state::ProjectionTargetSettings;
+use crate::same_apk_panel_action::SameApkPanelActionSettings;
+use crate::simultaneous_hands_controllers::SimultaneousHandsControllersSettings;
 
 pub(crate) use crate::native_renderer_camera_options::{
     NativeCameraOutputMode, NativeCameraQualityProfile, NativeCameraResolutionProfile,
@@ -119,6 +124,13 @@ pub(crate) struct NativeRendererRuntimeOptions {
     pub(crate) projection_target_settings: ProjectionTargetSettings,
     pub(crate) private_particle_breath_state_driver_settings:
         PrivateParticleBreathStateDriverSettings,
+    pub(crate) private_particle_breath_composition_driver_settings: BreathCompositionDriverSettings,
+    pub(crate) private_particle_heartbeat_pulse_adapter_settings:
+        PrivateParticleHeartbeatPulseAdapterSettings,
+    pub(crate) same_apk_panel_action_settings: SameApkPanelActionSettings,
+    pub(crate) breath_calibration_controller_action_settings:
+        BreathCalibrationControllerActionSettings,
+    pub(crate) simultaneous_hands_controllers_settings: SimultaneousHandsControllersSettings,
     pub(crate) manifold_scalar_driver_settings: ManifoldScalarDriverBridgeSettings,
     pub(crate) projection_border_stretch_settings: NativeProjectionBorderStretchSettings,
     pub(crate) private_layer_settings: NativePrivateLayerSettings,
@@ -202,6 +214,16 @@ impl NativeRendererRuntimeOptions {
         };
         let private_particle_breath_state_driver_settings =
             PrivateParticleBreathStateDriverSettings::from_property_lookup(&mut lookup);
+        let private_particle_breath_composition_driver_settings =
+            BreathCompositionDriverSettings::from_property_lookup(&mut lookup);
+        let private_particle_heartbeat_pulse_adapter_settings =
+            PrivateParticleHeartbeatPulseAdapterSettings::from_property_lookup(&mut lookup);
+        let same_apk_panel_action_settings =
+            SameApkPanelActionSettings::from_property_lookup(&mut lookup);
+        let breath_calibration_controller_action_settings =
+            BreathCalibrationControllerActionSettings::from_property_lookup(&mut lookup);
+        let simultaneous_hands_controllers_settings =
+            SimultaneousHandsControllersSettings::from_property_lookup(&mut lookup);
         let manifold_scalar_driver_settings =
             ManifoldScalarDriverBridgeSettings::from_property_lookup(&mut lookup);
         let projection_border_stretch_settings =
@@ -247,6 +269,11 @@ impl NativeRendererRuntimeOptions {
             stimulus_volume_settings,
             projection_target_settings,
             private_particle_breath_state_driver_settings,
+            private_particle_breath_composition_driver_settings,
+            private_particle_heartbeat_pulse_adapter_settings,
+            same_apk_panel_action_settings,
+            breath_calibration_controller_action_settings,
+            simultaneous_hands_controllers_settings,
             manifold_scalar_driver_settings,
             projection_border_stretch_settings,
             private_layer_settings,

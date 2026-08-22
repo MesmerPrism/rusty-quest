@@ -5,6 +5,36 @@
 
 pub(crate) const PROP_ENABLE_SDF_VISUAL: &str =
     "debug.rustyquest.native_renderer.sdf.visual.enabled";
+pub(crate) const PROP_BREATH_COMPOSITION_ENABLED: &str =
+    "debug.rustyquest.native_renderer.breath_composition.enabled";
+pub(crate) const PROP_BREATH_COMPOSITION_ACTIVATION_BINDING_SHA256: &str =
+    "debug.rustyquest.native_renderer.breath_composition.activation.binding_sha256";
+pub(crate) const PROP_BREATH_COMPOSITION_CONTROLLER_ASSESSMENT_ENABLED: &str =
+    "debug.rustyquest.native_renderer.breath_composition.controller_assessment.enabled";
+pub(crate) const PROP_BREATH_COMPOSITION_POLAR_ACC_ASSESSMENT_ENABLED: &str =
+    "debug.rustyquest.native_renderer.breath_composition.polar_acc_assessment.enabled";
+pub(crate) const PROP_BREATH_COMPOSITION_VOLUME_MAPPING_ENABLED: &str =
+    "debug.rustyquest.native_renderer.breath_composition.volume_mapping.enabled";
+pub(crate) const PROP_BREATH_COMPOSITION_STATE_MAPPING_ENABLED: &str =
+    "debug.rustyquest.native_renderer.breath_composition.state_mapping.enabled";
+pub(crate) const PROP_BREATH_COMPOSITION_PANEL_ENABLED: &str =
+    "debug.rustyquest.native_renderer.breath_composition.panel.enabled";
+pub(crate) const PROP_BREATH_COMPOSITION_SOURCE: &str =
+    "debug.rustyquest.native_renderer.breath_composition.source";
+pub(crate) const PROP_BREATH_COMPOSITION_MAPPING: &str =
+    "debug.rustyquest.native_renderer.breath_composition.mapping";
+pub(crate) const PROP_BREATH_COMPOSITION_CONTROLLER_PROJECTION: &str =
+    "debug.rustyquest.native_renderer.breath_composition.controller_projection";
+pub(crate) const PROP_BREATH_COMPOSITION_POLAR_PROJECTION: &str =
+    "debug.rustyquest.native_renderer.breath_composition.polar_projection";
+pub(crate) const PROP_BREATH_COMPOSITION_INVERTED: &str =
+    "debug.rustyquest.native_renderer.breath_composition.inverted";
+pub(crate) const PROP_BREATH_COMPOSITION_STALE_MILLIS: &str =
+    "debug.rustyquest.native_renderer.breath_composition.stale_millis";
+pub(crate) const PROP_BREATH_CALIBRATION_RIGHT_SECONDARY_ACTION_MODE: &str =
+    "debug.rustyquest.native_renderer.breath_composition.calibration.right_secondary_action.mode";
+pub(crate) const PROP_BREATH_CALIBRATION_RIGHT_SECONDARY_ACTION_HOLD_SECONDS: &str =
+    "debug.rustyquest.native_renderer.breath_composition.calibration.right_secondary_action.hold_seconds";
 pub(crate) const PROP_PARTICLE_ADAPTER_ENABLED: &str =
     "debug.rustyquest.native_renderer.particle_adapter.enabled";
 pub(crate) const PROP_PARTICLE_ADAPTER_PROFILE_ID: &str =
@@ -29,6 +59,10 @@ pub(crate) const PROP_HAND_ADAPTER_LOCK_REVISION: &str =
     "debug.rustyquest.native_renderer.hand_adapter.lock_revision";
 pub(crate) const PROP_HAND_ADAPTER_LOCK_SHA256: &str =
     "debug.rustyquest.native_renderer.hand_adapter.lock_sha256";
+pub(crate) const PROP_SIMULTANEOUS_HANDS_CONTROLLERS_ENABLED: &str =
+    "debug.rustyquest.native_renderer.simultaneous_hands_controllers.enabled";
+pub(crate) const PROP_SIMULTANEOUS_HANDS_CONTROLLERS_ACTIVATION_BINDING_SHA256: &str =
+    "debug.rustyquest.native_renderer.simultaneous_hands_controllers.activation.binding_sha256";
 pub(crate) const PROP_SDF_FIELD_VISUAL_ENABLED: &str =
     "debug.rustyquest.native_renderer.sdf.field_visual.enabled";
 pub(crate) const PROP_RENDER_MODE: &str = "debug.rustyquest.native_renderer.render.mode";
@@ -268,6 +302,38 @@ pub(crate) const PROP_PRIVATE_PARTICLES_BREATH_STATE_DRIVER_INHALE_SECONDS: &str
     "debug.rustyquest.native_renderer.private_particles.breath_state_driver.inhale.seconds.min_to_max";
 pub(crate) const PROP_PRIVATE_PARTICLES_BREATH_STATE_DRIVER_EXHALE_SECONDS: &str =
     "debug.rustyquest.native_renderer.private_particles.breath_state_driver.exhale.seconds.max_to_min";
+pub(crate) const PROP_PRIVATE_PARTICLES_BREATH_STATE_DRIVER_ACC_AXIS: &str =
+    "debug.rustyquest.native_renderer.private_particles.breath_state_driver.acc.axis";
+pub(crate) const PROP_PRIVATE_PARTICLES_BREATH_STATE_DRIVER_ACC_MIN_MG: &str =
+    "debug.rustyquest.native_renderer.private_particles.breath_state_driver.acc.min_mg";
+pub(crate) const PROP_PRIVATE_PARTICLES_BREATH_STATE_DRIVER_ACC_MAX_MG: &str =
+    "debug.rustyquest.native_renderer.private_particles.breath_state_driver.acc.max_mg";
+pub(crate) const PROP_PRIVATE_PARTICLES_BREATH_STATE_DRIVER_ACC_STALE_SECONDS: &str =
+    "debug.rustyquest.native_renderer.private_particles.breath_state_driver.acc.stale_seconds";
+pub(crate) const PROP_PRIVATE_PARTICLES_BREATH_COMPOSITION_DRIVER_ENABLED: &str =
+    "debug.rustyquest.native_renderer.private_particles.breath_composition_driver.enabled";
+pub(crate) const PROP_PRIVATE_PARTICLES_BREATH_COMPOSITION_DRIVER_ACTIVATION_BINDING_SHA256: &str =
+    "debug.rustyquest.native_renderer.private_particles.breath_composition_driver.activation.binding_sha256";
+pub(crate) const PROP_PRIVATE_PARTICLES_BREATH_COMPOSITION_DRIVER_TARGET_SLOT: &str =
+    "debug.rustyquest.native_renderer.private_particles.breath_composition_driver.target_slot";
+pub(crate) const PROP_PRIVATE_PARTICLES_BREATH_COMPOSITION_DRIVER_INHALE_RATE: &str =
+    "debug.rustyquest.native_renderer.private_particles.breath_composition_driver.inhale.rate_per_second";
+pub(crate) const PROP_PRIVATE_PARTICLES_BREATH_COMPOSITION_DRIVER_EXHALE_RATE: &str =
+    "debug.rustyquest.native_renderer.private_particles.breath_composition_driver.exhale.rate_per_second";
+pub(crate) const PROP_PRIVATE_PARTICLES_BREATH_COMPOSITION_DRIVER_HOLD_POLICY: &str =
+    "debug.rustyquest.native_renderer.private_particles.breath_composition_driver.hold.policy";
+pub(crate) const PROP_PRIVATE_PARTICLES_BREATH_COMPOSITION_DRIVER_LOSS_VALUE01: &str =
+    "debug.rustyquest.native_renderer.private_particles.breath_composition_driver.loss.value01";
+pub(crate) const PROP_PRIVATE_PARTICLES_HEARTBEAT_PULSE_MODE: &str =
+    "debug.rustyquest.native_renderer.private_particles.heartbeat_pulse.mode";
+pub(crate) const PROP_PRIVATE_PARTICLES_HEARTBEAT_PULSE_TARGET_SLOT: &str =
+    "debug.rustyquest.native_renderer.private_particles.heartbeat_pulse.target_slot";
+pub(crate) const PROP_PRIVATE_PARTICLES_HEARTBEAT_PULSE_STALE_SECONDS: &str =
+    "debug.rustyquest.native_renderer.private_particles.heartbeat_pulse.stale_seconds";
+pub(crate) const PROP_PRIVATE_PARTICLES_HEARTBEAT_PULSE_MIN_RR_MS: &str =
+    "debug.rustyquest.native_renderer.private_particles.heartbeat_pulse.min_rr_ms";
+pub(crate) const PROP_PRIVATE_PARTICLES_HEARTBEAT_PULSE_MAX_RR_MS: &str =
+    "debug.rustyquest.native_renderer.private_particles.heartbeat_pulse.max_rr_ms";
 pub(crate) const PROP_PRIVATE_PARTICLES_MANIFOLD_DRIVER_BROKER_HOST: &str =
     "debug.rustyquest.native_renderer.private_particles.manifold_driver.broker.host";
 pub(crate) const PROP_PRIVATE_PARTICLES_MANIFOLD_DRIVER_BROKER_PATH: &str =
@@ -412,6 +478,10 @@ pub(crate) const PROP_STIMULUS_VOLUME_SAFETY_ACK: &str =
     "debug.rustyquest.native_renderer.stimulus_volume.safety_ack";
 pub(crate) const PROP_CONTROL_PANEL_MODE: &str =
     "debug.rustyquest.native_renderer.control_panel.mode";
+pub(crate) const PROP_CONTROL_PANEL_RIGHT_SECONDARY_ACTION_MODE: &str =
+    "debug.rustyquest.native_renderer.control_panel.right_secondary_action.mode";
+pub(crate) const PROP_CONTROL_PANEL_RIGHT_SECONDARY_ACTION_WINDOW_SECONDS: &str =
+    "debug.rustyquest.native_renderer.control_panel.right_secondary_action.window_seconds";
 pub(crate) const PROP_PROCESSING_LAYER: &str = "debug.rustyquest.native_renderer.processing.layer";
 pub(crate) const PROP_PROJECTION_BORDER_POLICY: &str =
     "debug.rustyquest.native_renderer.projection.border.policy";

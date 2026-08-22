@@ -20,7 +20,7 @@ $manifest = $manifestText | ConvertFrom-Json
 if ($manifest.schema -ne "rusty.quest.native_renderer_property_manifest.v2") {
     throw "Native renderer property manifest has an unexpected schema."
 }
-$expectedPropertyCount = 268
+$expectedPropertyCount = 303
 if ($manifest.property_count -ne $expectedPropertyCount -or $manifest.properties.Count -ne $expectedPropertyCount) {
     throw "Native renderer property manifest must cover the current $expectedPropertyCount-property runtime surface."
 }
@@ -37,12 +37,30 @@ foreach ($entry in @($manifest.properties)) {
 }
 
 foreach ($token in @(
+    'debug.rustyquest.native_renderer.breath_composition.activation.binding_sha256',
+    'debug.rustyquest.native_renderer.breath_composition.enabled',
+    'debug.rustyquest.native_renderer.breath_composition.controller_assessment.enabled',
+    'debug.rustyquest.native_renderer.breath_composition.polar_acc_assessment.enabled',
+    'debug.rustyquest.native_renderer.breath_composition.volume_mapping.enabled',
+    'debug.rustyquest.native_renderer.breath_composition.state_mapping.enabled',
+    'debug.rustyquest.native_renderer.breath_composition.panel.enabled',
+    'debug.rustyquest.native_renderer.breath_composition.source',
+    'debug.rustyquest.native_renderer.breath_composition.mapping',
+    'debug.rustyquest.native_renderer.breath_composition.controller_projection',
+    'debug.rustyquest.native_renderer.breath_composition.polar_projection',
+    'debug.rustyquest.native_renderer.breath_composition.inverted',
+    'debug.rustyquest.native_renderer.breath_composition.stale_millis',
+    'debug.rustyquest.native_renderer.breath_composition.calibration.right_secondary_action.mode',
+    'debug.rustyquest.native_renderer.breath_composition.calibration.right_secondary_action.hold_seconds',
+    'breath_calibration_controller_action',
     'debug.rustyquest.native_renderer.hand_adapter.enabled',
     'debug.rustyquest.native_renderer.hand_adapter.profile_id',
     'debug.rustyquest.native_renderer.hand_adapter.project_id',
     'debug.rustyquest.native_renderer.hand_adapter.feature_id',
     'debug.rustyquest.native_renderer.hand_adapter.lock_revision',
     'debug.rustyquest.native_renderer.hand_adapter.lock_sha256',
+    'debug.rustyquest.native_renderer.simultaneous_hands_controllers.activation.binding_sha256',
+    'debug.rustyquest.native_renderer.simultaneous_hands_controllers.enabled',
     'debug.rustyquest.native_renderer.particle_adapter.enabled',
     'debug.rustyquest.native_renderer.particle_adapter.profile_id',
     'debug.rustyquest.native_renderer.particle_adapter.project_id',
@@ -146,6 +164,13 @@ foreach ($token in @(
     'debug.rustyquest.native_renderer.private_particles.driver7.value01',
     'debug.rustyquest.native_renderer.private_particles.breath_state_driver.mode',
     'debug.rustyquest.native_renderer.private_particles.breath_state_driver.target_slot',
+    'debug.rustyquest.native_renderer.private_particles.breath_composition_driver.activation.binding_sha256',
+    'debug.rustyquest.native_renderer.private_particles.breath_composition_driver.enabled',
+    'debug.rustyquest.native_renderer.private_particles.breath_composition_driver.exhale.rate_per_second',
+    'debug.rustyquest.native_renderer.private_particles.breath_composition_driver.hold.policy',
+    'debug.rustyquest.native_renderer.private_particles.breath_composition_driver.inhale.rate_per_second',
+    'debug.rustyquest.native_renderer.private_particles.breath_composition_driver.loss.value01',
+    'debug.rustyquest.native_renderer.private_particles.breath_composition_driver.target_slot',
     'private_particle_breath_state_driver',
     'debug.rustyquest.native_renderer.private_particles.manifold_driver.enabled',
     'debug.rustyquest.native_renderer.private_particles.manifold_driver.broker.host',

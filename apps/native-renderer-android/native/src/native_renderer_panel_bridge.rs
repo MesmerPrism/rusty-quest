@@ -89,20 +89,26 @@ impl ControlPanelCommandPoller {
 }
 
 #[cfg(target_os = "android")]
-pub(crate) fn toggle_control_panel(app: &android_activity::AndroidApp, frame_count: u64) {
+pub(crate) fn toggle_control_panel(
+    app: &android_activity::AndroidApp,
+    frame_count: u64,
+    source: &str,
+) {
     match toggle_control_panel_impl(app) {
         Ok(()) => crate::marker(
             "stimulus-panel",
             format!(
-                "event=right-trigger-panel-toggle status=intent-sent frame={} panelActivity=ControlPanelActivity action=toggle",
-                frame_count
+                "event=control-panel-toggle status=intent-sent frame={} panelActivity=ControlPanelActivity action=toggle source={}",
+                frame_count,
+                crate::sanitize(source),
             ),
         ),
         Err(error) => crate::marker(
             "stimulus-panel",
             format!(
-                "event=right-trigger-panel-toggle status=intent-error frame={} reason={}",
+                "event=control-panel-toggle status=intent-error frame={} source={} reason={}",
                 frame_count,
+                crate::sanitize(source),
                 crate::sanitize(&error)
             ),
         ),

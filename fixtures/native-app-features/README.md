@@ -14,6 +14,9 @@ steps by adding broad modules or broad permission helpers.
 
 Module families:
 
+- `breath/`: source-neutral controller/Polar ACC assessment capabilities,
+  independent Volume/State mappings, and the disabled-unless-selected
+  closed-world composition root.
 - `core/`: Quest NativeActivity/OpenXR/Vulkan substrate.
 - `background/`: mutually exclusive background/render route setup.
 - `particles/private/`: downstream private-particle public ABI, placeholder,

@@ -685,6 +685,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "rusty-quest-breath-contract"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "rusty-quest-broker-admission"
 version = "0.1.0"
 dependencies = [
@@ -856,6 +864,7 @@ dependencies = [
  "jni 0.22.4",
  "ndk-sys",
  "openxr",
+ "rusty-quest-breath-contract",
  "rusty-quest-broker-authority",
  "rusty-quest-hand-adapter",
  "rusty-quest-native-renderer",

@@ -36,6 +36,17 @@ validates provider/basis/hand/rig identity and CPU-prepared parity; OpenXR
 acquisition, GPU buffers, shaders, material choice, and hand visibility remain
 native-renderer policy. Setting the property to `false` restores the prior path.
 
+The separate `input.simultaneous_hands_and_controllers` native app feature is
+the only route that requests `XR_META_simultaneous_hands_and_controllers`.
+It requires the exact hand-adapter conformance lock plus live hand input and
+visual descriptors, then uses this renderer's existing OpenXR
+instance/system/session and action set. Extension enablement, system support,
+function resolution, resume/pause generation, live hand readiness, and
+controller profile/action readiness are reported independently. The aggregate
+combined status cannot be satisfied by hands-only, controller-only, or a
+successful resume without live input. The adapter does not request
+`XR_META_detached_controllers` and adds no Android permission.
+
 | Profile | Background | Visible hand content | Camera2/HWB projection |
 | --- | --- | --- | --- |
 | `quest-native-renderer-direct-hwb-camera-quality.profile.json` | Custom direct camera projection | Hand/SDF overlays disabled for raw camera inspection | Enabled, forced direct `AHardwareBuffer` sample with Android-suggested YCbCr, UNORM swapchain preference, and clean border |
@@ -181,6 +192,31 @@ bounded app-private stream events to `files/polar_stream_events.jsonl`. The
 current direct PMD route keeps one PMD stream active at a time, so the page
 defaults to ACC and lets the operator switch the active PMD stream to ECG while
 HR/RR notifications remain subscribed.
+
+Three composition adapters remain inert unless their native app-build features
+are requested. `particles.private.polar_acc_breath_source` maps one selected ACC
+axis or magnitude into a bounded normalized driver value;
+`particles.private.polar_rr_heartbeat_pulse` emits one normalized event frame
+for each admitted RR interval; and
+`input.right_secondary_same_apk_panel_triple_press` toggles the existing
+`ControlPanelActivity` after three B/right-secondary press edges in the
+configured window. The public adapters own only bounded admission, stale and
+malformed-input state, and generic action dispatch. Downstream app specs own
+the selected driver slots, ACC range, RR range, pulse envelope, panel mode, and
+all visual interpretation.
+
+Direct breath selection treats source and mapping as independent dimensions.
+The current public matrix accepts `controller` + `state`, `controller` +
+`volume`, and `polar-acc` + `volume`; `polar-acc` + `state` remains a typed
+unavailable combination. The controller assessment adapts the existing OpenXR
+right-grip pose into fixed-orientation or dynamic-motion-axis accepted-frame
+calibration and emits bounded volume concurrently with the normalized current
+phase classifier. This assessment does not itself map volume into a private
+driver. Unknown, incomplete, unavailable, stale, malformed, denied, and
+unselected requests remain inert; none are silently reclassified as ordinary
+disabled state or routed through a broker. Native-effective markers report the
+requested source, mapping, estimator generation, tracking state, calibration,
+and selection status separately from the legacy combined mode marker.
 
 The Rust core proves Android package, NativeActivity entry, NDK camera/HWB
 acquisition shape, native timing counters, OpenXR loader packaging, an
