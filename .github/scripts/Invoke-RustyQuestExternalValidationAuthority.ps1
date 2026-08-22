@@ -240,29 +240,52 @@ function Invoke-BaseGitBytes {
 
 function Get-ExternalOwnerArtifacts {
     param([Parameter(Mandatory = $true)][string]$Base, [Parameter(Mandatory = $true)][string]$Head)
-    [byte[]]$raw = Invoke-BaseGitBytes @("diff", "--name-status", "-z", "--no-renames", $Base, $Head)
-    $tokens = [Text.Encoding]::UTF8.GetString($raw).Split([char]0, [StringSplitOptions]::RemoveEmptyEntries)
-    if (($tokens.Count % 2) -ne 0 -or ($tokens.Count / 2) -gt 512) { throw "Authorization diff is malformed or exceeds its path bound." }
+    [byte[]]$raw = Invoke-BaseGitBytes @(
+        "diff", "--name-status", "-z", "--no-renames", "--no-ext-diff", $Base, $Head, "--"
+    )
+    $records = @(ConvertFrom-ExternalOwnerGitNameStatusBytes $raw)
+    if ($records.Count -gt 512) {
+        throw "Authorization diff exceeds its path bound."
+    }
     $artifacts = [Collections.Generic.List[object]]::new()
     [int64]$total = 0
-    for ($index = 0; $index -lt $tokens.Count; $index += 2) {
-        $path = [string]$tokens[$index + 1]
-        if ([string]::IsNullOrWhiteSpace($path) -or $path.Length -gt 512 -or $path.Contains("\\") -or $path.Contains(":") -or $path -match "[\x00-\x1f\x7f]" -or @($path.Split("/") | Where-Object { [string]::IsNullOrEmpty($_) -or $_ -in @(".", "..") }).Count -ne 0) { throw "Authorization artifact path is not portable." }
-        $entry = (Invoke-BaseGit @("ls-tree", $Head, "--", $path)).TrimEnd()
-        if ([string]::IsNullOrEmpty($entry)) { $artifacts.Add([ordered]@{ path = $path; state = "absent" }); continue }
-        if ($entry -cnotmatch "^(100644|100755) blob ([0-9a-f]{40})`t(.+)$" -or $Matches[3] -cne $path) { throw "Authorization artifact is not an exact regular blob." }
-        $size = [int64](Invoke-BaseGit @("cat-file", "-s", $Matches[2])).Trim()
+    foreach ($record in $records) {
+        $path = [string]$record.path
+        [byte[]]$treeBytes = Invoke-BaseGitBytes @("ls-tree", "-z", $Head, "--", $path)
+        if ($treeBytes.Length -eq 0) {
+            $artifacts.Add([ordered]@{ path = $path; state = "absent" })
+            continue
+        }
+        if ($treeBytes[$treeBytes.Length - 1] -ne 0) {
+            throw "Authorization tree output lacks a terminal NUL delimiter."
+        }
+        $utf8 = [Text.UTF8Encoding]::new($false, $true)
+        try {
+            $entry = $utf8.GetString($treeBytes, 0, $treeBytes.Length - 1)
+        } catch {
+            throw "Authorization tree output contains invalid UTF-8."
+        }
+        if ($entry.IndexOf([char]0) -ge 0 -or
+            $entry -cnotmatch "^(100644|100755) blob ([0-9a-f]{40})`t(.+)$" -or
+            $Matches[3] -cne $path) {
+            throw "Authorization artifact is not an exact regular blob."
+        }
+        $mode = $Matches[1]
+        $objectId = $Matches[2]
+        $size = [int64](Invoke-BaseGit @("cat-file", "-s", $objectId)).Trim()
         $total += $size
         if ($size -gt 16777216 -or $total -gt 67108864) { throw "Authorization artifact bytes exceed their bound." }
-        [byte[]]$bytes = Invoke-BaseGitBytes @("cat-file", "blob", $Matches[2])
+        [byte[]]$bytes = Invoke-BaseGitBytes @("cat-file", "blob", $objectId)
         if ($bytes.Length -ne $size) { throw "Authorization artifact byte size drifted while reading Git object." }
         $hash = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($bytes)).ToLowerInvariant()
-        $artifacts.Add([ordered]@{ path = $path; state = "present"; mode = $Matches[1]; size_bytes = $size; sha256 = $hash })
+        $artifacts.Add([ordered]@{ path = $path; state = "present"; mode = $mode; size_bytes = $size; sha256 = $hash })
     }
     $result = @($artifacts)
     $paths = @($result | ForEach-Object { [string]$_.path })
-    $sorted = @($paths | Sort-Object -CaseSensitive)
-    if (($paths -join "`n") -cne ($sorted -join "`n") -or @($paths | Sort-Object -Unique -CaseSensitive).Count -ne $paths.Count) { throw "Authorization artifact paths are not ordinally sorted and unique." }
+    $recordPaths = @($records | ForEach-Object { [string]$_.path })
+    if ($result.Count -ne $records.Count -or ($paths -join "`n") -cne ($recordPaths -join "`n")) {
+        throw "Authorization artifact inventory is incomplete relative to Git name-status output."
+    }
     return $result
 }
 
@@ -522,6 +545,7 @@ if (
 ) {
     throw "Pinned verifier entrypoint byte identity differs."
 }
+Import-Module (Join-Path $script:TrustedBase ".github\scripts\lib\ExternalOwnerAuthorization.psm1") -Force
 
 $finalOutput = [IO.Path]::GetFullPath($OutPath)
 $outputParent = Split-Path -Parent $finalOutput
@@ -551,25 +575,24 @@ try {
     $pwsh = (Get-Command pwsh -CommandType Application -ErrorAction Stop | `
         Select-Object -First 1).Source
     $externalOwnerHold = $false
-    try {
-        $verifierOutput = @(& $pwsh -NoProfile -NonInteractive -ExecutionPolicy Bypass `
-            -File $verifierScript `
-            -RepositoryRoot $script:TrustedBase `
-            -PolicyPath $PolicyPath `
-            -Repository $ExpectedRepository `
-            -BaseCommit $BaseCommit `
-            -CandidateCommit $CandidateCommit `
-            -OutPath $genericOutput 2>&1)
-        if ($LASTEXITCODE -ne 0) {
-            $verifierFailure = ($verifierOutput | Out-String).Trim()
-            if ($verifierFailure -match [regex]::Escape("Protected changes do not match an exact base-approved change set.")) {
-                throw "Protected changes do not match an exact base-approved change set."
-            }
-            throw "Pinned external validation verifier failed: $verifierFailure"
+    $verifierOutput = @(& $pwsh -NoProfile -NonInteractive -ExecutionPolicy Bypass `
+        -File $verifierScript `
+        -RepositoryRoot $script:TrustedBase `
+        -PolicyPath $PolicyPath `
+        -Repository $ExpectedRepository `
+        -BaseCommit $BaseCommit `
+        -CandidateCommit $CandidateCommit `
+        -OutPath $genericOutput 2>&1)
+    $verifierExit = $LASTEXITCODE
+    if ($verifierExit -ne 0) {
+        if (Test-Path -LiteralPath $genericOutput -PathType Leaf) {
+            throw "Pinned verifier emitted an assessment while failing."
         }
-    } catch {
-        if ($_.Exception.Message -cne "Protected changes do not match an exact base-approved change set.") {
-            throw
+        try {
+            Assert-ExternalOwnerFallbackVerifierFailure `
+                -ExitCode $verifierExit -Output $verifierOutput
+        } catch {
+            throw "Pinned external validation verifier failed without the exact protected-without-base-approval hold: $($_.Exception.Message)"
         }
         $externalOwnerHold = $true
     }
@@ -585,24 +608,10 @@ try {
             }).Count -gt 0
         })
         if ($protectedArtifacts.Count -eq 0) { throw "Exact protected-without-base-approval hold did not contain protected artifacts." }
-        $generic = [pscustomobject][ordered]@{
-            policy_id = [string]$policy.policy_id
-            policy_sha256 = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($policyBytes)).ToLowerInvariant()
-            base = Get-GitIdentity $BaseCommit
-            candidate = Get-GitIdentity $CandidateCommit
-            changed_paths = @($artifacts | ForEach-Object { [string]$_.path })
-            protected_paths = @($protectedArtifacts | ForEach-Object { [string]$_.path })
-            decision = "external-owner-authorization"
-            approval_id = "external-owner-authorization-required"
-            candidate_code_executed = $false
-            execution_attested = $false
-            publication_authority = $false
-            limitations = @(
-                "Static admission only; no candidate code was executed.",
-                "Execution, tests, and owner-effect evidence require separate trusted validation.",
-                "This assessment does not authorize publication."
-            )
-        }
+        $generic = New-ExternalOwnerProtectedWithoutBaseApprovalAssessment `
+            -Policy $policy -PolicyBytes $policyBytes -Base (Get-GitIdentity $BaseCommit) `
+            -Candidate (Get-GitIdentity $CandidateCommit) -ChangedArtifacts $artifacts `
+            -ProtectedArtifacts $protectedArtifacts
     } else {
         $genericJson = Get-Content -Raw -LiteralPath $genericOutput
         $generic = $genericJson | ConvertFrom-Json -Depth 30
@@ -678,13 +687,10 @@ try {
         )
     }
     if ($externalOwnerHold) {
-        Import-Module (Join-Path $script:TrustedBase ".github\scripts\lib\ExternalOwnerAuthorization.psm1") -Force
         $ownerPolicy = Read-ExternalOwnerAuthorizationPolicy `
             -Path (Join-Path $script:TrustedBase $ExternalOwnerPolicyPath) `
             -SchemaPath (Join-Path $script:TrustedBase $ExternalOwnerPolicySchemaPath)
         $signedAssessment = $assessment | ConvertTo-Json -Depth 30 | ConvertFrom-Json -Depth 30 -DateKind String
-        $signedAssessment.decision = "protected-without-base-approval"
-        $signedAssessment.approval_id = $null
         $request = New-ExternalOwnerAuthorizationRequest -Policy $ownerPolicy `
             -PullRequestNumber $pullRequest -Base $assessment.base -Head $assessment.candidate `
             -ChangedArtifacts $artifacts -ProtectedArtifacts $protectedArtifacts `
@@ -704,6 +710,7 @@ try {
             $document = ConvertFrom-ExternalOwnerJsonStrict (([string]$markers[0].body -split "\r?\n", 2)[1])
             $expected = New-ExternalOwnerAuthorizationPayload -Request $request -AuditId ([string]$document.payload.audit_id) -IssuedAt ([string]$document.payload.issued_at) -ExpiresAt ([string]$document.payload.expires_at)
             $payload = Test-ExternalOwnerAuthorizationComments -Comments $comments -ExpectedPayload $expected -Policy $ownerPolicy -SchemaPath (Join-Path $script:TrustedBase $ExternalOwnerAuthorizationSchemaPath)
+            $assessment.decision = "external-owner-authorization"
             $assessment.approval_id = [string]$payload.audit_id
         } catch {
             Write-ExternalOwnerRequest $request

@@ -42,6 +42,7 @@ jobs:
       - name: Assess candidate Git objects without checkout or execution
         shell: pwsh
         env:
+          GITHUB_TOKEN: ${{ github.token }}
           EVENT_BASE_REF: ${{ github.event.pull_request.base.ref }}
           EVENT_BASE_REPOSITORY: ${{ github.event.pull_request.base.repo.full_name }}
           EVENT_BASE_SHA: ${{ github.event.pull_request.base.sha }}
