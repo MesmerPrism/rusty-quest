@@ -247,6 +247,13 @@ headset or ADB server. The native renderer profiles are the public validation
 matrix for the main native Quest XR stack: they select custom Camera2/HWB
 projection, native Meta passthrough, or a solid black projection background
 without changing APK identity or hiding route state in ad hoc launch scripts.
+The focused host-only reliability gate exercises bounded property batching,
+complete exact readback, receipt-bound interrupted-run recovery, and the
+capture operator's fresh generation/effect contract against a fake ADB:
+
+```powershell
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\checks\Test-QuestRecordingHostReliability.ps1 -RepoRoot .
+```
 The Spatial Camera Panel panel lane adds a separate static/build/headset gate
 for `apps/spatial-camera-panel-android`:
 

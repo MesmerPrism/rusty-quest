@@ -55,6 +55,9 @@ For concurrent project builds and repeated launches on one headset, use
 [APK Build And Run Isolation](docs/APK_RUN_ISOLATION.md): distinct app/package
 identity, explicit locked inputs, content-addressed outputs, a hashed run
 capsule, and serial-scoped cleanup that restores exact prior properties.
+The same contract includes bounded ordered property transport and a
+receipt-bound recovery entrypoint for a process interrupted after entering a
+run transaction; it has no generic package or shell authority.
 
 ## Device Link Contracts
 

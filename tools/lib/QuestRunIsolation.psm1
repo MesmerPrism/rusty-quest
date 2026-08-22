@@ -1,5 +1,6 @@
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
+Import-Module (Join-Path $PSScriptRoot "QuestPropertyTransport.psm1") -Force
 
 function Get-QuestRunIsolationHash {
     param([Parameter(Mandatory=$true)][string]$Value)
@@ -12,6 +13,58 @@ function ConvertTo-QuestShellSingleQuoted {
     param([Parameter(Mandatory=$true)][AllowEmptyString()][string]$Value)
     $singleQuoteEscape = "'" + [char]34 + "'" + [char]34 + "'"
     return "'" + $Value.Replace("'", $singleQuoteEscape) + "'"
+}
+
+function Get-QuestRunIsolationMutexName {
+    param([Parameter(Mandatory=$true)][string]$Serial)
+    return "Local\RustyMorphospaceQuestRun-" + (Get-QuestRunIsolationHash -Value $Serial).Substring(0, 24)
+}
+
+function Get-QuestRunIsolationSnapshotHash {
+    param([Parameter(Mandatory=$true)]$Snapshot)
+    $canonical = @($Snapshot | ForEach-Object {
+        [ordered]@{ name = [string]$_.name; value = [string]$_.value }
+    }) | ConvertTo-Json -Compress -Depth 4
+    return Get-QuestRunIsolationHash -Value $canonical
+}
+
+function Assert-QuestRunIsolationEnteredReceipt {
+    param(
+        [Parameter(Mandatory=$true)]$Receipt,
+        [Parameter(Mandatory=$true)][string]$ExpectedSerial,
+        [Parameter(Mandatory=$true)][string]$ExpectedPackageName
+    )
+    if ([string]$Receipt.schema -ne "rusty.quest.run_isolation_receipt.v1") { throw "Entered run-isolation receipt schema is not supported." }
+    if ([string]$Receipt.phase -ne "entered" -or [string]$Receipt.status -ne "active") { throw "Run-isolation recovery accepts only an active entered receipt." }
+    if ([string]$Receipt.serial -ne $ExpectedSerial) { throw "Entered run-isolation receipt serial does not match the expected serial." }
+    if ([string]$Receipt.package_name -ne $ExpectedPackageName) { throw "Entered run-isolation receipt package does not match the expected package." }
+    $expectedMutexName = Get-QuestRunIsolationMutexName -Serial $ExpectedSerial
+    if ([string]$Receipt.mutex_name -ne $expectedMutexName) { throw "Entered run-isolation receipt mutex identity is not bound to the expected serial." }
+    $snapshot = @($Receipt.property_snapshot)
+    if ($snapshot.Count -eq 0) { throw "Entered run-isolation receipt property snapshot is empty." }
+    $seen = @{}
+    foreach ($entry in $snapshot) {
+        $name = [string]$entry.name
+        $value = [string]$entry.value
+        if ($name -notmatch '^[A-Za-z0-9._-]{1,92}$') { throw "Entered run-isolation receipt contains an unsafe property name." }
+        if ($value.IndexOf([char]0) -ge 0 -or $value.Contains("`r") -or $value.Contains("`n")) { throw "Entered run-isolation receipt contains an unsafe property value." }
+        if ($seen.ContainsKey($name)) { throw "Entered run-isolation receipt contains duplicate property names: $name" }
+        $seen[$name] = $true
+    }
+    return @($snapshot | ForEach-Object { [pscustomobject][ordered]@{ name = [string]$_.name; value = [string]$_.value } })
+}
+
+function Write-QuestRunIsolationReceiptAtomically {
+    param([Parameter(Mandatory=$true)]$Receipt, [Parameter(Mandatory=$true)][string]$Path)
+    $parent = Split-Path -Parent $Path
+    New-Item -ItemType Directory -Force -Path $parent | Out-Null
+    $temporary = Join-Path $parent ((Split-Path -Leaf $Path) + "." + [guid]::NewGuid().ToString("N") + ".tmp")
+    try {
+        $Receipt | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath $temporary -Encoding UTF8
+        Move-Item -LiteralPath $temporary -Destination $Path -Force
+    } finally {
+        Remove-Item -LiteralPath $temporary -Force -ErrorAction SilentlyContinue
+    }
 }
 
 function Invoke-QuestRunIsolationAdb {
@@ -60,11 +113,9 @@ function Get-QuestPropertySnapshot {
 
 function Set-QuestPropertyBatch {
     param([string]$Adb, [string]$Serial, [string]$AdbServerPort, [Parameter(Mandatory=$true)]$Entries)
-    $commands = @($Entries | ForEach-Object {
-        "setprop $(ConvertTo-QuestShellSingleQuoted -Value ([string]$_.name)) $(ConvertTo-QuestShellSingleQuoted -Value ([string]$_.value))"
-    })
-    if ($commands.Count -eq 0) { return }
-    $null = Invoke-QuestRunIsolationAdb -Adb $Adb -Serial $Serial -AdbServerPort $AdbServerPort -Arguments @("shell", ($commands -join "; "))
+    $batches = @(New-QuestPropertySetpropBatches -Entries $Entries)
+    if ($batches.Count -eq 0) { return }
+    $null = Invoke-QuestPropertySetpropBatches -Adb $Adb -Serial $Serial -AdbServerPort $AdbServerPort -Batches $batches
 }
 
 function Get-QuestRunCapsuleInstallApk {
@@ -116,7 +167,7 @@ function Enter-QuestRunIsolation {
         [Parameter(Mandatory=$true)][string]$ReceiptPath,
         [int]$MutexTimeoutSeconds = 120
     )
-    $mutexName = "Local\RustyMorphospaceQuestRun-" + (Get-QuestRunIsolationHash -Value $Serial).Substring(0, 24)
+    $mutexName = Get-QuestRunIsolationMutexName -Serial $Serial
     $mutex = [Threading.Mutex]::new($false, $mutexName)
     $acquired = $false
     try {
@@ -132,7 +183,7 @@ function Enter-QuestRunIsolation {
             mutex_name = $mutexName; property_snapshot = $snapshots; foreground_before = [string]$foreground.output
         }
         New-Item -ItemType Directory -Force -Path (Split-Path -Parent $ReceiptPath) | Out-Null
-        $receipt | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $ReceiptPath -Encoding UTF8
+        Write-QuestRunIsolationReceiptAtomically -Receipt $receipt -Path $ReceiptPath
         return [pscustomobject]@{
             Adb = $Adb; Serial = $Serial; AdbServerPort = $AdbServerPort; PackageName = $PackageName
             ReceiptPath = $ReceiptPath; Mutex = $mutex; MutexName = $mutexName; Acquired = $true; PropertySnapshot = $snapshots
@@ -197,7 +248,7 @@ function Exit-QuestRunIsolation {
             mutex_name = [string]$Context.MutexName; force_stop_exit_code = $stop.exit_code; complete_property_clear = [bool]$Context.CompletePropertyClear
             property_restore = $restores; errors = @($errors)
         }
-        $receipt | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $Context.ReceiptPath -Encoding UTF8
+        Write-QuestRunIsolationReceiptAtomically -Receipt $receipt -Path $Context.ReceiptPath
         return $receipt
     } finally {
         if ($Context.Acquired) { try { $Context.Mutex.ReleaseMutex() } catch {} }
@@ -205,4 +256,69 @@ function Exit-QuestRunIsolation {
     }
 }
 
-Export-ModuleMember -Function Get-QuestRunCapsuleInstallApk, Enter-QuestRunIsolation, Clear-QuestRunIsolationProperties, Exit-QuestRunIsolation
+function Recover-QuestRunIsolation {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory=$true)][string]$Adb,
+        [Parameter(Mandatory=$true)][string]$ExpectedSerial,
+        [string]$AdbServerPort,
+        [Parameter(Mandatory=$true)][string]$ExpectedPackageName,
+        [Parameter(Mandatory=$true)][string]$EnteredReceiptPath,
+        [Parameter(Mandatory=$true)][string]$TerminalReceiptPath,
+        [ValidateRange(0, 120)][int]$MutexTimeoutSeconds = 0
+    )
+    $enteredFullPath = (Resolve-Path -LiteralPath $EnteredReceiptPath -ErrorAction Stop).Path
+    $terminalFullPath = [IO.Path]::GetFullPath($TerminalReceiptPath)
+    if ($enteredFullPath -eq $terminalFullPath) { throw "Recovery terminal receipt path must be distinct from the entered receipt path." }
+    $rawBytes = [IO.File]::ReadAllBytes($enteredFullPath)
+    try { $enteredReceipt = ([Text.Encoding]::UTF8.GetString($rawBytes) | ConvertFrom-Json -Depth 32) }
+    catch { throw "Entered run-isolation receipt is not valid JSON: $($_.Exception.Message)" }
+    $snapshot = @(Assert-QuestRunIsolationEnteredReceipt -Receipt $enteredReceipt -ExpectedSerial $ExpectedSerial -ExpectedPackageName $ExpectedPackageName)
+    $mutexName = Get-QuestRunIsolationMutexName -Serial $ExpectedSerial
+    $mutex = [Threading.Mutex]::new($false, $mutexName)
+    $acquired = $false
+    $errors = [Collections.Generic.List[string]]::new()
+    $restores = @()
+    try {
+        $acquired = $mutex.WaitOne($MutexTimeoutSeconds * 1000)
+        if (-not $acquired) { throw "Quest $ExpectedSerial is already owned by another Rusty Morphospace run transaction ($mutexName)." }
+        $state = Invoke-QuestRunIsolationAdb -Adb $Adb -Serial $ExpectedSerial -AdbServerPort $AdbServerPort -Arguments @("get-state")
+        if ([string]$state.output.Trim() -ne "device") { throw "Quest $ExpectedSerial is not in device state." }
+        $stop = Invoke-QuestRunIsolationAdb -Adb $Adb -Serial $ExpectedSerial -AdbServerPort $AdbServerPort -Arguments @("shell", "am force-stop $(ConvertTo-QuestShellSingleQuoted -Value $ExpectedPackageName)") -AllowFailure
+        if ($stop.exit_code -ne 0) { $errors.Add("force-stop failed: $($stop.output)") }
+        try {
+            Set-QuestPropertyBatch -Adb $Adb -Serial $ExpectedSerial -AdbServerPort $AdbServerPort -Entries $snapshot
+        } catch {
+            $errors.Add("property restore batch failed: $($_.Exception.Message)")
+        }
+        $observed = @{}
+        try {
+            $globalReadback = Get-QuestPropertyGlobalReadback -Adb $Adb -Serial $ExpectedSerial -AdbServerPort $AdbServerPort
+            $observed = $globalReadback.observed
+        } catch {
+            $errors.Add("property restore readback failed: $($_.Exception.Message)")
+        }
+        $restoreResult = Test-QuestPropertyExactReadback -Entries $snapshot -Observed $observed
+        $restores = @($restoreResult.readbacks)
+        foreach ($errorText in @($restoreResult.errors)) { $errors.Add($errorText) }
+        $receipt = [pscustomobject][ordered]@{
+            schema = "rusty.quest.run_isolation_receipt.v1"; phase = "cleaned"; status = if ($errors.Count -eq 0) { "pass" } else { "partial" }
+            completed_at = [DateTime]::UtcNow.ToString("o"); serial = $ExpectedSerial; package_name = $ExpectedPackageName
+            mutex_name = $mutexName; force_stop_exit_code = $stop.exit_code; complete_property_clear = $null
+            property_restore = $restores; errors = @($errors)
+            recovery = [ordered]@{
+                mode = "receipt-bound-cross-process"
+                entered_receipt_sha256 = ([BitConverter]::ToString(([Security.Cryptography.SHA256]::Create().ComputeHash($rawBytes))).Replace("-", "").ToLowerInvariant())
+                property_snapshot_sha256 = Get-QuestRunIsolationSnapshotHash -Snapshot $snapshot
+            }
+        }
+        Write-QuestRunIsolationReceiptAtomically -Receipt $receipt -Path $terminalFullPath
+        if ($errors.Count -ne 0) { throw "Quest run-isolation recovery completed partially: $($errors -join '; ')" }
+        return $receipt
+    } finally {
+        if ($acquired) { try { $mutex.ReleaseMutex() } catch {} }
+        $mutex.Dispose()
+    }
+}
+
+Export-ModuleMember -Function Get-QuestRunCapsuleInstallApk, Enter-QuestRunIsolation, Clear-QuestRunIsolationProperties, Exit-QuestRunIsolation, Recover-QuestRunIsolation

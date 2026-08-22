@@ -28,6 +28,8 @@ $nativeSmoke = Get-Content -LiteralPath (Join-Path $repo "tools\Invoke-NativeRen
 $spatialSmoke = Get-Content -LiteralPath (Join-Path $repo "tools\Invoke-SpatialCameraPanelAndroidCameraHwbProjectionSmoke.ps1") -Raw
 $profileTool = Get-Content -LiteralPath (Join-Path $repo "tools\Apply-RuntimeProfile.ps1") -Raw
 $isolationModule = Get-Content -LiteralPath (Join-Path $repo "tools\lib\QuestRunIsolation.psm1") -Raw
+$propertyTransportModule = Get-Content -LiteralPath (Join-Path $repo "tools\lib\QuestPropertyTransport.psm1") -Raw
+$recoveryTool = Get-Content -LiteralPath (Join-Path $repo "tools\Recover-QuestRunIsolation.ps1") -Raw
 $sourceCompositionModule = Get-Content -LiteralPath (Join-Path $repo "tools\lib\SourceComposition.psm1") -Raw
 
 foreach ($needle in @("-AppBuildLock is required", "Locked native APK build rejected undeclared ambient feature inputs", "content-addressed-app-lock-source-composition", "generated-native-renderer.broker-media-client.feature.lock.json", "embedded_manifold_app_feature_lock_sha256", "run-capsule.json")) { Assert-Contains "native build" $nativeBuild $needle }
@@ -45,7 +47,10 @@ Assert-Contains "Spatial smoke" $spatialSmoke 'if ($ForceStopKnownXrPackages)'
 Assert-Contains "Spatial smoke" $spatialSmoke '$capsule.property_manifest.path'
 Assert-Contains "runtime profile" $profileTool '[ValidateSet("ProfileOwned", "CompleteManifest")]'
 Assert-Contains "runtime profile" $profileTool 'property_scope_mode = $PropertyScopeMode'
-foreach ($needle in @("target\apk-r", "Get-QuestRunCapsuleInstallApk", "Local\RustyMorphospaceQuestRun-", "property_snapshot", "Clear-QuestRunIsolationProperties", "complete_property_clear", "Exit-QuestRunIsolation", "force-stop", "property_restore")) { Assert-Contains "run isolation module" $isolationModule $needle }
+foreach ($needle in @("target\apk-r", "Get-QuestRunCapsuleInstallApk", "Local\RustyMorphospaceQuestRun-", "property_snapshot", "Clear-QuestRunIsolationProperties", "complete_property_clear", "Exit-QuestRunIsolation", "Recover-QuestRunIsolation", "force-stop", "property_restore", "receipt-bound-cross-process")) { Assert-Contains "run isolation module" $isolationModule $needle }
+Assert-Contains "runtime profile" $profileTool "ordered-batched-setprop"
+foreach ($needle in @("New-QuestPropertySetpropBatches", "Get-QuestPropertyGlobalReadback", "Test-QuestPropertyExactReadback", "MaxCommandUtf8Bytes", "duplicate property")) { Assert-Contains "property transport module" $propertyTransportModule $needle }
+foreach ($needle in @("-EnteredReceiptPath", "-TerminalReceiptPath", "-ExpectedSerial", "-ExpectedPackageName", "-Adb must be an explicit existing executable path")) { Assert-Contains "recovery entrypoint" $recoveryTool $needle }
 foreach ($text in @($nativeSmoke, $spatialSmoke)) { Assert-Contains "smoke wrapper short APK staging" $text "Get-QuestRunCapsuleInstallApk" }
 foreach ($needle in @("cargo metadata --format-version 1 --locked", "path-dependency", "tracked_worktree_clean", "rusty.quest.apk_source_composition_identity.v1")) { Assert-Contains "source composition module" $sourceCompositionModule $needle }
 foreach ($text in @($nativeBuild, $spatialBuild)) {

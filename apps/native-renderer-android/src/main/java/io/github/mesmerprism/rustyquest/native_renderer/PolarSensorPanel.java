@@ -401,86 +401,141 @@ final class PolarSensorPanel {
         marker("status=stopped");
     }
 
-    void handleCommand(String rawCommand) {
+    static final class OperatorCommandStatus {
+        final long operationGeneration;
+        final String command;
+        final String dispatchStatus;
+        final String reasonCode;
+        final String effectStatus;
+        final String captureSessionId;
+        final JSONObject freshPolarStatus;
+
+        OperatorCommandStatus(
+            long operationGeneration,
+            String command,
+            String dispatchStatus,
+            String reasonCode,
+            String effectStatus,
+            String captureSessionId,
+            JSONObject freshPolarStatus
+        ) {
+            this.operationGeneration = operationGeneration;
+            this.command = command;
+            this.dispatchStatus = dispatchStatus;
+            this.reasonCode = reasonCode;
+            this.effectStatus = effectStatus;
+            this.captureSessionId = captureSessionId;
+            this.freshPolarStatus = freshPolarStatus;
+        }
+    }
+
+    private long operatorCommandGeneration = 0L;
+
+    OperatorCommandStatus handleCommand(String rawCommand) {
         String command = rawCommand == null ? "" : rawCommand.trim().toLowerCase(Locale.US);
+        long operationGeneration = ++operatorCommandGeneration;
         if ("scan".equals(command)) {
             setStatus("CLI command: scan.");
             marker("status=cli-command command=scan");
             startScan();
-            return;
+            return finishOperatorCommand(operationGeneration, command, "accepted", "none", "pending");
         }
         if ("connect".equals(command)) {
             setStatus("CLI command: connect.");
             marker("status=cli-command command=connect");
             connectSelected();
-            return;
+            return finishOperatorCommand(operationGeneration, command, "accepted", "none", "pending");
         }
         if ("start_acc".equals(command)) {
             setSelectedPmdMode("acc");
             setStatus("CLI command: start ACC.");
             marker("status=cli-command command=start_acc");
             startSelectedPmd();
-            return;
+            return finishOperatorCommand(operationGeneration, command, "accepted", "none", "pending");
         }
         if ("start_ecg".equals(command)) {
             setSelectedPmdMode("ecg");
             setStatus("CLI command: start ECG.");
             marker("status=cli-command command=start_ecg");
             startSelectedPmd();
-            return;
+            return finishOperatorCommand(operationGeneration, command, "accepted", "none", "pending");
         }
         if ("start_all".equals(command)) {
             marker("status=cli-command command=start_all");
             startAllPmd();
-            return;
+            return finishOperatorCommand(operationGeneration, command, "accepted", "none", "pending");
         }
         if ("stop_all".equals(command)) {
             marker("status=cli-command command=stop_all");
             stopAllPmd();
-            return;
+            return finishOperatorCommand(operationGeneration, command, "accepted", "none", "pending");
         }
         if ("start_capture".equals(command)) {
             marker("status=cli-command command=start_capture");
-            startParallelCapture();
-            return;
+            return finishOperatorCommand(
+                operationGeneration,
+                command,
+                "accepted",
+                "none",
+                startParallelCapture()
+            );
         }
         if ("stop_capture".equals(command)) {
             marker("status=cli-command command=stop_capture");
             stopParallelCapture();
-            return;
+            return finishOperatorCommand(operationGeneration, command, "accepted", "none", "pending");
         }
         if ("presentation_low_latency".equals(command)) {
             marker("status=cli-command command=presentation_low_latency");
             setAccPresentationMode("low-latency-smooth");
-            return;
+            return finishOperatorCommand(operationGeneration, command, "accepted", "none", "pending");
         }
         if ("presentation_timestamp_faithful".equals(command)) {
             marker("status=cli-command command=presentation_timestamp_faithful");
             setAccPresentationMode("timestamp-faithful");
-            return;
+            return finishOperatorCommand(operationGeneration, command, "accepted", "none", "pending");
         }
         if ("stop_pmd".equals(command)) {
             marker("status=cli-command command=stop_pmd");
             stopPmd();
-            return;
+            return finishOperatorCommand(operationGeneration, command, "accepted", "none", "pending");
         }
         if ("disconnect".equals(command)) {
             marker("status=cli-command command=disconnect");
             disconnect();
-            return;
+            return finishOperatorCommand(operationGeneration, command, "accepted", "none", "pending");
         }
         if ("reset".equals(command)) {
             marker("status=cli-command command=reset");
             clearCounters();
-            return;
+            return finishOperatorCommand(operationGeneration, command, "accepted", "none", "pending");
         }
         if ("status".equals(command)) {
             marker("status=cli-command command=status");
-            writeStatus(statusState, statusDetail);
-            return;
+            return finishOperatorCommand(operationGeneration, command, "accepted", "none", "observed");
         }
         setStatus("Unknown Polar CLI command: " + rawCommand);
         marker("status=cli-command-ignored command=" + markerToken(rawCommand));
+        return finishOperatorCommand(operationGeneration, command, "rejected", "unknown-command", "not-started");
+    }
+
+    private OperatorCommandStatus finishOperatorCommand(
+        long operationGeneration,
+        String command,
+        String dispatchStatus,
+        String reasonCode,
+        String effectStatus
+    ) {
+        JSONObject freshStatus = writeStatus(statusState, statusDetail);
+        return new OperatorCommandStatus(
+            operationGeneration,
+            command,
+            dispatchStatus,
+            reasonCode,
+            effectStatus,
+            captureSessionId,
+            freshStatus
+        );
     }
 
     boolean isEcgReceiving() {
@@ -702,10 +757,10 @@ final class PolarSensorPanel {
         writePmdCommand("stop_stream_only", buildStopCommand(mode));
     }
 
-    private void startParallelCapture() {
+    private String startParallelCapture() {
         if (!"none".equals(captureSessionId)) {
             setStatus("A synchronized capture is already active: " + captureSessionId);
-            return;
+            return "rejected-already-active";
         }
         captureSessionId = "breath_capture_" + System.currentTimeMillis();
         File directory = new File(new File(activity.getFilesDir(), "breath_source_captures"), captureSessionId);
@@ -719,7 +774,7 @@ final class PolarSensorPanel {
             if (!"started".equals(result.optString("status", ""))) {
                 captureSessionId = "none";
                 setStatus("Capture start rejected: " + result.optString("reason_code", "unknown"));
-                return;
+                return "rejected";
             }
             marker("status=capture-started session=" + markerToken(captureSessionId));
             setStatus("Two-minute synchronized controller/Polar capture started.");
@@ -730,9 +785,11 @@ final class PolarSensorPanel {
                     refreshCaptureCompletion(startedCaptureSessionId);
                 }
             }, 120000L);
+            return "started";
         } catch (Exception error) {
             captureSessionId = "none";
             setStatus("Capture start returned malformed status.");
+            return "malformed";
         }
     }
 
@@ -1831,7 +1888,7 @@ final class PolarSensorPanel {
         });
     }
 
-    private void writeStatus(String state, String detail) {
+    private JSONObject writeStatus(String state, String detail) {
         try {
             long accFrameCount;
             long accSampleCount;
@@ -1891,7 +1948,9 @@ final class PolarSensorPanel {
             } finally {
                 out.close();
             }
+            return body;
         } catch (Exception ignored) {
+            return null;
         }
     }
 

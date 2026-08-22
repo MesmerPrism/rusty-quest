@@ -67,6 +67,18 @@ if ($null -eq $receipt) {
     throw "Timed out waiting for correlated app-owned Polar receipt token $token"
 }
 
+if ($Command -eq 'start_capture') {
+    if ([string]$receipt.dispatch_status -ne 'accepted') {
+        throw "start_capture dispatch was not accepted: $([string]$receipt.reason_code)"
+    }
+    if ([long]$receipt.operation_generation -lt 1) {
+        throw 'start_capture app receipt did not publish a fresh operation generation.'
+    }
+    if ([string]$receipt.effect_status -ne 'started' -or [string]$receipt.capture_session_id -eq 'none') {
+        throw "start_capture was accepted but did not confirm a current capture session: $([string]$receipt.effect_status)"
+    }
+}
+
 [pscustomobject]@{
     schema = 'rusty.quest.native_renderer.polar_sensor_operator_invocation.v1'
     serial = $Serial
@@ -76,6 +88,7 @@ if ($null -eq $receipt) {
     command = $Command
     launch_transport = 'serial-scoped-fixed-adb-activity-action'
     screenshot_required = $false
+    effect_confirmation_required = ($Command -eq 'start_capture')
     app_receipt = $receipt
     launch_output = $launchOutput
 } | ConvertTo-Json -Depth 32

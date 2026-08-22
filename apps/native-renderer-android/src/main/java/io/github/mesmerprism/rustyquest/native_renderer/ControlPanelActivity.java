@@ -5541,8 +5541,8 @@ public final class ControlPanelActivity extends Activity {
             ensurePolarSensorPanel();
         }
         String command = intent.getStringExtra(EXTRA_POLAR_SENSOR_PANEL_COMMAND);
-        polarSensorPanel.handleCommand(command);
-        writePolarSensorOperatorReceipt(token, command, "sent", "none");
+        PolarSensorPanel.OperatorCommandStatus commandStatus = polarSensorPanel.handleCommand(command);
+        writePolarSensorOperatorReceipt(token, commandStatus);
     }
 
     private void writePolarSensorOperatorReceipt(
@@ -5565,6 +5565,36 @@ public final class ControlPanelActivity extends Activity {
                     receipt.put("polar_status", new JSONObject(statusText));
                 }
             } catch (Exception ignored) {
+                receipt.put("polar_status", JSONObject.NULL);
+            }
+            writeFile(POLAR_SENSOR_OPERATOR_STATUS_FILE, receipt.toString(2));
+        } catch (Exception error) {
+            Log.i(
+                TAG,
+                MARKER_PREFIX + " channel=polar-sensor-operator status=receipt-write-failed reason="
+                    + markerToken(error.getMessage())
+            );
+        }
+    }
+
+    private void writePolarSensorOperatorReceipt(
+        String token,
+        PolarSensorPanel.OperatorCommandStatus commandStatus
+    ) {
+        try {
+            JSONObject receipt = new JSONObject()
+                .put("schema", "rusty.quest.native_renderer.polar_sensor_operator_status.v1")
+                .put("token", token == null ? "" : token)
+                .put("command", commandStatus.command == null ? "" : commandStatus.command)
+                .put("dispatch_status", commandStatus.dispatchStatus)
+                .put("reason_code", commandStatus.reasonCode)
+                .put("effect_status", commandStatus.effectStatus)
+                .put("operation_generation", commandStatus.operationGeneration)
+                .put("capture_session_id", commandStatus.captureSessionId)
+                .put("updated_at_elapsed_realtime_ns", SystemClock.elapsedRealtimeNanos());
+            if (commandStatus.freshPolarStatus != null) {
+                receipt.put("polar_status", commandStatus.freshPolarStatus);
+            } else {
                 receipt.put("polar_status", JSONObject.NULL);
             }
             writeFile(POLAR_SENSOR_OPERATOR_STATUS_FILE, receipt.toString(2));

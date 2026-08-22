@@ -164,10 +164,15 @@ Assert-ContainsTokens $polarPanel @(
     'acc_presentation_delay_ms',
     'acc_smoothing_time_constant_ms'
 ) "parallel Polar streams, synchronized capture, and sample-time presentation"
-Assert-ContainsTokens "$controlPanel`n$polarOperator" @(
+Assert-ContainsTokens "$controlPanel`n$polarPanel`n$polarOperator" @(
     "polar_sensor_operator_status.json",
     "rusty.quest.native_renderer.polar_sensor_operator_status.v1",
     "dispatch_status",
+    "effect_status",
+    "operation_generation",
+    "capture_session_id",
+    "finishOperatorCommand",
+    "start_capture app receipt did not publish a fresh operation generation",
     "polar_status",
     "POLAR_SENSOR_PANEL_COMMAND",
     "presentation_low_latency",

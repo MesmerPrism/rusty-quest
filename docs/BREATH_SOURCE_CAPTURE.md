@@ -40,6 +40,13 @@ investigating capture transport itself. The panel only projects native status;
 opening or closing it does not create a second capture or controller-input
 owner.
 
+The fixed operator command reports dispatch and effect separately. In
+particular, `start_capture` first reports an accepted command generation and
+then requires the same app-owned receipt to name a current capture session with
+`effect_status=started`. A prior panel/status snapshot is never treated as a
+failed start, and an operator must not reissue a relative start command merely
+because a stale receipt predates the current operation.
+
 ## ACC presentation policies
 
 Both policies retain the same decoded ACC rows for calibration and capture:
