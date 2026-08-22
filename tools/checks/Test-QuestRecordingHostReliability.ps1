@@ -31,7 +31,6 @@ if ($Arguments -contains 'get-state') { 'device'; exit 0 }
 $shellIndex = [Array]::IndexOf($Arguments, 'shell')
 if ($shellIndex -lt 0) { exit 17 }
 $command = [string]$Arguments[$shellIndex + 1]
-if (-not [string]::IsNullOrEmpty($env:RUSTY_QUEST_FAKE_ADB_FAIL_MATCH) -and $command.Contains($env:RUSTY_QUEST_FAKE_ADB_FAIL_MATCH)) { 'forced batch failure'; exit 19 }
 if ($command -eq 'getprop') {
     $state = Get-Content -Raw -LiteralPath $statePath | ConvertFrom-Json -AsHashtable
     foreach ($name in @($state.Keys | Sort-Object)) {
@@ -44,10 +43,19 @@ if ($command -eq 'getprop') {
 if ($command.StartsWith('am force-stop ')) { 'stopped'; exit 0 }
 if ($command.StartsWith('setprop ')) {
     $state = Get-Content -Raw -LiteralPath $statePath | ConvertFrom-Json -AsHashtable
-    $matches = [regex]::Matches($command, "setprop '([^']+)' '([^']*)'")
-    if ($matches.Count -eq 0) { 'unparseable setprop fixture command'; exit 29 }
-    foreach ($match in $matches) { $state[$match.Groups[1].Value] = $match.Groups[2].Value }
-    $state | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $statePath -Encoding UTF8
+    $changed = $false
+    foreach ($operation in @($command -split ' && ')) {
+        $match = [regex]::Match($operation, "^setprop '([^']+)' '([^']*)'$")
+        if (-not $match.Success) { 'unparseable setprop fixture command'; exit 29 }
+        $name = $match.Groups[1].Value
+        if ($name -eq $env:RUSTY_QUEST_FAKE_ADB_FAIL_PROPERTY) {
+            if ($changed) { $state | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $statePath -Encoding UTF8 }
+            "forced property failure: $name"; exit 19
+        }
+        $state[$name] = $match.Groups[2].Value
+        $changed = $true
+    }
+    if ($changed) { $state | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $statePath -Encoding UTF8 }
     'ok'; exit 0
 }
 exit 23
@@ -69,10 +77,8 @@ exit 23
     $batches = @(New-QuestPropertySetpropBatches -Entries $batchEntries -MaxOperationsPerBatch 2 -MaxCommandUtf8Bytes 256)
     Assert-True ($batches.Count -eq 2 -and $batches[0].operation_count -eq 2 -and $batches[1].operation_count -eq 1) 'Bounded property batching did not preserve ordered chunk boundaries.'
     Assert-True ($batches[0].command_utf8_bytes -le 256 -and $batches[1].command_utf8_bytes -le 256) 'Bounded property batching exceeded its byte limit.'
-    $specialInvocations = @(Invoke-QuestPropertySetpropBatches -Adb $fakeAdb -Serial 'serial-test' -AdbServerPort 5039 -Batches $batches)
-    Assert-True ($specialInvocations.Count -eq 2 -and $specialInvocations[0].exit_code -eq 0) 'Fake ADB did not accept bounded special-value property batches.'
-    $specialLog = @(Get-Content -LiteralPath $fakeLogPath | ForEach-Object { $_ | ConvertFrom-Json -AsHashtable })
-    $specialCommand = [string](@($specialLog[0]['arguments'])[-1])
+    $specialCommand = [string]$batches[0].command
+    Assert-True ($specialCommand.Contains(' && ') -and $batches[0].command_utf8_bytes -eq [Text.Encoding]::UTF8.GetByteCount($specialCommand)) 'Fail-fast separator or its UTF-8 bytes were not included in the bounded batch command.'
     Assert-True ($specialCommand -like "*$quoted*") "Fake ADB did not receive safely escaped apostrophe/space property transport. Expected '$quoted'; observed '$specialCommand'."
     $damagedReadback = Test-QuestPropertyExactReadback -Entries $batchEntries -Observed @{ 'debug.test.one' = 'wrong'; 'debug.test.two' = "operator's value with spaces" }
     Assert-True ($damagedReadback.readbacks[0].status -eq 'mismatched' -and $damagedReadback.readbacks[2].status -eq 'missing') 'Exact property readback did not distinguish mismatch and missing values.'
@@ -117,14 +123,33 @@ exit 23
     $missingPlan = Get-Content -Raw -LiteralPath $missingPlanPath | ConvertFrom-Json -AsHashtable
     Assert-True (@($missingPlan.readbacks | Where-Object { $_.status -eq 'missing' }).Count -eq 1) 'Missing readback did not retain per-property failure evidence.'
     Remove-Item Env:RUSTY_QUEST_FAKE_ADB_OMIT_READBACK_NAME -ErrorAction SilentlyContinue
-    $env:RUSTY_QUEST_FAKE_ADB_FAIL_MATCH = 'setprop'
+    $intermediateEntries = @(
+        [pscustomobject]@{ name = 'debug.intermediate.first'; value = 'first' },
+        [pscustomobject]@{ name = 'debug.intermediate.fail'; value = 'fail' },
+        [pscustomobject]@{ name = 'debug.intermediate.later'; value = 'later' }
+    )
+    $intermediateState = [ordered]@{
+        'debug.intermediate.first' = 'before-first'
+        'debug.intermediate.fail' = 'before-fail'
+        'debug.intermediate.later' = 'before-later'
+    }
+    $intermediateState | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $fakeStatePath -Encoding UTF8
+    $intermediateBatch = @(New-QuestPropertySetpropBatches -Entries $intermediateEntries -MaxOperationsPerBatch 3 -MaxCommandUtf8Bytes 256)
+    Assert-True ($intermediateBatch.Count -eq 1 -and $intermediateBatch[0].command.Contains(' && ')) 'Intermediate failure fixture did not produce one fail-fast batch.'
+    $env:RUSTY_QUEST_FAKE_ADB_FAIL_PROPERTY = 'debug.intermediate.fail'
+    $intermediateFailure = Invoke-ExpectedFailure 'intermediate-setprop-failure' { Invoke-QuestPropertySetpropBatches -Adb $fakeAdb -Serial 'serial-test' -AdbServerPort 5039 -Batches $intermediateBatch | Out-Null }
+    Assert-True ($intermediateFailure.Length -gt 0) 'An intermediate setprop failure was accepted.'
+    $intermediateObserved = Get-Content -Raw -LiteralPath $fakeStatePath | ConvertFrom-Json -AsHashtable
+    Assert-True ($intermediateObserved['debug.intermediate.first'] -eq 'first' -and $intermediateObserved['debug.intermediate.fail'] -eq 'before-fail' -and $intermediateObserved['debug.intermediate.later'] -eq 'before-later') 'Fail-fast property batching did not stop later application after an intermediate failure.'
+    Remove-Item Env:RUSTY_QUEST_FAKE_ADB_FAIL_PROPERTY -ErrorAction SilentlyContinue
+    $env:RUSTY_QUEST_FAKE_ADB_FAIL_PROPERTY = $firstName
     $batchFailurePath = Join-Path $temporary 'batch-failure-plan.json'
     $batchFailureOutput = @(& pwsh -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo 'tools\Apply-RuntimeProfile.ps1') -ProfilePath $profile -Execute -PropertyScopeMode ProfileOwned -Adb $fakeAdb -Serial 'serial-test' -AdbServerPort 5039 -Out $batchFailurePath 2>&1)
     $batchFailureExitCode = $LASTEXITCODE
     Assert-True ($batchFailureExitCode -ne 0) "Nonzero property batch did not fail: $($batchFailureOutput -join ' | ')"
     $batchFailurePlan = Get-Content -Raw -LiteralPath $batchFailurePath | ConvertFrom-Json -AsHashtable
     Assert-True ($batchFailurePlan.execution_status -eq 'failed') 'Nonzero property batch did not publish a failed plan.'
-    Remove-Item Env:RUSTY_QUEST_FAKE_ADB_FAIL_MATCH -ErrorAction SilentlyContinue
+    Remove-Item Env:RUSTY_QUEST_FAKE_ADB_FAIL_PROPERTY -ErrorAction SilentlyContinue
 
     $recoveryState = [ordered]@{ 'debug.recovery.one' = 'changed'; 'debug.recovery.two' = 'changed' }
     $recoveryState | ConvertTo-Json | Set-Content -LiteralPath $fakeStatePath -Encoding UTF8
@@ -177,7 +202,7 @@ exit 23
 } finally {
     Remove-Item Env:RUSTY_QUEST_FAKE_ADB_STATE -ErrorAction SilentlyContinue
     Remove-Item Env:RUSTY_QUEST_FAKE_ADB_LOG -ErrorAction SilentlyContinue
-    Remove-Item Env:RUSTY_QUEST_FAKE_ADB_FAIL_MATCH -ErrorAction SilentlyContinue
+    Remove-Item Env:RUSTY_QUEST_FAKE_ADB_FAIL_PROPERTY -ErrorAction SilentlyContinue
     Remove-Item Env:RUSTY_QUEST_FAKE_ADB_MISMATCH_READBACK_NAME -ErrorAction SilentlyContinue
     Remove-Item Env:RUSTY_QUEST_FAKE_ADB_OMIT_READBACK_NAME -ErrorAction SilentlyContinue
     if (Test-Path -LiteralPath $temporary) { Remove-Item -LiteralPath $temporary -Recurse -Force }

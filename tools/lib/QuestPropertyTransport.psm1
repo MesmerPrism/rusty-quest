@@ -1,5 +1,6 @@
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
+$QuestPropertySetpropCommandSeparator = ' && '
 
 function ConvertTo-QuestPropertyShellSingleQuoted {
     param([Parameter(Mandatory=$true)][AllowEmptyString()][string]$Value)
@@ -42,10 +43,10 @@ function New-QuestPropertySetpropBatches {
         if ($commandBytes -gt $MaxCommandUtf8Bytes) {
             throw "Android property operation for $name exceeds the bounded shell command size."
         }
-        $separatorBytes = if ($pending.Count -eq 0) { 0 } else { [Text.Encoding]::UTF8.GetByteCount('; ') }
+        $separatorBytes = if ($pending.Count -eq 0) { 0 } else { [Text.Encoding]::UTF8.GetByteCount($QuestPropertySetpropCommandSeparator) }
         if ($pending.Count -gt 0 -and (($pending.Count -ge $MaxOperationsPerBatch) -or ($pendingBytes + $separatorBytes + $commandBytes -gt $MaxCommandUtf8Bytes))) {
             $batchIndex += 1
-            $batchCommand = ($pending | ForEach-Object { [string]$_.command }) -join '; '
+            $batchCommand = ($pending | ForEach-Object { [string]$_.command }) -join $QuestPropertySetpropCommandSeparator
             $batches.Add([pscustomobject][ordered]@{
                 index = $batchIndex
                 operation_count = $pending.Count
@@ -62,7 +63,7 @@ function New-QuestPropertySetpropBatches {
     }
     if ($pending.Count -gt 0) {
         $batchIndex += 1
-        $batchCommand = ($pending | ForEach-Object { [string]$_.command }) -join '; '
+        $batchCommand = ($pending | ForEach-Object { [string]$_.command }) -join $QuestPropertySetpropCommandSeparator
         $batches.Add([pscustomobject][ordered]@{
             index = $batchIndex
             operation_count = $pending.Count
