@@ -95,15 +95,35 @@ Assert-Tokens ($feature + [Environment]::NewLine + $appSpec) @(
     "privateParticleHeartbeatPulseMode=polar-rr-event"
 ) "closed feature and app composition"
 
-if ($feature.Contains("powershell -NoProfile", [System.StringComparison]::OrdinalIgnoreCase)) {
+$windowsPowerShellNoProfile = ("power" + "shell") + " -NoProfile"
+if ($feature.Contains($windowsPowerShellNoProfile, [System.StringComparison]::OrdinalIgnoreCase)) {
     throw "Breath composition driver feature must not add a Windows PowerShell child route"
 }
 
 if ($unlistedAppSpec.Contains('"particles.private.breath_composition_driver"', [System.StringComparison]::Ordinal)) {
     throw "The pre-existing four-way input shell must remain unlisted/inert for the particle driver adapter"
 }
+$forbiddenDownstreamTerms = @(
+    "viscereality",
+    ("kura" + "moto"),
+    "icosphere",
+    "orbit-radius",
+    "sphere-radius",
+    "shader tuning"
+)
+$syntheticJoinedForbiddenTerm = "synthetic-" + ("kura" + "moto")
+$syntheticJoinedForbiddenRejected = $false
+foreach ($forbidden in $forbiddenDownstreamTerms) {
+    if ($syntheticJoinedForbiddenTerm.Contains($forbidden, [System.StringComparison]::OrdinalIgnoreCase)) {
+        $syntheticJoinedForbiddenRejected = $true
+        break
+    }
+}
+if (-not $syntheticJoinedForbiddenRejected) {
+    throw "Public breath composition driver forbidden-token assertion must reject a synthetic joined token"
+}
 foreach ($text in @($driver, $integrator, $feature)) {
-    foreach ($forbidden in @("viscereality", "kuramoto", "icosphere", "orbit-radius", "sphere-radius", "shader tuning")) {
+    foreach ($forbidden in $forbiddenDownstreamTerms) {
         if ($text.Contains($forbidden, [System.StringComparison]::OrdinalIgnoreCase)) {
             throw "Public breath composition driver source contains downstream term: $forbidden"
         }
