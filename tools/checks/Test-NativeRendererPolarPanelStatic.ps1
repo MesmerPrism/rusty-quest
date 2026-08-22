@@ -64,7 +64,8 @@ Assert-ContainsTokens $manifest @(
     'android\.permission\.BLUETOOTH_SCAN',
     'PolarSensorCommandReceiver',
     'POLAR_SENSOR_RUNTIME_COMMAND',
-    'android:exported="true"'
+    'android:exported="true"',
+    'android:permission="android.permission.DUMP"'
 ) "development manifest BLE surface"
 
 Assert-ContainsTokens $controlPanel @(
@@ -185,8 +186,8 @@ Assert-ContainsTokens "$controlPanel`n$polarPanel`n$polarRuntime`n$polarReceiver
     "attachPanel",
     "detachPanel",
     "appContext",
-    "Process.SHELL_UID",
-    "getSendingUid",
+    "android.permission.DUMP",
+    "shell-authorized operator bridge",
     "am', 'broadcast",
     'foreground_activity_changed = \$false',
     "ConnectivityPreflight",

@@ -349,8 +349,9 @@ try {
     $generatedManifest = Get-Content -Raw -LiteralPath $generatedManifestPath
     if ($generatedManifest -notmatch 'PolarSensorCommandReceiver' -or
         $generatedManifest -notmatch 'POLAR_SENSOR_RUNTIME_COMMAND' -or
-        $generatedManifest -notmatch 'android:exported="true"') {
-        throw "Generated Android manifest omitted the exact headless Polar command receiver"
+        $generatedManifest -notmatch 'android:exported="true"' -or
+        $generatedManifest -notmatch 'android:permission="android.permission.DUMP"') {
+        throw "Generated Android manifest omitted the exact shell-authorized headless Polar command receiver"
     }
     if ([string]::IsNullOrWhiteSpace([string]$result.breath_composition_activation_sha256)) {
         throw "Structured resolver omitted breath composition activation binding"

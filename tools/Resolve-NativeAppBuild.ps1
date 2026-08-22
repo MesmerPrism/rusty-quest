@@ -762,7 +762,10 @@ function New-GeneratedAndroidManifestText {
         [void]$lines.Add('        </activity>')
     }
     if ($Receivers -contains "PolarSensorCommandReceiver") {
-        [void]$lines.Add('        <receiver android:name="io.github.mesmerprism.rustyquest.native_renderer.PolarSensorCommandReceiver" android:exported="true">')
+        # `android.permission.DUMP` is the platform's shell-operator boundary
+        # for this explicit receiver. The minSdk bootclasspath does not expose
+        # a trustworthy sender-UID API from BroadcastReceiver itself.
+        [void]$lines.Add('        <receiver android:name="io.github.mesmerprism.rustyquest.native_renderer.PolarSensorCommandReceiver" android:exported="true" android:permission="android.permission.DUMP">')
         [void]$lines.Add('            <intent-filter>')
         [void]$lines.Add('                <action android:name="io.github.mesmerprism.rustyquest.native_renderer.action.POLAR_SENSOR_RUNTIME_COMMAND" />')
         [void]$lines.Add('            </intent-filter>')

@@ -3,25 +3,20 @@ package io.github.mesmerprism.rustyquest.native_renderer;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
-import android.os.Process;
-import android.util.Log;
 
-/** Exact shell/self-only operator bridge; it never launches an Activity. */
+/**
+ * Exact shell-authorized operator bridge; it never launches an Activity.
+ *
+ * <p>The generated manifest protects this exported receiver with
+ * {@code android.permission.DUMP}. That is the Android-supported boundary for
+ * a host {@code adb shell am broadcast} operator command on this minSdk
+ * bootclasspath. Do not replace it with a caller-UID check here: this
+ * BroadcastReceiver API level does not expose a trustworthy sender UID.</p>
+ */
 public final class PolarSensorCommandReceiver extends BroadcastReceiver {
-    private static final String TAG = "RQNativeRenderer";
-    private static final String MARKER_PREFIX = "RUSTY_QUEST_NATIVE_RENDERER";
-
     @Override
     public void onReceive(Context context, Intent intent) {
         if (intent == null || !PolarSensorRuntime.ACTION_COMMAND.equals(intent.getAction())) {
-            return;
-        }
-        int senderUid = getSendingUid();
-        if (senderUid != Process.myUid() && senderUid != Process.SHELL_UID) {
-            Log.i(
-                TAG,
-                MARKER_PREFIX + " channel=polar-sensor-runtime status=rejected reason=caller-not-authorized"
-            );
             return;
         }
         PolarSensorRuntime.forApplication(context).dispatchFromCli(
