@@ -2188,7 +2188,6 @@ $manifest = [ordered]@{
     android_gradle_plugin_version = "8.11.1"
     kotlin_version = "2.1.0"
     gradle_version = $GradleVersion
-    isolated_intermediate_root = $intermediateRoot
     native_renderer_package_preserved = "io.github.mesmerprism.rustyquest.native_renderer"
     native_renderer_spatial_sdk_packaged = $false
     native_interop_probe = "spatial-sdk-openxr-handles-and-panelsurface-capability"

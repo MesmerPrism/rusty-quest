@@ -57,7 +57,27 @@ foreach ($text in @($nativeBuild, $spatialBuild)) {
 }
 Assert-Contains "Spatial iteration build" $spatialBuild "-AllowWorkingTreeChanges:(-not [bool]`$PublicationBuild)"
 Assert-Contains "Spatial publication build" $spatialBuild '[switch]$PublicationBuild'
-Assert-Contains "Spatial short Windows intermediate path" $spatialBuild '("apk-i\{0}" -f $buildInputFingerprint.Substring(0, 16))'
+foreach ($needle in @(
+    '$BuildCacheRoot.Length -gt 64',
+    'BuildCacheRoot must remain deliberately short (64 characters or fewer)',
+    '$cacheLaneId = (("{0}-{1}" -f $resolvedProductId, $buildTypeLower)',
+    'Join-Path $BuildCacheRoot ("l\{0}" -f $cacheLaneId)',
+    'Join-Path $BuildCacheRoot ("g\{0}" -f $cacheLaneId)',
+    'Join-Path $BuildCacheRoot "gp"',
+    'Join-Path $BuildCacheRoot "gu"',
+    'Join-Path $BuildCacheRoot ("c\{0}" -f $RustStdLinkage.Substring(0, 1).ToLowerInvariant())',
+    'native = $nativeFingerprint',
+    'android_shell = $shellFingerprint',
+    'package = $packageFingerprint',
+    'stable_short_cache = $true',
+    'paths_recorded = $false',
+    'build_cache_paths_recorded = $false'
+)) {
+    Assert-Contains "Spatial stable cache identity" $spatialBuild $needle
+}
+if ($spatialBuild.Contains('buildInputFingerprint.Substring(0, 16)', [StringComparison]::Ordinal)) {
+    throw 'Spatial compiler intermediates must not derive from the complete APK buildInputFingerprint.'
+}
 
 $temp = Join-Path ([IO.Path]::GetTempPath()) ("rusty-quest-run-capsule-test-" + [guid]::NewGuid().ToString("N"))
 try {
