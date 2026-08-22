@@ -71,6 +71,18 @@ change is static decision `external-owner-authorization`; it retains
 `publication_authority=false`. It grants no test, acceptance, merge, release,
 settings, or device authority.
 
+The authority job projects only GitHub's built-in read-only token as
+`GITHUB_TOKEN` to its base-owned adapter so it can page public PR comments.
+That token is not passed to a candidate checkout, another job, a secret, or an
+environment. The fallback accepts only the pinned verifier's exact terminal
+protected-without-base-approval hold: exit status, sole error record, and the
+adapter's closed Git-object assessment must all agree. It rejects prefix or
+suffix diagnostic text, extra output, different decisions or approval ids, and
+missing or malformed assessment fields. NUL-delimited Git paths are parsed as
+strict UTF-8, canonicalized, ordinally sorted, case-collision-free paths;
+malformed delimiters, duplicate/colliding paths, and incomplete changed or
+protected inventories reject before hashing or signing.
+
 GitHub required status checks match a context and optional GitHub App source;
 they do not bind a workflow path, matrix, or event. A candidate workflow can
 therefore emit the same context through the same GitHub Actions App. The exact
