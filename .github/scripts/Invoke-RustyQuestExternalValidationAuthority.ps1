@@ -275,11 +275,33 @@ function Get-PublicIssueComments {
         return @(ConvertFrom-ExternalOwnerJsonStrict ([Text.UTF8Encoding]::new($false,$true).GetString($raw)))
     }
     if ([string]::IsNullOrEmpty($env:GITHUB_TOKEN)) { throw "Base-owned GitHub token is unavailable for public comment inspection." }
-    $uri = "https://api.github.com/repos/MesmerPrism/rusty-quest/issues/$Number/comments?per_page=100"
-    $headers = @{ Accept = "application/vnd.github+json"; Authorization = "Bearer $($env:GITHUB_TOKEN)"; "X-GitHub-Api-Version" = "2022-11-28"; "User-Agent" = "rusty-quest-static-admission" }
-    $comments = @(Invoke-RestMethod -Uri $uri -Headers $headers -Method Get -MaximumRedirection 0 -TimeoutSec 30)
-    if ($comments.Count -gt [int]$Policy.maximum_comments) { throw "Comment count exceeds its configured bound." }
-    return $comments
+    $client = [Net.Http.HttpClient]::new()
+    $client.Timeout = [timespan]::FromSeconds(30)
+    $client.DefaultRequestHeaders.Add("Accept", "application/vnd.github+json")
+    $client.DefaultRequestHeaders.Add("Authorization", "Bearer $($env:GITHUB_TOKEN)")
+    $client.DefaultRequestHeaders.Add("X-GitHub-Api-Version", "2022-11-28")
+    $client.DefaultRequestHeaders.Add("User-Agent", "rusty-quest-static-admission")
+    $comments = [Collections.Generic.List[object]]::new()
+    [int64]$receivedBytes = 0
+    try {
+        for ($page = 1; $page -le [math]::Ceiling([int]$Policy.maximum_comments / 100.0); $page++) {
+            $uri = "https://api.github.com/repos/MesmerPrism/rusty-quest/issues/$Number/comments?per_page=100&page=$page"
+            $response = $client.GetAsync($uri).GetAwaiter().GetResult()
+            try {
+                if (-not $response.IsSuccessStatusCode) { throw "GitHub issue-comment query failed with HTTP $([int]$response.StatusCode)." }
+                if ($null -ne $response.Content.Headers.ContentLength -and $response.Content.Headers.ContentLength -gt [int]$Policy.maximum_response_bytes) { throw "Comment response exceeds its configured size bound." }
+                [byte[]]$bytes = $response.Content.ReadAsByteArrayAsync().GetAwaiter().GetResult()
+                $receivedBytes += $bytes.Length
+                if ($receivedBytes -gt [int]$Policy.maximum_response_bytes) { throw "Comment responses exceed their configured total size bound." }
+                $text = [Text.UTF8Encoding]::new($false, $true).GetString($bytes)
+                $pageComments = @(ConvertFrom-ExternalOwnerJsonStrict $text)
+                foreach ($comment in $pageComments) { $comments.Add($comment) }
+                if ($comments.Count -gt [int]$Policy.maximum_comments) { throw "Comment count exceeds its configured bound." }
+                if ($pageComments.Count -lt 100) { break }
+            } finally { $response.Dispose() }
+        }
+    } finally { $client.Dispose() }
+    return @($comments)
 }
 
 function Write-ExternalOwnerRequest {
