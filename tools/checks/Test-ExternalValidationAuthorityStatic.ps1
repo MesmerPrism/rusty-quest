@@ -18,6 +18,8 @@ $dynamicWorkflowPath = Join-Path $RepoRoot `
     ".github\workflows\package-updater-dynamic-validation.yml"
 $adapterPath = Join-Path $RepoRoot `
     ".github\scripts\Invoke-RustyQuestExternalValidationAuthority.ps1"
+$externalOwnerModulePath = Join-Path $RepoRoot `
+    ".github\scripts\lib\ExternalOwnerAuthorization.psm1"
 $schemaPath = Join-Path $RepoRoot `
     "schemas\rusty.quest.external_validation_authority_assessment.v1.schema.json"
 $settingsPath = Join-Path $RepoRoot `
@@ -32,18 +34,31 @@ $approvalFixturePath = Join-Path $RepoRoot `
     "fixtures\validation-authority\bootstrap-approval.valid.json"
 $policySelfTest = Join-Path $RepoRoot `
     "tools\checks\Test-ExternalValidationAuthorityPolicySelfTest.ps1"
+$externalOwnerSelfTest = Join-Path $RepoRoot `
+    "tools\checks\Test-ExternalOwnerAuthorization.ps1"
+$externalOwnerBootstrapSelfTest = Join-Path $RepoRoot `
+    "tools\checks\Test-ExternalOwnerBootstrapAuthorization.ps1"
+$bootstrapRequestSchemaPath = Join-Path $RepoRoot `
+    "schemas\rusty.quest.external_owner_bootstrap_request.v1.schema.json"
+$bootstrapAuthorizationSchemaPath = Join-Path $RepoRoot `
+    "schemas\rusty.quest.external_owner_bootstrap_authorization.v1.schema.json"
 
 foreach ($path in @(
     $workflowPath,
     $dynamicWorkflowPath,
     $adapterPath,
+    $externalOwnerModulePath,
     $schemaPath,
     $settingsPath,
     $settingsSchemaPath,
     $probeReceiptSchemaPath,
     $probeReceiptFixturePath,
     $approvalFixturePath,
-    $policySelfTest
+    $policySelfTest,
+    $externalOwnerSelfTest,
+    $externalOwnerBootstrapSelfTest,
+    $bootstrapRequestSchemaPath,
+    $bootstrapAuthorizationSchemaPath
 )) {
     if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
         throw "External validation authority surface is missing: $path"
@@ -99,7 +114,7 @@ $workflow = Get-Content -Raw -LiteralPath $workflowPath
 foreach ($token in @(
     '(?m)^name: External validation authority\s*$',
     '(?m)^\s*pull_request_target:\s*$',
-    '(?m)^permissions:\s*\r?\n\s+contents: read\s*$',
+    '(?m)^permissions:\s*\r?\n\s+contents: read\r?\n\s+pull-requests: read\s*$',
     'runs-on: windows-2025',
     '(?m)^\s{4}name: Static admission\s*$',
     'timeout-minutes: 10',
@@ -113,6 +128,7 @@ foreach ($token in @(
     'EVENT_HEAD_REPOSITORY: \$\{\{ github\.event\.pull_request\.head\.repo\.full_name \}\}',
     'EVENT_HEAD_SHA: \$\{\{ github\.event\.pull_request\.head\.sha \}\}',
     'EVENT_MERGE_SHA: \$\{\{ github\.event\.pull_request\.merge_commit_sha \}\}',
+    'GITHUB_TOKEN: \$\{\{ github\.token \}\}',
     'Invoke-RustyQuestExternalValidationAuthority\.ps1',
     '-BaseRepository \$env:EVENT_BASE_REPOSITORY',
     '-BaseRef \$env:EVENT_BASE_REF',
@@ -128,6 +144,71 @@ foreach ($token in @(
     if ($workflow -notmatch $token) {
         throw "External validation workflow is missing contract token: $token"
     }
+}
+function Assert-AuthorityTokenProjection {
+    param([Parameter(Mandatory)][string]$Content)
+    $permissions = @([regex]::Matches(
+        $Content,
+        '(?m)^permissions:\r?\n(?<body>(?:  [^\r\n]+\r?\n){2})\r?\n(?=^jobs:)'
+    ))
+    $normalizedPermissions = if ($permissions.Count -eq 1) {
+        (($permissions[0].Groups['body'].Value -split '\r?\n' |
+                Where-Object { $_.Length -gt 0 } |
+                ForEach-Object { $_.Trim() }) -join "`n")
+    }
+    if ($permissions.Count -ne 1 -or
+        $normalizedPermissions -cne "contents: read`npull-requests: read") {
+        throw "External validation workflow permissions must remain exactly contents:read and pull-requests:read."
+    }
+    $authoritySteps = @([regex]::Matches(
+        $Content,
+        '(?ms)^      - name: Assess candidate Git objects without checkout or execution\s*\r?\n(?<body>(?:(?!^      - name:)[\s\S])*)'
+    ))
+    if ($authoritySteps.Count -ne 1) {
+        throw "External validation workflow must contain exactly one named authority step."
+    }
+    $authorityStep = $authoritySteps[0].Value
+    $matches = @([regex]::Matches(
+        $Content,
+        '(?m)^          GITHUB_TOKEN:\s*\$\{\{ github\.token \}\}\s*$'
+    ))
+    if ($matches.Count -ne 1 -or $authorityStep -notmatch
+        '(?m)^        env:\s*\r?\n          GITHUB_TOKEN:\s*\$\{\{ github\.token \}\}\s*$' -or
+        ($Content.Replace($authorityStep, "") -match
+            '(?m)^\s*GITHUB_TOKEN:\s*')) {
+        throw "External validation workflow must project the built-in token only to the authority step."
+    }
+}
+Assert-AuthorityTokenProjection $workflow
+$tokenProjectionDamage = $workflow -replace
+    'GITHUB_TOKEN:\s*\$\{\{ github\.token \}\}',
+    'GITHUB_TOKEN: ${{ secrets.UNRELATED_TOKEN }}'
+$tokenProjectionRejected = $false
+try { Assert-AuthorityTokenProjection $tokenProjectionDamage } catch { $tokenProjectionRejected = $true }
+if (-not $tokenProjectionRejected) {
+    throw "Authority token projection damage was accepted."
+}
+$tokenRelocationDamage = ($workflow -replace
+    '(?m)^          GITHUB_TOKEN:\s*\$\{\{ github\.token \}\}\s*\r?\n',
+    '') + @'
+
+      - name: Candidate-executing token damage
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: .\candidate.ps1
+'@
+$tokenRelocationRejected = $false
+try { Assert-AuthorityTokenProjection $tokenRelocationDamage } catch { $tokenRelocationRejected = $true }
+if (-not $tokenRelocationRejected) {
+    throw "Authority token relocation to a candidate-executing step was accepted."
+}
+$permissionDamage = $workflow -replace
+    '(?m)^  pull-requests: read\s*$',
+    "  pull-requests: read`n  issues: write"
+$permissionDamageRejected = $false
+try { Assert-AuthorityTokenProjection $permissionDamage } catch { $permissionDamageRejected = $true }
+if (-not $permissionDamageRejected) {
+    throw "Additional workflow write permission was accepted."
 }
 $checkoutUses = @([regex]::Matches(
     $workflow,
@@ -155,6 +236,9 @@ foreach ($forbidden in @(
 }
 
 $dynamicWorkflow = Get-Content -Raw -LiteralPath $dynamicWorkflowPath
+if ($dynamicWorkflow -match '(?m)^\s*GITHUB_TOKEN:\s*') {
+    throw "Candidate-executing dynamic validation must not receive an authority token."
+}
 foreach ($token in @(
     '(?m)^name: Package updater dynamic validation \(non-authoritative\)\s*$',
     '(?m)^\s*pull_request:\s*$',
@@ -342,6 +426,17 @@ foreach ($token in @(
     'candidate_code_executed = \$false',
     'execution_attested = \$false',
     'publication_authority = \$false',
+    'ExternalOwnerAuthorization\.psm1',
+    'external-owner-authorization\.json',
+    'external_owner_authorization_request',
+    'https://api\.github\.com/repos/MesmerPrism/rusty-quest/issues/',
+    'GITHUB_TOKEN',
+    'Assert-ExternalOwnerFallbackVerifierFailure',
+    'Pinned verifier emitted an assessment while failing',
+    'ConvertFrom-ExternalOwnerGitNameStatusBytes',
+    'Authorization artifact inventory is incomplete relative to Git name-status output',
+    '"--no-ext-diff"',
+    'External-owner authorization is required; the canonical request was emitted\.',
     '\[IO\.FileMode\]::CreateNew'
 )) {
     if ($adapter -notmatch $token) {
@@ -354,11 +449,30 @@ foreach ($forbidden in @(
     'git\s+checkout',
     'git\s+switch',
     'gh\s+',
-    'Invoke-RestMethod',
     'Invoke-WebRequest'
 )) {
     if ($adapter -match $forbidden) {
         throw "Base-owned adapter contains forbidden execution route: $forbidden"
+    }
+}
+if ($adapter -match '-match\s*\[regex\]::Escape\("Protected changes do not match an exact base-approved change set\."\)') {
+    throw "Base-owned adapter retains substring-based protected-hold detection."
+}
+$externalOwnerModule = Get-Content -Raw -LiteralPath $externalOwnerModulePath
+foreach ($token in @(
+    'Assert-ExternalOwnerFallbackVerifierFailure',
+    'Exception: Protected changes do not match an exact base-approved change set\.',
+    'ConvertFrom-ExternalOwnerGitNameStatusBytes',
+    'Git name-status output contains invalid UTF-8',
+    'Git name-status output lacks a terminal NUL delimiter',
+    'case-colliding path',
+    'Assert-ExternalOwnerArtifactInventory',
+    'artifact count differs from its path inventory',
+    'bootstrap_comment_marker',
+    'Bootstrap authorization markers are never accepted by the normal external-owner fallback\.'
+)) {
+    if ($externalOwnerModule -notmatch $token) {
+        throw "External-owner module is missing fail-closed contract token: $token"
     }
 }
 
@@ -377,7 +491,7 @@ foreach ($trimProbe in @('C:\trusted\', 'C:\trusted/')) {
     }
 }
 
-foreach ($scriptPath in @($adapterPath, $policySelfTest, $PSCommandPath)) {
+foreach ($scriptPath in @($adapterPath, $externalOwnerModulePath, $policySelfTest, $externalOwnerSelfTest, $externalOwnerBootstrapSelfTest, $PSCommandPath)) {
     $tokens = $null
     $errors = $null
     [void][Management.Automation.Language.Parser]::ParseFile(
@@ -583,4 +697,6 @@ foreach ($damage in @(
 & $policySelfTest `
     -RepoRoot $RepoRoot `
     -ExpectedBootstrapApprovalAncestor $ExpectedBootstrapApprovalAncestor
+& $externalOwnerSelfTest -RepoRoot $RepoRoot
+& $externalOwnerBootstrapSelfTest -RepoRoot $RepoRoot
 Write-Output "External validation authority static contract passed."
