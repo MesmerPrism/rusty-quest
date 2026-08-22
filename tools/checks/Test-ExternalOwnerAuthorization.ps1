@@ -48,20 +48,60 @@ try {
                 -ChangedArtifacts $artifacts -ProtectedArtifacts $artifacts
         }
     }
+    $holdMessage = "Protected changes do not match an exact base-approved change set."
     $validHoldError = [Management.Automation.ErrorRecord]::new(
-        [Exception]::new("Exception: Protected changes do not match an exact base-approved change set."),
+        [Management.Automation.RuntimeException]::new($holdMessage),
         "PinnedVerifier", [Management.Automation.ErrorCategory]::NotSpecified, $null
     )
-    Assert-ExternalOwnerFallbackVerifierFailure -ExitCode 1 -Output @($validHoldError)
+    Assert-ExternalOwnerFallbackVerifierFailure -ErrorRecord $validHoldError -Output @() `
+        -AssessmentOutputExists $false
+    $exactHoldResult = Invoke-ExternalOwnerFallbackVerifier -Invocation ({
+        throw [Management.Automation.RuntimeException]::new($holdMessage)
+    }.GetNewClosure())
+    if ($exactHoldResult.succeeded -or -not $exactHoldResult.external_owner_hold -or
+        @($exactHoldResult.output).Count -ne 0) {
+        throw "Exact in-process protected hold was not accepted."
+    }
+    $successResult = Invoke-ExternalOwnerFallbackVerifier -Invocation ({
+        Write-Output "pinned-verifier-success"
+    })
+    if (-not $successResult.succeeded -or $successResult.external_owner_hold -or
+        @($successResult.output).Count -ne 1 -or
+        [string]$successResult.output[0] -cne "pinned-verifier-success") {
+        throw "In-process pinned verifier success behavior changed."
+    }
     foreach ($damage in @(
-        [pscustomobject]@{ name = "hold-prefix"; exit = 1; output = @([Management.Automation.ErrorRecord]::new([Exception]::new("prefix Exception: Protected changes do not match an exact base-approved change set."), "PinnedVerifier", [Management.Automation.ErrorCategory]::NotSpecified, $null)) },
-        [pscustomobject]@{ name = "hold-suffix"; exit = 1; output = @([Management.Automation.ErrorRecord]::new([Exception]::new("Exception: Protected changes do not match an exact base-approved change set. suffix"), "PinnedVerifier", [Management.Automation.ErrorCategory]::NotSpecified, $null)) },
-        [pscustomobject]@{ name = "hold-extra-output"; exit = 1; output = @($validHoldError, "extra") },
-        [pscustomobject]@{ name = "hold-exit"; exit = 2; output = @($validHoldError) },
-        [pscustomobject]@{ name = "hold-lookalike"; exit = 1; output = @("Exception: Protected changes do not match an exact base-approved change set.") }
+        [pscustomobject]@{ name = "hold-prefix"; action = ({ throw [Management.Automation.RuntimeException]::new("prefix $holdMessage") }.GetNewClosure()) },
+        [pscustomobject]@{ name = "hold-suffix"; action = ({ throw [Management.Automation.RuntimeException]::new("$holdMessage suffix") }.GetNewClosure()) },
+        [pscustomobject]@{ name = "hold-wrong-message"; action = ({ throw [Management.Automation.RuntimeException]::new("Unexpected verifier failure.") }) },
+        [pscustomobject]@{ name = "hold-unexpected-exception"; action = ({ throw [Exception]::new($holdMessage) }.GetNewClosure()) },
+        [pscustomobject]@{ name = "hold-runtime-subclass"; action = ({ throw [Management.Automation.CommandNotFoundException]::new($holdMessage) }.GetNewClosure()) },
+        [pscustomobject]@{ name = "hold-partial-output"; action = ({ Write-Output "partial-output"; throw [Management.Automation.RuntimeException]::new($holdMessage) }.GetNewClosure()) }
     )) {
         Assert-DamageRejected $damage.name {
-            Assert-ExternalOwnerFallbackVerifierFailure -ExitCode $damage.exit -Output $damage.output
+            $null = Invoke-ExternalOwnerFallbackVerifier -Invocation $damage.action
+        }
+    }
+    $emittedAssessment = Join-Path ([IO.Path]::GetTempPath()) (
+        "rusty-quest-partial-assessment-" + [Guid]::NewGuid().ToString("N") + ".json"
+    )
+    try {
+        $emittingInvocation = ({
+            [IO.File]::WriteAllText(
+                $emittedAssessment, "{}", [Text.UTF8Encoding]::new($false)
+            )
+            throw [Management.Automation.RuntimeException]::new($holdMessage)
+        }.GetNewClosure())
+        Assert-DamageRejected "hold-emitted-assessment" {
+            $null = Invoke-ExternalOwnerFallbackVerifier `
+                -Invocation $emittingInvocation -AssessmentOutputPath $emittedAssessment
+        }
+        if (-not (Test-Path -LiteralPath $emittedAssessment -PathType Leaf)) {
+            throw "Partial-assessment damage fixture did not materialize its assessment."
+        }
+    } finally {
+        if (Test-Path -LiteralPath $emittedAssessment -PathType Leaf) {
+            Remove-Item -LiteralPath $emittedAssessment -Force
         }
     }
     $null = ConvertFrom-ExternalOwnerGitNameStatusBytes ([Text.Encoding]::UTF8.GetBytes(

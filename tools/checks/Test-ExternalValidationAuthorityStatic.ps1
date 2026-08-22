@@ -431,8 +431,7 @@ foreach ($token in @(
     'external_owner_authorization_request',
     'https://api\.github\.com/repos/MesmerPrism/rusty-quest/issues/',
     'GITHUB_TOKEN',
-    'Assert-ExternalOwnerFallbackVerifierFailure',
-    'Pinned verifier emitted an assessment while failing',
+    'Invoke-ExternalOwnerFallbackVerifier',
     'ConvertFrom-ExternalOwnerGitNameStatusBytes',
     'Authorization artifact inventory is incomplete relative to Git name-status output',
     '"--no-ext-diff"',
@@ -458,10 +457,18 @@ foreach ($forbidden in @(
 if ($adapter -match '-match\s*\[regex\]::Escape\("Protected changes do not match an exact base-approved change set\."\)') {
     throw "Base-owned adapter retains substring-based protected-hold detection."
 }
+if ($adapter -match 'Get-Command\s+pwsh' -or $adapter -match '2>&1') {
+    throw "Base-owned adapter retains a child PowerShell verifier route."
+}
 $externalOwnerModule = Get-Content -Raw -LiteralPath $externalOwnerModulePath
 foreach ($token in @(
     'Assert-ExternalOwnerFallbackVerifierFailure',
-    'Exception: Protected changes do not match an exact base-approved change set\.',
+    'Invoke-ExternalOwnerFallbackVerifier',
+    'Management\.Automation\.RuntimeException',
+    'Exception\.GetType\(\) -ne \[Management\.Automation\.RuntimeException\]',
+    'Protected changes do not match an exact base-approved change set\.',
+    'Pinned verifier emitted output while failing\.',
+    'Pinned verifier emitted an assessment while failing\.',
     'ConvertFrom-ExternalOwnerGitNameStatusBytes',
     'Git name-status output contains invalid UTF-8',
     'Git name-status output lacks a terminal NUL delimiter',
@@ -473,6 +480,15 @@ foreach ($token in @(
 )) {
     if ($externalOwnerModule -notmatch $token) {
         throw "External-owner module is missing fail-closed contract token: $token"
+    }
+}
+$externalOwnerSelfTestText = Get-Content -Raw -LiteralPath $externalOwnerSelfTest
+foreach ($token in @(
+    'hold-runtime-subclass',
+    'Management\.Automation\.CommandNotFoundException'
+)) {
+    if ($externalOwnerSelfTestText -notmatch $token) {
+        throw "External-owner self-test is missing exact verifier-type damage coverage: $token"
     }
 }
 

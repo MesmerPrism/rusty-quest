@@ -317,14 +317,54 @@ function New-ExternalOwnerProtectedWithoutBaseApprovalAssessment {
 
 function Assert-ExternalOwnerFallbackVerifierFailure {
     param(
-        [Parameter(Mandatory)][int]$ExitCode,
-        [Parameter(Mandatory)][AllowEmptyCollection()][object[]]$Output
+        [Parameter(Mandatory)][object]$ErrorRecord,
+        [Parameter(Mandatory)][AllowEmptyCollection()][object[]]$Output,
+        [Parameter(Mandatory)][bool]$AssessmentOutputExists
     )
-    if ($ExitCode -ne 1 -or $Output.Count -ne 1 -or
-        $Output[0] -isnot [Management.Automation.ErrorRecord] -or
-        [string]$Output[0].Exception.Message -cne
-            "Exception: Protected changes do not match an exact base-approved change set.") {
+    if ($ErrorRecord -isnot [Management.Automation.ErrorRecord] -or
+        $null -eq $ErrorRecord.Exception -or
+        $ErrorRecord.Exception.GetType() -ne [Management.Automation.RuntimeException] -or
+        [string]$ErrorRecord.Exception.Message -cne
+            "Protected changes do not match an exact base-approved change set.") {
         throw "Pinned verifier result is not the exact protected-without-base-approval hold."
+    }
+    if ($Output.Count -ne 0) {
+        throw "Pinned verifier emitted output while failing."
+    }
+    if ($AssessmentOutputExists) {
+        throw "Pinned verifier emitted an assessment while failing."
+    }
+}
+
+function Invoke-ExternalOwnerFallbackVerifier {
+    param(
+        [Parameter(Mandatory)][scriptblock]$Invocation,
+        [Parameter()][AllowEmptyString()][string]$AssessmentOutputPath = ""
+    )
+    $output = [System.Collections.Generic.List[object]]::new()
+    $failure = $null
+    try {
+        & $Invocation | ForEach-Object {
+            [void]$output.Add($_)
+        }
+    } catch {
+        $failure = $_
+    }
+    if ($null -eq $failure) {
+        return [pscustomobject][ordered]@{
+            succeeded = $true
+            external_owner_hold = $false
+            output = @($output)
+        }
+    }
+    $assessmentOutputExists = -not [string]::IsNullOrEmpty($AssessmentOutputPath) -and
+        (Test-Path -LiteralPath $AssessmentOutputPath -PathType Leaf)
+    Assert-ExternalOwnerFallbackVerifierFailure -ErrorRecord $failure `
+        -Output @($output) -AssessmentOutputExists $assessmentOutputExists
+    return [pscustomobject][ordered]@{
+        succeeded = $false
+        external_owner_hold = $true
+        output = @($output)
     }
 }
 
@@ -413,4 +453,4 @@ function Test-ExternalOwnerAuthorizationComments {
     return $document.payload
 }
 
-Export-ModuleMember -Function Get-CanonicalAuthorizationBytes, Get-ExternalOwnerSha256, ConvertFrom-ExternalOwnerJsonStrict, Read-ExternalOwnerAuthorizationPolicy, ConvertFrom-ExternalOwnerGitNameStatusBytes, Assert-ExternalOwnerArtifactInventory, Assert-ExternalOwnerProtectedWithoutBaseApprovalAssessment, New-ExternalOwnerProtectedWithoutBaseApprovalAssessment, Assert-ExternalOwnerFallbackVerifierFailure, New-ExternalOwnerAuthorizationRequest, New-ExternalOwnerAuthorizationPayload, Test-ExternalOwnerAuthorizationComments
+Export-ModuleMember -Function Get-CanonicalAuthorizationBytes, Get-ExternalOwnerSha256, ConvertFrom-ExternalOwnerJsonStrict, Read-ExternalOwnerAuthorizationPolicy, ConvertFrom-ExternalOwnerGitNameStatusBytes, Assert-ExternalOwnerArtifactInventory, Assert-ExternalOwnerProtectedWithoutBaseApprovalAssessment, New-ExternalOwnerProtectedWithoutBaseApprovalAssessment, Assert-ExternalOwnerFallbackVerifierFailure, Invoke-ExternalOwnerFallbackVerifier, New-ExternalOwnerAuthorizationRequest, New-ExternalOwnerAuthorizationPayload, Test-ExternalOwnerAuthorizationComments
