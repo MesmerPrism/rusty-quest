@@ -119,7 +119,7 @@ mod tests {
         assert!(!default.is_applied());
         assert!(default
             .marker_fields()
-            .contains("activationRejectReason=lock-feature-not-selected"));
+            .contains("activationRejectReason=invalid-lock"));
 
         let mut wrong_feature = accepted_input();
         wrong_feature.feature_id = "tracked-hand-surface".to_owned();
