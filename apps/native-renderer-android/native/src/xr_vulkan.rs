@@ -5315,12 +5315,12 @@ impl PrivateParticleWorldAnchor {
         frame_count: u64,
     ) {
         if !self.initialized {
-            self.capture(eye_projection, frame_count, "startup");
+            self.capture_at_distance(eye_projection, frame_count, "startup", 0.0);
         }
     }
 
     fn recenter(&mut self, eye_projection: HandMeshVisualEyeProjection, frame_count: u64) {
-        self.capture(eye_projection, frame_count, "right-controller-primary");
+        self.recenter_at_headset(eye_projection, frame_count, "right-controller-primary");
     }
 
     fn recenter_at_headset(
@@ -5431,20 +5431,6 @@ impl PrivateParticleWorldAnchor {
                 ),
             );
         }
-    }
-
-    fn capture(
-        &mut self,
-        eye_projection: HandMeshVisualEyeProjection,
-        frame_count: u64,
-        reason: &'static str,
-    ) {
-        self.capture_at_distance(
-            eye_projection,
-            frame_count,
-            reason,
-            PRIVATE_PARTICLE_WORLD_ANCHOR_DISTANCE_M,
-        );
     }
 
     fn capture_at_distance(
@@ -6344,11 +6330,12 @@ mod tests {
     }
 
     #[test]
-    fn private_particle_compute_basis_does_not_follow_later_head_motion() {
+    fn private_particle_startup_anchor_captures_current_view_once() {
         let mut anchor = PrivateParticleWorldAnchor::new();
         let startup = eye_projection([0.0, 1.6, 0.0], [0.0, 0.0, 0.0, 1.0]);
         anchor.capture_startup_if_needed(startup, 1);
         let captured = anchor.compute_basis_transport();
+        assert_eq!(anchor.world_center_scale()[..3], startup.position[..3]);
 
         let later_head = eye_projection(
             [2.0, 1.2, -3.0],
@@ -6365,6 +6352,7 @@ mod tests {
         assert_eq!(after.position, captured.position);
         assert_eq!(after.orientation_xyzw, captured.orientation_xyzw);
         assert_eq!(after.fov_tangents, captured.fov_tangents);
+        assert_eq!(anchor.world_center_scale()[..3], startup.position[..3]);
         assert_ne!(
             after.position[..3],
             rotate_by_quat(later_head.orientation_xyzw, [1.0, 0.0, 0.0])
@@ -6376,19 +6364,18 @@ mod tests {
         let mut anchor = PrivateParticleWorldAnchor::new();
         anchor.capture_startup_if_needed(eye_projection([0.0, 1.6, 0.0], [0.0, 0.0, 0.0, 1.0]), 1);
         let before = anchor.compute_basis_transport();
-        anchor.recenter(
-            eye_projection(
-                [1.0, 1.6, 1.0],
-                [
-                    0.0,
-                    std::f32::consts::FRAC_1_SQRT_2,
-                    0.0,
-                    std::f32::consts::FRAC_1_SQRT_2,
-                ],
-            ),
-            2,
+        let current_view = eye_projection(
+            [1.0, 1.6, 1.0],
+            [
+                0.0,
+                std::f32::consts::FRAC_1_SQRT_2,
+                0.0,
+                std::f32::consts::FRAC_1_SQRT_2,
+            ],
         );
+        anchor.recenter(current_view, 2);
         let after = anchor.compute_basis_transport();
+        assert_eq!(anchor.world_center_scale()[..3], current_view.position[..3]);
         assert_ne!(after.position, before.position);
         assert_ne!(after.orientation_xyzw, before.orientation_xyzw);
         assert_ne!(after.fov_tangents, before.fov_tangents);

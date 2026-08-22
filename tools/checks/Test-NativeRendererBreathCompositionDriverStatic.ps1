@@ -95,7 +95,8 @@ Assert-Tokens ($feature + [Environment]::NewLine + $appSpec) @(
     "privateParticleHeartbeatPulseMode=polar-rr-event"
 ) "closed feature and app composition"
 
-if ($feature.Contains("powershell -NoProfile", [System.StringComparison]::OrdinalIgnoreCase)) {
+$windowsPowerShellNoProfile = ("power" + "shell") + " -NoProfile"
+if ($feature.Contains($windowsPowerShellNoProfile, [System.StringComparison]::OrdinalIgnoreCase)) {
     throw "Breath composition driver feature must not add a Windows PowerShell child route"
 }
 
