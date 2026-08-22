@@ -46,6 +46,8 @@ API run/check inventory, and `mergeStateStatus=BLOCKED` before candidate or
 release work proceeds. The live bootstrap policy remains approval-free until
 candidate `I` is sealed and independently audited, then may carry only its one
 exact bootstrap approval.
+An exceptional one-time trust-root review record is separately specified there;
+it is not a reusable runtime admission or publication authority.
 
 This repo treats ADB and Android properties as transports. They are generated
 from validated profiles and produce dry-run/readback evidence rather than

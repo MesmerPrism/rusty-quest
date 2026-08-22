@@ -378,6 +378,18 @@ function Test-ExternalOwnerAuthorizationComments {
     param([Parameter(Mandatory)][object[]]$Comments, [Parameter(Mandatory)][object]$ExpectedPayload, [Parameter(Mandatory)][object]$Policy, [datetimeoffset]$Now = [datetimeoffset]::UtcNow, [Parameter(Mandatory)][string]$SchemaPath)
     Initialize-ExternalOwnerAuthorizationTypes
     if ($Comments.Count -gt [int]$Policy.maximum_comments) { throw "Comment count exceeds the configured bound." }
+    $bootstrapMarker = [string]$Policy.bootstrap_comment_marker
+    if ([string]::IsNullOrWhiteSpace($bootstrapMarker)) {
+        throw "External-owner policy lacks the bootstrap-marker rejection binding."
+    }
+    $bootstrapMarkerPattern = "(?m)^$([regex]::Escape($bootstrapMarker))$"
+    $bootstrapMarked = @($Comments | Where-Object {
+        [string]$_.user.login -ceq [string]$Policy.owner_login -and
+        [regex]::Matches([string]$_.body, $bootstrapMarkerPattern).Count -gt 0
+    })
+    if ($bootstrapMarked.Count -ne 0) {
+        throw "Bootstrap authorization markers are never accepted by the normal external-owner fallback."
+    }
     $markerPattern = "(?m)^$([regex]::Escape([string]$Policy.comment_marker))$"
     $marked = @($Comments | Where-Object { [string]$_.user.login -ceq [string]$Policy.owner_login -and [regex]::Matches([string]$_.body,$markerPattern).Count -gt 0 })
     if ($marked.Count -ne 1) { throw "Exactly one pinned-owner authorization marker is required." }
