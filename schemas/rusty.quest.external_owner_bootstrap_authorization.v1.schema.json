@@ -1,0 +1,65 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/MesmerPrism/rusty-quest/schemas/rusty.quest.external_owner_bootstrap_authorization.v1.schema.json",
+  "title": "Rusty Quest one-time external-owner bootstrap authorization v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "payload", "signature"],
+  "properties": {
+    "schema": { "const": "rusty.quest.external_owner_bootstrap_authorization.v1" },
+    "payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema", "issuer_id", "key_id", "audit_id", "request", "request_sha256", "issued_at", "expires_at", "decision", "limitations"],
+      "properties": {
+        "schema": { "const": "rusty.quest.external_owner_bootstrap_authorization_payload.v1" },
+        "issuer_id": { "$ref": "#/$defs/id" },
+        "key_id": { "$ref": "#/$defs/id" },
+        "audit_id": { "$ref": "#/$defs/id" },
+        "request": { "$ref": "#/$defs/request" },
+        "request_sha256": { "$ref": "#/$defs/hash" },
+        "issued_at": { "type": "string", "format": "date-time", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$" },
+        "expires_at": { "type": "string", "format": "date-time", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$" },
+        "decision": { "const": "authorize-one-time-bootstrap-merge-review" },
+        "limitations": { "const": ["candidate_code_executed=false", "execution_attested=false", "static_admission_authority=false", "acceptance_authority=false", "publication_authority=false"] }
+      }
+    },
+    "signature": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["algorithm", "public_key_spki_sha256", "value_base64"],
+      "properties": {
+        "algorithm": { "const": "RSA-PSS-SHA256" },
+        "public_key_spki_sha256": { "$ref": "#/$defs/hash" },
+        "value_base64": { "type": "string", "minLength": 128, "maxLength": 2048, "pattern": "^[A-Za-z0-9+/]+={0,2}$" }
+      }
+    }
+  },
+  "$defs": {
+    "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{1,127}$" },
+    "decimalId": { "type": "string", "pattern": "^[1-9][0-9]{0,29}$" },
+    "hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "objectId": { "type": "string", "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$" },
+    "gitIdentity": { "type": "object", "additionalProperties": false, "required": ["commit", "tree"], "properties": { "commit": { "$ref": "#/$defs/objectId" }, "tree": { "$ref": "#/$defs/objectId" } } },
+    "artifacts": { "type": "array", "minItems": 1, "maxItems": 512, "items": { "$ref": "#/$defs/artifact" } },
+    "artifact": { "type": "object", "additionalProperties": false, "required": ["path", "mode", "size_bytes", "sha256"], "properties": { "path": { "$ref": "#/$defs/path" }, "mode": { "enum": ["100644", "100755"] }, "size_bytes": { "type": "integer", "minimum": 0, "maximum": 16777216 }, "sha256": { "$ref": "#/$defs/hash" } } },
+    "path": { "type": "string", "minLength": 1, "maxLength": 512, "pattern": "^[^\\\\\\u0000-\\u001f\\u007f:]+$" },
+    "request": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema", "issuer_id", "key_id", "comment_marker", "repository", "pull_request_number", "base", "head", "generated_merge", "changed_artifact_count", "protected_artifact_count", "inventory_digest", "changed_artifacts", "protected_artifacts", "intent", "old_base_hold", "ordinary_candidate_ci", "local_dynamic_evidence", "limitations"],
+      "properties": {
+        "schema": { "const": "rusty.quest.external_owner_bootstrap_request.v1" }, "issuer_id": { "$ref": "#/$defs/id" }, "key_id": { "$ref": "#/$defs/id" }, "comment_marker": { "const": "rusty-quest-external-owner-bootstrap-authorization:v1" }, "repository": { "const": "MesmerPrism/rusty-quest" }, "pull_request_number": { "type": "integer", "minimum": 1, "maximum": 2147483647 }, "base": { "$ref": "#/$defs/gitIdentity" }, "head": { "$ref": "#/$defs/gitIdentity" },
+        "generated_merge": { "type": "object", "additionalProperties": false, "required": ["observed_commit", "tree", "ordered_parents"], "properties": { "observed_commit": { "$ref": "#/$defs/objectId" }, "tree": { "$ref": "#/$defs/objectId" }, "ordered_parents": { "type": "array", "minItems": 2, "maxItems": 2, "items": { "$ref": "#/$defs/objectId" } } } },
+        "changed_artifact_count": { "type": "integer", "minimum": 1, "maximum": 512 }, "protected_artifact_count": { "type": "integer", "minimum": 1, "maximum": 512 },
+        "inventory_digest": { "type": "object", "additionalProperties": false, "required": ["algorithm", "domain", "encoding", "line_ending", "field_separator", "field_order", "absent_field_sentinel", "value"], "properties": { "algorithm": { "const": "SHA-256" }, "domain": { "const": "rusty.quest.external_owner_bootstrap_inventory.v1" }, "encoding": { "const": "UTF-8" }, "line_ending": { "const": "LF" }, "field_separator": { "const": "TAB" }, "field_order": { "const": ["path", "protected_classification", "state", "mode", "size_bytes", "sha256"] }, "absent_field_sentinel": { "const": "-" }, "value": { "$ref": "#/$defs/hash" } } },
+        "changed_artifacts": { "$ref": "#/$defs/artifacts" }, "protected_artifacts": { "$ref": "#/$defs/artifacts" },
+        "intent": { "type": "object", "additionalProperties": false, "required": ["kind", "independently_reviewed", "user_authorized_one_time_bootstrap", "authorization_scope", "consumption"], "properties": { "kind": { "const": "independently-reviewed-trust-root-evolution" }, "independently_reviewed": { "const": true }, "user_authorized_one_time_bootstrap": { "const": true }, "authorization_scope": { "const": "single-exact-bootstrap-merge-review-decision" }, "consumption": { "const": "orchestrator-exact-head-admin-merge-only" } } },
+        "old_base_hold": { "type": "object", "additionalProperties": false, "required": ["event", "workflow_name", "run_id", "job_id", "job_name", "exit_code", "verifier_message"], "properties": { "event": { "const": "pull_request_target" }, "workflow_name": { "const": "External validation authority" }, "run_id": { "$ref": "#/$defs/decimalId" }, "job_id": { "$ref": "#/$defs/decimalId" }, "job_name": { "const": "Static admission" }, "exit_code": { "const": 1 }, "verifier_message": { "const": "Protected changes do not match an exact base-approved change set." } } },
+        "ordinary_candidate_ci": { "type": "object", "additionalProperties": false, "required": ["event", "workflow_name", "run_id", "job_id", "job_name", "conclusion", "non_authoritative"], "properties": { "event": { "const": "pull_request" }, "workflow_name": { "const": "Package updater dynamic validation (non-authoritative)" }, "run_id": { "$ref": "#/$defs/decimalId" }, "job_id": { "$ref": "#/$defs/decimalId" }, "job_name": { "const": "Credential-free candidate checks (non-authoritative)" }, "conclusion": { "const": "success" }, "non_authoritative": { "const": true } } },
+        "local_dynamic_evidence": { "type": "object", "additionalProperties": false, "required": ["kind", "candidate_head", "aggregate_receipt_sha256", "conclusion", "non_authoritative"], "properties": { "kind": { "const": "supplied-local-aggregate-receipt" }, "candidate_head": { "$ref": "#/$defs/objectId" }, "aggregate_receipt_sha256": { "$ref": "#/$defs/hash" }, "conclusion": { "const": "passed" }, "non_authoritative": { "const": true } } },
+        "limitations": { "const": ["candidate_code_executed=false", "execution_attested=false", "static_admission_authority=false", "acceptance_authority=false", "publication_authority=false"] }
+      }
+    }
+  }
+}

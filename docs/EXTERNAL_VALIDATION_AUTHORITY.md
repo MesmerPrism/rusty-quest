@@ -48,6 +48,111 @@ result. It always records
 `publication_authority=false`. Dynamic validation, repository review, release
 environment approval, and publication remain separate authorities.
 
+## External-owner fallback after bootstrap
+
+The historical `bootstrap-sealed-candidate-i` record is a consumed singleton:
+it remains immutable and cannot be rebound, deleted, or reused. A later
+protected proposal that the pinned base verifier rejects with exactly
+`Protected changes do not match an exact base-approved change set.` may instead
+receive one fresh `rusty-quest-external-owner-authorization:v1` PR comment.
+The base-owned adapter derives a canonical request from Git objects only and
+binds repository/PR, exact base and head commits/trees, ordinal-sorted changed
+and protected artifact inventories (mode, byte length, SHA-256), and the
+canonical static hold assessment. The signed marker carries one audit id,
+pinned issuer/key id, issue/expiry time, and RSA-PSS-SHA256 signature.
+
+The adapter accepts exactly one unedited pinned-owner marker for identical
+evidence during its freshness window. Duplicate markers, changed Git objects
+or artifacts, changed assessment bytes, stale/future/invalid signatures,
+untrusted keys, malformed JSON, and an already-trusted candidate all reject.
+Exact-evidence reruns remain idempotent until expiry. The only resulting state
+change is static decision `external-owner-authorization`; it retains
+`candidate_code_executed=false`, `execution_attested=false`, and
+`publication_authority=false`. It grants no test, acceptance, merge, release,
+settings, or device authority.
+
+The authority job projects only GitHub's built-in read-only token as
+`GITHUB_TOKEN` to its base-owned adapter so it can page public PR comments.
+That token is not passed to a candidate checkout, another job, a secret, or an
+environment. The fallback accepts only the pinned verifier's exact terminal
+protected-without-base-approval hold: exit status, sole error record, and the
+adapter's closed Git-object assessment must all agree. It rejects prefix or
+suffix diagnostic text, extra output, different decisions or approval ids, and
+missing or malformed assessment fields. NUL-delimited Git paths are parsed as
+strict UTF-8, canonicalized, ordinally sorted, case-collision-free paths;
+malformed delimiters, duplicate/colliding paths, and incomplete changed or
+protected inventories reject before hashing or signing.
+
+## Extraordinary one-time trust-root bootstrap record
+
+An independently reviewed trust-root evolution may require a one-time record
+when the old base can neither emit nor verify the normal runtime assessment.
+This is not the external-owner fallback above. Its closed request schema is
+`rusty.quest.external_owner_bootstrap_request.v1`; its closed signed envelope
+schema is `rusty.quest.external_owner_bootstrap_authorization.v1`; and its only
+marker is `rusty-quest-external-owner-bootstrap-authorization:v1`. A record
+uses the same pinned owner, key id, RSA-PSS-SHA256 algorithm, canonical JSON
+primitive, exact UTC-second (`YYYY-MM-DDTHH:MM:SSZ`) issue/expiry syntax,
+issue/expiry window, unedited-comment rule, and freshness bounds as the normal
+policy, but contains no runtime executable, tool, runner, normal
+assessment, or normal request identity. The independent signer constructs and
+signs the closed JSON from the schemas and canonical/RSA primitive; it never
+executes candidate helper code.
+
+The record binds the repository and PR; exact base and head commits and trees;
+the generated merge tree and its ordered base/head parents; full changed and
+protected artifact arrays; both counts; and a separate `inventory_digest`.
+`generated_merge.observed_commit` records the synthetic GitHub merge commit
+seen during the independent review, but is observation only. On the one-time
+consumption readback, a different synthetic merge SHA is admissible only when
+its exact tree remains the signed head tree and its ordered parents remain the
+signed base commit followed by the signed head commit. The new observed SHA is
+still required to be a canonical full object ID; this exception applies only to
+that synthetic generated-merge observation, never to the base, head, artifact,
+or other commit identities. Every artifact is a present Git blob with exact
+portable path, mode, byte length, and lowercase SHA-256. The arrays must be
+ordinally sorted, unique, complete, and have identical metadata where a
+protected artifact occurs in the changed inventory.
+
+`inventory_digest` is SHA-256 over the following exact domain, named
+`rusty.quest.external_owner_bootstrap_inventory.v1`: for every changed
+artifact in `StringComparer.Ordinal` path order, encode one UTF-8 (no BOM) LF
+line with this fixed six-field order and TAB separators:
+
+```
+path<TAB>protected|unprotected<TAB>present<TAB>mode<TAB>size_bytes_decimal<TAB>sha256<LF>
+```
+
+`protected` is selected only when the same path appears in the complete
+protected array; the protected row must have the same mode, size, and hash.
+There is no omitted-field encoding in a bootstrap artifact record. The schema
+therefore fixes the digest algorithm, domain, encoding, LF line ending, TAB
+separator, field order, and its `-` absent-field sentinel even though the
+closed v1 record rejects absent artifacts. Hashing the JSON text, changing the
+separator or order, or omitting a line is not the digest domain.
+
+The request also records the independently reviewed trust-root intent, explicit
+user-authorized one-time bootstrap, exact old-base `pull_request_target` hold
+run/job/message, ordinary credential-free candidate CI as non-authoritative
+evidence, and the supplied local aggregate receipt as non-authoritative dynamic
+evidence. It permanently states `candidate_code_executed=false`,
+`execution_attested=false`, `static_admission_authority=false`,
+`acceptance_authority=false`, and `publication_authority=false`. Its sole
+decision is `authorize-one-time-bootstrap-merge-review`: it authorizes neither
+PR #53 nor any future candidate, static admission, testing, acceptance, merge,
+release, settings, or device work.
+
+The permanent runtime adapter must reject a bootstrap marker and never parses
+either bootstrap schema. Duplicate markers, a previously consumed audit id,
+stale or future timestamps, wrong keys, malformed or noncanonical JSON,
+changed artifacts, different inventory digests, a changed base/head, a changed
+merge tree, reordered merge parents, or any attempt to add runtime identity
+fields reject. A regenerated synthetic SHA with the same exact stable topology
+is the sole allowed observation change. This extraordinary record is consumed
+only by the orchestrator's already user-authorized, exact-head admin merge of
+this trust-root PR. It is a durable review receipt, not retained or reusable
+base authority; no later protected proposal may cite it.
+
 GitHub required status checks match a context and optional GitHub App source;
 they do not bind a workflow path, matrix, or event. A candidate workflow can
 therefore emit the same context through the same GitHub Actions App. The exact
