@@ -38,6 +38,44 @@
       "validators": ["runtime-parser", "profile-matrix", "rusty-quest-profile", "Apply-RuntimeProfile.ps1"]
     },
     {
+      "name": "debug.rustyquest.native_renderer.breath_composition.calibration.right_secondary_action.hold_seconds",
+      "family": "breath_composition",
+      "runtime_owner": "breath_calibration_controller_action",
+      "lifecycle": "startup-effective",
+      "clear_behavior": "profile-owned-explicit-set",
+      "default_behavior": "runtime-owner-default-when-unset",
+      "value_kind": "f32",
+      "range": {
+        "min": 0.5,
+        "max": 5.0
+      },
+      "validators": [
+        "runtime-parser",
+        "profile-matrix",
+        "rusty-quest-profile",
+        "Apply-RuntimeProfile.ps1"
+      ]
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.breath_composition.calibration.right_secondary_action.mode",
+      "family": "breath_composition",
+      "runtime_owner": "breath_calibration_controller_action",
+      "lifecycle": "startup-effective",
+      "clear_behavior": "profile-owned-explicit-set",
+      "default_behavior": "runtime-owner-default-when-unset",
+      "value_kind": "token",
+      "allowed_values": [
+        "disabled",
+        "right-secondary-hold-start"
+      ],
+      "validators": [
+        "runtime-parser",
+        "profile-matrix",
+        "rusty-quest-profile",
+        "Apply-RuntimeProfile.ps1"
+      ]
+    },
+    {
       "name": "debug.rustyquest.native_renderer.breath_composition.controller_assessment.enabled",
       "family": "breath_composition",
       "runtime_owner": "breath_composition_runtime",
@@ -392,44 +430,6 @@
       "range": {
         "min": 0.25,
         "max": 30.0
-      },
-      "validators": [
-        "runtime-parser",
-        "profile-matrix",
-        "rusty-quest-profile",
-        "Apply-RuntimeProfile.ps1"
-      ]
-    },
-    {
-      "name": "debug.rustyquest.native_renderer.breath_composition.calibration.right_secondary_action.mode",
-      "family": "breath_composition",
-      "runtime_owner": "breath_calibration_controller_action",
-      "lifecycle": "startup-effective",
-      "clear_behavior": "profile-owned-explicit-set",
-      "default_behavior": "runtime-owner-default-when-unset",
-      "value_kind": "token",
-      "allowed_values": [
-        "disabled",
-        "right-secondary-hold-start"
-      ],
-      "validators": [
-        "runtime-parser",
-        "profile-matrix",
-        "rusty-quest-profile",
-        "Apply-RuntimeProfile.ps1"
-      ]
-    },
-    {
-      "name": "debug.rustyquest.native_renderer.breath_composition.calibration.right_secondary_action.hold_seconds",
-      "family": "breath_composition",
-      "runtime_owner": "breath_calibration_controller_action",
-      "lifecycle": "startup-effective",
-      "clear_behavior": "profile-owned-explicit-set",
-      "default_behavior": "runtime-owner-default-when-unset",
-      "value_kind": "f32",
-      "range": {
-        "min": 0.5,
-        "max": 5.0
       },
       "validators": [
         "runtime-parser",
