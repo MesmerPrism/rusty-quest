@@ -4,6 +4,7 @@
   "key_id": "mesmerprism-owner-policy-rsa-pss-2026-08",
   "owner_login": "MesmerPrism",
   "comment_marker": "rusty-quest-external-owner-authorization:v1",
+  "bootstrap_comment_marker": "rusty-quest-external-owner-bootstrap-authorization:v1",
   "max_authorization_age_seconds": 86400,
   "max_future_skew_seconds": 300,
   "maximum_comments": 1000,

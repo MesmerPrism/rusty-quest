@@ -36,6 +36,12 @@ $policySelfTest = Join-Path $RepoRoot `
     "tools\checks\Test-ExternalValidationAuthorityPolicySelfTest.ps1"
 $externalOwnerSelfTest = Join-Path $RepoRoot `
     "tools\checks\Test-ExternalOwnerAuthorization.ps1"
+$externalOwnerBootstrapSelfTest = Join-Path $RepoRoot `
+    "tools\checks\Test-ExternalOwnerBootstrapAuthorization.ps1"
+$bootstrapRequestSchemaPath = Join-Path $RepoRoot `
+    "schemas\rusty.quest.external_owner_bootstrap_request.v1.schema.json"
+$bootstrapAuthorizationSchemaPath = Join-Path $RepoRoot `
+    "schemas\rusty.quest.external_owner_bootstrap_authorization.v1.schema.json"
 
 foreach ($path in @(
     $workflowPath,
@@ -49,7 +55,10 @@ foreach ($path in @(
     $probeReceiptFixturePath,
     $approvalFixturePath,
     $policySelfTest,
-    $externalOwnerSelfTest
+    $externalOwnerSelfTest,
+    $externalOwnerBootstrapSelfTest,
+    $bootstrapRequestSchemaPath,
+    $bootstrapAuthorizationSchemaPath
 )) {
     if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
         throw "External validation authority surface is missing: $path"
@@ -458,7 +467,9 @@ foreach ($token in @(
     'Git name-status output lacks a terminal NUL delimiter',
     'case-colliding path',
     'Assert-ExternalOwnerArtifactInventory',
-    'artifact count differs from its path inventory'
+    'artifact count differs from its path inventory',
+    'bootstrap_comment_marker',
+    'Bootstrap authorization markers are never accepted by the normal external-owner fallback\.'
 )) {
     if ($externalOwnerModule -notmatch $token) {
         throw "External-owner module is missing fail-closed contract token: $token"
@@ -480,7 +491,7 @@ foreach ($trimProbe in @('C:\trusted\', 'C:\trusted/')) {
     }
 }
 
-foreach ($scriptPath in @($adapterPath, $externalOwnerModulePath, $policySelfTest, $externalOwnerSelfTest, $PSCommandPath)) {
+foreach ($scriptPath in @($adapterPath, $externalOwnerModulePath, $policySelfTest, $externalOwnerSelfTest, $externalOwnerBootstrapSelfTest, $PSCommandPath)) {
     $tokens = $null
     $errors = $null
     [void][Management.Automation.Language.Parser]::ParseFile(
@@ -687,4 +698,5 @@ foreach ($damage in @(
     -RepoRoot $RepoRoot `
     -ExpectedBootstrapApprovalAncestor $ExpectedBootstrapApprovalAncestor
 & $externalOwnerSelfTest -RepoRoot $RepoRoot
+& $externalOwnerBootstrapSelfTest -RepoRoot $RepoRoot
 Write-Output "External validation authority static contract passed."

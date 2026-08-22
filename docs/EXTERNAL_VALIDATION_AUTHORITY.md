@@ -83,6 +83,67 @@ strict UTF-8, canonicalized, ordinally sorted, case-collision-free paths;
 malformed delimiters, duplicate/colliding paths, and incomplete changed or
 protected inventories reject before hashing or signing.
 
+## Extraordinary one-time trust-root bootstrap record
+
+An independently reviewed trust-root evolution may require a one-time record
+when the old base can neither emit nor verify the normal runtime assessment.
+This is not the external-owner fallback above. Its closed request schema is
+`rusty.quest.external_owner_bootstrap_request.v1`; its closed signed envelope
+schema is `rusty.quest.external_owner_bootstrap_authorization.v1`; and its only
+marker is `rusty-quest-external-owner-bootstrap-authorization:v1`. A record
+uses the same pinned owner, key id, RSA-PSS-SHA256 algorithm, canonical JSON
+primitive, exact UTC-second (`YYYY-MM-DDTHH:MM:SSZ`) issue/expiry syntax,
+issue/expiry window, unedited-comment rule, and freshness bounds as the normal
+policy, but contains no runtime executable, tool, runner, normal
+assessment, or normal request identity. The independent signer constructs and
+signs the closed JSON from the schemas and canonical/RSA primitive; it never
+executes candidate helper code.
+
+The record binds the repository and PR; exact base and head commits and trees;
+the generated-merge observation (which may be null), generated tree, and its
+ordered base/head parents; full changed and protected artifact arrays; both
+counts; and a separate `inventory_digest`. Every artifact is a present Git
+blob with exact portable path, mode, byte length, and lowercase SHA-256. The
+arrays must be ordinally sorted, unique, complete, and have identical metadata
+where a protected artifact occurs in the changed inventory.
+
+`inventory_digest` is SHA-256 over the following exact domain, named
+`rusty.quest.external_owner_bootstrap_inventory.v1`: for every changed
+artifact in `StringComparer.Ordinal` path order, encode one UTF-8 (no BOM) LF
+line with this fixed six-field order and TAB separators:
+
+```
+path<TAB>protected|unprotected<TAB>present<TAB>mode<TAB>size_bytes_decimal<TAB>sha256<LF>
+```
+
+`protected` is selected only when the same path appears in the complete
+protected array; the protected row must have the same mode, size, and hash.
+There is no omitted-field encoding in a bootstrap artifact record. The schema
+therefore fixes the digest algorithm, domain, encoding, LF line ending, TAB
+separator, field order, and its `-` absent-field sentinel even though the
+closed v1 record rejects absent artifacts. Hashing the JSON text, changing the
+separator or order, or omitting a line is not the digest domain.
+
+The request also records the independently reviewed trust-root intent, explicit
+user-authorized one-time bootstrap, exact old-base `pull_request_target` hold
+run/job/message, ordinary credential-free candidate CI as non-authoritative
+evidence, and the supplied local aggregate receipt as non-authoritative dynamic
+evidence. It permanently states `candidate_code_executed=false`,
+`execution_attested=false`, `static_admission_authority=false`,
+`acceptance_authority=false`, and `publication_authority=false`. Its sole
+decision is `authorize-one-time-bootstrap-merge-review`: it authorizes neither
+PR #53 nor any future candidate, static admission, testing, acceptance, merge,
+release, settings, or device work.
+
+The permanent runtime adapter must reject a bootstrap marker and never parses
+either bootstrap schema. Duplicate markers, stale or future timestamps, wrong
+keys, malformed or noncanonical JSON, changed artifacts, different inventory
+digests, altered merge objects, or any attempt to add runtime identity fields
+reject. This extraordinary record is consumed only by the orchestrator's
+already user-authorized, exact-head admin merge of this trust-root PR. It is a
+durable review receipt, not retained or reusable base authority; no later
+protected proposal may cite it.
+
 GitHub required status checks match a context and optional GitHub App source;
 they do not bind a workflow path, matrix, or event. A candidate workflow can
 therefore emit the same context through the same GitHub Actions App. The exact

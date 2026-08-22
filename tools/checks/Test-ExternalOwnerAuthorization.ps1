@@ -103,6 +103,13 @@ try {
     $comment = [ordered]@{ id = 1; created_at = "2026-08-22T15:59:00Z"; updated_at = "2026-08-22T15:59:00Z"; user = [ordered]@{ login = "MesmerPrism" }; body = $testPolicy.comment_marker + "`n" + ($document | ConvertTo-Json -Depth 30 -Compress) }
     $null = Test-ExternalOwnerAuthorizationComments -Comments @($comment) -ExpectedPayload $payload -Policy $testPolicy -Now $now -SchemaPath $authorizationSchema
     $null = Test-ExternalOwnerAuthorizationComments -Comments @($comment) -ExpectedPayload $payload -Policy $testPolicy -Now $now -SchemaPath $authorizationSchema
+    $bootstrapComment = $comment | ConvertTo-Json -Depth 30 | ConvertFrom-Json -Depth 30
+    $bootstrapComment.body = $testPolicy.bootstrap_comment_marker + "`n{}"
+    Assert-DamageRejected "bootstrap-marker-normal-fallback" {
+        $null = Test-ExternalOwnerAuthorizationComments -Comments @($bootstrapComment) `
+            -ExpectedPayload $payload -Policy $testPolicy -Now $now `
+            -SchemaPath $authorizationSchema
+    }
     $changed = $payload | ConvertTo-Json -Depth 30 | ConvertFrom-Json -Depth 30
     $changed.head.commit = ("0" * 40)
     $duplicate = @($comment, $comment)
