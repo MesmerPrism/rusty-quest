@@ -18,6 +18,9 @@ param(
     [Parameter(Mandatory = $true)][string]$RunnerArchitecture,
     [Parameter(Mandatory = $true)][string]$RunnerImageOs,
     [Parameter(Mandatory = $true)][string]$RunnerImageVersion,
+    [AllowEmptyString()][string]$CommentsJsonPath = "",
+    [AllowEmptyString()][string]$AuthorizationRequestPath = "",
+    [switch]$AllowLocalTestRemote,
     [Parameter(Mandatory = $true)][string]$OutPath
 )
 
@@ -33,6 +36,13 @@ $ExpectedVerifierSha256 = `
 $PolicyPath = "config/external-validation-authority.json"
 $AssessmentSchemaPath = `
     "schemas/rusty.quest.external_validation_authority_assessment.v1.schema.json"
+$ExternalOwnerPolicyPath = "config/external-owner-authorization.json"
+$ExternalOwnerPolicySchemaPath = `
+    "schemas/rusty.quest.external_owner_authorization_policy.v1.schema.json"
+$ExternalOwnerRequestSchemaPath = `
+    "schemas/rusty.quest.external_owner_authorization_request.v1.schema.json"
+$ExternalOwnerAuthorizationSchemaPath = `
+    "schemas/rusty.quest.external_owner_authorization.v1.schema.json"
 $ForbiddenGitEnvironmentVariables = @(
     "GIT_ALTERNATE_OBJECT_DIRECTORIES",
     "GIT_CEILING_DIRECTORIES",
@@ -189,6 +199,97 @@ function Get-GitIdentity {
         commit = $resolvedCommit
         tree = $resolvedTree
     }
+}
+
+function Invoke-BaseGitBytes {
+    param([Parameter(Mandatory = $true)][string[]]$Arguments)
+    $git = (Get-Command git -CommandType Application -ErrorAction Stop |
+        Select-Object -First 1).Source
+    $start = [Diagnostics.ProcessStartInfo]::new()
+    $start.FileName = $git
+    $start.WorkingDirectory = $script:TrustedBase
+    $start.UseShellExecute = $false
+    $start.CreateNoWindow = $true
+    $start.RedirectStandardOutput = $true
+    $start.RedirectStandardError = $true
+    $start.Environment["GIT_NO_REPLACE_OBJECTS"] = "1"
+    $start.Environment["GIT_OPTIONAL_LOCKS"] = "0"
+    $start.Environment["GIT_LFS_SKIP_SMUDGE"] = "1"
+    $start.Environment["LC_ALL"] = "C"
+    $start.Environment["LANG"] = "C"
+    foreach ($argument in @("--no-optional-locks", "-c", "core.fsmonitor=false", "-c", "diff.external=", "-C", $script:TrustedBase) + $Arguments) {
+        [void]$start.ArgumentList.Add($argument)
+    }
+    $process = [Diagnostics.Process]::new()
+    $process.StartInfo = $start
+    try {
+        if (-not $process.Start()) { throw "Could not start bounded Git byte process." }
+        $memory = [IO.MemoryStream]::new()
+        try {
+            $copy = $process.StandardOutput.BaseStream.CopyToAsync($memory)
+            $stderrTask = $process.StandardError.ReadToEndAsync()
+            if (-not $process.WaitForExit(30000)) { try { $process.Kill($true) } catch { }; throw "Git byte process exceeded the 30-second timeout." }
+            $copy.GetAwaiter().GetResult()
+            $stderr = $stderrTask.GetAwaiter().GetResult()
+            if ($memory.Length -gt 16777216 -or $stderr.Length -gt 1048576) { throw "Git byte process output exceeded its bound." }
+            if ($process.ExitCode -ne 0) { throw "Git byte process failed: $($stderr.Trim())" }
+            return ,$memory.ToArray()
+        } finally { $memory.Dispose() }
+    } finally { $process.Dispose() }
+}
+
+function Get-ExternalOwnerArtifacts {
+    param([Parameter(Mandatory = $true)][string]$Base, [Parameter(Mandatory = $true)][string]$Head)
+    [byte[]]$raw = Invoke-BaseGitBytes @("diff", "--name-status", "-z", "--no-renames", $Base, $Head)
+    $tokens = [Text.Encoding]::UTF8.GetString($raw).Split([char]0, [StringSplitOptions]::RemoveEmptyEntries)
+    if (($tokens.Count % 2) -ne 0 -or ($tokens.Count / 2) -gt 512) { throw "Authorization diff is malformed or exceeds its path bound." }
+    $artifacts = [Collections.Generic.List[object]]::new()
+    [int64]$total = 0
+    for ($index = 0; $index -lt $tokens.Count; $index += 2) {
+        $path = [string]$tokens[$index + 1]
+        if ([string]::IsNullOrWhiteSpace($path) -or $path.Length -gt 512 -or $path.Contains("\\") -or $path.Contains(":") -or $path -match "[\x00-\x1f\x7f]" -or @($path.Split("/") | Where-Object { [string]::IsNullOrEmpty($_) -or $_ -in @(".", "..") }).Count -ne 0) { throw "Authorization artifact path is not portable." }
+        $entry = (Invoke-BaseGit @("ls-tree", $Head, "--", $path)).TrimEnd()
+        if ([string]::IsNullOrEmpty($entry)) { $artifacts.Add([ordered]@{ path = $path; state = "absent" }); continue }
+        if ($entry -cnotmatch "^(100644|100755) blob ([0-9a-f]{40})`t(.+)$" -or $Matches[3] -cne $path) { throw "Authorization artifact is not an exact regular blob." }
+        $size = [int64](Invoke-BaseGit @("cat-file", "-s", $Matches[2])).Trim()
+        $total += $size
+        if ($size -gt 16777216 -or $total -gt 67108864) { throw "Authorization artifact bytes exceed their bound." }
+        [byte[]]$bytes = Invoke-BaseGitBytes @("cat-file", "blob", $Matches[2])
+        if ($bytes.Length -ne $size) { throw "Authorization artifact byte size drifted while reading Git object." }
+        $hash = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($bytes)).ToLowerInvariant()
+        $artifacts.Add([ordered]@{ path = $path; state = "present"; mode = $Matches[1]; size_bytes = $size; sha256 = $hash })
+    }
+    $result = @($artifacts)
+    $paths = @($result | ForEach-Object { [string]$_.path })
+    $sorted = @($paths | Sort-Object -CaseSensitive)
+    if (($paths -join "`n") -cne ($sorted -join "`n") -or @($paths | Sort-Object -Unique -CaseSensitive).Count -ne $paths.Count) { throw "Authorization artifact paths are not ordinally sorted and unique." }
+    return $result
+}
+
+function Get-PublicIssueComments {
+    param([Parameter(Mandatory = $true)][int]$Number, [Parameter(Mandatory = $true)][object]$Policy)
+    if (-not [string]::IsNullOrEmpty($CommentsJsonPath)) {
+        if (-not $AllowLocalTestRemote) { throw "Comment fixtures are test-only." }
+        [byte[]]$raw = [IO.File]::ReadAllBytes((Resolve-Path -LiteralPath $CommentsJsonPath).Path)
+        if ($raw.Length -gt [int]$Policy.maximum_response_bytes) { throw "Comment response exceeds its size bound." }
+        return @(ConvertFrom-ExternalOwnerJsonStrict ([Text.UTF8Encoding]::new($false,$true).GetString($raw)))
+    }
+    if ([string]::IsNullOrEmpty($env:GITHUB_TOKEN)) { throw "Base-owned GitHub token is unavailable for public comment inspection." }
+    $uri = "https://api.github.com/repos/MesmerPrism/rusty-quest/issues/$Number/comments?per_page=100"
+    $headers = @{ Accept = "application/vnd.github+json"; Authorization = "Bearer $($env:GITHUB_TOKEN)"; "X-GitHub-Api-Version" = "2022-11-28"; "User-Agent" = "rusty-quest-static-admission" }
+    $comments = @(Invoke-RestMethod -Uri $uri -Headers $headers -Method Get -MaximumRedirection 0 -TimeoutSec 30)
+    if ($comments.Count -gt [int]$Policy.maximum_comments) { throw "Comment count exceeds its configured bound." }
+    return $comments
+}
+
+function Write-ExternalOwnerRequest {
+    param([Parameter(Mandatory = $true)][object]$Request)
+    $text = ($Request | ConvertTo-Json -Depth 30 -Compress) + "`n"
+    if (-not [string]::IsNullOrEmpty($AuthorizationRequestPath)) {
+        if (-not $AllowLocalTestRemote) { throw "Authorization request fixture output is test-only." }
+        [IO.File]::WriteAllText([IO.Path]::GetFullPath($AuthorizationRequestPath), $text, [Text.UTF8Encoding]::new($false))
+    }
+    Write-Output $text
 }
 
 if ($Repository -cne $ExpectedRepository) {
@@ -427,19 +528,63 @@ $genericOutput = Join-Path $outputParent (
 try {
     $pwsh = (Get-Command pwsh -CommandType Application -ErrorAction Stop | `
         Select-Object -First 1).Source
-    & $pwsh -NoProfile -NonInteractive -ExecutionPolicy Bypass `
-        -File $verifierScript `
-        -RepositoryRoot $script:TrustedBase `
-        -PolicyPath $PolicyPath `
-        -Repository $ExpectedRepository `
-        -BaseCommit $BaseCommit `
-        -CandidateCommit $CandidateCommit `
-        -OutPath $genericOutput | Out-Null
-    if ($LASTEXITCODE -ne 0) {
-        throw "Pinned external validation verifier failed."
+    $externalOwnerHold = $false
+    try {
+        $verifierOutput = @(& $pwsh -NoProfile -NonInteractive -ExecutionPolicy Bypass `
+            -File $verifierScript `
+            -RepositoryRoot $script:TrustedBase `
+            -PolicyPath $PolicyPath `
+            -Repository $ExpectedRepository `
+            -BaseCommit $BaseCommit `
+            -CandidateCommit $CandidateCommit `
+            -OutPath $genericOutput 2>&1)
+        if ($LASTEXITCODE -ne 0) {
+            $verifierFailure = ($verifierOutput | Out-String).Trim()
+            if ($verifierFailure -match [regex]::Escape("Protected changes do not match an exact base-approved change set.")) {
+                throw "Protected changes do not match an exact base-approved change set."
+            }
+            throw "Pinned external validation verifier failed: $verifierFailure"
+        }
+    } catch {
+        if ($_.Exception.Message -cne "Protected changes do not match an exact base-approved change set.") {
+            throw
+        }
+        $externalOwnerHold = $true
     }
-    $genericJson = Get-Content -Raw -LiteralPath $genericOutput
-    $generic = $genericJson | ConvertFrom-Json -Depth 30
+    if ($externalOwnerHold) {
+        $policyBytes = [IO.File]::ReadAllBytes((Join-Path $script:TrustedBase $PolicyPath))
+        $policy = [Text.UTF8Encoding]::new($false, $true).GetString($policyBytes) | ConvertFrom-Json -Depth 30
+        $artifacts = Get-ExternalOwnerArtifacts -Base $BaseCommit -Head $CandidateCommit
+        $protectedArtifacts = @($artifacts | Where-Object {
+            $path = [string]$_.path
+            (@($policy.mandatory_protected_paths) -ccontains $path) -or @($policy.protected_rules | Where-Object {
+                ($_.match -ceq "exact" -and $_.path -ceq $path) -or
+                ($_.match -ceq "prefix" -and $path.StartsWith([string]$_.path, [StringComparison]::Ordinal))
+            }).Count -gt 0
+        })
+        if ($protectedArtifacts.Count -eq 0) { throw "Exact protected-without-base-approval hold did not contain protected artifacts." }
+        $generic = [pscustomobject][ordered]@{
+            policy_id = [string]$policy.policy_id
+            policy_sha256 = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($policyBytes)).ToLowerInvariant()
+            base = Get-GitIdentity $BaseCommit
+            candidate = Get-GitIdentity $CandidateCommit
+            changed_paths = @($artifacts | ForEach-Object { [string]$_.path })
+            protected_paths = @($protectedArtifacts | ForEach-Object { [string]$_.path })
+            decision = "external-owner-authorization"
+            approval_id = "external-owner-authorization-required"
+            candidate_code_executed = $false
+            execution_attested = $false
+            publication_authority = $false
+            limitations = @(
+                "Static admission only; no candidate code was executed.",
+                "Execution, tests, and owner-effect evidence require separate trusted validation.",
+                "This assessment does not authorize publication."
+            )
+        }
+    } else {
+        $genericJson = Get-Content -Raw -LiteralPath $genericOutput
+        $generic = $genericJson | ConvertFrom-Json -Depth 30
+    }
     if (
         $generic.repository -cne $ExpectedRepository -or
         $generic.base.commit -cne $BaseCommit -or
@@ -509,6 +654,39 @@ try {
         limitations = @($generic.limitations) + @(
             "Runner image and tool identities are observed exactly but not allowlisted."
         )
+    }
+    if ($externalOwnerHold) {
+        Import-Module (Join-Path $script:TrustedBase ".github\scripts\lib\ExternalOwnerAuthorization.psm1") -Force
+        $ownerPolicy = Read-ExternalOwnerAuthorizationPolicy `
+            -Path (Join-Path $script:TrustedBase $ExternalOwnerPolicyPath) `
+            -SchemaPath (Join-Path $script:TrustedBase $ExternalOwnerPolicySchemaPath)
+        $signedAssessment = $assessment | ConvertTo-Json -Depth 30 | ConvertFrom-Json -Depth 30 -DateKind String
+        $signedAssessment.decision = "protected-without-base-approval"
+        $signedAssessment.approval_id = $null
+        $request = New-ExternalOwnerAuthorizationRequest -Policy $ownerPolicy `
+            -PullRequestNumber $pullRequest -Base $assessment.base -Head $assessment.candidate `
+            -ChangedArtifacts $artifacts -ProtectedArtifacts $protectedArtifacts `
+            -Assessment $signedAssessment
+        $requestJson = $request | ConvertTo-Json -Depth 30
+        if (-not (Test-Json -Json $requestJson -SchemaFile (Join-Path $script:TrustedBase $ExternalOwnerRequestSchemaPath) -ErrorAction Stop)) {
+            throw "Canonical external-owner authorization request failed its schema."
+        }
+        $comments = @(Get-PublicIssueComments -Number $pullRequest -Policy $ownerPolicy)
+        $markerPattern = "(?m)^$([regex]::Escape([string]$ownerPolicy.comment_marker))$"
+        $markers = @($comments | Where-Object { [string]$_.user.login -ceq [string]$ownerPolicy.owner_login -and [regex]::Matches([string]$_.body, $markerPattern).Count -gt 0 })
+        if ($markers.Count -ne 1) {
+            Write-ExternalOwnerRequest $request
+            throw "External-owner authorization is required; the canonical request was emitted."
+        }
+        try {
+            $document = ConvertFrom-ExternalOwnerJsonStrict (([string]$markers[0].body -split "\r?\n", 2)[1])
+            $expected = New-ExternalOwnerAuthorizationPayload -Request $request -AuditId ([string]$document.payload.audit_id) -IssuedAt ([string]$document.payload.issued_at) -ExpiresAt ([string]$document.payload.expires_at)
+            $payload = Test-ExternalOwnerAuthorizationComments -Comments $comments -ExpectedPayload $expected -Policy $ownerPolicy -SchemaPath (Join-Path $script:TrustedBase $ExternalOwnerAuthorizationSchemaPath)
+            $assessment.approval_id = [string]$payload.audit_id
+        } catch {
+            Write-ExternalOwnerRequest $request
+            throw "External-owner authorization is required; the canonical request was emitted."
+        }
     }
     $assessmentJson = $assessment | ConvertTo-Json -Depth 30
     $assessmentSchema = Join-Path $script:TrustedBase $AssessmentSchemaPath

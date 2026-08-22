@@ -48,6 +48,29 @@ result. It always records
 `publication_authority=false`. Dynamic validation, repository review, release
 environment approval, and publication remain separate authorities.
 
+## External-owner fallback after bootstrap
+
+The historical `bootstrap-sealed-candidate-i` record is a consumed singleton:
+it remains immutable and cannot be rebound, deleted, or reused. A later
+protected proposal that the pinned base verifier rejects with exactly
+`Protected changes do not match an exact base-approved change set.` may instead
+receive one fresh `rusty-quest-external-owner-authorization:v1` PR comment.
+The base-owned adapter derives a canonical request from Git objects only and
+binds repository/PR, exact base and head commits/trees, ordinal-sorted changed
+and protected artifact inventories (mode, byte length, SHA-256), and the
+canonical static hold assessment. The signed marker carries one audit id,
+pinned issuer/key id, issue/expiry time, and RSA-PSS-SHA256 signature.
+
+The adapter accepts exactly one unedited pinned-owner marker for identical
+evidence during its freshness window. Duplicate markers, changed Git objects
+or artifacts, changed assessment bytes, stale/future/invalid signatures,
+untrusted keys, malformed JSON, and an already-trusted candidate all reject.
+Exact-evidence reruns remain idempotent until expiry. The only resulting state
+change is static decision `external-owner-authorization`; it retains
+`candidate_code_executed=false`, `execution_attested=false`, and
+`publication_authority=false`. It grants no test, acceptance, merge, release,
+settings, or device authority.
+
 GitHub required status checks match a context and optional GitHub App source;
 they do not bind a workflow path, matrix, or event. A candidate workflow can
 therefore emit the same context through the same GitHub Actions App. The exact

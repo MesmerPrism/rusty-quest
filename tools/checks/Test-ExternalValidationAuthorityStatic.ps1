@@ -32,6 +32,8 @@ $approvalFixturePath = Join-Path $RepoRoot `
     "fixtures\validation-authority\bootstrap-approval.valid.json"
 $policySelfTest = Join-Path $RepoRoot `
     "tools\checks\Test-ExternalValidationAuthorityPolicySelfTest.ps1"
+$externalOwnerSelfTest = Join-Path $RepoRoot `
+    "tools\checks\Test-ExternalOwnerAuthorization.ps1"
 
 foreach ($path in @(
     $workflowPath,
@@ -43,7 +45,8 @@ foreach ($path in @(
     $probeReceiptSchemaPath,
     $probeReceiptFixturePath,
     $approvalFixturePath,
-    $policySelfTest
+    $policySelfTest,
+    $externalOwnerSelfTest
 )) {
     if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
         throw "External validation authority surface is missing: $path"
@@ -99,7 +102,7 @@ $workflow = Get-Content -Raw -LiteralPath $workflowPath
 foreach ($token in @(
     '(?m)^name: External validation authority\s*$',
     '(?m)^\s*pull_request_target:\s*$',
-    '(?m)^permissions:\s*\r?\n\s+contents: read\s*$',
+    '(?m)^permissions:\s*\r?\n\s+contents: read\r?\n\s+pull-requests: read\s*$',
     'runs-on: windows-2025',
     '(?m)^\s{4}name: Static admission\s*$',
     'timeout-minutes: 10',
@@ -342,6 +345,13 @@ foreach ($token in @(
     'candidate_code_executed = \$false',
     'execution_attested = \$false',
     'publication_authority = \$false',
+    'ExternalOwnerAuthorization\.psm1',
+    'external-owner-authorization\.json',
+    'external_owner_authorization_request',
+    'Protected changes do not match an exact base-approved change set\.',
+    'https://api\.github\.com/repos/MesmerPrism/rusty-quest/issues/',
+    'GITHUB_TOKEN',
+    'External-owner authorization is required; the canonical request was emitted\.',
     '\[IO\.FileMode\]::CreateNew'
 )) {
     if ($adapter -notmatch $token) {
@@ -354,7 +364,6 @@ foreach ($forbidden in @(
     'git\s+checkout',
     'git\s+switch',
     'gh\s+',
-    'Invoke-RestMethod',
     'Invoke-WebRequest'
 )) {
     if ($adapter -match $forbidden) {
@@ -377,7 +386,7 @@ foreach ($trimProbe in @('C:\trusted\', 'C:\trusted/')) {
     }
 }
 
-foreach ($scriptPath in @($adapterPath, $policySelfTest, $PSCommandPath)) {
+foreach ($scriptPath in @($adapterPath, $policySelfTest, $externalOwnerSelfTest, $PSCommandPath)) {
     $tokens = $null
     $errors = $null
     [void][Management.Automation.Language.Parser]::ParseFile(
@@ -583,4 +592,5 @@ foreach ($damage in @(
 & $policySelfTest `
     -RepoRoot $RepoRoot `
     -ExpectedBootstrapApprovalAncestor $ExpectedBootstrapApprovalAncestor
+& $externalOwnerSelfTest -RepoRoot $RepoRoot
 Write-Output "External validation authority static contract passed."

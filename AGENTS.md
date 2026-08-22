@@ -86,6 +86,13 @@ candidate head only for formatting, package-updater Rust tests, and the Android
 static gate. Its pass is test evidence, not effect, acceptance, or publication
 authority.
 
+After that singleton is consumed, a protected proposal may use only the
+documented external-owner fallback in `docs/EXTERNAL_VALIDATION_AUTHORITY.md`.
+It is emitted solely from the exact protected-without-base-approval verifier
+result and binds one fresh pinned RSA-PSS comment to the complete static Git
+object assessment. It never authorizes execution, acceptance, merge, release,
+settings, or device work; trusted-base ancestry consumes it.
+
 Configure admission from
 `config/external-validation-authority-settings.json`. Rusty Quest is user-owned;
 organization required-workflow rules are future-only. The deployable repository
