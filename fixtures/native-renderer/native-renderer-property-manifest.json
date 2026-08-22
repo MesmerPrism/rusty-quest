@@ -16,6 +16,7 @@
     "apps/native-renderer-android/native/src/same_apk_panel_action.rs",
     "apps/native-renderer-android/native/src/simultaneous_hands_controllers.rs",
     "apps/native-renderer-android/native/src/native_renderer_display_composite_options.rs",
+    "apps/native-renderer-android/native/src/native_renderer_display_refresh_options.rs",
     "apps/native-renderer-android/native/src/native_renderer_foveation_options.rs",
     "apps/native-renderer-android/native/src/native_renderer_passthrough_style_options.rs",
     "apps/native-renderer-android/native/src/native_renderer_video_projection_options.rs",
@@ -24,7 +25,7 @@
     "apps/native-renderer-android/native/src/manifold_scalar_driver_bridge.rs",
     "apps/native-renderer-android/native/src/lsl_transport_bridge.rs"
   ],
-  "property_count": 303,
+  "property_count": 304,
   "properties": [
     {
       "name": "debug.rustyquest.native_renderer.breath_composition.activation.binding_sha256",
@@ -2565,6 +2566,24 @@
       "clear_behavior": "profile-owned-explicit-set",
       "default_behavior": "runtime-owner-default-when-unset",
       "value_kind": "bool",
+      "validators": [
+        "runtime-parser",
+        "profile-matrix",
+        "rusty-quest-profile",
+        "Apply-RuntimeProfile.ps1"
+      ]
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.openxr.display_refresh_rate_hz",
+      "family": "openxr_display_refresh",
+      "runtime_owner": "native_renderer_display_refresh_options",
+      "lifecycle": "startup-effective",
+      "clear_behavior": "profile-owned-explicit-set",
+      "default_behavior": "runtime-owner-default-when-unset",
+      "value_kind": "token",
+      "allowed_values": [
+        "72"
+      ],
       "validators": [
         "runtime-parser",
         "profile-matrix",

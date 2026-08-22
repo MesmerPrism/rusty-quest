@@ -141,6 +141,8 @@ pub(crate) const PROP_VIDEO_PROJECTION_HIGH_RATE_JSON_PAYLOAD: &str =
     "debug.rustyquest.native_renderer.video_projection.high_rate_json_payload";
 pub(crate) const PROP_SWAPCHAIN_COLOR_FORMAT_MODE: &str =
     "debug.rustyquest.native_renderer.swapchain.color_format";
+pub(crate) const PROP_OPENXR_DISPLAY_REFRESH_RATE_HZ: &str =
+    "debug.rustyquest.native_renderer.openxr.display_refresh_rate_hz";
 pub(crate) const PROP_PROJECTION_SWAPCHAIN_RESOLUTION_SCALE: &str =
     "debug.rustyquest.native_renderer.projection.swapchain.resolution_scale";
 pub(crate) const PROP_FOVEATION_MODE: &str = "debug.rustyquest.native_renderer.foveation.mode";

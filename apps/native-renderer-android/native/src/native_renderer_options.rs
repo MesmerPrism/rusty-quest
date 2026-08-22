@@ -28,6 +28,7 @@ pub(crate) use crate::native_renderer_display_composite_options::{
     NativeDisplayCompositeFeedbackProjection, NativeDisplayCompositeMode,
     NativeDisplayCompositeSource,
 };
+pub(crate) use crate::native_renderer_display_refresh_options::NativeDisplayRefreshSettings;
 pub(crate) use crate::native_renderer_environment_depth_options::NativeEnvironmentDepthSettings;
 #[cfg(test)]
 #[allow(unused_imports)]
@@ -104,6 +105,7 @@ pub(crate) struct NativeRendererRuntimeOptions {
     pub(crate) swapchain_color_format_mode: NativeSwapchainColorFormatMode,
     pub(crate) projection_swapchain_settings: NativeProjectionSwapchainSettings,
     pub(crate) foveation_settings: NativeFoveationSettings,
+    pub(crate) display_refresh_settings: NativeDisplayRefreshSettings,
     pub(crate) replay_visual_proof_enabled: bool,
     pub(crate) compact_hand_input_source_mode: CompactHandInputSourceMode,
     pub(crate) sdf_visual_enabled: bool,
@@ -163,6 +165,9 @@ impl NativeRendererRuntimeOptions {
         let projection_swapchain_settings =
             NativeProjectionSwapchainSettings::from_property_lookup(&mut lookup);
         let foveation_settings = NativeFoveationSettings::from_property_lookup(&mut lookup);
+        let display_refresh_settings = NativeDisplayRefreshSettings::from_property(lookup(
+            PROP_OPENXR_DISPLAY_REFRESH_RATE_HZ,
+        ));
         let replay_visual_proof_enabled =
             bool_value(lookup(PROP_REPLAY_VISUAL_PROOF_ENABLED), false);
         let compact_hand_input_source_mode = CompactHandInputSourceMode::from_property(
@@ -246,6 +251,7 @@ impl NativeRendererRuntimeOptions {
             swapchain_color_format_mode,
             projection_swapchain_settings,
             foveation_settings,
+            display_refresh_settings,
             replay_visual_proof_enabled,
             compact_hand_input_source_mode,
             sdf_visual_enabled,

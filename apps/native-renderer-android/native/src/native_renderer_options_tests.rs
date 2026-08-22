@@ -2,6 +2,7 @@
 mod tests {
     use std::collections::BTreeMap;
 
+    use crate::native_renderer_display_refresh_options::NativeDisplayRefreshRequest;
     use crate::native_renderer_options::{
         CompactHandInputSourceMode, HandMeshVisualMaterialProfile, HandMeshVisualMeshSource,
         NativeCameraOutputMode, NativeCameraQualityProfile, NativeCameraResolutionProfile,
@@ -60,15 +61,15 @@ mod tests {
         PROP_HAND_MESH_VISUAL_MATERIAL_BASE_COLOR_R, PROP_HAND_MESH_VISUAL_MATERIAL_PROFILE,
         PROP_HAND_MESH_VISUAL_MATERIAL_RIM_STRENGTH, PROP_HAND_MESH_VISUAL_MESH_SOURCE,
         PROP_HAND_MESH_VISUAL_WIREFRAME_ENABLED, PROP_HAND_MESH_VISUAL_WIREFRAME_WIDTH_PX,
-        PROP_PASSTHROUGH_STYLE_BRIGHTNESS, PROP_PASSTHROUGH_STYLE_COLOR_AMPLITUDE,
-        PROP_PASSTHROUGH_STYLE_COLOR_PHASE, PROP_PASSTHROUGH_STYLE_CONTRAST,
-        PROP_PASSTHROUGH_STYLE_EDGE_COLOR_A, PROP_PASSTHROUGH_STYLE_EDGE_COLOR_B,
-        PROP_PASSTHROUGH_STYLE_EDGE_COLOR_G, PROP_PASSTHROUGH_STYLE_EDGE_COLOR_R,
-        PROP_PASSTHROUGH_STYLE_MODE, PROP_PASSTHROUGH_STYLE_OPACITY,
-        PROP_PASSTHROUGH_STYLE_SATURATION, PROP_PERIPHERAL_STRETCH_BLEND_MODE,
-        PROP_PERIPHERAL_STRETCH_CORE_SCALE, PROP_PERIPHERAL_STRETCH_EDGE_INSET_UV,
-        PROP_PERIPHERAL_STRETCH_MAX_INSET_UV, PROP_PROCESSING_LAYER,
-        PROP_PROJECTION_BORDER_OPACITY, PROP_PROJECTION_BORDER_POLICY,
+        PROP_OPENXR_DISPLAY_REFRESH_RATE_HZ, PROP_PASSTHROUGH_STYLE_BRIGHTNESS,
+        PROP_PASSTHROUGH_STYLE_COLOR_AMPLITUDE, PROP_PASSTHROUGH_STYLE_COLOR_PHASE,
+        PROP_PASSTHROUGH_STYLE_CONTRAST, PROP_PASSTHROUGH_STYLE_EDGE_COLOR_A,
+        PROP_PASSTHROUGH_STYLE_EDGE_COLOR_B, PROP_PASSTHROUGH_STYLE_EDGE_COLOR_G,
+        PROP_PASSTHROUGH_STYLE_EDGE_COLOR_R, PROP_PASSTHROUGH_STYLE_MODE,
+        PROP_PASSTHROUGH_STYLE_OPACITY, PROP_PASSTHROUGH_STYLE_SATURATION,
+        PROP_PERIPHERAL_STRETCH_BLEND_MODE, PROP_PERIPHERAL_STRETCH_CORE_SCALE,
+        PROP_PERIPHERAL_STRETCH_EDGE_INSET_UV, PROP_PERIPHERAL_STRETCH_MAX_INSET_UV,
+        PROP_PROCESSING_LAYER, PROP_PROJECTION_BORDER_OPACITY, PROP_PROJECTION_BORDER_POLICY,
         PROP_PROJECTION_SWAPCHAIN_RESOLUTION_SCALE, PROP_RENDER_MODE,
         PROP_REPLAY_VISUAL_PROOF_ENABLED, PROP_SDF_FIELD_VISUAL_ENABLED,
         PROP_SDF_UPDATE_PERIOD_FRAMES, PROP_STIMULUS_VOLUME_CENTRAL_FOV_FRACTION,
@@ -218,6 +219,29 @@ mod tests {
             .foveation_settings
             .marker_fields()
             .contains("foveationScope=openxr-projection-swapchain-startup"));
+    }
+
+    #[test]
+    fn display_refresh_settings_are_unset_by_default_and_only_accept_72_hz() {
+        let default_options = options_from(&[]);
+        assert_eq!(
+            default_options.display_refresh_settings.request(),
+            &NativeDisplayRefreshRequest::Unset
+        );
+        assert!(!default_options
+            .display_refresh_settings
+            .extension_requested());
+
+        let requested = options_from(&[(PROP_OPENXR_DISPLAY_REFRESH_RATE_HZ, "72")]);
+        assert_eq!(
+            requested.display_refresh_settings.requested_hz(),
+            Some(72.0)
+        );
+        assert!(requested.display_refresh_settings.extension_requested());
+        assert!(requested.display_refresh_settings.validate().is_ok());
+
+        let invalid = options_from(&[(PROP_OPENXR_DISPLAY_REFRESH_RATE_HZ, "90")]);
+        assert!(invalid.display_refresh_settings.validate().is_err());
     }
 
     #[test]
