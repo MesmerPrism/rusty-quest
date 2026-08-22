@@ -74,14 +74,16 @@ settings, or device authority.
 The authority job projects only GitHub's built-in read-only token as
 `GITHUB_TOKEN` to its base-owned adapter so it can page public PR comments.
 That token is not passed to a candidate checkout, another job, a secret, or an
-environment. The fallback accepts only the pinned verifier's exact terminal
-protected-without-base-approval hold: exit status, sole error record, and the
-adapter's closed Git-object assessment must all agree. It rejects prefix or
-suffix diagnostic text, extra output, different decisions or approval ids, and
-missing or malformed assessment fields. NUL-delimited Git paths are parsed as
-strict UTF-8, canonicalized, ordinally sorted, case-collision-free paths;
-malformed delimiters, duplicate/colliding paths, and incomplete changed or
-protected inventories reject before hashing or signing.
+environment. The fallback invokes the hash-verified pinned verifier in-process
+and accepts only its raw `RuntimeException` error record with the exact
+terminal protected-without-base-approval message, zero prior output, and no
+partial assessment. The adapter's closed Git-object assessment must also
+agree. It rejects prefix or suffix diagnostic text, extra output, different
+decisions or approval ids, and missing or malformed assessment fields.
+NUL-delimited Git paths are parsed as strict UTF-8, canonicalized, ordinally
+sorted, case-collision-free paths; malformed delimiters, duplicate/colliding
+paths, and incomplete changed or protected inventories reject before hashing or
+signing.
 
 ## Extraordinary one-time trust-root bootstrap record
 

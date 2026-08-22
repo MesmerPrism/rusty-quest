@@ -572,30 +572,22 @@ $genericOutput = Join-Path $outputParent (
     ".external-validation-generic-" + [Guid]::NewGuid().ToString("N") + ".json"
 )
 try {
-    $pwsh = (Get-Command pwsh -CommandType Application -ErrorAction Stop | `
-        Select-Object -First 1).Source
-    $externalOwnerHold = $false
-    $verifierOutput = @(& $pwsh -NoProfile -NonInteractive -ExecutionPolicy Bypass `
-        -File $verifierScript `
-        -RepositoryRoot $script:TrustedBase `
-        -PolicyPath $PolicyPath `
-        -Repository $ExpectedRepository `
-        -BaseCommit $BaseCommit `
-        -CandidateCommit $CandidateCommit `
-        -OutPath $genericOutput 2>&1)
-    $verifierExit = $LASTEXITCODE
-    if ($verifierExit -ne 0) {
-        if (Test-Path -LiteralPath $genericOutput -PathType Leaf) {
-            throw "Pinned verifier emitted an assessment while failing."
-        }
-        try {
-            Assert-ExternalOwnerFallbackVerifierFailure `
-                -ExitCode $verifierExit -Output $verifierOutput
-        } catch {
-            throw "Pinned external validation verifier failed without the exact protected-without-base-approval hold: $($_.Exception.Message)"
-        }
-        $externalOwnerHold = $true
+    $verifierInvocation = ({
+        & $verifierScript `
+            -RepositoryRoot $script:TrustedBase `
+            -PolicyPath $PolicyPath `
+            -Repository $ExpectedRepository `
+            -BaseCommit $BaseCommit `
+            -CandidateCommit $CandidateCommit `
+            -OutPath $genericOutput
+    }).GetNewClosure()
+    try {
+        $verifierResult = Invoke-ExternalOwnerFallbackVerifier `
+            -Invocation $verifierInvocation -AssessmentOutputPath $genericOutput
+    } catch {
+        throw "Pinned external validation verifier failed without the exact protected-without-base-approval hold: $($_.Exception.Message)"
     }
+    $externalOwnerHold = [bool]$verifierResult.external_owner_hold
     if ($externalOwnerHold) {
         $policyBytes = [IO.File]::ReadAllBytes((Join-Path $script:TrustedBase $PolicyPath))
         $policy = [Text.UTF8Encoding]::new($false, $true).GetString($policyBytes) | ConvertFrom-Json -Depth 30
