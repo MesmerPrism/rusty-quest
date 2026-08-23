@@ -98,16 +98,18 @@ impl NativeDisplayRefreshSettings {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum DisplayRefreshRequestOutcome {
     NotAttempted,
-    Accepted,
-    Rejected,
+    AcceptedByExtension,
+    AcceptedByCurrentSessionRateChange,
+    RejectedByExtension,
 }
 
 impl DisplayRefreshRequestOutcome {
     fn marker_value(self) -> &'static str {
         match self {
             Self::NotAttempted => "not-attempted",
-            Self::Accepted => "accepted",
-            Self::Rejected => "rejected",
+            Self::AcceptedByExtension => "extension-accepted",
+            Self::AcceptedByCurrentSessionRateChange => "current-session-rate-change-accepted",
+            Self::RejectedByExtension => "extension-rejected",
         }
     }
 }
@@ -211,9 +213,9 @@ impl NativeDisplayRefreshRuntimeState {
             return false;
         }
         self.request_outcome = if accepted {
-            DisplayRefreshRequestOutcome::Accepted
+            DisplayRefreshRequestOutcome::AcceptedByExtension
         } else {
-            DisplayRefreshRequestOutcome::Rejected
+            DisplayRefreshRequestOutcome::RejectedByExtension
         };
         true
     }
@@ -235,6 +237,32 @@ impl NativeDisplayRefreshRuntimeState {
         true
     }
 
+    /// A host-side display-rate request can only qualify the current OpenXR
+    /// session after this app observes its rate-change event and independently
+    /// reads back the resulting rate through the enabled OpenXR extension.
+    /// This is deliberately narrower than a property readback: the event and
+    /// readback must both be current-generation and match the app's closed
+    /// requested rate.
+    pub(crate) fn record_current_session_rate_change_effective(
+        &mut self,
+        generation: u64,
+        from_hz: f32,
+        to_hz: f32,
+        effective_hz: f32,
+    ) -> bool {
+        if !self.record_rate_change(generation, from_hz, to_hz)
+            || !self.record_effective_rate(generation, effective_hz)
+        {
+            return false;
+        }
+        if self.settings.requested_hz().is_some_and(|requested_hz| {
+            rate_matches(to_hz, requested_hz) && rate_matches(effective_hz, requested_hz)
+        }) {
+            self.request_outcome = DisplayRefreshRequestOutcome::AcceptedByCurrentSessionRateChange;
+        }
+        true
+    }
+
     pub(crate) fn ensure_performance_ready(&self) -> Result<(), String> {
         let Some(requested_hz) = self.settings.requested_hz() else {
             return Ok(());
@@ -244,14 +272,18 @@ impl NativeDisplayRefreshRuntimeState {
                 "display refresh request has no current OpenXR session generation".to_string(),
             );
         }
-        if !self.requested_rate_is_supported() {
+        let accepted_by_extension =
+            self.request_outcome == DisplayRefreshRequestOutcome::AcceptedByExtension;
+        let accepted_by_current_session_rate_change = self.request_outcome
+            == DisplayRefreshRequestOutcome::AcceptedByCurrentSessionRateChange;
+        if !accepted_by_current_session_rate_change && !self.requested_rate_is_supported() {
             return Err(format!(
                 "requested display refresh {:.3} Hz is absent from supported rates {}",
                 requested_hz,
                 self.supported_rates_marker()
             ));
         }
-        if self.request_outcome != DisplayRefreshRequestOutcome::Accepted {
+        if !accepted_by_extension && !accepted_by_current_session_rate_change {
             return Err(format!(
                 "display refresh request {:.3} Hz was not accepted",
                 requested_hz
@@ -368,7 +400,7 @@ mod tests {
         assert!(marker.contains("displayRefreshSessionGeneration=1"));
         assert!(marker.contains("displayRefreshRequestedHz=72.000"));
         assert!(marker.contains("displayRefreshSupportedHz=72.000,90.000"));
-        assert!(marker.contains("displayRefreshRequestResult=accepted"));
+        assert!(marker.contains("displayRefreshRequestResult=extension-accepted"));
         assert!(marker.contains("displayRefreshEffectiveHz=72.000"));
         assert!(marker.contains("displayRefreshPerformanceReady=true"));
     }
@@ -431,6 +463,42 @@ mod tests {
         assert!(marker.contains("displayRefreshRateChangeFromHz=72.000"));
         assert!(marker.contains("displayRefreshRateChangeToHz=90.000"));
         assert!(marker.contains("displayRefreshEffectiveHz=90.000"));
+    }
+
+    #[test]
+    fn current_session_rate_change_with_matching_openxr_readback_qualifies_empty_enumeration() {
+        let settings = NativeDisplayRefreshSettings::from_property(Some("90".to_string()));
+        let mut state = NativeDisplayRefreshRuntimeState::new(settings);
+        let generation = state.begin_session();
+        assert!(state.record_supported_rates(generation, &[]));
+        assert!(state.record_request_result(generation, false));
+        assert!(state.record_current_session_rate_change_effective(generation, 72.0, 90.0, 90.0));
+        assert!(state.ensure_performance_ready().is_ok());
+        let marker = state.marker_fields();
+        assert!(marker.contains("displayRefreshSupportedHz=none"));
+        assert!(marker.contains("displayRefreshRequestResult=current-session-rate-change-accepted"));
+        assert!(marker.contains("displayRefreshEffectiveHz=90.000"));
+        assert!(marker.contains("displayRefreshPerformanceReady=true"));
+    }
+
+    #[test]
+    fn current_session_rate_change_requires_matching_event_and_effective_rate() {
+        let settings = NativeDisplayRefreshSettings::from_property(Some("90".to_string()));
+        let mut state = NativeDisplayRefreshRuntimeState::new(settings);
+        let generation = state.begin_session();
+        assert!(state.record_supported_rates(generation, &[]));
+        assert!(state.record_request_result(generation, false));
+        assert!(state.record_current_session_rate_change_effective(generation, 72.0, 80.0, 90.0));
+        assert!(state.ensure_performance_ready().is_err());
+        assert!(state.record_current_session_rate_change_effective(generation, 80.0, 90.0, 80.0));
+        assert!(state.ensure_performance_ready().is_err());
+        assert!(!state.record_current_session_rate_change_effective(
+            generation + 1,
+            80.0,
+            90.0,
+            90.0
+        ));
+        assert!(state.ensure_performance_ready().is_err());
     }
 
     #[test]

@@ -2219,11 +2219,9 @@ unsafe fn run_projection_frames(
                         );
                         continue;
                     }
-                    let _ = display_refresh.record_rate_change(
-                        generation,
-                        event.from_display_refresh_rate(),
-                        event.to_display_refresh_rate(),
-                    );
+                    let from_hz = event.from_display_refresh_rate();
+                    let to_hz = event.to_display_refresh_rate();
+                    let _ = display_refresh.record_rate_change(generation, from_hz, to_hz);
                     crate::marker(
                         "openxr-display-refresh",
                         format!(
@@ -2233,7 +2231,12 @@ unsafe fn run_projection_frames(
                     );
                     match session.get_display_refresh_rate() {
                         Ok(effective_hz) => {
-                            let _ = display_refresh.record_effective_rate(generation, effective_hz);
+                            let _ = display_refresh.record_current_session_rate_change_effective(
+                                generation,
+                                from_hz,
+                                to_hz,
+                                effective_hz,
+                            );
                             crate::marker(
                                 "openxr-display-refresh",
                                 format!(
