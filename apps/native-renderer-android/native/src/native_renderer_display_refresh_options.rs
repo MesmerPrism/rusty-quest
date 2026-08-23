@@ -122,6 +122,7 @@ struct DisplayRefreshRateChange {
 pub(crate) struct NativeDisplayRefreshRuntimeState {
     settings: NativeDisplayRefreshSettings,
     session_generation: u64,
+    configuration_attempted: bool,
     supported_hz: Vec<f32>,
     request_outcome: DisplayRefreshRequestOutcome,
     effective_hz: Option<f32>,
@@ -133,6 +134,7 @@ impl NativeDisplayRefreshRuntimeState {
         Self {
             settings,
             session_generation: 0,
+            configuration_attempted: false,
             supported_hz: Vec::new(),
             request_outcome: DisplayRefreshRequestOutcome::NotAttempted,
             effective_hz: None,
@@ -150,6 +152,7 @@ impl NativeDisplayRefreshRuntimeState {
 
     pub(crate) fn begin_session(&mut self) -> u64 {
         self.session_generation = self.session_generation.saturating_add(1);
+        self.configuration_attempted = false;
         self.supported_hz.clear();
         self.request_outcome = DisplayRefreshRequestOutcome::NotAttempted;
         self.effective_hz = None;
@@ -159,6 +162,16 @@ impl NativeDisplayRefreshRuntimeState {
 
     pub(crate) fn session_generation(&self) -> u64 {
         self.session_generation
+    }
+
+    /// Reserves the single display-refresh negotiation for the current OpenXR
+    /// session generation. Repeated focused events must not replay a request.
+    pub(crate) fn begin_configuration_attempt(&mut self, generation: u64) -> bool {
+        if !self.accepts_generation(generation) || self.configuration_attempted {
+            return false;
+        }
+        self.configuration_attempted = true;
+        true
     }
 
     pub(crate) fn record_supported_rates(&mut self, generation: u64, rates: &[f32]) -> bool {
@@ -267,9 +280,10 @@ impl NativeDisplayRefreshRuntimeState {
             })
             .unwrap_or_else(|| ("none".to_string(), "none".to_string()));
         format!(
-            "{} displayRefreshSessionGeneration={} displayRefreshSupportedHz={} displayRefreshRequestResult={} displayRefreshEffectiveHz={} displayRefreshRateChangeFromHz={} displayRefreshRateChangeToHz={} displayRefreshPerformanceReady={}",
+            "{} displayRefreshSessionGeneration={} displayRefreshConfigurationAttempted={} displayRefreshSupportedHz={} displayRefreshRequestResult={} displayRefreshEffectiveHz={} displayRefreshRateChangeFromHz={} displayRefreshRateChangeToHz={} displayRefreshPerformanceReady={}",
             self.settings.marker_fields(),
             self.session_generation,
+            self.configuration_attempted,
             self.supported_rates_marker(),
             self.request_outcome.marker_value(),
             effective_hz,
@@ -434,5 +448,22 @@ mod tests {
         assert!(state
             .marker_fields()
             .contains("displayRefreshSupportedHz=none"));
+    }
+
+    #[test]
+    fn configuration_is_deferred_once_per_openxr_session_generation() {
+        let mut state = NativeDisplayRefreshRuntimeState::new(requested_settings());
+        assert!(!state.begin_configuration_attempt(0));
+
+        let first_generation = state.begin_session();
+        assert!(state.begin_configuration_attempt(first_generation));
+        assert!(!state.begin_configuration_attempt(first_generation));
+        assert!(state
+            .marker_fields()
+            .contains("displayRefreshConfigurationAttempted=true"));
+
+        let second_generation = state.begin_session();
+        assert_eq!(second_generation, first_generation + 1);
+        assert!(state.begin_configuration_attempt(second_generation));
     }
 }

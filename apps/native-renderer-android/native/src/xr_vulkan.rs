@@ -2143,16 +2143,29 @@ unsafe fn run_projection_frames(
                             session
                                 .begin(VIEW_TYPE)
                                 .map_err(|error| format!("begin OpenXR session: {error}"))?;
-                            configure_requested_display_refresh_rate(
-                                session,
-                                &mut display_refresh,
-                                enabled_extensions.fb_display_refresh_rate,
-                            );
+                            if display_refresh.requested() {
+                                let generation = display_refresh.begin_session();
+                                crate::marker(
+                                    "openxr-display-refresh",
+                                    format!(
+                                        "status=session-begun-deferred-until-focused {}",
+                                        display_refresh.marker_fields()
+                                    ),
+                                );
+                                debug_assert_ne!(generation, 0);
+                            }
                             if let Some(renderer) = gpu_private_particle_renderer.as_deref_mut() {
                                 renderer.begin_runtime_session();
                             }
                             session_running = true;
                             crate::marker("openxr-session", "event=begin viewType=PRIMARY_STEREO");
+                        }
+                        xr::SessionState::FOCUSED => {
+                            configure_requested_display_refresh_rate(
+                                session,
+                                &mut display_refresh,
+                                enabled_extensions.fb_display_refresh_rate,
+                            );
                         }
                         xr::SessionState::STOPPING => {
                             simultaneous_hands_controllers.pause_best_effort(
@@ -3693,7 +3706,17 @@ fn configure_requested_display_refresh_rate(
         return;
     }
 
-    let generation = state.begin_session();
+    let generation = state.session_generation();
+    if !state.begin_configuration_attempt(generation) {
+        crate::marker(
+            "openxr-display-refresh",
+            format!(
+                "status=configuration-ignored-already-attempted {}",
+                state.marker_fields()
+            ),
+        );
+        return;
+    }
     crate::marker(
         "openxr-display-refresh",
         format!("status=requested {}", state.marker_fields()),
@@ -3732,6 +3755,7 @@ fn configure_requested_display_refresh_rate(
         format!("status=supported-rates {}", state.marker_fields()),
     );
     if !state.requested_rate_is_supported() {
+        let _ = state.record_request_result(generation, false);
         let error = state
             .ensure_performance_ready()
             .expect_err("unsupported requested display rate must fail readiness");
