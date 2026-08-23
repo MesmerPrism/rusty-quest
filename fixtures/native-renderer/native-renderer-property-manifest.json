@@ -17,6 +17,7 @@
     "apps/native-renderer-android/native/src/simultaneous_hands_controllers.rs",
     "apps/native-renderer-android/native/src/native_renderer_display_composite_options.rs",
     "apps/native-renderer-android/native/src/native_renderer_display_refresh_options.rs",
+    "apps/native-renderer-android/native/src/native_renderer_private_particle_visual_scale_request.rs",
     "apps/native-renderer-android/native/src/native_renderer_foveation_options.rs",
     "apps/native-renderer-android/native/src/native_renderer_passthrough_style_options.rs",
     "apps/native-renderer-android/native/src/native_renderer_video_projection_options.rs",
@@ -25,7 +26,7 @@
     "apps/native-renderer-android/native/src/manifold_scalar_driver_bridge.rs",
     "apps/native-renderer-android/native/src/lsl_transport_bridge.rs"
   ],
-  "property_count": 304,
+  "property_count": 305,
   "properties": [
     {
       "name": "debug.rustyquest.native_renderer.breath_composition.activation.binding_sha256",
@@ -4101,6 +4102,21 @@
         "min": 0.05,
         "max": 1.0
       },
+      "validators": [
+        "runtime-parser",
+        "profile-matrix",
+        "rusty-quest-profile",
+        "Apply-RuntimeProfile.ps1"
+      ]
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.private_particles.visual.scale_request.v1",
+      "family": "private_particles",
+      "runtime_owner": "native_renderer_private_particle_visual_scale_request",
+      "lifecycle": "runtime-polled",
+      "clear_behavior": "profile-owned-explicit-set",
+      "default_behavior": "runtime-owner-default-when-unset",
+      "value_kind": "string",
       "validators": [
         "runtime-parser",
         "profile-matrix",

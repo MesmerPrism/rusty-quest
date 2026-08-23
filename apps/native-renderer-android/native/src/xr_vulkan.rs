@@ -2164,6 +2164,9 @@ unsafe fn run_projection_frames(
                                 let _ = session.end();
                                 return Err(error);
                             }
+                            if let Some(renderer) = gpu_private_particle_renderer.as_deref_mut() {
+                                renderer.begin_runtime_session();
+                            }
                             session_running = true;
                             crate::marker("openxr-session", "event=begin viewType=PRIMARY_STEREO");
                         }
@@ -3617,6 +3620,9 @@ unsafe fn run_projection_frames(
             .map_err(|error| format!("end OpenXR frame: {error}"))?;
         trace_startup_frame(frame_count, "after-xr-end-frame");
         frame_timings.openxr_end_frame_ms = elapsed_ms(stage_started);
+        if let Some(renderer) = gpu_private_particle_renderer.as_deref_mut() {
+            renderer.confirm_submitted_frame(frame_count, private_particle_stats);
+        }
 
         frame_count = frame_count.saturating_add(1);
         pacing_window_frames = pacing_window_frames.saturating_add(1);

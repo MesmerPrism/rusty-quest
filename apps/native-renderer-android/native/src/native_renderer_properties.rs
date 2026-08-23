@@ -278,6 +278,8 @@ pub(crate) const PROP_CONTROLLER_BREATH_STATE_LONG_WINDOW_SECONDS: &str =
     "debug.rustyquest.native_renderer.controller_breath_state.long_window.seconds";
 pub(crate) const PROP_PRIVATE_PARTICLES_VISUAL_SCALE: &str =
     "debug.rustyquest.native_renderer.private_particles.visual.scale";
+pub(crate) const PROP_PRIVATE_PARTICLES_VISUAL_SCALE_REQUEST_V1: &str =
+    "debug.rustyquest.native_renderer.private_particles.visual.scale_request.v1";
 pub(crate) const PROP_PRIVATE_PARTICLES_WORLD_ANCHOR_SCALE_M: &str =
     "debug.rustyquest.native_renderer.private_particles.world_anchor.scale_m";
 pub(crate) const PROP_PRIVATE_PARTICLES_DRIVER0_VALUE01: &str =

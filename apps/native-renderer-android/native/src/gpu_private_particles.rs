@@ -10,6 +10,9 @@ use crate::manifold_scalar_driver_bridge::{
     ManifoldScalarDriverBridge, ManifoldScalarDriverBridgeSettings,
 };
 use crate::native_controller_breath_state::NativeControllerBreathSample;
+use crate::native_renderer_private_particle_visual_scale_request::{
+    PrivateParticleVisualScaleRequestObservation, PrivateParticleVisualScaleRequestState,
+};
 use crate::native_renderer_properties::{
     PROP_PRIVATE_PARTICLES_COLOR_FACING_ATTENUATION_STRENGTH,
     PROP_PRIVATE_PARTICLES_DRIVER0_VALUE01, PROP_PRIVATE_PARTICLES_DRIVER1_VALUE01,
@@ -25,6 +28,7 @@ use crate::native_renderer_properties::{
     PROP_PRIVATE_PARTICLES_TRANSPARENCY_OPACITY,
     PROP_PRIVATE_PARTICLES_TRANSPARENCY_OUTPUT_ALPHA_SCALE,
     PROP_PRIVATE_PARTICLES_TRANSPARENCY_RGB_ALPHA_COUPLING, PROP_PRIVATE_PARTICLES_VISUAL_SCALE,
+    PROP_PRIVATE_PARTICLES_VISUAL_SCALE_REQUEST_V1,
 };
 use crate::native_renderer_property_values::{bool_value, f32_clamped_value, u32_value};
 use crate::native_renderer_timing::{GpuTimestampStage, GpuTimestampTracker};
@@ -606,6 +610,10 @@ fn android_property(name: &str) -> Option<String> {
     })
 }
 
+fn private_particle_visual_scale_request_property() -> Option<String> {
+    android_property(PROP_PRIVATE_PARTICLES_VISUAL_SCALE_REQUEST_V1)
+}
+
 #[derive(Clone, Copy, Debug)]
 struct PrivateParticleDiagnosticSnapshot {
     status: &'static str,
@@ -990,6 +998,7 @@ pub(crate) struct GpuPrivateParticleRenderer {
     runtime_settings: PrivateParticleRuntimeSettings,
     driver_source_values01: [f32; PRIVATE_PARTICLE_DRIVER_BANK_SLOT_COUNT],
     runtime_settings_last_poll_frame: u64,
+    visual_scale_request_state: PrivateParticleVisualScaleRequestState,
     panel_settings_override: Option<GpuPrivateParticlePanelSettings>,
     pending_phase_reset_revision: i64,
     last_phase_reset_revision: i64,
@@ -1688,6 +1697,7 @@ impl GpuPrivateParticleRenderer {
             runtime_settings,
             driver_source_values01: runtime_settings.driver_bank_values01,
             runtime_settings_last_poll_frame: u64::MAX,
+            visual_scale_request_state: PrivateParticleVisualScaleRequestState::default(),
             panel_settings_override: None,
             pending_phase_reset_revision: 0,
             last_phase_reset_revision: 0,
@@ -1725,6 +1735,37 @@ impl GpuPrivateParticleRenderer {
         device.destroy_pipeline_layout(self.pipeline_layout, None);
         device.destroy_descriptor_pool(self.descriptor_pool, None);
         device.destroy_descriptor_set_layout(self.descriptor_set_layout, None);
+    }
+
+    pub(crate) fn begin_runtime_session(&mut self) {
+        self.visual_scale_request_state.begin_session();
+        self.runtime_settings_last_poll_frame = u64::MAX;
+        crate::marker(
+            "private-particle-visual-scale-request",
+            format!(
+                "status=session-ready {}",
+                self.visual_scale_request_state.session_marker_fields()
+            ),
+        );
+    }
+
+    pub(crate) fn confirm_submitted_frame(
+        &mut self,
+        frame_count: u64,
+        stats: GpuPrivateParticleFrameStats,
+    ) {
+        if !stats.ready || !stats.visible || stats.draw_count == 0 {
+            return;
+        }
+        if let Some(receipt) = self
+            .visual_scale_request_state
+            .confirm_submitted_frame(frame_count)
+        {
+            crate::marker(
+                "private-particle-visual-scale-request",
+                format!("status=effective {}", receipt.marker_fields()),
+            );
+        }
     }
 
     pub(crate) unsafe fn collect_completed_diagnostics(
@@ -2045,6 +2086,12 @@ impl GpuPrivateParticleRenderer {
             tracer_draw_slots_capacity: self.tracer_draw_slots_per_oscillator,
             diagnostic_snapshot: self.last_diagnostic_snapshot,
         };
+        self.visual_scale_request_state
+            .note_renderer_prepared_frame(
+                frame_count,
+                runtime_settings.visual_scale,
+                stats.ready && stats.visible && stats.draw_count > 0,
+            );
 
         if frame_count == 0 || frame_count % 120 == 0 {
             crate::marker(
@@ -2178,6 +2225,32 @@ impl GpuPrivateParticleRenderer {
                 >= PRIVATE_PARTICLE_SETTINGS_POLL_INTERVAL_FRAMES;
         if should_poll {
             let mut next = PrivateParticleRuntimeSettings::load_from_android_properties();
+            match self
+                .visual_scale_request_state
+                .observe_property(private_particle_visual_scale_request_property())
+            {
+                PrivateParticleVisualScaleRequestObservation::NoChange => {}
+                PrivateParticleVisualScaleRequestObservation::Accepted(request) => {
+                    crate::marker(
+                        "private-particle-visual-scale-request",
+                        format!(
+                            "status=accepted frame={} {}",
+                            frame_count,
+                            request.marker_fields("accepted")
+                        ),
+                    );
+                }
+                PrivateParticleVisualScaleRequestObservation::Rejected(rejection) => {
+                    crate::marker(
+                        "private-particle-visual-scale-request",
+                        format!(
+                            "status=rejected frame={} {}",
+                            frame_count,
+                            rejection.marker_fields()
+                        ),
+                    );
+                }
+            }
             let mut driver_parameter_source = next.driver_parameter_source;
             let manifold_driver_active_count =
                 self.manifold_driver_bridge.as_ref().map_or(0, |bridge| {
@@ -2223,6 +2296,10 @@ impl GpuPrivateParticleRenderer {
             self.driver_source_values01 = next.driver_bank_values01;
             if let Some(panel_override) = self.panel_settings_override {
                 next.apply_panel_override(panel_override, self.driver_source_values01);
+            }
+            if let Some(scale) = self.visual_scale_request_state.active_scale() {
+                next.visual_scale = scale;
+                next.visual_parameter_source = "runtime-fenced-visual-scale-request-v1";
             }
             if next != self.runtime_settings {
                 crate::marker(

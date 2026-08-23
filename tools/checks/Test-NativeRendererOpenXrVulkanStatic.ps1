@@ -60,6 +60,7 @@ $privateParticlesOffscreenCompositeFragment = Read-RequiredText (Join-Path $nati
 $nativeRendererOptionSurface = @(
     (Read-RequiredText (Join-Path $srcRoot "native_renderer_camera_options.rs") "native renderer camera options"),
     (Read-RequiredText (Join-Path $srcRoot "native_renderer_display_refresh_options.rs") "native renderer display refresh options"),
+    (Read-RequiredText (Join-Path $srcRoot "native_renderer_private_particle_visual_scale_request.rs") "private particle visual scale request options"),
     (Read-RequiredText (Join-Path $srcRoot "native_renderer_properties.rs") "native renderer properties"),
     (Read-RequiredText (Join-Path $srcRoot "native_renderer_property_values.rs") "native renderer property values"),
     (Read-RequiredText (Join-Path $srcRoot "native_renderer_environment_depth_options.rs") "native renderer environment-depth options"),
@@ -88,7 +89,7 @@ $xrVulkanSurface = @(
     (Read-RequiredText (Join-Path $srcRoot "xr_vulkan\scorecard.rs") "xr_vulkan scorecard")
 ) -join "`n"
 
-Assert-ContainsTokens "$xrVulkanSurface`n$nativeRendererOptionSurface`n$nativeRendererTiming`n$privateExtensionSlot`n$nativeCamera" @(
+Assert-ContainsTokens "$xrVulkanSurface`n$nativeRendererOptionSurface`n$nativeRendererTiming`n$privateExtensionSlot`n$nativeCamera`n$gpuPrivateParticles" @(
     'mod replay_visual_stats',
     'mod scorecard',
     'Replay/live visual evidence rectangle helpers for the Quest-native frame loop',
@@ -197,6 +198,20 @@ Assert-ContainsTokens "$xrVulkanSurface`n$nativeRendererOptionSurface`n$nativeRe
     'NativePassthroughRuntime',
     'NativeDisplayRefreshSettings',
     'NativeDisplayRefreshRuntimeState',
+    'PrivateParticleVisualScaleRequestState',
+    'PrivateParticleVisualScaleRequestObservation',
+    'debug\.rustyquest\.native_renderer\.private_particles\.visual\.scale_request\.v1',
+    'private-particle-visual-scale-request',
+    'status=session-ready',
+    'status=accepted',
+    'status=effective',
+    'status=rejected',
+    'privateParticleVisualScaleRequestSession=',
+    'privateParticleVisualScaleRequestGeneration=',
+    'privateParticleVisualScaleRequestId=',
+    'privateParticleVisualScaleSubmittedFrame=',
+    'begin_runtime_session',
+    'confirm_submitted_frame',
     'REQUESTED_DISPLAY_REFRESH_RATE_HZ: f32 = 72\.0',
     'debug\.rustyquest\.native_renderer\.openxr\.display_refresh_rate_hz',
     'displayRefreshRequestedHz=unset',

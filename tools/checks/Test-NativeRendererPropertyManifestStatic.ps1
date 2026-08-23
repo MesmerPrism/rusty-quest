@@ -20,7 +20,7 @@ $manifest = $manifestText | ConvertFrom-Json
 if ($manifest.schema -ne "rusty.quest.native_renderer_property_manifest.v2") {
     throw "Native renderer property manifest has an unexpected schema."
 }
-$expectedPropertyCount = 304
+$expectedPropertyCount = 305
 if ($manifest.property_count -ne $expectedPropertyCount -or $manifest.properties.Count -ne $expectedPropertyCount) {
     throw "Native renderer property manifest must cover the current $expectedPropertyCount-property runtime surface."
 }
@@ -160,6 +160,9 @@ foreach ($token in @(
     'direct-controller-state',
     'debug.rustyquest.native_renderer.projection.target.breath.high_rate_json_payload',
     'debug.rustyquest.native_renderer.private_particles.visual.scale',
+    'debug.rustyquest.native_renderer.private_particles.visual.scale_request.v1',
+    'native_renderer_private_particle_visual_scale_request',
+    'runtime-polled',
     'debug.rustyquest.native_renderer.private_particles.world_anchor.scale_m',
     'debug.rustyquest.native_renderer.private_particles.driver0.value01',
     'debug.rustyquest.native_renderer.private_particles.driver1.value01',
