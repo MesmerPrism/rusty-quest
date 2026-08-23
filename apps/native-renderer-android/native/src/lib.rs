@@ -345,10 +345,15 @@ fn request_runtime_permissions(
 #[cfg(target_os = "android")]
 #[no_mangle]
 fn android_main(app: android_activity::AndroidApp) {
-    let particle_adapter_input = particle_adapter_consumer::load_runtime_input();
+    let native_app_settings =
+        native_app_settings::NativeAppSettingsDefaults::load_from_apk_asset(&app);
+    marker("native-app-settings", native_app_settings.marker_fields());
+    let particle_adapter_input =
+        particle_adapter_consumer::load_runtime_input_with_defaults(&native_app_settings);
     let particle_adapter_decision =
         particle_adapter_consumer::resolve_activation(&particle_adapter_input);
-    let hand_adapter_input = hand_adapter_consumer::load_runtime_input();
+    let hand_adapter_input =
+        hand_adapter_consumer::load_runtime_input_with_defaults(&native_app_settings);
     let hand_adapter_decision = hand_adapter_consumer::resolve_activation(&hand_adapter_input);
     if (particle_adapter_input.enabled && !particle_adapter_decision.is_applied())
         || (hand_adapter_input.enabled && !hand_adapter_decision.is_applied())
@@ -386,9 +391,9 @@ fn android_main(app: android_activity::AndroidApp) {
         ),
     );
 
-    let native_app_settings =
-        native_app_settings::NativeAppSettingsDefaults::load_from_apk_asset(&app);
-    marker("native-app-settings", native_app_settings.marker_fields());
+    breath_composition_runtime::install_from_android_properties_with_defaults(|name| {
+        native_app_settings.lookup(name)
+    });
     let runtime_options =
         native_renderer_options::NativeRendererRuntimeOptions::load_from_android_properties_with_defaults(
             |name| native_app_settings.lookup(name),

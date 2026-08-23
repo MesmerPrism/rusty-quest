@@ -71,10 +71,18 @@ impl Default for BreathCompositionRuntimeConfig {
 impl BreathCompositionRuntimeConfig {
     #[cfg(target_os = "android")]
     pub(crate) fn from_android_properties() -> Self {
-        let get = |name: &str| {
-            let mut property = android_properties::getprop(name);
-            property.value().map(|value| value.trim().to_owned())
-        };
+        Self::from_property_lookup(android_property)
+    }
+
+    #[cfg(target_os = "android")]
+    pub(crate) fn from_android_properties_with_defaults(
+        mut default_lookup: impl FnMut(&str) -> Option<String>,
+    ) -> Self {
+        Self::from_property_lookup(|name| android_property(name).or_else(|| default_lookup(name)))
+    }
+
+    #[cfg(target_os = "android")]
+    fn from_property_lookup(mut get: impl FnMut(&str) -> Option<String>) -> Self {
         let enabled = bool_token(get(PROP_BREATH_COMPOSITION_ENABLED));
         let capabilities = BreathCompositionCapabilities {
             controller_assessment: bool_token(get(
@@ -110,6 +118,12 @@ impl BreathCompositionRuntimeConfig {
             stale_after_micros: stale_millis * 1_000,
         }
     }
+}
+
+#[cfg(target_os = "android")]
+fn android_property(name: &str) -> Option<String> {
+    let mut property = android_properties::getprop(name);
+    property.value().map(|value| value.trim().to_owned())
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -656,6 +670,17 @@ fn lock_runtime() -> MutexGuard<'static, BreathCompositionRuntime> {
 #[cfg(target_os = "android")]
 pub(crate) fn install_from_android_properties() {
     let config = BreathCompositionRuntimeConfig::from_android_properties();
+    let mut state = lock_runtime();
+    *state = BreathCompositionRuntime::new(config);
+    crate::marker("breath-composition", marker_fields(state.snapshot()));
+}
+
+#[cfg(target_os = "android")]
+pub(crate) fn install_from_android_properties_with_defaults(
+    default_lookup: impl FnMut(&str) -> Option<String>,
+) {
+    let config =
+        BreathCompositionRuntimeConfig::from_android_properties_with_defaults(default_lookup);
     let mut state = lock_runtime();
     *state = BreathCompositionRuntime::new(config);
     crate::marker("breath-composition", marker_fields(state.snapshot()));

@@ -371,19 +371,6 @@ unsafe fn run_projection_loop_inner(
         return Err(error);
     }
     let display_refresh_requested = display_refresh_settings.extension_requested();
-    if display_refresh_requested && !available_extensions.fb_display_refresh_rate {
-        crate::marker(
-            "openxr-display-refresh",
-            format!(
-                "status=extension-unavailable {} displayRefreshExtensionAvailable=false displayRefreshExtensionEnabled=false",
-                display_refresh_settings.marker_fields()
-            ),
-        );
-        return Err(
-            "OpenXR runtime does not expose XR_FB_display_refresh_rate for the requested 72 Hz profile"
-                .to_string(),
-        );
-    }
     let mut enabled_extensions = xr::ExtensionSet::default();
     enabled_extensions.khr_android_create_instance = true;
     enabled_extensions.khr_vulkan_enable2 = true;
@@ -2157,13 +2144,11 @@ unsafe fn run_projection_frames(
                             session
                                 .begin(VIEW_TYPE)
                                 .map_err(|error| format!("begin OpenXR session: {error}"))?;
-                            if let Err(error) = configure_requested_display_refresh_rate(
+                            configure_requested_display_refresh_rate(
                                 session,
                                 &mut display_refresh,
-                            ) {
-                                let _ = session.end();
-                                return Err(error);
-                            }
+                                enabled_extensions.fb_display_refresh_rate,
+                            );
                             if let Some(renderer) = gpu_private_particle_renderer.as_deref_mut() {
                                 renderer.begin_runtime_session();
                             }
@@ -2230,18 +2215,27 @@ unsafe fn run_projection_frames(
                             display_refresh.marker_fields()
                         ),
                     );
-                    let effective_hz = session.get_display_refresh_rate().map_err(|error| {
-                        format!("read effective display refresh after rate change: {error}")
-                    })?;
-                    let _ = display_refresh.record_effective_rate(generation, effective_hz);
-                    crate::marker(
-                        "openxr-display-refresh",
-                        format!(
-                            "status=effective-readback-after-rate-change {}",
-                            display_refresh.marker_fields()
+                    match session.get_display_refresh_rate() {
+                        Ok(effective_hz) => {
+                            let _ = display_refresh.record_effective_rate(generation, effective_hz);
+                            crate::marker(
+                                "openxr-display-refresh",
+                                format!(
+                                    "status=effective-readback-after-rate-change {}",
+                                    display_refresh.marker_fields()
+                                ),
+                            );
+                        }
+                        Err(error) => crate::marker(
+                            "openxr-display-refresh",
+                            format!(
+                                "status=effective-readback-failed-after-rate-change {} reason={}",
+                                display_refresh.marker_fields(),
+                                crate::sanitize(&error.to_string())
+                            ),
                         ),
-                    );
-                    display_refresh.ensure_performance_ready()?;
+                    }
+                    mark_display_refresh_performance_readiness(&display_refresh);
                 }
                 _ => {}
             }
@@ -3690,9 +3684,10 @@ unsafe fn run_projection_frames(
 fn configure_requested_display_refresh_rate(
     session: &xr::Session<xr::Vulkan>,
     state: &mut NativeDisplayRefreshRuntimeState,
-) -> Result<(), String> {
+    extension_enabled: bool,
+) {
     if !state.requested() {
-        return Ok(());
+        return;
     }
 
     let generation = state.begin_session();
@@ -3700,6 +3695,18 @@ fn configure_requested_display_refresh_rate(
         "openxr-display-refresh",
         format!("status=requested {}", state.marker_fields()),
     );
+    if !extension_enabled {
+        let _ = state.record_request_result(generation, false);
+        crate::marker(
+            "openxr-display-refresh",
+            format!(
+                "status=extension-unavailable {} displayRefreshExtensionName=XR_FB_display_refresh_rate displayRefreshExtensionAvailable=false displayRefreshExtensionEnabled=false",
+                state.marker_fields()
+            ),
+        );
+        mark_display_refresh_performance_readiness(state);
+        return;
+    }
     let supported_hz = match session.enumerate_display_refresh_rates() {
         Ok(rates) => rates,
         Err(error) => {
@@ -3711,7 +3718,9 @@ fn configure_requested_display_refresh_rate(
                     crate::sanitize(&error.to_string())
                 ),
             );
-            return Err(format!("enumerate OpenXR display refresh rates: {error}"));
+            let _ = state.record_request_result(generation, false);
+            mark_display_refresh_performance_readiness(state);
+            return;
         }
     };
     let _ = state.record_supported_rates(generation, &supported_hz);
@@ -3731,7 +3740,8 @@ fn configure_requested_display_refresh_rate(
                 crate::sanitize(&error)
             ),
         );
-        return Err(error);
+        mark_display_refresh_performance_readiness(state);
+        return;
     }
 
     let requested_hz = REQUESTED_DISPLAY_REFRESH_RATE_HZ;
@@ -3745,10 +3755,8 @@ fn configure_requested_display_refresh_rate(
                 crate::sanitize(&error.to_string())
             ),
         );
-        return Err(format!(
-            "request OpenXR display refresh rate {:.3} Hz: {error}",
-            requested_hz
-        ));
+        mark_display_refresh_performance_readiness(state);
+        return;
     }
     let _ = state.record_request_result(generation, true);
     crate::marker(
@@ -3767,9 +3775,8 @@ fn configure_requested_display_refresh_rate(
                     crate::sanitize(&error.to_string())
                 ),
             );
-            return Err(format!(
-                "read effective OpenXR display refresh rate: {error}"
-            ));
+            mark_display_refresh_performance_readiness(state);
+            return;
         }
     };
     let _ = state.record_effective_rate(generation, effective_hz);
@@ -3777,7 +3784,20 @@ fn configure_requested_display_refresh_rate(
         "openxr-display-refresh",
         format!("status=effective-readback {}", state.marker_fields()),
     );
-    state.ensure_performance_ready()
+    mark_display_refresh_performance_readiness(state);
+}
+
+fn mark_display_refresh_performance_readiness(state: &NativeDisplayRefreshRuntimeState) {
+    if let Err(error) = state.ensure_performance_ready() {
+        crate::marker(
+            "openxr-display-refresh",
+            format!(
+                "status=performance-not-ready {} reason={}",
+                state.marker_fields(),
+                crate::sanitize(&error)
+            ),
+        );
+    }
 }
 
 fn trace_startup_frame(frame_count: u64, stage: &str) {
