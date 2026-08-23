@@ -2148,7 +2148,7 @@ unsafe fn run_projection_frames(
                                 crate::marker(
                                     "openxr-display-refresh",
                                     format!(
-                                        "status=session-begun-deferred-until-focused {}",
+                                        "status=session-begun-deferred-until-submitted-frame {}",
                                         display_refresh.marker_fields()
                                     ),
                                 );
@@ -2161,11 +2161,15 @@ unsafe fn run_projection_frames(
                             crate::marker("openxr-session", "event=begin viewType=PRIMARY_STEREO");
                         }
                         xr::SessionState::FOCUSED => {
-                            configure_requested_display_refresh_rate(
-                                session,
-                                &mut display_refresh,
-                                enabled_extensions.fb_display_refresh_rate,
-                            );
+                            if display_refresh.configuration_pending() {
+                                crate::marker(
+                                    "openxr-display-refresh",
+                                    format!(
+                                        "status=focused-awaiting-first-submitted-frame {}",
+                                        display_refresh.marker_fields()
+                                    ),
+                                );
+                            }
                         }
                         xr::SessionState::STOPPING => {
                             simultaneous_hands_controllers.pause_best_effort(
@@ -3628,6 +3632,13 @@ unsafe fn run_projection_frames(
         frame_timings.openxr_end_frame_ms = elapsed_ms(stage_started);
         if let Some(renderer) = gpu_private_particle_renderer.as_deref_mut() {
             renderer.confirm_submitted_frame(frame_count, private_particle_stats);
+        }
+        if display_refresh.configuration_pending() {
+            configure_requested_display_refresh_rate(
+                session,
+                &mut display_refresh,
+                enabled_extensions.fb_display_refresh_rate,
+            );
         }
 
         frame_count = frame_count.saturating_add(1);

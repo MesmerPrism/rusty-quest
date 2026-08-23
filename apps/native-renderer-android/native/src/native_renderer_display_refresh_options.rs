@@ -174,6 +174,13 @@ impl NativeDisplayRefreshRuntimeState {
         true
     }
 
+    /// A refresh-rate query is meaningful only after this OpenXR session has
+    /// submitted a frame to the compositor. The caller still obtains the
+    /// one-shot reservation through `begin_configuration_attempt`.
+    pub(crate) fn configuration_pending(&self) -> bool {
+        self.requested() && self.session_generation != 0 && !self.configuration_attempted
+    }
+
     pub(crate) fn record_supported_rates(&mut self, generation: u64, rates: &[f32]) -> bool {
         if !self.accepts_generation(generation) {
             return false;
@@ -456,14 +463,17 @@ mod tests {
         assert!(!state.begin_configuration_attempt(0));
 
         let first_generation = state.begin_session();
+        assert!(state.configuration_pending());
         assert!(state.begin_configuration_attempt(first_generation));
         assert!(!state.begin_configuration_attempt(first_generation));
+        assert!(!state.configuration_pending());
         assert!(state
             .marker_fields()
             .contains("displayRefreshConfigurationAttempted=true"));
 
         let second_generation = state.begin_session();
         assert_eq!(second_generation, first_generation + 1);
+        assert!(state.configuration_pending());
         assert!(state.begin_configuration_attempt(second_generation));
     }
 }
