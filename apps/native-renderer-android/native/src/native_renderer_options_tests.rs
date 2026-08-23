@@ -222,7 +222,7 @@ mod tests {
     }
 
     #[test]
-    fn display_refresh_settings_are_unset_by_default_and_only_accept_72_hz() {
+    fn display_refresh_settings_are_unset_by_default_and_accept_closed_72_or_90_hz() {
         let default_options = options_from(&[]);
         assert_eq!(
             default_options.display_refresh_settings.request(),
@@ -240,8 +240,43 @@ mod tests {
         assert!(requested.display_refresh_settings.extension_requested());
         assert!(requested.display_refresh_settings.validate().is_ok());
 
-        let invalid = options_from(&[(PROP_OPENXR_DISPLAY_REFRESH_RATE_HZ, "90")]);
+        let requested_ninety = options_from(&[(PROP_OPENXR_DISPLAY_REFRESH_RATE_HZ, "90")]);
+        assert_eq!(
+            requested_ninety.display_refresh_settings.requested_hz(),
+            Some(90.0)
+        );
+        assert!(requested_ninety
+            .display_refresh_settings
+            .extension_requested());
+        assert!(requested_ninety.display_refresh_settings.validate().is_ok());
+
+        let invalid = options_from(&[(PROP_OPENXR_DISPLAY_REFRESH_RATE_HZ, "120")]);
         assert!(invalid.display_refresh_settings.validate().is_err());
+    }
+
+    #[test]
+    fn packaged_90_hz_default_is_used_when_android_property_is_unset_and_explicit_property_wins() {
+        let packaged_ninety = NativeRendererRuntimeOptions::from_property_lookup_with_defaults(
+            |_| None,
+            |name| (name == PROP_OPENXR_DISPLAY_REFRESH_RATE_HZ).then(|| "90".to_string()),
+        );
+        assert_eq!(
+            packaged_ninety.display_refresh_settings.requested_hz(),
+            Some(90.0)
+        );
+        assert!(packaged_ninety
+            .display_refresh_settings
+            .extension_requested());
+        assert!(packaged_ninety.display_refresh_settings.validate().is_ok());
+
+        let explicit_seventy_two = NativeRendererRuntimeOptions::from_property_lookup_with_defaults(
+            |name| (name == PROP_OPENXR_DISPLAY_REFRESH_RATE_HZ).then(|| "72".to_string()),
+            |name| (name == PROP_OPENXR_DISPLAY_REFRESH_RATE_HZ).then(|| "90".to_string()),
+        );
+        assert_eq!(
+            explicit_seventy_two.display_refresh_settings.requested_hz(),
+            Some(72.0)
+        );
     }
 
     #[test]

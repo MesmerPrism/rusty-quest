@@ -411,6 +411,14 @@ fn android_main(app: android_activity::AndroidApp) {
         );
     let runtime_options =
         native_renderer_stimulus_panel::apply_app_private_candidate(&app, runtime_options);
+    marker(
+        "native-renderer-display-refresh-config",
+        format!(
+            "source=runtime-options {} nativeAppSettings={}",
+            runtime_options.display_refresh_settings.marker_fields(),
+            native_app_settings.marker_fields(),
+        ),
+    );
     let simultaneous_hands_controllers_decision =
         simultaneous_hands_controllers::resolve_activation(
             runtime_options.simultaneous_hands_controllers_settings,

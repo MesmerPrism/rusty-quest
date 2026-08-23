@@ -3686,6 +3686,10 @@ fn configure_requested_display_refresh_rate(
     extension_enabled: bool,
 ) {
     if !state.requested() {
+        crate::marker(
+            "openxr-display-refresh",
+            format!("status=not-requested {}", state.marker_fields()),
+        );
         return;
     }
 
