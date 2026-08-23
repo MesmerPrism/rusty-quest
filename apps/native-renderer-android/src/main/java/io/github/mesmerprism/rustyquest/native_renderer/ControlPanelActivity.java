@@ -25,6 +25,7 @@ import android.widget.Button;
 import android.widget.CheckBox;
 import android.widget.EditText;
 import android.widget.GridLayout;
+import android.widget.HorizontalScrollView;
 import android.widget.LinearLayout;
 import android.widget.ProgressBar;
 import android.widget.ScrollView;
@@ -92,6 +93,7 @@ public final class ControlPanelActivity extends Activity {
     private static final String DEPTH_ALIGNMENT_STATUS_FILE = "depth_alignment_status.json";
     private static final String PRIVATE_PARTICLE_DYNAMICS_STATUS_FILE =
         "private_particle_dynamics_status.json";
+    private static final String RENDERER_FOCUS_STATUS_FILE = "renderer_focus_state.json";
     private static final String DRIVER_PROFILE_PANEL_STATUS_FILE =
         "driver_profile_panel_status.json";
     private static final String BREATH_COMPOSITION_OPERATOR_STATUS_FILE =
@@ -426,6 +428,19 @@ public final class ControlPanelActivity extends Activity {
     private Spinner privateParticleMaterialPreset;
     private CheckBox privateParticlePolarRrOrbitBoost;
     private TextView privateParticleEffectiveReadback;
+    // This is deliberately separate from the legacy liveAutoApply control.  The
+    // Viscereality panel always sends one closed, debounced JSON candidate for
+    // an intentional particle edit; it must not inherit another panel's toggle.
+    private boolean privateParticlePanelLiveApply;
+    private boolean privateParticleControlsHydrating;
+    private long privateParticlePendingRevision;
+    private long privateParticlePendingReadbackDeadlineMs;
+    private Runnable pendingPrivateParticleEffectReadback;
+    private String viscerealityPanelTopic = "home";
+    private boolean rendererReturnPending;
+    private long rendererReturnBaselineFrame;
+    private long rendererReturnStartedAtMs;
+    private Runnable rendererReturnReadinessPoll;
     private Runnable pendingPrivateParticleDepthWaveApply;
     private Runnable pendingPrivateParticleConfigApply;
     private Button[] privateParticleConfigPageButtons = new Button[0];
@@ -617,6 +632,8 @@ public final class ControlPanelActivity extends Activity {
 
     @Override
     protected void onDestroy() {
+        cancelRendererReturnReadinessPoll();
+        cancelPendingPrivateParticleEffectReadback();
         recordSpatialCameraPanelEvent(
             "panel_activity_destroyed",
             "destroyed",
@@ -725,9 +742,322 @@ public final class ControlPanelActivity extends Activity {
             return buildPolarSensorPanelPageView(false);
         }
         if ("breath-mapping".equals(panelMode)) {
-            return buildBreathMappingPanelView();
+            return buildViscerealityControlPanelView();
         }
         return buildStimulusPanelView();
+    }
+
+    private View buildViscerealityControlPanelView() {
+        ScrollView scroll = new ScrollView(this);
+        scroll.setBackgroundColor(PANEL_BG);
+        LinearLayout root = new LinearLayout(this);
+        root.setOrientation(LinearLayout.VERTICAL);
+        int pad = dp(18);
+        root.setPadding(pad, pad, pad, pad);
+        scroll.addView(root);
+
+        appendViscerealityPanelHeader(root);
+        if ("particles".equals(viscerealityPanelTopic)) {
+            appendUnifiedParticleControls(root);
+        } else if ("breath".equals(viscerealityPanelTopic)) {
+            appendViscerealityBreathControls(root);
+        } else if ("polar".equals(viscerealityPanelTopic)) {
+            appendViscerealityPolarControls(root);
+        } else if ("status".equals(viscerealityPanelTopic)) {
+            appendViscerealityStatus(root);
+        } else {
+            appendViscerealityPanelHome(root);
+        }
+        return scroll;
+    }
+
+    private void appendViscerealityPanelHeader(LinearLayout root) {
+        LinearLayout header = new LinearLayout(this);
+        header.setOrientation(LinearLayout.HORIZONTAL);
+        header.setGravity(Gravity.CENTER_VERTICAL);
+        TextView title = text("Viscereality · " + viscerealityTopicTitle(), 22, PANEL_FG);
+        header.addView(
+            title,
+            new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+        );
+        Button resume = button("Resume VR");
+        resume.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                closePanelAndReturnToImmersive();
+            }
+        });
+        header.addView(resume);
+        root.addView(header);
+        root.addView(text(viscerealityTopicSubtitle(), 13, PANEL_MUTED));
+
+        HorizontalScrollView topicScroll = new HorizontalScrollView(this);
+        topicScroll.setHorizontalScrollBarEnabled(false);
+        LinearLayout topics = new LinearLayout(this);
+        topics.setOrientation(LinearLayout.HORIZONTAL);
+        String[] ids = new String[] {"home", "particles", "breath", "polar", "status"};
+        String[] titles = new String[] {"Home", "Particles", "Breath", "Polar", "Status"};
+        for (int i = 0; i < ids.length; i++) {
+            final String topic = ids[i];
+            Button choice = button(titles[i]);
+            choice.setEnabled(!topic.equals(viscerealityPanelTopic));
+            choice.setOnClickListener(new View.OnClickListener() {
+                @Override
+                public void onClick(View view) {
+                    selectViscerealityPanelTopic(topic);
+                }
+            });
+            topics.addView(choice);
+        }
+        topicScroll.addView(topics);
+        root.addView(topicScroll);
+    }
+
+    private String viscerealityTopicTitle() {
+        if ("particles".equals(viscerealityPanelTopic)) {
+            return "Particles";
+        }
+        if ("breath".equals(viscerealityPanelTopic)) {
+            return "Breath";
+        }
+        if ("polar".equals(viscerealityPanelTopic)) {
+            return "Polar";
+        }
+        if ("status".equals(viscerealityPanelTopic)) {
+            return "Effective state";
+        }
+        return "Control panel";
+    }
+
+    private String viscerealityTopicSubtitle() {
+        if ("particles".equals(viscerealityPanelTopic)) {
+            return "Visual shape, dynamics, trails, material, and RR orbit response.";
+        }
+        if ("breath".equals(viscerealityPanelTopic)) {
+            return "Choose and calibrate the live controller or Polar ACC breath input.";
+        }
+        if ("polar".equals(viscerealityPanelTopic)) {
+            return "Pairing and acquisition remain owned by the same-APK Polar runtime.";
+        }
+        if ("status".equals(viscerealityPanelTopic)) {
+            return "Requested values never replace the renderer's effective readback.";
+        }
+        return "Organized by the live system that owns each setting.";
+    }
+
+    private void selectViscerealityPanelTopic(String topic) {
+        if (topic.equals(viscerealityPanelTopic) || rendererReturnPending) {
+            return;
+        }
+        cancelPendingPrivateParticleDynamicsApply();
+        cancelPendingPrivateParticleEffectReadback();
+        cancelBreathCompositionRefresh();
+        viscerealityPanelTopic = topic;
+        setContentView(buildViscerealityControlPanelView());
+    }
+
+    private void appendViscerealityPanelHome(LinearLayout root) {
+        root.addView(
+            text(
+                "Use a focused topic rather than one long mixed control surface. Each topic reports the state actually accepted by its runtime owner.",
+                13,
+                PANEL_MUTED
+            )
+        );
+        appendViscerealityTopicRow(
+            root,
+            "Particles",
+            "Shape, oscillator drivers, trails, material A/B, and Polar RR orbit boost.",
+            "particles"
+        );
+        appendViscerealityTopicRow(
+            root,
+            "Breath",
+            "Controller or Polar ACC mapping, calibration, and current live output.",
+            "breath"
+        );
+        appendViscerealityTopicRow(
+            root,
+            "Polar",
+            "Connection, ACC acquisition, and RR availability for the optional orbit boost.",
+            "polar"
+        );
+        appendViscerealityTopicRow(
+            root,
+            "Effective state",
+            "Read the renderer-confirmed particle revision and the current breath composition.",
+            "status"
+        );
+    }
+
+    private void appendViscerealityTopicRow(
+        LinearLayout root,
+        String title,
+        String summary,
+        final String topic
+    ) {
+        LinearLayout card = panelCard(title);
+        card.addView(text(summary, 13, PANEL_MUTED));
+        Button open = button("Open " + title);
+        open.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                selectViscerealityPanelTopic(topic);
+            }
+        });
+        card.addView(open);
+        root.addView(card);
+    }
+
+    private void appendViscerealityBreathControls(LinearLayout root) {
+        LinearLayout statusCard = panelCard("Live breath state");
+        breathOverviewReadback = text("Reading native-effective selection…", 15, PANEL_FG);
+        breathCalibrationReadback = text("Calibration: waiting for readback", 13, PANEL_MUTED);
+        breathCalibrationProgress = new ProgressBar(
+            this,
+            null,
+            android.R.attr.progressBarStyleHorizontal
+        );
+        breathCalibrationProgress.setMax(1000);
+        breathCalibrationProgress.setProgress(0);
+        breathOutputReadback = text("Live output: none", 13, PANEL_MUTED);
+        statusCard.addView(breathOverviewReadback);
+        statusCard.addView(breathCalibrationReadback);
+        statusCard.addView(breathCalibrationProgress);
+        statusCard.addView(breathOutputReadback);
+        root.addView(statusCard);
+
+        LinearLayout mappingCard = panelCard("Input mapping");
+        final Spinner source = spinner(new String[] {"Controller", "Polar ACC"}, 0);
+        final Spinner mapping = spinner(new String[] {"Volume", "State"}, 0);
+        final Spinner controllerProjection = spinner(
+            new String[] {"Dynamic axis", "Fixed orientation"},
+            0
+        );
+        final Spinner polarProjection = spinner(new String[] {"XZ", "3D"}, 0);
+        final CheckBox inverted = checkBox("Invert assessed direction", false);
+        mappingCard.addView(label("Input source"));
+        mappingCard.addView(source);
+        mappingCard.addView(label("Movement mapping"));
+        mappingCard.addView(mapping);
+        mappingCard.addView(label("Controller volume calibration"));
+        mappingCard.addView(controllerProjection);
+        mappingCard.addView(label("Polar ACC calibration space"));
+        mappingCard.addView(polarProjection);
+        mappingCard.addView(inverted);
+
+        final TextView readback = text("Structured diagnostics pending.", 12, PANEL_MUTED);
+        breathDiagnosticsReadback = readback;
+        Button applySelection = button("Apply breath mapping");
+        applySelection.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                try {
+                    JSONObject command = new JSONObject()
+                        .put("schema", BREATH_COMPOSITION_COMMAND_SCHEMA)
+                        .put("operation", "select")
+                        .put("source", "Controller".equals(selected(source)) ? "controller" : "polar-acc")
+                        .put("mapping", "Volume".equals(selected(mapping)) ? "volume" : "state")
+                        .put("controller_projection", "Fixed orientation".equals(selected(controllerProjection))
+                            ? "fixed-orientation" : "dynamic-axis")
+                        .put("polar_projection", "3D".equals(selected(polarProjection)) ? "3d" : "xz")
+                        .put("inverted", inverted.isChecked());
+                    applyBreathCompositionCommand(command, readback);
+                } catch (Exception error) {
+                    readback.setText("Selection request failed: " + markerToken(error.getMessage()));
+                }
+            }
+        });
+        mappingCard.addView(applySelection);
+        root.addView(mappingCard);
+
+        LinearLayout calibrationCard = panelCard("Calibration");
+        calibrationCard.addView(text(
+            "Move through a comfortable full breath range. Start here or hold right B for 1.25 seconds.",
+            12,
+            PANEL_MUTED
+        ));
+        LinearLayout actions = new LinearLayout(this);
+        actions.setOrientation(LinearLayout.HORIZONTAL);
+        String[] operationNames = new String[] {"start_calibration", "cancel", "reset"};
+        String[] operationLabels = new String[] {"Start", "Cancel", "Reset"};
+        for (int i = 0; i < operationNames.length; i++) {
+            final String operation = operationNames[i];
+            Button action = button(operationLabels[i]);
+            action.setOnClickListener(new View.OnClickListener() {
+                @Override
+                public void onClick(View view) {
+                    applyBreathCompositionOperation(
+                        operation,
+                        readback,
+                        "cancel".equals(operation)
+                    );
+                }
+            });
+            actions.addView(action, rowButtonParams());
+        }
+        calibrationCard.addView(actions);
+        root.addView(calibrationCard);
+
+        LinearLayout diagnostics = panelCard("Effective readback");
+        diagnostics.addView(readback);
+        Button refresh = button("Refresh breath state");
+        refresh.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                refreshBreathCompositionReadback(readback);
+            }
+        });
+        diagnostics.addView(refresh);
+        root.addView(diagnostics);
+        refreshBreathCompositionReadback(readback);
+        scheduleBreathCompositionRefresh();
+    }
+
+    private void appendViscerealityPolarControls(LinearLayout root) {
+        LinearLayout polar = panelCard("Polar connection & acquisition");
+        polar.addView(text(
+            "Scan, connect, select ACC, and start PMD. RR events remain separate from the breath mapping and are consumed only when the Particle topic explicitly enables RR orbit boost.",
+            12,
+            PANEL_MUTED
+        ));
+        polar.addView(ensurePolarSensorPanel().buildEmbeddedAcquisitionView());
+        root.addView(polar);
+    }
+
+    private void appendViscerealityStatus(LinearLayout root) {
+        LinearLayout particle = panelCard("Particle renderer effective state");
+        privateParticleEffectiveReadback = text(
+            "Particle effective receipt: waiting for renderer readback.",
+            13,
+            PANEL_MUTED
+        );
+        particle.addView(privateParticleEffectiveReadback);
+        Button particleRefresh = button("Refresh particle state");
+        particleRefresh.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                refreshPrivateParticleDynamicsFromStatus(true);
+            }
+        });
+        particle.addView(particleRefresh);
+        root.addView(particle);
+
+        LinearLayout breath = panelCard("Breath composition state");
+        final TextView readback = text("Structured diagnostics pending.", 12, PANEL_MUTED);
+        breathDiagnosticsReadback = readback;
+        breath.addView(readback);
+        Button breathRefresh = button("Refresh breath state");
+        breathRefresh.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                refreshBreathCompositionReadback(readback);
+            }
+        });
+        breath.addView(breathRefresh);
+        root.addView(breath);
+        refreshPrivateParticleDynamicsFromStatus(false);
+        refreshBreathCompositionReadback(readback);
     }
 
     private View buildBreathMappingPanelView() {
@@ -908,15 +1238,17 @@ public final class ControlPanelActivity extends Activity {
     }
 
     private void appendUnifiedParticleControls(LinearLayout root) {
-        // The unified panel is explicit-apply by default. Clear a stale control
-        // from another panel mode before status hydration so rebuilding this
-        // view can never dispatch an unsolicited particle request.
+        // Keep the Viscereality particle surface autonomous.  It deliberately
+        // does not reuse the legacy panel's liveAutoApply checkbox, which may
+        // be absent when this view is built and previously made edits inert.
         liveAutoApply = null;
-        FoldoutControl particle = foldout("Particle dynamics & material", false);
-        root.addView(particle.view);
-        particle.body.addView(
+        privateParticlePanelLiveApply = true;
+        privateParticleControlsHydrating = true;
+        LinearLayout particle = panelCard("Particles");
+        root.addView(particle);
+        particle.addView(
             text(
-                "Persistent same-process particle controls. Apply changes at a renderer-safe frame; the effective receipt below is the authority. Material choices are closed presets, not independent blend knobs.",
+                "Edits apply automatically as one debounced, renderer-safe JSON command. The effective receipt—not a slider position—is authoritative. Material choices are closed presets, not independent blend knobs.",
                 12,
                 PANEL_MUTED
             )
@@ -937,8 +1269,8 @@ public final class ControlPanelActivity extends Activity {
             ? null
             : privateParticles.optJSONObject("heartbeat_pulse");
 
-        FoldoutControl shape = foldout("Shape & scale", true);
-        particle.body.addView(shape.view);
+        LinearLayout shape = panelCard("Shape");
+        particle.addView(shape);
         privateParticleVisualScale = privateParticleSlider(
             "Particle visual scale",
             0.05,
@@ -953,7 +1285,7 @@ public final class ControlPanelActivity extends Activity {
             false
         );
         privateParticleWorldAnchorScale = privateParticleSlider(
-            "Sphere scale",
+            "Sphere radius / anchor scale",
             0.05,
             4.0,
             readPrivateParticleStatusDouble(
@@ -965,11 +1297,11 @@ public final class ControlPanelActivity extends Activity {
             " m",
             false
         );
-        shape.body.addView(privateParticleVisualScale.view);
-        shape.body.addView(privateParticleWorldAnchorScale.view);
+        shape.addView(privateParticleVisualScale.view);
+        shape.addView(privateParticleWorldAnchorScale.view);
 
-        FoldoutControl dynamics = foldout("Oscillator driver values", false);
-        particle.body.addView(dynamics.view);
+        LinearLayout dynamics = panelCard("Oscillator drivers");
+        particle.addView(dynamics);
         for (int i = 0; i < privateParticleDrivers.length; i++) {
             double fallback = readDoubleProperty(PROP_PRIVATE_PARTICLE_DRIVERS[i], 0.0);
             double initial = driverStatus == null ? fallback : driverStatus.optDouble(i, fallback);
@@ -982,11 +1314,11 @@ public final class ControlPanelActivity extends Activity {
                 "",
                 false
             );
-            dynamics.body.addView(privateParticleDrivers[i].view);
+            dynamics.addView(privateParticleDrivers[i].view);
         }
 
-        FoldoutControl tracer = foldout("Tracers", false);
-        particle.body.addView(tracer.view);
+        LinearLayout tracer = panelCard("Tracers");
+        particle.addView(tracer);
         privateParticleTracerDrawSlots = privateParticleSlider(
             "Tracer draw slots",
             0.0,
@@ -1026,13 +1358,13 @@ public final class ControlPanelActivity extends Activity {
             "",
             false
         );
-        tracer.body.addView(privateParticleTracerDrawSlots.view);
-        tracer.body.addView(privateParticleTracerLifetime.view);
-        tracer.body.addView(privateParticleTracerCopies.view);
+        tracer.addView(privateParticleTracerDrawSlots.view);
+        tracer.addView(privateParticleTracerLifetime.view);
+        tracer.addView(privateParticleTracerCopies.view);
 
-        FoldoutControl material = foldout("Material & Polar orbit boost", true);
-        particle.body.addView(material.view);
-        material.body.addView(label("Material A/B preset"));
+        LinearLayout material = panelCard("Material & Polar RR orbit boost");
+        particle.addView(material);
+        material.addView(label("Material A/B preset"));
         privateParticleMaterialPreset = spinner(
             new String[] {
                 "Keep packaged/default material",
@@ -1048,20 +1380,39 @@ public final class ControlPanelActivity extends Activity {
                     : materialStatus.optString("preset", "packaged-default")
             )
         );
-        material.body.addView(privateParticleMaterialPreset);
+        material.addView(privateParticleMaterialPreset);
         privateParticlePolarRrOrbitBoost = checkBox(
             "Enable Polar RR orbit boost",
             heartbeatStatus != null
                 && "polar-rr-orbit-boost".equals(heartbeatStatus.optString("mode", "disabled"))
         );
-        material.body.addView(privateParticlePolarRrOrbitBoost);
-        material.body.addView(
+        material.addView(privateParticlePolarRrOrbitBoost);
+        material.addView(
             text(
                 "Uses only valid Polar RR events. No synthetic beat, custom threshold, amplitude, or decay control is exposed here; those remain in the private GPU envelope.",
                 12,
                 PANEL_MUTED
             )
         );
+
+        privateParticleMaterialPreset.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
+            @Override
+            public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
+                if (!privateParticleControlsHydrating) {
+                    schedulePrivateParticleDynamicsApplyFromControl();
+                }
+            }
+
+            @Override
+            public void onNothingSelected(AdapterView<?> parent) {
+            }
+        });
+        privateParticlePolarRrOrbitBoost.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                schedulePrivateParticleDynamicsApplyFromControl();
+            }
+        });
 
         LinearLayout actions = new LinearLayout(this);
         actions.setOrientation(LinearLayout.HORIZONTAL);
@@ -1072,23 +1423,16 @@ public final class ControlPanelActivity extends Activity {
                 refreshPrivateParticleDynamicsFromStatus(true);
             }
         });
-        Button apply = button("Apply particle settings");
-        apply.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View view) {
-                submitLivePrivateParticleDynamics(true);
-            }
-        });
         actions.addView(refresh, rowButtonParams());
-        actions.addView(apply, rowButtonParams());
-        particle.body.addView(actions);
+        particle.addView(actions);
         privateParticleEffectiveReadback = text(
             "Particle effective receipt: waiting for renderer readback.",
             12,
             PANEL_MUTED
         );
-        particle.body.addView(privateParticleEffectiveReadback);
+        particle.addView(privateParticleEffectiveReadback);
         refreshPrivateParticleDynamicsFromStatus(false);
+        privateParticleControlsHydrating = false;
     }
 
     private void applyBreathCompositionOperation(
@@ -4175,7 +4519,7 @@ public final class ControlPanelActivity extends Activity {
     }
 
     private void schedulePrivateParticleDynamicsApplyFromControl() {
-        if (liveAutoApply == null || !liveAutoApply.isChecked()) {
+        if (!privateParticlePanelLiveApply || privateParticleControlsHydrating) {
             return;
         }
         cancelPendingPrivateParticleDynamicsApply();
@@ -4187,7 +4531,7 @@ public final class ControlPanelActivity extends Activity {
             }
         };
         liveApplyHandler.postDelayed(pendingPrivateParticleDynamicsApply, 180);
-        setStatusText("Particle dynamics update pending.");
+        setStatusText("Particle edit pending renderer-safe apply.");
     }
 
     private void cancelPendingPrivateParticleDynamicsApply() {
@@ -4264,6 +4608,7 @@ public final class ControlPanelActivity extends Activity {
             } else {
                 setStatusText(message);
             }
+            awaitPrivateParticleEffectiveRevision(candidate.optLong("revision", 0L));
         } catch (Exception error) {
             if (userVisible) {
                 updateStatus("Particle dynamics failed: " + error.getMessage());
@@ -4271,6 +4616,51 @@ public final class ControlPanelActivity extends Activity {
                 setStatusText("Particle dynamics update failed: " + error.getMessage());
             }
         }
+    }
+
+    private void awaitPrivateParticleEffectiveRevision(long revision) {
+        if (revision <= 0L || liveApplyHandler == null) {
+            return;
+        }
+        cancelPendingPrivateParticleEffectReadback();
+        privateParticlePendingRevision = revision;
+        privateParticlePendingReadbackDeadlineMs = SystemClock.elapsedRealtime() + 4000L;
+        pollPrivateParticleEffectiveRevision();
+    }
+
+    private void pollPrivateParticleEffectiveRevision() {
+        if (privateParticlePendingRevision <= 0L) {
+            return;
+        }
+        JSONObject statusJson = readPrivateParticleDynamicsStatusJson();
+        if (statusJson != null
+            && "applied".equals(statusJson.optString("status", ""))
+            && statusJson.optLong("effective_revision", 0L) >= privateParticlePendingRevision) {
+            privateParticlePendingRevision = 0L;
+            cancelPendingPrivateParticleEffectReadback();
+            refreshPrivateParticleDynamicsFromStatus(false);
+            return;
+        }
+        if (SystemClock.elapsedRealtime() >= privateParticlePendingReadbackDeadlineMs) {
+            privateParticlePendingRevision = 0L;
+            cancelPendingPrivateParticleEffectReadback();
+            setStatusText("Particle edit remains queued; renderer effective receipt has not arrived yet.");
+            return;
+        }
+        pendingPrivateParticleEffectReadback = new Runnable() {
+            @Override
+            public void run() {
+                pollPrivateParticleEffectiveRevision();
+            }
+        };
+        liveApplyHandler.postDelayed(pendingPrivateParticleEffectReadback, 100L);
+    }
+
+    private void cancelPendingPrivateParticleEffectReadback() {
+        if (liveApplyHandler != null && pendingPrivateParticleEffectReadback != null) {
+            liveApplyHandler.removeCallbacks(pendingPrivateParticleEffectReadback);
+        }
+        pendingPrivateParticleEffectReadback = null;
     }
 
     private void submitLivePrivateParticleDepthWave(boolean userVisible) {
@@ -4676,6 +5066,12 @@ public final class ControlPanelActivity extends Activity {
             }
             return;
         }
+        boolean wasHydrating = privateParticleControlsHydrating;
+        privateParticleControlsHydrating = true;
+        JSONObject materialStatus = privateParticles.optJSONObject("material");
+        JSONObject heartbeatStatus = privateParticles.optJSONObject("heartbeat_pulse");
+        try {
+        if (privateParticleVisualScale != null) {
         setSliderValue(
             privateParticleVisualScale,
             readPrivateParticleStatusDouble(privateParticles, "visual_scale", privateParticleVisualScale.value())
@@ -4721,7 +5117,6 @@ public final class ControlPanelActivity extends Activity {
                 )
             );
         }
-        JSONObject materialStatus = privateParticles.optJSONObject("material");
         if (privateParticleMaterialPreset != null) {
             privateParticleMaterialPreset.setSelection(
                 privateParticleMaterialPresetIndex(
@@ -4731,7 +5126,6 @@ public final class ControlPanelActivity extends Activity {
                 )
             );
         }
-        JSONObject heartbeatStatus = privateParticles.optJSONObject("heartbeat_pulse");
         if (privateParticlePolarRrOrbitBoost != null) {
             privateParticlePolarRrOrbitBoost.setChecked(
                 heartbeatStatus != null
@@ -4739,6 +5133,7 @@ public final class ControlPanelActivity extends Activity {
                         heartbeatStatus.optString("mode", "disabled")
                     )
             );
+        }
         }
         if (privateParticleEffectiveReadback != null) {
             String material = materialStatus == null
@@ -4753,6 +5148,9 @@ public final class ControlPanelActivity extends Activity {
                     + " · revision " + statusJson.optLong("effective_revision", 0L)
                     + " · status " + statusJson.optString("status", "unknown")
             );
+        }
+        } finally {
+            privateParticleControlsHydrating = wasHydrating;
         }
         String message = "Particle dynamics refreshed: " + privateParticleDynamicsSummary() + ".";
         if (userVisible) {
@@ -5419,6 +5817,13 @@ public final class ControlPanelActivity extends Activity {
     }
 
     private String privateParticleDynamicsSummary() {
+        if (privateParticleWorldAnchorScale == null
+            || privateParticleDrivers.length < 2
+            || privateParticleDrivers[0] == null
+            || privateParticleDrivers[1] == null
+            || privateParticleTracerDrawSlots == null) {
+            return "renderer effective state";
+        }
         return String.format(
             Locale.US,
             "scale %.2f m, d0 %.2f, d1 %.2f, tracers %d",
@@ -6094,17 +6499,96 @@ public final class ControlPanelActivity extends Activity {
     }
 
     private void closePanelAndReturnToImmersive() {
+        if (rendererReturnPending) {
+            return;
+        }
         recordSpatialCameraPanelEvent(
             "panel_close_command_requested",
             "close_requested",
             "close_panel_and_return_to_immersive"
         );
+        rendererReturnBaselineFrame = readRendererFocusFrameCount();
+        rendererReturnStartedAtMs = SystemClock.elapsedRealtime();
+        rendererReturnPending = true;
         launchImmersiveRenderer();
-        if (Build.VERSION.SDK_INT >= 21) {
-            finishAndRemoveTask();
-        } else {
-            finish();
+        pollRendererReturnReadiness();
+    }
+
+    private long readRendererFocusFrameCount() {
+        try {
+            String contents = readFile(RENDERER_FOCUS_STATUS_FILE);
+            if (contents.length() == 0) {
+                return 0L;
+            }
+            return new JSONObject(contents).optLong("frame_count", 0L);
+        } catch (Exception ignored) {
+            return 0L;
         }
+    }
+
+    private boolean rendererHasAdvancedFocusedFrame() {
+        try {
+            String contents = readFile(RENDERER_FOCUS_STATUS_FILE);
+            if (contents.length() == 0) {
+                return false;
+            }
+            JSONObject state = new JSONObject(contents);
+            return "FOCUSED".equals(state.optString("session_state", ""))
+                && state.optBoolean("submitted", false)
+                && state.optLong("frame_count", 0L) > rendererReturnBaselineFrame;
+        } catch (Exception ignored) {
+            return false;
+        }
+    }
+
+    private void pollRendererReturnReadiness() {
+        if (!rendererReturnPending) {
+            return;
+        }
+        if (rendererHasAdvancedFocusedFrame()) {
+            rendererReturnPending = false;
+            cancelRendererReturnReadinessPoll();
+            recordSpatialCameraPanelEvent(
+                "panel_close_renderer_ready",
+                "closed",
+                "focused_submitted_frame_after_resume"
+            );
+            if (Build.VERSION.SDK_INT >= 21) {
+                finishAndRemoveTask();
+            } else {
+                finish();
+            }
+            return;
+        }
+        if (SystemClock.elapsedRealtime() - rendererReturnStartedAtMs >= 4000L) {
+            rendererReturnPending = false;
+            cancelRendererReturnReadinessPoll();
+            recordSpatialCameraPanelEvent(
+                "panel_close_renderer_not_ready",
+                "open",
+                "focused_submitted_frame_timeout"
+            );
+            Toast.makeText(
+                this,
+                "Renderer did not regain a focused submitted frame; panel remains open.",
+                Toast.LENGTH_LONG
+            ).show();
+            return;
+        }
+        rendererReturnReadinessPoll = new Runnable() {
+            @Override
+            public void run() {
+                pollRendererReturnReadiness();
+            }
+        };
+        liveApplyHandler.postDelayed(rendererReturnReadinessPoll, 100L);
+    }
+
+    private void cancelRendererReturnReadinessPoll() {
+        if (liveApplyHandler != null && rendererReturnReadinessPoll != null) {
+            liveApplyHandler.removeCallbacks(rendererReturnReadinessPoll);
+        }
+        rendererReturnReadinessPoll = null;
     }
 
     private void writeStatus(String panelStatus) throws Exception {

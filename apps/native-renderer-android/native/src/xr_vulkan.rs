@@ -118,6 +118,30 @@ use replay_visual_stats::{EvidenceUvRect, ReplayVisualStats};
 const PIPELINE_DEPTH: u32 = 2;
 const PRIVATE_PARTICLE_WORLD_ANCHOR_DISTANCE_M: f32 = 1.70;
 const PRIVATE_PARTICLE_WORLD_ANCHOR_SCALE_M: f32 = 0.46;
+const RENDERER_FOCUS_STATUS_FILE: &str = "renderer_focus_state.json";
+
+fn write_renderer_focus_state(
+    app: &android_activity::AndroidApp,
+    session_state: &str,
+    frame_count: u64,
+    submitted: bool,
+) {
+    let Some(data_path) = app.internal_data_path() else {
+        return;
+    };
+    let body = format!(
+        concat!(
+            "{{\"schema\":\"rusty.quest.native_renderer.renderer_focus_state.v1\",",
+            "\"session_state\":\"{}\",\"frame_count\":{},\"submitted\":{}}}"
+        ),
+        session_state, frame_count, submitted
+    );
+    let target = data_path.join(RENDERER_FOCUS_STATUS_FILE);
+    let staging = data_path.join("renderer_focus_state.next.json");
+    if std::fs::write(&staging, body).is_ok() {
+        let _ = std::fs::rename(staging, target);
+    }
+}
 const PRIVATE_PARTICLE_WORLD_ANCHOR_SCALE_MIN_M: f32 = 0.05;
 const PRIVATE_PARTICLE_WORLD_ANCHOR_SCALE_MAX_M: f32 = 4.0;
 const PRIVATE_PARTICLE_WORLD_ANCHOR_SCALE_POLL_INTERVAL_FRAMES: u64 = 30;
@@ -2064,6 +2088,7 @@ unsafe fn run_projection_frames(
     let mut event_storage = xr::EventDataBuffer::new();
     let mut display_refresh = NativeDisplayRefreshRuntimeState::new(display_refresh_settings);
     let mut session_running = false;
+    let mut renderer_focus_session_state = "IDLE";
     let mut app_running = true;
     let mut frame_slot = 0_usize;
     let mut frame_count = 0_u64;
@@ -2133,6 +2158,14 @@ unsafe fn run_projection_frames(
         {
             match event {
                 xr::Event::SessionStateChanged(event) => {
+                    renderer_focus_session_state = match event.state() {
+                        xr::SessionState::READY => "READY",
+                        xr::SessionState::FOCUSED => "FOCUSED",
+                        xr::SessionState::STOPPING => "STOPPING",
+                        xr::SessionState::EXITING => "EXITING",
+                        xr::SessionState::LOSS_PENDING => "LOSS_PENDING",
+                        _ => "OTHER",
+                    };
                     crate::marker(
                         "openxr-session",
                         format!("event=state-changed state={:?}", event.state()),
@@ -2193,6 +2226,12 @@ unsafe fn run_projection_frames(
                         }
                         _ => {}
                     }
+                    write_renderer_focus_state(
+                        app,
+                        renderer_focus_session_state,
+                        frame_count,
+                        false,
+                    );
                 }
                 xr::Event::InstanceLossPending(_) => {
                     simultaneous_hands_controllers.hard_reset_session_loss("instance-loss-pending");
@@ -3635,6 +3674,14 @@ unsafe fn run_projection_frames(
         frame_timings.openxr_end_frame_ms = elapsed_ms(stage_started);
         if let Some(renderer) = gpu_private_particle_renderer.as_deref_mut() {
             renderer.confirm_submitted_frame(frame_count, private_particle_stats);
+        }
+        if frame_count == 0 || frame_count % 15 == 0 {
+            write_renderer_focus_state(
+                app,
+                renderer_focus_session_state,
+                frame_count.saturating_add(1),
+                true,
+            );
         }
         if display_refresh.configuration_pending() {
             configure_requested_display_refresh_rate(

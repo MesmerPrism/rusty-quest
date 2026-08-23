@@ -222,16 +222,43 @@ $unifiedParticlePanel = $panel.Substring(
     $unifiedParticlePanelEnd - $unifiedParticlePanelStart
 )
 Assert-Tokens $unifiedParticlePanel @(
-    "Particle dynamics & material",
-    "Material & Polar orbit boost",
-    "Apply particle settings",
+    "privateParticlePanelLiveApply = true",
+    "privateParticleControlsHydrating = true",
+    "Material & Polar RR orbit boost",
     "privateParticleMaterialPreset",
     "Enable Polar RR orbit boost",
     "polar-rr-orbit-boost",
-    "submitLivePrivateParticleDynamics",
-    "renderer-safe frame",
+    "schedulePrivateParticleDynamicsApplyFromControl",
+    "renderer-safe JSON command",
     "No synthetic beat"
 ) "unified breath and particle panel"
+Assert-Tokens $panel @(
+    "buildViscerealityControlPanelView",
+    "HorizontalScrollView",
+    "Viscereality · ",
+    "selectViscerealityPanelTopic",
+    "appendViscerealityPanelHome",
+    "appendViscerealityBreathControls",
+    "appendViscerealityPolarControls",
+    "appendViscerealityStatus",
+    "Requested values never replace the renderer's effective readback.",
+    "awaitPrivateParticleEffectiveRevision",
+    "pollPrivateParticleEffectiveRevision",
+    "effective_revision",
+    "Particle edit remains queued; renderer effective receipt has not arrived yet.",
+    "renderer_focus_state.json",
+    "rendererHasAdvancedFocusedFrame",
+    "focused_submitted_frame_after_resume",
+    "Renderer did not regain a focused submitted frame; panel remains open."
+) "organized persistent Viscereality panel and receipt-gated VR return"
+Assert-Tokens $xrVulkan @(
+    "RENDERER_FOCUS_STATUS_FILE",
+    "write_renderer_focus_state",
+    "rusty.quest.native_renderer.renderer_focus_state.v1",
+    "renderer_focus_session_state",
+    "frame_count.saturating_add(1)",
+    "submitted"
+) "focused submitted-frame return receipt"
 Assert-Tokens $panel @(
     "privateParticleMaterialPresetWire",
     "current-additive",
