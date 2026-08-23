@@ -20,8 +20,7 @@
   "incompatible_with": [
     "particles.private.breath_state_driver",
     "particles.private.manifold_scalar_driver",
-    "particles.private.polar_acc_breath_source",
-    "particles.private.polar_rr_heartbeat_pulse"
+    "particles.private.polar_acc_breath_source"
   ],
   "exclusive_groups": {
     "private_particle_breath_source": "breath-composition-closed-world"
@@ -54,8 +53,7 @@
       "breathCompositionDriverRrConsumed=false"
     ],
     "forbidden": [
-      "privateParticleDriverParameterSource=manifold-scalar-stream",
-      "privateParticleHeartbeatPulseMode=polar-rr-event"
+      "privateParticleDriverParameterSource=manifold-scalar-stream"
     ]
   },
   "validation": {

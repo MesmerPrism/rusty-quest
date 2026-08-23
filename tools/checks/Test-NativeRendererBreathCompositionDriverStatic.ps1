@@ -95,6 +95,14 @@ Assert-Tokens ($feature + [Environment]::NewLine + $appSpec) @(
     "privateParticleHeartbeatPulseMode=polar-rr-event"
 ) "closed feature and app composition"
 
+$featureDescriptor = $feature | ConvertFrom-Json
+if (@($featureDescriptor.incompatible_with) -contains "particles.private.polar_rr_heartbeat_pulse") {
+    throw "Breath composition must permit the separately slotted Polar RR heartbeat pulse feature"
+}
+if (@($featureDescriptor.markers.forbidden) -contains "privateParticleHeartbeatPulseMode=polar-rr-event") {
+    throw "Breath composition must not forbid the separately slotted Polar RR heartbeat pulse marker"
+}
+
 $windowsPowerShellNoProfile = ("power" + "shell") + " -NoProfile"
 if ($feature.Contains($windowsPowerShellNoProfile, [System.StringComparison]::OrdinalIgnoreCase)) {
     throw "Breath composition driver feature must not add a Windows PowerShell child route"
