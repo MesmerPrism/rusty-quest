@@ -251,6 +251,26 @@ Assert-Tokens $panel @(
     "focused_submitted_frame_after_resume",
     "Renderer did not regain a focused submitted frame; panel remains open."
 ) "organized persistent Viscereality panel and receipt-gated VR return"
+$immersiveLaunchStart = $panel.IndexOf("private void launchImmersiveRenderer()")
+$immersiveLaunchEnd = $panel.IndexOf("private void closePanelAndReturnToImmersive()", $immersiveLaunchStart)
+if ($immersiveLaunchStart -lt 0 -or $immersiveLaunchEnd -le $immersiveLaunchStart) {
+    throw "Breath composition static check could not isolate the immersive front-door launcher"
+}
+$immersiveLaunchMethod = $panel.Substring(
+    $immersiveLaunchStart,
+    $immersiveLaunchEnd - $immersiveLaunchStart
+)
+Assert-Tokens $immersiveLaunchMethod @(
+    "Intent.ACTION_MAIN",
+    "Intent.CATEGORY_LAUNCHER",
+    '"com.oculus.intent.category.VR"',
+    "Intent.FLAG_ACTIVITY_NEW_TASK",
+    "Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED",
+    "Intent.FLAG_ACTIVITY_REORDER_TO_FRONT"
+) "immersive front-door return launcher"
+if ($immersiveLaunchMethod -match [regex]::Escape("Intent.FLAG_ACTIVITY_SINGLE_TOP")) {
+    throw "Immersive front-door return must use the task-reset route, not a single-top-only launch"
+}
 Assert-Tokens $xrVulkan @(
     "RENDERER_FOCUS_STATUS_FILE",
     "write_renderer_focus_state",

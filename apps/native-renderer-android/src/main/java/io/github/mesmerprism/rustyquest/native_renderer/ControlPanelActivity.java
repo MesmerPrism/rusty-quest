@@ -6493,8 +6493,13 @@ public final class ControlPanelActivity extends Activity {
     private void launchImmersiveRenderer() {
         Intent intent = new Intent(Intent.ACTION_MAIN);
         intent.setComponent(new ComponentName(getPackageName(), "android.app.NativeActivity"));
+        intent.addCategory(Intent.CATEGORY_LAUNCHER);
         intent.addCategory("com.oculus.intent.category.VR");
-        intent.addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+        intent.addFlags(
+            Intent.FLAG_ACTIVITY_NEW_TASK
+                | Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED
+                | Intent.FLAG_ACTIVITY_REORDER_TO_FRONT
+        );
         startActivity(intent);
     }
 
