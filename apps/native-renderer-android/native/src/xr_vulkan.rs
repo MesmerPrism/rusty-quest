@@ -4021,7 +4021,7 @@ fn apply_live_private_particle_dynamics(
     crate::marker(
         "private-particle-panel",
         format!(
-            "status=live-applied transport=jni-live-queue frame={} candidateRevision={} privateParticleVisualScale={:.3} privateParticleWorldAnchorScaleM={:.3} privateParticleDriver0Value01={:.3} privateParticleDriver1Value01={:.3} privateParticleDriverParameterSource={} privateParticleTracerDrawSlotsPerOscillator={} privateParticleTracerDrawSlotsCapacity={} privateParticleTracerLifetimeSeconds={:.3} privateParticleTracerCopiesPerSecond={:.3} privateParticleTracerParameterSource={} privateParticleTransparencyOpacity={:.3} privateParticleTransparencyOutputAlphaScale={:.3} privateParticleTransparencyDepthSuppressionStrength={:.3} privateParticleTransparencyRgbAlphaCoupling={:.3} privateParticleTransparencyParameterSource={} privateParticleColorFacingAttenuationStrength={:.3} privateParticleColorParameterSource={}",
+            "status=live-applied transport=jni-live-queue frame={} candidateRevision={} privateParticleVisualScale={:.3} privateParticleWorldAnchorScaleM={:.3} privateParticleDriver0Value01={:.3} privateParticleDriver1Value01={:.3} privateParticleDriverParameterSource={} privateParticleTracerDrawSlotsPerOscillator={} privateParticleTracerDrawSlotsCapacity={} privateParticleTracerLifetimeSeconds={:.3} privateParticleTracerCopiesPerSecond={:.3} privateParticleTracerParameterSource={} privateParticleTransparencyOpacity={:.3} privateParticleTransparencyOutputAlphaScale={:.3} privateParticleTransparencyDepthSuppressionStrength={:.3} privateParticleTransparencyRgbAlphaCoupling={:.3} privateParticleTransparencyParameterSource={} privateParticleColorFacingAttenuationStrength={:.3} privateParticleColorParameterSource={} privateParticleMaterialPreset={} privateParticleMaterialParameterSource={} privateParticlePolarRrOrbitBoostEnabled={} privateParticleHeartbeatPulseParameterSource={}",
             frame_count,
             revision,
             effective.settings.visual_scale,
@@ -4040,7 +4040,13 @@ fn apply_live_private_particle_dynamics(
             effective.settings.transparency_rgb_alpha_coupling,
             crate::sanitize(effective.settings.transparency_parameter_source),
             effective.settings.color_facing_attenuation_strength,
-            crate::sanitize(effective.settings.color_parameter_source)
+            crate::sanitize(effective.settings.color_parameter_source),
+            effective.settings.material_preset
+                .map(crate::native_renderer_private_particle_material_request::PrivateParticleMaterialPreset::marker_name)
+                .unwrap_or("packaged-default"),
+            crate::sanitize(effective.settings.material_parameter_source),
+            effective.settings.polar_rr_orbit_boost_enabled,
+            crate::sanitize(effective.settings.heartbeat_pulse_parameter_source)
         ),
     );
     crate::native_renderer_stimulus_panel::write_private_particle_dynamics_status(

@@ -95,6 +95,23 @@ impl PrivateParticleHeartbeatPulseAdapterSettings {
         }
     }
 
+    /// Closed same-APK panel route for the private orbit boost. The panel may
+    /// choose only whether it is on; the established private RR bounds, target
+    /// slot, and stale policy remain fixed here rather than becoming UI tuning
+    /// parameters.
+    pub(crate) fn panel_polar_rr_orbit_boost(enabled: bool) -> Self {
+        if !enabled {
+            return Self::disabled();
+        }
+        Self {
+            mode: HeartbeatPulseAdapterMode::PolarRrEvent,
+            target_slot: 5,
+            stale_seconds: 2.0,
+            min_rr_ms: 200.0,
+            max_rr_ms: 3000.0,
+        }
+    }
+
     pub(crate) fn enabled(self) -> bool {
         self.mode == HeartbeatPulseAdapterMode::PolarRrEvent && self.max_rr_ms > self.min_rr_ms
     }
@@ -161,6 +178,17 @@ impl PrivateParticleHeartbeatPulseAdapter {
 
     pub(crate) fn settings(self) -> PrivateParticleHeartbeatPulseAdapterSettings {
         self.settings
+    }
+
+    pub(crate) fn reconfigure(&mut self, settings: PrivateParticleHeartbeatPulseAdapterSettings) {
+        if self.settings == settings {
+            return;
+        }
+        self.settings = settings;
+        self.source = PolarRrPulseSource::new(settings.source_settings());
+        self.value01 = 0.0;
+        self.last_transport_sequence_id = None;
+        self.emitted_pulse_count = 0;
     }
 
     pub(crate) fn update_frame(&mut self, dt_seconds: f32) {
@@ -273,5 +301,24 @@ mod tests {
             .update_frame_with_measurements(0.01, [measurement(1, 800.0), measurement(2, 900.0)]);
         assert_eq!(adapter.value01, 1.0);
         assert_eq!(adapter.emitted_pulse_count, 2);
+    }
+
+    #[test]
+    fn panel_route_reconfigures_only_the_closed_orbit_boost_settings() {
+        let mut adapter = PrivateParticleHeartbeatPulseAdapter::new(settings(false));
+        adapter.reconfigure(
+            PrivateParticleHeartbeatPulseAdapterSettings::panel_polar_rr_orbit_boost(true),
+        );
+        assert!(adapter.enabled());
+        assert_eq!(adapter.settings().target_slot, 5);
+        adapter.update_frame_with_measurements(0.01, [measurement(1, 900.0)]);
+        assert_eq!(adapter.value01, 1.0);
+
+        adapter.reconfigure(
+            PrivateParticleHeartbeatPulseAdapterSettings::panel_polar_rr_orbit_boost(false),
+        );
+        assert!(!adapter.enabled());
+        assert_eq!(adapter.value01, 0.0);
+        assert_eq!(adapter.emitted_pulse_count, 0);
     }
 }

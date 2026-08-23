@@ -84,6 +84,7 @@ const PANEL_DRIVER_MODE_OSCILLATOR: u32 = 0;
 const PANEL_DRIVER_MODE_MANUAL: u32 = 1;
 const PANEL_DRIVER_MODE_INPUT_SLOT: u32 = 2;
 const PANEL_DRIVER_MODE_DIRECT: u32 = 3;
+const PANEL_DRIVER_MODE_PRIVATE_HEARTBEAT_ORBIT: u32 = 4;
 const PANEL_CURVE_LINEAR: u32 = 0;
 const PANEL_CURVE_AKD_HUMP: u32 = 1;
 const PANEL_CURVE_SMOOTHSTEP: u32 = 2;
@@ -174,6 +175,9 @@ pub(crate) struct GpuPrivateParticlePanelSettings {
     pub(crate) transparency_depth_suppression_strength: f32,
     pub(crate) transparency_rgb_alpha_coupling: f32,
     pub(crate) color_facing_attenuation_strength: f32,
+    pub(crate) material_preset: Option<PrivateParticleMaterialPreset>,
+    pub(crate) material_override_enabled: bool,
+    pub(crate) polar_rr_orbit_boost_enabled: bool,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -199,6 +203,10 @@ pub(crate) struct GpuPrivateParticlePanelEffectiveSettings {
     pub(crate) transparency_parameter_source: &'static str,
     pub(crate) color_facing_attenuation_strength: f32,
     pub(crate) color_parameter_source: &'static str,
+    pub(crate) material_preset: Option<PrivateParticleMaterialPreset>,
+    pub(crate) material_parameter_source: &'static str,
+    pub(crate) polar_rr_orbit_boost_enabled: bool,
+    pub(crate) heartbeat_pulse_parameter_source: &'static str,
 }
 
 impl GpuPrivateParticlePanelSettings {
@@ -213,6 +221,7 @@ impl GpuPrivateParticlePanelSettings {
                 && *mode != PANEL_DRIVER_MODE_MANUAL
                 && *mode != PANEL_DRIVER_MODE_INPUT_SLOT
                 && *mode != PANEL_DRIVER_MODE_DIRECT
+                && *mode != PANEL_DRIVER_MODE_PRIVATE_HEARTBEAT_ORBIT
             {
                 *mode = PANEL_DRIVER_MODE_DIRECT;
             }
@@ -246,6 +255,15 @@ impl GpuPrivateParticlePanelSettings {
         for multiplier in &mut driver_control_cycle_multipliers {
             *multiplier = multiplier.clamp(0.0, 10.0);
         }
+        if self.polar_rr_orbit_boost_enabled {
+            // Slot 5 is the fixed orbit-radius envelope in the private
+            // payload. Its event input and envelope tuning stay private; the
+            // public panel can only choose this one closed route.
+            driver_control_modes[5] = PANEL_DRIVER_MODE_PRIVATE_HEARTBEAT_ORBIT;
+            driver_control_source_slots[5] = 5;
+            driver_control_curve_codes[5] = PANEL_CURVE_AKD_HUMP;
+            driver_control_cycle_multipliers[5] = 1.0;
+        }
         Self {
             visual_scale: self.visual_scale.clamp(0.05, 1.0),
             driver_values01,
@@ -267,6 +285,9 @@ impl GpuPrivateParticlePanelSettings {
             color_facing_attenuation_strength: self
                 .color_facing_attenuation_strength
                 .clamp(0.0, 1.0),
+            material_preset: self.material_preset,
+            material_override_enabled: self.material_override_enabled,
+            polar_rr_orbit_boost_enabled: self.polar_rr_orbit_boost_enabled,
         }
     }
 }
@@ -537,7 +558,51 @@ impl PrivateParticleRuntimeSettings {
         self.color_parameter_source = "same-apk-panel-live";
     }
 
+    fn material_defaults(&self) -> PrivateParticleMaterialDefaults {
+        PrivateParticleMaterialDefaults {
+            transparency_opacity: self.transparency_opacity,
+            transparency_output_alpha_scale: self.transparency_output_alpha_scale,
+            transparency_depth_suppression_strength: self.transparency_depth_suppression_strength,
+            transparency_rgb_alpha_coupling: self.transparency_rgb_alpha_coupling,
+            transparency_blend_mode: self.transparency_blend_mode,
+            color_facing_attenuation_strength: self.color_facing_attenuation_strength,
+        }
+    }
+
+    fn apply_panel_material_override(
+        &mut self,
+        panel: GpuPrivateParticlePanelSettings,
+        defaults: PrivateParticleMaterialDefaults,
+    ) {
+        if !panel.material_override_enabled {
+            return;
+        }
+        if let Some(preset) = panel.material_preset {
+            self.apply_material_preset_with_source(preset, "same-apk-panel-live");
+            return;
+        }
+        self.transparency_opacity = defaults.transparency_opacity;
+        self.transparency_output_alpha_scale = defaults.transparency_output_alpha_scale;
+        self.transparency_depth_suppression_strength =
+            defaults.transparency_depth_suppression_strength;
+        self.transparency_rgb_alpha_coupling = defaults.transparency_rgb_alpha_coupling;
+        self.transparency_blend_mode = defaults.transparency_blend_mode;
+        self.transparency_parameter_source = "same-apk-panel-live-packaged-default";
+        self.color_facing_attenuation_strength = defaults.color_facing_attenuation_strength;
+        self.color_parameter_source = "same-apk-panel-live-packaged-default";
+        self.material_preset = None;
+        self.material_parameter_source = "same-apk-panel-live-packaged-default";
+    }
+
     fn apply_material_preset(&mut self, preset: PrivateParticleMaterialPreset) {
+        self.apply_material_preset_with_source(preset, "runtime-fenced-material-request-v1");
+    }
+
+    fn apply_material_preset_with_source(
+        &mut self,
+        preset: PrivateParticleMaterialPreset,
+        parameter_source: &'static str,
+    ) {
         // This is the current Viscereality material, expressed explicitly so a
         // closed request also clears any earlier scalar-property experiments
         // without changing the packaged startup default. The AKD preset keeps
@@ -553,11 +618,11 @@ impl PrivateParticleRuntimeSettings {
         self.transparency_output_alpha_scale = parameters.output_alpha_scale;
         self.transparency_depth_suppression_strength = parameters.depth_suppression_strength;
         self.transparency_rgb_alpha_coupling = parameters.rgb_alpha_coupling;
-        self.transparency_parameter_source = "runtime-fenced-material-request-v1";
+        self.transparency_parameter_source = parameter_source;
         self.color_facing_attenuation_strength = parameters.facing_attenuation_strength;
-        self.color_parameter_source = "runtime-fenced-material-request-v1";
+        self.color_parameter_source = parameter_source;
         self.material_preset = Some(preset);
-        self.material_parameter_source = "runtime-fenced-material-request-v1";
+        self.material_parameter_source = parameter_source;
     }
 
     fn apply_render_experiment_preset(&mut self, preset: PrivateParticleRenderExperimentPreset) {
@@ -605,6 +670,16 @@ fn panel_requires_input_driver_update(panel: &GpuPrivateParticlePanelSettings) -
         .driver_control_modes
         .iter()
         .any(|mode| *mode == PANEL_DRIVER_MODE_INPUT_SLOT)
+}
+
+#[derive(Clone, Copy, Debug)]
+struct PrivateParticleMaterialDefaults {
+    transparency_opacity: f32,
+    transparency_output_alpha_scale: f32,
+    transparency_depth_suppression_strength: f32,
+    transparency_rgb_alpha_coupling: f32,
+    transparency_blend_mode: PrivateParticleTransparencyBlendMode,
+    color_facing_attenuation_strength: f32,
 }
 
 fn f32_hotload_value(
@@ -2313,13 +2388,21 @@ impl GpuPrivateParticleRenderer {
         frame_count: u64,
         revision: i64,
     ) -> GpuPrivateParticlePanelEffectiveSettings {
-        self.panel_settings_override = Some(settings.clamped());
+        let settings = settings.clamped();
+        let heartbeat_settings =
+            PrivateParticleHeartbeatPulseAdapterSettings::panel_polar_rr_orbit_boost(
+                settings.polar_rr_orbit_boost_enabled,
+            );
+        if self.heartbeat_pulse_adapter.settings() != heartbeat_settings {
+            self.heartbeat_pulse_adapter.reconfigure(heartbeat_settings);
+            self.heartbeat_pulse_adapter_connected_marker_emitted = false;
+        }
+        self.panel_settings_override = Some(settings);
         if revision > 0 {
             self.pending_phase_reset_revision = revision;
         }
         self.runtime_settings_last_poll_frame = u64::MAX;
         let runtime_settings = self.runtime_settings(frame_count);
-        let settings = settings.clamped();
         GpuPrivateParticlePanelEffectiveSettings {
             visual_scale: runtime_settings.visual_scale,
             driver_values01: runtime_settings.driver_values01,
@@ -2345,6 +2428,13 @@ impl GpuPrivateParticleRenderer {
             transparency_parameter_source: runtime_settings.transparency_parameter_source,
             color_facing_attenuation_strength: runtime_settings.color_facing_attenuation_strength,
             color_parameter_source: runtime_settings.color_parameter_source,
+            material_preset: runtime_settings.material_preset,
+            material_parameter_source: runtime_settings.material_parameter_source,
+            polar_rr_orbit_boost_enabled: settings.polar_rr_orbit_boost_enabled,
+            heartbeat_pulse_parameter_source: self
+                .heartbeat_pulse_adapter
+                .settings()
+                .parameter_source(),
         }
     }
 
@@ -2405,6 +2495,7 @@ impl GpuPrivateParticleRenderer {
                 >= PRIVATE_PARTICLE_SETTINGS_POLL_INTERVAL_FRAMES;
         if should_poll {
             let mut next = PrivateParticleRuntimeSettings::load_from_android_properties();
+            let material_defaults = next.material_defaults();
             match self
                 .visual_scale_request_state
                 .observe_property(private_particle_visual_scale_request_property())
@@ -2535,6 +2626,9 @@ impl GpuPrivateParticleRenderer {
             }
             if let Some(preset) = self.material_request_state.active_preset() {
                 next.apply_material_preset(preset);
+            }
+            if let Some(panel_override) = self.panel_settings_override {
+                next.apply_panel_material_override(panel_override, material_defaults);
             }
             if let Some(preset) = self.render_experiment_request_state.active_preset() {
                 next.apply_render_experiment_preset(preset);
@@ -5339,6 +5433,36 @@ struct PrivateParticlePush {
 mod material_request_tests {
     use super::*;
 
+    fn panel_settings(
+        material_preset: Option<PrivateParticleMaterialPreset>,
+        material_override_enabled: bool,
+        polar_rr_orbit_boost_enabled: bool,
+    ) -> GpuPrivateParticlePanelSettings {
+        GpuPrivateParticlePanelSettings {
+            visual_scale: 0.70,
+            driver_values01: [0.0; GPU_PRIVATE_PARTICLE_PANEL_DRIVER_COUNT],
+            driver_control_modes: [PANEL_DRIVER_MODE_DIRECT;
+                GPU_PRIVATE_PARTICLE_PANEL_DRIVER_COUNT],
+            driver_control_source_slots: [0, 1, 2, 3, 4, 5, 6, 7],
+            driver_control_curve_codes: [PANEL_CURVE_LINEAR;
+                GPU_PRIVATE_PARTICLE_PANEL_DRIVER_COUNT],
+            driver_control_range_mins: [0.0; GPU_PRIVATE_PARTICLE_PANEL_DRIVER_COUNT],
+            driver_control_range_maxs: [1.0; GPU_PRIVATE_PARTICLE_PANEL_DRIVER_COUNT],
+            driver_control_cycle_multipliers: [0.0; GPU_PRIVATE_PARTICLE_PANEL_DRIVER_COUNT],
+            tracer_draw_slots_per_oscillator: 7,
+            tracer_lifetime_seconds: 0.5,
+            tracer_copies_per_second: 14.0,
+            transparency_opacity: 1.0,
+            transparency_output_alpha_scale: 1.0,
+            transparency_depth_suppression_strength: 0.0,
+            transparency_rgb_alpha_coupling: 1.0,
+            color_facing_attenuation_strength: 0.0,
+            material_preset,
+            material_override_enabled,
+            polar_rr_orbit_boost_enabled,
+        }
+    }
+
     #[test]
     fn material_presets_change_only_the_closed_material_envelope() {
         let mut settings = PrivateParticleRuntimeSettings::from_generated_defaults();
@@ -5363,6 +5487,70 @@ mod material_request_tests {
         assert_eq!(settings.tracer_draw_slots_per_oscillator, tracer_draw_slots);
         assert_eq!(settings.tracer_lifetime_seconds, tracer_lifetime);
         assert_eq!(settings.tracer_copies_per_second, tracer_copies);
+    }
+
+    #[test]
+    fn panel_material_selection_wins_over_an_earlier_fenced_request() {
+        let mut settings = PrivateParticleRuntimeSettings::from_generated_defaults();
+        let material_defaults = settings.material_defaults();
+        let panel = panel_settings(
+            Some(PrivateParticleMaterialPreset::PremultipliedAlphaOver),
+            true,
+            false,
+        );
+        settings.apply_panel_override(panel, [0.0; GPU_PRIVATE_PARTICLE_PANEL_DRIVER_COUNT]);
+        assert_eq!(
+            settings.material_preset,
+            Some(PrivateParticleMaterialPreset::PremultipliedAlphaOver)
+        );
+        assert_eq!(settings.material_parameter_source, "same-apk-panel-live");
+
+        settings.apply_material_preset(PrivateParticleMaterialPreset::AkdMaterialEmulation);
+        settings.apply_panel_material_override(panel, material_defaults);
+        assert_eq!(
+            settings.material_preset,
+            Some(PrivateParticleMaterialPreset::PremultipliedAlphaOver)
+        );
+        assert_eq!(settings.material_parameter_source, "same-apk-panel-live");
+    }
+
+    #[test]
+    fn explicit_panel_packaged_default_clears_an_earlier_material_request() {
+        let mut settings = PrivateParticleRuntimeSettings::from_generated_defaults();
+        let material_defaults = settings.material_defaults();
+        settings.apply_material_preset(PrivateParticleMaterialPreset::AkdMaterialEmulation);
+        settings
+            .apply_panel_material_override(panel_settings(None, true, false), material_defaults);
+        assert_eq!(settings.material_preset, None);
+        assert_eq!(
+            settings.material_parameter_source,
+            "same-apk-panel-live-packaged-default"
+        );
+        assert_eq!(
+            settings.transparency_blend_mode,
+            material_defaults.transparency_blend_mode
+        );
+    }
+
+    #[test]
+    fn panel_rr_toggle_changes_only_the_closed_orbit_radius_control_route() {
+        let disabled = panel_settings(None, false, false).clamped();
+        let enabled = panel_settings(None, false, true).clamped();
+        assert_eq!(disabled.driver_control_modes[5], PANEL_DRIVER_MODE_DIRECT);
+        assert_eq!(
+            enabled.driver_control_modes[5],
+            PANEL_DRIVER_MODE_PRIVATE_HEARTBEAT_ORBIT
+        );
+        assert_eq!(enabled.driver_control_source_slots[5], 5);
+        assert_eq!(enabled.driver_control_curve_codes[5], PANEL_CURVE_AKD_HUMP);
+        for index in 0..GPU_PRIVATE_PARTICLE_PANEL_DRIVER_COUNT {
+            if index != 5 {
+                assert_eq!(
+                    enabled.driver_control_modes[index],
+                    disabled.driver_control_modes[index]
+                );
+            }
+        }
     }
 
     #[test]

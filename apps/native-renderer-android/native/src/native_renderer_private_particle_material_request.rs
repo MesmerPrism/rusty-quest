@@ -117,6 +117,23 @@ impl PrivateParticleMaterialPreset {
             _ => None,
         }
     }
+
+    /// Parses the stable, operator-facing preset names used by the same-APK
+    /// particle panel. These are intentionally distinct from the compact
+    /// property-wire codes: the panel is a JSON control surface and must not
+    /// accept a partially specified material envelope.
+    pub(crate) fn parse_marker_name(value: &str) -> Option<Self> {
+        match value {
+            "current-additive" => Some(Self::CurrentAdditive),
+            "premultiplied-alpha-over" => Some(Self::PremultipliedAlphaOver),
+            "premultiplied-alpha-over-depth" => Some(Self::PremultipliedAlphaOverDepthFade),
+            "premultiplied-alpha-over-depth-facing" => {
+                Some(Self::PremultipliedAlphaOverDepthFacingFade)
+            }
+            "akd-material-emulation" => Some(Self::AkdMaterialEmulation),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]

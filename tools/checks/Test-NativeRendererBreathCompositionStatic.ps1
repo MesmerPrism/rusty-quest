@@ -190,7 +190,7 @@ Assert-Tokens $panel @(
     "nativeReadBreathCompositionStatus"
 ) "same-APK panel mode"
 $breathPanelStart = $panel.IndexOf("private View buildBreathMappingPanelView()")
-$breathPanelEnd = $panel.IndexOf("private void applyBreathCompositionOperation(", $breathPanelStart)
+$breathPanelEnd = $panel.IndexOf("private void appendUnifiedParticleControls(LinearLayout root)", $breathPanelStart)
 if ($breathPanelStart -lt 0 -or $breathPanelEnd -le $breathPanelStart) {
     throw "Breath composition static check could not isolate the same-APK breath panel method"
 }
@@ -212,6 +212,37 @@ Assert-Tokens $breathPanelMethod @(
     'applyBreathCompositionOperation("reset", readback, false);',
     "refreshBreathCompositionReadback(readback);"
 ) "Android-compatible breath panel click behavior"
+$unifiedParticlePanelStart = $panel.IndexOf("private void appendUnifiedParticleControls(LinearLayout root)")
+$unifiedParticlePanelEnd = $panel.IndexOf("private void applyBreathCompositionOperation(", $unifiedParticlePanelStart)
+if ($unifiedParticlePanelStart -lt 0 -or $unifiedParticlePanelEnd -le $unifiedParticlePanelStart) {
+    throw "Breath composition static check could not isolate the unified particle panel method"
+}
+$unifiedParticlePanel = $panel.Substring(
+    $unifiedParticlePanelStart,
+    $unifiedParticlePanelEnd - $unifiedParticlePanelStart
+)
+Assert-Tokens $unifiedParticlePanel @(
+    "Particle dynamics & material",
+    "Material & Polar orbit boost",
+    "Apply particle settings",
+    "privateParticleMaterialPreset",
+    "Enable Polar RR orbit boost",
+    "polar-rr-orbit-boost",
+    "submitLivePrivateParticleDynamics",
+    "renderer-safe frame",
+    "No synthetic beat"
+) "unified breath and particle panel"
+Assert-Tokens $panel @(
+    "privateParticleMaterialPresetWire",
+    "current-additive",
+    "premultiplied-alpha-over-depth-facing",
+    "akd-material-emulation",
+    '"material"',
+    '"heartbeat_pulse"'
+) "closed particle material JSON envelope"
+if ($unifiedParticlePanel -match [regex]::Escape("synthetic-breath")) {
+    throw "Unified particle panel must not expose a synthetic-breath fallback for Polar RR orbit boost"
+}
 Assert-Tokens ($calibrationAction + [Environment]::NewLine + $controller) @(
     "right-secondary-hold-start",
     "hold_triggers_once_until_release_and_rearms",

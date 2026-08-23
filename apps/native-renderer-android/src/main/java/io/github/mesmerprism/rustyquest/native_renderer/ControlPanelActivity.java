@@ -423,6 +423,9 @@ public final class ControlPanelActivity extends Activity {
     private SliderControl privateParticleTracerDrawSlots;
     private SliderControl privateParticleTracerLifetime;
     private SliderControl privateParticleTracerCopies;
+    private Spinner privateParticleMaterialPreset;
+    private CheckBox privateParticlePolarRrOrbitBoost;
+    private TextView privateParticleEffectiveReadback;
     private Runnable pendingPrivateParticleDepthWaveApply;
     private Runnable pendingPrivateParticleConfigApply;
     private Button[] privateParticleConfigPageButtons = new Button[0];
@@ -868,6 +871,8 @@ public final class ControlPanelActivity extends Activity {
         calibrationCard.addView(calibrationActions);
         root.addView(calibrationCard);
 
+        appendUnifiedParticleControls(root);
+
         LinearLayout diagnosticsCard = panelCard("Diagnostics");
         diagnosticsCard.addView(readback);
         Button refresh = button("Refresh readback");
@@ -900,6 +905,190 @@ public final class ControlPanelActivity extends Activity {
         refreshBreathCompositionReadback(readback);
         scheduleBreathCompositionRefresh();
         return scroll;
+    }
+
+    private void appendUnifiedParticleControls(LinearLayout root) {
+        // The unified panel is explicit-apply by default. Clear a stale control
+        // from another panel mode before status hydration so rebuilding this
+        // view can never dispatch an unsolicited particle request.
+        liveAutoApply = null;
+        FoldoutControl particle = foldout("Particle dynamics & material", false);
+        root.addView(particle.view);
+        particle.body.addView(
+            text(
+                "Persistent same-process particle controls. Apply changes at a renderer-safe frame; the effective receipt below is the authority. Material choices are closed presets, not independent blend knobs.",
+                12,
+                PANEL_MUTED
+            )
+        );
+
+        JSONObject statusJson = readPrivateParticleDynamicsStatusJson();
+        JSONObject privateParticles = privateParticleStatusBody(statusJson);
+        JSONArray driverStatus = privateParticles == null
+            ? null
+            : privateParticles.optJSONArray("driver_values01");
+        JSONObject tracerStatus = privateParticles == null
+            ? null
+            : privateParticles.optJSONObject("tracer");
+        JSONObject materialStatus = privateParticles == null
+            ? null
+            : privateParticles.optJSONObject("material");
+        JSONObject heartbeatStatus = privateParticles == null
+            ? null
+            : privateParticles.optJSONObject("heartbeat_pulse");
+
+        FoldoutControl shape = foldout("Shape & scale", true);
+        particle.body.addView(shape.view);
+        privateParticleVisualScale = privateParticleSlider(
+            "Particle visual scale",
+            0.05,
+            1.0,
+            readPrivateParticleStatusDouble(
+                privateParticles,
+                "visual_scale",
+                readDoubleProperty(PROP_PRIVATE_PARTICLE_VISUAL_SCALE, 0.70)
+            ),
+            1000,
+            "",
+            false
+        );
+        privateParticleWorldAnchorScale = privateParticleSlider(
+            "Sphere scale",
+            0.05,
+            4.0,
+            readPrivateParticleStatusDouble(
+                privateParticles,
+                "world_anchor_scale_m",
+                readDoubleProperty(PROP_PRIVATE_PARTICLE_WORLD_ANCHOR_SCALE, 0.46)
+            ),
+            1000,
+            " m",
+            false
+        );
+        shape.body.addView(privateParticleVisualScale.view);
+        shape.body.addView(privateParticleWorldAnchorScale.view);
+
+        FoldoutControl dynamics = foldout("Oscillator driver values", false);
+        particle.body.addView(dynamics.view);
+        for (int i = 0; i < privateParticleDrivers.length; i++) {
+            double fallback = readDoubleProperty(PROP_PRIVATE_PARTICLE_DRIVERS[i], 0.0);
+            double initial = driverStatus == null ? fallback : driverStatus.optDouble(i, fallback);
+            privateParticleDrivers[i] = privateParticleSlider(
+                PRIVATE_PARTICLE_DRIVER_LABELS[i],
+                0.0,
+                1.0,
+                initial,
+                1000,
+                "",
+                false
+            );
+            dynamics.body.addView(privateParticleDrivers[i].view);
+        }
+
+        FoldoutControl tracer = foldout("Tracers", false);
+        particle.body.addView(tracer.view);
+        privateParticleTracerDrawSlots = privateParticleSlider(
+            "Tracer draw slots",
+            0.0,
+            1024.0,
+            readPrivateParticleStatusTracerDouble(
+                tracerStatus,
+                "draw_slots_per_oscillator",
+                readDoubleProperty(PROP_PRIVATE_PARTICLE_TRACER_DRAW_SLOTS, 7.0)
+            ),
+            1024,
+            "",
+            true
+        );
+        privateParticleTracerLifetime = privateParticleSlider(
+            "Tracer lifetime",
+            0.016,
+            30.0,
+            readPrivateParticleStatusTracerDouble(
+                tracerStatus,
+                "lifetime_seconds",
+                readDoubleProperty(PROP_PRIVATE_PARTICLE_TRACER_LIFETIME, 0.5)
+            ),
+            1000,
+            " s",
+            false
+        );
+        privateParticleTracerCopies = privateParticleSlider(
+            "Tracer copies/sec",
+            0.0,
+            120.0,
+            readPrivateParticleStatusTracerDouble(
+                tracerStatus,
+                "copies_per_second",
+                readDoubleProperty(PROP_PRIVATE_PARTICLE_TRACER_COPIES, 14.0)
+            ),
+            1000,
+            "",
+            false
+        );
+        tracer.body.addView(privateParticleTracerDrawSlots.view);
+        tracer.body.addView(privateParticleTracerLifetime.view);
+        tracer.body.addView(privateParticleTracerCopies.view);
+
+        FoldoutControl material = foldout("Material & Polar orbit boost", true);
+        particle.body.addView(material.view);
+        material.body.addView(label("Material A/B preset"));
+        privateParticleMaterialPreset = spinner(
+            new String[] {
+                "Keep packaged/default material",
+                "Current additive",
+                "Premultiplied alpha over",
+                "Premultiplied alpha over + depth fade",
+                "Premultiplied alpha over + depth + facing fade",
+                "AKD material emulation"
+            },
+            privateParticleMaterialPresetIndex(
+                materialStatus == null
+                    ? "packaged-default"
+                    : materialStatus.optString("preset", "packaged-default")
+            )
+        );
+        material.body.addView(privateParticleMaterialPreset);
+        privateParticlePolarRrOrbitBoost = checkBox(
+            "Enable Polar RR orbit boost",
+            heartbeatStatus != null
+                && "polar-rr-orbit-boost".equals(heartbeatStatus.optString("mode", "disabled"))
+        );
+        material.body.addView(privateParticlePolarRrOrbitBoost);
+        material.body.addView(
+            text(
+                "Uses only valid Polar RR events. No synthetic beat, custom threshold, amplitude, or decay control is exposed here; those remain in the private GPU envelope.",
+                12,
+                PANEL_MUTED
+            )
+        );
+
+        LinearLayout actions = new LinearLayout(this);
+        actions.setOrientation(LinearLayout.HORIZONTAL);
+        Button refresh = button("Refresh effective");
+        refresh.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                refreshPrivateParticleDynamicsFromStatus(true);
+            }
+        });
+        Button apply = button("Apply particle settings");
+        apply.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                submitLivePrivateParticleDynamics(true);
+            }
+        });
+        actions.addView(refresh, rowButtonParams());
+        actions.addView(apply, rowButtonParams());
+        particle.body.addView(actions);
+        privateParticleEffectiveReadback = text(
+            "Particle effective receipt: waiting for renderer readback.",
+            12,
+            PANEL_MUTED
+        );
+        particle.body.addView(privateParticleEffectiveReadback);
+        refreshPrivateParticleDynamicsFromStatus(false);
     }
 
     private void applyBreathCompositionOperation(
@@ -4152,7 +4341,7 @@ public final class ControlPanelActivity extends Activity {
         for (int i = 0; i < privateParticleDrivers.length; i++) {
             drivers[i] = privateParticleDrivers[i].value();
         }
-        return buildPrivateParticleDynamicsJsonFromValues(
+        JSONObject candidate = buildPrivateParticleDynamicsJsonFromValues(
             "same-apk-private-particle-dynamics",
             "same_apk_panel",
             privateParticleVisualScale.value(),
@@ -4162,6 +4351,62 @@ public final class ControlPanelActivity extends Activity {
             privateParticleTracerLifetime.value(),
             privateParticleTracerCopies.value()
         );
+        if (privateParticleMaterialPreset != null) {
+            JSONObject privateParticles = candidate.getJSONObject("private_particles");
+            privateParticles.put(
+                "material",
+                new JSONObject().put("preset", privateParticleMaterialPresetWire())
+            );
+            privateParticles.put(
+                "heartbeat_pulse",
+                new JSONObject().put(
+                    "mode",
+                    privateParticlePolarRrOrbitBoost != null && privateParticlePolarRrOrbitBoost.isChecked()
+                        ? "polar-rr-orbit-boost"
+                        : "disabled"
+                )
+            );
+        }
+        return candidate;
+    }
+
+    private String privateParticleMaterialPresetWire() {
+        if (privateParticleMaterialPreset == null) {
+            return "packaged-default";
+        }
+        switch (privateParticleMaterialPreset.getSelectedItemPosition()) {
+            case 1:
+                return "current-additive";
+            case 2:
+                return "premultiplied-alpha-over";
+            case 3:
+                return "premultiplied-alpha-over-depth";
+            case 4:
+                return "premultiplied-alpha-over-depth-facing";
+            case 5:
+                return "akd-material-emulation";
+            default:
+                return "packaged-default";
+        }
+    }
+
+    private int privateParticleMaterialPresetIndex(String preset) {
+        if ("current-additive".equals(preset)) {
+            return 1;
+        }
+        if ("premultiplied-alpha-over".equals(preset)) {
+            return 2;
+        }
+        if ("premultiplied-alpha-over-depth".equals(preset)) {
+            return 3;
+        }
+        if ("premultiplied-alpha-over-depth-facing".equals(preset)) {
+            return 4;
+        }
+        if ("akd-material-emulation".equals(preset)) {
+            return 5;
+        }
+        return 0;
     }
 
     private JSONObject buildPrivateParticleDepthWaveJson() throws Exception {
@@ -4474,6 +4719,39 @@ public final class ControlPanelActivity extends Activity {
                     "copies_per_second",
                     privateParticleTracerCopies.value()
                 )
+            );
+        }
+        JSONObject materialStatus = privateParticles.optJSONObject("material");
+        if (privateParticleMaterialPreset != null) {
+            privateParticleMaterialPreset.setSelection(
+                privateParticleMaterialPresetIndex(
+                    materialStatus == null
+                        ? "packaged-default"
+                        : materialStatus.optString("preset", "packaged-default")
+                )
+            );
+        }
+        JSONObject heartbeatStatus = privateParticles.optJSONObject("heartbeat_pulse");
+        if (privateParticlePolarRrOrbitBoost != null) {
+            privateParticlePolarRrOrbitBoost.setChecked(
+                heartbeatStatus != null
+                    && "polar-rr-orbit-boost".equals(
+                        heartbeatStatus.optString("mode", "disabled")
+                    )
+            );
+        }
+        if (privateParticleEffectiveReadback != null) {
+            String material = materialStatus == null
+                ? "packaged-default"
+                : materialStatus.optString("preset", "packaged-default");
+            String heartbeat = heartbeatStatus == null
+                ? "disabled"
+                : heartbeatStatus.optString("mode", "disabled");
+            privateParticleEffectiveReadback.setText(
+                "Effective: material " + material
+                    + " · RR orbit boost " + heartbeat
+                    + " · revision " + statusJson.optLong("effective_revision", 0L)
+                    + " · status " + statusJson.optString("status", "unknown")
             );
         }
         String message = "Particle dynamics refreshed: " + privateParticleDynamicsSummary() + ".";
