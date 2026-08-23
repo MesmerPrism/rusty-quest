@@ -2584,7 +2584,8 @@
       "default_behavior": "runtime-owner-default-when-unset",
       "value_kind": "token",
       "allowed_values": [
-        "72"
+        "72",
+        "90"
       ],
       "validators": [
         "runtime-parser",

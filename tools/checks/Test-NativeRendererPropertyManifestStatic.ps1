@@ -36,6 +36,14 @@ foreach ($entry in @($manifest.properties)) {
     }
 }
 
+$displayRefreshProperty = @($manifest.properties | Where-Object {
+    [string]$_.name -eq 'debug.rustyquest.native_renderer.openxr.display_refresh_rate_hz'
+})
+$displayRefreshValues = @($displayRefreshProperty[0].allowed_values)
+if ($displayRefreshProperty.Count -ne 1 -or (($displayRefreshValues -join ',') -ne '72,90')) {
+    throw "Native renderer display-refresh property must expose exactly the closed values 72,90."
+}
+
 foreach ($token in @(
     'debug.rustyquest.native_renderer.breath_composition.activation.binding_sha256',
     'debug.rustyquest.native_renderer.breath_composition.enabled',
