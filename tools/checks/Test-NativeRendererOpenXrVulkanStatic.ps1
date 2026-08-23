@@ -55,12 +55,14 @@ $nativeRendererTiming = Read-RequiredText (Join-Path $srcRoot "native_renderer_t
 $privateExtensionSlot = Read-RequiredText (Join-Path $srcRoot "private_extension_slot.rs") "private extension slot"
 $gpuPrivateParticles = Read-RequiredText (Join-Path $srcRoot "gpu_private_particles.rs") "private particle renderer"
 $nativeBuildScript = Read-RequiredText (Join-Path $nativeRoot "build.rs") "native build script"
+$privateParticlesFragment = Read-RequiredText (Join-Path $nativeRoot "shaders\private_particles.frag.glsl") "private particle fragment shader"
 $privateParticlesOffscreenCompositeVertex = Read-RequiredText (Join-Path $nativeRoot "shaders\private_particles_offscreen_composite.vert.glsl") "private particle offscreen composite vertex shader"
 $privateParticlesOffscreenCompositeFragment = Read-RequiredText (Join-Path $nativeRoot "shaders\private_particles_offscreen_composite.frag.glsl") "private particle offscreen composite fragment shader"
 $nativeRendererOptionSurface = @(
     (Read-RequiredText (Join-Path $srcRoot "native_renderer_camera_options.rs") "native renderer camera options"),
     (Read-RequiredText (Join-Path $srcRoot "native_renderer_display_refresh_options.rs") "native renderer display refresh options"),
     (Read-RequiredText (Join-Path $srcRoot "native_renderer_private_particle_visual_scale_request.rs") "private particle visual scale request options"),
+    (Read-RequiredText (Join-Path $srcRoot "native_renderer_private_particle_material_request.rs") "private particle material request options"),
     (Read-RequiredText (Join-Path $srcRoot "native_renderer_properties.rs") "native renderer properties"),
     (Read-RequiredText (Join-Path $srcRoot "native_renderer_property_values.rs") "native renderer property values"),
     (Read-RequiredText (Join-Path $srcRoot "native_renderer_environment_depth_options.rs") "native renderer environment-depth options"),
@@ -200,8 +202,12 @@ Assert-ContainsTokens "$xrVulkanSurface`n$nativeRendererOptionSurface`n$nativeRe
     'NativeDisplayRefreshRuntimeState',
     'PrivateParticleVisualScaleRequestState',
     'PrivateParticleVisualScaleRequestObservation',
+    'PrivateParticleMaterialRequestState',
+    'PrivateParticleMaterialRequestObservation',
     'debug\.rustyquest\.native_renderer\.private_particles\.visual\.scale_request\.v1',
+    'debug\.rustyquest\.native_renderer\.private_particles\.material\.request\.v1',
     'private-particle-visual-scale-request',
+    'private-particle-material-request',
     'status=session-ready',
     'status=accepted',
     'status=effective',
@@ -293,7 +299,7 @@ Assert-ContainsTokens "$xrVulkanSurface`n$nativeRendererOptionSurface`n$nativeRe
     'vulkan-probe'
 ) "OpenXR/Vulkan runtime route"
 
-Assert-ContainsLiteralTokens "$gpuPrivateParticles`n$xrVulkanSurface`n$nativeRendererTiming`n$nativeBuildScript`n$privateParticlesOffscreenCompositeVertex`n$privateParticlesOffscreenCompositeFragment" @(
+Assert-ContainsLiteralTokens "$gpuPrivateParticles`n$xrVulkanSurface`n$nativeRendererTiming`n$nativeBuildScript`n$privateParticlesFragment`n$privateParticlesOffscreenCompositeVertex`n$privateParticlesOffscreenCompositeFragment" @(
     'private_particles_offscreen_composite.vert.glsl',
     'private_particles_offscreen_composite.frag.glsl',
     'private_particles_offscreen_composite.vert.spv',
@@ -307,8 +313,18 @@ Assert-ContainsLiteralTokens "$gpuPrivateParticles`n$xrVulkanSurface`n$nativeRen
     'PrivateParticleOffscreenResources',
     'create_offscreen_render_pass',
     'create_offscreen_composite_pipeline',
-    'resources.particle_pipeline',
-    'resources.composite_pipeline',
+    'resources.particle_pipeline_additive',
+    'resources.particle_pipeline_alpha_over',
+    'resources.composite_pipeline_additive',
+    'resources.composite_pipeline_alpha_over',
+    'PrivateParticleTransparencyBlendMode',
+    'PrivateParticleMaterialPreset',
+    'private_particle_material_effective_marker_fields',
+    'privateParticleMaterialPresetEffective=',
+    'privateParticleMaterialBlendMode=',
+    'privateParticleMaterialPipelines=additive,alpha-over',
+    'material_blend_mode',
+    'rgb *= coverage_alpha',
     'projection_render_pass',
     '.usage(vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::SAMPLED)',
     '.final_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)',
