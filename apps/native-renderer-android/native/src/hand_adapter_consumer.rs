@@ -66,11 +66,6 @@ pub(crate) fn activation_marker(input: &HandAdapterRuntimeActivationInput) -> St
 }
 
 #[cfg(target_os = "android")]
-pub(crate) fn load_runtime_input() -> HandAdapterRuntimeActivationInput {
-    load_runtime_input_from_property_lookup(property_value)
-}
-
-#[cfg(target_os = "android")]
 pub(crate) fn load_runtime_input_with_defaults(
     defaults: &NativeAppSettingsDefaults,
 ) -> HandAdapterRuntimeActivationInput {
@@ -99,7 +94,7 @@ fn load_runtime_input_from_property_lookup(
 #[cfg(target_os = "android")]
 fn property_value(name: &str) -> Option<String> {
     let mut property = android_properties::getprop(name);
-    property.value().map(|value| value.trim().to_owned())
+    crate::native_app_settings::nonempty_trimmed(property.value().as_deref())
 }
 
 #[cfg(test)]

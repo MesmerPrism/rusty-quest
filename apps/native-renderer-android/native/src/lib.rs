@@ -158,27 +158,36 @@ fn load_public_plan() -> Result<NativeRendererPlan, String> {
 
 #[cfg(target_os = "android")]
 #[no_mangle]
-fn android_on_create(_state: &android_activity::OnCreateState) {
+fn android_on_create(state: &android_activity::OnCreateState) {
     marker(
         "activity-created",
         "entrypoint=NativeActivity rustNativeActivity=true javaPackaged=true panelActivity=ControlPanelActivity",
     );
-    breath_composition_runtime::install_from_android_properties();
-    let particle_adapter_input = particle_adapter_consumer::load_runtime_input();
+    let native_app_settings =
+        native_app_settings::NativeAppSettingsDefaults::load_from_on_create_state(state);
+    marker("native-app-settings", native_app_settings.marker_fields());
+    breath_composition_runtime::install_from_android_properties_with_defaults(|name| {
+        native_app_settings.lookup(name)
+    });
+    let particle_adapter_input =
+        particle_adapter_consumer::load_runtime_input_with_defaults(&native_app_settings);
     let particle_adapter_decision =
         particle_adapter_consumer::resolve_activation(&particle_adapter_input);
     marker(
         "particle-adapter",
         particle_adapter_consumer::activation_marker(&particle_adapter_input),
     );
-    let hand_adapter_input = hand_adapter_consumer::load_runtime_input();
+    let hand_adapter_input =
+        hand_adapter_consumer::load_runtime_input_with_defaults(&native_app_settings);
     let hand_adapter_decision = hand_adapter_consumer::resolve_activation(&hand_adapter_input);
     marker(
         "hand-adapter",
         hand_adapter_consumer::activation_marker(&hand_adapter_input),
     );
     let runtime_options =
-        native_renderer_options::NativeRendererRuntimeOptions::load_from_android_properties();
+        native_renderer_options::NativeRendererRuntimeOptions::load_from_android_properties_with_defaults(
+            |name| native_app_settings.lookup(name),
+        );
     let simultaneous_hands_controllers_decision =
         simultaneous_hands_controllers::resolve_activation(
             runtime_options.simultaneous_hands_controllers_settings,
@@ -221,7 +230,7 @@ fn android_on_create(_state: &android_activity::OnCreateState) {
         );
         return;
     }
-    match request_runtime_permissions(_state, &permissions) {
+    match request_runtime_permissions(state, &permissions) {
         Ok(()) => marker(
             "permission-request",
             format!(

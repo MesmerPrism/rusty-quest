@@ -294,11 +294,6 @@ impl NativeRendererRuntimeOptions {
     }
 
     #[cfg(target_os = "android")]
-    pub(crate) fn load_from_android_properties() -> Self {
-        Self::load_from_android_properties_with_defaults(|_| None)
-    }
-
-    #[cfg(target_os = "android")]
     pub(crate) fn load_from_android_properties_with_defaults(
         default_lookup: impl FnMut(&str) -> Option<String>,
     ) -> Self {

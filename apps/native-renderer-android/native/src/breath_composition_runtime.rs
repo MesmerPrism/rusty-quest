@@ -70,11 +70,6 @@ impl Default for BreathCompositionRuntimeConfig {
 
 impl BreathCompositionRuntimeConfig {
     #[cfg(target_os = "android")]
-    pub(crate) fn from_android_properties() -> Self {
-        Self::from_property_lookup(android_property)
-    }
-
-    #[cfg(target_os = "android")]
     pub(crate) fn from_android_properties_with_defaults(
         mut default_lookup: impl FnMut(&str) -> Option<String>,
     ) -> Self {
@@ -123,7 +118,7 @@ impl BreathCompositionRuntimeConfig {
 #[cfg(target_os = "android")]
 fn android_property(name: &str) -> Option<String> {
     let mut property = android_properties::getprop(name);
-    property.value().map(|value| value.trim().to_owned())
+    crate::native_app_settings::nonempty_trimmed(property.value().as_deref())
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -665,14 +660,6 @@ fn lock_runtime() -> MutexGuard<'static, BreathCompositionRuntime> {
     runtime()
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
-}
-
-#[cfg(target_os = "android")]
-pub(crate) fn install_from_android_properties() {
-    let config = BreathCompositionRuntimeConfig::from_android_properties();
-    let mut state = lock_runtime();
-    *state = BreathCompositionRuntime::new(config);
-    crate::marker("breath-composition", marker_fields(state.snapshot()));
 }
 
 #[cfg(target_os = "android")]

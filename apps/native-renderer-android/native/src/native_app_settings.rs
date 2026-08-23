@@ -92,10 +92,31 @@ impl NativeAppSettingsDefaults {
     }
 }
 
+/// Treat an absent Android property (which the platform reports as an empty
+/// string) as absent so a packaged setting can supply the baseline value.
+pub(crate) fn nonempty_trimmed(value: Option<&str>) -> Option<String> {
+    value.and_then(|value| {
+        let trimmed = value.trim();
+        (!trimmed.is_empty()).then(|| trimmed.to_owned())
+    })
+}
+
 #[cfg(target_os = "android")]
 impl NativeAppSettingsDefaults {
     pub(crate) fn load_from_apk_asset(app: &android_activity::AndroidApp) -> Self {
-        let json = match read_asset_via_java(app, NATIVE_APP_SETTINGS_ASSET) {
+        Self::load_from_java_context(app.vm_as_ptr(), app.activity_as_ptr())
+    }
+
+    pub(crate) fn load_from_on_create_state(state: &android_activity::OnCreateState) -> Self {
+        Self::load_from_java_context(state.vm_as_ptr(), state.activity_as_ptr())
+    }
+
+    fn load_from_java_context(
+        vm_as_ptr: *mut std::ffi::c_void,
+        activity_as_ptr: *mut std::ffi::c_void,
+    ) -> Self {
+        let json = match read_asset_via_java(vm_as_ptr, activity_as_ptr, NATIVE_APP_SETTINGS_ASSET)
+        {
             Ok(json) => json,
             Err(error) => return Self::missing(format!("java-asset-read-error-{error}")),
         };
@@ -121,7 +142,8 @@ impl NativeAppSettingsDefaults {
 
 #[cfg(target_os = "android")]
 fn read_asset_via_java(
-    app: &android_activity::AndroidApp,
+    vm_as_ptr: *mut std::ffi::c_void,
+    activity_as_ptr: *mut std::ffi::c_void,
     asset_name: &str,
 ) -> Result<String, String> {
     use jni::{
@@ -133,8 +155,8 @@ fn read_asset_via_java(
     const READER_CLASS_NAME: &str =
         "io.github.mesmerprism.rustyquest.native_renderer.NativeAppSettingsReader";
 
-    let vm = unsafe { JavaVM::from_raw(app.vm_as_ptr().cast()) };
-    let activity = app.activity_as_ptr() as jni::sys::jobject;
+    let vm = unsafe { JavaVM::from_raw(vm_as_ptr.cast()) };
+    let activity = activity_as_ptr as jni::sys::jobject;
     vm.attach_current_thread(|env| -> jni::errors::Result<String> {
         let activity = unsafe { env.as_cast_raw::<JObject>(&activity)? };
         let class_loader = env
@@ -191,7 +213,7 @@ fn marker_token(value: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::NativeAppSettingsDefaults;
+    use super::{nonempty_trimmed, NativeAppSettingsDefaults};
 
     #[test]
     fn parses_values_by_android_property() {
@@ -240,5 +262,15 @@ mod tests {
         )
         .expect("settings with UTF-8 BOM should parse");
         assert!(settings.marker_fields().contains("appId=bom"));
+    }
+
+    #[test]
+    fn blank_android_property_allows_packaged_default() {
+        assert_eq!(nonempty_trimmed(None), None);
+        assert_eq!(nonempty_trimmed(Some(" \t ")), None);
+        assert_eq!(
+            nonempty_trimmed(Some("  packaged-value\n")),
+            Some("packaged-value".to_string())
+        );
     }
 }
