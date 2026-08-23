@@ -29,6 +29,7 @@ $gpuPath = Join-Path $repo "apps\native-renderer-android\native\src\gpu_private_
 $buildRsPath = Join-Path $repo "apps\native-renderer-android\native\build.rs"
 $resolverPath = Join-Path $repo "tools\Resolve-NativeAppBuild.ps1"
 $featurePath = Join-Path $repo "fixtures\native-app-features\particles\private\breath-composition-driver\particles.private.breath_composition_driver.feature.json"
+$polarRrFeaturePath = Join-Path $repo "fixtures\native-app-features\particles\private\polar_rr_heartbeat_pulse\particles.private.polar_rr_heartbeat_pulse.feature.json"
 $appSpecPath = Join-Path $repo "fixtures\native-app-builds\native-breath-particle-driver-conformance.app.json"
 $unlistedAppSpecPath = Join-Path $repo "fixtures\native-app-builds\native-breath-four-way-conformance.app.json"
 
@@ -38,6 +39,7 @@ $gpu = Read-RequiredText $gpuPath "generic driver bank consumer"
 $buildRs = Read-RequiredText $buildRsPath "native packaged-binding build contract"
 $resolver = Read-RequiredText $resolverPath "structured resolver"
 $feature = Read-RequiredText $featurePath "feature descriptor"
+$polarRrFeature = Read-RequiredText $polarRrFeaturePath "Polar RR heartbeat feature descriptor"
 $appSpec = Read-RequiredText $appSpecPath "conformance app"
 $unlistedAppSpec = Read-RequiredText $unlistedAppSpecPath "unlisted conformance app"
 
@@ -101,6 +103,11 @@ if (@($featureDescriptor.incompatible_with) -contains "particles.private.polar_r
 }
 if (@($featureDescriptor.markers.forbidden) -contains "privateParticleHeartbeatPulseMode=polar-rr-event") {
     throw "Breath composition must not forbid the separately slotted Polar RR heartbeat pulse marker"
+}
+$polarRrFeatureDescriptor = $polarRrFeature | ConvertFrom-Json
+if (@($polarRrFeatureDescriptor.runtime_profile.set.PSObject.Properties).Count -ne 0 -or
+    @($polarRrFeatureDescriptor.markers.required).Count -ne 0) {
+    throw "Polar RR heartbeat feature must be availability-only until an app-owned route explicitly enables it"
 }
 
 $windowsPowerShellNoProfile = ("power" + "shell") + " -NoProfile"

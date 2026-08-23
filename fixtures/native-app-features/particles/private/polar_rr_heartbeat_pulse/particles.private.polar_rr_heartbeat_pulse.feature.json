@@ -29,9 +29,7 @@
     "queries": []
   },
   "runtime_profile": {
-    "set": {
-      "debug.rustyquest.native_renderer.private_particles.heartbeat_pulse.mode": "polar-rr-event"
-    },
+    "set": {},
     "clear_families": [],
     "expected_render_modes": [
       "solid-black-private-particles"
@@ -43,10 +41,7 @@
     "shaders": []
   },
   "markers": {
-    "required": [
-      "privateParticleHeartbeatPulseMode=polar-rr-event",
-      "polarRrPulseSourceEnabled=true"
-    ],
+    "required": [],
     "forbidden": []
   },
   "validation": {
