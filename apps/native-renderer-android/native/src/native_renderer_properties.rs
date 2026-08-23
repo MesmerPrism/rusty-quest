@@ -282,6 +282,8 @@ pub(crate) const PROP_PRIVATE_PARTICLES_VISUAL_SCALE_REQUEST_V1: &str =
     "debug.rustyquest.native_renderer.private_particles.visual.scale_request.v1";
 pub(crate) const PROP_PRIVATE_PARTICLES_MATERIAL_REQUEST_V1: &str =
     "debug.rustyquest.native_renderer.private_particles.material.request.v1";
+pub(crate) const PROP_PRIVATE_PARTICLES_RENDER_EXPERIMENT_REQUEST_V1: &str =
+    "debug.rustyquest.native_renderer.private_particles.render.experiment_request.v1";
 pub(crate) const PROP_PRIVATE_PARTICLES_WORLD_ANCHOR_SCALE_M: &str =
     "debug.rustyquest.native_renderer.private_particles.world_anchor.scale_m";
 pub(crate) const PROP_PRIVATE_PARTICLES_DRIVER0_VALUE01: &str =

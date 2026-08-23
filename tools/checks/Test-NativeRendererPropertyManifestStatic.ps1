@@ -20,7 +20,7 @@ $manifest = $manifestText | ConvertFrom-Json
 if ($manifest.schema -ne "rusty.quest.native_renderer_property_manifest.v2") {
     throw "Native renderer property manifest has an unexpected schema."
 }
-$expectedPropertyCount = 306
+$expectedPropertyCount = 307
 if ($manifest.property_count -ne $expectedPropertyCount -or $manifest.properties.Count -ne $expectedPropertyCount) {
     throw "Native renderer property manifest must cover the current $expectedPropertyCount-property runtime surface."
 }
@@ -126,6 +126,7 @@ foreach ($token in @(
     'debug.rustyquest.native_renderer.openxr.display_refresh_rate_hz',
     'native_renderer_display_refresh_options',
     '72',
+    '90',
     'debug.rustyquest.native_renderer.projection.swapchain.resolution_scale',
     'native_renderer_projection_swapchain_options',
     'debug.rustyquest.native_renderer.manifold.embedded_broker.enabled',
@@ -164,6 +165,8 @@ foreach ($token in @(
     'native_renderer_private_particle_visual_scale_request',
     'debug.rustyquest.native_renderer.private_particles.material.request.v1',
     'native_renderer_private_particle_material_request',
+    'debug.rustyquest.native_renderer.private_particles.render.experiment_request.v1',
+    'native_renderer_private_particle_render_experiment_request',
     'runtime-polled',
     'debug.rustyquest.native_renderer.private_particles.world_anchor.scale_m',
     'debug.rustyquest.native_renderer.private_particles.driver0.value01',

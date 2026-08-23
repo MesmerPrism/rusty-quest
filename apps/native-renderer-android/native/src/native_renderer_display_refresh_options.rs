@@ -2,7 +2,7 @@
 //!
 //! The native renderer normally leaves the runtime display refresh rate alone.
 //! A closed private performance profile may opt in to the one supported request
-//! in this app: 72 Hz.  The state machine keeps the request, observed effective
+//! in this app: 72 Hz or 90 Hz. The state machine keeps the request, observed effective
 //! rate, and runtime rate-change events bound to the current OpenXR session
 //! generation so stale evidence cannot satisfy a later run.
 
@@ -13,13 +13,15 @@ use crate::{
     native_renderer_property_values::normalized_property,
 };
 
-pub(crate) const REQUESTED_DISPLAY_REFRESH_RATE_HZ: f32 = 72.0;
+pub(crate) const REQUESTED_DISPLAY_REFRESH_RATE_HZ_72: f32 = 72.0;
+pub(crate) const REQUESTED_DISPLAY_REFRESH_RATE_HZ_90: f32 = 90.0;
 const DISPLAY_REFRESH_RATE_TOLERANCE_HZ: f32 = 0.01;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum NativeDisplayRefreshRequest {
     Unset,
     Hz72,
+    Hz90,
     Invalid(String),
 }
 
@@ -33,6 +35,7 @@ impl NativeDisplayRefreshSettings {
         let request = match normalized_property(value) {
             value if value.is_empty() => NativeDisplayRefreshRequest::Unset,
             value if value == "72" => NativeDisplayRefreshRequest::Hz72,
+            value if value == "90" => NativeDisplayRefreshRequest::Hz90,
             value => NativeDisplayRefreshRequest::Invalid(value),
         };
         Self { request }
@@ -40,7 +43,8 @@ impl NativeDisplayRefreshSettings {
 
     pub(crate) fn requested_hz(&self) -> Option<f32> {
         match self.request {
-            NativeDisplayRefreshRequest::Hz72 => Some(REQUESTED_DISPLAY_REFRESH_RATE_HZ),
+            NativeDisplayRefreshRequest::Hz72 => Some(REQUESTED_DISPLAY_REFRESH_RATE_HZ_72),
+            NativeDisplayRefreshRequest::Hz90 => Some(REQUESTED_DISPLAY_REFRESH_RATE_HZ_90),
             NativeDisplayRefreshRequest::Unset | NativeDisplayRefreshRequest::Invalid(_) => None,
         }
     }
@@ -56,9 +60,11 @@ impl NativeDisplayRefreshSettings {
 
     pub(crate) fn validate(&self) -> Result<(), String> {
         match &self.request {
-            NativeDisplayRefreshRequest::Unset | NativeDisplayRefreshRequest::Hz72 => Ok(()),
+            NativeDisplayRefreshRequest::Unset
+            | NativeDisplayRefreshRequest::Hz72
+            | NativeDisplayRefreshRequest::Hz90 => Ok(()),
             NativeDisplayRefreshRequest::Invalid(value) => Err(format!(
-                "{} must be unset or the closed supported value 72; got {}",
+                "{} must be unset or one of the closed supported values 72, 90; got {}",
                 PROP_OPENXR_DISPLAY_REFRESH_RATE_HZ, value
             )),
         }
@@ -73,7 +79,12 @@ impl NativeDisplayRefreshSettings {
             NativeDisplayRefreshRequest::Hz72 => format!(
                 "displayRefreshProperty={} displayRefreshRequestedHz={:.3} displayRefreshRequestState=requested",
                 PROP_OPENXR_DISPLAY_REFRESH_RATE_HZ,
-                REQUESTED_DISPLAY_REFRESH_RATE_HZ
+                REQUESTED_DISPLAY_REFRESH_RATE_HZ_72
+            ),
+            NativeDisplayRefreshRequest::Hz90 => format!(
+                "displayRefreshProperty={} displayRefreshRequestedHz={:.3} displayRefreshRequestState=requested",
+                PROP_OPENXR_DISPLAY_REFRESH_RATE_HZ,
+                REQUESTED_DISPLAY_REFRESH_RATE_HZ_90
             ),
             NativeDisplayRefreshRequest::Invalid(value) => format!(
                 "displayRefreshProperty={} displayRefreshRequestedHz=invalid displayRefreshRequestState=invalid displayRefreshInvalidValue={}",
@@ -127,6 +138,10 @@ impl NativeDisplayRefreshRuntimeState {
             effective_hz: None,
             latest_rate_change: None,
         }
+    }
+
+    pub(crate) fn requested_hz(&self) -> Option<f32> {
+        self.settings.requested_hz()
     }
 
     pub(crate) fn requested(&self) -> bool {
@@ -306,10 +321,10 @@ mod tests {
 
     #[test]
     fn invalid_value_is_fail_closed_instead_of_falling_back_to_unset() {
-        let settings = NativeDisplayRefreshSettings::from_property(Some("90".to_string()));
+        let settings = NativeDisplayRefreshSettings::from_property(Some("120".to_string()));
         assert_eq!(
             settings.request,
-            NativeDisplayRefreshRequest::Invalid("90".to_string())
+            NativeDisplayRefreshRequest::Invalid("120".to_string())
         );
         assert!(!settings.extension_requested());
         assert!(settings.validate().is_err());
@@ -335,6 +350,28 @@ mod tests {
         assert!(marker.contains("displayRefreshRequestResult=accepted"));
         assert!(marker.contains("displayRefreshEffectiveHz=72.000"));
         assert!(marker.contains("displayRefreshPerformanceReady=true"));
+    }
+
+    #[test]
+    fn supported_90_request_with_effective_readback_is_performance_ready() {
+        let settings = NativeDisplayRefreshSettings::from_property(Some("90".to_string()));
+        assert_eq!(
+            settings.requested_hz(),
+            Some(REQUESTED_DISPLAY_REFRESH_RATE_HZ_90)
+        );
+        let mut state = NativeDisplayRefreshRuntimeState::new(settings);
+        let generation = state.begin_session();
+        assert!(state.record_supported_rates(generation, &[72.0, 90.0005]));
+        assert!(state.requested_rate_is_supported());
+        assert!(state.record_request_result(generation, true));
+        assert!(state.record_effective_rate(generation, 90.0));
+        assert!(state.ensure_performance_ready().is_ok());
+        assert!(state
+            .marker_fields()
+            .contains("displayRefreshRequestedHz=90.000"));
+        assert!(state
+            .marker_fields()
+            .contains("displayRefreshEffectiveHz=90.000"));
     }
 
     #[test]

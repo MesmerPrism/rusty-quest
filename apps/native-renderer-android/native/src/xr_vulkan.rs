@@ -49,7 +49,6 @@ use crate::{
     },
     native_renderer_display_refresh_options::{
         NativeDisplayRefreshRuntimeState, NativeDisplayRefreshSettings,
-        REQUESTED_DISPLAY_REFRESH_RATE_HZ,
     },
     native_renderer_options::{
         CompactHandInputSourceMode, HandMeshVisualDiagnosticSettings,
@@ -3744,7 +3743,9 @@ fn configure_requested_display_refresh_rate(
         return;
     }
 
-    let requested_hz = REQUESTED_DISPLAY_REFRESH_RATE_HZ;
+    let requested_hz = state
+        .requested_hz()
+        .expect("display refresh request is present once the extension path is entered");
     if let Err(error) = session.request_display_refresh_rate(requested_hz) {
         let _ = state.record_request_result(generation, false);
         crate::marker(

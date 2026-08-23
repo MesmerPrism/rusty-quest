@@ -99,6 +99,7 @@ mod native_renderer_options_tests;
 mod native_renderer_panel_bridge;
 mod native_renderer_passthrough_style_options;
 mod native_renderer_private_particle_material_request;
+mod native_renderer_private_particle_render_experiment_request;
 mod native_renderer_private_particle_visual_scale_request;
 mod native_renderer_projection_border_stretch_options;
 mod native_renderer_projection_swapchain_options;
