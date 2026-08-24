@@ -1115,7 +1115,7 @@ $expectedRenderModes = @(Get-SortedSet -Set $expectedRenderModesSet)
 $requiredMarkers = @(Get-SortedSet -Set $requiredMarkerSet)
 $forbiddenMarkers = @(Get-SortedSet -Set $forbiddenMarkerSet)
 foreach ($receiver in $receivers) {
-    if ($receiver -notin @("PolarSensorCommandReceiver")) {
+    if ($receiver -notin @("PolarSensorCommandReceiver", "LslPanelCommandReceiver")) {
         throw "Android receiver surface contains an unsupported closed-world receiver: $receiver"
     }
 }
