@@ -249,7 +249,12 @@ Assert-Tokens $panel @(
     "renderer_focus_state.json",
     "rendererHasAdvancedFocusedFrame",
     "focused_submitted_frame_after_resume",
-    "Renderer did not regain a focused submitted frame; panel remains open."
+    "focused_submitted_frame_timeout_panel_task_removed",
+    "status=timeout-fallback panelTaskRemoved=true",
+    "status=probe-retained-after-destroy",
+    "RENDERER_RETURN_RELAUNCH_MS",
+    "RENDERER_FOCUS_FRESH_MS",
+    "finishAndRemoveTask();"
 ) "organized persistent Viscereality panel and receipt-gated VR return"
 $immersiveLaunchStart = $panel.IndexOf("private void launchImmersiveRenderer()")
 $immersiveLaunchEnd = $panel.IndexOf("private void closePanelAndReturnToImmersive()", $immersiveLaunchStart)
@@ -262,14 +267,18 @@ $immersiveLaunchMethod = $panel.Substring(
 )
 Assert-Tokens $immersiveLaunchMethod @(
     "Intent.ACTION_MAIN",
-    "Intent.CATEGORY_LAUNCHER",
     '"com.oculus.intent.category.VR"',
+    "Intent.FLAG_ACTIVITY_REORDER_TO_FRONT",
+    "Intent.FLAG_ACTIVITY_SINGLE_TOP"
+) "Study 6 renderer handoff launcher"
+foreach ($forbiddenLaunchToken in @(
+    "Intent.CATEGORY_LAUNCHER",
     "Intent.FLAG_ACTIVITY_NEW_TASK",
-    "Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED",
-    "Intent.FLAG_ACTIVITY_REORDER_TO_FRONT"
-) "immersive front-door return launcher"
-if ($immersiveLaunchMethod -match [regex]::Escape("Intent.FLAG_ACTIVITY_SINGLE_TOP")) {
-    throw "Immersive front-door return must use the task-reset route, not a single-top-only launch"
+    "Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED"
+)) {
+    if ($immersiveLaunchMethod -match [regex]::Escape($forbiddenLaunchToken)) {
+        throw "Study 6 renderer handoff launcher must not contain $forbiddenLaunchToken"
+    }
 }
 Assert-Tokens $xrVulkan @(
     "RENDERER_FOCUS_STATUS_FILE",
@@ -277,7 +286,10 @@ Assert-Tokens $xrVulkan @(
     "rusty.quest.native_renderer.renderer_focus_state.v1",
     "renderer_focus_session_state",
     "frame_count.saturating_add(1)",
-    "submitted"
+    "submitted",
+    '\"activity\":\"android.app.NativeActivity\"',
+    '\"updated_at_unix_ms\"',
+    "SystemTime::now()"
 ) "focused submitted-frame return receipt"
 Assert-Tokens $panel @(
     "privateParticleMaterialPresetWire",

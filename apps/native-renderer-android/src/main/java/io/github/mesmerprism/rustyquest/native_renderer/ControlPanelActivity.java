@@ -94,6 +94,10 @@ public final class ControlPanelActivity extends Activity {
     private static final String PRIVATE_PARTICLE_DYNAMICS_STATUS_FILE =
         "private_particle_dynamics_status.json";
     private static final String RENDERER_FOCUS_STATUS_FILE = "renderer_focus_state.json";
+    private static final long RENDERER_RETURN_POLL_MS = 250L;
+    private static final long RENDERER_RETURN_RELAUNCH_MS = 1000L;
+    private static final long RENDERER_RETURN_TIMEOUT_MS = 4000L;
+    private static final long RENDERER_FOCUS_FRESH_MS = 2000L;
     private static final String DRIVER_PROFILE_PANEL_STATUS_FILE =
         "driver_profile_panel_status.json";
     private static final String BREATH_COMPOSITION_OPERATOR_STATUS_FILE =
@@ -440,6 +444,9 @@ public final class ControlPanelActivity extends Activity {
     private boolean rendererReturnPending;
     private long rendererReturnBaselineFrame;
     private long rendererReturnStartedAtMs;
+    private long rendererReturnLastLaunchAtMs;
+    private int rendererReturnGeneration;
+    private boolean rendererReturnPanelPaused;
     private Runnable rendererReturnReadinessPoll;
     private Runnable pendingPrivateParticleDepthWaveApply;
     private Runnable pendingPrivateParticleConfigApply;
@@ -616,6 +623,13 @@ public final class ControlPanelActivity extends Activity {
     @Override
     protected void onPause() {
         cancelBreathCompositionRefresh();
+        if (rendererReturnPending) {
+            rendererReturnPanelPaused = true;
+            rendererHandoffMarker(
+                "status=panel-paused supportingEvidence=true generation="
+                    + rendererReturnGeneration
+            );
+        }
         if ("breath-mapping".equals(readControlPanelMode())) {
             breathOperatorMarker(
                 "status=panel-background panelVisibility=background "
@@ -632,7 +646,13 @@ public final class ControlPanelActivity extends Activity {
 
     @Override
     protected void onDestroy() {
-        cancelRendererReturnReadinessPoll();
+        if (!rendererReturnPending) {
+            cancelRendererReturnReadinessPoll();
+        } else {
+            rendererHandoffMarker(
+                "status=probe-retained-after-destroy generation=" + rendererReturnGeneration
+            );
+        }
         cancelPendingPrivateParticleEffectReadback();
         recordSpatialCameraPanelEvent(
             "panel_activity_destroyed",
@@ -6493,13 +6513,8 @@ public final class ControlPanelActivity extends Activity {
     private void launchImmersiveRenderer() {
         Intent intent = new Intent(Intent.ACTION_MAIN);
         intent.setComponent(new ComponentName(getPackageName(), "android.app.NativeActivity"));
-        intent.addCategory(Intent.CATEGORY_LAUNCHER);
         intent.addCategory("com.oculus.intent.category.VR");
-        intent.addFlags(
-            Intent.FLAG_ACTIVITY_NEW_TASK
-                | Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED
-                | Intent.FLAG_ACTIVITY_REORDER_TO_FRONT
-        );
+        intent.addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT | Intent.FLAG_ACTIVITY_SINGLE_TOP);
         startActivity(intent);
     }
 
@@ -6512,47 +6527,87 @@ public final class ControlPanelActivity extends Activity {
             "close_requested",
             "close_panel_and_return_to_immersive"
         );
-        rendererReturnBaselineFrame = readRendererFocusFrameCount();
+        RendererFocusState baseline = readRendererFocusState();
+        rendererReturnBaselineFrame = rendererFocusReceiptIsCurrentActivity(baseline)
+            ? baseline.frameCount
+            : -1L;
         rendererReturnStartedAtMs = SystemClock.elapsedRealtime();
+        rendererReturnLastLaunchAtMs = 0L;
+        rendererReturnPanelPaused = false;
+        rendererReturnGeneration += 1;
         rendererReturnPending = true;
-        launchImmersiveRenderer();
-        pollRendererReturnReadiness();
+        int generation = rendererReturnGeneration;
+        rendererHandoffMarker(
+            "status=requested baselineFrame="
+                + rendererReturnBaselineFrame
+                + " generation="
+                + generation
+        );
+        launchImmersiveRendererForHandoff(generation, "initial");
+        scheduleRendererReturnReadinessPoll(generation);
     }
 
-    private long readRendererFocusFrameCount() {
+    private void launchImmersiveRendererForHandoff(int generation, String source) {
+        rendererReturnLastLaunchAtMs = SystemClock.elapsedRealtime();
+        launchImmersiveRenderer();
+        rendererHandoffMarker(
+            "status=intent-dispatched source="
+                + markerToken(source)
+                + " generation="
+                + generation
+        );
+    }
+
+    private RendererFocusState readRendererFocusState() {
         try {
             String contents = readFile(RENDERER_FOCUS_STATUS_FILE);
             if (contents.length() == 0) {
-                return 0L;
+                return null;
             }
-            return new JSONObject(contents).optLong("frame_count", 0L);
+            return new RendererFocusState(new JSONObject(contents));
         } catch (Exception ignored) {
-            return 0L;
+            return null;
         }
     }
 
-    private boolean rendererHasAdvancedFocusedFrame() {
-        try {
-            String contents = readFile(RENDERER_FOCUS_STATUS_FILE);
-            if (contents.length() == 0) {
-                return false;
-            }
-            JSONObject state = new JSONObject(contents);
-            return "FOCUSED".equals(state.optString("session_state", ""))
-                && state.optBoolean("submitted", false)
-                && state.optLong("frame_count", 0L) > rendererReturnBaselineFrame;
-        } catch (Exception ignored) {
+    private boolean rendererHasAdvancedFocusedFrame(RendererFocusState state) {
+        if (!rendererFocusReceiptIsCurrentActivity(state)
+                || !"FOCUSED".equals(state.sessionState)
+                || !state.submitted) {
             return false;
         }
+        long minimumFrame = rendererReturnBaselineFrame >= 0L
+            ? rendererReturnBaselineFrame
+            : 0L;
+        return state.frameCount > minimumFrame;
     }
 
-    private void pollRendererReturnReadiness() {
-        if (!rendererReturnPending) {
+    private boolean rendererFocusReceiptIsCurrentActivity(RendererFocusState state) {
+        return state != null
+            && "rusty.quest.native_renderer.renderer_focus_state.v1".equals(state.schema)
+            && "android.app.NativeActivity".equals(state.activity)
+            && state.updatedAtUnixMs > 0L
+            && state.ageMs() <= RENDERER_FOCUS_FRESH_MS;
+    }
+
+    private void pollRendererReturnReadiness(int generation) {
+        if (!rendererReturnPending || generation != rendererReturnGeneration) {
             return;
         }
-        if (rendererHasAdvancedFocusedFrame()) {
+        RendererFocusState state = readRendererFocusState();
+        if (rendererHasAdvancedFocusedFrame(state)) {
             rendererReturnPending = false;
             cancelRendererReturnReadinessPoll();
+            rendererHandoffMarker(
+                "status=verified frame="
+                    + state.frameCount
+                    + " focusAgeMs="
+                    + state.ageMs()
+                    + " panelPaused="
+                    + rendererReturnPanelPaused
+                    + " generation="
+                    + generation
+            );
             recordSpatialCameraPanelEvent(
                 "panel_close_renderer_ready",
                 "closed",
@@ -6565,28 +6620,42 @@ public final class ControlPanelActivity extends Activity {
             }
             return;
         }
-        if (SystemClock.elapsedRealtime() - rendererReturnStartedAtMs >= 4000L) {
+        long nowMs = SystemClock.elapsedRealtime();
+        if (nowMs - rendererReturnStartedAtMs >= RENDERER_RETURN_TIMEOUT_MS) {
             rendererReturnPending = false;
             cancelRendererReturnReadinessPoll();
+            rendererHandoffMarker(
+                "status=timeout-fallback panelTaskRemoved=true panelPaused="
+                    + rendererReturnPanelPaused
+                    + " generation="
+                    + generation
+            );
             recordSpatialCameraPanelEvent(
                 "panel_close_renderer_not_ready",
-                "open",
-                "focused_submitted_frame_timeout"
+                "hidden",
+                "focused_submitted_frame_timeout_panel_task_removed"
             );
-            Toast.makeText(
-                this,
-                "Renderer did not regain a focused submitted frame; panel remains open.",
-                Toast.LENGTH_LONG
-            ).show();
+            if (Build.VERSION.SDK_INT >= 21) {
+                finishAndRemoveTask();
+            } else {
+                finish();
+            }
             return;
         }
+        if (nowMs - rendererReturnLastLaunchAtMs >= RENDERER_RETURN_RELAUNCH_MS) {
+            launchImmersiveRendererForHandoff(generation, "reassert");
+        }
+        scheduleRendererReturnReadinessPoll(generation);
+    }
+
+    private void scheduleRendererReturnReadinessPoll(final int generation) {
         rendererReturnReadinessPoll = new Runnable() {
             @Override
             public void run() {
-                pollRendererReturnReadiness();
+                pollRendererReturnReadiness(generation);
             }
         };
-        liveApplyHandler.postDelayed(rendererReturnReadinessPoll, 100L);
+        liveApplyHandler.postDelayed(rendererReturnReadinessPoll, RENDERER_RETURN_POLL_MS);
     }
 
     private void cancelRendererReturnReadinessPoll() {
@@ -6594,6 +6663,31 @@ public final class ControlPanelActivity extends Activity {
             liveApplyHandler.removeCallbacks(rendererReturnReadinessPoll);
         }
         rendererReturnReadinessPoll = null;
+    }
+
+    private static final class RendererFocusState {
+        final String schema;
+        final String activity;
+        final String sessionState;
+        final long updatedAtUnixMs;
+        final long frameCount;
+        final boolean submitted;
+
+        RendererFocusState(JSONObject json) {
+            schema = json.optString("schema", "");
+            activity = json.optString("activity", "");
+            sessionState = json.optString("session_state", "");
+            updatedAtUnixMs = json.optLong("updated_at_unix_ms", 0L);
+            frameCount = json.optLong("frame_count", -1L);
+            submitted = json.optBoolean("submitted", false);
+        }
+
+        long ageMs() {
+            if (updatedAtUnixMs <= 0L) {
+                return Long.MAX_VALUE;
+            }
+            return Math.max(0L, System.currentTimeMillis() - updatedAtUnixMs);
+        }
     }
 
     private void writeStatus(String panelStatus) throws Exception {
@@ -6660,6 +6754,15 @@ public final class ControlPanelActivity extends Activity {
             TAG,
             MARKER_PREFIX
                 + " channel=breath-operator "
+                + String.valueOf(detail).replace('\n', ' ').replace('\r', ' ')
+        );
+    }
+
+    private static void rendererHandoffMarker(String detail) {
+        Log.i(
+            TAG,
+            MARKER_PREFIX
+                + " channel=renderer-handoff "
                 + String.valueOf(detail).replace('\n', ' ').replace('\r', ' ')
         );
     }

@@ -3,7 +3,7 @@
 use std::{
     ffi::{CStr, CString},
     ptr,
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 use ash::vk::{self, Handle};
@@ -129,12 +129,18 @@ fn write_renderer_focus_state(
     let Some(data_path) = app.internal_data_path() else {
         return;
     };
+    let updated_at_unix_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis() as u64)
+        .unwrap_or(0);
     let body = format!(
         concat!(
             "{{\"schema\":\"rusty.quest.native_renderer.renderer_focus_state.v1\",",
-            "\"session_state\":\"{}\",\"frame_count\":{},\"submitted\":{}}}"
+            "\"activity\":\"android.app.NativeActivity\",",
+            "\"session_state\":\"{}\",\"frame_count\":{},\"submitted\":{},",
+            "\"updated_at_unix_ms\":{}}}"
         ),
-        session_state, frame_count, submitted
+        session_state, frame_count, submitted, updated_at_unix_ms
     );
     let target = data_path.join(RENDERER_FOCUS_STATUS_FILE);
     let staging = data_path.join("renderer_focus_state.next.json");
