@@ -376,6 +376,7 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
 
     private TextView status;
     private Handler liveApplyHandler;
+    private CheckBox liveAutoApply;
     private Runnable pendingDepthAlignmentApply;
     private Runnable pendingPrivateParticleDynamicsApply;
     private String handledDisplayCompositeIntentToken = "";

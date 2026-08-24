@@ -85,6 +85,10 @@ $resolver = Read-RequiredText $resolverPath "structured resolver"
 $appSpec = Read-RequiredText $appSpecPath "conformance app"
 $features = ($featurePaths | ForEach-Object { Read-RequiredText $_ "feature descriptor" }) -join [Environment]::NewLine
 
+Assert-Tokens $panel @(
+    "private CheckBox liveAutoApply;"
+) "composite panel presentation state"
+
 Assert-Tokens $core @(
     "BreathCompositionSource",
     "BreathCompositionMapping",
