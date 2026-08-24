@@ -154,6 +154,8 @@ pub(crate) const PROP_FOVEATION_VERTICAL_OFFSET: &str =
 pub(crate) const PROP_FOVEATION_VULKAN_FDM: &str =
     "debug.rustyquest.native_renderer.foveation.vulkan_fdm";
 pub(crate) const PROP_LSL_ENABLED: &str = "debug.rustyquest.native_renderer.lsl.enabled";
+pub(crate) const PROP_LSL_PANEL_CONTROLLED: &str =
+    "debug.rustyquest.native_renderer.lsl.panel_controlled";
 pub(crate) const PROP_LSL_OUTLET_ENABLED: &str =
     "debug.rustyquest.native_renderer.lsl.outlet.enabled";
 pub(crate) const PROP_LSL_INLET_ENABLED: &str =

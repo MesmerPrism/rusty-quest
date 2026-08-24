@@ -41,6 +41,7 @@ import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Locale;
+import java.util.UUID;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
@@ -48,6 +49,8 @@ public final class ControlPanelActivity extends Activity {
     private static final String TAG = "RQNativeRenderer";
     private static final String MARKER_PREFIX = "RUSTY_QUEST_NATIVE_RENDERER";
     private static final String CHANNEL_DRIVER_PROFILE_PANEL = "driver-profile-panel";
+    private static final String LSL_PANEL_COMMAND_SCHEMA =
+        "rusty.quest.native_renderer.lsl.panel_command.v1";
     public static final String ACTION_TOGGLE_PANEL =
         "io.github.mesmerprism.rustyquest.native_renderer.action.TOGGLE_PANEL";
     public static final String ACTION_OPEN_PANEL =
@@ -786,6 +789,8 @@ public final class ControlPanelActivity extends Activity {
             appendViscerealityBreathControls(root);
         } else if ("polar".equals(viscerealityPanelTopic)) {
             appendViscerealityPolarControls(root);
+        } else if ("lsl".equals(viscerealityPanelTopic)) {
+            appendViscerealityLslControls(root);
         } else if ("status".equals(viscerealityPanelTopic)) {
             appendViscerealityStatus(root);
         } else {
@@ -818,8 +823,8 @@ public final class ControlPanelActivity extends Activity {
         topicScroll.setHorizontalScrollBarEnabled(false);
         LinearLayout topics = new LinearLayout(this);
         topics.setOrientation(LinearLayout.HORIZONTAL);
-        String[] ids = new String[] {"home", "particles", "breath", "polar", "status"};
-        String[] titles = new String[] {"Home", "Particles", "Breath", "Polar", "Status"};
+        String[] ids = new String[] {"home", "particles", "breath", "polar", "lsl", "status"};
+        String[] titles = new String[] {"Home", "Particles", "Breath", "Polar", "LSL", "Status"};
         for (int i = 0; i < ids.length; i++) {
             final String topic = ids[i];
             Button choice = button(titles[i]);
@@ -846,6 +851,9 @@ public final class ControlPanelActivity extends Activity {
         if ("polar".equals(viscerealityPanelTopic)) {
             return "Polar";
         }
+        if ("lsl".equals(viscerealityPanelTopic)) {
+            return "LSL streaming";
+        }
         if ("status".equals(viscerealityPanelTopic)) {
             return "Effective state";
         }
@@ -861,6 +869,9 @@ public final class ControlPanelActivity extends Activity {
         }
         if ("polar".equals(viscerealityPanelTopic)) {
             return "Pairing and acquisition remain owned by the same-APK Polar runtime.";
+        }
+        if ("lsl".equals(viscerealityPanelTopic)) {
+            return "Persistent, panel-controlled LAN outlets and one bounded Float32 inlet.";
         }
         if ("status".equals(viscerealityPanelTopic)) {
             return "Requested values never replace the renderer's effective readback.";
@@ -904,6 +915,12 @@ public final class ControlPanelActivity extends Activity {
             "Polar",
             "Connection, ACC acquisition, and RR availability for the optional orbit boost.",
             "polar"
+        );
+        appendViscerealityTopicRow(
+            root,
+            "LSL",
+            "Stream Polar, controller, and headset samples out; map one normalized Float32 stream into driver slots 1–7.",
+            "lsl"
         );
         appendViscerealityTopicRow(
             root,
@@ -1046,6 +1063,226 @@ public final class ControlPanelActivity extends Activity {
         ));
         polar.addView(ensurePolarSensorPanel().buildEmbeddedAcquisitionView());
         root.addView(polar);
+    }
+
+    private void appendViscerealityLslControls(LinearLayout root) {
+        JSONObject status = readLslTransportStatusJson();
+        JSONObject config = status.optJSONObject("config");
+        if (config == null) {
+            config = LslPanelConfigStore.read(getApplicationContext());
+        }
+        JSONObject outlets = config.optJSONObject("outlets");
+        JSONObject inlet = config.optJSONObject("inlet");
+
+        LinearLayout overview = panelCard("Effective LSL state");
+        final TextView readback = text(formatLslStatus(status), 12, PANEL_MUTED);
+        overview.addView(readback);
+        Button refresh = button("Refresh effective state");
+        refresh.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                readback.setText(formatLslStatus(readLslTransportStatusJson()));
+            }
+        });
+        overview.addView(refresh);
+        root.addView(overview);
+
+        LinearLayout identity = panelCard("Session identity");
+        final EditText prefix = editText(config.optString("stream_prefix", "viscereality"), "stream prefix", false);
+        final EditText participant = editText(config.optString("participant_id", "participant"), "participant id", false);
+        final EditText session = editText(config.optString("session_id", "session"), "session id", false);
+        identity.addView(label("Stream prefix"));
+        identity.addView(prefix);
+        identity.addView(label("Participant ID"));
+        identity.addView(participant);
+        identity.addView(label("Session ID"));
+        identity.addView(session);
+        root.addView(identity);
+
+        LinearLayout directions = panelCard("Transport directions");
+        final CheckBox enabled = checkBox("Enable LSL runtime", config.optBoolean("enabled", false));
+        final CheckBox outletEnabled = checkBox("Enable selected outlets", config.optBoolean("outlet_enabled", false));
+        final CheckBox inletEnabled = checkBox("Enable Float32 inlet", config.optBoolean("inlet_enabled", false));
+        directions.addView(enabled);
+        directions.addView(outletEnabled);
+        directions.addView(inletEnabled);
+        root.addView(directions);
+
+        LinearLayout outletCard = panelCard("Outlet streams");
+        final CheckBox polarHr = checkBox("Polar heart rate (BPM)", outlets == null || outlets.optBoolean("polar_hr", true));
+        final CheckBox polarRr = checkBox("Polar RR intervals (ms)", outlets == null || outlets.optBoolean("polar_rr", true));
+        final CheckBox polarAcc = checkBox("Polar ACC (x/y/z mg, nominal 200 Hz)", outlets == null || outlets.optBoolean("polar_acc", true));
+        final CheckBox polarEcg = checkBox("Polar ECG (microvolts, nominal 130 Hz)", outlets == null || outlets.optBoolean("polar_ecg", true));
+        final CheckBox controller = checkBox("Right controller grip pose", outlets == null || outlets.optBoolean("controller_right_grip", true));
+        final CheckBox headset = checkBox("Headset stereo OpenXR view poses", outlets == null || outlets.optBoolean("headset_views", true));
+        outletCard.addView(polarHr);
+        outletCard.addView(polarRr);
+        outletCard.addView(polarAcc);
+        outletCard.addView(polarEcg);
+        outletCard.addView(controller);
+        outletCard.addView(headset);
+        root.addView(outletCard);
+
+        LinearLayout inletCard = panelCard("Float32 inlet → particle driver");
+        inletCard.addView(text(
+            "The first finite sample channel must be normalized to 0…1. Slot 0 remains reserved for the breathing composition; LSL may target only slots 1–7.",
+            12,
+            PANEL_MUTED
+        ));
+        String resolveByValue = inlet == null ? "source_id" : inlet.optString("resolve_by", "source_id");
+        final Spinner resolveBy = spinner(
+            new String[] {"Source ID", "Name", "Type"},
+            "name".equals(resolveByValue) ? 1 : ("type".equals(resolveByValue) ? 2 : 0)
+        );
+        final EditText resolveValue = editText(
+            inlet == null ? "viscereality.input.driver1" : inlet.optString("resolve_value", "viscereality.input.driver1"),
+            "exact source id, name, or type",
+            false
+        );
+        int driverSlot = inlet == null ? 1 : Math.max(1, Math.min(7, inlet.optInt("driver_slot", 1)));
+        final Spinner driver = spinner(new String[] {"1", "2", "3", "4", "5", "6", "7"}, driverSlot - 1);
+        final EditText hold = editText(
+            String.format(Locale.US, "%.3f", inlet == null ? 1.0 : inlet.optDouble("sample_hold_seconds", 1.0)),
+            "sample hold seconds",
+            false
+        );
+        final CheckBox recover = checkBox("Recover after sender loss", inlet == null || inlet.optBoolean("recover", true));
+        inletCard.addView(label("Resolve by"));
+        inletCard.addView(resolveBy);
+        inletCard.addView(label("Exact selector"));
+        inletCard.addView(resolveValue);
+        inletCard.addView(label("Driver slot"));
+        inletCard.addView(driver);
+        inletCard.addView(label("Sample hold (seconds)"));
+        inletCard.addView(hold);
+        inletCard.addView(recover);
+        root.addView(inletCard);
+
+        LinearLayout actions = panelCard("Apply and persistence");
+        actions.addView(text(
+            "Apply writes only the native-accepted normalized configuration to app-private storage. It survives direct headset launches; no capsule or Android property is required.",
+            12,
+            PANEL_MUTED
+        ));
+        Button apply = button("Apply LSL configuration");
+        apply.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                try {
+                    String resolve = selected(resolveBy);
+                    JSONObject requested = new JSONObject()
+                        .put("schema", "rusty.quest.native_renderer.lsl.persisted_config.v1")
+                        .put("enabled", enabled.isChecked())
+                        .put("outlet_enabled", outletEnabled.isChecked())
+                        .put("inlet_enabled", inletEnabled.isChecked())
+                        .put("stream_prefix", prefix.getText().toString().trim())
+                        .put("participant_id", participant.getText().toString().trim())
+                        .put("session_id", session.getText().toString().trim())
+                        .put("outlets", new JSONObject()
+                            .put("polar_hr", polarHr.isChecked())
+                            .put("polar_rr", polarRr.isChecked())
+                            .put("polar_acc", polarAcc.isChecked())
+                            .put("polar_ecg", polarEcg.isChecked())
+                            .put("controller_right_grip", controller.isChecked())
+                            .put("headset_views", headset.isChecked()))
+                        .put("inlet", new JSONObject()
+                            .put("resolve_by", "Name".equals(resolve) ? "name" : ("Type".equals(resolve) ? "type" : "source_id"))
+                            .put("resolve_value", resolveValue.getText().toString().trim())
+                            .put("driver_slot", Integer.parseInt(selected(driver)))
+                            .put("sample_hold_seconds", Double.parseDouble(hold.getText().toString().trim()))
+                            .put("recover", recover.isChecked()));
+                    applyLslPanelOperation("apply", requested, readback);
+                } catch (Exception error) {
+                    readback.setText("LSL request rejected locally: " + markerToken(error.getMessage()));
+                }
+            }
+        });
+        actions.addView(apply);
+        Button stop = button("Disable LSL");
+        stop.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                applyLslPanelOperation("disable", null, readback);
+            }
+        });
+        actions.addView(stop);
+        Button reset = button("Reset LSL defaults");
+        reset.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                applyLslPanelOperation("reset", null, readback);
+            }
+        });
+        actions.addView(reset);
+        root.addView(actions);
+    }
+
+    private JSONObject readLslTransportStatusJson() {
+        try {
+            return new JSONObject(nativeReadLslTransportStatus());
+        } catch (Exception error) {
+            try {
+                return new JSONObject()
+                    .put("schema", "rusty.quest.native_renderer.lsl.status.v1")
+                    .put("response_status", "unavailable")
+                    .put("response_reason", markerToken(error.getMessage()))
+                    .put("panel_available", false)
+                    .put("library_linked", false)
+                    .put("app_session_id", "none")
+                    .put("generation", 0)
+                    .put("config", LslPanelConfigStore.read(getApplicationContext()));
+            } catch (Exception impossible) {
+                return new JSONObject();
+            }
+        }
+    }
+
+    private String formatLslStatus(JSONObject status) {
+        JSONObject effective = status.optJSONObject("effective");
+        return "Packaged: " + status.optBoolean("panel_available", false)
+            + " | liblsl: " + status.optBoolean("library_linked", false)
+            + " | state: " + (effective == null ? "unknown" : effective.optString("state", "unknown"))
+            + " | outlets: " + (effective == null ? 0 : effective.optInt("outlet_count", 0))
+            + " | inlet: " + (effective == null ? "unknown" : effective.optString("inlet_state", "unknown"))
+            + "\npushed=" + (effective == null ? 0 : effective.optLong("samples_pushed", 0))
+            + " pulled=" + (effective == null ? 0 : effective.optLong("samples_pulled", 0))
+            + " dropped=" + (effective == null ? 0 : effective.optLong("samples_dropped", 0))
+            + " rejectedInlet=" + (effective == null ? 0 : effective.optLong("inlet_samples_rejected", 0))
+            + "\nsession=" + status.optString("app_session_id", "none")
+            + " generation=" + status.optLong("generation", 0)
+            + " reason=" + (effective == null ? status.optString("response_reason", "unknown") : effective.optString("reason", "none"));
+    }
+
+    private void applyLslPanelOperation(String operation, JSONObject config, TextView readback) {
+        try {
+            JSONObject current = readLslTransportStatusJson();
+            JSONObject command = new JSONObject()
+                .put("schema", LSL_PANEL_COMMAND_SCHEMA)
+                .put("operation", operation)
+                .put("request_id", UUID.randomUUID().toString())
+                .put("app_session_id", current.optString("app_session_id", ""))
+                .put("generation", current.optLong("generation", 0) + 1L);
+            if (config != null) {
+                command.put("config", config);
+            }
+            JSONObject response = new JSONObject(nativeApplyLslTransportCommand(command.toString()));
+            if (!"accepted".equals(response.optString("response_status", ""))) {
+                readback.setText("LSL request rejected: " + formatLslStatus(response));
+                return;
+            }
+            JSONObject acceptedConfig = response.optJSONObject("config");
+            boolean persisted = acceptedConfig != null
+                && LslPanelConfigStore.save(getApplicationContext(), acceptedConfig);
+            if ("reset".equals(operation)) {
+                persisted = LslPanelConfigStore.reset(getApplicationContext());
+            }
+            boolean effectiveEnabled = acceptedConfig != null
+                && acceptedConfig.optBoolean("enabled", false);
+            LslMulticastLockManager.setFromPanel(this, effectiveEnabled);
+            readback.setText(formatLslStatus(response) + "\npersisted=" + persisted);
+        } catch (Exception error) {
+            readback.setText("LSL request failed: " + markerToken(error.getMessage()));
+        }
     }
 
     private void appendViscerealityStatus(LinearLayout root) {
@@ -7016,6 +7253,13 @@ public final class ControlPanelActivity extends Activity {
         if ("breath-mapping".equals(requested)) {
             return requested;
         }
+        String packaged = NativeAppSettingsReader.readSetting(
+            this,
+            "native_renderer.control_panel.mode"
+        );
+        if ("breath-mapping".equals(packaged)) {
+            return packaged;
+        }
         return "stimulus-volume";
     }
 
@@ -7421,5 +7665,12 @@ public final class ControlPanelActivity extends Activity {
     private static native String nativeSubmitLivePrivateParticleDynamics(String dynamicsJson);
     private static native String nativeStartDriverProfileSessionBlock(String blockJson);
     private static native String nativeApplyBreathCompositionCommand(String commandJson);
+    private static native String nativeApplyLslTransportCommand(String commandJson);
+    private static native String nativeReadLslTransportStatus();
+
+    static String applyLslTransportCommandFromOwner(String commandJson) {
+        return nativeApplyLslTransportCommand(commandJson);
+    }
+
     private static native String nativeReadBreathCompositionStatus();
 }

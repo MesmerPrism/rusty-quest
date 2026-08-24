@@ -169,6 +169,9 @@ foreach ($requiredResolverNeedle in @(
     'android:debuggable="true"',
     'android:resizeableActivity="false"',
     "ControlPanelActivity",
+    "LslPanelCommandReceiver",
+    "android.permission.DUMP",
+    "LSL_PANEL_COMMAND",
     "QuestionnairePanelActivity",
     'android:hardwareAccelerated="true"',
     'android:defaultHeight="720dp"',
@@ -246,6 +249,7 @@ foreach ($requiredFeature in @(
     "ui.same_apk_questionnaire_panel",
     "lsl.outlet",
     "lsl.inlet",
+    "lsl.panel_controlled_io",
     "makepad_runtime"
 )) {
     if (-not $featureIds.ContainsKey($requiredFeature)) {

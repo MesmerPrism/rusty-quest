@@ -905,6 +905,7 @@ impl StimulusVolumeActions {
         let right_grip_pose_sample = if breath_haptics_enabled
             || native_controller_breath_enabled
             || controller_capture_enabled
+            || crate::lsl_panel_runtime::controller_outlet_requested()
         {
             self.locate_right_grip_pose_sample(
                 reference_space,
@@ -919,6 +920,14 @@ impl StimulusVolumeActions {
         };
         events.right_grip_pose_tracked =
             right_grip_pose_sample.is_some_and(|sample| sample.tracked);
+        if let Some(sample) = right_grip_pose_sample {
+            crate::lsl_panel_runtime::submit_controller_right_grip(
+                sample.position_m,
+                sample.orientation_xyzw,
+                sample.active,
+                sample.tracked,
+            );
+        }
         if controller_capture_enabled {
             if let Some(sample) = right_grip_pose_sample {
                 crate::breath_capture::record_controller_pose(

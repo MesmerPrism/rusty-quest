@@ -659,6 +659,7 @@ function Assert-NativeAppSettingsAssertions {
 function New-GeneratedAndroidManifestText {
     param(
         [Parameter(Mandatory=$true)][string]$PackageName,
+        [Parameter(Mandatory=$true)][string]$ApplicationLabel,
         [string[]]$Permissions,
         [string[]]$UsesFeatures,
         [string[]]$Activities,
@@ -691,7 +692,7 @@ function New-GeneratedAndroidManifestText {
     [void]$lines.Add('        android:debuggable="true"')
     [void]$lines.Add('        android:extractNativeLibs="true"')
     [void]$lines.Add('        android:hasCode="true"')
-    [void]$lines.Add('        android:label="Rusty Quest Generated Native App"')
+    [void]$lines.Add(('        android:label="{0}"' -f [System.Security.SecurityElement]::Escape($ApplicationLabel)))
     [void]$lines.Add('        android:theme="@android:style/Theme.Material.NoActionBar">')
     [void]$lines.Add('        <meta-data android:name="com.samsung.android.vr.application.mode" android:value="vr_only" />')
     if ($Activities -contains "android.app.NativeActivity") {
@@ -721,7 +722,7 @@ function New-GeneratedAndroidManifestText {
         [void]$lines.Add('            android:configChanges="screenSize|screenLayout|orientation|keyboardHidden|keyboard|navigation|uiMode"')
         [void]$lines.Add('            android:exported="true"')
         [void]$lines.Add('            android:hardwareAccelerated="true"')
-        [void]$lines.Add('            android:label="Rusty Quest Stimulus Panel"')
+        [void]$lines.Add(('            android:label="{0}"' -f [System.Security.SecurityElement]::Escape($ApplicationLabel + ' Controls')))
         [void]$lines.Add('            android:launchMode="singleTask"')
         [void]$lines.Add('            android:resizeableActivity="true"')
         [void]$lines.Add('            android:screenOrientation="landscape"')
@@ -768,6 +769,13 @@ function New-GeneratedAndroidManifestText {
         [void]$lines.Add('        <receiver android:name="io.github.mesmerprism.rustyquest.native_renderer.PolarSensorCommandReceiver" android:exported="true" android:permission="android.permission.DUMP">')
         [void]$lines.Add('            <intent-filter>')
         [void]$lines.Add('                <action android:name="io.github.mesmerprism.rustyquest.native_renderer.action.POLAR_SENSOR_RUNTIME_COMMAND" />')
+        [void]$lines.Add('            </intent-filter>')
+        [void]$lines.Add('        </receiver>')
+    }
+    if ($Receivers -contains "LslPanelCommandReceiver") {
+        [void]$lines.Add('        <receiver android:name="io.github.mesmerprism.rustyquest.native_renderer.LslPanelCommandReceiver" android:exported="true" android:permission="android.permission.DUMP">')
+        [void]$lines.Add('            <intent-filter>')
+        [void]$lines.Add('                <action android:name="io.github.mesmerprism.rustyquest.native_renderer.action.LSL_PANEL_COMMAND" />')
         [void]$lines.Add('            </intent-filter>')
         [void]$lines.Add('        </receiver>')
     }
@@ -1628,7 +1636,15 @@ if ($LASTEXITCODE -ne 0) {
     throw "Generated runtime profile failed Apply-RuntimeProfile.ps1 dry-run"
 }
 
-$manifestText = New-GeneratedAndroidManifestText -PackageName ([string]$app.package_name) -Permissions $permissions -UsesFeatures $usesFeatures -Activities $activities -Receivers $receivers -Services $services -Queries $queries
+$applicationLabel = if ($null -ne $app.PSObject.Properties["application_label"]) {
+    ([string]$app.application_label).Trim()
+} else {
+    "Rusty Quest Generated Native App"
+}
+if ([string]::IsNullOrWhiteSpace($applicationLabel) -or $applicationLabel.Length -gt 64 -or $applicationLabel -match '[\r\n\t]') {
+    throw "App build spec application_label must be 1..64 visible characters without control whitespace"
+}
+$manifestText = New-GeneratedAndroidManifestText -PackageName ([string]$app.package_name) -ApplicationLabel $applicationLabel -Permissions $permissions -UsesFeatures $usesFeatures -Activities $activities -Receivers $receivers -Services $services -Queries $queries
 New-Item -ItemType Directory -Path (Split-Path -Parent $androidManifestPath) -Force | Out-Null
 Set-Content -LiteralPath $androidManifestPath -Value $manifestText -Encoding UTF8
 
@@ -1647,6 +1663,7 @@ $buildManifest = [ordered]@{
     app_id = [string]$app.app_id
     resolution_fingerprint = $resolutionFingerprint
     package_name = [string]$app.package_name
+    application_label = $applicationLabel
     package_policy = [string]$app.package_policy
     feature_lock_sha256 = Get-FileSha256 -Path $featureLockPath
     runtime_profile_sha256 = Get-FileSha256 -Path $runtimeProfilePath

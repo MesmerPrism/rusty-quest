@@ -637,11 +637,13 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_native_1renderer_Po
     y_mg: jni::sys::jint,
     z_mg: jni::sys::jint,
 ) {
+    let xyz_mg = [x_mg as f32, y_mg as f32, z_mg as f32];
     submit_polar_acc_measurement_and_advance_composition(
         sample_host_time_ns.max(0) as u64,
         sample_sensor_time_ns.max(0) as u64,
-        [x_mg as f32, y_mg as f32, z_mg as f32],
+        xyz_mg,
     );
+    crate::lsl_panel_runtime::submit_polar_acc(xyz_mg);
     crate::breath_capture::record_polar_acc_sample(
         frame_sequence_id.max(0) as u64,
         sample_index.max(0) as usize,
@@ -650,7 +652,7 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_native_1renderer_Po
         sample_host_time_ns.max(0) as u64,
         sample_sensor_time_ns.max(0) as u64,
         jni_submit_time_ns.max(0) as u64,
-        [x_mg as f32, y_mg as f32, z_mg as f32],
+        xyz_mg,
     );
 }
 
@@ -668,6 +670,7 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_native_1renderer_Po
     jni_submit_time_ns: jni::sys::jlong,
     microvolts: jni::sys::jint,
 ) {
+    crate::lsl_panel_runtime::submit_polar_ecg(microvolts);
     crate::breath_capture::record_polar_ecg_sample(
         frame_sequence_id.max(0) as u64,
         sample_index.max(0) as usize,
@@ -717,6 +720,7 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_native_1renderer_Po
     host_time_ns: jni::sys::jlong,
     bpm: jni::sys::jint,
 ) {
+    crate::lsl_panel_runtime::submit_polar_hr(bpm.max(0) as u32);
     crate::breath_capture::record_polar_hr(host_time_ns.max(0) as u64, bpm.max(0) as u32);
 }
 
@@ -729,6 +733,7 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_native_1renderer_Po
     rr_interval_ms: jni::sys::jfloat,
 ) {
     submit_polar_rr_measurement(host_time_ns.max(0) as u64, rr_interval_ms);
+    crate::lsl_panel_runtime::submit_polar_rr(rr_interval_ms);
     crate::breath_capture::record_polar_rr(host_time_ns.max(0) as u64, rr_interval_ms);
 }
 

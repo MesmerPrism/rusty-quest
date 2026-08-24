@@ -72,6 +72,7 @@ mod live_hand_joint_capture;
 #[cfg(target_os = "android")]
 mod live_hand_mesh_capture;
 mod lsl_android;
+mod lsl_panel_runtime;
 mod lsl_transport_bridge;
 mod manifold_breath_bridge;
 mod manifold_pose_publisher;
@@ -478,11 +479,15 @@ fn android_main(app: android_activity::AndroidApp) {
         lsl_transport_bridge::LslTransportSettings::load_from_android_properties_with_defaults(
             &native_app_settings,
         );
-    lsl_transport_bridge::start_if_enabled(
-        &app,
-        &lsl_transport_settings,
-        &embedded_manifold_broker_settings,
-    );
+    if lsl_transport_settings.panel_controlled {
+        lsl_panel_runtime::initialize(&app, true);
+    } else {
+        lsl_transport_bridge::start_if_enabled(
+            &app,
+            &lsl_transport_settings,
+            &embedded_manifold_broker_settings,
+        );
+    }
     let native_passthrough_requested = runtime_options.render_mode.uses_native_passthrough()
         || runtime_options
             .environment_depth_settings
@@ -649,6 +654,10 @@ fn android_main(app: android_activity::AndroidApp) {
 
     drop(camera_runtime);
     drop(video_projection_playback);
+    lsl_panel_runtime::shutdown();
+    if lsl_transport_settings.panel_controlled {
+        lsl_transport_bridge::release_multicast_lock(&app);
+    }
     marker("render-loop", "status=stopped");
 }
 

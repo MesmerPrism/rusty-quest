@@ -2607,6 +2607,11 @@ impl GpuPrivateParticleRenderer {
                 driver_parameter_source = "breath-composition-closed-world";
                 self.emit_breath_composition_driver_connected_marker(frame_count);
             }
+            let lsl_inlet_active_count =
+                crate::lsl_panel_runtime::apply_inlet_driver_values(&mut next.driver_values01);
+            if lsl_inlet_active_count > 0 {
+                driver_parameter_source = "lsl-float32-inlet";
+            }
             if self
                 .heartbeat_pulse_adapter
                 .apply_to_driver_values(&mut next.driver_values01)
@@ -2689,6 +2694,11 @@ impl GpuPrivateParticleRenderer {
             {
                 driver_parameter_source = "breath-composition-closed-world";
                 self.emit_breath_composition_driver_connected_marker(frame_count);
+            }
+            if crate::lsl_panel_runtime::apply_inlet_driver_values(&mut self.driver_source_values01)
+                > 0
+            {
+                driver_parameter_source = "lsl-float32-inlet";
             }
             if self
                 .heartbeat_pulse_adapter

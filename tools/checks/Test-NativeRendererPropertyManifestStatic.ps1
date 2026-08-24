@@ -20,7 +20,7 @@ $manifest = $manifestText | ConvertFrom-Json
 if ($manifest.schema -ne "rusty.quest.native_renderer_property_manifest.v2") {
     throw "Native renderer property manifest has an unexpected schema."
 }
-$expectedPropertyCount = 307
+$expectedPropertyCount = 308
 if ($manifest.property_count -ne $expectedPropertyCount -or $manifest.properties.Count -ne $expectedPropertyCount) {
     throw "Native renderer property manifest must cover the current $expectedPropertyCount-property runtime surface."
 }
@@ -148,6 +148,7 @@ foreach ($token in @(
     'embedded_manifold_broker_bridge',
     'debug.rustyquest.native_renderer.lsl.enabled',
     'debug.rustyquest.native_renderer.lsl.outlet.enabled',
+    'debug.rustyquest.native_renderer.lsl.panel_controlled',
     'debug.rustyquest.native_renderer.lsl.inlet.enabled',
     'debug.rustyquest.native_renderer.lsl.multicast_lock.enabled',
     'debug.rustyquest.native_renderer.lsl.stream_prefix',

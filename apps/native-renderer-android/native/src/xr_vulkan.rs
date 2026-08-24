@@ -2406,6 +2406,26 @@ unsafe fn run_projection_frames(
             continue;
         }
         trace_startup_frame(frame_count, "after-locate-views");
+        crate::lsl_panel_runtime::submit_headset_views(
+            [
+                views[0].pose.position.x,
+                views[0].pose.position.y,
+                views[0].pose.position.z,
+                views[0].pose.orientation.x,
+                views[0].pose.orientation.y,
+                views[0].pose.orientation.z,
+                views[0].pose.orientation.w,
+            ],
+            [
+                views[1].pose.position.x,
+                views[1].pose.position.y,
+                views[1].pose.position.z,
+                views[1].pose.orientation.x,
+                views[1].pose.orientation.y,
+                views[1].pose.orientation.z,
+                views[1].pose.orientation.w,
+            ],
+        );
 
         let frame_instant = Instant::now();
         let dt_seconds = (frame_instant - previous_frame_instant)
