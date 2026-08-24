@@ -97,6 +97,7 @@ public final class ControlPanelActivity extends Activity {
     private static final long RENDERER_RETURN_POLL_MS = 250L;
     private static final long RENDERER_RETURN_RELAUNCH_MS = 1000L;
     private static final long RENDERER_RETURN_TIMEOUT_MS = 4000L;
+    private static final long RENDERER_RETURN_STABLE_FOCUS_MS = 750L;
     private static final long RENDERER_FOCUS_FRESH_MS = 2000L;
     private static final String DRIVER_PROFILE_PANEL_STATUS_FILE =
         "driver_profile_panel_status.json";
@@ -445,6 +446,8 @@ public final class ControlPanelActivity extends Activity {
     private long rendererReturnBaselineFrame;
     private long rendererReturnStartedAtMs;
     private long rendererReturnLastLaunchAtMs;
+    private long rendererReturnStableFocusStartedAtMs;
+    private long rendererReturnStableFocusFrame;
     private int rendererReturnGeneration;
     private boolean rendererReturnPanelPaused;
     private Runnable rendererReturnReadinessPoll;
@@ -6533,6 +6536,7 @@ public final class ControlPanelActivity extends Activity {
             : -1L;
         rendererReturnStartedAtMs = SystemClock.elapsedRealtime();
         rendererReturnLastLaunchAtMs = 0L;
+        resetRendererReturnStableFocus();
         rendererReturnPanelPaused = false;
         rendererReturnGeneration += 1;
         rendererReturnPending = true;
@@ -6595,57 +6599,71 @@ public final class ControlPanelActivity extends Activity {
             return;
         }
         RendererFocusState state = readRendererFocusState();
-        if (rendererHasAdvancedFocusedFrame(state)) {
-            rendererReturnPending = false;
-            cancelRendererReturnReadinessPoll();
-            rendererHandoffMarker(
-                "status=verified frame="
-                    + state.frameCount
-                    + " focusAgeMs="
-                    + state.ageMs()
-                    + " panelPaused="
-                    + rendererReturnPanelPaused
-                    + " generation="
-                    + generation
-            );
-            recordSpatialCameraPanelEvent(
-                "panel_close_renderer_ready",
-                "closed",
-                "focused_submitted_frame_after_resume"
-            );
-            if (Build.VERSION.SDK_INT >= 21) {
-                finishAndRemoveTask();
-            } else {
-                finish();
-            }
-            return;
-        }
         long nowMs = SystemClock.elapsedRealtime();
+        boolean focusedFrameQualifies = rendererReturnPanelPaused
+            && rendererHasAdvancedFocusedFrame(state);
+        if (focusedFrameQualifies) {
+            if (rendererReturnStableFocusStartedAtMs < 0L) {
+                rendererReturnStableFocusStartedAtMs = nowMs;
+                rendererReturnStableFocusFrame = state.frameCount;
+                rendererHandoffMarker(
+                    "status=focus-stability-started frame="
+                        + state.frameCount
+                        + " panelPaused=true generation="
+                        + generation
+                );
+            } else if (state.frameCount > rendererReturnStableFocusFrame
+                    && nowMs - rendererReturnStableFocusStartedAtMs
+                        >= RENDERER_RETURN_STABLE_FOCUS_MS) {
+                long stableFocusMs = nowMs - rendererReturnStableFocusStartedAtMs;
+                rendererReturnPending = false;
+                cancelRendererReturnReadinessPoll();
+                rendererHandoffMarker(
+                    "status=verified frame="
+                        + state.frameCount
+                        + " focusAgeMs="
+                        + state.ageMs()
+                        + " stableFocusMs="
+                        + stableFocusMs
+                        + " panelPaused=true panelTaskRetained=true generation="
+                        + generation
+                );
+                recordSpatialCameraPanelEvent(
+                    "panel_close_renderer_ready",
+                    "hidden",
+                    "stable_focused_submitted_frames_panel_retained"
+                );
+                return;
+            }
+        } else {
+            resetRendererReturnStableFocus();
+        }
         if (nowMs - rendererReturnStartedAtMs >= RENDERER_RETURN_TIMEOUT_MS) {
             rendererReturnPending = false;
             cancelRendererReturnReadinessPoll();
             rendererHandoffMarker(
-                "status=timeout-fallback panelTaskRemoved=true panelPaused="
+                "status=timeout panelTaskRetained=true panelPaused="
                     + rendererReturnPanelPaused
                     + " generation="
                     + generation
             );
             recordSpatialCameraPanelEvent(
                 "panel_close_renderer_not_ready",
-                "hidden",
-                "focused_submitted_frame_timeout_panel_task_removed"
+                "open",
+                "focused_submitted_frame_timeout_panel_retained"
             );
-            if (Build.VERSION.SDK_INT >= 21) {
-                finishAndRemoveTask();
-            } else {
-                finish();
-            }
             return;
         }
-        if (nowMs - rendererReturnLastLaunchAtMs >= RENDERER_RETURN_RELAUNCH_MS) {
+        if (rendererReturnStableFocusStartedAtMs < 0L
+                && nowMs - rendererReturnLastLaunchAtMs >= RENDERER_RETURN_RELAUNCH_MS) {
             launchImmersiveRendererForHandoff(generation, "reassert");
         }
         scheduleRendererReturnReadinessPoll(generation);
+    }
+
+    private void resetRendererReturnStableFocus() {
+        rendererReturnStableFocusStartedAtMs = -1L;
+        rendererReturnStableFocusFrame = -1L;
     }
 
     private void scheduleRendererReturnReadinessPoll(final int generation) {

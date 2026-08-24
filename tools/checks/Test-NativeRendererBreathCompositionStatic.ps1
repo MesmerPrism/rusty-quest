@@ -248,14 +248,30 @@ Assert-Tokens $panel @(
     "Particle edit remains queued; renderer effective receipt has not arrived yet.",
     "renderer_focus_state.json",
     "rendererHasAdvancedFocusedFrame",
-    "focused_submitted_frame_after_resume",
-    "focused_submitted_frame_timeout_panel_task_removed",
-    "status=timeout-fallback panelTaskRemoved=true",
+    "stable_focused_submitted_frames_panel_retained",
+    "focused_submitted_frame_timeout_panel_retained",
+    "status=timeout panelTaskRetained=true",
+    "panelPaused=true panelTaskRetained=true",
     "status=probe-retained-after-destroy",
     "RENDERER_RETURN_RELAUNCH_MS",
+    "RENDERER_RETURN_STABLE_FOCUS_MS",
     "RENDERER_FOCUS_FRESH_MS",
-    "finishAndRemoveTask();"
+    "resetRendererReturnStableFocus"
 ) "organized persistent Viscereality panel and receipt-gated VR return"
+$rendererReturnStart = $panel.IndexOf("private void closePanelAndReturnToImmersive()")
+$rendererReturnEnd = $panel.IndexOf("private static final class RendererFocusState", $rendererReturnStart)
+if ($rendererReturnStart -lt 0 -or $rendererReturnEnd -le $rendererReturnStart) {
+    throw "Breath composition static check could not isolate the renderer return handoff"
+}
+$rendererReturnMethods = $panel.Substring(
+    $rendererReturnStart,
+    $rendererReturnEnd - $rendererReturnStart
+)
+foreach ($forbiddenPanelRemovalToken in @("finishAndRemoveTask();", "finish();")) {
+    if ($rendererReturnMethods -match [regex]::Escape($forbiddenPanelRemovalToken)) {
+        throw "Ordinary renderer return must retain the paused panel task: $forbiddenPanelRemovalToken"
+    }
+}
 $immersiveLaunchStart = $panel.IndexOf("private void launchImmersiveRenderer()")
 $immersiveLaunchEnd = $panel.IndexOf("private void closePanelAndReturnToImmersive()", $immersiveLaunchStart)
 if ($immersiveLaunchStart -lt 0 -or $immersiveLaunchEnd -le $immersiveLaunchStart) {
