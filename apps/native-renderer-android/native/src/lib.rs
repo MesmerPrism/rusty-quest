@@ -360,6 +360,7 @@ fn android_main(app: android_activity::AndroidApp) {
     let native_app_settings =
         native_app_settings::NativeAppSettingsDefaults::load_from_apk_asset(&app);
     marker("native-app-settings", native_app_settings.marker_fields());
+    native_renderer_panel_bridge::install_packaged_control_panel_mode(&native_app_settings);
     let particle_adapter_input =
         particle_adapter_consumer::load_runtime_input_with_defaults(&native_app_settings);
     let particle_adapter_decision =

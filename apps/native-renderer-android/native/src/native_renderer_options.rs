@@ -106,6 +106,7 @@ pub(crate) struct NativeRendererRuntimeOptions {
     pub(crate) projection_swapchain_settings: NativeProjectionSwapchainSettings,
     pub(crate) foveation_settings: NativeFoveationSettings,
     pub(crate) display_refresh_settings: NativeDisplayRefreshSettings,
+    pub(crate) private_particle_world_anchor_scale_m: f32,
     pub(crate) replay_visual_proof_enabled: bool,
     pub(crate) compact_hand_input_source_mode: CompactHandInputSourceMode,
     pub(crate) sdf_visual_enabled: bool,
@@ -168,6 +169,12 @@ impl NativeRendererRuntimeOptions {
         let display_refresh_settings = NativeDisplayRefreshSettings::from_property(lookup(
             PROP_OPENXR_DISPLAY_REFRESH_RATE_HZ,
         ));
+        let private_particle_world_anchor_scale_m = f32_clamped_value(
+            lookup(PROP_PRIVATE_PARTICLES_WORLD_ANCHOR_SCALE_M),
+            0.46,
+            0.05,
+            4.0,
+        );
         let replay_visual_proof_enabled =
             bool_value(lookup(PROP_REPLAY_VISUAL_PROOF_ENABLED), false);
         let compact_hand_input_source_mode = CompactHandInputSourceMode::from_property(
@@ -252,6 +259,7 @@ impl NativeRendererRuntimeOptions {
             projection_swapchain_settings,
             foveation_settings,
             display_refresh_settings,
+            private_particle_world_anchor_scale_m,
             replay_visual_proof_enabled,
             compact_hand_input_source_mode,
             sdf_visual_enabled,

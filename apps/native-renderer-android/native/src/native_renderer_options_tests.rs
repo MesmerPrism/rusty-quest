@@ -69,7 +69,8 @@ mod tests {
         PROP_PASSTHROUGH_STYLE_OPACITY, PROP_PASSTHROUGH_STYLE_SATURATION,
         PROP_PERIPHERAL_STRETCH_BLEND_MODE, PROP_PERIPHERAL_STRETCH_CORE_SCALE,
         PROP_PERIPHERAL_STRETCH_EDGE_INSET_UV, PROP_PERIPHERAL_STRETCH_MAX_INSET_UV,
-        PROP_PROCESSING_LAYER, PROP_PROJECTION_BORDER_OPACITY, PROP_PROJECTION_BORDER_POLICY,
+        PROP_PRIVATE_PARTICLES_WORLD_ANCHOR_SCALE_M, PROP_PROCESSING_LAYER,
+        PROP_PROJECTION_BORDER_OPACITY, PROP_PROJECTION_BORDER_POLICY,
         PROP_PROJECTION_SWAPCHAIN_RESOLUTION_SCALE, PROP_RENDER_MODE,
         PROP_REPLAY_VISUAL_PROOF_ENABLED, PROP_SDF_FIELD_VISUAL_ENABLED,
         PROP_SDF_UPDATE_PERIOD_FRAMES, PROP_STIMULUS_VOLUME_CENTRAL_FOV_FRACTION,
@@ -277,6 +278,21 @@ mod tests {
             explicit_seventy_two.display_refresh_settings.requested_hz(),
             Some(72.0)
         );
+    }
+
+    #[test]
+    fn packaged_world_anchor_scale_is_used_when_unset_and_explicit_property_wins() {
+        let packaged = NativeRendererRuntimeOptions::from_property_lookup_with_defaults(
+            |_| None,
+            |name| (name == PROP_PRIVATE_PARTICLES_WORLD_ANCHOR_SCALE_M).then(|| "1.0".to_string()),
+        );
+        assert!((packaged.private_particle_world_anchor_scale_m - 1.0).abs() <= f32::EPSILON);
+
+        let explicit = NativeRendererRuntimeOptions::from_property_lookup_with_defaults(
+            |name| (name == PROP_PRIVATE_PARTICLES_WORLD_ANCHOR_SCALE_M).then(|| "1.5".to_string()),
+            |name| (name == PROP_PRIVATE_PARTICLES_WORLD_ANCHOR_SCALE_M).then(|| "1.0".to_string()),
+        );
+        assert!((explicit.private_particle_world_anchor_scale_m - 1.5).abs() <= f32::EPSILON);
     }
 
     #[test]

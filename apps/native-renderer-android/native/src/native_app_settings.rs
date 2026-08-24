@@ -101,6 +101,15 @@ pub(crate) fn nonempty_trimmed(value: Option<&str>) -> Option<String> {
     })
 }
 
+/// Prefer a non-empty runtime transport value while retaining the packaged
+/// app-build setting as the exact unset baseline.
+pub(crate) fn explicit_or_packaged(
+    explicit: Option<String>,
+    packaged: Option<String>,
+) -> Option<String> {
+    nonempty_trimmed(explicit.as_deref()).or_else(|| nonempty_trimmed(packaged.as_deref()))
+}
+
 #[cfg(target_os = "android")]
 impl NativeAppSettingsDefaults {
     pub(crate) fn load_from_apk_asset(app: &android_activity::AndroidApp) -> Self {
@@ -213,7 +222,7 @@ fn marker_token(value: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{nonempty_trimmed, NativeAppSettingsDefaults};
+    use super::{explicit_or_packaged, nonempty_trimmed, NativeAppSettingsDefaults};
 
     #[test]
     fn parses_values_by_android_property() {
@@ -272,5 +281,22 @@ mod tests {
             nonempty_trimmed(Some("  packaged-value\n")),
             Some("packaged-value".to_string())
         );
+    }
+
+    #[test]
+    fn explicit_runtime_value_overrides_the_packaged_unset_baseline() {
+        assert_eq!(
+            explicit_or_packaged(None, Some("breath-mapping".to_string())).as_deref(),
+            Some("breath-mapping")
+        );
+        assert_eq!(
+            explicit_or_packaged(
+                Some("private-particle-config".to_string()),
+                Some("breath-mapping".to_string()),
+            )
+            .as_deref(),
+            Some("private-particle-config")
+        );
+        assert_eq!(explicit_or_packaged(None, Some("  ".to_string())), None);
     }
 }

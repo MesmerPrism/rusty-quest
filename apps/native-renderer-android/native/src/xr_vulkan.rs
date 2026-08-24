@@ -1489,6 +1489,7 @@ unsafe fn run_projection_loop_inner(
         &available_extensions,
         &enabled_extensions,
         display_refresh_settings,
+        runtime_options.private_particle_world_anchor_scale_m,
         runtime_options.foveation_settings,
         projection_swapchain_settings,
         projection_foveation_vulkan_support,
@@ -2081,6 +2082,7 @@ unsafe fn run_projection_frames(
     available_extensions: &xr::ExtensionSet,
     enabled_extensions: &xr::ExtensionSet,
     display_refresh_settings: NativeDisplayRefreshSettings,
+    private_particle_world_anchor_scale_m: f32,
     foveation_settings: NativeFoveationSettings,
     projection_swapchain_settings: NativeProjectionSwapchainSettings,
     projection_foveation_vulkan_support: ProjectionFoveationVulkanSupport,
@@ -2107,7 +2109,8 @@ unsafe fn run_projection_frames(
         ProjectionTargetState::new(projection_target_settings.clone());
     let mut breath_bridge = ManifoldBreathBridge::start(projection_target_settings);
     let mut previous_frame_instant = Instant::now();
-    let mut private_particle_world_anchor = PrivateParticleWorldAnchor::new();
+    let mut private_particle_world_anchor =
+        PrivateParticleWorldAnchor::new_with_runtime_scale(private_particle_world_anchor_scale_m);
     let mut control_panel_command_poller =
         crate::native_renderer_panel_bridge::ControlPanelCommandPoller::default();
     let mut environment_depth_provider_attempts = 0_u32;
@@ -5610,24 +5613,42 @@ struct PrivateParticleWorldAnchor {
     scale_parameter_source: &'static str,
     last_scale_poll_frame: u64,
     panel_scale_override_m: Option<f32>,
+    packaged_scale_m: f32,
+    packaged_scale_parameter_source: &'static str,
 }
 
 impl PrivateParticleWorldAnchor {
     fn new() -> Self {
+        Self::new_with_runtime_scale(PRIVATE_PARTICLE_WORLD_ANCHOR_SCALE_M)
+    }
+
+    fn new_with_runtime_scale(runtime_scale_m: f32) -> Self {
+        let packaged_scale_m = runtime_scale_m.clamp(
+            PRIVATE_PARTICLE_WORLD_ANCHOR_SCALE_MIN_M,
+            PRIVATE_PARTICLE_WORLD_ANCHOR_SCALE_MAX_M,
+        );
+        let packaged_scale_parameter_source =
+            if (packaged_scale_m - PRIVATE_PARTICLE_WORLD_ANCHOR_SCALE_M).abs() <= f32::EPSILON {
+                "particle-world-anchor-default"
+            } else {
+                "apk-native-app-settings"
+            };
         Self {
             center_scale: [
                 0.0,
                 0.0,
                 -PRIVATE_PARTICLE_WORLD_ANCHOR_DISTANCE_M,
-                PRIVATE_PARTICLE_WORLD_ANCHOR_SCALE_M,
+                packaged_scale_m,
             ],
             right_axis: [1.0, 0.0, 0.0, 0.0],
             up_axis: [0.0, 1.0, 0.0, 0.0],
             forward_axis: [0.0, 0.0, -1.0, 1.0],
             initialized: false,
-            scale_parameter_source: "particle-world-anchor-default",
+            scale_parameter_source: packaged_scale_parameter_source,
             last_scale_poll_frame: u64::MAX,
             panel_scale_override_m: None,
+            packaged_scale_m,
+            packaged_scale_parameter_source,
         }
     }
 
@@ -5722,14 +5743,14 @@ impl PrivateParticleWorldAnchor {
                 let property_overridden = property.is_some();
                 let scale_m = f32_clamped_value(
                     property,
-                    PRIVATE_PARTICLE_WORLD_ANCHOR_SCALE_M,
+                    self.packaged_scale_m,
                     PRIVATE_PARTICLE_WORLD_ANCHOR_SCALE_MIN_M,
                     PRIVATE_PARTICLE_WORLD_ANCHOR_SCALE_MAX_M,
                 );
                 let scale_parameter_source = if property_overridden {
                     "runtime-hotload-android-property"
                 } else {
-                    "particle-world-anchor-default"
+                    self.packaged_scale_parameter_source
                 };
                 (scale_m, scale_parameter_source)
             };
@@ -6678,6 +6699,18 @@ mod tests {
         assert_ne!(
             after.position[..3],
             rotate_by_quat(later_head.orientation_xyzw, [1.0, 0.0, 0.0])
+        );
+    }
+
+    #[test]
+    fn private_particle_anchor_uses_the_packaged_runtime_scale_as_its_unset_baseline() {
+        let anchor = PrivateParticleWorldAnchor::new_with_runtime_scale(1.0);
+        assert!((anchor.world_center_scale()[3] - 1.0).abs() <= f32::EPSILON);
+        assert_eq!(anchor.scale_parameter_source(), "apk-native-app-settings");
+        assert!((anchor.packaged_scale_m - 1.0).abs() <= f32::EPSILON);
+        assert_eq!(
+            anchor.packaged_scale_parameter_source,
+            "apk-native-app-settings"
         );
     }
 
