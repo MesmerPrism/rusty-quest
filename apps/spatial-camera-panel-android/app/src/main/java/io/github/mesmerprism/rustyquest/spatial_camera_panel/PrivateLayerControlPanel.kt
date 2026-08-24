@@ -2643,6 +2643,12 @@ private fun MiddleRegionPage(
         style = MaterialTheme.typography.bodySmall,
         color = if (bufferActive) LayerPanelAccent else LayerPanelMuted,
     )
+    Text(
+        "Current result: ${controls.resolvedMiddleContentLabel(configuration)}. " +
+            "Transition controls soften its boundaries; they do not change this content or the Middle size.",
+        style = MaterialTheme.typography.bodySmall,
+        color = LayerPanelMuted,
+    )
     Row(
         horizontalArrangement = Arrangement.spacedBy(10.dp),
         modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
@@ -3679,9 +3685,9 @@ private fun RegionTransitionsSection(
     if (!outerActive) {
       Text(
           if (configuration.bufferGeometryMode == controls.bufferGeometryOff) {
-            "Buffer is Off, so there is one direct Inner ↔ Outer boundary."
+            "Middle is Off, so there is one direct Center ↔ Outer boundary."
           } else {
-            "Stretch replaces Outer, so there is no separate buffer ↔ Outer boundary."
+            "Stretch replaces Outer, so there is no separate Middle ↔ Outer boundary."
           },
           style = MaterialTheme.typography.bodySmall,
           color = LayerPanelWarm,
@@ -3701,7 +3707,7 @@ private fun ZoneTransitionEditor(
     configuration: PrivateLayerZoneCompositor,
     onConfigurationChange: (PrivateLayerZoneCompositor, String) -> Unit,
 ) {
-  val prefix = if (inner) "Inner" else "Outer"
+  val prefix = if (inner) "Center–Middle" else "Middle–Outer"
   val sourcePrefix = if (inner) "inner" else "outer"
   val signal = if (inner) configuration.innerSignal else configuration.outerSignal
   val dynamics =

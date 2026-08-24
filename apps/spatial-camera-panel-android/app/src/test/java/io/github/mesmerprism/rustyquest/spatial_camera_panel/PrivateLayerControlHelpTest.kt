@@ -19,9 +19,9 @@ class PrivateLayerControlHelpTest {
     listOf(
             "Projection scale",
             "Tile gap",
-            "Inner red threshold",
-            "Outer blue cycle speed",
-            "Inner green phase (turns)",
+            "Center–Middle red threshold",
+            "Middle–Outer blue cycle speed",
+            "Center–Middle green phase (turns)",
             "Left depth X",
             "Depth Y scale",
         )

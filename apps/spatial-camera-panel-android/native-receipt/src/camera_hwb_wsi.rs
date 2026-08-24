@@ -914,6 +914,9 @@ pub(crate) unsafe fn record_camera_hwb_probe_command_buffer(
             "disabled"
         },
     );
+    let retained_unused_video_descriptor = video_renderer
+        .as_deref()
+        .and_then(SpatialVideoProjectionRenderer::retained_unused_descriptor_binding);
     let prepared_video = match (video_renderer, video_frame) {
         (Some(renderer), Some(frame))
             if video_settings.active()
@@ -971,35 +974,46 @@ pub(crate) unsafe fn record_camera_hwb_probe_command_buffer(
             targets.prepare_spatial_public_projection_sampling(device, command_buffer);
         if sampling_ready {
             let synthetic_diagnostic = projection_zone_frame.settings.synthetic_diagnostic();
-            let projection_zone_descriptor =
-                if synthetic_diagnostic || !readable_video_consumer_required {
-                    // These routes never sample u_video_projection. Bind the already-valid camera
-                    // descriptor at the otherwise-compatible slot. The deterministic diagnostic
-                    // supplies synthetic sources; projection/stretch/transparent-only layouts need
-                    // no decoded video descriptor.
-                    Some((
-                        resources.descriptor_set_layout,
-                        descriptor_set,
-                        if synthetic_diagnostic {
-                            "synthetic-diagnostic-fallback-unused"
-                        } else if projection_zone_frame
-                            .settings
-                            .transparent_underlay_requested()
-                        {
-                            "transparent-underlay-fallback-unused"
-                        } else {
-                            "camera-fallback-unused"
-                        },
-                    ))
-                } else {
-                    prepared_video.as_ref().map(|(_, prepared)| {
-                        (
-                            prepared.descriptor_set_layout,
-                            prepared.descriptor_set,
-                            "prepared-video",
-                        )
+            let projection_zone_descriptor = if synthetic_diagnostic {
+                // Synthetic diagnostics can still carry a video-owning configuration. Bind
+                // the live camera layout because prepare_frame may have replaced the retained
+                // video resources earlier in this frame.
+                Some((
+                    resources.descriptor_set_layout,
+                    descriptor_set,
+                    "synthetic-diagnostic-fallback-unused",
+                ))
+            } else if !readable_video_consumer_required {
+                // These routes never sample u_video_projection. Prefer the last exact video
+                // descriptor solely to retain its descriptor-set layout across a hot
+                // Video/Transparent change. This avoids destroying and recompiling the Vulkan
+                // compositor pipeline on the render thread. Before the first decoded frame,
+                // the compatible camera descriptor remains the cold fallback.
+                retained_unused_video_descriptor
+                    .map(|(layout, set)| (layout, set, "retained-video-fallback-unused"))
+                    .or_else(|| {
+                        Some((
+                            resources.descriptor_set_layout,
+                            descriptor_set,
+                            if projection_zone_frame
+                                .settings
+                                .transparent_underlay_requested()
+                            {
+                                "transparent-underlay-fallback-unused"
+                            } else {
+                                "camera-fallback-unused"
+                            },
+                        ))
                     })
-                };
+            } else {
+                prepared_video.as_ref().map(|(_, prepared)| {
+                    (
+                        prepared.descriptor_set_layout,
+                        prepared.descriptor_set,
+                        "prepared-video",
+                    )
+                })
+            };
             if let Some((descriptor_set_layout, zone_descriptor_set, descriptor_source)) =
                 projection_zone_descriptor
             {

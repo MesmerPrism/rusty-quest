@@ -327,15 +327,28 @@ internal object PrivateLayerZoneCompositorControls {
             "Outer continuation"
       }
 
+  fun resolvedMiddleContentLabel(configuration: PrivateLayerZoneCompositor): String =
+      when (configuration.bufferFillMode) {
+        bufferFillTransparentReveal -> "Transparent"
+        bufferFillStretch -> "Stretch"
+        bufferFillVideo -> "Head-locked video"
+        else ->
+            when (configuration.outerContentMode) {
+              outerContentStretch -> "Continue Outer → Stretch"
+              outerContentTransparent -> "Continue Outer → Transparent"
+              else -> "Continue Outer → Head-locked video"
+            }
+      }
+
   fun innerBoundaryLabel(configuration: PrivateLayerZoneCompositor): String =
       if (configuration.bufferGeometryMode == bufferGeometryOff) {
-        "Inner ↔ Outer"
+        "Center ↔ Outer"
       } else {
-        "Inner ↔ ${bufferContentLabel(configuration)}"
+        "Center ↔ Middle"
       }
 
   fun outerBoundaryLabel(configuration: PrivateLayerZoneCompositor): String =
-      "${bufferContentLabel(configuration)} ↔ Outer"
+      "Middle ↔ Outer"
 
   fun outerBoundaryActive(configuration: PrivateLayerZoneCompositor): Boolean =
       configuration.bufferGeometryMode != bufferGeometryOff

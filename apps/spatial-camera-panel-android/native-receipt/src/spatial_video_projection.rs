@@ -215,6 +215,20 @@ impl SpatialVideoProjectionRenderer {
         }
     }
 
+    /// Returns the most recently imported descriptor without adopting or sampling another frame.
+    ///
+    /// The zone compositor uses this only for shader branches that are proven not to sample video.
+    /// Keeping the descriptor-set layout stable prevents a Video/Transparent control change from
+    /// recompiling the compositor pipeline on the render thread. The imported image remains owned
+    /// by this renderer until its normal bounded cache eviction or renderer destruction.
+    pub(crate) fn retained_unused_descriptor_binding(
+        &self,
+    ) -> Option<(vk::DescriptorSetLayout, vk::DescriptorSet)> {
+        let resources = self.resources.as_ref()?;
+        let retained = self.imports.last()?;
+        Some((resources.descriptor_set_layout, retained.descriptor_set))
+    }
+
     pub(crate) unsafe fn prepare_frame(
         &mut self,
         device: &ash::Device,

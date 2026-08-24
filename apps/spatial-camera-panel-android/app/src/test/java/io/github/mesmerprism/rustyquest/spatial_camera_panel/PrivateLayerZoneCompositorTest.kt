@@ -7,6 +7,26 @@ import org.junit.Test
 
 class PrivateLayerZoneCompositorTest {
   @Test
+  fun visibleBoundaryLabelsUseCenterMiddleOuterWithoutChangingStoredFieldNames() {
+    val controls = PrivateLayerZoneCompositorControls
+    val active =
+        PrivateLayerZoneCompositor().copy(
+            regionContractVersion = controls.regionContractCompositorOwned,
+            bufferGeometryMode = controls.bufferGeometryStatic,
+            bufferFillMode = controls.bufferFillOuterContinuation,
+            outerContentMode = controls.outerContentTransparent,
+        )
+
+    assertEquals("Center ↔ Middle", controls.innerBoundaryLabel(active))
+    assertEquals("Middle ↔ Outer", controls.outerBoundaryLabel(active))
+    assertEquals("Continue Outer → Transparent", controls.resolvedMiddleContentLabel(active))
+    assertEquals(
+        "Center ↔ Outer",
+        controls.innerBoundaryLabel(active.copy(bufferGeometryMode = controls.bufferGeometryOff)),
+    )
+  }
+
+  @Test
   fun normalizationClampsAllTransportRanges() {
     val normalized =
         PrivateLayerZoneCompositorModule.normalize(

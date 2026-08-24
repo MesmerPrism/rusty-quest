@@ -34,8 +34,8 @@ internal object PrivateLayerControlHelp {
           "Stretch extent",
           "Stretch attachment",
           "Stretch source",
-          "Inner transition signal",
-          "Outer transition signal",
+          "Center–Middle transition signal",
+          "Middle–Outer transition signal",
           "Outer target",
           "Debug view",
           "Camera sampling",
@@ -119,7 +119,7 @@ internal object PrivateLayerControlHelp {
           normalized == "buffer geometry" ->
               "Off removes the middle region, Static gives it a fixed width, and Dynamic uses the margin released by the anti-image-drag footprint. This does not choose its content."
           normalized == "static buffer width" ->
-              "Expands the buffer outward from the Inner boundary by a fixed normalized amount, clipped to the current projection area."
+              "Expands Middle outward from the Center boundary by a fixed normalized amount, clipped to the current projection area."
           normalized == "buffer content" ->
               "Chooses what occupies an active buffer: the selected Outer target, a transparent reveal, or Stretch. Geometry and content remain independent."
           normalized == "stretch starting point" ->
@@ -143,9 +143,9 @@ internal object PrivateLayerControlHelp {
           normalized == "blend test preset" ->
               "Loads deterministic component, region, or underlay transition stimuli for inspecting boundaries. Synthetic region tests disable surface displacement for clarity."
           normalized.contains("width") ->
-              "Sets the spatial width of this transition band around its region boundary."
+              "Sets the width of this blend band inside the outgoing region. It softens the boundary but does not resize Center, Middle, or Outer."
           normalized.contains("spatial curve") ->
-              "Shapes the spatial easing across this transition band; higher values concentrate change toward one side."
+              "Shapes easing across this blend band; higher values concentrate the change toward the incoming side without moving the boundary."
           normalized.contains("threshold") ->
               "Sets the color-channel threshold used by this transition signal."
           normalized.contains("softness") ->
@@ -161,7 +161,7 @@ internal object PrivateLayerControlHelp {
           normalized.contains("motion response") ->
               "Adds or subtracts transition response based on measured image motion."
           normalized.contains("transition signal") ->
-              "Chooses which image measurement dynamically drives this transition region."
+              "Chooses the image measurement that modulates blending inside this boundary band. It does not select region content or change region size."
           normalized.contains("blend application") ->
               "Chooses legacy combined blending, independent color components, or a channel-selected regional driver."
           normalized.contains("blend sample") ->
