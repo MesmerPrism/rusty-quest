@@ -135,6 +135,25 @@ selector, while the renderer proves adoption through effective
 `privateParticle*`, `handAnchorParticle*`, and downstream-owned marker-prefix
 fields.
 
+### Closed-world Android panel composition
+
+`ControlPanelActivity` is a generated manifest/JNI/lifecycle shell, not an
+ambient product selector. A feature that composes a panel declares one
+`panel_composition` with a selected module, denied module IDs, dependency
+edges, and exact Java source paths. The resolver admits exactly one composition
+when the manifest includes the shell, hashes its dependency closure into the
+feature lock, and emits an explicit empty closure for apps without a panel.
+Missing, unknown, duplicate, cyclic, denied, or source-missing selections fail
+resolution.
+
+The Android builder re-hashes that locked source closure and compiles common
+shell code plus only those module sources. It also bakes the selection into
+`native-app-settings.json`, `feature-lock.json`, and
+`panel-source-closure.json`. Runtime profiles and Android properties may choose
+pages inside a packaged module, but they cannot discover, add, or activate an
+unbundled module. Product panels remain low-rate request/readback adapters; the
+consuming Rust runtime owns effective renderer state.
+
 The clean native hand lab is
 `fixtures/native-app-builds/native-openxr-hand-lab.app.json`. Validate it with:
 

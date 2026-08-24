@@ -253,6 +253,11 @@ $appBuildEnvByName = @{}
 $runtimeProfilePath = ""
 $generatedBuildManifestPath = ""
 $appBuildLockSha256 = ""
+$panelSourceClosure = $null
+$panelSourceFiles = @()
+$selectedPanelModuleId = ""
+$selectedPanelEntryClass = ""
+$selectedPanelEntrySimpleName = ""
 if ([string]::IsNullOrWhiteSpace($AppBuildLock) -and -not $AllowUnlockedDevelopmentBuild) {
     throw "-AppBuildLock is required. Use -AllowUnlockedDevelopmentBuild only for an explicitly loose local compatibility build."
 }
@@ -264,7 +269,7 @@ if (-not [string]::IsNullOrWhiteSpace($AppBuildLock)) {
     if ([string]$appBuildLockObject.schema -ne "rusty.quest.native_app_feature_lock.v1") {
         throw "Unsupported native app-build feature lock schema: $($appBuildLockObject.schema)"
     }
-    foreach ($field in @("android_manifest", "generated_outputs", "app_settings", "build_inputs")) {
+    foreach ($field in @("android_manifest", "generated_outputs", "app_settings", "build_inputs", "panel_source_closure")) {
         if ($null -eq $appBuildLockObject.PSObject.Properties[$field]) {
             throw "Native app-build feature lock is missing required field for APK build: $field"
         }
@@ -290,6 +295,83 @@ if (-not [string]::IsNullOrWhiteSpace($AppBuildLock)) {
             -Label "Native app-build feature descriptor $($descriptor.feature_id)" `
             -ExpectedSha256 ([string]$descriptor.sha256) `
             -Path $descriptorPath
+    }
+
+    $panelSourceClosure = $appBuildLockObject.panel_source_closure
+    if ([string]$panelSourceClosure.schema -cne "rusty.quest.native_renderer.panel_source_closure.v1") {
+        throw "Unsupported native panel source-closure schema: $($panelSourceClosure.schema)"
+    }
+    if ($null -eq $panelSourceClosure.PSObject.Properties["runtime_widening_allowed"] -or
+        [bool]$panelSourceClosure.runtime_widening_allowed) {
+        throw "Native panel source closure must explicitly forbid runtime widening."
+    }
+    $panelActivitySelected = @($appBuildLockObject.android_manifest.activities) -ccontains "ControlPanelActivity"
+    $selectedPanelModuleId = [string]$panelSourceClosure.selected_module_id
+    $selectedPanelEntryClass = [string]$panelSourceClosure.entry_class
+    if ($panelActivitySelected) {
+        if ([string]::IsNullOrWhiteSpace($selectedPanelModuleId) -or
+            [string]::IsNullOrWhiteSpace($selectedPanelEntryClass)) {
+            throw "ControlPanelActivity requires exactly one baked native panel module."
+        }
+        if (@($panelSourceClosure.denied_module_ids) -ccontains $selectedPanelModuleId) {
+            throw "Selected native panel module is denied by its own source closure: $selectedPanelModuleId"
+        }
+        if ($selectedPanelEntryClass -notmatch '^io\.github\.mesmerprism\.rustyquest\.native_renderer\.[A-Za-z][A-Za-z0-9_]*$') {
+            throw "Native panel entry class is outside the fixed Android package: $selectedPanelEntryClass"
+        }
+        $selectedPanelEntrySimpleName = $selectedPanelEntryClass.Substring($selectedPanelEntryClass.LastIndexOf('.') + 1)
+        $moduleIds = @{}
+        foreach ($module in @($panelSourceClosure.modules)) {
+            $moduleId = [string]$module.module_id
+            if ([string]::IsNullOrWhiteSpace($moduleId) -or $moduleIds.ContainsKey($moduleId)) {
+                throw "Native panel source closure contains an absent or duplicate module id: $moduleId"
+            }
+            $moduleIds[$moduleId] = $true
+        }
+        if (-not $moduleIds.ContainsKey($selectedPanelModuleId)) {
+            throw "Native panel source closure omits selected module: $selectedPanelModuleId"
+        }
+        foreach ($module in @($panelSourceClosure.modules)) {
+            foreach ($dependency in @($module.dependencies)) {
+                if (-not $moduleIds.ContainsKey([string]$dependency)) {
+                    throw "Native panel source closure omits dependency $dependency required by $($module.module_id)"
+                }
+            }
+        }
+        $selectedRecords = @($panelSourceClosure.modules | Where-Object {
+            [string]$_.module_id -ceq $selectedPanelModuleId -and
+            [string]$_.entry_class -ceq $selectedPanelEntryClass
+        })
+        if ($selectedRecords.Count -ne 1) {
+            throw "Native panel source closure does not bind exactly one matching selected entry class."
+        }
+        $panelSourcePaths = @{}
+        foreach ($sourceRecord in @($panelSourceClosure.source_files)) {
+            $relativeSource = ([string]$sourceRecord.path).Replace('\', '/')
+            if ([string]::IsNullOrWhiteSpace($relativeSource) -or
+                -not $relativeSource.StartsWith('apps/native-renderer-android/panel-modules/', [System.StringComparison]::Ordinal) -or
+                -not $relativeSource.EndsWith('.java', [System.StringComparison]::Ordinal)) {
+                throw "Native panel source is outside the owned panel-module root: $relativeSource"
+            }
+            if ($panelSourcePaths.ContainsKey($relativeSource)) {
+                throw "Native panel source closure contains a duplicate source: $relativeSource"
+            }
+            $panelSourcePaths[$relativeSource] = $true
+            $resolvedPanelSource = Resolve-RepoPath -Path $relativeSource -RepoRoot ([string]$repoRoot)
+            Assert-HashMatches `
+                -Label "Native panel source $relativeSource" `
+                -ExpectedSha256 ([string]$sourceRecord.sha256) `
+                -Path $resolvedPanelSource
+            $panelSourceFiles += $resolvedPanelSource
+        }
+        if ($panelSourceFiles.Count -eq 0) {
+            throw "Selected native panel source closure is empty: $selectedPanelModuleId"
+        }
+    } elseif (-not [string]::IsNullOrWhiteSpace($selectedPanelModuleId) -or
+        -not [string]::IsNullOrWhiteSpace($selectedPanelEntryClass) -or
+        @($panelSourceClosure.modules).Count -ne 0 -or
+        @($panelSourceClosure.source_files).Count -ne 0) {
+        throw "Native app without ControlPanelActivity must carry an explicit empty panel source closure."
     }
     $packageName = [string]$appBuildLockObject.android_manifest.package_name
     $activityName = "$packageName/android.app.NativeActivity"
@@ -378,6 +460,8 @@ if (-not [string]::IsNullOrWhiteSpace($AppBuildLock)) {
     if ($undeclaredAmbient.Count -gt 0) {
         throw "Locked native APK build rejected undeclared ambient feature inputs: $($undeclaredAmbient -join ', '). Add them to the app feature lock or clear them."
     }
+} elseif ((Get-Content -LiteralPath $manifestInputPath -Raw) -match 'ControlPanelActivity') {
+    throw "Unlocked development builds cannot package ControlPanelActivity; resolve an exact native-app feature lock first."
 }
 
 Import-Module (Join-Path $PSScriptRoot "lib\SourceComposition.psm1") -Force
@@ -633,6 +717,109 @@ final class GeneratedEmbeddedManifoldRuntimeConfig {
     $generatedEmbeddedRuntimeConfigPath,
     $generatedEmbeddedRuntimeConfigSource,
     (New-Object System.Text.UTF8Encoding($false)))
+$generatedControlPanelActivityPath = ""
+if (-not [string]::IsNullOrWhiteSpace($selectedPanelModuleId)) {
+    $panelNativeMethods = if ($selectedPanelModuleId -ceq "stimulus-volume") {
+@"
+    static native String nativeSubmitLiveStimulusCandidate(String candidateJson);
+"@
+    } elseif ($selectedPanelModuleId -ceq "private-particle-controls") {
+@"
+    static native String nativeSubmitLivePrivateParticleDynamics(String dynamicsJson);
+"@
+    } elseif ($selectedPanelModuleId -ceq "breath-composition-controls") {
+@"
+    static native String nativeSubmitLivePrivateLayerSelection(String selectionJson);
+    static native String nativeSubmitLiveDepthAlignment(String alignmentJson);
+    static native String nativeSubmitLivePrivateParticleDynamics(String dynamicsJson);
+    static native String nativeStartDriverProfileSessionBlock(String blockJson);
+    static native String nativeApplyBreathCompositionCommand(String commandJson);
+    static native String nativeApplyLslTransportCommand(String commandJson);
+    static native String nativeReadLslTransportStatus();
+    static native String nativeReadBreathCompositionStatus();
+
+    static String applyLslTransportCommandFromOwner(String commandJson) {
+        return nativeApplyLslTransportCommand(commandJson);
+    }
+"@
+    } else {
+        throw "Native panel module has no declared JNI adapter surface: $selectedPanelModuleId"
+    }
+    $generatedControlPanelActivityPath = Join-Path $generatedEmbeddedPackageDir "ControlPanelActivity.java"
+    $generatedControlPanelActivitySource = @"
+package io.github.mesmerprism.rustyquest.native_renderer;
+
+/**
+ * Build-generated Android shell for the one panel module admitted by the app lock.
+ * Product pages and local presentation state live in the selected module; this class
+ * remains the stable manifest/JNI/lifecycle boundary.
+ */
+public final class ControlPanelActivity extends $selectedPanelEntrySimpleName {
+    static final PanelModuleRegistry PACKAGED_PANEL = PanelModuleRegistry.requireExact(
+        "$selectedPanelModuleId",
+        $selectedPanelEntrySimpleName.MODULE_ID,
+        $selectedPanelEntrySimpleName.class
+    );
+
+    static {
+        System.loadLibrary("rusty_quest_native_renderer");
+    }
+
+    private final PanelImmersiveHandoff immersiveHandoff = new PanelImmersiveHandoff(this);
+
+    static void closePanelAndReturnToImmersive(android.app.Activity activity) {
+        if (!(activity instanceof ControlPanelActivity)) {
+            throw new IllegalStateException("Panel handoff owner is not the packaged ControlPanelActivity");
+        }
+        ((ControlPanelActivity) activity).immersiveHandoff.request();
+    }
+
+    @Override
+    protected void onCreate(android.os.Bundle state) {
+        PACKAGED_PANEL.entryClass();
+        super.onCreate(state);
+    }
+
+    @Override
+    protected void onNewIntent(android.content.Intent intent) {
+        super.onNewIntent(intent);
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, android.content.Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] results) {
+        super.onRequestPermissionsResult(requestCode, permissions, results);
+    }
+
+    @Override
+    public void onConfigurationChanged(android.content.res.Configuration configuration) {
+        super.onConfigurationChanged(configuration);
+    }
+
+    @Override
+    protected void onPause() {
+        immersiveHandoff.onPanelPaused();
+        super.onPause();
+    }
+
+    @Override
+    protected void onDestroy() {
+        immersiveHandoff.onPanelDestroyed();
+        super.onDestroy();
+    }
+
+$panelNativeMethods
+}
+"@
+    [System.IO.File]::WriteAllText(
+        $generatedControlPanelActivityPath,
+        $generatedControlPanelActivitySource,
+        (New-Object System.Text.UTF8Encoding($false)))
+}
 $embeddedAuthorityAssetDir = Join-Path $assetsDir "manifold"
 New-Item -ItemType Directory -Force -Path $embeddedAuthorityAssetDir | Out-Null
 Copy-Item -LiteralPath $embeddedProductSpecPath -Destination (Join-Path $embeddedAuthorityAssetDir "product-spec.json") -Force
@@ -648,6 +835,8 @@ Copy-Item -LiteralPath (Join-Path $repoRoot "fixtures\native-renderer\recorded-h
 if (-not [string]::IsNullOrWhiteSpace($nativeAppSettingsPath)) {
     Copy-Item -LiteralPath $nativeAppSettingsPath -Destination (Join-Path $assetsDir "native-app-settings.json") -Force
     Copy-Item -LiteralPath $appBuildLockPath -Destination (Join-Path $assetsDir "feature-lock.json") -Force
+    $panelSourceClosure | ConvertTo-Json -Depth 20 |
+        Set-Content -LiteralPath (Join-Path $assetsDir "panel-source-closure.json") -Encoding UTF8
 }
 
 $declaredAssetInputsPackaged = @()
@@ -701,7 +890,14 @@ $sharedBrokerTransportJava = Get-ChildItem -LiteralPath $sharedBrokerTransportJa
 if ($sharedBrokerTransportJava.Count -lt 1) {
     throw "Shared broker transport Android sources are incomplete: $sharedBrokerTransportJavaRoot"
 }
-$sourceFiles = @($sourceFiles) + @($sharedBrokerClientJava) + @($sharedBrokerTransportJava) + @($generatedEmbeddedRuntimeConfigPath)
+$sourceFiles = @($sourceFiles) +
+    @($panelSourceFiles) +
+    @($sharedBrokerClientJava) +
+    @($sharedBrokerTransportJava) +
+    @($generatedEmbeddedRuntimeConfigPath)
+if (-not [string]::IsNullOrWhiteSpace($generatedControlPanelActivityPath)) {
+    $sourceFiles += $generatedControlPanelActivityPath
+}
 if ($sourceFiles.Count -eq 0) {
     throw "No Java sources found under $appRoot"
 }
@@ -879,7 +1075,16 @@ $manifest = [ordered]@{
     marker_prefix = "RUSTY_QUEST_NATIVE_RENDERER"
     rust_native_activity = $true
     java_classes_packaged = $true
-    panel_activity = "$packageName/io.github.mesmerprism.rustyquest.native_renderer.ControlPanelActivity"
+    panel_activity_packaged = (-not [string]::IsNullOrWhiteSpace($selectedPanelModuleId))
+    panel_activity = if ([string]::IsNullOrWhiteSpace($selectedPanelModuleId)) { "" } else { "$packageName/io.github.mesmerprism.rustyquest.native_renderer.ControlPanelActivity" }
+    selected_panel_module_id = $selectedPanelModuleId
+    selected_panel_entry_class = $selectedPanelEntryClass
+    panel_runtime_widening_allowed = $false
+    panel_source_closure_asset = if ([string]::IsNullOrWhiteSpace($selectedPanelModuleId)) { "" } else { "panel-source-closure.json" }
+    panel_source_closure = $panelSourceClosure
+    panel_java_sources = if ($null -eq $panelSourceClosure) { @() } else { @($panelSourceClosure.source_files) }
+    java_compile_source_count = @($sourceFiles).Count
+    java_compile_sources = @($sourceFiles | ForEach-Object { [System.IO.Path]::GetFullPath([string]$_) })
     panel_transport = "app-private-file"
     panel_candidate_file = "stimulus_volume_candidate.json"
     panel_status_file = "stimulus_volume_status.json"

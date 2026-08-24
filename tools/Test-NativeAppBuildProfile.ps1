@@ -93,6 +93,7 @@ Assert-SetEquals -Label "canary selected feature closure" -Expected @(
     "quest.native.openxr_vulkan_base",
     "renderer.background.solid_black",
     "renderer.private_particles",
+    "ui.private_particle_control_panel",
     "ui.same_apk_control_panel"
 ) -Actual @($lock.selected_feature_ids | ForEach-Object { [string]$_ })
 

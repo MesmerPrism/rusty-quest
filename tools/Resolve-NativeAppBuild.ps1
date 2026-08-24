@@ -810,6 +810,177 @@ function Write-JsonArtifact {
     $Value | ConvertTo-Json -Depth 32 | Set-Content -LiteralPath $Path -Encoding UTF8
 }
 
+function Resolve-NativePanelComposition {
+    param(
+        [Parameter(Mandatory=$true)][string]$RepoRoot,
+        [Parameter(Mandatory=$true)][string[]]$SelectedFeatureIds,
+        [Parameter(Mandatory=$true)]$Features,
+        [Parameter(Mandatory=$true)][string[]]$Activities
+    )
+
+    $compositionOwners = @()
+    foreach ($featureId in $SelectedFeatureIds) {
+        $descriptor = $Features[$featureId].descriptor
+        if ($null -ne $descriptor.PSObject.Properties["panel_composition"]) {
+            $compositionOwners += [ordered]@{
+                feature_id = $featureId
+                composition = $descriptor.panel_composition
+            }
+        }
+    }
+
+    $controlPanelSelected = $Activities -contains "ControlPanelActivity"
+    if (-not $controlPanelSelected) {
+        if ($compositionOwners.Count -ne 0) {
+            throw "A native panel module was selected without ControlPanelActivity."
+        }
+        return [ordered]@{
+            schema = "rusty.quest.native_renderer.panel_source_closure.v1"
+            selected_module_id = $null
+            entry_class = $null
+            modules = @()
+            source_files = @()
+            runtime_widening_allowed = $false
+        }
+    }
+    if ($compositionOwners.Count -eq 0) {
+        throw "ControlPanelActivity requires exactly one packaged panel composition; none resolved."
+    }
+    if ($compositionOwners.Count -ne 1) {
+        throw "ControlPanelActivity requires exactly one packaged panel composition; duplicate selections resolved from: $(@($compositionOwners.feature_id) -join ', ')"
+    }
+
+    $owner = $compositionOwners[0]
+    $composition = $owner.composition
+    if ([string]$composition.schema -ne "rusty.quest.native_renderer.panel_composition.v1") {
+        throw "Feature $($owner.feature_id) has unsupported panel composition schema: $($composition.schema)"
+    }
+    $selectedModuleId = [string]$composition.selected_module_id
+    if ([string]::IsNullOrWhiteSpace($selectedModuleId)) {
+        throw "Feature $($owner.feature_id) has an absent panel selected_module_id."
+    }
+    $deniedModuleIds = @(Get-StringArray $composition.denied_module_ids | Sort-Object -Unique)
+    if ($deniedModuleIds -contains $selectedModuleId) {
+        throw "Selected panel module is denied: $selectedModuleId"
+    }
+
+    $modulesById = @{}
+    foreach ($module in @($composition.modules)) {
+        foreach ($requiredField in @("module_id", "entry_class", "dependencies", "source_files")) {
+            Assert-RequiredProperty -Object $module -Name $requiredField -Label "Panel module in feature $($owner.feature_id)"
+        }
+        $moduleId = [string]$module.module_id
+        if ($moduleId -notmatch '^[a-z0-9]+([.-][a-z0-9]+)*$') {
+            throw "Invalid panel module id: $moduleId"
+        }
+        if ($modulesById.ContainsKey($moduleId)) {
+            throw "Panel composition contains duplicate module id: $moduleId"
+        }
+        $dependencies = @(Get-StringArray $module.dependencies)
+        if (@($dependencies | Sort-Object -Unique).Count -ne $dependencies.Count) {
+            throw "Panel module $moduleId contains duplicate dependencies."
+        }
+        $sourceFiles = @(Get-StringArray $module.source_files)
+        if ($sourceFiles.Count -eq 0) {
+            throw "Panel module $moduleId has no declared Java sources."
+        }
+        $modulesById[$moduleId] = [ordered]@{
+            module_id = $moduleId
+            entry_class = [string]$module.entry_class
+            dependencies = $dependencies
+            source_files = $sourceFiles
+        }
+    }
+    if (-not $modulesById.ContainsKey($selectedModuleId)) {
+        throw "Unknown selected panel module: $selectedModuleId"
+    }
+    if ([string]::IsNullOrWhiteSpace([string]$modulesById[$selectedModuleId].entry_class)) {
+        throw "Selected panel module $selectedModuleId has no entry class."
+    }
+
+    $closure = @{}
+    $pending = New-Object System.Collections.Generic.Stack[string]
+    $pending.Push($selectedModuleId)
+    while ($pending.Count -gt 0) {
+        $moduleId = $pending.Pop()
+        if ($closure.ContainsKey($moduleId)) {
+            continue
+        }
+        if (-not $modulesById.ContainsKey($moduleId)) {
+            throw "Panel dependency closure references unknown module: $moduleId"
+        }
+        if ($deniedModuleIds -contains $moduleId) {
+            throw "Panel dependency closure includes denied module: $moduleId"
+        }
+        $closure[$moduleId] = $true
+        foreach ($dependency in @($modulesById[$moduleId].dependencies)) {
+            $pending.Push([string]$dependency)
+        }
+    }
+
+    $orderedIds = @()
+    $remaining = @($closure.Keys | Sort-Object)
+    while ($remaining.Count -gt 0) {
+        $ready = @($remaining | Where-Object {
+            $candidateId = [string]$_
+            @($modulesById[$candidateId].dependencies | Where-Object { $orderedIds -notcontains [string]$_ }).Count -eq 0
+        } | Sort-Object)
+        if ($ready.Count -eq 0) {
+            throw "Panel module dependency graph is cyclic: $($remaining -join ', ')"
+        }
+        foreach ($readyId in $ready) {
+            $orderedIds += [string]$readyId
+        }
+        $remaining = @($remaining | Where-Object { $ready -notcontains $_ })
+    }
+
+    $sourceRecords = @()
+    $sourcePathSet = @{}
+    $moduleRecords = @()
+    foreach ($moduleId in $orderedIds) {
+        $module = $modulesById[$moduleId]
+        $moduleSourceRecords = @()
+        foreach ($relativePath in @($module.source_files)) {
+            $normalizedPath = ([string]$relativePath).Replace("\", "/")
+            if (-not $normalizedPath.StartsWith("apps/native-renderer-android/panel-modules/", [System.StringComparison]::Ordinal)) {
+                throw "Panel source must live in the declared panel-modules owner root: $normalizedPath"
+            }
+            if ($sourcePathSet.ContainsKey($normalizedPath)) {
+                throw "Panel source closure contains duplicate source path: $normalizedPath"
+            }
+            $sourcePath = Resolve-RepoPath -Path $normalizedPath -RepoRoot $RepoRoot
+            if (-not (Test-Path -LiteralPath $sourcePath -PathType Leaf)) {
+                throw "Panel source closure references a missing source: $normalizedPath"
+            }
+            $record = [ordered]@{
+                path = $normalizedPath
+                sha256 = Get-FileSha256 -Path $sourcePath
+                module_id = $moduleId
+            }
+            $sourcePathSet[$normalizedPath] = $true
+            $sourceRecords += $record
+            $moduleSourceRecords += $record
+        }
+        $moduleRecords += [ordered]@{
+            module_id = $moduleId
+            entry_class = [string]$module.entry_class
+            dependencies = @($module.dependencies)
+            source_files = $moduleSourceRecords
+        }
+    }
+
+    return [ordered]@{
+        schema = "rusty.quest.native_renderer.panel_source_closure.v1"
+        selected_by_feature_id = [string]$owner.feature_id
+        selected_module_id = $selectedModuleId
+        entry_class = [string]$modulesById[$selectedModuleId].entry_class
+        denied_module_ids = $deniedModuleIds
+        modules = $moduleRecords
+        source_files = $sourceRecords
+        runtime_widening_allowed = $false
+    }
+}
+
 $RepoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 $repoRootText = [string]$RepoRoot
 $appSpecPath = Resolve-RepoPath -Path $AppSpec -RepoRoot $repoRootText
@@ -1133,6 +1304,12 @@ Assert-SetEquals -Label "Android activity surface" -Expected (Get-StringArray $a
 Assert-SetEquals -Label "Android receiver surface" -Expected (Get-StringArray $app.declared_manifest.receivers) -Actual $receivers
 Assert-SetEquals -Label "Android service surface" -Expected (Get-StringArray $app.declared_manifest.services) -Actual $services
 
+$panelSourceClosure = Resolve-NativePanelComposition `
+    -RepoRoot $repoRootText `
+    -SelectedFeatureIds $selectedFeatureIds `
+    -Features $features `
+    -Activities $activities
+
 $environmentDepthMode = if ($runtimeSet.Contains($EnvironmentDepthModeProperty)) { [string]$runtimeSet[$EnvironmentDepthModeProperty] } else { "" }
 $environmentDepthSource = if ($runtimeSet.Contains($EnvironmentDepthSourceProperty)) { [string]$runtimeSet[$EnvironmentDepthSourceProperty] } else { "" }
 $environmentDepthNativePassthroughRequired =
@@ -1334,6 +1511,7 @@ $resolutionInputs = [ordered]@{
     resolver_version = $ResolverVersion
     app_spec_sha256 = Get-FileSha256 -Path $appSpecPath
     feature_descriptors = $featureDescriptorRecords
+    panel_source_closure = $panelSourceClosure
     private_particle_payload_linkage = $privateParticlePayloadLinkageReceipt
     build_env = @($envByName.Keys | Sort-Object | ForEach-Object { $envByName[$_] })
     runtime_set = @($runtimeSet.Keys | Sort-Object | ForEach-Object { [ordered]@{ name = [string]$_; value = [string]$runtimeSet[$_] } })
@@ -1528,6 +1706,7 @@ $nativeAppSettings = [ordered]@{
     resolver_version = $ResolverVersion
     selected_feature_ids = $selectedFeatureIds
     modules = $moduleRecords
+    panel = $panelSourceClosure
     values = $settingsValues
     disabled_modules = $clearFamilies
     settings_hotload = $settingsHotload
@@ -1554,6 +1733,7 @@ $featureLock = [ordered]@{
     denied_feature_ids = @(Get-StringArray $app.denied_features | Sort-Object)
     feature_descriptors = $featureDescriptorRecords
     dependency_reasons = $dependencyReasons
+    panel_source_closure = $panelSourceClosure
     breath_composition_activation = if ($null -ne $breathCompositionActivationBinding) {
         [ordered]@{
             schema = "rusty.quest.breath_composition.activation_binding.v1"
@@ -1665,6 +1845,7 @@ $buildManifest = [ordered]@{
     package_name = [string]$app.package_name
     application_label = $applicationLabel
     package_policy = [string]$app.package_policy
+    panel_source_closure = $panelSourceClosure
     feature_lock_sha256 = Get-FileSha256 -Path $featureLockPath
     runtime_profile_sha256 = Get-FileSha256 -Path $runtimeProfilePath
     native_app_settings_sha256 = Get-FileSha256 -Path $nativeAppSettingsPath
@@ -1682,6 +1863,7 @@ $audit = [ordered]@{
     source_app_spec = Get-RepoRelativePath -RepoRoot $repoRootText -Path $appSpecPath
     selected_feature_ids = $selectedFeatureIds
     denied_feature_ids = @(Get-StringArray $app.denied_features | Sort-Object)
+    panel_source_closure = $panelSourceClosure
     android_permissions = $permissions
     android_uses_features = $usesFeatures
     render_mode = $renderMode
@@ -1703,6 +1885,7 @@ if ($null -ne $resultJsonCanonicalPath) {
         app_id = [string]$app.app_id
         resolution_fingerprint = $resolutionFingerprint
         resolved_feature_ids = $selectedFeatureIds
+        panel_source_closure = $panelSourceClosure
         output_root = [System.IO.Path]::GetFullPath($outputRootPath)
         feature_lock_path = [System.IO.Path]::GetFullPath($featureLockPath)
         feature_lock_sha256 = Get-FileSha256 -Path $featureLockPath

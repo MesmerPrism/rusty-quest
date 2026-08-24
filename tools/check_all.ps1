@@ -37,6 +37,7 @@ try {
     Invoke-Checked "native renderer runtime profile matrix" "pwsh" @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools\Test-NativeRendererProfileMatrix.ps1")
     Invoke-Checked "native renderer property parity" "python" @("tools\check_native_renderer_property_parity.py", "--out", "local-artifacts\native-renderer-property-parity.json")
     Invoke-Checked "native app-build static gate" "pwsh" @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools\checks\Test-NativeAppBuildStatic.ps1", "-RepoRoot", ".")
+    Invoke-Checked "native renderer panel composition static gate" "pwsh" @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools\checks\Test-NativeRendererPanelCompositionStatic.ps1", "-RepoRoot", ".")
     Invoke-Checked "APK build and run isolation static gate" "pwsh" @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools\checks\Test-ApkRunIsolationStatic.ps1", "-RepoRoot", ".")
     Invoke-Checked "recording host reliability gate" "pwsh" @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools\checks\Test-QuestRecordingHostReliability.ps1", "-RepoRoot", ".")
     $externalAuthorityArguments = @(

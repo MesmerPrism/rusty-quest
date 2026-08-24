@@ -7,7 +7,7 @@
   "requested_features": [
     "input.controllers_and_hands_optional",
     "quest.native.openxr_vulkan_base",
-    "ui.same_apk_control_panel",
+    "ui.private_particle_control_panel",
     "renderer.background.solid_black",
     "renderer.private_particles",
     "particles.tracers.snapshot_rows",

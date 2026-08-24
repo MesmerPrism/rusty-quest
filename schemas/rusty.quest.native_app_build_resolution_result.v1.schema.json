@@ -8,6 +8,7 @@
     "schema",
     "app_id",
     "resolution_fingerprint",
+    "panel_source_closure",
     "output_root",
     "feature_lock_path",
     "feature_lock_sha256",
@@ -25,6 +26,9 @@
     "resolution_fingerprint": {
       "type": "string",
       "pattern": "^[a-f0-9]{64}$"
+    },
+    "panel_source_closure": {
+      "type": "object"
     },
     "output_root": {
       "type": "string",

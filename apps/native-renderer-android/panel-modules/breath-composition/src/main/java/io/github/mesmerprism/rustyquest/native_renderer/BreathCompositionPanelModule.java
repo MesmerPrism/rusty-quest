@@ -45,7 +45,21 @@ import java.util.UUID;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
-public final class ControlPanelActivity extends Activity {
+/**
+ * Product-composable breath/particle/Polar/LSL control surface.
+ *
+ * <p>The generated {@code ControlPanelActivity} is deliberately only the Android entry
+ * shell and JNI name anchor. This module owns the product pages, local presentation state,
+ * low-rate command adapters, and native-effective readback projection. It is compiled only
+ * when the resolved native-app lock selects the {@code breath-composition-controls} module.</p>
+ */
+public class BreathCompositionPanelModule extends Activity implements PanelModule {
+    public static final String MODULE_ID = "breath-composition-controls";
+
+    @Override
+    public final String panelModuleId() {
+        return MODULE_ID;
+    }
     private static final String TAG = "RQNativeRenderer";
     private static final String MARKER_PREFIX = "RUSTY_QUEST_NATIVE_RENDERER";
     private static final String CHANNEL_DRIVER_PROFILE_PANEL = "driver-profile-panel";
@@ -91,8 +105,6 @@ public final class ControlPanelActivity extends Activity {
     public static final String EXTRA_DRIVER_PROFILE_SESSION_STARTUP_RESET =
         "spatial_camera_panel_session_startup_reset";
     private static final int REQUEST_DISPLAY_COMPOSITE_CAPTURE = 7401;
-    private static final String CANDIDATE_FILE = "stimulus_volume_candidate.json";
-    private static final String STATUS_FILE = "stimulus_volume_status.json";
     private static final String DEPTH_ALIGNMENT_STATUS_FILE = "depth_alignment_status.json";
     private static final String PRIVATE_PARTICLE_DYNAMICS_STATUS_FILE =
         "private_particle_dynamics_status.json";
@@ -109,7 +121,6 @@ public final class ControlPanelActivity extends Activity {
     private static final String POLAR_SENSOR_OPERATOR_STATUS_FILE =
         "polar_sensor_operator_status.json";
     private static final String POLAR_SENSOR_STATUS_FILE = "polar_sensor_status.json";
-    private static final String PROFILE_SCHEMA = "rusty.quest.stimulus_volume.profile.v1";
     private static final String PRIVATE_LAYER_SELECTION_SCHEMA =
         "rusty.quest.native_renderer.private_layer_selection.v1";
     private static final String ENVIRONMENT_DEPTH_ALIGNMENT_SCHEMA =
@@ -164,20 +175,6 @@ public final class ControlPanelActivity extends Activity {
         "debug.rustyquest.native_renderer.environment_depth.alignment.right.offset.y.uv";
     private static final String PROP_ENVIRONMENT_DEPTH_ALIGNMENT_SCALE =
         "debug.rustyquest.native_renderer.environment_depth.alignment.scale";
-    private static final String PROP_STIMULUS_ENABLED =
-        "debug.rustyquest.native_renderer.stimulus_volume.enabled";
-    private static final String PROP_STIMULUS_SAFETY_ACK =
-        "debug.rustyquest.native_renderer.stimulus_volume.safety_ack";
-    private static final String PROP_STIMULUS_RANDOMIZE =
-        "debug.rustyquest.native_renderer.stimulus_volume.randomize.enabled";
-    private static final String PROP_STIMULUS_RENDER_TARGET =
-        "debug.rustyquest.native_renderer.stimulus_volume.render_target";
-    private static final String PROP_STIMULUS_RAYMARCH =
-        "debug.rustyquest.native_renderer.stimulus_volume.raymarch_samples";
-    private static final String PROP_STIMULUS_CENTRAL_FOV =
-        "debug.rustyquest.native_renderer.stimulus_volume.central_fov_fraction";
-    private static final String PROP_STIMULUS_GRADIENT =
-        "debug.rustyquest.native_renderer.stimulus_volume.gradient_smoothing";
     private static final String PROP_DISPLAY_COMPOSITE_WIDTH =
         "debug.rustyquest.native_renderer.display_composite.width";
     private static final String PROP_DISPLAY_COMPOSITE_HEIGHT =
@@ -377,51 +374,17 @@ public final class ControlPanelActivity extends Activity {
         }
     }
 
-    private CheckBox safetyAck;
-    private CheckBox enabledRequested;
-    private CheckBox randomizeEnabled;
-    private CheckBox liveAutoApply;
-    private Spinner renderTarget;
     private TextView status;
     private Handler liveApplyHandler;
-    private Runnable pendingLiveApply;
     private Runnable pendingDepthAlignmentApply;
     private Runnable pendingPrivateParticleDynamicsApply;
-    private String handledDiagnosticIntentToken = "";
     private String handledDisplayCompositeIntentToken = "";
     private String handledPolarSensorPanelCommandToken = "";
     private String handledBreathCompositionCommandToken = "";
     private String handledDriverProfileMeshPanelCommandToken = "";
     private boolean displayCompositeRequestInFlight;
-    private Button[] patternButtons = new Button[0];
-    private Button[] mirrorButtons = new Button[0];
     private Button[] privateLayerButtons = new Button[0];
-    private String selectedPatternFamily = "randomized-trevor-vocabulary";
-    private String selectedMirrorMode = "none";
     private int selectedPrivateLayerIndex;
-    private SliderControl minHz;
-    private SliderControl maxHz;
-    private SliderControl raymarchSamples;
-    private SliderControl centralFovFraction;
-    private SliderControl gradientSmoothing;
-    private SliderControl temporalHz;
-    private SliderControl oscillatorAHz;
-    private SliderControl oscillatorBHz;
-    private SliderControl oscillatorCHz;
-    private SliderControl spatialScale;
-    private SliderControl sourceShiftX;
-    private SliderControl sourceShiftY;
-    private SliderControl noiseScale;
-    private SliderControl depthWarp;
-    private SliderControl twist;
-    private SliderControl pinch;
-    private SliderControl scramble;
-    private SliderControl jumble;
-    private SliderControl stretchX;
-    private SliderControl stretchY;
-    private SliderControl phaseA;
-    private SliderControl phaseB;
-    private SliderControl phaseC;
     private SliderControl depthLeftOffsetX;
     private SliderControl depthLeftOffsetY;
     private SliderControl depthRightOffsetX;
@@ -509,7 +472,6 @@ public final class ControlPanelActivity extends Activity {
         setContentView(buildContentView());
         updateReadyStatusForPanelMode();
         handleDisplayCompositeIntent(getIntent());
-        handleDiagnosticIntent(getIntent());
         handlePolarSensorPanelCommandIntent(getIntent());
         handleBreathCompositionCommandIntent(getIntent());
         handleDriverProfileMeshPanelCommandIntent(getIntent());
@@ -551,7 +513,6 @@ public final class ControlPanelActivity extends Activity {
             );
             rebuildContentViewForCurrentMode();
             handleDisplayCompositeIntent(intent);
-            handleDiagnosticIntent(intent);
             handlePolarSensorPanelCommandIntent(intent);
             handleBreathCompositionCommandIntent(intent);
             handleDriverProfileMeshPanelCommandIntent(intent);
@@ -562,7 +523,6 @@ public final class ControlPanelActivity extends Activity {
             );
         } else {
             handleDisplayCompositeIntent(intent);
-            handleDiagnosticIntent(intent);
             handlePolarSensorPanelCommandIntent(intent);
             handleBreathCompositionCommandIntent(intent);
             handleDriverProfileMeshPanelCommandIntent(intent);
@@ -602,7 +562,7 @@ public final class ControlPanelActivity extends Activity {
         } else if ("driver-profile-session".equals(panelMode)) {
             updateStatus("Driver profile session panel ready.");
         } else {
-            updateStatus("Panel ready. Candidate path: " + new File(getFilesDir(), CANDIDATE_FILE));
+            updateStatus("Viscereality control panel ready.");
         }
     }
 
@@ -610,7 +570,6 @@ public final class ControlPanelActivity extends Activity {
     protected void onResume() {
         super.onResume();
         handleDisplayCompositeIntent(getIntent());
-        handleDiagnosticIntent(getIntent());
         if ("breath-mapping".equals(readControlPanelMode())) {
             breathOperatorMarker(
                 "status=panel-foreground panelVisibility=foreground "
@@ -770,7 +729,9 @@ public final class ControlPanelActivity extends Activity {
         if ("breath-mapping".equals(panelMode)) {
             return buildViscerealityControlPanelView();
         }
-        return buildStimulusPanelView();
+        // The packaged module is authoritative. Missing, stale, or malformed runtime mode
+        // input may narrow to the Viscereality home page but can never activate StrobeSim.
+        return buildViscerealityControlPanelView();
     }
 
     private View buildViscerealityControlPanelView() {
@@ -1923,191 +1884,6 @@ public final class ControlPanelActivity extends Activity {
         breathCompositionRefresh = null;
     }
 
-    private View buildStimulusPanelView() {
-        ScrollView scroll = new ScrollView(this);
-        scroll.setBackgroundColor(PANEL_BG);
-        LinearLayout root = new LinearLayout(this);
-        root.setOrientation(LinearLayout.VERTICAL);
-        int pad = dp(18);
-        root.setPadding(pad, pad, pad, pad);
-        scroll.addView(root);
-
-        LinearLayout header = new LinearLayout(this);
-        header.setOrientation(LinearLayout.HORIZONTAL);
-        header.setGravity(Gravity.CENTER_VERTICAL);
-        TextView title = text("Volumetric Pattern Panel", 22, PANEL_FG);
-        title.setGravity(Gravity.CENTER_VERTICAL);
-        header.addView(title, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
-        Button headerClose = button("Close");
-        headerClose.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View view) {
-                closePanelAndReturnToImmersive();
-            }
-        });
-        header.addView(headerClose);
-        root.addView(header);
-        root.addView(text("App-private candidate for the native OpenXR/Vulkan renderer.", 13, PANEL_MUTED));
-        root.addView(previewBand());
-
-        safetyAck = checkBox(
-            "Photosensitive-risk acknowledgement",
-            readBooleanProperty(PROP_STIMULUS_SAFETY_ACK, false)
-        );
-        enabledRequested = checkBox(
-            "Request active stimulus after launch",
-            readBooleanProperty(PROP_STIMULUS_ENABLED, false)
-        );
-        randomizeEnabled = checkBox(
-            "Enable right-primary randomize",
-            readBooleanProperty(PROP_STIMULUS_RANDOMIZE, true)
-        );
-        View.OnClickListener liveControlListener = new View.OnClickListener() {
-            @Override
-            public void onClick(View view) {
-                scheduleLiveApplyFromControl();
-            }
-        };
-        safetyAck.setOnClickListener(liveControlListener);
-        enabledRequested.setOnClickListener(liveControlListener);
-        randomizeEnabled.setOnClickListener(liveControlListener);
-        liveAutoApply = checkBox("Live auto update", true);
-        liveAutoApply.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View view) {
-                if (liveAutoApply.isChecked()) {
-                    scheduleLiveApplyFromControl();
-                } else {
-                    cancelPendingLiveApply();
-                    setStatusText("Live auto update off. Use Apply Live for explicit changes.");
-                }
-            }
-        });
-        root.addView(safetyAck);
-        root.addView(enabledRequested);
-        root.addView(randomizeEnabled);
-        root.addView(liveAutoApply);
-
-        root.addView(sectionTitle("Render"));
-        String[] renderTargets = new String[] {
-            "512x512x2-rgba16f",
-            "768x768x2-rgba16f",
-            "1024x1024x2-rgba16f"
-        };
-        renderTarget = spinner(
-            renderTargets,
-            indexOf(renderTargets, readSystemProperty(PROP_STIMULUS_RENDER_TARGET), 0)
-        );
-        root.addView(label("Render target"));
-        root.addView(renderTarget);
-        raymarchSamples = slider(
-            "Raymarch samples",
-            1.0,
-            48.0,
-            readDoubleProperty(PROP_STIMULUS_RAYMARCH, 12.0),
-            47,
-            "",
-            true
-        );
-        centralFovFraction = slider(
-            "Central FOV fraction",
-            0.45,
-            1.0,
-            readDoubleProperty(PROP_STIMULUS_CENTRAL_FOV, 0.72),
-            1000,
-            "",
-            false
-        );
-        gradientSmoothing = slider(
-            "Gradient smoothing",
-            0.0,
-            1.0,
-            readDoubleProperty(PROP_STIMULUS_GRADIENT, 0.78),
-            1000,
-            "",
-            false
-        );
-        root.addView(raymarchSamples.view);
-        root.addView(centralFovFraction.view);
-        root.addView(gradientSmoothing.view);
-
-        root.addView(sectionTitle("Pattern"));
-        root.addView(buildChoiceGrid(true, new String[][] {
-            {"Random", "randomized-trevor-vocabulary"},
-            {"Mix", "trevor-mix"},
-            {"Stripes", "stripes"},
-            {"Ripples", "ripples"},
-            {"Rays", "rays"},
-            {"Checker", "checker"},
-            {"Spiral", "spiral"},
-            {"Noise", "noise-field"}
-        }));
-
-        root.addView(sectionTitle("Mirroring"));
-        root.addView(buildChoiceGrid(false, new String[][] {
-            {"None", "none"},
-            {"Mirror X", "mirror-x"},
-            {"Mirror Y", "mirror-y"},
-            {"Mirror XY", "mirror-xy"},
-            {"Radial", "radial-wedge"},
-            {"Grid", "grid-fold"}
-        }));
-
-        root.addView(sectionTitle("Timing"));
-        minHz = slider("Randomize min Hz", 3.0, 40.0, 3.0, 1000, " Hz", false);
-        maxHz = slider("Randomize max Hz", 3.0, 40.0, 40.0, 1000, " Hz", false);
-        temporalHz = slider("Temporal Hz", 3.0, 40.0, 3.083864, 1000, " Hz", false);
-        oscillatorAHz = slider("Oscillator A", 3.0, 40.0, 6.041369, 1000, " Hz", false);
-        oscillatorBHz = slider("Oscillator B", 3.0, 40.0, 35.362293, 1000, " Hz", false);
-        oscillatorCHz = slider("Oscillator C", 3.0, 40.0, 37.53054, 1000, " Hz", false);
-        root.addView(minHz.view);
-        root.addView(maxHz.view);
-        root.addView(temporalHz.view);
-        root.addView(oscillatorAHz.view);
-        root.addView(oscillatorBHz.view);
-        root.addView(oscillatorCHz.view);
-
-        root.addView(sectionTitle("Volume Field"));
-        spatialScale = slider("Shape size", 0.35, 3.0, 0.900433, 1000, "", false);
-        sourceShiftX = slider("Source shift X", -0.5, 0.5, -0.052117, 1000, "", false);
-        sourceShiftY = slider("Source shift Y", -0.5, 0.5, 0.099197, 1000, "", false);
-        noiseScale = slider("Noise scale", 0.0, 12.0, 6.632848, 1000, "", false);
-        depthWarp = slider("Depth warp", 0.0, 0.25, 0.103063, 1000, "", false);
-        root.addView(spatialScale.view);
-        root.addView(sourceShiftX.view);
-        root.addView(sourceShiftY.view);
-        root.addView(noiseScale.view);
-        root.addView(depthWarp.view);
-
-        root.addView(sectionTitle("Warp"));
-        twist = slider("Twist", -1.6, 1.6, -0.791351, 1000, "", false);
-        pinch = slider("Bulge/pinch", -1.2, 1.2, -0.281597, 1000, "", false);
-        scramble = slider("Scramble", 0.0, 1.0, 0.127603, 1000, "", false);
-        jumble = slider("Jumble", 0.0, 1.0, 0.165175, 1000, "", false);
-        stretchX = slider("Stretch X", 0.4, 2.0, 1.390104, 1000, "", false);
-        stretchY = slider("Stretch Y", 0.4, 2.0, 1.071787, 1000, "", false);
-        root.addView(twist.view);
-        root.addView(pinch.view);
-        root.addView(scramble.view);
-        root.addView(jumble.view);
-        root.addView(stretchX.view);
-        root.addView(stretchY.view);
-
-        root.addView(sectionTitle("Phase"));
-        phaseA = slider("Phase A", 0.0, Math.PI * 2.0, 0.964848, 1000, "", false);
-        phaseB = slider("Phase B", 0.0, Math.PI * 2.0, 1.612527, 1000, "", false);
-        phaseC = slider("Phase C", 0.0, Math.PI * 2.0, 3.835902, 1000, "", false);
-        root.addView(phaseA.view);
-        root.addView(phaseB.view);
-        root.addView(phaseC.view);
-
-        root.addView(buildActionRow());
-
-        status = text("", 13, PANEL_MUTED);
-        status.setPadding(0, dp(10), 0, dp(8));
-        root.addView(status);
-        return scroll;
-    }
 
     private View buildPrivateLayerSelectorView() {
         ScrollView scroll = new ScrollView(this);
@@ -2328,7 +2104,7 @@ public final class ControlPanelActivity extends Activity {
             polarSensorPanel = PolarSensorRuntime.forApplication(getApplicationContext()).attachPanel(this, new PolarSensorPanel.Host() {
                 @Override
                 public void closePanelAndReturnToImmersive() {
-                    ControlPanelActivity.this.closePanelAndReturnToImmersive();
+                    BreathCompositionPanelModule.this.closePanelAndReturnToImmersive();
                 }
 
                 @Override
@@ -6191,129 +5967,8 @@ public final class ControlPanelActivity extends Activity {
         }
     }
 
-    private View previewBand() {
-        TextView preview = text("depth ramp volume", 13, Color.WHITE);
-        preview.setGravity(Gravity.CENTER);
-        preview.setPadding(dp(12), dp(12), dp(12), dp(12));
-        GradientDrawable background = new GradientDrawable(
-            GradientDrawable.Orientation.LEFT_RIGHT,
-            new int[] {
-                Color.BLACK,
-                Color.rgb(0, 255, 255),
-                Color.rgb(255, 0, 180),
-                Color.rgb(255, 230, 0),
-                Color.BLACK
-            }
-        );
-        background.setCornerRadius(dp(3));
-        preview.setBackground(background);
-        LinearLayout.LayoutParams params =
-            new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(54));
-        params.setMargins(0, dp(12), 0, dp(12));
-        preview.setLayoutParams(params);
-        return preview;
-    }
 
-    private GridLayout buildChoiceGrid(final boolean patternGrid, String[][] choices) {
-        GridLayout grid = new GridLayout(this);
-        grid.setColumnCount(3);
-        grid.setUseDefaultMargins(false);
-        ArrayList<Button> buttons = new ArrayList<Button>();
-        for (int i = 0; i < choices.length; i++) {
-            Button choice = button(choices[i][0]);
-            choice.setTag(choices[i][1]);
-            choice.setMinHeight(dp(42));
-            choice.setOnClickListener(new View.OnClickListener() {
-                @Override
-                public void onClick(View view) {
-                    if (patternGrid) {
-                        selectedPatternFamily = String.valueOf(view.getTag());
-                        updateChoiceButtons(patternButtons, selectedPatternFamily);
-                    } else {
-                        selectedMirrorMode = String.valueOf(view.getTag());
-                        updateChoiceButtons(mirrorButtons, selectedMirrorMode);
-                    }
-                    scheduleLiveApplyFromControl();
-                }
-            });
-            GridLayout.LayoutParams params = new GridLayout.LayoutParams();
-            params.width = 0;
-            params.height = GridLayout.LayoutParams.WRAP_CONTENT;
-            params.columnSpec = GridLayout.spec(GridLayout.UNDEFINED, 1f);
-            params.setMargins(dp(3), dp(3), dp(3), dp(3));
-            grid.addView(choice, params);
-            buttons.add(choice);
-        }
-        if (patternGrid) {
-            patternButtons = buttons.toArray(new Button[buttons.size()]);
-            updateChoiceButtons(patternButtons, selectedPatternFamily);
-        } else {
-            mirrorButtons = buttons.toArray(new Button[buttons.size()]);
-            updateChoiceButtons(mirrorButtons, selectedMirrorMode);
-        }
-        return grid;
-    }
 
-    private View buildActionRow() {
-        LinearLayout actionBlock = new LinearLayout(this);
-        actionBlock.setOrientation(LinearLayout.VERTICAL);
-        actionBlock.setPadding(0, dp(14), 0, dp(10));
-
-        Button validate = button("Validate");
-        validate.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View view) {
-                try {
-                    buildCandidateJson("validate-only");
-                    writeStatus("validated_by_panel");
-                    updateStatus("Panel validation passed.");
-                } catch (Exception error) {
-                    updateStatus("Panel validation failed: " + error.getMessage());
-                }
-            }
-        });
-        Button stage = button("Stage");
-        stage.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View view) {
-                stageCandidate(false);
-            }
-        });
-        Button applyLive = button("Apply Live");
-        applyLive.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View view) {
-                submitLiveCandidate(true);
-            }
-        });
-        Button stageLaunch = button("Stage + Launch VR");
-        stageLaunch.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View view) {
-                stageCandidate(true);
-            }
-        });
-        Button close = button("Close");
-        close.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View view) {
-                closePanelAndReturnToImmersive();
-            }
-        });
-
-        LinearLayout firstRow = new LinearLayout(this);
-        firstRow.setOrientation(LinearLayout.HORIZONTAL);
-        firstRow.addView(validate, rowButtonParams());
-        firstRow.addView(applyLive, rowButtonParams());
-        firstRow.addView(stage, rowButtonParams());
-        LinearLayout secondRow = new LinearLayout(this);
-        secondRow.setOrientation(LinearLayout.HORIZONTAL);
-        secondRow.addView(stageLaunch, rowButtonParams());
-        secondRow.addView(close, rowButtonParams());
-        actionBlock.addView(firstRow);
-        actionBlock.addView(secondRow);
-        return actionBlock;
-    }
 
     private LinearLayout.LayoutParams rowButtonParams() {
         LinearLayout.LayoutParams params =
@@ -6322,159 +5977,12 @@ public final class ControlPanelActivity extends Activity {
         return params;
     }
 
-    private void updateChoiceButtons(Button[] buttons, String selectedValue) {
-        for (int i = 0; i < buttons.length; i++) {
-            boolean selected = selectedValue.equals(String.valueOf(buttons[i].getTag()));
-            styleButton(buttons[i], selected);
-        }
-    }
 
-    private void stageCandidate(boolean launchAfterStage) {
-        try {
-            JSONObject candidate = buildCandidateJson("stage");
-            writeFile(CANDIDATE_FILE, candidate.toString(2));
-            writeStatus("staged_by_panel");
-            updateStatus("Candidate staged.");
-            if (launchAfterStage) {
-                launchImmersiveRenderer();
-            }
-        } catch (Exception error) {
-            updateStatus("Stage failed: " + error.getMessage());
-        }
-    }
 
-    private JSONObject buildCandidateJson(String applyMode) throws Exception {
-        boolean active = enabledRequested.isChecked();
-        boolean acknowledged = safetyAck.isChecked();
-        if (active && !acknowledged) {
-            throw new IllegalArgumentException("acknowledgement is required before requesting active stimulus");
-        }
-        double min = minHz.value();
-        double max = maxHz.value();
-        if (min < 3.0 || max > 40.0 || min > max) {
-            throw new IllegalArgumentException("randomize Hz must stay within 3.0-40.0 and min <= max");
-        }
 
-        JSONObject source = new JSONObject()
-            .put("surface", "same_apk_panel")
-            .put("transport", "app_private_file");
-        JSONObject safety = new JSONObject()
-            .put("photosensitive_risk_ack", acknowledged)
-            .put("requires_user_activation", true)
-            .put("allow_autostart", false)
-            .put("black_lead_in_seconds", 1.0)
-            .put("max_duration_seconds", 30.0);
-        JSONObject randomize = new JSONObject()
-            .put("enabled", randomizeEnabled.isChecked())
-            .put("min_hz", min)
-            .put("max_hz", max);
-        JSONObject stimulus = new JSONObject()
-            .put("enabled_requested", active)
-            .put("composition", "opaque-black-projection")
-            .put("render_target", selected(renderTarget))
-            .put("raymarch_samples", raymarchSamples.intValue())
-            .put("central_fov_fraction", centralFovFraction.value())
-            .put("gradient_smoothing", gradientSmoothing.value())
-            .put("pattern_family", selectedPatternFamily)
-            .put("randomize", randomize)
-            .put("dynamics", buildDynamicsJson());
-        JSONObject apply = new JSONObject()
-            .put("mode", applyMode)
-            .put("expected_effective_revision", -1);
-        return new JSONObject()
-            .put("schema", PROFILE_SCHEMA)
-            .put("profile_id", "same-apk-panel")
-            .put("revision", System.currentTimeMillis())
-            .put("source", source)
-            .put("safety", safety)
-            .put("stimulus", stimulus)
-            .put("apply", apply);
-    }
 
-    private void scheduleLiveApplyFromControl() {
-        if (liveAutoApply == null || !liveAutoApply.isChecked()) {
-            return;
-        }
-        cancelPendingLiveApply();
-        pendingLiveApply = new Runnable() {
-            @Override
-            public void run() {
-                pendingLiveApply = null;
-                submitLiveCandidate(false);
-            }
-        };
-        liveApplyHandler.postDelayed(pendingLiveApply, 180);
-        setStatusText("Live auto update pending.");
-    }
 
-    private void cancelPendingLiveApply() {
-        if (liveApplyHandler != null && pendingLiveApply != null) {
-            liveApplyHandler.removeCallbacks(pendingLiveApply);
-            pendingLiveApply = null;
-        }
-    }
 
-    private void submitLiveCandidate(boolean userVisible) {
-        try {
-            if (!nativeBridgeLoaded) {
-                throw new IllegalStateException("native bridge unavailable: " + nativeBridgeLoadError);
-            }
-            JSONObject candidate = buildCandidateJson("apply-on-next-safe-frame");
-            String responseText = nativeSubmitLiveStimulusCandidate(candidate.toString());
-            JSONObject response = new JSONObject(responseText);
-            String responseStatus = response.optString("status", "unknown");
-            if (!"queued".equals(responseStatus)) {
-                throw new IllegalStateException(responseText);
-            }
-            String message = "Live candidate queued for next safe frame.";
-            if (response.optBoolean("overwrote_pending", false)) {
-                message = "Live candidate queued; older pending edit was replaced.";
-            }
-            if (userVisible) {
-                updateStatus(message);
-            } else {
-                setStatusText(message);
-            }
-        } catch (Exception error) {
-            if (userVisible) {
-                updateStatus("Live apply failed: " + error.getMessage());
-            } else {
-                setStatusText("Live auto update failed: " + error.getMessage());
-            }
-        }
-    }
-
-    private void handleDiagnosticIntent(Intent intent) {
-        if (intent == null || !ACTION_APPLY_LIVE_SELF_TEST.equals(intent.getAction())) {
-            return;
-        }
-        if (!"stimulus-volume".equals(readControlPanelMode())) {
-            setStatusText("Stimulus diagnostic self-test ignored in this panel mode.");
-            return;
-        }
-        String token = intent.getAction() + ":" + intent.getLongExtra("diagnostic_token", 0L);
-        if (token.equals(handledDiagnosticIntentToken)) {
-            return;
-        }
-        handledDiagnosticIntentToken = token;
-        if (safetyAck != null) {
-            safetyAck.setChecked(true);
-        }
-        if (enabledRequested != null) {
-            enabledRequested.setChecked(true);
-        }
-        if (randomizeEnabled != null) {
-            randomizeEnabled.setChecked(true);
-        }
-        cancelPendingLiveApply();
-        liveApplyHandler.postDelayed(new Runnable() {
-            @Override
-            public void run() {
-                submitLiveCandidate(true);
-            }
-        }, 120);
-        setStatusText("Diagnostic Apply Live self-test pending.");
-    }
 
     private void handleDisplayCompositeIntent(Intent intent) {
         if (intent == null || !ACTION_REQUEST_DISPLAY_COMPOSITE_CAPTURE.equals(intent.getAction())) {
@@ -6772,28 +6280,6 @@ public final class ControlPanelActivity extends Activity {
         }
     }
 
-    private JSONObject buildDynamicsJson() throws Exception {
-        return new JSONObject()
-            .put("mirror_mode", selectedMirrorMode)
-            .put("temporal_frequency_hz", temporalHz.value())
-            .put("spatial_oscillator_hz", new JSONArray()
-                .put(oscillatorAHz.value())
-                .put(oscillatorBHz.value())
-                .put(oscillatorCHz.value()))
-            .put("spatial_frequency_scale", spatialScale.value())
-            .put("source_shift", new JSONArray().put(sourceShiftX.value()).put(sourceShiftY.value()))
-            .put("noise_scale", noiseScale.value())
-            .put("depth_warp", depthWarp.value())
-            .put("twist", twist.value())
-            .put("pinch", pinch.value())
-            .put("scramble", scramble.value())
-            .put("jumble", jumble.value())
-            .put("stretch", new JSONArray().put(stretchX.value()).put(stretchY.value()))
-            .put("phase_offsets", new JSONArray()
-                .put(phaseA.value())
-                .put(phaseB.value())
-                .put(phaseC.value()));
-    }
 
     private void launchImmersiveRenderer() {
         Intent intent = new Intent(Intent.ACTION_MAIN);
@@ -6990,15 +6476,6 @@ public final class ControlPanelActivity extends Activity {
         }
     }
 
-    private void writeStatus(String panelStatus) throws Exception {
-        JSONObject body = new JSONObject()
-            .put("schema", "rusty.quest.stimulus_volume.apply_status.v1")
-            .put("status", panelStatus)
-            .put("candidate_file", CANDIDATE_FILE)
-            .put("transport", "app_private_file")
-            .put("updated_at_unix_ms", System.currentTimeMillis());
-        writeFile(STATUS_FILE, body.toString(2));
-    }
 
     private void writeFile(String name, String content) throws Exception {
         FileOutputStream out = openFileOutput(name, MODE_PRIVATE);
@@ -7175,12 +6652,7 @@ public final class ControlPanelActivity extends Activity {
             steps,
             suffix,
             integer,
-            new Runnable() {
-                @Override
-                public void run() {
-                    scheduleLiveApplyFromControl();
-                }
-            }
+            null
         );
     }
 
@@ -7305,7 +6777,7 @@ public final class ControlPanelActivity extends Activity {
         if ("breath-mapping".equals(packaged)) {
             return packaged;
         }
-        return "stimulus-volume";
+        return "breath-mapping";
     }
 
     private int dp(int value) {
@@ -7322,11 +6794,11 @@ public final class ControlPanelActivity extends Activity {
         FoldoutControl(String title, boolean expanded) {
             this.title = title;
             this.expanded = expanded;
-            this.view = new LinearLayout(ControlPanelActivity.this);
+            this.view = new LinearLayout(BreathCompositionPanelModule.this);
             this.view.setOrientation(LinearLayout.VERTICAL);
             this.view.setPadding(0, dp(8), 0, dp(4));
             this.header = button("");
-            this.body = new LinearLayout(ControlPanelActivity.this);
+            this.body = new LinearLayout(BreathCompositionPanelModule.this);
             this.body.setOrientation(LinearLayout.VERTICAL);
             this.body.setPadding(dp(12), dp(4), 0, dp(4));
             this.header.setOnClickListener(new View.OnClickListener() {
@@ -7637,11 +7109,11 @@ public final class ControlPanelActivity extends Activity {
             this.suffix = suffix;
             this.integer = integer;
             this.onUserChange = onUserChange;
-            this.view = new LinearLayout(ControlPanelActivity.this);
+            this.view = new LinearLayout(BreathCompositionPanelModule.this);
             this.view.setOrientation(LinearLayout.VERTICAL);
             this.view.setPadding(0, dp(6), 0, dp(4));
             this.valueLabel = text("", 13, PANEL_FG);
-            this.seekBar = new SeekBar(ControlPanelActivity.this);
+            this.seekBar = new SeekBar(BreathCompositionPanelModule.this);
             this.seekBar.setMax(this.steps);
             this.seekBar.setProgress(progressFor(initial));
             this.seekBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
@@ -7704,18 +7176,39 @@ public final class ControlPanelActivity extends Activity {
         }
     }
 
-    private static native String nativeSubmitLiveStimulusCandidate(String candidateJson);
-    private static native String nativeSubmitLivePrivateLayerSelection(String selectionJson);
-    private static native String nativeSubmitLiveDepthAlignment(String alignmentJson);
-    private static native String nativeSubmitLivePrivateParticleDynamics(String dynamicsJson);
-    private static native String nativeStartDriverProfileSessionBlock(String blockJson);
-    private static native String nativeApplyBreathCompositionCommand(String commandJson);
-    private static native String nativeApplyLslTransportCommand(String commandJson);
-    private static native String nativeReadLslTransportStatus();
-
-    static String applyLslTransportCommandFromOwner(String commandJson) {
-        return nativeApplyLslTransportCommand(commandJson);
+    private static String nativeSubmitLivePrivateLayerSelection(String selectionJson) {
+        return ControlPanelActivity.nativeSubmitLivePrivateLayerSelection(selectionJson);
     }
 
-    private static native String nativeReadBreathCompositionStatus();
+    private static String nativeSubmitLiveDepthAlignment(String alignmentJson) {
+        return ControlPanelActivity.nativeSubmitLiveDepthAlignment(alignmentJson);
+    }
+
+    private static String nativeSubmitLivePrivateParticleDynamics(String dynamicsJson) {
+        return PrivateParticlePanelController.submitCandidate(dynamicsJson);
+    }
+
+    private static String nativeStartDriverProfileSessionBlock(String blockJson) {
+        return ControlPanelActivity.nativeStartDriverProfileSessionBlock(blockJson);
+    }
+
+    private static String nativeApplyBreathCompositionCommand(String commandJson) {
+        return ControlPanelActivity.nativeApplyBreathCompositionCommand(commandJson);
+    }
+
+    private static String nativeApplyLslTransportCommand(String commandJson) {
+        return ControlPanelActivity.nativeApplyLslTransportCommand(commandJson);
+    }
+
+    private static String nativeReadLslTransportStatus() {
+        return ControlPanelActivity.nativeReadLslTransportStatus();
+    }
+
+    static String applyLslTransportCommandFromOwner(String commandJson) {
+        return ControlPanelActivity.applyLslTransportCommandFromOwner(commandJson);
+    }
+
+    private static String nativeReadBreathCompositionStatus() {
+        return ControlPanelActivity.nativeReadBreathCompositionStatus();
+    }
 }

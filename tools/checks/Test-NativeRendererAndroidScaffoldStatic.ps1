@@ -45,8 +45,12 @@ $androidEvents = Read-RequiredText (Join-Path $srcRoot "android_events.rs") "And
 $panelBridge = Read-RequiredText (Join-Path $srcRoot "native_renderer_panel_bridge.rs") "stimulus panel JNI bridge"
 $embeddedManifoldBridge = Read-RequiredText (Join-Path $srcRoot "embedded_manifold_broker_bridge.rs") "embedded Manifold broker JNI bridge"
 $stimulusPanel = Read-RequiredText (Join-Path $srcRoot "native_renderer_stimulus_panel.rs") "stimulus panel candidate adapter"
-$controlPanel = Read-RequiredText (Join-Path $appRoot "src\main\java\io\github\mesmerprism\rustyquest\native_renderer\ControlPanelActivity.java") "control panel Activity"
-$polarPanel = Read-RequiredText (Join-Path $appRoot "src\main\java\io\github\mesmerprism\rustyquest\native_renderer\PolarSensorPanel.java") "Polar sensor panel"
+$controlPanel = @(
+    (Read-RequiredText (Join-Path $appRoot "panel-modules\breath-composition\src\main\java\io\github\mesmerprism\rustyquest\native_renderer\BreathCompositionPanelModule.java") "breath-composition panel module"),
+    (Read-RequiredText (Join-Path $appRoot "panel-modules\stimulus-volume\src\main\java\io\github\mesmerprism\rustyquest\native_renderer\StimulusVolumePanelModule.java") "stimulus-volume panel module"),
+    (Read-RequiredText (Join-Path $repoRootPath "tools\Build-NativeRendererAndroid.ps1") "generated control panel shell")
+) -join [Environment]::NewLine
+$polarPanel = Read-RequiredText (Join-Path $appRoot "panel-modules\polar\src\main\java\io\github\mesmerprism\rustyquest\native_renderer\PolarSensorPanel.java") "Polar sensor panel"
 $questionnairePanel = Read-RequiredText (Join-Path $appRoot "src\main\java\io\github\mesmerprism\rustyquest\native_renderer\QuestionnairePanelActivity.java") "questionnaire panel Activity"
 $embeddedManifoldBroker = Read-RequiredText (Join-Path $appRoot "src\main\java\io\github\mesmerprism\rustyquest\native_renderer\EmbeddedManifoldBrokerServer.java") "embedded Manifold broker server"
 $embeddedWebSocketPolicy = Read-RequiredText (Join-Path $appRoot "src\main\java\io\github\mesmerprism\rustyquest\native_renderer\EmbeddedWebSocketAuthorityPolicy.java") "embedded WebSocket authority policy"
@@ -55,8 +59,8 @@ $embeddedManifoldAdmissionLifecycle = Read-RequiredText (Join-Path $appRoot "src
 $nativeAppSettingsReader = Read-RequiredText (Join-Path $appRoot "src\main\java\io\github\mesmerprism\rustyquest\native_renderer\NativeAppSettingsReader.java") "native app settings reader"
 $lslPanelRuntime = Read-RequiredText (Join-Path $srcRoot "lsl_panel_runtime.rs") "panel-controlled LSL runtime"
 $lslRustyOutlet = Read-RequiredText (Join-Path $srcRoot "lsl_rusty_outlet.rs") "Rusty-LSL outlet adapter"
-$lslPanelConfigStore = Read-RequiredText (Join-Path $appRoot "src\main\java\io\github\mesmerprism\rustyquest\native_renderer\LslPanelConfigStore.java") "panel-controlled LSL config store"
-$lslPanelCommandReceiver = Read-RequiredText (Join-Path $appRoot "src\main\java\io\github\mesmerprism\rustyquest\native_renderer\LslPanelCommandReceiver.java") "panel-controlled LSL CLI receiver"
+$lslPanelConfigStore = Read-RequiredText (Join-Path $appRoot "panel-modules\lsl\src\main\java\io\github\mesmerprism\rustyquest\native_renderer\LslPanelConfigStore.java") "panel-controlled LSL config store"
+$lslPanelCommandReceiver = Read-RequiredText (Join-Path $appRoot "panel-modules\lsl\src\main\java\io\github\mesmerprism\rustyquest\native_renderer\LslPanelCommandReceiver.java") "panel-controlled LSL CLI receiver"
 $xrVulkan = Read-RequiredText (Join-Path $srcRoot "xr_vulkan.rs") "xr_vulkan facade"
 $buildScriptText = Read-RequiredText (Join-Path $repoRootPath "tools\Build-NativeRendererAndroid.ps1") "native Android build script"
 
@@ -97,7 +101,7 @@ Assert-ContainsTokens $manifest @(
 ) "Android manifest NativeActivity and 2D panel routes"
 
 Assert-ContainsTokens $controlPanel @(
-    'final class ControlPanelActivity extends Activity',
+    'public final class ControlPanelActivity extends',
     'stimulus_volume_candidate.json',
     'stimulus_volume_status.json',
     'rusty.quest.stimulus_volume.profile.v1',
