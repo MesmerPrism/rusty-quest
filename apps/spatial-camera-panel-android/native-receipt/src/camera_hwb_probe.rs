@@ -59,6 +59,7 @@ use crate::spatial_public_multistack_runtime::{
 };
 use crate::spatial_video_projection::SpatialVideoProjectionRenderer;
 use crate::spatial_video_projection_native_stream::latest_spatial_video_projection_frame;
+use crate::spatial_video_projection_qualification::record_presented_frame;
 #[cfg(rq_environment_depth_spatial_sdk_api_layer)]
 use crate::spatial_video_projection_settings::spatial_video_media_source_generation;
 use crate::spatial_video_projection_settings::spatial_video_projection_settings;
@@ -1449,6 +1450,8 @@ unsafe fn render_camera_hwb_probe(
         crate::spatial_sdk_depth_handoff::SpatialSubmitRetirementState,
     > = None;
     #[cfg(rq_environment_depth_spatial_sdk_api_layer)]
+    let mut submitted_video_qualification = None;
+    #[cfg(rq_environment_depth_spatial_sdk_api_layer)]
     let mut submitted_broker_failure_observed_at: Option<Instant> = None;
     #[cfg(rq_environment_depth_spatial_sdk_api_layer)]
     let mut broker_terminal_consumed_total = 0_u64;
@@ -1720,6 +1723,15 @@ unsafe fn render_camera_hwb_probe(
                 .map(crate::spatial_sdk_depth_handoff::release_spatial_depth_render_lease)
                 .unwrap_or(0);
             submit_retired_total = submit_retired_total.saturating_add(1);
+            if let Some((video_stats, present_ordinal)) = submitted_video_qualification.take() {
+                record_presented_frame(
+                    video_stats.ready,
+                    video_stats.rendered,
+                    video_stats.frame_index,
+                    video_stats.timestamp_ns,
+                    present_ordinal,
+                );
+            }
             let request_ordinal = completed_retirement.request_id & u64::from(u32::MAX);
             if request_ordinal <= 4
                 || request_ordinal % 300 == 0
@@ -2272,6 +2284,10 @@ unsafe fn render_camera_hwb_probe(
             submitted_retirement = Some(
                 crate::spatial_sdk_depth_handoff::SpatialSubmitRetirementState::new(request_id),
             );
+            submitted_video_qualification = Some((
+                record_result.video_stats.clone(),
+                u64::from(frames_presented) + 1,
+            ));
             submitted_broker_failure_observed_at = None;
         }
         last_submitted_frame_slot = Some(image_index as usize);
@@ -2294,6 +2310,14 @@ unsafe fn render_camera_hwb_probe(
         }
         frame_timing.present_call = present_started.elapsed();
         frames_presented = frames_presented.saturating_add(1);
+        #[cfg(not(rq_environment_depth_spatial_sdk_api_layer))]
+        record_presented_frame(
+            record_result.video_stats.ready,
+            record_result.video_stats.rendered,
+            record_result.video_stats.frame_index,
+            record_result.video_stats.timestamp_ns,
+            u64::from(frames_presented),
+        );
         frame_timing.loop_total = loop_started.elapsed();
         if frames_presented <= 4
             || crate::camera_latency_diagnostics::camera_latency_per_frame_log_enabled()

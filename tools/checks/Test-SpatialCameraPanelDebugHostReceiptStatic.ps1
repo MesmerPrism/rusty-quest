@@ -28,12 +28,18 @@ $contractPath = 'apps/spatial-camera-panel-android/app/src/debug/java/io/github/
 $storePath = 'apps/spatial-camera-panel-android/app/src/debug/java/io/github/mesmerprism/rustyquest/spatial_camera_panel/DebugHostReceiptStore.kt'
 $providerPath = 'apps/spatial-camera-panel-android/app/src/debug/java/io/github/mesmerprism/rustyquest/spatial_camera_panel/DebugHostReceiptProvider.kt'
 $runtimePath = 'apps/spatial-camera-panel-android/app/src/debug/java/io/github/mesmerprism/rustyquest/spatial_camera_panel/DebugHostReceiptRuntime.kt'
+$reducerPath = 'apps/spatial-camera-panel-android/app/src/debug/java/io/github/mesmerprism/rustyquest/spatial_camera_panel/DebugHostReceiptQualificationReducer.kt'
+$telemetryPath = 'apps/spatial-camera-panel-android/app/src/main/java/io/github/mesmerprism/rustyquest/spatial_camera_panel/SpatialLaunchQualificationTelemetry.kt'
+$nativeQualificationPath = 'apps/spatial-camera-panel-android/native-receipt/src/spatial_video_projection_qualification.rs'
 
 $debugManifest = Read-RequiredText $debugManifestPath
 $contract = Read-RequiredText $contractPath
 $store = Read-RequiredText $storePath
 $provider = Read-RequiredText $providerPath
 $runtime = Read-RequiredText $runtimePath
+$reducer = Read-RequiredText $reducerPath
+$telemetry = Read-RequiredText $telemetryPath
+$nativeQualification = Read-RequiredText $nativeQualificationPath
 $mainManifest = Read-RequiredText 'apps/spatial-camera-panel-android/app/src/main/AndroidManifest.xml'
 
 Assert-Contains $debugManifestPath $debugManifest 'DebugHostReceiptProvider'
@@ -56,8 +62,20 @@ foreach ($token in @('Binder.getCallingUid()', 'Process.SHELL_UID', 'override fu
 foreach ($token in @('writeAtomically', 'StandardCopyOption.ATOMIC_MOVE', 'stream.fd.sync()', 'StateKind.CONSUMED', 'debug_host_receipt_replay_rejected', 'debug_host_receipt_size_exceeded', 'debug_host_receipt_privacy_rejected')) {
     Assert-Contains $storePath $store $token
 }
-foreach ($token in @('FileInputStream(context.applicationInfo.sourceDir)', 'MessageDigest.getInstance("SHA-256")', 'finalizeTerminalReceipt')) {
+foreach ($token in @('FileInputStream(context.applicationInfo.sourceDir)', 'MessageDigest.getInstance("SHA-256")', 'finalizeTerminalReceipt', 'finalizeIfQualified', 'SpatialLaunchQualificationTelemetry.arm()')) {
     Assert-Contains $runtimePath $runtime $token
+}
+foreach ($token in @('decoderStarted', 'distinctAdoptedFrames', 'lastPresentOrdinal', 'nativeReadQualificationField', 'nativeDisableQualification', 'MAX_SNAPSHOT_ATTEMPTS')) {
+    Assert-Contains $telemetryPath $telemetry $token
+}
+foreach ($token in @('mediacodec-output-established', 'gpu-import-ready', 'decoded-and-adopted', 'present-retired', 'errorCode != 0', 'distinctAdoptedFrames < 2')) {
+    Assert-Contains $reducerPath $reducer $token
+}
+foreach ($token in @('QUALIFICATION_ENABLED', 'QUALIFICATION_EPOCH', 'record_decoded_frame', 'record_presented_frame', 'first_decoded_frame', 'distinct_adopted_frames', 'frame_index < state.first_decoded_frame', 'timestamp_ns < state.first_timestamp_ns')) {
+    Assert-Contains $nativeQualificationPath $nativeQualification $token
+}
+foreach ($forbidden in @('Log.', 'logcat', 'pidof', 'ActivityManager')) {
+    Assert-NotContains $reducerPath $reducer $forbidden
 }
 foreach ($forbidden in @('startActivity', 'sendBroadcast', 'adb ', 'content://', 'Uri.parse', 'Intent(', 'ComponentName', 'Log.')) {
     Assert-NotContains $providerPath $provider $forbidden

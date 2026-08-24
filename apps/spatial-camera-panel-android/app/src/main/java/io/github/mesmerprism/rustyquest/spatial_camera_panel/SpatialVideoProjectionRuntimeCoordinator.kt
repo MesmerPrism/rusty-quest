@@ -48,6 +48,7 @@ internal class SpatialVideoProjectionRuntimeCoordinator(
   ) {
     this.settings = settings
     this.offlinePack = offlinePack
+    SpatialLaunchQualificationTelemetry.recordSettings(settings)
   }
 
   fun configure(settings: SpatialVideoProjectionSettings, reason: String): Long {
@@ -116,8 +117,7 @@ internal class SpatialVideoProjectionRuntimeCoordinator(
         )
         return SpatialVideoProjectionSourceSwitchResult(applied = false, decoderStarted = false)
       }
-      this.settings = settings
-      this.offlinePack = offlinePack
+      adoptSettings(settings, offlinePack)
       configure(settings, "$reason-source-switch")
       sourceGeneration += 1L
       started = false
@@ -145,8 +145,7 @@ internal class SpatialVideoProjectionRuntimeCoordinator(
       return SpatialVideoProjectionSourceSwitchResult(applied = false, decoderStarted = false)
     }
     if (!started) {
-      this.settings = settings
-      this.offlinePack = offlinePack
+      adoptSettings(settings, offlinePack)
       configure(settings, "$reason-source-switch")
       sourceGeneration += 1L
       start(settings, "$reason-source-switch")
@@ -175,8 +174,7 @@ internal class SpatialVideoProjectionRuntimeCoordinator(
       )
       return SpatialVideoProjectionSourceSwitchResult(applied = false, decoderStarted = false)
     }
-    this.settings = settings
-    this.offlinePack = offlinePack
+    adoptSettings(settings, offlinePack)
     configure(settings, "$reason-source-switch")
     sourceGeneration += 1L
     val replacementStarted =
@@ -337,6 +335,7 @@ internal class SpatialVideoProjectionRuntimeCoordinator(
     }
     started = false
     settings = SpatialVideoProjectionSettings.disabled()
+    SpatialLaunchQualificationTelemetry.recordSettings(settings)
     offlinePack = null
     readableVideoConsumerRequired = true
     bindings.marker(SpatialVideoProjectionRouteModule.stoppedMarker(reason, previousSettings))

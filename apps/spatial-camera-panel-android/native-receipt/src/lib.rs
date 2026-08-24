@@ -75,6 +75,7 @@ mod spatial_video_projection_marker;
 mod spatial_video_projection_native_stream;
 #[cfg(target_os = "android")]
 mod spatial_video_projection_probe;
+mod spatial_video_projection_qualification;
 mod spatial_video_projection_settings;
 #[cfg(any(target_os = "android", test))]
 mod surface_particle_layer;

@@ -4,14 +4,47 @@ import android.content.Context
 import java.io.File
 import java.io.FileInputStream
 
-/** App-internal future integration point. This slice deliberately does not invoke it from launch code. */
+/** App-owned bridge from an armed shell nonce to a complete typed renderer snapshot. */
 internal object DebugHostReceiptRuntime {
   private val processEpoch = DebugHostReceiptContract.freshEpoch()
+  private val monitor = Any()
+  private data class PendingNonce(val value: String, val expiresAtMs: Long)
+  private var pendingNonce: PendingNonce? = null
 
   fun epoch(): String = processEpoch
 
   fun store(context: Context): DebugHostReceiptStore =
       DebugHostReceiptStore(File(context.filesDir, "debug-host-receipt"))
+
+  fun arm(context: Context, nonce: String): Long = synchronized(monitor) {
+    val validatedNonce = DebugHostReceiptContract.requireNonce(nonce)
+    SpatialLaunchQualificationTelemetry.arm()
+    try {
+      val expiry = store(context).arm(validatedNonce, processEpoch)
+      pendingNonce = PendingNonce(validatedNonce, expiry)
+      expiry
+    } catch (failure: Throwable) {
+      SpatialLaunchQualificationTelemetry.disarm()
+      throw failure
+    }
+  }
+
+  fun finalizeIfQualified(context: Context): String? = synchronized(monitor) {
+    val pending = pendingNonce ?: return null
+    if (pending.expiresAtMs <= System.currentTimeMillis()) {
+      pendingNonce = null
+      SpatialLaunchQualificationTelemetry.disarm()
+      return null
+    }
+    val snapshot = SpatialLaunchQualificationTelemetry.snapshot() ?: return null
+    val facts = DebugHostReceiptQualificationReducer.terminalFacts(snapshot) ?: return null
+    try {
+      finalizeTerminalReceipt(context, pending.value, facts)
+    } finally {
+      pendingNonce = null
+      SpatialLaunchQualificationTelemetry.disarm()
+    }
+  }
 
   fun finalizeTerminalReceipt(
       context: Context,

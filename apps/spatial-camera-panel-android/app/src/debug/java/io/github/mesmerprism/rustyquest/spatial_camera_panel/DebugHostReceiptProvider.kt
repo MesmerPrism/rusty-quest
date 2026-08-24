@@ -26,10 +26,15 @@ class DebugHostReceiptProvider : ContentProvider() {
     return try {
       when (request.route) {
         DebugHostReceiptContract.Route.ARM -> {
-          val expiresAt = store.arm(requireNotNull(request.nonce), DebugHostReceiptRuntime.epoch())
+          val expiresAt =
+              DebugHostReceiptRuntime.arm(
+                  requireNotNull(context).applicationContext,
+                  requireNotNull(request.nonce),
+              )
           response("armed").apply { putLong(DebugHostReceiptContract.KEY_EXPIRES_AT_MS, expiresAt) }
         }
         DebugHostReceiptContract.Route.STATUS -> {
+          DebugHostReceiptRuntime.finalizeIfQualified(requireNotNull(context).applicationContext)
           val status = store.status()
           response(status.value).apply {
             status.receiptHash?.let { putString(DebugHostReceiptContract.KEY_RECEIPT_HASH, it) }
