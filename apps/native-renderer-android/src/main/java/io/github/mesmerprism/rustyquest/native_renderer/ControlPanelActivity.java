@@ -1073,6 +1073,7 @@ public final class ControlPanelActivity extends Activity {
         }
         JSONObject outlets = config.optJSONObject("outlets");
         JSONObject inlet = config.optJSONObject("inlet");
+        JSONObject rustyLsl = config.optJSONObject("rusty_lsl");
 
         LinearLayout overview = panelCard("Effective LSL state");
         final TextView readback = text(formatLslStatus(status), 12, PANEL_MUTED);
@@ -1107,6 +1108,35 @@ public final class ControlPanelActivity extends Activity {
         directions.addView(outletEnabled);
         directions.addView(inletEnabled);
         root.addView(directions);
+
+        LinearLayout backendCard = panelCard("Transport backend A/B");
+        backendCard.addView(text(
+            "LibLSL remains the default for outlets and inlets. Rusty-LSL is an experimental outlet-only backend; it uses the same producer queue and stream schemas. A Rusty-LSL inlet or mixed Rusty-LSL outlet + LibLSL inlet request is rejected rather than silently changing the comparison.",
+            12,
+            PANEL_MUTED
+        ));
+        String outletBackendValue = config.optString("outlet_backend", "liblsl");
+        String inletBackendValue = config.optString("inlet_backend", "liblsl");
+        final Spinner outletBackend = spinner(
+            new String[] {"LibLSL", "Rusty-LSL (experimental outlet)"},
+            "rusty-lsl".equals(outletBackendValue) ? 1 : 0
+        );
+        final Spinner inletBackend = spinner(
+            new String[] {"LibLSL", "Rusty-LSL (unavailable inlet)"},
+            "rusty-lsl".equals(inletBackendValue) ? 1 : 0
+        );
+        final EditText rustyLslInterface = editText(
+            rustyLsl == null ? "0.0.0.0" : rustyLsl.optString("interface_ipv4", "0.0.0.0"),
+            "Quest LAN IPv4, required for Rusty-LSL",
+            false
+        );
+        backendCard.addView(label("Outlet backend"));
+        backendCard.addView(outletBackend);
+        backendCard.addView(label("Inlet backend"));
+        backendCard.addView(inletBackend);
+        backendCard.addView(label("Rusty-LSL interface IPv4"));
+        backendCard.addView(rustyLslInterface);
+        root.addView(backendCard);
 
         LinearLayout outletCard = panelCard("Outlet streams");
         final CheckBox polarHr = checkBox("Polar heart rate (BPM)", outlets == null || outlets.optBoolean("polar_hr", true));
@@ -1170,11 +1200,18 @@ public final class ControlPanelActivity extends Activity {
             public void onClick(View view) {
                 try {
                     String resolve = selected(resolveBy);
+                    String outletBackendSelection = selected(outletBackend);
+                    String inletBackendSelection = selected(inletBackend);
                     JSONObject requested = new JSONObject()
                         .put("schema", "rusty.quest.native_renderer.lsl.persisted_config.v1")
                         .put("enabled", enabled.isChecked())
                         .put("outlet_enabled", outletEnabled.isChecked())
                         .put("inlet_enabled", inletEnabled.isChecked())
+                        .put("outlet_backend", outletBackendSelection.startsWith("Rusty-LSL") ? "rusty-lsl" : "liblsl")
+                        .put("inlet_backend", inletBackendSelection.startsWith("Rusty-LSL") ? "rusty-lsl" : "liblsl")
+                        .put("rusty_lsl", new JSONObject()
+                            .put("interface_ipv4", rustyLslInterface.getText().toString().trim())
+                            .put("source_commit", "8b6b2a6cd0c0e5147b7e1cc076a116ef226cddbd"))
                         .put("stream_prefix", prefix.getText().toString().trim())
                         .put("participant_id", participant.getText().toString().trim())
                         .put("session_id", session.getText().toString().trim())
@@ -1241,13 +1278,21 @@ public final class ControlPanelActivity extends Activity {
         JSONObject effective = status.optJSONObject("effective");
         return "Packaged: " + status.optBoolean("panel_available", false)
             + " | liblsl: " + status.optBoolean("library_linked", false)
+            + " | rusty-lsl: " + status.optBoolean("rusty_lsl_compiled", false)
             + " | state: " + (effective == null ? "unknown" : effective.optString("state", "unknown"))
+            + "\nbackend out=" + (effective == null ? "unknown" : effective.optString("outlet_backend", "unknown"))
+            + " in=" + (effective == null ? "unknown" : effective.optString("inlet_backend", "unknown"))
             + " | outlets: " + (effective == null ? 0 : effective.optInt("outlet_count", 0))
             + " | inlet: " + (effective == null ? "unknown" : effective.optString("inlet_state", "unknown"))
             + "\npushed=" + (effective == null ? 0 : effective.optLong("samples_pushed", 0))
             + " pulled=" + (effective == null ? 0 : effective.optLong("samples_pulled", 0))
             + " dropped=" + (effective == null ? 0 : effective.optLong("samples_dropped", 0))
             + " rejectedInlet=" + (effective == null ? 0 : effective.optLong("inlet_samples_rejected", 0))
+            + "\npushNsTotal=" + (effective == null ? 0 : effective.optLong("push_elapsed_ns_total", 0))
+            + " pushNsMax=" + (effective == null ? 0 : effective.optLong("push_elapsed_ns_max", 0))
+            + " deliveries=" + (effective == null ? 0 : effective.optLong("complete_deliveries", 0))
+            + " consumers=" + (effective == null ? 0 : effective.optInt("connected_consumers", 0))
+            + " discoveries=" + (effective == null ? 0 : effective.optLong("discovery_queries", 0))
             + "\nsession=" + status.optString("app_session_id", "none")
             + " generation=" + status.optLong("generation", 0)
             + " reason=" + (effective == null ? status.optString("response_reason", "unknown") : effective.optString("reason", "none"));

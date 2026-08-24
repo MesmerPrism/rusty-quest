@@ -84,6 +84,14 @@ public final class LslPanelConfigStore {
                 .put("enabled", false)
                 .put("outlet_enabled", false)
                 .put("inlet_enabled", false)
+                .put("outlet_backend", "liblsl")
+                .put("inlet_backend", "liblsl")
+                .put(
+                    "rusty_lsl",
+                    new JSONObject()
+                        .put("interface_ipv4", "0.0.0.0")
+                        .put("source_commit", "8b6b2a6cd0c0e5147b7e1cc076a116ef226cddbd")
+                )
                 .put("stream_prefix", "viscereality")
                 .put("participant_id", "participant")
                 .put("session_id", "session")

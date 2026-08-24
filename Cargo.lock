@@ -544,6 +544,11 @@ dependencies = [
 ]
 
 [[package]]
+name = "rusty-lsl"
+version = "0.0.0"
+source = "git+https://github.com/MesmerPrism/rusty-lsl.git?rev=8b6b2a6cd0c0e5147b7e1cc076a116ef226cddbd#8b6b2a6cd0c0e5147b7e1cc076a116ef226cddbd"
+
+[[package]]
 name = "rusty-manifold-admission"
 version = "0.1.0"
 dependencies = [
@@ -864,6 +869,7 @@ dependencies = [
  "jni 0.22.4",
  "ndk-sys",
  "openxr",
+ "rusty-lsl",
  "rusty-quest-breath-contract",
  "rusty-quest-broker-authority",
  "rusty-quest-hand-adapter",

@@ -54,6 +54,7 @@ $embeddedManifoldAuthorityBridge = Read-RequiredText (Join-Path $appRoot "src\ma
 $embeddedManifoldAdmissionLifecycle = Read-RequiredText (Join-Path $appRoot "src\main\java\io\github\mesmerprism\rustyquest\native_renderer\EmbeddedManifoldAdmissionLifecycle.java") "embedded platform-authenticated admission lifecycle"
 $nativeAppSettingsReader = Read-RequiredText (Join-Path $appRoot "src\main\java\io\github\mesmerprism\rustyquest\native_renderer\NativeAppSettingsReader.java") "native app settings reader"
 $lslPanelRuntime = Read-RequiredText (Join-Path $srcRoot "lsl_panel_runtime.rs") "panel-controlled LSL runtime"
+$lslRustyOutlet = Read-RequiredText (Join-Path $srcRoot "lsl_rusty_outlet.rs") "Rusty-LSL outlet adapter"
 $lslPanelConfigStore = Read-RequiredText (Join-Path $appRoot "src\main\java\io\github\mesmerprism\rustyquest\native_renderer\LslPanelConfigStore.java") "panel-controlled LSL config store"
 $lslPanelCommandReceiver = Read-RequiredText (Join-Path $appRoot "src\main\java\io\github\mesmerprism\rustyquest\native_renderer\LslPanelCommandReceiver.java") "panel-controlled LSL CLI receiver"
 $xrVulkan = Read-RequiredText (Join-Path $srcRoot "xr_vulkan.rs") "xr_vulkan facade"
@@ -216,6 +217,7 @@ Assert-ContainsTokens $nativeLib @(
     'mod native_renderer_panel_bridge',
     'mod embedded_manifold_broker_bridge',
     'mod lsl_panel_runtime',
+    'mod lsl_rusty_outlet',
     'mod native_renderer_stimulus_panel',
     'apply_app_private_candidate',
     'requestPermissions',
@@ -240,16 +242,38 @@ Assert-ContainsTokens $lslPanelRuntime @(
     'submit_headset_views',
     'apply_inlet_driver_values',
     'inlet-driver-slot-reserved-or-out-of-range',
+    'rusty-lsl-persistent-inlet-not-supported',
+    'rusty-lsl-outlet-cannot-share-discovery-with-liblsl-inlet',
+    'RUSTY_LSL_SOURCE_COMMIT',
     'push_f32_at'
 ) "panel-controlled LSL runtime"
+
+Assert-ContainsTokens $lslRustyOutlet @(
+    'PersistentFloat32OutletRegistry',
+    'PersistentFloat32OutletRegistryLimits',
+    'try_push_chunk',
+    'connected_consumers',
+    '8b6b2a6cd0c0e5147b7e1cc076a116ef226cddbd',
+    'rusty-lsl-backend-not-compiled'
+) "Rusty-LSL outlet adapter"
 
 Assert-ContainsTokens $lslPanelConfigStore @(
     'viscereality_lsl_panel',
     'accepted_config_v1',
     'SharedPreferences',
     'readFromNative',
-    'defaultConfig'
+    'defaultConfig',
+    'outlet_backend',
+    'inlet_backend',
+    'interface_ipv4'
 ) "panel-controlled LSL config persistence"
+
+Assert-ContainsTokens $buildScriptText @(
+    'RUSTY_QUEST_NATIVE_RENDERER_RUSTY_LSL_ANDROID',
+    'rusty-lsl-backend',
+    'rusty_lsl_source_commit',
+    '4bfd1b1b5621af6706aafa9477e7a4f5764dd688'
+) "Rusty-LSL Android build closure"
 
 Assert-ContainsTokens $lslPanelCommandReceiver @(
     'android\.permission\.DUMP',

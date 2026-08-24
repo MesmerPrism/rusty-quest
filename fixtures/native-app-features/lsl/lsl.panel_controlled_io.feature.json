@@ -9,12 +9,13 @@
   },
   "owner_lane": "rusty-quest",
   "status": "public-substrate",
-  "description": "Self-contained, disabled-by-default LSL runtime with persistent panel control, typed Polar/tracking outlets, and one bounded Float32 private-particle driver inlet.",
+  "description": "Self-contained, disabled-by-default LSL runtime with persistent panel control, typed Polar/tracking outlets, one bounded Float32 private-particle driver inlet, and a closed LibLSL versus Rusty-LSL outlet comparison.",
   "provides": [
     "lsl.panel_controlled_runtime",
     "lsl.polar_float32_outlets",
     "lsl.openxr_tracking_float32_outlets",
-    "lsl.private_particle_float32_inlet"
+    "lsl.private_particle_float32_inlet",
+    "lsl.outlet_backend_ab"
   ],
   "depends_on": [
     "quest.native.openxr_vulkan_base",
@@ -54,6 +55,10 @@
       {
         "name": "RUSTY_QUEST_NATIVE_RENDERER_LSL_ANDROID",
         "value": "1"
+      },
+      {
+        "name": "RUSTY_QUEST_NATIVE_RENDERER_RUSTY_LSL_ANDROID",
+        "value": "1"
       }
     ],
     "assets": [],
@@ -62,7 +67,8 @@
   "markers": {
     "required": [
       "RUSTY_QUEST_NATIVE_RENDERER channel=lsl-panel-runtime",
-      "lslPanelControlled=true"
+      "lslPanelControlled=true",
+      "rustyLslSourceCommit=8b6b2a6cd0c0e5147b7e1cc076a116ef226cddbd"
     ],
     "forbidden": [
       "status=lsl-error reason=missing-liblsl",
@@ -72,7 +78,7 @@
   },
   "validation": {
     "quick": [
-      "cargo test -p rusty-quest-native-renderer-android-native lsl_panel_runtime --locked",
+      "cargo test -p rusty-quest-native-renderer-android-native lsl_panel_runtime --locked --features rusty-lsl-backend",
       "powershell -NoProfile -ExecutionPolicy Bypass -File tools/Apply-RuntimeProfile.ps1 -ProfilePath <generated-profile> -DryRun -Out <generated-property-plan>"
     ],
     "standard": [

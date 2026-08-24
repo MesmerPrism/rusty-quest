@@ -73,6 +73,7 @@ mod live_hand_joint_capture;
 mod live_hand_mesh_capture;
 mod lsl_android;
 mod lsl_panel_runtime;
+mod lsl_rusty_outlet;
 mod lsl_transport_bridge;
 mod manifold_breath_bridge;
 mod manifold_pose_publisher;

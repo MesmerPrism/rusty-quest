@@ -7,18 +7,22 @@
 
 use std::{
     collections::VecDeque,
+    net::Ipv4Addr,
     sync::{
         atomic::{AtomicBool, AtomicU64, Ordering},
         mpsc::{self, SyncSender, TrySendError},
         Arc, Mutex, MutexGuard, OnceLock,
     },
-    thread,
+    thread::{self, JoinHandle},
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 use serde_json::{json, Value};
 
 use crate::lsl_android::{self, LslChannelFormat, LslInlet, LslOutlet};
+use crate::lsl_rusty_outlet::{
+    self, RustyLslOutletSet, RustyLslPollHealth, RustyLslStreamDefinition,
+};
 
 pub(crate) const PANEL_COMMAND_SCHEMA: &str = "rusty.quest.native_renderer.lsl.panel_command.v1";
 pub(crate) const PERSISTED_CONFIG_SCHEMA: &str =
@@ -34,6 +38,9 @@ pub(crate) struct LslPanelConfig {
     pub(crate) enabled: bool,
     pub(crate) outlet_enabled: bool,
     pub(crate) inlet_enabled: bool,
+    pub(crate) outlet_backend: LslBackend,
+    pub(crate) inlet_backend: LslBackend,
+    pub(crate) rusty_lsl_interface_ipv4: Ipv4Addr,
     pub(crate) stream_prefix: String,
     pub(crate) participant_id: String,
     pub(crate) session_id: String,
@@ -56,6 +63,9 @@ impl Default for LslPanelConfig {
             enabled: false,
             outlet_enabled: false,
             inlet_enabled: false,
+            outlet_backend: LslBackend::LibLsl,
+            inlet_backend: LslBackend::LibLsl,
+            rusty_lsl_interface_ipv4: Ipv4Addr::UNSPECIFIED,
             stream_prefix: "viscereality".to_owned(),
             participant_id: "participant".to_owned(),
             session_id: "session".to_owned(),
@@ -93,6 +103,25 @@ impl LslPanelConfig {
             enabled: bool_field(object, "enabled", defaults.enabled)?,
             outlet_enabled: bool_field(object, "outlet_enabled", defaults.outlet_enabled)?,
             inlet_enabled: bool_field(object, "inlet_enabled", defaults.inlet_enabled)?,
+            outlet_backend: LslBackend::parse(
+                object
+                    .get("outlet_backend")
+                    .and_then(Value::as_str)
+                    .unwrap_or(defaults.outlet_backend.marker_value()),
+            )?,
+            inlet_backend: LslBackend::parse(
+                object
+                    .get("inlet_backend")
+                    .and_then(Value::as_str)
+                    .unwrap_or(defaults.inlet_backend.marker_value()),
+            )?,
+            rusty_lsl_interface_ipv4: ipv4_field(
+                object
+                    .get("rusty_lsl")
+                    .and_then(Value::as_object)
+                    .and_then(|rusty| rusty.get("interface_ipv4")),
+                defaults.rusty_lsl_interface_ipv4,
+            )?,
             stream_prefix: token_field(
                 object.get("stream_prefix"),
                 &defaults.stream_prefix,
@@ -154,6 +183,21 @@ impl LslPanelConfig {
         if self.inlet_enabled && self.inlet_resolve_value.trim().is_empty() {
             return Err("inlet-resolve-value-empty".to_owned());
         }
+        if self.inlet_enabled && self.inlet_backend == LslBackend::RustyLsl {
+            return Err("rusty-lsl-persistent-inlet-not-supported".to_owned());
+        }
+        if self.outlet_enabled && self.outlet_backend == LslBackend::RustyLsl {
+            if self.inlet_enabled {
+                return Err("rusty-lsl-outlet-cannot-share-discovery-with-liblsl-inlet".to_owned());
+            }
+            if self.rusty_lsl_interface_ipv4.is_unspecified()
+                || self.rusty_lsl_interface_ipv4.is_loopback()
+                || self.rusty_lsl_interface_ipv4.is_multicast()
+                || self.rusty_lsl_interface_ipv4 == Ipv4Addr::BROADCAST
+            {
+                return Err("rusty-lsl-interface-not-concrete-lan-ipv4".to_owned());
+            }
+        }
         if !(1..=7).contains(&self.inlet_driver_slot) {
             return Err("inlet-driver-slot-reserved-or-out-of-range".to_owned());
         }
@@ -180,6 +224,12 @@ impl LslPanelConfig {
             "enabled": self.enabled,
             "outlet_enabled": self.outlet_enabled,
             "inlet_enabled": self.inlet_enabled,
+            "outlet_backend": self.outlet_backend.marker_value(),
+            "inlet_backend": self.inlet_backend.marker_value(),
+            "rusty_lsl": {
+                "interface_ipv4": self.rusty_lsl_interface_ipv4.to_string(),
+                "source_commit": lsl_rusty_outlet::RUSTY_LSL_SOURCE_COMMIT,
+            },
             "stream_prefix": self.stream_prefix,
             "participant_id": self.participant_id,
             "session_id": self.session_id,
@@ -199,6 +249,29 @@ impl LslPanelConfig {
                 "recover": self.inlet_recover,
             }
         })
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum LslBackend {
+    LibLsl,
+    RustyLsl,
+}
+
+impl LslBackend {
+    fn parse(value: &str) -> Result<Self, String> {
+        match value.trim() {
+            "liblsl" => Ok(Self::LibLsl),
+            "rusty-lsl" => Ok(Self::RustyLsl),
+            _ => Err("invalid-lsl-backend".to_owned()),
+        }
+    }
+
+    fn marker_value(self) -> &'static str {
+        match self {
+            Self::LibLsl => "liblsl",
+            Self::RustyLsl => "rusty-lsl",
+        }
     }
 }
 
@@ -239,9 +312,18 @@ struct TimedInletSample {
 struct WorkerStatus {
     state: &'static str,
     reason: String,
+    outlet_backend: &'static str,
+    inlet_backend: &'static str,
     outlet_count: usize,
     inlet_state: &'static str,
     pushed: u64,
+    push_elapsed_ns_total: u64,
+    push_elapsed_ns_max: u64,
+    complete_deliveries: u64,
+    discovery_queries: u64,
+    discovery_responses: u64,
+    consumers_accepted: u64,
+    connected_consumers: usize,
     pulled: u64,
     rejected_inlet: u64,
     last_effective_request_id: String,
@@ -252,9 +334,18 @@ impl Default for WorkerStatus {
         Self {
             state: "disabled",
             reason: "default-disabled".to_owned(),
+            outlet_backend: "liblsl",
+            inlet_backend: "liblsl",
             outlet_count: 0,
             inlet_state: "disabled",
             pushed: 0,
+            push_elapsed_ns_total: 0,
+            push_elapsed_ns_max: 0,
+            complete_deliveries: 0,
+            discovery_queries: 0,
+            discovery_responses: 0,
+            consumers_accepted: 0,
+            connected_consumers: 0,
             pulled: 0,
             rejected_inlet: 0,
             last_effective_request_id: "none".to_owned(),
@@ -270,6 +361,8 @@ struct RuntimeState {
     retained_request_ids: VecDeque<String>,
     config: LslPanelConfig,
     sender: Option<SyncSender<OutboundSample>>,
+    outlet_worker: Option<JoinHandle<()>>,
+    inlet_worker: Option<JoinHandle<()>>,
     stop: Arc<AtomicBool>,
     dropped: Arc<AtomicU64>,
     status: Arc<Mutex<WorkerStatus>>,
@@ -286,6 +379,8 @@ impl Default for RuntimeState {
             retained_request_ids: VecDeque::new(),
             config: LslPanelConfig::default(),
             sender: None,
+            outlet_worker: None,
+            inlet_worker: None,
             stop: Arc::new(AtomicBool::new(true)),
             dropped: Arc::new(AtomicU64::new(0)),
             status: Arc::new(Mutex::new(WorkerStatus::default())),
@@ -322,9 +417,11 @@ pub(crate) fn initialize(app: &android_activity::AndroidApp, panel_available: bo
     };
     initialize_with_config(panel_available, persisted.as_deref());
     marker(&format!(
-        "status=initialized lslPanelControlled={} libraryLinked={} defaultNetworkInert={}",
+        "status=initialized lslPanelControlled={} libraryLinked={} rustyLslCompiled={} rustyLslSourceCommit={} defaultNetworkInert={}",
         panel_available,
         lsl_android::library_linked(),
+        lsl_rusty_outlet::compiled(),
+        lsl_rusty_outlet::RUSTY_LSL_SOURCE_COMMIT,
         !lock_runtime().config.enabled,
     ));
     if panel_available {
@@ -380,6 +477,12 @@ pub(crate) fn shutdown() {
 fn stop_workers(state: &mut RuntimeState) {
     state.stop.store(true, Ordering::Release);
     state.sender = None;
+    if let Some(worker) = state.outlet_worker.take() {
+        let _ = worker.join();
+    }
+    if let Some(worker) = state.inlet_worker.take() {
+        let _ = worker.join();
+    }
     state.stop = Arc::new(AtomicBool::new(true));
 }
 
@@ -449,8 +552,17 @@ pub(crate) fn apply_command_json(command_json: &str) -> String {
     {
         return response_locked(&state, "rejected", "replayed-request-id", None);
     }
-    if config.enabled && !lsl_android::library_linked() {
+    let requires_liblsl = (config.outlet_enabled && config.outlet_backend == LslBackend::LibLsl)
+        || (config.inlet_enabled && config.inlet_backend == LslBackend::LibLsl);
+    if config.enabled && requires_liblsl && !lsl_android::library_linked() {
         return response_locked(&state, "rejected", "liblsl-not-linked", None);
+    }
+    if config.enabled
+        && config.outlet_enabled
+        && config.outlet_backend == LslBackend::RustyLsl
+        && !lsl_rusty_outlet::compiled()
+    {
+        return response_locked(&state, "rejected", "rusty-lsl-backend-not-compiled", None);
     }
     state.generation = requested_generation;
     state.last_request_id = request_id.clone();
@@ -459,13 +571,15 @@ pub(crate) fn apply_command_json(command_json: &str) -> String {
         state.retained_request_ids.pop_front();
     }
     marker(&format!(
-        "status=request-accepted appSessionId={} generation={} requestId={} enabled={} outletEnabled={} inletEnabled={}",
+        "status=request-accepted appSessionId={} generation={} requestId={} enabled={} outletEnabled={} inletEnabled={} outletBackend={} inletBackend={}",
         token(&state.app_session_id),
         state.generation,
         token(&request_id),
         config.enabled,
         config.outlet_enabled,
         config.inlet_enabled,
+        config.outlet_backend.marker_value(),
+        config.inlet_backend.marker_value(),
     ));
     activate_locked(&mut state, config.clone(), &request_id);
     response_locked(&state, "accepted", "none", Some(config.to_value()))
@@ -476,6 +590,10 @@ fn activate_locked(state: &mut RuntimeState, config: LslPanelConfig, request_id:
     state.config = config.clone();
     state.dropped = Arc::new(AtomicU64::new(0));
     state.status = Arc::new(Mutex::new(WorkerStatus::default()));
+    if let Ok(mut snapshot) = state.status.lock() {
+        snapshot.outlet_backend = config.outlet_backend.marker_value();
+        snapshot.inlet_backend = config.inlet_backend.marker_value();
+    }
     if let Ok(mut samples) = state.inlet_samples.lock() {
         *samples = std::array::from_fn(|_| None);
     }
@@ -529,16 +647,19 @@ fn activate_locked(state: &mut RuntimeState, config: LslPanelConfig, request_id:
                     worker_request_id,
                 )
             });
-        if spawn.is_err() {
-            state.sender = None;
-            update_status(
-                &state.status,
-                "error",
-                "outlet-thread-spawn-failed",
-                0,
-                "disabled",
-            );
-            return;
+        match spawn {
+            Ok(worker) => state.outlet_worker = Some(worker),
+            Err(_) => {
+                state.sender = None;
+                update_status(
+                    &state.status,
+                    "error",
+                    "outlet-thread-spawn-failed",
+                    0,
+                    "disabled",
+                );
+                return;
+            }
         }
     }
     if config.inlet_enabled {
@@ -547,7 +668,7 @@ fn activate_locked(state: &mut RuntimeState, config: LslPanelConfig, request_id:
         let worker_status = Arc::clone(&state.status);
         let inlet_samples = Arc::clone(&state.inlet_samples);
         let generation = state.generation;
-        let _ = thread::Builder::new()
+        let spawn = thread::Builder::new()
             .name("rusty-quest-lsl-panel-in".to_owned())
             .spawn(move || {
                 run_inlet_worker(
@@ -558,18 +679,35 @@ fn activate_locked(state: &mut RuntimeState, config: LslPanelConfig, request_id:
                     generation,
                 )
             });
+        match spawn {
+            Ok(worker) => state.inlet_worker = Some(worker),
+            Err(_) => {
+                update_status(
+                    &state.status,
+                    "error",
+                    "inlet-thread-spawn-failed",
+                    0,
+                    "disabled",
+                );
+                return;
+            }
+        }
     }
     if !config.outlet_enabled {
         update_status(&state.status, "effective", "none", 0, "starting");
         set_last_effective_request_id(&state.status, request_id);
         marker(&format!(
-            "status=request-effective appSessionId={} generation={} requestId={} enabled=true outletCount=0 inletState=starting",
-            token(&state.app_session_id), state.generation, token(request_id)
+            "status=request-effective appSessionId={} generation={} requestId={} enabled=true outletBackend={} inletBackend={} outletCount=0 inletState=starting",
+            token(&state.app_session_id),
+            state.generation,
+            token(request_id),
+            config.outlet_backend.marker_value(),
+            config.inlet_backend.marker_value(),
         ));
     }
 }
 
-struct OutletSet {
+struct LibLslOutletSet {
     polar_hr: Option<LslOutlet>,
     polar_rr: Option<LslOutlet>,
     polar_acc: Option<LslOutlet>,
@@ -578,7 +716,7 @@ struct OutletSet {
     headset_views: Option<LslOutlet>,
 }
 
-impl OutletSet {
+impl LibLslOutletSet {
     fn create(config: &LslPanelConfig) -> Result<Self, String> {
         let stem = stream_stem(config);
         let source = source_stem(config);
@@ -679,6 +817,147 @@ impl OutletSet {
     }
 }
 
+enum OutletSet {
+    LibLsl(LibLslOutletSet),
+    RustyLsl(Box<RustyLslOutletSet>),
+}
+
+impl OutletSet {
+    fn create(config: &LslPanelConfig, app_session_id: &str) -> Result<Self, String> {
+        match config.outlet_backend {
+            LslBackend::LibLsl => LibLslOutletSet::create(config).map(Self::LibLsl),
+            LslBackend::RustyLsl => {
+                let definitions = rusty_lsl_definitions(config);
+                RustyLslOutletSet::create(
+                    config.rusty_lsl_interface_ipv4,
+                    &stream_stem(config),
+                    &source_stem(config),
+                    app_session_id,
+                    &config.session_id,
+                    &definitions,
+                )
+                .map(Box::new)
+                .map(Self::RustyLsl)
+            }
+        }
+    }
+
+    fn count(&self) -> usize {
+        match self {
+            Self::LibLsl(outlets) => outlets.count(),
+            Self::RustyLsl(outlets) => outlets.count(),
+        }
+    }
+
+    fn poll(&mut self, stop: &AtomicBool) -> Result<Option<RustyLslPollHealth>, String> {
+        match self {
+            Self::LibLsl(_) => Ok(None),
+            Self::RustyLsl(outlets) => outlets.poll(stop).map(Some),
+        }
+    }
+
+    fn push(&mut self, sample: OutboundSample, stop: &AtomicBool) -> Result<(bool, u64), String> {
+        match self {
+            Self::LibLsl(outlets) => outlets.push(sample).map(|selected| (selected, 0)),
+            Self::RustyLsl(outlets) => {
+                let (suffix, timestamp, values): (&str, f64, &[f32]) = match &sample {
+                    OutboundSample::PolarHr { timestamp, bpm } => {
+                        ("polar_hr", *timestamp, std::slice::from_ref(bpm))
+                    }
+                    OutboundSample::PolarRr { timestamp, rr_ms } => {
+                        ("polar_rr", *timestamp, std::slice::from_ref(rr_ms))
+                    }
+                    OutboundSample::PolarAcc { timestamp, xyz_mg } => {
+                        ("polar_acc", *timestamp, xyz_mg)
+                    }
+                    OutboundSample::PolarEcg {
+                        timestamp,
+                        microvolts,
+                    } => ("polar_ecg", *timestamp, std::slice::from_ref(microvolts)),
+                    OutboundSample::ControllerRightGrip { timestamp, values } => {
+                        ("controller_right_grip", *timestamp, values)
+                    }
+                    OutboundSample::HeadsetViews { timestamp, values } => {
+                        ("headset_views", *timestamp, values)
+                    }
+                };
+                outlets
+                    .push(suffix, values, timestamp, stop)
+                    .map(|outcome| (true, outcome.complete_deliveries))
+            }
+        }
+    }
+
+    fn close(self) {
+        if let Self::RustyLsl(outlets) = self {
+            (*outlets).close();
+        }
+    }
+}
+
+fn rusty_lsl_definitions(config: &LslPanelConfig) -> Vec<RustyLslStreamDefinition<'static>> {
+    let candidates = [
+        (
+            config.polar_hr,
+            RustyLslStreamDefinition {
+                suffix: "polar_hr",
+                stream_type: "PolarHeartRate",
+                channel_count: 1,
+                nominal_rate_hz: 0.0,
+            },
+        ),
+        (
+            config.polar_rr,
+            RustyLslStreamDefinition {
+                suffix: "polar_rr",
+                stream_type: "PolarRR",
+                channel_count: 1,
+                nominal_rate_hz: 0.0,
+            },
+        ),
+        (
+            config.polar_acc,
+            RustyLslStreamDefinition {
+                suffix: "polar_acc",
+                stream_type: "PolarACC",
+                channel_count: 3,
+                nominal_rate_hz: 200.0,
+            },
+        ),
+        (
+            config.polar_ecg,
+            RustyLslStreamDefinition {
+                suffix: "polar_ecg",
+                stream_type: "PolarECG",
+                channel_count: 1,
+                nominal_rate_hz: 130.0,
+            },
+        ),
+        (
+            config.controller_right_grip,
+            RustyLslStreamDefinition {
+                suffix: "controller_right_grip",
+                stream_type: "ControllerPose",
+                channel_count: 9,
+                nominal_rate_hz: 0.0,
+            },
+        ),
+        (
+            config.headset_views,
+            RustyLslStreamDefinition {
+                suffix: "headset_views",
+                stream_type: "HeadsetViews",
+                channel_count: 14,
+                nominal_rate_hz: 0.0,
+            },
+        ),
+    ];
+    candidates
+        .into_iter()
+        .filter_map(|(enabled, definition)| enabled.then_some(definition))
+        .collect()
+}
+
 fn create_if(
     enabled: bool,
     stem: &str,
@@ -706,8 +985,12 @@ fn push_if(outlet: &Option<LslOutlet>, sample: &[f32], timestamp: f64) -> Result
     let Some(outlet) = outlet else {
         return Ok(false);
     };
-    outlet.push_f32_at(sample, timestamp, false)?;
+    outlet.push_f32_at(sample, timestamp, outbound_sample_pushthrough())?;
     Ok(true)
+}
+
+fn outbound_sample_pushthrough() -> bool {
+    true
 }
 
 fn run_outlet_worker(
@@ -719,7 +1002,7 @@ fn run_outlet_worker(
     generation: u64,
     request_id: String,
 ) {
-    let outlets = match OutletSet::create(&config) {
+    let mut outlets = match OutletSet::create(&config, &app_session_id) {
         Ok(outlets) => outlets,
         Err(reason) => {
             update_status(&status, "error", &reason, 0, "disabled");
@@ -738,36 +1021,72 @@ fn run_outlet_worker(
         snapshot.last_effective_request_id = request_id.clone();
     }
     marker(&format!(
-        "status=request-effective appSessionId={} generation={} requestId={} enabled=true outletCount={} inletState={}",
+        "status=request-effective appSessionId={} generation={} requestId={} enabled=true outletBackend={} inletBackend={} outletCount={} inletState={}",
         token(&app_session_id),
         generation,
         token(&request_id),
+        config.outlet_backend.marker_value(),
+        config.inlet_backend.marker_value(),
         outlet_count,
         if config.inlet_enabled { "starting" } else { "disabled" }
     ));
     while !stop.load(Ordering::Acquire) {
-        match receiver.recv_timeout(Duration::from_millis(50)) {
-            Ok(sample) => match outlets.push(sample) {
-                Ok(true) => {
-                    if let Ok(mut snapshot) = status.lock() {
-                        snapshot.pushed = snapshot.pushed.saturating_add(1);
+        match outlets.poll(&stop) {
+            Ok(Some(health)) => update_rusty_lsl_health(&status, health),
+            Ok(None) => {}
+            Err(_) if stop.load(Ordering::Acquire) => break,
+            Err(reason) => {
+                if let Ok(mut snapshot) = status.lock() {
+                    snapshot.state = "degraded";
+                    snapshot.reason = reason;
+                }
+            }
+        }
+        match receiver.recv_timeout(Duration::from_millis(5)) {
+            Ok(sample) => {
+                let started = Instant::now();
+                match outlets.push(sample, &stop) {
+                    Ok((true, complete_deliveries)) => {
+                        let elapsed_ns =
+                            u64::try_from(started.elapsed().as_nanos()).unwrap_or(u64::MAX);
+                        if let Ok(mut snapshot) = status.lock() {
+                            snapshot.pushed = snapshot.pushed.saturating_add(1);
+                            snapshot.push_elapsed_ns_total =
+                                snapshot.push_elapsed_ns_total.saturating_add(elapsed_ns);
+                            snapshot.push_elapsed_ns_max =
+                                snapshot.push_elapsed_ns_max.max(elapsed_ns);
+                            snapshot.complete_deliveries = snapshot
+                                .complete_deliveries
+                                .saturating_add(complete_deliveries);
+                        }
+                    }
+                    Ok((false, _)) => {}
+                    Err(_) if stop.load(Ordering::Acquire) => break,
+                    Err(reason) => {
+                        if let Ok(mut snapshot) = status.lock() {
+                            snapshot.state = "degraded";
+                            snapshot.reason = reason;
+                        }
                     }
                 }
-                Ok(false) => {}
-                Err(reason) => {
-                    if let Ok(mut snapshot) = status.lock() {
-                        snapshot.state = "degraded";
-                        snapshot.reason = reason.clone();
-                    }
-                }
-            },
+            }
             Err(mpsc::RecvTimeoutError::Timeout) => {}
             Err(mpsc::RecvTimeoutError::Disconnected) => break,
         }
     }
+    outlets.close();
     marker(&format!(
         "status=outlet-worker-stopped generation={generation}"
     ));
+}
+
+fn update_rusty_lsl_health(status: &Arc<Mutex<WorkerStatus>>, health: RustyLslPollHealth) {
+    if let Ok(mut snapshot) = status.lock() {
+        snapshot.discovery_queries = health.discovery_queries;
+        snapshot.discovery_responses = health.discovery_responses;
+        snapshot.consumers_accepted = health.consumers_accepted;
+        snapshot.connected_consumers = health.connected_consumers;
+    }
 }
 
 fn run_inlet_worker(
@@ -1007,15 +1326,27 @@ fn response_locked(
         "response_reason": response_reason,
         "panel_available": state.panel_available,
         "library_linked": lsl_android::library_linked(),
+        "rusty_lsl_compiled": lsl_rusty_outlet::compiled(),
+        "rusty_lsl_source_commit": lsl_rusty_outlet::RUSTY_LSL_SOURCE_COMMIT,
         "app_session_id": state.app_session_id,
         "generation": state.generation,
         "last_request_id": state.last_request_id,
         "effective": {
             "state": worker.state,
             "reason": worker.reason,
+            "outlet_backend": worker.outlet_backend,
+            "inlet_backend": worker.inlet_backend,
             "outlet_count": worker.outlet_count,
             "inlet_state": worker.inlet_state,
             "samples_pushed": worker.pushed,
+            "push_elapsed_ns_total": worker.push_elapsed_ns_total,
+            "push_elapsed_ns_max": worker.push_elapsed_ns_max,
+            "complete_deliveries": worker.complete_deliveries,
+            "complete_delivery_receipts_available": worker.outlet_backend == "rusty-lsl",
+            "discovery_queries": worker.discovery_queries,
+            "discovery_responses": worker.discovery_responses,
+            "consumers_accepted": worker.consumers_accepted,
+            "connected_consumers": worker.connected_consumers,
             "samples_pulled": worker.pulled,
             "samples_dropped": state.dropped.load(Ordering::Relaxed),
             "inlet_samples_rejected": worker.rejected_inlet,
@@ -1125,6 +1456,17 @@ fn token_field(value: Option<&Value>, default: &str, label: &str) -> Result<Stri
         return Err(format!("invalid-{label}"));
     }
     Ok(value.to_owned())
+}
+
+fn ipv4_field(value: Option<&Value>, default: Ipv4Addr) -> Result<Ipv4Addr, String> {
+    let Some(value) = value else {
+        return Ok(default);
+    };
+    value
+        .as_str()
+        .ok_or_else(|| "invalid-rusty-lsl-interface-ipv4".to_owned())?
+        .parse::<Ipv4Addr>()
+        .map_err(|_| "invalid-rusty-lsl-interface-ipv4".to_owned())
 }
 
 fn usize_field(
@@ -1300,7 +1642,15 @@ mod tests {
         assert!(!config.enabled);
         assert!(!config.outlet_enabled);
         assert!(!config.inlet_enabled);
+        assert_eq!(config.outlet_backend, LslBackend::LibLsl);
+        assert_eq!(config.inlet_backend, LslBackend::LibLsl);
+        assert_eq!(config.rusty_lsl_interface_ipv4, Ipv4Addr::UNSPECIFIED);
         assert!(config.any_outlet_selected());
+    }
+
+    #[test]
+    fn outbound_samples_are_immediate_flush_boundaries() {
+        assert!(outbound_sample_pushthrough());
     }
 
     #[test]
@@ -1309,7 +1659,64 @@ mod tests {
         assert_eq!(config.participant_id, "P001");
         assert_eq!(config.inlet_driver_slot, 2);
         assert_eq!(config.inlet_resolve_by, LslInletResolveBy::SourceId);
+        assert_eq!(config.outlet_backend, LslBackend::LibLsl);
+        assert_eq!(config.inlet_backend, LslBackend::LibLsl);
         assert_eq!(config.to_value()["outlets"]["headset_views"], true);
+    }
+
+    #[test]
+    fn accepts_explicit_rusty_lsl_outlet_only_with_concrete_interface() {
+        let mut value = enabled_config();
+        value["inlet_enabled"] = json!(false);
+        value["outlet_backend"] = json!("rusty-lsl");
+        value["rusty_lsl"] = json!({"interface_ipv4": "192.0.2.10"});
+        let config = LslPanelConfig::from_value(&value).expect("Rusty LSL outlet config");
+        assert_eq!(config.outlet_backend, LslBackend::RustyLsl);
+        assert_eq!(
+            config.rusty_lsl_interface_ipv4,
+            Ipv4Addr::new(192, 0, 2, 10)
+        );
+        assert_eq!(config.to_value()["outlet_backend"], "rusty-lsl");
+    }
+
+    #[test]
+    fn rejects_rusty_lsl_inlet_and_mixed_transport() {
+        let mut rusty_inlet = enabled_config();
+        rusty_inlet["inlet_backend"] = json!("rusty-lsl");
+        assert_eq!(
+            LslPanelConfig::from_value(&rusty_inlet).unwrap_err(),
+            "rusty-lsl-persistent-inlet-not-supported"
+        );
+
+        let mut mixed = enabled_config();
+        mixed["outlet_backend"] = json!("rusty-lsl");
+        mixed["rusty_lsl"] = json!({"interface_ipv4": "192.0.2.10"});
+        assert_eq!(
+            LslPanelConfig::from_value(&mixed).unwrap_err(),
+            "rusty-lsl-outlet-cannot-share-discovery-with-liblsl-inlet"
+        );
+    }
+
+    #[test]
+    fn rejects_missing_loopback_and_malformed_rusty_lsl_interface() {
+        for interface in ["0.0.0.0", "127.0.0.1", "239.255.172.215"] {
+            let mut value = enabled_config();
+            value["inlet_enabled"] = json!(false);
+            value["outlet_backend"] = json!("rusty-lsl");
+            value["rusty_lsl"] = json!({"interface_ipv4": interface});
+            assert_eq!(
+                LslPanelConfig::from_value(&value).unwrap_err(),
+                "rusty-lsl-interface-not-concrete-lan-ipv4"
+            );
+        }
+        let mut malformed = enabled_config();
+        malformed["inlet_enabled"] = json!(false);
+        malformed["outlet_backend"] = json!("rusty-lsl");
+        malformed["rusty_lsl"] = json!({"interface_ipv4": "not-an-ip"});
+        assert_eq!(
+            LslPanelConfig::from_value(&malformed).unwrap_err(),
+            "invalid-rusty-lsl-interface-ipv4"
+        );
     }
 
     #[test]
