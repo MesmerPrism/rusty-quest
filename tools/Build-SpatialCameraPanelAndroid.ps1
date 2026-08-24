@@ -2245,8 +2245,11 @@ $manifest = [ordered]@{
     spatial_camera_projection_blend_policy = "premultiplied-alpha-over-same-surface-video"
     spatial_camera_projection_border_inner_blend_uv = 0.04
     spatial_camera_projection_border_blend_curve = 1.6
-    spatial_camera_raw_projection_border_blend = $true
+    spatial_camera_raw_projection_border_blend = $false
     spatial_camera_opaque_projection_border_blend = $true
+    spatial_camera_opaque_projection_border_blend_scope = "legacy-only"
+    spatial_camera_projection_zone_boundary_owner = "center-middle-outer"
+    spatial_camera_raw_projection_route = "zone-compositor-with-fallback-no-fade"
     spatial_public_guide_processing_properties = @(
         "debug.rustyquest.spatial.camera_hwb_projection_probe.guide.preblur.kernel",
         "debug.rustyquest.spatial.camera_hwb_projection_probe.guide.preblur.input",

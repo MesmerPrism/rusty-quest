@@ -2140,10 +2140,12 @@ fn spatial_public_guide_pass_count_for_layer_override(layer_override: f32) -> us
         return SPATIAL_PUBLIC_GUIDE_PASS_SCHEDULE.len();
     }
     match layer_override.round() as u32 {
-        // Raw camera brightness and the public depth diagnostic both consume
-        // only guide target 0. Preblur and raw-strength consume exact prefixes
-        // of the dependency-ordered schedule. Final, blurred-strength, and
-        // displacement retain the complete graph.
+        // Raw camera color consumes the camera descriptor directly through the
+        // zone compositor and needs no guide targets. Raw camera brightness and
+        // the public depth diagnostic consume only guide target 0. Preblur and
+        // raw-strength consume exact prefixes of the dependency-ordered
+        // schedule. Final, blurred-strength, and displacement retain the graph.
+        8 => 0,
         1 | 6 => 1,
         2 => 3,
         3 => 4,
@@ -5123,7 +5125,7 @@ mod tests {
         assert_eq!(spatial_public_guide_pass_count_for_layer_override(5.0), 6);
         assert_eq!(spatial_public_guide_pass_count_for_layer_override(6.0), 1);
         assert_eq!(spatial_public_guide_pass_count_for_layer_override(7.0), 6);
-        assert_eq!(spatial_public_guide_pass_count_for_layer_override(8.0), 6);
+        assert_eq!(spatial_public_guide_pass_count_for_layer_override(8.0), 0);
     }
 
     #[test]

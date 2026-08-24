@@ -1284,7 +1284,7 @@ pub(crate) fn camera_hwb_projection_marker_fields() -> String {
         current_spatial_public_opaque_projection_layer_override(),
     )
     + &format!(
-        " projectionBlendPolicy=premultiplied-alpha-over-same-surface-video rawCustomProjectionBorderBlend=true opaqueProjectionBorderBlend=true videoBorderInnerBlendUv={:.3} videoBorderBlendCurve={:.3} publicCameraSampling={} publicCameraSamplingRadiusTexels={:.2} {}",
+        " projectionBlendPolicy=premultiplied-alpha-over-same-surface-video rawCustomProjectionBorderBlend=false opaqueProjectionBorderBlend=legacy-only projectionZoneBoundaryOwner=center-middle-outer rawCustomProjectionRoute=zone-compositor-with-fallback-no-fade videoBorderInnerBlendUv={:.3} videoBorderBlendCurve={:.3} publicCameraSampling={} publicCameraSamplingRadiusTexels={:.2} {}",
         CAMERA_HWB_VIDEO_BORDER_INNER_BLEND_UV,
         CAMERA_HWB_VIDEO_BORDER_BLEND_CURVE,
         current_spatial_guide_processing_policy()
@@ -1672,6 +1672,10 @@ mod tests {
         assert!(fields.contains("targetClipPolicy=clip-to-visible-eye"));
         assert!(fields.contains("projectionContentMappingMode=target-local-raster"));
         assert!(fields.contains("monoDuplicated=false"));
+        assert!(fields.contains("rawCustomProjectionBorderBlend=false"));
+        assert!(fields.contains("opaqueProjectionBorderBlend=legacy-only"));
+        assert!(fields.contains("projectionZoneBoundaryOwner=center-middle-outer"));
+        assert!(fields.contains("rawCustomProjectionRoute=zone-compositor-with-fallback-no-fade"));
     }
 
     #[test]

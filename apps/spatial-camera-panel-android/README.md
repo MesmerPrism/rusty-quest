@@ -237,6 +237,11 @@ app-local. Stopping the bridge is the rollback and leaves the adapter inert.
   Center, optional Middle buffer, and Outer. Its geometry is recomputed from the
   same display-frame snapshot as the projection guard band, in this fixed order:
   `user scale -> effective guard contraction -> region content/transitions -> video carrier`.
+  Under the compositor-owned contract, Center/Middle/Outer is the sole
+  interactive boundary authority. Raw camera selection enters the same
+  compositor; the emergency raw fallback samples the camera without adding a
+  separate hidden perimeter fade. The older opaque border blend remains
+  confined to the exact legacy projection route.
   Right-stick projection scaling therefore remains independent of the Buffer.
   Static Buffer has one guard size. Dynamic Buffer interpolates from its
   configured minimum to maximum guard and reaches the maximum at the configured

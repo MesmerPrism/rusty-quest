@@ -28,8 +28,7 @@ use crate::spatial_guide_processing::current_spatial_guide_processing_policy;
 use crate::spatial_public_multistack::public_multistack_marker_fields;
 use crate::spatial_public_multistack_runtime::{
     record_spatial_public_meta_passthrough_edge_window_cutout,
-    spatial_public_meta_passthrough_edge_window_selected,
-    spatial_public_raw_custom_projection_selected, SpatialPublicGuideTargets,
+    spatial_public_meta_passthrough_edge_window_selected, SpatialPublicGuideTargets,
 };
 use crate::spatial_video_projection::{
     SpatialVideoProjectionFrameStats, SpatialVideoProjectionRenderer,
@@ -580,7 +579,7 @@ pub(crate) unsafe fn create_camera_hwb_probe_resources(
     if matches!(mode, CameraHwbProbeMode::RawColorProjection) {
         let sampling = current_spatial_guide_processing_policy().camera_sampling;
         log_marker(format!(
-            "status=projection-composition-policy projectionBlendPolicy=premultiplied-alpha-over-same-surface-video rawCustomProjectionBorderBlend=true opaqueProjectionBorderBlend=true videoBorderInnerBlendUv=0.040 videoBorderBlendCurve=1.600 offscreenGuideBlendPolicy=opaque publicCameraSampling={} publicCameraSamplingRadiusTexels={:.2} runtimeCrash=false",
+            "status=projection-composition-policy projectionBlendPolicy=premultiplied-alpha-over-same-surface-video rawCustomProjectionBorderBlend=false opaqueProjectionBorderBlend=legacy-only projectionZoneBoundaryOwner=center-middle-outer rawCustomProjectionRoute=zone-compositor-with-fallback-no-fade videoBorderInnerBlendUv=0.040 videoBorderBlendCurve=1.600 offscreenGuideBlendPolicy=opaque publicCameraSampling={} publicCameraSamplingRadiusTexels={:.2} runtimeCrash=false",
             sampling.marker_token(),
             sampling.radius_texels(),
         ));
@@ -948,90 +947,86 @@ pub(crate) unsafe fn record_camera_hwb_probe_command_buffer(
     };
     let mut public_guide_targets = public_guide_targets;
     let edge_window_selected = spatial_public_meta_passthrough_edge_window_selected();
-    let raw_custom_projection_selected = spatial_public_raw_custom_projection_selected();
     let projection_footprint_scale = projection_guard_band.footprint_scale;
     let mut projection_zone_ready = false;
     let mut projection_zone_descriptor_set = vk::DescriptorSet::null();
     let mut projection_zone_descriptor_source = "unavailable";
-    let public_projection_ready = if !camera_projection_visible
-        || opaque_camera_only
-        || edge_window_selected
-        || raw_custom_projection_selected
-    {
-        false
-    } else if let Some(targets) = public_guide_targets.as_deref_mut() {
-        targets.record_spatial_public_guide_passes(
-            device,
-            command_buffer,
-            gpu_timestamps,
-            frame_slot,
-            descriptor_set,
-            elapsed_seconds,
-            camera_reprojection,
-            projection_guard_band.source_overscan_uv,
-        )?;
-        let sampling_ready =
-            targets.prepare_spatial_public_projection_sampling(device, command_buffer);
-        if sampling_ready {
-            let synthetic_diagnostic = projection_zone_frame.settings.synthetic_diagnostic();
-            let projection_zone_descriptor = if synthetic_diagnostic {
-                // Synthetic diagnostics can still carry a video-owning configuration. Bind
-                // the live camera layout because prepare_frame may have replaced the retained
-                // video resources earlier in this frame.
-                Some((
-                    resources.descriptor_set_layout,
-                    descriptor_set,
-                    "synthetic-diagnostic-fallback-unused",
-                ))
-            } else if !readable_video_consumer_required {
-                // These routes never sample u_video_projection. Prefer the last exact video
-                // descriptor solely to retain its descriptor-set layout across a hot
-                // Video/Transparent change. This avoids destroying and recompiling the Vulkan
-                // compositor pipeline on the render thread. Before the first decoded frame,
-                // the compatible camera descriptor remains the cold fallback.
-                retained_unused_video_descriptor
-                    .map(|(layout, set)| (layout, set, "retained-video-fallback-unused"))
-                    .or_else(|| {
-                        Some((
-                            resources.descriptor_set_layout,
-                            descriptor_set,
-                            if projection_zone_frame
-                                .settings
-                                .transparent_underlay_requested()
-                            {
-                                "transparent-underlay-fallback-unused"
-                            } else {
-                                "camera-fallback-unused"
-                            },
-                        ))
+    let public_projection_ready =
+        if !camera_projection_visible || opaque_camera_only || edge_window_selected {
+            false
+        } else if let Some(targets) = public_guide_targets.as_deref_mut() {
+            targets.record_spatial_public_guide_passes(
+                device,
+                command_buffer,
+                gpu_timestamps,
+                frame_slot,
+                descriptor_set,
+                elapsed_seconds,
+                camera_reprojection,
+                projection_guard_band.source_overscan_uv,
+            )?;
+            let sampling_ready =
+                targets.prepare_spatial_public_projection_sampling(device, command_buffer);
+            if sampling_ready {
+                let synthetic_diagnostic = projection_zone_frame.settings.synthetic_diagnostic();
+                let projection_zone_descriptor = if synthetic_diagnostic {
+                    // Synthetic diagnostics can still carry a video-owning configuration. Bind
+                    // the live camera layout because prepare_frame may have replaced the retained
+                    // video resources earlier in this frame.
+                    Some((
+                        resources.descriptor_set_layout,
+                        descriptor_set,
+                        "synthetic-diagnostic-fallback-unused",
+                    ))
+                } else if !readable_video_consumer_required {
+                    // These routes never sample u_video_projection. Prefer the last exact video
+                    // descriptor solely to retain its descriptor-set layout across a hot
+                    // Video/Transparent change. This avoids destroying and recompiling the Vulkan
+                    // compositor pipeline on the render thread. Before the first decoded frame,
+                    // the compatible camera descriptor remains the cold fallback.
+                    retained_unused_video_descriptor
+                        .map(|(layout, set)| (layout, set, "retained-video-fallback-unused"))
+                        .or_else(|| {
+                            Some((
+                                resources.descriptor_set_layout,
+                                descriptor_set,
+                                if projection_zone_frame
+                                    .settings
+                                    .transparent_underlay_requested()
+                                {
+                                    "transparent-underlay-fallback-unused"
+                                } else {
+                                    "camera-fallback-unused"
+                                },
+                            ))
+                        })
+                } else {
+                    prepared_video.as_ref().map(|(_, prepared)| {
+                        (
+                            prepared.descriptor_set_layout,
+                            prepared.descriptor_set,
+                            "prepared-video",
+                        )
                     })
-            } else {
-                prepared_video.as_ref().map(|(_, prepared)| {
-                    (
-                        prepared.descriptor_set_layout,
-                        prepared.descriptor_set,
-                        "prepared-video",
-                    )
-                })
-            };
-            if let Some((descriptor_set_layout, zone_descriptor_set, descriptor_source)) =
-                projection_zone_descriptor
-            {
-                projection_zone_ready = targets.prepare_projection_zone_compositor(
-                    device,
-                    &projection_zone_frame,
-                    descriptor_set_layout,
-                )?;
-                if projection_zone_ready {
-                    projection_zone_descriptor_set = zone_descriptor_set;
-                    projection_zone_descriptor_source = descriptor_source;
+                };
+                if let Some((descriptor_set_layout, zone_descriptor_set, descriptor_source)) =
+                    projection_zone_descriptor
+                {
+                    projection_zone_ready = targets.prepare_projection_zone_compositor(
+                        device,
+                        &projection_zone_frame,
+                        descriptor_set_layout,
+                    )?;
+                    if projection_zone_ready {
+                        projection_zone_descriptor_set = zone_descriptor_set;
+                        projection_zone_descriptor_source = descriptor_source;
+                    }
                 }
             }
-        }
-        sampling_ready
-    } else {
-        false
-    };
+            sampling_ready
+        } else {
+            false
+        };
 
     gpu_timestamps.write_stage_start(
         device,

@@ -52,6 +52,7 @@ $wsi = Read-RequiredText "apps\spatial-camera-panel-android\native-receipt\src\c
 $videoProjection = Read-RequiredText "apps\spatial-camera-panel-android\native-receipt\src\spatial_video_projection.rs"
 $runtime = Read-RequiredText "apps\spatial-camera-panel-android\native-receipt\src\spatial_public_multistack_runtime.rs"
 $build = Read-RequiredText "apps\spatial-camera-panel-android\native-receipt\build.rs"
+$rawProjectionShader = Read-RequiredText "apps\spatial-camera-panel-android\native-receipt\shaders\camera_hwb_raw_color.frag.glsl"
 $readme = Read-RequiredText "apps\spatial-camera-panel-android\README.md"
 
 Assert-Contains $controls "coverageOff = 0" "The compositor must retain an explicit off/legacy mode."
@@ -156,6 +157,9 @@ Assert-Contains $projection "suppresses_same_surface_video" "Transparent underla
 Assert-Contains $projection "assert!(settings.suppresses_same_surface_video(false))" "Stretch Off must have a native regression test for same-surface video suppression."
 Assert-Contains $wsi "vk::CompositeAlphaFlagsKHR::PRE_MULTIPLIED" "The Android swapchain must prefer premultiplied alpha."
 Assert-Contains $wsi "projectionZoneRendered=" "The renderer must report effective compositor adoption rather than only requested controls."
+Assert-NotContains $wsi "raw_custom_projection_selected" "Raw camera must enter the same zone-compositor route as processed projection layers."
+Assert-NotContains $rawProjectionShader "video_border_alpha" "The raw fallback must not retain an independent hidden border fade."
+Assert-Contains $projection "projectionZoneBoundaryOwner=center-middle-outer" "Runtime markers must name the interactive region compositor as the sole boundary owner."
 Assert-Contains $runtime "prepare_projection_zone_compositor" "The renderer must prepare the live zone UBO and video-aware pipeline."
 Assert-Contains $runtime "pipeline.video_descriptor_set_layout != video_descriptor_set_layout" "The video descriptor layout must participate in pipeline compatibility."
 Assert-Contains $runtime "!zone_frame.settings.synthetic_diagnostic()" "Synthetic color diagnostics must bypass live guide displacement."
