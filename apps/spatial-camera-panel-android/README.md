@@ -42,8 +42,11 @@ pwsh -NoProfile -ExecutionPolicy Bypass -File ..\..\tools\checks\Test-SpatialCam
 
 ## Debug launch-qualification receipt
 
-The debug variant exposes one fixed `DUMP`-permission, shell-UID-only receipt
-provider. A host first arms a single-use 64-hex nonce and then launches the
+The debug variant exposes one `DUMP`-permission, shell-UID-only receipt
+provider whose authority is derived from the selected application id as
+`${applicationId}.debug-host-receipt`. Distinct diagnostic packages therefore
+remain co-installable and must never share a fixed provider authority. A host
+first arms a single-use 64-hex nonce and then launches the
 already inspected APK. The app may finalize only after its typed in-process
 readback observes the configured local source, successful MediaCodec startup,
 two distinct decoded frames with advancing timestamps, bounded decoder image
@@ -54,10 +57,10 @@ transport confirmation, and parsed log output are never receipt facts.
 The receipt is hash-chained, atomic-final, bounded to 64 KiB, bound to the APK
 bytes, package, PID, process epoch, and nonce hash, and contains only sanitized
 tokens. Raw nonces live in memory only. Source paths and private media identity
-are never serialized. The provider and its authority exist only in the debug
-source set; release manifests and artifacts contain neither. This host-side
-contract does not by itself qualify provider transport on a Quest or authorize
-product acceptance.
+are never serialized. The provider and its authority suffix exist only in the
+debug source set; release manifests and artifacts contain neither. This
+host-side contract does not by itself qualify provider transport on a Quest or
+authorize product acceptance.
 
 This workflow metadata does not itself activate a runtime route or add package
 permissions. Existing effective markers remain required.

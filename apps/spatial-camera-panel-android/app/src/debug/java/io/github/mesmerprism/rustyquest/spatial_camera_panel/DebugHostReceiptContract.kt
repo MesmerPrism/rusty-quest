@@ -8,8 +8,7 @@ import java.security.SecureRandom
 /** Closed debug-only shell transport; app code, not this provider, owns receipt facts. */
 internal object DebugHostReceiptContract {
   const val SCHEMA = "rusty.quest.debug_host_receipt.v1"
-  const val AUTHORITY =
-      "io.github.mesmerprism.rustyquest.spatial_camera_panel.debug-host-receipt"
+  const val AUTHORITY_SUFFIX = ".debug-host-receipt"
   const val METHOD_ARM = "arm"
   const val METHOD_STATUS = "status"
   const val METHOD_READ = "read"

@@ -3,7 +3,7 @@
     <application>
         <provider
             android:name=".DebugHostReceiptProvider"
-            android:authorities="io.github.mesmerprism.rustyquest.spatial_camera_panel.debug-host-receipt"
+            android:authorities="${applicationId}.debug-host-receipt"
             android:enabled="true"
             android:exported="true"
             android:grantUriPermissions="false"

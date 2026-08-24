@@ -22,7 +22,9 @@ function Assert-NotContains {
     if ($Text.Contains($Needle)) { throw "$Label contains forbidden token: $Needle" }
 }
 
-$authority = 'io.github.mesmerprism.rustyquest.spatial_camera_panel.debug-host-receipt'
+$authorityTemplate = '${applicationId}.debug-host-receipt'
+$authoritySuffix = '.debug-host-receipt'
+$obsoleteFixedAuthority = 'io.github.mesmerprism.rustyquest.spatial_camera_panel.debug-host-receipt'
 $debugManifestPath = 'apps/spatial-camera-panel-android/app/src/debug/AndroidManifest.xml'
 $contractPath = 'apps/spatial-camera-panel-android/app/src/debug/java/io/github/mesmerprism/rustyquest/spatial_camera_panel/DebugHostReceiptContract.kt'
 $storePath = 'apps/spatial-camera-panel-android/app/src/debug/java/io/github/mesmerprism/rustyquest/spatial_camera_panel/DebugHostReceiptStore.kt'
@@ -43,12 +45,15 @@ $nativeQualification = Read-RequiredText $nativeQualificationPath
 $mainManifest = Read-RequiredText 'apps/spatial-camera-panel-android/app/src/main/AndroidManifest.xml'
 
 Assert-Contains $debugManifestPath $debugManifest 'DebugHostReceiptProvider'
-Assert-Contains $debugManifestPath $debugManifest $authority
+Assert-Contains $debugManifestPath $debugManifest $authorityTemplate
+Assert-NotContains $debugManifestPath $debugManifest $obsoleteFixedAuthority
 Assert-Contains $debugManifestPath $debugManifest 'android.permission.DUMP'
 Assert-Contains $debugManifestPath $debugManifest 'android:exported="true"'
 Assert-Contains $debugManifestPath $debugManifest 'android:grantUriPermissions="false"'
 Assert-NotContains 'main AndroidManifest.xml' $mainManifest 'DebugHostReceiptProvider'
-Assert-NotContains 'main AndroidManifest.xml' $mainManifest $authority
+Assert-NotContains 'main AndroidManifest.xml' $mainManifest $authoritySuffix
+Assert-Contains $contractPath $contract 'AUTHORITY_SUFFIX = ".debug-host-receipt"'
+Assert-NotContains $contractPath $contract $obsoleteFixedAuthority
 
 foreach ($token in @('METHOD_ARM', 'METHOD_STATUS', 'METHOD_READ', 'METHOD_CLEANUP', '^[0-9a-f]{64}$', 'MAX_RECEIPT_BYTES = 64 * 1024')) {
     Assert-Contains $contractPath $contract $token
@@ -86,7 +91,7 @@ if (Test-Path -LiteralPath $releaseRoot) {
     Get-ChildItem -LiteralPath $releaseRoot -Recurse -File | ForEach-Object {
         $text = Get-Content -Raw -LiteralPath $_.FullName
         Assert-NotContains $_.FullName $text 'DebugHostReceiptProvider'
-        Assert-NotContains $_.FullName $text $authority
+        Assert-NotContains $_.FullName $text $authoritySuffix
     }
 }
 

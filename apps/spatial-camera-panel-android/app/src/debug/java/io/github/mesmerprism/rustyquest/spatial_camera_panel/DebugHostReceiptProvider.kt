@@ -10,7 +10,7 @@ import android.os.Bundle
 import android.os.ParcelFileDescriptor
 import android.os.Process
 
-/** Fixed DUMP-plus-shell-only provider. It has no URI, intent, component, or generic command route. */
+/** Package-scoped DUMP-plus-shell-only provider with no URI, intent, component, or generic route. */
 class DebugHostReceiptProvider : ContentProvider() {
   override fun onCreate(): Boolean = context != null
 

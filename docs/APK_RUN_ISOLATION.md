@@ -18,6 +18,12 @@ Manifold client identity, feature lock, marker namespace, and lifecycle/grant
 identity. Build inputs are explicit; ambient native-renderer or Spatial feature
 environment variables are rejected or ignored rather than inherited.
 
+Any exported debug-only provider must preserve that package isolation. Its
+authority is derived from the selected application id, for example
+`${applicationId}.debug-host-receipt`; a fixed provider authority shared by
+distinct candidate packages is rejected before build handoff because Android
+cannot co-install both packages.
+
 Native app specs resolve under:
 
 ```text
