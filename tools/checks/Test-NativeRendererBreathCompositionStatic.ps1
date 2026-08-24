@@ -61,6 +61,7 @@ $featurePaths = @(
     "fixtures\native-app-features\breath\polar-acc-assessment\input.breath.polar_acc_assessment.feature.json",
     "fixtures\native-app-features\breath\state-mapping\mapping.breath.state.feature.json",
     "fixtures\native-app-features\breath\volume-mapping\mapping.breath.volume.feature.json",
+    "fixtures\native-app-features\ui\breath-composition-panel\ui.breath_composition_control_panel.feature.json",
     "fixtures\native-app-features\ui\breath-mapping-panel\ui.same_apk_breath_mapping_panel.feature.json"
 ) | ForEach-Object { Join-Path $repo $_ }
 
@@ -438,6 +439,7 @@ try {
         "quest.native.openxr_vulkan_base",
         "renderer.background.solid_black",
         "sensor.polar_h10_ble",
+        "ui.breath_composition_control_panel",
         "ui.same_apk_breath_mapping_panel",
         "ui.same_apk_control_panel"
     )

@@ -142,21 +142,21 @@ try {
 
     Invoke-DamagedFeatureCase -Name "missing-selection" -ExpectedMessage "requires exactly one packaged panel composition" -Mutate {
         param($features)
-        $path = Join-Path $features "ui\breath-mapping-panel\ui.same_apk_breath_mapping_panel.feature.json"
+        $path = Join-Path $features "ui\breath-composition-panel\ui.breath_composition_control_panel.feature.json"
         $value = Read-Json $path
         $value.PSObject.Properties.Remove("panel_composition")
         Write-Json $value $path
     }
     Invoke-DamagedFeatureCase -Name "unknown-selection" -ExpectedMessage "Unknown selected panel module" -Mutate {
         param($features)
-        $path = Join-Path $features "ui\breath-mapping-panel\ui.same_apk_breath_mapping_panel.feature.json"
+        $path = Join-Path $features "ui\breath-composition-panel\ui.breath_composition_control_panel.feature.json"
         $value = Read-Json $path
         $value.panel_composition.selected_module_id = "unknown-panel"
         Write-Json $value $path
     }
     Invoke-DamagedFeatureCase -Name "duplicate-owner" -ExpectedMessage "requires exactly one packaged panel composition" -Mutate {
         param($features)
-        $sourcePath = Join-Path $features "ui\breath-mapping-panel\ui.same_apk_breath_mapping_panel.feature.json"
+        $sourcePath = Join-Path $features "ui\breath-composition-panel\ui.breath_composition_control_panel.feature.json"
         $basePath = Join-Path $features "core\quest.native.openxr_vulkan_base.feature.json"
         $composition = (Read-Json $sourcePath).panel_composition
         $base = Read-Json $basePath
@@ -165,21 +165,21 @@ try {
     }
     Invoke-DamagedFeatureCase -Name "unknown-dependency" -ExpectedMessage "unknown module" -Mutate {
         param($features)
-        $path = Join-Path $features "ui\breath-mapping-panel\ui.same_apk_breath_mapping_panel.feature.json"
+        $path = Join-Path $features "ui\breath-composition-panel\ui.breath_composition_control_panel.feature.json"
         $value = Read-Json $path
         $value.panel_composition.modules[0].dependencies += "missing-controls"
         Write-Json $value $path
     }
     Invoke-DamagedFeatureCase -Name "denied-selection" -ExpectedMessage "is denied" -Mutate {
         param($features)
-        $path = Join-Path $features "ui\breath-mapping-panel\ui.same_apk_breath_mapping_panel.feature.json"
+        $path = Join-Path $features "ui\breath-composition-panel\ui.breath_composition_control_panel.feature.json"
         $value = Read-Json $path
         $value.panel_composition.denied_module_ids += "breath-composition-controls"
         Write-Json $value $path
     }
     Invoke-DamagedFeatureCase -Name "duplicate-module" -ExpectedMessage "duplicate module id" -Mutate {
         param($features)
-        $path = Join-Path $features "ui\breath-mapping-panel\ui.same_apk_breath_mapping_panel.feature.json"
+        $path = Join-Path $features "ui\breath-composition-panel\ui.breath_composition_control_panel.feature.json"
         $value = Read-Json $path
         $value.panel_composition.modules += $value.panel_composition.modules[0]
         Write-Json $value $path

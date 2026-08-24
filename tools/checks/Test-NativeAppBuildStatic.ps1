@@ -247,6 +247,8 @@ foreach ($requiredFeature in @(
     "manifold.bridge",
     "manifold.embedded_broker",
     "ui.same_apk_questionnaire_panel",
+    "ui.breath_composition_control_panel",
+    "ui.private_particle_control_panel",
     "lsl.outlet",
     "lsl.inlet",
     "lsl.panel_controlled_io",

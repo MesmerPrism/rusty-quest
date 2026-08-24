@@ -22,8 +22,8 @@ function Get-ContentAddressedResolutionDirectory {
     $root = Join-Path $repoRootPath "local-artifacts\native-app-builds\$AppId"
     $directory = Get-ChildItem -LiteralPath $root -Directory |
         Where-Object { $_.Name -match '^[0-9a-f]{64}$' } |
-        Sort-Object Name |
-        Select-Object -Last 1
+        Sort-Object LastWriteTimeUtc -Descending |
+        Select-Object -First 1
     if ($null -eq $directory) { throw "No content-addressed resolution found for $AppId under $root" }
     return $directory.FullName
 }
