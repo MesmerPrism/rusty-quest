@@ -769,6 +769,40 @@ public final class ControlPanelActivity extends $selectedPanelEntrySimpleName {
 
     private final PanelImmersiveHandoff immersiveHandoff = new PanelImmersiveHandoff(this);
 
+    static int panelBackgroundColor() {
+        return android.graphics.Color.rgb(17, 18, 22);
+    }
+
+    static int panelForegroundColor() {
+        return android.graphics.Color.rgb(238, 240, 244);
+    }
+
+    static int panelMutedColor() {
+        return android.graphics.Color.rgb(170, 176, 186);
+    }
+
+    static android.widget.Button panelButton(android.app.Activity activity, String label) {
+        android.widget.Button button = new android.widget.Button(activity);
+        button.setText(label);
+        button.setAllCaps(false);
+        return button;
+    }
+
+    static android.widget.TextView panelText(
+        android.app.Activity activity,
+        String value,
+        int sizeSp,
+        int color,
+        int verticalPaddingPx
+    ) {
+        android.widget.TextView view = new android.widget.TextView(activity);
+        view.setText(value);
+        view.setTextSize(sizeSp);
+        view.setTextColor(color);
+        view.setPadding(0, verticalPaddingPx, 0, verticalPaddingPx);
+        return view;
+    }
+
     static void closePanelAndReturnToImmersive(android.app.Activity activity) {
         if (!(activity instanceof ControlPanelActivity)) {
             throw new IllegalStateException("Panel handoff owner is not the packaged ControlPanelActivity");

@@ -25,6 +25,8 @@ public class PrivateParticlePanelModule extends Activity implements PanelModule 
     public static final String MODULE_ID = "private-particle-controls";
     private static final String CANDIDATE_SCHEMA =
         "rusty.quest.native_renderer.private_particle_dynamics.v1";
+    private static final String STATUS_SCHEMA =
+        "rusty.quest.native_renderer.private_particle_dynamics_status.v1";
     private static final String STATUS_FILE = "private_particle_dynamics_status.json";
     private static final int PANEL_BG = Color.rgb(17, 18, 22);
     private static final int PANEL_FG = Color.rgb(238, 240, 244);
@@ -39,6 +41,7 @@ public class PrivateParticlePanelModule extends Activity implements PanelModule 
     private ScalarControl tracerCopies;
     private TextView requestReceipt;
     private TextView effectiveReadback;
+    private long latestRequestedRevision;
 
     @Override
     public String panelModuleId() {
@@ -120,12 +123,14 @@ public class PrivateParticlePanelModule extends Activity implements PanelModule 
 
     private void submitRequest() {
         try {
+            long revision = Math.max(1L, System.currentTimeMillis());
             JSONArray driverValues = new JSONArray();
             for (ScalarControl driver : drivers) {
                 driverValues.put(driver.value());
             }
             JSONObject request = new JSONObject()
                 .put("schema", CANDIDATE_SCHEMA)
+                .put("revision", revision)
                 .put("private_particles", new JSONObject()
                     .put("visual_scale", visualScale.value())
                     .put("world_anchor_scale_m", worldAnchorScale.value())
@@ -138,6 +143,11 @@ public class PrivateParticlePanelModule extends Activity implements PanelModule 
             JSONObject receipt = new JSONObject(
                 PrivateParticlePanelController.submitCandidate(request.toString())
             );
+            if (!"queued".equals(receipt.optString("status", ""))
+                    || receipt.optLong("candidate_revision", 0L) != revision) {
+                throw new IllegalStateException("runtime did not queue the exact candidate revision");
+            }
+            latestRequestedRevision = revision;
             requestReceipt.setText("Request receipt (not effective state):\n" + receipt.toString(2));
             scheduleEffectiveReadbackRefresh();
         } catch (Exception error) {
@@ -174,8 +184,31 @@ public class PrivateParticlePanelModule extends Activity implements PanelModule 
                     body.append(line);
                 }
                 JSONObject status = new JSONObject(body.toString());
+                if (!STATUS_SCHEMA.equals(status.optString("schema", ""))) {
+                    throw new IllegalStateException("status schema mismatch");
+                }
+                String ownerStatus = status.optString("status", "unknown");
+                long candidateRevision = status.optLong("candidate_revision", 0L);
+                long effectiveRevision = status.optLong("effective_revision", 0L);
+                if ("rejected".equals(ownerStatus)) {
+                    effectiveReadback.setText(
+                        "Request rejected by consuming runtime (not effective):\n" + status.toString(2)
+                    );
+                    return;
+                }
+                if (!"applied".equals(ownerStatus)
+                        || effectiveRevision <= 0L
+                        || effectiveRevision != candidateRevision
+                        || (latestRequestedRevision > 0L
+                            && effectiveRevision != latestRequestedRevision)) {
+                    effectiveReadback.setText(
+                        "Native-effective readback pending; owner has not applied the exact request revision:\n"
+                            + status.toString(2)
+                    );
+                    return;
+                }
                 if (status.optJSONObject("private_particles") == null) {
-                    throw new IllegalStateException("status has no private_particles projection");
+                    throw new IllegalStateException("applied status has no effective projection");
                 }
                 effectiveReadback.setText(
                     "Native-effective readback (consuming runtime):\n" + status.toString(2)
@@ -211,19 +244,11 @@ public class PrivateParticlePanelModule extends Activity implements PanelModule 
     }
 
     private Button button(String label) {
-        Button button = new Button(this);
-        button.setText(label);
-        button.setAllCaps(false);
-        return button;
+        return ControlPanelActivity.panelButton(this, label);
     }
 
     private TextView text(String value, int sizeSp, int color) {
-        TextView view = new TextView(this);
-        view.setText(value);
-        view.setTextSize(sizeSp);
-        view.setTextColor(color);
-        view.setPadding(0, dp(8), 0, dp(8));
-        return view;
+        return ControlPanelActivity.panelText(this, value, sizeSp, color, dp(8));
     }
 
     private int dp(int value) {

@@ -111,7 +111,7 @@ try {
         -Resolution $viscereality `
         -ExpectedModule "breath-composition-controls" `
         -RequiredSourceNeedles @("BreathCompositionPanelModule.java", "PolarSensorPanel.java", "LslPanelConfigStore.java") `
-        -ForbiddenSourceNeedles @("StimulusVolumePanelModule.java")
+        -ForbiddenSourceNeedles @("StimulusVolumePanelModule.java", "DriverProfileSession.java", "DriverProfilePanelModule.java", "PrivateParticlePanelModule.java", "PolarPanelModule.java")
 
     $strobe = Invoke-Resolution `
         -Name "strobe" `
@@ -300,6 +300,17 @@ try {
         $viscerealitySource -notlike '*return "breath-mapping";*') {
         throw "Viscereality panel still contains an ambient/denied entry-mode activation path."
     }
+    foreach ($foreignPageNeedle in @(
+        "buildDriverProfileMeshPanelView",
+        "buildPrivateParticleDynamicsView",
+        "buildPrivateParticleDepthWaveView",
+        "buildPolarSensorPanelView",
+        "DriverProfileSession"
+    )) {
+        if ($viscerealitySource -like "*$foreignPageNeedle*") {
+            throw "Viscereality source physically retains a foreign product page: $foreignPageNeedle"
+        }
+    }
     foreach ($lifecycleNeedle in @("onNewIntent", "onActivityResult", "onRequestPermissionsResult", "onConfigurationChanged")) {
         if ((Get-Content -LiteralPath (Join-Path $repoRootPath "tools\Build-NativeRendererAndroid.ps1") -Raw) -notlike "*$lifecycleNeedle*") {
             throw "Generated panel shell is missing lifecycle/result delegation: $lifecycleNeedle"
@@ -308,6 +319,17 @@ try {
     foreach ($handoffNeedle in @("Resume VR", "closePanelAndReturnToImmersive", "focused_submitted_frame_timeout_panel_retained")) {
         if ($viscerealitySource -notlike "*$handoffNeedle*") {
             throw "Viscereality lifecycle handoff behavior is missing: $handoffNeedle"
+        }
+    }
+    foreach ($readbackNeedle in @(
+        "private_particle_dynamics_status.v1",
+        "candidate_revision",
+        "effective_revision",
+        "privateParticleStatusIsEffective",
+        "Request rejected by consuming runtime (not effective)"
+    )) {
+        if ($viscerealitySource -notlike "*$readbackNeedle*") {
+            throw "Viscereality effective readback is missing owner-revision fencing: $readbackNeedle"
         }
     }
     $privateController = Get-Content -LiteralPath (Join-Path $repoRootPath "apps\native-renderer-android\panel-modules\private-particle\src\main\java\io\github\mesmerprism\rustyquest\native_renderer\PrivateParticlePanelController.java") -Raw
@@ -323,6 +345,10 @@ try {
         'draw_slots_per_oscillator',
         'apply-on-next-safe-frame',
         'private_particle_dynamics_status.json',
+        'private_particle_dynamics_status.v1',
+        '"queued"\.equals',
+        '"rejected"\.equals',
+        'effectiveRevision != candidateRevision',
         'Request receipt \(not effective state\)',
         'Native-effective readback \(consuming runtime\)'
     )) {
@@ -332,6 +358,25 @@ try {
     }
     if ($privateModule -match 'rusty.quest.private_particle.panel_request.v1') {
         throw "Standalone private-particle module still emits the rejected legacy panel schema."
+    }
+    $driverModule = Get-Content -LiteralPath (Join-Path $repoRootPath "apps\native-renderer-android\panel-modules\driver-profile\src\main\java\io\github\mesmerprism\rustyquest\native_renderer\DriverProfilePanelModule.java") -Raw
+    foreach ($needle in @(
+        'profile-a', 'profile-b', 'profile-c', 'profile-d',
+        'real-hands', 'gpu-replay-hands', 'icosphere',
+        'rusty\.driver_profile\.mesh\.native_panel_selection\.v1',
+        'runtime did not queue the exact candidate revision',
+        'effectiveRevision != candidateRevision',
+        'Native-effective readback \(consuming runtime\)'
+    )) {
+        if ($driverModule -notmatch $needle) {
+            throw "Standalone driver-profile module lost the existing request/readback contract: $needle"
+        }
+    }
+    $buildScriptSource = Get-Content -LiteralPath (Join-Path $repoRootPath "tools\Build-NativeRendererAndroid.ps1") -Raw
+    foreach ($chromeNeedle in @("panelBackgroundColor", "panelForegroundColor", "panelMutedColor", "panelButton", "panelText")) {
+        if ($buildScriptSource -notlike "*$chromeNeedle*") {
+            throw "Generated Android shell no longer owns shared panel chrome primitive: $chromeNeedle"
+        }
     }
 
     Write-Output "native renderer panel composition static checks passed"
