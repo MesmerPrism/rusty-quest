@@ -723,13 +723,15 @@ if (-not [string]::IsNullOrWhiteSpace($selectedPanelModuleId)) {
 @"
     static native String nativeSubmitLiveStimulusCandidate(String candidateJson);
 "@
-    } elseif ($selectedPanelModuleId -ceq "private-particle-controls") {
+    } elseif ($selectedPanelModuleId -ceq "private-particle-controls" -or
+              $selectedPanelModuleId -ceq "driver-profile-controls") {
 @"
     static native String nativeSubmitLivePrivateParticleDynamics(String dynamicsJson);
 "@
+    } elseif ($selectedPanelModuleId -ceq "polar-controls") {
+        ""
     } elseif ($selectedPanelModuleId -ceq "breath-composition-controls") {
 @"
-    static native String nativeSubmitLivePrivateLayerSelection(String selectionJson);
     static native String nativeSubmitLiveDepthAlignment(String alignmentJson);
     static native String nativeSubmitLivePrivateParticleDynamics(String dynamicsJson);
     static native String nativeStartDriverProfileSessionBlock(String blockJson);

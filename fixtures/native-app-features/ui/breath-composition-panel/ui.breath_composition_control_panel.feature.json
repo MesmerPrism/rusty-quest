@@ -57,17 +57,17 @@
         "module_id": "breath-composition-controls",
         "entry_class": "io.github.mesmerprism.rustyquest.native_renderer.BreathCompositionPanelModule",
         "dependencies": [
-          "driver-profile-controls",
-          "lsl-controls",
-          "polar-controls",
-          "private-particle-controls"
+          "driver-profile-session-support",
+          "lsl-runtime-support",
+          "polar-runtime-support",
+          "private-particle-request-adapter"
         ],
         "source_files": [
           "apps/native-renderer-android/panel-modules/breath-composition/src/main/java/io/github/mesmerprism/rustyquest/native_renderer/BreathCompositionPanelModule.java"
         ]
       },
       {
-        "module_id": "private-particle-controls",
+        "module_id": "private-particle-request-adapter",
         "entry_class": "",
         "dependencies": [],
         "source_files": [
@@ -75,7 +75,7 @@
         ]
       },
       {
-        "module_id": "driver-profile-controls",
+        "module_id": "driver-profile-session-support",
         "entry_class": "",
         "dependencies": [],
         "source_files": [
@@ -83,7 +83,7 @@
         ]
       },
       {
-        "module_id": "polar-controls",
+        "module_id": "polar-runtime-support",
         "entry_class": "",
         "dependencies": [],
         "source_files": [
@@ -94,7 +94,7 @@
         ]
       },
       {
-        "module_id": "lsl-controls",
+        "module_id": "lsl-runtime-support",
         "entry_class": "",
         "dependencies": [],
         "source_files": [

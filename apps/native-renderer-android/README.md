@@ -116,8 +116,24 @@ unless a later layer explicitly consumes them.
 ## Same-APK 2D Control Panel
 
 `io.github.mesmerprism.rustyquest.native_renderer/.ControlPanelActivity` is a
-plain Android 2D panel with `com.oculus.intent.category.2D`. It is intended as
-the first low-overhead in-headset setup surface for the stimulus-volume route.
+plain Android 2D shell with `com.oculus.intent.category.2D`. The resolved
+native-app feature lock selects exactly one panel module, or explicitly selects
+no panel. The build generates the shell for that entry module and compiles only
+the module's declared Java source dependency closure. Packaged settings repeat
+the selected module id and set `runtime_widening_allowed=false`; missing,
+unknown, duplicate, denied, or source-hash-mismatched compositions fail the
+resolver/build instead of falling back to another product.
+
+Selectable product entries are independently owned by Viscereality breath
+composition, StrobeSim stimulus volume, generic private-particle controls,
+driver-profile controls, and Polar-only controls. Viscereality declares Polar,
+LSL, driver-session, and private-particle request helpers as explicit support
+dependencies, but runtime profile mode strings cannot replace its baked entry
+module. Each panel remains a low-rate request/readback adapter: Rust owns
+renderer-effective state, acquisition, transport, and frame-boundary apply.
+
+The stimulus-volume module is the first low-overhead in-headset setup surface
+for the StrobeSim route. It writes a candidate profile:
 The panel writes a candidate profile:
 
 ```text

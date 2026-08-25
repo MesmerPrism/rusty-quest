@@ -131,6 +131,56 @@ try {
         -RequiredSourceNeedles @("PrivateParticlePanelController.java", "PrivateParticlePanelModule.java") `
         -ForbiddenSourceNeedles @("BreathCompositionPanelModule.java", "StimulusVolumePanelModule.java", "PolarSensorPanel.java")
 
+    $driverAppPath = Join-Path $runRoot "driver-profile.app.json"
+    $driverApp = Read-Json (Join-Path $appRoot "private-particle-solid-black-canary.app.json")
+    $driverApp.app_id = "driver_profile_panel_static"
+    $driverApp.package_name = "io.github.mesmerprism.rustyquest.native_renderer.driver_profile_static"
+    $driverApp.requested_features = @($driverApp.requested_features | ForEach-Object {
+        if ([string]$_ -ceq "ui.private_particle_control_panel") {
+            "ui.driver_profile_control_panel"
+        } else {
+            [string]$_
+        }
+    })
+    Write-Json $driverApp $driverAppPath
+    $driver = Invoke-Resolution -Name "driver-profile" -AppSpec $driverAppPath
+    Assert-PanelClosure `
+        -Resolution $driver `
+        -ExpectedModule "driver-profile-controls" `
+        -RequiredSourceNeedles @("DriverProfilePanelModule.java", "PrivateParticlePanelController.java") `
+        -ForbiddenSourceNeedles @("BreathCompositionPanelModule.java", "StimulusVolumePanelModule.java", "PolarPanelModule.java")
+
+    $polarAppPath = Join-Path $runRoot "polar.app.json"
+    $polarApp = Read-Json (Join-Path $appRoot "private-particle-solid-black-canary.app.json")
+    $polarApp.app_id = "polar_panel_static"
+    $polarApp.package_name = "io.github.mesmerprism.rustyquest.native_renderer.polar_static"
+    $polarApp.requested_features = @($polarApp.requested_features | ForEach-Object {
+        if ([string]$_ -ceq "ui.private_particle_control_panel") {
+            "ui.polar_control_panel"
+        } else {
+            [string]$_
+        }
+    })
+    $polarPermissions = @(
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.ACCESS_FINE_LOCATION",
+        "android.permission.BLUETOOTH",
+        "android.permission.BLUETOOTH_ADMIN",
+        "android.permission.BLUETOOTH_CONNECT",
+        "android.permission.BLUETOOTH_SCAN"
+    )
+    $polarApp.permission_allowlist = @($polarApp.permission_allowlist) + $polarPermissions
+    $polarApp.declared_manifest.permissions = @($polarApp.declared_manifest.permissions) + $polarPermissions
+    $polarApp.declared_manifest.uses_features = @($polarApp.declared_manifest.uses_features) + "android.hardware.bluetooth_le"
+    $polarApp.declared_manifest | Add-Member -NotePropertyName receivers -NotePropertyValue @("PolarSensorCommandReceiver")
+    Write-Json $polarApp $polarAppPath
+    $polar = Invoke-Resolution -Name "polar" -AppSpec $polarAppPath
+    Assert-PanelClosure `
+        -Resolution $polar `
+        -ExpectedModule "polar-controls" `
+        -RequiredSourceNeedles @("PolarPanelModule.java", "PolarSensorPanel.java", "PolarSensorRuntime.java") `
+        -ForbiddenSourceNeedles @("BreathCompositionPanelModule.java", "StimulusVolumePanelModule.java", "PrivateParticlePanelModule.java")
+
     $noPanel = Invoke-Resolution `
         -Name "no-panel" `
         -AppSpec (Join-Path $appRoot "native-openxr-hand-lab.app.json")
@@ -185,21 +235,33 @@ try {
         Write-Json $value $path
     }
 
-    # A stale but syntactically valid runtime mode cannot widen the baked Viscereality closure.
-    $staleAppPath = Join-Path $runRoot "viscereality-stale-runtime.app.json"
-    $staleApp = Read-Json (Join-Path $appRoot "native-breath-four-way-conformance.app.json")
-    $staleApp.runtime_profile | Add-Member -NotePropertyName allow_feature_overrides -NotePropertyValue "true"
-    $staleApp.runtime_profile.set | Add-Member `
-        -NotePropertyName "debug.rustyquest.native_renderer.control_panel.mode" `
-        -NotePropertyValue "stimulus-volume"
-    $staleApp.settings_assertions.required_values."native_renderer.control_panel.mode" = "stimulus-volume"
-    Write-Json $staleApp $staleAppPath
-    $staleResolution = Invoke-Resolution -Name "viscereality-stale-runtime" -AppSpec $staleAppPath
-    Assert-PanelClosure `
-        -Resolution $staleResolution `
-        -ExpectedModule "breath-composition-controls" `
-        -RequiredSourceNeedles @("BreathCompositionPanelModule.java") `
-        -ForbiddenSourceNeedles @("StimulusVolumePanelModule.java")
+    # Every legacy/foreign runtime mode remains a renderer hint and cannot widen the baked
+    # Viscereality Java closure or activate another entry module.
+    foreach ($staleMode in @(
+        "stimulus-volume",
+        "private-layer-selector",
+        "private-particle-dynamics",
+        "private-particle-depth-wave",
+        "private-particle-config",
+        "driver-profile-panel",
+        "driver-profile-session",
+        "polar-sensor"
+    )) {
+        $staleAppPath = Join-Path $runRoot ("viscereality-stale-" + $staleMode + ".app.json")
+        $staleApp = Read-Json (Join-Path $appRoot "native-breath-four-way-conformance.app.json")
+        $staleApp.runtime_profile | Add-Member -NotePropertyName allow_feature_overrides -NotePropertyValue "true"
+        $staleApp.runtime_profile.set | Add-Member `
+            -NotePropertyName "debug.rustyquest.native_renderer.control_panel.mode" `
+            -NotePropertyValue $staleMode
+        $staleApp.settings_assertions.required_values."native_renderer.control_panel.mode" = $staleMode
+        Write-Json $staleApp $staleAppPath
+        $staleResolution = Invoke-Resolution -Name ("viscereality-stale-" + $staleMode) -AppSpec $staleAppPath
+        Assert-PanelClosure `
+            -Resolution $staleResolution `
+            -ExpectedModule "breath-composition-controls" `
+            -RequiredSourceNeedles @("BreathCompositionPanelModule.java") `
+            -ForbiddenSourceNeedles @("StimulusVolumePanelModule.java", "PrivateParticlePanelModule.java", "PolarPanelModule.java")
+    }
 
     foreach ($invalidMode in @("", "malformed-panel-id")) {
         $invalidAppPath = Join-Path $runRoot ("viscereality-invalid-" + [guid]::NewGuid().ToString("N") + ".app.json")
@@ -232,9 +294,11 @@ try {
     }
 
     $viscerealitySource = Get-Content -LiteralPath (Join-Path $repoRootPath "apps\native-renderer-android\panel-modules\breath-composition\src\main\java\io\github\mesmerprism\rustyquest\native_renderer\BreathCompositionPanelModule.java") -Raw
-    if ($viscerealitySource -match '"stimulus-volume"\.equals' -or
+    if ($viscerealitySource -match 'readSystemProperty\(PROP_CONTROL_PANEL_MODE\)' -or
+        $viscerealitySource -match 'private-layer-selector' -or
+        $viscerealitySource -match 'nativeSubmitLivePrivateLayerSelection' -or
         $viscerealitySource -notlike '*return "breath-mapping";*') {
-        throw "Viscereality runtime-mode projection can still select a stimulus panel or lacks its fail-closed default."
+        throw "Viscereality panel still contains an ambient/denied entry-mode activation path."
     }
     foreach ($lifecycleNeedle in @("onNewIntent", "onActivityResult", "onRequestPermissionsResult", "onConfigurationChanged")) {
         if ((Get-Content -LiteralPath (Join-Path $repoRootPath "tools\Build-NativeRendererAndroid.ps1") -Raw) -notlike "*$lifecycleNeedle*") {
@@ -251,11 +315,31 @@ try {
         $privateController -notlike '*consuming Rust runtime and returns that owner*') {
         throw "Private-particle panel adapter no longer delegates request/readback authority to Rust."
     }
+    $privateModule = Get-Content -LiteralPath (Join-Path $repoRootPath "apps\native-renderer-android\panel-modules\private-particle\src\main\java\io\github\mesmerprism\rustyquest\native_renderer\PrivateParticlePanelModule.java") -Raw
+    foreach ($needle in @(
+        'rusty.quest.native_renderer.private_particle_dynamics.v1',
+        'private_particles',
+        'driver_values01',
+        'draw_slots_per_oscillator',
+        'apply-on-next-safe-frame',
+        'private_particle_dynamics_status.json',
+        'Request receipt \(not effective state\)',
+        'Native-effective readback \(consuming runtime\)'
+    )) {
+        if ($privateModule -notmatch $needle) {
+            throw "Standalone private-particle module does not implement the consuming Rust contract: $needle"
+        }
+    }
+    if ($privateModule -match 'rusty.quest.private_particle.panel_request.v1') {
+        throw "Standalone private-particle module still emits the rejected legacy panel schema."
+    }
 
     Write-Output "native renderer panel composition static checks passed"
     Write-Output "viscereality panel sources: $(@($viscereality.lock.panel_source_closure.source_files).Count)"
     Write-Output "strobe panel sources: $(@($strobe.lock.panel_source_closure.source_files).Count)"
     Write-Output "private-particle panel sources: $(@($privateParticle.lock.panel_source_closure.source_files).Count)"
+    Write-Output "driver-profile panel sources: $(@($driver.lock.panel_source_closure.source_files).Count)"
+    Write-Output "polar panel sources: $(@($polar.lock.panel_source_closure.source_files).Count)"
 } finally {
     $resolvedRunRoot = [System.IO.Path]::GetFullPath($runRoot)
     $allowedRoot = [System.IO.Path]::GetFullPath((Join-Path $repoRootPath "local-artifacts\panel-composition-static")).TrimEnd('\') + '\'

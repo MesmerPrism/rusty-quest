@@ -121,20 +121,14 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
     private static final String POLAR_SENSOR_OPERATOR_STATUS_FILE =
         "polar_sensor_operator_status.json";
     private static final String POLAR_SENSOR_STATUS_FILE = "polar_sensor_status.json";
-    private static final String PRIVATE_LAYER_SELECTION_SCHEMA =
-        "rusty.quest.native_renderer.private_layer_selection.v1";
     private static final String ENVIRONMENT_DEPTH_ALIGNMENT_SCHEMA =
         "rusty.quest.native_renderer.environment_depth_alignment.v1";
     private static final String PRIVATE_PARTICLE_DYNAMICS_SCHEMA =
         "rusty.quest.native_renderer.private_particle_dynamics.v1";
     private static final String DRIVER_PROFILE_PANEL_SELECTION_SCHEMA =
         "rusty.driver_profile.mesh.native_panel_selection.v1";
-    private static final String PROP_CONTROL_PANEL_MODE =
-        "debug.rustyquest.native_renderer.control_panel.mode";
     private static final String BREATH_COMPOSITION_COMMAND_SCHEMA =
         "rusty.quest.breath_composition.command.v1";
-    private static final String PROP_PRIVATE_LAYER_OVERRIDE =
-        "debug.rustyquest.native_renderer.private_layer.layer_override";
     private static final String PROP_PRIVATE_PARTICLE_VISUAL_SCALE =
         "debug.rustyquest.native_renderer.private_particles.visual.scale";
     private static final String PROP_PRIVATE_PARTICLE_WORLD_ANCHOR_SCALE =
@@ -384,8 +378,6 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
     private String handledBreathCompositionCommandToken = "";
     private String handledDriverProfileMeshPanelCommandToken = "";
     private boolean displayCompositeRequestInFlight;
-    private Button[] privateLayerButtons = new Button[0];
-    private int selectedPrivateLayerIndex;
     private SliderControl depthLeftOffsetX;
     private SliderControl depthLeftOffsetY;
     private SliderControl depthRightOffsetX;
@@ -531,40 +523,14 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
     }
 
     private void rebuildContentViewForCurrentMode() {
-        String panelMode = readControlPanelMode();
-        boolean polarOwnerRetained = "polar-sensor".equals(panelMode)
-            || "breath-mapping".equals(panelMode)
-            || "driver-profile-panel".equals(panelMode)
-            || "driver-profile-session".equals(panelMode);
-        if (polarSensorPanel != null && !polarOwnerRetained) {
-            PolarSensorRuntime.forApplication(getApplicationContext()).detachPanel(this);
-            polarSensorPanel = null;
-        }
+        // This product's integrated Polar owner survives page rebuilds. Runtime profile input
+        // cannot replace the baked Viscereality module with a legacy product mode.
         setContentView(buildContentView());
         updateReadyStatusForPanelMode();
     }
 
     private void updateReadyStatusForPanelMode() {
-        String panelMode = readControlPanelMode();
-        if ("private-layer-selector".equals(panelMode)) {
-            updateStatus("Layer selector ready.");
-        } else if ("private-particle-dynamics".equals(panelMode)) {
-            updateStatus("Particle dynamics panel ready.");
-        } else if ("private-particle-depth-wave".equals(panelMode)) {
-            updateStatus("Depth wave panel ready.");
-        } else if ("private-particle-config".equals(panelMode)) {
-            updateStatus("AKD config panel ready.");
-        } else if ("polar-sensor".equals(panelMode)) {
-            updateStatus("Polar sensor panel ready.");
-        } else if ("breath-mapping".equals(panelMode)) {
-            updateStatus("Direct breath mapping panel ready; native-effective readback required.");
-        } else if ("driver-profile-panel".equals(panelMode)) {
-            updateStatus("Driver profile panel ready.");
-        } else if ("driver-profile-session".equals(panelMode)) {
-            updateStatus("Driver profile session panel ready.");
-        } else {
-            updateStatus("Viscereality control panel ready.");
-        }
+        updateStatus("Direct breath mapping panel ready; native-effective readback required.");
     }
 
     @Override
@@ -705,33 +671,8 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
     }
 
     private View buildContentView() {
-        String panelMode = readControlPanelMode();
-        if ("private-layer-selector".equals(panelMode)) {
-            return buildPrivateLayerSelectorView();
-        }
-        if ("private-particle-dynamics".equals(panelMode)) {
-            return buildPrivateParticleDynamicsView();
-        }
-        if ("private-particle-depth-wave".equals(panelMode)) {
-            return buildPrivateParticleDepthWaveView();
-        }
-        if ("private-particle-config".equals(panelMode)) {
-            return buildPrivateParticleConfigView();
-        }
-        if ("driver-profile-panel".equals(panelMode)) {
-            return buildDriverProfileMeshPanelView();
-        }
-        if ("driver-profile-session".equals(panelMode)) {
-            return buildDriverProfileExperimentView();
-        }
-        if ("polar-sensor".equals(panelMode)) {
-            return buildPolarSensorPanelPageView(false);
-        }
-        if ("breath-mapping".equals(panelMode)) {
-            return buildViscerealityControlPanelView();
-        }
-        // The packaged module is authoritative. Missing, stale, or malformed runtime mode
-        // input may narrow to the Viscereality home page but can never activate StrobeSim.
+        // The packaged module is authoritative. Runtime mode strings are legacy renderer hints,
+        // not a factory for alternate Java product panels.
         return buildViscerealityControlPanelView();
     }
 
@@ -1885,58 +1826,6 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
         breathCompositionRefresh = null;
     }
 
-
-    private View buildPrivateLayerSelectorView() {
-        ScrollView scroll = new ScrollView(this);
-        scroll.setBackgroundColor(PANEL_BG);
-        LinearLayout root = new LinearLayout(this);
-        root.setOrientation(LinearLayout.VERTICAL);
-        int pad = dp(18);
-        root.setPadding(pad, pad, pad, pad);
-        scroll.addView(root);
-
-        LinearLayout header = new LinearLayout(this);
-        header.setOrientation(LinearLayout.HORIZONTAL);
-        header.setGravity(Gravity.CENTER_VERTICAL);
-        TextView title = text("Layer Selection Panel", 22, PANEL_FG);
-        title.setGravity(Gravity.CENTER_VERTICAL);
-        header.addView(title, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
-        Button headerClose = button("Close");
-        headerClose.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View view) {
-                closePanelAndReturnToImmersive();
-            }
-        });
-        header.addView(headerClose);
-        root.addView(header);
-        root.addView(text("Select the active private rendering layer.", 13, PANEL_MUTED));
-        root.addView(privateLayerPreviewBand());
-        selectedPrivateLayerIndex = readPrivateLayerOverride();
-
-        root.addView(sectionTitle("Active Rendering"));
-        root.addView(buildPrivateLayerChoiceGrid());
-        root.addView(sectionTitle("Depth Alignment"));
-        addDepthAlignmentControls(root);
-
-        Button close = button("Close");
-        close.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View view) {
-                closePanelAndReturnToImmersive();
-            }
-        });
-        LinearLayout closeRow = new LinearLayout(this);
-        closeRow.setOrientation(LinearLayout.HORIZONTAL);
-        closeRow.setPadding(0, dp(14), 0, dp(10));
-        closeRow.addView(close, rowButtonParams());
-        root.addView(closeRow);
-
-        status = text("", 13, PANEL_MUTED);
-        status.setPadding(0, dp(10), 0, dp(8));
-        root.addView(status);
-        return scroll;
-    }
 
     private View buildDriverProfileMeshPanelView() {
         ScrollView scroll = new ScrollView(this);
@@ -4239,107 +4128,6 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
         return actionBlock;
     }
 
-    private View privateLayerPreviewBand() {
-        TextView preview = text("private layer selector", 13, Color.WHITE);
-        preview.setGravity(Gravity.CENTER);
-        preview.setPadding(dp(12), dp(12), dp(12), dp(12));
-        GradientDrawable background = new GradientDrawable(
-            GradientDrawable.Orientation.LEFT_RIGHT,
-            new int[] {
-                Color.rgb(20, 24, 30),
-                Color.rgb(45, 120, 210),
-                Color.rgb(255, 214, 68),
-                Color.rgb(215, 70, 150),
-                Color.rgb(20, 24, 30)
-            }
-        );
-        background.setCornerRadius(dp(3));
-        preview.setBackground(background);
-        LinearLayout.LayoutParams params =
-            new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(54));
-        params.setMargins(0, dp(12), 0, dp(12));
-        preview.setLayoutParams(params);
-        return preview;
-    }
-
-    private GridLayout buildPrivateLayerChoiceGrid() {
-        GridLayout grid = new GridLayout(this);
-        grid.setColumnCount(2);
-        grid.setUseDefaultMargins(false);
-        String[][] choices = new String[][] {
-            {"Final", "0"},
-            {"Raw brightness", "1"},
-            {"Preblur brightness", "2"},
-            {"Raw strength", "3"},
-            {"Blurred strength", "4"},
-            {"Displacement", "5"},
-            {"Depth gradient", "6"}
-        };
-        ArrayList<Button> buttons = new ArrayList<Button>();
-        for (int i = 0; i < choices.length; i++) {
-            Button choice = button(choices[i][0]);
-            choice.setTag(choices[i][1]);
-            choice.setMinHeight(dp(46));
-            choice.setOnClickListener(new View.OnClickListener() {
-                @Override
-                public void onClick(View view) {
-                    int layerIndex = Integer.parseInt(String.valueOf(view.getTag()));
-                    selectedPrivateLayerIndex = layerIndex;
-                    updatePrivateLayerButtons();
-                    submitLivePrivateLayerSelection(layerIndex, true);
-                }
-            });
-            GridLayout.LayoutParams params = new GridLayout.LayoutParams();
-            params.width = 0;
-            params.height = GridLayout.LayoutParams.WRAP_CONTENT;
-            params.columnSpec = GridLayout.spec(GridLayout.UNDEFINED, 1f);
-            params.setMargins(dp(3), dp(3), dp(3), dp(3));
-            grid.addView(choice, params);
-            buttons.add(choice);
-        }
-        privateLayerButtons = buttons.toArray(new Button[buttons.size()]);
-        updatePrivateLayerButtons();
-        return grid;
-    }
-
-    private void updatePrivateLayerButtons() {
-        for (int i = 0; i < privateLayerButtons.length; i++) {
-            int layerIndex = Integer.parseInt(String.valueOf(privateLayerButtons[i].getTag()));
-            styleButton(privateLayerButtons[i], layerIndex == selectedPrivateLayerIndex);
-        }
-    }
-
-    private void submitLivePrivateLayerSelection(int layerIndex, boolean userVisible) {
-        try {
-            if (!nativeBridgeLoaded) {
-                throw new IllegalStateException("native bridge unavailable: " + nativeBridgeLoadError);
-            }
-            JSONObject candidate = buildPrivateLayerSelectionJson(layerIndex);
-            String responseText = nativeSubmitLivePrivateLayerSelection(candidate.toString());
-            JSONObject response = new JSONObject(responseText);
-            String responseStatus = response.optString("status", "unknown");
-            if (!"queued".equals(responseStatus)) {
-                throw new IllegalStateException(responseText);
-            }
-            String message = "Layer queued: " + privateLayerLabel(layerIndex) + ".";
-            if (response.optBoolean("overwrote_pending", false)) {
-                message = "Layer queued; older pending selection was replaced: "
-                    + privateLayerLabel(layerIndex) + ".";
-            }
-            if (userVisible) {
-                updateStatus(message);
-            } else {
-                setStatusText(message);
-            }
-        } catch (Exception error) {
-            if (userVisible) {
-                updateStatus("Layer selection failed: " + error.getMessage());
-            } else {
-                setStatusText("Layer selection failed: " + error.getMessage());
-            }
-        }
-    }
-
     private void addDepthAlignmentControls(LinearLayout root) {
         JSONObject statusJson = readDepthAlignmentStatusJson();
         double leftX = readDepthAlignmentStatusOffset(
@@ -5916,58 +5704,6 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
         );
     }
 
-    private JSONObject buildPrivateLayerSelectionJson(int layerIndex) throws Exception {
-        if (layerIndex < 0 || layerIndex > 6) {
-            throw new IllegalArgumentException("layer index must be 0-6");
-        }
-        JSONObject source = new JSONObject()
-            .put("surface", "same_apk_panel")
-            .put("transport", "jni_live_queue");
-        JSONObject privateLayer = new JSONObject()
-            .put("layer_override", layerIndex)
-            .put("layer_label", privateLayerLabel(layerIndex));
-        JSONObject apply = new JSONObject()
-            .put("mode", "apply-on-next-safe-frame")
-            .put("expected_effective_revision", -1);
-        return new JSONObject()
-            .put("schema", PRIVATE_LAYER_SELECTION_SCHEMA)
-            .put("profile_id", "same-apk-private-layer-selector")
-            .put("revision", System.currentTimeMillis())
-            .put("source", source)
-            .put("private_layer", privateLayer)
-            .put("apply", apply);
-    }
-
-    private int readPrivateLayerOverride() {
-        double requested = readDoubleProperty(PROP_PRIVATE_LAYER_OVERRIDE, 0.0);
-        int layerIndex = (int) Math.round(requested);
-        if (layerIndex < 0 || layerIndex > 6) {
-            return 0;
-        }
-        return layerIndex;
-    }
-
-    private String privateLayerLabel(int layerIndex) {
-        switch (layerIndex) {
-            case 0:
-                return "final";
-            case 1:
-                return "raw-brightness";
-            case 2:
-                return "preblur-brightness";
-            case 3:
-                return "raw-strength";
-            case 4:
-                return "blurred-strength";
-            case 5:
-                return "displacement";
-            case 6:
-                return "depth-gradient";
-            default:
-                return "unknown";
-        }
-    }
-
 
 
 
@@ -6746,31 +6482,6 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
     }
 
     private String readControlPanelMode() {
-        String requested = readSystemProperty(PROP_CONTROL_PANEL_MODE);
-        if ("private-layer-selector".equals(requested)) {
-            return requested;
-        }
-        if ("private-particle-dynamics".equals(requested)) {
-            return requested;
-        }
-        if ("private-particle-depth-wave".equals(requested)) {
-            return requested;
-        }
-        if ("private-particle-config".equals(requested)) {
-            return requested;
-        }
-        if ("driver-profile-panel".equals(requested)) {
-            return requested;
-        }
-        if ("driver-profile-session".equals(requested)) {
-            return requested;
-        }
-        if ("polar-sensor".equals(requested)) {
-            return requested;
-        }
-        if ("breath-mapping".equals(requested)) {
-            return requested;
-        }
         String packaged = NativeAppSettingsReader.readSetting(
             this,
             "native_renderer.control_panel.mode"
@@ -7175,10 +6886,6 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
                 : String.format(Locale.US, "%.3f%s", value(), suffix);
             valueLabel.setText(title + ": " + formatted);
         }
-    }
-
-    private static String nativeSubmitLivePrivateLayerSelection(String selectionJson) {
-        return ControlPanelActivity.nativeSubmitLivePrivateLayerSelection(selectionJson);
     }
 
     private static String nativeSubmitLiveDepthAlignment(String alignmentJson) {

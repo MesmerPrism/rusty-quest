@@ -1,0 +1,57 @@
+{
+  "schema": "rusty.quest.native_app_feature.v1",
+  "feature_id": "ui.polar_control_panel",
+  "module_path": "ui/polar-panel",
+  "module_kind": "same-apk-panel-mode",
+  "settings_surface": {
+    "authority": "rusty.quest.native_app_settings.v1",
+    "adapter": "runtime_profile"
+  },
+  "owner_lane": "rusty-quest",
+  "status": "public-app-feature",
+  "description": "Closed-world standalone Polar acquisition control panel.",
+  "provides": ["ui.polar_control_panel"],
+  "depends_on": ["sensor.polar_h10_ble"],
+  "incompatible_with": ["renderer.stimulus_volume"],
+  "exclusive_groups": {},
+  "android_manifest": {
+    "permissions": [],
+    "uses_features": [],
+    "activities": [],
+    "services": [],
+    "queries": []
+  },
+  "runtime_profile": {
+    "set": {
+      "debug.rustyquest.native_renderer.control_panel.mode": "polar-sensor"
+    },
+    "clear_families": [],
+    "expected_render_modes": []
+  },
+  "build_inputs": {"env": [], "assets": [], "shaders": []},
+  "markers": {"required": ["panelActivity=ControlPanelActivity"], "forbidden": []},
+  "validation": {"quick": [], "standard": [], "device": []},
+  "panel_composition": {
+    "schema": "rusty.quest.native_renderer.panel_composition.v1",
+    "selected_module_id": "polar-controls",
+    "denied_module_ids": [
+      "breath-composition-controls",
+      "stimulus-volume"
+    ],
+    "modules": [
+      {
+        "module_id": "polar-controls",
+        "entry_class": "io.github.mesmerprism.rustyquest.native_renderer.PolarPanelModule",
+        "dependencies": [],
+        "source_files": [
+          "apps/native-renderer-android/panel-modules/polar/src/main/java/io/github/mesmerprism/rustyquest/native_renderer/PolarBleRuntimeSupport.java",
+          "apps/native-renderer-android/panel-modules/polar/src/main/java/io/github/mesmerprism/rustyquest/native_renderer/PolarPanelModule.java",
+          "apps/native-renderer-android/panel-modules/polar/src/main/java/io/github/mesmerprism/rustyquest/native_renderer/PolarSensorCommandReceiver.java",
+          "apps/native-renderer-android/panel-modules/polar/src/main/java/io/github/mesmerprism/rustyquest/native_renderer/PolarSensorPanel.java",
+          "apps/native-renderer-android/panel-modules/polar/src/main/java/io/github/mesmerprism/rustyquest/native_renderer/PolarSensorRuntime.java"
+        ]
+      }
+    ]
+  },
+  "public_private_boundary": "The process runtime owns BLE acquisition; the panel is an attachable low-rate control view."
+}

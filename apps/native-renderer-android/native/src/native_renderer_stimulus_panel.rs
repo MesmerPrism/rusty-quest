@@ -2871,6 +2871,36 @@ mod tests {
     }
 
     #[test]
+    fn standalone_private_particle_panel_candidate_matches_runtime_contract() {
+        // Mirrors the independently packaged Java module: request receipt is only queue
+        // acknowledgement; effective state is subsequently projected through the status file.
+        let value = json!({
+            "schema": "rusty.quest.native_renderer.private_particle_dynamics.v1",
+            "private_particles": {
+                "visual_scale": 0.70,
+                "world_anchor_scale_m": 0.46,
+                "driver_values01": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+                "tracer": {
+                    "draw_slots_per_oscillator": 7,
+                    "lifetime_seconds": 0.5,
+                    "copies_per_second": 14.0
+                }
+            },
+            "apply": { "mode": "apply-on-next-safe-frame" }
+        });
+
+        let candidate = parse_private_particle_dynamics_json(&value.to_string())
+            .expect("standalone Java panel candidate parses");
+
+        assert_close(candidate.visual_scale, 0.70);
+        assert_close(candidate.world_anchor_scale_m, 0.46);
+        assert_eq!(candidate.driver_values01, [0.0; 8]);
+        assert_eq!(candidate.tracer_draw_slots_per_oscillator, 7);
+        assert_close(candidate.tracer_lifetime_seconds, 0.5);
+        assert_close(candidate.tracer_copies_per_second, 14.0);
+    }
+
+    #[test]
     fn rejects_open_or_invalid_material_and_heartbeat_panel_envelopes() {
         let base = json!({
             "schema": PRIVATE_PARTICLE_DYNAMICS_SCHEMA,
