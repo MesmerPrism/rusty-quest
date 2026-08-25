@@ -5,6 +5,8 @@
 //! scale, reset, driver switching, and haptics stay in the projection-target
 //! and OpenXR action layers.
 
+use rusty_quest_breath_contract::assessment::CommonBreathPhase;
+
 use crate::projection_target_state::{ProjectionTargetBreathState, ProjectionTargetInput};
 
 const DEFAULT_ORIENTATION_AXIS: [f32; 3] = [0.0, 0.0, -1.0];
@@ -134,47 +136,26 @@ impl NativeControllerBreathPoseSample {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum NativeControllerBreathPhase {
-    Unknown,
-    Inhale,
-    Exhale,
-    Pause,
-    BadTracking,
-}
-
-impl NativeControllerBreathPhase {
-    pub(crate) fn marker_value(self) -> &'static str {
-        match self {
-            Self::Unknown => "unknown",
-            Self::Inhale => "inhale",
-            Self::Exhale => "exhale",
-            Self::Pause => "pause",
-            Self::BadTracking => "bad-tracking",
-        }
-    }
-
-    fn projection_target_state(self) -> ProjectionTargetBreathState {
-        match self {
-            Self::Unknown => ProjectionTargetBreathState::Unknown,
-            Self::Inhale => ProjectionTargetBreathState::Inhale,
-            Self::Exhale => ProjectionTargetBreathState::Exhale,
-            Self::Pause => ProjectionTargetBreathState::Pause,
-            Self::BadTracking => ProjectionTargetBreathState::BadTracking,
-        }
+fn projection_target_state(phase: CommonBreathPhase) -> ProjectionTargetBreathState {
+    match phase {
+        CommonBreathPhase::Unknown => ProjectionTargetBreathState::Unknown,
+        CommonBreathPhase::Inhale => ProjectionTargetBreathState::Inhale,
+        CommonBreathPhase::Exhale => ProjectionTargetBreathState::Exhale,
+        CommonBreathPhase::Hold => ProjectionTargetBreathState::Pause,
+        CommonBreathPhase::BadTracking => ProjectionTargetBreathState::BadTracking,
     }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct NativeControllerBreathSample {
-    pub(crate) phase: NativeControllerBreathPhase,
+    pub(crate) phase: CommonBreathPhase,
     pub(crate) sequence_id: u64,
 }
 
 impl NativeControllerBreathSample {
     pub(crate) fn projection_target_input(self) -> ProjectionTargetInput {
         ProjectionTargetInput::BreathState {
-            state: self.phase.projection_target_state(),
+            state: projection_target_state(self.phase),
             sequence_id: Some(self.sequence_id),
         }
     }
@@ -187,6 +168,7 @@ pub(crate) struct NativeControllerBreathStateEstimator {
     sequence_id: u64,
     emitted_samples: u64,
     tracking_loss_samples: u64,
+    last_phase: CommonBreathPhase,
 }
 
 impl NativeControllerBreathStateEstimator {
@@ -197,6 +179,7 @@ impl NativeControllerBreathStateEstimator {
             sequence_id: 0,
             emitted_samples: 0,
             tracking_loss_samples: 0,
+            last_phase: CommonBreathPhase::Unknown,
         }
     }
 
@@ -216,21 +199,30 @@ impl NativeControllerBreathStateEstimator {
             _ => {
                 self.classifier.reset();
                 self.tracking_loss_samples = self.tracking_loss_samples.saturating_add(1);
-                NativeControllerBreathPhase::BadTracking
+                CommonBreathPhase::BadTracking
             }
         };
         self.sequence_id = self.sequence_id.saturating_add(1);
         self.emitted_samples = self.emitted_samples.saturating_add(1);
+        self.last_phase = phase;
         NativeControllerBreathSample {
             phase,
             sequence_id: self.sequence_id,
         }
     }
 
+    pub(crate) fn reset_history(&mut self) {
+        self.classifier.reset();
+        self.last_phase = CommonBreathPhase::Unknown;
+    }
+
     pub(crate) fn marker_fields(&self) -> String {
         format!(
-            "nativeControllerBreathSamples={} nativeControllerBreathTrackingLossSamples={} nativeControllerBreathLastSequenceId={}",
-            self.emitted_samples, self.tracking_loss_samples, self.sequence_id
+            "nativeControllerBreathSamples={} nativeControllerBreathTrackingLossSamples={} nativeControllerBreathLastSequenceId={} nativeControllerBreathPhase={}",
+            self.emitted_samples,
+            self.tracking_loss_samples,
+            self.sequence_id,
+            self.last_phase.as_str(),
         )
     }
 }
@@ -276,14 +268,14 @@ impl FixedControllerStateClassifier {
         &mut self,
         settings: NativeControllerBreathSettings,
         sample: NativeControllerBreathPoseSample,
-    ) -> NativeControllerBreathPhase {
+    ) -> CommonBreathPhase {
         let position = to_f64_3(sample.position_m);
         let orientation = to_f64_4(sample.orientation_xyzw);
         let Some(last_position) = self.last_position else {
             self.last_position = Some(position);
             self.last_orientation = orientation;
             self.last_sample_time_s = Some(sample.sample_time_s);
-            return NativeControllerBreathPhase::Pause;
+            return CommonBreathPhase::Hold;
         };
 
         let sample_time_s = fixed_controller_sample_time_s(
@@ -324,14 +316,14 @@ impl FixedControllerStateClassifier {
         if rotation_delta > f64::from(settings.rotation_guard_degrees)
             || ma_diff.abs() > f64::from(settings.moving_average_guard)
         {
-            return NativeControllerBreathPhase::BadTracking;
+            return CommonBreathPhase::BadTracking;
         }
         if ma_diff > f64::from(settings.inhale_threshold) {
-            NativeControllerBreathPhase::Inhale
+            CommonBreathPhase::Inhale
         } else if ma_diff < f64::from(settings.exhale_threshold) {
-            NativeControllerBreathPhase::Exhale
+            CommonBreathPhase::Exhale
         } else {
-            NativeControllerBreathPhase::Pause
+            CommonBreathPhase::Hold
         }
     }
 }
@@ -407,7 +399,7 @@ fn mean_timed_delta_accumulator(
     }
 }
 
-fn quat_angle_degrees(left: [f64; 4], right: [f64; 4]) -> f64 {
+pub(crate) fn quat_angle_degrees(left: [f64; 4], right: [f64; 4]) -> f64 {
     let left = normalize_quat_or_identity(left);
     let right = normalize_quat_or_identity(right);
     let dot = (left[0] * right[0] + left[1] * right[1] + left[2] * right[2] + left[3] * right[3])
@@ -416,7 +408,7 @@ fn quat_angle_degrees(left: [f64; 4], right: [f64; 4]) -> f64 {
     (2.0 * dot.acos()).to_degrees()
 }
 
-fn normalize_quat_or_identity(value: [f64; 4]) -> [f64; 4] {
+pub(crate) fn normalize_quat_or_identity(value: [f64; 4]) -> [f64; 4] {
     if !value.iter().all(|value| value.is_finite()) {
         return [0.0, 0.0, 0.0, 1.0];
     }
@@ -435,7 +427,7 @@ fn normalize_quat_or_identity(value: [f64; 4]) -> [f64; 4] {
     }
 }
 
-fn rotate_vec3_by_quat(value: [f64; 3], quat_xyzw: [f64; 4]) -> [f64; 3] {
+pub(crate) fn rotate_vec3_by_quat(value: [f64; 3], quat_xyzw: [f64; 4]) -> [f64; 3] {
     let q = quat_xyzw;
     let u = [q[0], q[1], q[2]];
     let s = q[3];
@@ -448,7 +440,7 @@ fn normalized_axis_f32(axis: [f32; 3]) -> Option<[f32; 3]> {
     normalized_axis(to_f64_3(axis)).map(|axis| [axis[0] as f32, axis[1] as f32, axis[2] as f32])
 }
 
-fn normalized_axis(axis: [f64; 3]) -> Option<[f64; 3]> {
+pub(crate) fn normalized_axis(axis: [f64; 3]) -> Option<[f64; 3]> {
     if !axis.iter().all(|value| value.is_finite()) {
         return None;
     }
@@ -497,7 +489,7 @@ fn cross3(left: [f64; 3], right: [f64; 3]) -> [f64; 3] {
     ]
 }
 
-fn dot3(left: [f64; 3], right: [f64; 3]) -> f64 {
+pub(crate) fn dot3(left: [f64; 3], right: [f64; 3]) -> f64 {
     left[0] * right[0] + left[1] * right[1] + left[2] * right[2]
 }
 
@@ -573,30 +565,97 @@ mod tests {
     }
 
     #[test]
+    fn controller_outputs_the_normalized_common_phase_vocabulary_and_genuine_hold() {
+        let mut estimator = NativeControllerBreathStateEstimator::new(test_settings());
+        let hold = estimator.push_breath_sample(Some(sample_at(0.0, 0.0, true)));
+        assert_eq!(hold.phase, CommonBreathPhase::Hold);
+        assert!(matches!(
+            hold.projection_target_input(),
+            ProjectionTargetInput::BreathState {
+                state: ProjectionTargetBreathState::Pause,
+                sequence_id: Some(1),
+            }
+        ));
+        assert!(estimator
+            .marker_fields()
+            .contains("nativeControllerBreathPhase=hold"));
+        estimator.reset_history();
+        assert!(estimator
+            .marker_fields()
+            .contains("nativeControllerBreathPhase=unknown"));
+        let bad = estimator.push_breath_sample(None);
+        assert_eq!(bad.phase, CommonBreathPhase::BadTracking);
+    }
+
+    #[test]
     fn uses_time_windows_across_pose_cadences() {
-        fn states_for_hz(sample_hz: f64) -> Vec<ProjectionTargetBreathState> {
+        fn transition_times_for_hz(sample_hz: f64) -> (f64, f64) {
             let mut settings = test_settings();
             settings.short_window_seconds = 0.3;
             settings.long_window_seconds = 0.9;
             let mut estimator = NativeControllerBreathStateEstimator::new(settings);
             let dt = 1.0 / sample_hz;
             let sample_count = (2.0 * sample_hz).round() as usize;
-            (0..=sample_count)
-                .map(|index| {
-                    let t = index as f64 * dt;
-                    let y = if t <= 1.0 {
-                        t as f32 * 0.004
-                    } else {
-                        (2.0 - t).max(0.0) as f32 * 0.004
-                    };
-                    input_state(estimator.push_pose_sample(Some(sample_at(t, y, true))))
-                })
-                .collect()
+            let mut first_inhale = None;
+            let mut first_exhale = None;
+            for index in 0..=sample_count {
+                let t = index as f64 * dt;
+                let y = if t <= 1.0 {
+                    t as f32 * 0.004
+                } else {
+                    (2.0 - t).max(0.0) as f32 * 0.004
+                };
+                match input_state(estimator.push_pose_sample(Some(sample_at(t, y, true)))) {
+                    ProjectionTargetBreathState::Inhale if first_inhale.is_none() => {
+                        first_inhale = Some(t);
+                    }
+                    ProjectionTargetBreathState::Exhale if first_exhale.is_none() => {
+                        first_exhale = Some(t);
+                    }
+                    _ => {}
+                }
+            }
+            (
+                first_inhale.expect("cadence reaches inhale"),
+                first_exhale.expect("cadence reaches exhale"),
+            )
         }
 
-        for states in [states_for_hz(10.0), states_for_hz(90.0)] {
-            assert!(states.contains(&ProjectionTargetBreathState::Inhale));
-            assert!(states.contains(&ProjectionTargetBreathState::Exhale));
+        let baseline = transition_times_for_hz(72.0);
+        for observed in [
+            baseline,
+            transition_times_for_hz(90.0),
+            transition_times_for_hz(120.0),
+        ] {
+            assert!((observed.0 - baseline.0).abs() <= 0.025);
+            assert!((observed.1 - baseline.1).abs() <= 0.025);
         }
+    }
+
+    #[test]
+    fn variable_pose_cadence_preserves_directional_classification() {
+        let mut settings = test_settings();
+        settings.short_window_seconds = 0.3;
+        settings.long_window_seconds = 0.9;
+        let mut estimator = NativeControllerBreathStateEstimator::new(settings);
+        let cadence: [f64; 3] = [1.0 / 72.0, 1.0 / 120.0, 1.0 / 90.0];
+        let mut time: f64 = 0.0;
+        let mut states = Vec::new();
+        for index in 0..180 {
+            time += cadence[index % cadence.len()];
+            let cycle_time = time.min(2.0);
+            let position = if cycle_time <= 1.0 {
+                cycle_time * 0.004
+            } else {
+                (2.0 - cycle_time).max(0.0) * 0.004
+            };
+            states.push(input_state(estimator.push_pose_sample(Some(sample_at(
+                time,
+                position as f32,
+                true,
+            )))));
+        }
+        assert!(states.contains(&ProjectionTargetBreathState::Inhale));
+        assert!(states.contains(&ProjectionTargetBreathState::Exhale));
     }
 }

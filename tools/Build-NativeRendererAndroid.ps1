@@ -345,6 +345,30 @@ if (-not [string]::IsNullOrWhiteSpace($AppBuildLock)) {
         }
         $appBuildEnvByName[$name] = if ($null -ne $entry.PSObject.Properties["value"]) { [string]$entry.value } else { "" }
     }
+    $breathExpectedBindingEnvName = "RUSTY_QUEST_NATIVE_RENDERER_BREATH_COMPOSITION_EXPECTED_BINDING_SHA256"
+    $breathActivation = $appBuildLockObject.PSObject.Properties["breath_composition_activation"]
+    if ($null -ne $breathActivation -and $null -ne $breathActivation.Value) {
+        $expectedBreathBinding = [string]$breathActivation.Value.sha256
+        if ([string]::IsNullOrWhiteSpace($expectedBreathBinding) -or
+            -not $appBuildEnvByName.ContainsKey($breathExpectedBindingEnvName) -or
+            [string]$appBuildEnvByName[$breathExpectedBindingEnvName] -cne $expectedBreathBinding) {
+            throw "Native app-build packaged breath binding does not exactly match feature-lock activation"
+        }
+    } elseif ($appBuildEnvByName.ContainsKey($breathExpectedBindingEnvName)) {
+        throw "Native app-build env carries a breath binding without a feature-lock activation"
+    }
+    $simultaneousExpectedBindingEnvName = "RUSTY_QUEST_NATIVE_RENDERER_SIMULTANEOUS_HANDS_CONTROLLERS_EXPECTED_BINDING_SHA256"
+    $simultaneousActivation = $appBuildLockObject.PSObject.Properties["simultaneous_hands_controllers_activation"]
+    if ($null -ne $simultaneousActivation -and $null -ne $simultaneousActivation.Value) {
+        $expectedSimultaneousBinding = [string]$simultaneousActivation.Value.sha256
+        if ([string]::IsNullOrWhiteSpace($expectedSimultaneousBinding) -or
+            -not $appBuildEnvByName.ContainsKey($simultaneousExpectedBindingEnvName) -or
+            [string]$appBuildEnvByName[$simultaneousExpectedBindingEnvName] -cne $expectedSimultaneousBinding) {
+            throw "Native app-build packaged simultaneous hands/controllers binding does not exactly match feature-lock activation"
+        }
+    } elseif ($appBuildEnvByName.ContainsKey($simultaneousExpectedBindingEnvName)) {
+        throw "Native app-build env carries a simultaneous hands/controllers binding without a feature-lock activation"
+    }
 
     $undeclaredAmbient = @(Get-ChildItem Env: | Where-Object {
         $_.Name -like "RUSTY_QUEST_NATIVE_RENDERER_*" -and
@@ -701,6 +725,18 @@ $previousLinker = $env:CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER
 $previousRecordedHandCaptureDir = $env:RUSTY_QUEST_NATIVE_RECORDED_HAND_CAPTURE_DIR
 $previousRecordedHandFrameLimit = $env:RUSTY_QUEST_NATIVE_RECORDED_HAND_FRAME_LIMIT
 $previousAppBuildEnv = @{}
+$rustyLslBackendPackaged = Test-TruthyBuildEnvValue -Value (Get-EffectiveBuildEnvValue -Name "RUSTY_QUEST_NATIVE_RENDERER_RUSTY_LSL_ANDROID" -AppBuildEnvByName $appBuildEnvByName)
+$cargoBuildArguments = @(
+    "build",
+    "--manifest-path", (Join-Path $appRoot "native\Cargo.toml"),
+    "--locked",
+    "--target", "aarch64-linux-android",
+    "--release",
+    "--target-dir", $cargoTargetDir
+)
+if ($rustyLslBackendPackaged) {
+    $cargoBuildArguments += @("--features", "rusty-lsl-backend")
+}
 try {
     $env:ANDROID_HOME = $AndroidHome
     $env:ANDROID_NDK_HOME = $NdkHome
@@ -717,14 +753,7 @@ try {
         Remove-Item Env:\RUSTY_QUEST_NATIVE_RECORDED_HAND_CAPTURE_DIR -ErrorAction SilentlyContinue
         Remove-Item Env:\RUSTY_QUEST_NATIVE_RECORDED_HAND_FRAME_LIMIT -ErrorAction SilentlyContinue
     }
-    Invoke-Checked "native renderer cargo build" $cargoCommand.Source @(
-        "build",
-        "--manifest-path", (Join-Path $appRoot "native\Cargo.toml"),
-        "--locked",
-        "--target", "aarch64-linux-android",
-        "--release",
-        "--target-dir", $cargoTargetDir
-    )
+    Invoke-Checked "native renderer cargo build" $cargoCommand.Source $cargoBuildArguments
 } finally {
     $env:ANDROID_HOME = $previousAndroidHome
     $env:ANDROID_NDK_HOME = $previousNdkHome
@@ -878,6 +907,10 @@ $manifest = [ordered]@{
     lsl_native_library_packaged = $lslNativeLibraryPackaged
     lsl_native_library = $lslNativeLibraryPath
     lsl_native_library_sha256 = $lslNativeLibrarySha256
+    rusty_lsl_backend_packaged = $rustyLslBackendPackaged
+    rusty_lsl_source_repository = if ($rustyLslBackendPackaged) { "https://github.com/MesmerPrism/rusty-lsl.git" } else { "" }
+    rusty_lsl_source_commit = if ($rustyLslBackendPackaged) { "8b6b2a6cd0c0e5147b7e1cc076a116ef226cddbd" } else { "" }
+    rusty_lsl_source_tree = if ($rustyLslBackendPackaged) { "4bfd1b1b5621af6706aafa9477e7a4f5764dd688" } else { "" }
     declared_asset_inputs_packaged = $declaredAssetInputsPackaged
     questionnaire_assets_packaged = $questionnaireAssetsPackaged
     questionnaire_asset_source = $questionnaireAssetSource

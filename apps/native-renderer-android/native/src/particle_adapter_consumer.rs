@@ -1,4 +1,5 @@
 #[cfg(target_os = "android")]
+use crate::native_app_settings::NativeAppSettingsDefaults;
 use crate::native_renderer_properties::{
     PROP_PARTICLE_ADAPTER_ENABLED, PROP_PARTICLE_ADAPTER_FEATURE_ID,
     PROP_PARTICLE_ADAPTER_LOCK_REVISION, PROP_PARTICLE_ADAPTER_LOCK_SHA256,
@@ -84,25 +85,35 @@ pub(crate) fn activation_marker(input: &ParticleAdapterRuntimeActivationInput) -
 }
 
 #[cfg(target_os = "android")]
-pub(crate) fn load_runtime_input() -> ParticleAdapterRuntimeActivationInput {
+pub(crate) fn load_runtime_input_with_defaults(
+    defaults: &NativeAppSettingsDefaults,
+) -> ParticleAdapterRuntimeActivationInput {
+    load_runtime_input_from_property_lookup(|name| {
+        property_value(name).or_else(|| defaults.lookup(name))
+    })
+}
+
+fn load_runtime_input_from_property_lookup(
+    mut property_lookup: impl FnMut(&str) -> Option<String>,
+) -> ParticleAdapterRuntimeActivationInput {
     ParticleAdapterRuntimeActivationInput {
-        enabled: property_value(PROP_PARTICLE_ADAPTER_ENABLED)
+        enabled: property_lookup(PROP_PARTICLE_ADAPTER_ENABLED)
             .map(|value| matches!(value.as_str(), "1" | "true" | "on" | "enabled"))
             .unwrap_or(false),
-        profile_id: property_value(PROP_PARTICLE_ADAPTER_PROFILE_ID).unwrap_or_default(),
-        project_id: property_value(PROP_PARTICLE_ADAPTER_PROJECT_ID).unwrap_or_default(),
-        feature_id: property_value(PROP_PARTICLE_ADAPTER_FEATURE_ID).unwrap_or_default(),
-        lock_revision: property_value(PROP_PARTICLE_ADAPTER_LOCK_REVISION)
+        profile_id: property_lookup(PROP_PARTICLE_ADAPTER_PROFILE_ID).unwrap_or_default(),
+        project_id: property_lookup(PROP_PARTICLE_ADAPTER_PROJECT_ID).unwrap_or_default(),
+        feature_id: property_lookup(PROP_PARTICLE_ADAPTER_FEATURE_ID).unwrap_or_default(),
+        lock_revision: property_lookup(PROP_PARTICLE_ADAPTER_LOCK_REVISION)
             .and_then(|value| value.parse::<u64>().ok())
             .unwrap_or(0),
-        lock_sha256: property_value(PROP_PARTICLE_ADAPTER_LOCK_SHA256).unwrap_or_default(),
+        lock_sha256: property_lookup(PROP_PARTICLE_ADAPTER_LOCK_SHA256).unwrap_or_default(),
     }
 }
 
 #[cfg(target_os = "android")]
 fn property_value(name: &str) -> Option<String> {
     let mut property = android_properties::getprop(name);
-    property.value().map(|value| value.trim().to_owned())
+    crate::native_app_settings::nonempty_trimmed(property.value().as_deref())
 }
 
 #[cfg(test)]
@@ -131,6 +142,21 @@ mod tests {
         assert!(marker.contains("activationState=applied"));
         assert!(marker.contains("projectId=native-renderer"));
         assert!(marker.contains("featureId=particle-adapter-consumer"));
+    }
+
+    #[test]
+    fn packaged_defaults_can_satisfy_startup_lock_admission() {
+        let input = load_runtime_input_from_property_lookup(|name| match name {
+            PROP_PARTICLE_ADAPTER_ENABLED => Some("true".to_owned()),
+            PROP_PARTICLE_ADAPTER_PROFILE_ID => Some(ACCEPTED_PROFILE_ID.to_owned()),
+            PROP_PARTICLE_ADAPTER_PROJECT_ID => Some(PROJECT_ID.to_owned()),
+            PROP_PARTICLE_ADAPTER_FEATURE_ID => Some(FEATURE_ID.to_owned()),
+            PROP_PARTICLE_ADAPTER_LOCK_REVISION => Some("1".to_owned()),
+            PROP_PARTICLE_ADAPTER_LOCK_SHA256 => Some(ACCEPTED_LOCK_SHA256.to_owned()),
+            _ => None,
+        });
+
+        assert!(resolve_activation(&input).is_applied());
     }
 
     #[test]

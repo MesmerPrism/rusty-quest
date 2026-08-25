@@ -1,0 +1,45 @@
+{
+  "schema": "rusty.quest.native_app_build.v1",
+  "app_id": "damaged_simultaneous_controller_only_claim",
+  "owner_repo": "rusty-quest",
+  "package_policy": "app-specific-package",
+  "package_name": "io.github.mesmerprism.rustyquest.damaged.simultaneous_controller_only_claim",
+  "requested_features": [
+    "input.controllers_and_hands_optional",
+    "renderer.background.solid_black"
+  ],
+  "denied_features": [],
+  "payloads": [],
+  "runtime_profile": {
+    "set": {
+      "debug.rustyquest.native_renderer.render.mode": "solid-black-hands-and-grafts"
+    }
+  },
+  "permission_allowlist": [],
+  "declared_manifest": {
+    "permissions": [
+      "com.oculus.permission.HAND_TRACKING",
+      "org.khronos.openxr.permission.OPENXR",
+      "org.khronos.openxr.permission.OPENXR_SYSTEM"
+    ],
+    "uses_features": [
+      "android.hardware.vr.headtracking",
+      "android.opengl.gles.3.1",
+      "oculus.software.handtracking"
+    ],
+    "activities": ["android.app.NativeActivity"],
+    "services": []
+  },
+  "expected_render_mode": "solid-black-hands-and-grafts",
+  "settings_assertions": {
+    "required_values": {},
+    "required_disabled_modules": [],
+    "required_modules": [],
+    "forbidden_modules": []
+  },
+  "expected_markers": {
+    "required": ["simultaneousHandsControllersReady=true"],
+    "forbidden": []
+  },
+  "validation_tier": "quick"
+}

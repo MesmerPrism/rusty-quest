@@ -18,8 +18,8 @@ use crate::{
         PROP_LSL_INLET_ROUTES, PROP_LSL_INLET_SAMPLE_HOLD_SECONDS, PROP_LSL_INLET_SOURCE_ID,
         PROP_LSL_INLET_STREAM_NAME, PROP_LSL_INLET_STREAM_TYPE, PROP_LSL_INLET_TEST_SOURCE_ENABLED,
         PROP_LSL_INLET_TEST_SOURCE_VALUE01, PROP_LSL_MULTICAST_LOCK_ENABLED,
-        PROP_LSL_OUTLET_ENABLED, PROP_LSL_PARTICIPANT_ID, PROP_LSL_SESSION_ID,
-        PROP_LSL_SOURCE_ID_PREFIX, PROP_LSL_STREAM_PREFIX,
+        PROP_LSL_OUTLET_ENABLED, PROP_LSL_PANEL_CONTROLLED, PROP_LSL_PARTICIPANT_ID,
+        PROP_LSL_SESSION_ID, PROP_LSL_SOURCE_ID_PREFIX, PROP_LSL_STREAM_PREFIX,
     },
     native_renderer_property_values::{bool_value, f32_clamped_value},
 };
@@ -42,6 +42,7 @@ const MANIFOLD_COMMAND_SCHEMA: &str = "rusty.manifold.command.envelope.v1";
 
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct LslTransportSettings {
+    pub(crate) panel_controlled: bool,
     pub(crate) enabled: bool,
     pub(crate) outlet_enabled: bool,
     pub(crate) inlet_enabled: bool,
@@ -62,6 +63,7 @@ pub(crate) struct LslTransportSettings {
 
 impl LslTransportSettings {
     pub(crate) fn from_property_lookup(mut lookup: impl FnMut(&str) -> Option<String>) -> Self {
+        let panel_controlled = bool_value(lookup(PROP_LSL_PANEL_CONTROLLED), false);
         let outlet_enabled = bool_value(lookup(PROP_LSL_OUTLET_ENABLED), false);
         let inlet_enabled = bool_value(lookup(PROP_LSL_INLET_ENABLED), false);
         let enabled = bool_value(lookup(PROP_LSL_ENABLED), outlet_enabled || inlet_enabled);
@@ -107,6 +109,7 @@ impl LslTransportSettings {
         );
 
         Self {
+            panel_controlled,
             enabled,
             outlet_enabled,
             inlet_enabled,
@@ -142,7 +145,8 @@ impl LslTransportSettings {
 
     pub(crate) fn marker_fields(&self) -> String {
         format!(
-            "lslEnabled={} lslOutletEnabled={} lslInletEnabled={} lslMulticastLockRequested={} lslStreamPrefix={} lslParticipantId={} lslSessionId={} lslInletRouteCount={} lslInletSampleHoldSeconds={:.3} lslInletTestSourceEnabled={} lslInletTestSourceValue01={:.3}",
+            "lslPanelControlled={} lslEnabled={} lslOutletEnabled={} lslInletEnabled={} lslMulticastLockRequested={} lslStreamPrefix={} lslParticipantId={} lslSessionId={} lslInletRouteCount={} lslInletSampleHoldSeconds={:.3} lslInletTestSourceEnabled={} lslInletTestSourceValue01={:.3}",
+            self.panel_controlled,
             self.enabled,
             self.outlet_enabled,
             self.inlet_enabled,
@@ -923,6 +927,59 @@ fn acquire_multicast_lock(app: &android_activity::AndroidApp, enabled: bool) {
     }
 }
 
+#[cfg(target_os = "android")]
+pub(crate) fn set_multicast_lock(app: &android_activity::AndroidApp, enabled: bool) {
+    if enabled {
+        acquire_multicast_lock(app, true);
+    } else {
+        release_multicast_lock(app);
+    }
+}
+
+#[cfg(target_os = "android")]
+pub(crate) fn release_multicast_lock(app: &android_activity::AndroidApp) {
+    use jni::{
+        jni_sig, jni_str,
+        objects::{JClass, JClassLoader, JObject},
+        JavaVM,
+    };
+
+    const CLASS_NAME: &str =
+        "io.github.mesmerprism.rustyquest.native_renderer.LslMulticastLockManager";
+    let vm = unsafe { JavaVM::from_raw(app.vm_as_ptr().cast()) };
+    let activity = app.activity_as_ptr() as jni::sys::jobject;
+    let result = vm.attach_current_thread(|env| -> jni::errors::Result<()> {
+        let activity = unsafe { env.as_cast_raw::<JObject>(&activity)? };
+        let class_loader = env
+            .call_method(
+                &activity,
+                jni_str!("getClassLoader"),
+                jni_sig!("()Ljava/lang/ClassLoader;"),
+                &[],
+            )?
+            .l()?;
+        let class_loader: JClassLoader = env.cast_local::<JClassLoader>(class_loader)?;
+        let class_name = env.new_string(CLASS_NAME)?;
+        let lock_class = JClass::for_name_with_loader(env, class_name, true, class_loader)?;
+        env.call_static_method(
+            lock_class,
+            jni_str!("releaseFromNative"),
+            jni_sig!("()V"),
+            &[],
+        )?;
+        Ok(())
+    });
+    if let Err(error) = result {
+        marker(
+            "lsl",
+            format!(
+                "status=multicast-lock-error operation=release reason={}",
+                marker_token(&error.to_string())
+            ),
+        );
+    }
+}
+
 fn string_value(value: Option<String>, default_value: &str) -> String {
     value
         .map(|value| value.trim().to_owned())
@@ -985,6 +1042,7 @@ mod tests {
     fn defaults_to_disabled_outlet_and_inlet() {
         let settings = LslTransportSettings::from_property_lookup(|_| None);
         assert!(!settings.enabled);
+        assert!(!settings.panel_controlled);
         assert!(!settings.outlet_enabled);
         assert!(!settings.inlet_enabled);
         assert!(!settings.inlet_test_source_enabled);

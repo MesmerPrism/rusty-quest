@@ -20,7 +20,7 @@ $manifest = $manifestText | ConvertFrom-Json
 if ($manifest.schema -ne "rusty.quest.native_renderer_property_manifest.v2") {
     throw "Native renderer property manifest has an unexpected schema."
 }
-$expectedPropertyCount = 268
+$expectedPropertyCount = 308
 if ($manifest.property_count -ne $expectedPropertyCount -or $manifest.properties.Count -ne $expectedPropertyCount) {
     throw "Native renderer property manifest must cover the current $expectedPropertyCount-property runtime surface."
 }
@@ -36,13 +36,39 @@ foreach ($entry in @($manifest.properties)) {
     }
 }
 
+$displayRefreshProperty = @($manifest.properties | Where-Object {
+    [string]$_.name -eq 'debug.rustyquest.native_renderer.openxr.display_refresh_rate_hz'
+})
+$displayRefreshValues = @($displayRefreshProperty[0].allowed_values)
+if ($displayRefreshProperty.Count -ne 1 -or (($displayRefreshValues -join ',') -ne '72,90')) {
+    throw "Native renderer display-refresh property must expose exactly the closed values 72,90."
+}
+
 foreach ($token in @(
+    'debug.rustyquest.native_renderer.breath_composition.activation.binding_sha256',
+    'debug.rustyquest.native_renderer.breath_composition.enabled',
+    'debug.rustyquest.native_renderer.breath_composition.controller_assessment.enabled',
+    'debug.rustyquest.native_renderer.breath_composition.polar_acc_assessment.enabled',
+    'debug.rustyquest.native_renderer.breath_composition.volume_mapping.enabled',
+    'debug.rustyquest.native_renderer.breath_composition.state_mapping.enabled',
+    'debug.rustyquest.native_renderer.breath_composition.panel.enabled',
+    'debug.rustyquest.native_renderer.breath_composition.source',
+    'debug.rustyquest.native_renderer.breath_composition.mapping',
+    'debug.rustyquest.native_renderer.breath_composition.controller_projection',
+    'debug.rustyquest.native_renderer.breath_composition.polar_projection',
+    'debug.rustyquest.native_renderer.breath_composition.inverted',
+    'debug.rustyquest.native_renderer.breath_composition.stale_millis',
+    'debug.rustyquest.native_renderer.breath_composition.calibration.right_secondary_action.mode',
+    'debug.rustyquest.native_renderer.breath_composition.calibration.right_secondary_action.hold_seconds',
+    'breath_calibration_controller_action',
     'debug.rustyquest.native_renderer.hand_adapter.enabled',
     'debug.rustyquest.native_renderer.hand_adapter.profile_id',
     'debug.rustyquest.native_renderer.hand_adapter.project_id',
     'debug.rustyquest.native_renderer.hand_adapter.feature_id',
     'debug.rustyquest.native_renderer.hand_adapter.lock_revision',
     'debug.rustyquest.native_renderer.hand_adapter.lock_sha256',
+    'debug.rustyquest.native_renderer.simultaneous_hands_controllers.activation.binding_sha256',
+    'debug.rustyquest.native_renderer.simultaneous_hands_controllers.enabled',
     'debug.rustyquest.native_renderer.particle_adapter.enabled',
     'debug.rustyquest.native_renderer.particle_adapter.profile_id',
     'debug.rustyquest.native_renderer.particle_adapter.project_id',
@@ -105,6 +131,10 @@ foreach ($token in @(
     'debug.rustyquest.native_renderer.foveation.vertical_offset',
     'debug.rustyquest.native_renderer.foveation.vulkan_fdm',
     'native_renderer_foveation_options',
+    'debug.rustyquest.native_renderer.openxr.display_refresh_rate_hz',
+    'native_renderer_display_refresh_options',
+    '72',
+    '90',
     'debug.rustyquest.native_renderer.projection.swapchain.resolution_scale',
     'native_renderer_projection_swapchain_options',
     'debug.rustyquest.native_renderer.manifold.embedded_broker.enabled',
@@ -118,6 +148,7 @@ foreach ($token in @(
     'embedded_manifold_broker_bridge',
     'debug.rustyquest.native_renderer.lsl.enabled',
     'debug.rustyquest.native_renderer.lsl.outlet.enabled',
+    'debug.rustyquest.native_renderer.lsl.panel_controlled',
     'debug.rustyquest.native_renderer.lsl.inlet.enabled',
     'debug.rustyquest.native_renderer.lsl.multicast_lock.enabled',
     'debug.rustyquest.native_renderer.lsl.stream_prefix',
@@ -139,6 +170,13 @@ foreach ($token in @(
     'direct-controller-state',
     'debug.rustyquest.native_renderer.projection.target.breath.high_rate_json_payload',
     'debug.rustyquest.native_renderer.private_particles.visual.scale',
+    'debug.rustyquest.native_renderer.private_particles.visual.scale_request.v1',
+    'native_renderer_private_particle_visual_scale_request',
+    'debug.rustyquest.native_renderer.private_particles.material.request.v1',
+    'native_renderer_private_particle_material_request',
+    'debug.rustyquest.native_renderer.private_particles.render.experiment_request.v1',
+    'native_renderer_private_particle_render_experiment_request',
+    'runtime-polled',
     'debug.rustyquest.native_renderer.private_particles.world_anchor.scale_m',
     'debug.rustyquest.native_renderer.private_particles.driver0.value01',
     'debug.rustyquest.native_renderer.private_particles.driver1.value01',
@@ -146,6 +184,13 @@ foreach ($token in @(
     'debug.rustyquest.native_renderer.private_particles.driver7.value01',
     'debug.rustyquest.native_renderer.private_particles.breath_state_driver.mode',
     'debug.rustyquest.native_renderer.private_particles.breath_state_driver.target_slot',
+    'debug.rustyquest.native_renderer.private_particles.breath_composition_driver.activation.binding_sha256',
+    'debug.rustyquest.native_renderer.private_particles.breath_composition_driver.enabled',
+    'debug.rustyquest.native_renderer.private_particles.breath_composition_driver.exhale.rate_per_second',
+    'debug.rustyquest.native_renderer.private_particles.breath_composition_driver.hold.policy',
+    'debug.rustyquest.native_renderer.private_particles.breath_composition_driver.inhale.rate_per_second',
+    'debug.rustyquest.native_renderer.private_particles.breath_composition_driver.loss.value01',
+    'debug.rustyquest.native_renderer.private_particles.breath_composition_driver.target_slot',
     'private_particle_breath_state_driver',
     'debug.rustyquest.native_renderer.private_particles.manifold_driver.enabled',
     'debug.rustyquest.native_renderer.private_particles.manifold_driver.broker.host',

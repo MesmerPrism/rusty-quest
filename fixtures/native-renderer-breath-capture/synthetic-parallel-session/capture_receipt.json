@@ -1,0 +1,25 @@
+{
+  "schema": "rusty.quest.breath_source_capture_receipt.v1",
+  "session_id": "synthetic-parallel-session",
+  "generation": 1,
+  "stop_reason": "duration-elapsed",
+  "target_duration_millis": 120000,
+  "observed_duration_millis": 120000,
+  "enqueued_records": 8,
+  "written_records": 8,
+  "dropped_records": 0,
+  "write_failures": 0,
+  "durable_checkpoints": 1,
+  "finalized_samples": true,
+  "active_marker_removed": true,
+  "record_counts": {
+    "polar_acc_frame": 1,
+    "polar_acc_sample": 2,
+    "polar_ecg_sample": 1,
+    "controller_pose": 1,
+    "controller_right_thumbstick": 1,
+    "breath_assessment": 1,
+    "driver_apply": 1
+  },
+  "complete": true
+}

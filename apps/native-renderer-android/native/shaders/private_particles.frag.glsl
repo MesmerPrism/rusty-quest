@@ -196,6 +196,11 @@ void main() {
     float frame01 = clamp(v_render_params.y, 0.0, 0.99902344);
     uint packed_mode = uint(pc.params0.z + 0.5);
     uint mask_discard_mode = (packed_mode / 1000000u) % 10u;
+    // The render thread packs the selected closed material blend mode in the
+    // two-million range, leaving the legacy mask/order/facing fields intact.
+    // The alpha-over pipeline consumes premultiplied RGB; the additive
+    // baseline deliberately remains straight RGB plus coverage alpha.
+    uint material_blend_mode = (packed_mode / 2000000u) % 2u;
 #if PRIVATE_PARTICLE_MASK_TEXTURE_MODE_CODE == PRIVATE_PARTICLE_MASK_MODE_ARRAY_NEAREST
     float mask = texture_array_alpha_nearest(v_mask_uv, frame01);
 #elif PRIVATE_PARTICLE_MASK_TEXTURE_MODE_CODE == PRIVATE_PARTICLE_MASK_MODE_ARRAY_BLEND
@@ -223,5 +228,8 @@ void main() {
     vec3 base_rgb = clamp(v_color.rgb, vec3(0.0), vec3(1.0))
         * clamp(v_color_params.x, 0.0, 1.0);
     vec3 rgb = base_rgb * mix(1.0, coverage_alpha, rgb_alpha_coupling);
+    if (material_blend_mode == 1u) {
+        rgb *= coverage_alpha;
+    }
     out_color = vec4(rgb, clamp(coverage_alpha * output_alpha_scale, 0.0, 1.0));
 }

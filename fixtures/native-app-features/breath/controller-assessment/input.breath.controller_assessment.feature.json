@@ -1,0 +1,24 @@
+{
+  "schema": "rusty.quest.native_app_feature.v1",
+  "feature_id": "input.breath.controller_assessment",
+  "module_path": "breath/controller-assessment",
+  "module_kind": "assessment-adapter",
+  "settings_surface": {"authority": "rusty.quest.native_app_settings.v1", "adapter": "runtime_profile"},
+  "owner_lane": "rusty-quest",
+  "status": "public-substrate",
+  "description": "Generic bounded OpenXR controller-pose breath assessment capability.",
+  "provides": ["breath.assessment.controller.volume", "breath.assessment.controller.phase"],
+  "depends_on": ["input.controllers_and_hands_optional"],
+  "incompatible_with": [],
+  "exclusive_groups": {},
+  "android_manifest": {"permissions": [], "uses_features": [], "activities": [], "services": [], "queries": []},
+  "runtime_profile": {
+    "set": {"debug.rustyquest.native_renderer.breath_composition.controller_assessment.enabled": "true"},
+    "clear_families": [],
+    "expected_render_modes": []
+  },
+  "build_inputs": {"env": [], "assets": [], "shaders": []},
+  "markers": {"required": ["RUSTY_QUEST_NATIVE_RENDERER channel=native-controller-breath-assessment"], "forbidden": []},
+  "validation": {"quick": [], "standard": [], "device": []},
+  "public_private_boundary": "Rusty Quest owns generic pose admission, calibration, volume, and common phase; consuming applications own all effect interpretation."
+}

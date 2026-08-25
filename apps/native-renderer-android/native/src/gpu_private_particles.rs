@@ -4,19 +4,32 @@ use std::{ffi::CString, mem};
 
 use ash::vk;
 
+use crate::breath_composition_driver::{BreathCompositionDriver, BreathCompositionDriverSettings};
 use crate::gpu_hand_mesh_visual::HandMeshVisualEyeProjection;
 use crate::manifold_scalar_driver_bridge::{
     ManifoldScalarDriverBridge, ManifoldScalarDriverBridgeSettings,
 };
 use crate::native_controller_breath_state::NativeControllerBreathSample;
+use crate::native_renderer_private_particle_material_request::{
+    PrivateParticleMaterialPreset, PrivateParticleMaterialRequestObservation,
+    PrivateParticleMaterialRequestState,
+};
+use crate::native_renderer_private_particle_render_experiment_request::{
+    PrivateParticleRenderExperimentPreset, PrivateParticleRenderExperimentRequestObservation,
+    PrivateParticleRenderExperimentRequestState,
+};
+use crate::native_renderer_private_particle_visual_scale_request::{
+    PrivateParticleVisualScaleRequestObservation, PrivateParticleVisualScaleRequestState,
+};
 use crate::native_renderer_properties::{
     PROP_PRIVATE_PARTICLES_COLOR_FACING_ATTENUATION_STRENGTH,
     PROP_PRIVATE_PARTICLES_DRIVER0_VALUE01, PROP_PRIVATE_PARTICLES_DRIVER1_VALUE01,
     PROP_PRIVATE_PARTICLES_DRIVER2_VALUE01, PROP_PRIVATE_PARTICLES_DRIVER3_VALUE01,
     PROP_PRIVATE_PARTICLES_DRIVER4_VALUE01, PROP_PRIVATE_PARTICLES_DRIVER5_VALUE01,
     PROP_PRIVATE_PARTICLES_DRIVER6_VALUE01, PROP_PRIVATE_PARTICLES_DRIVER7_VALUE01,
-    PROP_PRIVATE_PARTICLES_OFFSCREEN_HALF_RES,
+    PROP_PRIVATE_PARTICLES_MATERIAL_REQUEST_V1, PROP_PRIVATE_PARTICLES_OFFSCREEN_HALF_RES,
     PROP_PRIVATE_PARTICLES_OFFSCREEN_HALF_RES_TRACERS_ONLY,
+    PROP_PRIVATE_PARTICLES_RENDER_EXPERIMENT_REQUEST_V1,
     PROP_PRIVATE_PARTICLES_TRACER_COPIES_PER_SECOND,
     PROP_PRIVATE_PARTICLES_TRACER_DRAW_SLOTS_PER_OSCILLATOR,
     PROP_PRIVATE_PARTICLES_TRACER_LIFETIME_SECONDS,
@@ -24,19 +37,23 @@ use crate::native_renderer_properties::{
     PROP_PRIVATE_PARTICLES_TRANSPARENCY_OPACITY,
     PROP_PRIVATE_PARTICLES_TRANSPARENCY_OUTPUT_ALPHA_SCALE,
     PROP_PRIVATE_PARTICLES_TRANSPARENCY_RGB_ALPHA_COUPLING, PROP_PRIVATE_PARTICLES_VISUAL_SCALE,
+    PROP_PRIVATE_PARTICLES_VISUAL_SCALE_REQUEST_V1,
 };
 use crate::native_renderer_property_values::{bool_value, f32_clamped_value, u32_value};
 use crate::native_renderer_timing::{GpuTimestampStage, GpuTimestampTracker};
 use crate::private_particle_breath_state_driver::{
     PrivateParticleBreathStateDriver, PrivateParticleBreathStateDriverSettings,
 };
+use crate::private_particle_heartbeat_pulse_adapter::{
+    PrivateParticleHeartbeatPulseAdapter, PrivateParticleHeartbeatPulseAdapterSettings,
+};
+use crate::private_particle_world_basis::PrivateParticleFrameEyeProjections;
 
 include!(concat!(
     env!("OUT_DIR"),
     "/private_particle_payload_config.rs"
 ));
 
-const PARTICLE_VERTICES_PER_INSTANCE: u32 = 6;
 const PARTICLE_COMPUTE_LOCAL_SIZE: u32 = 64;
 const PARTICLE_SORT_LOCAL_SIZE: u32 = 128;
 const PARTICLE_SORT_ROW_BYTES: vk::DeviceSize = 16;
@@ -59,18 +76,50 @@ const PRIVATE_PARTICLE_ORDERING_BACK_TO_FRONT: u32 = 0;
 const PRIVATE_PARTICLE_ORDERING_SOURCE_ORDER: u32 = 1;
 const PRIVATE_PARTICLE_OFFSCREEN_RESOLUTION_SCALE: f32 = 0.5;
 const PRIVATE_PARTICLE_OFFSCREEN_EYE_COUNT: usize = 2;
+const PRIVATE_PARTICLE_BLEND_MODE_PACK_OFFSET: u32 = 2_000_000;
+const PRIVATE_PARTICLE_GEOMETRY_PACK_OFFSET: u32 = 10_000_000;
 pub(crate) const GPU_PRIVATE_PARTICLE_PANEL_DRIVER_COUNT: usize =
     PRIVATE_PARTICLE_DRIVER_BANK_SLOT_COUNT;
 const PANEL_DRIVER_MODE_OSCILLATOR: u32 = 0;
 const PANEL_DRIVER_MODE_MANUAL: u32 = 1;
 const PANEL_DRIVER_MODE_INPUT_SLOT: u32 = 2;
 const PANEL_DRIVER_MODE_DIRECT: u32 = 3;
+const PANEL_DRIVER_MODE_PRIVATE_HEARTBEAT_ORBIT: u32 = 4;
 const PANEL_CURVE_LINEAR: u32 = 0;
 const PANEL_CURVE_AKD_HUMP: u32 = 1;
 const PANEL_CURVE_SMOOTHSTEP: u32 = 2;
 const PANEL_CURVE_REVERSE_LINEAR: u32 = 3;
 const PANEL_CURVE_HOLD_LOW: u32 = 4;
 const PANEL_CURVE_HOLD_HIGH: u32 = 5;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PrivateParticleTransparencyBlendMode {
+    Additive,
+    PremultipliedAlphaOver,
+}
+
+impl PrivateParticleTransparencyBlendMode {
+    fn from_generated_config() -> Self {
+        match PRIVATE_PARTICLE_TRANSPARENCY_BLEND_MODE {
+            "src-alpha-one-additive" => Self::Additive,
+            _ => Self::PremultipliedAlphaOver,
+        }
+    }
+
+    fn marker_name(self) -> &'static str {
+        match self {
+            Self::Additive => "src-alpha-one-additive",
+            Self::PremultipliedAlphaOver => "src-one-one-minus-src-alpha",
+        }
+    }
+
+    fn packed_code(self) -> u32 {
+        match self {
+            Self::Additive => 0,
+            Self::PremultipliedAlphaOver => 1,
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct PrivateParticleRuntimeSettings {
@@ -95,9 +144,14 @@ struct PrivateParticleRuntimeSettings {
     transparency_output_alpha_scale: f32,
     transparency_depth_suppression_strength: f32,
     transparency_rgb_alpha_coupling: f32,
+    transparency_blend_mode: PrivateParticleTransparencyBlendMode,
     transparency_parameter_source: &'static str,
     color_facing_attenuation_strength: f32,
     color_parameter_source: &'static str,
+    material_preset: Option<PrivateParticleMaterialPreset>,
+    material_parameter_source: &'static str,
+    render_experiment_preset: Option<PrivateParticleRenderExperimentPreset>,
+    render_experiment_parameter_source: &'static str,
     offscreen_half_res: bool,
     offscreen_half_res_tracers_only: bool,
     offscreen_parameter_source: &'static str,
@@ -121,6 +175,9 @@ pub(crate) struct GpuPrivateParticlePanelSettings {
     pub(crate) transparency_depth_suppression_strength: f32,
     pub(crate) transparency_rgb_alpha_coupling: f32,
     pub(crate) color_facing_attenuation_strength: f32,
+    pub(crate) material_preset: Option<PrivateParticleMaterialPreset>,
+    pub(crate) material_override_enabled: bool,
+    pub(crate) polar_rr_orbit_boost_enabled: bool,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -146,6 +203,10 @@ pub(crate) struct GpuPrivateParticlePanelEffectiveSettings {
     pub(crate) transparency_parameter_source: &'static str,
     pub(crate) color_facing_attenuation_strength: f32,
     pub(crate) color_parameter_source: &'static str,
+    pub(crate) material_preset: Option<PrivateParticleMaterialPreset>,
+    pub(crate) material_parameter_source: &'static str,
+    pub(crate) polar_rr_orbit_boost_enabled: bool,
+    pub(crate) heartbeat_pulse_parameter_source: &'static str,
 }
 
 impl GpuPrivateParticlePanelSettings {
@@ -160,6 +221,7 @@ impl GpuPrivateParticlePanelSettings {
                 && *mode != PANEL_DRIVER_MODE_MANUAL
                 && *mode != PANEL_DRIVER_MODE_INPUT_SLOT
                 && *mode != PANEL_DRIVER_MODE_DIRECT
+                && *mode != PANEL_DRIVER_MODE_PRIVATE_HEARTBEAT_ORBIT
             {
                 *mode = PANEL_DRIVER_MODE_DIRECT;
             }
@@ -193,6 +255,15 @@ impl GpuPrivateParticlePanelSettings {
         for multiplier in &mut driver_control_cycle_multipliers {
             *multiplier = multiplier.clamp(0.0, 10.0);
         }
+        if self.polar_rr_orbit_boost_enabled {
+            // Slot 5 is the fixed orbit-radius envelope in the private
+            // payload. Its event input and envelope tuning stay private; the
+            // public panel can only choose this one closed route.
+            driver_control_modes[5] = PANEL_DRIVER_MODE_PRIVATE_HEARTBEAT_ORBIT;
+            driver_control_source_slots[5] = 5;
+            driver_control_curve_codes[5] = PANEL_CURVE_AKD_HUMP;
+            driver_control_cycle_multipliers[5] = 1.0;
+        }
         Self {
             visual_scale: self.visual_scale.clamp(0.05, 1.0),
             driver_values01,
@@ -214,6 +285,9 @@ impl GpuPrivateParticlePanelSettings {
             color_facing_attenuation_strength: self
                 .color_facing_attenuation_strength
                 .clamp(0.0, 1.0),
+            material_preset: self.material_preset,
+            material_override_enabled: self.material_override_enabled,
+            polar_rr_orbit_boost_enabled: self.polar_rr_orbit_boost_enabled,
         }
     }
 }
@@ -283,10 +357,15 @@ impl PrivateParticleRuntimeSettings {
                 PRIVATE_PARTICLE_TRANSPARENCY_DEPTH_SUPPRESSION_STRENGTH.clamp(0.0, 8.0),
             transparency_rgb_alpha_coupling: PRIVATE_PARTICLE_TRANSPARENCY_RGB_ALPHA_COUPLING
                 .clamp(0.0, 1.0),
+            transparency_blend_mode: PrivateParticleTransparencyBlendMode::from_generated_config(),
             transparency_parameter_source: PRIVATE_PARTICLE_TRANSPARENCY_PARAMETER_SOURCE,
             color_facing_attenuation_strength: PRIVATE_PARTICLE_COLOR_FACING_ATTENUATION_STRENGTH
                 .clamp(0.0, 1.0),
             color_parameter_source: PRIVATE_PARTICLE_COLOR_PARAMETER_SOURCE,
+            material_preset: None,
+            material_parameter_source: "runtime-owner-default-when-unset",
+            render_experiment_preset: None,
+            render_experiment_parameter_source: "runtime-owner-default-build-mask-policy",
             offscreen_half_res: false,
             offscreen_half_res_tracers_only: false,
             offscreen_parameter_source: "renderer-default-direct-projection-pass",
@@ -414,6 +493,7 @@ impl PrivateParticleRuntimeSettings {
             transparency_output_alpha_scale,
             transparency_depth_suppression_strength,
             transparency_rgb_alpha_coupling,
+            transparency_blend_mode: PrivateParticleTransparencyBlendMode::from_generated_config(),
             transparency_parameter_source: if transparency_overridden {
                 "runtime-hotload-android-property"
             } else {
@@ -425,6 +505,10 @@ impl PrivateParticleRuntimeSettings {
             } else {
                 PRIVATE_PARTICLE_COLOR_PARAMETER_SOURCE
             },
+            material_preset: None,
+            material_parameter_source: "runtime-owner-default-when-unset",
+            render_experiment_preset: None,
+            render_experiment_parameter_source: "runtime-owner-default-build-mask-policy",
             offscreen_half_res,
             offscreen_half_res_tracers_only: offscreen_half_res && offscreen_half_res_tracers_only,
             offscreen_parameter_source: if offscreen_overridden || offscreen_tracers_only_overridden
@@ -474,6 +558,78 @@ impl PrivateParticleRuntimeSettings {
         self.color_parameter_source = "same-apk-panel-live";
     }
 
+    fn material_defaults(&self) -> PrivateParticleMaterialDefaults {
+        PrivateParticleMaterialDefaults {
+            transparency_opacity: self.transparency_opacity,
+            transparency_output_alpha_scale: self.transparency_output_alpha_scale,
+            transparency_depth_suppression_strength: self.transparency_depth_suppression_strength,
+            transparency_rgb_alpha_coupling: self.transparency_rgb_alpha_coupling,
+            transparency_blend_mode: self.transparency_blend_mode,
+            color_facing_attenuation_strength: self.color_facing_attenuation_strength,
+        }
+    }
+
+    fn apply_panel_material_override(
+        &mut self,
+        panel: GpuPrivateParticlePanelSettings,
+        defaults: PrivateParticleMaterialDefaults,
+    ) {
+        if !panel.material_override_enabled {
+            return;
+        }
+        if let Some(preset) = panel.material_preset {
+            self.apply_material_preset_with_source(preset, "same-apk-panel-live");
+            return;
+        }
+        self.transparency_opacity = defaults.transparency_opacity;
+        self.transparency_output_alpha_scale = defaults.transparency_output_alpha_scale;
+        self.transparency_depth_suppression_strength =
+            defaults.transparency_depth_suppression_strength;
+        self.transparency_rgb_alpha_coupling = defaults.transparency_rgb_alpha_coupling;
+        self.transparency_blend_mode = defaults.transparency_blend_mode;
+        self.transparency_parameter_source = "same-apk-panel-live-packaged-default";
+        self.color_facing_attenuation_strength = defaults.color_facing_attenuation_strength;
+        self.color_parameter_source = "same-apk-panel-live-packaged-default";
+        self.material_preset = None;
+        self.material_parameter_source = "same-apk-panel-live-packaged-default";
+    }
+
+    fn apply_material_preset(&mut self, preset: PrivateParticleMaterialPreset) {
+        self.apply_material_preset_with_source(preset, "runtime-fenced-material-request-v1");
+    }
+
+    fn apply_material_preset_with_source(
+        &mut self,
+        preset: PrivateParticleMaterialPreset,
+        parameter_source: &'static str,
+    ) {
+        // This is the current Viscereality material, expressed explicitly so a
+        // closed request also clears any earlier scalar-property experiments
+        // without changing the packaged startup default. The AKD preset keeps
+        // its historical 0.36 coverage, 0.45 stored alpha, depth 1.5, and
+        // 0.80 + 0.20 * facing term in the parser-owned envelope.
+        let parameters = preset.parameters();
+        self.transparency_blend_mode = if parameters.uses_premultiplied_alpha_over {
+            PrivateParticleTransparencyBlendMode::PremultipliedAlphaOver
+        } else {
+            PrivateParticleTransparencyBlendMode::Additive
+        };
+        self.transparency_opacity = parameters.opacity;
+        self.transparency_output_alpha_scale = parameters.output_alpha_scale;
+        self.transparency_depth_suppression_strength = parameters.depth_suppression_strength;
+        self.transparency_rgb_alpha_coupling = parameters.rgb_alpha_coupling;
+        self.transparency_parameter_source = parameter_source;
+        self.color_facing_attenuation_strength = parameters.facing_attenuation_strength;
+        self.color_parameter_source = parameter_source;
+        self.material_preset = Some(preset);
+        self.material_parameter_source = parameter_source;
+    }
+
+    fn apply_render_experiment_preset(&mut self, preset: PrivateParticleRenderExperimentPreset) {
+        self.render_experiment_preset = Some(preset);
+        self.render_experiment_parameter_source = "runtime-fenced-render-experiment-request-v1";
+    }
+
     fn apply_driver_source_values(
         &mut self,
         source_values01: [f32; PRIVATE_PARTICLE_DRIVER_BANK_SLOT_COUNT],
@@ -514,6 +670,16 @@ fn panel_requires_input_driver_update(panel: &GpuPrivateParticlePanelSettings) -
         .driver_control_modes
         .iter()
         .any(|mode| *mode == PANEL_DRIVER_MODE_INPUT_SLOT)
+}
+
+#[derive(Clone, Copy, Debug)]
+struct PrivateParticleMaterialDefaults {
+    transparency_opacity: f32,
+    transparency_output_alpha_scale: f32,
+    transparency_depth_suppression_strength: f32,
+    transparency_rgb_alpha_coupling: f32,
+    transparency_blend_mode: PrivateParticleTransparencyBlendMode,
+    color_facing_attenuation_strength: f32,
 }
 
 fn f32_hotload_value(
@@ -599,6 +765,18 @@ fn android_property(name: &str) -> Option<String> {
         let trimmed = value.trim();
         (!trimmed.is_empty()).then(|| trimmed.to_owned())
     })
+}
+
+fn private_particle_visual_scale_request_property() -> Option<String> {
+    android_property(PROP_PRIVATE_PARTICLES_VISUAL_SCALE_REQUEST_V1)
+}
+
+fn private_particle_material_request_property() -> Option<String> {
+    android_property(PROP_PRIVATE_PARTICLES_MATERIAL_REQUEST_V1)
+}
+
+fn private_particle_render_experiment_request_property() -> Option<String> {
+    android_property(PROP_PRIVATE_PARTICLES_RENDER_EXPERIMENT_REQUEST_V1)
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -958,7 +1136,8 @@ pub(crate) struct GpuPrivateParticleRenderer {
     pipeline_layout: vk::PipelineLayout,
     compute_pipeline: vk::Pipeline,
     sort_pipeline: vk::Pipeline,
-    graphics_pipeline: vk::Pipeline,
+    graphics_pipeline_additive: vk::Pipeline,
+    graphics_pipeline_alpha_over: vk::Pipeline,
     projection_render_pass: vk::RenderPass,
     offscreen: Option<PrivateParticleOffscreenResources>,
     position_buffer: OwnedBuffer,
@@ -985,6 +1164,9 @@ pub(crate) struct GpuPrivateParticleRenderer {
     runtime_settings: PrivateParticleRuntimeSettings,
     driver_source_values01: [f32; PRIVATE_PARTICLE_DRIVER_BANK_SLOT_COUNT],
     runtime_settings_last_poll_frame: u64,
+    visual_scale_request_state: PrivateParticleVisualScaleRequestState,
+    material_request_state: PrivateParticleMaterialRequestState,
+    render_experiment_request_state: PrivateParticleRenderExperimentRequestState,
     panel_settings_override: Option<GpuPrivateParticlePanelSettings>,
     pending_phase_reset_revision: i64,
     last_phase_reset_revision: i64,
@@ -992,6 +1174,10 @@ pub(crate) struct GpuPrivateParticleRenderer {
     manifold_driver_connected_marker_emitted: bool,
     breath_state_driver: PrivateParticleBreathStateDriver,
     breath_state_driver_connected_marker_emitted: bool,
+    breath_composition_driver: BreathCompositionDriver,
+    breath_composition_driver_connected_marker_emitted: bool,
+    heartbeat_pulse_adapter: PrivateParticleHeartbeatPulseAdapter,
+    heartbeat_pulse_adapter_connected_marker_emitted: bool,
 }
 
 impl GpuPrivateParticleRenderer {
@@ -1002,6 +1188,8 @@ impl GpuPrivateParticleRenderer {
         queue: vk::Queue,
         command_pool: vk::CommandPool,
         breath_state_driver_settings: PrivateParticleBreathStateDriverSettings,
+        breath_composition_driver_settings: BreathCompositionDriverSettings,
+        heartbeat_pulse_adapter_settings: PrivateParticleHeartbeatPulseAdapterSettings,
         manifold_scalar_driver_settings: ManifoldScalarDriverBridgeSettings,
     ) -> Result<Option<Self>, String> {
         if !PRIVATE_PARTICLE_PAYLOAD_LINKED {
@@ -1145,6 +1333,10 @@ impl GpuPrivateParticleRenderer {
             breath_state_driver_settings,
             runtime_settings.driver_values01[breath_state_driver_settings.target_slot()],
         );
+        let heartbeat_pulse_adapter =
+            PrivateParticleHeartbeatPulseAdapter::new(heartbeat_pulse_adapter_settings);
+        let breath_composition_driver =
+            BreathCompositionDriver::new(breath_composition_driver_settings);
         let driver_bank_rows = private_particle_driver_bank_rows(runtime_settings);
         let driver_bank_buffer = match OwnedBuffer::new_with_data(
             device,
@@ -1511,10 +1703,44 @@ impl GpuPrivateParticleRenderer {
                 return Err(error);
             }
         };
-        let graphics_pipeline = match create_graphics_pipeline(device, render_pass, pipeline_layout)
-        {
+        let graphics_pipeline_additive = match create_graphics_pipeline(
+            device,
+            render_pass,
+            pipeline_layout,
+            PrivateParticleTransparencyBlendMode::Additive,
+        ) {
             Ok(pipeline) => pipeline,
             Err(error) => {
+                device.destroy_pipeline(sort_pipeline, None);
+                device.destroy_pipeline(compute_pipeline, None);
+                device.destroy_pipeline_layout(pipeline_layout, None);
+                device.destroy_descriptor_pool(descriptor_pool, None);
+                device.destroy_descriptor_set_layout(descriptor_set_layout, None);
+                destroy_buffers_mask_sort_and_diagnostics(
+                    device,
+                    &position_buffer,
+                    &normal_buffer,
+                    &particle_output_buffer,
+                    &effect_state_buffer_a,
+                    &effect_state_buffer_b,
+                    &aux0_buffer,
+                    &driver_bank_buffer,
+                    &mask_texture,
+                    &particle_sort_buffer,
+                    &diagnostic_buffers,
+                );
+                return Err(error);
+            }
+        };
+        let graphics_pipeline_alpha_over = match create_graphics_pipeline(
+            device,
+            render_pass,
+            pipeline_layout,
+            PrivateParticleTransparencyBlendMode::PremultipliedAlphaOver,
+        ) {
+            Ok(pipeline) => pipeline,
+            Err(error) => {
+                device.destroy_pipeline(graphics_pipeline_additive, None);
                 device.destroy_pipeline(sort_pipeline, None);
                 device.destroy_pipeline(compute_pipeline, None);
                 device.destroy_pipeline_layout(pipeline_layout, None);
@@ -1546,7 +1772,7 @@ impl GpuPrivateParticleRenderer {
         crate::marker(
             "private-particle-slot",
             format!(
-                "status=linked privateParticlePayloadLinked=true privateParticleKind={} privateParticleImplementationPath={} privateParticleDataPath={} privateParticleCount={} privateParticleMainCount={} privateParticleDrawCount={} privateParticleVisualScale={:.3} privateParticleVisualParameterSource={} privateParticleDriver0Value01={:.3} privateParticleDriver1Value01={:.3} {} privateParticleDriverParameterSource={} privateParticleTracerMaxCount={} privateParticleTracerStateCapacity={} privateParticleTracerDrawSlotsPerOscillator={} privateParticleTracerDrawCount={} privateParticleTracerLifetimeSeconds={:.3} privateParticleTracerCopiesPerSecond={:.3} privateParticleTracerParameterSource={} privateParticleTracerStateRows={} privateParticleTracerRadiusPolicy=snapshot-source-radius privateParticleTracerOutputMode=merged-billboard-output privateParticleDrawBudgetIncludesTracers={} privateParticleTracerCpuUploadPerFrame=false {} privateParticleStaticPositionBytes={} privateParticleStaticNormalBytes={} privateParticleAux0Bytes={} privateParticleAux0Rows={} privateParticleStateBufferBytes={} privateParticleStatePingPong=true privateParticleOutputBufferBytes={} privateParticleOutputAbi=four-vec4-billboard-rows privateParticleBillboardKindAux=aux.z-main-1-tracer-2-anchor-3-anchor_echo-4 privateParticleOrderingMode={} privateParticleOrderingImplementation={} privateParticleOrderingParameterSource={} privateParticleOrderingBasis=per-eye-openxr-reference-space privateParticleSortActive={} privateParticleSortInputCount={} privateParticleSortCount={} privateParticleSortCapacity={} privateParticleSortBufferBytes={} privateParticleOrderingCpuExpandedUploadPerFrame=false {} privateParticleMaskTextureLinked={} privateParticleMaskTextureMode={} privateParticleMaskDiscardMode={} privateParticleMaskAlphaCutoff={:.4} privateParticleMaskTexturePath={} privateParticleMaskTextureFormat=R8_UNORM privateParticleMaskTextureSize={}x{}x{} privateParticleMaskTextureBytes={} privateParticleMaskTextureGpuResident=true {} {} privateParticleCpuUploadBytes=0 privateParticleGpuBuffersResident=true privateParticleVisualAcceptance=pending-headset-screenshot",
+                "status=linked privateParticlePayloadLinked=true privateParticleKind={} privateParticleImplementationPath={} privateParticleDataPath={} privateParticleCount={} privateParticleMainCount={} privateParticleDrawCount={} privateParticleVisualScale={:.3} privateParticleVisualParameterSource={} privateParticleDriver0Value01={:.3} privateParticleDriver1Value01={:.3} {} privateParticleDriverParameterSource={} privateParticleTracerMaxCount={} privateParticleTracerStateCapacity={} privateParticleTracerDrawSlotsPerOscillator={} privateParticleTracerDrawCount={} privateParticleTracerLifetimeSeconds={:.3} privateParticleTracerCopiesPerSecond={:.3} privateParticleTracerParameterSource={} privateParticleTracerStateRows={} privateParticleTracerRadiusPolicy=snapshot-source-radius privateParticleTracerOutputMode=merged-billboard-output privateParticleDrawBudgetIncludesTracers={} privateParticleTracerCpuUploadPerFrame=false {} privateParticleStaticPositionBytes={} privateParticleStaticNormalBytes={} privateParticleAux0Bytes={} privateParticleAux0Rows={} privateParticleStateBufferBytes={} privateParticleStatePingPong=true privateParticleOutputBufferBytes={} privateParticleOutputAbi=four-vec4-billboard-rows privateParticleBillboardKindAux=aux.z-main-1-tracer-2-anchor-3-anchor_echo-4 privateParticleOrderingMode={} privateParticleOrderingImplementation={} privateParticleOrderingParameterSource={} privateParticleOrderingBasis=per-eye-openxr-reference-space privateParticleSortActive={} privateParticleSortInputCount={} privateParticleSortCount={} privateParticleSortCapacity={} privateParticleSortBufferBytes={} privateParticleOrderingCpuExpandedUploadPerFrame=false {} privateParticleMaterialPipelines=additive,alpha-over privateParticleMaskTextureLinked={} privateParticleMaskTextureMode={} privateParticleMaskDiscardMode={} privateParticleMaskAlphaCutoff={:.4} privateParticleMaskTexturePath={} privateParticleMaskTextureFormat=R8_UNORM privateParticleMaskTextureSize={}x{}x{} privateParticleMaskTextureBytes={} privateParticleMaskTextureGpuResident=true {} {} privateParticleCpuUploadBytes=0 privateParticleGpuBuffersResident=true privateParticleVisualAcceptance=pending-headset-screenshot",
                 crate::sanitize(PRIVATE_PARTICLE_KIND),
                 crate::sanitize(PRIVATE_PARTICLE_IMPLEMENTATION_PATH),
                 crate::sanitize(PRIVATE_PARTICLE_DATA_PATH),
@@ -1605,6 +1831,17 @@ impl GpuPrivateParticleRenderer {
             "private-particle-breath-driver",
             format!("status=config {}", breath_state_driver.marker_fields()),
         );
+        crate::marker(
+            "breath-composition-driver",
+            format!(
+                "status=config {}",
+                breath_composition_driver.marker_fields()
+            ),
+        );
+        crate::marker(
+            "private-particle-heartbeat-pulse",
+            format!("status=config {}", heartbeat_pulse_adapter.marker_fields()),
+        );
         let startup_world_anchor_stats = GpuPrivateParticleFrameStats::default();
         log_private_marker(
             "created",
@@ -1635,7 +1872,8 @@ impl GpuPrivateParticleRenderer {
             pipeline_layout,
             compute_pipeline,
             sort_pipeline,
-            graphics_pipeline,
+            graphics_pipeline_additive,
+            graphics_pipeline_alpha_over,
             projection_render_pass: render_pass,
             offscreen: None,
             position_buffer,
@@ -1662,6 +1900,9 @@ impl GpuPrivateParticleRenderer {
             runtime_settings,
             driver_source_values01: runtime_settings.driver_bank_values01,
             runtime_settings_last_poll_frame: u64::MAX,
+            visual_scale_request_state: PrivateParticleVisualScaleRequestState::default(),
+            material_request_state: PrivateParticleMaterialRequestState::default(),
+            render_experiment_request_state: PrivateParticleRenderExperimentRequestState::default(),
             panel_settings_override: None,
             pending_phase_reset_revision: 0,
             last_phase_reset_revision: 0,
@@ -1669,6 +1910,10 @@ impl GpuPrivateParticleRenderer {
             manifold_driver_connected_marker_emitted: false,
             breath_state_driver,
             breath_state_driver_connected_marker_emitted: false,
+            breath_composition_driver,
+            breath_composition_driver_connected_marker_emitted: false,
+            heartbeat_pulse_adapter,
+            heartbeat_pulse_adapter_connected_marker_emitted: false,
         }))
     }
 
@@ -1689,12 +1934,82 @@ impl GpuPrivateParticleRenderer {
         self.particle_output_buffer.destroy(device);
         self.normal_buffer.destroy(device);
         self.position_buffer.destroy(device);
-        device.destroy_pipeline(self.graphics_pipeline, None);
+        device.destroy_pipeline(self.graphics_pipeline_alpha_over, None);
+        device.destroy_pipeline(self.graphics_pipeline_additive, None);
         device.destroy_pipeline(self.sort_pipeline, None);
         device.destroy_pipeline(self.compute_pipeline, None);
         device.destroy_pipeline_layout(self.pipeline_layout, None);
         device.destroy_descriptor_pool(self.descriptor_pool, None);
         device.destroy_descriptor_set_layout(self.descriptor_set_layout, None);
+    }
+
+    pub(crate) fn begin_runtime_session(&mut self) {
+        self.visual_scale_request_state.begin_session();
+        self.material_request_state.begin_session();
+        self.render_experiment_request_state.begin_session();
+        self.runtime_settings_last_poll_frame = u64::MAX;
+        crate::marker(
+            "private-particle-visual-scale-request",
+            format!(
+                "status=session-ready {}",
+                self.visual_scale_request_state.session_marker_fields()
+            ),
+        );
+        crate::marker(
+            "private-particle-material-request",
+            format!(
+                "status=session-ready {}",
+                self.material_request_state.session_marker_fields()
+            ),
+        );
+        crate::marker(
+            "private-particle-render-experiment-request",
+            format!(
+                "status=session-ready {}",
+                self.render_experiment_request_state.session_marker_fields()
+            ),
+        );
+    }
+
+    pub(crate) fn confirm_submitted_frame(
+        &mut self,
+        frame_count: u64,
+        stats: GpuPrivateParticleFrameStats,
+    ) {
+        if !stats.ready || !stats.visible || stats.draw_count == 0 {
+            return;
+        }
+        if let Some(receipt) = self
+            .visual_scale_request_state
+            .confirm_submitted_frame(frame_count)
+        {
+            crate::marker(
+                "private-particle-visual-scale-request",
+                format!("status=effective {}", receipt.marker_fields()),
+            );
+        }
+        if let Some(receipt) = self
+            .material_request_state
+            .confirm_submitted_frame(frame_count)
+        {
+            crate::marker(
+                "private-particle-material-request",
+                format!(
+                    "status=effective {} {}",
+                    receipt.marker_fields(),
+                    private_particle_material_effective_marker_fields(stats.runtime_settings)
+                ),
+            );
+        }
+        if let Some(receipt) = self
+            .render_experiment_request_state
+            .confirm_submitted_frame(frame_count)
+        {
+            crate::marker(
+                "private-particle-render-experiment-request",
+                format!("status=effective {}", receipt.marker_fields()),
+            );
+        }
     }
 
     pub(crate) unsafe fn collect_completed_diagnostics(
@@ -1755,13 +2070,62 @@ impl GpuPrivateParticleRenderer {
         }
     }
 
+    pub(crate) fn update_heartbeat_pulse_adapter(&mut self, dt_seconds: f32, frame_count: u64) {
+        if !self.heartbeat_pulse_adapter.enabled() {
+            return;
+        }
+        self.heartbeat_pulse_adapter.update_frame(dt_seconds);
+        if frame_count == 0 || frame_count % 120 == 0 {
+            crate::marker(
+                "private-particle-heartbeat-pulse",
+                format!(
+                    "status=updated frame={} {}",
+                    frame_count,
+                    self.heartbeat_pulse_adapter.marker_fields()
+                ),
+            );
+        }
+    }
+
+    pub(crate) fn update_breath_composition_driver(
+        &mut self,
+        snapshot: rusty_quest_breath_contract::composition::BreathCompositionSnapshot,
+        observed_at: rusty_quest_breath_contract::BreathTimestampMicros,
+        dt_seconds: f32,
+        frame_count: u64,
+    ) {
+        let settings = self.breath_composition_driver.settings();
+        self.breath_composition_driver
+            .update_frame(settings, snapshot, observed_at, dt_seconds);
+        crate::breath_capture::record_driver_apply(
+            frame_count,
+            observed_at.get(),
+            settings.target_slot(),
+            self.breath_composition_driver.value01(),
+            snapshot,
+        );
+        if frame_count == 0 || frame_count % 120 == 0 {
+            crate::marker(
+                "breath-composition-driver",
+                format!(
+                    "status=updated frame={} {}",
+                    frame_count,
+                    self.breath_composition_driver.marker_fields()
+                ),
+            );
+        }
+    }
+
     pub(crate) unsafe fn record_compute_frame(
         &mut self,
         device: &ash::Device,
         cmd: vk::CommandBuffer,
         gpu_timestamp_tracker: &GpuTimestampTracker,
         frame_slot: usize,
-        eye_projection: HandMeshVisualEyeProjection,
+        eye_projections: PrivateParticleFrameEyeProjections<
+            HandMeshVisualEyeProjection,
+            HandMeshVisualEyeProjection,
+        >,
         world_center_scale: [f32; 4],
         world_anchor_scale_parameter_source: &'static str,
         world_anchor_forward_axis: [f32; 4],
@@ -1824,7 +2188,7 @@ impl GpuPrivateParticleRenderer {
             draw_count,
             self.tracer_max_count,
             runtime_settings,
-            eye_projection,
+            eye_projections.compute_basis,
             world_center_scale,
             frame_count,
             phase_reset,
@@ -1924,7 +2288,8 @@ impl GpuPrivateParticleRenderer {
                 frame_slot,
                 GpuTimestampStage::PrivateParticleSort,
             );
-            let sort_count = self.record_sort_frame(device, cmd, eye_projection, draw_count);
+            let sort_count =
+                self.record_sort_frame(device, cmd, eye_projections.sort_eye, draw_count);
             gpu_timestamp_tracker.write_stage_end(
                 device,
                 cmd,
@@ -1965,6 +2330,23 @@ impl GpuPrivateParticleRenderer {
             tracer_draw_slots_capacity: self.tracer_draw_slots_per_oscillator,
             diagnostic_snapshot: self.last_diagnostic_snapshot,
         };
+        self.visual_scale_request_state
+            .note_renderer_prepared_frame(
+                frame_count,
+                runtime_settings.visual_scale,
+                stats.ready && stats.visible && stats.draw_count > 0,
+            );
+        self.material_request_state.note_renderer_prepared_frame(
+            frame_count,
+            runtime_settings.material_preset,
+            stats.ready && stats.visible && stats.draw_count > 0,
+        );
+        self.render_experiment_request_state
+            .note_renderer_prepared_frame(
+                frame_count,
+                runtime_settings.render_experiment_preset,
+                stats.ready && stats.visible && stats.draw_count > 0,
+            );
 
         if frame_count == 0 || frame_count % 120 == 0 {
             crate::marker(
@@ -2006,13 +2388,21 @@ impl GpuPrivateParticleRenderer {
         frame_count: u64,
         revision: i64,
     ) -> GpuPrivateParticlePanelEffectiveSettings {
-        self.panel_settings_override = Some(settings.clamped());
+        let settings = settings.clamped();
+        let heartbeat_settings =
+            PrivateParticleHeartbeatPulseAdapterSettings::panel_polar_rr_orbit_boost(
+                settings.polar_rr_orbit_boost_enabled,
+            );
+        if self.heartbeat_pulse_adapter.settings() != heartbeat_settings {
+            self.heartbeat_pulse_adapter.reconfigure(heartbeat_settings);
+            self.heartbeat_pulse_adapter_connected_marker_emitted = false;
+        }
+        self.panel_settings_override = Some(settings);
         if revision > 0 {
             self.pending_phase_reset_revision = revision;
         }
         self.runtime_settings_last_poll_frame = u64::MAX;
         let runtime_settings = self.runtime_settings(frame_count);
-        let settings = settings.clamped();
         GpuPrivateParticlePanelEffectiveSettings {
             visual_scale: runtime_settings.visual_scale,
             driver_values01: runtime_settings.driver_values01,
@@ -2038,6 +2428,13 @@ impl GpuPrivateParticleRenderer {
             transparency_parameter_source: runtime_settings.transparency_parameter_source,
             color_facing_attenuation_strength: runtime_settings.color_facing_attenuation_strength,
             color_parameter_source: runtime_settings.color_parameter_source,
+            material_preset: runtime_settings.material_preset,
+            material_parameter_source: runtime_settings.material_parameter_source,
+            polar_rr_orbit_boost_enabled: settings.polar_rr_orbit_boost_enabled,
+            heartbeat_pulse_parameter_source: self
+                .heartbeat_pulse_adapter
+                .settings()
+                .parameter_source(),
         }
     }
 
@@ -2057,6 +2454,37 @@ impl GpuPrivateParticleRenderer {
         self.breath_state_driver_connected_marker_emitted = true;
     }
 
+    fn emit_heartbeat_pulse_adapter_connected_marker(&mut self, frame_count: u64) {
+        if self.heartbeat_pulse_adapter_connected_marker_emitted {
+            return;
+        }
+        crate::marker(
+            "private-particle-heartbeat-pulse",
+            format!(
+                "status=connected frame={} privateParticleDriverParameterSource={} privateParticleHeartbeatPulseReceipt=render-thread-applied-event {}",
+                frame_count,
+                crate::sanitize(self.heartbeat_pulse_adapter.settings().parameter_source()),
+                self.heartbeat_pulse_adapter.marker_fields(),
+            ),
+        );
+        self.heartbeat_pulse_adapter_connected_marker_emitted = true;
+    }
+
+    fn emit_breath_composition_driver_connected_marker(&mut self, frame_count: u64) {
+        if self.breath_composition_driver_connected_marker_emitted {
+            return;
+        }
+        crate::marker(
+            "breath-composition-driver",
+            format!(
+                "status=connected frame={} breathCompositionDriverReceipt=render-thread-applied-neutral-slot {}",
+                frame_count,
+                self.breath_composition_driver.marker_fields(),
+            ),
+        );
+        self.breath_composition_driver_connected_marker_emitted = true;
+    }
+
     fn runtime_settings(&mut self, frame_count: u64) -> PrivateParticleRuntimeSettings {
         let has_input_driver = self
             .panel_settings_override
@@ -2067,6 +2495,85 @@ impl GpuPrivateParticleRenderer {
                 >= PRIVATE_PARTICLE_SETTINGS_POLL_INTERVAL_FRAMES;
         if should_poll {
             let mut next = PrivateParticleRuntimeSettings::load_from_android_properties();
+            let material_defaults = next.material_defaults();
+            match self
+                .visual_scale_request_state
+                .observe_property(private_particle_visual_scale_request_property())
+            {
+                PrivateParticleVisualScaleRequestObservation::NoChange => {}
+                PrivateParticleVisualScaleRequestObservation::Accepted(request) => {
+                    crate::marker(
+                        "private-particle-visual-scale-request",
+                        format!(
+                            "status=accepted frame={} {}",
+                            frame_count,
+                            request.marker_fields("accepted")
+                        ),
+                    );
+                }
+                PrivateParticleVisualScaleRequestObservation::Rejected(rejection) => {
+                    crate::marker(
+                        "private-particle-visual-scale-request",
+                        format!(
+                            "status=rejected frame={} {}",
+                            frame_count,
+                            rejection.marker_fields()
+                        ),
+                    );
+                }
+            }
+            match self
+                .material_request_state
+                .observe_property(private_particle_material_request_property())
+            {
+                PrivateParticleMaterialRequestObservation::NoChange => {}
+                PrivateParticleMaterialRequestObservation::Accepted(request) => {
+                    crate::marker(
+                        "private-particle-material-request",
+                        format!(
+                            "status=accepted frame={} {}",
+                            frame_count,
+                            request.marker_fields("accepted")
+                        ),
+                    );
+                }
+                PrivateParticleMaterialRequestObservation::Rejected(rejection) => {
+                    crate::marker(
+                        "private-particle-material-request",
+                        format!(
+                            "status=rejected frame={} {}",
+                            frame_count,
+                            rejection.marker_fields()
+                        ),
+                    );
+                }
+            }
+            match self.render_experiment_request_state.observe_property(
+                private_particle_render_experiment_request_property(),
+                private_particle_static_ring_frame_zero_enabled(),
+            ) {
+                PrivateParticleRenderExperimentRequestObservation::NoChange => {}
+                PrivateParticleRenderExperimentRequestObservation::Accepted(request) => {
+                    crate::marker(
+                        "private-particle-render-experiment-request",
+                        format!(
+                            "status=accepted frame={} {}",
+                            frame_count,
+                            request.marker_fields("accepted")
+                        ),
+                    );
+                }
+                PrivateParticleRenderExperimentRequestObservation::Rejected(rejection) => {
+                    crate::marker(
+                        "private-particle-render-experiment-request",
+                        format!(
+                            "status=rejected frame={} {}",
+                            frame_count,
+                            rejection.marker_fields()
+                        ),
+                    );
+                }
+            }
             let mut driver_parameter_source = next.driver_parameter_source;
             let manifold_driver_active_count =
                 self.manifold_driver_bridge.as_ref().map_or(0, |bridge| {
@@ -2093,10 +2600,43 @@ impl GpuPrivateParticleRenderer {
                 driver_parameter_source = self.breath_state_driver.settings().parameter_source();
                 self.emit_breath_state_driver_connected_marker(frame_count);
             }
+            if self
+                .breath_composition_driver
+                .apply_to_driver_values(&mut next.driver_values01)
+            {
+                driver_parameter_source = "breath-composition-closed-world";
+                self.emit_breath_composition_driver_connected_marker(frame_count);
+            }
+            let lsl_inlet_active_count =
+                crate::lsl_panel_runtime::apply_inlet_driver_values(&mut next.driver_values01);
+            if lsl_inlet_active_count > 0 {
+                driver_parameter_source = "lsl-float32-inlet";
+            }
+            if self
+                .heartbeat_pulse_adapter
+                .apply_to_driver_values(&mut next.driver_values01)
+            {
+                driver_parameter_source =
+                    self.heartbeat_pulse_adapter.settings().parameter_source();
+                self.emit_heartbeat_pulse_adapter_connected_marker(frame_count);
+            }
             next.apply_driver_source_values(next.driver_values01, driver_parameter_source);
             self.driver_source_values01 = next.driver_bank_values01;
             if let Some(panel_override) = self.panel_settings_override {
                 next.apply_panel_override(panel_override, self.driver_source_values01);
+            }
+            if let Some(scale) = self.visual_scale_request_state.active_scale() {
+                next.visual_scale = scale;
+                next.visual_parameter_source = "runtime-fenced-visual-scale-request-v1";
+            }
+            if let Some(preset) = self.material_request_state.active_preset() {
+                next.apply_material_preset(preset);
+            }
+            if let Some(panel_override) = self.panel_settings_override {
+                next.apply_panel_material_override(panel_override, material_defaults);
+            }
+            if let Some(preset) = self.render_experiment_request_state.active_preset() {
+                next.apply_render_experiment_preset(preset);
             }
             if next != self.runtime_settings {
                 crate::marker(
@@ -2129,7 +2669,11 @@ impl GpuPrivateParticleRenderer {
             }
             self.runtime_settings = next;
             self.runtime_settings_last_poll_frame = frame_count;
-        } else if has_input_driver || self.breath_state_driver.enabled() {
+        } else if has_input_driver
+            || self.breath_state_driver.enabled()
+            || self.breath_composition_driver.settings().enabled()
+            || self.heartbeat_pulse_adapter.enabled()
+        {
             let mut next = self.runtime_settings;
             let mut driver_parameter_source = next.driver_parameter_source;
             if let Some(bridge) = self.manifold_driver_bridge.as_ref() {
@@ -2143,6 +2687,26 @@ impl GpuPrivateParticleRenderer {
             {
                 driver_parameter_source = self.breath_state_driver.settings().parameter_source();
                 self.emit_breath_state_driver_connected_marker(frame_count);
+            }
+            if self
+                .breath_composition_driver
+                .apply_to_driver_values(&mut self.driver_source_values01)
+            {
+                driver_parameter_source = "breath-composition-closed-world";
+                self.emit_breath_composition_driver_connected_marker(frame_count);
+            }
+            if crate::lsl_panel_runtime::apply_inlet_driver_values(&mut self.driver_source_values01)
+                > 0
+            {
+                driver_parameter_source = "lsl-float32-inlet";
+            }
+            if self
+                .heartbeat_pulse_adapter
+                .apply_to_driver_values(&mut self.driver_source_values01)
+            {
+                driver_parameter_source =
+                    self.heartbeat_pulse_adapter.settings().parameter_source();
+                self.emit_heartbeat_pulse_adapter_connected_marker(frame_count);
             }
             next.apply_driver_source_values(self.driver_source_values01, driver_parameter_source);
             if let Some(panel_override) = self.panel_settings_override {
@@ -2353,7 +2917,7 @@ impl GpuPrivateParticleRenderer {
             eye_projection,
             world_center_scale,
             stats,
-            offscreen.particle_pipeline,
+            offscreen.particle_pipeline_for(stats.runtime_settings.transparency_blend_mode),
             instance_count,
             first_instance,
         );
@@ -2394,7 +2958,7 @@ impl GpuPrivateParticleRenderer {
         device.cmd_bind_pipeline(
             cmd,
             vk::PipelineBindPoint::GRAPHICS,
-            offscreen.composite_pipeline,
+            offscreen.composite_pipeline_for(stats.runtime_settings.transparency_blend_mode),
         );
         device.cmd_bind_descriptor_sets(
             cmd,
@@ -2408,6 +2972,18 @@ impl GpuPrivateParticleRenderer {
         device.cmd_set_scissor(cmd, 0, &scissor);
         device.cmd_draw(cmd, 3, 1, 0, 0);
         true
+    }
+
+    fn graphics_pipeline_for(
+        &self,
+        blend_mode: PrivateParticleTransparencyBlendMode,
+    ) -> vk::Pipeline {
+        match blend_mode {
+            PrivateParticleTransparencyBlendMode::Additive => self.graphics_pipeline_additive,
+            PrivateParticleTransparencyBlendMode::PremultipliedAlphaOver => {
+                self.graphics_pipeline_alpha_over
+            }
+        }
     }
 
     pub(crate) unsafe fn record_overlay_eye(
@@ -2426,7 +3002,7 @@ impl GpuPrivateParticleRenderer {
             eye_projection,
             world_center_scale,
             stats,
-            self.graphics_pipeline,
+            self.graphics_pipeline_for(stats.runtime_settings.transparency_blend_mode),
             stats.draw_count,
             0,
         );
@@ -2461,7 +3037,7 @@ impl GpuPrivateParticleRenderer {
             eye_projection,
             world_center_scale,
             stats,
-            self.graphics_pipeline,
+            self.graphics_pipeline_for(stats.runtime_settings.transparency_blend_mode),
             stats.particle_count,
             0,
         );
@@ -2525,7 +3101,7 @@ impl GpuPrivateParticleRenderer {
         device.cmd_set_scissor(cmd, 0, &scissor);
         device.cmd_draw(
             cmd,
-            PARTICLE_VERTICES_PER_INSTANCE,
+            private_particle_vertices_per_instance(stats.runtime_settings),
             instance_count,
             0,
             first_instance,
@@ -2554,7 +3130,7 @@ fn private_particle_push(
         params0: [
             particle_count as f32,
             runtime_settings.visual_scale,
-            private_particle_packed_mode_code(runtime_settings.color_facing_attenuation_strength),
+            private_particle_packed_mode_code(runtime_settings),
             runtime_settings.driver0_value01,
         ],
         params1: [
@@ -2586,11 +3162,15 @@ fn private_particle_transparency_marker_fields(
     runtime_settings: PrivateParticleRuntimeSettings,
 ) -> String {
     format!(
-        "privateParticleTransparencyParameterSource={} privateParticleColorParameterSource={} privateParticleColorFacingAttenuationStrength={:.3} privateParticleTransparencyBlendMode={} privateParticleTransparencyCompositionMode=parametric-rgb-alpha-coupling privateParticleTransparencyOpacity={:.3} privateParticleTransparencyOutputAlphaScale={:.3} privateParticleTransparencyDepthSuppressionStrength={:.3} privateParticleTransparencyRgbAlphaCoupling={:.3}",
+        "privateParticleTransparencyParameterSource={} privateParticleColorParameterSource={} privateParticleMaterialParameterSource={} privateParticleMaterialPreset={} privateParticleColorFacingAttenuationStrength={:.3} privateParticleTransparencyBlendMode={} privateParticleTransparencyCompositionMode=parametric-rgb-alpha-coupling privateParticleTransparencyOpacity={:.3} privateParticleTransparencyOutputAlphaScale={:.3} privateParticleTransparencyDepthSuppressionStrength={:.3} privateParticleTransparencyRgbAlphaCoupling={:.3}",
         crate::sanitize(runtime_settings.transparency_parameter_source),
         crate::sanitize(runtime_settings.color_parameter_source),
+        crate::sanitize(runtime_settings.material_parameter_source),
+        runtime_settings
+            .material_preset
+            .map_or("unset", PrivateParticleMaterialPreset::marker_name),
         runtime_settings.color_facing_attenuation_strength,
-        crate::sanitize(PRIVATE_PARTICLE_TRANSPARENCY_BLEND_MODE),
+        runtime_settings.transparency_blend_mode.marker_name(),
         runtime_settings.transparency_opacity,
         runtime_settings.transparency_output_alpha_scale,
         runtime_settings.transparency_depth_suppression_strength,
@@ -2632,14 +3212,16 @@ fn private_particle_offscreen_marker_fields(
         billboard_policy,
         PRIVATE_PARTICLE_OFFSCREEN_RESOLUTION_SCALE,
         crate::sanitize(runtime_settings.offscreen_parameter_source),
-        private_particle_offscreen_composite_mode(),
+        private_particle_offscreen_composite_mode(runtime_settings),
     )
 }
 
-fn private_particle_offscreen_composite_mode() -> &'static str {
-    match PRIVATE_PARTICLE_TRANSPARENCY_BLEND_MODE {
-        "src-alpha-one-additive" => "additive-resolved-color",
-        _ => "alpha-over-resolved-color",
+fn private_particle_offscreen_composite_mode(
+    runtime_settings: PrivateParticleRuntimeSettings,
+) -> &'static str {
+    match runtime_settings.transparency_blend_mode {
+        PrivateParticleTransparencyBlendMode::Additive => "additive-resolved-color",
+        PrivateParticleTransparencyBlendMode::PremultipliedAlphaOver => "alpha-over-resolved-color",
     }
 }
 
@@ -2666,15 +3248,76 @@ fn private_particle_payload_surface_draw_enabled(
     true
 }
 
-fn private_particle_packed_mode_code(color_facing_attenuation_strength: f32) -> f32 {
-    // Keep the push constant block at 128 bytes: mask, ordering, and facing color
-    // mode share params0.z as a small integer payload decoded by the draw shaders.
-    let facing_quantized =
-        (color_facing_attenuation_strength.clamp(0.0, 1.0) * 1000.0).round() as u32;
+fn private_particle_render_experiment_preset(
+    runtime_settings: PrivateParticleRuntimeSettings,
+) -> PrivateParticleRenderExperimentPreset {
+    runtime_settings.render_experiment_preset.unwrap_or({
+        if PRIVATE_PARTICLE_MASK_DISCARD_MODE_CODE == 1 {
+            PrivateParticleRenderExperimentPreset::SquareNoDiscard
+        } else {
+            PrivateParticleRenderExperimentPreset::ControlSquareDiscard
+        }
+    })
+}
+
+fn private_particle_static_ring_frame_zero_enabled() -> bool {
+    PRIVATE_PARTICLE_MARKER_FIELDS
+        .contains("viscerealityStaticPhaseDimensions=rotation2,animation5")
+        && PRIVATE_PARTICLE_MARKER_FIELDS.contains("viscerealityStaticPhaseCanonicalRadians=0.000")
+}
+
+fn private_particle_vertices_per_instance(runtime_settings: PrivateParticleRuntimeSettings) -> u32 {
+    private_particle_render_experiment_preset(runtime_settings).vertices_per_instance()
+}
+
+fn private_particle_packed_mode_code(runtime_settings: PrivateParticleRuntimeSettings) -> f32 {
+    // Keep the push constant block at 128 bytes: mask, ordering, facing color,
+    // and material blend mode share params0.z as a small integer payload decoded
+    // by the draw shaders.
+    let facing_quantized = (runtime_settings
+        .color_facing_attenuation_strength
+        .clamp(0.0, 1.0)
+        * 1000.0)
+        .round() as u32;
+    let experiment = private_particle_render_experiment_preset(runtime_settings);
     (PRIVATE_PARTICLE_MASK_TEXTURE_MODE_CODE
         + PRIVATE_PARTICLE_ORDERING_MODE_CODE * 10
         + facing_quantized * 100
-        + PRIVATE_PARTICLE_MASK_DISCARD_MODE_CODE * 1_000_000) as f32
+        + experiment.mask_discard_code() * 1_000_000
+        + runtime_settings.transparency_blend_mode.packed_code()
+            * PRIVATE_PARTICLE_BLEND_MODE_PACK_OFFSET
+        + experiment.geometry_code() * PRIVATE_PARTICLE_GEOMETRY_PACK_OFFSET) as f32
+}
+
+fn private_particle_material_effective_marker_fields(
+    runtime_settings: PrivateParticleRuntimeSettings,
+) -> String {
+    format!(
+        "privateParticleMaterialPresetEffective={} privateParticleMaterialBlendMode={} privateParticleMaterialOpacity={:.3} privateParticleMaterialOutputAlphaScale={:.3} privateParticleMaterialDepthSuppressionStrength={:.3} privateParticleMaterialFacingAttenuationStrength={:.3}",
+        runtime_settings
+            .material_preset
+            .map_or("unset", PrivateParticleMaterialPreset::marker_name),
+        runtime_settings.transparency_blend_mode.marker_name(),
+        runtime_settings.transparency_opacity,
+        runtime_settings.transparency_output_alpha_scale,
+        runtime_settings.transparency_depth_suppression_strength,
+        runtime_settings.color_facing_attenuation_strength,
+    )
+}
+
+fn private_particle_render_experiment_marker_fields(
+    runtime_settings: PrivateParticleRuntimeSettings,
+) -> String {
+    let preset = private_particle_render_experiment_preset(runtime_settings);
+    format!(
+        "privateParticleRenderExperimentParameterSource={} privateParticleRenderExperimentPresetEffective={} privateParticleRenderExperimentGeometryEffective={} privateParticleRenderExperimentMaskDiscardEffective={} privateParticleRenderExperimentVerticesPerInstance={} privateParticleRenderExperimentStaticRingRequired={}",
+        crate::sanitize(runtime_settings.render_experiment_parameter_source),
+        preset.marker_name(),
+        preset.geometry_marker(),
+        preset.discard_marker(),
+        preset.vertices_per_instance(),
+        preset.requires_static_ring(),
+    )
 }
 
 fn log_private_marker(
@@ -2764,7 +3407,7 @@ fn log_private_render_config_marker(
     runtime_settings: PrivateParticleRuntimeSettings,
 ) {
     crate::android_log(format!(
-        "{} channel=render-config status={} frame={} privateParticleMaskTextureLinked={} privateParticleMaskTextureMode={} privateParticleMaskDiscardMode={} privateParticleMaskAlphaCutoff={:.4} privateParticleMaskTextureFormat=R8_UNORM privateParticleMaskTextureSize={}x{}x{} {} {} {}",
+        "{} channel=render-config status={} frame={} privateParticleMaskTextureLinked={} privateParticleMaskTextureMode={} privateParticleMaskDiscardMode={} privateParticleMaskAlphaCutoff={:.4} privateParticleMaskTextureFormat=R8_UNORM privateParticleMaskTextureSize={}x{}x{} {} {} {} {}",
         PRIVATE_PARTICLE_MARKER_PREFIX,
         status,
         frame_count,
@@ -2778,6 +3421,7 @@ fn log_private_render_config_marker(
         private_particle_mask_texture_marker_fields(),
         private_particle_transparency_marker_fields(runtime_settings),
         private_particle_offscreen_marker_fields(runtime_settings),
+        private_particle_render_experiment_marker_fields(runtime_settings),
     ));
 }
 
@@ -2974,6 +3618,7 @@ unsafe fn create_graphics_pipeline(
     device: &ash::Device,
     render_pass: vk::RenderPass,
     pipeline_layout: vk::PipelineLayout,
+    blend_mode: PrivateParticleTransparencyBlendMode,
 ) -> Result<vk::Pipeline, String> {
     let vertex_words = spirv_words(include_bytes!(concat!(
         env!("OUT_DIR"),
@@ -3026,7 +3671,7 @@ unsafe fn create_graphics_pipeline(
         .line_width(1.0);
     let multisample = vk::PipelineMultisampleStateCreateInfo::default()
         .rasterization_samples(vk::SampleCountFlags::TYPE_1);
-    let color_blend_attachment = [particle_color_blend_attachment()];
+    let color_blend_attachment = [particle_color_blend_attachment(blend_mode)];
     let color_blend =
         vk::PipelineColorBlendStateCreateInfo::default().attachments(&color_blend_attachment);
     let depth_stencil = vk::PipelineDepthStencilStateCreateInfo::default()
@@ -3121,6 +3766,7 @@ unsafe fn create_offscreen_composite_pipeline(
     device: &ash::Device,
     render_pass: vk::RenderPass,
     pipeline_layout: vk::PipelineLayout,
+    blend_mode: PrivateParticleTransparencyBlendMode,
 ) -> Result<vk::Pipeline, String> {
     let vertex_words = spirv_words(include_bytes!(concat!(
         env!("OUT_DIR"),
@@ -3174,7 +3820,7 @@ unsafe fn create_offscreen_composite_pipeline(
         .line_width(1.0);
     let multisample = vk::PipelineMultisampleStateCreateInfo::default()
         .rasterization_samples(vk::SampleCountFlags::TYPE_1);
-    let color_blend_attachment = [offscreen_composite_color_blend_attachment()];
+    let color_blend_attachment = [offscreen_composite_color_blend_attachment(blend_mode)];
     let color_blend =
         vk::PipelineColorBlendStateCreateInfo::default().attachments(&color_blend_attachment);
     let depth_stencil = vk::PipelineDepthStencilStateCreateInfo::default()
@@ -3209,26 +3855,22 @@ unsafe fn create_offscreen_composite_pipeline(
         })
 }
 
-fn particle_color_blend_attachment() -> vk::PipelineColorBlendAttachmentState {
+fn particle_color_blend_attachment(
+    blend_mode: PrivateParticleTransparencyBlendMode,
+) -> vk::PipelineColorBlendAttachmentState {
     let (
         src_color_blend_factor,
         dst_color_blend_factor,
         src_alpha_blend_factor,
         dst_alpha_blend_factor,
-    ) = match PRIVATE_PARTICLE_TRANSPARENCY_BLEND_MODE {
-        "src-alpha-one-additive" => (
+    ) = match blend_mode {
+        PrivateParticleTransparencyBlendMode::Additive => (
             vk::BlendFactor::SRC_ALPHA,
             vk::BlendFactor::ONE,
             vk::BlendFactor::SRC_ALPHA,
             vk::BlendFactor::ONE,
         ),
-        "src-one-one-minus-src-alpha" => (
-            vk::BlendFactor::ONE,
-            vk::BlendFactor::ONE_MINUS_SRC_ALPHA,
-            vk::BlendFactor::ONE,
-            vk::BlendFactor::ONE_MINUS_SRC_ALPHA,
-        ),
-        _ => (
+        PrivateParticleTransparencyBlendMode::PremultipliedAlphaOver => (
             vk::BlendFactor::ONE,
             vk::BlendFactor::ONE_MINUS_SRC_ALPHA,
             vk::BlendFactor::ONE,
@@ -3246,20 +3888,22 @@ fn particle_color_blend_attachment() -> vk::PipelineColorBlendAttachmentState {
         .color_write_mask(vk::ColorComponentFlags::RGBA)
 }
 
-fn offscreen_composite_color_blend_attachment() -> vk::PipelineColorBlendAttachmentState {
+fn offscreen_composite_color_blend_attachment(
+    blend_mode: PrivateParticleTransparencyBlendMode,
+) -> vk::PipelineColorBlendAttachmentState {
     let (
         src_color_blend_factor,
         dst_color_blend_factor,
         src_alpha_blend_factor,
         dst_alpha_blend_factor,
-    ) = match PRIVATE_PARTICLE_TRANSPARENCY_BLEND_MODE {
-        "src-alpha-one-additive" => (
+    ) = match blend_mode {
+        PrivateParticleTransparencyBlendMode::Additive => (
             vk::BlendFactor::ONE,
             vk::BlendFactor::ONE,
             vk::BlendFactor::ONE,
             vk::BlendFactor::ONE,
         ),
-        _ => (
+        PrivateParticleTransparencyBlendMode::PremultipliedAlphaOver => (
             vk::BlendFactor::ONE,
             vk::BlendFactor::ONE_MINUS_SRC_ALPHA,
             vk::BlendFactor::ONE,
@@ -3422,11 +4066,13 @@ struct PrivateParticleOffscreenResources {
     extent: vk::Extent2D,
     swapchain_image_count: usize,
     render_pass: vk::RenderPass,
-    particle_pipeline: vk::Pipeline,
+    particle_pipeline_additive: vk::Pipeline,
+    particle_pipeline_alpha_over: vk::Pipeline,
     composite_descriptor_pool: vk::DescriptorPool,
     composite_descriptor_set_layout: vk::DescriptorSetLayout,
     composite_pipeline_layout: vk::PipelineLayout,
-    composite_pipeline: vk::Pipeline,
+    composite_pipeline_additive: vk::Pipeline,
+    composite_pipeline_alpha_over: vk::Pipeline,
     sampler: vk::Sampler,
     allocation_bytes: vk::DeviceSize,
     targets: Vec<PrivateParticleOffscreenTarget>,
@@ -3463,11 +4109,13 @@ impl PrivateParticleOffscreenResources {
             extent,
             swapchain_image_count,
             render_pass: vk::RenderPass::null(),
-            particle_pipeline: vk::Pipeline::null(),
+            particle_pipeline_additive: vk::Pipeline::null(),
+            particle_pipeline_alpha_over: vk::Pipeline::null(),
             composite_descriptor_pool: vk::DescriptorPool::null(),
             composite_descriptor_set_layout: vk::DescriptorSetLayout::null(),
             composite_pipeline_layout: vk::PipelineLayout::null(),
-            composite_pipeline: vk::Pipeline::null(),
+            composite_pipeline_additive: vk::Pipeline::null(),
+            composite_pipeline_alpha_over: vk::Pipeline::null(),
             sampler: vk::Sampler::null(),
             allocation_bytes: 0,
             targets: Vec::with_capacity(target_count),
@@ -3480,15 +4128,30 @@ impl PrivateParticleOffscreenResources {
                 return Err(error);
             }
         };
-        resources.particle_pipeline =
-            match create_graphics_pipeline(device, resources.render_pass, particle_pipeline_layout)
-            {
-                Ok(pipeline) => pipeline,
-                Err(error) => {
-                    resources.destroy(device);
-                    return Err(error);
-                }
-            };
+        resources.particle_pipeline_additive = match create_graphics_pipeline(
+            device,
+            resources.render_pass,
+            particle_pipeline_layout,
+            PrivateParticleTransparencyBlendMode::Additive,
+        ) {
+            Ok(pipeline) => pipeline,
+            Err(error) => {
+                resources.destroy(device);
+                return Err(error);
+            }
+        };
+        resources.particle_pipeline_alpha_over = match create_graphics_pipeline(
+            device,
+            resources.render_pass,
+            particle_pipeline_layout,
+            PrivateParticleTransparencyBlendMode::PremultipliedAlphaOver,
+        ) {
+            Ok(pipeline) => pipeline,
+            Err(error) => {
+                resources.destroy(device);
+                return Err(error);
+            }
+        };
         resources.composite_descriptor_set_layout =
             match create_offscreen_composite_descriptor_set_layout(device) {
                 Ok(layout) => layout,
@@ -3510,10 +4173,23 @@ impl PrivateParticleOffscreenResources {
                 ));
             }
         };
-        resources.composite_pipeline = match create_offscreen_composite_pipeline(
+        resources.composite_pipeline_additive = match create_offscreen_composite_pipeline(
             device,
             projection_render_pass,
             resources.composite_pipeline_layout,
+            PrivateParticleTransparencyBlendMode::Additive,
+        ) {
+            Ok(pipeline) => pipeline,
+            Err(error) => {
+                resources.destroy(device);
+                return Err(error);
+            }
+        };
+        resources.composite_pipeline_alpha_over = match create_offscreen_composite_pipeline(
+            device,
+            projection_render_pass,
+            resources.composite_pipeline_layout,
+            PrivateParticleTransparencyBlendMode::PremultipliedAlphaOver,
         ) {
             Ok(pipeline) => pipeline,
             Err(error) => {
@@ -3617,7 +4293,7 @@ impl PrivateParticleOffscreenResources {
 
     fn marker_fields(&self) -> String {
         format!(
-            "privateParticleOffscreenHalfRes=true privateParticleOffscreenResourceKind=half-resolution-color-targets privateParticleOffscreenResolutionScale={:.3} privateParticleOffscreenFullExtent={}x{} privateParticleOffscreenTargetExtent={}x{} privateParticleOffscreenColorFormat={:?} privateParticleOffscreenSwapchainImageCount={} privateParticleOffscreenTargetCount={} privateParticleOffscreenAllocationBytes={} privateParticleOffscreenCompositeMode={} privateParticleOffscreenCompositeFilter=linear-upsample",
+            "privateParticleOffscreenHalfRes=true privateParticleOffscreenResourceKind=half-resolution-color-targets privateParticleOffscreenResolutionScale={:.3} privateParticleOffscreenFullExtent={}x{} privateParticleOffscreenTargetExtent={}x{} privateParticleOffscreenColorFormat={:?} privateParticleOffscreenSwapchainImageCount={} privateParticleOffscreenTargetCount={} privateParticleOffscreenAllocationBytes={} privateParticleOffscreenMaterialPipelines=additive,alpha-over privateParticleOffscreenCompositeFilter=linear-upsample",
             PRIVATE_PARTICLE_OFFSCREEN_RESOLUTION_SCALE,
             self.full_extent.width,
             self.full_extent.height,
@@ -3627,8 +4303,31 @@ impl PrivateParticleOffscreenResources {
             self.swapchain_image_count,
             self.targets.len(),
             self.allocation_bytes,
-            private_particle_offscreen_composite_mode(),
         )
+    }
+
+    fn particle_pipeline_for(
+        &self,
+        blend_mode: PrivateParticleTransparencyBlendMode,
+    ) -> vk::Pipeline {
+        match blend_mode {
+            PrivateParticleTransparencyBlendMode::Additive => self.particle_pipeline_additive,
+            PrivateParticleTransparencyBlendMode::PremultipliedAlphaOver => {
+                self.particle_pipeline_alpha_over
+            }
+        }
+    }
+
+    fn composite_pipeline_for(
+        &self,
+        blend_mode: PrivateParticleTransparencyBlendMode,
+    ) -> vk::Pipeline {
+        match blend_mode {
+            PrivateParticleTransparencyBlendMode::Additive => self.composite_pipeline_additive,
+            PrivateParticleTransparencyBlendMode::PremultipliedAlphaOver => {
+                self.composite_pipeline_alpha_over
+            }
+        }
     }
 
     fn target(
@@ -3649,11 +4348,17 @@ impl PrivateParticleOffscreenResources {
         for target in &self.targets {
             target.destroy(device);
         }
-        if self.composite_pipeline != vk::Pipeline::null() {
-            device.destroy_pipeline(self.composite_pipeline, None);
+        if self.composite_pipeline_alpha_over != vk::Pipeline::null() {
+            device.destroy_pipeline(self.composite_pipeline_alpha_over, None);
         }
-        if self.particle_pipeline != vk::Pipeline::null() {
-            device.destroy_pipeline(self.particle_pipeline, None);
+        if self.composite_pipeline_additive != vk::Pipeline::null() {
+            device.destroy_pipeline(self.composite_pipeline_additive, None);
+        }
+        if self.particle_pipeline_alpha_over != vk::Pipeline::null() {
+            device.destroy_pipeline(self.particle_pipeline_alpha_over, None);
+        }
+        if self.particle_pipeline_additive != vk::Pipeline::null() {
+            device.destroy_pipeline(self.particle_pipeline_additive, None);
         }
         if self.composite_pipeline_layout != vk::PipelineLayout::null() {
             device.destroy_pipeline_layout(self.composite_pipeline_layout, None);
@@ -4732,4 +5437,193 @@ struct PrivateParticlePush {
     eye_position: [f32; 4],
     eye_orientation_xyzw: [f32; 4],
     fov_tangents: [f32; 4],
+}
+
+#[cfg(test)]
+mod material_request_tests {
+    use super::*;
+
+    fn panel_settings(
+        material_preset: Option<PrivateParticleMaterialPreset>,
+        material_override_enabled: bool,
+        polar_rr_orbit_boost_enabled: bool,
+    ) -> GpuPrivateParticlePanelSettings {
+        GpuPrivateParticlePanelSettings {
+            visual_scale: 0.70,
+            driver_values01: [0.0; GPU_PRIVATE_PARTICLE_PANEL_DRIVER_COUNT],
+            driver_control_modes: [PANEL_DRIVER_MODE_DIRECT;
+                GPU_PRIVATE_PARTICLE_PANEL_DRIVER_COUNT],
+            driver_control_source_slots: [0, 1, 2, 3, 4, 5, 6, 7],
+            driver_control_curve_codes: [PANEL_CURVE_LINEAR;
+                GPU_PRIVATE_PARTICLE_PANEL_DRIVER_COUNT],
+            driver_control_range_mins: [0.0; GPU_PRIVATE_PARTICLE_PANEL_DRIVER_COUNT],
+            driver_control_range_maxs: [1.0; GPU_PRIVATE_PARTICLE_PANEL_DRIVER_COUNT],
+            driver_control_cycle_multipliers: [0.0; GPU_PRIVATE_PARTICLE_PANEL_DRIVER_COUNT],
+            tracer_draw_slots_per_oscillator: 7,
+            tracer_lifetime_seconds: 0.5,
+            tracer_copies_per_second: 14.0,
+            transparency_opacity: 1.0,
+            transparency_output_alpha_scale: 1.0,
+            transparency_depth_suppression_strength: 0.0,
+            transparency_rgb_alpha_coupling: 1.0,
+            color_facing_attenuation_strength: 0.0,
+            material_preset,
+            material_override_enabled,
+            polar_rr_orbit_boost_enabled,
+        }
+    }
+
+    #[test]
+    fn material_presets_change_only_the_closed_material_envelope() {
+        let mut settings = PrivateParticleRuntimeSettings::from_generated_defaults();
+        let visual_scale = settings.visual_scale;
+        let driver_values01 = settings.driver_values01;
+        let tracer_draw_slots = settings.tracer_draw_slots_per_oscillator;
+        let tracer_lifetime = settings.tracer_lifetime_seconds;
+        let tracer_copies = settings.tracer_copies_per_second;
+
+        settings.apply_material_preset(PrivateParticleMaterialPreset::AkdMaterialEmulation);
+
+        assert_eq!(
+            settings.transparency_blend_mode,
+            PrivateParticleTransparencyBlendMode::PremultipliedAlphaOver
+        );
+        assert_eq!(settings.transparency_opacity, 0.36);
+        assert_eq!(settings.transparency_output_alpha_scale, 0.45);
+        assert_eq!(settings.transparency_depth_suppression_strength, 1.5);
+        assert_eq!(settings.color_facing_attenuation_strength, 0.20);
+        assert_eq!(settings.visual_scale, visual_scale);
+        assert_eq!(settings.driver_values01, driver_values01);
+        assert_eq!(settings.tracer_draw_slots_per_oscillator, tracer_draw_slots);
+        assert_eq!(settings.tracer_lifetime_seconds, tracer_lifetime);
+        assert_eq!(settings.tracer_copies_per_second, tracer_copies);
+    }
+
+    #[test]
+    fn panel_material_selection_wins_over_an_earlier_fenced_request() {
+        let mut settings = PrivateParticleRuntimeSettings::from_generated_defaults();
+        let material_defaults = settings.material_defaults();
+        let panel = panel_settings(
+            Some(PrivateParticleMaterialPreset::PremultipliedAlphaOver),
+            true,
+            false,
+        );
+        settings.apply_panel_override(panel, [0.0; GPU_PRIVATE_PARTICLE_PANEL_DRIVER_COUNT]);
+        assert_eq!(
+            settings.material_preset,
+            Some(PrivateParticleMaterialPreset::PremultipliedAlphaOver)
+        );
+        assert_eq!(settings.material_parameter_source, "same-apk-panel-live");
+
+        settings.apply_material_preset(PrivateParticleMaterialPreset::AkdMaterialEmulation);
+        settings.apply_panel_material_override(panel, material_defaults);
+        assert_eq!(
+            settings.material_preset,
+            Some(PrivateParticleMaterialPreset::PremultipliedAlphaOver)
+        );
+        assert_eq!(settings.material_parameter_source, "same-apk-panel-live");
+    }
+
+    #[test]
+    fn explicit_panel_packaged_default_clears_an_earlier_material_request() {
+        let mut settings = PrivateParticleRuntimeSettings::from_generated_defaults();
+        let material_defaults = settings.material_defaults();
+        settings.apply_material_preset(PrivateParticleMaterialPreset::AkdMaterialEmulation);
+        settings
+            .apply_panel_material_override(panel_settings(None, true, false), material_defaults);
+        assert_eq!(settings.material_preset, None);
+        assert_eq!(
+            settings.material_parameter_source,
+            "same-apk-panel-live-packaged-default"
+        );
+        assert_eq!(
+            settings.transparency_blend_mode,
+            material_defaults.transparency_blend_mode
+        );
+    }
+
+    #[test]
+    fn panel_rr_toggle_changes_only_the_closed_orbit_radius_control_route() {
+        let disabled = panel_settings(None, false, false).clamped();
+        let enabled = panel_settings(None, false, true).clamped();
+        assert_eq!(disabled.driver_control_modes[5], PANEL_DRIVER_MODE_DIRECT);
+        assert_eq!(
+            enabled.driver_control_modes[5],
+            PANEL_DRIVER_MODE_PRIVATE_HEARTBEAT_ORBIT
+        );
+        assert_eq!(enabled.driver_control_source_slots[5], 5);
+        assert_eq!(enabled.driver_control_curve_codes[5], PANEL_CURVE_AKD_HUMP);
+        for index in 0..GPU_PRIVATE_PARTICLE_PANEL_DRIVER_COUNT {
+            if index != 5 {
+                assert_eq!(
+                    enabled.driver_control_modes[index],
+                    disabled.driver_control_modes[index]
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn blend_mode_has_an_exact_non_overlapping_push_constant_encoding() {
+        let mut additive_settings = PrivateParticleRuntimeSettings::from_generated_defaults();
+        additive_settings.color_facing_attenuation_strength = 0.20;
+        additive_settings.transparency_blend_mode = PrivateParticleTransparencyBlendMode::Additive;
+        let mut alpha_over_settings = additive_settings;
+        alpha_over_settings.transparency_blend_mode =
+            PrivateParticleTransparencyBlendMode::PremultipliedAlphaOver;
+        let additive = private_particle_packed_mode_code(additive_settings);
+        let alpha_over = private_particle_packed_mode_code(alpha_over_settings);
+        assert_eq!(
+            alpha_over - additive,
+            PRIVATE_PARTICLE_BLEND_MODE_PACK_OFFSET as f32
+        );
+        assert_eq!(
+            alpha_over as u32 / PRIVATE_PARTICLE_BLEND_MODE_PACK_OFFSET,
+            1
+        );
+    }
+}
+
+#[cfg(test)]
+mod render_experiment_request_tests {
+    use super::*;
+
+    #[test]
+    fn render_experiment_changes_only_primitive_coverage_and_discard_policy() {
+        let mut settings = PrivateParticleRuntimeSettings::from_generated_defaults();
+        let visual_scale = settings.visual_scale;
+        let tracer_slots = settings.tracer_draw_slots_per_oscillator;
+        let material = settings.material_preset;
+        let blend = settings.transparency_blend_mode;
+
+        settings.apply_render_experiment_preset(
+            PrivateParticleRenderExperimentPreset::StaticRingAnnulus12,
+        );
+
+        assert_eq!(settings.visual_scale, visual_scale);
+        assert_eq!(settings.tracer_draw_slots_per_oscillator, tracer_slots);
+        assert_eq!(settings.material_preset, material);
+        assert_eq!(settings.transparency_blend_mode, blend);
+        assert_eq!(
+            private_particle_vertices_per_instance(settings),
+            72,
+            "the static annulus is the only higher-vertex primitive",
+        );
+        assert_eq!(
+            private_particle_render_experiment_preset(settings).mask_discard_code(),
+            0,
+        );
+    }
+
+    #[test]
+    fn square_no_discard_keeps_the_six_vertex_control_geometry() {
+        let mut settings = PrivateParticleRuntimeSettings::from_generated_defaults();
+        settings
+            .apply_render_experiment_preset(PrivateParticleRenderExperimentPreset::SquareNoDiscard);
+        assert_eq!(private_particle_vertices_per_instance(settings), 6);
+        assert_eq!(
+            private_particle_render_experiment_preset(settings).mask_discard_code(),
+            1,
+        );
+    }
 }

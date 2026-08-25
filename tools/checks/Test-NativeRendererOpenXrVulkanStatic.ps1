@@ -55,10 +55,16 @@ $nativeRendererTiming = Read-RequiredText (Join-Path $srcRoot "native_renderer_t
 $privateExtensionSlot = Read-RequiredText (Join-Path $srcRoot "private_extension_slot.rs") "private extension slot"
 $gpuPrivateParticles = Read-RequiredText (Join-Path $srcRoot "gpu_private_particles.rs") "private particle renderer"
 $nativeBuildScript = Read-RequiredText (Join-Path $nativeRoot "build.rs") "native build script"
+$privateParticlesVertex = Read-RequiredText (Join-Path $nativeRoot "shaders\private_particles.vert.glsl") "private particle vertex shader"
+$privateParticlesFragment = Read-RequiredText (Join-Path $nativeRoot "shaders\private_particles.frag.glsl") "private particle fragment shader"
 $privateParticlesOffscreenCompositeVertex = Read-RequiredText (Join-Path $nativeRoot "shaders\private_particles_offscreen_composite.vert.glsl") "private particle offscreen composite vertex shader"
 $privateParticlesOffscreenCompositeFragment = Read-RequiredText (Join-Path $nativeRoot "shaders\private_particles_offscreen_composite.frag.glsl") "private particle offscreen composite fragment shader"
 $nativeRendererOptionSurface = @(
     (Read-RequiredText (Join-Path $srcRoot "native_renderer_camera_options.rs") "native renderer camera options"),
+    (Read-RequiredText (Join-Path $srcRoot "native_renderer_display_refresh_options.rs") "native renderer display refresh options"),
+    (Read-RequiredText (Join-Path $srcRoot "native_renderer_private_particle_visual_scale_request.rs") "private particle visual scale request options"),
+    (Read-RequiredText (Join-Path $srcRoot "native_renderer_private_particle_material_request.rs") "private particle material request options"),
+    (Read-RequiredText (Join-Path $srcRoot "native_renderer_private_particle_render_experiment_request.rs") "private particle render experiment request options"),
     (Read-RequiredText (Join-Path $srcRoot "native_renderer_properties.rs") "native renderer properties"),
     (Read-RequiredText (Join-Path $srcRoot "native_renderer_property_values.rs") "native renderer property values"),
     (Read-RequiredText (Join-Path $srcRoot "native_renderer_environment_depth_options.rs") "native renderer environment-depth options"),
@@ -87,7 +93,7 @@ $xrVulkanSurface = @(
     (Read-RequiredText (Join-Path $srcRoot "xr_vulkan\scorecard.rs") "xr_vulkan scorecard")
 ) -join "`n"
 
-Assert-ContainsTokens "$xrVulkanSurface`n$nativeRendererOptionSurface`n$nativeRendererTiming`n$privateExtensionSlot`n$nativeCamera" @(
+Assert-ContainsTokens "$xrVulkanSurface`n$nativeRendererOptionSurface`n$nativeRendererTiming`n$privateExtensionSlot`n$nativeCamera`n$gpuPrivateParticles" @(
     'mod replay_visual_stats',
     'mod scorecard',
     'Replay/live visual evidence rectangle helpers for the Quest-native frame loop',
@@ -194,6 +200,51 @@ Assert-ContainsTokens "$xrVulkanSurface`n$nativeRendererOptionSurface`n$nativeRe
     'XR_FB_passthrough',
     'fb_passthrough',
     'NativePassthroughRuntime',
+    'NativeDisplayRefreshSettings',
+    'NativeDisplayRefreshRuntimeState',
+    'PrivateParticleVisualScaleRequestState',
+    'PrivateParticleVisualScaleRequestObservation',
+    'PrivateParticleMaterialRequestState',
+    'PrivateParticleMaterialRequestObservation',
+    'PrivateParticleRenderExperimentRequestState',
+    'PrivateParticleRenderExperimentRequestObservation',
+    'debug\.rustyquest\.native_renderer\.private_particles\.visual\.scale_request\.v1',
+    'debug\.rustyquest\.native_renderer\.private_particles\.material\.request\.v1',
+    'debug\.rustyquest\.native_renderer\.private_particles\.render\.experiment_request\.v1',
+    'private-particle-visual-scale-request',
+    'private-particle-material-request',
+    'status=session-ready',
+    'status=accepted',
+    'status=effective',
+    'status=rejected',
+    'privateParticleVisualScaleRequestSession=',
+    'privateParticleVisualScaleRequestGeneration=',
+    'privateParticleVisualScaleRequestId=',
+    'privateParticleVisualScaleSubmittedFrame=',
+    'begin_runtime_session',
+    'confirm_submitted_frame',
+    'REQUESTED_DISPLAY_REFRESH_RATE_HZ_72: f32 = 72\.0',
+    'REQUESTED_DISPLAY_REFRESH_RATE_HZ_90: f32 = 90\.0',
+    'debug\.rustyquest\.native_renderer\.openxr\.display_refresh_rate_hz',
+    'displayRefreshRequestedHz=unset',
+    'displayRefreshSessionGeneration=',
+    'displayRefreshSupportedHz=',
+    'displayRefreshRequestResult=',
+    'displayRefreshEffectiveHz=',
+    'displayRefreshRateChangeFromHz=',
+    'displayRefreshRateChangeToHz=',
+    'displayRefreshPerformanceReady=',
+    'XR_FB_display_refresh_rate',
+    'fb_display_refresh_rate',
+    'configure_requested_display_refresh_rate',
+    'enumerate_display_refresh_rates',
+    'request_display_refresh_rate',
+    'get_display_refresh_rate',
+    'DisplayRefreshRateChangedFB',
+    'status=extension-unavailable',
+    'status=request-accepted',
+    'status=effective-readback',
+    'status=rate-change-observed',
     'create_passthrough',
     'create_passthrough_layer',
     'native-passthrough-style',
@@ -254,7 +305,7 @@ Assert-ContainsTokens "$xrVulkanSurface`n$nativeRendererOptionSurface`n$nativeRe
     'vulkan-probe'
 ) "OpenXR/Vulkan runtime route"
 
-Assert-ContainsLiteralTokens "$gpuPrivateParticles`n$xrVulkanSurface`n$nativeRendererTiming`n$nativeBuildScript`n$privateParticlesOffscreenCompositeVertex`n$privateParticlesOffscreenCompositeFragment" @(
+Assert-ContainsLiteralTokens "$gpuPrivateParticles`n$xrVulkanSurface`n$nativeRendererTiming`n$nativeRendererOptionSurface`n$nativeBuildScript`n$privateParticlesVertex`n$privateParticlesFragment`n$privateParticlesOffscreenCompositeVertex`n$privateParticlesOffscreenCompositeFragment" @(
     'private_particles_offscreen_composite.vert.glsl',
     'private_particles_offscreen_composite.frag.glsl',
     'private_particles_offscreen_composite.vert.spv',
@@ -268,8 +319,24 @@ Assert-ContainsLiteralTokens "$gpuPrivateParticles`n$xrVulkanSurface`n$nativeRen
     'PrivateParticleOffscreenResources',
     'create_offscreen_render_pass',
     'create_offscreen_composite_pipeline',
-    'resources.particle_pipeline',
-    'resources.composite_pipeline',
+    'resources.particle_pipeline_additive',
+    'resources.particle_pipeline_alpha_over',
+    'resources.composite_pipeline_additive',
+    'resources.composite_pipeline_alpha_over',
+    'PrivateParticleTransparencyBlendMode',
+    'PrivateParticleMaterialPreset',
+    'PrivateParticleRenderExperimentPreset',
+    'private_particle_material_effective_marker_fields',
+    'private_particle_render_experiment_marker_fields',
+    'privateParticleMaterialPresetEffective=',
+    'privateParticleRenderExperimentPresetEffective=',
+    'privateParticleRenderExperimentGeometryEffective=',
+    'static-ring-annulus-12',
+    'STATIC_RING_ANNULUS_SEGMENTS',
+    'privateParticleMaterialBlendMode=',
+    'privateParticleMaterialPipelines=additive,alpha-over',
+    'material_blend_mode',
+    'rgb *= coverage_alpha',
     'projection_render_pass',
     '.usage(vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::SAMPLED)',
     '.final_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)',

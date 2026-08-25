@@ -163,6 +163,15 @@ fn main() {
     );
     println!("cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RENDERER_LSL_ANDROID");
     println!("cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RENDERER_LSL_LIB_DIR");
+    println!(
+        "cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RENDERER_BREATH_COMPOSITION_EXPECTED_BINDING_SHA256"
+    );
+    println!(
+        "cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RENDERER_BREATH_COMPOSITION_DRIVER_EXPECTED_BINDING_SHA256"
+    );
+    println!(
+        "cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RENDERER_SIMULTANEOUS_HANDS_CONTROLLERS_EXPECTED_BINDING_SHA256"
+    );
 
     let out_dir = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR is set by Cargo"));
     write_recorded_hand_replay_source(&out_dir);
@@ -1068,11 +1077,7 @@ fn private_particle_tracer_config(particle_count: usize) -> (usize, usize, f32, 
         "default-generated-config"
     };
     let max_count = optional_env_usize(max_count_name, 0, 0, 1_000_000);
-    let state_slots_per_oscillator = if particle_count == 0 {
-        0
-    } else {
-        max_count / particle_count
-    };
+    let state_slots_per_oscillator = max_count.checked_div(particle_count).unwrap_or(0);
     (
         max_count,
         optional_env_usize(

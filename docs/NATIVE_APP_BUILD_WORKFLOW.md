@@ -42,6 +42,14 @@ cannot bleed into unrelated apps.
      generated build artifacts. The APK build refuses stale locks; re-run the
      resolver after changing a spec, copied downstream feature descriptor,
      generated manifest, generated settings file, or build-env file.
+   - `build_inputs.private_particle_payload_linkage`: the resolver-owned,
+     private-free linkage mode and exact payload-inventory digest. A selected
+     private-particle renderer with no complete payload receives the public
+     no-op placeholder and unlinked markers. Exactly one complete payload
+     excludes that placeholder and requires the linked marker; partial,
+     ambiguous, or multiple payload inventories fail closed. Apps that select
+     neither the renderer nor a payload remain `inactive` and receive no
+     private-particle marker contract.
 5. Build from the lock:
 
    ```powershell
@@ -90,6 +98,15 @@ as a generic private-particle payload:
   compute shader, static position/normal buffers, graph/aux buffers, mask
   texture, marker prefix, and profile meanings. Rusty Quest owns the Vulkan
   slot, sorting, mask sampler, low-rate scalar transport, and public markers.
+  A `private_particle` app payload may declare additional compile inputs as
+  explicit `{name, value}` entries in `build_env`. Names are restricted to the
+  generic `RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_*` namespace, are
+  sorted into the resolved build environment, and become part of the
+  resolution fingerprint. Ambient values are not revision authority; the app
+  spec must declare every private-particle compile input it expects.
+  Do not request the public placeholder for a linked payload. The resolver
+  selects it only for the zero-payload no-op closure and rejects contradictory
+  linked/unlinked marker expectations.
 - Live hand surfaces should use `hand_anchor_particles` when the particles are
   attached to the resident GPU-skinned hand mesh. `hand_mesh_live_input` owns
   the compact live Meta/OpenXR hand input and resident skinning substrate, while

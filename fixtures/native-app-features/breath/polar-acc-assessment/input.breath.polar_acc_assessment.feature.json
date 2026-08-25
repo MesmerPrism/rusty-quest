@@ -1,0 +1,24 @@
+{
+  "schema": "rusty.quest.native_app_feature.v1",
+  "feature_id": "input.breath.polar_acc_assessment",
+  "module_path": "breath/polar-acc-assessment",
+  "module_kind": "assessment-adapter",
+  "settings_surface": {"authority": "rusty.quest.native_app_settings.v1", "adapter": "runtime_profile"},
+  "owner_lane": "rusty-quest",
+  "status": "public-substrate",
+  "description": "Generic bounded Polar ACC calibration, volume, and common-phase assessment capability.",
+  "provides": ["breath.assessment.polar_acc.volume", "breath.assessment.polar_acc.phase"],
+  "depends_on": ["sensor.polar_h10_ble"],
+  "incompatible_with": [],
+  "exclusive_groups": {},
+  "android_manifest": {"permissions": [], "uses_features": [], "activities": [], "services": [], "queries": []},
+  "runtime_profile": {
+    "set": {"debug.rustyquest.native_renderer.breath_composition.polar_acc_assessment.enabled": "true"},
+    "clear_families": [],
+    "expected_render_modes": []
+  },
+  "build_inputs": {"env": [], "assets": [], "shaders": []},
+  "markers": {"required": ["RUSTY_QUEST_NATIVE_RENDERER channel=breath-composition"], "forbidden": []},
+  "validation": {"quick": [], "standard": [], "device": []},
+  "public_private_boundary": "The existing Android PMD/JNI owner supplies typed ACC only; RR remains a separate heartbeat stream and effect semantics remain downstream."
+}

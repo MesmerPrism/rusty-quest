@@ -1,6 +1,9 @@
 //! JNI bridge for launching the same-APK 2D control panel.
 
 #[cfg(target_os = "android")]
+use std::sync::OnceLock;
+
+#[cfg(target_os = "android")]
 const ACTION_OPEN_PANEL: &str =
     "io.github.mesmerprism.rustyquest.native_renderer.action.OPEN_PANEL";
 #[cfg(target_os = "android")]
@@ -11,6 +14,15 @@ const PROP_CONTROL_PANEL_OPEN_TOKEN: &str =
     "debug.rustyquest.native_renderer.control_panel.open_token";
 #[cfg(target_os = "android")]
 const PROP_CONTROL_PANEL_MODE: &str = "debug.rustyquest.native_renderer.control_panel.mode";
+#[cfg(target_os = "android")]
+static PACKAGED_CONTROL_PANEL_MODE: OnceLock<Option<String>> = OnceLock::new();
+
+#[cfg(target_os = "android")]
+pub(crate) fn install_packaged_control_panel_mode(
+    defaults: &crate::native_app_settings::NativeAppSettingsDefaults,
+) {
+    let _ = PACKAGED_CONTROL_PANEL_MODE.set(defaults.lookup(PROP_CONTROL_PANEL_MODE));
+}
 #[cfg(target_os = "android")]
 const EXTRA_DRIVER_PROFILE_SESSION_STARTUP_RESET: &str =
     "spatial_camera_panel_session_startup_reset";
@@ -89,20 +101,26 @@ impl ControlPanelCommandPoller {
 }
 
 #[cfg(target_os = "android")]
-pub(crate) fn toggle_control_panel(app: &android_activity::AndroidApp, frame_count: u64) {
+pub(crate) fn toggle_control_panel(
+    app: &android_activity::AndroidApp,
+    frame_count: u64,
+    source: &str,
+) {
     match toggle_control_panel_impl(app) {
         Ok(()) => crate::marker(
             "stimulus-panel",
             format!(
-                "event=right-trigger-panel-toggle status=intent-sent frame={} panelActivity=ControlPanelActivity action=toggle",
-                frame_count
+                "event=control-panel-toggle status=intent-sent frame={} panelActivity=ControlPanelActivity action=toggle source={}",
+                frame_count,
+                crate::sanitize(source),
             ),
         ),
         Err(error) => crate::marker(
             "stimulus-panel",
             format!(
-                "event=right-trigger-panel-toggle status=intent-error frame={} reason={}",
+                "event=control-panel-toggle status=intent-error frame={} source={} reason={}",
                 frame_count,
+                crate::sanitize(source),
                 crate::sanitize(&error)
             ),
         ),
@@ -163,10 +181,14 @@ fn control_panel_mode_is_spatial_camera_panel_session() -> bool {
 #[cfg(target_os = "android")]
 fn control_panel_mode() -> Option<String> {
     let mut property = android_properties::getprop(PROP_CONTROL_PANEL_MODE);
-    property
+    let explicit = property
         .value()
         .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
+        .filter(|value| !value.is_empty());
+    crate::native_app_settings::explicit_or_packaged(
+        explicit,
+        PACKAGED_CONTROL_PANEL_MODE.get().cloned().flatten(),
+    )
 }
 
 #[cfg(target_os = "android")]

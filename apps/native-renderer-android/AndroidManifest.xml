@@ -12,6 +12,7 @@
     <uses-feature android:name="android.hardware.camera2.full" android:required="false" />
 
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
     <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
@@ -96,6 +97,14 @@
             android:exported="true"
             android:excludeFromRecents="true"
             android:noHistory="true" />
+        <receiver
+            android:name=".PolarSensorCommandReceiver"
+            android:exported="true"
+            android:permission="android.permission.DUMP">
+            <intent-filter>
+                <action android:name="io.github.mesmerprism.rustyquest.native_renderer.action.POLAR_SENSOR_RUNTIME_COMMAND" />
+            </intent-filter>
+        </receiver>
         <service
             android:name=".DisplayCompositeProjectionService"
             android:exported="false"

@@ -1,0 +1,93 @@
+{
+  "schema": "rusty.quest.native_app_feature.v1",
+  "feature_id": "lsl.panel_controlled_io",
+  "module_path": "lsl/panel-controlled-io",
+  "module_kind": "panel-controlled-native-lsl-data-plane",
+  "settings_surface": {
+    "authority": "rusty.quest.native_app_settings.v1",
+    "adapter": "app-private-persisted-panel-command"
+  },
+  "owner_lane": "rusty-quest",
+  "status": "public-substrate",
+  "description": "Self-contained, disabled-by-default LSL runtime with persistent panel control, typed Polar/tracking outlets, one bounded Float32 private-particle driver inlet, and a closed LibLSL versus Rusty-LSL outlet comparison.",
+  "provides": [
+    "lsl.panel_controlled_runtime",
+    "lsl.polar_float32_outlets",
+    "lsl.openxr_tracking_float32_outlets",
+    "lsl.private_particle_float32_inlet",
+    "lsl.outlet_backend_ab"
+  ],
+  "depends_on": [
+    "quest.native.openxr_vulkan_base",
+    "renderer.private_particles",
+    "ui.same_apk_control_panel"
+  ],
+  "incompatible_with": [],
+  "exclusive_groups": {},
+  "android_manifest": {
+    "permissions": [
+      "android.permission.ACCESS_NETWORK_STATE",
+      "android.permission.ACCESS_WIFI_STATE",
+      "android.permission.CHANGE_WIFI_MULTICAST_STATE",
+      "android.permission.INTERNET"
+    ],
+    "uses_features": [],
+    "activities": [],
+    "receivers": [
+      "LslPanelCommandReceiver"
+    ],
+    "services": [],
+    "queries": []
+  },
+  "runtime_profile": {
+    "set": {
+      "debug.rustyquest.native_renderer.lsl.enabled": "false",
+      "debug.rustyquest.native_renderer.lsl.inlet.enabled": "false",
+      "debug.rustyquest.native_renderer.lsl.multicast_lock.enabled": "false",
+      "debug.rustyquest.native_renderer.lsl.outlet.enabled": "false",
+      "debug.rustyquest.native_renderer.lsl.panel_controlled": "true"
+    },
+    "clear_families": [],
+    "expected_render_modes": []
+  },
+  "build_inputs": {
+    "env": [
+      {
+        "name": "RUSTY_QUEST_NATIVE_RENDERER_LSL_ANDROID",
+        "value": "1"
+      },
+      {
+        "name": "RUSTY_QUEST_NATIVE_RENDERER_RUSTY_LSL_ANDROID",
+        "value": "1"
+      }
+    ],
+    "assets": [],
+    "shaders": []
+  },
+  "markers": {
+    "required": [
+      "RUSTY_QUEST_NATIVE_RENDERER channel=lsl-panel-runtime",
+      "lslPanelControlled=true",
+      "rustyLslSourceCommit=8b6b2a6cd0c0e5147b7e1cc076a116ef226cddbd"
+    ],
+    "forbidden": [
+      "status=lsl-error reason=missing-liblsl",
+      "highRateSamplesViaAndroidProperties=true",
+      "inlet-driver-slot=0"
+    ]
+  },
+  "validation": {
+    "quick": [
+      "cargo test -p rusty-quest-native-renderer-android-native lsl_panel_runtime --locked --features rusty-lsl-backend",
+      "powershell -NoProfile -ExecutionPolicy Bypass -File tools/Apply-RuntimeProfile.ps1 -ProfilePath <generated-profile> -DryRun -Out <generated-property-plan>"
+    ],
+    "standard": [
+      "powershell -NoProfile -ExecutionPolicy Bypass -File tools/Stage-LibLslAndroid.ps1 -SourceRoot <liblsl-source-root>"
+    ],
+    "device": [
+      "enable selected outlets in the same-APK panel and resolve their exact source IDs from a same-LAN LSL consumer",
+      "publish a finite normalized Float32 stream matching the panel selector and verify the renderer-effective target driver slot"
+    ]
+  },
+  "public_private_boundary": "Rusty Quest owns the bounded LSL runtime, transport lifecycle, typed Polar/OpenXR source schemas, and generic driver-slot adapter. Applications choose whether to package it and own persisted participant/session naming and downstream private visual semantics. Samples never transit Android properties, JSON, or Manifold commands."
+}
