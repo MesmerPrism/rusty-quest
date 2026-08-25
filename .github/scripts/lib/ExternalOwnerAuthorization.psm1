@@ -320,10 +320,19 @@ function Assert-ExternalOwnerFallbackVerifierFailure {
         [Parameter(Mandatory)][int]$ExitCode,
         [Parameter(Mandatory)][AllowEmptyCollection()][object[]]$Output
     )
+    $holdMessage = "Protected changes do not match an exact base-approved change set."
+    # The authority workflow is pinned to windows-2025.  A terminating throw
+    # from its child pwsh process is transported through native stderr as this
+    # exact RemoteException message, including one terminal CRLF.
+    $transportMessage = "Exception: $holdMessage`r`n"
     if ($ExitCode -ne 1 -or $Output.Count -ne 1 -or
         $Output[0] -isnot [Management.Automation.ErrorRecord] -or
-        [string]$Output[0].Exception.Message -cne
-            "Exception: Protected changes do not match an exact base-approved change set.") {
+        $null -eq $Output[0].Exception -or
+        $Output[0].Exception.GetType() -ne [Management.Automation.RemoteException] -or
+        [string]$Output[0].FullyQualifiedErrorId -cne "NativeCommandError" -or
+        [string]$Output[0].CategoryInfo.Category -cne "NotSpecified" -or
+        [string]$Output[0].TargetObject -cne $transportMessage -or
+        [string]$Output[0].Exception.Message -cne $transportMessage) {
         throw "Pinned verifier result is not the exact protected-without-base-approval hold."
     }
 }

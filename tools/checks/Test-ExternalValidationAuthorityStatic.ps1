@@ -458,10 +458,16 @@ foreach ($forbidden in @(
 if ($adapter -match '-match\s*\[regex\]::Escape\("Protected changes do not match an exact base-approved change set\."\)') {
     throw "Base-owned adapter retains substring-based protected-hold detection."
 }
+if ($adapter -notmatch 'Get-Command\s+pwsh' -or $adapter -notmatch '2>&1') {
+    throw "Base-owned adapter must retain the bounded child-PowerShell verifier transport."
+}
 $externalOwnerModule = Get-Content -Raw -LiteralPath $externalOwnerModulePath
 foreach ($token in @(
     'Assert-ExternalOwnerFallbackVerifierFailure',
-    'Exception: Protected changes do not match an exact base-approved change set\.',
+    'Management\.Automation\.RemoteException',
+    'NativeCommandError',
+    'CategoryInfo\.Category',
+    'transportMessage = "Exception: \$holdMessage`r`n"',
     'ConvertFrom-ExternalOwnerGitNameStatusBytes',
     'Git name-status output contains invalid UTF-8',
     'Git name-status output lacks a terminal NUL delimiter',
@@ -473,6 +479,19 @@ foreach ($token in @(
 )) {
     if ($externalOwnerModule -notmatch $token) {
         throw "External-owner module is missing fail-closed contract token: $token"
+    }
+}
+$externalOwnerSelfTestText = Get-Content -Raw -LiteralPath $externalOwnerSelfTest
+foreach ($token in @(
+    'Invoke-ExternalOwnerChildFailureFixture',
+    'Direct verifier hold behavior changed\.',
+    'Exact Windows child verifier hold transport changed\.',
+    'hold-lf',
+    'hold-double-crlf',
+    'hold-stdout-contamination'
+)) {
+    if ($externalOwnerSelfTestText -notmatch $token) {
+        throw "External-owner self-test is missing transport-bound regression coverage: $token"
     }
 }
 

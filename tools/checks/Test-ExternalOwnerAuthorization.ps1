@@ -15,6 +15,34 @@ function Assert-DamageRejected {
     if (-not $rejected) { throw "External-owner damage was accepted: $Name" }
 }
 
+function Invoke-ExternalOwnerChildFailureFixture {
+    param([Parameter(Mandatory)][string]$ScriptText)
+    $pwsh = (Get-Command pwsh -CommandType Application -ErrorAction Stop |
+        Select-Object -First 1).Source
+    $encoded = [Convert]::ToBase64String(
+        [Text.Encoding]::Unicode.GetBytes($ScriptText)
+    )
+    $output = @(& $pwsh -NoProfile -NonInteractive -ExecutionPolicy Bypass `
+        -EncodedCommand $encoded 2>&1)
+    return [pscustomobject]@{
+        exit_code = [int]$LASTEXITCODE
+        output = $output
+    }
+}
+
+function New-ExternalOwnerChildFailureRecord {
+    param(
+        [Parameter(Mandatory)][string]$Message,
+        [string]$FullyQualifiedErrorId = "NativeCommandError",
+        [Management.Automation.ErrorCategory]$Category = [Management.Automation.ErrorCategory]::NotSpecified,
+        [AllowEmptyString()][string]$Target = $Message
+    )
+    return [Management.Automation.ErrorRecord]::new(
+        [Management.Automation.RemoteException]::new($Message),
+        $FullyQualifiedErrorId, $Category, $Target
+    )
+}
+
 $rsa = [Security.Cryptography.RSA]::Create(3072)
 try {
     $now = [datetimeoffset]::Parse("2026-08-22T16:00:00Z")
@@ -48,21 +76,63 @@ try {
                 -ChangedArtifacts $artifacts -ProtectedArtifacts $artifacts
         }
     }
-    $validHoldError = [Management.Automation.ErrorRecord]::new(
-        [Exception]::new("Exception: Protected changes do not match an exact base-approved change set."),
-        "PinnedVerifier", [Management.Automation.ErrorCategory]::NotSpecified, $null
-    )
-    Assert-ExternalOwnerFallbackVerifierFailure -ExitCode 1 -Output @($validHoldError)
+    $holdMessage = "Protected changes do not match an exact base-approved change set."
+    $transportMessage = "Exception: $holdMessage`r`n"
+    $directFailure = $null
+    try {
+        throw [Management.Automation.RuntimeException]::new($holdMessage)
+    } catch {
+        $directFailure = $_
+    }
+    if (
+        $directFailure -isnot [Management.Automation.ErrorRecord] -or
+        $directFailure.Exception.GetType() -ne [Management.Automation.RuntimeException] -or
+        [string]$directFailure.Exception.Message -cne $holdMessage
+    ) {
+        throw "Direct verifier hold behavior changed."
+    }
+    $serializedHold = Invoke-ExternalOwnerChildFailureFixture "throw '$holdMessage'"
+    if (
+        $serializedHold.exit_code -ne 1 -or
+        $serializedHold.output.Count -ne 1 -or
+        $serializedHold.output[0] -isnot [Management.Automation.ErrorRecord] -or
+        $serializedHold.output[0].Exception.GetType() -ne [Management.Automation.RemoteException] -or
+        [string]$serializedHold.output[0].FullyQualifiedErrorId -cne "NativeCommandError" -or
+        [string]$serializedHold.output[0].CategoryInfo.Category -cne "NotSpecified" -or
+        [string]$serializedHold.output[0].TargetObject -cne $transportMessage -or
+        [string]$serializedHold.output[0].Exception.Message -cne $transportMessage
+    ) {
+        throw "Exact Windows child verifier hold transport changed."
+    }
+    Assert-ExternalOwnerFallbackVerifierFailure `
+        -ExitCode $serializedHold.exit_code -Output $serializedHold.output
     foreach ($damage in @(
-        [pscustomobject]@{ name = "hold-prefix"; exit = 1; output = @([Management.Automation.ErrorRecord]::new([Exception]::new("prefix Exception: Protected changes do not match an exact base-approved change set."), "PinnedVerifier", [Management.Automation.ErrorCategory]::NotSpecified, $null)) },
-        [pscustomobject]@{ name = "hold-suffix"; exit = 1; output = @([Management.Automation.ErrorRecord]::new([Exception]::new("Exception: Protected changes do not match an exact base-approved change set. suffix"), "PinnedVerifier", [Management.Automation.ErrorCategory]::NotSpecified, $null)) },
-        [pscustomobject]@{ name = "hold-extra-output"; exit = 1; output = @($validHoldError, "extra") },
-        [pscustomobject]@{ name = "hold-exit"; exit = 2; output = @($validHoldError) },
-        [pscustomobject]@{ name = "hold-lookalike"; exit = 1; output = @("Exception: Protected changes do not match an exact base-approved change set.") }
+        [pscustomobject]@{ name = "hold-prefix"; exit = 1; output = @(New-ExternalOwnerChildFailureRecord "prefix $transportMessage") },
+        [pscustomobject]@{ name = "hold-suffix"; exit = 1; output = @(New-ExternalOwnerChildFailureRecord ($transportMessage + "suffix")) },
+        [pscustomobject]@{ name = "hold-space"; exit = 1; output = @(New-ExternalOwnerChildFailureRecord ($transportMessage + " ")) },
+        [pscustomobject]@{ name = "hold-lf"; exit = 1; output = @(New-ExternalOwnerChildFailureRecord "Exception: $holdMessage`n") },
+        [pscustomobject]@{ name = "hold-double-crlf"; exit = 1; output = @(New-ExternalOwnerChildFailureRecord ($transportMessage + "`r`n")) },
+        [pscustomobject]@{ name = "hold-target"; exit = 1; output = @(New-ExternalOwnerChildFailureRecord $transportMessage -Target "wrong-target") },
+        [pscustomobject]@{ name = "hold-category"; exit = 1; output = @(New-ExternalOwnerChildFailureRecord $transportMessage -Category ([Management.Automation.ErrorCategory]::InvalidData)) },
+        [pscustomobject]@{ name = "hold-fqid"; exit = 1; output = @(New-ExternalOwnerChildFailureRecord $transportMessage -FullyQualifiedErrorId "PinnedVerifier") },
+        [pscustomobject]@{ name = "hold-runtime-exception"; exit = 1; output = @([Management.Automation.ErrorRecord]::new([Management.Automation.RuntimeException]::new($transportMessage), "NativeCommandError", [Management.Automation.ErrorCategory]::NotSpecified, $transportMessage)) },
+        [pscustomobject]@{ name = "hold-extra-output"; exit = 1; output = @($serializedHold.output[0], "extra") },
+        [pscustomobject]@{ name = "hold-exit"; exit = 2; output = @($serializedHold.output[0]) },
+        [pscustomobject]@{ name = "hold-lookalike"; exit = 1; output = @($transportMessage) }
     )) {
         Assert-DamageRejected $damage.name {
             Assert-ExternalOwnerFallbackVerifierFailure -ExitCode $damage.exit -Output $damage.output
         }
+    }
+    $stdoutContamination = Invoke-ExternalOwnerChildFailureFixture (
+        "Write-Output 'unexpected stdout'; throw '$holdMessage'"
+    )
+    if ($stdoutContamination.exit_code -ne 1 -or $stdoutContamination.output.Count -ne 2) {
+        throw "Child stdout-contamination fixture changed."
+    }
+    Assert-DamageRejected "hold-stdout-contamination" {
+        Assert-ExternalOwnerFallbackVerifierFailure `
+            -ExitCode $stdoutContamination.exit_code -Output $stdoutContamination.output
     }
     $null = ConvertFrom-ExternalOwnerGitNameStatusBytes ([Text.Encoding]::UTF8.GetBytes(
         "A" + [char]0 + "config/external-validation-authority.json" + [char]0
