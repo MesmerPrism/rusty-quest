@@ -29,6 +29,7 @@ use crate::{
         PROP_STIMULUS_VOLUME_RAYMARCH_SAMPLES, PROP_STIMULUS_VOLUME_RENDER_TARGET,
         PROP_STIMULUS_VOLUME_SAFETY_ACK,
     },
+    native_renderer_private_particle_material_request::PrivateParticleMaterialPreset,
     native_renderer_stimulus_volume_options::{
         NativeStimulusVolumeCompositionMode, NativeStimulusVolumeSettings,
         NativeStimulusVolumeStartupDynamics,
@@ -114,6 +115,9 @@ pub(crate) struct PrivateParticleDynamicsPanelCandidate {
     pub(crate) transparency_depth_suppression_strength: f32,
     pub(crate) transparency_rgb_alpha_coupling: f32,
     pub(crate) color_facing_attenuation_strength: f32,
+    pub(crate) material_preset: Option<PrivateParticleMaterialPreset>,
+    pub(crate) material_override_enabled: bool,
+    pub(crate) polar_rr_orbit_boost_enabled: bool,
 }
 
 #[cfg(target_os = "android")]
@@ -144,6 +148,9 @@ impl PrivateParticleDynamicsPanelCandidate {
             transparency_depth_suppression_strength: self.transparency_depth_suppression_strength,
             transparency_rgb_alpha_coupling: self.transparency_rgb_alpha_coupling,
             color_facing_attenuation_strength: self.color_facing_attenuation_strength,
+            material_preset: self.material_preset,
+            material_override_enabled: self.material_override_enabled,
+            polar_rr_orbit_boost_enabled: self.polar_rr_orbit_boost_enabled,
         }
     }
 }
@@ -1461,6 +1468,9 @@ pub(crate) fn parse_private_particle_dynamics_json(
         .unwrap_or(private_particles);
     let color_facing_attenuation_strength =
         bounded_number_at(color, "facing_attenuation_strength", 0.0, 0.0, 1.0)? as f32;
+    let (material_preset, material_override_enabled) =
+        private_particle_material_preset(private_particles)?;
+    let polar_rr_orbit_boost_enabled = private_particle_polar_rr_orbit_boost(private_particles)?;
 
     Ok(PrivateParticleDynamicsPanelCandidate {
         revision,
@@ -1481,7 +1491,52 @@ pub(crate) fn parse_private_particle_dynamics_json(
         transparency_depth_suppression_strength,
         transparency_rgb_alpha_coupling,
         color_facing_attenuation_strength,
+        material_preset,
+        material_override_enabled,
+        polar_rr_orbit_boost_enabled,
     })
+}
+
+fn private_particle_material_preset(
+    private_particles: &Value,
+) -> Result<(Option<PrivateParticleMaterialPreset>, bool), String> {
+    let Some(material) = private_particles.get("material") else {
+        return Ok((None, false));
+    };
+    let material = material
+        .as_object()
+        .ok_or_else(|| "material_must_be_object".to_string())?;
+    if material.len() != 1 || !material.contains_key("preset") {
+        return Err("material_must_contain_only_preset".to_string());
+    }
+    let preset = material
+        .get("preset")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "material_preset_must_be_string".to_string())?;
+    if preset == "packaged-default" {
+        return Ok((None, true));
+    }
+    PrivateParticleMaterialPreset::parse_marker_name(preset)
+        .ok_or_else(|| format!("unsupported_material_preset:{preset}"))
+        .map(|preset| (Some(preset), true))
+}
+
+fn private_particle_polar_rr_orbit_boost(private_particles: &Value) -> Result<bool, String> {
+    let Some(heartbeat_pulse) = private_particles.get("heartbeat_pulse") else {
+        return Ok(false);
+    };
+    let heartbeat_pulse = heartbeat_pulse
+        .as_object()
+        .ok_or_else(|| "heartbeat_pulse_must_be_object".to_string())?;
+    if heartbeat_pulse.len() != 1 || !heartbeat_pulse.contains_key("mode") {
+        return Err("heartbeat_pulse_must_contain_only_mode".to_string());
+    }
+    match heartbeat_pulse.get("mode").and_then(Value::as_str) {
+        Some("disabled") => Ok(false),
+        Some("polar-rr-orbit-boost") => Ok(true),
+        Some(mode) => Err(format!("unsupported_heartbeat_pulse_mode:{mode}")),
+        None => Err("heartbeat_pulse_mode_must_be_string".to_string()),
+    }
 }
 
 pub(crate) fn parse_environment_depth_alignment_json(
@@ -2266,6 +2321,21 @@ pub(crate) fn write_private_particle_dynamics_status(
                 "color": {
                     "facing_attenuation_strength": effective.settings.color_facing_attenuation_strength,
                     "parameter_source": effective.settings.color_parameter_source
+                },
+                "material": {
+                    "preset": effective.settings.material_preset
+                        .map(PrivateParticleMaterialPreset::marker_name)
+                        .unwrap_or("packaged-default"),
+                    "parameter_source": effective.settings.material_parameter_source
+                },
+                "heartbeat_pulse": {
+                    "mode": if effective.settings.polar_rr_orbit_boost_enabled {
+                        "polar-rr-orbit-boost"
+                    } else {
+                        "disabled"
+                    },
+                    "target_slot": 5,
+                    "parameter_source": effective.settings.heartbeat_pulse_parameter_source
                 }
             })
         } else if let Some(candidate) = candidate {
@@ -2300,6 +2370,21 @@ pub(crate) fn write_private_particle_dynamics_status(
                 },
                 "color": {
                     "facing_attenuation_strength": candidate.color_facing_attenuation_strength,
+                    "parameter_source": "requested"
+                },
+                "material": {
+                    "preset": candidate.material_preset
+                        .map(PrivateParticleMaterialPreset::marker_name)
+                        .unwrap_or("packaged-default"),
+                    "parameter_source": "requested"
+                },
+                "heartbeat_pulse": {
+                    "mode": if candidate.polar_rr_orbit_boost_enabled {
+                        "polar-rr-orbit-boost"
+                    } else {
+                        "disabled"
+                    },
+                    "target_slot": 5,
                     "parameter_source": "requested"
                 }
             })
@@ -2748,6 +2833,12 @@ mod tests {
                 },
                 "color": {
                     "facing_attenuation_strength": 0.65
+                },
+                "material": {
+                    "preset": "premultiplied-alpha-over-depth-facing"
+                },
+                "heartbeat_pulse": {
+                    "mode": "polar-rr-orbit-boost"
                 }
             },
             "apply": {
@@ -2771,6 +2862,58 @@ mod tests {
         assert_close(candidate.transparency_depth_suppression_strength, 2.25);
         assert_close(candidate.transparency_rgb_alpha_coupling, 0.35);
         assert_close(candidate.color_facing_attenuation_strength, 0.65);
+        assert_eq!(
+            candidate.material_preset,
+            Some(PrivateParticleMaterialPreset::PremultipliedAlphaOverDepthFacingFade)
+        );
+        assert!(candidate.material_override_enabled);
+        assert!(candidate.polar_rr_orbit_boost_enabled);
+    }
+
+    #[test]
+    fn rejects_open_or_invalid_material_and_heartbeat_panel_envelopes() {
+        let base = json!({
+            "schema": PRIVATE_PARTICLE_DYNAMICS_SCHEMA,
+            "private_particles": {
+                "visual_scale": 0.70,
+                "world_anchor_scale_m": 0.46,
+                "driver_values01": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+                "tracer": {
+                    "draw_slots_per_oscillator": 7,
+                    "lifetime_seconds": 0.5,
+                    "copies_per_second": 14.0
+                }
+            }
+        });
+
+        for (field, replacement, expected) in [
+            (
+                "material",
+                json!({"preset": "premultiplied-alpha-over", "opacity": 0.5}),
+                "material_must_contain_only_preset",
+            ),
+            (
+                "heartbeat_pulse",
+                json!({"mode": "polar-rr-orbit-boost", "target_slot": 4}),
+                "heartbeat_pulse_must_contain_only_mode",
+            ),
+            (
+                "heartbeat_pulse",
+                json!({"mode": "synthetic-breath"}),
+                "unsupported_heartbeat_pulse_mode:synthetic-breath",
+            ),
+        ] {
+            let mut candidate = base.clone();
+            candidate["private_particles"][field] = replacement;
+            let error = parse_private_particle_dynamics_json(&candidate.to_string()).unwrap_err();
+            assert_eq!(error, expected);
+        }
+
+        let mut packaged_default = base;
+        packaged_default["private_particles"]["material"] = json!({"preset": "packaged-default"});
+        let parsed = parse_private_particle_dynamics_json(&packaged_default.to_string()).unwrap();
+        assert_eq!(parsed.material_preset, None);
+        assert!(parsed.material_override_enabled);
     }
 
     #[test]
@@ -2859,6 +3002,9 @@ mod tests {
             candidate.driver_control_modes[7],
             PRIVATE_PARTICLE_DRIVER_CONTROL_DIRECT
         );
+        assert_eq!(candidate.material_preset, None);
+        assert!(!candidate.material_override_enabled);
+        assert!(!candidate.polar_rr_orbit_boost_enabled);
     }
 
     #[test]

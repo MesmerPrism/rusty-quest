@@ -51,6 +51,41 @@ public final class LslMulticastLockManager {
         }
     }
 
+    public static void setFromPanel(Activity activity, boolean enabled) {
+        if (enabled) {
+            acquireFromNative(activity, true);
+        } else {
+            releaseFromNative();
+        }
+    }
+
+    public static void setFromCli(Context context, boolean enabled) {
+        if (!enabled) {
+            releaseFromNative();
+            return;
+        }
+        if (context == null) {
+            marker("status=multicast-lock-error lslMulticastLockAcquired=false reason=missing-context");
+            return;
+        }
+        synchronized (LOCK) {
+            if (multicastLock != null && multicastLock.isHeld()) {
+                marker("status=multicast-lock-already-held lslMulticastLockAcquired=true");
+                return;
+            }
+            WifiManager wifiManager = (WifiManager) context.getApplicationContext()
+                    .getSystemService(Context.WIFI_SERVICE);
+            if (wifiManager == null) {
+                marker("status=multicast-lock-error lslMulticastLockAcquired=false reason=missing-wifi-manager");
+                return;
+            }
+            multicastLock = wifiManager.createMulticastLock("rusty-quest-lsl");
+            multicastLock.setReferenceCounted(false);
+            multicastLock.acquire();
+            marker("status=multicast-lock-acquired lslMulticastLockAcquired=true source=cli");
+        }
+    }
+
     private static void marker(String detail) {
         Log.i(TAG, MARKER_PREFIX + " channel=lsl " + sanitize(detail));
     }

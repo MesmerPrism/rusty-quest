@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "rusty.quest.native_app_build_resolution_result.v1",
+  "title": "Rusty Quest native app-build structured resolution result",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "app_id",
+    "resolution_fingerprint",
+    "output_root",
+    "feature_lock_path",
+    "feature_lock_sha256",
+    "audit_path",
+    "audit_sha256"
+  ],
+  "properties": {
+    "schema": {
+      "const": "rusty.quest.native_app_build_resolution_result.v1"
+    },
+    "app_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "resolution_fingerprint": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "output_root": {
+      "type": "string",
+      "minLength": 1
+    },
+    "feature_lock_path": {
+      "type": "string",
+      "minLength": 1
+    },
+    "feature_lock_sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "audit_path": {
+      "type": "string",
+      "minLength": 1
+    },
+    "audit_sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    }
+  }
+}

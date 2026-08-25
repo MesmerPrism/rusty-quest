@@ -95,6 +95,28 @@ Assert-SetEquals -Label "canary selected feature closure" -Expected @(
     "renderer.private_particles",
     "ui.same_apk_control_panel"
 ) -Actual @($lock.selected_feature_ids | ForEach-Object { [string]$_ })
+
+$structuredResultPath = Join-Path $repoRootPath "local-artifacts\native-app-builds\structured-result-tests\canary-resolution-result.json"
+& pwsh -NoProfile -ExecutionPolicy Bypass -File $resolver `
+    -AppSpec (Join-Path $validSpecDir "private-particle-solid-black-canary.app.json") `
+    -ResultJsonPath $structuredResultPath `
+    -DryRun
+if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $structuredResultPath)) {
+    throw "Native app-build resolver did not emit the requested structured result"
+}
+$structuredResult = Read-Json -Path $structuredResultPath
+if ([string]$structuredResult.schema -ne "rusty.quest.native_app_build_resolution_result.v1") {
+    throw "Native app-build structured result has the wrong schema: $($structuredResult.schema)"
+}
+Assert-SetEquals -Label "structured result resolved feature closure" `
+    -Expected @($lock.selected_feature_ids | ForEach-Object { [string]$_ }) `
+    -Actual @($structuredResult.resolved_feature_ids | ForEach-Object { [string]$_ })
+if ((Resolve-Path -LiteralPath ([string]$structuredResult.feature_lock_path)).Path -ne (Resolve-Path -LiteralPath $lockPath).Path) {
+    throw "Native app-build structured result points at the wrong feature lock"
+}
+if ([string]$structuredResult.feature_lock_sha256 -ne (Get-FileHash -Algorithm SHA256 -LiteralPath $lockPath).Hash.ToLowerInvariant()) {
+    throw "Native app-build structured result has the wrong feature-lock hash"
+}
 Assert-SetEquals -Label "canary Android permission surface" -Expected @(
     "com.oculus.permission.HAND_TRACKING",
     "org.khronos.openxr.permission.OPENXR",

@@ -1,0 +1,46 @@
+{
+  "schema": "rusty.quest.native_app_feature.v1",
+  "feature_id": "breath.composition.closed_world",
+  "module_path": "breath/composition",
+  "module_kind": "closed-world-composition",
+  "settings_surface": {"authority": "rusty.quest.native_app_settings.v1", "adapter": "runtime_profile"},
+  "owner_lane": "rusty-quest",
+  "status": "public-substrate",
+  "description": "Exact-lock activation of the direct Controller/Polar ACC by Volume/State matrix.",
+  "provides": ["breath.composition.direct_four_way"],
+  "depends_on": [
+    "input.breath.controller_assessment",
+    "input.breath.polar_acc_assessment",
+    "input.right_secondary_same_apk_panel_triple_press",
+    "mapping.breath.state",
+    "mapping.breath.volume",
+    "ui.same_apk_breath_mapping_panel"
+  ],
+  "incompatible_with": [],
+  "exclusive_groups": {"breath_composition_transport": "same-process-direct"},
+  "android_manifest": {"permissions": [], "uses_features": [], "activities": [], "services": [], "queries": []},
+  "runtime_profile": {
+    "set": {
+      "debug.rustyquest.native_renderer.breath_composition.controller_projection": "dynamic-axis",
+      "debug.rustyquest.native_renderer.breath_composition.enabled": "true",
+      "debug.rustyquest.native_renderer.breath_composition.inverted": "false",
+      "debug.rustyquest.native_renderer.breath_composition.mapping": "volume",
+      "debug.rustyquest.native_renderer.breath_composition.polar_projection": "xz",
+      "debug.rustyquest.native_renderer.breath_composition.source": "controller",
+      "debug.rustyquest.native_renderer.breath_composition.stale_millis": "500"
+    },
+    "clear_families": [],
+    "expected_render_modes": []
+  },
+  "build_inputs": {"env": [], "assets": [], "shaders": []},
+  "markers": {
+    "required": [
+      "RUSTY_QUEST_NATIVE_RENDERER channel=breath-composition",
+      "featureLockActive=true",
+      "transport=same-process-direct"
+    ],
+    "forbidden": []
+  },
+  "validation": {"quick": [], "standard": [], "device": []},
+  "public_private_boundary": "Rusty Quest owns closed-world source/mapping selection, lifecycle, generation fencing, and neutral readback only."
+}

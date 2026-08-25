@@ -38,18 +38,34 @@ $javaRoot = Join-Path $appRoot "src\main\java\io\github\mesmerprism\rustyquest\n
 $manifest = Read-RequiredText (Join-Path $appRoot "AndroidManifest.xml") "Android manifest"
 $controlPanel = Read-RequiredText (Join-Path $javaRoot "ControlPanelActivity.java") "control panel"
 $polarPanel = Read-RequiredText (Join-Path $javaRoot "PolarSensorPanel.java") "Polar panel"
+$polarRuntime = Read-RequiredText (Join-Path $javaRoot "PolarSensorRuntime.java") "headless Polar runtime"
+$polarReceiver = Read-RequiredText (Join-Path $javaRoot "PolarSensorCommandReceiver.java") "headless Polar receiver"
+$polarRuntimeSupport = Read-RequiredText (Join-Path $javaRoot "PolarBleRuntimeSupport.java") "Polar runtime support"
+$polarAdapters = Read-RequiredText (Join-Path $appRoot "native\src\polar_composition_adapters.rs") "Polar composition adapters"
+$polarAccBreathAdapter = Read-RequiredText (Join-Path $appRoot "native\src\polar_acc_breath_adapter.rs") "calibrated Polar ACC adapter"
+$breathAdapter = Read-RequiredText (Join-Path $appRoot "native\src\private_particle_breath_state_driver.rs") "breath-state adapter"
+$heartbeatAdapter = Read-RequiredText (Join-Path $appRoot "native\src\private_particle_heartbeat_pulse_adapter.rs") "heartbeat-pulse adapter"
+$panelAction = Read-RequiredText (Join-Path $appRoot "native\src\same_apk_panel_action.rs") "same-APK panel action"
+$panelBridge = Read-RequiredText (Join-Path $appRoot "native\src\native_renderer_panel_bridge.rs") "same-APK panel bridge"
 $feature = Read-RequiredText (Join-Path $repoRootPath "fixtures\native-app-features\sensors\polar-h10-ble\sensor.polar_h10_ble.feature.json") "Polar feature"
 $propertyManifest = Read-RequiredText (Join-Path $repoRootPath "fixtures\native-renderer\native-renderer-property-manifest.json") "property manifest"
 $resolver = Read-RequiredText (Join-Path $repoRootPath "tools\Resolve-NativeAppBuild.ps1") "native app-build resolver"
 $pregrant = Read-RequiredText (Join-Path $repoRootPath "tools\Grant-NativeRendererPermissions.ps1") "permission pregrant"
+$polarOperator = Read-RequiredText (Join-Path $repoRootPath "tools\Invoke-NativeRendererPolarOperator.ps1") "fixed Polar operator"
+$breathCaptureOperator = Read-RequiredText (Join-Path $repoRootPath "tools\Invoke-NativeRendererBreathCapture.ps1") "headless breath capture operator"
 
 Assert-ContainsTokens $manifest @(
     'android\.hardware\.bluetooth_le',
+    'android\.permission\.ACCESS_COARSE_LOCATION',
     'android\.permission\.ACCESS_FINE_LOCATION',
     'android\.permission\.BLUETOOTH',
     'android\.permission\.BLUETOOTH_ADMIN',
     'android\.permission\.BLUETOOTH_CONNECT',
-    'android\.permission\.BLUETOOTH_SCAN'
+    'android\.permission\.BLUETOOTH_SCAN',
+    'PolarSensorCommandReceiver',
+    'POLAR_SENSOR_RUNTIME_COMMAND',
+    'android:exported="true"',
+    'android:permission="android.permission.DUMP"'
 ) "development manifest BLE surface"
 
 Assert-ContainsTokens $controlPanel @(
@@ -59,7 +75,7 @@ Assert-ContainsTokens $controlPanel @(
     'closePanelAndReturnToImmersive'
 ) "ControlPanelActivity Polar mode"
 
-Assert-ContainsTokens $polarPanel @(
+Assert-ContainsTokens "$polarPanel`n$polarRuntimeSupport" @(
     'final class PolarSensorPanel',
     'BluetoothLeScanner',
     'ScanCallback',
@@ -67,6 +83,7 @@ Assert-ContainsTokens $polarPanel @(
     'requestPermissions',
     'BLUETOOTH_SCAN',
     'BLUETOOTH_CONNECT',
+    'ACCESS_COARSE_LOCATION',
     'ACCESS_FINE_LOCATION',
     'HEART_RATE_MEASUREMENT',
     'PMD_CONTROL_POINT',
@@ -81,9 +98,180 @@ Assert-ContainsTokens $polarPanel @(
     'decodeAcc',
     'decodeEcg',
     'buildStartCommand',
+    'nativeSubmitPolarRrMeasurement',
+    'nativeSubmitPolarAccMeasurement',
     'RUSTY_QUEST_NATIVE_RENDERER',
     'polar-sensor-panel'
 ) "Polar BLE panel implementation"
+
+Assert-ContainsTokens "$polarPanel`n$polarRuntimeSupport" @(
+    'SCAN_MODE_LOW_LATENCY',
+    'platformFilter=empty',
+    'PENDING_BLE_SCAN',
+    'resumePendingBleAction',
+    'quest-nearby-devices-plus-location',
+    'polar_sensor_status\.v2',
+    'rr_consumed_by_breath',
+    'rawDeviceIdentifierLogged=false'
+) "Quest Polar discovery and structured readback"
+
+Assert-ContainsTokens $polarPanel @(
+    'private volatile boolean connected;',
+    'private ScanCallback activeScanCallback;',
+    'private long scanGeneration;',
+    'createScanCallback\(final long generation\)',
+    'if \(!isCurrentScanGeneration\(generation\)\)',
+    'currentScanner\.stopScan\(currentCallback\);',
+    'callbackGatt != gatt',
+    'private boolean isCurrentConnectedGatt\(BluetoothGatt callbackGatt\)',
+    'return !closing && connected && callbackGatt != null && callbackGatt == gatt;',
+    'dispatchCharacteristic\(callbackGatt, characteristic, characteristic\.getValue\(\)\);',
+    'dispatchCharacteristic\(callbackGatt, characteristic, value\);',
+    'if \(!isCurrentConnectedGatt\(callbackGatt\) \|\| descriptorsStarted\)',
+    'if \(!isCurrentConnectedGatt\(callbackGatt\) \|\| commandInFlight\)',
+    'setStatusState\("connected", "Connected\. Discovering services\."\);',
+    'setStatusState\("connection-failed", "Connection failed: " \+ statusCode\);',
+    'setStatusState\("disconnected", "Polar device disconnected\."\);',
+    'setStatusState\("candidate-found", "A compatible Polar candidate was found\."\);',
+    'scheduleBatteryRead\(callbackGatt, batteryCharacteristic\);',
+    'readBatteryIfIdle\(callbackGatt, callbackBatteryCharacteristic\);',
+    'callbackBatteryCharacteristic != batteryCharacteristic',
+    'callbackGatt\.readCharacteristic\(callbackBatteryCharacteristic\)',
+    '\.put\("connected", connected\)',
+    'pmdFlowGeneration \+= 1L;',
+    'pendingCommandGeneration = pmdFlowGeneration;',
+    'connectedDeviceInstanceId = "none";',
+    'pendingConnectionDeviceInstanceId = "none";'
+) "authoritative Polar connection lifecycle"
+
+Assert-ContainsTokens $polarPanel @(
+    'Button startAll = button\("Start ACC \+ ECG"\)',
+    'startAllPmd\(\)',
+    'stopAllPmd\(\)',
+    'accPmdRunning',
+    'ecgPmdRunning',
+    'activePmdMode = accPmdRunning && ecgPmdRunning',
+    'nativeSubmitPolarEcgMeasurement',
+    'nativeSubmitPolarPmdFrame',
+    'nativeSubmitPolarHeartRateMeasurement',
+    'sampleTimeNs',
+    'nativeStartParallelBreathCapture',
+    'nativeStopParallelBreathCapture',
+    'SystemClock\.elapsedRealtimeNanos\(\)',
+    'refreshCaptureCompletion',
+    'Two-minute synchronized controller/Polar capture started',
+    'breath_source_captures',
+    'Executors\.newSingleThreadExecutor',
+    'nativeSetPolarAccPresentationMode',
+    'nativeReadPolarAccPresentationStatus',
+    'presentation_low_latency',
+    'presentation_timestamp_faithful',
+    'low-latency-smooth',
+    'timestamp-faithful',
+    'acc_presentation_delay_ms',
+    'acc_smoothing_time_constant_ms'
+) "parallel Polar streams, synchronized capture, and sample-time presentation"
+Assert-ContainsTokens "$controlPanel`n$polarPanel`n$polarRuntime`n$polarReceiver`n$polarOperator`n$breathCaptureOperator" @(
+    "polar_sensor_operator_status.json",
+    "rusty.quest.native_renderer.polar_sensor_operator_status.v2",
+    "dispatch_status",
+    "effect_status",
+    "operation_generation",
+    "capture_session_id",
+    "finishOperatorCommand",
+    "polar_status",
+    "POLAR_SENSOR_RUNTIME_COMMAND",
+    "PolarSensorCommandReceiver",
+    "PolarSensorRuntime",
+    "attachPanel",
+    "detachPanel",
+    "appContext",
+    "android.permission.DUMP",
+    "shell-authorized operator bridge",
+    "am', 'broadcast",
+    'foreground_activity_changed = \$false',
+    "ConnectivityPreflight",
+    "ControllerPreflight",
+    "FullRecording",
+    "controller_right_thumbstick",
+    "diagnostic-incomplete-not-recording",
+    "rr_consumed_by_breath",
+    "presentation_low_latency",
+    "presentation_timestamp_faithful",
+    'screenshot_required = \$false'
+) "fixed Polar operator and app-owned readback"
+if ($polarReceiver -match 'startActivity|ControlPanelActivity') {
+    throw "Headless Polar receiver must not foreground a panel or Activity"
+}
+if ($controlPanel -match 'polarSensorPanel\.stop\(\)') {
+    throw "ControlPanelActivity must detach, not stop, process-owned Polar acquisition"
+}
+if ($polarPanel -notmatch 'activity == null && devices\.size\(\) != 1' -or
+    $breathCaptureOperator -notmatch 'Headless connection requires exactly one compatible candidate') {
+    throw "Headless Polar selection must auto-select exactly one candidate and reject ambiguity"
+}
+if ($polarPanel.Contains('AccSample latest = frame.accSamples.get(frame.accSamples.size() - 1)')) {
+    throw "Polar ACC composition must not discard every PMD sample except the batch tail"
+}
+if ($polarPanel -notmatch 'for \(int sampleIndex = 0; sampleIndex < frame\.accSamples\.size\(\); sampleIndex\+\+\)') {
+    throw "Polar ACC composition must submit every decoded PMD sample"
+}
+if ($polarPanel.Contains('.put("connected", gatt != null)')) {
+    throw "Polar structured readback must not infer connection state from a non-null GATT handle"
+}
+if ($polarPanel.Contains('writeStatus("candidate-found"')) {
+    throw "Polar candidate discovery must update the cached structured status"
+}
+if ($polarPanel.Contains('setStatusState("candidate-found", "Found " + entry.label())')) {
+    throw "Polar structured candidate detail must not expose the raw device label"
+}
+if ($polarPanel.Contains('scanner.stopScan(scanCallback)')) {
+    throw "Polar scan shutdown must target the exact generation-owned callback"
+}
+$currentGattFenceCount = [regex]::Matches(
+    $polarPanel,
+    'if \(!isCurrentConnectedGatt\(callbackGatt\)\)'
+).Count
+if ($currentGattFenceCount -lt 6) {
+    throw "Polar async callbacks must reject stale connection generations; found only $currentGattFenceCount current-GATT fences"
+}
+
+Assert-ContainsTokens "$polarAdapters`n$breathAdapter`n$heartbeatAdapter`n$panelAction`n$panelBridge" @(
+    'PolarAccBreathSource',
+    'PolarRrPulseSource',
+    'RR_QUEUE_CAPACITY',
+    'SourceState::Disabled',
+    'SourceState::Missing',
+    'SourceState::Malformed',
+    'SourceState::Stale',
+    'polar_acc_synthetic_conformance_maps_configured_axis',
+    'polar_acc_output_is_bounded',
+    'rr_synthetic_conformance_emits_one_normalized_pulse',
+    'valid_event_emits_one_bounded_frame_then_returns_to_zero',
+    'right-secondary-triple-press-toggle',
+    'exactly_three_press_edges_trigger_one_deterministic_action',
+    'timeout_discards_incomplete_sequence',
+    'ControlPanelActivity'
+) "disabled-by-default Polar composition adapters"
+
+Assert-ContainsTokens $polarAccBreathAdapter @(
+    'PolarAccBreathAdapter',
+    'TimedPolarAccFrame',
+    'from_pmd_measurement',
+    'PolarAccProjection',
+    'CalibrationProjectionSpace::Xz',
+    'CalibrationProjectionSpace::Full3d',
+    'PolarAccelerationUnit',
+    'SensorTimestampOutOfOrder',
+    'CommonPhaseClassifier',
+    'CommonPhaseResetReason',
+    'polarAccPhaseCandidate',
+    'polarAccPhaseFilteredDerivativePerSecond',
+    'calibrated_projection_drives_confirmed_exhale_hold_inhale_and_resets_on_missing',
+    'ready_volume_is_bounded_and_responds_before_the_next_analysis_tick',
+    'calibration_failure_can_retry_with_a_fresh_generation',
+    'deterministic_action_replay_is_value_equal_in_memory'
+) "calibrated Polar ACC assessment adapter"
 
 foreach ($forbidden in @('WebView', 'addJavascriptInterface', 'androidx', 'AppSystemActivity', 'VrActivity', 'GLXF')) {
     if ($polarPanel -match $forbidden) {
@@ -95,6 +283,7 @@ Assert-ContainsTokens $feature @(
     '"feature_id": "sensor\.polar_h10_ble"',
     '"module_path": "sensor/polar-h10-ble"',
     '"ui\.same_apk_control_panel"',
+    '"android\.permission\.ACCESS_COARSE_LOCATION"',
     '"android\.permission\.BLUETOOTH_SCAN"',
     '"android\.permission\.BLUETOOTH_CONNECT"',
     '"android\.hardware\.bluetooth_le"',
@@ -105,6 +294,7 @@ Assert-ContainsTokens $feature @(
 ) "Polar native app feature"
 
 Assert-ContainsTokens "$resolver`n$pregrant" @(
+    'android\.permission\.ACCESS_COARSE_LOCATION',
     'android\.permission\.ACCESS_FINE_LOCATION',
     'android\.permission\.BLUETOOTH_CONNECT',
     'android\.permission\.BLUETOOTH_SCAN'

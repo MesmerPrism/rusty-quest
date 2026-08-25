@@ -53,6 +53,10 @@ $embeddedWebSocketPolicy = Read-RequiredText (Join-Path $appRoot "src\main\java\
 $embeddedManifoldAuthorityBridge = Read-RequiredText (Join-Path $appRoot "src\main\java\io\github\mesmerprism\rustyquest\native_renderer\EmbeddedManifoldRuntimeAuthorityBridge.java") "embedded Manifold Runtime Host authority bridge"
 $embeddedManifoldAdmissionLifecycle = Read-RequiredText (Join-Path $appRoot "src\main\java\io\github\mesmerprism\rustyquest\native_renderer\EmbeddedManifoldAdmissionLifecycle.java") "embedded platform-authenticated admission lifecycle"
 $nativeAppSettingsReader = Read-RequiredText (Join-Path $appRoot "src\main\java\io\github\mesmerprism\rustyquest\native_renderer\NativeAppSettingsReader.java") "native app settings reader"
+$lslPanelRuntime = Read-RequiredText (Join-Path $srcRoot "lsl_panel_runtime.rs") "panel-controlled LSL runtime"
+$lslRustyOutlet = Read-RequiredText (Join-Path $srcRoot "lsl_rusty_outlet.rs") "Rusty-LSL outlet adapter"
+$lslPanelConfigStore = Read-RequiredText (Join-Path $appRoot "src\main\java\io\github\mesmerprism\rustyquest\native_renderer\LslPanelConfigStore.java") "panel-controlled LSL config store"
+$lslPanelCommandReceiver = Read-RequiredText (Join-Path $appRoot "src\main\java\io\github\mesmerprism\rustyquest\native_renderer\LslPanelCommandReceiver.java") "panel-controlled LSL CLI receiver"
 $xrVulkan = Read-RequiredText (Join-Path $srcRoot "xr_vulkan.rs") "xr_vulkan facade"
 $buildScriptText = Read-RequiredText (Join-Path $repoRootPath "tools\Build-NativeRendererAndroid.ps1") "native Android build script"
 
@@ -146,7 +150,8 @@ Assert-ContainsTokens $controlPanel @(
     'onResume',
     'Close',
     'closePanelAndReturnToImmersive',
-    'finishAndRemoveTask',
+    'panelTaskRetained=true',
+    'RENDERER_RETURN_STABLE_FOCUS_MS',
     'FLAG_ACTIVITY_REORDER_TO_FRONT',
     'com.oculus.intent.category.VR',
     'android.app.NativeActivity',
@@ -211,6 +216,8 @@ Assert-ContainsTokens $nativeLib @(
     'panelActivity=ControlPanelActivity',
     'mod native_renderer_panel_bridge',
     'mod embedded_manifold_broker_bridge',
+    'mod lsl_panel_runtime',
+    'mod lsl_rusty_outlet',
     'mod native_renderer_stimulus_panel',
     'apply_app_private_candidate',
     'requestPermissions',
@@ -225,6 +232,59 @@ Assert-ContainsTokens $nativeLib @(
     'openxrSubmitReady=false',
     'vulkanExternalImportReady=false'
 ) "Rust NativeActivity scaffold"
+
+Assert-ContainsTokens $lslPanelRuntime @(
+    'rusty\.quest\.native_renderer\.lsl\.panel_command\.v1',
+    'OUTBOUND_QUEUE_CAPACITY',
+    'submit_polar_hr',
+    'submit_polar_acc',
+    'submit_controller_right_grip',
+    'submit_headset_views',
+    'apply_inlet_driver_values',
+    'inlet-driver-slot-reserved-or-out-of-range',
+    'rusty-lsl-persistent-inlet-not-supported',
+    'rusty-lsl-outlet-cannot-share-discovery-with-liblsl-inlet',
+    'RUSTY_LSL_SOURCE_COMMIT',
+    'push_f32_at'
+) "panel-controlled LSL runtime"
+
+Assert-ContainsTokens $lslRustyOutlet @(
+    'PersistentFloat32OutletRegistry',
+    'PersistentFloat32OutletRegistryLimits',
+    'try_push_chunk',
+    'connected_consumers',
+    '8b6b2a6cd0c0e5147b7e1cc076a116ef226cddbd',
+    'rusty-lsl-backend-not-compiled'
+) "Rusty-LSL outlet adapter"
+
+Assert-ContainsTokens $lslPanelConfigStore @(
+    'viscereality_lsl_panel',
+    'accepted_config_v1',
+    'SharedPreferences',
+    'readFromNative',
+    'defaultConfig',
+    'outlet_backend',
+    'inlet_backend',
+    'interface_ipv4'
+) "panel-controlled LSL config persistence"
+
+Assert-ContainsTokens $buildScriptText @(
+    'RUSTY_QUEST_NATIVE_RENDERER_RUSTY_LSL_ANDROID',
+    'rusty-lsl-backend',
+    'rusty_lsl_source_commit',
+    '4bfd1b1b5621af6706aafa9477e7a4f5764dd688'
+) "Rusty-LSL Android build closure"
+
+Assert-ContainsTokens $lslPanelCommandReceiver @(
+    'android\.permission\.DUMP',
+    'ACTION_COMMAND',
+    'command_b64',
+    'isOrderedBroadcast',
+    'applyLslTransportCommandFromOwner',
+    'LslPanelConfigStore\.save',
+    'LslMulticastLockManager\.setFromCli',
+    'setResultData'
+) "panel-controlled LSL CLI receiver"
 
 Assert-ContainsTokens $nativeAppSettings @(
     'load_from_apk_asset',
@@ -319,7 +379,7 @@ Assert-ContainsTokens $panelBridge @(
     'FLAG_ACTIVITY_REORDER_TO_FRONT',
     'FLAG_ACTIVITY_SINGLE_TOP',
     'startActivity',
-    'event=right-trigger-panel-toggle status=intent-sent'
+    'event=control-panel-toggle status=intent-sent'
 ) "Rust panel JNI toggle bridge"
 
 Assert-ContainsTokens $stimulusPanel @(

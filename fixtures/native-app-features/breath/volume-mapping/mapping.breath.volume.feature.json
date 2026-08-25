@@ -1,0 +1,24 @@
+{
+  "schema": "rusty.quest.native_app_feature.v1",
+  "feature_id": "mapping.breath.volume",
+  "module_path": "breath/mapping/volume",
+  "module_kind": "assessment-selection",
+  "settings_surface": {"authority": "rusty.quest.native_app_settings.v1", "adapter": "runtime_profile"},
+  "owner_lane": "rusty-quest",
+  "status": "public-substrate",
+  "description": "Selects the bounded calibrated continuous dimension from a common breath assessment.",
+  "provides": ["breath.mapping.volume"],
+  "depends_on": ["quest.native.openxr_vulkan_base"],
+  "incompatible_with": [],
+  "exclusive_groups": {},
+  "android_manifest": {"permissions": [], "uses_features": [], "activities": [], "services": [], "queries": []},
+  "runtime_profile": {
+    "set": {"debug.rustyquest.native_renderer.breath_composition.volume_mapping.enabled": "true"},
+    "clear_families": [],
+    "expected_render_modes": []
+  },
+  "build_inputs": {"env": [], "assets": [], "shaders": []},
+  "markers": {"required": [], "forbidden": []},
+  "validation": {"quick": [], "standard": [], "device": []},
+  "public_private_boundary": "This feature exposes only a bounded normalized value and never assigns an application effect."
+}
