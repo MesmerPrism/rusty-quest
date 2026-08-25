@@ -74,14 +74,28 @@ settings, or device authority.
 The authority job projects only GitHub's built-in read-only token as
 `GITHUB_TOKEN` to its base-owned adapter so it can page public PR comments.
 That token is not passed to a candidate checkout, another job, a secret, or an
-environment. The fallback accepts only the pinned verifier's exact terminal
-protected-without-base-approval hold: exit status, sole error record, and the
-adapter's closed Git-object assessment must all agree. It rejects prefix or
-suffix diagnostic text, extra output, different decisions or approval ids, and
-missing or malformed assessment fields. NUL-delimited Git paths are parsed as
-strict UTF-8, canonicalized, ordinally sorted, case-collision-free paths;
-malformed delimiters, duplicate/colliding paths, and incomplete changed or
-protected inventories reject before hashing or signing.
+environment. The fallback invokes the hash-verified pinned verifier through
+the workflow's fixed `windows-2025` child-`pwsh` transport. It accepts only
+exit status `1` and one `ErrorRecord` with exact type
+`System.Management.Automation.RemoteException`,
+`FullyQualifiedErrorId` `NativeCommandError`, category `NotSpecified`, and a
+target and exception message equal byte-for-byte to:
+
+```
+Exception: Protected changes do not match an exact base-approved change set.<CR><LF>
+```
+
+The terminal `CRLF` (`0D0A`) is the observed Windows PowerShell native-error
+transport envelope, not verifier policy text. A bare `LF`, no terminator,
+multiple terminators, whitespace, prefix/suffix text, another exception or
+record type, a different exit status, extra output (including stdout), a
+partial assessment, different decisions or approval ids, and missing or
+malformed assessment fields all reject. A runner or PowerShell transport change
+therefore fails closed and requires a separately reviewed trust-root update;
+the adapter does not trim or normalize diagnostics. NUL-delimited Git paths
+are parsed as strict UTF-8, canonicalized, ordinally sorted, case-collision-free
+paths; malformed delimiters, duplicate/colliding paths, and incomplete changed
+or protected inventories reject before hashing or signing.
 
 ## Extraordinary one-time trust-root bootstrap record
 
