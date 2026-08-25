@@ -106,6 +106,77 @@ try {
     }
     Assert-ExternalOwnerFallbackVerifierFailure `
         -ExitCode $serializedHold.exit_code -Output $serializedHold.output
+    $fileTransportVerifier = "C:\trusted-verifier\scripts\Test-ExternalValidationAuthority.ps1"
+    $fileTransportLine = 969
+    $fileTransportMessages = @(
+        "Exception: $fileTransportVerifier`:$fileTransportLine",
+        "Line |",
+        (" {0,3} |          throw `"Protected changes do not match an exact base-approved  …" -f $fileTransportLine),
+        "     |          ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~",
+        "     | $holdMessage"
+    )
+    $fileTransportIds = @(
+        "NativeCommandError",
+        "NativeCommandErrorMessage",
+        "NativeCommandErrorMessage",
+        "NativeCommandErrorMessage",
+        "NativeCommandErrorMessage"
+    )
+    function New-ExternalOwnerFileTransportFixture {
+        param(
+            [int]$MessageDamageIndex = -1,
+            [int]$FullyQualifiedErrorIdDamageIndex = -1,
+            [int]$CategoryDamageIndex = -1,
+            [int]$TargetDamageIndex = -1
+        )
+        return @(
+            for ($index = 0; $index -lt 5; $index++) {
+                $message = if ($index -eq $MessageDamageIndex) {
+                    $fileTransportMessages[$index] + " damage"
+                } else { $fileTransportMessages[$index] }
+                $id = if ($index -eq $FullyQualifiedErrorIdDamageIndex) {
+                    "PinnedVerifier"
+                } else { $fileTransportIds[$index] }
+                $category = if ($index -eq $CategoryDamageIndex) {
+                    [Management.Automation.ErrorCategory]::InvalidData
+                } else { [Management.Automation.ErrorCategory]::NotSpecified }
+                $target = if ($index -eq $TargetDamageIndex) {
+                    "wrong-target"
+                } elseif ($index -eq 0) { $message } else { "" }
+            New-ExternalOwnerChildFailureRecord `
+                    -Message $message -FullyQualifiedErrorId $id `
+                    -Category $category -Target $target
+            }
+        )
+    }
+    $fileTransportOutput = New-ExternalOwnerFileTransportFixture
+    Assert-ExternalOwnerFallbackVerifierFailure `
+        -ExitCode 1 -Output $fileTransportOutput `
+        -VerifierScript $fileTransportVerifier -VerifierHoldLine $fileTransportLine
+    $fileTransportDamageCases = @(
+        [pscustomobject]@{ name = "wrong-script"; line = $fileTransportLine; output = $fileTransportOutput; script = "C:\wrong\Test-ExternalValidationAuthority.ps1"; exit = 1 },
+        [pscustomobject]@{ name = "wrong-line"; line = ($fileTransportLine - 1); output = $fileTransportOutput; script = $fileTransportVerifier; exit = 1 },
+        [pscustomobject]@{ name = "record-count-short"; line = $fileTransportLine; output = @($fileTransportOutput | Select-Object -First 4); script = $fileTransportVerifier; exit = 1 },
+        [pscustomobject]@{ name = "record-count-extra"; line = $fileTransportLine; output = @($fileTransportOutput + $fileTransportOutput[4]); script = $fileTransportVerifier; exit = 1 },
+        [pscustomobject]@{ name = "exit"; line = $fileTransportLine; output = $fileTransportOutput; script = $fileTransportVerifier; exit = 2 },
+        [pscustomobject]@{ name = "fqid"; line = $fileTransportLine; output = (New-ExternalOwnerFileTransportFixture -FullyQualifiedErrorIdDamageIndex 1); script = $fileTransportVerifier; exit = 1 },
+        [pscustomobject]@{ name = "category"; line = $fileTransportLine; output = (New-ExternalOwnerFileTransportFixture -CategoryDamageIndex 2); script = $fileTransportVerifier; exit = 1 },
+        [pscustomobject]@{ name = "target"; line = $fileTransportLine; output = (New-ExternalOwnerFileTransportFixture -TargetDamageIndex 0); script = $fileTransportVerifier; exit = 1 }
+    )
+    foreach ($index in 0..4) {
+        $fileTransportDamageCases += [pscustomobject]@{
+            name = "renderer-record-$index"; line = $fileTransportLine
+            output = (New-ExternalOwnerFileTransportFixture -MessageDamageIndex $index)
+            script = $fileTransportVerifier; exit = 1
+        }
+    }
+    foreach ($damage in $fileTransportDamageCases) {
+        Assert-DamageRejected ("file-transport-" + $damage.name) {
+            Assert-ExternalOwnerFallbackVerifierFailure `
+                -ExitCode $damage.exit -Output $damage.output `
+                -VerifierScript $damage.script -VerifierHoldLine $damage.line
+        }
+    }
     foreach ($damage in @(
         [pscustomobject]@{ name = "hold-prefix"; exit = 1; output = @(New-ExternalOwnerChildFailureRecord "prefix $transportMessage") },
         [pscustomobject]@{ name = "hold-suffix"; exit = 1; output = @(New-ExternalOwnerChildFailureRecord ($transportMessage + "suffix")) },

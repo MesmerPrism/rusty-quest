@@ -318,21 +318,64 @@ function New-ExternalOwnerProtectedWithoutBaseApprovalAssessment {
 function Assert-ExternalOwnerFallbackVerifierFailure {
     param(
         [Parameter(Mandatory)][int]$ExitCode,
-        [Parameter(Mandatory)][AllowEmptyCollection()][object[]]$Output
+        [Parameter(Mandatory)][AllowEmptyCollection()][object[]]$Output,
+        [AllowEmptyString()][string]$VerifierScript = "",
+        [int]$VerifierHoldLine = 0
     )
     $holdMessage = "Protected changes do not match an exact base-approved change set."
     # The authority workflow is pinned to windows-2025.  A terminating throw
     # from its child pwsh process is transported through native stderr as this
     # exact RemoteException message, including one terminal CRLF.
     $transportMessage = "Exception: $holdMessage`r`n"
-    if ($ExitCode -ne 1 -or $Output.Count -ne 1 -or
-        $Output[0] -isnot [Management.Automation.ErrorRecord] -or
-        $null -eq $Output[0].Exception -or
-        $Output[0].Exception.GetType() -ne [Management.Automation.RemoteException] -or
-        [string]$Output[0].FullyQualifiedErrorId -cne "NativeCommandError" -or
-        [string]$Output[0].CategoryInfo.Category -cne "NotSpecified" -or
-        [string]$Output[0].TargetObject -cne $transportMessage -or
-        [string]$Output[0].Exception.Message -cne $transportMessage) {
+    if (
+        $ExitCode -eq 1 -and $Output.Count -eq 1 -and
+        $Output[0] -is [Management.Automation.ErrorRecord] -and
+        $null -ne $Output[0].Exception -and
+        $Output[0].Exception.GetType() -eq [Management.Automation.RemoteException] -and
+        [string]$Output[0].FullyQualifiedErrorId -ceq "NativeCommandError" -and
+        [string]$Output[0].CategoryInfo.Category -ceq "NotSpecified" -and
+        [string]$Output[0].TargetObject -ceq $transportMessage -and
+        [string]$Output[0].Exception.Message -ceq $transportMessage
+    ) {
+        return
+    }
+
+    # PowerShell 7.6's -File native-error renderer emits the trusted throw as
+    # five RemoteException records rather than the legacy one-record CRLF
+    # envelope.  It is accepted only when every record is the exact rendering
+    # of the hash-pinned verifier path, source line, and hold text.
+    if ([string]::IsNullOrWhiteSpace($VerifierScript) -or $VerifierHoldLine -eq 0) {
+        throw "Pinned verifier result is not the exact protected-without-base-approval hold."
+    }
+    $absoluteVerifierScript = [IO.Path]::GetFullPath($VerifierScript)
+    $expectedMessages = @(
+        "Exception: $absoluteVerifierScript`:$VerifierHoldLine",
+        "Line |",
+        (" {0,3} |          throw `"Protected changes do not match an exact base-approved  …" -f $VerifierHoldLine),
+        "     |          ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~",
+        "     | $holdMessage"
+    )
+    $expectedIds = @(
+        "NativeCommandError",
+        "NativeCommandErrorMessage",
+        "NativeCommandErrorMessage",
+        "NativeCommandErrorMessage",
+        "NativeCommandErrorMessage"
+    )
+    $currentFileTransport = $ExitCode -eq 1 -and $Output.Count -eq 5
+    for ($index = 0; $currentFileTransport -and $index -lt 5; $index++) {
+        $record = $Output[$index]
+        $expectedTarget = if ($index -eq 0) { $expectedMessages[$index] } else { "" }
+        $currentFileTransport =
+            $record -is [Management.Automation.ErrorRecord] -and
+            $null -ne $record.Exception -and
+            $record.Exception.GetType() -eq [Management.Automation.RemoteException] -and
+            [string]$record.FullyQualifiedErrorId -ceq $expectedIds[$index] -and
+            [string]$record.CategoryInfo.Category -ceq "NotSpecified" -and
+            [string]$record.TargetObject -ceq $expectedTarget -and
+            [string]$record.Exception.Message -ceq $expectedMessages[$index]
+    }
+    if (-not $currentFileTransport) {
         throw "Pinned verifier result is not the exact protected-without-base-approval hold."
     }
 }

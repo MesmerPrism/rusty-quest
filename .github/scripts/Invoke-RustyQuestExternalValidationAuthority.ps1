@@ -33,6 +33,7 @@ $ExpectedVerifierTree = "ead3855a2ecc5e1240e271d81a938985457f10e8"
 $ExpectedVerifierBytes = 35452
 $ExpectedVerifierSha256 = `
     "fcab9717b53bee594949d3d7ffc6126d91db0a4b7592241efab9f9cefcd5a5be"
+$ExpectedVerifierHoldLine = 969
 $PolicyPath = "config/external-validation-authority.json"
 $AssessmentSchemaPath = `
     "schemas/rusty.quest.external_validation_authority_assessment.v1.schema.json"
@@ -590,7 +591,9 @@ try {
         }
         try {
             Assert-ExternalOwnerFallbackVerifierFailure `
-                -ExitCode $verifierExit -Output $verifierOutput
+                -ExitCode $verifierExit -Output $verifierOutput `
+                -VerifierScript $verifierScript `
+                -VerifierHoldLine $ExpectedVerifierHoldLine
         } catch {
             throw "Pinned external validation verifier failed without the exact protected-without-base-approval hold: $($_.Exception.Message)"
         }
