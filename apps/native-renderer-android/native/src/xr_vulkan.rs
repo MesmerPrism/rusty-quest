@@ -2710,7 +2710,7 @@ unsafe fn run_projection_frames(
                     .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT),
             )
             .map_err(|error| format!("begin Vulkan command buffer: {error}"))?;
-        gpu_timestamp_tracker.reset_frame(vk_device, cmd, frame_slot);
+        gpu_timestamp_tracker.reset_frame(vk_device, cmd, frame_slot, frame_count);
         let stage_started = Instant::now();
         gpu_timestamp_tracker.write_stage_start(
             vk_device,
@@ -3304,6 +3304,13 @@ unsafe fn run_projection_frames(
                     frame_count,
                 )
             } else {
+                for stage in [
+                    GpuTimestampStage::PrivateParticleCompute,
+                    GpuTimestampStage::PrivateParticleComputeDispatch,
+                    GpuTimestampStage::PrivateParticleComputePostDispatchSync,
+                ] {
+                    gpu_timestamp_tracker.write_disabled_stage(vk_device, cmd, frame_slot, stage);
+                }
                 GpuPrivateParticleFrameStats::unavailable()
             };
         if private_particle_stats.half_res_offscreen_requested() {
@@ -5046,6 +5053,16 @@ unsafe fn record_projection_diagnostic(
             }
         }
     }
+    if !private_particle_half_res_tracers_only {
+        for stage in [
+            GpuTimestampStage::PrivateParticleMainFullResDrawLeftEye,
+            GpuTimestampStage::PrivateParticleMainFullResDrawRightEye,
+            GpuTimestampStage::PrivateParticleTracerHalfResDrawLeftEye,
+            GpuTimestampStage::PrivateParticleTracerHalfResDrawRightEye,
+        ] {
+            gpu_timestamp_tracker.write_disabled_stage(device, cmd, frame_slot, stage);
+        }
+    }
     for (eye_index, eye) in buffer.eyes.iter().enumerate() {
         let target_rect =
             projection_target_state.effective_rect(projection_metadata.rect_for_eye(eye_index));
@@ -5085,6 +5102,18 @@ unsafe fn record_projection_diagnostic(
             if let Some(stage) = half_res_draw_stage {
                 gpu_timestamp_tracker.write_stage_start(device, cmd, frame_slot, stage);
             }
+            let tracer_half_res_draw_stage = if private_particle_half_res_tracers_only {
+                match eye_index {
+                    0 => Some(GpuTimestampStage::PrivateParticleTracerHalfResDrawLeftEye),
+                    1 => Some(GpuTimestampStage::PrivateParticleTracerHalfResDrawRightEye),
+                    _ => None,
+                }
+            } else {
+                None
+            };
+            if let Some(stage) = tracer_half_res_draw_stage {
+                gpu_timestamp_tracker.write_stage_start(device, cmd, frame_slot, stage);
+            }
             if let Some(renderer) = gpu_private_particle_renderer {
                 renderer.record_half_res_offscreen_eye(
                     device,
@@ -5095,6 +5124,9 @@ unsafe fn record_projection_diagnostic(
                     private_particle_world_center_scale,
                     private_particle_stats,
                 );
+            }
+            if let Some(stage) = tracer_half_res_draw_stage {
+                gpu_timestamp_tracker.write_stage_end(device, cmd, frame_slot, stage);
             }
             if let Some(stage) = half_res_draw_stage {
                 gpu_timestamp_tracker.write_stage_end(device, cmd, frame_slot, stage);
@@ -5366,6 +5398,14 @@ unsafe fn record_projection_diagnostic(
                         if let Some(stage) = direct_draw_stage {
                             gpu_timestamp_tracker.write_stage_start(device, cmd, frame_slot, stage);
                         }
+                        let main_full_res_draw_stage = match eye_index {
+                            0 => Some(GpuTimestampStage::PrivateParticleMainFullResDrawLeftEye),
+                            1 => Some(GpuTimestampStage::PrivateParticleMainFullResDrawRightEye),
+                            _ => None,
+                        };
+                        if let Some(stage) = main_full_res_draw_stage {
+                            gpu_timestamp_tracker.write_stage_start(device, cmd, frame_slot, stage);
+                        }
                         renderer.record_overlay_eye_main_particles(
                             device,
                             cmd,
@@ -5374,6 +5414,9 @@ unsafe fn record_projection_diagnostic(
                             private_particle_world_center_scale,
                             private_particle_stats,
                         );
+                        if let Some(stage) = main_full_res_draw_stage {
+                            gpu_timestamp_tracker.write_stage_end(device, cmd, frame_slot, stage);
+                        }
                         if let Some(stage) = direct_draw_stage {
                             gpu_timestamp_tracker.write_stage_end(device, cmd, frame_slot, stage);
                         }

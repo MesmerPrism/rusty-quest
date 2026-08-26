@@ -142,6 +142,27 @@ Assert-ContainsTokens "$xrVulkanSurface`n$nativeRendererOptionSurface`n$nativeRe
     'gpu-timestamp-timing',
     'gpuTimestampQuerySupported',
     'gpuTimestampQueryReady',
+    'gpuTimestampFrameLag',
+    'gpuTimestampSubmittedFrameId',
+    'gpuTimestampMeasuredFrameId',
+    'gpuTimestampMeasuredFrameLagFrames',
+    'stage_active_mask',
+    'write_compute_stage_start',
+    'write_compute_stage_end',
+    'privateParticleComputeDispatchGpuMs',
+    'privateParticleComputeDispatchTimingScope=compute-shader-dispatch-stage',
+    'privateParticleComputePostDispatchSyncGpuMs',
+    'privateParticleComputePostDispatchSyncTimingScope=post-dispatch-visibility-and-diagnostic-host-sync-command-region',
+    'privateParticleComputeStageScope=single-dispatch-and-post-compute-sync',
+    'privateParticleWorkloadMarkerVersion=v1',
+    'privateParticleComputeLogicalParticleCount=',
+    'privateParticleComputeWorkgroupCount=',
+    'privateParticleComputeLocalSizeX=',
+    'privateParticleComputeLaunchedLaneCount=',
+    'privateParticleTracerStateSlotsVisited=',
+    'privateParticleDiagnosticSubmittedFrameId=',
+    'privateParticleDiagnosticMeasuredFrameId=',
+    'privateParticleDiagnosticMeasuredFrameLagFrames=',
     'cameraProjectionGpuMs',
     'guideGraphGpuMs',
     'handSdfGpuMs',
@@ -315,6 +336,40 @@ Assert-ContainsTokens "$xrVulkanSurface`n$nativeRendererOptionSurface`n$nativeRe
     'vulkan-probe'
 ) "OpenXR/Vulkan runtime route"
 
+foreach ($forbiddenToken in @(
+    'privateParticleOscillatorDimensionCount=',
+    'privateParticleCrossCouplingEvaluationsPerFrame=',
+    'privateParticleActiveNeighborEdgeEvaluations='
+)) {
+    if ($gpuPrivateParticles.Contains($forbiddenToken)) {
+        throw "Public private-particle workload marker must not expose private semantic token: $forbiddenToken"
+    }
+}
+if ($gpuPrivateParticles -notmatch '(?s)gpu_timestamp_tracker\.write_compute_stage_start\(\s*device,\s*cmd,\s*frame_slot,\s*GpuTimestampStage::PrivateParticleComputePostDispatchSync,\s*\);\s*let compute_to_sort') {
+    throw "Post-dispatch synchronization timestamp must begin at COMPUTE_SHADER"
+}
+if ($xrVulkanSurface -notmatch '(?s)\}\s*else\s*\{\s*for stage in \[\s*GpuTimestampStage::PrivateParticleCompute,\s*GpuTimestampStage::PrivateParticleComputeDispatch,\s*GpuTimestampStage::PrivateParticleComputePostDispatchSync,\s*\]\s*\{\s*gpu_timestamp_tracker\.write_disabled_stage\(vk_device,\s*cmd,\s*frame_slot,\s*stage\);\s*\}\s*GpuPrivateParticleFrameStats::unavailable\(\)') {
+    throw "Renderer-unavailable path must explicitly write disabled compute, dispatch, and post-sync queries"
+}
+if ($xrVulkanSurface -notmatch '(?s)if let Some\(stage\) = main_full_res_draw_stage \{\s*gpu_timestamp_tracker\.write_stage_start\(device,\s*cmd,\s*frame_slot,\s*stage\);\s*\}\s*renderer\.record_overlay_eye_main_particles\(.*?if let Some\(stage\) = main_full_res_draw_stage \{\s*gpu_timestamp_tracker\.write_stage_end\(device,\s*cmd,\s*frame_slot,\s*stage\);\s*\}\s*if let Some\(stage\) = direct_draw_stage \{\s*gpu_timestamp_tracker\.write_stage_end\(device,\s*cmd,\s*frame_slot,\s*stage\);\s*\}') {
+    throw "Main full-resolution inner timestamp must close before its outer draw span"
+}
+if ($xrVulkanSurface -notmatch '(?s)if let Some\(stage\) = tracer_half_res_draw_stage \{\s*gpu_timestamp_tracker\.write_stage_start\(device,\s*cmd,\s*frame_slot,\s*stage\);\s*\}\s*if let Some\(renderer\) = gpu_private_particle_renderer \{\s*renderer\.record_half_res_offscreen_eye\(.*?if let Some\(stage\) = tracer_half_res_draw_stage \{\s*gpu_timestamp_tracker\.write_stage_end\(device,\s*cmd,\s*frame_slot,\s*stage\);\s*\}\s*if let Some\(stage\) = half_res_draw_stage \{\s*gpu_timestamp_tracker\.write_stage_end\(device,\s*cmd,\s*frame_slot,\s*stage\);\s*\}') {
+    throw "Tracer half-resolution inner timestamp must close before its outer draw span"
+}
+foreach ($requiredWorkloadExpression in @(
+    'if self.anchor_echo_draw_echo_count == 0 {',
+    'privateParticleDrawBudgetCapacityInstances=',
+    'privateParticleDrawBudgetCapacityRows='
+)) {
+    if (-not $gpuPrivateParticles.Contains($requiredWorkloadExpression)) {
+        throw "Effective-runtime workload marker is missing required capacity/visit expression: $requiredWorkloadExpression"
+    }
+}
+if ($gpuPrivateParticles -notmatch '(?s)let tracer_output_slots_capacity = self\s*\.particle_count\s*\.saturating_mul\(self\.tracer_draw_slots_capacity\);') {
+    throw "Tracer output capacity must be derived from allocated per-particle slots"
+}
+
 Assert-ContainsLiteralTokens "$gpuPrivateParticles`n$xrVulkanSurface`n$nativeRendererTiming`n$nativeRendererOptionSurface`n$nativeBuildScript`n$privateParticlesVertex`n$privateParticlesFragment`n$privateParticlesOffscreenCompositeVertex`n$privateParticlesOffscreenCompositeFragment" @(
     'private_particles_offscreen_composite.vert.glsl',
     'private_particles_offscreen_composite.frag.glsl',
@@ -371,8 +426,18 @@ Assert-ContainsLiteralTokens "$gpuPrivateParticles`n$xrVulkanSurface`n$nativeRen
     'PrivateParticleHalfResDrawRightEye',
     'PrivateParticleHalfResCompositeLeftEye',
     'PrivateParticleHalfResCompositeRightEye',
+    'PrivateParticleMainFullResDrawLeftEye',
+    'PrivateParticleMainFullResDrawRightEye',
+    'PrivateParticleTracerHalfResDrawLeftEye',
+    'PrivateParticleTracerHalfResDrawRightEye',
     'privateParticleHalfResDrawGpuMs',
     'privateParticleHalfResCompositeGpuMs',
+    'privateParticleMainFullResDrawGpuMs',
+    'privateParticleMainFullResDrawTimingAvailable',
+    'privateParticleMainFullResDrawTimingScope=mixed-path-main-particles-only-full-resolution-draw-command-region',
+    'privateParticleTracerHalfResDrawGpuMs',
+    'privateParticleTracerHalfResDrawTimingAvailable',
+    'privateParticleTracerHalfResDrawTimingScope=mixed-path-tracer-instances-only-offscreen-half-resolution-draw-command-region',
     'privateParticleHalfResTimingScope=offscreen-render-pass-and-projection-composite',
     'layout(set = 0, binding = 0) uniform sampler2D u_private_particles_offscreen',
     'out_color = texture(u_private_particles_offscreen, v_uv)',

@@ -236,7 +236,7 @@ pub(super) fn write_projection_scorecard(
             record_ms,
             submit_ms,
             frame_timings.marker_fields(),
-            gpu_stage_timings.marker_fields(),
+            gpu_stage_timings.marker_fields(frame_count.saturating_sub(1)),
             stimulus_volume_scorecard_fields,
             "",
             extent.width,
@@ -417,7 +417,7 @@ pub(super) fn write_projection_scorecard(
             "status=frame frame={} observedOpenXrFps={:.1} {}",
             frame_count,
             observed_openxr_fps,
-            gpu_stage_timings.marker_fields()
+            gpu_stage_timings.marker_fields(frame_count.saturating_sub(1))
         ),
     );
     crate::marker(
