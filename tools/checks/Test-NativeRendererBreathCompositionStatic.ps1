@@ -91,15 +91,22 @@ $features = ($featurePaths | ForEach-Object { Read-RequiredText $_ "feature desc
 $closedWorldFeature = Get-Content -Raw -LiteralPath $featurePaths[0] | ConvertFrom-Json
 $conformanceAppSpec = $appSpec | ConvertFrom-Json
 
-$inversionProperty = "debug.rustyquest.native_renderer.breath_composition.inverted"
-if ($closedWorldFeature.runtime_profile.set.PSObject.Properties.Name -contains $inversionProperty) {
-    throw "Closed-world breath feature must not override the app-owned inversion selection."
+$appOwnedSelectionDefaults = [ordered]@{
+    "debug.rustyquest.native_renderer.breath_composition.inverted" = "false"
+    "debug.rustyquest.native_renderer.breath_composition.mapping" = "volume"
+    "debug.rustyquest.native_renderer.breath_composition.source" = "controller"
 }
-if ([string]$conformanceAppSpec.settings_assertions.required_values."native_renderer.breath_composition.inverted" -cne "false") {
-    throw "Conformance app must retain its explicit non-inverted default after inversion ownership moves out of the feature descriptor."
-}
-if ([string]$conformanceAppSpec.runtime_profile.set.$inversionProperty -cne "false") {
-    throw "Conformance app must own its explicit non-inverted runtime value after inversion ownership moves out of the feature descriptor."
+foreach ($entry in $appOwnedSelectionDefaults.GetEnumerator()) {
+    if ($closedWorldFeature.runtime_profile.set.PSObject.Properties.Name -contains $entry.Key) {
+        throw "Closed-world breath feature must not override app-owned selection $($entry.Key)."
+    }
+    $settingsName = $entry.Key.Replace("debug.rustyquest.", "")
+    if ([string]$conformanceAppSpec.settings_assertions.required_values.$settingsName -cne $entry.Value) {
+        throw "Conformance app must retain explicit selection $settingsName=$($entry.Value)."
+    }
+    if ([string]$conformanceAppSpec.runtime_profile.set.$($entry.Key) -cne $entry.Value) {
+        throw "Conformance app must own runtime selection $($entry.Key)=$($entry.Value)."
+    }
 }
 
 Assert-Tokens $panel @(

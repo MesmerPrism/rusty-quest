@@ -23,9 +23,7 @@
     "set": {
       "debug.rustyquest.native_renderer.breath_composition.controller_projection": "dynamic-axis",
       "debug.rustyquest.native_renderer.breath_composition.enabled": "true",
-      "debug.rustyquest.native_renderer.breath_composition.mapping": "volume",
       "debug.rustyquest.native_renderer.breath_composition.polar_projection": "xz",
-      "debug.rustyquest.native_renderer.breath_composition.source": "controller",
       "debug.rustyquest.native_renderer.breath_composition.stale_millis": "500"
     },
     "clear_families": [],
