@@ -317,19 +317,19 @@ $dynamicCheckoutUses = @([regex]::Matches(
     $dynamicWorkflow,
     'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1'
 ))
-if ($dynamicCheckoutUses.Count -ne 5) {
-    throw "Dynamic validation must use five exact pinned source checkouts."
+if ($dynamicCheckoutUses.Count -ne 7) {
+    throw "Dynamic validation must use seven exact pinned source checkouts."
 }
 $dynamicUses = @([regex]::Matches($dynamicWorkflow, '(?m)^\s+uses:\s+'))
-if ($dynamicUses.Count -ne 6) {
-    throw "Dynamic validation may use only five checkouts and exact Java setup."
+if ($dynamicUses.Count -ne 8) {
+    throw "Dynamic validation may use only seven checkouts and exact Java setup."
 }
 foreach ($binding in @(
-    [pscustomobject]@{ pattern = 'fetch-depth: 0'; count = 1 },
-    [pscustomobject]@{ pattern = 'fetch-depth: 1'; count = 4 },
-    [pscustomobject]@{ pattern = 'lfs: false'; count = 5 },
-    [pscustomobject]@{ pattern = 'persist-credentials: false'; count = 5 },
-    [pscustomobject]@{ pattern = 'submodules: false'; count = 5 },
+    [pscustomobject]@{ pattern = 'fetch-depth: 0'; count = 2 },
+    [pscustomobject]@{ pattern = 'fetch-depth: 1'; count = 5 },
+    [pscustomobject]@{ pattern = 'lfs: false'; count = 7 },
+    [pscustomobject]@{ pattern = 'persist-credentials: false'; count = 7 },
+    [pscustomobject]@{ pattern = 'submodules: false'; count = 7 },
     [pscustomobject]@{
         pattern = 'actions/setup-java@03ad4de0992f5dab5e18fcb136590ce7c4a0ac95'
         count = 1
@@ -373,6 +373,175 @@ foreach ($forbidden in @(
 )) {
     if ($dynamicWorkflow -match $forbidden) {
         throw "Dynamic validation workflow contains forbidden authority: $forbidden"
+    }
+}
+function Assert-TransportEnvelopeDiagnosticBoundary {
+    param([Parameter(Mandatory)][string]$Content)
+
+    $diagnosticMatch = [regex]::Match(
+        $Content,
+        '(?ms)^  transport-envelope-diagnostic:\s*\r?\n(?<body>.*)\z'
+    )
+    if (-not $diagnosticMatch.Success) {
+        throw "Transport diagnostic job is missing or is not the final bounded job."
+    }
+    $diagnostic = $diagnosticMatch.Value
+    foreach ($token in @(
+        '(?m)^    name: Child PowerShell transport fingerprint \(non-authoritative\)\s*$',
+        '(?m)^    runs-on: windows-2025\s*$',
+        '(?m)^    timeout-minutes: 10\s*$',
+        '(?m)^          path: trusted-base\s*$',
+        '(?m)^          ref: \$\{\{ github\.event\.pull_request\.base\.sha \}\}\s*$',
+        '(?m)^          path: pinned-verifier\s*$',
+        '(?m)^          ref: 50a4c5222c9d6c4567bac09405e43049c61b126f\s*$',
+        '(?m)^          repository: MesmerPrism/rusty-morphospace-work-environment\s*$',
+        'EVENT_BASE_REF: \$\{\{ github\.event\.pull_request\.base\.ref \}\}',
+        'EVENT_BASE_REPOSITORY: \$\{\{ github\.event\.pull_request\.base\.repo\.full_name \}\}',
+        'EVENT_BASE_SHA: \$\{\{ github\.event\.pull_request\.base\.sha \}\}',
+        'EVENT_HEAD_REPOSITORY: \$\{\{ github\.event\.pull_request\.head\.repo\.full_name \}\}',
+        'EVENT_HEAD_SHA: \$\{\{ github\.event\.pull_request\.head\.sha \}\}',
+        'PR_NUMBER_EXACT: \$\{\{ github\.event\.pull_request\.number \}\}',
+        'REPOSITORY_EXACT: \$\{\{ github\.repository \}\}',
+        'candidate_code_executed = \$false',
+        'non_authoritative = \$true',
+        'rusty\.quest\.external_validation_transport_fingerprint\.v1',
+        'pull_request_number = \[int\]\$env:PR_NUMBER_EXACT',
+        'base = \[ordered\]@\{ repository = \$env:EVENT_BASE_REPOSITORY; ref = \$env:EVENT_BASE_REF; commit = \$env:EVENT_BASE_SHA \}',
+        'head = \[ordered\]@\{ repository = \$env:EVENT_HEAD_REPOSITORY; commit = \$env:EVENT_HEAD_SHA \}',
+        'policyBlob = \(git -C \$baseRoot rev-parse --verify',
+        'git_blob = \$policyBlob',
+        'Get-TransportText',
+        '-gt 512',
+        '\[Diagnostics\.ProcessStartInfo\]::new\(\)',
+        'RedirectStandardOutput = \$true',
+        'RedirectStandardError = \$true',
+        '"-File", \$verifierScript',
+        '\$records = @\(& \$pwsh @arguments 2>&1\)',
+        'record_count = \$recordRows\.Count',
+        'fully_qualified_error_id',
+        'message = \[ordered\]@\{ bytes = \$messageBytes\.Length; sha256 = Get-Sha256 \$messageBytes; escaped_text = Get-TransportText \$message \}'
+    )) {
+        if ($diagnostic -notmatch $token) {
+            throw "Transport diagnostic is missing required bounded token: $token"
+        }
+    }
+    foreach ($forbidden in @(
+        'GITHUB_TOKEN',
+        'github\.token',
+        'secrets\.',
+        'pull_request_target',
+        'workflow_dispatch',
+        'actions/upload-artifact',
+        'actions/cache',
+        'path:\s*rusty-quest',
+        'working-directory:',
+        'ref:\s*\$\{\{\s*github\.event\.pull_request\.head\.sha',
+        'Invoke-RustyQuestExternalValidationAuthority',
+        'Test-PackageUpdater',
+        'cargo\s',
+        'gh\s+',
+        'Invoke-RestMethod',
+        'Invoke-WebRequest',
+        'Start-Process'
+    )) {
+        if ($diagnostic -match $forbidden) {
+            throw "Transport diagnostic contains forbidden authority or candidate execution: $forbidden"
+        }
+    }
+    $scriptMatch = [regex]::Match(
+        $diagnostic,
+        '(?ms)- name: Fingerprint pinned child PowerShell transport \(non-authoritative\).*?' +
+            'run: \|\r?\n(?<body>(?: {10}[^\r\n]*\r?\n)+)'
+    )
+    if (-not $scriptMatch.Success) {
+        throw "Transport diagnostic PowerShell block is not bounded."
+    }
+    $script = [regex]::Replace(
+        $scriptMatch.Groups['body'].Value,
+        '(?m)^ {10}',
+        ''
+    )
+    $tokens = $null
+    $errors = $null
+    $diagnosticAst = [Management.Automation.Language.Parser]::ParseInput(
+        $script, [ref]$tokens, [ref]$errors
+    )
+    if ($errors.Count -ne 0) {
+        throw "Transport diagnostic PowerShell parse failed: $($errors[0].Message)"
+    }
+    foreach ($command in @($diagnosticAst.FindAll({
+                param($node)
+                $node -is [Management.Automation.Language.CommandAst]
+            }, $true))) {
+        $executable = $command.GetCommandName()
+        if ($executable -cnotmatch '^(?:git|git\.exe)$') {
+            continue
+        }
+        $elements = @($command.CommandElements)
+        $index = 1
+        while ($index -lt $elements.Count) {
+            $token = [string]$elements[$index].Extent.Text
+            if ($token -cmatch '^(?:-C|-c|--config-env|--exec-path|--git-dir|--work-tree|--namespace|--super-prefix)$') {
+                $index += 2
+                continue
+            }
+            if ($token -cmatch '^(?:-C|-c|--config-env|--exec-path|--git-dir|--work-tree|--namespace|--super-prefix)=') {
+                $index++
+                continue
+            }
+            if ($token -cmatch '^-' -and $token -cnotin @('--')) {
+                $index++
+                continue
+            }
+            if ($token -cin @('checkout', 'switch', 'worktree')) {
+                throw "Transport diagnostic contains candidate materialization command '$token' through Git executable '$executable'."
+            }
+            break
+        }
+    }
+}
+Assert-TransportEnvelopeDiagnosticBoundary $dynamicWorkflow
+$transportCandidateRefDamage = $dynamicWorkflow -replace
+    '(?ms)(transport-envelope-diagnostic:.*?path: trusted-base\r?\n\s+persist-credentials: false\r?\n\s+ref: )\$\{\{ github\.event\.pull_request\.base\.sha \}\}',
+    '$1${{ github.event.pull_request.head.sha }}'
+$transportCandidateRefRejected = $false
+try { Assert-TransportEnvelopeDiagnosticBoundary $transportCandidateRefDamage } catch { $transportCandidateRefRejected = $true }
+if (-not $transportCandidateRefRejected) {
+    throw "Transport diagnostic accepted a candidate checkout ref."
+}
+$transportExecutionDamage = $dynamicWorkflow -replace
+    'candidate_code_executed = \$false',
+    'candidate_code_executed = $true'
+$transportExecutionRejected = $false
+try { Assert-TransportEnvelopeDiagnosticBoundary $transportExecutionDamage } catch { $transportExecutionRejected = $true }
+if (-not $transportExecutionRejected) {
+    throw "Transport diagnostic accepted a candidate-execution assertion."
+}
+$transportMaterializationDamages = @(
+    [pscustomobject]@{ label = 'bare checkout'; command = 'git checkout --detach $env:EVENT_HEAD_SHA' },
+    [pscustomobject]@{ label = 'base-root checkout'; command = '& git -C $baseRoot checkout --detach $env:EVENT_HEAD_SHA' },
+    [pscustomobject]@{ label = 'path-qualified switch'; command = 'git -C "$env:RUNNER_TEMP\trusted-base" switch --detach $env:EVENT_HEAD_SHA' },
+    [pscustomobject]@{ label = 'base-root worktree'; command = 'git -C $baseRoot worktree add "$env:RUNNER_TEMP\candidate" $env:EVENT_HEAD_SHA' },
+    [pscustomobject]@{ label = 'bare worktree'; command = 'git worktree add candidate $env:EVENT_HEAD_SHA' },
+    [pscustomobject]@{ label = 'git executable checkout'; command = 'git.exe checkout --detach $env:EVENT_HEAD_SHA' },
+    [pscustomobject]@{ label = 'global-option checkout'; command = 'git --no-pager checkout --detach $env:EVENT_HEAD_SHA' },
+    [pscustomobject]@{ label = 'equals-C switch'; command = 'git -C=$baseRoot switch --detach $env:EVENT_HEAD_SHA' },
+    [pscustomobject]@{ label = 'combined global worktree'; command = 'git -C $baseRoot --no-pager worktree add "$env:RUNNER_TEMP\candidate" $env:EVENT_HEAD_SHA' }
+)
+foreach ($damage in $transportMaterializationDamages) {
+    $damagedDiagnostic = $dynamicWorkflow.TrimEnd("`r", "`n") +
+        "`n          $($damage.command)`n"
+    $rejected = $false
+    try {
+        Assert-TransportEnvelopeDiagnosticBoundary $damagedDiagnostic
+    } catch {
+        if ($_.Exception.Message -cnotmatch 'candidate materialization command') {
+            throw "Transport materialization damage '$($damage.label)' rejected for the wrong reason: $($_.Exception.Message)"
+        }
+        $rejected = $true
+    }
+    if (-not $rejected) {
+        throw "Transport diagnostic accepted materialization damage: $($damage.label)"
     }
 }
 $topologyScriptMatch = [regex]::Match(

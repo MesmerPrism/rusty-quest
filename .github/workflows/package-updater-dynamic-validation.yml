@@ -206,3 +206,173 @@ jobs:
         run: |
           Write-Output "Credential-free candidate checks completed."
           Write-Output "This check does not validate owner effects, accept work, or authorize publication."
+
+  transport-envelope-diagnostic:
+    name: Child PowerShell transport fingerprint (non-authoritative)
+    runs-on: windows-2025
+    timeout-minutes: 10
+    steps:
+      - name: Checkout exact trusted base
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          lfs: false
+          path: trusted-base
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.base.sha }}
+          submodules: false
+
+      - name: Checkout pinned external verifier
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+          lfs: false
+          path: pinned-verifier
+          persist-credentials: false
+          ref: 50a4c5222c9d6c4567bac09405e43049c61b126f
+          repository: MesmerPrism/rusty-morphospace-work-environment
+          submodules: false
+
+      - name: Fingerprint pinned child PowerShell transport (non-authoritative)
+        shell: pwsh
+        env:
+          EVENT_BASE_REF: ${{ github.event.pull_request.base.ref }}
+          EVENT_BASE_REPOSITORY: ${{ github.event.pull_request.base.repo.full_name }}
+          EVENT_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          EVENT_HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
+          EVENT_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_NUMBER_EXACT: ${{ github.event.pull_request.number }}
+          REPOSITORY_EXACT: ${{ github.repository }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $expectedRepository = "MesmerPrism/rusty-quest"
+          $expectedVerifierCommit = "50a4c5222c9d6c4567bac09405e43049c61b126f"
+          $expectedVerifierTree = "ead3855a2ecc5e1240e271d81a938985457f10e8"
+          $policyPath = "config/external-validation-authority.json"
+          if ($env:REPOSITORY_EXACT -cne $expectedRepository -or
+              $env:EVENT_BASE_REPOSITORY -cne $expectedRepository -or
+              $env:EVENT_BASE_REF -cne "main" -or
+              $env:EVENT_HEAD_REPOSITORY -cnotmatch '^[A-Za-z0-9_.-]{1,100}/[A-Za-z0-9_.-]{1,100}$' -or
+              $env:EVENT_BASE_SHA -cnotmatch '^[0-9a-f]{40}$' -or
+              $env:EVENT_HEAD_SHA -cnotmatch '^[0-9a-f]{40}$' -or
+              $env:PR_NUMBER_EXACT -cnotmatch '^[1-9][0-9]{0,9}$') {
+            throw "Transport diagnostic event identity differs."
+          }
+          $baseRoot = [IO.Path]::GetFullPath("trusted-base")
+          $verifierRoot = [IO.Path]::GetFullPath("pinned-verifier")
+          if ((git -C $baseRoot rev-parse HEAD).Trim() -cne $env:EVENT_BASE_SHA -or
+              (git -C $baseRoot status --porcelain=v1 --untracked-files=all).Length -ne 0 -or
+              (git -C $verifierRoot rev-parse HEAD).Trim() -cne $expectedVerifierCommit -or
+              (git -C $verifierRoot rev-parse 'HEAD^{tree}').Trim() -cne $expectedVerifierTree -or
+              (git -C $verifierRoot status --porcelain=v1 --untracked-files=all).Length -ne 0) {
+            throw "Transport diagnostic checkout identity differs."
+          }
+          $privateHead = "refs/transport-diagnostic/pr-$($env:PR_NUMBER_EXACT)/head"
+          & git -C $baseRoot fetch --force --no-tags --no-write-fetch-head origin `
+            "+refs/pull/$($env:PR_NUMBER_EXACT)/head`:$privateHead" 1>$null 2>$null
+          if ($LASTEXITCODE -ne 0 -or
+              (git -C $baseRoot rev-parse --verify "$privateHead^{commit}").Trim() -cne $env:EVENT_HEAD_SHA -or
+              (git -C $baseRoot rev-parse HEAD).Trim() -cne $env:EVENT_BASE_SHA -or
+              (git -C $baseRoot status --porcelain=v1 --untracked-files=all).Length -ne 0) {
+            throw "Transport diagnostic candidate object identity differs."
+          }
+          $verifierScript = Join-Path $verifierRoot "scripts/Test-ExternalValidationAuthority.ps1"
+          $genericOutput = Join-Path $env:RUNNER_TEMP "transport-diagnostic-generic.json"
+          if (Test-Path -LiteralPath $genericOutput) { throw "Transport diagnostic output already exists." }
+          $policyBlob = (git -C $baseRoot rev-parse --verify "$($env:EVENT_BASE_SHA):$policyPath").Trim()
+          if ($LASTEXITCODE -ne 0 -or $policyBlob -cnotmatch '^[0-9a-f]{40}$') {
+            throw "Transport diagnostic policy object differs."
+          }
+          function Get-Sha256([byte[]]$Bytes) {
+            return ([Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($Bytes))).ToLowerInvariant()
+          }
+          function Get-TransportText([AllowEmptyString()][string]$Value) {
+            $safe = $Value.Replace($verifierRoot, "<verifier-root>").Replace($baseRoot, "<base-root>")
+            $builder = [Text.StringBuilder]::new()
+            foreach ($character in $safe.ToCharArray()) {
+              $piece = switch ([int][char]$character) {
+                13 { "\\r"; break }
+                10 { "\\n"; break }
+                9 { "\\t"; break }
+                { $_ -ge 32 -and $_ -le 126 } { [string]$character; break }
+                default { ("\\u{0:x4}" -f [int][char]$character); break }
+              }
+              if ($builder.Length + $piece.Length -gt 512) { break }
+              [void]$builder.Append($piece)
+            }
+            return $builder.ToString()
+          }
+          $pwsh = (Get-Command pwsh -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
+          $arguments = @(
+            "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", $verifierScript,
+            "-RepositoryRoot", $baseRoot, "-PolicyPath", $policyPath,
+            "-Repository", $expectedRepository, "-BaseCommit", $env:EVENT_BASE_SHA,
+            "-CandidateCommit", $env:EVENT_HEAD_SHA, "-OutPath", $genericOutput
+          )
+          $processInfo = [Diagnostics.ProcessStartInfo]::new()
+          $processInfo.FileName = $pwsh
+          $processInfo.UseShellExecute = $false
+          $processInfo.CreateNoWindow = $true
+          $processInfo.RedirectStandardOutput = $true
+          $processInfo.RedirectStandardError = $true
+          foreach ($argument in $arguments) { [void]$processInfo.ArgumentList.Add($argument) }
+          $process = [Diagnostics.Process]::new()
+          $process.StartInfo = $processInfo
+          try {
+            if (-not $process.Start()) { throw "Transport diagnostic child did not start." }
+            $stdoutTask = $process.StandardOutput.ReadToEndAsync()
+            $stderrTask = $process.StandardError.ReadToEndAsync()
+            if (-not $process.WaitForExit(55000)) {
+              try { $process.Kill($true) } catch { }
+              throw "Transport diagnostic child exceeded 55 seconds."
+            }
+            $rawExit = $process.ExitCode
+            $rawStdout = $stdoutTask.GetAwaiter().GetResult()
+            $rawStderr = $stderrTask.GetAwaiter().GetResult()
+          } finally {
+            $process.Dispose()
+          }
+          $utf8 = [Text.UTF8Encoding]::new($false)
+          $previousErrorActionPreference = $ErrorActionPreference
+          try {
+            $ErrorActionPreference = "Continue"
+            $records = @(& $pwsh @arguments 2>&1)
+            $recordExit = $LASTEXITCODE
+          } finally {
+            $ErrorActionPreference = $previousErrorActionPreference
+          }
+          if ($rawExit -ne 1 -or $recordExit -ne 1 -or (Test-Path -LiteralPath $genericOutput)) {
+            throw "Transport diagnostic did not observe the expected non-assessment hold."
+          }
+          $recordRows = @($records | ForEach-Object {
+            $record = $_
+            $isError = $record -is [Management.Automation.ErrorRecord]
+            $message = if ($isError) { [string]$record.Exception.Message } else { [string]$record }
+            $target = if ($isError) { [string]$record.TargetObject } else { "" }
+            $messageBytes = $utf8.GetBytes($message)
+            $targetBytes = $utf8.GetBytes($target)
+            [ordered]@{
+              type = $record.GetType().FullName
+              fully_qualified_error_id = if ($isError) { [string]$record.FullyQualifiedErrorId } else { $null }
+              category = if ($isError) { [string]$record.CategoryInfo.Category } else { $null }
+              target = [ordered]@{ bytes = $targetBytes.Length; sha256 = Get-Sha256 $targetBytes; escaped_text = Get-TransportText $target }
+              message = [ordered]@{ bytes = $messageBytes.Length; sha256 = Get-Sha256 $messageBytes; escaped_text = Get-TransportText $message }
+            }
+          })
+          $rawStdoutBytes = $utf8.GetBytes($rawStdout)
+          $rawStderrBytes = $utf8.GetBytes($rawStderr)
+          $policyBytes = [IO.File]::ReadAllBytes((Join-Path $baseRoot $policyPath))
+          [ordered]@{
+            schema = "rusty.quest.external_validation_transport_fingerprint.v1"
+            non_authoritative = $true
+            candidate_code_executed = $false
+            event = [ordered]@{
+              pull_request_number = [int]$env:PR_NUMBER_EXACT
+              base = [ordered]@{ repository = $env:EVENT_BASE_REPOSITORY; ref = $env:EVENT_BASE_REF; commit = $env:EVENT_BASE_SHA }
+              head = [ordered]@{ repository = $env:EVENT_HEAD_REPOSITORY; commit = $env:EVENT_HEAD_SHA }
+            }
+            policy = [ordered]@{ path = $policyPath; git_blob = $policyBlob; bytes = $policyBytes.Length; sha256 = Get-Sha256 $policyBytes }
+            verifier = [ordered]@{ commit = $expectedVerifierCommit; tree = $expectedVerifierTree }
+            raw_child = [ordered]@{ exit_code = $rawExit; stdout = [ordered]@{ bytes = $rawStdoutBytes.Length; sha256 = Get-Sha256 $rawStdoutBytes }; stderr = [ordered]@{ bytes = $rawStderrBytes.Length; sha256 = Get-Sha256 $rawStderrBytes } }
+            parent_collection = [ordered]@{ exit_code = $recordExit; record_count = $recordRows.Count; records = $recordRows }
+          } | ConvertTo-Json -Compress -Depth 12 | Write-Output
