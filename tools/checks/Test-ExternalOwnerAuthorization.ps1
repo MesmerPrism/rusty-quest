@@ -355,6 +355,41 @@ try {
             -ProtectedPaths @($secondArtifact.path) -ProtectedArtifacts $artifacts
     }
     $request = New-ExternalOwnerAuthorizationRequest -Policy $policy -PullRequestNumber 53 -Base ([ordered]@{commit=("1"*40);tree=("2"*40)}) -Head ([ordered]@{commit=("3"*40);tree=("4"*40)}) -ChangedArtifacts $artifacts -ProtectedArtifacts $artifacts -Assessment $assessment
+    $ordinalArtifacts = @(
+        [ordered]@{ path = "README.md"; state = "present"; mode = "100644"; size_bytes = 3; sha256 = ("b" * 64) },
+        [ordered]@{ path = "config/external-validation-authority.json"; state = "present"; mode = "100644"; size_bytes = 3; sha256 = ("c" * 64) }
+    )
+    $ordinalRequest = New-ExternalOwnerAuthorizationRequest `
+        -Policy $policy -PullRequestNumber 53 `
+        -Base ([ordered]@{commit=("1"*40);tree=("2"*40)}) `
+        -Head ([ordered]@{commit=("3"*40);tree=("4"*40)}) `
+        -ChangedArtifacts $ordinalArtifacts -ProtectedArtifacts $ordinalArtifacts `
+        -Assessment $assessment
+    if ((@($ordinalRequest.changed_artifacts | ForEach-Object { [string]$_.path }) -join "`n") -cne (@($ordinalArtifacts | ForEach-Object { [string]$_.path }) -join "`n")) {
+        throw "Authorization request did not preserve ordinal mixed-case artifact order."
+    }
+    Assert-DamageRejected "authorization-request-reversed-ordinal-artifacts" {
+        $null = New-ExternalOwnerAuthorizationRequest `
+            -Policy $policy -PullRequestNumber 53 `
+            -Base ([ordered]@{commit=("1"*40);tree=("2"*40)}) `
+            -Head ([ordered]@{commit=("3"*40);tree=("4"*40)}) `
+            -ChangedArtifacts @($ordinalArtifacts[1], $ordinalArtifacts[0]) `
+            -ProtectedArtifacts @($ordinalArtifacts[1], $ordinalArtifacts[0]) `
+            -Assessment $assessment
+    }
+    $caseCollidingArtifacts = @(
+        [ordered]@{ path = "README.md"; state = "present"; mode = "100644"; size_bytes = 3; sha256 = ("d" * 64) },
+        [ordered]@{ path = "readme.md"; state = "present"; mode = "100644"; size_bytes = 3; sha256 = ("e" * 64) }
+    )
+    Assert-DamageRejected "authorization-request-case-colliding-artifacts" {
+        $null = New-ExternalOwnerAuthorizationRequest `
+            -Policy $policy -PullRequestNumber 53 `
+            -Base ([ordered]@{commit=("1"*40);tree=("2"*40)}) `
+            -Head ([ordered]@{commit=("3"*40);tree=("4"*40)}) `
+            -ChangedArtifacts $caseCollidingArtifacts `
+            -ProtectedArtifacts $caseCollidingArtifacts `
+            -Assessment $assessment
+    }
     $payload = New-ExternalOwnerAuthorizationPayload -Request $request -AuditId "external-owner-pr53-00000000000000000000000000000000" -IssuedAt "2026-08-22T15:59:00Z" -ExpiresAt "2026-08-22T16:59:00Z"
     [byte[]]$canonical = Get-CanonicalAuthorizationBytes $payload
     $signature = $rsa.SignData($canonical, [Security.Cryptography.HashAlgorithmName]::SHA256, [Security.Cryptography.RSASignaturePadding]::Pss)
