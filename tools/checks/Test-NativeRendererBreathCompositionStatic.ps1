@@ -23,6 +23,44 @@ function Assert-Tokens {
     }
 }
 
+function Assert-PanelNavigationMutationSafe {
+    param([string]$Text)
+    $replaceStart = $Text.IndexOf("private void replaceViscerealityPanelContent(String topic)")
+    $replaceEnd = $Text.IndexOf("private void invalidatePrivateParticleControls()", $replaceStart)
+    if ($replaceStart -lt 0 -or $replaceEnd -le $replaceStart) {
+        throw "Panel navigation mutation guard could not isolate the topic replacement method"
+    }
+    $replaceMethod = $Text.Substring($replaceStart, $replaceEnd - $replaceStart)
+    Assert-Tokens $replaceMethod @(
+        "cancelPendingPrivateParticleDynamicsApply();",
+        "invalidatePrivateParticleControls();",
+        "viscerealityPanelNavigationEpoch += 1L;",
+        "setContentView(buildViscerealityControlPanelView());"
+    ) "read-only topic replacement"
+    foreach ($forbidden in @(
+        "submitLivePrivateParticleDynamics",
+        "nativeSubmitLivePrivateParticleDynamics",
+        "applyBreathCompositionCommand",
+        "applyLslPanelOperation"
+    )) {
+        if ($replaceMethod.Contains($forbidden)) {
+            throw "Panel navigation must not dispatch a simulation mutation: $forbidden"
+        }
+    }
+
+    Assert-Tokens $Text @(
+        "private long viscerealityPanelNavigationEpoch;",
+        "private long privateParticleControlEpoch = -1L;",
+        "private int privateParticleMaterialSelection = -1;",
+        "privateParticleMaterialSelection = privateParticleMaterialPreset.getSelectedItemPosition();",
+        "admitPrivateParticleMaterialSelection(controlEpoch, position)",
+        "setPrivateParticleMaterialSelectionFromRuntime(",
+        "if (!isCurrentPrivateParticleControlSurface(controlEpoch))",
+        "controlEpoch == viscerealityPanelNavigationEpoch",
+        '"particles".equals(viscerealityPanelTopic)'
+    ) "navigation-fenced particle controls"
+}
+
 function Resolve-GeneratedOutputPath {
     param([string]$Value)
     if ([System.IO.Path]::IsPathRooted($Value)) {
@@ -278,6 +316,31 @@ $unifiedParticlePanel = $panel.Substring(
     $unifiedParticlePanelStart,
     $unifiedParticlePanelEnd - $unifiedParticlePanelStart
 )
+Assert-PanelNavigationMutationSafe $panel
+$damagedNavigationGuard = $panel.Replace(
+    "if (!isCurrentPrivateParticleControlSurface(controlEpoch))",
+    "if (false)"
+)
+try {
+    Assert-PanelNavigationMutationSafe $damagedNavigationGuard
+    throw "Panel navigation damage test accepted a debounced apply without the current-page epoch guard"
+} catch {
+    if ($_.Exception.Message -like "Panel navigation damage test accepted*") {
+        throw
+    }
+}
+$damagedMaterialHydration = $panel.Replace(
+    "privateParticleMaterialSelection = privateParticleMaterialPreset.getSelectedItemPosition();",
+    "privateParticleMaterialSelection = -1;"
+)
+try {
+    Assert-PanelNavigationMutationSafe $damagedMaterialHydration
+    throw "Panel navigation damage test accepted an unsynchronized initial spinner selection"
+} catch {
+    if ($_.Exception.Message -like "Panel navigation damage test accepted*") {
+        throw
+    }
+}
 Assert-Tokens $unifiedParticlePanel @(
     "privateParticlePanelLiveApply = true",
     "privateParticleControlsHydrating = true",

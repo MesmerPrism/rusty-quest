@@ -171,6 +171,16 @@ Assert-ContainsTokens $polarPanel @(
     'timestamp-faithful',
     'acc_presentation_delay_ms',
     'acc_smoothing_time_constant_ms'
+    'PMD_DATA_RECEIVING_WINDOW_NS'
+    'scheduleStreamingStatusWrite'
+    'pmdDataReceiving'
+    '\.put\("pmd_state_source", pmdStateSource\)'
+    '\.put\("pmd_command_running", pmdRunning\)'
+    '\.put\("acc_pmd_command_running", accPmdRunning\)'
+    '\.put\("ecg_pmd_command_running", ecgPmdRunning\)'
+    '\.put\("pmd_data_receiving", accDataReceiving \|\| ecgDataReceiving\)'
+    '\.put\("acc_data_receiving", accDataReceiving\)'
+    '\.put\("ecg_data_receiving", ecgDataReceiving\)'
 ) "parallel Polar streams, synchronized capture, and sample-time presentation"
 Assert-ContainsTokens "$controlPanel`n$polarPanel`n$polarRuntime`n$polarReceiver`n$polarOperator`n$breathCaptureOperator" @(
     "polar_sensor_operator_status.json",
@@ -200,6 +210,12 @@ Assert-ContainsTokens "$controlPanel`n$polarPanel`n$polarRuntime`n$polarReceiver
     "presentation_low_latency",
     "presentation_timestamp_faithful",
     'screenshot_required = \$false'
+    "statusPath = 'files/polar_sensor_status.json'"
+    "start_acc', 'start_ecg', 'start_all'"
+    'acc_data_receiving'
+    'ecg_data_receiving'
+    'confirmed-fresh-pmd-data'
+    'Timed out waiting for app-owned fresh PMD data evidence'
 ) "fixed Polar operator and app-owned readback"
 if ($polarReceiver -match 'startActivity|ControlPanelActivity') {
     throw "Headless Polar receiver must not foreground a panel or Activity"
@@ -219,6 +235,19 @@ if ($polarPanel -notmatch 'for \(int sampleIndex = 0; sampleIndex < frame\.accSa
 }
 if ($polarPanel.Contains('.put("connected", gatt != null)')) {
     throw "Polar structured readback must not infer connection state from a non-null GATT handle"
+}
+if ($polarPanel -notmatch 'observedAtNs - lastReceiptNs <= PMD_DATA_RECEIVING_WINDOW_NS') {
+    throw "Polar structured status must derive data-receiving evidence from a bounded fresh receipt window"
+}
+$damagedPolarFreshness = $polarPanel.Replace(
+    'observedAtNs - lastReceiptNs <= PMD_DATA_RECEIVING_WINDOW_NS',
+    'lastReceiptNs > 0L'
+)
+if ($damagedPolarFreshness -match 'observedAtNs - lastReceiptNs <= PMD_DATA_RECEIVING_WINDOW_NS') {
+    throw "Polar freshness damage test failed to remove the bounded receipt window"
+}
+if ($damagedPolarFreshness -notmatch 'return lastReceiptNs > 0L;') {
+    throw "Polar freshness damage test did not construct the stale-counter failure shape"
 }
 if ($polarPanel.Contains('writeStatus("candidate-found"')) {
     throw "Polar candidate discovery must update the cached structured status"

@@ -27,6 +27,7 @@ $receiverClass = 'io.github.mesmerprism.rustyquest.native_renderer.PolarSensorCo
 $component = "$PackageName/$receiverClass"
 $token = [Guid]::NewGuid().ToString('N')
 $receiptPath = 'files/polar_sensor_operator_status.json'
+$statusPath = 'files/polar_sensor_status.json'
 
 $deviceState = (& $adb -s $Serial get-state 2>&1 | Out-String).Trim()
 if ($LASTEXITCODE -ne 0 -or $deviceState -ne 'device') {
@@ -76,6 +77,39 @@ if ([string]$receipt.dispatch_status -ne 'accepted') {
     throw "Polar command was not accepted: $([string]$receipt.reason_code)"
 }
 
+$effectiveStatus = $receipt.polar_status
+$requiresPmdData = $Command -in @('start_acc', 'start_ecg', 'start_all')
+if ($requiresPmdData) {
+    $effectConfirmed = $false
+    $effectiveDeadline = [DateTimeOffset]::UtcNow.AddSeconds($TimeoutSeconds)
+    do {
+        $rawStatus = (& $adb -s $Serial exec-out run-as $PackageName cat $statusPath 2>$null | Out-String).Trim()
+        if ($LASTEXITCODE -eq 0 -and -not [string]::IsNullOrWhiteSpace($rawStatus)) {
+            try {
+                $candidateStatus = $rawStatus | ConvertFrom-Json -Depth 32
+                if ([string]$candidateStatus.schema -eq 'rusty.quest.native_renderer.polar_sensor_status.v2') {
+                    $effectiveStatus = $candidateStatus
+                    $accReady = [bool]$candidateStatus.acc_data_receiving
+                    $ecgReady = [bool]$candidateStatus.ecg_data_receiving
+                    $effectConfirmed = switch ($Command) {
+                        'start_acc' { $accReady }
+                        'start_ecg' { $ecgReady }
+                        'start_all' { $accReady -and $ecgReady }
+                    }
+                    if ($effectConfirmed) {
+                        break
+                    }
+                }
+            } catch {
+            }
+        }
+        Start-Sleep -Milliseconds 100
+    } while ([DateTimeOffset]::UtcNow -lt $effectiveDeadline)
+    if (-not $effectConfirmed) {
+        throw "Timed out waiting for app-owned fresh PMD data evidence after $Command."
+    }
+}
+
 [pscustomobject]@{
     schema = 'rusty.quest.native_renderer.polar_sensor_operator_invocation.v2'
     serial = $Serial
@@ -86,6 +120,8 @@ if ([string]$receipt.dispatch_status -ne 'accepted') {
     dispatch_transport = 'serial-scoped-fixed-adb-broadcast'
     foreground_activity_changed = $false
     screenshot_required = $false
+    effective_status = if ($requiresPmdData) { 'confirmed-fresh-pmd-data' } else { [string]$receipt.effect_status }
+    effective_polar_status = $effectiveStatus
     app_receipt = $receipt
     dispatch_output = $dispatchOutput
 } | ConvertTo-Json -Depth 32

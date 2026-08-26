@@ -199,6 +199,9 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
     // an intentional particle edit; it must not inherit another panel's toggle.
     private boolean privateParticlePanelLiveApply;
     private boolean privateParticleControlsHydrating;
+    private long viscerealityPanelNavigationEpoch;
+    private long privateParticleControlEpoch = -1L;
+    private int privateParticleMaterialSelection = -1;
     private long privateParticlePendingRevision;
     private long privateParticlePendingReadbackDeadlineMs;
     private Runnable pendingPrivateParticleEffectReadback;
@@ -253,7 +256,7 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
     private void rebuildContentViewForCurrentMode() {
         // This product's integrated Polar owner survives page rebuilds. Runtime profile input
         // cannot replace the baked Viscereality module with a legacy product mode.
-        setContentView(buildContentView());
+        replaceViscerealityPanelContent(viscerealityPanelTopic);
         updateReadyStatusForPanelMode();
     }
 
@@ -303,7 +306,9 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
                 "status=probe-retained-after-destroy generation=" + rendererReturnGeneration
             );
         }
+        cancelPendingPrivateParticleDynamicsApply();
         cancelPendingPrivateParticleEffectReadback();
+        invalidatePrivateParticleControls();
         if (polarSensorPanel != null) {
             PolarSensorRuntime.forApplication(getApplicationContext()).detachPanel(this);
             polarSensorPanel = null;
@@ -482,11 +487,33 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
         if (topic.equals(viscerealityPanelTopic) || rendererReturnPending) {
             return;
         }
+        replaceViscerealityPanelContent(topic);
+    }
+
+    private void replaceViscerealityPanelContent(String topic) {
         cancelPendingPrivateParticleDynamicsApply();
         cancelPendingPrivateParticleEffectReadback();
         cancelBreathCompositionRefresh();
+        invalidatePrivateParticleControls();
+        viscerealityPanelNavigationEpoch += 1L;
         viscerealityPanelTopic = topic;
         setContentView(buildViscerealityControlPanelView());
+    }
+
+    private void invalidatePrivateParticleControls() {
+        privateParticlePanelLiveApply = false;
+        privateParticleControlsHydrating = true;
+        privateParticleControlEpoch = -1L;
+        privateParticleMaterialSelection = -1;
+        privateParticleVisualScale = null;
+        privateParticleWorldAnchorScale = null;
+        privateParticleDrivers = new SliderControl[8];
+        privateParticleTracerDrawSlots = null;
+        privateParticleTracerLifetime = null;
+        privateParticleTracerCopies = null;
+        privateParticleMaterialPreset = null;
+        privateParticlePolarRrOrbitBoost = null;
+        privateParticleEffectiveReadback = null;
     }
 
     private void appendViscerealityPanelHome(LinearLayout root) {
@@ -1283,6 +1310,8 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
         liveAutoApply = null;
         privateParticlePanelLiveApply = true;
         privateParticleControlsHydrating = true;
+        privateParticleControlEpoch = viscerealityPanelNavigationEpoch;
+        final long controlEpoch = privateParticleControlEpoch;
         LinearLayout particle = panelCard("Particles");
         root.addView(particle);
         particle.addView(
@@ -1419,6 +1448,7 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
                     : materialStatus.optString("preset", "packaged-default")
             )
         );
+        privateParticleMaterialSelection = privateParticleMaterialPreset.getSelectedItemPosition();
         material.addView(privateParticleMaterialPreset);
         privateParticlePolarRrOrbitBoost = checkBox(
             "Enable Polar RR orbit boost",
@@ -1437,8 +1467,8 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
         privateParticleMaterialPreset.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
             @Override
             public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
-                if (!privateParticleControlsHydrating) {
-                    schedulePrivateParticleDynamicsApplyFromControl();
+                if (admitPrivateParticleMaterialSelection(controlEpoch, position)) {
+                    schedulePrivateParticleDynamicsApplyFromControl(controlEpoch);
                 }
             }
 
@@ -1449,7 +1479,7 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
         privateParticlePolarRrOrbitBoost.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
-                schedulePrivateParticleDynamicsApplyFromControl();
+                schedulePrivateParticleDynamicsApplyFromControl(controlEpoch);
             }
         });
 
@@ -1726,6 +1756,7 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
         String suffix,
         boolean integer
     ) {
+        final long controlEpoch = privateParticleControlEpoch;
         return slider(
             title,
             min,
@@ -1737,14 +1768,48 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
             new Runnable() {
                 @Override
                 public void run() {
-                    schedulePrivateParticleDynamicsApplyFromControl();
+                    schedulePrivateParticleDynamicsApplyFromControl(controlEpoch);
                 }
             }
         );
     }
 
-    private void schedulePrivateParticleDynamicsApplyFromControl() {
-        if (!privateParticlePanelLiveApply || privateParticleControlsHydrating) {
+    private boolean isCurrentPrivateParticleControlSurface(long controlEpoch) {
+        return privateParticlePanelLiveApply
+            && !privateParticleControlsHydrating
+            && "particles".equals(viscerealityPanelTopic)
+            && controlEpoch >= 0L
+            && controlEpoch == privateParticleControlEpoch
+            && controlEpoch == viscerealityPanelNavigationEpoch;
+    }
+
+    private boolean admitPrivateParticleMaterialSelection(long controlEpoch, int position) {
+        if (controlEpoch != privateParticleControlEpoch
+                || controlEpoch != viscerealityPanelNavigationEpoch
+                || !"particles".equals(viscerealityPanelTopic)
+                || privateParticleControlsHydrating) {
+            if (controlEpoch == privateParticleControlEpoch) {
+                privateParticleMaterialSelection = position;
+            }
+            return false;
+        }
+        if (position == privateParticleMaterialSelection) {
+            return false;
+        }
+        privateParticleMaterialSelection = position;
+        return true;
+    }
+
+    private void setPrivateParticleMaterialSelectionFromRuntime(int position) {
+        privateParticleMaterialSelection = position;
+        if (privateParticleMaterialPreset != null
+                && privateParticleMaterialPreset.getSelectedItemPosition() != position) {
+            privateParticleMaterialPreset.setSelection(position);
+        }
+    }
+
+    private void schedulePrivateParticleDynamicsApplyFromControl(final long controlEpoch) {
+        if (!isCurrentPrivateParticleControlSurface(controlEpoch)) {
             return;
         }
         cancelPendingPrivateParticleDynamicsApply();
@@ -1752,6 +1817,9 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
             @Override
             public void run() {
                 pendingPrivateParticleDynamicsApply = null;
+                if (!isCurrentPrivateParticleControlSurface(controlEpoch)) {
+                    return;
+                }
                 submitLivePrivateParticleDynamics(false);
             }
         };
@@ -2059,74 +2127,87 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
             }
             return;
         }
-        boolean wasHydrating = privateParticleControlsHydrating;
-        privateParticleControlsHydrating = true;
         JSONObject materialStatus = privateParticles.optJSONObject("material");
         JSONObject heartbeatStatus = privateParticles.optJSONObject("heartbeat_pulse");
-        try {
-        if (privateParticleVisualScale != null) {
-        setSliderValue(
-            privateParticleVisualScale,
-            readPrivateParticleStatusDouble(privateParticles, "visual_scale", privateParticleVisualScale.value())
-        );
-        setSliderValue(
-            privateParticleWorldAnchorScale,
-            readPrivateParticleStatusDouble(
-                privateParticles,
-                "world_anchor_scale_m",
-                privateParticleWorldAnchorScale.value()
-            )
-        );
-        JSONArray driverStatus = privateParticles.optJSONArray("driver_values01");
-        if (driverStatus != null) {
-            for (int i = 0; i < privateParticleDrivers.length; i++) {
-                setSliderValue(privateParticleDrivers[i], driverStatus.optDouble(i, privateParticleDrivers[i].value()));
+        boolean hydrateControls = isCurrentPrivateParticleControlSurface(privateParticleControlEpoch);
+        if (hydrateControls) {
+            boolean wasHydrating = privateParticleControlsHydrating;
+            privateParticleControlsHydrating = true;
+            try {
+                if (privateParticleVisualScale != null) {
+                    setSliderValue(
+                        privateParticleVisualScale,
+                        readPrivateParticleStatusDouble(
+                            privateParticles,
+                            "visual_scale",
+                            privateParticleVisualScale.value()
+                        )
+                    );
+                    setSliderValue(
+                        privateParticleWorldAnchorScale,
+                        readPrivateParticleStatusDouble(
+                            privateParticles,
+                            "world_anchor_scale_m",
+                            privateParticleWorldAnchorScale.value()
+                        )
+                    );
+                    JSONArray driverStatus = privateParticles.optJSONArray("driver_values01");
+                    if (driverStatus != null) {
+                        for (int i = 0; i < privateParticleDrivers.length; i++) {
+                            setSliderValue(
+                                privateParticleDrivers[i],
+                                driverStatus.optDouble(i, privateParticleDrivers[i].value())
+                            );
+                        }
+                    }
+                    JSONObject tracerStatus = privateParticles.optJSONObject("tracer");
+                    if (tracerStatus != null) {
+                        setSliderValue(
+                            privateParticleTracerDrawSlots,
+                            readPrivateParticleStatusTracerDouble(
+                                tracerStatus,
+                                "draw_slots_per_oscillator",
+                                privateParticleTracerDrawSlots.value()
+                            )
+                        );
+                        setSliderValue(
+                            privateParticleTracerLifetime,
+                            readPrivateParticleStatusTracerDouble(
+                                tracerStatus,
+                                "lifetime_seconds",
+                                privateParticleTracerLifetime.value()
+                            )
+                        );
+                        setSliderValue(
+                            privateParticleTracerCopies,
+                            readPrivateParticleStatusTracerDouble(
+                                tracerStatus,
+                                "copies_per_second",
+                                privateParticleTracerCopies.value()
+                            )
+                        );
+                    }
+                    if (privateParticleMaterialPreset != null) {
+                        setPrivateParticleMaterialSelectionFromRuntime(
+                            privateParticleMaterialPresetIndex(
+                                materialStatus == null
+                                    ? "packaged-default"
+                                    : materialStatus.optString("preset", "packaged-default")
+                            )
+                        );
+                    }
+                    if (privateParticlePolarRrOrbitBoost != null) {
+                        privateParticlePolarRrOrbitBoost.setChecked(
+                            heartbeatStatus != null
+                                && "polar-rr-orbit-boost".equals(
+                                    heartbeatStatus.optString("mode", "disabled")
+                                )
+                        );
+                    }
+                }
+            } finally {
+                privateParticleControlsHydrating = wasHydrating;
             }
-        }
-        JSONObject tracerStatus = privateParticles.optJSONObject("tracer");
-        if (tracerStatus != null) {
-            setSliderValue(
-                privateParticleTracerDrawSlots,
-                readPrivateParticleStatusTracerDouble(
-                    tracerStatus,
-                    "draw_slots_per_oscillator",
-                    privateParticleTracerDrawSlots.value()
-                )
-            );
-            setSliderValue(
-                privateParticleTracerLifetime,
-                readPrivateParticleStatusTracerDouble(
-                    tracerStatus,
-                    "lifetime_seconds",
-                    privateParticleTracerLifetime.value()
-                )
-            );
-            setSliderValue(
-                privateParticleTracerCopies,
-                readPrivateParticleStatusTracerDouble(
-                    tracerStatus,
-                    "copies_per_second",
-                    privateParticleTracerCopies.value()
-                )
-            );
-        }
-        if (privateParticleMaterialPreset != null) {
-            privateParticleMaterialPreset.setSelection(
-                privateParticleMaterialPresetIndex(
-                    materialStatus == null
-                        ? "packaged-default"
-                        : materialStatus.optString("preset", "packaged-default")
-                )
-            );
-        }
-        if (privateParticlePolarRrOrbitBoost != null) {
-            privateParticlePolarRrOrbitBoost.setChecked(
-                heartbeatStatus != null
-                    && "polar-rr-orbit-boost".equals(
-                        heartbeatStatus.optString("mode", "disabled")
-                    )
-            );
-        }
         }
         if (privateParticleEffectiveReadback != null) {
             String material = materialStatus == null
@@ -2141,9 +2222,6 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
                     + " · revision " + statusJson.optLong("effective_revision", 0L)
                     + " · status " + statusJson.optString("status", "unknown")
             );
-        }
-        } finally {
-            privateParticleControlsHydrating = wasHydrating;
         }
         String message = "Particle dynamics refreshed: " + privateParticleDynamicsSummary() + ".";
         if (userVisible) {

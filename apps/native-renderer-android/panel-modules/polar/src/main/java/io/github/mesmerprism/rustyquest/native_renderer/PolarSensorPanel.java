@@ -51,6 +51,7 @@ import java.util.Queue;
 import java.util.UUID;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 final class PolarSensorPanel {
     static final int REQUEST_BLE_PERMISSIONS = 9103;
@@ -102,6 +103,8 @@ final class PolarSensorPanel {
     private static final long PMD_PROBE_DELAY_MS = 500L;
     private static final long PMD_SETTINGS_WAIT_MS = 1500L;
     private static final long PMD_START_ACK_WAIT_MS = 1200L;
+    private static final long PMD_DATA_RECEIVING_WINDOW_NS = 2_000_000_000L;
+    private static final long STREAMING_STATUS_WRITE_DELAY_MS = 250L;
 
     interface Host {
         void closePanelAndReturnToImmersive();
@@ -120,6 +123,7 @@ final class PolarSensorPanel {
     private final Object countersLock = new Object();
     private final Queue<DescriptorTask> descriptorTasks = new ArrayDeque<DescriptorTask>();
     private final ExecutorService eventWriter = Executors.newSingleThreadExecutor();
+    private final AtomicBoolean streamingStatusWriteScheduled = new AtomicBoolean(false);
 
     private ArrayAdapter<String> deviceAdapter;
     private Spinner deviceSpinner;
@@ -1613,6 +1617,7 @@ final class PolarSensorPanel {
                             sample.zMg);
                     }
                     appendAccEvent(frame);
+                    scheduleStreamingStatusWrite();
                 } else if (measurementType == 0x00) {
                     PmdFrameMetric frame = PolarProtocol.decodeEcg(value);
                     long frameSequenceId;
@@ -1656,6 +1661,7 @@ final class PolarSensorPanel {
                             frame.ecgSamplesMicrovolts.get(sampleIndex).intValue());
                     }
                     appendEcgEvent(frame);
+                    scheduleStreamingStatusWrite();
                 }
             }
         } catch (RuntimeException ex) {
@@ -1957,6 +1963,18 @@ final class PolarSensorPanel {
                 accReceiptDeltaNs = lastAccFrameReceiptNs;
                 ecgReceiptDeltaNs = lastEcgFrameReceiptNs;
             }
+            long observedAtNs = System.nanoTime();
+            boolean accDataReceiving = pmdDataReceiving(connected, observedAtNs, accReceiptDeltaNs);
+            boolean ecgDataReceiving = pmdDataReceiving(connected, observedAtNs, ecgReceiptDeltaNs);
+            boolean accEffectiveRunning = accPmdRunning || accDataReceiving;
+            boolean ecgEffectiveRunning = ecgPmdRunning || ecgDataReceiving;
+            boolean pmdEffectiveRunning = accEffectiveRunning || ecgEffectiveRunning;
+            String pmdEffectiveMode = accEffectiveRunning && ecgEffectiveRunning
+                ? "acc+ecg"
+                : (accEffectiveRunning ? "acc" : (ecgEffectiveRunning ? "ecg" : "none"));
+            String pmdStateSource = (accDataReceiving || ecgDataReceiving)
+                ? ((accPmdRunning || ecgPmdRunning) ? "control-ack-and-fresh-data" : "fresh-data-fallback")
+                : ((accPmdRunning || ecgPmdRunning) ? "control-ack-awaiting-data" : "none");
             JSONObject presentation = new JSONObject(nativeReadPolarAccPresentationStatus());
             accPresentationMode = presentation.optString("mode", accPresentationMode);
             JSONObject body = new JSONObject()
@@ -1970,10 +1988,18 @@ final class PolarSensorPanel {
                 .put("connected_device_instance_id", connectedDeviceInstanceId)
                 .put("connected", connected)
                 .put("pmd_ready", pmdReady)
-                .put("pmd_running", pmdRunning)
-                .put("pmd_mode", activePmdMode)
-                .put("acc_pmd_running", accPmdRunning)
-                .put("ecg_pmd_running", ecgPmdRunning)
+                .put("pmd_running", pmdEffectiveRunning)
+                .put("pmd_mode", pmdEffectiveMode)
+                .put("pmd_state_source", pmdStateSource)
+                .put("pmd_command_running", pmdRunning)
+                .put("pmd_command_mode", activePmdMode)
+                .put("acc_pmd_running", accEffectiveRunning)
+                .put("ecg_pmd_running", ecgEffectiveRunning)
+                .put("acc_pmd_command_running", accPmdRunning)
+                .put("ecg_pmd_command_running", ecgPmdRunning)
+                .put("pmd_data_receiving", accDataReceiving || ecgDataReceiving)
+                .put("acc_data_receiving", accDataReceiving)
+                .put("ecg_data_receiving", ecgDataReceiving)
                 .put("acc_sample_rate_hz", activeAccSampleRateHz)
                 .put("ecg_sample_rate_hz", activeEcgSampleRateHz)
                 .put("acc_frames", accFrameCount)
@@ -2004,6 +2030,26 @@ final class PolarSensorPanel {
         } catch (Exception ignored) {
             return null;
         }
+    }
+
+    private static boolean pmdDataReceiving(boolean linkConnected, long observedAtNs, long lastReceiptNs) {
+        if (!linkConnected || observedAtNs <= 0L || lastReceiptNs <= 0L || observedAtNs < lastReceiptNs) {
+            return false;
+        }
+        return observedAtNs - lastReceiptNs <= PMD_DATA_RECEIVING_WINDOW_NS;
+    }
+
+    private void scheduleStreamingStatusWrite() {
+        if (!streamingStatusWriteScheduled.compareAndSet(false, true)) {
+            return;
+        }
+        handler.postDelayed(new Runnable() {
+            @Override
+            public void run() {
+                streamingStatusWriteScheduled.set(false);
+                writeStatus(statusState, statusDetail);
+            }
+        }, STREAMING_STATUS_WRITE_DELAY_MS);
     }
 
     private void updateCountersOnUiThread() {
