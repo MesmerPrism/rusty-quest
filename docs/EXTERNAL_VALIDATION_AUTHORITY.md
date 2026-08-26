@@ -14,6 +14,12 @@ entrypoint length, and entrypoint SHA-256 are checked before invocation.
 Candidate files are never checked out, imported, built, restored, extracted,
 or executed.
 
+For the external-owner fallback, every base-owned Git byte read has one exact
+pipeline result: `System.Byte[]`. The adapter suppresses the completed
+non-generic `CopyToAsync` task result before typed artifact capture; missing,
+extra, or non-byte output fails before the existing bounded UTF-8, NUL, size,
+hash, and signing checks.
+
 The static assessment binds the exact event base repository
 `MesmerPrism/rusty-quest`, base ref `main`, head repository identity, exact
 base/head commits, and the exact fetched GitHub PR merge commit and tree.

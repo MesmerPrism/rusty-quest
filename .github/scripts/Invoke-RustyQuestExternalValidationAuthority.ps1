@@ -230,7 +230,7 @@ function Invoke-BaseGitBytes {
             $copy = $process.StandardOutput.BaseStream.CopyToAsync($memory)
             $stderrTask = $process.StandardError.ReadToEndAsync()
             if (-not $process.WaitForExit(30000)) { try { $process.Kill($true) } catch { }; throw "Git byte process exceeded the 30-second timeout." }
-            $copy.GetAwaiter().GetResult()
+            [void]$copy.GetAwaiter().GetResult()
             $stderr = $stderrTask.GetAwaiter().GetResult()
             if ($memory.Length -gt 16777216 -or $stderr.Length -gt 1048576) { throw "Git byte process output exceeded its bound." }
             if ($process.ExitCode -ne 0) { throw "Git byte process failed: $($stderr.Trim())" }

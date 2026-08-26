@@ -411,6 +411,7 @@ foreach ($token in @(
     'event-merge-observation-stale-fetched-ref-authoritative',
     'parents\.Count -ne 3',
     'WaitForExit\(30000\)',
+    '\[void\]\$copy\.GetAwaiter\(\)\.GetResult\(\)',
     'Git process output exceeded 1 MiB',
     'Trusted base must be a standalone initialized checkout',
     'Trusted base contains replacement refs',
@@ -536,6 +537,99 @@ foreach ($scriptPath in @($adapterPath, $externalOwnerModulePath, $policySelfTes
     if ($errors.Count -ne 0) {
         throw "PowerShell parse failure in $scriptPath`: $($errors[0].Message)"
     }
+}
+
+$adapterAstErrors = $null
+$adapterAstTokens = $null
+$adapterAst = [Management.Automation.Language.Parser]::ParseFile(
+    $adapterPath, [ref]$adapterAstTokens, [ref]$adapterAstErrors
+)
+if ($adapterAstErrors.Count -ne 0) {
+    throw "Base-owned adapter AST parse failed: $($adapterAstErrors[0].Message)"
+}
+$byteFunctions = @($adapterAst.Find({
+    param($node)
+    $node -is [Management.Automation.Language.FunctionDefinitionAst] -and
+        $node.Name -ceq "Invoke-BaseGitBytes"
+}, $true))
+if ($byteFunctions.Count -ne 1) {
+    throw "Base-owned adapter must contain exactly one Git byte-stream function."
+}
+$byteFunctionText = [string]$byteFunctions[0].Extent.Text
+if ($byteFunctionText -notmatch
+    '^function\s+Invoke-BaseGitBytes\s*\{' -or
+    $byteFunctionText -notmatch
+    '\[void\]\$copy\.GetAwaiter\(\)\.GetResult\(\)') {
+    throw "Base-owned Git byte-stream function does not suppress its non-generic task result."
+}
+
+function New-AdapterByteStreamProbeModule {
+    param([Parameter(Mandatory = $true)][string]$FunctionDefinition)
+    return New-Module -ScriptBlock {
+        param([string]$TrustedBase, [string]$Definition)
+        $script:TrustedBase = $TrustedBase
+        . ([scriptblock]::Create($Definition))
+    } -ArgumentList $RepoRoot, $FunctionDefinition
+}
+
+function Assert-AdapterGitByteStreamResult {
+    param(
+        [Parameter(Mandatory = $true)][object[]]$Values,
+        [Parameter(Mandatory = $true)][string]$Label
+    )
+    $types = @($Values | ForEach-Object { $_.GetType().FullName })
+    if ($Values.Count -ne 1 -or $types[0] -cne "System.Byte[]") {
+        throw "$Label must yield exactly one System.Byte[] pipeline result; observed $($types -join ', ')."
+    }
+    [byte[]]$bytes = $Values[0]
+    if ($bytes.Length -eq 0 -or
+        [Text.UTF8Encoding]::new($false, $true).GetString($bytes) -cnotmatch
+        '^git version [0-9]') {
+        throw "$Label did not preserve exact Git byte output."
+    }
+}
+
+$probeFunctionText = $byteFunctionText.Replace(
+    'function Invoke-BaseGitBytes', 'function Invoke-AdapterByteStreamProbeTarget'
+)
+$probeModule = New-AdapterByteStreamProbeModule $probeFunctionText
+try {
+    $probeValues = @(& $probeModule {
+        Invoke-AdapterByteStreamProbeTarget -Arguments @("--version")
+    })
+    Assert-AdapterGitByteStreamResult -Values $probeValues `
+        -Label "Base-owned Git byte stream"
+} finally {
+    Remove-Module -ModuleInfo $probeModule -Force -ErrorAction SilentlyContinue
+}
+
+$damagedFunctionText = $probeFunctionText.Replace(
+    '[void]$copy.GetAwaiter().GetResult()', '$copy.GetAwaiter().GetResult()'
+)
+if ($damagedFunctionText -ceq $probeFunctionText) {
+    throw "Git byte-stream damage fixture did not remove task-result suppression."
+}
+$damageModule = New-AdapterByteStreamProbeModule $damagedFunctionText
+$damageRejected = $false
+try {
+    $damageValues = @(& $damageModule {
+        Invoke-AdapterByteStreamProbeTarget -Arguments @("--version")
+    })
+    try {
+        Assert-AdapterGitByteStreamResult -Values $damageValues `
+            -Label "Damaged base-owned Git byte stream"
+    } catch {
+        if ($_.Exception.Message -cne
+            "Damaged base-owned Git byte stream must yield exactly one System.Byte[] pipeline result; observed System.Threading.Tasks.VoidTaskResult, System.Byte[].") {
+            throw "Git byte-stream damage rejected for the wrong reason: $($_.Exception.Message)"
+        }
+        $damageRejected = $true
+    }
+} finally {
+    Remove-Module -ModuleInfo $damageModule -Force -ErrorAction SilentlyContinue
+}
+if (-not $damageRejected) {
+    throw "Git byte-stream task-result damage was accepted."
 }
 
 function Assert-AdapterInputDamageRejected {
