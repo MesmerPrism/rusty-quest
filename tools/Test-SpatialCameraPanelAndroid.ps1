@@ -3,7 +3,6 @@ param(
     [string]$RepoRoot,
     [string]$AndroidHome = $env:ANDROID_HOME,
     [string]$JavaHome = $env:JAVA_HOME,
-    [string]$GradleVersion = "9.4.1",
     [string]$PrivateLayerProfilePath = $env:RUSTY_QUEST_SPATIAL_CAMERA_PANEL_PRIVATE_LAYER_PROFILE,
     [string]$OpaqueGuideShader = $env:RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OPAQUE_GUIDE_SHADER,
     [string]$OpaqueProjectionShader = $env:RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OPAQUE_PROJECTION_SHADER,
@@ -23,6 +22,33 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+
+function Get-VerifiedPinnedGradleBat {
+    param([Parameter(Mandatory=$true)][string]$RepoRoot)
+    $resolver = Join-Path $RepoRoot "tools\Resolve-GradleTool.ps1"
+    if (-not (Test-Path -LiteralPath $resolver -PathType Leaf)) { throw "Pinned Gradle resolver is missing: $resolver" }
+    try {
+        $output = @(& $resolver -RepoRoot $RepoRoot -Mode VerifyCache -TimeoutSeconds 55)
+    } catch {
+        throw "Pinned Gradle cache verification failed: $($_.Exception.Message)"
+    }
+    if ($output.Count -eq 0) { throw "Pinned Gradle cache verification returned no receipt." }
+    try { $receipt = (($output -join "`n") | ConvertFrom-Json -ErrorAction Stop) } catch { throw "Pinned Gradle cache verification returned an invalid receipt: $($_.Exception.Message)" }
+    $expectedHome = [IO.Path]::GetFullPath((Join-Path $RepoRoot "local-artifacts\tools\gradle-9.4.1")).TrimEnd('\')
+    $actualHome = [IO.Path]::GetFullPath([string]$receipt.gradle_home).TrimEnd('\')
+    $actualBat = [IO.Path]::GetFullPath([string]$receipt.gradle_bat)
+    if ($receipt.schema -cne "rusty.quest.gradle_cache_receipt.v2" -or $receipt.mode -cne "VerifyCache" -or
+        $receipt.tool_id -cne "gradle" -or $receipt.version -cne "9.4.1" -or
+        $receipt.archive_sha256 -cne "2ab2958f2a1e51120c326cad6f385153bb11ee93b3c216c5fccebfdfbb7ec6cb" -or
+        $receipt.tree_sha256 -cne "5c94e8204be25e0c18c94780cf4cf768fefa92e73f8c7b1617c483f33ca088db" -or
+        $actualHome -cne $expectedHome -or
+        -not $actualBat.StartsWith($expectedHome + "\bin\", [StringComparison]::OrdinalIgnoreCase) -or
+        $actualBat -cnotlike "*\bin\gradle.bat" -or
+        -not (Test-Path -LiteralPath $actualBat -PathType Leaf)) {
+        throw "Pinned Gradle cache receipt is invalid or escapes the repository-local tool root."
+    }
+    return $actualBat
+}
 
 if ([string]::IsNullOrWhiteSpace($RepoRoot)) {
     $RepoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
@@ -95,10 +121,7 @@ if (-not (Test-Path -LiteralPath $buildPath)) {
 & $panelFacingCheckPath -RepoRoot $repoRootPath
 & $productIsolationCheckPath -RepoRoot $repoRootPath
 
-$gradleBat = Join-Path $repoRootPath "local-artifacts\tools\gradle-$GradleVersion\bin\gradle.bat"
-if (-not (Test-Path -LiteralPath $gradleBat -PathType Leaf)) {
-    throw "Gradle $GradleVersion is not provisioned at $gradleBat. Use the repository's Spatial Camera Panel build resolver."
-}
+$gradleBat = Get-VerifiedPinnedGradleBat -RepoRoot ([string]$repoRootPath)
 if ([string]::IsNullOrWhiteSpace($AndroidHome) -or -not (Test-Path -LiteralPath $AndroidHome -PathType Container)) {
     throw "ANDROID_HOME or -AndroidHome must name a valid Android SDK directory for Spatial Camera Panel Kotlin compilation and JVM tests."
 }

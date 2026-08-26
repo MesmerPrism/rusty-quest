@@ -917,6 +917,7 @@ gate is `tools/checks/Test-CorrectedReleaseTwoQuestMatrixStatic.ps1`.
 ## Validation
 
 ```powershell
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Resolve-GradleTool.ps1
 pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\check_all.ps1
 pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-NativeAppBuildProfile.ps1
 pwsh -NoProfile -ExecutionPolicy Bypass -Command "cargo test -p rusty-quest-device-link"
@@ -943,6 +944,10 @@ pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\checks\Test-QuestBrokerAdm
 pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\checks\Test-CorrectedReleaseTwoQuestMatrixStatic.ps1 -RepoRoot .
 pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-BrokerAdmissionDeathRecoveryTwoQuest.ps1 -Serial <quest-serial-a>,<quest-serial-b>
 ```
+
+`Resolve-GradleTool.ps1` is the explicit resolve-only prerequisite for
+build-capable validation. It installs only the repository-pinned Gradle 9.4.1
+into ignored `local-artifacts/`; see [Gradle Tool Resolution](docs/GRADLE_TOOL_RESOLUTION.md).
 
 The two-Quest broker-death suite first proves client death/rebind against the
 live authority, then force-stops the broker and requires an explicit fresh-
