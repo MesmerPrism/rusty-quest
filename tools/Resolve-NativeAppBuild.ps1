@@ -779,6 +779,13 @@ function New-GeneratedAndroidManifestText {
         [void]$lines.Add('            </intent-filter>')
         [void]$lines.Add('        </receiver>')
     }
+    if ($Receivers -contains "BreathCompositionCommandReceiver") {
+        [void]$lines.Add('        <receiver android:name="io.github.mesmerprism.rustyquest.native_renderer.BreathCompositionCommandReceiver" android:exported="true" android:permission="android.permission.DUMP">')
+        [void]$lines.Add('            <intent-filter>')
+        [void]$lines.Add('                <action android:name="io.github.mesmerprism.rustyquest.native_renderer.action.BREATH_COMPOSITION_COMMAND" />')
+        [void]$lines.Add('            </intent-filter>')
+        [void]$lines.Add('        </receiver>')
+    }
     if ($Services -contains "DisplayCompositeProjectionService") {
         [void]$lines.Add('        <service android:name="io.github.mesmerprism.rustyquest.native_renderer.DisplayCompositeProjectionService" android:exported="false" android:foregroundServiceType="mediaProjection" />')
     }
@@ -1286,7 +1293,7 @@ $expectedRenderModes = @(Get-SortedSet -Set $expectedRenderModesSet)
 $requiredMarkers = @(Get-SortedSet -Set $requiredMarkerSet)
 $forbiddenMarkers = @(Get-SortedSet -Set $forbiddenMarkerSet)
 foreach ($receiver in $receivers) {
-    if ($receiver -notin @("PolarSensorCommandReceiver", "LslPanelCommandReceiver")) {
+    if ($receiver -notin @("PolarSensorCommandReceiver", "LslPanelCommandReceiver", "BreathCompositionCommandReceiver")) {
         throw "Android receiver surface contains an unsupported closed-world receiver: $receiver"
     }
 }

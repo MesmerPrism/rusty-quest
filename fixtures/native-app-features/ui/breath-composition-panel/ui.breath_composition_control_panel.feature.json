@@ -62,6 +62,7 @@
           "private-particle-request-adapter"
         ],
         "source_files": [
+          "apps/native-renderer-android/panel-modules/breath-composition/src/main/java/io/github/mesmerprism/rustyquest/native_renderer/BreathCompositionCommandReceiver.java",
           "apps/native-renderer-android/panel-modules/breath-composition/src/main/java/io/github/mesmerprism/rustyquest/native_renderer/BreathCompositionPanelModule.java"
         ]
       },

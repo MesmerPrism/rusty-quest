@@ -10,6 +10,9 @@ use crate::manifold_scalar_driver_bridge::{
     ManifoldScalarDriverBridge, ManifoldScalarDriverBridgeSettings,
 };
 use crate::native_controller_breath_state::NativeControllerBreathSample;
+use crate::native_renderer_private_particle_heartbeat_orbit_request::{
+    PrivateParticleHeartbeatOrbitRequestObservation, PrivateParticleHeartbeatOrbitRequestState,
+};
 use crate::native_renderer_private_particle_material_request::{
     PrivateParticleMaterialPreset, PrivateParticleMaterialRequestObservation,
     PrivateParticleMaterialRequestState,
@@ -27,7 +30,8 @@ use crate::native_renderer_properties::{
     PROP_PRIVATE_PARTICLES_DRIVER2_VALUE01, PROP_PRIVATE_PARTICLES_DRIVER3_VALUE01,
     PROP_PRIVATE_PARTICLES_DRIVER4_VALUE01, PROP_PRIVATE_PARTICLES_DRIVER5_VALUE01,
     PROP_PRIVATE_PARTICLES_DRIVER6_VALUE01, PROP_PRIVATE_PARTICLES_DRIVER7_VALUE01,
-    PROP_PRIVATE_PARTICLES_MATERIAL_REQUEST_V1, PROP_PRIVATE_PARTICLES_OFFSCREEN_HALF_RES,
+    PROP_PRIVATE_PARTICLES_HEARTBEAT_ORBIT_REQUEST_V1, PROP_PRIVATE_PARTICLES_MATERIAL_REQUEST_V1,
+    PROP_PRIVATE_PARTICLES_OFFSCREEN_HALF_RES,
     PROP_PRIVATE_PARTICLES_OFFSCREEN_HALF_RES_TRACERS_ONLY,
     PROP_PRIVATE_PARTICLES_RENDER_EXPERIMENT_REQUEST_V1,
     PROP_PRIVATE_PARTICLES_TRACER_COPIES_PER_SECOND,
@@ -558,6 +562,29 @@ impl PrivateParticleRuntimeSettings {
         self.color_parameter_source = "same-apk-panel-live";
     }
 
+    fn apply_heartbeat_orbit_control(&mut self, requested: Option<bool>) {
+        let Some(enabled) = requested else {
+            return;
+        };
+        self.driver_control_modes[5] = if enabled {
+            PANEL_DRIVER_MODE_PRIVATE_HEARTBEAT_ORBIT
+        } else {
+            PANEL_DRIVER_MODE_DIRECT
+        };
+        self.driver_control_curve_codes[5] = if enabled {
+            PANEL_CURVE_AKD_HUMP
+        } else {
+            PANEL_CURVE_LINEAR
+        };
+        if enabled {
+            self.driver_control_source_slots[5] = 5;
+            self.driver_control_range_mins[5] = canonical_driver_value_range(5).0;
+            self.driver_control_range_maxs[5] = canonical_driver_value_range(5).1;
+            self.driver_control_cycle_multipliers[5] = 1.0;
+        }
+        self.driver_parameter_source = "runtime-heartbeat-orbit-control";
+    }
+
     fn material_defaults(&self) -> PrivateParticleMaterialDefaults {
         PrivateParticleMaterialDefaults {
             transparency_opacity: self.transparency_opacity,
@@ -769,6 +796,10 @@ fn android_property(name: &str) -> Option<String> {
 
 fn private_particle_visual_scale_request_property() -> Option<String> {
     android_property(PROP_PRIVATE_PARTICLES_VISUAL_SCALE_REQUEST_V1)
+}
+
+fn private_particle_heartbeat_orbit_request_property() -> Option<String> {
+    android_property(PROP_PRIVATE_PARTICLES_HEARTBEAT_ORBIT_REQUEST_V1)
 }
 
 fn private_particle_material_request_property() -> Option<String> {
@@ -1165,6 +1196,7 @@ pub(crate) struct GpuPrivateParticleRenderer {
     driver_source_values01: [f32; PRIVATE_PARTICLE_DRIVER_BANK_SLOT_COUNT],
     runtime_settings_last_poll_frame: u64,
     visual_scale_request_state: PrivateParticleVisualScaleRequestState,
+    heartbeat_orbit_request_state: PrivateParticleHeartbeatOrbitRequestState,
     material_request_state: PrivateParticleMaterialRequestState,
     render_experiment_request_state: PrivateParticleRenderExperimentRequestState,
     panel_settings_override: Option<GpuPrivateParticlePanelSettings>,
@@ -1178,6 +1210,7 @@ pub(crate) struct GpuPrivateParticleRenderer {
     breath_composition_driver_connected_marker_emitted: bool,
     heartbeat_pulse_adapter: PrivateParticleHeartbeatPulseAdapter,
     heartbeat_pulse_adapter_connected_marker_emitted: bool,
+    heartbeat_orbit_packaged_settings: PrivateParticleHeartbeatPulseAdapterSettings,
 }
 
 impl GpuPrivateParticleRenderer {
@@ -1865,6 +1898,7 @@ impl GpuPrivateParticleRenderer {
             PrivateParticleDiagnosticSnapshot::pending(),
         );
 
+        let heartbeat_orbit_packaged_settings = heartbeat_pulse_adapter.settings();
         Ok(Some(Self {
             descriptor_pool,
             descriptor_set_layout,
@@ -1901,6 +1935,7 @@ impl GpuPrivateParticleRenderer {
             driver_source_values01: runtime_settings.driver_bank_values01,
             runtime_settings_last_poll_frame: u64::MAX,
             visual_scale_request_state: PrivateParticleVisualScaleRequestState::default(),
+            heartbeat_orbit_request_state: PrivateParticleHeartbeatOrbitRequestState::default(),
             material_request_state: PrivateParticleMaterialRequestState::default(),
             render_experiment_request_state: PrivateParticleRenderExperimentRequestState::default(),
             panel_settings_override: None,
@@ -1914,6 +1949,7 @@ impl GpuPrivateParticleRenderer {
             breath_composition_driver_connected_marker_emitted: false,
             heartbeat_pulse_adapter,
             heartbeat_pulse_adapter_connected_marker_emitted: false,
+            heartbeat_orbit_packaged_settings,
         }))
     }
 
@@ -1945,14 +1981,33 @@ impl GpuPrivateParticleRenderer {
 
     pub(crate) fn begin_runtime_session(&mut self) {
         self.visual_scale_request_state.begin_session();
+        self.heartbeat_orbit_request_state.begin_session();
         self.material_request_state.begin_session();
         self.render_experiment_request_state.begin_session();
+        let heartbeat_settings =
+            self.panel_settings_override
+                .map_or(self.heartbeat_orbit_packaged_settings, |panel| {
+                    PrivateParticleHeartbeatPulseAdapterSettings::panel_polar_rr_orbit_boost(
+                        panel.polar_rr_orbit_boost_enabled,
+                    )
+                });
+        if self.heartbeat_pulse_adapter.settings() != heartbeat_settings {
+            self.heartbeat_pulse_adapter.reconfigure(heartbeat_settings);
+            self.heartbeat_pulse_adapter_connected_marker_emitted = false;
+        }
         self.runtime_settings_last_poll_frame = u64::MAX;
         crate::marker(
             "private-particle-visual-scale-request",
             format!(
                 "status=session-ready {}",
                 self.visual_scale_request_state.session_marker_fields()
+            ),
+        );
+        crate::marker(
+            "private-particle-heartbeat-orbit-request",
+            format!(
+                "status=session-ready {}",
+                self.heartbeat_orbit_request_state.session_marker_fields()
             ),
         );
         crate::marker(
@@ -1985,6 +2040,15 @@ impl GpuPrivateParticleRenderer {
         {
             crate::marker(
                 "private-particle-visual-scale-request",
+                format!("status=effective {}", receipt.marker_fields()),
+            );
+        }
+        if let Some(receipt) = self
+            .heartbeat_orbit_request_state
+            .confirm_submitted_frame(frame_count)
+        {
+            crate::marker(
+                "private-particle-heartbeat-orbit-request",
                 format!("status=effective {}", receipt.marker_fields()),
             );
         }
@@ -2347,6 +2411,13 @@ impl GpuPrivateParticleRenderer {
                 runtime_settings.render_experiment_preset,
                 stats.ready && stats.visible && stats.draw_count > 0,
             );
+        let heartbeat_orbit_enabled = self.heartbeat_orbit_enabled();
+        self.heartbeat_orbit_request_state
+            .note_renderer_prepared_frame(
+                frame_count,
+                heartbeat_orbit_enabled,
+                stats.ready && stats.visible && stats.draw_count > 0,
+            );
 
         if frame_count == 0 || frame_count % 120 == 0 {
             crate::marker(
@@ -2389,6 +2460,8 @@ impl GpuPrivateParticleRenderer {
         revision: i64,
     ) -> GpuPrivateParticlePanelEffectiveSettings {
         let settings = settings.clamped();
+        self.heartbeat_orbit_request_state
+            .clear_request_for_panel_authority();
         let heartbeat_settings =
             PrivateParticleHeartbeatPulseAdapterSettings::panel_polar_rr_orbit_boost(
                 settings.polar_rr_orbit_boost_enabled,
@@ -2496,6 +2569,49 @@ impl GpuPrivateParticleRenderer {
         if should_poll {
             let mut next = PrivateParticleRuntimeSettings::load_from_android_properties();
             let material_defaults = next.material_defaults();
+            match self
+                .heartbeat_orbit_request_state
+                .observe_property(private_particle_heartbeat_orbit_request_property())
+            {
+                PrivateParticleHeartbeatOrbitRequestObservation::NoChange => {}
+                PrivateParticleHeartbeatOrbitRequestObservation::Accepted(request) => {
+                    let settings = request.override_value().map_or_else(
+                        || {
+                            self.panel_settings_override.map_or(
+                                self.heartbeat_orbit_packaged_settings,
+                                |panel| {
+                                    PrivateParticleHeartbeatPulseAdapterSettings::panel_polar_rr_orbit_boost(
+                                        panel.polar_rr_orbit_boost_enabled,
+                                    )
+                                },
+                            )
+                        },
+                        PrivateParticleHeartbeatPulseAdapterSettings::panel_polar_rr_orbit_boost,
+                    );
+                    if self.heartbeat_pulse_adapter.settings() != settings {
+                        self.heartbeat_pulse_adapter.reconfigure(settings);
+                        self.heartbeat_pulse_adapter_connected_marker_emitted = false;
+                    }
+                    crate::marker(
+                        "private-particle-heartbeat-orbit-request",
+                        format!(
+                            "status=accepted frame={} {}",
+                            frame_count,
+                            request.marker_fields("accepted")
+                        ),
+                    );
+                }
+                PrivateParticleHeartbeatOrbitRequestObservation::Rejected(rejection) => {
+                    crate::marker(
+                        "private-particle-heartbeat-orbit-request",
+                        format!(
+                            "status=rejected frame={} {}",
+                            frame_count,
+                            rejection.marker_fields()
+                        ),
+                    );
+                }
+            }
             match self
                 .visual_scale_request_state
                 .observe_property(private_particle_visual_scale_request_property())
@@ -2625,6 +2741,7 @@ impl GpuPrivateParticleRenderer {
             if let Some(panel_override) = self.panel_settings_override {
                 next.apply_panel_override(panel_override, self.driver_source_values01);
             }
+            next.apply_heartbeat_orbit_control(self.heartbeat_orbit_control());
             if let Some(scale) = self.visual_scale_request_state.active_scale() {
                 next.visual_scale = scale;
                 next.visual_parameter_source = "runtime-fenced-visual-scale-request-v1";
@@ -2712,9 +2829,27 @@ impl GpuPrivateParticleRenderer {
             if let Some(panel_override) = self.panel_settings_override {
                 next.apply_panel_override(panel_override, self.driver_source_values01);
             }
+            next.apply_heartbeat_orbit_control(self.heartbeat_orbit_control());
             self.runtime_settings = next;
         }
         self.runtime_settings
+    }
+
+    fn heartbeat_orbit_enabled(&self) -> bool {
+        self.heartbeat_orbit_request_state
+            .active_override()
+            .unwrap_or_else(|| {
+                self.panel_settings_override.map_or_else(
+                    || self.heartbeat_orbit_packaged_settings.enabled(),
+                    |panel| panel.polar_rr_orbit_boost_enabled,
+                )
+            })
+    }
+
+    fn heartbeat_orbit_control(&self) -> Option<bool> {
+        self.heartbeat_orbit_request_state
+            .active_override()
+            .or_else(|| self.heartbeat_orbit_enabled().then_some(true))
     }
 
     unsafe fn record_sort_frame(
@@ -5561,6 +5696,49 @@ mod material_request_tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn explicit_runtime_disable_overrides_enabled_panel_without_touching_other_slots() {
+        let panel = panel_settings(None, false, true).clamped();
+        let mut settings = PrivateParticleRuntimeSettings::from_generated_defaults();
+        settings.apply_panel_override(panel, [0.0; GPU_PRIVATE_PARTICLE_PANEL_DRIVER_COUNT]);
+        let modes_before = settings.driver_control_modes;
+        let curves_before = settings.driver_control_curve_codes;
+        let ranges_before = (
+            settings.driver_control_range_mins,
+            settings.driver_control_range_maxs,
+        );
+
+        settings.apply_heartbeat_orbit_control(Some(false));
+
+        assert_eq!(settings.driver_control_modes[5], PANEL_DRIVER_MODE_DIRECT);
+        assert_eq!(settings.driver_control_curve_codes[5], PANEL_CURVE_LINEAR);
+        assert_eq!(settings.driver_control_range_mins, ranges_before.0);
+        assert_eq!(settings.driver_control_range_maxs, ranges_before.1);
+        for index in 0..GPU_PRIVATE_PARTICLE_PANEL_DRIVER_COUNT {
+            if index != 5 {
+                assert_eq!(settings.driver_control_modes[index], modes_before[index]);
+                assert_eq!(
+                    settings.driver_control_curve_codes[index],
+                    curves_before[index]
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn absent_runtime_heartbeat_request_preserves_packaged_controls() {
+        let mut settings = PrivateParticleRuntimeSettings::from_generated_defaults();
+        settings.driver_control_modes[5] = PANEL_DRIVER_MODE_INPUT_SLOT;
+        settings.driver_control_curve_codes[5] = PANEL_CURVE_HOLD_HIGH;
+        let modes_before = settings.driver_control_modes;
+        let curves_before = settings.driver_control_curve_codes;
+
+        settings.apply_heartbeat_orbit_control(None);
+
+        assert_eq!(settings.driver_control_modes, modes_before);
+        assert_eq!(settings.driver_control_curve_codes, curves_before);
     }
 
     #[test]

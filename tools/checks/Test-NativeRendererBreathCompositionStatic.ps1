@@ -51,6 +51,7 @@ $worldBasisPath = Join-Path $repo "apps\native-renderer-android\native\src\priva
 $xrVulkanPath = Join-Path $repo "apps\native-renderer-android\native\src\xr_vulkan.rs"
 $gpuPrivateParticlesPath = Join-Path $repo "apps\native-renderer-android\native\src\gpu_private_particles.rs"
 $operatorPath = Join-Path $repo "tools\Invoke-NativeRendererBreathOperator.ps1"
+$operatorReceiverPath = Join-Path $repo "apps\native-renderer-android\panel-modules\breath-composition\src\main\java\io\github\mesmerprism\rustyquest\native_renderer\BreathCompositionCommandReceiver.java"
 $nativeBuildScriptPath = Join-Path $repo "apps\native-renderer-android\native\build.rs"
 $androidBuildPath = Join-Path $repo "tools\Build-NativeRendererAndroid.ps1"
 $resolverPath = Join-Path $repo "tools\Resolve-NativeAppBuild.ps1"
@@ -79,6 +80,7 @@ $worldBasis = Read-RequiredText $worldBasisPath "captured private-particle world
 $xrVulkan = Read-RequiredText $xrVulkanPath "native OpenXR/Vulkan composition"
 $gpuPrivateParticles = Read-RequiredText $gpuPrivateParticlesPath "private particle compute/sort routing"
 $operator = Read-RequiredText $operatorPath "fixed breath operator CLI"
+$operatorReceiver = Read-RequiredText $operatorReceiverPath "headless breath operator receiver"
 $nativeBuildScript = Read-RequiredText $nativeBuildScriptPath "native build script"
 $androidBuild = Read-RequiredText $androidBuildPath "Android build wrapper"
 $resolver = Read-RequiredText $resolverPath "structured resolver"
@@ -341,14 +343,15 @@ Assert-Tokens ($worldBasis + [Environment]::NewLine + $xrVulkan + [Environment]:
     "privateParticleComputeBasisSource=captured-world-anchor",
     "privateParticleComputeBasisFollowCamera=false"
 ) "captured private-particle compute basis"
-Assert-Tokens ($operator + [Environment]::NewLine + $panel) @(
-    "BREATH_COMPOSITION_PANEL_COMMAND",
+Assert-Tokens ($operator + [Environment]::NewLine + $operatorReceiver) @(
+    "BREATH_COMPOSITION_COMMAND",
+    "BreathCompositionCommandReceiver",
     "start_calibration",
-    "breath_composition_operator_status.json",
     "screenshot_required",
-    "structuredReadback=true",
-    "run-as"
-) "fixed operator command and structured readback"
+    "serial-scoped-fixed-adb-ordered-broadcast",
+    "activity_launched = `$false",
+    "android.permission.DUMP"
+) "headless operator command and structured readback"
 Assert-Tokens $polarPanel @(
     "buildEmbeddedAcquisitionView",
     "buildView(false)",

@@ -100,6 +100,7 @@ mod native_renderer_options_tests;
 #[cfg(target_os = "android")]
 mod native_renderer_panel_bridge;
 mod native_renderer_passthrough_style_options;
+mod native_renderer_private_particle_heartbeat_orbit_request;
 mod native_renderer_private_particle_material_request;
 mod native_renderer_private_particle_render_experiment_request;
 mod native_renderer_private_particle_visual_scale_request;
