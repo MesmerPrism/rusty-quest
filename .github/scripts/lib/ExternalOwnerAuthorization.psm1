@@ -315,6 +315,26 @@ function New-ExternalOwnerProtectedWithoutBaseApprovalAssessment {
     return $assessment
 }
 
+function Test-ExternalOwnerExactUtf8TransportText {
+    param(
+        [Parameter(Mandatory)][AllowEmptyString()][string]$Actual,
+        [Parameter(Mandatory)][AllowEmptyString()][string]$Expected
+    )
+    # Keep the ANSI renderer profile byte-for-byte: ordinal text equality
+    # rejects lookalikes, while fixed-time UTF-8 comparison rejects a partial
+    # rendering without normalizing terminal control bytes.
+    $sameOrdinalText = [string]::Equals(
+        $Actual, $Expected, [StringComparison]::Ordinal
+    )
+    $utf8 = [Text.UTF8Encoding]::new($false, $true)
+    [byte[]]$actualBytes = $utf8.GetBytes($Actual)
+    [byte[]]$expectedBytes = $utf8.GetBytes($Expected)
+    $sameBytes = [Security.Cryptography.CryptographicOperations]::FixedTimeEquals(
+        $actualBytes, $expectedBytes
+    )
+    return $sameOrdinalText -and $sameBytes
+}
+
 function Assert-ExternalOwnerFallbackVerifierFailure {
     param(
         [Parameter(Mandatory)][int]$ExitCode,
@@ -376,7 +396,53 @@ function Assert-ExternalOwnerFallbackVerifierFailure {
             [string]$record.Exception.Message -ceq $expectedMessages[$index]
     }
     if (-not $currentFileTransport) {
-        throw "Pinned verifier result is not the exact protected-without-base-approval hold."
+        $escape = [char]27
+        $red = $escape + "[31;1m"
+        $reset = $escape + "[0m"
+        $cyan = $escape + "[36;1m"
+        [string[]]$expectedAnsiMessages = @(
+            ($red + "Exception: " + $reset + $absoluteVerifierScript + ":" + $VerifierHoldLine + $reset),
+            ($red + $reset + $cyan + "Line |" + $reset),
+            ($red + $reset + $cyan + $cyan + (" {0,3} | " -f $VerifierHoldLine) +
+                $reset + "         " + $cyan +
+                "throw `"Protected changes do not match an exact base-approved " +
+                $reset + " …" + $reset),
+            ($red + $reset + $cyan + $cyan + $reset + $cyan + $reset + $cyan +
+                "     | " + $red +
+                "         ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~" + $reset),
+            ($red + $reset + $cyan + $cyan + $reset + $cyan + $reset + $cyan +
+                $red + $red + $cyan + "     | " + $red + $holdMessage + $reset
+            )
+        )
+        $currentAnsiTransport = $VerifierHoldLine -eq 969 -and
+            $ExitCode -eq 1 -and $Output.Count -eq 5
+        for ($index = 0; $currentAnsiTransport -and $index -lt 5; $index++) {
+            $record = $Output[$index]
+            $expectedTarget = if ($index -eq 0) {
+                $expectedAnsiMessages[$index]
+            } else { "" }
+            $currentAnsiTransport =
+                $record -is [Management.Automation.ErrorRecord] -and
+                $record.GetType() -eq [Management.Automation.ErrorRecord] -and
+                $null -ne $record.Exception -and
+                $record.Exception.GetType() -eq [Management.Automation.RemoteException] -and
+                [string]::Equals(
+                    [string]$record.FullyQualifiedErrorId, $expectedIds[$index],
+                    [StringComparison]::Ordinal
+                ) -and
+                [string]::Equals(
+                    [string]$record.CategoryInfo.Category, "NotSpecified",
+                    [StringComparison]::Ordinal
+                ) -and
+                (Test-ExternalOwnerExactUtf8TransportText `
+                    -Actual ([string]$record.TargetObject) -Expected $expectedTarget) -and
+                (Test-ExternalOwnerExactUtf8TransportText `
+                    -Actual ([string]$record.Exception.Message) `
+                    -Expected $expectedAnsiMessages[$index])
+        }
+        if (-not $currentAnsiTransport) {
+            throw "Pinned verifier result is not the exact protected-without-base-approval hold."
+        }
     }
 }
 

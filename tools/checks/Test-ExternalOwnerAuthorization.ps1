@@ -15,6 +15,19 @@ function Assert-DamageRejected {
     if (-not $rejected) { throw "External-owner damage was accepted: $Name" }
 }
 
+function Assert-ExternalOwnerClosedProfileDamageRejected {
+    param([Parameter(Mandatory)][string]$Name, [Parameter(Mandatory)][scriptblock]$Action)
+    try {
+        & $Action
+    } catch {
+        if ([string]$_.Exception.Message -cne "Pinned verifier result is not the exact protected-without-base-approval hold.") {
+            throw "ANSI closed-profile damage rejected outside its verifier gate: $Name"
+        }
+        return
+    }
+    throw "ANSI closed-profile damage was accepted: $Name"
+}
+
 function Invoke-ExternalOwnerChildFailureFixture {
     param([Parameter(Mandatory)][string]$ScriptText)
     $pwsh = (Get-Command pwsh -CommandType Application -ErrorAction Stop |
@@ -122,18 +135,52 @@ try {
         "NativeCommandErrorMessage",
         "NativeCommandErrorMessage"
     )
+    function Get-ExternalOwnerAnsiFileTransportMessages {
+        param(
+            [Parameter(Mandatory)][string]$VerifierScript,
+            [Parameter(Mandatory)][int]$VerifierLine,
+            [Parameter(Mandatory)][string]$HoldMessage
+        )
+        $escape = [char]27
+        $red = $escape + "[31;1m"
+        $reset = $escape + "[0m"
+        $cyan = $escape + "[36;1m"
+        return [string[]]@(
+            ($red + "Exception: " + $reset + $VerifierScript + ":" + $VerifierLine + $reset),
+            ($red + $reset + $cyan + "Line |" + $reset),
+            ($red + $reset + $cyan + $cyan + (" {0,3} | " -f $VerifierLine) +
+                $reset + "         " + $cyan +
+                "throw `"Protected changes do not match an exact base-approved " +
+                $reset + " …" + $reset),
+            ($red + $reset + $cyan + $cyan + $reset + $cyan + $reset + $cyan +
+                "     | " + $red +
+                "         ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~" + $reset),
+            ($red + $reset + $cyan + $cyan + $reset + $cyan + $reset + $cyan +
+                $red + $red + $cyan + "     | " + $red + $HoldMessage + $reset
+            )
+        )
+    }
+    function Get-ExternalOwnerUtf8Sha256 {
+        param([Parameter(Mandatory)][string]$Text)
+        [byte[]]$bytes = [Text.UTF8Encoding]::new($false, $true).GetBytes($Text)
+        return [Convert]::ToHexString(
+            [Security.Cryptography.SHA256]::HashData($bytes)
+        ).ToLowerInvariant()
+    }
     function New-ExternalOwnerFileTransportFixture {
         param(
+            [Parameter(Mandatory)][string[]]$Messages,
             [int]$MessageDamageIndex = -1,
             [int]$FullyQualifiedErrorIdDamageIndex = -1,
             [int]$CategoryDamageIndex = -1,
-            [int]$TargetDamageIndex = -1
+            [int]$TargetDamageIndex = -1,
+            [int]$ExceptionDamageIndex = -1
         )
         return @(
             for ($index = 0; $index -lt 5; $index++) {
                 $message = if ($index -eq $MessageDamageIndex) {
-                    $fileTransportMessages[$index] + " damage"
-                } else { $fileTransportMessages[$index] }
+                    $Messages[$index] + " damage"
+                } else { $Messages[$index] }
                 $id = if ($index -eq $FullyQualifiedErrorIdDamageIndex) {
                     "PinnedVerifier"
                 } else { $fileTransportIds[$index] }
@@ -143,13 +190,17 @@ try {
                 $target = if ($index -eq $TargetDamageIndex) {
                     "wrong-target"
                 } elseif ($index -eq 0) { $message } else { "" }
-            New-ExternalOwnerChildFailureRecord `
-                    -Message $message -FullyQualifiedErrorId $id `
-                    -Category $category -Target $target
+                $exception = if ($index -eq $ExceptionDamageIndex) {
+                    [Management.Automation.RuntimeException]::new($message)
+                } else { [Management.Automation.RemoteException]::new($message) }
+                [Management.Automation.ErrorRecord]::new(
+                    $exception, $id, $category, $target
+                )
             }
         )
     }
-    $fileTransportOutput = New-ExternalOwnerFileTransportFixture
+    $fileTransportOutput = New-ExternalOwnerFileTransportFixture `
+        -Messages $fileTransportMessages
     Assert-ExternalOwnerFallbackVerifierFailure `
         -ExitCode 1 -Output $fileTransportOutput `
         -VerifierScript $fileTransportVerifier -VerifierHoldLine $fileTransportLine
@@ -159,19 +210,90 @@ try {
         [pscustomobject]@{ name = "record-count-short"; line = $fileTransportLine; output = @($fileTransportOutput | Select-Object -First 4); script = $fileTransportVerifier; exit = 1 },
         [pscustomobject]@{ name = "record-count-extra"; line = $fileTransportLine; output = @($fileTransportOutput + $fileTransportOutput[4]); script = $fileTransportVerifier; exit = 1 },
         [pscustomobject]@{ name = "exit"; line = $fileTransportLine; output = $fileTransportOutput; script = $fileTransportVerifier; exit = 2 },
-        [pscustomobject]@{ name = "fqid"; line = $fileTransportLine; output = (New-ExternalOwnerFileTransportFixture -FullyQualifiedErrorIdDamageIndex 1); script = $fileTransportVerifier; exit = 1 },
-        [pscustomobject]@{ name = "category"; line = $fileTransportLine; output = (New-ExternalOwnerFileTransportFixture -CategoryDamageIndex 2); script = $fileTransportVerifier; exit = 1 },
-        [pscustomobject]@{ name = "target"; line = $fileTransportLine; output = (New-ExternalOwnerFileTransportFixture -TargetDamageIndex 0); script = $fileTransportVerifier; exit = 1 }
+        [pscustomobject]@{ name = "fqid"; line = $fileTransportLine; output = (New-ExternalOwnerFileTransportFixture -Messages $fileTransportMessages -FullyQualifiedErrorIdDamageIndex 1); script = $fileTransportVerifier; exit = 1 },
+        [pscustomobject]@{ name = "category"; line = $fileTransportLine; output = (New-ExternalOwnerFileTransportFixture -Messages $fileTransportMessages -CategoryDamageIndex 2); script = $fileTransportVerifier; exit = 1 },
+        [pscustomobject]@{ name = "target"; line = $fileTransportLine; output = (New-ExternalOwnerFileTransportFixture -Messages $fileTransportMessages -TargetDamageIndex 0); script = $fileTransportVerifier; exit = 1 }
     )
     foreach ($index in 0..4) {
         $fileTransportDamageCases += [pscustomobject]@{
             name = "renderer-record-$index"; line = $fileTransportLine
-            output = (New-ExternalOwnerFileTransportFixture -MessageDamageIndex $index)
+            output = (New-ExternalOwnerFileTransportFixture -Messages $fileTransportMessages -MessageDamageIndex $index)
             script = $fileTransportVerifier; exit = 1
         }
     }
     foreach ($damage in $fileTransportDamageCases) {
         Assert-DamageRejected ("file-transport-" + $damage.name) {
+            Assert-ExternalOwnerFallbackVerifierFailure `
+                -ExitCode $damage.exit -Output $damage.output `
+            -VerifierScript $damage.script -VerifierHoldLine $damage.line
+        }
+    }
+    # This is the exact hosted windows-2025 renderer observation from the
+    # non-authoritative diagnostic.  The permanent adapter still builds its
+    # expected text from the live hash-verified verifier path; this fixed
+    # template protects the captured ANSI byte shape from accidental drift.
+    $hostedAnsiVerifier = "D:\a\rusty-quest\rusty-quest\pinned-verifier\scripts\Test-ExternalValidationAuthority.ps1"
+    $hostedAnsiMessages = Get-ExternalOwnerAnsiFileTransportMessages `
+        -VerifierScript $hostedAnsiVerifier -VerifierLine 969 `
+        -HoldMessage $holdMessage
+    $hostedAnsiExpected = @(
+        [pscustomobject]@{ bytes = 119; sha256 = "24ade1f4eb1d7c360c21d6f6302a8cf685673577732235dd4b4c51b09cb99a93" },
+        [pscustomobject]@{ bytes = 28; sha256 = "eab5810c4d6310caf3407134ffd9a1d2a6d2a80fbf7801e32c56b8bc0243872e" },
+        [pscustomobject]@{ bytes = 125; sha256 = "8977d37fccc7351da85f28e1d99d20fe1545fb2b680dec7290b237b8991c7ef1" },
+        [pscustomobject]@{ bytes = 135; sha256 = "5b55dd13ad3587247bb68a05e5df28df6ce4d2ec1769750a8d7c91df447a9615" },
+        [pscustomobject]@{ bytes = 151; sha256 = "96371b12b6cfd7db954297523533338fd3f5720e4d279c2619dc99a67cda7a29" }
+    )
+    for ($index = 0; $index -lt 5; $index++) {
+        $bytes = [Text.UTF8Encoding]::new($false, $true).GetByteCount($hostedAnsiMessages[$index])
+        if ($bytes -ne $hostedAnsiExpected[$index].bytes -or
+            (Get-ExternalOwnerUtf8Sha256 $hostedAnsiMessages[$index]) -cne $hostedAnsiExpected[$index].sha256) {
+            throw "Hosted ANSI renderer template changed at record $index."
+        }
+    }
+    $ansiFileTransportMessages = Get-ExternalOwnerAnsiFileTransportMessages `
+        -VerifierScript $fileTransportVerifier -VerifierLine $fileTransportLine `
+        -HoldMessage $holdMessage
+    $ansiFileTransportOutput = New-ExternalOwnerFileTransportFixture `
+        -Messages $ansiFileTransportMessages
+    Assert-ExternalOwnerFallbackVerifierFailure `
+        -ExitCode 1 -Output $ansiFileTransportOutput `
+        -VerifierScript $fileTransportVerifier -VerifierHoldLine $fileTransportLine
+    $ansiEsc = [char]27
+    [string[]]$ansiEscDamageMessages = @($ansiFileTransportMessages)
+    $ansiEscDamageMessages[0] = $ansiEscDamageMessages[0].Replace($ansiEsc, [char]26)
+    [string[]]$ansiColorDamageMessages = @($ansiFileTransportMessages)
+    $ansiColorDamageMessages[0] = $ansiColorDamageMessages[0].Replace("[31;1m", "[32;1m")
+    [string[]]$ansiResetDamageMessages = @($ansiFileTransportMessages)
+    $ansiResetDamageMessages[0] = $ansiResetDamageMessages[0].Replace("[0m", "[1m")
+    [string[]]$ansiSourceDamageMessages = @($ansiFileTransportMessages)
+    $ansiSourceDamageMessages[2] = $ansiSourceDamageMessages[2].Replace("throw", "write")
+    [string[]]$ansiEllipsisDamageMessages = @($ansiFileTransportMessages)
+    $ansiEllipsisDamageMessages[2] = $ansiEllipsisDamageMessages[2].Replace("…", "...")
+    [string[]]$ansiMixedDamageMessages = @($ansiFileTransportMessages)
+    $ansiMixedDamageMessages[4] = $fileTransportMessages[4]
+    $ansiDamageCases = @(
+        [pscustomobject]@{ name = "esc"; line = $fileTransportLine; script = $fileTransportVerifier; exit = 1; output = (New-ExternalOwnerFileTransportFixture -Messages $ansiEscDamageMessages) },
+        [pscustomobject]@{ name = "color"; line = $fileTransportLine; script = $fileTransportVerifier; exit = 1; output = (New-ExternalOwnerFileTransportFixture -Messages $ansiColorDamageMessages) },
+        [pscustomobject]@{ name = "reset"; line = $fileTransportLine; script = $fileTransportVerifier; exit = 1; output = (New-ExternalOwnerFileTransportFixture -Messages $ansiResetDamageMessages) },
+        [pscustomobject]@{ name = "source"; line = $fileTransportLine; script = $fileTransportVerifier; exit = 1; output = (New-ExternalOwnerFileTransportFixture -Messages $ansiSourceDamageMessages) },
+        [pscustomobject]@{ name = "ellipsis"; line = $fileTransportLine; script = $fileTransportVerifier; exit = 1; output = (New-ExternalOwnerFileTransportFixture -Messages $ansiEllipsisDamageMessages) },
+        [pscustomobject]@{ name = "path"; line = $fileTransportLine; script = "C:\wrong\Test-ExternalValidationAuthority.ps1"; exit = 1; output = $ansiFileTransportOutput },
+        [pscustomobject]@{ name = "line"; line = ($fileTransportLine - 1); script = $fileTransportVerifier; exit = 1; output = $ansiFileTransportOutput },
+        [pscustomobject]@{ name = "record-identity"; line = $fileTransportLine; script = $fileTransportVerifier; exit = 1; output = (New-ExternalOwnerFileTransportFixture -Messages $ansiFileTransportMessages -ExceptionDamageIndex 4) },
+        [pscustomobject]@{ name = "fqid-first"; line = $fileTransportLine; script = $fileTransportVerifier; exit = 1; output = (New-ExternalOwnerFileTransportFixture -Messages $ansiFileTransportMessages -FullyQualifiedErrorIdDamageIndex 0) },
+        [pscustomobject]@{ name = "fqid-later"; line = $fileTransportLine; script = $fileTransportVerifier; exit = 1; output = (New-ExternalOwnerFileTransportFixture -Messages $ansiFileTransportMessages -FullyQualifiedErrorIdDamageIndex 3) },
+        [pscustomobject]@{ name = "category"; line = $fileTransportLine; script = $fileTransportVerifier; exit = 1; output = (New-ExternalOwnerFileTransportFixture -Messages $ansiFileTransportMessages -CategoryDamageIndex 2) },
+        [pscustomobject]@{ name = "target-first"; line = $fileTransportLine; script = $fileTransportVerifier; exit = 1; output = (New-ExternalOwnerFileTransportFixture -Messages $ansiFileTransportMessages -TargetDamageIndex 0) },
+        [pscustomobject]@{ name = "target-later"; line = $fileTransportLine; script = $fileTransportVerifier; exit = 1; output = (New-ExternalOwnerFileTransportFixture -Messages $ansiFileTransportMessages -TargetDamageIndex 3) },
+        [pscustomobject]@{ name = "record-count-short"; line = $fileTransportLine; script = $fileTransportVerifier; exit = 1; output = @($ansiFileTransportOutput | Select-Object -First 4) },
+        [pscustomobject]@{ name = "record-count-extra"; line = $fileTransportLine; script = $fileTransportVerifier; exit = 1; output = @($ansiFileTransportOutput + $ansiFileTransportOutput[4]) },
+        [pscustomobject]@{ name = "output"; line = $fileTransportLine; script = $fileTransportVerifier; exit = 1; output = @($ansiFileTransportOutput + "extra") },
+        [pscustomobject]@{ name = "exit"; line = $fileTransportLine; script = $fileTransportVerifier; exit = 2; output = $ansiFileTransportOutput },
+        [pscustomobject]@{ name = "mixed-plain"; line = $fileTransportLine; script = $fileTransportVerifier; exit = 1; output = (New-ExternalOwnerFileTransportFixture -Messages $ansiMixedDamageMessages) },
+        [pscustomobject]@{ name = "partial"; line = $fileTransportLine; script = $fileTransportVerifier; exit = 1; output = @($ansiFileTransportOutput | Select-Object -First 2) }
+    )
+    foreach ($damage in $ansiDamageCases) {
+        Assert-ExternalOwnerClosedProfileDamageRejected ("ansi-file-transport-" + $damage.name) {
             Assert-ExternalOwnerFallbackVerifierFailure `
                 -ExitCode $damage.exit -Output $damage.output `
                 -VerifierScript $damage.script -VerifierHoldLine $damage.line

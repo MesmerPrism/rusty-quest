@@ -468,6 +468,12 @@ foreach ($token in @(
     'NativeCommandError',
     'CategoryInfo\.Category',
     'transportMessage = "Exception: \$holdMessage`r`n"',
+    'Test-ExternalOwnerExactUtf8TransportText',
+    'StringComparison\]::Ordinal',
+    'CryptographicOperations\]::FixedTimeEquals',
+    'record\.GetType\(\) -eq \[Management\.Automation\.ErrorRecord\]',
+    '\$VerifierHoldLine -eq 969',
+    '\$escape = \[char\]27',
     'ConvertFrom-ExternalOwnerGitNameStatusBytes',
     'Git name-status output contains invalid UTF-8',
     'Git name-status output lacks a terminal NUL delimiter',
@@ -488,7 +494,18 @@ foreach ($token in @(
     'Exact Windows child verifier hold transport changed\.',
     'hold-lf',
     'hold-double-crlf',
-    'hold-stdout-contamination'
+    'hold-stdout-contamination',
+    'hostedAnsiExpected',
+    'ansiDamageCases',
+    'Assert-ExternalOwnerClosedProfileDamageRejected',
+    'name = "esc"',
+    'name = "fqid-first"',
+    'name = "fqid-later"',
+    'name = "category"',
+    'name = "target-first"',
+    'name = "target-later"',
+    'name = "mixed-plain"',
+    'name = "partial"'
 )) {
     if ($externalOwnerSelfTestText -notmatch $token) {
         throw "External-owner self-test is missing transport-bound regression coverage: $token"
