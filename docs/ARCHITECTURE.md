@@ -237,6 +237,11 @@ blur/projection receipts. The panel placement
 controls are there to test Spatial SDK position, scale, and resolution options
 on headset; they are not a renderer contract and are not the native Quest XR
 path.
+Its build wrapper consumes the single repository-owned Gradle 9.4.1 resolver
+rather than acquiring a mutable checksum at build time. The resolver identity
+and cache-only trust boundary are documented in
+[`GRADLE_TOOL_RESOLUTION.md`](GRADLE_TOOL_RESOLUTION.md); Android build output,
+SDK, and Gradle user-home authority remain outside that resolver.
 One-sided Compose UI panels have a narrower pose authority:
 `SpatialPanelFacing` computes their front-facing viewer-relative rotation using
 the official Meta `lookRotationAroundY` convention and owns the known-facing

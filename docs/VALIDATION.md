@@ -127,8 +127,14 @@ approved update plus one wearer cancellation, then restore the original state.
 Run:
 
 ```powershell
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Resolve-GradleTool.ps1
 pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\check_all.ps1
 ```
+
+The first command resolves only the pinned Gradle 9.4.1 repository-local build
+tool; it does not invoke an Android build. See
+[Gradle Tool Resolution](GRADLE_TOOL_RESOLUTION.md) for the immutable identity,
+cache scope, and offline self-test.
 
 The default gate targets native OpenXR/Vulkan and Meta Spatial SDK surfaces.
 It skips the legacy Makepad runtime profile and QCL099 runner; use
@@ -172,6 +178,7 @@ The Spatial Camera Panel panel lane adds a separate static/build/headset gate
 for `apps/spatial-camera-panel-android`:
 
 ```powershell
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Resolve-GradleTool.ps1
 pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-SpatialCameraPanelAndroid.ps1
 pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-SpatialCameraPanelAndroid.ps1 -Build
 ```
