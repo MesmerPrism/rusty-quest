@@ -450,7 +450,7 @@ function New-ExternalOwnerAuthorizationRequest {
     param([Parameter(Mandatory)][object]$Policy, [Parameter(Mandatory)][int]$PullRequestNumber, [Parameter(Mandatory)][object]$Base, [Parameter(Mandatory)][object]$Head, [Parameter(Mandatory)][object[]]$ChangedArtifacts, [Parameter(Mandatory)][object[]]$ProtectedArtifacts, [Parameter(Mandatory)][object]$Assessment)
     foreach ($set in @(@($ChangedArtifacts), @($ProtectedArtifacts))) {
         $paths = @($set | ForEach-Object { [string]$_.path })
-        if (($paths -join "`n") -cne (($paths | Sort-Object -CaseSensitive) -join "`n") -or @($paths | Sort-Object -Unique -CaseSensitive).Count -ne $paths.Count) { throw "Authorization artifacts must be complete, unique, and ordinal sorted." }
+        Assert-ExternalOwnerPortablePathSequence -Paths $paths -Label "Authorization artifacts"
     }
     $stableAssessment = $Assessment | ConvertTo-Json -Depth 30 -Compress | ConvertFrom-Json -Depth 30 -DateKind String
     return [ordered]@{
