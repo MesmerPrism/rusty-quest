@@ -85,15 +85,27 @@ target and exception message equal byte-for-byte to:
 Exception: Protected changes do not match an exact base-approved change set.<CR><LF>
 ```
 
-The terminal `CRLF` (`0D0A`) is the observed Windows PowerShell native-error
-transport envelope, not verifier policy text. A bare `LF`, no terminator,
+The terminal `CRLF` (`0D0A`) is the legacy Windows PowerShell native-error
+transport envelope, not verifier policy text. The fixed plain `pwsh -File`
+renderer emits exactly five `RemoteException` records: the full hash-pinned
+verifier path plus its pinned throw line, `Line |`, the pinned source excerpt
+and underline, then the exact hold text. The current hosted `windows-2025`
+renderer may instead emit a separate five-record ANSI SGR profile. That third
+profile is closed to the live hash-verified verifier path and line `969`, exit
+`1`, exact record identity/order/category/target, and exact ordinal UTF-8
+bytes. Its control text is constructed directly from `[char]27` plus only the
+observed red (`[31;1m`), cyan (`[36;1m`), and reset (`[0m`) sequences, including
+the exact source excerpt, underline, and Unicode ellipsis. The adapter accepts
+one complete legacy, plain, or ANSI profile only; it does not strip ANSI,
+apply a regex, substitute a root placeholder, consume raw stderr, trim,
+normalize, or accept a substring of any diagnostic. A bare `LF`, no terminator,
 multiple terminators, whitespace, prefix/suffix text, another exception or
 record type, a different exit status, extra output (including stdout), a
-partial assessment, different decisions or approval ids, and missing or
-malformed assessment fields all reject. A runner or PowerShell transport change
-therefore fails closed and requires a separately reviewed trust-root update;
-the adapter does not trim or normalize diagnostics. NUL-delimited Git paths
-are parsed as strict UTF-8, canonicalized, ordinally sorted, case-collision-free
+different verifier path/line/source diagnostic, a partial assessment,
+different decisions or approval ids, and missing or malformed assessment fields
+all reject. A runner or PowerShell transport change therefore fails closed and
+requires a separately reviewed trust-root update. NUL-delimited Git paths are
+parsed as strict UTF-8, canonicalized, ordinally sorted, case-collision-free
 paths; malformed delimiters, duplicate/colliding paths, and incomplete changed
 or protected inventories reject before hashing or signing.
 
