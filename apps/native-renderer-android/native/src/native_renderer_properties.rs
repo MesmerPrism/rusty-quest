@@ -27,6 +27,8 @@ pub(crate) const PROP_BREATH_COMPOSITION_CONTROLLER_PROJECTION: &str =
     "debug.rustyquest.native_renderer.breath_composition.controller_projection";
 pub(crate) const PROP_BREATH_COMPOSITION_POLAR_PROJECTION: &str =
     "debug.rustyquest.native_renderer.breath_composition.polar_projection";
+pub(crate) const PROP_BREATH_COMPOSITION_POLAR_STATE_CONFIG_V1: &str =
+    "debug.rustyquest.native_renderer.breath_composition.polar_state.config.v1";
 pub(crate) const PROP_BREATH_COMPOSITION_INVERTED: &str =
     "debug.rustyquest.native_renderer.breath_composition.inverted";
 pub(crate) const PROP_BREATH_COMPOSITION_STALE_MILLIS: &str =

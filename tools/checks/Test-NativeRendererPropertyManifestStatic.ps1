@@ -20,7 +20,7 @@ $manifest = $manifestText | ConvertFrom-Json
 if ($manifest.schema -ne "rusty.quest.native_renderer_property_manifest.v2") {
     throw "Native renderer property manifest has an unexpected schema."
 }
-$expectedPropertyCount = 308
+$expectedPropertyCount = 310
 if ($manifest.property_count -ne $expectedPropertyCount -or $manifest.properties.Count -ne $expectedPropertyCount) {
     throw "Native renderer property manifest must cover the current $expectedPropertyCount-property runtime surface."
 }
@@ -56,6 +56,7 @@ foreach ($token in @(
     'debug.rustyquest.native_renderer.breath_composition.mapping',
     'debug.rustyquest.native_renderer.breath_composition.controller_projection',
     'debug.rustyquest.native_renderer.breath_composition.polar_projection',
+    'debug.rustyquest.native_renderer.breath_composition.polar_state.config.v1',
     'debug.rustyquest.native_renderer.breath_composition.inverted',
     'debug.rustyquest.native_renderer.breath_composition.stale_millis',
     'debug.rustyquest.native_renderer.breath_composition.calibration.right_secondary_action.mode',

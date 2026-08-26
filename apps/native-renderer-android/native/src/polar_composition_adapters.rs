@@ -48,9 +48,11 @@ impl PolarAccPresentationMode {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct PolarAccMeasurement {
     pub(crate) sequence_id: u64,
+    pub(crate) source_sequence_id: u64,
     pub(crate) host_time_ns: u64,
     pub(crate) sensor_time_ns: u64,
     pub(crate) xyz_mg: [f32; 3],
+    pub(crate) held_target_presentation: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -91,9 +93,11 @@ impl PolarMeasurementIngress {
         let sequence_id = self.next_acc_sequence_id();
         let measurement = PolarAccMeasurement {
             sequence_id,
+            source_sequence_id: sequence_id,
             host_time_ns,
             sensor_time_ns,
             xyz_mg,
+            held_target_presentation: false,
         };
         if self
             .latest_acc
@@ -158,9 +162,11 @@ impl PolarMeasurementIngress {
         self.last_acc_presentation_target_ns = Some(target_host_time_ns);
         Some(PolarAccMeasurement {
             sequence_id: self.next_acc_presentation_sequence_id,
+            source_sequence_id: right.sequence_id,
             host_time_ns: target_host_time_ns,
             sensor_time_ns,
             xyz_mg,
+            held_target_presentation: false,
         })
     }
 
@@ -205,9 +211,11 @@ impl PolarMeasurementIngress {
             self.next_acc_presentation_sequence_id.saturating_add(1);
         Some(PolarAccMeasurement {
             sequence_id: self.next_acc_presentation_sequence_id,
+            source_sequence_id: target.sequence_id,
             host_time_ns: observed_host_time_ns,
             sensor_time_ns: target.sensor_time_ns,
             xyz_mg,
+            held_target_presentation: true,
         })
     }
 
@@ -878,9 +886,11 @@ mod tests {
         let mut source = PolarAccBreathSource::new(acc_settings(true));
         assert!(source.push(PolarAccMeasurement {
             sequence_id: 1,
+            source_sequence_id: 1,
             host_time_ns: 10,
             sensor_time_ns: 20,
             xyz_mg: [0.0, 50.0, -50.0],
+            held_target_presentation: false,
         }));
         assert_eq!(source.state(), SourceState::Ready);
         assert_eq!(source.sample().unwrap().value01, 0.5);
@@ -892,9 +902,11 @@ mod tests {
         for (sequence_id, x_mg, expected) in [(1, -1000.0, 0.0), (2, 1000.0, 1.0)] {
             assert!(source.push(PolarAccMeasurement {
                 sequence_id,
+                source_sequence_id: sequence_id,
                 host_time_ns: sequence_id,
                 sensor_time_ns: sequence_id,
                 xyz_mg: [x_mg, 0.0, 0.0],
+                held_target_presentation: false,
             }));
             assert_eq!(source.sample().unwrap().value01, expected);
         }
@@ -906,9 +918,11 @@ mod tests {
         assert_eq!(source.state(), SourceState::Missing);
         assert!(source.push(PolarAccMeasurement {
             sequence_id: 1,
+            source_sequence_id: 1,
             host_time_ns: 1,
             sensor_time_ns: 1,
             xyz_mg: [0.0, 0.0, 0.0],
+            held_target_presentation: false,
         }));
         source.advance(1.1);
         assert_eq!(source.state(), SourceState::Stale);
@@ -920,9 +934,11 @@ mod tests {
         let mut source = PolarAccBreathSource::new(acc_settings(true));
         assert!(!source.push(PolarAccMeasurement {
             sequence_id: 1,
+            source_sequence_id: 1,
             host_time_ns: 1,
             sensor_time_ns: 1,
             xyz_mg: [f32::NAN, 0.0, 0.0],
+            held_target_presentation: false,
         }));
         assert_eq!(source.state(), SourceState::Malformed);
     }
@@ -932,9 +948,11 @@ mod tests {
         let mut source = PolarAccBreathSource::new(acc_settings(false));
         assert!(!source.push(PolarAccMeasurement {
             sequence_id: 1,
+            source_sequence_id: 1,
             host_time_ns: 1,
             sensor_time_ns: 1,
             xyz_mg: [0.0, 0.0, 0.0],
+            held_target_presentation: false,
         }));
         assert_eq!(source.state(), SourceState::Disabled);
         assert_eq!(source.sample(), None);

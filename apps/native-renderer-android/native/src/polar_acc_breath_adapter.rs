@@ -23,6 +23,10 @@ use rusty_quest_breath_contract::{
     BreathGeneration, BreathTimestampMicros,
 };
 
+use crate::polar_acc_phase_classifier::{
+    PolarAccPhaseClassifier, PolarAccPhaseConfiguration, PolarAccPhaseConfigurationError,
+    PolarAccPhaseParameters,
+};
 use crate::polar_composition_adapters::PolarAccMeasurement;
 
 const NANOSECONDS_PER_MICROSECOND: u64 = 1_000;
@@ -79,10 +83,12 @@ impl PolarAccelerationUnit {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct TimedPolarAccFrame {
     pub(crate) sequence_id: u64,
+    pub(crate) source_sequence_id: u64,
     pub(crate) host_monotonic_time_ns: u64,
     pub(crate) sensor_monotonic_time_ns: u64,
     pub(crate) acceleration: [f64; 3],
     pub(crate) unit: PolarAccelerationUnit,
+    pub(crate) held_target_presentation: bool,
 }
 
 impl TimedPolarAccFrame {
@@ -90,15 +96,17 @@ impl TimedPolarAccFrame {
     pub(crate) fn from_pmd_measurement(measurement: PolarAccMeasurement) -> Self {
         Self {
             sequence_id: measurement.sequence_id,
+            source_sequence_id: measurement.source_sequence_id,
             host_monotonic_time_ns: measurement.host_time_ns,
             sensor_monotonic_time_ns: measurement.sensor_time_ns,
             acceleration: measurement.xyz_mg.map(f64::from),
             unit: PolarAccelerationUnit::Milligravity,
+            held_target_presentation: measurement.held_target_presentation,
         }
     }
 
     fn normalize(self) -> Result<NormalizedPolarAccFrame, PolarAccTranslationError> {
-        if self.sequence_id == 0 {
+        if self.sequence_id == 0 || self.source_sequence_id == 0 {
             return Err(PolarAccTranslationError::ZeroSequence);
         }
         if self.host_monotonic_time_ns == 0 {
@@ -125,12 +133,14 @@ impl TimedPolarAccFrame {
         }
         Ok(NormalizedPolarAccFrame {
             sequence_id: self.sequence_id,
+            source_sequence_id: self.source_sequence_id,
             sampled_at: BreathTimestampMicros::new(
                 self.host_monotonic_time_ns / NANOSECONDS_PER_MICROSECOND,
             ),
             sensor_monotonic_time_ns: self.sensor_monotonic_time_ns,
             acceleration_g,
             input_unit: self.unit,
+            held_target_presentation: self.held_target_presentation,
         })
     }
 }
@@ -138,10 +148,12 @@ impl TimedPolarAccFrame {
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct NormalizedPolarAccFrame {
     sequence_id: u64,
+    source_sequence_id: u64,
     sampled_at: BreathTimestampMicros,
     sensor_monotonic_time_ns: u64,
     acceleration_g: [f64; 3],
     input_unit: PolarAccelerationUnit,
+    held_target_presentation: bool,
 }
 
 /// Explicit Polar acceleration availability at one injected action time.
@@ -158,6 +170,7 @@ pub(crate) struct PolarAccVolumeSettings {
     projection: PolarAccProjection,
     calibration: CalibrationConfiguration,
     phase: CommonPhaseConfiguration,
+    polar_phase: Option<PolarAccPhaseConfiguration>,
 }
 
 impl PolarAccVolumeSettings {
@@ -176,6 +189,7 @@ impl PolarAccVolumeSettings {
             projection,
             calibration,
             phase,
+            polar_phase: None,
         })
     }
 
@@ -187,6 +201,17 @@ impl PolarAccVolumeSettings {
             .map_err(PolarAccVolumeSettingsError::InvalidPhase)?;
         Ok(self)
     }
+
+    pub(crate) fn with_polar_phase_parameters(
+        mut self,
+        parameters: PolarAccPhaseParameters,
+    ) -> Result<Self, PolarAccVolumeSettingsError> {
+        self.polar_phase = Some(
+            PolarAccPhaseConfiguration::new(parameters)
+                .map_err(PolarAccVolumeSettingsError::InvalidPolarPhase)?,
+        );
+        Ok(self)
+    }
 }
 
 /// Typed configuration rejection at the Polar adapter boundary.
@@ -194,6 +219,7 @@ impl PolarAccVolumeSettings {
 pub(crate) enum PolarAccVolumeSettingsError {
     InvalidCalibration(rusty_quest_breath_contract::calibration::CalibrationConfigurationError),
     InvalidPhase(CommonPhaseConfigurationError),
+    InvalidPolarPhase(PolarAccPhaseConfigurationError),
 }
 
 /// Typed rejection while translating PMD/JNI ingress into the pure contract.
@@ -204,6 +230,7 @@ pub(crate) enum PolarAccTranslationError {
     ZeroSensorTimestamp,
     NonFiniteAcceleration { index: usize },
     SensorTimestampOutOfOrder { submitted: u64, previous: u64 },
+    HostTimestampOutOfOrder { submitted: u64, previous: u64 },
 }
 
 /// Adapter-level rejection that leaves calibrated volume inert.
@@ -211,6 +238,7 @@ pub(crate) enum PolarAccTranslationError {
 pub(crate) enum PolarAccAssessmentRejection {
     Disabled,
     GenerationMismatch,
+    LateSampleDropped,
     Translation(PolarAccTranslationError),
     Calibration(CalibrationRejection),
     CalibrationFailure(rusty_quest_breath_contract::calibration::CalibrationFailure),
@@ -227,6 +255,23 @@ pub(crate) struct PolarAccAdapterTelemetry {
     pub(crate) milligravity_frame_count: u64,
     pub(crate) standard_gravity_frame_count: u64,
     pub(crate) meters_per_second_squared_frame_count: u64,
+    pub(crate) late_sample_drop_count: u64,
+    pub(crate) out_of_window_disorder_count: u64,
+    pub(crate) stale_gap_count: u64,
+}
+
+/// Low-rate assessment diagnostics suitable for app-owned status and markers.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct PolarAccRuntimeDiagnostics {
+    pub(crate) classifier: &'static str,
+    pub(crate) phase: CommonBreathPhase,
+    pub(crate) phase_transition_count: u64,
+    pub(crate) hold_transition_count: u64,
+    pub(crate) late_sample_window_micros: u64,
+    pub(crate) late_sample_drop_count: u64,
+    pub(crate) out_of_window_disorder_count: u64,
+    pub(crate) stale_gap_count: u64,
+    pub(crate) settings: String,
 }
 
 /// One calibrated Polar assessment result.
@@ -244,24 +289,32 @@ pub(crate) struct PolarAccAssessmentResult {
 pub(crate) struct PolarAccBreathAdapter {
     settings: PolarAccVolumeSettings,
     calibration: AcceptedFrameCalibration,
-    phase: CommonPhaseClassifier,
+    phase: PolarPhaseOwner,
     generation: Option<BreathGeneration>,
     next_runtime_generation: u64,
     last_sensor_monotonic_time_ns: Option<u64>,
+    last_source_sequence_id: Option<u64>,
+    last_sampled_at: Option<BreathTimestampMicros>,
+    last_acceleration_g: Option<[f64; 3]>,
     last_phase_observation: Option<CommonPhaseObservation>,
+    last_tracking: Option<BreathTrackingState>,
     telemetry: PolarAccAdapterTelemetry,
 }
 
 impl PolarAccBreathAdapter {
     pub(crate) fn new(settings: PolarAccVolumeSettings) -> Self {
         Self {
-            phase: CommonPhaseClassifier::new(settings.phase),
+            phase: PolarPhaseOwner::from_settings(settings),
             settings,
             calibration: AcceptedFrameCalibration::new(),
             generation: None,
             next_runtime_generation: 1,
             last_sensor_monotonic_time_ns: None,
+            last_source_sequence_id: None,
+            last_sampled_at: None,
+            last_acceleration_g: None,
             last_phase_observation: None,
+            last_tracking: None,
             telemetry: PolarAccAdapterTelemetry::default(),
         }
     }
@@ -269,6 +322,10 @@ impl PolarAccBreathAdapter {
     pub(crate) fn configure(&mut self, at: BreathTimestampMicros) -> CalibrationObservation {
         self.generation = None;
         self.last_sensor_monotonic_time_ns = None;
+        self.last_source_sequence_id = None;
+        self.last_sampled_at = None;
+        self.last_acceleration_g = None;
+        self.last_tracking = None;
         self.reset_phase(at, CommonPhaseResetReason::CalibrationChanged);
         if !self.settings.enabled {
             return self.calibration.snapshot();
@@ -297,6 +354,10 @@ impl PolarAccBreathAdapter {
                 .next_runtime_generation
                 .max(generation.get().saturating_add(1));
             self.last_sensor_monotonic_time_ns = None;
+            self.last_source_sequence_id = None;
+            self.last_sampled_at = None;
+            self.last_acceleration_g = None;
+            self.last_tracking = None;
             self.reset_phase(at, CommonPhaseResetReason::LifecycleChanged);
         }
         observation
@@ -333,6 +394,10 @@ impl PolarAccBreathAdapter {
         if observation.lifecycle == CalibrationLifecycle::Cancelled {
             self.generation = None;
             self.last_sensor_monotonic_time_ns = None;
+            self.last_source_sequence_id = None;
+            self.last_sampled_at = None;
+            self.last_acceleration_g = None;
+            self.last_tracking = None;
             self.reset_phase(at, CommonPhaseResetReason::LifecycleChanged);
         }
         observation
@@ -341,9 +406,30 @@ impl PolarAccBreathAdapter {
     pub(crate) fn reset(&mut self, at: BreathTimestampMicros) -> CalibrationObservation {
         self.generation = None;
         self.last_sensor_monotonic_time_ns = None;
+        self.last_source_sequence_id = None;
+        self.last_sampled_at = None;
+        self.last_acceleration_g = None;
+        self.last_tracking = None;
         self.last_phase_observation = Some(self.phase.reset(at));
         self.telemetry = PolarAccAdapterTelemetry::default();
         self.calibration.reset(at)
+    }
+
+    pub(crate) fn apply_polar_phase_parameters(
+        &mut self,
+        at: BreathTimestampMicros,
+        parameters: PolarAccPhaseParameters,
+    ) -> Result<(), PolarAccVolumeSettingsError> {
+        let configuration = PolarAccPhaseConfiguration::new(parameters)
+            .map_err(PolarAccVolumeSettingsError::InvalidPolarPhase)?;
+        self.settings.polar_phase = Some(configuration);
+        self.phase = PolarPhaseOwner::Tuned(PolarAccPhaseClassifier::new(configuration));
+        self.last_phase_observation = Some(
+            self.phase
+                .reset_history(at, CommonPhaseResetReason::CalibrationChanged),
+        );
+        self.last_tracking = None;
+        Ok(())
     }
 
     pub(crate) fn observe(
@@ -377,7 +463,7 @@ impl PolarAccBreathAdapter {
                 } else {
                     (BreathTrackingState::Missing, None)
                 };
-                self.finish(at, at, sequence_id, tracking, rejection, calibration)
+                self.finish(at, at, sequence_id, tracking, rejection, calibration, None)
             }
             PolarAccInput::Frame(frame) => self.observe_frame(at, generation, frame),
         }
@@ -406,7 +492,18 @@ impl PolarAccBreathAdapter {
             }
         };
         if let Some(previous) = self.last_sensor_monotonic_time_ns {
-            if normalized.sensor_monotonic_time_ns <= previous {
+            let held_target_repeat = normalized.held_target_presentation
+                && normalized.sensor_monotonic_time_ns == previous
+                && self.last_source_sequence_id == Some(normalized.source_sequence_id);
+            if normalized.sensor_monotonic_time_ns <= previous && !held_target_repeat {
+                let lateness_micros = previous.saturating_sub(normalized.sensor_monotonic_time_ns)
+                    / NANOSECONDS_PER_MICROSECOND;
+                if self.phase.late_sample_window_micros() > 0
+                    && lateness_micros <= self.phase.late_sample_window_micros()
+                {
+                    return self.drop_late_sample();
+                }
+                increment(&mut self.telemetry.out_of_window_disorder_count);
                 return self.reject_translation(
                     at,
                     normalized.sampled_at.min(at),
@@ -419,6 +516,37 @@ impl PolarAccBreathAdapter {
                 );
             }
         }
+        if let Some(previous) = self.last_sampled_at {
+            if normalized.sampled_at <= previous {
+                let lateness_micros = previous.get().saturating_sub(normalized.sampled_at.get());
+                if self.phase.late_sample_window_micros() > 0
+                    && lateness_micros <= self.phase.late_sample_window_micros()
+                {
+                    return self.drop_late_sample();
+                }
+                increment(&mut self.telemetry.out_of_window_disorder_count);
+                return self.reject_translation(
+                    at,
+                    normalized.sampled_at.min(at),
+                    normalized.sequence_id,
+                    generation,
+                    PolarAccTranslationError::HostTimestampOutOfOrder {
+                        submitted: normalized.sampled_at.get(),
+                        previous: previous.get(),
+                    },
+                );
+            }
+        }
+        let motion_delta_mg = self.last_acceleration_g.map_or(f64::INFINITY, |previous| {
+            normalized
+                .acceleration_g
+                .into_iter()
+                .zip(previous)
+                .map(|(current, old)| (current - old).powi(2))
+                .sum::<f64>()
+                .sqrt()
+                * 1_000.0
+        });
         increment(&mut self.telemetry.normalized_frame_count);
         match normalized.input_unit {
             PolarAccelerationUnit::Milligravity => {
@@ -442,6 +570,9 @@ impl PolarAccBreathAdapter {
         );
         if calibration_consumed_source_order(&calibration) {
             self.last_sensor_monotonic_time_ns = Some(normalized.sensor_monotonic_time_ns);
+            self.last_source_sequence_id = Some(normalized.source_sequence_id);
+            self.last_sampled_at = Some(normalized.sampled_at);
+            self.last_acceleration_g = Some(normalized.acceleration_g);
         }
         let (tracking, rejection) = classify_calibration(&calibration);
         self.finish(
@@ -451,7 +582,19 @@ impl PolarAccBreathAdapter {
             tracking,
             rejection,
             calibration,
+            Some(motion_delta_mg),
         )
+    }
+
+    fn drop_late_sample(&mut self) -> PolarAccAssessmentResult {
+        increment(&mut self.telemetry.late_sample_drop_count);
+        PolarAccAssessmentResult {
+            assessment: None,
+            calibration: self.calibration.snapshot(),
+            phase: self.last_phase_observation,
+            rejection: Some(PolarAccAssessmentRejection::LateSampleDropped),
+            telemetry: self.telemetry,
+        }
     }
 
     fn reject_translation(
@@ -468,6 +611,7 @@ impl PolarAccBreathAdapter {
         let tracking = if matches!(
             error,
             PolarAccTranslationError::SensorTimestampOutOfOrder { .. }
+                | PolarAccTranslationError::HostTimestampOutOfOrder { .. }
         ) {
             BreathTrackingState::OutOfOrder
         } else {
@@ -480,6 +624,7 @@ impl PolarAccBreathAdapter {
             tracking,
             Some(PolarAccAssessmentRejection::Translation(error)),
             calibration,
+            None,
         )
     }
 
@@ -491,8 +636,15 @@ impl PolarAccBreathAdapter {
         tracking: BreathTrackingState,
         rejection: Option<PolarAccAssessmentRejection>,
         calibration: CalibrationObservation,
+        motion_delta_mg: Option<f64>,
     ) -> PolarAccAssessmentResult {
         let generation = self.generation.expect("active adapter retains generation");
+        if tracking == BreathTrackingState::Stale
+            && self.last_tracking != Some(BreathTrackingState::Stale)
+        {
+            increment(&mut self.telemetry.stale_gap_count);
+        }
+        self.last_tracking = Some(tracking);
         let volume01 = if tracking == BreathTrackingState::Valid {
             calibration.live.map(|live| live.volume01)
         } else {
@@ -505,11 +657,10 @@ impl PolarAccBreathAdapter {
             calibration.live.map(|live| {
                 self.phase.observe(
                     observed_at,
-                    CommonPhaseInput::Sample {
-                        sequence_id: live.sequence_id,
-                        sampled_at: live.sampled_at,
-                        value01: live.volume01,
-                    },
+                    live.sequence_id,
+                    live.sampled_at,
+                    live.volume01,
+                    motion_delta_mg.unwrap_or_default(),
                 )
             })
         } else {
@@ -582,12 +733,145 @@ impl PolarAccBreathAdapter {
                 .map_or_else(|| "none".to_owned(), |value| value.to_string()),
             self.phase.telemetry().phase_transition_count,
             self.phase.telemetry().hold_transition_count,
+        ) + &format!(
+            " polarAccPhaseClassifier={} polarAccPhaseLatePolicy=bounded-late-drop polarAccPhaseLateWindowMicros={} polarAccPhaseLateDrops={} polarAccPhaseOutOfWindowDisorder={} polarAccPhaseStaleGaps={} polarAccPhaseSettings={}",
+            self.phase.mode_token(),
+            self.phase.late_sample_window_micros(),
+            self.telemetry.late_sample_drop_count,
+            self.telemetry.out_of_window_disorder_count,
+            self.telemetry.stale_gap_count,
+            self.phase.settings_marker(),
         )
+    }
+
+    pub(crate) fn runtime_diagnostics(&self) -> PolarAccRuntimeDiagnostics {
+        let telemetry = self.phase.telemetry();
+        PolarAccRuntimeDiagnostics {
+            classifier: self.phase.mode_token(),
+            phase: self
+                .last_phase_observation
+                .map_or(CommonBreathPhase::Unknown, |value| value.phase),
+            phase_transition_count: telemetry.phase_transition_count,
+            hold_transition_count: telemetry.hold_transition_count,
+            late_sample_window_micros: self.phase.late_sample_window_micros(),
+            late_sample_drop_count: self.telemetry.late_sample_drop_count,
+            out_of_window_disorder_count: self.telemetry.out_of_window_disorder_count,
+            stale_gap_count: self.telemetry.stale_gap_count,
+            settings: self.phase.settings_marker(),
+        }
     }
 
     fn reset_phase(&mut self, at: BreathTimestampMicros, reason: CommonPhaseResetReason) {
         let observation = self.phase.reset_history(at, reason);
         self.last_phase_observation = Some(observation);
+    }
+}
+
+#[derive(Debug)]
+enum PolarPhaseOwner {
+    Common(CommonPhaseClassifier),
+    Tuned(PolarAccPhaseClassifier),
+}
+
+impl PolarPhaseOwner {
+    fn from_settings(settings: PolarAccVolumeSettings) -> Self {
+        settings.polar_phase.map_or_else(
+            || Self::Common(CommonPhaseClassifier::new(settings.phase)),
+            |configuration| Self::Tuned(PolarAccPhaseClassifier::new(configuration)),
+        )
+    }
+
+    fn observe(
+        &mut self,
+        observed_at: BreathTimestampMicros,
+        sequence_id: u64,
+        sampled_at: BreathTimestampMicros,
+        value01: f64,
+        motion_delta_mg: f64,
+    ) -> CommonPhaseObservation {
+        match self {
+            Self::Common(classifier) => classifier.observe(
+                observed_at,
+                CommonPhaseInput::Sample {
+                    sequence_id,
+                    sampled_at,
+                    value01,
+                },
+            ),
+            Self::Tuned(classifier) => classifier.observe_sample(
+                observed_at,
+                sequence_id,
+                sampled_at,
+                value01,
+                motion_delta_mg,
+            ),
+        }
+    }
+
+    fn reset_history(
+        &mut self,
+        at: BreathTimestampMicros,
+        reason: CommonPhaseResetReason,
+    ) -> CommonPhaseObservation {
+        match self {
+            Self::Common(classifier) => classifier.reset_history(at, reason),
+            Self::Tuned(classifier) => classifier.reset_history(at, reason),
+        }
+    }
+
+    fn reset(&mut self, at: BreathTimestampMicros) -> CommonPhaseObservation {
+        match self {
+            Self::Common(classifier) => classifier.reset(at),
+            Self::Tuned(classifier) => classifier.reset(at),
+        }
+    }
+
+    fn telemetry(&self) -> rusty_quest_breath_contract::phase::CommonPhaseTelemetry {
+        match self {
+            Self::Common(classifier) => classifier.telemetry(),
+            Self::Tuned(classifier) => classifier.telemetry(),
+        }
+    }
+
+    const fn late_sample_window_micros(&self) -> u64 {
+        match self {
+            Self::Common(_) => 0,
+            Self::Tuned(classifier) => {
+                classifier
+                    .configuration()
+                    .parameters()
+                    .late_sample_window_micros
+            }
+        }
+    }
+
+    const fn mode_token(&self) -> &'static str {
+        match self {
+            Self::Common(_) => "common-default",
+            Self::Tuned(_) => "polar-specific-v1",
+        }
+    }
+
+    fn settings_marker(&self) -> String {
+        match self {
+            Self::Common(_) => "common-default".to_owned(),
+            Self::Tuned(classifier) => {
+                let value = classifier.configuration().parameters();
+                format!(
+                    "inhale-{:.6}_exhale-{:.6}_hold-{:.6}_smoothMs-{}_confirmMs-{}_dwellMs-{}_staleMs-{}_motionMg-{:.3}_leaveContract-{:.6}_leaveExpand-{:.6}",
+                    value.inhale_entry_per_second,
+                    value.exhale_entry_per_second,
+                    value.hold_band_per_second,
+                    value.smoothing_tau_micros / 1_000,
+                    value.confirmation_micros / 1_000,
+                    value.minimum_dwell_micros / 1_000,
+                    value.stale_after_micros / 1_000,
+                    value.motion_admission_mg,
+                    value.leave_full_contraction_per_second,
+                    value.leave_full_expansion_per_second,
+                )
+            }
+        }
     }
 }
 
@@ -737,10 +1021,12 @@ mod tests {
     ) -> PolarAccInput {
         PolarAccInput::Frame(TimedPolarAccFrame {
             sequence_id,
+            source_sequence_id: sequence_id,
             host_monotonic_time_ns: time_micros.saturating_mul(NANOSECONDS_PER_MICROSECOND),
             sensor_monotonic_time_ns: sensor_time_ns,
             acceleration,
             unit,
+            held_target_presentation: false,
         })
     }
 
@@ -776,9 +1062,11 @@ mod tests {
     fn pmd_ingress_translation_normalizes_timestamp_and_unit() {
         let translated = TimedPolarAccFrame::from_pmd_measurement(PolarAccMeasurement {
             sequence_id: 7,
+            source_sequence_id: 7,
             host_time_ns: 123_456_789,
             sensor_time_ns: 987_654_321,
             xyz_mg: [1_000.0, -500.0, 250.0],
+            held_target_presentation: false,
         })
         .normalize()
         .expect("typed PMD frame");
@@ -789,10 +1077,12 @@ mod tests {
 
         let meters = TimedPolarAccFrame {
             sequence_id: 1,
+            source_sequence_id: 1,
             host_monotonic_time_ns: 1_000,
             sensor_monotonic_time_ns: 1,
             acceleration: [STANDARD_GRAVITY_METERS_PER_SECOND_SQUARED, 0.0, 0.0],
             unit: PolarAccelerationUnit::MetersPerSecondSquared,
+            held_target_presentation: false,
         }
         .normalize()
         .expect("SI frame");
@@ -800,10 +1090,12 @@ mod tests {
 
         let gravity = TimedPolarAccFrame {
             sequence_id: 1,
+            source_sequence_id: 1,
             host_monotonic_time_ns: 1_000,
             sensor_monotonic_time_ns: 1,
             acceleration: [1.0, -0.5, 0.25],
             unit: PolarAccelerationUnit::StandardGravity,
+            held_target_presentation: false,
         }
         .normalize()
         .expect("standard-gravity frame");
@@ -1009,6 +1301,127 @@ mod tests {
     }
 
     #[test]
+    fn bounded_late_sample_is_dropped_without_reset_and_next_ordered_frame_recovers() {
+        let parameters = crate::polar_acc_phase_classifier::PolarAccPhaseParameters {
+            late_sample_window_micros: 120_000,
+            motion_admission_mg: 2.0,
+            ..crate::polar_acc_phase_classifier::PolarAccPhaseParameters::default()
+        };
+        let settings = PolarAccVolumeSettings::new(true, PolarAccProjection::Xz, test_parameters())
+            .expect("base settings")
+            .with_polar_phase_parameters(parameters)
+            .expect("tuned settings");
+        let mut adapter = PolarAccBreathAdapter::new(settings);
+        start(&mut adapter, 1_000_000, 1);
+        let first = adapter.observe(
+            timestamp(1_000_000),
+            generation(1),
+            frame(
+                1,
+                1_000_000,
+                200_000_000,
+                [0.0, 1.0, 0.0],
+                PolarAccelerationUnit::StandardGravity,
+            ),
+        );
+        assert_eq!(first.telemetry.late_sample_drop_count, 0);
+        let late = adapter.observe(
+            timestamp(1_100_000),
+            generation(1),
+            frame(
+                2,
+                1_100_000,
+                120_000_000,
+                [0.01, 1.0, 0.0],
+                PolarAccelerationUnit::StandardGravity,
+            ),
+        );
+        assert!(late.assessment.is_none());
+        assert_eq!(
+            late.rejection,
+            Some(PolarAccAssessmentRejection::LateSampleDropped)
+        );
+        assert_eq!(late.telemetry.late_sample_drop_count, 1);
+        assert_eq!(late.telemetry.out_of_window_disorder_count, 0);
+
+        let recovered = adapter.observe(
+            timestamp(1_200_000),
+            generation(1),
+            frame(
+                3,
+                1_200_000,
+                300_000_000,
+                [0.02, 1.0, 0.0],
+                PolarAccelerationUnit::StandardGravity,
+            ),
+        );
+        assert!(recovered.assessment.is_some());
+        assert_eq!(recovered.telemetry.late_sample_drop_count, 1);
+    }
+
+    #[test]
+    fn low_latency_smoothing_reuses_one_source_timestamp_without_becoming_late_data() {
+        let parameters = crate::polar_acc_phase_classifier::PolarAccPhaseParameters {
+            late_sample_window_micros: 120_000,
+            motion_admission_mg: 2.0,
+            ..crate::polar_acc_phase_classifier::PolarAccPhaseParameters::default()
+        };
+        let settings = PolarAccVolumeSettings::new(true, PolarAccProjection::Xz, test_parameters())
+            .expect("base settings")
+            .with_polar_phase_parameters(parameters)
+            .expect("tuned settings");
+        let mut adapter = PolarAccBreathAdapter::new(settings);
+        start(&mut adapter, 1_000_000, 1);
+
+        let held = |sequence_id, source_sequence_id, host_time_ns, sensor_time_ns, x| {
+            PolarAccInput::Frame(TimedPolarAccFrame {
+                sequence_id,
+                source_sequence_id,
+                host_monotonic_time_ns: host_time_ns,
+                sensor_monotonic_time_ns: sensor_time_ns,
+                acceleration: [x, 1.0, 0.0],
+                unit: PolarAccelerationUnit::StandardGravity,
+                held_target_presentation: true,
+            })
+        };
+
+        let first = adapter.observe(
+            timestamp(1_000_000),
+            generation(1),
+            held(1, 10, 1_000_000_000, 200_000_000, 0.0),
+        );
+        assert!(first.assessment.is_some());
+        assert_eq!(first.telemetry.normalized_frame_count, 1);
+
+        let smoothed_repeat = adapter.observe(
+            timestamp(1_010_000),
+            generation(1),
+            held(2, 10, 1_010_000_000, 200_000_000, 0.005),
+        );
+        assert!(smoothed_repeat.assessment.is_some());
+        assert_eq!(smoothed_repeat.rejection, None);
+        assert_eq!(smoothed_repeat.telemetry.normalized_frame_count, 2);
+        assert_eq!(smoothed_repeat.telemetry.late_sample_drop_count, 0);
+
+        let new_source_with_repeated_timestamp = adapter.observe(
+            timestamp(1_020_000),
+            generation(1),
+            held(3, 11, 1_020_000_000, 200_000_000, 0.01),
+        );
+        assert!(new_source_with_repeated_timestamp.assessment.is_none());
+        assert_eq!(
+            new_source_with_repeated_timestamp.rejection,
+            Some(PolarAccAssessmentRejection::LateSampleDropped)
+        );
+        assert_eq!(
+            new_source_with_repeated_timestamp
+                .telemetry
+                .late_sample_drop_count,
+            1
+        );
+    }
+
+    #[test]
     fn adaptive_limits_remain_bounded_through_the_adapter() {
         let mut adapter = adapter(PolarAccProjection::Xz);
         start(&mut adapter, 1_000_000, 1);
@@ -1085,24 +1498,30 @@ mod tests {
         for error_frame in [
             TimedPolarAccFrame {
                 sequence_id: 1,
+                source_sequence_id: 1,
                 host_monotonic_time_ns: 0,
                 sensor_monotonic_time_ns: 1,
                 acceleration: [0.0, 1.0, 0.0],
                 unit: PolarAccelerationUnit::StandardGravity,
+                held_target_presentation: false,
             },
             TimedPolarAccFrame {
                 sequence_id: 1,
+                source_sequence_id: 1,
                 host_monotonic_time_ns: 1_000_000_000,
                 sensor_monotonic_time_ns: 1,
                 acceleration: [f64::NAN, 1.0, 0.0],
                 unit: PolarAccelerationUnit::StandardGravity,
+                held_target_presentation: false,
             },
             TimedPolarAccFrame {
                 sequence_id: 1,
+                source_sequence_id: 1,
                 host_monotonic_time_ns: 1_000_000_000,
                 sensor_monotonic_time_ns: 1,
                 acceleration: [17.0, 1.0, 0.0],
                 unit: PolarAccelerationUnit::StandardGravity,
+                held_target_presentation: false,
             },
         ] {
             let mut malformed = adapter(PolarAccProjection::Xz);
@@ -1136,6 +1555,7 @@ mod tests {
             stale_result.assessment.expect("stale assessment").tracking,
             BreathTrackingState::Stale
         );
+        assert_eq!(stale_result.telemetry.stale_gap_count, 1);
 
         let mut ordered = adapter(PolarAccProjection::Xz);
         start(&mut ordered, 1_000_000, 1);
@@ -1301,6 +1721,10 @@ mod tests {
         let marker = adapter.marker_fields();
         assert!(marker.contains("polarAccAssessmentProjection=xz"));
         assert!(marker.contains("polarAccAssessmentInputUnit=typed"));
+        assert!(marker.contains("polarAccPhaseStaleGaps=0"));
+        let diagnostics = adapter.runtime_diagnostics();
+        assert_eq!(diagnostics.classifier, "common-default");
+        assert_eq!(diagnostics.stale_gap_count, 0);
         assert_eq!(PolarAccelerationUnit::Milligravity.marker_value(), "mg");
     }
 }

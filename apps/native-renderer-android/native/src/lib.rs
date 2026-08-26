@@ -125,6 +125,7 @@ mod openxr_simultaneous_hands_controllers;
 mod openxr_stimulus_actions;
 mod particle_adapter_consumer;
 mod polar_acc_breath_adapter;
+mod polar_acc_phase_classifier;
 mod polar_composition_adapters;
 #[cfg(target_os = "android")]
 mod private_extension_slot;

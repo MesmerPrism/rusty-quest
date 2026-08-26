@@ -3,6 +3,7 @@
 use std::{
     collections::VecDeque,
     sync::{Mutex, MutexGuard, OnceLock},
+    time::{SystemTime, UNIX_EPOCH},
 };
 
 use rusty_quest_breath_contract::{
@@ -25,15 +26,16 @@ use crate::native_renderer_properties::{
     PROP_BREATH_COMPOSITION_CONTROLLER_PROJECTION, PROP_BREATH_COMPOSITION_ENABLED,
     PROP_BREATH_COMPOSITION_INVERTED, PROP_BREATH_COMPOSITION_MAPPING,
     PROP_BREATH_COMPOSITION_PANEL_ENABLED, PROP_BREATH_COMPOSITION_POLAR_ACC_ASSESSMENT_ENABLED,
-    PROP_BREATH_COMPOSITION_POLAR_PROJECTION, PROP_BREATH_COMPOSITION_SOURCE,
-    PROP_BREATH_COMPOSITION_STALE_MILLIS, PROP_BREATH_COMPOSITION_STATE_MAPPING_ENABLED,
-    PROP_BREATH_COMPOSITION_VOLUME_MAPPING_ENABLED,
+    PROP_BREATH_COMPOSITION_POLAR_PROJECTION, PROP_BREATH_COMPOSITION_POLAR_STATE_CONFIG_V1,
+    PROP_BREATH_COMPOSITION_SOURCE, PROP_BREATH_COMPOSITION_STALE_MILLIS,
+    PROP_BREATH_COMPOSITION_STATE_MAPPING_ENABLED, PROP_BREATH_COMPOSITION_VOLUME_MAPPING_ENABLED,
 };
 use crate::{
     polar_acc_breath_adapter::{
-        PolarAccBreathAdapter, PolarAccInput, PolarAccProjection, PolarAccVolumeSettings,
-        TimedPolarAccFrame,
+        PolarAccBreathAdapter, PolarAccInput, PolarAccProjection, PolarAccRuntimeDiagnostics,
+        PolarAccVolumeSettings, TimedPolarAccFrame,
     },
+    polar_acc_phase_classifier::{PolarAccPhaseConfiguration, PolarAccPhaseParameters},
     polar_composition_adapters::polar_acc_for_presentation,
 };
 
@@ -45,7 +47,7 @@ const DEFAULT_STALE_MILLIS: u64 = 500;
 const PACKAGED_ACTIVATION_BINDING_SHA256: Option<&str> =
     option_env!("RUSTY_QUEST_NATIVE_RENDERER_BREATH_COMPOSITION_EXPECTED_BINDING_SHA256");
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct BreathCompositionRuntimeConfig {
     pub(crate) enabled: bool,
     pub(crate) packaged_activation_binding: BreathCompositionBinding,
@@ -53,6 +55,7 @@ pub(crate) struct BreathCompositionRuntimeConfig {
     pub(crate) capabilities: BreathCompositionCapabilities,
     pub(crate) initial_request: Option<BreathCompositionRequest>,
     pub(crate) stale_after_micros: u64,
+    pub(crate) polar_state_parameters: Option<PolarAccPhaseParameters>,
 }
 
 impl Default for BreathCompositionRuntimeConfig {
@@ -64,6 +67,7 @@ impl Default for BreathCompositionRuntimeConfig {
             capabilities: BreathCompositionCapabilities::default(),
             initial_request: None,
             stale_after_micros: DEFAULT_STALE_MILLIS * 1_000,
+            polar_state_parameters: None,
         }
     }
 }
@@ -102,6 +106,9 @@ impl BreathCompositionRuntimeConfig {
             .and_then(|value| value.trim().parse::<u64>().ok())
             .filter(|value| (1..=60_000).contains(value))
             .unwrap_or(DEFAULT_STALE_MILLIS);
+        let polar_state_parameters = get(PROP_BREATH_COMPOSITION_POLAR_STATE_CONFIG_V1)
+            .as_deref()
+            .and_then(parse_polar_state_compact);
         Self {
             enabled,
             packaged_activation_binding: parse_binding(PACKAGED_ACTIVATION_BINDING_SHA256),
@@ -111,6 +118,7 @@ impl BreathCompositionRuntimeConfig {
             capabilities,
             initial_request,
             stale_after_micros: stale_millis * 1_000,
+            polar_state_parameters,
         }
     }
 }
@@ -146,6 +154,8 @@ pub(crate) struct BreathCompositionRuntime {
     polar_missing_reported: bool,
     stale_after_micros: u64,
     latest_calibration: Option<CalibrationPanelReadback>,
+    polar_state_tuning: PolarStateTuningControl,
+    last_polar_diagnostics: Option<PolarAccRuntimeDiagnostics>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -158,6 +168,94 @@ struct CalibrationPanelReadback {
     target_frames: Option<usize>,
     watchdog_age_micros: Option<u64>,
     failure_code: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct PolarStateTuningRequest {
+    session_id: String,
+    generation: u64,
+    request_id: String,
+    parameters: PolarAccPhaseParameters,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct PolarStateTuningControl {
+    session_id: String,
+    generation: u64,
+    requested: Option<PolarStateTuningRequest>,
+    effective: Option<PolarStateTuningRequest>,
+    pending: Option<PolarStateTuningRequest>,
+    accepted_count: u64,
+    rejected_count: u64,
+    effective_count: u64,
+    last_reason: &'static str,
+}
+
+impl PolarStateTuningControl {
+    fn new(profile_parameters: Option<PolarAccPhaseParameters>) -> Self {
+        let session_id = new_session_id();
+        let effective = profile_parameters.map(|parameters| PolarStateTuningRequest {
+            session_id: session_id.clone(),
+            generation: 0,
+            request_id: "startup-profile".to_owned(),
+            parameters,
+        });
+        Self {
+            session_id,
+            generation: 0,
+            requested: effective.clone(),
+            effective,
+            pending: None,
+            accepted_count: 0,
+            rejected_count: 0,
+            effective_count: u64::from(profile_parameters.is_some()),
+            last_reason: if profile_parameters.is_some() {
+                "startup-profile"
+            } else {
+                "common-default"
+            },
+        }
+    }
+
+    fn current_parameters(&self) -> Option<PolarAccPhaseParameters> {
+        self.effective.as_ref().map(|request| request.parameters)
+    }
+
+    fn accept(&mut self, request: PolarStateTuningRequest) -> Result<(), &'static str> {
+        if request.session_id != self.session_id {
+            increment(&mut self.rejected_count);
+            self.last_reason = "session-mismatch";
+            return Err("polar-state-session-mismatch");
+        }
+        if request.generation == 0 || request.generation <= self.generation {
+            increment(&mut self.rejected_count);
+            self.last_reason = "stale-or-replayed-generation";
+            return Err("polar-state-stale-or-replayed-generation");
+        }
+        if self
+            .requested
+            .as_ref()
+            .is_some_and(|old| old.request_id == request.request_id)
+        {
+            increment(&mut self.rejected_count);
+            self.last_reason = "duplicate-request-id";
+            return Err("polar-state-duplicate-request-id");
+        }
+        self.generation = request.generation;
+        self.requested = Some(request.clone());
+        self.pending = Some(request);
+        increment(&mut self.accepted_count);
+        self.last_reason = "accepted-pending-consumer";
+        Ok(())
+    }
+
+    fn apply_pending(&mut self) -> Option<PolarStateTuningRequest> {
+        let request = self.pending.take()?;
+        self.effective = Some(request.clone());
+        increment(&mut self.effective_count);
+        self.last_reason = "effective-polar-assessment-boundary";
+        Some(request)
+    }
 }
 
 impl BreathCompositionRuntime {
@@ -184,6 +282,8 @@ impl BreathCompositionRuntime {
             polar_missing_reported: false,
             stale_after_micros: config.stale_after_micros,
             latest_calibration: None,
+            polar_state_tuning: PolarStateTuningControl::new(config.polar_state_parameters),
+            last_polar_diagnostics: None,
         }
     }
 
@@ -199,12 +299,16 @@ impl BreathCompositionRuntime {
                 "none",
                 self.authority.snapshot(),
                 self.latest_calibration.as_ref(),
+                Some(&self.polar_state_tuning),
+                self.last_polar_diagnostics.as_ref(),
             ),
             Err(reason) => response_json(
                 "rejected",
                 reason,
                 self.authority.snapshot(),
                 self.latest_calibration.as_ref(),
+                Some(&self.polar_state_tuning),
+                self.last_polar_diagnostics.as_ref(),
             ),
         }
     }
@@ -364,6 +468,41 @@ impl BreathCompositionRuntime {
                 )?;
                 Ok(())
             }
+            "configure_polar_state" => {
+                require_fields(
+                    object,
+                    &[
+                        "schema",
+                        "operation",
+                        "session_id",
+                        "generation",
+                        "request_id",
+                        "settings",
+                    ],
+                )?;
+                let request = parse_polar_state_request(object)?;
+                #[cfg(target_os = "android")]
+                let marker_request = request.clone();
+                let result = self.polar_state_tuning.accept(request);
+                #[cfg(target_os = "android")]
+                crate::marker(
+                    "polar-state-tuning",
+                    format!(
+                        "status={} sessionId={} generation={} requestId={} reason={} settings={}",
+                        if result.is_ok() {
+                            "accepted"
+                        } else {
+                            "rejected"
+                        },
+                        marker_token(&marker_request.session_id),
+                        marker_request.generation,
+                        marker_token(&marker_request.request_id),
+                        result.as_ref().err().copied().unwrap_or("none"),
+                        polar_state_settings_marker(marker_request.parameters),
+                    ),
+                );
+                result
+            }
             "status" => require_fields(object, &["schema", "operation"]),
             _ => Err("unsupported-operation"),
         }
@@ -490,6 +629,28 @@ impl BreathCompositionRuntime {
     }
 
     pub(crate) fn poll_polar(&mut self, at: BreathTimestampMicros) {
+        if let Some(applied) = self.polar_state_tuning.apply_pending() {
+            let mut parameters = applied.parameters;
+            parameters.inverted = self
+                .authority
+                .snapshot()
+                .effective
+                .is_some_and(|selection| selection.inverted);
+            if let Some(adapter) = self.polar_adapter.as_mut() {
+                let _ = adapter.apply_polar_phase_parameters(at, parameters);
+            }
+            #[cfg(target_os = "android")]
+            crate::marker(
+                "polar-state-tuning",
+                format!(
+                    "status=effective sessionId={} generation={} requestId={} consumerBoundary=poll-polar settings={}",
+                    marker_token(&applied.session_id),
+                    applied.generation,
+                    marker_token(&applied.request_id),
+                    polar_state_settings_marker(applied.parameters),
+                ),
+            );
+        }
         while let Some(action) = self.take_action(BreathCompositionSource::PolarAcc) {
             match action {
                 AdapterAction::Configure => {
@@ -503,10 +664,20 @@ impl BreathCompositionRuntime {
                     let mut parameters =
                         rusty_quest_breath_contract::calibration::CalibrationParameters::default();
                     parameters.inverted = request.inverted;
-                    let Ok(settings) = PolarAccVolumeSettings::new(true, projection, parameters)
+                    let Ok(mut settings) =
+                        PolarAccVolumeSettings::new(true, projection, parameters)
                     else {
                         continue;
                     };
+                    if let Some(mut phase_parameters) = self.polar_state_tuning.current_parameters()
+                    {
+                        phase_parameters.inverted = request.inverted;
+                        let Ok(tuned) = settings.with_polar_phase_parameters(phase_parameters)
+                        else {
+                            continue;
+                        };
+                        settings = tuned;
+                    }
                     let mut adapter = PolarAccBreathAdapter::new(settings);
                     let calibration = adapter.configure(at);
                     self.polar_adapter = Some(adapter);
@@ -546,6 +717,7 @@ impl BreathCompositionRuntime {
                 }
             }
         }
+        self.refresh_polar_state_diagnostics();
         let snapshot = self.authority.snapshot();
         let Some(generation) = snapshot.generation else {
             return;
@@ -561,6 +733,7 @@ impl BreathCompositionRuntime {
             self.stale_after_micros.saturating_mul(1_000),
         ) else {
             self.observe_polar_missing_if_due(at, generation);
+            self.refresh_polar_state_diagnostics();
             return;
         };
         self.last_polar_sequence_id = Some(measurement.sequence_id);
@@ -585,6 +758,36 @@ impl BreathCompositionRuntime {
                 snapshot,
             );
         }
+        self.refresh_polar_state_diagnostics();
+    }
+
+    fn refresh_polar_state_diagnostics(&mut self) {
+        let current = self
+            .polar_adapter
+            .as_ref()
+            .map(PolarAccBreathAdapter::runtime_diagnostics);
+        if current == self.last_polar_diagnostics {
+            return;
+        }
+        #[cfg(target_os = "android")]
+        if let Some(value) = current.as_ref() {
+            crate::marker(
+                "polar-state-assessment",
+                format!(
+                    "classifier={} phase={} transitions={} holdTransitions={} lateWindowMicros={} lateDrops={} outOfWindowDisorder={} staleGaps={} settings={}",
+                    value.classifier,
+                    value.phase.as_str(),
+                    value.phase_transition_count,
+                    value.hold_transition_count,
+                    value.late_sample_window_micros,
+                    value.late_sample_drop_count,
+                    value.out_of_window_disorder_count,
+                    value.stale_gap_count,
+                    value.settings,
+                ),
+            );
+        }
+        self.last_polar_diagnostics = current;
     }
 
     fn observe_polar_missing_if_due(
@@ -725,6 +928,8 @@ pub(crate) fn status_json() -> String {
         "none",
         state.snapshot(),
         state.latest_calibration.as_ref(),
+        Some(&state.polar_state_tuning),
+        state.last_polar_diagnostics.as_ref(),
     )
 }
 
@@ -761,7 +966,14 @@ pub(crate) fn start_calibration(trigger_source: &str) -> String {
     }
     #[cfg(not(target_os = "android"))]
     let _ = trigger_source;
-    response_json(status, reason, snapshot, state.latest_calibration.as_ref())
+    response_json(
+        status,
+        reason,
+        snapshot,
+        state.latest_calibration.as_ref(),
+        Some(&state.polar_state_tuning),
+        state.last_polar_diagnostics.as_ref(),
+    )
 }
 
 fn response_json(
@@ -769,12 +981,19 @@ fn response_json(
     reason_code: &str,
     snapshot: BreathCompositionSnapshot,
     calibration: Option<&CalibrationPanelReadback>,
+    polar_state_tuning: Option<&PolarStateTuningControl>,
+    polar_state_diagnostics: Option<&PolarAccRuntimeDiagnostics>,
 ) -> String {
     json!({
         "schema": RESPONSE_SCHEMA_ID,
         "command_status": status,
         "reason_code": reason_code,
-        "snapshot": snapshot_value(snapshot, calibration),
+        "snapshot": snapshot_value(
+            snapshot,
+            calibration,
+            polar_state_tuning,
+            polar_state_diagnostics,
+        ),
     })
     .to_string()
 }
@@ -782,6 +1001,8 @@ fn response_json(
 fn snapshot_value(
     snapshot: BreathCompositionSnapshot,
     calibration: Option<&CalibrationPanelReadback>,
+    polar_state_tuning: Option<&PolarStateTuningControl>,
+    polar_state_diagnostics: Option<&PolarAccRuntimeDiagnostics>,
 ) -> Value {
     let request_value = |request: BreathCompositionRequest| {
         json!({
@@ -842,7 +1063,19 @@ fn snapshot_value(
             "received_assessments": snapshot.telemetry.received_assessment_count,
             "accepted_assessments": snapshot.telemetry.accepted_assessment_count,
             "rejected_assessments": snapshot.telemetry.rejected_assessment_count,
-        }
+        },
+        "polar_state_tuning": polar_state_tuning.map(polar_state_tuning_value),
+        "polar_state_diagnostics": polar_state_diagnostics.map(|value| json!({
+            "classifier": value.classifier,
+            "phase": value.phase.as_str(),
+            "phase_transitions": value.phase_transition_count,
+            "hold_transitions": value.hold_transition_count,
+            "late_sample_window_micros": value.late_sample_window_micros,
+            "late_sample_drops": value.late_sample_drop_count,
+            "out_of_window_disorder": value.out_of_window_disorder_count,
+            "stale_gaps": value.stale_gap_count,
+            "settings": value.settings,
+        })),
     })
 }
 
@@ -938,6 +1171,256 @@ fn parse_request_tokens(
     })
 }
 
+fn parse_polar_state_request(
+    object: &Map<String, Value>,
+) -> Result<PolarStateTuningRequest, &'static str> {
+    let session_id = required_string(object, "session_id")?;
+    if !is_lower_hex(session_id, 32) || session_id.bytes().all(|byte| byte == b'0') {
+        return Err("invalid-polar-state-session-id");
+    }
+    let generation = object
+        .get("generation")
+        .and_then(Value::as_u64)
+        .filter(|value| *value > 0)
+        .ok_or("invalid-polar-state-generation")?;
+    let request_id = required_string(object, "request_id")?;
+    if !is_lower_hex(request_id, 32) || request_id.bytes().all(|byte| byte == b'0') {
+        return Err("invalid-polar-state-request-id");
+    }
+    let settings = object
+        .get("settings")
+        .and_then(Value::as_object)
+        .ok_or("invalid-polar-state-settings")?;
+    let parameters = parse_polar_state_settings(settings)?;
+    Ok(PolarStateTuningRequest {
+        session_id: session_id.to_owned(),
+        generation,
+        request_id: request_id.to_owned(),
+        parameters,
+    })
+}
+
+fn parse_polar_state_settings(
+    object: &Map<String, Value>,
+) -> Result<PolarAccPhaseParameters, &'static str> {
+    let fields = [
+        "inhale_entry_per_second",
+        "exhale_entry_per_second",
+        "hold_band_per_second",
+        "smoothing_millis",
+        "confirmation_millis",
+        "minimum_dwell_millis",
+        "stale_millis",
+        "motion_admission_mg",
+        "leave_full_contraction_per_second",
+        "leave_full_expansion_per_second",
+        "late_sample_window_millis",
+    ];
+    require_fields(object, &fields)?;
+    let stale_millis = required_u64(object, "stale_millis", 1, 20_000)?;
+    let parameters = PolarAccPhaseParameters {
+        inhale_entry_per_second: required_f64(
+            object,
+            "inhale_entry_per_second",
+            0.000_001,
+            1_000.0,
+        )?,
+        exhale_entry_per_second: required_f64(
+            object,
+            "exhale_entry_per_second",
+            0.000_001,
+            1_000.0,
+        )?,
+        hold_band_per_second: required_f64(object, "hold_band_per_second", 0.0, 999.999)?,
+        smoothing_tau_micros: required_u64(object, "smoothing_millis", 0, 10_000)?
+            .saturating_mul(1_000),
+        confirmation_micros: required_u64(object, "confirmation_millis", 1, 10_000)?
+            .saturating_mul(1_000),
+        minimum_dwell_micros: required_u64(object, "minimum_dwell_millis", 0, 10_000)?
+            .saturating_mul(1_000),
+        stale_after_micros: stale_millis.saturating_mul(1_000),
+        discontinuity_after_micros: stale_millis
+            .saturating_mul(3)
+            .max(stale_millis.saturating_add(1))
+            .saturating_mul(1_000),
+        motion_admission_mg: required_f64(object, "motion_admission_mg", 0.0, 1_000.0)?,
+        leave_full_contraction_per_second: required_f64(
+            object,
+            "leave_full_contraction_per_second",
+            0.000_001,
+            1_000.0,
+        )?,
+        leave_full_expansion_per_second: required_f64(
+            object,
+            "leave_full_expansion_per_second",
+            0.000_001,
+            1_000.0,
+        )?,
+        late_sample_window_micros: required_u64(object, "late_sample_window_millis", 0, 10_000)?
+            .saturating_mul(1_000),
+        inverted: false,
+    };
+    PolarAccPhaseConfiguration::new(parameters)
+        .map(|configuration| configuration.parameters())
+        .map_err(|_| "invalid-polar-state-settings")
+}
+
+fn parse_polar_state_compact(value: &str) -> Option<PolarAccPhaseParameters> {
+    let fields = value.trim().split('|').collect::<Vec<_>>();
+    if fields.len() != 12 || fields[0] != "v1" {
+        return None;
+    }
+    let object = Map::from_iter([
+        (
+            "inhale_entry_per_second".to_owned(),
+            json!(fields[1].parse::<f64>().ok()?),
+        ),
+        (
+            "exhale_entry_per_second".to_owned(),
+            json!(fields[2].parse::<f64>().ok()?),
+        ),
+        (
+            "hold_band_per_second".to_owned(),
+            json!(fields[3].parse::<f64>().ok()?),
+        ),
+        (
+            "smoothing_millis".to_owned(),
+            json!(fields[4].parse::<u64>().ok()?),
+        ),
+        (
+            "confirmation_millis".to_owned(),
+            json!(fields[5].parse::<u64>().ok()?),
+        ),
+        (
+            "minimum_dwell_millis".to_owned(),
+            json!(fields[6].parse::<u64>().ok()?),
+        ),
+        (
+            "stale_millis".to_owned(),
+            json!(fields[7].parse::<u64>().ok()?),
+        ),
+        (
+            "motion_admission_mg".to_owned(),
+            json!(fields[8].parse::<f64>().ok()?),
+        ),
+        (
+            "leave_full_contraction_per_second".to_owned(),
+            json!(fields[9].parse::<f64>().ok()?),
+        ),
+        (
+            "leave_full_expansion_per_second".to_owned(),
+            json!(fields[10].parse::<f64>().ok()?),
+        ),
+        (
+            "late_sample_window_millis".to_owned(),
+            json!(fields[11].parse::<u64>().ok()?),
+        ),
+    ]);
+    parse_polar_state_settings(&object).ok()
+}
+
+fn required_f64(
+    object: &Map<String, Value>,
+    name: &str,
+    minimum: f64,
+    maximum: f64,
+) -> Result<f64, &'static str> {
+    object
+        .get(name)
+        .and_then(Value::as_f64)
+        .filter(|value| value.is_finite() && (minimum..=maximum).contains(value))
+        .ok_or("invalid-polar-state-settings")
+}
+
+fn required_u64(
+    object: &Map<String, Value>,
+    name: &str,
+    minimum: u64,
+    maximum: u64,
+) -> Result<u64, &'static str> {
+    object
+        .get(name)
+        .and_then(Value::as_u64)
+        .filter(|value| (minimum..=maximum).contains(value))
+        .ok_or("invalid-polar-state-settings")
+}
+
+fn polar_state_tuning_value(control: &PolarStateTuningControl) -> Value {
+    let request_value = |request: &PolarStateTuningRequest| {
+        json!({
+            "session_id": request.session_id,
+            "generation": request.generation,
+            "request_id": request.request_id,
+            "settings": polar_state_settings_value(request.parameters),
+        })
+    };
+    json!({
+        "schema": "rusty.quest.polar_acc_state_tuning.status.v1",
+        "session_id": control.session_id,
+        "generation": control.generation,
+        "requested": control.requested.as_ref().map(request_value),
+        "effective": control.effective.as_ref().map(request_value),
+        "pending": control.pending.as_ref().map(request_value),
+        "accepted_count": control.accepted_count,
+        "rejected_count": control.rejected_count,
+        "effective_count": control.effective_count,
+        "reason": control.last_reason,
+    })
+}
+
+fn polar_state_settings_value(parameters: PolarAccPhaseParameters) -> Value {
+    json!({
+        "inhale_entry_per_second": parameters.inhale_entry_per_second,
+        "exhale_entry_per_second": parameters.exhale_entry_per_second,
+        "hold_band_per_second": parameters.hold_band_per_second,
+        "smoothing_millis": parameters.smoothing_tau_micros / 1_000,
+        "confirmation_millis": parameters.confirmation_micros / 1_000,
+        "minimum_dwell_millis": parameters.minimum_dwell_micros / 1_000,
+        "stale_millis": parameters.stale_after_micros / 1_000,
+        "motion_admission_mg": parameters.motion_admission_mg,
+        "leave_full_contraction_per_second": parameters.leave_full_contraction_per_second,
+        "leave_full_expansion_per_second": parameters.leave_full_expansion_per_second,
+        "late_sample_window_millis": parameters.late_sample_window_micros / 1_000,
+    })
+}
+
+fn polar_state_settings_marker(parameters: PolarAccPhaseParameters) -> String {
+    format!(
+        "inhale-{:.6}_exhale-{:.6}_hold-{:.6}_smoothMs-{}_confirmMs-{}_dwellMs-{}_staleMs-{}_motionMg-{:.3}_leaveContract-{:.6}_leaveExpand-{:.6}_lateMs-{}",
+        parameters.inhale_entry_per_second,
+        parameters.exhale_entry_per_second,
+        parameters.hold_band_per_second,
+        parameters.smoothing_tau_micros / 1_000,
+        parameters.confirmation_micros / 1_000,
+        parameters.minimum_dwell_micros / 1_000,
+        parameters.stale_after_micros / 1_000,
+        parameters.motion_admission_mg,
+        parameters.leave_full_contraction_per_second,
+        parameters.leave_full_expansion_per_second,
+        parameters.late_sample_window_micros / 1_000,
+    )
+}
+
+fn is_lower_hex(value: &str, expected_len: usize) -> bool {
+    value.len() == expected_len
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
+fn new_session_id() -> String {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or_default();
+    let mixed = nanos ^ ((std::process::id() as u128) << 64);
+    format!("{mixed:032x}")
+}
+
+fn increment(counter: &mut u64) {
+    *counter = counter.saturating_add(1);
+}
+
 fn bool_token(value: Option<String>) -> bool {
     value.is_some_and(|value| {
         matches!(
@@ -1023,6 +1506,8 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_native_1renderer_Co
             "invalid-jni-string",
             lock_runtime().snapshot(),
             None,
+            None,
+            None,
         ),
     };
     jni_response(env, response)
@@ -1055,6 +1540,7 @@ mod tests {
             },
             initial_request: None,
             stale_after_micros: 500_000,
+            polar_state_parameters: None,
         })
     }
 
@@ -1071,6 +1557,38 @@ mod tests {
         .to_string()
     }
 
+    fn polar_settings() -> Value {
+        json!({
+            "inhale_entry_per_second": 0.030,
+            "exhale_entry_per_second": 0.031,
+            "hold_band_per_second": 0.025,
+            "smoothing_millis": 400,
+            "confirmation_millis": 400,
+            "minimum_dwell_millis": 400,
+            "stale_millis": 500,
+            "motion_admission_mg": 2.0,
+            "leave_full_contraction_per_second": 0.040,
+            "leave_full_expansion_per_second": 0.041,
+            "late_sample_window_millis": 120,
+        })
+    }
+
+    fn polar_tuning_command(
+        runtime: &BreathCompositionRuntime,
+        generation: u64,
+        request: &str,
+    ) -> String {
+        json!({
+            "schema": COMMAND_SCHEMA_ID,
+            "operation": "configure_polar_state",
+            "session_id": runtime.polar_state_tuning.session_id,
+            "generation": generation,
+            "request_id": request,
+            "settings": polar_settings(),
+        })
+        .to_string()
+    }
+
     #[test]
     fn panel_requests_require_native_effective_readback() {
         let mut runtime = runtime();
@@ -1080,6 +1598,144 @@ mod tests {
         assert_eq!(response["command_status"], "accepted");
         assert_eq!(response["snapshot"]["requested"]["source"], "controller");
         assert_eq!(response["snapshot"]["effective"]["mapping"], "volume");
+    }
+
+    #[test]
+    fn polar_state_tuning_is_atomic_fenced_and_effective_only_at_consumer_boundary() {
+        let mut runtime = runtime();
+        let request_id = "11111111111111111111111111111111";
+        let accepted: Value = serde_json::from_str(
+            &runtime.apply_command(&polar_tuning_command(&runtime, 1, request_id)),
+        )
+        .expect("accepted response");
+        assert_eq!(accepted["command_status"], "accepted");
+        assert_eq!(
+            accepted["snapshot"]["polar_state_tuning"]["pending"]["request_id"],
+            request_id
+        );
+        assert!(accepted["snapshot"]["polar_state_tuning"]["effective"].is_null());
+
+        let settings = PolarAccVolumeSettings::new(
+            true,
+            PolarAccProjection::Xz,
+            rusty_quest_breath_contract::calibration::CalibrationParameters::default(),
+        )
+        .expect("Polar adapter settings");
+        runtime.polar_adapter = Some(PolarAccBreathAdapter::new(settings));
+        runtime.poll_polar(BreathTimestampMicros::new(1_000_000));
+        let effective: Value = serde_json::from_str(&response_json(
+            "status",
+            "none",
+            runtime.snapshot(),
+            runtime.latest_calibration.as_ref(),
+            Some(&runtime.polar_state_tuning),
+            runtime.last_polar_diagnostics.as_ref(),
+        ))
+        .expect("effective response");
+        assert_eq!(
+            effective["snapshot"]["polar_state_tuning"]["effective"]["request_id"],
+            request_id
+        );
+        assert!(effective["snapshot"]["polar_state_tuning"]["pending"].is_null());
+        assert_eq!(
+            effective["snapshot"]["polar_state_diagnostics"]["classifier"],
+            "polar-specific-v1"
+        );
+
+        let replay: Value = serde_json::from_str(
+            &runtime.apply_command(&polar_tuning_command(&runtime, 1, request_id)),
+        )
+        .expect("replay response");
+        assert_eq!(replay["command_status"], "rejected");
+        assert_eq!(
+            replay["snapshot"]["polar_state_tuning"]["effective"]["request_id"],
+            request_id
+        );
+
+        let duplicate_id: Value = serde_json::from_str(
+            &runtime.apply_command(&polar_tuning_command(&runtime, 2, request_id)),
+        )
+        .expect("duplicate request ID response");
+        assert_eq!(duplicate_id["command_status"], "rejected");
+        assert_eq!(
+            duplicate_id["snapshot"]["polar_state_tuning"]["effective"]["generation"],
+            1
+        );
+    }
+
+    #[test]
+    fn malformed_session_nonfinite_range_and_unknown_fields_are_rejected_without_change() {
+        let mut runtime = runtime();
+        let baseline = runtime.polar_state_tuning.clone();
+        let valid: Value = serde_json::from_str(&polar_tuning_command(
+            &runtime,
+            1,
+            "22222222222222222222222222222222",
+        ))
+        .expect("command");
+        for damaged in [
+            {
+                let mut value = valid.clone();
+                value["session_id"] = json!("ffffffffffffffffffffffffffffffff");
+                value
+            },
+            {
+                let mut value = valid.clone();
+                value["session_id"] = json!("00000000000000000000000000000000");
+                value
+            },
+            {
+                let mut value = valid.clone();
+                value["generation"] = json!(0);
+                value
+            },
+            {
+                let mut value = valid.clone();
+                value["request_id"] = json!("00000000000000000000000000000000");
+                value
+            },
+            {
+                let mut value = valid.clone();
+                value["settings"]["inhale_entry_per_second"] = json!("NaN");
+                value
+            },
+            {
+                let mut value = valid.clone();
+                value["settings"]["hold_band_per_second"] = json!(0.5);
+                value
+            },
+            {
+                let mut value = valid.clone();
+                value["settings"]["extra"] = json!(true);
+                value
+            },
+        ] {
+            let response: Value =
+                serde_json::from_str(&runtime.apply_command(&damaged.to_string()))
+                    .expect("rejection");
+            assert_eq!(response["command_status"], "rejected");
+            assert_eq!(runtime.polar_state_tuning.effective, baseline.effective);
+            assert!(runtime.polar_state_tuning.pending.is_none());
+        }
+    }
+
+    #[test]
+    fn compact_profile_is_exact_and_fresh_runtime_resets_request_fence() {
+        let parameters =
+            parse_polar_state_compact("v1|0.030|0.031|0.025|400|400|400|500|2.0|0.040|0.041|120")
+                .expect("compact profile");
+        assert_eq!(parameters.motion_admission_mg, 2.0);
+        assert_eq!(parameters.smoothing_tau_micros, 400_000);
+        assert!(parse_polar_state_compact("v1|0.030").is_none());
+
+        let first = runtime();
+        let second = runtime();
+        assert_ne!(
+            first.polar_state_tuning.session_id,
+            second.polar_state_tuning.session_id
+        );
+        assert_eq!(second.polar_state_tuning.generation, 0);
+        assert!(second.polar_state_tuning.pending.is_none());
     }
 
     #[test]
@@ -1325,6 +1981,7 @@ mod tests {
                 capabilities: BreathCompositionCapabilities::default(),
                 initial_request: None,
                 stale_after_micros: 500_000,
+                polar_state_parameters: None,
             });
             let snapshot = runtime.snapshot();
             assert!(!snapshot.feature_lock_active);
@@ -1349,6 +2006,7 @@ mod tests {
             capabilities,
             initial_request: None,
             stale_after_micros: 500_000,
+            polar_state_parameters: None,
         });
         runtime.apply_command(&select("controller", "volume"));
         runtime.apply_command(

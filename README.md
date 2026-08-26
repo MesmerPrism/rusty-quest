@@ -417,8 +417,10 @@ translates the existing typed PMD/JNI milligravity measurements, normalizes
 host and sensor monotonic timestamps plus acceleration units, and produces
 calibrated XZ-default or explicit 3D volume and quality, then feeds only ready
 normalized volume into the pure phase owner. Missing, stale, malformed,
-out-of-order, calibration, lifecycle, and timestamp-discontinuity boundaries
-clear retained phase history. RR remains on its independent pulse lane and
+calibration, lifecycle, and timestamp-discontinuity boundaries clear retained
+phase history. The optional Polar-specific state owner instead drops bounded
+late samples without rewriting raw capture or resetting a valid classifier,
+while out-of-window disorder still fails closed. RR remains on its independent pulse lane and
 configured fixed ranges remain diagnostic-only. The crate starts inert and has
 no Android, JNI, OpenXR, renderer, source acquisition, or
 application-mapping behavior.
@@ -452,6 +454,17 @@ in every executable property adapter, and packages the same expected digest
 through the locked build environment. Runtime activation requires the observed
 property to equal that packaged digest exactly. RR remains outside this
 composition.
+
+The same panel also exposes a Polar-only state-sensitivity card. It submits one
+atomic `configure_polar_state` request containing separately named inhale and
+exhale entry sensitivities, a neutral hold band, smoothing, confirmation,
+minimum dwell, stale-gap and motion-admission thresholds, two endpoint-only
+exit thresholds, and the bounded late-sample window. The headless operator
+exposes the identical typed fields through `-Operation configure-polar-state`.
+Both adapters bind the request to the current app session, a strictly newer
+generation, and a fresh request ID, then require native-effective readback at
+the Polar assessment boundary. This control never changes the controller
+classifier or the independent Polar RR heartbeat lane.
 
 For synchronized post-session tuning, the Native Renderer can write a bounded
 app-private capture of controller poses, typed Polar PMD ACC/ECG samples,

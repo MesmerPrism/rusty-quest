@@ -610,6 +610,104 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
         mappingCard.addView(applySelection);
         root.addView(mappingCard);
 
+        JSONObject polarTuning = readPolarStateTuningSettings();
+        LinearLayout polarStateCard = panelCard("Polar state sensitivity");
+        polarStateCard.addView(text(
+            "These controls affect only Polar ACC state classification. Controller assessment and Polar RR orbit pulses remain independent.",
+            12,
+            PANEL_MUTED
+        ));
+        final EditText polarInhaleEntry = tuningField(
+            polarStateCard,
+            "Inhale entry (/s)",
+            polarTuning.optDouble("inhale_entry_per_second", 0.030)
+        );
+        final EditText polarExhaleEntry = tuningField(
+            polarStateCard,
+            "Exhale entry (/s)",
+            polarTuning.optDouble("exhale_entry_per_second", 0.030)
+        );
+        final EditText polarHoldBand = tuningField(
+            polarStateCard,
+            "Hold band (/s)",
+            polarTuning.optDouble("hold_band_per_second", 0.025)
+        );
+        final EditText polarSmoothing = tuningField(
+            polarStateCard,
+            "Derivative smoothing (ms)",
+            polarTuning.optDouble("smoothing_millis", 400.0)
+        );
+        final EditText polarConfirmation = tuningField(
+            polarStateCard,
+            "State confirmation (ms)",
+            polarTuning.optDouble("confirmation_millis", 400.0)
+        );
+        final EditText polarDwell = tuningField(
+            polarStateCard,
+            "Minimum phase dwell (ms)",
+            polarTuning.optDouble("minimum_dwell_millis", 400.0)
+        );
+        final EditText polarStale = tuningField(
+            polarStateCard,
+            "Stale gap (ms)",
+            polarTuning.optDouble("stale_millis", 500.0)
+        );
+        final EditText polarMotion = tuningField(
+            polarStateCard,
+            "Motion admission (mg)",
+            polarTuning.optDouble("motion_admission_mg", 2.0)
+        );
+        final EditText polarLeaveContraction = tuningField(
+            polarStateCard,
+            "Leave full contraction (/s)",
+            polarTuning.optDouble("leave_full_contraction_per_second", 0.030)
+        );
+        final EditText polarLeaveExpansion = tuningField(
+            polarStateCard,
+            "Leave full expansion (/s)",
+            polarTuning.optDouble("leave_full_expansion_per_second", 0.030)
+        );
+        final EditText polarLateWindow = tuningField(
+            polarStateCard,
+            "Late-sample window (ms)",
+            polarTuning.optDouble("late_sample_window_millis", 120.0)
+        );
+        Button applyPolarTuning = button("Apply Polar state tuning");
+        applyPolarTuning.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                try {
+                    JSONObject statusJson = new JSONObject(nativeReadBreathCompositionStatus());
+                    JSONObject snapshot = statusJson.getJSONObject("snapshot");
+                    JSONObject tuning = snapshot.getJSONObject("polar_state_tuning");
+                    JSONObject settings = new JSONObject()
+                        .put("inhale_entry_per_second", tuningDouble(polarInhaleEntry))
+                        .put("exhale_entry_per_second", tuningDouble(polarExhaleEntry))
+                        .put("hold_band_per_second", tuningDouble(polarHoldBand))
+                        .put("smoothing_millis", tuningLong(polarSmoothing))
+                        .put("confirmation_millis", tuningLong(polarConfirmation))
+                        .put("minimum_dwell_millis", tuningLong(polarDwell))
+                        .put("stale_millis", tuningLong(polarStale))
+                        .put("motion_admission_mg", tuningDouble(polarMotion))
+                        .put("leave_full_contraction_per_second", tuningDouble(polarLeaveContraction))
+                        .put("leave_full_expansion_per_second", tuningDouble(polarLeaveExpansion))
+                        .put("late_sample_window_millis", tuningLong(polarLateWindow));
+                    JSONObject command = new JSONObject()
+                        .put("schema", BREATH_COMPOSITION_COMMAND_SCHEMA)
+                        .put("operation", "configure_polar_state")
+                        .put("session_id", tuning.getString("session_id"))
+                        .put("generation", tuning.optLong("generation", 0L) + 1L)
+                        .put("request_id", UUID.randomUUID().toString().replace("-", ""))
+                        .put("settings", settings);
+                    applyBreathCompositionCommand(command, readback);
+                } catch (Exception error) {
+                    readback.setText("Polar tuning request failed: " + markerToken(error.getMessage()));
+                }
+            }
+        });
+        polarStateCard.addView(applyPolarTuning);
+        root.addView(polarStateCard);
+
         LinearLayout calibrationCard = panelCard("Calibration");
         calibrationCard.addView(text(
             "Move through a comfortable full breath range. Start here or hold right B for 1.25 seconds.",
@@ -651,6 +749,43 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
         root.addView(diagnostics);
         refreshBreathCompositionReadback(readback);
         scheduleBreathCompositionRefresh();
+    }
+
+    private JSONObject readPolarStateTuningSettings() {
+        try {
+            JSONObject statusJson = new JSONObject(nativeReadBreathCompositionStatus());
+            JSONObject tuning = statusJson.getJSONObject("snapshot")
+                .getJSONObject("polar_state_tuning");
+            JSONObject effective = tuning.optJSONObject("effective");
+            JSONObject settings = effective == null ? null : effective.optJSONObject("settings");
+            return settings == null ? new JSONObject() : settings;
+        } catch (Exception error) {
+            return new JSONObject();
+        }
+    }
+
+    private EditText tuningField(LinearLayout parent, String title, double value) {
+        parent.addView(label(title));
+        EditText field = editText(String.format(Locale.US, "%.6f", value), title, false);
+        field.setInputType(
+            android.text.InputType.TYPE_CLASS_NUMBER
+                | android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
+                | android.text.InputType.TYPE_NUMBER_FLAG_SIGNED
+        );
+        parent.addView(field);
+        return field;
+    }
+
+    private double tuningDouble(EditText field) {
+        return Double.parseDouble(field.getText().toString().trim());
+    }
+
+    private long tuningLong(EditText field) {
+        double value = tuningDouble(field);
+        if (!Double.isFinite(value) || value < 0.0 || value != Math.rint(value)) {
+            throw new IllegalArgumentException("integer-milliseconds-required");
+        }
+        return (long) value;
     }
 
     private void appendViscerealityPolarControls(LinearLayout root) {
@@ -1404,6 +1539,8 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
         JSONObject assessment = snapshot.optJSONObject("latest_assessment");
         JSONObject calibration = snapshot.optJSONObject("calibration_readback");
         JSONObject telemetry = snapshot.optJSONObject("telemetry");
+        JSONObject polarStateTuning = snapshot.optJSONObject("polar_state_tuning");
+        JSONObject polarStateDiagnostics = snapshot.optJSONObject("polar_state_diagnostics");
         String requestedSummary = requested == null
             ? "none"
             : requested.optString("source") + " × " + requested.optString("mapping");
@@ -1495,6 +1632,33 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
         lines.append("\naccepted/rejected=")
             .append(telemetry == null ? "0/0" : telemetry.optLong("accepted_assessments") + "/" + telemetry.optLong("rejected_assessments"));
         lines.append(" rejection=").append(snapshot.optString("rejection", "none"));
+        if (polarStateTuning != null) {
+            JSONObject polarEffective = polarStateTuning.optJSONObject("effective");
+            lines.append("\npolarState session=")
+                .append(polarStateTuning.optString("session_id", "none"))
+                .append(" generation=")
+                .append(polarStateTuning.optLong("generation", 0L))
+                .append(" effectiveRequest=")
+                .append(polarEffective == null ? "none" : polarEffective.optString("request_id", "none"))
+                .append(" reason=")
+                .append(polarStateTuning.optString("reason", "none"));
+        }
+        if (polarStateDiagnostics != null) {
+            lines.append("\npolarClassifier=")
+                .append(polarStateDiagnostics.optString("classifier", "none"))
+                .append(" phase=")
+                .append(polarStateDiagnostics.optString("phase", "unknown"))
+                .append(" transitions=")
+                .append(polarStateDiagnostics.optLong("phase_transitions", 0L))
+                .append(" holdTransitions=")
+                .append(polarStateDiagnostics.optLong("hold_transitions", 0L));
+            lines.append("\npolarLateDrops=")
+                .append(polarStateDiagnostics.optLong("late_sample_drops", 0L))
+                .append(" outOfWindow=")
+                .append(polarStateDiagnostics.optLong("out_of_window_disorder", 0L))
+                .append(" staleGaps=")
+                .append(polarStateDiagnostics.optLong("stale_gaps", 0L));
+        }
         readback.setText(lines.toString());
     }
 

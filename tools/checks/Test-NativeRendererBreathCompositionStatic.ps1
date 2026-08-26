@@ -40,6 +40,7 @@ $corePath = Join-Path $repo "crates\rusty-quest-breath-contract\src\composition.
 $runtimePath = Join-Path $repo "apps\native-renderer-android\native\src\breath_composition_runtime.rs"
 $controllerPath = Join-Path $repo "apps\native-renderer-android\native\src\openxr_stimulus_actions.rs"
 $polarPath = Join-Path $repo "apps\native-renderer-android\native\src\polar_acc_breath_adapter.rs"
+$polarPhasePath = Join-Path $repo "apps\native-renderer-android\native\src\polar_acc_phase_classifier.rs"
 $ingressPath = Join-Path $repo "apps\native-renderer-android\native\src\polar_composition_adapters.rs"
 $capturePath = Join-Path $repo "apps\native-renderer-android\native\src\breath_capture.rs"
 $captureAnalyzerPath = Join-Path $repo "tools\Analyze-NativeRendererBreathCapture.ps1"
@@ -70,6 +71,7 @@ $core = Read-RequiredText $corePath "pure composition"
 $runtime = Read-RequiredText $runtimePath "native runtime"
 $controller = Read-RequiredText $controllerPath "OpenXR adapter composition"
 $polar = Read-RequiredText $polarPath "Polar ACC adapter"
+$polarPhase = Read-RequiredText $polarPhasePath "Polar-specific phase classifier"
 $ingress = Read-RequiredText $ingressPath "Polar ingress"
 $capture = Read-RequiredText $capturePath "synchronized source capture"
 $captureAnalyzer = Read-RequiredText $captureAnalyzerPath "host capture analyzer"
@@ -123,6 +125,14 @@ Assert-Tokens $runtime @(
     "start_calibration_restarts_running_ready_and_failed_generations_atomically",
     "running_calibration_restart_rejects_before_any_mutation_when_queue_is_full",
     "source_change_queues_hard_resets_but_mapping_change_does_not"
+    '"configure_polar_state"'
+    '"polar_state_tuning"'
+    '"polar_state_diagnostics"'
+    '"polar-state-assessment"'
+    "effective-polar-assessment-boundary"
+    "polar_state_tuning_is_atomic_fenced_and_effective_only_at_consumer_boundary"
+    "malformed_session_nonfinite_range_and_unknown_fields_are_rejected_without_change"
+    "compact_profile_is_exact_and_fresh_runtime_resets_request_fence"
 ) "native command/readback authority"
 Assert-Tokens $controller @(
     "apply_composition_controller_actions",
@@ -137,7 +147,7 @@ Assert-Tokens $controller @(
     "poll_polar(observed_at)",
     "submit_assessment"
 ) "single OpenXR assessment owner"
-Assert-Tokens ($polar + [Environment]::NewLine + $ingress) @(
+Assert-Tokens ($polar + [Environment]::NewLine + $polarPhase + [Environment]::NewLine + $ingress) @(
     "TimedPolarAccFrame::from_pmd_measurement",
     "CommonPhaseClassifier",
     "latest_polar_acc_after",
@@ -146,6 +156,16 @@ Assert-Tokens ($polar + [Environment]::NewLine + $ingress) @(
     "TimestampFaithful",
     "POLAR_ACC_PRESENTATION_DELAY_NS",
     "POLAR_ACC_SMOOTHING_TIME_CONSTANT_NS",
+    "PolarAccPhaseParameters",
+    "leave_full_contraction_per_second",
+    "leave_full_expansion_per_second",
+    "late_sample_window_micros",
+    "polar-specific-v1",
+    "bounded-late-drop",
+    "polarAccPhaseStaleGaps",
+    "runtime_diagnostics",
+    "bounded_late_sample_is_dropped_without_reset_and_next_ordered_frame_recovers",
+    "endpoint_exit_thresholds_apply_only_to_the_latched_endpoint",
     "timestamped_acc_batches_resample_at_render_cadence_with_one_batch_delay",
     "low_latency_presentation_uses_the_freshest_target_and_eases_at_render_cadence",
     "polar_rr_after",
@@ -219,6 +239,16 @@ Assert-Tokens $breathPanelMethod @(
     'applyBreathCompositionOperation("reset", readback, false);',
     "refreshBreathCompositionReadback(readback);"
 ) "Android-compatible breath panel click behavior"
+Assert-Tokens $panel @(
+    "Polar state sensitivity"
+    'put("operation", "configure_polar_state")'
+    'put("leave_full_contraction_per_second"'
+    'put("leave_full_expansion_per_second"'
+    'put("late_sample_window_millis"'
+    'optLong("late_sample_drops"'
+    'optLong("out_of_window_disorder"'
+    'optLong("stale_gaps"'
+) "organized Polar state tuning controls"
 $unifiedParticlePanelStart = $panel.IndexOf("private void appendUnifiedParticleControls(LinearLayout root)")
 $unifiedParticlePanelEnd = $panel.IndexOf("private void applyBreathCompositionOperation(", $unifiedParticlePanelStart)
 if ($unifiedParticlePanelStart -lt 0 -or $unifiedParticlePanelEnd -le $unifiedParticlePanelStart) {
@@ -351,6 +381,13 @@ Assert-Tokens ($operator + [Environment]::NewLine + $operatorReceiver) @(
     "serial-scoped-fixed-adb-ordered-broadcast",
     "activity_launched = `$false",
     "android.permission.DUMP"
+    "configure-polar-state"
+    "PolarInhaleEntryPerSecond"
+    "PolarLeaveFullContractionPerSecond"
+    "PolarLeaveFullExpansionPerSecond"
+    "PolarLateSampleWindowMillis"
+    "NoAwaitEffective"
+    "Timed out waiting for this Polar tuning request to become effective at the assessment boundary."
 ) "headless operator command and structured readback"
 Assert-Tokens $polarPanel @(
     "buildEmbeddedAcquisitionView",
