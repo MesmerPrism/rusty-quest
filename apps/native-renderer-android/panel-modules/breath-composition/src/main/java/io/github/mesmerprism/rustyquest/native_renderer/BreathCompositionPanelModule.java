@@ -186,6 +186,12 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
     private String handledBreathCompositionCommandToken = "";
     private boolean displayCompositeRequestInFlight;
     private SliderControl privateParticleVisualScale;
+    private Spinner privateParticleSizeMode;
+    private SliderControl privateParticleSizeWorldMeters;
+    private SliderControl privateParticleSizeSpherePercent;
+    private SliderControl privateParticleSizeOscillationPercent;
+    private boolean privateParticleSizeOverrideEnabled;
+    private int privateParticleSizeModeSelection = -1;
     private SliderControl privateParticleWorldAnchorScale;
     private SliderControl[] privateParticleDrivers = new SliderControl[8];
     private SliderControl privateParticleTracerDrawSlots;
@@ -506,6 +512,12 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
         privateParticleControlEpoch = -1L;
         privateParticleMaterialSelection = -1;
         privateParticleVisualScale = null;
+        privateParticleSizeMode = null;
+        privateParticleSizeWorldMeters = null;
+        privateParticleSizeSpherePercent = null;
+        privateParticleSizeOscillationPercent = null;
+        privateParticleSizeOverrideEnabled = false;
+        privateParticleSizeModeSelection = -1;
         privateParticleWorldAnchorScale = null;
         privateParticleDrivers = new SliderControl[8];
         privateParticleTracerDrawSlots = null;
@@ -1336,21 +1348,85 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
         JSONObject heartbeatStatus = privateParticles == null
             ? null
             : privateParticles.optJSONObject("heartbeat_pulse");
+        JSONObject sizeStatus = privateParticles == null
+            ? null
+            : privateParticles.optJSONObject("size");
 
         LinearLayout shape = panelCard("Shape");
         particle.addView(shape);
+        double legacyVisualScale = readPrivateParticleStatusDouble(
+            privateParticles,
+            "visual_scale",
+            readDoubleProperty(PROP_PRIVATE_PARTICLE_VISUAL_SCALE, 0.70)
+        );
         privateParticleVisualScale = privateParticleSlider(
-            "Particle visual scale",
+            "Legacy particle visual scale",
             0.05,
             1.0,
-            readPrivateParticleStatusDouble(
-                privateParticles,
-                "visual_scale",
-                readDoubleProperty(PROP_PRIVATE_PARTICLE_VISUAL_SCALE, 0.70)
-            ),
+            legacyVisualScale,
             1000,
             "",
             false
+        );
+        double legacyMinPercent = 4.0 * legacyVisualScale;
+        double legacyMaxPercent = 11.5 * legacyVisualScale;
+        double legacyBasePercent = Math.sqrt(legacyMinPercent * legacyMaxPercent);
+        double legacyOscillationPercent = 100.0
+            * (1.0 - Math.sqrt(legacyMinPercent / legacyMaxPercent));
+        String sizeMode = sizeStatus == null
+            ? "sphere-radius-percent"
+            : sizeStatus.optString("mode", "sphere-radius-percent");
+        privateParticleSizeOverrideEnabled = sizeStatus != null
+            && sizeStatus.optBoolean("enabled", false);
+        privateParticleSizeModeSelection = "world-meters".equals(sizeMode) ? 1 : 0;
+        shape.addView(label("Particle size unit"));
+        privateParticleSizeMode = spinner(
+            new String[] { "Percent of sphere radius", "Raw world size (meters)" },
+            privateParticleSizeModeSelection
+        );
+        shape.addView(privateParticleSizeMode);
+        privateParticleSizeSpherePercent = privateParticleSizeSlider(
+            "Base particle size",
+            0.1,
+            50.0,
+            sizeStatus == null
+                ? legacyBasePercent
+                : sizeStatus.optDouble("sphere_radius_percent", legacyBasePercent),
+            49900,
+            " % of sphere radius",
+            false
+        );
+        privateParticleSizeWorldMeters = privateParticleSizeSlider(
+            "Base particle size",
+            0.001,
+            0.5,
+            sizeStatus == null
+                ? legacyBasePercent * 0.01
+                : sizeStatus.optDouble("world_meters", legacyBasePercent * 0.01),
+            4990,
+            " m",
+            false
+        );
+        privateParticleSizeOscillationPercent = privateParticleSizeSlider(
+            "Size oscillation",
+            0.0,
+            90.0,
+            sizeStatus == null
+                ? legacyOscillationPercent
+                : sizeStatus.optDouble("oscillation_percent", legacyOscillationPercent),
+            9000,
+            " %",
+            false
+        );
+        shape.addView(privateParticleSizeSpherePercent.view);
+        shape.addView(privateParticleSizeWorldMeters.view);
+        shape.addView(privateParticleSizeOscillationPercent.view);
+        shape.addView(
+            text(
+                "The percentage mode follows the current deformed sphere radius; meter mode stays constant in world space. Oscillation is reciprocal: 50% means 0.5× at minimum and 2× at maximum.",
+                12,
+                PANEL_MUTED
+            )
         );
         privateParticleWorldAnchorScale = privateParticleSlider(
             "Sphere radius / anchor scale",
@@ -1365,8 +1441,25 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
             " m",
             false
         );
-        shape.addView(privateParticleVisualScale.view);
         shape.addView(privateParticleWorldAnchorScale.view);
+        updatePrivateParticleSizeModeVisibility();
+        privateParticleSizeMode.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
+            @Override
+            public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
+                updatePrivateParticleSizeModeVisibility();
+                if (privateParticleControlsHydrating || position == privateParticleSizeModeSelection) {
+                    privateParticleSizeModeSelection = position;
+                    return;
+                }
+                privateParticleSizeModeSelection = position;
+                privateParticleSizeOverrideEnabled = true;
+                schedulePrivateParticleDynamicsApplyFromControl(controlEpoch);
+            }
+
+            @Override
+            public void onNothingSelected(AdapterView<?> parent) {
+            }
+        });
 
         LinearLayout dynamics = panelCard("Oscillator drivers");
         particle.addView(dynamics);
@@ -1774,6 +1867,45 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
         );
     }
 
+    private SliderControl privateParticleSizeSlider(
+        String title,
+        double min,
+        double max,
+        double initial,
+        int steps,
+        String suffix,
+        boolean integer
+    ) {
+        final long controlEpoch = privateParticleControlEpoch;
+        return slider(
+            title,
+            min,
+            max,
+            initial,
+            steps,
+            suffix,
+            integer,
+            new Runnable() {
+                @Override
+                public void run() {
+                    privateParticleSizeOverrideEnabled = true;
+                    schedulePrivateParticleDynamicsApplyFromControl(controlEpoch);
+                }
+            }
+        );
+    }
+
+    private void updatePrivateParticleSizeModeVisibility() {
+        if (privateParticleSizeMode == null
+                || privateParticleSizeSpherePercent == null
+                || privateParticleSizeWorldMeters == null) {
+            return;
+        }
+        boolean meters = privateParticleSizeMode.getSelectedItemPosition() == 1;
+        privateParticleSizeSpherePercent.view.setVisibility(meters ? View.GONE : View.VISIBLE);
+        privateParticleSizeWorldMeters.view.setVisibility(meters ? View.VISIBLE : View.GONE);
+    }
+
     private boolean isCurrentPrivateParticleControlSurface(long controlEpoch) {
         return privateParticlePanelLiveApply
             && !privateParticleControlsHydrating
@@ -2083,8 +2215,21 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
             .put("rgb_alpha_coupling", transparencyRgbAlphaCoupling);
         JSONObject color = new JSONObject()
             .put("facing_attenuation_strength", colorFacingAttenuationStrength);
+        JSONObject size = new JSONObject()
+            .put("enabled", privateParticleSizeOverrideEnabled)
+            .put(
+                "mode",
+                privateParticleSizeMode != null
+                        && privateParticleSizeMode.getSelectedItemPosition() == 1
+                    ? "world-meters"
+                    : "sphere-radius-percent"
+            )
+            .put("world_meters", privateParticleSizeWorldMeters.value())
+            .put("sphere_radius_percent", privateParticleSizeSpherePercent.value())
+            .put("oscillation_percent", privateParticleSizeOscillationPercent.value());
         JSONObject privateParticles = new JSONObject()
             .put("visual_scale", visualScale)
+            .put("size", size)
             .put("world_anchor_scale_m", worldAnchorScale)
             .put("driver_values01", drivers)
             .put("tracer", tracer)
@@ -2129,6 +2274,7 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
         }
         JSONObject materialStatus = privateParticles.optJSONObject("material");
         JSONObject heartbeatStatus = privateParticles.optJSONObject("heartbeat_pulse");
+        JSONObject sizeStatus = privateParticles.optJSONObject("size");
         boolean hydrateControls = isCurrentPrivateParticleControlSurface(privateParticleControlEpoch);
         if (hydrateControls) {
             boolean wasHydrating = privateParticleControlsHydrating;
@@ -2151,6 +2297,40 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
                             privateParticleWorldAnchorScale.value()
                         )
                     );
+                    if (sizeStatus != null) {
+                        privateParticleSizeOverrideEnabled = sizeStatus.optBoolean("enabled", false);
+                        int sizeModeSelection = "world-meters".equals(
+                            sizeStatus.optString("mode", "sphere-radius-percent")
+                        ) ? 1 : 0;
+                        privateParticleSizeModeSelection = sizeModeSelection;
+                        if (privateParticleSizeMode != null
+                                && privateParticleSizeMode.getSelectedItemPosition()
+                                    != sizeModeSelection) {
+                            privateParticleSizeMode.setSelection(sizeModeSelection);
+                        }
+                        setSliderValue(
+                            privateParticleSizeWorldMeters,
+                            sizeStatus.optDouble(
+                                "world_meters",
+                                privateParticleSizeWorldMeters.value()
+                            )
+                        );
+                        setSliderValue(
+                            privateParticleSizeSpherePercent,
+                            sizeStatus.optDouble(
+                                "sphere_radius_percent",
+                                privateParticleSizeSpherePercent.value()
+                            )
+                        );
+                        setSliderValue(
+                            privateParticleSizeOscillationPercent,
+                            sizeStatus.optDouble(
+                                "oscillation_percent",
+                                privateParticleSizeOscillationPercent.value()
+                            )
+                        );
+                        updatePrivateParticleSizeModeVisibility();
+                    }
                     JSONArray driverStatus = privateParticles.optJSONArray("driver_values01");
                     if (driverStatus != null) {
                         for (int i = 0; i < privateParticleDrivers.length; i++) {
@@ -2216,8 +2396,35 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
             String heartbeat = heartbeatStatus == null
                 ? "disabled"
                 : heartbeatStatus.optString("mode", "disabled");
+            String effectiveSize = sizeStatus == null
+                ? "legacy payload envelope"
+                : sizeStatus.optString("mode", "legacy-payload-envelope")
+                    + " · base "
+                    + String.format(
+                        Locale.US,
+                        "%.3f",
+                        "world-meters".equals(sizeStatus.optString("mode", ""))
+                            ? sizeStatus.optDouble("world_meters", 0.0)
+                            : sizeStatus.optDouble("sphere_radius_percent", 0.0)
+                    )
+                    + ("world-meters".equals(sizeStatus.optString("mode", "")) ? " m" : "%")
+                    + " · oscillation "
+                    + String.format(
+                        Locale.US,
+                        "%.1f%%",
+                        sizeStatus.optDouble("oscillation_percent", 0.0)
+                    )
+                    + " · range "
+                    + String.format(
+                        Locale.US,
+                        "%.3f–%.3f",
+                        sizeStatus.optDouble("derived_min", 0.0),
+                        sizeStatus.optDouble("derived_max", 0.0)
+                    )
+                    + ("world-meters".equals(sizeStatus.optString("mode", "")) ? " m" : "%");
             privateParticleEffectiveReadback.setText(
-                "Effective: material " + material
+                "Effective: size " + effectiveSize
+                    + " · material " + material
                     + " · RR orbit boost " + heartbeat
                     + " · revision " + statusJson.optLong("effective_revision", 0L)
                     + " · status " + statusJson.optString("status", "unknown")
@@ -2338,16 +2545,26 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
 
     private String privateParticleDynamicsSummary() {
         if (privateParticleWorldAnchorScale == null
+            || privateParticleSizeMode == null
+            || privateParticleSizeWorldMeters == null
+            || privateParticleSizeSpherePercent == null
+            || privateParticleSizeOscillationPercent == null
             || privateParticleDrivers.length < 2
             || privateParticleDrivers[0] == null
             || privateParticleDrivers[1] == null
             || privateParticleTracerDrawSlots == null) {
             return "renderer effective state";
         }
+        boolean meters = privateParticleSizeMode.getSelectedItemPosition() == 1;
+        String size = meters
+            ? String.format(Locale.US, "%.3f m", privateParticleSizeWorldMeters.value())
+            : String.format(Locale.US, "%.2f%% radius", privateParticleSizeSpherePercent.value());
         return String.format(
             Locale.US,
-            "scale %.2f m, d0 %.2f, d1 %.2f, tracers %d",
+            "sphere %.2f m, particle %s, oscillation %.1f%%, d0 %.2f, d1 %.2f, tracers %d",
             privateParticleWorldAnchorScale.value(),
+            size,
+            privateParticleSizeOscillationPercent.value(),
             privateParticleDrivers[0].value(),
             privateParticleDrivers[1].value(),
             privateParticleTracerDrawSlots.intValue()

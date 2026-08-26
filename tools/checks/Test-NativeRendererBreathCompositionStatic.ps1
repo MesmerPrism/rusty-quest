@@ -345,6 +345,13 @@ Assert-Tokens $unifiedParticlePanel @(
     "privateParticlePanelLiveApply = true",
     "privateParticleControlsHydrating = true",
     "Material & Polar RR orbit boost",
+    "Particle size",
+    "Percent of sphere radius",
+    "Raw world size (meters)",
+    "Size oscillation",
+    "50% means 0.5× at minimum and 2× at maximum",
+    "privateParticleSizeOverrideEnabled = true",
+    "privateParticleSizeModeSelection",
     "privateParticleMaterialPreset",
     "Enable Polar RR orbit boost",
     "polar-rr-orbit-boost",
@@ -433,8 +440,17 @@ Assert-Tokens $panel @(
     "premultiplied-alpha-over-depth-facing",
     "akd-material-emulation",
     '"material"',
-    '"heartbeat_pulse"'
-) "closed particle material JSON envelope"
+    '"heartbeat_pulse"',
+    '"size"',
+    '"sphere-radius-percent"',
+    '"world-meters"',
+    '"sphere_radius_percent"',
+    '"world_meters"',
+    '"oscillation_percent"',
+    '.put("enabled", privateParticleSizeOverrideEnabled)',
+    'sizeStatus.optDouble("derived_min"',
+    'sizeStatus.optDouble("derived_max"'
+) "closed particle material and size JSON envelope"
 if ($unifiedParticlePanel -match [regex]::Escape("synthetic-breath")) {
     throw "Unified particle panel must not expose a synthetic-breath fallback for Polar RR orbit boost"
 }

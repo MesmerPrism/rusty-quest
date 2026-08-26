@@ -73,6 +73,9 @@ const PRIVATE_PARTICLE_CURVE_SMOOTHSTEP: u32 = 2;
 const PRIVATE_PARTICLE_CURVE_REVERSE_LINEAR: u32 = 3;
 const PRIVATE_PARTICLE_CURVE_HOLD_LOW: u32 = 4;
 const PRIVATE_PARTICLE_CURVE_HOLD_HIGH: u32 = 5;
+const PRIVATE_PARTICLE_SIZE_MODE_LEGACY: u32 = 0;
+const PRIVATE_PARTICLE_SIZE_MODE_SPHERE_PERCENT: u32 = 1;
+const PRIVATE_PARTICLE_SIZE_MODE_WORLD_METERS: u32 = 2;
 
 #[derive(Clone, Debug)]
 pub(crate) struct StimulusPanelCandidate {
@@ -99,6 +102,11 @@ pub(crate) struct EnvironmentDepthAlignmentPanelCandidate {
 pub(crate) struct PrivateParticleDynamicsPanelCandidate {
     pub(crate) revision: i64,
     pub(crate) visual_scale: f32,
+    pub(crate) particle_size_override_enabled: bool,
+    pub(crate) particle_size_mode: u32,
+    pub(crate) particle_size_world_meters: f32,
+    pub(crate) particle_size_sphere_percent: f32,
+    pub(crate) particle_size_oscillation_percent: f32,
     pub(crate) world_anchor_scale_m: f32,
     pub(crate) driver_values01: [f32; PRIVATE_PARTICLE_DYNAMICS_DRIVER_COUNT],
     pub(crate) driver_control_modes: [u32; PRIVATE_PARTICLE_DYNAMICS_DRIVER_COUNT],
@@ -133,6 +141,11 @@ impl PrivateParticleDynamicsPanelCandidate {
     pub(crate) fn panel_settings(&self) -> GpuPrivateParticlePanelSettings {
         GpuPrivateParticlePanelSettings {
             visual_scale: self.visual_scale,
+            particle_size_override_enabled: self.particle_size_override_enabled,
+            particle_size_mode: self.particle_size_mode,
+            particle_size_world_meters: self.particle_size_world_meters,
+            particle_size_sphere_percent: self.particle_size_sphere_percent,
+            particle_size_oscillation_percent: self.particle_size_oscillation_percent,
             driver_values01: self.driver_values01,
             driver_control_modes: self.driver_control_modes,
             driver_control_source_slots: self.driver_control_source_slots,
@@ -1435,6 +1448,7 @@ pub(crate) fn parse_private_particle_dynamics_json(
     }
 
     let visual_scale = bounded_number_at(private_particles, "visual_scale", 0.7, 0.05, 1.0)? as f32;
+    let particle_size = private_particle_size_config(private_particles)?;
     let world_anchor_scale_m =
         bounded_number_at(private_particles, "world_anchor_scale_m", 0.46, 0.05, 4.0)? as f32;
     let driver_values01 = bounded_number_array_at::<{ PRIVATE_PARTICLE_DYNAMICS_DRIVER_COUNT }>(
@@ -1475,6 +1489,11 @@ pub(crate) fn parse_private_particle_dynamics_json(
     Ok(PrivateParticleDynamicsPanelCandidate {
         revision,
         visual_scale,
+        particle_size_override_enabled: particle_size.0,
+        particle_size_mode: particle_size.1,
+        particle_size_world_meters: particle_size.2,
+        particle_size_sphere_percent: particle_size.3,
+        particle_size_oscillation_percent: particle_size.4,
         world_anchor_scale_m,
         driver_values01,
         driver_control_modes: driver_controls.0,
@@ -1495,6 +1514,69 @@ pub(crate) fn parse_private_particle_dynamics_json(
         material_override_enabled,
         polar_rr_orbit_boost_enabled,
     })
+}
+
+fn private_particle_size_config(
+    private_particles: &Value,
+) -> Result<(bool, u32, f32, f32, f32), String> {
+    let Some(size) = private_particles.get("size") else {
+        return Ok((false, PRIVATE_PARTICLE_SIZE_MODE_LEGACY, 0.05, 5.0, 0.0));
+    };
+    let size = size
+        .as_object()
+        .ok_or_else(|| "particle_size_must_be_object".to_string())?;
+    const ALLOWED: [&str; 5] = [
+        "enabled",
+        "mode",
+        "world_meters",
+        "sphere_radius_percent",
+        "oscillation_percent",
+    ];
+    if let Some(key) = size.keys().find(|key| !ALLOWED.contains(&key.as_str())) {
+        return Err(format!("unsupported_particle_size_field:{key}"));
+    }
+    let enabled = match size.get("enabled") {
+        Some(value) => value
+            .as_bool()
+            .ok_or_else(|| "particle_size_enabled_must_be_boolean".to_string())?,
+        None => false,
+    };
+    let mode_name = match size.get("mode") {
+        Some(value) => value
+            .as_str()
+            .ok_or_else(|| "particle_size_mode_must_be_string".to_string())?,
+        None => "legacy-payload-envelope",
+    };
+    let mode = match mode_name {
+        "legacy-payload-envelope" => PRIVATE_PARTICLE_SIZE_MODE_LEGACY,
+        "sphere-radius-percent" => PRIVATE_PARTICLE_SIZE_MODE_SPHERE_PERCENT,
+        "world-meters" => PRIVATE_PARTICLE_SIZE_MODE_WORLD_METERS,
+        _ => return Err(format!("unsupported_particle_size_mode:{mode_name}")),
+    };
+    if enabled && mode == PRIVATE_PARTICLE_SIZE_MODE_LEGACY {
+        return Err("particle_size_enabled_requires_explicit_mode".to_string());
+    }
+    let size_value = Value::Object(size.clone());
+    let world_meters = bounded_number_at(&size_value, "world_meters", 0.05, 0.001, 0.5)? as f32;
+    let sphere_radius_percent =
+        bounded_number_at(&size_value, "sphere_radius_percent", 5.0, 0.1, 50.0)? as f32;
+    let oscillation_percent =
+        bounded_number_at(&size_value, "oscillation_percent", 0.0, 0.0, 90.0)? as f32;
+    Ok((
+        enabled,
+        mode,
+        world_meters,
+        sphere_radius_percent,
+        oscillation_percent,
+    ))
+}
+
+fn private_particle_size_mode_name(mode: u32) -> &'static str {
+    match mode {
+        PRIVATE_PARTICLE_SIZE_MODE_SPHERE_PERCENT => "sphere-radius-percent",
+        PRIVATE_PARTICLE_SIZE_MODE_WORLD_METERS => "world-meters",
+        _ => "legacy-payload-envelope",
+    }
 }
 
 fn private_particle_material_preset(
@@ -2292,6 +2374,16 @@ pub(crate) fn write_private_particle_dynamics_status(
             json!({
                 "visual_scale": effective.settings.visual_scale,
                 "visual_parameter_source": "same-apk-panel-live",
+                "size": {
+                    "enabled": effective.settings.particle_size_override_enabled,
+                    "mode": private_particle_size_mode_name(effective.settings.particle_size_mode),
+                    "world_meters": effective.settings.particle_size_world_meters,
+                    "sphere_radius_percent": effective.settings.particle_size_sphere_percent,
+                    "oscillation_percent": effective.settings.particle_size_oscillation_percent,
+                    "derived_min": effective.settings.particle_size_min,
+                    "derived_max": effective.settings.particle_size_max,
+                    "parameter_source": effective.settings.particle_size_parameter_source
+                },
                 "world_anchor_scale_m": effective.world_anchor_scale_m,
                 "world_anchor_scale_parameter_source": effective.world_anchor_scale_parameter_source,
                 "driver_values01": effective.settings.driver_values01,
@@ -2342,6 +2434,16 @@ pub(crate) fn write_private_particle_dynamics_status(
             json!({
                 "visual_scale": candidate.visual_scale,
                 "visual_parameter_source": "requested",
+                "size": {
+                    "enabled": candidate.particle_size_override_enabled,
+                    "mode": private_particle_size_mode_name(candidate.particle_size_mode),
+                    "world_meters": candidate.particle_size_world_meters,
+                    "sphere_radius_percent": candidate.particle_size_sphere_percent,
+                    "oscillation_percent": candidate.particle_size_oscillation_percent,
+                    "derived_min": Value::Null,
+                    "derived_max": Value::Null,
+                    "parameter_source": "requested"
+                },
                 "world_anchor_scale_m": candidate.world_anchor_scale_m,
                 "world_anchor_scale_parameter_source": "requested",
                 "driver_values01": candidate.driver_values01,
@@ -2818,6 +2920,13 @@ mod tests {
             },
             "private_particles": {
                 "visual_scale": 0.62,
+                "size": {
+                    "enabled": true,
+                    "mode": "sphere-radius-percent",
+                    "world_meters": 0.0475,
+                    "sphere_radius_percent": 4.75,
+                    "oscillation_percent": 50.0
+                },
                 "world_anchor_scale_m": 0.88,
                 "driver_values01": [0.10, 0.20, 0.30, 0.40, 0.50, 0.60, 0.70, 0.80],
                 "tracer": {
@@ -2851,6 +2960,14 @@ mod tests {
 
         assert_eq!(candidate.revision, 11);
         assert_close(candidate.visual_scale, 0.62);
+        assert!(candidate.particle_size_override_enabled);
+        assert_eq!(
+            candidate.particle_size_mode,
+            PRIVATE_PARTICLE_SIZE_MODE_SPHERE_PERCENT
+        );
+        assert_close(candidate.particle_size_world_meters, 0.0475);
+        assert_close(candidate.particle_size_sphere_percent, 4.75);
+        assert_close(candidate.particle_size_oscillation_percent, 50.0);
         assert_close(candidate.world_anchor_scale_m, 0.88);
         assert_close(candidate.driver_values01[0], 0.10);
         assert_close(candidate.driver_values01[7], 0.80);
@@ -2868,6 +2985,103 @@ mod tests {
         );
         assert!(candidate.material_override_enabled);
         assert!(candidate.polar_rr_orbit_boost_enabled);
+    }
+
+    #[test]
+    fn particle_size_modes_are_closed_and_legacy_absence_is_neutral() {
+        let base = json!({
+            "schema": PRIVATE_PARTICLE_DYNAMICS_SCHEMA,
+            "private_particles": {
+                "visual_scale": 0.70,
+                "world_anchor_scale_m": 1.0,
+                "driver_values01": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+                "tracer": {
+                    "draw_slots_per_oscillator": 7,
+                    "lifetime_seconds": 0.5,
+                    "copies_per_second": 14.0
+                }
+            }
+        });
+
+        let legacy = parse_private_particle_dynamics_json(&base.to_string()).unwrap();
+        assert!(!legacy.particle_size_override_enabled);
+        assert_eq!(legacy.particle_size_mode, PRIVATE_PARTICLE_SIZE_MODE_LEGACY);
+
+        let mut meters = base.clone();
+        meters["private_particles"]["size"] = json!({
+            "enabled": true,
+            "mode": "world-meters",
+            "world_meters": 0.08,
+            "sphere_radius_percent": 8.0,
+            "oscillation_percent": 50.0
+        });
+        let meters = parse_private_particle_dynamics_json(&meters.to_string()).unwrap();
+        assert_eq!(
+            meters.particle_size_mode,
+            PRIVATE_PARTICLE_SIZE_MODE_WORLD_METERS
+        );
+        assert_close(meters.particle_size_world_meters, 0.08);
+
+        for (size, expected) in [
+            (
+                json!({
+                    "enabled": true,
+                    "mode": "legacy-payload-envelope",
+                    "world_meters": 0.08,
+                    "sphere_radius_percent": 8.0,
+                    "oscillation_percent": 50.0
+                }),
+                "particle_size_enabled_requires_explicit_mode",
+            ),
+            (
+                json!({
+                    "enabled": true,
+                    "mode": "pixels",
+                    "world_meters": 0.08,
+                    "sphere_radius_percent": 8.0,
+                    "oscillation_percent": 50.0
+                }),
+                "unsupported_particle_size_mode:pixels",
+            ),
+            (
+                json!({
+                    "enabled": true,
+                    "mode": "world-meters",
+                    "world_meters": 0.08,
+                    "sphere_radius_percent": 8.0,
+                    "oscillation_percent": 50.0,
+                    "extra": true
+                }),
+                "unsupported_particle_size_field:extra",
+            ),
+            (
+                json!({
+                    "enabled": 1,
+                    "mode": "world-meters",
+                    "world_meters": 0.08,
+                    "sphere_radius_percent": 8.0,
+                    "oscillation_percent": 50.0
+                }),
+                "particle_size_enabled_must_be_boolean",
+            ),
+            (
+                json!({
+                    "enabled": true,
+                    "mode": 2,
+                    "world_meters": 0.08,
+                    "sphere_radius_percent": 8.0,
+                    "oscillation_percent": 50.0
+                }),
+                "particle_size_mode_must_be_string",
+            ),
+        ] {
+            let mut damaged = base.clone();
+            damaged["private_particles"]["size"] = size;
+            assert_eq!(
+                parse_private_particle_dynamics_json(&damaged.to_string()).unwrap_err(),
+                expected
+            );
+        }
     }
 
     #[test]

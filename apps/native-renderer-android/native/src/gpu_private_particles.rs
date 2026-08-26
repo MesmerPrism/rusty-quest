@@ -95,6 +95,16 @@ const PANEL_CURVE_SMOOTHSTEP: u32 = 2;
 const PANEL_CURVE_REVERSE_LINEAR: u32 = 3;
 const PANEL_CURVE_HOLD_LOW: u32 = 4;
 const PANEL_CURVE_HOLD_HIGH: u32 = 5;
+pub(crate) const PRIVATE_PARTICLE_SIZE_MODE_LEGACY: u32 = 0;
+pub(crate) const PRIVATE_PARTICLE_SIZE_MODE_SPHERE_PERCENT: u32 = 1;
+pub(crate) const PRIVATE_PARTICLE_SIZE_MODE_WORLD_METERS: u32 = 2;
+const PRIVATE_PARTICLE_SIZE_MIN_SPHERE_PERCENT: f32 = 0.1;
+const PRIVATE_PARTICLE_SIZE_MAX_SPHERE_PERCENT: f32 = 50.0;
+const PRIVATE_PARTICLE_SIZE_MIN_WORLD_METERS: f32 = 0.001;
+const PRIVATE_PARTICLE_SIZE_MAX_WORLD_METERS: f32 = 0.5;
+const PRIVATE_PARTICLE_SIZE_MAX_OSCILLATION_PERCENT: f32 = 90.0;
+const PRIVATE_PARTICLE_LEGACY_SIZE_MIN: f32 = 0.04;
+const PRIVATE_PARTICLE_LEGACY_SIZE_MAX: f32 = 0.115;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum PrivateParticleTransparencyBlendMode {
@@ -129,6 +139,12 @@ impl PrivateParticleTransparencyBlendMode {
 struct PrivateParticleRuntimeSettings {
     visual_scale: f32,
     visual_parameter_source: &'static str,
+    particle_size_override_enabled: bool,
+    particle_size_mode: u32,
+    particle_size_world_meters: f32,
+    particle_size_sphere_percent: f32,
+    particle_size_oscillation_percent: f32,
+    particle_size_parameter_source: &'static str,
     driver0_value01: f32,
     driver1_value01: f32,
     driver_values01: [f32; PRIVATE_PARTICLE_DRIVER_BANK_SLOT_COUNT],
@@ -164,6 +180,11 @@ struct PrivateParticleRuntimeSettings {
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct GpuPrivateParticlePanelSettings {
     pub(crate) visual_scale: f32,
+    pub(crate) particle_size_override_enabled: bool,
+    pub(crate) particle_size_mode: u32,
+    pub(crate) particle_size_world_meters: f32,
+    pub(crate) particle_size_sphere_percent: f32,
+    pub(crate) particle_size_oscillation_percent: f32,
     pub(crate) driver_values01: [f32; GPU_PRIVATE_PARTICLE_PANEL_DRIVER_COUNT],
     pub(crate) driver_control_modes: [u32; GPU_PRIVATE_PARTICLE_PANEL_DRIVER_COUNT],
     pub(crate) driver_control_source_slots: [u32; GPU_PRIVATE_PARTICLE_PANEL_DRIVER_COUNT],
@@ -187,6 +208,14 @@ pub(crate) struct GpuPrivateParticlePanelSettings {
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct GpuPrivateParticlePanelEffectiveSettings {
     pub(crate) visual_scale: f32,
+    pub(crate) particle_size_override_enabled: bool,
+    pub(crate) particle_size_mode: u32,
+    pub(crate) particle_size_world_meters: f32,
+    pub(crate) particle_size_sphere_percent: f32,
+    pub(crate) particle_size_oscillation_percent: f32,
+    pub(crate) particle_size_min: f32,
+    pub(crate) particle_size_max: f32,
+    pub(crate) particle_size_parameter_source: &'static str,
     pub(crate) driver_values01: [f32; GPU_PRIVATE_PARTICLE_PANEL_DRIVER_COUNT],
     pub(crate) driver_control_modes: [u32; GPU_PRIVATE_PARTICLE_PANEL_DRIVER_COUNT],
     pub(crate) driver_control_source_slots: [u32; GPU_PRIVATE_PARTICLE_PANEL_DRIVER_COUNT],
@@ -215,6 +244,12 @@ pub(crate) struct GpuPrivateParticlePanelEffectiveSettings {
 
 impl GpuPrivateParticlePanelSettings {
     fn clamped(self) -> Self {
+        let particle_size_mode = match self.particle_size_mode {
+            PRIVATE_PARTICLE_SIZE_MODE_SPHERE_PERCENT | PRIVATE_PARTICLE_SIZE_MODE_WORLD_METERS => {
+                self.particle_size_mode
+            }
+            _ => PRIVATE_PARTICLE_SIZE_MODE_LEGACY,
+        };
         let mut driver_values01 = self.driver_values01;
         for value in &mut driver_values01 {
             *value = value.clamp(0.0, 1.0);
@@ -270,6 +305,20 @@ impl GpuPrivateParticlePanelSettings {
         }
         Self {
             visual_scale: self.visual_scale.clamp(0.05, 1.0),
+            particle_size_override_enabled: self.particle_size_override_enabled
+                && particle_size_mode != PRIVATE_PARTICLE_SIZE_MODE_LEGACY,
+            particle_size_mode,
+            particle_size_world_meters: self.particle_size_world_meters.clamp(
+                PRIVATE_PARTICLE_SIZE_MIN_WORLD_METERS,
+                PRIVATE_PARTICLE_SIZE_MAX_WORLD_METERS,
+            ),
+            particle_size_sphere_percent: self.particle_size_sphere_percent.clamp(
+                PRIVATE_PARTICLE_SIZE_MIN_SPHERE_PERCENT,
+                PRIVATE_PARTICLE_SIZE_MAX_SPHERE_PERCENT,
+            ),
+            particle_size_oscillation_percent: self
+                .particle_size_oscillation_percent
+                .clamp(0.0, PRIVATE_PARTICLE_SIZE_MAX_OSCILLATION_PERCENT),
             driver_values01,
             driver_control_modes,
             driver_control_source_slots,
@@ -332,12 +381,29 @@ fn private_particle_panel_cycle_multipliers() -> [f32; PRIVATE_PARTICLE_DRIVER_B
     [1.0; PRIVATE_PARTICLE_DRIVER_BANK_SLOT_COUNT]
 }
 
+fn legacy_particle_size_percent_envelope(visual_scale: f32) -> (f32, f32, f32, f32) {
+    let min = PRIVATE_PARTICLE_LEGACY_SIZE_MIN * visual_scale * 100.0;
+    let max = PRIVATE_PARTICLE_LEGACY_SIZE_MAX * visual_scale * 100.0;
+    let base = (min * max).sqrt();
+    let oscillation_percent = 100.0 * (1.0 - (min / max).sqrt());
+    (base, oscillation_percent, min, max)
+}
+
 impl PrivateParticleRuntimeSettings {
     fn from_generated_defaults() -> Self {
         let driver_values01 = private_particle_driver_values01_from_generated();
+        let visual_scale = PRIVATE_PARTICLE_VISUAL_SCALE.clamp(0.05, 1.0);
+        let (legacy_size_base, legacy_size_oscillation, _, _) =
+            legacy_particle_size_percent_envelope(visual_scale);
         Self {
-            visual_scale: PRIVATE_PARTICLE_VISUAL_SCALE.clamp(0.05, 1.0),
+            visual_scale,
             visual_parameter_source: PRIVATE_PARTICLE_VISUAL_PARAMETER_SOURCE,
+            particle_size_override_enabled: false,
+            particle_size_mode: PRIVATE_PARTICLE_SIZE_MODE_LEGACY,
+            particle_size_world_meters: 0.05,
+            particle_size_sphere_percent: legacy_size_base,
+            particle_size_oscillation_percent: legacy_size_oscillation,
+            particle_size_parameter_source: "payload-legacy-size-envelope",
             driver0_value01: PRIVATE_PARTICLE_DRIVER_VALUES01[0].clamp(0.0, 1.0),
             driver1_value01: PRIVATE_PARTICLE_DRIVER_VALUES01[1].clamp(0.0, 1.0),
             driver_values01,
@@ -463,6 +529,8 @@ impl PrivateParticleRuntimeSettings {
             || transparency_output_alpha_overridden
             || transparency_depth_suppression_overridden
             || transparency_rgb_alpha_overridden;
+        let (legacy_size_base, legacy_size_oscillation, _, _) =
+            legacy_particle_size_percent_envelope(visual_scale);
         Self {
             visual_scale,
             visual_parameter_source: if visual_overridden {
@@ -470,6 +538,12 @@ impl PrivateParticleRuntimeSettings {
             } else {
                 PRIVATE_PARTICLE_VISUAL_PARAMETER_SOURCE
             },
+            particle_size_override_enabled: false,
+            particle_size_mode: PRIVATE_PARTICLE_SIZE_MODE_LEGACY,
+            particle_size_world_meters: 0.05,
+            particle_size_sphere_percent: legacy_size_base,
+            particle_size_oscillation_percent: legacy_size_oscillation,
+            particle_size_parameter_source: "payload-legacy-size-envelope",
             driver0_value01,
             driver1_value01,
             driver_values01,
@@ -532,6 +606,25 @@ impl PrivateParticleRuntimeSettings {
         let panel = panel.clamped();
         self.visual_scale = panel.visual_scale;
         self.visual_parameter_source = "same-apk-panel-live";
+        self.particle_size_override_enabled = panel.particle_size_override_enabled;
+        if panel.particle_size_override_enabled {
+            self.particle_size_mode = panel.particle_size_mode;
+            self.particle_size_world_meters = panel.particle_size_world_meters;
+            self.particle_size_sphere_percent = panel.particle_size_sphere_percent;
+            self.particle_size_oscillation_percent = panel.particle_size_oscillation_percent;
+        } else {
+            let (base, oscillation, _, _) =
+                legacy_particle_size_percent_envelope(self.visual_scale);
+            self.particle_size_mode = PRIVATE_PARTICLE_SIZE_MODE_LEGACY;
+            self.particle_size_world_meters = 0.05;
+            self.particle_size_sphere_percent = base;
+            self.particle_size_oscillation_percent = oscillation;
+        }
+        self.particle_size_parameter_source = if panel.particle_size_override_enabled {
+            "same-apk-panel-live-explicit-size"
+        } else {
+            "payload-legacy-size-envelope"
+        };
         self.driver_values01 = panel.driver_values01;
         self.driver_control_modes = panel.driver_control_modes;
         self.driver_control_source_slots = panel.driver_control_source_slots;
@@ -978,7 +1071,7 @@ impl GpuPrivateParticleFrameStats {
 
     fn marker_fields(self) -> String {
         format!(
-            "privateParticleReady={} privateParticleVisible={} privateParticlePayloadLinked={} privateParticleKind={} privateParticleCount={} privateParticleMainCount={} privateParticleDrawCount={} privateParticleSettingsHotload=true privateParticleHotloadPollIntervalFrames={} privateParticleWorldAnchorScaleM={:.3} privateParticleWorldAnchorScaleParameterSource={} privateParticleVisualScale={:.3} privateParticleVisualParameterSource={} privateParticleDriver0Value01={:.3} privateParticleDriver1Value01={:.3} {} privateParticleDriverParameterSource={} privateParticleTracerMaxCount={} privateParticleTracerStateCapacity={} privateParticleTracerDrawSlotsCapacity={} privateParticleTracerDrawSlotsPerOscillator={} privateParticleTracerDrawCount={} privateParticleTracerLifetimeSeconds={:.3} privateParticleTracerCopiesPerSecond={:.3} privateParticleTracerParameterSource={} privateParticleTracerStateRows={} privateParticleTracerRadiusPolicy=snapshot-source-radius privateParticleTracerOutputMode=merged-billboard-output privateParticleDrawBudgetIncludesTracers={} privateParticleTracerCpuUploadPerFrame=false {} privateParticleOutputAbi=four-vec4-billboard-rows privateParticleBillboardKindAux=aux.z-main-1-tracer-2-anchor-3-anchor_echo-4 privateParticleStatePingPong={} privateParticleAux0Rows={} privateParticleOrderingMode={} privateParticleOrderingImplementation={} privateParticleOrderingParameterSource={} privateParticleOrderingBasis=per-eye-openxr-reference-space privateParticleSortActive={} privateParticleSortInputCount={} privateParticleSortCount={} privateParticleSortCapacity={} privateParticleOrderingCpuExpandedUploadPerFrame=false {} privateParticleMaskTextureLinked={} privateParticleMaskTextureMode={} privateParticleMaskDiscardMode={} privateParticleMaskAlphaCutoff={:.4} privateParticleMaskTextureFormat=R8_UNORM privateParticleMaskTextureSize={}x{}x{} privateParticleMaskTextureBytes={} {} {} {} privateParticleCpuUploadBytes=0 privateParticleGpuBuffersResident={} privateParticleMaskTextureGpuResident={}",
+            "privateParticleReady={} privateParticleVisible={} privateParticlePayloadLinked={} privateParticleKind={} privateParticleCount={} privateParticleMainCount={} privateParticleDrawCount={} privateParticleSettingsHotload=true privateParticleHotloadPollIntervalFrames={} privateParticleWorldAnchorScaleM={:.3} privateParticleWorldAnchorScaleParameterSource={} privateParticleVisualScale={:.3} privateParticleVisualParameterSource={} {} privateParticleDriver0Value01={:.3} privateParticleDriver1Value01={:.3} {} privateParticleDriverParameterSource={} privateParticleTracerMaxCount={} privateParticleTracerStateCapacity={} privateParticleTracerDrawSlotsCapacity={} privateParticleTracerDrawSlotsPerOscillator={} privateParticleTracerDrawCount={} privateParticleTracerLifetimeSeconds={:.3} privateParticleTracerCopiesPerSecond={:.3} privateParticleTracerParameterSource={} privateParticleTracerStateRows={} privateParticleTracerRadiusPolicy=snapshot-source-radius privateParticleTracerOutputMode=merged-billboard-output privateParticleDrawBudgetIncludesTracers={} privateParticleTracerCpuUploadPerFrame=false {} privateParticleOutputAbi=four-vec4-billboard-rows privateParticleBillboardKindAux=aux.z-main-1-tracer-2-anchor-3-anchor_echo-4 privateParticleStatePingPong={} privateParticleAux0Rows={} privateParticleOrderingMode={} privateParticleOrderingImplementation={} privateParticleOrderingParameterSource={} privateParticleOrderingBasis=per-eye-openxr-reference-space privateParticleSortActive={} privateParticleSortInputCount={} privateParticleSortCount={} privateParticleSortCapacity={} privateParticleOrderingCpuExpandedUploadPerFrame=false {} privateParticleMaskTextureLinked={} privateParticleMaskTextureMode={} privateParticleMaskDiscardMode={} privateParticleMaskAlphaCutoff={:.4} privateParticleMaskTextureFormat=R8_UNORM privateParticleMaskTextureSize={}x{}x{} privateParticleMaskTextureBytes={} {} {} {} privateParticleCpuUploadBytes=0 privateParticleGpuBuffersResident={} privateParticleMaskTextureGpuResident={}",
             self.ready,
             self.visible,
             PRIVATE_PARTICLE_PAYLOAD_LINKED,
@@ -991,6 +1084,7 @@ impl GpuPrivateParticleFrameStats {
             crate::sanitize(self.world_anchor_scale_parameter_source),
             self.runtime_settings.visual_scale,
             crate::sanitize(self.runtime_settings.visual_parameter_source),
+            private_particle_size_marker_fields(self.runtime_settings),
             self.runtime_settings.driver0_value01,
             self.runtime_settings.driver1_value01,
             private_particle_driver_bank_marker_fields(self.runtime_settings),
@@ -1049,6 +1143,41 @@ fn private_particle_driver_bank_marker_fields(
         runtime_settings.driver_bank_values01[5],
         runtime_settings.driver_bank_values01[6],
         runtime_settings.driver_bank_values01[7],
+    )
+}
+
+fn private_particle_size_limits(runtime_settings: PrivateParticleRuntimeSettings) -> (f32, f32) {
+    if !runtime_settings.particle_size_override_enabled {
+        let (_, _, min, max) = legacy_particle_size_percent_envelope(runtime_settings.visual_scale);
+        return (min, max);
+    }
+    let base = match runtime_settings.particle_size_mode {
+        PRIVATE_PARTICLE_SIZE_MODE_WORLD_METERS => runtime_settings.particle_size_world_meters,
+        _ => runtime_settings.particle_size_sphere_percent,
+    };
+    let reciprocal = 1.0
+        - (runtime_settings.particle_size_oscillation_percent / 100.0)
+            .clamp(0.0, PRIVATE_PARTICLE_SIZE_MAX_OSCILLATION_PERCENT / 100.0);
+    (base * reciprocal, base / reciprocal.max(0.1))
+}
+
+fn private_particle_size_marker_fields(runtime_settings: PrivateParticleRuntimeSettings) -> String {
+    let (min, max) = private_particle_size_limits(runtime_settings);
+    let mode = match runtime_settings.particle_size_mode {
+        PRIVATE_PARTICLE_SIZE_MODE_SPHERE_PERCENT => "sphere-radius-percent",
+        PRIVATE_PARTICLE_SIZE_MODE_WORLD_METERS => "world-meters",
+        _ => "legacy-payload-envelope",
+    };
+    format!(
+        "privateParticleSizeOverrideEnabled={} privateParticleSizeMode={} privateParticleSizeWorldMeters={:.4} privateParticleSizeSphereRadiusPercent={:.3} privateParticleSizeOscillationPercent={:.3} privateParticleSizeDerivedMin={:.4} privateParticleSizeDerivedMax={:.4} privateParticleSizeParameterSource={}",
+        runtime_settings.particle_size_override_enabled,
+        mode,
+        runtime_settings.particle_size_world_meters,
+        runtime_settings.particle_size_sphere_percent,
+        runtime_settings.particle_size_oscillation_percent,
+        min,
+        max,
+        crate::sanitize(runtime_settings.particle_size_parameter_source),
     )
 }
 
@@ -1127,6 +1256,20 @@ fn private_particle_driver_bank_rows(
                 1.0
             },
         ];
+        if slot == 2 && runtime_settings.particle_size_override_enabled {
+            let active_base =
+                if runtime_settings.particle_size_mode == PRIVATE_PARTICLE_SIZE_MODE_WORLD_METERS {
+                    runtime_settings.particle_size_world_meters
+                } else {
+                    runtime_settings.particle_size_sphere_percent
+                };
+            rows[control_row + 2] = [
+                1.0,
+                runtime_settings.particle_size_mode as f32,
+                active_base,
+                runtime_settings.particle_size_oscillation_percent,
+            ];
+        }
     }
     rows
 }
@@ -2476,8 +2619,17 @@ impl GpuPrivateParticleRenderer {
         }
         self.runtime_settings_last_poll_frame = u64::MAX;
         let runtime_settings = self.runtime_settings(frame_count);
+        let (particle_size_min, particle_size_max) = private_particle_size_limits(runtime_settings);
         GpuPrivateParticlePanelEffectiveSettings {
             visual_scale: runtime_settings.visual_scale,
+            particle_size_override_enabled: runtime_settings.particle_size_override_enabled,
+            particle_size_mode: runtime_settings.particle_size_mode,
+            particle_size_world_meters: runtime_settings.particle_size_world_meters,
+            particle_size_sphere_percent: runtime_settings.particle_size_sphere_percent,
+            particle_size_oscillation_percent: runtime_settings.particle_size_oscillation_percent,
+            particle_size_min,
+            particle_size_max,
+            particle_size_parameter_source: runtime_settings.particle_size_parameter_source,
             driver_values01: runtime_settings.driver_values01,
             driver_control_modes: settings.driver_control_modes,
             driver_control_source_slots: settings.driver_control_source_slots,
@@ -5585,6 +5737,11 @@ mod material_request_tests {
     ) -> GpuPrivateParticlePanelSettings {
         GpuPrivateParticlePanelSettings {
             visual_scale: 0.70,
+            particle_size_override_enabled: false,
+            particle_size_mode: PRIVATE_PARTICLE_SIZE_MODE_LEGACY,
+            particle_size_world_meters: 0.05,
+            particle_size_sphere_percent: 5.0,
+            particle_size_oscillation_percent: 0.0,
             driver_values01: [0.0; GPU_PRIVATE_PARTICLE_PANEL_DRIVER_COUNT],
             driver_control_modes: [PANEL_DRIVER_MODE_DIRECT;
                 GPU_PRIVATE_PARTICLE_PANEL_DRIVER_COUNT],
@@ -5632,6 +5789,47 @@ mod material_request_tests {
         assert_eq!(settings.tracer_draw_slots_per_oscillator, tracer_draw_slots);
         assert_eq!(settings.tracer_lifetime_seconds, tracer_lifetime);
         assert_eq!(settings.tracer_copies_per_second, tracer_copies);
+    }
+
+    #[test]
+    fn explicit_particle_size_uses_reciprocal_percent_envelope_and_reserved_aux_row() {
+        let mut panel = panel_settings(None, false, false);
+        panel.particle_size_override_enabled = true;
+        panel.particle_size_mode = PRIVATE_PARTICLE_SIZE_MODE_SPHERE_PERCENT;
+        panel.particle_size_sphere_percent = 6.0;
+        panel.particle_size_world_meters = 0.08;
+        panel.particle_size_oscillation_percent = 50.0;
+        let mut settings = PrivateParticleRuntimeSettings::from_generated_defaults();
+        settings.apply_panel_override(panel, [0.0; GPU_PRIVATE_PARTICLE_PANEL_DRIVER_COUNT]);
+
+        assert_eq!(private_particle_size_limits(settings), (3.0, 12.0));
+        let rows = private_particle_driver_bank_rows(settings);
+        let size_aux_row = PRIVATE_PARTICLE_DRIVER_BANK_VALUE_VEC4_ROWS
+            + 2 * PRIVATE_PARTICLE_DRIVER_CONTROL_ROWS_PER_SLOT
+            + 2;
+        assert_eq!(
+            rows[size_aux_row],
+            [
+                1.0,
+                PRIVATE_PARTICLE_SIZE_MODE_SPHERE_PERCENT as f32,
+                6.0,
+                50.0
+            ]
+        );
+    }
+
+    #[test]
+    fn absent_particle_size_override_keeps_reserved_aux_row_neutral() {
+        let settings = PrivateParticleRuntimeSettings::from_generated_defaults();
+        let rows = private_particle_driver_bank_rows(settings);
+        let size_aux_row = PRIVATE_PARTICLE_DRIVER_BANK_VALUE_VEC4_ROWS
+            + 2 * PRIVATE_PARTICLE_DRIVER_CONTROL_ROWS_PER_SLOT
+            + 2;
+        assert_eq!(rows[size_aux_row], [0.0; 4]);
+        assert_eq!(
+            settings.particle_size_mode,
+            PRIVATE_PARTICLE_SIZE_MODE_LEGACY
+        );
     }
 
     #[test]
