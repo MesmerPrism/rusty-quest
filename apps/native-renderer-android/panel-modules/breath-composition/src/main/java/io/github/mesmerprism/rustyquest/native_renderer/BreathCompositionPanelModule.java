@@ -35,7 +35,9 @@ import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
+import java.util.LinkedHashSet;
 import java.util.Locale;
+import java.util.Set;
 import java.util.UUID;
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -181,6 +183,8 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
     private Handler liveApplyHandler;
     private CheckBox liveAutoApply;
     private Runnable pendingPrivateParticleDynamicsApply;
+    private final LinkedHashSet<String> pendingPrivateParticlePatchFields =
+        new LinkedHashSet<String>();
     private String handledDisplayCompositeIntentToken = "";
     private String handledPolarSensorPanelCommandToken = "";
     private String handledBreathCompositionCommandToken = "";
@@ -1328,7 +1332,7 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
         root.addView(particle);
         particle.addView(
             text(
-                "Edits apply automatically as one debounced, renderer-safe JSON command. The effective receipt—not a slider position—is authoritative. Material choices are closed presets, not independent blend knobs.",
+                "Each edit applies only its named field through a debounced, renderer-safe JSON patch. Unedited particle, material, driver, tracer, anchor, and heartbeat state is preserved. The effective receipt—not a slider position—is authoritative.",
                 12,
                 PANEL_MUTED
             )
@@ -1366,7 +1370,8 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
             legacyVisualScale,
             1000,
             "",
-            false
+            false,
+            "visual_scale"
         );
         double legacyMinPercent = 4.0 * legacyVisualScale;
         double legacyMaxPercent = 11.5 * legacyVisualScale;
@@ -1394,7 +1399,8 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
                 : sizeStatus.optDouble("sphere_radius_percent", legacyBasePercent),
             49900,
             " % of sphere radius",
-            false
+            false,
+            "size.sphere_radius_percent"
         );
         privateParticleSizeWorldMeters = privateParticleSizeSlider(
             "Base particle size",
@@ -1405,7 +1411,8 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
                 : sizeStatus.optDouble("world_meters", legacyBasePercent * 0.01),
             4990,
             " m",
-            false
+            false,
+            "size.world_meters"
         );
         privateParticleSizeOscillationPercent = privateParticleSizeSlider(
             "Size oscillation",
@@ -1416,7 +1423,8 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
                 : sizeStatus.optDouble("oscillation_percent", legacyOscillationPercent),
             9000,
             " %",
-            false
+            false,
+            "size.oscillation_percent"
         );
         shape.addView(privateParticleSizeSpherePercent.view);
         shape.addView(privateParticleSizeWorldMeters.view);
@@ -1439,7 +1447,8 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
             ),
             1000,
             " m",
-            false
+            false,
+            "world_anchor_scale_m"
         );
         shape.addView(privateParticleWorldAnchorScale.view);
         updatePrivateParticleSizeModeVisibility();
@@ -1453,7 +1462,7 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
                 }
                 privateParticleSizeModeSelection = position;
                 privateParticleSizeOverrideEnabled = true;
-                schedulePrivateParticleDynamicsApplyFromControl(controlEpoch);
+                schedulePrivateParticleDynamicsApplyFromControl(controlEpoch, "size.mode");
             }
 
             @Override
@@ -1473,7 +1482,8 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
                 initial,
                 1000,
                 "",
-                false
+                false,
+                "driver_values01." + i
             );
             dynamics.addView(privateParticleDrivers[i].view);
         }
@@ -1491,7 +1501,8 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
             ),
             1024,
             "",
-            true
+            true,
+            "tracer.draw_slots_per_oscillator"
         );
         privateParticleTracerLifetime = privateParticleSlider(
             "Tracer lifetime",
@@ -1504,7 +1515,8 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
             ),
             1000,
             " s",
-            false
+            false,
+            "tracer.lifetime_seconds"
         );
         privateParticleTracerCopies = privateParticleSlider(
             "Tracer copies/sec",
@@ -1517,7 +1529,8 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
             ),
             1000,
             "",
-            false
+            false,
+            "tracer.copies_per_second"
         );
         tracer.addView(privateParticleTracerDrawSlots.view);
         tracer.addView(privateParticleTracerLifetime.view);
@@ -1561,7 +1574,7 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
             @Override
             public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
                 if (admitPrivateParticleMaterialSelection(controlEpoch, position)) {
-                    schedulePrivateParticleDynamicsApplyFromControl(controlEpoch);
+                    schedulePrivateParticleDynamicsApplyFromControl(controlEpoch, "material");
                 }
             }
 
@@ -1572,7 +1585,7 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
         privateParticlePolarRrOrbitBoost.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
-                schedulePrivateParticleDynamicsApplyFromControl(controlEpoch);
+                schedulePrivateParticleDynamicsApplyFromControl(controlEpoch, "heartbeat_pulse");
             }
         });
 
@@ -1847,7 +1860,8 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
         double initial,
         int steps,
         String suffix,
-        boolean integer
+        boolean integer,
+        final String patchField
     ) {
         final long controlEpoch = privateParticleControlEpoch;
         return slider(
@@ -1861,7 +1875,7 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
             new Runnable() {
                 @Override
                 public void run() {
-                    schedulePrivateParticleDynamicsApplyFromControl(controlEpoch);
+                    schedulePrivateParticleDynamicsApplyFromControl(controlEpoch, patchField);
                 }
             }
         );
@@ -1874,7 +1888,8 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
         double initial,
         int steps,
         String suffix,
-        boolean integer
+        boolean integer,
+        final String patchField
     ) {
         final long controlEpoch = privateParticleControlEpoch;
         return slider(
@@ -1889,7 +1904,7 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
                 @Override
                 public void run() {
                     privateParticleSizeOverrideEnabled = true;
-                    schedulePrivateParticleDynamicsApplyFromControl(controlEpoch);
+                    schedulePrivateParticleDynamicsApplyFromControl(controlEpoch, patchField);
                 }
             }
         );
@@ -1940,19 +1955,32 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
         }
     }
 
-    private void schedulePrivateParticleDynamicsApplyFromControl(final long controlEpoch) {
+    private void schedulePrivateParticleDynamicsApplyFromControl(
+        final long controlEpoch,
+        final String patchField
+    ) {
         if (!isCurrentPrivateParticleControlSurface(controlEpoch)) {
             return;
         }
-        cancelPendingPrivateParticleDynamicsApply();
+        if (patchField == null || patchField.length() == 0) {
+            return;
+        }
+        if (liveApplyHandler != null && pendingPrivateParticleDynamicsApply != null) {
+            liveApplyHandler.removeCallbacks(pendingPrivateParticleDynamicsApply);
+        }
+        pendingPrivateParticlePatchFields.add(patchField);
         pendingPrivateParticleDynamicsApply = new Runnable() {
             @Override
             public void run() {
                 pendingPrivateParticleDynamicsApply = null;
                 if (!isCurrentPrivateParticleControlSurface(controlEpoch)) {
+                    pendingPrivateParticlePatchFields.clear();
                     return;
                 }
-                submitLivePrivateParticleDynamics(false);
+                LinkedHashSet<String> patchFields =
+                    new LinkedHashSet<String>(pendingPrivateParticlePatchFields);
+                pendingPrivateParticlePatchFields.clear();
+                submitLivePrivateParticleDynamics(false, patchFields);
             }
         };
         liveApplyHandler.postDelayed(pendingPrivateParticleDynamicsApply, 180);
@@ -1964,14 +1992,18 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
             liveApplyHandler.removeCallbacks(pendingPrivateParticleDynamicsApply);
             pendingPrivateParticleDynamicsApply = null;
         }
+        pendingPrivateParticlePatchFields.clear();
     }
 
-    private void submitLivePrivateParticleDynamics(boolean userVisible) {
+    private void submitLivePrivateParticleDynamics(
+        boolean userVisible,
+        Set<String> patchFields
+    ) {
         try {
             if (!nativeBridgeLoaded) {
                 throw new IllegalStateException("native bridge unavailable: " + nativeBridgeLoadError);
             }
-            JSONObject candidate = buildPrivateParticleDynamicsJson();
+            JSONObject candidate = buildPrivateParticleDynamicsPatchJson(patchFields);
             String responseText = nativeSubmitLivePrivateParticleDynamics(candidate.toString());
             JSONObject response = new JSONObject(responseText);
             String responseStatus = response.optString("status", "unknown");
@@ -2052,6 +2084,118 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
             liveApplyHandler.removeCallbacks(pendingPrivateParticleEffectReadback);
         }
         pendingPrivateParticleEffectReadback = null;
+    }
+
+    private JSONObject buildPrivateParticleDynamicsPatchJson(Set<String> patchFields)
+        throws Exception {
+        if (patchFields == null || patchFields.isEmpty()) {
+            throw new IllegalArgumentException("particle field patch must not be empty");
+        }
+        JSONObject privateParticles = new JSONObject();
+        JSONObject size = new JSONObject();
+        JSONObject driverValues = new JSONObject();
+        JSONArray driverControls = new JSONArray();
+        JSONObject tracer = new JSONObject();
+        for (String field : patchFields) {
+            if ("visual_scale".equals(field)) {
+                privateParticles.put("visual_scale", privateParticleVisualScale.value());
+            } else if ("world_anchor_scale_m".equals(field)) {
+                privateParticles.put(
+                    "world_anchor_scale_m",
+                    privateParticleWorldAnchorScale.value()
+                );
+            } else if ("size.mode".equals(field)) {
+                size.put("enabled", true);
+                size.put("mode", privateParticleSizeModeWire());
+            } else if ("size.world_meters".equals(field)) {
+                size.put("enabled", true);
+                size.put("mode", privateParticleSizeModeWire());
+                size.put("world_meters", privateParticleSizeWorldMeters.value());
+            } else if ("size.sphere_radius_percent".equals(field)) {
+                size.put("enabled", true);
+                size.put("mode", privateParticleSizeModeWire());
+                size.put(
+                    "sphere_radius_percent",
+                    privateParticleSizeSpherePercent.value()
+                );
+            } else if ("size.oscillation_percent".equals(field)) {
+                size.put("enabled", true);
+                size.put("mode", privateParticleSizeModeWire());
+                size.put(
+                    "oscillation_percent",
+                    privateParticleSizeOscillationPercent.value()
+                );
+            } else if (field.startsWith("driver_values01.")) {
+                int index = Integer.parseInt(field.substring("driver_values01.".length()));
+                if (index < 0 || index >= privateParticleDrivers.length) {
+                    throw new IllegalArgumentException("particle driver patch index out of range");
+                }
+                driverValues.put(Integer.toString(index), privateParticleDrivers[index].value());
+                driverControls.put(
+                    new JSONObject()
+                        .put("target_slot", index)
+                        .put("mode", "direct")
+                );
+            } else if ("tracer.draw_slots_per_oscillator".equals(field)) {
+                tracer.put(
+                    "draw_slots_per_oscillator",
+                    privateParticleTracerDrawSlots.intValue()
+                );
+            } else if ("tracer.lifetime_seconds".equals(field)) {
+                tracer.put("lifetime_seconds", privateParticleTracerLifetime.value());
+            } else if ("tracer.copies_per_second".equals(field)) {
+                tracer.put("copies_per_second", privateParticleTracerCopies.value());
+            } else if ("material".equals(field)) {
+                privateParticles.put(
+                    "material",
+                    new JSONObject().put("preset", privateParticleMaterialPresetWire())
+                );
+            } else if ("heartbeat_pulse".equals(field)) {
+                privateParticles.put(
+                    "heartbeat_pulse",
+                    new JSONObject().put(
+                        "mode",
+                        privateParticlePolarRrOrbitBoost != null
+                                && privateParticlePolarRrOrbitBoost.isChecked()
+                            ? "polar-rr-orbit-boost"
+                            : "disabled"
+                    )
+                );
+            } else {
+                throw new IllegalArgumentException("unsupported particle patch field: " + field);
+            }
+        }
+        if (size.length() > 0) {
+            privateParticles.put("size", size);
+        }
+        if (driverValues.length() > 0) {
+            privateParticles.put("driver_values01", driverValues);
+            privateParticles.put("driver_controls", driverControls);
+        }
+        if (tracer.length() > 0) {
+            privateParticles.put("tracer", tracer);
+        }
+        JSONObject source = new JSONObject()
+            .put("surface", "same_apk_panel")
+            .put("transport", "jni_live_queue");
+        JSONObject apply = new JSONObject()
+            .put("mode", "apply-on-next-safe-frame")
+            .put("expected_effective_revision", -1);
+        return new JSONObject()
+            .put("schema", PRIVATE_PARTICLE_DYNAMICS_SCHEMA)
+            .put("profile_id", "same-apk-private-particle-field-patch")
+            .put("revision", System.currentTimeMillis())
+            .put("update_mode", "field-patch")
+            .put("source", source)
+            .put("private_particles", privateParticles)
+            .put("apply", apply);
+    }
+
+    private String privateParticleSizeModeWire() {
+        return privateParticleSizeMode != null
+                && privateParticleSizeMode.getSelectedItemPosition() == 1
+            ? "world-meters"
+            : "sphere-radius-percent";
     }
 
     private JSONObject buildPrivateParticleDynamicsJson() throws Exception {
@@ -2217,13 +2361,7 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
             .put("facing_attenuation_strength", colorFacingAttenuationStrength);
         JSONObject size = new JSONObject()
             .put("enabled", privateParticleSizeOverrideEnabled)
-            .put(
-                "mode",
-                privateParticleSizeMode != null
-                        && privateParticleSizeMode.getSelectedItemPosition() == 1
-                    ? "world-meters"
-                    : "sphere-radius-percent"
-            )
+            .put("mode", privateParticleSizeModeWire())
             .put("world_meters", privateParticleSizeWorldMeters.value())
             .put("sphere_radius_percent", privateParticleSizeSpherePercent.value())
             .put("oscillation_percent", privateParticleSizeOscillationPercent.value());

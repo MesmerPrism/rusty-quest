@@ -44,6 +44,7 @@ use crate::native_renderer_properties::{
     PROP_PRIVATE_PARTICLES_VISUAL_SCALE_REQUEST_V1,
 };
 use crate::native_renderer_property_values::{bool_value, f32_clamped_value, u32_value};
+use crate::native_renderer_stimulus_panel::PrivateParticlePanelUpdateMask;
 use crate::native_renderer_timing::{GpuTimestampStage, GpuTimestampTracker};
 use crate::private_particle_breath_state_driver::{
     PrivateParticleBreathStateDriver, PrivateParticleBreathStateDriverSettings,
@@ -179,6 +180,7 @@ struct PrivateParticleRuntimeSettings {
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct GpuPrivateParticlePanelSettings {
+    pub(crate) update_mask: PrivateParticlePanelUpdateMask,
     pub(crate) visual_scale: f32,
     pub(crate) particle_size_override_enabled: bool,
     pub(crate) particle_size_mode: u32,
@@ -243,6 +245,75 @@ pub(crate) struct GpuPrivateParticlePanelEffectiveSettings {
 }
 
 impl GpuPrivateParticlePanelSettings {
+    fn merge_patch(&mut self, newer: Self) {
+        let mask = newer.update_mask;
+        if mask.visual_scale {
+            self.visual_scale = newer.visual_scale;
+        }
+        if mask.particle_size_override_enabled {
+            self.particle_size_override_enabled = newer.particle_size_override_enabled;
+        }
+        if mask.particle_size_mode {
+            self.particle_size_mode = newer.particle_size_mode;
+        }
+        if mask.particle_size_world_meters {
+            self.particle_size_world_meters = newer.particle_size_world_meters;
+        }
+        if mask.particle_size_sphere_percent {
+            self.particle_size_sphere_percent = newer.particle_size_sphere_percent;
+        }
+        if mask.particle_size_oscillation_percent {
+            self.particle_size_oscillation_percent = newer.particle_size_oscillation_percent;
+        }
+        for index in 0..GPU_PRIVATE_PARTICLE_PANEL_DRIVER_COUNT {
+            if mask.driver_values01[index] {
+                self.driver_values01[index] = newer.driver_values01[index];
+            }
+            if mask.driver_controls[index] {
+                self.driver_control_modes[index] = newer.driver_control_modes[index];
+                self.driver_control_source_slots[index] = newer.driver_control_source_slots[index];
+                self.driver_control_curve_codes[index] = newer.driver_control_curve_codes[index];
+                self.driver_control_range_mins[index] = newer.driver_control_range_mins[index];
+                self.driver_control_range_maxs[index] = newer.driver_control_range_maxs[index];
+                self.driver_control_cycle_multipliers[index] =
+                    newer.driver_control_cycle_multipliers[index];
+            }
+        }
+        if mask.tracer_draw_slots_per_oscillator {
+            self.tracer_draw_slots_per_oscillator = newer.tracer_draw_slots_per_oscillator;
+        }
+        if mask.tracer_lifetime_seconds {
+            self.tracer_lifetime_seconds = newer.tracer_lifetime_seconds;
+        }
+        if mask.tracer_copies_per_second {
+            self.tracer_copies_per_second = newer.tracer_copies_per_second;
+        }
+        if mask.transparency_opacity {
+            self.transparency_opacity = newer.transparency_opacity;
+        }
+        if mask.transparency_output_alpha_scale {
+            self.transparency_output_alpha_scale = newer.transparency_output_alpha_scale;
+        }
+        if mask.transparency_depth_suppression_strength {
+            self.transparency_depth_suppression_strength =
+                newer.transparency_depth_suppression_strength;
+        }
+        if mask.transparency_rgb_alpha_coupling {
+            self.transparency_rgb_alpha_coupling = newer.transparency_rgb_alpha_coupling;
+        }
+        if mask.color_facing_attenuation_strength {
+            self.color_facing_attenuation_strength = newer.color_facing_attenuation_strength;
+        }
+        if mask.material {
+            self.material_preset = newer.material_preset;
+            self.material_override_enabled = newer.material_override_enabled;
+        }
+        if mask.polar_rr_orbit_boost {
+            self.polar_rr_orbit_boost_enabled = newer.polar_rr_orbit_boost_enabled;
+        }
+        self.update_mask.merge(mask);
+    }
+
     fn clamped(self) -> Self {
         let particle_size_mode = match self.particle_size_mode {
             PRIVATE_PARTICLE_SIZE_MODE_SPHERE_PERCENT | PRIVATE_PARTICLE_SIZE_MODE_WORLD_METERS => {
@@ -304,6 +375,7 @@ impl GpuPrivateParticlePanelSettings {
             driver_control_cycle_multipliers[5] = 1.0;
         }
         Self {
+            update_mask: self.update_mask,
             visual_scale: self.visual_scale.clamp(0.05, 1.0),
             particle_size_override_enabled: self.particle_size_override_enabled
                 && particle_size_mode != PRIVATE_PARTICLE_SIZE_MODE_LEGACY,
@@ -604,15 +676,32 @@ impl PrivateParticleRuntimeSettings {
         source_values01: [f32; PRIVATE_PARTICLE_DRIVER_BANK_SLOT_COUNT],
     ) {
         let panel = panel.clamped();
-        self.visual_scale = panel.visual_scale;
-        self.visual_parameter_source = "same-apk-panel-live";
-        self.particle_size_override_enabled = panel.particle_size_override_enabled;
-        if panel.particle_size_override_enabled {
+        let mask = panel.update_mask;
+        if mask.visual_scale {
+            self.visual_scale = panel.visual_scale;
+            self.visual_parameter_source = "same-apk-panel-live";
+        }
+        if mask.particle_size_override_enabled {
+            self.particle_size_override_enabled = panel.particle_size_override_enabled;
+        }
+        if mask.particle_size_mode {
             self.particle_size_mode = panel.particle_size_mode;
+        }
+        if mask.particle_size_world_meters {
             self.particle_size_world_meters = panel.particle_size_world_meters;
+        }
+        if mask.particle_size_sphere_percent {
             self.particle_size_sphere_percent = panel.particle_size_sphere_percent;
+        }
+        if mask.particle_size_oscillation_percent {
             self.particle_size_oscillation_percent = panel.particle_size_oscillation_percent;
-        } else {
+        }
+        let size_updated = mask.particle_size_override_enabled
+            || mask.particle_size_mode
+            || mask.particle_size_world_meters
+            || mask.particle_size_sphere_percent
+            || mask.particle_size_oscillation_percent;
+        if size_updated && !self.particle_size_override_enabled {
             let (base, oscillation, _, _) =
                 legacy_particle_size_percent_envelope(self.visual_scale);
             self.particle_size_mode = PRIVATE_PARTICLE_SIZE_MODE_LEGACY;
@@ -620,18 +709,27 @@ impl PrivateParticleRuntimeSettings {
             self.particle_size_sphere_percent = base;
             self.particle_size_oscillation_percent = oscillation;
         }
-        self.particle_size_parameter_source = if panel.particle_size_override_enabled {
-            "same-apk-panel-live-explicit-size"
-        } else {
-            "payload-legacy-size-envelope"
-        };
-        self.driver_values01 = panel.driver_values01;
-        self.driver_control_modes = panel.driver_control_modes;
-        self.driver_control_source_slots = panel.driver_control_source_slots;
-        self.driver_control_curve_codes = panel.driver_control_curve_codes;
-        self.driver_control_range_mins = panel.driver_control_range_mins;
-        self.driver_control_range_maxs = panel.driver_control_range_maxs;
-        self.driver_control_cycle_multipliers = panel.driver_control_cycle_multipliers;
+        if size_updated {
+            self.particle_size_parameter_source = if self.particle_size_override_enabled {
+                "same-apk-panel-live-explicit-size"
+            } else {
+                "payload-legacy-size-envelope"
+            };
+        }
+        for slot in 0..PRIVATE_PARTICLE_DRIVER_BANK_SLOT_COUNT {
+            if mask.driver_values01[slot] {
+                self.driver_values01[slot] = panel.driver_values01[slot];
+            }
+            if mask.driver_controls[slot] {
+                self.driver_control_modes[slot] = panel.driver_control_modes[slot];
+                self.driver_control_source_slots[slot] = panel.driver_control_source_slots[slot];
+                self.driver_control_curve_codes[slot] = panel.driver_control_curve_codes[slot];
+                self.driver_control_range_mins[slot] = panel.driver_control_range_mins[slot];
+                self.driver_control_range_maxs[slot] = panel.driver_control_range_maxs[slot];
+                self.driver_control_cycle_multipliers[slot] =
+                    panel.driver_control_cycle_multipliers[slot];
+            }
+        }
         self.driver_bank_values01 = source_values01;
         for slot in 0..PRIVATE_PARTICLE_DRIVER_BANK_SLOT_COUNT {
             if self.driver_control_modes[slot] == PANEL_DRIVER_MODE_DIRECT {
@@ -640,19 +738,50 @@ impl PrivateParticleRuntimeSettings {
         }
         self.driver0_value01 = self.driver_bank_values01[0];
         self.driver1_value01 = self.driver_bank_values01[1];
-        self.driver_parameter_source = "same-apk-panel-live";
-        self.tracer_draw_slots_per_oscillator = panel.tracer_draw_slots_per_oscillator;
-        self.tracer_lifetime_seconds = panel.tracer_lifetime_seconds;
-        self.tracer_copies_per_second = panel.tracer_copies_per_second;
-        self.tracer_parameter_source = "same-apk-panel-live";
-        self.transparency_opacity = panel.transparency_opacity;
-        self.transparency_output_alpha_scale = panel.transparency_output_alpha_scale;
-        self.transparency_depth_suppression_strength =
-            panel.transparency_depth_suppression_strength;
-        self.transparency_rgb_alpha_coupling = panel.transparency_rgb_alpha_coupling;
-        self.transparency_parameter_source = "same-apk-panel-live";
-        self.color_facing_attenuation_strength = panel.color_facing_attenuation_strength;
-        self.color_parameter_source = "same-apk-panel-live";
+        if mask.driver_values01.iter().any(|selected| *selected)
+            || mask.driver_controls.iter().any(|selected| *selected)
+        {
+            self.driver_parameter_source = "same-apk-panel-live";
+        }
+        if mask.tracer_draw_slots_per_oscillator {
+            self.tracer_draw_slots_per_oscillator = panel.tracer_draw_slots_per_oscillator;
+        }
+        if mask.tracer_lifetime_seconds {
+            self.tracer_lifetime_seconds = panel.tracer_lifetime_seconds;
+        }
+        if mask.tracer_copies_per_second {
+            self.tracer_copies_per_second = panel.tracer_copies_per_second;
+        }
+        if mask.tracer_draw_slots_per_oscillator
+            || mask.tracer_lifetime_seconds
+            || mask.tracer_copies_per_second
+        {
+            self.tracer_parameter_source = "same-apk-panel-live";
+        }
+        if mask.transparency_opacity {
+            self.transparency_opacity = panel.transparency_opacity;
+        }
+        if mask.transparency_output_alpha_scale {
+            self.transparency_output_alpha_scale = panel.transparency_output_alpha_scale;
+        }
+        if mask.transparency_depth_suppression_strength {
+            self.transparency_depth_suppression_strength =
+                panel.transparency_depth_suppression_strength;
+        }
+        if mask.transparency_rgb_alpha_coupling {
+            self.transparency_rgb_alpha_coupling = panel.transparency_rgb_alpha_coupling;
+        }
+        if mask.transparency_opacity
+            || mask.transparency_output_alpha_scale
+            || mask.transparency_depth_suppression_strength
+            || mask.transparency_rgb_alpha_coupling
+        {
+            self.transparency_parameter_source = "same-apk-panel-live";
+        }
+        if mask.color_facing_attenuation_strength {
+            self.color_facing_attenuation_strength = panel.color_facing_attenuation_strength;
+            self.color_parameter_source = "same-apk-panel-live";
+        }
     }
 
     fn apply_heartbeat_orbit_control(&mut self, requested: Option<bool>) {
@@ -694,7 +823,7 @@ impl PrivateParticleRuntimeSettings {
         panel: GpuPrivateParticlePanelSettings,
         defaults: PrivateParticleMaterialDefaults,
     ) {
-        if !panel.material_override_enabled {
+        if !panel.update_mask.material || !panel.material_override_enabled {
             return;
         }
         if let Some(preset) = panel.material_preset {
@@ -789,7 +918,10 @@ fn panel_requires_input_driver_update(panel: &GpuPrivateParticlePanelSettings) -
     panel
         .driver_control_modes
         .iter()
-        .any(|mode| *mode == PANEL_DRIVER_MODE_INPUT_SLOT)
+        .enumerate()
+        .any(|(index, mode)| {
+            panel.update_mask.driver_controls[index] && *mode == PANEL_DRIVER_MODE_INPUT_SLOT
+        })
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -2603,18 +2735,24 @@ impl GpuPrivateParticleRenderer {
         revision: i64,
     ) -> GpuPrivateParticlePanelEffectiveSettings {
         let settings = settings.clamped();
-        self.heartbeat_orbit_request_state
-            .clear_request_for_panel_authority();
-        let heartbeat_settings =
-            PrivateParticleHeartbeatPulseAdapterSettings::panel_polar_rr_orbit_boost(
-                settings.polar_rr_orbit_boost_enabled,
-            );
-        if self.heartbeat_pulse_adapter.settings() != heartbeat_settings {
-            self.heartbeat_pulse_adapter.reconfigure(heartbeat_settings);
-            self.heartbeat_pulse_adapter_connected_marker_emitted = false;
+        if settings.update_mask.polar_rr_orbit_boost {
+            self.heartbeat_orbit_request_state
+                .clear_request_for_panel_authority();
+            let heartbeat_settings =
+                PrivateParticleHeartbeatPulseAdapterSettings::panel_polar_rr_orbit_boost(
+                    settings.polar_rr_orbit_boost_enabled,
+                );
+            if self.heartbeat_pulse_adapter.settings() != heartbeat_settings {
+                self.heartbeat_pulse_adapter.reconfigure(heartbeat_settings);
+                self.heartbeat_pulse_adapter_connected_marker_emitted = false;
+            }
         }
-        self.panel_settings_override = Some(settings);
-        if revision > 0 {
+        if let Some(existing) = &mut self.panel_settings_override {
+            existing.merge_patch(settings);
+        } else {
+            self.panel_settings_override = Some(settings);
+        }
+        if settings.update_mask.full_snapshot && revision > 0 {
             self.pending_phase_reset_revision = revision;
         }
         self.runtime_settings_last_poll_frame = u64::MAX;
@@ -2631,12 +2769,12 @@ impl GpuPrivateParticleRenderer {
             particle_size_max,
             particle_size_parameter_source: runtime_settings.particle_size_parameter_source,
             driver_values01: runtime_settings.driver_values01,
-            driver_control_modes: settings.driver_control_modes,
-            driver_control_source_slots: settings.driver_control_source_slots,
-            driver_control_curve_codes: settings.driver_control_curve_codes,
-            driver_control_range_mins: settings.driver_control_range_mins,
-            driver_control_range_maxs: settings.driver_control_range_maxs,
-            driver_control_cycle_multipliers: settings.driver_control_cycle_multipliers,
+            driver_control_modes: runtime_settings.driver_control_modes,
+            driver_control_source_slots: runtime_settings.driver_control_source_slots,
+            driver_control_curve_codes: runtime_settings.driver_control_curve_codes,
+            driver_control_range_mins: runtime_settings.driver_control_range_mins,
+            driver_control_range_maxs: runtime_settings.driver_control_range_maxs,
+            driver_control_cycle_multipliers: runtime_settings.driver_control_cycle_multipliers,
             driver_parameter_source: runtime_settings.driver_parameter_source,
             tracer_draw_slots_per_oscillator: runtime_settings
                 .tracer_draw_slots_per_oscillator
@@ -2655,7 +2793,7 @@ impl GpuPrivateParticleRenderer {
             color_parameter_source: runtime_settings.color_parameter_source,
             material_preset: runtime_settings.material_preset,
             material_parameter_source: runtime_settings.material_parameter_source,
-            polar_rr_orbit_boost_enabled: settings.polar_rr_orbit_boost_enabled,
+            polar_rr_orbit_boost_enabled: self.heartbeat_orbit_enabled(),
             heartbeat_pulse_parameter_source: self
                 .heartbeat_pulse_adapter
                 .settings()
@@ -2729,14 +2867,13 @@ impl GpuPrivateParticleRenderer {
                 PrivateParticleHeartbeatOrbitRequestObservation::Accepted(request) => {
                     let settings = request.override_value().map_or_else(
                         || {
-                            self.panel_settings_override.map_or(
-                                self.heartbeat_orbit_packaged_settings,
-                                |panel| {
+                            self.panel_settings_override
+                                .filter(|panel| panel.update_mask.polar_rr_orbit_boost)
+                                .map_or(self.heartbeat_orbit_packaged_settings, |panel| {
                                     PrivateParticleHeartbeatPulseAdapterSettings::panel_polar_rr_orbit_boost(
                                         panel.polar_rr_orbit_boost_enabled,
                                     )
-                                },
-                            )
+                                })
                         },
                         PrivateParticleHeartbeatPulseAdapterSettings::panel_polar_rr_orbit_boost,
                     );
@@ -2991,10 +3128,12 @@ impl GpuPrivateParticleRenderer {
         self.heartbeat_orbit_request_state
             .active_override()
             .unwrap_or_else(|| {
-                self.panel_settings_override.map_or_else(
-                    || self.heartbeat_orbit_packaged_settings.enabled(),
-                    |panel| panel.polar_rr_orbit_boost_enabled,
-                )
+                self.panel_settings_override
+                    .filter(|panel| panel.update_mask.polar_rr_orbit_boost)
+                    .map_or_else(
+                        || self.heartbeat_orbit_packaged_settings.enabled(),
+                        |panel| panel.polar_rr_orbit_boost_enabled,
+                    )
             })
     }
 
@@ -5736,6 +5875,7 @@ mod material_request_tests {
         polar_rr_orbit_boost_enabled: bool,
     ) -> GpuPrivateParticlePanelSettings {
         GpuPrivateParticlePanelSettings {
+            update_mask: PrivateParticlePanelUpdateMask::full_snapshot(),
             visual_scale: 0.70,
             particle_size_override_enabled: false,
             particle_size_mode: PRIVATE_PARTICLE_SIZE_MODE_LEGACY,
@@ -5816,6 +5956,69 @@ mod material_request_tests {
                 50.0
             ]
         );
+    }
+
+    #[test]
+    fn size_field_patch_preserves_every_unselected_runtime_parameter() {
+        let mut settings = PrivateParticleRuntimeSettings::from_generated_defaults();
+        settings.apply_material_preset(PrivateParticleMaterialPreset::AkdMaterialEmulation);
+        settings.driver_control_modes[2] = PANEL_DRIVER_MODE_INPUT_SLOT;
+        settings.driver_control_curve_codes[2] = PANEL_CURVE_HOLD_HIGH;
+        settings.driver_bank_values01[2] = 0.37;
+        settings.tracer_draw_slots_per_oscillator = 19;
+        settings.tracer_lifetime_seconds = 2.5;
+        settings.tracer_copies_per_second = 33.0;
+        let source_values = settings.driver_bank_values01;
+        let before = settings;
+
+        let mut patch = panel_settings(None, false, false);
+        patch.update_mask = PrivateParticlePanelUpdateMask::empty();
+        patch.update_mask.particle_size_override_enabled = true;
+        patch.update_mask.particle_size_mode = true;
+        patch.update_mask.particle_size_sphere_percent = true;
+        patch.particle_size_override_enabled = true;
+        patch.particle_size_mode = PRIVATE_PARTICLE_SIZE_MODE_SPHERE_PERCENT;
+        patch.particle_size_sphere_percent = 6.25;
+
+        settings.apply_panel_override(patch, source_values);
+        let mut expected = before;
+        expected.particle_size_override_enabled = true;
+        expected.particle_size_mode = PRIVATE_PARTICLE_SIZE_MODE_SPHERE_PERCENT;
+        expected.particle_size_sphere_percent = 6.25;
+        expected.particle_size_parameter_source = "same-apk-panel-live-explicit-size";
+        assert_eq!(settings, expected);
+
+        let material_defaults = before.material_defaults();
+        settings.apply_panel_material_override(patch, material_defaults);
+        assert_eq!(
+            settings, expected,
+            "an unselected material must remain untouched"
+        );
+    }
+
+    #[test]
+    fn independent_field_patches_merge_without_overwriting_each_other() {
+        let mut visual_patch = panel_settings(None, false, false);
+        visual_patch.update_mask = PrivateParticlePanelUpdateMask::empty();
+        visual_patch.update_mask.visual_scale = true;
+        visual_patch.visual_scale = 0.55;
+
+        let mut tracer_patch = panel_settings(None, false, false);
+        tracer_patch.update_mask = PrivateParticlePanelUpdateMask::empty();
+        tracer_patch.update_mask.tracer_lifetime_seconds = true;
+        tracer_patch.tracer_lifetime_seconds = 3.25;
+        tracer_patch.material_override_enabled = true;
+        tracer_patch.material_preset = Some(PrivateParticleMaterialPreset::AkdMaterialEmulation);
+
+        visual_patch.merge_patch(tracer_patch);
+
+        assert!(visual_patch.update_mask.visual_scale);
+        assert!(visual_patch.update_mask.tracer_lifetime_seconds);
+        assert!(!visual_patch.update_mask.material);
+        assert_eq!(visual_patch.visual_scale, 0.55);
+        assert_eq!(visual_patch.tracer_lifetime_seconds, 3.25);
+        assert!(!visual_patch.material_override_enabled);
+        assert_eq!(visual_patch.material_preset, None);
     }
 
     #[test]

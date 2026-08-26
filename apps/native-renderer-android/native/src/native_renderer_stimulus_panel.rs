@@ -63,6 +63,130 @@ pub(crate) const QUESTIONNAIRE_RESULT_STATUS_SCHEMA: &str =
 pub(crate) const QUESTIONNAIRE_SESSION_ROOT: &str = "files/sessions";
 pub(crate) const QUESTIONNAIRE_RESULT_FILE: &str = "questionnaire_results.jsonl";
 pub(crate) const PRIVATE_PARTICLE_DYNAMICS_DRIVER_COUNT: usize = 8;
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct PrivateParticlePanelUpdateMask {
+    pub(crate) full_snapshot: bool,
+    pub(crate) visual_scale: bool,
+    pub(crate) particle_size_override_enabled: bool,
+    pub(crate) particle_size_mode: bool,
+    pub(crate) particle_size_world_meters: bool,
+    pub(crate) particle_size_sphere_percent: bool,
+    pub(crate) particle_size_oscillation_percent: bool,
+    pub(crate) world_anchor_scale_m: bool,
+    pub(crate) driver_values01: [bool; PRIVATE_PARTICLE_DYNAMICS_DRIVER_COUNT],
+    pub(crate) driver_controls: [bool; PRIVATE_PARTICLE_DYNAMICS_DRIVER_COUNT],
+    pub(crate) tracer_draw_slots_per_oscillator: bool,
+    pub(crate) tracer_lifetime_seconds: bool,
+    pub(crate) tracer_copies_per_second: bool,
+    pub(crate) transparency_opacity: bool,
+    pub(crate) transparency_output_alpha_scale: bool,
+    pub(crate) transparency_depth_suppression_strength: bool,
+    pub(crate) transparency_rgb_alpha_coupling: bool,
+    pub(crate) color_facing_attenuation_strength: bool,
+    pub(crate) material: bool,
+    pub(crate) polar_rr_orbit_boost: bool,
+}
+
+impl PrivateParticlePanelUpdateMask {
+    pub(crate) const fn empty() -> Self {
+        Self {
+            full_snapshot: false,
+            visual_scale: false,
+            particle_size_override_enabled: false,
+            particle_size_mode: false,
+            particle_size_world_meters: false,
+            particle_size_sphere_percent: false,
+            particle_size_oscillation_percent: false,
+            world_anchor_scale_m: false,
+            driver_values01: [false; PRIVATE_PARTICLE_DYNAMICS_DRIVER_COUNT],
+            driver_controls: [false; PRIVATE_PARTICLE_DYNAMICS_DRIVER_COUNT],
+            tracer_draw_slots_per_oscillator: false,
+            tracer_lifetime_seconds: false,
+            tracer_copies_per_second: false,
+            transparency_opacity: false,
+            transparency_output_alpha_scale: false,
+            transparency_depth_suppression_strength: false,
+            transparency_rgb_alpha_coupling: false,
+            color_facing_attenuation_strength: false,
+            material: false,
+            polar_rr_orbit_boost: false,
+        }
+    }
+
+    pub(crate) const fn full_snapshot() -> Self {
+        Self {
+            full_snapshot: true,
+            visual_scale: true,
+            particle_size_override_enabled: true,
+            particle_size_mode: true,
+            particle_size_world_meters: true,
+            particle_size_sphere_percent: true,
+            particle_size_oscillation_percent: true,
+            world_anchor_scale_m: true,
+            driver_values01: [true; PRIVATE_PARTICLE_DYNAMICS_DRIVER_COUNT],
+            driver_controls: [true; PRIVATE_PARTICLE_DYNAMICS_DRIVER_COUNT],
+            tracer_draw_slots_per_oscillator: true,
+            tracer_lifetime_seconds: true,
+            tracer_copies_per_second: true,
+            transparency_opacity: true,
+            transparency_output_alpha_scale: true,
+            transparency_depth_suppression_strength: true,
+            transparency_rgb_alpha_coupling: true,
+            color_facing_attenuation_strength: true,
+            material: true,
+            polar_rr_orbit_boost: true,
+        }
+    }
+
+    pub(crate) fn any(self) -> bool {
+        self.visual_scale
+            || self.particle_size_override_enabled
+            || self.particle_size_mode
+            || self.particle_size_world_meters
+            || self.particle_size_sphere_percent
+            || self.particle_size_oscillation_percent
+            || self.world_anchor_scale_m
+            || self.driver_values01.iter().any(|selected| *selected)
+            || self.driver_controls.iter().any(|selected| *selected)
+            || self.tracer_draw_slots_per_oscillator
+            || self.tracer_lifetime_seconds
+            || self.tracer_copies_per_second
+            || self.transparency_opacity
+            || self.transparency_output_alpha_scale
+            || self.transparency_depth_suppression_strength
+            || self.transparency_rgb_alpha_coupling
+            || self.color_facing_attenuation_strength
+            || self.material
+            || self.polar_rr_orbit_boost
+    }
+
+    pub(crate) fn merge(&mut self, newer: Self) {
+        self.full_snapshot |= newer.full_snapshot;
+        self.visual_scale |= newer.visual_scale;
+        self.particle_size_override_enabled |= newer.particle_size_override_enabled;
+        self.particle_size_mode |= newer.particle_size_mode;
+        self.particle_size_world_meters |= newer.particle_size_world_meters;
+        self.particle_size_sphere_percent |= newer.particle_size_sphere_percent;
+        self.particle_size_oscillation_percent |= newer.particle_size_oscillation_percent;
+        self.world_anchor_scale_m |= newer.world_anchor_scale_m;
+        for index in 0..PRIVATE_PARTICLE_DYNAMICS_DRIVER_COUNT {
+            self.driver_values01[index] |= newer.driver_values01[index];
+            self.driver_controls[index] |= newer.driver_controls[index];
+        }
+        self.tracer_draw_slots_per_oscillator |= newer.tracer_draw_slots_per_oscillator;
+        self.tracer_lifetime_seconds |= newer.tracer_lifetime_seconds;
+        self.tracer_copies_per_second |= newer.tracer_copies_per_second;
+        self.transparency_opacity |= newer.transparency_opacity;
+        self.transparency_output_alpha_scale |= newer.transparency_output_alpha_scale;
+        self.transparency_depth_suppression_strength |=
+            newer.transparency_depth_suppression_strength;
+        self.transparency_rgb_alpha_coupling |= newer.transparency_rgb_alpha_coupling;
+        self.color_facing_attenuation_strength |= newer.color_facing_attenuation_strength;
+        self.material |= newer.material;
+        self.polar_rr_orbit_boost |= newer.polar_rr_orbit_boost;
+    }
+}
 const PRIVATE_PARTICLE_DRIVER_CONTROL_OSCILLATOR: u32 = 0;
 const PRIVATE_PARTICLE_DRIVER_CONTROL_MANUAL: u32 = 1;
 const PRIVATE_PARTICLE_DRIVER_CONTROL_INPUT_SLOT: u32 = 2;
@@ -101,6 +225,7 @@ pub(crate) struct EnvironmentDepthAlignmentPanelCandidate {
 #[derive(Clone, Debug)]
 pub(crate) struct PrivateParticleDynamicsPanelCandidate {
     pub(crate) revision: i64,
+    pub(crate) update_mask: PrivateParticlePanelUpdateMask,
     pub(crate) visual_scale: f32,
     pub(crate) particle_size_override_enabled: bool,
     pub(crate) particle_size_mode: u32,
@@ -137,9 +262,14 @@ pub(crate) struct PrivateParticleDynamicsPanelAppliedState {
 }
 
 impl PrivateParticleDynamicsPanelCandidate {
+    pub(crate) fn updates_world_anchor_scale(&self) -> bool {
+        self.update_mask.world_anchor_scale_m
+    }
+
     #[cfg(target_os = "android")]
     pub(crate) fn panel_settings(&self) -> GpuPrivateParticlePanelSettings {
         GpuPrivateParticlePanelSettings {
+            update_mask: self.update_mask,
             visual_scale: self.visual_scale,
             particle_size_override_enabled: self.particle_size_override_enabled,
             particle_size_mode: self.particle_size_mode,
@@ -391,9 +521,10 @@ fn queue_live_private_particle_dynamics(text: &str) -> Result<LiveQueueOutcome, 
     crate::marker(
         "private-particle-panel",
         format!(
-            "status=live-queued transport=jni-live-queue schema={} candidateRevision={} privateParticleVisualScale={:.3} privateParticleWorldAnchorScaleM={:.3} privateParticleDriver0Value01={:.3} privateParticleDriver1Value01={:.3} privateParticleTracerDrawSlotsPerOscillator={} privateParticleTracerLifetimeSeconds={:.3} privateParticleTracerCopiesPerSecond={:.3} privateParticleTransparencyOpacity={:.3} privateParticleTransparencyOutputAlphaScale={:.3} privateParticleTransparencyDepthSuppressionStrength={:.3} privateParticleTransparencyRgbAlphaCoupling={:.3} privateParticleColorFacingAttenuationStrength={:.3} overwrotePendingDynamics={}",
+            "status=live-queued transport=jni-live-queue schema={} candidateRevision={} privateParticleUpdateMode={} privateParticleVisualScale={:.3} privateParticleWorldAnchorScaleM={:.3} privateParticleDriver0Value01={:.3} privateParticleDriver1Value01={:.3} privateParticleTracerDrawSlotsPerOscillator={} privateParticleTracerLifetimeSeconds={:.3} privateParticleTracerCopiesPerSecond={:.3} privateParticleTransparencyOpacity={:.3} privateParticleTransparencyOutputAlphaScale={:.3} privateParticleTransparencyDepthSuppressionStrength={:.3} privateParticleTransparencyRgbAlphaCoupling={:.3} privateParticleColorFacingAttenuationStrength={:.3} overwrotePendingDynamics={}",
             PRIVATE_PARTICLE_DYNAMICS_SCHEMA,
             revision,
+            if candidate.update_mask.full_snapshot { "full-snapshot" } else { "field-patch" },
             candidate.visual_scale,
             candidate.world_anchor_scale_m,
             candidate.driver_values01[0],
@@ -1435,6 +1566,12 @@ pub(crate) fn parse_private_particle_dynamics_json(
         .and_then(Value::as_i64)
         .unwrap_or(0)
         .max(0);
+    let field_patch = match value.get("update_mode") {
+        None => false,
+        Some(Value::String(mode)) if mode == "field-patch" => true,
+        Some(Value::String(mode)) => return Err(format!("unsupported_update_mode:{mode}")),
+        Some(_) => return Err("update_mode_must_be_string".to_string()),
+    };
     let private_particles = object_value_at(&value, &["private_particles"])?;
     let apply = value.get("apply").and_then(Value::as_object);
     if let Some(mode) = apply
@@ -1447,24 +1584,120 @@ pub(crate) fn parse_private_particle_dynamics_json(
         }
     }
 
+    if field_patch {
+        const ALLOWED: [&str; 9] = [
+            "visual_scale",
+            "size",
+            "world_anchor_scale_m",
+            "driver_values01",
+            "driver_controls",
+            "tracer",
+            "transparency",
+            "color",
+            "material",
+        ];
+        const HEARTBEAT: &str = "heartbeat_pulse";
+        if let Some(key) = private_particles.as_object().and_then(|object| {
+            object
+                .keys()
+                .find(|key| !ALLOWED.contains(&key.as_str()) && key.as_str() != HEARTBEAT)
+        }) {
+            return Err(format!("unsupported_private_particle_patch_field:{key}"));
+        }
+    }
+
+    let mut update_mask = if field_patch {
+        PrivateParticlePanelUpdateMask::empty()
+    } else {
+        PrivateParticlePanelUpdateMask::full_snapshot()
+    };
     let visual_scale = bounded_number_at(private_particles, "visual_scale", 0.7, 0.05, 1.0)? as f32;
+    if field_patch && private_particles.get("visual_scale").is_some() {
+        update_mask.visual_scale = true;
+    }
     let particle_size = private_particle_size_config(private_particles)?;
+    if field_patch {
+        if let Some(size) = private_particles.get("size").and_then(Value::as_object) {
+            update_mask.particle_size_override_enabled = size.contains_key("enabled");
+            update_mask.particle_size_mode = size.contains_key("mode");
+            update_mask.particle_size_world_meters = size.contains_key("world_meters");
+            update_mask.particle_size_sphere_percent = size.contains_key("sphere_radius_percent");
+            update_mask.particle_size_oscillation_percent =
+                size.contains_key("oscillation_percent");
+        }
+    }
     let world_anchor_scale_m =
         bounded_number_at(private_particles, "world_anchor_scale_m", 0.46, 0.05, 4.0)? as f32;
-    let driver_values01 = bounded_number_array_at::<{ PRIVATE_PARTICLE_DYNAMICS_DRIVER_COUNT }>(
-        private_particles,
-        "driver_values01",
-        0.0,
-        1.0,
-    )?;
+    if field_patch && private_particles.get("world_anchor_scale_m").is_some() {
+        update_mask.world_anchor_scale_m = true;
+    }
+    let driver_values01 = if field_patch {
+        private_particle_driver_values_patch(private_particles, &mut update_mask)?
+    } else {
+        bounded_number_array_at::<{ PRIVATE_PARTICLE_DYNAMICS_DRIVER_COUNT }>(
+            private_particles,
+            "driver_values01",
+            0.0,
+            1.0,
+        )?
+    };
     let driver_controls = private_particle_driver_controls(private_particles)?;
-    let tracer = object_value_at(private_particles, &["tracer"])?;
-    let tracer_draw_slots_per_oscillator =
-        bounded_u32_at(tracer, "draw_slots_per_oscillator", 7, 0, 1024)?;
-    let tracer_lifetime_seconds =
-        bounded_number_at(tracer, "lifetime_seconds", 0.5, 0.016, 30.0)? as f32;
-    let tracer_copies_per_second =
-        bounded_number_at(tracer, "copies_per_second", 14.0, 0.0, 120.0)? as f32;
+    if field_patch {
+        if let Some(controls) = private_particles
+            .get("driver_controls")
+            .and_then(Value::as_array)
+        {
+            for (fallback_index, control) in controls.iter().enumerate() {
+                let target_slot = bounded_u32_at(
+                    control,
+                    "target_slot",
+                    fallback_index as u32,
+                    0,
+                    (PRIVATE_PARTICLE_DYNAMICS_DRIVER_COUNT - 1) as u32,
+                )? as usize;
+                update_mask.driver_controls[target_slot] = true;
+            }
+        }
+    }
+    let tracer = if field_patch {
+        private_particles.get("tracer").unwrap_or(&Value::Null)
+    } else {
+        object_value_at(private_particles, &["tracer"])?
+    };
+    if field_patch && !tracer.is_null() && !tracer.is_object() {
+        return Err("tracer_must_be_object".to_string());
+    }
+    let tracer_draw_slots_per_oscillator = if tracer.is_null() {
+        7
+    } else {
+        bounded_u32_at(tracer, "draw_slots_per_oscillator", 7, 0, 1024)?
+    };
+    let tracer_lifetime_seconds = if tracer.is_null() {
+        0.5
+    } else {
+        bounded_number_at(tracer, "lifetime_seconds", 0.5, 0.016, 30.0)? as f32
+    };
+    let tracer_copies_per_second = if tracer.is_null() {
+        14.0
+    } else {
+        bounded_number_at(tracer, "copies_per_second", 14.0, 0.0, 120.0)? as f32
+    };
+    if field_patch {
+        if let Some(tracer) = tracer.as_object() {
+            const ALLOWED: [&str; 3] = [
+                "draw_slots_per_oscillator",
+                "lifetime_seconds",
+                "copies_per_second",
+            ];
+            if let Some(key) = tracer.keys().find(|key| !ALLOWED.contains(&key.as_str())) {
+                return Err(format!("unsupported_tracer_patch_field:{key}"));
+            }
+            update_mask.tracer_draw_slots_per_oscillator =
+                tracer.contains_key("draw_slots_per_oscillator");
+            update_mask.tracer_lifetime_seconds = tracer.contains_key("lifetime_seconds");
+            update_mask.tracer_copies_per_second = tracer.contains_key("copies_per_second");
+        }
+    }
     let transparency = private_particles
         .get("transparency")
         .filter(|value| value.is_object())
@@ -1476,18 +1709,67 @@ pub(crate) fn parse_private_particle_dynamics_json(
         bounded_number_at(transparency, "depth_suppression_strength", 0.0, 0.0, 8.0)? as f32;
     let transparency_rgb_alpha_coupling =
         bounded_number_at(transparency, "rgb_alpha_coupling", 1.0, 0.0, 1.0)? as f32;
+    if field_patch {
+        if let Some(transparency) = private_particles
+            .get("transparency")
+            .and_then(Value::as_object)
+        {
+            const ALLOWED: [&str; 4] = [
+                "opacity",
+                "output_alpha_scale",
+                "depth_suppression_strength",
+                "rgb_alpha_coupling",
+            ];
+            if let Some(key) = transparency
+                .keys()
+                .find(|key| !ALLOWED.contains(&key.as_str()))
+            {
+                return Err(format!("unsupported_transparency_patch_field:{key}"));
+            }
+            update_mask.transparency_opacity = transparency.contains_key("opacity");
+            update_mask.transparency_output_alpha_scale =
+                transparency.contains_key("output_alpha_scale");
+            update_mask.transparency_depth_suppression_strength =
+                transparency.contains_key("depth_suppression_strength");
+            update_mask.transparency_rgb_alpha_coupling =
+                transparency.contains_key("rgb_alpha_coupling");
+        } else if private_particles.get("transparency").is_some() {
+            return Err("transparency_must_be_object".to_string());
+        }
+    }
     let color = private_particles
         .get("color")
         .filter(|value| value.is_object())
         .unwrap_or(private_particles);
     let color_facing_attenuation_strength =
         bounded_number_at(color, "facing_attenuation_strength", 0.0, 0.0, 1.0)? as f32;
+    if field_patch {
+        if let Some(color) = private_particles.get("color").and_then(Value::as_object) {
+            if color.len() > 1 || color.keys().any(|key| key != "facing_attenuation_strength") {
+                return Err("color_patch_must_contain_only_facing_attenuation_strength".to_string());
+            }
+            update_mask.color_facing_attenuation_strength =
+                color.contains_key("facing_attenuation_strength");
+        } else if private_particles.get("color").is_some() {
+            return Err("color_must_be_object".to_string());
+        }
+    }
     let (material_preset, material_override_enabled) =
         private_particle_material_preset(private_particles)?;
+    if field_patch && private_particles.get("material").is_some() {
+        update_mask.material = true;
+    }
     let polar_rr_orbit_boost_enabled = private_particle_polar_rr_orbit_boost(private_particles)?;
+    if field_patch && private_particles.get("heartbeat_pulse").is_some() {
+        update_mask.polar_rr_orbit_boost = true;
+    }
+    if field_patch && !update_mask.any() {
+        return Err("empty_private_particle_field_patch".to_string());
+    }
 
     Ok(PrivateParticleDynamicsPanelCandidate {
         revision,
+        update_mask,
         visual_scale,
         particle_size_override_enabled: particle_size.0,
         particle_size_mode: particle_size.1,
@@ -1514,6 +1796,47 @@ pub(crate) fn parse_private_particle_dynamics_json(
         material_override_enabled,
         polar_rr_orbit_boost_enabled,
     })
+}
+
+fn private_particle_driver_values_patch(
+    private_particles: &Value,
+    update_mask: &mut PrivateParticlePanelUpdateMask,
+) -> Result<[f32; PRIVATE_PARTICLE_DYNAMICS_DRIVER_COUNT], String> {
+    let mut values = [0.0_f32; PRIVATE_PARTICLE_DYNAMICS_DRIVER_COUNT];
+    let Some(candidate) = private_particles.get("driver_values01") else {
+        return Ok(values);
+    };
+    if candidate.is_array() {
+        values = bounded_number_array_at::<{ PRIVATE_PARTICLE_DYNAMICS_DRIVER_COUNT }>(
+            private_particles,
+            "driver_values01",
+            0.0,
+            1.0,
+        )?;
+        update_mask.driver_values01 = [true; PRIVATE_PARTICLE_DYNAMICS_DRIVER_COUNT];
+        return Ok(values);
+    }
+    let object = candidate
+        .as_object()
+        .ok_or_else(|| "driver_values01_patch_must_be_object_or_complete_array".to_string())?;
+    if object.is_empty() {
+        return Err("driver_values01_patch_must_not_be_empty".to_string());
+    }
+    for (key, value) in object {
+        let index = key
+            .parse::<usize>()
+            .map_err(|_| format!("driver_values01_patch_index_invalid:{key}"))?;
+        if index >= PRIVATE_PARTICLE_DYNAMICS_DRIVER_COUNT {
+            return Err(format!("driver_values01_patch_index_out_of_range:{index}"));
+        }
+        let number = value
+            .as_f64()
+            .filter(|number| number.is_finite() && (0.0..=1.0).contains(number))
+            .ok_or_else(|| format!("driver_values01_patch_value_out_of_range:{index}"))?;
+        values[index] = number as f32;
+        update_mask.driver_values01[index] = true;
+    }
+    Ok(values)
 }
 
 fn private_particle_size_config(
@@ -2985,6 +3308,102 @@ mod tests {
         );
         assert!(candidate.material_override_enabled);
         assert!(candidate.polar_rr_orbit_boost_enabled);
+        assert!(candidate.update_mask.full_snapshot);
+        assert!(candidate.update_mask.material);
+        assert!(candidate
+            .update_mask
+            .driver_values01
+            .iter()
+            .all(|selected| *selected));
+    }
+
+    #[test]
+    fn field_patch_selects_only_explicit_particle_parameters() {
+        let value = json!({
+            "schema": PRIVATE_PARTICLE_DYNAMICS_SCHEMA,
+            "revision": 12,
+            "update_mode": "field-patch",
+            "private_particles": {
+                "size": {
+                    "enabled": true,
+                    "mode": "sphere-radius-percent",
+                    "sphere_radius_percent": 6.25
+                },
+                "driver_values01": {
+                    "3": 0.42
+                },
+                "driver_controls": [
+                    {
+                        "target_slot": 3,
+                        "mode": "direct"
+                    }
+                ],
+                "tracer": {
+                    "copies_per_second": 18.0
+                }
+            },
+            "apply": {
+                "mode": "apply-on-next-safe-frame"
+            }
+        });
+
+        let candidate = parse_private_particle_dynamics_json(&value.to_string()).unwrap();
+        let mask = candidate.update_mask;
+        assert!(!mask.full_snapshot);
+        assert!(mask.particle_size_override_enabled);
+        assert!(mask.particle_size_mode);
+        assert!(mask.particle_size_sphere_percent);
+        assert!(!mask.particle_size_world_meters);
+        assert!(!mask.particle_size_oscillation_percent);
+        assert_eq!(
+            mask.driver_values01,
+            [false, false, false, true, false, false, false, false]
+        );
+        assert_eq!(
+            mask.driver_controls,
+            [false, false, false, true, false, false, false, false]
+        );
+        assert!(mask.tracer_copies_per_second);
+        assert!(!mask.tracer_draw_slots_per_oscillator);
+        assert!(!mask.tracer_lifetime_seconds);
+        assert!(!mask.visual_scale);
+        assert!(!mask.world_anchor_scale_m);
+        assert!(!mask.material);
+        assert!(!mask.polar_rr_orbit_boost);
+        assert_close(candidate.particle_size_sphere_percent, 6.25);
+        assert_close(candidate.driver_values01[3], 0.42);
+        assert_close(candidate.tracer_copies_per_second, 18.0);
+    }
+
+    #[test]
+    fn field_patch_rejects_empty_unknown_and_damaged_fields() {
+        for (private_particles, expected) in [
+            (json!({}), "empty_private_particle_field_patch"),
+            (
+                json!({"unexpected": 1}),
+                "unsupported_private_particle_patch_field:unexpected",
+            ),
+            (
+                json!({"driver_values01": {"8": 0.5}}),
+                "driver_values01_patch_index_out_of_range:8",
+            ),
+            (
+                json!({"tracer": {"lifetime_seconds": 0.0}}),
+                "lifetime_seconds_out_of_range",
+            ),
+        ] {
+            let value = json!({
+                "schema": PRIVATE_PARTICLE_DYNAMICS_SCHEMA,
+                "revision": 13,
+                "update_mode": "field-patch",
+                "private_particles": private_particles
+            });
+            let error = parse_private_particle_dynamics_json(&value.to_string()).unwrap_err();
+            assert!(
+                error.starts_with(expected),
+                "expected {expected}, received {error}"
+            );
+        }
     }
 
     #[test]

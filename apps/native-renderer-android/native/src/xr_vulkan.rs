@@ -4083,8 +4083,11 @@ fn apply_live_private_particle_dynamics(
         );
         return;
     };
-    let world_anchor_scale_m = private_particle_world_anchor
-        .apply_panel_scale(candidate.world_anchor_scale_m, frame_count);
+    let world_anchor_scale_m = if candidate.updates_world_anchor_scale() {
+        private_particle_world_anchor.apply_panel_scale(candidate.world_anchor_scale_m, frame_count)
+    } else {
+        private_particle_world_anchor.world_center_scale()[3]
+    };
     let effective_settings =
         renderer.apply_panel_settings(candidate.panel_settings(), frame_count, revision);
     let effective =

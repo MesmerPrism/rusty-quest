@@ -61,6 +61,44 @@ function Assert-PanelNavigationMutationSafe {
     ) "navigation-fenced particle controls"
 }
 
+function Assert-ParticleFieldPatchClosed {
+    param([string]$Text)
+    $patchStart = $Text.IndexOf("private JSONObject buildPrivateParticleDynamicsPatchJson(")
+    $patchEnd = $Text.IndexOf("private String privateParticleSizeModeWire()", $patchStart)
+    if ($patchStart -lt 0 -or $patchEnd -le $patchStart) {
+        throw "Particle field-patch guard could not isolate the patch builder"
+    }
+    $patchBuilder = $Text.Substring($patchStart, $patchEnd - $patchStart)
+    Assert-Tokens $patchBuilder @(
+        '.put("update_mode", "field-patch")',
+        'patchFields.isEmpty()',
+        '"visual_scale".equals(field)',
+        '"world_anchor_scale_m".equals(field)',
+        '"size.mode".equals(field)',
+        '"size.world_meters".equals(field)',
+        '"size.sphere_radius_percent".equals(field)',
+        '"size.oscillation_percent".equals(field)',
+        'field.startsWith("driver_values01.")',
+        '"tracer.draw_slots_per_oscillator".equals(field)',
+        '"tracer.lifetime_seconds".equals(field)',
+        '"tracer.copies_per_second".equals(field)',
+        '"material".equals(field)',
+        '"heartbeat_pulse".equals(field)',
+        'unsupported particle patch field'
+    ) "closed field-scoped particle patch builder"
+    if ($patchBuilder.Contains("buildPrivateParticleDynamicsJson()")) {
+        throw "Particle field patch must not delegate to the full-snapshot builder"
+    }
+    Assert-Tokens $Text @(
+        "pendingPrivateParticlePatchFields.add(patchField);",
+        '"visual_scale"',
+        'schedulePrivateParticleDynamicsApplyFromControl(controlEpoch, "size.mode")',
+        '"driver_values01." + i',
+        'schedulePrivateParticleDynamicsApplyFromControl(controlEpoch, "material")',
+        'schedulePrivateParticleDynamicsApplyFromControl(controlEpoch, "heartbeat_pulse")'
+    ) "field-specific control routing"
+}
+
 function Resolve-GeneratedOutputPath {
     param([string]$Value)
     if ([System.IO.Path]::IsPathRooted($Value)) {
@@ -317,6 +355,7 @@ $unifiedParticlePanel = $panel.Substring(
     $unifiedParticlePanelEnd - $unifiedParticlePanelStart
 )
 Assert-PanelNavigationMutationSafe $panel
+Assert-ParticleFieldPatchClosed $panel
 $damagedNavigationGuard = $panel.Replace(
     "if (!isCurrentPrivateParticleControlSurface(controlEpoch))",
     "if (false)"
@@ -341,6 +380,18 @@ try {
         throw
     }
 }
+$damagedFieldPatchMode = $panel.Replace(
+    '.put("update_mode", "field-patch")',
+    '.put("update_mode", "full-snapshot")'
+)
+try {
+    Assert-ParticleFieldPatchClosed $damagedFieldPatchMode
+    throw "Particle field-patch damage test accepted a full-snapshot update mode"
+} catch {
+    if ($_.Exception.Message -like "Particle field-patch damage test accepted*") {
+        throw
+    }
+}
 Assert-Tokens $unifiedParticlePanel @(
     "privateParticlePanelLiveApply = true",
     "privateParticleControlsHydrating = true",
@@ -356,7 +407,7 @@ Assert-Tokens $unifiedParticlePanel @(
     "Enable Polar RR orbit boost",
     "polar-rr-orbit-boost",
     "schedulePrivateParticleDynamicsApplyFromControl",
-    "renderer-safe JSON command",
+    "renderer-safe JSON patch",
     "No synthetic beat"
 ) "unified breath and particle panel"
 Assert-Tokens $panel @(
