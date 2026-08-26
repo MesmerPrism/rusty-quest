@@ -88,6 +88,19 @@ $androidBuild = Read-RequiredText $androidBuildPath "Android build wrapper"
 $resolver = Read-RequiredText $resolverPath "structured resolver"
 $appSpec = Read-RequiredText $appSpecPath "conformance app"
 $features = ($featurePaths | ForEach-Object { Read-RequiredText $_ "feature descriptor" }) -join [Environment]::NewLine
+$closedWorldFeature = Get-Content -Raw -LiteralPath $featurePaths[0] | ConvertFrom-Json
+$conformanceAppSpec = $appSpec | ConvertFrom-Json
+
+$inversionProperty = "debug.rustyquest.native_renderer.breath_composition.inverted"
+if ($closedWorldFeature.runtime_profile.set.PSObject.Properties.Name -contains $inversionProperty) {
+    throw "Closed-world breath feature must not override the app-owned inversion selection."
+}
+if ([string]$conformanceAppSpec.settings_assertions.required_values."native_renderer.breath_composition.inverted" -cne "false") {
+    throw "Conformance app must retain its explicit non-inverted default after inversion ownership moves out of the feature descriptor."
+}
+if ([string]$conformanceAppSpec.runtime_profile.set.$inversionProperty -cne "false") {
+    throw "Conformance app must own its explicit non-inverted runtime value after inversion ownership moves out of the feature descriptor."
+}
 
 Assert-Tokens $panel @(
     "private CheckBox liveAutoApply;"

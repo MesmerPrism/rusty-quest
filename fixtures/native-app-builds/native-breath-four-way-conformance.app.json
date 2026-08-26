@@ -45,6 +45,7 @@
   "payloads": [],
   "runtime_profile": {
     "set": {
+      "debug.rustyquest.native_renderer.breath_composition.inverted": "false",
       "debug.rustyquest.native_renderer.hand_anchor_particles.enabled": "false",
       "debug.rustyquest.native_renderer.hand_mesh.graft_copies.enabled": "false",
       "debug.rustyquest.native_renderer.render.mode": "solid-black-hands-and-grafts"
