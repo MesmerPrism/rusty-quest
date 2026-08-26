@@ -469,6 +469,11 @@ function Assert-TransportEnvelopeDiagnosticBoundary {
     if ($errors.Count -ne 0) {
         throw "Transport diagnostic PowerShell parse failed: $($errors[0].Message)"
     }
+    $successExitCommands = @([regex]::Matches($script, '(?m)^exit 0\s*$'))
+    if ($successExitCommands.Count -ne 1 -or $script -notmatch
+        '(?ms)^\} \| ConvertTo-Json -Compress -Depth 12 \| Write-Output\r?\nexit 0\s*\z') {
+        throw "Transport diagnostic success exit must be unique and immediately follow verified JSON output."
+    }
     foreach ($command in @($diagnosticAst.FindAll({
                 param($node)
                 $node -is [Management.Automation.Language.CommandAst]
@@ -517,6 +522,35 @@ try { Assert-TransportEnvelopeDiagnosticBoundary $transportExecutionDamage } cat
 if (-not $transportExecutionRejected) {
     throw "Transport diagnostic accepted a candidate-execution assertion."
 }
+$transportPreambleLine = '          $ErrorActionPreference = "Stop"'
+$transportSuccessExitDamages = @(
+    [pscustomobject]@{
+        label = 'early success exit'
+        content = $dynamicWorkflow.Replace(
+            $transportPreambleLine,
+            "$transportPreambleLine`n          exit 0"
+        )
+    },
+    [pscustomobject]@{
+        label = 'missing success exit'
+        content = $dynamicWorkflow -replace '(?m)^          exit 0\s*\r?\n?', ''
+    }
+)
+foreach ($damage in $transportSuccessExitDamages) {
+    $rejected = $false
+    try {
+        Assert-TransportEnvelopeDiagnosticBoundary $damage.content
+    } catch {
+        if ($_.Exception.Message -cnotmatch
+            'success exit must be unique and immediately follow verified JSON output') {
+            throw "Transport success-exit damage '$($damage.label)' rejected for the wrong reason: $($_.Exception.Message)"
+        }
+        $rejected = $true
+    }
+    if (-not $rejected) {
+        throw "Transport diagnostic accepted success-exit damage: $($damage.label)"
+    }
+}
 $transportMaterializationDamages = @(
     [pscustomobject]@{ label = 'bare checkout'; command = 'git checkout --detach $env:EVENT_HEAD_SHA' },
     [pscustomobject]@{ label = 'base-root checkout'; command = '& git -C $baseRoot checkout --detach $env:EVENT_HEAD_SHA' },
@@ -528,9 +562,12 @@ $transportMaterializationDamages = @(
     [pscustomobject]@{ label = 'equals-C switch'; command = 'git -C=$baseRoot switch --detach $env:EVENT_HEAD_SHA' },
     [pscustomobject]@{ label = 'combined global worktree'; command = 'git -C $baseRoot --no-pager worktree add "$env:RUNNER_TEMP\candidate" $env:EVENT_HEAD_SHA' }
 )
+$transportMaterializationAnchor = '          $verifierScript = Join-Path $verifierRoot "scripts/Test-ExternalValidationAuthority.ps1"'
 foreach ($damage in $transportMaterializationDamages) {
-    $damagedDiagnostic = $dynamicWorkflow.TrimEnd("`r", "`n") +
-        "`n          $($damage.command)`n"
+    $damagedDiagnostic = $dynamicWorkflow.Replace(
+        $transportMaterializationAnchor,
+        "          $($damage.command)`n$transportMaterializationAnchor"
+    )
     $rejected = $false
     try {
         Assert-TransportEnvelopeDiagnosticBoundary $damagedDiagnostic

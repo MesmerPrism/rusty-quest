@@ -376,3 +376,4 @@ jobs:
             raw_child = [ordered]@{ exit_code = $rawExit; stdout = [ordered]@{ bytes = $rawStdoutBytes.Length; sha256 = Get-Sha256 $rawStdoutBytes }; stderr = [ordered]@{ bytes = $rawStderrBytes.Length; sha256 = Get-Sha256 $rawStderrBytes } }
             parent_collection = [ordered]@{ exit_code = $recordExit; record_count = $recordRows.Count; records = $recordRows }
           } | ConvertTo-Json -Compress -Depth 12 | Write-Output
+          exit 0
