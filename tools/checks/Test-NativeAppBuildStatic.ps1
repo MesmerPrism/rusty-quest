@@ -217,6 +217,24 @@ foreach ($file in $featureFiles) {
     $featureIds[$featureId] = $true
 }
 
+$retiredPrivateParticleReductionMarkers = @(
+    "privateParticleDiagnosticTracerSpawnedCount=",
+    "privateParticleDiagnosticTracerDiscardedCount=",
+    "privateParticleDiagnosticAnchorEchoActiveCount=",
+    "privateParticleDiagnosticAnchorEchoSpawnedCount=",
+    "privateParticleDiagnosticAnchorEchoDiscardedCount=",
+    "privateParticleDiagnosticActiveEdgeCount=",
+    "privateParticleDiagnosticPassHealthFlags="
+)
+foreach ($file in $featureFiles) {
+    $activeFeatureText = Get-Content -Raw -LiteralPath $file.FullName
+    foreach ($retiredMarker in $retiredPrivateParticleReductionMarkers) {
+        if ($activeFeatureText.Contains($retiredMarker)) {
+            throw "Active public feature descriptor retains retired private-particle reduction marker: $retiredMarker ($($file.FullName))"
+        }
+    }
+}
+
 foreach ($requiredFeature in @(
     "quest.native.openxr_vulkan_base",
     "renderer.background.solid_black",
@@ -275,14 +293,20 @@ foreach ($marker in @(
     "privateParticleComputeFovTangentPayload=world-anchor-forward-axis",
     "privateParticleDiagnosticStorageBinding=9",
     "privateParticleDiagnosticWords=24",
-    "privateParticleDiagnosticTracerSpawnedCount=",
-    "privateParticleDiagnosticTracerDiscardedCount=",
-    "privateParticleDiagnosticAnchorEchoActiveCount=",
-    "privateParticleDiagnosticAnchorEchoSpawnedCount=",
-    "privateParticleDiagnosticAnchorEchoDiscardedCount=",
-    "privateParticleDiagnosticActiveEdgeCount=",
-    "privateParticleDiagnosticPassHealthFlags=",
-    "privateParticleDiagnosticCpuFullBufferReadback=false"
+    "privateParticleDiagnosticCpuFullBufferReadback=false",
+    "privateParticleDiagnosticReadbackStatus=",
+    "privateParticleDiagnosticSchema=v2",
+    "privateParticleDiagnosticSubmittedFrameId=",
+    "privateParticleDiagnosticMeasuredFrameId=",
+    "privateParticleDiagnosticMeasuredFrameLagFrames=",
+    "privateParticleDiagnosticFrameIdentityAvailable=",
+    "privateParticleDiagnosticFrameIdWords=20,21",
+    "privateParticleDiagnosticLanesVisitedWord=22",
+    "privateParticleDiagnosticSchemaValidityWord=23",
+    "privateParticleDiagnosticParticleCount=",
+    "privateParticleDiagnosticLanesVisited=",
+    "privateParticleDiagnosticValidityMask=",
+    "privateParticleDiagnosticLegacyReductionsAvailability=unavailable-v2-validity-masked"
 )) {
     if (@($privateParticleFeature.markers.required) -notcontains $marker) {
         throw "Private particle feature must require generic diagnostic marker: $marker"

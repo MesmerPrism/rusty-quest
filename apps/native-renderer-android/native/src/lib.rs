@@ -89,6 +89,7 @@ mod native_camera_profiles;
 mod native_camera_reader_selection;
 mod native_controller_breath_state;
 mod native_renderer_camera_options;
+mod native_renderer_diagnostics_contract;
 mod native_renderer_display_composite_options;
 mod native_renderer_display_refresh_options;
 mod native_renderer_environment_depth_options;

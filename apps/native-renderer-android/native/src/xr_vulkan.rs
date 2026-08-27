@@ -1353,8 +1353,9 @@ unsafe fn run_projection_loop_inner(
     crate::marker(
         "gpu-timestamp-timing",
         format!(
-            "status=config {}",
-            gpu_timestamp_tracker.config_marker_fields()
+            "status=config {} {}",
+            crate::native_renderer_diagnostics_contract::build_policy_marker_fields(),
+            gpu_timestamp_tracker.config_marker_fields(),
         ),
     );
     let mut gpu_private_particle_renderer = match GpuPrivateParticleRenderer::new(
@@ -3618,6 +3619,7 @@ unsafe fn run_projection_frames(
             frame_slot,
             GpuTimestampStage::ProjectionComposite,
         );
+        gpu_timestamp_tracker.finalize_frame(vk_device, cmd, frame_slot);
         frame_timings.projection_composite_ms = elapsed_ms(stage_started);
         vk_device
             .end_command_buffer(cmd)

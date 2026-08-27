@@ -49,9 +49,39 @@ function Assert-ContainsLiteralTokens {
     }
 }
 
+function Invoke-BuildScriptLocalSizeTests {
+    param(
+        [string]$BuildScriptPath
+    )
+
+    $rustc = Get-Command rustc -ErrorAction Stop
+    $testExecutable = Join-Path ([System.IO.Path]::GetTempPath()) (
+        "rusty-quest-native-renderer-build-local-size-{0}.exe" -f [System.Guid]::NewGuid().ToString("N")
+    )
+    if (Test-Path -LiteralPath $testExecutable) {
+        throw "Refusing to overwrite unexpected build-script test artifact: $testExecutable"
+    }
+    try {
+        & $rustc.Source --edition 2024 --test $BuildScriptPath -C debuginfo=0 -o $testExecutable
+        if ($LASTEXITCODE -ne 0) {
+            throw "Native renderer build-script local-size tests failed to compile"
+        }
+        & $testExecutable
+        if ($LASTEXITCODE -ne 0) {
+            throw "Native renderer build-script local-size tests failed"
+        }
+    }
+    finally {
+        if (Test-Path -LiteralPath $testExecutable) {
+            Remove-Item -LiteralPath $testExecutable -Force
+        }
+    }
+}
+
 $nativeLib = Read-RequiredText (Join-Path $srcRoot "lib.rs") "native lib"
 $nativeCamera = Read-RequiredText (Join-Path $srcRoot "native_camera.rs") "native camera"
 $nativeRendererTiming = Read-RequiredText (Join-Path $srcRoot "native_renderer_timing.rs") "native renderer timing"
+$nativeRendererDiagnosticsContract = Read-RequiredText (Join-Path $srcRoot "native_renderer_diagnostics_contract.rs") "native renderer diagnostics contract"
 $privateExtensionSlot = Read-RequiredText (Join-Path $srcRoot "private_extension_slot.rs") "private extension slot"
 $gpuPrivateParticles = Read-RequiredText (Join-Path $srcRoot "gpu_private_particles.rs") "private particle renderer"
 $nativeBuildScript = Read-RequiredText (Join-Path $nativeRoot "build.rs") "native build script"
@@ -59,6 +89,71 @@ $privateParticlesVertex = Read-RequiredText (Join-Path $nativeRoot "shaders\priv
 $privateParticlesFragment = Read-RequiredText (Join-Path $nativeRoot "shaders\private_particles.frag.glsl") "private particle fragment shader"
 $privateParticlesOffscreenCompositeVertex = Read-RequiredText (Join-Path $nativeRoot "shaders\private_particles_offscreen_composite.vert.glsl") "private particle offscreen composite vertex shader"
 $privateParticlesOffscreenCompositeFragment = Read-RequiredText (Join-Path $nativeRoot "shaders\private_particles_offscreen_composite.frag.glsl") "private particle offscreen composite fragment shader"
+$privateDiagnosticReductionPlaceholder = Read-RequiredText (Join-Path $nativeRoot "shaders\private_particles_diagnostic_reduction_placeholder.comp.glsl") "private particle diagnostic reduction placeholder"
+
+# Phase-B damage checks: the build level is closed at build time, off never
+# emits timestamp/readback commands, and frame resources use fence slot identity.
+Assert-ContainsLiteralTokens $nativeRendererDiagnosticsContract @(
+    'enum DiagnosticsLevel',
+    'Off', 'Basic', 'Detailed',
+    'DIAGNOSTIC_SCHEMA_V2: u32 = 2',
+    'DIAGNOSTIC_HEALTH_WINDOW_SAMPLES: usize = 120'
+) "generic diagnostics contract"
+Assert-ContainsLiteralTokens $nativeBuildScript @(
+    'RUSTY_QUEST_NATIVE_RENDERER_GPU_DIAGNOSTICS_LEVEL',
+    'must be exactly off, basic, or detailed',
+    'gpu_diagnostics_off', 'gpu_diagnostics_basic', 'gpu_diagnostics_detailed',
+    'detailed linked private particle payload requires RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_DIAGNOSTIC_SHADER',
+    'off/basic diagnostics must not receive a private diagnostic shader',
+    'RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_DIAGNOSTIC_SHADER must name a readable file',
+    'fn require_compute_local_size_x',
+    'has_compute_local_size_x_declaration',
+    'strip_glsl_comments',
+    'rejects_a_larger_local_size_literal',
+    'rejects_a_comment_only_expected_size_when_the_declaration_is_wrong'
+) "closed diagnostics build policy"
+Invoke-BuildScriptLocalSizeTests (Join-Path $nativeRoot "build.rs")
+Assert-ContainsLiteralTokens $nativeRendererTiming @(
+    'GPU_TIMESTAMP_STAGES_PER_FRAME: u32 = GpuTimestampStage::COUNT',
+    'GPU_TIMESTAMP_QUERIES_PER_FRAME',
+    'GPU_TIMESTAMP_EXPECTED_POOL_QUERIES',
+    'PrivateParticleComputeInterDispatch',
+    'PrivateParticleComputeAuxiliary',
+    'PrivateParticleDetailedDiagnostic',
+    'assert_eq!(GPU_TIMESTAMP_STAGES_PER_FRAME, 25)',
+    'assert_eq!(GPU_TIMESTAMP_QUERIES_PER_FRAME, 50)',
+    'assert_eq!(GPU_TIMESTAMP_EXPECTED_POOL_QUERIES, 100)'
+) "timestamp budget and extended endpoints"
+Assert-ContainsLiteralTokens $nativeRendererTiming @(
+    'pub(crate) unsafe fn finalize_frame',
+    'Unused stages remain unavailable in the active mask',
+    'self.write_disabled_stage(device, cmd, frame_slot, stage);',
+    'gpuTimestampAllocatedPoolQueries={}'
+) "timestamp finalization and off-mode allocation contract"
+Assert-ContainsLiteralTokens $gpuPrivateParticles @(
+    'const PARTICLE_DESCRIPTOR_SET_COUNT: usize = 2;',
+    'let descriptor_index = frame_slot % PARTICLE_DESCRIPTOR_SET_COUNT;',
+    'let next_descriptor_index = (descriptor_index + 1) & 1;',
+    'submitted_frame_slot_keeps_phase_through_invalid_view_attempt',
+    'invalid-view attempt does',
+    'not submit or advance the slot',
+    'if !BUILD_DIAGNOSTICS_LEVEL.detailed_readback_enabled()',
+    'fn initial_private_particle_diagnostic_snapshot',
+    'initial_diagnostic_status_is_truthful_for_each_build_level',
+    'fn detailed_diagnostic_workload_counts',
+    'detailed_observer_workload_is_zero_unless_the_observer_executes',
+    'diagnostic_frame: [',
+    'const _: [(); 144] = [(); mem::size_of::<PrivateParticlePush>()];',
+    'source_frame_id != Some(embedded_frame_id)',
+    '|| schema != 2',
+    '|| validity & 0x7 != 0x7'
+) "submitted-frame-slot ownership and envelope validation"
+Assert-ContainsLiteralTokens $privateDiagnosticReductionPlaceholder @(
+    'layout(local_size_x = 64', 'binding = 9'
+) "generic detailed diagnostic placeholder ABI"
+if (([regex]::Matches($gpuPrivateParticles, 'if let Some\(pipeline\) = (?:self\.)?diagnostic_reduction_pipeline \{\s*device\.destroy_pipeline\(pipeline, None\);')).Count -lt 4) {
+    throw "Detailed diagnostic pipeline must be destroyed in normal teardown and every post-creation failure path"
+}
 $nativeRendererOptionSurface = @(
     (Read-RequiredText (Join-Path $srcRoot "native_renderer_camera_options.rs") "native renderer camera options"),
     (Read-RequiredText (Join-Path $srcRoot "native_renderer_display_refresh_options.rs") "native renderer display refresh options"),
@@ -141,6 +236,7 @@ Assert-ContainsTokens "$xrVulkanSurface`n$nativeRendererOptionSurface`n$nativeRe
     'get_query_pool_results',
     'gpu-timestamp-timing',
     'gpuTimestampQuerySupported',
+    'gpuTimestampQueryPoolAllocated',
     'gpuTimestampQueryReady',
     'gpuTimestampFrameLag',
     'gpuTimestampSubmittedFrameId',
@@ -152,8 +248,12 @@ Assert-ContainsTokens "$xrVulkanSurface`n$nativeRendererOptionSurface`n$nativeRe
     'privateParticleComputeDispatchGpuMs',
     'privateParticleComputeDispatchTimingScope=primary-compute-command-region',
     'privateParticleComputePostDispatchSyncGpuMs',
-    'privateParticleComputePostDispatchSyncTimingScope=post-compute-visibility-and-diagnostic-host-sync-command-region',
-    'privateParticleComputeStageScope=primary-command-region-optional-auxiliary-command-region-and-post-sync',
+    'privateParticleComputePostDispatchSyncTimingScope={}',
+    'privateParticleComputeStageScope={}',
+    'privateParticleShaderInternalSubstageTimingAvailable=false',
+    'gpuTimestampBudgetPoolQueries={}',
+    'gpuTimestampAllocatedPoolQueries={}',
+    'timestamp_query_support_is_hardware_capability_not_pool_allocation',
     'privateParticleWorkloadMarkerVersion=v2',
     'privateParticleComputeLogicalParticleCount=',
     'privateParticleComputeWorkgroupCount=',
@@ -161,6 +261,9 @@ Assert-ContainsTokens "$xrVulkanSurface`n$nativeRendererOptionSurface`n$nativeRe
     'privateParticleAuxiliaryComputeWorkgroupCount=',
     'privateParticleAuxiliaryComputeLocalSizeX=',
     'privateParticleAuxiliaryComputeLaunchedLaneCount=',
+    'privateParticleDetailedDiagnosticLogicalLanes=',
+    'privateParticleDetailedDiagnosticWorkgroupCount=',
+    'privateParticleDetailedDiagnosticLaunchedLaneCount=',
     'privateParticleAnchorOutputInstancesWritten=',
     'privateParticleEchoOutputSlotsCleared=',
     'privateParticleComputeLocalSizeX=',
@@ -353,6 +456,12 @@ foreach ($forbiddenToken in @(
 }
 if ($gpuPrivateParticles -notmatch '(?s)gpu_timestamp_tracker\.write_compute_stage_start\(\s*device,\s*cmd,\s*frame_slot,\s*GpuTimestampStage::PrivateParticleComputePostDispatchSync,\s*\);\s*let compute_to_sort') {
     throw "Post-dispatch synchronization timestamp must begin at COMPUTE_SHADER"
+}
+if ($gpuPrivateParticles -notmatch '(?s)device\.cmd_pipeline_barrier\(\s*cmd,\s*vk::PipelineStageFlags::HOST.*?&compute_write_barrier,\s*&\[\],\s*\);\s*gpu_timestamp_tracker\.write_compute_stage_start\(\s*device,\s*cmd,\s*frame_slot,\s*GpuTimestampStage::PrivateParticleCompute,\s*\)') {
+    throw "Aggregate private-particle compute timestamp must start at COMPUTE_SHADER after its input dependency"
+}
+if ($gpuPrivateParticles -match '(?s)gpu_timestamp_tracker\.write_stage_start\(\s*device,\s*cmd,\s*frame_slot,\s*GpuTimestampStage::PrivateParticleCompute,\s*\)') {
+    throw "Aggregate private-particle compute timestamp must not start at TOP_OF_PIPE"
 }
 if ($xrVulkanSurface -notmatch '(?s)\}\s*else\s*\{\s*for stage in \[\s*GpuTimestampStage::PrivateParticleCompute,\s*GpuTimestampStage::PrivateParticleComputeDispatch,\s*GpuTimestampStage::PrivateParticleComputePostDispatchSync,\s*\]\s*\{\s*gpu_timestamp_tracker\.write_disabled_stage\(vk_device,\s*cmd,\s*frame_slot,\s*stage\);\s*\}\s*GpuPrivateParticleFrameStats::unavailable\(\)') {
     throw "Renderer-unavailable path must explicitly write disabled compute, dispatch, and post-sync queries"

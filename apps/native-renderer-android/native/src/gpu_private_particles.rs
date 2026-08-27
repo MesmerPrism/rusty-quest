@@ -45,7 +45,6 @@ use crate::native_renderer_properties::{
 };
 use crate::native_renderer_property_values::{bool_value, f32_clamped_value, u32_value};
 use crate::native_renderer_stimulus_panel::PrivateParticlePanelUpdateMask;
-use crate::native_renderer_timing::{GpuTimestampStage, GpuTimestampTracker};
 use crate::private_particle_breath_state_driver::{
     PrivateParticleBreathStateDriver, PrivateParticleBreathStateDriverSettings,
 };
@@ -53,6 +52,12 @@ use crate::private_particle_heartbeat_pulse_adapter::{
     PrivateParticleHeartbeatPulseAdapter, PrivateParticleHeartbeatPulseAdapterSettings,
 };
 use crate::private_particle_world_basis::PrivateParticleFrameEyeProjections;
+use crate::{
+    native_renderer_diagnostics_contract::{
+        DiagnosticsLevel, BUILD_DIAGNOSTICS_LEVEL, DIAGNOSTIC_HEALTH_WINDOW_SAMPLES,
+    },
+    native_renderer_timing::{GpuTimestampStage, GpuTimestampTracker},
+};
 
 include!(concat!(
     env!("OUT_DIR"),
@@ -66,6 +71,9 @@ const PARTICLE_OUTPUT_ROWS_PER_INSTANCE: usize = 4;
 const PARTICLE_MAIN_STATE_ROWS_PER_INSTANCE: usize = 2;
 const PARTICLE_TRACER_STATE_ROWS_PER_SLOT: usize = 4;
 const PARTICLE_ANCHOR_ECHO_STATE_ROWS_PER_SLOT: usize = 4;
+/// A fence slot advances only after a submitted frame. It is therefore the
+/// shared ownership clock for state ping-pong and deferred diagnostics: an
+/// invalid-view attempt cannot skip a simulation phase.
 const PARTICLE_DESCRIPTOR_SET_COUNT: usize = 2;
 const PRIVATE_PARTICLE_DRIVER_BANK_VALUE_VEC4_ROWS: usize =
     PRIVATE_PARTICLE_DRIVER_BANK_SLOT_COUNT / 4;
@@ -1095,33 +1103,42 @@ impl PrivateParticleDiagnosticSnapshot {
     fn from_raw(
         raw: [i32; PRIVATE_PARTICLE_DIAGNOSTIC_WORDS],
         source_frame_id: Option<u64>,
+        expected_particle_count: u32,
     ) -> Self {
-        let particle_count = raw[0].max(0) as u32;
-        let denominator =
-            (particle_count.max(1) as f64) * PRIVATE_PARTICLE_DIAGNOSTIC_FIXED_POINT_SCALE;
-        let mut order = [0.0_f32; 6];
-        for dim in 0..6 {
-            let cos_sum = raw[1 + dim * 2] as f64;
-            let sin_sum = raw[2 + dim * 2] as f64;
-            order[dim] = ((cos_sum * cos_sum + sin_sum * sin_sum).sqrt() / denominator)
-                .clamp(0.0, 1.0) as f32;
+        let embedded_frame_id = u64::from(raw[20] as u32) | (u64::from(raw[21] as u32) << 32);
+        let schema = (raw[23] as u32) & 0xffff;
+        let validity = (raw[23] as u32) >> 16;
+        // A compact buffer belongs to the retired slot only when all three
+        // transport facts agree. Never turn a stale/partial reduction into
+        // zero-valued private metrics.
+        if source_frame_id != Some(embedded_frame_id)
+            || schema != 2
+            || validity & 0x7 != 0x7
+            || raw[0].max(0) as u32 != expected_particle_count
+            || raw[22].max(0) as u32 != expected_particle_count
+        {
+            let mut snapshot = Self::unavailable();
+            snapshot.status = "invalid";
+            snapshot.raw = raw;
+            return snapshot;
         }
-        let tracer_events = raw[15].max(0) as u32;
-        let anchor_echo_events = raw[19].max(0) as u32;
+        let particle_count = raw[0].max(0) as u32;
         Self {
             status: "readback",
             particle_count,
-            order,
-            tracer_active_count: raw[13].max(0) as u32,
-            tracer_spawned_count: tracer_events & 0x0000_ffff,
-            tracer_discarded_count: (tracer_events >> 16) & 0x0000_ffff,
-            anchor_echo_active_count: raw[18].max(0) as u32,
-            anchor_echo_spawned_count: anchor_echo_events & 0x0000_ffff,
-            anchor_echo_discarded_count: (anchor_echo_events >> 16) & 0x0000_ffff,
-            saturation_count: raw[14].max(0) as u32,
-            active_edge_count: raw[16].max(0) as u32,
-            pass_health_flags: raw[17].max(0) as u32,
-            source_frame_id,
+            // v2 intentionally leaves legacy private reductions unavailable;
+            // no zero-valued field is allowed to imply a measurement.
+            order: [0.0; 6],
+            tracer_active_count: 0,
+            tracer_spawned_count: 0,
+            tracer_discarded_count: 0,
+            anchor_echo_active_count: 0,
+            anchor_echo_spawned_count: 0,
+            anchor_echo_discarded_count: 0,
+            saturation_count: 0,
+            active_edge_count: 0,
+            pass_health_flags: 0,
+            source_frame_id: Some(embedded_frame_id),
             raw,
         }
     }
@@ -1130,38 +1147,27 @@ impl PrivateParticleDiagnosticSnapshot {
         let (measured_frame_id, measured_frame_lag_frames) =
             source_frame_id_fields(self.source_frame_id, submitted_frame_id);
         format!(
-            "privateParticleDiagnosticReadbackStatus={} privateParticleDiagnosticStorageBinding=9 privateParticleDiagnosticWords={} privateParticleDiagnosticFixedPointScale={} privateParticleDiagnosticCpuFullBufferReadback=false privateParticleDiagnosticSubmittedFrameId={} privateParticleDiagnosticMeasuredFrameId={} privateParticleDiagnosticMeasuredFrameLagFrames={} privateParticleDiagnosticFrameIdentityAvailable={} privateParticleDiagnosticParticleCount={} privateParticleDiagnosticOrderDim0={:.4} privateParticleDiagnosticOrderDim1={:.4} privateParticleDiagnosticOrderDim2={:.4} privateParticleDiagnosticOrderDim3={:.4} privateParticleDiagnosticOrderDim4={:.4} privateParticleDiagnosticOrderDim5={:.4} privateParticleDiagnosticTracerActiveCount={} privateParticleDiagnosticTracerSpawnedCount={} privateParticleDiagnosticTracerDiscardedCount={} privateParticleDiagnosticAnchorEchoActiveCount={} privateParticleDiagnosticAnchorEchoSpawnedCount={} privateParticleDiagnosticAnchorEchoDiscardedCount={} privateParticleDiagnosticSaturationCount={} privateParticleDiagnosticActiveEdgeCount={} privateParticleDiagnosticPassHealthFlags={} privateParticleDiagnosticRawParticleCount={} privateParticleDiagnosticRawOrderDim0Cos={} privateParticleDiagnosticRawOrderDim0Sin={} privateParticleDiagnosticRawTracerEvents={} privateParticleDiagnosticRawAnchorEchoEvents={} privateParticleDiagnosticRawActiveEdgeCount={} privateParticleDiagnosticRawPassHealthFlags={}",
+            "privateParticleDiagnosticReadbackStatus={} privateParticleDiagnosticSchema=v2 privateParticleDiagnosticStorageBinding=9 privateParticleDiagnosticWords={} privateParticleDiagnosticCpuFullBufferReadback=false privateParticleDiagnosticSubmittedFrameId={} privateParticleDiagnosticMeasuredFrameId={} privateParticleDiagnosticMeasuredFrameLagFrames={} privateParticleDiagnosticFrameIdentityAvailable={} privateParticleDiagnosticFrameIdWords=20,21 privateParticleDiagnosticLanesVisitedWord=22 privateParticleDiagnosticSchemaValidityWord=23 privateParticleDiagnosticParticleCount={} privateParticleDiagnosticLanesVisited={} privateParticleDiagnosticValidityMask=0x{:x} privateParticleDiagnosticLegacyReductionsAvailability=unavailable-v2-validity-masked",
             self.status,
             PRIVATE_PARTICLE_DIAGNOSTIC_WORDS,
-            PRIVATE_PARTICLE_DIAGNOSTIC_FIXED_POINT_SCALE as u32,
             submitted_frame_id,
             measured_frame_id,
             measured_frame_lag_frames,
             self.status == "readback" && self.source_frame_id.is_some(),
             self.particle_count,
-            self.order[0],
-            self.order[1],
-            self.order[2],
-            self.order[3],
-            self.order[4],
-            self.order[5],
-            self.tracer_active_count,
-            self.tracer_spawned_count,
-            self.tracer_discarded_count,
-            self.anchor_echo_active_count,
-            self.anchor_echo_spawned_count,
-            self.anchor_echo_discarded_count,
-            self.saturation_count,
-            self.active_edge_count,
-            self.pass_health_flags,
-            self.raw[0],
-            self.raw[1],
-            self.raw[2],
-            self.raw[15],
-            self.raw[19],
-            self.raw[16],
-            self.raw[17],
+            self.raw[22].max(0) as u32,
+            (self.raw[23] as u32) >> 16,
         )
+    }
+}
+
+fn initial_private_particle_diagnostic_snapshot(
+    diagnostics_level: DiagnosticsLevel,
+) -> PrivateParticleDiagnosticSnapshot {
+    if diagnostics_level.detailed_readback_enabled() {
+        PrivateParticleDiagnosticSnapshot::pending()
+    } else {
+        PrivateParticleDiagnosticSnapshot::unavailable()
     }
 }
 
@@ -1177,6 +1183,43 @@ fn source_frame_id_fields(
             )
         })
         .unwrap_or_else(|| ("unavailable".to_string(), "unavailable".to_string()))
+}
+
+/// Add one populated diagnostic observation to the bounded health window and
+/// return the count of healthy populated observations. Empty future entries are
+/// deliberately excluded until they have received an observation.
+fn update_diagnostic_health_window(
+    window: &mut [bool; DIAGNOSTIC_HEALTH_WINDOW_SAMPLES],
+    cursor: &mut usize,
+    population: &mut usize,
+    healthy: bool,
+) -> usize {
+    window[*cursor] = healthy;
+    *cursor = (*cursor + 1) % DIAGNOSTIC_HEALTH_WINDOW_SAMPLES;
+    *population = (*population + 1).min(DIAGNOSTIC_HEALTH_WINDOW_SAMPLES);
+    window
+        .iter()
+        .take(*population)
+        .filter(|sample| **sample)
+        .count()
+}
+
+/// Executed detailed-observer work is zero in off/basic builds. The primary
+/// particle count remains available elsewhere as configuration/workload data,
+/// but must not be misreported as an observer dispatch that did not occur.
+fn detailed_diagnostic_workload_counts(
+    diagnostics_level: DiagnosticsLevel,
+    particle_count: u32,
+) -> (u32, u32, u32) {
+    if !diagnostics_level.detailed_readback_enabled() {
+        return (0, 0, 0);
+    }
+    let workgroups = particle_count.div_ceil(PARTICLE_COMPUTE_LOCAL_SIZE);
+    (
+        particle_count,
+        workgroups,
+        workgroups.saturating_mul(PARTICLE_COMPUTE_LOCAL_SIZE),
+    )
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -1323,9 +1366,15 @@ impl GpuPrivateParticleFrameStats {
         );
         let auxiliary_launched_lane_count = auxiliary_workgroup_count
             .saturating_mul(PRIVATE_PARTICLE_AUXILIARY_COMPUTE_LOCAL_SIZE_X);
+        let detailed_diagnostics = BUILD_DIAGNOSTICS_LEVEL.detailed_readback_enabled();
+        let (
+            detailed_diagnostic_logical_lane_count,
+            detailed_diagnostic_workgroup_count,
+            detailed_diagnostic_launched_lane_count,
+        ) = detailed_diagnostic_workload_counts(BUILD_DIAGNOSTICS_LEVEL, self.particle_count);
         let anchor_output_instances_written = u32::from(self.anchor_echo_max_count > 0);
         format!(
-            "privateParticleWorkloadMarkerVersion=v2 privateParticleWorkloadSource=effective-runtime-config privateParticleComputeLogicalParticleCount={} privateParticleComputeWorkgroupCount={} privateParticleComputeLocalSizeX={} privateParticleComputeLaunchedLaneCount={} privateParticleAuxiliaryComputeLogicalInvocations={} privateParticleAuxiliaryComputeWorkgroupCount={} privateParticleAuxiliaryComputeLocalSizeX={} privateParticleAuxiliaryComputeLaunchedLaneCount={} privateParticleMainOutputInstances={} privateParticleTracerStateSlotsVisited={} privateParticleTracerStateRowsVisited={} privateParticleTracerOutputSlotsCleared={} privateParticleTracerOutputSlotsCapacity={} privateParticleAnchorEchoStateSlotsVisited={} privateParticleAnchorOutputInstancesWritten={} privateParticleAnchorOutputRowsWritten={} privateParticleEchoOutputSlotsCleared={} privateParticleAnchorEchoOutputSlotsCapacity={} privateParticleDrawBudgetInstances={} privateParticleDrawBudgetRows={} privateParticleDrawBudgetCapacityInstances={} privateParticleDrawBudgetCapacityRows={} privateParticleWorkloadHighRatePayload=false",
+            "privateParticleWorkloadMarkerVersion=v2 privateParticleWorkloadSource=effective-runtime-config privateParticleComputeLogicalParticleCount={} privateParticleComputeWorkgroupCount={} privateParticleComputeLocalSizeX={} privateParticleComputeLaunchedLaneCount={} privateParticleAuxiliaryComputeLogicalInvocations={} privateParticleAuxiliaryComputeWorkgroupCount={} privateParticleAuxiliaryComputeLocalSizeX={} privateParticleAuxiliaryComputeLaunchedLaneCount={} privateParticleDetailedDiagnosticEnabled={} privateParticleDetailedDiagnosticLogicalLanes={} privateParticleDetailedDiagnosticWorkgroupCount={} privateParticleDetailedDiagnosticLocalSizeX={} privateParticleDetailedDiagnosticLaunchedLaneCount={} privateParticleMainOutputInstances={} privateParticleTracerStateSlotsVisited={} privateParticleTracerStateRowsVisited={} privateParticleTracerOutputSlotsCleared={} privateParticleTracerOutputSlotsCapacity={} privateParticleAnchorEchoStateSlotsVisited={} privateParticleAnchorOutputInstancesWritten={} privateParticleAnchorOutputRowsWritten={} privateParticleEchoOutputSlotsCleared={} privateParticleAnchorEchoOutputSlotsCapacity={} privateParticleDrawBudgetInstances={} privateParticleDrawBudgetRows={} privateParticleDrawBudgetCapacityInstances={} privateParticleDrawBudgetCapacityRows={} privateParticleWorkloadHighRatePayload=false",
             self.particle_count,
             compute_workgroup_count,
             PARTICLE_COMPUTE_LOCAL_SIZE,
@@ -1334,6 +1383,11 @@ impl GpuPrivateParticleFrameStats {
             auxiliary_workgroup_count,
             PRIVATE_PARTICLE_AUXILIARY_COMPUTE_LOCAL_SIZE_X,
             auxiliary_launched_lane_count,
+            detailed_diagnostics,
+            detailed_diagnostic_logical_lane_count,
+            detailed_diagnostic_workgroup_count,
+            PARTICLE_COMPUTE_LOCAL_SIZE,
+            detailed_diagnostic_launched_lane_count,
             self.main_particle_count,
             tracer_state_slots_visited,
             tracer_state_rows_visited,
@@ -1559,6 +1613,7 @@ pub(crate) struct GpuPrivateParticleRenderer {
     pipeline_layout: vk::PipelineLayout,
     compute_pipeline: vk::Pipeline,
     auxiliary_compute_pipeline: Option<vk::Pipeline>,
+    diagnostic_reduction_pipeline: Option<vk::Pipeline>,
     auxiliary_compute_logical_invocations: u32,
     sort_pipeline: vk::Pipeline,
     graphics_pipeline_additive: vk::Pipeline,
@@ -1577,6 +1632,9 @@ pub(crate) struct GpuPrivateParticleRenderer {
     diagnostic_dispatched: [bool; PARTICLE_DESCRIPTOR_SET_COUNT],
     diagnostic_source_frame_ids: [Option<u64>; PARTICLE_DESCRIPTOR_SET_COUNT],
     last_diagnostic_snapshot: PrivateParticleDiagnosticSnapshot,
+    diagnostic_health_window: [bool; DIAGNOSTIC_HEALTH_WINDOW_SAMPLES],
+    diagnostic_health_cursor: usize,
+    diagnostic_health_population: usize,
     mask_texture: OwnedMaskTexture,
     particle_count: u32,
     tracer_max_count: u32,
@@ -2143,6 +2201,43 @@ impl GpuPrivateParticleRenderer {
                     }
                 }
             };
+        let diagnostic_reduction_pipeline = if BUILD_DIAGNOSTICS_LEVEL.detailed_readback_enabled() {
+            match create_compute_pipeline(
+                device,
+                pipeline_layout,
+                include_bytes!(concat!(
+                    env!("OUT_DIR"),
+                    "/private_particles_diagnostic_reduction.comp.spv"
+                )),
+            ) {
+                Ok(pipeline) => Some(pipeline),
+                Err(error) => {
+                    if let Some(pipeline) = auxiliary_compute_pipeline {
+                        device.destroy_pipeline(pipeline, None);
+                    }
+                    device.destroy_pipeline(compute_pipeline, None);
+                    device.destroy_pipeline_layout(pipeline_layout, None);
+                    device.destroy_descriptor_pool(descriptor_pool, None);
+                    device.destroy_descriptor_set_layout(descriptor_set_layout, None);
+                    destroy_buffers_mask_sort_and_diagnostics(
+                        device,
+                        &position_buffer,
+                        &normal_buffer,
+                        &particle_output_buffer,
+                        &effect_state_buffer_a,
+                        &effect_state_buffer_b,
+                        &aux0_buffer,
+                        &driver_bank_buffer,
+                        &mask_texture,
+                        &particle_sort_buffer,
+                        &diagnostic_buffers,
+                    );
+                    return Err(error);
+                }
+            }
+        } else {
+            None
+        };
         let sort_pipeline = match create_compute_pipeline(
             device,
             pipeline_layout,
@@ -2150,6 +2245,9 @@ impl GpuPrivateParticleRenderer {
         ) {
             Ok(pipeline) => pipeline,
             Err(error) => {
+                if let Some(pipeline) = diagnostic_reduction_pipeline {
+                    device.destroy_pipeline(pipeline, None);
+                }
                 if let Some(pipeline) = auxiliary_compute_pipeline {
                     device.destroy_pipeline(pipeline, None);
                 }
@@ -2182,6 +2280,9 @@ impl GpuPrivateParticleRenderer {
             Ok(pipeline) => pipeline,
             Err(error) => {
                 device.destroy_pipeline(sort_pipeline, None);
+                if let Some(pipeline) = diagnostic_reduction_pipeline {
+                    device.destroy_pipeline(pipeline, None);
+                }
                 if let Some(pipeline) = auxiliary_compute_pipeline {
                     device.destroy_pipeline(pipeline, None);
                 }
@@ -2215,6 +2316,9 @@ impl GpuPrivateParticleRenderer {
             Err(error) => {
                 device.destroy_pipeline(graphics_pipeline_additive, None);
                 device.destroy_pipeline(sort_pipeline, None);
+                if let Some(pipeline) = diagnostic_reduction_pipeline {
+                    device.destroy_pipeline(pipeline, None);
+                }
                 if let Some(pipeline) = auxiliary_compute_pipeline {
                     device.destroy_pipeline(pipeline, None);
                 }
@@ -2289,7 +2393,8 @@ impl GpuPrivateParticleRenderer {
                 marker_sort_count,
                 sort_capacity,
                 particle_sort_buffer.bytes,
-                PrivateParticleDiagnosticSnapshot::pending().marker_fields(0),
+                initial_private_particle_diagnostic_snapshot(BUILD_DIAGNOSTICS_LEVEL)
+                    .marker_fields(0),
                 PRIVATE_PARTICLE_MASK_TEXTURE_LINKED,
                 crate::sanitize(PRIVATE_PARTICLE_MASK_TEXTURE_MODE),
                 crate::sanitize(PRIVATE_PARTICLE_MASK_DISCARD_MODE),
@@ -2338,7 +2443,7 @@ impl GpuPrivateParticleRenderer {
             startup_world_anchor_stats.world_anchor_scale_m,
             startup_world_anchor_stats.world_anchor_scale_parameter_source,
             runtime_settings,
-            PrivateParticleDiagnosticSnapshot::pending(),
+            initial_private_particle_diagnostic_snapshot(BUILD_DIAGNOSTICS_LEVEL),
         );
 
         let heartbeat_orbit_packaged_settings = heartbeat_pulse_adapter.settings();
@@ -2349,6 +2454,7 @@ impl GpuPrivateParticleRenderer {
             pipeline_layout,
             compute_pipeline,
             auxiliary_compute_pipeline,
+            diagnostic_reduction_pipeline,
             auxiliary_compute_logical_invocations,
             sort_pipeline,
             graphics_pipeline_additive,
@@ -2366,7 +2472,12 @@ impl GpuPrivateParticleRenderer {
             diagnostic_buffers,
             diagnostic_dispatched: [false; PARTICLE_DESCRIPTOR_SET_COUNT],
             diagnostic_source_frame_ids: [None; PARTICLE_DESCRIPTOR_SET_COUNT],
-            last_diagnostic_snapshot: PrivateParticleDiagnosticSnapshot::pending(),
+            last_diagnostic_snapshot: initial_private_particle_diagnostic_snapshot(
+                BUILD_DIAGNOSTICS_LEVEL,
+            ),
+            diagnostic_health_window: [false; DIAGNOSTIC_HEALTH_WINDOW_SAMPLES],
+            diagnostic_health_cursor: 0,
+            diagnostic_health_population: 0,
             mask_texture,
             particle_count,
             tracer_max_count,
@@ -2420,6 +2531,9 @@ impl GpuPrivateParticleRenderer {
         device.destroy_pipeline(self.graphics_pipeline_additive, None);
         device.destroy_pipeline(self.sort_pipeline, None);
         if let Some(pipeline) = self.auxiliary_compute_pipeline {
+            device.destroy_pipeline(pipeline, None);
+        }
+        if let Some(pipeline) = self.diagnostic_reduction_pipeline {
             device.destroy_pipeline(pipeline, None);
         }
         device.destroy_pipeline(self.compute_pipeline, None);
@@ -2530,6 +2644,10 @@ impl GpuPrivateParticleRenderer {
         device: &ash::Device,
         frame_slot: usize,
     ) {
+        if !BUILD_DIAGNOSTICS_LEVEL.detailed_readback_enabled() {
+            self.last_diagnostic_snapshot = PrivateParticleDiagnosticSnapshot::unavailable();
+            return;
+        }
         let diagnostic_slot = frame_slot % PARTICLE_DESCRIPTOR_SET_COUNT;
         if !self.diagnostic_dispatched[diagnostic_slot] {
             self.last_diagnostic_snapshot = PrivateParticleDiagnosticSnapshot::pending();
@@ -2544,6 +2662,7 @@ impl GpuPrivateParticleRenderer {
                 self.last_diagnostic_snapshot = PrivateParticleDiagnosticSnapshot::from_raw(
                     raw,
                     self.diagnostic_source_frame_ids[diagnostic_slot],
+                    self.particle_count,
                 );
             }
             Err(error) => {
@@ -2560,6 +2679,32 @@ impl GpuPrivateParticleRenderer {
         }
         self.diagnostic_dispatched[diagnostic_slot] = false;
         self.diagnostic_source_frame_ids[diagnostic_slot] = None;
+        let healthy_samples = update_diagnostic_health_window(
+            &mut self.diagnostic_health_window,
+            &mut self.diagnostic_health_cursor,
+            &mut self.diagnostic_health_population,
+            self.last_diagnostic_snapshot.status == "readback",
+        );
+        // A valid result is sampled every submitted detailed frame, but health
+        // reporting is bounded to one low-rate receipt per 30 filled samples.
+        // Failures remain immediate rather than being hidden until the next
+        // periodic report.
+        if self.last_diagnostic_snapshot.status != "readback"
+            || (self.diagnostic_health_population == DIAGNOSTIC_HEALTH_WINDOW_SAMPLES
+                && self.diagnostic_health_cursor % 30 == 0)
+        {
+            crate::marker(
+                "private-particle-diagnostics-health",
+                format!(
+                    "windowCapacitySamples={} windowPopulationSamples={} healthySamples={} unhealthySamples={} status={} healthReportCadenceSamples=30",
+                    DIAGNOSTIC_HEALTH_WINDOW_SAMPLES,
+                    self.diagnostic_health_population,
+                    healthy_samples,
+                    self.diagnostic_health_population.saturating_sub(healthy_samples),
+                    self.last_diagnostic_snapshot.status
+                ),
+            );
+        }
     }
 
     pub(crate) fn update_breath_state_driver(
@@ -2692,7 +2837,10 @@ impl GpuPrivateParticleRenderer {
         } else {
             0
         };
-        let descriptor_index = frame_count as usize & 1;
+        // `frame_slot` advances only after queue submission, so it carries the
+        // correct phase through invalid-view attempts. It also identifies the
+        // fence-retired diagnostic buffer for this command buffer.
+        let descriptor_index = frame_slot % PARTICLE_DESCRIPTOR_SET_COUNT;
         let next_descriptor_index = (descriptor_index + 1) & 1;
         let diagnostic_buffer = &self.diagnostic_buffers[descriptor_index];
         let phase_reset = self.pending_phase_reset_revision > 0
@@ -2711,15 +2859,17 @@ impl GpuPrivateParticleRenderer {
             phase_reset,
             Some(world_anchor_forward_axis),
         );
-        device.cmd_fill_buffer(
-            cmd,
-            diagnostic_buffer.buffer,
-            0,
-            PRIVATE_PARTICLE_DIAGNOSTIC_BYTES,
-            0,
-        );
-        let compute_write_barrier = [
-            transfer_write_to_shader_write_barrier(diagnostic_buffer),
+        let detailed_diagnostics = BUILD_DIAGNOSTICS_LEVEL.detailed_readback_enabled();
+        if detailed_diagnostics {
+            device.cmd_fill_buffer(
+                cmd,
+                diagnostic_buffer.buffer,
+                0,
+                PRIVATE_PARTICLE_DIAGNOSTIC_BYTES,
+                0,
+            );
+        }
+        let mut compute_write_barrier = vec![
             storage_to_compute_read_barrier(&self.position_buffer),
             storage_to_compute_read_barrier(&self.normal_buffer),
             storage_to_compute_read_barrier(&self.aux0_buffer),
@@ -2728,6 +2878,9 @@ impl GpuPrivateParticleRenderer {
             shader_to_compute_write_barrier(&self.effect_state_buffers[next_descriptor_index]),
             shader_to_compute_write_barrier(&self.particle_output_buffer),
         ];
+        if detailed_diagnostics {
+            compute_write_barrier.push(transfer_write_to_shader_write_barrier(diagnostic_buffer));
+        }
         device.cmd_pipeline_barrier(
             cmd,
             vk::PipelineStageFlags::HOST
@@ -2740,7 +2893,7 @@ impl GpuPrivateParticleRenderer {
             &compute_write_barrier,
             &[],
         );
-        gpu_timestamp_tracker.write_stage_start(
+        gpu_timestamp_tracker.write_compute_stage_start(
             device,
             cmd,
             frame_slot,
@@ -2786,7 +2939,13 @@ impl GpuPrivateParticleRenderer {
             // slot, while output-rank lanes exclusively own their matching output
             // rows, so no workgroup ordering is required inside that dispatch.
             // The auxiliary pass reads only the anchor rows written by primary.
-            // Its phase-state range and diagnostics 18–19 have disjoint writers.
+            // Its echo phase-state slots and output-rank rows have disjoint writers.
+            gpu_timestamp_tracker.write_compute_stage_start(
+                device,
+                cmd,
+                frame_slot,
+                GpuTimestampStage::PrivateParticleComputeInterDispatch,
+            );
             let primary_to_auxiliary = [compute_write_to_compute_read_write_barrier(
                 &self.particle_output_buffer,
             )];
@@ -2798,6 +2957,18 @@ impl GpuPrivateParticleRenderer {
                 &[],
                 &primary_to_auxiliary,
                 &[],
+            );
+            gpu_timestamp_tracker.write_compute_stage_end(
+                device,
+                cmd,
+                frame_slot,
+                GpuTimestampStage::PrivateParticleComputeInterDispatch,
+            );
+            gpu_timestamp_tracker.write_compute_stage_start(
+                device,
+                cmd,
+                frame_slot,
+                GpuTimestampStage::PrivateParticleComputeAuxiliary,
             );
             device.cmd_bind_pipeline(
                 cmd,
@@ -2829,6 +3000,65 @@ impl GpuPrivateParticleRenderer {
                 1,
                 1,
             );
+            gpu_timestamp_tracker.write_compute_stage_end(
+                device,
+                cmd,
+                frame_slot,
+                GpuTimestampStage::PrivateParticleComputeAuxiliary,
+            );
+        }
+        if detailed_diagnostics {
+            let diagnostic_read = [compute_write_to_compute_read_write_barrier(
+                &self.particle_output_buffer,
+            )];
+            device.cmd_pipeline_barrier(
+                cmd,
+                vk::PipelineStageFlags::COMPUTE_SHADER,
+                vk::PipelineStageFlags::COMPUTE_SHADER,
+                vk::DependencyFlags::empty(),
+                &[],
+                &diagnostic_read,
+                &[],
+            );
+            gpu_timestamp_tracker.write_compute_stage_start(
+                device,
+                cmd,
+                frame_slot,
+                GpuTimestampStage::PrivateParticleDetailedDiagnostic,
+            );
+            device.cmd_bind_pipeline(
+                cmd,
+                vk::PipelineBindPoint::COMPUTE,
+                self.diagnostic_reduction_pipeline
+                    .expect("detailed diagnostics selects its private reduction pipeline"),
+            );
+            device.cmd_bind_descriptor_sets(
+                cmd,
+                vk::PipelineBindPoint::COMPUTE,
+                self.pipeline_layout,
+                0,
+                &[self.descriptor_sets[descriptor_index]],
+                &[],
+            );
+            device.cmd_push_constants(
+                cmd,
+                self.pipeline_layout,
+                vk::ShaderStageFlags::COMPUTE,
+                0,
+                as_bytes(&push),
+            );
+            device.cmd_dispatch(
+                cmd,
+                self.particle_count.div_ceil(PARTICLE_COMPUTE_LOCAL_SIZE),
+                1,
+                1,
+            );
+            gpu_timestamp_tracker.write_compute_stage_end(
+                device,
+                cmd,
+                frame_slot,
+                GpuTimestampStage::PrivateParticleDetailedDiagnostic,
+            );
         }
         gpu_timestamp_tracker.write_compute_stage_start(
             device,
@@ -2848,18 +3078,20 @@ impl GpuPrivateParticleRenderer {
             &compute_to_sort,
             &[],
         );
-        let diagnostic_to_host = [compute_write_to_host_read_barrier(diagnostic_buffer)];
-        device.cmd_pipeline_barrier(
-            cmd,
-            vk::PipelineStageFlags::COMPUTE_SHADER,
-            vk::PipelineStageFlags::HOST,
-            vk::DependencyFlags::empty(),
-            &[],
-            &diagnostic_to_host,
-            &[],
-        );
-        self.diagnostic_dispatched[descriptor_index] = true;
-        self.diagnostic_source_frame_ids[descriptor_index] = Some(frame_count);
+        if detailed_diagnostics {
+            let diagnostic_to_host = [compute_write_to_host_read_barrier(diagnostic_buffer)];
+            device.cmd_pipeline_barrier(
+                cmd,
+                vk::PipelineStageFlags::COMPUTE_SHADER,
+                vk::PipelineStageFlags::HOST,
+                vk::DependencyFlags::empty(),
+                &[],
+                &diagnostic_to_host,
+                &[],
+            );
+            self.diagnostic_dispatched[descriptor_index] = true;
+            self.diagnostic_source_frame_ids[descriptor_index] = Some(frame_count);
+        }
         gpu_timestamp_tracker.write_stage_end(
             device,
             cmd,
@@ -3835,6 +4067,12 @@ fn private_particle_push(
         eye_position: eye_projection.position,
         eye_orientation_xyzw: eye_projection.orientation_xyzw,
         fov_tangents: fov_tangents_override.unwrap_or(eye_projection.fov_tangents),
+        diagnostic_frame: [
+            frame_count as u32,
+            (frame_count >> 32) as u32,
+            0,
+            crate::native_renderer_diagnostics_contract::DIAGNOSTIC_SCHEMA_V2,
+        ],
     }
 }
 
@@ -6128,6 +6366,181 @@ struct PrivateParticlePush {
     eye_position: [f32; 4],
     eye_orientation_xyzw: [f32; 4],
     fov_tangents: [f32; 4],
+    diagnostic_frame: [u32; 4],
+}
+
+// Eight legacy vec4s plus the v2 diagnostic frame envelope. Keep the private
+// detailed shader ABI explicit: 9 * 16 bytes.
+const _: [(); 144] = [(); mem::size_of::<PrivateParticlePush>()];
+
+#[cfg(test)]
+mod diagnostic_contract_tests {
+    use super::*;
+
+    fn valid_diagnostic_words(
+        frame_id: u64,
+        particle_count: u32,
+    ) -> [i32; PRIVATE_PARTICLE_DIAGNOSTIC_WORDS] {
+        let mut raw = [0_i32; PRIVATE_PARTICLE_DIAGNOSTIC_WORDS];
+        raw[0] = particle_count as i32;
+        raw[20] = frame_id as u32 as i32;
+        raw[21] = (frame_id >> 32) as u32 as i32;
+        raw[22] = particle_count as i32;
+        raw[23] = ((0x7_u32 << 16) | 2) as i32;
+        raw
+    }
+
+    #[test]
+    fn diagnostic_snapshot_accepts_only_the_current_complete_envelope() {
+        let frame_id = 0x1122_3344_5566_7788;
+        let snapshot = PrivateParticleDiagnosticSnapshot::from_raw(
+            valid_diagnostic_words(frame_id, 17),
+            Some(frame_id),
+            17,
+        );
+        assert_eq!(snapshot.status, "readback");
+        assert_eq!(snapshot.source_frame_id, Some(frame_id));
+        assert_eq!(snapshot.particle_count, 17);
+    }
+
+    #[test]
+    fn initial_diagnostic_status_is_truthful_for_each_build_level() {
+        let off = initial_private_particle_diagnostic_snapshot(DiagnosticsLevel::Off);
+        let basic = initial_private_particle_diagnostic_snapshot(DiagnosticsLevel::Basic);
+        let detailed = initial_private_particle_diagnostic_snapshot(DiagnosticsLevel::Detailed);
+        assert_eq!(off.status, "unavailable");
+        assert_eq!(basic.status, "unavailable");
+        assert_eq!(detailed.status, "pending");
+        assert!(off
+            .marker_fields(0)
+            .contains("privateParticleDiagnosticReadbackStatus=unavailable"));
+        assert!(basic
+            .marker_fields(0)
+            .contains("privateParticleDiagnosticReadbackStatus=unavailable"));
+        assert!(detailed
+            .marker_fields(0)
+            .contains("privateParticleDiagnosticReadbackStatus=pending"));
+    }
+
+    #[test]
+    fn detailed_observer_workload_is_zero_unless_the_observer_executes() {
+        assert_eq!(
+            detailed_diagnostic_workload_counts(DiagnosticsLevel::Off, 129),
+            (0, 0, 0)
+        );
+        assert_eq!(
+            detailed_diagnostic_workload_counts(DiagnosticsLevel::Basic, 129),
+            (0, 0, 0)
+        );
+        assert_eq!(
+            detailed_diagnostic_workload_counts(DiagnosticsLevel::Detailed, 129),
+            (129, 3, 192)
+        );
+    }
+
+    #[test]
+    fn diagnostic_snapshot_rejects_each_transport_or_population_mismatch() {
+        let frame_id = 41_u64;
+        let expected_count = 17_u32;
+        let cases = [
+            ("source-frame", Some(frame_id + 1), None, None, None, None),
+            (
+                "embedded-frame",
+                Some(frame_id),
+                Some(frame_id + 1),
+                None,
+                None,
+                None,
+            ),
+            ("schema", Some(frame_id), None, Some(3_u32), None, None),
+            ("validity", Some(frame_id), None, None, Some(0x3_u32), None),
+            (
+                "particle-count",
+                Some(frame_id),
+                None,
+                None,
+                None,
+                Some(16_u32),
+            ),
+            (
+                "visited-lanes",
+                Some(frame_id),
+                None,
+                None,
+                None,
+                Some(18_u32),
+            ),
+        ];
+        for (label, source, embedded, schema, validity, count_or_lanes) in cases {
+            let mut raw = valid_diagnostic_words(frame_id, expected_count);
+            if let Some(embedded) = embedded {
+                raw[20] = embedded as u32 as i32;
+                raw[21] = (embedded >> 32) as u32 as i32;
+            }
+            if let Some(schema) = schema {
+                raw[23] = ((0x7_u32 << 16) | schema) as i32;
+            }
+            if let Some(validity) = validity {
+                raw[23] = ((validity << 16) | 2) as i32;
+            }
+            match label {
+                "particle-count" => raw[0] = count_or_lanes.expect("count") as i32,
+                "visited-lanes" => raw[22] = count_or_lanes.expect("lanes") as i32,
+                _ => {}
+            }
+            let snapshot = PrivateParticleDiagnosticSnapshot::from_raw(raw, source, expected_count);
+            assert_eq!(snapshot.status, "invalid", "{label} must fail closed");
+            assert_eq!(
+                snapshot.source_frame_id, None,
+                "{label} must not be attributed"
+            );
+        }
+    }
+
+    #[test]
+    fn health_window_counts_only_populated_samples_and_evicts_oldest() {
+        let mut window = [false; DIAGNOSTIC_HEALTH_WINDOW_SAMPLES];
+        let mut cursor = 0;
+        let mut population = 0;
+        assert_eq!(
+            update_diagnostic_health_window(&mut window, &mut cursor, &mut population, true),
+            1
+        );
+        assert_eq!(population, 1, "unpopulated false entries are not failures");
+        assert_eq!(
+            update_diagnostic_health_window(&mut window, &mut cursor, &mut population, false),
+            1
+        );
+        assert_eq!(population, 2);
+
+        for _ in 0..DIAGNOSTIC_HEALTH_WINDOW_SAMPLES {
+            update_diagnostic_health_window(&mut window, &mut cursor, &mut population, true);
+        }
+        assert_eq!(population, DIAGNOSTIC_HEALTH_WINDOW_SAMPLES);
+        assert_eq!(
+            window.iter().filter(|sample| **sample).count(),
+            DIAGNOSTIC_HEALTH_WINDOW_SAMPLES,
+            "the initial failure is evicted after one full bounded window"
+        );
+    }
+
+    #[test]
+    fn submitted_frame_slot_keeps_phase_through_invalid_view_attempt() {
+        // Submitted frame 0 uses state A -> B. An invalid-view attempt does
+        // not submit or advance the slot. The next submitted frame must use
+        // B -> A, irrespective of the attempted frame counter.
+        let submitted_frame_0_slot = 0_usize;
+        let skipped_attempt_1_slot = submitted_frame_0_slot;
+        let submitted_frame_2_slot = (skipped_attempt_1_slot + 1) % PARTICLE_DESCRIPTOR_SET_COUNT;
+        assert_eq!(submitted_frame_0_slot, 0);
+        assert_eq!(skipped_attempt_1_slot, 0);
+        assert_eq!(submitted_frame_2_slot, 1);
+        assert_eq!(
+            (submitted_frame_0_slot + 1) & 1,
+            submitted_frame_2_slot,
+            "frame 2 reads state B written by frame 0 rather than restarting A -> B"
+        );
+    }
 }
 
 #[cfg(test)]
