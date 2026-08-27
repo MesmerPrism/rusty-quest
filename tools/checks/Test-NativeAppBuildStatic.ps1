@@ -237,6 +237,7 @@ foreach ($file in $featureFiles) {
 
 foreach ($requiredFeature in @(
     "quest.native.openxr_vulkan_base",
+    "renderer.gpu_diagnostics",
     "renderer.background.solid_black",
     "renderer.private_particles",
     "particles.private.payload_slot",
@@ -286,6 +287,31 @@ if (@($privateParticleFeature.depends_on) -contains "particles.private.placehold
 $privateParticlePayloadSlotFeature = Read-Json -Path (Join-Path $featureDir "particles\private\payload-slot\particles.private.payload_slot.feature.json")
 if (@($privateParticlePayloadSlotFeature.markers.required) -contains "privateParticlePayloadLinked=false") {
     throw "Generic private-particle payload slot must remain linkage-state-neutral"
+}
+$gpuDiagnosticsFeature = Read-Json -Path (Join-Path $featureDir "diagnostics\gpu\renderer.gpu_diagnostics.feature.json")
+if ((@($gpuDiagnosticsFeature.depends_on) -join "`n") -cne "quest.native.openxr_vulkan_base" -or
+    @($gpuDiagnosticsFeature.build_inputs.env).Count -ne 1 -or
+    [string]$gpuDiagnosticsFeature.build_inputs.env[0].name -cne "RUSTY_QUEST_NATIVE_RENDERER_GPU_DIAGNOSTICS_LEVEL" -or
+    $null -ne $gpuDiagnosticsFeature.build_inputs.env[0].PSObject.Properties["value"] -or
+    $null -ne $gpuDiagnosticsFeature.build_inputs.env[0].PSObject.Properties["source"]) {
+    throw "GPU diagnostics feature must require exactly the inherited diagnostics-level build environment value"
+}
+foreach ($marker in @(
+    "gpuDiagnosticsLevel=",
+    "gpuTimestampQuerySupported=",
+    "gpuTimestampQueryPoolAllocated=",
+    "gpuTimestampValidBits=",
+    "gpuTimestampPeriodNs=",
+    "gpuTimestampStageCount=25",
+    "gpuTimestampBudgetQueriesPerFrame=50",
+    "gpuTimestampBudgetFrameSlots=2",
+    "gpuTimestampBudgetPoolQueries=100",
+    "gpuTimestampAllocatedPoolQueries=",
+    "gpuTimingScope=vulkan-timestamp-query"
+)) {
+    if (@($gpuDiagnosticsFeature.markers.required) -notcontains $marker) {
+        throw "GPU diagnostics feature must require generic v2 marker: $marker"
+    }
 }
 foreach ($marker in @(
     "RUSTY_QUEST_NATIVE_RENDERER channel=private-particle-anchor",
@@ -436,6 +462,87 @@ try {
     }
     if (@($inactiveFeatureLock.expected_markers.required + $inactiveFeatureLock.expected_markers.forbidden | Where-Object { [string]$_ -like "privateParticlePayloadLinked=*" }).Count -ne 0) {
         throw "Native app-build unrelated app must not receive a private-particle linkage marker contract"
+    }
+
+    $gpuDiagnosticsEnvName = "RUSTY_QUEST_NATIVE_RENDERER_GPU_DIAGNOSTICS_LEVEL"
+    $priorGpuDiagnosticsEnvValue = [Environment]::GetEnvironmentVariable($gpuDiagnosticsEnvName, "Process")
+    try {
+        $gpuDiagnosticsApp = Read-Json -Path (Join-Path $appBuildDir "native-stimulus-volume-panel.app.json")
+        $gpuDiagnosticsApp.app_id = "gpu_diagnostics_feature_probe"
+        $gpuDiagnosticsApp.package_name = "io.github.example.rustyquest.gpu_diagnostics_feature_probe"
+        $gpuDiagnosticsApp.requested_features = @($gpuDiagnosticsApp.requested_features) + "renderer.gpu_diagnostics"
+        $gpuDiagnosticsAppPath = Join-Path $structuredResultRoot "gpu-diagnostics-feature-probe.app.json"
+        $gpuDiagnosticsApp | ConvertTo-Json -Depth 100 | Set-Content -LiteralPath $gpuDiagnosticsAppPath -Encoding utf8
+        $gpuDiagnosticsFeaturePath = "fixtures/native-app-features/diagnostics/gpu/renderer.gpu_diagnostics.feature.json"
+        $gpuDiagnosticsFeatureSha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $repoRootPath $gpuDiagnosticsFeaturePath)).Hash.ToLowerInvariant()
+        $gpuDiagnosticsFingerprints = @{}
+
+        foreach ($diagnosticsLevel in @("off", "basic", "detailed")) {
+            [Environment]::SetEnvironmentVariable($gpuDiagnosticsEnvName, $diagnosticsLevel, "Process")
+            $gpuDiagnosticsResultPath = Join-Path $structuredResultRoot "gpu-diagnostics-$diagnosticsLevel-result.json"
+            & pwsh -NoProfile -ExecutionPolicy Bypass -File $resolver `
+                -AppSpec $gpuDiagnosticsAppPath `
+                -OutputRoot $structuredResultRoot `
+                -ResultJsonPath $gpuDiagnosticsResultPath `
+                -DryRun | Out-Host
+            if ($LASTEXITCODE -ne 0) {
+                throw "Native app-build GPU diagnostics $diagnosticsLevel probe failed with exit code $LASTEXITCODE"
+            }
+            $gpuDiagnosticsResult = Read-Json -Path $gpuDiagnosticsResultPath
+            $gpuDiagnosticsFeatureLock = Read-Json -Path ([string]$gpuDiagnosticsResult.feature_lock_path)
+            if (@($gpuDiagnosticsFeatureLock.selected_feature_ids) -cnotcontains "renderer.gpu_diagnostics") {
+                throw "Native app-build GPU diagnostics $diagnosticsLevel probe did not lock the selected feature"
+            }
+            $lockedDescriptor = @($gpuDiagnosticsFeatureLock.feature_descriptors | Where-Object { [string]$_.feature_id -ceq "renderer.gpu_diagnostics" })
+            if ($lockedDescriptor.Count -ne 1 -or
+                [string]$lockedDescriptor[0].path -cne $gpuDiagnosticsFeaturePath -or
+                [string]$lockedDescriptor[0].sha256 -cne $gpuDiagnosticsFeatureSha256) {
+                throw "Native app-build GPU diagnostics $diagnosticsLevel probe did not capture the exact feature source"
+            }
+            $lockedEnv = @($gpuDiagnosticsFeatureLock.build_inputs.env | Where-Object { [string]$_.name -ceq $gpuDiagnosticsEnvName })
+            if ($lockedEnv.Count -ne 1 -or [string]$lockedEnv[0].value -cne $diagnosticsLevel) {
+                throw "Native app-build GPU diagnostics $diagnosticsLevel probe did not lock the exact build value"
+            }
+            $gpuDiagnosticsFingerprints[$diagnosticsLevel] = [string]$gpuDiagnosticsResult.resolution_fingerprint
+        }
+        if (@($gpuDiagnosticsFingerprints.Values | Select-Object -Unique).Count -ne 3) {
+            throw "Native app-build GPU diagnostics levels must produce distinct resolution fingerprints"
+        }
+
+        [Environment]::SetEnvironmentVariable($gpuDiagnosticsEnvName, $null, "Process")
+        $missingGpuDiagnosticsOutput = @(& pwsh -NoProfile -ExecutionPolicy Bypass -File $resolver `
+            -AppSpec $gpuDiagnosticsAppPath `
+            -OutputRoot $structuredResultRoot `
+            -DryRun 2>&1 | ForEach-Object { $_.ToString() })
+        $missingGpuDiagnosticsExitCode = $LASTEXITCODE
+        if ($missingGpuDiagnosticsExitCode -eq 0) {
+            throw "Native app-build accepted GPU diagnostics selection without its required build environment value"
+        }
+        $normalizedMissingGpuDiagnosticsOutput = ((($missingGpuDiagnosticsOutput -join " ") -replace '\s*\|\s*', ' ') -replace '\s+', ' ').Trim()
+        $expectedMissingGpuDiagnostics = "Feature renderer.gpu_diagnostics requires build environment value $gpuDiagnosticsEnvName, but it was not supplied."
+        if (-not $normalizedMissingGpuDiagnosticsOutput.Contains($expectedMissingGpuDiagnostics, [System.StringComparison]::Ordinal)) {
+            throw "Native app-build GPU diagnostics missing-value probe returned the wrong error: $normalizedMissingGpuDiagnosticsOutput"
+        }
+
+        [Environment]::SetEnvironmentVariable($gpuDiagnosticsEnvName, "detailed", "Process")
+        $unselectedGpuDiagnosticsResultPath = Join-Path $structuredResultRoot "gpu-diagnostics-unselected-result.json"
+        & pwsh -NoProfile -ExecutionPolicy Bypass -File $resolver `
+            -AppSpec "fixtures\native-app-builds\native-stimulus-volume-panel.app.json" `
+            -OutputRoot $structuredResultRoot `
+            -ResultJsonPath $unselectedGpuDiagnosticsResultPath `
+            -DryRun | Out-Host
+        if ($LASTEXITCODE -ne 0) {
+            throw "Native app-build unselected GPU diagnostics probe failed with exit code $LASTEXITCODE"
+        }
+        $unselectedGpuDiagnosticsResult = Read-Json -Path $unselectedGpuDiagnosticsResultPath
+        $unselectedGpuDiagnosticsLock = Read-Json -Path ([string]$unselectedGpuDiagnosticsResult.feature_lock_path)
+        if (@($unselectedGpuDiagnosticsLock.selected_feature_ids) -ccontains "renderer.gpu_diagnostics" -or
+            @($unselectedGpuDiagnosticsLock.build_inputs.env | Where-Object { [string]$_.name -ceq $gpuDiagnosticsEnvName }).Count -ne 0) {
+            throw "Native app-build GPU diagnostics build input must remain inert when the feature is unselected"
+        }
+    }
+    finally {
+        [Environment]::SetEnvironmentVariable($gpuDiagnosticsEnvName, $priorGpuDiagnosticsEnvValue, "Process")
     }
 
     $payloadInputDir = Join-Path $structuredResultRoot "synthetic-private-particle-payload"
