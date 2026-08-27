@@ -84,7 +84,8 @@ use crate::{
     native_renderer_properties::PROP_PRIVATE_PARTICLES_WORLD_ANCHOR_SCALE_M,
     native_renderer_property_values::f32_clamped_value,
     native_renderer_timing::{
-        elapsed_ms, FrameCpuTimings, GpuStageTimings, GpuTimestampStage, GpuTimestampTracker,
+        detailed_private_particle_cpu_observation_available, elapsed_ms, FrameCpuTimings,
+        GpuStageTimings, GpuTimestampStage, GpuTimestampTracker,
     },
     openxr_environment_depth::{
         OpenXrEnvironmentDepthFrame, OpenXrEnvironmentDepthProperties,
@@ -2339,15 +2340,23 @@ unsafe fn run_projection_frames(
             );
         }
 
+        let mut frame_timings = FrameCpuTimings::default();
         trace_startup_frame(frame_count, "before-xr-wait-frame");
+        let xr_wait_started = Instant::now();
         let frame_state = frame_wait
             .wait()
             .map_err(|error| format!("wait OpenXR frame: {error}"))?;
+        frame_timings.xr_wait_frame_ms = elapsed_ms(xr_wait_started);
         trace_startup_frame(frame_count, "after-xr-wait-frame");
+        // The submitted-frame host span begins only after wait has returned:
+        // display pacing is its own OpenXR API timing above.
+        let submitted_frame_host_started = Instant::now();
         trace_startup_frame(frame_count, "before-xr-begin-frame");
+        let xr_begin_started = Instant::now();
         frame_stream
             .begin()
             .map_err(|error| format!("begin OpenXR frame: {error}"))?;
+        frame_timings.xr_begin_frame_ms = elapsed_ms(xr_begin_started);
         trace_startup_frame(frame_count, "after-xr-begin-frame");
 
         if !frame_state.should_render {
@@ -2640,17 +2649,24 @@ unsafe fn run_projection_frames(
         }
 
         trace_startup_frame(frame_count, "before-swapchain-acquire-image");
+        let swapchain_acquire_started = Instant::now();
         let image_index = swapchain
             .handle
             .acquire_image()
             .map_err(|error| format!("acquire OpenXR swapchain image: {error}"))?;
+        frame_timings.swapchain_acquire_ms = elapsed_ms(swapchain_acquire_started);
         trace_startup_frame(frame_count, "after-swapchain-acquire-image");
         let cmd = cmds[frame_slot];
         trace_startup_frame(frame_count, "before-vulkan-wait-fence");
+        let prior_frame_fence_wait_started = Instant::now();
         vk_device
             .wait_for_fences(&[fences[frame_slot]], true, u64::MAX)
             .map_err(|error| format!("wait Vulkan fence: {error}"))?;
+        frame_timings.vulkan_prior_frame_fence_wait_ms = elapsed_ms(prior_frame_fence_wait_started);
         trace_startup_frame(frame_count, "after-vulkan-wait-fence");
+        // This aggregate intentionally contains the two narrower observations
+        // below. Consumers must not add it to either child timing.
+        let prior_frame_retire_readback_started = Instant::now();
         let retired_image_leases =
             camera_projection_renderer.retire_completed_frame_leases(frame_slot);
         display_composite_feedback_renderer
@@ -2659,9 +2675,20 @@ unsafe fn run_projection_frames(
         video_projection_renderer.retire_completed_frame_handles(frame_slot);
         let _completed_luma_diagnostic = camera_projection_renderer
             .collect_completed_luma_diagnostic(frame_slot, camera_luma_diagnostic_enabled);
-        if let Some(renderer) = gpu_private_particle_renderer.as_deref_mut() {
-            renderer.collect_completed_diagnostics(vk_device, frame_slot);
-        }
+        let detailed_diagnostic_available = detailed_private_particle_cpu_observation_available(
+            crate::native_renderer_diagnostics_contract::BUILD_DIAGNOSTICS_LEVEL,
+            gpu_private_particle_renderer.is_some(),
+        );
+        let detailed_diagnostic_started = Instant::now();
+        let detailed_diagnostic_executed = gpu_private_particle_renderer
+            .as_deref_mut()
+            .map(|renderer| renderer.collect_completed_diagnostics(vk_device, frame_slot))
+            .unwrap_or(false);
+        frame_timings.record_private_particle_detailed_diagnostic_readback(
+            detailed_diagnostic_available,
+            detailed_diagnostic_executed,
+            elapsed_ms(detailed_diagnostic_started),
+        );
         if retired_image_leases > 0 {
             crate::marker(
                 "camera-sync",
@@ -2691,8 +2718,16 @@ unsafe fn run_projection_frames(
                 );
             }
         }
+        let gpu_timestamp_query_results_started = Instant::now();
         let gpu_stage_timings = gpu_timestamp_tracker.read_frame(vk_device, frame_slot);
+        frame_timings.record_gpu_timestamp_query_results(
+            gpu_stage_timings.query_results_ready(),
+            elapsed_ms(gpu_timestamp_query_results_started),
+        );
+        frame_timings.vulkan_prior_frame_retire_readback_ms =
+            elapsed_ms(prior_frame_retire_readback_started);
         trace_startup_frame(frame_count, "before-vulkan-reset-fence");
+        let prior_frame_reset_started = Instant::now();
         vk_device
             .reset_fences(&[fences[frame_slot]])
             .map_err(|error| format!("reset Vulkan fence: {error}"))?;
@@ -2700,10 +2735,10 @@ unsafe fn run_projection_frames(
         vk_device
             .reset_command_buffer(cmd, vk::CommandBufferResetFlags::empty())
             .map_err(|error| format!("reset Vulkan command buffer: {error}"))?;
+        frame_timings.vulkan_prior_frame_reset_ms = elapsed_ms(prior_frame_reset_started);
         trace_startup_frame(frame_count, "after-vulkan-reset-command-buffer");
 
         let record_started = Instant::now();
-        let mut frame_timings = FrameCpuTimings::default();
         vk_device
             .begin_command_buffer(
                 cmd,
@@ -3648,10 +3683,12 @@ unsafe fn run_projection_frames(
         let submit_ms = submit_started.elapsed().as_secs_f64() * 1000.0;
         frame_timings.queue_submit_ms = submit_ms;
         trace_startup_frame(frame_count, "before-swapchain-release-image");
+        let swapchain_release_started = Instant::now();
         swapchain
             .handle
             .release_image()
             .map_err(|error| format!("release OpenXR swapchain image: {error}"))?;
+        frame_timings.swapchain_release_ms = elapsed_ms(swapchain_release_started);
         trace_startup_frame(frame_count, "after-swapchain-release-image");
 
         let rect = xr::Rect2Di {
@@ -3710,6 +3747,7 @@ unsafe fn run_projection_frames(
             .map_err(|error| format!("end OpenXR frame: {error}"))?;
         trace_startup_frame(frame_count, "after-xr-end-frame");
         frame_timings.openxr_end_frame_ms = elapsed_ms(stage_started);
+        frame_timings.submitted_frame_host_ms = elapsed_ms(submitted_frame_host_started);
         if let Some(renderer) = gpu_private_particle_renderer.as_deref_mut() {
             renderer.confirm_submitted_frame(frame_count, private_particle_stats);
         }

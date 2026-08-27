@@ -2643,15 +2643,15 @@ impl GpuPrivateParticleRenderer {
         &mut self,
         device: &ash::Device,
         frame_slot: usize,
-    ) {
+    ) -> bool {
         if !BUILD_DIAGNOSTICS_LEVEL.detailed_readback_enabled() {
             self.last_diagnostic_snapshot = PrivateParticleDiagnosticSnapshot::unavailable();
-            return;
+            return false;
         }
         let diagnostic_slot = frame_slot % PARTICLE_DESCRIPTOR_SET_COUNT;
         if !self.diagnostic_dispatched[diagnostic_slot] {
             self.last_diagnostic_snapshot = PrivateParticleDiagnosticSnapshot::pending();
-            return;
+            return false;
         }
         match self.diagnostic_buffers[diagnostic_slot]
             .read_i32_words::<PRIVATE_PARTICLE_DIAGNOSTIC_WORDS>(
@@ -2705,6 +2705,7 @@ impl GpuPrivateParticleRenderer {
                 ),
             );
         }
+        true
     }
 
     pub(crate) fn update_breath_state_driver(

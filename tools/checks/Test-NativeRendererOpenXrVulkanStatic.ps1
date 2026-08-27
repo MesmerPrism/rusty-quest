@@ -229,7 +229,31 @@ Assert-ContainsTokens "$xrVulkanSurface`n$nativeRendererOptionSurface`n$nativeRe
     'swapchainWaitCpuMs',
     'queueSubmitCpuMs',
     'openxrEndFrameCpuMs',
-    'cpuTimingScope=host-recording-and-submit',
+    'xrWaitFrameCpuMs',
+    'xrWaitFrameCpuTimingScope=openxr-wait-frame-api',
+    'xrBeginFrameCpuMs',
+    'xrBeginFrameCpuTimingScope=openxr-begin-frame-api',
+    'vulkanPriorFrameFenceWaitCpuMs',
+    'vulkanPriorFrameFenceWaitCpuTimingScope=prior-slot-fence-ownership-wait',
+    'vulkanPriorFrameRetireReadbackCpuMs',
+    'vulkanPriorFrameRetireReadbackCpuTimingOverlap=not-additive-with-child-timings',
+    'vulkanPriorFrameResetCpuMs',
+    'swapchainAcquireCpuMs',
+    'swapchainAcquireCpuTimingScope=openxr-acquire-swapchain-image-api',
+    'gpuTimestampQueryResultsCpuMs',
+    'gpuTimestampQueryResultsCpuTimingAvailable',
+    'privateParticleDetailedDiagnosticReadbackMapValidateCpuMs',
+    'privateParticleDetailedDiagnosticReadbackCpuTimingAvailable',
+    'privateParticleDetailedDiagnosticReadbackCpuTimingExecuted',
+    'swapchainReleaseCpuMs',
+    'swapchainReleaseCpuTimingScope=openxr-release-swapchain-image-api',
+    'handMeshVisualCpuSpanMs',
+    'projectionCompositeCpuSpanMs',
+    'submittedFrameHostCpuMs',
+    'submittedFrameHostCpuTimingScope=after-xr-wait-frame-through-successful-xr-end-frame',
+    'renderLoopSubmittedFrameCpuMs',
+    'renderLoopSubmittedFrameCpuTimingScope=after-xr-wait-frame-through-successful-xr-end-frame',
+    'cpuTimingScope=host-submitted-frame-and-prior-slot-observation',
     'GpuTimestampTracker',
     'cmd_reset_query_pool',
     'cmd_write_timestamp',
@@ -462,6 +486,29 @@ if ($gpuPrivateParticles -notmatch '(?s)device\.cmd_pipeline_barrier\(\s*cmd,\s*
 }
 if ($gpuPrivateParticles -match '(?s)gpu_timestamp_tracker\.write_stage_start\(\s*device,\s*cmd,\s*frame_slot,\s*GpuTimestampStage::PrivateParticleCompute,\s*\)') {
     throw "Aggregate private-particle compute timestamp must not start at TOP_OF_PIPE"
+}
+if ($xrVulkanSurface -notmatch '(?s)let mut frame_timings = FrameCpuTimings::default\(\);\s*trace_startup_frame\(frame_count, "before-xr-wait-frame"\);\s*let xr_wait_started = Instant::now\(\);\s*let frame_state = frame_wait.*?frame_timings\.xr_wait_frame_ms = elapsed_ms\(xr_wait_started\);.*?let submitted_frame_host_started = Instant::now\(\);\s*trace_startup_frame\(frame_count, "before-xr-begin-frame"\);\s*let xr_begin_started = Instant::now\(\);\s*frame_stream.*?\.begin\(\).*?frame_timings\.xr_begin_frame_ms = elapsed_ms\(xr_begin_started\);') {
+    throw "CPU timing must separate xrWaitFrame and xrBeginFrame, and begin the submitted-frame host span only after wait returns"
+}
+foreach ($cpuTimingBoundaryPattern in @(
+    '(?s)let prior_frame_fence_wait_started = Instant::now\(\);.*?\.wait_for_fences\(.*?frame_timings\.vulkan_prior_frame_fence_wait_ms = elapsed_ms\(prior_frame_fence_wait_started\);',
+    '(?s)let detailed_diagnostic_started = Instant::now\(\);.*?collect_completed_diagnostics.*?record_private_particle_detailed_diagnostic_readback\(',
+    '(?s)let gpu_timestamp_query_results_started = Instant::now\(\);.*?gpu_timestamp_tracker\.read_frame\(vk_device, frame_slot\).*?record_gpu_timestamp_query_results\(\s*gpu_stage_timings\.query_results_ready\(\)',
+    '(?s)record_gpu_timestamp_query_results\(.*?frame_timings\.vulkan_prior_frame_retire_readback_ms =.*?prior_frame_retire_readback_started',
+    '(?s)let prior_frame_reset_started = Instant::now\(\);.*?\.reset_fences\(.*?\.reset_command_buffer\(.*?frame_timings\.vulkan_prior_frame_reset_ms = elapsed_ms\(prior_frame_reset_started\);.*?let record_started = Instant::now\(\);'
+)) {
+    if ($xrVulkanSurface -notmatch $cpuTimingBoundaryPattern) {
+        throw "CPU timing must attribute prior-slot fence ownership, retire/readback children, and reset separately before command recording"
+    }
+}
+if ($xrVulkanSurface -notmatch '(?s)frame_stream.*?\.end\(.*?\)\?;\s*trace_startup_frame\(frame_count, "after-xr-end-frame"\);\s*frame_timings\.openxr_end_frame_ms = elapsed_ms\(stage_started\);\s*frame_timings\.submitted_frame_host_ms = elapsed_ms\(submitted_frame_host_started\);.*?scorecard::write_projection_scorecard\(.*?frame_timings,') {
+    throw "Submitted-frame host CPU timing must end only after successful xrEndFrame and flow into the scorecard"
+}
+if ($xrVulkanSurface -notmatch '(?s)let swapchain_acquire_started = Instant::now\(\);\s*let image_index = swapchain.*?\.acquire_image\(\).*?frame_timings\.swapchain_acquire_ms = elapsed_ms\(swapchain_acquire_started\);') {
+    throw "CPU timing must bracket the exact OpenXR swapchain acquire API call"
+}
+if ($xrVulkanSurface -notmatch '(?s)let swapchain_release_started = Instant::now\(\);\s*swapchain.*?\.release_image\(\).*?frame_timings\.swapchain_release_ms = elapsed_ms\(swapchain_release_started\);') {
+    throw "CPU timing must bracket the exact OpenXR swapchain release API call"
 }
 if ($xrVulkanSurface -notmatch '(?s)\}\s*else\s*\{\s*for stage in \[\s*GpuTimestampStage::PrivateParticleCompute,\s*GpuTimestampStage::PrivateParticleComputeDispatch,\s*GpuTimestampStage::PrivateParticleComputePostDispatchSync,\s*\]\s*\{\s*gpu_timestamp_tracker\.write_disabled_stage\(vk_device,\s*cmd,\s*frame_slot,\s*stage\);\s*\}\s*GpuPrivateParticleFrameStats::unavailable\(\)') {
     throw "Renderer-unavailable path must explicitly write disabled compute, dispatch, and post-sync queries"

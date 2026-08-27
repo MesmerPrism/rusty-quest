@@ -11,6 +11,17 @@ pub(crate) const GPU_TIMESTAMP_FRAME_LAG: u32 = 2;
 
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct FrameCpuTimings {
+    pub(crate) xr_wait_frame_ms: f64,
+    pub(crate) xr_begin_frame_ms: f64,
+    pub(crate) vulkan_prior_frame_fence_wait_ms: f64,
+    pub(crate) vulkan_prior_frame_retire_readback_ms: f64,
+    pub(crate) vulkan_prior_frame_reset_ms: f64,
+    pub(crate) swapchain_acquire_ms: f64,
+    pub(crate) gpu_timestamp_query_results_ms: f64,
+    pub(crate) gpu_timestamp_query_results_available: bool,
+    pub(crate) private_particle_detailed_diagnostic_readback_map_validate_ms: f64,
+    pub(crate) private_particle_detailed_diagnostic_readback_available: bool,
+    pub(crate) private_particle_detailed_diagnostic_readback_executed: bool,
     pub(crate) camera_acquire_import_ms: f64,
     pub(crate) guide_graph_ms: f64,
     pub(crate) live_hand_ms: f64,
@@ -19,25 +30,99 @@ pub(crate) struct FrameCpuTimings {
     pub(crate) projection_composite_ms: f64,
     pub(crate) command_record_ms: f64,
     pub(crate) swapchain_wait_ms: f64,
+    pub(crate) swapchain_release_ms: f64,
     pub(crate) queue_submit_ms: f64,
     pub(crate) openxr_end_frame_ms: f64,
+    pub(crate) submitted_frame_host_ms: f64,
 }
 
 impl FrameCpuTimings {
+    pub(crate) fn record_gpu_timestamp_query_results(&mut self, available: bool, elapsed: f64) {
+        self.gpu_timestamp_query_results_available = available;
+        self.gpu_timestamp_query_results_ms = if available {
+            nonnegative_cpu_ms(elapsed)
+        } else {
+            0.0
+        };
+    }
+
+    pub(crate) fn record_private_particle_detailed_diagnostic_readback(
+        &mut self,
+        available: bool,
+        executed: bool,
+        elapsed: f64,
+    ) {
+        let sample_available = available && executed;
+        self.private_particle_detailed_diagnostic_readback_available = sample_available;
+        self.private_particle_detailed_diagnostic_readback_executed = sample_available;
+        self.private_particle_detailed_diagnostic_readback_map_validate_ms = if sample_available {
+            nonnegative_cpu_ms(elapsed)
+        } else {
+            0.0
+        };
+    }
+
     pub(crate) fn marker_fields(self) -> String {
+        let gpu_timestamp_query_results_ms = cpu_ms_marker(
+            self.gpu_timestamp_query_results_available,
+            self.gpu_timestamp_query_results_ms,
+        );
+        let private_particle_detailed_diagnostic_readback_ms = cpu_ms_marker(
+            self.private_particle_detailed_diagnostic_readback_available,
+            self.private_particle_detailed_diagnostic_readback_map_validate_ms,
+        );
         format!(
-            "cameraAcquireImportCpuMs={:.3} guideGraphCpuMs={:.3} liveHandLocateCpuMs={:.3} handSdfPrepareCpuMs={:.3} handMeshVisualCpuMs={:.3} projectionCompositeCpuMs={:.3} commandRecordCpuMs={:.3} swapchainWaitCpuMs={:.3} queueSubmitCpuMs={:.3} openxrEndFrameCpuMs={:.3} cpuTimingScope=host-recording-and-submit",
-            self.camera_acquire_import_ms,
-            self.guide_graph_ms,
-            self.live_hand_ms,
-            self.hand_sdf_prepare_ms,
-            self.hand_mesh_visual_ms,
-            self.projection_composite_ms,
-            self.command_record_ms,
-            self.swapchain_wait_ms,
-            self.queue_submit_ms,
-            self.openxr_end_frame_ms
+            "xrWaitFrameCpuMs={:.3} xrWaitFrameCpuTimingScope=openxr-wait-frame-api xrBeginFrameCpuMs={:.3} xrBeginFrameCpuTimingScope=openxr-begin-frame-api vulkanPriorFrameFenceWaitCpuMs={:.3} vulkanPriorFrameFenceWaitCpuTimingScope=prior-slot-fence-ownership-wait vulkanPriorFrameRetireReadbackCpuMs={:.3} vulkanPriorFrameRetireReadbackCpuTimingScope=post-fence-prior-slot-retirement-includes-timestamp-query-results-and-detailed-private-diagnostic vulkanPriorFrameRetireReadbackCpuTimingOverlap=not-additive-with-child-timings vulkanPriorFrameResetCpuMs={:.3} vulkanPriorFrameResetCpuTimingScope=prior-slot-fence-and-command-buffer-reset swapchainAcquireCpuMs={:.3} swapchainAcquireCpuTimingScope=openxr-acquire-swapchain-image-api gpuTimestampQueryResultsCpuMs={} gpuTimestampQueryResultsCpuTimingAvailable={} gpuTimestampQueryResultsCpuTimingScope=vulkan-get-query-pool-results privateParticleDetailedDiagnosticReadbackMapValidateCpuMs={} privateParticleDetailedDiagnosticReadbackCpuTimingAvailable={} privateParticleDetailedDiagnosticReadbackCpuTimingExecuted={} privateParticleDetailedDiagnosticReadbackCpuTimingScope=host-readback-map-validate cameraAcquireImportCpuMs={:.3} guideGraphCpuMs={:.3} liveHandLocateCpuMs={:.3} handSdfPrepareCpuMs={:.3} handMeshVisualCpuMs={:.3} handMeshVisualCpuSpanMs={:.3} handMeshVisualCpuTimingScope=host-hand-mesh-visual-anchor-particle-environment-depth-and-private-particle-compute-preparation projectionCompositeCpuMs={:.3} projectionCompositeCpuSpanMs={:.3} projectionCompositeCpuTimingScope=host-projection-composition-and-command-finalization commandRecordCpuMs={:.3} swapchainWaitCpuMs={:.3} swapchainReleaseCpuMs={:.3} swapchainReleaseCpuTimingScope=openxr-release-swapchain-image-api queueSubmitCpuMs={:.3} openxrEndFrameCpuMs={:.3} submittedFrameHostCpuMs={:.3} submittedFrameHostCpuTimingScope=after-xr-wait-frame-through-successful-xr-end-frame renderLoopSubmittedFrameCpuMs={:.3} renderLoopSubmittedFrameCpuTimingScope=after-xr-wait-frame-through-successful-xr-end-frame cpuTimingScope=host-submitted-frame-and-prior-slot-observation",
+            nonnegative_cpu_ms(self.xr_wait_frame_ms),
+            nonnegative_cpu_ms(self.xr_begin_frame_ms),
+            nonnegative_cpu_ms(self.vulkan_prior_frame_fence_wait_ms),
+            nonnegative_cpu_ms(self.vulkan_prior_frame_retire_readback_ms),
+            nonnegative_cpu_ms(self.vulkan_prior_frame_reset_ms),
+            nonnegative_cpu_ms(self.swapchain_acquire_ms),
+            gpu_timestamp_query_results_ms,
+            self.gpu_timestamp_query_results_available,
+            private_particle_detailed_diagnostic_readback_ms,
+            self.private_particle_detailed_diagnostic_readback_available,
+            self.private_particle_detailed_diagnostic_readback_executed,
+            nonnegative_cpu_ms(self.camera_acquire_import_ms),
+            nonnegative_cpu_ms(self.guide_graph_ms),
+            nonnegative_cpu_ms(self.live_hand_ms),
+            nonnegative_cpu_ms(self.hand_sdf_prepare_ms),
+            nonnegative_cpu_ms(self.hand_mesh_visual_ms),
+            nonnegative_cpu_ms(self.hand_mesh_visual_ms),
+            nonnegative_cpu_ms(self.projection_composite_ms),
+            nonnegative_cpu_ms(self.projection_composite_ms),
+            nonnegative_cpu_ms(self.command_record_ms),
+            nonnegative_cpu_ms(self.swapchain_wait_ms),
+            nonnegative_cpu_ms(self.swapchain_release_ms),
+            nonnegative_cpu_ms(self.queue_submit_ms),
+            nonnegative_cpu_ms(self.openxr_end_frame_ms),
+            nonnegative_cpu_ms(self.submitted_frame_host_ms),
+            nonnegative_cpu_ms(self.submitted_frame_host_ms),
         )
+    }
+}
+
+pub(crate) const fn detailed_private_particle_cpu_observation_available(
+    diagnostics_level: DiagnosticsLevel,
+    private_particle_renderer_available: bool,
+) -> bool {
+    diagnostics_level.detailed_readback_enabled() && private_particle_renderer_available
+}
+
+fn nonnegative_cpu_ms(value: f64) -> f64 {
+    if value.is_finite() {
+        value.max(0.0)
+    } else {
+        0.0
+    }
+}
+
+fn cpu_ms_marker(available: bool, value: f64) -> String {
+    if available {
+        format!("{:.3}", nonnegative_cpu_ms(value))
+    } else {
+        "unavailable".to_string()
     }
 }
 
@@ -188,6 +273,13 @@ pub(crate) struct GpuStageTimings {
 }
 
 impl GpuStageTimings {
+    /// A successful query result is only attributable when its frame identity
+    /// is present. Hardware support or an allocated pool alone is not a CPU
+    /// sample availability signal.
+    pub(crate) const fn query_results_ready(&self) -> bool {
+        self.ready && self.measured_frame_id.is_some()
+    }
+
     pub(crate) fn unavailable(timestamp_valid_bits: u32, timestamp_period_ns: f64) -> Self {
         Self {
             supported: timestamp_valid_bits > 0 && timestamp_period_ns > 0.0,
@@ -886,6 +978,7 @@ mod tests {
         values[first_query + 1] = 300;
         let timings = GpuStageTimings::ready(64, 1.0, &values, 1_u32 << dispatch.index(), Some(7));
 
+        assert!(timings.query_results_ready());
         assert_eq!(timings.private_particle_compute_ms, -1.0);
         assert_eq!(timings.private_particle_draw_ms, -1.0);
         assert!(timings.private_particle_compute_dispatch_ms > 0.0);
@@ -936,6 +1029,7 @@ mod tests {
         assert!(marker.contains("gpuTimestampQueryPoolAllocated=false"));
         assert!(marker.contains("gpuTimestampBudgetPoolQueries=100"));
         assert!(marker.contains("gpuTimestampAllocatedPoolQueries=0"));
+        assert!(!GpuStageTimings::unavailable(64, 1.0).query_results_ready());
     }
 
     #[test]
@@ -943,5 +1037,92 @@ mod tests {
         assert!(timestamp_query_supported(64, 1.0));
         assert!(!timestamp_query_supported(0, 1.0));
         assert!(!timestamp_query_supported(64, 0.0));
+    }
+
+    #[test]
+    fn cpu_observation_availability_is_mode_and_execution_aware() {
+        assert!(!detailed_private_particle_cpu_observation_available(
+            DiagnosticsLevel::Off,
+            true
+        ));
+        assert!(!detailed_private_particle_cpu_observation_available(
+            DiagnosticsLevel::Basic,
+            true
+        ));
+        assert!(!detailed_private_particle_cpu_observation_available(
+            DiagnosticsLevel::Detailed,
+            false
+        ));
+        assert!(detailed_private_particle_cpu_observation_available(
+            DiagnosticsLevel::Detailed,
+            true
+        ));
+
+        let mut unavailable = FrameCpuTimings::default();
+        unavailable.record_gpu_timestamp_query_results(false, 9.0);
+        unavailable.record_private_particle_detailed_diagnostic_readback(false, true, 9.0);
+        let unavailable_marker = unavailable.marker_fields();
+        assert!(unavailable_marker.contains("gpuTimestampQueryResultsCpuMs=unavailable"));
+        assert!(unavailable_marker.contains("gpuTimestampQueryResultsCpuTimingAvailable=false"));
+        assert!(unavailable_marker
+            .contains("privateParticleDetailedDiagnosticReadbackMapValidateCpuMs=unavailable"));
+        assert!(unavailable_marker
+            .contains("privateParticleDetailedDiagnosticReadbackCpuTimingExecuted=false"));
+
+        let mut detailed_without_work = FrameCpuTimings::default();
+        detailed_without_work
+            .record_private_particle_detailed_diagnostic_readback(true, false, 9.0);
+        let without_work_marker = detailed_without_work.marker_fields();
+        assert!(without_work_marker
+            .contains("privateParticleDetailedDiagnosticReadbackMapValidateCpuMs=unavailable"));
+        assert!(without_work_marker
+            .contains("privateParticleDetailedDiagnosticReadbackCpuTimingAvailable=false"));
+        assert!(without_work_marker
+            .contains("privateParticleDetailedDiagnosticReadbackCpuTimingExecuted=false"));
+
+        let mut detailed_with_work = FrameCpuTimings::default();
+        detailed_with_work.record_gpu_timestamp_query_results(true, 2.5);
+        detailed_with_work.record_private_particle_detailed_diagnostic_readback(true, true, 3.5);
+        let with_work_marker = detailed_with_work.marker_fields();
+        assert!(with_work_marker.contains("gpuTimestampQueryResultsCpuMs=2.500"));
+        assert!(with_work_marker
+            .contains("privateParticleDetailedDiagnosticReadbackMapValidateCpuMs=3.500"));
+        assert!(with_work_marker
+            .contains("privateParticleDetailedDiagnosticReadbackCpuTimingExecuted=true"));
+    }
+
+    #[test]
+    fn cpu_observability_markers_name_overlapping_scopes_without_false_negative_values() {
+        let timings = FrameCpuTimings {
+            xr_wait_frame_ms: -1.0,
+            xr_begin_frame_ms: f64::NAN,
+            vulkan_prior_frame_fence_wait_ms: 1.0,
+            vulkan_prior_frame_retire_readback_ms: 2.0,
+            vulkan_prior_frame_reset_ms: 3.0,
+            command_record_ms: 4.0,
+            submitted_frame_host_ms: 5.0,
+            hand_mesh_visual_ms: 6.0,
+            projection_composite_ms: 7.0,
+            swapchain_acquire_ms: 8.0,
+            swapchain_release_ms: 9.0,
+            ..FrameCpuTimings::default()
+        };
+        let marker = timings.marker_fields();
+        assert!(marker.contains("xrWaitFrameCpuMs=0.000"));
+        assert!(marker.contains("xrBeginFrameCpuMs=0.000"));
+        assert!(marker.contains(
+            "vulkanPriorFrameRetireReadbackCpuTimingOverlap=not-additive-with-child-timings"
+        ));
+        assert!(marker.contains("handMeshVisualCpuMs=6.000 handMeshVisualCpuSpanMs=6.000"));
+        assert!(
+            marker.contains("projectionCompositeCpuMs=7.000 projectionCompositeCpuSpanMs=7.000")
+        );
+        assert!(marker.contains("swapchainAcquireCpuMs=8.000"));
+        assert!(marker.contains("swapchainReleaseCpuMs=9.000"));
+        assert!(marker.contains(
+            "submittedFrameHostCpuTimingScope=after-xr-wait-frame-through-successful-xr-end-frame"
+        ));
+        assert!(marker.contains("renderLoopSubmittedFrameCpuMs=5.000"));
+        assert!(marker.contains("cpuTimingScope=host-submitted-frame-and-prior-slot-observation"));
     }
 }
