@@ -1191,6 +1191,7 @@ pub(crate) struct GpuPrivateParticleFrameStats {
     pub(crate) anchor_echo_max_count: u32,
     pub(crate) anchor_echo_draw_echo_count: u32,
     pub(crate) anchor_echo_draw_count: u32,
+    auxiliary_compute_logical_invocations: u32,
     pub(crate) draw_count: u32,
     pub(crate) state_ping_pong: bool,
     pub(crate) aux0_rows: u32,
@@ -1316,19 +1317,32 @@ impl GpuPrivateParticleFrameStats {
         } else {
             self.anchor_echo_max_count
         };
+        let auxiliary_workgroup_count = auxiliary_compute_workgroup_count(
+            self.auxiliary_compute_logical_invocations,
+            PRIVATE_PARTICLE_AUXILIARY_COMPUTE_LOCAL_SIZE_X,
+        );
+        let auxiliary_launched_lane_count = auxiliary_workgroup_count
+            .saturating_mul(PRIVATE_PARTICLE_AUXILIARY_COMPUTE_LOCAL_SIZE_X);
+        let anchor_output_instances_written = u32::from(self.anchor_echo_max_count > 0);
         format!(
-            "privateParticleWorkloadMarkerVersion=v1 privateParticleWorkloadSource=effective-runtime-config privateParticleComputeLogicalParticleCount={} privateParticleComputeWorkgroupCount={} privateParticleComputeLocalSizeX={} privateParticleComputeLaunchedLaneCount={} privateParticleMainOutputInstances={} privateParticleTracerStateSlotsVisited={} privateParticleTracerStateRowsVisited={} privateParticleTracerOutputSlotsCleared={} privateParticleTracerOutputSlotsCapacity={} privateParticleAnchorEchoStateSlotsVisited={} privateParticleAnchorEchoOutputSlotsCleared={} privateParticleAnchorEchoOutputSlotsCapacity={} privateParticleDrawBudgetInstances={} privateParticleDrawBudgetRows={} privateParticleDrawBudgetCapacityInstances={} privateParticleDrawBudgetCapacityRows={} privateParticleWorkloadHighRatePayload=false",
+            "privateParticleWorkloadMarkerVersion=v2 privateParticleWorkloadSource=effective-runtime-config privateParticleComputeLogicalParticleCount={} privateParticleComputeWorkgroupCount={} privateParticleComputeLocalSizeX={} privateParticleComputeLaunchedLaneCount={} privateParticleAuxiliaryComputeLogicalInvocations={} privateParticleAuxiliaryComputeWorkgroupCount={} privateParticleAuxiliaryComputeLocalSizeX={} privateParticleAuxiliaryComputeLaunchedLaneCount={} privateParticleMainOutputInstances={} privateParticleTracerStateSlotsVisited={} privateParticleTracerStateRowsVisited={} privateParticleTracerOutputSlotsCleared={} privateParticleTracerOutputSlotsCapacity={} privateParticleAnchorEchoStateSlotsVisited={} privateParticleAnchorOutputInstancesWritten={} privateParticleAnchorOutputRowsWritten={} privateParticleEchoOutputSlotsCleared={} privateParticleAnchorEchoOutputSlotsCapacity={} privateParticleDrawBudgetInstances={} privateParticleDrawBudgetRows={} privateParticleDrawBudgetCapacityInstances={} privateParticleDrawBudgetCapacityRows={} privateParticleWorkloadHighRatePayload=false",
             self.particle_count,
             compute_workgroup_count,
             PARTICLE_COMPUTE_LOCAL_SIZE,
             compute_launched_lane_count,
+            self.auxiliary_compute_logical_invocations,
+            auxiliary_workgroup_count,
+            PRIVATE_PARTICLE_AUXILIARY_COMPUTE_LOCAL_SIZE_X,
+            auxiliary_launched_lane_count,
             self.main_particle_count,
             tracer_state_slots_visited,
             tracer_state_rows_visited,
             self.tracer_draw_count,
             tracer_output_slots_capacity,
             anchor_echo_state_slots_visited,
-            self.anchor_echo_draw_count,
+            anchor_output_instances_written,
+            anchor_output_instances_written.saturating_mul(PARTICLE_OUTPUT_ROWS_PER_INSTANCE as u32),
+            self.anchor_echo_draw_echo_count,
             self.anchor_echo_draw_count,
             self.draw_count,
             draw_budget_rows,
@@ -1416,6 +1430,11 @@ fn private_particle_anchor_echo_draw_count(max_count: u32, draw_echo_count: u32)
     }
 }
 
+fn auxiliary_compute_workgroup_count(logical_invocations: u32, local_size_x: u32) -> u32 {
+    debug_assert!(local_size_x > 0);
+    logical_invocations.div_ceil(local_size_x)
+}
+
 fn private_particle_anchor_echo_marker_fields(
     max_count: u32,
     draw_echo_count: u32,
@@ -1436,6 +1455,28 @@ fn private_particle_anchor_echo_marker_fields(
         max_count * PARTICLE_ANCHOR_ECHO_STATE_ROWS_PER_SLOT as u32,
         draw_count > 0,
     )
+}
+
+#[cfg(test)]
+mod auxiliary_compute_contract_tests {
+    use super::*;
+
+    #[test]
+    fn anchor_echo_draw_count_preserves_zero_and_small_capacity_abi() {
+        assert_eq!(private_particle_anchor_echo_draw_count(0, 0), 0);
+        assert_eq!(private_particle_anchor_echo_draw_count(1, 0), 1);
+        assert_eq!(private_particle_anchor_echo_draw_count(1, 2), 2);
+        assert_eq!(private_particle_anchor_echo_draw_count(2, 1), 2);
+        assert_eq!(private_particle_anchor_echo_draw_count(2, 2), 3);
+    }
+
+    #[test]
+    fn auxiliary_dispatch_rounds_only_the_final_workgroup() {
+        assert_eq!(auxiliary_compute_workgroup_count(0, 64), 0);
+        assert_eq!(auxiliary_compute_workgroup_count(1, 64), 1);
+        assert_eq!(auxiliary_compute_workgroup_count(2, 64), 1);
+        assert_eq!(auxiliary_compute_workgroup_count(65, 64), 2);
+    }
 }
 
 fn private_particle_driver_bank_rows(
@@ -1494,6 +1535,7 @@ impl Default for GpuPrivateParticleFrameStats {
             anchor_echo_max_count: 0,
             anchor_echo_draw_echo_count: 0,
             anchor_echo_draw_count: 0,
+            auxiliary_compute_logical_invocations: 0,
             draw_count: 0,
             state_ping_pong: false,
             aux0_rows: 0,
@@ -1516,6 +1558,8 @@ pub(crate) struct GpuPrivateParticleRenderer {
     descriptor_sets: [vk::DescriptorSet; PARTICLE_DESCRIPTOR_SET_COUNT],
     pipeline_layout: vk::PipelineLayout,
     compute_pipeline: vk::Pipeline,
+    auxiliary_compute_pipeline: Option<vk::Pipeline>,
+    auxiliary_compute_logical_invocations: u32,
     sort_pipeline: vk::Pipeline,
     graphics_pipeline_additive: vk::Pipeline,
     graphics_pipeline_alpha_over: vk::Pipeline,
@@ -1604,6 +1648,10 @@ impl GpuPrivateParticleRenderer {
             })?;
         let anchor_echo_max_count =
             PRIVATE_PARTICLE_ANCHOR_ECHO_MAX_COUNT.min(u32::MAX as usize) as u32;
+        let auxiliary_compute_logical_invocations =
+            u32::try_from(PRIVATE_PARTICLE_AUXILIARY_COMPUTE_LOGICAL_INVOCATIONS).map_err(
+                |_| "generic auxiliary compute logical invocation count exceeds u32".to_string(),
+            )?;
         let anchor_echo_draw_echo_count = (PRIVATE_PARTICLE_ANCHOR_ECHO_DRAW_ECHO_COUNT
             .min(u32::MAX as usize) as u32)
             .min(anchor_echo_max_count);
@@ -2060,6 +2108,41 @@ impl GpuPrivateParticleRenderer {
                 return Err(error);
             }
         };
+        let auxiliary_compute_pipeline =
+            if PRIVATE_PARTICLE_AUXILIARY_COMPUTE_LOGICAL_INVOCATIONS == 0 {
+                None
+            } else {
+                match create_compute_pipeline(
+                    device,
+                    pipeline_layout,
+                    include_bytes!(concat!(
+                        env!("OUT_DIR"),
+                        "/private_particles_auxiliary_compute.comp.spv"
+                    )),
+                ) {
+                    Ok(pipeline) => Some(pipeline),
+                    Err(error) => {
+                        device.destroy_pipeline(compute_pipeline, None);
+                        device.destroy_pipeline_layout(pipeline_layout, None);
+                        device.destroy_descriptor_pool(descriptor_pool, None);
+                        device.destroy_descriptor_set_layout(descriptor_set_layout, None);
+                        destroy_buffers_mask_sort_and_diagnostics(
+                            device,
+                            &position_buffer,
+                            &normal_buffer,
+                            &particle_output_buffer,
+                            &effect_state_buffer_a,
+                            &effect_state_buffer_b,
+                            &aux0_buffer,
+                            &driver_bank_buffer,
+                            &mask_texture,
+                            &particle_sort_buffer,
+                            &diagnostic_buffers,
+                        );
+                        return Err(error);
+                    }
+                }
+            };
         let sort_pipeline = match create_compute_pipeline(
             device,
             pipeline_layout,
@@ -2067,6 +2150,9 @@ impl GpuPrivateParticleRenderer {
         ) {
             Ok(pipeline) => pipeline,
             Err(error) => {
+                if let Some(pipeline) = auxiliary_compute_pipeline {
+                    device.destroy_pipeline(pipeline, None);
+                }
                 device.destroy_pipeline(compute_pipeline, None);
                 device.destroy_pipeline_layout(pipeline_layout, None);
                 device.destroy_descriptor_pool(descriptor_pool, None);
@@ -2096,6 +2182,9 @@ impl GpuPrivateParticleRenderer {
             Ok(pipeline) => pipeline,
             Err(error) => {
                 device.destroy_pipeline(sort_pipeline, None);
+                if let Some(pipeline) = auxiliary_compute_pipeline {
+                    device.destroy_pipeline(pipeline, None);
+                }
                 device.destroy_pipeline(compute_pipeline, None);
                 device.destroy_pipeline_layout(pipeline_layout, None);
                 device.destroy_descriptor_pool(descriptor_pool, None);
@@ -2126,6 +2215,9 @@ impl GpuPrivateParticleRenderer {
             Err(error) => {
                 device.destroy_pipeline(graphics_pipeline_additive, None);
                 device.destroy_pipeline(sort_pipeline, None);
+                if let Some(pipeline) = auxiliary_compute_pipeline {
+                    device.destroy_pipeline(pipeline, None);
+                }
                 device.destroy_pipeline(compute_pipeline, None);
                 device.destroy_pipeline_layout(pipeline_layout, None);
                 device.destroy_descriptor_pool(descriptor_pool, None);
@@ -2256,6 +2348,8 @@ impl GpuPrivateParticleRenderer {
             descriptor_sets,
             pipeline_layout,
             compute_pipeline,
+            auxiliary_compute_pipeline,
+            auxiliary_compute_logical_invocations,
             sort_pipeline,
             graphics_pipeline_additive,
             graphics_pipeline_alpha_over,
@@ -2325,6 +2419,9 @@ impl GpuPrivateParticleRenderer {
         device.destroy_pipeline(self.graphics_pipeline_alpha_over, None);
         device.destroy_pipeline(self.graphics_pipeline_additive, None);
         device.destroy_pipeline(self.sort_pipeline, None);
+        if let Some(pipeline) = self.auxiliary_compute_pipeline {
+            device.destroy_pipeline(pipeline, None);
+        }
         device.destroy_pipeline(self.compute_pipeline, None);
         device.destroy_pipeline_layout(self.pipeline_layout, None);
         device.destroy_descriptor_pool(self.descriptor_pool, None);
@@ -2683,6 +2780,56 @@ impl GpuPrivateParticleRenderer {
             frame_slot,
             GpuTimestampStage::PrivateParticleComputeDispatch,
         );
+        if self.auxiliary_compute_logical_invocations > 0 {
+            // The primary pass has published the current anchor output before each
+            // auxiliary lane reads it. Each lane owns its matching echo-state
+            // slot, while output-rank lanes exclusively own their matching output
+            // rows, so no workgroup ordering is required inside that dispatch.
+            // The auxiliary pass reads only the anchor rows written by primary.
+            // Its phase-state range and diagnostics 18–19 have disjoint writers.
+            let primary_to_auxiliary = [compute_write_to_compute_read_write_barrier(
+                &self.particle_output_buffer,
+            )];
+            device.cmd_pipeline_barrier(
+                cmd,
+                vk::PipelineStageFlags::COMPUTE_SHADER,
+                vk::PipelineStageFlags::COMPUTE_SHADER,
+                vk::DependencyFlags::empty(),
+                &[],
+                &primary_to_auxiliary,
+                &[],
+            );
+            device.cmd_bind_pipeline(
+                cmd,
+                vk::PipelineBindPoint::COMPUTE,
+                self.auxiliary_compute_pipeline
+                    .expect("active auxiliary dispatch requires pipeline"),
+            );
+            device.cmd_bind_descriptor_sets(
+                cmd,
+                vk::PipelineBindPoint::COMPUTE,
+                self.pipeline_layout,
+                0,
+                &[self.descriptor_sets[descriptor_index]],
+                &[],
+            );
+            device.cmd_push_constants(
+                cmd,
+                self.pipeline_layout,
+                vk::ShaderStageFlags::COMPUTE,
+                0,
+                as_bytes(&push),
+            );
+            device.cmd_dispatch(
+                cmd,
+                auxiliary_compute_workgroup_count(
+                    self.auxiliary_compute_logical_invocations,
+                    PRIVATE_PARTICLE_AUXILIARY_COMPUTE_LOCAL_SIZE_X,
+                ),
+                1,
+                1,
+            );
+        }
         gpu_timestamp_tracker.write_compute_stage_start(
             device,
             cmd,
@@ -2762,6 +2909,7 @@ impl GpuPrivateParticleRenderer {
             anchor_echo_max_count: self.anchor_echo_max_count,
             anchor_echo_draw_echo_count: self.anchor_echo_draw_echo_count,
             anchor_echo_draw_count: self.anchor_echo_draw_count,
+            auxiliary_compute_logical_invocations: self.auxiliary_compute_logical_invocations,
             draw_count,
             state_ping_pong: true,
             aux0_rows: self.aux0_rows,
@@ -4567,6 +4715,17 @@ fn compute_write_to_shader_read_barrier(buffer: &OwnedBuffer) -> vk::BufferMemor
     vk::BufferMemoryBarrier::default()
         .src_access_mask(vk::AccessFlags::SHADER_WRITE)
         .dst_access_mask(vk::AccessFlags::SHADER_READ)
+        .buffer(buffer.buffer)
+        .offset(0)
+        .size(buffer.bytes)
+}
+
+fn compute_write_to_compute_read_write_barrier(
+    buffer: &OwnedBuffer,
+) -> vk::BufferMemoryBarrier<'static> {
+    vk::BufferMemoryBarrier::default()
+        .src_access_mask(vk::AccessFlags::SHADER_WRITE)
+        .dst_access_mask(vk::AccessFlags::SHADER_READ | vk::AccessFlags::SHADER_WRITE)
         .buffer(buffer.buffer)
         .offset(0)
         .size(buffer.bytes)

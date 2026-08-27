@@ -33,6 +33,9 @@ fn main() {
     println!("cargo:rerun-if-changed=shaders/environment_depth_particles.vert.glsl");
     println!("cargo:rerun-if-changed=shaders/environment_depth_particles.frag.glsl");
     println!("cargo:rerun-if-changed=shaders/private_particles_placeholder.comp.glsl");
+    println!(
+        "cargo:rerun-if-changed=shaders/private_particles_auxiliary_compute_placeholder.comp.glsl"
+    );
     println!("cargo:rerun-if-changed=shaders/private_particles_sort.comp.glsl");
     println!("cargo:rerun-if-changed=shaders/private_particles.vert.glsl");
     println!("cargo:rerun-if-changed=shaders/private_particles.frag.glsl");
@@ -49,6 +52,9 @@ fn main() {
     println!("cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RECORDED_HAND_FRAME_LIMIT");
     println!("cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_DATA_DIR");
     println!("cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_SHADER");
+    println!("cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_AUXILIARY_COMPUTE_SHADER");
+    println!("cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_AUXILIARY_COMPUTE_LOGICAL_INVOCATIONS");
+    println!("cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_AUXILIARY_COMPUTE_LOCAL_SIZE_X");
     println!("cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_SHADER_DIR");
     println!("cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_KIND");
     println!(
@@ -499,12 +505,64 @@ fn main() {
                 ),
             ],
         );
+        if let Some(auxiliary_shader) = payload.auxiliary_compute_shader.as_ref() {
+            println!("cargo:rerun-if-changed={}", auxiliary_shader.display());
+            compile_shader_with_defines(
+                &glslc,
+                "compute",
+                auxiliary_shader,
+                &out_dir.join("private_particles_auxiliary_compute.comp.spv"),
+                &[
+                    (
+                        "PRIVATE_PARTICLE_ANCHOR_ECHO_MAX_COUNT",
+                        &anchor_echo_max_count_define,
+                    ),
+                    (
+                        "PRIVATE_PARTICLE_ANCHOR_ECHO_DRAW_ECHO_COUNT",
+                        &anchor_echo_draw_echo_count_define,
+                    ),
+                    (
+                        "PRIVATE_PARTICLE_ANCHOR_ECHO_LIFETIME_SECONDS",
+                        &anchor_echo_lifetime_seconds_define,
+                    ),
+                    (
+                        "PRIVATE_PARTICLE_ANCHOR_ECHO_COPIES_PER_SECOND",
+                        &anchor_echo_copies_per_second_define,
+                    ),
+                    (
+                        "PRIVATE_PARTICLE_ANCHOR_ECHO_RADIUS_M",
+                        &anchor_echo_radius_m_define,
+                    ),
+                    (
+                        "PRIVATE_PARTICLE_ANCHOR_ECHO_ALPHA",
+                        &anchor_echo_alpha_define,
+                    ),
+                    (
+                        "PRIVATE_PARTICLE_ANCHOR_ECHO_ROTATION_RADIANS",
+                        &anchor_echo_rotation_radians_define,
+                    ),
+                ],
+            );
+        } else {
+            compile_shader(
+                &glslc,
+                "compute",
+                Path::new("shaders/private_particles_auxiliary_compute_placeholder.comp.glsl"),
+                &out_dir.join("private_particles_auxiliary_compute.comp.spv"),
+            );
+        }
     } else {
         compile_shader(
             &glslc,
             "compute",
             Path::new("shaders/private_particles_placeholder.comp.glsl"),
             &out_dir.join("private_particles.comp.spv"),
+        );
+        compile_shader(
+            &glslc,
+            "compute",
+            Path::new("shaders/private_particles_auxiliary_compute_placeholder.comp.glsl"),
+            &out_dir.join("private_particles_auxiliary_compute.comp.spv"),
         );
     }
     compile_private_layer_payload(&glslc, private_layer_sources.as_ref(), &out_dir);
@@ -518,6 +576,7 @@ struct PrivateLayerShaderSources {
 struct PrivateParticlePayloadSources {
     data_dir: PathBuf,
     shader: PathBuf,
+    auxiliary_compute_shader: Option<PathBuf>,
     kind: String,
     marker_prefix: String,
     marker_fields: String,
@@ -650,6 +709,11 @@ fn private_particle_payload_sources() -> Option<PrivateParticlePayloadSources> {
             .map(|path| path.join("private_particles.comp.glsl"))
             .filter(|path| path.is_file())
     })?;
+    let auxiliary_compute_shader =
+        env::var("RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_AUXILIARY_COMPUTE_SHADER")
+            .ok()
+            .map(PathBuf::from)
+            .filter(|path| path.is_file());
     let positions = data_dir.join("private_particle_positions.f32.bin");
     let normals = data_dir.join("private_particle_normals.f32.bin");
     if !positions.is_file() || !normals.is_file() {
@@ -693,6 +757,7 @@ fn private_particle_payload_sources() -> Option<PrivateParticlePayloadSources> {
     Some(PrivateParticlePayloadSources {
         data_dir,
         shader,
+        auxiliary_compute_shader,
         kind,
         marker_prefix,
         marker_fields,
@@ -1330,8 +1395,39 @@ fn write_private_particle_payload_config(
         anchor_echo_rotation_radians,
         anchor_echo_parameter_source,
     ) = private_particle_anchor_echo_config(particle_count);
+    let auxiliary_compute_logical_invocations = env::var(
+        "RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_AUXILIARY_COMPUTE_LOGICAL_INVOCATIONS",
+    )
+    .ok()
+    .map(|value| {
+        value
+            .parse::<usize>()
+            .expect("auxiliary logical invocations must be usize")
+    })
+    .unwrap_or(0);
+    let auxiliary_compute_local_size_x =
+        env::var("RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_AUXILIARY_COMPUTE_LOCAL_SIZE_X")
+            .ok()
+            .map(|value| {
+                value
+                    .parse::<u32>()
+                    .expect("auxiliary local size must be u32")
+            })
+            .unwrap_or(64);
+    if auxiliary_compute_local_size_x != 64 {
+        panic!("auxiliary compute local size must match the fixed shader contract: 64");
+    }
+    let auxiliary_shader_present = payload
+        .and_then(|value| value.auxiliary_compute_shader.as_ref())
+        .is_some();
+    if auxiliary_compute_logical_invocations > 0 && !auxiliary_shader_present {
+        panic!("positive auxiliary logical invocations require an auxiliary compute shader");
+    }
+    if auxiliary_shader_present && auxiliary_compute_logical_invocations == 0 {
+        panic!("an auxiliary compute shader requires positive logical invocations");
+    }
     let source = format!(
-        "pub(crate) const PRIVATE_PARTICLE_PAYLOAD_LINKED: bool = {payload_linked};\npub(crate) const PRIVATE_PARTICLE_IMPLEMENTATION_PATH: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_DATA_PATH: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_KIND: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_MARKER_PREFIX: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_MARKER_FIELDS: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_COUNT: usize = {particle_count};\npub(crate) const PRIVATE_PARTICLE_VISUAL_SCALE: f32 = {:.8};\npub(crate) const PRIVATE_PARTICLE_VISUAL_PARAMETER_SOURCE: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_DRIVER_BANK_SLOT_COUNT: usize = 8;\npub(crate) const PRIVATE_PARTICLE_DRIVER_VALUES01: [f32; PRIVATE_PARTICLE_DRIVER_BANK_SLOT_COUNT] = [{:.8}, {:.8}, {:.8}, {:.8}, {:.8}, {:.8}, {:.8}, {:.8}];\npub(crate) const PRIVATE_PARTICLE_DRIVER0_VALUE01: f32 = PRIVATE_PARTICLE_DRIVER_VALUES01[0];\npub(crate) const PRIVATE_PARTICLE_DRIVER1_VALUE01: f32 = PRIVATE_PARTICLE_DRIVER_VALUES01[1];\npub(crate) const PRIVATE_PARTICLE_DRIVER_PARAMETER_SOURCE: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_TRACER_MAX_COUNT: usize = {tracer_max_count};\npub(crate) const PRIVATE_PARTICLE_TRACER_DRAW_SLOTS_PER_OSCILLATOR: usize = {tracer_draw_slots_per_oscillator};\npub(crate) const PRIVATE_PARTICLE_TRACER_LIFETIME_SECONDS: f32 = {:.8};\npub(crate) const PRIVATE_PARTICLE_TRACER_COPIES_PER_SECOND: f32 = {:.8};\npub(crate) const PRIVATE_PARTICLE_TRACER_PARAMETER_SOURCE: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_ANCHOR_ECHO_MAX_COUNT: usize = {anchor_echo_max_count};\npub(crate) const PRIVATE_PARTICLE_ANCHOR_ECHO_DRAW_ECHO_COUNT: usize = {anchor_echo_draw_echo_count};\npub(crate) const PRIVATE_PARTICLE_ANCHOR_ECHO_LIFETIME_SECONDS: f32 = {:.8};\npub(crate) const PRIVATE_PARTICLE_ANCHOR_ECHO_COPIES_PER_SECOND: f32 = {:.8};\npub(crate) const PRIVATE_PARTICLE_ANCHOR_ECHO_RADIUS_M: f32 = {:.8};\npub(crate) const PRIVATE_PARTICLE_ANCHOR_ECHO_ALPHA: f32 = {:.8};\npub(crate) const PRIVATE_PARTICLE_ANCHOR_ECHO_ROTATION_RADIANS: f32 = {:.8};\npub(crate) const PRIVATE_PARTICLE_ANCHOR_ECHO_PARAMETER_SOURCE: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_AUX0_VEC4_ROWS: usize = {aux0_rows};\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_LINKED: bool = {mask_linked};\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_PATH: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_WIDTH: u32 = {mask_width};\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_HEIGHT: u32 = {mask_height};\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_LAYERS: u32 = {mask_layers};\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_BYTES: usize = {mask_bytes};\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_MODE_CODE: u32 = {mask_mode_code};\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_MODE: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_VIEW_TYPE: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_MIP_MODE: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_MIP_LEVELS: u32 = {mask_mip_levels};\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_ATLAS_COLUMNS: u32 = {mask_atlas_columns};\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_ATLAS_ROWS: u32 = {mask_atlas_rows};\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_IMAGE_WIDTH: u32 = {mask_image_width};\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_IMAGE_HEIGHT: u32 = {mask_image_height};\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_IMAGE_LAYERS: u32 = {mask_image_layers};\npub(crate) const PRIVATE_PARTICLE_MASK_DISCARD_MODE_CODE: u32 = {mask_discard_mode_code};\npub(crate) const PRIVATE_PARTICLE_MASK_DISCARD_MODE: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_MASK_ALPHA_CUTOFF: f32 = {:.8};\npub(crate) const PRIVATE_PARTICLE_TRANSPARENCY_OPACITY: f32 = {:.8};\npub(crate) const PRIVATE_PARTICLE_TRANSPARENCY_OUTPUT_ALPHA_SCALE: f32 = {:.8};\npub(crate) const PRIVATE_PARTICLE_TRANSPARENCY_DEPTH_SUPPRESSION_STRENGTH: f32 = {:.8};\npub(crate) const PRIVATE_PARTICLE_TRANSPARENCY_RGB_ALPHA_COUPLING: f32 = {:.8};\npub(crate) const PRIVATE_PARTICLE_TRANSPARENCY_BLEND_MODE: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_TRANSPARENCY_PARAMETER_SOURCE: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_ORDERING_MODE_CODE: u32 = {ordering_mode_code};\npub(crate) const PRIVATE_PARTICLE_ORDERING_MODE: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_ORDERING_PARAMETER_SOURCE: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_COLOR_FACING_ATTENUATION_STRENGTH: f32 = {:.8};\npub(crate) const PRIVATE_PARTICLE_COLOR_PARAMETER_SOURCE: &str = \"{}\";\n",
+        "pub(crate) const PRIVATE_PARTICLE_PAYLOAD_LINKED: bool = {payload_linked};\npub(crate) const PRIVATE_PARTICLE_IMPLEMENTATION_PATH: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_DATA_PATH: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_KIND: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_MARKER_PREFIX: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_MARKER_FIELDS: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_COUNT: usize = {particle_count};\npub(crate) const PRIVATE_PARTICLE_VISUAL_SCALE: f32 = {:.8};\npub(crate) const PRIVATE_PARTICLE_VISUAL_PARAMETER_SOURCE: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_DRIVER_BANK_SLOT_COUNT: usize = 8;\npub(crate) const PRIVATE_PARTICLE_DRIVER_VALUES01: [f32; PRIVATE_PARTICLE_DRIVER_BANK_SLOT_COUNT] = [{:.8}, {:.8}, {:.8}, {:.8}, {:.8}, {:.8}, {:.8}, {:.8}];\npub(crate) const PRIVATE_PARTICLE_DRIVER0_VALUE01: f32 = PRIVATE_PARTICLE_DRIVER_VALUES01[0];\npub(crate) const PRIVATE_PARTICLE_DRIVER1_VALUE01: f32 = PRIVATE_PARTICLE_DRIVER_VALUES01[1];\npub(crate) const PRIVATE_PARTICLE_DRIVER_PARAMETER_SOURCE: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_TRACER_MAX_COUNT: usize = {tracer_max_count};\npub(crate) const PRIVATE_PARTICLE_TRACER_DRAW_SLOTS_PER_OSCILLATOR: usize = {tracer_draw_slots_per_oscillator};\npub(crate) const PRIVATE_PARTICLE_TRACER_LIFETIME_SECONDS: f32 = {:.8};\npub(crate) const PRIVATE_PARTICLE_TRACER_COPIES_PER_SECOND: f32 = {:.8};\npub(crate) const PRIVATE_PARTICLE_TRACER_PARAMETER_SOURCE: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_ANCHOR_ECHO_MAX_COUNT: usize = {anchor_echo_max_count};\npub(crate) const PRIVATE_PARTICLE_ANCHOR_ECHO_DRAW_ECHO_COUNT: usize = {anchor_echo_draw_echo_count};\npub(crate) const PRIVATE_PARTICLE_ANCHOR_ECHO_LIFETIME_SECONDS: f32 = {:.8};\npub(crate) const PRIVATE_PARTICLE_ANCHOR_ECHO_COPIES_PER_SECOND: f32 = {:.8};\npub(crate) const PRIVATE_PARTICLE_ANCHOR_ECHO_RADIUS_M: f32 = {:.8};\npub(crate) const PRIVATE_PARTICLE_ANCHOR_ECHO_ALPHA: f32 = {:.8};\npub(crate) const PRIVATE_PARTICLE_ANCHOR_ECHO_ROTATION_RADIANS: f32 = {:.8};\npub(crate) const PRIVATE_PARTICLE_ANCHOR_ECHO_PARAMETER_SOURCE: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_AUXILIARY_COMPUTE_LOGICAL_INVOCATIONS: usize = {auxiliary_compute_logical_invocations};\npub(crate) const PRIVATE_PARTICLE_AUXILIARY_COMPUTE_LOCAL_SIZE_X: u32 = {auxiliary_compute_local_size_x};\npub(crate) const PRIVATE_PARTICLE_AUX0_VEC4_ROWS: usize = {aux0_rows};\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_LINKED: bool = {mask_linked};\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_PATH: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_WIDTH: u32 = {mask_width};\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_HEIGHT: u32 = {mask_height};\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_LAYERS: u32 = {mask_layers};\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_BYTES: usize = {mask_bytes};\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_MODE_CODE: u32 = {mask_mode_code};\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_MODE: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_VIEW_TYPE: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_MIP_MODE: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_MIP_LEVELS: u32 = {mask_mip_levels};\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_ATLAS_COLUMNS: u32 = {mask_atlas_columns};\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_ATLAS_ROWS: u32 = {mask_atlas_rows};\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_IMAGE_WIDTH: u32 = {mask_image_width};\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_IMAGE_HEIGHT: u32 = {mask_image_height};\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_IMAGE_LAYERS: u32 = {mask_image_layers};\npub(crate) const PRIVATE_PARTICLE_MASK_DISCARD_MODE_CODE: u32 = {mask_discard_mode_code};\npub(crate) const PRIVATE_PARTICLE_MASK_DISCARD_MODE: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_MASK_ALPHA_CUTOFF: f32 = {:.8};\npub(crate) const PRIVATE_PARTICLE_TRANSPARENCY_OPACITY: f32 = {:.8};\npub(crate) const PRIVATE_PARTICLE_TRANSPARENCY_OUTPUT_ALPHA_SCALE: f32 = {:.8};\npub(crate) const PRIVATE_PARTICLE_TRANSPARENCY_DEPTH_SUPPRESSION_STRENGTH: f32 = {:.8};\npub(crate) const PRIVATE_PARTICLE_TRANSPARENCY_RGB_ALPHA_COUPLING: f32 = {:.8};\npub(crate) const PRIVATE_PARTICLE_TRANSPARENCY_BLEND_MODE: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_TRANSPARENCY_PARAMETER_SOURCE: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_ORDERING_MODE_CODE: u32 = {ordering_mode_code};\npub(crate) const PRIVATE_PARTICLE_ORDERING_MODE: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_ORDERING_PARAMETER_SOURCE: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_COLOR_FACING_ATTENUATION_STRENGTH: f32 = {:.8};\npub(crate) const PRIVATE_PARTICLE_COLOR_PARAMETER_SOURCE: &str = \"{}\";\n",
         rust_string_literal(&shader_path),
         rust_string_literal(&data_path),
         rust_string_literal(&kind),
