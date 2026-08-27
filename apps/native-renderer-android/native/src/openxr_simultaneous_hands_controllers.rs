@@ -259,6 +259,10 @@ impl OpenXrSimultaneousHandsControllers {
     pub(crate) fn marker_fields(&self) -> String {
         self.lifecycle.marker_fields()
     }
+
+    pub(crate) fn marker_fields_for_controller_composition(&self) -> String {
+        self.lifecycle.marker_fields_for_controller_composition()
+    }
 }
 
 fn query_system_support(instance: &xr::Instance, system: xr::SystemId) -> Result<bool, String> {

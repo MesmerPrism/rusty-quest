@@ -43,6 +43,9 @@ use crate::{
     live_hand_mesh_capture::LiveHandMeshCaptureRecorder,
     manifold_breath_bridge::ManifoldBreathBridge,
     native_camera::NativeCameraRuntime,
+    native_renderer_diagnostics_contract::{
+        compose_marker_fields, write_renderer_focus_state_file,
+    },
     native_renderer_display_composite_options::{
         NativeDisplayCompositeFeedbackProjection, NativeDisplayCompositeMode,
         NativeDisplayCompositeSettings,
@@ -119,8 +122,6 @@ use replay_visual_stats::{EvidenceUvRect, ReplayVisualStats};
 const PIPELINE_DEPTH: u32 = 2;
 const PRIVATE_PARTICLE_WORLD_ANCHOR_DISTANCE_M: f32 = 1.70;
 const PRIVATE_PARTICLE_WORLD_ANCHOR_SCALE_M: f32 = 0.46;
-const RENDERER_FOCUS_STATUS_FILE: &str = "renderer_focus_state.json";
-
 fn write_renderer_focus_state(
     app: &android_activity::AndroidApp,
     session_state: &str,
@@ -134,20 +135,14 @@ fn write_renderer_focus_state(
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_millis() as u64)
         .unwrap_or(0);
-    let body = format!(
-        concat!(
-            "{{\"schema\":\"rusty.quest.native_renderer.renderer_focus_state.v1\",",
-            "\"activity\":\"android.app.NativeActivity\",",
-            "\"session_state\":\"{}\",\"frame_count\":{},\"submitted\":{},",
-            "\"updated_at_unix_ms\":{}}}"
-        ),
-        session_state, frame_count, submitted, updated_at_unix_ms
+    let _ = write_renderer_focus_state_file(
+        &data_path,
+        std::process::id(),
+        session_state,
+        frame_count,
+        submitted,
+        updated_at_unix_ms,
     );
-    let target = data_path.join(RENDERER_FOCUS_STATUS_FILE);
-    let staging = data_path.join("renderer_focus_state.next.json");
-    if std::fs::write(&staging, body).is_ok() {
-        let _ = std::fs::rename(staging, target);
-    }
 }
 const PRIVATE_PARTICLE_WORLD_ANCHOR_SCALE_MIN_M: f32 = 0.05;
 const PRIVATE_PARTICLE_WORLD_ANCHOR_SCALE_MAX_M: f32 = 4.0;
@@ -2966,14 +2961,13 @@ unsafe fn run_projection_frames(
             controller_action_ready: controller_readiness.action_ready,
         });
         if frame_count == 0 || frame_count % 120 == 0 {
+            let prefix = format!("status=readiness frame={frame_count}");
+            let controller_fields = controller_readiness.marker_fields();
+            let lifecycle_fields =
+                simultaneous_hands_controllers.marker_fields_for_controller_composition();
             crate::marker(
                 "simultaneous-hands-controllers",
-                format!(
-                    "status=readiness frame={} {} {}",
-                    frame_count,
-                    controller_readiness.marker_fields(),
-                    simultaneous_hands_controllers.marker_fields(),
-                ),
+                compose_marker_fields(&[&prefix, &controller_fields, &lifecycle_fields]),
             );
         }
         frame_timings.live_hand_ms = elapsed_ms(stage_started);

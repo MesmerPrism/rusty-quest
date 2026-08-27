@@ -454,6 +454,17 @@ impl SimultaneousHandsControllersLifecycle {
             self.combined_ready(),
         )
     }
+
+    pub(crate) fn marker_fields_for_controller_composition(&self) -> String {
+        self.marker_fields()
+            .split_whitespace()
+            .filter(|field| {
+                !field.starts_with("controllerActionSetReady=")
+                    && !field.starts_with("controllerActionReady=")
+            })
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
 }
 
 fn optional_u64(value: Option<u64>) -> String {
@@ -491,6 +502,33 @@ mod tests {
             controller_profile_ready: true,
             controller_action_ready: true,
         }
+    }
+
+    #[test]
+    fn controller_composition_preserves_standalone_contract_without_duplicate_action_keys() {
+        let controller_fields =
+            crate::native_renderer_diagnostics_contract::controller_action_readiness_marker_fields(
+                true,
+                true,
+                true,
+                "/interaction_profiles/oculus/touch_controller",
+            );
+        let mut lifecycle = platform_ready();
+        lifecycle.observe_readiness(full_readiness());
+        let standalone = lifecycle.marker_fields();
+        assert!(standalone.contains("controllerActionSetReady=true"));
+        assert!(standalone.contains("controllerActionReady=true"));
+
+        let composed = crate::native_renderer_diagnostics_contract::compose_marker_fields(&[
+            "status=readiness frame=7",
+            &controller_fields,
+            &lifecycle.marker_fields_for_controller_composition(),
+        ]);
+        assert!(crate::native_renderer_diagnostics_contract::marker_keys_are_unique(&composed));
+        assert_eq!(composed.matches("controllerActionSetReady=").count(), 1);
+        assert_eq!(composed.matches("controllerActionReady=").count(), 1);
+        assert!(composed.contains("controllerProfileReady=true"));
+        assert!(composed.contains("controllersReady=true"));
     }
 
     #[test]

@@ -126,13 +126,11 @@ pub(crate) struct ControllerActionReadiness {
 
 impl ControllerActionReadiness {
     pub(crate) fn marker_fields(&self) -> String {
-        format!(
-            "controllerActionSetReady={} controllerInteractionProfileReady={} controllerActionReady={} controllerInteractionProfile={} controllerPhysicalInputObserved={} handsCannotSubstituteController=true",
+        crate::native_renderer_diagnostics_contract::controller_action_readiness_marker_fields(
             self.action_set_ready,
             self.interaction_profile_ready,
             self.action_ready,
-            crate::sanitize(&self.interaction_profile),
-            self.action_ready,
+            &self.interaction_profile,
         )
     }
 }

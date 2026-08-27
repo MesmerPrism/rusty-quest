@@ -369,18 +369,19 @@ pub(super) fn write_projection_scorecard(
     );
     crate::marker(
         "guide-blur-graph",
-        format!(
-            "status=frame frame={} observedOpenXrFps={:.1} recordCpuMs={:.3} submitCpuMs={:.3} guideGraphCpuMs={:.3} guideGraphGpuMs={:.3} guideTarget=metadata-target-screen-uv guideProjectionCoverage={} {} {}",
+        crate::native_renderer_diagnostics_contract::compose_marker_fields(&[
+            &format!(
+            "status=frame frame={} observedOpenXrFps={:.1} recordCpuMs={:.3} submitCpuMs={:.3} guideGraphCpuMs={:.3} guideGraphGpuMs={:.3} guideTarget=metadata-target-screen-uv",
             frame_count,
             observed_openxr_fps,
             record_ms,
             submit_ms,
             frame_timings.guide_graph_ms,
             gpu_stage_timings.stage_ms(GpuTimestampStage::GuideGraph),
-            projection_settings.guide_projection_coverage(),
-            projection_settings.marker_fields(),
-            guide_blur_stats.marker_fields()
-        ),
+            ),
+            &projection_settings.marker_fields(),
+            &guide_blur_stats.marker_fields(),
+        ]),
     );
     crate::marker(
         "hand-mesh-visual",
@@ -448,6 +449,26 @@ pub(super) fn write_projection_scorecard(
             gpu_sdf_stats.derived_buffers_resident,
         ),
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn guide_scorecard_composes_real_producer_fields_without_duplicate_keys() {
+        let prefix =
+            "status=frame frame=7 observedOpenXrFps=90.0 guideTarget=metadata-target-screen-uv";
+        let projection = NativeProjectionBorderStretchSettings::default().marker_fields();
+        let guide = GuideBlurGraphFrameStats::default().marker_fields();
+        let fields = crate::native_renderer_diagnostics_contract::compose_marker_fields(&[
+            prefix,
+            &projection,
+            &guide,
+        ]);
+        assert!(crate::native_renderer_diagnostics_contract::marker_keys_are_unique(&fields));
+        assert_eq!(fields.matches("guideProjectionCoverage=").count(), 1);
+    }
 }
 
 fn optional_i32_marker(value: Option<i32>) -> String {
