@@ -96,7 +96,7 @@ mod tests {
         assert!(!default.is_applied());
         assert!(default
             .marker_fields()
-            .contains("activationRejectReason=lock-feature-not-selected"));
+            .contains("activationRejectReason=invalid-lock"));
 
         let mut stale = accepted_input();
         stale.lock_sha256 = "0".repeat(64);
