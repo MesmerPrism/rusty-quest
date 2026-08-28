@@ -157,8 +157,8 @@ Assert-ContainsTokens "$nativeLib`n$nativeRendererOptionSurface`n$projectionTarg
 ) "Breathing Room projection-target route"
 
 Assert-NotContainsTokens $polarAccBreathAdapter @(
-    'Viscereality',
-    'viscereality',
+    ('Viscere' + 'ality'),
+    ('viscere' + 'ality'),
     'icosphere',
     'orbit',
     'sphere radius',

@@ -192,7 +192,7 @@ const PRIVATE_PARTICLE_DRIVER_CONTROL_MANUAL: u32 = 1;
 const PRIVATE_PARTICLE_DRIVER_CONTROL_INPUT_SLOT: u32 = 2;
 const PRIVATE_PARTICLE_DRIVER_CONTROL_DIRECT: u32 = 3;
 const PRIVATE_PARTICLE_CURVE_LINEAR: u32 = 0;
-const PRIVATE_PARTICLE_CURVE_AKD_HUMP: u32 = 1;
+const PRIVATE_PARTICLE_CURVE_HUMP: u32 = 1;
 const PRIVATE_PARTICLE_CURVE_SMOOTHSTEP: u32 = 2;
 const PRIVATE_PARTICLE_CURVE_REVERSE_LINEAR: u32 = 3;
 const PRIVATE_PARTICLE_CURVE_HOLD_LOW: u32 = 4;
@@ -2122,7 +2122,7 @@ fn private_particle_curve_code(control: &Value) -> Result<u32, String> {
         .unwrap_or_else(|| "linear".to_string());
     match curve.as_str() {
         "linear" => Ok(PRIVATE_PARTICLE_CURVE_LINEAR),
-        "akd hump" | "akd-hump" | "hump" => Ok(PRIVATE_PARTICLE_CURVE_AKD_HUMP),
+        "hump" => Ok(PRIVATE_PARTICLE_CURVE_HUMP),
         "smoothstep" => Ok(PRIVATE_PARTICLE_CURVE_SMOOTHSTEP),
         "reverse linear" | "reverse-linear" => Ok(PRIVATE_PARTICLE_CURVE_REVERSE_LINEAR),
         "hold low" | "hold-low" => Ok(PRIVATE_PARTICLE_CURVE_HOLD_LOW),
@@ -2181,7 +2181,7 @@ fn private_particle_driver_control_mode_label(mode: u32) -> &'static str {
 
 fn private_particle_curve_label(curve_code: u32) -> &'static str {
     match curve_code {
-        PRIVATE_PARTICLE_CURVE_AKD_HUMP => "akd-hump",
+        PRIVATE_PARTICLE_CURVE_HUMP => "hump",
         PRIVATE_PARTICLE_CURVE_SMOOTHSTEP => "smoothstep",
         PRIVATE_PARTICLE_CURVE_REVERSE_LINEAR => "reverse-linear",
         PRIVATE_PARTICLE_CURVE_HOLD_LOW => "hold-low",
@@ -3594,7 +3594,7 @@ mod tests {
                         "mode": "manual",
                         "mode_code": 1,
                         "source_slot": 2,
-                        "curve": "akd-hump",
+                        "curve": "hump",
                         "curve_code": 1,
                         "range_min": 0.04,
                         "range_max": 0.115,
@@ -3652,7 +3652,7 @@ mod tests {
         );
         assert_eq!(
             candidate.driver_control_curve_codes[2],
-            PRIVATE_PARTICLE_CURVE_AKD_HUMP
+            PRIVATE_PARTICLE_CURVE_HUMP
         );
         assert_eq!(
             candidate.driver_control_curve_codes[3],

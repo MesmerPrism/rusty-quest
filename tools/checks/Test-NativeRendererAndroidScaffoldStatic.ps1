@@ -258,7 +258,12 @@ Assert-ContainsTokens $lslRustyOutlet @(
 ) "Rusty-LSL outlet adapter"
 
 Assert-ContainsTokens $lslPanelConfigStore @(
-    'viscereality_lsl_panel',
+    'rustyquest_lsl_panel',
+    'LEGACY_PREFERENCES',
+    'readStoredConfig',
+    'preferences\.contains\(CONFIG_KEY\)',
+    'legacy\.edit\(\)\.remove\(CONFIG_KEY\)\.commit\(\)',
+    'if \(!legacyReset\)',
     'accepted_config_v1',
     'SharedPreferences',
     'readFromNative',
@@ -267,6 +272,18 @@ Assert-ContainsTokens $lslPanelConfigStore @(
     'inlet_backend',
     'interface_ipv4'
 ) "panel-controlled LSL config persistence"
+
+$lslResetStart = $lslPanelConfigStore.IndexOf("static boolean reset(Context context)")
+$lslResetEnd = $lslPanelConfigStore.IndexOf("static JSONObject defaultConfig()", $lslResetStart)
+if ($lslResetStart -lt 0 -or $lslResetEnd -le $lslResetStart) {
+    throw "Could not isolate the panel-controlled LSL reset method."
+}
+$lslResetMethod = $lslPanelConfigStore.Substring($lslResetStart, $lslResetEnd - $lslResetStart)
+$legacyResetIndex = $lslResetMethod.IndexOf("getSharedPreferences(LEGACY_PREFERENCES")
+$currentResetIndex = $lslResetMethod.IndexOf("getSharedPreferences(PREFERENCES")
+if ($legacyResetIndex -lt 0 -or $currentResetIndex -le $legacyResetIndex) {
+    throw "LSL reset must remove the legacy key before deleting the authoritative current key."
+}
 
 Assert-ContainsTokens $buildScriptText @(
     'RUSTY_QUEST_NATIVE_RENDERER_RUSTY_LSL_ANDROID',

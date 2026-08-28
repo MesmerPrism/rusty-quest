@@ -104,11 +104,11 @@ function Invoke-DamagedFeatureCase {
 }
 
 try {
-    $viscereality = Invoke-Resolution `
-        -Name "viscereality" `
+    $breathComposition = Invoke-Resolution `
+        -Name "breath-composition" `
         -AppSpec (Join-Path $appRoot "native-breath-four-way-conformance.app.json")
     Assert-PanelClosure `
-        -Resolution $viscereality `
+        -Resolution $breathComposition `
         -ExpectedModule "breath-composition-controls" `
         -RequiredSourceNeedles @("BreathCompositionPanelModule.java", "PolarSensorPanel.java", "LslPanelConfigStore.java") `
         -ForbiddenSourceNeedles @("StimulusVolumePanelModule.java", "DriverProfileSession.java", "DriverProfilePanelModule.java", "PrivateParticlePanelModule.java", "PolarPanelModule.java")
@@ -236,7 +236,7 @@ try {
     }
 
     # Every legacy/foreign runtime mode remains a renderer hint and cannot widen the baked
-    # Viscereality Java closure or activate another entry module.
+    # Breath-composition Java closure or activate another entry module.
     foreach ($staleMode in @(
         "stimulus-volume",
         "private-layer-selector",
@@ -247,7 +247,7 @@ try {
         "driver-profile-session",
         "polar-sensor"
     )) {
-        $staleAppPath = Join-Path $runRoot ("viscereality-stale-" + $staleMode + ".app.json")
+        $staleAppPath = Join-Path $runRoot ("breath-composition-stale-" + $staleMode + ".app.json")
         $staleApp = Read-Json (Join-Path $appRoot "native-breath-four-way-conformance.app.json")
         $staleApp.runtime_profile | Add-Member -NotePropertyName allow_feature_overrides -NotePropertyValue "true"
         $staleApp.runtime_profile.set | Add-Member `
@@ -255,7 +255,7 @@ try {
             -NotePropertyValue $staleMode
         $staleApp.settings_assertions.required_values."native_renderer.control_panel.mode" = $staleMode
         Write-Json $staleApp $staleAppPath
-        $staleResolution = Invoke-Resolution -Name ("viscereality-stale-" + $staleMode) -AppSpec $staleAppPath
+        $staleResolution = Invoke-Resolution -Name ("breath-composition-stale-" + $staleMode) -AppSpec $staleAppPath
         Assert-PanelClosure `
             -Resolution $staleResolution `
             -ExpectedModule "breath-composition-controls" `
@@ -264,7 +264,7 @@ try {
     }
 
     foreach ($invalidMode in @("", "malformed-panel-id")) {
-        $invalidAppPath = Join-Path $runRoot ("viscereality-invalid-" + [guid]::NewGuid().ToString("N") + ".app.json")
+        $invalidAppPath = Join-Path $runRoot ("breath-composition-invalid-" + [guid]::NewGuid().ToString("N") + ".app.json")
         $invalidApp = Read-Json (Join-Path $appRoot "native-breath-four-way-conformance.app.json")
         $invalidApp.runtime_profile | Add-Member -NotePropertyName allow_feature_overrides -NotePropertyValue "true"
         $invalidApp.runtime_profile.set | Add-Member `
@@ -293,12 +293,12 @@ try {
         }
     }
 
-    $viscerealitySource = Get-Content -LiteralPath (Join-Path $repoRootPath "apps\native-renderer-android\panel-modules\breath-composition\src\main\java\io\github\mesmerprism\rustyquest\native_renderer\BreathCompositionPanelModule.java") -Raw
-    if ($viscerealitySource -match 'readSystemProperty\(PROP_CONTROL_PANEL_MODE\)' -or
-        $viscerealitySource -match 'private-layer-selector' -or
-        $viscerealitySource -match 'nativeSubmitLivePrivateLayerSelection' -or
-        $viscerealitySource -notlike '*return "breath-mapping";*') {
-        throw "Viscereality panel still contains an ambient/denied entry-mode activation path."
+    $breathCompositionSource = Get-Content -LiteralPath (Join-Path $repoRootPath "apps\native-renderer-android\panel-modules\breath-composition\src\main\java\io\github\mesmerprism\rustyquest\native_renderer\BreathCompositionPanelModule.java") -Raw
+    if ($breathCompositionSource -match 'readSystemProperty\(PROP_CONTROL_PANEL_MODE\)' -or
+        $breathCompositionSource -match 'private-layer-selector' -or
+        $breathCompositionSource -match 'nativeSubmitLivePrivateLayerSelection' -or
+        $breathCompositionSource -notlike '*return "breath-mapping";*') {
+        throw "Breath-composition panel still contains an ambient/denied entry-mode activation path."
     }
     foreach ($foreignPageNeedle in @(
         "buildDriverProfileMeshPanelView",
@@ -307,8 +307,8 @@ try {
         "buildPolarSensorPanelView",
         "DriverProfileSession"
     )) {
-        if ($viscerealitySource -like "*$foreignPageNeedle*") {
-            throw "Viscereality source physically retains a foreign product page: $foreignPageNeedle"
+        if ($breathCompositionSource -like "*$foreignPageNeedle*") {
+            throw "Breath-composition source physically retains a foreign product page: $foreignPageNeedle"
         }
     }
     foreach ($lifecycleNeedle in @("onNewIntent", "onActivityResult", "onRequestPermissionsResult", "onConfigurationChanged")) {
@@ -317,8 +317,8 @@ try {
         }
     }
     foreach ($handoffNeedle in @("Resume VR", "closePanelAndReturnToImmersive", "focused_submitted_frame_timeout_panel_retained")) {
-        if ($viscerealitySource -notlike "*$handoffNeedle*") {
-            throw "Viscereality lifecycle handoff behavior is missing: $handoffNeedle"
+        if ($breathCompositionSource -notlike "*$handoffNeedle*") {
+            throw "Breath-composition lifecycle handoff behavior is missing: $handoffNeedle"
         }
     }
     foreach ($readbackNeedle in @(
@@ -328,8 +328,8 @@ try {
         "privateParticleStatusIsEffective",
         "Request rejected by consuming runtime (not effective)"
     )) {
-        if ($viscerealitySource -notlike "*$readbackNeedle*") {
-            throw "Viscereality effective readback is missing owner-revision fencing: $readbackNeedle"
+        if ($breathCompositionSource -notlike "*$readbackNeedle*") {
+            throw "Breath-composition effective readback is missing owner-revision fencing: $readbackNeedle"
         }
     }
     $privateController = Get-Content -LiteralPath (Join-Path $repoRootPath "apps\native-renderer-android\panel-modules\private-particle\src\main\java\io\github\mesmerprism\rustyquest\native_renderer\PrivateParticlePanelController.java") -Raw
@@ -380,7 +380,7 @@ try {
     }
 
     Write-Output "native renderer panel composition static checks passed"
-    Write-Output "viscereality panel sources: $(@($viscereality.lock.panel_source_closure.source_files).Count)"
+    Write-Output "breath-composition panel sources: $(@($breathComposition.lock.panel_source_closure.source_files).Count)"
     Write-Output "strobe panel sources: $(@($strobe.lock.panel_source_closure.source_files).Count)"
     Write-Output "private-particle panel sources: $(@($privateParticle.lock.panel_source_closure.source_files).Count)"
     Write-Output "driver-profile panel sources: $(@($driver.lock.panel_source_closure.source_files).Count)"

@@ -22,7 +22,7 @@ pub(crate) enum PrivateParticleMaterialPreset {
     PremultipliedAlphaOver,
     PremultipliedAlphaOverDepthFade,
     PremultipliedAlphaOverDepthFacingFade,
-    AkdMaterialEmulation,
+    ReferenceMaterialEmulation,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -43,7 +43,7 @@ impl PrivateParticleMaterialPreset {
             Self::PremultipliedAlphaOver => "over",
             Self::PremultipliedAlphaOverDepthFade => "over-d",
             Self::PremultipliedAlphaOverDepthFacingFade => "over-df",
-            Self::AkdMaterialEmulation => "akd",
+            Self::ReferenceMaterialEmulation => "ref",
         }
     }
 
@@ -53,7 +53,7 @@ impl PrivateParticleMaterialPreset {
             Self::PremultipliedAlphaOver => "premultiplied-alpha-over",
             Self::PremultipliedAlphaOverDepthFade => "premultiplied-alpha-over-depth",
             Self::PremultipliedAlphaOverDepthFacingFade => "premultiplied-alpha-over-depth-facing",
-            Self::AkdMaterialEmulation => "akd-material-emulation",
+            Self::ReferenceMaterialEmulation => "reference-material-emulation",
         }
     }
 
@@ -96,7 +96,7 @@ impl PrivateParticleMaterialPreset {
                     facing_attenuation_strength: 0.20,
                 }
             }
-            Self::AkdMaterialEmulation => PrivateParticleMaterialPresetParameters {
+            Self::ReferenceMaterialEmulation => PrivateParticleMaterialPresetParameters {
                 uses_premultiplied_alpha_over: true,
                 opacity: 0.36,
                 output_alpha_scale: 0.45,
@@ -113,7 +113,7 @@ impl PrivateParticleMaterialPreset {
             "over" => Some(Self::PremultipliedAlphaOver),
             "over-d" => Some(Self::PremultipliedAlphaOverDepthFade),
             "over-df" => Some(Self::PremultipliedAlphaOverDepthFacingFade),
-            "akd" => Some(Self::AkdMaterialEmulation),
+            "ref" => Some(Self::ReferenceMaterialEmulation),
             _ => None,
         }
     }
@@ -130,7 +130,7 @@ impl PrivateParticleMaterialPreset {
             "premultiplied-alpha-over-depth-facing" => {
                 Some(Self::PremultipliedAlphaOverDepthFacingFade)
             }
-            "akd-material-emulation" => Some(Self::AkdMaterialEmulation),
+            "reference-material-emulation" => Some(Self::ReferenceMaterialEmulation),
             _ => None,
         }
     }
@@ -458,7 +458,7 @@ mod tests {
             payload(SESSION_A, 2, REQUEST_B, "unknown"),
             payload(SESSION_A, 0, REQUEST_B, "add"),
             payload(SESSION_B, 2, REQUEST_B, "add"),
-            payload(SESSION_A, 1, REQUEST_B, "akd"),
+            payload(SESSION_A, 1, REQUEST_B, "ref"),
         ] {
             assert!(matches!(
                 state.observe_property(Some(invalid)),
@@ -476,7 +476,7 @@ mod tests {
         let mut state = PrivateParticleMaterialRequestState::default();
         state.begin_session_with_id(SESSION_A).unwrap();
         assert!(matches!(
-            state.observe_property(Some(payload(SESSION_A, 9, REQUEST_A, "akd"))),
+            state.observe_property(Some(payload(SESSION_A, 9, REQUEST_A, "ref"))),
             PrivateParticleMaterialRequestObservation::Accepted(_)
         ));
         state.begin_session_with_id(SESSION_B).unwrap();
@@ -510,7 +510,7 @@ mod tests {
             PrivateParticleMaterialPreset::PremultipliedAlphaOver,
             PrivateParticleMaterialPreset::PremultipliedAlphaOverDepthFade,
             PrivateParticleMaterialPreset::PremultipliedAlphaOverDepthFacingFade,
-            PrivateParticleMaterialPreset::AkdMaterialEmulation,
+            PrivateParticleMaterialPreset::ReferenceMaterialEmulation,
         ] {
             let envelope = payload(SESSION_A, 1, REQUEST_A, preset.wire_code());
             assert!(envelope.len() <= 91, "{envelope}");
@@ -542,7 +542,7 @@ mod tests {
             }
         );
         assert_eq!(
-            PrivateParticleMaterialPreset::AkdMaterialEmulation.parameters(),
+            PrivateParticleMaterialPreset::ReferenceMaterialEmulation.parameters(),
             PrivateParticleMaterialPresetParameters {
                 uses_premultiplied_alpha_over: true,
                 opacity: 0.36,

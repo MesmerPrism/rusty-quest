@@ -31,6 +31,7 @@ $pure = Read-RequiredText "apps\native-renderer-android\native\src\simultaneous_
 $platform = Read-RequiredText "apps\native-renderer-android\native\src\openxr_simultaneous_hands_controllers.rs"
 $xrVulkan = Read-RequiredText "apps\native-renderer-android\native\src\xr_vulkan.rs"
 $actions = Read-RequiredText "apps\native-renderer-android\native\src\openxr_stimulus_actions.rs"
+$diagnosticsContract = Read-RequiredText "apps\native-renderer-android\native\src\native_renderer_diagnostics_contract.rs"
 $resolver = Read-RequiredText "tools\Resolve-NativeAppBuild.ps1"
 $builder = Read-RequiredText "tools\Build-NativeRendererAndroid.ps1"
 $buildRs = Read-RequiredText "apps\native-renderer-android\native\build.rs"
@@ -75,7 +76,7 @@ Assert-Tokens $xrVulkan @(
     "controller_action_set_ready: controller_readiness.action_set_ready"
 ) "existing native-renderer lifecycle integration"
 
-Assert-Tokens $actions @(
+Assert-Tokens ($actions + [Environment]::NewLine + $diagnosticsContract) @(
     "ControllerActionReadiness",
     "current_interaction_profile",
     "INTERACTION_PROFILES",

@@ -72,3 +72,50 @@ fn contract_and_fixtures_contain_no_downstream_material() {
         }
     }
 }
+
+#[test]
+fn reusable_native_runtime_and_panel_defaults_contain_no_downstream_branding() {
+    let manifest_root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let repository_root = manifest_root
+        .parent()
+        .and_then(Path::parent)
+        .expect("repository root");
+    let files = [
+        [
+            "apps/native-renderer-android/native/",
+            &["sha", "ders"].concat(),
+            "/private_particles.frag.glsl",
+        ]
+        .concat(),
+        "apps/native-renderer-android/native/src/gpu_private_particles.rs".to_owned(),
+        "apps/native-renderer-android/native/src/lsl_panel_runtime.rs".to_owned(),
+        "apps/native-renderer-android/native/src/lsl_rusty_outlet.rs".to_owned(),
+        "apps/native-renderer-android/native/src/native_renderer_private_particle_material_request.rs"
+            .to_owned(),
+        "apps/native-renderer-android/native/src/native_renderer_stimulus_panel.rs".to_owned(),
+        "apps/native-renderer-android/panel-modules/breath-composition/src/main/java/io/github/mesmerprism/rustyquest/native_renderer/BreathCompositionPanelModule.java".to_owned(),
+        "apps/native-renderer-android/panel-modules/lsl/src/main/java/io/github/mesmerprism/rustyquest/native_renderer/LslPanelConfigStore.java".to_owned(),
+        "tools/private-particle-panel-preview/index.html".to_owned(),
+        "tools/private-particle-panel-preview/panel-preview.js".to_owned(),
+    ];
+    let forbidden = [
+        ["viscere", "ality"].concat(),
+        ["astral", "karatedojo"].concat(),
+        ["a", "kd"].concat(),
+    ];
+
+    for relative in files {
+        let path = repository_root.join(relative);
+        let normalized = fs::read_to_string(&path)
+            .unwrap_or_else(|error| panic!("read {}: {error}", path.display()))
+            .to_lowercase();
+        for term in &forbidden {
+            assert!(
+                !normalized.contains(term),
+                "forbidden downstream branding '{}' in {}",
+                term,
+                path.display()
+            );
+        }
+    }
+}

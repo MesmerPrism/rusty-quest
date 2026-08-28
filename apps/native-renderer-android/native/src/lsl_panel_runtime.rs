@@ -66,7 +66,7 @@ impl Default for LslPanelConfig {
             outlet_backend: LslBackend::LibLsl,
             inlet_backend: LslBackend::LibLsl,
             rusty_lsl_interface_ipv4: Ipv4Addr::UNSPECIFIED,
-            stream_prefix: "viscereality".to_owned(),
+            stream_prefix: "rustyquest".to_owned(),
             participant_id: "participant".to_owned(),
             session_id: "session".to_owned(),
             polar_hr: true,
@@ -76,7 +76,7 @@ impl Default for LslPanelConfig {
             controller_right_grip: true,
             headset_views: true,
             inlet_resolve_by: LslInletResolveBy::SourceId,
-            inlet_resolve_value: "viscereality.input.driver1".to_owned(),
+            inlet_resolve_value: "rustyquest.input.driver1".to_owned(),
             inlet_driver_slot: 1,
             inlet_sample_hold_seconds: 1.0,
             inlet_recover: true,
@@ -1389,7 +1389,7 @@ fn stream_stem(config: &LslPanelConfig) -> String {
 
 fn source_stem(config: &LslPanelConfig) -> String {
     format!(
-        "io.github.mesmerprism.viscereality:{}:{}",
+        "io.github.mesmerprism.rustyquest:{}:{}",
         token(&config.participant_id),
         token(&config.session_id)
     )
@@ -1615,7 +1615,7 @@ mod tests {
             "enabled": true,
             "outlet_enabled": true,
             "inlet_enabled": true,
-            "stream_prefix": "viscereality",
+            "stream_prefix": "rustyquest",
             "participant_id": "P001",
             "session_id": "S001",
             "outlets": {

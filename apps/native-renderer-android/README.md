@@ -124,13 +124,13 @@ the selected module id and set `runtime_widening_allowed=false`; missing,
 unknown, duplicate, denied, or source-hash-mismatched compositions fail the
 resolver/build instead of falling back to another product.
 
-Selectable product entries are independently owned by Viscereality breath
-composition, StrobeSim stimulus volume, generic private-particle controls,
-driver-profile controls, and Polar-only controls. Viscereality declares Polar,
-LSL, driver-session, and private-particle request helpers as explicit support
-dependencies, but runtime profile mode strings cannot replace its baked entry
-module. Each panel remains a low-rate request/readback adapter: Rust owns
-renderer-effective state, acquisition, transport, and frame-boundary apply.
+Selectable product entries are independently owned by breath-composition,
+stimulus-volume, generic private-particle, driver-profile, and Polar-only panel
+modules. The breath-composition module declares Polar, LSL, driver-session, and
+private-particle request helpers as explicit support dependencies, but runtime
+profile mode strings cannot replace its baked entry module. Each panel remains
+a low-rate request/readback adapter: Rust owns renderer-effective state,
+acquisition, transport, and frame-boundary apply.
 
 The stimulus-volume module is the first low-overhead in-headset setup surface
 for the StrobeSim route. It writes a candidate profile:

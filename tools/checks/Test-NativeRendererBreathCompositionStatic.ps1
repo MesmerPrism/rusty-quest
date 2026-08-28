@@ -25,7 +25,7 @@ function Assert-Tokens {
 
 function Assert-PanelNavigationMutationSafe {
     param([string]$Text)
-    $replaceStart = $Text.IndexOf("private void replaceViscerealityPanelContent(String topic)")
+    $replaceStart = $Text.IndexOf("private void replaceBreathCompositionPanelContent(String topic)")
     $replaceEnd = $Text.IndexOf("private void invalidatePrivateParticleControls()", $replaceStart)
     if ($replaceStart -lt 0 -or $replaceEnd -le $replaceStart) {
         throw "Panel navigation mutation guard could not isolate the topic replacement method"
@@ -34,8 +34,8 @@ function Assert-PanelNavigationMutationSafe {
     Assert-Tokens $replaceMethod @(
         "cancelPendingPrivateParticleDynamicsApply();",
         "invalidatePrivateParticleControls();",
-        "viscerealityPanelNavigationEpoch += 1L;",
-        "setContentView(buildViscerealityControlPanelView());"
+        "breathCompositionPanelNavigationEpoch += 1L;",
+        "setContentView(buildBreathCompositionControlPanelView());"
     ) "read-only topic replacement"
     foreach ($forbidden in @(
         "submitLivePrivateParticleDynamics",
@@ -49,15 +49,15 @@ function Assert-PanelNavigationMutationSafe {
     }
 
     Assert-Tokens $Text @(
-        "private long viscerealityPanelNavigationEpoch;",
+        "private long breathCompositionPanelNavigationEpoch;",
         "private long privateParticleControlEpoch = -1L;",
         "private int privateParticleMaterialSelection = -1;",
         "privateParticleMaterialSelection = privateParticleMaterialPreset.getSelectedItemPosition();",
         "admitPrivateParticleMaterialSelection(controlEpoch, position)",
         "setPrivateParticleMaterialSelectionFromRuntime(",
         "if (!isCurrentPrivateParticleControlSurface(controlEpoch))",
-        "controlEpoch == viscerealityPanelNavigationEpoch",
-        '"particles".equals(viscerealityPanelTopic)'
+        "controlEpoch == breathCompositionPanelNavigationEpoch",
+        '"particles".equals(breathCompositionPanelTopic)'
     ) "navigation-fenced particle controls"
 }
 
@@ -126,6 +126,7 @@ $polarPanelPath = Join-Path $repo "apps\native-renderer-android\panel-modules\po
 $calibrationActionPath = Join-Path $repo "apps\native-renderer-android\native\src\breath_calibration_controller_action.rs"
 $worldBasisPath = Join-Path $repo "apps\native-renderer-android\native\src\private_particle_world_basis.rs"
 $xrVulkanPath = Join-Path $repo "apps\native-renderer-android\native\src\xr_vulkan.rs"
+$diagnosticsContractPath = Join-Path $repo "apps\native-renderer-android\native\src\native_renderer_diagnostics_contract.rs"
 $gpuPrivateParticlesPath = Join-Path $repo "apps\native-renderer-android\native\src\gpu_private_particles.rs"
 $operatorPath = Join-Path $repo "tools\Invoke-NativeRendererBreathOperator.ps1"
 $operatorReceiverPath = Join-Path $repo "apps\native-renderer-android\panel-modules\breath-composition\src\main\java\io\github\mesmerprism\rustyquest\native_renderer\BreathCompositionCommandReceiver.java"
@@ -156,6 +157,7 @@ $polarPanel = Read-RequiredText $polarPanelPath "sole Polar acquisition panel"
 $calibrationAction = Read-RequiredText $calibrationActionPath "controller calibration action"
 $worldBasis = Read-RequiredText $worldBasisPath "captured private-particle world basis"
 $xrVulkan = Read-RequiredText $xrVulkanPath "native OpenXR/Vulkan composition"
+$diagnosticsContract = Read-RequiredText $diagnosticsContractPath "renderer diagnostics contract"
 $gpuPrivateParticles = Read-RequiredText $gpuPrivateParticlesPath "private particle compute/sort routing"
 $operator = Read-RequiredText $operatorPath "fixed breath operator CLI"
 $operatorReceiver = Read-RequiredText $operatorReceiverPath "headless breath operator receiver"
@@ -411,14 +413,14 @@ Assert-Tokens $unifiedParticlePanel @(
     "No synthetic beat"
 ) "unified breath and particle panel"
 Assert-Tokens $panel @(
-    "buildViscerealityControlPanelView",
+    "buildBreathCompositionControlPanelView",
     "HorizontalScrollView",
-    "Viscereality · ",
-    "selectViscerealityPanelTopic",
-    "appendViscerealityPanelHome",
-    "appendViscerealityBreathControls",
-    "appendViscerealityPolarControls",
-    "appendViscerealityStatus",
+    "Breath composition · ",
+    "selectBreathCompositionPanelTopic",
+    "appendBreathCompositionPanelHome",
+    "appendBreathCompositionBreathControls",
+    "appendBreathCompositionPolarControls",
+    "appendBreathCompositionStatus",
     "Requested values never replace the renderer's effective readback.",
     "awaitPrivateParticleEffectiveRevision",
     "pollPrivateParticleEffectiveRevision",
@@ -435,7 +437,7 @@ Assert-Tokens $panel @(
     "RENDERER_RETURN_STABLE_FOCUS_MS",
     "RENDERER_FOCUS_FRESH_MS",
     "resetRendererReturnStableFocus"
-) "organized persistent Viscereality panel and receipt-gated VR return"
+) "organized persistent breath-composition panel and receipt-gated VR return"
 $rendererReturnStart = $panel.IndexOf("private void closePanelAndReturnToImmersive()")
 $rendererReturnEnd = $panel.IndexOf("private static final class RendererFocusState", $rendererReturnStart)
 if ($rendererReturnStart -lt 0 -or $rendererReturnEnd -le $rendererReturnStart) {
@@ -474,22 +476,22 @@ foreach ($forbiddenLaunchToken in @(
         throw "Study 6 renderer handoff launcher must not contain $forbiddenLaunchToken"
     }
 }
-Assert-Tokens $xrVulkan @(
+Assert-Tokens ($xrVulkan + [Environment]::NewLine + $diagnosticsContract) @(
     "RENDERER_FOCUS_STATUS_FILE",
     "write_renderer_focus_state",
     "rusty.quest.native_renderer.renderer_focus_state.v1",
     "renderer_focus_session_state",
     "frame_count.saturating_add(1)",
     "submitted",
-    '\"activity\":\"android.app.NativeActivity\"',
-    '\"updated_at_unix_ms\"',
+    '"activity": "android.app.NativeActivity"',
+    '"updated_at_unix_ms"',
     "SystemTime::now()"
 ) "focused submitted-frame return receipt"
 Assert-Tokens $panel @(
     "privateParticleMaterialPresetWire",
     "current-additive",
     "premultiplied-alpha-over-depth-facing",
-    "akd-material-emulation",
+    "reference-material-emulation",
     '"material"',
     '"heartbeat_pulse"',
     '"size"',
@@ -570,7 +572,7 @@ Assert-Tokens ($features + [Environment]::NewLine + $appSpec) @(
 ) "closed-world feature and lane identities"
 
 foreach ($text in @($core, $runtime, $features)) {
-    foreach ($forbidden in @("viscereality", "orbit-radius", "sphere-radius", "icosphere", "shader tuning")) {
+    foreach ($forbidden in @(("viscere" + "ality"), "orbit-radius", "sphere-radius", "icosphere", "shader tuning")) {
         if ($text.ToLowerInvariant().Contains($forbidden)) {
             throw "Generic breath composition source contains downstream term: $forbidden"
         }

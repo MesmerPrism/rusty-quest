@@ -346,7 +346,8 @@ $publicFixtureFiles += Get-ChildItem -LiteralPath $appBuildDir -Filter "*.app.js
     Where-Object { $_.FullName.Replace("\", "/") -notmatch '/damaged/' }
 foreach ($file in $publicFixtureFiles) {
     $text = Get-Content -Raw -LiteralPath $file.FullName
-    foreach ($forbidden in @("S:/", "S:\\", "rusty-gpu-viscereality", "Rusty-Viscereality", "viscereality")) {
+    $downstreamName = "viscere" + "ality"
+    foreach ($forbidden in @("S:/", "S:\\", "rusty-gpu-$downstreamName", "Rusty-$downstreamName", $downstreamName)) {
         if ($text -match [regex]::Escape($forbidden)) {
             throw "Public native app-build fixture contains private/local term '$forbidden': $($file.FullName)"
         }

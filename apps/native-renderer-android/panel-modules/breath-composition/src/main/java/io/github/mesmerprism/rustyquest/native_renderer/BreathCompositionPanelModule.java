@@ -205,17 +205,17 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
     private CheckBox privateParticlePolarRrOrbitBoost;
     private TextView privateParticleEffectiveReadback;
     // This is deliberately separate from the legacy liveAutoApply control.  The
-    // Viscereality panel always sends one closed, debounced JSON candidate for
+    // Breath-composition panel always sends one closed, debounced JSON candidate for
     // an intentional particle edit; it must not inherit another panel's toggle.
     private boolean privateParticlePanelLiveApply;
     private boolean privateParticleControlsHydrating;
-    private long viscerealityPanelNavigationEpoch;
+    private long breathCompositionPanelNavigationEpoch;
     private long privateParticleControlEpoch = -1L;
     private int privateParticleMaterialSelection = -1;
     private long privateParticlePendingRevision;
     private long privateParticlePendingReadbackDeadlineMs;
     private Runnable pendingPrivateParticleEffectReadback;
-    private String viscerealityPanelTopic = "home";
+    private String breathCompositionPanelTopic = "home";
     private boolean rendererReturnPending;
     private long rendererReturnBaselineFrame;
     private long rendererReturnStartedAtMs;
@@ -265,8 +265,8 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
 
     private void rebuildContentViewForCurrentMode() {
         // This product's integrated Polar owner survives page rebuilds. Runtime profile input
-        // cannot replace the baked Viscereality module with a legacy product mode.
-        replaceViscerealityPanelContent(viscerealityPanelTopic);
+        // cannot replace the baked breath-composition module with a legacy product mode.
+        replaceBreathCompositionPanelContent(breathCompositionPanelTopic);
         updateReadyStatusForPanelMode();
     }
 
@@ -384,10 +384,10 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
     private View buildContentView() {
         // The packaged module is authoritative. Runtime mode strings are legacy renderer hints,
         // not a factory for alternate Java product panels.
-        return buildViscerealityControlPanelView();
+        return buildBreathCompositionControlPanelView();
     }
 
-    private View buildViscerealityControlPanelView() {
+    private View buildBreathCompositionControlPanelView() {
         ScrollView scroll = new ScrollView(this);
         scroll.setBackgroundColor(PANEL_BG);
         LinearLayout root = new LinearLayout(this);
@@ -396,28 +396,28 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
         root.setPadding(pad, pad, pad, pad);
         scroll.addView(root);
 
-        appendViscerealityPanelHeader(root);
-        if ("particles".equals(viscerealityPanelTopic)) {
+        appendBreathCompositionPanelHeader(root);
+        if ("particles".equals(breathCompositionPanelTopic)) {
             appendUnifiedParticleControls(root);
-        } else if ("breath".equals(viscerealityPanelTopic)) {
-            appendViscerealityBreathControls(root);
-        } else if ("polar".equals(viscerealityPanelTopic)) {
-            appendViscerealityPolarControls(root);
-        } else if ("lsl".equals(viscerealityPanelTopic)) {
-            appendViscerealityLslControls(root);
-        } else if ("status".equals(viscerealityPanelTopic)) {
-            appendViscerealityStatus(root);
+        } else if ("breath".equals(breathCompositionPanelTopic)) {
+            appendBreathCompositionBreathControls(root);
+        } else if ("polar".equals(breathCompositionPanelTopic)) {
+            appendBreathCompositionPolarControls(root);
+        } else if ("lsl".equals(breathCompositionPanelTopic)) {
+            appendBreathCompositionLslControls(root);
+        } else if ("status".equals(breathCompositionPanelTopic)) {
+            appendBreathCompositionStatus(root);
         } else {
-            appendViscerealityPanelHome(root);
+            appendBreathCompositionPanelHome(root);
         }
         return scroll;
     }
 
-    private void appendViscerealityPanelHeader(LinearLayout root) {
+    private void appendBreathCompositionPanelHeader(LinearLayout root) {
         LinearLayout header = new LinearLayout(this);
         header.setOrientation(LinearLayout.HORIZONTAL);
         header.setGravity(Gravity.CENTER_VERTICAL);
-        TextView title = text("Viscereality · " + viscerealityTopicTitle(), 22, PANEL_FG);
+        TextView title = text("Breath composition · " + breathCompositionTopicTitle(), 22, PANEL_FG);
         header.addView(
             title,
             new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
@@ -431,7 +431,7 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
         });
         header.addView(resume);
         root.addView(header);
-        root.addView(text(viscerealityTopicSubtitle(), 13, PANEL_MUTED));
+        root.addView(text(breathCompositionTopicSubtitle(), 13, PANEL_MUTED));
 
         HorizontalScrollView topicScroll = new HorizontalScrollView(this);
         topicScroll.setHorizontalScrollBarEnabled(false);
@@ -442,11 +442,11 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
         for (int i = 0; i < ids.length; i++) {
             final String topic = ids[i];
             Button choice = button(titles[i]);
-            choice.setEnabled(!topic.equals(viscerealityPanelTopic));
+            choice.setEnabled(!topic.equals(breathCompositionPanelTopic));
             choice.setOnClickListener(new View.OnClickListener() {
                 @Override
                 public void onClick(View view) {
-                    selectViscerealityPanelTopic(topic);
+                    selectBreathCompositionPanelTopic(topic);
                 }
             });
             topics.addView(choice);
@@ -455,59 +455,59 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
         root.addView(topicScroll);
     }
 
-    private String viscerealityTopicTitle() {
-        if ("particles".equals(viscerealityPanelTopic)) {
+    private String breathCompositionTopicTitle() {
+        if ("particles".equals(breathCompositionPanelTopic)) {
             return "Particles";
         }
-        if ("breath".equals(viscerealityPanelTopic)) {
+        if ("breath".equals(breathCompositionPanelTopic)) {
             return "Breath";
         }
-        if ("polar".equals(viscerealityPanelTopic)) {
+        if ("polar".equals(breathCompositionPanelTopic)) {
             return "Polar";
         }
-        if ("lsl".equals(viscerealityPanelTopic)) {
+        if ("lsl".equals(breathCompositionPanelTopic)) {
             return "LSL streaming";
         }
-        if ("status".equals(viscerealityPanelTopic)) {
+        if ("status".equals(breathCompositionPanelTopic)) {
             return "Effective state";
         }
         return "Control panel";
     }
 
-    private String viscerealityTopicSubtitle() {
-        if ("particles".equals(viscerealityPanelTopic)) {
+    private String breathCompositionTopicSubtitle() {
+        if ("particles".equals(breathCompositionPanelTopic)) {
             return "Visual shape, dynamics, trails, material, and RR orbit response.";
         }
-        if ("breath".equals(viscerealityPanelTopic)) {
+        if ("breath".equals(breathCompositionPanelTopic)) {
             return "Choose and calibrate the live controller or Polar ACC breath input.";
         }
-        if ("polar".equals(viscerealityPanelTopic)) {
+        if ("polar".equals(breathCompositionPanelTopic)) {
             return "Pairing and acquisition remain owned by the same-APK Polar runtime.";
         }
-        if ("lsl".equals(viscerealityPanelTopic)) {
+        if ("lsl".equals(breathCompositionPanelTopic)) {
             return "Persistent, panel-controlled LAN outlets and one bounded Float32 inlet.";
         }
-        if ("status".equals(viscerealityPanelTopic)) {
+        if ("status".equals(breathCompositionPanelTopic)) {
             return "Requested values never replace the renderer's effective readback.";
         }
         return "Organized by the live system that owns each setting.";
     }
 
-    private void selectViscerealityPanelTopic(String topic) {
-        if (topic.equals(viscerealityPanelTopic) || rendererReturnPending) {
+    private void selectBreathCompositionPanelTopic(String topic) {
+        if (topic.equals(breathCompositionPanelTopic) || rendererReturnPending) {
             return;
         }
-        replaceViscerealityPanelContent(topic);
+        replaceBreathCompositionPanelContent(topic);
     }
 
-    private void replaceViscerealityPanelContent(String topic) {
+    private void replaceBreathCompositionPanelContent(String topic) {
         cancelPendingPrivateParticleDynamicsApply();
         cancelPendingPrivateParticleEffectReadback();
         cancelBreathCompositionRefresh();
         invalidatePrivateParticleControls();
-        viscerealityPanelNavigationEpoch += 1L;
-        viscerealityPanelTopic = topic;
-        setContentView(buildViscerealityControlPanelView());
+        breathCompositionPanelNavigationEpoch += 1L;
+        breathCompositionPanelTopic = topic;
+        setContentView(buildBreathCompositionControlPanelView());
     }
 
     private void invalidatePrivateParticleControls() {
@@ -532,7 +532,7 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
         privateParticleEffectiveReadback = null;
     }
 
-    private void appendViscerealityPanelHome(LinearLayout root) {
+    private void appendBreathCompositionPanelHome(LinearLayout root) {
         root.addView(
             text(
                 "Use a focused topic rather than one long mixed control surface. Each topic reports the state actually accepted by its runtime owner.",
@@ -540,31 +540,31 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
                 PANEL_MUTED
             )
         );
-        appendViscerealityTopicRow(
+        appendBreathCompositionTopicRow(
             root,
             "Particles",
             "Shape, oscillator drivers, trails, material A/B, and Polar RR orbit boost.",
             "particles"
         );
-        appendViscerealityTopicRow(
+        appendBreathCompositionTopicRow(
             root,
             "Breath",
             "Controller or Polar ACC mapping, calibration, and current live output.",
             "breath"
         );
-        appendViscerealityTopicRow(
+        appendBreathCompositionTopicRow(
             root,
             "Polar",
             "Connection, ACC acquisition, and RR availability for the optional orbit boost.",
             "polar"
         );
-        appendViscerealityTopicRow(
+        appendBreathCompositionTopicRow(
             root,
             "LSL",
             "Stream Polar, controller, and headset samples out; map one normalized Float32 stream into driver slots 1–7.",
             "lsl"
         );
-        appendViscerealityTopicRow(
+        appendBreathCompositionTopicRow(
             root,
             "Effective state",
             "Read the renderer-confirmed particle revision and the current breath composition.",
@@ -572,7 +572,7 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
         );
     }
 
-    private void appendViscerealityTopicRow(
+    private void appendBreathCompositionTopicRow(
         LinearLayout root,
         String title,
         String summary,
@@ -584,14 +584,14 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
         open.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
-                selectViscerealityPanelTopic(topic);
+                selectBreathCompositionPanelTopic(topic);
             }
         });
         card.addView(open);
         root.addView(card);
     }
 
-    private void appendViscerealityBreathControls(LinearLayout root) {
+    private void appendBreathCompositionBreathControls(LinearLayout root) {
         LinearLayout statusCard = panelCard("Live breath state");
         breathOverviewReadback = text("Reading native-effective selection…", 15, PANEL_FG);
         breathCalibrationReadback = text("Calibration: waiting for readback", 13, PANEL_MUTED);
@@ -831,7 +831,7 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
         return (long) value;
     }
 
-    private void appendViscerealityPolarControls(LinearLayout root) {
+    private void appendBreathCompositionPolarControls(LinearLayout root) {
         LinearLayout polar = panelCard("Polar connection & acquisition");
         polar.addView(text(
             "Scan, connect, select ACC, and start PMD. RR events remain separate from the breath mapping and are consumed only when the Particle topic explicitly enables RR orbit boost.",
@@ -842,7 +842,7 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
         root.addView(polar);
     }
 
-    private void appendViscerealityLslControls(LinearLayout root) {
+    private void appendBreathCompositionLslControls(LinearLayout root) {
         JSONObject status = readLslTransportStatusJson();
         JSONObject config = status.optJSONObject("config");
         if (config == null) {
@@ -866,7 +866,7 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
         root.addView(overview);
 
         LinearLayout identity = panelCard("Session identity");
-        final EditText prefix = editText(config.optString("stream_prefix", "viscereality"), "stream prefix", false);
+        final EditText prefix = editText(config.optString("stream_prefix", "rustyquest"), "stream prefix", false);
         final EditText participant = editText(config.optString("participant_id", "participant"), "participant id", false);
         final EditText session = editText(config.optString("session_id", "session"), "session id", false);
         identity.addView(label("Stream prefix"));
@@ -942,7 +942,7 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
             "name".equals(resolveByValue) ? 1 : ("type".equals(resolveByValue) ? 2 : 0)
         );
         final EditText resolveValue = editText(
-            inlet == null ? "viscereality.input.driver1" : inlet.optString("resolve_value", "viscereality.input.driver1"),
+            inlet == null ? "rustyquest.input.driver1" : inlet.optString("resolve_value", "rustyquest.input.driver1"),
             "exact source id, name, or type",
             false
         );
@@ -1107,7 +1107,7 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
         }
     }
 
-    private void appendViscerealityStatus(LinearLayout root) {
+    private void appendBreathCompositionStatus(LinearLayout root) {
         LinearLayout particle = panelCard("Particle renderer effective state");
         privateParticleEffectiveReadback = text(
             "Particle effective receipt: waiting for renderer readback.",
@@ -1320,13 +1320,13 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
     }
 
     private void appendUnifiedParticleControls(LinearLayout root) {
-        // Keep the Viscereality particle surface autonomous.  It deliberately
+        // Keep the private-particle surface autonomous.  It deliberately
         // does not reuse the legacy panel's liveAutoApply checkbox, which may
         // be absent when this view is built and previously made edits inert.
         liveAutoApply = null;
         privateParticlePanelLiveApply = true;
         privateParticleControlsHydrating = true;
-        privateParticleControlEpoch = viscerealityPanelNavigationEpoch;
+        privateParticleControlEpoch = breathCompositionPanelNavigationEpoch;
         final long controlEpoch = privateParticleControlEpoch;
         LinearLayout particle = panelCard("Particles");
         root.addView(particle);
@@ -1546,7 +1546,7 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
                 "Premultiplied alpha over",
                 "Premultiplied alpha over + depth fade",
                 "Premultiplied alpha over + depth + facing fade",
-                "AKD material emulation"
+                "Reference material emulation"
             },
             privateParticleMaterialPresetIndex(
                 materialStatus == null
@@ -1924,16 +1924,16 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
     private boolean isCurrentPrivateParticleControlSurface(long controlEpoch) {
         return privateParticlePanelLiveApply
             && !privateParticleControlsHydrating
-            && "particles".equals(viscerealityPanelTopic)
+            && "particles".equals(breathCompositionPanelTopic)
             && controlEpoch >= 0L
             && controlEpoch == privateParticleControlEpoch
-            && controlEpoch == viscerealityPanelNavigationEpoch;
+            && controlEpoch == breathCompositionPanelNavigationEpoch;
     }
 
     private boolean admitPrivateParticleMaterialSelection(long controlEpoch, int position) {
         if (controlEpoch != privateParticleControlEpoch
-                || controlEpoch != viscerealityPanelNavigationEpoch
-                || !"particles".equals(viscerealityPanelTopic)
+                || controlEpoch != breathCompositionPanelNavigationEpoch
+                || !"particles".equals(breathCompositionPanelTopic)
                 || privateParticleControlsHydrating) {
             if (controlEpoch == privateParticleControlEpoch) {
                 privateParticleMaterialSelection = position;
@@ -2246,7 +2246,7 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
             case 4:
                 return "premultiplied-alpha-over-depth-facing";
             case 5:
-                return "akd-material-emulation";
+                return "reference-material-emulation";
             default:
                 return "packaged-default";
         }
@@ -2265,7 +2265,7 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
         if ("premultiplied-alpha-over-depth-facing".equals(preset)) {
             return 4;
         }
-        if ("akd-material-emulation".equals(preset)) {
+        if ("reference-material-emulation".equals(preset)) {
             return 5;
         }
         return 0;

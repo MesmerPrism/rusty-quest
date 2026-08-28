@@ -8,7 +8,10 @@ import org.json.JSONObject;
 
 /** App-private persistence for the panel-owned LSL request. */
 public final class LslPanelConfigStore {
-    private static final String PREFERENCES = "viscereality_lsl_panel";
+    private static final String PREFERENCES = "rustyquest_lsl_panel";
+    // Compatibility-only name used to migrate the previously accepted config
+    // once. New reads and writes are authoritative in PREFERENCES.
+    private static final String LEGACY_PREFERENCES = "viscere" + "ality_lsl_panel";
     private static final String CONFIG_KEY = "accepted_config_v1";
     private static final String CONFIG_SCHEMA =
         "rusty.quest.native_renderer.lsl.persisted_config.v1";
@@ -29,18 +32,38 @@ public final class LslPanelConfigStore {
             return defaultConfig();
         }
         SharedPreferences preferences = context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE);
+        if (preferences.contains(CONFIG_KEY)) {
+            JSONObject current = readStoredConfig(preferences);
+            return current == null ? defaultConfig() : current;
+        }
+        SharedPreferences legacy = context.getSharedPreferences(LEGACY_PREFERENCES, Context.MODE_PRIVATE);
+        if (!legacy.contains(CONFIG_KEY)) {
+            return defaultConfig();
+        }
+        JSONObject migrated = readStoredConfig(legacy);
+        if (migrated == null) {
+            return defaultConfig();
+        }
+        String value = migrated.toString();
+        if (preferences.edit().putString(CONFIG_KEY, value).commit()) {
+            legacy.edit().remove(CONFIG_KEY).commit();
+        }
+        return migrated;
+    }
+
+    private static JSONObject readStoredConfig(SharedPreferences preferences) {
         String value = preferences.getString(CONFIG_KEY, "");
         if (value == null || value.isEmpty() || value.length() > MAX_CONFIG_CHARS) {
-            return defaultConfig();
+            return null;
         }
         try {
             JSONObject config = new JSONObject(value);
             if (!CONFIG_SCHEMA.equals(config.optString("schema", ""))) {
-                return defaultConfig();
+                return null;
             }
             return config;
         } catch (Exception ignored) {
-            return defaultConfig();
+            return null;
         }
     }
 
@@ -70,6 +93,14 @@ public final class LslPanelConfigStore {
         if (context == null) {
             return false;
         }
+        boolean legacyReset = context
+            .getSharedPreferences(LEGACY_PREFERENCES, Context.MODE_PRIVATE)
+            .edit()
+            .remove(CONFIG_KEY)
+            .commit();
+        if (!legacyReset) {
+            return false;
+        }
         return context
             .getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
             .edit()
@@ -92,7 +123,7 @@ public final class LslPanelConfigStore {
                         .put("interface_ipv4", "0.0.0.0")
                         .put("source_commit", "8b6b2a6cd0c0e5147b7e1cc076a116ef226cddbd")
                 )
-                .put("stream_prefix", "viscereality")
+                .put("stream_prefix", "rustyquest")
                 .put("participant_id", "participant")
                 .put("session_id", "session")
                 .put(
@@ -109,7 +140,7 @@ public final class LslPanelConfigStore {
                     "inlet",
                     new JSONObject()
                         .put("resolve_by", "source_id")
-                        .put("resolve_value", "viscereality.input.driver1")
+                        .put("resolve_value", "rustyquest.input.driver1")
                         .put("driver_slot", 1)
                         .put("sample_hold_seconds", 1.0)
                         .put("recover", true)

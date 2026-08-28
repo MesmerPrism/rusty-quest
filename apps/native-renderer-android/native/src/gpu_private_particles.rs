@@ -99,7 +99,7 @@ const PANEL_DRIVER_MODE_INPUT_SLOT: u32 = 2;
 const PANEL_DRIVER_MODE_DIRECT: u32 = 3;
 const PANEL_DRIVER_MODE_PRIVATE_HEARTBEAT_ORBIT: u32 = 4;
 const PANEL_CURVE_LINEAR: u32 = 0;
-const PANEL_CURVE_AKD_HUMP: u32 = 1;
+const PANEL_CURVE_HUMP: u32 = 1;
 const PANEL_CURVE_SMOOTHSTEP: u32 = 2;
 const PANEL_CURVE_REVERSE_LINEAR: u32 = 3;
 const PANEL_CURVE_HOLD_LOW: u32 = 4;
@@ -379,7 +379,7 @@ impl GpuPrivateParticlePanelSettings {
             // public panel can only choose this one closed route.
             driver_control_modes[5] = PANEL_DRIVER_MODE_PRIVATE_HEARTBEAT_ORBIT;
             driver_control_source_slots[5] = 5;
-            driver_control_curve_codes[5] = PANEL_CURVE_AKD_HUMP;
+            driver_control_curve_codes[5] = PANEL_CURVE_HUMP;
             driver_control_cycle_multipliers[5] = 1.0;
         }
         Self {
@@ -802,7 +802,7 @@ impl PrivateParticleRuntimeSettings {
             PANEL_DRIVER_MODE_DIRECT
         };
         self.driver_control_curve_codes[5] = if enabled {
-            PANEL_CURVE_AKD_HUMP
+            PANEL_CURVE_HUMP
         } else {
             PANEL_CURVE_LINEAR
         };
@@ -860,9 +860,9 @@ impl PrivateParticleRuntimeSettings {
         preset: PrivateParticleMaterialPreset,
         parameter_source: &'static str,
     ) {
-        // This is the current Viscereality material, expressed explicitly so a
+        // This reference material is expressed explicitly so a
         // closed request also clears any earlier scalar-property experiments
-        // without changing the packaged startup default. The AKD preset keeps
+        // without changing the packaged startup default. The reference preset keeps
         // its historical 0.36 coverage, 0.45 stored alpha, depth 1.5, and
         // 0.80 + 0.20 * facing term in the parser-owned envelope.
         let parameters = preset.parameters();
@@ -4181,8 +4181,9 @@ fn private_particle_render_experiment_preset(
 
 fn private_particle_static_ring_frame_zero_enabled() -> bool {
     PRIVATE_PARTICLE_MARKER_FIELDS
-        .contains("viscerealityStaticPhaseDimensions=rotation2,animation5")
-        && PRIVATE_PARTICLE_MARKER_FIELDS.contains("viscerealityStaticPhaseCanonicalRadians=0.000")
+        .contains("privateParticleStaticPhaseDimensions=rotation2,animation5")
+        && PRIVATE_PARTICLE_MARKER_FIELDS
+            .contains("privateParticleStaticPhaseCanonicalRadians=0.000")
 }
 
 fn private_particle_vertices_per_instance(runtime_settings: PrivateParticleRuntimeSettings) -> u32 {
@@ -6593,7 +6594,7 @@ mod material_request_tests {
         let tracer_lifetime = settings.tracer_lifetime_seconds;
         let tracer_copies = settings.tracer_copies_per_second;
 
-        settings.apply_material_preset(PrivateParticleMaterialPreset::AkdMaterialEmulation);
+        settings.apply_material_preset(PrivateParticleMaterialPreset::ReferenceMaterialEmulation);
 
         assert_eq!(
             settings.transparency_blend_mode,
@@ -6640,7 +6641,7 @@ mod material_request_tests {
     #[test]
     fn size_field_patch_preserves_every_unselected_runtime_parameter() {
         let mut settings = PrivateParticleRuntimeSettings::from_generated_defaults();
-        settings.apply_material_preset(PrivateParticleMaterialPreset::AkdMaterialEmulation);
+        settings.apply_material_preset(PrivateParticleMaterialPreset::ReferenceMaterialEmulation);
         settings.driver_control_modes[2] = PANEL_DRIVER_MODE_INPUT_SLOT;
         settings.driver_control_curve_codes[2] = PANEL_CURVE_HOLD_HIGH;
         settings.driver_bank_values01[2] = 0.37;
@@ -6687,7 +6688,8 @@ mod material_request_tests {
         tracer_patch.update_mask.tracer_lifetime_seconds = true;
         tracer_patch.tracer_lifetime_seconds = 3.25;
         tracer_patch.material_override_enabled = true;
-        tracer_patch.material_preset = Some(PrivateParticleMaterialPreset::AkdMaterialEmulation);
+        tracer_patch.material_preset =
+            Some(PrivateParticleMaterialPreset::ReferenceMaterialEmulation);
 
         visual_patch.merge_patch(tracer_patch);
 
@@ -6730,7 +6732,7 @@ mod material_request_tests {
         );
         assert_eq!(settings.material_parameter_source, "same-apk-panel-live");
 
-        settings.apply_material_preset(PrivateParticleMaterialPreset::AkdMaterialEmulation);
+        settings.apply_material_preset(PrivateParticleMaterialPreset::ReferenceMaterialEmulation);
         settings.apply_panel_material_override(panel, material_defaults);
         assert_eq!(
             settings.material_preset,
@@ -6743,7 +6745,7 @@ mod material_request_tests {
     fn explicit_panel_packaged_default_clears_an_earlier_material_request() {
         let mut settings = PrivateParticleRuntimeSettings::from_generated_defaults();
         let material_defaults = settings.material_defaults();
-        settings.apply_material_preset(PrivateParticleMaterialPreset::AkdMaterialEmulation);
+        settings.apply_material_preset(PrivateParticleMaterialPreset::ReferenceMaterialEmulation);
         settings
             .apply_panel_material_override(panel_settings(None, true, false), material_defaults);
         assert_eq!(settings.material_preset, None);
@@ -6767,7 +6769,7 @@ mod material_request_tests {
             PANEL_DRIVER_MODE_PRIVATE_HEARTBEAT_ORBIT
         );
         assert_eq!(enabled.driver_control_source_slots[5], 5);
-        assert_eq!(enabled.driver_control_curve_codes[5], PANEL_CURVE_AKD_HUMP);
+        assert_eq!(enabled.driver_control_curve_codes[5], PANEL_CURVE_HUMP);
         for index in 0..GPU_PRIVATE_PARTICLE_PANEL_DRIVER_COUNT {
             if index != 5 {
                 assert_eq!(

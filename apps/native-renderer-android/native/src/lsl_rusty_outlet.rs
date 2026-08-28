@@ -389,13 +389,13 @@ mod compiled {
             let body = stream_info_body(
                 Ipv4Addr::new(192, 0, 2, 10),
                 16574,
-                "viscereality_P001_S001",
+                "rustyquest_P001_S001",
                 &definition,
-                "io.github.mesmerprism.viscereality:P001:S001:headset_views",
+                "io.github.mesmerprism.rustyquest:P001:S001:headset_views",
                 "00112233-4455-6677-8899-aabbccddee01",
                 "S001",
             );
-            assert!(body.contains("<name>viscereality_P001_S001_headset_views</name>"));
+            assert!(body.contains("<name>rustyquest_P001_S001_headset_views</name>"));
             assert!(body.contains("<type>HeadsetViews</type>"));
             assert!(body.contains("<channel_count>14</channel_count>"));
             assert!(body.contains("<nominal_srate>0.000000000000000</nominal_srate>"));
