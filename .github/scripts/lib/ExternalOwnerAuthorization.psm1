@@ -453,6 +453,8 @@ function New-ExternalOwnerAuthorizationRequest {
         if (($paths -join "`n") -cne (($paths | Sort-Object -CaseSensitive) -join "`n") -or @($paths | Sort-Object -Unique -CaseSensitive).Count -ne $paths.Count) { throw "Authorization artifacts must be complete, unique, and ordinal sorted." }
     }
     $stableAssessment = $Assessment | ConvertTo-Json -Depth 30 -Compress | ConvertFrom-Json -Depth 30 -DateKind String
+    $assessmentChallenge = New-ExternalOwnerAuthorizationAssessmentChallenge `
+        -Assessment $stableAssessment
     return [ordered]@{
         schema = "rusty.quest.external_owner_authorization_request.v1"
         issuer_id = [string]$Policy.issuer_id
@@ -464,14 +466,71 @@ function New-ExternalOwnerAuthorizationRequest {
         changed_artifacts = $ChangedArtifacts
         protected_artifacts = $ProtectedArtifacts
         assessment = $stableAssessment
-        assessment_sha256 = Get-ExternalOwnerSha256 (Get-CanonicalAuthorizationBytes $stableAssessment)
+        assessment_sha256 = Get-ExternalOwnerSha256 `
+            (Get-CanonicalAuthorizationBytes $assessmentChallenge)
         limitations = @("candidate_code_executed=false","execution_attested=false","acceptance_authority=false","publication_authority=false")
+    }
+}
+
+function New-ExternalOwnerAuthorizationAssessmentChallenge {
+    param([Parameter(Mandatory)][object]$Assessment)
+    return [ordered]@{
+        domain = "rusty.quest.external_owner_authorization_assessment_challenge.v1"
+        assessment_schema = $Assessment.schema
+        policy_id = $Assessment.policy_id
+        policy_sha256 = $Assessment.policy_sha256
+        repository = $Assessment.repository
+        pull_request_number = $Assessment.pull_request_number
+        event_identity = [ordered]@{
+            base_repository = $Assessment.event_identity.base_repository
+            base_ref = $Assessment.event_identity.base_ref
+            head_repository = $Assessment.event_identity.head_repository
+        }
+        workflow_event = $Assessment.workflow.event
+        base = $Assessment.base
+        candidate = $Assessment.candidate
+        merge = $Assessment.merge
+        changed_paths = @($Assessment.changed_paths)
+        protected_paths = @($Assessment.protected_paths)
+        decision = $Assessment.decision
+        approval_id = $Assessment.approval_id
+        candidate_code_executed = $Assessment.candidate_code_executed
+        execution_attested = $Assessment.execution_attested
+        publication_authority = $Assessment.publication_authority
+        limitations = @($Assessment.limitations)
+    }
+}
+
+function New-ExternalOwnerAuthorizationRequestChallenge {
+    param([Parameter(Mandatory)][object]$Request)
+    $assessmentChallenge = New-ExternalOwnerAuthorizationAssessmentChallenge `
+        -Assessment $Request.assessment
+    $assessmentHash = Get-ExternalOwnerSha256 `
+        (Get-CanonicalAuthorizationBytes $assessmentChallenge)
+    if ($assessmentHash -cne [string]$Request.assessment_sha256) {
+        throw "Authorization request assessment challenge hash is inconsistent."
+    }
+    return [ordered]@{
+        domain = "rusty.quest.external_owner_authorization_request_challenge.v1"
+        request_schema = [string]$Request.schema
+        issuer_id = [string]$Request.issuer_id
+        key_id = [string]$Request.key_id
+        repository = [string]$Request.repository
+        pull_request_number = [int]$Request.pull_request_number
+        base = $Request.base
+        head = $Request.head
+        changed_artifacts = @($Request.changed_artifacts)
+        protected_artifacts = @($Request.protected_artifacts)
+        assessment = $assessmentChallenge
+        assessment_sha256 = $assessmentHash
+        limitations = @($Request.limitations)
     }
 }
 
 function New-ExternalOwnerAuthorizationPayload {
     param([Parameter(Mandatory)][object]$Request, [Parameter(Mandatory)][string]$AuditId, [Parameter(Mandatory)][string]$IssuedAt, [Parameter(Mandatory)][string]$ExpiresAt)
-    if ((Get-ExternalOwnerSha256 (Get-CanonicalAuthorizationBytes $Request.assessment)) -cne [string]$Request.assessment_sha256) { throw "Authorization request assessment hash is inconsistent." }
+    $requestChallenge = New-ExternalOwnerAuthorizationRequestChallenge `
+        -Request $Request
     return [ordered]@{
         schema = "rusty.quest.external_owner_authorization_payload.v1"
         issuer_id = [string]$Request.issuer_id
@@ -484,7 +543,8 @@ function New-ExternalOwnerAuthorizationPayload {
         changed_artifacts = @($Request.changed_artifacts)
         protected_artifacts = @($Request.protected_artifacts)
         assessment_sha256 = [string]$Request.assessment_sha256
-        request_sha256 = Get-ExternalOwnerSha256 (Get-CanonicalAuthorizationBytes $Request)
+        request_sha256 = Get-ExternalOwnerSha256 `
+            (Get-CanonicalAuthorizationBytes $requestChallenge)
         issued_at = $IssuedAt
         expires_at = $ExpiresAt
         decision = "authorize-static-assessment"
