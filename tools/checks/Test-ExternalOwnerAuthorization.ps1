@@ -398,12 +398,31 @@ try {
     $null = ConvertFrom-ExternalOwnerGitNameStatusBytes ([Text.Encoding]::UTF8.GetBytes(
         "A" + [char]0 + "config/external-validation-authority.json" + [char]0
     ))
+    $ordinalBeforeCulturePaths = @(
+        "Cargo.lock",
+        "apps/native-renderer-android/AndroidManifest.xml"
+    )
+    $ordinalBeforeCultureBytes = [Text.Encoding]::UTF8.GetBytes(
+        "M" + [char]0 + $ordinalBeforeCulturePaths[0] + [char]0 +
+        "M" + [char]0 + $ordinalBeforeCulturePaths[1] + [char]0
+    )
+    $ordinalBeforeCultureRecords = @(
+        ConvertFrom-ExternalOwnerGitNameStatusBytes $ordinalBeforeCultureBytes
+    )
+    if (
+        $ordinalBeforeCultureRecords.Count -ne 2 -or
+        [string]$ordinalBeforeCultureRecords[0].path -cne $ordinalBeforeCulturePaths[0] -or
+        [string]$ordinalBeforeCultureRecords[1].path -cne $ordinalBeforeCulturePaths[1]
+    ) {
+        throw "The Git name-status parser did not preserve ordinal path order."
+    }
     foreach ($damage in @(
         [pscustomobject]@{ name = "invalid-utf8"; bytes = [byte[]]@(65, 0, 255, 0) },
         [pscustomobject]@{ name = "missing-terminal-delimiter"; bytes = [Text.Encoding]::UTF8.GetBytes("A" + [char]0 + "config/external-validation-authority.json") },
         [pscustomobject]@{ name = "backslash-path"; bytes = [Text.Encoding]::UTF8.GetBytes("A" + [char]0 + "dir" + [char]92 + "file.ps1" + [char]0) },
         [pscustomobject]@{ name = "duplicate-path"; bytes = [Text.Encoding]::UTF8.GetBytes("A" + [char]0 + "config/external-validation-authority.json" + [char]0 + "M" + [char]0 + "config/external-validation-authority.json" + [char]0) },
-        [pscustomobject]@{ name = "case-colliding-path"; bytes = [Text.Encoding]::UTF8.GetBytes("A" + [char]0 + "Config/external-validation-authority.json" + [char]0 + "M" + [char]0 + "config/external-validation-authority.json" + [char]0) }
+        [pscustomobject]@{ name = "case-colliding-path"; bytes = [Text.Encoding]::UTF8.GetBytes("A" + [char]0 + "Config/external-validation-authority.json" + [char]0 + "M" + [char]0 + "config/external-validation-authority.json" + [char]0) },
+        [pscustomobject]@{ name = "culture-sorted-not-ordinal"; bytes = [Text.Encoding]::UTF8.GetBytes("M" + [char]0 + $ordinalBeforeCulturePaths[1] + [char]0 + "M" + [char]0 + $ordinalBeforeCulturePaths[0] + [char]0) }
     )) {
         Assert-DamageRejected $damage.name {
             $null = ConvertFrom-ExternalOwnerGitNameStatusBytes $damage.bytes
@@ -421,6 +440,31 @@ try {
             -ChangedPaths @($artifacts[0].path, $secondArtifact.path) `
             -ChangedArtifacts @($artifacts[0], $secondArtifact) `
             -ProtectedPaths @($secondArtifact.path) -ProtectedArtifacts $artifacts
+    }
+    $ordinalBeforeCultureArtifacts = @($ordinalBeforeCulturePaths | ForEach-Object {
+        [ordered]@{
+            path = $_
+            state = "present"
+            mode = "100644"
+            size_bytes = 3
+            sha256 = ("a" * 64)
+        }
+    })
+    $ordinalBeforeCultureAssessment = $assessment | ConvertTo-Json -Depth 30 |
+        ConvertFrom-Json -Depth 30 -DateKind String
+    $ordinalBeforeCultureAssessment.changed_paths = $ordinalBeforeCulturePaths
+    $ordinalBeforeCultureAssessment.protected_paths = $ordinalBeforeCulturePaths
+    $null = New-ExternalOwnerAuthorizationRequest `
+        -Policy $policy -PullRequestNumber 53 -Base $baseIdentity -Head $headIdentity `
+        -ChangedArtifacts $ordinalBeforeCultureArtifacts `
+        -ProtectedArtifacts $ordinalBeforeCultureArtifacts `
+        -Assessment $ordinalBeforeCultureAssessment
+    Assert-DamageRejected "culture-sorted-authorization-artifacts" {
+        $null = New-ExternalOwnerAuthorizationRequest `
+            -Policy $policy -PullRequestNumber 53 -Base $baseIdentity -Head $headIdentity `
+            -ChangedArtifacts @($ordinalBeforeCultureArtifacts[1], $ordinalBeforeCultureArtifacts[0]) `
+            -ProtectedArtifacts @($ordinalBeforeCultureArtifacts[1], $ordinalBeforeCultureArtifacts[0]) `
+            -Assessment $ordinalBeforeCultureAssessment
     }
     $request = New-ExternalOwnerAuthorizationRequest -Policy $policy -PullRequestNumber 53 -Base ([ordered]@{commit=("1"*40);tree=("2"*40)}) -Head ([ordered]@{commit=("3"*40);tree=("4"*40)}) -ChangedArtifacts $artifacts -ProtectedArtifacts $artifacts -Assessment $assessment
     $payload = New-ExternalOwnerAuthorizationPayload -Request $request -AuditId "external-owner-pr53-00000000000000000000000000000000" -IssuedAt "2026-08-22T15:59:00Z" -ExpiresAt "2026-08-22T16:59:00Z"
