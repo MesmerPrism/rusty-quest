@@ -422,6 +422,67 @@ try {
             -ChangedArtifacts @($artifacts[0], $secondArtifact) `
             -ProtectedPaths @($secondArtifact.path) -ProtectedArtifacts $artifacts
     }
+    $ordinalChangedArtifacts = @(
+        [ordered]@{ path = "Zeta/owner.ps1"; state = "absent" },
+        [ordered]@{ path = "alpha/owner.ps1"; state = "absent" }
+    )
+    $ordinalProtectedArtifacts = @($ordinalChangedArtifacts[1])
+    $originalCulture = [Threading.Thread]::CurrentThread.CurrentCulture
+    $originalUiCulture = [Threading.Thread]::CurrentThread.CurrentUICulture
+    try {
+        foreach ($cultureName in @("en-US", "tr-TR", "sv-SE")) {
+            $culture = [Globalization.CultureInfo]::GetCultureInfo($cultureName)
+            [Threading.Thread]::CurrentThread.CurrentCulture = $culture
+            [Threading.Thread]::CurrentThread.CurrentUICulture = $culture
+            $ordinalRequest = New-ExternalOwnerAuthorizationRequest `
+                -Policy $policy -PullRequestNumber 53 -Base $baseIdentity `
+                -Head $headIdentity -ChangedArtifacts $ordinalChangedArtifacts `
+                -ProtectedArtifacts $ordinalProtectedArtifacts -Assessment $assessment
+            if (
+                (@($ordinalRequest.changed_artifacts.path) -join "`n") -cne
+                    "Zeta/owner.ps1`nalpha/owner.ps1" -or
+                (@($ordinalRequest.protected_artifacts.path) -join "`n") -cne
+                    "alpha/owner.ps1"
+            ) {
+                throw "Authorization artifact ordering changed under culture $cultureName."
+            }
+        }
+    } finally {
+        [Threading.Thread]::CurrentThread.CurrentCulture = $originalCulture
+        [Threading.Thread]::CurrentThread.CurrentUICulture = $originalUiCulture
+    }
+    foreach ($damage in @(
+        [pscustomobject]@{
+            name = "authorization-duplicate-path"
+            changed = @($ordinalChangedArtifacts[0], $ordinalChangedArtifacts[0])
+            protected = @($ordinalChangedArtifacts[0])
+        },
+        [pscustomobject]@{
+            name = "authorization-case-colliding-path"
+            changed = @(
+                [ordered]@{ path = "Path/owner.ps1"; state = "absent" },
+                [ordered]@{ path = "path/owner.ps1"; state = "absent" }
+            )
+            protected = @()
+        },
+        [pscustomobject]@{
+            name = "authorization-protected-not-subset"
+            changed = $ordinalChangedArtifacts
+            protected = @([ordered]@{ path = "beta/owner.ps1"; state = "absent" })
+        },
+        [pscustomobject]@{
+            name = "authorization-protected-not-ordinal"
+            changed = $ordinalChangedArtifacts
+            protected = @($ordinalChangedArtifacts[1], $ordinalChangedArtifacts[0])
+        }
+    )) {
+        Assert-DamageRejected $damage.name {
+            $null = New-ExternalOwnerAuthorizationRequest `
+                -Policy $policy -PullRequestNumber 53 -Base $baseIdentity `
+                -Head $headIdentity -ChangedArtifacts $damage.changed `
+                -ProtectedArtifacts $damage.protected -Assessment $assessment
+        }
+    }
     $request = New-ExternalOwnerAuthorizationRequest -Policy $policy -PullRequestNumber 53 -Base ([ordered]@{commit=("1"*40);tree=("2"*40)}) -Head ([ordered]@{commit=("3"*40);tree=("4"*40)}) -ChangedArtifacts $artifacts -ProtectedArtifacts $artifacts -Assessment $assessment
     $payload = New-ExternalOwnerAuthorizationPayload -Request $request -AuditId "external-owner-pr53-00000000000000000000000000000000" -IssuedAt "2026-08-22T15:59:00Z" -ExpiresAt "2026-08-22T16:59:00Z"
     $attemptTwoAssessment = $assessment | ConvertTo-Json -Depth 30 |

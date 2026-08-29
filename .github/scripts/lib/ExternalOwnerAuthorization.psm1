@@ -448,10 +448,11 @@ function Assert-ExternalOwnerFallbackVerifierFailure {
 
 function New-ExternalOwnerAuthorizationRequest {
     param([Parameter(Mandatory)][object]$Policy, [Parameter(Mandatory)][int]$PullRequestNumber, [Parameter(Mandatory)][object]$Base, [Parameter(Mandatory)][object]$Head, [Parameter(Mandatory)][object[]]$ChangedArtifacts, [Parameter(Mandatory)][object[]]$ProtectedArtifacts, [Parameter(Mandatory)][object]$Assessment)
-    foreach ($set in @(@($ChangedArtifacts), @($ProtectedArtifacts))) {
-        $paths = @($set | ForEach-Object { [string]$_.path })
-        if (($paths -join "`n") -cne (($paths | Sort-Object -CaseSensitive) -join "`n") -or @($paths | Sort-Object -Unique -CaseSensitive).Count -ne $paths.Count) { throw "Authorization artifacts must be complete, unique, and ordinal sorted." }
-    }
+    $changedPaths = @($ChangedArtifacts | ForEach-Object { [string]$_.path })
+    $protectedPaths = @($ProtectedArtifacts | ForEach-Object { [string]$_.path })
+    Assert-ExternalOwnerArtifactInventory `
+        -ChangedPaths $changedPaths -ChangedArtifacts $ChangedArtifacts `
+        -ProtectedPaths $protectedPaths -ProtectedArtifacts $ProtectedArtifacts
     $stableAssessment = $Assessment | ConvertTo-Json -Depth 30 -Compress | ConvertFrom-Json -Depth 30 -DateKind String
     $assessmentChallenge = New-ExternalOwnerAuthorizationAssessmentChallenge `
         -Assessment $stableAssessment
