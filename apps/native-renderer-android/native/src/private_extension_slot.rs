@@ -332,8 +332,8 @@ impl PrivateExtensionSlotFrameStats {
         } else {
             "not-applicable-public-noop"
         };
-        format!(
-            "privateLayerSlotReady=true privateLayerSlotId={} privateLayerAbiId={} privateLayerPublicAbiOnly={} privateLayerPayloadLinked={} privateLayerImplementationPath={} privateLayerFrame={} privateLayerInvocationSequence={} privateLayerInputGuideGraphReady={} privateLayerInputSdfFieldReady={} privateLayerEnabled={} privateLayerReady={} privateLayerRendered={} privateLayerError={} privateLayerRequestedWithoutCamera={} privateLayerOutput={} privateLayerColorEffectActive={} privateLayerGuideResolution={}x{} privateLayerGuideTargets={} privateLayerGuidePasses={} privateLayerLayerSeconds={:.3} privateLayerActiveLayer={} privateLayerOverride={:.1} privateLayerFinalExternalHwbSamples={} privateLayerGuideTextureSamples={} privateLayerRenderCount={} privateLayerCacheHits={} privateLayerLeftSourceFrame={} privateLayerRightSourceFrame={} privateLayerLeftHardwareBufferId={} privateLayerRightHardwareBufferId={} privateLayerVisualAcceptance={} {}",
+        let slot_fields = format!(
+            "privateLayerSlotReady=true privateLayerSlotId={} privateLayerAbiId={} privateLayerPublicAbiOnly={} privateLayerPayloadLinked={} privateLayerImplementationPath={} privateLayerFrame={} privateLayerInvocationSequence={} privateLayerInputGuideGraphReady={} privateLayerInputSdfFieldReady={} privateLayerReady={} privateLayerRendered={} privateLayerError={} privateLayerRequestedWithoutCamera={} privateLayerOutput={} privateLayerColorEffectActive={} privateLayerGuideResolution={}x{} privateLayerGuideTargets={} privateLayerGuidePasses={} privateLayerLayerSeconds={:.3} privateLayerActiveLayer={} privateLayerFinalExternalHwbSamples={} privateLayerGuideTextureSamples={} privateLayerRenderCount={} privateLayerCacheHits={} privateLayerLeftSourceFrame={} privateLayerRightSourceFrame={} privateLayerLeftHardwareBufferId={} privateLayerRightHardwareBufferId={} privateLayerVisualAcceptance={}",
             PRIVATE_LAYER_SLOT_ID,
             PRIVATE_LAYER_SLOT_ABI_ID,
             !PRIVATE_LAYER_PAYLOAD_LINKED,
@@ -343,7 +343,6 @@ impl PrivateExtensionSlotFrameStats {
             self.invocation_sequence,
             self.guide_graph_ready,
             self.sdf_field_ready,
-            self.settings.enabled,
             self.ready,
             self.rendered,
             self.error,
@@ -356,7 +355,6 @@ impl PrivateExtensionSlotFrameStats {
             PRIVATE_GUIDE_PASS_COUNT,
             self.settings.layer_seconds,
             active_layer_for_frame(self.frame_count, self.settings),
-            self.settings.layer_override,
             if self.ready { 1 } else { 0 },
             if self.ready { PRIVATE_GUIDE_TARGET_COUNT } else { 0 },
             self.render_count,
@@ -366,8 +364,11 @@ impl PrivateExtensionSlotFrameStats {
             self.left_hardware_buffer_id,
             self.right_hardware_buffer_id,
             visual_acceptance,
-            self.settings.marker_fields()
-        )
+        );
+        crate::native_renderer_diagnostics_contract::compose_marker_fields(&[
+            &slot_fields,
+            &self.settings.marker_fields(),
+        ])
     }
 }
 
@@ -2085,5 +2086,13 @@ mod guide_push_tests {
     #[test]
     fn verified_native_phase_rate_is_half_a_cycle_per_second() {
         assert_eq!(2.0 * PRIVATE_GUIDE_NATIVE_PHASE_RATE_HZ, 1.0);
+    }
+
+    #[test]
+    fn frame_marker_uses_real_settings_fields_once() {
+        let fields = PrivateExtensionSlotFrameStats::default().marker_fields();
+        assert!(crate::native_renderer_diagnostics_contract::marker_keys_are_unique(&fields));
+        assert_eq!(fields.matches("privateLayerEnabled=").count(), 1);
+        assert_eq!(fields.matches("privateLayerOverride=").count(), 1);
     }
 }

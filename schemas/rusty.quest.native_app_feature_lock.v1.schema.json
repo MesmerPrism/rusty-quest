@@ -15,6 +15,7 @@
     "denied_feature_ids",
     "feature_descriptors",
     "dependency_reasons",
+    "panel_source_closure",
     "exclusive_groups",
     "android_manifest",
     "runtime_profile",
@@ -65,6 +66,9 @@
       }
     },
     "dependency_reasons": {
+      "type": "object"
+    },
+    "panel_source_closure": {
       "type": "object"
     },
     "exclusive_groups": {

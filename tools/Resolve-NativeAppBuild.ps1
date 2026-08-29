@@ -3,20 +3,40 @@ param(
     [string]$AppSpec,
     [string]$FeatureDir = "fixtures\native-app-features",
     [string]$OutputRoot = "local-artifacts\native-app-builds",
+    [string]$ResultJsonPath,
     [switch]$DryRun
 )
 
 $ErrorActionPreference = "Stop"
-$ResolverVersion = "native-app-build-resolver.ps1.v1"
+$ResolverVersion = "native-app-build-resolver.ps1.v3"
 $FeatureSchema = "rusty.quest.native_app_feature.v1"
 $AppBuildSchema = "rusty.quest.native_app_build.v1"
 $FeatureLockSchema = "rusty.quest.native_app_feature_lock.v1"
+$ResolutionResultSchema = "rusty.quest.native_app_build_resolution_result.v1"
 $NativeAppSettingsSchema = "rusty.quest.native_app_settings.v1"
 $RuntimeProfileSchema = "rusty.quest.runtime_profile.v1"
 $NativeRendererPropertyManifestSchema = "rusty.quest.native_renderer_property_manifest.v2"
 $NativeRendererPropertyManifestRelativePath = "fixtures\native-renderer\native-renderer-property-manifest.json"
 $NativeRendererPropertyPrefix = "debug.rustyquest.native_renderer."
 $RenderModeProperty = "debug.rustyquest.native_renderer.render.mode"
+$BreathCompositionFeatureId = "breath.composition.closed_world"
+$BreathCompositionActivationBindingProperty = "debug.rustyquest.native_renderer.breath_composition.activation.binding_sha256"
+$BreathCompositionExpectedBindingBuildEnv = "RUSTY_QUEST_NATIVE_RENDERER_BREATH_COMPOSITION_EXPECTED_BINDING_SHA256"
+$BreathCompositionDriverFeatureId = "particles.private.breath_composition_driver"
+$BreathCompositionDriverActivationBindingProperty = "debug.rustyquest.native_renderer.private_particles.breath_composition_driver.activation.binding_sha256"
+$BreathCompositionDriverExpectedBindingBuildEnv = "RUSTY_QUEST_NATIVE_RENDERER_BREATH_COMPOSITION_DRIVER_EXPECTED_BINDING_SHA256"
+$PrivateParticleRendererFeatureId = "renderer.private_particles"
+$PrivateParticlePlaceholderFeatureId = "particles.private.placeholder_compute"
+$PrivateParticleLinkedMarker = "privateParticlePayloadLinked=true"
+$PrivateParticleUnlinkedMarkers = @(
+    "privateParticlePayloadLinked=false",
+    "privateParticlePublicAbiOnly=true",
+    "privateParticleVisualAcceptance=not-applicable-public-noop"
+)
+$SimultaneousHandsControllersFeatureId = "input.simultaneous_hands_and_controllers"
+$SimultaneousHandsControllersEnabledProperty = "debug.rustyquest.native_renderer.simultaneous_hands_controllers.enabled"
+$SimultaneousHandsControllersActivationBindingProperty = "debug.rustyquest.native_renderer.simultaneous_hands_controllers.activation.binding_sha256"
+$SimultaneousHandsControllersExpectedBindingBuildEnv = "RUSTY_QUEST_NATIVE_RENDERER_SIMULTANEOUS_HANDS_CONTROLLERS_EXPECTED_BINDING_SHA256"
 $EnvironmentDepthModeProperty = "debug.rustyquest.native_renderer.environment_depth.mode"
 $EnvironmentDepthSourceProperty = "debug.rustyquest.native_renderer.environment_depth.source"
 $EnvironmentDepthNativePassthroughRequiredProperty = "debug.rustyquest.native_renderer.environment_depth.native_passthrough.required"
@@ -24,6 +44,7 @@ $UseScenePermission = "horizonos.permission.USE_SCENE"
 $PassthroughFeature = "com.oculus.feature.PASSTHROUGH"
 $UseSceneDataAppOp = "USE_SCENE_DATA"
 $RuntimeDangerousPermissionNames = @(
+    "android.permission.ACCESS_COARSE_LOCATION",
     "android.permission.ACCESS_FINE_LOCATION",
     "android.permission.BLUETOOTH_CONNECT",
     "android.permission.BLUETOOTH_SCAN",
@@ -61,6 +82,21 @@ function Get-RepoRelativePath {
         return $full.Substring($root.Length).TrimStart("\", "/").Replace("\", "/")
     }
     return $full.Replace("\", "/")
+}
+
+function Assert-CanonicalPathInsideRoot {
+    param(
+        [Parameter(Mandatory=$true)][string]$Path,
+        [Parameter(Mandatory=$true)][string]$Root,
+        [Parameter(Mandatory=$true)][string]$Label
+    )
+    $canonicalPath = [System.IO.Path]::GetFullPath($Path)
+    $canonicalRoot = [System.IO.Path]::GetFullPath($Root).TrimEnd("\", "/")
+    $relative = [System.IO.Path]::GetRelativePath($canonicalRoot, $canonicalPath)
+    if ([System.IO.Path]::IsPathRooted($relative) -or $relative -eq ".." -or $relative.StartsWith("..\") -or $relative.StartsWith("../")) {
+        throw "$Label must resolve inside requested output root. Path=$canonicalPath root=$canonicalRoot"
+    }
+    return $canonicalPath
 }
 
 function Read-JsonFile {
@@ -324,6 +360,120 @@ function Assert-AppSpecShape {
     }
 }
 
+function Resolve-PrivateParticlePayloadInventory {
+    param(
+        [Parameter(Mandatory=$true)]$App
+    )
+
+    $payloads = @($App.payloads)
+    foreach ($payload in $payloads) {
+        if ($null -eq $payload -or
+            $null -eq $payload.PSObject.Properties["kind"] -or
+            [string]::IsNullOrWhiteSpace([string]$payload.kind)) {
+            throw "App $($App.app_id) payload inventory contains an ambiguous entry without a non-empty kind"
+        }
+    }
+
+    $privateParticlePayloads = @($payloads | Where-Object { [string]$_.kind -eq "private_particle" })
+    if ($privateParticlePayloads.Count -gt 1) {
+        throw "App $($App.app_id) declares multiple private_particle payloads; exactly zero or one is allowed"
+    }
+
+    $identityPayloads = @()
+    $payload = $null
+    if ($privateParticlePayloads.Count -eq 1) {
+        $payload = $privateParticlePayloads[0]
+        $payloadId = if ($null -ne $payload.PSObject.Properties["payload_id"]) {
+            [string]$payload.payload_id
+        } else {
+            ""
+        }
+        $legacyId = if ($null -ne $payload.PSObject.Properties["id"]) {
+            [string]$payload.id
+        } else {
+            ""
+        }
+        if (-not [string]::IsNullOrWhiteSpace($payloadId) -and
+            -not [string]::IsNullOrWhiteSpace($legacyId) -and
+            $payloadId -cne $legacyId) {
+            throw "App $($App.app_id) private_particle payload has ambiguous payload_id and id values"
+        }
+        $effectivePayloadId = if (-not [string]::IsNullOrWhiteSpace($payloadId)) { $payloadId } else { $legacyId }
+        if ([string]::IsNullOrWhiteSpace($effectivePayloadId)) {
+            throw "App $($App.app_id) private_particle payload is partial; missing required payload_id"
+        }
+        foreach ($field in @("data_dir", "shader", "particle_kind", "marker_prefix", "marker_fields")) {
+            if ($null -eq $payload.PSObject.Properties[$field] -or
+                [string]::IsNullOrWhiteSpace([string]$payload.$field)) {
+                throw "App $($App.app_id) private_particle payload $effectivePayloadId is partial; missing required field: $field"
+            }
+        }
+
+        $maskIdentity = $null
+        if ($null -ne $payload.PSObject.Properties["mask_texture"]) {
+            $mask = $payload.mask_texture
+            if ($null -eq $mask) {
+                throw "App $($App.app_id) private_particle payload $effectivePayloadId has a partial mask_texture"
+            }
+            foreach ($field in @("width", "height", "layers")) {
+                if ($null -eq $mask.PSObject.Properties[$field] -or
+                    [string]::IsNullOrWhiteSpace([string]$mask.$field)) {
+                    throw "App $($App.app_id) private_particle payload $effectivePayloadId has a partial mask_texture; missing required field: $field"
+                }
+            }
+            $maskIdentity = [ordered]@{
+                path = if ($null -ne $mask.PSObject.Properties["path"]) { [string]$mask.path } else { "" }
+                width = [string]$mask.width
+                height = [string]$mask.height
+                layers = [string]$mask.layers
+                mode = if ($null -ne $mask.PSObject.Properties["mode"]) { [string]$mask.mode } else { "" }
+                mip_mode = if ($null -ne $mask.PSObject.Properties["mip_mode"]) { [string]$mask.mip_mode } else { "" }
+                discard_mode = if ($null -ne $mask.PSObject.Properties["discard_mode"]) { [string]$mask.discard_mode } else { "" }
+                alpha_cutoff = if ($null -ne $mask.PSObject.Properties["alpha_cutoff"]) { [string]$mask.alpha_cutoff } else { "" }
+            }
+        }
+
+        $buildEnvIdentity = @()
+        if ($null -ne $payload.PSObject.Properties["build_env"]) {
+            foreach ($entry in @($payload.build_env | Sort-Object { [string]$_.name }, { [string]$_.value })) {
+                if ($null -eq $entry -or
+                    $null -eq $entry.PSObject.Properties["name"] -or
+                    $null -eq $entry.PSObject.Properties["value"]) {
+                    throw "App payload $effectivePayloadId build_env entries require explicit name and value fields"
+                }
+                $buildEnvIdentity += [ordered]@{
+                    name = [string]$entry.name
+                    value = [string]$entry.value
+                }
+            }
+        }
+
+        $identityPayloads += [ordered]@{
+            kind = "private_particle"
+            payload_id = $effectivePayloadId
+            data_dir = [string]$payload.data_dir
+            shader = [string]$payload.shader
+            particle_kind = [string]$payload.particle_kind
+            marker_prefix = [string]$payload.marker_prefix
+            marker_fields = [string]$payload.marker_fields
+            mask_texture = $maskIdentity
+            build_env = $buildEnvIdentity
+        }
+    }
+
+    $identity = [ordered]@{
+        schema = "rusty.quest.private_particle_payload_inventory.v1"
+        payloads = $identityPayloads
+    }
+    return [ordered]@{
+        schema = "rusty.quest.private_particle_payload_linkage.v1"
+        mode = "pending-feature-closure"
+        complete_payload_count = $privateParticlePayloads.Count
+        inventory_sha256 = Get-StringSha256 -Value ($identity | ConvertTo-Json -Depth 20 -Compress)
+        payload = $payload
+    }
+}
+
 function Read-FeatureLibrary {
     param(
         [Parameter(Mandatory=$true)][string]$FeatureDirPath,
@@ -509,9 +659,11 @@ function Assert-NativeAppSettingsAssertions {
 function New-GeneratedAndroidManifestText {
     param(
         [Parameter(Mandatory=$true)][string]$PackageName,
+        [Parameter(Mandatory=$true)][string]$ApplicationLabel,
         [string[]]$Permissions,
         [string[]]$UsesFeatures,
         [string[]]$Activities,
+        [string[]]$Receivers,
         [string[]]$Services,
         [string[]]$Queries
     )
@@ -540,7 +692,7 @@ function New-GeneratedAndroidManifestText {
     [void]$lines.Add('        android:debuggable="true"')
     [void]$lines.Add('        android:extractNativeLibs="true"')
     [void]$lines.Add('        android:hasCode="true"')
-    [void]$lines.Add('        android:label="Rusty Quest Generated Native App"')
+    [void]$lines.Add(('        android:label="{0}"' -f [System.Security.SecurityElement]::Escape($ApplicationLabel)))
     [void]$lines.Add('        android:theme="@android:style/Theme.Material.NoActionBar">')
     [void]$lines.Add('        <meta-data android:name="com.samsung.android.vr.application.mode" android:value="vr_only" />')
     if ($Activities -contains "android.app.NativeActivity") {
@@ -570,7 +722,7 @@ function New-GeneratedAndroidManifestText {
         [void]$lines.Add('            android:configChanges="screenSize|screenLayout|orientation|keyboardHidden|keyboard|navigation|uiMode"')
         [void]$lines.Add('            android:exported="true"')
         [void]$lines.Add('            android:hardwareAccelerated="true"')
-        [void]$lines.Add('            android:label="Rusty Quest Stimulus Panel"')
+        [void]$lines.Add(('            android:label="{0}"' -f [System.Security.SecurityElement]::Escape($ApplicationLabel + ' Controls')))
         [void]$lines.Add('            android:launchMode="singleTask"')
         [void]$lines.Add('            android:resizeableActivity="true"')
         [void]$lines.Add('            android:screenOrientation="landscape"')
@@ -610,6 +762,30 @@ function New-GeneratedAndroidManifestText {
         [void]$lines.Add('            </intent-filter>')
         [void]$lines.Add('        </activity>')
     }
+    if ($Receivers -contains "PolarSensorCommandReceiver") {
+        # `android.permission.DUMP` is the platform's shell-operator boundary
+        # for this explicit receiver. The minSdk bootclasspath does not expose
+        # a trustworthy sender-UID API from BroadcastReceiver itself.
+        [void]$lines.Add('        <receiver android:name="io.github.mesmerprism.rustyquest.native_renderer.PolarSensorCommandReceiver" android:exported="true" android:permission="android.permission.DUMP">')
+        [void]$lines.Add('            <intent-filter>')
+        [void]$lines.Add('                <action android:name="io.github.mesmerprism.rustyquest.native_renderer.action.POLAR_SENSOR_RUNTIME_COMMAND" />')
+        [void]$lines.Add('            </intent-filter>')
+        [void]$lines.Add('        </receiver>')
+    }
+    if ($Receivers -contains "LslPanelCommandReceiver") {
+        [void]$lines.Add('        <receiver android:name="io.github.mesmerprism.rustyquest.native_renderer.LslPanelCommandReceiver" android:exported="true" android:permission="android.permission.DUMP">')
+        [void]$lines.Add('            <intent-filter>')
+        [void]$lines.Add('                <action android:name="io.github.mesmerprism.rustyquest.native_renderer.action.LSL_PANEL_COMMAND" />')
+        [void]$lines.Add('            </intent-filter>')
+        [void]$lines.Add('        </receiver>')
+    }
+    if ($Receivers -contains "BreathCompositionCommandReceiver") {
+        [void]$lines.Add('        <receiver android:name="io.github.mesmerprism.rustyquest.native_renderer.BreathCompositionCommandReceiver" android:exported="true" android:permission="android.permission.DUMP">')
+        [void]$lines.Add('            <intent-filter>')
+        [void]$lines.Add('                <action android:name="io.github.mesmerprism.rustyquest.native_renderer.action.BREATH_COMPOSITION_COMMAND" />')
+        [void]$lines.Add('            </intent-filter>')
+        [void]$lines.Add('        </receiver>')
+    }
     if ($Services -contains "DisplayCompositeProjectionService") {
         [void]$lines.Add('        <service android:name="io.github.mesmerprism.rustyquest.native_renderer.DisplayCompositeProjectionService" android:exported="false" android:foregroundServiceType="mediaProjection" />')
     }
@@ -641,11 +817,188 @@ function Write-JsonArtifact {
     $Value | ConvertTo-Json -Depth 32 | Set-Content -LiteralPath $Path -Encoding UTF8
 }
 
+function Resolve-NativePanelComposition {
+    param(
+        [Parameter(Mandatory=$true)][string]$RepoRoot,
+        [Parameter(Mandatory=$true)][string[]]$SelectedFeatureIds,
+        [Parameter(Mandatory=$true)]$Features,
+        [Parameter(Mandatory=$true)][string[]]$Activities
+    )
+
+    $compositionOwners = @()
+    foreach ($featureId in $SelectedFeatureIds) {
+        $descriptor = $Features[$featureId].descriptor
+        if ($null -ne $descriptor.PSObject.Properties["panel_composition"]) {
+            $compositionOwners += [ordered]@{
+                feature_id = $featureId
+                composition = $descriptor.panel_composition
+            }
+        }
+    }
+
+    $controlPanelSelected = $Activities -contains "ControlPanelActivity"
+    if (-not $controlPanelSelected) {
+        if ($compositionOwners.Count -ne 0) {
+            throw "A native panel module was selected without ControlPanelActivity."
+        }
+        return [ordered]@{
+            schema = "rusty.quest.native_renderer.panel_source_closure.v1"
+            selected_module_id = $null
+            entry_class = $null
+            modules = @()
+            source_files = @()
+            runtime_widening_allowed = $false
+        }
+    }
+    if ($compositionOwners.Count -eq 0) {
+        throw "ControlPanelActivity requires exactly one packaged panel composition; none resolved."
+    }
+    if ($compositionOwners.Count -ne 1) {
+        throw "ControlPanelActivity requires exactly one packaged panel composition; duplicate selections resolved from: $(@($compositionOwners.feature_id) -join ', ')"
+    }
+
+    $owner = $compositionOwners[0]
+    $composition = $owner.composition
+    if ([string]$composition.schema -ne "rusty.quest.native_renderer.panel_composition.v1") {
+        throw "Feature $($owner.feature_id) has unsupported panel composition schema: $($composition.schema)"
+    }
+    $selectedModuleId = [string]$composition.selected_module_id
+    if ([string]::IsNullOrWhiteSpace($selectedModuleId)) {
+        throw "Feature $($owner.feature_id) has an absent panel selected_module_id."
+    }
+    $deniedModuleIds = @(Get-StringArray $composition.denied_module_ids | Sort-Object -Unique)
+    if ($deniedModuleIds -contains $selectedModuleId) {
+        throw "Selected panel module is denied: $selectedModuleId"
+    }
+
+    $modulesById = @{}
+    foreach ($module in @($composition.modules)) {
+        foreach ($requiredField in @("module_id", "entry_class", "dependencies", "source_files")) {
+            Assert-RequiredProperty -Object $module -Name $requiredField -Label "Panel module in feature $($owner.feature_id)"
+        }
+        $moduleId = [string]$module.module_id
+        if ($moduleId -notmatch '^[a-z0-9]+([.-][a-z0-9]+)*$') {
+            throw "Invalid panel module id: $moduleId"
+        }
+        if ($modulesById.ContainsKey($moduleId)) {
+            throw "Panel composition contains duplicate module id: $moduleId"
+        }
+        $dependencies = @(Get-StringArray $module.dependencies)
+        if (@($dependencies | Sort-Object -Unique).Count -ne $dependencies.Count) {
+            throw "Panel module $moduleId contains duplicate dependencies."
+        }
+        $sourceFiles = @(Get-StringArray $module.source_files)
+        if ($sourceFiles.Count -eq 0) {
+            throw "Panel module $moduleId has no declared Java sources."
+        }
+        $modulesById[$moduleId] = [ordered]@{
+            module_id = $moduleId
+            entry_class = [string]$module.entry_class
+            dependencies = $dependencies
+            source_files = $sourceFiles
+        }
+    }
+    if (-not $modulesById.ContainsKey($selectedModuleId)) {
+        throw "Unknown selected panel module: $selectedModuleId"
+    }
+    if ([string]::IsNullOrWhiteSpace([string]$modulesById[$selectedModuleId].entry_class)) {
+        throw "Selected panel module $selectedModuleId has no entry class."
+    }
+
+    $closure = @{}
+    $pending = New-Object System.Collections.Generic.Stack[string]
+    $pending.Push($selectedModuleId)
+    while ($pending.Count -gt 0) {
+        $moduleId = $pending.Pop()
+        if ($closure.ContainsKey($moduleId)) {
+            continue
+        }
+        if (-not $modulesById.ContainsKey($moduleId)) {
+            throw "Panel dependency closure references unknown module: $moduleId"
+        }
+        if ($deniedModuleIds -contains $moduleId) {
+            throw "Panel dependency closure includes denied module: $moduleId"
+        }
+        $closure[$moduleId] = $true
+        foreach ($dependency in @($modulesById[$moduleId].dependencies)) {
+            $pending.Push([string]$dependency)
+        }
+    }
+
+    $orderedIds = @()
+    $remaining = @($closure.Keys | Sort-Object)
+    while ($remaining.Count -gt 0) {
+        $ready = @($remaining | Where-Object {
+            $candidateId = [string]$_
+            @($modulesById[$candidateId].dependencies | Where-Object { $orderedIds -notcontains [string]$_ }).Count -eq 0
+        } | Sort-Object)
+        if ($ready.Count -eq 0) {
+            throw "Panel module dependency graph is cyclic: $($remaining -join ', ')"
+        }
+        foreach ($readyId in $ready) {
+            $orderedIds += [string]$readyId
+        }
+        $remaining = @($remaining | Where-Object { $ready -notcontains $_ })
+    }
+
+    $sourceRecords = @()
+    $sourcePathSet = @{}
+    $moduleRecords = @()
+    foreach ($moduleId in $orderedIds) {
+        $module = $modulesById[$moduleId]
+        $moduleSourceRecords = @()
+        foreach ($relativePath in @($module.source_files)) {
+            $normalizedPath = ([string]$relativePath).Replace("\", "/")
+            if (-not $normalizedPath.StartsWith("apps/native-renderer-android/panel-modules/", [System.StringComparison]::Ordinal)) {
+                throw "Panel source must live in the declared panel-modules owner root: $normalizedPath"
+            }
+            if ($sourcePathSet.ContainsKey($normalizedPath)) {
+                throw "Panel source closure contains duplicate source path: $normalizedPath"
+            }
+            $sourcePath = Resolve-RepoPath -Path $normalizedPath -RepoRoot $RepoRoot
+            if (-not (Test-Path -LiteralPath $sourcePath -PathType Leaf)) {
+                throw "Panel source closure references a missing source: $normalizedPath"
+            }
+            $record = [ordered]@{
+                path = $normalizedPath
+                sha256 = Get-FileSha256 -Path $sourcePath
+                module_id = $moduleId
+            }
+            $sourcePathSet[$normalizedPath] = $true
+            $sourceRecords += $record
+            $moduleSourceRecords += $record
+        }
+        $moduleRecords += [ordered]@{
+            module_id = $moduleId
+            entry_class = [string]$module.entry_class
+            dependencies = @($module.dependencies)
+            source_files = $moduleSourceRecords
+        }
+    }
+
+    return [ordered]@{
+        schema = "rusty.quest.native_renderer.panel_source_closure.v1"
+        selected_by_feature_id = [string]$owner.feature_id
+        selected_module_id = $selectedModuleId
+        entry_class = [string]$modulesById[$selectedModuleId].entry_class
+        denied_module_ids = $deniedModuleIds
+        modules = $moduleRecords
+        source_files = $sourceRecords
+        runtime_widening_allowed = $false
+    }
+}
+
 $RepoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 $repoRootText = [string]$RepoRoot
 $appSpecPath = Resolve-RepoPath -Path $AppSpec -RepoRoot $repoRootText
 $featureDirPath = Resolve-RepoPath -Path $FeatureDir -RepoRoot $repoRootText
 $outputRootPath = Resolve-RepoPath -Path $OutputRoot -RepoRoot $repoRootText
+$resultJsonCanonicalPath = if ([string]::IsNullOrWhiteSpace($ResultJsonPath)) {
+    $null
+} else {
+    $candidate = Resolve-RepoPath -Path $ResultJsonPath -RepoRoot $repoRootText
+    Assert-CanonicalPathInsideRoot -Path $candidate -Root $outputRootPath -Label "Structured resolution result"
+}
 $manifestPath = Resolve-RepoPath -Path $NativeRendererPropertyManifestRelativePath -RepoRoot $repoRootText
 
 $propertyManifest = Get-NativeRendererPropertyManifest -Path $manifestPath
@@ -654,12 +1007,38 @@ $nativeRendererPropertiesByFamily = $propertyManifest.by_family
 $app = Read-JsonFile -Path $appSpecPath
 Assert-AppSpecShape -Spec $app -Path (Get-RepoRelativePath -RepoRoot $repoRootText -Path $appSpecPath)
 $features = Read-FeatureLibrary -FeatureDirPath $featureDirPath -RepoRoot $repoRootText -ManifestByName $nativeRendererPropertyByName
+$privateParticlePayloadLinkage = Resolve-PrivateParticlePayloadInventory -App $app
 
 $denied = @{}
 Add-StringsToSet -Set $denied -Values $app.denied_features
 $state = New-FeatureResolverState
 foreach ($requestedFeature in Get-StringArray $app.requested_features) {
     Resolve-FeatureClosure -FeatureId $requestedFeature -Reason "requested by app spec" -Features $features -Denied $denied -State $state
+}
+$privateParticleRendererSelected = $state.selected.ContainsKey($PrivateParticleRendererFeatureId)
+if ($privateParticleRendererSelected) {
+    if ([int]$privateParticlePayloadLinkage.complete_payload_count -eq 1) {
+        $privateParticlePayloadLinkage.mode = "linked-app-payload"
+        if ($state.selected.ContainsKey($PrivateParticlePlaceholderFeatureId)) {
+            throw "App $($app.app_id) links a private_particle payload but also selects the unlinked placeholder feature $PrivateParticlePlaceholderFeatureId"
+        }
+    } else {
+        $privateParticlePayloadLinkage.mode = "unlinked-placeholder"
+        Resolve-FeatureClosure `
+            -FeatureId $PrivateParticlePlaceholderFeatureId `
+            -Reason "resolver-selected for zero complete private_particle payloads" `
+            -Features $features `
+            -Denied $denied `
+            -State $state
+    }
+} else {
+    if ([int]$privateParticlePayloadLinkage.complete_payload_count -eq 1) {
+        throw "App $($app.app_id) declares a complete private_particle payload without selecting $PrivateParticleRendererFeatureId"
+    }
+    if ($state.selected.ContainsKey($PrivateParticlePlaceholderFeatureId)) {
+        throw "App $($app.app_id) selects $PrivateParticlePlaceholderFeatureId without selecting $PrivateParticleRendererFeatureId"
+    }
+    $privateParticlePayloadLinkage.mode = "inactive"
 }
 $selectedFeatureIds = @(Get-SortedSet -Set $state.selected)
 
@@ -675,6 +1054,7 @@ foreach ($featureId in $selectedFeatureIds) {
 $permissionsSet = @{}
 $usesFeaturesSet = @{}
 $activitiesSet = @{}
+$receiversSet = @{}
 $servicesSet = @{}
 $queriesSet = @{}
 $clearFamiliesSet = @{}
@@ -732,20 +1112,15 @@ function Add-AppPrivateParticlePayloadBuildEnv {
     param(
         [object]$App,
         [string]$AppSpecPath,
+        [object]$PrivateParticlePayloadLinkage,
         [System.Collections.Specialized.OrderedDictionary]$EnvByName
     )
 
-    $privateParticlePayloads = @($App.payloads | Where-Object {
-        $null -ne $_.PSObject.Properties["kind"] -and [string]$_.kind -eq "private_particle"
-    })
-    if ($privateParticlePayloads.Count -gt 1) {
-        throw "App $($App.app_id) may declare at most one private_particle payload"
-    }
-    if ($privateParticlePayloads.Count -eq 0) {
+    if ([string]$PrivateParticlePayloadLinkage.mode -ne "linked-app-payload") {
         return
     }
 
-    $payload = $privateParticlePayloads[0]
+    $payload = $PrivateParticlePayloadLinkage.payload
     $payloadId = if ($null -ne $payload.PSObject.Properties["payload_id"]) {
         [string]$payload.payload_id
     } elseif ($null -ne $payload.PSObject.Properties["id"]) {
@@ -803,6 +1178,23 @@ function Add-AppPrivateParticlePayloadBuildEnv {
             }
         }
     }
+
+    if ($null -ne $payload.PSObject.Properties["build_env"]) {
+        foreach ($envEntry in @($payload.build_env)) {
+            if ($null -eq $envEntry.PSObject.Properties["name"] -or $null -eq $envEntry.PSObject.Properties["value"]) {
+                throw "App payload $payloadId build_env entries require explicit name and value fields"
+            }
+            $name = [string]$envEntry.name
+            if ($name -notmatch '^RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_[A-Z0-9_]+$') {
+                throw "App payload $payloadId build_env name is outside the generic private-particle namespace: $name"
+            }
+            Add-BuildEnvValue `
+                -EnvByName $EnvByName `
+                -Name $name `
+                -Value ([string]$envEntry.value) `
+                -Source $source
+        }
+    }
 }
 
 foreach ($featureId in $selectedFeatureIds) {
@@ -810,6 +1202,9 @@ foreach ($featureId in $selectedFeatureIds) {
     Add-StringsToSet -Set $permissionsSet -Values $feature.android_manifest.permissions
     Add-StringsToSet -Set $usesFeaturesSet -Values $feature.android_manifest.uses_features
     Add-StringsToSet -Set $activitiesSet -Values $feature.android_manifest.activities
+    if ($feature.android_manifest.PSObject.Properties.Name -contains "receivers") {
+        Add-StringsToSet -Set $receiversSet -Values $feature.android_manifest.receivers
+    }
     Add-StringsToSet -Set $servicesSet -Values $feature.android_manifest.services
     Add-StringsToSet -Set $queriesSet -Values $feature.android_manifest.queries
     Add-StringsToSet -Set $clearFamiliesSet -Values $feature.runtime_profile.clear_families
@@ -854,7 +1249,11 @@ foreach ($featureId in $selectedFeatureIds) {
             -Source $envEntrySource
     }
 }
-Add-AppPrivateParticlePayloadBuildEnv -App $app -AppSpecPath $appSpecPath -EnvByName $envByName
+Add-AppPrivateParticlePayloadBuildEnv `
+    -App $app `
+    -AppSpecPath $appSpecPath `
+    -PrivateParticlePayloadLinkage $privateParticlePayloadLinkage `
+    -EnvByName $envByName
 Add-AppRuntimeSet `
     -RuntimeSet $runtimeSet `
     -RuntimeSources $runtimeSources `
@@ -865,20 +1264,58 @@ Add-StringsToSet -Set $permissionsSet -Values $app.permission_allowlist
 Add-StringsToSet -Set $requiredMarkerSet -Values $app.expected_markers.required
 Add-StringsToSet -Set $forbiddenMarkerSet -Values $app.expected_markers.forbidden
 
+if ($selectedFeatureIds -contains $PrivateParticleRendererFeatureId) {
+    if ([string]$privateParticlePayloadLinkage.mode -eq "linked-app-payload") {
+        $requiredMarkerSet[$PrivateParticleLinkedMarker] = $true
+        foreach ($marker in $PrivateParticleUnlinkedMarkers) {
+            $forbiddenMarkerSet[$marker] = $true
+        }
+    } else {
+        $requiredMarkerSet[$PrivateParticleUnlinkedMarkers[0]] = $true
+        $forbiddenMarkerSet[$PrivateParticleLinkedMarker] = $true
+    }
+}
+
+foreach ($marker in @($requiredMarkerSet.Keys)) {
+    if ($forbiddenMarkerSet.ContainsKey([string]$marker)) {
+        throw "Resolved marker contract is contradictory; marker is both required and forbidden: $marker"
+    }
+}
+
 $permissions = @(Get-SortedSet -Set $permissionsSet)
 $usesFeatures = @(Get-SortedSet -Set $usesFeaturesSet)
 $activities = @(Get-SortedSet -Set $activitiesSet)
+$receivers = @(Get-SortedSet -Set $receiversSet)
 $services = @(Get-SortedSet -Set $servicesSet)
 $queries = @(Get-SortedSet -Set $queriesSet)
 $clearFamilies = @(Get-SortedSet -Set $clearFamiliesSet)
 $expectedRenderModes = @(Get-SortedSet -Set $expectedRenderModesSet)
 $requiredMarkers = @(Get-SortedSet -Set $requiredMarkerSet)
 $forbiddenMarkers = @(Get-SortedSet -Set $forbiddenMarkerSet)
+foreach ($receiver in $receivers) {
+    if ($receiver -notin @("PolarSensorCommandReceiver", "LslPanelCommandReceiver", "BreathCompositionCommandReceiver")) {
+        throw "Android receiver surface contains an unsupported closed-world receiver: $receiver"
+    }
+}
+$claimsSimultaneousHandsControllers = @($requiredMarkers | Where-Object {
+    [string]$_ -match 'simultaneousHandsControllers(Selected|Ready)=true'
+}).Count -gt 0
+if ($claimsSimultaneousHandsControllers -and
+    $selectedFeatureIds -cnotcontains $SimultaneousHandsControllersFeatureId) {
+    throw "Hands-only or controller-only selection cannot claim simultaneous hands/controllers activation"
+}
 
 Assert-SetEquals -Label "Android permission surface" -Expected (Get-StringArray $app.declared_manifest.permissions) -Actual $permissions
 Assert-SetEquals -Label "Android uses-feature surface" -Expected (Get-StringArray $app.declared_manifest.uses_features) -Actual $usesFeatures
 Assert-SetEquals -Label "Android activity surface" -Expected (Get-StringArray $app.declared_manifest.activities) -Actual $activities
+Assert-SetEquals -Label "Android receiver surface" -Expected (Get-StringArray $app.declared_manifest.receivers) -Actual $receivers
 Assert-SetEquals -Label "Android service surface" -Expected (Get-StringArray $app.declared_manifest.services) -Actual $services
+
+$panelSourceClosure = Resolve-NativePanelComposition `
+    -RepoRoot $repoRootText `
+    -SelectedFeatureIds $selectedFeatureIds `
+    -Features $features `
+    -Activities $activities
 
 $environmentDepthMode = if ($runtimeSet.Contains($EnvironmentDepthModeProperty)) { [string]$runtimeSet[$EnvironmentDepthModeProperty] } else { "" }
 $environmentDepthSource = if ($runtimeSet.Contains($EnvironmentDepthSourceProperty)) { [string]$runtimeSet[$EnvironmentDepthSourceProperty] } else { "" }
@@ -928,6 +1365,132 @@ if ($expectedRenderModes.Count -gt 0 -and $expectedRenderModes -cnotcontains $re
     throw "Resolved render mode $renderMode is not allowed by selected feature expected_render_modes: $($expectedRenderModes -join ', ')"
 }
 
+$featureDescriptorRecords = @()
+foreach ($featureId in $selectedFeatureIds) {
+    $featureDescriptorRecords += [ordered]@{
+        feature_id = $featureId
+        module_path = [string]$features[$featureId].descriptor.module_path
+        module_kind = [string]$features[$featureId].descriptor.module_kind
+        path = Get-RepoRelativePath -RepoRoot $repoRootText -Path $features[$featureId].path
+        sha256 = [string]$features[$featureId].sha256
+    }
+}
+$privateParticlePayloadLinkageReceipt = [ordered]@{
+    schema = [string]$privateParticlePayloadLinkage.schema
+    mode = [string]$privateParticlePayloadLinkage.mode
+    complete_payload_count = [int]$privateParticlePayloadLinkage.complete_payload_count
+    inventory_sha256 = [string]$privateParticlePayloadLinkage.inventory_sha256
+}
+$runtimeSetWithoutResolverBindings = @($runtimeSet.Keys | Sort-Object | ForEach-Object {
+    [ordered]@{ name = [string]$_; value = [string]$runtimeSet[$_] }
+})
+$simultaneousHandsControllersSelected = $selectedFeatureIds -contains $SimultaneousHandsControllersFeatureId
+$simultaneousHandsControllersEnabled =
+    $runtimeSet.Contains($SimultaneousHandsControllersEnabledProperty) -and
+    [string]$runtimeSet[$SimultaneousHandsControllersEnabledProperty] -eq "true"
+if ($simultaneousHandsControllersSelected -ne $simultaneousHandsControllersEnabled) {
+    throw "Simultaneous hands/controllers runtime selection must exactly match $SimultaneousHandsControllersFeatureId"
+}
+if ($simultaneousHandsControllersSelected) {
+    foreach ($requiredFeature in @(
+        "input.controllers_and_hands_optional",
+        "hand_mesh_live_input",
+        "hand_mesh_visual"
+    )) {
+        if ($selectedFeatureIds -cnotcontains $requiredFeature) {
+            throw "Simultaneous hands/controllers selection is missing required feature: $requiredFeature"
+        }
+    }
+    $requiredHandBinding = [ordered]@{
+        "debug.rustyquest.native_renderer.hand_adapter.enabled" = "true"
+        "debug.rustyquest.native_renderer.hand_adapter.profile_id" = "profile.quest.native_renderer.hand_adapter_conformance"
+        "debug.rustyquest.native_renderer.hand_adapter.project_id" = "native-renderer"
+        "debug.rustyquest.native_renderer.hand_adapter.feature_id" = "hand-adapter-consumer"
+        "debug.rustyquest.native_renderer.hand_adapter.lock_revision" = "1"
+        "debug.rustyquest.native_renderer.hand_adapter.lock_sha256" = "A1391A7EF2C41F072032283E485F5A9EB58CAB3B74681F150CE24CD9262CF91D"
+    }
+    foreach ($entry in $requiredHandBinding.GetEnumerator()) {
+        if (-not $runtimeSet.Contains([string]$entry.Key) -or
+            [string]$runtimeSet[[string]$entry.Key] -cne [string]$entry.Value) {
+            throw "Simultaneous hands/controllers selection requires exact applied hand-adapter binding property: $($entry.Key)"
+        }
+    }
+}
+$breathCompositionActivationBinding = $null
+if ($selectedFeatureIds -contains $BreathCompositionFeatureId) {
+    $bindingInputs = [ordered]@{
+        schema = "rusty.quest.breath_composition.activation_binding_inputs.v1"
+        app_spec_sha256 = Get-FileSha256 -Path $appSpecPath
+        feature_descriptors = $featureDescriptorRecords
+        selected_feature_ids = $selectedFeatureIds
+        runtime_set_without_binding = $runtimeSetWithoutResolverBindings
+    }
+    $breathCompositionActivationBinding = Get-StringSha256 -Value ($bindingInputs | ConvertTo-Json -Depth 20 -Compress)
+    Assert-NativeRendererPropertyValue `
+        -Name $BreathCompositionActivationBindingProperty `
+        -Value $breathCompositionActivationBinding `
+        -ManifestByName $nativeRendererPropertyByName
+    if ($runtimeSet.Contains($BreathCompositionActivationBindingProperty)) {
+        throw "Breath composition activation binding is resolver-derived and must not be supplied by a feature or app spec"
+    }
+    $runtimeSet[$BreathCompositionActivationBindingProperty] = $breathCompositionActivationBinding
+    $runtimeSources[$BreathCompositionActivationBindingProperty] = "resolver:$BreathCompositionFeatureId"
+    if ($envByName.Contains($BreathCompositionExpectedBindingBuildEnv)) {
+        throw "Breath composition packaged binding build env is resolver-derived and must not be supplied by a feature or payload"
+    }
+    $envByName[$BreathCompositionExpectedBindingBuildEnv] = [ordered]@{
+        name = $BreathCompositionExpectedBindingBuildEnv
+        value = $breathCompositionActivationBinding
+    }
+    if ($selectedFeatureIds -contains $BreathCompositionDriverFeatureId) {
+        Assert-NativeRendererPropertyValue `
+            -Name $BreathCompositionDriverActivationBindingProperty `
+            -Value $breathCompositionActivationBinding `
+            -ManifestByName $nativeRendererPropertyByName
+        if ($runtimeSet.Contains($BreathCompositionDriverActivationBindingProperty)) {
+            throw "Breath composition driver activation binding is resolver-derived and must not be supplied by a feature or app spec"
+        }
+        $runtimeSet[$BreathCompositionDriverActivationBindingProperty] = $breathCompositionActivationBinding
+        $runtimeSources[$BreathCompositionDriverActivationBindingProperty] = "resolver:$BreathCompositionDriverFeatureId"
+        if ($envByName.Contains($BreathCompositionDriverExpectedBindingBuildEnv)) {
+            throw "Breath composition driver packaged binding build env is resolver-derived and must not be supplied by a feature or payload"
+        }
+        $envByName[$BreathCompositionDriverExpectedBindingBuildEnv] = [ordered]@{
+            name = $BreathCompositionDriverExpectedBindingBuildEnv
+            value = $breathCompositionActivationBinding
+        }
+    }
+}
+$simultaneousHandsControllersActivationBinding = $null
+if ($simultaneousHandsControllersSelected) {
+    $bindingInputs = [ordered]@{
+        schema = "rusty.quest.simultaneous_hands_controllers.activation_binding_inputs.v1"
+        app_spec_sha256 = Get-FileSha256 -Path $appSpecPath
+        feature_descriptors = $featureDescriptorRecords
+        selected_feature_ids = $selectedFeatureIds
+        runtime_set_without_binding = $runtimeSetWithoutResolverBindings
+    }
+    $simultaneousHandsControllersActivationBinding = Get-StringSha256 -Value ($bindingInputs | ConvertTo-Json -Depth 20 -Compress)
+    Assert-NativeRendererPropertyValue `
+        -Name $SimultaneousHandsControllersActivationBindingProperty `
+        -Value $simultaneousHandsControllersActivationBinding `
+        -ManifestByName $nativeRendererPropertyByName
+    if ($runtimeSet.Contains($SimultaneousHandsControllersActivationBindingProperty)) {
+        throw "Simultaneous hands/controllers activation binding is resolver-derived and must not be supplied by a feature or app spec"
+    }
+    $runtimeSet[$SimultaneousHandsControllersActivationBindingProperty] = $simultaneousHandsControllersActivationBinding
+    $runtimeSources[$SimultaneousHandsControllersActivationBindingProperty] = "resolver:$SimultaneousHandsControllersFeatureId"
+    if ($envByName.Contains($SimultaneousHandsControllersExpectedBindingBuildEnv)) {
+        throw "Simultaneous hands/controllers packaged binding build env is resolver-derived and must not be supplied by a feature or payload"
+    }
+    $envByName[$SimultaneousHandsControllersExpectedBindingBuildEnv] = [ordered]@{
+        name = $SimultaneousHandsControllersExpectedBindingBuildEnv
+        value = $simultaneousHandsControllersActivationBinding
+    }
+}
+
+# Materialize executable property adapters only after all resolver-derived
+# values have entered the authoritative runtime set.
 $ownedPropertiesSet = @{}
 foreach ($propertyName in $runtimeSet.Keys) {
     $ownedPropertiesSet[[string]$propertyName] = $true
@@ -951,21 +1514,12 @@ foreach ($propertyName in @($runtimeSet.Keys | Sort-Object)) {
         source_setting_id = $settingId
     }
 }
-
-$featureDescriptorRecords = @()
-foreach ($featureId in $selectedFeatureIds) {
-    $featureDescriptorRecords += [ordered]@{
-        feature_id = $featureId
-        module_path = [string]$features[$featureId].descriptor.module_path
-        module_kind = [string]$features[$featureId].descriptor.module_kind
-        path = Get-RepoRelativePath -RepoRoot $repoRootText -Path $features[$featureId].path
-        sha256 = [string]$features[$featureId].sha256
-    }
-}
 $resolutionInputs = [ordered]@{
     resolver_version = $ResolverVersion
     app_spec_sha256 = Get-FileSha256 -Path $appSpecPath
     feature_descriptors = $featureDescriptorRecords
+    panel_source_closure = $panelSourceClosure
+    private_particle_payload_linkage = $privateParticlePayloadLinkageReceipt
     build_env = @($envByName.Keys | Sort-Object | ForEach-Object { $envByName[$_] })
     runtime_set = @($runtimeSet.Keys | Sort-Object | ForEach-Object { [ordered]@{ name = [string]$_; value = [string]$runtimeSet[$_] } })
 }
@@ -1159,6 +1713,7 @@ $nativeAppSettings = [ordered]@{
     resolver_version = $ResolverVersion
     selected_feature_ids = $selectedFeatureIds
     modules = $moduleRecords
+    panel = $panelSourceClosure
     values = $settingsValues
     disabled_modules = $clearFamilies
     settings_hotload = $settingsHotload
@@ -1185,11 +1740,34 @@ $featureLock = [ordered]@{
     denied_feature_ids = @(Get-StringArray $app.denied_features | Sort-Object)
     feature_descriptors = $featureDescriptorRecords
     dependency_reasons = $dependencyReasons
+    panel_source_closure = $panelSourceClosure
+    breath_composition_activation = if ($null -ne $breathCompositionActivationBinding) {
+        [ordered]@{
+            schema = "rusty.quest.breath_composition.activation_binding.v1"
+            property = $BreathCompositionActivationBindingProperty
+            sha256 = $breathCompositionActivationBinding
+        }
+    } else { $null }
+    breath_composition_driver_activation = if ($selectedFeatureIds -contains $BreathCompositionDriverFeatureId) {
+        [ordered]@{
+            schema = "rusty.quest.breath_composition_driver.activation_binding.v1"
+            property = $BreathCompositionDriverActivationBindingProperty
+            sha256 = $breathCompositionActivationBinding
+        }
+    } else { $null }
+    simultaneous_hands_controllers_activation = if ($null -ne $simultaneousHandsControllersActivationBinding) {
+        [ordered]@{
+            schema = "rusty.quest.simultaneous_hands_controllers.activation_binding.v1"
+            property = $SimultaneousHandsControllersActivationBindingProperty
+            sha256 = $simultaneousHandsControllersActivationBinding
+        }
+    } else { $null }
     exclusive_groups = $exclusiveGroups
     android_manifest = [ordered]@{
         permissions = $permissions
         uses_features = $usesFeatures
         activities = $activities
+        receivers = $receivers
         services = $services
         queries = $queries
         package_name = [string]$app.package_name
@@ -1216,6 +1794,7 @@ $featureLock = [ordered]@{
         assets = @(Get-SortedSet -Set $assetSet)
         shaders = @(Get-SortedSet -Set $shaderSet)
         payloads = @($app.payloads)
+        private_particle_payload_linkage = $privateParticlePayloadLinkageReceipt
     }
     expected_markers = [ordered]@{
         required = $requiredMarkers
@@ -1244,7 +1823,15 @@ if ($LASTEXITCODE -ne 0) {
     throw "Generated runtime profile failed Apply-RuntimeProfile.ps1 dry-run"
 }
 
-$manifestText = New-GeneratedAndroidManifestText -PackageName ([string]$app.package_name) -Permissions $permissions -UsesFeatures $usesFeatures -Activities $activities -Services $services -Queries $queries
+$applicationLabel = if ($null -ne $app.PSObject.Properties["application_label"]) {
+    ([string]$app.application_label).Trim()
+} else {
+    "Rusty Quest Generated Native App"
+}
+if ([string]::IsNullOrWhiteSpace($applicationLabel) -or $applicationLabel.Length -gt 64 -or $applicationLabel -match '[\r\n\t]') {
+    throw "App build spec application_label must be 1..64 visible characters without control whitespace"
+}
+$manifestText = New-GeneratedAndroidManifestText -PackageName ([string]$app.package_name) -ApplicationLabel $applicationLabel -Permissions $permissions -UsesFeatures $usesFeatures -Activities $activities -Receivers $receivers -Services $services -Queries $queries
 New-Item -ItemType Directory -Path (Split-Path -Parent $androidManifestPath) -Force | Out-Null
 Set-Content -LiteralPath $androidManifestPath -Value $manifestText -Encoding UTF8
 
@@ -1263,7 +1850,9 @@ $buildManifest = [ordered]@{
     app_id = [string]$app.app_id
     resolution_fingerprint = $resolutionFingerprint
     package_name = [string]$app.package_name
+    application_label = $applicationLabel
     package_policy = [string]$app.package_policy
+    panel_source_closure = $panelSourceClosure
     feature_lock_sha256 = Get-FileSha256 -Path $featureLockPath
     runtime_profile_sha256 = Get-FileSha256 -Path $runtimeProfilePath
     native_app_settings_sha256 = Get-FileSha256 -Path $nativeAppSettingsPath
@@ -1281,6 +1870,7 @@ $audit = [ordered]@{
     source_app_spec = Get-RepoRelativePath -RepoRoot $repoRootText -Path $appSpecPath
     selected_feature_ids = $selectedFeatureIds
     denied_feature_ids = @(Get-StringArray $app.denied_features | Sort-Object)
+    panel_source_closure = $panelSourceClosure
     android_permissions = $permissions
     android_uses_features = $usesFeatures
     render_mode = $renderMode
@@ -1289,13 +1879,36 @@ $audit = [ordered]@{
     settings_authority = $NativeAppSettingsSchema
     settings_hotload = $settingsHotload
     permission_pregrant = $permissionPregrant
+    private_particle_payload_linkage = $privateParticlePayloadLinkageReceipt
     generated_outputs = $generatedOutputs
     artifact_hashes = $buildManifest
     result = "accepted"
 }
 Write-JsonArtifact -Value $audit -Path $auditPath
 
+if ($null -ne $resultJsonCanonicalPath) {
+    $resolutionResult = [ordered]@{
+        schema = $ResolutionResultSchema
+        app_id = [string]$app.app_id
+        resolution_fingerprint = $resolutionFingerprint
+        resolved_feature_ids = $selectedFeatureIds
+        panel_source_closure = $panelSourceClosure
+        output_root = [System.IO.Path]::GetFullPath($outputRootPath)
+        feature_lock_path = [System.IO.Path]::GetFullPath($featureLockPath)
+        feature_lock_sha256 = Get-FileSha256 -Path $featureLockPath
+        breath_composition_activation_sha256 = $breathCompositionActivationBinding
+        breath_composition_driver_activation_sha256 = if ($selectedFeatureIds -contains $BreathCompositionDriverFeatureId) { $breathCompositionActivationBinding } else { $null }
+        simultaneous_hands_controllers_activation_sha256 = $simultaneousHandsControllersActivationBinding
+        audit_path = [System.IO.Path]::GetFullPath($auditPath)
+        audit_sha256 = Get-FileSha256 -Path $auditPath
+    }
+    Write-JsonArtifact -Value $resolutionResult -Path $resultJsonCanonicalPath
+}
+
 Write-Output "native app-build dry-run accepted: $($app.app_id)"
 Write-Output "resolution fingerprint: $resolutionFingerprint"
 Write-Output "feature lock: $featureLockPath"
 Write-Output "audit report: $auditPath"
+if ($null -ne $resultJsonCanonicalPath) {
+    Write-Output "structured result: $resultJsonCanonicalPath"
+}

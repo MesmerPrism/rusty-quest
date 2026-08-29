@@ -3,13 +3,18 @@
 //! This module keeps Android property parsing separate from the OpenXR/Vulkan
 //! frame loop so replay-proof, live-hand, and SDF visual modes stay testable.
 
+use crate::breath_calibration_controller_action::BreathCalibrationControllerActionSettings;
+use crate::breath_composition_driver::BreathCompositionDriverSettings;
 pub(crate) use crate::environment_depth_alignment_state::EnvironmentDepthAlignmentSettings;
 use crate::manifold_scalar_driver_bridge::ManifoldScalarDriverBridgeSettings;
 use crate::native_renderer_property_values::{
     bool_value, f32_clamped_value, f32_pair_value, f32_value, u32_value, u64_value,
 };
 use crate::private_particle_breath_state_driver::PrivateParticleBreathStateDriverSettings;
+use crate::private_particle_heartbeat_pulse_adapter::PrivateParticleHeartbeatPulseAdapterSettings;
 use crate::projection_target_state::ProjectionTargetSettings;
+use crate::same_apk_panel_action::SameApkPanelActionSettings;
+use crate::simultaneous_hands_controllers::SimultaneousHandsControllersSettings;
 
 pub(crate) use crate::native_renderer_camera_options::{
     NativeCameraOutputMode, NativeCameraQualityProfile, NativeCameraResolutionProfile,
@@ -23,6 +28,7 @@ pub(crate) use crate::native_renderer_display_composite_options::{
     NativeDisplayCompositeFeedbackProjection, NativeDisplayCompositeMode,
     NativeDisplayCompositeSource,
 };
+pub(crate) use crate::native_renderer_display_refresh_options::NativeDisplayRefreshSettings;
 pub(crate) use crate::native_renderer_environment_depth_options::NativeEnvironmentDepthSettings;
 #[cfg(test)]
 #[allow(unused_imports)]
@@ -99,6 +105,8 @@ pub(crate) struct NativeRendererRuntimeOptions {
     pub(crate) swapchain_color_format_mode: NativeSwapchainColorFormatMode,
     pub(crate) projection_swapchain_settings: NativeProjectionSwapchainSettings,
     pub(crate) foveation_settings: NativeFoveationSettings,
+    pub(crate) display_refresh_settings: NativeDisplayRefreshSettings,
+    pub(crate) private_particle_world_anchor_scale_m: f32,
     pub(crate) replay_visual_proof_enabled: bool,
     pub(crate) compact_hand_input_source_mode: CompactHandInputSourceMode,
     pub(crate) sdf_visual_enabled: bool,
@@ -119,6 +127,13 @@ pub(crate) struct NativeRendererRuntimeOptions {
     pub(crate) projection_target_settings: ProjectionTargetSettings,
     pub(crate) private_particle_breath_state_driver_settings:
         PrivateParticleBreathStateDriverSettings,
+    pub(crate) private_particle_breath_composition_driver_settings: BreathCompositionDriverSettings,
+    pub(crate) private_particle_heartbeat_pulse_adapter_settings:
+        PrivateParticleHeartbeatPulseAdapterSettings,
+    pub(crate) same_apk_panel_action_settings: SameApkPanelActionSettings,
+    pub(crate) breath_calibration_controller_action_settings:
+        BreathCalibrationControllerActionSettings,
+    pub(crate) simultaneous_hands_controllers_settings: SimultaneousHandsControllersSettings,
     pub(crate) manifold_scalar_driver_settings: ManifoldScalarDriverBridgeSettings,
     pub(crate) projection_border_stretch_settings: NativeProjectionBorderStretchSettings,
     pub(crate) private_layer_settings: NativePrivateLayerSettings,
@@ -151,6 +166,15 @@ impl NativeRendererRuntimeOptions {
         let projection_swapchain_settings =
             NativeProjectionSwapchainSettings::from_property_lookup(&mut lookup);
         let foveation_settings = NativeFoveationSettings::from_property_lookup(&mut lookup);
+        let display_refresh_settings = NativeDisplayRefreshSettings::from_property(lookup(
+            PROP_OPENXR_DISPLAY_REFRESH_RATE_HZ,
+        ));
+        let private_particle_world_anchor_scale_m = f32_clamped_value(
+            lookup(PROP_PRIVATE_PARTICLES_WORLD_ANCHOR_SCALE_M),
+            0.46,
+            0.05,
+            4.0,
+        );
         let replay_visual_proof_enabled =
             bool_value(lookup(PROP_REPLAY_VISUAL_PROOF_ENABLED), false);
         let compact_hand_input_source_mode = CompactHandInputSourceMode::from_property(
@@ -202,6 +226,16 @@ impl NativeRendererRuntimeOptions {
         };
         let private_particle_breath_state_driver_settings =
             PrivateParticleBreathStateDriverSettings::from_property_lookup(&mut lookup);
+        let private_particle_breath_composition_driver_settings =
+            BreathCompositionDriverSettings::from_property_lookup(&mut lookup);
+        let private_particle_heartbeat_pulse_adapter_settings =
+            PrivateParticleHeartbeatPulseAdapterSettings::from_property_lookup(&mut lookup);
+        let same_apk_panel_action_settings =
+            SameApkPanelActionSettings::from_property_lookup(&mut lookup);
+        let breath_calibration_controller_action_settings =
+            BreathCalibrationControllerActionSettings::from_property_lookup(&mut lookup);
+        let simultaneous_hands_controllers_settings =
+            SimultaneousHandsControllersSettings::from_property_lookup(&mut lookup);
         let manifold_scalar_driver_settings =
             ManifoldScalarDriverBridgeSettings::from_property_lookup(&mut lookup);
         let projection_border_stretch_settings =
@@ -224,6 +258,8 @@ impl NativeRendererRuntimeOptions {
             swapchain_color_format_mode,
             projection_swapchain_settings,
             foveation_settings,
+            display_refresh_settings,
+            private_particle_world_anchor_scale_m,
             replay_visual_proof_enabled,
             compact_hand_input_source_mode,
             sdf_visual_enabled,
@@ -247,6 +283,11 @@ impl NativeRendererRuntimeOptions {
             stimulus_volume_settings,
             projection_target_settings,
             private_particle_breath_state_driver_settings,
+            private_particle_breath_composition_driver_settings,
+            private_particle_heartbeat_pulse_adapter_settings,
+            same_apk_panel_action_settings,
+            breath_calibration_controller_action_settings,
+            simultaneous_hands_controllers_settings,
             manifold_scalar_driver_settings,
             projection_border_stretch_settings,
             private_layer_settings,
@@ -258,11 +299,6 @@ impl NativeRendererRuntimeOptions {
         mut default_lookup: impl FnMut(&str) -> Option<String>,
     ) -> Self {
         Self::from_property_lookup(|name| lookup(name).or_else(|| default_lookup(name)))
-    }
-
-    #[cfg(target_os = "android")]
-    pub(crate) fn load_from_android_properties() -> Self {
-        Self::load_from_android_properties_with_defaults(|_| None)
     }
 
     #[cfg(target_os = "android")]

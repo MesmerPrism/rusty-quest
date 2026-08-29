@@ -1,11 +1,27 @@
-use std::time::Instant;
+use std::{
+    sync::atomic::{AtomicBool, Ordering},
+    time::Instant,
+};
 
 use ash::vk;
+
+use crate::native_renderer_diagnostics_contract::{DiagnosticsLevel, BUILD_DIAGNOSTICS_LEVEL};
 
 pub(crate) const GPU_TIMESTAMP_FRAME_LAG: u32 = 2;
 
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct FrameCpuTimings {
+    pub(crate) xr_wait_frame_ms: f64,
+    pub(crate) xr_begin_frame_ms: f64,
+    pub(crate) vulkan_prior_frame_fence_wait_ms: f64,
+    pub(crate) vulkan_prior_frame_retire_readback_ms: f64,
+    pub(crate) vulkan_prior_frame_reset_ms: f64,
+    pub(crate) swapchain_acquire_ms: f64,
+    pub(crate) gpu_timestamp_query_results_ms: f64,
+    pub(crate) gpu_timestamp_query_results_available: bool,
+    pub(crate) private_particle_detailed_diagnostic_readback_map_validate_ms: f64,
+    pub(crate) private_particle_detailed_diagnostic_readback_available: bool,
+    pub(crate) private_particle_detailed_diagnostic_readback_executed: bool,
     pub(crate) camera_acquire_import_ms: f64,
     pub(crate) guide_graph_ms: f64,
     pub(crate) live_hand_ms: f64,
@@ -14,25 +30,99 @@ pub(crate) struct FrameCpuTimings {
     pub(crate) projection_composite_ms: f64,
     pub(crate) command_record_ms: f64,
     pub(crate) swapchain_wait_ms: f64,
+    pub(crate) swapchain_release_ms: f64,
     pub(crate) queue_submit_ms: f64,
     pub(crate) openxr_end_frame_ms: f64,
+    pub(crate) submitted_frame_host_ms: f64,
 }
 
 impl FrameCpuTimings {
+    pub(crate) fn record_gpu_timestamp_query_results(&mut self, available: bool, elapsed: f64) {
+        self.gpu_timestamp_query_results_available = available;
+        self.gpu_timestamp_query_results_ms = if available {
+            nonnegative_cpu_ms(elapsed)
+        } else {
+            0.0
+        };
+    }
+
+    pub(crate) fn record_private_particle_detailed_diagnostic_readback(
+        &mut self,
+        available: bool,
+        executed: bool,
+        elapsed: f64,
+    ) {
+        let sample_available = available && executed;
+        self.private_particle_detailed_diagnostic_readback_available = sample_available;
+        self.private_particle_detailed_diagnostic_readback_executed = sample_available;
+        self.private_particle_detailed_diagnostic_readback_map_validate_ms = if sample_available {
+            nonnegative_cpu_ms(elapsed)
+        } else {
+            0.0
+        };
+    }
+
     pub(crate) fn marker_fields(self) -> String {
+        let gpu_timestamp_query_results_ms = cpu_ms_marker(
+            self.gpu_timestamp_query_results_available,
+            self.gpu_timestamp_query_results_ms,
+        );
+        let private_particle_detailed_diagnostic_readback_ms = cpu_ms_marker(
+            self.private_particle_detailed_diagnostic_readback_available,
+            self.private_particle_detailed_diagnostic_readback_map_validate_ms,
+        );
         format!(
-            "cameraAcquireImportCpuMs={:.3} guideGraphCpuMs={:.3} liveHandLocateCpuMs={:.3} handSdfPrepareCpuMs={:.3} handMeshVisualCpuMs={:.3} projectionCompositeCpuMs={:.3} commandRecordCpuMs={:.3} swapchainWaitCpuMs={:.3} queueSubmitCpuMs={:.3} openxrEndFrameCpuMs={:.3} cpuTimingScope=host-recording-and-submit",
-            self.camera_acquire_import_ms,
-            self.guide_graph_ms,
-            self.live_hand_ms,
-            self.hand_sdf_prepare_ms,
-            self.hand_mesh_visual_ms,
-            self.projection_composite_ms,
-            self.command_record_ms,
-            self.swapchain_wait_ms,
-            self.queue_submit_ms,
-            self.openxr_end_frame_ms
+            "xrWaitFrameCpuMs={:.3} xrWaitFrameCpuTimingScope=openxr-wait-frame-api xrBeginFrameCpuMs={:.3} xrBeginFrameCpuTimingScope=openxr-begin-frame-api vulkanPriorFrameFenceWaitCpuMs={:.3} vulkanPriorFrameFenceWaitCpuTimingScope=prior-slot-fence-ownership-wait vulkanPriorFrameRetireReadbackCpuMs={:.3} vulkanPriorFrameRetireReadbackCpuTimingScope=post-fence-prior-slot-retirement-includes-timestamp-query-results-and-detailed-private-diagnostic vulkanPriorFrameRetireReadbackCpuTimingOverlap=not-additive-with-child-timings vulkanPriorFrameResetCpuMs={:.3} vulkanPriorFrameResetCpuTimingScope=prior-slot-fence-and-command-buffer-reset swapchainAcquireCpuMs={:.3} swapchainAcquireCpuTimingScope=openxr-acquire-swapchain-image-api gpuTimestampQueryResultsCpuMs={} gpuTimestampQueryResultsCpuTimingAvailable={} gpuTimestampQueryResultsCpuTimingScope=vulkan-get-query-pool-results privateParticleDetailedDiagnosticReadbackMapValidateCpuMs={} privateParticleDetailedDiagnosticReadbackCpuTimingAvailable={} privateParticleDetailedDiagnosticReadbackCpuTimingExecuted={} privateParticleDetailedDiagnosticReadbackCpuTimingScope=host-readback-map-validate cameraAcquireImportCpuMs={:.3} guideGraphCpuMs={:.3} liveHandLocateCpuMs={:.3} handSdfPrepareCpuMs={:.3} handMeshVisualCpuMs={:.3} handMeshVisualCpuSpanMs={:.3} handMeshVisualCpuTimingScope=host-hand-mesh-visual-anchor-particle-environment-depth-and-private-particle-compute-preparation projectionCompositeCpuMs={:.3} projectionCompositeCpuSpanMs={:.3} projectionCompositeCpuTimingScope=host-projection-composition-and-command-finalization commandRecordCpuMs={:.3} swapchainWaitCpuMs={:.3} swapchainReleaseCpuMs={:.3} swapchainReleaseCpuTimingScope=openxr-release-swapchain-image-api queueSubmitCpuMs={:.3} openxrEndFrameCpuMs={:.3} submittedFrameHostCpuMs={:.3} submittedFrameHostCpuTimingScope=after-xr-wait-frame-through-successful-xr-end-frame renderLoopSubmittedFrameCpuMs={:.3} renderLoopSubmittedFrameCpuTimingScope=after-xr-wait-frame-through-successful-xr-end-frame cpuTimingScope=host-submitted-frame-and-prior-slot-observation",
+            nonnegative_cpu_ms(self.xr_wait_frame_ms),
+            nonnegative_cpu_ms(self.xr_begin_frame_ms),
+            nonnegative_cpu_ms(self.vulkan_prior_frame_fence_wait_ms),
+            nonnegative_cpu_ms(self.vulkan_prior_frame_retire_readback_ms),
+            nonnegative_cpu_ms(self.vulkan_prior_frame_reset_ms),
+            nonnegative_cpu_ms(self.swapchain_acquire_ms),
+            gpu_timestamp_query_results_ms,
+            self.gpu_timestamp_query_results_available,
+            private_particle_detailed_diagnostic_readback_ms,
+            self.private_particle_detailed_diagnostic_readback_available,
+            self.private_particle_detailed_diagnostic_readback_executed,
+            nonnegative_cpu_ms(self.camera_acquire_import_ms),
+            nonnegative_cpu_ms(self.guide_graph_ms),
+            nonnegative_cpu_ms(self.live_hand_ms),
+            nonnegative_cpu_ms(self.hand_sdf_prepare_ms),
+            nonnegative_cpu_ms(self.hand_mesh_visual_ms),
+            nonnegative_cpu_ms(self.hand_mesh_visual_ms),
+            nonnegative_cpu_ms(self.projection_composite_ms),
+            nonnegative_cpu_ms(self.projection_composite_ms),
+            nonnegative_cpu_ms(self.command_record_ms),
+            nonnegative_cpu_ms(self.swapchain_wait_ms),
+            nonnegative_cpu_ms(self.swapchain_release_ms),
+            nonnegative_cpu_ms(self.queue_submit_ms),
+            nonnegative_cpu_ms(self.openxr_end_frame_ms),
+            nonnegative_cpu_ms(self.submitted_frame_host_ms),
+            nonnegative_cpu_ms(self.submitted_frame_host_ms),
         )
+    }
+}
+
+pub(crate) const fn detailed_private_particle_cpu_observation_available(
+    diagnostics_level: DiagnosticsLevel,
+    private_particle_renderer_available: bool,
+) -> bool {
+    diagnostics_level.detailed_readback_enabled() && private_particle_renderer_available
+}
+
+fn nonnegative_cpu_ms(value: f64) -> f64 {
+    if value.is_finite() {
+        value.max(0.0)
+    } else {
+        0.0
+    }
+}
+
+fn cpu_ms_marker(available: bool, value: f64) -> String {
+    if available {
+        format!("{:.3}", nonnegative_cpu_ms(value))
+    } else {
+        "unavailable".to_string()
     }
 }
 
@@ -55,13 +145,25 @@ pub(crate) enum GpuTimestampStage {
     PrivateParticleHalfResDrawRightEye,
     PrivateParticleHalfResCompositeLeftEye,
     PrivateParticleHalfResCompositeRightEye,
+    PrivateParticleMainFullResDrawLeftEye,
+    PrivateParticleMainFullResDrawRightEye,
+    PrivateParticleTracerHalfResDrawLeftEye,
+    PrivateParticleTracerHalfResDrawRightEye,
     StimulusVolumeCompute,
     StimulusVolumeProjection,
     ProjectionComposite,
+    PrivateParticleComputeDispatch,
+    PrivateParticleComputePostDispatchSync,
+    /// Primary-to-auxiliary dependency. This is a dependency span, not work.
+    PrivateParticleComputeInterDispatch,
+    /// Optional payload auxiliary compute dispatch.
+    PrivateParticleComputeAuxiliary,
+    /// Isolated detailed-only diagnostic reduction/readback pass.
+    PrivateParticleDetailedDiagnostic,
 }
 
 impl GpuTimestampStage {
-    const COUNT: u32 = 16;
+    pub(crate) const COUNT: u32 = 25;
 
     const fn index(self) -> u32 {
         match self {
@@ -78,14 +180,59 @@ impl GpuTimestampStage {
             Self::PrivateParticleHalfResDrawRightEye => 10,
             Self::PrivateParticleHalfResCompositeLeftEye => 11,
             Self::PrivateParticleHalfResCompositeRightEye => 12,
-            Self::StimulusVolumeCompute => 13,
-            Self::StimulusVolumeProjection => 14,
-            Self::ProjectionComposite => 15,
+            Self::PrivateParticleMainFullResDrawLeftEye => 13,
+            Self::PrivateParticleMainFullResDrawRightEye => 14,
+            Self::PrivateParticleTracerHalfResDrawLeftEye => 15,
+            Self::PrivateParticleTracerHalfResDrawRightEye => 16,
+            Self::StimulusVolumeCompute => 17,
+            Self::StimulusVolumeProjection => 18,
+            Self::ProjectionComposite => 19,
+            Self::PrivateParticleComputeDispatch => 20,
+            Self::PrivateParticleComputePostDispatchSync => 21,
+            Self::PrivateParticleComputeInterDispatch => 22,
+            Self::PrivateParticleComputeAuxiliary => 23,
+            Self::PrivateParticleDetailedDiagnostic => 24,
+        }
+    }
+
+    const fn from_index(index: u32) -> Self {
+        match index {
+            0 => Self::CameraProjection,
+            1 => Self::GuideGraph,
+            2 => Self::HandSdf,
+            3 => Self::HandMeshVisual,
+            4 => Self::PrivateParticleCompute,
+            5 => Self::PrivateParticleSort,
+            6 => Self::PrivateParticleDrawLeftEye,
+            7 => Self::PrivateParticleDrawRightEye,
+            8 => Self::PrivateParticleTileComposite,
+            9 => Self::PrivateParticleHalfResDrawLeftEye,
+            10 => Self::PrivateParticleHalfResDrawRightEye,
+            11 => Self::PrivateParticleHalfResCompositeLeftEye,
+            12 => Self::PrivateParticleHalfResCompositeRightEye,
+            13 => Self::PrivateParticleMainFullResDrawLeftEye,
+            14 => Self::PrivateParticleMainFullResDrawRightEye,
+            15 => Self::PrivateParticleTracerHalfResDrawLeftEye,
+            16 => Self::PrivateParticleTracerHalfResDrawRightEye,
+            17 => Self::StimulusVolumeCompute,
+            18 => Self::StimulusVolumeProjection,
+            19 => Self::ProjectionComposite,
+            20 => Self::PrivateParticleComputeDispatch,
+            21 => Self::PrivateParticleComputePostDispatchSync,
+            22 => Self::PrivateParticleComputeInterDispatch,
+            23 => Self::PrivateParticleComputeAuxiliary,
+            _ => Self::PrivateParticleDetailedDiagnostic,
         }
     }
 }
 
 const QUERIES_PER_STAGE: u32 = 2;
+pub(crate) const GPU_TIMESTAMP_STAGES_PER_FRAME: u32 = GpuTimestampStage::COUNT;
+pub(crate) const GPU_TIMESTAMP_QUERIES_PER_FRAME: u32 =
+    GPU_TIMESTAMP_STAGES_PER_FRAME * QUERIES_PER_STAGE;
+pub(crate) const GPU_TIMESTAMP_EXPECTED_FRAME_SLOTS: usize = 2;
+pub(crate) const GPU_TIMESTAMP_EXPECTED_POOL_QUERIES: u32 =
+    GPU_TIMESTAMP_QUERIES_PER_FRAME * GPU_TIMESTAMP_EXPECTED_FRAME_SLOTS as u32;
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct GpuStageTimings {
@@ -98,6 +245,11 @@ pub(crate) struct GpuStageTimings {
     hand_sdf_ms: f64,
     hand_mesh_visual_ms: f64,
     private_particle_compute_ms: f64,
+    private_particle_compute_dispatch_ms: f64,
+    private_particle_compute_post_dispatch_sync_ms: f64,
+    private_particle_compute_inter_dispatch_ms: f64,
+    private_particle_compute_auxiliary_ms: f64,
+    private_particle_detailed_diagnostic_ms: f64,
     private_particle_sort_ms: f64,
     private_particle_draw_ms: f64,
     private_particle_draw_left_eye_ms: f64,
@@ -109,12 +261,25 @@ pub(crate) struct GpuStageTimings {
     private_particle_half_res_composite_ms: f64,
     private_particle_half_res_composite_left_eye_ms: f64,
     private_particle_half_res_composite_right_eye_ms: f64,
+    private_particle_main_full_res_draw_left_eye_ms: f64,
+    private_particle_main_full_res_draw_right_eye_ms: f64,
+    private_particle_tracer_half_res_draw_left_eye_ms: f64,
+    private_particle_tracer_half_res_draw_right_eye_ms: f64,
+    stage_active_mask: u32,
+    measured_frame_id: Option<u64>,
     stimulus_volume_compute_ms: f64,
     stimulus_volume_projection_ms: f64,
     projection_composite_ms: f64,
 }
 
 impl GpuStageTimings {
+    /// A successful query result is only attributable when its frame identity
+    /// is present. Hardware support or an allocated pool alone is not a CPU
+    /// sample availability signal.
+    pub(crate) const fn query_results_ready(&self) -> bool {
+        self.ready && self.measured_frame_id.is_some()
+    }
+
     pub(crate) fn unavailable(timestamp_valid_bits: u32, timestamp_period_ns: f64) -> Self {
         Self {
             supported: timestamp_valid_bits > 0 && timestamp_period_ns > 0.0,
@@ -126,6 +291,11 @@ impl GpuStageTimings {
             hand_sdf_ms: -1.0,
             hand_mesh_visual_ms: -1.0,
             private_particle_compute_ms: -1.0,
+            private_particle_compute_dispatch_ms: -1.0,
+            private_particle_compute_post_dispatch_sync_ms: -1.0,
+            private_particle_compute_inter_dispatch_ms: -1.0,
+            private_particle_compute_auxiliary_ms: -1.0,
+            private_particle_detailed_diagnostic_ms: -1.0,
             private_particle_sort_ms: -1.0,
             private_particle_draw_ms: -1.0,
             private_particle_draw_left_eye_ms: -1.0,
@@ -137,20 +307,44 @@ impl GpuStageTimings {
             private_particle_half_res_composite_ms: -1.0,
             private_particle_half_res_composite_left_eye_ms: -1.0,
             private_particle_half_res_composite_right_eye_ms: -1.0,
+            private_particle_main_full_res_draw_left_eye_ms: -1.0,
+            private_particle_main_full_res_draw_right_eye_ms: -1.0,
+            private_particle_tracer_half_res_draw_left_eye_ms: -1.0,
+            private_particle_tracer_half_res_draw_right_eye_ms: -1.0,
+            stage_active_mask: 0,
+            measured_frame_id: None,
             stimulus_volume_compute_ms: -1.0,
             stimulus_volume_projection_ms: -1.0,
             projection_composite_ms: -1.0,
         }
     }
 
-    fn ready(timestamp_valid_bits: u32, timestamp_period_ns: f64, query_values: &[u64]) -> Self {
+    fn ready(
+        timestamp_valid_bits: u32,
+        timestamp_period_ns: f64,
+        query_values: &[u64],
+        stage_active_mask: u32,
+        measured_frame_id: Option<u64>,
+    ) -> Self {
         let stage_ms = |stage: GpuTimestampStage| -> f64 {
+            if stage_active_mask & (1_u32 << stage.index()) == 0 {
+                return -1.0;
+            }
             timestamp_delta_ms(
                 query_values[(stage.index() * QUERIES_PER_STAGE) as usize],
                 query_values[(stage.index() * QUERIES_PER_STAGE + 1) as usize],
                 timestamp_valid_bits,
                 timestamp_period_ns,
             )
+        };
+        let paired_stage_ms = |left: GpuTimestampStage, right: GpuTimestampStage| -> f64 {
+            let left_ms = stage_ms(left);
+            let right_ms = stage_ms(right);
+            if left_ms < 0.0 || right_ms < 0.0 {
+                -1.0
+            } else {
+                left_ms + right_ms
+            }
         };
         Self {
             supported: true,
@@ -162,9 +356,26 @@ impl GpuStageTimings {
             hand_sdf_ms: stage_ms(GpuTimestampStage::HandSdf),
             hand_mesh_visual_ms: stage_ms(GpuTimestampStage::HandMeshVisual),
             private_particle_compute_ms: stage_ms(GpuTimestampStage::PrivateParticleCompute),
+            private_particle_compute_dispatch_ms: stage_ms(
+                GpuTimestampStage::PrivateParticleComputeDispatch,
+            ),
+            private_particle_compute_post_dispatch_sync_ms: stage_ms(
+                GpuTimestampStage::PrivateParticleComputePostDispatchSync,
+            ),
+            private_particle_compute_inter_dispatch_ms: stage_ms(
+                GpuTimestampStage::PrivateParticleComputeInterDispatch,
+            ),
+            private_particle_compute_auxiliary_ms: stage_ms(
+                GpuTimestampStage::PrivateParticleComputeAuxiliary,
+            ),
+            private_particle_detailed_diagnostic_ms: stage_ms(
+                GpuTimestampStage::PrivateParticleDetailedDiagnostic,
+            ),
             private_particle_sort_ms: stage_ms(GpuTimestampStage::PrivateParticleSort),
-            private_particle_draw_ms: stage_ms(GpuTimestampStage::PrivateParticleDrawLeftEye)
-                + stage_ms(GpuTimestampStage::PrivateParticleDrawRightEye),
+            private_particle_draw_ms: paired_stage_ms(
+                GpuTimestampStage::PrivateParticleDrawLeftEye,
+                GpuTimestampStage::PrivateParticleDrawRightEye,
+            ),
             private_particle_draw_left_eye_ms: stage_ms(
                 GpuTimestampStage::PrivateParticleDrawLeftEye,
             ),
@@ -174,9 +385,8 @@ impl GpuStageTimings {
             private_particle_tile_composite_ms: stage_ms(
                 GpuTimestampStage::PrivateParticleTileComposite,
             ),
-            private_particle_half_res_draw_ms: stage_ms(
+            private_particle_half_res_draw_ms: paired_stage_ms(
                 GpuTimestampStage::PrivateParticleHalfResDrawLeftEye,
-            ) + stage_ms(
                 GpuTimestampStage::PrivateParticleHalfResDrawRightEye,
             ),
             private_particle_half_res_draw_left_eye_ms: stage_ms(
@@ -185,9 +395,8 @@ impl GpuStageTimings {
             private_particle_half_res_draw_right_eye_ms: stage_ms(
                 GpuTimestampStage::PrivateParticleHalfResDrawRightEye,
             ),
-            private_particle_half_res_composite_ms: stage_ms(
+            private_particle_half_res_composite_ms: paired_stage_ms(
                 GpuTimestampStage::PrivateParticleHalfResCompositeLeftEye,
-            ) + stage_ms(
                 GpuTimestampStage::PrivateParticleHalfResCompositeRightEye,
             ),
             private_particle_half_res_composite_left_eye_ms: stage_ms(
@@ -196,6 +405,20 @@ impl GpuStageTimings {
             private_particle_half_res_composite_right_eye_ms: stage_ms(
                 GpuTimestampStage::PrivateParticleHalfResCompositeRightEye,
             ),
+            private_particle_main_full_res_draw_left_eye_ms: stage_ms(
+                GpuTimestampStage::PrivateParticleMainFullResDrawLeftEye,
+            ),
+            private_particle_main_full_res_draw_right_eye_ms: stage_ms(
+                GpuTimestampStage::PrivateParticleMainFullResDrawRightEye,
+            ),
+            private_particle_tracer_half_res_draw_left_eye_ms: stage_ms(
+                GpuTimestampStage::PrivateParticleTracerHalfResDrawLeftEye,
+            ),
+            private_particle_tracer_half_res_draw_right_eye_ms: stage_ms(
+                GpuTimestampStage::PrivateParticleTracerHalfResDrawRightEye,
+            ),
+            stage_active_mask,
+            measured_frame_id,
             stimulus_volume_compute_ms: stage_ms(GpuTimestampStage::StimulusVolumeCompute),
             stimulus_volume_projection_ms: stage_ms(GpuTimestampStage::StimulusVolumeProjection),
             projection_composite_ms: stage_ms(GpuTimestampStage::ProjectionComposite),
@@ -209,6 +432,21 @@ impl GpuStageTimings {
             GpuTimestampStage::HandSdf => self.hand_sdf_ms,
             GpuTimestampStage::HandMeshVisual => self.hand_mesh_visual_ms,
             GpuTimestampStage::PrivateParticleCompute => self.private_particle_compute_ms,
+            GpuTimestampStage::PrivateParticleComputeDispatch => {
+                self.private_particle_compute_dispatch_ms
+            }
+            GpuTimestampStage::PrivateParticleComputePostDispatchSync => {
+                self.private_particle_compute_post_dispatch_sync_ms
+            }
+            GpuTimestampStage::PrivateParticleComputeInterDispatch => {
+                self.private_particle_compute_inter_dispatch_ms
+            }
+            GpuTimestampStage::PrivateParticleComputeAuxiliary => {
+                self.private_particle_compute_auxiliary_ms
+            }
+            GpuTimestampStage::PrivateParticleDetailedDiagnostic => {
+                self.private_particle_detailed_diagnostic_ms
+            }
             GpuTimestampStage::PrivateParticleSort => self.private_particle_sort_ms,
             GpuTimestampStage::PrivateParticleDrawLeftEye => self.private_particle_draw_left_eye_ms,
             GpuTimestampStage::PrivateParticleDrawRightEye => {
@@ -229,25 +467,83 @@ impl GpuStageTimings {
             GpuTimestampStage::PrivateParticleHalfResCompositeRightEye => {
                 self.private_particle_half_res_composite_right_eye_ms
             }
+            GpuTimestampStage::PrivateParticleMainFullResDrawLeftEye => {
+                self.private_particle_main_full_res_draw_left_eye_ms
+            }
+            GpuTimestampStage::PrivateParticleMainFullResDrawRightEye => {
+                self.private_particle_main_full_res_draw_right_eye_ms
+            }
+            GpuTimestampStage::PrivateParticleTracerHalfResDrawLeftEye => {
+                self.private_particle_tracer_half_res_draw_left_eye_ms
+            }
+            GpuTimestampStage::PrivateParticleTracerHalfResDrawRightEye => {
+                self.private_particle_tracer_half_res_draw_right_eye_ms
+            }
             GpuTimestampStage::StimulusVolumeCompute => self.stimulus_volume_compute_ms,
             GpuTimestampStage::StimulusVolumeProjection => self.stimulus_volume_projection_ms,
             GpuTimestampStage::ProjectionComposite => self.projection_composite_ms,
         }
     }
 
-    pub(crate) fn marker_fields(self) -> String {
+    fn stage_available(self, stage: GpuTimestampStage) -> bool {
+        self.ready && (self.stage_active_mask & (1_u32 << stage.index())) != 0
+    }
+
+    pub(crate) fn marker_fields(self, submitted_frame_id: u64) -> String {
+        let (measured_frame_id, measured_frame_lag_frames) = self
+            .measured_frame_id
+            .map(|measured| {
+                (
+                    measured.to_string(),
+                    submitted_frame_id.saturating_sub(measured).to_string(),
+                )
+            })
+            .unwrap_or_else(|| ("unavailable".to_string(), "unavailable".to_string()));
+        let paired_stage_ms = |left: f64, right: f64| {
+            if left < 0.0 || right < 0.0 {
+                -1.0
+            } else {
+                left + right
+            }
+        };
+        let aggregate_scope = if BUILD_DIAGNOSTICS_LEVEL.detailed_readback_enabled() {
+            "compute-shader-after-input-dependency-primary-command-region-optional-auxiliary-command-region-optional-detailed-diagnostic-and-post-sync-through-bottom-of-pipe"
+        } else {
+            "compute-shader-after-input-dependency-primary-command-region-optional-auxiliary-command-region-and-post-sync-through-bottom-of-pipe"
+        };
+        let post_sync_scope = if BUILD_DIAGNOSTICS_LEVEL.detailed_readback_enabled() {
+            "post-compute-visibility-and-diagnostic-host-sync-command-region"
+        } else {
+            "post-compute-visibility-command-region"
+        };
         format!(
-            "gpuTimestampQuerySupported={} gpuTimestampQueryReady={} gpuTimestampValidBits={} gpuTimestampPeriodNs={:.3} gpuTimestampFrameLag={} cameraProjectionGpuMs={:.3} guideGraphGpuMs={:.3} handSdfGpuMs={:.3} handMeshVisualGpuMs={:.3} privateParticleComputeGpuMs={:.3} privateParticleSortGpuMs={:.3} privateParticleDrawGpuMs={:.3} privateParticleDrawLeftEyeGpuMs={:.3} privateParticleDrawRightEyeGpuMs={:.3} privateParticleTileCompositeGpuMs={:.3} privateParticleTileCompositeScope=private-particle-render-window privateParticleHalfResDrawGpuMs={:.3} privateParticleHalfResDrawLeftEyeGpuMs={:.3} privateParticleHalfResDrawRightEyeGpuMs={:.3} privateParticleHalfResCompositeGpuMs={:.3} privateParticleHalfResCompositeLeftEyeGpuMs={:.3} privateParticleHalfResCompositeRightEyeGpuMs={:.3} privateParticleHalfResTimingScope=offscreen-render-pass-and-projection-composite stimulusVolumeComputeGpuMs={:.3} stimulusVolumeProjectionGpuMs={:.3} projectionCompositeGpuMs={:.3} gpuTimingScope=vulkan-timestamp-query",
+            "gpuTimestampQuerySupported={} gpuTimestampQueryReady={} gpuTimestampValidBits={} gpuTimestampPeriodNs={:.3} gpuTimestampFrameLag={} gpuTimestampSubmittedFrameId={} gpuTimestampMeasuredFrameId={} gpuTimestampMeasuredFrameLagFrames={} cameraProjectionGpuMs={:.3} guideGraphGpuMs={:.3} handSdfGpuMs={:.3} handMeshVisualGpuMs={:.3} privateParticleComputeGpuMs={:.3} privateParticleComputeTimingAvailable={} privateParticleComputeStageScope={} privateParticleComputeDispatchGpuMs={:.3} privateParticleComputeDispatchTimingAvailable={} privateParticleComputeDispatchTimingScope=primary-compute-command-region privateParticleComputeInterDispatchGpuMs={:.3} privateParticleComputeInterDispatchTimingAvailable={} privateParticleComputeInterDispatchTimingScope=primary-to-auxiliary-compute-dependency-command-region privateParticleComputeAuxiliaryGpuMs={:.3} privateParticleComputeAuxiliaryTimingAvailable={} privateParticleComputeAuxiliaryTimingScope=auxiliary-compute-command-region privateParticleDetailedDiagnosticGpuMs={:.3} privateParticleDetailedDiagnosticTimingAvailable={} privateParticleDetailedDiagnosticTimingScope=detailed-read-only-diagnostic-reduction-command-region privateParticleComputePostDispatchSyncGpuMs={:.3} privateParticleComputePostDispatchSyncTimingAvailable={} privateParticleComputePostDispatchSyncTimingScope={} privateParticleShaderInternalSubstageTimingAvailable=false privateParticleSortGpuMs={:.3} privateParticleDrawGpuMs={:.3} privateParticleDrawLeftEyeGpuMs={:.3} privateParticleDrawRightEyeGpuMs={:.3} privateParticleTileCompositeGpuMs={:.3} privateParticleTileCompositeScope=private-particle-render-window privateParticleHalfResDrawGpuMs={:.3} privateParticleHalfResDrawLeftEyeGpuMs={:.3} privateParticleHalfResDrawRightEyeGpuMs={:.3} privateParticleHalfResCompositeGpuMs={:.3} privateParticleHalfResCompositeLeftEyeGpuMs={:.3} privateParticleHalfResCompositeRightEyeGpuMs={:.3} privateParticleHalfResTimingScope=offscreen-render-pass-and-projection-composite privateParticleMainFullResDrawGpuMs={:.3} privateParticleMainFullResDrawLeftEyeGpuMs={:.3} privateParticleMainFullResDrawRightEyeGpuMs={:.3} privateParticleMainFullResDrawTimingAvailable={} privateParticleMainFullResDrawTimingScope=mixed-path-main-particles-only-full-resolution-draw-command-region privateParticleTracerHalfResDrawGpuMs={:.3} privateParticleTracerHalfResDrawLeftEyeGpuMs={:.3} privateParticleTracerHalfResDrawRightEyeGpuMs={:.3} privateParticleTracerHalfResDrawTimingAvailable={} privateParticleTracerHalfResDrawTimingScope=mixed-path-tracer-instances-only-offscreen-half-resolution-draw-command-region stimulusVolumeComputeGpuMs={:.3} stimulusVolumeProjectionGpuMs={:.3} projectionCompositeGpuMs={:.3} gpuTimingScope=vulkan-timestamp-query",
             self.supported,
             self.ready,
             self.timestamp_valid_bits,
             self.timestamp_period_ns,
             GPU_TIMESTAMP_FRAME_LAG,
+            submitted_frame_id,
+            measured_frame_id,
+            measured_frame_lag_frames,
             self.camera_projection_ms,
             self.guide_graph_ms,
             self.hand_sdf_ms,
             self.hand_mesh_visual_ms,
             self.private_particle_compute_ms,
+            self.stage_available(GpuTimestampStage::PrivateParticleCompute),
+            aggregate_scope,
+            self.private_particle_compute_dispatch_ms,
+            self.stage_available(GpuTimestampStage::PrivateParticleComputeDispatch),
+            self.private_particle_compute_inter_dispatch_ms,
+            self.stage_available(GpuTimestampStage::PrivateParticleComputeInterDispatch),
+            self.private_particle_compute_auxiliary_ms,
+            self.stage_available(GpuTimestampStage::PrivateParticleComputeAuxiliary),
+            self.private_particle_detailed_diagnostic_ms,
+            self.stage_available(GpuTimestampStage::PrivateParticleDetailedDiagnostic),
+            self.private_particle_compute_post_dispatch_sync_ms,
+            self.stage_available(GpuTimestampStage::PrivateParticleComputePostDispatchSync),
+            post_sync_scope,
             self.private_particle_sort_ms,
             self.private_particle_draw_ms,
             self.private_particle_draw_left_eye_ms,
@@ -259,6 +555,22 @@ impl GpuStageTimings {
             self.private_particle_half_res_composite_ms,
             self.private_particle_half_res_composite_left_eye_ms,
             self.private_particle_half_res_composite_right_eye_ms,
+            paired_stage_ms(
+                self.private_particle_main_full_res_draw_left_eye_ms,
+                self.private_particle_main_full_res_draw_right_eye_ms,
+            ),
+            self.private_particle_main_full_res_draw_left_eye_ms,
+            self.private_particle_main_full_res_draw_right_eye_ms,
+            self.stage_available(GpuTimestampStage::PrivateParticleMainFullResDrawLeftEye)
+                && self.stage_available(GpuTimestampStage::PrivateParticleMainFullResDrawRightEye),
+            paired_stage_ms(
+                self.private_particle_tracer_half_res_draw_left_eye_ms,
+                self.private_particle_tracer_half_res_draw_right_eye_ms,
+            ),
+            self.private_particle_tracer_half_res_draw_left_eye_ms,
+            self.private_particle_tracer_half_res_draw_right_eye_ms,
+            self.stage_available(GpuTimestampStage::PrivateParticleTracerHalfResDrawLeftEye)
+                && self.stage_available(GpuTimestampStage::PrivateParticleTracerHalfResDrawRightEye),
             self.stimulus_volume_compute_ms,
             self.stimulus_volume_projection_ms,
             self.projection_composite_ms
@@ -267,12 +579,16 @@ impl GpuStageTimings {
 }
 
 pub(crate) struct GpuTimestampTracker {
+    diagnostics_level: DiagnosticsLevel,
     query_pool: Option<vk::QueryPool>,
     frame_slots: usize,
     queries_per_frame: u32,
     timestamp_valid_bits: u32,
     timestamp_period_ns: f64,
     used_slots: Vec<bool>,
+    stage_active: Vec<AtomicBool>,
+    stage_finalized: Vec<AtomicBool>,
+    frame_ids: Vec<Option<u64>>,
 }
 
 impl GpuTimestampTracker {
@@ -282,8 +598,12 @@ impl GpuTimestampTracker {
         timestamp_valid_bits: u32,
         timestamp_period_ns: f64,
     ) -> Result<Self, String> {
-        let queries_per_frame = GpuTimestampStage::COUNT * QUERIES_PER_STAGE;
-        if frame_slots == 0 || timestamp_valid_bits == 0 || timestamp_period_ns <= 0.0 {
+        let queries_per_frame = GPU_TIMESTAMP_QUERIES_PER_FRAME;
+        if !BUILD_DIAGNOSTICS_LEVEL.timestamps_enabled()
+            || frame_slots == 0
+            || timestamp_valid_bits == 0
+            || timestamp_period_ns <= 0.0
+        {
             return Ok(Self::disabled(
                 frame_slots,
                 timestamp_valid_bits,
@@ -303,12 +623,20 @@ impl GpuTimestampTracker {
             )
             .map_err(|error| format!("create GPU timestamp query pool: {error}"))?;
         Ok(Self {
+            diagnostics_level: BUILD_DIAGNOSTICS_LEVEL,
             query_pool: Some(query_pool),
             frame_slots,
             queries_per_frame,
             timestamp_valid_bits,
             timestamp_period_ns,
             used_slots: vec![false; frame_slots],
+            stage_active: (0..frame_slots * GpuTimestampStage::COUNT as usize)
+                .map(|_| AtomicBool::new(false))
+                .collect(),
+            stage_finalized: (0..frame_slots * GpuTimestampStage::COUNT as usize)
+                .map(|_| AtomicBool::new(false))
+                .collect(),
+            frame_ids: vec![None; frame_slots],
         })
     }
 
@@ -318,22 +646,40 @@ impl GpuTimestampTracker {
         timestamp_period_ns: f64,
     ) -> Self {
         Self {
+            diagnostics_level: BUILD_DIAGNOSTICS_LEVEL,
             query_pool: None,
             frame_slots,
-            queries_per_frame: GpuTimestampStage::COUNT * QUERIES_PER_STAGE,
+            queries_per_frame: GPU_TIMESTAMP_QUERIES_PER_FRAME,
             timestamp_valid_bits,
             timestamp_period_ns,
             used_slots: vec![false; frame_slots],
+            stage_active: (0..frame_slots * GpuTimestampStage::COUNT as usize)
+                .map(|_| AtomicBool::new(false))
+                .collect(),
+            stage_finalized: (0..frame_slots * GpuTimestampStage::COUNT as usize)
+                .map(|_| AtomicBool::new(false))
+                .collect(),
+            frame_ids: vec![None; frame_slots],
         }
     }
 
     pub(crate) fn config_marker_fields(&self) -> String {
         format!(
-            "gpuTimestampQuerySupported={} gpuTimestampValidBits={} gpuTimestampPeriodNs={:.3} gpuTimestampFrameLag={} gpuTimingScope=vulkan-timestamp-query",
+            "gpuDiagnosticsLevel={} gpuTimestampQuerySupported={} gpuTimestampQueryPoolAllocated={} gpuTimestampValidBits={} gpuTimestampPeriodNs={:.3} gpuTimestampStageCount={} gpuTimestampBudgetQueriesPerFrame={} gpuTimestampBudgetFrameSlots={} gpuTimestampBudgetPoolQueries={} gpuTimestampAllocatedPoolQueries={} gpuTimingScope=vulkan-timestamp-query",
+            self.diagnostics_level.as_str(),
+            timestamp_query_supported(self.timestamp_valid_bits, self.timestamp_period_ns),
             self.query_pool.is_some(),
             self.timestamp_valid_bits,
             self.timestamp_period_ns,
-            GPU_TIMESTAMP_FRAME_LAG
+            GpuTimestampStage::COUNT,
+            self.queries_per_frame,
+            self.frame_slots,
+            self.frame_slots as u32 * self.queries_per_frame,
+            if self.query_pool.is_some() {
+                self.frame_slots as u32 * self.queries_per_frame
+            } else {
+                0
+            },
         )
     }
 
@@ -354,7 +700,10 @@ impl GpuTimestampTracker {
                 self.timestamp_period_ns,
             );
         };
-        if frame_slot >= self.frame_slots || !self.used_slots[frame_slot] {
+        if frame_slot >= self.frame_slots
+            || !self.used_slots[frame_slot]
+            || !self.frame_finalized(frame_slot)
+        {
             return GpuStageTimings::unavailable(
                 self.timestamp_valid_bits,
                 self.timestamp_period_ns,
@@ -372,6 +721,8 @@ impl GpuTimestampTracker {
                 self.timestamp_valid_bits,
                 self.timestamp_period_ns,
                 &query_values,
+                self.stage_active_for_frame(frame_slot),
+                self.frame_ids[frame_slot],
             ),
             Err(_) => {
                 GpuStageTimings::unavailable(self.timestamp_valid_bits, self.timestamp_period_ns)
@@ -384,6 +735,7 @@ impl GpuTimestampTracker {
         device: &ash::Device,
         cmd: vk::CommandBuffer,
         frame_slot: usize,
+        frame_id: u64,
     ) {
         let Some(query_pool) = self.query_pool else {
             return;
@@ -391,7 +743,7 @@ impl GpuTimestampTracker {
         if frame_slot >= self.frame_slots {
             return;
         }
-        self.used_slots[frame_slot] = true;
+        self.reset_frame_metadata(frame_slot, frame_id);
         device.cmd_reset_query_pool(
             cmd,
             query_pool,
@@ -407,6 +759,7 @@ impl GpuTimestampTracker {
         frame_slot: usize,
         stage: GpuTimestampStage,
     ) {
+        self.mark_stage_active(frame_slot, stage);
         self.write_timestamp(
             device,
             cmd,
@@ -432,6 +785,43 @@ impl GpuTimestampTracker {
             1,
             vk::PipelineStageFlags::BOTTOM_OF_PIPE,
         );
+        self.mark_stage_finalized(frame_slot, stage);
+    }
+
+    pub(crate) unsafe fn write_compute_stage_start(
+        &self,
+        device: &ash::Device,
+        cmd: vk::CommandBuffer,
+        frame_slot: usize,
+        stage: GpuTimestampStage,
+    ) {
+        self.mark_stage_active(frame_slot, stage);
+        self.write_timestamp(
+            device,
+            cmd,
+            frame_slot,
+            stage,
+            0,
+            vk::PipelineStageFlags::COMPUTE_SHADER,
+        );
+    }
+
+    pub(crate) unsafe fn write_compute_stage_end(
+        &self,
+        device: &ash::Device,
+        cmd: vk::CommandBuffer,
+        frame_slot: usize,
+        stage: GpuTimestampStage,
+    ) {
+        self.write_timestamp(
+            device,
+            cmd,
+            frame_slot,
+            stage,
+            1,
+            vk::PipelineStageFlags::COMPUTE_SHADER,
+        );
+        self.mark_stage_finalized(frame_slot, stage);
     }
 
     pub(crate) unsafe fn write_disabled_stage(
@@ -457,10 +847,77 @@ impl GpuTimestampTracker {
             1,
             vk::PipelineStageFlags::TOP_OF_PIPE,
         );
+        self.mark_stage_finalized(frame_slot, stage);
+    }
+
+    /// Finalize every timestamp pair in one place immediately before command
+    /// buffer end. Unused stages remain unavailable in the active mask, while
+    /// their query pair is still initialized for a stable 25-stage budget.
+    pub(crate) unsafe fn finalize_frame(
+        &self,
+        device: &ash::Device,
+        cmd: vk::CommandBuffer,
+        frame_slot: usize,
+    ) {
+        if self.query_pool.is_none() || frame_slot >= self.frame_slots {
+            return;
+        }
+        for stage_index in 0..GpuTimestampStage::COUNT {
+            let stage = GpuTimestampStage::from_index(stage_index);
+            if !self.stage_finalized
+                [frame_slot * GpuTimestampStage::COUNT as usize + stage_index as usize]
+                .load(Ordering::Relaxed)
+            {
+                self.write_disabled_stage(device, cmd, frame_slot, stage);
+            }
+        }
     }
 
     fn first_query(&self, frame_slot: usize) -> u32 {
         frame_slot as u32 * self.queries_per_frame
+    }
+
+    fn mark_stage_active(&self, frame_slot: usize, stage: GpuTimestampStage) {
+        if frame_slot < self.frame_slots {
+            self.stage_active
+                [frame_slot * GpuTimestampStage::COUNT as usize + stage.index() as usize]
+                .store(true, Ordering::Relaxed);
+        }
+    }
+
+    fn reset_frame_metadata(&mut self, frame_slot: usize, frame_id: u64) {
+        self.used_slots[frame_slot] = true;
+        self.frame_ids[frame_slot] = Some(frame_id);
+        for stage in 0..GpuTimestampStage::COUNT as usize {
+            self.stage_active[frame_slot * GpuTimestampStage::COUNT as usize + stage]
+                .store(false, Ordering::Relaxed);
+            self.stage_finalized[frame_slot * GpuTimestampStage::COUNT as usize + stage]
+                .store(false, Ordering::Relaxed);
+        }
+    }
+
+    fn stage_active_for_frame(&self, frame_slot: usize) -> u32 {
+        (0..GpuTimestampStage::COUNT as usize)
+            .filter(|stage| {
+                self.stage_active[frame_slot * GpuTimestampStage::COUNT as usize + *stage]
+                    .load(Ordering::Relaxed)
+            })
+            .fold(0_u32, |mask, stage| mask | (1_u32 << stage))
+    }
+
+    fn mark_stage_finalized(&self, frame_slot: usize, stage: GpuTimestampStage) {
+        if frame_slot < self.frame_slots {
+            self.stage_finalized
+                [frame_slot * GpuTimestampStage::COUNT as usize + stage.index() as usize]
+                .store(true, Ordering::Relaxed);
+        }
+    }
+
+    fn frame_finalized(&self, frame_slot: usize) -> bool {
+        (0..GpuTimestampStage::COUNT as usize).all(|stage| {
+            self.stage_finalized[frame_slot * GpuTimestampStage::COUNT as usize + stage]
+                .load(Ordering::Relaxed)
+        })
     }
 
     unsafe fn write_timestamp(
@@ -483,6 +940,10 @@ impl GpuTimestampTracker {
     }
 }
 
+fn timestamp_query_supported(timestamp_valid_bits: u32, timestamp_period_ns: f64) -> bool {
+    timestamp_valid_bits > 0 && timestamp_period_ns > 0.0
+}
+
 fn timestamp_delta_ms(
     start_timestamp: u64,
     end_timestamp: u64,
@@ -502,4 +963,166 @@ fn timestamp_delta_ms(
         mask - start + end + 1
     };
     ticks as f64 * timestamp_period_ns / 1_000_000.0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn inactive_and_paired_stages_are_unavailable() {
+        let mut values = vec![0_u64; (GpuTimestampStage::COUNT * QUERIES_PER_STAGE) as usize];
+        let dispatch = GpuTimestampStage::PrivateParticleComputeDispatch;
+        let first_query = (dispatch.index() * QUERIES_PER_STAGE) as usize;
+        values[first_query] = 100;
+        values[first_query + 1] = 300;
+        let timings = GpuStageTimings::ready(64, 1.0, &values, 1_u32 << dispatch.index(), Some(7));
+
+        assert!(timings.query_results_ready());
+        assert_eq!(timings.private_particle_compute_ms, -1.0);
+        assert_eq!(timings.private_particle_draw_ms, -1.0);
+        assert!(timings.private_particle_compute_dispatch_ms > 0.0);
+        let marker = timings.marker_fields(9);
+        assert!(marker.contains("gpuTimestampSubmittedFrameId=9"));
+        assert!(marker.contains("gpuTimestampMeasuredFrameId=7"));
+        assert!(marker.contains("gpuTimestampMeasuredFrameLagFrames=2"));
+        assert!(marker.contains("privateParticleComputeTimingAvailable=false"));
+        assert!(marker.contains("privateParticleComputeDispatchTimingAvailable=true"));
+        assert!(marker.contains("privateParticleShaderInternalSubstageTimingAvailable=false"));
+        assert!(marker.contains(
+            "privateParticleComputeStageScope=compute-shader-after-input-dependency-primary-command-region"
+        ));
+    }
+
+    #[test]
+    fn reset_clears_active_mask_and_replaces_measured_frame_id() {
+        let mut tracker = GpuTimestampTracker::disabled(1, 64, 1.0);
+        tracker.mark_stage_active(0, GpuTimestampStage::PrivateParticleCompute);
+        assert_ne!(tracker.stage_active_for_frame(0), 0);
+
+        tracker.reset_frame_metadata(0, 12);
+        assert_eq!(tracker.stage_active_for_frame(0), 0);
+        assert_eq!(tracker.frame_ids[0], Some(12));
+    }
+
+    #[test]
+    fn unavailable_marker_never_claims_a_duration_or_frame_identity() {
+        let marker = GpuStageTimings::unavailable(0, 0.0).marker_fields(9);
+        assert!(marker.contains("gpuTimestampQueryReady=false"));
+        assert!(marker.contains("gpuTimestampMeasuredFrameId=unavailable"));
+        assert!(marker.contains("privateParticleComputeGpuMs=-1.000"));
+    }
+
+    #[test]
+    fn timestamp_budget_is_fixed_for_the_two_slot_renderer() {
+        assert_eq!(GPU_TIMESTAMP_STAGES_PER_FRAME, 25);
+        assert_eq!(GPU_TIMESTAMP_QUERIES_PER_FRAME, 50);
+        assert_eq!(GPU_TIMESTAMP_EXPECTED_FRAME_SLOTS, 2);
+        assert_eq!(GPU_TIMESTAMP_EXPECTED_POOL_QUERIES, 100);
+    }
+
+    #[test]
+    fn disabled_tracker_reports_zero_allocated_queries_but_keeps_the_budget() {
+        let tracker = GpuTimestampTracker::disabled(2, 64, 1.0);
+        let marker = tracker.config_marker_fields();
+        assert!(marker.contains("gpuTimestampQuerySupported=true"));
+        assert!(marker.contains("gpuTimestampQueryPoolAllocated=false"));
+        assert!(marker.contains("gpuTimestampBudgetPoolQueries=100"));
+        assert!(marker.contains("gpuTimestampAllocatedPoolQueries=0"));
+        assert!(!GpuStageTimings::unavailable(64, 1.0).query_results_ready());
+    }
+
+    #[test]
+    fn timestamp_query_support_is_hardware_capability_not_pool_allocation() {
+        assert!(timestamp_query_supported(64, 1.0));
+        assert!(!timestamp_query_supported(0, 1.0));
+        assert!(!timestamp_query_supported(64, 0.0));
+    }
+
+    #[test]
+    fn cpu_observation_availability_is_mode_and_execution_aware() {
+        assert!(!detailed_private_particle_cpu_observation_available(
+            DiagnosticsLevel::Off,
+            true
+        ));
+        assert!(!detailed_private_particle_cpu_observation_available(
+            DiagnosticsLevel::Basic,
+            true
+        ));
+        assert!(!detailed_private_particle_cpu_observation_available(
+            DiagnosticsLevel::Detailed,
+            false
+        ));
+        assert!(detailed_private_particle_cpu_observation_available(
+            DiagnosticsLevel::Detailed,
+            true
+        ));
+
+        let mut unavailable = FrameCpuTimings::default();
+        unavailable.record_gpu_timestamp_query_results(false, 9.0);
+        unavailable.record_private_particle_detailed_diagnostic_readback(false, true, 9.0);
+        let unavailable_marker = unavailable.marker_fields();
+        assert!(unavailable_marker.contains("gpuTimestampQueryResultsCpuMs=unavailable"));
+        assert!(unavailable_marker.contains("gpuTimestampQueryResultsCpuTimingAvailable=false"));
+        assert!(unavailable_marker
+            .contains("privateParticleDetailedDiagnosticReadbackMapValidateCpuMs=unavailable"));
+        assert!(unavailable_marker
+            .contains("privateParticleDetailedDiagnosticReadbackCpuTimingExecuted=false"));
+
+        let mut detailed_without_work = FrameCpuTimings::default();
+        detailed_without_work
+            .record_private_particle_detailed_diagnostic_readback(true, false, 9.0);
+        let without_work_marker = detailed_without_work.marker_fields();
+        assert!(without_work_marker
+            .contains("privateParticleDetailedDiagnosticReadbackMapValidateCpuMs=unavailable"));
+        assert!(without_work_marker
+            .contains("privateParticleDetailedDiagnosticReadbackCpuTimingAvailable=false"));
+        assert!(without_work_marker
+            .contains("privateParticleDetailedDiagnosticReadbackCpuTimingExecuted=false"));
+
+        let mut detailed_with_work = FrameCpuTimings::default();
+        detailed_with_work.record_gpu_timestamp_query_results(true, 2.5);
+        detailed_with_work.record_private_particle_detailed_diagnostic_readback(true, true, 3.5);
+        let with_work_marker = detailed_with_work.marker_fields();
+        assert!(with_work_marker.contains("gpuTimestampQueryResultsCpuMs=2.500"));
+        assert!(with_work_marker
+            .contains("privateParticleDetailedDiagnosticReadbackMapValidateCpuMs=3.500"));
+        assert!(with_work_marker
+            .contains("privateParticleDetailedDiagnosticReadbackCpuTimingExecuted=true"));
+    }
+
+    #[test]
+    fn cpu_observability_markers_name_overlapping_scopes_without_false_negative_values() {
+        let timings = FrameCpuTimings {
+            xr_wait_frame_ms: -1.0,
+            xr_begin_frame_ms: f64::NAN,
+            vulkan_prior_frame_fence_wait_ms: 1.0,
+            vulkan_prior_frame_retire_readback_ms: 2.0,
+            vulkan_prior_frame_reset_ms: 3.0,
+            command_record_ms: 4.0,
+            submitted_frame_host_ms: 5.0,
+            hand_mesh_visual_ms: 6.0,
+            projection_composite_ms: 7.0,
+            swapchain_acquire_ms: 8.0,
+            swapchain_release_ms: 9.0,
+            ..FrameCpuTimings::default()
+        };
+        let marker = timings.marker_fields();
+        assert!(marker.contains("xrWaitFrameCpuMs=0.000"));
+        assert!(marker.contains("xrBeginFrameCpuMs=0.000"));
+        assert!(marker.contains(
+            "vulkanPriorFrameRetireReadbackCpuTimingOverlap=not-additive-with-child-timings"
+        ));
+        assert!(marker.contains("handMeshVisualCpuMs=6.000 handMeshVisualCpuSpanMs=6.000"));
+        assert!(
+            marker.contains("projectionCompositeCpuMs=7.000 projectionCompositeCpuSpanMs=7.000")
+        );
+        assert!(marker.contains("swapchainAcquireCpuMs=8.000"));
+        assert!(marker.contains("swapchainReleaseCpuMs=9.000"));
+        assert!(marker.contains(
+            "submittedFrameHostCpuTimingScope=after-xr-wait-frame-through-successful-xr-end-frame"
+        ));
+        assert!(marker.contains("renderLoopSubmittedFrameCpuMs=5.000"));
+        assert!(marker.contains("cpuTimingScope=host-submitted-frame-and-prior-slot-observation"));
+    }
 }

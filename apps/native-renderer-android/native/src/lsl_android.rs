@@ -146,8 +146,22 @@ mod linked {
         }
 
         pub(crate) fn push_f32(&self, sample: &[f32]) -> Result<(), String> {
+            self.push_f32_at(sample, local_clock(), true)
+        }
+
+        pub(crate) fn push_f32_at(
+            &self,
+            sample: &[f32],
+            timestamp: f64,
+            pushthrough: bool,
+        ) -> Result<(), String> {
             let error = unsafe {
-                lsl_push_sample_ftp(self.handle.as_ptr(), sample.as_ptr(), local_clock(), 1)
+                lsl_push_sample_ftp(
+                    self.handle.as_ptr(),
+                    sample.as_ptr(),
+                    timestamp,
+                    i32::from(pushthrough),
+                )
             };
             if error == LSL_NO_ERROR {
                 Ok(())
@@ -374,6 +388,15 @@ mod unavailable {
         }
 
         pub(crate) fn push_f32(&self, _sample: &[f32]) -> Result<(), String> {
+            Err("liblsl not linked for this native renderer build".to_owned())
+        }
+
+        pub(crate) fn push_f32_at(
+            &self,
+            _sample: &[f32],
+            _timestamp: f64,
+            _pushthrough: bool,
+        ) -> Result<(), String> {
             Err("liblsl not linked for this native renderer build".to_owned())
         }
 

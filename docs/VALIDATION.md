@@ -32,6 +32,85 @@ Validate the host contract before a focused or aggregate run:
 pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-PowerShellHost.ps1 -SelfTest
 ```
 
+The pure breath lifecycle has a dependency-free focused gate:
+
+```powershell
+cargo test -p rusty-quest-breath-contract --locked
+cargo test -p rusty-quest-native-renderer-android-native openxr_controller_breath_adapter --locked
+cargo test -p rusty-quest-native-renderer-android-native native_controller_breath_state --locked
+cargo test -p rusty-quest-native-renderer-android-native polar_acc_breath_adapter --locked
+cargo test -p rusty-quest-native-renderer-android-native breath_composition_runtime --locked
+cargo test -p rusty-quest-native-renderer-android-native breath_composition_driver --locked
+pwsh -NoProfile -File .\tools\Analyze-NativeRendererBreathCapture.ps1 `
+  -CaptureDirectory .\fixtures\native-renderer-breath-capture\synthetic-parallel-session `
+  -OutputDirectory <private-temporary-output>
+pwsh -NoProfile -File .\tools\checks\Test-NativeRendererBreathCompositionStatic.ps1 -RepoRoot .
+pwsh -NoProfile -File .\tools\checks\Test-NativeRendererBreathCompositionDriverStatic.ps1 -RepoRoot .
+```
+
+The native simultaneous hands/controllers adapter has an additional focused
+host/static and Android-target gate:
+
+```powershell
+cargo test -p rusty-quest-native-renderer-android-native simultaneous_hands_controllers --locked
+cargo clippy --manifest-path apps/native-renderer-android/native/Cargo.toml --lib --no-deps -- -D warnings -A clippy::manual_checked_ops -A clippy::field_reassign_with_default -A clippy::incompatible_msrv -A clippy::collapsible_str_replace -A clippy::too_many_arguments -A clippy::derivable_impls -A clippy::match_single_binding -A clippy::manual_contains -A clippy::enum_variant_names -A clippy::manual_pattern_char_comparison
+pwsh -NoProfile -File .\tools\checks\Test-NativeRendererSimultaneousHandsControllersStatic.ps1 -RepoRoot .
+pwsh -NoProfile -File .\tools\Test-NativeAppBuildProfile.ps1
+cargo check -p rusty-quest-native-renderer-android-native --target aarch64-linux-android --lib
+```
+
+The Clippy command keeps the accepted native-renderer baseline lint classes as
+invocation-scoped exclusions; `-D warnings` still rejects every other finding,
+including findings introduced by the simultaneous-mode adapter.
+
+Damaged app fixtures reject a combined claim without the selected feature,
+hands-only and controller-only substitution, and a selected combined feature
+whose exact hand-adapter lock is disabled or unapplied. Pure lifecycle tests
+cover unavailable extension, false system support, unresolved functions,
+resume failure/session-loss-pending, stale generations, duplicate resume,
+idempotent pause/teardown, and independent live-readiness conjunction. These
+host gates neither create an OpenXR session nor infer wearer-visible readiness.
+
+Its unit and fixture tests cover disabled construction, configuration and
+normalized-input bounds, Reset/Configure/Start/Cancel/Observe transitions,
+injected-time regression and discontinuity, generation isolation, missing,
+stale, malformed and out-of-order input, deterministic bounded replay,
+over-limit replay rejection, and downstream-material absence. Calibration
+fixtures add principal, diagonal, rotated, XZ, bias, noise, spike, stationary,
+insufficient-motion, degenerate-axis, insufficient-span, virtual-time timeout,
+inversion, adaptive-limit, and rapid-live-response cases. The rapid case proves
+a valid post-calibration frame updates filtered bounded output before the next
+10 Hz analysis tick. Phase fixtures add timestamp-aware derivative filtering,
+entry/exit hysteresis, directional and Hold confirmation, minimum dwell,
+asymmetric rates, endpoint holds, drift, shallow/noisy input, variable/dropped
+samples, stale reconnect, discontinuity, source reset, inversion, deterministic
+replay, and 72/90/120 Hz parity. The native controller gates cover fixed and dynamic pose
+projection, rotated axes, calibration travel, rotation/motion/tracking guards,
+admission failures, missing/stale/malformed/disabled input, reset and generation
+fencing, variable cadence, 72/90/120 Hz phase parity, and concurrent phase plus
+volume. They exercise the host-testable adapter without acquiring an OpenXR
+session. The Polar adapter gate covers typed PMD/JNI translation, independent
+ACC/RR sequencing, timestamp and unit normalization, XZ-default and explicit
+3D calibration, realistic gravity and rotated motion, bounded fast live
+volume, adaptive limits, stale/missing/malformed/out-of-order input, retry,
+reset, deterministic actions, ready-calibrated phase progression, genuine
+Hold, and fail-closed phase reset. These gates do not execute
+Gradle, rendering, APK, ADB, or device work.
+
+The composition gates add all four source/mapping combinations, ordered panel
+actions, requested/effective proof, mapping-change calibration retention,
+source-change hard reset, stale/malformed/unselected assessment rejection,
+exact structured resolver output, canonical output-root containment, exact
+closed-world feature closure, exact resolver-binding propagation through the
+runtime profile, settings/property adapters, locked build environment and
+artifact hashes, packaged/observed binding match and mismatch behavior,
+transactional action-queue admission, calibration-readback reset, sync-error
+clearing order, exact running-source/generation calibration fencing, sole Polar
+acquisition-owner reuse, unique
+package/property/marker namespaces, and an absence scan for downstream effect
+material. The Android-target Cargo check validates the JNI/OpenXR/PMD
+composition surface without Gradle or packaging.
+
 When a pull request changes `.github/` or a package-updater validation or
 publication authority path, use
 [`EXTERNAL_VALIDATION_AUTHORITY.md`](EXTERNAL_VALIDATION_AUTHORITY.md). Run the
@@ -168,6 +247,13 @@ headset or ADB server. The native renderer profiles are the public validation
 matrix for the main native Quest XR stack: they select custom Camera2/HWB
 projection, native Meta passthrough, or a solid black projection background
 without changing APK identity or hiding route state in ad hoc launch scripts.
+The focused host-only reliability gate exercises bounded property batching,
+complete exact readback, receipt-bound interrupted-run recovery, and the
+capture operator's fresh generation/effect contract against a fake ADB:
+
+```powershell
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\checks\Test-QuestRecordingHostReliability.ps1 -RepoRoot .
+```
 The Spatial Camera Panel panel lane adds a separate static/build/headset gate
 for `apps/spatial-camera-panel-android`:
 

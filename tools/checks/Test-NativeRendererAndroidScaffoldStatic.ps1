@@ -45,14 +45,26 @@ $androidEvents = Read-RequiredText (Join-Path $srcRoot "android_events.rs") "And
 $panelBridge = Read-RequiredText (Join-Path $srcRoot "native_renderer_panel_bridge.rs") "stimulus panel JNI bridge"
 $embeddedManifoldBridge = Read-RequiredText (Join-Path $srcRoot "embedded_manifold_broker_bridge.rs") "embedded Manifold broker JNI bridge"
 $stimulusPanel = Read-RequiredText (Join-Path $srcRoot "native_renderer_stimulus_panel.rs") "stimulus panel candidate adapter"
-$controlPanel = Read-RequiredText (Join-Path $appRoot "src\main\java\io\github\mesmerprism\rustyquest\native_renderer\ControlPanelActivity.java") "control panel Activity"
-$polarPanel = Read-RequiredText (Join-Path $appRoot "src\main\java\io\github\mesmerprism\rustyquest\native_renderer\PolarSensorPanel.java") "Polar sensor panel"
+$controlPanel = @(
+    (Read-RequiredText (Join-Path $appRoot "panel-modules\breath-composition\src\main\java\io\github\mesmerprism\rustyquest\native_renderer\BreathCompositionPanelModule.java") "breath-composition panel module"),
+    (Read-RequiredText (Join-Path $appRoot "panel-modules\stimulus-volume\src\main\java\io\github\mesmerprism\rustyquest\native_renderer\StimulusVolumePanelModule.java") "stimulus-volume panel module"),
+    (Read-RequiredText (Join-Path $appRoot "panel-modules\private-particle\src\main\java\io\github\mesmerprism\rustyquest\native_renderer\PrivateParticlePanelModule.java") "private-particle panel module"),
+    (Read-RequiredText (Join-Path $appRoot "panel-modules\driver-profile\src\main\java\io\github\mesmerprism\rustyquest\native_renderer\DriverProfilePanelModule.java") "driver-profile panel module"),
+    (Read-RequiredText (Join-Path $appRoot "panel-modules\polar\src\main\java\io\github\mesmerprism\rustyquest\native_renderer\PolarPanelModule.java") "Polar-only panel module"),
+    (Read-RequiredText (Join-Path $appRoot "src\main\java\io\github\mesmerprism\rustyquest\native_renderer\PanelModuleRegistry.java") "typed panel registry"),
+    (Read-RequiredText (Join-Path $repoRootPath "tools\Build-NativeRendererAndroid.ps1") "generated control panel shell")
+) -join [Environment]::NewLine
+$polarPanel = Read-RequiredText (Join-Path $appRoot "panel-modules\polar\src\main\java\io\github\mesmerprism\rustyquest\native_renderer\PolarSensorPanel.java") "Polar sensor panel"
 $questionnairePanel = Read-RequiredText (Join-Path $appRoot "src\main\java\io\github\mesmerprism\rustyquest\native_renderer\QuestionnairePanelActivity.java") "questionnaire panel Activity"
 $embeddedManifoldBroker = Read-RequiredText (Join-Path $appRoot "src\main\java\io\github\mesmerprism\rustyquest\native_renderer\EmbeddedManifoldBrokerServer.java") "embedded Manifold broker server"
 $embeddedWebSocketPolicy = Read-RequiredText (Join-Path $appRoot "src\main\java\io\github\mesmerprism\rustyquest\native_renderer\EmbeddedWebSocketAuthorityPolicy.java") "embedded WebSocket authority policy"
 $embeddedManifoldAuthorityBridge = Read-RequiredText (Join-Path $appRoot "src\main\java\io\github\mesmerprism\rustyquest\native_renderer\EmbeddedManifoldRuntimeAuthorityBridge.java") "embedded Manifold Runtime Host authority bridge"
 $embeddedManifoldAdmissionLifecycle = Read-RequiredText (Join-Path $appRoot "src\main\java\io\github\mesmerprism\rustyquest\native_renderer\EmbeddedManifoldAdmissionLifecycle.java") "embedded platform-authenticated admission lifecycle"
 $nativeAppSettingsReader = Read-RequiredText (Join-Path $appRoot "src\main\java\io\github\mesmerprism\rustyquest\native_renderer\NativeAppSettingsReader.java") "native app settings reader"
+$lslPanelRuntime = Read-RequiredText (Join-Path $srcRoot "lsl_panel_runtime.rs") "panel-controlled LSL runtime"
+$lslRustyOutlet = Read-RequiredText (Join-Path $srcRoot "lsl_rusty_outlet.rs") "Rusty-LSL outlet adapter"
+$lslPanelConfigStore = Read-RequiredText (Join-Path $appRoot "panel-modules\lsl\src\main\java\io\github\mesmerprism\rustyquest\native_renderer\LslPanelConfigStore.java") "panel-controlled LSL config store"
+$lslPanelCommandReceiver = Read-RequiredText (Join-Path $appRoot "panel-modules\lsl\src\main\java\io\github\mesmerprism\rustyquest\native_renderer\LslPanelCommandReceiver.java") "panel-controlled LSL CLI receiver"
 $xrVulkan = Read-RequiredText (Join-Path $srcRoot "xr_vulkan.rs") "xr_vulkan facade"
 $buildScriptText = Read-RequiredText (Join-Path $repoRootPath "tools\Build-NativeRendererAndroid.ps1") "native Android build script"
 
@@ -93,29 +105,21 @@ Assert-ContainsTokens $manifest @(
 ) "Android manifest NativeActivity and 2D panel routes"
 
 Assert-ContainsTokens $controlPanel @(
-    'final class ControlPanelActivity extends Activity',
+    'public final class ControlPanelActivity extends',
     'stimulus_volume_candidate.json',
     'stimulus_volume_status.json',
     'rusty.quest.stimulus_volume.profile.v1',
     'rusty.quest.stimulus_volume.apply_status.v1',
-    'rusty.quest.native_renderer.private_layer_selection.v1',
     'same_apk_panel',
     'app_private_file',
-    'debug\.rustyquest\.native_renderer\.control_panel\.mode',
-    'private-layer-selector',
-    'private-particle-dynamics',
-    'private-particle-depth-wave',
+    'private-particle-controls',
+    'driver-profile-controls',
+    'polar-controls',
+    'PanelModuleRegistry\.requireExact',
     'polar-sensor',
     'PolarSensorPanel',
-    'Layer Selection Panel',
-    'Particle Dynamics Panel',
-    'Depth Wave Panel',
-    'buildPrivateLayerChoiceGrid',
-    'buildPrivateParticleDynamicsView',
-    'buildPrivateParticleDepthWaveView',
-    'AKD_HUMP_SAMPLES01',
-    'driverValue01ForDepthWavePercent',
-    'nativeSubmitLivePrivateLayerSelection',
+    'Private Particle Controls',
+    'Driver Profile Controls',
     'nativeSubmitLivePrivateParticleDynamics',
     'rusty.quest.native_renderer.private_particle_dynamics.v1',
     'private_particle_dynamics_status.json',
@@ -146,7 +150,8 @@ Assert-ContainsTokens $controlPanel @(
     'onResume',
     'Close',
     'closePanelAndReturnToImmersive',
-    'finishAndRemoveTask',
+    'panelTaskRetained=true',
+    'RENDERER_RETURN_STABLE_FOCUS_MS',
     'FLAG_ACTIVITY_REORDER_TO_FRONT',
     'com.oculus.intent.category.VR',
     'android.app.NativeActivity',
@@ -211,6 +216,8 @@ Assert-ContainsTokens $nativeLib @(
     'panelActivity=ControlPanelActivity',
     'mod native_renderer_panel_bridge',
     'mod embedded_manifold_broker_bridge',
+    'mod lsl_panel_runtime',
+    'mod lsl_rusty_outlet',
     'mod native_renderer_stimulus_panel',
     'apply_app_private_candidate',
     'requestPermissions',
@@ -225,6 +232,76 @@ Assert-ContainsTokens $nativeLib @(
     'openxrSubmitReady=false',
     'vulkanExternalImportReady=false'
 ) "Rust NativeActivity scaffold"
+
+Assert-ContainsTokens $lslPanelRuntime @(
+    'rusty\.quest\.native_renderer\.lsl\.panel_command\.v1',
+    'OUTBOUND_QUEUE_CAPACITY',
+    'submit_polar_hr',
+    'submit_polar_acc',
+    'submit_controller_right_grip',
+    'submit_headset_views',
+    'apply_inlet_driver_values',
+    'inlet-driver-slot-reserved-or-out-of-range',
+    'rusty-lsl-persistent-inlet-not-supported',
+    'rusty-lsl-outlet-cannot-share-discovery-with-liblsl-inlet',
+    'RUSTY_LSL_SOURCE_COMMIT',
+    'push_f32_at'
+) "panel-controlled LSL runtime"
+
+Assert-ContainsTokens $lslRustyOutlet @(
+    'PersistentFloat32OutletRegistry',
+    'PersistentFloat32OutletRegistryLimits',
+    'try_push_chunk',
+    'connected_consumers',
+    '8b6b2a6cd0c0e5147b7e1cc076a116ef226cddbd',
+    'rusty-lsl-backend-not-compiled'
+) "Rusty-LSL outlet adapter"
+
+Assert-ContainsTokens $lslPanelConfigStore @(
+    'rustyquest_lsl_panel',
+    'LEGACY_PREFERENCES',
+    'readStoredConfig',
+    'preferences\.contains\(CONFIG_KEY\)',
+    'legacy\.edit\(\)\.remove\(CONFIG_KEY\)\.commit\(\)',
+    'if \(!legacyReset\)',
+    'accepted_config_v1',
+    'SharedPreferences',
+    'readFromNative',
+    'defaultConfig',
+    'outlet_backend',
+    'inlet_backend',
+    'interface_ipv4'
+) "panel-controlled LSL config persistence"
+
+$lslResetStart = $lslPanelConfigStore.IndexOf("static boolean reset(Context context)")
+$lslResetEnd = $lslPanelConfigStore.IndexOf("static JSONObject defaultConfig()", $lslResetStart)
+if ($lslResetStart -lt 0 -or $lslResetEnd -le $lslResetStart) {
+    throw "Could not isolate the panel-controlled LSL reset method."
+}
+$lslResetMethod = $lslPanelConfigStore.Substring($lslResetStart, $lslResetEnd - $lslResetStart)
+$legacyResetIndex = $lslResetMethod.IndexOf("getSharedPreferences(LEGACY_PREFERENCES")
+$currentResetIndex = $lslResetMethod.IndexOf("getSharedPreferences(PREFERENCES")
+if ($legacyResetIndex -lt 0 -or $currentResetIndex -le $legacyResetIndex) {
+    throw "LSL reset must remove the legacy key before deleting the authoritative current key."
+}
+
+Assert-ContainsTokens $buildScriptText @(
+    'RUSTY_QUEST_NATIVE_RENDERER_RUSTY_LSL_ANDROID',
+    'rusty-lsl-backend',
+    'rusty_lsl_source_commit',
+    '4bfd1b1b5621af6706aafa9477e7a4f5764dd688'
+) "Rusty-LSL Android build closure"
+
+Assert-ContainsTokens $lslPanelCommandReceiver @(
+    'android\.permission\.DUMP',
+    'ACTION_COMMAND',
+    'command_b64',
+    'isOrderedBroadcast',
+    'applyLslTransportCommandFromOwner',
+    'LslPanelConfigStore\.save',
+    'LslMulticastLockManager\.setFromCli',
+    'setResultData'
+) "panel-controlled LSL CLI receiver"
 
 Assert-ContainsTokens $nativeAppSettings @(
     'load_from_apk_asset',
@@ -319,7 +396,7 @@ Assert-ContainsTokens $panelBridge @(
     'FLAG_ACTIVITY_REORDER_TO_FRONT',
     'FLAG_ACTIVITY_SINGLE_TOP',
     'startActivity',
-    'event=right-trigger-panel-toggle status=intent-sent'
+    'event=control-panel-toggle status=intent-sent'
 ) "Rust panel JNI toggle bridge"
 
 Assert-ContainsTokens $stimulusPanel @(

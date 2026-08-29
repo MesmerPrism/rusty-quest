@@ -1,0 +1,56 @@
+{
+  "schema": "rusty.quest.native_app_feature.v1",
+  "feature_id": "input.right_secondary_same_apk_panel_triple_press",
+  "module_path": "input/same-apk-panel/right-secondary-triple-press",
+  "module_kind": "input-composition-adapter",
+  "settings_surface": {
+    "authority": "rusty.quest.native_app_settings.v1",
+    "adapter": "runtime_profile"
+  },
+  "owner_lane": "rusty-quest",
+  "status": "public-substrate",
+  "description": "Generic right-secondary triple-press action that toggles the existing same-APK control panel.",
+  "provides": [
+    "input.right_secondary.same_apk_panel_toggle"
+  ],
+  "depends_on": [
+    "input.controllers_and_hands_optional",
+    "ui.same_apk_control_panel"
+  ],
+  "incompatible_with": [],
+  "exclusive_groups": {
+    "right_secondary_action": "same-apk-panel-triple-press"
+  },
+  "android_manifest": {
+    "permissions": [],
+    "uses_features": [],
+    "activities": [],
+    "services": [],
+    "queries": []
+  },
+  "runtime_profile": {
+    "set": {
+      "debug.rustyquest.native_renderer.control_panel.right_secondary_action.mode": "right-secondary-triple-press-toggle"
+    },
+    "clear_families": [],
+    "expected_render_modes": []
+  },
+  "build_inputs": {
+    "env": [],
+    "assets": [],
+    "shaders": []
+  },
+  "markers": {
+    "required": [
+      "sameApkPanelActionMode=right-secondary-triple-press-toggle",
+      "panelActivity=ControlPanelActivity"
+    ],
+    "forbidden": []
+  },
+  "validation": {
+    "quick": [],
+    "standard": [],
+    "device": []
+  },
+  "public_private_boundary": "Rusty Quest owns generic gesture recognition and same-APK panel dispatch; downstream apps own panel mode and private controls."
+}

@@ -31,7 +31,7 @@ function Assert-Contains {
 }
 
 $manifest = Read-RepoText "apps\native-renderer-android\AndroidManifest.xml"
-$activity = Read-RepoText "apps\native-renderer-android\src\main\java\io\github\mesmerprism\rustyquest\native_renderer\ControlPanelActivity.java"
+$activity = Read-RepoText "apps\native-renderer-android\panel-modules\breath-composition\src\main\java\io\github\mesmerprism\rustyquest\native_renderer\BreathCompositionPanelModule.java"
 $service = Read-RepoText "apps\native-renderer-android\src\main\java\io\github\mesmerprism\rustyquest\native_renderer\DisplayCompositeProjectionService.java"
 $nativeLib = Read-RepoText "apps\native-renderer-android\native\src\lib.rs"
 $nativeAhb = Read-RepoText "apps\native-renderer-android\native\src\android_hardware_buffer.rs"

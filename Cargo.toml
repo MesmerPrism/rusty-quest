@@ -19,6 +19,7 @@ members = [
     "crates/rusty-quest-media-stream",
     "crates/rusty-quest-remote-camera",
     "crates/rusty-quest-feature-activation",
+    "crates/rusty-quest-breath-contract",
     "crates/rusty-quest-particle-adapter",
     "crates/rusty-quest-hand-adapter",
     "crates/rusty-quest-peer-session-adapter",

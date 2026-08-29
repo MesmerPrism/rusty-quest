@@ -6,6 +6,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
+import org.json.JSONObject;
 
 public final class NativeAppSettingsReader {
     private static final int MAX_ASSET_BYTES = 1024 * 1024;
@@ -31,6 +32,17 @@ public final class NativeAppSettingsReader {
                 output.write(buffer, 0, read);
             }
             return new String(output.toByteArray(), StandardCharsets.UTF_8);
+        }
+    }
+
+    public static String readSetting(Activity activity, String settingId) {
+        try {
+            JSONObject root = new JSONObject(readAsset(activity, "native-app-settings.json"));
+            JSONObject values = root.optJSONObject("values");
+            JSONObject entry = values == null ? null : values.optJSONObject(settingId);
+            return entry == null ? "" : entry.optString("value", "").trim();
+        } catch (Exception ignored) {
+            return "";
         }
     }
 }

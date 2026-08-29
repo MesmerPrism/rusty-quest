@@ -11,6 +11,7 @@
     "resolver_version",
     "selected_feature_ids",
     "modules",
+    "panel",
     "values",
     "disabled_modules",
     "settings_hotload",
@@ -43,6 +44,9 @@
       "items": {
         "type": "object"
       }
+    },
+    "panel": {
+      "type": "object"
     },
     "values": {
       "type": "object"

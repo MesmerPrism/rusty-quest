@@ -1,0 +1,53 @@
+{
+  "schema": "rusty.quest.native_app_feature.v1",
+  "feature_id": "particles.private.polar_rr_heartbeat_pulse",
+  "module_path": "particles/private/polar_rr_heartbeat_pulse",
+  "module_kind": "sensor-composition-adapter",
+  "settings_surface": {
+    "authority": "rusty.quest.native_app_settings.v1",
+    "adapter": "runtime_profile"
+  },
+  "owner_lane": "rusty-quest",
+  "status": "public-substrate",
+  "description": "Generic Polar RR event to bounded normalized heartbeat-pulse source for private-particle driver slots.",
+  "provides": [
+    "input.private_particle_driver.polar_rr_heartbeat_pulse"
+  ],
+  "depends_on": [
+    "renderer.private_particles",
+    "sensor.polar_h10_ble"
+  ],
+  "incompatible_with": [],
+  "exclusive_groups": {
+    "private_particle_heartbeat_source": "polar-rr-normalized-event"
+  },
+  "android_manifest": {
+    "permissions": [],
+    "uses_features": [],
+    "activities": [],
+    "services": [],
+    "queries": []
+  },
+  "runtime_profile": {
+    "set": {},
+    "clear_families": [],
+    "expected_render_modes": [
+      "solid-black-private-particles"
+    ]
+  },
+  "build_inputs": {
+    "env": [],
+    "assets": [],
+    "shaders": []
+  },
+  "markers": {
+    "required": [],
+    "forbidden": []
+  },
+  "validation": {
+    "quick": [],
+    "standard": [],
+    "device": []
+  },
+  "public_private_boundary": "Rusty Quest owns only RR admission and one-frame normalized event handoff; downstream private effects own the slot meaning, envelope, baseline, decay, tuning, and visual interpretation."
+}
