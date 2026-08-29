@@ -126,6 +126,23 @@ function Assert-ExternalOwnerPortablePathSequence {
     }
 }
 
+function Resolve-ExternalOwnerAdapterExitCode {
+    param(
+        [Parameter(Mandatory)][int]$VerifierExit,
+        [Parameter(Mandatory)][string]$Decision
+    )
+    if (
+        ($VerifierExit -eq 0 -and $Decision -cin @(
+            "unprotected",
+            "approved-change-set"
+        )) -or
+        ($VerifierExit -eq 1 -and $Decision -ceq "external-owner-authorization")
+    ) {
+        return 0
+    }
+    return 1
+}
+
 function Get-ExternalOwnerPropertyNames {
     param([Parameter(Mandatory)][object]$Value)
     if ($Value -is [Collections.IDictionary]) {
@@ -450,7 +467,8 @@ function New-ExternalOwnerAuthorizationRequest {
     param([Parameter(Mandatory)][object]$Policy, [Parameter(Mandatory)][int]$PullRequestNumber, [Parameter(Mandatory)][object]$Base, [Parameter(Mandatory)][object]$Head, [Parameter(Mandatory)][object[]]$ChangedArtifacts, [Parameter(Mandatory)][object[]]$ProtectedArtifacts, [Parameter(Mandatory)][object]$Assessment)
     foreach ($set in @(@($ChangedArtifacts), @($ProtectedArtifacts))) {
         $paths = @($set | ForEach-Object { [string]$_.path })
-        if (($paths -join "`n") -cne (($paths | Sort-Object -CaseSensitive) -join "`n") -or @($paths | Sort-Object -Unique -CaseSensitive).Count -ne $paths.Count) { throw "Authorization artifacts must be complete, unique, and ordinal sorted." }
+        Assert-ExternalOwnerPortablePathSequence `
+            -Paths $paths -Label "Authorization artifact paths"
     }
     $stableAssessment = $Assessment | ConvertTo-Json -Depth 30 -Compress | ConvertFrom-Json -Depth 30 -DateKind String
     $assessmentChallenge = New-ExternalOwnerAuthorizationAssessmentChallenge `
@@ -591,4 +609,4 @@ function Test-ExternalOwnerAuthorizationComments {
     return $document.payload
 }
 
-Export-ModuleMember -Function Get-CanonicalAuthorizationBytes, Get-ExternalOwnerSha256, ConvertFrom-ExternalOwnerJsonStrict, Read-ExternalOwnerAuthorizationPolicy, ConvertFrom-ExternalOwnerGitNameStatusBytes, Assert-ExternalOwnerArtifactInventory, Assert-ExternalOwnerProtectedWithoutBaseApprovalAssessment, New-ExternalOwnerProtectedWithoutBaseApprovalAssessment, Assert-ExternalOwnerFallbackVerifierFailure, New-ExternalOwnerAuthorizationRequest, New-ExternalOwnerAuthorizationPayload, Test-ExternalOwnerAuthorizationComments
+Export-ModuleMember -Function Get-CanonicalAuthorizationBytes, Get-ExternalOwnerSha256, ConvertFrom-ExternalOwnerJsonStrict, Read-ExternalOwnerAuthorizationPolicy, ConvertFrom-ExternalOwnerGitNameStatusBytes, Assert-ExternalOwnerArtifactInventory, Assert-ExternalOwnerProtectedWithoutBaseApprovalAssessment, New-ExternalOwnerProtectedWithoutBaseApprovalAssessment, Assert-ExternalOwnerFallbackVerifierFailure, Resolve-ExternalOwnerAdapterExitCode, New-ExternalOwnerAuthorizationRequest, New-ExternalOwnerAuthorizationPayload, Test-ExternalOwnerAuthorizationComments
