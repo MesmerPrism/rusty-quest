@@ -572,6 +572,7 @@ if (
 $genericOutput = Join-Path $outputParent (
     ".external-validation-generic-" + [Guid]::NewGuid().ToString("N") + ".json"
 )
+$adapterExitCode = 1
 try {
     $pwsh = (Get-Command pwsh -CommandType Application -ErrorAction Stop | `
         Select-Object -First 1).Source
@@ -726,6 +727,11 @@ try {
         -SchemaFile $assessmentSchema -ErrorAction Stop)) {
         throw "Rusty Quest assessment failed its base-owned schema."
     }
+    $adapterExitCode = Resolve-ExternalOwnerAdapterExitCode `
+        -VerifierExit $verifierExit -Decision ([string]$assessment.decision)
+    if ($adapterExitCode -ne 0) {
+        throw "Rusty Quest assessment did not resolve to an accepted adapter exit."
+    }
     $bytes = [Text.UTF8Encoding]::new($false).GetBytes(
         $assessmentJson + "`n"
     )
@@ -747,3 +753,4 @@ try {
         Remove-Item -LiteralPath $genericOutput -Force
     }
 }
+exit $adapterExitCode

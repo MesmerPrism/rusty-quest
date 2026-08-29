@@ -126,6 +126,23 @@ function Assert-ExternalOwnerPortablePathSequence {
     }
 }
 
+function Resolve-ExternalOwnerAdapterExitCode {
+    param(
+        [Parameter(Mandatory)][int]$VerifierExit,
+        [Parameter(Mandatory)][string]$Decision
+    )
+    if (
+        ($VerifierExit -eq 0 -and $Decision -cin @(
+            "unprotected",
+            "approved-change-set"
+        )) -or
+        ($VerifierExit -eq 1 -and $Decision -ceq "external-owner-authorization")
+    ) {
+        return 0
+    }
+    return 1
+}
+
 function Get-ExternalOwnerPropertyNames {
     param([Parameter(Mandatory)][object]$Value)
     if ($Value -is [Collections.IDictionary]) {
@@ -592,4 +609,4 @@ function Test-ExternalOwnerAuthorizationComments {
     return $document.payload
 }
 
-Export-ModuleMember -Function Get-CanonicalAuthorizationBytes, Get-ExternalOwnerSha256, ConvertFrom-ExternalOwnerJsonStrict, Read-ExternalOwnerAuthorizationPolicy, ConvertFrom-ExternalOwnerGitNameStatusBytes, Assert-ExternalOwnerArtifactInventory, Assert-ExternalOwnerProtectedWithoutBaseApprovalAssessment, New-ExternalOwnerProtectedWithoutBaseApprovalAssessment, Assert-ExternalOwnerFallbackVerifierFailure, New-ExternalOwnerAuthorizationRequest, New-ExternalOwnerAuthorizationPayload, Test-ExternalOwnerAuthorizationComments
+Export-ModuleMember -Function Get-CanonicalAuthorizationBytes, Get-ExternalOwnerSha256, ConvertFrom-ExternalOwnerJsonStrict, Read-ExternalOwnerAuthorizationPolicy, ConvertFrom-ExternalOwnerGitNameStatusBytes, Assert-ExternalOwnerArtifactInventory, Assert-ExternalOwnerProtectedWithoutBaseApprovalAssessment, New-ExternalOwnerProtectedWithoutBaseApprovalAssessment, Assert-ExternalOwnerFallbackVerifierFailure, Resolve-ExternalOwnerAdapterExitCode, New-ExternalOwnerAuthorizationRequest, New-ExternalOwnerAuthorizationPayload, Test-ExternalOwnerAuthorizationComments

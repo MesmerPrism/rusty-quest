@@ -54,6 +54,23 @@ function Invoke-ExternalOwnerChildFailureFixture {
     }
 }
 
+function Invoke-ExternalOwnerAdapterExitFixture {
+    param(
+        [Parameter(Mandatory)][int]$VerifierExit,
+        [Parameter(Mandatory)][string]$Decision
+    )
+    $modulePath = Join-Path $RepoRoot `
+        ".github\scripts\lib\ExternalOwnerAuthorization.psm1"
+    $moduleLiteral = "'" + $modulePath.Replace("'", "''") + "'"
+    $decisionLiteral = "'" + $Decision.Replace("'", "''") + "'"
+    return Invoke-ExternalOwnerChildFailureFixture @"
+Import-Module $moduleLiteral -Force
+& `$env:ComSpec /d /c exit $VerifierExit
+if (`$LASTEXITCODE -ne $VerifierExit) { exit 97 }
+exit (Resolve-ExternalOwnerAdapterExitCode -VerifierExit `$LASTEXITCODE -Decision $decisionLiteral)
+"@
+}
+
 function New-ExternalOwnerChildFailureRecord {
     param(
         [Parameter(Mandatory)][string]$Message,
@@ -394,6 +411,37 @@ try {
     Assert-DamageRejected "hold-stdout-contamination" {
         Assert-ExternalOwnerFallbackVerifierFailure `
             -ExitCode $stdoutContamination.exit_code -Output $stdoutContamination.output
+    }
+    foreach ($accepted in @(
+        [pscustomobject]@{ name = "unprotected"; verifier_exit = 0; decision = "unprotected" },
+        [pscustomobject]@{ name = "approved-set"; verifier_exit = 0; decision = "approved-change-set" },
+        [pscustomobject]@{ name = "owner-marker"; verifier_exit = 1; decision = "external-owner-authorization" }
+    )) {
+        $acceptedAdapterExit = Invoke-ExternalOwnerAdapterExitFixture `
+            -VerifierExit $accepted.verifier_exit -Decision $accepted.decision
+        if (
+            $acceptedAdapterExit.exit_code -ne 0 -or
+            $acceptedAdapterExit.output.Count -ne 0
+        ) {
+            throw "An accepted adapter path did not resolve success: $($accepted.name)"
+        }
+    }
+    foreach ($damage in @(
+        [pscustomobject]@{ name = "unconsumed-hold"; verifier_exit = 1; decision = "protected-without-base-approval" },
+        [pscustomobject]@{ name = "hold-as-unprotected"; verifier_exit = 1; decision = "unprotected" },
+        [pscustomobject]@{ name = "hold-as-approved-set"; verifier_exit = 1; decision = "approved-change-set" },
+        [pscustomobject]@{ name = "owner-decision-without-hold"; verifier_exit = 0; decision = "external-owner-authorization" },
+        [pscustomobject]@{ name = "verifier-error-owner-decision"; verifier_exit = 2; decision = "external-owner-authorization" },
+        [pscustomobject]@{ name = "unknown-decision"; verifier_exit = 0; decision = "unknown" }
+    )) {
+        $damagedAdapterExit = Invoke-ExternalOwnerAdapterExitFixture `
+            -VerifierExit $damage.verifier_exit -Decision $damage.decision
+        if (
+            $damagedAdapterExit.exit_code -eq 0 -or
+            $damagedAdapterExit.output.Count -ne 0
+        ) {
+            throw "A non-accepted adapter path cleared its exit: $($damage.name)"
+        }
     }
     $null = ConvertFrom-ExternalOwnerGitNameStatusBytes ([Text.Encoding]::UTF8.GetBytes(
         "A" + [char]0 + "config/external-validation-authority.json" + [char]0

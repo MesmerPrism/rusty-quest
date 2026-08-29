@@ -436,6 +436,9 @@ foreach ($token in @(
     'Pinned verifier emitted an assessment while failing',
     'ConvertFrom-ExternalOwnerGitNameStatusBytes',
     'Authorization artifact inventory is incomplete relative to Git name-status output',
+    'Resolve-ExternalOwnerAdapterExitCode',
+    'Rusty Quest assessment did not resolve to an accepted adapter exit\.',
+    'exit \$adapterExitCode',
     '"--no-ext-diff"',
     'External-owner authorization is required; the canonical request was emitted\.',
     '\[IO\.FileMode\]::CreateNew'
@@ -458,6 +461,9 @@ foreach ($forbidden in @(
 }
 if ($adapter -match '-match\s*\[regex\]::Escape\("Protected changes do not match an exact base-approved change set\."\)') {
     throw "Base-owned adapter retains substring-based protected-hold detection."
+}
+if ($adapter -match '(?m)^\s*exit\s+0\s*$') {
+    throw "Base-owned adapter contains an unconditional success exit."
 }
 if ($adapter -notmatch 'Get-Command\s+pwsh' -or $adapter -notmatch '2>&1') {
     throw "Base-owned adapter must retain the bounded child-PowerShell verifier transport."
