@@ -51,7 +51,9 @@ use crate::{
         NativeDisplayCompositeSettings,
     },
     native_renderer_display_refresh_options::{
-        NativeDisplayRefreshRuntimeState, NativeDisplayRefreshSettings,
+        configure_current_session_display_refresh, NativeDisplayRefreshConfigurationOutcome,
+        NativeDisplayRefreshRuntimeState, NativeDisplayRefreshSession,
+        NativeDisplayRefreshSettings,
     },
     native_renderer_options::{
         CompactHandInputSourceMode, HandMeshVisualDiagnosticSettings,
@@ -3824,6 +3826,30 @@ unsafe fn run_projection_frames(
     Ok(())
 }
 
+struct OpenXrDisplayRefreshSession<'a> {
+    session: &'a xr::Session<xr::Vulkan>,
+}
+
+impl NativeDisplayRefreshSession for OpenXrDisplayRefreshSession<'_> {
+    fn enumerate_supported_display_refresh_rates(&self) -> Result<Vec<f32>, String> {
+        self.session
+            .enumerate_display_refresh_rates()
+            .map_err(|error| error.to_string())
+    }
+
+    fn request_display_refresh_rate(&self, rate_hz: f32) -> Result<(), String> {
+        self.session
+            .request_display_refresh_rate(rate_hz)
+            .map_err(|error| error.to_string())
+    }
+
+    fn current_display_refresh_rate(&self) -> Result<f32, String> {
+        self.session
+            .get_display_refresh_rate()
+            .map_err(|error| error.to_string())
+    }
+}
+
 fn configure_requested_display_refresh_rate(
     session: &xr::Session<xr::Vulkan>,
     state: &mut NativeDisplayRefreshRuntimeState,
@@ -3853,7 +3879,7 @@ fn configure_requested_display_refresh_rate(
         format!("status=requested {}", state.marker_fields()),
     );
     if !extension_enabled {
-        let _ = state.record_request_result(generation, false);
+        let _ = state.record_extension_unavailable(generation);
         crate::marker(
             "openxr-display-refresh",
             format!(
@@ -3864,86 +3890,116 @@ fn configure_requested_display_refresh_rate(
         mark_display_refresh_performance_readiness(state);
         return;
     }
-    let supported_hz = match session.enumerate_display_refresh_rates() {
-        Ok(rates) => rates,
-        Err(error) => {
+    let display_refresh_session = OpenXrDisplayRefreshSession { session };
+    let outcome =
+        configure_current_session_display_refresh(&display_refresh_session, state, generation);
+    if outcome.enumeration_succeeded() {
+        crate::marker(
+            "openxr-display-refresh",
+            format!("status=supported-rates {}", state.marker_fields()),
+        );
+    }
+    match outcome {
+        NativeDisplayRefreshConfigurationOutcome::StaleSessionGeneration => crate::marker(
+            "openxr-display-refresh",
+            format!(
+                "status=configuration-ignored-stale-session-generation {}",
+                state.marker_fields()
+            ),
+        ),
+        NativeDisplayRefreshConfigurationOutcome::SupportedRateEnumerationFailed { reason } => {
             crate::marker(
                 "openxr-display-refresh",
                 format!(
                     "status=supported-rate-enumeration-failed {} reason={}",
                     state.marker_fields(),
-                    crate::sanitize(&error.to_string())
+                    crate::sanitize(&reason)
                 ),
             );
-            let _ = state.record_request_result(generation, false);
-            mark_display_refresh_performance_readiness(state);
-            return;
         }
-    };
-    let _ = state.record_supported_rates(generation, &supported_hz);
-    crate::marker(
-        "openxr-display-refresh",
-        format!("status=supported-rates {}", state.marker_fields()),
-    );
-    if !state.requested_rate_is_supported() {
-        let _ = state.record_request_result(generation, false);
-        let error = state
-            .ensure_performance_ready()
-            .expect_err("unsupported requested display rate must fail readiness");
-        crate::marker(
+        NativeDisplayRefreshConfigurationOutcome::AlreadyEffectiveCurrentSession {
+            effective_hz,
+        } => crate::marker(
             "openxr-display-refresh",
             format!(
-                "status=request-rejected-unsupported-rate {} reason={}",
-                state.marker_fields(),
-                crate::sanitize(&error)
+                "status=already-effective-current-session {} currentSessionReadbackHz={effective_hz:.3} requestIssued=false",
+                state.marker_fields()
             ),
-        );
-        mark_display_refresh_performance_readiness(state);
-        return;
-    }
-
-    let requested_hz = state
-        .requested_hz()
-        .expect("display refresh request is present once the extension path is entered");
-    if let Err(error) = session.request_display_refresh_rate(requested_hz) {
-        let _ = state.record_request_result(generation, false);
-        crate::marker(
+        ),
+        NativeDisplayRefreshConfigurationOutcome::EnumerationEmptyIndeterminate {
+            effective_hz,
+        } => crate::marker(
             "openxr-display-refresh",
             format!(
-                "status=request-rejected {} reason={}",
-                state.marker_fields(),
-                crate::sanitize(&error.to_string())
+                "status=enumeration-empty-indeterminate {} currentSessionReadbackHz={effective_hz:.3} requestIssued=false",
+                state.marker_fields()
             ),
-        );
-        mark_display_refresh_performance_readiness(state);
-        return;
-    }
-    let _ = state.record_request_result(generation, true);
-    crate::marker(
-        "openxr-display-refresh",
-        format!("status=request-accepted {}", state.marker_fields()),
-    );
-
-    let effective_hz = match session.get_display_refresh_rate() {
-        Ok(rate) => rate,
-        Err(error) => {
+        ),
+        NativeDisplayRefreshConfigurationOutcome::EnumerationEmptyReadbackFailed { reason } => {
+            crate::marker(
+                "openxr-display-refresh",
+                format!(
+                    "status=effective-readback-failed-after-empty-enumeration {} reason={} requestIssued=false",
+                    state.marker_fields(),
+                    crate::sanitize(&reason)
+                ),
+            );
+        }
+        NativeDisplayRefreshConfigurationOutcome::UnsupportedRate => {
+            let error = state
+                .ensure_performance_ready()
+                .expect_err("unsupported requested display rate must fail readiness");
+            crate::marker(
+                "openxr-display-refresh",
+                format!(
+                    "status=request-not-attempted-unsupported-rate {} reason={} requestIssued=false",
+                    state.marker_fields(),
+                    crate::sanitize(&error)
+                ),
+            );
+        }
+        NativeDisplayRefreshConfigurationOutcome::RequestRejected { reason } => crate::marker(
+            "openxr-display-refresh",
+            format!(
+                "status=request-rejected {} reason={} requestIssued=true",
+                state.marker_fields(),
+                crate::sanitize(&reason)
+            ),
+        ),
+        NativeDisplayRefreshConfigurationOutcome::RequestAccepted { effective_hz } => {
+            crate::marker(
+                "openxr-display-refresh",
+                format!(
+                    "status=request-accepted {} requestIssued=true",
+                    state.marker_fields()
+                ),
+            );
+            crate::marker(
+                "openxr-display-refresh",
+                format!(
+                    "status=effective-readback {} currentSessionReadbackHz={effective_hz:.3}",
+                    state.marker_fields()
+                ),
+            );
+        }
+        NativeDisplayRefreshConfigurationOutcome::RequestAcceptedReadbackFailed { reason } => {
+            crate::marker(
+                "openxr-display-refresh",
+                format!(
+                    "status=request-accepted {} requestIssued=true",
+                    state.marker_fields()
+                ),
+            );
             crate::marker(
                 "openxr-display-refresh",
                 format!(
                     "status=effective-readback-failed {} reason={}",
                     state.marker_fields(),
-                    crate::sanitize(&error.to_string())
+                    crate::sanitize(&reason)
                 ),
             );
-            mark_display_refresh_performance_readiness(state);
-            return;
         }
-    };
-    let _ = state.record_effective_rate(generation, effective_hz);
-    crate::marker(
-        "openxr-display-refresh",
-        format!("status=effective-readback {}", state.marker_fields()),
-    );
+    }
     mark_display_refresh_performance_readiness(state);
 }
 

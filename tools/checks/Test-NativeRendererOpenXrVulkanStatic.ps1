@@ -49,6 +49,109 @@ function Assert-ContainsLiteralTokens {
     }
 }
 
+function Assert-DisplayRefreshAdjudicationContract {
+    param(
+        [string]$StateText,
+        [string]$XrText
+    )
+
+    $productionState = ($StateText -split '(?m)^#\[cfg\(test\)\]\r?\nmod tests \{', 2)[0]
+    Assert-ContainsLiteralTokens $productionState @(
+        'trait NativeDisplayRefreshSession',
+        'AlreadyEffectiveCurrentSession',
+        'EnumerationEmptyIndeterminate',
+        'EnumerationEmptyReadbackFailed',
+        'UnsupportedRate',
+        'return match session.current_display_refresh_rate()',
+        'session.request_display_refresh_rate(requested_hz)',
+        'DisplayRefreshRequestOutcome::AlreadyEffectiveCurrentSession',
+        'DisplayRefreshRequestOutcome::EnumerationEmptyIndeterminate',
+        'DisplayRefreshRequestOutcome::UnsupportedByEnumeration'
+    ) 'display-refresh typed adjudication owner'
+    Assert-ContainsLiteralTokens $XrText @(
+        'status=already-effective-current-session',
+        'status=enumeration-empty-indeterminate',
+        'status=effective-readback-failed-after-empty-enumeration',
+        'status=request-not-attempted-unsupported-rate',
+        'requestIssued=false',
+        'status=request-rejected',
+        'requestIssued=true',
+        'status=rate-change-ignored-no-current-session'
+    ) 'display-refresh OpenXR observability'
+
+    $emptyEnumerationIndex = $productionState.IndexOf('if supported_hz.is_empty() {', [System.StringComparison]::Ordinal)
+    $emptyReadbackIndex = $productionState.IndexOf('return match session.current_display_refresh_rate()', [System.StringComparison]::Ordinal)
+    $unsupportedIndex = $productionState.IndexOf('if !state.requested_rate_is_supported() {', [System.StringComparison]::Ordinal)
+    $requestIndex = $productionState.IndexOf('session.request_display_refresh_rate(requested_hz)', [System.StringComparison]::Ordinal)
+    if ($emptyEnumerationIndex -lt 0 -or
+        $emptyReadbackIndex -le $emptyEnumerationIndex -or
+        $unsupportedIndex -le $emptyReadbackIndex -or
+        $requestIndex -le $unsupportedIndex) {
+        throw 'Display-refresh empty enumeration must return through current-session readback before any request route'
+    }
+
+    $requestRejectionWrites = [regex]::Matches(
+        $productionState,
+        'record_request_result\(generation, false\)'
+    ).Count
+    if ($requestRejectionWrites -ne 1 -or
+        $productionState -notmatch '(?s)if let Err\(reason\) = session\.request_display_refresh_rate\(requested_hz\) \{\s*let _ = state\.record_request_result\(generation, false\);') {
+        throw 'Extension rejection may be recorded only after an actual failed display-refresh request'
+    }
+}
+
+function Assert-DisplayRefreshDamageRejected {
+    param(
+        [scriptblock]$Action,
+        [string]$Label
+    )
+
+    try {
+        & $Action
+    }
+    catch {
+        return
+    }
+    throw "Display-refresh static damage fixture unexpectedly passed: $Label"
+}
+
+function Invoke-DisplayRefreshAdjudicationDamageTests {
+    param(
+        [string]$StateText,
+        [string]$XrText
+    )
+
+    Assert-DisplayRefreshDamageRejected {
+        Assert-DisplayRefreshAdjudicationContract `
+            -StateText ($StateText.Replace(
+                'return match session.current_display_refresh_rate()',
+                'match session.current_display_refresh_rate()'
+            )) `
+            -XrText $XrText
+    } 'empty enumeration can fall through to request'
+    Assert-DisplayRefreshDamageRejected {
+        Assert-DisplayRefreshAdjudicationContract `
+            -StateText ($StateText.Replace(
+                'if supported_hz.is_empty() {',
+                "let _ = session.request_display_refresh_rate(requested_hz);`n    if supported_hz.is_empty() {"
+            )) `
+            -XrText $XrText
+    } 'request occurs before empty-enumeration adjudication'
+    Assert-DisplayRefreshDamageRejected {
+        Assert-DisplayRefreshAdjudicationContract `
+            -StateText $StateText `
+            -XrText ($XrText.Replace('requestIssued=false', 'requestIssued=true'))
+    } 'no-request marker is damaged'
+    Assert-DisplayRefreshDamageRejected {
+        Assert-DisplayRefreshAdjudicationContract `
+            -StateText ($StateText.Replace(
+                'record_request_result(generation, false)',
+                'record_unsupported_enumeration(generation)'
+            )) `
+            -XrText $XrText
+    } 'actual extension rejection is not recorded'
+}
+
 function Invoke-BuildScriptLocalSizeTests {
     param(
         [string]$BuildScriptPath
@@ -154,9 +257,10 @@ Assert-ContainsLiteralTokens $privateDiagnosticReductionPlaceholder @(
 if (([regex]::Matches($gpuPrivateParticles, 'if let Some\(pipeline\) = (?:self\.)?diagnostic_reduction_pipeline \{\s*device\.destroy_pipeline\(pipeline, None\);')).Count -lt 4) {
     throw "Detailed diagnostic pipeline must be destroyed in normal teardown and every post-creation failure path"
 }
+$displayRefreshState = Read-RequiredText (Join-Path $srcRoot "native_renderer_display_refresh_options.rs") "native renderer display refresh options"
 $nativeRendererOptionSurface = @(
     (Read-RequiredText (Join-Path $srcRoot "native_renderer_camera_options.rs") "native renderer camera options"),
-    (Read-RequiredText (Join-Path $srcRoot "native_renderer_display_refresh_options.rs") "native renderer display refresh options"),
+    $displayRefreshState,
     (Read-RequiredText (Join-Path $srcRoot "native_renderer_private_particle_heartbeat_orbit_request.rs") "private particle heartbeat orbit request options"),
     (Read-RequiredText (Join-Path $srcRoot "native_renderer_private_particle_visual_scale_request.rs") "private particle visual scale request options"),
     (Read-RequiredText (Join-Path $srcRoot "native_renderer_private_particle_material_request.rs") "private particle material request options"),
@@ -182,12 +286,16 @@ Assert-ContainsTokens $privateExtensionSlot @(
     'reprojection_params: \[f32; 4\]',
     'size_of::<PrivateLayerGuidePush>\(\) == 112'
 ) "private guide push-constant ABI"
+$xrVulkanFacade = Read-RequiredText (Join-Path $srcRoot "xr_vulkan.rs") "xr_vulkan facade"
 $xrVulkanSurface = @(
-    (Read-RequiredText (Join-Path $srcRoot "xr_vulkan.rs") "xr_vulkan facade"),
+    $xrVulkanFacade,
     (Read-RequiredText (Join-Path $srcRoot "openxr_passthrough_style.rs") "OpenXR passthrough style helper"),
     (Read-RequiredText (Join-Path $srcRoot "xr_vulkan\replay_visual_stats.rs") "xr_vulkan replay visual stats"),
     (Read-RequiredText (Join-Path $srcRoot "xr_vulkan\scorecard.rs") "xr_vulkan scorecard")
 ) -join "`n"
+
+Assert-DisplayRefreshAdjudicationContract -StateText $displayRefreshState -XrText $xrVulkanFacade
+Invoke-DisplayRefreshAdjudicationDamageTests -StateText $displayRefreshState -XrText $xrVulkanFacade
 
 Assert-ContainsTokens "$xrVulkanSurface`n$nativeRendererOptionSurface`n$nativeRendererTiming`n$privateExtensionSlot`n$nativeCamera`n$gpuPrivateParticles" @(
     'mod replay_visual_stats',

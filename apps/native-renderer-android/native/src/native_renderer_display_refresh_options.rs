@@ -99,7 +99,11 @@ impl NativeDisplayRefreshSettings {
 enum DisplayRefreshRequestOutcome {
     NotAttempted,
     AcceptedByExtension,
+    AlreadyEffectiveCurrentSession,
     AcceptedByCurrentSessionRateChange,
+    UnsupportedByEnumeration,
+    EnumerationEmptyIndeterminate,
+    ExtensionUnavailable,
     RejectedByExtension,
 }
 
@@ -108,9 +112,43 @@ impl DisplayRefreshRequestOutcome {
         match self {
             Self::NotAttempted => "not-attempted",
             Self::AcceptedByExtension => "extension-accepted",
+            Self::AlreadyEffectiveCurrentSession => "already-effective-current-session",
             Self::AcceptedByCurrentSessionRateChange => "current-session-rate-change-accepted",
+            Self::UnsupportedByEnumeration => "enumeration-unsupported",
+            Self::EnumerationEmptyIndeterminate => "enumeration-empty-indeterminate",
+            Self::ExtensionUnavailable => "extension-unavailable",
             Self::RejectedByExtension => "extension-rejected",
         }
+    }
+}
+
+pub(crate) trait NativeDisplayRefreshSession {
+    fn enumerate_supported_display_refresh_rates(&self) -> Result<Vec<f32>, String>;
+
+    fn request_display_refresh_rate(&self, rate_hz: f32) -> Result<(), String>;
+
+    fn current_display_refresh_rate(&self) -> Result<f32, String>;
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) enum NativeDisplayRefreshConfigurationOutcome {
+    StaleSessionGeneration,
+    SupportedRateEnumerationFailed { reason: String },
+    AlreadyEffectiveCurrentSession { effective_hz: f32 },
+    EnumerationEmptyIndeterminate { effective_hz: f32 },
+    EnumerationEmptyReadbackFailed { reason: String },
+    UnsupportedRate,
+    RequestRejected { reason: String },
+    RequestAccepted { effective_hz: f32 },
+    RequestAcceptedReadbackFailed { reason: String },
+}
+
+impl NativeDisplayRefreshConfigurationOutcome {
+    pub(crate) fn enumeration_succeeded(&self) -> bool {
+        !matches!(
+            self,
+            Self::StaleSessionGeneration | Self::SupportedRateEnumerationFailed { .. }
+        )
     }
 }
 
@@ -220,6 +258,51 @@ impl NativeDisplayRefreshRuntimeState {
         true
     }
 
+    pub(crate) fn record_unsupported_enumeration(&mut self, generation: u64) -> bool {
+        if !self.accepts_generation(generation) {
+            return false;
+        }
+        self.request_outcome = DisplayRefreshRequestOutcome::UnsupportedByEnumeration;
+        true
+    }
+
+    pub(crate) fn record_extension_unavailable(&mut self, generation: u64) -> bool {
+        if !self.accepts_generation(generation) {
+            return false;
+        }
+        self.request_outcome = DisplayRefreshRequestOutcome::ExtensionUnavailable;
+        true
+    }
+
+    pub(crate) fn record_empty_enumeration_readback(
+        &mut self,
+        generation: u64,
+        effective_hz: f32,
+    ) -> bool {
+        if !self.record_effective_rate(generation, effective_hz) {
+            return false;
+        }
+        self.request_outcome = if self
+            .settings
+            .requested_hz()
+            .is_some_and(|requested_hz| rate_matches(effective_hz, requested_hz))
+        {
+            DisplayRefreshRequestOutcome::AlreadyEffectiveCurrentSession
+        } else {
+            DisplayRefreshRequestOutcome::EnumerationEmptyIndeterminate
+        };
+        true
+    }
+
+    pub(crate) fn record_empty_enumeration_readback_failure(&mut self, generation: u64) -> bool {
+        if !self.accepts_generation(generation) {
+            return false;
+        }
+        self.request_outcome = DisplayRefreshRequestOutcome::EnumerationEmptyIndeterminate;
+        self.effective_hz = None;
+        true
+    }
+
     pub(crate) fn record_effective_rate(&mut self, generation: u64, rate_hz: f32) -> bool {
         if !self.accepts_generation(generation) {
             return false;
@@ -274,16 +357,24 @@ impl NativeDisplayRefreshRuntimeState {
         }
         let accepted_by_extension =
             self.request_outcome == DisplayRefreshRequestOutcome::AcceptedByExtension;
+        let already_effective_current_session =
+            self.request_outcome == DisplayRefreshRequestOutcome::AlreadyEffectiveCurrentSession;
         let accepted_by_current_session_rate_change = self.request_outcome
             == DisplayRefreshRequestOutcome::AcceptedByCurrentSessionRateChange;
-        if !accepted_by_current_session_rate_change && !self.requested_rate_is_supported() {
+        if !already_effective_current_session
+            && !accepted_by_current_session_rate_change
+            && !self.requested_rate_is_supported()
+        {
             return Err(format!(
                 "requested display refresh {:.3} Hz is absent from supported rates {}",
                 requested_hz,
                 self.supported_rates_marker()
             ));
         }
-        if !accepted_by_extension && !accepted_by_current_session_rate_change {
+        if !accepted_by_extension
+            && !already_effective_current_session
+            && !accepted_by_current_session_rate_change
+        {
             return Err(format!(
                 "display refresh request {:.3} Hz was not accepted",
                 requested_hz
@@ -349,6 +440,71 @@ impl NativeDisplayRefreshRuntimeState {
     }
 }
 
+pub(crate) fn configure_current_session_display_refresh<S: NativeDisplayRefreshSession>(
+    session: &S,
+    state: &mut NativeDisplayRefreshRuntimeState,
+    generation: u64,
+) -> NativeDisplayRefreshConfigurationOutcome {
+    if !state.accepts_generation(generation) {
+        return NativeDisplayRefreshConfigurationOutcome::StaleSessionGeneration;
+    }
+
+    let supported_hz = match session.enumerate_supported_display_refresh_rates() {
+        Ok(rates) => rates,
+        Err(reason) => {
+            return NativeDisplayRefreshConfigurationOutcome::SupportedRateEnumerationFailed {
+                reason,
+            };
+        }
+    };
+    let _ = state.record_supported_rates(generation, &supported_hz);
+
+    if supported_hz.is_empty() {
+        return match session.current_display_refresh_rate() {
+            Ok(effective_hz) => {
+                let _ = state.record_empty_enumeration_readback(generation, effective_hz);
+                if state.ensure_performance_ready().is_ok() {
+                    NativeDisplayRefreshConfigurationOutcome::AlreadyEffectiveCurrentSession {
+                        effective_hz,
+                    }
+                } else {
+                    NativeDisplayRefreshConfigurationOutcome::EnumerationEmptyIndeterminate {
+                        effective_hz,
+                    }
+                }
+            }
+            Err(reason) => {
+                let _ = state.record_empty_enumeration_readback_failure(generation);
+                NativeDisplayRefreshConfigurationOutcome::EnumerationEmptyReadbackFailed { reason }
+            }
+        };
+    }
+
+    if !state.requested_rate_is_supported() {
+        let _ = state.record_unsupported_enumeration(generation);
+        return NativeDisplayRefreshConfigurationOutcome::UnsupportedRate;
+    }
+
+    let requested_hz = state
+        .requested_hz()
+        .expect("display refresh request is present for current-session configuration");
+    if let Err(reason) = session.request_display_refresh_rate(requested_hz) {
+        let _ = state.record_request_result(generation, false);
+        return NativeDisplayRefreshConfigurationOutcome::RequestRejected { reason };
+    }
+    let _ = state.record_request_result(generation, true);
+
+    match session.current_display_refresh_rate() {
+        Ok(effective_hz) => {
+            let _ = state.record_effective_rate(generation, effective_hz);
+            NativeDisplayRefreshConfigurationOutcome::RequestAccepted { effective_hz }
+        }
+        Err(reason) => {
+            NativeDisplayRefreshConfigurationOutcome::RequestAcceptedReadbackFailed { reason }
+        }
+    }
+}
+
 fn rate_matches(observed_hz: f32, expected_hz: f32) -> bool {
     observed_hz.is_finite()
         && expected_hz.is_finite()
@@ -357,10 +513,59 @@ fn rate_matches(observed_hz: f32, expected_hz: f32) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use std::cell::Cell;
+
     use super::*;
+
+    struct MockDisplayRefreshSession {
+        supported_hz: Result<Vec<f32>, String>,
+        request_result: Result<(), String>,
+        current_hz: Result<f32, String>,
+        enumerate_calls: Cell<usize>,
+        request_calls: Cell<usize>,
+        current_calls: Cell<usize>,
+    }
+
+    impl MockDisplayRefreshSession {
+        fn new(
+            supported_hz: Result<Vec<f32>, String>,
+            request_result: Result<(), String>,
+            current_hz: Result<f32, String>,
+        ) -> Self {
+            Self {
+                supported_hz,
+                request_result,
+                current_hz,
+                enumerate_calls: Cell::new(0),
+                request_calls: Cell::new(0),
+                current_calls: Cell::new(0),
+            }
+        }
+    }
+
+    impl NativeDisplayRefreshSession for MockDisplayRefreshSession {
+        fn enumerate_supported_display_refresh_rates(&self) -> Result<Vec<f32>, String> {
+            self.enumerate_calls.set(self.enumerate_calls.get() + 1);
+            self.supported_hz.clone()
+        }
+
+        fn request_display_refresh_rate(&self, _rate_hz: f32) -> Result<(), String> {
+            self.request_calls.set(self.request_calls.get() + 1);
+            self.request_result.clone()
+        }
+
+        fn current_display_refresh_rate(&self) -> Result<f32, String> {
+            self.current_calls.set(self.current_calls.get() + 1);
+            self.current_hz.clone()
+        }
+    }
 
     fn requested_settings() -> NativeDisplayRefreshSettings {
         NativeDisplayRefreshSettings::from_property(Some("72".to_string()))
+    }
+
+    fn requested_ninety_settings() -> NativeDisplayRefreshSettings {
+        NativeDisplayRefreshSettings::from_property(Some("90".to_string()))
     }
 
     #[test]
@@ -407,7 +612,7 @@ mod tests {
 
     #[test]
     fn supported_90_request_with_effective_readback_is_performance_ready() {
-        let settings = NativeDisplayRefreshSettings::from_property(Some("90".to_string()));
+        let settings = requested_ninety_settings();
         assert_eq!(
             settings.requested_hz(),
             Some(REQUESTED_DISPLAY_REFRESH_RATE_HZ_90)
@@ -425,6 +630,180 @@ mod tests {
         assert!(state
             .marker_fields()
             .contains("displayRefreshEffectiveHz=90.000"));
+    }
+
+    #[test]
+    fn empty_enumeration_with_matching_current_rate_is_ready_without_request() {
+        let mut state = NativeDisplayRefreshRuntimeState::new(requested_ninety_settings());
+        let generation = state.begin_session();
+        assert!(state.begin_configuration_attempt(generation));
+        let session = MockDisplayRefreshSession::new(Ok(Vec::new()), Ok(()), Ok(90.0));
+
+        let outcome = configure_current_session_display_refresh(&session, &mut state, generation);
+
+        assert_eq!(
+            outcome,
+            NativeDisplayRefreshConfigurationOutcome::AlreadyEffectiveCurrentSession {
+                effective_hz: 90.0
+            }
+        );
+        assert_eq!(session.enumerate_calls.get(), 1);
+        assert_eq!(session.current_calls.get(), 1);
+        assert_eq!(session.request_calls.get(), 0);
+        assert!(state.ensure_performance_ready().is_ok());
+        let marker = state.marker_fields();
+        assert!(marker.contains("displayRefreshSupportedHz=none"));
+        assert!(marker.contains("displayRefreshRequestResult=already-effective-current-session"));
+        assert!(marker.contains("displayRefreshEffectiveHz=90.000"));
+        assert!(marker.contains("displayRefreshPerformanceReady=true"));
+    }
+
+    #[test]
+    fn empty_enumeration_with_different_current_rate_is_indeterminate_without_request() {
+        let mut state = NativeDisplayRefreshRuntimeState::new(requested_ninety_settings());
+        let generation = state.begin_session();
+        assert!(state.begin_configuration_attempt(generation));
+        let session = MockDisplayRefreshSession::new(Ok(Vec::new()), Ok(()), Ok(72.0));
+
+        let outcome = configure_current_session_display_refresh(&session, &mut state, generation);
+
+        assert_eq!(
+            outcome,
+            NativeDisplayRefreshConfigurationOutcome::EnumerationEmptyIndeterminate {
+                effective_hz: 72.0
+            }
+        );
+        assert_eq!(session.current_calls.get(), 1);
+        assert_eq!(session.request_calls.get(), 0);
+        assert!(state.ensure_performance_ready().is_err());
+        let marker = state.marker_fields();
+        assert!(marker.contains("displayRefreshRequestResult=enumeration-empty-indeterminate"));
+        assert!(marker.contains("displayRefreshEffectiveHz=72.000"));
+        assert!(marker.contains("displayRefreshPerformanceReady=false"));
+    }
+
+    #[test]
+    fn empty_enumeration_readback_failure_is_nonready_and_never_requests() {
+        let mut state = NativeDisplayRefreshRuntimeState::new(requested_ninety_settings());
+        let generation = state.begin_session();
+        assert!(state.begin_configuration_attempt(generation));
+        let session = MockDisplayRefreshSession::new(
+            Ok(Vec::new()),
+            Ok(()),
+            Err("current-rate-failed".to_string()),
+        );
+
+        let outcome = configure_current_session_display_refresh(&session, &mut state, generation);
+
+        assert_eq!(
+            outcome,
+            NativeDisplayRefreshConfigurationOutcome::EnumerationEmptyReadbackFailed {
+                reason: "current-rate-failed".to_string()
+            }
+        );
+        assert_eq!(session.current_calls.get(), 1);
+        assert_eq!(session.request_calls.get(), 0);
+        assert!(state.ensure_performance_ready().is_err());
+        assert!(state
+            .marker_fields()
+            .contains("displayRefreshRequestResult=enumeration-empty-indeterminate"));
+    }
+
+    #[test]
+    fn enumerated_requested_rate_is_requested_then_read_back() {
+        let mut state = NativeDisplayRefreshRuntimeState::new(requested_ninety_settings());
+        let generation = state.begin_session();
+        assert!(state.begin_configuration_attempt(generation));
+        let session = MockDisplayRefreshSession::new(Ok(vec![72.0, 90.0]), Ok(()), Ok(90.0));
+
+        let outcome = configure_current_session_display_refresh(&session, &mut state, generation);
+
+        assert_eq!(
+            outcome,
+            NativeDisplayRefreshConfigurationOutcome::RequestAccepted { effective_hz: 90.0 }
+        );
+        assert_eq!(session.request_calls.get(), 1);
+        assert_eq!(session.current_calls.get(), 1);
+        assert!(state.ensure_performance_ready().is_ok());
+    }
+
+    #[test]
+    fn nonempty_enumeration_without_requested_rate_rejects_without_request_or_readback() {
+        let mut state = NativeDisplayRefreshRuntimeState::new(requested_ninety_settings());
+        let generation = state.begin_session();
+        assert!(state.begin_configuration_attempt(generation));
+        let session = MockDisplayRefreshSession::new(Ok(vec![72.0]), Ok(()), Ok(90.0));
+
+        let outcome = configure_current_session_display_refresh(&session, &mut state, generation);
+
+        assert_eq!(
+            outcome,
+            NativeDisplayRefreshConfigurationOutcome::UnsupportedRate
+        );
+        assert_eq!(session.request_calls.get(), 0);
+        assert_eq!(session.current_calls.get(), 0);
+        assert!(state.ensure_performance_ready().is_err());
+        assert!(state
+            .marker_fields()
+            .contains("displayRefreshRequestResult=enumeration-unsupported"));
+    }
+
+    #[test]
+    fn actual_extension_request_rejection_is_the_only_extension_rejected_outcome() {
+        let mut state = NativeDisplayRefreshRuntimeState::new(requested_ninety_settings());
+        let generation = state.begin_session();
+        assert!(state.begin_configuration_attempt(generation));
+        let session = MockDisplayRefreshSession::new(
+            Ok(vec![72.0, 90.0]),
+            Err("request-rejected".to_string()),
+            Ok(90.0),
+        );
+
+        let outcome = configure_current_session_display_refresh(&session, &mut state, generation);
+
+        assert_eq!(
+            outcome,
+            NativeDisplayRefreshConfigurationOutcome::RequestRejected {
+                reason: "request-rejected".to_string()
+            }
+        );
+        assert_eq!(session.request_calls.get(), 1);
+        assert_eq!(session.current_calls.get(), 0);
+        assert!(state.ensure_performance_ready().is_err());
+        assert!(state
+            .marker_fields()
+            .contains("displayRefreshRequestResult=extension-rejected"));
+    }
+
+    #[test]
+    fn stale_configuration_generation_calls_no_openxr_operation() {
+        let mut state = NativeDisplayRefreshRuntimeState::new(requested_ninety_settings());
+        let generation = state.begin_session();
+        let session = MockDisplayRefreshSession::new(Ok(vec![90.0]), Ok(()), Ok(90.0));
+
+        let outcome =
+            configure_current_session_display_refresh(&session, &mut state, generation + 1);
+
+        assert_eq!(
+            outcome,
+            NativeDisplayRefreshConfigurationOutcome::StaleSessionGeneration
+        );
+        assert_eq!(session.enumerate_calls.get(), 0);
+        assert_eq!(session.request_calls.get(), 0);
+        assert_eq!(session.current_calls.get(), 0);
+        assert!(state.ensure_performance_ready().is_err());
+    }
+
+    #[test]
+    fn pre_session_rate_change_event_alone_cannot_satisfy_readiness() {
+        let mut state = NativeDisplayRefreshRuntimeState::new(requested_ninety_settings());
+        assert!(!state.record_current_session_rate_change_effective(0, 0.0, 90.0, 90.0));
+        let generation = state.begin_session();
+        assert!(state.record_supported_rates(generation, &[]));
+        assert!(state.ensure_performance_ready().is_err());
+        assert!(state
+            .marker_fields()
+            .contains("displayRefreshRateChangeToHz=none"));
     }
 
     #[test]
@@ -467,11 +846,11 @@ mod tests {
 
     #[test]
     fn current_session_rate_change_with_matching_openxr_readback_qualifies_empty_enumeration() {
-        let settings = NativeDisplayRefreshSettings::from_property(Some("90".to_string()));
+        let settings = requested_ninety_settings();
         let mut state = NativeDisplayRefreshRuntimeState::new(settings);
         let generation = state.begin_session();
         assert!(state.record_supported_rates(generation, &[]));
-        assert!(state.record_request_result(generation, false));
+        assert!(state.record_empty_enumeration_readback_failure(generation));
         assert!(state.record_current_session_rate_change_effective(generation, 72.0, 90.0, 90.0));
         assert!(state.ensure_performance_ready().is_ok());
         let marker = state.marker_fields();
@@ -483,11 +862,11 @@ mod tests {
 
     #[test]
     fn current_session_rate_change_requires_matching_event_and_effective_rate() {
-        let settings = NativeDisplayRefreshSettings::from_property(Some("90".to_string()));
+        let settings = requested_ninety_settings();
         let mut state = NativeDisplayRefreshRuntimeState::new(settings);
         let generation = state.begin_session();
         assert!(state.record_supported_rates(generation, &[]));
-        assert!(state.record_request_result(generation, false));
+        assert!(state.record_empty_enumeration_readback_failure(generation));
         assert!(state.record_current_session_rate_change_effective(generation, 72.0, 80.0, 90.0));
         assert!(state.ensure_performance_ready().is_err());
         assert!(state.record_current_session_rate_change_effective(generation, 80.0, 90.0, 80.0));
