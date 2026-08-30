@@ -469,6 +469,19 @@ fn legacy_particle_size_percent_envelope(visual_scale: f32) -> (f32, f32, f32, f
     (base, oscillation_percent, min, max)
 }
 
+fn generated_private_particle_material_default() -> Option<PrivateParticleMaterialPreset> {
+    if PRIVATE_PARTICLE_DEFAULT_MATERIAL_PRESET == "packaged-default" {
+        None
+    } else {
+        Some(
+            PrivateParticleMaterialPreset::parse_marker_name(
+                PRIVATE_PARTICLE_DEFAULT_MATERIAL_PRESET,
+            )
+            .expect("build script emitted an unsupported private-particle material preset"),
+        )
+    }
+}
+
 impl PrivateParticleRuntimeSettings {
     fn from_generated_defaults() -> Self {
         let driver_values01 = private_particle_driver_values01_from_generated();
@@ -478,12 +491,28 @@ impl PrivateParticleRuntimeSettings {
         Self {
             visual_scale,
             visual_parameter_source: PRIVATE_PARTICLE_VISUAL_PARAMETER_SOURCE,
-            particle_size_override_enabled: false,
-            particle_size_mode: PRIVATE_PARTICLE_SIZE_MODE_LEGACY,
-            particle_size_world_meters: 0.05,
-            particle_size_sphere_percent: legacy_size_base,
-            particle_size_oscillation_percent: legacy_size_oscillation,
-            particle_size_parameter_source: "payload-legacy-size-envelope",
+            particle_size_override_enabled: PRIVATE_PARTICLE_DEFAULT_SIZE_OVERRIDE_ENABLED,
+            particle_size_mode: if PRIVATE_PARTICLE_DEFAULT_SIZE_OVERRIDE_ENABLED {
+                PRIVATE_PARTICLE_DEFAULT_SIZE_MODE
+            } else {
+                PRIVATE_PARTICLE_SIZE_MODE_LEGACY
+            },
+            particle_size_world_meters: if PRIVATE_PARTICLE_DEFAULT_SIZE_OVERRIDE_ENABLED {
+                PRIVATE_PARTICLE_DEFAULT_SIZE_WORLD_METERS
+            } else {
+                0.05
+            },
+            particle_size_sphere_percent: if PRIVATE_PARTICLE_DEFAULT_SIZE_OVERRIDE_ENABLED {
+                PRIVATE_PARTICLE_DEFAULT_SIZE_SPHERE_RADIUS_PERCENT
+            } else {
+                legacy_size_base
+            },
+            particle_size_oscillation_percent: if PRIVATE_PARTICLE_DEFAULT_SIZE_OVERRIDE_ENABLED {
+                PRIVATE_PARTICLE_DEFAULT_SIZE_OSCILLATION_PERCENT
+            } else {
+                legacy_size_oscillation
+            },
+            particle_size_parameter_source: PRIVATE_PARTICLE_DEFAULT_SIZE_PARAMETER_SOURCE,
             driver0_value01: PRIVATE_PARTICLE_DRIVER_VALUES01[0].clamp(0.0, 1.0),
             driver1_value01: PRIVATE_PARTICLE_DRIVER_VALUES01[1].clamp(0.0, 1.0),
             driver_values01,
@@ -512,8 +541,8 @@ impl PrivateParticleRuntimeSettings {
             color_facing_attenuation_strength: PRIVATE_PARTICLE_COLOR_FACING_ATTENUATION_STRENGTH
                 .clamp(0.0, 1.0),
             color_parameter_source: PRIVATE_PARTICLE_COLOR_PARAMETER_SOURCE,
-            material_preset: None,
-            material_parameter_source: "runtime-owner-default-when-unset",
+            material_preset: generated_private_particle_material_default(),
+            material_parameter_source: PRIVATE_PARTICLE_DEFAULT_MATERIAL_PARAMETER_SOURCE,
             render_experiment_preset: None,
             render_experiment_parameter_source: "runtime-owner-default-build-mask-policy",
             offscreen_half_res: false,
@@ -611,6 +640,7 @@ impl PrivateParticleRuntimeSettings {
             || transparency_rgb_alpha_overridden;
         let (legacy_size_base, legacy_size_oscillation, _, _) =
             legacy_particle_size_percent_envelope(visual_scale);
+        let material_scalar_overridden = transparency_overridden || color_facing_overridden;
         Self {
             visual_scale,
             visual_parameter_source: if visual_overridden {
@@ -618,12 +648,28 @@ impl PrivateParticleRuntimeSettings {
             } else {
                 PRIVATE_PARTICLE_VISUAL_PARAMETER_SOURCE
             },
-            particle_size_override_enabled: false,
-            particle_size_mode: PRIVATE_PARTICLE_SIZE_MODE_LEGACY,
-            particle_size_world_meters: 0.05,
-            particle_size_sphere_percent: legacy_size_base,
-            particle_size_oscillation_percent: legacy_size_oscillation,
-            particle_size_parameter_source: "payload-legacy-size-envelope",
+            particle_size_override_enabled: PRIVATE_PARTICLE_DEFAULT_SIZE_OVERRIDE_ENABLED,
+            particle_size_mode: if PRIVATE_PARTICLE_DEFAULT_SIZE_OVERRIDE_ENABLED {
+                PRIVATE_PARTICLE_DEFAULT_SIZE_MODE
+            } else {
+                PRIVATE_PARTICLE_SIZE_MODE_LEGACY
+            },
+            particle_size_world_meters: if PRIVATE_PARTICLE_DEFAULT_SIZE_OVERRIDE_ENABLED {
+                PRIVATE_PARTICLE_DEFAULT_SIZE_WORLD_METERS
+            } else {
+                0.05
+            },
+            particle_size_sphere_percent: if PRIVATE_PARTICLE_DEFAULT_SIZE_OVERRIDE_ENABLED {
+                PRIVATE_PARTICLE_DEFAULT_SIZE_SPHERE_RADIUS_PERCENT
+            } else {
+                legacy_size_base
+            },
+            particle_size_oscillation_percent: if PRIVATE_PARTICLE_DEFAULT_SIZE_OVERRIDE_ENABLED {
+                PRIVATE_PARTICLE_DEFAULT_SIZE_OSCILLATION_PERCENT
+            } else {
+                legacy_size_oscillation
+            },
+            particle_size_parameter_source: PRIVATE_PARTICLE_DEFAULT_SIZE_PARAMETER_SOURCE,
             driver0_value01,
             driver1_value01,
             driver_values01,
@@ -663,8 +709,16 @@ impl PrivateParticleRuntimeSettings {
             } else {
                 PRIVATE_PARTICLE_COLOR_PARAMETER_SOURCE
             },
-            material_preset: None,
-            material_parameter_source: "runtime-owner-default-when-unset",
+            material_preset: if material_scalar_overridden {
+                None
+            } else {
+                generated_private_particle_material_default()
+            },
+            material_parameter_source: if material_scalar_overridden {
+                "runtime-hotload-android-property"
+            } else {
+                PRIVATE_PARTICLE_DEFAULT_MATERIAL_PARAMETER_SOURCE
+            },
             render_experiment_preset: None,
             render_experiment_parameter_source: "runtime-owner-default-build-mask-policy",
             offscreen_half_res,

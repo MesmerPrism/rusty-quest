@@ -98,6 +98,21 @@ fn main() {
         "cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_TRANSPARENCY_RGB_ALPHA_COUPLING"
     );
     println!(
+        "cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_DEFAULT_SIZE_MODE"
+    );
+    println!(
+        "cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_DEFAULT_SIZE_WORLD_METERS"
+    );
+    println!(
+        "cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_DEFAULT_SIZE_SPHERE_RADIUS_PERCENT"
+    );
+    println!(
+        "cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_DEFAULT_SIZE_OSCILLATION_PERCENT"
+    );
+    println!(
+        "cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_DEFAULT_MATERIAL_PRESET"
+    );
+    println!(
         "cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_ORDERING_MODE"
     );
     println!(
@@ -1267,6 +1282,160 @@ fn private_particle_transparency_config() -> (f32, f32, f32, f32, &'static str, 
     )
 }
 
+fn required_env_f32(name: &str, min: f32, max: f32) -> f32 {
+    let raw = env::var(name)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| panic!("{name} is required by the selected packaged particle default"));
+    let value = raw
+        .parse::<f32>()
+        .unwrap_or_else(|error| panic!("{name} must be a finite float, got {raw:?}: {error}"));
+    if !value.is_finite() || value < min || value > max {
+        panic!("{name} must be finite and in range [{min}, {max}], got {value}");
+    }
+    value
+}
+
+fn private_particle_size_default_config() -> (bool, u32, f32, f32, f32, &'static str) {
+    let mode_name = "RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_DEFAULT_SIZE_MODE";
+    let world_name = "RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_DEFAULT_SIZE_WORLD_METERS";
+    let sphere_name =
+        "RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_DEFAULT_SIZE_SPHERE_RADIUS_PERCENT";
+    let oscillation_name =
+        "RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_DEFAULT_SIZE_OSCILLATION_PERCENT";
+    let mode = env::var(mode_name)
+        .ok()
+        .map(|value| value.trim().to_ascii_lowercase())
+        .filter(|value| !value.is_empty());
+    let any_value = [world_name, sphere_name, oscillation_name]
+        .iter()
+        .any(|name| {
+            env::var(name)
+                .ok()
+                .is_some_and(|value| !value.trim().is_empty())
+        });
+
+    let Some(mode) = mode else {
+        if any_value {
+            panic!("packaged particle size values require {mode_name}");
+        }
+        return (false, 0, 0.05, 5.0, 0.0, "payload-legacy-size-envelope");
+    };
+
+    if mode == "legacy-payload-envelope" {
+        if any_value {
+            panic!("legacy-payload-envelope must not carry explicit packaged size values");
+        }
+        return (false, 0, 0.05, 5.0, 0.0, "payload-legacy-size-envelope");
+    }
+
+    let mode_code = match mode.as_str() {
+        "sphere-radius-percent" => 1,
+        "world-meters" => 2,
+        other => panic!("unsupported packaged private particle size mode: {other}"),
+    };
+    (
+        true,
+        mode_code,
+        required_env_f32(world_name, 0.001, 2.0),
+        required_env_f32(sphere_name, 0.1, 50.0),
+        required_env_f32(oscillation_name, 0.0, 90.0),
+        "particle-payload-build-env-packaged-size",
+    )
+}
+
+fn private_particle_material_default_config(
+    transparency_opacity: f32,
+    transparency_output_alpha_scale: f32,
+    transparency_depth_suppression_strength: f32,
+    transparency_rgb_alpha_coupling: f32,
+    transparency_blend_mode: &str,
+    color_facing_attenuation_strength: f32,
+) -> (&'static str, &'static str) {
+    let name = "RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_DEFAULT_MATERIAL_PRESET";
+    let Some(raw) = env::var(name)
+        .ok()
+        .map(|value| value.trim().to_ascii_lowercase())
+        .filter(|value| !value.is_empty())
+    else {
+        return ("packaged-default", "runtime-owner-default-when-unset");
+    };
+    if raw == "packaged-default" {
+        return ("packaged-default", "particle-payload-build-env");
+    }
+
+    let (
+        marker,
+        expected_blend,
+        expected_opacity,
+        expected_alpha,
+        expected_depth,
+        expected_coupling,
+        expected_facing,
+    ) = match raw.as_str() {
+        "current-additive" => (
+            "current-additive",
+            "src-alpha-one-additive",
+            1.0,
+            1.0,
+            0.0,
+            0.0,
+            0.0,
+        ),
+        "premultiplied-alpha-over" => (
+            "premultiplied-alpha-over",
+            "src-one-one-minus-src-alpha",
+            1.0,
+            1.0,
+            0.0,
+            0.0,
+            0.0,
+        ),
+        "premultiplied-alpha-over-depth" => (
+            "premultiplied-alpha-over-depth",
+            "src-one-one-minus-src-alpha",
+            1.0,
+            1.0,
+            1.5,
+            0.0,
+            0.0,
+        ),
+        "premultiplied-alpha-over-depth-facing" => (
+            "premultiplied-alpha-over-depth-facing",
+            "src-one-one-minus-src-alpha",
+            1.0,
+            1.0,
+            1.5,
+            0.0,
+            0.20,
+        ),
+        "reference-material-emulation" => (
+            "reference-material-emulation",
+            "src-one-one-minus-src-alpha",
+            0.36,
+            0.45,
+            1.5,
+            0.0,
+            0.20,
+        ),
+        other => panic!("unsupported packaged private particle material preset: {other}"),
+    };
+    let close = |actual: f32, expected: f32| (actual - expected).abs() <= 0.000_01;
+    if transparency_blend_mode != expected_blend
+        || !close(transparency_opacity, expected_opacity)
+        || !close(transparency_output_alpha_scale, expected_alpha)
+        || !close(transparency_depth_suppression_strength, expected_depth)
+        || !close(transparency_rgb_alpha_coupling, expected_coupling)
+        || !close(color_facing_attenuation_strength, expected_facing)
+    {
+        panic!(
+            "packaged material preset {marker} does not match its closed blend/coefficient envelope"
+        );
+    }
+    (marker, "particle-payload-build-env-material-preset")
+}
+
 fn private_particle_ordering_config() -> (u32, &'static str, &'static str) {
     let name = "RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_ORDERING_MODE";
     let source = if env::var(name)
@@ -1468,6 +1637,23 @@ fn write_private_particle_payload_config(
     let (color_facing_attenuation_strength, color_parameter_source) =
         private_particle_color_config();
     let (
+        particle_size_default_override_enabled,
+        particle_size_default_mode,
+        particle_size_default_world_meters,
+        particle_size_default_sphere_radius_percent,
+        particle_size_default_oscillation_percent,
+        particle_size_default_parameter_source,
+    ) = private_particle_size_default_config();
+    let (material_default_preset, material_default_parameter_source) =
+        private_particle_material_default_config(
+            transparency_opacity,
+            transparency_output_alpha_scale,
+            transparency_depth_suppression_strength,
+            transparency_rgb_alpha_coupling,
+            transparency_blend_mode,
+            color_facing_attenuation_strength,
+        );
+    let (
         data_path,
         shader_path,
         kind,
@@ -1657,7 +1843,7 @@ fn write_private_particle_payload_config(
         panic!("an auxiliary compute shader requires positive logical invocations");
     }
     let source = format!(
-        "pub(crate) const PRIVATE_PARTICLE_PAYLOAD_LINKED: bool = {payload_linked};\npub(crate) const PRIVATE_PARTICLE_IMPLEMENTATION_PATH: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_DATA_PATH: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_KIND: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_MARKER_PREFIX: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_MARKER_FIELDS: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_COUNT: usize = {particle_count};\npub(crate) const PRIVATE_PARTICLE_VISUAL_SCALE: f32 = {:.8};\npub(crate) const PRIVATE_PARTICLE_VISUAL_PARAMETER_SOURCE: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_DRIVER_BANK_SLOT_COUNT: usize = 8;\npub(crate) const PRIVATE_PARTICLE_DRIVER_VALUES01: [f32; PRIVATE_PARTICLE_DRIVER_BANK_SLOT_COUNT] = [{:.8}, {:.8}, {:.8}, {:.8}, {:.8}, {:.8}, {:.8}, {:.8}];\npub(crate) const PRIVATE_PARTICLE_DRIVER0_VALUE01: f32 = PRIVATE_PARTICLE_DRIVER_VALUES01[0];\npub(crate) const PRIVATE_PARTICLE_DRIVER1_VALUE01: f32 = PRIVATE_PARTICLE_DRIVER_VALUES01[1];\npub(crate) const PRIVATE_PARTICLE_DRIVER_PARAMETER_SOURCE: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_TRACER_MAX_COUNT: usize = {tracer_max_count};\npub(crate) const PRIVATE_PARTICLE_TRACER_DRAW_SLOTS_PER_OSCILLATOR: usize = {tracer_draw_slots_per_oscillator};\npub(crate) const PRIVATE_PARTICLE_TRACER_LIFETIME_SECONDS: f32 = {:.8};\npub(crate) const PRIVATE_PARTICLE_TRACER_COPIES_PER_SECOND: f32 = {:.8};\npub(crate) const PRIVATE_PARTICLE_TRACER_PARAMETER_SOURCE: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_ANCHOR_ECHO_MAX_COUNT: usize = {anchor_echo_max_count};\npub(crate) const PRIVATE_PARTICLE_ANCHOR_ECHO_DRAW_ECHO_COUNT: usize = {anchor_echo_draw_echo_count};\npub(crate) const PRIVATE_PARTICLE_ANCHOR_ECHO_LIFETIME_SECONDS: f32 = {:.8};\npub(crate) const PRIVATE_PARTICLE_ANCHOR_ECHO_COPIES_PER_SECOND: f32 = {:.8};\npub(crate) const PRIVATE_PARTICLE_ANCHOR_ECHO_RADIUS_M: f32 = {:.8};\npub(crate) const PRIVATE_PARTICLE_ANCHOR_ECHO_ALPHA: f32 = {:.8};\npub(crate) const PRIVATE_PARTICLE_ANCHOR_ECHO_ROTATION_RADIANS: f32 = {:.8};\npub(crate) const PRIVATE_PARTICLE_ANCHOR_ECHO_PARAMETER_SOURCE: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_AUXILIARY_COMPUTE_LOGICAL_INVOCATIONS: usize = {auxiliary_compute_logical_invocations};\npub(crate) const PRIVATE_PARTICLE_AUXILIARY_COMPUTE_LOCAL_SIZE_X: u32 = {auxiliary_compute_local_size_x};\npub(crate) const PRIVATE_PARTICLE_AUX0_VEC4_ROWS: usize = {aux0_rows};\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_LINKED: bool = {mask_linked};\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_PATH: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_WIDTH: u32 = {mask_width};\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_HEIGHT: u32 = {mask_height};\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_LAYERS: u32 = {mask_layers};\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_BYTES: usize = {mask_bytes};\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_MODE_CODE: u32 = {mask_mode_code};\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_MODE: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_VIEW_TYPE: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_MIP_MODE: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_MIP_LEVELS: u32 = {mask_mip_levels};\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_ATLAS_COLUMNS: u32 = {mask_atlas_columns};\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_ATLAS_ROWS: u32 = {mask_atlas_rows};\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_IMAGE_WIDTH: u32 = {mask_image_width};\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_IMAGE_HEIGHT: u32 = {mask_image_height};\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_IMAGE_LAYERS: u32 = {mask_image_layers};\npub(crate) const PRIVATE_PARTICLE_MASK_DISCARD_MODE_CODE: u32 = {mask_discard_mode_code};\npub(crate) const PRIVATE_PARTICLE_MASK_DISCARD_MODE: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_MASK_ALPHA_CUTOFF: f32 = {:.8};\npub(crate) const PRIVATE_PARTICLE_TRANSPARENCY_OPACITY: f32 = {:.8};\npub(crate) const PRIVATE_PARTICLE_TRANSPARENCY_OUTPUT_ALPHA_SCALE: f32 = {:.8};\npub(crate) const PRIVATE_PARTICLE_TRANSPARENCY_DEPTH_SUPPRESSION_STRENGTH: f32 = {:.8};\npub(crate) const PRIVATE_PARTICLE_TRANSPARENCY_RGB_ALPHA_COUPLING: f32 = {:.8};\npub(crate) const PRIVATE_PARTICLE_TRANSPARENCY_BLEND_MODE: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_TRANSPARENCY_PARAMETER_SOURCE: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_ORDERING_MODE_CODE: u32 = {ordering_mode_code};\npub(crate) const PRIVATE_PARTICLE_ORDERING_MODE: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_ORDERING_PARAMETER_SOURCE: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_COLOR_FACING_ATTENUATION_STRENGTH: f32 = {:.8};\npub(crate) const PRIVATE_PARTICLE_COLOR_PARAMETER_SOURCE: &str = \"{}\";\n",
+        "pub(crate) const PRIVATE_PARTICLE_PAYLOAD_LINKED: bool = {payload_linked};\npub(crate) const PRIVATE_PARTICLE_IMPLEMENTATION_PATH: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_DATA_PATH: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_KIND: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_MARKER_PREFIX: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_MARKER_FIELDS: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_COUNT: usize = {particle_count};\npub(crate) const PRIVATE_PARTICLE_VISUAL_SCALE: f32 = {:.8};\npub(crate) const PRIVATE_PARTICLE_VISUAL_PARAMETER_SOURCE: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_DEFAULT_SIZE_OVERRIDE_ENABLED: bool = {particle_size_default_override_enabled};\npub(crate) const PRIVATE_PARTICLE_DEFAULT_SIZE_MODE: u32 = {particle_size_default_mode};\npub(crate) const PRIVATE_PARTICLE_DEFAULT_SIZE_WORLD_METERS: f32 = {particle_size_default_world_meters:.8};\npub(crate) const PRIVATE_PARTICLE_DEFAULT_SIZE_SPHERE_RADIUS_PERCENT: f32 = {particle_size_default_sphere_radius_percent:.8};\npub(crate) const PRIVATE_PARTICLE_DEFAULT_SIZE_OSCILLATION_PERCENT: f32 = {particle_size_default_oscillation_percent:.8};\npub(crate) const PRIVATE_PARTICLE_DEFAULT_SIZE_PARAMETER_SOURCE: &str = \"{particle_size_default_parameter_source}\";\npub(crate) const PRIVATE_PARTICLE_DEFAULT_MATERIAL_PRESET: &str = \"{material_default_preset}\";\npub(crate) const PRIVATE_PARTICLE_DEFAULT_MATERIAL_PARAMETER_SOURCE: &str = \"{material_default_parameter_source}\";\npub(crate) const PRIVATE_PARTICLE_DRIVER_BANK_SLOT_COUNT: usize = 8;\npub(crate) const PRIVATE_PARTICLE_DRIVER_VALUES01: [f32; PRIVATE_PARTICLE_DRIVER_BANK_SLOT_COUNT] = [{:.8}, {:.8}, {:.8}, {:.8}, {:.8}, {:.8}, {:.8}, {:.8}];\npub(crate) const PRIVATE_PARTICLE_DRIVER0_VALUE01: f32 = PRIVATE_PARTICLE_DRIVER_VALUES01[0];\npub(crate) const PRIVATE_PARTICLE_DRIVER1_VALUE01: f32 = PRIVATE_PARTICLE_DRIVER_VALUES01[1];\npub(crate) const PRIVATE_PARTICLE_DRIVER_PARAMETER_SOURCE: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_TRACER_MAX_COUNT: usize = {tracer_max_count};\npub(crate) const PRIVATE_PARTICLE_TRACER_DRAW_SLOTS_PER_OSCILLATOR: usize = {tracer_draw_slots_per_oscillator};\npub(crate) const PRIVATE_PARTICLE_TRACER_LIFETIME_SECONDS: f32 = {:.8};\npub(crate) const PRIVATE_PARTICLE_TRACER_COPIES_PER_SECOND: f32 = {:.8};\npub(crate) const PRIVATE_PARTICLE_TRACER_PARAMETER_SOURCE: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_ANCHOR_ECHO_MAX_COUNT: usize = {anchor_echo_max_count};\npub(crate) const PRIVATE_PARTICLE_ANCHOR_ECHO_DRAW_ECHO_COUNT: usize = {anchor_echo_draw_echo_count};\npub(crate) const PRIVATE_PARTICLE_ANCHOR_ECHO_LIFETIME_SECONDS: f32 = {:.8};\npub(crate) const PRIVATE_PARTICLE_ANCHOR_ECHO_COPIES_PER_SECOND: f32 = {:.8};\npub(crate) const PRIVATE_PARTICLE_ANCHOR_ECHO_RADIUS_M: f32 = {:.8};\npub(crate) const PRIVATE_PARTICLE_ANCHOR_ECHO_ALPHA: f32 = {:.8};\npub(crate) const PRIVATE_PARTICLE_ANCHOR_ECHO_ROTATION_RADIANS: f32 = {:.8};\npub(crate) const PRIVATE_PARTICLE_ANCHOR_ECHO_PARAMETER_SOURCE: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_AUXILIARY_COMPUTE_LOGICAL_INVOCATIONS: usize = {auxiliary_compute_logical_invocations};\npub(crate) const PRIVATE_PARTICLE_AUXILIARY_COMPUTE_LOCAL_SIZE_X: u32 = {auxiliary_compute_local_size_x};\npub(crate) const PRIVATE_PARTICLE_AUX0_VEC4_ROWS: usize = {aux0_rows};\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_LINKED: bool = {mask_linked};\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_PATH: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_WIDTH: u32 = {mask_width};\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_HEIGHT: u32 = {mask_height};\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_LAYERS: u32 = {mask_layers};\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_BYTES: usize = {mask_bytes};\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_MODE_CODE: u32 = {mask_mode_code};\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_MODE: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_VIEW_TYPE: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_MIP_MODE: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_MIP_LEVELS: u32 = {mask_mip_levels};\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_ATLAS_COLUMNS: u32 = {mask_atlas_columns};\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_ATLAS_ROWS: u32 = {mask_atlas_rows};\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_IMAGE_WIDTH: u32 = {mask_image_width};\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_IMAGE_HEIGHT: u32 = {mask_image_height};\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_IMAGE_LAYERS: u32 = {mask_image_layers};\npub(crate) const PRIVATE_PARTICLE_MASK_DISCARD_MODE_CODE: u32 = {mask_discard_mode_code};\npub(crate) const PRIVATE_PARTICLE_MASK_DISCARD_MODE: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_MASK_ALPHA_CUTOFF: f32 = {:.8};\npub(crate) const PRIVATE_PARTICLE_TRANSPARENCY_OPACITY: f32 = {:.8};\npub(crate) const PRIVATE_PARTICLE_TRANSPARENCY_OUTPUT_ALPHA_SCALE: f32 = {:.8};\npub(crate) const PRIVATE_PARTICLE_TRANSPARENCY_DEPTH_SUPPRESSION_STRENGTH: f32 = {:.8};\npub(crate) const PRIVATE_PARTICLE_TRANSPARENCY_RGB_ALPHA_COUPLING: f32 = {:.8};\npub(crate) const PRIVATE_PARTICLE_TRANSPARENCY_BLEND_MODE: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_TRANSPARENCY_PARAMETER_SOURCE: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_ORDERING_MODE_CODE: u32 = {ordering_mode_code};\npub(crate) const PRIVATE_PARTICLE_ORDERING_MODE: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_ORDERING_PARAMETER_SOURCE: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_COLOR_FACING_ATTENUATION_STRENGTH: f32 = {:.8};\npub(crate) const PRIVATE_PARTICLE_COLOR_PARAMETER_SOURCE: &str = \"{}\";\n",
         rust_string_literal(&shader_path),
         rust_string_literal(&data_path),
         rust_string_literal(&kind),

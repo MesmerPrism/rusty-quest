@@ -768,6 +768,12 @@ visual scale, tracer draw slots/lifetime/cadence, transparency
 opacity/alpha/depth/RGB coupling, and the generic color facing-attenuation
 strength, plus bounded generic driver scalars in the `driver0.value01` through
 `driver7.value01` bank.
+An app-owned private payload may also seal a packaged initial particle-size
+mode/envelope and one closed material-preset identity through the locked build
+environment. Those values initialize the same typed runtime settings used by
+the panel and CLI; a validated runtime-property overlay still takes precedence,
+and later field-scoped commands replace only their selected fields. Public or
+unselected payloads retain the legacy size envelope and no material preset.
 The opt-in `particles.private.manifold_scalar_driver` feature adds a public
 Manifold stream-to-driver adapter. It subscribes to configured Manifold scalar
 stream ids, parses bounded `value01` samples, clamps them to `0..=1`, and

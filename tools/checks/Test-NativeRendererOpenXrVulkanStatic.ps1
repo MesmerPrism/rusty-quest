@@ -215,6 +215,29 @@ Assert-ContainsLiteralTokens $nativeBuildScript @(
     'rejects_a_larger_local_size_literal',
     'rejects_a_comment_only_expected_size_when_the_declaration_is_wrong'
 ) "closed diagnostics build policy"
+Assert-ContainsLiteralTokens $nativeBuildScript @(
+    'RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_DEFAULT_SIZE_MODE',
+    'RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_DEFAULT_SIZE_WORLD_METERS',
+    'RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_DEFAULT_SIZE_SPHERE_RADIUS_PERCENT',
+    'RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_DEFAULT_SIZE_OSCILLATION_PERCENT',
+    'RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_DEFAULT_MATERIAL_PRESET',
+    'fn private_particle_size_default_config()',
+    'legacy-payload-envelope must not carry explicit packaged size values',
+    'fn private_particle_material_default_config(',
+    'packaged material preset {marker} does not match its closed blend/coefficient envelope',
+    'PRIVATE_PARTICLE_DEFAULT_SIZE_OVERRIDE_ENABLED',
+    'PRIVATE_PARTICLE_DEFAULT_MATERIAL_PRESET'
+) "closed packaged private-particle defaults"
+Assert-ContainsLiteralTokens $gpuPrivateParticles @(
+    'fn generated_private_particle_material_default()',
+    'particle_size_override_enabled: PRIVATE_PARTICLE_DEFAULT_SIZE_OVERRIDE_ENABLED',
+    'particle_size_sphere_percent: if PRIVATE_PARTICLE_DEFAULT_SIZE_OVERRIDE_ENABLED',
+    'particle_size_oscillation_percent: if PRIVATE_PARTICLE_DEFAULT_SIZE_OVERRIDE_ENABLED',
+    'material_preset: generated_private_particle_material_default()',
+    'let material_scalar_overridden = transparency_overridden || color_facing_overridden;',
+    '"runtime-hotload-android-property"',
+    'PRIVATE_PARTICLE_DEFAULT_MATERIAL_PARAMETER_SOURCE'
+) "packaged-default adoption and runtime precedence"
 Invoke-BuildScriptLocalSizeTests (Join-Path $nativeRoot "build.rs")
 Assert-ContainsLiteralTokens $nativeRendererTiming @(
     'GPU_TIMESTAMP_STAGES_PER_FRAME: u32 = GpuTimestampStage::COUNT',
