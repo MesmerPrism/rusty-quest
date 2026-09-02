@@ -94,7 +94,7 @@ fn observe_camera_projection_freshness(
     };
     match tracker.observe_with_live_fence(sample, observed_layer_fence) {
         CameraProjectionFreshnessObservation::Issued(receipt) => log_marker(format!(
-            "status=camera-projection-freshness-receipt {} runtimeCrash=false",
+            "status=camera-projection-freshness-receipt runtimeCrash=false {}",
             receipt.marker_fields(),
         )),
         CameraProjectionFreshnessObservation::Rejected(reason)

@@ -4685,6 +4685,8 @@ Assert-Contains "Camera probe" $cameraProbe "tracker.observe_live_fence(observed
 Assert-Contains "Camera probe" $cameraProbe "current_raw_projection_layer_fence()"
 Assert-Contains "Camera probe" $cameraProbe "CameraProjectionLaunchFence::from_raw("
 Assert-Contains "Camera probe" $cameraProbe "CameraProjectionLaunchFence::validate_monotonic_update(*current, fence)"
+Assert-Contains "Camera probe" $cameraProbe '"status=camera-projection-freshness-receipt runtimeCrash=false {}"'
+Assert-NotContains "Camera probe" $cameraProbe '"status=camera-projection-freshness-receipt {} runtimeCrash=false"'
 Assert-Contains "Camera freshness" $cameraFreshness "rusty.quest.camera_hwb_projection_freshness_receipt.v1"
 Assert-Contains "Camera freshness" $cameraFreshness "first-moving-then-periodic-300-present-ordinals"
 Assert-Contains "Camera freshness" $cameraFreshness "visibilityScope=app-command-buffer-not-wearer-visible"

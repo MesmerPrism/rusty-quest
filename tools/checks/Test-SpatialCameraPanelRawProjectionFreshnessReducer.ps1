@@ -101,7 +101,9 @@ try {
     $first = New-Marker 1 2 10 11 1000 1100 20 21
     $second = New-Marker 2 302 11 311 1100 31100 21 321
     $captureBoundary = "schema=rusty.quest.camera_hwb_projection_freshness_capture.v1 captureComplete=true logCount=1"
-    $validReceiptText = "09-02 00:00:00.000 I/RustyQuest: $first`n09-02 00:00:03.000 I/RustyQuest: $second`n"
+    $validReceiptText =
+        "09-02 00:00:00.000 I/RustyQuest: status=camera-projection-freshness-receipt runtimeCrash=false $first`n" +
+        "09-02 00:00:03.000 I/RustyQuest: status=camera-projection-freshness-receipt runtimeCrash=false $second`n"
     $validReceiptCrLf = $validReceiptText.Replace("`n", "`r`n")
     $validText = "$validReceiptText$captureBoundary`n"
     $input = Join-Path $script:Root "valid.log"
@@ -131,9 +133,15 @@ try {
     Assert-Rejected "timestamp-not-monotonic" (($validText -replace 'previousRightTimestampNs=1000 currentRightTimestampNs=1100', 'previousRightTimestampNs=1100 currentRightTimestampNs=1100'))
     Assert-Rejected "import-not-monotonic" (($validText -replace 'previousLeftHwbImportSequence=20 currentLeftHwbImportSequence=21', 'previousLeftHwbImportSequence=21 currentLeftHwbImportSequence=21'))
     Assert-Rejected "cadence-tuple" (($validText -replace 'sessionGenerationAuthority=spatial-sdk-device-binding', 'sessionGenerationAuthority=app-vulkan-wsi-run'))
-    Assert-Rejected "short-period" (("$first`n" + (New-Marker 2 301 11 310 1100 31000 21 320) + "`n"))
+    $shortSecond = New-Marker 2 301 11 310 1100 31000 21 320
+    Assert-Rejected "short-period" (
+        "status=camera-projection-freshness-receipt runtimeCrash=false $first`n" +
+        "status=camera-projection-freshness-receipt runtimeCrash=false $shortSecond`n" +
+        "$captureBoundary`n")
     Assert-Rejected "duplicate-field" (($validText -replace 'launchChallenge=701', 'launchChallenge=701 launchChallenge=701'))
     Assert-Rejected "unknown-field" (($validText -replace 'layerGeneration=1', 'layerGeneration=1 extraField=1'))
+    Assert-Rejected "envelope-suffix-after-receipt" (($validText -replace 'intervalPolicy=first-moving-then-periodic-300-present-ordinals', 'intervalPolicy=first-moving-then-periodic-300-present-ordinals runtimeCrash=false'))
+    Assert-Rejected "runtime-crash-envelope" (($validText -replace 'runtimeCrash=false', 'runtimeCrash=true'))
     Assert-Rejected "leading-zero" (($validText -replace 'launchChallenge=701', 'launchChallenge=000701'))
     Assert-Rejected "missing-capture-boundary" $validReceiptText
     Assert-Rejected "partial-receipt-family" ("$validReceiptText" + "schema=rusty.quest.camera_hwb_projection_freshness_receipt.v`n$captureBoundary`n")
@@ -175,7 +183,7 @@ try {
         result = "pass"
         positive_receipts = 2
         minimum_present_separation = 300
-        damage_case_count = 38
+        damage_case_count = 40
         wearer_visible_claim = $false
         product_or_device_used = $false
     } | ConvertTo-Json -Compress
