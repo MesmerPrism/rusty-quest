@@ -247,6 +247,10 @@ try {
     if ($LASTEXITCODE -ne 0) {
         throw "Spatial Camera Panel camera-latency Rust tests failed."
     }
+    cargo test -p spatial-camera-panel-native-receipt camera_hwb_freshness
+    if ($LASTEXITCODE -ne 0) {
+        throw "Spatial Camera Panel camera-HWB freshness Rust tests failed."
+    }
     cargo test -p spatial-camera-panel-native-receipt projection_surface_displacement
     if ($LASTEXITCODE -ne 0) {
         throw "Spatial Camera Panel projection-surface displacement Rust tests failed."

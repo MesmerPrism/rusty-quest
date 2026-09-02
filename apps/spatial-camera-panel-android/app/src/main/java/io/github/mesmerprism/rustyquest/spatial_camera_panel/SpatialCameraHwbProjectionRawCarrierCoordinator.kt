@@ -44,7 +44,8 @@ internal data class SpatialCameraHwbProjectionRawCarrierBindings(
     val applyPrivateLayerConfiguration: (String) -> Unit,
     val configureVideoProjection: (SpatialVideoProjectionSettings, String) -> Unit,
     val startVideoProjection: (SpatialVideoProjectionSettings, String) -> Unit,
-    val startNative: (AndroidSurface, Int, Int, Int, Int) -> Long,
+    val updateNativeLayerFence: (Long, Long, Long, Int) -> Long,
+    val startNative: (AndroidSurface, Int, Int, Int, Int, Long, Long, Long, Int) -> Long,
     val updateFromViewer: (String, Boolean) -> Unit,
     val marker: (String) -> Unit,
 )
@@ -52,6 +53,9 @@ internal data class SpatialCameraHwbProjectionRawCarrierBindings(
 internal class SpatialCameraHwbProjectionRawCarrierCoordinator(
     private val bindings: SpatialCameraHwbProjectionRawCarrierBindings,
 ) {
+  private val rawLayerContinuity = SpatialCameraHwbProjectionRawLayerContinuity()
+  private val rawLayerPublicationMonitor = Any()
+
   fun run(readerMaxImages: Int, videoSettings: SpatialVideoProjectionSettings) {
     if (!bindings.routeEnabled()) {
       return
@@ -123,8 +127,9 @@ internal class SpatialCameraHwbProjectionRawCarrierCoordinator(
       return
     }
 
-    val layerCreated = createLayer(sdkSwapchain, videoSettings)
-    if (!layerCreated) {
+    val launchFence =
+        createObservedLayerForNewLaunch(sdkSwapchain, videoSettings, "raw-projection-run")
+    if (launchFence == null) {
       val cleanupStatus = bindings.cleanup("camera-hwb-projection-layer-create-failed")
       bindings.marker(
           CameraHwbProjectionModule.rawProjectionCompleteAfterCleanupMarker(
@@ -135,7 +140,6 @@ internal class SpatialCameraHwbProjectionRawCarrierCoordinator(
       )
       return
     }
-
     if (bindings.syntheticVisualEnabled()) {
       val canvasDrawn = bindings.drawSyntheticVisual(renderSurface, "SceneQuadLayer")
       bindings.marker(
@@ -173,6 +177,10 @@ internal class SpatialCameraHwbProjectionRawCarrierCoordinator(
                   CAMERA_HWB_PROJECTION_HEIGHT_PX,
                   CAMERA_HWB_PROJECTION_FRAME_COUNT_UNBOUNDED,
                   readerMaxImages,
+                  launchFence.launchChallenge,
+                  launchFence.layerGeneration,
+                  launchFence.layerSwitchCount,
+                  launchFence.layerState.code,
               )
             }
             .getOrElse { throwable ->
@@ -205,12 +213,62 @@ internal class SpatialCameraHwbProjectionRawCarrierCoordinator(
                 ),
             nativePassthroughStartMask = nativePassthroughStartMask,
             nativeEnvironmentDepthStartMask = nativeEnvironmentDepthStartMask,
+            launchFenceMarkerFields = launchFence.markerFields(),
         )
     )
     bindings.updateFromViewer(reason, true)
   }
 
   fun createLayer(
+      sdkSwapchain: SceneSwapchain,
+      videoSettings: SpatialVideoProjectionSettings,
+  ): Boolean =
+      createObservedLayerForNewLaunch(sdkSwapchain, videoSettings, "external-layer-create") != null
+
+  fun recordLayerRemoved(reason: String) {
+    synchronized(rawLayerPublicationMonitor) { recordLayerRemovedLocked(reason) }
+  }
+
+  private fun recordLayerRemovedLocked(reason: String) {
+    val removedFence = rawLayerContinuity.recordLayerRemoved() ?: return
+    publishLayerFence(removedFence, "removed-$reason")
+  }
+
+  private fun createObservedLayerForNewLaunch(
+      sdkSwapchain: SceneSwapchain,
+      videoSettings: SpatialVideoProjectionSettings,
+      reason: String,
+  ): SpatialCameraHwbProjectionRawLaunchFence? = synchronized(rawLayerPublicationMonitor) {
+    recordLayerRemovedLocked("before-$reason")
+    val launchChallenge = SpatialCameraHwbProjectionRawLaunchChallengeSource.next()
+    rawLayerContinuity.beginLaunch(launchChallenge)
+    if (!createLayerUnobserved(sdkSwapchain, videoSettings)) {
+      return@synchronized null
+    }
+    val fence = rawLayerContinuity.recordLayerCreated(launchChallenge)
+    if (publishLayerFence(fence, "created")) fence else null
+  }
+
+  private fun publishLayerFence(
+      fence: SpatialCameraHwbProjectionRawLaunchFence,
+      reason: String,
+  ): Boolean {
+    val updateMask =
+        bindings.updateNativeLayerFence(
+            fence.launchChallenge,
+            fence.layerGeneration,
+            fence.layerSwitchCount,
+            fence.layerState.code,
+        )
+    bindings.marker(
+        "channel=camera-hwb-spatial-probe status=raw-projection-layer-fence-updated " +
+            "reason=$reason updateMask=$updateMask ${fence.markerFields()} " +
+            "continuousObservation=true runtimeCrash=false"
+    )
+    return updateMask == 1L
+  }
+
+  private fun createLayerUnobserved(
       sdkSwapchain: SceneSwapchain,
       videoSettings: SpatialVideoProjectionSettings,
   ): Boolean =

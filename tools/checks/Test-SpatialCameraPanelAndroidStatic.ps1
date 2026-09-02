@@ -146,6 +146,8 @@ $cameraHwbProjectionLaunchCoordinator = Read-RequiredText "apps\spatial-camera-p
 $projectionPanelVisibilityCoordinator = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\SpatialProjectionPanelVisibilityCoordinator.kt"
 $cameraHwbProjectionDepthPrerequisiteCoordinator = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\SpatialCameraHwbProjectionDepthPrerequisiteCoordinator.kt"
 $cameraHwbProjectionRawCarrierCoordinator = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\SpatialCameraHwbProjectionRawCarrierCoordinator.kt"
+$cameraHwbProjectionRawLaunchFence = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\SpatialCameraHwbProjectionRawLaunchFence.kt"
+$cameraHwbProjectionRawLaunchFenceTest = Read-RequiredText "apps\spatial-camera-panel-android\app\src\test\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\SpatialCameraHwbProjectionRawLaunchFenceTest.kt"
 $cameraHwbProjectionPanelCarrierCoordinator = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\SpatialCameraHwbProjectionPanelCarrierCoordinator.kt"
 $cameraHwbProjectionPlacementUpdateCoordinator = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\SpatialCameraHwbProjectionPlacementUpdateCoordinator.kt"
 $cameraHwbProjectionTuningCoordinator = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\SpatialCameraHwbProjectionTuningCoordinator.kt"
@@ -164,6 +166,7 @@ $privateFeatureLoader = Read-RequiredText "apps\spatial-camera-panel-android\app
 $nativeLib = Read-RequiredText "apps\spatial-camera-panel-android\native-receipt\src\lib.rs"
 $nativeBuildScript = Read-RequiredText "apps\spatial-camera-panel-android\native-receipt\build.rs"
 $cameraProbe = Read-RequiredText "apps\spatial-camera-panel-android\native-receipt\src\camera_hwb_probe.rs"
+$cameraFreshness = Read-RequiredText "apps\spatial-camera-panel-android\native-receipt\src\camera_hwb_freshness.rs"
 $cameraTiming = Read-RequiredText "apps\spatial-camera-panel-android\native-receipt\src\camera_hwb_timing.rs"
 $cameraProjectionTarget = Read-RequiredText "apps\spatial-camera-panel-android\native-receipt\src\camera_hwb_projection_target.rs"
 $nativeMultiStack = Read-RequiredText "apps\spatial-camera-panel-android\native-receipt\src\spatial_public_multistack.rs"
@@ -1379,7 +1382,7 @@ Assert-Contains "Activity" $activity "cameraHwbProjectionRawCarrierCoordinator b
 Assert-Contains "Activity" $activity "SpatialCameraHwbProjectionRawCarrierBindings("
 Assert-Contains "Activity" $activity "cameraHwbProjectionLaunchCoordinator.started &&"
 Assert-Contains "Activity" $activity "!cameraHwbProjectionCarrierStateCoordinator.scenePanelCarrierEnabled()"
-Assert-Contains "Activity" $activity "startNative = ::nativeStartCameraHwbProjectionProbe"
+Assert-Contains "Activity" $activity "startNative = ::nativeStartCameraHwbProjectionProbeWithFence"
 Assert-Contains "Activity" $activity "cameraHwbProjectionRawCarrierCoordinator.run(readerMaxImages, videoSettings)"
 Assert-Contains "Activity" $activity "cameraHwbProjectionRawCarrierCoordinator.createLayer("
 Assert-NotContains "Activity" $activity "private fun createCameraHwbProjectionLayer"
@@ -4669,6 +4672,48 @@ Assert-Contains "Camera projection target" $cameraProjectionTarget "settings.out
 Assert-Contains "Native public multi-stack runtime" $nativeMultiStackRuntime "!zone_frame.settings.synthetic_diagnostic()"
 Assert-Contains "Camera WSI" $cameraWsi "transparent-underlay-fallback-unused"
 Assert-Contains "Camera WSI" $cameraWsi "vk::CompositeAlphaFlagsKHR::PRE_MULTIPLIED"
+Assert-Contains "Native library" $nativeLib "mod camera_hwb_freshness;"
+Assert-Contains "Camera probe" $cameraProbe "CameraProjectionFreshnessTracker::new("
+Assert-Contains "Camera probe" $cameraProbe "submitted_camera_projection_freshness.take()"
+Assert-Contains "Camera probe" $cameraProbe "sample.cadence_ordinal = submit_retired_total"
+Assert-Contains "Camera probe" $cameraProbe "camera_projection_visible: record_result.camera_projection_visible"
+Assert-Contains "Camera probe" $cameraProbe "tracker.observe_with_live_fence(sample, observed_layer_fence)"
+Assert-Contains "Camera probe" $cameraProbe "tracker.observe_live_fence(observed_layer_fence)"
+Assert-Contains "Camera probe" $cameraProbe "current_raw_projection_layer_fence()"
+Assert-Contains "Camera probe" $cameraProbe "CameraProjectionLaunchFence::from_raw("
+Assert-Contains "Camera probe" $cameraProbe "CameraProjectionLaunchFence::validate_monotonic_update(*current, fence)"
+Assert-Contains "Camera freshness" $cameraFreshness "rusty.quest.camera_hwb_projection_freshness_receipt.v1"
+Assert-Contains "Camera freshness" $cameraFreshness "first-moving-then-periodic-300-present-ordinals"
+Assert-Contains "Camera freshness" $cameraFreshness "visibilityScope=app-command-buffer-not-wearer-visible"
+Assert-Contains "Camera freshness" $cameraFreshness "launchFenceAuthority=app-raw-carrier-live-jni-fence"
+Assert-Contains "Camera freshness" $cameraFreshness "freshness-launch-already-rejected"
+Assert-Contains "Camera freshness damage tests" $cameraFreshness '"stale-run-generation"'
+Assert-Contains "Camera freshness damage tests" $cameraFreshness '"launch-challenge-mismatch"'
+Assert-Contains "Camera freshness damage tests" $cameraFreshness '"camera-frame-index-not-monotonic"'
+Assert-Contains "Camera freshness damage tests" $cameraFreshness '"camera-hwb-import-sequence-not-monotonic"'
+Assert-Contains "Camera freshness damage tests" $cameraFreshness '"app-owned-layer-switch-observed"'
+Assert-Contains "Camera freshness damage tests" $cameraFreshness '"cadence-missing"'
+Assert-Contains "Camera freshness damage tests" $cameraFreshness '"camera-projection-visible-witness-missing"'
+Assert-Contains "Camera freshness damage tests" $cameraFreshness "live_layer_removal_between_submission_and_retirement_latches_rejection"
+Assert-Contains "Camera freshness damage tests" $cameraFreshness '"live-layer-fence-transition-not-monotonic"'
+Assert-Contains "Camera freshness damage tests" $cameraFreshness '"live-layer-fence-unavailable"'
+Assert-Contains "Raw Projection launch fence" $cameraHwbProjectionRawLaunchFence "SpatialCameraHwbProjectionRawLayerContinuity"
+Assert-Contains "Raw Projection launch fence" $cameraHwbProjectionRawLaunchFence "layerSwitchCount = Math.addExact(layerSwitchCount, 1L)"
+Assert-Contains "Raw Projection launch fence" $cameraHwbProjectionRawLaunchFence "RAW_SCENE_QUAD_ACTIVE"
+Assert-Contains "Raw Projection launch fence test" $cameraHwbProjectionRawLaunchFenceTest "secondLayerInTheSameLaunchRecordsAnActualSwitch"
+Assert-Contains "Raw Projection launch fence test" $cameraHwbProjectionRawLaunchFenceTest "removalAndReplacementRemainInOneMonotonicLifecycle"
+Assert-Contains "Raw Projection launch fence test" $cameraHwbProjectionRawLaunchFenceTest "newLaunchResetsPerLaunchCountersButUsesANewChallenge"
+Assert-Contains "Raw Projection launch fence test" $cameraHwbProjectionRawLaunchFenceTest "staleOrMissingLaunchChallengeIsRejected"
+Assert-Contains "Camera HWB projection raw carrier coordinator" $cameraHwbProjectionRawCarrierCoordinator "rawLayerContinuity.beginLaunch(launchChallenge)"
+Assert-Contains "Camera HWB projection raw carrier coordinator" $cameraHwbProjectionRawCarrierCoordinator "rawLayerContinuity.recordLayerCreated(launchChallenge)"
+Assert-Contains "Camera HWB projection raw carrier coordinator" $cameraHwbProjectionRawCarrierCoordinator "launchFence.layerSwitchCount"
+Assert-Contains "Camera HWB projection raw carrier coordinator" $cameraHwbProjectionRawCarrierCoordinator "updateNativeLayerFence"
+Assert-Contains "Camera HWB projection raw carrier coordinator" $cameraHwbProjectionRawCarrierCoordinator "recordLayerRemoved"
+Assert-Contains "Camera HWB projection raw carrier coordinator" $cameraHwbProjectionRawCarrierCoordinator "synchronized(rawLayerPublicationMonitor)"
+Assert-Contains "Camera HWB projection raw carrier coordinator" $cameraHwbProjectionRawCarrierCoordinator "createObservedLayerForNewLaunch"
+Assert-Contains "Activity" $activity "layerStateCode: Int"
+Assert-Contains "Activity" $activity "nativeUpdateCameraHwbProjectionLayerFence("
+Assert-Contains "Test script" $testScript "cargo test -p spatial-camera-panel-native-receipt camera_hwb_freshness"
 Assert-Contains "Spatial validation workflow coordinator" $validationWorkflowCoordinator '"private-layer-zone-off" ->'
 Assert-Contains "Spatial validation workflow coordinator" $validationWorkflowCoordinator '"projection-panel-off" -> bindings.setProjectionPanelEnabled(false, source)'
 Assert-Contains "Spatial validation workflow coordinator" $validationWorkflowCoordinator '"projection-panel-on" -> bindings.setProjectionPanelEnabled(true, source)'
