@@ -1,0 +1,53 @@
+{
+  "schema": "rusty.quest.native_app_feature.v1",
+  "feature_id": "operator.breath_composition_cli",
+  "module_path": "operator/breath-composition-cli",
+  "module_kind": "shell-authorized-headless-operator-adapter",
+  "settings_surface": {
+    "authority": "rusty.quest.native_app_settings.v1",
+    "adapter": "typed-ordered-broadcast"
+  },
+  "owner_lane": "rusty-quest",
+  "status": "public-substrate",
+  "description": "Disabled-by-selection headless CLI projection of the selected same-APK breath-composition reducer; it never launches a panel Activity.",
+  "provides": [
+    "operator.breath_composition_cli"
+  ],
+  "depends_on": [
+    "ui.breath_composition_control_panel"
+  ],
+  "incompatible_with": [],
+  "exclusive_groups": {},
+  "android_manifest": {
+    "permissions": [],
+    "uses_features": [],
+    "activities": [],
+    "receivers": [
+      "BreathCompositionCommandReceiver"
+    ],
+    "services": [],
+    "queries": []
+  },
+  "runtime_profile": {
+    "set": {},
+    "clear_families": [],
+    "expected_render_modes": []
+  },
+  "build_inputs": {
+    "env": [],
+    "assets": [],
+    "shaders": []
+  },
+  "markers": {
+    "required": [],
+    "forbidden": []
+  },
+  "validation": {
+    "quick": [
+      "pwsh -NoProfile -NonInteractive -ExecutionPolicy Bypass -File tools/Invoke-NativeRendererBreathOperator.ps1 -SelfTest"
+    ],
+    "standard": [],
+    "device": []
+  },
+  "public_private_boundary": "The receiver exposes only the existing closed breath command schema through android.permission.DUMP; it adds no generic shell, property, UI, or product-semantic authority."
+}

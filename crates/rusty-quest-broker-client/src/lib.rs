@@ -270,6 +270,16 @@ pub fn validate_broker_client_pair(
     if !identities_distinct {
         errors.push("client identities, feature locks, and markers must be distinct".to_string());
     }
+    let first_contracts = first
+        .contract_families
+        .iter()
+        .map(String::as_str)
+        .collect::<BTreeSet<_>>();
+    let second_contracts = second
+        .contract_families
+        .iter()
+        .map(String::as_str)
+        .collect::<BTreeSet<_>>();
     let first_caps = first
         .capabilities
         .iter()
@@ -301,7 +311,7 @@ pub fn validate_broker_client_pair(
     Ok(BrokerClientPairReceipt {
         schema: "rusty.quest.broker_client_pair_receipt.v1".to_string(),
         client_ids: vec![first.client_id.clone(), second.client_id.clone()],
-        shared_contract_parity: first.contract_families == second.contract_families,
+        shared_contract_parity: first_contracts == second_contracts,
         identities_and_locks_distinct: true,
         capability_bleed_absent,
         adapter_permission_bleed_absent: true,

@@ -1,0 +1,101 @@
+{
+  "schema": "rusty.quest.native_app_feature.v1",
+  "feature_id": "ui.breath_composition_control_panel",
+  "module_path": "ui/breath-composition-panel",
+  "module_kind": "same-apk-panel-composition",
+  "settings_surface": {
+    "authority": "rusty.quest.native_app_settings.v1",
+    "adapter": "runtime_profile"
+  },
+  "owner_lane": "rusty-quest",
+  "status": "public-substrate",
+  "description": "Closed-world composite control surface for breath, particle, Polar, LSL, and driver-profile adapters.",
+  "provides": [
+    "ui.breath_composition_control_panel"
+  ],
+  "depends_on": [
+    "ui.same_apk_control_panel"
+  ],
+  "incompatible_with": [
+    "renderer.stimulus_volume"
+  ],
+  "exclusive_groups": {},
+  "android_manifest": {
+    "permissions": [],
+    "uses_features": [],
+    "activities": [],
+    "services": [],
+    "queries": []
+  },
+  "runtime_profile": {
+    "set": {},
+    "clear_families": [],
+    "expected_render_modes": []
+  },
+  "build_inputs": {
+    "env": [],
+    "assets": [],
+    "shaders": []
+  },
+  "markers": {
+    "required": [],
+    "forbidden": []
+  },
+  "validation": {
+    "quick": [],
+    "standard": [],
+    "device": []
+  },
+  "panel_composition": {
+    "schema": "rusty.quest.native_renderer.panel_composition.v1",
+    "selected_module_id": "breath-composition-controls",
+    "denied_module_ids": [
+      "stimulus-volume"
+    ],
+    "modules": [
+      {
+        "module_id": "breath-composition-controls",
+        "entry_class": "io.github.mesmerprism.rustyquest.native_renderer.BreathCompositionPanelModule",
+        "dependencies": [
+          "lsl-runtime-support",
+          "polar-runtime-support",
+          "private-particle-request-adapter"
+        ],
+        "source_files": [
+          "apps/native-renderer-android/panel-modules/breath-composition/src/main/java/io/github/mesmerprism/rustyquest/native_renderer/BreathCompositionCommandReceiver.java",
+          "apps/native-renderer-android/panel-modules/breath-composition/src/main/java/io/github/mesmerprism/rustyquest/native_renderer/BreathCompositionPanelModule.java"
+        ]
+      },
+      {
+        "module_id": "private-particle-request-adapter",
+        "entry_class": "",
+        "dependencies": [],
+        "source_files": [
+          "apps/native-renderer-android/panel-modules/private-particle/src/main/java/io/github/mesmerprism/rustyquest/native_renderer/PrivateParticlePanelController.java"
+        ]
+      },
+      {
+        "module_id": "polar-runtime-support",
+        "entry_class": "",
+        "dependencies": [],
+        "source_files": [
+          "apps/native-renderer-android/panel-modules/polar/src/main/java/io/github/mesmerprism/rustyquest/native_renderer/PolarBleRuntimeSupport.java",
+          "apps/native-renderer-android/panel-modules/polar/src/main/java/io/github/mesmerprism/rustyquest/native_renderer/PolarSensorCommandReceiver.java",
+          "apps/native-renderer-android/panel-modules/polar/src/main/java/io/github/mesmerprism/rustyquest/native_renderer/PolarSensorPanel.java",
+          "apps/native-renderer-android/panel-modules/polar/src/main/java/io/github/mesmerprism/rustyquest/native_renderer/PolarSensorRuntime.java"
+        ]
+      },
+      {
+        "module_id": "lsl-runtime-support",
+        "entry_class": "",
+        "dependencies": [],
+        "source_files": [
+          "apps/native-renderer-android/panel-modules/lsl/src/main/java/io/github/mesmerprism/rustyquest/native_renderer/LslMulticastLockManager.java",
+          "apps/native-renderer-android/panel-modules/lsl/src/main/java/io/github/mesmerprism/rustyquest/native_renderer/LslPanelCommandReceiver.java",
+          "apps/native-renderer-android/panel-modules/lsl/src/main/java/io/github/mesmerprism/rustyquest/native_renderer/LslPanelConfigStore.java"
+        ]
+      }
+    ]
+  },
+  "public_private_boundary": "The composite panel is a generic low-rate adapter; product semantics and renderer-effective state remain with consuming owners."
+}

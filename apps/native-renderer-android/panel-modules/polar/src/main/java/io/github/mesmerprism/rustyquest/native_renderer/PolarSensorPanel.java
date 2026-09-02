@@ -1,6 +1,5 @@
 package io.github.mesmerprism.rustyquest.native_renderer;
 
-import android.Manifest;
 import android.app.Activity;
 import android.bluetooth.BluetoothAdapter;
 import android.bluetooth.BluetoothDevice;
@@ -14,15 +13,17 @@ import android.bluetooth.BluetoothProfile;
 import android.bluetooth.BluetoothStatusCodes;
 import android.bluetooth.le.BluetoothLeScanner;
 import android.bluetooth.le.ScanCallback;
+import android.bluetooth.le.ScanFilter;
 import android.bluetooth.le.ScanResult;
+import android.bluetooth.le.ScanSettings;
 import android.content.Context;
-import android.content.pm.PackageManager;
 import android.graphics.Color;
 import android.graphics.drawable.GradientDrawable;
 import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.ParcelUuid;
+import android.os.SystemClock;
 import android.util.Log;
 import android.view.Gravity;
 import android.view.View;
@@ -39,16 +40,26 @@ import org.json.JSONObject;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.time.Instant;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.Locale;
 import java.util.Queue;
 import java.util.UUID;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 final class PolarSensorPanel {
     static final int REQUEST_BLE_PERMISSIONS = 9103;
+    private static final int PENDING_BLE_NONE = 0;
+    private static final int PENDING_BLE_SCAN = 1;
+    private static final int PENDING_BLE_CONNECT = 2;
+    private static final int PENDING_BLE_START_PMD = 3;
+    private static final long SCAN_TIMEOUT_MS = 15000L;
 
     private static final String TAG = "RQNativeRenderer";
     private static final String MARKER_PREFIX = "RUSTY_QUEST_NATIVE_RENDERER";
@@ -92,18 +103,27 @@ final class PolarSensorPanel {
     private static final long PMD_PROBE_DELAY_MS = 500L;
     private static final long PMD_SETTINGS_WAIT_MS = 1500L;
     private static final long PMD_START_ACK_WAIT_MS = 1200L;
+    private static final long PMD_DATA_RECEIVING_WINDOW_NS = 2_000_000_000L;
+    private static final long STREAMING_STATUS_WRITE_DELAY_MS = 250L;
 
     interface Host {
         void closePanelAndReturnToImmersive();
         void onPolarStreamEvent(JSONObject event);
     }
 
-    private final Activity activity;
-    private final Host host;
+    /*
+     * Acquisition is process-owned.  A panel can attach to observe/control it,
+     * but must never become the lifetime owner of BLE, PMD, or a capture.
+     */
+    private final Context appContext;
+    private Activity activity;
+    private Host host;
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final ArrayList<DeviceEntry> devices = new ArrayList<DeviceEntry>();
     private final Object countersLock = new Object();
     private final Queue<DescriptorTask> descriptorTasks = new ArrayDeque<DescriptorTask>();
+    private final ExecutorService eventWriter = Executors.newSingleThreadExecutor();
+    private final AtomicBoolean streamingStatusWriteScheduled = new AtomicBoolean(false);
 
     private ArrayAdapter<String> deviceAdapter;
     private Spinner deviceSpinner;
@@ -116,7 +136,8 @@ final class PolarSensorPanel {
     private TextView linkStatus;
 
     private BluetoothLeScanner scanner;
-    private BluetoothGatt gatt;
+    private ScanCallback activeScanCallback;
+    private volatile BluetoothGatt gatt;
     private BluetoothGattCharacteristic batteryCharacteristic;
     private BluetoothGattCharacteristic hrCharacteristic;
     private BluetoothGattCharacteristic pmdControlCharacteristic;
@@ -126,8 +147,15 @@ final class PolarSensorPanel {
     private boolean descriptorsStarted;
     private boolean commandInFlight;
     private boolean pmdReady;
-    private boolean pmdRunning;
-    private boolean closing;
+    private volatile boolean pmdRunning;
+    private volatile boolean accPmdRunning;
+    private volatile boolean ecgPmdRunning;
+    private volatile boolean connected;
+    private volatile boolean closing;
+    private boolean startAllPending;
+    private boolean stopAllPending;
+    private long scanGeneration;
+    private int pendingBleAction;
     private String pendingCommand = "";
     private String pendingPmdMode = "acc";
     private String activePmdMode = "none";
@@ -137,6 +165,12 @@ final class PolarSensorPanel {
     private int pmdStartAttempts;
     private PmdSettings accSettings = PmdSettings.EMPTY;
     private PmdSettings ecgSettings = PmdSettings.EMPTY;
+    private int activeAccSampleRateHz = 200;
+    private int activeEcgSampleRateHz = 130;
+    private long lastAccFrameReceiptNs;
+    private long lastEcgFrameReceiptNs;
+    private String captureSessionId = "none";
+    private String accPresentationMode = "low-latency-smooth";
 
     private long sequenceId;
     private long heartRateEvents;
@@ -151,13 +185,57 @@ final class PolarSensorPanel {
     private int latestBpm;
     private int batteryPercent = -1;
     private String connectedLabel = "none";
+    private String connectedDeviceInstanceId = "none";
+    private String pendingConnectionLabel = "none";
+    private String pendingConnectionDeviceInstanceId = "none";
+    private int selectedDeviceIndex = -1;
+    private String selectedPmdMode = "acc";
+    private String statusState = "idle";
+    private String statusDetail = "panel-created";
 
-    PolarSensorPanel(Activity activity, Host host) {
-        this.activity = activity;
-        this.host = host;
+    PolarSensorPanel(Context context) {
+        this.appContext = context.getApplicationContext();
+    }
+
+    void attachPanel(Activity panelActivity, Host panelHost) {
+        this.activity = panelActivity;
+        this.host = panelHost;
+        closing = false;
+        updateCounters();
+        writeStatus(statusState, statusDetail);
+    }
+
+    void detachPanel(Activity panelActivity) {
+        if (activity != panelActivity) {
+            return;
+        }
+        activity = null;
+        host = null;
+        deviceAdapter = null;
+        deviceSpinner = null;
+        pmdSpinner = null;
+        status = null;
+        selectedDevice = null;
+        hrStatus = null;
+        accStatus = null;
+        ecgStatus = null;
+        linkStatus = null;
+        writeStatus(statusState, statusDetail);
+    }
+
+    boolean isPanelAttached() {
+        return activity != null;
     }
 
     View buildView() {
+        return buildView(true);
+    }
+
+    View buildEmbeddedAcquisitionView() {
+        return buildView(false);
+    }
+
+    private View buildView(boolean includeCloseButton) {
         ScrollView scroll = new ScrollView(activity);
         scroll.setBackgroundColor(PANEL_BG);
         LinearLayout root = new LinearLayout(activity);
@@ -170,15 +248,19 @@ final class PolarSensorPanel {
         TextView title = text("Polar Sensor Panel", 22, PANEL_FG);
         title.setGravity(Gravity.CENTER_VERTICAL);
         header.addView(title, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
-        Button close = button("Close");
-        close.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View view) {
-                stop();
-                host.closePanelAndReturnToImmersive();
-            }
-        });
-        header.addView(close);
+        if (includeCloseButton) {
+            Button close = button("Close");
+            close.setOnClickListener(new View.OnClickListener() {
+                @Override
+                public void onClick(View view) {
+                    Host currentHost = host;
+                    if (currentHost != null) {
+                        currentHost.closePanelAndReturnToImmersive();
+                    }
+                }
+            });
+            header.addView(close);
+        }
         root.addView(header);
         root.addView(text("Direct BLE intake for Polar H10 streams.", 13, PANEL_MUTED));
 
@@ -256,6 +338,65 @@ final class PolarSensorPanel {
         streamRow.addView(clear, rowButtonParams());
         root.addView(streamRow);
 
+        LinearLayout parallelRow = row();
+        Button startAll = button("Start ACC + ECG");
+        startAll.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                startAllPmd();
+            }
+        });
+        Button stopAll = button("Stop all PMD");
+        stopAll.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                stopAllPmd();
+            }
+        });
+        parallelRow.addView(startAll, rowButtonParams());
+        parallelRow.addView(stopAll, rowButtonParams());
+        root.addView(parallelRow);
+
+        root.addView(sectionTitle("ACC presentation"));
+        LinearLayout presentationRow = row();
+        Button lowLatencyPresentation = button("Low-latency smooth");
+        lowLatencyPresentation.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                setAccPresentationMode("low-latency-smooth");
+            }
+        });
+        Button faithfulPresentation = button("Timestamp-faithful");
+        faithfulPresentation.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                setAccPresentationMode("timestamp-faithful");
+            }
+        });
+        presentationRow.addView(lowLatencyPresentation, rowButtonParams());
+        presentationRow.addView(faithfulPresentation, rowButtonParams());
+        root.addView(presentationRow);
+
+        root.addView(sectionTitle("Synchronized capture"));
+        LinearLayout captureRow = row();
+        Button startCapture = button("Start recording");
+        startCapture.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                startParallelCapture();
+            }
+        });
+        Button stopCapture = button("Stop recording");
+        stopCapture.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                stopParallelCapture();
+            }
+        });
+        captureRow.addView(startCapture, rowButtonParams());
+        captureRow.addView(stopCapture, rowButtonParams());
+        root.addView(captureRow);
+
         root.addView(sectionTitle("Streams"));
         linkStatus = text("", 14, PANEL_FG);
         hrStatus = text("", 14, PANEL_FG);
@@ -270,7 +411,7 @@ final class PolarSensorPanel {
         status.setPadding(0, dp(16), 0, 0);
         root.addView(status);
         updateCounters();
-        writeStatus("ready", "panel-created");
+        setStatusState("ready", "panel-created");
         marker("status=ready");
         return scroll;
     }
@@ -280,57 +421,168 @@ final class PolarSensorPanel {
             return;
         }
         if (hasRequiredPermissions()) {
-            setStatus("BLE permissions accepted.");
+            setStatusState("permission-ready", "BLE/location permissions accepted.");
             marker("status=permission-accepted");
+            resumePendingBleAction();
         } else {
-            setStatus("BLE permission request was not accepted.");
-            marker("status=permission-rejected");
+            String missing = PolarBleRuntimeSupport.join(
+                PolarBleRuntimeSupport.missingPermissions(appContext),
+                ","
+            );
+            setStatusState("permission-required", "BLE/location permissions missing: " + missing);
+            marker("status=permission-rejected missing=" + markerToken(missing));
+            pendingBleAction = PENDING_BLE_NONE;
         }
     }
 
-    void stop() {
+    void shutdown() {
         closing = true;
         stopScan();
         closeGatt();
-        writeStatus("stopped", "panel-closed");
+        setStatusState("stopped", "runtime-shutdown");
         marker("status=stopped");
     }
 
-    void handleCommand(String rawCommand) {
+    static final class OperatorCommandStatus {
+        final long operationGeneration;
+        final String command;
+        final String dispatchStatus;
+        final String reasonCode;
+        final String effectStatus;
+        final String captureSessionId;
+        final JSONObject freshPolarStatus;
+
+        OperatorCommandStatus(
+            long operationGeneration,
+            String command,
+            String dispatchStatus,
+            String reasonCode,
+            String effectStatus,
+            String captureSessionId,
+            JSONObject freshPolarStatus
+        ) {
+            this.operationGeneration = operationGeneration;
+            this.command = command;
+            this.dispatchStatus = dispatchStatus;
+            this.reasonCode = reasonCode;
+            this.effectStatus = effectStatus;
+            this.captureSessionId = captureSessionId;
+            this.freshPolarStatus = freshPolarStatus;
+        }
+    }
+
+    private long operatorCommandGeneration = 0L;
+
+    OperatorCommandStatus handleCommand(String rawCommand) {
         String command = rawCommand == null ? "" : rawCommand.trim().toLowerCase(Locale.US);
+        long operationGeneration = ++operatorCommandGeneration;
         if ("scan".equals(command)) {
             setStatus("CLI command: scan.");
             marker("status=cli-command command=scan");
             startScan();
-            return;
+            return finishOperatorCommand(operationGeneration, command, "accepted", "none", "pending");
         }
         if ("connect".equals(command)) {
             setStatus("CLI command: connect.");
             marker("status=cli-command command=connect");
             connectSelected();
-            return;
+            return finishOperatorCommand(operationGeneration, command, "accepted", "none", "pending");
         }
         if ("start_acc".equals(command)) {
             setSelectedPmdMode("acc");
             setStatus("CLI command: start ACC.");
             marker("status=cli-command command=start_acc");
             startSelectedPmd();
-            return;
+            return finishOperatorCommand(operationGeneration, command, "accepted", "none", "pending");
         }
         if ("start_ecg".equals(command)) {
             setSelectedPmdMode("ecg");
             setStatus("CLI command: start ECG.");
             marker("status=cli-command command=start_ecg");
             startSelectedPmd();
-            return;
+            return finishOperatorCommand(operationGeneration, command, "accepted", "none", "pending");
+        }
+        if ("start_all".equals(command)) {
+            marker("status=cli-command command=start_all");
+            startAllPmd();
+            return finishOperatorCommand(operationGeneration, command, "accepted", "none", "pending");
+        }
+        if ("stop_all".equals(command)) {
+            marker("status=cli-command command=stop_all");
+            stopAllPmd();
+            return finishOperatorCommand(operationGeneration, command, "accepted", "none", "pending");
+        }
+        if ("start_capture".equals(command)) {
+            marker("status=cli-command command=start_capture");
+            return finishOperatorCommand(
+                operationGeneration,
+                command,
+                "accepted",
+                "none",
+                startParallelCapture()
+            );
+        }
+        if ("stop_capture".equals(command)) {
+            marker("status=cli-command command=stop_capture");
+            stopParallelCapture();
+            return finishOperatorCommand(operationGeneration, command, "accepted", "none", "pending");
+        }
+        if ("presentation_low_latency".equals(command)) {
+            marker("status=cli-command command=presentation_low_latency");
+            setAccPresentationMode("low-latency-smooth");
+            return finishOperatorCommand(operationGeneration, command, "accepted", "none", "pending");
+        }
+        if ("presentation_timestamp_faithful".equals(command)) {
+            marker("status=cli-command command=presentation_timestamp_faithful");
+            setAccPresentationMode("timestamp-faithful");
+            return finishOperatorCommand(operationGeneration, command, "accepted", "none", "pending");
+        }
+        if ("stop_pmd".equals(command)) {
+            marker("status=cli-command command=stop_pmd");
+            stopPmd();
+            return finishOperatorCommand(operationGeneration, command, "accepted", "none", "pending");
+        }
+        if ("disconnect".equals(command)) {
+            marker("status=cli-command command=disconnect");
+            disconnect();
+            return finishOperatorCommand(operationGeneration, command, "accepted", "none", "pending");
+        }
+        if ("reset".equals(command)) {
+            marker("status=cli-command command=reset");
+            clearCounters();
+            return finishOperatorCommand(operationGeneration, command, "accepted", "none", "pending");
+        }
+        if ("status".equals(command)) {
+            marker("status=cli-command command=status");
+            return finishOperatorCommand(operationGeneration, command, "accepted", "none", "observed");
         }
         setStatus("Unknown Polar CLI command: " + rawCommand);
         marker("status=cli-command-ignored command=" + markerToken(rawCommand));
+        return finishOperatorCommand(operationGeneration, command, "rejected", "unknown-command", "not-started");
+    }
+
+    private OperatorCommandStatus finishOperatorCommand(
+        long operationGeneration,
+        String command,
+        String dispatchStatus,
+        String reasonCode,
+        String effectStatus
+    ) {
+        JSONObject freshStatus = writeStatus(statusState, statusDetail);
+        return new OperatorCommandStatus(
+            operationGeneration,
+            command,
+            dispatchStatus,
+            reasonCode,
+            effectStatus,
+            captureSessionId,
+            freshStatus
+        );
     }
 
     boolean isEcgReceiving() {
         synchronized (countersLock) {
-            return pmdRunning && "ecg".equals(activePmdMode) && ecgFrames > 0L && ecgSamples > 0L;
+            return ecgPmdRunning && ecgFrames > 0L && ecgSamples > 0L;
         }
     }
 
@@ -342,29 +594,30 @@ final class PolarSensorPanel {
         synchronized (countersLock) {
             frameCount = ecgFrames;
             sampleCount = ecgSamples;
-            running = pmdRunning;
+            running = ecgPmdRunning;
             mode = activePmdMode;
         }
         if (!experimentReady) {
             return "ECG logging: participant file not created yet.";
         }
-        if (running && "ecg".equals(mode) && frameCount > 0L && sampleCount > 0L) {
+        if (running && frameCount > 0L && sampleCount > 0L) {
             return "ECG logging: active, " + frameCount + " frames / " + sampleCount + " samples mirrored to participant files.";
         }
-        if (running && "ecg".equals(mode)) {
+        if (running) {
             return "ECG logging: ECG stream active, waiting for decoded samples.";
         }
         return "ECG logging: not active. Select ECG 130 Hz and start PMD after connecting.";
     }
 
     private void startScan() {
-        if (!ensurePermissions()) {
+        if (!ensurePermissions(PENDING_BLE_SCAN)) {
             return;
         }
+        pendingBleAction = PENDING_BLE_NONE;
         BluetoothAdapter adapter = bluetoothAdapter();
         if (adapter == null || !adapter.isEnabled()) {
-            setStatus("Bluetooth is unavailable.");
-            marker("status=error reason=bluetooth-unavailable");
+            setStatusState("bluetooth-disabled", "Bluetooth is unavailable or turned off.");
+            marker("status=error reason=bluetooth-disabled");
             return;
         }
         BluetoothLeScanner nextScanner = adapter.getBluetoothLeScanner();
@@ -377,39 +630,56 @@ final class PolarSensorPanel {
         devices.clear();
         updateDeviceAdapter();
         scanner = nextScanner;
+        final long generation = scanGeneration;
+        activeScanCallback = createScanCallback(generation);
         scanning = true;
         try {
-            scanner.startScan(scanCallback);
+            scanner.startScan(
+                new ArrayList<ScanFilter>(),
+                new ScanSettings.Builder()
+                    .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
+                    .build(),
+                activeScanCallback
+            );
         } catch (SecurityException ex) {
-            scanning = false;
-            setStatus("BLE scan permission is missing.");
+            stopScan();
+            setStatusState("permission-required", "BLE scan permission is missing.");
             marker("status=error reason=scan-security-exception");
             return;
         } catch (RuntimeException ex) {
-            scanning = false;
-            setStatus("BLE scan failed to start.");
+            stopScan();
+            setStatusState("scan-start-failed", "BLE scan failed to start.");
             marker("status=error reason=scan-start-failed");
             return;
         }
-        setStatus("Scanning for Polar devices.");
-        marker("status=scanning");
+        setStatusState("scanning", "Scanning for Polar H10 advertisements.");
+        marker("status=scanning scanMode=low-latency platformFilter=empty");
         handler.postDelayed(new Runnable() {
             @Override
             public void run() {
-                if (scanning) {
+                if (isCurrentScanGeneration(generation)) {
                     stopScan();
-                    setStatus("Scan finished. Devices found: " + devices.size());
+                    setStatusState("scan-finished", "Scan finished. Devices found: " + devices.size());
                     marker("status=scan-finished deviceCount=" + devices.size());
                 }
             }
-        }, 15000L);
+        }, SCAN_TIMEOUT_MS);
     }
 
     private void connectSelected() {
-        if (!ensurePermissions()) {
+        if (!ensurePermissions(PENDING_BLE_CONNECT)) {
             return;
         }
-        int index = deviceSpinner == null ? -1 : deviceSpinner.getSelectedItemPosition();
+        pendingBleAction = PENDING_BLE_NONE;
+        if (activity == null && devices.size() != 1) {
+            setStatusState(
+                "candidate-ambiguous",
+                "Headless connect requires exactly one compatible Polar candidate."
+            );
+            marker("status=connection-rejected reason=headless-candidate-count count=" + devices.size());
+            return;
+        }
+        int index = selectedDeviceIndex();
         if (index < 0 || index >= devices.size()) {
             setStatus("No Polar device selected.");
             return;
@@ -420,29 +690,40 @@ final class PolarSensorPanel {
         descriptorsStarted = false;
         commandInFlight = false;
         pmdReady = false;
-        pmdRunning = false;
-        activePmdMode = "none";
-        pmdFlowGeneration += 1L;
+        accPmdRunning = false;
+        ecgPmdRunning = false;
+        setStreamRunning("acc", false);
+        startAllPending = false;
+        stopAllPending = false;
         pmdSettingsAttempts = 0;
         pmdStartAttempts = 0;
         accSettings = PmdSettings.EMPTY;
         ecgSettings = PmdSettings.EMPTY;
         pendingPmdMode = selectedPmdMode();
-        connectedLabel = entry.label();
+        pendingConnectionLabel = entry.label();
+        pendingConnectionDeviceInstanceId = entry.instanceId();
         try {
             if (Build.VERSION.SDK_INT >= 23) {
-                gatt = entry.device.connectGatt(activity, false, gattCallback, BluetoothDevice.TRANSPORT_LE);
+                gatt = entry.device.connectGatt(appContext, false, gattCallback, BluetoothDevice.TRANSPORT_LE);
             } else {
-                gatt = entry.device.connectGatt(activity, false, gattCallback);
+                gatt = entry.device.connectGatt(appContext, false, gattCallback);
             }
-            setStatus("Connecting to " + entry.label());
-            writeStatus("connecting", entry.label());
-            marker("status=connecting device=" + markerToken(entry.address));
+            if (gatt == null) {
+                closeGatt();
+                setStatusState("connection-failed", "BLE connect returned no transport handle.");
+                marker("status=error reason=connect-null-gatt");
+                return;
+            }
+            setStatusState("connecting", "Connecting to selected Polar device.");
+            marker("status=connecting deviceInstanceId=" + markerToken(entry.instanceId())
+                + " rawDeviceIdentifierLogged=false");
         } catch (SecurityException ex) {
-            setStatus("BLE connect permission is missing.");
+            closeGatt();
+            setStatusState("permission-required", "BLE connect permission is missing.");
             marker("status=error reason=connect-security-exception");
         } catch (RuntimeException ex) {
-            setStatus("BLE connect failed to start.");
+            closeGatt();
+            setStatusState("connection-failed", "BLE connect failed to start.");
             marker("status=error reason=connect-start-failed");
         }
     }
@@ -450,15 +731,17 @@ final class PolarSensorPanel {
     private void disconnect() {
         stopScan();
         closeGatt();
-        setStatus("Disconnected.");
-        writeStatus("disconnected", connectedLabel);
+        setStatusState("disconnected", "Disconnected from Polar device.");
         marker("status=disconnected");
-        connectedLabel = "none";
         updateCounters();
     }
 
     private void startSelectedPmd() {
-        if (gatt == null || pmdControlCharacteristic == null) {
+        if (!ensurePermissions(PENDING_BLE_START_PMD)) {
+            return;
+        }
+        pendingBleAction = PENDING_BLE_NONE;
+        if (!connected || gatt == null || pmdControlCharacteristic == null) {
             setStatus("PMD control point is not available.");
             return;
         }
@@ -470,17 +753,179 @@ final class PolarSensorPanel {
         beginPmdStartFlow(selectedMode);
     }
 
+    private void startAllPmd() {
+        if (!ensurePermissions(PENDING_BLE_START_PMD)) {
+            return;
+        }
+        pendingBleAction = PENDING_BLE_NONE;
+        if (!connected || gatt == null || pmdControlCharacteristic == null || !pmdReady) {
+            setStatus("PMD control point is not ready for parallel streams.");
+            return;
+        }
+        startAllPending = true;
+        if (!accPmdRunning) {
+            beginPmdStartFlow("acc");
+        } else if (!ecgPmdRunning) {
+            beginPmdStartFlow("ecg");
+        } else {
+            startAllPending = false;
+            setStatus("ACC and ECG PMD streams are already active.");
+        }
+    }
+
+    private void stopAllPmd() {
+        if (gatt == null || pmdControlCharacteristic == null) {
+            setStatus("PMD control point is not available.");
+            return;
+        }
+        stopAllPending = true;
+        pmdFlowGeneration += 1L;
+        if (accPmdRunning) {
+            pendingPmdMode = "acc";
+            writePmdCommand("stop_stream_only", buildStopCommand("acc"));
+        } else if (ecgPmdRunning) {
+            pendingPmdMode = "ecg";
+            writePmdCommand("stop_stream_only", buildStopCommand("ecg"));
+        } else {
+            stopAllPending = false;
+            setStatus("All PMD streams are already stopped.");
+        }
+    }
+
     private void stopPmd() {
         if (gatt == null || pmdControlCharacteristic == null) {
             setStatus("PMD control point is not available.");
             return;
         }
-        if (!pmdRunning) {
-            setStatus("PMD stream is already stopped.");
+        String mode = selectedPmdMode();
+        if (!streamRunning(mode)) {
+            setStatus(mode.toUpperCase(Locale.US) + " PMD stream is already stopped.");
             return;
         }
         pmdFlowGeneration += 1L;
-        writePmdCommand("stop_stream_only", buildStopCommand(activePmdMode));
+        pendingPmdMode = mode;
+        writePmdCommand("stop_stream_only", buildStopCommand(mode));
+    }
+
+    private String startParallelCapture() {
+        if (!"none".equals(captureSessionId)) {
+            setStatus("A synchronized capture is already active: " + captureSessionId);
+            return "rejected-already-active";
+        }
+        captureSessionId = "breath_capture_" + System.currentTimeMillis();
+        File directory = new File(new File(appContext.getFilesDir(), "breath_source_captures"), captureSessionId);
+        long startedAtElapsedRealtimeNs = SystemClock.elapsedRealtimeNanos();
+        String response = nativeStartParallelBreathCapture(
+            directory.getAbsolutePath(),
+            captureSessionId,
+            startedAtElapsedRealtimeNs);
+        try {
+            JSONObject result = new JSONObject(response == null ? "{}" : response);
+            if (!"started".equals(result.optString("status", ""))) {
+                captureSessionId = "none";
+                setStatus("Capture start rejected: " + result.optString("reason_code", "unknown"));
+                return "rejected";
+            }
+            marker("status=capture-started session=" + markerToken(captureSessionId));
+            setStatus("Two-minute synchronized controller/Polar capture started.");
+            final String startedCaptureSessionId = captureSessionId;
+            handler.postDelayed(new Runnable() {
+                @Override
+                public void run() {
+                    refreshCaptureCompletion(startedCaptureSessionId);
+                }
+            }, 120000L);
+            return "started";
+        } catch (Exception error) {
+            captureSessionId = "none";
+            setStatus("Capture start returned malformed status.");
+            return "malformed";
+        }
+    }
+
+    private void stopParallelCapture() {
+        String response = nativeStopParallelBreathCapture();
+        try {
+            JSONObject result = new JSONObject(response == null ? "{}" : response);
+            if (!"stopped".equals(result.optString("status", ""))) {
+                setStatus("Capture stop rejected: " + result.optString("reason_code", "unknown"));
+                return;
+            }
+            marker("status=capture-stopped session=" + markerToken(captureSessionId)
+                + " written=" + result.optLong("written_records", 0L)
+                + " dropped=" + result.optLong("dropped_records", 0L));
+            captureSessionId = "none";
+            setStatus(result.optBoolean("complete", false)
+                ? "Synchronized capture stopped and finalized."
+                : "Capture stopped incomplete; retain it only for transport diagnosis.");
+        } catch (Exception error) {
+            setStatus("Capture stop returned malformed status.");
+        }
+    }
+
+    private void refreshCaptureCompletion(String expectedSessionId) {
+        if (!expectedSessionId.equals(captureSessionId)) {
+            return;
+        }
+        try {
+            JSONObject result = new JSONObject(nativeReadParallelBreathCaptureStatus());
+            if (result.optBoolean("active", false)) {
+                handler.postDelayed(new Runnable() {
+                    @Override
+                    public void run() {
+                        refreshCaptureCompletion(expectedSessionId);
+                    }
+                }, 250L);
+                return;
+            }
+            String stopReason = result.optString("stop_reason", "unknown");
+            boolean complete = result.optBoolean("complete", false);
+            captureSessionId = "none";
+            marker("status=capture-auto-complete reason=" + markerToken(stopReason)
+                + " complete=" + complete);
+            setStatus(complete
+                ? "Two-minute capture finalized."
+                : "Two-minute capture incomplete; retain it only for transport diagnosis.");
+            updateCounters();
+        } catch (Exception error) {
+            setStatus("Capture completion status was malformed.");
+        }
+    }
+
+    private void setAccPresentationMode(String mode) {
+        String response = nativeSetPolarAccPresentationMode(mode);
+        try {
+            JSONObject result = new JSONObject(response == null ? "{}" : response);
+            if (!"accepted".equals(result.optString("status", ""))) {
+                setStatus("ACC presentation rejected: " + result.optString("reason_code", "unknown"));
+                return;
+            }
+            JSONObject presentation = result.optJSONObject("presentation");
+            accPresentationMode = presentation == null
+                ? mode
+                : presentation.optString("mode", mode);
+            marker("status=acc-presentation mode=" + markerToken(accPresentationMode));
+            setStatus("ACC presentation: " + accPresentationMode + ".");
+            updateCounters();
+        } catch (Exception error) {
+            setStatus("ACC presentation returned malformed status.");
+        }
+    }
+
+    private boolean streamRunning(String mode) {
+        return "ecg".equals(mode) ? ecgPmdRunning : accPmdRunning;
+    }
+
+    private void setStreamRunning(String mode, boolean running) {
+        if ("ecg".equals(mode)) {
+            ecgPmdRunning = running;
+        } else {
+            accPmdRunning = running;
+        }
+        pmdRunning = accPmdRunning || ecgPmdRunning;
+        activePmdMode = accPmdRunning && ecgPmdRunning
+            ? "acc+ecg"
+            : (accPmdRunning ? "acc" : (ecgPmdRunning ? "ecg" : "none"));
     }
 
     private void clearCounters() {
@@ -497,64 +942,93 @@ final class PolarSensorPanel {
             streamEventsWritten = 0L;
             latestBpm = 0;
             batteryPercent = -1;
+            lastAccFrameReceiptNs = 0L;
+            lastEcgFrameReceiptNs = 0L;
         }
-        File events = new File(activity.getFilesDir(), STREAM_EVENTS_FILE);
+        File events = new File(appContext.getFilesDir(), STREAM_EVENTS_FILE);
         if (events.exists() && !events.delete()) {
             setStatus("Counters reset; stream-event file could not be removed.");
         } else {
             setStatus("Counters reset.");
         }
         updateCounters();
-        writeStatus("ready", "counters-reset");
+        setStatusState("ready", "Counters reset.");
         marker("status=counters-reset");
     }
 
-    private final ScanCallback scanCallback = new ScanCallback() {
-        @Override
-        public void onScanResult(int callbackType, ScanResult result) {
-            if (result == null || result.getDevice() == null) {
-                return;
-            }
-            String discoveredName = safeName(result.getDevice());
-            if ((discoveredName == null || discoveredName.trim().isEmpty())
-                    && result.getScanRecord() != null
-                    && result.getScanRecord().getDeviceName() != null) {
-                discoveredName = result.getScanRecord().getDeviceName();
-            }
-            boolean hasSupportedService = scanRecordHasSupportedService(result.getScanRecord());
-            final DeviceEntry entry = new DeviceEntry(
-                result.getDevice(),
-                discoveredName,
-                safeAddress(result.getDevice()),
-                result.getRssi());
-            if (!entry.looksLikePolar() && !hasSupportedService) {
-                return;
-            }
-            activity.runOnUiThread(new Runnable() {
-                @Override
-                public void run() {
-                    addOrUpdateDevice(entry);
+    private ScanCallback createScanCallback(final long generation) {
+        return new ScanCallback() {
+            @Override
+            public void onScanResult(int callbackType, ScanResult result) {
+                if (result == null || result.getDevice() == null) {
+                    return;
                 }
-            });
-        }
+                String discoveredName = safeName(result.getDevice());
+                if ((discoveredName == null || discoveredName.trim().isEmpty())
+                        && result.getScanRecord() != null
+                        && result.getScanRecord().getDeviceName() != null) {
+                    discoveredName = result.getScanRecord().getDeviceName();
+                }
+                boolean hasHeartRateService = scanRecordHasService(
+                    result.getScanRecord(),
+                    HEART_RATE_SERVICE
+                );
+                boolean hasPmdService = scanRecordHasService(result.getScanRecord(), PMD_SERVICE);
+                final DeviceEntry entry = new DeviceEntry(
+                    result.getDevice(),
+                    discoveredName,
+                    safeAddress(result.getDevice()),
+                    result.getRssi(),
+                    hasHeartRateService,
+                    hasPmdService
+                );
+                if (!entry.looksLikePolar() && !hasHeartRateService && !hasPmdService) {
+                    return;
+                }
+                handler.post(new Runnable() {
+                    @Override
+                    public void run() {
+                        if (!isCurrentScanGeneration(generation)) {
+                            return;
+                        }
+                        addOrUpdateDevice(entry);
+                    }
+                });
+            }
 
-        @Override
-        public void onScanFailed(final int errorCode) {
-            activity.runOnUiThread(new Runnable() {
-                @Override
-                public void run() {
-                    scanning = false;
-                    setStatus("BLE scan failed: " + errorCode);
-                    marker("status=scan-failed errorCode=" + errorCode);
-                }
-            });
+            @Override
+            public void onScanFailed(final int errorCode) {
+                handler.post(new Runnable() {
+                    @Override
+                    public void run() {
+                        if (!isCurrentScanGeneration(generation)) {
+                            return;
+                        }
+                        invalidateScanGeneration(generation);
+                        setStatusState("scan-failed", "BLE scan failed with code " + errorCode + ".");
+                        marker("status=scan-failed errorCode=" + errorCode);
+                    }
+                });
+            }
+        };
+    }
+
+    private boolean isCurrentScanGeneration(long generation) {
+        return !closing && scanning && generation == scanGeneration;
+    }
+
+    private void invalidateScanGeneration(long generation) {
+        if (generation == scanGeneration) {
+            scanning = false;
+            activeScanCallback = null;
+            scanGeneration += 1L;
         }
-    };
+    }
 
     private final BluetoothGattCallback gattCallback = new BluetoothGattCallback() {
         @Override
         public void onConnectionStateChange(final BluetoothGatt callbackGatt, final int statusCode, final int newState) {
-            activity.runOnUiThread(new Runnable() {
+            handler.post(new Runnable() {
                 @Override
                 public void run() {
                     handleConnectionState(callbackGatt, statusCode, newState);
@@ -564,9 +1038,12 @@ final class PolarSensorPanel {
 
         @Override
         public void onServicesDiscovered(final BluetoothGatt callbackGatt, final int statusCode) {
-            activity.runOnUiThread(new Runnable() {
+            handler.post(new Runnable() {
                 @Override
                 public void run() {
+                    if (!isCurrentConnectedGatt(callbackGatt)) {
+                        return;
+                    }
                     if (statusCode != BluetoothGatt.GATT_SUCCESS) {
                         setStatus("Service discovery failed: " + statusCode);
                         marker("status=error reason=service-discovery statusCode=" + statusCode);
@@ -593,9 +1070,12 @@ final class PolarSensorPanel {
 
         @Override
         public void onMtuChanged(final BluetoothGatt callbackGatt, int mtu, int statusCode) {
-            activity.runOnUiThread(new Runnable() {
+            handler.post(new Runnable() {
                 @Override
                 public void run() {
+                    if (!isCurrentConnectedGatt(callbackGatt)) {
+                        return;
+                    }
                     setupAfterMtu(callbackGatt);
                 }
             });
@@ -603,9 +1083,12 @@ final class PolarSensorPanel {
 
         @Override
         public void onDescriptorWrite(final BluetoothGatt callbackGatt, BluetoothGattDescriptor descriptor, final int statusCode) {
-            activity.runOnUiThread(new Runnable() {
+            handler.post(new Runnable() {
                 @Override
                 public void run() {
+                    if (!isCurrentConnectedGatt(callbackGatt)) {
+                        return;
+                    }
                     commandInFlight = false;
                     if (statusCode != BluetoothGatt.GATT_SUCCESS) {
                         malformedFrames += 1L;
@@ -617,22 +1100,28 @@ final class PolarSensorPanel {
         }
 
         @Override
-        public void onCharacteristicWrite(BluetoothGatt callbackGatt, BluetoothGattCharacteristic characteristic, final int statusCode) {
-            activity.runOnUiThread(new Runnable() {
+        public void onCharacteristicWrite(final BluetoothGatt callbackGatt, BluetoothGattCharacteristic characteristic, final int statusCode) {
+            handler.post(new Runnable() {
                 @Override
                 public void run() {
+                    if (!isCurrentConnectedGatt(callbackGatt)) {
+                        return;
+                    }
                     handleCharacteristicWrite(statusCode);
                 }
             });
         }
 
         @Override
-        public void onCharacteristicRead(BluetoothGatt callbackGatt, BluetoothGattCharacteristic characteristic, int statusCode) {
+        public void onCharacteristicRead(final BluetoothGatt callbackGatt, BluetoothGattCharacteristic characteristic, int statusCode) {
             if (statusCode == BluetoothGatt.GATT_SUCCESS && BATTERY_LEVEL.equals(characteristic.getUuid())) {
                 final byte[] value = characteristic.getValue();
-                activity.runOnUiThread(new Runnable() {
+                handler.post(new Runnable() {
                     @Override
                     public void run() {
+                        if (!isCurrentConnectedGatt(callbackGatt)) {
+                            return;
+                        }
                         handleBattery(value);
                     }
                 });
@@ -641,59 +1130,78 @@ final class PolarSensorPanel {
 
         @Override
         public void onCharacteristicChanged(BluetoothGatt callbackGatt, BluetoothGattCharacteristic characteristic) {
-            dispatchCharacteristic(characteristic, characteristic.getValue());
+            dispatchCharacteristic(callbackGatt, characteristic, characteristic.getValue());
         }
 
         @Override
         public void onCharacteristicChanged(BluetoothGatt callbackGatt, BluetoothGattCharacteristic characteristic, byte[] value) {
-            dispatchCharacteristic(characteristic, value);
+            dispatchCharacteristic(callbackGatt, characteristic, value);
         }
     };
 
-    private void dispatchCharacteristic(final BluetoothGattCharacteristic characteristic, byte[] value) {
+    private void dispatchCharacteristic(
+        final BluetoothGatt callbackGatt,
+        final BluetoothGattCharacteristic characteristic,
+        byte[] value
+    ) {
         final byte[] copy = value == null ? null : value.clone();
-        activity.runOnUiThread(new Runnable() {
+        UUID uuid = characteristic == null ? null : characteristic.getUuid();
+        if (PMD_DATA.equals(uuid) || HEART_RATE_MEASUREMENT.equals(uuid)) {
+            if (isCurrentConnectedGatt(callbackGatt)) {
+                handleCharacteristic(characteristic, copy);
+            }
+            return;
+        }
+        handler.post(new Runnable() {
             @Override
             public void run() {
+                if (!isCurrentConnectedGatt(callbackGatt)) {
+                    return;
+                }
                 handleCharacteristic(characteristic, copy);
             }
         });
     }
 
+    private boolean isCurrentConnectedGatt(BluetoothGatt callbackGatt) {
+        return !closing && connected && callbackGatt != null && callbackGatt == gatt;
+    }
+
     private void handleConnectionState(BluetoothGatt callbackGatt, int statusCode, int newState) {
-        if (closing) {
+        if (closing || callbackGatt != gatt) {
             return;
         }
         if (statusCode != BluetoothGatt.GATT_SUCCESS) {
-            setStatus("Connection failed: " + statusCode);
-            writeStatus("connection_failed", String.valueOf(statusCode));
-            marker("status=connection-failed statusCode=" + statusCode);
             closeGatt();
+            setStatusState("connection-failed", "Connection failed: " + statusCode);
+            marker("status=connection-failed statusCode=" + statusCode);
             return;
         }
         if (newState == BluetoothProfile.STATE_CONNECTED) {
-            setStatus("Connected. Discovering services.");
-            writeStatus("connected", connectedLabel);
+            connected = true;
+            connectedLabel = pendingConnectionLabel;
+            connectedDeviceInstanceId = pendingConnectionDeviceInstanceId;
+            pendingConnectionLabel = "none";
+            pendingConnectionDeviceInstanceId = "none";
+            setStatusState("connected", "Connected. Discovering services.");
             marker("status=connected");
             try {
                 callbackGatt.requestConnectionPriority(BluetoothGatt.CONNECTION_PRIORITY_HIGH);
                 callbackGatt.discoverServices();
             } catch (SecurityException ex) {
-                setStatus("BLE service discovery permission is missing.");
+                setStatusState("permission-required", "BLE service discovery permission is missing.");
                 marker("status=error reason=discover-security-exception");
             }
         } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
-            pmdRunning = false;
-            activePmdMode = "none";
-            setStatus("Polar device disconnected.");
-            writeStatus("disconnected", connectedLabel);
+            closeGatt();
+            setStatusState("disconnected", "Polar device disconnected.");
             marker("status=device-disconnected");
             updateCounters();
         }
     }
 
     private void setupAfterMtu(BluetoothGatt callbackGatt) {
-        if (descriptorsStarted || callbackGatt == null) {
+        if (!isCurrentConnectedGatt(callbackGatt) || descriptorsStarted) {
             return;
         }
         descriptorsStarted = true;
@@ -725,12 +1233,12 @@ final class PolarSensorPanel {
     }
 
     private void writeNextDescriptorOrBegin(BluetoothGatt callbackGatt) {
-        if (commandInFlight || callbackGatt == null) {
+        if (!isCurrentConnectedGatt(callbackGatt) || commandInFlight) {
             return;
         }
         DescriptorTask task = descriptorTasks.poll();
         if (task == null) {
-            beginStreams();
+            beginStreams(callbackGatt);
             return;
         }
         BluetoothGattDescriptor descriptor = task.characteristic.getDescriptor(CCCD);
@@ -756,9 +1264,12 @@ final class PolarSensorPanel {
         }
     }
 
-    private void beginStreams() {
+    private void beginStreams(BluetoothGatt callbackGatt) {
+        if (!isCurrentConnectedGatt(callbackGatt)) {
+            return;
+        }
         appendStatusEvent("subscribed");
-        scheduleBatteryRead();
+        scheduleBatteryRead(callbackGatt, batteryCharacteristic);
         if (pmdControlCharacteristic != null && pmdDataCharacteristic != null) {
             pmdReady = true;
             marker("status=pmd-ready");
@@ -808,24 +1319,26 @@ final class PolarSensorPanel {
             }, PMD_START_ACK_WAIT_MS);
             return;
         }
-        if ("stop_before_start".equals(command)) {
-            pmdRunning = false;
-            activePmdMode = "none";
-            handler.postDelayed(new Runnable() {
-                @Override
-                public void run() {
-                    requestPmdSettings(generation);
-                }
-            }, 250L);
-            return;
-        }
         if ("stop_stream_only".equals(command)) {
-            pmdRunning = false;
-            activePmdMode = "none";
-            setStatus("PMD stream stopped.");
-            marker("status=pmd-stopped");
-            appendStatusEvent("pmd-stopped");
+            final String stoppedMode = pendingPmdMode;
+            setStreamRunning(stoppedMode, false);
+            setStatus(stoppedMode.toUpperCase(Locale.US) + " PMD stream stopped.");
+            marker("status=pmd-stopped mode=" + markerToken(stoppedMode));
+            appendStatusEvent("pmd-stopped-" + stoppedMode);
             updateCounters();
+            if (stopAllPending && pmdRunning) {
+                handler.postDelayed(new Runnable() {
+                    @Override
+                    public void run() {
+                        String nextMode = accPmdRunning ? "acc" : "ecg";
+                        pendingPmdMode = nextMode;
+                        pmdFlowGeneration += 1L;
+                        writePmdCommand("stop_stream_only", buildStopCommand(nextMode));
+                    }
+                }, 150L);
+            } else {
+                stopAllPending = false;
+            }
         }
     }
 
@@ -839,13 +1352,16 @@ final class PolarSensorPanel {
         pmdSettingsAttempts = 0;
         pmdStartAttempts = 0;
         long generation = pmdFlowGeneration;
-        setStatus("Preparing " + mode.toUpperCase(Locale.US) + " PMD stream.");
-        if (pmdRunning && !"none".equals(activePmdMode)) {
-            writePmdCommand("stop_before_start", buildStopCommand(activePmdMode));
-        } else {
-            writePmdCommand("probe_pmd", new byte[] {0x00});
-            pendingCommandGeneration = generation;
+        if (streamRunning(mode)) {
+            setStatus(mode.toUpperCase(Locale.US) + " PMD stream is already active.");
+            if (startAllPending && "acc".equals(mode) && !ecgPmdRunning) {
+                beginPmdStartFlow("ecg");
+            }
+            return;
         }
+        setStatus("Preparing " + mode.toUpperCase(Locale.US) + " PMD stream.");
+        writePmdCommand("probe_pmd", new byte[] {0x00});
+        pendingCommandGeneration = generation;
     }
 
     private void requestPmdSettings(final long generation) {
@@ -985,24 +1501,33 @@ final class PolarSensorPanel {
         return targetGatt.writeCharacteristic(characteristic);
     }
 
-    private void scheduleBatteryRead() {
-        if (batteryCharacteristic == null) {
+    private void scheduleBatteryRead(
+        final BluetoothGatt callbackGatt,
+        final BluetoothGattCharacteristic callbackBatteryCharacteristic
+    ) {
+        if (!isCurrentConnectedGatt(callbackGatt) || callbackBatteryCharacteristic == null) {
             return;
         }
         handler.postDelayed(new Runnable() {
             @Override
             public void run() {
-                readBatteryIfIdle();
+                readBatteryIfIdle(callbackGatt, callbackBatteryCharacteristic);
             }
         }, 1500L);
     }
 
-    private void readBatteryIfIdle() {
-        if (gatt == null || batteryCharacteristic == null || commandInFlight) {
+    private void readBatteryIfIdle(
+        BluetoothGatt callbackGatt,
+        BluetoothGattCharacteristic callbackBatteryCharacteristic
+    ) {
+        if (!isCurrentConnectedGatt(callbackGatt)
+                || callbackBatteryCharacteristic == null
+                || callbackBatteryCharacteristic != batteryCharacteristic
+                || commandInFlight) {
             return;
         }
         try {
-            if (!gatt.readCharacteristic(batteryCharacteristic)) {
+            if (!callbackGatt.readCharacteristic(callbackBatteryCharacteristic)) {
                 marker("status=battery-read-not-started");
             }
         } catch (SecurityException ex) {
@@ -1029,6 +1554,13 @@ final class PolarSensorPanel {
                     latestBpm = reading.bpm;
                     rrIntervals += reading.rrIntervalsMs.size();
                 }
+                long hostTimeNs = System.nanoTime();
+                nativeSubmitPolarHeartRateMeasurement(hostTimeNs, reading.bpm);
+                for (Float rrIntervalMs : reading.rrIntervalsMs) {
+                    if (rrIntervalMs != null) {
+                        nativeSubmitPolarRrMeasurement(hostTimeNs, rrIntervalMs.floatValue());
+                    }
+                }
                 appendHrEvent(reading);
             } else if (PMD_CONTROL_POINT.equals(uuid)) {
                 ControlRecord record = PolarProtocol.parseControl(value);
@@ -1041,18 +1573,95 @@ final class PolarSensorPanel {
                 int measurementType = PolarProtocol.unsigned(value[0]);
                 if (measurementType == 0x02) {
                     PmdFrameMetric frame = PolarProtocol.decodeAcc(value);
+                    long frameSequenceId;
+                    long previousReceiptDeltaNs;
                     synchronized (countersLock) {
                         accFrames += 1L;
                         accSamples += frame.sampleCount;
+                        frameSequenceId = accFrames;
+                        previousReceiptDeltaNs = lastAccFrameReceiptNs == 0L
+                            ? 0L
+                            : Math.max(0L, frame.hostTimeNs - lastAccFrameReceiptNs);
+                        lastAccFrameReceiptNs = frame.hostTimeNs;
+                    }
+                    nativeSubmitPolarPmdFrame(
+                        measurementType,
+                        frameSequenceId,
+                        frame.hostTimeNs,
+                        frame.sensorTimestampNs,
+                        activeAccSampleRateHz,
+                        frame.sampleCount,
+                        previousReceiptDeltaNs);
+                    for (int sampleIndex = 0; sampleIndex < frame.accSamples.size(); sampleIndex++) {
+                        AccSample sample = frame.accSamples.get(sampleIndex);
+                        long sampleHostTimeNs = sampleTimeNs(
+                            frame.hostTimeNs,
+                            activeAccSampleRateHz,
+                            sampleIndex,
+                            frame.sampleCount);
+                        long sampleSensorTimeNs = sampleTimeNs(
+                            frame.sensorTimestampNs,
+                            activeAccSampleRateHz,
+                            sampleIndex,
+                            frame.sampleCount);
+                        nativeSubmitPolarAccMeasurement(
+                            sampleHostTimeNs,
+                            sampleSensorTimeNs,
+                            frame.hostTimeNs,
+                            frameSequenceId,
+                            sampleIndex,
+                            frame.sampleCount,
+                            System.nanoTime(),
+                            sample.xMg,
+                            sample.yMg,
+                            sample.zMg);
                     }
                     appendAccEvent(frame);
+                    scheduleStreamingStatusWrite();
                 } else if (measurementType == 0x00) {
                     PmdFrameMetric frame = PolarProtocol.decodeEcg(value);
+                    long frameSequenceId;
+                    long previousReceiptDeltaNs;
                     synchronized (countersLock) {
                         ecgFrames += 1L;
                         ecgSamples += frame.sampleCount;
+                        frameSequenceId = ecgFrames;
+                        previousReceiptDeltaNs = lastEcgFrameReceiptNs == 0L
+                            ? 0L
+                            : Math.max(0L, frame.hostTimeNs - lastEcgFrameReceiptNs);
+                        lastEcgFrameReceiptNs = frame.hostTimeNs;
+                    }
+                    nativeSubmitPolarPmdFrame(
+                        measurementType,
+                        frameSequenceId,
+                        frame.hostTimeNs,
+                        frame.sensorTimestampNs,
+                        activeEcgSampleRateHz,
+                        frame.sampleCount,
+                        previousReceiptDeltaNs);
+                    for (int sampleIndex = 0; sampleIndex < frame.ecgSamplesMicrovolts.size(); sampleIndex++) {
+                        long sampleHostTimeNs = sampleTimeNs(
+                            frame.hostTimeNs,
+                            activeEcgSampleRateHz,
+                            sampleIndex,
+                            frame.sampleCount);
+                        long sampleSensorTimeNs = sampleTimeNs(
+                            frame.sensorTimestampNs,
+                            activeEcgSampleRateHz,
+                            sampleIndex,
+                            frame.sampleCount);
+                        nativeSubmitPolarEcgMeasurement(
+                            sampleHostTimeNs,
+                            sampleSensorTimeNs,
+                            frame.hostTimeNs,
+                            frameSequenceId,
+                            sampleIndex,
+                            frame.sampleCount,
+                            System.nanoTime(),
+                            frame.ecgSamplesMicrovolts.get(sampleIndex).intValue());
                     }
                     appendEcgEvent(frame);
+                    scheduleStreamingStatusWrite();
                 }
             }
         } catch (RuntimeException ex) {
@@ -1085,12 +1694,25 @@ final class PolarSensorPanel {
                 && "start_stream".equals(pendingCommand)
                 && record.measurementType == measurementTypeInt(pendingPmdMode)) {
             if (record.errorCode == 0) {
-                pmdRunning = true;
-                activePmdMode = pendingPmdMode;
+                final String startedMode = pendingPmdMode;
+                setStreamRunning(startedMode, true);
                 setStatus("PMD stream active: " + activePmdMode.toUpperCase(Locale.US));
-                marker("status=pmd-started mode=" + markerToken(activePmdMode));
-                appendStatusEvent("pmd-started-" + activePmdMode);
+                marker("status=pmd-started mode=" + markerToken(startedMode)
+                    + " activeModes=" + markerToken(activePmdMode));
+                appendStatusEvent("pmd-started-" + startedMode);
                 updateCounters();
+                if (startAllPending && "acc".equals(startedMode) && !ecgPmdRunning) {
+                    handler.postDelayed(new Runnable() {
+                        @Override
+                        public void run() {
+                            beginPmdStartFlow("ecg");
+                        }
+                    }, 150L);
+                } else if (startAllPending && accPmdRunning && ecgPmdRunning) {
+                    startAllPending = false;
+                    setStatus("ACC and ECG PMD streams are active in parallel.");
+                    marker("status=pmd-all-started activeModes=acc_ecg");
+                }
             } else if (!tryNextStartCandidate(pendingCommandGeneration, "err_" + record.errorCode)) {
                 setStatus("PMD start rejected for " + pendingPmdMode.toUpperCase(Locale.US)
                     + " error " + record.errorCode + ".");
@@ -1103,8 +1725,7 @@ final class PolarSensorPanel {
         }
         if (record.opCode == 0x03
                 && ("stop_stream_only".equals(pendingCommand) || "stop_before_start".equals(pendingCommand))) {
-            pmdRunning = false;
-            activePmdMode = "none";
+            setStreamRunning(pendingPmdMode, false);
             updateCounters();
         }
     }
@@ -1136,17 +1757,80 @@ final class PolarSensorPanel {
         }
     }
 
+    private static native void nativeSubmitPolarAccMeasurement(
+        long sampleHostTimeNs,
+        long sampleSensorTimeNs,
+        long frameHostReceiptTimeNs,
+        long frameSequenceId,
+        int sampleIndex,
+        int sampleCount,
+        long jniSubmitTimeNs,
+        int xMg,
+        int yMg,
+        int zMg);
+
+    private static native void nativeSubmitPolarEcgMeasurement(
+        long sampleHostTimeNs,
+        long sampleSensorTimeNs,
+        long frameHostReceiptTimeNs,
+        long frameSequenceId,
+        int sampleIndex,
+        int sampleCount,
+        long jniSubmitTimeNs,
+        int microvolts);
+
+    private static native void nativeSubmitPolarPmdFrame(
+        int measurementType,
+        long frameSequenceId,
+        long hostReceiptTimeNs,
+        long sensorFrameTimeNs,
+        int sampleRateHz,
+        int sampleCount,
+        long previousReceiptDeltaNs);
+
+    private static native void nativeSubmitPolarHeartRateMeasurement(long hostTimeNs, int bpm);
+
+    private static native void nativeSubmitPolarRrMeasurement(
+        long hostTimeNs,
+        float rrIntervalMs);
+
+    private static native String nativeStartParallelBreathCapture(
+        String directory,
+        String sessionId,
+        long startedAtElapsedRealtimeNs);
+
+    private static native String nativeStopParallelBreathCapture();
+
+    private static native String nativeReadParallelBreathCaptureStatus();
+
+    private static native String nativeSetPolarAccPresentationMode(String mode);
+
+    private static native String nativeReadPolarAccPresentationStatus();
+
+    private static long sampleTimeNs(long frameLastSampleTimeNs, int sampleRateHz, int sampleIndex, int sampleCount) {
+        if (frameLastSampleTimeNs <= 0L || sampleRateHz <= 0 || sampleCount <= 0
+                || sampleIndex < 0 || sampleIndex >= sampleCount) {
+            return frameLastSampleTimeNs;
+        }
+        long periodNs = Math.max(1L, 1000000000L / sampleRateHz);
+        long samplesAfter = sampleCount - 1L - sampleIndex;
+        long offsetNs = periodNs > Long.MAX_VALUE / Math.max(1L, samplesAfter)
+            ? Long.MAX_VALUE
+            : periodNs * samplesAfter;
+        return Math.max(1L, frameLastSampleTimeNs - Math.min(frameLastSampleTimeNs - 1L, offsetNs));
+    }
+
     private void appendAccEvent(PmdFrameMetric frame) {
         try {
             JSONObject payload = basePayload(STREAM_ACC)
                 .put("sensor_timestamp_ns", frame.sensorTimestampNs)
                 .put("frame_sample_count", frame.sampleCount);
             if (!frame.accSamples.isEmpty()) {
-                AccSample latest = frame.accSamples.get(frame.accSamples.size() - 1);
+                AccSample lastSampleForLowRateEvent = frame.accSamples.get(frame.accSamples.size() - 1);
                 payload.put("latest_sample_mg", new JSONObject()
-                    .put("x", latest.xMg)
-                    .put("y", latest.yMg)
-                    .put("z", latest.zMg));
+                    .put("x", lastSampleForLowRateEvent.xMg)
+                    .put("y", lastSampleForLowRateEvent.yMg)
+                    .put("z", lastSampleForLowRateEvent.zMg));
             }
             appendStreamEvent(STREAM_ACC, payload);
         } catch (Exception ex) {
@@ -1208,14 +1892,14 @@ final class PolarSensorPanel {
             .put("device", connectedLabel);
     }
 
-    private void appendStreamEvent(String streamId, JSONObject payload) throws Exception {
+    private void appendStreamEvent(final String streamId, JSONObject payload) throws Exception {
         long nextSequence;
         synchronized (countersLock) {
             sequenceId += 1L;
             nextSequence = sequenceId;
         }
         long nowNs = System.currentTimeMillis() * 1000000L;
-        JSONObject event = new JSONObject()
+        final JSONObject event = new JSONObject()
             .put("type", "stream_event")
             .put("schema", "rusty.manifold.stream.event.v1")
             .put("stream", streamId)
@@ -1225,44 +1909,151 @@ final class PolarSensorPanel {
             .put("transport_time_unix_ns", nowNs)
             .put("transport_receive_time_unix_ns", nowNs)
             .put("time_utc", Instant.now().toString());
-        FileOutputStream out = activity.openFileOutput(STREAM_EVENTS_FILE, Context.MODE_APPEND);
-        try {
-            out.write(event.toString().getBytes(StandardCharsets.UTF_8));
-            out.write('\n');
-            out.flush();
-        } finally {
-            out.close();
-        }
-        synchronized (countersLock) {
-            streamEventsWritten += 1L;
-        }
-        try {
-            host.onPolarStreamEvent(event);
-        } catch (RuntimeException ignored) {
-        }
+        final String line = event.toString();
+        eventWriter.execute(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    FileOutputStream out = appContext.openFileOutput(STREAM_EVENTS_FILE, Context.MODE_APPEND);
+                    try {
+                        out.write(line.getBytes(StandardCharsets.UTF_8));
+                        out.write('\n');
+                    } finally {
+                        out.close();
+                    }
+                    synchronized (countersLock) {
+                        streamEventsWritten += 1L;
+                    }
+                    handler.post(new Runnable() {
+                        @Override
+                        public void run() {
+                            try {
+                                Host currentHost = host;
+                                if (currentHost != null) {
+                                    currentHost.onPolarStreamEvent(event);
+                                }
+                            } catch (RuntimeException ignored) {
+                            }
+                        }
+                    });
+                } catch (Exception error) {
+                    marker("status=event-write-failed stream=" + markerToken(streamId));
+                }
+            }
+        });
     }
 
-    private void writeStatus(String state, String detail) {
+    private JSONObject writeStatus(String state, String detail) {
         try {
+            long accFrameCount;
+            long accSampleCount;
+            long ecgFrameCount;
+            long ecgSampleCount;
+            long hrCount;
+            long rrCount;
+            long accReceiptDeltaNs;
+            long ecgReceiptDeltaNs;
+            synchronized (countersLock) {
+                accFrameCount = accFrames;
+                accSampleCount = accSamples;
+                ecgFrameCount = ecgFrames;
+                ecgSampleCount = ecgSamples;
+                hrCount = heartRateEvents;
+                rrCount = rrIntervals;
+                accReceiptDeltaNs = lastAccFrameReceiptNs;
+                ecgReceiptDeltaNs = lastEcgFrameReceiptNs;
+            }
+            long observedAtNs = System.nanoTime();
+            boolean accDataReceiving = pmdDataReceiving(connected, observedAtNs, accReceiptDeltaNs);
+            boolean ecgDataReceiving = pmdDataReceiving(connected, observedAtNs, ecgReceiptDeltaNs);
+            boolean accEffectiveRunning = accPmdRunning || accDataReceiving;
+            boolean ecgEffectiveRunning = ecgPmdRunning || ecgDataReceiving;
+            boolean pmdEffectiveRunning = accEffectiveRunning || ecgEffectiveRunning;
+            String pmdEffectiveMode = accEffectiveRunning && ecgEffectiveRunning
+                ? "acc+ecg"
+                : (accEffectiveRunning ? "acc" : (ecgEffectiveRunning ? "ecg" : "none"));
+            String pmdStateSource = (accDataReceiving || ecgDataReceiving)
+                ? ((accPmdRunning || ecgPmdRunning) ? "control-ack-and-fresh-data" : "fresh-data-fallback")
+                : ((accPmdRunning || ecgPmdRunning) ? "control-ack-awaiting-data" : "none");
+            JSONObject presentation = new JSONObject(nativeReadPolarAccPresentationStatus());
+            accPresentationMode = presentation.optString("mode", accPresentationMode);
             JSONObject body = new JSONObject()
-                .put("schema", "rusty.quest.native_renderer.polar_sensor_status.v1")
+                .put("schema", "rusty.quest.native_renderer.polar_sensor_status.v2")
                 .put("status", state)
                 .put("detail", detail == null ? "" : detail)
+                .put("ble_runtime", PolarBleRuntimeSupport.statusJson(appContext))
+                .put("scanning", scanning)
+                .put("candidate_count", devices.size())
+                .put("selected_device_instance_id", selectedDeviceInstanceId())
+                .put("connected_device_instance_id", connectedDeviceInstanceId)
+                .put("connected", connected)
+                .put("pmd_ready", pmdReady)
+                .put("pmd_running", pmdEffectiveRunning)
+                .put("pmd_mode", pmdEffectiveMode)
+                .put("pmd_state_source", pmdStateSource)
+                .put("pmd_command_running", pmdRunning)
+                .put("pmd_command_mode", activePmdMode)
+                .put("acc_pmd_running", accEffectiveRunning)
+                .put("ecg_pmd_running", ecgEffectiveRunning)
+                .put("acc_pmd_command_running", accPmdRunning)
+                .put("ecg_pmd_command_running", ecgPmdRunning)
+                .put("pmd_data_receiving", accDataReceiving || ecgDataReceiving)
+                .put("acc_data_receiving", accDataReceiving)
+                .put("ecg_data_receiving", ecgDataReceiving)
+                .put("acc_sample_rate_hz", activeAccSampleRateHz)
+                .put("ecg_sample_rate_hz", activeEcgSampleRateHz)
+                .put("acc_frames", accFrameCount)
+                .put("acc_samples", accSampleCount)
+                .put("ecg_frames", ecgFrameCount)
+                .put("ecg_samples", ecgSampleCount)
+                .put("acc_last_receipt_time_ns", accReceiptDeltaNs)
+                .put("ecg_last_receipt_time_ns", ecgReceiptDeltaNs)
+                .put("heart_rate_events_observed", hrCount)
+                .put("rr_intervals_observed", rrCount)
+                .put("rr_consumed_by_breath", false)
+                .put("acc_direct_same_process", true)
+                .put("acc_presentation", accPresentationMode)
+                .put("acc_presentation_delay_ms", presentation.optLong("timestamp_faithful_delay_ms", 0L))
+                .put("acc_smoothing_time_constant_ms", presentation.optLong("low_latency_smoothing_time_constant_ms", 0L))
+                .put("acc_presentation_status", presentation)
+                .put("capture", new JSONObject(nativeReadParallelBreathCaptureStatus()))
                 .put("stream_events_file", STREAM_EVENTS_FILE)
                 .put("updated_at_unix_ms", System.currentTimeMillis());
-            FileOutputStream out = activity.openFileOutput(STATUS_FILE, Context.MODE_PRIVATE);
+            FileOutputStream out = appContext.openFileOutput(STATUS_FILE, Context.MODE_PRIVATE);
             try {
                 out.write(body.toString(2).getBytes(StandardCharsets.UTF_8));
                 out.flush();
             } finally {
                 out.close();
             }
+            return body;
         } catch (Exception ignored) {
+            return null;
         }
     }
 
+    private static boolean pmdDataReceiving(boolean linkConnected, long observedAtNs, long lastReceiptNs) {
+        if (!linkConnected || observedAtNs <= 0L || lastReceiptNs <= 0L || observedAtNs < lastReceiptNs) {
+            return false;
+        }
+        return observedAtNs - lastReceiptNs <= PMD_DATA_RECEIVING_WINDOW_NS;
+    }
+
+    private void scheduleStreamingStatusWrite() {
+        if (!streamingStatusWriteScheduled.compareAndSet(false, true)) {
+            return;
+        }
+        handler.postDelayed(new Runnable() {
+            @Override
+            public void run() {
+                streamingStatusWriteScheduled.set(false);
+                writeStatus(statusState, statusDetail);
+            }
+        }, STREAMING_STATUS_WRITE_DELAY_MS);
+    }
+
     private void updateCountersOnUiThread() {
-        activity.runOnUiThread(new Runnable() {
+        handler.post(new Runnable() {
             @Override
             public void run() {
                 updateCounters();
@@ -1302,6 +2093,7 @@ final class PolarSensorPanel {
             String batteryText = battery >= 0 ? Integer.toString(battery) + "%" : "unknown";
             linkStatus.setText("Link: " + connectedLabel
                 + " | PMD: " + activePmdMode
+                + " | capture: " + ("none".equals(captureSessionId) ? "stopped" : captureSessionId)
                 + " | battery: " + batteryText
                 + " | control: " + controlCount
                 + " | malformed: " + malformed
@@ -1311,15 +2103,20 @@ final class PolarSensorPanel {
             hrStatus.setText("HR/RR: " + hr + " heart-rate events, " + rr + " RR intervals, latest " + bpm + " bpm");
         }
         if (accStatus != null) {
-            accStatus.setText("ACC: " + accFrameCount + " frames, " + accSampleCount + " decoded samples");
+            String presentation = "low-latency-smooth".equals(accPresentationMode)
+                ? "low-latency smooth at render cadence (120 ms time constant)"
+                : "timestamp-faithful (180 ms sample-time buffer)";
+            accStatus.setText("ACC: " + accFrameCount + " PMD batches, " + accSampleCount
+                + " decoded samples @ " + activeAccSampleRateHz + " Hz; " + presentation);
         }
         if (ecgStatus != null) {
-            ecgStatus.setText("ECG: " + ecgFrameCount + " frames, " + ecgSampleCount + " decoded samples");
+            ecgStatus.setText("ECG: " + ecgFrameCount + " PMD batches, " + ecgSampleCount
+                + " decoded samples @ " + activeEcgSampleRateHz + " Hz");
         }
     }
 
     private String selectedDeviceLabel() {
-        int index = deviceSpinner == null ? -1 : deviceSpinner.getSelectedItemPosition();
+        int index = selectedDeviceIndex();
         if (index >= 0 && index < devices.size()) {
             return devices.get(index).label();
         }
@@ -1327,18 +2124,24 @@ final class PolarSensorPanel {
     }
 
     private void addOrUpdateDevice(DeviceEntry entry) {
+        String selectedBefore = selectedDeviceInstanceId();
         for (int i = 0; i < devices.size(); i++) {
             DeviceEntry existing = devices.get(i);
             if (existing.sameDevice(entry)) {
                 devices.set(i, entry);
+                Collections.sort(devices);
+                restoreOrChooseHeadlessCandidate(selectedBefore);
                 updateDeviceAdapter();
                 return;
             }
         }
         devices.add(entry);
+        Collections.sort(devices);
+        restoreOrChooseHeadlessCandidate(selectedBefore);
         updateDeviceAdapter();
-        setStatus("Found " + entry.label());
-        marker("status=device-found device=" + markerToken(entry.address));
+        setStatusState("candidate-found", "A compatible Polar candidate was found.");
+        marker("status=device-found deviceInstanceId=" + markerToken(entry.instanceId())
+            + " matchScore=" + entry.matchScore + " rawDeviceIdentifierLogged=false");
     }
 
     private void updateDeviceAdapter() {
@@ -1350,38 +2153,60 @@ final class PolarSensorPanel {
             deviceAdapter.add(device.label());
         }
         deviceAdapter.notifyDataSetChanged();
+        if (deviceSpinner != null && selectedDeviceIndex >= 0 && selectedDeviceIndex < devices.size()) {
+            deviceSpinner.setSelection(selectedDeviceIndex);
+        }
         updateCounters();
     }
 
     private void stopScan() {
-        if (scanner != null && scanning) {
+        BluetoothLeScanner currentScanner = scanner;
+        ScanCallback currentCallback = activeScanCallback;
+        boolean wasScanning = scanning;
+        scanner = null;
+        activeScanCallback = null;
+        scanning = false;
+        scanGeneration += 1L;
+        if (currentScanner != null && wasScanning && currentCallback != null) {
             try {
-                scanner.stopScan(scanCallback);
+                currentScanner.stopScan(currentCallback);
             } catch (SecurityException ignored) {
             } catch (RuntimeException ignored) {
             }
         }
-        scanning = false;
     }
 
     private void closeGatt() {
-        if (gatt != null) {
+        BluetoothGatt currentGatt = gatt;
+        gatt = null;
+        connected = false;
+        pmdFlowGeneration += 1L;
+        connectedLabel = "none";
+        connectedDeviceInstanceId = "none";
+        pendingConnectionLabel = "none";
+        pendingConnectionDeviceInstanceId = "none";
+        if (currentGatt != null) {
             try {
-                gatt.disconnect();
+                currentGatt.disconnect();
             } catch (SecurityException ignored) {
             } catch (RuntimeException ignored) {
             }
             try {
-                gatt.close();
+                currentGatt.close();
             } catch (RuntimeException ignored) {
             }
-            gatt = null;
         }
         descriptorTasks.clear();
         descriptorsStarted = false;
         commandInFlight = false;
-        pmdRunning = false;
-        activePmdMode = "none";
+        pendingCommand = "none";
+        pendingCommandGeneration = pmdFlowGeneration;
+        pmdReady = false;
+        accPmdRunning = false;
+        ecgPmdRunning = false;
+        setStreamRunning("acc", false);
+        startAllPending = false;
+        stopAllPending = false;
         batteryCharacteristic = null;
         hrCharacteristic = null;
         pmdControlCharacteristic = null;
@@ -1389,58 +2214,63 @@ final class PolarSensorPanel {
     }
 
     private BluetoothAdapter bluetoothAdapter() {
-        BluetoothManager manager = (BluetoothManager) activity.getSystemService(Context.BLUETOOTH_SERVICE);
+        BluetoothManager manager = (BluetoothManager) appContext.getSystemService(Context.BLUETOOTH_SERVICE);
         return manager == null ? null : manager.getAdapter();
     }
 
-    private boolean ensurePermissions() {
+    private boolean ensurePermissions(int pendingAction) {
         if (hasRequiredPermissions()) {
             return true;
         }
-        if (Build.VERSION.SDK_INT < 23) {
-            return true;
+        pendingBleAction = pendingAction;
+        if (activity == null) {
+            pendingBleAction = PENDING_BLE_NONE;
+            setStatusState("permission-required", "BLE/location permission is required; attach the panel to respond.");
+            marker("status=permission-required origin=headless pendingAction=" + pendingAction);
+            return false;
         }
-        activity.requestPermissions(requiredPermissions(), REQUEST_BLE_PERMISSIONS);
-        setStatus("Requesting BLE permissions.");
-        marker("status=permission-requested");
+        PolarBleRuntimeSupport.ensureReady(activity, REQUEST_BLE_PERMISSIONS);
+        String missing = PolarBleRuntimeSupport.join(
+            PolarBleRuntimeSupport.missingPermissions(appContext),
+            ","
+        );
+        setStatusState("permission-required", "Requesting BLE/location permissions.");
+        marker("status=permission-requested missing=" + markerToken(missing)
+            + " pendingAction=" + pendingAction);
         return false;
     }
 
     private boolean hasRequiredPermissions() {
-        if (Build.VERSION.SDK_INT < 23) {
-            return true;
-        }
-        String[] required = requiredPermissions();
-        for (String permission : required) {
-            if (activity.checkSelfPermission(permission) != PackageManager.PERMISSION_GRANTED) {
-                return false;
-            }
-        }
-        return true;
+        return PolarBleRuntimeSupport.hasRequiredPermissions(appContext);
     }
 
-    private String[] requiredPermissions() {
-        if (Build.VERSION.SDK_INT >= 31) {
-            return new String[] {
-                Manifest.permission.BLUETOOTH_SCAN,
-                Manifest.permission.BLUETOOTH_CONNECT
-            };
+    private void resumePendingBleAction() {
+        int action = pendingBleAction;
+        pendingBleAction = PENDING_BLE_NONE;
+        if (action == PENDING_BLE_SCAN) {
+            startScan();
+        } else if (action == PENDING_BLE_CONNECT) {
+            connectSelected();
+        } else if (action == PENDING_BLE_START_PMD) {
+            startSelectedPmd();
         }
-        return new String[] {
-            Manifest.permission.ACCESS_FINE_LOCATION
-        };
     }
 
     private String selectedPmdMode() {
-        int index = pmdSpinner == null ? 0 : pmdSpinner.getSelectedItemPosition();
-        return index == 1 ? "ecg" : "acc";
+        if (pmdSpinner != null) {
+            int index = pmdSpinner.getSelectedItemPosition();
+            if (index == 0 || index == 1) {
+                selectedPmdMode = index == 1 ? "ecg" : "acc";
+            }
+        }
+        return selectedPmdMode;
     }
 
     private void setSelectedPmdMode(String mode) {
-        if (pmdSpinner == null) {
-            return;
+        selectedPmdMode = "ecg".equals(mode) ? "ecg" : "acc";
+        if (pmdSpinner != null) {
+            pmdSpinner.setSelection("ecg".equals(selectedPmdMode) ? 1 : 0);
         }
-        pmdSpinner.setSelection("ecg".equals(mode) ? 1 : 0);
     }
 
     private byte[] buildGetSettingsCommand(String mode) {
@@ -1457,6 +2287,7 @@ final class PolarSensorPanel {
             int sampleRate = settings.hasAny() && attempt == 0
                 ? settings.chooseLowestSampleRate(130)
                 : (attempt >= 2 ? 256 : 130);
+            activeEcgSampleRateHz = sampleRate;
             int resolution = settings.hasAny() && attempt == 0
                 ? settings.chooseLowestResolution(14)
                 : 14;
@@ -1464,6 +2295,7 @@ final class PolarSensorPanel {
         }
         PmdSettings settings = settingsForMode(mode);
         int sampleRate = settings.chooseClosestSampleRate(200);
+        activeAccSampleRateHz = sampleRate;
         int resolution = settings.chooseClosestResolution(16);
         int rangeG = settings.chooseClosestRange(8);
         return buildPmdStartRequest((byte) 0x02, sampleRate, resolution, Integer.valueOf(rangeG));
@@ -1528,7 +2360,9 @@ final class PolarSensorPanel {
         }
     }
 
-    private static boolean scanRecordHasSupportedService(android.bluetooth.le.ScanRecord record) {
+    private static boolean scanRecordHasService(
+            android.bluetooth.le.ScanRecord record,
+            UUID expectedService) {
         if (record == null || record.getServiceUuids() == null) {
             return false;
         }
@@ -1537,7 +2371,7 @@ final class PolarSensorPanel {
                 continue;
             }
             UUID uuid = parcelUuid.getUuid();
-            if (HEART_RATE_SERVICE.equals(uuid) || PMD_SERVICE.equals(uuid)) {
+            if (expectedService.equals(uuid)) {
                 return true;
             }
         }
@@ -1547,6 +2381,46 @@ final class PolarSensorPanel {
     private void setStatus(String message) {
         if (status != null) {
             status.setText(message);
+        }
+    }
+
+    private void setStatusState(String state, String detail) {
+        statusState = state == null ? "unknown" : state;
+        statusDetail = detail == null ? "" : detail;
+        setStatus(statusDetail);
+        writeStatus(statusState, statusDetail);
+    }
+
+    private String selectedDeviceInstanceId() {
+        int index = selectedDeviceIndex();
+        if (index >= 0 && index < devices.size()) {
+            return devices.get(index).instanceId();
+        }
+        return "none";
+    }
+
+    private int selectedDeviceIndex() {
+        if (deviceSpinner != null) {
+            int uiIndex = deviceSpinner.getSelectedItemPosition();
+            if (uiIndex >= 0 && uiIndex < devices.size()) {
+                selectedDeviceIndex = uiIndex;
+            }
+        }
+        return selectedDeviceIndex;
+    }
+
+    private void restoreOrChooseHeadlessCandidate(String selectedBefore) {
+        selectedDeviceIndex = -1;
+        if (selectedBefore != null && !"none".equals(selectedBefore)) {
+            for (int index = 0; index < devices.size(); index++) {
+                if (selectedBefore.equals(devices.get(index).instanceId())) {
+                    selectedDeviceIndex = index;
+                    return;
+                }
+            }
+        }
+        if (devices.size() == 1) {
+            selectedDeviceIndex = 0;
         }
     }
 
@@ -1623,17 +2497,57 @@ final class PolarSensorPanel {
             .replace('"', '\'');
     }
 
-    private static final class DeviceEntry {
+    private static String pseudonymousDeviceInstanceId(String address, String name) {
+        String identity = address == null || address.trim().isEmpty() ? name : address;
+        if (identity == null || identity.trim().isEmpty()) {
+            return "polar-unknown";
+        }
+        try {
+            byte[] digest = MessageDigest.getInstance("SHA-256")
+                .digest(identity.trim().toLowerCase(Locale.US).getBytes(StandardCharsets.UTF_8));
+            StringBuilder result = new StringBuilder("polar-");
+            for (int index = 0; index < 6; index++) {
+                result.append(String.format(Locale.US, "%02x", digest[index] & 0xff));
+            }
+            return result.toString();
+        } catch (Exception ignored) {
+            return "polar-unavailable";
+        }
+    }
+
+    private static final class DeviceEntry implements Comparable<DeviceEntry> {
         final BluetoothDevice device;
         final String name;
         final String address;
         final int rssi;
+        final boolean hasHeartRateService;
+        final boolean hasPmdService;
+        final int matchScore;
 
-        DeviceEntry(BluetoothDevice device, String name, String address, int rssi) {
+        DeviceEntry(
+                BluetoothDevice device,
+                String name,
+                String address,
+                int rssi,
+                boolean hasHeartRateService,
+                boolean hasPmdService) {
             this.device = device;
             this.name = name == null ? "" : name.trim();
             this.address = address == null ? "" : address.trim();
             this.rssi = rssi;
+            this.hasHeartRateService = hasHeartRateService;
+            this.hasPmdService = hasPmdService;
+            int score = Math.max(-100, Math.min(-20, rssi)) + 100;
+            if (looksLikePolar()) {
+                score += 80;
+            }
+            if (hasHeartRateService) {
+                score += 100;
+            }
+            if (hasPmdService) {
+                score += 200;
+            }
+            this.matchScore = score;
         }
 
         boolean looksLikePolar() {
@@ -1646,6 +2560,19 @@ final class PolarSensorPanel {
                 return address.equalsIgnoreCase(other.address);
             }
             return label().equals(other.label());
+        }
+
+        String instanceId() {
+            return pseudonymousDeviceInstanceId(address, name);
+        }
+
+        @Override
+        public int compareTo(DeviceEntry other) {
+            int scoreOrder = Integer.compare(other.matchScore, matchScore);
+            if (scoreOrder != 0) {
+                return scoreOrder;
+            }
+            return instanceId().compareTo(other.instanceId());
         }
 
         String label() {

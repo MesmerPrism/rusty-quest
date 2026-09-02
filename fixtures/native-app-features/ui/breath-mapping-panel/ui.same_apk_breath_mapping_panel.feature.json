@@ -1,0 +1,27 @@
+{
+  "schema": "rusty.quest.native_app_feature.v1",
+  "feature_id": "ui.same_apk_breath_mapping_panel",
+  "module_path": "ui/breath-mapping-panel",
+  "module_kind": "same-apk-panel-mode",
+  "settings_surface": {"authority": "rusty.quest.native_app_settings.v1", "adapter": "runtime_profile"},
+  "owner_lane": "rusty-quest",
+  "status": "public-substrate",
+  "description": "Same-APK request and native-effective readback surface for generic breath composition.",
+  "provides": ["ui.same_apk_breath_mapping_panel"],
+  "depends_on": ["ui.breath_composition_control_panel"],
+  "incompatible_with": [],
+  "exclusive_groups": {"control_panel_mode": "breath-mapping"},
+  "android_manifest": {"permissions": [], "uses_features": [], "activities": [], "services": [], "queries": []},
+  "runtime_profile": {
+    "set": {
+      "debug.rustyquest.native_renderer.breath_composition.panel.enabled": "true",
+      "debug.rustyquest.native_renderer.control_panel.mode": "breath-mapping"
+    },
+    "clear_families": [],
+    "expected_render_modes": []
+  },
+  "build_inputs": {"env": [], "assets": [], "shaders": []},
+  "markers": {"required": ["panelActivity=ControlPanelActivity"], "forbidden": []},
+  "validation": {"quick": [], "standard": [], "device": []},
+  "public_private_boundary": "The panel submits low-rate requests and renders native-effective generic state; it is not estimator or application-effect authority."
+}

@@ -1520,7 +1520,8 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
                 privateLayerControlCoordinator::applyCurrentConfiguration,
             configureVideoProjection = spatialVideoProjectionRuntimeCoordinator::configure,
             startVideoProjection = ::startCustomVideoProjectionWithDecoderOwnership,
-            startNative = ::nativeStartCameraHwbProjectionProbe,
+            updateNativeLayerFence = ::nativeUpdateCameraHwbProjectionLayerFence,
+            startNative = ::nativeStartCameraHwbProjectionProbeWithFence,
             updateFromViewer = { reason, forceLog ->
               cameraHwbProjectionPlacementUpdateCoordinator.update(reason, forceLog)
             },
@@ -3281,6 +3282,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
         }
     spatialVideoProjectionRuntimeCoordinator.stop(reason)
     cameraHwbProjectionDepthPrerequisiteCoordinator.stop()
+    cameraHwbProjectionRawCarrierCoordinator.recordLayerRemoved(reason)
     val rawCleanupStatus = sdkQuadResourceCoordinator.cleanup(reason)
     cameraHwbProjectionEntity = null
     val carrierCleanupStatus =
@@ -3297,6 +3299,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
   private fun cleanupSdkQuadSurfaceProbe(reason: String): String {
     spatialVideoProjectionRuntimeCoordinator.stop("sdk-quad-surface-$reason")
     cameraHwbProjectionDepthPrerequisiteCoordinator.stop()
+    cameraHwbProjectionRawCarrierCoordinator.recordLayerRemoved(reason)
     return sdkQuadResourceCoordinator.cleanup(reason)
   }
 
@@ -4252,7 +4255,26 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
       readerMaxImages: Int,
   ): Long
 
+  private external fun nativeStartCameraHwbProjectionProbeWithFence(
+      surface: AndroidSurface,
+      width: Int,
+      height: Int,
+      frameCount: Int,
+      readerMaxImages: Int,
+      launchChallenge: Long,
+      layerGeneration: Long,
+      layerSwitchCount: Long,
+      layerStateCode: Int,
+  ): Long
+
   private external fun nativeStopCameraHwbProbe()
+
+  private external fun nativeUpdateCameraHwbProjectionLayerFence(
+      launchChallenge: Long,
+      layerGeneration: Long,
+      layerSwitchCount: Long,
+      layerStateCode: Int,
+  ): Long
 
   private external fun nativeConfigureCameraReplayCapture(
       outputDirectory: String,

@@ -26,6 +26,14 @@ layout(location = 3) out vec4 v_color_params;
 
 const float NEAR_M = 0.05;
 const float FAR_DEPTH_SPAN_M = 12.0;
+const float TAU = 6.28318530717958647692;
+const uint STATIC_RING_ANNULUS_SEGMENTS = 12u;
+// The outer radius is deliberately larger than the visible R8 ring support so
+// the geometry never clips its feather; the inner radius removes only pixels
+// whose static-ring mask is already transparent. The annulus therefore tests
+// primitive coverage, not a different mask or particle size.
+const float STATIC_RING_ANNULUS_OUTER_RAW_RADIUS = 0.90;
+const float STATIC_RING_ANNULUS_INNER_RAW_RADIUS = 0.30;
 
 const vec2 QUAD_POSITIONS[6] = vec2[](
     vec2(-1.0, -1.0),
@@ -35,6 +43,22 @@ const vec2 QUAD_POSITIONS[6] = vec2[](
     vec2( 1.0, -1.0),
     vec2( 1.0,  1.0)
 );
+
+vec2 static_ring_annulus_position(uint vertex_index) {
+    uint segment = vertex_index / 6u;
+    uint corner = vertex_index % 6u;
+    float a0 = float(segment) * (TAU / float(STATIC_RING_ANNULUS_SEGMENTS));
+    float a1 = float(segment + 1u) * (TAU / float(STATIC_RING_ANNULUS_SEGMENTS));
+    vec2 outer0 = STATIC_RING_ANNULUS_OUTER_RAW_RADIUS * vec2(cos(a0), sin(a0));
+    vec2 outer1 = STATIC_RING_ANNULUS_OUTER_RAW_RADIUS * vec2(cos(a1), sin(a1));
+    vec2 inner0 = STATIC_RING_ANNULUS_INNER_RAW_RADIUS * vec2(cos(a0), sin(a0));
+    vec2 inner1 = STATIC_RING_ANNULUS_INNER_RAW_RADIUS * vec2(cos(a1), sin(a1));
+    if (corner == 0u) { return outer0; }
+    if (corner == 1u) { return inner0; }
+    if (corner == 2u || corner == 3u) { return outer1; }
+    if (corner == 4u) { return inner0; }
+    return inner1;
+}
 
 vec4 safe_normalize_quat(vec4 quat) {
     float length_sq = max(dot(quat, quat), 0.000000000001);
@@ -84,6 +108,7 @@ void main() {
     uint draw_count = max(uint(pc.tracer_params.x), 1u);
     uint packed_mode = uint(pc.params0.z + 0.5);
     uint ordering_mode = (packed_mode / 10u) % 10u;
+    uint geometry_mode = (packed_mode / 10000000u) % 2u;
     float facing_attenuation_strength =
         clamp(float((packed_mode / 100u) % 10000u) / 1000.0, 0.0, 1.0);
     uint index;
@@ -98,7 +123,9 @@ void main() {
     vec4 color_alpha = particle_output.rows[base + 1u];
     vec4 normal_flags = particle_output.rows[base + 2u];
     vec4 aux = particle_output.rows[base + 3u];
-    vec2 raw_quad = QUAD_POSITIONS[gl_VertexIndex % 6];
+    vec2 raw_quad = geometry_mode == 1u
+        ? static_ring_annulus_position(uint(gl_VertexIndex) % 72u)
+        : QUAD_POSITIONS[gl_VertexIndex % 6];
     float rotation = aux.x;
     float cs = cos(rotation);
     float sn = sin(rotation);

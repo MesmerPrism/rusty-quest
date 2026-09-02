@@ -35,4 +35,34 @@ class DebugHostReceiptProviderTest {
       }
     }
   }
+
+  @Test
+  fun providerFirstArmLoadsNativeLibraryOnceBeforeEveryReset() {
+    val events = mutableListOf<String>()
+    val boundary =
+        SpatialLaunchQualificationNativeBoundary(
+            loadLibrary = { events += "load" },
+            resetQualification = { events += "reset" },
+        )
+
+    boundary.ensureLoadedAndReset()
+    boundary.ensureLoadedAndReset()
+
+    assertEquals(listOf("load", "reset", "reset"), events)
+  }
+
+  @Test
+  fun providerFirstArmNormalizesNativeLoadAndLinkageFailures() {
+    listOf(UnsatisfiedLinkError("missing"), SecurityException("denied")).forEach { failure ->
+      val boundary =
+          SpatialLaunchQualificationNativeBoundary(
+              loadLibrary = { throw failure },
+              resetQualification = { throw AssertionError("reset must not run") },
+          )
+      val rejected =
+          assertThrows(IllegalStateException::class.java) { boundary.ensureLoadedAndReset() }
+      assertEquals("debug_host_receipt_native_unavailable", rejected.message)
+      assertEquals(failure, rejected.cause)
+    }
+  }
 }

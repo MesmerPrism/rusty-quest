@@ -99,6 +99,27 @@ candidate head only for formatting, package-updater Rust tests, and the Android
 static gate. Its pass is test evidence, not effect, acceptance, or publication
 authority.
 
+After that singleton is consumed, an ordinary protected proposal may use only
+the documented external-owner fallback in `docs/EXTERNAL_VALIDATION_AUTHORITY.md`.
+It is emitted solely from the exact protected-without-base-approval verifier
+result and binds one fresh pinned RSA-PSS comment to the complete static Git
+object assessment. Treat its NUL-delimited Git-object inventory as strict UTF-8
+and fail closed on malformed, noncanonical, duplicate, colliding, or incomplete
+paths. It never authorizes execution, acceptance, merge, release, settings, or
+device work; trusted-base ancestry consumes it.
+
+An extraordinary trust-root bootstrap review may use only the separately named
+bootstrap schemas and marker documented in that authority guide, and only for
+the explicitly user-authorized exact-head bootstrap merge. It records a
+one-time independent review, never a normal runtime assessment. The permanent
+runtime adapter rejects that marker and it cannot satisfy the normal fallback,
+PR #53, or any future candidate. It is a durable non-reusable review receipt,
+not static-admission, test, acceptance, merge, release, settings, or device
+authority. Its GitHub synthetic merge SHA is observational only: consumption
+requires the exact signed base/head commits and trees, generated tree, ordered
+base/head parents, artifact inventories, and digest; a regenerated synthetic
+SHA is admissible only when all of those stable fields remain exact.
+
 Configure admission from
 `config/external-validation-authority-settings.json`. Rusty Quest is user-owned;
 organization required-workflow rules are future-only. The deployable repository
@@ -256,6 +277,9 @@ substrates. It validates Lattice provider/frame identity, maps joints into the
 Matter rig, checks prepared rows against the Matter CPU oracle, and preserves
 Optics provider/frame/rig/hand identity. Native and Spatial acquisition and app
 policy stay local; provider, basis, hand, rig, or joint substitution fails closed.
+The native renderer's optional simultaneous hands/controllers adapter must use
+its existing OpenXR lifecycle, the exact applied hand lock, and independent
+live hand plus controller readiness; it must not request detached controllers.
 
 `crates/rusty-quest-broker-product` is only the Android projection boundary for
 accepted Manifold broker product locks. Manifold owns product feature resolution,

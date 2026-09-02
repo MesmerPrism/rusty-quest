@@ -53,11 +53,11 @@ layout(push_constant) uniform PrivateParticlePush {
 
 #if PRIVATE_PARTICLE_MASK_TEXTURE_MODE_CODE == PRIVATE_PARTICLE_MASK_MODE_PROCEDURAL
 const float TAU = 6.28318530717958647692;
-const float AKD_RING_EDGE_WIDTH = 0.015;
-const float AKD_RING_OUTER_FEATHER = 0.06;
-const float AKD_RING_RADIUS = 0.32;
-const float AKD_RING_THICKNESS = 0.03;
-const float AKD_RING_DUAL_OFFSET_RADIANS = 3.14159265358979323846;
+const float RING_EDGE_WIDTH = 0.015;
+const float RING_OUTER_FEATHER = 0.06;
+const float RING_RADIUS = 0.32;
+const float RING_THICKNESS = 0.03;
+const float RING_DUAL_OFFSET_RADIANS = 3.14159265358979323846;
 
 float seg_dist(vec2 p, vec2 a, vec2 b) {
     vec2 pa = p - a;
@@ -99,8 +99,8 @@ vec2 rotate_around_center(vec2 p, float angle) {
 float morphed_ring_dist_single(vec2 p, float phase01) {
     vec2 center = vec2(0.5);
     float m = morph_factor(phase01);
-    float safe_thickness = min(AKD_RING_THICKNESS, AKD_RING_RADIUS * 0.99);
-    float mid_radius = max(AKD_RING_RADIUS - 0.5 * safe_thickness, 0.0001);
+    float safe_thickness = min(RING_THICKNESS, RING_RADIUS * 0.99);
+    float mid_radius = max(RING_RADIUS - 0.5 * safe_thickness, 0.0001);
     float d_min = 999.0;
     for (int arc = 0; arc < 3; ++arc) {
         float a0 = float(arc) * (TAU / 3.0);
@@ -117,7 +117,7 @@ float morphed_ring_dist_single(vec2 p, float phase01) {
 }
 
 float morphed_ring_dist(vec2 p, float phase01) {
-    float full_offset = AKD_RING_DUAL_OFFSET_RADIANS * abs(phase01 * 2.0 - 1.0);
+    float full_offset = RING_DUAL_OFFSET_RADIANS * abs(phase01 * 2.0 - 1.0);
     float half_offset = 0.5 * full_offset;
     float d_a = morphed_ring_dist_single(rotate_around_center(p, -half_offset), phase01);
     float d_b = morphed_ring_dist_single(rotate_around_center(p, half_offset), phase01);
@@ -127,10 +127,10 @@ float morphed_ring_dist(vec2 p, float phase01) {
 float procedural_morphed_ring_alpha(vec2 uv, float frame01) {
     float d = morphed_ring_dist(uv, frame01);
     float aa = max(fwidth(d), 0.0001);
-    float core = 1.0 - smoothstep(AKD_RING_EDGE_WIDTH, AKD_RING_EDGE_WIDTH + aa, d);
+    float core = 1.0 - smoothstep(RING_EDGE_WIDTH, RING_EDGE_WIDTH + aa, d);
     float feather = 1.0 - smoothstep(
-        AKD_RING_EDGE_WIDTH + aa,
-        AKD_RING_EDGE_WIDTH + aa + AKD_RING_OUTER_FEATHER,
+        RING_EDGE_WIDTH + aa,
+        RING_EDGE_WIDTH + aa + RING_OUTER_FEATHER,
         d);
     return max(core, feather);
 }
@@ -196,6 +196,11 @@ void main() {
     float frame01 = clamp(v_render_params.y, 0.0, 0.99902344);
     uint packed_mode = uint(pc.params0.z + 0.5);
     uint mask_discard_mode = (packed_mode / 1000000u) % 10u;
+    // The render thread packs the selected closed material blend mode in the
+    // two-million range, leaving the legacy mask/order/facing fields intact.
+    // The alpha-over pipeline consumes premultiplied RGB; the additive
+    // baseline deliberately remains straight RGB plus coverage alpha.
+    uint material_blend_mode = (packed_mode / 2000000u) % 2u;
 #if PRIVATE_PARTICLE_MASK_TEXTURE_MODE_CODE == PRIVATE_PARTICLE_MASK_MODE_ARRAY_NEAREST
     float mask = texture_array_alpha_nearest(v_mask_uv, frame01);
 #elif PRIVATE_PARTICLE_MASK_TEXTURE_MODE_CODE == PRIVATE_PARTICLE_MASK_MODE_ARRAY_BLEND
@@ -223,5 +228,8 @@ void main() {
     vec3 base_rgb = clamp(v_color.rgb, vec3(0.0), vec3(1.0))
         * clamp(v_color_params.x, 0.0, 1.0);
     vec3 rgb = base_rgb * mix(1.0, coverage_alpha, rgb_alpha_coupling);
+    if (material_blend_mode == 1u) {
+        rgb *= coverage_alpha;
+    }
     out_color = vec4(rgb, clamp(coverage_alpha * output_alpha_scale, 0.0, 1.0));
 }

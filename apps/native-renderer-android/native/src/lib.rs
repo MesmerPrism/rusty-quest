@@ -11,6 +11,13 @@ const PLAN_JSON: &str =
     include_str!("../../../../fixtures/native-renderer/native-hwb-blur-sdf-public.plan.json");
 const MARKER_PREFIX: &str = "RUSTY_QUEST_NATIVE_RENDERER";
 
+mod bounded_breath_phase_integrator;
+mod breath_calibration_controller_action;
+mod breath_capture;
+mod breath_composition_driver;
+mod breath_composition_runtime;
+mod breath_input_selection;
+
 #[cfg(target_os = "android")]
 mod acamera_sys;
 #[cfg(target_os = "android")]
@@ -65,6 +72,8 @@ mod live_hand_joint_capture;
 #[cfg(target_os = "android")]
 mod live_hand_mesh_capture;
 mod lsl_android;
+mod lsl_panel_runtime;
+mod lsl_rusty_outlet;
 mod lsl_transport_bridge;
 mod manifold_breath_bridge;
 mod manifold_pose_publisher;
@@ -80,7 +89,9 @@ mod native_camera_profiles;
 mod native_camera_reader_selection;
 mod native_controller_breath_state;
 mod native_renderer_camera_options;
+mod native_renderer_diagnostics_contract;
 mod native_renderer_display_composite_options;
+mod native_renderer_display_refresh_options;
 mod native_renderer_environment_depth_options;
 mod native_renderer_foveation_options;
 mod native_renderer_hand_anchor_particle_options;
@@ -90,6 +101,10 @@ mod native_renderer_options_tests;
 #[cfg(target_os = "android")]
 mod native_renderer_panel_bridge;
 mod native_renderer_passthrough_style_options;
+mod native_renderer_private_particle_heartbeat_orbit_request;
+mod native_renderer_private_particle_material_request;
+mod native_renderer_private_particle_render_experiment_request;
+mod native_renderer_private_particle_visual_scale_request;
 mod native_renderer_projection_border_stretch_options;
 mod native_renderer_projection_swapchain_options;
 mod native_renderer_properties;
@@ -100,21 +115,31 @@ mod native_renderer_stimulus_volume_options;
 mod native_renderer_timing;
 mod native_renderer_video_projection_options;
 mod native_renderer_visual_options;
+mod openxr_controller_breath_adapter;
 #[cfg(target_os = "android")]
 mod openxr_environment_depth;
 #[cfg(target_os = "android")]
 mod openxr_passthrough_style;
 #[cfg(target_os = "android")]
+mod openxr_simultaneous_hands_controllers;
+#[cfg(target_os = "android")]
 mod openxr_stimulus_actions;
 mod particle_adapter_consumer;
+mod polar_acc_breath_adapter;
+mod polar_acc_phase_classifier;
+mod polar_composition_adapters;
 #[cfg(target_os = "android")]
 mod private_extension_slot;
 mod private_particle_breath_state_driver;
+mod private_particle_heartbeat_pulse_adapter;
+mod private_particle_world_basis;
 mod projection_rect;
 mod projection_target_state;
 mod recorded_hand_replay;
 #[cfg(target_os = "android")]
 mod remote_camera_projection_native_stream;
+mod same_apk_panel_action;
+mod simultaneous_hands_controllers;
 #[cfg(target_os = "android")]
 mod video_projection;
 mod video_projection_metadata;
@@ -140,26 +165,53 @@ fn load_public_plan() -> Result<NativeRendererPlan, String> {
 
 #[cfg(target_os = "android")]
 #[no_mangle]
-fn android_on_create(_state: &android_activity::OnCreateState) {
+fn android_on_create(state: &android_activity::OnCreateState) {
     marker(
         "activity-created",
         "entrypoint=NativeActivity rustNativeActivity=true javaPackaged=true panelActivity=ControlPanelActivity",
     );
-    let particle_adapter_input = particle_adapter_consumer::load_runtime_input();
+    let native_app_settings =
+        native_app_settings::NativeAppSettingsDefaults::load_from_on_create_state(state);
+    marker("native-app-settings", native_app_settings.marker_fields());
+    breath_composition_runtime::install_from_android_properties_with_defaults(|name| {
+        native_app_settings.lookup(name)
+    });
+    let particle_adapter_input =
+        particle_adapter_consumer::load_runtime_input_with_defaults(&native_app_settings);
     let particle_adapter_decision =
         particle_adapter_consumer::resolve_activation(&particle_adapter_input);
     marker(
         "particle-adapter",
         particle_adapter_consumer::activation_marker(&particle_adapter_input),
     );
-    let hand_adapter_input = hand_adapter_consumer::load_runtime_input();
+    let hand_adapter_input =
+        hand_adapter_consumer::load_runtime_input_with_defaults(&native_app_settings);
     let hand_adapter_decision = hand_adapter_consumer::resolve_activation(&hand_adapter_input);
     marker(
         "hand-adapter",
         hand_adapter_consumer::activation_marker(&hand_adapter_input),
     );
     let runtime_options =
-        native_renderer_options::NativeRendererRuntimeOptions::load_from_android_properties();
+        native_renderer_options::NativeRendererRuntimeOptions::load_from_android_properties_with_defaults(
+            |name| native_app_settings.lookup(name),
+        );
+    let simultaneous_hands_controllers_decision =
+        simultaneous_hands_controllers::resolve_activation(
+            runtime_options.simultaneous_hands_controllers_settings,
+            hand_adapter_decision.is_applied(),
+        );
+    marker(
+        "simultaneous-hands-controllers-activation",
+        simultaneous_hands_controllers_decision
+            .marker_fields(runtime_options.simultaneous_hands_controllers_settings),
+    );
+    if simultaneous_hands_controllers_decision.is_rejected() {
+        marker(
+            "adapter-lock-admission",
+            "status=rejected reason=simultaneous-hands-controllers-activation-rejected effectsStarted=false permissionsRequested=false sceneStarted=false inputStarted=false mediaStarted=false",
+        );
+        return;
+    }
     let particle_effect_request = particle_adapter_effect_request(&runtime_options);
     let hand_effect_request = hand_adapter_effect_request(&runtime_options);
     if !particle_adapter_consumer::effects_authorized(
@@ -185,7 +237,7 @@ fn android_on_create(_state: &android_activity::OnCreateState) {
         );
         return;
     }
-    match request_runtime_permissions(_state, &permissions) {
+    match request_runtime_permissions(state, &permissions) {
         Ok(()) => marker(
             "permission-request",
             format!(
@@ -309,10 +361,16 @@ fn request_runtime_permissions(
 #[cfg(target_os = "android")]
 #[no_mangle]
 fn android_main(app: android_activity::AndroidApp) {
-    let particle_adapter_input = particle_adapter_consumer::load_runtime_input();
+    let native_app_settings =
+        native_app_settings::NativeAppSettingsDefaults::load_from_apk_asset(&app);
+    marker("native-app-settings", native_app_settings.marker_fields());
+    native_renderer_panel_bridge::install_packaged_control_panel_mode(&native_app_settings);
+    let particle_adapter_input =
+        particle_adapter_consumer::load_runtime_input_with_defaults(&native_app_settings);
     let particle_adapter_decision =
         particle_adapter_consumer::resolve_activation(&particle_adapter_input);
-    let hand_adapter_input = hand_adapter_consumer::load_runtime_input();
+    let hand_adapter_input =
+        hand_adapter_consumer::load_runtime_input_with_defaults(&native_app_settings);
     let hand_adapter_decision = hand_adapter_consumer::resolve_activation(&hand_adapter_input);
     if (particle_adapter_input.enabled && !particle_adapter_decision.is_applied())
         || (hand_adapter_input.enabled && !hand_adapter_decision.is_applied())
@@ -350,15 +408,41 @@ fn android_main(app: android_activity::AndroidApp) {
         ),
     );
 
-    let native_app_settings =
-        native_app_settings::NativeAppSettingsDefaults::load_from_apk_asset(&app);
-    marker("native-app-settings", native_app_settings.marker_fields());
+    breath_composition_runtime::install_from_android_properties_with_defaults(|name| {
+        native_app_settings.lookup(name)
+    });
     let runtime_options =
         native_renderer_options::NativeRendererRuntimeOptions::load_from_android_properties_with_defaults(
             |name| native_app_settings.lookup(name),
         );
     let runtime_options =
         native_renderer_stimulus_panel::apply_app_private_candidate(&app, runtime_options);
+    marker(
+        "native-renderer-display-refresh-config",
+        format!(
+            "source=runtime-options {} nativeAppSettings={}",
+            runtime_options.display_refresh_settings.marker_fields(),
+            native_app_settings.marker_fields(),
+        ),
+    );
+    let simultaneous_hands_controllers_decision =
+        simultaneous_hands_controllers::resolve_activation(
+            runtime_options.simultaneous_hands_controllers_settings,
+            hand_adapter_decision.is_applied(),
+        );
+    marker(
+        "simultaneous-hands-controllers-activation",
+        simultaneous_hands_controllers_decision
+            .marker_fields(runtime_options.simultaneous_hands_controllers_settings),
+    );
+    if simultaneous_hands_controllers_decision.is_rejected() {
+        marker(
+            "adapter-lock-admission",
+            "status=rejected reason=simultaneous-hands-controllers-activation-rejected effectsStarted=false permissionsRequested=false sceneStarted=false inputStarted=false mediaStarted=false",
+        );
+        keep_activity_alive_after_error(app);
+        return;
+    }
     let particle_effect_request = particle_adapter_effect_request(&runtime_options);
     let hand_effect_request = hand_adapter_effect_request(&runtime_options);
     if !particle_adapter_consumer::effects_authorized(
@@ -380,6 +464,17 @@ fn android_main(app: android_activity::AndroidApp) {
         keep_activity_alive_after_error(app);
         return;
     }
+    let xr_vulkan_readiness = xr_vulkan::probe(&app, simultaneous_hands_controllers_decision);
+    if simultaneous_hands_controllers_decision.is_selected()
+        && !xr_vulkan_readiness.simultaneous_hands_controllers_probe_ready
+    {
+        marker(
+            "simultaneous-hands-controllers",
+            "status=rejected reason=probe-preconditions-failed effectsStarted=false sceneStarted=false inputStarted=false mediaStarted=false",
+        );
+        keep_activity_alive_after_error(app);
+        return;
+    }
     let embedded_manifold_broker_settings =
         embedded_manifold_broker_bridge::EmbeddedManifoldBrokerSettings::load_from_android_properties_with_defaults(
             &native_app_settings,
@@ -389,11 +484,15 @@ fn android_main(app: android_activity::AndroidApp) {
         lsl_transport_bridge::LslTransportSettings::load_from_android_properties_with_defaults(
             &native_app_settings,
         );
-    lsl_transport_bridge::start_if_enabled(
-        &app,
-        &lsl_transport_settings,
-        &embedded_manifold_broker_settings,
-    );
+    if lsl_transport_settings.panel_controlled {
+        lsl_panel_runtime::initialize(&app, true);
+    } else {
+        lsl_transport_bridge::start_if_enabled(
+            &app,
+            &lsl_transport_settings,
+            &embedded_manifold_broker_settings,
+        );
+    }
     let native_passthrough_requested = runtime_options.render_mode.uses_native_passthrough()
         || runtime_options
             .environment_depth_settings
@@ -470,8 +569,6 @@ fn android_main(app: android_activity::AndroidApp) {
         &runtime_options.video_projection_settings,
     );
 
-    let xr_vulkan_readiness = xr_vulkan::probe(&app);
-
     let camera_runtime = if runtime_options.render_mode.uses_custom_stereo_projection()
         && runtime_options.camera_output_mode.camera_import_enabled()
     {
@@ -538,7 +635,12 @@ fn android_main(app: android_activity::AndroidApp) {
         ),
     );
 
-    match xr_vulkan::run_projection_loop(&app, camera_runtime.as_ref(), runtime_options) {
+    match xr_vulkan::run_projection_loop(
+        &app,
+        camera_runtime.as_ref(),
+        runtime_options,
+        simultaneous_hands_controllers_decision,
+    ) {
         Ok(()) => marker(
             "render-loop",
             "status=stopped reason=openxr-projection-loop-finished",
@@ -557,6 +659,10 @@ fn android_main(app: android_activity::AndroidApp) {
 
     drop(camera_runtime);
     drop(video_projection_playback);
+    lsl_panel_runtime::shutdown();
+    if lsl_transport_settings.panel_controlled {
+        lsl_transport_bridge::release_multicast_lock(&app);
+    }
     marker("render-loop", "status=stopped");
 }
 

@@ -179,7 +179,7 @@ internal class DebugHostReceiptStore(
   private data class VerifiedReceipt(val json: String, val receiptHash: String)
 
   private fun buildReceipt(nonceHash: String, identity: Identity, facts: List<Fact>): VerifiedReceipt {
-    var previousHash = DebugHostReceiptContract.sha256(DebugHostReceiptContract.SCHEMA.toByteArray(StandardCharsets.UTF_8))
+    var previousHash = rootCommitment(nonceHash, identity)
     val factJson =
         facts.mapIndexed { index, fact ->
           val sequence = index + 1
@@ -229,7 +229,7 @@ internal class DebugHostReceiptStore(
       "debug_host_receipt_schema_rejected"
     }
     require(rootObject["version"].asInt == 1) { "debug_host_receipt_version_rejected" }
-    validateIdentity(
+    val identity =
         Identity(
             applicationId = rootObject["application_id"].asString,
             apkSha256 = rootObject["apk_sha256"].asString,
@@ -238,14 +238,14 @@ internal class DebugHostReceiptStore(
             variant = rootObject["variant"].asString,
             pid = rootObject["pid"].asInt,
             epoch = rootObject["epoch"].asString,
-        ),
-    )
+        )
+    validateIdentity(identity)
     val nonceHash = DebugHostReceiptContract.requireReceiptHash(rootObject["nonce_hash"].asString)
     val factArray = rootObject["facts"].asJsonArray
     require(factArray.size() == DebugHostReceiptContract.FACT_TYPES.size) {
       "debug_host_receipt_fact_count_rejected"
     }
-    var previousHash = DebugHostReceiptContract.sha256(DebugHostReceiptContract.SCHEMA.toByteArray(StandardCharsets.UTF_8))
+    var previousHash = rootCommitment(nonceHash, identity)
     factArray.forEachIndexed { index, element ->
       val fact = element.asJsonObject
       require(fact.keySet() == setOf("sequence", "fact", "value", "previous_hash", "hash")) {
@@ -272,6 +272,24 @@ internal class DebugHostReceiptStore(
     require(rootObject["receipt_hash"].asString == previousHash) { "debug_host_receipt_chain_rejected" }
     return VerifiedReceipt(json, previousHash)
   }
+
+  private fun rootCommitment(nonceHash: String, identity: Identity): String =
+      DebugHostReceiptContract.sha256(
+          listOf(
+                  DebugHostReceiptContract.SCHEMA,
+                  "receipt-root-v1",
+                  nonceHash,
+                  identity.applicationId,
+                  identity.apkSha256,
+                  identity.versionCode.toString(),
+                  identity.versionName,
+                  identity.variant,
+                  identity.pid.toString(),
+                  identity.epoch,
+              )
+              .joinToString("|")
+              .toByteArray(StandardCharsets.UTF_8),
+      )
 
   private fun writeAtomically(target: File, bytes: ByteArray) {
     val temporary = File(target.parentFile, ".${target.name}.${DebugHostReceiptContract.freshEpoch()}.tmp")

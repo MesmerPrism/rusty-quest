@@ -12,7 +12,10 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+Import-Module (Join-Path $PSScriptRoot "lib\QuestPropertyTransport.psm1") -Force
 $AndroidPropertyValueMaxBytes = 92
+$PropertySetpropBatchMaxOperations = 24
+$PropertySetpropBatchMaxCommandUtf8Bytes = 3072
 $NativeRendererPropertyPrefix = "debug.rustyquest.native_renderer."
 $NativeRendererPropertyManifestRelativePath = "fixtures\native-renderer\native-renderer-property-manifest.json"
 $NativeRendererPropertyManifestSchema = "rusty.quest.native_renderer_property_manifest.v2"
@@ -107,18 +110,6 @@ $NativeManifoldEmbeddedBrokerLanEnabledProperty = "debug.rustyquest.native_rende
 $NativeManifoldEmbeddedBrokerSessionTokenRequiredProperty = "debug.rustyquest.native_renderer.manifold.embedded_broker.session_token_required"
 $NativeManifoldEmbeddedBrokerSessionTokenProperty = "debug.rustyquest.native_renderer.manifold.embedded_broker.session_token"
 $MakepadPropertyPrefix = "debug.rustyquest.makepad."
-
-function ConvertTo-AndroidShellSingleQuoted {
-    param(
-        [Parameter(Mandatory=$true)]
-        [string]$Value
-    )
-
-    if ($Value.Contains("'")) {
-        throw "Android shell single-quote escaping is not supported for value: $Value"
-    }
-    return "'$Value'"
-}
 
 function Resolve-AdbServerPortArgument {
     param(
@@ -1081,6 +1072,25 @@ $plan = [ordered]@{
     operations = $operations
 }
 
+$outPath = if ([System.IO.Path]::IsPathRooted($Out)) {
+    $Out
+} else {
+    Join-Path $RepoRoot $Out
+}
+
+function Write-PropertyWritePlanAtomically {
+    param([Parameter(Mandatory=$true)]$Plan, [Parameter(Mandatory=$true)][string]$Path)
+    $parent = Split-Path -Parent $Path
+    New-Item -ItemType Directory -Path $parent -Force | Out-Null
+    $temporary = Join-Path $parent ((Split-Path -Leaf $Path) + "." + [guid]::NewGuid().ToString("N") + ".tmp")
+    try {
+        $Plan | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath $temporary -Encoding UTF8
+        Move-Item -LiteralPath $temporary -Destination $Path -Force
+    } finally {
+        Remove-Item -LiteralPath $temporary -Force -ErrorAction SilentlyContinue
+    }
+}
+
 if ($Execute) {
     if ([string]::IsNullOrWhiteSpace($Adb)) {
         $Adb = "adb"
@@ -1103,55 +1113,46 @@ if ($Execute) {
         throw "ADB target is not in device state: $($state -join ' ')"
     }
 
-    $readbacks = @()
-    foreach ($operation in $operations) {
-        $name = [string]$operation["name"]
-        $value = [string]$operation["value"]
-        $setpropCommand = "setprop $(ConvertTo-AndroidShellSingleQuoted $name) $(ConvertTo-AndroidShellSingleQuoted $value)"
-        & $Adb @adbArgsBase "shell" $setpropCommand
-        if ($LASTEXITCODE -ne 0) {
-            throw "ADB setprop failed for $name with exit code $LASTEXITCODE"
-        }
-
-        $getpropCommand = "getprop $(ConvertTo-AndroidShellSingleQuoted $name)"
-        $observed = & $Adb @adbArgsBase "shell" $getpropCommand
-        if ($LASTEXITCODE -ne 0) {
-            throw "ADB getprop failed for $name with exit code $LASTEXITCODE"
-        }
-        $observedValue = ($observed -join "`n").Trim()
-        $expectedValue = if ([string]$operation["kind"] -eq "clear") {
-            ""
-        } else {
-            $value.Trim()
-        }
-        if ($observedValue -ne $expectedValue) {
-            throw "ADB property readback mismatch for ${name}: expected '${expectedValue}' observed '${observedValue}'"
-        }
-        $readbacks += [ordered]@{
-            name = $name
-            kind = [string]$operation["kind"]
-            expected_value = $expectedValue
-            observed_value = $observedValue
-            status = "matched"
-        }
-    }
-
     $plan.executed_at = (Get-Date).ToUniversalTime().ToString("o")
     $plan.transport = "adb"
     $plan.adb_scope = "device-scoped-adb"
     $plan.adb_serial_required = $true
     $plan.adb_serial = $Serial
     $plan.adb_server_port = $resolvedAdbServerPort
-    $plan.readbacks = $readbacks
+    $batches = @(New-QuestPropertySetpropBatches -Entries $operations -MaxOperationsPerBatch $PropertySetpropBatchMaxOperations -MaxCommandUtf8Bytes $PropertySetpropBatchMaxCommandUtf8Bytes)
+    $plan.transport_summary = [ordered]@{
+        mode = "ordered-batched-setprop"
+        operation_count = $operations.Count
+        setprop_batch_count = $batches.Count
+        max_operations_per_batch = $PropertySetpropBatchMaxOperations
+        max_command_utf8_bytes = $PropertySetpropBatchMaxCommandUtf8Bytes
+        complete_readback = "single-global-getprop"
+    }
+    try {
+        $plan.transport_summary.setprop_batches = @(Invoke-QuestPropertySetpropBatches -Adb $Adb -Serial $Serial -AdbServerPort $resolvedAdbServerPort -Batches $batches)
+        $globalReadback = Get-QuestPropertyGlobalReadback -Adb $Adb -Serial $Serial -AdbServerPort $resolvedAdbServerPort
+        $readbackResult = Test-QuestPropertyExactReadback -Entries $operations -Observed $globalReadback.observed
+        $plan.readbacks = @($readbackResult.readbacks)
+        $plan.transport_summary.readback_property_count = $plan.readbacks.Count
+        $plan.transport_summary.readback_error_count = $readbackResult.errors.Count
+        if ($readbackResult.errors.Count -ne 0) {
+            $plan.execution_status = "failed"
+            $plan.errors = @($readbackResult.errors)
+            Write-PropertyWritePlanAtomically -Plan $plan -Path $outPath
+            throw "ADB property readback validation failed: $($readbackResult.errors -join '; ')"
+        }
+        $plan.execution_status = "passed"
+    } catch {
+        if ($null -eq $plan.execution_status) {
+            $plan.execution_status = "failed"
+            $plan.errors = @($_.Exception.Message)
+            Write-PropertyWritePlanAtomically -Plan $plan -Path $outPath
+        }
+        throw
+    }
 }
 
-$outPath = if ([System.IO.Path]::IsPathRooted($Out)) {
-    $Out
-} else {
-    Join-Path $RepoRoot $Out
-}
-New-Item -ItemType Directory -Path (Split-Path $outPath -Parent) -Force | Out-Null
-$plan | ConvertTo-Json -Depth 8 | Set-Content -Path $outPath -Encoding UTF8
+Write-PropertyWritePlanAtomically -Plan $plan -Path $outPath
 
 if ($DryRun) {
     Write-Output "runtime profile dry-run plan written: $outPath"

@@ -40,6 +40,121 @@ function Assert-NotContains {
     }
 }
 
+function Assert-CargoCommandExitGuardAstContracts {
+    param(
+        [Parameter(Mandatory=$true)][string]$Text,
+        [Parameter(Mandatory=$true)][object[]]$Contracts
+    )
+    $tokens = $null
+    $parseErrors = $null
+    $scriptAst = [System.Management.Automation.Language.Parser]::ParseInput(
+        $Text,
+        [ref]$tokens,
+        [ref]$parseErrors
+    )
+    if ($parseErrors.Count -ne 0) {
+        throw "Spatial Camera Panel test script must parse before cargo guard validation."
+    }
+    $expectedTryBody = $null
+    $previousStatementIndex = -1
+    foreach ($contract in $Contracts) {
+        $pipelines = @($scriptAst.FindAll({
+            param($node)
+            $node -is [System.Management.Automation.Language.PipelineAst] -and
+                $node.Extent.Text.Trim() -ceq $contract.Command
+        }, $true))
+        if ($pipelines.Count -ne 1) {
+            throw "$($contract.Label) must contain exactly one executable PipelineAst; found $($pipelines.Count)."
+        }
+        $pipeline = $pipelines[0]
+        if ($pipeline.PipelineElements.Count -ne 1 -or
+            $pipeline.PipelineElements[0] -isnot [System.Management.Automation.Language.CommandAst]) {
+            throw "$($contract.Label) must remain one exact cargo CommandAst pipeline."
+        }
+        $statementBlock = $pipeline.Parent
+        if ($statementBlock -isnot [System.Management.Automation.Language.StatementBlockAst]) {
+            throw "$($contract.Label) is not a direct statement in an executable statement block."
+        }
+        $tryStatement = $statementBlock.Parent
+        if ($tryStatement -isnot [System.Management.Automation.Language.TryStatementAst] -or
+            -not [object]::ReferenceEquals($tryStatement.Body, $statementBlock) -or
+            -not [object]::ReferenceEquals($tryStatement.Parent, $scriptAst.EndBlock)) {
+            throw "$($contract.Label) must be a direct statement in the executable top-level try body."
+        }
+        if ($null -eq $expectedTryBody) {
+            $expectedTryBody = $statementBlock
+        } elseif (-not [object]::ReferenceEquals($expectedTryBody, $statementBlock)) {
+            throw "Camera HWB cargo commands must share one executable top-level try body."
+        }
+        $statements = @($statementBlock.Statements)
+        $statementIndex = [Array]::IndexOf([object[]]$statements, [object]$pipeline)
+        if ($statementIndex -le $previousStatementIndex) {
+            throw "Camera HWB cargo commands are not in the required execution order."
+        }
+        $previousStatementIndex = $statementIndex
+        if ($statementIndex -lt 0 -or $statementIndex + 1 -ge $statements.Count) {
+            throw "$($contract.Label) is not immediately followed by its exit guard."
+        }
+        $guard = $statements[$statementIndex + 1]
+        if ($guard -isnot [System.Management.Automation.Language.IfStatementAst] -or
+            $guard.Clauses.Count -ne 1 -or
+            $null -ne $guard.ElseClause) {
+            throw "$($contract.Label) must be followed by one exact if guard without an else branch."
+        }
+        $condition = $guard.Clauses[0].Item1
+        $conditionElement = if (
+            $condition -is [System.Management.Automation.Language.PipelineAst] -and
+            $condition.PipelineElements.Count -eq 1
+        ) { $condition.PipelineElements[0] } else { $null }
+        $conditionExpression = if (
+            $conditionElement -is [System.Management.Automation.Language.CommandExpressionAst]
+        ) { $conditionElement.Expression } else { $null }
+        if ($conditionExpression -isnot [System.Management.Automation.Language.BinaryExpressionAst] -or
+            $conditionExpression.Operator -ne [System.Management.Automation.Language.TokenKind]::Ine -or
+            $conditionExpression.Left -isnot [System.Management.Automation.Language.VariableExpressionAst] -or
+            $conditionExpression.Left.Splatted -or
+            $conditionExpression.Left.VariablePath.UserPath -cne 'LASTEXITCODE' -or
+            $conditionExpression.Right -isnot [System.Management.Automation.Language.ConstantExpressionAst] -or
+            $conditionExpression.Right.Value -isnot [int] -or
+            $conditionExpression.Right.Value -ne 0 -or
+            $condition.Extent.Text.Trim() -cne '$LASTEXITCODE -ne 0') {
+            throw "$($contract.Label) guard condition must be exactly `$LASTEXITCODE -ne 0."
+        }
+        $guardBody = $guard.Clauses[0].Item2
+        if ($guardBody.Statements.Count -ne 1 -or
+            $guardBody.Statements[0] -isnot [System.Management.Automation.Language.ThrowStatementAst]) {
+            throw "$($contract.Label) guard body must contain exactly one throw statement."
+        }
+        $throwStatement = $guardBody.Statements[0]
+        $throwElement = if (
+            $throwStatement.Pipeline -is [System.Management.Automation.Language.PipelineAst] -and
+            $throwStatement.Pipeline.PipelineElements.Count -eq 1
+        ) { $throwStatement.Pipeline.PipelineElements[0] } else { $null }
+        $throwExpression = if (
+            $throwElement -is [System.Management.Automation.Language.CommandExpressionAst]
+        ) { $throwElement.Expression } else { $null }
+        if ($throwExpression -isnot [System.Management.Automation.Language.StringConstantExpressionAst] -or
+            $throwExpression.Value -cne $contract.FailureMessage -or
+            $throwStatement.Extent.Text.Trim() -cne "throw `"$($contract.FailureMessage)`"") {
+            throw "$($contract.Label) guard must contain its exact failure throw."
+        }
+    }
+}
+
+function Assert-CargoCommandGuardDamageRejected {
+    param(
+        [Parameter(Mandatory=$true)][string]$Label,
+        [Parameter(Mandatory=$true)][string]$Text,
+        [Parameter(Mandatory=$true)][object[]]$Contracts
+    )
+    try {
+        Assert-CargoCommandExitGuardAstContracts $Text $Contracts
+    } catch {
+        return
+    }
+    throw "$Label damage was accepted."
+}
+
 function Assert-FileAbsent {
     param([Parameter(Mandatory=$true)][string]$RelativePath)
     if (Test-Path -LiteralPath (Join-Path $repoRootPath $RelativePath)) {
@@ -164,6 +279,8 @@ $privateFeatureLoader = Read-RequiredText "apps\spatial-camera-panel-android\app
 $nativeLib = Read-RequiredText "apps\spatial-camera-panel-android\native-receipt\src\lib.rs"
 $nativeBuildScript = Read-RequiredText "apps\spatial-camera-panel-android\native-receipt\build.rs"
 $cameraProbe = Read-RequiredText "apps\spatial-camera-panel-android\native-receipt\src\camera_hwb_probe.rs"
+$cameraFreshness = Read-RequiredText "apps\spatial-camera-panel-android\native-receipt\src\camera_hwb_freshness.rs"
+$cameraFreshnessRuntime = Read-RequiredText "apps\spatial-camera-panel-android\native-receipt\src\camera_hwb_projection_freshness_runtime.rs"
 $cameraTiming = Read-RequiredText "apps\spatial-camera-panel-android\native-receipt\src\camera_hwb_timing.rs"
 $cameraProjectionTarget = Read-RequiredText "apps\spatial-camera-panel-android\native-receipt\src\camera_hwb_projection_target.rs"
 $nativeMultiStack = Read-RequiredText "apps\spatial-camera-panel-android\native-receipt\src\spatial_public_multistack.rs"
@@ -189,6 +306,7 @@ $spatialVideoStream = Read-RequiredText "apps\spatial-camera-panel-android\nativ
 $spatialVideoRenderer = Read-RequiredText "apps\spatial-camera-panel-android\native-receipt\src\spatial_video_projection.rs"
 $spatialVideoMarker = Read-RequiredText "apps\spatial-camera-panel-android\native-receipt\src\spatial_video_projection_marker.rs"
 $spatialVideoProbe = Read-RequiredText "apps\spatial-camera-panel-android\native-receipt\src\spatial_video_projection_probe.rs"
+$spatialVideoQualification = Read-RequiredText "apps\spatial-camera-panel-android\native-receipt\src\spatial_video_projection_qualification.rs"
 $spatialVideoVertShader = Read-RequiredText "apps\spatial-camera-panel-android\native-receipt\shaders\spatial_video_projection.vert.glsl"
 $spatialVideoFragShader = Read-RequiredText "apps\spatial-camera-panel-android\native-receipt\shaders\spatial_video_projection.frag.glsl"
 $surfaceLayer = Read-RequiredText "apps\spatial-camera-panel-android\native-receipt\src\surface_particle_layer.rs"
@@ -196,6 +314,8 @@ $surfaceProjection = Read-RequiredText "apps\spatial-camera-panel-android\native
 $liveHandJoints = Read-RequiredText "apps\spatial-camera-panel-android\native-receipt\src\live_hand_joints.rs"
 $replayHands = Read-RequiredText "apps\spatial-camera-panel-android\native-receipt\src\replay_hands.rs"
 $buildScript = Read-RequiredText "tools\Build-SpatialCameraPanelAndroid.ps1"
+$rawProjectionFreshnessReducerCheck = Read-RequiredText "tools\checks\Test-SpatialCameraPanelRawProjectionFreshnessReducer.ps1"
+$rawProjectionFreshnessFinalizerCheck = Read-RequiredText "tools\checks\Test-SpatialCameraPanelRawProjectionFreshnessFinalizer.ps1"
 $cameraProjectionSmoke = Read-RequiredText "tools\Invoke-SpatialCameraPanelAndroidCameraHwbProjectionSmoke.ps1"
 $layeringMatrix = Read-RequiredText "tools\Invoke-SpatialCameraPanelAndroidLayeringMatrix.ps1"
 $stageSpatialAsset = Read-RequiredText "tools\Stage-SpatialCameraPanelAsset.ps1"
@@ -1379,7 +1499,8 @@ Assert-Contains "Activity" $activity "cameraHwbProjectionRawCarrierCoordinator b
 Assert-Contains "Activity" $activity "SpatialCameraHwbProjectionRawCarrierBindings("
 Assert-Contains "Activity" $activity "cameraHwbProjectionLaunchCoordinator.started &&"
 Assert-Contains "Activity" $activity "!cameraHwbProjectionCarrierStateCoordinator.scenePanelCarrierEnabled()"
-Assert-Contains "Activity" $activity "startNative = ::nativeStartCameraHwbProjectionProbe"
+Assert-Contains "Activity" $activity "startNative = ::nativeStartCameraHwbProjectionProbeWithFence,"
+Assert-Contains "Activity" $activity "updateNativeLayerFence = ::nativeUpdateCameraHwbProjectionLayerFence,"
 Assert-Contains "Activity" $activity "cameraHwbProjectionRawCarrierCoordinator.run(readerMaxImages, videoSettings)"
 Assert-Contains "Activity" $activity "cameraHwbProjectionRawCarrierCoordinator.createLayer("
 Assert-NotContains "Activity" $activity "private fun createCameraHwbProjectionLayer"
@@ -1412,7 +1533,7 @@ Assert-Contains "Activity" $activity "cameraHwbProjectionPanelCarrierCoordinator
 Assert-Contains "Activity" $activity "SpatialCameraHwbProjectionPanelCarrierBindings("
 Assert-Contains "Activity" $activity "cameraHwbProjectionLaunchCoordinator.started &&"
 Assert-Contains "Activity" $activity "cameraHwbProjectionCarrierStateCoordinator.scenePanelCarrierEnabled()"
-Assert-Contains "Activity" $activity "startNative = ::nativeStartCameraHwbProjectionProbe"
+Assert-Contains "Activity" $activity "startNative = ::nativeStartCameraHwbProjectionProbe,"
 Assert-Contains "Activity" $activity "stopNative = ::nativeStopCameraHwbProbe"
 Assert-Contains "Activity" $activity "cameraHwbProjectionPanelCarrierCoordinator.videoPanelBindings()"
 Assert-Contains "Activity" $activity "cameraHwbProjectionPanelCarrierCoordinator.run(readerMaxImages, videoSettings)"
@@ -3538,6 +3659,140 @@ Assert-Contains "Camera HWB probe" $cameraProbe "cameraProjectionAlignmentPreser
 Assert-Contains "Camera HWB probe" $cameraProbe "read_retired_slot"
 Assert-Contains "Camera HWB probe" $cameraProbe "status=gpu-timestamp-config"
 Assert-Contains "Camera HWB probe" $cameraProbe "status=gpu-timestamp-summary"
+Assert-Contains "Native library" $nativeLib "mod camera_hwb_freshness;"
+Assert-Contains "Native library" $nativeLib "mod camera_hwb_projection_freshness_runtime;"
+Assert-Contains "Camera projection freshness runtime" $cameraFreshnessRuntime "CameraProjectionFreshnessTracker::new("
+Assert-Contains "Camera projection freshness runtime" $cameraFreshnessRuntime "CameraProjectionCadenceAuthority::VulkanWsiPresentReturned"
+Assert-Contains "Camera projection freshness runtime" $cameraFreshnessRuntime "CameraProjectionLaunchFence::from_raw("
+Assert-Contains "Camera projection freshness runtime" $cameraFreshnessRuntime "CameraProjectionLaunchFence::validate_monotonic_update(runtime.live_fence, fence)"
+Assert-Contains "Camera projection freshness runtime" $cameraFreshnessRuntime "stage_camera_projection_command_buffer("
+Assert-Contains "Camera projection freshness runtime" $cameraFreshnessRuntime "record_vulkan_wsi_present_returned("
+Assert-Contains "Camera projection freshness runtime" $cameraFreshnessRuntime "staging_rejection: Option<&'static str>"
+Assert-Contains "Camera projection freshness runtime" $cameraFreshnessRuntime "reject_active_raw_staging("
+Assert-Contains "Camera projection freshness runtime" $cameraFreshnessRuntime "session.pending = None;"
+Assert-Contains "Camera projection freshness runtime" $cameraFreshnessRuntime "run_generation: left.stream_generation"
+Assert-Contains "Camera projection freshness runtime" $cameraFreshnessRuntime "session_generation: session.generation"
+Assert-Contains "Camera projection freshness runtime" $cameraFreshnessRuntime "raw_projection_selected: matches!(probe_mode, CameraHwbProbeMode::RawColorProjection)"
+Assert-Contains "Camera projection freshness runtime" $cameraFreshnessRuntime "tracker.observe_with_live_fence(sample, observed_layer_fence)"
+Assert-Contains "Camera projection freshness runtime" $cameraFreshnessRuntime '"status=camera-projection-freshness-receipt runtimeCrash=false {}"'
+Assert-Contains "Camera projection freshness runtime" $cameraFreshnessRuntime "nativeStartCameraHwbProjectionProbeWithFence("
+Assert-Contains "Camera projection freshness runtime" $cameraFreshnessRuntime "nativeUpdateCameraHwbProjectionLayerFence("
+Assert-Contains "Camera projection freshness runtime" $cameraFreshnessRuntime "nativeStartCameraHwbProjectionProbe("
+Assert-Contains "Camera projection freshness runtime damage" $cameraFreshnessRuntime '"presented-command-buffer-identity-mismatch"'
+Assert-Contains "Camera projection freshness runtime damage" $cameraFreshnessRuntime '"live-layer-fence-transition-not-monotonic"'
+Assert-Contains "Camera projection freshness runtime damage" $cameraFreshnessRuntime "let absent = fence(701, 1, 1, 0);"
+Assert-Contains "Camera projection freshness runtime damage" $cameraFreshnessRuntime "let replacement = fence(702, 1, 0, 1);"
+Assert-Contains "Camera projection freshness runtime damage" $cameraFreshnessRuntime '"raw-projection-not-selected"'
+Assert-Contains "Camera projection freshness runtime damage" $cameraFreshnessRuntime '"live-layer-fence-mismatch"'
+Assert-Contains "Camera projection freshness runtime damage" $cameraFreshnessRuntime '"camera-hwb-wsi-import-generation-mismatch"'
+Assert-Contains "Camera projection freshness runtime damage" $cameraFreshnessRuntime '"camera-hwb-wsi-import-frame-identity-mismatch"'
+Assert-Contains "Camera projection freshness runtime damage" $cameraFreshnessRuntime '"pending-camera-projection-command-buffer-replaced"'
+Assert-Contains "Camera projection freshness runtime damage" $cameraFreshnessRuntime '"freshness-launch-already-rejected"'
+Assert-Contains "Camera projection freshness runtime compatibility" $cameraFreshnessRuntime "if !matches!(probe_mode, CameraHwbProbeMode::RawColorProjection)"
+Assert-Contains "Camera projection freshness runtime compatibility" $cameraFreshnessRuntime "let Some(session) = runtime.session.as_mut() else"
+Assert-NotContains "Camera projection freshness runtime" $cameraFreshnessRuntime "submitted_camera_projection_freshness"
+Assert-NotContains "Camera projection freshness runtime" $cameraFreshnessRuntime "SpatialSdkBrokerRetired"
+Assert-Contains "Camera HWB WSI" $cameraWsi "stage_camera_projection_command_buffer("
+Assert-Contains "Camera HWB WSI" $cameraWsi "camera_replay_metadata.clone()"
+Assert-Contains "Camera HWB WSI" $cameraWsi "publish_camera_hwb_wsi_import_identity(self.stream_generation, frame)"
+Assert-Contains "Camera HWB WSI" $cameraWsi "exact_camera_hwb_wsi_import_identities("
+Assert-Contains "Camera HWB WSI" $cameraWsi '"camera-hwb-wsi-import-identity-mismatch"'
+Assert-Contains "Camera HWB WSI" $cameraWsi "CameraHwbProbeMode::RawColorProjection"
+Assert-Contains "Camera HWB WSI" $cameraWsi "CameraHwbProbeMode::LumaChecker"
+Assert-Contains "Spatial video qualification" $spatialVideoQualification "record_vulkan_wsi_present_returned("
+Assert-Contains "Spatial video qualification" $spatialVideoQualification "#[cfg(not(rq_environment_depth_spatial_sdk_api_layer))]"
+Assert-Contains "Camera freshness" $cameraFreshness "rusty.quest.camera_hwb_projection_freshness_receipt.v1"
+Assert-Contains "Camera freshness" $cameraFreshness "first-moving-then-periodic-300-present-ordinals"
+Assert-Contains "Camera freshness" $cameraFreshness "visibilityScope=app-command-buffer-not-wearer-visible"
+Assert-Contains "Camera freshness" $cameraFreshness 'Self::VulkanWsiPresentReturned => "vulkan-wsi-queue-present-returned"'
+Assert-Contains "Camera freshness damage" $cameraFreshness '"stale-run-generation"'
+Assert-Contains "Camera freshness damage" $cameraFreshness '"camera-frame-index-not-monotonic"'
+Assert-Contains "Camera freshness damage" $cameraFreshness '"camera-hwb-import-sequence-not-monotonic"'
+Assert-Contains "Camera freshness damage" $cameraFreshness '"camera-projection-visible-witness-missing"'
+Assert-Contains "Camera freshness damage" $cameraFreshness "live_layer_removal_between_wsi_observations_latches_rejection"
+Assert-Contains "Camera freshness damage" $cameraFreshness '"live-layer-fence-unavailable"'
+Assert-Contains "Freshness reducer damage" $rawProjectionFreshnessReducerCheck 'Assert-Rejected "wrong-challenge"'
+Assert-Contains "Freshness reducer damage" $rawProjectionFreshnessReducerCheck 'Assert-Rejected "freshness-denial"'
+Assert-Contains "Freshness reducer schema" $rawProjectionFreshnessReducerCheck 'rusty.quest.camera_hwb_projection_freshness_reduction.v1.schema.json'
+Assert-Contains "Freshness finalizer damage" $rawProjectionFreshnessFinalizerCheck 'Assert-Rejected "duplicate-root-property"'
+Assert-Contains "Freshness finalizer damage" $rawProjectionFreshnessFinalizerCheck 'damage_case_count = 31'
+Assert-Contains "Freshness finalizer schema" $rawProjectionFreshnessFinalizerCheck 'rusty.quest.camera_hwb_projection_freshness_capture_finalization.v1.schema.json'
+$cargoGuardContracts = @(
+    [pscustomobject]@{
+        Label = "Camera HWB freshness test command"
+        Command = "cargo test -p spatial-camera-panel-native-receipt camera_hwb_freshness"
+        FailureMessage = "Spatial Camera Panel camera-HWB freshness Rust tests failed."
+    },
+    [pscustomobject]@{
+        Label = "Camera HWB projection freshness runtime test command"
+        Command = "cargo test -p spatial-camera-panel-native-receipt camera_hwb_projection_freshness_runtime"
+        FailureMessage = "Spatial Camera Panel camera-HWB projection freshness runtime Rust tests failed."
+    }
+)
+$normalizedTestScript = $testScript.Replace("`r`n", "`n")
+Assert-CargoCommandExitGuardAstContracts $normalizedTestScript $cargoGuardContracts
+foreach ($contract in $cargoGuardContracts) {
+    $commandLine = "    $($contract.Command)"
+    $guardBlock = @(
+        '    if ($LASTEXITCODE -ne 0) {'
+        "        throw `"$($contract.FailureMessage)`""
+        '    }'
+    ) -join "`n"
+    $expectedBlock = "$commandLine`n$guardBlock"
+    $missingGuardDamage = $normalizedTestScript.Replace($expectedBlock, $commandLine)
+    $relocatedGuardDamage = $normalizedTestScript.Replace($expectedBlock, "$guardBlock`n$commandLine")
+    $invertedGuardDamage = $normalizedTestScript.Replace(
+        $expectedBlock,
+        $expectedBlock.Replace('$LASTEXITCODE -ne 0', '$LASTEXITCODE -eq 0')
+    )
+    $nestedBlock = (($expectedBlock -split "`n") | ForEach-Object { "    $_" }) -join "`n"
+    $unreachableParentDamage = $normalizedTestScript.Replace(
+        $expectedBlock,
+        "    if (`$false) {`n$nestedBlock`n    }"
+    )
+    $nonExecutedContextDamage = $normalizedTestScript.Replace(
+        $expectedBlock,
+        "    function Invoke-UnexecutedCameraHwbCargoDamage {`n$nestedBlock`n    }"
+    )
+    foreach ($damage in @(
+        [pscustomobject]@{ Label = "$($contract.Label) missing guard"; Text = $missingGuardDamage },
+        [pscustomobject]@{ Label = "$($contract.Label) relocated guard"; Text = $relocatedGuardDamage },
+        [pscustomobject]@{ Label = "$($contract.Label) inverted guard"; Text = $invertedGuardDamage },
+        [pscustomobject]@{ Label = "$($contract.Label) unreachable parent"; Text = $unreachableParentDamage },
+        [pscustomobject]@{ Label = "$($contract.Label) non-executed context"; Text = $nonExecutedContextDamage }
+    )) {
+        if ($damage.Text -ceq $normalizedTestScript) {
+            throw "$($damage.Label) fixture did not mutate the exact guarded block."
+        }
+        Assert-CargoCommandGuardDamageRejected $damage.Label $damage.Text $cargoGuardContracts
+    }
+}
+Assert-Contains "Build script JNI linkage" $buildScript '$llvmNm "--defined-only" "--extern-only" $nativeReceiptBuiltLib'
+Assert-Contains "Build script JNI linkage" $buildScript 'nativeStartCameraHwbProjectionProbeWithFence'
+Assert-Contains "Build script JNI linkage" $buildScript 'nativeUpdateCameraHwbProjectionLayerFence'
+Assert-Contains "Build script JNI linkage" $buildScript 'must define exactly one $requiredSymbol symbol'
+$cameraProbePresentIndex = $cameraProbe.IndexOf('match swapchain_loader.queue_present(queue, &present_info)')
+$cameraProbePresentedHookIndex = $cameraProbe.IndexOf('record_presented_frame(', $cameraProbePresentIndex)
+if ($cameraProbePresentIndex -lt 0 -or $cameraProbePresentedHookIndex -le $cameraProbePresentIndex) {
+    throw "Camera projection freshness is not downstream of successful Vulkan queue_present return."
+}
+$cameraWsiEndIndex = $cameraWsi.IndexOf('.end_command_buffer(command_buffer)')
+$cameraWsiStageIndex = $cameraWsi.IndexOf('stage_camera_projection_command_buffer(', $cameraWsiEndIndex)
+if ($cameraWsiEndIndex -lt 0 -or $cameraWsiStageIndex -le $cameraWsiEndIndex) {
+    throw "Camera projection freshness staging is not bound to a completed command buffer."
+}
+$nativeReceiptRust = @(
+    Get-ChildItem -LiteralPath (Join-Path $repoRootPath "apps\spatial-camera-panel-android\native-receipt\src") -Filter "*.rs" -File |
+        ForEach-Object { [IO.File]::ReadAllText($_.FullName) }
+) -join "`n"
+foreach ($jniSymbol in @(
+    'Java_io_github_mesmerprism_rustyquest_spatial_1camera_1panel_SpatialCameraPanelActivity_nativeStartCameraHwbProjectionProbeWithFence',
+    'Java_io_github_mesmerprism_rustyquest_spatial_1camera_1panel_SpatialCameraPanelActivity_nativeUpdateCameraHwbProjectionLayerFence'
+)) {
+    if ([regex]::Matches($nativeReceiptRust, "pub extern `"system`" fn $([regex]::Escape($jniSymbol))\(").Count -ne 1) {
+        throw "Native receipt must define exactly one $jniSymbol export."
+    }
+}
 Assert-Contains "Camera HWB GPU timing" $cameraTiming "debug.rustyquest.spatial.camera_hwb_projection_probe.gpu_timestamps"
 Assert-Contains "Camera HWB GPU timing" $cameraTiming "cmd_reset_query_pool"
 Assert-Contains "Camera HWB GPU timing" $cameraTiming "cmd_write_timestamp"

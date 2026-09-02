@@ -875,7 +875,8 @@ $keytool = Join-Path $JavaHome "bin\keytool.exe"
 $java = Join-Path $JavaHome "bin\java.exe"
 $nativeReceiptLinker = Join-Path $NdkHome "toolchains\llvm\prebuilt\windows-x86_64\bin\aarch64-linux-android29-clang.cmd"
 $llvmReadelf = Join-Path $NdkHome "toolchains\llvm\prebuilt\windows-x86_64\bin\llvm-readelf.exe"
-foreach ($tool in @($sourceAapt2, $zipalign, $apksigner, $keytool, $java, $nativeReceiptLinker, $llvmReadelf)) {
+$llvmNm = Join-Path $NdkHome "toolchains\llvm\prebuilt\windows-x86_64\bin\llvm-nm.exe"
+foreach ($tool in @($sourceAapt2, $zipalign, $apksigner, $keytool, $java, $nativeReceiptLinker, $llvmReadelf, $llvmNm)) {
     if (-not (Test-Path -LiteralPath $tool -PathType Leaf)) {
         throw "Pinned Android build tool not found: $tool"
     }
@@ -1562,6 +1563,23 @@ try {
 $nativeStopwatch.Stop()
 if (-not (Test-Path -LiteralPath $nativeReceiptBuiltLib)) {
     throw "Cargo build did not produce native receipt library: $nativeReceiptBuiltLib"
+}
+$requiredCameraProjectionJniSymbols = @(
+    "Java_io_github_mesmerprism_rustyquest_spatial_1camera_1panel_SpatialCameraPanelActivity_nativeStartCameraHwbProjectionProbeWithFence",
+    "Java_io_github_mesmerprism_rustyquest_spatial_1camera_1panel_SpatialCameraPanelActivity_nativeUpdateCameraHwbProjectionLayerFence"
+)
+$nativeDefinedSymbolLines = @(& $llvmNm "--defined-only" "--extern-only" $nativeReceiptBuiltLib 2>&1)
+if ($LASTEXITCODE -ne 0) {
+    throw "Produced native receipt failed llvm-nm JNI symbol inspection."
+}
+foreach ($requiredSymbol in $requiredCameraProjectionJniSymbols) {
+    $matchingSymbols = @(
+        $nativeDefinedSymbolLines |
+            Where-Object { ([string]$_ -split '\s+')[-1] -ceq $requiredSymbol }
+    )
+    if ($matchingSymbols.Count -ne 1) {
+        throw "Produced native receipt must define exactly one $requiredSymbol symbol; observed $($matchingSymbols.Count)."
+    }
 }
 $nativeJniUpdated = Copy-FileIfChanged -Source $nativeReceiptBuiltLib -Destination $nativeReceiptJniLib
 $nativeReceiptSha256 = Get-FileSha256 -Path $nativeReceiptJniLib

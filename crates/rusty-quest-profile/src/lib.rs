@@ -15,6 +15,8 @@ const NATIVE_RENDERER_PROPERTY_MANIFEST_SCHEMA: &str =
     "rusty.quest.native_renderer_property_manifest.v2";
 const NATIVE_RENDERER_PROPERTY_MANIFEST_JSON: &str =
     include_str!("../../../fixtures/native-renderer/native-renderer-property-manifest.json");
+const NATIVE_RENDERER_POLAR_STATE_CONFIG_V1: &str =
+    "debug.rustyquest.native_renderer.breath_composition.polar_state.config.v1";
 const ENVIRONMENT_DEPTH_PROP_PREFIX: &str = "debug.rustyquest.native_renderer.environment_depth.";
 const ENVIRONMENT_DEPTH_MODE: &str = "debug.rustyquest.native_renderer.environment_depth.mode";
 const ENVIRONMENT_DEPTH_SOURCE: &str = "debug.rustyquest.native_renderer.environment_depth.source";
@@ -396,12 +398,63 @@ fn validate_native_renderer_profile_against_manifest(
             continue;
         }
         match manifest_by_name.get(property.name.as_str()) {
-            Some(entry) => validate_native_renderer_manifest_value(property, entry, errors),
+            Some(entry) => {
+                validate_native_renderer_manifest_value(property, entry, errors);
+                if property.name == NATIVE_RENDERER_POLAR_STATE_CONFIG_V1 {
+                    validate_polar_state_config_v1(property, errors);
+                }
+            }
             None => errors.push(ValidationError::new(format!(
                 "native renderer set property {} is missing from property manifest",
                 property.name
             ))),
         }
+    }
+}
+
+fn validate_polar_state_config_v1(property: &PropertyValue, errors: &mut Vec<ValidationError>) {
+    let fields = property.value.trim().split('|').collect::<Vec<_>>();
+    let invalid = || {
+        ValidationError::new(format!(
+            "{} must be v1|inhale|exhale|hold|smooth_ms|confirm_ms|dwell_ms|stale_ms|motion_mg|leave_contraction|leave_expansion|late_ms with bounded values",
+            property.name
+        ))
+    };
+    if fields.len() != 12 || fields[0] != "v1" {
+        errors.push(invalid());
+        return;
+    }
+    let finite = |index: usize, min: f64, max: f64| {
+        fields[index]
+            .parse::<f64>()
+            .ok()
+            .filter(|value| value.is_finite() && (min..=max).contains(value))
+    };
+    let integer = |index: usize, min: u64, max: u64| {
+        fields[index]
+            .parse::<u64>()
+            .ok()
+            .filter(|value| (min..=max).contains(value))
+    };
+    let inhale = finite(1, 0.000_001, 1_000.0);
+    let exhale = finite(2, 0.000_001, 1_000.0);
+    let hold = finite(3, 0.0, 999.999);
+    let valid = inhale.is_some()
+        && exhale.is_some()
+        && hold.is_some()
+        && hold.is_some_and(|value| {
+            value < inhale.unwrap_or_default() && value < exhale.unwrap_or_default()
+        })
+        && integer(4, 0, 10_000).is_some()
+        && integer(5, 1, 10_000).is_some()
+        && integer(6, 0, 10_000).is_some()
+        && integer(7, 1, 20_000).is_some()
+        && finite(8, 0.0, 1_000.0).is_some()
+        && finite(9, 0.000_001, 1_000.0).is_some()
+        && finite(10, 0.000_001, 1_000.0).is_some()
+        && integer(11, 0, 10_000).is_some();
+    if !valid {
+        errors.push(invalid());
     }
 }
 
@@ -1607,10 +1660,35 @@ fn validate_property_name(property: &str, label: &str, errors: &mut Vec<Validati
 #[cfg(test)]
 mod tests {
     use super::{
-        build_write_plan, validate_runtime_profile, PropertyValue, RuntimeProfile,
-        STIMULUS_VOLUME_PATTERN_FAMILY, STIMULUS_VOLUME_RAYMARCH_SAMPLES,
-        STIMULUS_VOLUME_RENDER_TARGET,
+        build_write_plan, validate_polar_state_config_v1, validate_runtime_profile, PropertyValue,
+        RuntimeProfile, NATIVE_RENDERER_POLAR_STATE_CONFIG_V1, STIMULUS_VOLUME_PATTERN_FAMILY,
+        STIMULUS_VOLUME_RAYMARCH_SAMPLES, STIMULUS_VOLUME_RENDER_TARGET,
     };
+
+    #[test]
+    fn polar_state_compact_profile_value_is_closed_and_damage_checked() {
+        let valid = PropertyValue {
+            name: NATIVE_RENDERER_POLAR_STATE_CONFIG_V1.to_owned(),
+            value: "v1|0.030|0.030|0.025|400|400|400|500|2.0|0.030|0.030|120".to_owned(),
+            source_setting_id: "native_renderer.breath_composition.polar_state.config.v1"
+                .to_owned(),
+        };
+        let mut errors = Vec::new();
+        validate_polar_state_config_v1(&valid, &mut errors);
+        assert!(errors.is_empty());
+        for value in [
+            "v2|0.030|0.030|0.025|400|400|400|500|2.0|0.030|0.030|120",
+            "v1|0.030|0.030|0.040|400|400|400|500|2.0|0.030|0.030|120",
+            "v1|NaN|0.030|0.025|400|400|400|500|2.0|0.030|0.030|120",
+            "v1|0.030|0.030|0.025|400|400|400|0|2.0|0.030|0.030|120",
+        ] {
+            let mut damaged = valid.clone();
+            damaged.value = value.to_owned();
+            let mut errors = Vec::new();
+            validate_polar_state_config_v1(&damaged, &mut errors);
+            assert_eq!(errors.len(), 1);
+        }
+    }
 
     fn valid_profile() -> RuntimeProfile {
         serde_json::from_str(include_str!(

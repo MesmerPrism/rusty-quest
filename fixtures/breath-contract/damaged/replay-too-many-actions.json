@@ -1,0 +1,11 @@
+{
+  "schema": "rusty.quest.breath_contract_replay.v1",
+  "fixture_id": "replay-too-many-actions",
+  "max_actions": 2,
+  "actions": [
+    { "kind": "reset", "at_micros": 0 },
+    { "kind": "reset", "at_micros": 1 },
+    { "kind": "reset", "at_micros": 2 }
+  ],
+  "expected_error": "action-limit-exceeded"
+}

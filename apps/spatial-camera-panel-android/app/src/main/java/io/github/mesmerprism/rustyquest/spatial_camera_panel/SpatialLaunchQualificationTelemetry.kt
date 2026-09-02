@@ -3,6 +3,31 @@ package io.github.mesmerprism.rustyquest.spatial_camera_panel
 import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
 
+internal class SpatialLaunchQualificationNativeBoundary(
+    private val loadLibrary: () -> Unit,
+    private val resetQualification: () -> Unit,
+) {
+  private val monitor = Any()
+  @Volatile private var loaded = false
+
+  fun ensureLoadedAndReset() = synchronized(monitor) {
+    try {
+      if (!loaded) {
+        loadLibrary()
+        loaded = true
+      }
+      resetQualification()
+    } catch (failure: LinkageError) {
+      unavailable(failure)
+    } catch (failure: SecurityException) {
+      unavailable(failure)
+    }
+  }
+
+  private fun unavailable(failure: Throwable): Nothing =
+      throw IllegalStateException("debug_host_receipt_native_unavailable", failure)
+}
+
 /**
  * App-owned, in-process readback for a bounded launch qualification consumer.
  *
@@ -54,6 +79,11 @@ internal object SpatialLaunchQualificationTelemetry {
   private const val MAX_SNAPSHOT_ATTEMPTS = 4
 
   private val monitor = Any()
+  private val nativeBoundary =
+      SpatialLaunchQualificationNativeBoundary(
+          loadLibrary = { System.loadLibrary(NATIVE_RECEIPT_LIBRARY) },
+          resetQualification = { nativeResetQualification() },
+      )
   private var armed = false
   private data class SettingsSnapshot(
       val source: String,
@@ -66,7 +96,7 @@ internal object SpatialLaunchQualificationTelemetry {
   fun arm() {
     synchronized(monitor) {
       armed = false
-      nativeResetQualification()
+      nativeBoundary.ensureLoadedAndReset()
       armed = true
     }
   }

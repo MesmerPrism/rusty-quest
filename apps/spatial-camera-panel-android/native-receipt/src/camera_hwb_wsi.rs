@@ -1,6 +1,7 @@
 use std::collections::HashSet;
 use std::ffi::{CStr, CString};
 use std::mem;
+use std::sync::Mutex;
 use std::time::Instant;
 
 use ash::vk;
@@ -13,6 +14,9 @@ use crate::ahardware_buffer_vulkan::{
 use crate::bool_token;
 use crate::camera_hwb_marker::log_camera_hwb_marker as log_marker;
 use crate::camera_hwb_probe::CameraHwbProbeMode;
+use crate::camera_hwb_projection_freshness_runtime::{
+    stage_camera_projection_command_buffer, CameraProjectionFrameIdentity,
+};
 use crate::camera_hwb_projection_target::{
     camera_hwb_projection_eye_push, camera_hwb_projection_marker_fields,
     camera_hwb_projection_zone_frame, CameraHwbProjectionEyePush,
@@ -185,6 +189,49 @@ struct CameraHwbCachedImport {
     image: AhbVulkanSampledImage,
 }
 
+static CAMERA_HWB_WSI_IMPORT_IDENTITIES: Mutex<[Option<CameraProjectionFrameIdentity>; 2]> =
+    Mutex::new([None, None]);
+
+fn publish_camera_hwb_wsi_import_identity(stream_generation: u64, frame: &CameraProbeFrame) {
+    let side = match frame.side_label {
+        "left" => 0,
+        "right" => 1,
+        _ => return,
+    };
+    if let Ok(mut identities) = CAMERA_HWB_WSI_IMPORT_IDENTITIES.lock() {
+        identities[side] = Some(CameraProjectionFrameIdentity {
+            stream_generation,
+            frame_index: frame.frame_index,
+            hwb_import_sequence: frame.hwb_import_sequence,
+            timestamp_ns: frame.timestamp_ns,
+            hardware_buffer_id: frame.descriptor.hardware_buffer_id,
+        });
+    }
+}
+
+fn exact_camera_hwb_wsi_import_identities(
+    left_frame_index: u64,
+    right_frame_index: u64,
+    left_timestamp_ns: i64,
+    right_timestamp_ns: i64,
+) -> Result<[CameraProjectionFrameIdentity; 2], &'static str> {
+    let identities = CAMERA_HWB_WSI_IMPORT_IDENTITIES
+        .lock()
+        .map_err(|_| "camera-hwb-wsi-import-identity-lock-unavailable")?;
+    let left = identities[0].ok_or("left-camera-hwb-wsi-import-identity-unavailable")?;
+    let right = identities[1].ok_or("right-camera-hwb-wsi-import-identity-unavailable")?;
+    if left.frame_index != left_frame_index
+        || right.frame_index != right_frame_index
+        || left.timestamp_ns != left_timestamp_ns
+        || right.timestamp_ns != right_timestamp_ns
+        || left.stream_generation == 0
+        || left.stream_generation != right.stream_generation
+    {
+        return Err("camera-hwb-wsi-import-identity-mismatch");
+    }
+    Ok([left, right])
+}
+
 pub(crate) struct CameraHwbImportCache {
     stream_generation: u64,
     side_label: &'static str,
@@ -202,6 +249,7 @@ impl CameraHwbImportCache {
         initial_frame: &CameraProbeFrame,
         inactive_limit: usize,
     ) -> Self {
+        publish_camera_hwb_wsi_import_identity(stream_generation, initial_frame);
         Self {
             stream_generation,
             side_label: initial_frame.side_label,
@@ -253,10 +301,11 @@ impl CameraHwbImportCache {
                 let cached = self.entries.remove(index);
                 stats.record_hit();
                 stats.record_cache_state(self.entries.len());
+                publish_camera_hwb_wsi_import_identity(self.stream_generation, frame);
                 return Ok(cached.image);
             }
         }
-        import_replacement_camera_frame_uncached(
+        let image = import_replacement_camera_frame_uncached(
             device,
             memory_properties,
             ahb_device,
@@ -264,7 +313,9 @@ impl CameraHwbImportCache {
             expected_format_key,
             frame,
             stats,
-        )
+        )?;
+        publish_camera_hwb_wsi_import_identity(self.stream_generation, frame);
+        Ok(image)
     }
 
     pub(crate) unsafe fn retire(
@@ -878,7 +929,7 @@ pub(crate) unsafe fn record_camera_hwb_probe_command_buffer(
             command_buffer,
             descriptor_set,
             camera_replay_boottime_ns,
-            camera_replay_metadata,
+            camera_replay_metadata.clone(),
         );
     }
     let opaque_camera_only = latency_settings.enabled
@@ -1123,6 +1174,26 @@ pub(crate) unsafe fn record_camera_hwb_probe_command_buffer(
     device
         .end_command_buffer(command_buffer)
         .map_err(|error| format!("end-command-buffer-{error:?}"))?;
+    let frame_identities = exact_camera_hwb_wsi_import_identities(
+        camera_replay_metadata.left_frame_index,
+        camera_replay_metadata.right_frame_index,
+        camera_replay_metadata.left_timestamp_ns,
+        camera_replay_metadata.right_timestamp_ns,
+    );
+    let _ = stage_camera_projection_command_buffer(
+        frame_id,
+        if sampled_right_image.is_some() {
+            CameraHwbProbeMode::RawColorProjection
+        } else {
+            CameraHwbProbeMode::LumaChecker
+        },
+        camera_projection_visible,
+        camera_replay_metadata.left_frame_index,
+        camera_replay_metadata.right_frame_index,
+        camera_replay_metadata.left_timestamp_ns,
+        camera_replay_metadata.right_timestamp_ns,
+        frame_identities,
+    );
     Ok(CameraHwbRecordResult {
         projected_by_public_stack,
         camera_projection_visible,

@@ -1,5 +1,6 @@
 package io.github.mesmerprism.rustyquest.spatial_camera_panel
 
+import com.google.gson.JsonParser
 import java.io.File
 import java.nio.file.Files
 import org.junit.Assert.assertEquals
@@ -81,6 +82,37 @@ class DebugHostReceiptStoreTest {
     assertFalse(receipt.contains("content://"))
     assertFalse(receipt.contains("/private/"))
     assertNotEquals("0".repeat(64), receiptHash)
+  }
+
+  @Test
+  fun receiptHashChainCommitsEveryRootIdentityField() {
+    val damageCases =
+        listOf<Pair<String, Any>>(
+            "nonce_hash" to "b".repeat(64),
+            "application_id" to "io.github.mesmerprism.tampered",
+            "apk_sha256" to "e".repeat(64),
+            "version_code" to 2L,
+            "version_name" to "0.2.0",
+            "variant" to "release",
+            "pid" to 4321,
+            "epoch" to "d".repeat(32),
+        )
+    damageCases.forEach { (field, value) ->
+      val root = temporaryRoot()
+      val store = DebugHostReceiptStore(root)
+      store.arm(nonce, epoch)
+      val receiptHash = store.finalizeReceipt(nonce, identity(epoch), facts())
+      val receiptFile = File(root, "receipt.v1.json")
+      val receipt = JsonParser.parseString(receiptFile.readText()).asJsonObject
+      when (value) {
+        is String -> receipt.addProperty(field, value)
+        is Long -> receipt.addProperty(field, value)
+        is Int -> receipt.addProperty(field, value)
+        else -> throw AssertionError("unsupported damage value")
+      }
+      receiptFile.writeText(receipt.toString())
+      assertThrows(IllegalArgumentException::class.java) { store.read(receiptHash) }
+    }
   }
 
   private fun identity(epoch: String) =

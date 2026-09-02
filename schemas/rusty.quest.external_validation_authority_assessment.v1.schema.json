@@ -191,7 +191,9 @@
     "decision": {
       "enum": [
         "unprotected",
-        "approved-change-set"
+        "approved-change-set",
+        "protected-without-base-approval",
+        "external-owner-authorization"
       ]
     },
     "approval_id": {

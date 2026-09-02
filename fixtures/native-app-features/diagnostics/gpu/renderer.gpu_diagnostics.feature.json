@@ -1,0 +1,64 @@
+{
+  "schema": "rusty.quest.native_app_feature.v1",
+  "feature_id": "renderer.gpu_diagnostics",
+  "module_path": "diagnostics/gpu",
+  "module_kind": "gpu-diagnostics-build-policy",
+  "settings_surface": {
+    "authority": "rusty.quest.native_app_settings.v1",
+    "adapter": "runtime_profile"
+  },
+  "owner_lane": "rusty-quest",
+  "status": "public-substrate",
+  "description": "Closed build-time GPU timestamp diagnostics level for the native OpenXR renderer.",
+  "provides": [
+    "renderer.gpu_diagnostics"
+  ],
+  "depends_on": [
+    "quest.native.openxr_vulkan_base"
+  ],
+  "incompatible_with": [],
+  "exclusive_groups": {},
+  "android_manifest": {
+    "permissions": [],
+    "uses_features": [],
+    "activities": [],
+    "services": [],
+    "queries": []
+  },
+  "runtime_profile": {
+    "set": {},
+    "clear_families": [],
+    "expected_render_modes": []
+  },
+  "build_inputs": {
+    "env": [
+      {
+        "name": "RUSTY_QUEST_NATIVE_RENDERER_GPU_DIAGNOSTICS_LEVEL"
+      }
+    ],
+    "assets": [],
+    "shaders": []
+  },
+  "markers": {
+    "required": [
+      "gpuDiagnosticsLevel=",
+      "gpuTimestampQuerySupported=",
+      "gpuTimestampQueryPoolAllocated=",
+      "gpuTimestampValidBits=",
+      "gpuTimestampPeriodNs=",
+      "gpuTimestampStageCount=25",
+      "gpuTimestampBudgetQueriesPerFrame=50",
+      "gpuTimestampBudgetFrameSlots=2",
+      "gpuTimestampBudgetPoolQueries=100",
+      "gpuTimestampAllocatedPoolQueries=",
+      "gpuTimingScope=vulkan-timestamp-query"
+    ],
+    "forbidden": []
+  },
+  "validation": {
+    "quick": [],
+    "standard": [],
+    "device": []
+  },
+  "public_private_boundary": "This feature owns only the generic timestamp diagnostic build level and generic marker contract; it does not select a private payload or expose private rendering semantics."
+}

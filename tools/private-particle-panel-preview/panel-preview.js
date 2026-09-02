@@ -1,6 +1,6 @@
 const curveChoices = [
   "Linear",
-  "AKD hump",
+  "Hump",
   "Smoothstep",
   "Reverse linear",
   "Hold low",
@@ -35,18 +35,18 @@ const parameterGroups = [
     title: "Size And Depth Wave",
     open: false,
     parameters: [
-      param("particle_size", "Particle Size", "Particle size envelope limits", 0.04, 0.115, 0, 0.2, 1, "AKD hump", "Use percent size", true),
-      param("depth_wave", "Depth Wave", "Depth wave percent limits", 0, 0.1, 0, 0.5, 0, "AKD hump"),
+      param("particle_size", "Particle Size", "Particle size envelope limits", 0.04, 0.115, 0, 0.2, 1, "Hump", "Use percent size", true),
+      param("depth_wave", "Depth Wave", "Depth wave percent limits", 0, 0.1, 0, 0.5, 0, "Hump"),
     ],
   },
   {
     title: "Spin And Orbit",
     open: false,
     parameters: [
-      param("spin_speed", "Spin Speed", "Spin speed limits", 0.1, 0.5, 0, 1, 0, "AKD hump", "Dual spin animation", true),
-      param("orbit_radius", "Orbit Radius", "Orbit radius multiplier limits", 0.2, 1.5, 0, 2, 1, "AKD hump"),
+      param("spin_speed", "Spin Speed", "Spin speed limits", 0.1, 0.5, 0, 1, 0, "Hump", "Dual spin animation", true),
+      param("orbit_radius", "Orbit Radius", "Orbit radius multiplier limits", 0.2, 1.5, 0, 2, 1, "Hump"),
       param("orbit_angle", "Orbit Angle", "Orbit angle limits", 0, 6.283185, 0, 6.283185, 1, "Linear"),
-      param("animation_phase", "Animation Phase", "Animation phase limits", 0, 1, 0, 1, 1, "AKD hump"),
+      param("animation_phase", "Animation Phase", "Animation phase limits", 0, 1, 0, 1, 1, "Hump"),
     ],
   },
 ];
@@ -228,7 +228,7 @@ function drawCurve(canvas, name) {
 }
 
 function curveValue(name, t) {
-  if (name === "AKD hump") return Math.sin(Math.PI * t);
+  if (name === "Hump") return Math.sin(Math.PI * t);
   if (name === "Smoothstep") return t * t * (3 - 2 * t);
   if (name === "Reverse linear") return 1 - t;
   if (name === "Hold low") return 0;
@@ -260,8 +260,8 @@ function exportJson() {
     return object;
   });
   return {
-    schema: "rusty.quest.native_renderer.private_particle_akd_config_panel.v1",
-    parameter_defaults_source: "akd-pe-oscillator-config",
+    schema: "rusty.quest.native_renderer.private_particle_config_panel.v1",
+    parameter_defaults_source: "private-particle-oscillator-config",
     driver_mode_default: "Oscillator",
     curve_choices: curveChoices,
     driver_mode_choices: driverModes,
@@ -341,7 +341,7 @@ function driverModeLabel(mode) {
 }
 
 function curveCode(curve) {
-  if (curve === "AKD hump") return 1;
+  if (curve === "Hump") return 1;
   if (curve === "Smoothstep") return 2;
   if (curve === "Reverse linear") return 3;
   if (curve === "Hold low") return 4;
@@ -350,7 +350,7 @@ function curveCode(curve) {
 }
 
 function curveLabel(curve) {
-  if (curve === "AKD hump") return "akd-hump";
+  if (curve === "Hump") return "hump";
   if (curve === "Reverse linear") return "reverse-linear";
   if (curve === "Hold low") return "hold-low";
   if (curve === "Hold high") return "hold-high";

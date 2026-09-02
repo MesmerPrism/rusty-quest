@@ -128,5 +128,26 @@
     "standard": [],
     "device": []
   },
+  "panel_composition": {
+    "schema": "rusty.quest.native_renderer.panel_composition.v1",
+    "selected_module_id": "stimulus-volume",
+    "denied_module_ids": [
+      "driver-profile-controls",
+      "lsl-controls",
+      "polar-controls",
+      "private-particle-controls",
+      "breath-composition-controls"
+    ],
+    "modules": [
+      {
+        "module_id": "stimulus-volume",
+        "entry_class": "io.github.mesmerprism.rustyquest.native_renderer.StimulusVolumePanelModule",
+        "dependencies": [],
+        "source_files": [
+          "apps/native-renderer-android/panel-modules/stimulus-volume/src/main/java/io/github/mesmerprism/rustyquest/native_renderer/StimulusVolumePanelModule.java"
+        ]
+      }
+    ]
+  },
   "public_private_boundary": "Stimulus-volume route remains public only after safety and runtime-profile gates are selected explicitly."
 }

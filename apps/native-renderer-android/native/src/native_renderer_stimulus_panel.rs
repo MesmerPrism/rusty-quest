@@ -29,6 +29,7 @@ use crate::{
         PROP_STIMULUS_VOLUME_RAYMARCH_SAMPLES, PROP_STIMULUS_VOLUME_RENDER_TARGET,
         PROP_STIMULUS_VOLUME_SAFETY_ACK,
     },
+    native_renderer_private_particle_material_request::PrivateParticleMaterialPreset,
     native_renderer_stimulus_volume_options::{
         NativeStimulusVolumeCompositionMode, NativeStimulusVolumeSettings,
         NativeStimulusVolumeStartupDynamics,
@@ -62,16 +63,143 @@ pub(crate) const QUESTIONNAIRE_RESULT_STATUS_SCHEMA: &str =
 pub(crate) const QUESTIONNAIRE_SESSION_ROOT: &str = "files/sessions";
 pub(crate) const QUESTIONNAIRE_RESULT_FILE: &str = "questionnaire_results.jsonl";
 pub(crate) const PRIVATE_PARTICLE_DYNAMICS_DRIVER_COUNT: usize = 8;
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct PrivateParticlePanelUpdateMask {
+    pub(crate) full_snapshot: bool,
+    pub(crate) visual_scale: bool,
+    pub(crate) particle_size_override_enabled: bool,
+    pub(crate) particle_size_mode: bool,
+    pub(crate) particle_size_world_meters: bool,
+    pub(crate) particle_size_sphere_percent: bool,
+    pub(crate) particle_size_oscillation_percent: bool,
+    pub(crate) world_anchor_scale_m: bool,
+    pub(crate) driver_values01: [bool; PRIVATE_PARTICLE_DYNAMICS_DRIVER_COUNT],
+    pub(crate) driver_controls: [bool; PRIVATE_PARTICLE_DYNAMICS_DRIVER_COUNT],
+    pub(crate) tracer_draw_slots_per_oscillator: bool,
+    pub(crate) tracer_lifetime_seconds: bool,
+    pub(crate) tracer_copies_per_second: bool,
+    pub(crate) transparency_opacity: bool,
+    pub(crate) transparency_output_alpha_scale: bool,
+    pub(crate) transparency_depth_suppression_strength: bool,
+    pub(crate) transparency_rgb_alpha_coupling: bool,
+    pub(crate) color_facing_attenuation_strength: bool,
+    pub(crate) material: bool,
+    pub(crate) polar_rr_orbit_boost: bool,
+}
+
+impl PrivateParticlePanelUpdateMask {
+    pub(crate) const fn empty() -> Self {
+        Self {
+            full_snapshot: false,
+            visual_scale: false,
+            particle_size_override_enabled: false,
+            particle_size_mode: false,
+            particle_size_world_meters: false,
+            particle_size_sphere_percent: false,
+            particle_size_oscillation_percent: false,
+            world_anchor_scale_m: false,
+            driver_values01: [false; PRIVATE_PARTICLE_DYNAMICS_DRIVER_COUNT],
+            driver_controls: [false; PRIVATE_PARTICLE_DYNAMICS_DRIVER_COUNT],
+            tracer_draw_slots_per_oscillator: false,
+            tracer_lifetime_seconds: false,
+            tracer_copies_per_second: false,
+            transparency_opacity: false,
+            transparency_output_alpha_scale: false,
+            transparency_depth_suppression_strength: false,
+            transparency_rgb_alpha_coupling: false,
+            color_facing_attenuation_strength: false,
+            material: false,
+            polar_rr_orbit_boost: false,
+        }
+    }
+
+    pub(crate) const fn full_snapshot() -> Self {
+        Self {
+            full_snapshot: true,
+            visual_scale: true,
+            particle_size_override_enabled: true,
+            particle_size_mode: true,
+            particle_size_world_meters: true,
+            particle_size_sphere_percent: true,
+            particle_size_oscillation_percent: true,
+            world_anchor_scale_m: true,
+            driver_values01: [true; PRIVATE_PARTICLE_DYNAMICS_DRIVER_COUNT],
+            driver_controls: [true; PRIVATE_PARTICLE_DYNAMICS_DRIVER_COUNT],
+            tracer_draw_slots_per_oscillator: true,
+            tracer_lifetime_seconds: true,
+            tracer_copies_per_second: true,
+            transparency_opacity: true,
+            transparency_output_alpha_scale: true,
+            transparency_depth_suppression_strength: true,
+            transparency_rgb_alpha_coupling: true,
+            color_facing_attenuation_strength: true,
+            material: true,
+            polar_rr_orbit_boost: true,
+        }
+    }
+
+    pub(crate) fn any(self) -> bool {
+        self.visual_scale
+            || self.particle_size_override_enabled
+            || self.particle_size_mode
+            || self.particle_size_world_meters
+            || self.particle_size_sphere_percent
+            || self.particle_size_oscillation_percent
+            || self.world_anchor_scale_m
+            || self.driver_values01.iter().any(|selected| *selected)
+            || self.driver_controls.iter().any(|selected| *selected)
+            || self.tracer_draw_slots_per_oscillator
+            || self.tracer_lifetime_seconds
+            || self.tracer_copies_per_second
+            || self.transparency_opacity
+            || self.transparency_output_alpha_scale
+            || self.transparency_depth_suppression_strength
+            || self.transparency_rgb_alpha_coupling
+            || self.color_facing_attenuation_strength
+            || self.material
+            || self.polar_rr_orbit_boost
+    }
+
+    pub(crate) fn merge(&mut self, newer: Self) {
+        self.full_snapshot |= newer.full_snapshot;
+        self.visual_scale |= newer.visual_scale;
+        self.particle_size_override_enabled |= newer.particle_size_override_enabled;
+        self.particle_size_mode |= newer.particle_size_mode;
+        self.particle_size_world_meters |= newer.particle_size_world_meters;
+        self.particle_size_sphere_percent |= newer.particle_size_sphere_percent;
+        self.particle_size_oscillation_percent |= newer.particle_size_oscillation_percent;
+        self.world_anchor_scale_m |= newer.world_anchor_scale_m;
+        for index in 0..PRIVATE_PARTICLE_DYNAMICS_DRIVER_COUNT {
+            self.driver_values01[index] |= newer.driver_values01[index];
+            self.driver_controls[index] |= newer.driver_controls[index];
+        }
+        self.tracer_draw_slots_per_oscillator |= newer.tracer_draw_slots_per_oscillator;
+        self.tracer_lifetime_seconds |= newer.tracer_lifetime_seconds;
+        self.tracer_copies_per_second |= newer.tracer_copies_per_second;
+        self.transparency_opacity |= newer.transparency_opacity;
+        self.transparency_output_alpha_scale |= newer.transparency_output_alpha_scale;
+        self.transparency_depth_suppression_strength |=
+            newer.transparency_depth_suppression_strength;
+        self.transparency_rgb_alpha_coupling |= newer.transparency_rgb_alpha_coupling;
+        self.color_facing_attenuation_strength |= newer.color_facing_attenuation_strength;
+        self.material |= newer.material;
+        self.polar_rr_orbit_boost |= newer.polar_rr_orbit_boost;
+    }
+}
 const PRIVATE_PARTICLE_DRIVER_CONTROL_OSCILLATOR: u32 = 0;
 const PRIVATE_PARTICLE_DRIVER_CONTROL_MANUAL: u32 = 1;
 const PRIVATE_PARTICLE_DRIVER_CONTROL_INPUT_SLOT: u32 = 2;
 const PRIVATE_PARTICLE_DRIVER_CONTROL_DIRECT: u32 = 3;
 const PRIVATE_PARTICLE_CURVE_LINEAR: u32 = 0;
-const PRIVATE_PARTICLE_CURVE_AKD_HUMP: u32 = 1;
+const PRIVATE_PARTICLE_CURVE_HUMP: u32 = 1;
 const PRIVATE_PARTICLE_CURVE_SMOOTHSTEP: u32 = 2;
 const PRIVATE_PARTICLE_CURVE_REVERSE_LINEAR: u32 = 3;
 const PRIVATE_PARTICLE_CURVE_HOLD_LOW: u32 = 4;
 const PRIVATE_PARTICLE_CURVE_HOLD_HIGH: u32 = 5;
+const PRIVATE_PARTICLE_SIZE_MODE_LEGACY: u32 = 0;
+const PRIVATE_PARTICLE_SIZE_MODE_SPHERE_PERCENT: u32 = 1;
+const PRIVATE_PARTICLE_SIZE_MODE_WORLD_METERS: u32 = 2;
 
 #[derive(Clone, Debug)]
 pub(crate) struct StimulusPanelCandidate {
@@ -97,7 +225,13 @@ pub(crate) struct EnvironmentDepthAlignmentPanelCandidate {
 #[derive(Clone, Debug)]
 pub(crate) struct PrivateParticleDynamicsPanelCandidate {
     pub(crate) revision: i64,
+    pub(crate) update_mask: PrivateParticlePanelUpdateMask,
     pub(crate) visual_scale: f32,
+    pub(crate) particle_size_override_enabled: bool,
+    pub(crate) particle_size_mode: u32,
+    pub(crate) particle_size_world_meters: f32,
+    pub(crate) particle_size_sphere_percent: f32,
+    pub(crate) particle_size_oscillation_percent: f32,
     pub(crate) world_anchor_scale_m: f32,
     pub(crate) driver_values01: [f32; PRIVATE_PARTICLE_DYNAMICS_DRIVER_COUNT],
     pub(crate) driver_control_modes: [u32; PRIVATE_PARTICLE_DYNAMICS_DRIVER_COUNT],
@@ -114,6 +248,9 @@ pub(crate) struct PrivateParticleDynamicsPanelCandidate {
     pub(crate) transparency_depth_suppression_strength: f32,
     pub(crate) transparency_rgb_alpha_coupling: f32,
     pub(crate) color_facing_attenuation_strength: f32,
+    pub(crate) material_preset: Option<PrivateParticleMaterialPreset>,
+    pub(crate) material_override_enabled: bool,
+    pub(crate) polar_rr_orbit_boost_enabled: bool,
 }
 
 #[cfg(target_os = "android")]
@@ -125,10 +262,20 @@ pub(crate) struct PrivateParticleDynamicsPanelAppliedState {
 }
 
 impl PrivateParticleDynamicsPanelCandidate {
+    pub(crate) fn updates_world_anchor_scale(&self) -> bool {
+        self.update_mask.world_anchor_scale_m
+    }
+
     #[cfg(target_os = "android")]
     pub(crate) fn panel_settings(&self) -> GpuPrivateParticlePanelSettings {
         GpuPrivateParticlePanelSettings {
+            update_mask: self.update_mask,
             visual_scale: self.visual_scale,
+            particle_size_override_enabled: self.particle_size_override_enabled,
+            particle_size_mode: self.particle_size_mode,
+            particle_size_world_meters: self.particle_size_world_meters,
+            particle_size_sphere_percent: self.particle_size_sphere_percent,
+            particle_size_oscillation_percent: self.particle_size_oscillation_percent,
             driver_values01: self.driver_values01,
             driver_control_modes: self.driver_control_modes,
             driver_control_source_slots: self.driver_control_source_slots,
@@ -144,6 +291,9 @@ impl PrivateParticleDynamicsPanelCandidate {
             transparency_depth_suppression_strength: self.transparency_depth_suppression_strength,
             transparency_rgb_alpha_coupling: self.transparency_rgb_alpha_coupling,
             color_facing_attenuation_strength: self.color_facing_attenuation_strength,
+            material_preset: self.material_preset,
+            material_override_enabled: self.material_override_enabled,
+            polar_rr_orbit_boost_enabled: self.polar_rr_orbit_boost_enabled,
         }
     }
 }
@@ -371,9 +521,10 @@ fn queue_live_private_particle_dynamics(text: &str) -> Result<LiveQueueOutcome, 
     crate::marker(
         "private-particle-panel",
         format!(
-            "status=live-queued transport=jni-live-queue schema={} candidateRevision={} privateParticleVisualScale={:.3} privateParticleWorldAnchorScaleM={:.3} privateParticleDriver0Value01={:.3} privateParticleDriver1Value01={:.3} privateParticleTracerDrawSlotsPerOscillator={} privateParticleTracerLifetimeSeconds={:.3} privateParticleTracerCopiesPerSecond={:.3} privateParticleTransparencyOpacity={:.3} privateParticleTransparencyOutputAlphaScale={:.3} privateParticleTransparencyDepthSuppressionStrength={:.3} privateParticleTransparencyRgbAlphaCoupling={:.3} privateParticleColorFacingAttenuationStrength={:.3} overwrotePendingDynamics={}",
+            "status=live-queued transport=jni-live-queue schema={} candidateRevision={} privateParticleUpdateMode={} privateParticleVisualScale={:.3} privateParticleWorldAnchorScaleM={:.3} privateParticleDriver0Value01={:.3} privateParticleDriver1Value01={:.3} privateParticleTracerDrawSlotsPerOscillator={} privateParticleTracerLifetimeSeconds={:.3} privateParticleTracerCopiesPerSecond={:.3} privateParticleTransparencyOpacity={:.3} privateParticleTransparencyOutputAlphaScale={:.3} privateParticleTransparencyDepthSuppressionStrength={:.3} privateParticleTransparencyRgbAlphaCoupling={:.3} privateParticleColorFacingAttenuationStrength={:.3} overwrotePendingDynamics={}",
             PRIVATE_PARTICLE_DYNAMICS_SCHEMA,
             revision,
+            if candidate.update_mask.full_snapshot { "full-snapshot" } else { "field-patch" },
             candidate.visual_scale,
             candidate.world_anchor_scale_m,
             candidate.driver_values01[0],
@@ -1415,6 +1566,12 @@ pub(crate) fn parse_private_particle_dynamics_json(
         .and_then(Value::as_i64)
         .unwrap_or(0)
         .max(0);
+    let field_patch = match value.get("update_mode") {
+        None => false,
+        Some(Value::String(mode)) if mode == "field-patch" => true,
+        Some(Value::String(mode)) => return Err(format!("unsupported_update_mode:{mode}")),
+        Some(_) => return Err("update_mode_must_be_string".to_string()),
+    };
     let private_particles = object_value_at(&value, &["private_particles"])?;
     let apply = value.get("apply").and_then(Value::as_object);
     if let Some(mode) = apply
@@ -1427,23 +1584,120 @@ pub(crate) fn parse_private_particle_dynamics_json(
         }
     }
 
+    if field_patch {
+        const ALLOWED: [&str; 9] = [
+            "visual_scale",
+            "size",
+            "world_anchor_scale_m",
+            "driver_values01",
+            "driver_controls",
+            "tracer",
+            "transparency",
+            "color",
+            "material",
+        ];
+        const HEARTBEAT: &str = "heartbeat_pulse";
+        if let Some(key) = private_particles.as_object().and_then(|object| {
+            object
+                .keys()
+                .find(|key| !ALLOWED.contains(&key.as_str()) && key.as_str() != HEARTBEAT)
+        }) {
+            return Err(format!("unsupported_private_particle_patch_field:{key}"));
+        }
+    }
+
+    let mut update_mask = if field_patch {
+        PrivateParticlePanelUpdateMask::empty()
+    } else {
+        PrivateParticlePanelUpdateMask::full_snapshot()
+    };
     let visual_scale = bounded_number_at(private_particles, "visual_scale", 0.7, 0.05, 1.0)? as f32;
+    if field_patch && private_particles.get("visual_scale").is_some() {
+        update_mask.visual_scale = true;
+    }
+    let particle_size = private_particle_size_config(private_particles)?;
+    if field_patch {
+        if let Some(size) = private_particles.get("size").and_then(Value::as_object) {
+            update_mask.particle_size_override_enabled = size.contains_key("enabled");
+            update_mask.particle_size_mode = size.contains_key("mode");
+            update_mask.particle_size_world_meters = size.contains_key("world_meters");
+            update_mask.particle_size_sphere_percent = size.contains_key("sphere_radius_percent");
+            update_mask.particle_size_oscillation_percent =
+                size.contains_key("oscillation_percent");
+        }
+    }
     let world_anchor_scale_m =
         bounded_number_at(private_particles, "world_anchor_scale_m", 0.46, 0.05, 4.0)? as f32;
-    let driver_values01 = bounded_number_array_at::<{ PRIVATE_PARTICLE_DYNAMICS_DRIVER_COUNT }>(
-        private_particles,
-        "driver_values01",
-        0.0,
-        1.0,
-    )?;
+    if field_patch && private_particles.get("world_anchor_scale_m").is_some() {
+        update_mask.world_anchor_scale_m = true;
+    }
+    let driver_values01 = if field_patch {
+        private_particle_driver_values_patch(private_particles, &mut update_mask)?
+    } else {
+        bounded_number_array_at::<{ PRIVATE_PARTICLE_DYNAMICS_DRIVER_COUNT }>(
+            private_particles,
+            "driver_values01",
+            0.0,
+            1.0,
+        )?
+    };
     let driver_controls = private_particle_driver_controls(private_particles)?;
-    let tracer = object_value_at(private_particles, &["tracer"])?;
-    let tracer_draw_slots_per_oscillator =
-        bounded_u32_at(tracer, "draw_slots_per_oscillator", 7, 0, 1024)?;
-    let tracer_lifetime_seconds =
-        bounded_number_at(tracer, "lifetime_seconds", 0.5, 0.016, 30.0)? as f32;
-    let tracer_copies_per_second =
-        bounded_number_at(tracer, "copies_per_second", 14.0, 0.0, 120.0)? as f32;
+    if field_patch {
+        if let Some(controls) = private_particles
+            .get("driver_controls")
+            .and_then(Value::as_array)
+        {
+            for (fallback_index, control) in controls.iter().enumerate() {
+                let target_slot = bounded_u32_at(
+                    control,
+                    "target_slot",
+                    fallback_index as u32,
+                    0,
+                    (PRIVATE_PARTICLE_DYNAMICS_DRIVER_COUNT - 1) as u32,
+                )? as usize;
+                update_mask.driver_controls[target_slot] = true;
+            }
+        }
+    }
+    let tracer = if field_patch {
+        private_particles.get("tracer").unwrap_or(&Value::Null)
+    } else {
+        object_value_at(private_particles, &["tracer"])?
+    };
+    if field_patch && !tracer.is_null() && !tracer.is_object() {
+        return Err("tracer_must_be_object".to_string());
+    }
+    let tracer_draw_slots_per_oscillator = if tracer.is_null() {
+        7
+    } else {
+        bounded_u32_at(tracer, "draw_slots_per_oscillator", 7, 0, 1024)?
+    };
+    let tracer_lifetime_seconds = if tracer.is_null() {
+        0.5
+    } else {
+        bounded_number_at(tracer, "lifetime_seconds", 0.5, 0.016, 30.0)? as f32
+    };
+    let tracer_copies_per_second = if tracer.is_null() {
+        14.0
+    } else {
+        bounded_number_at(tracer, "copies_per_second", 14.0, 0.0, 120.0)? as f32
+    };
+    if field_patch {
+        if let Some(tracer) = tracer.as_object() {
+            const ALLOWED: [&str; 3] = [
+                "draw_slots_per_oscillator",
+                "lifetime_seconds",
+                "copies_per_second",
+            ];
+            if let Some(key) = tracer.keys().find(|key| !ALLOWED.contains(&key.as_str())) {
+                return Err(format!("unsupported_tracer_patch_field:{key}"));
+            }
+            update_mask.tracer_draw_slots_per_oscillator =
+                tracer.contains_key("draw_slots_per_oscillator");
+            update_mask.tracer_lifetime_seconds = tracer.contains_key("lifetime_seconds");
+            update_mask.tracer_copies_per_second = tracer.contains_key("copies_per_second");
+        }
+    }
     let transparency = private_particles
         .get("transparency")
         .filter(|value| value.is_object())
@@ -1455,16 +1709,73 @@ pub(crate) fn parse_private_particle_dynamics_json(
         bounded_number_at(transparency, "depth_suppression_strength", 0.0, 0.0, 8.0)? as f32;
     let transparency_rgb_alpha_coupling =
         bounded_number_at(transparency, "rgb_alpha_coupling", 1.0, 0.0, 1.0)? as f32;
+    if field_patch {
+        if let Some(transparency) = private_particles
+            .get("transparency")
+            .and_then(Value::as_object)
+        {
+            const ALLOWED: [&str; 4] = [
+                "opacity",
+                "output_alpha_scale",
+                "depth_suppression_strength",
+                "rgb_alpha_coupling",
+            ];
+            if let Some(key) = transparency
+                .keys()
+                .find(|key| !ALLOWED.contains(&key.as_str()))
+            {
+                return Err(format!("unsupported_transparency_patch_field:{key}"));
+            }
+            update_mask.transparency_opacity = transparency.contains_key("opacity");
+            update_mask.transparency_output_alpha_scale =
+                transparency.contains_key("output_alpha_scale");
+            update_mask.transparency_depth_suppression_strength =
+                transparency.contains_key("depth_suppression_strength");
+            update_mask.transparency_rgb_alpha_coupling =
+                transparency.contains_key("rgb_alpha_coupling");
+        } else if private_particles.get("transparency").is_some() {
+            return Err("transparency_must_be_object".to_string());
+        }
+    }
     let color = private_particles
         .get("color")
         .filter(|value| value.is_object())
         .unwrap_or(private_particles);
     let color_facing_attenuation_strength =
         bounded_number_at(color, "facing_attenuation_strength", 0.0, 0.0, 1.0)? as f32;
+    if field_patch {
+        if let Some(color) = private_particles.get("color").and_then(Value::as_object) {
+            if color.len() > 1 || color.keys().any(|key| key != "facing_attenuation_strength") {
+                return Err("color_patch_must_contain_only_facing_attenuation_strength".to_string());
+            }
+            update_mask.color_facing_attenuation_strength =
+                color.contains_key("facing_attenuation_strength");
+        } else if private_particles.get("color").is_some() {
+            return Err("color_must_be_object".to_string());
+        }
+    }
+    let (material_preset, material_override_enabled) =
+        private_particle_material_preset(private_particles)?;
+    if field_patch && private_particles.get("material").is_some() {
+        update_mask.material = true;
+    }
+    let polar_rr_orbit_boost_enabled = private_particle_polar_rr_orbit_boost(private_particles)?;
+    if field_patch && private_particles.get("heartbeat_pulse").is_some() {
+        update_mask.polar_rr_orbit_boost = true;
+    }
+    if field_patch && !update_mask.any() {
+        return Err("empty_private_particle_field_patch".to_string());
+    }
 
     Ok(PrivateParticleDynamicsPanelCandidate {
         revision,
+        update_mask,
         visual_scale,
+        particle_size_override_enabled: particle_size.0,
+        particle_size_mode: particle_size.1,
+        particle_size_world_meters: particle_size.2,
+        particle_size_sphere_percent: particle_size.3,
+        particle_size_oscillation_percent: particle_size.4,
         world_anchor_scale_m,
         driver_values01,
         driver_control_modes: driver_controls.0,
@@ -1481,7 +1792,156 @@ pub(crate) fn parse_private_particle_dynamics_json(
         transparency_depth_suppression_strength,
         transparency_rgb_alpha_coupling,
         color_facing_attenuation_strength,
+        material_preset,
+        material_override_enabled,
+        polar_rr_orbit_boost_enabled,
     })
+}
+
+fn private_particle_driver_values_patch(
+    private_particles: &Value,
+    update_mask: &mut PrivateParticlePanelUpdateMask,
+) -> Result<[f32; PRIVATE_PARTICLE_DYNAMICS_DRIVER_COUNT], String> {
+    let mut values = [0.0_f32; PRIVATE_PARTICLE_DYNAMICS_DRIVER_COUNT];
+    let Some(candidate) = private_particles.get("driver_values01") else {
+        return Ok(values);
+    };
+    if candidate.is_array() {
+        values = bounded_number_array_at::<{ PRIVATE_PARTICLE_DYNAMICS_DRIVER_COUNT }>(
+            private_particles,
+            "driver_values01",
+            0.0,
+            1.0,
+        )?;
+        update_mask.driver_values01 = [true; PRIVATE_PARTICLE_DYNAMICS_DRIVER_COUNT];
+        return Ok(values);
+    }
+    let object = candidate
+        .as_object()
+        .ok_or_else(|| "driver_values01_patch_must_be_object_or_complete_array".to_string())?;
+    if object.is_empty() {
+        return Err("driver_values01_patch_must_not_be_empty".to_string());
+    }
+    for (key, value) in object {
+        let index = key
+            .parse::<usize>()
+            .map_err(|_| format!("driver_values01_patch_index_invalid:{key}"))?;
+        if index >= PRIVATE_PARTICLE_DYNAMICS_DRIVER_COUNT {
+            return Err(format!("driver_values01_patch_index_out_of_range:{index}"));
+        }
+        let number = value
+            .as_f64()
+            .filter(|number| number.is_finite() && (0.0..=1.0).contains(number))
+            .ok_or_else(|| format!("driver_values01_patch_value_out_of_range:{index}"))?;
+        values[index] = number as f32;
+        update_mask.driver_values01[index] = true;
+    }
+    Ok(values)
+}
+
+fn private_particle_size_config(
+    private_particles: &Value,
+) -> Result<(bool, u32, f32, f32, f32), String> {
+    let Some(size) = private_particles.get("size") else {
+        return Ok((false, PRIVATE_PARTICLE_SIZE_MODE_LEGACY, 0.05, 5.0, 0.0));
+    };
+    let size = size
+        .as_object()
+        .ok_or_else(|| "particle_size_must_be_object".to_string())?;
+    const ALLOWED: [&str; 5] = [
+        "enabled",
+        "mode",
+        "world_meters",
+        "sphere_radius_percent",
+        "oscillation_percent",
+    ];
+    if let Some(key) = size.keys().find(|key| !ALLOWED.contains(&key.as_str())) {
+        return Err(format!("unsupported_particle_size_field:{key}"));
+    }
+    let enabled = match size.get("enabled") {
+        Some(value) => value
+            .as_bool()
+            .ok_or_else(|| "particle_size_enabled_must_be_boolean".to_string())?,
+        None => false,
+    };
+    let mode_name = match size.get("mode") {
+        Some(value) => value
+            .as_str()
+            .ok_or_else(|| "particle_size_mode_must_be_string".to_string())?,
+        None => "legacy-payload-envelope",
+    };
+    let mode = match mode_name {
+        "legacy-payload-envelope" => PRIVATE_PARTICLE_SIZE_MODE_LEGACY,
+        "sphere-radius-percent" => PRIVATE_PARTICLE_SIZE_MODE_SPHERE_PERCENT,
+        "world-meters" => PRIVATE_PARTICLE_SIZE_MODE_WORLD_METERS,
+        _ => return Err(format!("unsupported_particle_size_mode:{mode_name}")),
+    };
+    if enabled && mode == PRIVATE_PARTICLE_SIZE_MODE_LEGACY {
+        return Err("particle_size_enabled_requires_explicit_mode".to_string());
+    }
+    let size_value = Value::Object(size.clone());
+    let world_meters = bounded_number_at(&size_value, "world_meters", 0.05, 0.001, 0.5)? as f32;
+    let sphere_radius_percent =
+        bounded_number_at(&size_value, "sphere_radius_percent", 5.0, 0.1, 50.0)? as f32;
+    let oscillation_percent =
+        bounded_number_at(&size_value, "oscillation_percent", 0.0, 0.0, 90.0)? as f32;
+    Ok((
+        enabled,
+        mode,
+        world_meters,
+        sphere_radius_percent,
+        oscillation_percent,
+    ))
+}
+
+fn private_particle_size_mode_name(mode: u32) -> &'static str {
+    match mode {
+        PRIVATE_PARTICLE_SIZE_MODE_SPHERE_PERCENT => "sphere-radius-percent",
+        PRIVATE_PARTICLE_SIZE_MODE_WORLD_METERS => "world-meters",
+        _ => "legacy-payload-envelope",
+    }
+}
+
+fn private_particle_material_preset(
+    private_particles: &Value,
+) -> Result<(Option<PrivateParticleMaterialPreset>, bool), String> {
+    let Some(material) = private_particles.get("material") else {
+        return Ok((None, false));
+    };
+    let material = material
+        .as_object()
+        .ok_or_else(|| "material_must_be_object".to_string())?;
+    if material.len() != 1 || !material.contains_key("preset") {
+        return Err("material_must_contain_only_preset".to_string());
+    }
+    let preset = material
+        .get("preset")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "material_preset_must_be_string".to_string())?;
+    if preset == "packaged-default" {
+        return Ok((None, true));
+    }
+    PrivateParticleMaterialPreset::parse_marker_name(preset)
+        .ok_or_else(|| format!("unsupported_material_preset:{preset}"))
+        .map(|preset| (Some(preset), true))
+}
+
+fn private_particle_polar_rr_orbit_boost(private_particles: &Value) -> Result<bool, String> {
+    let Some(heartbeat_pulse) = private_particles.get("heartbeat_pulse") else {
+        return Ok(false);
+    };
+    let heartbeat_pulse = heartbeat_pulse
+        .as_object()
+        .ok_or_else(|| "heartbeat_pulse_must_be_object".to_string())?;
+    if heartbeat_pulse.len() != 1 || !heartbeat_pulse.contains_key("mode") {
+        return Err("heartbeat_pulse_must_contain_only_mode".to_string());
+    }
+    match heartbeat_pulse.get("mode").and_then(Value::as_str) {
+        Some("disabled") => Ok(false),
+        Some("polar-rr-orbit-boost") => Ok(true),
+        Some(mode) => Err(format!("unsupported_heartbeat_pulse_mode:{mode}")),
+        None => Err("heartbeat_pulse_mode_must_be_string".to_string()),
+    }
 }
 
 pub(crate) fn parse_environment_depth_alignment_json(
@@ -1662,7 +2122,7 @@ fn private_particle_curve_code(control: &Value) -> Result<u32, String> {
         .unwrap_or_else(|| "linear".to_string());
     match curve.as_str() {
         "linear" => Ok(PRIVATE_PARTICLE_CURVE_LINEAR),
-        "akd hump" | "akd-hump" | "hump" => Ok(PRIVATE_PARTICLE_CURVE_AKD_HUMP),
+        "hump" => Ok(PRIVATE_PARTICLE_CURVE_HUMP),
         "smoothstep" => Ok(PRIVATE_PARTICLE_CURVE_SMOOTHSTEP),
         "reverse linear" | "reverse-linear" => Ok(PRIVATE_PARTICLE_CURVE_REVERSE_LINEAR),
         "hold low" | "hold-low" => Ok(PRIVATE_PARTICLE_CURVE_HOLD_LOW),
@@ -1721,7 +2181,7 @@ fn private_particle_driver_control_mode_label(mode: u32) -> &'static str {
 
 fn private_particle_curve_label(curve_code: u32) -> &'static str {
     match curve_code {
-        PRIVATE_PARTICLE_CURVE_AKD_HUMP => "akd-hump",
+        PRIVATE_PARTICLE_CURVE_HUMP => "hump",
         PRIVATE_PARTICLE_CURVE_SMOOTHSTEP => "smoothstep",
         PRIVATE_PARTICLE_CURVE_REVERSE_LINEAR => "reverse-linear",
         PRIVATE_PARTICLE_CURVE_HOLD_LOW => "hold-low",
@@ -2237,6 +2697,16 @@ pub(crate) fn write_private_particle_dynamics_status(
             json!({
                 "visual_scale": effective.settings.visual_scale,
                 "visual_parameter_source": "same-apk-panel-live",
+                "size": {
+                    "enabled": effective.settings.particle_size_override_enabled,
+                    "mode": private_particle_size_mode_name(effective.settings.particle_size_mode),
+                    "world_meters": effective.settings.particle_size_world_meters,
+                    "sphere_radius_percent": effective.settings.particle_size_sphere_percent,
+                    "oscillation_percent": effective.settings.particle_size_oscillation_percent,
+                    "derived_min": effective.settings.particle_size_min,
+                    "derived_max": effective.settings.particle_size_max,
+                    "parameter_source": effective.settings.particle_size_parameter_source
+                },
                 "world_anchor_scale_m": effective.world_anchor_scale_m,
                 "world_anchor_scale_parameter_source": effective.world_anchor_scale_parameter_source,
                 "driver_values01": effective.settings.driver_values01,
@@ -2266,12 +2736,37 @@ pub(crate) fn write_private_particle_dynamics_status(
                 "color": {
                     "facing_attenuation_strength": effective.settings.color_facing_attenuation_strength,
                     "parameter_source": effective.settings.color_parameter_source
+                },
+                "material": {
+                    "preset": effective.settings.material_preset
+                        .map(PrivateParticleMaterialPreset::marker_name)
+                        .unwrap_or("packaged-default"),
+                    "parameter_source": effective.settings.material_parameter_source
+                },
+                "heartbeat_pulse": {
+                    "mode": if effective.settings.polar_rr_orbit_boost_enabled {
+                        "polar-rr-orbit-boost"
+                    } else {
+                        "disabled"
+                    },
+                    "target_slot": 5,
+                    "parameter_source": effective.settings.heartbeat_pulse_parameter_source
                 }
             })
         } else if let Some(candidate) = candidate {
             json!({
                 "visual_scale": candidate.visual_scale,
                 "visual_parameter_source": "requested",
+                "size": {
+                    "enabled": candidate.particle_size_override_enabled,
+                    "mode": private_particle_size_mode_name(candidate.particle_size_mode),
+                    "world_meters": candidate.particle_size_world_meters,
+                    "sphere_radius_percent": candidate.particle_size_sphere_percent,
+                    "oscillation_percent": candidate.particle_size_oscillation_percent,
+                    "derived_min": Value::Null,
+                    "derived_max": Value::Null,
+                    "parameter_source": "requested"
+                },
                 "world_anchor_scale_m": candidate.world_anchor_scale_m,
                 "world_anchor_scale_parameter_source": "requested",
                 "driver_values01": candidate.driver_values01,
@@ -2300,6 +2795,21 @@ pub(crate) fn write_private_particle_dynamics_status(
                 },
                 "color": {
                     "facing_attenuation_strength": candidate.color_facing_attenuation_strength,
+                    "parameter_source": "requested"
+                },
+                "material": {
+                    "preset": candidate.material_preset
+                        .map(PrivateParticleMaterialPreset::marker_name)
+                        .unwrap_or("packaged-default"),
+                    "parameter_source": "requested"
+                },
+                "heartbeat_pulse": {
+                    "mode": if candidate.polar_rr_orbit_boost_enabled {
+                        "polar-rr-orbit-boost"
+                    } else {
+                        "disabled"
+                    },
+                    "target_slot": 5,
                     "parameter_source": "requested"
                 }
             })
@@ -2733,6 +3243,13 @@ mod tests {
             },
             "private_particles": {
                 "visual_scale": 0.62,
+                "size": {
+                    "enabled": true,
+                    "mode": "sphere-radius-percent",
+                    "world_meters": 0.0475,
+                    "sphere_radius_percent": 4.75,
+                    "oscillation_percent": 50.0
+                },
                 "world_anchor_scale_m": 0.88,
                 "driver_values01": [0.10, 0.20, 0.30, 0.40, 0.50, 0.60, 0.70, 0.80],
                 "tracer": {
@@ -2748,6 +3265,12 @@ mod tests {
                 },
                 "color": {
                     "facing_attenuation_strength": 0.65
+                },
+                "material": {
+                    "preset": "premultiplied-alpha-over-depth-facing"
+                },
+                "heartbeat_pulse": {
+                    "mode": "polar-rr-orbit-boost"
                 }
             },
             "apply": {
@@ -2760,6 +3283,14 @@ mod tests {
 
         assert_eq!(candidate.revision, 11);
         assert_close(candidate.visual_scale, 0.62);
+        assert!(candidate.particle_size_override_enabled);
+        assert_eq!(
+            candidate.particle_size_mode,
+            PRIVATE_PARTICLE_SIZE_MODE_SPHERE_PERCENT
+        );
+        assert_close(candidate.particle_size_world_meters, 0.0475);
+        assert_close(candidate.particle_size_sphere_percent, 4.75);
+        assert_close(candidate.particle_size_oscillation_percent, 50.0);
         assert_close(candidate.world_anchor_scale_m, 0.88);
         assert_close(candidate.driver_values01[0], 0.10);
         assert_close(candidate.driver_values01[7], 0.80);
@@ -2771,6 +3302,281 @@ mod tests {
         assert_close(candidate.transparency_depth_suppression_strength, 2.25);
         assert_close(candidate.transparency_rgb_alpha_coupling, 0.35);
         assert_close(candidate.color_facing_attenuation_strength, 0.65);
+        assert_eq!(
+            candidate.material_preset,
+            Some(PrivateParticleMaterialPreset::PremultipliedAlphaOverDepthFacingFade)
+        );
+        assert!(candidate.material_override_enabled);
+        assert!(candidate.polar_rr_orbit_boost_enabled);
+        assert!(candidate.update_mask.full_snapshot);
+        assert!(candidate.update_mask.material);
+        assert!(candidate
+            .update_mask
+            .driver_values01
+            .iter()
+            .all(|selected| *selected));
+    }
+
+    #[test]
+    fn field_patch_selects_only_explicit_particle_parameters() {
+        let value = json!({
+            "schema": PRIVATE_PARTICLE_DYNAMICS_SCHEMA,
+            "revision": 12,
+            "update_mode": "field-patch",
+            "private_particles": {
+                "size": {
+                    "enabled": true,
+                    "mode": "sphere-radius-percent",
+                    "sphere_radius_percent": 6.25
+                },
+                "driver_values01": {
+                    "3": 0.42
+                },
+                "driver_controls": [
+                    {
+                        "target_slot": 3,
+                        "mode": "direct"
+                    }
+                ],
+                "tracer": {
+                    "copies_per_second": 18.0
+                }
+            },
+            "apply": {
+                "mode": "apply-on-next-safe-frame"
+            }
+        });
+
+        let candidate = parse_private_particle_dynamics_json(&value.to_string()).unwrap();
+        let mask = candidate.update_mask;
+        assert!(!mask.full_snapshot);
+        assert!(mask.particle_size_override_enabled);
+        assert!(mask.particle_size_mode);
+        assert!(mask.particle_size_sphere_percent);
+        assert!(!mask.particle_size_world_meters);
+        assert!(!mask.particle_size_oscillation_percent);
+        assert_eq!(
+            mask.driver_values01,
+            [false, false, false, true, false, false, false, false]
+        );
+        assert_eq!(
+            mask.driver_controls,
+            [false, false, false, true, false, false, false, false]
+        );
+        assert!(mask.tracer_copies_per_second);
+        assert!(!mask.tracer_draw_slots_per_oscillator);
+        assert!(!mask.tracer_lifetime_seconds);
+        assert!(!mask.visual_scale);
+        assert!(!mask.world_anchor_scale_m);
+        assert!(!mask.material);
+        assert!(!mask.polar_rr_orbit_boost);
+        assert_close(candidate.particle_size_sphere_percent, 6.25);
+        assert_close(candidate.driver_values01[3], 0.42);
+        assert_close(candidate.tracer_copies_per_second, 18.0);
+    }
+
+    #[test]
+    fn field_patch_rejects_empty_unknown_and_damaged_fields() {
+        for (private_particles, expected) in [
+            (json!({}), "empty_private_particle_field_patch"),
+            (
+                json!({"unexpected": 1}),
+                "unsupported_private_particle_patch_field:unexpected",
+            ),
+            (
+                json!({"driver_values01": {"8": 0.5}}),
+                "driver_values01_patch_index_out_of_range:8",
+            ),
+            (
+                json!({"tracer": {"lifetime_seconds": 0.0}}),
+                "lifetime_seconds_out_of_range",
+            ),
+        ] {
+            let value = json!({
+                "schema": PRIVATE_PARTICLE_DYNAMICS_SCHEMA,
+                "revision": 13,
+                "update_mode": "field-patch",
+                "private_particles": private_particles
+            });
+            let error = parse_private_particle_dynamics_json(&value.to_string()).unwrap_err();
+            assert!(
+                error.starts_with(expected),
+                "expected {expected}, received {error}"
+            );
+        }
+    }
+
+    #[test]
+    fn particle_size_modes_are_closed_and_legacy_absence_is_neutral() {
+        let base = json!({
+            "schema": PRIVATE_PARTICLE_DYNAMICS_SCHEMA,
+            "private_particles": {
+                "visual_scale": 0.70,
+                "world_anchor_scale_m": 1.0,
+                "driver_values01": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+                "tracer": {
+                    "draw_slots_per_oscillator": 7,
+                    "lifetime_seconds": 0.5,
+                    "copies_per_second": 14.0
+                }
+            }
+        });
+
+        let legacy = parse_private_particle_dynamics_json(&base.to_string()).unwrap();
+        assert!(!legacy.particle_size_override_enabled);
+        assert_eq!(legacy.particle_size_mode, PRIVATE_PARTICLE_SIZE_MODE_LEGACY);
+
+        let mut meters = base.clone();
+        meters["private_particles"]["size"] = json!({
+            "enabled": true,
+            "mode": "world-meters",
+            "world_meters": 0.08,
+            "sphere_radius_percent": 8.0,
+            "oscillation_percent": 50.0
+        });
+        let meters = parse_private_particle_dynamics_json(&meters.to_string()).unwrap();
+        assert_eq!(
+            meters.particle_size_mode,
+            PRIVATE_PARTICLE_SIZE_MODE_WORLD_METERS
+        );
+        assert_close(meters.particle_size_world_meters, 0.08);
+
+        for (size, expected) in [
+            (
+                json!({
+                    "enabled": true,
+                    "mode": "legacy-payload-envelope",
+                    "world_meters": 0.08,
+                    "sphere_radius_percent": 8.0,
+                    "oscillation_percent": 50.0
+                }),
+                "particle_size_enabled_requires_explicit_mode",
+            ),
+            (
+                json!({
+                    "enabled": true,
+                    "mode": "pixels",
+                    "world_meters": 0.08,
+                    "sphere_radius_percent": 8.0,
+                    "oscillation_percent": 50.0
+                }),
+                "unsupported_particle_size_mode:pixels",
+            ),
+            (
+                json!({
+                    "enabled": true,
+                    "mode": "world-meters",
+                    "world_meters": 0.08,
+                    "sphere_radius_percent": 8.0,
+                    "oscillation_percent": 50.0,
+                    "extra": true
+                }),
+                "unsupported_particle_size_field:extra",
+            ),
+            (
+                json!({
+                    "enabled": 1,
+                    "mode": "world-meters",
+                    "world_meters": 0.08,
+                    "sphere_radius_percent": 8.0,
+                    "oscillation_percent": 50.0
+                }),
+                "particle_size_enabled_must_be_boolean",
+            ),
+            (
+                json!({
+                    "enabled": true,
+                    "mode": 2,
+                    "world_meters": 0.08,
+                    "sphere_radius_percent": 8.0,
+                    "oscillation_percent": 50.0
+                }),
+                "particle_size_mode_must_be_string",
+            ),
+        ] {
+            let mut damaged = base.clone();
+            damaged["private_particles"]["size"] = size;
+            assert_eq!(
+                parse_private_particle_dynamics_json(&damaged.to_string()).unwrap_err(),
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn standalone_private_particle_panel_candidate_matches_runtime_contract() {
+        // Mirrors the independently packaged Java module: request receipt is only queue
+        // acknowledgement; effective state is subsequently projected through the status file.
+        let value = json!({
+            "schema": "rusty.quest.native_renderer.private_particle_dynamics.v1",
+            "private_particles": {
+                "visual_scale": 0.70,
+                "world_anchor_scale_m": 0.46,
+                "driver_values01": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+                "tracer": {
+                    "draw_slots_per_oscillator": 7,
+                    "lifetime_seconds": 0.5,
+                    "copies_per_second": 14.0
+                }
+            },
+            "apply": { "mode": "apply-on-next-safe-frame" }
+        });
+
+        let candidate = parse_private_particle_dynamics_json(&value.to_string())
+            .expect("standalone Java panel candidate parses");
+
+        assert_close(candidate.visual_scale, 0.70);
+        assert_close(candidate.world_anchor_scale_m, 0.46);
+        assert_eq!(candidate.driver_values01, [0.0; 8]);
+        assert_eq!(candidate.tracer_draw_slots_per_oscillator, 7);
+        assert_close(candidate.tracer_lifetime_seconds, 0.5);
+        assert_close(candidate.tracer_copies_per_second, 14.0);
+    }
+
+    #[test]
+    fn rejects_open_or_invalid_material_and_heartbeat_panel_envelopes() {
+        let base = json!({
+            "schema": PRIVATE_PARTICLE_DYNAMICS_SCHEMA,
+            "private_particles": {
+                "visual_scale": 0.70,
+                "world_anchor_scale_m": 0.46,
+                "driver_values01": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+                "tracer": {
+                    "draw_slots_per_oscillator": 7,
+                    "lifetime_seconds": 0.5,
+                    "copies_per_second": 14.0
+                }
+            }
+        });
+
+        for (field, replacement, expected) in [
+            (
+                "material",
+                json!({"preset": "premultiplied-alpha-over", "opacity": 0.5}),
+                "material_must_contain_only_preset",
+            ),
+            (
+                "heartbeat_pulse",
+                json!({"mode": "polar-rr-orbit-boost", "target_slot": 4}),
+                "heartbeat_pulse_must_contain_only_mode",
+            ),
+            (
+                "heartbeat_pulse",
+                json!({"mode": "synthetic-breath"}),
+                "unsupported_heartbeat_pulse_mode:synthetic-breath",
+            ),
+        ] {
+            let mut candidate = base.clone();
+            candidate["private_particles"][field] = replacement;
+            let error = parse_private_particle_dynamics_json(&candidate.to_string()).unwrap_err();
+            assert_eq!(error, expected);
+        }
+
+        let mut packaged_default = base;
+        packaged_default["private_particles"]["material"] = json!({"preset": "packaged-default"});
+        let parsed = parse_private_particle_dynamics_json(&packaged_default.to_string()).unwrap();
+        assert_eq!(parsed.material_preset, None);
+        assert!(parsed.material_override_enabled);
     }
 
     #[test]
@@ -2788,7 +3594,7 @@ mod tests {
                         "mode": "manual",
                         "mode_code": 1,
                         "source_slot": 2,
-                        "curve": "akd-hump",
+                        "curve": "hump",
                         "curve_code": 1,
                         "range_min": 0.04,
                         "range_max": 0.115,
@@ -2846,7 +3652,7 @@ mod tests {
         );
         assert_eq!(
             candidate.driver_control_curve_codes[2],
-            PRIVATE_PARTICLE_CURVE_AKD_HUMP
+            PRIVATE_PARTICLE_CURVE_HUMP
         );
         assert_eq!(
             candidate.driver_control_curve_codes[3],
@@ -2859,6 +3665,9 @@ mod tests {
             candidate.driver_control_modes[7],
             PRIVATE_PARTICLE_DRIVER_CONTROL_DIRECT
         );
+        assert_eq!(candidate.material_preset, None);
+        assert!(!candidate.material_override_enabled);
+        assert!(!candidate.polar_rr_orbit_boost_enabled);
     }
 
     #[test]

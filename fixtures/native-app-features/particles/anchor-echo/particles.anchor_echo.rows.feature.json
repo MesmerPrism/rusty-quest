@@ -64,9 +64,7 @@
       "privateParticleAnchorEchoOutputMode=merged-billboard-output-after-tracers",
       "privateParticleDrawBudgetIncludesAnchorEcho=",
       "privateParticleAnchorEchoCpuUploadPerFrame=false",
-      "privateParticleDiagnosticAnchorEchoActiveCount=",
-      "privateParticleDiagnosticAnchorEchoSpawnedCount=",
-      "privateParticleDiagnosticAnchorEchoDiscardedCount="
+      "privateParticleDiagnosticLegacyReductionsAvailability=unavailable-v2-validity-masked"
     ],
     "forbidden": []
   },

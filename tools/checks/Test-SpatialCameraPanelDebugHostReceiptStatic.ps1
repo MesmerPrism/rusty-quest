@@ -32,6 +32,10 @@ $providerPath = 'apps/spatial-camera-panel-android/app/src/debug/java/io/github/
 $runtimePath = 'apps/spatial-camera-panel-android/app/src/debug/java/io/github/mesmerprism/rustyquest/spatial_camera_panel/DebugHostReceiptRuntime.kt'
 $reducerPath = 'apps/spatial-camera-panel-android/app/src/debug/java/io/github/mesmerprism/rustyquest/spatial_camera_panel/DebugHostReceiptQualificationReducer.kt'
 $telemetryPath = 'apps/spatial-camera-panel-android/app/src/main/java/io/github/mesmerprism/rustyquest/spatial_camera_panel/SpatialLaunchQualificationTelemetry.kt'
+$runtimeCoordinatorPath = 'apps/spatial-camera-panel-android/app/src/main/java/io/github/mesmerprism/rustyquest/spatial_camera_panel/SpatialVideoProjectionRuntimeCoordinator.kt'
+$nativeStreamPath = 'apps/spatial-camera-panel-android/native-receipt/src/spatial_video_projection_native_stream.rs'
+$cameraProbePath = 'apps/spatial-camera-panel-android/native-receipt/src/camera_hwb_probe.rs'
+$nativeLibraryPath = 'apps/spatial-camera-panel-android/native-receipt/src/lib.rs'
 $nativeQualificationPath = 'apps/spatial-camera-panel-android/native-receipt/src/spatial_video_projection_qualification.rs'
 
 $debugManifest = Read-RequiredText $debugManifestPath
@@ -41,6 +45,10 @@ $provider = Read-RequiredText $providerPath
 $runtime = Read-RequiredText $runtimePath
 $reducer = Read-RequiredText $reducerPath
 $telemetry = Read-RequiredText $telemetryPath
+$runtimeCoordinator = Read-RequiredText $runtimeCoordinatorPath
+$nativeStream = Read-RequiredText $nativeStreamPath
+$cameraProbe = Read-RequiredText $cameraProbePath
+$nativeLibrary = Read-RequiredText $nativeLibraryPath
 $nativeQualification = Read-RequiredText $nativeQualificationPath
 $mainManifest = Read-RequiredText 'apps/spatial-camera-panel-android/app/src/main/AndroidManifest.xml'
 
@@ -64,13 +72,19 @@ foreach ($fact in @('"source"', '"grant"', '"decoder"', '"max-count"', '"decoded
 foreach ($token in @('Binder.getCallingUid()', 'Process.SHELL_UID', 'override fun query', 'override fun insert', 'override fun update', 'override fun delete', 'override fun openFile', 'override fun openAssetFile', 'override fun openTypedAssetFile')) {
     Assert-Contains $providerPath $provider $token
 }
+foreach ($token in @('catch (_: Exception)', 'closed()')) {
+    Assert-Contains $providerPath $provider $token
+}
 foreach ($token in @('writeAtomically', 'StandardCopyOption.ATOMIC_MOVE', 'stream.fd.sync()', 'StateKind.CONSUMED', 'debug_host_receipt_replay_rejected', 'debug_host_receipt_size_exceeded', 'debug_host_receipt_privacy_rejected')) {
+    Assert-Contains $storePath $store $token
+}
+foreach ($token in @('rootCommitment(nonceHash, identity)', '"receipt-root-v1"', 'identity.applicationId', 'identity.apkSha256', 'identity.versionCode.toString()', 'identity.versionName', 'identity.variant', 'identity.pid.toString()', 'identity.epoch')) {
     Assert-Contains $storePath $store $token
 }
 foreach ($token in @('FileInputStream(context.applicationInfo.sourceDir)', 'MessageDigest.getInstance("SHA-256")', 'finalizeTerminalReceipt', 'finalizeIfQualified', 'SpatialLaunchQualificationTelemetry.arm()')) {
     Assert-Contains $runtimePath $runtime $token
 }
-foreach ($token in @('decoderStarted', 'distinctAdoptedFrames', 'lastPresentOrdinal', 'nativeReadQualificationField', 'nativeDisableQualification', 'MAX_SNAPSHOT_ATTEMPTS')) {
+foreach ($token in @('decoderStarted', 'distinctAdoptedFrames', 'lastPresentOrdinal', 'nativeReadQualificationField', 'nativeDisableQualification', 'MAX_SNAPSHOT_ATTEMPTS', 'System.loadLibrary(NATIVE_RECEIPT_LIBRARY)', 'nativeBoundary.ensureLoadedAndReset()', 'debug_host_receipt_native_unavailable')) {
     Assert-Contains $telemetryPath $telemetry $token
 }
 foreach ($token in @('mediacodec-output-established', 'gpu-import-ready', 'decoded-and-adopted', 'present-retired', 'errorCode != 0', 'distinctAdoptedFrames < 2')) {
@@ -79,6 +93,16 @@ foreach ($token in @('mediacodec-output-established', 'gpu-import-ready', 'decod
 foreach ($token in @('QUALIFICATION_ENABLED', 'QUALIFICATION_EPOCH', 'record_decoded_frame', 'record_presented_frame', 'first_decoded_frame', 'distinct_adopted_frames', 'frame_index < state.first_decoded_frame', 'timestamp_ns < state.first_timestamp_ns')) {
     Assert-Contains $nativeQualificationPath $nativeQualification $token
 }
+foreach ($token in @('SpatialLaunchQualificationTelemetry.recordSettings(settings)', 'adoptSettings(settings, offlinePack)')) {
+    Assert-Contains $runtimeCoordinatorPath $runtimeCoordinator $token
+}
+foreach ($token in @('spatial_video_projection_qualification::record_lifecycle(', 'SpatialLaunchQualificationTelemetry_nativeResetQualification', 'SpatialLaunchQualificationTelemetry_nativeDisableQualification', 'SpatialLaunchQualificationTelemetry_nativeReadQualificationField', 'spatial_video_projection_qualification::record_decoded_frame(')) {
+    Assert-Contains $nativeStreamPath $nativeStream $token
+}
+foreach ($token in @('SpatialVideoProjectionFrameStats, SpatialVideoProjectionRenderer', 'submitted_video_qualification: Option<(SpatialVideoProjectionFrameStats, u64)>', 'record_presented_frame(')) {
+    Assert-Contains $cameraProbePath $cameraProbe $token
+}
+Assert-Contains $nativeLibraryPath $nativeLibrary 'mod spatial_video_projection_qualification;'
 foreach ($forbidden in @('Log.', 'logcat', 'pidof', 'ActivityManager')) {
     Assert-NotContains $reducerPath $reducer $forbidden
 }

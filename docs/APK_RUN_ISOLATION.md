@@ -102,6 +102,22 @@ clears that set, and applies only the capsule profile. Cleanup runs in
 `finally`: it force-stops only the capsule package, restores every property to
 its exact prior value, verifies the restore, and writes a cleanup receipt.
 
+`Apply-RuntimeProfile.ps1 -Execute` sends the ordered property-write plan as
+bounded `setprop` batches, then performs one complete `getprop` readback. The
+plan retains each operation in order and records matched, superseded, missing,
+or mismatched final-property evidence. Every ADB call remains explicitly bound
+to the requested serial and optional server port; a batch or readback failure
+is terminal.
+
+If a host process dies after `Enter-QuestRunIsolation` has published its active
+receipt, use only `tools\Recover-QuestRunIsolation.ps1`. It requires that exact
+entered receipt, an explicit existing ADB executable, and the expected
+serial/package. It reuses the serial mutex, force-stops only the receipt-bound
+package, restores only the receipt snapshot, verifies every property, and
+atomically writes a distinct `cleaned` or `partial` terminal receipt. Damaged,
+mismatched, terminal, or concurrently owned receipts are rejected; this is not
+a generic shell, property, or package cleanup command.
+
 Do not use blanket force-stop of neighboring XR packages as ordinary
 preflight. The Spatial wrapper exposes `-ForceStopKnownXrPackages` only for an
 explicit diagnostic that actually requires that disruption.
@@ -120,6 +136,10 @@ copy is content addressed and never substitutes a loose or unhashed APK.
 ```powershell
 pwsh -NoProfile -ExecutionPolicy Bypass `
   -File .\tools\checks\Test-ApkRunIsolationStatic.ps1 `
+  -RepoRoot .
+
+pwsh -NoProfile -ExecutionPolicy Bypass `
+  -File .\tools\checks\Test-QuestRecordingHostReliability.ps1 `
   -RepoRoot .
 ```
 
