@@ -37,6 +37,7 @@ internal class SpatialVideoProjectionRuntimeCoordinator(
   ) {
     this.settings = settings
     this.offlinePack = offlinePack
+    SpatialLaunchQualificationTelemetry.recordSettings(settings)
   }
 
   fun configure(settings: SpatialVideoProjectionSettings, reason: String): Long {
@@ -89,8 +90,7 @@ internal class SpatialVideoProjectionRuntimeCoordinator(
       return false
     }
     runCatching { bindings.stopPlayback() }
-    this.settings = settings
-    this.offlinePack = offlinePack
+    adoptSettings(settings, offlinePack)
     configure(settings, "$reason-source-switch")
     bindings.startPlayback(settings, offlinePack)
     bindings.marker(
@@ -138,6 +138,7 @@ internal class SpatialVideoProjectionRuntimeCoordinator(
     }
     started = false
     settings = SpatialVideoProjectionSettings.disabled()
+    SpatialLaunchQualificationTelemetry.recordSettings(settings)
     offlinePack = null
     bindings.marker(SpatialVideoProjectionRouteModule.stoppedMarker(reason, previousSettings))
   }

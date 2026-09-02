@@ -48,8 +48,11 @@ use crate::spatial_public_multistack_runtime::{
     update_spatial_public_guide_processing_policy,
     update_spatial_public_opaque_projection_layer_override,
 };
-use crate::spatial_video_projection::SpatialVideoProjectionRenderer;
+use crate::spatial_video_projection::{
+    SpatialVideoProjectionFrameStats, SpatialVideoProjectionRenderer,
+};
 use crate::spatial_video_projection_native_stream::latest_spatial_video_projection_frame;
+use crate::spatial_video_projection_qualification::record_presented_frame;
 use crate::spatial_video_projection_settings::spatial_video_projection_settings;
 use crate::{bool_token, marker_token};
 
@@ -1776,6 +1779,11 @@ unsafe fn render_camera_hwb_probe(
             .wait_semaphores(&signal_semaphores)
             .swapchains(&swapchains)
             .image_indices(&image_indices);
+        let submitted_video_qualification: Option<(SpatialVideoProjectionFrameStats, u64)> =
+            Some((
+                record_result.video_stats.clone(),
+                u64::from(frames_presented) + 1,
+            ));
         let present_started = Instant::now();
         match swapchain_loader.queue_present(queue, &present_info) {
             Ok(_suboptimal) => {}
@@ -1783,6 +1791,15 @@ unsafe fn render_camera_hwb_probe(
             Err(error) => return Err(format!("queue-present-{error:?}")),
         }
         frame_timing.present_call = present_started.elapsed();
+        if let Some((video_stats, present_ordinal)) = submitted_video_qualification {
+            record_presented_frame(
+                video_stats.ready,
+                video_stats.rendered,
+                video_stats.frame_index,
+                video_stats.timestamp_ns,
+                present_ordinal,
+            );
+        }
         frames_presented = frames_presented.saturating_add(1);
         frame_timing.loop_total = loop_started.elapsed();
         if frames_presented <= 4
