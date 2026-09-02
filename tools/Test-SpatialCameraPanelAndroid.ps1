@@ -94,6 +94,8 @@ if (-not $buildLaneMutexOwned) {
 }
 $workflowCheckPath = Join-Path $PSScriptRoot "checks\Test-SpatialCameraPanelWorkflowStatic.ps1"
 $staticCheckPath = Join-Path $PSScriptRoot "checks\Test-SpatialCameraPanelAndroidStatic.ps1"
+$rawProjectionFreshnessReducerCheckPath =
+    Join-Path $PSScriptRoot "checks\Test-SpatialCameraPanelRawProjectionFreshnessReducer.ps1"
 $immersiveVideoCheckPath = Join-Path $PSScriptRoot "checks\Test-SpatialCameraPanelImmersiveVideoStatic.ps1"
 $rgbChannelTransformCheckPath = Join-Path $PSScriptRoot "checks\Test-SpatialCameraPanelRgbChannelTransformStatic.ps1"
 $projectionSurfaceDisplacementCheckPath = Join-Path $PSScriptRoot "checks\Test-SpatialCameraPanelProjectionSurfaceDisplacementStatic.ps1"
@@ -115,6 +117,9 @@ if (-not (Test-Path -LiteralPath $workflowCheckPath)) {
 }
 if (-not (Test-Path -LiteralPath $staticCheckPath)) {
     throw "Missing Spatial Camera Panel static check: $staticCheckPath"
+}
+if (-not (Test-Path -LiteralPath $rawProjectionFreshnessReducerCheckPath)) {
+    throw "Missing Spatial Camera Panel Raw Projection freshness reducer check: $rawProjectionFreshnessReducerCheckPath"
 }
 if (-not (Test-Path -LiteralPath $immersiveVideoCheckPath)) {
     throw "Missing Spatial Camera Panel immersive-video static check: $immersiveVideoCheckPath"
@@ -164,6 +169,7 @@ if (-not (Test-Path -LiteralPath $buildPath)) {
 
 & $workflowCheckPath -RepoRoot $repoRootPath
 & $staticCheckPath -RepoRoot $repoRootPath
+& $rawProjectionFreshnessReducerCheckPath -RepoRoot $repoRootPath
 & $immersiveVideoCheckPath -RepoRoot $repoRootPath
 & $rgbChannelTransformCheckPath -RepoRoot $repoRootPath
 & $projectionSurfaceDisplacementCheckPath -RepoRoot $repoRootPath
