@@ -30,6 +30,10 @@ if ([string]::IsNullOrWhiteSpace($RepoRoot)) {
 $repoRootPath = Resolve-Path $RepoRoot
 $workflowCheckPath = Join-Path $PSScriptRoot "checks\Test-SpatialCameraPanelWorkflowStatic.ps1"
 $staticCheckPath = Join-Path $PSScriptRoot "checks\Test-SpatialCameraPanelAndroidStatic.ps1"
+$rawProjectionFreshnessReducerCheckPath =
+    Join-Path $PSScriptRoot "checks\Test-SpatialCameraPanelRawProjectionFreshnessReducer.ps1"
+$rawProjectionFreshnessFinalizerCheckPath =
+    Join-Path $PSScriptRoot "checks\Test-SpatialCameraPanelRawProjectionFreshnessFinalizer.ps1"
 $immersiveVideoCheckPath = Join-Path $PSScriptRoot "checks\Test-SpatialCameraPanelImmersiveVideoStatic.ps1"
 $rgbChannelTransformCheckPath = Join-Path $PSScriptRoot "checks\Test-SpatialCameraPanelRgbChannelTransformStatic.ps1"
 $projectionSurfaceDisplacementCheckPath = Join-Path $PSScriptRoot "checks\Test-SpatialCameraPanelProjectionSurfaceDisplacementStatic.ps1"
@@ -47,6 +51,12 @@ if (-not (Test-Path -LiteralPath $workflowCheckPath)) {
 }
 if (-not (Test-Path -LiteralPath $staticCheckPath)) {
     throw "Missing Spatial Camera Panel static check: $staticCheckPath"
+}
+if (-not (Test-Path -LiteralPath $rawProjectionFreshnessReducerCheckPath)) {
+    throw "Missing Spatial Camera Panel Raw Projection freshness reducer check: $rawProjectionFreshnessReducerCheckPath"
+}
+if (-not (Test-Path -LiteralPath $rawProjectionFreshnessFinalizerCheckPath)) {
+    throw "Missing Spatial Camera Panel Raw Projection freshness finalizer check: $rawProjectionFreshnessFinalizerCheckPath"
 }
 if (-not (Test-Path -LiteralPath $immersiveVideoCheckPath)) {
     throw "Missing Spatial Camera Panel immersive-video static check: $immersiveVideoCheckPath"
@@ -84,6 +94,8 @@ if (-not (Test-Path -LiteralPath $buildPath)) {
 
 & $workflowCheckPath -RepoRoot $repoRootPath
 & $staticCheckPath -RepoRoot $repoRootPath
+& $rawProjectionFreshnessFinalizerCheckPath -RepoRoot $repoRootPath
+& $rawProjectionFreshnessReducerCheckPath -RepoRoot $repoRootPath
 & $immersiveVideoCheckPath -RepoRoot $repoRootPath
 & $rgbChannelTransformCheckPath -RepoRoot $repoRootPath
 & $projectionSurfaceDisplacementCheckPath -RepoRoot $repoRootPath
@@ -144,6 +156,10 @@ try {
     cargo test -p spatial-camera-panel-native-receipt camera_latency
     if ($LASTEXITCODE -ne 0) {
         throw "Spatial Camera Panel camera-latency Rust tests failed."
+    }
+    cargo test -p spatial-camera-panel-native-receipt camera_hwb_freshness
+    if ($LASTEXITCODE -ne 0) {
+        throw "Spatial Camera Panel camera-HWB freshness Rust tests failed."
     }
     cargo test -p spatial-camera-panel-native-receipt projection_surface_displacement
     if ($LASTEXITCODE -ne 0) {

@@ -1052,6 +1052,24 @@ Interaction SDK pointer input without native multimodal extension forcing.
   bleed into unrelated app runs.
 - `native-receipt/src/camera_hwb_probe.rs` is the Android JNI facade and
   raw camera probe orchestration entry point.
+- `native-receipt/src/camera_hwb_freshness.rs` owns the bounded periodic Raw
+  Projection freshness receipt. It binds one camera-import run, the app
+  carrier's immutable per-launch challenge and continuously observed JNI-fed
+  layer generation/state/switch count, monotonic stereo frame/timestamp/HWB
+  import identity, successful Vulkan WSI presentation cadence, and the current
+  app-command-buffer `cameraProjectionVisible` moving witness. This is
+  app-owned command-recording evidence, not wearer-visible acceptance.
+- `SpatialCameraHwbProjectionRawLaunchFence.kt` owns the app-side challenge and
+  layer-continuity state. First creation is generation 1 with zero switches;
+  removal, replacement, or a second layer advances the observed fence and
+  permanently rejects that launch in the native freshness authority. Carrier
+  transition and JNI publication share one monitor, while native admission
+  independently rejects reordered or regressive publications.
+- `tools/Finalize-SpatialCameraPanelRawProjectionFreshnessCapture.ps1` is the
+  host-only bridge from one exact completed QFM launch-diagnostic bundle to the
+  single-log capture boundary consumed by the freshness reducer. It preserves
+  QFM bytes, publishes a separate create-new directory, and claims neither
+  semantic freshness nor wearer visibility.
 - `native-receipt/src/camera_hwb_stream.rs` owns the Android Camera2 /
   `AImageReader` stream runtime, stereo camera 50/51 selection, private output
   size selection, and acquired `AHardwareBuffer` frame handoff.

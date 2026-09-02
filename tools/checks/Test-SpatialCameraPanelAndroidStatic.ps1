@@ -144,12 +144,20 @@ $cameraHwbProjectionLaunchCoordinator = Read-RequiredText "apps\spatial-camera-p
 $projectionPanelVisibilityCoordinator = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\SpatialProjectionPanelVisibilityCoordinator.kt"
 $cameraHwbProjectionDepthPrerequisiteCoordinator = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\SpatialCameraHwbProjectionDepthPrerequisiteCoordinator.kt"
 $cameraHwbProjectionRawCarrierCoordinator = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\SpatialCameraHwbProjectionRawCarrierCoordinator.kt"
+$cameraHwbProjectionRawLaunchFence = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\SpatialCameraHwbProjectionRawLaunchFence.kt"
+$cameraHwbProjectionRawLaunchFenceTest = Read-RequiredText "apps\spatial-camera-panel-android\app\src\test\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\SpatialCameraHwbProjectionRawLaunchFenceTest.kt"
 $cameraHwbProjectionPanelCarrierCoordinator = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\SpatialCameraHwbProjectionPanelCarrierCoordinator.kt"
 $cameraHwbProjectionPlacementUpdateCoordinator = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\SpatialCameraHwbProjectionPlacementUpdateCoordinator.kt"
 $cameraHwbProjectionTuningCoordinator = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\SpatialCameraHwbProjectionTuningCoordinator.kt"
 $cameraHwbProjectionSyntheticRenderer = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\SpatialCameraHwbProjectionSyntheticRenderer.kt"
 $cameraHwbProjectionCarrierStateCoordinator = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\SpatialCameraHwbProjectionCarrierStateCoordinator.kt"
 $cameraHwbProjectionGeometryCoordinator = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\SpatialCameraHwbProjectionGeometryCoordinator.kt"
+$rawProjectionFreshnessReducer = Read-RequiredText "tools\Reduce-SpatialCameraPanelRawProjectionFreshness.ps1"
+$rawProjectionFreshnessReducerTest = Read-RequiredText "tools\checks\Test-SpatialCameraPanelRawProjectionFreshnessReducer.ps1"
+$rawProjectionFreshnessReductionSchema = Read-RequiredText "schemas\rusty.quest.camera_hwb_projection_freshness_reduction.v1.schema.json"
+$rawProjectionFreshnessFinalizer = Read-RequiredText "tools\Finalize-SpatialCameraPanelRawProjectionFreshnessCapture.ps1"
+$rawProjectionFreshnessFinalizerTest = Read-RequiredText "tools\checks\Test-SpatialCameraPanelRawProjectionFreshnessFinalizer.ps1"
+$rawProjectionFreshnessFinalizationSchema = Read-RequiredText "schemas\rusty.quest.camera_hwb_projection_freshness_capture_finalization.v1.schema.json"
 $avatarFeature = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\SpatialAvatarHandVisualFeature.kt"
 $avatarProbeFeature = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\SpatialAvatarHandInvestigationFeature.kt"
 $handBillboardFeature = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\SpatialHandBillboardFlockFeature.kt"
@@ -162,6 +170,7 @@ $privateFeatureLoader = Read-RequiredText "apps\spatial-camera-panel-android\app
 $nativeLib = Read-RequiredText "apps\spatial-camera-panel-android\native-receipt\src\lib.rs"
 $nativeBuildScript = Read-RequiredText "apps\spatial-camera-panel-android\native-receipt\build.rs"
 $cameraProbe = Read-RequiredText "apps\spatial-camera-panel-android\native-receipt\src\camera_hwb_probe.rs"
+$cameraFreshness = Read-RequiredText "apps\spatial-camera-panel-android\native-receipt\src\camera_hwb_freshness.rs"
 $cameraProjectionTarget = Read-RequiredText "apps\spatial-camera-panel-android\native-receipt\src\camera_hwb_projection_target.rs"
 $nativeMultiStack = Read-RequiredText "apps\spatial-camera-panel-android\native-receipt\src\spatial_public_multistack.rs"
 $nativeMultiStackRuntime = Read-RequiredText "apps\spatial-camera-panel-android\native-receipt\src\spatial_public_multistack_runtime.rs"
@@ -1366,7 +1375,7 @@ Assert-Contains "Activity" $activity "cameraHwbProjectionRawCarrierCoordinator b
 Assert-Contains "Activity" $activity "SpatialCameraHwbProjectionRawCarrierBindings("
 Assert-Contains "Activity" $activity "cameraHwbProjectionLaunchCoordinator.started &&"
 Assert-Contains "Activity" $activity "!cameraHwbProjectionCarrierStateCoordinator.scenePanelCarrierEnabled()"
-Assert-Contains "Activity" $activity "startNative = ::nativeStartCameraHwbProjectionProbe"
+Assert-Contains "Activity" $activity "startNative = ::nativeStartCameraHwbProjectionProbeWithFence"
 Assert-Contains "Activity" $activity "cameraHwbProjectionRawCarrierCoordinator.run(readerMaxImages, videoSettings)"
 Assert-Contains "Activity" $activity "cameraHwbProjectionRawCarrierCoordinator.createLayer("
 Assert-NotContains "Activity" $activity "private fun createCameraHwbProjectionLayer"
@@ -4543,6 +4552,53 @@ Assert-Contains "Camera projection target" $cameraProjectionTarget "settings.out
 Assert-Contains "Native public multi-stack runtime" $nativeMultiStackRuntime "!zone_frame.settings.synthetic_diagnostic()"
 Assert-Contains "Camera WSI" $cameraWsi "transparent-underlay-fallback-unused"
 Assert-Contains "Camera WSI" $cameraWsi "vk::CompositeAlphaFlagsKHR::PRE_MULTIPLIED"
+Assert-Contains "Native library" $nativeLib "mod camera_hwb_freshness;"
+Assert-Contains "Camera probe" $cameraProbe "CameraProjectionFreshnessTracker::new("
+Assert-Contains "Camera probe" $cameraProbe "CameraProjectionCadenceAuthority::VulkanWsiPresentReturned"
+Assert-Contains "Camera probe" $cameraProbe "camera_projection_visible: record_result.camera_projection_visible"
+Assert-Contains "Camera probe" $cameraProbe "tracker.observe_with_live_fence(sample, observed_layer_fence)"
+Assert-Contains "Camera probe" $cameraProbe "current_raw_projection_layer_fence()"
+Assert-Contains "Camera probe" $cameraProbe "CameraProjectionLaunchFence::from_raw("
+Assert-Contains "Camera probe" $cameraProbe "CameraProjectionLaunchFence::validate_monotonic_update(*current, fence)"
+Assert-Contains "Camera probe" $cameraProbe '"status=camera-projection-freshness-receipt runtimeCrash=false {}"'
+Assert-NotContains "Camera probe" $cameraProbe '"status=camera-projection-freshness-receipt {} runtimeCrash=false"'
+Assert-NotContains "Camera probe" $cameraProbe "submitted_camera_projection_freshness"
+Assert-NotContains "Camera probe" $cameraProbe "SpatialSdkBrokerRetired"
+Assert-Contains "Camera freshness" $cameraFreshness "rusty.quest.camera_hwb_projection_freshness_receipt.v1"
+Assert-Contains "Camera freshness" $cameraFreshness "first-moving-then-periodic-300-present-ordinals"
+Assert-Contains "Camera freshness" $cameraFreshness "visibilityScope=app-command-buffer-not-wearer-visible"
+Assert-Contains "Camera freshness" $cameraFreshness "launchFenceAuthority=app-raw-carrier-live-jni-fence"
+Assert-Contains "Camera freshness" $cameraFreshness 'Self::VulkanWsiPresentReturned => "app-vulkan-wsi-run"'
+Assert-Contains "Camera freshness" $cameraFreshness 'Self::VulkanWsiPresentReturned => "vulkan-wsi-queue-present-returned"'
+Assert-NotContains "Camera freshness" $cameraFreshness "SpatialSdkBrokerRetired"
+Assert-Contains "Camera freshness" $cameraFreshness "freshness-launch-already-rejected"
+Assert-Contains "Camera freshness damage tests" $cameraFreshness '"stale-run-generation"'
+Assert-Contains "Camera freshness damage tests" $cameraFreshness '"launch-challenge-mismatch"'
+Assert-Contains "Camera freshness damage tests" $cameraFreshness '"camera-frame-index-not-monotonic"'
+Assert-Contains "Camera freshness damage tests" $cameraFreshness '"camera-hwb-import-sequence-not-monotonic"'
+Assert-Contains "Camera freshness damage tests" $cameraFreshness '"app-owned-layer-switch-observed"'
+Assert-Contains "Camera freshness damage tests" $cameraFreshness '"cadence-missing"'
+Assert-Contains "Camera freshness damage tests" $cameraFreshness '"camera-projection-visible-witness-missing"'
+Assert-Contains "Camera freshness damage tests" $cameraFreshness "live_layer_removal_between_wsi_observations_latches_rejection"
+Assert-Contains "Camera freshness damage tests" $cameraFreshness '"live-layer-fence-transition-not-monotonic"'
+Assert-Contains "Camera freshness damage tests" $cameraFreshness '"live-layer-fence-unavailable"'
+Assert-Contains "Raw Projection launch fence" $cameraHwbProjectionRawLaunchFence "SpatialCameraHwbProjectionRawLayerContinuity"
+Assert-Contains "Raw Projection launch fence" $cameraHwbProjectionRawLaunchFence "layerSwitchCount = Math.addExact(layerSwitchCount, 1L)"
+Assert-Contains "Raw Projection launch fence" $cameraHwbProjectionRawLaunchFence "RAW_SCENE_QUAD_ACTIVE"
+Assert-Contains "Raw Projection launch fence test" $cameraHwbProjectionRawLaunchFenceTest "secondLayerInTheSameLaunchRecordsAnActualSwitch"
+Assert-Contains "Raw Projection launch fence test" $cameraHwbProjectionRawLaunchFenceTest "removalAndReplacementRemainInOneMonotonicLifecycle"
+Assert-Contains "Raw Projection launch fence test" $cameraHwbProjectionRawLaunchFenceTest "newLaunchResetsPerLaunchCountersButUsesANewChallenge"
+Assert-Contains "Raw Projection launch fence test" $cameraHwbProjectionRawLaunchFenceTest "staleOrMissingLaunchChallengeIsRejected"
+Assert-Contains "Camera HWB projection raw carrier coordinator" $cameraHwbProjectionRawCarrierCoordinator "rawLayerContinuity.beginLaunch(launchChallenge)"
+Assert-Contains "Camera HWB projection raw carrier coordinator" $cameraHwbProjectionRawCarrierCoordinator "rawLayerContinuity.recordLayerCreated(launchChallenge)"
+Assert-Contains "Camera HWB projection raw carrier coordinator" $cameraHwbProjectionRawCarrierCoordinator "launchFence.layerSwitchCount"
+Assert-Contains "Camera HWB projection raw carrier coordinator" $cameraHwbProjectionRawCarrierCoordinator "updateNativeLayerFence"
+Assert-Contains "Camera HWB projection raw carrier coordinator" $cameraHwbProjectionRawCarrierCoordinator "recordLayerRemoved"
+Assert-Contains "Camera HWB projection raw carrier coordinator" $cameraHwbProjectionRawCarrierCoordinator "synchronized(rawLayerPublicationMonitor)"
+Assert-Contains "Camera HWB projection raw carrier coordinator" $cameraHwbProjectionRawCarrierCoordinator "createObservedLayerForNewLaunch"
+Assert-Contains "Activity" $activity "layerStateCode: Int"
+Assert-Contains "Activity" $activity "nativeUpdateCameraHwbProjectionLayerFence("
+Assert-Contains "Test script" $testScript "cargo test -p spatial-camera-panel-native-receipt camera_hwb_freshness"
 Assert-Contains "Spatial validation workflow coordinator" $validationWorkflowCoordinator '"private-layer-zone-off" ->'
 Assert-Contains "Spatial validation workflow coordinator" $validationWorkflowCoordinator '"projection-panel-off" -> bindings.setProjectionPanelEnabled(false, source)'
 Assert-Contains "Spatial validation workflow coordinator" $validationWorkflowCoordinator '"projection-panel-on" -> bindings.setProjectionPanelEnabled(true, source)'
@@ -5201,5 +5257,45 @@ Assert-Contains "README" $readme "SpatialControllerAndroidEventRouter.kt"
 Assert-Contains "README" $readme "key-versus-motion edge state"
 Assert-Contains "Implementation notes" $notes "SpatialControllerAndroidEventRouter.kt"
 Assert-Contains "Implementation notes" $notes "trigger-axis thresholding"
+
+Assert-Contains "Raw Projection freshness reducer" $rawProjectionFreshnessReducer "rusty.quest.camera_hwb_projection_freshness_reduction.v1"
+Assert-Contains "Raw Projection freshness reducer" $rawProjectionFreshnessReducer "app-raw-carrier-live-jni-fence"
+Assert-Contains "Raw Projection freshness reducer" $rawProjectionFreshnessReducer '$expectedSessionAuthority = "app-vulkan-wsi-run"'
+Assert-Contains "Raw Projection freshness reducer" $rawProjectionFreshnessReducer '$expectedPresentAuthority = "vulkan-wsi-queue-present-returned"'
+Assert-NotContains "Raw Projection freshness reducer" $rawProjectionFreshnessReducer "spatial-sdk-broker-retired-fence-complete"
+Assert-Contains "Raw Projection freshness reducer" $rawProjectionFreshnessReducer "raw-projection-layer-fence-updated"
+Assert-Contains "Raw Projection freshness reducer" $rawProjectionFreshnessReducer "rusty.quest.camera_hwb_projection_freshness_capture.v1"
+Assert-Contains "Raw Projection freshness reducer" $rawProjectionFreshnessReducer "partial or unsupported receipt-family marker"
+Assert-Contains "Raw Projection freshness reducer" $rawProjectionFreshnessReducer '$value.ToString($Invariant)'
+Assert-Contains "Raw Projection freshness reducer test" $rawProjectionFreshnessReducerTest "live-fence-removal"
+Assert-Contains "Raw Projection freshness reducer test" $rawProjectionFreshnessReducerTest "live-fence-removal-reversed"
+Assert-Contains "Raw Projection freshness reducer test" $rawProjectionFreshnessReducerTest "live-fence-update-failed"
+Assert-Contains "Raw Projection freshness reducer test" $rawProjectionFreshnessReducerTest "live-fence-update-failed-reversed"
+Assert-Contains "Raw Projection freshness reducer test" $rawProjectionFreshnessReducerTest "live-fence-removal-reversed-crlf"
+Assert-Contains "Raw Projection freshness reducer test" $rawProjectionFreshnessReducerTest "live-fence-update-failed-reversed-crlf"
+Assert-Contains "Raw Projection freshness reducer test" $rawProjectionFreshnessReducerTest "partial-receipt-family"
+Assert-Contains "Raw Projection freshness reducer test" $rawProjectionFreshnessReducerTest "partial-family-word-before-receipt"
+Assert-Contains "Raw Projection freshness reducer test" $rawProjectionFreshnessReducerTest "duplicate-capture-boundary"
+Assert-Contains "Raw Projection freshness reducer test" $rawProjectionFreshnessReducerTest "leading-zero"
+Assert-Contains "Raw Projection freshness reducer test" $rawProjectionFreshnessReducerTest "retired-cadence-authority"
+Assert-Contains "Raw Projection freshness reducer test" $rawProjectionFreshnessReducerTest "retired-session-authority"
+Assert-Contains "Raw Projection freshness reducer test" $rawProjectionFreshnessReducerTest "retired-present-authority"
+Assert-Contains "Raw Projection freshness schema" $rawProjectionFreshnessReductionSchema '"wearer_visible_claim"'
+Assert-Contains "Raw Projection freshness schema" $rawProjectionFreshnessReductionSchema '"const": false'
+Assert-Contains "Raw Projection freshness schema" $rawProjectionFreshnessReductionSchema '"cadence_authority": { "const": "vulkan-wsi-queue-present-returned" }'
+Assert-Contains "Raw Projection capture finalizer" $rawProjectionFreshnessFinalizer "questionable.file_manager.apk_launch_diagnostic_manifest.v1"
+Assert-Contains "Raw Projection capture finalizer" $rawProjectionFreshnessFinalizer "questionable.file_manager.apk_launch_diagnostic_bundle.v1"
+Assert-Contains "Raw Projection capture finalizer" $rawProjectionFreshnessFinalizer "rusty.quest.camera_hwb_projection_freshness_capture_finalization.v1"
+Assert-Contains "Raw Projection capture finalizer" $rawProjectionFreshnessFinalizer "Assert-NoDuplicateJsonProperties"
+Assert-Contains "Raw Projection capture finalizer" $rawProjectionFreshnessFinalizer "QFM launch-diagnostic bundle changed during capture finalization."
+Assert-Contains "Raw Projection capture finalizer" $rawProjectionFreshnessFinalizer "Capture finalizer source changed during execution."
+Assert-Contains "Raw Projection capture finalizer" $rawProjectionFreshnessFinalizer '[IO.Directory]::Move($stage, $output)'
+Assert-Contains "Raw Projection capture finalizer test" $rawProjectionFreshnessFinalizerTest "duplicate-root-property"
+Assert-Contains "Raw Projection capture finalizer test" $rawProjectionFreshnessFinalizerTest "duplicate-nested-authority-property"
+Assert-Contains "Raw Projection capture finalizer test" $rawProjectionFreshnessFinalizerTest "partial-capture-family"
+Assert-Contains "Raw Projection capture finalizer test" $rawProjectionFreshnessFinalizerTest "output-collision"
+Assert-Contains "Raw Projection capture finalization schema" $rawProjectionFreshnessFinalizationSchema '"additionalProperties": false'
+Assert-Contains "Raw Projection capture finalization schema" $rawProjectionFreshnessFinalizationSchema '"semantic_freshness_adjudicated"'
+Assert-Contains "Raw Projection capture finalization schema" $rawProjectionFreshnessFinalizationSchema '"wearer_visible_claim"'
 
 Write-Host "Spatial Camera Panel Android static gate passed"

@@ -524,6 +524,7 @@ internal object CameraHwbProjectionModule {
       publicMultiStackMarkerFields: String,
       nativePassthroughStartMask: Long,
       nativeEnvironmentDepthStartMask: Long,
+      launchFenceMarkerFields: String,
   ): String =
       "channel=camera-hwb-spatial-probe status=native-start-requested rawCameraProjectionProbe=true " +
           "sdkSwapchainCreated=true surfaceValid=$surfaceValid sceneQuadLayerCreated=true " +
@@ -536,6 +537,7 @@ internal object CameraHwbProjectionModule {
           "${publicMultiStackMarkerFields.trim()} " +
           "nativePassthroughStartMask=$nativePassthroughStartMask " +
           "nativeEnvironmentDepthStartMask=$nativeEnvironmentDepthStartMask " +
+          "${launchFenceMarkerFields.trim()} " +
           "outputMode=raw-color-target-rect sampledCameraTexture=see-native-logcat " +
           "sampledLeftCameraTexture=see-native-logcat sampledRightCameraTexture=see-native-logcat " +
           "monoDuplicated=false " +
