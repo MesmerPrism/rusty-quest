@@ -57,7 +57,9 @@ use crate::spatial_public_multistack_runtime::{
     update_spatial_public_guide_processing_policy,
     update_spatial_public_opaque_projection_layer_override,
 };
-use crate::spatial_video_projection::SpatialVideoProjectionRenderer;
+use crate::spatial_video_projection::{
+    SpatialVideoProjectionFrameStats, SpatialVideoProjectionRenderer,
+};
 use crate::spatial_video_projection_native_stream::latest_spatial_video_projection_frame;
 use crate::spatial_video_projection_qualification::record_presented_frame;
 #[cfg(rq_environment_depth_spatial_sdk_api_layer)]
@@ -1450,7 +1452,7 @@ unsafe fn render_camera_hwb_probe(
         crate::spatial_sdk_depth_handoff::SpatialSubmitRetirementState,
     > = None;
     #[cfg(rq_environment_depth_spatial_sdk_api_layer)]
-    let mut submitted_video_qualification = None;
+    let mut submitted_video_qualification: Option<(SpatialVideoProjectionFrameStats, u64)> = None;
     #[cfg(rq_environment_depth_spatial_sdk_api_layer)]
     let mut submitted_broker_failure_observed_at: Option<Instant> = None;
     #[cfg(rq_environment_depth_spatial_sdk_api_layer)]
