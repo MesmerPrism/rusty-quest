@@ -1,5 +1,18 @@
 # Rusty Quest Agent Notes
 
+## Debug host receipt boundary
+
+The Spatial Camera Panel debug host receipt provider is debug-source-set only.
+Its authority is derived from the selected application id as
+`${applicationId}.debug-host-receipt`, requires Android `DUMP` plus the runtime
+shell UID, and accepts only closed arm/status/hash-read/hash-cleanup calls. It
+must never accept URI, intent, component, generic command, arbitrary bundle, or
+non-shell transport. Release source and release artifacts must contain neither
+its class nor authority suffix. A fixed cross-package authority is forbidden
+because distinct diagnostic application ids must remain co-installable. It is
+a receipt prerequisite only and does not authorize app launch, media dispatch,
+or device-performance inference.
+
 The P70 `lsl-rust-float32-lan-outlet-android` package is an opt-in,
 same-LAN, one-channel Float32 Quest-outlet to host-inlet qualification only.
 It does not establish the reverse direction or a default runtime feature.

@@ -27,6 +27,7 @@ use crate::{
     android_hardware_buffer::{AndroidHardwareBufferDescriptor, AndroidHardwareBufferHandle},
     marker_token,
     spatial_video_projection_marker::log_spatial_video_projection_marker as log_marker,
+    spatial_video_projection_qualification,
 };
 
 static SPATIAL_VIDEO_PROJECTION_STREAM: Mutex<Option<NativeSpatialVideoProjectionStream>> =
@@ -250,6 +251,14 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1pa
     fps_cap: jint,
     looping: jint,
 ) {
+    spatial_video_projection_qualification::record_lifecycle(
+        event_code,
+        result_code,
+        width,
+        height,
+        max_images,
+        fps_cap,
+    );
     let event_name = match event_code {
         1 => "start-requested",
         2 => "started",
@@ -272,6 +281,31 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1pa
         event_code == 2,
         event_code == 6
     ));
+}
+
+#[no_mangle]
+pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1panel_SpatialLaunchQualificationTelemetry_nativeResetQualification(
+    _env: *mut JNIEnv,
+    _class: jclass,
+) {
+    spatial_video_projection_qualification::reset();
+}
+
+#[no_mangle]
+pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1panel_SpatialLaunchQualificationTelemetry_nativeDisableQualification(
+    _env: *mut JNIEnv,
+    _class: jclass,
+) {
+    spatial_video_projection_qualification::disable();
+}
+
+#[no_mangle]
+pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1panel_SpatialLaunchQualificationTelemetry_nativeReadQualificationField(
+    _env: *mut JNIEnv,
+    _class: jclass,
+    field: jint,
+) -> jlong {
+    spatial_video_projection_qualification::read_field(field)
 }
 
 impl NativeSpatialVideoProjectionStream {
@@ -480,6 +514,15 @@ unsafe extern "C" fn spatial_video_projection_on_image_available(
         buffer_removed_count,
         packed_pair,
     };
+    spatial_video_projection_qualification::record_decoded_frame(
+        frame.frame_index,
+        frame.import_sequence,
+        frame.timestamp_ns,
+        frame.configured_width,
+        frame.configured_height,
+        frame.max_images,
+        frame.fps_cap,
+    );
     if let Ok(mut latest) = SPATIAL_VIDEO_PROJECTION_LATEST_FRAME.lock() {
         *latest = Some(frame.clone());
     }
