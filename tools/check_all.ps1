@@ -75,6 +75,8 @@ try {
     Invoke-Checked "Quest broker admission static gate" "pwsh" @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools\checks\Test-QuestBrokerAdmissionStatic.ps1", "-RepoRoot", ".")
     Invoke-Checked "Quest multi-app broker client static gate" "pwsh" @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools\checks\Test-MultiAppBrokerClients.ps1", "-RepoRoot", ".")
     Invoke-Checked "Corrected release two-Quest matrix static gate" "pwsh" @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools\checks\Test-CorrectedReleaseTwoQuestMatrixStatic.ps1", "-RepoRoot", ".")
+    Invoke-Checked "Gradle resolver deterministic self-test" "pwsh" @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools\Resolve-GradleTool.ps1", "-SelfTest")
+    Invoke-Checked "Gradle resolver static gate" "pwsh" @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools\checks\Test-GradleToolResolverStatic.ps1", "-RepoRoot", ".")
     Invoke-Checked "Spatial Camera Panel Android static gate" "pwsh" @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools\Test-SpatialCameraPanelAndroid.ps1", "-RepoRoot", ".")
     Invoke-Checked "Manifold broker Android scaffold" "pwsh" @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools\Test-ManifoldBrokerAndroid.ps1")
     Invoke-Checked "Peer rendezvous Android scaffold" "pwsh" @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools\Test-PeerRendezvousAndroid.ps1")
