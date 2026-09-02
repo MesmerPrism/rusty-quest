@@ -1,6 +1,7 @@
 use std::ffi::{c_void, CString};
 use std::os::raw::{c_float, c_int};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::Mutex;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -9,6 +10,10 @@ use ash::vk;
 use crate::acamera_sys::{ANativeWindow, ANativeWindow_release as ACameraNativeWindow_release};
 use crate::ahardware_buffer_vulkan::{
     import_ahb_sampled_image, query_ahb_vulkan_import_properties, AhbVulkanSampledImageCreateInfo,
+};
+use crate::camera_hwb_freshness::{
+    CameraProjectionCadenceAuthority, CameraProjectionFreshnessObservation,
+    CameraProjectionFreshnessSample, CameraProjectionFreshnessTracker, CameraProjectionLaunchFence,
 };
 use crate::camera_hwb_marker::log_camera_hwb_marker as log_marker;
 use crate::camera_hwb_projection_target::{
@@ -60,6 +65,46 @@ const CAMERA_HWB_PROBE_WAIT_FRAME_MS: u64 = 5000;
 const CAMERA_HWB_PROBE_MAX_FRAMES: u32 = 1800;
 
 static STOP_CAMERA_HWB_PROBE: AtomicBool = AtomicBool::new(false);
+static NEXT_CAMERA_IMPORT_STREAM_GENERATION: AtomicU64 = AtomicU64::new(1);
+static CURRENT_RAW_PROJECTION_LAYER_FENCE: Mutex<Option<CameraProjectionLaunchFence>> =
+    Mutex::new(None);
+
+fn observe_camera_projection_freshness(
+    tracker: &mut Option<CameraProjectionFreshnessTracker>,
+    sample: CameraProjectionFreshnessSample,
+    observed_layer_fence: Result<CameraProjectionLaunchFence, &'static str>,
+) {
+    let present_ordinal = sample.present_ordinal;
+    let Some(tracker) = tracker.as_mut() else {
+        return;
+    };
+    match tracker.observe_with_live_fence(sample, observed_layer_fence) {
+        CameraProjectionFreshnessObservation::Issued(receipt) => log_marker(format!(
+            "status=camera-projection-freshness-receipt runtimeCrash=false {}",
+            receipt.marker_fields(),
+        )),
+        CameraProjectionFreshnessObservation::Rejected(reason)
+            if reason != "freshness-launch-already-rejected"
+                || present_ordinal <= 4
+                || present_ordinal % 300 == 0 =>
+        {
+            log_marker(format!(
+                "status=camera-projection-freshness-rejected reason={} failClosed=true presentOrdinal={} runtimeCrash=false",
+                reason, present_ordinal,
+            ));
+        }
+        CameraProjectionFreshnessObservation::Primed
+        | CameraProjectionFreshnessObservation::Pending
+        | CameraProjectionFreshnessObservation::Rejected(_) => {}
+    }
+}
+
+fn current_raw_projection_layer_fence() -> Result<CameraProjectionLaunchFence, &'static str> {
+    let guard = CURRENT_RAW_PROJECTION_LAYER_FENCE
+        .lock()
+        .map_err(|_| "live-layer-fence-lock-unavailable")?;
+    guard.ok_or("live-layer-fence-unavailable")
+}
 
 #[derive(Clone, Copy)]
 pub(crate) enum CameraHwbProbeMode {
@@ -203,6 +248,7 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1pa
         frame_count,
         reader_max_images,
         CameraHwbProbeMode::LumaChecker,
+        None,
     )
 }
 
@@ -225,7 +271,95 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1pa
         frame_count,
         reader_max_images,
         CameraHwbProbeMode::RawColorProjection,
+        None,
     )
+}
+
+#[no_mangle]
+#[allow(non_snake_case)]
+pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1panel_SpatialCameraPanelActivity_nativeStartCameraHwbProjectionProbeWithFence(
+    env: *mut c_void,
+    _thiz: *mut c_void,
+    surface: *mut c_void,
+    width: c_int,
+    height: c_int,
+    frame_count: c_int,
+    reader_max_images: c_int,
+    launch_challenge: i64,
+    layer_generation: i64,
+    layer_switch_count: i64,
+    layer_state_code: c_int,
+) -> i64 {
+    let launch_fence = match CameraProjectionLaunchFence::from_raw(
+        launch_challenge,
+        layer_generation,
+        layer_switch_count,
+        layer_state_code,
+    ) {
+        Ok(fence) => fence,
+        Err(reason) => {
+            log_marker(format!(
+                "status=start-receipt startStatus=raw-projection-launch-fence-rejected reason={} failClosed=true renderThreadSpawned=false runtimeCrash=false",
+                reason,
+            ));
+            return 1;
+        }
+    };
+    let current_fence = match current_raw_projection_layer_fence() {
+        Ok(fence) => fence,
+        Err(reason) => {
+            log_marker(format!(
+                "status=start-receipt startStatus=raw-projection-live-layer-fence-unavailable reason={} failClosed=true renderThreadSpawned=false runtimeCrash=false",
+                reason,
+            ));
+            return 1;
+        }
+    };
+    if current_fence != launch_fence {
+        log_marker(
+            "status=start-receipt startStatus=raw-projection-live-layer-fence-mismatch failClosed=true renderThreadSpawned=false runtimeCrash=false"
+                .to_string(),
+        );
+        return 1;
+    }
+    start_camera_hwb_probe(
+        env,
+        surface,
+        width,
+        height,
+        frame_count,
+        reader_max_images,
+        CameraHwbProbeMode::RawColorProjection,
+        Some(launch_fence),
+    )
+}
+
+#[no_mangle]
+#[allow(non_snake_case)]
+pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1panel_SpatialCameraPanelActivity_nativeUpdateCameraHwbProjectionLayerFence(
+    _env: *mut c_void,
+    _thiz: *mut c_void,
+    launch_challenge: i64,
+    layer_generation: i64,
+    layer_switch_count: i64,
+    layer_state_code: c_int,
+) -> i64 {
+    let Ok(fence) = CameraProjectionLaunchFence::observed_from_raw(
+        launch_challenge,
+        layer_generation,
+        layer_switch_count,
+        layer_state_code,
+    ) else {
+        return 0;
+    };
+    let Ok(mut current) = CURRENT_RAW_PROJECTION_LAYER_FENCE.lock() else {
+        return 0;
+    };
+    if CameraProjectionLaunchFence::validate_monotonic_update(*current, fence).is_err() {
+        return 0;
+    }
+    *current = Some(fence);
+    1
 }
 
 #[no_mangle]
@@ -711,6 +845,7 @@ fn start_camera_hwb_probe(
     frame_count: c_int,
     reader_max_images: c_int,
     mode: CameraHwbProbeMode,
+    raw_projection_launch_fence: Option<CameraProjectionLaunchFence>,
 ) -> i64 {
     let mut mask = 1_i64;
     if !surface.is_null() {
@@ -758,7 +893,15 @@ fn start_camera_hwb_probe(
             let window = window_addr as *mut vk::ANativeWindow;
             let started = Instant::now();
             let result = std::panic::catch_unwind(|| unsafe {
-                render_camera_hwb_probe(window, width, height, max_frames, reader_max_images, mode)
+                render_camera_hwb_probe(
+                    window,
+                    width,
+                    height,
+                    max_frames,
+                    reader_max_images,
+                    mode,
+                    raw_projection_launch_fence,
+                )
             })
             .unwrap_or_else(|_| Err("panic".to_string()));
             unsafe {
@@ -872,6 +1015,7 @@ unsafe fn render_camera_hwb_probe(
     max_frames: u32,
     reader_max_images: c_int,
     mode: CameraHwbProbeMode,
+    raw_projection_launch_fence: Option<CameraProjectionLaunchFence>,
 ) -> Result<CameraHwbProbeStats, String> {
     let entry = ash::Entry::load().map_err(|error| format!("vulkan-loader-{error}"))?;
     let app_name = CString::new("rusty-quest-spatial-camera-panel").expect("static app name");
@@ -1066,6 +1210,8 @@ unsafe fn render_camera_hwb_probe(
     ));
 
     let camera_runtime = CameraProbeRuntime::start(reader_max_images, mode.stream_mode())?;
+    let camera_import_stream_generation =
+        NEXT_CAMERA_IMPORT_STREAM_GENERATION.fetch_add(1, Ordering::AcqRel);
     let initial_frames = if matches!(mode, CameraHwbProbeMode::RawColorProjection) {
         camera_runtime
             .wait_for_first_stereo_frame(Duration::from_millis(CAMERA_HWB_PROBE_WAIT_FRAME_MS))
@@ -1269,6 +1415,14 @@ unsafe fn render_camera_hwb_probe(
     ));
 
     let render_started = Instant::now();
+    let mut camera_projection_freshness = raw_projection_launch_fence.map(|launch_fence| {
+        CameraProjectionFreshnessTracker::new(
+            launch_fence,
+            camera_import_stream_generation,
+            camera_import_stream_generation,
+            CameraProjectionCadenceAuthority::VulkanWsiPresentReturned,
+        )
+    });
     let mut current_left_frame = initial_frames.left;
     let mut current_right_frame = initial_frames.right;
     let mut last_polled_left_hwb_import_sequence = current_left_frame.hwb_import_sequence;
@@ -1779,11 +1933,9 @@ unsafe fn render_camera_hwb_probe(
             .wait_semaphores(&signal_semaphores)
             .swapchains(&swapchains)
             .image_indices(&image_indices);
+        let present_ordinal = u64::from(frames_presented) + 1;
         let submitted_video_qualification: Option<(SpatialVideoProjectionFrameStats, u64)> =
-            Some((
-                record_result.video_stats.clone(),
-                u64::from(frames_presented) + 1,
-            ));
+            Some((record_result.video_stats.clone(), present_ordinal));
         let present_started = Instant::now();
         match swapchain_loader.queue_present(queue, &present_info) {
             Ok(_suboptimal) => {}
@@ -1798,6 +1950,35 @@ unsafe fn render_camera_hwb_probe(
                 video_stats.frame_index,
                 video_stats.timestamp_ns,
                 present_ordinal,
+            );
+        }
+        if let Some(launch_fence) = raw_projection_launch_fence {
+            let sample = CameraProjectionFreshnessSample {
+                launch_challenge: launch_fence.launch_challenge,
+                layer_generation: launch_fence.layer_generation,
+                layer_switch_count: launch_fence.layer_switch_count,
+                layer_state: launch_fence.layer_state,
+                run_generation: camera_import_stream_generation,
+                session_generation: camera_import_stream_generation,
+                cadence_authority: CameraProjectionCadenceAuthority::VulkanWsiPresentReturned,
+                cadence_available: true,
+                cadence_ordinal: present_ordinal,
+                present_ordinal,
+                raw_projection_selected: matches!(mode, CameraHwbProbeMode::RawColorProjection),
+                camera_projection_visible: record_result.camera_projection_visible,
+                left_frame_index: current_left_frame.frame_index,
+                right_frame_index: current_right_frame.frame_index,
+                left_timestamp_ns: current_left_frame.timestamp_ns,
+                right_timestamp_ns: current_right_frame.timestamp_ns,
+                left_hwb_import_sequence: current_left_frame.hwb_import_sequence,
+                right_hwb_import_sequence: current_right_frame.hwb_import_sequence,
+                left_hardware_buffer_id: current_left_frame.descriptor.hardware_buffer_id,
+                right_hardware_buffer_id: current_right_frame.descriptor.hardware_buffer_id,
+            };
+            observe_camera_projection_freshness(
+                &mut camera_projection_freshness,
+                sample,
+                current_raw_projection_layer_fence(),
             );
         }
         frames_presented = frames_presented.saturating_add(1);
