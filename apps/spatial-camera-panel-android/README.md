@@ -1066,6 +1066,11 @@ Interaction SDK pointer input without native multimodal extension forcing.
   and layer-continuity state. First creation is recorded as generation 1 with
   zero switches; removal, replacement, or a second layer increments the actual
   switch count and permanently rejects that launch in the native freshness authority.
+- `tools/Finalize-SpatialCameraPanelRawProjectionFreshnessCapture.ps1` is the
+  host-only bridge from one exact completed QFM launch-diagnostic bundle to the
+  single-log capture boundary consumed by the freshness reducer. It preserves
+  QFM bytes, publishes a separate create-new directory, and claims neither
+  semantic freshness nor wearer visibility.
   Carrier transition and JNI publication share one monitor, while the native
   endpoint independently rejects reordered or regressive publications. The
   live fence is required at native start, SDK submission, and later broker/fence
