@@ -13,11 +13,14 @@ param(
     [string]$VersionName = "0.1.0",
     [switch]$LegacyCameraP2pCompatibility,
     [switch]$EnableConnectionHubDebugOperator,
+    [switch]$EnableRemoteCameraDebugOperator,
+    [switch]$RequireSharedMorphovisionSigner,
     [switch]$PrepareOnly,
     [switch]$ValidateRuntimeConfigOnly
 )
 
 $ErrorActionPreference = "Stop"
+$SharedMorphovisionSignerSha256 = "722f1f3dcb921918d2e02f39f1b1bd8f9ff2812e07757c5fc665f6b8f7ee32a8"
 
 function Get-LatestDirectory {
     param(
@@ -152,11 +155,12 @@ function Read-ValidatedSpatialCameraPanelLockedPlaylistHubContract {
         [ordered]@{ command = "command.spatial_camera_panel.locked_playlist.resume"; display_label = "Resume"; required_controller_capability = "capability.spatial_camera_panel.locked_playlist.resume" }
     )
     $expectedStateKeys = @(
-        "active_index", "active_label", "item_count", "paused", "phase",
+        "active_index", "active_label", "item_count", "item_duration_seconds",
+        "item_elapsed_seconds", "paused", "phase",
         "playlist_title", "progress", "revision", "running"
     )
     if ([string]$contract.'$schema' -cne "rusty.quest.connection_hub.locked_playlist_surface_contract.v1" -or
-        [string]$contract.canonical_version -cne "locked-playlist-v1" -or
+        [string]$contract.canonical_version -cne "locked-playlist-v2" -or
         [string]$contract.provider_id -cne "provider.quest.spatial-camera-panel-locked-playlist" -or
         [string]$contract.surface_id -cne "surface.spatial_camera_panel.locked_playlist" -or
         [string]$contract.display_label -cne "Spatial Camera Locked Playlist" -or
@@ -174,7 +178,7 @@ function Read-ValidatedSpatialCameraPanelLockedPlaylistHubContract {
         throw "Spatial Camera Panel locked-playlist Hub surface contract changed outside its closed reviewed boundary."
     }
 
-    $canonical = "locked-playlist-v1`nprovider|$($contract.provider_id)`nsurface|$($contract.surface_id)`nlabel|$($contract.display_label)`ndescription|$($contract.description)`ntyped_params|$($contract.typed_params_schema)`navailability|$($contract.availability)`nlifecycle|$($contract.lifecycle)`ndirect_item_activation|$($contract.direct_item_activation)`nordered_item_list|$($contract.ordered_item_list)`nmax_state_keys|$($contract.max_state_keys)`nmax_state_bytes|$($contract.max_state_bytes)`nmax_string_bytes|$($contract.max_string_bytes)`n"
+    $canonical = "locked-playlist-v2`nprovider|$($contract.provider_id)`nsurface|$($contract.surface_id)`nlabel|$($contract.display_label)`ndescription|$($contract.description)`ntyped_params|$($contract.typed_params_schema)`navailability|$($contract.availability)`nlifecycle|$($contract.lifecycle)`ndirect_item_activation|$($contract.direct_item_activation)`nordered_item_list|$($contract.ordered_item_list)`nmax_state_keys|$($contract.max_state_keys)`nmax_state_bytes|$($contract.max_state_bytes)`nmax_string_bytes|$($contract.max_string_bytes)`n"
     $runtimeCanonical = "v1`n$($contract.surface_id)`n$($contract.display_label)`n$($contract.description)`n"
     $commands = @()
     for ($index = 0; $index -lt $expectedCommands.Count; $index += 1) {
@@ -405,6 +409,31 @@ if ($PrepareOnly -and $ValidateRuntimeConfigOnly) {
 if ([string]::IsNullOrWhiteSpace($OutDir)) {
     $OutDir = Join-Path $targetRoot "manifold-broker-android"
 }
+$keystoreWasExplicit = -not [string]::IsNullOrWhiteSpace($Keystore)
+if ($RequireSharedMorphovisionSigner -and -not $keystoreWasExplicit) {
+    throw "Shared Morphovision package builds require an explicit local -Keystore binding."
+}
+$signingAlias = if ($RequireSharedMorphovisionSigner) {
+    $env:RUSTY_QUEST_MORPHOVISION_SIGNING_ALIAS
+} else {
+    "androiddebugkey"
+}
+$signingStorePassword = if ($RequireSharedMorphovisionSigner) {
+    $env:RUSTY_QUEST_MORPHOVISION_SIGNING_STORE_PASSWORD
+} else {
+    "android"
+}
+$signingKeyPassword = if ($RequireSharedMorphovisionSigner) {
+    $env:RUSTY_QUEST_MORPHOVISION_SIGNING_KEY_PASSWORD
+} else {
+    "android"
+}
+if ($RequireSharedMorphovisionSigner -and (
+        [string]::IsNullOrWhiteSpace($signingAlias) -or
+        [string]::IsNullOrWhiteSpace($signingStorePassword) -or
+        [string]::IsNullOrWhiteSpace($signingKeyPassword))) {
+    throw "Shared Morphovision signer alias and passwords require local environment bindings."
+}
 
 $resolvedOutParent = Split-Path -Parent $OutDir
 New-Item -ItemType Directory -Force -Path $targetRoot, $resolvedOutParent | Out-Null
@@ -538,15 +567,18 @@ if ([string]::IsNullOrWhiteSpace($Keystore)) {
 
 New-Item -ItemType Directory -Force -Path $classesDir, $dexDir | Out-Null
 
+if ($RequireSharedMorphovisionSigner -and -not (Test-Path -LiteralPath $Keystore -PathType Leaf)) {
+    throw "The explicit shared Morphovision signing keystore does not exist."
+}
 if (-not (Test-Path $Keystore)) {
     New-Item -ItemType Directory -Force -Path (Split-Path -Parent $Keystore) | Out-Null
     Invoke-Checked "keytool" $keytool @(
         "-genkeypair",
         "-v",
         "-keystore", $Keystore,
-        "-storepass", "android",
-        "-keypass", "android",
-        "-alias", "androiddebugkey",
+        "-storepass", $signingStorePassword,
+        "-keypass", $signingKeyPassword,
+        "-alias", $signingAlias,
         "-keyalg", "RSA",
         "-keysize", "2048",
         "-validity", "10000",
@@ -558,11 +590,18 @@ $certificatePath = Join-Path $OutDir "broker-signing-certificate.der"
 Invoke-Checked "keytool certificate export" $keytool @(
     "-exportcert",
     "-keystore", $Keystore,
-    "-storepass", "android",
-    "-alias", "androiddebugkey",
+    "-storepass", $signingStorePassword,
+    "-alias", $signingAlias,
     "-file", $certificatePath
 )
 $certificateSha256 = Get-FileSha256Hex -Path $certificatePath
+if ($RequireSharedMorphovisionSigner -and
+    -not [string]::Equals(
+        $certificateSha256,
+        $SharedMorphovisionSignerSha256,
+        [System.StringComparison]::Ordinal)) {
+    throw "Explicit shared Morphovision signer fingerprint mismatch."
+}
 $acceptedProductLockJson = [System.IO.File]::ReadAllText($acceptedProductLockPath)
 $acceptedProductSpecJson = [System.IO.File]::ReadAllText($canonicalProductSpecPath)
 $acceptedProductLock = $acceptedProductLockJson | ConvertFrom-Json
@@ -904,6 +943,11 @@ if ($connectionHubSelected) {
             android:authorities="io.github.mesmerprism.rustymanifold.broker.connection-hub-operator"
             android:exported="true"
             android:permission="android.permission.DUMP" />
+        <provider
+            android:name=".ConnectionHubWearerControlProvider"
+            android:authorities="io.github.mesmerprism.rustymanifold.broker.connection-hub-wearer-control"
+            android:exported="true"
+            android:permission="io.github.mesmerprism.rustymanifold.permission.BROKER_ADMISSION" />
 "@
     $operatorManifestDir = Join-Path $OutDir "operator"
     New-Item -ItemType Directory -Force -Path $operatorManifestDir | Out-Null
@@ -954,14 +998,42 @@ if ($EnableConnectionHubDebugOperator) {
         $manifestText,
         (New-Object System.Text.UTF8Encoding($false)))
 }
+if ($EnableRemoteCameraDebugOperator) {
+    $manifestText = [System.IO.File]::ReadAllText($packagingManifestPath)
+    $closingApplication = "    </application>"
+    if ([regex]::Matches($manifestText, [regex]::Escape($closingApplication)).Count -ne 1) {
+        throw "Remote Camera Android manifest has an unexpected application boundary."
+    }
+    $remoteCameraDebugProvider = @"
+        <provider
+            android:name=".RemoteCameraDebugControlProvider"
+            android:authorities="io.github.mesmerprism.rustymanifold.broker.debug-remote-camera-control"
+            android:exported="true"
+            android:permission="android.permission.DUMP" />
+"@
+    $remoteCameraDebugManifestDir = Join-Path $OutDir "remote-camera-debug-operator"
+    New-Item -ItemType Directory -Force -Path $remoteCameraDebugManifestDir | Out-Null
+    $packagingManifestPath = Join-Path $remoteCameraDebugManifestDir "AndroidManifest.xml"
+    $manifestText = $manifestText.Replace(
+        $closingApplication,
+        "$remoteCameraDebugProvider`n$closingApplication")
+    [System.IO.File]::WriteAllText(
+        $packagingManifestPath,
+        $manifestText,
+        (New-Object System.Text.UTF8Encoding($false)))
+}
 $sourceFiles = Get-ChildItem -Path (Join-Path $appRoot "src\main\java") -Recurse -Filter *.java |
     Where-Object {
         if ($_.Name -eq "ConnectionHubDebugControlProvider.java") {
             return [bool]$EnableConnectionHubDebugOperator
         }
+        if ($_.Name -eq "RemoteCameraDebugControlProvider.java") {
+            return [bool]$EnableRemoteCameraDebugOperator
+        }
         $connectionHubSelected -or
         ($_.Name -notlike "ConnectionHub*.java" -and
          $_.Name -notlike "AndroidConnectionHub*.java" -and
+         $_.Name -notlike "ManifoldConnectionHub*.java" -and
          $_.Name -notlike "Hub*.java" -and
          $_.Name -notlike "UnavailableManifoldConnectionHub*.java")
     } |
@@ -1088,8 +1160,9 @@ Invoke-Checked "zipalign" $zipalign @("-f", "4", $apkUnaligned, $apkAligned)
 Invoke-Checked "apksigner" $apksigner @(
     "sign",
     "--ks", $Keystore,
-    "--ks-pass", "pass:android",
-    "--key-pass", "pass:android",
+    "--ks-pass", "pass:$signingStorePassword",
+    "--key-pass", "pass:$signingKeyPassword",
+    "--ks-key-alias", $signingAlias,
     "--out", $apkSigned,
     $apkAligned
 )
@@ -1146,6 +1219,10 @@ $manifest = [ordered]@{
     generated_android_manifest_sha256 = [string]$productInputs.android_manifest_sha256
     packaging_android_manifest_sha256 = Get-FileSha256Hex -Path $packagingManifestPath
     connection_hub_debug_operator = [bool]$EnableConnectionHubDebugOperator
+    remote_camera_debug_operator = [bool]$EnableRemoteCameraDebugOperator
+    shared_morphovision_signer_required = [bool]$RequireSharedMorphovisionSigner
+    expected_shared_morphovision_signer_sha256 = $(if ($RequireSharedMorphovisionSigner) { $SharedMorphovisionSignerSha256 } else { $null })
+    artifact_signer_sha256 = $certificateSha256
     generated_manifest_projection_sha256 = [string]$productInputs.manifest_projection_sha256
     generated_command_registry_sha256 = [string]$productInputs.command_registry_sha256
     broker_runtime_config_sha256 = Get-FileSha256Hex -Path $runtimeConfigPath

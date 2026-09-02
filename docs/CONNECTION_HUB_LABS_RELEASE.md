@@ -71,3 +71,9 @@ an Android version code/name, and a fresh output directory. It emits the signed
 APK plus `connection-hub-release-manifest.json`, which binds source revisions,
 signer, APK bytes, version identity, release-only manifest exclusions, and the
 plaintext transport posture.
+
+Use the same stable accepted keystore as the Hub already installed on the
+headset. A per-worktree fallback debug keystore has a different signer and
+cannot update that installation without uninstalling it. The release builder
+exports and hashes the selected keystore certificate before compilation and
+fails immediately when it does not equal `-ExpectedSignerSha256`.

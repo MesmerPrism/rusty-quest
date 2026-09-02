@@ -30,6 +30,17 @@ provider never calls `startForegroundService`; a direct provider start without
 that ready service returns a typed rejected receipt and cannot leave a
 non-foreground listener running.
 
+The normal product also packages the fixed wearer-control authority
+`io.github.mesmerprism.rustymanifold.broker.connection-hub-wearer-control`.
+Android gates it with the signature-level `BROKER_ADMISSION` permission. Its
+only methods are `start`, `stop`, and `status`, with no arguments or extras.
+This lets a foreground, same-signer Morphovision panel start or stop the real
+Hub foreground service without exposing endpoints, pairing secrets, sessions,
+identities, capabilities, packages, components, or arbitrary intents. The
+returned snapshot contains only effective listener/status classification and
+explicitly states that it contains no secrets. Headset controller input remains
+owned by Morphovision and is unaffected when the Hub is stopped.
+
 The provider routes wearer and ADB actions through one
 `ConnectionHubOperatorController`. Each mutation records sent and pending
 before confirmed, rejected, or `outcome_unknown`, based on effective Hub

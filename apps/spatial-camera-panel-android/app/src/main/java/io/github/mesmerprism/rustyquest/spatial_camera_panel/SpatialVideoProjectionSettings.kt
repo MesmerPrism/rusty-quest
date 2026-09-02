@@ -19,6 +19,14 @@ private const val CAMERA_HWB_PROJECTION_VIDEO_BROKER_PORT_PROPERTY =
     "debug.rustyquest.spatial.camera_hwb_projection_probe.video.broker.port"
 private const val CAMERA_HWB_PROJECTION_VIDEO_BROKER_CONNECT_TIMEOUT_MS_PROPERTY =
     "debug.rustyquest.spatial.camera_hwb_projection_probe.video.broker.connect_timeout_ms"
+private const val CAMERA_HWB_PROJECTION_VIDEO_PEER_ROUTE_KIND_PROPERTY =
+    "debug.rustyquest.spatial.camera_hwb_projection_probe.video.peer.route_kind"
+private const val CAMERA_HWB_PROJECTION_VIDEO_PEER_SESSION_ID_PROPERTY =
+    "debug.rustyquest.spatial.camera_hwb_projection_probe.video.peer.session_id"
+private const val CAMERA_HWB_PROJECTION_VIDEO_PEER_RELAY_CHANNEL_PROPERTY =
+    "debug.rustyquest.spatial.camera_hwb_projection_probe.video.peer.relay_channel"
+private const val CAMERA_HWB_PROJECTION_VIDEO_PEER_TLS_SERVER_NAME_PROPERTY =
+    "debug.rustyquest.spatial.camera_hwb_projection_probe.video.peer.tls_server_name"
 private const val CAMERA_HWB_PROJECTION_VIDEO_MEDIA_LAYOUT_PROPERTY =
     "debug.rustyquest.spatial.camera_hwb_projection_probe.video.media_layout"
 private const val CAMERA_HWB_PROJECTION_VIDEO_STEREO_LAYOUT_PROPERTY =
@@ -31,6 +39,8 @@ private const val CAMERA_HWB_PROJECTION_VIDEO_MAX_IMAGES_PROPERTY =
     "debug.rustyquest.spatial.camera_hwb_projection_probe.video.max_images"
 private const val CAMERA_HWB_PROJECTION_VIDEO_FPS_CAP_PROPERTY =
     "debug.rustyquest.spatial.camera_hwb_projection_probe.video.fps_cap"
+private const val CAMERA_HWB_PROJECTION_VIDEO_CADENCE_MODE_PROPERTY =
+    "debug.rustyquest.spatial.camera_hwb_projection_probe.video.cadence_mode"
 private const val CAMERA_HWB_PROJECTION_VIDEO_LOOPING_PROPERTY =
     "debug.rustyquest.spatial.camera_hwb_projection_probe.video.looping"
 private const val CAMERA_HWB_PROJECTION_VIDEO_OPACITY_PROPERTY =
@@ -50,6 +60,16 @@ private const val EXTRA_VIDEO_PROJECTION_BROKER_PORT =
     "rustyquest.spatial.camera_hwb_projection_probe.video.broker.port"
 private const val EXTRA_VIDEO_PROJECTION_BROKER_CONNECT_TIMEOUT_MS =
     "rustyquest.spatial.camera_hwb_projection_probe.video.broker.connect_timeout_ms"
+private const val EXTRA_VIDEO_PROJECTION_PEER_ROUTE_KIND =
+    "rustyquest.spatial.camera_hwb_projection_probe.video.peer.route_kind"
+private const val EXTRA_VIDEO_PROJECTION_PEER_SESSION_ID =
+    "rustyquest.spatial.camera_hwb_projection_probe.video.peer.session_id"
+private const val EXTRA_VIDEO_PROJECTION_PEER_RELAY_CHANNEL =
+    "rustyquest.spatial.camera_hwb_projection_probe.video.peer.relay_channel"
+private const val EXTRA_VIDEO_PROJECTION_PEER_TLS_SERVER_NAME =
+    "rustyquest.spatial.camera_hwb_projection_probe.video.peer.tls_server_name"
+private const val EXTRA_VIDEO_PROJECTION_PEER_AUTH_TOKEN =
+    "rustyquest.spatial.camera_hwb_projection_probe.video.peer.auth_token"
 private const val EXTRA_VIDEO_PROJECTION_MEDIA_LAYOUT =
     "rustyquest.spatial.camera_hwb_projection_probe.video.media_layout"
 private const val EXTRA_VIDEO_PROJECTION_STEREO_LAYOUT =
@@ -62,6 +82,8 @@ private const val EXTRA_VIDEO_PROJECTION_MAX_IMAGES =
     "rustyquest.spatial.camera_hwb_projection_probe.video.max_images"
 private const val EXTRA_VIDEO_PROJECTION_FPS_CAP =
     "rustyquest.spatial.camera_hwb_projection_probe.video.fps_cap"
+private const val EXTRA_VIDEO_PROJECTION_CADENCE_MODE =
+    "rustyquest.spatial.camera_hwb_projection_probe.video.cadence_mode"
 private const val EXTRA_VIDEO_PROJECTION_LOOPING =
     "rustyquest.spatial.camera_hwb_projection_probe.video.looping"
 private const val EXTRA_VIDEO_PROJECTION_OPACITY =
@@ -93,6 +115,53 @@ private const val CAMERA_HWB_PROJECTION_VIDEO_DEFAULT_LOOPING = true
 private const val CAMERA_HWB_PROJECTION_VIDEO_DEFAULT_OPACITY = 1.0f
 private const val CAMERA_HWB_PROJECTION_VIDEO_DEFAULT_HIGH_RATE_JSON_PAYLOAD = false
 
+internal enum class SpatialPeerStereoRouteKind(val token: String, val encrypted: Boolean) {
+  InfrastructureLan("direct_tcp_connect", false),
+  WifiDirect("direct_p2p_tcp", false),
+  AuthenticatedTlsRelay("relay_tls_client", true),
+  ;
+
+  companion object {
+    fun fromToken(value: String?): SpatialPeerStereoRouteKind =
+        when (value?.trim()?.lowercase(Locale.US)?.replace("-", "_")) {
+          "direct_p2p_tcp", "wifi_direct", "qcl100" -> WifiDirect
+          "relay_tls_client", "relay_tls", "authenticated_tls_relay" -> AuthenticatedTlsRelay
+          else -> InfrastructureLan
+        }
+  }
+}
+
+internal enum class SpatialVideoCadenceMode(
+    val token: String,
+    val surfaceGateFps: Int,
+    val nativeFallbackFps: Int,
+) {
+  Fps30("30", 30, 30),
+  Fps60("60", 60, 60),
+  Source("source", 0, CAMERA_HWB_PROJECTION_VIDEO_MAX_FPS),
+  ;
+
+  val surfaceGateEnabled: Boolean
+    get() = this != Source
+
+  companion object {
+    fun fromToken(value: String?): SpatialVideoCadenceMode? =
+        when (value?.trim()?.lowercase(Locale.US)?.replace("_", "-")) {
+          "30", "30-fps", "fps-30" -> Fps30
+          "60", "60-fps", "fps-60" -> Fps60
+          "source", "source-rate", "native" -> Source
+          else -> null
+        }
+
+    fun fromLegacyFpsCap(value: Int): SpatialVideoCadenceMode =
+        when {
+          value <= 30 -> Fps30
+          value <= 60 -> Fps60
+          else -> Source
+        }
+  }
+}
+
 internal data class SpatialVideoProjectionSettings(
     val enabled: Boolean,
     val source: String,
@@ -106,12 +175,34 @@ internal data class SpatialVideoProjectionSettings(
     val height: Int,
     val maxImages: Int,
     val fpsCap: Int,
+    val cadenceMode: SpatialVideoCadenceMode =
+        SpatialVideoCadenceMode.fromLegacyFpsCap(fpsCap),
     val looping: Boolean,
     val opacity: Float,
     val highRateJsonPayload: Boolean,
+    val peerRouteKind: SpatialPeerStereoRouteKind = SpatialPeerStereoRouteKind.InfrastructureLan,
+    val peerSessionId: String = "",
+    val peerRelayChannel: String = "",
+    val peerTlsServerName: String = "",
+    val peerAuthToken: String = "",
 ) {
   val active: Boolean
-    get() = enabled && (if (source == "broker-rmanvid1") brokerPort > 0 else path.isNotBlank())
+    get() =
+        enabled &&
+            (if (source == "broker-rmanvid1") {
+              brokerPort > 0
+            } else if (source == "peer-packed-stereo") {
+              brokerPort > 0 && peerSessionId.isNotBlank() &&
+                  (peerRouteKind != SpatialPeerStereoRouteKind.AuthenticatedTlsRelay ||
+                      (peerRelayChannel.isNotBlank() &&
+                          peerTlsServerName.isNotBlank() &&
+                          peerAuthToken.isNotBlank()))
+            } else {
+              path.isNotBlank()
+            })
+
+  val surfaceOutputCadenceFps: Int
+    get() = cadenceMode.surfaceGateFps
 
   companion object {
     fun disabled(): SpatialVideoProjectionSettings =
@@ -128,9 +219,15 @@ internal data class SpatialVideoProjectionSettings(
             height = CAMERA_HWB_PROJECTION_VIDEO_DEFAULT_HEIGHT_PX,
             maxImages = CAMERA_HWB_PROJECTION_VIDEO_DEFAULT_IMAGES,
             fpsCap = CAMERA_HWB_PROJECTION_VIDEO_DEFAULT_FPS,
+            cadenceMode = SpatialVideoCadenceMode.Fps30,
             looping = CAMERA_HWB_PROJECTION_VIDEO_DEFAULT_LOOPING,
             opacity = CAMERA_HWB_PROJECTION_VIDEO_DEFAULT_OPACITY,
             highRateJsonPayload = CAMERA_HWB_PROJECTION_VIDEO_DEFAULT_HIGH_RATE_JSON_PAYLOAD,
+            peerRouteKind = SpatialPeerStereoRouteKind.InfrastructureLan,
+            peerSessionId = "",
+            peerRelayChannel = "",
+            peerTlsServerName = "",
+            peerAuthToken = "",
         )
   }
 }
@@ -181,6 +278,29 @@ internal object SpatialVideoProjectionRouteModule {
                 100,
                 60000,
             )
+    val peerRouteKind =
+        SpatialPeerStereoRouteKind.fromToken(
+            activityReadOptionalStringIntentExtra(intent, EXTRA_VIDEO_PROJECTION_PEER_ROUTE_KIND)
+                ?: activityReadSystemProperty(CAMERA_HWB_PROJECTION_VIDEO_PEER_ROUTE_KIND_PROPERTY)
+        )
+    val peerSessionId =
+        (activityReadOptionalStringIntentExtra(intent, EXTRA_VIDEO_PROJECTION_PEER_SESSION_ID)
+                ?: activityReadSystemProperty(CAMERA_HWB_PROJECTION_VIDEO_PEER_SESSION_ID_PROPERTY))
+            .trim()
+    val peerRelayChannel =
+        (activityReadOptionalStringIntentExtra(intent, EXTRA_VIDEO_PROJECTION_PEER_RELAY_CHANNEL)
+                ?: activityReadSystemProperty(CAMERA_HWB_PROJECTION_VIDEO_PEER_RELAY_CHANNEL_PROPERTY))
+            .trim()
+    val peerTlsServerName =
+        (activityReadOptionalStringIntentExtra(intent, EXTRA_VIDEO_PROJECTION_PEER_TLS_SERVER_NAME)
+                ?: activityReadSystemProperty(CAMERA_HWB_PROJECTION_VIDEO_PEER_TLS_SERVER_NAME_PROPERTY))
+            .trim()
+    // The relay bearer is deliberately intent-only. It is never stored in a system property,
+    // marker, profile, Hub surface, Manifold/Fleet JSON, or serialized status snapshot.
+    val peerAuthToken =
+        activityReadOptionalStringIntentExtra(intent, EXTRA_VIDEO_PROJECTION_PEER_AUTH_TOKEN)
+            ?.trim()
+            .orEmpty()
     val mediaLayout =
         normalizeMediaLayout(
             activityReadOptionalStringIntentExtra(intent, EXTRA_VIDEO_PROJECTION_MEDIA_LAYOUT)
@@ -230,7 +350,7 @@ internal object SpatialVideoProjectionRouteModule {
                 CAMERA_HWB_PROJECTION_VIDEO_MIN_IMAGES,
                 CAMERA_HWB_PROJECTION_VIDEO_MAX_IMAGES,
             )
-    val fpsCap =
+    val legacyFpsCap =
         activityReadOptionalIntIntentExtra(
             intent,
             EXTRA_VIDEO_PROJECTION_FPS_CAP,
@@ -243,6 +363,12 @@ internal object SpatialVideoProjectionRouteModule {
                 CAMERA_HWB_PROJECTION_VIDEO_MIN_FPS,
                 CAMERA_HWB_PROJECTION_VIDEO_MAX_FPS,
             )
+    val requestedCadenceMode =
+        activityReadOptionalStringIntentExtra(intent, EXTRA_VIDEO_PROJECTION_CADENCE_MODE)
+            ?: activityReadSystemProperty(CAMERA_HWB_PROJECTION_VIDEO_CADENCE_MODE_PROPERTY)
+    val cadenceMode =
+        SpatialVideoCadenceMode.fromToken(requestedCadenceMode)
+            ?: SpatialVideoCadenceMode.fromLegacyFpsCap(legacyFpsCap)
     val looping =
         activityReadOptionalBooleanIntentExtra(intent, EXTRA_VIDEO_PROJECTION_LOOPING)
             ?: activityReadOptionalBooleanSystemProperty(CAMERA_HWB_PROJECTION_VIDEO_LOOPING_PROPERTY)
@@ -278,10 +404,16 @@ internal object SpatialVideoProjectionRouteModule {
         width = width,
         height = height,
         maxImages = maxImages,
-        fpsCap = fpsCap,
+        fpsCap = cadenceMode.nativeFallbackFps,
+        cadenceMode = cadenceMode,
         looping = looping,
         opacity = opacity,
         highRateJsonPayload = highRateJsonPayload,
+        peerRouteKind = peerRouteKind,
+        peerSessionId = peerSessionId,
+        peerRelayChannel = peerRelayChannel,
+        peerTlsServerName = peerTlsServerName,
+        peerAuthToken = peerAuthToken,
     )
   }
 
@@ -295,9 +427,12 @@ internal object SpatialVideoProjectionRouteModule {
 
   fun normalizeSource(value: String): String =
       when (value.trim().lowercase(Locale.US).replace("_", "-")) {
+        "peer-packed-stereo", "peer-stereo", "packed-stereo-peer" -> "peer-packed-stereo"
         "broker-rmanvid1", "rmanvid1" -> "broker-rmanvid1"
         "encrypted-offline-pack", "offline-pack" ->
             SpatialImmersiveVideoSessionPolicy.CUSTOM_PROJECTION_SOURCE
+        "shared-plain-video", "plain-video" ->
+            SpatialImmersiveVideoSessionPolicy.PLAIN_CUSTOM_PROJECTION_SOURCE
         else -> CAMERA_HWB_PROJECTION_VIDEO_DEFAULT_SOURCE
       }
 
@@ -320,6 +455,20 @@ internal object SpatialVideoProjectionRouteModule {
               "0.000000,0.000000,0.500000,1.000000" to
                   "0.500000,0.000000,0.500000,1.000000"
         }
+    val endpointMarker =
+        if (settings.source == "peer-packed-stereo") {
+          "videoProjectionPeerEndpointProvided=${settings.brokerPort > 0} " +
+              "videoProjectionPeerRouteKind=${settings.peerRouteKind.token} " +
+              "videoProjectionPeerTransportEncrypted=${settings.peerRouteKind.encrypted} " +
+              "videoProjectionPeerSessionAccepted=${settings.peerSessionId.isNotBlank()} " +
+              "videoProjectionPeerRelayChannelProvided=${settings.peerRelayChannel.isNotBlank()} " +
+              "videoProjectionPeerTlsServerNameProvided=${settings.peerTlsServerName.isNotBlank()} " +
+              "videoProjectionPeerAuthenticationProvided=${settings.peerAuthToken.isNotBlank()} " +
+              "peerEndpointRedacted=true peerSecretSerialized=false"
+        } else {
+          "videoProjectionBrokerHost=${activityMarkerToken(settings.brokerHost)} " +
+              "videoProjectionBrokerPort=${settings.brokerPort}"
+        }
     return "videoProjectionEnabled=${settings.enabled} " +
           "spatialVideoProjectionEnabled=${settings.enabled} " +
           "spatialVideoProjectionActive=${settings.active} " +
@@ -329,6 +478,7 @@ internal object SpatialVideoProjectionRouteModule {
           "videoProjectionPath=${activityMarkerToken(settings.path)} " +
           "videoProjectionPathProvided=${settings.path.isNotBlank()} " +
           "videoProjectionPackagedMedia=${settings.source == SpatialImmersiveVideoSessionPolicy.CUSTOM_PROJECTION_SOURCE} " +
+          "videoProjectionSharedPlainMedia=${settings.source == SpatialImmersiveVideoSessionPolicy.PLAIN_CUSTOM_PROJECTION_SOURCE} " +
           "videoProjectionPlaintextFileWritten=false " +
           "videoProjectionPathProperty=$CAMERA_HWB_PROJECTION_VIDEO_PATH_PROPERTY " +
           "videoProjectionEnabledProperty=$CAMERA_HWB_PROJECTION_VIDEO_ENABLED_PROPERTY " +
@@ -336,11 +486,16 @@ internal object SpatialVideoProjectionRouteModule {
           "videoProjectionPathIntentExtra=$EXTRA_VIDEO_PROJECTION_PATH " +
           "videoProjectionSource=${settings.source} " +
           "videoProjectionMediaLayout=${settings.mediaLayout} " +
-          "videoProjectionBrokerHost=${activityMarkerToken(settings.brokerHost)} " +
-          "videoProjectionBrokerPort=${settings.brokerPort} " +
+          "$endpointMarker " +
           "videoProjectionBrokerConnectTimeoutMs=${settings.brokerConnectTimeoutMs} " +
           "videoProjectionWidth=${settings.width} videoProjectionHeight=${settings.height} " +
           "videoProjectionMaxImages=${settings.maxImages} videoProjectionFpsCap=${settings.fpsCap} " +
+          "videoProjectionCadenceRequested=${settings.cadenceMode.token} " +
+          "videoProjectionCadenceEffective=${settings.cadenceMode.token} " +
+          "videoProjectionSurfaceCadenceGateEnabled=${settings.cadenceMode.surfaceGateEnabled} " +
+          "videoProjectionSurfaceCadenceFps=${settings.surfaceOutputCadenceFps} " +
+          "videoProjectionNativeCadenceFallbackFps=${settings.cadenceMode.nativeFallbackFps} " +
+          "videoProjectionSourceCadenceCeilingFps=$CAMERA_HWB_PROJECTION_VIDEO_MAX_FPS " +
           "videoProjectionLooping=${settings.looping} " +
           "videoProjectionStereoLayout=${settings.stereoLayout} " +
           "videoProjectionTarget=packed-sbs-full-eye " +
@@ -349,13 +504,20 @@ internal object SpatialVideoProjectionRouteModule {
           "videoProjectionStream=stereo_video " +
           "videoProjectionSourceAuthority=${when (settings.source) {
             "broker-rmanvid1" -> "manifold-broker-rmanvid1-packed-camera2-h264"
+            "peer-packed-stereo" -> "rusty-quest-peer-packed-stereo-camera2-h264"
             SpatialImmersiveVideoSessionPolicy.CUSTOM_PROJECTION_SOURCE ->
                 "authenticated-aes-gcm-random-access-mediadatasource"
+            SpatialImmersiveVideoSessionPolicy.PLAIN_CUSTOM_PROJECTION_SOURCE ->
+                "persisted-read-only-saf-content-uri"
             else -> "android-mediacodec-surface-decoder"
           }} " +
           "videoProjectionTransport=mediacodec-surface-to-ndk-aimage-reader-ahardwarebuffer " +
           "videoProjectionControlPlane=spatial-activity-runtime-property-or-intent-extra " +
           "videoProjectionDecodePath=MediaCodec-to-Surface " +
+          "videoProjectionCodecOutputCadenceGate=${settings.cadenceMode.surfaceGateEnabled} " +
+          "videoProjectionCodecOutputCadenceBoundary=mediacodec-output-before-surface " +
+          "videoProjectionCompressedReferenceFramesPreserved=true " +
+          "videoProjectionNativeCadenceFallbackRetained=true " +
           "videoProjectionFormat=private " +
           "videoProjectionLeftSourceUvRect=$leftSourceUvRect " +
           "videoProjectionRightSourceUvRect=$rightSourceUvRect " +

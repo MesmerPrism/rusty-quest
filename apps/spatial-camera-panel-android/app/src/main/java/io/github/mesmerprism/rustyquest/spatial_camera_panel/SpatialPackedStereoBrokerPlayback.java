@@ -13,7 +13,6 @@ import org.json.JSONObject;
 import java.io.DataInputStream;
 import java.io.EOFException;
 import java.io.IOException;
-import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.net.SocketTimeoutException;
 import java.nio.ByteBuffer;
@@ -22,7 +21,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.TreeMap;
 
-/** One-socket RMANVID v4 packed-stereo adapter for the opt-in Spatial video route. */
+/** Transport-neutral one-stream RMANVID v4 packed-stereo source for Spatial projection. */
 final class SpatialPackedStereoBrokerPlayback {
     private static final String LOG_TAG = "RQSpatialCamera";
     private static final String MAGIC = "RMANVID1";
@@ -43,6 +42,11 @@ final class SpatialPackedStereoBrokerPlayback {
         int port,
         int connectTimeoutMs,
         String mediaLayout,
+        String peerRouteKind,
+        String peerSessionId,
+        String peerRelayChannel,
+        String peerTlsServerName,
+        String peerAuthToken,
         Surface surface,
         int requestedWidth,
         int requestedHeight,
@@ -50,16 +54,28 @@ final class SpatialPackedStereoBrokerPlayback {
         int fpsCap
     ) throws IOException {
         if (!MEDIA_LAYOUT.equals(mediaLayout) || port <= 0 || port > 65535) {
-            throw new IOException("Spatial packed broker requires explicit SBS layout and one port");
+            throw new IOException("Spatial packed peer source requires explicit SBS layout and one port");
         }
-        Socket socket = new Socket();
+        Socket socket = null;
         MediaCodec codec = null;
+        boolean failed = true;
+        SpatialPeerStereoStatus.starting(
+            peerRouteKind,
+            peerSessionId,
+            peerAuthToken != null && !peerAuthToken.trim().isEmpty()
+        );
         try {
-            socket.connect(
-                new InetSocketAddress(normalizeHost(host), port),
-                clamp(connectTimeoutMs, 100, 60000)
+            socket = SpatialPeerStereoTransport.connect(
+                peerRouteKind,
+                host,
+                port,
+                connectTimeoutMs,
+                peerSessionId,
+                peerRelayChannel,
+                peerTlsServerName,
+                peerAuthToken
             );
-            socket.setSoTimeout(1000);
+            SpatialPeerStereoStatus.connected();
             DataInputStream input = new DataInputStream(socket.getInputStream());
             Header header = Header.read(input, requestedWidth, requestedHeight);
             codec = createHardwareDecoder(surface, header.width, header.height);
@@ -70,23 +86,37 @@ final class SpatialPackedStereoBrokerPlayback {
             long renderedFrames = 0L;
             Log.i(LOG_TAG, String.format(
                 Locale.US,
-                "RUSTY_QUEST_SPATIAL_CAMERA_PANEL channel=spatial-packed-broker status=started magic=RMANVID1 schema=4 brokerMediaLayout=side-by-side-left-right brokerHost=%s brokerPort=%d packedSocketCount=1 decoderInstanceCount=1 nativeImageReaderCount=1 width=%d height=%d maxImages=%d fpsCap=%d cpuPixelCopy=false",
-                normalizeHost(host), port, header.width, header.height, maxImages, fpsCap));
+                "RUSTY_QUEST_SPATIAL_CAMERA_PANEL channel=spatial-peer-stereo status=started magic=RMANVID1 schema=4 peerMediaLayout=side-by-side-left-right %s packedSocketCount=1 decoderInstanceCount=1 nativeImageReaderCount=1 width=%d height=%d maxImages=%d fpsCap=%d cpuPixelCopy=false",
+                SpatialPeerStereoTransport.safeRouteMarker(
+                    peerRouteKind,
+                    peerSessionId,
+                    peerAuthToken != null && !peerAuthToken.trim().isEmpty()),
+                header.width, header.height, maxImages, fpsCap));
             while (!SpatialStereoVideoPlayback.isStopRequested()) {
                 Packet packet;
                 try {
                     packet = Packet.read(input, header.maxPairDeltaNs);
                 } catch (SocketTimeoutException timeout) {
                     renderedFrames += drain(codec, outputInfo, queuedPairs);
+                    SpatialPeerStereoStatus.rendered(renderedFrames);
                     continue;
                 } catch (EOFException eof) {
                     break;
                 }
                 sequence.validate(packet.pair, packet.codecConfig, header.maxPairDeltaNs);
+                SpatialPeerStereoStatus.packet(
+                    packet.payload.length,
+                    packet.pair.pairId,
+                    packet.pair.leftSensorTimestampNs,
+                    packet.pair.rightSensorTimestampNs,
+                    packet.pair.pairDeltaNs,
+                    packet.codecConfig
+                );
                 int inputIndex;
                 do {
                     inputIndex = codec.dequeueInputBuffer(DEQUEUE_TIMEOUT_US);
                     renderedFrames += drain(codec, outputInfo, queuedPairs);
+                    SpatialPeerStereoStatus.rendered(renderedFrames);
                 } while (inputIndex < 0 && !SpatialStereoVideoPlayback.isStopRequested());
                 if (inputIndex < 0) {
                     break;
@@ -112,13 +142,15 @@ final class SpatialPackedStereoBrokerPlayback {
                 }
                 queuedPackets++;
                 renderedFrames += drain(codec, outputInfo, queuedPairs);
+                SpatialPeerStereoStatus.rendered(renderedFrames);
                 if (renderedFrames == 1L || renderedFrames % 60L == 0L) {
                     Log.i(LOG_TAG, String.format(
                         Locale.US,
-                        "RUSTY_QUEST_SPATIAL_CAMERA_PANEL channel=spatial-packed-broker status=frame renderedFrames=%d queuedPackets=%d brokerPort=%d packedStereo=true nativeImageReaderCount=1 cpuPixelCopy=false",
-                        renderedFrames, queuedPackets, port));
+                        "RUSTY_QUEST_SPATIAL_CAMERA_PANEL channel=spatial-peer-stereo status=frame renderedFrames=%d queuedPackets=%d packedStereo=true nativeImageReaderCount=1 cpuPixelCopy=false %s",
+                        renderedFrames, queuedPackets, SpatialPeerStereoStatus.snapshot().marker()));
                 }
             }
+            failed = false;
         } finally {
             if (codec != null) {
                 try {
@@ -127,10 +159,20 @@ final class SpatialPackedStereoBrokerPlayback {
                 }
                 codec.release();
             }
-            try {
-                socket.close();
-            } catch (IOException ignored) {
+            if (socket != null) {
+                try {
+                    socket.close();
+                } catch (IOException ignored) {
+                }
             }
+            SpatialPeerStereoStatus.stopped(failed);
+            Log.i(
+                LOG_TAG,
+                "RUSTY_QUEST_SPATIAL_CAMERA_PANEL channel=spatial-peer-stereo status="
+                    + (failed ? "failed" : "stopped")
+                    + " "
+                    + SpatialPeerStereoStatus.snapshot().marker()
+            );
         }
     }
 
@@ -219,15 +261,6 @@ final class SpatialPackedStereoBrokerPlayback {
             || name.startsWith("omx.google.")
             || name.contains("google")
             || name.contains("software");
-    }
-
-    private static String normalizeHost(String host) {
-        String value = host == null ? "" : host.trim();
-        return value.isEmpty() ? "127.0.0.1" : value;
-    }
-
-    private static int clamp(int value, int min, int max) {
-        return Math.max(min, Math.min(max, value));
     }
 
     private static final class Header {

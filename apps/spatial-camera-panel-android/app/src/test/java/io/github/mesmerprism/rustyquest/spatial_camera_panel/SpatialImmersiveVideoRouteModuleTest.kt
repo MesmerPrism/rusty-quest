@@ -82,6 +82,37 @@ class SpatialImmersiveVideoRouteModuleTest {
   }
 
   @Test
+  fun sharedPlainMediaCanSeedTheCatalogWithoutEnablingPlaybackAtLaunch() {
+    val item =
+        SharedPlainImmersiveMediaItem(
+            mediaId = "plain-seed",
+            contentUri = "content://com.android.externalstorage.documents/document/plain-seed",
+            shape = SpatialImmersiveVideoShape.Equirect360,
+            stereoLayout = SpatialImmersiveVideoStereoLayout.TopBottom,
+            widthPx = 1024,
+            heightPx = 1024,
+            containerMimeType = "video/mp4",
+        )
+    val resolution =
+        assertIs<SpatialImmersiveVideoRouteResolution.Ready>(
+            SpatialImmersiveVideoRouteModule.resolveAvailablePlainMedia(
+                item = item,
+                autoplay = null,
+                loop = null,
+                radiusMeters = null,
+            )
+        )
+
+    assertFalse(resolution.playbackInitiallyEnabled)
+    assertTrue(resolution.requested)
+    assertEquals(item, resolution.config.plainMedia)
+    assertTrue(
+        SpatialImmersiveVideoRouteModule.routePolicyMarker(resolution)
+            .contains("explicitOptIn=false initialPlaybackEnabled=false")
+    )
+  }
+
+  @Test
   fun rejectsContentUrisOutsideTheMediaVideoCollection() {
     val resolution =
         SpatialImmersiveVideoRouteModule.resolve(

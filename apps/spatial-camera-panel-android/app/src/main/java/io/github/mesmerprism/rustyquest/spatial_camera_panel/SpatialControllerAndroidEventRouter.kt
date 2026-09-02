@@ -4,8 +4,7 @@ import android.view.KeyEvent
 import android.view.MotionEvent
 
 internal class SpatialControllerAndroidEventRouter(
-    private val armSecondaryToggle: (String) -> Unit,
-    private val toggleSecondary: (String, String) -> Boolean,
+    private val recenterVideo: (String, String) -> Boolean,
     private val recenterTrigger: (String, String) -> Boolean,
     private val openPrimary: (String, String) -> Boolean,
     private val storeLeftPrimary: (String, String) -> Boolean,
@@ -40,7 +39,6 @@ internal class SpatialControllerAndroidEventRouter(
           }
           KeyEvent.ACTION_UP -> {
             secondaryKeyDown = false
-            armSecondaryToggle("android-key-event")
             false
           }
           else -> false
@@ -48,7 +46,7 @@ internal class SpatialControllerAndroidEventRouter(
     if (!pressedEdge) {
       return false
     }
-    return toggleSecondary(
+    return recenterVideo(
         "android-key-event",
         "keyCode=${event.keyCode} keyAction=${event.action} repeatCount=${event.repeatCount}",
     )
@@ -65,13 +63,10 @@ internal class SpatialControllerAndroidEventRouter(
     val secondaryDown = (event.buttonState and MotionEvent.BUTTON_SECONDARY) != 0
     val pressedEdge = secondaryDown && !secondaryMotionDown
     secondaryMotionDown = secondaryDown
-    if (!secondaryDown) {
-      armSecondaryToggle("android-generic-motion-button")
-    }
     if (!pressedEdge) {
       return false
     }
-    return toggleSecondary(
+    return recenterVideo(
         "android-generic-motion-button",
         "motionAction=$action motionButtonState=${event.buttonState} " +
             "motionButtonBit=${MotionEvent.BUTTON_SECONDARY}",

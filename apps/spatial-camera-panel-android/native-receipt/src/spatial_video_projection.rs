@@ -1,6 +1,7 @@
 //! Vulkan projection for decoded stereo video frames in the Spatial camera panel.
 
 use std::ffi::CString;
+use std::time::Instant;
 
 use ash::vk;
 
@@ -13,10 +14,11 @@ use crate::{
     },
     spatial_video_projection_marker::log_spatial_video_projection_marker as log_marker,
     spatial_video_projection_native_stream::SpatialVideoProjectionFrame,
-    spatial_video_projection_settings::SpatialVideoProjectionSettings,
+    spatial_video_projection_settings::{
+        should_log_spatial_video_projection_import, spatial_video_projection_import_cache_limit,
+        SpatialVideoProjectionSettings, SPATIAL_VIDEO_PROJECTION_IMPORT_CACHE_LIMIT,
+    },
 };
-
-const SPATIAL_VIDEO_PROJECTION_IMPORT_CACHE_LIMIT: usize = 8;
 
 #[derive(Clone, Debug)]
 pub(crate) struct SpatialVideoProjectionFrameStats {
@@ -47,6 +49,12 @@ pub(crate) struct SpatialVideoProjectionFrameStats {
     pub(crate) memory_type_bits: u32,
     pub(crate) import_cache_hits: u64,
     pub(crate) import_cache_misses: u64,
+    pub(crate) import_cache_entries: usize,
+    pub(crate) import_cache_limit: usize,
+    pub(crate) import_property_query_calls: u64,
+    pub(crate) import_property_query_total_ns: u64,
+    pub(crate) import_property_query_max_ns: u64,
+    pub(crate) cache_hits_before_property_query: u64,
     pub(crate) opacity: f32,
     pub(crate) stereo_layout: &'static str,
 }
@@ -84,6 +92,12 @@ impl SpatialVideoProjectionFrameStats {
             memory_type_bits: 0,
             import_cache_hits: 0,
             import_cache_misses: 0,
+            import_cache_entries: 0,
+            import_cache_limit: 0,
+            import_property_query_calls: 0,
+            import_property_query_total_ns: 0,
+            import_property_query_max_ns: 0,
+            cache_hits_before_property_query: 0,
             opacity: settings.opacity,
             stereo_layout: settings.stereo_layout.marker_value(),
         }
@@ -91,7 +105,7 @@ impl SpatialVideoProjectionFrameStats {
 
     pub(crate) fn marker_fields(&self) -> String {
         format!(
-            "videoProjectionReady={} videoProjectionRendered={} spatialVideoProjectionRendered={} videoProjectionReason={} videoProjectionStereoLayout={} videoProjectionFrameIndex={} videoProjectionImportSequence={} videoProjectionTimestampNs={} videoProjectionHardwareBufferId={} videoProjectionDescriptorWidth={} videoProjectionDescriptorHeight={} videoProjectionDescriptorFormat={} videoProjectionDescriptorUsage={} videoProjectionDescriptorStride={} videoProjectionConfiguredWidth={} videoProjectionConfiguredHeight={} videoProjectionFpsCap={} videoProjectionDroppedFrames={} videoProjectionBufferRemovedCount={} videoProjectionExternalFormat={} videoProjectionVkFormat={:?} descriptorShape={} videoProjectionExternalFormatSampling={} videoProjectionSamplerYcbcrConversion={} videoProjectionDescriptorUsesImmutableSampler={} videoProjectionOpacity={:.3} videoProjectionAllocationSize={} videoProjectionMemoryTypeBits=0x{:x} videoProjectionImportCacheHits={} videoProjectionImportCacheMisses={} videoProjectionGpuImportReady={} videoProjectionGpuAdoptionPath=android-mediacodec-surface-aimage-reader-ahardwarebuffer-to-vulkan-sampled-image nativeImageReader=true javaHardwareBufferBridge=false cpuPixelCopy=false highRateJsonPayload=false sourceAuthority=android-mediacodec-surface-decoder rawCamera=false passthroughTexture=false environmentDepth=false geometryWitness=false",
+            "videoProjectionReady={} videoProjectionRendered={} spatialVideoProjectionRendered={} videoProjectionReason={} videoProjectionStereoLayout={} videoProjectionFrameIndex={} videoProjectionImportSequence={} videoProjectionTimestampNs={} videoProjectionHardwareBufferId={} videoProjectionDescriptorWidth={} videoProjectionDescriptorHeight={} videoProjectionDescriptorFormat={} videoProjectionDescriptorUsage={} videoProjectionDescriptorStride={} videoProjectionConfiguredWidth={} videoProjectionConfiguredHeight={} videoProjectionFpsCap={} videoProjectionDroppedFrames={} videoProjectionBufferRemovedCount={} videoProjectionExternalFormat={} videoProjectionVkFormat={:?} descriptorShape={} videoProjectionExternalFormatSampling={} videoProjectionSamplerYcbcrConversion={} videoProjectionDescriptorUsesImmutableSampler={} videoProjectionOpacity={:.3} videoProjectionAllocationSize={} videoProjectionMemoryTypeBits=0x{:x} videoProjectionImportCacheHits={} videoProjectionImportCacheMisses={} videoProjectionImportCacheEntries={} videoProjectionImportCacheLimit={} videoProjectionImportPropertyQueryCalls={} videoProjectionImportPropertyQueryTotalNs={} videoProjectionImportPropertyQueryMaxNs={} videoProjectionCacheHitsBeforePropertyQuery={} videoProjectionImportTelemetryAllocation=scalar videoProjectionImportTelemetryPerFrameLog=false videoProjectionGpuImportReady={} videoProjectionGpuAdoptionPath=android-mediacodec-surface-aimage-reader-ahardwarebuffer-to-vulkan-sampled-image nativeImageReader=true javaHardwareBufferBridge=false cpuPixelCopy=false highRateJsonPayload=false sourceAuthority=android-mediacodec-surface-decoder rawCamera=false passthroughTexture=false environmentDepth=false geometryWitness=false",
             self.ready,
             self.rendered,
             self.rendered,
@@ -122,6 +136,12 @@ impl SpatialVideoProjectionFrameStats {
             self.memory_type_bits,
             self.import_cache_hits,
             self.import_cache_misses,
+            self.import_cache_entries,
+            self.import_cache_limit,
+            self.import_property_query_calls,
+            self.import_property_query_total_ns,
+            self.import_property_query_max_ns,
+            self.cache_hits_before_property_query,
             self.ready
         )
     }
@@ -143,6 +163,10 @@ pub(crate) struct SpatialVideoProjectionRenderer {
     imports: Vec<SpatialVideoProjectionImport>,
     import_cache_hits: u64,
     import_cache_misses: u64,
+    import_property_query_calls: u64,
+    import_property_query_total_ns: u64,
+    import_property_query_max_ns: u64,
+    cache_hits_before_property_query: u64,
     gpu_frame_hardware_buffer_ids: Vec<Vec<u64>>,
 }
 
@@ -169,6 +193,10 @@ impl SpatialVideoProjectionRenderer {
             imports: Vec::new(),
             import_cache_hits: 0,
             import_cache_misses: 0,
+            import_property_query_calls: 0,
+            import_property_query_total_ns: 0,
+            import_property_query_max_ns: 0,
+            cache_hits_before_property_query: 0,
             gpu_frame_hardware_buffer_ids: Vec::new(),
         }
     }
@@ -187,6 +215,20 @@ impl SpatialVideoProjectionRenderer {
         }
     }
 
+    /// Returns the most recently imported descriptor without adopting or sampling another frame.
+    ///
+    /// The zone compositor uses this only for shader branches that are proven not to sample video.
+    /// Keeping the descriptor-set layout stable prevents a Video/Transparent control change from
+    /// recompiling the compositor pipeline on the render thread. The imported image remains owned
+    /// by this renderer until its normal bounded cache eviction or renderer destruction.
+    pub(crate) fn retained_unused_descriptor_binding(
+        &self,
+    ) -> Option<(vk::DescriptorSetLayout, vk::DescriptorSet)> {
+        let resources = self.resources.as_ref()?;
+        let retained = self.imports.last()?;
+        Some((resources.descriptor_set_layout, retained.descriptor_set))
+    }
+
     pub(crate) unsafe fn prepare_frame(
         &mut self,
         device: &ash::Device,
@@ -202,40 +244,15 @@ impl SpatialVideoProjectionRenderer {
             return Ok(None);
         };
 
-        let (import_properties, format_props) =
-            query_ahb_vulkan_import_properties(ahb, &frame.hardware_buffer)?;
-        let format_key = import_properties.format_key;
-        if format_key.format == vk::Format::UNDEFINED && format_key.external_format == 0 {
-            return Err(
-                "spatial video projection got no Vulkan format or Android external format"
-                    .to_string(),
-            );
-        }
-
-        if self
-            .resources
-            .as_ref()
-            .map(|resources| resources.format_key != format_key)
-            .unwrap_or(true)
-        {
-            self.destroy_imports(device);
-            if let Some(resources) = self.resources.take() {
-                resources.destroy(device);
-            }
-            self.resources = Some(create_spatial_video_projection_resources(
-                device,
-                self.render_pass,
-                format_key,
-                &format_props,
-            )?);
-        }
-
         let protected_hardware_buffer_id = frame.descriptor.hardware_buffer_id;
+        let import_cache_limit = spatial_video_projection_import_cache_limit(frame.max_images);
         let key = SpatialVideoProjectionImportKey::from_frame(frame);
-        let import_index = if let Some(index) =
+        let (import_index, format_key, allocation_size, memory_type_bits) = if let Some(index) =
             self.imports.iter().position(|import| import.key == key)
         {
             self.import_cache_hits = self.import_cache_hits.saturating_add(1);
+            self.cache_hits_before_property_query =
+                self.cache_hits_before_property_query.saturating_add(1);
             if self.imports[index].needs_layout_transition {
                 transition_ahb_sampled_image_to_shader_read(
                     device,
@@ -244,15 +261,69 @@ impl SpatialVideoProjectionRenderer {
                 );
                 self.imports[index].needs_layout_transition = false;
             }
-            index
+            let import = &self.imports[index];
+            (
+                index,
+                import.format_key,
+                import.allocation_size,
+                import.memory_type_bits,
+            )
         } else {
             self.import_cache_misses = self.import_cache_misses.saturating_add(1);
+            let query_started_at = Instant::now();
+            let query_result = query_ahb_vulkan_import_properties(ahb, &frame.hardware_buffer);
+            let query_elapsed_ns =
+                u64::try_from(query_started_at.elapsed().as_nanos()).unwrap_or(u64::MAX);
+            self.import_property_query_calls = self.import_property_query_calls.saturating_add(1);
+            self.import_property_query_total_ns = self
+                .import_property_query_total_ns
+                .saturating_add(query_elapsed_ns);
+            self.import_property_query_max_ns =
+                self.import_property_query_max_ns.max(query_elapsed_ns);
+            let (import_properties, format_props) = query_result?;
+            let format_key = import_properties.format_key;
+            let allocation_size = import_properties.allocation_size;
+            let memory_type_bits = import_properties.memory_type_bits;
+            if format_key.format == vk::Format::UNDEFINED && format_key.external_format == 0 {
+                return Err(
+                    "spatial video projection got no Vulkan format or Android external format"
+                        .to_string(),
+                );
+            }
+
+            if self
+                .resources
+                .as_ref()
+                .map(|resources| resources.format_key != format_key)
+                .unwrap_or(true)
+            {
+                self.destroy_imports(device);
+                if let Some(resources) = self.resources.take() {
+                    resources.destroy(device);
+                }
+                self.resources = Some(create_spatial_video_projection_resources(
+                    device,
+                    self.render_pass,
+                    format_key,
+                    &format_props,
+                )?);
+            }
+
             let imports_before = self.imports.len();
-            let eviction_stats = self.evict_imports_to_limit(device, protected_hardware_buffer_id);
-            if eviction_stats.should_log() {
+            let eviction_stats = self.evict_imports_to_limit(
+                device,
+                protected_hardware_buffer_id,
+                import_cache_limit,
+            );
+            if eviction_stats.should_log()
+                && should_log_spatial_video_projection_import(
+                    self.import_cache_misses,
+                    import_cache_limit,
+                )
+            {
                 log_marker(format!(
-                    "status=import-lru-eviction importCacheLimit={} importsBefore={} importsAfter={} evictionAttempts={} evictedImportCount={} inFlightSkipCount={} protectedSkipCount={} cacheEvictionApplied={} cacheEvictionDeferred={} stream=stereo_video",
-                    SPATIAL_VIDEO_PROJECTION_IMPORT_CACHE_LIMIT,
+                    "status=import-lru-eviction importCacheLimit={} importsBefore={} importsAfter={} evictionAttempts={} evictedImportCount={} inFlightSkipCount={} protectedSkipCount={} cacheEvictionApplied={} cacheEvictionDeferred={} importCacheMisses={} receiptSampling=first-eviction-and-every-60-misses stream=stereo_video",
+                    import_cache_limit,
                     imports_before,
                     self.imports.len(),
                     eviction_stats.attempts,
@@ -261,6 +332,7 @@ impl SpatialVideoProjectionRenderer {
                     eviction_stats.protected_skips,
                     eviction_stats.applied > 0,
                     eviction_stats.deferred > 0,
+                    self.import_cache_misses,
                 ));
             }
 
@@ -274,35 +346,41 @@ impl SpatialVideoProjectionRenderer {
                 frame,
                 key,
                 format_key,
-                import_properties.allocation_size,
-                import_properties.memory_type_bits,
+                allocation_size,
+                memory_type_bits,
             )?;
             transition_ahb_sampled_image_to_shader_read(device, cmd, import.sampled_image.image);
             import.needs_layout_transition = false;
             self.imports.push(import);
             let import_index = self.imports.len() - 1;
 
-            log_marker(format!(
-                "status=ahardware-buffer-import-ready stream=stereo_video frameIndex={} importSequence={} timestampNs={} hardwareBufferId={} width={} height={} descriptorFormat={} descriptorUsage={} descriptorStride={} externalFormat={} vkFormat={:?} allocationSize={} memoryTypeBits=0x{:x} descriptorShape={} videoProjectionExternalFormatSampling={} videoProjectionSamplerYcbcrConversion={} videoProjectionDescriptorUsesImmutableSampler={} gpuImportWorked=true videoProjectionGpuImportReady=true videoProjectionGpuAdoptionPath=android-mediacodec-surface-aimage-reader-ahardwarebuffer-to-vulkan-sampled-image nativeImageReader=true javaHardwareBufferBridge=false cpuPixelCopy=false",
-                frame.frame_index,
-                frame.import_sequence,
-                frame.timestamp_ns,
-                frame.descriptor.hardware_buffer_id,
-                frame.descriptor.width,
-                frame.descriptor.height,
-                frame.descriptor.format,
-                frame.descriptor.usage,
-                frame.descriptor.stride,
-                format_key.external_format,
-                format_key.format,
-                import_properties.allocation_size,
-                import_properties.memory_type_bits,
-                resources.descriptor_shape(),
-                resources.sampler_ycbcr_conversion.is_some(),
-                resources.sampler_ycbcr_conversion.is_some(),
-                resources.descriptor_uses_immutable_sampler,
-            ));
-            import_index
+            if should_log_spatial_video_projection_import(
+                self.import_cache_misses,
+                import_cache_limit,
+            ) {
+                log_marker(format!(
+                    "status=ahardware-buffer-import-ready stream=stereo_video frameIndex={} importSequence={} timestampNs={} hardwareBufferId={} width={} height={} descriptorFormat={} descriptorUsage={} descriptorStride={} externalFormat={} vkFormat={:?} allocationSize={} memoryTypeBits=0x{:x} descriptorShape={} videoProjectionExternalFormatSampling={} videoProjectionSamplerYcbcrConversion={} videoProjectionDescriptorUsesImmutableSampler={} importCacheMisses={} receiptSampling=first-import-first-eviction-and-every-60-misses gpuImportWorked=true videoProjectionGpuImportReady=true videoProjectionGpuAdoptionPath=android-mediacodec-surface-aimage-reader-ahardwarebuffer-to-vulkan-sampled-image nativeImageReader=true javaHardwareBufferBridge=false cpuPixelCopy=false",
+                    frame.frame_index,
+                    frame.import_sequence,
+                    frame.timestamp_ns,
+                    frame.descriptor.hardware_buffer_id,
+                    frame.descriptor.width,
+                    frame.descriptor.height,
+                    frame.descriptor.format,
+                    frame.descriptor.usage,
+                    frame.descriptor.stride,
+                    format_key.external_format,
+                    format_key.format,
+                    allocation_size,
+                    memory_type_bits,
+                    resources.descriptor_shape(),
+                    resources.sampler_ycbcr_conversion.is_some(),
+                    resources.sampler_ycbcr_conversion.is_some(),
+                    resources.descriptor_uses_immutable_sampler,
+                    self.import_cache_misses,
+                ));
+            }
+            (import_index, format_key, allocation_size, memory_type_bits)
         };
 
         let (
@@ -357,10 +435,16 @@ impl SpatialVideoProjectionRenderer {
                 external_format_sampling,
                 sampler_ycbcr_conversion,
                 descriptor_uses_immutable_sampler,
-                allocation_size: import_properties.allocation_size,
-                memory_type_bits: import_properties.memory_type_bits,
+                allocation_size,
+                memory_type_bits,
                 import_cache_hits: self.import_cache_hits,
                 import_cache_misses: self.import_cache_misses,
+                import_cache_entries: self.imports.len(),
+                import_cache_limit,
+                import_property_query_calls: self.import_property_query_calls,
+                import_property_query_total_ns: self.import_property_query_total_ns,
+                import_property_query_max_ns: self.import_property_query_max_ns,
+                cache_hits_before_property_query: self.cache_hits_before_property_query,
                 opacity: settings.opacity,
                 stereo_layout: settings.stereo_layout.marker_value(),
             },
@@ -421,9 +505,10 @@ impl SpatialVideoProjectionRenderer {
         &mut self,
         device: &ash::Device,
         protected_hardware_buffer_id: u64,
+        import_cache_limit: usize,
     ) -> SpatialVideoProjectionCacheEvictionStats {
         let mut stats = SpatialVideoProjectionCacheEvictionStats::default();
-        while self.imports.len() >= SPATIAL_VIDEO_PROJECTION_IMPORT_CACHE_LIMIT {
+        while self.imports.len() >= import_cache_limit {
             stats.attempts += 1;
             let mut evict_index = None;
             for (index, import) in self.imports.iter().enumerate() {
@@ -553,6 +638,9 @@ impl SpatialVideoProjectionResources {
 
 struct SpatialVideoProjectionImport {
     key: SpatialVideoProjectionImportKey,
+    format_key: AhbVulkanFormatKey,
+    allocation_size: vk::DeviceSize,
+    memory_type_bits: u32,
     sampled_image: AhbVulkanSampledImage,
     descriptor_set: vk::DescriptorSet,
     descriptor_pool: vk::DescriptorPool,
@@ -824,6 +912,9 @@ unsafe fn import_spatial_video_projection_hardware_buffer(
     )?;
     Ok(SpatialVideoProjectionImport {
         key,
+        format_key,
+        allocation_size,
+        memory_type_bits,
         sampled_image,
         descriptor_set,
         descriptor_pool: resources.descriptor_pool,

@@ -19,10 +19,11 @@ use crate::acamera_sys::{
     ACaptureSessionOutput, ACaptureSessionOutputContainer, ACaptureSessionOutputContainer_add,
     ACaptureSessionOutputContainer_create, ACaptureSessionOutputContainer_free,
     ACaptureSessionOutput_create, ACaptureSessionOutput_free, AImage, AImageReader,
-    AImageReader_ImageListener, AImageReader_acquireLatestImage, AImageReader_delete,
-    AImageReader_getWindow, AImageReader_newWithUsage, AImageReader_setImageListener,
-    AImage_delete, AImage_getHardwareBuffer, AImage_getTimestamp, ANativeWindow,
-    ANativeWindow_acquire as ACameraNativeWindow_acquire,
+    AImageReader_BufferRemovedListener, AImageReader_ImageListener,
+    AImageReader_acquireLatestImage, AImageReader_delete, AImageReader_getWindow,
+    AImageReader_newWithUsage, AImageReader_setBufferRemovedListener,
+    AImageReader_setImageListener, AImage_delete, AImage_getHardwareBuffer, AImage_getTimestamp,
+    ANativeWindow, ANativeWindow_acquire as ACameraNativeWindow_acquire,
     ANativeWindow_release as ACameraNativeWindow_release,
     ACAMERA_CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES, ACAMERA_CONTROL_AE_TARGET_FPS_RANGE,
     ACAMERA_EDGE_AVAILABLE_EDGE_MODES, ACAMERA_EDGE_MODE, ACAMERA_EDGE_MODE_OFF,
@@ -50,6 +51,7 @@ use crate::{bool_token, marker_token};
 
 const CAMERA_HWB_PROBE_READER_DEFAULT_WIDTH: i32 = 1280;
 const CAMERA_HWB_PROBE_READER_DEFAULT_HEIGHT: i32 = 1280;
+const CAMERA_HWB_REMOVED_BUFFER_QUEUE_LIMIT: usize = 64;
 
 #[derive(Clone, Copy)]
 pub(crate) enum CameraProbeStreamMode {
@@ -227,6 +229,9 @@ struct CameraProbeContext {
     previous_timestamp_ns: AtomicI64,
     previous_callback_boottime_ns: AtomicI64,
     last_camera_sync_mode: AtomicU32,
+    removed_hardware_buffer_ids: Mutex<Vec<u64>>,
+    removed_hardware_buffer_pending: AtomicBool,
+    removed_hardware_buffer_overflow: AtomicBool,
     latest_frame: Mutex<Option<CameraProbeFrame>>,
     frame_available: Condvar,
 }
@@ -416,6 +421,20 @@ impl CameraProbeRuntime {
             .unwrap_or(left);
         (left, right)
     }
+
+    pub(crate) fn drain_removed_hardware_buffer_ids(&self) -> ((Vec<u64>, bool), (Vec<u64>, bool)) {
+        let left = self
+            .left
+            .as_ref()
+            .map(CameraProbeStream::drain_removed_hardware_buffer_ids)
+            .unwrap_or_default();
+        let right = self
+            .right
+            .as_ref()
+            .map(CameraProbeStream::drain_removed_hardware_buffer_ids)
+            .unwrap_or_default();
+        (left, right)
+    }
 }
 
 impl Drop for CameraProbeRuntime {
@@ -518,6 +537,9 @@ impl CameraProbeStream {
             previous_timestamp_ns: AtomicI64::new(0),
             previous_callback_boottime_ns: AtomicI64::new(0),
             last_camera_sync_mode: AtomicU32::new(u32::MAX),
+            removed_hardware_buffer_ids: Mutex::new(Vec::new()),
+            removed_hardware_buffer_pending: AtomicBool::new(false),
+            removed_hardware_buffer_overflow: AtomicBool::new(false),
             latest_frame: Mutex::new(None),
             frame_available: Condvar::new(),
         });
@@ -527,6 +549,19 @@ impl CameraProbeStream {
             onImageAvailable: Some(camera_probe_image_available),
         };
         let _ = AImageReader_setImageListener(reader, &mut listener);
+        let mut buffer_removed_listener = AImageReader_BufferRemovedListener {
+            context: context_raw as *mut c_void,
+            onBufferRemoved: Some(camera_probe_buffer_removed),
+        };
+        let buffer_removed_listener_status =
+            AImageReader_setBufferRemovedListener(reader, &mut buffer_removed_listener);
+        log_marker(format!(
+            "status=camera-buffer-removed-listener side={} cameraId={} listenerRegistered={} listenerStatus={} cacheEvictionSignal=true runtimeCrash=false",
+            side_label,
+            marker_token(camera_id),
+            bool_token(buffer_removed_listener_status == 0),
+            buffer_removed_listener_status,
+        ));
 
         let mut window = ptr::null_mut();
         if AImageReader_getWindow(reader, &mut window) != 0 || window.is_null() {
@@ -703,6 +738,28 @@ impl CameraProbeStream {
         }
     }
 
+    fn drain_removed_hardware_buffer_ids(&self) -> (Vec<u64>, bool) {
+        if self.context_raw.is_null() {
+            return (Vec::new(), false);
+        }
+        let context = unsafe { &*self.context_raw };
+        if !context
+            .removed_hardware_buffer_pending
+            .swap(false, Ordering::AcqRel)
+        {
+            return (Vec::new(), false);
+        }
+        let overflowed = context
+            .removed_hardware_buffer_overflow
+            .swap(false, Ordering::AcqRel);
+        let ids = context
+            .removed_hardware_buffer_ids
+            .lock()
+            .map(|mut ids| std::mem::take(&mut *ids))
+            .unwrap_or_default();
+        (ids, overflowed)
+    }
+
     fn wait_for_first_frame(&self, timeout: Duration) -> Option<CameraProbeFrame> {
         self.wait_for_frame_after(0, timeout)
     }
@@ -752,6 +809,14 @@ impl Drop for CameraProbeStream {
                     onImageAvailable: None,
                 };
                 let _ = AImageReader_setImageListener(self.reader, &mut listener);
+                let mut buffer_removed_listener = AImageReader_BufferRemovedListener {
+                    context: ptr::null_mut(),
+                    onBufferRemoved: None,
+                };
+                let _ = AImageReader_setBufferRemovedListener(
+                    self.reader,
+                    &mut buffer_removed_listener,
+                );
             }
             if !self.capture_session.is_null() {
                 ACameraCaptureSession_stopRepeating(self.capture_session);
@@ -809,6 +874,50 @@ unsafe extern "C" fn camera_device_error(
     log_marker(format!(
         "status=camera-device-error errorCode={} runtimeCrash=false",
         error
+    ));
+}
+
+unsafe extern "C" fn camera_probe_buffer_removed(
+    context: *mut c_void,
+    _reader: *mut AImageReader,
+    buffer: *mut ndk_sys::AHardwareBuffer,
+) {
+    if context.is_null() || buffer.is_null() {
+        return;
+    }
+    let context = &*(context as *const CameraProbeContext);
+    if !context.alive.load(Ordering::Acquire) {
+        return;
+    }
+    let mut hardware_buffer_id = 0_u64;
+    if ndk_sys::AHardwareBuffer_getId(buffer, &mut hardware_buffer_id) != 0
+        || hardware_buffer_id == 0
+    {
+        return;
+    }
+    let queued = match context.removed_hardware_buffer_ids.lock() {
+        Ok(ids) if ids.contains(&hardware_buffer_id) => true,
+        Ok(mut ids) if ids.len() < CAMERA_HWB_REMOVED_BUFFER_QUEUE_LIMIT => {
+            ids.push(hardware_buffer_id);
+            true
+        }
+        Ok(_) | Err(_) => {
+            context
+                .removed_hardware_buffer_overflow
+                .store(true, Ordering::Release);
+            false
+        }
+    };
+    context
+        .removed_hardware_buffer_pending
+        .store(true, Ordering::Release);
+    log_marker(format!(
+        "status=camera-buffer-removed side={} cameraId={} hardwareBufferId={} cacheEvictionQueued={} queueOverflow={} runtimeCrash=false",
+        context.side_label,
+        marker_token(&context.camera_id),
+        hardware_buffer_id,
+        bool_token(queued),
+        bool_token(!queued),
     ));
 }
 

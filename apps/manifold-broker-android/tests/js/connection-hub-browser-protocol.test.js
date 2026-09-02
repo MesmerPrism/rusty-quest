@@ -110,6 +110,99 @@ const storage = initial => {
   };
 };
 
+const runPresentationHelpers = () => {
+  const elements = new Map([
+    ["#surfaces", new FakeElement()],
+    ["#surface-template", new FakeElement()],
+    ["#pair-status", new FakeElement()],
+    ["#pair-button", new FakeElement()],
+    ["#disconnect-button", new FakeElement()],
+    ["#pairing-code", new FakeElement()],
+  ]);
+  const hooks = {};
+  const browserContext = vm.createContext({
+    RustyConnectionHubProtocol: actual,
+    RustyConnectionHubCanonicalJson: canonicalJsonEncoder,
+    RustyConnectionHubTestHooks: hooks,
+    document: {
+      querySelector: selector => elements.get(selector),
+      createElement: () => new FakeElement(),
+    },
+    sessionStorage: storage({}),
+    localStorage: storage({}),
+    fetch: async () => { throw new Error("unexpected fetch"); },
+    crypto: require("crypto").webcrypto,
+    TextEncoder,
+    location: {protocol: "http:", host: "hub.test"},
+    WebSocket: class {},
+    CSS: {escape: value => value},
+    setInterval: () => 1,
+    clearInterval: () => {},
+    setTimeout: () => 1,
+    clearTimeout: () => {},
+  });
+  vm.runInContext(appSource, browserContext, {filename: "app.js"});
+  if (hooks.formatDuration(0) !== "0:00"
+      || hooks.formatDuration(83.91) !== "1:23"
+      || hooks.formatDuration(3723) !== "1:02:03"
+      || hooks.formatDuration(Number.NaN) !== "–:––") {
+    throw new Error("playlist duration formatter is not stable and human-readable");
+  }
+  const rows = JSON.parse(JSON.stringify(hooks.lockedPlaylistStateRows({
+    playlist_title: "Night sequence",
+    item_count: 3,
+    active_index: 1,
+    active_label: "Second view",
+    paused: false,
+    phase: "dwell",
+    item_elapsed_seconds: 83,
+    item_duration_seconds: 300,
+    progress: 0.27666666666666667,
+  })));
+  const values = Object.fromEntries(rows.map(row => [row.label, row.value]));
+  if (values.Playlist !== "Night sequence"
+      || values["Current item"] !== "2 of 3"
+      || values.Item !== "Second view"
+      || values["Item time"] !== "1:23 / 5:00") {
+    throw new Error("locked-playlist state was not projected into operator-readable rows");
+  }
+  if (Object.hasOwn(values, "Status")) {
+    throw new Error("locked-playlist status was not consolidated into the playback toggle");
+  }
+  if (rows.some(row => row.label === "progress" || String(row.value).includes("0.276666"))) {
+    throw new Error("raw locked-playlist progress leaked into the operator presentation");
+  }
+
+  const commands = [
+    {command: "command.spatial_camera_panel.locked_playlist.next", display_label: "Next"},
+    {command: "command.spatial_camera_panel.locked_playlist.pause", display_label: "Pause"},
+    {command: "command.spatial_camera_panel.locked_playlist.previous", display_label: "Previous"},
+    {command: "command.spatial_camera_panel.locked_playlist.resume", display_label: "Resume"},
+  ];
+  const playingCommands = JSON.parse(JSON.stringify(hooks.surfaceCommandPresentations({
+    surface_id: "surface.spatial_camera_panel.locked_playlist",
+    state: {paused: false, phase: "dwell"},
+    commands,
+  })));
+  const pausedCommands = JSON.parse(JSON.stringify(hooks.surfaceCommandPresentations({
+    surface_id: "surface.spatial_camera_panel.locked_playlist",
+    state: {paused: true, phase: "dwell"},
+    commands,
+  })));
+  const playingToggle = playingCommands.find(command => command.playbackToggle);
+  const pausedToggle = pausedCommands.find(command => command.playbackToggle);
+  if (playingCommands.length !== 3
+      || playingToggle.label !== "Pause · Playing"
+      || playingToggle.descriptor.command !== "command.spatial_camera_panel.locked_playlist.pause"
+      || playingToggle.paused !== false
+      || pausedCommands.length !== 3
+      || pausedToggle.label !== "Resume · Paused"
+      || pausedToggle.descriptor.command !== "command.spatial_camera_panel.locked_playlist.resume"
+      || pausedToggle.paused !== true) {
+    throw new Error("pause/resume commands were not consolidated into one stateful toggle");
+  }
+};
+
 const runDisconnect = async fetchImplementation => {
   const elements = new Map([
     ["#surfaces", new FakeElement()],
@@ -410,6 +503,7 @@ const runV2SequenceFlow = () => {
 };
 
 (async () => {
+  runPresentationHelpers();
   await runPlainHttpPair();
   runStoredSessionRecovery();
   runV2SequenceFlow();

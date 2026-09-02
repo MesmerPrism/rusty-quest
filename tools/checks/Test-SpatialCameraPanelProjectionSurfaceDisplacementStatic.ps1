@@ -81,10 +81,17 @@ Assert-Contains "Native contract" $native "projectionSurfaceDisplacementDisabled
 Assert-Contains "Vulkan runtime" $runtime "opaque_projection_displacement_pipeline"
 Assert-Contains "Vulkan runtime" $runtime "create_projection_displacement_pipeline"
 Assert-Contains "Vulkan runtime" $runtime "PROJECTION_SURFACE_GRID_VERTEX_COUNT"
-Assert-Contains "Vulkan runtime" $runtime "if displacement_effective"
+Assert-Contains "Vulkan runtime" $runtime ".tessellated_effective("
+Assert-Contains "Vulkan runtime" $runtime "if tessellated_effective"
 Assert-Contains "Vulkan runtime" $runtime "dst_binding(1)"
 Assert-Contains "Vulkan runtime" $runtime "vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT"
+Assert-Contains "Vulkan runtime" $runtime '"/spatial_opaque_projection.vert.spv"'
+Assert-Contains "Vulkan runtime" $runtime '"/spatial_opaque_projection_video_compositor.vert.spv"'
 Assert-Contains "Native build" $nativeBuild "RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OPAQUE_PROJECTION_VERTEX_SHADER"
+Assert-Contains "Native build" $nativeBuild '"spatial_opaque_projection.vert.spv"'
+Assert-Contains "Native build" $nativeBuild '"-DPRIVATE_LAYER_VIDEO_COMPOSITOR=0"'
+Assert-Contains "Native build" $nativeBuild '"spatial_opaque_projection_video_compositor.vert.spv"'
+Assert-Contains "Native build" $nativeBuild '"-DPRIVATE_LAYER_VIDEO_COMPOSITOR=1"'
 Assert-Contains "Build wrapper" $build '[string]$OpaqueProjectionVertexShader = ""'
 Assert-Contains "Build wrapper" $build "projection_vertex_shader"
 Assert-Contains "Public documentation" $docs "original fullscreen triangle"

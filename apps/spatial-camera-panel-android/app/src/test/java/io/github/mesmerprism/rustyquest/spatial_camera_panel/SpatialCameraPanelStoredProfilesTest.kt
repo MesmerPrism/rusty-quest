@@ -165,7 +165,7 @@ class SpatialCameraPanelStoredProfilesTest {
               projectionSurfaceTiling =
                   ProjectionSurfaceTiling(
                       enabled = true,
-                      topology = ProjectionSurfaceTilingControls.topologyTiled,
+                      topology = ProjectionSurfaceTilingControls.topologyTriangleTiles,
                       gapNormalized = 0.08f,
                       depthFlexibility = 0.7f,
                   ),

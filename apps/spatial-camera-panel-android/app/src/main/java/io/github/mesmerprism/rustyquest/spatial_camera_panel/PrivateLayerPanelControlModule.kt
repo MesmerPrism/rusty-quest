@@ -7,10 +7,10 @@ internal data class PrivateLayerChoice(
 )
 
 internal data class PrivateLayerDepthAlignment(
-    val leftX: Float = 0.0f,
-    val leftY: Float = 0.0f,
-    val rightX: Float = 0.0f,
-    val rightY: Float = 0.0f,
+    val leftX: Float = BuildConfig.DEPTH_ALIGNMENT_DEFAULT_LEFT_X,
+    val leftY: Float = BuildConfig.DEPTH_ALIGNMENT_DEFAULT_LEFT_Y,
+    val rightX: Float = BuildConfig.DEPTH_ALIGNMENT_DEFAULT_RIGHT_X,
+    val rightY: Float = BuildConfig.DEPTH_ALIGNMENT_DEFAULT_RIGHT_Y,
     val sampleScale: Float = 1.0f,
     val sampleScaleY: Float = 1.0f,
     val rollDegrees: Float = 0.0f,
@@ -55,16 +55,33 @@ internal object PrivateLayerControls {
 
   val layers =
       listOf(
-          PrivateLayerChoice(0, "Final", "final"),
-          PrivateLayerChoice(1, "Opaque analysis 0", "opaque-analysis0-slot"),
-          PrivateLayerChoice(2, "Public guide blur", "public-guide-blur"),
-          PrivateLayerChoice(3, "Opaque analysis 1", "opaque-analysis1-slot"),
-          PrivateLayerChoice(4, "Public post-blur guide", "public-post-blur-guide"),
-          PrivateLayerChoice(5, "Opaque projection", "opaque-projection-slot"),
-          PrivateLayerChoice(6, "Public depth diagnostic", "public-depth-diagnostic"),
+          PrivateLayerChoice(0, "Final composition", "final-composition"),
+          PrivateLayerChoice(1, "Camera brightness", "camera-brightness"),
+          PrivateLayerChoice(2, "Brightness after first blur", "brightness-after-first-blur"),
+          PrivateLayerChoice(
+              3,
+              "Distortion strength · before smoothing",
+              "distortion-strength-before-smoothing",
+          ),
+          PrivateLayerChoice(
+              4,
+              "Distortion strength · smoothed",
+              "distortion-strength-smoothed",
+          ),
+          PrivateLayerChoice(
+              5,
+              "Distortion strength · depth adjusted",
+              "distortion-strength-depth-adjusted",
+          ),
+          PrivateLayerChoice(6, "Meta depth diagnostic", "meta-depth-diagnostic"),
           PrivateLayerChoice(7, "Meta poster LUT", "meta-passthrough-edge-window"),
-          PrivateLayerChoice(8, "Raw custom projection", "raw-custom-projection"),
+          PrivateLayerChoice(8, "Raw camera projection", "raw-camera-projection"),
       )
+
+  val centerContentLayers =
+      listOf(0, 8, 1, 2, 3, 4, 5, 6).map { index ->
+        layers.first { it.index == index }
+      }
 
   val depthSourcePolicies =
       listOf(
@@ -85,6 +102,20 @@ internal object PrivateLayerControls {
 
   fun metaPassthroughEdgeWindowSelected(layerOverride: Float): Boolean =
       layerOverride.toInt() == metaPassthroughEdgeWindowOverride.toInt()
+
+  /**
+   * Mirrors the private projection shader's environment-depth reads. Cycle can visit a
+   * depth-consuming layer, while Final, depth-adjusted strength, and Meta depth diagnostic sample
+   * environment depth directly. The remaining fixed diagnostic layers cannot be changed by
+   * depth, so keeping the provider alive for them is pure background work.
+   */
+  fun environmentDepthConsumerRequired(layerOverride: Float): Boolean {
+    if (layerOverride < 0.0f) return true
+    return when (layerOverride.toInt()) {
+      0, 5, 6 -> true
+      else -> false
+    }
+  }
 
   fun normalizeDepthLayerPolicy(policy: Int): Int =
       depthSourcePolicies.firstOrNull { it.code == policy }?.code ?: defaultDepthLayerPolicy
@@ -218,7 +249,8 @@ internal object PrivateLayerPanelControlModule {
   ): String =
       "channel=private-layer-panel status=layer-button-selected " +
           "source=${activityMarkerToken(source)} spatialPrivateLayerControlPanel=true " +
-          "privateLayerPanelInputButtons=button-a+trigger-l+trigger-r " +
+          "privateLayerPanelInputButtons=trigger-l+trigger-r " +
+          "privateLayerPanelRightPrimarySelectEnabled=false " +
           "privateLayerPanelTriggerSelectEnabled=true " +
           "requestedPublicMultiStackOpaqueProjectionLayerOverride=${activityMarkerFloat(requestedLayerOverride)} " +
           "previousPublicMultiStackOpaqueProjectionLayerOverride=${activityMarkerFloat(previousOverride)} " +

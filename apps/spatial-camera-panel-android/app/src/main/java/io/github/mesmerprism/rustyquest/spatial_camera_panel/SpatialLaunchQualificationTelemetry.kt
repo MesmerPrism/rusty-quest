@@ -110,12 +110,7 @@ internal object SpatialLaunchQualificationTelemetry {
     val next =
         SettingsSnapshot(
             source = settings.source,
-            cadence =
-                when {
-                  settings.fpsCap <= 30 -> "30"
-                  settings.fpsCap <= 60 -> "60"
-                  else -> "source"
-                },
+            cadence = settings.cadenceMode.token,
             active = settings.active,
             sourceIdentitySha256 = sha256(settings.path),
         )

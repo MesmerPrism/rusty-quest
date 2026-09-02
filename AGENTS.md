@@ -168,6 +168,25 @@ apps in this repo. Keep reusable hand, space, mesh, visual, command, and report
 contracts in Lattice, Matter, Optics, Manifold, GUI, and Hostess before adding
 Quest adapters.
 
+For `spatial-camera-panel-android` performance work, this public adapter owns
+allocation-free, nonblocking Vulkan timestamp-query instrumentation and
+public, output-equivalent guide-kernel, host-upload, and hardware-buffer import
+optimizations. Timestamp readback must use a retired frame slot plus
+availability results and must never introduce a query-result `WAIT` into the
+render loop. A NativeBox5 reduction is admissible only when the packed-eye texel
+domain proves that the three filtered reads are equivalent to the existing five
+physical-texel taps. Keep Gaussian5 unchanged. Host-coherent uniform buffers may
+remain persistently mapped through resource lifetime, must be unmapped before
+free, and may skip a write only on exact value equality. Video imports must test
+their exact stable-ID/generation/descriptor cache key before querying Vulkan
+hardware-buffer properties. Camera imports may be reused only within one stream
+generation and exact eye, camera, stable hardware-buffer ID, descriptor, and
+Vulkan-format identity; retire active images only after the existing fence,
+bound inactive entries, consume AImageReader buffer-removal notifications, and
+disable reuse fail-safely if removal bookkeeping overflows. Keep performance
+telemetry scalar and low-rate. Private effect formulas, private shader source,
+and unsanitized headset evidence remain outside this repository.
+
 Do not add new Makepad compatibility shims, profile surfaces, or Quest-Makepad
 parity work here unless the user explicitly asks for Makepad migration,
 regression repair, or historical evidence replay. When old Makepad evidence is
@@ -442,16 +461,18 @@ encrypted pack catalog generic, bounded, opt-in, and free of private media
 names. In direct video-only mode, each item owns its ideal Spatial SDK shape
 and stereo mode; switching may rebuild only that world-centered media surface
 and decoder, never head-lock an immersive surface, and must require neutral
-rearm between right-stick selection flicks. When video and the custom camera
-projection are both active, keep them on coordinated carriers: the video uses
-its declared world-anchored flat/180/360 surface or an explicitly selected
-legacy head-fixed background quad, while the custom camera/effect compositor
-retains its planar stereo carrier and camera mapping. The video carrier uses a
-strictly lower Spatial SDK z-index than the custom projection, and the control
-panel remains above both. Video selection or
-presentation changes may rebuild only the video surface and decoder; they must
-retain the Activity, planar camera carrier, control state, and current private
-configuration.
+rearm between right-stick selection flicks. World-anchored video continues to
+use its declared flat/180/360 Spatial SDK surface. Supported head-fixed stereo
+instead feeds the existing planar Vulkan camera/effect carrier: Center
+independently selects Projection, Video, Projection+Video, or Transparent;
+Middle selects Continue Outer, Stretch, or Transparent; Outer selects Video,
+Stretch, or Transparent. Full head-fixed video is therefore the same
+compositor surface with Center Video, Buffer Off, and Outer Video, not an
+additional panel. The direct head-fixed Spatial panel is retained only as a
+bounded fallback/diagnostic route for unsupported input or compositor
+unavailability. Video selection must retain the Activity, carrier, control
+state, and current private configuration; zero-contribution decoder teardown
+must never join on the Activity/XR thread.
 
 The reusable RGB-channel spatial transform is documented in
 `docs/RGB_CHANNEL_TRANSFORM.md`. Rusty Quest owns only its bounded neutral

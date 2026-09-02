@@ -8,14 +8,23 @@ internal data class SpatialValidationWorkflowBindings(
     val setPrivateLayerPanelVisible: (Boolean, Boolean, String) -> Unit,
     val privateLayerPanelVisible: () -> Boolean,
     val updatePrivateLayerOverride: (Float, String) -> Unit,
+    val currentPrivateLayerZoneCompositor: () -> PrivateLayerZoneCompositor,
     val updatePrivateLayerZoneCompositor: (PrivateLayerZoneCompositor, String) -> Unit,
     val updateRgbChannelTransform: (RgbChannelTransform, String) -> Unit,
     val updateProjectionSurfaceDisplacement:
         (ProjectionSurfaceDisplacement, String) -> Unit,
     val setProjectionPanelEnabled: (Boolean, String) -> Unit,
     val changeImmersiveVideo: (String, String?, String) -> Unit,
+    val recenterImmersiveVideo: (String, String) -> Unit,
+    val setImmersiveVideoPlaybackEnabled: (Boolean, String) -> Unit,
     val setImmersiveVideoPresentationMode:
         (SpatialImmersiveVideoPresentationMode, String) -> Unit,
+    val setBackgroundMode: (SpatialBackgroundMode, String) -> Unit,
+    val saveStoredProfile: (String) -> SpatialCameraPanelProfileOperationResult,
+    val chooseSharedMediaFolder: () -> Unit,
+    val refreshSharedMediaLibrary: () -> Unit,
+    val updateEnvironmentDepthRecoveryPolicy:
+        (SpatialEnvironmentDepthRecoveryPolicy, String) -> Unit,
     val currentParticleControls: () -> SurfaceParticleControlState,
     val updateSurfaceParticleControls: (SurfaceParticleControlState, String) -> Unit,
     val applyRemoteParticleLayerTargetDistance: (Intent, String) -> Unit,
@@ -31,8 +40,9 @@ internal data class SpatialValidationWorkflowBindings(
 internal class SpatialValidationWorkflowCoordinator(
     private val bindings: SpatialValidationWorkflowBindings,
 ) {
-  fun dispatchIfRequested(intent: Intent?): Boolean =
-      when (intent?.action) {
+  fun dispatchIfRequested(intent: Intent?): Boolean {
+    val handled =
+        when (intent?.action) {
         ACTION_RUN_UI_COMMAND -> {
           runUiCommand(intent)
           true
@@ -43,6 +53,12 @@ internal class SpatialValidationWorkflowCoordinator(
         }
         else -> false
       }
+    if (handled && intent != null) {
+      intent.action = null
+      intent.removeExtra(EXTRA_UI_ACTION)
+    }
+    return handled
+  }
 
   private fun runUiCommand(intent: Intent) {
     val uiAction =
@@ -63,22 +79,33 @@ internal class SpatialValidationWorkflowCoordinator(
             )
         "private-layer-zone-off" ->
             bindings.updatePrivateLayerZoneCompositor(
-                PrivateLayerZoneCompositorControls.legacyOff,
+                PrivateLayerZoneCompositorControls.disableStretch(
+                    bindings.currentPrivateLayerZoneCompositor(),
+                ),
                 source,
             )
         "private-layer-zone-native-buffer" ->
             bindings.updatePrivateLayerZoneCompositor(
-                PrivateLayerZoneCompositorControls.nativeBuffer,
+                PrivateLayerZoneCompositorControls.applyStretchStyle(
+                    bindings.currentPrivateLayerZoneCompositor(),
+                    PrivateLayerZoneCompositorControls.nativeBuffer,
+                ),
                 source,
             )
         "private-layer-zone-linear-buffer" ->
             bindings.updatePrivateLayerZoneCompositor(
-                PrivateLayerZoneCompositorControls.nativeBuffer,
+                PrivateLayerZoneCompositorControls.applyStretchStyle(
+                    bindings.currentPrivateLayerZoneCompositor(),
+                    PrivateLayerZoneCompositorControls.nativeBuffer,
+                ),
                 source,
             )
         "private-layer-zone-organic-buffer" ->
             bindings.updatePrivateLayerZoneCompositor(
-                PrivateLayerZoneCompositorControls.organicBuffer,
+                PrivateLayerZoneCompositorControls.applyStretchStyle(
+                    bindings.currentPrivateLayerZoneCompositor(),
+                    PrivateLayerZoneCompositorControls.organicBuffer,
+                ),
                 source,
             )
         "private-layer-zone-full-stretch" ->
@@ -136,9 +163,44 @@ internal class SpatialValidationWorkflowCoordinator(
         "projection-panel-on" -> bindings.setProjectionPanelEnabled(true, source)
         "video-previous" -> bindings.changeImmersiveVideo("previous", null, source)
         "video-next" -> bindings.changeImmersiveVideo("next", null, source)
+        "video-recenter" ->
+            bindings.recenterImmersiveVideo(
+                source,
+                "remoteUiAction=video-recenter controllerInputRequired=false",
+            )
+        "video-playback-off" ->
+            bindings.setImmersiveVideoPlaybackEnabled(false, source)
+        "video-playback-on" ->
+            bindings.setImmersiveVideoPlaybackEnabled(true, source)
         "video-world-anchored" ->
             bindings.setImmersiveVideoPresentationMode(
                 SpatialImmersiveVideoPresentationMode.WorldAnchored,
+                source,
+            )
+        "background-black" ->
+            bindings.setBackgroundMode(SpatialBackgroundMode.Black, source)
+        "background-passthrough" ->
+            bindings.setBackgroundMode(SpatialBackgroundMode.Passthrough, source)
+        "background-lut-passthrough" ->
+            bindings.setBackgroundMode(SpatialBackgroundMode.LutPassthrough, source)
+        "profile-save-current" -> {
+          val title =
+              intent.getStringExtra(EXTRA_PROFILE_TITLE)?.trim()?.takeIf {
+                it.isNotEmpty() && it.length <= 96
+              } ?: error("profile_title_invalid")
+          val result = bindings.saveStoredProfile(title)
+          check(result.status == "profile-saved") { result.status }
+        }
+        "choose-shared-media-folder" -> bindings.chooseSharedMediaFolder()
+        "refresh-shared-media-library" -> bindings.refreshSharedMediaLibrary()
+        "environment-depth-recovery-bounded" ->
+            bindings.updateEnvironmentDepthRecoveryPolicy(
+                SpatialEnvironmentDepthRecoveryPolicy.Bounded,
+                source,
+            )
+        "environment-depth-recovery-aggressive" ->
+            bindings.updateEnvironmentDepthRecoveryPolicy(
+                SpatialEnvironmentDepthRecoveryPolicy.Aggressive,
                 source,
             )
         "video-head-fixed-border" ->
@@ -274,6 +336,7 @@ internal class SpatialValidationWorkflowCoordinator(
     private const val EXTRA_UI_ACTION = "ui_action"
     private const val EXTRA_PRIVATE_LAYER_OVERRIDE = "private_layer_override"
     private const val EXTRA_IMMERSIVE_VIDEO_PACK_ID = "video_pack_id"
+    private const val EXTRA_PROFILE_TITLE = "profile_title"
     private const val EXTRA_DRIVER0 = "driver0"
     private const val EXTRA_DRIVER1 = "driver1"
     private const val EXTRA_DRIVER2 = "driver2"

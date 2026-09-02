@@ -21,15 +21,51 @@ internal data class SpatialControllerPollingBindings(
     val currentLeftStickPanelDistanceMapping: () -> String,
     val currentLeftStickPanelDistanceEnabled: () -> Boolean,
     val currentSpatialVrInputSystemToken: () -> String,
+    val lockedInputEnabled: () -> Boolean = { false },
+    val applyLockedHorizontalSelection: (Float, Float, String) -> Boolean = { _, _, _ -> false },
+    val dispatchLockedPrimary: (String, String) -> Boolean = { _, _ -> false },
     val applyImmersiveVideoSelection: (Float, Float, String) -> Boolean,
     val applyProjectionScale: (Float, String, String, String) -> Unit,
     val applyPanelDistance: (Float, String, String, String) -> Unit,
     val recenterParticleSphere: (String, String) -> Boolean,
-    val armSecondaryToggle: (String) -> Unit,
-    val toggleSecondary: (String, String) -> Unit,
+    val recenterVideo: (String, String) -> Unit,
     val openPrimary: (String, String) -> Unit,
     val marker: (String) -> Unit,
 )
+
+internal data class SpatialPrivatePanelLockedControllerBindings(
+    val enabled: () -> Boolean,
+    val applyHorizontalSelection: (Float, Float, String) -> Boolean,
+    val dispatchPrimary: (String, String) -> Boolean,
+)
+
+/** Consumes only the bounded controller surface declared by a locked private extension. */
+internal class SpatialPrivatePanelLockedControllerCoordinator(
+    private val bindings: SpatialPrivatePanelLockedControllerBindings,
+) {
+  private var primaryDown = false
+
+  fun handle(snapshot: SpatialControllerPrimarySnapshot): Boolean {
+    if (!bindings.enabled()) {
+      primaryDown = snapshot.down
+      return false
+    }
+    bindings.applyHorizontalSelection(
+        snapshot.rightThumbX,
+        snapshot.rightThumbY,
+        snapshot.rightInputSource,
+    )
+    val primaryPressedEdge = snapshot.pressed || (snapshot.down && !primaryDown)
+    primaryDown = snapshot.down
+    if (primaryPressedEdge) {
+      bindings.dispatchPrimary(
+          snapshot.rightInputSource,
+          "rightPrimaryDown=${snapshot.down} rightPrimaryPressed=${snapshot.pressed}",
+      )
+    }
+    return true
+  }
+}
 
 internal class SpatialControllerPollingCoordinator(
     private val bindings: SpatialControllerPollingBindings,
@@ -45,6 +81,14 @@ internal class SpatialControllerPollingCoordinator(
   private var spatialRightTriggerDown = false
   private var nativePrimaryDown = false
   private var nativeSecondaryDown = false
+  private val lockedControllerCoordinator =
+      SpatialPrivatePanelLockedControllerCoordinator(
+          SpatialPrivatePanelLockedControllerBindings(
+              enabled = bindings.lockedInputEnabled,
+              applyHorizontalSelection = bindings.applyLockedHorizontalSelection,
+              dispatchPrimary = bindings.dispatchLockedPrimary,
+          )
+      )
 
   fun pollNativeInput() {
     val state = bindings.nativeState()
@@ -138,11 +182,8 @@ internal class SpatialControllerPollingCoordinator(
             }
     val rightButtonBPressedEdge = rightButtonBDown && !nativeSecondaryDown
     nativeSecondaryDown = rightButtonBDown
-    if (!rightButtonBDown) {
-      bindings.armSecondaryToggle("native-openxr-action")
-    }
     if (rightButtonBPressedEdge) {
-      bindings.toggleSecondary(
+      bindings.recenterVideo(
           "native-openxr-action",
           "rightButtonBDown=true nativeRightButtonBAction=true " +
               "nativeControllerActionStartMask=${state.actionStartMask}",
@@ -200,6 +241,13 @@ internal class SpatialControllerPollingCoordinator(
       )
     }
 
+    if (lockedControllerCoordinator.handle(snapshot)) {
+      spatialRightTriggerDown = snapshot.triggerDown
+      spatialSecondaryDown = snapshot.secondaryDown
+      spatialPrimaryDown = snapshot.down
+      return
+    }
+
     val immersiveVideoSelectionHandled =
         bindings.applyImmersiveVideoSelection(
             snapshot.rightThumbX,
@@ -239,13 +287,10 @@ internal class SpatialControllerPollingCoordinator(
     val secondaryPressedEdge =
         snapshot.secondaryPressed || (snapshot.secondaryDown && !spatialSecondaryDown)
     spatialSecondaryDown = snapshot.secondaryDown
-    if (!snapshot.secondaryDown) {
-      bindings.armSecondaryToggle(snapshot.rightInputSource)
-    }
     if (secondaryPressedEdge) {
-      bindings.toggleSecondary(
+      bindings.recenterVideo(
           snapshot.rightInputSource,
-          SpatialControllerRoutingModule.rightSecondaryPlacementToggleDetail(snapshot),
+          SpatialControllerRoutingModule.rightSecondaryVideoRecenterDetail(snapshot),
       )
       return
     }

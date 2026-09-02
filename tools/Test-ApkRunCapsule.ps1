@@ -22,8 +22,11 @@ function Get-StringSha256 {
 
 function Assert-SourceRepository {
     param([Parameter(Mandatory=$true)]$Record, [Parameter(Mandatory=$true)][string]$Label)
-    if ([string]$Record.commit -notmatch '^[0-9a-f]{40}$' -or [string]$Record.tree -notmatch '^[0-9a-f]{40}$' -or $Record.tracked_worktree_clean -ne $true) {
-        throw "$Label is not an exact clean source record."
+    if ([string]$Record.commit -notmatch '^[0-9a-f]{40}$' -or [string]$Record.tree -notmatch '^[0-9a-f]{40}$') {
+        throw "$Label is not an exact source record."
+    }
+    if ($Record.tracked_worktree_clean -ne $true -and [string]$Record.worktree_overlay_sha256 -notmatch '^[0-9a-f]{64}$') {
+        throw "$Label dirty iteration source record lacks an exact worktree overlay SHA-256."
     }
     if (-not (Test-Path -LiteralPath ([string]$Record.repository) -PathType Container)) { throw "$Label repository is missing: $($Record.repository)" }
     $observedTree = ([string](& git -C ([string]$Record.repository) rev-parse "$([string]$Record.commit)^{tree}" 2>$null)).Trim().ToLowerInvariant()
@@ -56,10 +59,18 @@ if ($hasComposition -or $hasPackages -or $hasDependencies) {
     if (-not ($hasComposition -and $hasPackages -and $hasDependencies)) { throw "APK run capsule source composition fields must be complete." }
     if ([string]$capsule.source.composition_fingerprint -notmatch '^[0-9a-f]{64}$' -or @($capsule.source.packages).Count -eq 0) { throw "APK run capsule source composition identity is invalid." }
     $identityRecords = [Collections.Generic.List[object]]::new()
-    $identityRecords.Add([pscustomobject][ordered]@{ repository_id = "rusty-quest"; role = "primary"; commit = [string]$capsule.source.commit; tree = [string]$capsule.source.tree }) | Out-Null
+    $primaryOverlaySha256 = if ($capsule.source.PSObject.Properties.Name -contains "worktree_overlay_sha256") { [string]$capsule.source.worktree_overlay_sha256 } else { "" }
+    $identityRecords.Add([pscustomobject][ordered]@{
+        repository_id = "rusty-quest"; role = "primary"; commit = [string]$capsule.source.commit; tree = [string]$capsule.source.tree
+        tracked_worktree_clean = [bool]$capsule.source.tracked_worktree_clean; worktree_overlay_sha256 = $primaryOverlaySha256
+    }) | Out-Null
     foreach ($dependency in @($capsule.source.dependencies)) {
         Assert-SourceRepository -Record $dependency -Label "APK run capsule dependency '$($dependency.repository_id)'"
-        $identityRecords.Add([pscustomobject][ordered]@{ repository_id = [string]$dependency.repository_id; role = [string]$dependency.role; commit = [string]$dependency.commit; tree = [string]$dependency.tree }) | Out-Null
+        $dependencyOverlaySha256 = if ($dependency.PSObject.Properties.Name -contains "worktree_overlay_sha256") { [string]$dependency.worktree_overlay_sha256 } else { "" }
+        $identityRecords.Add([pscustomobject][ordered]@{
+            repository_id = [string]$dependency.repository_id; role = [string]$dependency.role; commit = [string]$dependency.commit; tree = [string]$dependency.tree
+            tracked_worktree_clean = [bool]$dependency.tracked_worktree_clean; worktree_overlay_sha256 = $dependencyOverlaySha256
+        }) | Out-Null
     }
     $canonicalIdentity = Get-QuestBuildSourceCompositionIdentityCanonicalText `
         -PackageName @($capsule.source.packages | ForEach-Object { [string]$_ }) `

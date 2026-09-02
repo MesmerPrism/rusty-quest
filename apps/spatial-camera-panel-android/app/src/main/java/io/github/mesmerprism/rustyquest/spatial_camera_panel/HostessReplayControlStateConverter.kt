@@ -190,14 +190,14 @@ internal object HostessReplayControlStateConverter {
             .put("topology", "continuous")
             .put("gap_normalized", 0.0)
             .put("depth_flexibility", 1.0)
-            .put("scope", "core-and-stretch")
+            .put("scope", "inner-and-buffer")
       } else {
         JSONObject()
             .put("enabled", values[16] >= 0.5f)
-            .put("topology", token(values[17], "continuous", "tiled"))
+            .put("topology", token(values[17], "continuous", "tiled", "triangle-tiles"))
             .put("gap_normalized", values[18])
             .put("depth_flexibility", values[19])
-            .put("scope", token(values[20], "core-and-stretch", "core-only"))
+            .put("scope", token(values[20], "inner-and-buffer", "core-only"))
       }
 
   private fun innerAlphaJson(values: FloatArray?): JSONObject =
@@ -226,8 +226,11 @@ internal object HostessReplayControlStateConverter {
             .put("stretch_obeys_exact_projection_mask", values[28] >= 0.5f)
       }
 
-  private fun zoneJson(v: FloatArray): JSONObject =
-      JSONObject()
+  private fun zoneJson(v: FloatArray): JSONObject {
+    val flags = v[31].toInt()
+    val independent = (flags and (1 shl 8)) != 0
+    val result =
+        JSONObject()
           .put("coverage_mode", token(v[24], "off", "buffer", "full"))
           .put("stretch_source", token(v[25], "raw", "processed", "mix"))
           .put("debug_mode", token(v[26], "normal", "regions", "sample-uv"))
@@ -240,12 +243,37 @@ internal object HostessReplayControlStateConverter {
               "projection_effect_edge_guard_enabled",
               (v[31].toInt() and (1 shl 1)) == 0,
           )
+          .put("stretch_option_flags", flags and 0x1d)
           .put("edge_inset_uv", v[28])
           .put("max_inset_uv", v[29])
           .put("stretch_curve", v[30])
           .put("processed_mix", v[27])
           .put("inner", band(v, true))
           .put("outer", band(v, false))
+    if (independent) {
+      result
+          .put("region_contract", "v2")
+          .put(
+              "buffer_geometry",
+              token(((flags shr 9) and 0x3).toFloat(), "off", "static", "dynamic"),
+          )
+          .put("buffer_static_width_uv", v[47])
+          .put(
+              "buffer_fill",
+              token(
+                  ((flags shr 11) and 0x3).toFloat(),
+                  "outer-continuation",
+                  "transparent-reveal",
+                  "stretch",
+              ),
+          )
+          .put(
+              "stretch_extent",
+              token(((flags shr 13) and 0x1).toFloat(), "buffer-only", "replace-outer"),
+          )
+    }
+    return result
+  }
 
   private fun band(v: FloatArray, inner: Boolean): JSONObject {
     val threshold = if (inner) 36 else 48

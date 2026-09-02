@@ -46,13 +46,13 @@ The debug variant exposes one `DUMP`-permission, shell-UID-only receipt
 provider whose authority is derived from the selected application id as
 `${applicationId}.debug-host-receipt`. Distinct diagnostic packages therefore
 remain co-installable and must never share a fixed provider authority. A host
-first arms a single-use 64-hex nonce and then launches the already inspected
-APK. The app may finalize only after its typed in-process readback observes the
-configured local source, successful MediaCodec startup, two distinct decoded
-frames with advancing timestamps, bounded decoder image count and geometry,
-GPU import, and two distinct frames adopted by a completed present step. PID,
-resumed-component state, transport confirmation, and parsed log output are
-never receipt facts.
+first arms a single-use 64-hex nonce and then launches the
+already inspected APK. The app may finalize only after its typed in-process
+readback observes the configured local source, successful MediaCodec startup,
+two distinct decoded frames with advancing timestamps, bounded decoder image
+count and geometry, GPU import, and two distinct frames adopted by a completed
+present or Spatial submit-retirement step. PID, resumed-component state, QFM
+transport confirmation, and parsed log output are never receipt facts.
 
 The receipt is hash-chained, atomic-final, bounded to 64 KiB, bound to the APK
 bytes, package, PID, process epoch, and nonce hash, and contains only sanitized
@@ -64,22 +64,6 @@ authorize product acceptance.
 
 This workflow metadata does not itself activate a runtime route or add package
 permissions. Existing effective markers remain required.
-
-## Locked-playlist Connection Hub provider
-
-The app binds the signature-scoped Hub admission service and registers its
-public locked-playlist surface only while the private owner reports
-`locked=true` and `running=true`. One authorized generation retains the exact
-`registration_id`, registration fingerprint, session generation,
-authorization correlation id, and canonical surface JSON through retry or
-rebind. Stale generations and mismatched fingerprints/correlations reject;
-cleanup unregisters exactly once.
-
-The public surface projects only bounded scalar state and empty-argument
-Previous, Next, Pause, and Resume commands. Application effect confirmation is
-required after Binder dispatch. It exposes no ordered items, profile ids,
-private effects, caller-selected identity/capability, or arbitrary arguments.
-Validate the app and Hub composition together before any device run.
 
 The accepted `MOD-001` particle classification reuses
 `rusty.matter.surface_runtime.particle_snapshot.v1` and the existing Matter
@@ -143,13 +127,19 @@ app-local. Stopping the bridge is the rollback and leaves the adapter inert.
   box5/luma/box5 at `384x384` per eye. Gaussian five-tap and RGB-preserving
   input remain independently selectable from the private-layer panel for later
   experiments; these public policies do not contain downstream effect formulas.
-- The private layer panel also exposes a separate projection-panel isolation
-  toggle. Turning it off stops native custom projection and destroys only the
-  custom Spatial projection carrier. The independent Spatial SDK 360 video
-  layer and system passthrough remain available. The video page has its own
-  playback toggle, so either carrier can be isolated without conflating their
-  lifecycle. Turning custom projection back on rebuilds the same carrier and
-  resumes the captured video settings.
+- The private layer panel exposes Center output as Projection, Video,
+  Projection + Video, or Transparent on one retained planar Vulkan carrier.
+  Buffer Off plus Center Video and Outer Video produces full head-fixed video
+  without creating a second Spatial panel. Whole-carrier disable remains an
+  explicit diagnostic operation; ordinary content changes retain the carrier,
+  Activity, controls, and current private settings.
+- Compatible video selection now retains the custom planar projection carrier
+  and private configuration. The direct 180/360 layer fades to transparent,
+  performs one hidden ExoPlayer/media-panel swap, waits for the replacement's
+  first frame, and fades back in. Previously imported encrypted packs can be
+  used by code-only APK rebuilds that omit the multi-gigabyte asset root, as
+  long as the APK is installed with data-preserving `adb install -r`; an
+  unseeded app fails closed.
 - Camera-latency diagnosis has a revisioned, serial-scoped A/B control plane in
   `tools/Set-SpatialCameraPanelCameraLatencyDiagnostic.ps1`. `Baseline`,
   `FrozenWorld`, `NonBlocking`, `FrozenNonBlocking`, `StrictPair`, `MonoLeft`,
@@ -243,26 +233,37 @@ app-local. Stopping the bridge is the rollback and leaves the adapter inert.
   and the
   [motion iteration report](../../docs/SPATIAL_CAMERA_MOTION_ITERATION_REPORT.md)
   for the complete A/B sequence and remaining limitations.
-- The private-layer panel now includes an optional peripheral stretch and
-  zone-blend compositor. Its geometry is recomputed from the same display-frame
-  snapshot as the projection guard band, in this fixed order:
-  `user scale -> dynamic core -> stretch/seams -> video carrier`. Right-stick
-  projection scaling therefore changes the outer projection boundary before
-  the motion-driven guard contracts the visible core. `Off` remains the exact
-  legacy projection-over-video path. `Native stretch` fills only the area
-  around the guarded core and leaves the ordinary video draw behind it. Its
+- The private-layer panel exposes the custom projection as three owned regions:
+  Center, optional Middle buffer, and Outer. Its geometry is recomputed from the
+  same display-frame snapshot as the projection guard band, in this fixed order:
+  `user scale -> effective guard contraction -> region content/transitions -> video carrier`.
+  Under the compositor-owned contract, Center/Middle/Outer is the sole
+  interactive boundary authority. Raw camera selection enters the same
+  compositor; the emergency raw fallback samples the camera without adding a
+  separate hidden perimeter fade. The older opaque border blend remains
+  confined to the exact legacy projection route.
+  Right-stick projection scaling therefore remains independent of the Buffer.
+  Static Buffer has one guard size. Dynamic Buffer interpolates from its
+  configured minimum to maximum guard and reaches the maximum at the configured
+  tracked headset speed. The effective guard jointly retains the source border
+  and contracts the visible center; there is no second hidden size authority.
+  Middle content can continue Outer, use the active video, stretch camera
+  content, or reveal transparency. Outer independently selects video, stretch,
+  or transparency, so Outer Stretch works even when Buffer is Off. The
+  head-fixed direct-video quad applies a symmetric 1.20x
+  cover overscan around that outer-video footprint so the underlying
+  passthrough treatment cannot appear as narrow top/bottom bands. This changes
+  only the head-fixed video panel: the video keeps its per-eye source
+  aspect, the custom projection's 5.40 m x 4.00 m target remains unchanged,
+  and world-anchored flat/180/360 carriers retain their declared geometry. Its
   default mapping id selects the original native graded edge-trail treatment:
   samples begin at the corresponding projection border and move progressively
   deeper into that same side under a nonlinear distance curve. The rounded
   target footprint supplies the corner treatment. The later cross-center lens
   effect is not part of this route; old requests for it normalize to the graded
-  edge-trail defaults. `Full stretch`
-  expands the treatment to the full stereo carrier and suppresses the separate
-  video draw only after the video-aware compositor pipeline is ready; a missing
-  video frame or pipeline falls back to the legacy path. `Organic stretch` is an
-  A/B preset for RGB/difference-responsive seams with bounded sine and motion
-  modulation. Raw-camera, processed-layer, and mixed stretch sources remain
-  selectable. The public adapter owns only rectangles, the numeric mapping id,
+  edge-trail defaults. Middle and Outer each retain independent raw-camera,
+  processed-layer, or mixed stretch source plus inset, curve, and attachment
+  controls. The public adapter owns only rectangles, the numeric mapping id,
   three bounded family parameters, descriptors, and rollback; the lens formula
   and downstream color/effect formulas stay in the private downstream shader.
   Device validation can select the same bounded presets without controller
@@ -477,10 +478,10 @@ When it is not actively grabbed, the app reapplies the stored placement so
 right-stick/default SDK nudges do not teleport it; while grabbed, the SDK
 transform is accepted and synced back into the stored placement.
 
-For the accepted no-room default, right secondary/B is deliberately disabled
-and consumed as a no-op; markers use
-`cameraProjectionWallToggleInput=disabled-right-secondary-noop` and
-`cameraProjectionWallToggleEnabled=false`. Earlier room diagnostics used the
+For the accepted no-room default, right secondary/B recenters the current
+direct video from the latest viewer pose. The existing entity, decoder,
+Activity, and separate custom projection carrier are retained; validation can
+invoke the same route with `video-recenter`. Earlier room diagnostics used the
 right secondary/B button to toggle the raw camera projection quad between a
 fixed virtual wall pose inside the packaged room and the full-field
 viewer-locked pose. With the room enabled, the accepted live surface carrier is
@@ -1301,9 +1302,11 @@ and screenshot dimensions. It does not require
 physical controller input.
 
 Build and launch each project with a distinct package and content-addressed
-output. The builder rejects tracked source drift, ignores ambient
-`RUSTY_QUEST_SPATIAL_*` feature inputs, isolates Gradle/Cargo intermediates,
-and writes a validated run capsule:
+output. The default iteration build fingerprints the base commit/tree and exact
+observed working-tree overlay, ignores ambient `RUSTY_QUEST_SPATIAL_*` feature
+inputs, isolates Gradle/Cargo intermediates, and writes a validated run capsule.
+Use `-PublicationBuild` only when intentionally preparing a publication
+candidate; it rejects any tracked or untracked source drift:
 
 ```powershell
 pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Build-SpatialCameraPanelAndroid.ps1 `
@@ -1322,6 +1325,134 @@ pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-ApkRunCapsule.ps1 `
 All camera-projection wrapper examples below require that capsule. The wrapper
 serializes by headset serial, stops only the capsule package, and restores the
 complete pre-run property state. See `docs/APK_RUN_ISOLATION.md`.
+
+### Optional Vulkan GPU timestamp telemetry
+
+Set
+`debug.rustyquest.spatial.camera_hwb_projection_probe.gpu_timestamps=true`
+to enable disabled-by-default GPU timestamp telemetry for the camera projection
+renderer. One query pair measures the full recorded frame, six pairs measure
+the ordered public guide passes, and one pair measures the final compositor
+render pass. The renderer reads only a retired frame slot, requests query
+availability without `WAIT`, handles the device timestamp valid-bit width and
+timestamp period, and fails open when timestamp support, query creation, or a
+query result is unavailable. Instrumentation therefore must not make projection
+startup or rendering depend on timing data.
+
+The runtime emits low-rate `status=gpu-timestamp-config`,
+`status=gpu-timestamp-sample`, and `status=gpu-timestamp-summary` markers. The
+summary reports attempted, ready, partial, not-ready, and failed query-set
+counts plus ring occupancy/overwrite counts. Samples are stored in one fixed
+4096-entry ring allocated at tracker creation; the active render loop performs
+no timing-related heap allocation. Treat a marker as measurement evidence only
+when `gpuTimestampActive=true` and the corresponding
+`gpuTimestampQuerySetReady=true`. Controlled comparisons must use the same APK
+and scene with the property disabled/enabled/disabled, preserve exact run-capsule
+and property closure, and record contamination or readiness failures rather
+than silently discarding them. The camera-projection smoke wrapper exposes that
+switch as `-GpuTimestamps $false` or `-GpuTimestamps $true`.
+
+### Output-neutral CPU and hardware-buffer import performance
+
+The public renderer keeps its host-coherent RGB-transform, projection-zone, and
+surface-displacement uniform buffers persistently mapped for their resource
+lifetime. An update copies bytes only when the typed value differs from the last
+uploaded value. Teardown unmaps each allocation before freeing it. Low-rate
+markers report `uniformUploadPolicy=persistent-mapped-value-equality`; the hot
+path does not allocate telemetry or log per frame.
+
+The Spatial-video import cache tests its stable hardware-buffer identity,
+stream generation, complete AHardwareBuffer descriptor, and Vulkan-format key
+before requesting Vulkan hardware-buffer properties. A hit therefore avoids
+both the property query and a new import. A miss still queries, validates, and
+imports through the existing exact path. Its low-rate sample marker reports
+`videoProjectionImportQueryPolicy=cache-hit-before-property-query`.
+
+Raw stereo camera imports use separate, generation-aware caches per eye. An
+entry is reusable only when stream generation, eye, camera, stable
+AHardwareBuffer ID, complete descriptor, and Vulkan-format identity match. The
+active image is retired only after the existing frame fence. Each eye permits at
+most `readerMaxImages + 1` inactive entries plus one active import. The
+AImageReader buffer-removal listener evicts matching inactive entries and
+tombstones an active removal until fence retirement. A removal queue or
+tombstone overflow disables reuse fail-safely for that stream. The runtime emits
+low-rate `status=camera-import-cache-ready`,
+`status=camera-import-performance-sample`, and
+`status=camera-import-performance-summary` markers with
+`policy=bounded-generation-aware-ahb-vulkan-import-cache`.
+
+Controlled Quest A-B-A measurements retained these three exact-output changes:
+uniform update-pair CPU time fell about 44%, Spatial-video accumulated property
+query time fell about 95-97%, and repeated camera query/import work fell about
+99.89%. A five-minute camera run needed five imports across 30,861 adoptions,
+with inactive high-water two per eye and no cache disable. These are sanitized
+results; raw device evidence remains private. None of these changes adds a
+visual-quality option or changes rendered output.
+
+### Whole-frame GPU-regression isolation
+
+A fixed-capacity follow-up rebuilt the older unified-compositor control, the
+NativeBox5/timestamp parent, and the retained CPU/import-cache build with the
+same Spatial SDK API-layer owner. Every 25-second Quest trace asserted CPU/GPU
+levels 4/4. Non-video stress movement was large enough that no winner was
+supported. In two decoder-valid runs per build, however, Maximum blend averaged
+about 88.8 FPS on the older control and 86.4/86.2 FPS on the two newer builds.
+The Unit 046 caches reduced internal work and small CPU aggregates relative to
+their direct parent, but did not recover that display-rate difference.
+
+All relevant `status=gpu-timestamp-config` markers reported
+`gpuTimestampRequested=false` and `gpuTimestampActive=false`; active query work
+was therefore not a valid explanation. The bounded follow-up kept the Unit 046
+caches and independently tested the prior five-physical-read NativeBox5
+equivalent and a build that compiled the timestamp module and all of its
+startup/hot-path calls out of the native library. Binary string inspection
+confirmed the timing factor was absent from that candidate.
+
+Neither factor won its two fixed-level matched brackets. The five-read build
+was 2.10 and 1.68 FPS slower than its neighboring controls and used slightly
+more mean GPU; its tear delta changed sign. The timing-out build was 0.68 and
+0.44 FPS slower, also used slightly more mean GPU, and its tear delta changed
+sign. All ten traces stayed at 40 C with zero trace packet loss, depth
+call-order errors, fatal exceptions, or ANRs. Because neither narrow candidate
+passed, the full matrix was not run and no visual-quality A/B option is
+eligible. Retain the three-linear-read NativeBox5 fold, retain the
+disabled-by-default timestamp implementation, and direct subsequent work at
+actual Maximum-blend compositor sampling rather than these rejected factors.
+
+### Private Maximum-blend endpoint-demand result
+
+A subsequent private, exact-output compositor candidate retained the public
+CPU/import caches and Android runtime unchanged. Its final selector activates
+only for the measured decoder-valid Maximum-blend workload; all other public
+diagnostic profiles use the original compositor route. Dense host equivalence
+oracles cover exact endpoints and transition-band behavior, so the candidate is
+not a visual-quality option.
+
+On Quest at asserted CPU/GPU levels 4/4, a decoder-valid A/B/A/B/A bracket used
+25-second traces after an eight-second offset. Candidate windows averaged 90.58
+FPS with a 90 FPS minimum, 324 VrApi tear increments, and 78.5% GPU. Neighboring
+controls averaged 90.27 FPS with 87-88 minimum, 439.7 tear increments, and 80.5%
+GPU. App CPU was effectively unchanged. A playlist-context B/A/B repeated the
+Maximum-blend result: candidate windows averaged 90.32 FPS and 402.5 tears;
+the intervening control reached 87.48 FPS and 710 tears at effectively equal GPU
+and app CPU.
+
+The scoped shader module adds a bounded approximately 17-18 MiB application
+footprint because it carries both original and gated bodies. A smaller globally
+applied form avoided that footprint but did not clear the unaffected-profile
+regression burden under observed run drift, so it was not retained. Across 40
+admitted traces there was no Perfetto packet loss, fatal exception, ANR,
+environment-depth call-order error, decoder overlap, or OpenXR/Vulkan loss. The
+public runtime remains unchanged and no visual A/B control is exposed.
+
+A later private distinct-pipeline packaging candidate was not retained. Its
+authorized device proof produced no admitted sample and no performance trace:
+one attempt stopped at the provider's missing source-grant capability, and a
+bounded follow-up grant reached the already-created activity as a normal new
+intent without activating the source. No FPS, tear, GPU, CPU, frame-time,
+memory, or PSS conclusion follows. The public adapter and the retained prior
+runtime remain unchanged. A typed inspected source-launch route or explicit
+app new-intent activation contract is a separate future ownership slice.
 
 Run the raw camera projection headset smoke with:
 
@@ -1398,17 +1529,14 @@ for the shape matrix, failure policy, lifecycle, and validation markers.
 
 Sideload-only builds may instead embed authenticated encrypted packs. One live
 catalog can mix SBS and top-bottom stereo items, including different
-flat/180°/360° source classifications. When the custom camera projection is
-also active, the video remains on its ideal world-anchored Spatial SDK surface
-below a separate planar custom-projection carrier. `Head-fixed border` rebuilds
-only the direct video as a viewer-following background quad. Selecting another
-encrypted stereo item rebuilds the direct video for its own shape and
-atomically restarts only the planar custom-projection carrier with the selected
-pack's layout and dimensions; it does not restart the Activity or the control
-panel. The video and custom-projection toggles remain independent, and the
-control panel stays ordered above both visual layers. Mono items follow the
-same ideal direct Spatial SDK media-panel route and are not adopted by the
-custom stereo projection carrier.
+flat/180°/360° source classifications. World-anchored playback retains the
+item's ideal Spatial SDK surface. Supported head-fixed stereo feeds the retained
+planar Vulkan compositor, where Center, Middle, and Outer choose their content
+independently and Center may blend projection with video. Selecting another
+encrypted stereo item stops the outgoing decoder, applies its complete layout
+and dimensions, and starts one new generation without restarting the Activity,
+control panel, or carrier. Mono items follow the ideal direct Spatial SDK
+media-panel route unless a compatible custom-compositor adapter is added.
 
 To include a generic Spatial SDK staged 3D asset, provide a staged mesh URI or
 let the wrapper stage a local GLB/GLTF source. Raw FBX sources must be converted
@@ -1577,8 +1705,10 @@ markers keep requested, supported, and effective state separate.
 
 The existing descriptor-set-3/binding-1 displacement block remains the first
 64 bytes. Uniform ABI v2 appends a 64-byte neutral suffix; existing ABI-v1
-shader payloads can continue reading only the prefix. The 368-byte zone block
-also remains unchanged. A v2-consuming build declares
+shader payloads can continue reading only the prefix. The region-owned zone
+block is 416 bytes: its original v3 400-byte prefix remains byte-compatible
+and one appended vec4 carries compositor-owned Center content and
+projection/video mix. A v2-consuming build declares
 `-ProjectionSurfaceUniformAbiVersion 2` (or the matching public build
 environment value), and the optional vertex and fragment payloads remain
 responsible for consuming the neutral controls.
@@ -1588,3 +1718,67 @@ projection. Its result is premultiplied and multiplicatively composes with the
 existing outer-underlay alpha. It does not add per-pixel transparency to the
 direct Spatial 180/360 video carrier. See
 `docs/SPATIAL_CAMERA_CONTROL_PROFILES.md`.
+
+## Independent region controls
+
+The projection-zone transport uses the additive region-owned v4 contract.
+Buffer geometry (`off`, `static`, or `dynamic`) and content
+(`outer-continuation`, `transparent-reveal`, `stretch`, or `video`) remain in
+the compatible packed flag lane. The appended Outer lane selects video,
+stretch, or transparency and carries independent Outer Stretch settings.
+Dynamic profiles persist `buffer_minimum_width_uv`,
+`buffer_maximum_width_uv`, and
+`buffer_maximum_speed_meters_per_second`; Static continues to use
+`buffer_static_width_uv`. Buffer Off selects zero guard and the full configured
+projection scale. Center independently selects Projection, Video,
+Projection + Video, or Transparent. v1/v2/v3 profiles migrate
+deterministically into v4 with Center Projection, without changing their
+accepted output.
+
+The panel presents Center region, Middle buffer, Outer region, and Transitions
+as top-level pages. Center content uses accurate stage names for camera
+brightness, the first blur, distortion strength before and after smoothing,
+depth-adjusted strength, and the aligned Meta depth diagnostic. Its advanced
+distortion safety section exposes the existing profile-backed projection edge
+guard without changing projection or region geometry. Middle and Outer show
+their Stretch or Video settings only when that content is selected. The Media
+library lists sanitized selectable encrypted-pack and shared-plain items; it
+never exposes storage paths. An explicit refresh scans on a background worker
+and adopts the bounded catalog through pre-registered slots without recreating
+the Activity, control panel, selected carrier, or selected decoder. Turning the
+Buffer off produces a direct Center-to-Outer transition while retaining the
+dormant Middle settings.
+
+Background is a separate top-level page rather than a Media subsection. Media
+owns video discovery, selection, presentation, cadence, and playback; Background
+owns Black, system passthrough, and LUT passthrough plus LUT animation, color
+strength, cycle speed, and black-cutoff controls. Ordinary video off/on hides
+and reuses the registered Spatial carrier and Surface. Decoder stop/release and
+replacement are serialized on a dedicated Media3 looper so no codec teardown
+blocks the Activity/XR thread.
+
+Meta system passthrough stays enabled for the scene session. Black and video
+carriers occlude it, Transparent removes the opaque black carrier, and LUT
+removes that carrier while styling the underlying passthrough. Background
+selection never retries the platform's advisory passthrough getter. Animated
+LUT construction runs away from the main thread; only the final Scene update is
+submitted on the main scope. Static LUT mode applies once with no recurring LUT
+job.
+
+## Connection Hub runtime isolation
+
+The wearer Start/Stop controls own both sides of the optional integration.
+When the listener is stopped, Spatial Camera Panel owns no Hub surface client,
+broker binding, state publisher, availability timer, or recurring provider
+status call; controller input and all local projection, video, profile, and
+playlist behavior remain independent. Opening the app performs one bounded
+background status reconciliation, and the panel Refresh button requests another
+explicit readback.
+
+When enabled, synchronous provider calls, Binder session reduction, JSON
+serialization, registration, and state publication run on dedicated background
+workers. The Compose panel observes an in-process snapshot, and the XR scene
+tick performs no Hub refresh. The private locked-playlist owner signals only
+availability or revision changes; advancing unpaused progress is coalesced at
+one update per second on the Hub worker, while paused or unavailable surfaces
+retain no publication timer.

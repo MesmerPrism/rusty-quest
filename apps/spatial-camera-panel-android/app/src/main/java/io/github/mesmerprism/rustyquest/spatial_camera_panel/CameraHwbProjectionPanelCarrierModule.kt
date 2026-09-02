@@ -5,12 +5,15 @@ import com.meta.spatial.core.Entity
 import com.meta.spatial.core.Pose
 import com.meta.spatial.core.Vector2
 import com.meta.spatial.runtime.AlphaMode
+import com.meta.spatial.runtime.BlendMode
+import com.meta.spatial.runtime.DepthWrite
 import com.meta.spatial.runtime.PanelSceneObject
 import com.meta.spatial.runtime.Scene
 import com.meta.spatial.runtime.SceneMaterial
 import com.meta.spatial.runtime.SceneMesh
 import com.meta.spatial.runtime.SceneObject
 import com.meta.spatial.runtime.SceneTexture
+import com.meta.spatial.runtime.SortOrder
 import com.meta.spatial.runtime.StereoMode
 import com.meta.spatial.toolkit.Hittable
 import com.meta.spatial.toolkit.MediaPanelRenderOptions
@@ -169,10 +172,13 @@ internal object CameraHwbProjectionPanelCarrierModule {
                     includeGlass = false
                     sceneMeshCreator = { texture: SceneTexture ->
                       val material =
-                          SceneMaterial(texture, AlphaMode.OPAQUE, SceneMaterial.UNLIT_SHADER)
+                          SceneMaterial(texture, AlphaMode.TRANSLUCENT, SceneMaterial.UNLIT_SHADER)
                               .apply {
                                 setStereoMode(StereoMode.LeftRight)
                                 setUnlit(true)
+                                setBlendMode(BlendMode.TRANSLUCENT)
+                                setDepthWrite(DepthWrite.DISABLE)
+                                setSortOrder(SortOrder.TRANSLUCENT)
                               }
                       SceneMesh.singleSidedQuad(
                           plane.projectionWidthMeters / 2.0f,
@@ -314,6 +320,8 @@ internal object CameraHwbProjectionPanelCarrierModule {
           "manualPanelSceneObjectCustomMesh=true manualPanelNoHittable=true " +
           "manualPanelNoIsdkGrabbable=true panelInputOptionsClickButtons=0 " +
           "manualPanelForceSceneTexture=true " +
+          "manualPanelAlphaMode=translucent manualPanelBlendMode=translucent " +
+          "manualPanelDepthWrite=disabled " +
           "panelLayerUpdateStatus=${activityMarkerToken(panelLayerUpdateStatus)} " +
           "surfaceValid=$surfaceValid sceneQuadLayerCreated=false nativeStartRequested=false " +
           "panelRegistrationId=spatial_camera_projection_manual_custom_mesh_panel " +

@@ -15,8 +15,6 @@ layout(push_constant) uniform CameraHwbProjectionPush {
 layout(location = 0) in vec2 vUv;
 layout(location = 0) out vec4 outColor;
 
-const float VIDEO_BORDER_INNER_BLEND_UV = 0.04;
-const float VIDEO_BORDER_BLEND_CURVE = 1.6;
 const float THIN_LINE_AA_MIN_RADIUS_TEXELS = 0.75;
 const float THIN_LINE_AA_MAX_RADIUS_TEXELS = 2.0;
 
@@ -86,12 +84,6 @@ vec2 rotation_reprojected_uv(vec2 presentationSourceUv) {
     );
 }
 
-float video_border_alpha(vec2 localUv) {
-    float edge = min(min(localUv.x, 1.0 - localUv.x), min(localUv.y, 1.0 - localUv.y));
-    float towardEdge = smoothstep(-VIDEO_BORDER_INNER_BLEND_UV, 0.0, -edge);
-    return clamp(1.0 - pow(towardEdge, VIDEO_BORDER_BLEND_CURVE), 0.0, 1.0);
-}
-
 vec3 camera_sample(sampler2D source, vec2 sampleUv) {
     if (pc.params.x < 0.5) {
         return texture(source, sampleUv).rgb;
@@ -125,9 +117,11 @@ void main() {
         vec3 rgb = pc.params.z < 0.5
             ? camera_sample(u_camera_left, sampleUv)
             : camera_sample(u_camera_right, sampleUv);
-        float alpha = video_border_alpha(localUv);
         vec3 color = fallback_layer_debug(rgb, localUv);
-        outColor = vec4(clamp(color, vec3(0.0), vec3(1.0)) * alpha, alpha);
+        // The raw fallback owns camera sampling only. Center/Middle/Outer owns
+        // every interactive boundary, so the fallback must not add a hidden
+        // inner fade that cannot be controlled from the region UI.
+        outColor = vec4(clamp(color, vec3(0.0), vec3(1.0)), 1.0);
         return;
     }
 

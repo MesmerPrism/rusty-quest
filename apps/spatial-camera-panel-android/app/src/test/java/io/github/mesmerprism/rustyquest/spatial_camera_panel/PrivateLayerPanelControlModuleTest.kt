@@ -13,6 +13,10 @@ class PrivateLayerPanelControlModuleTest {
     assertEquals(PrivateLayerControls.depthPolicyEyeIndex, PrivateLayerControls.defaultDepthLayerPolicy)
     assertEquals("Stereo (per eye)", PrivateLayerControls.labelForDepthLayerPolicy(2))
     assertEquals("eye-index", PrivateLayerControls.tokenForDepthLayerPolicy(2))
+    assertEquals(BuildConfig.DEPTH_ALIGNMENT_DEFAULT_LEFT_X, alignment.leftX)
+    assertEquals(BuildConfig.DEPTH_ALIGNMENT_DEFAULT_LEFT_Y, alignment.leftY)
+    assertEquals(BuildConfig.DEPTH_ALIGNMENT_DEFAULT_RIGHT_X, alignment.rightX)
+    assertEquals(BuildConfig.DEPTH_ALIGNMENT_DEFAULT_RIGHT_Y, alignment.rightY)
     assertTrue(alignment.metadataAutoAlign)
     assertEquals(1.0f, alignment.sampleScale)
     assertEquals(1.0f, alignment.sampleScaleY)
@@ -65,5 +69,19 @@ class PrivateLayerPanelControlModuleTest {
     assertTrue(marker.contains("publicMultiStackDepthAlignmentSampleScaleY=0.9000"))
     assertTrue(marker.contains("publicMultiStackDepthAlignmentRollDegrees=2.0000"))
     assertTrue(marker.contains("publicMultiStackDepthMetadataAutoAlignRequested=false"))
+  }
+
+  @Test
+  fun environmentDepthRunsOnlyForShaderLayersThatCanConsumeIt() {
+    assertTrue(PrivateLayerControls.environmentDepthConsumerRequired(-1.0f))
+    assertTrue(PrivateLayerControls.environmentDepthConsumerRequired(0.0f))
+    assertFalse(PrivateLayerControls.environmentDepthConsumerRequired(1.0f))
+    assertFalse(PrivateLayerControls.environmentDepthConsumerRequired(2.0f))
+    assertFalse(PrivateLayerControls.environmentDepthConsumerRequired(3.0f))
+    assertFalse(PrivateLayerControls.environmentDepthConsumerRequired(4.0f))
+    assertTrue(PrivateLayerControls.environmentDepthConsumerRequired(5.0f))
+    assertTrue(PrivateLayerControls.environmentDepthConsumerRequired(6.0f))
+    assertFalse(PrivateLayerControls.environmentDepthConsumerRequired(7.0f))
+    assertFalse(PrivateLayerControls.environmentDepthConsumerRequired(8.0f))
   }
 }

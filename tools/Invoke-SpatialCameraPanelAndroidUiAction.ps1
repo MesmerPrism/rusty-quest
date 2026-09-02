@@ -23,9 +23,20 @@ param(
         "projection-panel-on",
         "video-previous",
         "video-next",
+        "video-recenter",
+        "video-playback-off",
+        "video-playback-on",
         "video-select",
         "video-world-anchored",
         "video-head-fixed-border",
+        "background-black",
+        "background-passthrough",
+        "background-lut-passthrough",
+        "profile-save-current",
+        "choose-shared-media-folder",
+        "refresh-shared-media-library",
+        "environment-depth-recovery-bounded",
+        "environment-depth-recovery-aggressive",
         "particle-controls",
         "particle-panel-distance",
         "particle-panel-view-yaw",
@@ -39,6 +50,8 @@ param(
     [string]$SurfaceTargetId = "real-hands",
 
     [string]$VideoPackId = "",
+
+    [string]$ProfileTitle = "",
 
     [double]$PrivateLayerOverride = 0.0,
 
@@ -277,8 +290,15 @@ $intentArguments = @(
 if ($Action -eq "video-select" -and [string]::IsNullOrWhiteSpace($VideoPackId)) {
     throw "-VideoPackId is required when -Action video-select is requested."
 }
+if ($Action -eq "profile-save-current" -and
+    ([string]::IsNullOrWhiteSpace($ProfileTitle) -or $ProfileTitle.Trim() -cne $ProfileTitle -or $ProfileTitle.Length -gt 96)) {
+    throw "-ProfileTitle must contain 1 to 96 trimmed characters when -Action profile-save-current is requested."
+}
 if (-not [string]::IsNullOrWhiteSpace($VideoPackId)) {
     $intentArguments += @("--es", "video_pack_id", $VideoPackId.Trim())
+}
+if (-not [string]::IsNullOrWhiteSpace($ProfileTitle)) {
+    $intentArguments += @("--es", "profile_title", $ProfileTitle.Trim())
 }
 
 $launch = Invoke-AdbCommand -Name "run Spatial Camera Panel UI action $Action" -Arguments $intentArguments
@@ -303,6 +323,7 @@ if ($ReadMarkers) {
     action = $Action
     surface_target_id = $SurfaceTargetId
     video_pack_id = $VideoPackId
+    profile_title = $ProfileTitle
     pid = $targetPid
     launch_exit_code = $launch.exit_code
     launch_output = $launch.output

@@ -67,6 +67,34 @@ foreach ($required in @($keystorePath, $spec, $lock)) {
     if (-not (Test-Path -LiteralPath $required -PathType Leaf)) { throw "Required release input is missing: $required" }
 }
 
+$keytool = if ([string]::IsNullOrWhiteSpace($JavaHome)) {
+    (Get-Command keytool -ErrorAction Stop).Source
+} else {
+    Join-Path $JavaHome "bin\keytool.exe"
+}
+if (-not (Test-Path -LiteralPath $keytool -PathType Leaf)) {
+    throw "Java keytool is unavailable for the pre-build signer check: $keytool"
+}
+$signerProbe = Join-Path $out "keystore-signer-preflight.der"
+try {
+    & $keytool -exportcert `
+        -keystore $keystorePath `
+        -storepass android `
+        -alias androiddebugkey `
+        -file $signerProbe
+    if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $signerProbe -PathType Leaf)) {
+        throw "Could not export the Connection Hub signing certificate before build."
+    }
+    $actualSignerSha256 = Get-Sha256 $signerProbe
+    if ($actualSignerSha256 -cne $ExpectedSignerSha256) {
+        throw "Keystore signer mismatch before build: expected $ExpectedSignerSha256, got $actualSignerSha256. Use the stable accepted Hub keystore so the APK can update the installed app."
+    }
+} finally {
+    if (Test-Path -LiteralPath $signerProbe -PathType Leaf) {
+        Remove-Item -LiteralPath $signerProbe -Force
+    }
+}
+
 $buildOut = Join-Path $out "build"
 & (Join-Path $repoRoot "tools\Build-ManifoldBrokerAndroid.ps1") `
     -AndroidHome $AndroidHome `
@@ -101,8 +129,15 @@ $manifestTree = @(& $aapt2 dump xmltree $builtApk --file AndroidManifest.xml 2>&
 if ($LASTEXITCODE -ne 0) { throw "Pinned aapt2 could not inspect the release manifest." }
 $badgingText = $badging -join "`n"
 $manifestText = $manifestTree -join "`n"
+$dumpPermissionCount = [regex]::Matches(
+    $manifestText,
+    'android:permission[^\r\n]*android\.permission\.DUMP').Count
 if ($badgingText -notmatch "package: name='io\.github\.mesmerprism\.rustymanifold\.broker' versionCode='$VersionCode' versionName='$([regex]::Escape($VersionName))'" -or
-        $manifestText -match 'ConnectionHubDebugControlProvider|android\.permission\.DUMP') {
+        $manifestText -match 'ConnectionHubDebugControlProvider' -or
+        $dumpPermissionCount -ne 2 -or
+        $manifestText -notmatch 'ConnectionHubStartService[\s\S]{0,800}android\.permission\.DUMP' -or
+        $manifestText -notmatch 'ConnectionHubOperatorProvider[\s\S]{0,800}android\.permission\.DUMP' -or
+        $manifestText -notmatch 'screenOrientation\(0x0101001e\)=0(?:\r?\n|$)') {
     throw "Independent APK inspection rejected the release package/version/debug boundary."
 }
 

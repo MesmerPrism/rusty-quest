@@ -254,7 +254,7 @@ impl SpatialGuideProcessingPolicy {
 
     pub(crate) fn marker_fields(self) -> String {
         format!(
-            "publicGuideProcessingPreset={} publicGuidePreblurKernel={} publicGuidePreblurInput={} publicGuidePostblurKernel={} publicGuideKernelAlternatives=native-box5+gaussian5 publicGuideInputAlternatives=luma+rgb-preserve publicGuidePreblurAuxiliary={} publicGuidePostblurAuxiliary={} publicGuideAuxiliaryAlternatives=preserve+derive-luma publicCameraSampling={} publicCameraSamplingRadiusTexels={:.2} publicCameraSamplingAlternatives=linear+thin-line-tent5 publicCameraSamplingDefault=thin-line-tent5 publicCameraSamplingFootprintAware=true",
+            "publicGuideProcessingPreset={} publicGuidePreblurKernel={} publicGuidePreblurInput={} publicGuidePostblurKernel={} publicGuideKernelAlternatives=native-box5+gaussian5 publicGuideNativeBox5PhysicalFetches=3 publicGuideGaussian5PhysicalFetches=5 publicGuideNativeBox5LinearFoldEquivalent=true publicGuideInputAlternatives=luma+rgb-preserve publicGuidePreblurAuxiliary={} publicGuidePostblurAuxiliary={} publicGuideAuxiliaryAlternatives=preserve+derive-luma publicCameraSampling={} publicCameraSamplingRadiusTexels={:.2} publicCameraSamplingAlternatives=linear+thin-line-tent5 publicCameraSamplingDefault=thin-line-tent5 publicCameraSamplingFootprintAware=true",
             self.preset_token(),
             self.preblur_kernel.marker_token(),
             self.preblur_input.marker_token(),

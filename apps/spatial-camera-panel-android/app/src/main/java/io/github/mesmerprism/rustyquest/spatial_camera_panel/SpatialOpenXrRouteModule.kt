@@ -31,6 +31,9 @@ private const val SPATIAL_MULTIMODAL_INPUT_RESUME_SUCCEEDED_BIT = 1L shl 10
 private const val SPATIAL_NATIVE_PASSTHROUGH_LAYER_ACTIVE_BIT = 1L shl 10
 private const val SPATIAL_ENVIRONMENT_DEPTH_PROVIDER_STARTED_BIT = 1L shl 22
 private const val SPATIAL_ENVIRONMENT_DEPTH_ACQUIRE_THREAD_STARTED_BIT = 1L shl 23
+private const val SPATIAL_ENVIRONMENT_DEPTH_ACQUIRE_CALL_ORDER_INVALID_BIT = 1L shl 4
+private const val SPATIAL_ENVIRONMENT_DEPTH_ACQUIRE_SUCCEEDED_BIT = 1L shl 1
+private const val SPATIAL_ENVIRONMENT_DEPTH_ACQUIRE_ERROR_BIT = 1L shl 3
 private const val NATIVE_RECEIPT_OPENXR_INSTANCE_BIT = 1L shl 1
 private const val NATIVE_RECEIPT_OPENXR_SESSION_BIT = 1L shl 2
 private const val NATIVE_RECEIPT_OPENXR_GET_PROC_BIT = 1L shl 3
@@ -181,6 +184,15 @@ internal object SpatialOpenXrRouteModule {
   fun spatialEnvironmentDepthAcquireThreadStarted(mask: Long): Boolean =
       mask.hasReceiptBit(SPATIAL_ENVIRONMENT_DEPTH_ACQUIRE_THREAD_STARTED_BIT)
 
+  fun spatialEnvironmentDepthAcquireSucceeded(mask: Long): Boolean =
+      mask.hasReceiptBit(SPATIAL_ENVIRONMENT_DEPTH_ACQUIRE_SUCCEEDED_BIT)
+
+  fun spatialEnvironmentDepthAcquireFailed(mask: Long): Boolean =
+      mask.hasReceiptBit(SPATIAL_ENVIRONMENT_DEPTH_ACQUIRE_ERROR_BIT)
+
+  fun spatialEnvironmentDepthAcquireCallOrderInvalid(mask: Long): Boolean =
+      mask.hasReceiptBit(SPATIAL_ENVIRONMENT_DEPTH_ACQUIRE_CALL_ORDER_INVALID_BIT)
+
   fun nativePassthroughLibraryUnavailableMarker(source: String, error: String): String =
       "channel=spatial-native-passthrough status=library-unavailable " +
           "source=${activityMarkerToken(source)} nativePassthroughRequested=true " +
@@ -265,14 +277,19 @@ internal object SpatialOpenXrRouteModule {
       mask: Long,
       probe: SpatialNativeInteropProbe,
       requiredOpenXrExtensions: String,
+      recoveryPolicy: SpatialEnvironmentDepthRecoveryPolicy,
   ): String =
       "channel=spatial-environment-depth status=start-requested " +
           "source=${activityMarkerToken(source)} environmentDepthProviderRequested=true " +
           "nativeEnvironmentDepthStartMask=$mask " +
           "environmentDepthRealProviderBound=${spatialEnvironmentDepthProviderStarted(mask)} " +
-          "environmentDepthAcquireThreadStarted=${spatialEnvironmentDepthAcquireThreadStarted(mask)} " +
+          "environmentDepthAcquireThreadStarted=false " +
           "environmentDepthAcquireStatus=see-native-logcat " +
-          "environmentDepthAcquireDisplayTimePolicy=diagnostic-zero-time " +
+          "environmentDepthAcquireDisplayTimePolicy=spatial-sdk-predicted-display-time " +
+          "environmentDepthAcquireScheduling=${if (recoveryPolicy == SpatialEnvironmentDepthRecoveryPolicy.Bounded) "once-per-unique-spatial-sdk-wait-frame" else "every-positive-spatial-sdk-ecs-tick"} " +
+          "environmentDepthAcquireDuplicateFrameSuppression=${recoveryPolicy == SpatialEnvironmentDepthRecoveryPolicy.Bounded} " +
+          "environmentDepthRecoveryPolicy=${recoveryPolicy.markerToken} " +
+          "environmentDepthLastValidRetention=true " +
           "spatialSdkOwnsFrameLoop=true " +
           "openXrInstanceHandleNonZero=${probe.openXrInstanceHandleNonZero} " +
           "openXrSessionHandleNonZero=${probe.openXrSessionHandleNonZero} " +

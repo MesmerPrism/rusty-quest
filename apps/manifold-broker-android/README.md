@@ -148,8 +148,13 @@ registration to that grant's capability intersection. Duplicate same-subject
 grants fail the build, and the app never supplies a client identity. The
 surface contract permits only empty-argument Next, Previous, Pause, and Resume
 commands and the scalar state keys `playlist_title`, `item_count`,
-`active_index`, `active_label`, `running`, `paused`, `phase`, `progress`, and
-`revision`. Availability is app-owned: the provider registers only while an
+`active_index`, `active_label`, `item_elapsed_seconds`,
+`item_duration_seconds`, `running`, `paused`, `phase`, `progress`, and
+`revision`. The browser presents the zero-based active index as “item N of M”
+and elapsed/total seconds as a clock instead of exposing raw normalized
+progress. It presents Pause/Resume and the effective playback status as one
+stateful toggle rather than duplicate command buttons plus a separate status
+row. Availability is app-owned: the provider registers only while an
 effective locked playlist is active and unregisters when it is not. The
 compatibility contract exposes neither a typed item selector nor an ordered
 item array; either addition requires a separate Hub-owner schema, descriptor,

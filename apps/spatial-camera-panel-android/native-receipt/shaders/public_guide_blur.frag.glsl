@@ -24,10 +24,7 @@ vec4 publicGuideInput(vec2 uv) {
     return vec4(color, auxiliary);
 }
 
-float publicGuideWeight(int offset) {
-    if (pc.processing.x < 0.5) {
-        return 0.2;
-    }
+float publicGuideGaussianWeight(int offset) {
     const float gaussian5[5] = float[5](0.06136, 0.24477, 0.38774, 0.24477, 0.06136);
     return gaussian5[offset + 2];
 }
@@ -40,9 +37,22 @@ void main() {
     vec2 sourceMax = pc.sourceRect.xy + pc.sourceRect.zw - texelInset;
     vec2 stepUv = pc.stepAndScale.xy;
     vec4 color = vec4(0.0);
-    for (int offset = -2; offset <= 2; ++offset) {
-        vec2 sampleUv = clamp(sourceUv + float(offset) * stepUv, sourceMin, sourceMax);
-        color += publicGuideInput(sampleUv) * publicGuideWeight(offset);
+    if (pc.processing.x < 0.5) {
+        // LINEAR filtering folds the uniform five-texel box into 2+1+2 texels.
+        // stepUv is one physical packed-target texel; sourceMin/sourceMax keep
+        // both folded edge reads inside the selected 384x384 eye domain.
+        vec2 negativeUv = clamp(sourceUv - 1.5 * stepUv, sourceMin, sourceMax);
+        vec2 centerUv = clamp(sourceUv, sourceMin, sourceMax);
+        vec2 positiveUv = clamp(sourceUv + 1.5 * stepUv, sourceMin, sourceMax);
+        color = 0.4 * publicGuideInput(negativeUv)
+            + 0.2 * publicGuideInput(centerUv)
+            + 0.4 * publicGuideInput(positiveUv);
+    } else {
+        // Gaussian5 intentionally retains its original five physical reads.
+        for (int offset = -2; offset <= 2; ++offset) {
+            vec2 sampleUv = clamp(sourceUv + float(offset) * stepUv, sourceMin, sourceMax);
+            color += publicGuideInput(sampleUv) * publicGuideGaussianWeight(offset);
+        }
     }
     outColor = clamp(color, vec4(0.0), vec4(1.0));
 }

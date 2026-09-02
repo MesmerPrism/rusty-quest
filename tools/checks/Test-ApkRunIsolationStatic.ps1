@@ -56,13 +56,36 @@ Assert-Contains "runtime profile" $profileTool "ordered-batched-setprop"
 foreach ($needle in @("New-QuestPropertySetpropBatches", "Get-QuestPropertyGlobalReadback", "Test-QuestPropertyExactReadback", "MaxCommandUtf8Bytes", "QuestPropertySetpropCommandSeparator", " && ", "duplicate property")) { Assert-Contains "property transport module" $propertyTransportModule $needle }
 foreach ($needle in @("-EnteredReceiptPath", "-TerminalReceiptPath", "-ExpectedSerial", "-ExpectedPackageName", "-Adb must be an explicit existing executable path")) { Assert-Contains "recovery entrypoint" $recoveryTool $needle }
 foreach ($text in @($nativeSmoke, $spatialSmoke)) { Assert-Contains "smoke wrapper short APK staging" $text "Get-QuestRunCapsuleInstallApk" }
-foreach ($needle in @("cargo metadata --format-version 1 --locked", "path-dependency", "tracked_worktree_clean", "rusty.quest.apk_source_composition_identity.v1")) { Assert-Contains "source composition module" $sourceCompositionModule $needle }
+foreach ($needle in @("cargo metadata --format-version 1 --locked", "path-dependency", "tracked_worktree_clean", "worktree_overlay_sha256", "AllowWorkingTreeChanges", "apk_source_composition_identity.v")) { Assert-Contains "source composition module" $sourceCompositionModule $needle }
 foreach ($text in @($nativeBuild, $spatialBuild)) {
     Assert-Contains "APK builder" $text "Get-QuestBuildSourceComposition"
     Assert-Contains "APK builder" $text "source_composition_fingerprint"
     Assert-Contains "APK builder" $text "source_dependencies"
     Assert-Contains "APK builder" $text '"--locked"'
     Assert-Contains "APK builder" $text "apk-i"
+}
+Assert-Contains "Spatial iteration build" $spatialBuild "-AllowWorkingTreeChanges:(-not [bool]`$PublicationBuild)"
+Assert-Contains "Spatial publication build" $spatialBuild '[switch]$PublicationBuild'
+foreach ($needle in @(
+    '$BuildCacheRoot.Length -gt 64',
+    'BuildCacheRoot must remain deliberately short (64 characters or fewer)',
+    '$cacheLaneId = (("{0}-{1}" -f $resolvedProductId, $buildTypeLower)',
+    'Join-Path $BuildCacheRoot ("l\{0}" -f $cacheLaneId)',
+    'Join-Path $BuildCacheRoot ("g\{0}" -f $cacheLaneId)',
+    'Join-Path $BuildCacheRoot "gp"',
+    'Join-Path $BuildCacheRoot "gu"',
+    'Join-Path $BuildCacheRoot ("c\{0}" -f $RustStdLinkage.Substring(0, 1).ToLowerInvariant())',
+    'native = $nativeFingerprint',
+    'android_shell = $shellFingerprint',
+    'package = $packageFingerprint',
+    'stable_short_cache = $true',
+    'paths_recorded = $false',
+    'build_cache_paths_recorded = $false'
+)) {
+    Assert-Contains "Spatial stable cache identity" $spatialBuild $needle
+}
+if ($spatialBuild.Contains('buildInputFingerprint.Substring(0, 16)', [StringComparison]::Ordinal)) {
+    throw 'Spatial compiler intermediates must not derive from the complete APK buildInputFingerprint.'
 }
 
 $temp = Join-Path ([IO.Path]::GetTempPath()) ("rusty-quest-run-capsule-test-" + [guid]::NewGuid().ToString("N"))

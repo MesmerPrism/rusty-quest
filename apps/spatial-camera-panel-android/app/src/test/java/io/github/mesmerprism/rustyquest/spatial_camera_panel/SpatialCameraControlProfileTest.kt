@@ -153,6 +153,7 @@ class SpatialCameraControlProfileTest {
         profile.zoneCompositor.coverageMode,
     )
     assertFalse(profile.zoneCompositor.projectionEffectEdgeGuardEnabled)
+    assertEquals(24, profile.zoneCompositor.stretchOptionFlags)
     assertEquals(
         RgbChannelTransformControls.modeIndependent,
         profile.rgbChannelTransform.mode,
@@ -182,6 +183,73 @@ class SpatialCameraControlProfileTest {
 
     assertEquals(ProjectionSurfaceTilingControls.off, parsed.projectionSurfaceTiling)
     assertEquals(ProjectionInnerAlphaControls.off, parsed.projectionInnerAlpha)
+  }
+
+  @Test
+  fun regionOwnedProfileCarriesDynamicBufferAndIndependentOuterStretch() {
+    val document = validProfile()
+    val zone = document.getJSONObject("quest_controls").getJSONObject("zone_compositor")
+    zone
+        .put("region_contract", "v3")
+        .put("buffer_geometry", "dynamic")
+        .put("buffer_static_width_uv", 0.09)
+        .put("buffer_minimum_width_uv", 0.04)
+        .put("buffer_maximum_width_uv", 0.17)
+        .put("buffer_maximum_speed_meters_per_second", 0.75)
+        .put("buffer_fill", "video")
+        .put("stretch_extent", "buffer-only")
+        .put("outer_content", "stretch")
+        .put("outer_stretch_source", "mix")
+        .put("outer_stretch_option_flags", 16)
+        .put("outer_edge_inset_uv", 0.02)
+        .put("outer_max_inset_uv", 0.19)
+        .put("outer_stretch_curve", 2.2)
+        .put("outer_processed_mix", 0.65)
+
+    val parsed = SpatialCameraControlProfileContract.parse(document.toString().toByteArray())
+    val value = parsed.zoneCompositor
+    assertEquals(
+        PrivateLayerZoneCompositorControls.regionContractCompositorOwned,
+        value.regionContractVersion,
+    )
+    assertEquals(
+        PrivateLayerZoneCompositorControls.centerContentProjection,
+        value.centerContentMode,
+    )
+    assertEquals(0.04f, value.bufferMinimumWidthUv)
+    assertEquals(0.17f, value.bufferMaximumWidthUv)
+    assertEquals(0.75f, value.bufferMaximumSpeedMetersPerSecond)
+    assertEquals(
+        PrivateLayerZoneCompositorControls.bufferFillOuterContinuation,
+        value.bufferFillMode,
+    )
+    assertEquals(PrivateLayerZoneCompositorControls.outerContentStretch, value.outerContentMode)
+    assertEquals(PrivateLayerZoneCompositorControls.sourceMixed, value.outerStretchSource)
+    assertEquals(16, value.outerStretchOptionFlags)
+    assertEquals(0.02f, value.outerEdgeInsetUv)
+    assertEquals(0.19f, value.outerMaxInsetUv)
+    assertEquals(2.2f, value.outerStretchCurve)
+    assertEquals(0.65f, value.outerProcessedMix)
+  }
+
+  @Test
+  fun compositorOwnedProfileCarriesCenterVideoBlend() {
+    val document = validProfile()
+    document
+        .getJSONObject("quest_controls")
+        .getJSONObject("zone_compositor")
+        .put("region_contract", "v4")
+        .put("center_content", "projection-video-blend")
+        .put("center_projection_mix", 0.35)
+
+    val value =
+        SpatialCameraControlProfileContract.parse(document.toString().toByteArray()).zoneCompositor
+    assertEquals(
+        PrivateLayerZoneCompositorControls.regionContractCompositorOwned,
+        value.regionContractVersion,
+    )
+    assertEquals(PrivateLayerZoneCompositorControls.centerContentBlend, value.centerContentMode)
+    assertEquals(0.35f, value.centerProjectionMix)
   }
 
   @Test
@@ -255,9 +323,11 @@ class SpatialCameraControlProfileTest {
         .getJSONObject("outer")
         .getJSONObject("channel_dynamics")
         .put("source_choice", "incoming")
-    assertThrows(IllegalArgumentException::class.java) {
-      SpatialCameraControlProfileContract.parse(invalid.toString().toByteArray())
-    }
+    val error =
+        assertThrows(IllegalArgumentException::class.java) {
+          SpatialCameraControlProfileContract.parse(invalid.toString().toByteArray())
+        }
+    assertEquals("unsupported_transparent_spatial_video_blend", error.message)
   }
 
   private fun validProfile(): JSONObject {
@@ -271,6 +341,7 @@ class SpatialCameraControlProfileTest {
             .put("outer_target_mode", "readable-color")
             .put("stretch_mapping", "graded-edge-trail-native")
             .put("projection_effect_edge_guard_enabled", false)
+            .put("stretch_option_flags", 24)
             .put("edge_inset_uv", 0.015)
             .put("max_inset_uv", 0.14)
             .put("stretch_curve", 1.6)

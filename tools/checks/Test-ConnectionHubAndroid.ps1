@@ -63,6 +63,13 @@ if ($activity -notmatch 'new ScrollView\(this\)' -or
     $activity -notmatch 'scroll\.addView\(layout\)') {
     throw 'Connection Hub management controls must remain inside a scrollable viewport.'
 }
+if ($activity -notmatch 'layout\.setOrientation\(LinearLayout\.HORIZONTAL\)' -or
+    $activity -notmatch 'weightedPane\(0\.9f\)' -or
+    $activity -notmatch 'weightedPane\(1\.1f\)' -or
+    $activity -notmatch 'roundedBackground\(COLOR_SURFACE, COLOR_BORDER, 14\)' -or
+    $activity -notmatch 'pairingCode\.setLetterSpacing\(0\.14f\)') {
+    throw 'Connection Hub wearer UI is not the locked landscape split-view console.'
+}
 $binder = Get-Content -Raw -LiteralPath (Join-Path $javaRoot "ConnectionHubAdmissionService.java")
 $stateStore = Get-Content -Raw -LiteralPath (Join-Path $javaRoot "AndroidConnectionHubStateStore.java")
 $server = Get-Content -Raw -LiteralPath (Join-Path $javaRoot "ConnectionHubHttpServer.java")
@@ -84,6 +91,10 @@ $spatialActivity = Get-Content -Raw -LiteralPath (Join-Path $spatial "app\src\ma
 $spatialCameraPanelManifest = Get-Content -Raw -LiteralPath (Join-Path $spatialCameraPanel "app\src\main\AndroidManifest.xml")
 $spatialCameraPanelClientSource = Get-Content -Raw -LiteralPath (Join-Path $spatialCameraPanel "app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\ConnectionHubSurfaceClient.kt")
 $releaseManifest = Get-Content -Raw -LiteralPath (Join-Path $RepoRoot "fixtures\broker-products\connection-hub-standalone.AndroidManifest.xml")
+if ($releaseManifest -notmatch 'android:theme="@android:style/Theme\.Material\.NoActionBar"' -or
+    $releaseManifest -notmatch 'android:name="\.ConnectionHubStartActivity"[\s\S]*android:screenOrientation="landscape"') {
+    throw 'Connection Hub product does not lock its dark landscape wearer presentation.'
+}
 $buildScript = Get-Content -Raw -LiteralPath (Join-Path $RepoRoot "tools\Build-ManifoldBrokerAndroid.ps1")
 $releaseScript = Get-Content -Raw -LiteralPath (Join-Path $RepoRoot "tools\Build-ConnectionHubLabsRelease.ps1")
 $spatialContractPath = Join-Path $spatial "contracts\connection-hub-media-surface.v1.json"
@@ -216,6 +227,19 @@ if ($releaseScript.IndexOf('$aapt2 dump xmltree $builtApk --file AndroidManifest
     $releaseScript -match 'dump xmltree \$builtApk AndroidManifest\.xml') {
     throw "Connection Hub release inspection does not use the pinned aapt2 xmltree file contract."
 }
+if ($releaseScript -notmatch 'android:permission\[\^\\r\\n\]\*android\\\.permission\\\.DUMP' -or
+    $releaseScript -notmatch 'ConnectionHubStartService\[\\s\\S\]\{0,800\}android\\\.permission\\\.DUMP' -or
+    $releaseScript -notmatch 'ConnectionHubOperatorProvider\[\\s\\S\]\{0,800\}android\\\.permission\\\.DUMP' -or
+    $releaseScript -notmatch 'ConnectionHubDebugControlProvider' -or
+    $releaseScript -notmatch 'screenOrientation\\\(0x0101001e\\\)=0') {
+    throw "Connection Hub release inspection does not enforce its exact published-shell and landscape boundary."
+}
+if ($releaseScript -notmatch 'keystore-signer-preflight\.der' -or
+    $releaseScript -notmatch 'Keystore signer mismatch before build' -or
+    $releaseScript.IndexOf('$actualSignerSha256 = Get-Sha256 $signerProbe',
+        [StringComparison]::Ordinal) -lt 0) {
+    throw "Connection Hub release build does not reject a mismatched update signer before compilation."
+}
 $runtimeOwnerIndex = $process.IndexOf('ManifoldRuntimeAuthorityBridge.initialize();', [StringComparison]::Ordinal)
 $hubOwnerIndex = $process.IndexOf('new ManifoldConnectionHubAuthority()', [StringComparison]::Ordinal)
 if ($runtimeOwnerIndex -lt 0 -or $hubOwnerIndex -lt 0 -or $runtimeOwnerIndex -ge $hubOwnerIndex) {
@@ -265,12 +289,13 @@ $expectedLockedCommands = @(
     [ordered]@{ command = 'command.spatial_camera_panel.locked_playlist.resume'; display_label = 'Resume'; required_controller_capability = 'capability.spatial_camera_panel.locked_playlist.resume' }
 )
 $expectedLockedStateKeys = @(
-    'active_index', 'active_label', 'item_count', 'paused', 'phase',
+    'active_index', 'active_label', 'item_count', 'item_duration_seconds',
+    'item_elapsed_seconds', 'paused', 'phase',
     'playlist_title', 'progress', 'revision', 'running'
 )
 if ([string]$lockedPlaylistContract.'$schema' -cne 'rusty.quest.connection_hub.locked_playlist_surface_contract.v1' -or
-    [string]$lockedPlaylistContract.canonical_version -cne 'locked-playlist-v1' -or
-    [string]$lockedPlaylistContract.canonical_contract_sha256 -cne 'sha256:9e4c3794d8edbe123cd30cd3fc6abf0e14e71356c97fca2020334c5581b15e26' -or
+    [string]$lockedPlaylistContract.canonical_version -cne 'locked-playlist-v2' -or
+    [string]$lockedPlaylistContract.canonical_contract_sha256 -cne 'sha256:87b7e4e96c524740477c06b9374d30fb4ee643e599477eaca046725fb29e0587' -or
     [string]$lockedPlaylistContract.runtime_surface_contract_sha256 -cne 'sha256:3eafe0fb1ff859a7848dfba8cf64a6eb532f98a39d0953fd628594792ca18d6e' -or
     [string]$lockedPlaylistContract.provider_id -cne 'provider.quest.spatial-camera-panel-locked-playlist' -or
     [string]$lockedPlaylistContract.surface_id -cne 'surface.spatial_camera_panel.locked_playlist' -or
@@ -286,7 +311,7 @@ if ([string]$lockedPlaylistContract.'$schema' -cne 'rusty.quest.connection_hub.l
     ((@($lockedPlaylistContract.state_keys | ForEach-Object { [string]$_ })) -join "`n") -cne ($expectedLockedStateKeys -join "`n")) {
     throw "Spatial Camera Panel locked-playlist contract is outside the exact empty-args scalar boundary."
 }
-$lockedCanonical = "locked-playlist-v1`nprovider|$($lockedPlaylistContract.provider_id)`nsurface|$($lockedPlaylistContract.surface_id)`nlabel|$($lockedPlaylistContract.display_label)`ndescription|$($lockedPlaylistContract.description)`ntyped_params|$($lockedPlaylistContract.typed_params_schema)`navailability|$($lockedPlaylistContract.availability)`nlifecycle|$($lockedPlaylistContract.lifecycle)`ndirect_item_activation|$($lockedPlaylistContract.direct_item_activation)`nordered_item_list|$($lockedPlaylistContract.ordered_item_list)`nmax_state_keys|$($lockedPlaylistContract.max_state_keys)`nmax_state_bytes|$($lockedPlaylistContract.max_state_bytes)`nmax_string_bytes|$($lockedPlaylistContract.max_string_bytes)`n"
+$lockedCanonical = "locked-playlist-v2`nprovider|$($lockedPlaylistContract.provider_id)`nsurface|$($lockedPlaylistContract.surface_id)`nlabel|$($lockedPlaylistContract.display_label)`ndescription|$($lockedPlaylistContract.description)`ntyped_params|$($lockedPlaylistContract.typed_params_schema)`navailability|$($lockedPlaylistContract.availability)`nlifecycle|$($lockedPlaylistContract.lifecycle)`ndirect_item_activation|$($lockedPlaylistContract.direct_item_activation)`nordered_item_list|$($lockedPlaylistContract.ordered_item_list)`nmax_state_keys|$($lockedPlaylistContract.max_state_keys)`nmax_state_bytes|$($lockedPlaylistContract.max_state_bytes)`nmax_string_bytes|$($lockedPlaylistContract.max_string_bytes)`n"
 $lockedRuntimeCanonical = "v1`n$($lockedPlaylistContract.surface_id)`n$($lockedPlaylistContract.display_label)`n$($lockedPlaylistContract.description)`n"
 for ($index = 0; $index -lt $expectedLockedCommands.Count; $index += 1) {
     $actual = @($lockedPlaylistContract.commands)[$index]
@@ -530,6 +555,9 @@ if ($LASTEXITCODE -ne 0) { throw "Connection Hub admission-session reducer tests
 
 & cargo test --locked --manifest-path (Join-Path $nativeHubRoot "Cargo.toml")
 if ($LASTEXITCODE -ne 0) { throw "Isolated Connection Hub native tests failed." }
+
+& cargo test --locked --manifest-path (Join-Path $RepoRoot "crates\rusty-quest-broker-product\Cargo.toml")
+if ($LASTEXITCODE -ne 0) { throw "Quest broker product manifest projection tests failed." }
 
 $androidJar = Join-Path $env:ANDROID_HOME "platforms\android-35\android.jar"
 if (-not (Test-Path -LiteralPath $androidJar -PathType Leaf)) {

@@ -1,5 +1,8 @@
+use std::collections::HashSet;
 use std::ffi::{CStr, CString};
 use std::mem;
+use std::sync::Mutex;
+use std::time::Instant;
 
 use ash::vk;
 
@@ -11,11 +14,15 @@ use crate::ahardware_buffer_vulkan::{
 use crate::bool_token;
 use crate::camera_hwb_marker::log_camera_hwb_marker as log_marker;
 use crate::camera_hwb_probe::CameraHwbProbeMode;
+use crate::camera_hwb_projection_freshness_runtime::{
+    stage_camera_projection_command_buffer, CameraProjectionFrameIdentity,
+};
 use crate::camera_hwb_projection_target::{
     camera_hwb_projection_eye_push, camera_hwb_projection_marker_fields,
     camera_hwb_projection_zone_frame, CameraHwbProjectionEyePush,
 };
 use crate::camera_hwb_stream::CameraProbeFrame;
+use crate::camera_hwb_timing::{CameraHwbGpuTimestampStage, CameraHwbGpuTimestampTracker};
 use crate::camera_latency_diagnostics::{
     CameraLatencyIsolationMode, CameraLatencySettings, CameraLatencyStereoReprojection,
 };
@@ -25,8 +32,7 @@ use crate::spatial_guide_processing::current_spatial_guide_processing_policy;
 use crate::spatial_public_multistack::public_multistack_marker_fields;
 use crate::spatial_public_multistack_runtime::{
     record_spatial_public_meta_passthrough_edge_window_cutout,
-    spatial_public_meta_passthrough_edge_window_selected,
-    spatial_public_raw_custom_projection_selected, SpatialPublicGuideTargets,
+    spatial_public_meta_passthrough_edge_window_selected, SpatialPublicGuideTargets,
 };
 use crate::spatial_video_projection::{
     SpatialVideoProjectionFrameStats, SpatialVideoProjectionRenderer,
@@ -41,6 +47,374 @@ pub(crate) struct CameraHwbRecordResult {
     pub(crate) projection_zone_stats: ProjectionZoneRenderStats,
 }
 
+#[derive(Default)]
+pub(crate) struct CameraHwbImportPerformanceStats {
+    attempts: u64,
+    hits: u64,
+    misses: u64,
+    property_query_calls: u64,
+    property_query_total_ns: u64,
+    property_query_max_ns: u64,
+    vulkan_import_calls: u64,
+    vulkan_import_total_ns: u64,
+    vulkan_import_max_ns: u64,
+    evictions: u64,
+    removal_signals: u64,
+    removal_evictions: u64,
+    removal_overflows: u64,
+    cache_disabled: bool,
+    cache_entries: usize,
+    cache_high_water: usize,
+    cache_inactive_limit: usize,
+}
+
+impl CameraHwbImportPerformanceStats {
+    pub(crate) fn with_cache_inactive_limit(cache_inactive_limit: usize) -> Self {
+        Self {
+            cache_inactive_limit,
+            ..Self::default()
+        }
+    }
+
+    fn record_hit(&mut self) {
+        self.attempts = self.attempts.saturating_add(1);
+        self.hits = self.hits.saturating_add(1);
+    }
+
+    fn record_miss(&mut self) {
+        self.attempts = self.attempts.saturating_add(1);
+        self.misses = self.misses.saturating_add(1);
+    }
+
+    fn record_property_query(&mut self, started_at: Instant) {
+        let elapsed_ns = u64::try_from(started_at.elapsed().as_nanos()).unwrap_or(u64::MAX);
+        self.property_query_calls = self.property_query_calls.saturating_add(1);
+        self.property_query_total_ns = self.property_query_total_ns.saturating_add(elapsed_ns);
+        self.property_query_max_ns = self.property_query_max_ns.max(elapsed_ns);
+    }
+
+    fn record_vulkan_import(&mut self, started_at: Instant) {
+        let elapsed_ns = u64::try_from(started_at.elapsed().as_nanos()).unwrap_or(u64::MAX);
+        self.vulkan_import_calls = self.vulkan_import_calls.saturating_add(1);
+        self.vulkan_import_total_ns = self.vulkan_import_total_ns.saturating_add(elapsed_ns);
+        self.vulkan_import_max_ns = self.vulkan_import_max_ns.max(elapsed_ns);
+    }
+
+    fn record_cache_state(&mut self, entries: usize) {
+        self.cache_entries = entries;
+        self.cache_high_water = self.cache_high_water.max(entries);
+    }
+
+    fn record_eviction(&mut self, removed: bool) {
+        self.evictions = self.evictions.saturating_add(1);
+        if removed {
+            self.removal_evictions = self.removal_evictions.saturating_add(1);
+        }
+    }
+
+    fn record_removal_signals(&mut self, count: usize) {
+        self.removal_signals = self
+            .removal_signals
+            .saturating_add(u64::try_from(count).unwrap_or(u64::MAX));
+    }
+
+    fn record_removal_overflow(&mut self) {
+        self.removal_overflows = self.removal_overflows.saturating_add(1);
+        self.cache_disabled = true;
+    }
+
+    pub(crate) fn marker_fields(&self, eye: &str) -> String {
+        format!(
+            "eye={eye} attempts={} hits={} misses={} propertyQueries={} propertyQueryTotalNs={} propertyQueryMaxNs={} vulkanImports={} vulkanImportTotalNs={} vulkanImportMaxNs={} evictions={} removalSignals={} removalEvictions={} removalOverflows={} cacheDisabled={} cacheEntries={} cacheHighWater={} cacheInactiveLimit={}",
+            self.attempts,
+            self.hits,
+            self.misses,
+            self.property_query_calls,
+            self.property_query_total_ns,
+            self.property_query_max_ns,
+            self.vulkan_import_calls,
+            self.vulkan_import_total_ns,
+            self.vulkan_import_max_ns,
+            self.evictions,
+            self.removal_signals,
+            self.removal_evictions,
+            self.removal_overflows,
+            self.cache_disabled,
+            self.cache_entries,
+            self.cache_high_water,
+            self.cache_inactive_limit,
+        )
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct CameraHwbImportCacheKey {
+    stream_generation: u64,
+    hardware_buffer_id: u64,
+    width: u32,
+    height: u32,
+    layers: u32,
+    native_format: u32,
+    usage: u64,
+    stride: u32,
+    format_key: AhbVulkanFormatKey,
+}
+
+impl CameraHwbImportCacheKey {
+    fn from_frame(
+        stream_generation: u64,
+        frame: &CameraProbeFrame,
+        format_key: AhbVulkanFormatKey,
+    ) -> Self {
+        Self {
+            stream_generation,
+            hardware_buffer_id: frame.descriptor.hardware_buffer_id,
+            width: frame.descriptor.width,
+            height: frame.descriptor.height,
+            layers: frame.descriptor.layers,
+            native_format: frame.descriptor.format,
+            usage: frame.descriptor.usage,
+            stride: frame.descriptor.stride,
+            format_key,
+        }
+    }
+
+    fn cacheable(self, hardware_buffer_id_status: i32) -> bool {
+        self.hardware_buffer_id != 0 && hardware_buffer_id_status == 0
+    }
+}
+
+struct CameraHwbCachedImport {
+    key: CameraHwbImportCacheKey,
+    image: AhbVulkanSampledImage,
+}
+
+static CAMERA_HWB_WSI_IMPORT_IDENTITIES: Mutex<[Option<CameraProjectionFrameIdentity>; 2]> =
+    Mutex::new([None, None]);
+
+fn publish_camera_hwb_wsi_import_identity(stream_generation: u64, frame: &CameraProbeFrame) {
+    let side = match frame.side_label {
+        "left" => 0,
+        "right" => 1,
+        _ => return,
+    };
+    if let Ok(mut identities) = CAMERA_HWB_WSI_IMPORT_IDENTITIES.lock() {
+        identities[side] = Some(CameraProjectionFrameIdentity {
+            stream_generation,
+            frame_index: frame.frame_index,
+            hwb_import_sequence: frame.hwb_import_sequence,
+            timestamp_ns: frame.timestamp_ns,
+            hardware_buffer_id: frame.descriptor.hardware_buffer_id,
+        });
+    }
+}
+
+fn exact_camera_hwb_wsi_import_identities(
+    left_frame_index: u64,
+    right_frame_index: u64,
+    left_timestamp_ns: i64,
+    right_timestamp_ns: i64,
+) -> Result<[CameraProjectionFrameIdentity; 2], &'static str> {
+    let identities = CAMERA_HWB_WSI_IMPORT_IDENTITIES
+        .lock()
+        .map_err(|_| "camera-hwb-wsi-import-identity-lock-unavailable")?;
+    let left = identities[0].ok_or("left-camera-hwb-wsi-import-identity-unavailable")?;
+    let right = identities[1].ok_or("right-camera-hwb-wsi-import-identity-unavailable")?;
+    if left.frame_index != left_frame_index
+        || right.frame_index != right_frame_index
+        || left.timestamp_ns != left_timestamp_ns
+        || right.timestamp_ns != right_timestamp_ns
+        || left.stream_generation == 0
+        || left.stream_generation != right.stream_generation
+    {
+        return Err("camera-hwb-wsi-import-identity-mismatch");
+    }
+    Ok([left, right])
+}
+
+pub(crate) struct CameraHwbImportCache {
+    stream_generation: u64,
+    side_label: &'static str,
+    camera_id: String,
+    inactive_limit: usize,
+    removal_tombstone_limit: usize,
+    entries: Vec<CameraHwbCachedImport>,
+    removed_hardware_buffer_ids: HashSet<u64>,
+    disabled: bool,
+}
+
+impl CameraHwbImportCache {
+    pub(crate) fn new(
+        stream_generation: u64,
+        initial_frame: &CameraProbeFrame,
+        inactive_limit: usize,
+    ) -> Self {
+        publish_camera_hwb_wsi_import_identity(stream_generation, initial_frame);
+        Self {
+            stream_generation,
+            side_label: initial_frame.side_label,
+            camera_id: initial_frame.camera_id.clone(),
+            inactive_limit,
+            removal_tombstone_limit: inactive_limit.saturating_mul(4).max(16),
+            entries: Vec::with_capacity(inactive_limit),
+            removed_hardware_buffer_ids: HashSet::new(),
+            disabled: false,
+        }
+    }
+
+    fn key_for_frame(
+        &self,
+        frame: &CameraProbeFrame,
+        expected_format_key: AhbVulkanFormatKey,
+    ) -> Result<CameraHwbImportCacheKey, String> {
+        if frame.side_label != self.side_label || frame.camera_id != self.camera_id {
+            return Err(format!(
+                "camera-import-cache-source-changed-expected-side-{}-camera-{}-actual-side-{}-camera-{}",
+                self.side_label, self.camera_id, frame.side_label, frame.camera_id,
+            ));
+        }
+        Ok(CameraHwbImportCacheKey::from_frame(
+            self.stream_generation,
+            frame,
+            expected_format_key,
+        ))
+    }
+
+    pub(crate) unsafe fn acquire(
+        &mut self,
+        device: &ash::Device,
+        memory_properties: &vk::PhysicalDeviceMemoryProperties,
+        ahb_device: &ash::android::external_memory_android_hardware_buffer::Device,
+        resources: &CameraHwbProbeResources,
+        expected_format_key: AhbVulkanFormatKey,
+        frame: &CameraProbeFrame,
+        stats: &mut CameraHwbImportPerformanceStats,
+    ) -> Result<AhbVulkanSampledImage, String> {
+        let key = self.key_for_frame(frame, expected_format_key)?;
+        if !self.disabled
+            && key.cacheable(frame.descriptor.hardware_buffer_id_status)
+            && !self
+                .removed_hardware_buffer_ids
+                .contains(&key.hardware_buffer_id)
+        {
+            if let Some(index) = self.entries.iter().position(|entry| entry.key == key) {
+                let cached = self.entries.remove(index);
+                stats.record_hit();
+                stats.record_cache_state(self.entries.len());
+                publish_camera_hwb_wsi_import_identity(self.stream_generation, frame);
+                return Ok(cached.image);
+            }
+        }
+        let image = import_replacement_camera_frame_uncached(
+            device,
+            memory_properties,
+            ahb_device,
+            resources,
+            expected_format_key,
+            frame,
+            stats,
+        )?;
+        publish_camera_hwb_wsi_import_identity(self.stream_generation, frame);
+        Ok(image)
+    }
+
+    pub(crate) unsafe fn retire(
+        &mut self,
+        device: &ash::Device,
+        expected_format_key: AhbVulkanFormatKey,
+        frame: &CameraProbeFrame,
+        image: AhbVulkanSampledImage,
+        stats: &mut CameraHwbImportPerformanceStats,
+    ) -> Result<(), String> {
+        let key = self.key_for_frame(frame, expected_format_key)?;
+        let removed = self
+            .removed_hardware_buffer_ids
+            .contains(&key.hardware_buffer_id);
+        if self.disabled
+            || self.inactive_limit == 0
+            || !key.cacheable(frame.descriptor.hardware_buffer_id_status)
+            || removed
+        {
+            image.destroy(device);
+            if removed {
+                stats.record_eviction(true);
+            }
+            return Ok(());
+        }
+        if let Some(index) = self.entries.iter().position(|entry| entry.key == key) {
+            let duplicate = self.entries.remove(index);
+            duplicate.image.destroy(device);
+            stats.record_eviction(false);
+        }
+        if self.entries.len() >= self.inactive_limit {
+            let evicted = self.entries.remove(0);
+            evicted.image.destroy(device);
+            stats.record_eviction(false);
+        }
+        self.entries.push(CameraHwbCachedImport { key, image });
+        stats.record_cache_state(self.entries.len());
+        Ok(())
+    }
+
+    pub(crate) unsafe fn process_removed_hardware_buffer_ids(
+        &mut self,
+        device: &ash::Device,
+        ids: &[u64],
+        queue_overflowed: bool,
+        stats: &mut CameraHwbImportPerformanceStats,
+    ) {
+        stats.record_removal_signals(ids.len());
+        if queue_overflowed {
+            self.disable_after_removal_overflow(device, stats);
+            return;
+        }
+        for hardware_buffer_id in ids.iter().copied().filter(|id| *id != 0) {
+            if !self
+                .removed_hardware_buffer_ids
+                .contains(&hardware_buffer_id)
+                && self.removed_hardware_buffer_ids.len() >= self.removal_tombstone_limit
+            {
+                self.disable_after_removal_overflow(device, stats);
+                return;
+            }
+            self.removed_hardware_buffer_ids.insert(hardware_buffer_id);
+            let mut index = 0;
+            while index < self.entries.len() {
+                if self.entries[index].key.hardware_buffer_id == hardware_buffer_id {
+                    let removed = self.entries.remove(index);
+                    removed.image.destroy(device);
+                    stats.record_eviction(true);
+                } else {
+                    index += 1;
+                }
+            }
+        }
+        stats.record_cache_state(self.entries.len());
+    }
+
+    unsafe fn disable_after_removal_overflow(
+        &mut self,
+        device: &ash::Device,
+        stats: &mut CameraHwbImportPerformanceStats,
+    ) {
+        if !self.disabled {
+            for entry in self.entries.drain(..) {
+                entry.image.destroy(device);
+                stats.record_eviction(true);
+            }
+        }
+        self.disabled = true;
+        stats.record_removal_overflow();
+        stats.record_cache_state(0);
+    }
+
+    pub(crate) unsafe fn destroy(self, device: &ash::Device) {
+        for entry in self.entries {
+            entry.image.destroy(device);
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct ProjectionZoneRenderStats {
     pub(crate) requested_mode: u32,
@@ -50,6 +424,7 @@ pub(crate) struct ProjectionZoneRenderStats {
     pub(crate) rendered: bool,
     pub(crate) native_video_drawn: bool,
     pub(crate) native_video_suppressed: bool,
+    pub(crate) readable_video_consumer_required: bool,
     pub(crate) transparent_underlay_requested: bool,
     pub(crate) transparent_underlay_supported: bool,
     pub(crate) synthetic_displacement_suppressed: bool,
@@ -59,7 +434,7 @@ pub(crate) struct ProjectionZoneRenderStats {
 impl ProjectionZoneRenderStats {
     pub(crate) fn marker_fields(self) -> String {
         format!(
-            "projectionZoneRequestedMode={} projectionZonePreparedVideoReady={} projectionZonePublicProjectionReady={} projectionZonePipelineReady={} projectionZoneRendered={} projectionZoneNativeVideoDrawn={} projectionZoneNativeVideoSuppressed={} projectionZoneTransparentUnderlayRequested={} projectionZoneTransparentUnderlaySupported={} projectionZoneSyntheticDisplacementSuppressed={} projectionZoneDescriptorSource={}",
+            "projectionZoneRequestedMode={} projectionZonePreparedVideoReady={} projectionZonePublicProjectionReady={} projectionZonePipelineReady={} projectionZoneRendered={} projectionZoneNativeVideoDrawn={} projectionZoneNativeVideoSuppressed={} readableVideoConsumerRequired={} projectionZoneTransparentUnderlayRequested={} projectionZoneTransparentUnderlaySupported={} projectionZoneSyntheticDisplacementSuppressed={} projectionZoneDescriptorSource={}",
             self.requested_mode,
             bool_token(self.prepared_video_ready),
             bool_token(self.public_projection_ready),
@@ -67,6 +442,7 @@ impl ProjectionZoneRenderStats {
             bool_token(self.rendered),
             bool_token(self.native_video_drawn),
             bool_token(self.native_video_suppressed),
+            bool_token(self.readable_video_consumer_required),
             bool_token(self.transparent_underlay_requested),
             bool_token(self.transparent_underlay_supported),
             bool_token(self.synthetic_displacement_suppressed),
@@ -254,7 +630,7 @@ pub(crate) unsafe fn create_camera_hwb_probe_resources(
     if matches!(mode, CameraHwbProbeMode::RawColorProjection) {
         let sampling = current_spatial_guide_processing_policy().camera_sampling;
         log_marker(format!(
-            "status=projection-composition-policy projectionBlendPolicy=premultiplied-alpha-over-same-surface-video rawCustomProjectionBorderBlend=true opaqueProjectionBorderBlend=true videoBorderInnerBlendUv=0.040 videoBorderBlendCurve=1.600 offscreenGuideBlendPolicy=opaque publicCameraSampling={} publicCameraSamplingRadiusTexels={:.2} runtimeCrash=false",
+            "status=projection-composition-policy projectionBlendPolicy=premultiplied-alpha-over-same-surface-video rawCustomProjectionBorderBlend=false opaqueProjectionBorderBlend=legacy-only projectionZoneBoundaryOwner=center-middle-outer rawCustomProjectionRoute=zone-compositor-with-fallback-no-fade videoBorderInnerBlendUv=0.040 videoBorderBlendCurve=1.600 offscreenGuideBlendPolicy=opaque publicCameraSampling={} publicCameraSamplingRadiusTexels={:.2} runtimeCrash=false",
             sampling.marker_token(),
             sampling.radius_texels(),
         ));
@@ -361,16 +737,20 @@ pub(crate) unsafe fn update_camera_hwb_probe_descriptor_set(
     device.update_descriptor_sets(&writes, &[]);
 }
 
-pub(crate) unsafe fn import_replacement_camera_frame(
+unsafe fn import_replacement_camera_frame_uncached(
     device: &ash::Device,
     memory_properties: &vk::PhysicalDeviceMemoryProperties,
     ahb_device: &ash::android::external_memory_android_hardware_buffer::Device,
     resources: &CameraHwbProbeResources,
     expected_format_key: AhbVulkanFormatKey,
     frame: &CameraProbeFrame,
+    stats: &mut CameraHwbImportPerformanceStats,
 ) -> Result<AhbVulkanSampledImage, String> {
-    let (import_properties, _format_props) =
-        query_ahb_vulkan_import_properties(ahb_device, &frame.hardware_buffer)?;
+    stats.record_miss();
+    let query_started_at = Instant::now();
+    let query_result = query_ahb_vulkan_import_properties(ahb_device, &frame.hardware_buffer);
+    stats.record_property_query(query_started_at);
+    let (import_properties, _format_props) = query_result?;
     if import_properties.format_key != expected_format_key {
         return Err(format!(
             "format-key-changed-expected-external-{}-vk-{:?}-actual-external-{}-vk-{:?}",
@@ -380,6 +760,7 @@ pub(crate) unsafe fn import_replacement_camera_frame(
             import_properties.format_key.format,
         ));
     }
+    let import_started_at = Instant::now();
     let sampled_image = import_ahb_sampled_image(
         device,
         memory_properties,
@@ -397,7 +778,9 @@ pub(crate) unsafe fn import_replacement_camera_frame(
                 "camera-hwb-raw-projection-left-frame"
             },
         },
-    )?;
+    );
+    stats.record_vulkan_import(import_started_at);
+    let sampled_image = sampled_image?;
     Ok(sampled_image)
 }
 
@@ -507,7 +890,9 @@ pub(crate) unsafe fn record_camera_hwb_probe_command_buffer(
     video_renderer: Option<&mut SpatialVideoProjectionRenderer>,
     video_frame: Option<&SpatialVideoProjectionFrame>,
     video_settings: &SpatialVideoProjectionSettings,
+    gpu_timestamps: &mut CameraHwbGpuTimestampTracker,
     frame_slot: usize,
+    frame_id: u64,
     camera_reprojection: CameraLatencyStereoReprojection,
     projection_guard_band: CameraReprojectionGuardBandFrame,
     latency_settings: CameraLatencySettings,
@@ -521,6 +906,7 @@ pub(crate) unsafe fn record_camera_hwb_probe_command_buffer(
     device
         .begin_command_buffer(command_buffer, &vk::CommandBufferBeginInfo::default())
         .map_err(|error| format!("begin-command-buffer-{error:?}"))?;
+    gpu_timestamps.begin_frame(device, command_buffer, frame_slot, frame_id);
     if transition_left_camera_image {
         transition_ahb_sampled_image_to_shader_read(
             device,
@@ -543,7 +929,7 @@ pub(crate) unsafe fn record_camera_hwb_probe_command_buffer(
             command_buffer,
             descriptor_set,
             camera_replay_boottime_ns,
-            camera_replay_metadata,
+            camera_replay_metadata.clone(),
         );
     }
     let opaque_camera_only = latency_settings.enabled
@@ -552,18 +938,41 @@ pub(crate) unsafe fn record_camera_hwb_probe_command_buffer(
         && latency_settings.isolation_mode == CameraLatencyIsolationMode::FreshFrameOnlyPulse;
     let camera_projection_visible =
         !fresh_frame_only_pulse || transition_left_camera_image || transition_right_camera_image;
+    let projection_zone_frame = camera_hwb_projection_zone_frame(
+        projection_guard_band.footprint_scale,
+        projection_guard_band.source_overscan_uv,
+        elapsed_seconds,
+        [
+            video_settings.source_rect_for_eye(0),
+            video_settings.source_rect_for_eye(1),
+        ],
+    );
+    // Import decoded video only while at least one compositor-owned region can contribute it.
+    // Transparent regions reveal the always-available system background without a decoder.
+    let readable_video_consumer_required = projection_zone_frame
+        .settings
+        .readable_video_consumer_required();
     let mut video_stats = SpatialVideoProjectionFrameStats::unavailable(
         video_settings,
         if opaque_camera_only {
             "camera-only-isolation"
+        } else if !readable_video_consumer_required {
+            "no-readable-video-consumer"
         } else if video_settings.active() {
             "waiting-for-decoded-frame"
         } else {
             "disabled"
         },
     );
+    let retained_unused_video_descriptor = video_renderer
+        .as_deref()
+        .and_then(SpatialVideoProjectionRenderer::retained_unused_descriptor_binding);
     let prepared_video = match (video_renderer, video_frame) {
-        (Some(renderer), Some(frame)) if video_settings.active() && !opaque_camera_only => {
+        (Some(renderer), Some(frame))
+            if video_settings.active()
+                && !opaque_camera_only
+                && readable_video_consumer_required =>
+        {
             match renderer.prepare_frame(device, command_buffer, frame_slot, frame, video_settings)
             {
                 Ok(Some(prepared)) => {
@@ -587,92 +996,95 @@ pub(crate) unsafe fn record_camera_hwb_probe_command_buffer(
         }
         _ => None,
     };
-    let projection_zone_frame = camera_hwb_projection_zone_frame(
-        projection_guard_band.footprint_scale,
-        projection_guard_band.source_overscan_uv,
-        elapsed_seconds,
-        [
-            video_settings.source_rect_for_eye(0),
-            video_settings.source_rect_for_eye(1),
-        ],
-    );
-
     let mut public_guide_targets = public_guide_targets;
     let edge_window_selected = spatial_public_meta_passthrough_edge_window_selected();
-    let raw_custom_projection_selected = spatial_public_raw_custom_projection_selected();
     let projection_footprint_scale = projection_guard_band.footprint_scale;
     let mut projection_zone_ready = false;
     let mut projection_zone_descriptor_set = vk::DescriptorSet::null();
     let mut projection_zone_descriptor_source = "unavailable";
-    let public_projection_ready = if !camera_projection_visible
-        || opaque_camera_only
-        || edge_window_selected
-        || raw_custom_projection_selected
-    {
-        false
-    } else if let Some(targets) = public_guide_targets.as_deref_mut() {
-        let guide_passes_recorded = targets.record_spatial_public_guide_passes(
-            device,
-            command_buffer,
-            descriptor_set,
-            elapsed_seconds,
-            camera_reprojection,
-            projection_guard_band.source_overscan_uv,
-        )?;
-        let sampling_ready = guide_passes_recorded
-            && targets.prepare_spatial_public_projection_sampling(device, command_buffer);
-        if sampling_ready {
-            let synthetic_diagnostic = projection_zone_frame.settings.synthetic_diagnostic();
-            let transparent_underlay = projection_zone_frame
-                .settings
-                .transparent_underlay_requested();
-            let projection_zone_descriptor = if projection_zone_frame.settings.replaces_video()
-                || synthetic_diagnostic
-                || transparent_underlay
-            {
-                // These routes never sample u_video_projection. Bind the already-valid camera
-                // descriptor at the otherwise-compatible slot: full stretch replaces video,
-                // the deterministic diagnostic supplies three readable synthetic sources, and
-                // transparent underlay derives alpha only from the outgoing buffer source.
-                Some((
-                    resources.descriptor_set_layout,
-                    descriptor_set,
-                    if synthetic_diagnostic {
-                        "synthetic-diagnostic-fallback-unused"
-                    } else if transparent_underlay {
-                        "transparent-underlay-fallback-unused"
-                    } else {
-                        "camera-fallback-unused"
-                    },
-                ))
-            } else {
-                prepared_video.as_ref().map(|(_, prepared)| {
-                    (
-                        prepared.descriptor_set_layout,
-                        prepared.descriptor_set,
-                        "prepared-video",
-                    )
-                })
-            };
-            if let Some((descriptor_set_layout, zone_descriptor_set, descriptor_source)) =
-                projection_zone_descriptor
-            {
-                projection_zone_ready = targets.prepare_projection_zone_compositor(
-                    device,
-                    &projection_zone_frame,
-                    descriptor_set_layout,
-                )?;
-                if projection_zone_ready {
-                    projection_zone_descriptor_set = zone_descriptor_set;
-                    projection_zone_descriptor_source = descriptor_source;
+    let public_projection_ready =
+        if !camera_projection_visible || opaque_camera_only || edge_window_selected {
+            false
+        } else if let Some(targets) = public_guide_targets.as_deref_mut() {
+            let guide_passes_recorded = targets.record_spatial_public_guide_passes(
+                device,
+                command_buffer,
+                gpu_timestamps,
+                frame_slot,
+                descriptor_set,
+                elapsed_seconds,
+                camera_reprojection,
+                projection_guard_band.source_overscan_uv,
+            )?;
+            let sampling_ready = guide_passes_recorded
+                && targets.prepare_spatial_public_projection_sampling(device, command_buffer);
+            if sampling_ready {
+                let synthetic_diagnostic = projection_zone_frame.settings.synthetic_diagnostic();
+                let projection_zone_descriptor = if synthetic_diagnostic {
+                    // Synthetic diagnostics can still carry a video-owning configuration. Bind
+                    // the live camera layout because prepare_frame may have replaced the retained
+                    // video resources earlier in this frame.
+                    Some((
+                        resources.descriptor_set_layout,
+                        descriptor_set,
+                        "synthetic-diagnostic-fallback-unused",
+                    ))
+                } else if !readable_video_consumer_required {
+                    // These routes never sample u_video_projection. Prefer the last exact video
+                    // descriptor solely to retain its descriptor-set layout across a hot
+                    // Video/Transparent change. This avoids destroying and recompiling the Vulkan
+                    // compositor pipeline on the render thread. Before the first decoded frame,
+                    // the compatible camera descriptor remains the cold fallback.
+                    retained_unused_video_descriptor
+                        .map(|(layout, set)| (layout, set, "retained-video-fallback-unused"))
+                        .or_else(|| {
+                            Some((
+                                resources.descriptor_set_layout,
+                                descriptor_set,
+                                if projection_zone_frame
+                                    .settings
+                                    .transparent_underlay_requested()
+                                {
+                                    "transparent-underlay-fallback-unused"
+                                } else {
+                                    "camera-fallback-unused"
+                                },
+                            ))
+                        })
+                } else {
+                    prepared_video.as_ref().map(|(_, prepared)| {
+                        (
+                            prepared.descriptor_set_layout,
+                            prepared.descriptor_set,
+                            "prepared-video",
+                        )
+                    })
+                };
+                if let Some((descriptor_set_layout, zone_descriptor_set, descriptor_source)) =
+                    projection_zone_descriptor
+                {
+                    projection_zone_ready = targets.prepare_projection_zone_compositor(
+                        device,
+                        &projection_zone_frame,
+                        descriptor_set_layout,
+                    )?;
+                    if projection_zone_ready {
+                        projection_zone_descriptor_set = zone_descriptor_set;
+                        projection_zone_descriptor_source = descriptor_source;
+                    }
                 }
             }
-        }
-        sampling_ready
-    } else {
-        false
-    };
+            sampling_ready
+        } else {
+            false
+        };
 
+    gpu_timestamps.write_stage_start(
+        device,
+        command_buffer,
+        frame_slot,
+        CameraHwbGpuTimestampStage::FinalCompositor,
+    );
     begin_camera_hwb_final_render_pass(
         device,
         command_buffer,
@@ -682,13 +1094,11 @@ pub(crate) unsafe fn record_camera_hwb_probe_command_buffer(
         opaque_camera_only,
     );
     let mut native_video_drawn = false;
-    let mut native_video_suppressed = false;
+    let mut native_video_suppressed = !readable_video_consumer_required;
     if let Some((renderer, prepared)) = prepared_video.as_ref() {
-        if !(projection_zone_ready
-            && (projection_zone_frame.settings.replaces_video()
-                || projection_zone_frame
-                    .settings
-                    .transparent_underlay_requested()))
+        if !projection_zone_frame
+            .settings
+            .suppresses_same_surface_video(projection_zone_ready)
         {
             renderer.record_video_eye(device, command_buffer, extent, 0, video_settings, prepared);
             renderer.record_video_eye(device, command_buffer, extent, 1, video_settings, prepared);
@@ -754,9 +1164,36 @@ pub(crate) unsafe fn record_camera_hwb_probe_command_buffer(
         );
     }
     device.cmd_end_render_pass(command_buffer);
+    gpu_timestamps.write_stage_end(
+        device,
+        command_buffer,
+        frame_slot,
+        CameraHwbGpuTimestampStage::FinalCompositor,
+    );
+    gpu_timestamps.finish_frame(device, command_buffer, frame_slot);
     device
         .end_command_buffer(command_buffer)
         .map_err(|error| format!("end-command-buffer-{error:?}"))?;
+    let frame_identities = exact_camera_hwb_wsi_import_identities(
+        camera_replay_metadata.left_frame_index,
+        camera_replay_metadata.right_frame_index,
+        camera_replay_metadata.left_timestamp_ns,
+        camera_replay_metadata.right_timestamp_ns,
+    );
+    let _ = stage_camera_projection_command_buffer(
+        frame_id,
+        if sampled_right_image.is_some() {
+            CameraHwbProbeMode::RawColorProjection
+        } else {
+            CameraHwbProbeMode::LumaChecker
+        },
+        camera_projection_visible,
+        camera_replay_metadata.left_frame_index,
+        camera_replay_metadata.right_frame_index,
+        camera_replay_metadata.left_timestamp_ns,
+        camera_replay_metadata.right_timestamp_ns,
+        frame_identities,
+    );
     Ok(CameraHwbRecordResult {
         projected_by_public_stack,
         camera_projection_visible,
@@ -769,6 +1206,7 @@ pub(crate) unsafe fn record_camera_hwb_probe_command_buffer(
             rendered: projection_zone_rendered,
             native_video_drawn,
             native_video_suppressed,
+            readable_video_consumer_required,
             transparent_underlay_requested: projection_zone_frame
                 .settings
                 .transparent_underlay_requested(),
@@ -1132,6 +1570,62 @@ mod tests {
         assert_eq!(
             choose_composite_alpha(vk::CompositeAlphaFlagsKHR::OPAQUE),
             vk::CompositeAlphaFlagsKHR::OPAQUE
+        );
+    }
+
+    #[test]
+    fn camera_import_cache_identity_is_generation_and_descriptor_exact() {
+        let key = CameraHwbImportCacheKey {
+            stream_generation: 7,
+            hardware_buffer_id: 42,
+            width: 1280,
+            height: 1280,
+            layers: 1,
+            native_format: 35,
+            usage: 0x100,
+            stride: 1280,
+            format_key: AhbVulkanFormatKey {
+                format: vk::Format::UNDEFINED,
+                external_format: 99,
+            },
+        };
+        assert!(key.cacheable(0));
+        assert!(!CameraHwbImportCacheKey {
+            hardware_buffer_id: 0,
+            ..key
+        }
+        .cacheable(0));
+        assert!(!key.cacheable(-1));
+        assert_ne!(
+            key,
+            CameraHwbImportCacheKey {
+                stream_generation: 8,
+                ..key
+            }
+        );
+        assert_ne!(
+            key,
+            CameraHwbImportCacheKey {
+                hardware_buffer_id: 43,
+                ..key
+            }
+        );
+        assert_ne!(
+            key,
+            CameraHwbImportCacheKey {
+                stride: 1344,
+                ..key
+            }
+        );
+        assert_ne!(
+            key,
+            CameraHwbImportCacheKey {
+                format_key: AhbVulkanFormatKey {
+                    format: vk::Format::UNDEFINED,
+                    external_format: 100,
+                },
+                ..key
+            }
         );
     }
 }

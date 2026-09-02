@@ -21,6 +21,8 @@ internal object DebugHostReceiptQualificationReducer {
     val grant =
         when (snapshot.source) {
           SpatialImmersiveVideoSessionPolicy.CUSTOM_PROJECTION_SOURCE -> "app-private-source"
+          SpatialImmersiveVideoSessionPolicy.PLAIN_CUSTOM_PROJECTION_SOURCE ->
+              "content-read-established"
           "app-private-file" -> "app-private-source"
           else -> return null
         }
@@ -54,6 +56,7 @@ internal object DebugHostReceiptQualificationReducer {
       setOf(
           "app-private-file",
           SpatialImmersiveVideoSessionPolicy.CUSTOM_PROJECTION_SOURCE,
+          SpatialImmersiveVideoSessionPolicy.PLAIN_CUSTOM_PROJECTION_SOURCE,
       )
   private val supportedCadences = setOf("30", "60", "source")
 }

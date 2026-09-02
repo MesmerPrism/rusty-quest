@@ -18,11 +18,13 @@ $launchEvidencePath = Join-Path $appRoot "src\main\java\io\github\mesmerprism\ru
 $serverPath = Join-Path $appRoot "src\main\java\io\github\mesmerprism\rustymanifold\broker\LocalManifoldBrokerServer.java"
 $remoteCameraRuntimePath = Join-Path $appRoot "src\main\java\io\github\mesmerprism\rustymanifold\broker\RemoteCameraSessionRuntime.java"
 $remoteCameraDirectP2pSocketAuthorityPath = Join-Path $appRoot "src\main\java\io\github\mesmerprism\rustymanifold\broker\RemoteCameraDirectP2pSocketAuthority.java"
+$remoteCameraRelayCredentialPath = Join-Path $appRoot "src\main\java\io\github\mesmerprism\rustymanifold\broker\RemoteCameraRelayCredential.java"
+$remoteCameraRelayTransportPath = Join-Path $appRoot "src\main\java\io\github\mesmerprism\rustymanifold\broker\RemoteCameraRelayTransport.java"
 $remoteCameraSourceRuntimePath = Join-Path $appRoot "src\main\java\io\github\mesmerprism\rustymanifold\broker\RemoteCameraSourceRuntime.java"
 $h264MediaStreamWriterPath = Join-Path $appRoot "src\main\java\io\github\mesmerprism\rustymanifold\broker\H264MediaStreamWriter.java"
 $mediaCodecSurfaceEncoderPath = Join-Path $appRoot "src\main\java\io\github\mesmerprism\rustymanifold\broker\MediaCodecSurfaceEncoder.java"
 
-foreach ($path in @($manifestPath, $activityPath, $servicePath, $admissionServicePath, $admissionBridgePath, $authorityBridgePath, $launchEvidencePath, $serverPath, $remoteCameraRuntimePath, $remoteCameraDirectP2pSocketAuthorityPath, $remoteCameraSourceRuntimePath, $h264MediaStreamWriterPath, $mediaCodecSurfaceEncoderPath)) {
+foreach ($path in @($manifestPath, $activityPath, $servicePath, $admissionServicePath, $admissionBridgePath, $authorityBridgePath, $launchEvidencePath, $serverPath, $remoteCameraRuntimePath, $remoteCameraDirectP2pSocketAuthorityPath, $remoteCameraRelayCredentialPath, $remoteCameraRelayTransportPath, $remoteCameraSourceRuntimePath, $h264MediaStreamWriterPath, $mediaCodecSurfaceEncoderPath)) {
     if (-not (Test-Path $path)) {
         throw "Missing Manifold broker Android file: $path"
     }
@@ -38,6 +40,8 @@ $launchEvidence = Get-Content -Raw -Path $launchEvidencePath
 $server = Get-Content -Raw -Path $serverPath
 $remoteCameraRuntime = Get-Content -Raw -Path $remoteCameraRuntimePath
 $remoteCameraDirectP2pSocketAuthority = Get-Content -Raw -Path $remoteCameraDirectP2pSocketAuthorityPath
+$remoteCameraRelayCredential = Get-Content -Raw -Path $remoteCameraRelayCredentialPath
+$remoteCameraRelayTransport = Get-Content -Raw -Path $remoteCameraRelayTransportPath
 $remoteCameraSourceRuntime = Get-Content -Raw -Path $remoteCameraSourceRuntimePath
 $h264MediaStreamWriter = Get-Content -Raw -Path $h264MediaStreamWriterPath
 $mediaCodecSurfaceEncoder = Get-Content -Raw -Path $mediaCodecSurfaceEncoderPath
@@ -107,6 +111,10 @@ if ($activity -notmatch 'requestPermissions') {
 }
 if ($activity -notmatch 'GeneratedBrokerProductConfig\.CAMERA_MEDIA_ENABLED') {
     throw "BrokerStartActivity does not gate camera permission requests by the accepted product lock."
+}
+if ($activity -notmatch 'RemoteCameraRelayCredential\.adopt\(getIntent\(\)\)' -or
+    $activity -notmatch 'RemoteCameraRelayCredential\.adopt\(intent\)') {
+    throw "BrokerStartActivity does not provision the relay credential through the explicit process-local intent route."
 }
 if ($activity -notmatch 'ManifoldRuntimeAuthorityBridge\.initialize\(\)' -or
     $service -notmatch 'ManifoldRuntimeAuthorityBridge\.initialize\(\)' -or
@@ -308,6 +316,29 @@ if ($remoteCameraRuntime -notmatch 'peer_socket_authority') {
 }
 if ($remoteCameraRuntime -notmatch 'RemoteCameraDirectP2pSocketAuthority\.requiresDirectP2pSocket') {
     throw "RemoteCameraSessionRuntime does not delegate direct p2p socket selection to the shared authority."
+}
+if ($remoteCameraRuntime -notmatch 'RemoteCameraRelayTransport\.connect' -or
+    $remoteCameraRuntime -notmatch 'RemoteCameraRelayTransport\.connectReceiver' -or
+    $remoteCameraRuntime -notmatch 'authenticated_tls_relay_connected_waiting_for_local_client' -or
+    $remoteCameraRuntime -notmatch 'RemoteCameraRelayCredential\.clearIfSession') {
+    throw "RemoteCameraSessionRuntime does not connect authenticated TLS sender/receiver adapters and clear the credential on stop."
+}
+if ($remoteCameraRelayCredential -notmatch 'rustyquest\.remote_camera\.relay\.auth_token' -or
+    $remoteCameraRelayCredential -notmatch 'rustyquest\.remote_camera\.relay\.certificate_sha256' -or
+    $remoteCameraRelayCredential -notmatch 'Process-memory-only' -or
+    $remoteCameraRelayCredential -match 'SharedPreferences|System\.setProperty|SystemProperties') {
+    throw "RemoteCameraRelayCredential must remain an explicit process-memory-only secret route."
+}
+if ($remoteCameraRelayTransport -notmatch 'relay_tls_client' -or
+    $remoteCameraRelayTransport -notmatch 'RQPRLY1' -or
+    $remoteCameraRelayTransport -notmatch 'ROLE_SENDER = 1' -or
+    $remoteCameraRelayTransport -notmatch 'ROLE_RECEIVER = 2' -or
+    $remoteCameraRelayTransport -notmatch 'MessageDigest\.isEqual' -or
+    $remoteCameraRelayTransport -notmatch 'getDefaultHostnameVerifier' -or
+    $remoteCameraRelayTransport -notmatch 'setEndpointIdentificationAlgorithm\("HTTPS"\)' -or
+    $remoteCameraRelayTransport -notmatch 'startHandshake\(\)' -or
+    $remoteCameraRelayTransport -match 'JSONObject|JSONArray') {
+    throw "RemoteCameraRelayTransport must authenticate an endpoint-verified TLS binary lane without a JSON media plane."
 }
 if ($remoteCameraRuntime -notmatch 'hasDirectP2pLocalAddressBinding') {
     throw "RemoteCameraSessionRuntime must fail closed unless the local source is on a P2P interface and peer subnet."

@@ -250,6 +250,14 @@ particle payloads through Java/Kotlin JSON, and keeps hand visuals explicit:
 the Spatial SDK avatar hand visual and the public ECS hand-billboard flock are
 both opt-in comparison surfaces.
 
+Diagnostic activity-marker file persistence is also opt-in through
+`debug.rustyquest.spatial_camera_panel.activity_marker_file.enabled=true`.
+Normal launches retain bounded, deduplicated Logcat markers but create no
+marker-file thread and perform no marker-file I/O. When explicitly enabled,
+persistence runs on a background thread and stops at 8 MiB without implicitly
+truncating historical evidence. External control-profile hotload is likewise
+opt-in and uses file-observer events rather than XR scene-tick polling.
+
 That directory now supplies shared public adapter source to private downstream
 effect projects and the public Spatial VR Strobe application. Their adapter
 products do not share package/client/lock/marker identity, property namespace,

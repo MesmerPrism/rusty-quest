@@ -97,7 +97,7 @@ final class RemoteCameraSessionRuntime {
         String command = commandId(message);
         boolean mediaStreamCommand = isMediaStreamCommand(message);
         if (COMMAND_START_RECEIVER.equals(command)) {
-            return startReceiver(message);
+            return startReceiver(context, message);
         }
         if (COMMAND_START_SENDER.equals(command) || COMMAND_MEDIA_STREAM_START_SOURCE.equals(command)) {
             return startSender(context, message, command, mediaStreamCommand);
@@ -126,7 +126,7 @@ final class RemoteCameraSessionRuntime {
                 || COMMAND_MEDIA_STREAM_STOP.equals(command);
     }
 
-    private static JSONObject startReceiver(JSONObject message) throws Exception {
+    private static JSONObject startReceiver(Context context, JSONObject message) throws Exception {
         String sessionId = sessionId(message);
         String bindHost = configString(message, PROP_RECEIVER_BIND_HOST, "127.0.0.1", "receiver_bind_host");
         String transportBindHost = configString(
@@ -145,18 +145,44 @@ final class RemoteCameraSessionRuntime {
                         PROP_TRANSPORT_RECEIVE_PORTS,
                         "left:9079,right:9080",
                         "transport_receive_ports"));
+        String transportBindLocalAddress = configString(
+                message,
+                PROP_TRANSPORT_BIND_LOCAL_ADDRESS,
+                "",
+                "transport_bind_local_address",
+                "transport_local_bind_host",
+                "receiver_transport_bind_local_address");
+        String transportSocketAuthority = configString(
+                message,
+                PROP_TRANSPORT_SOCKET_AUTHORITY,
+                "",
+                "transport_socket_authority",
+                "socket_authority",
+                "peer_socket_authority");
+        List<PeerRoute> routes = parsePeerRoutes(
+                routeOverride(message),
+                transportBindLocalAddress,
+                transportSocketAuthority);
         List<RuntimeLane> receiverLanes = new ArrayList<>();
+        Context appContext = context == null ? null : context.getApplicationContext();
         for (PortBinding port : ports) {
             RuntimeLane lane = activeLane(sessionId, "receiver", port.eye);
             if (lane == null) {
                 PortBinding transportPort = findPortBinding(transportPorts, port.eye);
+                PeerRoute route = findPeerRoute(routes, port.eye);
+                PeerRoute receiverRelayRoute = route != null
+                                && RemoteCameraRelayTransport.applies(route.routeKind)
+                        ? route
+                        : null;
                 lane = RuntimeLane.receiver(
+                        appContext,
                         sessionId,
                         port.eye,
                         bindHost,
                         port.port,
                         transportBindHost,
-                        transportPort != null ? transportPort.port : 0);
+                        receiverRelayRoute == null && transportPort != null ? transportPort.port : 0,
+                        receiverRelayRoute);
                 registerAndStart(lane);
             }
             receiverLanes.add(lane);
@@ -318,6 +344,7 @@ final class RemoteCameraSessionRuntime {
             stopped.put(lane.toJson());
         }
         JSONObject sourceStop = RemoteCameraSourceRuntime.stop(sessionId, "stop_command");
+        RemoteCameraRelayCredential.clearIfSession(sessionId);
         JSONObject result = baseResult(command, sessionId, "stopped", mediaStreamCommand);
         result.put("marker", "RUSTY_QUEST_REMOTE_CAMERA_STOPPED");
         result.put("stopped_count", stopped.length());
@@ -1076,12 +1103,14 @@ final class RemoteCameraSessionRuntime {
         volatile long lastStreamRecycleUnixMs;
 
         static RuntimeLane receiver(
+                Context context,
                 String sessionId,
                 String eye,
                 String bindHost,
                 int port,
                 String transportBindHost,
-                int transportPort) {
+                int transportPort,
+                PeerRoute peerRoute) {
             return new RuntimeLane(
                     "receiver",
                     sessionId,
@@ -1090,8 +1119,8 @@ final class RemoteCameraSessionRuntime {
                     port,
                     transportBindHost,
                     transportPort,
-                    null,
-                    null,
+                    peerRoute,
+                    context,
                     "starting");
         }
 
@@ -1187,7 +1216,74 @@ final class RemoteCameraSessionRuntime {
             Socket client = null;
             Socket remote = null;
             try {
-                if (transportPort > 0) {
+                if (peerRoute != null && RemoteCameraRelayTransport.applies(peerRoute.routeKind)) {
+                    while (!stopRequested) {
+                        try {
+                            server = bindLocalReceiverServer();
+                            state = streamRecycleCount == 0L
+                                    ? "connecting_authenticated_tls_relay_receiver"
+                                    : "reconnecting_authenticated_tls_relay_receiver";
+                            remote = RemoteCameraRelayTransport.connectReceiver(
+                                    peerRoute.connectHost,
+                                    peerRoute.connectPort,
+                                    CONNECT_TIMEOUT_MS,
+                                    RemoteCameraRelayCredential.forSession(sessionId));
+                            transportSocket = remote;
+                            peerSocket = remote;
+                            remote.setTcpNoDelay(true);
+                            transportAcceptCount += 1L;
+                            peerSocketNetworkSelection = "authenticated_tls_relay_receiver";
+                            notePeerSocketConnected(remote);
+                            state = "authenticated_tls_relay_connected_waiting_for_local_client";
+                            client = server.accept();
+                            localClientSocket = client;
+                            client.setTcpNoDelay(true);
+                            localClientAcceptCount += 1L;
+                            state = "authenticated_tls_relay_streaming_to_local_client";
+                            closeReason = "";
+                            long segmentStartBytesRead = copyBytesRead;
+                            long segmentStartBytesWritten = copyBytesWritten;
+                            try {
+                                copyStream(remote.getInputStream(), client.getOutputStream(), false);
+                            } catch (IOException ex) {
+                                boolean copiedSegmentBytes = copyBytesRead > segmentStartBytesRead
+                                        || copyBytesWritten > segmentStartBytesWritten;
+                                closeReason = copiedSegmentBytes
+                                        ? "relay_stream_copy_error_after_bytes:" + ex.getClass().getSimpleName()
+                                        : "relay_stream_copy_error:" + ex.getClass().getSimpleName();
+                            }
+                            if (!stopRequested && (closeReason == null || closeReason.length() == 0)) {
+                                closeReason = "relay_peer_closed";
+                            }
+                        } finally {
+                            closeQuietly(remote);
+                            closeQuietly(client);
+                            closeQuietly(server);
+                            if (transportSocket == remote) {
+                                transportSocket = null;
+                            }
+                            if (peerSocket == remote) {
+                                peerSocket = null;
+                            }
+                            if (localClientSocket == client) {
+                                localClientSocket = null;
+                            }
+                            if (serverSocket == server) {
+                                serverSocket = null;
+                            }
+                            remote = null;
+                            client = null;
+                            server = null;
+                        }
+                        if (!stopRequested) {
+                            streamRecycleCount += 1L;
+                            lastStreamRecycleUnixMs = System.currentTimeMillis();
+                            state = "relay_stream_recycle_waiting_for_peer";
+                        }
+                    }
+                    markStopped("stop_requested");
+                    return;
+                } else if (transportPort > 0) {
                     state = "binding_transport_receiver";
                     transportServerBindAttemptUnixMs = System.currentTimeMillis();
                     transportServer = new ServerSocket();
@@ -1351,15 +1447,27 @@ final class RemoteCameraSessionRuntime {
                 source.connect(new InetSocketAddress(host, port), CONNECT_TIMEOUT_MS);
                 localSourceSocket = source;
                 state = "connecting_transport_peer";
-                peer = createTransportPeerSocket(context, peerRoute, this);
+                if (RemoteCameraRelayTransport.applies(peerRoute.routeKind)) {
+                    peer = RemoteCameraRelayTransport.connect(
+                            peerRoute.connectHost,
+                            peerRoute.connectPort,
+                            CONNECT_TIMEOUT_MS,
+                            RemoteCameraRelayCredential.forSession(sessionId));
+                    peerSocketNetworkSelection = "authenticated_tls_relay";
+                } else {
+                    peer = createTransportPeerSocket(context, peerRoute, this);
+                    peer.connect(
+                            new InetSocketAddress(peerRoute.connectHost, peerRoute.connectPort),
+                            CONNECT_TIMEOUT_MS);
+                }
                 peer.setTcpNoDelay(true);
                 peerSocket = peer;
-                peer.connect(new InetSocketAddress(peerRoute.connectHost, peerRoute.connectPort), CONNECT_TIMEOUT_MS);
                 notePeerSocketConnected(peer);
-                if (RemoteCameraDirectP2pSocketAuthority.requiresDirectP2pSocket(
-                                peerRoute.routeKind,
-                                peerRoute.socketAuthority,
-                                InetAddress.getByName(peerRoute.connectHost))
+                if (!RemoteCameraRelayTransport.applies(peerRoute.routeKind)
+                        && RemoteCameraDirectP2pSocketAuthority.requiresDirectP2pSocket(
+                                 peerRoute.routeKind,
+                                 peerRoute.socketAuthority,
+                                 InetAddress.getByName(peerRoute.connectHost))
                         && !hasDirectP2pNetworkBinding(this)
                         && !hasDirectP2pLocalAddressBinding(this)) {
                     throw new IOException("Connected peer socket did not retain direct P2P authority");
@@ -1457,6 +1565,11 @@ final class RemoteCameraSessionRuntime {
         boolean receiverTransportReady() {
             if (!"receiver".equals(role) || isTerminal()) {
                 return false;
+            }
+            if (peerRoute != null && RemoteCameraRelayTransport.applies(peerRoute.routeKind)) {
+                return transportSocket != null
+                        && !transportSocket.isClosed()
+                        && "authenticated_tls_relay_receiver".equals(peerSocketNetworkSelection);
             }
             if (transportPort <= 0) {
                 return true;

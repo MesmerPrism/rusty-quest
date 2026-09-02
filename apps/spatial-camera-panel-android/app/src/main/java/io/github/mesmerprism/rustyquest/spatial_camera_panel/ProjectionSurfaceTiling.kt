@@ -7,14 +7,16 @@ internal data class ProjectionSurfaceTiling(
     val topology: Int = ProjectionSurfaceTilingControls.topologyContinuous,
     val gapNormalized: Float = 0.0f,
     val depthFlexibility: Float = 1.0f,
-    val scope: Int = ProjectionSurfaceTilingControls.scopeCoreAndStretch,
+    val scope: Int = ProjectionSurfaceTilingControls.scopeInnerAndBuffer,
 )
 
 internal object ProjectionSurfaceTilingControls {
   const val topologyContinuous = 0
   const val topologyTiled = 1
+  const val topologyTriangleTiles = 2
 
-  const val scopeCoreAndStretch = 0
+  const val scopeInnerAndBuffer = 0
+  const val scopeCoreAndStretch = scopeInnerAndBuffer
   const val scopeCoreOnly = 1
 
   val off = ProjectionSurfaceTiling()
@@ -22,13 +24,14 @@ internal object ProjectionSurfaceTilingControls {
   fun topologyToken(topology: Int): String =
       when (topology) {
         topologyTiled -> "tiled"
+        topologyTriangleTiles -> "triangle-tiles"
         else -> "continuous"
       }
 
   fun scopeToken(scope: Int): String =
       when (scope) {
         scopeCoreOnly -> "core-only"
-        else -> "core-and-stretch"
+        else -> "inner-and-buffer"
       }
 }
 
@@ -46,6 +49,8 @@ internal object ProjectionSurfaceTilingModule {
             when (requested.topology) {
               ProjectionSurfaceTilingControls.topologyTiled ->
                   ProjectionSurfaceTilingControls.topologyTiled
+              ProjectionSurfaceTilingControls.topologyTriangleTiles ->
+                  ProjectionSurfaceTilingControls.topologyTriangleTiles
               else -> ProjectionSurfaceTilingControls.topologyContinuous
             },
         gapNormalized = finiteOr(requested.gapNormalized, 0.0f).coerceIn(0.0f, 0.45f),
@@ -55,7 +60,7 @@ internal object ProjectionSurfaceTilingModule {
             when (requested.scope) {
               ProjectionSurfaceTilingControls.scopeCoreOnly ->
                   ProjectionSurfaceTilingControls.scopeCoreOnly
-              else -> ProjectionSurfaceTilingControls.scopeCoreAndStretch
+              else -> ProjectionSurfaceTilingControls.scopeInnerAndBuffer
             },
     )
   }

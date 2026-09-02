@@ -12,6 +12,13 @@ internal interface ConnectionHubSurfaceTarget {
 
   fun hubSurfaceState(): JSONObject
 
+  /**
+   * Installs the single low-rate owner-change signal used to reconcile registration. The target
+   * must remain completely quiet while this observer is null. State payload construction and
+   * transport remain owned by the Hub worker.
+   */
+  fun setHubSurfaceChangeObserver(observer: (() -> Unit)?) = Unit
+
   fun applyHubAuthorizedCommand(
       requestId: String,
       surfaceId: String,
@@ -46,6 +53,8 @@ internal object ConnectionHubLockedPlaylistContract {
           "active_index",
           "active_label",
           "item_count",
+          "item_duration_seconds",
+          "item_elapsed_seconds",
           "paused",
           "phase",
           "playlist_title",

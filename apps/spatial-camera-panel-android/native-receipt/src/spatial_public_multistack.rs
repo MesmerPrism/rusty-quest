@@ -156,12 +156,20 @@ fn spatial_native_passthrough_marker_fields() -> String {
     "nativePassthroughRequested=true nativePassthroughLayerActive=false nativePassthroughActivationPath=spatial-native-receipt-xr-fb-passthrough nativePassthroughCompositionLayerSubmission=spatial-sdk-owned-end-frame".to_string()
 }
 
-#[cfg(target_os = "android")]
+#[cfg(all(target_os = "android", rq_environment_depth_legacy_native_sidecar))]
 fn spatial_environment_depth_marker_fields() -> String {
     crate::spatial_environment_depth::spatial_environment_depth_marker_fields()
 }
 
-#[cfg(not(target_os = "android"))]
+#[cfg(all(target_os = "android", rq_environment_depth_spatial_sdk_api_layer))]
+fn spatial_environment_depth_marker_fields() -> String {
+    crate::spatial_sdk_depth_handoff::spatial_environment_depth_marker_fields()
+}
+
+#[cfg(any(
+    not(target_os = "android"),
+    all(target_os = "android", rq_environment_depth_disabled)
+))]
 fn spatial_environment_depth_marker_fields() -> String {
     "publicMultiStackDepthSource=spatial-fallback-depth-descriptor publicMultiStackDepthProviderRequested=false publicMultiStackDepthRealProviderBound=false publicMultiStackDepthValidData=false publicMultiStackDepthPermissionSurface=horizonos.permission.USE_SCENE+USE_SCENE_DATA environmentDepthSource=spatial-fallback-depth-descriptor environmentDepthProviderState=not-bound environmentDepthProviderAvailable=false environmentDepthRealProviderBound=false environmentDepthAcquireStatus=not-attempted-provider-not-bound environmentDepthValidData=false environmentDepthDebugValidSampleCount=0 environmentDepthAcquiredFrameCount=0".to_string()
 }

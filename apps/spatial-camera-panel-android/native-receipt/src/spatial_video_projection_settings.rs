@@ -1,16 +1,21 @@
 #![cfg_attr(not(target_os = "android"), allow(dead_code))]
 
-use std::sync::{LazyLock, Mutex};
+use std::sync::{
+    atomic::{AtomicU64, Ordering},
+    LazyLock, Mutex,
+};
 
 use crate::marker_token;
 use crate::spatial_video_projection_marker::log_spatial_video_projection_marker as log_marker;
 
 static SPATIAL_VIDEO_PROJECTION_SETTINGS: LazyLock<Mutex<SpatialVideoProjectionSettings>> =
     LazyLock::new(|| Mutex::new(SpatialVideoProjectionSettings::default()));
+static SPATIAL_VIDEO_MEDIA_SOURCE_GENERATION: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Clone, Debug)]
 pub(crate) struct SpatialVideoProjectionSettings {
     pub(crate) enabled: bool,
+    pub(crate) source: SpatialVideoProjectionSource,
     pub(crate) path: String,
     pub(crate) stereo_layout: SpatialVideoProjectionStereoLayout,
     pub(crate) width: u32,
@@ -26,6 +31,7 @@ impl Default for SpatialVideoProjectionSettings {
     fn default() -> Self {
         Self {
             enabled: false,
+            source: SpatialVideoProjectionSource::FileBacked,
             path: String::new(),
             stereo_layout: SpatialVideoProjectionStereoLayout::SideBySideLeftRight,
             width: 3840,
@@ -41,7 +47,9 @@ impl Default for SpatialVideoProjectionSettings {
 
 impl SpatialVideoProjectionSettings {
     pub(crate) fn active(&self) -> bool {
-        self.enabled && !self.high_rate_json_payload && !self.path.trim().is_empty()
+        self.enabled
+            && !self.high_rate_json_payload
+            && (self.source.stream_backed() || !self.path.trim().is_empty())
     }
 
     pub(crate) fn source_rect_for_eye(&self, eye_index: usize) -> [f32; 4] {
@@ -58,9 +66,11 @@ impl SpatialVideoProjectionSettings {
 
     pub(crate) fn marker_fields(&self) -> String {
         format!(
-            "videoProjectionEnabled={} spatialVideoProjectionEnabled={} videoProjectionSource=app-private-or-device-local-file videoProjectionPath={} videoProjectionPathProvided={} videoProjectionWidth={} videoProjectionHeight={} videoProjectionMaxImages={} videoProjectionFpsCap={} videoProjectionLooping={} videoProjectionStereoLayout={} videoProjectionTarget=packed-sbs-full-eye videoProjectionOpacity={:.3} videoProjectionHighRateJsonPayload={} videoProjectionStream=stereo_video videoProjectionSourceAuthority=android-mediacodec-surface-decoder videoProjectionTransport=mediacodec-surface-to-ndk-aimage-reader-ahardwarebuffer videoProjectionFramePlane=media-data-plane videoProjectionControlPlane=spatial-activity-runtime-property-or-intent-extra videoProjectionDecodePath=MediaCodec-to-Surface videoProjectionFormat=private videoProjectionLeftSourceUvRect={} videoProjectionRightSourceUvRect={} videoProjectionLeftTargetPackedUvRect={} videoProjectionRightTargetPackedUvRect={} spatialVideoProjectionSameSurfaceComposition=true videoProjectionComposedBeforeCamera=true cameraProjectionAlignmentPreserved=true nativeImageReader=true javaHardwareBufferBridge=false cpuPixelCopy=false highRateJsonPayload={} rawCamera=false passthroughTexture=false environmentDepth=false geometryWitness=false",
+            "videoProjectionEnabled={} spatialVideoProjectionEnabled={} videoProjectionSource={} videoProjectionStreamBacked={} videoProjectionPath={} videoProjectionPathProvided={} videoProjectionWidth={} videoProjectionHeight={} videoProjectionMaxImages={} videoProjectionFpsCap={} videoProjectionLooping={} videoProjectionStereoLayout={} videoProjectionTarget=packed-sbs-full-eye videoProjectionOpacity={:.3} videoProjectionHighRateJsonPayload={} videoProjectionStream=stereo_video videoProjectionSourceAuthority=android-mediacodec-surface-decoder videoProjectionTransport=mediacodec-surface-to-ndk-aimage-reader-ahardwarebuffer videoProjectionFramePlane=media-data-plane videoProjectionControlPlane=spatial-activity-runtime-property-or-intent-extra videoProjectionDecodePath=MediaCodec-to-Surface videoProjectionFormat=private videoProjectionLeftSourceUvRect={} videoProjectionRightSourceUvRect={} videoProjectionLeftTargetPackedUvRect={} videoProjectionRightTargetPackedUvRect={} spatialVideoProjectionSameSurfaceComposition=true videoProjectionComposedBeforeCamera=true cameraProjectionAlignmentPreserved=true nativeImageReader=true javaHardwareBufferBridge=false cpuPixelCopy=false highRateJsonPayload={} rawCamera=false passthroughTexture=false environmentDepth=false geometryWitness=false",
             self.enabled,
             self.enabled,
+            self.source.marker_value(),
+            self.source.stream_backed(),
             marker_token(&self.path),
             !self.path.trim().is_empty(),
             self.width,
@@ -77,6 +87,35 @@ impl SpatialVideoProjectionSettings {
             rect_token(self.target_rect_for_eye(1)),
             self.high_rate_json_payload
         )
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum SpatialVideoProjectionSource {
+    FileBacked,
+    BrokerRmanvid1,
+    PeerPackedStereo,
+}
+
+impl SpatialVideoProjectionSource {
+    fn from_token(value: &str) -> Self {
+        match normalized_token(value).as_str() {
+            "broker-rmanvid1" => Self::BrokerRmanvid1,
+            "peer-packed-stereo" => Self::PeerPackedStereo,
+            _ => Self::FileBacked,
+        }
+    }
+
+    fn stream_backed(self) -> bool {
+        matches!(self, Self::BrokerRmanvid1 | Self::PeerPackedStereo)
+    }
+
+    fn marker_value(self) -> &'static str {
+        match self {
+            Self::FileBacked => "app-private-or-device-local-file",
+            Self::BrokerRmanvid1 => "broker-rmanvid1",
+            Self::PeerPackedStereo => "peer-packed-stereo",
+        }
     }
 }
 
@@ -125,6 +164,14 @@ pub(crate) fn spatial_video_projection_settings() -> SpatialVideoProjectionSetti
 
 pub(crate) fn configure_spatial_video_projection(settings: SpatialVideoProjectionSettings) {
     if let Ok(mut guard) = SPATIAL_VIDEO_PROJECTION_SETTINGS.lock() {
+        if guard.source != settings.source
+            || guard.path != settings.path
+            || guard.stereo_layout != settings.stereo_layout
+            || guard.width != settings.width
+            || guard.height != settings.height
+        {
+            SPATIAL_VIDEO_MEDIA_SOURCE_GENERATION.fetch_add(1, Ordering::AcqRel);
+        }
         *guard = settings.clone();
     }
     log_marker(format!(
@@ -132,6 +179,10 @@ pub(crate) fn configure_spatial_video_projection(settings: SpatialVideoProjectio
         settings.active(),
         settings.marker_fields()
     ));
+}
+
+pub(crate) fn spatial_video_media_source_generation() -> u64 {
+    SPATIAL_VIDEO_MEDIA_SOURCE_GENERATION.load(Ordering::Acquire)
 }
 
 fn rect_token(rect: [f32; 4]) -> String {
@@ -145,6 +196,42 @@ fn normalized_token(value: &str) -> String {
     value.trim().to_ascii_lowercase().replace('_', "-")
 }
 
+pub(crate) const SPATIAL_VIDEO_PROJECTION_IMPORT_CACHE_LIMIT: usize = 8;
+
+pub(crate) fn spatial_video_projection_import_cache_limit(_max_images: i32) -> usize {
+    SPATIAL_VIDEO_PROJECTION_IMPORT_CACHE_LIMIT
+}
+
+pub(crate) fn should_log_spatial_video_projection_frame(frame_index: u64) -> bool {
+    frame_index == 1 || frame_index % 60 == 0
+}
+
+pub(crate) fn should_log_spatial_video_projection_import(
+    import_miss_count: u64,
+    import_cache_limit: usize,
+) -> bool {
+    import_miss_count == 1
+        || import_miss_count == import_cache_limit.saturating_add(1) as u64
+        || import_miss_count % 60 == 0
+}
+
+const FPS_CAP_TIMESTAMP_ROUNDING_TOLERANCE_NS: i64 = 1_000;
+
+pub(crate) fn should_drop_spatial_video_projection_timestamp(
+    previous_timestamp_ns: i64,
+    timestamp_ns: i64,
+    fps_cap: i32,
+) -> bool {
+    if previous_timestamp_ns <= 0 || timestamp_ns <= 0 {
+        return false;
+    }
+    let minimum_gap_ns = 1_000_000_000_i64 / i64::from(fps_cap.max(1));
+    timestamp_ns
+        .saturating_sub(previous_timestamp_ns)
+        .saturating_add(FPS_CAP_TIMESTAMP_ROUNDING_TOLERANCE_NS)
+        < minimum_gap_ns
+}
+
 #[cfg(target_os = "android")]
 #[no_mangle]
 #[allow(non_snake_case)]
@@ -152,6 +239,7 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1pa
     env: *mut jni::sys::JNIEnv,
     _thiz: jni::sys::jobject,
     enabled: jni::sys::jboolean,
+    source: jni::sys::jstring,
     path: jni::sys::jstring,
     stereo_layout: jni::sys::jstring,
     width: jni::sys::jint,
@@ -163,6 +251,7 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1pa
     high_rate_json_payload: jni::sys::jboolean,
 ) -> i64 {
     let mut mask = 1_i64;
+    let source = SpatialVideoProjectionSource::from_token(&jstring_to_string(env, source));
     let path = jstring_to_string(env, path);
     let stereo_layout_token = jstring_to_string(env, stereo_layout);
     if enabled != 0 {
@@ -171,8 +260,12 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1pa
     if !path.trim().is_empty() {
         mask |= 1 << 2;
     }
+    if source.stream_backed() {
+        mask |= 1 << 4;
+    }
     let settings = SpatialVideoProjectionSettings {
         enabled: enabled != 0,
+        source,
         path,
         stereo_layout: SpatialVideoProjectionStereoLayout::from_token(&stereo_layout_token),
         width: (width.max(320) as u32).min(4096),
@@ -221,6 +314,32 @@ mod tests {
     }
 
     #[test]
+    fn peer_stream_is_active_without_a_file_path() {
+        let settings = SpatialVideoProjectionSettings {
+            enabled: true,
+            source: SpatialVideoProjectionSource::from_token("peer-packed-stereo"),
+            ..SpatialVideoProjectionSettings::default()
+        };
+        assert!(settings.active());
+        assert!(settings
+            .marker_fields()
+            .contains("videoProjectionSource=peer-packed-stereo"));
+        assert!(settings
+            .marker_fields()
+            .contains("videoProjectionStreamBacked=true"));
+    }
+
+    #[test]
+    fn unknown_source_without_a_file_path_stays_inactive() {
+        let settings = SpatialVideoProjectionSettings {
+            enabled: true,
+            source: SpatialVideoProjectionSource::from_token("unknown-source"),
+            ..SpatialVideoProjectionSettings::default()
+        };
+        assert!(!settings.active());
+    }
+
+    #[test]
     fn side_by_side_rects_match_packed_surface_contract() {
         let settings = SpatialVideoProjectionSettings {
             enabled: true,
@@ -253,5 +372,67 @@ mod tests {
         assert!(settings
             .marker_fields()
             .contains("videoProjectionStereoLayout=top-bottom-left-right"));
+    }
+
+    #[test]
+    fn import_cache_preserves_the_proven_eight_entry_rotating_bound() {
+        assert_eq!(spatial_video_projection_import_cache_limit(1), 8);
+        assert_eq!(spatial_video_projection_import_cache_limit(2), 8);
+        assert_eq!(spatial_video_projection_import_cache_limit(3), 8);
+        assert_eq!(spatial_video_projection_import_cache_limit(6), 8);
+        assert_eq!(spatial_video_projection_import_cache_limit(12), 8);
+    }
+
+    #[test]
+    fn decoded_frame_receipts_keep_first_frame_and_one_periodic_witness() {
+        assert!(should_log_spatial_video_projection_frame(1));
+        assert!(!should_log_spatial_video_projection_frame(2));
+        assert!(!should_log_spatial_video_projection_frame(59));
+        assert!(should_log_spatial_video_projection_frame(60));
+        assert!(should_log_spatial_video_projection_frame(120));
+    }
+
+    #[test]
+    fn import_receipts_keep_first_import_first_eviction_and_periodic_witnesses() {
+        assert!(should_log_spatial_video_projection_import(1, 8));
+        assert!(!should_log_spatial_video_projection_import(8, 8));
+        assert!(should_log_spatial_video_projection_import(9, 8));
+        assert!(!should_log_spatial_video_projection_import(10, 8));
+        assert!(should_log_spatial_video_projection_import(60, 8));
+    }
+
+    #[test]
+    fn thirty_fps_microsecond_timestamps_are_not_dropped() {
+        let timestamps = [
+            1_000_000_000_i64,
+            1_033_333_000,
+            1_066_667_000,
+            1_100_000_000,
+        ];
+        let mut previous = 0_i64;
+        for timestamp in timestamps {
+            assert!(!should_drop_spatial_video_projection_timestamp(
+                previous, timestamp, 30,
+            ));
+            previous = timestamp;
+        }
+    }
+
+    #[test]
+    fn thirty_fps_cap_still_drops_intermediate_sixty_fps_timestamps() {
+        let first = 1_000_000_000_i64;
+        assert!(!should_drop_spatial_video_projection_timestamp(
+            0, first, 30
+        ));
+        assert!(should_drop_spatial_video_projection_timestamp(
+            first,
+            1_016_667_000,
+            30,
+        ));
+        assert!(!should_drop_spatial_video_projection_timestamp(
+            first,
+            1_033_333_000,
+            30,
+        ));
     }
 }

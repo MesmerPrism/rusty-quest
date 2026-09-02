@@ -19,6 +19,14 @@ payload move raster positions inside that carrier. This produces a
 surface-like parallax or depth warp, but it is not compositor-space mesh
 geometry and must not be reported as environment depth.
 
+The neutral tiling suffix has three topology values. `continuous` retains the
+connected grid, `tiled` uses one center for each of the 1,024 square cells, and
+`triangle-tiles` gives the two already-present triangles in every cell separate
+centers, yielding 2,048 independently centered triangle tiles. All three use
+the same 32 by 32 grid, 6,144 vertices, one draw, and unchanged rest-space
+content UVs. A downstream vertex payload owns how those centers affect private
+depth sampling or geometry.
+
 Keeping the carrier unchanged preserves:
 
 - Camera2 and hardware-buffer sampling;

@@ -164,6 +164,10 @@ pub(crate) fn record_presented_frame(
     timestamp_ns: i64,
     present_ordinal: u64,
 ) {
+    #[cfg(not(rq_environment_depth_spatial_sdk_api_layer))]
+    let _ = crate::camera_hwb_projection_freshness_runtime::record_vulkan_wsi_present_returned(
+        present_ordinal,
+    );
     if !QUALIFICATION_ENABLED.load(Ordering::Acquire) {
         return;
     }
