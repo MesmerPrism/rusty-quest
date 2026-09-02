@@ -611,7 +611,7 @@ pub(crate) unsafe fn record_camera_hwb_probe_command_buffer(
     {
         false
     } else if let Some(targets) = public_guide_targets.as_deref_mut() {
-        targets.record_spatial_public_guide_passes(
+        let guide_passes_recorded = targets.record_spatial_public_guide_passes(
             device,
             command_buffer,
             descriptor_set,
@@ -619,8 +619,8 @@ pub(crate) unsafe fn record_camera_hwb_probe_command_buffer(
             camera_reprojection,
             projection_guard_band.source_overscan_uv,
         )?;
-        let sampling_ready =
-            targets.prepare_spatial_public_projection_sampling(device, command_buffer);
+        let sampling_ready = guide_passes_recorded
+            && targets.prepare_spatial_public_projection_sampling(device, command_buffer);
         if sampling_ready {
             let synthetic_diagnostic = projection_zone_frame.settings.synthetic_diagnostic();
             let transparent_underlay = projection_zone_frame
