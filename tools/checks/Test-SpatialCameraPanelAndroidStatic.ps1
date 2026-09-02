@@ -157,6 +157,9 @@ $cameraHwbProjectionGeometryCoordinator = Read-RequiredText "apps\spatial-camera
 $rawProjectionFreshnessReducer = Read-RequiredText "tools\Reduce-SpatialCameraPanelRawProjectionFreshness.ps1"
 $rawProjectionFreshnessReducerTest = Read-RequiredText "tools\checks\Test-SpatialCameraPanelRawProjectionFreshnessReducer.ps1"
 $rawProjectionFreshnessReductionSchema = Read-RequiredText "schemas\rusty.quest.camera_hwb_projection_freshness_reduction.v1.schema.json"
+$rawProjectionFreshnessFinalizer = Read-RequiredText "tools\Finalize-SpatialCameraPanelRawProjectionFreshnessCapture.ps1"
+$rawProjectionFreshnessFinalizerTest = Read-RequiredText "tools\checks\Test-SpatialCameraPanelRawProjectionFreshnessFinalizer.ps1"
+$rawProjectionFreshnessFinalizationSchema = Read-RequiredText "schemas\rusty.quest.camera_hwb_projection_freshness_capture_finalization.v1.schema.json"
 $avatarFeature = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\SpatialAvatarHandVisualFeature.kt"
 $avatarProbeFeature = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\SpatialAvatarHandInvestigationFeature.kt"
 $handBillboardFeature = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\SpatialHandBillboardFlockFeature.kt"
@@ -5395,5 +5398,19 @@ Assert-Contains "Raw Projection freshness reducer test" $rawProjectionFreshnessR
 Assert-Contains "Raw Projection freshness reducer test" $rawProjectionFreshnessReducerTest "leading-zero"
 Assert-Contains "Raw Projection freshness schema" $rawProjectionFreshnessReductionSchema '"wearer_visible_claim"'
 Assert-Contains "Raw Projection freshness schema" $rawProjectionFreshnessReductionSchema '"const": false'
+Assert-Contains "Raw Projection capture finalizer" $rawProjectionFreshnessFinalizer "questionable.file_manager.apk_launch_diagnostic_manifest.v1"
+Assert-Contains "Raw Projection capture finalizer" $rawProjectionFreshnessFinalizer "questionable.file_manager.apk_launch_diagnostic_bundle.v1"
+Assert-Contains "Raw Projection capture finalizer" $rawProjectionFreshnessFinalizer "rusty.quest.camera_hwb_projection_freshness_capture_finalization.v1"
+Assert-Contains "Raw Projection capture finalizer" $rawProjectionFreshnessFinalizer "Assert-NoDuplicateJsonProperties"
+Assert-Contains "Raw Projection capture finalizer" $rawProjectionFreshnessFinalizer "QFM launch-diagnostic bundle changed during capture finalization."
+Assert-Contains "Raw Projection capture finalizer" $rawProjectionFreshnessFinalizer "Capture finalizer source changed during execution."
+Assert-Contains "Raw Projection capture finalizer" $rawProjectionFreshnessFinalizer '[IO.Directory]::Move($stage, $output)'
+Assert-Contains "Raw Projection capture finalizer test" $rawProjectionFreshnessFinalizerTest "duplicate-root-property"
+Assert-Contains "Raw Projection capture finalizer test" $rawProjectionFreshnessFinalizerTest "duplicate-nested-authority-property"
+Assert-Contains "Raw Projection capture finalizer test" $rawProjectionFreshnessFinalizerTest "partial-capture-family"
+Assert-Contains "Raw Projection capture finalizer test" $rawProjectionFreshnessFinalizerTest "output-collision"
+Assert-Contains "Raw Projection capture finalization schema" $rawProjectionFreshnessFinalizationSchema '"additionalProperties": false'
+Assert-Contains "Raw Projection capture finalization schema" $rawProjectionFreshnessFinalizationSchema '"semantic_freshness_adjudicated"'
+Assert-Contains "Raw Projection capture finalization schema" $rawProjectionFreshnessFinalizationSchema '"wearer_visible_claim"'
 
 Write-Host "Spatial Camera Panel Android static gate passed"
