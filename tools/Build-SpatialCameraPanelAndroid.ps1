@@ -3,7 +3,6 @@ param(
     [string]$AndroidHome = $env:ANDROID_HOME,
     [string]$JavaHome = $env:JAVA_HOME,
     [string]$NdkHome = $env:ANDROID_NDK_HOME,
-    [string]$GradleVersion = "9.4.1",
     [string]$RecordedHandCaptureDir = "",
     [int]$RecordedHandFrameLimit = 24,
     [string]$PrivateLayerProfilePath = "",
@@ -67,6 +66,33 @@ function Invoke-Checked {
     if ($LASTEXITCODE -ne 0) {
         throw "$Name failed with exit code $LASTEXITCODE"
     }
+}
+
+function Get-VerifiedPinnedGradleBat {
+    param([Parameter(Mandatory=$true)][string]$RepoRoot)
+    $resolver = Join-Path $RepoRoot "tools\Resolve-GradleTool.ps1"
+    if (-not (Test-Path -LiteralPath $resolver -PathType Leaf)) { throw "Pinned Gradle resolver is missing: $resolver" }
+    try {
+        $output = @(& $resolver -RepoRoot $RepoRoot -Mode VerifyCache -TimeoutSeconds 55)
+    } catch {
+        throw "Pinned Gradle cache verification failed: $($_.Exception.Message)"
+    }
+    if ($output.Count -eq 0) { throw "Pinned Gradle cache verification returned no receipt." }
+    try { $receipt = (($output -join "`n") | ConvertFrom-Json -ErrorAction Stop) } catch { throw "Pinned Gradle cache verification returned an invalid receipt: $($_.Exception.Message)" }
+    $expectedHome = [IO.Path]::GetFullPath((Join-Path $RepoRoot "local-artifacts\tools\gradle-9.4.1")).TrimEnd('\')
+    $actualHome = [IO.Path]::GetFullPath([string]$receipt.gradle_home).TrimEnd('\')
+    $actualBat = [IO.Path]::GetFullPath([string]$receipt.gradle_bat)
+    if ($receipt.schema -cne "rusty.quest.gradle_cache_receipt.v2" -or $receipt.mode -cne "VerifyCache" -or
+        $receipt.tool_id -cne "gradle" -or $receipt.version -cne "9.4.1" -or
+        $receipt.archive_sha256 -cne "2ab2958f2a1e51120c326cad6f385153bb11ee93b3c216c5fccebfdfbb7ec6cb" -or
+        $receipt.tree_sha256 -cne "5c94e8204be25e0c18c94780cf4cf768fefa92e73f8c7b1617c483f33ca088db" -or
+        $actualHome -cne $expectedHome -or
+        -not $actualBat.StartsWith($expectedHome + "\bin\", [StringComparison]::OrdinalIgnoreCase) -or
+        $actualBat -cnotlike "*\bin\gradle.bat" -or
+        -not (Test-Path -LiteralPath $actualBat -PathType Leaf)) {
+        throw "Pinned Gradle cache receipt is invalid or escapes the repository-local tool root."
+    }
+    return $actualBat
 }
 
 function Get-FileSha256 {
@@ -151,29 +177,6 @@ function Test-ZipEntry {
         return [bool]($zip.Entries | Where-Object { $_.FullName -eq $EntryName } | Select-Object -First 1)
     } finally {
         $zip.Dispose()
-    }
-}
-
-function Invoke-DownloadFile {
-    param(
-        [Parameter(Mandatory=$true)][string]$Uri,
-        [Parameter(Mandatory=$true)][string]$OutFile
-    )
-    $client = [System.Net.WebClient]::new()
-    try {
-        $client.DownloadFile($Uri, $OutFile)
-    } finally {
-        $client.Dispose()
-    }
-}
-
-function Invoke-DownloadText {
-    param([Parameter(Mandatory=$true)][string]$Uri)
-    $client = [System.Net.WebClient]::new()
-    try {
-        return $client.DownloadString($Uri)
-    } finally {
-        $client.Dispose()
     }
 }
 
@@ -428,40 +431,6 @@ function Resolve-ApkFileName {
     return $trimmed
 }
 
-function Resolve-Gradle {
-    param(
-        [Parameter(Mandatory=$true)][string]$RepoRoot,
-        [Parameter(Mandatory=$true)][string]$Version
-    )
-    $localRoot = Join-Path $RepoRoot "local-artifacts"
-    $toolsRoot = Join-Path $localRoot "tools"
-    $downloadsRoot = Join-Path $localRoot "downloads"
-    $gradleHome = Join-Path $toolsRoot "gradle-$Version"
-    $gradleBat = Join-Path $gradleHome "bin\gradle.bat"
-    if (Test-Path -LiteralPath $gradleBat) {
-        return $gradleBat
-    }
-
-    New-Item -ItemType Directory -Force -Path $toolsRoot, $downloadsRoot | Out-Null
-    $zipPath = Join-Path $downloadsRoot "gradle-$Version-bin.zip"
-    $distributionUrl = "https://services.gradle.org/distributions/gradle-$Version-bin.zip"
-    if (-not (Test-Path -LiteralPath $zipPath)) {
-        Invoke-DownloadFile -Uri $distributionUrl -OutFile $zipPath
-    }
-
-    $expectedSha = (Invoke-DownloadText -Uri "$distributionUrl.sha256").Trim().Split()[0].ToLowerInvariant()
-    $actualSha = Get-FileSha256 -Path $zipPath
-    if ($expectedSha -ne $actualSha) {
-        throw "Gradle distribution SHA-256 mismatch for $zipPath. Expected $expectedSha but found $actualSha."
-    }
-
-    Expand-Archive -LiteralPath $zipPath -DestinationPath $toolsRoot -Force
-    if (-not (Test-Path -LiteralPath $gradleBat)) {
-        throw "Gradle distribution did not provide expected executable: $gradleBat"
-    }
-    return $gradleBat
-}
-
 $resolvedPrivateSurfaceParticleProfilePath = Resolve-OptionalFilePath -Path $PrivateSurfaceParticleProfilePath -Label "Private surface-particle profile"
 $resolvedPrivateSurfaceParticleShader = Resolve-OptionalFilePath -Path $PrivateSurfaceParticleShader -Label "Private surface-particle shader"
 $resolvedPrivateSurfaceParticlePayloadDir = Resolve-OptionalDirectoryPath -Path $PrivateSurfaceParticlePayloadDir -Label "Private surface-particle payload directory"
@@ -607,6 +576,7 @@ if ([string]::IsNullOrWhiteSpace($RepoRoot)) {
     $RepoRoot = Join-Path $PSScriptRoot ".."
 }
 $repoRoot = Resolve-Path $RepoRoot
+$gradleBat = Get-VerifiedPinnedGradleBat -RepoRoot ([string]$repoRoot)
 $appRoot = Resolve-Path (Join-Path $repoRoot "apps\spatial-camera-panel-android")
 $targetRoot = Join-Path $repoRoot "target"
 Import-Module (Join-Path $PSScriptRoot "lib\SourceComposition.psm1") -Force
@@ -654,7 +624,7 @@ $buildInputDescriptor = [ordered]@{
     application_id = $resolvedAppId
     app_label = $resolvedAppLabel
     apk_file_name = $resolvedApkFileName
-    gradle_version = $GradleVersion
+    gradle_version = "9.4.1"
     android_build_type = $buildTypeLower
     locked_final_presentation = $lockedFinalPresentationEnabled
     camera_projection_default_enabled = [bool]$CameraProjectionDefaultEnabled
@@ -942,7 +912,6 @@ if (-not (Test-Path -LiteralPath $nativeReceiptBuiltLib)) {
 Copy-Item -LiteralPath $nativeReceiptBuiltLib -Destination $nativeReceiptJniLib -Force
 $nativeReceiptSha256 = Get-FileSha256 -Path $nativeReceiptJniLib
 
-$gradleBat = Resolve-Gradle -RepoRoot ([string]$repoRoot) -Version $GradleVersion
 $gradleUserHome = Join-Path $productBuildRoot "gradle-user-home"
 New-Item -ItemType Directory -Force -Path $gradleUserHome | Out-Null
 
@@ -1264,7 +1233,7 @@ $manifest = [ordered]@{
     spatial_sdk_skybox_default_enabled = $false
     android_gradle_plugin_version = "8.11.1"
     kotlin_version = "2.1.0"
-    gradle_version = $GradleVersion
+    gradle_version = "9.4.1"
     isolated_intermediate_root = $intermediateRoot
     native_renderer_package_preserved = "io.github.mesmerprism.rustyquest.native_renderer"
     native_renderer_spatial_sdk_packaged = $false
