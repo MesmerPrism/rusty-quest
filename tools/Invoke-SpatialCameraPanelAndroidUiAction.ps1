@@ -32,6 +32,7 @@ param(
         "background-black",
         "background-passthrough",
         "background-lut-passthrough",
+        "background-video",
         "profile-save-current",
         "choose-shared-media-folder",
         "refresh-shared-media-library",
