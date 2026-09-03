@@ -34,6 +34,7 @@ class PrivateLayerZoneCompositorTest {
                 coverageMode = 99,
                 centerContentMode = 99,
                 centerProjectionMix = -2.0f,
+                centerCornerRadiusUv = 2.0f,
                 bufferGeometryMode = 99,
                 bufferStaticWidthUv = 4.0f,
                 bufferMinimumWidthUv = -2.0f,
@@ -77,6 +78,7 @@ class PrivateLayerZoneCompositorTest {
     )
     assertEquals(PrivateLayerZoneCompositorControls.centerContentTransparent, normalized.centerContentMode)
     assertEquals(0.0f, normalized.centerProjectionMix)
+    assertEquals(0.49f, normalized.centerCornerRadiusUv)
     assertEquals(
         PrivateLayerZoneCompositorControls.bufferGeometryDynamic,
         normalized.bufferGeometryMode,
@@ -493,6 +495,7 @@ class PrivateLayerZoneCompositorTest {
     assertTrue(marker.contains("projectionZoneInnerApplication=legacy"))
     assertTrue(marker.contains("projectionZoneInnerColorSource=midpoint"))
     assertTrue(marker.contains("projectionZoneOuterTarget=readable-color"))
+    assertTrue(marker.contains("projectionZoneCenterCornerRadiusUv=0.08"))
   }
 
   @Test

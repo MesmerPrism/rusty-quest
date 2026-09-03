@@ -249,6 +249,7 @@ internal class SpatialCameraControlProfileHotloader(
               PrivateLayerZoneCompositorControls.centerContentToken(value.centerContentMode),
           )
           .put("center_projection_mix", value.centerProjectionMix)
+          .put("center_corner_radius_uv", value.centerCornerRadiusUv)
           .put(
               "buffer_geometry",
               PrivateLayerZoneCompositorControls.bufferGeometryToken(value.bufferGeometryMode),

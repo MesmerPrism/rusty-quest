@@ -61,6 +61,7 @@ pub(crate) struct ProjectionZoneCompositorSettings {
     pub(crate) region_contract_version: u32,
     pub(crate) center_content_mode: u32,
     pub(crate) center_projection_mix: f32,
+    pub(crate) center_corner_radius_uv: f32,
     pub(crate) buffer_geometry_mode: u32,
     pub(crate) buffer_static_width_uv: f32,
     pub(crate) buffer_minimum_width_uv: f32,
@@ -126,6 +127,7 @@ impl Default for ProjectionZoneCompositorSettings {
             region_contract_version: 1,
             center_content_mode: 0,
             center_projection_mix: 1.0,
+            center_corner_radius_uv: 0.08,
             buffer_geometry_mode: 0,
             buffer_static_width_uv: 0.08,
             buffer_minimum_width_uv: 0.06,
@@ -211,7 +213,17 @@ impl ProjectionZoneCompositorSettings {
         self.debug_mode == 1
     }
 
-    pub(crate) fn transparent_underlay_requested(self) -> bool {
+    pub(crate) fn center_transparent_underlay_requested(self) -> bool {
+        self.region_contract_version >= 4 && self.center_content_mode == 3
+    }
+
+    pub(crate) fn middle_transparent_underlay_requested(self) -> bool {
+        self.region_contract_version >= 4
+            && self.buffer_geometry_mode != 0
+            && self.buffer_fill_mode == 1
+    }
+
+    pub(crate) fn outer_transparent_underlay_requested(self) -> bool {
         if self.region_contract_version >= 3 {
             self.outer_content_mode == 2
         } else {
@@ -219,8 +231,20 @@ impl ProjectionZoneCompositorSettings {
         }
     }
 
+    pub(crate) fn transparent_underlay_requested(self) -> bool {
+        self.center_transparent_underlay_requested()
+            || self.middle_transparent_underlay_requested()
+            || self.outer_transparent_underlay_requested()
+    }
+
     pub(crate) fn transparent_underlay_supported(self) -> bool {
-        self.transparent_underlay_requested()
+        self.center_transparent_underlay_requested()
+            || self.middle_transparent_underlay_requested()
+            || self.outer_transparent_underlay_supported()
+    }
+
+    pub(crate) fn outer_transparent_underlay_supported(self) -> bool {
+        self.outer_transparent_underlay_requested()
             && (self.region_contract_version >= 2
                 || self.coverage_mode == 0
                 || (self.coverage_mode == 1
@@ -252,6 +276,12 @@ impl ProjectionZoneCompositorSettings {
         } else {
             !self.transparent_underlay_requested()
         }
+    }
+
+    pub(crate) fn same_surface_blend_required(self) -> bool {
+        self.region_contract_version < 4
+            && !self.transparent_underlay_requested()
+            && !self.replaces_video()
     }
 
     pub(crate) fn marker_fields(self) -> String {
@@ -304,9 +334,10 @@ impl ProjectionZoneCompositorSettings {
             debug_mode_token(self.debug_mode),
         );
         format!(
-            "{base} projectionZoneCenterContent={} projectionZoneCenterProjectionMix={:.3} projectionZoneInnerApplication={} projectionZoneInnerColorSource={} projectionZoneInnerRegionDriver={} projectionZoneInnerStrengthRgb={:.3},{:.3},{:.3} projectionZoneInnerCycleAmplitudeRgb={:.3},{:.3},{:.3} projectionZoneInnerCycleHzRgb={:.3},{:.3},{:.3} projectionZoneInnerCyclePhaseTurnsRgb={:.3},{:.3},{:.3} projectionZoneOuterApplication={} projectionZoneOuterColorSource={} projectionZoneOuterRegionDriver={} projectionZoneOuterStrengthRgb={:.3},{:.3},{:.3} projectionZoneOuterCycleAmplitudeRgb={:.3},{:.3},{:.3} projectionZoneOuterCycleHzRgb={:.3},{:.3},{:.3} projectionZoneOuterCyclePhaseTurnsRgb={:.3},{:.3},{:.3} projectionZoneOuterTarget={} projectionZoneOuterUnderlaySupported={} projectionZoneOuterAlphaDriver={} projectionZoneSyntheticSourceIsolation={} projectionZoneSyntheticDisplacementSuppressed={} projectionZoneUnsampledOuterData={}",
+            "{base} projectionZoneCenterContent={} projectionZoneCenterProjectionMix={:.3} projectionZoneCenterCornerRadiusUv={:.3} projectionZoneInnerApplication={} projectionZoneInnerColorSource={} projectionZoneInnerRegionDriver={} projectionZoneInnerStrengthRgb={:.3},{:.3},{:.3} projectionZoneInnerCycleAmplitudeRgb={:.3},{:.3},{:.3} projectionZoneInnerCycleHzRgb={:.3},{:.3},{:.3} projectionZoneInnerCyclePhaseTurnsRgb={:.3},{:.3},{:.3} projectionZoneOuterApplication={} projectionZoneOuterColorSource={} projectionZoneOuterRegionDriver={} projectionZoneOuterStrengthRgb={:.3},{:.3},{:.3} projectionZoneOuterCycleAmplitudeRgb={:.3},{:.3},{:.3} projectionZoneOuterCycleHzRgb={:.3},{:.3},{:.3} projectionZoneOuterCyclePhaseTurnsRgb={:.3},{:.3},{:.3} projectionZoneOuterTarget={} projectionZoneOuterUnderlaySupported={} projectionZoneOuterAlphaDriver={} projectionZoneSyntheticSourceIsolation={} projectionZoneSyntheticDisplacementSuppressed={} projectionZoneUnsampledOuterData={}",
             center_content_token(self.center_content_mode),
             self.center_projection_mix,
+            self.center_corner_radius_uv,
             blend_application_token(self.inner_application_mode),
             blend_source_choice_token(self.inner_source_choice),
             blend_region_driver_token(self.inner_region_driver),
@@ -338,12 +369,65 @@ impl ProjectionZoneCompositorSettings {
             self.outer_cycle_phase_rgb[1],
             self.outer_cycle_phase_rgb[2],
             outer_target_mode_token(self.outer_target_mode),
-            self.transparent_underlay_supported(),
+            self.outer_transparent_underlay_supported(),
             blend_region_driver_token(self.outer_region_driver),
             self.synthetic_diagnostic(),
             self.synthetic_diagnostic(),
-            self.transparent_underlay_requested(),
+            self.outer_transparent_underlay_requested(),
         )
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ProjectionZoneCompositeAlpha {
+    PreMultiplied,
+    PostMultiplied,
+    Inherit,
+    Opaque,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct ProjectionZoneAlphaPolicy {
+    pub(crate) transparent_underlay_supported: bool,
+    pub(crate) premultiplied_alpha_output: bool,
+    pub(crate) readable_video_consumer_required: bool,
+}
+
+impl ProjectionZoneAlphaPolicy {
+    pub(crate) fn suppresses_same_surface_video(
+        self,
+        settings: ProjectionZoneCompositorSettings,
+        projection_zone_ready: bool,
+    ) -> bool {
+        if settings.transparent_underlay_requested() {
+            (self.transparent_underlay_supported && settings.outer_transparent_underlay_requested())
+                || projection_zone_ready
+        } else {
+            settings.suppresses_same_surface_video(projection_zone_ready)
+        }
+    }
+}
+
+pub(crate) fn projection_zone_alpha_policy(
+    settings: ProjectionZoneCompositorSettings,
+    composite_alpha: ProjectionZoneCompositeAlpha,
+) -> ProjectionZoneAlphaPolicy {
+    let explicit_transparent_alpha = matches!(
+        composite_alpha,
+        ProjectionZoneCompositeAlpha::PreMultiplied | ProjectionZoneCompositeAlpha::PostMultiplied
+    );
+    let transparent_underlay_supported =
+        settings.transparent_underlay_supported() && explicit_transparent_alpha;
+    let transparent_underlay_video_fallback =
+        settings.transparent_underlay_requested() && !transparent_underlay_supported;
+    ProjectionZoneAlphaPolicy {
+        transparent_underlay_supported,
+        // Legacy v2/v3 pipelines retain premultiplied fixed-function blending. A POST swapchain
+        // changes the projection-layer contract, not the source-alpha convention of that blend.
+        premultiplied_alpha_output: settings.same_surface_blend_required()
+            || composite_alpha != ProjectionZoneCompositeAlpha::PostMultiplied,
+        readable_video_consumer_required: settings.readable_video_consumer_required()
+            || transparent_underlay_video_fallback,
     }
 }
 
@@ -384,6 +468,41 @@ pub(crate) struct CameraHwbProjectionZoneFrame {
     pub(crate) user_rects: [[f32; 4]; 2],
     pub(crate) draw_rects: [[f32; 4]; 2],
     pub(crate) uniform: ProjectionZoneUniform,
+}
+
+impl CameraHwbProjectionZoneFrame {
+    pub(crate) fn apply_alpha_policy(
+        &mut self,
+        transparent_underlay_supported: bool,
+        premultiplied_alpha_output: bool,
+    ) {
+        self.uniform.center_content[3] = if premultiplied_alpha_output { 1.0 } else { 0.0 };
+        if self.settings.transparent_underlay_requested() && !transparent_underlay_supported {
+            // INHERIT and OPAQUE swapchains cannot expose a compositor underlay. Preserve the
+            // requested settings for evidence, but make every transparency-producing lane
+            // consume the video descriptor rather than writing transparent black into an opaque
+            // carrier.
+            if self.settings.center_transparent_underlay_requested() {
+                self.uniform.center_content[0] = 1.0;
+            }
+            if self.settings.middle_transparent_underlay_requested() {
+                let stretch_flags = self.uniform.stretch[3] as u32;
+                self.uniform.stretch[3] = ((stretch_flags & !(0x3 << 11)) | (3 << 11)) as f32;
+            }
+            if self.settings.outer_transparent_underlay_requested() {
+                if self.settings.region_contract_version >= 3 {
+                    self.uniform.outer_stretch_options[2] = 0.0;
+                } else {
+                    self.uniform.outer_shape[3] = 0.0;
+                    if self.settings.region_contract_version == 2 {
+                        let stretch_flags = self.uniform.stretch[3] as u32;
+                        self.uniform.stretch[3] = (stretch_flags & !(1 << 13)) as f32;
+                    }
+                }
+                self.draw_rects = self.uniform.carrier_rects;
+            }
+        }
+    }
 }
 
 pub(crate) const CAMERA_HWB_LEFT_CAMERA_ID: &str = "50";
@@ -562,6 +681,7 @@ pub(crate) fn update_projection_zone_region_layout_settings(
     outer_processed_mix: f32,
     center_content_mode: u32,
     center_projection_mix: f32,
+    center_corner_radius_uv: f32,
 ) -> ProjectionZoneCompositorSettings {
     let minimum = finite_or(buffer_minimum_width_uv, 0.06).clamp(0.0, 0.2);
     let maximum = finite_or(buffer_maximum_width_uv, 0.18).clamp(minimum, 0.2);
@@ -570,6 +690,7 @@ pub(crate) fn update_projection_zone_region_layout_settings(
         region_contract_version: 4,
         center_content_mode: center_content_mode.min(3),
         center_projection_mix: finite_or(center_projection_mix, 1.0).clamp(0.0, 1.0),
+        center_corner_radius_uv: finite_or(center_corner_radius_uv, 0.08).clamp(0.0, 0.49),
         buffer_minimum_width_uv: minimum,
         buffer_maximum_width_uv: maximum,
         buffer_maximum_speed_meters_per_second: finite_or(
@@ -966,13 +1087,14 @@ pub(crate) fn camera_hwb_projection_zone_frame(
     video_source_rects: [[f32; 4]; 2],
 ) -> CameraHwbProjectionZoneFrame {
     let settings = current_projection_zone_compositor_settings();
-    camera_hwb_projection_zone_frame_with_settings(
+    let frame = camera_hwb_projection_zone_frame_with_settings(
         footprint_scale,
         source_overscan_uv,
         elapsed_seconds,
         video_source_rects,
         settings,
-    )
+    );
+    frame
 }
 
 fn camera_hwb_projection_zone_frame_with_settings(
@@ -1207,7 +1329,7 @@ fn camera_hwb_projection_zone_frame_with_settings(
         center_content: [
             settings.center_content_mode as f32,
             settings.center_projection_mix,
-            0.0,
+            settings.center_corner_radius_uv,
             1.0,
         ],
     };
@@ -1968,7 +2090,7 @@ mod tests {
             frame.draw_rects,
             [[0.0, 0.0, 0.5, 1.0], [0.5, 0.0, 0.5, 1.0]]
         );
-        assert_eq!(frame.uniform.center_content, [1.0, 0.0, 0.0, 1.0]);
+        assert_eq!(frame.uniform.center_content, [1.0, 0.0, 0.08, 1.0]);
         assert!(frame.settings.owns_full_carrier());
         assert!(frame.settings.readable_video_consumer_required());
         assert!(frame.settings.suppresses_same_surface_video(true));
@@ -1986,6 +2108,9 @@ mod tests {
         assert!(blend
             .marker_fields()
             .contains("projectionZoneCenterProjectionMix=0.350"));
+        assert!(blend
+            .marker_fields()
+            .contains("projectionZoneCenterCornerRadiusUv=0.080"));
     }
 
     #[test]
@@ -1999,6 +2124,205 @@ mod tests {
         };
         assert!(!settings.readable_video_consumer_required());
         assert!(!settings.owns_full_carrier());
+    }
+
+    #[test]
+    fn unsupported_transparent_underlay_uses_video_uniform_without_rewriting_request() {
+        let settings = ProjectionZoneCompositorSettings {
+            region_contract_version: 4,
+            center_content_mode: 0,
+            buffer_geometry_mode: 0,
+            outer_content_mode: 2,
+            ..ProjectionZoneCompositorSettings::default()
+        };
+        let mut frame = camera_hwb_projection_zone_frame_with_settings(
+            1.0,
+            0.0,
+            0.0,
+            [[0.0, 0.0, 0.5, 1.0], [0.5, 0.0, 0.5, 1.0]],
+            settings,
+        );
+        frame.apply_alpha_policy(false, true);
+        assert_eq!(frame.settings.outer_content_mode, 2);
+        assert_eq!(frame.uniform.outer_stretch_options[2], 0.0);
+        assert_eq!(frame.uniform.center_content[3], 1.0);
+        assert_eq!(frame.draw_rects, frame.uniform.carrier_rects);
+
+        let mut post_multiplied = camera_hwb_projection_zone_frame_with_settings(
+            1.0,
+            0.0,
+            0.0,
+            [[0.0, 0.0, 0.5, 1.0], [0.5, 0.0, 0.5, 1.0]],
+            settings,
+        );
+        post_multiplied.apply_alpha_policy(true, false);
+        assert_eq!(post_multiplied.uniform.outer_stretch_options[2], 2.0);
+        assert_eq!(post_multiplied.uniform.center_content[3], 0.0);
+    }
+
+    #[test]
+    fn alpha_policy_covers_transparent_and_legacy_routes_for_every_composite_mode() {
+        let transparent = ProjectionZoneCompositorSettings {
+            region_contract_version: 4,
+            center_content_mode: 0,
+            buffer_geometry_mode: 0,
+            outer_content_mode: 2,
+            ..ProjectionZoneCompositorSettings::default()
+        };
+        for (alpha, supported, premultiplied) in [
+            (ProjectionZoneCompositeAlpha::PreMultiplied, true, true),
+            (ProjectionZoneCompositeAlpha::PostMultiplied, true, false),
+            (ProjectionZoneCompositeAlpha::Inherit, false, true),
+            (ProjectionZoneCompositeAlpha::Opaque, false, true),
+        ] {
+            let policy = projection_zone_alpha_policy(transparent, alpha);
+            assert_eq!(policy.transparent_underlay_supported, supported);
+            assert_eq!(policy.premultiplied_alpha_output, premultiplied);
+            assert_eq!(policy.readable_video_consumer_required, !supported);
+            assert!(policy.suppresses_same_surface_video(transparent, true));
+            assert_eq!(
+                policy.suppresses_same_surface_video(transparent, false),
+                supported
+            );
+        }
+
+        let legacy_same_surface = ProjectionZoneCompositorSettings {
+            region_contract_version: 3,
+            outer_content_mode: 0,
+            ..ProjectionZoneCompositorSettings::default()
+        };
+        for alpha in [
+            ProjectionZoneCompositeAlpha::PreMultiplied,
+            ProjectionZoneCompositeAlpha::PostMultiplied,
+            ProjectionZoneCompositeAlpha::Inherit,
+            ProjectionZoneCompositeAlpha::Opaque,
+        ] {
+            let policy = projection_zone_alpha_policy(legacy_same_surface, alpha);
+            assert!(policy.premultiplied_alpha_output);
+            assert!(policy.readable_video_consumer_required);
+        }
+    }
+
+    #[test]
+    fn unsupported_alpha_falls_back_center_and_middle_transparency_to_video() {
+        let video_source_rects = [[0.0, 0.0, 0.5, 1.0], [0.5, 0.0, 0.5, 1.0]];
+        let center_transparent = ProjectionZoneCompositorSettings {
+            region_contract_version: 4,
+            center_content_mode: 3,
+            buffer_geometry_mode: 0,
+            outer_content_mode: 1,
+            ..ProjectionZoneCompositorSettings::default()
+        };
+        let middle_transparent = ProjectionZoneCompositorSettings {
+            region_contract_version: 4,
+            center_content_mode: 0,
+            buffer_geometry_mode: 1,
+            buffer_fill_mode: 1,
+            outer_content_mode: 1,
+            ..ProjectionZoneCompositorSettings::default()
+        };
+
+        for (settings, expected_center_mode, expected_buffer_fill) in
+            [(center_transparent, 1.0, 0), (middle_transparent, 0.0, 3)]
+        {
+            assert!(settings.transparent_underlay_requested());
+            assert!(!settings.readable_video_consumer_required());
+            for alpha in [
+                ProjectionZoneCompositeAlpha::Inherit,
+                ProjectionZoneCompositeAlpha::Opaque,
+            ] {
+                let policy = projection_zone_alpha_policy(settings, alpha);
+                assert!(!policy.transparent_underlay_supported);
+                assert!(policy.readable_video_consumer_required);
+                assert!(!policy.suppresses_same_surface_video(settings, false));
+                assert!(policy.suppresses_same_surface_video(settings, true));
+
+                let mut frame = camera_hwb_projection_zone_frame_with_settings(
+                    1.0,
+                    0.0,
+                    0.0,
+                    video_source_rects,
+                    settings,
+                );
+                frame.apply_alpha_policy(false, true);
+                assert_eq!(frame.settings, settings);
+                assert_eq!(frame.uniform.center_content[0], expected_center_mode);
+                assert_eq!(
+                    ((frame.uniform.stretch[3] as u32) >> 11) & 0x3,
+                    expected_buffer_fill
+                );
+            }
+            let marker = settings.marker_fields();
+            assert!(marker.contains("projectionZoneOuterUnderlaySupported=false"));
+            assert!(marker.contains("projectionZoneUnsampledOuterData=false"));
+        }
+    }
+
+    #[test]
+    fn legacy_outer_alpha_fallback_uses_contract_appropriate_uniform_lanes() {
+        let video_source_rects = [[0.0, 0.0, 0.5, 1.0], [0.5, 0.0, 0.5, 1.0]];
+        for version in [1, 2] {
+            let settings = ProjectionZoneCompositorSettings {
+                coverage_mode: 1,
+                region_contract_version: version,
+                outer_target_mode: 1,
+                stretch_extent_mode: 1,
+                outer_signal: 1,
+                outer_application_mode: 2,
+                outer_source_choice: 0,
+                ..ProjectionZoneCompositorSettings::default()
+            };
+            assert!(settings.outer_transparent_underlay_requested());
+            assert!(settings.outer_transparent_underlay_supported());
+
+            for alpha in [
+                ProjectionZoneCompositeAlpha::PreMultiplied,
+                ProjectionZoneCompositeAlpha::PostMultiplied,
+            ] {
+                let policy = projection_zone_alpha_policy(settings, alpha);
+                assert!(policy.transparent_underlay_supported);
+                let mut frame = camera_hwb_projection_zone_frame_with_settings(
+                    1.0,
+                    0.0,
+                    0.0,
+                    video_source_rects,
+                    settings,
+                );
+                let original = frame;
+                frame.apply_alpha_policy(true, policy.premultiplied_alpha_output);
+                let mut expected = original;
+                expected.uniform.center_content[3] =
+                    if alpha == ProjectionZoneCompositeAlpha::PreMultiplied {
+                        1.0
+                    } else {
+                        0.0
+                    };
+                assert_eq!(frame.uniform, expected.uniform);
+                assert_eq!(frame.draw_rects, original.draw_rects);
+                assert_eq!(frame.settings, original.settings);
+            }
+
+            for alpha in [
+                ProjectionZoneCompositeAlpha::Inherit,
+                ProjectionZoneCompositeAlpha::Opaque,
+            ] {
+                let policy = projection_zone_alpha_policy(settings, alpha);
+                assert!(!policy.transparent_underlay_supported);
+                assert!(policy.readable_video_consumer_required);
+                let mut frame = camera_hwb_projection_zone_frame_with_settings(
+                    1.0,
+                    0.0,
+                    0.0,
+                    video_source_rects,
+                    settings,
+                );
+                frame.apply_alpha_policy(false, policy.premultiplied_alpha_output);
+                assert_eq!(frame.settings, settings);
+                assert_eq!(frame.uniform.outer_shape[3], 0.0);
+                assert_eq!(((frame.uniform.stretch[3] as u32) >> 13) & 0x1, 0);
+                assert_eq!(frame.draw_rects, frame.uniform.carrier_rects);
+            }
+        }
     }
 
     #[test]

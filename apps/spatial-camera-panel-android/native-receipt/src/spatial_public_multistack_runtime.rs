@@ -512,6 +512,7 @@ impl SpatialProjectionZoneUniformResources {
 
 struct SpatialProjectionZoneVideoPipeline {
     video_descriptor_set_layout: vk::DescriptorSetLayout,
+    same_surface_blend_enabled: bool,
     pipeline_layout: vk::PipelineLayout,
     pipeline: vk::Pipeline,
     displacement_pipeline: Option<vk::Pipeline>,
@@ -846,10 +847,14 @@ impl SpatialPublicGuideTargets {
         camera_reprojection: CameraLatencyStereoReprojection,
         source_overscan_uv: f32,
     ) -> Result<bool, String> {
-        if spatial_public_meta_passthrough_edge_window_selected()
-            || spatial_public_raw_custom_projection_selected()
-        {
+        if spatial_public_meta_passthrough_edge_window_selected() {
             return Ok(false);
+        }
+        if spatial_public_raw_custom_projection_selected() {
+            // Raw Projection intentionally skips every guide draw. It still authorizes the
+            // projection sampling/zone stage because the private raw layer samples the live
+            // camera descriptor directly and the zone compositor owns its visible boundary.
+            return Ok(self.projection_execution_available());
         }
         if !self.guide_pass_execution_available() {
             return Ok(false);
@@ -959,7 +964,11 @@ impl SpatialPublicGuideTargets {
         let layout_changed = self
             .projection_zone_video_pipeline
             .as_ref()
-            .map(|pipeline| pipeline.video_descriptor_set_layout != video_descriptor_set_layout)
+            .map(|pipeline| {
+                pipeline.video_descriptor_set_layout != video_descriptor_set_layout
+                    || pipeline.same_surface_blend_enabled
+                        != projection_zone_same_surface_blend_required(zone_frame.settings)
+            })
             .unwrap_or(true);
         if layout_changed {
             if let Some(previous) = self.projection_zone_video_pipeline.take() {
@@ -974,6 +983,7 @@ impl SpatialPublicGuideTargets {
                 self.rgb_channel_transform_uniform.descriptor_set_layout,
                 video_descriptor_set_layout,
                 self.projection_zone_uniform.descriptor_set_layout,
+                projection_zone_same_surface_blend_required(zone_frame.settings),
             )?);
         }
         Ok(self.projection_zone_video_pipeline.is_some())
@@ -1347,6 +1357,12 @@ impl SpatialPublicGuideTargets {
         transition_guide_image_for_sampling(device, command_buffer, destination.image);
         Ok(())
     }
+}
+
+fn projection_zone_same_surface_blend_required(
+    settings: crate::camera_hwb_projection_target::ProjectionZoneCompositorSettings,
+) -> bool {
+    settings.same_surface_blend_required()
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -3918,6 +3934,7 @@ unsafe fn create_projection_zone_video_pipeline(
     rgb_channel_transform_descriptor_set_layout: vk::DescriptorSetLayout,
     video_descriptor_set_layout: vk::DescriptorSetLayout,
     zone_descriptor_set_layout: vk::DescriptorSetLayout,
+    same_surface_blend_enabled: bool,
 ) -> Result<SpatialProjectionZoneVideoPipeline, String> {
     let set_layouts = [
         camera_descriptor_set_layout,
@@ -3949,7 +3966,7 @@ unsafe fn create_projection_zone_video_pipeline(
         pipeline_layout,
         fragment_spirv,
         "spatial-public-projection-zone-video-compositor",
-        true,
+        same_surface_blend_enabled,
     ) {
         Ok(pipeline) => pipeline,
         Err(error) => {
@@ -3967,7 +3984,7 @@ unsafe fn create_projection_zone_video_pipeline(
         )),
         fragment_spirv,
         "spatial-public-projection-zone-video-compositor-displacement",
-        true,
+        same_surface_blend_enabled,
     ) {
         Ok(pipeline) => pipeline,
         Err(error) => {
@@ -3978,6 +3995,7 @@ unsafe fn create_projection_zone_video_pipeline(
     };
     Ok(SpatialProjectionZoneVideoPipeline {
         video_descriptor_set_layout,
+        same_surface_blend_enabled,
         pipeline_layout,
         pipeline,
         displacement_pipeline,
@@ -5131,5 +5149,19 @@ mod tests {
     #[test]
     fn guide_targets_clear_to_transparent_invalid_payloads() {
         assert_eq!(SPATIAL_PUBLIC_GUIDE_CLEAR_COLOR, [0.0, 0.0, 0.0, 0.0]);
+    }
+
+    #[test]
+    fn compositor_owned_zone_pipeline_does_not_blend_over_its_own_carrier() {
+        let mut settings =
+            crate::camera_hwb_projection_target::ProjectionZoneCompositorSettings::default();
+        settings.region_contract_version = 4;
+        assert!(!projection_zone_same_surface_blend_required(settings));
+
+        settings.region_contract_version = 3;
+        assert!(projection_zone_same_surface_blend_required(settings));
+
+        settings.outer_content_mode = 2;
+        assert!(!projection_zone_same_surface_blend_required(settings));
     }
 }

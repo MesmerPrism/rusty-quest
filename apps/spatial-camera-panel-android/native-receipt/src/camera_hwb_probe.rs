@@ -502,6 +502,7 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1pa
     outer_processed_mix: c_float,
     center_content_mode: c_int,
     center_projection_mix: c_float,
+    center_corner_radius_uv: c_float,
 ) -> i64 {
     let applied = update_projection_zone_region_layout_settings(
         buffer_minimum_width_uv as f32,
@@ -517,6 +518,7 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1pa
         outer_processed_mix as f32,
         center_content_mode.max(0) as u32,
         center_projection_mix as f32,
+        center_corner_radius_uv as f32,
     );
     log_marker(format!(
         "status=private-layer-region-layout-updated rawCameraProjectionProbe=true updateMask=2 spatialPrivateLayerControlPanel=true {} runtimeCrash=false",
@@ -2224,6 +2226,7 @@ unsafe fn render_camera_hwb_probe(
                     .timestamp_ns
                     .abs_diff(current_right_frame.timestamp_ns),
             },
+            composite_alpha,
         )?;
         frame_timing.record = record_started.elapsed();
         let projected_by_public_stack = record_result.projected_by_public_stack;

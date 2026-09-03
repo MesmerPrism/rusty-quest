@@ -116,6 +116,7 @@ internal object SpatialCameraControlProfileContract {
         "region_contract",
         "center_content",
         "center_projection_mix",
+        "center_corner_radius_uv",
         "buffer_geometry",
         "buffer_static_width_uv",
         "buffer_minimum_width_uv",
@@ -189,6 +190,12 @@ internal object SpatialCameraControlProfileContract {
                   json.requireFloat("center_projection_mix", 0.0f, 1.0f)
                 } else {
                   1.0f
+                },
+            centerCornerRadiusUv =
+                if (json.has("center_corner_radius_uv")) {
+                  json.requireFloat("center_corner_radius_uv", 0.0f, 0.49f)
+                } else {
+                  0.08f
                 },
             bufferGeometryMode =
                 if (json.has("buffer_geometry")) {

@@ -241,6 +241,7 @@ class SpatialCameraControlProfileTest {
         .put("region_contract", "v4")
         .put("center_content", "projection-video-blend")
         .put("center_projection_mix", 0.35)
+        .put("center_corner_radius_uv", 0.12)
 
     val value =
         SpatialCameraControlProfileContract.parse(document.toString().toByteArray()).zoneCompositor
@@ -250,6 +251,7 @@ class SpatialCameraControlProfileTest {
     )
     assertEquals(PrivateLayerZoneCompositorControls.centerContentBlend, value.centerContentMode)
     assertEquals(0.35f, value.centerProjectionMix)
+    assertEquals(0.12f, value.centerCornerRadiusUv)
   }
 
   @Test

@@ -28,6 +28,7 @@ internal data class PrivateLayerZoneCompositor(
         PrivateLayerZoneCompositorControls.regionContractCompositorOwned,
     val centerContentMode: Int = PrivateLayerZoneCompositorControls.centerContentProjection,
     val centerProjectionMix: Float = 1.0f,
+    val centerCornerRadiusUv: Float = 0.08f,
     val bufferGeometryMode: Int = PrivateLayerZoneCompositorControls.bufferGeometryOff,
     val bufferStaticWidthUv: Float = 0.08f,
     val bufferMinimumWidthUv: Float = 0.06f,
@@ -625,6 +626,8 @@ internal object PrivateLayerZoneCompositorModule {
             },
         centerProjectionMix =
             requested.centerProjectionMix.finiteOr(1.0f).coerceIn(0.0f, 1.0f),
+        centerCornerRadiusUv =
+            requested.centerCornerRadiusUv.finiteOr(0.08f).coerceIn(0.0f, 0.49f),
         bufferGeometryMode = bufferGeometryMode,
         bufferStaticWidthUv =
             requested.bufferStaticWidthUv.finiteOr(0.08f).coerceIn(0.0f, 0.2f),
@@ -728,6 +731,7 @@ internal object PrivateLayerZoneCompositorModule {
         "projectionRegionContract=v${value.regionContractVersion} " +
         "projectionZoneCenterContent=${PrivateLayerZoneCompositorControls.centerContentToken(value.centerContentMode)} " +
         "projectionZoneCenterProjectionMix=${value.centerProjectionMix} " +
+        "projectionZoneCenterCornerRadiusUv=${value.centerCornerRadiusUv} " +
         "projectionBufferGeometry=${PrivateLayerZoneCompositorControls.bufferGeometryToken(value.bufferGeometryMode)} " +
         "projectionBufferGuardSizeUv=${value.bufferStaticWidthUv} " +
         "projectionBufferMinimumGuardSizeUv=${value.bufferMinimumWidthUv} " +

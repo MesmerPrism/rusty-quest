@@ -396,6 +396,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
                       configuration.outerProcessedMix,
                       configuration.centerContentMode,
                       configuration.centerProjectionMix,
+                      configuration.centerCornerRadiusUv,
                   )
                   val dynamicsMask = nativeUpdatePrivateLayerZoneChannelDynamics(
                       configuration.innerChannelDynamics.applicationMode,
@@ -4443,6 +4444,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
       outerProcessedMix: Float,
       centerContentMode: Int,
       centerProjectionMix: Float,
+      centerCornerRadiusUv: Float,
   ): Long
 
   private external fun nativeUpdateRgbChannelTransform(

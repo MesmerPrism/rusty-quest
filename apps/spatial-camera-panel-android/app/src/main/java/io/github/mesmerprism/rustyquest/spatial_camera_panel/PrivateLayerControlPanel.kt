@@ -418,6 +418,21 @@ internal fun PrivateLayerControlPanel(
             )
           }
         }
+        DepthSlider(
+            "Corner radius",
+            localZoneCompositor.centerCornerRadiusUv,
+            0.0f..0.49f,
+        ) { value ->
+          PrivateLayerZoneCompositorPanelBridge.submit(
+              localZoneCompositor.copy(centerCornerRadiusUv = value),
+              "private-layer-center-corner-radius",
+          )
+        }
+        Text(
+            "Rounds the center projection boundary before the Center–Middle or Center–Outer transition is applied. Zero keeps square corners.",
+            style = MaterialTheme.typography.bodySmall,
+            color = LayerPanelMuted,
+        )
       }
       if (
           localZoneCompositor.centerContentMode ==

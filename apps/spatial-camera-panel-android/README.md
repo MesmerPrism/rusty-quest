@@ -1125,11 +1125,16 @@ Interaction SDK pointer input without native multimodal extension forcing.
   `nativeImageReader=true`, `javaHardwareBufferBridge=false`,
   `cpuPixelCopy=false`, same-surface composition, and preserved camera
   alignment.
-- Final raw and downstream camera projections use premultiplied-alpha-over
-  blending on top of that same-surface video draw. Both routes apply the same
-  4-percent inner border fade, so the blend region reveals decoded video rather
-  than transparent compositor passthrough. Offscreen guide and blur passes stay
-  opaque. Camera ingress also exposes a low-rate `Linear` versus
+- Legacy v2/v3 raw and downstream camera projections use premultiplied-alpha-over
+  blending on top of that same-surface video draw. The compositor-owned v4 route
+  instead owns the complete Center/Middle/Outer carrier: it emits premultiplied
+  color for PRE_MULTIPLIED, INHERIT, and OPAQUE swapchains, and straight color
+  only for POST_MULTIPLIED when no same-surface fixed-function blend remains.
+  PRE_MULTIPLIED and POST_MULTIPLIED can reveal a transparent system underlay;
+  INHERIT and OPAQUE fail every Center, Middle, and Outer transparency request
+  safely to a readable video underlay rather than suppressing video and writing
+  transparent black. Offscreen guide and blur
+  passes stay opaque. Camera ingress also exposes a low-rate `Linear` versus
   `Thin-line AA` A/B policy; the latter uses a footprint-aware five-tap tent
   sample (0.75-2.0 source texels) before raw display or guide downsampling.
 - `native-receipt/shaders/public_guide_blur.frag.glsl` is the public generic
@@ -1707,8 +1712,9 @@ The existing descriptor-set-3/binding-1 displacement block remains the first
 64 bytes. Uniform ABI v2 appends a 64-byte neutral suffix; existing ABI-v1
 shader payloads can continue reading only the prefix. The region-owned zone
 block is 416 bytes: its original v3 400-byte prefix remains byte-compatible
-and one appended vec4 carries compositor-owned Center content and
-projection/video mix. A v2-consuming build declares
+and one appended vec4 carries compositor-owned Center content,
+projection/video mix, Center-only corner radius, and the effective shader
+output-alpha convention. A v2-consuming build declares
 `-ProjectionSurfaceUniformAbiVersion 2` (or the matching public build
 environment value), and the optional vertex and fragment payloads remain
 responsible for consuming the neutral controls.
@@ -1733,7 +1739,9 @@ Dynamic profiles persist `buffer_minimum_width_uv`,
 projection scale. Center independently selects Projection, Video,
 Projection + Video, or Transparent. v1/v2/v3 profiles migrate
 deterministically into v4 with Center Projection, without changing their
-accepted output.
+accepted output. The Center corner-radius control changes only the
+Center-to-Middle boundary; Middle-to-Outer geometry and legacy attachment
+sampling retain the established fixed radius.
 
 The panel presents Center region, Middle buffer, Outer region, and Transitions
 as top-level pages. Center content uses accurate stage names for camera

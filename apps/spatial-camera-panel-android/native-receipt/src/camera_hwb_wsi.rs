@@ -19,7 +19,8 @@ use crate::camera_hwb_projection_freshness_runtime::{
 };
 use crate::camera_hwb_projection_target::{
     camera_hwb_projection_eye_push, camera_hwb_projection_marker_fields,
-    camera_hwb_projection_zone_frame, CameraHwbProjectionEyePush,
+    camera_hwb_projection_zone_frame, projection_zone_alpha_policy, CameraHwbProjectionEyePush,
+    ProjectionZoneCompositeAlpha,
 };
 use crate::camera_hwb_stream::CameraProbeFrame;
 use crate::camera_hwb_timing::{CameraHwbGpuTimestampStage, CameraHwbGpuTimestampTracker};
@@ -427,6 +428,8 @@ pub(crate) struct ProjectionZoneRenderStats {
     pub(crate) readable_video_consumer_required: bool,
     pub(crate) transparent_underlay_requested: bool,
     pub(crate) transparent_underlay_supported: bool,
+    pub(crate) composite_alpha: &'static str,
+    pub(crate) premultiplied_alpha_output: bool,
     pub(crate) synthetic_displacement_suppressed: bool,
     pub(crate) descriptor_source: &'static str,
 }
@@ -434,7 +437,7 @@ pub(crate) struct ProjectionZoneRenderStats {
 impl ProjectionZoneRenderStats {
     pub(crate) fn marker_fields(self) -> String {
         format!(
-            "projectionZoneRequestedMode={} projectionZonePreparedVideoReady={} projectionZonePublicProjectionReady={} projectionZonePipelineReady={} projectionZoneRendered={} projectionZoneNativeVideoDrawn={} projectionZoneNativeVideoSuppressed={} readableVideoConsumerRequired={} projectionZoneTransparentUnderlayRequested={} projectionZoneTransparentUnderlaySupported={} projectionZoneSyntheticDisplacementSuppressed={} projectionZoneDescriptorSource={}",
+            "projectionZoneRequestedMode={} projectionZonePreparedVideoReady={} projectionZonePublicProjectionReady={} projectionZonePipelineReady={} projectionZoneRendered={} projectionZoneNativeVideoDrawn={} projectionZoneNativeVideoSuppressed={} readableVideoConsumerRequired={} projectionZoneTransparentUnderlayRequested={} projectionZoneTransparentUnderlaySupported={} projectionZoneCompositeAlpha={} projectionZonePremultipliedAlphaOutput={} projectionZoneSyntheticDisplacementSuppressed={} projectionZoneDescriptorSource={}",
             self.requested_mode,
             bool_token(self.prepared_video_ready),
             bool_token(self.public_projection_ready),
@@ -445,6 +448,8 @@ impl ProjectionZoneRenderStats {
             bool_token(self.readable_video_consumer_required),
             bool_token(self.transparent_underlay_requested),
             bool_token(self.transparent_underlay_supported),
+            self.composite_alpha,
+            bool_token(self.premultiplied_alpha_output),
             bool_token(self.synthetic_displacement_suppressed),
             self.descriptor_source,
         )
@@ -899,6 +904,7 @@ pub(crate) unsafe fn record_camera_hwb_probe_command_buffer(
     camera_replay_capture: Option<&mut CameraReplayCaptureRecorder>,
     camera_replay_boottime_ns: u64,
     camera_replay_metadata: CameraReplayFrameMetadata,
+    composite_alpha: vk::CompositeAlphaFlagsKHR,
 ) -> Result<CameraHwbRecordResult, String> {
     device
         .reset_command_buffer(command_buffer, vk::CommandBufferResetFlags::empty())
@@ -938,7 +944,7 @@ pub(crate) unsafe fn record_camera_hwb_probe_command_buffer(
         && latency_settings.isolation_mode == CameraLatencyIsolationMode::FreshFrameOnlyPulse;
     let camera_projection_visible =
         !fresh_frame_only_pulse || transition_left_camera_image || transition_right_camera_image;
-    let projection_zone_frame = camera_hwb_projection_zone_frame(
+    let mut projection_zone_frame = camera_hwb_projection_zone_frame(
         projection_guard_band.footprint_scale,
         projection_guard_band.source_overscan_uv,
         elapsed_seconds,
@@ -947,11 +953,18 @@ pub(crate) unsafe fn record_camera_hwb_probe_command_buffer(
             video_settings.source_rect_for_eye(1),
         ],
     );
+    let projection_zone_alpha_policy = projection_zone_alpha_policy(
+        projection_zone_frame.settings,
+        projection_zone_composite_alpha(composite_alpha),
+    );
+    projection_zone_frame.apply_alpha_policy(
+        projection_zone_alpha_policy.transparent_underlay_supported,
+        projection_zone_alpha_policy.premultiplied_alpha_output,
+    );
     // Import decoded video only while at least one compositor-owned region can contribute it.
     // Transparent regions reveal the always-available system background without a decoder.
-    let readable_video_consumer_required = projection_zone_frame
-        .settings
-        .readable_video_consumer_required();
+    let readable_video_consumer_required =
+        projection_zone_alpha_policy.readable_video_consumer_required;
     let mut video_stats = SpatialVideoProjectionFrameStats::unavailable(
         video_settings,
         if opaque_camera_only {
@@ -1016,6 +1029,9 @@ pub(crate) unsafe fn record_camera_hwb_probe_command_buffer(
                 camera_reprojection,
                 projection_guard_band.source_overscan_uv,
             )?;
+            // Raw Projection deliberately records zero guide draws, but the runtime returns
+            // true here when its direct-camera projection/zone stage is available. Keep this
+            // boolean as stage authorization rather than interpreting it as a draw count.
             let sampling_ready = guide_passes_recorded
                 && targets.prepare_spatial_public_projection_sampling(device, command_buffer);
             if sampling_ready {
@@ -1096,9 +1112,8 @@ pub(crate) unsafe fn record_camera_hwb_probe_command_buffer(
     let mut native_video_drawn = false;
     let mut native_video_suppressed = !readable_video_consumer_required;
     if let Some((renderer, prepared)) = prepared_video.as_ref() {
-        if !projection_zone_frame
-            .settings
-            .suppresses_same_surface_video(projection_zone_ready)
+        if !projection_zone_alpha_policy
+            .suppresses_same_surface_video(projection_zone_frame.settings, projection_zone_ready)
         {
             renderer.record_video_eye(device, command_buffer, extent, 0, video_settings, prepared);
             renderer.record_video_eye(device, command_buffer, extent, 1, video_settings, prepared);
@@ -1210,9 +1225,10 @@ pub(crate) unsafe fn record_camera_hwb_probe_command_buffer(
             transparent_underlay_requested: projection_zone_frame
                 .settings
                 .transparent_underlay_requested(),
-            transparent_underlay_supported: projection_zone_frame
-                .settings
-                .transparent_underlay_supported(),
+            transparent_underlay_supported: projection_zone_alpha_policy
+                .transparent_underlay_supported,
+            composite_alpha: composite_alpha_token(composite_alpha),
+            premultiplied_alpha_output: projection_zone_alpha_policy.premultiplied_alpha_output,
             synthetic_displacement_suppressed: projection_zone_frame
                 .settings
                 .synthetic_diagnostic(),
@@ -1450,8 +1466,8 @@ pub(crate) fn choose_composite_alpha(
 ) -> vk::CompositeAlphaFlagsKHR {
     for candidate in [
         vk::CompositeAlphaFlagsKHR::PRE_MULTIPLIED,
-        vk::CompositeAlphaFlagsKHR::INHERIT,
         vk::CompositeAlphaFlagsKHR::POST_MULTIPLIED,
+        vk::CompositeAlphaFlagsKHR::INHERIT,
         vk::CompositeAlphaFlagsKHR::OPAQUE,
     ] {
         if flags.contains(candidate) {
@@ -1459,6 +1475,32 @@ pub(crate) fn choose_composite_alpha(
         }
     }
     vk::CompositeAlphaFlagsKHR::OPAQUE
+}
+
+pub(crate) fn composite_alpha_token(alpha: vk::CompositeAlphaFlagsKHR) -> &'static str {
+    if alpha == vk::CompositeAlphaFlagsKHR::PRE_MULTIPLIED {
+        "pre-multiplied"
+    } else if alpha == vk::CompositeAlphaFlagsKHR::POST_MULTIPLIED {
+        "post-multiplied"
+    } else if alpha == vk::CompositeAlphaFlagsKHR::INHERIT {
+        "inherit"
+    } else {
+        "opaque"
+    }
+}
+
+fn projection_zone_composite_alpha(
+    alpha: vk::CompositeAlphaFlagsKHR,
+) -> ProjectionZoneCompositeAlpha {
+    if alpha == vk::CompositeAlphaFlagsKHR::PRE_MULTIPLIED {
+        ProjectionZoneCompositeAlpha::PreMultiplied
+    } else if alpha == vk::CompositeAlphaFlagsKHR::POST_MULTIPLIED {
+        ProjectionZoneCompositeAlpha::PostMultiplied
+    } else if alpha == vk::CompositeAlphaFlagsKHR::INHERIT {
+        ProjectionZoneCompositeAlpha::Inherit
+    } else {
+        ProjectionZoneCompositeAlpha::Opaque
+    }
 }
 
 pub(crate) unsafe fn create_image_views(
@@ -1560,6 +1602,12 @@ mod tests {
         assert_eq!(
             choose_composite_alpha(all),
             vk::CompositeAlphaFlagsKHR::PRE_MULTIPLIED
+        );
+        assert_eq!(
+            choose_composite_alpha(
+                vk::CompositeAlphaFlagsKHR::POST_MULTIPLIED | vk::CompositeAlphaFlagsKHR::INHERIT
+            ),
+            vk::CompositeAlphaFlagsKHR::POST_MULTIPLIED
         );
         assert_eq!(
             choose_composite_alpha(
