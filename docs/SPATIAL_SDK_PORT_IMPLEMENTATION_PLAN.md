@@ -328,15 +328,26 @@ Apply that model here when a lane grows beyond a narrow facade method:
   failure marker envelope, private-layer panel layer
   readiness/failure marker envelopes, and private-layer grabbable/sync evidence in
   `SpatialPanelPlacementModule.kt`;
+- keep layer-override requested, pending, submitted, effective, and failed
+  evidence distinct in `PrivateLayerPanelControlModule.kt`. The coordinator may
+  retain a normalized inactive request under a monotonic generation, but it
+  must not call JNI or claim effectiveness until the exact named accepted mask
+  returns. Raw launch applies the newest generation once per native lifecycle
+  before native start, suppresses self-refresh while the carrier is still
+  starting, and cleans up instead of starting when submission throws, the
+  lifecycle is invalidated, or the returned mask is zero, wrong, or ambiguous.
+  Profile hotload remains pending until a concrete lifecycle can produce an
+  exact accepted result; requested state is never serialized as effective;
 - package private-layer control choices, depth alignment clamping, panel-control
   marker fields, and JNI submission result marker fields in
   `PrivateLayerPanelControlModule.kt`;
 - package layer-override, depth-source, and depth-alignment mutable state plus
   guarded native submission sequencing in
-  `SpatialPrivateLayerControlCoordinator.kt`; fail closed before mutation or
-  native submission unless the Activity-supplied camera/video projection route
-  is active, and retain property reads, route state, placement refresh, and JNI
-  declarations in typed Activity bindings;
+  `SpatialPrivateLayerControlCoordinator.kt`; retain an inactive or pre-native
+  layer-override request as requested/pending state without JNI or an effective
+  claim, submit it only when a concrete carrier lifecycle owns the attempt, and
+  retain property reads, route state, placement refresh, and JNI declarations
+  in typed Activity bindings;
 - keep `PrivateLayerControlPanel.kt` as the Compose-only projection of those
   controls;
 - package projection-carrier isolation state, coordinated video/custom

@@ -41,7 +41,10 @@ internal data class SpatialCameraHwbProjectionRawCarrierBindings(
     val startEnvironmentDepth: (String) -> Long,
     val updateNativeStereoOffset: (String, Boolean) -> Unit,
     val updateNativeTargetScale: (String, Boolean) -> Unit,
-    val applyPrivateLayerConfiguration: (String) -> Unit,
+    val applyPrivateLayerOverrideForLaunch:
+        (String, Long) -> PrivateLayerOverrideApplicationResult,
+    val privateLayerOverrideLifecycleCurrent: (Long) -> Boolean,
+    val applyRemainingPrivateLayerConfiguration: (String) -> Unit,
     val configureVideoProjection: (SpatialVideoProjectionSettings, String) -> Unit,
     val startVideoProjection: (SpatialVideoProjectionSettings, String) -> Unit,
     val updateNativeLayerFence: (Long, Long, Long, Int) -> Long,
@@ -49,6 +52,121 @@ internal data class SpatialCameraHwbProjectionRawCarrierBindings(
     val updateFromViewer: (String, Boolean) -> Unit,
     val marker: (String) -> Unit,
 )
+
+internal data class SpatialCameraHwbProjectionRawStartSequenceBindings(
+    val startNativePassthrough: () -> Long,
+    val updateNativeStereoOffset: () -> Unit,
+    val updateNativeTargetScale: () -> Unit,
+    val applyPrivateLayerOverride: () -> PrivateLayerOverrideApplicationResult,
+    val applyRemainingPrivateLayerConfiguration: () -> Unit,
+    val startEnvironmentDepth: () -> Long,
+    val configureVideoProjection: () -> Unit,
+    val startVideoProjection: (() -> Unit)?,
+    val privateLayerOverrideLifecycleCurrent: () -> Boolean,
+    val startNative: () -> Long,
+    val cleanup: (String) -> String,
+)
+
+internal data class SpatialCameraHwbProjectionRawStartSequenceResult(
+    val admitted: Boolean,
+    val cleanupStatus: String?,
+    val privateLayerApplication: PrivateLayerOverrideApplicationResult?,
+    val nativePassthroughStartMask: Long,
+    val nativeEnvironmentDepthStartMask: Long,
+    val startMask: Long?,
+    val error: String?,
+    val message: String?,
+)
+
+internal object SpatialCameraHwbProjectionRawStartSequence {
+  fun execute(
+      bindings: SpatialCameraHwbProjectionRawStartSequenceBindings,
+  ): SpatialCameraHwbProjectionRawStartSequenceResult {
+    var privateLayerApplication: PrivateLayerOverrideApplicationResult? = null
+    var nativePassthroughStartMask = 0L
+    var nativeEnvironmentDepthStartMask = 0L
+    return try {
+      nativePassthroughStartMask = bindings.startNativePassthrough()
+      bindings.updateNativeStereoOffset()
+      bindings.updateNativeTargetScale()
+      privateLayerApplication = bindings.applyPrivateLayerOverride()
+      if (privateLayerApplication?.readyForNativeStart != true) {
+        return rejected(
+            bindings = bindings,
+            cleanupReason = "camera-hwb-projection-layer-override-not-effective",
+            privateLayerApplication = privateLayerApplication,
+            nativePassthroughStartMask = nativePassthroughStartMask,
+            nativeEnvironmentDepthStartMask = nativeEnvironmentDepthStartMask,
+            error = "PrivateLayerOverrideNotEffective",
+            message = privateLayerApplication?.failureReason ?: "unknown",
+        )
+      }
+      bindings.applyRemainingPrivateLayerConfiguration()
+      nativeEnvironmentDepthStartMask = bindings.startEnvironmentDepth()
+      bindings.configureVideoProjection()
+      bindings.startVideoProjection?.invoke()
+      if (!bindings.privateLayerOverrideLifecycleCurrent()) {
+        return rejected(
+            bindings = bindings,
+            cleanupReason = "camera-hwb-projection-layer-override-lifecycle-invalidated",
+            privateLayerApplication = privateLayerApplication,
+            nativePassthroughStartMask = nativePassthroughStartMask,
+            nativeEnvironmentDepthStartMask = nativeEnvironmentDepthStartMask,
+            error = "PrivateLayerOverrideLifecycleInvalidated",
+            message = "native-lifecycle-invalidated-before-start",
+        )
+      }
+      val startMask = bindings.startNative()
+      SpatialCameraHwbProjectionRawStartSequenceResult(
+          admitted = true,
+          cleanupStatus = null,
+          privateLayerApplication = privateLayerApplication,
+          nativePassthroughStartMask = nativePassthroughStartMask,
+          nativeEnvironmentDepthStartMask = nativeEnvironmentDepthStartMask,
+          startMask = startMask,
+          error = null,
+          message = null,
+      )
+    } catch (throwable: Throwable) {
+      rejected(
+          bindings = bindings,
+          cleanupReason = "camera-hwb-projection-pre-start-failed",
+          privateLayerApplication = privateLayerApplication,
+          nativePassthroughStartMask = nativePassthroughStartMask,
+          nativeEnvironmentDepthStartMask = nativeEnvironmentDepthStartMask,
+          error = throwable.javaClass.simpleName,
+          message = throwable.message ?: "none",
+      )
+    }
+  }
+
+  private fun rejected(
+      bindings: SpatialCameraHwbProjectionRawStartSequenceBindings,
+      cleanupReason: String,
+      privateLayerApplication: PrivateLayerOverrideApplicationResult?,
+      nativePassthroughStartMask: Long,
+      nativeEnvironmentDepthStartMask: Long,
+      error: String,
+      message: String,
+  ): SpatialCameraHwbProjectionRawStartSequenceResult {
+    val cleanupStatus =
+        try {
+          bindings.cleanup(cleanupReason)
+        } catch (cleanupThrowable: Throwable) {
+          "cleanup-failed-${cleanupThrowable.javaClass.simpleName}"
+        }
+    return SpatialCameraHwbProjectionRawStartSequenceResult(
+        admitted = false,
+        cleanupStatus = cleanupStatus,
+        privateLayerApplication = privateLayerApplication,
+        nativePassthroughStartMask = nativePassthroughStartMask,
+        nativeEnvironmentDepthStartMask = nativeEnvironmentDepthStartMask,
+        startMask = null,
+        error = error,
+        message = message,
+    )
+  }
+}
 
 internal class SpatialCameraHwbProjectionRawCarrierCoordinator(
     private val bindings: SpatialCameraHwbProjectionRawCarrierBindings,
@@ -155,48 +273,71 @@ internal class SpatialCameraHwbProjectionRawCarrierCoordinator(
     }
 
     val reason = "raw-projection-start"
-    val nativePassthroughStartMask = bindings.startNativePassthrough(reason)
+    val startSequence =
+        SpatialCameraHwbProjectionRawStartSequence.execute(
+            SpatialCameraHwbProjectionRawStartSequenceBindings(
+                startNativePassthrough = { bindings.startNativePassthrough(reason) },
+                updateNativeStereoOffset = { bindings.updateNativeStereoOffset(reason, true) },
+                updateNativeTargetScale = { bindings.updateNativeTargetScale(reason, true) },
+                applyPrivateLayerOverride = {
+                  bindings.applyPrivateLayerOverrideForLaunch(
+                      reason,
+                      launchFence.launchChallenge,
+                  )
+                },
+                applyRemainingPrivateLayerConfiguration = {
+                  bindings.applyRemainingPrivateLayerConfiguration(reason)
+                },
+                startEnvironmentDepth = { bindings.startEnvironmentDepth(reason) },
+                configureVideoProjection = {
+                  bindings.configureVideoProjection(videoSettings, reason)
+                },
+                startVideoProjection =
+                    if (videoSettings.active) {
+                      { bindings.startVideoProjection(videoSettings, reason) }
+                    } else {
+                      null
+                    },
+                privateLayerOverrideLifecycleCurrent = {
+                  bindings.privateLayerOverrideLifecycleCurrent(launchFence.launchChallenge)
+                },
+                startNative = {
+                  bindings.startNative(
+                      renderSurface,
+                      CAMERA_HWB_PROJECTION_WIDTH_PX,
+                      CAMERA_HWB_PROJECTION_HEIGHT_PX,
+                      CAMERA_HWB_PROJECTION_FRAME_COUNT_UNBOUNDED,
+                      readerMaxImages,
+                      launchFence.launchChallenge,
+                      launchFence.layerGeneration,
+                      launchFence.layerSwitchCount,
+                      launchFence.layerState.code,
+                  )
+                },
+                cleanup = bindings.cleanup,
+            )
+        )
+    if (!startSequence.admitted) {
+      bindings.marker(
+          CameraHwbProjectionModule.rawProjectionCompleteAfterCleanupMarker(
+              surfaceValid = surfaceValid,
+              sceneQuadLayerCreated = true,
+              cleanupStatus = startSequence.cleanupStatus ?: "cleanup-status-unavailable",
+              error = startSequence.error ?: "RawPreStartRejected",
+              message = startSequence.message ?: "unknown",
+          )
+      )
+      return
+    }
+    val nativePassthroughStartMask = startSequence.nativePassthroughStartMask
     val nativePassthroughLayerActive =
         SpatialOpenXrRouteModule.nativePassthroughLayerActive(nativePassthroughStartMask)
-    bindings.updateNativeStereoOffset(reason, true)
-    bindings.updateNativeTargetScale(reason, true)
-    bindings.applyPrivateLayerConfiguration(reason)
-    val nativeEnvironmentDepthStartMask = bindings.startEnvironmentDepth(reason)
+    val nativeEnvironmentDepthStartMask = startSequence.nativeEnvironmentDepthStartMask
     val nativeEnvironmentDepthProviderBound =
         SpatialOpenXrRouteModule.spatialEnvironmentDepthProviderStarted(
             nativeEnvironmentDepthStartMask
         )
-    bindings.configureVideoProjection(videoSettings, reason)
-    if (videoSettings.active) {
-      bindings.startVideoProjection(videoSettings, reason)
-    }
-    val startMask =
-        runCatching {
-              bindings.startNative(
-                  renderSurface,
-                  CAMERA_HWB_PROJECTION_WIDTH_PX,
-                  CAMERA_HWB_PROJECTION_HEIGHT_PX,
-                  CAMERA_HWB_PROJECTION_FRAME_COUNT_UNBOUNDED,
-                  readerMaxImages,
-                  launchFence.launchChallenge,
-                  launchFence.layerGeneration,
-                  launchFence.layerSwitchCount,
-                  launchFence.layerState.code,
-              )
-            }
-            .getOrElse { throwable ->
-              val cleanupStatus = bindings.cleanup("camera-hwb-projection-start-failed")
-              bindings.marker(
-                  CameraHwbProjectionModule.rawProjectionCompleteAfterCleanupMarker(
-                      surfaceValid = surfaceValid,
-                      sceneQuadLayerCreated = true,
-                      cleanupStatus = cleanupStatus,
-                      error = throwable.javaClass.simpleName,
-                      message = throwable.message ?: "none",
-                  )
-              )
-              return
-            }
+    val startMask = requireNotNull(startSequence.startMask)
     bindings.marker(
         CameraHwbProjectionModule.rawProjectionNativeStartRequestedMarker(
             surfaceValid = surfaceValid,

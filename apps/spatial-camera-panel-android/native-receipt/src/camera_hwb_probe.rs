@@ -14,6 +14,8 @@ use crate::ahardware_buffer_vulkan::{
     import_ahb_sampled_image, query_ahb_vulkan_import_properties, AhbVulkanSampledImageCreateInfo,
 };
 use crate::camera_hwb_marker::log_camera_hwb_marker as log_marker;
+#[cfg(rq_environment_depth_spatial_sdk_api_layer)]
+use crate::camera_hwb_projection_freshness_runtime::record_vulkan_wsi_present_returned;
 use crate::camera_hwb_projection_target::{
     camera_hwb_projection_marker_fields, current_projection_zone_compositor_settings,
     update_camera_hwb_projection_stereo_horizontal_offset_uv,
@@ -1722,11 +1724,13 @@ unsafe fn render_camera_hwb_probe(
         #[cfg(rq_environment_depth_spatial_sdk_api_layer)]
         if let Some(completed_retirement) = submitted_retirement.take() {
             submitted_broker_failure_observed_at = None;
+            let request_ordinal = completed_retirement.request_id & u64::from(u32::MAX);
             let release_status = submitted_depth_lease
                 .take()
                 .map(crate::spatial_sdk_depth_handoff::release_spatial_depth_render_lease)
                 .unwrap_or(0);
             submit_retired_total = submit_retired_total.saturating_add(1);
+            let _ = record_vulkan_wsi_present_returned(request_ordinal);
             if let Some((video_stats, present_ordinal)) = submitted_video_qualification.take() {
                 record_presented_frame(
                     video_stats.ready,
@@ -1736,7 +1740,6 @@ unsafe fn render_camera_hwb_probe(
                     present_ordinal,
                 );
             }
-            let request_ordinal = completed_retirement.request_id & u64::from(u32::MAX);
             if request_ordinal <= 4
                 || request_ordinal % 300 == 0
                 || release_status != 0

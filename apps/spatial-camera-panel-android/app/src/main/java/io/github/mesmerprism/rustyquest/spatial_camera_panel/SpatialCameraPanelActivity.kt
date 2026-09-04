@@ -494,8 +494,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
         SpatialCameraControlProfileHotloader(
             context = this,
             routeActive = {
-              cameraHwbProjectionLaunchCoordinator.started ||
-                  spatialVideoProjectionRuntimeCoordinator.started
+              privateLayerControlCoordinator.layerOverrideNativeLifecycleReady()
             },
             applyProfile = ::applyControlProfile,
             marker = ::marker,
@@ -1517,8 +1516,12 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             updateNativeTargetScale = { reason, forceLog ->
               cameraHwbProjectionTuningCoordinator.updateNativeTargetScale(reason, forceLog)
             },
-            applyPrivateLayerConfiguration =
-                privateLayerControlCoordinator::applyCurrentConfiguration,
+            applyPrivateLayerOverrideForLaunch =
+                privateLayerControlCoordinator::applyPendingLayerOverrideForRawLaunch,
+            privateLayerOverrideLifecycleCurrent =
+                privateLayerControlCoordinator::layerOverrideNativeLifecycleCurrent,
+            applyRemainingPrivateLayerConfiguration =
+                privateLayerControlCoordinator::applyRemainingConfiguration,
             configureVideoProjection = spatialVideoProjectionRuntimeCoordinator::configure,
             startVideoProjection = ::startCustomVideoProjectionWithDecoderOwnership,
             updateNativeLayerFence = ::nativeUpdateCameraHwbProjectionLayerFence,
@@ -2797,8 +2800,12 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
       profile: SpatialCameraControlProfile,
       source: String,
   ): SpatialCameraControlProfileEffective {
-    val effectiveLayer =
-        privateLayerControlCoordinator.updateLayerOverride(profile.layerOverride, source)
+    val layerApplication =
+        privateLayerControlCoordinator.updateLayerOverrideWithResult(profile.layerOverride, source)
+    check(layerApplication.effective) {
+      "layer-override-${layerApplication.status}-generation-${layerApplication.requestGeneration}"
+    }
+    val effectiveLayer = layerApplication.effectiveOverride
     val effectiveScale =
         cameraHwbProjectionTuningCoordinator.updateTargetScaleFromPanel(
             profile.projectionScale,
@@ -3199,6 +3206,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
       readerMaxImages: Int,
       videoSettings: SpatialVideoProjectionSettings,
   ) {
+    privateLayerControlCoordinator.clearNativeLayerOverrideLifecycle()
     cameraLatencyDiagnosticModule.poll("camera-hwb-projection-pre-run", force = true)
     if (nativeInteropCoordinator.receiptLibraryLoaded) {
       val openXrProbe = SpatialNativeInteropProbe.capture(scene)
@@ -3242,9 +3250,17 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     setPrivateLayerPanelVisible(false, focus = false, source = "camera-hwb-projection-probe")
     if (cameraHwbProjectionCarrierStateCoordinator.scenePanelCarrierEnabled()) {
       cameraHwbProjectionPanelCarrierCoordinator.run(readerMaxImages, videoSettings)
+      pollPendingControlProfileAfterProjectionStart()
       return
     }
     cameraHwbProjectionRawCarrierCoordinator.run(readerMaxImages, videoSettings)
+    pollPendingControlProfileAfterProjectionStart()
+  }
+
+  private fun pollPendingControlProfileAfterProjectionStart() {
+    if (controlProfileHotloaderStarted) {
+      controlProfileHotloader.poll(force = true)
+    }
   }
 
   private fun currentCameraHwbProjectionLaunchRequest(
@@ -3262,6 +3278,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
       )
 
   private fun stopCameraHwbProjectionPanel(reason: String): SpatialProjectionPanelStopReceipt {
+    privateLayerControlCoordinator.clearNativeLayerOverrideLifecycle()
     val scenePanelCarrier = cameraHwbProjectionCarrierStateCoordinator.scenePanelCarrierEnabled()
     val panelCleanupStatus =
         if (scenePanelCarrier) {
@@ -3298,6 +3315,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
   }
 
   private fun cleanupSdkQuadSurfaceProbe(reason: String): String {
+    privateLayerControlCoordinator.clearNativeLayerOverrideLifecycle()
     spatialVideoProjectionRuntimeCoordinator.stop("sdk-quad-surface-$reason")
     cameraHwbProjectionDepthPrerequisiteCoordinator.stop()
     cameraHwbProjectionRawCarrierCoordinator.recordLayerRemoved(reason)

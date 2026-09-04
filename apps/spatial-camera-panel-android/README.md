@@ -775,9 +775,22 @@ Interaction SDK pointer input without native multimodal extension forcing.
   JNI, or decide feature opt-in.
 - `app/src/main/.../SpatialPrivateLayerControlCoordinator.kt` is the single
   mutable owner for layer override, depth-source policy, and depth alignment.
-  It fails closed before state mutation or native submission unless the
-  Activity-supplied camera/video projection route is active. The Activity
-  retains property reads, exact route state, placement refresh, and JNI
+  An inactive layer-override request is normalized and retained with a
+  monotonic generation but performs no JNI submission and makes no effective
+  claim. Even if the launch route becomes active before its Handler callback,
+  the request remains pending until the positive Raw launch challenge owns its
+  first submission. The newest request is submitted exactly once per native
+  lifecycle before Raw native start; only the exact named accepted mask advances the
+  effective value and clears that still-current generation. Failure retains
+  the pending request and aborts the Raw launch before native start. The panel
+  carrier retains the full configuration path, while Raw calls a distinct
+  remaining-configuration path after its explicit override gate. Pre-start
+  application never requests a carrier refresh, and an invalidated lifecycle
+  cannot resume its old drain or native start. Control-profile hotload remains
+  pending until this concrete lifecycle exists and reports applied/effective
+  only after exact-mask acceptance. Other
+  inactive controls still fail closed before state mutation or submission. The
+  Activity retains property reads, exact route state, placement refresh, and JNI
   declarations through typed bindings; the coordinator cannot activate a route.
 - `app/src/main/.../PrivateLayerControlPanel.kt` owns only the Compose
   projection of those controls and forwards requests to Activity-owned routes.

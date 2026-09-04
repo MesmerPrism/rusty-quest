@@ -204,6 +204,11 @@ internal object PrivateLayerControls {
 }
 
 internal object PrivateLayerPanelControlModule {
+  const val LAYER_OVERRIDE_ACCEPTED_MASK: Long = 1L
+
+  fun layerOverrideMaskAccepted(updateMask: Long): Boolean =
+      updateMask == LAYER_OVERRIDE_ACCEPTED_MASK
+
   fun normalizeLayerOverride(requestedLayerOverride: Float): Float =
       if (requestedLayerOverride < 0.0f) {
         PrivateLayerControls.cycleOverride
@@ -240,55 +245,79 @@ internal object PrivateLayerPanelControlModule {
           metadataAutoAlign = requestedAlignment.metadataAutoAlign,
       )
 
-  fun layerButtonSelectedMarker(
+  fun layerOverrideRequestedMarker(
       source: String,
       requestedLayerOverride: Float,
-      previousOverride: Float,
-      updatedOverride: Float,
+      previousRequestedOverride: Float,
+      normalizedRequestedOverride: Float,
+      requestGeneration: Long,
       placementMode: CameraHwbProjectionPlacementMode,
   ): String =
-      "channel=private-layer-panel status=layer-button-selected " +
+      "channel=private-layer-panel status=layer-override-requested " +
           "source=${activityMarkerToken(source)} spatialPrivateLayerControlPanel=true " +
           "privateLayerPanelInputButtons=trigger-l+trigger-r " +
           "privateLayerPanelRightPrimarySelectEnabled=false " +
           "privateLayerPanelTriggerSelectEnabled=true " +
+          "layerOverrideRequestGeneration=$requestGeneration " +
           "requestedPublicMultiStackOpaqueProjectionLayerOverride=${activityMarkerFloat(requestedLayerOverride)} " +
-          "previousPublicMultiStackOpaqueProjectionLayerOverride=${activityMarkerFloat(previousOverride)} " +
-          "publicMultiStackOpaqueProjectionLayerOverride=${activityMarkerFloat(updatedOverride)} " +
-          "publicMultiStackOpaqueProjectionLayerLabel=${activityMarkerToken(PrivateLayerControls.labelForOverride(updatedOverride))} " +
+          "previousRequestedPublicMultiStackOpaqueProjectionLayerOverride=${activityMarkerFloat(previousRequestedOverride)} " +
+          "normalizedRequestedPublicMultiStackOpaqueProjectionLayerOverride=${activityMarkerFloat(normalizedRequestedOverride)} " +
+          "requestedPublicMultiStackOpaqueProjectionLayerLabel=${activityMarkerToken(PrivateLayerControls.labelForOverride(normalizedRequestedOverride))} " +
           "projectionPlacementMode=${placementMode.markerToken} " +
           "layerOverrideAppliesToWallAndFullFov=true " +
           "cameraProjectionPlacementIndependentLayerControl=true " +
           "runtimeCrash=false"
 
+  fun layerOverridePendingMarker(
+      source: String,
+      requestedOverride: Float,
+      requestGeneration: Long,
+      pendingReason: String,
+  ): String =
+      "channel=private-layer-panel status=layer-override-pending " +
+          "source=${activityMarkerToken(source)} spatialPrivateLayerControlPanel=true " +
+          "layerOverrideRequestGeneration=$requestGeneration " +
+          "requestedPublicMultiStackOpaqueProjectionLayerOverride=${activityMarkerFloat(requestedOverride)} " +
+          "nativeSubmissionAttempted=false layerOverrideAccepted=false " +
+          "pendingRequestPresent=true pendingReason=${activityMarkerToken(pendingReason)} " +
+          "runtimeCrash=false"
+
   fun layerOverrideUpdateFailedMarker(
       source: String,
       requestedLayerOverride: Float,
-      updatedOverride: Float,
+      requestGeneration: Long,
+      nativeLifecycleGeneration: Long,
+      updateMask: Long?,
+      pendingRequestPreserved: Boolean,
       error: String,
       message: String,
   ): String =
       "channel=private-layer-panel status=layer-override-update-failed " +
           "source=${activityMarkerToken(source)} spatialPrivateLayerControlPanel=true " +
+          "layerOverrideRequestGeneration=$requestGeneration " +
+          "nativeLifecycleGeneration=$nativeLifecycleGeneration " +
           "requestedPublicMultiStackOpaqueProjectionLayerOverride=${activityMarkerFloat(requestedLayerOverride)} " +
-          "publicMultiStackOpaqueProjectionLayerOverride=${activityMarkerFloat(updatedOverride)} " +
+          "updateMask=${updateMask?.toString() ?: "unavailable"} " +
+          "layerOverrideAccepted=false pendingRequestPreserved=$pendingRequestPreserved " +
           "error=${activityMarkerToken(error)} " +
           "message=${activityMarkerToken(message)} runtimeCrash=false"
 
   fun layerOverrideSubmittedMarker(
       source: String,
       updateMask: Long,
-      previousOverride: Float,
-      updatedOverride: Float,
+      requestGeneration: Long,
+      nativeLifecycleGeneration: Long,
+      requestedOverride: Float,
       placementMode: CameraHwbProjectionPlacementMode,
       projectionTargetScale: Float,
   ): String =
       "channel=private-layer-panel status=layer-override-submitted " +
           "source=${activityMarkerToken(source)} spatialPrivateLayerControlPanel=true " +
           "transport=jni-live-queue publicMultiStackLayerControl=true updateMask=$updateMask " +
-          "previousPublicMultiStackOpaqueProjectionLayerOverride=${activityMarkerFloat(previousOverride)} " +
-          "publicMultiStackOpaqueProjectionLayerOverride=${activityMarkerFloat(updatedOverride)} " +
-          "publicMultiStackOpaqueProjectionLayerLabel=${activityMarkerToken(PrivateLayerControls.labelForOverride(updatedOverride))} " +
+          "acceptedMask=$LAYER_OVERRIDE_ACCEPTED_MASK " +
+          "layerOverrideRequestGeneration=$requestGeneration " +
+          "nativeLifecycleGeneration=$nativeLifecycleGeneration " +
+          "requestedPublicMultiStackOpaqueProjectionLayerOverride=${activityMarkerFloat(requestedOverride)} " +
           "projectionPlacementMode=${placementMode.markerToken} " +
           "layerOverrideAppliesToWallAndFullFov=true " +
           "cameraProjectionPlacementIndependentLayerControl=true " +
@@ -296,6 +325,24 @@ internal object PrivateLayerPanelControlModule {
           "projectionTargetLiveScale=${activityMarkerFloat(projectionTargetScale)} " +
           "layerOverrideForcedProjectionRefresh=true " +
           "panelRenderOrder=spatial-sdk-quad-layer-z-index runtimeCrash=false"
+
+  fun layerOverrideEffectiveMarker(
+      source: String,
+      requestGeneration: Long,
+      nativeLifecycleGeneration: Long,
+      previousEffectiveOverride: Float,
+      effectiveOverride: Float,
+      pendingRequestCleared: Boolean,
+  ): String =
+      "channel=private-layer-panel status=layer-override-effective " +
+          "source=${activityMarkerToken(source)} spatialPrivateLayerControlPanel=true " +
+          "layerOverrideRequestGeneration=$requestGeneration " +
+          "nativeLifecycleGeneration=$nativeLifecycleGeneration " +
+          "layerOverrideAccepted=true pendingRequestCleared=$pendingRequestCleared " +
+          "previousEffectivePublicMultiStackOpaqueProjectionLayerOverride=${activityMarkerFloat(previousEffectiveOverride)} " +
+          "effectivePublicMultiStackOpaqueProjectionLayerOverride=${activityMarkerFloat(effectiveOverride)} " +
+          "effectivePublicMultiStackOpaqueProjectionLayerLabel=${activityMarkerToken(PrivateLayerControls.labelForOverride(effectiveOverride))} " +
+          "runtimeCrash=false"
 
   fun metaPassthroughEdgeWindowSubmittedMarker(
       source: String,
