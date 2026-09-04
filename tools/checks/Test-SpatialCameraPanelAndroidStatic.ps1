@@ -3101,7 +3101,8 @@ Assert-Contains "Public multi-stack" $publicMultiStack "publicMultiStackDownstre
 Assert-Contains "Public multi-stack" $publicMultiStack 'private const val LAYER_COUNT = 9'
 Assert-Contains "Public multi-stack" $publicMultiStack "7:meta-passthrough-edge-window"
 Assert-Contains "Public multi-stack" $publicMultiStack "8:raw-custom-projection"
-Assert-Contains "Public multi-stack" $publicMultiStack "rawCustomProjectionSource=camera2-hwb-direct-sample"
+Assert-Contains "Public multi-stack" $publicMultiStack "rawCustomProjectionRequestedSource=private-guide-pass0-prewarped-camera-color"
+Assert-NotContains "Public multi-stack" $publicMultiStack "rawCustomProjectionSource=camera2-hwb-direct-sample"
 Assert-Contains "Public multi-stack" $publicMultiStack "metaPassthroughEdgeWindowDefaultActive=false"
 Assert-NotContains "Activity" $activity "channel=experiment-panel status=panel-first-launch-reset"
 Assert-NotContains "Activity" $activity "channel=experiment-panel status=panel-first-flow-ready"
@@ -3243,6 +3244,24 @@ Assert-Contains "Camera HWB projection raw carrier coordinator" $cameraHwbProjec
 Assert-NotContains "Camera HWB projection raw carrier coordinator" $cameraHwbProjectionRawCarrierCoordinator "BlendFactor.SOURCE_ALPHA"
 Assert-Contains "Camera HWB projection module" $cameraProjectionModule "projectionPanelAlphaBlendEnabled=true"
 Assert-Contains "Camera HWB projection module" $cameraProjectionModule "projectionPanelAlphaBlend=premultiplied-one-over-one-minus-source-alpha"
+Assert-Contains "Camera HWB projection module" $cameraProjectionModule "projectionCarrierAlphaRequested=pre-multiplied"
+Assert-Contains "Camera HWB projection module" $cameraProjectionModule "projectionCarrierLayerBlendAppApplied=true"
+Assert-Contains "Camera HWB projection module" $cameraProjectionModule "projectionCarrierRuntimeBlendObserved=false"
+Assert-Contains "Camera HWB projection module" $cameraProjectionModule "projectionCarrierRuntimeAlphaEffective=unobserved"
+Assert-Contains "Camera HWB projection module" $cameraProjectionModule "projectionCarrierAlphaRequested=straight"
+Assert-Contains "Camera HWB projection module" $cameraProjectionModule "projectionCarrierLayerBlendConfigured=source-alpha-destination-one-minus-source-alpha"
+$panelCarrierNativeStartMarker = [regex]::Match(
+    $cameraProjectionModule,
+    '(?s)fun panelCarrierNativeStartRequestedMarker\(.*?(?=\r?\n\s*fun scenePanelCarrierDestroyedMarker\()'
+).Value
+if ([string]::IsNullOrWhiteSpace($panelCarrierNativeStartMarker)) {
+    throw "Camera HWB projection module must expose the native panel-carrier start marker body."
+}
+Assert-Contains "Camera HWB native panel-carrier start marker" $panelCarrierNativeStartMarker "projectionCarrierAlphaRequested=straight"
+Assert-Contains "Camera HWB native panel-carrier start marker" $panelCarrierNativeStartMarker "projectionCarrierLayerBlendConfigured=source-alpha-destination-one-minus-source-alpha"
+Assert-Contains "Camera HWB native panel-carrier start marker" $panelCarrierNativeStartMarker "projectionCarrierLayerBlendApplication=see-panelLayerUpdateStatus"
+Assert-Contains "Camera HWB native panel-carrier start marker" $panelCarrierNativeStartMarker "projectionCarrierRuntimeBlendObserved=false"
+Assert-Contains "Camera HWB native panel-carrier start marker" $panelCarrierNativeStartMarker "projectionCarrierRuntimeAlphaEffective=unobserved"
 Assert-Contains "Camera HWB projection panel carrier coordinator" $cameraHwbProjectionPanelCarrierCoordinator "LayerAlphaBlend("
 Assert-Contains "Activity" $activity "nativeResolveSurfaceParticleAliasParameter"
 Assert-Contains "Spatial validation workflow coordinator" $validationWorkflowCoordinator '"particle-alias-control"'
@@ -3873,6 +3892,8 @@ Assert-Contains "Native public multi-stack" $nativeMultiStack 'rusty.quest.spati
 Assert-Contains "Native public multi-stack" $nativeMultiStack "publicMultiStackLayerCount=9"
 Assert-Contains "Native public multi-stack" $nativeMultiStack "7:meta-passthrough-edge-window"
 Assert-Contains "Native public multi-stack" $nativeMultiStack "8:raw-custom-projection"
+Assert-Contains "Native public multi-stack" $nativeMultiStack "rawCustomProjectionRequestedSource=private-guide-pass0-prewarped-camera-color"
+Assert-NotContains "Native public multi-stack" $nativeMultiStack "rawCustomProjectionSource=camera2-hwb-direct-sample"
 Assert-Contains "Native public multi-stack runtime" $nativeMultiStackRuntime "spatial_public_raw_custom_projection_selected"
 Assert-Contains "Native public multi-stack runtime" $nativeMultiStackRuntime "rawCustomProjectionSelected="
 Assert-NotContains "Native camera HWB WSI" $cameraWsi "raw_custom_projection_selected"
@@ -4120,8 +4141,8 @@ Assert-Contains "Camera HWB WSI" $cameraWsi "record_camera_hwb_probe_command_buf
 Assert-Contains "Camera HWB WSI" $cameraWsi "select_camera_surface_device"
 Assert-Contains "Camera HWB WSI" $cameraWsi "public_multistack_marker_fields"
 Assert-Contains "Camera HWB WSI" $cameraWsi "record_spatial_public_guide_passes"
-Assert-Contains "Camera HWB WSI" $cameraWsi "let guide_passes_recorded = targets.record_spatial_public_guide_passes("
-Assert-Contains "Camera HWB WSI" $cameraWsi "let sampling_ready = guide_passes_recorded"
+Assert-Contains "Camera HWB WSI" $cameraWsi "guide_record = targets.record_spatial_public_guide_passes("
+Assert-Contains "Camera HWB WSI" $cameraWsi "let sampling_ready = guide_record.complete()"
 Assert-Contains "Camera HWB WSI" $cameraWsi "&& targets.prepare_spatial_public_projection_sampling(device, command_buffer);"
 Assert-Contains "Camera HWB WSI" $cameraWsi "record_spatial_public_projection"
 Assert-Contains "Camera HWB WSI" $cameraWsi "SpatialVideoProjectionRenderer"
@@ -4785,6 +4806,11 @@ Assert-Contains "Camera projection smoke wrapper" $cameraProjectionSmoke "camera
 Assert-Contains "Camera projection smoke wrapper" $cameraProjectionSmoke "spatial_video_projection_no_cpu_copy"
 Assert-Contains "Camera projection smoke wrapper" $cameraProjectionSmoke "nativeImageReader=true javaHardwareBufferBridge=false cpuPixelCopy=false"
 Assert-Contains "Camera projection smoke wrapper" $cameraProjectionSmoke "public_multistack_projection_applied"
+Assert-Contains "Camera projection smoke wrapper" $cameraProjectionSmoke "rawCustomProjectionGuidePassesRecorded=1"
+Assert-Contains "Camera projection smoke wrapper" $cameraProjectionSmoke "rawCustomProjectionLayerOverride=8\.000"
+Assert-Contains "Camera projection smoke wrapper" $cameraProjectionSmoke "rawCustomProjectionGuideRecordStatus=recorded"
+Assert-Contains "Camera projection smoke wrapper" $cameraProjectionSmoke "rawCustomProjectionDownstreamEffectPassesRecorded=0"
+Assert-NotContains "Camera projection smoke wrapper" $cameraProjectionSmoke "cameraPresentationReprojectionGuidePushProvided=true"
 Assert-Contains "Camera projection smoke wrapper" $cameraProjectionSmoke "public_multistack_layer_cycle_enabled"
 Assert-Contains "Camera projection smoke wrapper" $cameraProjectionSmoke "public_multistack_depth_layer_policy_marker"
 Assert-Contains "Camera projection smoke wrapper" $cameraProjectionSmoke "public_multistack_depth_layer_compare_visual_shader"
@@ -4921,7 +4947,7 @@ Assert-Contains "Private layer panel" $privateLayerPanel "ProjectionSurfaceDispl
 Assert-Contains "Camera projection target" $cameraProjectionTarget "transparent_underlay_requested"
 Assert-Contains "Camera projection target" $cameraProjectionTarget "transparent_underlay_supported"
 Assert-Contains "Camera projection target" $cameraProjectionTarget "settings.outer_target_mode as f32"
-Assert-Contains "Native public multi-stack runtime" $nativeMultiStackRuntime "!zone_frame.settings.synthetic_diagnostic()"
+Assert-Contains "Native public multi-stack runtime" $nativeMultiStackRuntime "zone_frame.settings.synthetic_diagnostic(),"
 Assert-Contains "Camera WSI" $cameraWsi "transparent-underlay-fallback-unused"
 Assert-Contains "Camera WSI" $cameraWsi "vk::CompositeAlphaFlagsKHR::PRE_MULTIPLIED"
 Assert-Contains "Spatial validation workflow coordinator" $validationWorkflowCoordinator '"private-layer-zone-off" ->'

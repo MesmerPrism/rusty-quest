@@ -680,21 +680,23 @@ impl SpatialPublicGuideTargets {
         projected_by_public_stack: bool,
         elapsed_seconds: f32,
         footprint_scale: f32,
+        frame_layer_override: f32,
     ) -> String {
         let left_projection_rect = packed_projection_target_rect(0, footprint_scale);
         let right_projection_rect = packed_projection_target_rect(1, footprint_scale);
-        let layer_override = opaque_projection_layer_override();
-        let edge_window_selected = spatial_public_meta_passthrough_edge_window_selected();
-        let raw_custom_projection_selected = spatial_public_raw_custom_projection_selected();
+        let layer_override = frame_layer_override;
+        let edge_window_selected = is_meta_passthrough_edge_window_layer(layer_override);
+        let raw_custom_projection_selected = is_raw_custom_projection_layer(layer_override);
         let depth_alignment = current_spatial_public_depth_alignment();
         format!(
-            "publicMultiStackProjectionApplied={} publicMultiStackLayerCycleEnabled=true publicMultiStackLayerCycleElapsedSeconds={:.3} publicMultiStackOpaqueProjectionLayerOverride={:.3} publicMultiStackOpaqueProjectionTargetSpace=packed-stereo-surface-uv publicMultiStackOpaqueProjectionLeftTargetRect={} publicMultiStackOpaqueProjectionRightTargetRect={} metaPassthroughEdgeWindowSelected={} rawCustomProjectionSelected={} rawCustomProjectionSource=camera2-hwb-direct-sample rawCustomProjectionVideoDecodePolicy=keep-active cameraPresentationReprojectionGuidePushProvided=true cameraPresentationReprojectionGuideIngress=private-guide-pass0-prewarped-camera-color cameraPresentationReprojectionGuidePushBytes={} projectionAlphaCutoutActive={} projectionAlphaCutoutValue=0.000 projectionAlphaCutoutPreservesVideoDecode=true projectionAlphaCutoutTarget=custom-stereo-projection-rect {} {} {} {} publicMultiStackDepthAlignmentLeftOffsetUv={:.6},{:.6} publicMultiStackDepthAlignmentRightOffsetUv={:.6},{:.6} publicMultiStackDepthAlignmentSampleScale={:.4} publicMultiStackDepthAlignmentSampleScaleY={:.4} publicMultiStackDepthAlignmentRollDegrees={:.3} publicMultiStackDepthMetadataAutoAlignRequested={}",
+            "publicMultiStackProjectionApplied={} publicMultiStackLayerCycleEnabled=true publicMultiStackLayerCycleElapsedSeconds={:.3} publicMultiStackOpaqueProjectionLayerOverride={:.3} publicMultiStackOpaqueProjectionTargetSpace=packed-stereo-surface-uv publicMultiStackOpaqueProjectionLeftTargetRect={} publicMultiStackOpaqueProjectionRightTargetRect={} metaPassthroughEdgeWindowSelected={} rawCustomProjectionSelected={} rawCustomProjectionRequestedSource=private-guide-pass0-prewarped-camera-color rawCustomProjectionVideoDecodePolicy=keep-active cameraPresentationReprojectionGuidePushRequired={} cameraPresentationReprojectionGuideIngress=private-guide-pass0-prewarped-camera-color cameraPresentationReprojectionGuidePushBytes={} projectionAlphaCutoutActive={} projectionAlphaCutoutValue=0.000 projectionAlphaCutoutPreservesVideoDecode=true projectionAlphaCutoutTarget=custom-stereo-projection-rect {} {} {} {} publicMultiStackDepthAlignmentLeftOffsetUv={:.6},{:.6} publicMultiStackDepthAlignmentRightOffsetUv={:.6},{:.6} publicMultiStackDepthAlignmentSampleScale={:.4} publicMultiStackDepthAlignmentSampleScaleY={:.4} publicMultiStackDepthAlignmentRollDegrees={:.3} publicMultiStackDepthMetadataAutoAlignRequested={}",
             bool_marker(projected_by_public_stack),
             elapsed_seconds.max(0.0),
             layer_override,
             rect_marker(left_projection_rect),
             rect_marker(right_projection_rect),
             bool_marker(edge_window_selected),
+            bool_marker(raw_custom_projection_selected),
             bool_marker(raw_custom_projection_selected),
             mem::size_of::<OpaqueGuidePush>(),
             bool_marker(edge_window_selected && projected_by_public_stack),
@@ -846,24 +848,24 @@ impl SpatialPublicGuideTargets {
         elapsed_seconds: f32,
         camera_reprojection: CameraLatencyStereoReprojection,
         source_overscan_uv: f32,
-    ) -> Result<bool, String> {
-        if spatial_public_meta_passthrough_edge_window_selected() {
-            return Ok(false);
-        }
-        if spatial_public_raw_custom_projection_selected() {
-            // Raw Projection intentionally skips every guide draw. It still authorizes the
-            // projection sampling/zone stage because the private raw layer samples the live
-            // camera descriptor directly and the zone compositor owns its visible boundary.
-            return Ok(self.projection_execution_available());
+        plan: SpatialPublicGuidePassPlan,
+    ) -> Result<SpatialPublicGuidePassRecord, String> {
+        if plan.edge_window_selected() {
+            return Ok(SpatialPublicGuidePassRecord::not_recorded(
+                plan,
+                "edge-window-selected",
+            ));
         }
         if !self.guide_pass_execution_available() {
-            return Ok(false);
+            return Ok(SpatialPublicGuidePassRecord::not_recorded(
+                plan,
+                "guide-resources-unavailable",
+            ));
         }
-        let guide_pass_count =
-            spatial_public_guide_pass_count_for_layer_override(opaque_projection_layer_override());
+        let mut recorded_pass_count = 0;
         for (pass_index, step) in SPATIAL_PUBLIC_GUIDE_PASS_SCHEDULE
             .iter()
-            .take(guide_pass_count)
+            .take(plan.requested_pass_count)
             .enumerate()
         {
             let timestamp_stage = CameraHwbGpuTimestampStage::from_guide_pass_index(pass_index)
@@ -898,8 +900,12 @@ impl SpatialPublicGuideTargets {
                 }
             }
             gpu_timestamps.write_stage_end(device, command_buffer, frame_slot, timestamp_stage);
+            recorded_pass_count += 1;
         }
-        Ok(true)
+        Ok(SpatialPublicGuidePassRecord::recorded(
+            plan,
+            recorded_pass_count,
+        ))
     }
 
     pub(crate) unsafe fn record_spatial_public_projection(
@@ -912,6 +918,7 @@ impl SpatialPublicGuideTargets {
         camera_descriptor_set: vk::DescriptorSet,
         elapsed_seconds: f32,
         footprint_scale: f32,
+        guide_plan: SpatialPublicGuidePassPlan,
     ) -> Result<bool, String> {
         if !self.projection_execution_available() {
             return Ok(false);
@@ -925,6 +932,8 @@ impl SpatialPublicGuideTargets {
             camera_descriptor_set,
             elapsed_seconds,
             footprint_scale,
+            guide_plan.camera_content_only,
+            f32::from_bits(guide_plan.layer_override_bits),
         )?;
         device.cmd_end_render_pass(command_buffer);
         Ok(projected)
@@ -961,15 +970,20 @@ impl SpatialPublicGuideTargets {
         }
         self.projection_zone_uniform
             .update(device, &zone_frame.uniform)?;
-        let layout_changed = self
-            .projection_zone_video_pipeline
-            .as_ref()
-            .map(|pipeline| {
-                pipeline.video_descriptor_set_layout != video_descriptor_set_layout
-                    || pipeline.same_surface_blend_enabled
-                        != projection_zone_same_surface_blend_required(zone_frame.settings)
-            })
-            .unwrap_or(true);
+        let same_surface_blend_required =
+            projection_zone_same_surface_blend_required(zone_frame.settings);
+        let layout_changed = !projection_zone_pipeline_binding_compatible(
+            self.projection_zone_video_pipeline
+                .as_ref()
+                .map(|pipeline| {
+                    (
+                        pipeline.video_descriptor_set_layout,
+                        pipeline.same_surface_blend_enabled,
+                    )
+                }),
+            video_descriptor_set_layout,
+            same_surface_blend_required,
+        );
         if layout_changed {
             if let Some(previous) = self.projection_zone_video_pipeline.take() {
                 previous.destroy(device);
@@ -983,7 +997,7 @@ impl SpatialPublicGuideTargets {
                 self.rgb_channel_transform_uniform.descriptor_set_layout,
                 video_descriptor_set_layout,
                 self.projection_zone_uniform.descriptor_set_layout,
-                projection_zone_same_surface_blend_required(zone_frame.settings),
+                same_surface_blend_required,
             )?);
         }
         Ok(self.projection_zone_video_pipeline.is_some())
@@ -997,6 +1011,8 @@ impl SpatialPublicGuideTargets {
         camera_descriptor_set: vk::DescriptorSet,
         elapsed_seconds: f32,
         footprint_scale: f32,
+        camera_content_only: bool,
+        layer_override: f32,
     ) -> Result<bool, String> {
         if !self.projection_execution_available() {
             return Ok(false);
@@ -1011,11 +1027,13 @@ impl SpatialPublicGuideTargets {
             .update(device, &current_rgb_channel_transform_settings().uniform())?;
         self.rgb_channel_transform_uniform
             .update_displacement(device, &surface_features.uniform(displacement, draw_rects))?;
-        let tessellated_effective = surface_features.tessellated_effective(
-            displacement,
-            PROJECTION_SURFACE_UNIFORM_ABI_VERSION >= 2
-                && self.opaque_projection_displacement_pipeline.is_some(),
-        );
+        let tessellated_effective =
+            projection_surface_tessellation_allowed(camera_content_only, false)
+                && surface_features.tessellated_effective(
+                    displacement,
+                    PROJECTION_SURFACE_UNIFORM_ABI_VERSION >= 2
+                        && self.opaque_projection_displacement_pipeline.is_some(),
+                );
         for eye_index in 0..SPATIAL_PUBLIC_PACKED_EYE_COUNT {
             let target_rect = draw_rects[eye_index];
             set_packed_projection_target_view(device, command_buffer, extent, target_rect);
@@ -1046,6 +1064,7 @@ impl SpatialPublicGuideTargets {
                 elapsed_seconds,
                 depth_binding,
                 footprint_scale,
+                layer_override,
             );
             push_projection_constants(
                 device,
@@ -1078,6 +1097,8 @@ impl SpatialPublicGuideTargets {
         elapsed_seconds: f32,
         footprint_scale: f32,
         zone_frame: &CameraHwbProjectionZoneFrame,
+        camera_content_only: bool,
+        layer_override: f32,
     ) -> Result<bool, String> {
         let pipeline = self
             .projection_zone_video_pipeline
@@ -1091,12 +1112,13 @@ impl SpatialPublicGuideTargets {
             device,
             &surface_features.uniform(displacement, zone_frame.draw_rects),
         )?;
-        let tessellated_effective = !zone_frame.settings.synthetic_diagnostic()
-            && surface_features.tessellated_effective(
-                displacement,
-                PROJECTION_SURFACE_UNIFORM_ABI_VERSION >= 2
-                    && pipeline.displacement_pipeline.is_some(),
-            );
+        let tessellated_effective = projection_surface_tessellation_allowed(
+            camera_content_only,
+            zone_frame.settings.synthetic_diagnostic(),
+        ) && surface_features.tessellated_effective(
+            displacement,
+            PROJECTION_SURFACE_UNIFORM_ABI_VERSION >= 2 && pipeline.displacement_pipeline.is_some(),
+        );
         for eye_index in 0..SPATIAL_PUBLIC_PACKED_EYE_COUNT {
             set_packed_projection_target_view(
                 device,
@@ -1135,6 +1157,7 @@ impl SpatialPublicGuideTargets {
                 elapsed_seconds,
                 self.depth_resources.current_binding(),
                 footprint_scale,
+                layer_override,
             );
             push_projection_constants(device, command_buffer, pipeline.pipeline_layout, &push);
             device.cmd_draw(
@@ -1359,6 +1382,25 @@ impl SpatialPublicGuideTargets {
     }
 }
 
+fn projection_surface_tessellation_allowed(
+    camera_content_only: bool,
+    synthetic_diagnostic: bool,
+) -> bool {
+    !camera_content_only && !synthetic_diagnostic
+}
+
+fn projection_zone_pipeline_binding_compatible(
+    existing: Option<(vk::DescriptorSetLayout, bool)>,
+    requested_layout: vk::DescriptorSetLayout,
+    requested_same_surface_blend: bool,
+) -> bool {
+    existing
+        .map(|(layout, same_surface_blend)| {
+            layout == requested_layout && same_surface_blend == requested_same_surface_blend
+        })
+        .unwrap_or(false)
+}
+
 fn projection_zone_same_surface_blend_required(
     settings: crate::camera_hwb_projection_target::ProjectionZoneCompositorSettings,
 ) -> bool {
@@ -1422,8 +1464,8 @@ impl OpaqueProjectionPush {
         elapsed_seconds: f32,
         depth_binding: SpatialPublicDepthBinding,
         footprint_scale: f32,
+        layer_override: f32,
     ) -> Self {
-        let layer_override = opaque_projection_layer_override();
         let depth_alignment = current_spatial_public_depth_alignment();
         let depth_layer_policy = current_spatial_public_depth_layer_policy();
         let depth_uv_affine = depth_alignment
@@ -1522,8 +1564,9 @@ pub(crate) unsafe fn record_spatial_public_meta_passthrough_edge_window_cutout(
     command_buffer: vk::CommandBuffer,
     extent: vk::Extent2D,
     footprint_scale: f32,
+    edge_window_selected: bool,
 ) -> bool {
-    if !spatial_public_meta_passthrough_edge_window_selected() {
+    if !edge_window_selected {
         return false;
     }
     let attachments = [vk::ClearAttachment::default()
@@ -2156,25 +2199,132 @@ fn spatial_public_guide_pass_count_for_layer_override(layer_override: f32) -> us
         return SPATIAL_PUBLIC_GUIDE_PASS_SCHEDULE.len();
     }
     match layer_override.round() as u32 {
-        // Raw camera color consumes the camera descriptor directly through the
-        // zone compositor and needs no guide targets. Raw camera brightness and
-        // the public depth diagnostic consume only guide target 0. Preblur and
-        // raw-strength consume exact prefixes of the dependency-ordered
-        // schedule. Final, blurred-strength, and displacement retain the graph.
-        8 => 0,
-        1 | 6 => 1,
+        // Raw camera color, Raw camera brightness, and the public depth diagnostic
+        // consume only reprojection-aware guide target 0. Raw returns from the
+        // private projection shader before every downstream effect sample. Preblur
+        // and raw-strength consume exact prefixes of the dependency-ordered schedule.
+        // Final, blurred-strength, and displacement retain the complete graph.
+        1 | 6 | 8 => 1,
         2 => 3,
         3 => 4,
         _ => SPATIAL_PUBLIC_GUIDE_PASS_SCHEDULE.len(),
     }
 }
 
-fn spatial_public_guide_pass_execution_marker_fields() -> String {
-    let layer_override = opaque_projection_layer_override();
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct SpatialPublicGuidePassPlan {
+    pub(crate) layer_override_bits: u32,
+    pub(crate) requested_pass_count: usize,
+    pub(crate) camera_content_only: bool,
+    pub(crate) requested_camera_payload_source: &'static str,
+    pub(crate) requested_downstream_effect_pass_count: usize,
+}
+
+impl SpatialPublicGuidePassPlan {
+    pub(crate) fn edge_window_selected(self) -> bool {
+        is_meta_passthrough_edge_window_layer(f32::from_bits(self.layer_override_bits))
+    }
+}
+
+fn spatial_public_guide_pass_plan_for_layer_override(
+    layer_override: f32,
+) -> SpatialPublicGuidePassPlan {
     let pass_count = spatial_public_guide_pass_count_for_layer_override(layer_override);
+    let camera_content_only = layer_override >= 0.0 && layer_override.round() as u32 == 8;
+    SpatialPublicGuidePassPlan {
+        layer_override_bits: layer_override.to_bits(),
+        requested_pass_count: pass_count,
+        camera_content_only,
+        requested_camera_payload_source: if camera_content_only && pass_count == 1 {
+            "private-guide-pass0-prewarped-camera-color"
+        } else if camera_content_only {
+            "unavailable"
+        } else {
+            "active-layer-guide-graph"
+        },
+        requested_downstream_effect_pass_count: if camera_content_only {
+            pass_count.saturating_sub(1)
+        } else {
+            pass_count
+        },
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct SpatialPublicGuidePassRecord {
+    pub(crate) layer_override_bits: u32,
+    pub(crate) requested_pass_count: usize,
+    pub(crate) recorded_pass_count: usize,
+    pub(crate) camera_content_only: bool,
+    pub(crate) camera_payload_source: &'static str,
+    pub(crate) downstream_effect_pass_count: usize,
+    pub(crate) record_status: &'static str,
+}
+
+impl SpatialPublicGuidePassRecord {
+    pub(crate) fn not_recorded(
+        plan: SpatialPublicGuidePassPlan,
+        record_status: &'static str,
+    ) -> Self {
+        Self {
+            layer_override_bits: plan.layer_override_bits,
+            requested_pass_count: plan.requested_pass_count,
+            recorded_pass_count: 0,
+            camera_content_only: plan.camera_content_only,
+            camera_payload_source: "unavailable",
+            downstream_effect_pass_count: 0,
+            record_status,
+        }
+    }
+
+    fn recorded(plan: SpatialPublicGuidePassPlan, recorded_pass_count: usize) -> Self {
+        let complete = recorded_pass_count == plan.requested_pass_count;
+        Self {
+            layer_override_bits: plan.layer_override_bits,
+            requested_pass_count: plan.requested_pass_count,
+            recorded_pass_count,
+            camera_content_only: plan.camera_content_only,
+            camera_payload_source: if complete && plan.camera_content_only {
+                plan.requested_camera_payload_source
+            } else if complete {
+                "active-layer-guide-graph"
+            } else {
+                "unavailable"
+            },
+            downstream_effect_pass_count: if plan.camera_content_only {
+                recorded_pass_count.saturating_sub(1)
+            } else {
+                recorded_pass_count
+            },
+            record_status: if complete { "recorded" } else { "partial" },
+        }
+    }
+
+    pub(crate) fn complete(self) -> bool {
+        self.recorded_pass_count == self.requested_pass_count && self.record_status == "recorded"
+    }
+}
+
+pub(crate) fn current_spatial_public_guide_pass_plan() -> SpatialPublicGuidePassPlan {
+    spatial_public_guide_pass_plan_for_layer_override(opaque_projection_layer_override())
+}
+
+fn spatial_public_guide_pass_execution_marker_fields() -> String {
+    let plan = current_spatial_public_guide_pass_plan();
     format!(
-        "publicMultiStackGuidePassesRecordedPerFrame={} publicMultiStackGuidePassExecutionPolicy=active-layer-dependency-prefix",
-        pass_count,
+        "publicMultiStackGuidePassesRequestedForSelectedLayer={} publicMultiStackGuidePassExecutionPolicy=active-layer-dependency-prefix rawCustomProjectionStagingPassesRequested={} rawCustomProjectionRequestedSource={} rawCustomProjectionDownstreamEffectPassesRequested={}",
+        plan.requested_pass_count,
+        if plan.camera_content_only {
+            plan.requested_pass_count
+        } else {
+            0
+        },
+        if plan.camera_content_only {
+            plan.requested_camera_payload_source
+        } else {
+            "not-selected"
+        },
+        plan.requested_downstream_effect_pass_count,
     )
 }
 
@@ -4779,12 +4929,12 @@ mod tests {
         assert_eq!(packed_projection_target_rect(0, 1.0), push.left_rect);
         assert_eq!(packed_projection_target_rect(1, 1.0), push.right_rect);
         assert_eq!(
-            OpaqueProjectionPush::for_packed_eye(0, 1.25, fallback_depth_binding(), 1.0)
+            OpaqueProjectionPush::for_packed_eye(0, 1.25, fallback_depth_binding(), 1.0, -1.0)
                 .target_rect,
             push.left_rect
         );
         assert_eq!(
-            OpaqueProjectionPush::for_packed_eye(1, 1.25, fallback_depth_binding(), 1.0)
+            OpaqueProjectionPush::for_packed_eye(1, 1.25, fallback_depth_binding(), 1.0, -1.0)
                 .target_rect,
             push.right_rect
         );
@@ -5047,7 +5197,8 @@ mod tests {
     #[test]
     fn opaque_projection_push_defaults_to_layer_cycle_without_android_property() {
         assert_eq!(
-            OpaqueProjectionPush::for_packed_eye(0, 1.25, fallback_depth_binding(), 1.0).params0[3],
+            OpaqueProjectionPush::for_packed_eye(0, 1.25, fallback_depth_binding(), 1.0, -1.0)
+                .params0[3],
             SPATIAL_PUBLIC_OPAQUE_PROJECTION_LAYER_OVERRIDE_DEFAULT
         );
     }
@@ -5143,7 +5294,57 @@ mod tests {
         assert_eq!(spatial_public_guide_pass_count_for_layer_override(5.0), 6);
         assert_eq!(spatial_public_guide_pass_count_for_layer_override(6.0), 1);
         assert_eq!(spatial_public_guide_pass_count_for_layer_override(7.0), 6);
-        assert_eq!(spatial_public_guide_pass_count_for_layer_override(8.0), 0);
+        assert_eq!(spatial_public_guide_pass_count_for_layer_override(8.0), 1);
+        assert_eq!(
+            spatial_public_guide_pass_plan_for_layer_override(8.0),
+            SpatialPublicGuidePassPlan {
+                layer_override_bits: 8.0_f32.to_bits(),
+                requested_pass_count: 1,
+                camera_content_only: true,
+                requested_camera_payload_source: "private-guide-pass0-prewarped-camera-color",
+                requested_downstream_effect_pass_count: 0,
+            }
+        );
+    }
+
+    #[test]
+    fn raw_camera_content_forces_non_tessellated_projection_pipeline() {
+        assert!(!projection_surface_tessellation_allowed(true, false));
+        assert!(!projection_surface_tessellation_allowed(true, true));
+        assert!(!projection_surface_tessellation_allowed(false, true));
+        assert!(projection_surface_tessellation_allowed(false, false));
+    }
+
+    #[test]
+    fn guide_record_distinguishes_requested_from_actual_raw_staging() {
+        let plan = spatial_public_guide_pass_plan_for_layer_override(8.0);
+        let unavailable =
+            SpatialPublicGuidePassRecord::not_recorded(plan, "guide-resources-unavailable");
+        assert_eq!(unavailable.requested_pass_count, 1);
+        assert_eq!(unavailable.recorded_pass_count, 0);
+        assert_eq!(unavailable.camera_payload_source, "unavailable");
+        assert!(!unavailable.complete());
+
+        let recorded = SpatialPublicGuidePassRecord::recorded(plan, 1);
+        assert_eq!(recorded.recorded_pass_count, 1);
+        assert_eq!(
+            recorded.camera_payload_source,
+            "private-guide-pass0-prewarped-camera-color"
+        );
+        assert_eq!(recorded.downstream_effect_pass_count, 0);
+        assert_eq!(f32::from_bits(recorded.layer_override_bits), 8.0);
+        assert_eq!(
+            OpaqueProjectionPush::for_packed_eye(
+                0,
+                1.25,
+                fallback_depth_binding(),
+                1.0,
+                f32::from_bits(recorded.layer_override_bits),
+            )
+            .params0[3],
+            8.0
+        );
+        assert!(recorded.complete());
     }
 
     #[test]
@@ -5163,5 +5364,29 @@ mod tests {
 
         settings.outer_content_mode = 2;
         assert!(!projection_zone_same_surface_blend_required(settings));
+    }
+
+    #[test]
+    fn projection_zone_pipeline_binding_rejects_layout_and_blend_mismatch() {
+        let first = vk::DescriptorSetLayout::from_raw(1);
+        let second = vk::DescriptorSetLayout::from_raw(2);
+        assert!(!projection_zone_pipeline_binding_compatible(
+            None, first, false
+        ));
+        assert!(projection_zone_pipeline_binding_compatible(
+            Some((first, false)),
+            first,
+            false,
+        ));
+        assert!(!projection_zone_pipeline_binding_compatible(
+            Some((first, false)),
+            second,
+            false,
+        ));
+        assert!(!projection_zone_pipeline_binding_compatible(
+            Some((first, false)),
+            first,
+            true,
+        ));
     }
 }

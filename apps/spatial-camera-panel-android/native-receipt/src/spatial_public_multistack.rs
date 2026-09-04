@@ -53,7 +53,7 @@ const PUBLIC_MULTISTACK_STATIC_MARKER_FIELDS: &str = concat!(
         "metaPassthroughEdgeWindowVideoDecodePolicy=keep-active ",
         "rawCustomProjectionAvailable=true ",
         "rawCustomProjectionActivation=explicit-ui-layer-selection ",
-        "rawCustomProjectionSource=camera2-hwb-direct-sample ",
+        "rawCustomProjectionRequestedSource=private-guide-pass0-prewarped-camera-color ",
         "rawCustomProjectionVideoDecodePolicy=keep-active ",
         "publicMultiStackGuideTargetManifest=0:opaque-analysis0-target,1:public-blur-temp,",
         "2:public-preblur-guide,3:opaque-analysis1-target,4:public-postblur-guide ",

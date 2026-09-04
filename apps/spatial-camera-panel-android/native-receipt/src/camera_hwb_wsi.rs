@@ -32,8 +32,9 @@ use crate::camera_reprojection_guard_band::CameraReprojectionGuardBandFrame;
 use crate::spatial_guide_processing::current_spatial_guide_processing_policy;
 use crate::spatial_public_multistack::public_multistack_marker_fields;
 use crate::spatial_public_multistack_runtime::{
-    record_spatial_public_meta_passthrough_edge_window_cutout,
-    spatial_public_meta_passthrough_edge_window_selected, SpatialPublicGuideTargets,
+    current_spatial_public_guide_pass_plan,
+    record_spatial_public_meta_passthrough_edge_window_cutout, SpatialPublicGuidePassRecord,
+    SpatialPublicGuideTargets,
 };
 use crate::spatial_video_projection::{
     SpatialVideoProjectionFrameStats, SpatialVideoProjectionRenderer,
@@ -428,16 +429,33 @@ pub(crate) struct ProjectionZoneRenderStats {
     pub(crate) readable_video_consumer_required: bool,
     pub(crate) transparent_underlay_requested: bool,
     pub(crate) transparent_underlay_supported: bool,
-    pub(crate) composite_alpha: &'static str,
-    pub(crate) premultiplied_alpha_output: bool,
+    pub(crate) swapchain_composite_alpha_selected: &'static str,
+    pub(crate) shader_alpha_output_contract: &'static str,
     pub(crate) synthetic_displacement_suppressed: bool,
     pub(crate) descriptor_source: &'static str,
+    pub(crate) system_layer_blend_observation: &'static str,
+    pub(crate) render_route: &'static str,
+    pub(crate) applied_region_contract_version: u32,
+    pub(crate) applied_center_content_mode: u32,
+    pub(crate) applied_center_corner_radius_uv_bits: u32,
+    pub(crate) applied_buffer_geometry_mode: u32,
+    pub(crate) applied_buffer_fill_mode: u32,
+    pub(crate) applied_buffer_static_width_uv_bits: u32,
+    pub(crate) applied_outer_content_mode: u32,
+    pub(crate) applied_outer_target_mode: u32,
+    pub(crate) guide_layer_override_bits: u32,
+    pub(crate) guide_passes_requested: usize,
+    pub(crate) guide_passes_recorded: usize,
+    pub(crate) guide_record_status: &'static str,
+    pub(crate) camera_payload_source: &'static str,
+    pub(crate) downstream_effect_passes_recorded: usize,
+    pub(crate) parity_loss_reason: &'static str,
 }
 
 impl ProjectionZoneRenderStats {
     pub(crate) fn marker_fields(self) -> String {
         format!(
-            "projectionZoneRequestedMode={} projectionZonePreparedVideoReady={} projectionZonePublicProjectionReady={} projectionZonePipelineReady={} projectionZoneRendered={} projectionZoneNativeVideoDrawn={} projectionZoneNativeVideoSuppressed={} readableVideoConsumerRequired={} projectionZoneTransparentUnderlayRequested={} projectionZoneTransparentUnderlaySupported={} projectionZoneCompositeAlpha={} projectionZonePremultipliedAlphaOutput={} projectionZoneSyntheticDisplacementSuppressed={} projectionZoneDescriptorSource={}",
+            "projectionZoneRequestedMode={} projectionZonePreparedVideoReady={} projectionZonePublicProjectionReady={} projectionZonePipelineReady={} projectionZoneRendered={} projectionZoneNativeVideoDrawn={} projectionZoneNativeVideoSuppressed={} readableVideoConsumerRequired={} projectionZoneTransparentUnderlayRequested={} projectionZoneTransparentUnderlaySupported={} projectionZoneSwapchainCompositeAlphaSelected={} projectionZoneShaderAlphaOutputContract={} projectionZoneSyntheticDisplacementSuppressed={} projectionZoneDescriptorSource={} projectionZoneSystemLayerBlendObservation={} projectionZoneRenderRoute={} projectionZoneAppliedRegionContractVersion={} projectionZoneAppliedCenterContentMode={} projectionZoneAppliedCenterCornerRadiusUv={:.6} projectionZoneAppliedBufferGeometryMode={} projectionZoneAppliedBufferFillMode={} projectionZoneAppliedBufferStaticWidthUv={:.6} projectionZoneAppliedOuterContentMode={} projectionZoneAppliedOuterTargetMode={} rawCustomProjectionLayerOverride={:.3} rawCustomProjectionGuidePassesRequested={} rawCustomProjectionGuidePassesRecorded={} rawCustomProjectionGuideRecordStatus={} projectionZoneCameraPayloadSource={} rawCustomProjectionDownstreamEffectPassesRecorded={} projectionZoneParityLossReason={}",
             self.requested_mode,
             bool_token(self.prepared_video_ready),
             bool_token(self.public_projection_ready),
@@ -448,11 +466,108 @@ impl ProjectionZoneRenderStats {
             bool_token(self.readable_video_consumer_required),
             bool_token(self.transparent_underlay_requested),
             bool_token(self.transparent_underlay_supported),
-            self.composite_alpha,
-            bool_token(self.premultiplied_alpha_output),
+            self.swapchain_composite_alpha_selected,
+            self.shader_alpha_output_contract,
             bool_token(self.synthetic_displacement_suppressed),
             self.descriptor_source,
+            self.system_layer_blend_observation,
+            self.render_route,
+            self.applied_region_contract_version,
+            self.applied_center_content_mode,
+            f32::from_bits(self.applied_center_corner_radius_uv_bits),
+            self.applied_buffer_geometry_mode,
+            self.applied_buffer_fill_mode,
+            f32::from_bits(self.applied_buffer_static_width_uv_bits),
+            self.applied_outer_content_mode,
+            self.applied_outer_target_mode,
+            f32::from_bits(self.guide_layer_override_bits),
+            self.guide_passes_requested,
+            self.guide_passes_recorded,
+            self.guide_record_status,
+            self.camera_payload_source,
+            self.downstream_effect_passes_recorded,
+            self.parity_loss_reason,
         )
+    }
+}
+
+fn projection_zone_render_route_token(
+    camera_projection_visible: bool,
+    edge_window_cutout_applied: bool,
+    public_projection_ready: bool,
+    projection_zone_ready: bool,
+    projection_zone_rendered: bool,
+    projected_by_public_stack: bool,
+) -> &'static str {
+    if projection_zone_rendered {
+        "shared-zone-compositor"
+    } else if edge_window_cutout_applied {
+        "meta-passthrough-edge-window"
+    } else if public_projection_ready && !projection_zone_ready {
+        "public-projection-without-zone"
+    } else if projected_by_public_stack {
+        "public-projection"
+    } else if camera_projection_visible {
+        "camera-hwb-fallback"
+    } else {
+        "none"
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ProjectionZoneDescriptorRoute {
+    SyntheticDiagnostic,
+    RetainedUnusedVideo,
+    TransparentUnderlayFallback,
+    CameraFallback,
+    PreparedVideo,
+    Unavailable,
+}
+
+fn projection_zone_descriptor_route(
+    synthetic_diagnostic: bool,
+    readable_video_consumer_required: bool,
+    transparent_underlay_requested: bool,
+    retained_unused_video_descriptor_available: bool,
+    prepared_video_descriptor_available: bool,
+) -> ProjectionZoneDescriptorRoute {
+    if synthetic_diagnostic {
+        ProjectionZoneDescriptorRoute::SyntheticDiagnostic
+    } else if !readable_video_consumer_required && retained_unused_video_descriptor_available {
+        ProjectionZoneDescriptorRoute::RetainedUnusedVideo
+    } else if !readable_video_consumer_required && transparent_underlay_requested {
+        ProjectionZoneDescriptorRoute::TransparentUnderlayFallback
+    } else if !readable_video_consumer_required {
+        ProjectionZoneDescriptorRoute::CameraFallback
+    } else if prepared_video_descriptor_available {
+        ProjectionZoneDescriptorRoute::PreparedVideo
+    } else {
+        ProjectionZoneDescriptorRoute::Unavailable
+    }
+}
+
+fn projection_zone_parity_loss_reason(
+    guide_record: SpatialPublicGuidePassRecord,
+    camera_projection_visible: bool,
+    public_projection_ready: bool,
+    projection_zone_descriptor_available: bool,
+    projection_zone_ready: bool,
+    projection_zone_rendered: bool,
+) -> &'static str {
+    if !guide_record.camera_content_only {
+        "not-applicable"
+    } else if !camera_projection_visible {
+        "camera-projection-not-visible"
+    } else if !guide_record.complete() || !public_projection_ready {
+        "raw-reprojection-staging-unavailable"
+    } else if !projection_zone_descriptor_available {
+        "zone-descriptor-unavailable"
+    } else if !projection_zone_ready {
+        "shared-zone-pipeline-unavailable"
+    } else if !projection_zone_rendered {
+        "shared-zone-render-not-recorded"
+    } else {
+        "none"
     }
 }
 
@@ -1010,16 +1125,20 @@ pub(crate) unsafe fn record_camera_hwb_probe_command_buffer(
         _ => None,
     };
     let mut public_guide_targets = public_guide_targets;
-    let edge_window_selected = spatial_public_meta_passthrough_edge_window_selected();
+    let guide_plan = current_spatial_public_guide_pass_plan();
+    let mut guide_record =
+        SpatialPublicGuidePassRecord::not_recorded(guide_plan, "camera-projection-not-attempted");
+    let edge_window_selected = guide_plan.edge_window_selected();
     let projection_footprint_scale = projection_guard_band.footprint_scale;
     let mut projection_zone_ready = false;
+    let mut projection_zone_descriptor_available = false;
     let mut projection_zone_descriptor_set = vk::DescriptorSet::null();
     let mut projection_zone_descriptor_source = "unavailable";
     let public_projection_ready =
         if !camera_projection_visible || opaque_camera_only || edge_window_selected {
             false
         } else if let Some(targets) = public_guide_targets.as_deref_mut() {
-            let guide_passes_recorded = targets.record_spatial_public_guide_passes(
+            guide_record = targets.record_spatial_public_guide_passes(
                 device,
                 command_buffer,
                 gpu_timestamps,
@@ -1028,57 +1147,65 @@ pub(crate) unsafe fn record_camera_hwb_probe_command_buffer(
                 elapsed_seconds,
                 camera_reprojection,
                 projection_guard_band.source_overscan_uv,
+                guide_plan,
             )?;
-            // Raw Projection deliberately records zero guide draws, but the runtime returns
-            // true here when its direct-camera projection/zone stage is available. Keep this
-            // boolean as stage authorization rather than interpreting it as a draw count.
-            let sampling_ready = guide_passes_recorded
+            let sampling_ready = guide_record.complete()
                 && targets.prepare_spatial_public_projection_sampling(device, command_buffer);
             if sampling_ready {
                 let synthetic_diagnostic = projection_zone_frame.settings.synthetic_diagnostic();
-                let projection_zone_descriptor = if synthetic_diagnostic {
-                    // Synthetic diagnostics can still carry a video-owning configuration. Bind
-                    // the live camera layout because prepare_frame may have replaced the retained
-                    // video resources earlier in this frame.
-                    Some((
+                let descriptor_route = projection_zone_descriptor_route(
+                    synthetic_diagnostic,
+                    readable_video_consumer_required,
+                    projection_zone_frame
+                        .settings
+                        .transparent_underlay_requested(),
+                    retained_unused_video_descriptor.is_some(),
+                    prepared_video.is_some(),
+                );
+                let projection_zone_descriptor = match descriptor_route {
+                    ProjectionZoneDescriptorRoute::SyntheticDiagnostic => {
+                        // Synthetic diagnostics can still carry a video-owning configuration. Bind
+                        // the live camera layout because prepare_frame may have replaced the retained
+                        // video resources earlier in this frame.
+                        Some((
+                            resources.descriptor_set_layout,
+                            descriptor_set,
+                            "synthetic-diagnostic-fallback-unused",
+                        ))
+                    }
+                    ProjectionZoneDescriptorRoute::RetainedUnusedVideo => {
+                        // These routes never sample u_video_projection. Prefer the last exact video
+                        // descriptor solely to retain its descriptor-set layout across a hot
+                        // Video/Transparent change. This avoids destroying and recompiling the Vulkan
+                        // compositor pipeline on the render thread.
+                        retained_unused_video_descriptor
+                            .map(|(layout, set)| (layout, set, "retained-video-fallback-unused"))
+                    }
+                    ProjectionZoneDescriptorRoute::TransparentUnderlayFallback => Some((
                         resources.descriptor_set_layout,
                         descriptor_set,
-                        "synthetic-diagnostic-fallback-unused",
-                    ))
-                } else if !readable_video_consumer_required {
-                    // These routes never sample u_video_projection. Prefer the last exact video
-                    // descriptor solely to retain its descriptor-set layout across a hot
-                    // Video/Transparent change. This avoids destroying and recompiling the Vulkan
-                    // compositor pipeline on the render thread. Before the first decoded frame,
-                    // the compatible camera descriptor remains the cold fallback.
-                    retained_unused_video_descriptor
-                        .map(|(layout, set)| (layout, set, "retained-video-fallback-unused"))
-                        .or_else(|| {
-                            Some((
-                                resources.descriptor_set_layout,
-                                descriptor_set,
-                                if projection_zone_frame
-                                    .settings
-                                    .transparent_underlay_requested()
-                                {
-                                    "transparent-underlay-fallback-unused"
-                                } else {
-                                    "camera-fallback-unused"
-                                },
-                            ))
+                        "transparent-underlay-fallback-unused",
+                    )),
+                    ProjectionZoneDescriptorRoute::CameraFallback => Some((
+                        resources.descriptor_set_layout,
+                        descriptor_set,
+                        "camera-fallback-unused",
+                    )),
+                    ProjectionZoneDescriptorRoute::PreparedVideo => {
+                        prepared_video.as_ref().map(|(_, prepared)| {
+                            (
+                                prepared.descriptor_set_layout,
+                                prepared.descriptor_set,
+                                "prepared-video",
+                            )
                         })
-                } else {
-                    prepared_video.as_ref().map(|(_, prepared)| {
-                        (
-                            prepared.descriptor_set_layout,
-                            prepared.descriptor_set,
-                            "prepared-video",
-                        )
-                    })
+                    }
+                    ProjectionZoneDescriptorRoute::Unavailable => None,
                 };
                 if let Some((descriptor_set_layout, zone_descriptor_set, descriptor_source)) =
                     projection_zone_descriptor
                 {
+                    projection_zone_descriptor_available = true;
                     projection_zone_ready = targets.prepare_projection_zone_compositor(
                         device,
                         &projection_zone_frame,
@@ -1129,6 +1256,7 @@ pub(crate) unsafe fn record_camera_hwb_probe_command_buffer(
             command_buffer,
             extent,
             projection_footprint_scale,
+            edge_window_selected,
         );
     let mut projection_zone_rendered = false;
     let projected_by_public_stack = if opaque_camera_only {
@@ -1148,6 +1276,8 @@ pub(crate) unsafe fn record_camera_hwb_probe_command_buffer(
                 elapsed_seconds,
                 projection_footprint_scale,
                 &projection_zone_frame,
+                guide_record.camera_content_only,
+                f32::from_bits(guide_record.layer_override_bits),
             )?;
         projection_zone_rendered = rendered;
         rendered
@@ -1162,6 +1292,8 @@ pub(crate) unsafe fn record_camera_hwb_probe_command_buffer(
                 descriptor_set,
                 elapsed_seconds,
                 projection_footprint_scale,
+                guide_record.camera_content_only,
+                f32::from_bits(guide_record.layer_override_bits),
             )?
     } else {
         false
@@ -1227,12 +1359,55 @@ pub(crate) unsafe fn record_camera_hwb_probe_command_buffer(
                 .transparent_underlay_requested(),
             transparent_underlay_supported: projection_zone_alpha_policy
                 .transparent_underlay_supported,
-            composite_alpha: composite_alpha_token(composite_alpha),
-            premultiplied_alpha_output: projection_zone_alpha_policy.premultiplied_alpha_output,
+            swapchain_composite_alpha_selected: composite_alpha_token(composite_alpha),
+            shader_alpha_output_contract: if projection_zone_alpha_policy.premultiplied_alpha_output
+            {
+                "pre-multiplied"
+            } else {
+                "post-multiplied"
+            },
             synthetic_displacement_suppressed: projection_zone_frame
                 .settings
-                .synthetic_diagnostic(),
+                .synthetic_diagnostic()
+                || guide_record.camera_content_only,
             descriptor_source: projection_zone_descriptor_source,
+            system_layer_blend_observation: "not-observed-by-native-wsi",
+            render_route: projection_zone_render_route_token(
+                camera_projection_visible,
+                edge_window_cutout_applied,
+                public_projection_ready,
+                projection_zone_ready,
+                projection_zone_rendered,
+                projected_by_public_stack,
+            ),
+            applied_region_contract_version: projection_zone_frame.settings.region_contract_version,
+            applied_center_content_mode: projection_zone_frame.settings.center_content_mode,
+            applied_center_corner_radius_uv_bits: projection_zone_frame
+                .settings
+                .center_corner_radius_uv
+                .to_bits(),
+            applied_buffer_geometry_mode: projection_zone_frame.settings.buffer_geometry_mode,
+            applied_buffer_fill_mode: projection_zone_frame.settings.buffer_fill_mode,
+            applied_buffer_static_width_uv_bits: projection_zone_frame
+                .settings
+                .buffer_static_width_uv
+                .to_bits(),
+            applied_outer_content_mode: projection_zone_frame.settings.outer_content_mode,
+            applied_outer_target_mode: projection_zone_frame.settings.outer_target_mode,
+            guide_layer_override_bits: guide_record.layer_override_bits,
+            guide_passes_requested: guide_record.requested_pass_count,
+            guide_passes_recorded: guide_record.recorded_pass_count,
+            guide_record_status: guide_record.record_status,
+            camera_payload_source: guide_record.camera_payload_source,
+            downstream_effect_passes_recorded: guide_record.downstream_effect_pass_count,
+            parity_loss_reason: projection_zone_parity_loss_reason(
+                guide_record,
+                camera_projection_visible,
+                public_projection_ready,
+                projection_zone_descriptor_available,
+                projection_zone_ready,
+                projection_zone_rendered,
+            ),
         },
     })
 }
@@ -1619,6 +1794,239 @@ mod tests {
             choose_composite_alpha(vk::CompositeAlphaFlagsKHR::OPAQUE),
             vk::CompositeAlphaFlagsKHR::OPAQUE
         );
+    }
+
+    #[test]
+    fn render_route_tokens_distinguish_shared_compositor_from_fallbacks() {
+        assert_eq!(
+            projection_zone_render_route_token(true, false, true, true, true, true),
+            "shared-zone-compositor"
+        );
+        assert_eq!(
+            projection_zone_render_route_token(true, false, true, false, false, false),
+            "public-projection-without-zone"
+        );
+        assert_eq!(
+            projection_zone_render_route_token(true, false, false, false, false, false),
+            "camera-hwb-fallback"
+        );
+    }
+
+    #[test]
+    fn descriptor_routing_and_raw_fallbacks_fail_closed_on_unavailable_inputs() {
+        assert_eq!(
+            projection_zone_descriptor_route(false, true, false, false, false),
+            ProjectionZoneDescriptorRoute::Unavailable
+        );
+        assert_eq!(
+            projection_zone_descriptor_route(false, true, false, true, true),
+            ProjectionZoneDescriptorRoute::PreparedVideo
+        );
+        assert_eq!(
+            projection_zone_descriptor_route(false, false, true, false, false),
+            ProjectionZoneDescriptorRoute::TransparentUnderlayFallback
+        );
+        assert_eq!(
+            projection_zone_render_route_token(true, false, false, false, false, false),
+            "camera-hwb-fallback"
+        );
+        assert_eq!(
+            projection_zone_render_route_token(true, false, true, false, false, true),
+            "public-projection-without-zone"
+        );
+    }
+
+    #[test]
+    fn raw_zone_parity_loss_is_typed_at_each_fail_closed_boundary() {
+        let recorded_raw = SpatialPublicGuidePassRecord {
+            layer_override_bits: 8.0_f32.to_bits(),
+            requested_pass_count: 1,
+            recorded_pass_count: 1,
+            camera_content_only: true,
+            camera_payload_source: "private-guide-pass0-prewarped-camera-color",
+            downstream_effect_pass_count: 0,
+            record_status: "recorded",
+        };
+        let unavailable_raw = SpatialPublicGuidePassRecord {
+            recorded_pass_count: 0,
+            camera_payload_source: "unavailable",
+            record_status: "guide-resources-unavailable",
+            ..recorded_raw
+        };
+        let processed = SpatialPublicGuidePassRecord {
+            camera_content_only: false,
+            camera_payload_source: "active-layer-guide-graph",
+            ..recorded_raw
+        };
+        assert_eq!(
+            projection_zone_parity_loss_reason(recorded_raw, true, true, true, true, true),
+            "none"
+        );
+        assert_eq!(
+            projection_zone_parity_loss_reason(unavailable_raw, true, false, false, false, false),
+            "raw-reprojection-staging-unavailable"
+        );
+        assert_eq!(
+            projection_zone_parity_loss_reason(recorded_raw, true, true, false, false, false),
+            "zone-descriptor-unavailable"
+        );
+        assert_eq!(
+            projection_zone_parity_loss_reason(recorded_raw, true, true, true, false, false),
+            "shared-zone-pipeline-unavailable"
+        );
+        assert_eq!(
+            projection_zone_parity_loss_reason(recorded_raw, true, true, true, true, false),
+            "shared-zone-render-not-recorded"
+        );
+        assert_eq!(
+            projection_zone_parity_loss_reason(processed, true, true, true, true, true),
+            "not-applicable"
+        );
+    }
+
+    #[test]
+    fn projection_zone_markers_separate_alpha_zone_source_and_fallback_facts() {
+        let marker = recorded_raw_zone_stats().marker_fields();
+        for expected in [
+            "projectionZoneSwapchainCompositeAlphaSelected=post-multiplied",
+            "projectionZoneShaderAlphaOutputContract=post-multiplied",
+            "projectionZoneSystemLayerBlendObservation=not-observed-by-native-wsi",
+            "projectionZoneRenderRoute=shared-zone-compositor",
+            "projectionZoneAppliedRegionContractVersion=4",
+            "projectionZoneAppliedCenterContentMode=0",
+            "projectionZoneAppliedCenterCornerRadiusUv=0.125000",
+            "projectionZoneAppliedBufferFillMode=1",
+            "projectionZoneAppliedOuterContentMode=2",
+            "rawCustomProjectionLayerOverride=8.000",
+            "rawCustomProjectionGuidePassesRecorded=1",
+            "projectionZoneDescriptorSource=transparent-underlay-fallback-unused",
+            "projectionZoneCameraPayloadSource=private-guide-pass0-prewarped-camera-color",
+            "rawCustomProjectionDownstreamEffectPassesRecorded=0",
+            "projectionZoneParityLossReason=none",
+        ] {
+            assert!(
+                marker.contains(expected),
+                "missing marker field: {expected}"
+            );
+        }
+    }
+
+    fn recorded_raw_zone_stats() -> ProjectionZoneRenderStats {
+        ProjectionZoneRenderStats {
+            requested_mode: 2,
+            prepared_video_ready: false,
+            public_projection_ready: true,
+            pipeline_ready: true,
+            rendered: true,
+            native_video_drawn: false,
+            native_video_suppressed: true,
+            readable_video_consumer_required: false,
+            transparent_underlay_requested: true,
+            transparent_underlay_supported: true,
+            swapchain_composite_alpha_selected: "post-multiplied",
+            shader_alpha_output_contract: "post-multiplied",
+            synthetic_displacement_suppressed: true,
+            descriptor_source: "transparent-underlay-fallback-unused",
+            system_layer_blend_observation: "not-observed-by-native-wsi",
+            render_route: "shared-zone-compositor",
+            applied_region_contract_version: 4,
+            applied_center_content_mode: 0,
+            applied_center_corner_radius_uv_bits: 0.125_f32.to_bits(),
+            applied_buffer_geometry_mode: 1,
+            applied_buffer_fill_mode: 1,
+            applied_buffer_static_width_uv_bits: 0.08_f32.to_bits(),
+            applied_outer_content_mode: 2,
+            applied_outer_target_mode: 0,
+            guide_layer_override_bits: 8.0_f32.to_bits(),
+            guide_passes_requested: 1,
+            guide_passes_recorded: 1,
+            guide_record_status: "recorded",
+            camera_payload_source: "private-guide-pass0-prewarped-camera-color",
+            downstream_effect_passes_recorded: 0,
+            parity_loss_reason: "none",
+        }
+    }
+
+    #[test]
+    fn raw_fallback_markers_bind_record_route_descriptor_and_parity() {
+        let staging = ProjectionZoneRenderStats {
+            public_projection_ready: false,
+            pipeline_ready: false,
+            rendered: false,
+            descriptor_source: "unavailable",
+            render_route: "camera-hwb-fallback",
+            guide_passes_recorded: 0,
+            guide_record_status: "guide-resources-unavailable",
+            camera_payload_source: "unavailable",
+            parity_loss_reason: "raw-reprojection-staging-unavailable",
+            ..recorded_raw_zone_stats()
+        }
+        .marker_fields();
+        for expected in [
+            "projectionZoneRendered=false",
+            "projectionZoneDescriptorSource=unavailable",
+            "projectionZoneRenderRoute=camera-hwb-fallback",
+            "rawCustomProjectionGuidePassesRequested=1",
+            "rawCustomProjectionGuidePassesRecorded=0",
+            "rawCustomProjectionGuideRecordStatus=guide-resources-unavailable",
+            "projectionZoneCameraPayloadSource=unavailable",
+            "rawCustomProjectionDownstreamEffectPassesRecorded=0",
+            "projectionZoneParityLossReason=raw-reprojection-staging-unavailable",
+        ] {
+            assert!(
+                staging.contains(expected),
+                "missing staging field: {expected}"
+            );
+        }
+
+        let descriptor = ProjectionZoneRenderStats {
+            pipeline_ready: false,
+            rendered: false,
+            descriptor_source: "unavailable",
+            render_route: "public-projection-without-zone",
+            parity_loss_reason: "zone-descriptor-unavailable",
+            ..recorded_raw_zone_stats()
+        }
+        .marker_fields();
+        for expected in [
+            "projectionZoneRendered=false",
+            "projectionZoneDescriptorSource=unavailable",
+            "projectionZoneRenderRoute=public-projection-without-zone",
+            "rawCustomProjectionGuidePassesRecorded=1",
+            "rawCustomProjectionGuideRecordStatus=recorded",
+            "projectionZoneCameraPayloadSource=private-guide-pass0-prewarped-camera-color",
+            "rawCustomProjectionDownstreamEffectPassesRecorded=0",
+            "projectionZoneParityLossReason=zone-descriptor-unavailable",
+        ] {
+            assert!(
+                descriptor.contains(expected),
+                "missing descriptor field: {expected}"
+            );
+        }
+
+        let pipeline = ProjectionZoneRenderStats {
+            pipeline_ready: false,
+            rendered: false,
+            descriptor_source: "prepared-video",
+            render_route: "public-projection-without-zone",
+            parity_loss_reason: "shared-zone-pipeline-unavailable",
+            ..recorded_raw_zone_stats()
+        }
+        .marker_fields();
+        for expected in [
+            "projectionZoneRendered=false",
+            "projectionZoneDescriptorSource=prepared-video",
+            "projectionZoneRenderRoute=public-projection-without-zone",
+            "rawCustomProjectionGuidePassesRecorded=1",
+            "rawCustomProjectionGuideRecordStatus=recorded",
+            "rawCustomProjectionDownstreamEffectPassesRecorded=0",
+            "projectionZoneParityLossReason=shared-zone-pipeline-unavailable",
+        ] {
+            assert!(
+                pipeline.contains(expected),
+                "missing pipeline field: {expected}"
+            );
+        }
     }
 
     #[test]

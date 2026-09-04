@@ -2484,6 +2484,11 @@ unsafe fn render_camera_hwb_probe(
                         projected_by_public_stack,
                         public_stack_elapsed_seconds,
                         projection_guard_band.footprint_scale,
+                        f32::from_bits(
+                            record_result
+                                .projection_zone_stats
+                                .guide_layer_override_bits,
+                        ),
                     ),
                 ));
             }

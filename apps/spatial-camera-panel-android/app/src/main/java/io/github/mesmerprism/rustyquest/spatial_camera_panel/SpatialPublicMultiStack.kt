@@ -61,7 +61,7 @@ internal object SpatialPublicMultiStack {
           "metaPassthroughEdgeWindowVideoDecodePolicy=keep-active " +
           "rawCustomProjectionAvailable=true " +
           "rawCustomProjectionActivation=explicit-ui-layer-selection " +
-          "rawCustomProjectionSource=camera2-hwb-direct-sample " +
+          "rawCustomProjectionRequestedSource=private-guide-pass0-prewarped-camera-color " +
           "rawCustomProjectionVideoDecodePolicy=keep-active " +
           "publicMultiStackGuideTargetManifest=$GUIDE_TARGET_MANIFEST " +
           "publicMultiStackGuidePassManifest=$GUIDE_PASS_MANIFEST " +
