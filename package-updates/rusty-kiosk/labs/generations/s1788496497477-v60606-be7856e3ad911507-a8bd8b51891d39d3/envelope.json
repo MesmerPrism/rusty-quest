@@ -1,0 +1,24 @@
+{
+  "schema": "rusty.quest.package_update_manifest_envelope.v1",
+  "key_id": "release-manifest-2026-a",
+  "algorithm": "Ed25519",
+  "signature": "9LWWCB6Y5_IlBKGiC85etM55hc-KcpUxCDgZEp9TS4S5i-y9NGIEJ5zCcSesG_cj2ikyJIcuMCTWfBeZKRyNDw",
+  "signed": {
+    "schema": "rusty.quest.package_update_manifest.v1",
+    "manifest_id": "rusty-kiosk.labs.s1788496497477.v60606",
+    "sequence": 1788496497477,
+    "issued_at_ms": 1788496497477,
+    "expires_at_ms": 1788582897477,
+    "channel": "labs",
+    "rollout_ring": "labs",
+    "artifact": {
+      "package_name": "io.github.mesmerprism.rustykiosk.labs",
+      "version_code": 60606,
+      "version_name": "0.6.6-alpha.6",
+      "apk_url": "https://mesmerprism.com/rusty-quest/package-updates/rusty-kiosk/labs/artifacts/sha256/be7856e3ad91150747e640410d53087f81dd1466dc41a8e95df2b0a1275408bd/rusty-kiosk-0.6.6-alpha.6.apk",
+      "apk_sha256": "sha256:be7856e3ad91150747e640410d53087f81dd1466dc41a8e95df2b0a1275408bd",
+      "apk_size_bytes": 87062353,
+      "signer_sha256": "sha256:423d20004c79dd140c692e31aa80369cd3677b1ae2688dbd75011a4c83a0f1fb"
+    }
+  }
+}
