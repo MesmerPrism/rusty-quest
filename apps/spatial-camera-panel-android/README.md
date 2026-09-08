@@ -15,6 +15,13 @@ repository `AGENTS.md`. For Strobe, read
 `../spatial-vr-strobe-android/morphospace/`. Never use a historical unit to
 block or authorize another project.
 
+For a project with adopted external planning, resolve its current workspace
+through the registered repository map. Follow the repository
+[AGENTS.md](../../AGENTS.md) and the adopted Work Environment's
+`docs/SOURCE_ONLY_PUBLICATION.md` to publish an accepted source snapshot when
+planning intentionally has no remote. Publish source providers before their
+consumers and record completion in the local planning owner.
+
 The applications have distinct source sets, manifests, packages, Manifold
 identities, markers, properties, Gradle intermediates, and APK outputs. Build
 Strobe with its dedicated wrapper in `tools/Build-SpatialVrStrobeAndroid.ps1`.

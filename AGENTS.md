@@ -202,6 +202,22 @@ regression repair, or historical evidence replay. When old Makepad evidence is
 useful, port the accepted contract, marker, fixture, or scorecard shape into a
 native Quest path.
 
+## Project continuation and source publication
+
+Use `$rusty-morphospace` for project and owner routing. Use
+`$rusty-morphospace-context` only when the registered machine-local owner must
+be located. After a project adopts an external planning workspace, that
+workspace owns its current unit and lifecycle; any embedded predecessor stays
+historical. Source repositories retain source and publication ownership.
+
+A planning repository that deliberately has no remote remains local. For an
+accepted development integration or reviewed source snapshot, use the adopted
+Work Environment's `docs/SOURCE_ONLY_PUBLICATION.md` route. Bind the tested
+candidate separately from any provider-generated merge commit, satisfy each
+source owner's required PR checks, publish providers before consumers, and
+record the exact source readbacks in local planning last. This grants no new
+release, feature, or device acceptance and does not change old unit statuses.
+
 ## Read Order
 
 1. `README.md`
