@@ -290,6 +290,15 @@ impl CameraProjectionFreshnessTracker {
         }) {
             return CameraProjectionFreshnessObservation::Pending;
         }
+        // Display cadence may exceed camera cadence, and each eye can arrive
+        // independently. A coherent held frame is valid reprojection input but
+        // cannot establish a new moving witness. Compare against the receipt
+        // anchor so both eyes must advance before issuing the next receipt.
+        match validate_moving_transition(previous, sample) {
+            Ok(true) => {}
+            Ok(false) => return CameraProjectionFreshnessObservation::Pending,
+            Err(reason) => return self.reject(reason),
+        }
         self.receipt_anchor = Some(sample);
         self.last_receipt_present_ordinal = Some(sample.present_ordinal);
         CameraProjectionFreshnessObservation::Issued(CameraProjectionFreshnessReceipt {
@@ -388,29 +397,66 @@ impl CameraProjectionFreshnessTracker {
 fn validate_moving_transition(
     previous: CameraProjectionFreshnessSample,
     current: CameraProjectionFreshnessSample,
-) -> Result<(), &'static str> {
+) -> Result<bool, &'static str> {
     if current.present_ordinal <= previous.present_ordinal {
         return Err("present-ordinal-not-monotonic");
     }
     if current.cadence_ordinal <= previous.cadence_ordinal {
         return Err("cadence-ordinal-not-monotonic");
     }
-    if current.left_frame_index <= previous.left_frame_index
-        || current.right_frame_index <= previous.right_frame_index
-    {
+    let left_advanced = validate_camera_eye_transition(
+        (
+            previous.left_frame_index,
+            previous.left_timestamp_ns,
+            previous.left_hwb_import_sequence,
+            previous.left_hardware_buffer_id,
+        ),
+        (
+            current.left_frame_index,
+            current.left_timestamp_ns,
+            current.left_hwb_import_sequence,
+            current.left_hardware_buffer_id,
+        ),
+    )?;
+    let right_advanced = validate_camera_eye_transition(
+        (
+            previous.right_frame_index,
+            previous.right_timestamp_ns,
+            previous.right_hwb_import_sequence,
+            previous.right_hardware_buffer_id,
+        ),
+        (
+            current.right_frame_index,
+            current.right_timestamp_ns,
+            current.right_hwb_import_sequence,
+            current.right_hardware_buffer_id,
+        ),
+    )?;
+    Ok(left_advanced && right_advanced)
+}
+
+fn validate_camera_eye_transition(
+    previous: (u64, i64, u64, u64),
+    current: (u64, i64, u64, u64),
+) -> Result<bool, &'static str> {
+    if current == previous {
+        return Ok(false);
+    }
+    if current.0 == previous.0 && current.1 == previous.1 && current.2 == previous.2 {
+        return Err("camera-held-hardware-buffer-identity-mismatch");
+    }
+    // Partial equality is not a held frame: changing a timestamp, import, or
+    // buffer under an unchanged frame identity must still fail closed.
+    if current.0 <= previous.0 {
         return Err("camera-frame-index-not-monotonic");
     }
-    if current.left_timestamp_ns <= previous.left_timestamp_ns
-        || current.right_timestamp_ns <= previous.right_timestamp_ns
-    {
+    if current.1 <= previous.1 {
         return Err("camera-timestamp-not-monotonic");
     }
-    if current.left_hwb_import_sequence <= previous.left_hwb_import_sequence
-        || current.right_hwb_import_sequence <= previous.right_hwb_import_sequence
-    {
+    if current.2 <= previous.2 {
         return Err("camera-hwb-import-sequence-not-monotonic");
     }
-    Ok(())
+    Ok(true)
 }
 
 #[cfg(test)]
@@ -485,6 +531,128 @@ mod tests {
         assert!(!marker.contains("screen-recording"));
         assert_eq!(periodic.previous.present_ordinal, 2);
         assert_eq!(periodic.current.present_ordinal, 302);
+    }
+
+    fn at_present(
+        mut frame: CameraProjectionFreshnessSample,
+        ordinal: u64,
+    ) -> CameraProjectionFreshnessSample {
+        frame.present_ordinal = ordinal;
+        frame.cadence_ordinal = ordinal;
+        frame
+    }
+
+    fn with_left_eye(
+        mut frame: CameraProjectionFreshnessSample,
+        left: CameraProjectionFreshnessSample,
+    ) -> CameraProjectionFreshnessSample {
+        frame.left_frame_index = left.left_frame_index;
+        frame.left_timestamp_ns = left.left_timestamp_ns;
+        frame.left_hwb_import_sequence = left.left_hwb_import_sequence;
+        frame.left_hardware_buffer_id = left.left_hardware_buffer_id;
+        frame
+    }
+
+    #[test]
+    fn faster_display_reuses_exact_camera_frames_without_rejecting_the_launch() {
+        let mut tracker = tracker();
+        assert_eq!(
+            tracker.observe(sample(1)),
+            CameraProjectionFreshnessObservation::Primed
+        );
+        assert!(matches!(
+            tracker.observe(sample(2)),
+            CameraProjectionFreshnessObservation::Issued(_)
+        ));
+        // The observed startup sequence: both eyes advance, both hold for one
+        // display, then only the left eye advances. No new moving receipt yet.
+        assert_eq!(
+            tracker.observe(at_present(sample(2), 3)),
+            CameraProjectionFreshnessObservation::Pending
+        );
+        assert_eq!(
+            tracker.observe(at_present(with_left_eye(sample(2), sample(3)), 4)),
+            CameraProjectionFreshnessObservation::Pending
+        );
+        let CameraProjectionFreshnessObservation::Issued(receipt) =
+            tracker.observe(at_present(sample(4), 302))
+        else {
+            panic!("legal camera holds poisoned the next moving receipt");
+        };
+        assert_eq!(receipt.previous.present_ordinal, 2);
+        assert_eq!(receipt.current.present_ordinal, 302);
+    }
+
+    #[test]
+    fn first_moving_receipt_waits_until_both_independent_eyes_advance() {
+        let mut tracker = tracker();
+        assert_eq!(
+            tracker.observe(sample(1)),
+            CameraProjectionFreshnessObservation::Primed
+        );
+        assert_eq!(
+            tracker.observe(at_present(with_left_eye(sample(1), sample(2)), 2)),
+            CameraProjectionFreshnessObservation::Pending
+        );
+        let CameraProjectionFreshnessObservation::Issued(receipt) =
+            tracker.observe(at_present(sample(2), 3))
+        else {
+            panic!("independent eye arrivals did not complete moving evidence");
+        };
+        assert_eq!(receipt.previous.present_ordinal, 1);
+        assert_eq!(receipt.current.present_ordinal, 3);
+        assert!(receipt.current.left_frame_index > receipt.previous.left_frame_index);
+        assert!(receipt.current.right_frame_index > receipt.previous.right_frame_index);
+    }
+
+    #[test]
+    fn held_camera_input_never_produces_a_new_periodic_moving_receipt() {
+        let mut tracker = tracker();
+        tracker.observe(sample(1));
+        assert!(matches!(
+            tracker.observe(sample(2)),
+            CameraProjectionFreshnessObservation::Issued(_)
+        ));
+        for ordinal in 3..=603 {
+            assert_eq!(
+                tracker.observe(at_present(sample(2), ordinal)),
+                CameraProjectionFreshnessObservation::Pending
+            );
+        }
+        let CameraProjectionFreshnessObservation::Issued(receipt) =
+            tracker.observe(at_present(sample(3), 604))
+        else {
+            panic!("a new exact stereo pair should resume moving evidence");
+        };
+        assert_eq!(receipt.previous.present_ordinal, 2);
+        assert_eq!(receipt.current.present_ordinal, 604);
+    }
+
+    #[test]
+    fn coherent_holds_do_not_hide_rollback_or_hardware_buffer_substitution() {
+        let mut rollback_tracker = tracker();
+        rollback_tracker.observe(sample(2));
+        assert_eq!(
+            rollback_tracker.observe(at_present(sample(2), 3)),
+            CameraProjectionFreshnessObservation::Pending
+        );
+        assert_rejected(
+            rollback_tracker.observe(at_present(sample(1), 4)),
+            "camera-frame-index-not-monotonic",
+        );
+
+        let mut substitution_tracker = tracker();
+        substitution_tracker.observe(sample(2));
+        let mut substituted = at_present(sample(2), 3);
+        substituted.right_hardware_buffer_id += 1;
+        assert_rejected(
+            substitution_tracker.observe(substituted),
+            "camera-held-hardware-buffer-identity-mismatch",
+        );
+        assert_rejected(
+            substitution_tracker.observe(sample(302)),
+            "freshness-launch-already-rejected",
+        );
     }
 
     #[test]

@@ -1,8 +1,12 @@
 //! Vulkan projection for decoded stereo video frames in the Spatial camera panel.
 
 use std::ffi::CString;
+use std::sync::Arc;
 use std::time::Instant;
 
+use crate::spatial_public_multistack_runtime::{
+    SpatialPipelineWorker, SpatialVideoProjectionResourceLease,
+};
 use ash::vk;
 
 use crate::{
@@ -150,16 +154,30 @@ impl SpatialVideoProjectionFrameStats {
 pub(crate) struct PreparedSpatialVideoProjection {
     pub(crate) descriptor_set: vk::DescriptorSet,
     pub(crate) descriptor_set_layout: vk::DescriptorSetLayout,
+    pub(crate) resource_lease: SpatialVideoProjectionResourceLease,
     pipeline_layout: vk::PipelineLayout,
     pipeline: vk::Pipeline,
     pub(crate) stats: SpatialVideoProjectionFrameStats,
+}
+
+pub(crate) struct SpatialVideoProjectionDescriptorBinding {
+    pub(crate) descriptor_set_layout: vk::DescriptorSetLayout,
+    pub(crate) descriptor_set: vk::DescriptorSet,
+    pub(crate) resource_lease: SpatialVideoProjectionResourceLease,
+}
+
+struct SpatialVideoProjectionResourceBuild {
+    format_key: AhbVulkanFormatKey,
+    worker: SpatialPipelineWorker<Result<Arc<SpatialVideoProjectionResources>, String>>,
 }
 
 pub(crate) struct SpatialVideoProjectionRenderer {
     ahb: Option<AhbVulkanDevice>,
     memory_properties: vk::PhysicalDeviceMemoryProperties,
     render_pass: vk::RenderPass,
-    resources: Option<SpatialVideoProjectionResources>,
+    resources: Option<Arc<SpatialVideoProjectionResources>>,
+    resource_build: Option<SpatialVideoProjectionResourceBuild>,
+    failed_resource_build: Option<AhbVulkanFormatKey>,
     imports: Vec<SpatialVideoProjectionImport>,
     import_cache_hits: u64,
     import_cache_misses: u64,
@@ -190,6 +208,8 @@ impl SpatialVideoProjectionRenderer {
             memory_properties,
             render_pass,
             resources: None,
+            resource_build: None,
+            failed_resource_build: None,
             imports: Vec::new(),
             import_cache_hits: 0,
             import_cache_misses: 0,
@@ -202,11 +222,13 @@ impl SpatialVideoProjectionRenderer {
     }
 
     pub(crate) unsafe fn destroy(&mut self, device: &ash::Device) {
+        // Only teardown waits. The caller keeps the render pass/device alive.
+        if let Some(build) = self.resource_build.take() {
+            let _ = build.worker.join();
+        }
         self.gpu_frame_hardware_buffer_ids.clear();
         self.destroy_imports(device);
-        if let Some(resources) = self.resources.take() {
-            resources.destroy(device);
-        }
+        self.resources = None;
     }
 
     pub(crate) fn retire_completed_frame_handles(&mut self) {
@@ -223,10 +245,17 @@ impl SpatialVideoProjectionRenderer {
     /// by this renderer until its normal bounded cache eviction or renderer destruction.
     pub(crate) fn retained_unused_descriptor_binding(
         &self,
-    ) -> Option<(vk::DescriptorSetLayout, vk::DescriptorSet)> {
+    ) -> Option<SpatialVideoProjectionDescriptorBinding> {
         let resources = self.resources.as_ref()?;
         let retained = self.imports.last()?;
-        Some((resources.descriptor_set_layout, retained.descriptor_set))
+        Some(SpatialVideoProjectionDescriptorBinding {
+            descriptor_set_layout: resources.descriptor_set_layout,
+            descriptor_set: retained.descriptor_set,
+            resource_lease: SpatialVideoProjectionResourceLease::new(
+                resources.descriptor_set_layout,
+                Arc::clone(resources),
+            ),
+        })
     }
 
     pub(crate) unsafe fn prepare_frame(
@@ -297,16 +326,9 @@ impl SpatialVideoProjectionRenderer {
                 .map(|resources| resources.format_key != format_key)
                 .unwrap_or(true)
             {
-                self.destroy_imports(device);
-                if let Some(resources) = self.resources.take() {
-                    resources.destroy(device);
+                if !self.prepare_resources(device, format_key, &format_props)? {
+                    return Ok(None);
                 }
-                self.resources = Some(create_spatial_video_projection_resources(
-                    device,
-                    self.render_pass,
-                    format_key,
-                    &format_props,
-                )?);
             }
 
             let imports_before = self.imports.len();
@@ -409,6 +431,10 @@ impl SpatialVideoProjectionRenderer {
         Ok(Some(PreparedSpatialVideoProjection {
             descriptor_set: self.imports[import_index].descriptor_set,
             descriptor_set_layout,
+            resource_lease: SpatialVideoProjectionResourceLease::new(
+                descriptor_set_layout,
+                Arc::clone(self.resources.as_ref().expect("prepared-video-resources")),
+            ),
             pipeline_layout,
             pipeline,
             stats: SpatialVideoProjectionFrameStats {
@@ -449,6 +475,74 @@ impl SpatialVideoProjectionRenderer {
                 stereo_layout: settings.stereo_layout.marker_value(),
             },
         }))
+    }
+
+    unsafe fn prepare_resources(
+        &mut self,
+        device: &ash::Device,
+        format_key: AhbVulkanFormatKey,
+        format_props: &vk::AndroidHardwareBufferFormatPropertiesANDROID<'_>,
+    ) -> Result<bool, String> {
+        if self
+            .resource_build
+            .as_ref()
+            .is_some_and(|build| build.worker.is_finished())
+        {
+            let build = self.resource_build.take().unwrap();
+            match build.worker.join() {
+                Ok(Ok(resources)) if build.format_key == format_key => {
+                    // prepare_frame runs only after retirement of the preceding
+                    // GPU submission; imports are released before their pool.
+                    self.destroy_imports(device);
+                    self.resources = Some(resources);
+                    self.failed_resource_build = None;
+                    log_marker("status=video-resources-adopted preparation=worker exactFormatMatch=true runtimeCrash=false".to_string());
+                    return Ok(true);
+                }
+                Ok(Ok(_stale)) => {} // Arc drops the never-submitted bundle.
+                result => {
+                    self.failed_resource_build = Some(build.format_key);
+                    let reason = match result {
+                        Ok(Err(error)) => error,
+                        _ => "worker-panicked".to_string(),
+                    };
+                    log_marker(format!("status=video-resource-preparation-failed reason={} lastGoodResourcesPreserved=true runtimeCrash=false", crate::marker_token(&reason)));
+                }
+            }
+        }
+        if self.failed_resource_build == Some(format_key) {
+            return Ok(false);
+        }
+        if self.resource_build.is_none() {
+            // Copy only returned scalar values, never an FFI pNext chain or a
+            // borrowed frame/AImage. The worker needs no decoded buffer lifetime.
+            let properties = SpatialVideoProjectionFormatProperties::from(format_props);
+            let worker_device = device.clone();
+            let render_pass = self.render_pass;
+            let worker = SpatialPipelineWorker::spawn("video-pipeline", move || {
+                let started_at = Instant::now();
+                let result = create_spatial_video_projection_resources(
+                    &worker_device,
+                    render_pass,
+                    format_key,
+                    &properties.to_vk(),
+                )
+                .map(Arc::new);
+                log_marker(format!("status=video-resources-prepared preparation=worker cpuDurationNs={} succeeded={} runtimeCrash=false", started_at.elapsed().as_nanos(), result.is_ok()));
+                result
+            });
+            match worker {
+                Ok(worker) => {
+                    self.resource_build =
+                        Some(SpatialVideoProjectionResourceBuild { format_key, worker })
+                }
+                Err(error) => {
+                    self.failed_resource_build = Some(format_key);
+                    return Err(format!("video-pipeline-worker-{error}"));
+                }
+            }
+        }
+        Ok(false)
     }
 
     pub(crate) unsafe fn record_video_eye(
@@ -605,6 +699,7 @@ impl SpatialVideoProjectionImportKey {
 }
 
 struct SpatialVideoProjectionResources {
+    device: ash::Device,
     format_key: AhbVulkanFormatKey,
     sampler_ycbcr_conversion: Option<vk::SamplerYcbcrConversion>,
     sampler: vk::Sampler,
@@ -623,16 +718,67 @@ impl SpatialVideoProjectionResources {
             "combined-rgba-sampler"
         }
     }
+}
 
-    unsafe fn destroy(self, device: &ash::Device) {
-        device.destroy_pipeline(self.pipeline, None);
-        device.destroy_pipeline_layout(self.pipeline_layout, None);
-        device.destroy_descriptor_pool(self.descriptor_pool, None);
-        device.destroy_descriptor_set_layout(self.descriptor_set_layout, None);
-        device.destroy_sampler(self.sampler, None);
-        if let Some(conversion) = self.sampler_ycbcr_conversion {
-            device.destroy_sampler_ycbcr_conversion(conversion, None);
+impl Drop for SpatialVideoProjectionResources {
+    fn drop(&mut self) {
+        unsafe {
+            self.device.destroy_pipeline(self.pipeline, None);
+            self.device
+                .destroy_pipeline_layout(self.pipeline_layout, None);
+            self.device
+                .destroy_descriptor_pool(self.descriptor_pool, None);
+            self.device
+                .destroy_descriptor_set_layout(self.descriptor_set_layout, None);
+            self.device.destroy_sampler(self.sampler, None);
+            if let Some(conversion) = self.sampler_ycbcr_conversion {
+                self.device
+                    .destroy_sampler_ycbcr_conversion(conversion, None);
+            }
         }
+    }
+}
+
+#[derive(Clone, Copy)]
+struct SpatialVideoProjectionFormatProperties {
+    format: vk::Format,
+    external_format: u64,
+    format_features: vk::FormatFeatureFlags,
+    components: vk::ComponentMapping,
+    model: vk::SamplerYcbcrModelConversion,
+    range: vk::SamplerYcbcrRange,
+    x_chroma_offset: vk::ChromaLocation,
+    y_chroma_offset: vk::ChromaLocation,
+}
+
+impl From<&vk::AndroidHardwareBufferFormatPropertiesANDROID<'_>>
+    for SpatialVideoProjectionFormatProperties
+{
+    fn from(properties: &vk::AndroidHardwareBufferFormatPropertiesANDROID<'_>) -> Self {
+        Self {
+            format: properties.format,
+            external_format: properties.external_format,
+            format_features: properties.format_features,
+            components: properties.sampler_ycbcr_conversion_components,
+            model: properties.suggested_ycbcr_model,
+            range: properties.suggested_ycbcr_range,
+            x_chroma_offset: properties.suggested_x_chroma_offset,
+            y_chroma_offset: properties.suggested_y_chroma_offset,
+        }
+    }
+}
+
+impl SpatialVideoProjectionFormatProperties {
+    fn to_vk(self) -> vk::AndroidHardwareBufferFormatPropertiesANDROID<'static> {
+        vk::AndroidHardwareBufferFormatPropertiesANDROID::default()
+            .format(self.format)
+            .external_format(self.external_format)
+            .format_features(self.format_features)
+            .sampler_ycbcr_conversion_components(self.components)
+            .suggested_ycbcr_model(self.model)
+            .suggested_ycbcr_range(self.range)
+            .suggested_x_chroma_offset(self.x_chroma_offset)
+            .suggested_y_chroma_offset(self.y_chroma_offset)
     }
 }
 
@@ -834,6 +980,7 @@ unsafe fn create_spatial_video_projection_resources(
     ));
 
     Ok(SpatialVideoProjectionResources {
+        device: device.clone(),
         format_key,
         sampler_ycbcr_conversion: sampler_ycbcr_handle,
         sampler,

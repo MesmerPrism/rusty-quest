@@ -51,6 +51,7 @@ param(
     [switch]$RequireSpatialAssetModel,
     [switch]$RequireSpatialVirtualRoom,
     [switch]$SyntheticVisualProbe,
+    [switch]$SelfTestPrivateLayerOverrideReduction,
     [int]$MinimumSyntheticRedPixels = 1000,
     [int]$MinimumSyntheticGreenPixels = 1000,
     [double]$MinimumSyntheticTargetPixelRatio = 0.01,
@@ -207,6 +208,123 @@ function Test-TextContains {
         [string]$Needle
     )
     return $Text.Contains($Needle)
+}
+
+function Get-MarkerField {
+    param(
+        [Parameter(Mandatory=$true)][string]$Line,
+        [Parameter(Mandatory=$true)][string]$Name
+    )
+    $match = [regex]::Match($Line, "(?:^|\s)$([regex]::Escape($Name))=([^\s]+)")
+    if (-not $match.Success) {
+        return $null
+    }
+    return $match.Groups[1].Value
+}
+
+function Get-ExactPrivateLayerOverrideAttempt {
+    param(
+        [Parameter(Mandatory=$true)][string]$LayerMarkerText,
+        [Parameter(Mandatory=$true)][string]$RawStartText
+    )
+
+    $lines = @($LayerMarkerText -split "\r?\n" | Where-Object { $_ -match 'channel=private-layer-panel status=layer-override-' })
+    $indexedLines = @(
+        for ($lineIndex = 0; $lineIndex -lt $lines.Count; $lineIndex++) {
+            [pscustomobject]@{ ordinal = $lineIndex; text = [string]$lines[$lineIndex] }
+        }
+    )
+    $rawLines = @($RawStartText -split "\r?\n")
+    $indexedRawLines = @(
+        for ($lineIndex = 0; $lineIndex -lt $rawLines.Count; $lineIndex++) {
+            [pscustomobject]@{ ordinal = $lineIndex; text = [string]$rawLines[$lineIndex] }
+        }
+    )
+    $totalFailures = @($indexedLines | Where-Object { $_.text -match 'status=layer-override-update-failed' }).Count
+    for ($effectiveIndex = $indexedLines.Count - 1; $effectiveIndex -ge 0; $effectiveIndex--) {
+        $effectiveRecord = $indexedLines[$effectiveIndex]
+        $effectiveLine = $effectiveRecord.text
+        if ($effectiveLine -notmatch 'status=layer-override-effective') { continue }
+        $generation = Get-MarkerField $effectiveLine 'layerOverrideRequestGeneration'
+        $lifecycle = Get-MarkerField $effectiveLine 'nativeLifecycleGeneration'
+        $effectiveValue = Get-MarkerField $effectiveLine 'effectivePublicMultiStackOpaqueProjectionLayerOverride'
+        $parsedGeneration = 0L
+        $parsedLifecycle = 0L
+        if (-not [long]::TryParse($generation, [ref]$parsedGeneration) -or
+            $parsedGeneration -le 0L -or
+            -not [long]::TryParse($lifecycle, [ref]$parsedLifecycle) -or
+            $parsedLifecycle -le 0L -or
+            [string]::IsNullOrWhiteSpace($effectiveValue)) {
+            continue
+        }
+        $requested = @($indexedLines | Where-Object {
+            $_.text -match 'status=layer-override-requested' -and
+            (Get-MarkerField $_.text 'layerOverrideRequestGeneration') -eq $generation
+        })
+        $pending = @($indexedLines | Where-Object {
+            $_.text -match 'status=layer-override-pending' -and
+            (Get-MarkerField $_.text 'layerOverrideRequestGeneration') -eq $generation
+        })
+        $submitted = @($indexedLines | Where-Object {
+            $_.text -match 'status=layer-override-submitted' -and
+            (Get-MarkerField $_.text 'layerOverrideRequestGeneration') -eq $generation -and
+            (Get-MarkerField $_.text 'nativeLifecycleGeneration') -eq $lifecycle
+        })
+        $effective = @($indexedLines | Where-Object {
+            $_.text -match 'status=layer-override-effective' -and
+            (Get-MarkerField $_.text 'layerOverrideRequestGeneration') -eq $generation -and
+            (Get-MarkerField $_.text 'nativeLifecycleGeneration') -eq $lifecycle
+        })
+        $failed = @($indexedLines | Where-Object {
+            $_.text -match 'status=layer-override-update-failed' -and
+            (Get-MarkerField $_.text 'layerOverrideRequestGeneration') -eq $generation -and
+            (Get-MarkerField $_.text 'nativeLifecycleGeneration') -eq $lifecycle
+        })
+        $matchingRawEffective = @($indexedRawLines | Where-Object { $_.text -ceq $effectiveLine })
+        $matchingRawStarts = @($indexedRawLines | Where-Object {
+            $_.text -match 'channel=camera-hwb-spatial-probe status=native-start-requested' -and
+            $_.text -match 'rawCameraProjectionProbe=true' -and
+            (Get-MarkerField $_.text 'rawProjectionLaunchChallenge') -eq $lifecycle
+        })
+        if ($requested.Count -ne 1 -or $pending.Count -ne 1 -or $submitted.Count -ne 1 -or
+            $effective.Count -ne 1 -or $failed.Count -ne 0 -or
+            $matchingRawEffective.Count -ne 1 -or $matchingRawStarts.Count -ne 1) {
+            continue
+        }
+        $requestedValue = Get-MarkerField $requested[0].text 'normalizedRequestedPublicMultiStackOpaqueProjectionLayerOverride'
+        $submittedValue = Get-MarkerField $submitted[0].text 'requestedPublicMultiStackOpaqueProjectionLayerOverride'
+        if ($requestedValue -ne $submittedValue -or $submittedValue -ne $effectiveValue -or
+            -not ($requested[0].ordinal -lt $pending[0].ordinal -and
+                $pending[0].ordinal -lt $submitted[0].ordinal -and
+                $submitted[0].ordinal -lt $effective[0].ordinal) -or
+            $matchingRawStarts[0].ordinal -le $matchingRawEffective[0].ordinal) {
+            continue
+        }
+        return [ordered]@{
+            valid = $true
+            request_generation = $parsedGeneration
+            native_lifecycle_generation = $parsedLifecycle
+            requested_value = $requestedValue
+            effective_value = $effectiveValue
+            submission_count = $submitted.Count
+            failure_count = $failed.Count
+            total_failure_count = $totalFailures
+            raw_native_start_count = $matchingRawStarts.Count
+            marker_order = @('requested', 'pending', 'submitted', 'effective')
+        }
+    }
+    return [ordered]@{
+        valid = $false
+        request_generation = $null
+        native_lifecycle_generation = $null
+        requested_value = $null
+        effective_value = $null
+        submission_count = 0
+        failure_count = $null
+        total_failure_count = $totalFailures
+        raw_native_start_count = 0
+        marker_order = @()
+    }
 }
 
 function Assert-SummaryFlag {
@@ -374,6 +492,56 @@ function Measure-SyntheticSurfacePixels {
     } finally {
         $bitmap.Dispose()
     }
+}
+
+if ($SelfTestPrivateLayerOverrideReduction) {
+    $requested = "I/RustyQuest: channel=private-layer-panel status=layer-override-requested source=test layerOverrideRequestGeneration=7 normalizedRequestedPublicMultiStackOpaqueProjectionLayerOverride=8.0000"
+    $pending = "I/RustyQuest: channel=private-layer-panel status=layer-override-pending source=test layerOverrideRequestGeneration=7 requestedPublicMultiStackOpaqueProjectionLayerOverride=8.0000"
+    $submitted = "I/RustyQuest: channel=private-layer-panel status=layer-override-submitted source=test layerOverrideRequestGeneration=7 nativeLifecycleGeneration=701 requestedPublicMultiStackOpaqueProjectionLayerOverride=8.0000"
+    $effective = "I/RustyQuest: channel=private-layer-panel status=layer-override-effective source=test layerOverrideRequestGeneration=7 nativeLifecycleGeneration=701 effectivePublicMultiStackOpaqueProjectionLayerOverride=8.0000"
+    $failed = "I/RustyQuest: channel=private-layer-panel status=layer-override-update-failed source=test layerOverrideRequestGeneration=7 nativeLifecycleGeneration=701"
+    $rawStart = "I/RustyQuest: channel=camera-hwb-spatial-probe status=native-start-requested rawCameraProjectionProbe=true rawProjectionLaunchChallenge=701"
+    $validLf = "$requested`n$pending`n$submitted`n$effective`n$rawStart`n"
+    $validCrLf = "$requested`r`n$pending`r`n$submitted`r`n$effective`r`n$rawStart`r`n"
+    $damage = [ordered]@{
+        duplicate_requested = "$requested`n$requested`n$pending`n$submitted`n$effective`n$rawStart"
+        duplicate_pending = "$requested`n$pending`n$pending`n$submitted`n$effective`n$rawStart"
+        duplicate_submission = "$requested`n$pending`n$submitted`n$submitted`n$effective`n$rawStart"
+        duplicate_effective = "$requested`n$pending`n$submitted`n$effective`n$effective`n$rawStart"
+        zero_request_generation = $validLf.Replace('layerOverrideRequestGeneration=7', 'layerOverrideRequestGeneration=0')
+        negative_request_generation = $validLf.Replace('layerOverrideRequestGeneration=7', 'layerOverrideRequestGeneration=-1')
+        malformed_request_generation = $validLf.Replace('layerOverrideRequestGeneration=7', 'layerOverrideRequestGeneration=not-a-generation')
+        same_attempt_failure = "$requested`n$pending`n$submitted`n$failed`n$effective`n$rawStart"
+        wrong_order = "$requested`n$submitted`n$pending`n$effective`n$rawStart"
+        mismatched_value = "$requested`n$pending`n$($submitted.Replace('8.0000', '2.0000'))`n$effective`n$rawStart"
+        nonpositive_lifecycle = "$requested`n$pending`n$($submitted.Replace('701', '-1'))`n$($effective.Replace('701', '-1'))`n$($rawStart.Replace('701', '-1'))"
+        missing_raw_start = "$requested`n$pending`n$submitted`n$effective"
+        mismatched_raw_start = "$requested`n$pending`n$submitted`n$effective`n$($rawStart.Replace('701', '702'))"
+        raw_start_before_effective = "$requested`n$pending`n$submitted`n$rawStart`n$effective"
+        failed_only = "$requested`n$pending`n$failed`n$rawStart"
+    }
+    if (-not [bool](Get-ExactPrivateLayerOverrideAttempt $validLf $validLf).valid -or
+        -not [bool](Get-ExactPrivateLayerOverrideAttempt $validCrLf $validCrLf).valid) {
+        throw "Exact private-layer attempt reducer rejected a valid LF/CRLF envelope."
+    }
+    foreach ($case in $damage.GetEnumerator()) {
+        $damagedResult = Get-ExactPrivateLayerOverrideAttempt ([string]$case.Value) ([string]$case.Value)
+        if ([bool]$damagedResult.valid) {
+            throw "Exact private-layer attempt reducer accepted damage case '$($case.Key)'."
+        }
+        if ($case.Key -in @('same_attempt_failure', 'failed_only') -and
+            [int]$damagedResult.total_failure_count -lt 1) {
+            throw "Exact private-layer attempt reducer lost failure count for '$($case.Key)'."
+        }
+    }
+    [ordered]@{
+        schema = "rusty.quest.private_layer_override_attempt_reducer_self_test.v1"
+        result = "pass"
+        positive_cases = 2
+        damage_cases = $damage.Count
+        device_used = $false
+    } | ConvertTo-Json -Compress
+    exit 0
 }
 
 if ([string]::IsNullOrWhiteSpace($RepoRoot)) {
@@ -1058,8 +1226,15 @@ try {
     $summary.private_layer_panel_left_stick_distance_enabled = Test-TextContains $evidenceText "privateLayerPanelDistanceControl=left-stick-y-private-panel-free-transform-distance"
     $summary.private_layer_panel_distance_persists_across_toggle = Test-TextContains $evidenceText "privateLayerPanelDistancePersistsAcrossToggle=true"
     $summary.right_stick_side_flick_panel_move_disabled = Test-TextContains $evidenceText "rightStickSideFlickPanelMoveDisabled=true"
-    $summary.private_layer_panel_button_selected = $evidenceText -match "status=layer-button-selected[^\r\n]*source=private-layer-control-panel"
-    $summary.private_layer_panel_override_submitted = $evidenceText -match "status=layer-override-submitted[^\r\n]*source=private-layer-control-panel"
+    $layerOverrideEvidence = if (-not [string]::IsNullOrWhiteSpace($tagLogcat)) { $tagLogcat } else { $pidLogcat }
+    $layerOverrideAttempt = Get-ExactPrivateLayerOverrideAttempt $layerOverrideEvidence $layerOverrideEvidence
+    $summary.private_layer_panel_override_attempt = $layerOverrideAttempt
+    $summary.private_layer_panel_button_selected = [bool]$layerOverrideAttempt.valid
+    $summary.private_layer_panel_override_requested = [bool]$layerOverrideAttempt.valid
+    $summary.private_layer_panel_override_pending = [bool]$layerOverrideAttempt.valid
+    $summary.private_layer_panel_override_submitted = [bool]$layerOverrideAttempt.valid
+    $summary.private_layer_panel_override_effective = [bool]$layerOverrideAttempt.valid
+    $summary.private_layer_panel_override_failed = [int]$layerOverrideAttempt.total_failure_count -ne 0
     $summary.private_layer_panel_override_native_updated = Test-TextContains $evidenceText "status=private-layer-override-updated"
     $summary.private_layer_panel_projection_refresh_forced = Test-TextContains $evidenceText "layerOverrideForcedProjectionRefresh=true"
     $summary.layer_created = [bool]$summary.scene_quad_layer_created -or [bool]$summary.scene_panel_carrier_entity_created
@@ -1150,7 +1325,7 @@ try {
     $summary.public_multistack_projection_evidence = Test-TextContains $evidenceText "status=public-multistack-projection-evidence"
     $summary.public_multistack_projection_applied = Test-TextContains $evidenceText "publicMultiStackProjectionApplied=true"
     $summary.public_multistack_presentation_reprojection_guide_ingress =
-        $evidenceText -match "cameraPresentationReprojectionGuidePushProvided=true[^\r\n]*cameraPresentationReprojectionGuideIngress=private-guide-pass0-prewarped-camera-color[^\r\n]*cameraPresentationReprojectionGuidePushBytes=112"
+        $evidenceText -match "status=projection-zone-raw-parity-effective[^\r\n]*rawCustomProjectionLayerOverride=8\.000[^\r\n]*rawCustomProjectionGuidePassesRequested=1[^\r\n]*rawCustomProjectionGuidePassesRecorded=1[^\r\n]*rawCustomProjectionGuideRecordStatus=recorded[^\r\n]*projectionZoneCameraPayloadSource=private-guide-pass0-prewarped-camera-color[^\r\n]*rawCustomProjectionDownstreamEffectPassesRecorded=0[^\r\n]*projectionZoneParityLossReason=none"
     $summary.public_multistack_layer_cycle_enabled = Test-TextContains $evidenceText "publicMultiStackLayerCycleEnabled=true"
     $summary.public_multistack_layer_cycle_elapsed = Test-TextContains $evidenceText "publicMultiStackLayerCycleElapsedSeconds="
     $summary.public_multistack_depth_layer_policy_marker =

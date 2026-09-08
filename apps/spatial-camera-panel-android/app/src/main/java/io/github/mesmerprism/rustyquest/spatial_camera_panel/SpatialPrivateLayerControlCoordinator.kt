@@ -20,11 +20,40 @@ internal data class SpatialPrivateLayerControlBindings(
     val updateZoneCompositorNative: (PrivateLayerZoneCompositor) -> Long,
     val updateReadableVideoConsumerRequired: (Boolean, String) -> Unit,
     val updateRgbChannelTransformNative: (RgbChannelTransform) -> Long,
+    val updateStrengthCycleSpeedHzNative: (Float) -> Long,
     val updateProjectionSurfaceDisplacementNative:
         (ProjectionSurfaceDisplacement) -> Long,
     val updateProjectionSurfaceFeaturesNative:
         (ProjectionSurfaceTiling, ProjectionInnerAlpha) -> Long,
     val marker: (String) -> Unit,
+)
+
+internal data class PrivateLayerOverrideApplicationResult(
+    val accepted: Boolean,
+    val requestGeneration: Long,
+    val nativeLifecycleGeneration: Long,
+    val requestedOverride: Float,
+    val updateMask: Long?,
+    val failureReason: String?,
+    val lifecycleCurrent: Boolean = true,
+) {
+  val readyForNativeStart: Boolean
+    get() = accepted && lifecycleCurrent
+}
+
+internal data class PrivateLayerOverrideRequestResult(
+    val requestedOverride: Float,
+    val requestGeneration: Long,
+    val status: String,
+    val effective: Boolean,
+    val effectiveOverride: Float,
+    val nativeLifecycleGeneration: Long?,
+    val failureReason: String?,
+)
+
+private data class PendingPrivateLayerOverride(
+    val generation: Long,
+    val requestedOverride: Float,
 )
 
 internal class SpatialPrivateLayerControlCoordinator(
@@ -33,9 +62,23 @@ internal class SpatialPrivateLayerControlCoordinator(
     initialZoneCompositor: PrivateLayerZoneCompositor =
         PrivateLayerZoneCompositorControls.legacyOff,
 ) {
+  private val layerOverrideMonitor = Any()
+
   var layerOverride: Float by
       mutableStateOf(fixedLayerOverride ?: PrivateLayerControls.cycleOverride)
     private set
+
+  var effectiveLayerOverride: Float = layerOverride
+    private set
+
+  private var layerOverrideRequestGeneration: Long = 0L
+  private var pendingLayerOverride: PendingPrivateLayerOverride? = null
+  private var activeLayerOverrideNativeLifecycleGeneration: Long? = null
+  private var layerOverrideLifecycleEpoch: Long = 0L
+  private var layerOverrideSubmissionInProgress = false
+  private var lastAttemptedLayerOverrideGeneration: Long = Long.MIN_VALUE
+  private var lastAttemptedNativeLifecycleGeneration: Long = Long.MIN_VALUE
+  private var lastLayerOverrideApplication: PrivateLayerOverrideApplicationResult? = null
 
   var depthLayerPolicy: Int = PrivateLayerControls.defaultDepthLayerPolicy
     private set
@@ -53,8 +96,15 @@ internal class SpatialPrivateLayerControlCoordinator(
   var zoneCompositor: PrivateLayerZoneCompositor =
       PrivateLayerZoneCompositorModule.normalize(initialZoneCompositor)
     private set
+  private val zoneCompositorLifecycleLock = Any()
+  private var effectiveZoneCompositor: PrivateLayerZoneCompositor =
+      safeReadableVideoFallback(zoneCompositor)
+  private var pendingReadableVideoZoneCompositor: PrivateLayerZoneCompositor? = null
 
   var rgbChannelTransform: RgbChannelTransform = RgbChannelTransformControls.bypass
+    private set
+
+  var strengthCycleSpeedHz: Float = SpatialStrengthCycleControls.defaultSpeedHz
     private set
 
   var projectionSurfaceDisplacement: ProjectionSurfaceDisplacement =
@@ -79,37 +129,235 @@ internal class SpatialPrivateLayerControlCoordinator(
 
   fun applyCurrentConfiguration(source: String) {
     if (!bindings.routeActive()) return
-    updateLayerOverride(layerOverride, source)
+    applyPendingLayerOverrideForPanelCarrier(source)
+    applyRemainingConfiguration(source)
+  }
+
+  fun applyRemainingConfiguration(source: String) {
+    if (!bindings.routeActive()) return
     updateDepthLayerPolicy(depthLayerPolicy, source)
     updateDepthAlignment(depthAlignment, source)
     updateGuideProcessing(guideProcessing, source)
     updateZoneCompositor(zoneCompositor, source)
     updateRgbChannelTransform(rgbChannelTransform, source)
+    updateStrengthCycleSpeedHz(strengthCycleSpeedHz, source)
     updateProjectionSurfaceDisplacement(projectionSurfaceDisplacement, source)
     updateProjectionSurfaceFeatures(projectionSurfaceTiling, projectionInnerAlpha, source)
   }
 
-  fun updateLayerOverride(requestedLayerOverride: Float, source: String): Float {
-    if (!bindings.routeActive()) return layerOverride
-    val previousOverride = layerOverride
-    val updatedOverride =
+  fun updateLayerOverride(requestedLayerOverride: Float, source: String): Float =
+      updateLayerOverrideWithResult(requestedLayerOverride, source).requestedOverride
+
+  fun updateLayerOverrideWithResult(
+      requestedLayerOverride: Float,
+      source: String,
+  ): PrivateLayerOverrideRequestResult {
+    val normalizedOverride =
         fixedLayerOverride
             ?: PrivateLayerPanelControlModule.normalizeLayerOverride(requestedLayerOverride)
+    val request =
+        synchronized(layerOverrideMonitor) {
+          val previousRequestedOverride = layerOverride
+          layerOverrideRequestGeneration = layerOverrideRequestGeneration.nextExactGeneration()
+          layerOverride = normalizedOverride
+          PendingPrivateLayerOverride(layerOverrideRequestGeneration, normalizedOverride).also {
+            pendingLayerOverride = it
+            bindings.marker(
+                PrivateLayerPanelControlModule.layerOverrideRequestedMarker(
+                    source = source,
+                    requestedLayerOverride = requestedLayerOverride,
+                    previousRequestedOverride = previousRequestedOverride,
+                    normalizedRequestedOverride = normalizedOverride,
+                    requestGeneration = it.generation,
+                    placementMode = bindings.placementMode(),
+                )
+            )
+          }
+        }
+    val activeLifecycleGeneration =
+        synchronized(layerOverrideMonitor) { activeLayerOverrideNativeLifecycleGeneration }
+    val pendingReason =
+        when {
+          !bindings.routeActive() -> "projection-route-inactive"
+          activeLifecycleGeneration == null -> "native-lifecycle-not-ready"
+          synchronized(layerOverrideMonitor) { layerOverrideSubmissionInProgress } ->
+              "native-submission-in-progress"
+          else -> "native-submission-queued"
+        }
     bindings.marker(
-        PrivateLayerPanelControlModule.layerButtonSelectedMarker(
+        PrivateLayerPanelControlModule.layerOverridePendingMarker(
             source = source,
-            requestedLayerOverride = requestedLayerOverride,
-            previousOverride = previousOverride,
-            updatedOverride = updatedOverride,
-            placementMode = bindings.placementMode(),
+            requestedOverride = request.requestedOverride,
+            requestGeneration = request.generation,
+            pendingReason = pendingReason,
         )
     )
-    layerOverride = updatedOverride
+    if (activeLifecycleGeneration == null ||
+        synchronized(layerOverrideMonitor) { layerOverrideSubmissionInProgress }) {
+      return layerOverrideRequestResult(request, null)
+    }
+    val application =
+        runCatching {
+              drainPendingLayerOverrideRequests(
+                  source,
+                  activeLifecycleGeneration,
+                  establishActiveLifecycle = false,
+                  allowProjectionRefresh = true,
+              )
+            }
+            .getOrNull()
+    return layerOverrideRequestResult(request, application)
+  }
+
+  fun applyPendingLayerOverrideForRawLaunch(
+      source: String,
+      nativeLifecycleGeneration: Long,
+  ): PrivateLayerOverrideApplicationResult {
+    if (nativeLifecycleGeneration <= 0L) {
+      return PrivateLayerOverrideApplicationResult(
+          accepted = false,
+          requestGeneration = synchronized(layerOverrideMonitor) { layerOverrideRequestGeneration },
+          nativeLifecycleGeneration = nativeLifecycleGeneration,
+          requestedOverride = layerOverride,
+          updateMask = null,
+          failureReason = "invalid-native-lifecycle-generation",
+      )
+    }
+    return drainPendingLayerOverrideRequests(
+        source,
+        nativeLifecycleGeneration,
+        establishActiveLifecycle = true,
+        allowProjectionRefresh = false,
+    )
+  }
+
+  fun clearNativeLayerOverrideLifecycle() {
+    synchronized(layerOverrideMonitor) {
+      layerOverrideLifecycleEpoch = layerOverrideLifecycleEpoch.nextExactGeneration()
+      activeLayerOverrideNativeLifecycleGeneration = null
+      if (pendingLayerOverride == null) {
+        pendingLayerOverride =
+            PendingPrivateLayerOverride(layerOverrideRequestGeneration, layerOverride)
+      }
+      lastAttemptedLayerOverrideGeneration = Long.MIN_VALUE
+      lastAttemptedNativeLifecycleGeneration = Long.MIN_VALUE
+      lastLayerOverrideApplication = null
+    }
+  }
+
+  fun layerOverrideNativeLifecycleReady(): Boolean =
+      synchronized(layerOverrideMonitor) { activeLayerOverrideNativeLifecycleGeneration != null }
+
+  fun layerOverrideNativeLifecycleCurrent(nativeLifecycleGeneration: Long): Boolean =
+      synchronized(layerOverrideMonitor) {
+        activeLayerOverrideNativeLifecycleGeneration == nativeLifecycleGeneration
+      }
+
+  private fun applyPendingLayerOverrideForPanelCarrier(source: String) {
+    drainPendingLayerOverrideRequests(
+        source,
+        PANEL_CARRIER_READY_LIFECYCLE_GENERATION,
+        establishActiveLifecycle = true,
+        allowProjectionRefresh = false,
+    )
+  }
+
+  private fun drainPendingLayerOverrideRequests(
+      source: String,
+      nativeLifecycleGeneration: Long,
+      establishActiveLifecycle: Boolean,
+      allowProjectionRefresh: Boolean,
+  ): PrivateLayerOverrideApplicationResult {
+    val expectedLifecycleEpoch = synchronized(layerOverrideMonitor) {
+      if (layerOverrideSubmissionInProgress) {
+        val retained = pendingLayerOverride
+        return PrivateLayerOverrideApplicationResult(
+            accepted = false,
+            requestGeneration = retained?.generation ?: layerOverrideRequestGeneration,
+            nativeLifecycleGeneration = nativeLifecycleGeneration,
+            requestedOverride = retained?.requestedOverride ?: layerOverride,
+            updateMask = null,
+            failureReason = "native-submission-in-progress",
+        )
+      }
+      val prior = lastLayerOverrideApplication
+      if (pendingLayerOverride == null &&
+          prior?.accepted == true &&
+          prior.requestGeneration == layerOverrideRequestGeneration &&
+          prior.nativeLifecycleGeneration == nativeLifecycleGeneration) {
+        if (establishActiveLifecycle) {
+          activeLayerOverrideNativeLifecycleGeneration = nativeLifecycleGeneration
+        }
+        return prior
+      }
+      if (pendingLayerOverride == null) {
+        pendingLayerOverride =
+            PendingPrivateLayerOverride(layerOverrideRequestGeneration, layerOverride)
+      }
+      layerOverrideSubmissionInProgress = true
+      layerOverrideLifecycleEpoch
+    }
+    try {
+      while (true) {
+        val request = synchronized(layerOverrideMonitor) { requireNotNull(pendingLayerOverride) }
+        val result =
+            applyLayerOverrideRequest(
+                request,
+                source,
+                nativeLifecycleGeneration,
+                allowProjectionRefresh,
+            )
+        val lifecycleCurrent =
+            synchronized(layerOverrideMonitor) {
+              expectedLifecycleEpoch == layerOverrideLifecycleEpoch
+            }
+        if (!lifecycleCurrent) {
+          synchronized(layerOverrideMonitor) {
+            if (pendingLayerOverride == null) {
+              pendingLayerOverride =
+                  PendingPrivateLayerOverride(layerOverrideRequestGeneration, layerOverride)
+            }
+          }
+          return result.copy(
+              lifecycleCurrent = false,
+              failureReason = "native-lifecycle-invalidated-during-submission",
+          )
+        }
+        if (!result.accepted) return result
+        val next = synchronized(layerOverrideMonitor) { pendingLayerOverride }
+        if (next == null) {
+          if (establishActiveLifecycle) {
+            synchronized(layerOverrideMonitor) {
+              activeLayerOverrideNativeLifecycleGeneration = nativeLifecycleGeneration
+            }
+          }
+          return result
+        }
+      }
+    } finally {
+      synchronized(layerOverrideMonitor) { layerOverrideSubmissionInProgress = false }
+    }
+  }
+
+  private fun applyLayerOverrideRequest(
+      request: PendingPrivateLayerOverride,
+      source: String,
+      nativeLifecycleGeneration: Long,
+      allowProjectionRefresh: Boolean,
+  ): PrivateLayerOverrideApplicationResult = synchronized(layerOverrideMonitor) {
+    if (lastAttemptedLayerOverrideGeneration == request.generation &&
+        lastAttemptedNativeLifecycleGeneration == nativeLifecycleGeneration) {
+      return@synchronized requireNotNull(lastLayerOverrideApplication)
+    }
+    lastAttemptedLayerOverrideGeneration = request.generation
+    lastAttemptedNativeLifecycleGeneration = nativeLifecycleGeneration
+
+    val previousEffectiveOverride = effectiveLayerOverride
     val edgeWindowSelected =
-        PrivateLayerControls.metaPassthroughEdgeWindowSelected(updatedOverride)
+        PrivateLayerControls.metaPassthroughEdgeWindowSelected(request.requestedOverride)
     val enteringEdgeWindow =
         edgeWindowSelected &&
-            !PrivateLayerControls.metaPassthroughEdgeWindowSelected(previousOverride)
+            !PrivateLayerControls.metaPassthroughEdgeWindowSelected(previousEffectiveOverride)
     // The system passthrough layer and its LUT must be active before the native surface submits
     // an alpha-zero camera target. Reversing this order can leave the cutout black until the
     // projection carrier is manually stopped and restarted.
@@ -137,41 +385,109 @@ internal class SpatialPrivateLayerControlCoordinator(
         )
     )
     val updateMask =
-        runCatching { bindings.updateLayerOverrideNative(updatedOverride) }
-            .getOrElse { throwable ->
-              bindings.marker(
-                  PrivateLayerPanelControlModule.layerOverrideUpdateFailedMarker(
-                      source = source,
-                      requestedLayerOverride = requestedLayerOverride,
-                      updatedOverride = updatedOverride,
-                      error = throwable.javaClass.simpleName,
-                      message = throwable.message ?: "none",
-                  )
+        try {
+          bindings.updateLayerOverrideNative(request.requestedOverride)
+        } catch (throwable: Throwable) {
+          restoreEffectivePassthroughStyle(previousEffectiveOverride, source)
+          val failed =
+              PrivateLayerOverrideApplicationResult(
+                  accepted = false,
+                  requestGeneration = request.generation,
+                  nativeLifecycleGeneration = nativeLifecycleGeneration,
+                  requestedOverride = request.requestedOverride,
+                  updateMask = null,
+                  failureReason = "native-update-exception",
               )
-              0L
-            }
+          lastLayerOverrideApplication = failed
+          bindings.marker(
+              PrivateLayerPanelControlModule.layerOverrideUpdateFailedMarker(
+                  source = source,
+                  requestedLayerOverride = request.requestedOverride,
+                  requestGeneration = request.generation,
+                  nativeLifecycleGeneration = nativeLifecycleGeneration,
+                  updateMask = null,
+                  pendingRequestPreserved = pendingLayerOverride != null,
+                  error = throwable.javaClass.simpleName,
+                  message = throwable.message ?: "none",
+              )
+          )
+          return@synchronized failed
+        }
     bindings.marker(
         PrivateLayerPanelControlModule.layerOverrideSubmittedMarker(
             source = source,
             updateMask = updateMask,
-            previousOverride = previousOverride,
-            updatedOverride = updatedOverride,
+            requestGeneration = request.generation,
+            nativeLifecycleGeneration = nativeLifecycleGeneration,
+            requestedOverride = request.requestedOverride,
             placementMode = bindings.placementMode(),
             projectionTargetScale = bindings.projectionTargetScale(),
         )
     )
+    if (!PrivateLayerPanelControlModule.layerOverrideMaskAccepted(updateMask)) {
+      restoreEffectivePassthroughStyle(previousEffectiveOverride, source)
+      val failed =
+          PrivateLayerOverrideApplicationResult(
+              accepted = false,
+              requestGeneration = request.generation,
+              nativeLifecycleGeneration = nativeLifecycleGeneration,
+              requestedOverride = request.requestedOverride,
+              updateMask = updateMask,
+              failureReason = "native-update-mask-not-exactly-accepted",
+          )
+      lastLayerOverrideApplication = failed
+      bindings.marker(
+          PrivateLayerPanelControlModule.layerOverrideUpdateFailedMarker(
+              source = source,
+              requestedLayerOverride = request.requestedOverride,
+              requestGeneration = request.generation,
+              nativeLifecycleGeneration = nativeLifecycleGeneration,
+              updateMask = updateMask,
+              pendingRequestPreserved = pendingLayerOverride != null,
+              error = "NativeUpdateMaskRejected",
+              message = "expected-${PrivateLayerPanelControlModule.LAYER_OVERRIDE_ACCEPTED_MASK}",
+          )
+      )
+      return@synchronized failed
+    }
+    effectiveLayerOverride = request.requestedOverride
+    val pendingRequestCleared = pendingLayerOverride?.generation == request.generation
+    if (pendingRequestCleared) {
+      pendingLayerOverride = null
+    }
+    val accepted =
+        PrivateLayerOverrideApplicationResult(
+            accepted = true,
+            requestGeneration = request.generation,
+            nativeLifecycleGeneration = nativeLifecycleGeneration,
+            requestedOverride = request.requestedOverride,
+            updateMask = updateMask,
+            failureReason = null,
+        )
+    lastLayerOverrideApplication = accepted
+    bindings.marker(
+        PrivateLayerPanelControlModule.layerOverrideEffectiveMarker(
+            source = source,
+            requestGeneration = request.generation,
+            nativeLifecycleGeneration = nativeLifecycleGeneration,
+            previousEffectiveOverride = previousEffectiveOverride,
+            effectiveOverride = request.requestedOverride,
+            pendingRequestCleared = pendingRequestCleared,
+        )
+    )
     bindings.updateEnvironmentDepthConsumerRequired(
-        PrivateLayerControls.environmentDepthConsumerRequired(updatedOverride),
+        PrivateLayerControls.environmentDepthConsumerRequired(request.requestedOverride),
         "private-layer-${activityMarkerToken(source)}",
     )
     bindings.updatePlacement("private-layer-override-panel", true)
-    val projectionRefreshRequested = enteringEdgeWindow && bindings.projectionPanelEnabled()
+    val projectionRefreshRequested =
+        allowProjectionRefresh && enteringEdgeWindow && bindings.projectionPanelEnabled()
     bindings.marker(
         PrivateLayerPanelControlModule.metaPassthroughProjectionRefreshMarker(
             source = source,
             requested = projectionRefreshRequested,
-            previousOverride = previousOverride,
-            updatedOverride = updatedOverride,
+            previousOverride = previousEffectiveOverride,
+            updatedOverride = request.requestedOverride,
         )
     )
     if (projectionRefreshRequested) {
@@ -183,7 +499,40 @@ internal class SpatialPrivateLayerControlCoordinator(
           "private-layer-${activityMarkerToken(source)}",
       )
     }
-    return updatedOverride
+    accepted
+  }
+
+  private fun restoreEffectivePassthroughStyle(previousEffectiveOverride: Float, source: String) {
+    runCatching {
+      bindings.updateMetaPassthroughStyle(
+          PrivateLayerControls.metaPassthroughEdgeWindowSelected(previousEffectiveOverride),
+          "private-layer-${activityMarkerToken(source)}-restore",
+      )
+    }
+  }
+
+  private fun layerOverrideRequestResult(
+      request: PendingPrivateLayerOverride,
+      application: PrivateLayerOverrideApplicationResult?,
+  ): PrivateLayerOverrideRequestResult {
+    val effective =
+        application?.readyForNativeStart == true &&
+            application.requestGeneration == request.generation &&
+            effectiveLayerOverride == request.requestedOverride
+    return PrivateLayerOverrideRequestResult(
+        requestedOverride = request.requestedOverride,
+        requestGeneration = request.generation,
+        status =
+            when {
+              effective -> "effective"
+              application == null -> "pending"
+              else -> "failed"
+            },
+        effective = effective,
+        effectiveOverride = effectiveLayerOverride,
+        nativeLifecycleGeneration = application?.nativeLifecycleGeneration,
+        failureReason = application?.failureReason,
+    )
   }
 
   fun updateDepthLayerPolicy(requestedPolicy: Int, source: String): Int {
@@ -296,9 +645,121 @@ internal class SpatialPrivateLayerControlCoordinator(
       source: String,
   ): PrivateLayerZoneCompositor {
     if (!bindings.routeActive()) return zoneCompositor
-    val previous = zoneCompositor
+    val previousRequested = zoneCompositor
     val updated = PrivateLayerZoneCompositorModule.normalize(requestedConfiguration)
     zoneCompositor = updated
+    val readableVideoRequired =
+        PrivateLayerZoneCompositorModule.readableVideoConsumerRequired(updated)
+    val effectiveBefore = synchronized(zoneCompositorLifecycleLock) { effectiveZoneCompositor }
+    if (readableVideoRequired &&
+        !PrivateLayerZoneCompositorModule.readableVideoConsumerRequired(effectiveBefore)) {
+      synchronized(zoneCompositorLifecycleLock) {
+        pendingReadableVideoZoneCompositor = updated
+      }
+      bindings.marker(
+          "channel=private-layer-panel status=zone-compositor-video-pending " +
+              "source=${activityMarkerToken(source)} requestedOuterContent=video " +
+              "effectiveOuterContent=${PrivateLayerZoneCompositorControls.outerContentToken(effectiveBefore.outerContentMode)} " +
+              "lastSafeCompositorRetained=true decoderEffectiveRequired=true runtimeCrash=false"
+      )
+      bindings.updateReadableVideoConsumerRequired(
+          true,
+          "private-layer-${activityMarkerToken(source)}",
+      )
+      return updated
+    }
+
+    synchronized(zoneCompositorLifecycleLock) {
+      pendingReadableVideoZoneCompositor = null
+    }
+    val submitted = submitEffectiveZoneCompositor(updated, effectiveBefore, source)
+    bindings.updateReadableVideoConsumerRequired(
+        if (submitted) readableVideoRequired
+        else PrivateLayerZoneCompositorModule.readableVideoConsumerRequired(effectiveBefore),
+        "private-layer-${activityMarkerToken(source)}",
+    )
+    if (previousRequested != updated) {
+      bindings.marker(
+          "channel=private-layer-panel status=zone-compositor-request-adopted " +
+              "source=${activityMarkerToken(source)} requestedChanged=true runtimeCrash=false"
+      )
+    }
+    return updated
+  }
+
+  fun updateReadableVideoLifecycle(
+      state: SpatialVideoProjectionDecoderState,
+      source: String,
+  ) {
+    val requested = zoneCompositor
+    when (state) {
+      SpatialVideoProjectionDecoderState.Starting ->
+          bindings.marker(
+              "channel=private-layer-panel status=zone-compositor-video-starting " +
+                  "source=${activityMarkerToken(source)} lastSafeCompositorRetained=true"
+          )
+      SpatialVideoProjectionDecoderState.Effective -> {
+        val pending =
+            synchronized(zoneCompositorLifecycleLock) {
+              pendingReadableVideoZoneCompositor?.takeIf {
+                it == requested &&
+                    PrivateLayerZoneCompositorModule.readableVideoConsumerRequired(it)
+              }
+            }
+        if (pending != null) {
+          val previous = synchronized(zoneCompositorLifecycleLock) { effectiveZoneCompositor }
+          if (submitEffectiveZoneCompositor(pending, previous, "$source-video-effective")) {
+            synchronized(zoneCompositorLifecycleLock) {
+              if (pendingReadableVideoZoneCompositor == pending) {
+                pendingReadableVideoZoneCompositor = null
+              }
+            }
+          }
+        }
+      }
+      SpatialVideoProjectionDecoderState.Failed -> {
+        val fallback = safeReadableVideoFallback(requested)
+        val previous = synchronized(zoneCompositorLifecycleLock) { effectiveZoneCompositor }
+        if (PrivateLayerZoneCompositorModule.readableVideoConsumerRequired(previous)) {
+          submitEffectiveZoneCompositor(fallback, previous, "$source-video-failed")
+        }
+        synchronized(zoneCompositorLifecycleLock) {
+          pendingReadableVideoZoneCompositor =
+              requested.takeIf {
+                PrivateLayerZoneCompositorModule.readableVideoConsumerRequired(it)
+              }
+        }
+        bindings.marker(
+            "channel=private-layer-panel status=zone-compositor-video-failed " +
+                "source=${activityMarkerToken(source)} requestedOuterContent=video " +
+                "effectiveOuterContent=${PrivateLayerZoneCompositorControls.outerContentToken(fallback.outerContentMode)} " +
+                "lastSafeCompositorRetained=true runtimeCrash=false"
+        )
+      }
+      SpatialVideoProjectionDecoderState.Stopped -> {
+        if (PrivateLayerZoneCompositorModule.readableVideoConsumerRequired(requested)) {
+          val fallback = safeReadableVideoFallback(requested)
+          val previous = synchronized(zoneCompositorLifecycleLock) { effectiveZoneCompositor }
+          if (PrivateLayerZoneCompositorModule.readableVideoConsumerRequired(previous)) {
+            submitEffectiveZoneCompositor(fallback, previous, "$source-video-stopped")
+          }
+          synchronized(zoneCompositorLifecycleLock) {
+            pendingReadableVideoZoneCompositor = requested
+          }
+          bindings.marker(
+              "channel=private-layer-panel status=zone-compositor-video-stopped " +
+                  "source=${activityMarkerToken(source)} lastSafeCompositorRetained=true"
+          )
+        }
+      }
+    }
+  }
+
+  private fun submitEffectiveZoneCompositor(
+      updated: PrivateLayerZoneCompositor,
+      previous: PrivateLayerZoneCompositor,
+      source: String,
+  ): Boolean {
     val updateMask =
         runCatching { bindings.updateZoneCompositorNative(updated) }
             .getOrElse { throwable ->
@@ -307,22 +768,39 @@ internal class SpatialPrivateLayerControlCoordinator(
                       "source=${activityMarkerToken(source)} " +
                       "error=${activityMarkerToken(throwable.javaClass.simpleName)} " +
                       "message=${activityMarkerToken(throwable.message ?: "none")} " +
-                      "${PrivateLayerZoneCompositorModule.markerFields(updated)} runtimeCrash=false"
+                      "previousProjectionZoneMode=${PrivateLayerZoneCompositorControls.coverageToken(previous.coverageMode)} " +
+                      "${PrivateLayerZoneCompositorModule.markerFields(updated)} " +
+                      "effectiveStateRetained=true jniSubmissionSucceeded=false rendered=false runtimeCrash=false"
               )
-              0L
+              return false
             }
+    synchronized(zoneCompositorLifecycleLock) {
+      effectiveZoneCompositor = updated
+    }
     bindings.marker(
         "channel=private-layer-panel status=zone-compositor-submitted " +
             "source=${activityMarkerToken(source)} transport=jni-live-queue updateMask=$updateMask " +
             "previousProjectionZoneMode=${PrivateLayerZoneCompositorControls.coverageToken(previous.coverageMode)} " +
-            "${PrivateLayerZoneCompositorModule.markerFields(updated)} runtimeCrash=false"
+            "${PrivateLayerZoneCompositorModule.markerFields(updated)} " +
+            "jniSubmissionSucceeded=true rendered=false runtimeCrash=false"
     )
-    bindings.updateReadableVideoConsumerRequired(
-        PrivateLayerZoneCompositorModule.readableVideoConsumerRequired(updated),
-        "private-layer-${activityMarkerToken(source)}",
-    )
-    return updated
+    return true
   }
+
+  private fun safeReadableVideoFallback(
+      requested: PrivateLayerZoneCompositor,
+  ): PrivateLayerZoneCompositor =
+      if (PrivateLayerZoneCompositorModule.readableVideoConsumerRequired(requested)) {
+        PrivateLayerZoneCompositorModule.normalize(
+            requested.copy(
+                outerTargetMode =
+                    PrivateLayerZoneCompositorControls.outerTargetTransparentSpatialVideo,
+                outerContentMode = PrivateLayerZoneCompositorControls.outerContentTransparent,
+            )
+        )
+      } else {
+        requested
+      }
 
   fun updateRgbChannelTransform(
       requestedConfiguration: RgbChannelTransform,
@@ -349,6 +827,30 @@ internal class SpatialPrivateLayerControlCoordinator(
             "source=${activityMarkerToken(source)} transport=jni-live-queue updateMask=$updateMask " +
             "previousRgbChannelTransformMode=${RgbChannelTransformControls.modeToken(previous.mode)} " +
             "${RgbChannelTransformModule.markerFields(updated)} runtimeCrash=false"
+    )
+    return updated
+  }
+
+  fun updateStrengthCycleSpeedHz(requestedSpeedHz: Float, source: String): Float {
+    if (!bindings.routeActive()) return strengthCycleSpeedHz
+    val previous = strengthCycleSpeedHz
+    val updated = SpatialStrengthCycleControls.normalize(requestedSpeedHz)
+    strengthCycleSpeedHz = updated
+    val updateMask =
+        runCatching { bindings.updateStrengthCycleSpeedHzNative(updated) }
+            .getOrElse { throwable ->
+              bindings.marker(
+                  "channel=private-layer-panel status=strength-cycle-speed-update-failed " +
+                      "source=${activityMarkerToken(source)} " +
+                      "error=${activityMarkerToken(throwable.javaClass.simpleName)} " +
+                      "message=${activityMarkerToken(throwable.message ?: "none")} runtimeCrash=false"
+              )
+              0L
+            }
+    bindings.marker(
+        "channel=private-layer-panel status=strength-cycle-speed-submitted " +
+            "source=${activityMarkerToken(source)} transport=jni-live-queue updateMask=$updateMask " +
+            "previousStrengthCycleSpeedHz=$previous effectiveStrengthCycleSpeedHz=$updated runtimeCrash=false"
     )
     return updated
   }
@@ -457,5 +959,11 @@ internal class SpatialPrivateLayerControlCoordinator(
 
   companion object {
     const val MODULE_ID = "spatial-private-layer-control-coordinator"
+    const val PANEL_CARRIER_READY_LIFECYCLE_GENERATION: Long = -2L
   }
+}
+
+private fun Long.nextExactGeneration(): Long {
+  check(this != Long.MAX_VALUE) { "private-layer-override-generation-exhausted" }
+  return this + 1L
 }

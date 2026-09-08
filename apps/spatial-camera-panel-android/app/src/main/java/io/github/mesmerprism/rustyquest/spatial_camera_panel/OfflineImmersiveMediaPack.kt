@@ -10,8 +10,13 @@ import androidx.media3.datasource.DataSource
 import androidx.media3.datasource.DataSpec
 import java.io.File
 import java.io.IOException
+import java.io.InputStream
 import java.nio.charset.StandardCharsets
+import java.nio.file.AtomicMoveNotSupportedException
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 import java.security.MessageDigest
+import java.util.UUID
 import javax.crypto.AEADBadTagException
 import javax.crypto.Cipher
 import javax.crypto.spec.GCMParameterSpec
@@ -324,7 +329,22 @@ private class FileOfflineImmersiveMediaPackSource(
 internal object PackagedOfflineImmersiveMediaPackImporter {
   private val packIdPattern = Regex("^[a-z0-9][a-z0-9._-]{0,95}$")
   private val chunkNamePattern = Regex("^chunk-[0-9]{6}\\.bin$")
+  private val sha256Pattern = Regex("^[a-f0-9]{64}$")
   private const val MAX_DISCOVERED_PACKS = 32
+  private const val GCM_TAG_SIZE_BYTES = 16L
+  private const val IMPORT_RECEIPT_NAME = ".packaged-import.v1"
+
+  internal interface AssetSource {
+    fun readManifestBytes(): ByteArray?
+
+    fun openChunk(name: String): InputStream?
+  }
+
+  private data class PackagedChunkIdentity(
+      val name: String,
+      val sizeBytes: Long,
+      val sha256: String,
+  )
 
   fun packagedPackIds(context: Context): List<String> =
       if (!BuildConfig.OFFLINE_MEDIA_PACKAGED_ASSETS) {
@@ -366,22 +386,36 @@ internal object PackagedOfflineImmersiveMediaPackImporter {
           }
           .getOrDefault(emptyList())
 
-  fun ensureImported(context: Context, requestedPackId: String): Boolean {
+  fun ensureImported(context: Context, requestedPackId: String): Boolean =
+      ensureImported(
+          mediaPackRoot = File(context.filesDir, "offline-media-packs"),
+          requestedPackId = requestedPackId,
+          assetSource =
+              object : AssetSource {
+                private val prefix = "offline-media-packs/${requestedPackId.trim().lowercase()}"
+
+                override fun readManifestBytes(): ByteArray? =
+                    runCatching { context.assets.open("$prefix/manifest.json").use { it.readBytes() } }
+                        .getOrNull()
+
+                override fun openChunk(name: String): InputStream? =
+                    runCatching { context.assets.open("$prefix/$name") }.getOrNull()
+              },
+      )
+
+  @Synchronized
+  internal fun ensureImported(
+      mediaPackRoot: File,
+      requestedPackId: String,
+      assetSource: AssetSource,
+  ): Boolean {
     val packId = requestedPackId.trim().lowercase()
     if (!packIdPattern.matches(packId)) {
       return false
     }
-    val root = File(context.filesDir, "offline-media-packs")
+    val root = runCatching { mediaPackRoot.canonicalFile }.getOrNull() ?: return false
     val finalDirectory = File(root, packId)
-    if (File(finalDirectory, "manifest.json").isFile) {
-      return true
-    }
-    val assetPrefix = "offline-media-packs/$packId"
-    val manifestBytes =
-        runCatching {
-              context.assets.open("$assetPrefix/manifest.json").use { it.readBytes() }
-            }
-            .getOrNull() ?: return false
+    val manifestBytes = assetSource.readManifestBytes() ?: return false
     val manifest =
         runCatching { JSONObject(String(manifestBytes, StandardCharsets.UTF_8)) }.getOrNull()
             ?: return false
@@ -390,41 +424,159 @@ internal object PackagedOfflineImmersiveMediaPackImporter {
       return false
     }
     val chunks = runCatching { manifest.getJSONArray("chunks") }.getOrNull() ?: return false
-    val expectedNames = ArrayList<String>(chunks.length())
+    val expectedChunks = ArrayList<PackagedChunkIdentity>(chunks.length())
     for (index in 0 until chunks.length()) {
       val item = runCatching { chunks.getJSONObject(index) }.getOrNull() ?: return false
       val name = item.optString("file")
+      val plaintextLength = item.optLong("plaintext_length", -1L)
+      val ciphertextSha256 = item.optString("ciphertext_sha256")
       if (item.optInt("index", -1) != index ||
           name != "chunk-${index.toString().padStart(6, '0')}.bin" ||
-          !chunkNamePattern.matches(name)) {
+          !chunkNamePattern.matches(name) ||
+          plaintextLength <= 0L ||
+          !sha256Pattern.matches(ciphertextSha256)) {
         return false
       }
-      expectedNames += name
+      expectedChunks +=
+          PackagedChunkIdentity(
+              name = name,
+              sizeBytes = plaintextLength + GCM_TAG_SIZE_BYTES,
+              sha256 = ciphertextSha256,
+          )
     }
 
-    root.mkdirs()
-    val stagingDirectory =
-        File(root, ".$packId.importing-${System.nanoTime().toString(16)}")
+    val expectedReceipt = importReceiptBytes(manifestBytes, expectedChunks)
+    if (installedRevisionMatches(finalDirectory, manifestBytes, expectedReceipt, expectedChunks)) {
+      return true
+    }
+
+    if (!root.exists() && !root.mkdirs()) return false
+    if (!root.isDirectory) return false
+    val generation = UUID.randomUUID().toString()
+    val stagingDirectory = File(root, ".$packId.importing-$generation")
+    val retiredDirectory = File(root, ".$packId.retired-$generation")
     if (!stagingDirectory.mkdir()) {
       return false
     }
-    return runCatching {
-          File(stagingDirectory, "manifest.json").writeBytes(manifestBytes)
-          for (name in expectedNames) {
-            val target = File(stagingDirectory, name)
-            context.assets.open("$assetPrefix/$name").use { input ->
-              target.outputStream().use(input::copyTo)
+    var retiredExisting = false
+    return try {
+      writeFully(File(stagingDirectory, "manifest.json"), manifestBytes)
+      for (chunk in expectedChunks) {
+        val input = assetSource.openChunk(chunk.name) ?: return false
+        input.use { copyAndVerifyChunk(it, File(stagingDirectory, chunk.name), chunk) }
+      }
+      writeFully(File(stagingDirectory, IMPORT_RECEIPT_NAME), expectedReceipt)
+      if (!installedRevisionMatches(
+              stagingDirectory,
+              manifestBytes,
+              expectedReceipt,
+              expectedChunks,
+          )) {
+        return false
+      }
+      if (finalDirectory.exists()) {
+        moveDirectoryWithoutOverwrite(finalDirectory, retiredDirectory)
+        retiredExisting = true
+      }
+      try {
+        moveDirectoryWithoutOverwrite(stagingDirectory, finalDirectory)
+      } catch (error: Exception) {
+        if (retiredExisting && !finalDirectory.exists()) {
+          runCatching { moveDirectoryWithoutOverwrite(retiredDirectory, finalDirectory) }
+        }
+        throw error
+      }
+      if (retiredExisting) retiredDirectory.deleteRecursively()
+      installedRevisionMatches(finalDirectory, manifestBytes, expectedReceipt, expectedChunks)
+    } catch (_: Exception) {
+      false
+    } finally {
+      if (stagingDirectory.exists()) stagingDirectory.deleteRecursively()
+      if (retiredDirectory.exists() && finalDirectory.exists()) retiredDirectory.deleteRecursively()
+    }
+  }
+
+  private fun installedRevisionMatches(
+      directory: File,
+      manifestBytes: ByteArray,
+      receiptBytes: ByteArray,
+      chunks: List<PackagedChunkIdentity>,
+  ): Boolean =
+      runCatching {
+            directory.isDirectory &&
+                File(directory, "manifest.json").readBytes().contentEquals(manifestBytes) &&
+                File(directory, IMPORT_RECEIPT_NAME).readBytes().contentEquals(receiptBytes) &&
+                chunks.all { chunk -> File(directory, chunk.name).length() == chunk.sizeBytes }
+          }
+          .getOrDefault(false)
+
+  private fun importReceiptBytes(
+      manifestBytes: ByteArray,
+      chunks: List<PackagedChunkIdentity>,
+  ): ByteArray =
+      buildString {
+            append("schema=rusty.quest.packaged_offline_media_import.v1\n")
+            append("manifest_sha256=")
+            append(sha256(manifestBytes))
+            append('\n')
+            chunks.forEach { chunk ->
+              append("chunk=")
+              append(chunk.name)
+              append('|')
+              append(chunk.sizeBytes)
+              append('|')
+              append(chunk.sha256)
+              append('\n')
             }
           }
-          if (finalDirectory.exists()) {
-            File(finalDirectory, "manifest.json").isFile
-          } else {
-            stagingDirectory.renameTo(finalDirectory) &&
-                File(finalDirectory, "manifest.json").isFile
-          }
-        }
-        .getOrDefault(false)
+          .toByteArray(StandardCharsets.UTF_8)
+
+  private fun copyAndVerifyChunk(
+      input: InputStream,
+      target: File,
+      expected: PackagedChunkIdentity,
+  ) {
+    val digest = MessageDigest.getInstance("SHA-256")
+    var copied = 0L
+    target.outputStream().use { output ->
+      val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+      while (true) {
+        val count = input.read(buffer)
+        if (count < 0) break
+        if (count == 0) continue
+        output.write(buffer, 0, count)
+        digest.update(buffer, 0, count)
+        copied += count
+      }
+      output.flush()
+    }
+    if (copied != expected.sizeBytes || digest.digest().toHex() != expected.sha256) {
+      throw IOException("packaged-offline-media-chunk-identity-mismatch")
+    }
   }
+
+  private fun writeFully(target: File, bytes: ByteArray) {
+    target.outputStream().use { output ->
+      output.write(bytes)
+      output.flush()
+    }
+  }
+
+  private fun moveDirectoryWithoutOverwrite(source: File, target: File) {
+    if (target.exists()) throw IOException("packaged-offline-media-target-collision")
+    try {
+      Files.move(source.toPath(), target.toPath(), StandardCopyOption.ATOMIC_MOVE)
+    } catch (_: AtomicMoveNotSupportedException) {
+      if (!source.renameTo(target)) {
+        throw IOException("packaged-offline-media-atomic-move-failed")
+      }
+    }
+  }
+
+  private fun sha256(bytes: ByteArray): String =
+      MessageDigest.getInstance("SHA-256").digest(bytes).toHex()
+
+  private fun ByteArray.toHex(): String = joinToString("") { "%02x".format(it) }
 }
 
 internal class OfflineImmersiveMediaPackException(val reason: String) : IOException(reason)

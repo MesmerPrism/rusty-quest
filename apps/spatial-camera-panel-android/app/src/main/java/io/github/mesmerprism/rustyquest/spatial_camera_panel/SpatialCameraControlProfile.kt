@@ -15,6 +15,7 @@ internal data class SpatialCameraControlProfile(
     val projectionSurfaceDisplacement: ProjectionSurfaceDisplacement,
     val projectionSurfaceTiling: ProjectionSurfaceTiling,
     val projectionInnerAlpha: ProjectionInnerAlpha,
+    val strengthCycleSpeedHz: Float = SpatialStrengthCycleControls.defaultSpeedHz,
 )
 
 internal object SpatialCameraControlProfileContract {
@@ -58,6 +59,7 @@ internal object SpatialCameraControlProfileContract {
         "projection_surface_displacement",
         "projection_surface_tiling",
         "projection_inner_alpha",
+        "strength_cycle_hz",
     )
     return SpatialCameraControlProfile(
         profileId = profileId,
@@ -82,6 +84,16 @@ internal object SpatialCameraControlProfileContract {
               parseInnerAlpha(controls.requireObject("projection_inner_alpha"))
             } else {
               ProjectionInnerAlphaControls.off
+            },
+        strengthCycleSpeedHz =
+            if (controls.has("strength_cycle_hz")) {
+              controls.requireFloat(
+                  "strength_cycle_hz",
+                  SpatialStrengthCycleControls.minSpeedHz,
+                  SpatialStrengthCycleControls.maxSpeedHz,
+              )
+            } else {
+              SpatialStrengthCycleControls.defaultSpeedHz
             },
     )
   }
@@ -116,6 +128,7 @@ internal object SpatialCameraControlProfileContract {
         "region_contract",
         "center_content",
         "center_projection_mix",
+        "center_corner_radius_uv",
         "buffer_geometry",
         "buffer_static_width_uv",
         "buffer_minimum_width_uv",
@@ -189,6 +202,12 @@ internal object SpatialCameraControlProfileContract {
                   json.requireFloat("center_projection_mix", 0.0f, 1.0f)
                 } else {
                   1.0f
+                },
+            centerCornerRadiusUv =
+                if (json.has("center_corner_radius_uv")) {
+                  json.requireFloat("center_corner_radius_uv", 0.0f, 0.49f)
+                } else {
+                  0.08f
                 },
             bufferGeometryMode =
                 if (json.has("buffer_geometry")) {
@@ -291,7 +310,10 @@ internal object SpatialCameraControlProfileContract {
                 json.requireBoolean("projection_effect_edge_guard_enabled"),
             stretchOptionFlags =
                 if (json.has("stretch_option_flags")) {
-                  json.requireLong("stretch_option_flags", 0L, 31L).toInt()
+                  json.requireOptionFlags(
+                      "stretch_option_flags",
+                      PrivateLayerZoneCompositorControls.stretchOptionMask,
+                  )
                 } else {
                   0
                 },
@@ -321,7 +343,10 @@ internal object SpatialCameraControlProfileContract {
                 },
             outerStretchOptionFlags =
                 if (json.has("outer_stretch_option_flags")) {
-                  json.requireLong("outer_stretch_option_flags", 0L, 31L).toInt()
+                  json.requireOptionFlags(
+                      "outer_stretch_option_flags",
+                      PrivateLayerZoneCompositorControls.outerStretchOptionMask,
+                  )
                 } else {
                   0
                 },
@@ -502,7 +527,15 @@ internal object SpatialCameraControlProfileContract {
   }
 
   private fun parseRgbTransform(json: JSONObject): RgbChannelTransform {
-    json.requireOnlyKeys("mode", "edge_mode", "red", "green", "blue")
+    json.requireOnlyKeys(
+        "mode",
+        "edge_mode",
+        "direction_noise_amount_turns",
+        "direction_noise_rate_hz",
+        "red",
+        "green",
+        "blue",
+    )
     return RgbChannelTransformModule.normalize(
         RgbChannelTransform(
             mode =
@@ -516,6 +549,18 @@ internal object SpatialCameraControlProfileContract {
                   "mirror" -> RgbChannelTransformControls.edgeMirror
                   "fade" -> RgbChannelTransformControls.edgeFade
                   else -> RgbChannelTransformControls.edgeClamp
+                },
+            directionNoiseAmountTurns =
+                if (json.has("direction_noise_amount_turns")) {
+                  json.requireFloat("direction_noise_amount_turns", 0.0f, 0.125f)
+                } else {
+                  0.0f
+                },
+            directionNoiseRateHz =
+                if (json.has("direction_noise_rate_hz")) {
+                  json.requireFloat("direction_noise_rate_hz", 0.0f, 1.0f)
+                } else {
+                  0.1f
                 },
             red = parseRgbChannel(json.requireObject("red")),
             green = parseRgbChannel(json.requireObject("green")),
@@ -730,4 +775,26 @@ internal fun JSONObject.requireToken(name: String, vararg allowed: String): Stri
   val value = requireString(name)
   require(allowed.contains(value)) { "${name}_unsupported_token" }
   return value
+}
+
+private fun JSONObject.requireOptionFlags(name: String, allowedMask: Int): Int {
+  val flags =
+      requireLong(
+              name,
+              0L,
+              maxOf(
+                      0xff,
+                      allowedMask or
+                          PrivateLayerZoneCompositorControls.stretchOptionLegacyReservedBit,
+                  )
+                  .toLong(),
+          )
+          .toInt()
+  require(
+      flags and
+          (allowedMask or PrivateLayerZoneCompositorControls.stretchOptionLegacyReservedBit) == flags
+  ) {
+    "${name}_unsupported_bits"
+  }
+  return flags
 }

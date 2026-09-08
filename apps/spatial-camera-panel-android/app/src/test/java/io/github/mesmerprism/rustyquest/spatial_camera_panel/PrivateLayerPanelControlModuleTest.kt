@@ -84,4 +84,77 @@ class PrivateLayerPanelControlModuleTest {
     assertFalse(PrivateLayerControls.environmentDepthConsumerRequired(7.0f))
     assertFalse(PrivateLayerControls.environmentDepthConsumerRequired(8.0f))
   }
+
+  @Test
+  fun layerOverrideAcceptsOnlyTheNamedExactNativeMask() {
+    assertTrue(
+        PrivateLayerPanelControlModule.layerOverrideMaskAccepted(
+            PrivateLayerPanelControlModule.LAYER_OVERRIDE_ACCEPTED_MASK
+        )
+    )
+    assertFalse(PrivateLayerPanelControlModule.layerOverrideMaskAccepted(0L))
+    assertFalse(PrivateLayerPanelControlModule.layerOverrideMaskAccepted(3L))
+  }
+
+  @Test
+  fun layerOverrideMarkersKeepRequestedPendingSubmittedEffectiveAndFailedDistinct() {
+    val requested =
+        PrivateLayerPanelControlModule.layerOverrideRequestedMarker(
+            source = "test",
+            requestedLayerOverride = 8.0f,
+            previousRequestedOverride = -1.0f,
+            normalizedRequestedOverride = 8.0f,
+            requestGeneration = 4L,
+            placementMode = CameraHwbProjectionPlacementMode.ViewerLocked,
+        )
+    val pending =
+        PrivateLayerPanelControlModule.layerOverridePendingMarker(
+            source = "test",
+            requestedOverride = 8.0f,
+            requestGeneration = 4L,
+            pendingReason = "native-lifecycle-not-ready",
+        )
+    val submitted =
+        PrivateLayerPanelControlModule.layerOverrideSubmittedMarker(
+            source = "test",
+            updateMask = PrivateLayerPanelControlModule.LAYER_OVERRIDE_ACCEPTED_MASK,
+            requestGeneration = 4L,
+            nativeLifecycleGeneration = 9L,
+            requestedOverride = 8.0f,
+            placementMode = CameraHwbProjectionPlacementMode.ViewerLocked,
+            projectionTargetScale = 1.0f,
+        )
+    val effective =
+        PrivateLayerPanelControlModule.layerOverrideEffectiveMarker(
+            source = "test",
+            requestGeneration = 4L,
+            nativeLifecycleGeneration = 9L,
+            previousEffectiveOverride = -1.0f,
+            effectiveOverride = 8.0f,
+            pendingRequestCleared = true,
+        )
+    val failed =
+        PrivateLayerPanelControlModule.layerOverrideUpdateFailedMarker(
+            source = "test",
+            requestedLayerOverride = 8.0f,
+            requestGeneration = 4L,
+            nativeLifecycleGeneration = 9L,
+            updateMask = 3L,
+            pendingRequestPreserved = true,
+            error = "NativeUpdateMaskRejected",
+            message = "expected-1",
+        )
+
+    assertTrue(requested.contains("status=layer-override-requested"))
+    assertTrue(pending.contains("status=layer-override-pending"))
+    assertTrue(pending.contains("nativeSubmissionAttempted=false"))
+    assertTrue(pending.contains("pendingRequestPresent=true"))
+    assertTrue(submitted.contains("status=layer-override-submitted"))
+    assertTrue(submitted.contains("acceptedMask=1"))
+    assertTrue(effective.contains("status=layer-override-effective"))
+    assertTrue(effective.contains("effectivePublicMultiStackOpaqueProjectionLayerOverride=8.0000"))
+    assertTrue(failed.contains("status=layer-override-update-failed"))
+    assertTrue(failed.contains("layerOverrideAccepted=false"))
+    assertFalse(failed.contains("effectivePublicMultiStackOpaqueProjectionLayerOverride"))
+  }
 }

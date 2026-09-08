@@ -65,6 +65,25 @@ out of the opaque field. Public code and documentation do not assign effect
 semantics to the remaining bits; the provider owns those meanings. Omission
 is the exact compatibility identity.
 
+The same object carries `center_corner_radius_uv` in the normalized `0.0..0.49`
+range. It rounds only the compositor-owned Center boundary; it does not reshape
+the Middle-to-Outer boundary or legacy attachment geometry. The native
+416-byte zone uniform stores Center content, projection mix, this radius, and
+the effective shader output-alpha convention in its appended `center_content`
+vec4. Fixed-function same-surface blending always consumes premultiplied shader
+output. A compositor-owned POST_MULTIPLIED route may emit straight output only
+when that additional blend is absent. Transparent underlay is effective only
+for explicit PRE_MULTIPLIED or POST_MULTIPLIED swapchain support; ambiguous
+INHERIT and OPAQUE modes retain each requested Center Transparent, Middle
+transparent-reveal, or Outer Transparent setting in receipts but render a
+readable video-underlay fallback for every affected lane.
+Legacy v1/v2 Outer transparency keeps its requested profile fields and receipt
+identity, while an unsupported effective route selects video through the
+legacy outer-target lane and clears the v2 stretch-extent flag. Existing
+`projectionZoneOuterUnderlaySupported` and `projectionZoneUnsampledOuterData`
+markers remain strictly Outer-specific; the render receipt's broader
+transparent-underlay fields cover all v4 lanes.
+
 State v2 is preferred and carries an opaque descriptor-keyed
 `control_transport` value map bound to its transport identifier and capsule
 SHA-256. Quest validates that envelope but does not interpret provider labels

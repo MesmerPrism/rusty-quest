@@ -183,6 +183,8 @@ internal class SpatialValidationWorkflowCoordinator(
             bindings.setBackgroundMode(SpatialBackgroundMode.Passthrough, source)
         "background-lut-passthrough" ->
             bindings.setBackgroundMode(SpatialBackgroundMode.LutPassthrough, source)
+        "background-video" ->
+            bindings.setBackgroundMode(SpatialBackgroundMode.Video, source)
         "profile-save-current" -> {
           val title =
               intent.getStringExtra(EXTRA_PROFILE_TITLE)?.trim()?.takeIf {

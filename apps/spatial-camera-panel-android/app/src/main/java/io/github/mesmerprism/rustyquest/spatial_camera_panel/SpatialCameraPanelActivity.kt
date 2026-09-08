@@ -305,7 +305,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             SpatialPrivateLayerControlBindings(
                 routeActive = {
                   cameraHwbProjectionLaunchCoordinator.started ||
-                      spatialVideoProjectionRuntimeCoordinator.started
+                      spatialVideoProjectionRuntimeCoordinator.decoderActive
                 },
                 placementMode = cameraHwbProjectionCarrierStateCoordinator::placementMode,
                 projectionTargetScale = cameraHwbProjectionTuningCoordinator::targetScale,
@@ -396,6 +396,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
                       configuration.outerProcessedMix,
                       configuration.centerContentMode,
                       configuration.centerProjectionMix,
+                      configuration.centerCornerRadiusUv,
                   )
                   val dynamicsMask = nativeUpdatePrivateLayerZoneChannelDynamics(
                       configuration.innerChannelDynamics.applicationMode,
@@ -436,6 +437,8 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
                   nativeUpdateRgbChannelTransform(
                       configuration.mode,
                       configuration.edgeMode,
+                      configuration.directionNoiseAmountTurns,
+                      configuration.directionNoiseRateHz,
                       configuration.red.directionTurns,
                       configuration.green.directionTurns,
                       configuration.blue.directionTurns,
@@ -453,6 +456,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
                       configuration.blue.coverageScale,
                   )
                 },
+                updateStrengthCycleSpeedHzNative = ::nativeUpdateStrengthCycleSpeedHz,
                 updateProjectionSurfaceDisplacementNative = { configuration ->
                   nativeUpdateProjectionSurfaceDisplacement(
                       if (configuration.enabled) 1 else 0,
@@ -493,8 +497,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
         SpatialCameraControlProfileHotloader(
             context = this,
             routeActive = {
-              cameraHwbProjectionLaunchCoordinator.started ||
-                  spatialVideoProjectionRuntimeCoordinator.started
+              privateLayerControlCoordinator.layerOverrideNativeLifecycleReady()
             },
             applyProfile = ::applyControlProfile,
             marker = ::marker,
@@ -997,10 +1000,10 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
               Unit
             },
             currentPrivateLayerZoneCompositor = {
-              privateLayerControlCoordinator.zoneCompositor
+              PrivateLayerZoneCompositorPanelBridge.configuration
             },
             updatePrivateLayerZoneCompositor = { configuration, source ->
-              privateLayerControlCoordinator.updateZoneCompositor(configuration, source)
+              PrivateLayerZoneCompositorPanelBridge.submit(configuration, source)
               Unit
             },
             updateRgbChannelTransform = { configuration, source ->
@@ -1123,7 +1126,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
                   settings.highRateJsonPayload,
               )
             },
-            startPlayback = { settings, offlinePack ->
+            startPlayback = { settings, offlinePack, callbacks ->
               SpatialStereoVideoPlayback.start(
                   this,
                   settings.source,
@@ -1145,12 +1148,22 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
                   settings.peerRelayChannel,
                   settings.peerTlsServerName,
                   settings.peerAuthToken,
+                  object : SpatialStereoVideoPlayback.LifecycleListener {
+                    override fun onFirstFrame() = callbacks.onFirstFrame()
+
+                    override fun onError(reason: String) = callbacks.onError(reason)
+
+                    override fun onStopped() = callbacks.onStopped()
+                  },
               )
             },
             stopPlayback = { SpatialStereoVideoPlayback.stop() },
             stopNativeProbe = ::nativeStopSpatialVideoProjectionProbe,
             marker = ::marker,
             dispatchDecoderLifecycle = { action -> videoDecoderLifecycleExecutor.execute(action) },
+            onDecoderStateChanged = { state, reason ->
+              privateLayerControlCoordinator.updateReadableVideoLifecycle(state, reason)
+            },
         )
     )
   }
@@ -1516,8 +1529,12 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             updateNativeTargetScale = { reason, forceLog ->
               cameraHwbProjectionTuningCoordinator.updateNativeTargetScale(reason, forceLog)
             },
-            applyPrivateLayerConfiguration =
-                privateLayerControlCoordinator::applyCurrentConfiguration,
+            applyPrivateLayerOverrideForLaunch =
+                privateLayerControlCoordinator::applyPendingLayerOverrideForRawLaunch,
+            privateLayerOverrideLifecycleCurrent =
+                privateLayerControlCoordinator::layerOverrideNativeLifecycleCurrent,
+            applyRemainingPrivateLayerConfiguration =
+                privateLayerControlCoordinator::applyRemainingConfiguration,
             configureVideoProjection = spatialVideoProjectionRuntimeCoordinator::configure,
             startVideoProjection = ::startCustomVideoProjectionWithDecoderOwnership,
             updateNativeLayerFence = ::nativeUpdateCameraHwbProjectionLayerFence,
@@ -1600,7 +1617,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             pollLatencyDiagnostics = cameraLatencyDiagnosticModule::poll,
             routeActive = {
               cameraHwbProjectionLaunchCoordinator.started ||
-                  spatialVideoProjectionRuntimeCoordinator.started
+                  spatialVideoProjectionRuntimeCoordinator.decoderActive
             },
             projectionEntity = { cameraHwbProjectionEntity },
             scenePanelCarrierEnabled =
@@ -1827,6 +1844,11 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     PrivateLayerZoneCompositorPanelBridge.bind(
         initial = privateLayerControlCoordinator.zoneCompositor,
         submit = privateLayerControlCoordinator::updateZoneCompositor,
+        onSubmitted = { source ->
+          cameraHwbProjectionRawCarrierCoordinator.reapplyPresentationDiagnostics(
+              "configuration-$source"
+          )
+        },
     )
     armControlProfileHotloaderIfEnabled()
     if (productPolicy.cameraPanelRoutesEnabled) {
@@ -2090,7 +2112,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     if (previous == cadenceMode) return cadenceMode
     videoCadenceModeOverride = cadenceMode
     val settings = currentProjectionVideoSettings()
-    val decoderWasStarted = spatialVideoProjectionRuntimeCoordinator.started
+    val decoderWasStarted = spatialVideoProjectionRuntimeCoordinator.decoderActive
     var decoderRestarted = false
     val switchResult =
         if (decoderWasStarted && settings.active) {
@@ -2183,7 +2205,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     if (!replacementStarted &&
         projectionPanelVisibilityCoordinator.enabled &&
         cameraHwbProjectionLaunchCoordinator.started &&
-        !spatialVideoProjectionRuntimeCoordinator.started) {
+        !spatialVideoProjectionRuntimeCoordinator.decoderActive) {
       immersiveVideoPanelCoordinator.setDirectVideoConsumerRequired(
           true,
           "$source-custom-decoder-fallback",
@@ -2218,12 +2240,14 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
       )
     }
     val directActive = immersiveVideoPanelCoordinator.directDecoderActive()
-    val customActive = spatialVideoProjectionRuntimeCoordinator.started
+    val customActive = spatialVideoProjectionRuntimeCoordinator.decoderActive
+    val customEffective = spatialVideoProjectionRuntimeCoordinator.started
     marker(
         "channel=spatial-video-decoder-ownership status=applied " +
             "source=${activityMarkerToken(source)} compositorVideoRequested=$compositorVideoRequested " +
             "customDecoderRequired=$customDecoderRequired " +
             "directDecoderActive=$directActive customDecoderActive=$customActive " +
+            "customDecoderEffective=$customEffective " +
             "activeDecoderCount=${listOf(directActive, customActive).count { it }} " +
             "decoderOverlap=${directActive && customActive} stopBeforeStart=true"
     )
@@ -2233,23 +2257,38 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
       settings: SpatialVideoProjectionSettings,
       reason: String,
   ) {
-    immersiveVideoPanelCoordinator.setDirectVideoConsumerRequired(false, reason)
-    spatialVideoProjectionRuntimeCoordinator.start(settings, reason)
-    if (!spatialVideoProjectionRuntimeCoordinator.started) {
+    val projectionPanelVisible = projectionPanelVisibilityCoordinator.enabled
+    if (projectionPanelVisible) {
+      immersiveVideoPanelCoordinator.setDirectVideoConsumerRequired(false, reason)
+    }
+    val ownership =
+        spatialVideoProjectionRuntimeCoordinator.startForComposedOwnership(
+            settings,
+            projectionPanelVisible,
+            reason,
+        )
+    if (ownership.directVideoConsumerRequired) {
       immersiveVideoPanelCoordinator.setDirectVideoConsumerRequired(
           true,
-          "$reason-custom-decoder-fallback",
+          if (ownership.disposition == SpatialVideoProjectionStartupDisposition.DecoderFailed) {
+            "$reason-custom-decoder-fallback"
+          } else {
+            "$reason-projection-hidden-direct"
+          },
       )
     }
     val directActive = immersiveVideoPanelCoordinator.directDecoderActive()
-    val customActive = spatialVideoProjectionRuntimeCoordinator.started
+    val customActive = spatialVideoProjectionRuntimeCoordinator.decoderActive
+    val customEffective = spatialVideoProjectionRuntimeCoordinator.started
     marker(
         "channel=spatial-video-decoder-ownership status=start-handoff " +
             "reason=${activityMarkerToken(reason)} directDecoderActive=$directActive " +
-            "customDecoderActive=$customActive " +
+            "customDecoderActive=$customActive customDecoderEffective=$customEffective " +
             "activeDecoderCount=${listOf(directActive, customActive).count { it }} " +
             "decoderOverlap=${directActive && customActive} stopBeforeStart=true " +
-            "fallbackToDirect=${!customActive && directActive}"
+            "startupDisposition=${ownership.disposition.token} " +
+            "directVideoOwnership=${ownership.directVideoConsumerRequired && directActive} " +
+            "fallbackToDirect=${ownership.disposition == SpatialVideoProjectionStartupDisposition.DecoderFailed && directActive}"
     )
   }
 
@@ -2544,6 +2583,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
                 privateLayerControlCoordinator.projectionSurfaceDisplacement,
             projectionSurfaceTiling = privateLayerControlCoordinator.projectionSurfaceTiling,
             projectionInnerAlpha = privateLayerControlCoordinator.projectionInnerAlpha,
+            strengthCycleSpeedHz = privateLayerControlCoordinator.strengthCycleSpeedHz,
             videoPlaybackEnabled = video.playbackEnabled,
             videoPresentationMode = video.presentationMode.token,
             backgroundMode = backgroundVideo.backgroundMode.token,
@@ -2678,6 +2718,10 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     privateLayerControlCoordinator.updateGuideProcessing(controls.guideProcessing, source)
     PrivateLayerZoneCompositorPanelBridge.submit(controls.zoneCompositor, source)
     privateLayerControlCoordinator.updateRgbChannelTransform(controls.rgbChannelTransform, source)
+    privateLayerControlCoordinator.updateStrengthCycleSpeedHz(
+        controls.resolvedStrengthCycleSpeedHz(),
+        source,
+    )
     privateLayerControlCoordinator.updateProjectionSurfaceDisplacement(
         controls.projectionSurfaceDisplacement,
         source,
@@ -2687,7 +2731,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
         controls.projectionInnerAlpha,
         source,
     )
-    return captureStoredProfileControls()
+    return captureStoredProfileControls().also(SpatialPrivateLayerControlPanelStateBridge::publish)
   }
 
   private fun preloadProjectionSurfaceFeatures(
@@ -2796,20 +2840,26 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
       profile: SpatialCameraControlProfile,
       source: String,
   ): SpatialCameraControlProfileEffective {
-    val effectiveLayer =
-        privateLayerControlCoordinator.updateLayerOverride(profile.layerOverride, source)
+    val layerApplication =
+        privateLayerControlCoordinator.updateLayerOverrideWithResult(profile.layerOverride, source)
+    check(layerApplication.effective) {
+      "layer-override-${layerApplication.status}-generation-${layerApplication.requestGeneration}"
+    }
+    val effectiveLayer = layerApplication.effectiveOverride
     val effectiveScale =
         cameraHwbProjectionTuningCoordinator.updateTargetScaleFromPanel(
             profile.projectionScale,
             source,
         )
     val effectiveZone =
-        privateLayerControlCoordinator.updateZoneCompositor(profile.zoneCompositor, source)
+        PrivateLayerZoneCompositorPanelBridge.submit(profile.zoneCompositor, source)
     val effectiveRgb =
         privateLayerControlCoordinator.updateRgbChannelTransform(
             profile.rgbChannelTransform,
             source,
         )
+    val effectiveStrengthCycleSpeedHz =
+        privateLayerControlCoordinator.updateStrengthCycleSpeedHz(profile.strengthCycleSpeedHz, source)
     val effectiveDisplacement =
         privateLayerControlCoordinator.updateProjectionSurfaceDisplacement(
             profile.projectionSurfaceDisplacement,
@@ -2821,7 +2871,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             profile.projectionInnerAlpha,
             source,
         )
-    return SpatialCameraControlProfileEffective(
+    val effective = SpatialCameraControlProfileEffective(
         layerOverride = effectiveLayer,
         projectionScale = effectiveScale,
         zoneCompositor = effectiveZone,
@@ -2829,7 +2879,10 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
         projectionSurfaceDisplacement = effectiveDisplacement,
         projectionSurfaceTiling = effectiveTiling,
         projectionInnerAlpha = effectiveInnerAlpha,
+        strengthCycleSpeedHz = effectiveStrengthCycleSpeedHz,
     )
+    SpatialPrivateLayerControlPanelStateBridge.publish(captureStoredProfileControls())
+    return effective
   }
 
   override fun dispatchGenericMotionEvent(event: MotionEvent): Boolean {
@@ -2863,6 +2916,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
 
   override fun onResume() {
     super.onResume()
+    PrivateLayerZoneCompositorPanelBridge.reapply("activity-resume")
     immersiveVideoPanelCoordinator.resume("activity-resume")
     backgroundImmersiveVideoPanelCoordinator.resume("activity-resume")
   }
@@ -2947,12 +3001,14 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
                     depthAlignment = privateLayerControlCoordinator.depthAlignment,
                     guideProcessing = privateLayerControlCoordinator.guideProcessing,
                     rgbChannelTransform = privateLayerControlCoordinator.rgbChannelTransform,
+                    strengthCycleSpeedHz = privateLayerControlCoordinator.strengthCycleSpeedHz,
                     projectionSurfaceDisplacement =
                         privateLayerControlCoordinator.projectionSurfaceDisplacement,
                     projectionSurfaceTiling =
                         privateLayerControlCoordinator.projectionSurfaceTiling,
                     projectionInnerAlpha =
                         privateLayerControlCoordinator.projectionInnerAlpha,
+                    profileAppliedControls = { SpatialPrivateLayerControlPanelStateBridge.controls },
                     passthroughLutSettings =
                         spatialPassthroughLutCoordinator::settingsSnapshot,
                     backgroundVideoSession =
@@ -2972,8 +3028,20 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
                         cameraHwbProjectionDepthPrerequisiteCoordinator::environmentDepthRecoveryPolicy,
                     updateEnvironmentDepthRecoveryPolicy =
                         cameraHwbProjectionDepthPrerequisiteCoordinator::updateEnvironmentDepthRecoveryPolicy,
-                    setLayerOverride = privateLayerControlCoordinator::updateLayerOverride,
-                    setProjectionPanelEnabled = ::setProjectionPanelEnabled,
+                    setLayerOverride = { value, source ->
+                      privateLayerControlCoordinator.updateLayerOverride(value, source).also {
+                        SpatialPrivateLayerControlPanelStateBridge.publish(
+                            captureStoredProfileControls()
+                        )
+                      }
+                    },
+                    setProjectionPanelEnabled = { enabled, source ->
+                      setProjectionPanelEnabled(enabled, source).also {
+                        SpatialPrivateLayerControlPanelStateBridge.publish(
+                            captureStoredProfileControls()
+                        )
+                      }
+                    },
                     setVideoPlaybackEnabled = { enabled ->
                       setImmersiveVideoPlaybackEnabled(
                           enabled,
@@ -2990,21 +3058,70 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
                       cameraHwbProjectionTuningCoordinator.updateTargetScaleFromPanel(
                           scale,
                           source,
-                      )
+                      ).also {
+                        SpatialPrivateLayerControlPanelStateBridge.publish(
+                            captureStoredProfileControls()
+                        )
+                      }
                     },
-                    updateDepthLayerPolicy =
-                        privateLayerControlCoordinator::updateDepthLayerPolicy,
-                    updateDepthAlignment = privateLayerControlCoordinator::updateDepthAlignment,
-                    updateGuideProcessing =
-                        privateLayerControlCoordinator::updateGuideProcessing,
-                    updateRgbChannelTransform =
-                        privateLayerControlCoordinator::updateRgbChannelTransform,
-                    updateProjectionSurfaceDisplacement =
-                        privateLayerControlCoordinator::updateProjectionSurfaceDisplacement,
-                    updateProjectionSurfaceTiling =
-                        privateLayerControlCoordinator::updateProjectionSurfaceTiling,
-                    updateProjectionInnerAlpha =
-                        privateLayerControlCoordinator::updateProjectionInnerAlpha,
+                    updateDepthLayerPolicy = { value, source ->
+                      privateLayerControlCoordinator.updateDepthLayerPolicy(value, source).also {
+                        SpatialPrivateLayerControlPanelStateBridge.publish(
+                            captureStoredProfileControls()
+                        )
+                      }
+                    },
+                    updateDepthAlignment = { value, source ->
+                      privateLayerControlCoordinator.updateDepthAlignment(value, source).also {
+                        SpatialPrivateLayerControlPanelStateBridge.publish(
+                            captureStoredProfileControls()
+                        )
+                      }
+                    },
+                    updateGuideProcessing = { value, source ->
+                      privateLayerControlCoordinator.updateGuideProcessing(value, source).also {
+                        SpatialPrivateLayerControlPanelStateBridge.publish(
+                            captureStoredProfileControls()
+                        )
+                      }
+                    },
+                    updateRgbChannelTransform = { value, source ->
+                      privateLayerControlCoordinator.updateRgbChannelTransform(value, source).also {
+                        SpatialPrivateLayerControlPanelStateBridge.publish(
+                            captureStoredProfileControls()
+                        )
+                      }
+                    },
+                    updateStrengthCycleSpeedHz = { value, source ->
+                      privateLayerControlCoordinator.updateStrengthCycleSpeedHz(value, source).also {
+                        SpatialPrivateLayerControlPanelStateBridge.publish(
+                            captureStoredProfileControls()
+                        )
+                      }
+                    },
+                    updateProjectionSurfaceDisplacement = { value, source ->
+                      privateLayerControlCoordinator
+                          .updateProjectionSurfaceDisplacement(value, source)
+                          .also {
+                            SpatialPrivateLayerControlPanelStateBridge.publish(
+                                captureStoredProfileControls()
+                            )
+                          }
+                    },
+                    updateProjectionSurfaceTiling = { value, source ->
+                      privateLayerControlCoordinator.updateProjectionSurfaceTiling(value, source).also {
+                        SpatialPrivateLayerControlPanelStateBridge.publish(
+                            captureStoredProfileControls()
+                        )
+                      }
+                    },
+                    updateProjectionInnerAlpha = { value, source ->
+                      privateLayerControlCoordinator.updateProjectionInnerAlpha(value, source).also {
+                        SpatialPrivateLayerControlPanelStateBridge.publish(
+                            captureStoredProfileControls()
+                        )
+                      }
+                    },
                     updatePassthroughLutSettings =
                         spatialPassthroughLutCoordinator::updateSettings,
                     selectPreviousVideo = {
@@ -3198,6 +3315,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
       readerMaxImages: Int,
       videoSettings: SpatialVideoProjectionSettings,
   ) {
+    privateLayerControlCoordinator.clearNativeLayerOverrideLifecycle()
     cameraLatencyDiagnosticModule.poll("camera-hwb-projection-pre-run", force = true)
     if (nativeInteropCoordinator.receiptLibraryLoaded) {
       val openXrProbe = SpatialNativeInteropProbe.capture(scene)
@@ -3241,9 +3359,17 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     setPrivateLayerPanelVisible(false, focus = false, source = "camera-hwb-projection-probe")
     if (cameraHwbProjectionCarrierStateCoordinator.scenePanelCarrierEnabled()) {
       cameraHwbProjectionPanelCarrierCoordinator.run(readerMaxImages, videoSettings)
+      pollPendingControlProfileAfterProjectionStart()
       return
     }
     cameraHwbProjectionRawCarrierCoordinator.run(readerMaxImages, videoSettings)
+    pollPendingControlProfileAfterProjectionStart()
+  }
+
+  private fun pollPendingControlProfileAfterProjectionStart() {
+    if (controlProfileHotloaderStarted) {
+      controlProfileHotloader.poll(force = true)
+    }
   }
 
   private fun currentCameraHwbProjectionLaunchRequest(
@@ -3261,6 +3387,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
       )
 
   private fun stopCameraHwbProjectionPanel(reason: String): SpatialProjectionPanelStopReceipt {
+    privateLayerControlCoordinator.clearNativeLayerOverrideLifecycle()
     val scenePanelCarrier = cameraHwbProjectionCarrierStateCoordinator.scenePanelCarrierEnabled()
     val panelCleanupStatus =
         if (scenePanelCarrier) {
@@ -3290,13 +3417,14 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     return SpatialProjectionPanelStopReceipt(
         nativeProjectionStopped = nativeProjectionStopped,
         videoProjectionStopped =
-            !spatialVideoProjectionRuntimeCoordinator.started &&
+            !spatialVideoProjectionRuntimeCoordinator.decoderActive &&
                 !spatialVideoProjectionRuntimeCoordinator.settings.enabled,
         carrierCleanupStatus = carrierCleanupStatus,
     )
   }
 
   private fun cleanupSdkQuadSurfaceProbe(reason: String): String {
+    privateLayerControlCoordinator.clearNativeLayerOverrideLifecycle()
     spatialVideoProjectionRuntimeCoordinator.stop("sdk-quad-surface-$reason")
     cameraHwbProjectionDepthPrerequisiteCoordinator.stop()
     cameraHwbProjectionRawCarrierCoordinator.recordLayerRemoved(reason)
@@ -4443,11 +4571,14 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
       outerProcessedMix: Float,
       centerContentMode: Int,
       centerProjectionMix: Float,
+      centerCornerRadiusUv: Float,
   ): Long
 
   private external fun nativeUpdateRgbChannelTransform(
       mode: Int,
       edgeMode: Int,
+      directionNoiseAmountTurns: Float,
+      directionNoiseRateHz: Float,
       redDirectionTurns: Float,
       greenDirectionTurns: Float,
       blueDirectionTurns: Float,
@@ -4464,6 +4595,8 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
       greenCoverageScale: Float,
       blueCoverageScale: Float,
   ): Long
+
+  private external fun nativeUpdateStrengthCycleSpeedHz(requestedHz: Float): Long
 
   private external fun nativeUpdateProjectionSurfaceDisplacement(
       enabled: Int,

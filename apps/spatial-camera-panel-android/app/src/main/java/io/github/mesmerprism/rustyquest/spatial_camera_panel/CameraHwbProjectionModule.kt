@@ -564,6 +564,11 @@ internal object CameraHwbProjectionModule {
           "renderSurfaceCarrier=scenequadlayer-createAsAndroid-vulkan-wsi " +
           "projectionPanelAlphaBlendEnabled=true " +
           "projectionPanelAlphaBlend=premultiplied-one-over-one-minus-source-alpha " +
+          "projectionCarrierAlphaRequested=pre-multiplied " +
+          "projectionCarrierLayerBlendRequested=source-one-destination-one-minus-source-alpha " +
+          "projectionCarrierLayerBlendAppApplied=true " +
+          "projectionCarrierRuntimeBlendObserved=false " +
+          "projectionCarrierRuntimeAlphaEffective=unobserved " +
           "projectionCarrierRoomObject=${carrierMode == CameraHwbProjectionCarrierMode.SceneQuadLayerRoomObject} " +
           "projectionAnchorHittable=none-first-room-diagnostic " +
           "projectionAnchorMaterialRenderOrder=default-first-room-diagnostic " +
@@ -587,6 +592,11 @@ internal object CameraHwbProjectionModule {
       "channel=camera-hwb-spatial-probe status=layer-create-failed " +
           "rawCameraProjectionProbe=true sceneQuadLayerCreated=false " +
           "anchorMode=generated-single-sided-quad " +
+          "projectionCarrierAlphaRequested=pre-multiplied " +
+          "projectionCarrierLayerBlendRequested=source-one-destination-one-minus-source-alpha " +
+          "projectionCarrierLayerBlendAppApplied=false " +
+          "projectionCarrierRuntimeBlendObserved=false " +
+          "projectionCarrierRuntimeAlphaEffective=unavailable " +
           "error=${activityMarkerToken(error)} " +
           "message=${activityMarkerToken(message)} runtimeCrash=false"
 
@@ -792,6 +802,11 @@ internal object CameraHwbProjectionModule {
           "panelRegistrationId=$panelRegistrationId " +
           "carrier=$carrier " +
           "panelLayerUpdateStatus=${activityMarkerToken(panelLayerUpdateStatus)} " +
+          "projectionCarrierAlphaRequested=straight " +
+          "projectionCarrierLayerBlendConfigured=source-alpha-destination-one-minus-source-alpha " +
+          "projectionCarrierLayerBlendApplication=see-panelLayerUpdateStatus " +
+          "projectionCarrierRuntimeBlendObserved=false " +
+          "projectionCarrierRuntimeAlphaEffective=unobserved " +
           "${projectionMarkerFields.trim()} " +
           "${stereoMarkerFields.trim()} " +
           "${videoProjectionMarkerFields.trim()} " +

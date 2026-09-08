@@ -17,6 +17,18 @@ import java.util.Collections;
 import java.util.Locale;
 
 public final class SpatialStereoVideoPlayback {
+    public interface LifecycleListener {
+        void onFirstFrame();
+        void onError(String reason);
+        void onStopped();
+    }
+
+    private static final LifecycleListener NO_OP_LIFECYCLE_LISTENER =
+        new LifecycleListener() {
+            @Override public void onFirstFrame() {}
+            @Override public void onError(String reason) {}
+            @Override public void onStopped() {}
+        };
     private static final String LOG_TAG = "RQSpatialCamera";
     private static final String SOURCE_BROKER_RMANVID1 = "broker-rmanvid1";
     private static final String SOURCE_PEER_PACKED_STEREO = "peer-packed-stereo";
@@ -70,6 +82,53 @@ public final class SpatialStereoVideoPlayback {
         String peerTlsServerName,
         String peerAuthToken
     ) {
+        return start(
+            context,
+            source,
+            path,
+            encryptedMediaSource,
+            width,
+            height,
+            maxImages,
+            fpsCap,
+            looping,
+            brokerHost,
+            brokerPort,
+            brokerConnectTimeoutMs,
+            mediaLayout,
+            peerRouteKind,
+            peerSessionId,
+            peerRelayChannel,
+            peerTlsServerName,
+            peerAuthToken,
+            NO_OP_LIFECYCLE_LISTENER
+        );
+    }
+
+    public static boolean start(
+        Context context,
+        String source,
+        String path,
+        MediaDataSource encryptedMediaSource,
+        int width,
+        int height,
+        int maxImages,
+        int fpsCap,
+        boolean looping,
+        String brokerHost,
+        int brokerPort,
+        int brokerConnectTimeoutMs,
+        String mediaLayout,
+        String peerRouteKind,
+        String peerSessionId,
+        String peerRelayChannel,
+        String peerTlsServerName,
+        String peerAuthToken,
+        LifecycleListener lifecycleListener
+    ) {
+        LifecycleListener listener = lifecycleListener == null
+            ? NO_OP_LIFECYCLE_LISTENER
+            : lifecycleListener;
         int requestedWidth = clamp(width, 320, 4096);
         int requestedHeight = clamp(height, 240, 4096);
         int requestedMaxImages = clamp(maxImages, 2, 6);
@@ -85,6 +144,7 @@ public final class SpatialStereoVideoPlayback {
         synchronized (LOCK) {
             if (!stopLocked()) {
                 closeQuietly(encryptedMediaSource);
+                listener.onError("decoder-handoff-blocked");
                 if (nativeBridgeLoaded) {
                     nativeStereoVideoLifecycleEvent(
                         EVENT_HANDOFF_BLOCKED,
@@ -114,9 +174,11 @@ public final class SpatialStereoVideoPlayback {
         }
         if (!nativeBridgeLoaded) {
             closeQuietly(encryptedMediaSource);
+            listener.onError("native-bridge-unavailable");
             return false;
         }
         if (encryptedOfflinePackSource && encryptedMediaSource == null) {
+            listener.onError("encrypted-media-source-missing");
             nativeStereoVideoLifecycleEvent(
                 EVENT_ERROR,
                 -5,
@@ -133,6 +195,7 @@ public final class SpatialStereoVideoPlayback {
             && !sharedPlainVideoSource
             && (resolvedPath.isEmpty() || !new File(resolvedPath).isFile())) {
             closeQuietly(encryptedMediaSource);
+            listener.onError("video-source-unavailable");
             nativeStereoVideoLifecycleEvent(
                 EVENT_ERROR,
                 -2,
@@ -147,6 +210,7 @@ public final class SpatialStereoVideoPlayback {
         if (sharedPlainVideoSource &&
             (path == null || !path.trim().startsWith("content://"))) {
             closeQuietly(encryptedMediaSource);
+            listener.onError("shared-video-uri-invalid");
             nativeStereoVideoLifecycleEvent(
                 EVENT_ERROR,
                 -7,
@@ -167,6 +231,7 @@ public final class SpatialStereoVideoPlayback {
         );
         if (surface == null) {
             closeQuietly(encryptedMediaSource);
+            listener.onError("decoder-surface-unavailable");
             nativeStereoVideoLifecycleEvent(
                 EVENT_ERROR,
                 -3,
@@ -198,7 +263,8 @@ public final class SpatialStereoVideoPlayback {
                             requestedWidth,
                             requestedHeight,
                             requestedMaxImages,
-                            requestedFpsCap
+                            requestedFpsCap,
+                            listener
                         );
                     } else if (encryptedOfflinePackSource) {
                         runPlayback(
@@ -208,7 +274,8 @@ public final class SpatialStereoVideoPlayback {
                             requestedHeight,
                             requestedMaxImages,
                             requestedSurfaceCadenceFps,
-                            looping
+                            looping,
+                            listener
                         );
                     } else if (sharedPlainVideoSource) {
                         runPlayback(
@@ -219,7 +286,8 @@ public final class SpatialStereoVideoPlayback {
                             requestedHeight,
                             requestedMaxImages,
                             requestedSurfaceCadenceFps,
-                            looping
+                            looping,
+                            listener
                         );
                     } else {
                         runPlayback(
@@ -229,7 +297,8 @@ public final class SpatialStereoVideoPlayback {
                             requestedHeight,
                             requestedMaxImages,
                             requestedSurfaceCadenceFps,
-                            looping
+                            looping,
+                            listener
                         );
                     }
                 }
@@ -300,7 +369,8 @@ public final class SpatialStereoVideoPlayback {
         int height,
         int maxImages,
         int fpsCap,
-        boolean looping
+        boolean looping,
+        LifecycleListener listener
     ) {
         int loopingFlag = looping ? 1 : 0;
         int nativeFpsCap = nativeFallbackFpsForSurfaceCadence(fpsCap);
@@ -314,7 +384,7 @@ public final class SpatialStereoVideoPlayback {
                 nativeFpsCap,
                 loopingFlag
             );
-            decodeOnce(path, surface, width, height, maxImages, fpsCap, looping);
+            decodeOnce(path, surface, width, height, maxImages, fpsCap, looping, listener);
             nativeStereoVideoLifecycleEvent(
                 EVENT_STOPPED,
                 0,
@@ -324,6 +394,7 @@ public final class SpatialStereoVideoPlayback {
                 nativeFpsCap,
                 loopingFlag
             );
+            listener.onStopped();
         } catch (RuntimeException | IOException error) {
             nativeStereoVideoLifecycleEvent(
                 EVENT_ERROR,
@@ -334,6 +405,7 @@ public final class SpatialStereoVideoPlayback {
                 nativeFpsCap,
                 loopingFlag
             );
+            listener.onError(lifecycleFailureReason(error));
         } finally {
             releasePlaybackOwnershipWithoutLock(surface);
         }
@@ -346,7 +418,8 @@ public final class SpatialStereoVideoPlayback {
         int height,
         int maxImages,
         int fpsCap,
-        boolean looping
+        boolean looping,
+        LifecycleListener listener
     ) {
         int loopingFlag = looping ? 1 : 0;
         int nativeFpsCap = nativeFallbackFpsForSurfaceCadence(fpsCap);
@@ -360,7 +433,16 @@ public final class SpatialStereoVideoPlayback {
                 nativeFpsCap,
                 loopingFlag
             );
-            decodeOnce(mediaDataSource, surface, width, height, maxImages, fpsCap, looping);
+            decodeOnce(
+                mediaDataSource,
+                surface,
+                width,
+                height,
+                maxImages,
+                fpsCap,
+                looping,
+                listener
+            );
             nativeStereoVideoLifecycleEvent(
                 EVENT_STOPPED,
                 0,
@@ -370,6 +452,7 @@ public final class SpatialStereoVideoPlayback {
                 nativeFpsCap,
                 loopingFlag
             );
+            listener.onStopped();
         } catch (RuntimeException | IOException error) {
             nativeStereoVideoLifecycleEvent(
                 EVENT_ERROR,
@@ -380,6 +463,7 @@ public final class SpatialStereoVideoPlayback {
                 nativeFpsCap,
                 loopingFlag
             );
+            listener.onError(lifecycleFailureReason(error));
         } finally {
             releasePlaybackOwnershipWithoutLock(surface);
         }
@@ -393,7 +477,8 @@ public final class SpatialStereoVideoPlayback {
         int height,
         int maxImages,
         int fpsCap,
-        boolean looping
+        boolean looping,
+        LifecycleListener listener
     ) {
         int loopingFlag = looping ? 1 : 0;
         int nativeFpsCap = nativeFallbackFpsForSurfaceCadence(fpsCap);
@@ -415,7 +500,8 @@ public final class SpatialStereoVideoPlayback {
                 height,
                 maxImages,
                 fpsCap,
-                looping
+                looping,
+                listener
             );
             nativeStereoVideoLifecycleEvent(
                 EVENT_STOPPED,
@@ -426,6 +512,7 @@ public final class SpatialStereoVideoPlayback {
                 nativeFpsCap,
                 loopingFlag
             );
+            listener.onStopped();
         } catch (RuntimeException | IOException error) {
             nativeStereoVideoLifecycleEvent(
                 EVENT_ERROR,
@@ -436,6 +523,7 @@ public final class SpatialStereoVideoPlayback {
                 nativeFpsCap,
                 loopingFlag
             );
+            listener.onError(lifecycleFailureReason(error));
         } finally {
             releasePlaybackOwnershipWithoutLock(surface);
         }
@@ -455,7 +543,8 @@ public final class SpatialStereoVideoPlayback {
         int width,
         int height,
         int maxImages,
-        int fpsCap
+        int fpsCap,
+        LifecycleListener listener
     ) {
         try {
             nativeStereoVideoLifecycleEvent(EVENT_STARTED, 0, width, height, maxImages, fpsCap, 0);
@@ -473,9 +562,11 @@ public final class SpatialStereoVideoPlayback {
                 width,
                 height,
                 maxImages,
-                fpsCap
+                fpsCap,
+                listener::onFirstFrame
             );
             nativeStereoVideoLifecycleEvent(EVENT_STOPPED, 0, width, height, maxImages, fpsCap, 0);
+            listener.onStopped();
         } catch (RuntimeException | IOException error) {
             Log.e(
                 LOG_TAG,
@@ -487,6 +578,7 @@ public final class SpatialStereoVideoPlayback {
                     + " peerEndpointRedacted=true peerSecretSerialized=false"
             );
             nativeStereoVideoLifecycleEvent(EVENT_ERROR, -1, width, height, maxImages, fpsCap, 0);
+            listener.onError(lifecycleFailureReason(error));
         } finally {
             releasePlaybackOwnershipWithoutLock(surface);
         }
@@ -509,6 +601,19 @@ public final class SpatialStereoVideoPlayback {
             return message.replaceAll("[^A-Za-z0-9._-]", "_");
         }
         return "redacted";
+    }
+
+    static String lifecycleFailureReason(Throwable error) {
+        String message = error == null ? null : error.getMessage();
+        if (message != null && message.matches("[a-z0-9][a-z0-9._-]{0,95}")) {
+            return message;
+        }
+        if (error instanceof MediaCodec.CodecException) {
+            return "mediacodec-codec-exception";
+        }
+        return error == null
+            ? "decoder-failure"
+            : error.getClass().getSimpleName().replaceAll("[^A-Za-z0-9._-]", "_");
     }
 
     private static void releasePlaybackOwnershipWithoutLock(Surface surface) {
@@ -535,7 +640,8 @@ public final class SpatialStereoVideoPlayback {
         int height,
         int maxImages,
         int fpsCap,
-        boolean looping
+        boolean looping,
+        LifecycleListener listener
     ) throws IOException {
         MediaExtractor extractor = new MediaExtractor();
         try {
@@ -547,7 +653,8 @@ public final class SpatialStereoVideoPlayback {
                 height,
                 maxImages,
                 fpsCap,
-                looping
+                looping,
+                listener
             );
         } finally {
             extractor.release();
@@ -561,7 +668,8 @@ public final class SpatialStereoVideoPlayback {
         int height,
         int maxImages,
         int fpsCap,
-        boolean looping
+        boolean looping,
+        LifecycleListener listener
     ) throws IOException {
         MediaExtractor extractor = new MediaExtractor();
         try {
@@ -573,7 +681,8 @@ public final class SpatialStereoVideoPlayback {
                 height,
                 maxImages,
                 fpsCap,
-                looping
+                looping,
+                listener
             );
         } finally {
             extractor.release();
@@ -589,7 +698,8 @@ public final class SpatialStereoVideoPlayback {
         int height,
         int maxImages,
         int fpsCap,
-        boolean looping
+        boolean looping,
+        LifecycleListener listener
     ) throws IOException {
         MediaExtractor extractor = new MediaExtractor();
         try {
@@ -605,7 +715,8 @@ public final class SpatialStereoVideoPlayback {
                 height,
                 maxImages,
                 fpsCap,
-                looping
+                looping,
+                listener
             );
         } finally {
             extractor.release();
@@ -619,7 +730,8 @@ public final class SpatialStereoVideoPlayback {
         int height,
         int maxImages,
         int fpsCap,
-        boolean looping
+        boolean looping,
+        LifecycleListener listener
     ) throws IOException {
         int loopingFlag = looping ? 1 : 0;
         MediaCodec codec = null;
@@ -757,6 +869,9 @@ public final class SpatialStereoVideoPlayback {
                     codec.releaseOutputBuffer(outputIndex, render);
                     if (render) {
                         renderedFrames += 1L;
+                        if (renderedFrames == 1L) {
+                            listener.onFirstFrame();
+                        }
                         if (renderedFrames == 1L || renderedFrames % 60L == 0L) {
                             nativeStereoVideoLifecycleEvent(
                                 EVENT_FRAME,

@@ -11,6 +11,8 @@ use std::sync::{OnceLock, RwLock};
 pub(crate) const RGB_CHANNEL_COUNT: usize = 3;
 pub(crate) const RGB_CHANNEL_TRANSFORM_CONTRACT_ID: &str = "rusty.quest.rgb-channel-transform.v1";
 pub(crate) const RGB_DIRECTION_RATE_MAX_HZ: f32 = 2.0;
+pub(crate) const RGB_DIRECTION_NOISE_AMOUNT_MAX_TURNS: f32 = 0.125;
+pub(crate) const RGB_DIRECTION_NOISE_RATE_MAX_HZ: f32 = 1.0;
 pub(crate) const RGB_DISPLACEMENT_MAX_UV: f32 = 0.08;
 pub(crate) const RGB_IMAGE_SCALE_MIN: f32 = 0.5;
 pub(crate) const RGB_IMAGE_SCALE_MAX: f32 = 2.0;
@@ -75,6 +77,8 @@ pub(crate) struct RgbChannelTransformSettings {
     pub(crate) edge_mode: RgbChannelEdgeMode,
     pub(crate) direction_turns: [f32; RGB_CHANNEL_COUNT],
     pub(crate) direction_rate_hz: [f32; RGB_CHANNEL_COUNT],
+    pub(crate) direction_noise_amount_turns: f32,
+    pub(crate) direction_noise_rate_hz: f32,
     pub(crate) displacement_strength_uv: [f32; RGB_CHANNEL_COUNT],
     pub(crate) image_scale: [f32; RGB_CHANNEL_COUNT],
     pub(crate) coverage_scale: [f32; RGB_CHANNEL_COUNT],
@@ -88,6 +92,8 @@ impl Default for RgbChannelTransformSettings {
             edge_mode: RgbChannelEdgeMode::Clamp,
             direction_turns: [0.0; RGB_CHANNEL_COUNT],
             direction_rate_hz: [0.0; RGB_CHANNEL_COUNT],
+            direction_noise_amount_turns: 0.0,
+            direction_noise_rate_hz: 0.1,
             displacement_strength_uv: [0.0; RGB_CHANNEL_COUNT],
             image_scale: [1.0; RGB_CHANNEL_COUNT],
             coverage_scale: [1.0; RGB_CHANNEL_COUNT],
@@ -105,6 +111,10 @@ impl RgbChannelTransformSettings {
             *value =
                 finite_or(*value, 0.0).clamp(-RGB_DIRECTION_RATE_MAX_HZ, RGB_DIRECTION_RATE_MAX_HZ);
         }
+        self.direction_noise_amount_turns = finite_or(self.direction_noise_amount_turns, 0.0)
+            .clamp(0.0, RGB_DIRECTION_NOISE_AMOUNT_MAX_TURNS);
+        self.direction_noise_rate_hz = finite_or(self.direction_noise_rate_hz, 0.1)
+            .clamp(0.0, RGB_DIRECTION_NOISE_RATE_MAX_HZ);
         for value in &mut self.displacement_strength_uv {
             *value = finite_or(*value, 0.0).clamp(0.0, RGB_DISPLACEMENT_MAX_UV);
         }
@@ -126,7 +136,7 @@ impl RgbChannelTransformSettings {
 
     pub(crate) fn marker_fields(self) -> String {
         format!(
-            "rgbChannelTransformContract={} rgbChannelTransformMode={} rgbChannelTransformEdge={} rgbChannelTransformRevision={} rgbDirectionTurns={:.4},{:.4},{:.4} rgbDirectionRateHz={:.4},{:.4},{:.4} rgbDisplacementStrengthUv={:.5},{:.5},{:.5} rgbImageScale={:.4},{:.4},{:.4} rgbCoverageScale={:.4},{:.4},{:.4}",
+            "rgbChannelTransformContract={} rgbChannelTransformMode={} rgbChannelTransformEdge={} rgbChannelTransformRevision={} rgbDirectionTurns={:.4},{:.4},{:.4} rgbDirectionRateHz={:.4},{:.4},{:.4} rgbDirectionNoiseAmountTurns={:.5} rgbDirectionNoiseRateHz={:.4} rgbDisplacementStrengthUv={:.5},{:.5},{:.5} rgbImageScale={:.4},{:.4},{:.4} rgbCoverageScale={:.4},{:.4},{:.4}",
             RGB_CHANNEL_TRANSFORM_CONTRACT_ID,
             self.mode.marker_token(),
             self.edge_mode.marker_token(),
@@ -137,6 +147,8 @@ impl RgbChannelTransformSettings {
             self.direction_rate_hz[0],
             self.direction_rate_hz[1],
             self.direction_rate_hz[2],
+            self.direction_noise_amount_turns,
+            self.direction_noise_rate_hz,
             self.displacement_strength_uv[0],
             self.displacement_strength_uv[1],
             self.displacement_strength_uv[2],
@@ -165,6 +177,40 @@ impl RgbChannelTransformSettings {
         }
     }
 
+    pub(crate) fn uniform_at_elapsed_seconds(
+        self,
+        elapsed_seconds: f32,
+    ) -> RgbChannelTransformUniform {
+        let mut uniform = self.uniform();
+        if self.mode == RgbChannelTransformMode::Bypass || self.direction_noise_amount_turns <= 0.0
+        {
+            return uniform;
+        }
+        if self.mode == RgbChannelTransformMode::Linked {
+            let direction_turns = (self.direction_turns[0]
+                + smooth_direction_noise_turns(
+                    elapsed_seconds,
+                    self.direction_noise_rate_hz,
+                    self.direction_noise_amount_turns,
+                    0.0,
+                ))
+            .rem_euclid(1.0);
+            uniform.direction_turns[..RGB_CHANNEL_COUNT].fill(direction_turns);
+            return uniform;
+        }
+        for (channel, seed) in [0.0, 0.381_966_02, 0.754_877_7].into_iter().enumerate() {
+            uniform.direction_turns[channel] = (self.direction_turns[channel]
+                + smooth_direction_noise_turns(
+                    elapsed_seconds,
+                    self.direction_noise_rate_hz,
+                    self.direction_noise_amount_turns,
+                    seed,
+                ))
+            .rem_euclid(1.0);
+        }
+        uniform
+    }
+
     #[cfg(test)]
     fn channel_sample(
         self,
@@ -182,8 +228,11 @@ impl RgbChannelTransformSettings {
         }
         let channel = channel.min(RGB_CHANNEL_COUNT - 1);
         let elapsed_seconds = finite_or(elapsed_seconds, 0.0).max(0.0);
+        let direction_turns = self
+            .uniform_at_elapsed_seconds(elapsed_seconds)
+            .direction_turns[channel];
         let angle = std::f32::consts::TAU
-            * (self.direction_turns[channel] + elapsed_seconds * self.direction_rate_hz[channel]);
+            * (direction_turns + elapsed_seconds * self.direction_rate_hz[channel]);
         let direction = [angle.cos(), angle.sin()];
         let scale = self.image_scale[channel];
         let signal = finite_or(centered_signal, 0.0).clamp(-0.5, 0.5);
@@ -236,6 +285,8 @@ pub(crate) fn update_rgb_channel_transform_settings(
     edge_mode_code: u32,
     direction_turns: [f32; RGB_CHANNEL_COUNT],
     direction_rate_hz: [f32; RGB_CHANNEL_COUNT],
+    direction_noise_amount_turns: f32,
+    direction_noise_rate_hz: f32,
     displacement_strength_uv: [f32; RGB_CHANNEL_COUNT],
     image_scale: [f32; RGB_CHANNEL_COUNT],
     coverage_scale: [f32; RGB_CHANNEL_COUNT],
@@ -248,6 +299,8 @@ pub(crate) fn update_rgb_channel_transform_settings(
         edge_mode: RgbChannelEdgeMode::from_code(edge_mode_code),
         direction_turns,
         direction_rate_hz,
+        direction_noise_amount_turns,
+        direction_noise_rate_hz,
         displacement_strength_uv,
         image_scale,
         coverage_scale,
@@ -266,6 +319,38 @@ fn finite_or(value: f32, fallback: f32) -> f32 {
     } else {
         fallback
     }
+}
+
+fn smooth_direction_noise_turns(
+    elapsed_seconds: f32,
+    noise_rate_hz: f32,
+    amount_turns: f32,
+    seed: f32,
+) -> f32 {
+    let amount_turns =
+        finite_or(amount_turns, 0.0).clamp(0.0, RGB_DIRECTION_NOISE_AMOUNT_MAX_TURNS);
+    if amount_turns <= 0.0 {
+        return 0.0;
+    }
+    let phase = finite_or(elapsed_seconds, 0.0).max(0.0)
+        * finite_or(noise_rate_hz, 0.0).clamp(0.0, RGB_DIRECTION_NOISE_RATE_MAX_HZ);
+    let cell = phase.floor();
+    let blend = smoothstep(cell, cell + 1.0, phase);
+    amount_turns
+        * mix(
+            unit_lattice_noise(cell, seed),
+            unit_lattice_noise(cell + 1.0, seed),
+            blend,
+        )
+}
+
+fn unit_lattice_noise(cell: f32, seed: f32) -> f32 {
+    let hashed = (cell * 12.9898 + finite_or(seed, 0.0) * 78.233 + 37.719).sin() * 43_758.547;
+    (hashed - hashed.floor()) * 2.0 - 1.0
+}
+
+fn mix(a: f32, b: f32, t: f32) -> f32 {
+    a + (b - a) * t
 }
 
 fn rgb_vec4(values: [f32; RGB_CHANNEL_COUNT], alpha: f32) -> [f32; 4] {
@@ -322,7 +407,6 @@ fn edge_fade(value: f32) -> f32 {
     smoothstep(-0.02, 0.0, value) * (1.0 - smoothstep(1.0, 1.02, value))
 }
 
-#[cfg(test)]
 fn smoothstep(edge0: f32, edge1: f32, value: f32) -> f32 {
     let width = (edge1 - edge0).max(f32::EPSILON);
     let t = ((value - edge0) / width).clamp(0.0, 1.0);
@@ -406,7 +490,94 @@ mod tests {
         assert_eq!(settings.displacement_strength_uv, [0.0, 0.08, 0.0]);
         assert_eq!(settings.image_scale, [0.5, 2.0, 1.0]);
         assert_eq!(settings.coverage_scale, [0.5, 1.0, 1.0]);
+        assert_eq!(settings.direction_noise_amount_turns, 0.0);
+        assert_eq!(settings.direction_noise_rate_hz, 0.1);
         assert_eq!(std::mem::size_of::<RgbChannelTransformUniform>(), 96);
+    }
+
+    #[test]
+    fn temporal_noise_is_deterministic_continuous_and_bounded() {
+        let amount = 0.125;
+        let first = smooth_direction_noise_turns(12.75, 0.4, amount, 0.381_966_02);
+        let repeated = smooth_direction_noise_turns(12.75, 0.4, amount, 0.381_966_02);
+        assert_eq!(first, repeated);
+        assert!(first.abs() <= amount);
+        let before_boundary = smooth_direction_noise_turns(2.499_99, 0.4, amount, 0.0);
+        let after_boundary = smooth_direction_noise_turns(2.500_01, 0.4, amount, 0.0);
+        assert!((before_boundary - after_boundary).abs() < 0.0001);
+    }
+
+    #[test]
+    fn zero_noise_preserves_the_exact_uniform() {
+        let settings = RgbChannelTransformSettings {
+            mode: RgbChannelTransformMode::Independent,
+            direction_turns: [0.1, 0.2, 0.3],
+            direction_noise_amount_turns: 0.0,
+            direction_noise_rate_hz: 1.0,
+            ..RgbChannelTransformSettings::default()
+        }
+        .normalized();
+        assert_eq!(
+            settings.uniform_at_elapsed_seconds(123.0),
+            settings.uniform()
+        );
+    }
+
+    #[test]
+    fn linked_mode_uses_one_noise_sample_and_independent_mode_uses_seeded_samples() {
+        let linked = RgbChannelTransformSettings {
+            mode: RgbChannelTransformMode::Linked,
+            direction_turns: [0.25; RGB_CHANNEL_COUNT],
+            direction_noise_amount_turns: 0.1,
+            direction_noise_rate_hz: 0.4,
+            ..RgbChannelTransformSettings::default()
+        }
+        .normalized()
+        .uniform_at_elapsed_seconds(3.5);
+        assert_eq!(linked.direction_turns[0], linked.direction_turns[1]);
+        assert_eq!(linked.direction_turns[1], linked.direction_turns[2]);
+
+        let independent = RgbChannelTransformSettings {
+            mode: RgbChannelTransformMode::Independent,
+            direction_turns: [0.25; RGB_CHANNEL_COUNT],
+            direction_noise_amount_turns: 0.1,
+            direction_noise_rate_hz: 0.4,
+            ..RgbChannelTransformSettings::default()
+        }
+        .normalized()
+        .uniform_at_elapsed_seconds(3.5);
+        assert_ne!(
+            independent.direction_turns[0],
+            independent.direction_turns[1]
+        );
+        assert_ne!(
+            independent.direction_turns[1],
+            independent.direction_turns[2]
+        );
+    }
+
+    #[test]
+    fn channel_sample_uses_the_same_temporal_direction_as_the_uploaded_uniform() {
+        let elapsed_seconds = 3.5;
+        let settings = RgbChannelTransformSettings {
+            mode: RgbChannelTransformMode::Independent,
+            direction_turns: [0.25; RGB_CHANNEL_COUNT],
+            direction_rate_hz: [0.2; RGB_CHANNEL_COUNT],
+            direction_noise_amount_turns: 0.1,
+            direction_noise_rate_hz: 0.4,
+            displacement_strength_uv: [0.02; RGB_CHANNEL_COUNT],
+            ..RgbChannelTransformSettings::default()
+        }
+        .normalized();
+        let uploaded_turns = settings
+            .uniform_at_elapsed_seconds(elapsed_seconds)
+            .direction_turns[0];
+        let angle = std::f32::consts::TAU
+            * (uploaded_turns + elapsed_seconds * settings.direction_rate_hz[0]);
+        let expected_uv = [0.4 + angle.cos() * 0.01, 0.4 + angle.sin() * 0.01];
+        let sample = settings.channel_sample(0, [0.4, 0.4], 0.5, elapsed_seconds);
+        assert!((sample.uv[0] - expected_uv[0]).abs() < 0.000_001);
+        assert!((sample.uv[1] - expected_uv[1]).abs() < 0.000_001);
     }
 
     #[test]

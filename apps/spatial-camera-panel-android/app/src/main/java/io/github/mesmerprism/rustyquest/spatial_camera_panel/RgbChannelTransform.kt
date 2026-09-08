@@ -13,6 +13,8 @@ internal data class RgbChannelParameters(
 internal data class RgbChannelTransform(
     val mode: Int = RgbChannelTransformControls.modeBypass,
     val edgeMode: Int = RgbChannelTransformControls.edgeClamp,
+    val directionNoiseAmountTurns: Float = 0.0f,
+    val directionNoiseRateHz: Float = 0.1f,
     val red: RgbChannelParameters = RgbChannelParameters(),
     val green: RgbChannelParameters = RgbChannelParameters(),
     val blue: RgbChannelParameters = RgbChannelParameters(),
@@ -35,7 +37,7 @@ internal object RgbChannelTransformControls {
           red =
               RgbChannelParameters(
                   directionTurns = 0.125f,
-                  directionRateHz = 0.125f,
+                  directionRateHz = 0.0625f,
                   displacementStrengthUv = 0.018f,
               ),
       )
@@ -47,7 +49,7 @@ internal object RgbChannelTransformControls {
           red =
               RgbChannelParameters(
                   directionTurns = 0.0f,
-                  directionRateHz = 0.11f,
+                  directionRateHz = 0.055f,
                   displacementStrengthUv = 0.018f,
                   imageScale = 1.0f,
                   coverageScale = 1.0f,
@@ -55,17 +57,17 @@ internal object RgbChannelTransformControls {
           green =
               RgbChannelParameters(
                   directionTurns = 0.333333f,
-                  directionRateHz = 0.17f,
+                  directionRateHz = 0.085f,
                   displacementStrengthUv = 0.014f,
-                  imageScale = 1.05f,
+                  imageScale = 1.0f,
                   coverageScale = 0.92f,
               ),
           blue =
               RgbChannelParameters(
                   directionTurns = 0.666667f,
-                  directionRateHz = -0.13f,
+                  directionRateHz = -0.065f,
                   displacementStrengthUv = 0.022f,
-                  imageScale = 0.95f,
+                  imageScale = 1.0f,
                   coverageScale = 0.84f,
               ),
       )
@@ -107,11 +109,25 @@ internal object RgbChannelTransformModule {
     val green = normalizeChannel(requested.green)
     val blue = normalizeChannel(requested.blue)
     return if (mode == RgbChannelTransformControls.modeLinked) {
-      RgbChannelTransform(mode = mode, edgeMode = edgeMode, red = red, green = red, blue = red)
+      RgbChannelTransform(
+          mode = mode,
+          edgeMode = edgeMode,
+          directionNoiseAmountTurns =
+              finiteOr(requested.directionNoiseAmountTurns, 0.0f).coerceIn(0.0f, 0.125f),
+          directionNoiseRateHz =
+              finiteOr(requested.directionNoiseRateHz, 0.1f).coerceIn(0.0f, 1.0f),
+          red = red,
+          green = red,
+          blue = red,
+      )
     } else {
       RgbChannelTransform(
           mode = mode,
           edgeMode = edgeMode,
+          directionNoiseAmountTurns =
+              finiteOr(requested.directionNoiseAmountTurns, 0.0f).coerceIn(0.0f, 0.125f),
+          directionNoiseRateHz =
+              finiteOr(requested.directionNoiseRateHz, 0.1f).coerceIn(0.0f, 1.0f),
           red = red,
           green = green,
           blue = blue,
@@ -124,6 +140,8 @@ internal object RgbChannelTransformModule {
     return "rgbChannelTransformContract=$CONTRACT_ID " +
         "rgbChannelTransformMode=${RgbChannelTransformControls.modeToken(value.mode)} " +
         "rgbChannelTransformEdge=${RgbChannelTransformControls.edgeToken(value.edgeMode)} " +
+        "rgbDirectionNoiseAmountTurns=${markerFloat(value.directionNoiseAmountTurns)} " +
+        "rgbDirectionNoiseRateHz=${markerFloat(value.directionNoiseRateHz)} " +
         "rgbDirectionTurns=${markerFloat(value.red.directionTurns)},${markerFloat(value.green.directionTurns)},${markerFloat(value.blue.directionTurns)} " +
         "rgbDirectionRateHz=${markerFloat(value.red.directionRateHz)},${markerFloat(value.green.directionRateHz)},${markerFloat(value.blue.directionRateHz)} " +
         "rgbDisplacementStrengthUv=${markerFloat(value.red.displacementStrengthUv)},${markerFloat(value.green.displacementStrengthUv)},${markerFloat(value.blue.displacementStrengthUv)} " +

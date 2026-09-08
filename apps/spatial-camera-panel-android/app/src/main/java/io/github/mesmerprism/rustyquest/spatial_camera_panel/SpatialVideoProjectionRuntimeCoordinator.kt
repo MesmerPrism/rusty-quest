@@ -6,19 +6,50 @@ internal data class SpatialVideoProjectionRuntimeNativeState(
     val receiptLibraryLoaded: Boolean,
 )
 
+internal enum class SpatialVideoProjectionDecoderState(val token: String) {
+  Stopped("stopped"),
+  Starting("starting"),
+  Effective("effective"),
+  Failed("failed"),
+}
+
+internal enum class SpatialVideoProjectionStartupDisposition(val token: String) {
+  Inactive("inactive"),
+  ProjectionHiddenDirect("projection-hidden-direct"),
+  ZeroDemandSkipped("zero-demand-skipped"),
+  DecoderDispatched("decoder-dispatched"),
+  DecoderFailed("decoder-failed"),
+}
+
+internal data class SpatialVideoProjectionStartupOwnership(
+    val disposition: SpatialVideoProjectionStartupDisposition,
+    val directVideoConsumerRequired: Boolean,
+)
+
+internal data class SpatialVideoProjectionPlaybackCallbacks(
+    val onFirstFrame: () -> Unit,
+    val onError: (String) -> Unit,
+    val onStopped: () -> Unit,
+)
+
 internal data class SpatialVideoProjectionRuntimeBindings(
     val nativeState: () -> SpatialVideoProjectionRuntimeNativeState,
     val configureNative: (SpatialVideoProjectionSettings) -> Long,
-    val startPlayback: (SpatialVideoProjectionSettings, OfflineImmersiveMediaPack?) -> Boolean,
+    val startPlayback:
+        (SpatialVideoProjectionSettings,
+            OfflineImmersiveMediaPack?,
+            SpatialVideoProjectionPlaybackCallbacks) -> Boolean,
     val stopPlayback: () -> Boolean,
     val stopNativeProbe: () -> Unit,
     val marker: (String) -> Unit,
     val dispatchDecoderLifecycle: ((() -> Unit) -> Unit) = { action -> action() },
+    val onDecoderStateChanged: (SpatialVideoProjectionDecoderState, String) -> Unit = { _, _ -> },
 )
 
 internal data class SpatialVideoProjectionSourceSwitchResult(
     val applied: Boolean,
     val decoderStarted: Boolean,
+    val decoderEffective: Boolean = false,
     val sourceGeneration: Long = 0L,
 )
 
@@ -28,13 +59,19 @@ internal class SpatialVideoProjectionRuntimeCoordinator(
   var settings = SpatialVideoProjectionSettings.disabled()
     private set
 
-  @Volatile var started = false
+  @Volatile var decoderState = SpatialVideoProjectionDecoderState.Stopped
     private set
+  val started: Boolean
+    get() = decoderState == SpatialVideoProjectionDecoderState.Effective
+  @Volatile private var decoderDispatched = false
+  val decoderActive: Boolean
+    get() = decoderDispatched
   private var offlinePack: OfflineImmersiveMediaPack? = null
   @Volatile private var readableVideoConsumerRequired = true
   private var sourceGeneration = 0L
   private val consumerLifecycleLock = Any()
   private var consumerLifecycleGeneration = 0L
+  private var playbackGeneration = 0L
 
   fun resolveSettings(intent: Intent?): SpatialVideoProjectionSettings =
       SpatialVideoProjectionRouteModule.currentSettings(intent)
@@ -78,26 +115,168 @@ internal class SpatialVideoProjectionRuntimeCoordinator(
     return mask
   }
 
-  fun start(settings: SpatialVideoProjectionSettings, reason: String) {
-    if (!settings.active) {
+  private fun beginPlayback(
+      requestedSettings: SpatialVideoProjectionSettings,
+      requestedOfflinePack: OfflineImmersiveMediaPack?,
+      reason: String,
+      generation: Long,
+  ): Boolean {
+    val canStart =
+        synchronized(consumerLifecycleLock) {
+          if (playbackGeneration != generation ||
+              !readableVideoConsumerRequired ||
+              settings != requestedSettings) {
+            false
+          } else {
+            decoderDispatched = true
+            decoderState = SpatialVideoProjectionDecoderState.Starting
+            true
+          }
+        }
+    if (!canStart) return false
+    bindings.onDecoderStateChanged(SpatialVideoProjectionDecoderState.Starting, reason)
+    bindings.marker(
+        "channel=spatial-video-projection status=decoder-lifecycle-state " +
+            "reason=${activityMarkerToken(reason)} playbackGeneration=$generation " +
+            "decoderState=starting decoderDispatched=true decoderEffective=false"
+    )
+    val callbacks =
+        SpatialVideoProjectionPlaybackCallbacks(
+            onFirstFrame = {
+              transitionDecoderStateForGeneration(
+                  generation,
+                  requestedSettings,
+                  SpatialVideoProjectionDecoderState.Effective,
+                  "$reason-first-frame",
+              )
+            },
+            onError = { failure ->
+              transitionDecoderStateForGeneration(
+                  generation,
+                  requestedSettings,
+                  SpatialVideoProjectionDecoderState.Failed,
+                  "$reason-${activityMarkerToken(failure)}",
+              )
+            },
+            onStopped = {
+              transitionDecoderStateForGeneration(
+                  generation,
+                  requestedSettings,
+                  SpatialVideoProjectionDecoderState.Stopped,
+                  "$reason-stopped",
+              )
+            },
+        )
+    val dispatched =
+        runCatching { bindings.startPlayback(requestedSettings, requestedOfflinePack, callbacks) }
+            .getOrDefault(false)
+    if (!dispatched) {
+      transitionDecoderStateForGeneration(
+          generation,
+          requestedSettings,
+          SpatialVideoProjectionDecoderState.Failed,
+          "$reason-dispatch-failed",
+      )
+    }
+    return synchronized(consumerLifecycleLock) {
+      playbackGeneration == generation && decoderDispatched
+    }
+  }
+
+  private fun transitionDecoderStateForGeneration(
+      generation: Long,
+      requestedSettings: SpatialVideoProjectionSettings,
+      state: SpatialVideoProjectionDecoderState,
+      reason: String,
+  ) {
+    val applied =
+        synchronized(consumerLifecycleLock) {
+          if (playbackGeneration != generation || settings != requestedSettings) {
+            false
+          } else {
+            decoderState = state
+            decoderDispatched =
+                state == SpatialVideoProjectionDecoderState.Starting ||
+                    state == SpatialVideoProjectionDecoderState.Effective
+            true
+          }
+        }
+    if (!applied) {
+      bindings.marker(
+          "channel=spatial-video-projection status=decoder-lifecycle-stale-skipped " +
+              "reason=${activityMarkerToken(reason)} playbackGeneration=$generation " +
+              "decoderState=${state.token}"
+      )
       return
     }
+    bindings.marker(
+        "channel=spatial-video-projection status=decoder-lifecycle-state " +
+            "reason=${activityMarkerToken(reason)} playbackGeneration=$generation " +
+            "decoderState=${state.token} decoderDispatched=$decoderDispatched " +
+            "decoderEffective=$started"
+    )
+    bindings.onDecoderStateChanged(state, reason)
+  }
+
+  fun start(settings: SpatialVideoProjectionSettings, reason: String) {
+    startWithDisposition(settings, reason)
+  }
+
+  private fun startWithDisposition(
+      settings: SpatialVideoProjectionSettings,
+      reason: String,
+  ): SpatialVideoProjectionStartupDisposition {
+    if (!settings.active) {
+      return SpatialVideoProjectionStartupDisposition.Inactive
+    }
     if (!readableVideoConsumerRequired) {
-      started = false
+      decoderDispatched = false
+      decoderState = SpatialVideoProjectionDecoderState.Stopped
       bindings.marker(
           "channel=spatial-video-projection status=decoder-start-skipped " +
               "reason=${activityMarkerToken(reason)} readableVideoConsumerRequired=false " +
               "visualContribution=false activeDecoderCount=0 decoderOverlap=false " +
               "zeroContributionDecodeWorkSkipped=true"
       )
-      return
+      return SpatialVideoProjectionStartupDisposition.ZeroDemandSkipped
     }
+    val generation =
+        synchronized(consumerLifecycleLock) {
+          consumerLifecycleGeneration += 1L
+          playbackGeneration += 1L
+          playbackGeneration
+        }
     bindings.marker(SpatialVideoProjectionRouteModule.startRequestedMarker(reason, settings))
-    started = runCatching { bindings.startPlayback(settings, offlinePack) }.getOrDefault(false)
+    val dispatched = beginPlayback(settings, offlinePack, reason, generation)
     bindings.marker(
         "channel=spatial-video-projection status=decoder-start-result " +
-            "reason=${activityMarkerToken(reason)} started=$started " +
-            "activeDecoderCount=${if (started) 1 else 0} decoderOverlap=false"
+            "reason=${activityMarkerToken(reason)} decoderDispatched=$dispatched " +
+            "decoderState=${decoderState.token} decoderEffective=$started " +
+            "activeDecoderCount=${if (decoderDispatched) 1 else 0} decoderOverlap=false"
+    )
+    return if (dispatched) {
+      SpatialVideoProjectionStartupDisposition.DecoderDispatched
+    } else {
+      SpatialVideoProjectionStartupDisposition.DecoderFailed
+    }
+  }
+
+  fun startForComposedOwnership(
+      settings: SpatialVideoProjectionSettings,
+      projectionPanelVisible: Boolean,
+      reason: String,
+  ): SpatialVideoProjectionStartupOwnership {
+    if (settings.active && !projectionPanelVisible) {
+      return SpatialVideoProjectionStartupOwnership(
+          disposition = SpatialVideoProjectionStartupDisposition.ProjectionHiddenDirect,
+          directVideoConsumerRequired = true,
+      )
+    }
+    val disposition = startWithDisposition(settings, reason)
+    return SpatialVideoProjectionStartupOwnership(
+        disposition = disposition,
+        directVideoConsumerRequired =
+            disposition == SpatialVideoProjectionStartupDisposition.DecoderFailed,
     )
   }
 
@@ -108,7 +287,7 @@ internal class SpatialVideoProjectionRuntimeCoordinator(
   ): SpatialVideoProjectionSourceSwitchResult {
     if (!readableVideoConsumerRequired && settings.active) {
       val previousStopped =
-          if (started) runCatching { bindings.stopPlayback() }.getOrDefault(false) else true
+          if (decoderDispatched) runCatching { bindings.stopPlayback() }.getOrDefault(false) else true
       if (!previousStopped) {
         bindings.marker(
             "channel=spatial-video-projection status=source-switch-rejected " +
@@ -120,7 +299,8 @@ internal class SpatialVideoProjectionRuntimeCoordinator(
       adoptSettings(settings, offlinePack)
       configure(settings, "$reason-source-switch")
       sourceGeneration += 1L
-      started = false
+      decoderDispatched = false
+      decoderState = SpatialVideoProjectionDecoderState.Stopped
       bindings.marker(
           "channel=spatial-video-projection status=source-switch-applied " +
               "reason=${activityMarkerToken(reason)} mediaDecoderRestarted=false " +
@@ -144,16 +324,17 @@ internal class SpatialVideoProjectionRuntimeCoordinator(
       )
       return SpatialVideoProjectionSourceSwitchResult(applied = false, decoderStarted = false)
     }
-    if (!started) {
+    if (!decoderDispatched) {
       adoptSettings(settings, offlinePack)
       configure(settings, "$reason-source-switch")
       sourceGeneration += 1L
       start(settings, "$reason-source-switch")
       bindings.marker(
           "channel=spatial-video-projection status=source-switch-applied " +
-              "reason=${activityMarkerToken(reason)} mediaDecoderRestarted=$started " +
+              "reason=${activityMarkerToken(reason)} mediaDecoderRestarted=$decoderDispatched " +
               "decoderHandoffComplete=true oldDecoderStoppedBeforeNew=true " +
-              "newDecoderStarted=$started decoderOverlap=false sourceGeneration=$sourceGeneration " +
+              "newDecoderStarted=$decoderDispatched decoderEffective=$started " +
+              "decoderOverlap=false sourceGeneration=$sourceGeneration " +
               "stereoLayoutGenerationAtomic=true eyeCropGenerationAtomic=true " +
               "customProjectionCarrierRetained=true projectionEntityRestarted=false " +
               "customProjectionStackRestarted=false cameraRuntimeRestarted=false " +
@@ -161,7 +342,8 @@ internal class SpatialVideoProjectionRuntimeCoordinator(
       )
       return SpatialVideoProjectionSourceSwitchResult(
           applied = true,
-          decoderStarted = started,
+          decoderStarted = decoderDispatched,
+          decoderEffective = started,
           sourceGeneration = sourceGeneration,
       )
     }
@@ -174,17 +356,28 @@ internal class SpatialVideoProjectionRuntimeCoordinator(
       )
       return SpatialVideoProjectionSourceSwitchResult(applied = false, decoderStarted = false)
     }
+    synchronized(consumerLifecycleLock) {
+      consumerLifecycleGeneration += 1L
+      playbackGeneration += 1L
+      decoderDispatched = false
+      decoderState = SpatialVideoProjectionDecoderState.Stopped
+    }
     adoptSettings(settings, offlinePack)
     configure(settings, "$reason-source-switch")
     sourceGeneration += 1L
+    val lifecycleGeneration =
+        synchronized(consumerLifecycleLock) {
+          consumerLifecycleGeneration += 1L
+          playbackGeneration += 1L
+          playbackGeneration
+        }
     val replacementStarted =
-        runCatching { bindings.startPlayback(settings, offlinePack) }.getOrDefault(false)
-    started = replacementStarted
+        beginPlayback(settings, offlinePack, "$reason-source-switch", lifecycleGeneration)
     bindings.marker(
         "channel=spatial-video-projection status=source-switch-applied " +
             "reason=${activityMarkerToken(reason)} mediaDecoderRestarted=$replacementStarted " +
             "decoderHandoffComplete=true oldDecoderStoppedBeforeNew=true " +
-            "newDecoderStarted=$replacementStarted decoderOverlap=false " +
+            "newDecoderStarted=$replacementStarted decoderEffective=$started decoderOverlap=false " +
             "sourceGeneration=$sourceGeneration stereoLayoutGenerationAtomic=true " +
             "eyeCropGenerationAtomic=true " +
             "customProjectionCarrierRetained=true projectionEntityRestarted=false " +
@@ -194,6 +387,7 @@ internal class SpatialVideoProjectionRuntimeCoordinator(
     return SpatialVideoProjectionSourceSwitchResult(
         applied = true,
         decoderStarted = replacementStarted,
+        decoderEffective = started,
         sourceGeneration = sourceGeneration,
     )
   }
@@ -229,20 +423,28 @@ internal class SpatialVideoProjectionRuntimeCoordinator(
           return@dispatchDecoderLifecycle
         }
         val playbackStopped =
-            if (started) runCatching { bindings.stopPlayback() }.getOrDefault(false) else true
-        if (playbackStopped) started = false
+            if (decoderDispatched) runCatching { bindings.stopPlayback() }.getOrDefault(false)
+            else true
+        if (playbackStopped) {
+          synchronized(consumerLifecycleLock) {
+            playbackGeneration += 1L
+            decoderDispatched = false
+            decoderState = SpatialVideoProjectionDecoderState.Stopped
+          }
+          bindings.onDecoderStateChanged(SpatialVideoProjectionDecoderState.Stopped, reason)
+        }
         bindings.marker(
             "channel=spatial-video-projection status=consumer-policy-applied " +
                 "reason=${activityMarkerToken(reason)} readableVideoConsumerRequired=false " +
                 "lifecycleGeneration=$generation playbackStopped=$playbackStopped " +
-                "visualContribution=false activeDecoderCount=${if (started) 1 else 0} " +
-                "zeroContributionDecodeWorkSkipped=${!started} decoderOverlap=false"
+                "visualContribution=false activeDecoderCount=${if (decoderDispatched) 1 else 0} " +
+                "zeroContributionDecodeWorkSkipped=${!decoderDispatched} decoderOverlap=false"
         )
       }
       return
     }
 
-    val shouldStart = !previousRequired && !started && settings.active
+    val shouldStart = !decoderDispatched && settings.active
     if (shouldStart) {
       val requestedOfflinePack = offlinePack
       bindings.dispatchDecoderLifecycle {
@@ -265,24 +467,35 @@ internal class SpatialVideoProjectionRuntimeCoordinator(
                 requestedSettings,
             )
         )
+        val decoderGeneration =
+            synchronized(consumerLifecycleLock) {
+              playbackGeneration += 1L
+              playbackGeneration
+            }
         val playbackStarted =
-            runCatching { bindings.startPlayback(requestedSettings, requestedOfflinePack) }
-                .getOrDefault(false)
+            beginPlayback(
+                requestedSettings,
+                requestedOfflinePack,
+                "$reason-consumer-required",
+                decoderGeneration,
+            )
         val retainStarted =
             synchronized(consumerLifecycleLock) {
               consumerLifecycleGeneration == generation &&
                   readableVideoConsumerRequired &&
                   settings == requestedSettings
             }
-        started = playbackStarted && retainStarted
         if (playbackStarted && !retainStarted) {
           runCatching { bindings.stopPlayback() }
+          decoderDispatched = false
+          decoderState = SpatialVideoProjectionDecoderState.Stopped
         }
         bindings.marker(
             "channel=spatial-video-projection status=decoder-start-result " +
-                "reason=${activityMarkerToken(reason)} started=$started " +
+                "reason=${activityMarkerToken(reason)} decoderDispatched=$decoderDispatched " +
+                "decoderState=${decoderState.token} decoderEffective=$started " +
                 "lifecycleGeneration=$generation uiThreadBlocked=false " +
-                "activeDecoderCount=${if (started) 1 else 0} decoderOverlap=false"
+                "activeDecoderCount=${if (decoderDispatched) 1 else 0} decoderOverlap=false"
         )
       }
     }
@@ -291,7 +504,7 @@ internal class SpatialVideoProjectionRuntimeCoordinator(
             "reason=${activityMarkerToken(reason)} previousReadableVideoConsumerRequired=$previousRequired " +
             "readableVideoConsumerRequired=true decoderStartRequested=$shouldStart " +
             "lifecycleGeneration=$generation uiThreadBlocked=false visualContribution=true " +
-            "activeDecoderCount=${if (started) 1 else 0} decoderOverlap=false"
+            "activeDecoderCount=${if (decoderDispatched) 1 else 0} decoderOverlap=false"
     )
   }
 
@@ -300,10 +513,14 @@ internal class SpatialVideoProjectionRuntimeCoordinator(
       offlinePack: OfflineImmersiveMediaPack?,
       reason: String,
   ) {
-    if (started) {
+    if (decoderDispatched) {
       runCatching { bindings.stopPlayback() }
     }
-    started = false
+    synchronized(consumerLifecycleLock) {
+      playbackGeneration += 1L
+      decoderDispatched = false
+      decoderState = SpatialVideoProjectionDecoderState.Stopped
+    }
     adoptSettings(settings, offlinePack)
     bindings.marker(
         "channel=spatial-video-projection status=carrier-rebuild-prepared " +
@@ -315,9 +532,10 @@ internal class SpatialVideoProjectionRuntimeCoordinator(
   fun stop(reason: String) {
     synchronized(consumerLifecycleLock) {
       consumerLifecycleGeneration += 1L
+      playbackGeneration += 1L
       readableVideoConsumerRequired = false
     }
-    if (!started && !settings.enabled) {
+    if (!decoderDispatched && !settings.enabled) {
       return
     }
     val previousSettings = settings
@@ -333,7 +551,8 @@ internal class SpatialVideoProjectionRuntimeCoordinator(
         )
       }
     }
-    started = false
+    decoderDispatched = false
+    decoderState = SpatialVideoProjectionDecoderState.Stopped
     settings = SpatialVideoProjectionSettings.disabled()
     SpatialLaunchQualificationTelemetry.recordSettings(settings)
     offlinePack = null

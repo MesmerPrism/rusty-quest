@@ -28,6 +28,7 @@ internal data class PrivateLayerZoneCompositor(
         PrivateLayerZoneCompositorControls.regionContractCompositorOwned,
     val centerContentMode: Int = PrivateLayerZoneCompositorControls.centerContentProjection,
     val centerProjectionMix: Float = 1.0f,
+    val centerCornerRadiusUv: Float = 0.08f,
     val bufferGeometryMode: Int = PrivateLayerZoneCompositorControls.bufferGeometryOff,
     val bufferStaticWidthUv: Float = 0.08f,
     val bufferMinimumWidthUv: Float = 0.06f,
@@ -119,7 +120,37 @@ internal object PrivateLayerZoneCompositorControls {
   const val sourceProcessed = 1
   const val sourceMixed = 2
   const val mappingGradedEdgeTrail = 0
+  const val stretchOptionAttachmentMask = 0x1c
+  const val stretchOptionLegacyReservedBit = 0x02
+  const val outerStretchOptionTransferCorrectedFade = 0x20
+  const val outerStretchOptionGuideValidityNormalization = 0x40
+  const val outerStretchOptionConstantColorAlphaDiagnostic = 0x80
+  const val outerStretchOptionAlphaAccumulationReplace = 0x100
+  const val outerStretchOptionOpaquePatches = 0x200
+  const val outerStretchOptionNearestSampler = 0x400
+  const val outerStretchOptionExplicitLinearSampler = 0x800
+  const val outerStretchOptionUniformWhiteEdge = 0x1000
+  const val outerStretchOptionStraightRgbPayload = 0x2000
+  const val outerStretchOptionStraightRgbBlend = 0x4000
+  const val outerStretchOptionProducerCaptureRequest = 0x8000
+  const val outerStretchOptionRoundedFadeContours = 0x10000
+  const val outerStretchTransitionOptionMask =
+      outerStretchOptionTransferCorrectedFade or
+          outerStretchOptionGuideValidityNormalization or
+          outerStretchOptionConstantColorAlphaDiagnostic or
+          outerStretchOptionAlphaAccumulationReplace or
+          outerStretchOptionOpaquePatches or
+          outerStretchOptionNearestSampler or
+          outerStretchOptionExplicitLinearSampler or
+          outerStretchOptionUniformWhiteEdge or
+          outerStretchOptionStraightRgbPayload or
+          outerStretchOptionStraightRgbBlend or
+          outerStretchOptionProducerCaptureRequest or
+          outerStretchOptionRoundedFadeContours
   const val stretchOptionMask = 0x1d
+  const val outerStretchOptionMask =
+      stretchOptionMask or
+          outerStretchTransitionOptionMask
   const val signalFlat = 0
   const val signalRgb = 1
   const val signalLuma = 2
@@ -524,16 +555,22 @@ internal object PrivateLayerZoneCompositorControls {
 
 internal object PrivateLayerZoneCompositorModule {
   /** True only while at least one compositor-owned region can contribute decoded video. */
-  fun readableVideoConsumerRequired(configuration: PrivateLayerZoneCompositor): Boolean =
-      normalize(configuration).let { value ->
-        val controls = PrivateLayerZoneCompositorControls
-        value.centerContentMode == controls.centerContentVideo ||
-            value.centerContentMode == controls.centerContentBlend ||
-            value.outerContentMode == controls.outerContentVideo ||
-            (value.bufferGeometryMode != controls.bufferGeometryOff &&
-                value.bufferFillMode == controls.bufferFillOuterContinuation &&
-                value.outerContentMode == controls.outerContentVideo)
-      }
+  fun readableVideoConsumerRequired(configuration: PrivateLayerZoneCompositor): Boolean {
+    val value = normalize(configuration)
+    if (
+        value.outerStretchOptionFlags and
+            PrivateLayerZoneCompositorControls.outerStretchOptionConstantColorAlphaDiagnostic != 0
+    ) {
+      return false
+    }
+    val controls = PrivateLayerZoneCompositorControls
+    return value.centerContentMode == controls.centerContentVideo ||
+        value.centerContentMode == controls.centerContentBlend ||
+        value.outerContentMode == controls.outerContentVideo ||
+        (value.bufferGeometryMode != controls.bufferGeometryOff &&
+            value.bufferFillMode == controls.bufferFillOuterContinuation &&
+            value.outerContentMode == controls.outerContentVideo)
+  }
 
   fun normalize(requested: PrivateLayerZoneCompositor): PrivateLayerZoneCompositor {
     val migratingLegacy =
@@ -625,6 +662,8 @@ internal object PrivateLayerZoneCompositorModule {
             },
         centerProjectionMix =
             requested.centerProjectionMix.finiteOr(1.0f).coerceIn(0.0f, 1.0f),
+        centerCornerRadiusUv =
+            requested.centerCornerRadiusUv.finiteOr(0.08f).coerceIn(0.0f, 0.49f),
         bufferGeometryMode = bufferGeometryMode,
         bufferStaticWidthUv =
             requested.bufferStaticWidthUv.finiteOr(0.08f).coerceIn(0.0f, 0.2f),
@@ -667,10 +706,10 @@ internal object PrivateLayerZoneCompositorModule {
         outerStretchSource =
             if (migratingRegionOwned) requested.stretchSource.coerceIn(0, 2)
             else requested.outerStretchSource.coerceIn(0, 2),
-        outerStretchOptionFlags =
-            (if (migratingRegionOwned) requested.stretchOptionFlags
-            else requested.outerStretchOptionFlags) and
-                PrivateLayerZoneCompositorControls.stretchOptionMask,
+        outerStretchOptionFlags = normalizeOuterStretchOptionFlags(
+            if (migratingRegionOwned) requested.stretchOptionFlags
+            else requested.outerStretchOptionFlags,
+        ),
         outerEdgeInsetUv =
             (if (migratingRegionOwned) parameterA else requested.outerEdgeInsetUv)
                 .finiteOr(0.015f)
@@ -728,6 +767,7 @@ internal object PrivateLayerZoneCompositorModule {
         "projectionRegionContract=v${value.regionContractVersion} " +
         "projectionZoneCenterContent=${PrivateLayerZoneCompositorControls.centerContentToken(value.centerContentMode)} " +
         "projectionZoneCenterProjectionMix=${value.centerProjectionMix} " +
+        "projectionZoneCenterCornerRadiusUv=${value.centerCornerRadiusUv} " +
         "projectionBufferGeometry=${PrivateLayerZoneCompositorControls.bufferGeometryToken(value.bufferGeometryMode)} " +
         "projectionBufferGuardSizeUv=${value.bufferStaticWidthUv} " +
         "projectionBufferMinimumGuardSizeUv=${value.bufferMinimumWidthUv} " +
@@ -744,6 +784,19 @@ internal object PrivateLayerZoneCompositorModule {
         "projectionZoneOuterTarget=${PrivateLayerZoneCompositorControls.outerTargetToken(value.outerTargetMode)} " +
         "projectionZoneOuterContent=${PrivateLayerZoneCompositorControls.outerContentToken(value.outerContentMode)} " +
         "projectionZoneOuterStretchSource=${PrivateLayerZoneCompositorControls.sourceToken(value.outerStretchSource)} " +
+        "projectionZoneOuterStretchOptionFlags=${value.outerStretchOptionFlags} " +
+        "projectionZoneOuterFadeCorrection=${value.outerStretchOptionFlags and PrivateLayerZoneCompositorControls.outerStretchOptionTransferCorrectedFade != 0} " +
+        "projectionZoneOuterSamplingEdgeCorrection=${value.outerStretchOptionFlags and PrivateLayerZoneCompositorControls.outerStretchOptionGuideValidityNormalization != 0} " +
+        "projectionZoneOuterTestPatches=${value.outerStretchOptionFlags and PrivateLayerZoneCompositorControls.outerStretchOptionConstantColorAlphaDiagnostic != 0} " +
+        "projectionZoneAlphaAccumulationReplace=${value.outerStretchOptionFlags and PrivateLayerZoneCompositorControls.outerStretchOptionAlphaAccumulationReplace != 0} " +
+        "projectionZoneOpaquePatches=${value.outerStretchOptionFlags and PrivateLayerZoneCompositorControls.outerStretchOptionOpaquePatches != 0} " +
+        "projectionZoneSamplerNearest=${value.outerStretchOptionFlags and PrivateLayerZoneCompositorControls.outerStretchOptionNearestSampler != 0} " +
+        "projectionZoneSamplerExplicitLinear=${value.outerStretchOptionFlags and PrivateLayerZoneCompositorControls.outerStretchOptionExplicitLinearSampler != 0} " +
+        "projectionZoneUniformWhiteEdge=${value.outerStretchOptionFlags and PrivateLayerZoneCompositorControls.outerStretchOptionUniformWhiteEdge != 0} " +
+        "projectionZoneRoundedFadeContours=${value.outerStretchOptionFlags and PrivateLayerZoneCompositorControls.outerStretchOptionRoundedFadeContours != 0} " +
+        "projectionZoneStraightRgbPayload=${value.outerStretchOptionFlags and PrivateLayerZoneCompositorControls.outerStretchOptionStraightRgbPayload != 0} " +
+        "projectionZoneStraightRgbBlend=${value.outerStretchOptionFlags and PrivateLayerZoneCompositorControls.outerStretchOptionStraightRgbBlend != 0} " +
+        "projectionZoneProducerCaptureRequested=${value.outerStretchOptionFlags and PrivateLayerZoneCompositorControls.outerStretchOptionProducerCaptureRequest != 0} " +
         "projectionZoneOuterUnderlaySupported=${PrivateLayerZoneCompositorControls.transparentSpatialVideoSupported(value)} " +
         "projectionZoneOuterAlphaDriver=${PrivateLayerZoneCompositorControls.regionDriverToken(value.outerChannelDynamics.regionDriver)} " +
         channelMarkerFields("Inner", value.innerChannelDynamics) +
@@ -777,6 +830,29 @@ internal object PrivateLayerZoneCompositorModule {
           cyclePhaseB = requested.cyclePhaseB.phase(),
       )
 
+  private fun normalizeOuterStretchOptionFlags(requested: Int): Int {
+    var flags = requested and PrivateLayerZoneCompositorControls.outerStretchOptionMask
+    if (
+        flags and PrivateLayerZoneCompositorControls.outerStretchOptionNearestSampler != 0 &&
+            flags and PrivateLayerZoneCompositorControls.outerStretchOptionExplicitLinearSampler != 0
+    ) {
+      flags = flags and PrivateLayerZoneCompositorControls.outerStretchOptionNearestSampler.inv()
+    }
+    if (
+        flags and PrivateLayerZoneCompositorControls.outerStretchOptionTransferCorrectedFade != 0 &&
+            flags and PrivateLayerZoneCompositorControls.outerStretchOptionStraightRgbPayload != 0
+    ) {
+      flags = flags and PrivateLayerZoneCompositorControls.outerStretchOptionTransferCorrectedFade.inv()
+    }
+    if (
+        flags and PrivateLayerZoneCompositorControls.outerStretchOptionUniformWhiteEdge != 0 &&
+            flags and PrivateLayerZoneCompositorControls.outerStretchOptionConstantColorAlphaDiagnostic == 0
+    ) {
+      flags = flags and PrivateLayerZoneCompositorControls.outerStretchOptionUniformWhiteEdge.inv()
+    }
+    return flags
+  }
+
   private fun channelMarkerFields(
       seam: String,
       dynamics: PrivateLayerZoneChannelDynamics,
@@ -803,24 +879,34 @@ internal object PrivateLayerZoneCompositorModule {
 }
 
 internal object PrivateLayerZoneCompositorPanelBridge {
+  /**
+   * The sole observable requested compositor state for profile, remote, and Compose routes.
+   * Native submission may retain a different last-safe effective state after a failure.
+   */
   var configuration: PrivateLayerZoneCompositor by
       mutableStateOf(PrivateLayerZoneCompositorControls.legacyOff)
     private set
 
   private var submitter:
       ((PrivateLayerZoneCompositor, String) -> PrivateLayerZoneCompositor)? = null
+  private var onConfigurationSubmitted: ((String) -> Unit)? = null
 
   fun bind(
       initial: PrivateLayerZoneCompositor,
       submit: (PrivateLayerZoneCompositor, String) -> PrivateLayerZoneCompositor,
+      onSubmitted: (String) -> Unit = {},
   ) {
     configuration = PrivateLayerZoneCompositorModule.normalize(initial)
     submitter = submit
+    onConfigurationSubmitted = onSubmitted
   }
 
   fun submit(requested: PrivateLayerZoneCompositor, source: String): PrivateLayerZoneCompositor {
     val normalized = PrivateLayerZoneCompositorModule.normalize(requested)
     configuration = submitter?.invoke(normalized, source) ?: normalized
+    onConfigurationSubmitted?.invoke(source)
     return configuration
   }
+
+  fun reapply(source: String): PrivateLayerZoneCompositor = submit(configuration, source)
 }

@@ -17,6 +17,7 @@ internal data class SpatialCameraControlProfileEffective(
     val projectionSurfaceDisplacement: ProjectionSurfaceDisplacement,
     val projectionSurfaceTiling: ProjectionSurfaceTiling,
     val projectionInnerAlpha: ProjectionInnerAlpha,
+    val strengthCycleSpeedHz: Float,
 )
 
 internal class SpatialCameraControlProfileHotloader(
@@ -137,6 +138,7 @@ internal class SpatialCameraControlProfileHotloader(
             "profileId=${activityMarkerToken(profile.profileId)} revision=${profile.revision} " +
             "profileSha256=$digest transport=file-poll-atomic-replace " +
             "layerOverride=${effective.layerOverride} projectionScale=${effective.projectionScale} " +
+            "strengthCycleSpeedHz=${effective.strengthCycleSpeedHz} " +
             "${PrivateLayerZoneCompositorModule.markerFields(effective.zoneCompositor)} " +
             "${RgbChannelTransformModule.markerFields(effective.rgbChannelTransform)} " +
             "${ProjectionSurfaceDisplacementModule.markerFields(effective.projectionSurfaceDisplacement)} " +
@@ -218,6 +220,7 @@ internal class SpatialCameraControlProfileHotloader(
       JSONObject()
           .put("layer_override", effective.layerOverride)
           .put("projection_scale", effective.projectionScale)
+          .put("strength_cycle_hz", effective.strengthCycleSpeedHz)
           .put("zone_compositor", zoneJson(effective.zoneCompositor))
           .put("rgb_channel_transform", rgbJson(effective.rgbChannelTransform))
           .put(
@@ -249,6 +252,7 @@ internal class SpatialCameraControlProfileHotloader(
               PrivateLayerZoneCompositorControls.centerContentToken(value.centerContentMode),
           )
           .put("center_projection_mix", value.centerProjectionMix)
+          .put("center_corner_radius_uv", value.centerCornerRadiusUv)
           .put(
               "buffer_geometry",
               PrivateLayerZoneCompositorControls.bufferGeometryToken(value.bufferGeometryMode),
@@ -404,6 +408,8 @@ internal class SpatialCameraControlProfileHotloader(
               },
           )
           .put("edge_mode", RgbChannelTransformControls.edgeToken(value.edgeMode))
+          .put("direction_noise_amount_turns", value.directionNoiseAmountTurns)
+          .put("direction_noise_rate_hz", value.directionNoiseRateHz)
           .put("red", rgbChannelJson(value.red))
           .put("green", rgbChannelJson(value.green))
           .put("blue", rgbChannelJson(value.blue))

@@ -40,6 +40,41 @@ function Assert-NotContains {
     }
 }
 
+function Assert-CameraFreshnessRetirementTopology {
+    param(
+        [Parameter(Mandatory=$true)][string]$CameraProbeText,
+        [Parameter(Mandatory=$true)][string]$VideoQualificationText
+    )
+    $apiCalls = [regex]::Matches($CameraProbeText, 'record_vulkan_wsi_present_returned\(request_ordinal\)').Count
+    if ($apiCalls -ne 1) {
+        throw "API-layer camera freshness retirement must have exactly one exact-ordinal call; found $apiCalls."
+    }
+    if ($CameraProbeText -notmatch '(?s)#\[cfg\(rq_environment_depth_spatial_sdk_api_layer\)\]\s+if let Some\(completed_retirement\) = submitted_retirement\.take\(\).*?let request_ordinal = completed_retirement\.request_id & u64::from\(u32::MAX\);.*?submit_retired_total = .*?;\s+let _ = record_vulkan_wsi_present_returned\(request_ordinal\);\s+if let Some\(\(video_stats, present_ordinal\)\)') {
+        throw "API-layer freshness retirement must follow completed broker/fence retirement and precede optional video qualification using the completed request low ordinal."
+    }
+    if ([regex]::Matches($VideoQualificationText, 'record_vulkan_wsi_present_returned\(').Count -ne 1 -or
+        $VideoQualificationText -notmatch '(?s)#\[cfg\(not\(rq_environment_depth_spatial_sdk_api_layer\)\)\]\s+let _ = crate::camera_hwb_projection_freshness_runtime::record_vulkan_wsi_present_returned') {
+        throw "Non-API freshness retirement must remain exactly once behind its mutually exclusive cfg guard."
+    }
+}
+
+function Assert-CameraFreshnessRetirementTopologyRejects {
+    param(
+        [Parameter(Mandatory=$true)][string]$Label,
+        [Parameter(Mandatory=$true)][string]$CameraProbeText,
+        [Parameter(Mandatory=$true)][string]$VideoQualificationText
+    )
+    $rejected = $false
+    try {
+        Assert-CameraFreshnessRetirementTopology $CameraProbeText $VideoQualificationText
+    } catch {
+        $rejected = $true
+    }
+    if (-not $rejected) {
+        throw "Camera freshness retirement damage case '$Label' was accepted."
+    }
+}
+
 function Assert-CargoCommandExitGuardAstContracts {
     param(
         [Parameter(Mandatory=$true)][string]$Text,
@@ -238,9 +273,13 @@ $laneBoundary = Read-RequiredText "apps\spatial-camera-panel-android\app\src\mai
 $publicMultiStack = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\SpatialPublicMultiStack.kt"
 $composePanelRegistrationModule = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\SpatialComposePanelRegistrationModule.kt"
 $privateLayerPanel = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\PrivateLayerControlPanel.kt"
+$privateLayerPanelStateBridge = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\SpatialPrivateLayerControlPanelStateBridge.kt"
 $privateLayerZoneCompositor = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\PrivateLayerZoneCompositor.kt"
 $privateLayerPanelControlModule = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\PrivateLayerPanelControlModule.kt"
 $privateLayerControlCoordinator = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\SpatialPrivateLayerControlCoordinator.kt"
+$privateLayerPanelControlModuleTest = Read-RequiredText "apps\spatial-camera-panel-android\app\src\test\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\PrivateLayerPanelControlModuleTest.kt"
+$privateLayerControlCoordinatorTest = Read-RequiredText "apps\spatial-camera-panel-android\app\src\test\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\SpatialPrivateLayerControlCoordinatorTest.kt"
+$rawCarrierCoordinatorTest = Read-RequiredText "apps\spatial-camera-panel-android\app\src\test\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\SpatialCameraHwbProjectionRawCarrierCoordinatorTest.kt"
 $presentationPolicy = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\SpatialPresentationPolicy.kt"
 $spatialPassthroughLutModule = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\SpatialPassthroughLutModule.kt"
 $privateLayerPanelLayerCoordinator = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\SpatialPrivateLayerPanelLayerCoordinator.kt"
@@ -1377,7 +1416,9 @@ Assert-Contains "Video projection runtime coordinator" $videoProjectionRuntimeCo
 Assert-Contains "Video projection runtime coordinator" $videoProjectionRuntimeCoordinator "SpatialVideoProjectionRuntimeBindings("
 Assert-Contains "Video projection runtime coordinator" $videoProjectionRuntimeCoordinator "SpatialVideoProjectionRuntimeNativeState("
 Assert-Contains "Video projection runtime coordinator" $videoProjectionRuntimeCoordinator "var settings = SpatialVideoProjectionSettings.disabled()"
-Assert-Contains "Video projection runtime coordinator" $videoProjectionRuntimeCoordinator "var started = false"
+Assert-Contains "Video projection runtime coordinator" $videoProjectionRuntimeCoordinator "var decoderState = SpatialVideoProjectionDecoderState.Stopped"
+Assert-Contains "Video projection runtime coordinator" $videoProjectionRuntimeCoordinator "val started: Boolean"
+Assert-Contains "Video projection runtime coordinator" $videoProjectionRuntimeCoordinator "decoderState == SpatialVideoProjectionDecoderState.Effective"
 Assert-Contains "Video projection runtime coordinator" $videoProjectionRuntimeCoordinator "fun resolveSettings(intent: Intent?)"
 Assert-Contains "Video projection runtime coordinator" $videoProjectionRuntimeCoordinator "SpatialVideoProjectionRouteModule.currentSettings(intent)"
 Assert-Contains "Video projection runtime coordinator" $videoProjectionRuntimeCoordinator "SpatialVideoProjectionRouteModule.markerFields(settings)"
@@ -1387,7 +1428,7 @@ Assert-Contains "Video projection runtime coordinator" $videoProjectionRuntimeCo
 Assert-Contains "Video projection runtime coordinator" $videoProjectionRuntimeCoordinator "if (!settings.active)"
 Assert-Contains "Video projection runtime coordinator" $videoProjectionRuntimeCoordinator "fun stop(reason: String)"
 Assert-Contains "Video projection runtime coordinator" $videoProjectionRuntimeCoordinator "bindings.configureNative("
-Assert-Contains "Video projection runtime coordinator" $videoProjectionRuntimeCoordinator "bindings.startPlayback(settings, offlinePack)"
+Assert-Contains "Video projection runtime coordinator" $videoProjectionRuntimeCoordinator "bindings.startPlayback(requestedSettings, requestedOfflinePack, callbacks)"
 Assert-Contains "Video projection runtime coordinator" $videoProjectionRuntimeCoordinator "fun replaceMediaSource("
 Assert-Contains "Video projection runtime coordinator" $videoProjectionRuntimeCoordinator "bindings.stopPlayback()"
 Assert-Contains "Video projection runtime coordinator" $videoProjectionRuntimeCoordinator "bindings.stopNativeProbe()"
@@ -1485,7 +1526,8 @@ Assert-Contains "Camera HWB projection raw carrier coordinator" $cameraHwbProjec
 Assert-Contains "Camera HWB projection raw carrier coordinator" $cameraHwbProjectionRawCarrierCoordinator "bindings.resources.adoptSwapchain(sdkSwapchain)"
 Assert-Contains "Camera HWB projection raw carrier coordinator" $cameraHwbProjectionRawCarrierCoordinator "fun createLayer("
 Assert-Contains "Camera HWB projection raw carrier coordinator" $cameraHwbProjectionRawCarrierCoordinator "bindings.startNative("
-Assert-Contains "Camera HWB projection raw carrier coordinator" $cameraHwbProjectionRawCarrierCoordinator "bindings.applyPrivateLayerConfiguration(reason)"
+Assert-Contains "Camera HWB projection raw carrier coordinator" $cameraHwbProjectionRawCarrierCoordinator "SpatialCameraHwbProjectionRawStartSequence.execute("
+Assert-Contains "Camera HWB projection raw carrier coordinator" $cameraHwbProjectionRawCarrierCoordinator "bindings.applyRemainingPrivateLayerConfiguration(reason)"
 Assert-Contains "Camera HWB projection raw carrier coordinator" $cameraHwbProjectionRawCarrierCoordinator "bindings.configureVideoProjection(videoSettings, reason)"
 Assert-Contains "Camera HWB projection raw carrier coordinator" $cameraHwbProjectionRawCarrierCoordinator "bindings.startVideoProjection(videoSettings, reason)"
 Assert-Contains "Camera HWB projection raw carrier coordinator" $cameraHwbProjectionRawCarrierCoordinator "CameraHwbProjectionModule.rawProjectionSdkSwapchainCreatedMarker"
@@ -2217,17 +2259,32 @@ Assert-Contains "Private layer panel control module" $privateLayerPanelControlMo
 Assert-Contains "Private layer panel control module" $privateLayerPanelControlModule "internal data class PrivateLayerDepthAlignment"
 Assert-Contains "Private layer panel control module" $privateLayerPanelControlModule "normalizeLayerOverride"
 Assert-Contains "Private layer panel control module" $privateLayerPanelControlModule "coerceDepthAlignment"
-Assert-Contains "Private layer panel control module" $privateLayerPanelControlModule "layerButtonSelectedMarker"
+Assert-Contains "Private layer panel control module" $privateLayerPanelControlModule "LAYER_OVERRIDE_ACCEPTED_MASK"
+Assert-Contains "Private layer panel control module" $privateLayerPanelControlModule "updateMask == LAYER_OVERRIDE_ACCEPTED_MASK"
+Assert-Contains "Private layer panel control module" $privateLayerPanelControlModule "layerOverrideRequestedMarker"
+Assert-Contains "Private layer panel control module" $privateLayerPanelControlModule "layerOverridePendingMarker"
 Assert-Contains "Private layer panel control module" $privateLayerPanelControlModule "layerOverrideUpdateFailedMarker"
 Assert-Contains "Private layer panel control module" $privateLayerPanelControlModule "layerOverrideSubmittedMarker"
+Assert-Contains "Private layer panel control module" $privateLayerPanelControlModule "layerOverrideEffectiveMarker"
 Assert-Contains "Private layer panel control module" $privateLayerPanelControlModule "depthLayerPolicySelectedMarker"
 Assert-Contains "Private layer panel control module" $privateLayerPanelControlModule "depthLayerPolicyUpdateFailedMarker"
 Assert-Contains "Private layer panel control module" $privateLayerPanelControlModule "depthLayerPolicySubmittedMarker"
 Assert-Contains "Private layer panel control module" $privateLayerPanelControlModule "depthAlignmentUpdateFailedMarker"
 Assert-Contains "Private layer panel control module" $privateLayerPanelControlModule "depthAlignmentSubmittedMarker"
-Assert-Contains "Private layer panel control module" $privateLayerPanelControlModule "status=layer-button-selected"
+Assert-Contains "Private layer panel control module" $privateLayerPanelControlModule "status=layer-override-requested"
+Assert-Contains "Private layer panel control module" $privateLayerPanelControlModule "status=layer-override-pending"
 Assert-Contains "Private layer panel control module" $privateLayerPanelControlModule "status=layer-override-update-failed"
 Assert-Contains "Private layer panel control module" $privateLayerPanelControlModule "status=layer-override-submitted"
+Assert-Contains "Private layer panel control module" $privateLayerPanelControlModule "status=layer-override-effective"
+Assert-Contains "Private layer panel control module" $privateLayerPanelControlModule "nativeSubmissionAttempted=false layerOverrideAccepted=false"
+$layerOverrideFailureMarkerSource = [regex]::Match(
+    $privateLayerPanelControlModule,
+    '(?s)fun layerOverrideUpdateFailedMarker\(.*?(?=\n  fun layerOverrideSubmittedMarker\()'
+).Value
+if ([string]::IsNullOrWhiteSpace($layerOverrideFailureMarkerSource)) {
+    throw "Private layer override failure marker function could not be isolated."
+}
+Assert-NotContains "Private layer override failure marker" $layerOverrideFailureMarkerSource "effectivePublicMultiStackOpaqueProjectionLayerOverride"
 Assert-Contains "Private layer panel control module" $privateLayerPanelControlModule "status=depth-layer-policy-selected"
 Assert-Contains "Private layer panel control module" $privateLayerPanelControlModule "status=depth-layer-policy-update-failed"
 Assert-Contains "Private layer panel control module" $privateLayerPanelControlModule "status=depth-layer-policy-submitted"
@@ -2241,17 +2298,30 @@ Assert-Contains "Private layer control coordinator" $privateLayerControlCoordina
 Assert-Contains "Private layer control coordinator" $privateLayerControlCoordinator "fun initializeDepthLayerPolicy(policy: Int)"
 Assert-Contains "Private layer control coordinator" $privateLayerControlCoordinator "fun applyCurrentConfiguration(source: String)"
 Assert-Contains "Private layer control coordinator" $privateLayerControlCoordinator "fun updateLayerOverride(requestedLayerOverride: Float, source: String): Float"
+Assert-Contains "Private layer control coordinator" $privateLayerControlCoordinator "fun applyPendingLayerOverrideForRawLaunch("
+Assert-Contains "Private layer control coordinator" $privateLayerControlCoordinator "layerOverrideRequestGeneration.nextExactGeneration()"
+Assert-Contains "Private layer control coordinator" $privateLayerControlCoordinator "lastAttemptedNativeLifecycleGeneration == nativeLifecycleGeneration"
+Assert-Contains "Private layer control coordinator" $privateLayerControlCoordinator "activeLayerOverrideNativeLifecycleGeneration"
+Assert-Contains "Private layer control coordinator" $privateLayerControlCoordinator "layerOverrideLifecycleEpoch"
+Assert-Contains "Private layer control coordinator" $privateLayerControlCoordinator "layerOverrideSubmissionInProgress"
+Assert-Contains "Private layer control coordinator" $privateLayerControlCoordinator "pendingRequestCleared = pendingLayerOverride?.generation == request.generation"
+Assert-Contains "Private layer control coordinator" $privateLayerControlCoordinator "allowProjectionRefresh && enteringEdgeWindow"
+Assert-Contains "Private layer control coordinator" $privateLayerControlCoordinator "native-lifecycle-invalidated-during-submission"
+Assert-Contains "Private layer control coordinator" $privateLayerControlCoordinator "PrivateLayerPanelControlModule.layerOverrideMaskAccepted(updateMask)"
+Assert-Contains "Private layer control coordinator" $privateLayerControlCoordinator "pendingLayerOverride?.generation == request.generation"
 Assert-Contains "Private layer control coordinator" $privateLayerControlCoordinator "fun updateDepthLayerPolicy(requestedPolicy: Int, source: String): Int"
 Assert-Contains "Private layer control coordinator" $privateLayerControlCoordinator "fun updateDepthAlignment("
 Assert-Contains "Private layer control coordinator" $privateLayerControlCoordinator "if (!bindings.routeActive()) return"
 Assert-Contains "Private layer control coordinator" $privateLayerControlCoordinator "PrivateLayerPanelControlModule.normalizeLayerOverride"
-Assert-Contains "Private layer control coordinator" $privateLayerControlCoordinator "PrivateLayerPanelControlModule.layerButtonSelectedMarker"
+Assert-Contains "Private layer control coordinator" $privateLayerControlCoordinator "PrivateLayerPanelControlModule.layerOverrideRequestedMarker"
+Assert-Contains "Private layer control coordinator" $privateLayerControlCoordinator "PrivateLayerPanelControlModule.layerOverridePendingMarker"
+Assert-Contains "Private layer control coordinator" $privateLayerControlCoordinator "PrivateLayerPanelControlModule.layerOverrideEffectiveMarker"
 Assert-Contains "Private layer control coordinator" $privateLayerControlCoordinator "PrivateLayerPanelControlModule.depthLayerPolicySelectedMarker"
 Assert-Contains "Private layer control coordinator" $privateLayerControlCoordinator "PrivateLayerPanelControlModule.depthAlignmentSubmittedMarker"
-Assert-Contains "Private layer control coordinator" $privateLayerControlCoordinator "bindings.updateLayerOverrideNative(updatedOverride)"
-Assert-Contains "Private layer control coordinator" $privateLayerControlCoordinator "PrivateLayerControls.metaPassthroughEdgeWindowSelected(updatedOverride)"
+Assert-Contains "Private layer control coordinator" $privateLayerControlCoordinator "bindings.updateLayerOverrideNative(request.requestedOverride)"
+Assert-Contains "Private layer control coordinator" $privateLayerControlCoordinator "PrivateLayerControls.metaPassthroughEdgeWindowSelected(request.requestedOverride)"
 Assert-Contains "Private layer control coordinator" $privateLayerControlCoordinator "bindings.updateMetaPassthroughStyle("
-if ($privateLayerControlCoordinator -notmatch '(?s)val passthroughStyleUpdate.*?bindings\.updateLayerOverrideNative\(updatedOverride\)') {
+if ($privateLayerControlCoordinator -notmatch '(?s)val passthroughStyleUpdate.*?bindings\.updateLayerOverrideNative\(request\.requestedOverride\)') {
     throw "Private layer control coordinator must activate and style system passthrough before submitting the native projection cutout."
 }
 Assert-Contains "Private layer control coordinator" $privateLayerControlCoordinator "val enteringEdgeWindow ="
@@ -2274,7 +2344,7 @@ Assert-NotContains "Private layer control coordinator" $privateLayerControlCoord
 Assert-NotContains "Private layer control coordinator" $privateLayerControlCoordinator "nativeUpdatePrivateLayerDepthLayerPolicy"
 Assert-NotContains "Private layer control coordinator" $privateLayerControlCoordinator "nativeUpdatePrivateLayerDepthAlignment"
 Assert-NotContains "Activity" $activity "PrivateLayerPanelControlModule.normalizeLayerOverride"
-Assert-NotContains "Activity" $activity "PrivateLayerPanelControlModule.layerButtonSelectedMarker"
+Assert-NotContains "Activity" $activity "PrivateLayerPanelControlModule.layerOverrideRequestedMarker"
 Assert-NotContains "Activity" $activity "PrivateLayerPanelControlModule.depthLayerPolicySelectedMarker"
 Assert-NotContains "Activity" $activity "PrivateLayerPanelControlModule.depthAlignmentSubmittedMarker"
 Assert-Contains "Activity" $activity "private val privateLayerControlCoordinator: SpatialPrivateLayerControlCoordinator by"
@@ -2286,10 +2356,24 @@ Assert-Contains "Activity" $activity "updateMetaPassthroughStyle = ::updateDiagn
 Assert-Contains "Activity" $activity "private fun updateDiagnosticPassthroughStyle("
 Assert-Contains "Activity" $activity "updateDepthLayerPolicyNative = ::nativeUpdatePrivateLayerDepthLayerPolicy"
 Assert-Contains "Activity" $activity "nativeUpdatePrivateLayerDepthAlignment("
+Assert-Contains "Activity" $activity "privateLayerControlCoordinator::applyPendingLayerOverrideForRawLaunch"
+Assert-Contains "Activity" $activity "privateLayerControlCoordinator::layerOverrideNativeLifecycleCurrent"
+Assert-Contains "Activity" $activity "privateLayerControlCoordinator::applyRemainingConfiguration"
 Assert-Contains "Activity" $activity "privateLayerControlCoordinator::applyCurrentConfiguration"
-Assert-Contains "Activity" $activity "privateLayerControlCoordinator::updateLayerOverride"
-Assert-Contains "Activity" $activity "privateLayerControlCoordinator::updateDepthLayerPolicy"
-Assert-Contains "Activity" $activity "privateLayerControlCoordinator::updateDepthAlignment"
+Assert-Contains "Activity" $activity "privateLayerControlCoordinator.clearNativeLayerOverrideLifecycle()"
+Assert-Contains "Activity" $activity "setLayerOverride = { value, source ->"
+Assert-Contains "Activity" $activity "privateLayerControlCoordinator.updateLayerOverride(value, source).also"
+Assert-Contains "Activity" $activity "setProjectionPanelEnabled = { enabled, source ->"
+Assert-Contains "Activity" $activity "setProjectionPanelEnabled(enabled, source).also"
+Assert-Contains "Activity" $activity "privateLayerControlCoordinator.updateDepthLayerPolicy(value, source).also"
+Assert-Contains "Activity" $activity "privateLayerControlCoordinator.updateDepthAlignment(value, source).also"
+Assert-Contains "Activity" $activity "privateLayerControlCoordinator.updateGuideProcessing(value, source).also"
+Assert-Contains "Activity" $activity "privateLayerControlCoordinator.updateRgbChannelTransform(value, source).also"
+Assert-Contains "Activity" $activity ".updateProjectionSurfaceDisplacement(value, source)"
+Assert-Contains "Activity" $activity "privateLayerControlCoordinator.updateProjectionSurfaceTiling(value, source).also"
+Assert-Contains "Activity" $activity "privateLayerControlCoordinator.updateProjectionInnerAlpha(value, source).also"
+Assert-Contains "Activity" $activity "SpatialPrivateLayerControlPanelStateBridge.publish("
+Assert-Contains "Activity" $activity "profileAppliedControls = { SpatialPrivateLayerControlPanelStateBridge.controls }"
 Assert-Contains "Activity" $activity "privateLayerControlCoordinator.initializeDepthLayerPolicy("
 Assert-NotContains "Activity" $activity "private var privateLayerOverride"
 Assert-NotContains "Activity" $activity "private var privateLayerDepthLayerPolicy"
@@ -2297,6 +2381,40 @@ Assert-NotContains "Activity" $activity "private var privateLayerDepthAlignment"
 Assert-NotContains "Activity" $activity "private fun updatePrivateLayerOverrideFromPanel"
 Assert-NotContains "Activity" $activity "private fun updatePrivateLayerDepthLayerPolicyFromPanel"
 Assert-NotContains "Activity" $activity "private fun updatePrivateLayerDepthAlignmentFromPanel"
+Assert-Contains "Private layer control coordinator test" $privateLayerControlCoordinatorTest "inactiveRequestsRemainPendingAndNewestGenerationAppliesOnceForOneLifecycle"
+Assert-Contains "Private layer control coordinator test" $privateLayerControlCoordinatorTest "routeActiveBeforeRawLifecycleKeepsRequestPendingThenSubmitsOnceToPositiveLifecycle"
+Assert-Contains "Private layer control coordinator test" $privateLayerControlCoordinatorTest "profileLayerOverrideResultIsPendingBeforeLifecycleAndEffectiveAfterAcceptance"
+Assert-Contains "Private layer control coordinator test" $privateLayerControlCoordinatorTest "layerSevenRunningRefreshInvalidationNeverResubmitsOnStaleLifecycle"
+Assert-Contains "Private layer control coordinator test" $privateLayerControlCoordinatorTest "layerSevenPreStartApplicationSuppressesCarrierRefresh"
+Assert-Contains "Private layer control coordinator test" $privateLayerControlCoordinatorTest "wrongOrAmbiguousMaskKeepsPriorEffectiveValueAndRetriesOnlyInNewLifecycle"
+Assert-Contains "Private layer control coordinator test" $privateLayerControlCoordinatorTest "reentrantNewerRequestDrainsAfterAcceptedOlderValueWithoutDivergence"
+Assert-Contains "Private layer control coordinator test" $privateLayerControlCoordinatorTest "rawRemainingConfigurationNeverResubmitsLayerOverride"
+Assert-Contains "Private layer control coordinator test" $privateLayerControlCoordinatorTest "panelCarrierConfigurationRetainsFullLayerOverridePath"
+Assert-Contains "Private layer marker test" $privateLayerPanelControlModuleTest "layerOverrideAcceptsOnlyTheNamedExactNativeMask"
+Assert-Contains "Private layer marker test" $privateLayerPanelControlModuleTest "layerOverrideMarkersKeepRequestedPendingSubmittedEffectiveAndFailedDistinct"
+Assert-Contains "Raw carrier coordinator test" $rawCarrierCoordinatorTest "realPreStartSequenceAppliesPendingOverrideBeforeNativeStartExactlyOnce"
+Assert-Contains "Raw carrier coordinator test" $rawCarrierCoordinatorTest "everyNonAcceptedLayerOverrideCleansAndNeverStartsNative"
+Assert-Contains "Raw carrier coordinator test" $rawCarrierCoordinatorTest "everyPreStartCallbackThrowableCleansAndNeverStartsNative"
+Assert-Contains "Raw carrier coordinator test" $rawCarrierCoordinatorTest "layerOverrideMarkerThrowableCleansAndNeverStartsNative"
+Assert-Contains "Raw carrier coordinator test" $rawCarrierCoordinatorTest "invalidatedLayerSevenLifecycleNeverContinuesToOldNativeStart"
+Assert-Contains "Raw carrier coordinator" $cameraHwbProjectionRawCarrierCoordinator "SpatialCameraHwbProjectionRawStartSequence.execute("
+Assert-Contains "Raw carrier coordinator" $cameraHwbProjectionRawCarrierCoordinator "bindings.applyPrivateLayerOverrideForLaunch("
+if ($cameraHwbProjectionRawCarrierCoordinator -notmatch '(?s)SpatialCameraHwbProjectionRawStartSequence\.execute\(.*?applyPrivateLayerOverrideForLaunch\(.*?launchFence\.launchChallenge.*?applyRemainingPrivateLayerConfiguration\(reason\).*?startNative = \{.*?bindings\.startNative\(.*?cleanup = bindings\.cleanup.*?if \(!startSequence\.admitted\).*?return') {
+    throw "Raw carrier must use the total pre-start sequence to apply the exact pending layer override, remaining configuration, native start, and cleanup boundary."
+}
+Assert-Contains "Camera HWB projection smoke" $cameraProjectionSmoke "function Get-ExactPrivateLayerOverrideAttempt"
+Assert-Contains "Camera HWB projection smoke" $cameraProjectionSmoke "submission_count = `$submitted.Count"
+Assert-Contains "Camera HWB projection smoke" $cameraProjectionSmoke "failure_count = `$failed.Count"
+Assert-Contains "Camera HWB projection smoke" $cameraProjectionSmoke "rawProjectionLaunchChallenge"
+Assert-Contains "Camera HWB projection smoke" $cameraProjectionSmoke "raw_start_before_effective"
+$layerOverrideReducerSelfTest = & pwsh -NoProfile -ExecutionPolicy Bypass -File (Join-Path $RepoRoot "tools\Invoke-SpatialCameraPanelAndroidCameraHwbProjectionSmoke.ps1") -SelfTestPrivateLayerOverrideReduction 2>&1
+if ($LASTEXITCODE -ne 0 -or ($layerOverrideReducerSelfTest -join "`n") -notmatch '"result":"pass"') {
+    throw "Private-layer override attempt reducer self-test failed: $($layerOverrideReducerSelfTest -join "`n")"
+}
+Assert-Contains "Activity" $activity "privateLayerControlCoordinator.layerOverrideNativeLifecycleReady()"
+Assert-Contains "Activity" $activity "privateLayerControlCoordinator.updateLayerOverrideWithResult(profile.layerOverride, source)"
+Assert-Contains "Activity" $activity "check(layerApplication.effective)"
+Assert-Contains "Activity" $activity "pollPendingControlProfileAfterProjectionStart()"
 Assert-Contains "Panel placement module" $panelPlacementModule "spatial-sdk-private-layer-panel-open"
 Assert-Contains "Panel placement module" $panelPlacementModule "spatialPrivateLayerControlPanel=true"
 Assert-Contains "Private layer panel control module" $privateLayerPanelControlModule "publicMultiStackOpaqueProjectionLayerOverride"
@@ -2309,7 +2427,7 @@ Assert-Contains "Private layer panel control module" $privateLayerPanelControlMo
 Assert-Contains "Private layer panel control module" $privateLayerPanelControlModule "publicMultiStackDepthAlignmentLeftOffsetUv="
 Assert-Contains "Panel placement module" $panelPlacementModule "panelRenderOrder=spatial-sdk-quad-layer-z-index"
 Assert-Contains "Panel placement module" $panelPlacementModule "panelOpensInFrontOfCameraVideo="
-Assert-NotContains "Activity" $activity "status=layer-button-selected"
+Assert-NotContains "Activity" $activity "status=layer-override-requested"
 Assert-NotContains "Activity" $activity "status=layer-override-update-failed"
 Assert-NotContains "Activity" $activity "status=layer-override-submitted"
 Assert-NotContains "Activity" $activity "status=depth-layer-policy-selected"
@@ -3101,7 +3219,8 @@ Assert-Contains "Public multi-stack" $publicMultiStack "publicMultiStackDownstre
 Assert-Contains "Public multi-stack" $publicMultiStack 'private const val LAYER_COUNT = 9'
 Assert-Contains "Public multi-stack" $publicMultiStack "7:meta-passthrough-edge-window"
 Assert-Contains "Public multi-stack" $publicMultiStack "8:raw-custom-projection"
-Assert-Contains "Public multi-stack" $publicMultiStack "rawCustomProjectionSource=camera2-hwb-direct-sample"
+Assert-Contains "Public multi-stack" $publicMultiStack "rawCustomProjectionRequestedSource=private-guide-pass0-prewarped-camera-color"
+Assert-NotContains "Public multi-stack" $publicMultiStack "rawCustomProjectionSource=camera2-hwb-direct-sample"
 Assert-Contains "Public multi-stack" $publicMultiStack "metaPassthroughEdgeWindowDefaultActive=false"
 Assert-NotContains "Activity" $activity "channel=experiment-panel status=panel-first-launch-reset"
 Assert-NotContains "Activity" $activity "channel=experiment-panel status=panel-first-flow-ready"
@@ -3114,6 +3233,9 @@ Assert-Contains "Compose panel registration module" $composePanelRegistrationMod
 Assert-Contains "Compose panel registration module" $composePanelRegistrationModule "layerOverride = bindings.layerOverride()"
 Assert-Contains "Compose panel registration module" $composePanelRegistrationModule "guideProcessing = bindings.guideProcessing"
 Assert-Contains "Compose panel registration module" $composePanelRegistrationModule "updateGuideProcessing = bindings.updateGuideProcessing"
+Assert-Contains "Compose panel registration module" $composePanelRegistrationModule "profileAppliedControls = bindings.profileAppliedControls()"
+Assert-Contains "Private layer panel state bridge" $privateLayerPanelStateBridge "var controls: SpatialCameraPanelControlSnapshot? by mutableStateOf(null)"
+Assert-Contains "Private layer panel state bridge" $privateLayerPanelStateBridge "controls = accepted.normalized()"
 Assert-NotContains "Compose panel registration module" $composePanelRegistrationModule "SpatialCameraPanel("
 Assert-NotContains "Compose panel registration module" $composePanelRegistrationModule "SpatialCameraPanelLauncher("
 Assert-NotContains "Compose panel registration module" $composePanelRegistrationModule "nativeStart"
@@ -3126,6 +3248,9 @@ Assert-Contains "Activity" $activity "nativeUpdatePrivateLayerGuideProcessing("
 Assert-Contains "Activity" $activity "initialPrivateLayerGuideProcessing"
 Assert-NotContains "Activity" $activity "ComposeViewPanelRegistration("
 Assert-Contains "Private layer panel" $privateLayerPanel "internal fun PrivateLayerControlPanel("
+Assert-Contains "Private layer panel" $privateLayerPanel "profileAppliedControls: SpatialCameraPanelControlSnapshot?"
+Assert-Contains "Private layer panel" $privateLayerPanel "LaunchedEffect(profileAppliedControls)"
+Assert-Contains "Private layer panel" $privateLayerPanel "profileAppliedControls?.let(::adoptProfileControls)"
 Assert-Contains "Private layer panel" $privateLayerPanel 'Home("Settings", "Choose a topic")'
 Assert-Contains "Private layer panel" $privateLayerPanel "Settings topics"
 Assert-Contains "Private layer panel" $privateLayerPanel 'Center("Center region"'
@@ -3134,7 +3259,7 @@ Assert-Contains "Private layer panel" $privateLayerPanel 'Outer("Outer region"'
 Assert-Contains "Private layer panel" $privateLayerPanel 'Transitions("Transitions"'
 Assert-Contains "Private layer panel" $privateLayerPanel 'Background("Background"'
 Assert-Contains "Private layer panel" $privateLayerPanel 'Media("Media library"'
-Assert-Contains "Private layer panel" $privateLayerPanel "Image processing"
+Assert-Contains "Private layer panel" $privateLayerPanel "Camera processing"
 Assert-Contains "Private layer panel" $privateLayerPanel "Depth alignment"
 Assert-Contains "Private layer panel" $privateLayerPanel "PersistentPanelHeader("
 Assert-Contains "Private layer panel" $privateLayerPanel "private enum class RegionSettingsTab"
@@ -3154,8 +3279,13 @@ Assert-Contains "Private layer panel" $privateLayerPanel 'Section("LUT appearanc
 Assert-Contains "Private layer panel" $privateLayerPanel 'label = "Color strength"'
 Assert-Contains "Private layer panel" $privateLayerPanel 'label = "Color cycle speed (Hz)"'
 Assert-Contains "Private layer panel" $privateLayerPanel 'label = "Black cutoff"'
-Assert-Contains "Private layer panel" $privateLayerPanel 'Section("Advanced distortion safety")'
-Assert-Contains "Private layer panel" $privateLayerPanel 'HelpLabel("Protect projection edges")'
+Assert-Contains "Private layer panel" $privateLayerPanel 'Section("Compositor carrier")'
+Assert-Contains "Private layer panel" $privateLayerPanel 'TransitionDiagnostics('
+Assert-Contains "Private layer panel" $privateLayerPanel 'HelpLabel("Edge protection")'
+Assert-Contains "Private layer panel" $privateLayerPanel 'DiagnosticsFoldout('
+Assert-Contains "Private layer panel" $privateLayerPanel 'title = "RGB payload"'
+Assert-Contains "Private layer panel" $privateLayerPanel 'HelpLabel("Guide validity correction")'
+Assert-Contains "Private layer panel" $privateLayerPanel 'title = "Transition test image"'
 Assert-Contains "Private layer panel" $privateLayerPanel 'Section("Available videos")'
 Assert-Contains "Private layer panel" $privateLayerPanel 'label = "Transparent"'
 Assert-Contains "Private layer panel" $privateLayerPanel "Disable compositor carrier (diagnostic)"
@@ -3166,7 +3296,7 @@ Assert-Contains "Private layer panel" $privateLayerPanel "Center blending does n
 Assert-Contains "Private layer panel" $privateLayerPanel "same head-locked Vulkan compositor"
 Assert-Contains "Private layer panel" $privateLayerPanel "Depth Source"
 Assert-Contains "Private layer panel" $privateLayerPanel "Depth Alignment"
-Assert-Contains "Private layer panel" $privateLayerPanel "Guide Processing A/B"
+Assert-Contains "Private layer panel" $privateLayerPanel 'Section("Guide processing")'
 Assert-Contains "Private layer panel" $privateLayerPanel "Native target"
 Assert-Contains "Private layer panel" $privateLayerPanel "Gaussian + RGB"
 Assert-Contains "Private layer panel" $privateLayerPanel "Preserve RGB"
@@ -3240,9 +3370,28 @@ Assert-Contains "Activity" $activity "nativeUpdateSpatialNativePassthroughEdgeSt
 Assert-Contains "Activity" $activity "SpatialPassthroughReasonAggregator("
 Assert-Contains "Camera HWB projection raw carrier coordinator" $cameraHwbProjectionRawCarrierCoordinator "LayerAlphaBlend("
 Assert-Contains "Camera HWB projection raw carrier coordinator" $cameraHwbProjectionRawCarrierCoordinator "BlendFactor.ONE,"
-Assert-NotContains "Camera HWB projection raw carrier coordinator" $cameraHwbProjectionRawCarrierCoordinator "BlendFactor.SOURCE_ALPHA"
+Assert-Contains "Camera HWB projection raw carrier coordinator" $cameraHwbProjectionRawCarrierCoordinator "outerStretchOptionStraightRgbBlend"
+Assert-Contains "Camera HWB projection raw carrier coordinator" $cameraHwbProjectionRawCarrierCoordinator "BlendFactor.SOURCE_ALPHA"
 Assert-Contains "Camera HWB projection module" $cameraProjectionModule "projectionPanelAlphaBlendEnabled=true"
 Assert-Contains "Camera HWB projection module" $cameraProjectionModule "projectionPanelAlphaBlend=premultiplied-one-over-one-minus-source-alpha"
+Assert-Contains "Camera HWB projection module" $cameraProjectionModule "projectionCarrierAlphaRequested=pre-multiplied"
+Assert-Contains "Camera HWB projection module" $cameraProjectionModule "projectionCarrierLayerBlendAppApplied=true"
+Assert-Contains "Camera HWB projection module" $cameraProjectionModule "projectionCarrierRuntimeBlendObserved=false"
+Assert-Contains "Camera HWB projection module" $cameraProjectionModule "projectionCarrierRuntimeAlphaEffective=unobserved"
+Assert-Contains "Camera HWB projection module" $cameraProjectionModule "projectionCarrierAlphaRequested=straight"
+Assert-Contains "Camera HWB projection module" $cameraProjectionModule "projectionCarrierLayerBlendConfigured=source-alpha-destination-one-minus-source-alpha"
+$panelCarrierNativeStartMarker = [regex]::Match(
+    $cameraProjectionModule,
+    '(?s)fun panelCarrierNativeStartRequestedMarker\(.*?(?=\r?\n\s*fun scenePanelCarrierDestroyedMarker\()'
+).Value
+if ([string]::IsNullOrWhiteSpace($panelCarrierNativeStartMarker)) {
+    throw "Camera HWB projection module must expose the native panel-carrier start marker body."
+}
+Assert-Contains "Camera HWB native panel-carrier start marker" $panelCarrierNativeStartMarker "projectionCarrierAlphaRequested=straight"
+Assert-Contains "Camera HWB native panel-carrier start marker" $panelCarrierNativeStartMarker "projectionCarrierLayerBlendConfigured=source-alpha-destination-one-minus-source-alpha"
+Assert-Contains "Camera HWB native panel-carrier start marker" $panelCarrierNativeStartMarker "projectionCarrierLayerBlendApplication=see-panelLayerUpdateStatus"
+Assert-Contains "Camera HWB native panel-carrier start marker" $panelCarrierNativeStartMarker "projectionCarrierRuntimeBlendObserved=false"
+Assert-Contains "Camera HWB native panel-carrier start marker" $panelCarrierNativeStartMarker "projectionCarrierRuntimeAlphaEffective=unobserved"
 Assert-Contains "Camera HWB projection panel carrier coordinator" $cameraHwbProjectionPanelCarrierCoordinator "LayerAlphaBlend("
 Assert-Contains "Activity" $activity "nativeResolveSurfaceParticleAliasParameter"
 Assert-Contains "Spatial validation workflow coordinator" $validationWorkflowCoordinator '"particle-alias-control"'
@@ -3701,6 +3850,31 @@ Assert-Contains "Camera HWB WSI" $cameraWsi "CameraHwbProbeMode::RawColorProject
 Assert-Contains "Camera HWB WSI" $cameraWsi "CameraHwbProbeMode::LumaChecker"
 Assert-Contains "Spatial video qualification" $spatialVideoQualification "record_vulkan_wsi_present_returned("
 Assert-Contains "Spatial video qualification" $spatialVideoQualification "#[cfg(not(rq_environment_depth_spatial_sdk_api_layer))]"
+Assert-CameraFreshnessRetirementTopology $cameraProbe $spatialVideoQualification
+$apiRetirementCall = "            let _ = record_vulkan_wsi_present_returned(request_ordinal);"
+Assert-CameraFreshnessRetirementTopologyRejects `
+    "missing-api-retirement" `
+    $cameraProbe.Replace($apiRetirementCall, "") `
+    $spatialVideoQualification
+Assert-CameraFreshnessRetirementTopologyRejects `
+    "duplicate-api-retirement" `
+    $cameraProbe.Replace($apiRetirementCall, "$apiRetirementCall`n$apiRetirementCall") `
+    $spatialVideoQualification
+$movedApiRetirement = $cameraProbe.Replace($apiRetirementCall, "").Replace(
+    "        if let Some(completed_retirement) = submitted_retirement.take() {",
+    "$apiRetirementCall`n        if let Some(completed_retirement) = submitted_retirement.take() {"
+)
+Assert-CameraFreshnessRetirementTopologyRejects `
+    "moved-before-completed-retirement" `
+    $movedApiRetirement `
+    $spatialVideoQualification
+Assert-CameraFreshnessRetirementTopologyRejects `
+    "wrong-present-ordinal" `
+    $cameraProbe.Replace(
+        "record_vulkan_wsi_present_returned(request_ordinal)",
+        "record_vulkan_wsi_present_returned(present_ordinal)"
+    ) `
+    $spatialVideoQualification
 Assert-Contains "Camera freshness" $cameraFreshness "rusty.quest.camera_hwb_projection_freshness_receipt.v1"
 Assert-Contains "Camera freshness" $cameraFreshness "first-moving-then-periodic-300-present-ordinals"
 Assert-Contains "Camera freshness" $cameraFreshness "visibilityScope=app-command-buffer-not-wearer-visible"
@@ -3873,6 +4047,8 @@ Assert-Contains "Native public multi-stack" $nativeMultiStack 'rusty.quest.spati
 Assert-Contains "Native public multi-stack" $nativeMultiStack "publicMultiStackLayerCount=9"
 Assert-Contains "Native public multi-stack" $nativeMultiStack "7:meta-passthrough-edge-window"
 Assert-Contains "Native public multi-stack" $nativeMultiStack "8:raw-custom-projection"
+Assert-Contains "Native public multi-stack" $nativeMultiStack "rawCustomProjectionRequestedSource=private-guide-pass0-prewarped-camera-color"
+Assert-NotContains "Native public multi-stack" $nativeMultiStack "rawCustomProjectionSource=camera2-hwb-direct-sample"
 Assert-Contains "Native public multi-stack runtime" $nativeMultiStackRuntime "spatial_public_raw_custom_projection_selected"
 Assert-Contains "Native public multi-stack runtime" $nativeMultiStackRuntime "rawCustomProjectionSelected="
 Assert-NotContains "Native camera HWB WSI" $cameraWsi "raw_custom_projection_selected"
@@ -4120,8 +4296,8 @@ Assert-Contains "Camera HWB WSI" $cameraWsi "record_camera_hwb_probe_command_buf
 Assert-Contains "Camera HWB WSI" $cameraWsi "select_camera_surface_device"
 Assert-Contains "Camera HWB WSI" $cameraWsi "public_multistack_marker_fields"
 Assert-Contains "Camera HWB WSI" $cameraWsi "record_spatial_public_guide_passes"
-Assert-Contains "Camera HWB WSI" $cameraWsi "let guide_passes_recorded = targets.record_spatial_public_guide_passes("
-Assert-Contains "Camera HWB WSI" $cameraWsi "let sampling_ready = guide_passes_recorded"
+Assert-Contains "Camera HWB WSI" $cameraWsi "guide_record = targets.record_spatial_public_guide_passes("
+Assert-Contains "Camera HWB WSI" $cameraWsi "let sampling_ready = guide_record.complete()"
 Assert-Contains "Camera HWB WSI" $cameraWsi "&& targets.prepare_spatial_public_projection_sampling(device, command_buffer);"
 Assert-Contains "Camera HWB WSI" $cameraWsi "record_spatial_public_projection"
 Assert-Contains "Camera HWB WSI" $cameraWsi "SpatialVideoProjectionRenderer"
@@ -4785,6 +4961,11 @@ Assert-Contains "Camera projection smoke wrapper" $cameraProjectionSmoke "camera
 Assert-Contains "Camera projection smoke wrapper" $cameraProjectionSmoke "spatial_video_projection_no_cpu_copy"
 Assert-Contains "Camera projection smoke wrapper" $cameraProjectionSmoke "nativeImageReader=true javaHardwareBufferBridge=false cpuPixelCopy=false"
 Assert-Contains "Camera projection smoke wrapper" $cameraProjectionSmoke "public_multistack_projection_applied"
+Assert-Contains "Camera projection smoke wrapper" $cameraProjectionSmoke "rawCustomProjectionGuidePassesRecorded=1"
+Assert-Contains "Camera projection smoke wrapper" $cameraProjectionSmoke "rawCustomProjectionLayerOverride=8\.000"
+Assert-Contains "Camera projection smoke wrapper" $cameraProjectionSmoke "rawCustomProjectionGuideRecordStatus=recorded"
+Assert-Contains "Camera projection smoke wrapper" $cameraProjectionSmoke "rawCustomProjectionDownstreamEffectPassesRecorded=0"
+Assert-NotContains "Camera projection smoke wrapper" $cameraProjectionSmoke "cameraPresentationReprojectionGuidePushProvided=true"
 Assert-Contains "Camera projection smoke wrapper" $cameraProjectionSmoke "public_multistack_layer_cycle_enabled"
 Assert-Contains "Camera projection smoke wrapper" $cameraProjectionSmoke "public_multistack_depth_layer_policy_marker"
 Assert-Contains "Camera projection smoke wrapper" $cameraProjectionSmoke "public_multistack_depth_layer_compare_visual_shader"
@@ -4921,7 +5102,7 @@ Assert-Contains "Private layer panel" $privateLayerPanel "ProjectionSurfaceDispl
 Assert-Contains "Camera projection target" $cameraProjectionTarget "transparent_underlay_requested"
 Assert-Contains "Camera projection target" $cameraProjectionTarget "transparent_underlay_supported"
 Assert-Contains "Camera projection target" $cameraProjectionTarget "settings.outer_target_mode as f32"
-Assert-Contains "Native public multi-stack runtime" $nativeMultiStackRuntime "!zone_frame.settings.synthetic_diagnostic()"
+Assert-Contains "Native public multi-stack runtime" $nativeMultiStackRuntime "zone_frame.settings.synthetic_diagnostic(),"
 Assert-Contains "Camera WSI" $cameraWsi "transparent-underlay-fallback-unused"
 Assert-Contains "Camera WSI" $cameraWsi "vk::CompositeAlphaFlagsKHR::PRE_MULTIPLIED"
 Assert-Contains "Spatial validation workflow coordinator" $validationWorkflowCoordinator '"private-layer-zone-off" ->'
@@ -5208,7 +5389,9 @@ Assert-Contains "README" $readme "PrivateLayerPanelControlModule.kt"
 Assert-Contains "README" $readme "PrivateLayerControlPanel.kt"
 Assert-Contains "README" $readme "It must not render Compose UI, mutate Activity state, call"
 Assert-Contains "README" $readme "SpatialPrivateLayerControlCoordinator.kt"
-Assert-Contains "README" $readme "fails closed before state mutation or native submission"
+Assert-Contains "README" $readme "normalized and retained with a"
+Assert-Contains "README" $readme "performs no JNI submission and makes no effective"
+Assert-Contains "README" $readme "only the exact named accepted mask advances the"
 Assert-Contains "README" $readme "coordinator cannot activate a route"
 Assert-Contains "README" $readme "SpatialControllerRoutingModule.kt"
 Assert-Contains "README" $readme "controller route/joystick marker envelopes"
@@ -5361,8 +5544,9 @@ Assert-Contains "Implementation notes" $notes "SDK-owned quad surface layer/canv
 Assert-Contains "Implementation notes" $notes "PrivateLayerPanelControlModule.kt"
 Assert-Contains "Implementation notes" $notes "PrivateLayerControlPanel.kt"
 Assert-Contains "Implementation notes" $notes "SpatialPrivateLayerControlCoordinator.kt"
-Assert-Contains "Implementation notes" $notes "fail closed before mutation or"
-Assert-Contains "Implementation notes" $notes "native submission unless the Activity-supplied camera/video projection route"
+Assert-Contains "Implementation notes" $notes "retain an inactive or pre-native"
+Assert-Contains "Implementation notes" $notes "without JNI or an effective"
+Assert-Contains "Implementation notes" $notes "concrete carrier lifecycle owns the attempt"
 Assert-Contains "Implementation notes" $notes "SpatialControllerRoutingModule.kt"
 Assert-Contains "Implementation notes" $notes "controller shortcut routing policy and controller marker envelopes"
 Assert-Contains "Implementation notes" $notes "SpatialOpenXrRouteModule.kt"

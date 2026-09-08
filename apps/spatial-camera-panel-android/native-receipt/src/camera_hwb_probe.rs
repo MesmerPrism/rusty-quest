@@ -14,9 +14,11 @@ use crate::ahardware_buffer_vulkan::{
     import_ahb_sampled_image, query_ahb_vulkan_import_properties, AhbVulkanSampledImageCreateInfo,
 };
 use crate::camera_hwb_marker::log_camera_hwb_marker as log_marker;
+#[cfg(rq_environment_depth_spatial_sdk_api_layer)]
+use crate::camera_hwb_projection_freshness_runtime::record_vulkan_wsi_present_returned;
 use crate::camera_hwb_projection_target::{
     camera_hwb_projection_marker_fields, current_projection_zone_compositor_settings,
-    update_camera_hwb_projection_stereo_horizontal_offset_uv,
+    readback::ProjectionReadback, update_camera_hwb_projection_stereo_horizontal_offset_uv,
     update_camera_hwb_projection_target_live_scale,
     update_projection_zone_channel_dynamics_settings, update_projection_zone_compositor_settings,
     update_projection_zone_region_layout_settings,
@@ -56,6 +58,7 @@ use crate::spatial_public_multistack_runtime::{
     update_spatial_public_depth_alignment, update_spatial_public_depth_layer_policy,
     update_spatial_public_guide_processing_policy,
     update_spatial_public_opaque_projection_layer_override,
+    update_spatial_public_strength_cycle_speed_hz,
 };
 use crate::spatial_video_projection::{
     SpatialVideoProjectionFrameStats, SpatialVideoProjectionRenderer,
@@ -502,6 +505,7 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1pa
     outer_processed_mix: c_float,
     center_content_mode: c_int,
     center_projection_mix: c_float,
+    center_corner_radius_uv: c_float,
 ) -> i64 {
     let applied = update_projection_zone_region_layout_settings(
         buffer_minimum_width_uv as f32,
@@ -517,6 +521,7 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1pa
         outer_processed_mix as f32,
         center_content_mode.max(0) as u32,
         center_projection_mix as f32,
+        center_corner_radius_uv as f32,
     );
     log_marker(format!(
         "status=private-layer-region-layout-updated rawCameraProjectionProbe=true updateMask=2 spatialPrivateLayerControlPanel=true {} runtimeCrash=false",
@@ -623,6 +628,8 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1pa
     _thiz: *mut c_void,
     mode: c_int,
     edge_mode: c_int,
+    direction_noise_amount_turns: c_float,
+    direction_noise_rate_hz: c_float,
     red_direction_turns: c_float,
     green_direction_turns: c_float,
     blue_direction_turns: c_float,
@@ -652,6 +659,8 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1pa
             green_direction_rate_hz as f32,
             blue_direction_rate_hz as f32,
         ],
+        direction_noise_amount_turns as f32,
+        direction_noise_rate_hz as f32,
         [
             red_displacement_strength_uv as f32,
             green_displacement_strength_uv as f32,
@@ -673,6 +682,22 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1pa
         applied.marker_fields(),
         mode,
         edge_mode,
+    ));
+    1
+}
+
+#[no_mangle]
+#[allow(non_snake_case)]
+pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1panel_SpatialCameraPanelActivity_nativeUpdateStrengthCycleSpeedHz(
+    _env: *mut c_void,
+    _thiz: *mut c_void,
+    requested_hz: c_float,
+) -> i64 {
+    let effective_hz = update_spatial_public_strength_cycle_speed_hz(requested_hz as f32);
+    log_marker(format!(
+        "status=strength-cycle-speed-updated rawCameraProjectionProbe=true updateMask=1 spatialPrivateLayerControlPanel=true requestedStrengthCycleSpeedHz={:.4} effectiveStrengthCycleSpeedHz={:.4} strengthCyclePhaseClock=frame-monotonic runtimeCrash=false",
+        requested_hz as f32,
+        effective_hz,
     ));
     1
 }
@@ -1120,6 +1145,15 @@ unsafe fn render_camera_hwb_probe(
         .image_count
         .choose(&capabilities);
     let composite_alpha = choose_composite_alpha(capabilities.supported_composite_alpha);
+    let swapchain_usage = vk::ImageUsageFlags::COLOR_ATTACHMENT
+        | if capabilities
+            .supported_usage_flags
+            .contains(vk::ImageUsageFlags::TRANSFER_SRC)
+        {
+            vk::ImageUsageFlags::TRANSFER_SRC
+        } else {
+            vk::ImageUsageFlags::empty()
+        };
     let swapchain_info = vk::SwapchainCreateInfoKHR::default()
         .surface(surface)
         .min_image_count(image_count)
@@ -1127,7 +1161,7 @@ unsafe fn render_camera_hwb_probe(
         .image_color_space(surface_format.color_space)
         .image_extent(extent)
         .image_array_layers(1)
-        .image_usage(vk::ImageUsageFlags::COLOR_ATTACHMENT)
+        .image_usage(swapchain_usage)
         .image_sharing_mode(vk::SharingMode::EXCLUSIVE)
         .pre_transform(capabilities.current_transform)
         .composite_alpha(composite_alpha)
@@ -1214,7 +1248,7 @@ unsafe fn render_camera_hwb_probe(
     ));
 
     log_marker(format!(
-        "status=render-loop-ready carrier=scenequadlayer-createAsAndroid-vulkan-wsi producerPath=Camera2-AImageReader-AHardwareBuffer-Vulkan-WSI swapchainImages={} extent={}x{} surfaceFormat={:?} presentMode={:?} presentModesAvailable={} compositeAlpha={:?} externalHwbExtensionReady={} samplerYcbcrExtensionReady={} samplerYcbcrFeatureReady={} outputMode={} rawCameraProjectionProbe={} stereoSource={} privateShaderStack=false customProjectionStack=false dynamicCameraPoseMetadataUsed=false imageTimestampPoseAssociation=selected-by-camera-latency-reprojection-mode captureResultMetadataCallbacks=false runtimeCrash=false {} {}",
+        "status=render-loop-ready carrier=scenequadlayer-createAsAndroid-vulkan-wsi producerPath=Camera2-AImageReader-AHardwareBuffer-Vulkan-WSI swapchainImages={} extent={}x{} surfaceFormat={:?} presentMode={:?} presentModesAvailable={} compositeAlpha={:?} swapchainUsage=0x{:x} projectionProducerReadbackTransferSrcAvailable={} externalHwbExtensionReady={} samplerYcbcrExtensionReady={} samplerYcbcrFeatureReady={} outputMode={} rawCameraProjectionProbe={} stereoSource={} privateShaderStack=false customProjectionStack=false dynamicCameraPoseMetadataUsed=false imageTimestampPoseAssociation=selected-by-camera-latency-reprojection-mode captureResultMetadataCallbacks=false runtimeCrash=false {} {}",
         images.len(),
         extent.width,
         extent.height,
@@ -1222,6 +1256,8 @@ unsafe fn render_camera_hwb_probe(
         present_mode,
         marker_token(&format!("{present_modes:?}")),
         composite_alpha,
+        swapchain_usage.as_raw(),
+        swapchain_usage.contains(vk::ImageUsageFlags::TRANSFER_SRC),
         extension_status.external_hwb_extension_ready,
         extension_status.sampler_ycbcr_extension_ready,
         extension_status.sampler_ycbcr_feature_ready,
@@ -1230,6 +1266,10 @@ unsafe fn render_camera_hwb_probe(
         mode.stereo_source(),
         mode.projection_contract_marker_fields(),
         active_latency_launch_settings.marker_fields(),
+    ));
+    log_marker(format!(
+        "status=projection-producer-color-contract surfaceFormatSelected={:?} surfaceColorSpaceSelected={:?} compositeAlphaSelected={:?} androidDataspaceObserved=false systemLayerAlphaObserved=false colorContractEvidence=vulkan-swapchain-create-parameters runtimeCrash=false",
+        surface_format.format, surface_format.color_space, composite_alpha,
     ));
 
     let camera_runtime = CameraProbeRuntime::start(reader_max_images, mode.stream_mode())?;
@@ -1253,6 +1293,13 @@ unsafe fn render_camera_hwb_probe(
     };
 
     let memory_properties = instance.get_physical_device_memory_properties(physical_device);
+    let mut projection_readback = ProjectionReadback::new(
+        surface_format,
+        composite_alpha,
+        extent,
+        capabilities.supported_usage_flags,
+        memory_properties,
+    );
     let ahb_device =
         ash::android::external_memory_android_hardware_buffer::Device::new(&instance, &device);
     let (left_import_properties, format_props) =
@@ -1720,11 +1767,13 @@ unsafe fn render_camera_hwb_probe(
         #[cfg(rq_environment_depth_spatial_sdk_api_layer)]
         if let Some(completed_retirement) = submitted_retirement.take() {
             submitted_broker_failure_observed_at = None;
+            let request_ordinal = completed_retirement.request_id & u64::from(u32::MAX);
             let release_status = submitted_depth_lease
                 .take()
                 .map(crate::spatial_sdk_depth_handoff::release_spatial_depth_render_lease)
                 .unwrap_or(0);
             submit_retired_total = submit_retired_total.saturating_add(1);
+            let _ = record_vulkan_wsi_present_returned(request_ordinal);
             if let Some((video_stats, present_ordinal)) = submitted_video_qualification.take() {
                 record_presented_frame(
                     video_stats.ready,
@@ -1734,7 +1783,6 @@ unsafe fn render_camera_hwb_probe(
                     present_ordinal,
                 );
             }
-            let request_ordinal = completed_retirement.request_id & u64::from(u32::MAX);
             if request_ordinal <= 4
                 || request_ordinal % 300 == 0
                 || release_status != 0
@@ -1799,6 +1847,7 @@ unsafe fn render_camera_hwb_probe(
         if let Some(capture) = camera_replay_capture.as_mut() {
             capture.retire_completed(&device)?;
         }
+        projection_readback.retire_after_fence(&device);
         device
             .reset_fences(&[frame_fence])
             .map_err(|error| format!("reset-fence-{error:?}"))?;
@@ -2177,6 +2226,7 @@ unsafe fn render_camera_hwb_probe(
             current_right_frame.capture_viewer_basis,
         );
         let projection_zone_settings = current_projection_zone_compositor_settings();
+        projection_readback.observe_control(projection_zone_settings);
         let projection_guard_band = camera_reprojection_guard_band.update_for_projection_buffer(
             observed_latency_settings,
             projection_zone_settings.buffer_geometry_mode,
@@ -2224,13 +2274,37 @@ unsafe fn render_camera_hwb_probe(
                     .timestamp_ns
                     .abs_diff(current_right_frame.timestamp_ns),
             },
+            composite_alpha,
+            images[image_index as usize],
+            surface_generation,
+            &mut projection_readback,
         )?;
         frame_timing.record = record_started.elapsed();
         let projected_by_public_stack = record_result.projected_by_public_stack;
         if last_projection_zone_render_stats != Some(record_result.projection_zone_stats) {
             log_marker(format!(
+                "status=projection-composition-options-recorded {} runtimeCrash=false",
+                record_result
+                    .projection_zone_stats
+                    .composition_marker_fields(),
+            ));
+            log_marker(format!(
                 "status=projection-zone-render-effective {} runtimeCrash=false",
-                record_result.projection_zone_stats.marker_fields(),
+                record_result
+                    .projection_zone_stats
+                    .readiness_marker_fields(),
+            ));
+            log_marker(format!(
+                "status=projection-zone-configuration-effective {} runtimeCrash=false",
+                record_result
+                    .projection_zone_stats
+                    .applied_configuration_marker_fields(),
+            ));
+            log_marker(format!(
+                "status=projection-zone-raw-parity-effective {} runtimeCrash=false",
+                record_result
+                    .projection_zone_stats
+                    .raw_parity_marker_fields(),
             ));
             last_projection_zone_render_stats = Some(record_result.projection_zone_stats);
         }
@@ -2252,9 +2326,10 @@ unsafe fn render_camera_hwb_probe(
             .signal_semaphores(&signal_semaphores)];
         let submit_started = Instant::now();
         #[cfg(not(rq_environment_depth_spatial_sdk_api_layer))]
-        device
-            .queue_submit(queue, &submit_info, frame_fence)
-            .map_err(|error| format!("queue-submit-{error:?}"))?;
+        if let Err(error) = device.queue_submit(queue, &submit_info, frame_fence) {
+            projection_readback.cancel_unsubmitted("queue-submit");
+            return Err(format!("queue-submit-{error:?}"));
+        }
         #[cfg(rq_environment_depth_spatial_sdk_api_layer)]
         {
             let request_id = (surface_generation << 32) | u64::from(frames_presented + 1);
@@ -2276,6 +2351,7 @@ unsafe fn render_camera_hwb_probe(
                 image_index,
             );
             if enqueue_status != 3 && enqueue_status != 0 {
+                projection_readback.cancel_unsubmitted("spatial-sdk-queue-broker-enqueue");
                 if let Some(lease) = current_depth_lease {
                     let _ =
                         crate::spatial_sdk_depth_handoff::release_spatial_depth_render_lease(lease);
@@ -2481,6 +2557,11 @@ unsafe fn render_camera_hwb_probe(
                         projected_by_public_stack,
                         public_stack_elapsed_seconds,
                         projection_guard_band.footprint_scale,
+                        f32::from_bits(
+                            record_result
+                                .projection_zone_stats
+                                .guide_layer_override_bits,
+                        ),
                     ),
                 ));
             }
@@ -2614,19 +2695,32 @@ unsafe fn render_camera_hwb_probe(
         })?;
         capture.destroy(&device);
     }
+    if projection_readback.has_in_flight() {
+        // A completed command buffer can leave the loop through a normal
+        // surface break before the next frame starts. This teardown-only wait
+        // is never part of the render cadence and prevents freeing staging
+        // memory while the selected-image copy is still executing.
+        device
+            .wait_for_fences(&[frame_fence], true, u64::MAX)
+            .map_err(|error| format!("readback-teardown-wait-fence-{error:?}"))?;
+        projection_readback.retire_after_fence(&device);
+    }
+    projection_readback.destroy(&device);
     if let Some(sampled_right_image) = sampled_right_image {
         sampled_right_image.destroy(&device);
     }
     sampled_left_image.destroy(&device);
     right_camera_import_cache.destroy(&device);
     left_camera_import_cache.destroy(&device);
+    // Join pending compositor builds before destroying their borrowed camera
+    // descriptor layout. Video layout ownership is also pinned by each build.
+    if let Some(public_guide_targets) = public_guide_targets {
+        public_guide_targets.destroy(&device);
+    }
     if let Some(mut video_renderer) = video_renderer {
         video_renderer.destroy(&device);
     }
     camera_resources.destroy(&device);
-    if let Some(public_guide_targets) = public_guide_targets {
-        public_guide_targets.destroy(&device);
-    }
     gpu_timestamps.destroy(&device);
     device.destroy_fence(frame_fence, None);
     device.destroy_semaphore(render_finished, None);
