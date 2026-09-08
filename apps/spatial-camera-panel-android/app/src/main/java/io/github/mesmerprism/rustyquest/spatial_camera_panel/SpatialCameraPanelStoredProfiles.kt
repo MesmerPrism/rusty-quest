@@ -7,6 +7,15 @@ import com.google.gson.JsonObject
 import com.google.gson.JsonParser
 import java.io.File
 
+internal object SpatialStrengthCycleControls {
+  const val defaultSpeedHz = 0.25f
+  const val minSpeedHz = 0.0f
+  const val maxSpeedHz = 2.0f
+
+  fun normalize(value: Float): Float =
+      value.takeIf(Float::isFinite)?.coerceIn(minSpeedHz, maxSpeedHz) ?: defaultSpeedHz
+}
+
 internal data class SpatialCameraPanelControlSnapshot(
     val projectionPanelEnabled: Boolean,
     val layerOverride: Float,
@@ -25,6 +34,8 @@ internal data class SpatialCameraPanelControlSnapshot(
     // Keep that representation stable so exact profile fingerprints used by playlists and
     // Kiosk launch options do not change merely because a newer app reads the profile.
     val backgroundMode: String? = null,
+    // Null preserves the on-disk representation of profiles that predate the strength cycle.
+    val strengthCycleSpeedHz: Float? = null,
 ) {
   fun normalized(): SpatialCameraPanelControlSnapshot =
       copy(
@@ -57,6 +68,7 @@ internal data class SpatialCameraPanelControlSnapshot(
               },
           backgroundMode =
               backgroundMode?.let { SpatialBackgroundMode.fromToken(it).token },
+          strengthCycleSpeedHz = strengthCycleSpeedHz?.let(SpatialStrengthCycleControls::normalize),
       )
 
   fun presentationMode(): SpatialImmersiveVideoPresentationMode =
@@ -68,6 +80,10 @@ internal data class SpatialCameraPanelControlSnapshot(
 
   fun resolvedBackgroundMode(): SpatialBackgroundMode =
       SpatialBackgroundMode.fromToken(backgroundMode)
+
+  fun resolvedStrengthCycleSpeedHz(): Float =
+      strengthCycleSpeedHz?.let(SpatialStrengthCycleControls::normalize)
+          ?: SpatialStrengthCycleControls.defaultSpeedHz
 }
 
 internal data class SpatialCameraPanelProfileEntry(

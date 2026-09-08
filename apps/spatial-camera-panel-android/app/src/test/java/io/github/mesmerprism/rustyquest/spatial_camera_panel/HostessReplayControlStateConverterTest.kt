@@ -153,6 +153,8 @@ class HostessReplayControlStateConverterTest {
     assertEquals(0, profile.zoneCompositor.stretchOptionFlags)
     assertEquals(0.018f, profile.rgbChannelTransform.red.displacementStrengthUv)
     assertEquals(-0.13f, profile.rgbChannelTransform.blue.directionRateHz)
+    assertEquals(0.0f, profile.rgbChannelTransform.directionNoiseAmountTurns)
+    assertEquals(0.1f, profile.rgbChannelTransform.directionNoiseRateHz)
     assertEquals(true, profile.projectionSurfaceDisplacement.enabled)
     assertEquals(0.18f, profile.projectionSurfaceDisplacement.maxDisplacementMeters)
     assertEquals(ProjectionSurfaceTilingControls.off, profile.projectionSurfaceTiling)

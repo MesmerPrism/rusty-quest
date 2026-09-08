@@ -187,6 +187,15 @@ disable reuse fail-safely if removal bookkeeping overflows. Keep performance
 telemetry scalar and low-rate. Private effect formulas, private shader source,
 and unsanitized headset evidence remain outside this repository.
 
+For Spatial Camera Panel video/compositor correctness, zero visible-zone video
+demand is a custom-decoder skip and must never select direct video as a
+fallback. A hidden projection keeps direct video as its own owner; only a
+failed custom decoder dispatch may choose fallback. A failed JNI compositor
+submission retains the prior submitted state, and queued JNI work is not render
+proof. Pipeline preparation stays on its worker and pending work retains the
+last good frame/state. Performance baselines record requested CPU/GPU level 4
+and 90 Hz separately from their effective readback values.
+
 Do not add new Makepad compatibility shims, profile surfaces, or Quest-Makepad
 parity work here unless the user explicitly asks for Makepad migration,
 regression repair, or historical evidence replay. When old Makepad evidence is

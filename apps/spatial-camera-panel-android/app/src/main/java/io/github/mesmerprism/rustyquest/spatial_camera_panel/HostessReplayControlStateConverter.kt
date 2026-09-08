@@ -171,6 +171,10 @@ internal object HostessReplayControlStateConverter {
       JSONObject()
           .put("mode", token(values[0], "off", "independent", "linked"))
           .put("edge_mode", token(values[1], "clamp", "mirror", "fade"))
+          // The fixed 24-float Hostess ingress predates temporal direction
+          // noise, so it intentionally imports the safe noise-off default.
+          .put("direction_noise_amount_turns", 0.0)
+          .put("direction_noise_rate_hz", 0.1)
           .put("red", rgbChannel(values, 0))
           .put("green", rgbChannel(values, 1))
           .put("blue", rgbChannel(values, 2))
@@ -243,7 +247,7 @@ internal object HostessReplayControlStateConverter {
               "projection_effect_edge_guard_enabled",
               (v[31].toInt() and (1 shl 1)) == 0,
           )
-          .put("stretch_option_flags", flags and 0x1d)
+          .put("stretch_option_flags", flags and PrivateLayerZoneCompositorControls.stretchOptionMask)
           .put("edge_inset_uv", v[28])
           .put("max_inset_uv", v[29])
           .put("stretch_curve", v[30])

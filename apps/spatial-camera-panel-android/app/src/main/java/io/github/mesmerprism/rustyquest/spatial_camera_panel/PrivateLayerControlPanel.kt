@@ -34,12 +34,15 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import java.io.Closeable
@@ -88,7 +91,7 @@ private enum class PrivateLayerPanelPage(
   Transitions("Transitions", "Center-to-middle and middle-to-outer boundaries"),
   Background("Background", "System background and its world-locked video"),
   Media("Media library", "Discover, validate, and assign media sources"),
-  Image("Image processing", "Depth warp, RGB transform, sampling, and guide blur"),
+  Image("Camera processing", "Depth warp, RGB transform, sampling, and guide blur"),
   Depth("Depth alignment", "Depth source and per-eye fine tuning"),
   Profiles("Profiles", "Save, restore, and exchange complete tuning setups"),
   Playlists("Playlists", "Sequence saved profiles with timed looping playback"),
@@ -114,9 +117,11 @@ internal fun PrivateLayerControlPanel(
     depthAlignment: PrivateLayerDepthAlignment,
     guideProcessing: PrivateLayerGuideProcessing,
     rgbChannelTransform: RgbChannelTransform,
+    strengthCycleSpeedHz: Float,
     projectionSurfaceDisplacement: ProjectionSurfaceDisplacement,
     projectionSurfaceTiling: ProjectionSurfaceTiling,
     projectionInnerAlpha: ProjectionInnerAlpha,
+    profileAppliedControls: SpatialCameraPanelControlSnapshot?,
     passthroughLutSettings: () -> SpatialPassthroughLutSettings,
     backgroundVideoSession: () -> SpatialImmersiveVideoSessionSnapshot,
     videoSession: () -> SpatialImmersiveVideoSessionSnapshot,
@@ -145,6 +150,7 @@ internal fun PrivateLayerControlPanel(
         (PrivateLayerGuideProcessing, String) -> PrivateLayerGuideProcessing,
     updateRgbChannelTransform:
         (RgbChannelTransform, String) -> RgbChannelTransform,
+    updateStrengthCycleSpeedHz: (Float, String) -> Float,
     updateProjectionSurfaceDisplacement:
         (ProjectionSurfaceDisplacement, String) -> ProjectionSurfaceDisplacement,
     updateProjectionSurfaceTiling:
@@ -178,6 +184,8 @@ internal fun PrivateLayerControlPanel(
   var localGuideProcessing by remember(guideProcessing) { mutableStateOf(guideProcessing) }
   var localRgbChannelTransform by
       remember(rgbChannelTransform) { mutableStateOf(rgbChannelTransform) }
+  var localStrengthCycleSpeedHz by
+      remember(strengthCycleSpeedHz) { mutableStateOf(strengthCycleSpeedHz) }
   var localProjectionSurfaceDisplacement by
       remember(projectionSurfaceDisplacement) {
         mutableStateOf(projectionSurfaceDisplacement)
@@ -189,6 +197,23 @@ internal fun PrivateLayerControlPanel(
   var localPassthroughLutSettings by
       remember { mutableStateOf(passthroughLutSettings()) }
   var currentPage by remember { mutableStateOf(PrivateLayerPanelPage.Home) }
+  var centerDiagnosticsExpanded by rememberSaveable(key = "private-layer-center-diagnostics-expanded") {
+    mutableStateOf(false)
+  }
+  var transitionDiagnosticsExpanded by
+      rememberSaveable(key = "private-layer-transition-diagnostics-expanded") { mutableStateOf(false) }
+  var cameraDiagnosticsExpanded by rememberSaveable(key = "private-layer-camera-diagnostics-expanded") {
+    mutableStateOf(false)
+  }
+  var depthDiagnosticsExpanded by rememberSaveable(key = "private-layer-depth-diagnostics-expanded") {
+    mutableStateOf(false)
+  }
+  var middleDiagnosticsExpanded by rememberSaveable(key = "private-layer-middle-diagnostics-expanded") {
+    mutableStateOf(false)
+  }
+  var outerDiagnosticsExpanded by rememberSaveable(key = "private-layer-outer-diagnostics-expanded") {
+    mutableStateOf(false)
+  }
   var localBackgroundVideoSession by remember { mutableStateOf(backgroundVideoSession()) }
   var localVideoSession by remember { mutableStateOf(videoSession()) }
   var localVideoCadenceMode by remember { mutableStateOf(SpatialVideoCadencePanelBridge.current()) }
@@ -210,11 +235,15 @@ internal fun PrivateLayerControlPanel(
     localDepthAlignment = controls.depthAlignment
     localGuideProcessing = controls.guideProcessing
     localRgbChannelTransform = controls.rgbChannelTransform
+    localStrengthCycleSpeedHz = controls.resolvedStrengthCycleSpeedHz()
     localProjectionSurfaceDisplacement = controls.projectionSurfaceDisplacement
     localProjectionSurfaceTiling = controls.projectionSurfaceTiling
     localProjectionInnerAlpha = controls.projectionInnerAlpha
     localBackgroundVideoSession = backgroundVideoSession()
     localVideoSession = videoSession()
+  }
+  LaunchedEffect(profileAppliedControls) {
+    profileAppliedControls?.let(::adoptProfileControls)
   }
   DisposableEffect(Unit) {
     val subscription = observeConnectionHub { snapshot -> localConnectionHub = snapshot }
@@ -442,16 +471,15 @@ internal fun PrivateLayerControlPanel(
       ) {
       Section("Projection effect") {
         Text(
-            "Choose the actual center-region output or a named diagnostic stage. The depth-adjusted distortion strength is the smoothed strength after Meta depth modulation; Meta depth diagnostic shows the aligned depth input itself.",
+            "Final composition is the normal camera projection output.",
             style = MaterialTheme.typography.bodySmall,
             color = LayerPanelMuted,
         )
-        LayerButtonGrid(
-            selectedLayerOverride = localLayerOverride,
-            onSelect = { override ->
-              localLayerOverride = setLayerOverride(override, "private-layer-control-panel")
-            },
-        )
+        Row(modifier = Modifier.fillMaxWidth()) {
+          ChoiceButton("Final composition", localLayerOverride == 0.0f) {
+            localLayerOverride = setLayerOverride(0.0f, "private-layer-control-panel-final-composition")
+          }
+        }
       }
       }
       if (
@@ -477,48 +505,118 @@ internal fun PrivateLayerControlPanel(
             },
         )
       }
-      Section("Advanced distortion safety") {
-        HelpLabel("Protect projection edges")
+      Section("Projection Area") {
+        HelpLabel("Projection scale")
         Text(
-            "Fades displacement back to the undistorted camera near the projection boundary. Disable it only to inspect the full distortion field; projection size and region geometry do not change.",
+            "Scale ${"%.2f".format(localProjectionScale)}",
+            style = MaterialTheme.typography.bodyMedium,
+            color = LayerPanelMuted,
+        )
+        Slider(
+            value = localProjectionScale,
+            onValueChange = { value ->
+              localProjectionScale = updateProjectionScale(value, "private-layer-control-panel-scale")
+            },
+            valueRange = projectionScaleRange,
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+          OperatorButton("0.75x") {
+            localProjectionScale =
+                updateProjectionScale(0.75f, "private-layer-control-panel-scale-preset")
+          }
+          OperatorButton("1.00x") {
+            localProjectionScale =
+                updateProjectionScale(1.0f, "private-layer-control-panel-scale-preset")
+          }
+          OperatorButton("1.25x") {
+            localProjectionScale =
+                updateProjectionScale(1.25f, "private-layer-control-panel-scale-preset")
+          }
+        }
+      }
+      DiagnosticsFoldout(
+          expanded = centerDiagnosticsExpanded,
+          onExpandedChange = { centerDiagnosticsExpanded = it },
+      ) {
+        Section("Compositor diagnostics") {
+        Text("Inspect compositor sampling, RGB handling, and capture without changing the normal projection controls.", style = MaterialTheme.typography.bodySmall, color = LayerPanelMuted)
+        DiagnosticFlagChoices(
+            title = "Sampling",
+            flags = localZoneCompositor.outerStretchOptionFlags,
+            choices = listOf("Default" to 0, "Linear" to PrivateLayerZoneCompositorControls.outerStretchOptionExplicitLinearSampler, "Nearest" to PrivateLayerZoneCompositorControls.outerStretchOptionNearestSampler),
+        ) { flags -> PrivateLayerZoneCompositorPanelBridge.submit(localZoneCompositor.copy(outerStretchOptionFlags = flags), "private-layer-border-sampling") }
+        DiagnosticFlagChoices(
+            title = "RGB payload",
+            flags = localZoneCompositor.outerStretchOptionFlags,
+            choices = listOf("Baseline" to 0, "Transfer" to PrivateLayerZoneCompositorControls.outerStretchOptionTransferCorrectedFade, "Straight" to PrivateLayerZoneCompositorControls.outerStretchOptionStraightRgbPayload),
+        ) { flags -> PrivateLayerZoneCompositorPanelBridge.submit(localZoneCompositor.copy(outerStretchOptionFlags = flags), "private-layer-border-rgb-payload") }
+        DiagnosticFlagChoices(
+            title = "Layer RGB blend",
+            flags = localZoneCompositor.outerStretchOptionFlags,
+            choices = listOf("Premultiplied" to 0, "Straight" to PrivateLayerZoneCompositorControls.outerStretchOptionStraightRgbBlend),
+        ) { flags -> PrivateLayerZoneCompositorPanelBridge.submit(localZoneCompositor.copy(outerStretchOptionFlags = flags), "private-layer-border-rgb-blend") }
+        Button(modifier = Modifier.fillMaxWidth().height(52.dp), onClick = {
+          PrivateLayerZoneCompositorPanelBridge.submit(localZoneCompositor.copy(outerStretchOptionFlags = localZoneCompositor.outerStretchOptionFlags xor PrivateLayerZoneCompositorControls.outerStretchOptionProducerCaptureRequest), "private-layer-border-producer-capture-request")
+        }) { Text("Capture producer pixels") }
+        HelpLabel("Layer alpha accumulation")
+        Text(
+            "Choose how the compositor writes its accumulated alpha for comparison.",
             style = MaterialTheme.typography.bodySmall,
             color = LayerPanelMuted,
         )
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+        ) {
+          ChoiceButton(
+              "Standard",
+              localZoneCompositor.outerStretchOptionFlags and
+                  PrivateLayerZoneCompositorControls.outerStretchOptionAlphaAccumulationReplace == 0,
+          ) {
+            PrivateLayerZoneCompositorPanelBridge.submit(
+                localZoneCompositor.copy(
+                    outerStretchOptionFlags =
+                        localZoneCompositor.outerStretchOptionFlags and
+                            PrivateLayerZoneCompositorControls
+                                .outerStretchOptionAlphaAccumulationReplace.inv()
+                ),
+                "private-layer-transition-alpha-standard",
+            )
+          }
+          ChoiceButton(
+              "Replace alpha",
+              localZoneCompositor.outerStretchOptionFlags and
+                  PrivateLayerZoneCompositorControls.outerStretchOptionAlphaAccumulationReplace != 0,
+          ) {
+            PrivateLayerZoneCompositorPanelBridge.submit(
+                localZoneCompositor.copy(
+                    outerStretchOptionFlags =
+                        localZoneCompositor.outerStretchOptionFlags or
+                            PrivateLayerZoneCompositorControls
+                                .outerStretchOptionAlphaAccumulationReplace
+                ),
+                "private-layer-transition-alpha-replace",
+            )
+          }
+        }
         Button(
             modifier = Modifier.fillMaxWidth().height(52.dp),
             onClick = {
               PrivateLayerZoneCompositorPanelBridge.submit(
                   localZoneCompositor.copy(
-                      projectionEffectEdgeGuardEnabled =
-                          !localZoneCompositor.projectionEffectEdgeGuardEnabled
+                      outerStretchOptionFlags =
+                          localZoneCompositor.outerStretchOptionFlags and
+                              PrivateLayerZoneCompositorControls
+                                  .outerStretchTransitionOptionMask.inv()
                   ),
-                  "private-layer-center-edge-guard",
+                  "private-layer-transition-reset-comparison",
               )
             },
-            colors =
-                ButtonDefaults.buttonColors(
-                    containerColor =
-                        if (localZoneCompositor.projectionEffectEdgeGuardEnabled) {
-                          LayerPanelAccent
-                        } else {
-                          LayerPanelSurfaceAlt
-                        },
-                    contentColor =
-                        if (localZoneCompositor.projectionEffectEdgeGuardEnabled) {
-                          Color(0xFF04111A)
-                        } else {
-                          LayerPanelInk
-                        },
-                ),
         ) {
-          Text(
-              if (localZoneCompositor.projectionEffectEdgeGuardEnabled) {
-                "Protection on · tap to disable"
-              } else {
-                "Protection off · tap to enable"
-              }
-          )
+          Text("Reset all diagnostic comparisons")
         }
+        }
+      Section("Compositor carrier") {
         Text(
             "The compositor carrier normally stays on even when Center projection is not selected. The control below is a diagnostic fallback that disables the whole Center/Middle/Outer Vulkan surface.",
             style = MaterialTheme.typography.bodySmall,
@@ -548,6 +646,7 @@ internal fun PrivateLayerControlPanel(
               }
           )
         }
+      }
       }
       }
 
@@ -1125,38 +1224,6 @@ internal fun PrivateLayerControlPanel(
         }
       }
 
-      if (currentPage == PrivateLayerPanelPage.Center) {
-      Section("Projection Area") {
-        HelpLabel("Projection scale")
-        Text(
-            "Scale ${"%.2f".format(localProjectionScale)}",
-            style = MaterialTheme.typography.bodyMedium,
-            color = LayerPanelMuted,
-        )
-        Slider(
-            value = localProjectionScale,
-            onValueChange = { value ->
-              localProjectionScale = updateProjectionScale(value, "private-layer-control-panel-scale")
-            },
-            valueRange = projectionScaleRange,
-        )
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-          OperatorButton("0.75x") {
-            localProjectionScale =
-                updateProjectionScale(0.75f, "private-layer-control-panel-scale-preset")
-          }
-          OperatorButton("1.00x") {
-            localProjectionScale =
-                updateProjectionScale(1.0f, "private-layer-control-panel-scale-preset")
-          }
-          OperatorButton("1.25x") {
-            localProjectionScale =
-                updateProjectionScale(1.25f, "private-layer-control-panel-scale-preset")
-          }
-        }
-      }
-      }
-
       if (currentPage == PrivateLayerPanelPage.Image) {
       Section("Projection Depth") {
         Text(
@@ -1513,6 +1580,28 @@ internal fun PrivateLayerControlPanel(
         }
       }
 
+      Section("Strength animation") {
+        Text(
+            "Adjusts the speed of the brightness-driven strength cycle. Zero pauses it.",
+            style = MaterialTheme.typography.bodySmall,
+            color = LayerPanelMuted,
+        )
+        HelpLabel("Strength cycle speed (Hz)")
+        Slider(
+            value = localStrengthCycleSpeedHz,
+            onValueChange = { value ->
+              localStrengthCycleSpeedHz =
+                  updateStrengthCycleSpeedHz(value, "private-layer-strength-cycle-speed")
+            },
+            valueRange = SpatialStrengthCycleControls.minSpeedHz..SpatialStrengthCycleControls.maxSpeedHz,
+        )
+        Text(
+            "${"%.2f".format(localStrengthCycleSpeedHz)} Hz",
+            style = MaterialTheme.typography.bodyMedium,
+            color = LayerPanelMuted,
+        )
+      }
+
       Section("RGB Channel Transform") {
         Text(
             "A public neutral transform supplies independent direction, cycle rate, strength, image scale, and effect coverage. The private shader retains authority over the guide signal and final distortion formula.",
@@ -1591,6 +1680,33 @@ internal fun PrivateLayerControlPanel(
                   )
             }
           }
+          DepthSlider(
+              "Direction noise amount (degrees)",
+              localRgbChannelTransform.directionNoiseAmountTurns * 360.0f,
+              0.0f..45.0f,
+          ) { value ->
+            localRgbChannelTransform =
+                updateRgbChannelTransform(
+                    localRgbChannelTransform.copy(directionNoiseAmountTurns = value / 360.0f),
+                    "private-layer-rgb-direction-noise-amount",
+                )
+          }
+          DepthSlider(
+              "Direction noise speed (Hz)",
+              localRgbChannelTransform.directionNoiseRateHz,
+              0.0f..1.0f,
+          ) { value ->
+            localRgbChannelTransform =
+                updateRgbChannelTransform(
+                    localRgbChannelTransform.copy(directionNoiseRateHz = value),
+                    "private-layer-rgb-direction-noise-rate",
+                )
+          }
+          Text(
+              "Amount 0 disables direction noise. At 0 Hz, a nonzero amount remains a frozen offset.",
+              style = MaterialTheme.typography.bodySmall,
+              color = LayerPanelMuted,
+          )
           if (localRgbChannelTransform.mode == RgbChannelTransformControls.modeLinked) {
             RgbChannelEditor(
                 label = "Linked RGB",
@@ -1646,6 +1762,8 @@ internal fun PrivateLayerControlPanel(
         MiddleRegionPage(
             configuration = localZoneCompositor,
             onConfigurationChange = PrivateLayerZoneCompositorPanelBridge::submit,
+            diagnosticsExpanded = middleDiagnosticsExpanded,
+            onDiagnosticsExpandedChange = { middleDiagnosticsExpanded = it },
         )
       }
 
@@ -1659,6 +1777,8 @@ internal fun PrivateLayerControlPanel(
             onSetPlaybackEnabled = { enabled ->
               localVideoSession = setVideoPlaybackEnabled(enabled)
             },
+            diagnosticsExpanded = outerDiagnosticsExpanded,
+            onDiagnosticsExpandedChange = { outerDiagnosticsExpanded = it },
             onSelectCadence = { mode ->
               localVideoCadenceMode = SpatialVideoCadencePanelBridge.select(mode)
             },
@@ -1670,10 +1790,91 @@ internal fun PrivateLayerControlPanel(
             configuration = localZoneCompositor,
             onConfigurationChange = PrivateLayerZoneCompositorPanelBridge::submit,
         )
+        TransitionDiagnostics(
+            configuration = localZoneCompositor,
+            onConfigurationChange = PrivateLayerZoneCompositorPanelBridge::submit,
+            expanded = transitionDiagnosticsExpanded,
+            onExpandedChange = { transitionDiagnosticsExpanded = it },
+        )
       }
 
       if (currentPage == PrivateLayerPanelPage.Image) {
-      Section("Camera Sampling A/B") {
+      DiagnosticsFoldout(
+          expanded = cameraDiagnosticsExpanded,
+          onExpandedChange = { cameraDiagnosticsExpanded = it },
+      ) {
+      Section("Camera distortion diagnostics") {
+        Text(
+            "Inspect camera-edge behavior without changing the normal depth and RGB controls.",
+            style = MaterialTheme.typography.bodySmall,
+            color = LayerPanelMuted,
+        )
+        HelpLabel("Edge protection")
+        Button(
+            modifier = Modifier.fillMaxWidth().height(52.dp),
+            onClick = {
+              PrivateLayerZoneCompositorPanelBridge.submit(
+                  localZoneCompositor.copy(
+                      projectionEffectEdgeGuardEnabled =
+                          !localZoneCompositor.projectionEffectEdgeGuardEnabled
+                  ),
+                  "private-layer-center-edge-guard",
+              )
+            },
+            colors =
+                ButtonDefaults.buttonColors(
+                    containerColor =
+                        if (localZoneCompositor.projectionEffectEdgeGuardEnabled) {
+                          LayerPanelAccent
+                        } else {
+                          LayerPanelSurfaceAlt
+                        },
+                    contentColor =
+                        if (localZoneCompositor.projectionEffectEdgeGuardEnabled) {
+                          Color(0xFF04111A)
+                        } else {
+                          LayerPanelInk
+                        },
+                ),
+        ) {
+          Text(
+              if (localZoneCompositor.projectionEffectEdgeGuardEnabled) {
+                "Edge protection on · tap to disable"
+              } else {
+                "Edge protection off · tap to enable"
+              }
+          )
+        }
+        HelpLabel("Guide validity correction")
+        Button(
+            modifier = Modifier.fillMaxWidth().height(52.dp),
+            onClick = {
+              PrivateLayerZoneCompositorPanelBridge.submit(
+                  localZoneCompositor.copy(
+                      outerStretchOptionFlags =
+                          localZoneCompositor.outerStretchOptionFlags xor
+                              PrivateLayerZoneCompositorControls
+                                  .outerStretchOptionGuideValidityNormalization
+                  ),
+                  "private-layer-transition-guide-validity-normalization",
+              )
+            },
+        ) {
+          Text(
+              if (
+                  localZoneCompositor.outerStretchOptionFlags and
+                      PrivateLayerZoneCompositorControls
+                          .outerStretchOptionGuideValidityNormalization != 0
+              ) {
+                "Guide correction on · tap to disable"
+              } else {
+                "Guide correction off · tap to enable"
+              }
+          )
+        }
+      }
+
+      Section("Camera sampling") {
         Text(
             "Thin-line AA applies a modest footprint-aware five-tap tent filter at camera ingress. Linear preserves the previous single bilinear sample for direct comparison.",
             style = MaterialTheme.typography.bodySmall,
@@ -1716,7 +1917,7 @@ internal fun PrivateLayerControlPanel(
         }
       }
 
-      Section("Guide Processing A/B") {
+      Section("Guide processing") {
         Text(
             "Native parity is the verified target: 5-tap box pre/post blur with luma extracted before pre-blur. Gaussian and RGB remain live diagnostics.",
             style = MaterialTheme.typography.bodySmall,
@@ -1843,31 +2044,24 @@ internal fun PrivateLayerControlPanel(
           }
         }
       }
-      }
-
-      if (currentPage == PrivateLayerPanelPage.Depth) {
-      Section("Depth Recovery") {
+      Section("Camera layer inspection") {
         Text(
-            "Bounded recovery reduces invalid-call pressure. Maximum freshness keeps trying on every eligible Spatial tick and may produce runtime error spam. Both retain the last valid depth frame.",
+            "Inspect intermediate camera and distortion stages. Final composition remains available on Center.",
             style = MaterialTheme.typography.bodySmall,
             color = LayerPanelMuted,
         )
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
-          SpatialEnvironmentDepthRecoveryPolicy.entries.forEach { policy ->
-            ChoiceButton(
-                label = policy.panelLabel,
-                selected = localEnvironmentDepthRecoveryPolicy == policy,
-            ) {
-              localEnvironmentDepthRecoveryPolicy =
-                  updateEnvironmentDepthRecoveryPolicy(
-                      policy,
-                      "private-layer-control-panel-depth-recovery",
-                  )
-            }
-          }
-        }
+        LayerButtonGrid(
+            selectedLayerOverride = localLayerOverride,
+            includeNormalChoice = false,
+            onSelect = { override ->
+              localLayerOverride = setLayerOverride(override, "private-layer-control-panel")
+            },
+        )
+      }
+      }
       }
 
+      if (currentPage == PrivateLayerPanelPage.Depth) {
       Section("Depth Source") {
         localEnvironmentDepthUnavailableWarning?.let { warning ->
           Text(
@@ -1883,12 +2077,13 @@ internal fun PrivateLayerControlPanel(
             color = LayerPanelMuted,
         )
         Text(
-            "Meta supplies left/right depth layers. Stereo selects the matching layer for each eye; mono and compare remain diagnostics.",
+            "Stereo selects the matching depth layer for each eye.",
             style = MaterialTheme.typography.bodySmall,
             color = LayerPanelMuted,
         )
         DepthSourceButtonGrid(
             selectedPolicy = localDepthLayerPolicy,
+            diagnosticOnly = false,
             onSelect = { policy ->
               localDepthLayerPolicy =
                   updateDepthLayerPolicy(policy, "private-layer-control-panel-depth-source")
@@ -1973,6 +2168,44 @@ internal fun PrivateLayerControlPanel(
                   localDepthAlignment.copy(rollDegrees = value),
                   "private-layer-control-panel-depth-roll",
               )
+        }
+      }
+      DiagnosticsFoldout(
+          expanded = depthDiagnosticsExpanded,
+          onExpandedChange = { depthDiagnosticsExpanded = it },
+      ) {
+        Text(
+            "Temporarily select one eye or a comparison; choose Stereo to restore normal depth.",
+            style = MaterialTheme.typography.bodySmall,
+            color = LayerPanelMuted,
+        )
+        DepthSourceButtonGrid(
+            selectedPolicy = localDepthLayerPolicy,
+            diagnosticOnly = true,
+            onSelect = { policy ->
+              localDepthLayerPolicy =
+                  updateDepthLayerPolicy(policy, "private-layer-control-panel-depth-source")
+            },
+        )
+        HelpLabel("Depth recovery")
+        Text(
+            "Bounded recovery reduces invalid-call pressure. Maximum freshness keeps trying on every eligible Spatial tick and may produce runtime error spam.",
+            style = MaterialTheme.typography.bodySmall,
+            color = LayerPanelMuted,
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+          SpatialEnvironmentDepthRecoveryPolicy.entries.forEach { policy ->
+            ChoiceButton(
+                label = policy.panelLabel,
+                selected = localEnvironmentDepthRecoveryPolicy == policy,
+            ) {
+              localEnvironmentDepthRecoveryPolicy =
+                  updateEnvironmentDepthRecoveryPolicy(
+                      policy,
+                      "private-layer-control-panel-depth-recovery",
+                  )
+            }
+          }
         }
       }
       }
@@ -2284,6 +2517,24 @@ internal fun HelpLabel(label: String) {
 }
 
 @Composable
+private fun DiagnosticFlagChoices(
+    title: String,
+    flags: Int,
+    choices: List<Pair<String, Int>>,
+    onSelect: (Int) -> Unit,
+) {
+  val mask = choices.fold(0) { value, choice -> value or choice.second }
+  Text(title, style = MaterialTheme.typography.bodySmall, color = LayerPanelMuted)
+  Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())) {
+    choices.forEach { (label, selectedBit) ->
+      ChoiceButton(label, (flags and mask) == selectedBit) {
+        onSelect((flags and mask.inv()) or selectedBit)
+      }
+    }
+  }
+}
+
+@Composable
 private fun PanelTopicMenu(
     projectionSummary: String,
     videoSummary: String,
@@ -2393,7 +2644,7 @@ private fun RgbChannelEditor(
   DepthSlider("Direction", channel.directionTurns, 0.0f..1.0f) {
     update(channel.copy(directionTurns = it), "private-layer-rgb-${label.lowercase()}-direction")
   }
-  DepthSlider("Direction speed", channel.directionRateHz, -1.0f..1.0f) {
+  DepthSlider("Direction speed (turns/s)", channel.directionRateHz, -1.0f..1.0f) {
     update(channel.copy(directionRateHz = it), "private-layer-rgb-${label.lowercase()}-speed")
   }
   DepthSlider("Strength", channel.displacementStrengthUv, 0.0f..0.08f) {
@@ -2488,21 +2739,64 @@ internal fun Section(title: String, content: @Composable () -> Unit) {
 }
 
 @Composable
+private fun DiagnosticsFoldout(
+    expanded: Boolean,
+    onExpandedChange: (Boolean) -> Unit,
+    content: @Composable () -> Unit,
+) {
+  Column(
+      modifier =
+          Modifier
+              .fillMaxWidth()
+              .clip(RoundedCornerShape(8.dp))
+              .background(LayerPanelSurface)
+              .border(1.dp, LayerPanelBorder, RoundedCornerShape(8.dp))
+              .padding(8.dp),
+      verticalArrangement = Arrangement.spacedBy(12.dp),
+  ) {
+    Button(
+        modifier =
+            Modifier.fillMaxWidth().semantics {
+              stateDescription = if (expanded) "Expanded" else "Collapsed"
+            },
+        onClick = { onExpandedChange(!expanded) },
+        colors =
+            ButtonDefaults.buttonColors(
+                containerColor = LayerPanelSurfaceAlt,
+                contentColor = LayerPanelInk,
+            ),
+    ) {
+      Text(if (expanded) "Diagnostics · expanded" else "Diagnostics · collapsed")
+    }
+    if (expanded) {
+      HorizontalDivider(color = LayerPanelBorder)
+      Column(
+          modifier = Modifier.fillMaxWidth(),
+          verticalArrangement = Arrangement.spacedBy(12.dp),
+      ) { content() }
+    }
+  }
+}
+
+@Composable
 private fun LayerButtonGrid(
     selectedLayerOverride: Float,
+    includeNormalChoice: Boolean = true,
     onSelect: (Float) -> Unit,
 ) {
   Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-    HelpLabel("Rendering layer")
-    LayerButtonRow(
-        choices =
-            listOf(
-                PrivateLayerChoice(-1, "Cycle", "cycle"),
-                PrivateLayerControls.layers[0],
-            ),
-        selectedLayerOverride = selectedLayerOverride,
-        onSelect = onSelect,
-    )
+    HelpLabel("Inspection layer")
+    if (includeNormalChoice) {
+      LayerButtonRow(
+          choices =
+              listOf(
+                  PrivateLayerChoice(-1, "Cycle", "cycle"),
+                  PrivateLayerControls.layers[0],
+              ),
+          selectedLayerOverride = selectedLayerOverride,
+          onSelect = onSelect,
+      )
+    }
     PrivateLayerControls.centerContentLayers.drop(1).chunked(2).forEach { row ->
       LayerButtonRow(row, selectedLayerOverride, onSelect)
     }
@@ -2546,11 +2840,18 @@ private fun LayerButtonRow(
 @Composable
 private fun DepthSourceButtonGrid(
     selectedPolicy: Int,
+    diagnosticOnly: Boolean,
     onSelect: (Int) -> Unit,
 ) {
   Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-    HelpLabel("Depth source")
-    PrivateLayerControls.depthSourcePolicies.chunked(2).forEach { row ->
+    HelpLabel(if (diagnosticOnly) "Depth inspection" else "Depth source")
+    PrivateLayerControls.depthSourcePolicies
+        .filter {
+          if (diagnosticOnly) it.code != PrivateLayerControls.depthPolicyEyeIndex
+          else it.code == PrivateLayerControls.depthPolicyEyeIndex
+        }
+        .chunked(2)
+        .forEach { row ->
       Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
         row.forEach { choice ->
           val selected =
@@ -2576,6 +2877,8 @@ private fun DepthSourceButtonGrid(
 private fun MiddleRegionPage(
     configuration: PrivateLayerZoneCompositor,
     onConfigurationChange: (PrivateLayerZoneCompositor, String) -> Unit,
+    diagnosticsExpanded: Boolean,
+    onDiagnosticsExpandedChange: (Boolean) -> Unit,
 ) {
   val controls = PrivateLayerZoneCompositorControls
   val bufferActive = configuration.bufferGeometryMode != controls.bufferGeometryOff
@@ -2701,6 +3004,8 @@ private fun MiddleRegionPage(
         configuration = configuration,
         outer = false,
         onConfigurationChange = onConfigurationChange,
+        diagnosticsExpanded = diagnosticsExpanded,
+        onDiagnosticsExpandedChange = onDiagnosticsExpandedChange,
     )
   }
   if (configuration.bufferFillMode == controls.bufferFillOuterContinuation) {
@@ -2731,6 +3036,8 @@ private fun OuterRegionPage(
     onSelectVideo: (Int) -> Unit,
     onSelectCadence: (SpatialVideoCadenceMode) -> Unit,
     onSetPlaybackEnabled: (Boolean) -> Unit,
+    diagnosticsExpanded: Boolean,
+    onDiagnosticsExpandedChange: (Boolean) -> Unit,
 ) {
   val controls = PrivateLayerZoneCompositorControls
   Section("Outer content") {
@@ -2776,6 +3083,8 @@ private fun OuterRegionPage(
         configuration = configuration,
         outer = true,
         onConfigurationChange = onConfigurationChange,
+        diagnosticsExpanded = diagnosticsExpanded,
+        onDiagnosticsExpandedChange = onDiagnosticsExpandedChange,
     )
   }
   if (configuration.outerContentMode == controls.outerContentVideo) {
@@ -2800,6 +3109,8 @@ private fun RegionStretchSettings(
     configuration: PrivateLayerZoneCompositor,
     outer: Boolean,
     onConfigurationChange: (PrivateLayerZoneCompositor, String) -> Unit,
+    diagnosticsExpanded: Boolean,
+    onDiagnosticsExpandedChange: (Boolean) -> Unit,
 ) {
   val controls = PrivateLayerZoneCompositorControls
   val source = if (outer) configuration.outerStretchSource else configuration.stretchSource
@@ -2864,8 +3175,14 @@ private fun RegionStretchSettings(
         )
       }
     }
+  }
+  DiagnosticsFoldout(
+      expanded = diagnosticsExpanded,
+      onExpandedChange = onDiagnosticsExpandedChange,
+  ) {
     HelpLabel("Stretch attachment")
-    val attachmentFlags = optionFlags and 0x1c
+    val attachmentFlags =
+        optionFlags and PrivateLayerZoneCompositorControls.stretchOptionAttachmentMask
     Row(
         horizontalArrangement = Arrangement.spacedBy(10.dp),
         modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
@@ -2879,7 +3196,10 @@ private fun RegionStretchSettings(
           .forEach { (label, flag) ->
             ChoiceButton(label, attachmentFlags == flag) {
               onConfigurationChange(
-                  withFlags((optionFlags and 0x1c.inv()) or flag),
+                  withFlags(
+                      (optionFlags and
+                          PrivateLayerZoneCompositorControls.stretchOptionAttachmentMask.inv()) or flag
+                  ),
                   "private-layer-$prefix-stretch-attachment-${label.lowercase().replace(' ', '-')}",
               )
             }
@@ -3017,6 +3337,113 @@ private fun RegionTransitionsPage(
           configuration.copy(outerSignal = signal),
           "private-layer-transition-outer-signal",
       )
+    }
+  }
+}
+
+@Composable
+private fun TransitionDiagnostics(
+    configuration: PrivateLayerZoneCompositor,
+    onConfigurationChange: (PrivateLayerZoneCompositor, String) -> Unit,
+    expanded: Boolean,
+    onExpandedChange: (Boolean) -> Unit,
+) {
+  DiagnosticsFoldout(expanded = expanded, onExpandedChange = onExpandedChange) {
+    Text(
+        "Inspect transition imagery and alpha without changing the transition width or curve.",
+        style = MaterialTheme.typography.bodySmall,
+        color = LayerPanelMuted,
+    )
+    DiagnosticFlagChoices(
+        title = "Transition test image",
+        flags = configuration.outerStretchOptionFlags,
+        choices =
+            listOf(
+                "Normal" to 0,
+                "Tiles" to PrivateLayerZoneCompositorControls.outerStretchOptionConstantColorAlphaDiagnostic,
+                "White edge" to
+                    (PrivateLayerZoneCompositorControls.outerStretchOptionConstantColorAlphaDiagnostic or
+                        PrivateLayerZoneCompositorControls.outerStretchOptionUniformWhiteEdge),
+            ),
+    ) { flags ->
+      onConfigurationChange(
+          configuration.copy(outerStretchOptionFlags = flags),
+          "private-layer-border-test-image",
+      )
+    }
+    DiagnosticFlagChoices(
+        title = "Fade shape",
+        flags = configuration.outerStretchOptionFlags,
+        choices =
+            listOf(
+                "Edge distance" to 0,
+                "Rounded contours" to
+                    PrivateLayerZoneCompositorControls.outerStretchOptionRoundedFadeContours,
+            ),
+    ) { flags ->
+      onConfigurationChange(
+          configuration.copy(outerStretchOptionFlags = flags),
+          "private-layer-border-fade-shape",
+      )
+    }
+    Text(
+        "Rounded contours keeps the inner fade rounded at wide transitions.",
+        style = MaterialTheme.typography.bodySmall,
+        color = LayerPanelMuted,
+    )
+    HelpLabel("Patch alpha")
+    Row(
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+    ) {
+      ChoiceButton(
+          "Nominal",
+          configuration.outerStretchOptionFlags and
+              PrivateLayerZoneCompositorControls.outerStretchOptionOpaquePatches == 0,
+      ) {
+        onConfigurationChange(
+            configuration.copy(
+                outerStretchOptionFlags =
+                    configuration.outerStretchOptionFlags and
+                        PrivateLayerZoneCompositorControls.outerStretchOptionOpaquePatches.inv()
+            ),
+            "private-layer-transition-patch-alpha-nominal",
+        )
+      }
+      ChoiceButton(
+          "Opaque footprint",
+          configuration.outerStretchOptionFlags and
+              PrivateLayerZoneCompositorControls.outerStretchOptionOpaquePatches != 0,
+      ) {
+        onConfigurationChange(
+            configuration.copy(
+                outerStretchOptionFlags =
+                    configuration.outerStretchOptionFlags or
+                        PrivateLayerZoneCompositorControls.outerStretchOptionOpaquePatches
+            ),
+            "private-layer-transition-patch-alpha-opaque",
+        )
+      }
+    }
+    Button(
+        modifier = Modifier.fillMaxWidth().height(52.dp),
+        onClick = {
+          val transitionDiagnosticMask =
+              PrivateLayerZoneCompositorControls.outerStretchOptionConstantColorAlphaDiagnostic or
+                  PrivateLayerZoneCompositorControls.outerStretchOptionUniformWhiteEdge or
+                  PrivateLayerZoneCompositorControls.outerStretchOptionOpaquePatches or
+                  PrivateLayerZoneCompositorControls.outerStretchOptionRoundedFadeContours
+          onConfigurationChange(
+              configuration.copy(
+                  outerStretchOptionFlags =
+                      configuration.outerStretchOptionFlags and
+                          transitionDiagnosticMask.inv()
+              ),
+              "private-layer-transition-reset-comparison",
+          )
+        },
+    ) {
+      Text("Reset transition comparison")
     }
   }
 }
@@ -3541,7 +3968,7 @@ private fun RegionSettingsPage(
             }
           } else {
             Text(
-                "Inner transparency is Off on the Image processing page, so these stored relationship settings have no visible effect.",
+                "Inner transparency is Off on the Camera processing page, so these stored relationship settings have no visible effect.",
                 style = MaterialTheme.typography.bodySmall,
                 color = LayerPanelMuted,
             )

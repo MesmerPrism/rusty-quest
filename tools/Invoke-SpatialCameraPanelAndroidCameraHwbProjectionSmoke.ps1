@@ -1325,7 +1325,7 @@ try {
     $summary.public_multistack_projection_evidence = Test-TextContains $evidenceText "status=public-multistack-projection-evidence"
     $summary.public_multistack_projection_applied = Test-TextContains $evidenceText "publicMultiStackProjectionApplied=true"
     $summary.public_multistack_presentation_reprojection_guide_ingress =
-        $evidenceText -match "rawCustomProjectionLayerOverride=8\.000[^\r\n]*rawCustomProjectionGuidePassesRequested=1[^\r\n]*rawCustomProjectionGuidePassesRecorded=1[^\r\n]*rawCustomProjectionGuideRecordStatus=recorded[^\r\n]*projectionZoneCameraPayloadSource=private-guide-pass0-prewarped-camera-color[^\r\n]*rawCustomProjectionDownstreamEffectPassesRecorded=0[^\r\n]*projectionZoneParityLossReason=none"
+        $evidenceText -match "status=projection-zone-raw-parity-effective[^\r\n]*rawCustomProjectionLayerOverride=8\.000[^\r\n]*rawCustomProjectionGuidePassesRequested=1[^\r\n]*rawCustomProjectionGuidePassesRecorded=1[^\r\n]*rawCustomProjectionGuideRecordStatus=recorded[^\r\n]*projectionZoneCameraPayloadSource=private-guide-pass0-prewarped-camera-color[^\r\n]*rawCustomProjectionDownstreamEffectPassesRecorded=0[^\r\n]*projectionZoneParityLossReason=none"
     $summary.public_multistack_layer_cycle_enabled = Test-TextContains $evidenceText "publicMultiStackLayerCycleEnabled=true"
     $summary.public_multistack_layer_cycle_elapsed = Test-TextContains $evidenceText "publicMultiStackLayerCycleElapsedSeconds="
     $summary.public_multistack_depth_layer_policy_marker =

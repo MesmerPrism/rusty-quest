@@ -20,6 +20,7 @@ internal data class SpatialPrivateLayerControlBindings(
     val updateZoneCompositorNative: (PrivateLayerZoneCompositor) -> Long,
     val updateReadableVideoConsumerRequired: (Boolean, String) -> Unit,
     val updateRgbChannelTransformNative: (RgbChannelTransform) -> Long,
+    val updateStrengthCycleSpeedHzNative: (Float) -> Long,
     val updateProjectionSurfaceDisplacementNative:
         (ProjectionSurfaceDisplacement) -> Long,
     val updateProjectionSurfaceFeaturesNative:
@@ -95,8 +96,15 @@ internal class SpatialPrivateLayerControlCoordinator(
   var zoneCompositor: PrivateLayerZoneCompositor =
       PrivateLayerZoneCompositorModule.normalize(initialZoneCompositor)
     private set
+  private val zoneCompositorLifecycleLock = Any()
+  private var effectiveZoneCompositor: PrivateLayerZoneCompositor =
+      safeReadableVideoFallback(zoneCompositor)
+  private var pendingReadableVideoZoneCompositor: PrivateLayerZoneCompositor? = null
 
   var rgbChannelTransform: RgbChannelTransform = RgbChannelTransformControls.bypass
+    private set
+
+  var strengthCycleSpeedHz: Float = SpatialStrengthCycleControls.defaultSpeedHz
     private set
 
   var projectionSurfaceDisplacement: ProjectionSurfaceDisplacement =
@@ -132,6 +140,7 @@ internal class SpatialPrivateLayerControlCoordinator(
     updateGuideProcessing(guideProcessing, source)
     updateZoneCompositor(zoneCompositor, source)
     updateRgbChannelTransform(rgbChannelTransform, source)
+    updateStrengthCycleSpeedHz(strengthCycleSpeedHz, source)
     updateProjectionSurfaceDisplacement(projectionSurfaceDisplacement, source)
     updateProjectionSurfaceFeatures(projectionSurfaceTiling, projectionInnerAlpha, source)
   }
@@ -636,9 +645,121 @@ internal class SpatialPrivateLayerControlCoordinator(
       source: String,
   ): PrivateLayerZoneCompositor {
     if (!bindings.routeActive()) return zoneCompositor
-    val previous = zoneCompositor
+    val previousRequested = zoneCompositor
     val updated = PrivateLayerZoneCompositorModule.normalize(requestedConfiguration)
     zoneCompositor = updated
+    val readableVideoRequired =
+        PrivateLayerZoneCompositorModule.readableVideoConsumerRequired(updated)
+    val effectiveBefore = synchronized(zoneCompositorLifecycleLock) { effectiveZoneCompositor }
+    if (readableVideoRequired &&
+        !PrivateLayerZoneCompositorModule.readableVideoConsumerRequired(effectiveBefore)) {
+      synchronized(zoneCompositorLifecycleLock) {
+        pendingReadableVideoZoneCompositor = updated
+      }
+      bindings.marker(
+          "channel=private-layer-panel status=zone-compositor-video-pending " +
+              "source=${activityMarkerToken(source)} requestedOuterContent=video " +
+              "effectiveOuterContent=${PrivateLayerZoneCompositorControls.outerContentToken(effectiveBefore.outerContentMode)} " +
+              "lastSafeCompositorRetained=true decoderEffectiveRequired=true runtimeCrash=false"
+      )
+      bindings.updateReadableVideoConsumerRequired(
+          true,
+          "private-layer-${activityMarkerToken(source)}",
+      )
+      return updated
+    }
+
+    synchronized(zoneCompositorLifecycleLock) {
+      pendingReadableVideoZoneCompositor = null
+    }
+    val submitted = submitEffectiveZoneCompositor(updated, effectiveBefore, source)
+    bindings.updateReadableVideoConsumerRequired(
+        if (submitted) readableVideoRequired
+        else PrivateLayerZoneCompositorModule.readableVideoConsumerRequired(effectiveBefore),
+        "private-layer-${activityMarkerToken(source)}",
+    )
+    if (previousRequested != updated) {
+      bindings.marker(
+          "channel=private-layer-panel status=zone-compositor-request-adopted " +
+              "source=${activityMarkerToken(source)} requestedChanged=true runtimeCrash=false"
+      )
+    }
+    return updated
+  }
+
+  fun updateReadableVideoLifecycle(
+      state: SpatialVideoProjectionDecoderState,
+      source: String,
+  ) {
+    val requested = zoneCompositor
+    when (state) {
+      SpatialVideoProjectionDecoderState.Starting ->
+          bindings.marker(
+              "channel=private-layer-panel status=zone-compositor-video-starting " +
+                  "source=${activityMarkerToken(source)} lastSafeCompositorRetained=true"
+          )
+      SpatialVideoProjectionDecoderState.Effective -> {
+        val pending =
+            synchronized(zoneCompositorLifecycleLock) {
+              pendingReadableVideoZoneCompositor?.takeIf {
+                it == requested &&
+                    PrivateLayerZoneCompositorModule.readableVideoConsumerRequired(it)
+              }
+            }
+        if (pending != null) {
+          val previous = synchronized(zoneCompositorLifecycleLock) { effectiveZoneCompositor }
+          if (submitEffectiveZoneCompositor(pending, previous, "$source-video-effective")) {
+            synchronized(zoneCompositorLifecycleLock) {
+              if (pendingReadableVideoZoneCompositor == pending) {
+                pendingReadableVideoZoneCompositor = null
+              }
+            }
+          }
+        }
+      }
+      SpatialVideoProjectionDecoderState.Failed -> {
+        val fallback = safeReadableVideoFallback(requested)
+        val previous = synchronized(zoneCompositorLifecycleLock) { effectiveZoneCompositor }
+        if (PrivateLayerZoneCompositorModule.readableVideoConsumerRequired(previous)) {
+          submitEffectiveZoneCompositor(fallback, previous, "$source-video-failed")
+        }
+        synchronized(zoneCompositorLifecycleLock) {
+          pendingReadableVideoZoneCompositor =
+              requested.takeIf {
+                PrivateLayerZoneCompositorModule.readableVideoConsumerRequired(it)
+              }
+        }
+        bindings.marker(
+            "channel=private-layer-panel status=zone-compositor-video-failed " +
+                "source=${activityMarkerToken(source)} requestedOuterContent=video " +
+                "effectiveOuterContent=${PrivateLayerZoneCompositorControls.outerContentToken(fallback.outerContentMode)} " +
+                "lastSafeCompositorRetained=true runtimeCrash=false"
+        )
+      }
+      SpatialVideoProjectionDecoderState.Stopped -> {
+        if (PrivateLayerZoneCompositorModule.readableVideoConsumerRequired(requested)) {
+          val fallback = safeReadableVideoFallback(requested)
+          val previous = synchronized(zoneCompositorLifecycleLock) { effectiveZoneCompositor }
+          if (PrivateLayerZoneCompositorModule.readableVideoConsumerRequired(previous)) {
+            submitEffectiveZoneCompositor(fallback, previous, "$source-video-stopped")
+          }
+          synchronized(zoneCompositorLifecycleLock) {
+            pendingReadableVideoZoneCompositor = requested
+          }
+          bindings.marker(
+              "channel=private-layer-panel status=zone-compositor-video-stopped " +
+                  "source=${activityMarkerToken(source)} lastSafeCompositorRetained=true"
+          )
+        }
+      }
+    }
+  }
+
+  private fun submitEffectiveZoneCompositor(
+      updated: PrivateLayerZoneCompositor,
+      previous: PrivateLayerZoneCompositor,
+      source: String,
+  ): Boolean {
     val updateMask =
         runCatching { bindings.updateZoneCompositorNative(updated) }
             .getOrElse { throwable ->
@@ -647,22 +768,39 @@ internal class SpatialPrivateLayerControlCoordinator(
                       "source=${activityMarkerToken(source)} " +
                       "error=${activityMarkerToken(throwable.javaClass.simpleName)} " +
                       "message=${activityMarkerToken(throwable.message ?: "none")} " +
-                      "${PrivateLayerZoneCompositorModule.markerFields(updated)} runtimeCrash=false"
+                      "previousProjectionZoneMode=${PrivateLayerZoneCompositorControls.coverageToken(previous.coverageMode)} " +
+                      "${PrivateLayerZoneCompositorModule.markerFields(updated)} " +
+                      "effectiveStateRetained=true jniSubmissionSucceeded=false rendered=false runtimeCrash=false"
               )
-              0L
+              return false
             }
+    synchronized(zoneCompositorLifecycleLock) {
+      effectiveZoneCompositor = updated
+    }
     bindings.marker(
         "channel=private-layer-panel status=zone-compositor-submitted " +
             "source=${activityMarkerToken(source)} transport=jni-live-queue updateMask=$updateMask " +
             "previousProjectionZoneMode=${PrivateLayerZoneCompositorControls.coverageToken(previous.coverageMode)} " +
-            "${PrivateLayerZoneCompositorModule.markerFields(updated)} runtimeCrash=false"
+            "${PrivateLayerZoneCompositorModule.markerFields(updated)} " +
+            "jniSubmissionSucceeded=true rendered=false runtimeCrash=false"
     )
-    bindings.updateReadableVideoConsumerRequired(
-        PrivateLayerZoneCompositorModule.readableVideoConsumerRequired(updated),
-        "private-layer-${activityMarkerToken(source)}",
-    )
-    return updated
+    return true
   }
+
+  private fun safeReadableVideoFallback(
+      requested: PrivateLayerZoneCompositor,
+  ): PrivateLayerZoneCompositor =
+      if (PrivateLayerZoneCompositorModule.readableVideoConsumerRequired(requested)) {
+        PrivateLayerZoneCompositorModule.normalize(
+            requested.copy(
+                outerTargetMode =
+                    PrivateLayerZoneCompositorControls.outerTargetTransparentSpatialVideo,
+                outerContentMode = PrivateLayerZoneCompositorControls.outerContentTransparent,
+            )
+        )
+      } else {
+        requested
+      }
 
   fun updateRgbChannelTransform(
       requestedConfiguration: RgbChannelTransform,
@@ -689,6 +827,30 @@ internal class SpatialPrivateLayerControlCoordinator(
             "source=${activityMarkerToken(source)} transport=jni-live-queue updateMask=$updateMask " +
             "previousRgbChannelTransformMode=${RgbChannelTransformControls.modeToken(previous.mode)} " +
             "${RgbChannelTransformModule.markerFields(updated)} runtimeCrash=false"
+    )
+    return updated
+  }
+
+  fun updateStrengthCycleSpeedHz(requestedSpeedHz: Float, source: String): Float {
+    if (!bindings.routeActive()) return strengthCycleSpeedHz
+    val previous = strengthCycleSpeedHz
+    val updated = SpatialStrengthCycleControls.normalize(requestedSpeedHz)
+    strengthCycleSpeedHz = updated
+    val updateMask =
+        runCatching { bindings.updateStrengthCycleSpeedHzNative(updated) }
+            .getOrElse { throwable ->
+              bindings.marker(
+                  "channel=private-layer-panel status=strength-cycle-speed-update-failed " +
+                      "source=${activityMarkerToken(source)} " +
+                      "error=${activityMarkerToken(throwable.javaClass.simpleName)} " +
+                      "message=${activityMarkerToken(throwable.message ?: "none")} runtimeCrash=false"
+              )
+              0L
+            }
+    bindings.marker(
+        "channel=private-layer-panel status=strength-cycle-speed-submitted " +
+            "source=${activityMarkerToken(source)} transport=jni-live-queue updateMask=$updateMask " +
+            "previousStrengthCycleSpeedHz=$previous effectiveStrengthCycleSpeedHz=$updated runtimeCrash=false"
     )
     return updated
   }

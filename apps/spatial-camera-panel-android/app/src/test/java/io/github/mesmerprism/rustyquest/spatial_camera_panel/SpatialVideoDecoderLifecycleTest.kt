@@ -47,6 +47,73 @@ class SpatialVideoDecoderLifecycleTest {
   }
 
   @Test
+  fun decoderBecomesEffectiveOnlyAfterFirstDecodedFrameAndErrorClearsIt() {
+    val calls = ArrayList<String>()
+    val states = ArrayList<SpatialVideoProjectionDecoderState>()
+    var callbacks: SpatialVideoProjectionPlaybackCallbacks? = null
+    val coordinator =
+        SpatialVideoProjectionRuntimeCoordinator(
+            bindings(calls = calls, stopResult = true, startResult = true).copy(
+                startPlayback = { settings, _, receivedCallbacks ->
+                  calls += "start:${settings.path}"
+                  callbacks = receivedCallbacks
+                  true
+                },
+                onDecoderStateChanged = { state, _ -> states += state },
+            )
+        )
+    val settings = activeSettings("content://plain/lifecycle")
+    coordinator.adoptSettings(settings)
+
+    coordinator.start(settings, "lifecycle")
+
+    assertEquals(SpatialVideoProjectionDecoderState.Starting, coordinator.decoderState)
+    assertFalse(coordinator.started)
+    callbacks!!.onFirstFrame()
+    assertEquals(SpatialVideoProjectionDecoderState.Effective, coordinator.decoderState)
+    assertTrue(coordinator.started)
+    callbacks!!.onError("offline-pack-chunk-authentication-failed")
+    assertEquals(SpatialVideoProjectionDecoderState.Failed, coordinator.decoderState)
+    assertFalse(coordinator.started)
+    assertEquals(
+        listOf(
+            SpatialVideoProjectionDecoderState.Starting,
+            SpatialVideoProjectionDecoderState.Effective,
+            SpatialVideoProjectionDecoderState.Failed,
+        ),
+        states,
+    )
+  }
+
+  @Test
+  fun failedDecoderCanBeRetriedWithoutAFalseStartedState() {
+    val calls = ArrayList<String>()
+    val callbacks = ArrayList<SpatialVideoProjectionPlaybackCallbacks>()
+    val coordinator =
+        SpatialVideoProjectionRuntimeCoordinator(
+            bindings(calls = calls, stopResult = true, startResult = true).copy(
+                startPlayback = { settings, _, receivedCallbacks ->
+                  calls += "start:${settings.path}"
+                  callbacks += receivedCallbacks
+                  true
+                }
+            )
+        )
+    val settings = activeSettings("content://plain/retry")
+    coordinator.adoptSettings(settings)
+    coordinator.start(settings, "initial")
+    callbacks.single().onError("decoder-error")
+
+    coordinator.updateReadableVideoConsumer(true, "retry")
+
+    assertEquals(2, callbacks.size)
+    assertEquals(SpatialVideoProjectionDecoderState.Starting, coordinator.decoderState)
+    assertFalse(coordinator.started)
+    callbacks.last().onFirstFrame()
+    assertTrue(coordinator.started)
+  }
+
+  @Test
   fun customProjectionStopsOldDecoderBeforeConfiguringAndStartingNewSource() {
     val calls = ArrayList<String>()
     val coordinator =
@@ -113,6 +180,63 @@ class SpatialVideoDecoderLifecycleTest {
 
     assertFalse(coordinator.started)
     assertTrue(calls.isEmpty())
+  }
+
+  @Test
+  fun composedStartupOwnershipKeepsZeroDemandSeparateFromFailureAndHiddenDirectOwnership() {
+    val zeroDemandCalls = ArrayList<String>()
+    val zeroDemand =
+        SpatialVideoProjectionRuntimeCoordinator(
+            bindings(calls = zeroDemandCalls, stopResult = true, startResult = true)
+        )
+    val settings = activeSettings("content://plain/composed-ownership")
+    zeroDemand.adoptSettings(settings)
+    zeroDemand.updateReadableVideoConsumer(false, "transparent-underlay")
+
+    val skipped =
+        zeroDemand.startForComposedOwnership(
+            settings,
+            projectionPanelVisible = true,
+            reason = "startup",
+        )
+
+    assertEquals(SpatialVideoProjectionStartupDisposition.ZeroDemandSkipped, skipped.disposition)
+    assertFalse(skipped.directVideoConsumerRequired)
+    assertTrue(zeroDemandCalls.isEmpty())
+
+    val hiddenCalls = ArrayList<String>()
+    val hidden =
+        SpatialVideoProjectionRuntimeCoordinator(
+            bindings(calls = hiddenCalls, stopResult = true, startResult = true)
+        )
+    hidden.adoptSettings(settings)
+    val direct =
+        hidden.startForComposedOwnership(
+            settings,
+            projectionPanelVisible = false,
+            reason = "startup",
+        )
+
+    assertEquals(SpatialVideoProjectionStartupDisposition.ProjectionHiddenDirect, direct.disposition)
+    assertTrue(direct.directVideoConsumerRequired)
+    assertTrue(hiddenCalls.isEmpty())
+
+    val failedCalls = ArrayList<String>()
+    val failed =
+        SpatialVideoProjectionRuntimeCoordinator(
+            bindings(calls = failedCalls, stopResult = true, startResult = false)
+        )
+    failed.adoptSettings(settings)
+    val fallback =
+        failed.startForComposedOwnership(
+            settings,
+            projectionPanelVisible = true,
+            reason = "startup",
+        )
+
+    assertEquals(SpatialVideoProjectionStartupDisposition.DecoderFailed, fallback.disposition)
+    assertTrue(fallback.directVideoConsumerRequired)
+    assertEquals(listOf("start:${settings.path}"), failedCalls)
   }
 
   @Test
@@ -262,8 +386,9 @@ class SpatialVideoDecoderLifecycleTest {
             calls += "configure:${it.path}"
             1L
           },
-          startPlayback = { settings, _ ->
+          startPlayback = { settings, _, callbacks ->
             calls += "start:${settings.path}"
+            if (startResult) callbacks.onFirstFrame()
             startResult
           },
           stopPlayback = {

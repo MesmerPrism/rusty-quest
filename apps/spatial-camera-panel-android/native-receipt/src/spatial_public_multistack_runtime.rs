@@ -8,8 +8,11 @@ use std::mem;
 #[cfg(target_os = "android")]
 use std::os::raw::{c_char, c_int};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
+use std::thread::{self, JoinHandle};
 use std::time::Instant;
 
+use crate::camera_hwb_marker::log_camera_hwb_marker as log_marker;
 use ash::vk::{self, Handle};
 
 use crate::camera_hwb_projection_target::{
@@ -37,9 +40,7 @@ use crate::spatial_guide_processing::{
 use crate::spatial_guide_processing::{
     SpatialCameraSampling, SpatialGuideBlurKernel, SpatialGuideInputTreatment,
 };
-use crate::spatial_presentation_policy::{
-    presentation_distortion_phase_rate_hz, presentation_layer_override,
-};
+use crate::spatial_presentation_policy::presentation_layer_override;
 
 pub(crate) const SPATIAL_PUBLIC_GUIDE_TARGET_COUNT: usize = 5;
 pub(crate) const SPATIAL_PUBLIC_GUIDE_TARGET_FORMAT: vk::Format = vk::Format::R8G8B8A8_UNORM;
@@ -68,7 +69,8 @@ const SPATIAL_PUBLIC_GUIDE_POSTBLUR_KERNEL_PROPERTY: &str =
     "debug.rustyquest.spatial.camera_hwb_projection_probe.guide.postblur.kernel";
 const SPATIAL_PUBLIC_CAMERA_SAMPLING_PROPERTY: &str =
     "debug.rustyquest.spatial.camera_hwb_projection_probe.camera.sampling";
-const SPATIAL_PUBLIC_OPAQUE_GUIDE_NATIVE_PHASE_RATE_HZ: f32 = 0.5;
+pub(crate) const SPATIAL_PUBLIC_STRENGTH_CYCLE_SPEED_HZ_DEFAULT: f32 = 0.25;
+pub(crate) const SPATIAL_PUBLIC_STRENGTH_CYCLE_SPEED_HZ_MAX: f32 = 2.0;
 const SPATIAL_PUBLIC_VIDEO_BORDER_INNER_BLEND_UV: f32 = 0.04;
 const SPATIAL_PUBLIC_VIDEO_BORDER_BLEND_CURVE: f32 = 1.6;
 const SPATIAL_PUBLIC_DEPTH_LAYER_COMPARE_SENTINEL: f32 = 2.0;
@@ -98,6 +100,77 @@ static SPATIAL_PUBLIC_DEPTH_ALIGNMENT_SAMPLE_SCALE_Y_BITS: AtomicU32 =
 static SPATIAL_PUBLIC_DEPTH_ALIGNMENT_ROLL_DEGREES_BITS: AtomicU32 =
     AtomicU32::new(0.0f32.to_bits());
 static SPATIAL_PUBLIC_DEPTH_ALIGNMENT_METADATA_AUTO: AtomicBool = AtomicBool::new(true);
+static SPATIAL_PUBLIC_STRENGTH_CYCLE_SPEED_HZ_BITS: AtomicU32 = AtomicU32::new(
+    SPATIAL_PUBLIC_STRENGTH_CYCLE_SPEED_HZ_DEFAULT.to_bits(),
+);
+static SPATIAL_PUBLIC_STRENGTH_CYCLE_PHASE: OnceLock<Mutex<SpatialPublicStrengthCyclePhase>> =
+    OnceLock::new();
+
+#[derive(Clone, Copy, Debug, Default)]
+struct SpatialPublicStrengthCyclePhase {
+    last_elapsed_seconds: Option<f32>,
+    phase_turns: f32,
+}
+
+fn strength_cycle_phase_lock() -> &'static Mutex<SpatialPublicStrengthCyclePhase> {
+    SPATIAL_PUBLIC_STRENGTH_CYCLE_PHASE.get_or_init(|| Mutex::new(SpatialPublicStrengthCyclePhase::default()))
+}
+
+fn normalize_strength_cycle_speed_hz(requested_hz: f32) -> f32 {
+    if requested_hz.is_finite() {
+        requested_hz.clamp(0.0, SPATIAL_PUBLIC_STRENGTH_CYCLE_SPEED_HZ_MAX)
+    } else {
+        SPATIAL_PUBLIC_STRENGTH_CYCLE_SPEED_HZ_DEFAULT
+    }
+}
+
+pub(crate) fn update_spatial_public_strength_cycle_speed_hz(requested_hz: f32) -> f32 {
+    let effective_hz = normalize_strength_cycle_speed_hz(requested_hz);
+    SPATIAL_PUBLIC_STRENGTH_CYCLE_SPEED_HZ_BITS.store(effective_hz.to_bits(), Ordering::Release);
+    effective_hz
+}
+
+pub(crate) fn current_spatial_public_strength_cycle_speed_hz() -> f32 {
+    normalize_strength_cycle_speed_hz(f32::from_bits(
+        SPATIAL_PUBLIC_STRENGTH_CYCLE_SPEED_HZ_BITS.load(Ordering::Acquire),
+    ))
+}
+
+fn advance_spatial_public_strength_cycle_phase(elapsed_seconds: f32) -> f32 {
+    let rate_hz = current_spatial_public_strength_cycle_speed_hz();
+    let mut state = strength_cycle_phase_lock()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    advance_strength_cycle_phase(&mut state, elapsed_seconds, rate_hz)
+}
+
+fn advance_strength_cycle_phase(
+    state: &mut SpatialPublicStrengthCyclePhase,
+    elapsed_seconds: f32,
+    rate_hz: f32,
+) -> f32 {
+    let requested_now = elapsed_seconds
+        .is_finite()
+        .then_some(elapsed_seconds.max(0.0))
+        .unwrap_or(0.0);
+    // A renderer/carrier can restart its elapsed-time origin while this process
+    // remains alive. Retain the phase but rebase the frame clock so that restart
+    // does not freeze the cycle until the old uptime is reached again.
+    if state
+        .last_elapsed_seconds
+        .is_some_and(|previous| requested_now < previous)
+    {
+        state.last_elapsed_seconds = Some(requested_now);
+        return state.phase_turns;
+    }
+    let now = requested_now;
+    if let Some(previous) = state.last_elapsed_seconds {
+        state.phase_turns = (state.phase_turns + (now - previous) * normalize_strength_cycle_speed_hz(rate_hz))
+            .rem_euclid(1.0);
+    }
+    state.last_elapsed_seconds = Some(now);
+    state.phase_turns
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(u32)]
@@ -319,6 +392,33 @@ pub(crate) fn spatial_public_guide_target_extent() -> vk::Extent2D {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ProjectionZoneCompositorPrepareStatus {
+    Ready,
+    SettingsInactive,
+    ShaderUnavailable,
+    DescriptorLayoutUnavailable,
+    PipelineUnavailable,
+    PipelinePreparing,
+}
+
+impl ProjectionZoneCompositorPrepareStatus {
+    pub(crate) fn ready(self) -> bool {
+        self == Self::Ready
+    }
+
+    pub(crate) fn marker_token(self) -> &'static str {
+        match self {
+            Self::Ready => "ready",
+            Self::SettingsInactive => "settings-inactive",
+            Self::ShaderUnavailable => "shader-unavailable",
+            Self::DescriptorLayoutUnavailable => "descriptor-layout-unavailable",
+            Self::PipelineUnavailable => "pipeline-unavailable",
+            Self::PipelinePreparing => "pipeline-preparing",
+        }
+    }
+}
+
 pub(crate) struct SpatialPublicGuideTargets {
     targets: Vec<SpatialPublicGuideTarget>,
     extent: vk::Extent2D,
@@ -343,6 +443,9 @@ pub(crate) struct SpatialPublicGuideTargets {
     rgb_channel_transform_uniform: SpatialRgbChannelTransformUniformResources,
     projection_zone_uniform: SpatialProjectionZoneUniformResources,
     projection_zone_video_pipeline: Option<SpatialProjectionZoneVideoPipeline>,
+    projection_zone_pipeline_build: Option<SpatialProjectionZonePipelineBuild>,
+    projection_zone_failed_build: Option<(vk::DescriptorSetLayout, bool)>,
+    projection_zone_rendered_frame: Cell<Option<(CameraHwbProjectionZoneFrame, bool)>>,
     blur_pipeline_layout: vk::PipelineLayout,
     blur_pipeline: vk::Pipeline,
 }
@@ -511,20 +614,101 @@ impl SpatialProjectionZoneUniformResources {
 }
 
 struct SpatialProjectionZoneVideoPipeline {
+    device: ash::Device,
     video_descriptor_set_layout: vk::DescriptorSetLayout,
     same_surface_blend_enabled: bool,
     pipeline_layout: vk::PipelineLayout,
     pipeline: vk::Pipeline,
     displacement_pipeline: Option<vk::Pipeline>,
+    // A format replacement must not destroy an immutable sampler while a worker or
+    // the active compositor still uses its exact descriptor layout.
+    _video_resources: Option<SpatialVideoProjectionResourceLease>,
+}
+
+/// Owns a format-specific descriptor layout and its immutable sampler. The
+/// renderer supplies its resource bundle; type erasure keeps this lifetime
+/// contract usable by host tests without an Android image reader.
+#[derive(Clone)]
+pub(crate) struct SpatialVideoProjectionResourceLease {
+    descriptor_set_layout: vk::DescriptorSetLayout,
+    _owner: Arc<dyn Send + Sync>,
+}
+
+impl SpatialVideoProjectionResourceLease {
+    pub(crate) fn new<T: Send + Sync + 'static>(
+        descriptor_set_layout: vk::DescriptorSetLayout,
+        owner: Arc<T>,
+    ) -> Self {
+        Self {
+            descriptor_set_layout,
+            _owner: owner,
+        }
+    }
+
+    pub(crate) fn descriptor_set_layout(&self) -> vk::DescriptorSetLayout {
+        self.descriptor_set_layout
+    }
+}
+
+struct SpatialProjectionZonePipelineBuild {
+    key: (vk::DescriptorSetLayout, bool),
+    worker: SpatialPipelineWorker<Result<SpatialProjectionZoneVideoPipeline, String>>,
+}
+
+/// A single owned compilation job. Normal rendering polls is_finished before
+/// joining; dropping the owner on teardown/error also joins, so no worker can
+/// outlive the borrowed Vulkan device, render pass, or camera layouts.
+pub(crate) struct SpatialPipelineWorker<T: Send + 'static> {
+    worker: Option<JoinHandle<T>>,
+}
+
+impl<T: Send + 'static> SpatialPipelineWorker<T> {
+    pub(crate) fn spawn(
+        name: &str,
+        work: impl FnOnce() -> T + Send + 'static,
+    ) -> std::io::Result<Self> {
+        thread::Builder::new()
+            .name(name.into())
+            .spawn(work)
+            .map(|worker| Self {
+                worker: Some(worker),
+            })
+    }
+
+    pub(crate) fn is_finished(&self) -> bool {
+        self.worker.as_ref().is_some_and(JoinHandle::is_finished)
+    }
+
+    pub(crate) fn join(mut self) -> thread::Result<T> {
+        self.worker.take().expect("owned-pipeline-worker").join()
+    }
+}
+
+impl<T: Send + 'static> Drop for SpatialPipelineWorker<T> {
+    fn drop(&mut self) {
+        if let Some(worker) = self.worker.take() {
+            // An abandoned successful result owns its resources and drops them.
+            let _ = worker.join();
+        }
+    }
 }
 
 impl SpatialProjectionZoneVideoPipeline {
-    unsafe fn destroy(self, device: &ash::Device) {
-        if let Some(pipeline) = self.displacement_pipeline {
-            device.destroy_pipeline(pipeline, None);
+    unsafe fn destroy(self, _device: &ash::Device) {
+        drop(self);
+    }
+}
+
+impl Drop for SpatialProjectionZoneVideoPipeline {
+    fn drop(&mut self) {
+        unsafe {
+            if let Some(pipeline) = self.displacement_pipeline {
+                self.device.destroy_pipeline(pipeline, None);
+            }
+            self.device.destroy_pipeline(self.pipeline, None);
+            self.device
+                .destroy_pipeline_layout(self.pipeline_layout, None);
         }
-        device.destroy_pipeline(self.pipeline, None);
-        device.destroy_pipeline_layout(self.pipeline_layout, None);
     }
 }
 
@@ -545,6 +729,13 @@ impl SpatialPublicGuideTargets {
     }
 
     pub(crate) unsafe fn destroy(self, device: &ash::Device) {
+        // Teardown alone may join unfinished work. All input layouts and the render
+        // pass remain alive until the worker has returned.
+        if let Some(build) = self.projection_zone_pipeline_build {
+            if let Ok(Ok(pipeline)) = build.worker.join() {
+                pipeline.destroy(device);
+            }
+        }
         for pipeline in self.opaque_guide_pipelines {
             device.destroy_pipeline(pipeline, None);
         }
@@ -645,9 +836,10 @@ impl SpatialPublicGuideTargets {
         let left_projection_rect = packed_projection_target_rect(0, footprint_scale);
         let right_projection_rect = packed_projection_target_rect(1, footprint_scale);
         format!(
-            "publicMultiStackProjectionApplied={} publicMultiStackLayerCycleEnabled=true publicMultiStackLayerCycleElapsedSeconds={:.3} publicMultiStackOpaqueProjectionTargetSpace=packed-stereo-surface-uv publicMultiStackOpaqueProjectionLeftTargetRect={} publicMultiStackOpaqueProjectionRightTargetRect={} publicMultiStackGuideTargetsAllocated=true publicMultiStackGuidePassResourcesReady=true publicMultiStackPassExecutionReady={} publicGuideBlurRuntimeReady={} publicGuideBlurPipelineReady=true publicGuideBlurRecordFunctionReady=true publicMultiStackOpaqueGuideDescriptorReady=true publicMultiStackOpaqueGuidePipelinesReady={} publicMultiStackOpaqueGuidePipelines={} publicMultiStackOpaqueGuideShaderPassCount={} publicMultiStackOpaqueProjectionPipelineReady={} publicMultiStackOpaqueProjectionPayloadExecutionReady={} publicMultiStackOpaquePayloadExecutionReady={} {} {} {} {} publicMultiStackGuideFramebuffers={} publicMultiStackGuideSampleDescriptorSets={} {}",
+            "publicMultiStackProjectionApplied={} publicMultiStackLayerCycleEnabled=true publicMultiStackLayerCycleElapsedSeconds={:.3} strengthCycleSpeedHz={:.4} strengthCyclePhaseClock=shared-frame-monotonic publicMultiStackOpaqueProjectionTargetSpace=packed-stereo-surface-uv publicMultiStackOpaqueProjectionLeftTargetRect={} publicMultiStackOpaqueProjectionRightTargetRect={} publicMultiStackGuideTargetsAllocated=true publicMultiStackGuidePassResourcesReady=true publicMultiStackPassExecutionReady={} publicGuideBlurRuntimeReady={} publicGuideBlurPipelineReady=true publicGuideBlurRecordFunctionReady=true publicMultiStackOpaqueGuideDescriptorReady=true publicMultiStackOpaqueGuidePipelinesReady={} publicMultiStackOpaqueGuidePipelines={} publicMultiStackOpaqueGuideShaderPassCount={} publicMultiStackOpaqueProjectionPipelineReady={} publicMultiStackOpaqueProjectionPayloadExecutionReady={} publicMultiStackOpaquePayloadExecutionReady={} {} {} {} {} publicMultiStackGuideFramebuffers={} publicMultiStackGuideSampleDescriptorSets={} {}",
             bool_marker(projected_by_public_stack),
             elapsed_seconds.max(0.0),
+            current_spatial_public_strength_cycle_speed_hz(),
             rect_marker(left_projection_rect),
             rect_marker(right_projection_rect),
             bool_marker(self.guide_pass_execution_available()),
@@ -961,18 +1153,57 @@ impl SpatialPublicGuideTargets {
         device: &ash::Device,
         zone_frame: &CameraHwbProjectionZoneFrame,
         video_descriptor_set_layout: vk::DescriptorSetLayout,
-    ) -> Result<bool, String> {
-        if !zone_frame.settings.active()
-            || !OPAQUE_PROJECTION_VIDEO_COMPOSITOR_SHADER_COMPILED
-            || video_descriptor_set_layout == vk::DescriptorSetLayout::null()
-        {
-            return Ok(false);
+        video_resources: Option<SpatialVideoProjectionResourceLease>,
+    ) -> Result<ProjectionZoneCompositorPrepareStatus, String> {
+        if !zone_frame.settings.active() {
+            return Ok(ProjectionZoneCompositorPrepareStatus::SettingsInactive);
         }
-        self.projection_zone_uniform
-            .update(device, &zone_frame.uniform)?;
+        if !OPAQUE_PROJECTION_VIDEO_COMPOSITOR_SHADER_COMPILED {
+            return Ok(ProjectionZoneCompositorPrepareStatus::ShaderUnavailable);
+        }
+        if video_descriptor_set_layout == vk::DescriptorSetLayout::null() {
+            return Ok(ProjectionZoneCompositorPrepareStatus::DescriptorLayoutUnavailable);
+        }
+        if video_descriptor_set_layout != self.camera_descriptor_set_layout
+            && !video_resources
+                .as_ref()
+                .is_some_and(|lease| lease.descriptor_set_layout() == video_descriptor_set_layout)
+        {
+            return Ok(ProjectionZoneCompositorPrepareStatus::DescriptorLayoutUnavailable);
+        }
         let same_surface_blend_required =
             projection_zone_same_surface_blend_required(zone_frame.settings);
-        let layout_changed = !projection_zone_pipeline_binding_compatible(
+        let requested_key = (video_descriptor_set_layout, same_surface_blend_required);
+        if self
+            .projection_zone_pipeline_build
+            .as_ref()
+            .is_some_and(|build| build.worker.is_finished())
+        {
+            let build = self.projection_zone_pipeline_build.take().unwrap();
+            match build.worker.join() {
+                Ok(Ok(pipeline)) if build.key == requested_key => {
+                    // The caller has retired the preceding GPU submission before
+                    // recording this frame. Never replace the last good pipeline
+                    // until the complete exact-layout bundle is available.
+                    if let Some(previous) = self.projection_zone_video_pipeline.replace(pipeline) {
+                        previous.destroy(device);
+                    }
+                    self.projection_zone_rendered_frame.set(None);
+                    self.projection_zone_failed_build = None;
+                    log_marker("status=projection-zone-pipeline-adopted preparation=worker exactLayoutMatch=true runtimeCrash=false".to_string());
+                }
+                Ok(Ok(stale)) => stale.destroy(device),
+                result => {
+                    self.projection_zone_failed_build = Some(build.key);
+                    let reason = match result {
+                        Ok(Err(error)) => error,
+                        _ => "worker-panicked".to_string(),
+                    };
+                    log_marker(format!("status=projection-zone-pipeline-failed reason={} lastGoodPipelinePreserved=true runtimeCrash=false", crate::marker_token(&reason)));
+                }
+            }
+        }
+        let compatible = projection_zone_pipeline_binding_compatible(
             self.projection_zone_video_pipeline
                 .as_ref()
                 .map(|pipeline| {
@@ -984,23 +1215,76 @@ impl SpatialPublicGuideTargets {
             video_descriptor_set_layout,
             same_surface_blend_required,
         );
-        if layout_changed {
-            if let Some(previous) = self.projection_zone_video_pipeline.take() {
-                previous.destroy(device);
-            }
-            self.projection_zone_video_pipeline = Some(create_projection_zone_video_pipeline(
-                device,
-                self.projection_render_pass,
-                self.camera_descriptor_set_layout,
-                self.opaque_guide_descriptor_set_layout,
-                self.depth_descriptor_set_layout,
-                self.rgb_channel_transform_uniform.descriptor_set_layout,
-                video_descriptor_set_layout,
-                self.projection_zone_uniform.descriptor_set_layout,
-                same_surface_blend_required,
-            )?);
+        if compatible {
+            return Ok(ProjectionZoneCompositorPrepareStatus::Ready);
         }
-        Ok(self.projection_zone_video_pipeline.is_some())
+        if self.projection_zone_failed_build == Some(requested_key) {
+            return Ok(ProjectionZoneCompositorPrepareStatus::PipelineUnavailable);
+        }
+        if self.projection_zone_pipeline_build.is_none() {
+            let worker_device = device.clone();
+            let render_pass = self.projection_render_pass;
+            let camera_layout = self.camera_descriptor_set_layout;
+            let guide_layout = self.opaque_guide_descriptor_set_layout;
+            let depth_layout = self.depth_descriptor_set_layout;
+            let rgb_layout = self.rgb_channel_transform_uniform.descriptor_set_layout;
+            let zone_layout = self.projection_zone_uniform.descriptor_set_layout;
+            match SpatialPipelineWorker::spawn("zone-pipeline", move || {
+                let started_at = Instant::now();
+                let result = create_projection_zone_video_pipeline(
+                    &worker_device,
+                    render_pass,
+                    camera_layout,
+                    guide_layout,
+                    depth_layout,
+                    rgb_layout,
+                    video_descriptor_set_layout,
+                    zone_layout,
+                    same_surface_blend_required,
+                    video_resources,
+                );
+                log_marker(format!("status=projection-zone-pipeline-prepared preparation=worker cpuDurationNs={} succeeded={} runtimeCrash=false", started_at.elapsed().as_nanos(), result.is_ok()));
+                result
+            }) {
+                Ok(worker) => {
+                    self.projection_zone_pipeline_build =
+                        Some(SpatialProjectionZonePipelineBuild {
+                            key: requested_key,
+                            worker,
+                        });
+                }
+                Err(error) => {
+                    self.projection_zone_failed_build = Some(requested_key);
+                    log_marker(format!("status=projection-zone-pipeline-worker-unavailable reason={} runtimeCrash=false", crate::marker_token(&error.to_string())));
+                    return Ok(ProjectionZoneCompositorPrepareStatus::PipelineUnavailable);
+                }
+            }
+        }
+        Ok(ProjectionZoneCompositorPrepareStatus::PipelinePreparing)
+    }
+
+    pub(crate) fn retained_projection_zone_frame(
+        &self,
+        descriptor_layout: vk::DescriptorSetLayout,
+        readable_video_available: bool,
+    ) -> Option<CameraHwbProjectionZoneFrame> {
+        projection_zone_retained_frame_for_binding(
+            self.projection_zone_video_pipeline
+                .as_ref()
+                .map(|pipeline| pipeline.video_descriptor_set_layout),
+            self.projection_zone_rendered_frame.get(),
+            descriptor_layout,
+            readable_video_available,
+        )
+    }
+
+    pub(crate) fn remember_projection_zone_frame(
+        &self,
+        frame: CameraHwbProjectionZoneFrame,
+        readable_video_required: bool,
+    ) {
+        self.projection_zone_rendered_frame
+            .set(Some((frame, readable_video_required)));
     }
 
     pub(crate) unsafe fn record_spatial_public_projection_in_open_render_pass(
@@ -1024,7 +1308,10 @@ impl SpatialPublicGuideTargets {
             packed_projection_target_rect(1, footprint_scale),
         ];
         self.rgb_channel_transform_uniform
-            .update(device, &current_rgb_channel_transform_settings().uniform())?;
+            .update(
+                device,
+                &current_rgb_channel_transform_settings().uniform_at_elapsed_seconds(elapsed_seconds),
+            )?;
         self.rgb_channel_transform_uniform
             .update_displacement(device, &surface_features.uniform(displacement, draw_rects))?;
         let tessellated_effective =
@@ -1034,6 +1321,7 @@ impl SpatialPublicGuideTargets {
                     PROJECTION_SURFACE_UNIFORM_ABI_VERSION >= 2
                         && self.opaque_projection_displacement_pipeline.is_some(),
                 );
+        let strength_cycle_phase_turns = advance_spatial_public_strength_cycle_phase(elapsed_seconds);
         for eye_index in 0..SPATIAL_PUBLIC_PACKED_EYE_COUNT {
             let target_rect = draw_rects[eye_index];
             set_packed_projection_target_view(device, command_buffer, extent, target_rect);
@@ -1062,6 +1350,7 @@ impl SpatialPublicGuideTargets {
             let push = OpaqueProjectionPush::for_packed_eye(
                 eye_index,
                 elapsed_seconds,
+                strength_cycle_phase_turns,
                 depth_binding,
                 footprint_scale,
                 layer_override,
@@ -1104,10 +1393,17 @@ impl SpatialPublicGuideTargets {
             .projection_zone_video_pipeline
             .as_ref()
             .ok_or_else(|| "projection-zone-video-pipeline-missing".to_string())?;
+        // Upload the frame actually being drawn, including a retained frame while
+        // a newly requested video layout is still compiling.
+        self.projection_zone_uniform
+            .update(device, &zone_frame.uniform)?;
         let displacement = current_projection_surface_displacement_settings();
         let surface_features = current_projection_surface_feature_settings();
         self.rgb_channel_transform_uniform
-            .update(device, &current_rgb_channel_transform_settings().uniform())?;
+            .update(
+                device,
+                &current_rgb_channel_transform_settings().uniform_at_elapsed_seconds(elapsed_seconds),
+            )?;
         self.rgb_channel_transform_uniform.update_displacement(
             device,
             &surface_features.uniform(displacement, zone_frame.draw_rects),
@@ -1119,6 +1415,7 @@ impl SpatialPublicGuideTargets {
             displacement,
             PROJECTION_SURFACE_UNIFORM_ABI_VERSION >= 2 && pipeline.displacement_pipeline.is_some(),
         );
+        let strength_cycle_phase_turns = advance_spatial_public_strength_cycle_phase(elapsed_seconds);
         for eye_index in 0..SPATIAL_PUBLIC_PACKED_EYE_COUNT {
             set_packed_projection_target_view(
                 device,
@@ -1155,6 +1452,7 @@ impl SpatialPublicGuideTargets {
             let push = OpaqueProjectionPush::for_packed_eye(
                 eye_index,
                 elapsed_seconds,
+                strength_cycle_phase_turns,
                 self.depth_resources.current_binding(),
                 footprint_scale,
                 layer_override,
@@ -1320,6 +1618,7 @@ impl SpatialPublicGuideTargets {
             .targets
             .get(destination_target_index)
             .ok_or_else(|| "opaque-guide-destination-index-out-of-range".to_string())?;
+        let strength_cycle_phase_turns = advance_spatial_public_strength_cycle_phase(elapsed_seconds);
         begin_guide_pass(
             device,
             command_buffer,
@@ -1355,10 +1654,7 @@ impl SpatialPublicGuideTargets {
                 ],
                 effect: [1.0, 1.0, 0.0, 1.0],
                 cycle: [
-                    elapsed_seconds.max(0.0)
-                        * presentation_distortion_phase_rate_hz(
-                            SPATIAL_PUBLIC_OPAQUE_GUIDE_NATIVE_PHASE_RATE_HZ,
-                        ),
+                    strength_cycle_phase_turns,
                     0.0,
                     0.0,
                     1.0,
@@ -1399,6 +1695,17 @@ fn projection_zone_pipeline_binding_compatible(
             layout == requested_layout && same_surface_blend == requested_same_surface_blend
         })
         .unwrap_or(false)
+}
+
+fn projection_zone_retained_frame_for_binding(
+    active_layout: Option<vk::DescriptorSetLayout>,
+    retained: Option<(CameraHwbProjectionZoneFrame, bool)>,
+    descriptor_layout: vk::DescriptorSetLayout,
+    readable_video_available: bool,
+) -> Option<CameraHwbProjectionZoneFrame> {
+    let (frame, requires_video) = retained?;
+    (active_layout == Some(descriptor_layout) && (!requires_video || readable_video_available))
+        .then_some(frame)
 }
 
 fn projection_zone_same_surface_blend_required(
@@ -1462,6 +1769,7 @@ impl OpaqueProjectionPush {
     fn for_packed_eye(
         eye_index: usize,
         elapsed_seconds: f32,
+        strength_cycle_phase_turns: f32,
         depth_binding: SpatialPublicDepthBinding,
         footprint_scale: f32,
         layer_override: f32,
@@ -1496,7 +1804,7 @@ impl OpaqueProjectionPush {
                 layer_override,
             ],
             effect: OPAQUE_PROJECTION_EFFECT,
-            cycle: [0.0, 5.0, 1.0, 1.0],
+            cycle: [strength_cycle_phase_turns, 5.0, 1.0, 1.0],
             border_blend: [
                 2.0,
                 SPATIAL_PUBLIC_VIDEO_BORDER_INNER_BLEND_UV,
@@ -3390,6 +3698,9 @@ pub(crate) unsafe fn allocate_spatial_public_guide_targets(
         rgb_channel_transform_uniform,
         projection_zone_uniform,
         projection_zone_video_pipeline: None,
+        projection_zone_pipeline_build: None,
+        projection_zone_failed_build: None,
+        projection_zone_rendered_frame: Cell::new(None),
         blur_pipeline_layout,
         blur_pipeline,
     })
@@ -4085,6 +4396,7 @@ unsafe fn create_projection_zone_video_pipeline(
     video_descriptor_set_layout: vk::DescriptorSetLayout,
     zone_descriptor_set_layout: vk::DescriptorSetLayout,
     same_surface_blend_enabled: bool,
+    video_resources: Option<SpatialVideoProjectionResourceLease>,
 ) -> Result<SpatialProjectionZoneVideoPipeline, String> {
     let set_layouts = [
         camera_descriptor_set_layout,
@@ -4144,11 +4456,13 @@ unsafe fn create_projection_zone_video_pipeline(
         }
     };
     Ok(SpatialProjectionZoneVideoPipeline {
+        device: device.clone(),
         video_descriptor_set_layout,
         same_surface_blend_enabled,
         pipeline_layout,
         pipeline,
         displacement_pipeline,
+        _video_resources: video_resources,
     })
 }
 
@@ -4929,12 +5243,12 @@ mod tests {
         assert_eq!(packed_projection_target_rect(0, 1.0), push.left_rect);
         assert_eq!(packed_projection_target_rect(1, 1.0), push.right_rect);
         assert_eq!(
-            OpaqueProjectionPush::for_packed_eye(0, 1.25, fallback_depth_binding(), 1.0, -1.0)
+            OpaqueProjectionPush::for_packed_eye(0, 1.25, 0.25, fallback_depth_binding(), 1.0, -1.0)
                 .target_rect,
             push.left_rect
         );
         assert_eq!(
-            OpaqueProjectionPush::for_packed_eye(1, 1.25, fallback_depth_binding(), 1.0, -1.0)
+            OpaqueProjectionPush::for_packed_eye(1, 1.25, 0.25, fallback_depth_binding(), 1.0, -1.0)
                 .target_rect,
             push.right_rect
         );
@@ -5197,10 +5511,29 @@ mod tests {
     #[test]
     fn opaque_projection_push_defaults_to_layer_cycle_without_android_property() {
         assert_eq!(
-            OpaqueProjectionPush::for_packed_eye(0, 1.25, fallback_depth_binding(), 1.0, -1.0)
+            OpaqueProjectionPush::for_packed_eye(0, 1.25, 0.25, fallback_depth_binding(), 1.0, -1.0)
                 .params0[3],
             SPATIAL_PUBLIC_OPAQUE_PROJECTION_LAYER_OVERRIDE_DEFAULT
         );
+    }
+
+    #[test]
+    fn strength_cycle_clock_accumulates_once_per_monotonic_frame_and_freezes_at_zero() {
+        let mut clock = SpatialPublicStrengthCyclePhase::default();
+        assert_eq!(advance_strength_cycle_phase(&mut clock, 10.0, 0.25), 0.0);
+        assert_eq!(advance_strength_cycle_phase(&mut clock, 12.0, 0.25), 0.5);
+        assert_eq!(advance_strength_cycle_phase(&mut clock, 12.0, 2.0), 0.5);
+        assert_eq!(advance_strength_cycle_phase(&mut clock, 15.0, 0.0), 0.5);
+        assert_eq!(advance_strength_cycle_phase(&mut clock, 16.0, 0.25), 0.75);
+        assert_eq!(advance_strength_cycle_phase(&mut clock, 14.0, 0.25), 0.75);
+        assert_eq!(advance_strength_cycle_phase(&mut clock, 15.0, 0.25), 0.0);
+    }
+
+    #[test]
+    fn strength_cycle_speed_is_bounded_and_defaults_when_not_finite() {
+        assert_eq!(normalize_strength_cycle_speed_hz(-1.0), 0.0);
+        assert_eq!(normalize_strength_cycle_speed_hz(3.0), 2.0);
+        assert_eq!(normalize_strength_cycle_speed_hz(f32::NAN), 0.25);
     }
 
     fn fallback_depth_binding() -> SpatialPublicDepthBinding {
@@ -5337,6 +5670,7 @@ mod tests {
             OpaqueProjectionPush::for_packed_eye(
                 0,
                 1.25,
+                0.25,
                 fallback_depth_binding(),
                 1.0,
                 f32::from_bits(recorded.layer_override_bits),
@@ -5388,5 +5722,116 @@ mod tests {
             first,
             true,
         ));
+    }
+
+    #[test]
+    fn pending_video_keeps_the_previous_uniform_and_rejects_incompatible_descriptors() {
+        let camera_layout = vk::DescriptorSetLayout::from_raw(41);
+        let video_layout = vk::DescriptorSetLayout::from_raw(42);
+        let mut previous = crate::camera_hwb_projection_target::camera_hwb_projection_zone_frame(
+            1.0,
+            0.0,
+            0.0,
+            [[0.0, 0.0, 1.0, 1.0]; 2],
+        );
+        previous.settings.outer_content_mode = 2;
+        previous.uniform.center_content[0] = 0.0;
+        let retained = Some((previous, false));
+        assert_eq!(
+            projection_zone_retained_frame_for_binding(
+                Some(camera_layout),
+                retained,
+                camera_layout,
+                false,
+            ),
+            Some(previous)
+        );
+        assert_eq!(
+            projection_zone_retained_frame_for_binding(
+                Some(camera_layout),
+                retained,
+                video_layout,
+                true,
+            ),
+            None
+        );
+        assert_eq!(
+            projection_zone_retained_frame_for_binding(
+                Some(video_layout),
+                Some((previous, true)),
+                video_layout,
+                false,
+            ),
+            None
+        );
+        assert_eq!(
+            projection_zone_retained_frame_for_binding(
+                Some(video_layout),
+                Some((previous, true)),
+                video_layout,
+                true,
+            ),
+            Some(previous)
+        );
+    }
+
+    #[test]
+    fn pending_pipeline_pins_the_exact_layout_until_the_completed_result_is_released() {
+        use std::sync::mpsc;
+        struct Owner(Arc<AtomicBool>);
+        impl Drop for Owner {
+            fn drop(&mut self) {
+                self.0.store(true, Ordering::SeqCst);
+            }
+        }
+        let destroyed = Arc::new(AtomicBool::new(false));
+        let owner = Arc::new(Owner(Arc::clone(&destroyed)));
+        let layout = vk::DescriptorSetLayout::from_raw(73);
+        let lease = SpatialVideoProjectionResourceLease::new(layout, Arc::clone(&owner));
+        let (release, wait) = mpsc::channel();
+        let worker = SpatialPipelineWorker::spawn("pipeline-lifetime-test", move || {
+            wait.recv().unwrap();
+            lease
+        })
+        .unwrap();
+        drop(owner);
+        assert!(
+            !worker.is_finished(),
+            "a pending compiler must remain pollable"
+        );
+        assert!(!destroyed.load(Ordering::SeqCst));
+        release.send(()).unwrap();
+        let completed = worker.join().unwrap();
+        assert_eq!(completed.descriptor_set_layout(), layout);
+        assert!(!destroyed.load(Ordering::SeqCst));
+        drop(completed);
+        assert!(destroyed.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn abandoned_pipeline_worker_joins_and_releases_its_unadopted_result() {
+        use std::sync::mpsc;
+        struct ResultOwner(Arc<AtomicBool>);
+        impl Drop for ResultOwner {
+            fn drop(&mut self) {
+                self.0.store(true, Ordering::SeqCst);
+            }
+        }
+        let destroyed = Arc::new(AtomicBool::new(false));
+        let result_destroyed = Arc::clone(&destroyed);
+        let (release, wait) = mpsc::channel();
+        let worker = SpatialPipelineWorker::spawn("pipeline-teardown-test", move || {
+            wait.recv().unwrap();
+            ResultOwner(result_destroyed)
+        })
+        .unwrap();
+        assert!(!worker.is_finished());
+        let teardown = thread::spawn(move || drop(worker));
+        release.send(()).unwrap();
+        teardown.join().unwrap();
+        assert!(
+            destroyed.load(Ordering::SeqCst),
+            "teardown must consume late successful results"
+        );
     }
 }

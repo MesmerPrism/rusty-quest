@@ -5,7 +5,10 @@ import com.meta.spatial.core.Entity
 import com.meta.spatial.core.Vector3
 import com.meta.spatial.runtime.Scene
 import com.meta.spatial.runtime.BlendFactor
+import com.meta.spatial.runtime.Filter
 import com.meta.spatial.runtime.LayerAlphaBlend
+import com.meta.spatial.runtime.AddressMode
+import com.meta.spatial.runtime.SamplerConfig
 import com.meta.spatial.runtime.SceneMaterial
 import com.meta.spatial.runtime.SceneMesh
 import com.meta.spatial.runtime.SceneObject
@@ -20,6 +23,87 @@ internal data class SpatialCameraHwbProjectionRawNativeState(
     val receiptLibraryLoaded: Boolean,
     val receiptLibraryError: String,
 )
+
+/** The requested factors submitted to the Spatial SDK; this is not compositor adoption evidence. */
+internal data class SpatialCameraHwbProjectionRawAlphaBlendSubmission(
+    val colorSource: BlendFactor,
+    val colorDestination: BlendFactor,
+    val alphaSource: BlendFactor,
+    val alphaDestination: BlendFactor,
+) {
+  fun markerFields(layerGeneration: Long): String =
+      "alphaColorSource=$colorSource " +
+          "alphaColorDestination=$colorDestination " +
+          "alphaSource=$alphaSource " +
+          "alphaDestination=$alphaDestination " +
+          "rawProjectionLayerGeneration=$layerGeneration " +
+          "sdkAlphaBlendSubmission=true compositorAdoptionObserved=false"
+}
+
+internal object SpatialCameraHwbProjectionRawAlphaBlend {
+  fun forConfiguration(
+      configuration: PrivateLayerZoneCompositor,
+  ): SpatialCameraHwbProjectionRawAlphaBlendSubmission {
+    val alphaReplace =
+        configuration.outerStretchOptionFlags and
+            PrivateLayerZoneCompositorControls.outerStretchOptionAlphaAccumulationReplace != 0
+    return SpatialCameraHwbProjectionRawAlphaBlendSubmission(
+        colorSource =
+            if (configuration.outerStretchOptionFlags and
+                    PrivateLayerZoneCompositorControls.outerStretchOptionStraightRgbBlend != 0) {
+              BlendFactor.SOURCE_ALPHA
+            } else BlendFactor.ONE,
+        colorDestination = BlendFactor.ONE_MINUS_SOURCE_ALPHA,
+        alphaSource = BlendFactor.ONE,
+        alphaDestination = if (alphaReplace) BlendFactor.ZERO else BlendFactor.ONE_MINUS_SOURCE_ALPHA,
+    )
+  }
+}
+
+internal object SpatialCameraHwbProjectionRawSampler {
+  /** Null leaves a newly created swapchain at the SDK sampler default. */
+  fun explicitConfigFor(configuration: PrivateLayerZoneCompositor): SamplerConfig? =
+      when {
+        configuration.outerStretchOptionFlags and
+            PrivateLayerZoneCompositorControls.outerStretchOptionNearestSampler != 0 ->
+            SamplerConfig(
+                Filter.NEAREST,
+                Filter.NEAREST,
+                Filter.NEAREST,
+                AddressMode.REPEAT,
+                AddressMode.REPEAT,
+                0.0f,
+            )
+        configuration.outerStretchOptionFlags and
+            PrivateLayerZoneCompositorControls.outerStretchOptionExplicitLinearSampler != 0 ->
+            sdkDefaultConfig()
+        else -> null
+      }
+
+  /** The SDK's no-argument constructor is LINEAR/LINEAR/LINEAR, REPEAT/REPEAT, 0.0f. */
+  fun sdkDefaultConfig(): SamplerConfig = SamplerConfig()
+
+  fun markerFields(
+      configuration: PrivateLayerZoneCompositor,
+      layerGeneration: Long,
+      restoringSdkDefault: Boolean,
+  ): String {
+    val nearest = configuration.outerStretchOptionFlags and
+        PrivateLayerZoneCompositorControls.outerStretchOptionNearestSampler != 0
+    val explicitLinear = configuration.outerStretchOptionFlags and
+        PrivateLayerZoneCompositorControls.outerStretchOptionExplicitLinearSampler != 0
+    val mode = when {
+      nearest -> "explicit-nearest"
+      explicitLinear -> "explicit-linear"
+      restoringSdkDefault -> "constructor-default-requested"
+      else -> "sdk-default-untouched"
+    }
+    return "sdkSamplerSubmission=true sdkSamplerNearest=$nearest sdkSamplerExplicitLinear=$explicitLinear " +
+        "sdkSamplerDefaultObserved=false sdkSamplerBaseline=$mode " +
+        "rawProjectionLayerGeneration=$layerGeneration compositorAdoptionObserved=false"
+  }
+}
+
 
 internal data class SpatialCameraHwbProjectionRawCarrierBindings(
     val scene: Scene,
@@ -173,6 +257,10 @@ internal class SpatialCameraHwbProjectionRawCarrierCoordinator(
 ) {
   private val rawLayerContinuity = SpatialCameraHwbProjectionRawLayerContinuity()
   private val rawLayerPublicationMonitor = Any()
+  private var activeSceneQuadLayer: SceneQuadLayer? = null
+  private var activeSceneSwapchain: SceneSwapchain? = null
+  private var activeLayerFence: SpatialCameraHwbProjectionRawLaunchFence? = null
+  private var activeSamplerOverrideSubmitted = false
 
   fun run(readerMaxImages: Int, videoSettings: SpatialVideoProjectionSettings) {
     if (!bindings.routeEnabled()) {
@@ -371,7 +459,53 @@ internal class SpatialCameraHwbProjectionRawCarrierCoordinator(
     synchronized(rawLayerPublicationMonitor) { recordLayerRemovedLocked(reason) }
   }
 
+  /** Re-submits selected factors to the live SDK layer; it does not assert compositor adoption. */
+  fun reapplyAlphaBlend(reason: String): Boolean =
+      synchronized(rawLayerPublicationMonitor) {
+        val layer = activeSceneQuadLayer ?: return@synchronized false
+        val fence = activeLayerFence ?: return@synchronized false
+        submitAlphaBlend(layer, fence, reason)
+      }
+
+  fun reapplyAlphaBlendForResume(): Boolean = reapplyPresentationDiagnostics("activity-resume")
+
+  fun reapplyPresentationDiagnostics(reason: String): Boolean =
+      reapplyAlphaBlend(reason) && reapplySampler(reason)
+
+  private fun reapplySampler(reason: String): Boolean = synchronized(rawLayerPublicationMonitor) {
+    val swapchain = activeSceneSwapchain ?: return@synchronized false
+    val fence = activeLayerFence ?: return@synchronized false
+    val configuration = PrivateLayerZoneCompositorPanelBridge.configuration
+    val explicitConfig = SpatialCameraHwbProjectionRawSampler.explicitConfigFor(configuration)
+    if (explicitConfig == null && !activeSamplerOverrideSubmitted) {
+      return@synchronized true
+    }
+    val restoringSdkDefault = explicitConfig == null
+    runCatching {
+          swapchain.updateSampler(explicitConfig ?: SpatialCameraHwbProjectionRawSampler.sdkDefaultConfig())
+          activeSamplerOverrideSubmitted = explicitConfig != null
+          bindings.marker("channel=camera-hwb-spatial-probe status=raw-projection-sampler-submitted reason=$reason " +
+              SpatialCameraHwbProjectionRawSampler.markerFields(
+                  configuration,
+                  fence.layerGeneration,
+                  restoringSdkDefault,
+              ))
+        }
+        .onFailure { throwable ->
+          bindings.marker(
+              "channel=camera-hwb-spatial-probe status=raw-projection-sampler-submit-failed " +
+                  "reason=$reason rawProjectionLayerGeneration=${fence.layerGeneration} " +
+                  "error=${throwable.javaClass.simpleName}"
+          )
+        }
+        .isSuccess
+  }
+
   private fun recordLayerRemovedLocked(reason: String) {
+    activeSceneQuadLayer = null
+    activeSceneSwapchain = null
+    activeLayerFence = null
+    activeSamplerOverrideSubmitted = false
     val removedFence = rawLayerContinuity.recordLayerRemoved() ?: return
     publishLayerFence(removedFence, "removed-$reason")
   }
@@ -388,8 +522,50 @@ internal class SpatialCameraHwbProjectionRawCarrierCoordinator(
       return@synchronized null
     }
     val fence = rawLayerContinuity.recordLayerCreated(launchChallenge)
+    val layer = checkNotNull(activeSceneQuadLayer) { "Created SceneQuadLayer was not retained." }
+    if (!submitAlphaBlend(layer, fence, "created-$reason")) {
+      recordLayerRemovedLocked("alpha-blend-submit-failed-$reason")
+      return@synchronized null
+    }
+    activeLayerFence = fence
+    if (!reapplySampler("created-$reason")) {
+      recordLayerRemovedLocked("sampler-submit-failed-$reason")
+      return@synchronized null
+    }
     if (publishLayerFence(fence, "created")) fence else null
   }
+
+  private fun submitAlphaBlend(
+      layer: SceneQuadLayer,
+      fence: SpatialCameraHwbProjectionRawLaunchFence,
+      reason: String,
+  ): Boolean =
+      runCatching {
+            val submission =
+                SpatialCameraHwbProjectionRawAlphaBlend.forConfiguration(
+                    PrivateLayerZoneCompositorPanelBridge.configuration
+                )
+            layer.setAlphaBlend(
+                LayerAlphaBlend(
+                    submission.colorSource,
+                    submission.colorDestination,
+                    submission.alphaSource,
+                    submission.alphaDestination,
+                )
+            )
+            bindings.marker(
+                "channel=camera-hwb-spatial-probe status=raw-projection-alpha-blend-submitted " +
+                    "reason=$reason ${submission.markerFields(fence.layerGeneration)}"
+            )
+          }
+          .onFailure { throwable ->
+            bindings.marker(
+                "channel=camera-hwb-spatial-probe status=raw-projection-alpha-blend-submit-failed " +
+                    "reason=$reason rawProjectionLayerGeneration=${fence.layerGeneration} " +
+                    "error=${throwable.javaClass.simpleName}"
+            )
+          }
+          .isSuccess
 
   private fun publishLayerFence(
       fence: SpatialCameraHwbProjectionRawLaunchFence,
@@ -445,17 +621,11 @@ internal class SpatialCameraHwbProjectionRawCarrierCoordinator(
                     0.5f,
                     StereoMode.LeftRight,
                     sceneObject,
-                )
+            )
             val layerZIndex = bindings.layerZIndex(plane.placementMode)
             layer.setZIndex(layerZIndex)
-            layer.setAlphaBlend(
-                LayerAlphaBlend(
-                    BlendFactor.ONE,
-                    BlendFactor.ONE_MINUS_SOURCE_ALPHA,
-                    BlendFactor.ONE,
-                    BlendFactor.ONE_MINUS_SOURCE_ALPHA,
-                )
-            )
+            activeSceneQuadLayer = layer
+            activeSceneSwapchain = sdkSwapchain
             bindings.resources.registerLayer(layer)
             bindings.marker(
                 CameraHwbProjectionModule.rawProjectionLayerCreatedMarker(

@@ -159,6 +159,14 @@ function Format-InvariantNumber {
     return $Value.ToString("0.###", [Globalization.CultureInfo]::InvariantCulture)
 }
 
+function ConvertTo-RemoteShellArgument {
+    param([Parameter(Mandatory=$true)][string]$Value)
+
+    # adb joins shell arguments before Android's remote shell parses them. Preserve spaces and
+    # literal apostrophes in string extras instead of allowing them to become separate tokens.
+    return "'" + $Value.Replace("'", "'\''") + "'"
+}
+
 function Invoke-AdbCommand {
     param(
         [Parameter(Mandatory=$true)][string]$Name,
@@ -299,7 +307,7 @@ if (-not [string]::IsNullOrWhiteSpace($VideoPackId)) {
     $intentArguments += @("--es", "video_pack_id", $VideoPackId.Trim())
 }
 if (-not [string]::IsNullOrWhiteSpace($ProfileTitle)) {
-    $intentArguments += @("--es", "profile_title", $ProfileTitle.Trim())
+    $intentArguments += @("--es", "profile_title", (ConvertTo-RemoteShellArgument $ProfileTitle.Trim()))
 }
 
 $launch = Invoke-AdbCommand -Name "run Spatial Camera Panel UI action $Action" -Arguments $intentArguments

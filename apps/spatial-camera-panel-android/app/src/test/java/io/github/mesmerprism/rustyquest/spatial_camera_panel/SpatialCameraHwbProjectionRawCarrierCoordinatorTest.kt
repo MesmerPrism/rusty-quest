@@ -1,5 +1,6 @@
 package io.github.mesmerprism.rustyquest.spatial_camera_panel
 
+import com.meta.spatial.runtime.BlendFactor
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -7,6 +8,133 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class SpatialCameraHwbProjectionRawCarrierCoordinatorTest {
+  @Test
+  fun alphaAccumulationModesKeepRgbOverAndToggleOnlyDestinationAlpha() {
+    val standard =
+        SpatialCameraHwbProjectionRawAlphaBlend.forConfiguration(
+            PrivateLayerZoneCompositorControls.nativeBuffer
+        )
+    val replace =
+        SpatialCameraHwbProjectionRawAlphaBlend.forConfiguration(
+            PrivateLayerZoneCompositorControls.nativeBuffer.copy(
+                outerStretchOptionFlags =
+                    PrivateLayerZoneCompositorControls.outerStretchOptionAlphaAccumulationReplace
+            )
+        )
+
+    assertEquals(BlendFactor.ONE, standard.colorSource)
+    assertEquals(BlendFactor.ONE_MINUS_SOURCE_ALPHA, standard.colorDestination)
+    assertEquals(BlendFactor.ONE, standard.alphaSource)
+    assertEquals(BlendFactor.ONE_MINUS_SOURCE_ALPHA, standard.alphaDestination)
+    assertEquals(standard.colorSource, replace.colorSource)
+    assertEquals(standard.colorDestination, replace.colorDestination)
+    assertEquals(standard.alphaSource, replace.alphaSource)
+    assertEquals(BlendFactor.ZERO, replace.alphaDestination)
+  }
+
+  @Test
+  fun straightRgbBlendChangesOnlyTheSdkRgbSourceFactor() {
+    val submission = SpatialCameraHwbProjectionRawAlphaBlend.forConfiguration(
+        PrivateLayerZoneCompositorControls.nativeBuffer.copy(
+            outerStretchOptionFlags =
+                PrivateLayerZoneCompositorControls.outerStretchOptionStraightRgbBlend,
+        )
+    )
+    assertEquals(BlendFactor.SOURCE_ALPHA, submission.colorSource)
+    assertEquals(BlendFactor.ONE_MINUS_SOURCE_ALPHA, submission.colorDestination)
+    assertEquals(BlendFactor.ONE, submission.alphaSource)
+    assertEquals(BlendFactor.ONE_MINUS_SOURCE_ALPHA, submission.alphaDestination)
+  }
+
+  @Test
+  fun samplerConfigurationsKeepOriginalDistinctFromExplicitLinearAndNearest() {
+    assertEquals(null, SpatialCameraHwbProjectionRawSampler.explicitConfigFor(PrivateLayerZoneCompositorControls.nativeBuffer))
+    val sdkDefault = SpatialCameraHwbProjectionRawSampler.sdkDefaultConfig()
+    assertEquals(com.meta.spatial.runtime.Filter.LINEAR, sdkDefault.minFilter)
+    assertEquals(com.meta.spatial.runtime.Filter.LINEAR, sdkDefault.magFilter)
+    assertEquals(com.meta.spatial.runtime.AddressMode.REPEAT, sdkDefault.addressModeU)
+    val explicitLinear = checkNotNull(
+        SpatialCameraHwbProjectionRawSampler.explicitConfigFor(
+            PrivateLayerZoneCompositorControls.nativeBuffer.copy(
+                outerStretchOptionFlags =
+                    PrivateLayerZoneCompositorControls.outerStretchOptionExplicitLinearSampler,
+            )
+        )
+    )
+    assertEquals(com.meta.spatial.runtime.Filter.LINEAR, explicitLinear.minFilter)
+    assertEquals(com.meta.spatial.runtime.AddressMode.REPEAT, explicitLinear.addressModeU)
+    assertEquals(
+        com.meta.spatial.runtime.Filter.NEAREST,
+        checkNotNull(
+            SpatialCameraHwbProjectionRawSampler.explicitConfigFor(
+                PrivateLayerZoneCompositorControls.nativeBuffer.copy(
+                    outerStretchOptionFlags =
+                        PrivateLayerZoneCompositorControls.outerStretchOptionNearestSampler,
+                )
+            )
+        ).minFilter,
+    )
+  }
+
+  @Test
+  fun alphaBlendSubmissionIncludesAllFactorsAndTheRecreatedLayerGeneration() {
+    val submission =
+        SpatialCameraHwbProjectionRawAlphaBlend.forConfiguration(
+            PrivateLayerZoneCompositorControls.nativeBuffer.copy(
+                outerStretchOptionFlags =
+                    PrivateLayerZoneCompositorControls.outerStretchOptionAlphaAccumulationReplace
+            )
+        )
+
+    val marker = submission.markerFields(layerGeneration = 2L)
+    for (field in
+        listOf(
+            "alphaColorSource=ONE",
+            "alphaColorDestination=ONE_MINUS_SOURCE_ALPHA",
+            "alphaSource=ONE",
+            "alphaDestination=ZERO",
+            "rawProjectionLayerGeneration=2",
+            "sdkAlphaBlendSubmission=true",
+            "compositorAdoptionObserved=false",
+        )) {
+      assertTrue(marker.contains(field), marker)
+    }
+  }
+
+  @Test
+  fun canonicalBridgeToggleReappliesTheLiveAlphaSubmissionForItsSameConfiguration() {
+    var callbackSource: String? = null
+    var callbackSubmission: SpatialCameraHwbProjectionRawAlphaBlendSubmission? = null
+    PrivateLayerZoneCompositorPanelBridge.bind(
+        initial = PrivateLayerZoneCompositorControls.nativeBuffer,
+        submit = { requested, _ -> PrivateLayerZoneCompositorModule.normalize(requested) },
+        onSubmitted = { source ->
+          callbackSource = source
+          callbackSubmission =
+              SpatialCameraHwbProjectionRawAlphaBlend.forConfiguration(
+                  PrivateLayerZoneCompositorPanelBridge.configuration
+              )
+        },
+    )
+
+    PrivateLayerZoneCompositorPanelBridge.submit(
+        PrivateLayerZoneCompositorPanelBridge.configuration.copy(
+            outerStretchOptionFlags =
+                PrivateLayerZoneCompositorControls.outerStretchOptionAlphaAccumulationReplace
+        ),
+        "transition-alpha-replace",
+    )
+
+    assertEquals("transition-alpha-replace", callbackSource)
+    assertEquals(BlendFactor.ZERO, callbackSubmission?.alphaDestination)
+    assertEquals(
+        PrivateLayerZoneCompositorPanelBridge.configuration,
+        PrivateLayerZoneCompositorModule.normalize(
+            PrivateLayerZoneCompositorPanelBridge.configuration
+        ),
+    )
+  }
+
   @Test
   fun realPreStartSequenceAppliesPendingOverrideBeforeNativeStartExactlyOnce() {
     val events = mutableListOf<String>()
@@ -237,7 +365,8 @@ class SpatialCameraHwbProjectionRawCarrierCoordinatorTest {
                 updateGuideProcessingNative = { 1L },
                 updateZoneCompositorNative = { 1L },
                 updateReadableVideoConsumerRequired = { _, _ -> },
-                updateRgbChannelTransformNative = { 1L },
+              updateRgbChannelTransformNative = { 1L },
+              updateStrengthCycleSpeedHzNative = { 1L },
                 updateProjectionSurfaceDisplacementNative = { 1L },
                 updateProjectionSurfaceFeaturesNative = { _, _ -> 1L },
                 marker = { marker ->

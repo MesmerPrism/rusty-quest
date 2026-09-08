@@ -52,6 +52,21 @@ class SpatialPrivateLayerControlCoordinatorTest {
   }
 
   @Test
+  fun strengthCycleSpeedUsesTheSharedBoundsAndZeroRemainsAFreezeRequest() {
+    val harness = Harness()
+    val coordinator = harness.coordinator()
+
+    assertEquals(0.0f, coordinator.updateStrengthCycleSpeedHz(-1.0f, "freeze"))
+    assertEquals(2.0f, coordinator.updateStrengthCycleSpeedHz(4.0f, "clamp"))
+    assertTrue(
+        harness.markers.any {
+          it.contains("status=strength-cycle-speed-submitted") &&
+              it.contains("effectiveStrengthCycleSpeedHz=2.0")
+        }
+    )
+  }
+
+  @Test
   fun inactiveRequestsRemainPendingAndNewestGenerationAppliesOnceForOneLifecycle() {
     val harness = Harness(routeActive = false)
     val coordinator = harness.coordinator()
@@ -279,15 +294,122 @@ class SpatialPrivateLayerControlCoordinatorTest {
     )
   }
 
+  @Test
+  fun outerVideoRetainsTransparentCompositorUntilDecoderFirstFrame() {
+    val harness = Harness(routeActive = true)
+    val transparent = PrivateLayerZoneCompositorControls.spatialVideoUnderlayBlendTest
+    val video =
+        transparent.copy(
+            outerTargetMode = PrivateLayerZoneCompositorControls.outerTargetReadableColor,
+            outerContentMode = PrivateLayerZoneCompositorControls.outerContentVideo,
+        )
+    val coordinator = harness.coordinator(initialZoneCompositor = transparent)
+
+    coordinator.updateZoneCompositor(video, "outer-video")
+
+    assertEquals(video, coordinator.zoneCompositor)
+    assertTrue(harness.nativeZoneUpdates.isEmpty())
+    assertEquals(listOf(true), harness.videoConsumerPolicies)
+    coordinator.updateReadableVideoLifecycle(
+        SpatialVideoProjectionDecoderState.Effective,
+        "first-frame",
+    )
+    assertEquals(listOf(PrivateLayerZoneCompositorModule.normalize(video)), harness.nativeZoneUpdates)
+  }
+
+  @Test
+  fun outerVideoFailureKeepsOrRestoresTransparentCompositor() {
+    val harness = Harness(routeActive = true)
+    val transparent = PrivateLayerZoneCompositorControls.spatialVideoUnderlayBlendTest
+    val video =
+        transparent.copy(
+            outerTargetMode = PrivateLayerZoneCompositorControls.outerTargetReadableColor,
+            outerContentMode = PrivateLayerZoneCompositorControls.outerContentVideo,
+        )
+    val coordinator = harness.coordinator(initialZoneCompositor = transparent)
+    coordinator.updateZoneCompositor(video, "outer-video")
+
+    coordinator.updateReadableVideoLifecycle(
+        SpatialVideoProjectionDecoderState.Failed,
+        "offline-pack-chunk-authentication-failed",
+    )
+
+    assertTrue(harness.nativeZoneUpdates.isEmpty())
+    assertTrue(
+        harness.markers.any {
+          it.contains("status=zone-compositor-video-failed") &&
+              it.contains("lastSafeCompositorRetained=true")
+        }
+    )
+  }
+
+  @Test
+  fun decoderFailureAfterFirstFrameRestoresTransparentCompositor() {
+    val harness = Harness(routeActive = true)
+    val transparent = PrivateLayerZoneCompositorControls.spatialVideoUnderlayBlendTest
+    val video =
+        transparent.copy(
+            outerTargetMode = PrivateLayerZoneCompositorControls.outerTargetReadableColor,
+            outerContentMode = PrivateLayerZoneCompositorControls.outerContentVideo,
+        )
+    val coordinator = harness.coordinator(initialZoneCompositor = transparent)
+    coordinator.updateZoneCompositor(video, "outer-video")
+    coordinator.updateReadableVideoLifecycle(
+        SpatialVideoProjectionDecoderState.Effective,
+        "first-frame",
+    )
+
+    coordinator.updateReadableVideoLifecycle(
+        SpatialVideoProjectionDecoderState.Failed,
+        "decoder-error",
+    )
+
+    assertEquals(2, harness.nativeZoneUpdates.size)
+    assertEquals(PrivateLayerZoneCompositorControls.outerContentVideo, harness.nativeZoneUpdates[0].outerContentMode)
+    assertEquals(
+        PrivateLayerZoneCompositorControls.outerContentTransparent,
+        harness.nativeZoneUpdates[1].outerContentMode,
+    )
+  }
+
+  @Test
+  fun zoneCompositorNativeExceptionRetainsEffectiveStateAndDoesNotClaimSubmission() {
+    val harness = Harness(routeActive = true)
+    harness.throwOnNextZoneUpdate = true
+    val coordinator = harness.coordinator()
+    val requested = PrivateLayerZoneCompositorControls.spatialVideoUnderlayBlendTest
+
+    coordinator.updateZoneCompositor(requested, "synthetic-native-failure")
+
+    assertEquals(
+        listOf(PrivateLayerZoneCompositorModule.normalize(requested)),
+        harness.nativeZoneUpdates,
+    )
+    assertTrue(
+        harness.markers.any {
+          it.contains("status=zone-compositor-update-failed") &&
+              it.contains("effectiveStateRetained=true") &&
+              it.contains("jniSubmissionSucceeded=false") &&
+              it.contains("rendered=false")
+        }
+    )
+    assertFalse(harness.markers.any { it.contains("status=zone-compositor-submitted") })
+  }
+
   private class Harness(var routeActive: Boolean = true) {
     val markers = mutableListOf<String>()
     val nativeLayerUpdates = mutableListOf<Float>()
     val updateMasks = mutableListOf<Long>()
+    val nativeZoneUpdates = mutableListOf<PrivateLayerZoneCompositor>()
+    val videoConsumerPolicies = mutableListOf<Boolean>()
     var throwOnNextLayerUpdate = false
+    var throwOnNextZoneUpdate = false
 
     fun coordinator(
         layerUpdate: ((Float) -> Long)? = null,
         refreshProjection: ((String) -> Unit)? = null,
+        initialZoneCompositor: PrivateLayerZoneCompositor =
+            PrivateLayerZoneCompositorControls.legacyOff,
     ): SpatialPrivateLayerControlCoordinator =
         SpatialPrivateLayerControlCoordinator(
             SpatialPrivateLayerControlBindings(
@@ -325,13 +447,24 @@ class SpatialPrivateLayerControlCoordinatorTest {
               updateDepthLayerPolicyNative = { 1L },
               updateDepthAlignmentNative = { 1L },
               updateGuideProcessingNative = { 1L },
-              updateZoneCompositorNative = { 1L },
-              updateReadableVideoConsumerRequired = { _, _ -> },
+              updateZoneCompositorNative = {
+                nativeZoneUpdates += it
+                if (throwOnNextZoneUpdate) {
+                  throwOnNextZoneUpdate = false
+                  error("synthetic-zone-native-failure")
+                }
+                1L
+              },
+               updateReadableVideoConsumerRequired = { required, _ ->
+                 videoConsumerPolicies += required
+               },
               updateRgbChannelTransformNative = { 1L },
+              updateStrengthCycleSpeedHzNative = { 1L },
               updateProjectionSurfaceDisplacementNative = { 1L },
               updateProjectionSurfaceFeaturesNative = { _, _ -> 1L },
               marker = markers::add,
-          )
+          ),
+          initialZoneCompositor = initialZoneCompositor,
       )
   }
 }

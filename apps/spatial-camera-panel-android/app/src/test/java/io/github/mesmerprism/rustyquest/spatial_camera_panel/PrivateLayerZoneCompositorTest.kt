@@ -7,6 +7,66 @@ import org.junit.Test
 
 class PrivateLayerZoneCompositorTest {
   @Test
+  fun profileLoadThenUiEditUsesOneCanonicalConfigurationAndExportsIt() {
+    val loaded =
+        PrivateLayerZoneCompositorControls.organicBuffer.copy(
+            outerWidthUv = 0.131f,
+            innerChannelDynamics =
+                PrivateLayerZoneCompositorControls.organicBuffer.innerChannelDynamics.copy(
+                    strengthG = 0.73f,
+                ),
+        )
+    var coordinatorCanonical = PrivateLayerZoneCompositorControls.legacyOff
+    PrivateLayerZoneCompositorPanelBridge.bind(
+        initial = loaded,
+        submit = { requested, _ ->
+          PrivateLayerZoneCompositorModule.normalize(requested).also { coordinatorCanonical = it }
+        },
+    )
+
+    val uiEdited =
+        PrivateLayerZoneCompositorPanelBridge.configuration.copy(centerCornerRadiusUv = 0.19f)
+    val effective = PrivateLayerZoneCompositorPanelBridge.submit(uiEdited, "ui-center-corner")
+
+    assertEquals(effective, PrivateLayerZoneCompositorPanelBridge.configuration)
+    assertEquals(effective, coordinatorCanonical)
+    assertEquals(0.131f, effective.outerWidthUv)
+    assertEquals(0.73f, effective.innerChannelDynamics.strengthG)
+    val exported =
+        SpatialCameraPanelProfileBundleCodec.encode(
+            listOf(
+                SpatialCameraPanelProfileEntry(
+                    id = "profile-1",
+                    title = "Spaced Profile",
+                    createdAtEpochMs = 1L,
+                    controls = profileSnapshotFor(effective),
+                )
+            )
+        )
+    assertEquals(
+        effective,
+        SpatialCameraPanelProfileBundleCodec.decode(exported).single().controls.zoneCompositor,
+    )
+  }
+
+  private fun profileSnapshotFor(zoneCompositor: PrivateLayerZoneCompositor) =
+      SpatialCameraPanelControlSnapshot(
+          projectionPanelEnabled = true,
+          layerOverride = 0.0f,
+          projectionScale = 1.0f,
+          depthLayerPolicy = PrivateLayerControls.defaultDepthLayerPolicy,
+          depthAlignment = PrivateLayerDepthAlignment(),
+          guideProcessing = PrivateLayerControls.nativeParityGuideProcessing,
+          zoneCompositor = zoneCompositor,
+          rgbChannelTransform = RgbChannelTransform(),
+          projectionSurfaceDisplacement = ProjectionSurfaceDisplacementControls.off,
+          projectionSurfaceTiling = ProjectionSurfaceTiling(),
+          projectionInnerAlpha = ProjectionInnerAlpha(),
+          videoPlaybackEnabled = false,
+          videoPresentationMode = SpatialImmersiveVideoPresentationMode.WorldAnchored.token,
+      )
+
+  @Test
   fun visibleBoundaryLabelsUseCenterMiddleOuterWithoutChangingStoredFieldNames() {
     val controls = PrivateLayerZoneCompositorControls
     val active =
@@ -113,7 +173,7 @@ class PrivateLayerZoneCompositorTest {
         normalized.outerContentMode,
     )
     assertEquals(PrivateLayerZoneCompositorControls.sourceRaw, normalized.outerStretchSource)
-    assertEquals(1, normalized.outerStretchOptionFlags)
+    assertEquals(97, normalized.outerStretchOptionFlags)
     assertEquals(0.4f, normalized.outerEdgeInsetUv)
     assertEquals(0.4f, normalized.outerMaxInsetUv)
     assertEquals(PrivateLayerZoneCompositorControls.signalDifference, normalized.innerSignal)
@@ -496,6 +556,104 @@ class PrivateLayerZoneCompositorTest {
     assertTrue(marker.contains("projectionZoneInnerColorSource=midpoint"))
     assertTrue(marker.contains("projectionZoneOuterTarget=readable-color"))
     assertTrue(marker.contains("projectionZoneCenterCornerRadiusUv=0.08"))
+  }
+
+  @Test
+  fun outerTransitionFlagsSurviveNormalizationAndExposeNamedReadback() {
+    val flags =
+        PrivateLayerZoneCompositorControls.outerStretchOptionMask and
+            PrivateLayerZoneCompositorControls.outerStretchOptionNearestSampler.inv() and
+            PrivateLayerZoneCompositorControls.outerStretchOptionTransferCorrectedFade.inv()
+    val normalized =
+        PrivateLayerZoneCompositorModule.normalize(
+            PrivateLayerZoneCompositor(
+                regionContractVersion =
+                    PrivateLayerZoneCompositorControls.regionContractCompositorOwned,
+                outerStretchOptionFlags = flags,
+            )
+        )
+
+    assertEquals(flags, normalized.outerStretchOptionFlags)
+    val marker = PrivateLayerZoneCompositorModule.markerFields(normalized)
+    assertTrue(marker.contains("projectionZoneOuterStretchOptionFlags=$flags"))
+    assertTrue(marker.contains("projectionZoneOuterSamplingEdgeCorrection=true"))
+    assertTrue(marker.contains("projectionZoneOuterTestPatches=true"))
+    assertTrue(marker.contains("projectionZoneAlphaAccumulationReplace=true"))
+    assertTrue(marker.contains("projectionZoneOpaquePatches=true"))
+    assertTrue(marker.contains("projectionZoneSamplerExplicitLinear=true"))
+    assertTrue(marker.contains("projectionZoneUniformWhiteEdge=true"))
+    assertTrue(marker.contains("projectionZoneRoundedFadeContours=true"))
+    assertTrue(marker.contains("projectionZoneStraightRgbPayload=true"))
+    assertTrue(marker.contains("projectionZoneStraightRgbBlend=true"))
+    assertTrue(marker.contains("projectionZoneProducerCaptureRequested=true"))
+  }
+
+  @Test
+  fun diagnosticOuterFlagsNormalizeSamplerConflictAndWhiteEdgeDependency() {
+    val controls = PrivateLayerZoneCompositorControls
+    val conflict = PrivateLayerZoneCompositorModule.normalize(
+        PrivateLayerZoneCompositor(
+            regionContractVersion = controls.regionContractCompositorOwned,
+            outerStretchOptionFlags =
+                controls.outerStretchOptionNearestSampler or
+                    controls.outerStretchOptionExplicitLinearSampler or
+                    controls.outerStretchOptionUniformWhiteEdge,
+        )
+    )
+    assertEquals(controls.outerStretchOptionExplicitLinearSampler, conflict.outerStretchOptionFlags)
+
+    val rgbPayload = PrivateLayerZoneCompositorModule.normalize(
+        conflict.copy(
+            outerStretchOptionFlags =
+                controls.outerStretchOptionTransferCorrectedFade or
+                    controls.outerStretchOptionStraightRgbPayload,
+        )
+    )
+    assertEquals(controls.outerStretchOptionStraightRgbPayload, rgbPayload.outerStretchOptionFlags)
+    val rgbMarker = PrivateLayerZoneCompositorModule.markerFields(rgbPayload)
+    assertTrue(rgbMarker.contains("projectionZoneStraightRgbPayload=true"))
+    assertTrue(rgbMarker.contains("projectionZoneOuterFadeCorrection=false"))
+
+    val whiteEdge = PrivateLayerZoneCompositorModule.normalize(
+        conflict.copy(
+            outerStretchOptionFlags =
+                controls.outerStretchOptionConstantColorAlphaDiagnostic or
+                    controls.outerStretchOptionUniformWhiteEdge,
+        )
+    )
+    assertEquals(
+        controls.outerStretchOptionConstantColorAlphaDiagnostic or
+            controls.outerStretchOptionUniformWhiteEdge,
+        whiteEdge.outerStretchOptionFlags,
+    )
+  }
+
+  @Test
+  fun testPatchesSuppressVideoDemandWhileOtherTransitionBitsAndResetDoNot() {
+    val baseline = PrivateLayerZoneCompositorControls.organicBuffer
+    val controls = PrivateLayerZoneCompositorControls
+    assertTrue(PrivateLayerZoneCompositorModule.readableVideoConsumerRequired(baseline))
+    assertTrue(
+        PrivateLayerZoneCompositorModule.readableVideoConsumerRequired(
+            baseline.copy(
+                outerStretchOptionFlags =
+                    controls.outerStretchOptionTransferCorrectedFade or
+                        controls.outerStretchOptionGuideValidityNormalization,
+            )
+        )
+    )
+    val testPatches =
+        baseline.copy(
+            outerStretchOptionFlags = controls.outerStretchOptionConstantColorAlphaDiagnostic,
+        )
+    assertFalse(PrivateLayerZoneCompositorModule.readableVideoConsumerRequired(testPatches))
+    val reset =
+        testPatches.copy(
+            outerStretchOptionFlags =
+                testPatches.outerStretchOptionFlags and
+                    controls.outerStretchTransitionOptionMask.inv(),
+        )
+    assertTrue(PrivateLayerZoneCompositorModule.readableVideoConsumerRequired(reset))
   }
 
   @Test

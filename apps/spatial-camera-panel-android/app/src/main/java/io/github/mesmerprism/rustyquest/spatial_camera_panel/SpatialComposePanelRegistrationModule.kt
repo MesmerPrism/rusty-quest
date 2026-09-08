@@ -24,9 +24,11 @@ internal data class SpatialPrivateLayerPanelRegistrationBindings(
     val depthAlignment: PrivateLayerDepthAlignment,
     val guideProcessing: PrivateLayerGuideProcessing,
     val rgbChannelTransform: RgbChannelTransform,
+    val strengthCycleSpeedHz: Float,
     val projectionSurfaceDisplacement: ProjectionSurfaceDisplacement,
     val projectionSurfaceTiling: ProjectionSurfaceTiling,
     val projectionInnerAlpha: ProjectionInnerAlpha,
+    val profileAppliedControls: () -> SpatialCameraPanelControlSnapshot?,
     val passthroughLutSettings: () -> SpatialPassthroughLutSettings,
     val backgroundVideoSession: () -> SpatialImmersiveVideoSessionSnapshot,
     val videoSession: () -> SpatialImmersiveVideoSessionSnapshot,
@@ -58,6 +60,7 @@ internal data class SpatialPrivateLayerPanelRegistrationBindings(
         (PrivateLayerGuideProcessing, String) -> PrivateLayerGuideProcessing,
     val updateRgbChannelTransform:
         (RgbChannelTransform, String) -> RgbChannelTransform,
+    val updateStrengthCycleSpeedHz: (Float, String) -> Float,
     val updateProjectionSurfaceDisplacement:
         (ProjectionSurfaceDisplacement, String) -> ProjectionSurfaceDisplacement,
     val updateProjectionSurfaceTiling:
@@ -124,9 +127,11 @@ internal object SpatialComposePanelRegistrationModule {
                       depthAlignment = bindings.depthAlignment,
                       guideProcessing = bindings.guideProcessing,
                       rgbChannelTransform = bindings.rgbChannelTransform,
+                      strengthCycleSpeedHz = bindings.strengthCycleSpeedHz,
                       projectionSurfaceDisplacement = bindings.projectionSurfaceDisplacement,
                       projectionSurfaceTiling = bindings.projectionSurfaceTiling,
                       projectionInnerAlpha = bindings.projectionInnerAlpha,
+                      profileAppliedControls = bindings.profileAppliedControls(),
                       passthroughLutSettings = bindings.passthroughLutSettings,
                       backgroundVideoSession = bindings.backgroundVideoSession,
                       videoSession = bindings.videoSession,
@@ -153,6 +158,7 @@ internal object SpatialComposePanelRegistrationModule {
                       updateDepthAlignment = bindings.updateDepthAlignment,
                       updateGuideProcessing = bindings.updateGuideProcessing,
                       updateRgbChannelTransform = bindings.updateRgbChannelTransform,
+                      updateStrengthCycleSpeedHz = bindings.updateStrengthCycleSpeedHz,
                       updateProjectionSurfaceDisplacement =
                           bindings.updateProjectionSurfaceDisplacement,
                       updateProjectionSurfaceTiling = bindings.updateProjectionSurfaceTiling,

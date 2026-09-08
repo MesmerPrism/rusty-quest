@@ -52,6 +52,29 @@ class SpatialCameraPanelStoredProfilesTest {
   }
 
   @Test
+  fun legacyBundleWithoutStrengthCycleKeepsItsBytesAndResolvesTheNewDefault() {
+    val encoded = SpatialCameraPanelProfileBundleCodec.encode(
+        listOf(
+            SpatialCameraPanelProfileEntry(
+                id = "profile-strength-legacy",
+                title = "Legacy strength",
+                createdAtEpochMs = 6L,
+                controls = sampleControls().copy(strengthCycleSpeedHz = 0.25f),
+            )
+        )
+    )
+    val legacyPayload = encoded.replace(Regex(",\\s*\\\"strengthCycleSpeedHz\\\": [0-9.]+"), "")
+
+    val decoded = SpatialCameraPanelProfileBundleCodec.decode(legacyPayload).single().controls
+
+    assertNull(decoded.strengthCycleSpeedHz)
+    assertEquals(0.25f, decoded.resolvedStrengthCycleSpeedHz())
+    assertEquals(legacyPayload, SpatialCameraPanelProfileBundleCodec.encode(
+        listOf(SpatialCameraPanelProfileEntry("profile-strength-legacy", "Legacy strength", 6L, decoded))
+    ))
+  }
+
+  @Test
   fun authorityPersistsListsDeletesAndPublishesExportMirror() {
     var persisted: String? = null
     var exported: String? = null

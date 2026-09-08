@@ -10,6 +10,49 @@ import org.junit.Test
 
 class SpatialCameraControlProfileTest {
   @Test
+  fun externalProfileSnapshotSuppliesCurrentUiValuesBeforeOneManualRgbEdit() {
+    val loaded =
+        SpatialCameraPanelControlSnapshot(
+            projectionPanelEnabled = true,
+            layerOverride = 8.0f,
+            projectionScale = 1.3f,
+            depthLayerPolicy = PrivateLayerControls.defaultDepthLayerPolicy,
+            depthAlignment = PrivateLayerDepthAlignment(leftX = 0.04f),
+            guideProcessing = PrivateLayerControls.nativeParityGuideProcessing,
+            zoneCompositor = PrivateLayerZoneCompositorControls.organicBuffer,
+            rgbChannelTransform = RgbChannelTransformControls.independent,
+            projectionSurfaceDisplacement = ProjectionSurfaceDisplacementControls.deep,
+            projectionSurfaceTiling =
+                ProjectionSurfaceTiling(
+                    enabled = true,
+                    topology = ProjectionSurfaceTilingControls.topologyTiled,
+                ),
+            projectionInnerAlpha =
+                ProjectionInnerAlpha(enabled = true, amount = 0.61f, invert = true),
+            videoPlaybackEnabled = true,
+            videoPresentationMode = SpatialImmersiveVideoPresentationMode.WorldAnchored.token,
+        )
+    SpatialPrivateLayerControlPanelStateBridge.publish(loaded)
+
+    val current = requireNotNull(SpatialPrivateLayerControlPanelStateBridge.controls)
+    val afterUiEdit =
+        current.copy(
+            rgbChannelTransform =
+                current.rgbChannelTransform.copy(
+                    red = current.rgbChannelTransform.red.copy(directionTurns = 0.21f),
+                ),
+        )
+
+    assertEquals(0.21f, afterUiEdit.rgbChannelTransform.red.directionTurns)
+    assertEquals(loaded.rgbChannelTransform.green, afterUiEdit.rgbChannelTransform.green)
+    assertEquals(loaded.projectionSurfaceDisplacement, afterUiEdit.projectionSurfaceDisplacement)
+    assertEquals(loaded.projectionSurfaceTiling, afterUiEdit.projectionSurfaceTiling)
+    assertEquals(loaded.projectionInnerAlpha, afterUiEdit.projectionInnerAlpha)
+    assertEquals(loaded.layerOverride, afterUiEdit.layerOverride)
+    assertEquals(loaded.projectionScale, afterUiEdit.projectionScale)
+  }
+
+  @Test
   fun malformedUtf8InOtherwiseValidStringFailsClosed() {
     assertThrows(IllegalArgumentException::class.java) {
       SpatialCameraControlProfileContract.parse(
@@ -158,6 +201,8 @@ class SpatialCameraControlProfileTest {
         RgbChannelTransformControls.modeIndependent,
         profile.rgbChannelTransform.mode,
     )
+    assertEquals(0.0f, profile.rgbChannelTransform.directionNoiseAmountTurns)
+    assertEquals(0.1f, profile.rgbChannelTransform.directionNoiseRateHz)
     assertTrue(profile.projectionSurfaceDisplacement.enabled)
     assertEquals(0.18f, profile.projectionSurfaceDisplacement.maxDisplacementMeters)
     assertTrue(profile.projectionSurfaceTiling.enabled)
@@ -170,6 +215,39 @@ class SpatialCameraControlProfileTest {
         ProjectionInnerAlphaControls.driverMax,
         profile.projectionInnerAlpha.driver,
     )
+    assertEquals(SpatialStrengthCycleControls.defaultSpeedHz, profile.strengthCycleSpeedHz)
+  }
+
+  @Test
+  fun strengthCycleProfileControlDefaultsAndRejectsOutOfRangeValues() {
+    val legacy = SpatialCameraControlProfileContract.parse(validProfile().toString().toByteArray())
+    assertEquals(0.25f, legacy.strengthCycleSpeedHz)
+
+    val explicit = validProfile()
+    explicit.getJSONObject("quest_controls").put("strength_cycle_hz", 0.0)
+    assertEquals(
+        0.0f,
+        SpatialCameraControlProfileContract.parse(explicit.toString().toByteArray()).strengthCycleSpeedHz,
+    )
+
+    val invalid = validProfile()
+    invalid.getJSONObject("quest_controls").put("strength_cycle_hz", 2.01)
+    assertThrows(IllegalArgumentException::class.java) {
+      SpatialCameraControlProfileContract.parse(invalid.toString().toByteArray())
+    }
+  }
+
+  @Test
+  fun profilePreservesBoundedDirectionNoiseWhenPresent() {
+    val document = validProfile()
+    val rgb = document.getJSONObject("quest_controls").getJSONObject("rgb_channel_transform")
+    rgb.put("direction_noise_amount_turns", 0.075)
+    rgb.put("direction_noise_rate_hz", 0.4)
+
+    val profile = SpatialCameraControlProfileContract.parse(document.toString().toByteArray())
+
+    assertEquals(0.075f, profile.rgbChannelTransform.directionNoiseAmountTurns)
+    assertEquals(0.4f, profile.rgbChannelTransform.directionNoiseRateHz)
   }
 
   @Test
@@ -183,6 +261,59 @@ class SpatialCameraControlProfileTest {
 
     assertEquals(ProjectionSurfaceTilingControls.off, parsed.projectionSurfaceTiling)
     assertEquals(ProjectionInnerAlphaControls.off, parsed.projectionInnerAlpha)
+  }
+
+  @Test
+  fun outerTransitionFlagsNormalizeToLinearAndOlderProfilesDefaultToBaseline() {
+    val profile = validProfile()
+    val zone = profile.getJSONObject("quest_controls").getJSONObject("zone_compositor")
+    zone
+        .put("region_contract", "v4")
+        .put("outer_content", "transparent")
+        .put("outer_stretch_option_flags", 0x1fffd)
+
+    val parsed = SpatialCameraControlProfileContract.parse(profile.toString().toByteArray())
+    assertEquals(0x1fbdd, parsed.zoneCompositor.outerStretchOptionFlags)
+
+    zone.remove("outer_stretch_option_flags")
+    val legacy = SpatialCameraControlProfileContract.parse(profile.toString().toByteArray())
+    assertEquals(0, legacy.zoneCompositor.outerStretchOptionFlags)
+  }
+
+  @Test
+  fun middleTransitionFlagsRejectUnsupportedPackedBits() {
+    val profile = validProfile()
+    profile
+        .getJSONObject("quest_controls")
+        .getJSONObject("zone_compositor")
+        .put("stretch_option_flags", 0x20)
+
+    val error =
+        assertThrows(IllegalArgumentException::class.java) {
+          SpatialCameraControlProfileContract.parse(profile.toString().toByteArray())
+        }
+    assertEquals("stretch_option_flags_unsupported_bits", error.message)
+  }
+
+  @Test
+  fun legacyPackedFlagsRemainAcceptedAndTheirReservedBitStaysIneffective() {
+    val profile = validProfile()
+    val zone = profile.getJSONObject("quest_controls").getJSONObject("zone_compositor")
+    zone.put("stretch_option_flags", 31)
+
+    val parsed = SpatialCameraControlProfileContract.parse(profile.toString().toByteArray())
+    assertEquals(0x1d, parsed.zoneCompositor.stretchOptionFlags)
+    assertEquals(0x1d, parsed.zoneCompositor.outerStretchOptionFlags)
+  }
+
+  @Test
+  fun explicitV4OuterPackedFlagsRetainNewBitsAndDropTheLegacyReservedBit() {
+    val profile = validProfile()
+    val zone = profile.getJSONObject("quest_controls").getJSONObject("zone_compositor")
+    zone.put("region_contract", "v4").put("outer_stretch_option_flags", 0xff)
+
+    val parsed = SpatialCameraControlProfileContract.parse(profile.toString().toByteArray())
+    assertEquals(0xfd, parsed.zoneCompositor.outerStretchOptionFlags)
   }
 
   @Test

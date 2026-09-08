@@ -994,7 +994,8 @@ internal class SpatialImmersiveVideoPanelCoordinator(
                     "shared-offline-media-unavailable"
                 )
               } else {
-                if (!PackagedOfflineImmersiveMediaPackImporter.ensureImported(context, packId)) {
+                if (packagedPackIds.contains(packId) &&
+                    !PackagedOfflineImmersiveMediaPackImporter.ensureImported(context, packId)) {
                   rejectedCount += 1
                   continue
                 }

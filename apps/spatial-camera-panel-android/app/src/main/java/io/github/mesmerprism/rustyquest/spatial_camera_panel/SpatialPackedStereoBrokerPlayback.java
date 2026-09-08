@@ -51,7 +51,8 @@ final class SpatialPackedStereoBrokerPlayback {
         int requestedWidth,
         int requestedHeight,
         int maxImages,
-        int fpsCap
+        int fpsCap,
+        Runnable onFirstFrame
     ) throws IOException {
         if (!MEDIA_LAYOUT.equals(mediaLayout) || port <= 0 || port > 65535) {
             throw new IOException("Spatial packed peer source requires explicit SBS layout and one port");
@@ -97,7 +98,11 @@ final class SpatialPackedStereoBrokerPlayback {
                 try {
                     packet = Packet.read(input, header.maxPairDeltaNs);
                 } catch (SocketTimeoutException timeout) {
-                    renderedFrames += drain(codec, outputInfo, queuedPairs);
+                    long drained = drain(codec, outputInfo, queuedPairs);
+                    if (renderedFrames == 0L && drained > 0L) {
+                        onFirstFrame.run();
+                    }
+                    renderedFrames += drained;
                     SpatialPeerStereoStatus.rendered(renderedFrames);
                     continue;
                 } catch (EOFException eof) {
@@ -115,7 +120,11 @@ final class SpatialPackedStereoBrokerPlayback {
                 int inputIndex;
                 do {
                     inputIndex = codec.dequeueInputBuffer(DEQUEUE_TIMEOUT_US);
-                    renderedFrames += drain(codec, outputInfo, queuedPairs);
+                    long drained = drain(codec, outputInfo, queuedPairs);
+                    if (renderedFrames == 0L && drained > 0L) {
+                        onFirstFrame.run();
+                    }
+                    renderedFrames += drained;
                     SpatialPeerStereoStatus.rendered(renderedFrames);
                 } while (inputIndex < 0 && !SpatialStereoVideoPlayback.isStopRequested());
                 if (inputIndex < 0) {
@@ -141,7 +150,11 @@ final class SpatialPackedStereoBrokerPlayback {
                     }
                 }
                 queuedPackets++;
-                renderedFrames += drain(codec, outputInfo, queuedPairs);
+                long drained = drain(codec, outputInfo, queuedPairs);
+                if (renderedFrames == 0L && drained > 0L) {
+                    onFirstFrame.run();
+                }
+                renderedFrames += drained;
                 SpatialPeerStereoStatus.rendered(renderedFrames);
                 if (renderedFrames == 1L || renderedFrames % 60L == 0L) {
                     Log.i(LOG_TAG, String.format(
