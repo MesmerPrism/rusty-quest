@@ -1,0 +1,17 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="io.github.mesmerprism.rustyquest.shellcapabilities">
+  <uses-sdk android:minSdkVersion="29" android:targetSdkVersion="34" />
+  <uses-permission android:name="android.permission.INTERNET" />
+  <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+  <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+  <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+  <uses-permission android:name="android.permission.BLUETOOTH_ADVERTISE" />
+  <application android:label="Quest Shell Capabilities" android:debuggable="true" android:allowBackup="false">
+    <activity android:name=".CapabilityActivity" android:exported="true" android:launchMode="singleTask">
+      <intent-filter><action android:name="io.github.mesmerprism.rustyquest.shellcapabilities.START"/><category android:name="android.intent.category.DEFAULT"/></intent-filter>
+      <intent-filter><action android:name="io.github.mesmerprism.rustyquest.shellcapabilities.STOP"/><category android:name="android.intent.category.DEFAULT"/></intent-filter>
+      <intent-filter><action android:name="io.github.mesmerprism.rustyquest.shellcapabilities.BLE_START"/><category android:name="android.intent.category.DEFAULT"/></intent-filter>
+      <intent-filter><action android:name="io.github.mesmerprism.rustyquest.shellcapabilities.BLE_STOP"/><category android:name="android.intent.category.DEFAULT"/></intent-filter>
+    </activity>
+    <provider android:name=".CapabilityProvider" android:authorities="io.github.mesmerprism.rustyquest.shellcapabilities" android:exported="true" android:permission="android.permission.DUMP" />
+  </application>
+</manifest>
