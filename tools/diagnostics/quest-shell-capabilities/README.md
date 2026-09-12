@@ -112,6 +112,61 @@ acquisition, `IContentProvider.call` with an explicit UID-2000
 This is a diagnostic identity fence, not a reusable product authorization
 protocol.
 
+## Exact-target BLE bootstrap
+
+These are target-side prerequisites for the BLE/Wi-Fi diagnostic. Run them only
+through an already authorized, serial-scoped ADB or equivalent UID-2000 shell;
+they do not establish shell authority. First inspect the local APK, install that
+exact file, verify the installed copy, and grant only the two declared BLE
+runtime permissions:
+
+```text
+pwsh -NoProfile -Command "(Get-FileHash -LiteralPath '<local-apk>' -Algorithm SHA256).Hash.ToLowerInvariant()"
+adb -s <target> install <local-apk>
+adb -s <target> shell pm path io.github.mesmerprism.rustyquest.shellcapabilities
+adb -s <target> shell sha256sum <installed-apk-path>
+adb -s <target> shell pm grant io.github.mesmerprism.rustyquest.shellcapabilities android.permission.BLUETOOTH_CONNECT
+adb -s <target> shell pm grant io.github.mesmerprism.rustyquest.shellcapabilities android.permission.BLUETOOTH_ADVERTISE
+adb -s <target> shell cmd package list packages -U io.github.mesmerprism.rustyquest.shellcapabilities
+```
+
+Require the local and installed SHA-256 values to match, and parse the exact
+`uid:<app_uid>` returned for the package. Generate a fresh cryptographic
+16-byte run token and 32-byte BLE secret, both lowercase hex. Create an exact
+run-owned shell-readable directory, place the inspected APK there as
+`probe.apk`, verify its hash again, and launch the server detached from the
+initiating transport:
+
+```text
+adb -s <target> shell mkdir -m 700 <run-directory>
+adb -s <target> push <local-apk> <run-directory>/probe.apk
+adb -s <target> shell chmod 600 <run-directory>/probe.apk
+adb -s <target> shell sha256sum <run-directory>/probe.apk
+adb -s <target> shell sh -c 'env CLASSPATH=<run-directory>/probe.apk setsid app_process / io.github.mesmerprism.rustyquest.shellcapabilities.WifiShellRole server <token> <app_uid> 120000 <secret> </dev/null > <run-directory>/shell.log 2>&1 &'
+```
+
+Read `shell.log` until one `rusty.quest.shell_caps_wifi_ready.v1` record binds
+the exact token, UID 2000, installed app UID, enabled baseline, shell PID, and
+Android `expires_elapsed_ms`. Use that returned Android elapsed-realtime
+deadline for the app start:
+
+```text
+adb -s <target> shell am start -n io.github.mesmerprism.rustyquest.shellcapabilities/.CapabilityActivity -a io.github.mesmerprism.rustyquest.shellcapabilities.BLE_START --es run_token <token> --el expires_elapsed_ms <server-expires-elapsed-ms>
+adb -s <target> shell run-as io.github.mesmerprism.rustyquest.shellcapabilities cat files/ble-<token>.json
+```
+
+An `am start` return, including `-W`, is dispatch evidence only. Proceed after
+the app-private result reports the exact token and `ready` state, which is
+written only after the GATT service-add and advertising callbacks succeed.
+After the bounded client finishes, use both typed stops, require helper and
+guardian exit plus enabled-Wi-Fi readback, then remove only run-owned staging
+and uninstall the package only if this run installed it:
+
+```text
+adb -s <target> shell env CLASSPATH=<run-directory>/probe.apk app_process / io.github.mesmerprism.rustyquest.shellcapabilities.WifiShellRole stop <token> <app_uid>
+adb -s <target> shell am start -n io.github.mesmerprism.rustyquest.shellcapabilities/.CapabilityActivity -a io.github.mesmerprism.rustyquest.shellcapabilities.BLE_STOP --es run_token <token>
+```
+
 The bounded BLE/WiFi diagnostic uses the same retained Binder lease. Start its
 shell role before the app:
 
@@ -148,6 +203,11 @@ Wi-Fi resume. It accepts no device command or Wi-Fi profile input:
 ```text
 python ble_wifi_client.py --token <32-lowercase-hex> --secret <64-lowercase-hex> --endpoint <host>:<port> --output <new-directory>
 ```
+
+This published host wrapper is distinct from the target bootstrap commands.
+Its exact published bytes passed syntax, static-surface, and BLE protocol
+checks, but were not the client bytes used in the retained live Quest run.
+Treat it as a reviewable runner that needs its own target receipt.
 
 Install `bleak` in the host Python environment first. Keep the token and secret
 out of command transcripts intended for publication. A client failure after
