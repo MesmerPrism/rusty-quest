@@ -66,6 +66,21 @@ run transaction; it has no generic package or shell authority.
 
 ## Device Link Contracts
 
+`tools/diagnostics/quest-shell-capabilities` is a bounded Android 14 diagnostic
+for APK↔UID-2000 transport and lifecycle: loopback TCP and abstract Unix socket
+comparison, exact external-provider Binder bootstrap, fixed Binder-carried pipe
+sizes, authenticated BLE no-op/Wi-Fi off/resume, and bounded restoration. Its
+host BLE client accepts only the fixed protocol sequence and one TCP endpoint;
+it is not a shell or product command channel.
+
+`tools/diagnostics/quest-offline-hotspot-handoff` is the separate attended
+UID-2000 A→temporary-B→A saved-network diagnostic. It uses the actual
+`NETWORK_SELECTION_ENABLED` and `DISABLED_NONE` fields, creates one
+run-identified WPA2 profile, and restores the original profile under a bounded
+guardian. Both diagnostics keep device receipts, network identities, tokens,
+and credentials outside this repository and provide source-only checks beside
+their build scripts.
+
 `crates/rusty-quest-device-link` defines
 `rusty.quest.device_link.v1`, the reusable report contract for host-to-Quest
 connectivity. A report records device identity, ADB forward/tunnel state,

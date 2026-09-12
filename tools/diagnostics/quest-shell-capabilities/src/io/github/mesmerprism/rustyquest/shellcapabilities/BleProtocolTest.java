@@ -1,0 +1,4 @@
+package io.github.mesmerprism.rustyquest.shellcapabilities;
+public final class BleProtocolTest{
+ public static void main(String[]a)throws Exception{byte[]token=BleProtocol.token("00112233445566778899aabbccddeeff"),secret=BleProtocol.secret("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"),f=new byte[20];f[0]=1;f[1]=1;f[3]=1;System.arraycopy(BleProtocol.tag(f,token,secret,'C'),0,f,4,16);if(!BleProtocol.valid(f,token,secret,'C')||BleProtocol.seq(f)!=1)throw new Exception("valid");f[4]^=1;if(BleProtocol.valid(f,token,secret,'C'))throw new Exception("bad_mac");byte[]r=BleProtocol.reply(BleProtocol.READY,0,token,secret);if(!BleProtocol.valid(r,token,secret,'R')||BleProtocol.valid(r,token,secret,'C'))throw new Exception("direction");System.out.println("ble_protocol_test=pass");}
+}
