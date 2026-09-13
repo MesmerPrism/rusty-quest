@@ -497,24 +497,24 @@ function Read-ValidatedClientLock {
 
 function New-SpecializedSpatialCameraPanelClientInput {
     param(
-        [Parameter(Mandatory=$true)]$Input,
+        [Parameter(Mandatory=$true)]$ClientInput,
         [Parameter(Mandatory=$true)][string]$PackageName
     )
 
-    if ([string]$Input.lock.client_id -cne "client.quest.spatial-camera-panel" -or
-        [string]$Input.lock.package_name -cne
+    if ([string]$ClientInput.lock.client_id -cne "client.quest.spatial-camera-panel" -or
+        [string]$ClientInput.lock.package_name -cne
             "io.github.mesmerprism.rustyquest.spatial_camera_panel") {
         throw "Spatial Camera Panel specialization requires the exact baseline client lock."
     }
-    $lock = $Input.lock | ConvertTo-Json -Depth 20 | ConvertFrom-Json
+    $lock = $ClientInput.lock | ConvertTo-Json -Depth 20 | ConvertFrom-Json
     $lock.package_name = $PackageName
     $json = $lock | ConvertTo-Json -Depth 20 -Compress
     return [pscustomobject]@{
-        path = [string]$Input.path
+        path = [string]$ClientInput.path
         json = $json
         lock = $lock
         sha256 = Get-TextSha256Hex -Text $json
-        source_sha256 = [string]$Input.sha256
+        source_sha256 = [string]$ClientInput.sha256
         specialized = $true
     }
 }
@@ -988,7 +988,7 @@ $spatialClientInput = Read-ValidatedClientLock -Path (
     Join-Path $repoRoot "fixtures\broker-clients\spatial-camera-panel.client.json")
 if (-not [string]::IsNullOrWhiteSpace($SpatialCameraPanelPackageName)) {
     $spatialClientInput = New-SpecializedSpatialCameraPanelClientInput `
-        -Input $spatialClientInput `
+        -ClientInput $spatialClientInput `
         -PackageName $SpatialCameraPanelPackageName
 }
 $clientLockInputs = @(
