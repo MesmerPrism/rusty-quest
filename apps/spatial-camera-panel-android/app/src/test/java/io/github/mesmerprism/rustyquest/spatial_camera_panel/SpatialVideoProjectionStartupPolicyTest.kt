@@ -6,13 +6,17 @@ import org.junit.Test
 
 class SpatialVideoProjectionStartupPolicyTest {
   @Test
-  fun streamBackedPeerUsesOnlyRawProjectionDecoderWhenCameraProjectionOwnsOutput() {
-    assertTrue(
+  fun projectionPeerNeverDelegatesIntoTheCompositorVideoProbe() {
+    assertFalse(
         SpatialVideoProjectionStartupPolicy.delegateStreamToCameraProjection(
             cameraProjectionEnabled = true,
             source = "peer-packed-stereo",
         )
     )
+  }
+
+  @Test
+  fun legacyBrokerStreamStillUsesItsExistingRawProjectionOwner() {
     assertTrue(
         SpatialVideoProjectionStartupPolicy.delegateStreamToCameraProjection(
             cameraProjectionEnabled = true,

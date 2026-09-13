@@ -52,7 +52,7 @@ private const val EXTRA_VIDEO_PROJECTION_ENABLED =
     "rustyquest.spatial.camera_hwb_projection_probe.video.enabled"
 private const val EXTRA_VIDEO_PROJECTION_PATH =
     "rustyquest.spatial.camera_hwb_projection_probe.video.path"
-private const val EXTRA_VIDEO_PROJECTION_SOURCE =
+internal const val EXTRA_VIDEO_PROJECTION_SOURCE =
     "rustyquest.spatial.camera_hwb_projection_probe.video.source"
 private const val EXTRA_VIDEO_PROJECTION_BROKER_HOST =
     "rustyquest.spatial.camera_hwb_projection_probe.video.broker.host"
@@ -160,6 +160,22 @@ internal enum class SpatialVideoCadenceMode(
           else -> Source
         }
   }
+}
+
+internal enum class SpatialVideoDecoderRole {
+  CompositorVideo,
+  ProjectionPeer,
+}
+
+internal object SpatialFixedDecoderRoleSettingsPolicy {
+  fun isCompositorVideo(settings: SpatialVideoProjectionSettings): Boolean =
+      settings.source != "peer-packed-stereo"
+
+  fun compositorSettings(
+      resolved: SpatialVideoProjectionSettings,
+      adopted: SpatialVideoProjectionSettings,
+  ): SpatialVideoProjectionSettings =
+      if (resolved.source == "peer-packed-stereo") adopted else resolved
 }
 
 internal data class SpatialVideoProjectionSettings(

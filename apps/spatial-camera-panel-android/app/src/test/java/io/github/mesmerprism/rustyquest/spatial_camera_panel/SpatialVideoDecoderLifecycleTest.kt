@@ -166,6 +166,26 @@ class SpatialVideoDecoderLifecycleTest {
   }
 
   @Test
+  fun failedNewDecoderDispatchMakesReplacementNotApplied() {
+    val calls = ArrayList<String>()
+    val coordinator =
+        SpatialVideoProjectionRuntimeCoordinator(
+            bindings(calls = calls, stopResult = true, startResult = false)
+        )
+    val replacement = activeSettings("content://plain/dispatch-failure")
+
+    val result = coordinator.replaceMediaSource(replacement, null, "selection")
+
+    assertFalse(result.applied)
+    assertFalse(result.decoderStarted)
+    assertEquals(SpatialVideoProjectionDecoderState.Failed, coordinator.decoderState)
+    assertEquals(
+        listOf("configure:content://plain/dispatch-failure", "start:content://plain/dispatch-failure"),
+        calls,
+    )
+  }
+
+  @Test
   fun transparentUnderlayNeverStartsTheZeroContributionCustomDecoder() {
     val calls = ArrayList<String>()
     val coordinator =
@@ -180,6 +200,102 @@ class SpatialVideoDecoderLifecycleTest {
 
     assertFalse(coordinator.started)
     assertTrue(calls.isEmpty())
+  }
+
+  @Test
+  fun localCameraSourceDoesNotSuppressVisibleFileCompositorVideo() {
+    val calls = ArrayList<String>()
+    val coordinator = SpatialVideoProjectionRuntimeCoordinator(bindings(calls, true, true))
+    val file = activeSettings("content://plain/local-visible")
+    assertTrue(SpatialCompositorVideoStartupPolicy.shouldStart(file))
+    coordinator.adoptSettings(file)
+    coordinator.updateSourceOwnerDemand(false, "local-source")
+
+    coordinator.start(file, "visible-file")
+
+    assertEquals(listOf("start:content://plain/local-visible"), calls)
+  }
+
+  @Test
+  fun localCameraSourceDoesNotOverrideZeroZoneFileDemand() {
+    val calls = ArrayList<String>()
+    val coordinator = SpatialVideoProjectionRuntimeCoordinator(bindings(calls, true, true))
+    val file = activeSettings("content://plain/local-zero-zone")
+    coordinator.adoptSettings(file)
+    coordinator.updateSourceOwnerDemand(false, "local-source")
+    coordinator.updateReadableVideoConsumer(false, "zero-zone")
+
+    coordinator.start(file, "zero-zone-file")
+
+    assertTrue(calls.isEmpty())
+  }
+
+  @Test
+  fun compositorVideoRejectsProjectionPeerSettingsWithoutStoppingItsFileDecoder() {
+    val calls = ArrayList<String>()
+    val coordinator = SpatialVideoProjectionRuntimeCoordinator(bindings(calls, true, true))
+    val file = activeSettings("content://plain/retained")
+    coordinator.adoptSettings(file)
+    coordinator.start(file, "file")
+    calls.clear()
+    val peer = SpatialVideoProjectionSettings.disabled().copy(
+        enabled = true,
+        source = "peer-packed-stereo",
+        brokerPort = 9079,
+        peerSessionId = "test-session",
+    )
+    coordinator.adoptSettings(peer)
+    coordinator.updateSourceOwnerDemand(true, "peer-source-owner")
+    val replaced = coordinator.replaceMediaSource(peer, null, "peer")
+
+    assertFalse(replaced.applied)
+    assertEquals(file, coordinator.settings)
+    assertTrue(coordinator.started)
+    assertFalse(calls.any { it == "stop" || it.startsWith("start:") })
+  }
+
+  @Test
+  fun localSourceOwnerDemandDoesNotRetainAnUnrelatedFileDecoder() {
+    val calls = ArrayList<String>()
+    val coordinator = SpatialVideoProjectionRuntimeCoordinator(bindings(calls, true, true))
+    val file = activeSettings("content://plain/local-default")
+    coordinator.adoptSettings(file)
+    coordinator.start(file, "file")
+    calls.clear()
+    coordinator.updateSourceOwnerDemand(true, "local-camera-owner")
+
+    coordinator.updateReadableVideoConsumer(false, "zero-readable-zones")
+
+    assertEquals(listOf("stop"), calls)
+    assertFalse(coordinator.decoderActive)
+  }
+
+  @Test
+  fun projectionPeerRouteDoesNotSuppressCompositorDirectViewerOwnership() {
+    assertTrue(
+        SpatialVideoDecoderOwnershipPolicy.directViewerRequired(
+            compositorVideoRequested = true,
+            projectionPanelVisible = false,
+        )
+    )
+    assertFalse(
+        SpatialVideoDecoderOwnershipPolicy.directViewerRequired(
+            compositorVideoRequested = true,
+            projectionPanelVisible = true,
+        )
+    )
+  }
+
+  @Test
+  fun projectionPeerStopRequiresTheExactRoleRouteAndDecoderIdentity() {
+    assertTrue(SpatialStereoVideoPlayback.projectionPeerStopMatches(7L, 31L, 7L, 31L))
+    assertFalse(SpatialStereoVideoPlayback.projectionPeerStopMatches(7L, 31L, 6L, 31L))
+    assertFalse(SpatialStereoVideoPlayback.projectionPeerStopMatches(7L, 31L, 7L, 30L))
+    assertFalse(SpatialStereoVideoPlayback.projectionPeerStopMatches(0L, 0L, 0L, 0L))
+    assertFalse(SpatialStereoVideoPlayback.projectionPeerNativeStopAccepted(0))
+    assertTrue(SpatialStereoVideoPlayback.projectionPeerNativeStopAccepted(1))
+    assertTrue(SpatialStereoVideoPlayback.projectionPeerNativeStopAccepted(2))
+    assertFalse(SpatialStereoVideoPlayback.projectionPeerNativeStopAccepted(3))
   }
 
   @Test

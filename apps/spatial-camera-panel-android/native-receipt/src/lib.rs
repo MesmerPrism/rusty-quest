@@ -43,12 +43,20 @@ mod camera_latency_diagnostics;
 mod camera_replay_capture;
 #[cfg(any(target_os = "android", test))]
 mod camera_reprojection_guard_band;
+#[cfg(any(target_os = "android", test))]
+mod frame_lease_slots;
 mod hand_adapter_consumer;
 #[cfg(target_os = "android")]
 mod live_hand_joint_bridge;
 #[cfg(any(target_os = "android", test))]
 mod live_hand_joints;
 mod particle_adapter_consumer;
+#[cfg(any(target_os = "android", test))]
+mod peer_projection_ingress;
+#[cfg(any(target_os = "android", test))]
+mod peer_projection_runtime;
+#[cfg(any(target_os = "android", test))]
+mod projection_frame_source;
 mod projection_surface_displacement;
 mod projection_surface_features;
 #[cfg(any(target_os = "android", test))]
@@ -84,6 +92,8 @@ mod spatial_video_projection_settings;
 #[cfg(any(target_os = "android", test))]
 mod surface_particle_layer;
 mod surface_particle_projection;
+#[cfg(any(target_os = "android", test))]
+mod video_import_cache_policy;
 
 #[cfg(target_os = "android")]
 const ANDROID_LOG_INFO: c_int = 4;

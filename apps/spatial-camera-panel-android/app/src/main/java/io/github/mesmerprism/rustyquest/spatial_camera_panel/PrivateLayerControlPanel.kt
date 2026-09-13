@@ -125,6 +125,7 @@ internal fun PrivateLayerControlPanel(
     passthroughLutSettings: () -> SpatialPassthroughLutSettings,
     backgroundVideoSession: () -> SpatialImmersiveVideoSessionSnapshot,
     videoSession: () -> SpatialImmersiveVideoSessionSnapshot,
+    projectionSource: () -> SpatialVideoSourceRoutingState,
     sharedMediaLibraryStatus: () -> SharedOfflineImmersiveMediaLibrarySnapshot,
     observeSharedMediaLibrary:
         ((SharedOfflineImmersiveMediaLibrarySnapshot) -> Unit) -> Closeable,
@@ -143,6 +144,7 @@ internal fun PrivateLayerControlPanel(
     setProjectionPanelEnabled: (Boolean, String) -> Boolean,
     setVideoPlaybackEnabled: (Boolean) -> SpatialImmersiveVideoSessionSnapshot,
     setBackgroundVideoPlaybackEnabled: (Boolean) -> SpatialImmersiveVideoSessionSnapshot,
+    requestProjectionSource: (SpatialVideoSource) -> SpatialVideoSourceRoutingState,
     updateProjectionScale: (Float, String) -> Float,
     updateDepthLayerPolicy: (Int, String) -> Int,
     updateDepthAlignment: (PrivateLayerDepthAlignment, String) -> PrivateLayerDepthAlignment,
@@ -216,6 +218,7 @@ internal fun PrivateLayerControlPanel(
   }
   var localBackgroundVideoSession by remember { mutableStateOf(backgroundVideoSession()) }
   var localVideoSession by remember { mutableStateOf(videoSession()) }
+  var localProjectionSource by remember { mutableStateOf(projectionSource()) }
   var localVideoCadenceMode by remember { mutableStateOf(SpatialVideoCadencePanelBridge.current()) }
   var localSharedMediaLibrary by remember { mutableStateOf(sharedMediaLibraryStatus()) }
   var localConnectionHub by remember { mutableStateOf(connectionHubStatus()) }
@@ -268,6 +271,10 @@ internal fun PrivateLayerControlPanel(
       val latestVideoCadenceMode = SpatialVideoCadencePanelBridge.current()
       if (latestVideoCadenceMode != localVideoCadenceMode) {
         localVideoCadenceMode = latestVideoCadenceMode
+      }
+      val latestProjectionSource = projectionSource()
+      if (latestProjectionSource != localProjectionSource) {
+        localProjectionSource = latestProjectionSource
       }
       val latestEnvironmentDepthUnavailableWarning = environmentDepthUnavailableWarning()
       if (latestEnvironmentDepthUnavailableWarning !=
@@ -810,6 +817,31 @@ internal fun PrivateLayerControlPanel(
               SpatialPeerStereoStatus.snapshotSummary(),
               style = MaterialTheme.typography.bodyMedium,
               color = LayerPanelAccent,
+          )
+          HelpLabel("Projection source")
+          Row(
+              horizontalArrangement = Arrangement.spacedBy(10.dp),
+              modifier = Modifier.fillMaxWidth(),
+          ) {
+            ChoiceButton("Local", localProjectionSource.requested == SpatialVideoSource.Local) {
+              localProjectionSource = requestProjectionSource(SpatialVideoSource.Local)
+            }
+            ChoiceButton("Peer", localProjectionSource.requested == SpatialVideoSource.Peer) {
+              localProjectionSource = requestProjectionSource(SpatialVideoSource.Peer)
+            }
+            ChoiceButton("Disabled", localProjectionSource.requested == SpatialVideoSource.Disabled) {
+              localProjectionSource = requestProjectionSource(SpatialVideoSource.Disabled)
+            }
+          }
+          Text(
+              "Requested ${localProjectionSource.requested.token} · effective " +
+                  "${localProjectionSource.effective.token}" +
+                  (localProjectionSource.pending?.let { " · pending ${it.token}" } ?: "") +
+                  (localProjectionSource.failed?.let {
+                    " · ${it.token} failed (${localProjectionSource.failureReason.token})"
+                  } ?: ""),
+              style = MaterialTheme.typography.bodySmall,
+              color = if (localProjectionSource.failed == null) LayerPanelAccent else LayerPanelWarm,
           )
           Text(
               "Targets and relay credentials are run-owned inputs and are never saved in profiles, playlists, Hub, or Fleet. Broker route endpoints remain private run evidence and are redacted from this UI and log markers.",

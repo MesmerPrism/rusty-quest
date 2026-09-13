@@ -31,6 +31,10 @@ const SPATIAL_VIDEO_PROJECTION_PROBE_MAX_FRAMES: u32 = 1800;
 
 static STOP_SPATIAL_VIDEO_PROJECTION_PROBE: AtomicBool = AtomicBool::new(false);
 
+pub(crate) fn request_spatial_video_projection_probe_stop() {
+    STOP_SPATIAL_VIDEO_PROJECTION_PROBE.store(true, Ordering::Release);
+}
+
 #[link(name = "android")]
 extern "C" {
     fn ANativeWindow_fromSurface(env: *mut c_void, surface: *mut c_void) -> *mut vk::ANativeWindow;
@@ -150,7 +154,7 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1pa
     _env: *mut c_void,
     _thiz: *mut c_void,
 ) {
-    STOP_SPATIAL_VIDEO_PROJECTION_PROBE.store(true, Ordering::Release);
+    request_spatial_video_projection_probe_stop();
     log_marker(
         "status=stop-requested carrier=scenequadlayer-createAsAndroid-vulkan-wsi videoOnlySpatialProjection=true runtimeCrash=false"
             .to_string(),
