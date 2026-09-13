@@ -382,21 +382,35 @@ $aapt2 = Join-Path $buildTools.FullName "aapt2.exe"
 $permissionOutput = @(& $aapt2 dump permissions $apkPath 2>&1)
 if ($LASTEXITCODE -ne 0) { throw "aapt2 permission inspection failed." }
 $apkPermissions = @($permissionOutput | ForEach-Object {
-    if ([string]$_ -match "^uses-permission: name='([^']+)'$") { $Matches[1] }
+    if ([string]$_ -match "^uses-permission: name='([^']+)'(?: .*)?$") { $Matches[1] }
 } | Where-Object { $_ } | Sort-Object -Unique)
 Assert-ExactStrings $apkPermissions @($build.android_permissions) `
     "actual candidate APK permissions"
 $xmlTree = @(& $aapt2 dump xmltree --file AndroidManifest.xml $apkPath 2>&1) -join "`n"
 if ($LASTEXITCODE -ne 0) { throw "aapt2 component inspection failed." }
+$androidAttributeMatches = [regex]::Matches($xmlTree,
+    '(?m)^\s*A:\s+http://schemas\.android\.com/apk/res/android:(?<attribute>[A-Za-z]+)(?:\(0x[0-9a-fA-F]+\))?="(?<value>[^"]*)"')
 foreach ($component in @($build.android_components)) {
-    if ([regex]::Matches($xmlTree, [regex]::Escape([string]$component.name)).Count -ne 1) {
+    $componentMatches = @($androidAttributeMatches | Where-Object {
+        $_.Groups['attribute'].Value -ceq 'name' -and
+        $_.Groups['value'].Value -ceq [string]$component.name
+    })
+    if ($componentMatches.Count -ne 1) {
         throw "Actual APK component is missing or duplicated: $($component.name)"
     }
 }
-foreach ($providerToken in @(".RemoteCameraDebugControlProvider", $ExpectedProviderAuthority,
-        "android.permission.DUMP")) {
-    if ([regex]::Matches($xmlTree, [regex]::Escape($providerToken)).Count -ne 1) {
-        throw "Actual APK remote-camera provider closure is invalid: $providerToken"
+$providerAttributes = [ordered]@{
+    name = '.RemoteCameraDebugControlProvider'
+    authorities = $ExpectedProviderAuthority
+    permission = 'android.permission.DUMP'
+}
+foreach ($providerAttribute in $providerAttributes.GetEnumerator()) {
+    $providerMatches = @($androidAttributeMatches | Where-Object {
+        $_.Groups['attribute'].Value -ceq $providerAttribute.Key -and
+        $_.Groups['value'].Value -ceq $providerAttribute.Value
+    })
+    if ($providerMatches.Count -ne 1) {
+        throw "Actual APK remote-camera provider closure is invalid: $($providerAttribute.Value)"
     }
 }
 
