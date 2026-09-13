@@ -287,6 +287,12 @@ pub(crate) fn record_peer_submission_retired(
     if current.words[1] != route_generation || current.words[2] != SOURCE_PEER {
         return SourceReceipt::unavailable(route_generation, REASON_RECEIPT_FOREIGN);
     }
+    if !matches!(current.words[11], RESULT_PENDING | RESULT_EFFECTIVE)
+        || u64::try_from(current.words[3]).ok() != Some(witness.decoder_token)
+        || u64::try_from(current.words[4]).ok() != Some(witness.reader_generation)
+    {
+        return SourceReceipt::unavailable(route_generation, REASON_RECEIPT_FOREIGN);
+    }
     if current.words[10] & STAGE_COMMON_GRAPH == 0 {
         drop(owner);
         return mark_route_lost(route_generation, REASON_MALFORMED);
@@ -752,6 +758,59 @@ mod tests {
         assert_eq!(lost.words[11], RESULT_LOST);
         assert_eq!(lost.words[12], REASON_STALE);
         assert_eq!(lost.words[10] & STAGE_ACTIVE, 0);
+    }
+
+    #[test]
+    fn peer_retirement_never_resurrects_lost_receipt() {
+        let _guard = reset();
+        request_source(request(105, SOURCE_PEER), true);
+        record_peer_decoder_bound(105, 4, 5);
+        record_peer_common_graph_attached(105);
+        let lost = mark_route_lost(105, REASON_STALE);
+
+        let rejected = record_peer_submission_retired(
+            105,
+            PeerFrameWitness {
+                decoder_token: 4,
+                reader_generation: 5,
+                pair_generation: 6,
+                import_generation: 7,
+            },
+        );
+        assert_eq!(rejected.words[11], RESULT_UNAVAILABLE);
+        assert_eq!(rejected.words[12], REASON_RECEIPT_FOREIGN);
+        assert_eq!(read_source(105), lost);
+    }
+
+    #[test]
+    fn peer_retirement_rejects_foreign_decoder_or_reader_witness() {
+        let _guard = reset();
+        request_source(request(107, SOURCE_PEER), true);
+        record_peer_decoder_bound(107, 14, 15);
+        record_peer_common_graph_attached(107);
+
+        for witness in [
+            PeerFrameWitness {
+                decoder_token: 99,
+                reader_generation: 15,
+                pair_generation: 16,
+                import_generation: 17,
+            },
+            PeerFrameWitness {
+                decoder_token: 14,
+                reader_generation: 99,
+                pair_generation: 16,
+                import_generation: 17,
+            },
+        ] {
+            let rejected = record_peer_submission_retired(107, witness);
+            assert_eq!(rejected.words[11], RESULT_UNAVAILABLE);
+            assert_eq!(rejected.words[12], REASON_RECEIPT_FOREIGN);
+        }
+        let retained = read_source(107);
+        assert_eq!(retained.words[11], RESULT_PENDING);
+        assert_eq!(retained.words[3..5], [14, 15]);
+        assert_ne!(retained.words[10] & STAGE_COMMON_GRAPH, 0);
     }
 
     #[test]

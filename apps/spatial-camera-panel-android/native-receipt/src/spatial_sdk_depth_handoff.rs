@@ -181,6 +181,10 @@ impl SpatialSubmitRetirementState {
         self.fence_signaled = true;
     }
 
+    pub(crate) fn accepted_submission_requires_fence(&self) -> bool {
+        self.qualification_flags & QUALIFICATION_QUEUE_SUBMIT_ACCEPTED != 0 && !self.fence_signaled
+    }
+
     pub(crate) fn action(&self) -> SpatialSubmitRetirementAction {
         let Some(status) = self.broker_status else {
             return SpatialSubmitRetirementAction::Wait;
@@ -601,6 +605,17 @@ mod tests {
     fn unsubmitted_failure_releases_without_waiting_for_fence() {
         let mut state = SpatialSubmitRetirementState::new(17);
         assert!(state.observe_terminal(terminal_result(-7, 0)));
+        assert_eq!(
+            state.action(),
+            SpatialSubmitRetirementAction::ReleaseUnsubmittedFailure
+        );
+    }
+
+    #[test]
+    fn queued_cancel_after_shutdown_never_waits_for_an_unsignaled_fence() {
+        let mut state = SpatialSubmitRetirementState::new(17);
+        assert!(state.observe_terminal(terminal_result(-10, 0)));
+        assert!(!state.accepted_submission_requires_fence());
         assert_eq!(
             state.action(),
             SpatialSubmitRetirementAction::ReleaseUnsubmittedFailure

@@ -50,6 +50,8 @@ mod hand_adapter_consumer;
 mod live_hand_joint_bridge;
 #[cfg(any(target_os = "android", test))]
 mod live_hand_joints;
+#[cfg(target_os = "android")]
+mod packed_sbs_normalizer;
 mod particle_adapter_consumer;
 #[cfg(any(target_os = "android", test))]
 mod peer_projection_ingress;

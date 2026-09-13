@@ -1,5 +1,113 @@
 //! Unit020 JNI source-owner boundary and packed SBS-LR sampling contract.
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct PackedSbsNormalizationPlan {
+    pub(crate) packed_binding_count: u32,
+    pub(crate) common_graph_binding_count: u32,
+    pub(crate) eye_width: u32,
+    pub(crate) eye_height: u32,
+}
+
+pub(crate) const PACKED_SBS_YCBCR_DESCRIPTOR_POOL_SLOTS: u32 = 3;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum PeerFrameFreshnessDecision {
+    Fresh,
+    Wait,
+    Lost,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct PeerFrameFreshness {
+    last_submitted_pair: u64,
+    last_submitted_import: u64,
+    last_progress_ms: u64,
+    timeout_ms: u64,
+}
+
+impl PeerFrameFreshness {
+    pub(crate) fn new(
+        initial_pair: u64,
+        initial_import: u64,
+        now_ms: u64,
+        timeout_ms: u64,
+    ) -> Self {
+        Self {
+            last_submitted_pair: initial_pair,
+            last_submitted_import: initial_import,
+            last_progress_ms: now_ms,
+            timeout_ms: timeout_ms.max(1),
+        }
+    }
+
+    pub(crate) fn observe(
+        &self,
+        candidate: Option<(u64, u64)>,
+        now_ms: u64,
+    ) -> PeerFrameFreshnessDecision {
+        if candidate.is_some_and(|(pair, import)| {
+            pair > self.last_submitted_pair && import > self.last_submitted_import
+        }) {
+            PeerFrameFreshnessDecision::Fresh
+        } else if now_ms.saturating_sub(self.last_progress_ms) >= self.timeout_ms {
+            PeerFrameFreshnessDecision::Lost
+        } else {
+            PeerFrameFreshnessDecision::Wait
+        }
+    }
+
+    pub(crate) fn commit(&mut self, pair_generation: u64, import_generation: u64, now_ms: u64) {
+        if pair_generation > self.last_submitted_pair
+            && import_generation > self.last_submitted_import
+        {
+            self.last_submitted_pair = pair_generation;
+            self.last_submitted_import = import_generation;
+            self.last_progress_ms = now_ms;
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) struct PeerSessionClaimState {
+    generation: Option<i64>,
+}
+
+impl PeerSessionClaimState {
+    pub(crate) fn generation(self) -> Option<i64> {
+        self.generation
+    }
+
+    pub(crate) fn claim(&mut self, generation: i64) -> bool {
+        if generation <= 0 || self.generation.is_some() {
+            return false;
+        }
+        self.generation = Some(generation);
+        true
+    }
+
+    pub(crate) fn release(&mut self, generation: i64) -> bool {
+        if self.generation != Some(generation) {
+            return false;
+        }
+        self.generation = None;
+        true
+    }
+}
+
+pub(crate) fn packed_sbs_normalization_plan(
+    packed_width: u32,
+    packed_height: u32,
+) -> Option<PackedSbsNormalizationPlan> {
+    (packed_width >= 2 && packed_width % 2 == 0 && packed_height > 0).then_some(
+        PackedSbsNormalizationPlan {
+            packed_binding_count: 1,
+            common_graph_binding_count: 2,
+            eye_width: packed_width / 2,
+            eye_height: packed_height,
+        },
+    )
+}
+
 /// Maps full-eye UV into one half of a packed SBS-LR image while keeping every
 /// bilinear footprint on its own side of the seam.
 pub(crate) fn packed_sbs_eye_uv(
@@ -295,16 +403,28 @@ mod jni_boundary {
             );
             return 3;
         }
-        // The retained carrier does not yet expose a joined provider-swap command channel.
-        // Starting the independent video renderer here would race the camera swapchain and
-        // falsely claim the shared public/private graph, so keep the route fail-closed.
-        let _ = (width, height, frame_count);
-        unsafe { ANativeWindow_release(window) };
-        peer_projection_runtime::mark_route_lost(
-            route_generation,
-            peer_projection_runtime::REASON_PROVIDER_REJECTED,
-        );
-        0
+        if width < 64 || height < 64 {
+            unsafe { ANativeWindow_release(window) };
+            peer_projection_runtime::mark_route_lost(
+                route_generation,
+                peer_projection_runtime::REASON_PROVIDER_REJECTED,
+            );
+            return 0;
+        }
+        // This entrypoint is intentionally cold-Peer only. The worker takes ownership of
+        // the exact retained WSI carrier and acknowledges CommonGraphAttached only after
+        // one packed AHB has been split into two distinct full-eye GPU images and bound to
+        // the existing camera processing graph. It never starts Camera2 or the independent
+        // spatial-video renderer.
+        unsafe {
+            crate::camera_hwb_probe::start_peer_common_graph(
+                window,
+                width as u32,
+                height as u32,
+                frame_count,
+                route_generation,
+            )
+        }
     }
 }
 
@@ -331,5 +451,63 @@ mod tests {
     fn odd_width_still_never_crosses_the_half_domain() {
         assert!(packed_sbs_eye_uv(0, [1.0, 0.5], 1919, 1080)[0] < 0.5);
         assert!(packed_sbs_eye_uv(1, [0.0, 0.5], 1919, 1080)[0] > 0.5);
+    }
+
+    #[test]
+    fn common_graph_plan_requires_one_packed_input_and_two_full_eye_outputs() {
+        let plan = packed_sbs_normalization_plan(3840, 1920).expect("valid packed SBS");
+        assert_eq!(plan.packed_binding_count, 1);
+        assert_eq!(plan.common_graph_binding_count, 2);
+        assert_eq!((plan.eye_width, plan.eye_height), (1920, 1920));
+    }
+
+    #[test]
+    fn common_graph_plan_rejects_ambiguous_packed_extents() {
+        assert_eq!(packed_sbs_normalization_plan(1919, 1080), None);
+        assert_eq!(packed_sbs_normalization_plan(1920, 0), None);
+        assert_eq!(packed_sbs_normalization_plan(1, 1080), None);
+    }
+
+    #[test]
+    fn peer_session_claim_is_exclusive_and_generation_bound() {
+        let mut state = PeerSessionClaimState::default();
+        assert!(state.claim(41));
+        assert!(!state.claim(41));
+        assert!(!state.claim(42));
+        assert!(!state.release(42));
+        assert!(state.release(41));
+        assert!(state.claim(42));
+    }
+
+    #[test]
+    fn repeated_or_missing_peer_frame_never_refreshes_freshness() {
+        let mut freshness = PeerFrameFreshness::new(3, 7, 100, 500);
+        assert_eq!(
+            freshness.observe(Some((3, 7)), 200),
+            PeerFrameFreshnessDecision::Wait
+        );
+        freshness.commit(3, 7, 400);
+        assert_eq!(
+            freshness.observe(None, 600),
+            PeerFrameFreshnessDecision::Lost
+        );
+    }
+
+    #[test]
+    fn newer_import_is_the_only_freshness_progress() {
+        let mut freshness = PeerFrameFreshness::new(3, 7, 100, 500);
+        assert_eq!(
+            freshness.observe(Some((4, 8)), 590),
+            PeerFrameFreshnessDecision::Fresh
+        );
+        freshness.commit(4, 8, 590);
+        assert_eq!(
+            freshness.observe(Some((4, 9)), 900),
+            PeerFrameFreshnessDecision::Wait
+        );
+        assert_eq!(
+            freshness.observe(Some((4, 9)), 1090),
+            PeerFrameFreshnessDecision::Lost
+        );
     }
 }

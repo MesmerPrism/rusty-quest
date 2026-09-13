@@ -62,6 +62,11 @@ fn main() {
             "fragment",
         ),
         (
+            "shaders/packed_sbs_normalize.frag.glsl",
+            "packed_sbs_normalize.frag.spv",
+            "fragment",
+        ),
+        (
             "shaders/camera_replay_capture.frag.glsl",
             "camera_replay_capture.frag.spv",
             "fragment",

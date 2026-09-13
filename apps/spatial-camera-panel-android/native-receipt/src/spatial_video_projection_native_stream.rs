@@ -130,7 +130,7 @@ pub(crate) fn latest_projection_peer_frame() -> Option<SpatialVideoProjectionFra
     .then_some(frame)
 }
 
-fn projection_peer_binding_matches(
+pub(crate) fn projection_peer_binding_matches(
     route_generation: u64,
     decoder_token: u64,
     reader_generation: u64,
