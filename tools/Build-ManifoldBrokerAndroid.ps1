@@ -12,6 +12,8 @@ param(
     [ValidatePattern('^[0-9A-Za-z][0-9A-Za-z._+-]{0,63}$')]
     [string]$VersionName = "0.1.0",
     [switch]$LegacyCameraP2pCompatibility,
+    [ValidatePattern('^[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+$')]
+    [string]$SpatialCameraPanelPackageName = "",
     [switch]$EnableConnectionHubDebugOperator,
     [switch]$EnableRemoteCameraDebugOperator,
     [switch]$RequireSharedMorphovisionSigner,
@@ -21,6 +23,10 @@ param(
 
 $ErrorActionPreference = "Stop"
 $SharedMorphovisionSignerSha256 = "722f1f3dcb921918d2e02f39f1b1bd8f9ff2812e07757c5fc665f6b8f7ee32a8"
+$ApprovedManifoldRevision = "6cb398ae06c5c7c47fdcbd47d17768bc31725f3c"
+$ApprovedManifoldTree = "b66340ba49099094005d33c145792c2bdd56793b"
+$ApprovedLegacyProductSpecSha256 = "007cac98547be79ddfdade70cfeedbca1c154034e52a8d62b59946f3dea5b314"
+$ApprovedLegacyProductLockSha256 = "f311d4fa9f5ddd37f6936b33f996885d12997edb9f89c36048945eb1f339268d"
 
 function Get-LatestDirectory {
     param(
@@ -73,6 +79,179 @@ function Get-FileSha256Hex {
         }
     } finally {
         $stream.Dispose()
+    }
+}
+
+function Get-TextSha256Hex {
+    param([Parameter(Mandatory=$true)][string]$Text)
+
+    $bytes = [System.Text.UTF8Encoding]::new($false).GetBytes($Text)
+    try {
+        return [Convert]::ToHexString(
+            [System.Security.Cryptography.SHA256]::HashData($bytes)
+        ).ToLowerInvariant()
+    } finally {
+        [Array]::Clear($bytes, 0, $bytes.Length)
+    }
+}
+
+function Assert-ReusableOutputIsolated {
+    param(
+        [Parameter(Mandatory=$true)][string]$OutputPath,
+        [string[]]$InputPath = @()
+    )
+
+    $outputFull = [IO.Path]::GetFullPath($OutputPath).TrimEnd("\", "/")
+    $cursor = $outputFull
+    while (-not [string]::IsNullOrWhiteSpace($cursor)) {
+        if (Test-Path -LiteralPath $cursor) {
+            $outputItem = Get-Item -LiteralPath $cursor -Force
+            if (($outputItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+                throw "OutDir cannot traverse a reparse point because it is replaced during builds: $cursor"
+            }
+        }
+        $parent = Split-Path -Parent $cursor
+        if ($parent -ceq $cursor) { break }
+        $cursor = $parent
+    }
+    foreach ($candidate in @($InputPath | Where-Object {
+                -not [string]::IsNullOrWhiteSpace([string]$_) })) {
+        $candidateFull = if (Test-Path -LiteralPath $candidate) {
+            (Resolve-Path -LiteralPath $candidate).Path.TrimEnd("\", "/")
+        } else {
+            [IO.Path]::GetFullPath($candidate).TrimEnd("\", "/")
+        }
+        $separator = [string][IO.Path]::DirectorySeparatorChar
+        if ($candidateFull.Equals($outputFull, [StringComparison]::OrdinalIgnoreCase) -or
+            $candidateFull.StartsWith($outputFull + $separator,
+                [StringComparison]::OrdinalIgnoreCase) -or
+            $outputFull.StartsWith($candidateFull + $separator,
+                [StringComparison]::OrdinalIgnoreCase)) {
+            throw "Reusable OutDir must be disjoint from every retained input: $candidateFull"
+        }
+    }
+}
+
+function New-IsolatedBrokerCargoMaterialization {
+    param(
+        [Parameter(Mandatory=$true)][string]$RepoRoot,
+        [Parameter(Mandatory=$true)][string]$ManifoldRoot,
+        [Parameter(Mandatory=$true)][string]$OutputRoot
+    )
+
+    $materializedRoot = Join-Path $OutputRoot "isolated-cargo"
+    New-Item -ItemType Directory -Force -Path (
+        Join-Path $materializedRoot "crates"), (
+        Join-Path $materializedRoot "apps\manifold-broker-android") | Out-Null
+    $questCrates = @(
+        "rusty-quest-broker-product", "rusty-quest-broker-authority",
+        "rusty-quest-broker-admission", "rusty-quest-broker-contracts",
+        "rusty-quest-media-stream", "rusty-quest-device-link")
+    foreach ($crate in $questCrates) {
+        Copy-Item -LiteralPath (Join-Path $RepoRoot "crates\$crate") `
+            -Destination (Join-Path $materializedRoot "crates\$crate") -Recurse
+    }
+    foreach ($nativeCrate in @("native", "connection-hub-native")) {
+        Copy-Item -LiteralPath (
+            Join-Path $RepoRoot "apps\manifold-broker-android\$nativeCrate") `
+            -Destination (
+                Join-Path $materializedRoot "apps\manifold-broker-android\$nativeCrate") `
+            -Recurse
+    }
+    Copy-Item -LiteralPath (Join-Path $RepoRoot "fixtures") `
+        -Destination (Join-Path $materializedRoot "fixtures") -Recurse
+    Copy-Item -LiteralPath (Join-Path $RepoRoot "Cargo.lock") `
+        -Destination (Join-Path $materializedRoot "Cargo.lock")
+
+    $workspaceManifest = @'
+[workspace]
+members = [
+  "crates/rusty-quest-broker-product",
+  "crates/rusty-quest-broker-authority",
+  "crates/rusty-quest-broker-admission",
+  "crates/rusty-quest-broker-contracts",
+  "crates/rusty-quest-media-stream",
+  "crates/rusty-quest-device-link",
+  "apps/manifold-broker-android/native",
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+authors = ["Till Holzapfel"]
+license = "AGPL-3.0-or-later"
+rust-version = "1.80"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"
+
+[workspace.lints.clippy]
+all = "warn"
+pedantic = "warn"
+'@
+    [IO.File]::WriteAllText((Join-Path $materializedRoot "Cargo.toml"),
+        $workspaceManifest, [Text.UTF8Encoding]::new($false))
+
+    $manifoldTomlRoot = $ManifoldRoot.Replace("\", "/")
+    foreach ($manifest in Get-ChildItem -LiteralPath $materializedRoot -Recurse `
+            -Filter Cargo.toml -File) {
+        $text = [IO.File]::ReadAllText($manifest.FullName)
+        $text = $text.Replace('../../../../rusty-manifold/crates/',
+            ($manifoldTomlRoot + '/crates/'))
+        $text = $text.Replace('../../../rusty-manifold/crates/',
+            ($manifoldTomlRoot + '/crates/'))
+        [IO.File]::WriteAllText($manifest.FullName, $text,
+            [Text.UTF8Encoding]::new($false))
+        $manifestDirectory = Split-Path -Parent $manifest.FullName
+        $approvedCrateRoot = [IO.Path]::GetFullPath(
+            (Join-Path $ManifoldRoot "crates")).TrimEnd("\", "/") + "\"
+        foreach ($pathMatch in [regex]::Matches(
+                $text, '(?m)\bpath\s*=\s*"(?<path>[^"]+)"')) {
+            $dependencyPath = [string]$pathMatch.Groups['path'].Value
+            $resolvedDependencyPath = [IO.Path]::GetFullPath($(if (
+                [IO.Path]::IsPathRooted($dependencyPath)) {
+                    $dependencyPath
+                } else {
+                    Join-Path $manifestDirectory $dependencyPath
+                })).TrimEnd("\", "/")
+            if (-not (Test-Path -LiteralPath $resolvedDependencyPath -PathType Container)) {
+                throw "Isolated Cargo dependency path does not resolve: $resolvedDependencyPath"
+            }
+            if ((Split-Path -Leaf $resolvedDependencyPath).StartsWith(
+                    "rusty-manifold-", [StringComparison]::Ordinal) -and
+                -not ($resolvedDependencyPath + "\").StartsWith(
+                    $approvedCrateRoot, [StringComparison]::OrdinalIgnoreCase)) {
+                throw "Isolated Cargo dependency resolved outside the supplied Manifold root: $resolvedDependencyPath"
+            }
+        }
+    }
+
+    $metadataText = @(& cargo metadata --locked --format-version 1 `
+        --manifest-path (Join-Path $materializedRoot "Cargo.toml") 2>&1)
+    if ($LASTEXITCODE -ne 0) {
+        throw "Isolated Cargo metadata resolution failed: $($metadataText -join [Environment]::NewLine)"
+    }
+    $metadata = ($metadataText -join "`n") | ConvertFrom-Json
+    $manifoldPrefix = $ManifoldRoot.TrimEnd("\") + "\"
+    $manifoldPackages = @($metadata.packages | Where-Object {
+        ([string]$_.name).StartsWith("rusty-manifold-", [StringComparison]::Ordinal)
+    })
+    if ($manifoldPackages.Count -lt 7 -or @($manifoldPackages | Where-Object {
+            -not ([IO.Path]::GetFullPath([string]$_.manifest_path)).StartsWith(
+                $manifoldPrefix, [StringComparison]::OrdinalIgnoreCase)
+        }).Count -ne 0) {
+        throw "Cargo metadata did not bind every resolved Manifold dependency to the supplied root."
+    }
+    return [pscustomobject]@{
+        root = $materializedRoot
+        manifest = Join-Path $materializedRoot "Cargo.toml"
+        native_manifest = Join-Path $materializedRoot `
+            "apps\manifold-broker-android\native\Cargo.toml"
+        connection_hub_native_manifest = Join-Path $materializedRoot `
+            "apps\manifold-broker-android\connection-hub-native\Cargo.toml"
+        manifold_packages = @($manifoldPackages.name | Sort-Object -Unique)
     }
 }
 
@@ -308,6 +487,30 @@ function Read-ValidatedClientLock {
     }
 }
 
+function New-SpecializedSpatialCameraPanelClientInput {
+    param(
+        [Parameter(Mandatory=$true)]$Input,
+        [Parameter(Mandatory=$true)][string]$PackageName
+    )
+
+    if ([string]$Input.lock.client_id -cne "client.quest.spatial-camera-panel" -or
+        [string]$Input.lock.package_name -cne
+            "io.github.mesmerprism.rustyquest.spatial_camera_panel") {
+        throw "Spatial Camera Panel specialization requires the exact baseline client lock."
+    }
+    $lock = $Input.lock | ConvertTo-Json -Depth 20 | ConvertFrom-Json
+    $lock.package_name = $PackageName
+    $json = $lock | ConvertTo-Json -Depth 20 -Compress
+    return [pscustomobject]@{
+        path = [string]$Input.path
+        json = $json
+        lock = $lock
+        sha256 = Get-TextSha256Hex -Text $json
+        source_sha256 = [string]$Input.sha256
+        specialized = $true
+    }
+}
+
 function Assert-UniqueAndroidAdmissionSubjects {
     param(
         [Parameter(Mandatory=$true)]$ClientLockInputs,
@@ -326,24 +529,29 @@ function Assert-UniqueAndroidAdmissionSubjects {
 
 function Get-RuntimeConfigDigest {
     param(
-        [Parameter(Mandatory=$true)][string]$RepoRoot,
+        [Parameter(Mandatory=$true)][string]$CargoManifest,
         [Parameter(Mandatory=$true)][string]$RuntimeConfigPath
     )
 
-    Push-Location $RepoRoot
-    try {
-        $output = @(& cargo run --quiet -p rusty-quest-broker-authority --bin runtime_config_digest -- $RuntimeConfigPath 2>&1)
-        if ($LASTEXITCODE -ne 0) {
-            throw "runtime config digest failed: $($output -join [Environment]::NewLine)"
-        }
-    } finally {
-        Pop-Location
+    $output = @(& cargo run --quiet --locked --manifest-path $CargoManifest `
+        -p rusty-quest-broker-authority --bin runtime_config_digest -- `
+        $RuntimeConfigPath 2>&1)
+    if ($LASTEXITCODE -ne 0) {
+        throw "runtime config digest failed: $($output -join [Environment]::NewLine)"
     }
     $digest = @($output | ForEach-Object { ([string]$_).Trim() } | Where-Object { $_ -match '^[0-9a-f]{64}$' }) | Select-Object -Last 1
     if ([string]::IsNullOrWhiteSpace($digest)) {
         throw "runtime config digest did not emit one lowercase SHA-256"
     }
-    return $digest
+    $validatorPath = Join-Path (Split-Path -Parent $CargoManifest) `
+        "target\debug\runtime_config_digest.exe"
+    if (-not (Test-Path -LiteralPath $validatorPath -PathType Leaf)) {
+        throw "runtime config digest validator executable is missing."
+    }
+    return [pscustomobject]@{
+        digest = $digest
+        validator_sha256 = Get-FileSha256Hex $validatorPath
+    }
 }
 
 function Test-HasInputPath {
@@ -364,7 +572,8 @@ function Read-MediaLifecycleAuthority {
     param(
         [Parameter(Mandatory=$true)]$ClientLock,
         [Parameter(Mandatory=$true)][string]$RepoRoot,
-        [Parameter(Mandatory=$true)]$MediaBindingByRelativePath
+        [Parameter(Mandatory=$true)]$MediaBindingByRelativePath,
+        [string]$PackageNameOverride = ""
     )
 
     $clientId = [string]$ClientLock.client_id
@@ -384,15 +593,33 @@ function Read-MediaLifecycleAuthority {
 
     $lifecyclePath = Join-Path $RepoRoot $mapping[$clientId].lifecycle
     $featurePath = Join-Path $RepoRoot $mapping[$clientId].feature
-    $lifecycle = Get-Content -Raw -LiteralPath $lifecyclePath | ConvertFrom-Json
+    $lifecycleJson = [System.IO.File]::ReadAllText($lifecyclePath)
+    $lifecycle = $lifecycleJson | ConvertFrom-Json
+    if ([string]$lifecycle.client_id -cne $clientId) {
+        throw "Broker media lifecycle client identity differs from its client lock."
+    }
+    if ([string]::IsNullOrWhiteSpace($PackageNameOverride)) {
+        if ([string]$lifecycle.package_name -cne [string]$ClientLock.package_name) {
+            throw "Broker media lifecycle package differs from its client lock."
+        }
+    } else {
+        if ($clientId -cne "client.quest.spatial-camera-panel" -or
+            [string]$ClientLock.package_name -cne $PackageNameOverride -or
+            [string]$lifecycle.package_name -cne
+                "io.github.mesmerprism.rustyquest.spatial_camera_panel") {
+            throw "Spatial Camera Panel lifecycle specialization is not based on the exact baseline lock."
+        }
+        $lifecycle.package_name = $PackageNameOverride
+        $lifecycleJson = $lifecycle | ConvertTo-Json -Depth 20 -Compress
+    }
     $relativeMediaPath = ([string]$lifecycle.media_binding_path).Replace("/", "\")
     if (-not $MediaBindingByRelativePath.ContainsKey($relativeMediaPath)) {
         return $null
     }
     $mediaPath = [string]$MediaBindingByRelativePath[$relativeMediaPath]
     return [ordered]@{
-        media_lifecycle_lock_json = [System.IO.File]::ReadAllText($lifecyclePath)
-        media_lifecycle_lock_sha256 = Get-FileSha256Hex -Path $lifecyclePath
+        media_lifecycle_lock_json = $lifecycleJson
+        media_lifecycle_lock_sha256 = Get-TextSha256Hex -Text $lifecycleJson
         app_feature_lock_json = [System.IO.File]::ReadAllText($featurePath)
         app_feature_lock_sha256 = Get-FileSha256Hex -Path $featurePath
         media_binding_json = [System.IO.File]::ReadAllText($mediaPath)
@@ -442,22 +669,62 @@ $resolvedOutFull = [System.IO.Path]::GetFullPath($OutDir).TrimEnd("\")
 if (-not $resolvedOutFull.StartsWith($resolvedTargetRoot + "\", [System.StringComparison]::OrdinalIgnoreCase)) {
     throw "OutDir must be under the repo target directory: $resolvedOutFull"
 }
+$retainedBuildInputs = @(
+    $ProductSpecPath, $ProductLockPath, $ManifoldSourceRoot, $Keystore) +
+    @(Expand-InputPaths -Path $MediaSessionBindingPath)
+Assert-ReusableOutputIsolated -OutputPath $resolvedOutFull `
+    -InputPath $retainedBuildInputs
 if (Test-Path $OutDir) {
     $resolvedOutDir = (Resolve-Path $OutDir).Path
     Remove-Item -LiteralPath $resolvedOutDir -Recurse -Force
 }
 
 $legacyProductId = "broker.legacy_camera_p2p.standalone"
+$selectedManifoldRevision = $null
+$selectedManifoldTree = $null
+$selectedManifoldSourceClean = $null
+$selectedManifoldSourceExplicit = $false
 if ($LegacyCameraP2pCompatibility) {
     if (-not [string]::IsNullOrWhiteSpace($ProductSpecPath) -or
         -not [string]::IsNullOrWhiteSpace($ProductLockPath)) {
         throw "-LegacyCameraP2pCompatibility cannot be combined with explicit product input paths."
     }
-    $manifoldFixtures = Join-Path $repoRoot "..\rusty-manifold\fixtures\broker-product"
+    if ([string]::IsNullOrWhiteSpace($ManifoldSourceRoot)) {
+        if (-not $PrepareOnly -or
+            -not [string]::IsNullOrWhiteSpace($SpatialCameraPanelPackageName)) {
+            throw "Legacy compatibility package builds require an explicit clean -ManifoldSourceRoot."
+        }
+        # The product-input-only compatibility check predates source-root admission and
+        # remains inert: it emits no runtime config, Java, native code, or APK.
+        $resolvedManifoldSourceRoot = (Resolve-Path -LiteralPath (
+            Join-Path $repoRoot "..\rusty-manifold")).Path
+    } elseif (-not (Test-Path -LiteralPath $ManifoldSourceRoot -PathType Container)) {
+        throw "The explicit -ManifoldSourceRoot does not exist."
+    } else {
+        $resolvedManifoldSourceRoot = (Resolve-Path -LiteralPath $ManifoldSourceRoot).Path
+    }
+    $selectedManifoldRevision = (& git -C $resolvedManifoldSourceRoot rev-parse HEAD).Trim()
+    if ($LASTEXITCODE -ne 0 -or $selectedManifoldRevision -notmatch '^[0-9a-f]{40}$') {
+        throw "Unable to resolve the explicit Manifold source revision."
+    }
+    $selectedManifoldTree = (& git -C $resolvedManifoldSourceRoot rev-parse "$selectedManifoldRevision`^{tree}").Trim()
+    $manifoldDirty = @(& git -C $resolvedManifoldSourceRoot status --porcelain --untracked-files=all)
+    if ($LASTEXITCODE -ne 0 -or $selectedManifoldTree -notmatch '^[0-9a-f]{40}$' -or
+        $manifoldDirty.Count -ne 0) {
+        throw "Legacy compatibility packaging requires exact tracked-clean Manifold source."
+    }
+    if ($selectedManifoldRevision -cne $ApprovedManifoldRevision -or
+        $selectedManifoldTree -cne $ApprovedManifoldTree) {
+        throw "Legacy compatibility packaging requires the approved Manifold commit and tree."
+    }
+    $selectedManifoldSourceClean = $true
+    $selectedManifoldSourceExplicit = -not [string]::IsNullOrWhiteSpace($ManifoldSourceRoot)
+    $manifoldFixtures = Join-Path $resolvedManifoldSourceRoot "fixtures\broker-product"
     $ProductSpecPath = Join-Path $manifoldFixtures "legacy-camera-p2p-standalone.json"
     $ProductLockPath = Join-Path $manifoldFixtures "legacy-camera-p2p-standalone.lock.json"
-    if (-not (Test-HasInputPath -Path $MediaSessionBindingPath)) {
-        $MediaSessionBindingPath = @(Join-Path $repoRoot "fixtures\media-runtime-products\camera2-surface.binding.json")
+    if ((Get-FileSha256Hex $ProductSpecPath) -cne $ApprovedLegacyProductSpecSha256 -or
+        (Get-FileSha256Hex $ProductLockPath) -cne $ApprovedLegacyProductLockSha256) {
+        throw "Legacy compatibility product spec/lock bytes differ from the approved inputs."
     }
 } elseif ([string]::IsNullOrWhiteSpace($ProductSpecPath) -or
           [string]::IsNullOrWhiteSpace($ProductLockPath)) {
@@ -467,21 +734,25 @@ if ($LegacyCameraP2pCompatibility) {
 $resolvedProductSpecPath = Resolve-ProductInputPath -Path $ProductSpecPath -Label "Product spec" -RepoRoot $repoRoot
 $resolvedProductLockPath = Resolve-ProductInputPath -Path $ProductLockPath -Label "Product lock" -RepoRoot $repoRoot
 New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
-$productInputsDir = Join-Path $OutDir "product-inputs"
-Push-Location $repoRoot
-try {
-    Invoke-Checked "broker product preparation" "cargo" @(
-        "run", "--quiet",
-        "-p", "rusty-quest-broker-product",
-        "--bin", "prepare_android_broker_product",
-        "--",
-        $resolvedProductSpecPath,
-        $resolvedProductLockPath,
-        $productInputsDir
-    )
-} finally {
-    Pop-Location
+$isolatedCargo = $null
+if ($LegacyCameraP2pCompatibility) {
+    $isolatedCargo = New-IsolatedBrokerCargoMaterialization `
+        -RepoRoot $repoRoot -ManifoldRoot $resolvedManifoldSourceRoot `
+        -OutputRoot $OutDir
 }
+$productInputsDir = Join-Path $OutDir "product-inputs"
+$productCargoManifest = if ($null -ne $isolatedCargo) {
+    [string]$isolatedCargo.manifest
+} else { Join-Path $repoRoot "Cargo.toml" }
+Invoke-Checked "broker product preparation" "cargo" @(
+    "run", "--quiet", "--locked", "--manifest-path", $productCargoManifest,
+    "-p", "rusty-quest-broker-product",
+    "--bin", "prepare_android_broker_product",
+    "--",
+    $resolvedProductSpecPath,
+    $resolvedProductLockPath,
+    $productInputsDir
+)
 
 $productInputsReceiptPath = Join-Path $productInputsDir "product-package-inputs.json"
 $generatedManifestPath = Join-Path $productInputsDir "AndroidManifest.xml"
@@ -519,6 +790,13 @@ if ($LegacyCameraP2pCompatibility) {
     }
 } elseif ($productInputs.product_id -eq $legacyProductId -or $sensitiveFeatures.Count -gt 0) {
     throw "Camera, direct-P2P, and BLE broker packaging is restricted to an explicit compatibility product or a dedicated provider package."
+}
+if (-not [string]::IsNullOrWhiteSpace($SpatialCameraPanelPackageName)) {
+    if (-not $LegacyCameraP2pCompatibility -or
+        -not $EnableRemoteCameraDebugOperator -or
+        -not $RequireSharedMorphovisionSigner) {
+        throw "Spatial Camera Panel package specialization requires the legacy compatibility product, remote-camera debug operator, and shared signer gate."
+    }
 }
 
 if ($PrepareOnly) {
@@ -618,12 +896,6 @@ if ($connectionHubSelected) {
     }
     $manifoldSourceRoot = (Resolve-Path -LiteralPath $manifoldSourceCandidate).Path
     $connectionHubNativeRoot = Join-Path $appRoot "connection-hub-native"
-    $nativeManifoldSourceRoot = (Resolve-Path -LiteralPath (
-        Join-Path $connectionHubNativeRoot "..\..\..\..\rusty-manifold"
-    )).Path
-    if ($nativeManifoldSourceRoot -cne $manifoldSourceRoot) {
-        throw "Connection Hub native dependency path does not equal the validated Manifold source root."
-    }
     $manifoldSourceLockPath = Join-Path $appRoot "native\manifold-source.lock.json"
     $manifoldSourceLock = Get-Content -Raw -LiteralPath $manifoldSourceLockPath | ConvertFrom-Json
     $manifoldRevision = (& git -C $manifoldSourceRoot rev-parse HEAD).Trim()
@@ -656,6 +928,7 @@ if ($EnableConnectionHubDebugOperator -and -not $connectionHubSelected) {
     throw "-EnableConnectionHubDebugOperator is valid only for the connection_hub product."
 }
 $mediaSessionBindings = @()
+$mediaSessionBindingReceipts = @()
 $mediaBindingByRelativePath = @{}
 if ($mediaSelected) {
     if (-not (Test-HasInputPath -Path $MediaSessionBindingPath)) {
@@ -680,11 +953,36 @@ if ($mediaSelected) {
         }
         $relative = $resolvedMediaSessionBindingPath.Substring($repoRootPrefix.Length).Replace("/", "\")
         $mediaBindingByRelativePath[$relative] = $resolvedMediaSessionBindingPath
+        $mediaSessionBindingReceipts += [ordered]@{
+            path = $relative.Replace("\", "/")
+            sha256 = Get-FileSha256Hex -Path $resolvedMediaSessionBindingPath
+            manifold_session_id = [string]$mediaSessionBinding.manifold.descriptor.session_id
+            quest_runtime_spec_id = [string]$mediaSessionBinding.quest.spec.runtime_spec_id
+        }
     }
 } elseif (Test-HasInputPath -Path $MediaSessionBindingPath) {
     throw "-MediaSessionBindingPath cannot widen a product that did not select media_session."
 }
+if (-not [string]::IsNullOrWhiteSpace($SpatialCameraPanelPackageName)) {
+    $requiredSupplierBindings = @(
+        "fixtures\media-runtime-products\camera2-surface.binding.json",
+        "fixtures\media-runtime-products\spatial-camera-panel-display.binding.json"
+    )
+    $actualSupplierBindings = @($mediaBindingByRelativePath.Keys | Sort-Object)
+    if ($actualSupplierBindings.Count -ne 2 -or
+        (($actualSupplierBindings -join "`n") -cne
+            (($requiredSupplierBindings | Sort-Object) -join "`n"))) {
+        throw "Spatial Camera Panel specialization requires exactly the camera2 and Spatial display media bindings."
+    }
+}
 $initialLeases = @()
+$spatialClientInput = Read-ValidatedClientLock -Path (
+    Join-Path $repoRoot "fixtures\broker-clients\spatial-camera-panel.client.json")
+if (-not [string]::IsNullOrWhiteSpace($SpatialCameraPanelPackageName)) {
+    $spatialClientInput = New-SpecializedSpatialCameraPanelClientInput `
+        -Input $spatialClientInput `
+        -PackageName $SpatialCameraPanelPackageName
+}
 $clientLockInputs = @(
     [ordered]@{
         grant_id = "grant.quest.authorized"
@@ -696,7 +994,7 @@ $clientLockInputs = @(
     },
     [ordered]@{
         grant_id = "grant.quest.spatial-camera-panel"
-        input = Read-ValidatedClientLock -Path (Join-Path $repoRoot "fixtures\broker-clients\spatial-camera-panel.client.json")
+        input = $spatialClientInput
     }
 )
 if ($connectionHubSelected) {
@@ -714,6 +1012,7 @@ Assert-UniqueAndroidAdmissionSubjects `
     -SigningFingerprint "sha256:$certificateSha256"
 $generatedGrants = @()
 $packagedClientLocks = @()
+$spatialMediaLifecycleAuthority = $null
 foreach ($binding in $clientLockInputs) {
     $clientLock = $binding.input.lock
     $generatedCapabilities = @(Get-ExactClientGrantCapabilities -ClientLock $clientLock -ProductLock $acceptedProductLock)
@@ -739,7 +1038,11 @@ foreach ($binding in $clientLockInputs) {
         $mediaLifecycleAuthority = Read-MediaLifecycleAuthority `
             -ClientLock $clientLock `
             -RepoRoot $repoRoot `
-            -MediaBindingByRelativePath $mediaBindingByRelativePath
+            -MediaBindingByRelativePath $mediaBindingByRelativePath `
+            -PackageNameOverride $(if (
+                [string]$clientLock.client_id -ceq "client.quest.spatial-camera-panel") {
+                    $SpatialCameraPanelPackageName
+                } else { "" })
         if ($null -ne $mediaLifecycleAuthority) {
             $packagedClientLock["media_lifecycle_authority"] = $mediaLifecycleAuthority
             $mediaLifecycleLock = $mediaLifecycleAuthority.media_lifecycle_lock_json | ConvertFrom-Json
@@ -748,6 +1051,9 @@ foreach ($binding in $clientLockInputs) {
                 scope = "lease.media.session"
                 holder_id = [string]$mediaLifecycleLock.client_id
                 expires_at_ms = 4102444800000
+            }
+            if ([string]$clientLock.client_id -ceq "client.quest.spatial-camera-panel") {
+                $spatialMediaLifecycleAuthority = $mediaLifecycleAuthority
             }
         }
     }
@@ -888,7 +1194,12 @@ $runtimeConfigPath = Join-Path $OutDir "broker-runtime-config.json"
     $runtimeConfigPath,
     ($runtimeConfig | ConvertTo-Json -Depth 30),
     (New-Object System.Text.UTF8Encoding($false)))
-$runtimeConfigSha256 = Get-RuntimeConfigDigest -RepoRoot $repoRoot -RuntimeConfigPath $runtimeConfigPath
+$runtimeCargoManifest = if ($null -ne $isolatedCargo) {
+    [string]$isolatedCargo.manifest
+} else { Join-Path $repoRoot "Cargo.toml" }
+$runtimeConfigValidation = Get-RuntimeConfigDigest `
+    -CargoManifest $runtimeCargoManifest -RuntimeConfigPath $runtimeConfigPath
+$runtimeConfigSha256 = [string]$runtimeConfigValidation.digest
 if ($ValidateRuntimeConfigOnly) {
     Write-Output $runtimeConfigPath
     return
@@ -1074,24 +1385,27 @@ try {
     $env:AR_aarch64_linux_android = $androidAr
     if ($connectionHubSelected) {
         $connectionHubNativeTarget = Join-Path $OutDir "connection-hub-native-target"
+        $generatedNativeManifest = if ($null -ne $isolatedCargo) {
+            [string]$isolatedCargo.connection_hub_native_manifest
+        } else { Join-Path $connectionHubNativeRoot "Cargo.toml" }
         Invoke-Checked "isolated Connection Hub native" "cargo" @(
             "build",
             "--locked",
-            "--manifest-path", (Join-Path $connectionHubNativeRoot "Cargo.toml"),
+            "--manifest-path", $generatedNativeManifest,
             "--target-dir", $connectionHubNativeTarget,
             "--target", "aarch64-linux-android"
         )
     } else {
-        Push-Location $repoRoot
-        try {
-            Invoke-Checked "standalone broker admission native" "cargo" @(
-                "build",
-                "--target", "aarch64-linux-android",
-                "-p", "rusty-quest-manifold-broker-authority-native"
-            )
-        } finally {
-            Pop-Location
-        }
+        $standaloneNativeTarget = Join-Path $OutDir "standalone-native-target"
+        $standaloneNativeManifest = if ($null -ne $isolatedCargo) {
+            [string]$isolatedCargo.manifest
+        } else { Join-Path $repoRoot "Cargo.toml" }
+        Invoke-Checked "standalone broker admission native" "cargo" @(
+            "build", "--locked", "--manifest-path", $standaloneNativeManifest,
+            "--target-dir", $standaloneNativeTarget,
+            "--target", "aarch64-linux-android",
+            "-p", "rusty-quest-manifold-broker-authority-native"
+        )
     }
 } finally {
     $env:CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER = $previousLinker
@@ -1101,7 +1415,7 @@ try {
 $nativeSoSource = if ($connectionHubSelected) {
     Join-Path $connectionHubNativeTarget "aarch64-linux-android\debug\librusty_quest_manifold_broker_authority.so"
 } else {
-    Join-Path $repoRoot "target\aarch64-linux-android\debug\librusty_quest_manifold_broker_authority.so"
+    Join-Path $standaloneNativeTarget "aarch64-linux-android\debug\librusty_quest_manifold_broker_authority.so"
 }
 if (-not (Test-Path -LiteralPath $nativeSoSource -PathType Leaf)) {
     throw "Standalone broker authority native library not found: $nativeSoSource"
@@ -1214,6 +1528,30 @@ $manifest = [ordered]@{
     manifold_product_features = @($productInputs.features)
     manifold_product_modules = @($acceptedProductLock.module_ids)
     manifold_product_permissions = @($acceptedProductLock.permissions)
+    manifold_source_revision = $selectedManifoldRevision
+    manifold_source_tree = $selectedManifoldTree
+    manifold_source_tracked_clean = $selectedManifoldSourceClean
+    manifold_source_root_explicit = [bool]$selectedManifoldSourceExplicit
+    manifold_source_approved = [bool]($LegacyCameraP2pCompatibility -and
+        $selectedManifoldRevision -ceq $ApprovedManifoldRevision -and
+        $selectedManifoldTree -ceq $ApprovedManifoldTree)
+    manifold_cargo_resolution_verified = [bool]($null -ne $isolatedCargo)
+    manifold_cargo_dependency_packages = $(if ($null -ne $isolatedCargo) {
+        @($isolatedCargo.manifold_packages)
+    } else { @() })
+    media_session_bindings = @($mediaSessionBindingReceipts)
+    spatial_camera_panel_package_name = [string]$spatialClientInput.lock.package_name
+    spatial_camera_panel_package_specialized = -not [string]::IsNullOrWhiteSpace(
+        $SpatialCameraPanelPackageName)
+    spatial_camera_panel_client_lock_sha256 = [string]$spatialClientInput.sha256
+    spatial_camera_panel_grant_sha256 = Get-TextSha256Hex -Text (
+        @($generatedGrants | Where-Object {
+            [string]$_.grant_id -ceq "grant.quest.spatial-camera-panel"
+        })[0] | ConvertTo-Json -Depth 20 -Compress)
+    spatial_camera_panel_media_lifecycle_sha256 = $(if (
+        $null -ne $spatialMediaLifecycleAuthority) {
+            [string]$spatialMediaLifecycleAuthority.media_lifecycle_lock_sha256
+        } else { $null })
     android_permissions = $androidPermissions
     android_components = $androidComponents
     generated_android_manifest_sha256 = [string]$productInputs.android_manifest_sha256
@@ -1227,6 +1565,7 @@ $manifest = [ordered]@{
     generated_command_registry_sha256 = [string]$productInputs.command_registry_sha256
     broker_runtime_config_sha256 = Get-FileSha256Hex -Path $runtimeConfigPath
     broker_runtime_config_canonical_sha256 = $runtimeConfigSha256
+    broker_runtime_config_validator_sha256 = [string]$runtimeConfigValidation.validator_sha256
     packaged_client_lock_sha256 = @($clientLockInputs | ForEach-Object { [string]$_.input.sha256 })
     broker_runtime_provider_epoch_policy = "fresh-process-entropy_same-process-rebind-continuity"
     product_inputs_receipt_sha256 = Get-FileSha256Hex -Path $productInputsReceiptPath
@@ -1241,6 +1580,23 @@ $manifest = [ordered]@{
     connection_hub_protocol_v2_sha256 = if ($connectionHubSelected) { Get-FileSha256Hex -Path $connectionHubProtocolV2Path } else { $null }
     connection_hub_browser_assets = $connectionHubPackagedAssets
     legacy_camera_p2p_compatibility = [bool]$LegacyCameraP2pCompatibility
+    compatibility_diagnostic = [ordered]@{
+        schema = "rusty.quest.manifold_broker.compatibility_diagnostic_build.v1"
+        static_gate_required = [bool]$EnableRemoteCameraDebugOperator
+        rollback_evidence_required = -not [string]::IsNullOrWhiteSpace(
+            $SpatialCameraPanelPackageName)
+        remote_camera_debug_provider_authority = $(if ($EnableRemoteCameraDebugOperator) {
+            "io.github.mesmerprism.rustymanifold.broker.debug-remote-camera-control"
+        } else { $null })
+        install_policy = "inspected-same-version-replace-with-installed-byte-readback"
+        restore_policy = "same-version-same-signer-rollback-reinstall"
+        uninstall_permitted = $false
+        data_clear_permitted = $false
+        global_log_clear_permitted = $false
+        blanket_force_stop_permitted = $false
+        downgrade_permitted = $false
+        adb_lifecycle_permitted = $false
+    }
     apk_path = $apkSigned
     apk_sha256 = $sha256
     apk_size = (Get-Item -LiteralPath $apkSigned).Length

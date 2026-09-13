@@ -931,6 +931,15 @@ lock, registry, and projection as APK assets and emits
   app-local `AndroidManifest.xml` fallback. See
   [Broker Packaging](docs/BROKER_PACKAGING.md).
 
+The supplier-only legacy camera/P2P specialization uses
+`-SpatialCameraPanelPackageName` together with an explicit tracked-clean
+`-ManifoldSourceRoot`, both reviewed media bindings, the remote-camera debug
+operator, shared signer, and explicit version. Its compatibility diagnostic is
+static-receipt gated and performs only an inspected same-version replacement,
+installed-byte readback, bounded provider status read, and exact rollback-byte
+restore. It does not uninstall, clear app data or global logs, blanket
+force-stop, request downgrade, or alter ADB lifecycle.
+
 The same build binds exact packaged product-spec, accepted-lock, and client-lock
 bytes plus their hashes into the runtime config. Grants are generated only from
 the product/client intersection: the base product remains media/sink/peer-free,

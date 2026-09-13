@@ -317,7 +317,13 @@ camera/P2P/BLE-free. `Build-ManifoldBrokerAndroid.ps1` must consume an exact
 spec/lock pair, generate the actual app manifest and command registry, and
 package their lock-stamped receipts; it must never fall back to an ambient app
 manifest. The broad camera/P2P validation surface is legacy compatibility and
-requires its explicit switch.
+requires its explicit switch. Supplier-specialized compatibility packages must
+also bind one explicit tracked-clean Manifold source root for both product
+fixtures and native compilation, the exact two reviewed media bindings, the
+remote-camera debug operator, shared signer, package specialization, and fixed
+version tuple. Their device diagnostic requires a matching static-gate receipt
+and exact same-version rollback bytes; uninstall, data/log clearing, blanket
+force-stop, downgrade, and ADB lifecycle changes remain prohibited.
 
 `crates/rusty-quest-broker-authority` is the trusted local process/JNI
 projection over `ManifoldBrokerRuntime`. Real standalone and embedded JNI
