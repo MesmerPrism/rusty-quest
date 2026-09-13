@@ -198,6 +198,37 @@ internal object SpatialVideoSourcePollingPolicy {
               state.ownedAcquisition != null)
 }
 
+/** Low-rate Activity observability: acquisition timestamps alone are not route transitions. */
+internal class SpatialVideoSourceRouteTransitionMarker {
+  private var lastSemanticKey: String? = null
+
+  fun markerFor(
+      state: SpatialVideoSourceRoutingState,
+      reason: String,
+  ): String? {
+    val receipt = state.readback
+    val semanticKey = listOf(
+        state.requested.token, state.generation, state.pending?.token, state.effective.token,
+        state.failed?.token, state.failureReason.token, receipt?.routeGeneration, receipt?.source?.token,
+        receipt?.result?.name, receipt?.reason?.token, receipt?.stages, receipt?.launchChallenge,
+        receipt?.surfaceGeneration, receipt?.decoderToken, receipt?.readerGeneration,
+    ).joinToString("|")
+    if (semanticKey == lastSemanticKey) return null
+    lastSemanticKey = semanticKey
+    val receiptFields = receipt?.let {
+      " receiptResult=${it.result.name.lowercase()} acquisitionTimeNs=${it.acquisitionTimeNs} " +
+          "decoderToken=${it.decoderToken} readerGeneration=${it.readerGeneration} " +
+          "importGeneration=${it.importGeneration} pairGeneration=${it.pairGeneration} " +
+          "stages=${it.stages} cameraStartRequested=${it.cameraStartRequested}"
+    } ?: " receiptResult=none"
+    return "channel=spatial-video-source status=routing-transition " +
+        "reason=${activityMarkerToken(reason)} source=${state.requested.token} " +
+        "generation=${state.generation} pending=${state.pending?.token ?: "none"} " +
+        "effective=${state.effective.token} failed=${state.failed?.token ?: "none"} " +
+        "failureReason=${state.failureReason.token}$receiptFields"
+  }
+}
+
 /** Native timestamps and this clock must both use CLOCK_MONOTONIC. */
 internal object SpatialVideoSourceFreshness {
   fun isStale(nowNs: Long, acquisitionTimeNs: Long, maxAgeNs: Long): Boolean =

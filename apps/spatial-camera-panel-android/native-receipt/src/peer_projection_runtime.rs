@@ -391,7 +391,10 @@ pub(crate) fn record_local_submission_retired(
     let Some(current) = owner.receipt else {
         return SourceReceipt::unavailable(route_generation, REASON_RECEIPT_UNAVAILABLE);
     };
-    if current.words[1] != route_generation || current.words[2] != SOURCE_LOCAL {
+    if current.words[1] != route_generation
+        || current.words[2] != SOURCE_LOCAL
+        || !matches!(current.words[11], RESULT_PENDING | RESULT_EFFECTIVE)
+    {
         return SourceReceipt::unavailable(route_generation, REASON_RECEIPT_FOREIGN);
     }
     if reader_generation == 0 || import_generation == 0 {
@@ -457,7 +460,8 @@ pub(crate) fn record_current_local_submission_retired(
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         owner.receipt.and_then(|receipt| {
-            (receipt.words[2] == SOURCE_LOCAL && receipt.words[11] == RESULT_PENDING)
+            (receipt.words[2] == SOURCE_LOCAL
+                && matches!(receipt.words[11], RESULT_PENDING | RESULT_EFFECTIVE))
                 .then_some(receipt.words[1])
         })
     }?;
@@ -830,5 +834,48 @@ mod tests {
         assert_eq!(effective.words[4], 7);
         assert_eq!(effective.words[8], 8);
         assert_eq!(effective.words[11], RESULT_EFFECTIVE);
+    }
+
+    #[test]
+    fn current_local_retirement_refreshes_an_exact_effective_receipt() {
+        let _guard = reset();
+        request_source(request(501, SOURCE_LOCAL), true);
+        let first = record_current_local_submission_retired(7, 8).expect("pending local receipt");
+        SOURCE_OWNER.lock().unwrap().receipt.as_mut().unwrap().words[9] = 41;
+        let refreshed = record_current_local_submission_retired(9, 10).expect("effective local receipt");
+        assert_eq!(first.words[11], RESULT_EFFECTIVE);
+        assert_eq!(refreshed.words[1], 501);
+        assert_eq!(refreshed.words[2], SOURCE_LOCAL);
+        assert_eq!(refreshed.words[4], 9);
+        assert_eq!(refreshed.words[8], 10);
+        assert_eq!(refreshed.words[11], RESULT_EFFECTIVE);
+        assert!(refreshed.words[9] > 41);
+    }
+
+    #[test]
+    fn local_retirement_never_resurrects_terminal_or_foreign_receipts() {
+        let _guard = reset();
+        request_source(request(502, SOURCE_LOCAL), true);
+        let lost = mark_route_lost(502, REASON_STALE);
+        assert_eq!(lost.words[11], RESULT_LOST);
+        assert!(record_current_local_submission_retired(7, 8).is_none());
+        let rejected = record_local_submission_retired(502, 7, 8);
+        assert_eq!(rejected.words[11], RESULT_UNAVAILABLE);
+        assert_eq!(rejected.words[12], REASON_RECEIPT_FOREIGN);
+        assert_eq!(read_source(502).words[11], RESULT_LOST);
+
+        request_source(request(503, SOURCE_DISABLED), true);
+        assert!(record_current_local_submission_retired(7, 8).is_none());
+        let foreign = record_local_submission_retired(502, 7, 8);
+        assert_eq!(foreign.words[11], RESULT_UNAVAILABLE);
+        assert_eq!(read_source(503).words[2], SOURCE_DISABLED);
+
+        request_source(request(504, SOURCE_LOCAL), true);
+        let current = record_current_local_submission_retired(17, 18).expect("current local");
+        let old = record_local_submission_retired(502, 99, 100);
+        assert_eq!(old.words[12], REASON_RECEIPT_FOREIGN);
+        let retained = read_source(504);
+        assert_eq!(retained.words[4], current.words[4]);
+        assert_eq!(retained.words[8], current.words[8]);
     }
 }

@@ -1591,8 +1591,16 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     )
   }
   private val projectionSourcePollQueued = AtomicBoolean(false)
+  private val projectionSourceRouteTransitionMarker = SpatialVideoSourceRouteTransitionMarker()
   @Volatile private var localSourceRetirementGeneration = 0L
   private var projectionSourcePollJob: Job? = null
+
+  private fun recordProjectionSourceRouteTransition(
+      state: SpatialVideoSourceRoutingState,
+      reason: String,
+  ) {
+    projectionSourceRouteTransitionMarker.markerFor(state, reason)?.let(::marker)
+  }
 
   /** Single Activity-owned route used by ordinary startup, explicit Intents, and the live panel. */
   private fun requestProjectionSource(
@@ -1616,6 +1624,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     videoLifecycleShutdownCoordinator.dispatch {
       val executed =
           spatialVideoSourceRoutingCoordinator.executeRequest(generation, carrier, reason)
+      recordProjectionSourceRouteTransition(executed, "$reason-execute")
       marker(
           "channel=spatial-video-source status=executed reason=${activityMarkerToken(reason)} " +
               "source=${source.token} generation=${executed.generation} " +
@@ -1681,12 +1690,14 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
           val current = spatialVideoSourceRoutingCoordinator.snapshot()
           if (current.producerState is SpatialProjectionProducerState.CleanupPending &&
               current.pending != null) {
-            spatialVideoSourceRoutingCoordinator.resumePending(
+            val resumed = spatialVideoSourceRoutingCoordinator.resumePending(
                 checkNotNull(carrier),
                 "$reason-cleanup-poll",
             )
+            recordProjectionSourceRouteTransition(resumed, "$reason-cleanup-poll")
           } else {
-            spatialVideoSourceRoutingCoordinator.pollActive(2_000_000_000L)
+            val polled = spatialVideoSourceRoutingCoordinator.pollActive(2_000_000_000L)
+            recordProjectionSourceRouteTransition(polled, "$reason-active-poll")
           }
         } finally {
           projectionSourcePollQueued.set(false)
@@ -1867,12 +1878,16 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
               videoLifecycleShutdownCoordinator.dispatch(action)
             },
             onSourceCarrierReady = { context, reason ->
-              spatialVideoSourceRoutingCoordinator.resumePending(context, reason)
+              spatialVideoSourceRoutingCoordinator.resumePending(context, reason).also {
+                recordProjectionSourceRouteTransition(it, "$reason-resume")
+              }
             },
             requestNativeProjectionSource = ::nativeRequestSpatialVideoProjectionSource,
             readNativeProjectionSource = ::nativeReadSpatialVideoProjectionSource,
             reportNativeProjectionSource = { readback ->
-              spatialVideoSourceRoutingCoordinator.reportNativeReadback(readback)
+              spatialVideoSourceRoutingCoordinator.reportNativeReadback(readback).also {
+                recordProjectionSourceRouteTransition(it, "native-readback")
+              }
             },
             startPeerCommonGraph = ::nativeStartSpatialPeerProjectionCommonGraph,
             updateNativeLayerFence = ::nativeUpdateCameraHwbProjectionLayerFence,
