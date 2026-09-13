@@ -228,7 +228,15 @@ pedantic = "warn"
         }
     }
 
-    $metadataText = @(& cargo metadata --locked --format-version 1 `
+    # The isolated workspace is an admitted subset of the owner workspace. Start
+    # from the owner's lock and let Cargo prune only no-longer-member entries
+    # offline, then require the resulting materialized lock for every real use.
+    $lockMaterialization = @(& cargo metadata --offline --format-version 1 `
+        --manifest-path (Join-Path $materializedRoot "Cargo.toml") 2>&1)
+    if ($LASTEXITCODE -ne 0) {
+        throw "Isolated Cargo lock materialization failed: $($lockMaterialization -join [Environment]::NewLine)"
+    }
+    $metadataText = @(& cargo metadata --locked --offline --format-version 1 `
         --manifest-path (Join-Path $materializedRoot "Cargo.toml") 2>&1)
     if ($LASTEXITCODE -ne 0) {
         throw "Isolated Cargo metadata resolution failed: $($metadataText -join [Environment]::NewLine)"
