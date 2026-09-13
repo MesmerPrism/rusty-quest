@@ -232,6 +232,13 @@ function Get-DeviceSnapshot([string]$Label) {
     $reverses = Invoke-Adb @("reverse", "--list") "$Label reverse inventory"
     if ([int]$reverses.exit_code -ne 0) { throw "$Label reverse inventory failed." }
     $properties = Invoke-Adb @("shell", "getprop") "$Label property inventory"
+    $stablePropertyLines = @(([string]$properties.output -split "`r?`n") |
+        Where-Object { $_ } | ForEach-Object {
+            if ($_ -cmatch '^\[(cache_key\.[^\]]+)\]: \[-?[0-9]+\]$') {
+                "[$($Matches[1])]: [<volatile>]"
+            } else { $_ }
+        })
+    $stableProperties = $stablePropertyLines -join "`n"
     $spatialPath = Invoke-Adb @("shell", "pm", "path", $SpatialCameraPanelPackageName) `
         "$Label Spatial package path"
     $spatialPid = Invoke-Adb @("shell", "pidof", $SpatialCameraPanelPackageName) `
@@ -242,7 +249,7 @@ function Get-DeviceSnapshot([string]$Label) {
         package_inventory_sha256=Get-TextSha256 ([string]$packages.output)
         forward_inventory_sha256=Get-TextSha256 ([string]$forwards.output)
         reverse_inventory_sha256=Get-TextSha256 ([string]$reverses.output)
-        property_inventory_sha256=Get-TextSha256 ([string]$properties.output)
+        property_inventory_sha256=Get-TextSha256 $stableProperties
         spatial_package_path_sha256=Get-TextSha256 ([string]$spatialPath.output)
         spatial_process_identity_sha256=Get-TextSha256 ([string]$spatialPid.output)
         spatial_process_observed=([int]$spatialPid.exit_code -eq 0)
