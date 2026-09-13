@@ -239,6 +239,10 @@ function Get-DeviceSnapshot([string]$Label) {
             } else { $_ }
         })
     $stableProperties = $stablePropertyLines -join "`n"
+    $artdState = @($stablePropertyLines | ForEach-Object {
+        if ($_ -cmatch '^\[init\.svc\.artd\]: \[([^\]]*)\]$') { $Matches[1] }
+    })
+    if ($artdState.Count -ne 1) { throw "$Label did not expose one exact init.svc.artd property." }
     $spatialPath = Invoke-Adb @("shell", "pm", "path", $SpatialCameraPanelPackageName) `
         "$Label Spatial package path"
     $spatialPid = Invoke-Adb @("shell", "pidof", $SpatialCameraPanelPackageName) `
@@ -250,12 +254,24 @@ function Get-DeviceSnapshot([string]$Label) {
         forward_inventory_sha256=Get-TextSha256 ([string]$forwards.output)
         reverse_inventory_sha256=Get-TextSha256 ([string]$reverses.output)
         property_inventory_sha256=Get-TextSha256 $stableProperties
+        package_effect_artd_state=[string]$artdState[0]
         spatial_package_path_sha256=Get-TextSha256 ([string]$spatialPath.output)
         spatial_process_identity_sha256=Get-TextSha256 ([string]$spatialPid.output)
         spatial_process_observed=([int]$spatialPid.exit_code -eq 0)
         broker_process_identity_sha256=Get-TextSha256 ([string]$brokerPid.output)
         broker_process_observed=([int]$brokerPid.exit_code -eq 0)
     }
+}
+
+function Wait-DevicePropertyValue([string]$Name, [string]$ExpectedValue,
+        [string]$Label, [int]$MaxAttempts = 10) {
+    for ($attempt = 1; $attempt -le $MaxAttempts; $attempt += 1) {
+        $observation = Invoke-Adb @("shell", "getprop", $Name) "$Label attempt $attempt"
+        $actualValue = ([string]$observation.output).Trim()
+        if ($actualValue -ceq $ExpectedValue) { return }
+        if ($attempt -lt $MaxAttempts) { Start-Sleep -Seconds 1 }
+    }
+    throw "$Label did not return to its exact pre-diagnostic value."
 }
 
 function Assert-SnapshotPreserved($Before, $After) {
@@ -525,6 +541,10 @@ try {
         }
     }
     try {
+        if ($null -ne $before) {
+            Wait-DevicePropertyValue "init.svc.artd" `
+                ([string]$before.package_effect_artd_state) "after package-effect artd settle"
+        }
         $after = Get-DeviceSnapshot "after"
         if ($null -ne $before) { Assert-SnapshotPreserved $before $after }
     } catch {
