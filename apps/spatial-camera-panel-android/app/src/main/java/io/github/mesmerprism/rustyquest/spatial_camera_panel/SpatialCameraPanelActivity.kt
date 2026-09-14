@@ -64,6 +64,7 @@ import com.meta.spatial.core.Vector4
 import com.meta.spatial.runtime.BlendFactor
 import com.meta.spatial.runtime.LayerAlphaBlend
 import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicBoolean
 import com.meta.spatial.runtime.LayerFilters
 import com.meta.spatial.runtime.PanelSceneObject
 import com.meta.spatial.runtime.ReferenceSpace
@@ -1103,6 +1104,8 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
           isDaemon = true
         }
       }
+  private val videoLifecycleShutdownCoordinator =
+      SpatialVideoLifecycleShutdownCoordinator(videoDecoderLifecycleExecutor)
   private val spatialVideoProjectionRuntimeCoordinator by lazy(LazyThreadSafetyMode.NONE) {
     SpatialVideoProjectionRuntimeCoordinator(
         SpatialVideoProjectionRuntimeBindings(
@@ -1160,10 +1163,69 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             stopPlayback = { SpatialStereoVideoPlayback.stop() },
             stopNativeProbe = ::nativeStopSpatialVideoProjectionProbe,
             marker = ::marker,
-            dispatchDecoderLifecycle = { action -> videoDecoderLifecycleExecutor.execute(action) },
+            dispatchDecoderLifecycle = { action ->
+              videoLifecycleShutdownCoordinator.dispatch(action)
+            },
             onDecoderStateChanged = { state, reason ->
               privateLayerControlCoordinator.updateReadableVideoLifecycle(state, reason)
             },
+        )
+    )
+  }
+  private val spatialPeerProjectionRuntimeCoordinator by lazy(LazyThreadSafetyMode.NONE) {
+    SpatialPeerProjectionRuntimeCoordinator(
+        SpatialPeerProjectionRuntimeBindings(
+            startDecoder = { settings, routeGeneration, callbacks ->
+              val started = SpatialStereoVideoPlayback.startProjectionPeer(
+                  this,
+                  settings.source,
+                  settings.width,
+                  settings.height,
+                  settings.maxImages,
+                  settings.surfaceOutputCadenceFps,
+                  settings.brokerHost,
+                  settings.brokerPort,
+                  settings.brokerConnectTimeoutMs,
+                  settings.mediaLayout,
+                  settings.peerRouteKind.token,
+                  settings.peerSessionId,
+                  settings.peerRelayChannel,
+                  settings.peerTlsServerName,
+                  settings.peerAuthToken,
+                  routeGeneration,
+                  object : SpatialStereoVideoPlayback.LifecycleListener {
+                    override fun onFirstFrame() = callbacks.onFirstFrame()
+                    override fun onError(reason: String) = callbacks.onError(reason)
+                    override fun onStopped() = callbacks.onStopped()
+                  },
+              )
+              if (started.isDispatched) {
+                SpatialPeerProjectionDecoderIdentity(
+                    started.routeGeneration,
+                    started.decoderToken,
+                    started.readerGeneration,
+                )
+              } else null
+            },
+            stopDecoder = { identity ->
+              SpatialStereoVideoPlayback.stopProjectionPeer(
+                  identity.routeGeneration,
+                  identity.decoderToken,
+              )
+            },
+            bindNativeRole = { identity ->
+              nativeBindSpatialProjectionPeerDecoder(
+                  identity.routeGeneration,
+                  identity.decoderToken,
+                  identity.readerGeneration,
+              ) == 1L
+            },
+            attachCommonGraph = { identity ->
+              cameraHwbProjectionRawCarrierCoordinator.attachProjectionPeerCommonGraph(
+                  identity
+              )
+            },
+            marker = ::marker,
         )
     )
   }
@@ -1387,6 +1449,277 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     )
   }
 
+  private val spatialVideoSourceRoutingCoordinator: SpatialVideoSourceRoutingCoordinator by
+      lazy(LazyThreadSafetyMode.NONE) {
+    SpatialVideoSourceRoutingCoordinator(
+        execution =
+            object : SpatialVideoSourceExecutionAdapter {
+              override fun producerState(): SpatialProjectionProducerState =
+                  spatialVideoSourceRoutingCoordinator.snapshot().producerState
+
+              override fun requestProducerCleanup(
+                  routeGeneration: Long,
+                  producer: SpatialProjectionProducerState.ProducerActive,
+              ): SpatialProjectionProducerState {
+                val receipt =
+                    runCatching {
+                          SpatialVideoSourceNativeAbi.decodeReadback(
+                              nativeRequestSpatialVideoProjectionProducerCleanup(
+                                  routeGeneration,
+                                  producer.session,
+                                  producer.epoch,
+                              )
+                          )
+                        }
+                        .getOrNull()
+                return if (receipt != null &&
+                    receipt.routeGeneration == routeGeneration &&
+                    receipt.producerSession == producer.session &&
+                    receipt.producerEpoch == producer.epoch &&
+                    receipt.hasStages(SpatialVideoSourceStage.ProducerInactive) &&
+                    receipt.result == SpatialVideoSourceResult.Inactive) {
+                  SpatialProjectionProducerState.ProducerInactive(
+                      producer.session,
+                      producer.epoch,
+                      routeGeneration,
+                  )
+                } else {
+                  SpatialProjectionProducerState.CleanupPending(
+                      producer.session,
+                      producer.epoch,
+                      routeGeneration,
+                  )
+                }
+              }
+
+              override fun readProducerCleanup(
+                  pending: SpatialProjectionProducerState.CleanupPending,
+              ): SpatialProjectionProducerState? {
+                val receipt =
+                    cameraHwbProjectionRawCarrierCoordinator.readNativeSource(
+                        pending.routeGeneration
+                    ) ?: return null
+                return if (receipt.result == SpatialVideoSourceResult.Inactive &&
+                    receipt.hasStages(SpatialVideoSourceStage.ProducerInactive)) {
+                  SpatialProjectionProducerState.ProducerInactive(
+                      receipt.producerSession,
+                      receipt.producerEpoch,
+                      receipt.routeGeneration,
+                  )
+                } else {
+                  null
+                }
+              }
+
+              override fun selectNativeProvider(
+                  request: SpatialVideoSourceNativeRequest,
+                  context: SpatialVideoSourceCarrierContext,
+              ): SpatialVideoSourceNativeReadback =
+                  cameraHwbProjectionRawCarrierCoordinator.selectNativeProvider(request, context)
+
+              override fun readNativeSource(routeGeneration: Long): SpatialVideoSourceNativeReadback? =
+                  cameraHwbProjectionRawCarrierCoordinator.readNativeSource(routeGeneration)
+
+              override fun stagePeerSettings(
+                  settings: SpatialVideoProjectionSettings,
+                  routeGeneration: Long,
+              ): Boolean = spatialPeerProjectionRuntimeCoordinator.stage(settings, routeGeneration)
+
+              override fun replacePeerSettings(
+                  settings: SpatialVideoProjectionSettings,
+                  routeGeneration: Long,
+                  reason: String,
+              ): Boolean = spatialPeerProjectionRuntimeCoordinator.startAfterNativeAck(
+                  routeGeneration,
+                  reason,
+              )
+
+              override fun preparePeerDecoderOwnership(
+                  routeGeneration: Long,
+                  reason: String,
+              ): Boolean = true
+
+              override fun stopSourceAcquisition(
+                  source: SpatialVideoSource,
+                  routeGeneration: Long,
+                  reason: String,
+              ): Boolean = when (source) {
+                SpatialVideoSource.Peer ->
+                    spatialPeerProjectionRuntimeCoordinator.snapshot().identity?.let {
+                      spatialPeerProjectionRuntimeCoordinator.stopExact(
+                          it,
+                          "$reason-route-$routeGeneration",
+                      )
+                    } ?: true
+                SpatialVideoSource.Local -> {
+                  val context = cameraHwbProjectionRawCarrierCoordinator.sourceCarrierContext()
+                  if (context == null) {
+                    false
+                  } else {
+                    val stopped =
+                        if (localSourceRetirementGeneration == routeGeneration) {
+                          cameraHwbProjectionRawCarrierCoordinator.readNativeSource(routeGeneration)
+                        } else {
+                          cameraHwbProjectionRawCarrierCoordinator.selectNativeProvider(
+                              SpatialVideoSourceNativeRequest(
+                                  routeGeneration = routeGeneration,
+                                  source = SpatialVideoSource.Disabled,
+                                  launchChallenge = context.launchChallenge,
+                                  surfaceGeneration = context.surfaceGeneration,
+                              ),
+                              context,
+                          ).also { localSourceRetirementGeneration = routeGeneration }
+                        }
+                    val confirmed = stopped != null &&
+                        stopped.routeGeneration == routeGeneration &&
+                        stopped.source == SpatialVideoSource.Disabled &&
+                        stopped.result == SpatialVideoSourceResult.Inactive &&
+                        stopped.hasStages(SpatialVideoSourceStage.AcquisitionStopped)
+                    if (confirmed) localSourceRetirementGeneration = 0L
+                    confirmed
+                  }
+                }
+                SpatialVideoSource.Disabled -> true
+              }
+
+              override fun updateSourceOwnerDemand(required: Boolean, reason: String) {
+                spatialPeerProjectionRuntimeCoordinator.updateSourceDemand(required, reason)
+              }
+            },
+        // Native acquisitionTimeNs is CLOCK_MONOTONIC, which maps to nanoTime here.
+        monotonicNowNs = System::nanoTime,
+    )
+  }
+  private val projectionSourcePollQueued = AtomicBoolean(false)
+  private val projectionSourceRouteTransitionMarker = SpatialVideoSourceRouteTransitionMarker()
+  @Volatile private var localSourceRetirementGeneration = 0L
+  private var projectionSourcePollJob: Job? = null
+
+  private fun recordProjectionSourceRouteTransition(
+      state: SpatialVideoSourceRoutingState,
+      reason: String,
+  ) {
+    projectionSourceRouteTransitionMarker.markerFor(state, reason)?.let(::marker)
+  }
+
+  /** Single Activity-owned route used by ordinary startup, explicit Intents, and the live panel. */
+  private fun requestProjectionSource(
+      source: SpatialVideoSource,
+      requestIntent: Intent?,
+      reason: String,
+  ): SpatialVideoSourceRoutingState {
+    val peerSettings =
+        if (source == SpatialVideoSource.Peer) {
+          val resolved = spatialVideoProjectionRuntimeCoordinator.resolveSettings(requestIntent)
+          val cadence = videoCadenceModeOverride ?: resolved.cadenceMode
+          presentationPolicy.videoSettings(
+              resolved.copy(fpsCap = cadence.nativeFallbackFps, cadenceMode = cadence)
+          )
+        } else {
+          null
+        }
+    val state = spatialVideoSourceRoutingCoordinator.beginProjectionSourceRequest(source, peerSettings)
+    val generation = state.generation
+    val carrier = cameraHwbProjectionRawCarrierCoordinator.sourceCarrierContext()
+    videoLifecycleShutdownCoordinator.dispatch {
+      val executed =
+          spatialVideoSourceRoutingCoordinator.executeRequest(generation, carrier, reason)
+      recordProjectionSourceRouteTransition(executed, "$reason-execute")
+      marker(
+          "channel=spatial-video-source status=executed reason=${activityMarkerToken(reason)} " +
+              "source=${source.token} generation=${executed.generation} " +
+              "pending=${executed.pending?.token ?: "none"} effective=${executed.effective.token} " +
+              "failed=${executed.failed?.token ?: "none"} failureReason=${executed.failureReason.token} " +
+              "uiThreadBlocked=false"
+      )
+    }
+    marker(
+        "channel=spatial-video-source status=requested reason=${activityMarkerToken(reason)} " +
+            "source=${source.token} generation=${state.generation} " +
+            "pending=${state.pending?.token ?: "none"} effective=${state.effective.token} " +
+            "failed=${state.failed?.token ?: "none"} failureReason=${state.failureReason.token} " +
+            "sourceOwnerDemand=${state.sourceOwnerDemand} activityRestarted=false " +
+            "controlsReset=false carrierReset=false"
+    )
+    return state
+  }
+
+  private fun requestInitialProjectionSource(intent: Intent) {
+    when (val parsed = SpatialVideoSourceIntentParser.parse(intent)) {
+      SpatialVideoSourceIntentResult.Unspecified ->
+          requestProjectionSource(SpatialVideoSource.Local, null, "activity-create-default-local")
+      is SpatialVideoSourceIntentResult.Selected ->
+          requestProjectionSource(parsed.source, intent, "activity-create-intent")
+      is SpatialVideoSourceIntentResult.Rejected -> {
+        marker(
+            "channel=spatial-video-source status=intent-rejected reason=activity-create " +
+                "token=${activityMarkerToken(parsed.token ?: "null")} strictExplicitIntent=true"
+        )
+        requestProjectionSource(SpatialVideoSource.Local, null, "activity-create-rejected-default-local")
+      }
+    }
+  }
+
+  private fun applyExplicitVideoSourceIntent(intent: Intent, reason: String) {
+    when (val parsed = SpatialVideoSourceIntentParser.parse(intent)) {
+      SpatialVideoSourceIntentResult.Unspecified -> return
+      is SpatialVideoSourceIntentResult.Rejected ->
+          marker(
+              "channel=spatial-video-source status=intent-rejected reason=${activityMarkerToken(reason)} " +
+                  "token=${activityMarkerToken(parsed.token ?: "null")} strictExplicitIntent=true"
+          )
+      is SpatialVideoSourceIntentResult.Selected ->
+          requestProjectionSource(parsed.source, intent, reason)
+    }
+  }
+
+  private fun projectionSourceSnapshotForPanel(): SpatialVideoSourceRoutingState {
+    val state = spatialVideoSourceRoutingCoordinator.snapshot()
+    enqueueProjectionSourcePoll("private-layer-control-panel")
+    return state
+  }
+
+  private fun enqueueProjectionSourcePoll(reason: String) {
+    val state = spatialVideoSourceRoutingCoordinator.snapshot()
+    val carrier = cameraHwbProjectionRawCarrierCoordinator.sourceCarrierContext()
+    val carrierPresent = carrier != null
+    if (SpatialVideoSourcePollingPolicy.shouldPoll(state, carrierPresent) &&
+        projectionSourcePollQueued.compareAndSet(false, true)) {
+      videoLifecycleShutdownCoordinator.dispatch {
+        try {
+          val current = spatialVideoSourceRoutingCoordinator.snapshot()
+          if (current.producerState is SpatialProjectionProducerState.CleanupPending &&
+              current.pending != null) {
+            val resumed = spatialVideoSourceRoutingCoordinator.resumePending(
+                checkNotNull(carrier),
+                "$reason-cleanup-poll",
+            )
+            recordProjectionSourceRouteTransition(resumed, "$reason-cleanup-poll")
+          } else {
+            val polled = spatialVideoSourceRoutingCoordinator.pollActive(2_000_000_000L)
+            recordProjectionSourceRouteTransition(polled, "$reason-active-poll")
+          }
+        } finally {
+          projectionSourcePollQueued.set(false)
+        }
+      }
+    }
+  }
+
+  private fun startProjectionSourceLifecyclePolling() {
+    if (projectionSourcePollJob?.isActive == true) return
+    projectionSourcePollJob = activityScope.launch {
+      while (true) {
+        enqueueProjectionSourcePoll("activity-lifecycle")
+        delay(PROJECTION_SOURCE_POLL_CADENCE_MS)
+      }
+    }
+  }
+
+  private fun stopProjectionSourceLifecyclePolling() {
+    projectionSourcePollJob?.cancel()
+    projectionSourcePollJob = null
+  }
   private var projectionPanelRuntimeEnabled = BuildConfig.CAMERA_PROJECTION_DEFAULT_ENABLED
 
   private val cameraHwbProjectionLaunchCoordinator by lazy(LazyThreadSafetyMode.NONE) {
@@ -1536,7 +1869,27 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             applyRemainingPrivateLayerConfiguration =
                 privateLayerControlCoordinator::applyRemainingConfiguration,
             configureVideoProjection = spatialVideoProjectionRuntimeCoordinator::configure,
-            startVideoProjection = ::startCustomVideoProjectionWithDecoderOwnership,
+            startVideoProjection = { settings, reason ->
+              if (!spatialVideoProjectionRuntimeCoordinator.decoderActive) {
+                startCustomVideoProjectionWithDecoderOwnership(settings, reason)
+              }
+            },
+            dispatchSourceLifecycle = { action ->
+              videoLifecycleShutdownCoordinator.dispatch(action)
+            },
+            onSourceCarrierReady = { context, reason ->
+              spatialVideoSourceRoutingCoordinator.resumePending(context, reason).also {
+                recordProjectionSourceRouteTransition(it, "$reason-resume")
+              }
+            },
+            requestNativeProjectionSource = ::nativeRequestSpatialVideoProjectionSource,
+            readNativeProjectionSource = ::nativeReadSpatialVideoProjectionSource,
+            reportNativeProjectionSource = { readback ->
+              spatialVideoSourceRoutingCoordinator.reportNativeReadback(readback).also {
+                recordProjectionSourceRouteTransition(it, "native-readback")
+              }
+            },
+            startPeerCommonGraph = ::nativeStartSpatialPeerProjectionCommonGraph,
             updateNativeLayerFence = ::nativeUpdateCameraHwbProjectionLayerFence,
             startNative = ::nativeStartCameraHwbProjectionProbeWithFence,
             updateFromViewer = { reason, forceLog ->
@@ -1840,6 +2193,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
 
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
+    requestInitialProjectionSource(intent)
     handlePrivatePanelLaunchIntent(intent, "activity-create")
     PrivateLayerZoneCompositorPanelBridge.bind(
         initial = privateLayerControlCoordinator.zoneCompositor,
@@ -1946,6 +2300,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
 
   override fun onNewIntent(intent: Intent) {
     super.onNewIntent(intent)
+    applyExplicitVideoSourceIntent(intent, "activity-new-intent")
     setIntent(intent)
     handlePrivatePanelLaunchIntent(intent, "new-intent")
     if (productPolicy.cameraPanelRoutesEnabled) {
@@ -2097,8 +2452,16 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
 
   private fun resolvedVideoProjectionSettings(): SpatialVideoProjectionSettings {
     val resolved = spatialVideoProjectionRuntimeCoordinator.resolveSettings(intent)
-    val cadenceMode = videoCadenceModeOverride ?: resolved.cadenceMode
-    return resolved.copy(
+    // The source-selection extra shares its historical key with CompositorVideo settings.
+    // A ProjectionPeer selection must not replace that fixed role's settings. On a hot
+    // selection retain the adopted compositor settings; on a cold selection that is the
+    // disabled default until an independent file/video selection is made.
+    val compositorSettings = SpatialFixedDecoderRoleSettingsPolicy.compositorSettings(
+        resolved,
+        spatialVideoProjectionRuntimeCoordinator.settings,
+    )
+    val cadenceMode = videoCadenceModeOverride ?: compositorSettings.cadenceMode
+    return compositorSettings.copy(
         fpsCap = cadenceMode.nativeFallbackFps,
         cadenceMode = cadenceMode,
     )
@@ -2228,6 +2591,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
   ) {
     val customDecoderRequired =
         compositorVideoRequested && projectionPanelVisibilityCoordinator.enabled
+    val projectionSource = spatialVideoSourceRoutingCoordinator.snapshot().requested
     if (customDecoderRequired) {
       // Release the outgoing decoder before the custom decoder is allowed to start.
       immersiveVideoPanelCoordinator.setDirectVideoConsumerRequired(false, source)
@@ -2235,7 +2599,10 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     } else {
       spatialVideoProjectionRuntimeCoordinator.updateReadableVideoConsumer(false, source)
       immersiveVideoPanelCoordinator.setDirectVideoConsumerRequired(
-          compositorVideoRequested,
+          SpatialVideoDecoderOwnershipPolicy.directViewerRequired(
+              compositorVideoRequested,
+              projectionPanelVisibilityCoordinator.enabled,
+          ),
           source,
       )
     }
@@ -2246,6 +2613,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
         "channel=spatial-video-decoder-ownership status=applied " +
             "source=${activityMarkerToken(source)} compositorVideoRequested=$compositorVideoRequested " +
             "customDecoderRequired=$customDecoderRequired " +
+            "projectionSource=${projectionSource.token} " +
             "directDecoderActive=$directActive customDecoderActive=$customActive " +
             "customDecoderEffective=$customEffective " +
             "activeDecoderCount=${listOf(directActive, customActive).count { it }} " +
@@ -2923,6 +3291,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
 
   override fun onStart() {
     super.onStart()
+    startProjectionSourceLifecyclePolling()
     connectionHubActivityStarted = true
     connectionHubSurfaceTarget =
         SpatialConnectionHubSurfaceTargetLoader.load(::marker, privatePanelExtension)
@@ -2936,6 +3305,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
   }
 
   override fun onStop() {
+    stopProjectionSourceLifecyclePolling()
     connectionHubActivityStarted = false
     connectionHubSurfaceClient?.close()
     connectionHubSurfaceClient = null
@@ -2944,6 +3314,25 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
   }
 
   override fun onDestroy() {
+    val cleanupScheduled =
+        videoLifecycleShutdownCoordinator.beginOrderedShutdown(
+            retireProjectionPeer = {
+              spatialPeerProjectionRuntimeCoordinator.retireForActivityDestroy(
+                  "activity-destroy-serialized"
+              )
+            },
+            finishCleanup = ::finishActivityDestroyCleanup,
+        )
+    stopProjectionSourceLifecyclePolling()
+    if (!cleanupScheduled) {
+      marker(
+          "channel=spatial-projection-peer status=activity-destroy-cleanup-already-scheduled"
+      )
+    }
+    super.onDestroy()
+  }
+
+  private fun finishActivityDestroyCleanup(peerRetirement: Boolean) {
     connectionHubSurfaceClient?.close()
     connectionHubSurfaceClient = null
     connectionHubWearerControlClient.close()
@@ -2952,6 +3341,11 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     }
     SpatialVideoCadencePanelBridge.clear()
     privatePanelExtension?.shutdown()
+    marker(
+        "channel=spatial-projection-peer status=activity-destroy-retirement " +
+            "stopped=$peerRetirement identityRetained=" +
+            "${spatialPeerProjectionRuntimeCoordinator.snapshot().identity != null}"
+    )
     immersiveVideoPanelCoordinator.destroy("activity-destroy")
     backgroundImmersiveVideoPanelCoordinator.destroy("activity-destroy")
     spatialPassthroughLutCoordinator.stop("activity-destroy")
@@ -2963,7 +3357,6 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
       runCatching { nativeStopSpatialVideoProjectionProbe() }
     }
     spatialVideoProjectionRuntimeCoordinator.stop("activity-destroy")
-    videoDecoderLifecycleExecutor.shutdownNow()
     cameraHwbProjectionPanelCarrierCoordinator.cleanup("activity-destroy")
     spatialFragmentProbeCoordinator.destroy("activity-destroy")
     spatialStimulusVolumeCoordinator.destroy("activity-destroy")
@@ -2974,7 +3367,6 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     surfaceParticleRuntimeCoordinator.stop()
     if (controlProfileHotloaderStarted) controlProfileHotloader.close()
     activityMarkerRecorder.close()
-    super.onDestroy()
   }
 
   override fun registerPanels(): List<PanelRegistration> {
@@ -3014,6 +3406,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
                     backgroundVideoSession =
                         backgroundImmersiveVideoPanelCoordinator::sessionSnapshot,
                     videoSession = immersiveVideoPanelCoordinator::sessionSnapshot,
+                    projectionSource = ::projectionSourceSnapshotForPanel,
                     sharedMediaLibraryStatus = sharedMediaLibraryClient::status,
                     observeSharedMediaLibrary = sharedMediaLibraryClient::observe,
                     refreshSharedMediaLibrary = ::refreshSharedMediaLibraryFromPanel,
@@ -3052,6 +3445,13 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
                       backgroundImmersiveVideoPanelCoordinator.setPlaybackEnabled(
                           enabled,
                           "private-layer-control-panel-background-video-toggle",
+                      )
+                    },
+                    requestProjectionSource = { source ->
+                      requestProjectionSource(
+                          source,
+                          intent,
+                          "private-layer-control-panel-source-${source.token}",
                       )
                     },
                     updateProjectionScale = { scale, source ->
@@ -4395,6 +4795,43 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
       layerStateCode: Int,
   ): Long
 
+  /**
+   * Unit020 source-owner ABI v1. The request/readback array is exactly
+   * SpatialVideoSourceNativeAbi.WORD_COUNT signed 64-bit words.
+   */
+  private external fun nativeRequestSpatialVideoProjectionSource(
+      surface: AndroidSurface,
+      requestWords: LongArray,
+  ): LongArray
+
+  private external fun nativeReadSpatialVideoProjectionSource(
+      routeGeneration: Long,
+  ): LongArray
+
+  private external fun nativeRequestSpatialVideoProjectionProducerCleanup(
+      routeGeneration: Long,
+      producerSession: Long,
+      producerEpoch: Long,
+  ): LongArray
+
+  private external fun nativeStartSpatialPeerProjectionCommonGraph(
+      routeGeneration: Long,
+      surface: AndroidSurface,
+      width: Int,
+      height: Int,
+      frameCount: Int,
+      launchChallenge: Long,
+      layerGeneration: Long,
+      layerSwitchCount: Long,
+      layerStateCode: Int,
+  ): Long
+
+  private external fun nativeBindSpatialProjectionPeerDecoder(
+      routeGeneration: Long,
+      decoderToken: Long,
+      readerGeneration: Long,
+  ): Long
+
   private external fun nativeStopCameraHwbProbe()
 
   private external fun nativeUpdateCameraHwbProjectionLayerFence(
@@ -4769,6 +5206,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
         "debug.rustyquest.spatial_camera_panel.native_marker_file.enabled"
     private const val CONTROL_PROFILE_HOTLOAD_ENABLED_PROPERTY =
         "debug.rustyquest.spatial_camera_panel.control_profile_hotload.enabled"
+    private const val PROJECTION_SOURCE_POLL_CADENCE_MS = 250L
     private const val PANEL_SHELL_VISIBLE_PROPERTY =
         "debug.rustyquest.spatial.panel_shell.visible"
     private val SUPPORTED_SURFACE_TARGET_IDS =

@@ -1695,7 +1695,9 @@ mod tests {
                 ..ProjectionZoneCompositorSettings::default()
             };
             let frame = camera_hwb_projection_zone_frame_with_settings(
-                1.0, 0.0, 0.0,
+                1.0,
+                0.0,
+                0.0,
                 [[0.0, 0.0, 0.5, 1.0], [0.5, 0.0, 0.5, 1.0]],
                 settings,
             );

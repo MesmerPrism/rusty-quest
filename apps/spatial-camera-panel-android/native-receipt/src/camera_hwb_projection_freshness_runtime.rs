@@ -377,6 +377,28 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1pa
             return 1;
         }
     };
+    if let Some(route_generation) = crate::peer_projection_runtime::pending_route_generation(
+        crate::peer_projection_runtime::SOURCE_LOCAL,
+        launch_challenge,
+        layer_generation,
+    ) {
+        let matches = unsafe {
+            crate::peer_projection_ingress::exact_bound_surface_matches(
+                env.cast(),
+                surface,
+                route_generation,
+                launch_challenge,
+                layer_generation,
+            )
+        };
+        if !matches {
+            crate::peer_projection_runtime::mark_route_lost(
+                route_generation,
+                crate::peer_projection_runtime::REASON_CARRIER_UNAVAILABLE,
+            );
+            return 1;
+        }
+    }
     let generation = match begin_camera_projection_freshness_session(launch_fence) {
         Ok(generation) => generation,
         Err(reason) => {

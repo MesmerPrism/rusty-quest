@@ -32,6 +32,7 @@ internal data class SpatialPrivateLayerPanelRegistrationBindings(
     val passthroughLutSettings: () -> SpatialPassthroughLutSettings,
     val backgroundVideoSession: () -> SpatialImmersiveVideoSessionSnapshot,
     val videoSession: () -> SpatialImmersiveVideoSessionSnapshot,
+    val projectionSource: () -> SpatialVideoSourceRoutingState,
     val sharedMediaLibraryStatus: () -> SharedOfflineImmersiveMediaLibrarySnapshot,
     val observeSharedMediaLibrary:
         ((SharedOfflineImmersiveMediaLibrarySnapshot) -> Unit) -> Closeable,
@@ -52,6 +53,7 @@ internal data class SpatialPrivateLayerPanelRegistrationBindings(
         (Boolean) -> SpatialImmersiveVideoSessionSnapshot,
     val setBackgroundVideoPlaybackEnabled:
         (Boolean) -> SpatialImmersiveVideoSessionSnapshot,
+    val requestProjectionSource: (SpatialVideoSource) -> SpatialVideoSourceRoutingState,
     val updateProjectionScale: (Float, String) -> Float,
     val updateDepthLayerPolicy: (Int, String) -> Int,
     val updateDepthAlignment:
@@ -135,6 +137,7 @@ internal object SpatialComposePanelRegistrationModule {
                       passthroughLutSettings = bindings.passthroughLutSettings,
                       backgroundVideoSession = bindings.backgroundVideoSession,
                       videoSession = bindings.videoSession,
+                      projectionSource = bindings.projectionSource,
                       sharedMediaLibraryStatus = bindings.sharedMediaLibraryStatus,
                       observeSharedMediaLibrary = bindings.observeSharedMediaLibrary,
                       refreshSharedMediaLibrary = bindings.refreshSharedMediaLibrary,
@@ -153,6 +156,7 @@ internal object SpatialComposePanelRegistrationModule {
                       setVideoPlaybackEnabled = bindings.setVideoPlaybackEnabled,
                       setBackgroundVideoPlaybackEnabled =
                           bindings.setBackgroundVideoPlaybackEnabled,
+                      requestProjectionSource = bindings.requestProjectionSource,
                       updateProjectionScale = bindings.updateProjectionScale,
                       updateDepthLayerPolicy = bindings.updateDepthLayerPolicy,
                       updateDepthAlignment = bindings.updateDepthAlignment,

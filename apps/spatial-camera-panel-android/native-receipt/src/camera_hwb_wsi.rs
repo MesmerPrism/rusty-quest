@@ -29,6 +29,7 @@ use crate::camera_latency_diagnostics::{
 };
 use crate::camera_replay_capture::{CameraReplayCaptureRecorder, CameraReplayFrameMetadata};
 use crate::camera_reprojection_guard_band::CameraReprojectionGuardBandFrame;
+use crate::packed_sbs_normalizer::PackedSbsNormalizer;
 use crate::spatial_guide_processing::current_spatial_guide_processing_policy;
 use crate::spatial_public_multistack::public_multistack_marker_fields;
 use crate::spatial_public_multistack_runtime::{
@@ -1045,10 +1046,11 @@ pub(crate) unsafe fn record_camera_hwb_probe_command_buffer(
     extent: vk::Extent2D,
     resources: &CameraHwbProbeResources,
     descriptor_set: vk::DescriptorSet,
-    sampled_left_image: &AhbVulkanSampledImage,
-    sampled_right_image: Option<&AhbVulkanSampledImage>,
+    sampled_left_image: vk::Image,
+    sampled_right_image: Option<vk::Image>,
     transition_left_camera_image: bool,
     transition_right_camera_image: bool,
+    packed_normalizer: Option<(&mut PackedSbsNormalizer, &AhbVulkanSampledImage, bool)>,
     public_guide_targets: Option<&mut SpatialPublicGuideTargets>,
     elapsed_seconds: f32,
     video_renderer: Option<&mut SpatialVideoProjectionRenderer>,
@@ -1075,19 +1077,18 @@ pub(crate) unsafe fn record_camera_hwb_probe_command_buffer(
         .begin_command_buffer(command_buffer, &vk::CommandBufferBeginInfo::default())
         .map_err(|error| format!("begin-command-buffer-{error:?}"))?;
     gpu_timestamps.begin_frame(device, command_buffer, frame_slot, frame_id);
+    if let Some((normalizer, packed_source, transition_source)) = packed_normalizer {
+        normalizer.record(device, command_buffer, packed_source, transition_source);
+    }
     if transition_left_camera_image {
-        transition_ahb_sampled_image_to_shader_read(
-            device,
-            command_buffer,
-            sampled_left_image.image,
-        );
+        transition_ahb_sampled_image_to_shader_read(device, command_buffer, sampled_left_image);
     }
     if transition_right_camera_image {
         if let Some(sampled_right_image) = sampled_right_image {
             transition_ahb_sampled_image_to_shader_read(
                 device,
                 command_buffer,
-                sampled_right_image.image,
+                sampled_right_image,
             );
         }
     }

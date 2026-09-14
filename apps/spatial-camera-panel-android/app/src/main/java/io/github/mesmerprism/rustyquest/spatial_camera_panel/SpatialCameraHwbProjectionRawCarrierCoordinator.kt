@@ -131,6 +131,12 @@ internal data class SpatialCameraHwbProjectionRawCarrierBindings(
     val applyRemainingPrivateLayerConfiguration: (String) -> Unit,
     val configureVideoProjection: (SpatialVideoProjectionSettings, String) -> Unit,
     val startVideoProjection: (SpatialVideoProjectionSettings, String) -> Unit,
+    val dispatchSourceLifecycle: ((() -> Unit) -> Unit),
+    val onSourceCarrierReady: (SpatialVideoSourceCarrierContext, String) -> SpatialVideoSourceRoutingState,
+    val requestNativeProjectionSource: (AndroidSurface, LongArray) -> LongArray,
+    val readNativeProjectionSource: (Long) -> LongArray,
+    val reportNativeProjectionSource: (SpatialVideoSourceNativeReadback) -> Unit,
+    val startPeerCommonGraph: (Long, AndroidSurface, Int, Int, Int, Long, Long, Long, Int) -> Long,
     val updateNativeLayerFence: (Long, Long, Long, Int) -> Long,
     val startNative: (AndroidSurface, Int, Int, Int, Int, Long, Long, Long, Int) -> Long,
     val updateFromViewer: (String, Boolean) -> Unit,
@@ -161,6 +167,37 @@ internal data class SpatialCameraHwbProjectionRawStartSequenceResult(
     val error: String?,
     val message: String?,
 )
+
+internal object SpatialCompositorVideoStartupPolicy {
+  fun shouldStart(settings: SpatialVideoProjectionSettings): Boolean =
+      settings.active && settings.source != "peer-packed-stereo"
+}
+
+internal object SpatialPeerCommonGraphAcknowledgementPolicy {
+  fun accepts(
+      startResult: Long,
+      receipt: SpatialVideoSourceNativeReadback?,
+      identity: SpatialPeerProjectionDecoderIdentity,
+      carrier: SpatialVideoSourceCarrierContext,
+  ): Boolean =
+      startResult > 0L && receipt != null &&
+          receipt.routeGeneration == identity.routeGeneration &&
+          receipt.source == SpatialVideoSource.Peer &&
+          receipt.launchChallenge == carrier.launchChallenge &&
+          receipt.surfaceGeneration == carrier.surfaceGeneration &&
+          receipt.decoderToken == identity.decoderToken &&
+          receipt.readerGeneration == identity.readerGeneration &&
+          receipt.hasStages(
+              SpatialVideoSourceStage.ProviderSelected or
+                  SpatialVideoSourceStage.DecoderBound or
+                  SpatialVideoSourceStage.ReaderBound or
+                  SpatialVideoSourceStage.SurfaceBound or
+                  SpatialVideoSourceStage.CommonGraphAttached
+          ) &&
+          receipt.result != SpatialVideoSourceResult.Rejected &&
+          receipt.result != SpatialVideoSourceResult.Lost &&
+          receipt.result != SpatialVideoSourceResult.Unavailable
+}
 
 internal object SpatialCameraHwbProjectionRawStartSequence {
   fun execute(
@@ -260,6 +297,7 @@ internal class SpatialCameraHwbProjectionRawCarrierCoordinator(
   private var activeSceneQuadLayer: SceneQuadLayer? = null
   private var activeSceneSwapchain: SceneSwapchain? = null
   private var activeLayerFence: SpatialCameraHwbProjectionRawLaunchFence? = null
+  private var activeRenderSurface: AndroidSurface? = null
   private var activeSamplerOverrideSubmitted = false
 
   fun run(readerMaxImages: Int, videoSettings: SpatialVideoProjectionSettings) {
@@ -346,6 +384,19 @@ internal class SpatialCameraHwbProjectionRawCarrierCoordinator(
       )
       return
     }
+    activeRenderSurface = renderSurface
+    bindings.dispatchSourceLifecycle sourceLifecycle@{
+    val sourceState =
+        bindings.onSourceCarrierReady(
+            SpatialVideoSourceCarrierContext(
+                launchChallenge = launchFence.launchChallenge,
+                surfaceGeneration = launchFence.layerGeneration,
+            ),
+            "raw-carrier-ready",
+        )
+    val acquisitionSource =
+        sourceState.requested.takeIf { sourceState.failed == null }
+            ?: SpatialVideoSource.Disabled
 
     if (bindings.syntheticVisualEnabled()) {
       val canvasDrawn = bindings.drawSyntheticVisual(renderSurface, "SceneQuadLayer")
@@ -357,7 +408,7 @@ internal class SpatialCameraHwbProjectionRawCarrierCoordinator(
           )
       )
       bindings.updateFromViewer("synthetic-visual-start", true)
-      return
+      return@sourceLifecycle
     }
 
     val reason = "raw-projection-start"
@@ -381,7 +432,7 @@ internal class SpatialCameraHwbProjectionRawCarrierCoordinator(
                   bindings.configureVideoProjection(videoSettings, reason)
                 },
                 startVideoProjection =
-                    if (videoSettings.active) {
+                    if (SpatialCompositorVideoStartupPolicy.shouldStart(videoSettings)) {
                       { bindings.startVideoProjection(videoSettings, reason) }
                     } else {
                       null
@@ -390,7 +441,8 @@ internal class SpatialCameraHwbProjectionRawCarrierCoordinator(
                   bindings.privateLayerOverrideLifecycleCurrent(launchFence.launchChallenge)
                 },
                 startNative = {
-                  bindings.startNative(
+                  if (acquisitionSource == SpatialVideoSource.Peer) 0L
+                  else if (acquisitionSource == SpatialVideoSource.Local) bindings.startNative(
                       renderSurface,
                       CAMERA_HWB_PROJECTION_WIDTH_PX,
                       CAMERA_HWB_PROJECTION_HEIGHT_PX,
@@ -400,7 +452,7 @@ internal class SpatialCameraHwbProjectionRawCarrierCoordinator(
                       launchFence.layerGeneration,
                       launchFence.layerSwitchCount,
                       launchFence.layerState.code,
-                  )
+                  ) else 0L
                 },
                 cleanup = bindings.cleanup,
             )
@@ -415,8 +467,12 @@ internal class SpatialCameraHwbProjectionRawCarrierCoordinator(
               message = startSequence.message ?: "unknown",
           )
       )
-      return
+      return@sourceLifecycle
     }
+    runCatching { bindings.readNativeProjectionSource(sourceState.generation) }
+        .getOrNull()
+        ?.let(SpatialVideoSourceNativeAbi::decodeReadback)
+        ?.let(bindings.reportNativeProjectionSource)
     val nativePassthroughStartMask = startSequence.nativePassthroughStartMask
     val nativePassthroughLayerActive =
         SpatialOpenXrRouteModule.nativePassthroughLayerActive(nativePassthroughStartMask)
@@ -447,6 +503,7 @@ internal class SpatialCameraHwbProjectionRawCarrierCoordinator(
         )
     )
     bindings.updateFromViewer(reason, true)
+    }
   }
 
   fun createLayer(
@@ -481,7 +538,7 @@ internal class SpatialCameraHwbProjectionRawCarrierCoordinator(
       return@synchronized true
     }
     val restoringSdkDefault = explicitConfig == null
-    runCatching {
+    return runCatching {
           swapchain.updateSampler(explicitConfig ?: SpatialCameraHwbProjectionRawSampler.sdkDefaultConfig())
           activeSamplerOverrideSubmitted = explicitConfig != null
           bindings.marker("channel=camera-hwb-spatial-probe status=raw-projection-sampler-submitted reason=$reason " +
@@ -505,9 +562,84 @@ internal class SpatialCameraHwbProjectionRawCarrierCoordinator(
     activeSceneQuadLayer = null
     activeSceneSwapchain = null
     activeLayerFence = null
+    activeRenderSurface = null
     activeSamplerOverrideSubmitted = false
     val removedFence = rawLayerContinuity.recordLayerRemoved() ?: return
     publishLayerFence(removedFence, "removed-$reason")
+  }
+
+  fun sourceCarrierContext(): SpatialVideoSourceCarrierContext? =
+      synchronized(rawLayerPublicationMonitor) {
+        val fence = activeLayerFence ?: return@synchronized null
+        if (activeRenderSurface?.isValid != true) return@synchronized null
+        SpatialVideoSourceCarrierContext(fence.launchChallenge, fence.layerGeneration)
+      }
+
+  fun selectNativeProvider(
+      request: SpatialVideoSourceNativeRequest,
+      context: SpatialVideoSourceCarrierContext,
+  ): SpatialVideoSourceNativeReadback {
+    val carrier = synchronized(rawLayerPublicationMonitor) {
+      activeRenderSurface to activeLayerFence
+    }
+    val surface = carrier.first
+    val fence = carrier.second
+    if (surface?.isValid != true || fence == null ||
+        context.launchChallenge != fence.launchChallenge ||
+        context.surfaceGeneration != fence.layerGeneration) {
+      return SpatialVideoSourceNativeReadback(
+          request.routeGeneration, request.source, 0L, 0L,
+          context.launchChallenge, context.surfaceGeneration, 0L, 0L, 0L, 0L,
+          SpatialVideoSourceResult.Unavailable, SpatialVideoSourceReason.CarrierUnavailable,
+          false, 0L, 0L,
+      )
+    }
+    return runCatching {
+          bindings.requestNativeProjectionSource(
+              surface,
+              SpatialVideoSourceNativeAbi.encodeRequest(request),
+          )
+        }
+        .getOrNull()
+        ?.let(SpatialVideoSourceNativeAbi::decodeReadback) ?: SpatialVideoSourceNativeReadback(
+        request.routeGeneration, request.source, 0L, 0L,
+        context.launchChallenge, context.surfaceGeneration, 0L, 0L, 0L, 0L,
+        SpatialVideoSourceResult.Unavailable, SpatialVideoSourceReason.ReceiptMalformed,
+        false, 0L, 0L,
+    )
+  }
+
+  fun readNativeSource(routeGeneration: Long): SpatialVideoSourceNativeReadback? =
+      runCatching { bindings.readNativeProjectionSource(routeGeneration) }
+          .getOrNull()
+          ?.let(SpatialVideoSourceNativeAbi::decodeReadback)
+
+  fun attachProjectionPeerCommonGraph(identity: SpatialPeerProjectionDecoderIdentity): Boolean {
+    val carrier = synchronized(rawLayerPublicationMonitor) {
+      Triple(activeRenderSurface, activeLayerFence, activeRenderSurface?.isValid == true)
+    }
+    val surface = carrier.first ?: return false
+    val fence = carrier.second ?: return false
+    if (!carrier.third) return false
+    val context = SpatialVideoSourceCarrierContext(fence.launchChallenge, fence.layerGeneration)
+    val startResult = bindings.startPeerCommonGraph(
+        identity.routeGeneration,
+        surface,
+        CAMERA_HWB_PROJECTION_WIDTH_PX,
+        CAMERA_HWB_PROJECTION_HEIGHT_PX,
+        CAMERA_HWB_PROJECTION_FRAME_COUNT_UNBOUNDED,
+        fence.launchChallenge,
+        fence.layerGeneration,
+        fence.layerSwitchCount,
+        fence.layerState.code,
+    )
+    val receipt = readNativeSource(identity.routeGeneration)
+    return SpatialPeerCommonGraphAcknowledgementPolicy.accepts(
+        startResult,
+        receipt,
+        identity,
+        context,
+    )
   }
 
   private fun createObservedLayerForNewLaunch(
