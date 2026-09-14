@@ -132,6 +132,8 @@ mod polar_composition_adapters;
 mod private_extension_slot;
 mod private_particle_breath_state_driver;
 mod private_particle_heartbeat_pulse_adapter;
+#[cfg(any(target_os = "android", test))]
+mod private_particle_push_abi;
 mod private_particle_world_basis;
 mod projection_rect;
 mod projection_target_state;

@@ -51,6 +51,9 @@ use crate::private_particle_breath_state_driver::{
 use crate::private_particle_heartbeat_pulse_adapter::{
     PrivateParticleHeartbeatPulseAdapter, PrivateParticleHeartbeatPulseAdapterSettings,
 };
+use crate::private_particle_push_abi::{
+    private_particle_diagnostic_push, PrivateParticlePush, PrivateParticleSortPush,
+};
 use crate::private_particle_world_basis::PrivateParticleFrameEyeProjections;
 use crate::{
     native_renderer_diagnostics_contract::{
@@ -2158,11 +2161,7 @@ impl GpuPrivateParticleRenderer {
         );
 
         let push_ranges = [vk::PushConstantRange::default()
-            .stage_flags(
-                vk::ShaderStageFlags::COMPUTE
-                    | vk::ShaderStageFlags::VERTEX
-                    | vk::ShaderStageFlags::FRAGMENT,
-            )
+            .stage_flags(private_particle_push_stages())
             .offset(0)
             .size(mem::size_of::<PrivateParticlePush>() as u32)];
         let pipeline_set_layouts = [descriptor_set_layout];
@@ -2966,7 +2965,7 @@ impl GpuPrivateParticleRenderer {
         device.cmd_push_constants(
             cmd,
             self.pipeline_layout,
-            vk::ShaderStageFlags::COMPUTE,
+            private_particle_push_stages(),
             0,
             as_bytes(&push),
         );
@@ -3042,7 +3041,7 @@ impl GpuPrivateParticleRenderer {
             device.cmd_push_constants(
                 cmd,
                 self.pipeline_layout,
-                vk::ShaderStageFlags::COMPUTE,
+                private_particle_push_stages(),
                 0,
                 as_bytes(&push),
             );
@@ -3098,9 +3097,12 @@ impl GpuPrivateParticleRenderer {
             device.cmd_push_constants(
                 cmd,
                 self.pipeline_layout,
-                vk::ShaderStageFlags::COMPUTE,
+                private_particle_push_stages(),
                 0,
-                as_bytes(&push),
+                as_bytes(&private_particle_diagnostic_push(
+                    self.particle_count,
+                    frame_count,
+                )),
             );
             device.cmd_dispatch(
                 cmd,
@@ -3763,7 +3765,7 @@ impl GpuPrivateParticleRenderer {
         device.cmd_push_constants(
             cmd,
             self.pipeline_layout,
-            vk::ShaderStageFlags::COMPUTE,
+            private_particle_push_stages(),
             0,
             as_bytes(push),
         );
@@ -4060,7 +4062,7 @@ impl GpuPrivateParticleRenderer {
         device.cmd_push_constants(
             cmd,
             self.pipeline_layout,
-            vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
+            private_particle_push_stages(),
             0,
             as_bytes(&push),
         );
@@ -4122,12 +4124,6 @@ fn private_particle_push(
         eye_position: eye_projection.position,
         eye_orientation_xyzw: eye_projection.orientation_xyzw,
         fov_tangents: fov_tangents_override.unwrap_or(eye_projection.fov_tangents),
-        diagnostic_frame: [
-            frame_count as u32,
-            (frame_count >> 32) as u32,
-            0,
-            crate::native_renderer_diagnostics_contract::DIAGNOSTIC_SCHEMA_V2,
-        ],
     }
 }
 
@@ -6405,29 +6401,11 @@ fn cross3(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
     ]
 }
 
-#[repr(C)]
-struct PrivateParticleSortPush {
-    params0: [f32; 4],
-    params1: [f32; 4],
-    params2: [f32; 4],
+fn private_particle_push_stages() -> vk::ShaderStageFlags {
+    // VUID-vkCmdPushConstants-offset-01796: every update must include all
+    // stages in the overlapping range, including compute-only dispatches.
+    vk::ShaderStageFlags::COMPUTE | vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT
 }
-
-#[repr(C)]
-struct PrivateParticlePush {
-    params0: [f32; 4],
-    params1: [f32; 4],
-    transparency_params: [f32; 4],
-    tracer_params: [f32; 4],
-    world_center_scale: [f32; 4],
-    eye_position: [f32; 4],
-    eye_orientation_xyzw: [f32; 4],
-    fov_tangents: [f32; 4],
-    diagnostic_frame: [u32; 4],
-}
-
-// Eight legacy vec4s plus the v2 diagnostic frame envelope. Keep the private
-// detailed shader ABI explicit: 9 * 16 bytes.
-const _: [(); 144] = [(); mem::size_of::<PrivateParticlePush>()];
 
 #[cfg(test)]
 mod diagnostic_contract_tests {

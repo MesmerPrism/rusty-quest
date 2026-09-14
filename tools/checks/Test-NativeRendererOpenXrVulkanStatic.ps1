@@ -49,6 +49,50 @@ function Assert-ContainsLiteralTokens {
     }
 }
 
+function Assert-PrivateParticlePortablePushContract {
+    param([string]$Text)
+    $production = ($Text -split '(?m)^#\[cfg\(test\)\]\r?\nmod diagnostic_contract_tests', 2)[0]
+    $semantic = [regex]::Match($production, 'struct PrivateParticlePush \{(?<fields>[^}]+)\}').Groups['fields'].Value
+    $observer = [regex]::Match($production, 'struct PrivateParticleDiagnosticPush \{(?<fields>[^}]+)\}').Groups['fields'].Value
+    if ([regex]::Matches($semantic, ': \[f32; 4\],').Count -ne 8 -or $semantic -match 'diagnostic_frame' -or
+        $observer.Trim() -ne 'pub(crate) diagnostic_frame: [u32; 4],') {
+        throw 'Private particle push ABI must retain eight semantic vec4s and one independent observer uvec4'
+    }
+    Assert-ContainsLiteralTokens $production @(
+        '.stage_flags(private_particle_push_stages())',
+        'const _: [(); 128] = [(); mem::size_of::<PrivateParticlePush>()];',
+        'const _: [(); 16] = [(); mem::size_of::<PrivateParticleDiagnosticPush>()];',
+        'const _: [(); 48] = [(); mem::size_of::<PrivateParticleSortPush>()];',
+        'as_bytes(&private_particle_diagnostic_push(',
+        'vk::ShaderStageFlags::COMPUTE | vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT'
+    ) 'portable private particle push ABI'
+    $updates = [regex]::Matches($production, 'device\.cmd_push_constants\(\s*cmd,\s*self\.pipeline_layout,\s*(?<stages>[^,]+),')
+    if ($updates.Count -ne 5) { throw 'Expected primary, auxiliary, diagnostic, sort, and draw push updates' }
+    foreach ($update in $updates) {
+        if ($update.Groups['stages'].Value.Trim() -ne 'private_particle_push_stages()') {
+            throw 'Every private-particle push update must match all stages of its shared range'
+        }
+    }
+}
+
+function Invoke-PrivateParticlePortablePushDamageTests {
+    param([string]$Text)
+    Assert-PrivateParticlePortablePushContract $Text
+    foreach ($case in @(
+        @('oversized-semantic', 'fov_tangents: [f32; 4],', "fov_tangents: [f32; 4],`n    extra: [f32; 4],"),
+        @('oversized-observer', 'diagnostic_frame: [u32; 4],', "diagnostic_frame: [u32; 4],`n    extra: [f32; 4],"),
+        @('stale-observer-upload', 'as_bytes(&private_particle_diagnostic_push(', 'as_bytes(&legacy_push('),
+        @('incomplete-stage-mask', "self.pipeline_layout,`n            private_particle_push_stages(),", "self.pipeline_layout,`n            vk::ShaderStageFlags::COMPUTE,")
+    )) {
+        $normalized = $Text.Replace("`r`n", "`n")
+        $damaged = $normalized.Replace($case[1], $case[2])
+        if ($damaged -eq $normalized) { throw "Push damage case did not mutate: $($case[0])" }
+        $rejected = $false
+        try { Assert-PrivateParticlePortablePushContract $damaged } catch { $rejected = $true }
+        if (-not $rejected) { throw "Push ABI damage accepted: $($case[0])" }
+    }
+}
+
 function Assert-DisplayRefreshAdjudicationContract {
     param(
         [string]$StateText,
@@ -268,12 +312,12 @@ Assert-ContainsLiteralTokens $gpuPrivateParticles @(
     'initial_diagnostic_status_is_truthful_for_each_build_level',
     'fn detailed_diagnostic_workload_counts',
     'detailed_observer_workload_is_zero_unless_the_observer_executes',
-    'diagnostic_frame: [',
-    'const _: [(); 144] = [(); mem::size_of::<PrivateParticlePush>()];',
     'source_frame_id != Some(embedded_frame_id)',
     '|| schema != 2',
     '|| validity & 0x7 != 0x7'
 ) "submitted-frame-slot ownership and envelope validation"
+$pushAbi = Read-RequiredText (Join-Path $srcRoot 'private_particle_push_abi.rs') 'host-testable private particle push ABI'
+Invoke-PrivateParticlePortablePushDamageTests "$pushAbi`n$gpuPrivateParticles"
 Assert-ContainsLiteralTokens $privateDiagnosticReductionPlaceholder @(
     'layout(local_size_x = 64', 'binding = 9'
 ) "generic detailed diagnostic placeholder ABI"

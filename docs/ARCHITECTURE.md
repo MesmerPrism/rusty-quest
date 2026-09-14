@@ -748,7 +748,14 @@ orchestration, captured world-anchor center/scale and forward-axis state, a
 public slot markers. The private-particle compute push keeps the 128-byte ABI:
 draw passes receive real FOV tangents, while compute passes receive the
 captured anchor forward axis in the same vector for downstream shaders that
-need startup/recenter-stable orientation. The diagnostic buffer is generic: private
+need startup/recenter-stable orientation. The detailed observer uploads a
+separate 16-byte push at offset zero: frame low/high words, particle count,
+and diagnostic schema. It must not extend the semantic push beyond Vulkan's
+guaranteed 128-byte floor. Every shared-layout push update includes compute,
+vertex, and fragment stages; sort and draw re-upload their own constants after
+the observer. `private_particle_push_abi.rs` owns host-tested sizes, offsets,
+and integer frame encoding; `gpu_private_particles.rs` owns Vulkan submission.
+The diagnostic buffer is generic: private
 compute shaders may write compact integer counters or fixed-point reductions,
 while Rusty Quest only clears it, reads it after the frame-slot fence, and emits
 `privateParticleDiagnostic*` markers, including optional tracer active,
