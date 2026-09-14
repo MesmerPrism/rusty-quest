@@ -32,6 +32,7 @@ param(
     [string]$PrivateFeatureSourceDir = "",
     [string]$PrivateFeatureAssetDir = "",
     [string]$PrivateFeatureResourceDir = "",
+    [string]$EmbeddedDuplexProductInputRoot = "",
     [string]$ProductId = "",
     [string]$AppId = "",
     [string]$AppLabel = "",
@@ -376,6 +377,234 @@ function Resolve-OptionalDirectoryPath {
         throw "$Label not found: $Path"
     }
     return (Resolve-Path -LiteralPath $Path).Path
+}
+
+function Test-ExactJsonProperties {
+    param(
+        [Parameter(Mandatory=$true)]$Object,
+        [Parameter(Mandatory=$true)][string[]]$Names
+    )
+    $actual = @($Object.PSObject.Properties.Name | Sort-Object)
+    $expected = @($Names | Sort-Object)
+    return ($actual -join "`n") -ceq ($expected -join "`n")
+}
+
+function Test-EmbeddedDuplexProductInputRoot {
+    param(
+        [string]$Path,
+        [Parameter(Mandatory=$true)][string]$ApplicationId,
+        [Parameter(Mandatory=$true)][string]$SigningCertificateSha256
+    )
+    if ([string]::IsNullOrWhiteSpace($Path)) { return $null }
+
+    $root = Resolve-OptionalDirectoryPath -Path $Path -Label "Embedded duplex product input root"
+    $rootItem = Get-Item -LiteralPath $root
+    if (($rootItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+        throw "Embedded duplex product input root must not be a reparse point."
+    }
+    $manifestPath = Join-Path $root "product-input-manifest.json"
+    if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) {
+        throw "Embedded duplex product input manifest not found."
+    }
+    if ((Get-Item -LiteralPath $manifestPath).Length -gt 128KB) {
+        throw "Embedded duplex product input manifest exceeds 128 KiB."
+    }
+    try { $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json -Depth 32 } catch {
+        throw "Embedded duplex product input manifest is not valid JSON."
+    }
+    $expectedPaths = @(
+        "product-spec.json",
+        "accepted-product-lock.json",
+        "client-lock.json",
+        "peer_a.media-lifecycle-lock.json",
+        "peer_b.media-lifecycle-lock.json",
+        "planning-feature-lock.json",
+        "packed-stereo-profile.json",
+        "peer_a_to_peer_b.media-binding.json",
+        "peer_b_to_peer_a.media-binding.json",
+        "route-configuration.json"
+    )
+    $closure = [string]$manifest.closure_sha256
+    if (-not (Test-ExactJsonProperties -Object $manifest -Names @("schema", "closure_sha256", "source_authorities", "package", "directional_bindings", "artifacts", "runtime_identity_packaged", "device_private_key_packaged")) -or
+        -not (Test-ExactJsonProperties -Object $manifest.package -Names @("application_id", "signing_certificate_sha256")) -or
+        -not (Test-ExactJsonProperties -Object $manifest.source_authorities -Names @("manifold_commit", "manifold_tree", "planning_feature_lock_sha256", "planning_project_revision", "planning_lock_revision")) -or
+        [string]$manifest.schema -cne "rusty.quest.embedded_duplex.product_input_manifest.v1" -or
+        $closure -cnotmatch '^[0-9a-f]{64}$' -or
+        (Split-Path -Leaf $root) -cne $closure) {
+        throw "Embedded duplex product input manifest identity is invalid."
+    }
+    if ([string]$manifest.package.application_id -cne $ApplicationId -or
+        [string]$manifest.package.signing_certificate_sha256 -cne $SigningCertificateSha256) {
+        throw "Embedded duplex product input package or signer binding differs from this build."
+    }
+    if ($manifest.runtime_identity_packaged -ne $false -or $manifest.device_private_key_packaged -ne $false) {
+        throw "Embedded duplex product inputs must not package runtime identity or device private keys."
+    }
+    $artifactRows = @($manifest.artifacts)
+    if ($artifactRows.Count -ne $expectedPaths.Count) {
+        throw "Embedded duplex product input manifest must declare exactly ten artifacts."
+    }
+    $observedFiles = @(Get-ChildItem -LiteralPath $root -File -Force)
+    $observedDirectories = @(Get-ChildItem -LiteralPath $root -Directory -Force)
+    if ($observedDirectories.Count -ne 0 -or $observedFiles.Count -ne ($expectedPaths.Count + 1)) {
+        throw "Embedded duplex product input root must contain only its manifest and nine direct artifacts."
+    }
+    $allowedNames = @("product-input-manifest.json") + $expectedPaths
+    foreach ($item in @($observedFiles)) {
+        if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or $item.Name -cnotin $allowedNames) {
+            throw "Embedded duplex product input root contains an unapproved or linked file."
+        }
+    }
+    $validatedRows = [Collections.Generic.List[object]]::new()
+    $closureLines = [Collections.Generic.List[string]]::new()
+    $totalBytes = 0L
+    for ($index = 0; $index -lt $expectedPaths.Count; $index++) {
+        $row = $artifactRows[$index]
+        $relativePath = [string]$row.path
+        $expectedSha = [string]$row.sha256
+        if (-not (Test-ExactJsonProperties -Object $row -Names @("path", "sha256", "size_bytes")) -or
+            $relativePath -cne $expectedPaths[$index] -or $expectedSha -cnotmatch '^[0-9a-f]{64}$') {
+            throw "Embedded duplex product input artifact order, path, or digest is invalid."
+        }
+        $artifactPath = Join-Path $root $relativePath
+        if (-not (Test-Path -LiteralPath $artifactPath -PathType Leaf)) {
+            throw "Embedded duplex product input artifact is missing: $relativePath"
+        }
+        $artifact = Get-Item -LiteralPath $artifactPath
+        if (($artifact.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or
+            $artifact.Length -gt 512KB -or $artifact.Length -ne [long]$row.size_bytes -or
+            (Get-FileSha256 -Path $artifactPath) -cne $expectedSha) {
+            throw "Embedded duplex product input artifact bytes differ from the manifest: $relativePath"
+        }
+        $totalBytes += $artifact.Length
+        $closureLines.Add("$relativePath=$expectedSha")
+        $validatedRows.Add([ordered]@{ path = $relativePath; sha256 = $expectedSha; size_bytes = [long]$artifact.Length })
+    }
+    if ($totalBytes -gt 2MB -or (Get-StringSha256 -Value ($closureLines -join "`n")) -cne $closure) {
+        throw "Embedded duplex product input closure digest or size is invalid."
+    }
+    $featureLockRow = @($validatedRows | Where-Object { [string]$_.path -ceq "planning-feature-lock.json" })
+    if ([string]$manifest.source_authorities.manifold_commit -cnotmatch '^[0-9a-f]{40}$' -or
+        [string]$manifest.source_authorities.manifold_tree -cnotmatch '^[0-9a-f]{40}$' -or
+        $featureLockRow.Count -ne 1 -or
+        [string]$manifest.source_authorities.planning_feature_lock_sha256 -cne [string]$featureLockRow[0].sha256 -or
+        [int]$manifest.source_authorities.planning_project_revision -lt 1 -or
+        [int]$manifest.source_authorities.planning_lock_revision -lt 1) {
+        throw "Embedded duplex product input source authority projection is invalid."
+    }
+    $directions = @($manifest.directional_bindings)
+    $expectedDirections = @(
+        @{ role = "peer_a"; lifecycle = "peer_a.media-lifecycle-lock.json"; binding = "peer_a_to_peer_b.media-binding.json" },
+        @{ role = "peer_b"; lifecycle = "peer_b.media-lifecycle-lock.json"; binding = "peer_b_to_peer_a.media-binding.json" }
+    )
+    if ($directions.Count -ne 2) { throw "Embedded duplex product inputs require exactly two installed-role bindings." }
+    if ([string]$directions[0].installed_role_id -ceq [string]$directions[1].installed_role_id) {
+        throw "Embedded duplex installed-role identities must be distinct."
+    }
+    try {
+        $clientLock = Get-Content -LiteralPath (Join-Path $root "client-lock.json") -Raw | ConvertFrom-Json -Depth 64
+        $routeConfiguration = Get-Content -LiteralPath (Join-Path $root "route-configuration.json") -Raw | ConvertFrom-Json -Depth 64
+    } catch { throw "Embedded duplex client or route configuration is not valid JSON." }
+    $routePeers = @($routeConfiguration.peers)
+    if ([string]$clientLock.schema -cne "rusty.quest.broker_client_spec.v1" -or
+        [string]$clientLock.package_name -cne $ApplicationId -or $routePeers.Count -ne 2) {
+        throw "Embedded duplex shared client or route configuration identity is invalid."
+    }
+    for ($index = 0; $index -lt 2; $index++) {
+        $direction = $directions[$index]
+        $expectedDirection = $expectedDirections[$index]
+        $lifecycleRow = @($validatedRows | Where-Object { [string]$_.path -ceq $expectedDirection.lifecycle })
+        if (-not (Test-ExactJsonProperties -Object $direction -Names @("installed_role", "installed_role_id", "lifecycle_lock_path", "media_binding_path", "lifecycle_lock_sha256", "runtime_spec_canonical_sha256", "manifold_descriptor_canonical_sha256", "owner_selection_count")) -or
+            [string]$direction.installed_role -cne $expectedDirection.role -or
+            [string]$direction.lifecycle_lock_path -cne $expectedDirection.lifecycle -or
+            [string]$direction.media_binding_path -cne $expectedDirection.binding -or
+            $lifecycleRow.Count -ne 1 -or
+            [string]$direction.lifecycle_lock_sha256 -cne [string]$lifecycleRow[0].sha256 -or
+            [string]$direction.runtime_spec_canonical_sha256 -cnotmatch '^sha256:[0-9a-f]{64}$' -or
+            [string]$direction.manifold_descriptor_canonical_sha256 -cnotmatch '^sha256:[0-9a-f]{64}$' -or
+            [int]$direction.owner_selection_count -ne 7) {
+            throw "Embedded duplex installed-role binding is incomplete or invalid."
+        }
+        try {
+            $lifecycle = Get-Content -LiteralPath (Join-Path $root $expectedDirection.lifecycle) -Raw | ConvertFrom-Json -Depth 64
+            $binding = Get-Content -LiteralPath (Join-Path $root $expectedDirection.binding) -Raw | ConvertFrom-Json -Depth 64
+        } catch { throw "Embedded duplex installed-role lifecycle or media binding is not valid JSON." }
+        $lane = @($binding.quest.spec.plan.lanes)
+        $sourcePeer = @($routePeers | Where-Object { [string]$_.installed_role_id -ceq [string]$direction.installed_role_id })
+        $sinkPeer = @($routePeers | Where-Object { [string]$_.installed_role_id -cne [string]$direction.installed_role_id })
+        if ([string]$lifecycle.'$schema' -cne "rusty.quest.broker_media_lifecycle_lock.v2" -or
+            [string]$lifecycle.client_id -cne [string]$clientLock.client_id -or
+            [string]$lifecycle.package_name -cne $ApplicationId -or
+            [string]$lifecycle.broker_client_lock_id -cne [string]$clientLock.feature_lock_id -or
+            [string]$direction.installed_role_id -cnotmatch '^[a-z][a-z0-9_-]*(?:\.[a-z0-9][a-z0-9_-]*)+$' -or
+            [string]$lifecycle.media_binding_path -cne "product-inputs/$($expectedDirection.binding)" -or
+            [string]$lifecycle.runtime_spec_id -cne [string]$binding.quest.spec.runtime_spec_id -or
+            [string]$lifecycle.session_id -cne [string]$binding.quest.spec.plan.session_id -or
+            [string]$lifecycle.session_id -cne [string]$binding.manifold.descriptor.session_id -or
+            [string]$lifecycle.stream_id -cne [string]$lane[0].media.track_id -or
+            @($binding.quest.spec.sinks).Count -ne 1 -or
+            [string]$lifecycle.render_sink_id -cne [string]$binding.quest.spec.sinks[0].sink_id -or
+            [string]$lifecycle.runtime_spec_canonical_sha256 -cne [string]$direction.runtime_spec_canonical_sha256 -or
+            [string]$lifecycle.runtime_spec_canonical_sha256 -cne [string]$binding.quest.runtime_spec_canonical_sha256 -or
+            [string]$lifecycle.manifold_descriptor_canonical_sha256 -cne [string]$direction.manifold_descriptor_canonical_sha256 -or
+            [string]$lifecycle.manifold_descriptor_canonical_sha256 -cne [string]$binding.manifold.descriptor_canonical_sha256 -or
+            $lane.Count -ne 1 -or [string]$lane[0].direction -cne "outgoing" -or
+            $sourcePeer.Count -ne 1 -or $sinkPeer.Count -ne 1 -or
+            [string]$lane[0].source_device_id -cne [string]$sourcePeer[0].device_id -or
+            [string]$lane[0].sink_device_id -cne [string]$sinkPeer[0].device_id) {
+            throw "Embedded duplex installed role does not select its exact outgoing lifecycle and binding."
+        }
+    }
+    return [pscustomobject]@{
+        root = $root
+        closure_sha256 = $closure
+        manifest_path = $manifestPath
+        manifest_sha256 = Get-FileSha256 -Path $manifestPath
+        artifacts = @($validatedRows)
+        total_artifact_bytes = $totalBytes
+    }
+}
+
+function Copy-EmbeddedDuplexProductInputs {
+    param(
+        [Parameter(Mandatory=$true)]$ValidatedInputs,
+        [Parameter(Mandatory=$true)][string]$AssetRoot
+    )
+    $embeddedRoot = Join-Path $AssetRoot "embedded-duplex"
+    New-Item -ItemType Directory -Force -Path $embeddedRoot | Out-Null
+    $allowedNames = @("product-input-manifest.json") + @($ValidatedInputs.artifacts | ForEach-Object { [string]$_.path })
+    $unexpected = @(Get-ChildItem -LiteralPath $embeddedRoot -Force -ErrorAction SilentlyContinue | Where-Object {
+        $_.PSIsContainer -or $_.Name -cnotin $allowedNames -or ($_.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0
+    })
+    if ($unexpected.Count -ne 0) { throw "Embedded duplex product input cache contains an unexpected entry." }
+    foreach ($name in $allowedNames) {
+        [void](Copy-FileIfChanged -Source (Join-Path $ValidatedInputs.root $name) -Destination (Join-Path $embeddedRoot $name))
+    }
+    $actualNames = @(Get-ChildItem -LiteralPath $embeddedRoot -File -Force | ForEach-Object Name | Sort-Object)
+    if (($actualNames -join "`n") -cne (@($allowedNames | Sort-Object) -join "`n")) {
+        throw "Embedded duplex product input cache inventory is incomplete."
+    }
+    return $AssetRoot
+}
+
+function Get-ZipEntrySha256 {
+    param(
+        [Parameter(Mandatory=$true)]$Zip,
+        [Parameter(Mandatory=$true)][string]$EntryName
+    )
+    $entries = @($Zip.Entries | Where-Object { [string]$_.FullName -ceq $EntryName })
+    if ($entries.Count -ne 1) { throw "APK entry must appear exactly once: $EntryName" }
+    $stream = $entries[0].Open()
+    $sha = [Security.Cryptography.SHA256]::Create()
+    try {
+        return [pscustomobject]@{
+            sha256 = ([BitConverter]::ToString($sha.ComputeHash($stream))).Replace("-", "").ToLowerInvariant()
+            size_bytes = [long]$entries[0].Length
+        }
+    } finally {
+        $sha.Dispose()
+        $stream.Dispose()
+    }
 }
 
 function Test-HandMeshRigAssetPack {
@@ -1067,6 +1296,10 @@ if (-not [string]::IsNullOrWhiteSpace($normalizedExpectedSignerSha256) -and
     $certificateSha256 -cne $normalizedExpectedSignerSha256) {
     throw "Explicit Spatial Camera Panel signer fingerprint mismatch before compilation."
 }
+$embeddedDuplexProductInputs = Test-EmbeddedDuplexProductInputRoot `
+    -Path $EmbeddedDuplexProductInputRoot `
+    -ApplicationId $resolvedAppId `
+    -SigningCertificateSha256 $normalizedExpectedSignerSha256
 $embeddedMediaModuleRoot = Join-Path $repoRoot "crates\rusty-quest-media-stream-android\android\library"
 $embeddedMediaSourceFiles = @(
     Join-Path $embeddedMediaModuleRoot "build.gradle"
@@ -1164,6 +1397,16 @@ $buildInputDescriptor = [ordered]@{
         private_source = if ([string]::IsNullOrWhiteSpace($resolvedPrivateFeatureSourceDir)) { $null } else { [ordered]@{ path = $resolvedPrivateFeatureSourceDir; sha256 = Get-DirectorySha256 -Path $resolvedPrivateFeatureSourceDir } }
         private_assets = if ([string]::IsNullOrWhiteSpace($resolvedPrivateFeatureAssetDir)) { $null } else { [ordered]@{ path = $resolvedPrivateFeatureAssetDir; sha256 = Get-DirectorySha256 -Path $resolvedPrivateFeatureAssetDir } }
         private_resources = if ([string]::IsNullOrWhiteSpace($resolvedPrivateFeatureResourceDir)) { $null } else { [ordered]@{ path = $resolvedPrivateFeatureResourceDir; sha256 = Get-DirectorySha256 -Path $resolvedPrivateFeatureResourceDir } }
+        embedded_duplex = if ($null -eq $embeddedDuplexProductInputs) { $null } else { [ordered]@{
+            closure_sha256 = [string]$embeddedDuplexProductInputs.closure_sha256
+            manifest_sha256 = [string]$embeddedDuplexProductInputs.manifest_sha256
+            artifact_count = @($embeddedDuplexProductInputs.artifacts).Count
+            total_artifact_bytes = [long]$embeddedDuplexProductInputs.total_artifact_bytes
+            artifacts = @($embeddedDuplexProductInputs.artifacts)
+            runtime_identity_packaged = $false
+            device_private_key_packaged = $false
+            paths_recorded = $false
+        } }
     }
     defaults = [ordered]@{
         particle_layer_carrier = $ParticleLayerCarrierDefault; start_in_particle_view = $StartInParticleViewDefault
@@ -1213,6 +1456,8 @@ $nativeIdentityDescriptor = [ordered]@{
     locked_final_presentation = $lockedFinalPresentationEnabled
     distortion_speed_scale = $resolvedDistortionSpeedScale
     environment_depth_owner = $EnvironmentDepthOwner
+    embedded_duplex_product_input_closure_sha256 = $(if ($null -eq $embeddedDuplexProductInputs) { "" } else { [string]$embeddedDuplexProductInputs.closure_sha256 })
+    embedded_duplex_product_input_manifest_sha256 = $(if ($null -eq $embeddedDuplexProductInputs) { "" } else { [string]$embeddedDuplexProductInputs.manifest_sha256 })
 }
 $nativeFingerprint = Get-StringSha256 -Value ($nativeIdentityDescriptor | ConvertTo-Json -Depth 20 -Compress)
 
@@ -1253,6 +1498,8 @@ $shellIdentityDescriptor = [ordered]@{
     environment_depth_owner = $EnvironmentDepthOwner
     private_assets_sha256 = if ($null -eq $buildInputDescriptor.packaged_inputs.private_assets) { "" } else { [string]$buildInputDescriptor.packaged_inputs.private_assets.sha256 }
     private_resources_sha256 = if ($null -eq $buildInputDescriptor.packaged_inputs.private_resources) { "" } else { [string]$buildInputDescriptor.packaged_inputs.private_resources.sha256 }
+    embedded_duplex_product_input_closure_sha256 = $(if ($null -eq $embeddedDuplexProductInputs) { "" } else { [string]$embeddedDuplexProductInputs.closure_sha256 })
+    embedded_duplex_product_input_manifest_sha256 = $(if ($null -eq $embeddedDuplexProductInputs) { "" } else { [string]$embeddedDuplexProductInputs.manifest_sha256 })
 }
 $shellFingerprint = Get-StringSha256 -Value ($shellIdentityDescriptor | ConvertTo-Json -Depth 20 -Compress)
 $packageIdentityDescriptor = [ordered]@{
@@ -1331,6 +1578,13 @@ New-Item -ItemType Directory -Force -Path @(
     $gradleUserHome,
     $nativeReceiptTargetDir
 ) | Out-Null
+$embeddedDuplexAssetRoot = ""
+if ($null -ne $embeddedDuplexProductInputs) {
+    $embeddedDuplexAssetRoot = Join-Path $BuildCacheRoot ("i\{0}" -f $embeddedDuplexProductInputs.closure_sha256.Substring(0, 24))
+    $embeddedDuplexAssetRoot = Copy-EmbeddedDuplexProductInputs `
+        -ValidatedInputs $embeddedDuplexProductInputs `
+        -AssetRoot $embeddedDuplexAssetRoot
+}
 
 $nativeReceiptRoot = Join-Path $appRoot "native-receipt"
 $nativeReceiptCargoManifest = Join-Path $nativeReceiptRoot "Cargo.toml"
@@ -1760,7 +2014,9 @@ try {
     foreach ($binding in @(
         @{ Name = "RUSTY_QUEST_SPATIAL_PRIVATE_FEATURE_SRC_DIR"; Value = $resolvedPrivateFeatureSourceDir },
         @{ Name = "RUSTY_QUEST_SPATIAL_PRIVATE_FEATURE_ASSET_DIR"; Value = $resolvedPrivateFeatureAssetDir },
-        @{ Name = "RUSTY_QUEST_SPATIAL_PRIVATE_FEATURE_RES_DIR"; Value = $resolvedPrivateFeatureResourceDir }
+        @{ Name = "RUSTY_QUEST_SPATIAL_PRIVATE_FEATURE_RES_DIR"; Value = $resolvedPrivateFeatureResourceDir },
+        @{ Name = "RUSTY_QUEST_SPATIAL_EMBEDDED_DUPLEX_ASSET_ROOT"; Value = $embeddedDuplexAssetRoot },
+        @{ Name = "RUSTY_QUEST_SPATIAL_EMBEDDED_DUPLEX_PRODUCT_MANIFEST_SHA256"; Value = $(if ($null -eq $embeddedDuplexProductInputs) { "" } else { [string]$embeddedDuplexProductInputs.manifest_sha256 }) }
     )) {
         if ([string]::IsNullOrWhiteSpace([string]$binding.Value)) {
             [Environment]::SetEnvironmentVariable([string]$binding.Name, $null, "Process")
@@ -2097,6 +2353,30 @@ Add-Type -AssemblyName System.IO.Compression.FileSystem
 $apkZip = [System.IO.Compression.ZipFile]::OpenRead((Resolve-Path -LiteralPath $apkOut).Path)
 try {
     $apkEntryNames = @($apkZip.Entries | ForEach-Object { [string]$_.FullName })
+    $actualEmbeddedDuplexAssetNames = @($apkEntryNames | Where-Object {
+        $_.StartsWith("assets/embedded-duplex/", [StringComparison]::Ordinal)
+    } | Sort-Object)
+    $expectedEmbeddedDuplexAssets = if ($null -eq $embeddedDuplexProductInputs) { @() } else {
+        @([ordered]@{
+            path = "product-input-manifest.json"
+            sha256 = [string]$embeddedDuplexProductInputs.manifest_sha256
+            size_bytes = [long](Get-Item -LiteralPath $embeddedDuplexProductInputs.manifest_path).Length
+        }) + @($embeddedDuplexProductInputs.artifacts)
+    }
+    $expectedEmbeddedDuplexAssetNames = @($expectedEmbeddedDuplexAssets | ForEach-Object {
+        "assets/embedded-duplex/$([string]$_.path)"
+    } | Sort-Object)
+    if (($actualEmbeddedDuplexAssetNames -join "`n") -cne ($expectedEmbeddedDuplexAssetNames -join "`n")) {
+        throw "APK embedded duplex product input inventory differs from the validated closure."
+    }
+    $embeddedDuplexApkEntries = @($expectedEmbeddedDuplexAssets | ForEach-Object {
+        $entryName = "assets/embedded-duplex/$([string]$_.path)"
+        $observed = Get-ZipEntrySha256 -Zip $apkZip -EntryName $entryName
+        if ([string]$observed.sha256 -cne [string]$_.sha256 -or [long]$observed.size_bytes -ne [long]$_.size_bytes) {
+            throw "APK embedded duplex product input bytes differ from the validated closure: $entryName"
+        }
+        [ordered]@{ path = $entryName; sha256 = [string]$observed.sha256; size_bytes = [long]$observed.size_bytes }
+    })
 } finally {
     $apkZip.Dispose()
 }
@@ -2141,6 +2421,16 @@ $apkInspection = [ordered]@{
     app_owned_rust_native_receipt_count = $nativeReceiptPayloadEntries.Count
     embedded_media_additional_native_payload_count = $unexpectedEmbeddedMediaNativePayload.Count
     embedded_media_rust_linkage = "statically-linked-once-in-spatial-camera-panel-native-receipt"
+    embedded_duplex_product_inputs = [ordered]@{
+        configured = ($null -ne $embeddedDuplexProductInputs)
+        closure_sha256 = $(if ($null -eq $embeddedDuplexProductInputs) { "" } else { [string]$embeddedDuplexProductInputs.closure_sha256 })
+        manifest_sha256 = $(if ($null -eq $embeddedDuplexProductInputs) { "" } else { [string]$embeddedDuplexProductInputs.manifest_sha256 })
+        asset_prefix = "assets/embedded-duplex/"
+        entries = @($embeddedDuplexApkEntries)
+        exact_inventory_verified = $true
+        runtime_identity_packaged = $false
+        device_private_key_packaged = $false
+    }
     native_needed_libraries = $nativeNeededLibraries
     missing_rust_dynamic_std_count = $missingRustDynamicStd.Count
     sensitive_payload_count = $sensitivePayload.Count
@@ -2245,6 +2535,17 @@ $manifest = [ordered]@{
         classes_jar_sha256 = [string]$embeddedMediaArtifactInspection.classes_jar_sha256
         native_payload_count = 0
         rust_linkage = [string]$embeddedMediaArtifactInspection.rust_linkage
+    }
+    embedded_duplex_product_inputs = [ordered]@{
+        configured = ($null -ne $embeddedDuplexProductInputs)
+        closure_sha256 = $(if ($null -eq $embeddedDuplexProductInputs) { "" } else { [string]$embeddedDuplexProductInputs.closure_sha256 })
+        manifest_sha256 = $(if ($null -eq $embeddedDuplexProductInputs) { "" } else { [string]$embeddedDuplexProductInputs.manifest_sha256 })
+        apk_asset_prefix = "assets/embedded-duplex/"
+        apk_entries = @($embeddedDuplexApkEntries)
+        exact_inventory_verified = $true
+        runtime_identity_packaged = $false
+        device_private_key_packaged = $false
+        paths_recorded = $false
     }
     property_manifest_path = $propertyManifestPath
     property_manifest_sha256 = Get-FileSha256 -Path $propertyManifestPath

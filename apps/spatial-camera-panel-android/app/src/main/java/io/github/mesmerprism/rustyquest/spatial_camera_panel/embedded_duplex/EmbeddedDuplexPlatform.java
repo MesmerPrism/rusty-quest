@@ -33,8 +33,11 @@ final class EmbeddedDuplexPlatform {
     private final int remoteControlPort;
     private final File replayDirectory;
     private final AtomicFile replayFile;
+    private final AtomicFile activationReplayFile;
     private volatile PackagedAndroidMediaOwnerRegistry registry;
     private volatile OwnerDispatchTcpEndpoint endpoint;
+    private volatile EmbeddedDuplexResources resources;
+    private volatile EmbeddedDuplexActivationGate activationGate;
 
     EmbeddedDuplexPlatform(Context context, EmbeddedDuplexDisplay display,
             EmbeddedDuplexIdentity.Identity identity, String localPeerId, String remotePeerId,
@@ -62,12 +65,27 @@ final class EmbeddedDuplexPlatform {
         rejectLink(new File(base.getPath() + ".new"));
         rejectLink(new File(base.getPath() + ".bak"));
         replayFile = new AtomicFile(base);
+        File activationBase = new File(replayDirectory, "product-activation.v1.json");
+        rejectLink(activationBase);
+        rejectLink(new File(activationBase.getPath() + ".new"));
+        rejectLink(new File(activationBase.getPath() + ".bak"));
+        activationReplayFile = new AtomicFile(activationBase);
     }
 
     /** Called once with resource tuples derived by Rust from packaged bindings. */
     void installRegistry(long generation, MediaProductBinding binding) {
         if (registry != null || endpoint != null) throw new IllegalStateException("registry already installed");
         registry = new PackagedAndroidMediaOwnerRegistry(generation, binding);
+    }
+
+    /** Installs the exact resource closure returned by the embedded Runtime Host. */
+    void installResources(EmbeddedDuplexResources installed) {
+        if (installed == null || resources != null || activationGate != null) {
+            throw new IllegalStateException("resources already installed");
+        }
+        installRegistry(installed.generation(), installed.binding());
+        resources = installed;
+        activationGate = new EmbeddedDuplexActivationGate(installed);
     }
 
     /** No Start can be issued until every peer's authenticated control endpoint is ready. */
@@ -96,6 +114,9 @@ final class EmbeddedDuplexPlatform {
         }
         PackagedAndroidMediaOwnerRegistry current = registry;
         if (current == null) throw new IllegalStateException("platform registry absent");
+        EmbeddedDuplexActivationGate gate = activationGate;
+        EmbeddedDuplexActivationGate.MediaTicket activationTicket = activationTicket(ticket);
+        if (gate != null) gate.beforeOwnerEffect(authority, activationTicket, compensate);
         if (!compensate && "source".equals(ticket.ownerKind()) && "start".equals(ticket.actionKind())) {
             display.ensureLocalCaptureStopped();
             if (!EmbeddedDuplexNative.localCameraQuiescent()) {
@@ -105,11 +126,23 @@ final class EmbeddedDuplexPlatform {
         String readback = current.execute(ticketJson, compensate);
         String verified = current.verifyAndReadEvidence(ticketJson, readback);
         if (verified == null) throw new IllegalStateException("live provider evidence rejected");
+        if (gate != null) {
+            gate.afterVerifiedOwnerEffect(authority, activationTicket,
+                    new JSONObject(readback), new JSONObject(verified), compensate);
+        }
         JSONObject result = new JSONObject();
         result.put("readback", new JSONObject(readback));
         result.put("readback_json", readback);
         result.put("verified", new JSONObject(verified));
         return result.toString();
+    }
+
+    // Public visibility is required by the native ProductActivationRegistry callback.
+    public String activateProduct(String activationId, String authorityJson, String proofJson)
+            throws Exception {
+        EmbeddedDuplexActivationGate gate = activationGate;
+        if (gate == null || resources == null) throw new IllegalStateException("resources absent");
+        return gate.activate(activationId, authorityJson, proofJson);
     }
 
     public byte[] signAuthorityBytes(byte[] exactNativeBytes) throws Exception {
@@ -124,30 +157,44 @@ final class EmbeddedDuplexPlatform {
     }
 
     public synchronized void persistDispatchReplay(String snapshotJson) throws Exception {
+        persistReplay(replayFile, snapshotJson);
+    }
+
+    public synchronized void persistActivationReplay(String snapshotJson) throws Exception {
+        persistReplay(activationReplayFile, snapshotJson);
+    }
+
+    private void persistReplay(AtomicFile file, String snapshotJson) throws Exception {
         byte[] encoded = snapshotJson.getBytes(StandardCharsets.UTF_8);
         if (encoded.length == 0 || encoded.length > MAX_REPLAY_BYTES) {
             throw new IllegalArgumentException("replay bounds");
         }
         FileOutputStream output = null;
         try {
-            output = replayFile.startWrite();
+            output = file.startWrite();
             Os.fchmod(output.getFD(), 0600);
             output.write(encoded);
             output.getFD().sync();
-            replayFile.finishWrite(output);
+            file.finishWrite(output);
             output = null;
             syncReplayDirectory();
         } finally {
-            if (output != null) replayFile.failWrite(output);
+            if (output != null) file.failWrite(output);
         }
     }
 
-    synchronized String loadDispatchReplay() throws Exception {
-        if (!replayFile.getBaseFile().exists()
-                && !new File(replayFile.getBaseFile().getPath() + ".bak").exists()) {
+    synchronized String loadDispatchReplay() throws Exception { return loadReplay(replayFile); }
+
+    public synchronized String loadActivationReplay() throws Exception {
+        return loadReplay(activationReplayFile);
+    }
+
+    private String loadReplay(AtomicFile file) throws Exception {
+        if (!file.getBaseFile().exists()
+                && !new File(file.getBaseFile().getPath() + ".bak").exists()) {
             return "{\"pending_request_sha256\":{},\"terminal\":{}}";
         }
-        try (FileInputStream input = replayFile.openRead()) {
+        try (FileInputStream input = file.openRead()) {
             long length = input.getChannel().size();
             if (length <= 0 || length > MAX_REPLAY_BYTES) throw new IllegalStateException("replay bounds");
             byte[] encoded = new byte[(int) length];
@@ -160,6 +207,13 @@ final class EmbeddedDuplexPlatform {
             if (input.read() != -1) throw new IllegalStateException("replay grew during read");
             return new String(encoded, StandardCharsets.UTF_8);
         }
+    }
+
+    private static EmbeddedDuplexActivationGate.MediaTicket activationTicket(MediaOwnerAction ticket) {
+        return new EmbeddedDuplexActivationGate.MediaTicket(ticket.executorGeneration(),
+                ticket.expectedRuntimeRevision(), ticket.actionId(), ticket.authorityEpochId(),
+                ticket.clientId(), ticket.leaseId(), ticket.operation(), ticket.ownerKind(),
+                ticket.actionKind());
     }
 
     /** Only after both products' authenticated terminal cleanup, or before any effect was issued. */

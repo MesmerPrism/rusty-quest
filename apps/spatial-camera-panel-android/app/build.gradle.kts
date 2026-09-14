@@ -217,6 +217,20 @@ val offlineMediaPackAssetDir =
 val offlineMediaPackagedAssets =
   offlineMediaPackAssetDir.map { it.isNotBlank().toString() }.orElse("false")
 
+val embeddedDuplexProductManifestSha256 =
+  providers.environmentVariable("RUSTY_QUEST_SPATIAL_EMBEDDED_DUPLEX_PRODUCT_MANIFEST_SHA256")
+    .map { raw ->
+      val value = raw.trim()
+      require(value.isEmpty() || value.matches(Regex("^[a-f0-9]{64}$"))) {
+        "RUSTY_QUEST_SPATIAL_EMBEDDED_DUPLEX_PRODUCT_MANIFEST_SHA256 must be empty or lowercase SHA-256"
+      }
+      value
+    }
+    .orElse("")
+
+val embeddedDuplexProductInputsEnabled =
+  embeddedDuplexProductManifestSha256.map { it.isNotEmpty().toString() }
+
 val spatialNdkVersion =
   providers.environmentVariable("RUSTY_QUEST_ANDROID_NDK_VERSION")
     .orElse("27.2.12479018")
@@ -372,6 +386,16 @@ android {
       "OFFLINE_MEDIA_PACKAGED_ASSETS",
       offlineMediaPackagedAssets.get(),
     )
+    buildConfigField(
+      "String",
+      "EMBEDDED_DUPLEX_PRODUCT_MANIFEST_SHA256",
+      buildConfigString(embeddedDuplexProductManifestSha256.get()),
+    )
+    buildConfigField(
+      "boolean",
+      "EMBEDDED_DUPLEX_PRODUCT_INPUTS_ENABLED",
+      embeddedDuplexProductInputsEnabled.get(),
+    )
   }
 
   if (spatialSdkDepthApiLayerEnabled.get()) {
@@ -437,6 +461,15 @@ android {
       providers.environmentVariable("RUSTY_QUEST_SPATIAL_PRIVATE_FEATURE_ASSET_DIR").orNull
         ?.takeIf { it.isNotBlank() }
         ?.let { assets.srcDir(it) }
+      providers.environmentVariable("RUSTY_QUEST_SPATIAL_EMBEDDED_DUPLEX_ASSET_ROOT").orNull
+        ?.takeIf { it.isNotBlank() }
+        ?.let { assetRoot ->
+          val embeddedDuplexRoot = file(assetRoot).resolve("embedded-duplex")
+          require(embeddedDuplexRoot.isDirectory) {
+            "RUSTY_QUEST_SPATIAL_EMBEDDED_DUPLEX_ASSET_ROOT must contain embedded-duplex/"
+          }
+          assets.srcDir(assetRoot)
+        }
       spatialHandMeshRigAssetDir.orNull
         ?.takeIf { it.isNotBlank() }
         ?.let { assets.srcDir(it) }

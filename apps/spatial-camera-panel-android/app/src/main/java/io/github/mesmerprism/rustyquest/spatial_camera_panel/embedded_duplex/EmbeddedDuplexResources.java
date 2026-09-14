@@ -9,12 +9,14 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 
 /** Owns the one outgoing capture graph and the independently assigned incoming sink. */
-final class EmbeddedDuplexResources {
+final class EmbeddedDuplexResources implements EmbeddedDuplexActivationGate.Target {
     private final long generation;
+    private final EmbeddedDuplexDisplay display;
     private final PackedStereoMediaSourceRuntime.Pipeline pipeline;
     private final PackedStereoMediaOwnerSet outgoing;
     private final EmbeddedDuplexReceiver incoming;
     private final MediaProductBinding binding;
+    private final String incomingRuntimeSpecId;
 
     // nativeInitialization is returned directly by initializeRuntime after all
     // packaged locks have validated; it is never read from an Intent/Bundle.
@@ -25,8 +27,10 @@ final class EmbeddedDuplexResources {
             throw new IllegalArgumentException("embedded resource initialization");
         }
         generation = nativeInitialization.getLong("executor_generation");
+        this.display = display;
         JSONObject outgoingSpec = nativeInitialization.getJSONObject("outgoing_runtime_spec");
         JSONObject incomingSpec = nativeInitialization.getJSONObject("incoming_runtime_spec");
+        incomingRuntimeSpecId = incomingSpec.getString("runtime_spec_id");
         Lane source = new Lane(outgoingSpec);
         Lane sink = new Lane(incomingSpec);
         String leftCamera = camera(source.source, "left");
@@ -83,10 +87,21 @@ final class EmbeddedDuplexResources {
         }
     }
 
-    long generation() { return generation; }
+    @Override public long generation() { return generation; }
     MediaProductBinding binding() { return binding; }
     EmbeddedDuplexReceiver incoming() { return incoming; }
     JSONObject sourceSnapshot() throws Exception { return pipeline.snapshot(); }
+
+    @Override public String incomingRuntimeSpecId() { return incomingRuntimeSpecId; }
+    @Override public void awaitFirstRenderedFrame() throws Exception { incoming.awaitFirstRenderedFrame(); }
+    @Override public long[] currentIncomingFrame(long maxAgeNs) { return incoming.currentFrame(maxAgeNs); }
+    @Override public long routeGeneration() { return incoming.routeGeneration(); }
+    @Override public long decoderToken() { return incoming.decoderToken(); }
+    @Override public long readerGeneration() { return incoming.readerGeneration(); }
+    @Override public void activateIncomingProjection() {
+        display.activatePeerProjection(routeGeneration(), decoderToken(), readerGeneration());
+    }
+    @Override public long[] currentProjection() { return display.currentProjection(routeGeneration()); }
 
     boolean productResourcesTerminal() {
         if (!incoming.snapshot().terminal()) return false;

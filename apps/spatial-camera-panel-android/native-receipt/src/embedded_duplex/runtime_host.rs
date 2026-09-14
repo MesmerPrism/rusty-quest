@@ -9,18 +9,22 @@ use jni::objects::{JByteArray, JClass, JObject, JString};
 use jni::sys::{jbyteArray, jstring};
 use jni::JNIEnv;
 use rusty_quest_broker_authority::{
-    QuestBrokerAuthorityBridgeKind, QuestBrokerRuntimeConfig, QuestBrokerRuntimeProvider,
-    QuestEmbeddedDuplexAuthority, QuestEmbeddedDuplexProjectionSource,
+    QuestBrokerAuthorityBridgeKind, QuestBrokerProductActivationMaterial, QuestBrokerRuntimeConfig,
+    QuestBrokerRuntimeProvider, QuestEmbeddedDuplexAuthority, QuestEmbeddedDuplexProjectionSource,
     QuestOwnerDispatchAuthorityVerifier,
 };
 use rusty_quest_media_stream_android::{
+    decode_product_activation_request, decode_product_activation_response,
+    encode_product_activation_request, verify_product_activation_response,
     AndroidMediaDevicePeerPlacement, AndroidMediaExecutionMode, AndroidMediaExecutionTicket,
     CompositeAndroidMediaOwnerExecutor, CurrentOwnerProjectionSource,
     OwnerDispatchAuthorityProjection, OwnerDispatchClock, OwnerDispatchReplaySnapshot,
-    OwnerDispatchServer, RemoteOwnerDispatchExecutor,
+    OwnerDispatchServer, OwnerDispatchSigner, OwnerDispatchStatus, OwnerDispatchTransport,
+    ProductActivationReplaySnapshot, ProductActivationRequest, ProductActivationResponse,
+    ProductActivationServer, RemoteOwnerDispatchExecutor, PRODUCT_ACTIVATION_REQUEST_SCHEMA,
 };
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::json;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
@@ -29,6 +33,25 @@ type DispatchServer = OwnerDispatchServer<
     JavaOwnerCallbacks,
     JavaOwnerCallbacks,
 >;
+
+type ActivationServer = ProductActivationServer<
+    QuestOwnerDispatchAuthorityVerifier,
+    JavaOwnerCallbacks,
+    JavaOwnerCallbacks,
+>;
+
+struct PendingActivation {
+    client_id: String,
+    activation_id: String,
+    material: QuestBrokerProductActivationMaterial,
+    frame: Option<Vec<u8>>,
+    response: Option<ProductActivationResponse>,
+}
+
+#[derive(Default)]
+struct ActivationSender {
+    pending: Option<PendingActivation>,
+}
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -45,6 +68,7 @@ struct Bootstrap {
     executor_generation: u64,
     device_peers: Vec<AndroidMediaDevicePeerPlacement>,
     replay: OwnerDispatchReplaySnapshot,
+    activation_replay: ProductActivationReplaySnapshot,
 }
 
 struct ConfiguredProjectionSource {
@@ -74,8 +98,17 @@ impl CurrentOwnerProjectionSource for ConfiguredProjectionSource {
 struct Host {
     provider: Arc<Mutex<Option<QuestBrokerRuntimeProvider>>>,
     server: Arc<Mutex<Option<DispatchServer>>>,
+    activation_server: Arc<Mutex<Option<ActivationServer>>>,
+    activation_sender: Arc<Mutex<Option<ActivationSender>>>,
     authority: QuestEmbeddedDuplexAuthority,
     clock: AuthorityClock,
+    callbacks: JavaOwnerCallbacks,
+    local_peer_id: String,
+    remote_peer_id: String,
+    route_grant_id: String,
+    route_configuration_sha256: String,
+    remote_key_id: String,
+    remote_public_key: [u8; 32],
 }
 
 #[derive(Default)]
@@ -210,6 +243,9 @@ fn build_host(
         || bootstrap.executor_generation > i64::MAX as u64
         || bootstrap.route_configuration_sha256.len() != 71
         || !bootstrap.route_configuration_sha256.starts_with("sha256:")
+        || !bootstrap.route_configuration_sha256.as_bytes()[7..]
+            .iter()
+            .all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(c))
     {
         return Err("invalid embedded pair binding".into());
     }
@@ -268,11 +304,12 @@ fn build_host(
         bootstrap.local_key_id,
         bootstrap.remote_peer_id.clone(),
     )?;
+    let remote_public_key = decode_key(&bootstrap.remote_public_key_hex)?;
     let remote = RemoteOwnerDispatchExecutor::new(
         callbacks.clone(),
         callbacks.clone(),
-        decode_key(&bootstrap.remote_public_key_hex)?,
-        bootstrap.remote_key_id,
+        remote_public_key,
+        bootstrap.remote_key_id.clone(),
     )?;
     let grant_id = serde_json::from_value(json!(bootstrap.route_grant_id)).map_err(safe_decode)?;
     let local_peer = serde_json::from_value(json!(bootstrap.local_peer_id)).map_err(safe_decode)?;
@@ -282,7 +319,7 @@ fn build_host(
             grant_id,
             local_peer,
         ),
-        route_configuration_sha256: bootstrap.route_configuration_sha256,
+        route_configuration_sha256: bootstrap.route_configuration_sha256.clone(),
     };
     let executor = CompositeAndroidMediaOwnerExecutor::new(
         bootstrap.executor_generation,
@@ -299,13 +336,22 @@ fn build_host(
     let verifier =
         QuestOwnerDispatchAuthorityVerifier::new(authority.clone(), Arc::new(clock.clone()));
     let server = OwnerDispatchServer::restore(
-        bootstrap.local_peer_id,
-        verifier,
+        bootstrap.local_peer_id.clone(),
+        verifier.clone(),
         callbacks.clone(),
         callbacks.clone(),
         Box::new(clock.clone()),
         bootstrap.replay,
-        Box::new(callbacks),
+        Box::new(callbacks.clone()),
+    )?;
+    let activation_server = ProductActivationServer::restore(
+        bootstrap.local_peer_id.clone(),
+        verifier,
+        callbacks.clone(),
+        callbacks.clone(),
+        Box::new(clock.clone()),
+        bootstrap.activation_replay,
+        Box::new(callbacks.clone()),
     )?;
     let result = json!({"$schema":"rusty.quest.embedded_duplex.runtime_initialized.v1",
         "runtime": status, "owner_placements": placements,
@@ -317,8 +363,17 @@ fn build_host(
         Host {
             provider: Arc::new(Mutex::new(Some(provider))),
             server: Arc::new(Mutex::new(Some(server))),
+            activation_server: Arc::new(Mutex::new(Some(activation_server))),
+            activation_sender: Arc::new(Mutex::new(Some(ActivationSender::default()))),
             authority,
             clock,
+            callbacks,
+            local_peer_id: bootstrap.local_peer_id,
+            remote_peer_id: bootstrap.remote_peer_id,
+            route_grant_id: bootstrap.route_grant_id,
+            route_configuration_sha256: bootstrap.route_configuration_sha256,
+            remote_key_id: bootstrap.remote_key_id,
+            remote_public_key,
         },
         result,
     ))
@@ -383,7 +438,7 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1pa
         let config = read_string(&mut env, &config, 2 * 1024 * 1024)?;
         let sha = read_string(&mut env, &sha, 64)?;
         let entropy = read_string(&mut env, &entropy, 128)?;
-        let bootstrap = read_string(&mut env, &bootstrap, 17 * 1024 * 1024)?;
+        let bootstrap = read_string(&mut env, &bootstrap, 33 * 1024 * 1024)?;
         initialize(&mut env, config, sha, entropy, bootstrap, callback)
     })();
     return_string(&mut env, result)
@@ -405,11 +460,18 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1pa
         let bytes = env
             .convert_byte_array(&frame)
             .map_err(|_| "owner frame bytes")?;
-        let mut server = Checkout::take(host()?.server)?;
-        server
-            .get()
-            .handle_frame(&bytes)
-            .map_err(|_| "owner dispatch rejected".to_owned())
+        let host = host()?;
+        if decode_product_activation_request(&bytes).is_ok() {
+            Checkout::take(host.activation_server)?
+                .get()
+                .handle_frame(&bytes)
+                .map_err(|_| "product activation rejected".to_owned())
+        } else {
+            Checkout::take(host.server)?
+                .get()
+                .handle_frame(&bytes)
+                .map_err(|_| "owner dispatch rejected".to_owned())
+        }
     })();
     match result {
         Ok(bytes) => env
@@ -420,6 +482,128 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1pa
             std::ptr::null_mut()
         }
     }
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ClientInput {
+    client_id: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StartInput {
+    client_id: String,
+    activation_id: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RequestCommand<R, C> {
+    request: R,
+    command: C,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ProposalReciprocal<P, R> {
+    proposal: P,
+    reciprocal: R,
+}
+
+fn complete_start(host: &Host, input: &str) -> Result<String, String> {
+    let request: StartInput = serde_json::from_str(input).map_err(safe_decode)?;
+    if request.activation_id.is_empty() || request.activation_id.len() > 128 {
+        return Err("activation identity bounds".into());
+    }
+    let client = serde_json::from_value(json!(request.client_id)).map_err(safe_decode)?;
+    // This slot serializes Start/retry, but no mutex remains held across Java.
+    let mut sender = Checkout::take(host.activation_sender.clone())?;
+    if let Some(pending) = &sender.get().pending {
+        if pending.client_id != request.client_id || pending.activation_id != request.activation_id
+        {
+            return Err("another activation is retained".into());
+        }
+    } else {
+        let material = {
+            let mut provider = Checkout::take(host.provider.clone())?;
+            provider
+                .get()
+                .complete_media_start_for_activation(&client, host.clock.now_ms()?)
+                .map_err(|_| "full product Start incomplete")?
+        }; // Provider restored before signing, transport or graph callbacks.
+        sender.get().pending = Some(PendingActivation {
+            client_id: request.client_id,
+            activation_id: request.activation_id,
+            material,
+            frame: None,
+            response: None,
+        });
+    }
+    let pending = sender
+        .get()
+        .pending
+        .as_mut()
+        .ok_or("activation state absent")?;
+    if pending.frame.is_none() {
+        let now = host.clock.now_ms()?;
+        let grant = serde_json::from_value(json!(host.route_grant_id)).map_err(safe_decode)?;
+        let local = serde_json::from_value(json!(host.local_peer_id)).map_err(safe_decode)?;
+        let remote = serde_json::from_value(json!(host.remote_peer_id)).map_err(safe_decode)?;
+        let authority = host
+            .authority
+            .current_owner_projection(&grant, &local, &remote, now)?;
+        let proof = &pending.material.proof;
+        if authority.route_configuration_sha256 != host.route_configuration_sha256
+            || authority.authority_provider_epoch_id != proof.provider_epoch_id
+            || authority.authority_client_id != proof.client_id
+            || authority.authority_runtime_lease_id != proof.lease_id
+            || authority.expires_at_ms <= now
+        {
+            return Err("activation current route differs from completed Start".into());
+        }
+        let request = ProductActivationRequest {
+            schema_id: PRODUCT_ACTIVATION_REQUEST_SCHEMA.to_owned(),
+            activation_id: pending.activation_id.clone(),
+            issued_at_ms: now,
+            expires_at_ms: authority.expires_at_ms.min(now.saturating_add(30_000)),
+            target_peer_id: host.remote_peer_id.clone(),
+            authority,
+            proof: proof.clone(),
+            completion_json: pending.material.completion_json.clone(),
+            signer_key_id: host.callbacks.key_id().to_owned(),
+            signature_base64: String::new(),
+        };
+        pending.frame = Some(encode_product_activation_request(request, &host.callbacks)?);
+    }
+    if pending.response.is_none() {
+        let frame = pending.frame.as_ref().ok_or("activation frame absent")?;
+        let bytes = host.callbacks.clone().exchange(frame, 128 * 1024)?;
+        let response = decode_product_activation_response(&bytes)?;
+        verify_product_activation_response(
+            &response,
+            &pending.activation_id,
+            frame,
+            &host.remote_key_id,
+            &host.remote_public_key,
+        )?;
+        if response.status == OwnerDispatchStatus::Completed
+            && response.readback.as_ref().map_or(true, |readback| {
+                readback.route_grant_id != host.route_grant_id
+                    || readback.resulting_state_revision == 0
+            })
+        {
+            return Err("activation acknowledgement route differs".into());
+        }
+        pending.response = Some(response);
+    }
+    // This is historical completion evidence. Current frame/route evidence is queried separately.
+    Ok(
+        json!({"$schema":"rusty.quest.embedded_duplex.product_start_acknowledged.v1",
+        "completion_json":pending.material.completion_json,
+        "activation":pending.response})
+        .to_string(),
+    )
 }
 
 fn command(operation: &str, input: &str) -> Result<String, String> {
@@ -438,10 +622,15 @@ fn command(operation: &str, input: &str) -> Result<String, String> {
             .get()
             .handle_server_mutation_json(input, now)
             .map_err(|_| "media command rejected".into()),
-        "complete_media_action" => Checkout::take(host.provider)?
-            .get()
-            .complete_media_action_json(input, now)
-            .map_err(|_| "media completion rejected".into()),
+        "complete_media_start" => complete_start(&host, input),
+        "complete_media_stop" => {
+            let request: ClientInput = serde_json::from_str(input).map_err(safe_decode)?;
+            let client = serde_json::from_value(json!(request.client_id)).map_err(safe_decode)?;
+            Checkout::take(host.provider)?
+                .get()
+                .complete_media_stop_for_cleanup(&client, now)
+                .map_err(|_| "media cleanup rejected".into())
+        }
         "peer_snapshot" => host.authority.snapshot_json(),
         "peer_status" => {
             let proposal = serde_json::from_str(input).map_err(safe_decode)?;
@@ -464,43 +653,40 @@ fn command(operation: &str, input: &str) -> Result<String, String> {
                 .map_err(safe_decode)
         }
         "apply_session" => {
-            let (proposal, reciprocal) = pair_input(input, "proposal", "reciprocal")?;
-            let proposal = serde_json::from_value(proposal).map_err(safe_decode)?;
-            let reciprocal = serde_json::from_value(reciprocal).map_err(safe_decode)?;
+            let parts: ProposalReciprocal<_, _> =
+                serde_json::from_str(input).map_err(safe_decode)?;
             serde_json::to_string(&host.authority.apply_common_lan_session(
-                &proposal,
-                &reciprocal,
+                &parts.proposal,
+                &parts.reciprocal,
                 now,
             )?)
             .map_err(safe_decode)
         }
         "issue_route" => {
-            let (request, command) = pair_input(input, "request", "command")?;
-            let request = serde_json::from_value(request).map_err(safe_decode)?;
-            let command = serde_json::from_value(command).map_err(safe_decode)?;
-            serde_json::to_string(
-                &host
-                    .authority
-                    .issue_common_lan_route(&request, &command, now)?,
-            )
+            let parts: RequestCommand<_, _> = serde_json::from_str(input).map_err(safe_decode)?;
+            serde_json::to_string(&host.authority.issue_common_lan_route(
+                &parts.request,
+                &parts.command,
+                now,
+            )?)
             .map_err(safe_decode)
         }
         "terminate_route" => {
-            let (request, command) = pair_input(input, "request", "command")?;
-            let request = serde_json::from_value(request).map_err(safe_decode)?;
-            let command = serde_json::from_value(command).map_err(safe_decode)?;
-            serde_json::to_string(&host.authority.terminate_route(&request, &command, now)?)
-                .map_err(safe_decode)
+            let parts: RequestCommand<_, _> = serde_json::from_str(input).map_err(safe_decode)?;
+            serde_json::to_string(&host.authority.terminate_route(
+                &parts.request,
+                &parts.command,
+                now,
+            )?)
+            .map_err(safe_decode)
         }
         "complete_route_cleanup" => {
-            let (request, command) = pair_input(input, "request", "command")?;
-            let request = serde_json::from_value(request).map_err(safe_decode)?;
-            let command = serde_json::from_value(command).map_err(safe_decode)?;
-            serde_json::to_string(
-                &host
-                    .authority
-                    .complete_route_cleanup(&request, &command, now)?,
-            )
+            let parts: RequestCommand<_, _> = serde_json::from_str(input).map_err(safe_decode)?;
+            serde_json::to_string(&host.authority.complete_route_cleanup(
+                &parts.request,
+                &parts.command,
+                now,
+            )?)
             .map_err(safe_decode)
         }
         "current_route" => {
@@ -509,22 +695,6 @@ fn command(operation: &str, input: &str) -> Result<String, String> {
         }
         _ => Err("unsupported embedded runtime operation".into()),
     }
-}
-
-fn pair_input(input: &str, first: &str, second: &str) -> Result<(Value, Value), String> {
-    let mut value: Value = serde_json::from_str(input).map_err(safe_decode)?;
-    let object = value.as_object_mut().ok_or("embedded compound input")?;
-    if object.len() != 2 {
-        return Err("embedded compound input fields".into());
-    }
-    Ok((
-        object
-            .remove(first)
-            .ok_or("embedded compound input field")?,
-        object
-            .remove(second)
-            .ok_or("embedded compound input field")?,
-    ))
 }
 
 #[no_mangle]

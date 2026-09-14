@@ -726,6 +726,7 @@ impl QuestBrokerRuntimeProvider {
             .runtime
             .as_mut()
             .ok_or(QuestBrokerRuntimeError::NotInitialized)?;
+        require_pending_operation(runtime, client_id, MediaStreamPlatformOperation::Start)?;
         let executor = self
             .media_owner_executor
             .as_mut()
@@ -739,6 +740,35 @@ impl QuestBrokerRuntimeProvider {
             &mut self.next_media_execution_nonce,
         )?;
         product_activation_material(&response)
+    }
+
+    /// Completes only a pending Stop; it cannot accidentally execute a Start.
+    ///
+    /// # Errors
+    /// Rejects missing/non-Stop actions and ordinary executor or lifecycle failures.
+    pub fn complete_media_stop_for_cleanup(
+        &mut self,
+        client_id: &DottedId,
+        now_ms: u64,
+    ) -> Result<String, QuestBrokerRuntimeError> {
+        let runtime = self
+            .runtime
+            .as_mut()
+            .ok_or(QuestBrokerRuntimeError::NotInitialized)?;
+        require_pending_operation(runtime, client_id, MediaStreamPlatformOperation::Stop)?;
+        let executor = self
+            .media_owner_executor
+            .as_mut()
+            .ok_or(QuestBrokerRuntimeError::TrustedMediaExecutorAbsent)?;
+        let response = runtime.complete_media_session_action(
+            &QuestBrokerMediaCompletionRequest {
+                client_id: client_id.clone(),
+            },
+            now_ms,
+            executor.as_mut(),
+            &mut self.next_media_execution_nonce,
+        )?;
+        serde_json::to_string(&response).map_err(QuestBrokerRuntimeError::Encode)
     }
 
     /// Returns integrated runtime evidence JSON.
@@ -778,6 +808,22 @@ pub fn canonical_runtime_config_sha256(
         serde_json::from_str(config_json).map_err(QuestBrokerRuntimeError::Decode)?;
     let canonical = serde_json::to_vec(&config).map_err(QuestBrokerRuntimeError::Encode)?;
     Ok(sha256_hex(&canonical))
+}
+
+fn require_pending_operation(
+    runtime: &QuestBrokerAuthorityRuntime,
+    client_id: &DottedId,
+    operation: MediaStreamPlatformOperation,
+) -> Result<(), QuestBrokerRuntimeError> {
+    let action = runtime
+        .media_sessions
+        .get(client_id)
+        .and_then(|media| media.pending_action())
+        .ok_or(QuestBrokerRuntimeError::MediaPeerRuntimeConfig)?;
+    if action.operation != operation {
+        return Err(QuestBrokerRuntimeError::MediaExecutionTicketInvalid);
+    }
+    Ok(())
 }
 
 fn product_activation_material(
@@ -1211,11 +1257,18 @@ impl QuestBrokerAuthorityRuntime {
         }
         let client_authority = media_client_authority(&grant, mutation, &receipt)?;
         let action_id = format!("platform.{}", mutation.command.request_id.as_str());
-        let old_peer = live_host
-            .read()
-            .map_err(|_| QuestBrokerRuntimeError::MediaPeerRuntimeConfig)?
-            .clone();
-        let mut peer = old_peer.clone();
+        // Reject an incompatible platform lifecycle before terminating authority.
+        // Every facade and owner projection must continue borrowing this one host.
+        self.media_sessions
+            .get_mut(&grant.client_id)
+            .ok_or(QuestBrokerRuntimeError::MediaPeerRuntimeConfig)?
+            .review_prepare(
+                &action_id,
+                MediaStreamPlatformOperation::Stop,
+                &client_authority,
+                now_ms,
+            )
+            .map_err(QuestBrokerRuntimeError::MediaRuntime)?;
         let current = self
             .media_sessions
             .get(&grant.client_id)
@@ -1224,6 +1277,9 @@ impl QuestBrokerAuthorityRuntime {
             .session
             .clone()
             .ok_or(QuestBrokerRuntimeError::MediaPeerRuntimeConfig)?;
+        let mut peer = live_host
+            .write()
+            .map_err(|_| QuestBrokerRuntimeError::MediaPeerRuntimeConfig)?;
         let termination = ManifoldMediaSessionTerminationRequest {
             schema_id: schema(MANIFOLD_MEDIA_SESSION_TERMINATION_REQUEST_SCHEMA),
             request_id: derived_request_id(
@@ -1272,20 +1328,22 @@ impl QuestBrokerAuthorityRuntime {
             return Err(QuestBrokerRuntimeError::MediaPeerRuntimeTransitionRejected);
         }
 
-        let candidate_host = Arc::new(RwLock::new(peer));
+        // Termination is now visible to already-issued authority/projection handles.
+        // Release authority before preparing or executing any platform callback.
+        drop(peer);
         let action = self
             .media_sessions
             .get_mut(&grant.client_id)
             .ok_or(QuestBrokerRuntimeError::MediaPeerRuntimeConfig)?
-            .prepare_with_live_authority(
-                Arc::clone(&candidate_host),
+            .prepare(
                 action_id,
                 MediaStreamPlatformOperation::Stop,
                 client_authority,
                 now_ms,
             )
-            .map_err(QuestBrokerRuntimeError::MediaRuntime)?;
-        self.peer_runtime_host = Some(candidate_host);
+            .map_err(|error| {
+                QuestBrokerRuntimeError::MediaStopAttemptRetained(error.to_string())
+            })?;
         Ok((receipt, Some(action)))
     }
 
@@ -3825,6 +3883,127 @@ mod tests {
         assert_eq!(left.application, right.application);
     }
 
+    #[test]
+    fn stop_keeps_existing_authority_facades_on_the_live_host() {
+        let kind = QuestBrokerAuthorityBridgeKind::EmbeddedInProcessJni;
+        let mut runtime = runtime_for(
+            kind.clone(),
+            vec![ManifoldBrokerFeature::MediaSession],
+            "command.media.session.start",
+            true,
+            "45",
+        );
+        let live_host = Arc::clone(runtime.peer_runtime_host.as_ref().expect("peer host"));
+        let facade = runtime
+            .embedded_duplex_authority()
+            .expect("existing facade");
+        let (use_id, token_id) = admit(&mut runtime, "command.media.session.start");
+        let start = mutation(
+            &runtime,
+            kind.clone(),
+            use_id,
+            token_id,
+            "command.media.session.start",
+            Some("lease.broker.media-session.quest.runtime"),
+        );
+        assert!(
+            runtime
+                .handle_server_mutation(&start, 4_000)
+                .expect("Start")
+                .accepted
+        );
+        let mut executor = DeterministicAndroidMediaOwnerExecutor::new(9).expect("executor");
+        let mut nonce = 1;
+        let completion = QuestBrokerMediaCompletionRequest {
+            client_id: identity().client_id,
+        };
+        runtime
+            .complete_media_session_action(&completion, 4_100, &mut executor, &mut nonce)
+            .expect("actual host Start completion");
+        let before_stop = facade.snapshot_json().expect("pre-Stop facade");
+        let admission_revision = runtime
+            .runtime
+            .read()
+            .expect("broker")
+            .admission_snapshot()
+            .authority_revision;
+        let issue = runtime
+            .execute_admission(QuestBrokerAdmissionOperation::IssueToken {
+                schema_id: QUEST_ADMISSION_OPERATION_SCHEMA.to_owned(),
+                caller: caller(),
+                request_id: id("request.quest.runtime.stop.issue"),
+                expected_authority_revision: admission_revision,
+                requested_capabilities: vec![command_capability(&id("command.media.session.stop"))],
+                requested_token_ttl_ms: 20_000,
+                issued_at_ms: 5_000,
+                expires_at_ms: 10_000,
+                entropy_hex: "08".repeat(32),
+            })
+            .expect("Stop token");
+        let stop_token = issue.receipt.token.expect("issued Stop token");
+        let stop_use = id("request.quest.runtime.stop.use");
+        let admission_revision = runtime
+            .runtime
+            .read()
+            .expect("broker")
+            .admission_snapshot()
+            .authority_revision;
+        let authorized = runtime
+            .execute_admission(QuestBrokerAdmissionOperation::AuthorizeUse {
+                schema_id: QUEST_ADMISSION_OPERATION_SCHEMA.to_owned(),
+                caller: caller(),
+                request_id: stop_use.clone(),
+                expected_authority_revision: admission_revision,
+                token_id: stop_token.token_id.clone(),
+                capability_id: command_capability(&id("command.media.session.stop")),
+                issued_at_ms: 5_100,
+                expires_at_ms: 9_000,
+            })
+            .expect("Stop use");
+        assert!(authorized.receipt.applied);
+        let mut stop = mutation(
+            &runtime,
+            kind,
+            stop_use,
+            stop_token.token_id,
+            "command.media.session.stop",
+            Some("lease.broker.media-session.quest.runtime"),
+        );
+        {
+            let broker = runtime.runtime.read().expect("broker");
+            stop.expected_admission_authority_revision =
+                broker.admission_snapshot().authority_revision;
+            stop.command.expected_authority_revision = broker.host_snapshot().authority_revision;
+        }
+        stop.command.request_id = id("request.quest.runtime.stop.command");
+        stop.command.issued_at_ms = 5_200;
+        let stopped = runtime
+            .handle_server_mutation(&stop, 5_300)
+            .expect("prepared Stop");
+        assert!(stopped.accepted);
+        assert_eq!(
+            stopped.platform_action.expect("Stop action").operation,
+            MediaStreamPlatformOperation::Stop
+        );
+        assert!(Arc::ptr_eq(
+            &live_host,
+            runtime.peer_runtime_host.as_ref().expect("retained host")
+        ));
+        let after_stop = facade.snapshot_json().expect("post-Stop facade");
+        assert_ne!(before_stop, after_stop);
+        assert_eq!(
+            after_stop,
+            live_host
+                .read()
+                .expect("host")
+                .snapshot_json()
+                .expect("live snapshot")
+        );
+        runtime
+            .complete_media_session_action(&completion, 5_400, &mut executor, &mut nonce)
+            .expect("actual host Stop completion");
+    }
+
     struct FailAfterSideEffect {
         inner: DeterministicAndroidMediaOwnerExecutor,
         fail_sequence: u32,
@@ -3859,6 +4038,59 @@ mod tests {
         ) -> bool {
             self.inner.verify(ticket, readback)
         }
+    }
+
+    #[test]
+    fn cleanup_entrypoint_rejects_pending_start_before_executor_access() {
+        let command_id = "command.media.session.start";
+        let kind = QuestBrokerAuthorityBridgeKind::StandaloneProcessJni;
+        let mut runtime = runtime_for(
+            kind.clone(),
+            vec![ManifoldBrokerFeature::MediaSession],
+            command_id,
+            true,
+            "31",
+        );
+        let (use_id, token_id) = admit(&mut runtime, command_id);
+        let response = runtime
+            .handle_server_mutation(
+                &mutation(
+                    &runtime,
+                    kind,
+                    use_id,
+                    token_id,
+                    command_id,
+                    Some("lease.broker.media-session.quest.runtime"),
+                ),
+                4_000,
+            )
+            .expect("prepared start");
+        let action = response.platform_action.expect("pending action");
+        let client = DottedId::new(action.client_authority.client_id.clone()).expect("client");
+        let mut provider = QuestBrokerRuntimeProvider {
+            runtime: Some(runtime),
+            ..Default::default()
+        };
+        assert!(matches!(
+            provider.complete_media_stop_for_cleanup(&client, 5_000),
+            Err(QuestBrokerRuntimeError::MediaExecutionTicketInvalid)
+        ));
+        let pending = provider
+            .runtime
+            .as_ref()
+            .expect("runtime")
+            .media_sessions
+            .get(&client)
+            .expect("media")
+            .pending_action()
+            .expect("Start preserved");
+        assert_eq!(pending.action_id, action.action_id);
+        assert_eq!(provider.next_media_execution_nonce, 1);
+        // Matching Start reaches the normal missing-executor guard without changing state.
+        assert!(matches!(
+            provider.complete_media_start_for_activation(&client, 5_000),
+            Err(QuestBrokerRuntimeError::TrustedMediaExecutorAbsent)
+        ));
     }
 
     #[test]

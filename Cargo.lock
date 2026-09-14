@@ -1121,6 +1121,7 @@ dependencies = [
  "libc",
  "ndk-sys",
  "openxr-sys",
+ "rusty-manifold-peer",
  "rusty-quest-broker-authority",
  "rusty-quest-feature-activation",
  "rusty-quest-hand-adapter",
