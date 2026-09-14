@@ -68,6 +68,9 @@ try {
         @{name=$_;path=$executable;sha256=(File-Hash $executable)}
     })
     if ($HostOnly) {
+        if (-not $ManifoldSourceRoot) { throw 'Host conformance requires the explicit admitted Manifold source root.' }
+        . (Join-Path $moduleRoot 'tools/MediaStreamCargoInputs.ps1')
+        $hostInputs=New-IsolatedBrokerCargoMaterialization -RepoRoot $repoRoot -ManifoldRoot $ManifoldSourceRoot -OutputRoot $runRoot -IncludeConformance
         if (-not $HostJsonJar) {
             $jsonCache=Join-Path $env:USERPROFILE '.gradle/caches/modules-2/files-2.1/org.json/json/20240303'
             $jsonCandidates=@(Get-ChildItem -LiteralPath $jsonCache -Recurse -File -Filter 'json-20240303.jar' -ErrorAction SilentlyContinue)
@@ -88,7 +91,7 @@ try {
         Run-Tool 'host-java-owner-lifecycle' $java @('-cp',($classes+[IO.Path]::PathSeparator+$HostJsonJar),'io.github.mesmerprism.rustyquest.media.MediaOwnerLifecycleAdversarialMain')
         if ((Get-Content -LiteralPath (Join-Path $logRoot 'host-java.log') -Raw) -notmatch '(?m)^rusty\.quest\.android\.media\.host-conformance\.v1:pass\s*$') { throw 'Pure Java harness did not report behavioral conformance.' }
         foreach ($package in @('rusty-quest-media-stream-android','rusty-quest-media-stream-conformance-android-native')) {
-            Run-Tool $package 'cargo' @('test','--locked','--offline','--manifest-path',(Join-Path $repoRoot 'Cargo.toml'),'--target-dir',(Join-Path $runRoot 'host-target'),'-p',$package)
+            Run-Tool $package 'cargo' @('test','--locked','--offline','--manifest-path',$hostInputs.manifest,'--target-dir',(Join-Path $runRoot 'host-target'),'-p',$package)
         }
         $receipt.checks=@('pure-java-behavioral-conformance','bounded-pump-and-lease-adversarial-tests','owner-rollback-and-freshness-tests','shared-rust-host-tests','neutral-native-host-tests')
         $receipt.tools=@($java,$javac,$HostJsonJar | ForEach-Object {@{path=$_;sha256=(File-Hash $_)}})
@@ -134,7 +137,7 @@ try {
         [void][IO.Directory]::CreateDirectory($dex)
         $sources=@(Get-ChildItem -LiteralPath (Join-Path $appRoot 'src/main/java') -Recurse -File -Filter '*.java' | Sort-Object FullName | ForEach-Object {$_.FullName})
         if (-not $sources.Count) { throw 'Neutral app Java sources are missing.' }
-        Run-Tool 'conformance-javac' $javac (@('-encoding','UTF-8','-source','1.8','-target','1.8','-bootclasspath',$platformJar,'-classpath',$aarInput.classes_jar_path,'-d',$classes)+$sources)
+        Run-Tool 'conformance-javac' $javac (@('--release','8','-encoding','UTF-8','-classpath',($platformJar+[IO.Path]::PathSeparator+$aarInput.classes_jar_path),'-d',$classes)+$sources)
         $appJar=Join-Path $runRoot 'app-classes.jar'
         Run-Tool 'conformance-jar' $jar @('cf',$appJar,'-C',$classes,'.')
         Run-Tool 'conformance-d8' $d8 @('--min-api','29','--lib',$platformJar,'--output',$dex,$appJar,$aarInput.classes_jar_path)
