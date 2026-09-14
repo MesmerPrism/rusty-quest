@@ -1,0 +1,10 @@
+{
+  "$schema": "rusty.quest.android.media.conformance.binding.v1",
+  "product_id": "media-stream-conformance-synthetic",
+  "runtime_inputs": ["android.media.conformance.synthetic-source", "android.media.product-binding"],
+  "source": {"kind":"synthetic_stereo","left_id":"synthetic.left.v1","right_id":"synthetic.right.v1","max_frames":8,"in_memory_only":true},
+  "transport": {"kind":"bounded_in_memory","max_packets":8,"max_bytes":65536,"network":false},
+  "failure_injection": {"enabled":true,"at_sequence":3,"expected":"deterministic_failure"},
+  "permissions": [],
+  "device_qualification": false
+}

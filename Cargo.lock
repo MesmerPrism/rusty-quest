@@ -721,6 +721,7 @@ dependencies = [
  "rusty-quest-broker-admission",
  "rusty-quest-broker-contracts",
  "rusty-quest-media-stream",
+ "rusty-quest-media-stream-android",
  "serde",
  "serde_json",
  "sha2",
@@ -834,6 +835,7 @@ dependencies = [
  "jni 0.22.4",
  "rusty-quest-broker-admission",
  "rusty-quest-broker-authority",
+ "rusty-quest-media-stream-android",
  "serde_json",
 ]
 
@@ -849,6 +851,23 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+]
+
+[[package]]
+name = "rusty-quest-media-stream-android"
+version = "0.1.0"
+dependencies = [
+ "rusty-quest-media-stream",
+ "serde",
+]
+
+[[package]]
+name = "rusty-quest-media-stream-conformance-android-native"
+version = "0.1.0"
+dependencies = [
+ "jni 0.22.4",
+ "rusty-quest-media-stream-android",
+ "serde_json",
 ]
 
 [[package]]
