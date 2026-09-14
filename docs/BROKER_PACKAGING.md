@@ -164,8 +164,12 @@ The device runner requires the exact prior broker bytes to be installed,
 performs a same-version/same-signer inspected replacement, verifies installed
 candidate bytes, reads only the bounded remote-camera `authority-status`, and
 reinstalls and verifies the exact prior bytes in `finally`. It never uninstalls,
-clears data or logs, force-stops packages, requests downgrade, changes ADB
-lifecycle, or touches the Spatial package. The evidence is local/target-only
+clears data or logs, requests downgrade, changes ADB lifecycle, or touches the
+Spatial package. After verified rollback, it may force-stop the exact broker
+package when that broker was initially inactive. It leaves unrelated packages
+alone. Failed or ambiguous candidate installation/readback still triggers the
+rollback attempt; any original failure and rollback failure remain in evidence.
+The evidence is local/target-only
 and proves neither a final media graph nor a hot Local consumer handoff.
 
 ## Runtime gate

@@ -507,7 +507,7 @@ try {
 } catch {
     $failure = $_
 } finally {
-    if ($candidateInstallAttempted -and $candidateBytesConfirmed) {
+    if ($candidateInstallAttempted) {
         try {
             $rollbackInstall = Invoke-QfmWithArtifactLock @(
                 "apk", "install", "--adb", $script:Adb, "--serial", $Serial, "--file", $rollbackApk, "--json") `
@@ -534,9 +534,12 @@ try {
         } catch {
             if ($null -eq $failure) { $failure = $_ }
             else {
-                $failure = [Exception]::new(
+                $combinedFailure = [Exception]::new(
                     "$($failure.Exception.Message) Rollback restore also failed: $($_.Exception.Message)",
                     $failure.Exception)
+                $failure = [Management.Automation.ErrorRecord]::new(
+                    $combinedFailure, 'BrokerRollbackRestoreFailed',
+                    [Management.Automation.ErrorCategory]::InvalidResult, $rollbackApk)
             }
         }
     }

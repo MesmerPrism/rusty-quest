@@ -110,6 +110,138 @@ if ($unsafe.Count -ne 0) {
     throw "Compatibility diagnostic contains a prohibited device operation."
 }
 
+# Execute the production try/catch/finally with host fakes at its device boundary.
+# This exercises the actual install-attempt guard and failure retention, rather
+# than a second policy implementation that the device runner never calls.
+$tokens = $null
+$parseErrors = $null
+$diagnosticAst = [Management.Automation.Language.Parser]::ParseFile(
+    $devicePath, [ref]$tokens, [ref]$parseErrors)
+if ($parseErrors.Count) { throw 'Compatibility diagnostic does not parse.' }
+$mainTries = @($diagnosticAst.FindAll({ param($node)
+    $node -is [Management.Automation.Language.TryStatementAst] -and
+    $null -ne $node.Finally -and
+    $node.Finally.Extent.Text.Contains('$candidateInstallAttempted')
+}, $true))
+if ($mainTries.Count -ne 1) { throw 'Expected one production install/rollback boundary.' }
+$fakeCommands = @('Invoke-Adb', 'Invoke-QfmWithArtifactLock', 'Assert-QfmObservation',
+    'Assert-QfmInstallMutation', 'Get-DeviceSnapshot', 'Assert-SnapshotPreserved',
+    'Wait-DevicePropertyValue', 'ConvertFrom-Json')
+foreach ($command in @($mainTries[0].FindAll({ param($node)
+    $node -is [Management.Automation.Language.CommandAst]
+}, $true))) {
+    if ($fakeCommands -cnotcontains $command.GetCommandName()) {
+        throw 'Production rollback test encountered a command outside its host-only boundary.'
+    }
+}
+$productionTry = $mainTries[0].Extent.Text
+function Test-ProductionBrokerRollback([hashtable]$Case, [string]$Source) {
+    $calls = [Collections.Generic.List[string]]::new()
+    $candidateInstallAttempted = $false
+    $candidateBytesConfirmed = $false
+    $rollbackRestored = $false
+    $brokerProcessRestorationAction = 'not-needed'
+    $before = $null; $after = $null; $failure = $null
+    $candidateObserve = $null; $rollbackObserve = $null
+    $candidateApk = 'host-test-candidate.apk'; $rollbackApk = 'host-test-prior.apk'
+    $rollbackApkSize = 1; $ExpectedVersionName = 'test'
+    $ExpectedPackageName = 'host.test.broker'; $ProviderAuthority = 'host.test.provider'
+    $Serial = 'HOST-ONLY'; $script:Adb = 'host-fake'
+    $build = @{apk_sha256=('a' * 64); apk_size=1}
+    $rollback = @{rollback_apk=@{sha256=('b' * 64); actual_version_name='test'}}
+    function Invoke-Adb([string[]]$Arguments, [string]$Label) {
+        $calls.Add($Label)
+        if ($Label -ceq 'exact device discovery') {
+            if ($Case.phase -ceq 'before-install') { throw 'discovery-failed' }
+            return @{output='device'}
+        }
+        if ($Label -ceq 'exact broker-only inactive-process cleanup' -and
+            $Case.rollback -ceq 'process') { throw 'rollback-process-failed' }
+        if ($Label -ceq 'bounded remote-camera authority status') {
+            $receipt = @{'$schema'='rusty.quest.remote_camera.debug_operator_receipt.v1';
+                action='authority-status'; applied=$true;
+                authority_status=@{provider_epoch_id='host.test.epoch'}} | ConvertTo-Json -Compress
+            return @{output=('receipt_b64=' + [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($receipt)))}
+        }
+        return @{output='ok'}
+    }
+    function Invoke-QfmWithArtifactLock([string[]]$Arguments, [string]$Label,
+        [string]$ArtifactPath, [string]$ArtifactSha256, [switch]$AllowFailure) {
+        $calls.Add($Label)
+        if ($Label -ceq 'inspected same-version candidate install' -and
+            $Case.phase -ceq 'candidate-install') { throw 'candidate-install-uncertain' }
+        $valid = -not (
+            ($Label -ceq 'candidate installed-byte readback' -and $Case.phase -ceq 'candidate-readback') -or
+            ($Label -ceq 'same-version rollback restore' -and $Case.rollback -ceq 'install') -or
+            ($Label -ceq 'rollback installed-byte readback' -and $Case.rollback -ceq 'readback'))
+        return @{valid=$valid; label=$Label}
+    }
+    function Assert-QfmObservation($Result, $Hash, $Size, $Version, $Label) {
+        if (-not $Result.valid) { throw "$Label failed" }
+    }
+    function Assert-QfmInstallMutation($Result, $Label) {
+        if (-not $Result.valid) { throw "$Label failed" }
+    }
+    function Get-DeviceSnapshot($Label) {
+        $calls.Add("snapshot-$Label")
+        return @{broker_process_observed=[bool]$Case.active; package_effect_artd_state='running'}
+    }
+    function Wait-DevicePropertyValue($Name, $Value, $Label) { }
+    function Assert-SnapshotPreserved($Before, $After) { }
+    . ([scriptblock]::Create($Source))
+    $expectedAttempt = $Case.phase -cne 'before-install'
+    if ($candidateInstallAttempted -ne $expectedAttempt -or
+        @($calls | Where-Object { $_ -ceq 'same-version rollback restore' }).Count -ne [int]$expectedAttempt) {
+        throw "Production rollback was skipped or duplicated: $($Case.name)"
+    }
+    if ($rollbackRestored -ne [bool]$Case.restored -or
+        $brokerProcessRestorationAction -cne $Case.action) {
+        throw "Production rollback restoration claim is wrong: $($Case.name)"
+    }
+    $processCalls = @($calls | Where-Object { $_ -in @(
+        'restore prior broker process through normal activity', 'exact broker-only inactive-process cleanup') })
+    if (-not $Case.restored -and $processCalls.Count) {
+        throw "Process mutation preceded verified rollback: $($Case.name)"
+    }
+    if ($expectedAttempt -and $calls.IndexOf('rollback installed-byte readback') -lt
+        $calls.IndexOf('same-version rollback restore')) { throw 'Rollback readback is out of order.' }
+    $expectedFailure = $Case.phase -ne '' -or $Case.rollback -ne ''
+    if (($null -ne $failure) -ne $expectedFailure) { throw "Failure evidence is wrong: $($Case.name)" }
+    if ($expectedFailure) {
+        if ($failure -isnot [Management.Automation.ErrorRecord] -or
+            [string]::IsNullOrWhiteSpace([string]$failure.Exception.Message)) {
+            throw "Failure message cannot be persisted: $($Case.name)"
+        }
+        if ($Case.phase -ceq 'candidate-readback' -and
+            -not $failure.Exception.Message.Contains('candidate installed-byte readback failed')) {
+            throw 'The original candidate ambiguity was lost.'
+        }
+        if ($Case.rollback -ne '' -and
+            -not $failure.Exception.Message.Contains('Rollback restore also failed:')) {
+            throw 'The additional rollback failure was lost.'
+        }
+    }
+}
+$rollbackCases = @(
+    @{name='active-success'; phase=''; rollback=''; active=$true; restored=$true; action='normal-activity-start'},
+    @{name='inactive-success'; phase=''; rollback=''; active=$false; restored=$true; action='exact-broker-force-stop'},
+    @{name='candidate-install-uncertain'; phase='candidate-install'; rollback=''; active=$false; restored=$true; action='exact-broker-force-stop'},
+    @{name='candidate-readback-uncertain'; phase='candidate-readback'; rollback=''; active=$false; restored=$true; action='exact-broker-force-stop'},
+    @{name='rollback-install-uncertain'; phase='candidate-readback'; rollback='install'; active=$false; restored=$false; action='not-needed'},
+    @{name='rollback-readback-failed'; phase='candidate-readback'; rollback='readback'; active=$false; restored=$false; action='not-needed'},
+    @{name='rollback-process-failed'; phase='candidate-readback'; rollback='process'; active=$false; restored=$true; action='not-needed'},
+    @{name='no-install'; phase='before-install'; rollback=''; active=$false; restored=$false; action='not-needed'}
+)
+foreach ($case in $rollbackCases) { Test-ProductionBrokerRollback $case $productionTry }
+# Prove that this regression catches the original ambiguous-readback bug.
+$oldGuard = $productionTry.Replace('if ($candidateInstallAttempted)',
+    'if ($candidateInstallAttempted -and $candidateBytesConfirmed)')
+if ($oldGuard -ceq $productionTry) { throw 'Rollback guard regression control could not be constructed.' }
+$oldGuardRejected = $false
+try { Test-ProductionBrokerRollback $rollbackCases[3] $oldGuard }
+catch { $oldGuardRejected = $_.Exception.Message -like 'Production rollback was skipped or duplicated:*' }
+if (-not $oldGuardRejected) { throw 'Rollback regression did not reject the original unsafe guard.' }
+Write-Output 'Production rollback host regression passed: eight cases; original guard rejected.'
 & pwsh -NoProfile -ExecutionPolicy Bypass -File (
     Join-Path $repo "tools\checks\Test-ManifoldBrokerSharedSignerGate.ps1") -RepoRoot $repo
 if ($LASTEXITCODE -ne 0) {
