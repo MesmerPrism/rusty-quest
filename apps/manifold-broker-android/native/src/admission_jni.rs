@@ -456,8 +456,11 @@ pub(super) mod tests {
     }
 
     pub(crate) fn runtime_config() -> serde_json::Value {
-        let manifold_root =
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../../rusty-manifold");
+        let manifold_root = std::env::var_os("Q2Q_MANIFOLD_SOURCE_ROOT")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| {
+                std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../../rusty-manifold")
+            });
         let quest_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
         let product_spec_json = std::fs::read_to_string(
             manifold_root.join("fixtures/broker-product/media-session-standalone.json"),
@@ -494,8 +497,7 @@ pub(super) mod tests {
         .expect("app feature lock");
         let client_lock_sha256 =
             rusty_quest_broker_authority::packaged_json_sha256(&client_lock_json);
-        let admission_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../../../rusty-manifold/fixtures/admission/initial-snapshot.json");
+        let admission_path = manifold_root.join("fixtures/admission/initial-snapshot.json");
         let mut admission: serde_json::Value =
             serde_json::from_str(&std::fs::read_to_string(admission_path).expect("admission"))
                 .expect("admission json");

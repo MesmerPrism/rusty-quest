@@ -35,6 +35,7 @@ function Run-Tool([string]$Name,[string]$File,[string[]]$Arguments) {
 }
 function Input-Inventory {
     $globs=@('Cargo.toml','Cargo.lock','rust-toolchain*','.cargo','crates/rusty-quest-media-stream*','crates/rusty-quest-broker-*','crates/rusty-quest-device-link','apps/manifold-broker-android','apps/media-stream-conformance-android','fixtures','tools/Build-ManifoldBrokerAndroid.ps1','tools/Build-MediaStreamConformanceAndroid.ps1')
+    $globs+='apps/spatial-camera-panel-android/legacy-workspaces/mixed-integration-v1/conformance-locks/broker-media-client.feature.lock.json'
     $paths=@(& git -C $repoRoot ls-files --cached --others --exclude-standard -- @globs)
     if ($LASTEXITCODE -ne 0) { throw 'Source inventory failed.' }
     @($paths | Sort-Object -Unique | ForEach-Object {

@@ -1250,14 +1250,14 @@ $sourceFiles = Get-ChildItem -Path (Join-Path $appRoot "src\main\java") -Recurse
     } |
     ForEach-Object { $_.FullName }
 $sharedBrokerTransportJavaRoot = Join-Path $repoRoot "crates\rusty-quest-broker-transport\android"
-$sharedBrokerTransportJava = Get-ChildItem -LiteralPath $sharedBrokerTransportJavaRoot -Recurse -Filter *.java |
-    ForEach-Object { $_.FullName }
+$sharedBrokerTransportJava = @(Get-ChildItem -LiteralPath $sharedBrokerTransportJavaRoot -Recurse -Filter *.java |
+    ForEach-Object { $_.FullName })
 if ($sharedBrokerTransportJava.Count -lt 1) {
     throw "Shared broker transport Android sources are incomplete: $sharedBrokerTransportJavaRoot"
 }
 $sharedBrokerAdmissionJavaRoot = Join-Path $repoRoot "crates\rusty-quest-broker-admission\android"
-$sharedBrokerAdmissionJava = Get-ChildItem -LiteralPath $sharedBrokerAdmissionJavaRoot -Recurse -Filter *.java |
-    ForEach-Object { $_.FullName }
+$sharedBrokerAdmissionJava = @(Get-ChildItem -LiteralPath $sharedBrokerAdmissionJavaRoot -Recurse -Filter *.java |
+    ForEach-Object { $_.FullName })
 if ($sharedBrokerAdmissionJava.Count -lt 1) {
     throw "Shared broker admission Android sources are incomplete: $sharedBrokerAdmissionJavaRoot"
 }
@@ -1272,8 +1272,9 @@ if ($sourceFiles.Count -eq 0) {
 $sourceList = Join-Path $OutDir "sources.rsp"
 $sourceFiles | Set-Content -Encoding ASCII -Path $sourceList
 
- $javacArguments = @("-encoding", "UTF-8", "-source", "1.8", "-target", "1.8", "-bootclasspath", $platformJar, "-d", $classesDir)
-if (-not [string]::IsNullOrWhiteSpace($mediaStreamAarClassesJar)) { $javacArguments += @("-classpath", $mediaStreamAarClassesJar) }
+$javacClasspath = $platformJar
+if (-not [string]::IsNullOrWhiteSpace($mediaStreamAarClassesJar)) { $javacClasspath += [IO.Path]::PathSeparator + $mediaStreamAarClassesJar }
+$javacArguments = @("--release", "8", "-encoding", "UTF-8", "-classpath", $javacClasspath, "-d", $classesDir)
 $javacArguments += "@$sourceList"
 Invoke-Checked "javac" $javac $javacArguments
 Invoke-Checked "jar class pack" $jar @("cf", $classesJar, "-C", $classesDir, ".")

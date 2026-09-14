@@ -38,6 +38,12 @@ function New-IsolatedBrokerCargoMaterialization {
         -Destination (Join-Path $materializedRoot "fixtures") -Recurse
     Copy-Item -LiteralPath (Join-Path $RepoRoot "Cargo.lock") `
         -Destination (Join-Path $materializedRoot "Cargo.lock")
+    # The existing native admission regression consumes this exact app lock.
+    # Retain its bytes in the isolated test graph without copying the app runtime.
+    $appLockRelative = 'apps/spatial-camera-panel-android/legacy-workspaces/mixed-integration-v1/conformance-locks/broker-media-client.feature.lock.json'
+    $appLockDestination = Join-Path $materializedRoot $appLockRelative
+    [void][IO.Directory]::CreateDirectory((Split-Path -Parent $appLockDestination))
+    Copy-Item -LiteralPath (Join-Path $RepoRoot $appLockRelative) -Destination $appLockDestination
 
     $workspaceManifest = @'
 [workspace]
