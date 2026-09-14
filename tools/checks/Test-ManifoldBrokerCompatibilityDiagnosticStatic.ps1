@@ -25,8 +25,9 @@ $ExpectedProductId = "broker.legacy_camera_p2p.standalone"
 $ExpectedFeatureId = "q2q-broker-compatibility-diagnostic-v1"
 $ExpectedProviderAuthority =
     "io.github.mesmerprism.rustymanifold.broker.debug-remote-camera-control"
-$ExpectedManifoldRevision = "6cb398ae06c5c7c47fdcbd47d17768bc31725f3c"
-$ExpectedManifoldTree = "b66340ba49099094005d33c145792c2bdd56793b"
+$ExpectedBuildManifoldRevision = "ae3effb502e5b3bf565dc628b3ac74235397145d"
+$ExpectedBuildManifoldTree = "4a148035b8692be171833a7ba235a391403c8256"
+$ExpectedProducerDescriptorSourceRevision = "6cb398ae06c5c7c47fdcbd47d17768bc31725f3c"
 $ExpectedLegacySpecSha256 = "007cac98547be79ddfdade70cfeedbca1c154034e52a8d62b59946f3dea5b314"
 $ExpectedLegacyLockSha256 = "f311d4fa9f5ddd37f6936b33f996885d12997edb9f89c36048945eb1f339268d"
 
@@ -176,8 +177,8 @@ if ([string]$build.'$schema' -cne "rusty.quest.manifold_broker_android.build_man
     -not $build.manifold_source_root_explicit -or
     $build.manifold_source_tracked_clean -isnot [bool] -or
     -not $build.manifold_source_tracked_clean -or
-    [string]$build.manifold_source_revision -cne $ExpectedManifoldRevision -or
-    [string]$build.manifold_source_tree -cne $ExpectedManifoldTree -or
+    [string]$build.manifold_source_revision -cne $ExpectedBuildManifoldRevision -or
+    [string]$build.manifold_source_tree -cne $ExpectedBuildManifoldTree -or
     $build.manifold_source_approved -isnot [bool] -or
     -not $build.manifold_source_approved -or
     $build.manifold_cargo_resolution_verified -isnot [bool] -or
@@ -490,7 +491,7 @@ if ($producerFeature.Count -ne 1 -or $feature.Count -ne 1 -or
     @($producerFeature[0].conflicts).Count -ne 0 -or
     @($feature[0].conflicts).Count -ne 0 -or
     [string]$producerFeature[0].descriptor.source_revision -cne
-        $ExpectedManifoldRevision -or
+        $ExpectedProducerDescriptorSourceRevision -or
     [string]$producerFeature[0].descriptor.sha256 -cne $ExpectedLegacyLockSha256 -or
     [string]$producerFeature[0].descriptor.source_sha256 -cne
         $ExpectedLegacyLockSha256 -or

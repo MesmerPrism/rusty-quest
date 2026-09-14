@@ -25,8 +25,8 @@ param(
 
 $ErrorActionPreference = "Stop"
 $SharedMorphovisionSignerSha256 = "722f1f3dcb921918d2e02f39f1b1bd8f9ff2812e07757c5fc665f6b8f7ee32a8"
-$ApprovedManifoldRevision = "6cb398ae06c5c7c47fdcbd47d17768bc31725f3c"
-$ApprovedManifoldTree = "b66340ba49099094005d33c145792c2bdd56793b"
+$ApprovedManifoldRevision = "ae3effb502e5b3bf565dc628b3ac74235397145d"
+$ApprovedManifoldTree = "4a148035b8692be171833a7ba235a391403c8256"
 $ApprovedLegacyProductSpecSha256 = "007cac98547be79ddfdade70cfeedbca1c154034e52a8d62b59946f3dea5b314"
 $ApprovedLegacyProductLockSha256 = "f311d4fa9f5ddd37f6936b33f996885d12997edb9f89c36048945eb1f339268d"
 

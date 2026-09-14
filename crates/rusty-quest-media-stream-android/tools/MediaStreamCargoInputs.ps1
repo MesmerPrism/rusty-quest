@@ -8,8 +8,8 @@ function New-IsolatedBrokerCargoMaterialization {
     )
 
     $resolvedManifold = (Resolve-Path -LiteralPath $ManifoldRoot).Path
-    if ((& git -C $resolvedManifold rev-parse HEAD) -cne '6cb398ae06c5c7c47fdcbd47d17768bc31725f3c' -or
-        (& git -C $resolvedManifold rev-parse 'HEAD^{tree}') -cne 'b66340ba49099094005d33c145792c2bdd56793b' -or
+    if ((& git -C $resolvedManifold rev-parse HEAD) -cne 'ae3effb502e5b3bf565dc628b3ac74235397145d' -or
+        (& git -C $resolvedManifold rev-parse 'HEAD^{tree}') -cne '4a148035b8692be171833a7ba235a391403c8256' -or
         @(& git -C $resolvedManifold status --porcelain --untracked-files=all).Count) {
         throw 'Media native materialization requires the exact clean admitted Manifold source.'
     }
