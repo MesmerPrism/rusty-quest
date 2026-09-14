@@ -1,6 +1,10 @@
 //! Authenticated, fail-closed contracts between the Rust media authority and
 //! one process-local Android owner registry.
 
+mod owner_dispatch;
+
+pub use owner_dispatch::*;
+
 use rusty_quest_media_stream::{
     MediaStreamOwnerAction, MediaStreamOwnerActionKind, MediaStreamOwnerKind,
     MediaStreamOwnerProviderReadback, MediaStreamPlatformAction, MediaStreamPlatformOperation,

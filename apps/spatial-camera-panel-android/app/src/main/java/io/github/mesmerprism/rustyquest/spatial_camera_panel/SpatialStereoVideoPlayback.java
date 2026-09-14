@@ -57,6 +57,7 @@ public final class SpatialStereoVideoPlayback {
     private static volatile Surface projectionPeerSurface;
     private static volatile long projectionPeerRouteGeneration;
     private static volatile long projectionPeerDecoderToken;
+    private static volatile boolean projectionPeerExternalDecoder;
     private static boolean nativeBridgeLoaded;
 
     static {
@@ -388,6 +389,10 @@ public final class SpatialStereoVideoPlayback {
         int requestedFpsCap = nativeFallbackFpsForSurfaceCadence(
             normalizeSurfaceCadenceFps(fpsCap));
         synchronized (PROJECTION_PEER_LOCK) {
+            if (projectionPeerExternalDecoder) {
+                listener.onError("projection-peer-owned-by-embedded-receiver");
+                return new ProjectionPeerStartResult(false, routeGeneration, 0L, 0L);
+            }
             if (!stopProjectionPeerLocked(
                     projectionPeerRouteGeneration, projectionPeerDecoderToken, true)) {
                 listener.onError("projection-peer-handoff-blocked");
@@ -430,7 +435,69 @@ public final class SpatialStereoVideoPlayback {
 
     public static boolean stopProjectionPeer(long routeGeneration, long decoderToken) {
         synchronized (PROJECTION_PEER_LOCK) {
+            if (projectionPeerExternalDecoder) return false;
             return stopProjectionPeerLocked(routeGeneration, decoderToken, false);
+        }
+    }
+
+    /** A host reader only. The embedded media module owns its sole decoder and socket. */
+    public static final class EmbeddedProjectionPeerSurface {
+        public final Surface surface;
+        public final long routeGeneration;
+        public final long decoderToken;
+        public final long readerGeneration;
+
+        private EmbeddedProjectionPeerSurface(Surface surface, long routeGeneration,
+                long decoderToken, long readerGeneration) {
+            this.surface = surface;
+            this.routeGeneration = routeGeneration;
+            this.decoderToken = decoderToken;
+            this.readerGeneration = readerGeneration;
+        }
+    }
+
+    /** Stages the reader inside SinkArmReceiver; creates no playback worker. */
+    public static EmbeddedProjectionPeerSurface stageEmbeddedProjectionPeerSurface(
+            int width, int height, int maxImages, int fpsCap, long routeGeneration) {
+        if (!nativeBridgeLoaded || routeGeneration <= 0L || width < 320 || width > 4096
+                || height < 240 || height > 4096 || maxImages < 2 || maxImages > 8
+                || fpsCap <= 0 || fpsCap > 120) {
+            throw new IllegalArgumentException("embedded projection reader binding");
+        }
+        synchronized (PROJECTION_PEER_LOCK) {
+            if (projectionPeerThread != null || projectionPeerSurface != null
+                    || projectionPeerRouteGeneration != 0L || projectionPeerDecoderToken != 0L) {
+                throw new IllegalStateException("projection peer reader already owned");
+            }
+            long token = nextDecoderToken();
+            Surface surface = nativeCreateProjectionPeerVideoSurface(width, height, maxImages,
+                    fpsCap, token, routeGeneration);
+            if (surface == null) throw new IllegalStateException("embedded reader unavailable");
+            projectionPeerStopRequested = false;
+            projectionPeerRouteGeneration = routeGeneration;
+            projectionPeerDecoderToken = token;
+            projectionPeerSurface = surface;
+            projectionPeerExternalDecoder = true;
+            // Publish ownership before inspecting reader readiness. Even a failed
+            // generation query returns the exact handle for compensating cleanup.
+            long reader;
+            try {
+                reader = nativeProjectionPeerReaderGeneration(routeGeneration, token);
+            } catch (RuntimeException failedReadback) {
+                reader = 0L;
+            }
+            return new EmbeddedProjectionPeerSurface(surface, routeGeneration, token, reader);
+        }
+    }
+
+    /** The caller must first verify that its receiver decoder and callbacks terminated. */
+    public static boolean releaseEmbeddedProjectionPeerSurface(EmbeddedProjectionPeerSurface staged) {
+        if (staged == null) return false;
+        synchronized (PROJECTION_PEER_LOCK) {
+            if (!projectionPeerExternalDecoder || projectionPeerSurface != staged.surface) return false;
+            if (!stopProjectionPeerLocked(staged.routeGeneration, staged.decoderToken, false)) return false;
+            projectionPeerExternalDecoder = false;
+            return true;
         }
     }
 

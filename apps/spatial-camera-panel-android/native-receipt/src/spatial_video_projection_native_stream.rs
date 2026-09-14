@@ -142,6 +142,189 @@ pub(crate) fn projection_peer_binding_matches(
     })
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct EmbeddedReceiverFrameRequest {
+    pub(crate) receiver_generation: u64,
+    pub(crate) connection_generation: u64,
+    pub(crate) route_generation: u64,
+    pub(crate) decoder_token: u64,
+    pub(crate) reader_generation: u64,
+    pub(crate) presentation_time_ns: i64,
+    pub(crate) source_elapsed_ns: i64,
+    pub(crate) source_unix_ns: i64,
+    pub(crate) pair_id: u64,
+    pub(crate) left_source_frame: u64,
+    pub(crate) right_source_frame: u64,
+    pub(crate) left_sensor_timestamp_ns: i64,
+    pub(crate) right_sensor_timestamp_ns: i64,
+    pub(crate) pair_delta_ns: u64,
+}
+
+pub(crate) fn register_embedded_receiver_frame(
+    request: EmbeddedReceiverFrameRequest,
+) -> crate::embedded_duplex::frame_identity::ReceiverFrameRegistrationResult {
+    use crate::embedded_duplex::frame_identity::{
+        register_receiver_frame, ReceiverFrameIdentity, ReceiverFrameRegistrationResult,
+    };
+    if !projection_peer_binding_matches(
+        request.route_generation,
+        request.decoder_token,
+        request.reader_generation,
+    ) {
+        return ReceiverFrameRegistrationResult::Invalid;
+    }
+    let Some(context) = context_for_decoder_token(request.decoder_token) else {
+        return ReceiverFrameRegistrationResult::Invalid;
+    };
+    if context.0.route_generation != request.route_generation
+        || context.0.reader_generation != request.reader_generation
+        || context.0.role != ProjectionDecoderRole::ProjectionPeer
+    {
+        return ReceiverFrameRegistrationResult::Invalid;
+    }
+    let identity = ReceiverFrameIdentity {
+        receiver_generation: request.receiver_generation,
+        connection_generation: request.connection_generation,
+        route_generation: request.route_generation,
+        decoder_token: request.decoder_token,
+        reader_generation: request.reader_generation,
+        presentation_time_ns: request.presentation_time_ns,
+        source_elapsed_ns: request.source_elapsed_ns,
+        source_unix_ns: request.source_unix_ns,
+        pair_id: request.pair_id,
+        left_source_frame: request.left_source_frame,
+        right_source_frame: request.right_source_frame,
+        left_sensor_timestamp_ns: request.left_sensor_timestamp_ns,
+        right_sensor_timestamp_ns: request.right_sensor_timestamp_ns,
+        pair_delta_ns: request.pair_delta_ns,
+    };
+    let Ok(mut source) = context.0.source.lock() else {
+        return ReceiverFrameRegistrationResult::Invalid;
+    };
+    if source
+        .register_packed(
+            request.presentation_time_ns,
+            PackedFrameIdentity {
+                receiver_generation: request.receiver_generation,
+                connection_generation: request.connection_generation,
+                source_elapsed_ns: request.source_elapsed_ns,
+                source_unix_ns: request.source_unix_ns,
+                pair_id: request.pair_id,
+                left_source_frame: request.left_source_frame,
+                right_source_frame: request.right_source_frame,
+                left_sensor_timestamp_ns: request.left_sensor_timestamp_ns,
+                right_sensor_timestamp_ns: request.right_sensor_timestamp_ns,
+                pair_delta_ns: request.pair_delta_ns,
+            },
+        )
+        .is_err()
+    {
+        return ReceiverFrameRegistrationResult::Invalid;
+    }
+    let now = peer_projection_runtime::monotonic_now_ns();
+    let result = if now > 0 {
+        register_receiver_frame(identity, now as u64)
+    } else {
+        ReceiverFrameRegistrationResult::Invalid
+    };
+    if result != ReceiverFrameRegistrationResult::Accepted {
+        source.discard_exact(request.presentation_time_ns);
+    }
+    result
+}
+
+pub(crate) fn record_embedded_receiver_frame_rendered(
+    request: EmbeddedReceiverFrameRequest,
+) -> crate::embedded_duplex::frame_identity::ReceiverFrameObservationResult {
+    let now = peer_projection_runtime::monotonic_now_ns();
+    if now <= 0 {
+        return crate::embedded_duplex::frame_identity::ReceiverFrameObservationResult::IdentityMismatch;
+    }
+    crate::embedded_duplex::frame_identity::record_receiver_frame_rendered(
+        receiver_frame_identity(request),
+        now as u64,
+    )
+}
+
+fn receiver_frame_identity(
+    request: EmbeddedReceiverFrameRequest,
+) -> crate::embedded_duplex::frame_identity::ReceiverFrameIdentity {
+    crate::embedded_duplex::frame_identity::ReceiverFrameIdentity {
+        receiver_generation: request.receiver_generation,
+        connection_generation: request.connection_generation,
+        route_generation: request.route_generation,
+        decoder_token: request.decoder_token,
+        reader_generation: request.reader_generation,
+        presentation_time_ns: request.presentation_time_ns,
+        source_elapsed_ns: request.source_elapsed_ns,
+        source_unix_ns: request.source_unix_ns,
+        pair_id: request.pair_id,
+        left_source_frame: request.left_source_frame,
+        right_source_frame: request.right_source_frame,
+        left_sensor_timestamp_ns: request.left_sensor_timestamp_ns,
+        right_sensor_timestamp_ns: request.right_sensor_timestamp_ns,
+        pair_delta_ns: request.pair_delta_ns,
+    }
+}
+
+pub(crate) fn current_embedded_receiver_frame_observation(
+    receiver_generation: u64,
+    connection_generation: u64,
+    route_generation: u64,
+    decoder_token: u64,
+    reader_generation: u64,
+    max_age_ns: u64,
+) -> Option<crate::embedded_duplex::frame_identity::ReceiverFrameObservation> {
+    if max_age_ns == 0
+        || !projection_peer_binding_matches(route_generation, decoder_token, reader_generation)
+    {
+        return None;
+    }
+    let now = peer_projection_runtime::monotonic_now_ns();
+    if now <= 0 {
+        return None;
+    }
+    let observation = crate::embedded_duplex::frame_identity::latest_receiver_frame_observation(
+        receiver_generation,
+        connection_generation,
+        route_generation,
+        decoder_token,
+        reader_generation,
+        now as u64,
+    )?;
+    observation
+        .is_fresh_at(now as u64, max_age_ns)
+        .then_some(observation)
+}
+
+pub(crate) fn retire_embedded_receiver_generation(receiver_generation: u64) {
+    crate::embedded_duplex::frame_identity::retire_receiver_generation(receiver_generation);
+    if let Ok(contexts) = SPATIAL_VIDEO_PROJECTION_CONTEXTS.lock() {
+        for context in contexts.values() {
+            if let Ok(mut source) = context.source.lock() {
+                source.retire_receiver_generation(receiver_generation);
+            }
+        }
+    }
+}
+
+pub(crate) fn retire_embedded_receiver_connection(
+    receiver_generation: u64,
+    connection_generation: u64,
+) {
+    crate::embedded_duplex::frame_identity::retire_receiver_connection(
+        receiver_generation,
+        connection_generation,
+    );
+    if let Ok(contexts) = SPATIAL_VIDEO_PROJECTION_CONTEXTS.lock() {
+        for context in contexts.values() {
+            if let Ok(mut source) = context.source.lock() {
+                source.retire_receiver_connection(receiver_generation, connection_generation);
+            }
+        }
+    }
+}
+
 fn latest_frame_for(
     slot: &Mutex<Option<SpatialVideoProjectionFrame>>,
 ) -> Option<SpatialVideoProjectionFrame> {
@@ -207,6 +390,10 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1pa
         .register_packed(
             output_timestamp_ns,
             SpatialPackedPairMetadata {
+                receiver_generation: 0,
+                connection_generation: 0,
+                source_elapsed_ns: 0,
+                source_unix_ns: 0,
                 pair_id: pair_id as u64,
                 left_source_frame: left_source_frame as u64,
                 right_source_frame: right_source_frame as u64,
@@ -879,6 +1066,36 @@ unsafe extern "C" fn spatial_video_projection_on_image_available(
             }
         }
     };
+    if let Some(identity) = packed_pair.filter(|identity| identity.receiver_generation != 0) {
+        let now = peer_projection_runtime::monotonic_now_ns();
+        if now <= 0
+            || crate::embedded_duplex::frame_identity::record_receiver_frame_acquired(
+                crate::embedded_duplex::frame_identity::ReceiverFrameIdentity {
+                    receiver_generation: identity.receiver_generation,
+                    connection_generation: identity.connection_generation,
+                    route_generation: reader_context.route_generation,
+                    decoder_token: reader_context.decoder_token,
+                    reader_generation: reader_context.reader_generation,
+                    presentation_time_ns: timestamp_ns,
+                    source_elapsed_ns: identity.source_elapsed_ns,
+                    source_unix_ns: identity.source_unix_ns,
+                    pair_id: identity.pair_id,
+                    left_source_frame: identity.left_source_frame,
+                    right_source_frame: identity.right_source_frame,
+                    left_sensor_timestamp_ns: identity.left_sensor_timestamp_ns,
+                    right_sensor_timestamp_ns: identity.right_sensor_timestamp_ns,
+                    pair_delta_ns: identity.pair_delta_ns,
+                },
+                now.max(0) as u64,
+            ) != crate::embedded_duplex::frame_identity::ReceiverFrameObservationResult::Accepted
+        {
+            log_marker(format!(
+                "status=frame-identity-rejected reason=embedded-receiver-acquisition-mismatch readerGeneration={} timestampNs={}",
+                reader_context.reader_generation, timestamp_ns
+            ));
+            return;
+        }
+    }
     if reader_context.role == ProjectionDecoderRole::ProjectionPeer
         && !projection_peer_binding_matches(
             reader_context.route_generation,

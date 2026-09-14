@@ -104,6 +104,40 @@ class SpatialVideoSourceRoutingCoordinatorTest {
     assertNull(stopped.pending)
   }
 
+  @Test fun embeddedPeerRequiresStoppedLocalReceiptAndDoesNotStartLegacyDecoder() {
+    val fake = FakeExecution().apply { immediateResult = SpatialVideoSourceResult.Inactive }
+    val coordinator = coordinator(fake)
+    coordinator.requestProjectionSource(SpatialVideoSource.Disabled, null, carrier, "handoff")
+    fake.calls.clear()
+    fake.immediateResult = SpatialVideoSourceResult.Pending
+
+    val staged = coordinator.beginEmbeddedProjectionPeerRequest()
+    val pending = coordinator.executeRequest(staged.generation, carrier, "embedded-sink")
+    coordinator.resumePending(carrier, "duplicate-carrier-observation")
+
+    assertEquals(listOf("demand:false", "native:peer:2"), fake.calls)
+    assertEquals(SpatialVideoSource.Peer, pending.pending)
+    assertEquals(SpatialVideoSource.Disabled, pending.effective)
+    assertNull(fake.adoptedSettings)
+    val active = coordinator.reportNativeReadback(fake.readbackFor(
+        SpatialVideoSource.Peer, staged.generation, SpatialVideoSourceResult.Effective,
+        SpatialVideoSourceStage.requiredFor(SpatialVideoSource.Peer),
+    ).copy(decoderToken = 21L, readerGeneration = 22L, pairGeneration = 23L, importGeneration = 24L))
+    assertEquals(SpatialVideoSource.Peer, active.effective)
+    assertNull(active.pending)
+  }
+
+  @Test(expected = IllegalStateException::class)
+  fun embeddedPeerCannotTreatPendingShutdownAsCameraRelease() {
+    val fake = FakeExecution().apply {
+      immediateResult = SpatialVideoSourceResult.Pending
+      disabledPendingStages = 0L
+    }
+    val coordinator = coordinator(fake)
+    coordinator.requestProjectionSource(SpatialVideoSource.Disabled, null, carrier, "handoff")
+    coordinator.beginEmbeddedProjectionPeerRequest()
+  }
+
   @Test fun asynchronousDisabledStopFailsClosedAfterBoundedDeadline() {
     var now = 1_000L
     val fake = FakeExecution().apply {

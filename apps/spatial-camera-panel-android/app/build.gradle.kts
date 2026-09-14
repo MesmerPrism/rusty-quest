@@ -471,8 +471,13 @@ android {
   kotlinOptions { jvmTarget = "17" }
 }
 
+val embeddedMediaAar = project(":media-stream-android").layout.buildDirectory.file(
+  "outputs/aar/rusty-quest-media-stream-android-release.aar",
+)
+
 dependencies {
   implementation(project(":spatial-sdk-shared"))
+  implementation(files(embeddedMediaAar).builtBy(":media-stream-android:bundleReleaseAar"))
   implementation(libs.androidx.core.ktx)
   implementation(libs.androidx.activity.compose)
   implementation(platform(libs.androidx.compose.bom))

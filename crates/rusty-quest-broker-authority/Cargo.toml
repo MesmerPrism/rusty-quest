@@ -8,11 +8,13 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+ed25519-dalek = { version = "=2.1.1", default-features = false, features = ["std"] }
 rusty-manifold-admission = { path = "../../../rusty-manifold/crates/rusty-manifold-admission" }
 rusty-manifold-broker-adapter = { path = "../../../rusty-manifold/crates/rusty-manifold-broker-adapter" }
 rusty-manifold-broker-product = { path = "../../../rusty-manifold/crates/rusty-manifold-broker-product" }
 rusty-manifold-media-session = { path = "../../../rusty-manifold/crates/rusty-manifold-media-session" }
 rusty-manifold-model = { path = "../../../rusty-manifold/crates/rusty-manifold-model", features = ["serde"] }
+rusty-manifold-peer = { path = "../../../rusty-manifold/crates/rusty-manifold-peer" }
 rusty-manifold-peer-runtime-host = { path = "../../../rusty-manifold/crates/rusty-manifold-peer-runtime-host" }
 rusty-manifold-runtime-host = { path = "../../../rusty-manifold/crates/rusty-manifold-runtime-host" }
 rusty-quest-broker-admission = { path = "../rusty-quest-broker-admission" }

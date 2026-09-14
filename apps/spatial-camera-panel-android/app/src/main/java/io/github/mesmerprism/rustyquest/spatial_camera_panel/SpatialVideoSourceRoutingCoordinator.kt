@@ -270,6 +270,7 @@ internal class SpatialVideoSourceRoutingCoordinator(
   private var peerSettings: SpatialVideoProjectionSettings? = null
   private var expectedRequest: SpatialVideoSourceNativeRequest? = null
   private var admittedGeneration: Long? = null
+  private var embeddedPeerGeneration: Long? = null
   private var lastNativeGeneration = 0L
   private var localRetirementGeneration = 0L
   private var localRetirementOwnerGeneration = 0L
@@ -286,6 +287,7 @@ internal class SpatialVideoSourceRoutingCoordinator(
     peerSettings = validatedPeerSettings
     expectedRequest = null
     admittedGeneration = null
+    embeddedPeerGeneration = null
     state = state.copy(
         requested = source, pending = source, effective = SpatialVideoSource.Disabled,
         failed = null, failureReason = SpatialVideoSourceReason.None,
@@ -293,6 +295,21 @@ internal class SpatialVideoSourceRoutingCoordinator(
         pendingSinceNs = 0L, readback = null,
     )
     state
+  }
+
+  /** Reserves a native Peer route for the embedded Sink; it owns decoder creation separately. */
+  fun beginEmbeddedProjectionPeerRequest(): SpatialVideoSourceRoutingState = synchronized(stateLock) {
+    val stopped = state.readback
+    check(state.requested == SpatialVideoSource.Disabled && state.pending == null &&
+        state.effective == SpatialVideoSource.Disabled && state.ownedAcquisition == null &&
+        stopped != null && stopped.routeGeneration == state.generation &&
+        stopped.source == SpatialVideoSource.Disabled && stopped.result == SpatialVideoSourceResult.Inactive &&
+        stopped.hasStages(SpatialVideoSourceStage.AcquisitionStopped)) {
+      "embedded receiver requires actual local acquisition shutdown"
+    }
+    beginProjectionSourceRequest(SpatialVideoSource.Peer, null).also {
+      embeddedPeerGeneration = it.generation
+    }
   }
 
   fun requestProjectionSource(
@@ -329,6 +346,8 @@ internal class SpatialVideoSourceRoutingCoordinator(
       Transition(state.pending!!, peerSettings, state.ownedAcquisition, state.producerState)
     } ?: return snapshot()
     val source = transition.source
+    val embeddedPeer = synchronized(stateLock) { embeddedPeerGeneration == generation }
+    if (embeddedPeer && synchronized(stateLock) { admittedGeneration == generation }) return snapshot()
 
     // This is Peer-decoder demand, not generic source-input demand. Local never starts Peer media.
     execution.updateSourceOwnerDemand(false, "$reason-route-fence")
@@ -346,7 +365,7 @@ internal class SpatialVideoSourceRoutingCoordinator(
         it.copy(ownedAcquisition = null, ownedAcquisitionGeneration = 0L)
       }
     }
-    if (source == SpatialVideoSource.Peer) {
+    if (source == SpatialVideoSource.Peer && !embeddedPeer) {
       val settings = transition.peerSettings
       if (settings == null || !settings.active || settings.source != "peer-packed-stereo") {
         return commitFailure(generation, source, SpatialVideoSourceReason.PeerSettingsInvalid)
@@ -408,7 +427,7 @@ internal class SpatialVideoSourceRoutingCoordinator(
         return commitFailure(generation, source, SpatialVideoSourceReason.ProducerCleanupDenied)
       }
     }
-    if (source == SpatialVideoSource.Peer &&
+    if (source == SpatialVideoSource.Peer && !embeddedPeer &&
         !execution.stagePeerSettings(checkNotNull(transition.peerSettings), generation)) {
       return commitFailure(generation, source, SpatialVideoSourceReason.PeerSettingsInvalid)
     }
@@ -468,7 +487,7 @@ internal class SpatialVideoSourceRoutingCoordinator(
                 },
         )
       }
-      if (!execution.preparePeerDecoderOwnership(generation, reason)) {
+      if (!embeddedPeer && !execution.preparePeerDecoderOwnership(generation, reason)) {
         return retireAfterFailure(
             generation, source, SpatialVideoSourceReason.DecoderReplacementFailed, reason)
       }
@@ -476,8 +495,8 @@ internal class SpatialVideoSourceRoutingCoordinator(
         retireStaleOwnedPeer(generation, reason)
         return snapshot()
       }
-      execution.updateSourceOwnerDemand(true, "$reason-admitted")
-      if (!execution.replacePeerSettings(checkNotNull(transition.peerSettings), generation, reason)) {
+      if (!embeddedPeer) execution.updateSourceOwnerDemand(true, "$reason-admitted")
+      if (!embeddedPeer && !execution.replacePeerSettings(checkNotNull(transition.peerSettings), generation, reason)) {
         execution.updateSourceOwnerDemand(false, "$reason-decoder-rejected")
         return retireAfterFailure(
             generation, source, SpatialVideoSourceReason.DecoderReplacementFailed, reason)

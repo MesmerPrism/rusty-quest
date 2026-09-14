@@ -242,6 +242,28 @@ function Get-DirectorySha256 {
     }
 }
 
+function Get-RelativeFileSha256Manifest {
+    param(
+        [Parameter(Mandatory=$true)][string]$Root,
+        [Parameter(Mandatory=$true)][string[]]$Paths
+    )
+    $resolvedRoot = (Resolve-Path -LiteralPath $Root).Path.TrimEnd([char[]]@('\', '/'))
+    $entries = foreach ($path in @($Paths | Sort-Object -Unique)) {
+        if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+            throw "Manifest input is not a file: $path"
+        }
+        $resolvedPath = (Resolve-Path -LiteralPath $path).Path
+        if (-not $resolvedPath.StartsWith($resolvedRoot + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) {
+            throw "Manifest input is outside its declared root: $resolvedPath"
+        }
+        [ordered]@{
+            path = $resolvedPath.Substring($resolvedRoot.Length + 1).Replace('\', '/')
+            sha256 = Get-FileSha256 -Path $resolvedPath
+        }
+    }
+    return @($entries)
+}
+
 function Get-SpatialPropertyNames {
     param([Parameter(Mandatory=$true)][string[]]$Roots)
     $names = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
@@ -1045,6 +1067,40 @@ if (-not [string]::IsNullOrWhiteSpace($normalizedExpectedSignerSha256) -and
     $certificateSha256 -cne $normalizedExpectedSignerSha256) {
     throw "Explicit Spatial Camera Panel signer fingerprint mismatch before compilation."
 }
+$embeddedMediaModuleRoot = Join-Path $repoRoot "crates\rusty-quest-media-stream-android\android\library"
+$embeddedMediaSourceFiles = @(
+    Join-Path $embeddedMediaModuleRoot "build.gradle"
+    Join-Path $embeddedMediaModuleRoot "src\main\AndroidManifest.xml"
+    Join-Path $embeddedMediaModuleRoot "src\main\R.txt"
+) + @(Get-ChildItem -LiteralPath (Join-Path $embeddedMediaModuleRoot "src\main\java") -Recurse -File |
+    Select-Object -ExpandProperty FullName)
+$embeddedMediaSourceEntries = @(
+    Get-RelativeFileSha256Manifest -Root $embeddedMediaModuleRoot -Paths $embeddedMediaSourceFiles
+)
+$embeddedMediaSourceManifest = [ordered]@{
+    schema = "rusty.quest.android.media.embedded_aar_source_inputs.v1"
+    module = "rusty-quest-media-stream-android"
+    entries = $embeddedMediaSourceEntries
+}
+$embeddedMediaSourceManifestJson = $embeddedMediaSourceManifest | ConvertTo-Json -Depth 12
+$embeddedMediaSourceManifestSha256 = Get-StringSha256 -Value $embeddedMediaSourceManifestJson
+$mediaAndroidJar = Join-Path $AndroidHome "platforms/android-34/android.jar"
+if (-not (Test-Path -LiteralPath $mediaAndroidJar -PathType Leaf)) {
+    throw "The embedded media module requires the same Android 34 platform as its host."
+}
+$embeddedMediaBuildInputs = [ordered]@{
+    schema = "rusty.quest.android.media.embedded_aar_build_inputs.v1"
+    source_manifest_sha256 = $embeddedMediaSourceManifestSha256
+    android_jar_sha256 = Get-FileSha256 -Path $mediaAndroidJar
+    gradle_version = $GradleVersion
+    java_source = "1.8"
+    java_target = "1.8"
+    aar_name = "rusty-quest-media-stream-android-release.aar"
+    aar_entries = @("AndroidManifest.xml", "R.txt", "classes.jar")
+    native_payload_expected_count = 0
+}
+$embeddedMediaBuildInputsJson = $embeddedMediaBuildInputs | ConvertTo-Json -Depth 12
+$embeddedMediaBuildInputsSha256 = Get-StringSha256 -Value $embeddedMediaBuildInputsJson
 $buildInputDescriptor = [ordered]@{
     schema = "rusty.quest.spatial_camera_panel.build_input_lock.v1"
     source_commit = $sourceHead
@@ -1055,6 +1111,10 @@ $buildInputDescriptor = [ordered]@{
     build_mode = $(if ([bool]$PublicationBuild) { "publication" } else { "iteration" })
     build_workflow_mode = $BuildMode.ToLowerInvariant()
     source_dependencies = $sourceDependencyIdentities
+    embedded_media_aar = [ordered]@{
+        source_manifest_sha256 = $embeddedMediaSourceManifestSha256
+        build_inputs_sha256 = $embeddedMediaBuildInputsSha256
+    }
     product_id = $resolvedProductId
     application_id = $resolvedAppId
     app_label = $resolvedAppLabel
@@ -1126,6 +1186,8 @@ $nativeIdentityInputs = [ordered]@{
     particle_adapter = Join-Path $repoRoot "crates\rusty-quest-particle-adapter"
     hand_adapter = Join-Path $repoRoot "crates\rusty-quest-hand-adapter"
     feature_activation = Join-Path $repoRoot "crates\rusty-quest-feature-activation"
+    media_stream_manifest = Join-Path $repoRoot "crates\rusty-quest-media-stream-android\Cargo.toml"
+    media_stream_rust = Join-Path $repoRoot "crates\rusty-quest-media-stream-android\src"
 }
 $nativeSourceSha256 = Get-PathSetSha256 -Paths $nativeIdentityInputs
 $privateNativeIdentity = [ordered]@{
@@ -1165,6 +1227,7 @@ $shellIdentityInputs = [ordered]@{
     spatial_sdk_shared = Join-Path $appRoot "spatial-sdk-shared"
     broker_client_android = Join-Path $repoRoot "crates\rusty-quest-broker-client\android"
     broker_admission_android = Join-Path $repoRoot "crates\rusty-quest-broker-admission\android"
+    media_stream_android = $embeddedMediaModuleRoot
 }
 if (-not [string]::IsNullOrWhiteSpace($resolvedPrivateFeatureSourceDir)) {
     $shellIdentityInputs["private_source"] = $resolvedPrivateFeatureSourceDir
@@ -1228,6 +1291,10 @@ if (Test-Path -LiteralPath $OutDir) {
 New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
 $buildInputLockPath = Join-Path $OutDir "build-input-lock.json"
 [void](Set-TextFileIfChanged -Path $buildInputLockPath -Value ($buildInputDescriptor | ConvertTo-Json -Depth 20))
+$embeddedMediaSourceManifestPath = Join-Path $OutDir "embedded-media-aar-source-inputs.json"
+[void](Set-TextFileIfChanged -Path $embeddedMediaSourceManifestPath -Value $embeddedMediaSourceManifestJson)
+$embeddedMediaBuildInputsPath = Join-Path $OutDir "embedded-media-aar-build-inputs.json"
+[void](Set-TextFileIfChanged -Path $embeddedMediaBuildInputsPath -Value $embeddedMediaBuildInputsJson)
 $propertyManifestPath = Join-Path $OutDir "spatial-property-manifest.json"
 $propertyScanRoots = @([string]$appRoot)
 if (-not [string]::IsNullOrWhiteSpace($resolvedPrivateFeatureSourceDir)) { $propertyScanRoots += $resolvedPrivateFeatureSourceDir }
@@ -1701,6 +1768,11 @@ try {
             [Environment]::SetEnvironmentVariable([string]$binding.Name, [string]$binding.Value, "Process")
         }
     }
+    $mediaAndroidBuildRoot = Join-Path $productBuildRoot "media-stream-android"
+    $mediaAndroidJar = Join-Path $AndroidHome "platforms/android-34/android.jar"
+    if (-not (Test-Path -LiteralPath $mediaAndroidJar -PathType Leaf)) {
+        throw "The embedded media module requires the same Android 34 platform as its host."
+    }
     $gradleArguments = @(
         $(if ($BuildMode -eq "DevFast") { "--daemon" } else { "--no-daemon" }),
         $(if ($BuildMode -eq "DevFast") { "--configuration-cache" } else { "--no-configuration-cache" }),
@@ -1708,6 +1780,8 @@ try {
         "--build-cache",
         "--project-cache-dir", $gradleProjectCacheDir,
         "-Pandroid.aapt2FromMavenOverride=$shortAapt2",
+        "-PandroidJar=$mediaAndroidJar",
+        "-PmediaBuildDir=$mediaAndroidBuildRoot",
         "-p", ([string]$appRoot),
         ":app:assemble$BuildType"
     )
@@ -1892,6 +1966,79 @@ try {
     }
 }
 
+$embeddedMediaAarPath = Join-Path $mediaAndroidBuildRoot "outputs\aar\rusty-quest-media-stream-android-release.aar"
+$embeddedMediaClassesJarPath = Join-Path $mediaAndroidBuildRoot "aar-staging\classes.jar"
+foreach ($embeddedMediaOutput in @($embeddedMediaAarPath, $embeddedMediaClassesJarPath)) {
+    if (-not (Test-Path -LiteralPath $embeddedMediaOutput -PathType Leaf)) {
+        throw "Gradle build did not produce embedded media artifact: $embeddedMediaOutput"
+    }
+}
+Add-Type -AssemblyName System.IO.Compression.FileSystem
+$embeddedMediaAarZip = [IO.Compression.ZipFile]::OpenRead((Resolve-Path -LiteralPath $embeddedMediaAarPath).Path)
+try {
+    $embeddedMediaAarEntries = @($embeddedMediaAarZip.Entries |
+        Where-Object { -not [string]::IsNullOrEmpty($_.Name) } |
+        ForEach-Object { [string]$_.FullName } | Sort-Object)
+    $embeddedMediaNativeEntries = @($embeddedMediaAarEntries | Where-Object { $_ -match '(?i)(^|/)[^/]+\.so$' })
+    if ($embeddedMediaNativeEntries.Count -ne 0) {
+        throw "Embedded media AAR must contain no native shared libraries."
+    }
+    $expectedEmbeddedMediaAarEntries = @($embeddedMediaBuildInputs.aar_entries | Sort-Object)
+    if (($embeddedMediaAarEntries -join "`n") -cne ($expectedEmbeddedMediaAarEntries -join "`n")) {
+        throw "Embedded media AAR entry closure differs from its exact build-input contract."
+    }
+    $embeddedClassesEntries = @($embeddedMediaAarZip.Entries | Where-Object { $_.FullName -ceq "classes.jar" })
+    if ($embeddedClassesEntries.Count -ne 1) {
+        throw "Embedded media AAR must contain exactly one classes.jar."
+    }
+    $embeddedClassesSha = [Security.Cryptography.SHA256]::Create()
+    try {
+        $embeddedClassesStream = $embeddedClassesEntries[0].Open()
+        try {
+            $embeddedClassesInAarSha256 = ([BitConverter]::ToString(
+                $embeddedClassesSha.ComputeHash($embeddedClassesStream)
+            )).Replace("-", "").ToLowerInvariant()
+        } finally {
+            $embeddedClassesStream.Dispose()
+        }
+    } finally {
+        $embeddedClassesSha.Dispose()
+    }
+} finally {
+    $embeddedMediaAarZip.Dispose()
+}
+$embeddedMediaClassesJarSha256 = Get-FileSha256 -Path $embeddedMediaClassesJarPath
+if ($embeddedClassesInAarSha256 -cne $embeddedMediaClassesJarSha256) {
+    throw "Embedded media AAR classes.jar differs from the exact Gradle-produced classes.jar."
+}
+$embeddedMediaClassesZip = [IO.Compression.ZipFile]::OpenRead((Resolve-Path -LiteralPath $embeddedMediaClassesJarPath).Path)
+try {
+    $embeddedMediaClassesNativeEntries = @($embeddedMediaClassesZip.Entries |
+        Where-Object { $_.FullName -match '(?i)(^|/)[^/]+\.so$' })
+    if ($embeddedMediaClassesNativeEntries.Count -ne 0) {
+        throw "Embedded media classes.jar must contain no native shared libraries."
+    }
+} finally {
+    $embeddedMediaClassesZip.Dispose()
+}
+$embeddedMediaArtifactInspection = [ordered]@{
+    schema = "rusty.quest.android.media.embedded_aar_artifacts.v1"
+    source_manifest_sha256 = Get-FileSha256 -Path $embeddedMediaSourceManifestPath
+    build_inputs_sha256 = Get-FileSha256 -Path $embeddedMediaBuildInputsPath
+    aar_sha256 = Get-FileSha256 -Path $embeddedMediaAarPath
+    aar_entries = $embeddedMediaAarEntries
+    classes_jar_sha256 = $embeddedMediaClassesJarSha256
+    classes_jar_matches_aar_entry = $true
+    aar_native_payload_count = 0
+    classes_jar_native_payload_count = 0
+    rust_linkage = "statically-linked-once-in-spatial-camera-panel-native-receipt"
+    local_build_paths_recorded = $false
+}
+$embeddedMediaArtifactInspectionPath = Join-Path $OutDir "embedded-media-aar-artifacts.json"
+[void](Set-TextFileIfChanged -Path $embeddedMediaArtifactInspectionPath -Value (
+    $embeddedMediaArtifactInspection | ConvertTo-Json -Depth 12
+))
+
 $apkSource = Join-Path $appBuildDir "outputs\apk\$buildTypeLower\app-$buildTypeLower.apk"
 if (-not (Test-Path -LiteralPath $apkSource)) {
     throw "Gradle build did not produce expected APK: $apkSource"
@@ -1954,6 +2101,16 @@ try {
     $apkZip.Dispose()
 }
 $nativePayload = @($apkEntryNames | Where-Object { $_ -match '^lib/[^/]+/[^/]+\.so$' } | Sort-Object)
+$nativeReceiptPayloadEntries = @($nativePayload | Where-Object { $_ -ceq $nativeReceiptApkEntry })
+if ($nativeReceiptPayloadEntries.Count -ne 1) {
+    throw "APK must contain exactly one app-owned Rust native receipt library."
+}
+$unexpectedEmbeddedMediaNativePayload = @($nativePayload | Where-Object {
+    (Split-Path -Leaf $_) -match '(?i)rusty[_-]?quest[_-]?media[_-]?stream'
+})
+if ($unexpectedEmbeddedMediaNativePayload.Count -ne 0) {
+    throw "Embedded media Rust must be linked into the app-owned native receipt, not packaged as another shared library."
+}
 $packagedNativeBasenames = @($nativePayload | ForEach-Object { Split-Path -Leaf $_ } | Sort-Object -Unique)
 $missingRustDynamicStd = @($nativeNeededLibraries | Where-Object {
     $_ -like 'libstd-*.so' -and $_ -notin $packagedNativeBasenames
@@ -1981,6 +2138,9 @@ $apkInspection = [ordered]@{
     native_elf_load_alignment_minimum = ($loadAlignments | Measure-Object -Minimum).Minimum
     native_elf_16k_compatible = $true
     native_payload = $nativePayload
+    app_owned_rust_native_receipt_count = $nativeReceiptPayloadEntries.Count
+    embedded_media_additional_native_payload_count = $unexpectedEmbeddedMediaNativePayload.Count
+    embedded_media_rust_linkage = "statically-linked-once-in-spatial-camera-panel-native-receipt"
     native_needed_libraries = $nativeNeededLibraries
     missing_rust_dynamic_std_count = $missingRustDynamicStd.Count
     sensitive_payload_count = $sensitivePayload.Count
@@ -2026,6 +2186,8 @@ $cacheState = [ordered]@{
     }
     outputs = [ordered]@{
         native_sha256 = Get-FileSha256 -Path $nativeReceiptBuiltLib
+        embedded_media_aar_sha256 = Get-FileSha256 -Path $embeddedMediaAarPath
+        embedded_media_classes_jar_sha256 = $embeddedMediaClassesJarSha256
         apk_sha256 = Get-FileSha256 -Path $apkSource
     }
 }
@@ -2066,6 +2228,24 @@ $manifest = [ordered]@{
     source_worktree_overlay_sha256 = $sourceWorktreeOverlaySha256
     source_composition_fingerprint = [string]$sourceComposition.fingerprint
     source_dependencies = $sourceDependencies
+    embedded_media_aar = [ordered]@{
+        source_inputs = [ordered]@{
+            path = $embeddedMediaSourceManifestPath
+            sha256 = Get-FileSha256 -Path $embeddedMediaSourceManifestPath
+        }
+        build_inputs = [ordered]@{
+            path = $embeddedMediaBuildInputsPath
+            sha256 = Get-FileSha256 -Path $embeddedMediaBuildInputsPath
+        }
+        artifacts = [ordered]@{
+            path = $embeddedMediaArtifactInspectionPath
+            sha256 = Get-FileSha256 -Path $embeddedMediaArtifactInspectionPath
+        }
+        aar_sha256 = [string]$embeddedMediaArtifactInspection.aar_sha256
+        classes_jar_sha256 = [string]$embeddedMediaArtifactInspection.classes_jar_sha256
+        native_payload_count = 0
+        rust_linkage = [string]$embeddedMediaArtifactInspection.rust_linkage
+    }
     property_manifest_path = $propertyManifestPath
     property_manifest_sha256 = Get-FileSha256 -Path $propertyManifestPath
     property_manifest_count = $propertyNames.Count
@@ -2696,6 +2876,11 @@ $runCapsule = [ordered]@{
         paths_recorded = $false
     }
     apk_inspection = [ordered]@{ path = $apkInspectionPath; sha256 = Get-FileSha256 -Path $apkInspectionPath }
+    embedded_media_aar = [ordered]@{
+        source_inputs = [ordered]@{ path = $embeddedMediaSourceManifestPath; sha256 = Get-FileSha256 -Path $embeddedMediaSourceManifestPath }
+        build_inputs = [ordered]@{ path = $embeddedMediaBuildInputsPath; sha256 = Get-FileSha256 -Path $embeddedMediaBuildInputsPath }
+        artifacts = [ordered]@{ path = $embeddedMediaArtifactInspectionPath; sha256 = Get-FileSha256 -Path $embeddedMediaArtifactInspectionPath }
+    }
     build_manifest = [ordered]@{ path = $manifestPath; sha256 = Get-FileSha256 -Path $manifestPath }
     apk = [ordered]@{ path = $apkOut; sha256 = $sha256 }
     runtime_profile = $null

@@ -29,6 +29,10 @@ use rusty_manifold_model::{
     ManifoldControlLeaseAuthorityApplicationOutcome, ManifoldControlLeaseRequest,
     ManifoldHostManifest, ManifoldStreamRegistrySnapshot, Revision, SafetyClass, SchemaId,
 };
+use rusty_manifold_peer::{
+    PAIR_MEDIA_ROUTE_CLEANUP_COMMAND, PAIR_MEDIA_ROUTE_ISSUE_COMMAND,
+    PAIR_MEDIA_ROUTE_REVOKE_COMMAND, PAIR_MEDIA_ROUTE_STOP_COMMAND,
+};
 use rusty_manifold_peer_runtime_host::{
     ManifoldPeerRuntimeAuthorityFamily, ManifoldPeerRuntimeBrokerLeaseAttemptOutcome,
     ManifoldPeerRuntimeHost, ManifoldPeerRuntimeHostError, ManifoldPeerRuntimeTrustPolicy,
@@ -57,8 +61,10 @@ use rusty_quest_media_stream::{
     MediaStreamTrustedOwnerProvider,
 };
 use rusty_quest_media_stream_android::{
-    execution_ticket, validate_readback, AndroidMediaExecutionMode, AndroidMediaExecutionTicket,
-    AndroidMediaOwnerExecutor, AndroidMediaOwnerReadback,
+    derive_embedded_duplex_owner_placements, execution_ticket, validate_readback,
+    AndroidMediaDevicePeerPlacement, AndroidMediaExecutionMode, AndroidMediaExecutionTicket,
+    AndroidMediaOwnerExecutor, AndroidMediaOwnerPlacement, AndroidMediaOwnerReadback,
+    ProductActivationProof,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -68,6 +74,8 @@ use std::{
     fmt,
     sync::{Arc, RwLock},
 };
+
+use crate::{QuestEmbeddedDuplexAuthority, QuestEmbeddedDuplexAuthorityConfig};
 
 /// Product-owned live runtime configuration schema.
 pub const QUEST_BROKER_RUNTIME_CONFIG_SCHEMA: &str = "rusty.quest.broker.runtime_config.v2";
@@ -132,6 +140,59 @@ pub struct QuestBrokerRuntimeConfig {
     /// Exact Manifold/Quest media bindings for independent app-local sinks.
     #[serde(default)]
     pub media_sessions: Vec<QuestBrokerMediaSessionProductBinding>,
+    /// Optional mixed peer/Common-LAN authority closure for an embedded duplex product.
+    #[serde(default)]
+    pub embedded_duplex: Option<QuestEmbeddedDuplexAuthorityConfig>,
+}
+
+impl QuestBrokerRuntimeConfig {
+    /// Adds the reusable mixed authority closure to an already complete packaged
+    /// media config. Product/client/media lock bytes remain unchanged.
+    pub fn with_embedded_duplex(
+        mut self,
+        embedded_duplex: QuestEmbeddedDuplexAuthorityConfig,
+    ) -> Result<Self, QuestBrokerRuntimeError> {
+        if !embedded_duplex.validate() || effective_media_bindings(&self).is_empty() {
+            return Err(QuestBrokerRuntimeError::MediaPeerRuntimeConfig);
+        }
+        self.embedded_duplex = Some(embedded_duplex);
+        Ok(self)
+    }
+
+    /// Resolves a complete seven-family placement directly from this packaged
+    /// product/client/feature/media lock closure and the C1 device-peer map.
+    ///
+    /// # Errors
+    /// Returns an error when any packaged authority binding is invalid, the
+    /// runtime-spec identity is ambiguous, or resource placement is incomplete.
+    pub fn embedded_duplex_owner_placements(
+        &self,
+        runtime_spec_id: &str,
+        local_peer_id: &str,
+        authority_peer_id: &str,
+        device_peers: &[AndroidMediaDevicePeerPlacement],
+    ) -> Result<Vec<AndroidMediaOwnerPlacement>, QuestBrokerRuntimeError> {
+        validate_packaged_authority(self)?;
+        validate_media_session_binding(self)?;
+        self.embedded_duplex
+            .as_ref()
+            .filter(|config| config.validate())
+            .ok_or(QuestBrokerRuntimeError::MediaPeerRuntimeConfig)?;
+        let matches = effective_media_bindings(self)
+            .into_iter()
+            .filter(|binding| binding.quest.spec.runtime_spec_id == runtime_spec_id)
+            .collect::<Vec<_>>();
+        let [binding] = matches.as_slice() else {
+            return Err(QuestBrokerRuntimeError::MediaCrossBindingMismatch);
+        };
+        derive_embedded_duplex_owner_placements(
+            &binding.quest,
+            local_peer_id,
+            authority_peer_id,
+            device_peers,
+        )
+        .map_err(|_| QuestBrokerRuntimeError::MediaPeerRuntimeConfig)
+    }
 }
 
 /// Cross-repo packaged binding for one source-neutral product media session.
@@ -359,6 +420,17 @@ pub struct QuestBrokerMediaCompletionResponse {
     pub platform_effect_completed: bool,
 }
 
+/// Native-only activation material derived atomically from a completed Start.
+/// The embedding layer may sign this proof after releasing its provider guard.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct QuestBrokerProductActivationMaterial {
+    /// Exact Rust-authored completion JSON.
+    pub completion_json: String,
+    /// Closed fields copied from the typed completion.
+    pub proof: ProductActivationProof,
+}
+
 /// Provider initialization or same-process rebind status.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -509,6 +581,20 @@ impl MediaStreamTrustedOwnerProvider for QuestBrokerAndroidMediaOwnerProvider<'_
 }
 
 impl QuestBrokerRuntimeProvider {
+    /// Returns the embedded-duplex façade for the currently initialized provider.
+    ///
+    /// # Errors
+    ///
+    /// Rejects use before initialization or when the product has no peer Runtime Host.
+    pub fn embedded_duplex_authority(
+        &self,
+    ) -> Result<QuestEmbeddedDuplexAuthority, QuestBrokerRuntimeError> {
+        self.runtime
+            .as_ref()
+            .ok_or(QuestBrokerRuntimeError::NotInitialized)?
+            .embedded_duplex_authority()
+    }
+
     /// Installs the sole process-local media owner executor. Replacing it changes
     /// generation and invalidates every older in-flight ticket.
     ///
@@ -626,6 +712,35 @@ impl QuestBrokerRuntimeProvider {
         serde_json::to_string(&response).map_err(QuestBrokerRuntimeError::Encode)
     }
 
+    /// Completes one pending Start and returns native-only activation material
+    /// derived from the typed result. No caller-supplied completion JSON is read.
+    ///
+    /// # Errors
+    /// Rejects absent/non-Start actions and every ordinary completion failure.
+    pub fn complete_media_start_for_activation(
+        &mut self,
+        client_id: &DottedId,
+        now_ms: u64,
+    ) -> Result<QuestBrokerProductActivationMaterial, QuestBrokerRuntimeError> {
+        let runtime = self
+            .runtime
+            .as_mut()
+            .ok_or(QuestBrokerRuntimeError::NotInitialized)?;
+        let executor = self
+            .media_owner_executor
+            .as_mut()
+            .ok_or(QuestBrokerRuntimeError::TrustedMediaExecutorAbsent)?;
+        let response = runtime.complete_media_session_action(
+            &QuestBrokerMediaCompletionRequest {
+                client_id: client_id.clone(),
+            },
+            now_ms,
+            executor.as_mut(),
+            &mut self.next_media_execution_nonce,
+        )?;
+        product_activation_material(&response)
+    }
+
     /// Returns integrated runtime evidence JSON.
     ///
     /// # Errors
@@ -665,6 +780,47 @@ pub fn canonical_runtime_config_sha256(
     Ok(sha256_hex(&canonical))
 }
 
+fn product_activation_material(
+    response: &QuestBrokerMediaCompletionResponse,
+) -> Result<QuestBrokerProductActivationMaterial, QuestBrokerRuntimeError> {
+    let receipt_ids = response
+        .owner_receipts
+        .iter()
+        .map(|receipt| receipt.receipt_id.clone())
+        .collect::<Vec<_>>();
+    if response.schema_id != QUEST_BROKER_MEDIA_COMPLETION_RESPONSE_SCHEMA
+        || response.action.operation != MediaStreamPlatformOperation::Start
+        || !response.platform_effect_completed
+        || !response.application.platform_effect_completed
+        || response.application.resulting_phase
+            != rusty_quest_media_stream::MediaStreamRuntimePhase::SourcesStarted
+        || response.action.owner_actions.len() != 7
+        || receipt_ids.len() != 7
+        || receipt_ids.iter().collect::<BTreeSet<_>>().len() != 7
+        || response.application.owner_receipt_ids != receipt_ids
+        || response.application.action_id != response.action.action_id
+        || response.application.authority_epoch_id != response.provider_epoch_id.as_str()
+        || response.client_id.as_str() != response.action.client_authority.client_id
+    {
+        return Err(QuestBrokerRuntimeError::MediaExecutionTicketInvalid);
+    }
+    let completion_json =
+        serde_json::to_string(response).map_err(QuestBrokerRuntimeError::Encode)?;
+    Ok(QuestBrokerProductActivationMaterial {
+        proof: ProductActivationProof {
+            action_id: response.action.action_id.clone(),
+            provider_epoch_id: response.provider_epoch_id.to_string(),
+            client_id: response.client_id.to_string(),
+            lease_id: response.action.client_authority.lease_id.clone(),
+            runtime_spec_id: response.action.runtime_spec_id.clone(),
+            resulting_runtime_revision: response.application.resulting_runtime_revision,
+            owner_receipt_ids: receipt_ids,
+            completion_sha256: format!("sha256:{}", sha256_hex(completion_json.as_bytes())),
+        },
+        completion_json,
+    })
+}
+
 fn effective_media_bindings(
     config: &QuestBrokerRuntimeConfig,
 ) -> Vec<QuestBrokerMediaSessionProductBinding> {
@@ -678,6 +834,19 @@ fn effective_media_bindings(
 }
 
 impl QuestBrokerAuthorityRuntime {
+    /// Returns a façade over this runtime's single Broker and peer authorities.
+    pub fn embedded_duplex_authority(
+        &self,
+    ) -> Result<QuestEmbeddedDuplexAuthority, QuestBrokerRuntimeError> {
+        let peer = self
+            .peer_runtime_host
+            .clone()
+            .ok_or(QuestBrokerRuntimeError::MediaProductNotSelected)?;
+        Ok(QuestEmbeddedDuplexAuthority::new(
+            self.runtime.clone(),
+            peer,
+        ))
+    }
     /// Creates a fresh authority epoch from exact product/grant state and entropy.
     ///
     /// # Errors
@@ -700,6 +869,13 @@ impl QuestBrokerAuthorityRuntime {
         }
         validate_initial_lease_request_ids(&config.initial_leases)?;
         validate_media_session_binding(&config)?;
+        if config
+            .embedded_duplex
+            .as_ref()
+            .is_some_and(|duplex| !duplex.validate())
+        {
+            return Err(QuestBrokerRuntimeError::MediaPeerRuntimeConfig);
+        }
         validate_packaged_authority(&config)?;
         validate_bridge_mode(&config.bridge_kind, &config.adapter_config.mode)?;
         let media_bindings = effective_media_bindings(&config);
@@ -1652,11 +1828,16 @@ fn build_media_peer_runtime_host(
     if effective_media_bindings(config).is_empty() {
         return Ok(None);
     }
-    let media_runtime_host_id = DottedId::new(format!(
-        "host.quest.media-runtime.{}",
-        config.product_lock.product_id.as_str()
-    ))
-    .map_err(|_| QuestBrokerRuntimeError::MediaPeerRuntimeConfig)?;
+    let media_runtime_host_id = config.embedded_duplex.as_ref().map_or_else(
+        || {
+            DottedId::new(format!(
+                "host.quest.media-runtime.{}",
+                config.product_lock.product_id.as_str()
+            ))
+            .map_err(|_| QuestBrokerRuntimeError::MediaPeerRuntimeConfig)
+        },
+        |duplex| Ok(duplex.runtime_host_id.clone()),
+    )?;
     let media_scope = DottedId::new("lease.media.session").expect("static media scope");
     let outer_command = DottedId::new("command.media.session.start").expect("static command");
     let outer_capability = command_capability(&outer_command);
@@ -1779,6 +1960,7 @@ fn build_media_peer_runtime_host(
     {
         return Err(QuestBrokerRuntimeError::MediaPeerRuntimeConfig);
     }
+    let duplex = config.embedded_duplex.as_ref();
     let trust_policy = ManifoldPeerRuntimeTrustPolicy {
         schema_id: schema(PEER_RUNTIME_HOST_TRUST_POLICY_SCHEMA),
         policy_id: DottedId::new(format!(
@@ -1787,15 +1969,28 @@ fn build_media_peer_runtime_host(
         ))
         .map_err(|_| QuestBrokerRuntimeError::MediaPeerRuntimeConfig)?,
         revision: Revision::INITIAL,
-        enabled_authority_families: vec![ManifoldPeerRuntimeAuthorityFamily::MediaSession],
-        trusted_operator_ids: Vec::new(),
-        trusted_key_fingerprints: Vec::new(),
-        trusted_adapter_ids: Vec::new(),
+        enabled_authority_families: if duplex.is_some() {
+            vec![
+                ManifoldPeerRuntimeAuthorityFamily::PeerStatus,
+                ManifoldPeerRuntimeAuthorityFamily::Enrollment,
+                ManifoldPeerRuntimeAuthorityFamily::Rendezvous,
+                ManifoldPeerRuntimeAuthorityFamily::MediaSession,
+            ]
+        } else {
+            vec![ManifoldPeerRuntimeAuthorityFamily::MediaSession]
+        },
+        trusted_operator_ids: duplex
+            .map_or_else(Vec::new, |value| value.trusted_operator_ids.clone()),
+        trusted_key_fingerprints: duplex
+            .map_or_else(Vec::new, |value| value.trusted_key_fingerprints.clone()),
+        trusted_adapter_ids: duplex
+            .map_or_else(Vec::new, |value| value.trusted_adapter_ids.clone()),
         trusted_mesh_proposer_ids: Vec::new(),
         media_client_grants: grants,
-        trusted_media_revoker_ids: vec![
-            DottedId::new("operator.quest.media-runtime").expect("static revoker")
-        ],
+        trusted_media_revoker_ids: duplex.map_or_else(
+            || vec![DottedId::new("operator.quest.media-runtime").expect("static revoker")],
+            |value| value.trusted_media_revoker_ids.clone(),
+        ),
         direct_lane_client_grants: Vec::new(),
         trusted_direct_lane_revoker_ids: Vec::new(),
         media_runtime_host_id: media_runtime_host_id.clone(),
@@ -1803,21 +1998,33 @@ fn build_media_peer_runtime_host(
         direct_lane_runtime_lease_scope_id: DottedId::new("lease.direct-lane")
             .expect("static direct lane scope"),
     };
-    let media_command_runtime = ManifoldRuntimeHostSnapshot {
-        schema_id: schema(HOST_SNAPSHOT_SCHEMA),
-        host_id: media_runtime_host_id,
-        authority_revision: Revision::INITIAL,
-        commands: [
-            MANIFOLD_MEDIA_SESSION_ACCEPT_COMMAND,
-            rusty_manifold_media_session::MANIFOLD_MEDIA_SESSION_REVOKE_COMMAND,
-            MANIFOLD_MEDIA_SESSION_STOP_COMMAND,
-        ]
+    let mut media_command_ids = vec![
+        MANIFOLD_MEDIA_SESSION_ACCEPT_COMMAND,
+        rusty_manifold_media_session::MANIFOLD_MEDIA_SESSION_REVOKE_COMMAND,
+        MANIFOLD_MEDIA_SESSION_STOP_COMMAND,
+    ];
+    if duplex.is_some() {
+        media_command_ids.extend([
+            PAIR_MEDIA_ROUTE_ISSUE_COMMAND,
+            PAIR_MEDIA_ROUTE_STOP_COMMAND,
+            PAIR_MEDIA_ROUTE_REVOKE_COMMAND,
+            PAIR_MEDIA_ROUTE_CLEANUP_COMMAND,
+        ]);
+    }
+    let mut media_commands = media_command_ids
         .into_iter()
         .map(|command| ManifoldRuntimeCommandDescriptor {
             command_id: DottedId::new(command).expect("static media command"),
             required_lease_scope: Some(media_scope.clone()),
         })
-        .collect(),
+        .collect::<Vec<_>>();
+    media_commands.sort_by(|left, right| left.command_id.cmp(&right.command_id));
+    let peer_runtime_host_id = media_runtime_host_id.clone();
+    let media_command_runtime = ManifoldRuntimeHostSnapshot {
+        schema_id: schema(HOST_SNAPSHOT_SCHEMA),
+        host_id: media_runtime_host_id,
+        authority_revision: Revision::INITIAL,
+        commands: media_commands,
         leases: Vec::new(),
         applied_request_ids: Vec::new(),
         reviewed_sweep_ids: Vec::new(),
@@ -1826,11 +2033,7 @@ fn build_media_peer_runtime_host(
         audit_events: Vec::new(),
     };
     let host = ManifoldPeerRuntimeHost::new(
-        DottedId::new(format!(
-            "host.quest.peer-runtime.{}",
-            config.product_lock.product_id.as_str()
-        ))
-        .map_err(|_| QuestBrokerRuntimeError::MediaPeerRuntimeConfig)?,
+        peer_runtime_host_id,
         trust_policy,
         provider_epoch_id.clone(),
         media_command_runtime,
@@ -2569,6 +2772,7 @@ impl std::error::Error for QuestBrokerRuntimeError {}
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ed25519_dalek::{Signer, SigningKey};
     use rusty_manifold_admission::{
         ManifoldAdmissionGrant, ManifoldAdmissionSnapshot, ManifoldClientIdentity,
         ADMISSION_SNAPSHOT_SCHEMA,
@@ -2579,6 +2783,20 @@ mod tests {
     use rusty_manifold_broker_product::{
         resolve_broker_product, ManifoldBrokerFeature, ManifoldBrokerProductSpec,
         BROKER_PRODUCT_SPEC_SCHEMA,
+    };
+    use rusty_manifold_peer::{
+        ManifoldCommonLanEndpointBinding, ManifoldCommonLanPairRole,
+        ManifoldCommonLanPeerSessionProposal, ManifoldCommonLanReciprocalEd25519PeerBinding,
+        ManifoldCommonLanReciprocalEd25519ReviewRequest,
+        ManifoldCommonLanReciprocalEd25519Signature, ManifoldCommonLanTransportBinding,
+        ManifoldPeerAvailability, ManifoldPeerCredentialAlgorithm, ManifoldPeerCredentialRecord,
+        ManifoldPeerCredentialStatus, ManifoldPeerEnrollmentAction, ManifoldPeerEnrollmentRequest,
+        ManifoldPeerIdentity, ManifoldPeerPayloadClass, ManifoldPeerRole, ManifoldPeerStatus,
+        ManifoldPeerStatusProposal, COMMON_LAN_PAIR_TOPOLOGY_CONTRACT_ID,
+        COMMON_LAN_PEER_SESSION_PROPOSAL_SCHEMA, COMMON_LAN_RECIPROCAL_ED25519_REVIEW_SCHEMA,
+        COMMON_LAN_RECIPROCAL_ED25519_SIGNATURE_SCHEMA, COMMON_LAN_TCP_TRANSPORT_CONTRACT_ID,
+        PEER_CREDENTIAL_SCHEMA, PEER_ENROLLMENT_REQUEST_SCHEMA, PEER_IDENTITY_SCHEMA,
+        PEER_PROPOSAL_SCHEMA, PEER_STATUS_SCHEMA,
     };
     use rusty_manifold_runtime_host::{
         ManifoldRuntimeRejectionReason, HOST_COMMAND_REQUEST_SCHEMA,
@@ -2953,6 +3171,7 @@ mod tests {
             },
             media_session,
             media_sessions: Vec::new(),
+            embedded_duplex: None,
         }
     }
 
@@ -3038,6 +3257,406 @@ mod tests {
             1_000_000_000,
         )
         .expect("runtime")
+    }
+
+    fn bootstrap_common_lan_peer(
+        authority: &QuestEmbeddedDuplexAuthority,
+        peer: &str,
+        key_id: &str,
+        fingerprint: &str,
+        key: &SigningKey,
+        ordinal: u64,
+    ) {
+        let status = ManifoldPeerStatusProposal {
+            schema_id: schema(PEER_PROPOSAL_SCHEMA),
+            proposal_id: id(&format!("proposal.{peer}.{ordinal}")),
+            expected_authority_revision: Revision::new(ordinal).expect("peer revision"),
+            proposer_id: id("adapter.quest.embedded-duplex"),
+            identity: ManifoldPeerIdentity {
+                schema_id: schema(PEER_IDENTITY_SCHEMA),
+                peer_id: id(peer),
+                key_fingerprint: id(fingerprint),
+                trust_domain: id("trust.morphospace.peer"),
+                roles: vec![ManifoldPeerRole::Observer, ManifoldPeerRole::Rendezvous],
+            },
+            status: ManifoldPeerStatus {
+                schema_id: schema(PEER_STATUS_SCHEMA),
+                peer_id: id(peer),
+                status_revision: Revision::INITIAL,
+                observed_at_ms: 1_000,
+                expires_at_ms: 60_000,
+                availability: ManifoldPeerAvailability::Ready,
+                capability_ids: vec![
+                    id("capability.rendezvous.ble"),
+                    id("capability.route.rust-direct-p2p"),
+                    id("capability.topology.wifi-direct"),
+                ],
+            },
+            payload_class: ManifoldPeerPayloadClass::LowRateDescriptor,
+        };
+        assert!(
+            authority
+                .review_peer_status(status, 1_100)
+                .expect("status")
+                .1
+                .applied
+        );
+        let public = key.verifying_key().to_bytes();
+        let public_hex = public
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>();
+        let request = ManifoldPeerEnrollmentRequest {
+            schema_id: schema(PEER_ENROLLMENT_REQUEST_SCHEMA),
+            request_id: id(&format!("request.enroll.{peer}.{ordinal}")),
+            expected_authority_revision: Revision::new(ordinal).expect("enrollment revision"),
+            operator_id: id("operator.quest.peer-enrollment"),
+            issued_at_ms: 1_200,
+            action: ManifoldPeerEnrollmentAction::Enroll {
+                credential: ManifoldPeerCredentialRecord {
+                    schema_id: schema(PEER_CREDENTIAL_SCHEMA),
+                    credential_id: id(&format!("credential.{peer}.1")),
+                    peer_id: id(peer),
+                    trust_domain: id("trust.morphospace.peer"),
+                    key_id: id(key_id),
+                    key_generation: 1,
+                    algorithm: ManifoldPeerCredentialAlgorithm::Ed25519,
+                    public_key_hex: public_hex,
+                    public_key_sha256: format!("sha256:{}", sha256_hex(&public)),
+                    valid_from_ms: 1_000,
+                    expires_at_ms: 60_000,
+                    status: ManifoldPeerCredentialStatus::Active,
+                    replaced_by_key_id: None,
+                },
+            },
+        };
+        assert!(
+            authority
+                .review_enrollment(&request, 1_200)
+                .expect("enrollment")
+                .applied
+        );
+    }
+
+    fn common_lan_transport(config_byte: char) -> ManifoldCommonLanTransportBinding {
+        ManifoldCommonLanTransportBinding {
+            topology_contract_id: id(COMMON_LAN_PAIR_TOPOLOGY_CONTRACT_ID),
+            transport_contract_id: id(COMMON_LAN_TCP_TRANSPORT_CONTRACT_ID),
+            network_scope_id: id("network.scope.quest-pair"),
+            endpoints: vec![
+                ManifoldCommonLanEndpointBinding {
+                    peer_id: id("peer.quest-a"),
+                    endpoint_id: id("endpoint.quest-a.media"),
+                    listen_ip_address: "192.168.49.2".to_owned(),
+                    listen_port: 46_000,
+                },
+                ManifoldCommonLanEndpointBinding {
+                    peer_id: id("peer.quest-b"),
+                    endpoint_id: id("endpoint.quest-b.media"),
+                    listen_ip_address: "192.168.49.3".to_owned(),
+                    listen_port: 46_001,
+                },
+            ],
+            route_configuration_sha256: format!("sha256:{}", config_byte.to_string().repeat(64)),
+        }
+    }
+
+    fn reciprocal_request(
+        authority: &QuestEmbeddedDuplexAuthority,
+        request_id: &str,
+        alpha: &SigningKey,
+        beta: &SigningKey,
+    ) -> ManifoldCommonLanReciprocalEd25519ReviewRequest {
+        let draft = crate::embedded_duplex::QuestCommonLanContextDraft {
+            correlation_id: id(request_id),
+            initiator: ManifoldCommonLanReciprocalEd25519PeerBinding {
+                peer_id: id("peer.quest-a"),
+                key_id: id("key.peer.quest-a.1"),
+                key_generation: 1,
+                public_key_sha256: format!(
+                    "sha256:{}",
+                    sha256_hex(&alpha.verifying_key().to_bytes())
+                ),
+                role: ManifoldCommonLanPairRole::Initiator,
+                device_nonce_hex: "61".repeat(32),
+            },
+            responder: ManifoldCommonLanReciprocalEd25519PeerBinding {
+                peer_id: id("peer.quest-b"),
+                key_id: id("key.peer.quest-b.1"),
+                key_generation: 1,
+                public_key_sha256: format!(
+                    "sha256:{}",
+                    sha256_hex(&beta.verifying_key().to_bytes())
+                ),
+                role: ManifoldCommonLanPairRole::Responder,
+                device_nonce_hex: "72".repeat(32),
+            },
+            transport: common_lan_transport('5'),
+            coordinator_epoch: 1,
+            issued_at_ms: 1_300,
+            expires_at_ms: 50_000,
+        };
+        let context = authority
+            .prepare_common_lan_context(draft)
+            .expect("context");
+        let bytes = QuestEmbeddedDuplexAuthority::common_lan_context_signing_bytes(&context);
+        let digest = rusty_manifold_peer::common_lan_reciprocal_ed25519_context_sha256(&context);
+        let signature = |peer: &str, key_id: &str, key: &SigningKey| {
+            ManifoldCommonLanReciprocalEd25519Signature {
+                schema_id: schema(COMMON_LAN_RECIPROCAL_ED25519_SIGNATURE_SCHEMA),
+                signer_peer_id: id(peer),
+                signer_key_id: id(key_id),
+                context_sha256: digest.clone(),
+                signature_hex: key
+                    .sign(&bytes)
+                    .to_bytes()
+                    .iter()
+                    .map(|byte| format!("{byte:02x}"))
+                    .collect(),
+            }
+        };
+        ManifoldCommonLanReciprocalEd25519ReviewRequest {
+            schema_id: schema(COMMON_LAN_RECIPROCAL_ED25519_REVIEW_SCHEMA),
+            request_id: id(request_id),
+            context,
+            initiator_signature: signature("peer.quest-a", "key.peer.quest-a.1", alpha),
+            responder_signature: signature("peer.quest-b", "key.peer.quest-b.1", beta),
+        }
+    }
+
+    #[test]
+    fn embedded_duplex_enables_exact_mixed_authority_and_route_commands() {
+        let mut runtime_config = config(
+            QuestBrokerAuthorityBridgeKind::EmbeddedInProcessJni,
+            vec![ManifoldBrokerFeature::MediaSession],
+            "command.media.session.start",
+            true,
+        );
+        runtime_config = runtime_config
+            .with_embedded_duplex(QuestEmbeddedDuplexAuthorityConfig {
+                schema_id: crate::QUEST_EMBEDDED_DUPLEX_AUTHORITY_CONFIG_SCHEMA.to_owned(),
+                runtime_host_id: id("host.quest-a.media-runtime"),
+                trusted_operator_ids: vec![id("operator.quest.peer-enrollment")],
+                trusted_key_fingerprints: vec![
+                    id("fingerprint.peer.quest-a"),
+                    id("fingerprint.peer.quest-b"),
+                ],
+                trusted_adapter_ids: vec![id("adapter.quest.embedded-duplex")],
+                trusted_media_revoker_ids: vec![id("operator.quest.media-revoker")],
+            })
+            .expect("duplex config");
+        let placements = runtime_config
+            .embedded_duplex_owner_placements(
+                "runtime.media.display-example",
+                "peer.quest-a",
+                "peer.quest-a",
+                &[
+                    AndroidMediaDevicePeerPlacement {
+                        device_id: "quest-a".to_owned(),
+                        peer_id: "peer.quest-a".to_owned(),
+                    },
+                    AndroidMediaDevicePeerPlacement {
+                        device_id: "pc-host".to_owned(),
+                        peer_id: "peer.quest-b".to_owned(),
+                    },
+                ],
+            )
+            .expect("exact packaged placements");
+        assert_eq!(placements.len(), 7);
+        assert!(placements.iter().any(|placement| {
+            placement.owner_kind == MediaStreamOwnerKind::Sink
+                && matches!(
+                    &placement.target,
+                    rusty_quest_media_stream_android::AndroidMediaOwnerPlacementTarget::Remote {
+                        peer_id
+                    } if peer_id == "peer.quest-b"
+                )
+        }));
+        assert!(placements.iter().any(|placement| {
+            placement.owner_kind == MediaStreamOwnerKind::Cleanup
+                && placement.target
+                    == rusty_quest_media_stream_android::AndroidMediaOwnerPlacementTarget::Local
+        }));
+        let mut peer_b_config = runtime_config.clone();
+        peer_b_config
+            .embedded_duplex
+            .as_mut()
+            .expect("duplex config")
+            .runtime_host_id = id("host.quest-b.media-runtime");
+        let runtime = QuestBrokerAuthorityRuntime::from_config(
+            runtime_config,
+            &"09".repeat(32),
+            1_000,
+            1_000_000_000,
+        )
+        .expect("duplex runtime");
+        let snapshot: serde_json::Value = serde_json::from_str(
+            &runtime
+                .embedded_duplex_authority()
+                .expect("duplex authority")
+                .snapshot_json()
+                .expect("snapshot"),
+        )
+        .expect("snapshot json");
+        assert_eq!(
+            snapshot["trust_policy"]["enabled_authority_families"],
+            serde_json::json!(["peer_status", "enrollment", "rendezvous", "media_session"])
+        );
+        assert_eq!(snapshot["host_id"], "host.quest-a.media-runtime");
+        let peer_b = QuestBrokerAuthorityRuntime::from_config(
+            peer_b_config,
+            &"0a".repeat(32),
+            1_000,
+            1_000_000_000,
+        )
+        .expect("second duplex runtime");
+        let peer_b_snapshot: serde_json::Value = serde_json::from_str(
+            &peer_b
+                .embedded_duplex_authority()
+                .expect("second duplex authority")
+                .snapshot_json()
+                .expect("second snapshot"),
+        )
+        .expect("second snapshot json");
+        assert_eq!(peer_b_snapshot["host_id"], "host.quest-b.media-runtime");
+        assert_ne!(snapshot["host_id"], peer_b_snapshot["host_id"]);
+        let authority_a = runtime.embedded_duplex_authority().expect("authority a");
+        let authority_b = peer_b.embedded_duplex_authority().expect("authority b");
+        let alpha = SigningKey::from_bytes(&[41; 32]);
+        let beta = SigningKey::from_bytes(&[42; 32]);
+        for authority in [&authority_a, &authority_b] {
+            bootstrap_common_lan_peer(
+                authority,
+                "peer.quest-a",
+                "key.peer.quest-a.1",
+                "fingerprint.peer.quest-a",
+                &alpha,
+                1,
+            );
+            bootstrap_common_lan_peer(
+                authority,
+                "peer.quest-b",
+                "key.peer.quest-b.1",
+                "fingerprint.peer.quest-b",
+                &beta,
+                2,
+            );
+        }
+        let request_a =
+            reciprocal_request(&authority_a, "request.reciprocal.host-a", &alpha, &beta);
+        let request_b =
+            reciprocal_request(&authority_b, "request.reciprocal.host-b", &alpha, &beta);
+        assert_ne!(
+            request_a.context.runtime_host_id,
+            request_b.context.runtime_host_id
+        );
+        assert_ne!(
+            rusty_manifold_peer::common_lan_reciprocal_ed25519_context_sha256(&request_a.context),
+            rusty_manifold_peer::common_lan_reciprocal_ed25519_context_sha256(&request_b.context)
+        );
+        let mut wrong_key = request_a.clone();
+        let wrong_bytes =
+            QuestEmbeddedDuplexAuthority::common_lan_context_signing_bytes(&wrong_key.context);
+        wrong_key.responder_signature.signature_hex = alpha
+            .sign(&wrong_bytes)
+            .to_bytes()
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect();
+        assert!(
+            !authority_a
+                .apply_common_lan_reciprocal(&wrong_key, 1_400)
+                .expect("typed wrong-key rejection")
+                .accepted
+        );
+        let receipt_a = authority_a
+            .apply_common_lan_reciprocal(&request_a, 1_400)
+            .expect("reciprocal a");
+        let receipt_b = authority_b
+            .apply_common_lan_reciprocal(&request_b, 1_400)
+            .expect("reciprocal b");
+        let proposal = |suffix: &str| ManifoldCommonLanPeerSessionProposal {
+            schema_id: schema(COMMON_LAN_PEER_SESSION_PROPOSAL_SCHEMA),
+            proposal_id: id(&format!("proposal.session.{suffix}")),
+            session_id: id("session.peer.quest-a-b"),
+            expected_authority_revision: Revision::INITIAL,
+            subject_peer_id: id("peer.quest-a"),
+            candidate_peer_id: id("peer.quest-b"),
+            initiator_peer_id: id("peer.quest-a"),
+            responder_peer_id: id("peer.quest-b"),
+            requested_capability_ids: vec![
+                id("capability.rendezvous.ble"),
+                id("capability.route.rust-direct-p2p"),
+                id("capability.topology.wifi-direct"),
+            ],
+            transport: common_lan_transport('5'),
+            expires_at_ms: 50_000,
+        };
+        let (_, topology_a) = authority_a
+            .apply_common_lan_session(&proposal("host-a"), &receipt_a, 1_500)
+            .expect("session a");
+        let (_, topology_b) = authority_b
+            .apply_common_lan_session(&proposal("host-b"), &receipt_b, 1_500)
+            .expect("session b");
+        assert_ne!(
+            sha256_hex(&serde_json::to_vec(&topology_a).expect("topology a")),
+            sha256_hex(&serde_json::to_vec(&topology_b).expect("topology b"))
+        );
+        let projection = rusty_quest_media_stream_android::OwnerDispatchAuthorityProjection {
+            schema_id: crate::QUEST_C1_OWNER_PROJECTION_SCHEMA.to_owned(),
+            authority_peer_id: "peer.quest-a".to_owned(),
+            executor_peer_id: "peer.quest-b".to_owned(),
+            peer_session_id: "session.peer.quest-a-b".to_owned(),
+            route_grant_id: "grant.route.quest-a-b".to_owned(),
+            route_authority_revision: 1,
+            authority_runtime_host_id: "host.quest-a.media-runtime".to_owned(),
+            authority_provider_epoch_id: "epoch.source".to_owned(),
+            platform_runtime_spec_id: "runtime.media.display-example".to_owned(),
+            authority_client_id: "client.quest.runtime".to_owned(),
+            authority_runtime_lease_id: "lease.media.session.quest.runtime".to_owned(),
+            signed_topology_sha256: format!(
+                "sha256:{}",
+                sha256_hex(&serde_json::to_vec(&topology_a).expect("topology a"))
+            ),
+            route_configuration_sha256: common_lan_transport('5').route_configuration_sha256,
+            route_authority_evidence_sha256: format!("sha256:{}", "7".repeat(64)),
+            expires_at_ms: 40_000,
+            authorization_kind:
+                rusty_quest_media_stream_android::OwnerDispatchAuthorizationKind::CurrentRoute,
+        };
+        authority_b
+            .verify_remote_projection_for_test(&projection, "key.peer.quest-a.1", 1_600)
+            .expect("different host-local topology accepts semantic source projection");
+        for damaged in [
+            {
+                let mut value = projection.clone();
+                value.route_configuration_sha256 = format!("sha256:{}", "8".repeat(64));
+                value
+            },
+            {
+                let mut value = projection.clone();
+                value.executor_peer_id = "peer.attacker".to_owned();
+                value
+            },
+        ] {
+            assert!(authority_b
+                .verify_remote_projection_for_test(&damaged, "key.peer.quest-a.1", 1_600)
+                .is_err());
+        }
+        assert!(authority_b
+            .verify_remote_projection_for_test(&projection, "key.peer.attacker.1", 1_600)
+            .is_err());
+        let commands = snapshot["media_command_runtime"]["commands"]
+            .as_array()
+            .expect("commands");
+        for command in [
+            PAIR_MEDIA_ROUTE_ISSUE_COMMAND,
+            PAIR_MEDIA_ROUTE_STOP_COMMAND,
+            PAIR_MEDIA_ROUTE_REVOKE_COMMAND,
+            PAIR_MEDIA_ROUTE_CLEANUP_COMMAND,
+        ] {
+            assert!(commands.iter().any(|value| value["command_id"] == command));
+        }
     }
 
     #[test]

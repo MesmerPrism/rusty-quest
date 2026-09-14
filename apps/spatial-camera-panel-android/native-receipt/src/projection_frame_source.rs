@@ -28,6 +28,10 @@ pub(crate) fn projection_peer_stop_result(active_match: bool, retired_match: boo
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct PackedFrameIdentity {
+    pub(crate) receiver_generation: u64,
+    pub(crate) connection_generation: u64,
+    pub(crate) source_elapsed_ns: i64,
+    pub(crate) source_unix_ns: i64,
     pub(crate) pair_id: u64,
     pub(crate) left_source_frame: u64,
     pub(crate) right_source_frame: u64,
@@ -167,6 +171,26 @@ impl ProjectionFrameSourceState {
         Ok(Some(accepted.packed))
     }
 
+    pub(crate) fn discard_exact(&mut self, output_timestamp_ns: i64) {
+        self.pending.remove(&output_timestamp_ns);
+    }
+
+    pub(crate) fn retire_receiver_connection(
+        &mut self,
+        receiver_generation: u64,
+        connection_generation: u64,
+    ) {
+        self.pending.retain(|_, pending| {
+            pending.packed.receiver_generation != receiver_generation
+                || pending.packed.connection_generation != connection_generation
+        });
+    }
+
+    pub(crate) fn retire_receiver_generation(&mut self, receiver_generation: u64) {
+        self.pending
+            .retain(|_, pending| pending.packed.receiver_generation != receiver_generation);
+    }
+
     pub(crate) fn record_buffer_removed(&mut self, stable_buffer_id: Option<u64>) {
         let Some(stable_buffer_id) = stable_buffer_id.filter(|value| *value != 0) else {
             self.buffer_reuse_disabled = true;
@@ -201,7 +225,11 @@ impl ProjectionFrameSourceState {
 }
 
 fn valid_packed_identity(identity: PackedFrameIdentity) -> bool {
-    identity.pair_id != 0
+    (identity.receiver_generation == 0) == (identity.connection_generation == 0)
+        && (identity.source_elapsed_ns == 0) == (identity.source_unix_ns == 0)
+        && identity.source_elapsed_ns >= 0
+        && identity.source_unix_ns >= 0
+        && identity.pair_id != 0
         && identity.left_source_frame != 0
         && identity.right_source_frame != 0
         && identity.left_sensor_timestamp_ns > 0
@@ -300,12 +328,30 @@ mod tests {
 
     fn packed(pair_id: u64) -> PackedFrameIdentity {
         PackedFrameIdentity {
+            receiver_generation: 0,
+            connection_generation: 0,
+            source_elapsed_ns: 0,
+            source_unix_ns: 0,
             pair_id,
             left_source_frame: pair_id * 2,
             right_source_frame: pair_id * 2 + 1,
             left_sensor_timestamp_ns: 10_000 + pair_id as i64,
             right_sensor_timestamp_ns: 10_002 + pair_id as i64,
             pair_delta_ns: 2,
+        }
+    }
+
+    fn embedded_packed(
+        receiver_generation: u64,
+        connection_generation: u64,
+        pair_id: u64,
+    ) -> PackedFrameIdentity {
+        PackedFrameIdentity {
+            receiver_generation,
+            connection_generation,
+            source_elapsed_ns: 100,
+            source_unix_ns: 200,
+            ..packed(pair_id)
         }
     }
 
@@ -355,6 +401,42 @@ mod tests {
         );
         assert_eq!(
             source.consume_exact(20_000),
+            Err(FrameIdentityError::MissingExactTimestamp)
+        );
+    }
+
+    #[test]
+    fn connection_and_generation_retirement_clear_only_matching_exact_pts() {
+        let mut source = ProjectionFrameSourceState::new_bound(
+            41,
+            9,
+            ProjectionDecoderRole::ProjectionPeer,
+            7,
+            true,
+        );
+        source
+            .register_packed(1, embedded_packed(5, 10, 1))
+            .unwrap();
+        source
+            .register_packed(2, embedded_packed(5, 11, 2))
+            .unwrap();
+        source
+            .register_packed(3, embedded_packed(6, 10, 3))
+            .unwrap();
+
+        source.retire_receiver_connection(5, 10);
+        assert_eq!(
+            source.consume_exact(1),
+            Err(FrameIdentityError::MissingExactTimestamp)
+        );
+        assert_eq!(
+            source.consume_exact(2).unwrap(),
+            Some(embedded_packed(5, 11, 2))
+        );
+
+        source.retire_receiver_generation(6);
+        assert_eq!(
+            source.consume_exact(3),
             Err(FrameIdentityError::MissingExactTimestamp)
         );
     }

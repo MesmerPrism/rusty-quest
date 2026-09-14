@@ -185,6 +185,13 @@ pub(crate) struct PeerFrameWitness {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct LocalCameraStartPermit {
+    pub(crate) route_generation: i64,
+    pub(crate) launch_challenge: i64,
+    pub(crate) surface_generation: i64,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct QualifiedProducerInactiveWitness {
     route_generation: i64,
     producer_session: i64,
@@ -199,6 +206,38 @@ struct SourceOwnerState {
 
 static SOURCE_OWNER: LazyLock<Mutex<SourceOwnerState>> =
     LazyLock::new(|| Mutex::new(SourceOwnerState::default()));
+
+pub(crate) fn current_local_camera_start_permit(
+    launch_challenge: i64,
+    surface_generation: i64,
+) -> Option<LocalCameraStartPermit> {
+    let owner = SOURCE_OWNER.lock().ok()?;
+    let receipt = owner.receipt?;
+    (receipt.words[2] == SOURCE_LOCAL
+        && receipt.words[11] == RESULT_PENDING
+        && receipt.words[13] == 1
+        && receipt.words[5] == launch_challenge
+        && receipt.words[6] == surface_generation)
+        .then_some(LocalCameraStartPermit {
+            route_generation: receipt.words[1],
+            launch_challenge,
+            surface_generation,
+        })
+}
+
+pub(crate) fn local_camera_start_permit_is_current(permit: LocalCameraStartPermit) -> bool {
+    current_local_camera_start_permit(permit.launch_challenge, permit.surface_generation)
+        == Some(permit)
+}
+
+/// Legacy camera entry points remain available only before route ownership is established.
+/// Once the coordinator has published any source receipt, all starts must carry its exact permit.
+pub(crate) fn unfenced_local_camera_start_allowed() -> bool {
+    SOURCE_OWNER
+        .lock()
+        .map(|owner| owner.receipt.is_none())
+        .unwrap_or(false)
+}
 
 pub(crate) fn request_source(
     words: [i64; SOURCE_ABI_WORDS],
@@ -468,7 +507,7 @@ pub(crate) fn record_current_local_submission_retired(
         owner.receipt.and_then(|receipt| {
             (receipt.words[2] == SOURCE_LOCAL
                 && matches!(receipt.words[11], RESULT_PENDING | RESULT_EFFECTIVE))
-                .then_some(receipt.words[1])
+            .then_some(receipt.words[1])
         })
     }?;
     Some(record_local_submission_retired(
@@ -880,6 +919,23 @@ mod tests {
     }
 
     #[test]
+    fn local_camera_permit_is_exact_and_newer_routes_revoke_it() {
+        let _guard = reset();
+        assert!(unfenced_local_camera_start_allowed());
+        let local = request_source(request(311, SOURCE_LOCAL), true);
+        assert!(!unfenced_local_camera_start_allowed());
+        let permit = current_local_camera_start_permit(local.words[5], local.words[6])
+            .expect("current local permit");
+        assert_eq!(permit.route_generation, 311);
+        assert!(local_camera_start_permit_is_current(permit));
+        assert!(current_local_camera_start_permit(local.words[5] + 1, local.words[6]).is_none());
+
+        request_source(request(312, SOURCE_PEER), true);
+        assert!(!local_camera_start_permit_is_current(permit));
+        assert!(current_local_camera_start_permit(local.words[5], local.words[6]).is_none());
+    }
+
+    #[test]
     fn local_effective_requires_real_reader_and_import_retirement_evidence() {
         let _guard = reset();
         request_source(request(401, SOURCE_LOCAL), true);
@@ -901,7 +957,8 @@ mod tests {
         request_source(request(501, SOURCE_LOCAL), true);
         let first = record_current_local_submission_retired(7, 8).expect("pending local receipt");
         SOURCE_OWNER.lock().unwrap().receipt.as_mut().unwrap().words[9] = 41;
-        let refreshed = record_current_local_submission_retired(9, 10).expect("effective local receipt");
+        let refreshed =
+            record_current_local_submission_retired(9, 10).expect("effective local receipt");
         assert_eq!(first.words[11], RESULT_EFFECTIVE);
         assert_eq!(refreshed.words[1], 501);
         assert_eq!(refreshed.words[2], SOURCE_LOCAL);

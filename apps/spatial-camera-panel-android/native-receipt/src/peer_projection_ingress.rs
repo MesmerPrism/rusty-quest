@@ -299,10 +299,12 @@ mod jni_boundary {
                 }
             }
         }
+        if accepted && receipt.words[2] != peer_projection_runtime::SOURCE_LOCAL {
+            crate::camera_hwb_probe::request_camera_hwb_probe_stop();
+        }
         if receipt.words[2] == peer_projection_runtime::SOURCE_DISABLED
             && receipt.words[11] == peer_projection_runtime::RESULT_PENDING
         {
-            crate::camera_hwb_probe::request_camera_hwb_probe_stop();
             crate::spatial_video_projection_probe::request_spatial_video_projection_probe_stop();
         }
         output_words(&mut env, receipt)

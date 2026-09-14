@@ -44,6 +44,8 @@ mod camera_replay_capture;
 #[cfg(any(target_os = "android", test))]
 mod camera_reprojection_guard_band;
 #[cfg(any(target_os = "android", test))]
+mod embedded_duplex;
+#[cfg(any(target_os = "android", test))]
 mod frame_lease_slots;
 mod hand_adapter_consumer;
 #[cfg(target_os = "android")]

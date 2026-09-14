@@ -298,6 +298,7 @@ internal class SpatialCameraHwbProjectionRawCarrierCoordinator(
   private var activeSceneSwapchain: SceneSwapchain? = null
   private var activeLayerFence: SpatialCameraHwbProjectionRawLaunchFence? = null
   private var activeRenderSurface: AndroidSurface? = null
+  private var activeReaderMaxImages = 0
   private var activeSamplerOverrideSubmitted = false
 
   fun run(readerMaxImages: Int, videoSettings: SpatialVideoProjectionSettings) {
@@ -384,7 +385,10 @@ internal class SpatialCameraHwbProjectionRawCarrierCoordinator(
       )
       return
     }
-    activeRenderSurface = renderSurface
+    synchronized(rawLayerPublicationMonitor) {
+      activeRenderSurface = renderSurface
+      activeReaderMaxImages = readerMaxImages
+    }
     bindings.dispatchSourceLifecycle sourceLifecycle@{
     val sourceState =
         bindings.onSourceCarrierReady(
@@ -563,6 +567,7 @@ internal class SpatialCameraHwbProjectionRawCarrierCoordinator(
     activeSceneSwapchain = null
     activeLayerFence = null
     activeRenderSurface = null
+    activeReaderMaxImages = 0
     activeSamplerOverrideSubmitted = false
     val removedFence = rawLayerContinuity.recordLayerRemoved() ?: return
     publishLayerFence(removedFence, "removed-$reason")
@@ -613,6 +618,29 @@ internal class SpatialCameraHwbProjectionRawCarrierCoordinator(
       runCatching { bindings.readNativeProjectionSource(routeGeneration) }
           .getOrNull()
           ?.let(SpatialVideoSourceNativeAbi::decodeReadback)
+
+  /** Restarts capture on the retained carrier after the shared sender has terminated. */
+  fun restartLocalAcquisition(routeGeneration: Long): Boolean {
+    val current = readNativeSource(routeGeneration) ?: return false
+    val retained = synchronized(rawLayerPublicationMonitor) {
+      Triple(activeRenderSurface, activeLayerFence, activeReaderMaxImages)
+    }
+    val surface = retained.first ?: return false
+    val fence = retained.second ?: return false
+    if (!surface.isValid || retained.third !in 3..12 ||
+        current.routeGeneration != routeGeneration || current.source != SpatialVideoSource.Local ||
+        current.result != SpatialVideoSourceResult.Pending || !current.cameraStartRequested ||
+        current.launchChallenge != fence.launchChallenge ||
+        current.surfaceGeneration != fence.layerGeneration ||
+        !bindings.privateLayerOverrideLifecycleCurrent(fence.launchChallenge)) return false
+    val start = bindings.startNative(
+        surface, CAMERA_HWB_PROJECTION_WIDTH_PX, CAMERA_HWB_PROJECTION_HEIGHT_PX,
+        CAMERA_HWB_PROJECTION_FRAME_COUNT_UNBOUNDED, retained.third, fence.launchChallenge,
+        fence.layerGeneration, fence.layerSwitchCount, fence.layerState.code,
+    )
+    readNativeSource(routeGeneration)?.let(bindings.reportNativeProjectionSource)
+    return start and (1L shl 3) != 0L
+  }
 
   fun attachProjectionPeerCommonGraph(identity: SpatialPeerProjectionDecoderIdentity): Boolean {
     val carrier = synchronized(rawLayerPublicationMonitor) {

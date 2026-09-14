@@ -2,7 +2,7 @@ use std::ffi::c_void;
 #[cfg(not(rq_environment_depth_spatial_sdk_api_layer))]
 use std::ffi::CString;
 use std::os::raw::{c_float, c_int};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, LazyLock, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -86,15 +86,78 @@ const CAMERA_HWB_PROBE_WAIT_FRAME_MS: u64 = 5000;
 const CAMERA_HWB_PROBE_MAX_FRAMES: u32 = 1800;
 
 static STOP_CAMERA_HWB_PROBE: AtomicBool = AtomicBool::new(false);
+static ACTIVE_LOCAL_CAMERA_WORKERS: AtomicUsize = AtomicUsize::new(0);
+static ACTIVE_PEER_COMMON_GRAPH_WORKERS: AtomicUsize = AtomicUsize::new(0);
+static LOCAL_CAMERA_START_OWNER: Mutex<
+    Option<crate::peer_projection_runtime::LocalCameraStartPermit>,
+> = Mutex::new(None);
 static PEER_COMMON_GRAPH_SESSION: LazyLock<Mutex<PeerCommonGraphSessionOwner>> =
     LazyLock::new(|| Mutex::new(PeerCommonGraphSessionOwner::default()));
 static NEXT_CAMERA_IMPORT_STREAM_GENERATION: AtomicU64 = AtomicU64::new(1);
 static NEXT_SDK_SURFACE_GENERATION: std::sync::atomic::AtomicU64 =
     std::sync::atomic::AtomicU64::new(1);
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct LocalCameraOwnershipSnapshot {
+    pub(crate) active_workers: usize,
+    pub(crate) claimed_route_generation: Option<i64>,
+    pub(crate) stop_requested: bool,
+}
+
+pub(crate) fn local_camera_ownership_snapshot() -> Option<LocalCameraOwnershipSnapshot> {
+    let owner = LOCAL_CAMERA_START_OWNER.lock().ok()?;
+    Some(LocalCameraOwnershipSnapshot {
+        active_workers: ACTIVE_LOCAL_CAMERA_WORKERS.load(Ordering::Acquire),
+        claimed_route_generation: (*owner).map(|permit| permit.route_generation),
+        stop_requested: STOP_CAMERA_HWB_PROBE.load(Ordering::Acquire),
+    })
+}
+
+pub(crate) fn local_camera_acquisition_quiescent() -> bool {
+    local_camera_ownership_snapshot().is_some_and(|snapshot| {
+        snapshot.active_workers == 0 && snapshot.claimed_route_generation.is_none()
+    })
+}
+
 pub(crate) fn request_camera_hwb_probe_stop() {
     STOP_CAMERA_HWB_PROBE.store(true, Ordering::Release);
     stop_peer_common_graph_session();
+    publish_acquisition_stopped_if_quiescent();
+}
+
+fn publish_acquisition_stopped_if_quiescent() {
+    if ACTIVE_LOCAL_CAMERA_WORKERS.load(Ordering::Acquire) == 0
+        && ACTIVE_PEER_COMMON_GRAPH_WORKERS.load(Ordering::Acquire) == 0
+    {
+        crate::peer_projection_runtime::record_current_acquisition_stopped_if_pending();
+    }
+}
+
+fn claim_local_camera_start(
+    permit: crate::peer_projection_runtime::LocalCameraStartPermit,
+) -> bool {
+    if !crate::peer_projection_runtime::local_camera_start_permit_is_current(permit) {
+        return false;
+    }
+    let Ok(mut owner) = LOCAL_CAMERA_START_OWNER.lock() else {
+        return false;
+    };
+    if owner.is_some() {
+        return false;
+    }
+    *owner = Some(permit);
+    true
+}
+
+fn release_local_camera_start(
+    permit: Option<crate::peer_projection_runtime::LocalCameraStartPermit>,
+) {
+    let Some(permit) = permit else { return };
+    if let Ok(mut owner) = LOCAL_CAMERA_START_OWNER.lock() {
+        if *owner == Some(permit) {
+            *owner = None;
+        }
+    }
 }
 
 #[derive(Default)]
@@ -126,7 +189,7 @@ fn stop_peer_common_graph_session() {
             debug_assert!(released);
         }
         drop(owner);
-        crate::peer_projection_runtime::record_current_acquisition_stopped_if_pending();
+        publish_acquisition_stopped_if_quiescent();
     }
 }
 
@@ -272,6 +335,7 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1pa
         frame_count,
         reader_max_images,
         CameraHwbProbeMode::LumaChecker,
+        None,
     )
 }
 
@@ -294,6 +358,28 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1pa
         frame_count,
         reader_max_images,
         CameraHwbProbeMode::RawColorProjection,
+        None,
+    )
+}
+
+pub(crate) fn start_camera_hwb_projection_probe_for_route(
+    env: *mut c_void,
+    surface: *mut c_void,
+    width: c_int,
+    height: c_int,
+    frame_count: c_int,
+    reader_max_images: c_int,
+    permit: crate::peer_projection_runtime::LocalCameraStartPermit,
+) -> i64 {
+    start_camera_hwb_probe(
+        env,
+        surface,
+        width,
+        height,
+        frame_count,
+        reader_max_images,
+        CameraHwbProbeMode::RawColorProjection,
+        Some(permit),
     )
 }
 
@@ -856,6 +942,7 @@ fn start_camera_hwb_probe(
     frame_count: c_int,
     reader_max_images: c_int,
     mode: CameraHwbProbeMode,
+    local_permit: Option<crate::peer_projection_runtime::LocalCameraStartPermit>,
 ) -> i64 {
     let mut mask = 1_i64;
     if !surface.is_null() {
@@ -873,8 +960,26 @@ fn start_camera_hwb_probe(
         return mask;
     }
 
+    if local_permit.is_none()
+        && !crate::peer_projection_runtime::unfenced_local_camera_start_allowed()
+    {
+        log_marker(
+            "status=start-receipt startStatus=unfenced-local-camera-start-rejected failClosed=true renderThreadSpawned=false runtimeCrash=false"
+                .to_string(),
+        );
+        return mask;
+    }
+
+    if local_permit.is_some_and(|permit| !claim_local_camera_start(permit)) {
+        log_marker(
+            "status=start-receipt startStatus=stale-local-camera-permit failClosed=true renderThreadSpawned=false runtimeCrash=false"
+                .to_string(),
+        );
+        return mask;
+    }
     let window = unsafe { ANativeWindow_fromSurface(env, surface) };
     if window.is_null() {
+        release_local_camera_start(local_permit);
         log_marker(format!(
             "status=start-receipt startStatus=native-window-null startMask={} surfaceNonNull=true nativeWindowObtained=false renderThreadSpawned=false carrier=scenequadlayer-createAsAndroid-vulkan-wsi rawCameraProjectionProbe={} outputMode={} {} runtimeCrash=false",
             mask,
@@ -885,7 +990,25 @@ fn start_camera_hwb_probe(
         return mask;
     }
     mask |= 1 << 2;
+    if local_permit.is_some_and(|permit| {
+        !crate::peer_projection_runtime::local_camera_start_permit_is_current(permit)
+    }) {
+        unsafe { ACameraNativeWindow_release(window.cast::<ANativeWindow>()) };
+        release_local_camera_start(local_permit);
+        return mask;
+    }
+    ACTIVE_LOCAL_CAMERA_WORKERS.fetch_add(1, Ordering::AcqRel);
     STOP_CAMERA_HWB_PROBE.store(false, Ordering::Release);
+    if local_permit.is_some_and(|permit| {
+        !crate::peer_projection_runtime::local_camera_start_permit_is_current(permit)
+    }) {
+        STOP_CAMERA_HWB_PROBE.store(true, Ordering::Release);
+        unsafe { ACameraNativeWindow_release(window.cast::<ANativeWindow>()) };
+        release_local_camera_start(local_permit);
+        ACTIVE_LOCAL_CAMERA_WORKERS.fetch_sub(1, Ordering::AcqRel);
+        publish_acquisition_stopped_if_quiescent();
+        return mask;
+    }
 
     let window_addr = window as usize;
     let width = width.max(64) as u32;
@@ -903,13 +1026,28 @@ fn start_camera_hwb_probe(
             let window = window_addr as *mut vk::ANativeWindow;
             let started = Instant::now();
             let result = std::panic::catch_unwind(|| unsafe {
-                render_camera_hwb_probe(window, width, height, max_frames, reader_max_images, mode)
+                if local_permit.is_some_and(|permit| {
+                    !crate::peer_projection_runtime::local_camera_start_permit_is_current(permit)
+                }) {
+                    return Err("stale-local-camera-permit".to_string());
+                }
+                render_camera_hwb_probe(
+                    window,
+                    width,
+                    height,
+                    max_frames,
+                    reader_max_images,
+                    mode,
+                    local_permit,
+                )
             })
             .unwrap_or_else(|_| Err("panic".to_string()));
             unsafe {
                 ACameraNativeWindow_release(window.cast::<ANativeWindow>());
             }
-            crate::peer_projection_runtime::record_current_acquisition_stopped_if_pending();
+            ACTIVE_LOCAL_CAMERA_WORKERS.fetch_sub(1, Ordering::AcqRel);
+            release_local_camera_start(local_permit);
+            publish_acquisition_stopped_if_quiescent();
             match result {
                 Ok(stats) => {
                     log_marker(format!(
@@ -967,6 +1105,9 @@ fn start_camera_hwb_probe(
             ));
         }
         Err(error) => {
+            ACTIVE_LOCAL_CAMERA_WORKERS.fetch_sub(1, Ordering::AcqRel);
+            release_local_camera_start(local_permit);
+            publish_acquisition_stopped_if_quiescent();
             unsafe {
                 ACameraNativeWindow_release(window.cast::<ANativeWindow>());
             }
@@ -1011,6 +1152,7 @@ pub(crate) unsafe fn start_peer_common_graph(
         }
         owner.cancellation = Some(cancellation.clone());
         let worker_cancellation = cancellation.clone();
+        ACTIVE_PEER_COMMON_GRAPH_WORKERS.fetch_add(1, Ordering::AcqRel);
         let spawn = thread::Builder::new()
             .name(format!("spatial-peer-common-graph-{route_generation}"))
             .spawn(move || {
@@ -1030,6 +1172,8 @@ pub(crate) unsafe fn start_peer_common_graph(
                 unsafe {
                     ACameraNativeWindow_release(window.cast::<ANativeWindow>());
                 }
+                ACTIVE_PEER_COMMON_GRAPH_WORKERS.fetch_sub(1, Ordering::AcqRel);
+                publish_acquisition_stopped_if_quiescent();
                 if let Err(error) = result {
                     log_marker(format!(
                         "status=peer-common-graph-failed routeGeneration={} error={} source=peer-packed-stereo camera2Opened=false runtimeCrash=false",
@@ -1045,6 +1189,8 @@ pub(crate) unsafe fn start_peer_common_graph(
         match spawn {
             Ok(worker) => owner.worker = Some(worker),
             Err(_) => {
+                ACTIVE_PEER_COMMON_GRAPH_WORKERS.fetch_sub(1, Ordering::AcqRel);
+                publish_acquisition_stopped_if_quiescent();
                 owner.cancellation = None;
                 let released = owner.claim.release(route_generation);
                 debug_assert!(released);
@@ -1729,6 +1875,7 @@ unsafe fn render_camera_hwb_probe(
     max_frames: u32,
     reader_max_images: c_int,
     mode: CameraHwbProbeMode,
+    local_permit: Option<crate::peer_projection_runtime::LocalCameraStartPermit>,
 ) -> Result<CameraHwbProbeStats, String> {
     let CameraHwbWsiParts {
         _entry,
@@ -2078,6 +2225,9 @@ unsafe fn render_camera_hwb_probe(
     };
     while (max_frames == 0 || frames_presented < max_frames)
         && !STOP_CAMERA_HWB_PROBE.load(Ordering::Acquire)
+        && local_permit.map_or(true, |permit| {
+            crate::peer_projection_runtime::local_camera_start_permit_is_current(permit)
+        })
     {
         let loop_started = Instant::now();
         let requested_latency_settings = current_camera_latency_settings();

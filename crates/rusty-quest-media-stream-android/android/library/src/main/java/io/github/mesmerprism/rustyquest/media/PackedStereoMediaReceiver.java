@@ -32,6 +32,7 @@ public final class PackedStereoMediaReceiver implements AutoCloseable {
     private final long generation;
     private final Bounds bounds;
     private final FrameListener listener;
+    private final FrameLifecycleListener lifecycleListener;
     private final String handleId;
     private final AtomicLong revision = new AtomicLong();
     private final Map<Long, PendingFrame> pendingFrames = new LinkedHashMap<>();
@@ -49,9 +50,16 @@ public final class PackedStereoMediaReceiver implements AutoCloseable {
     private long receivedPackets;
     private int reconnects;
     private long connectionGeneration;
+    private long retiredConnectionGeneration;
 
     public PackedStereoMediaReceiver(Surface surface, String host, int port, long generation,
             Bounds bounds, FrameListener listener) {
+        this(surface, host, port, generation, bounds, listener, null);
+    }
+
+    /** Constructor for hosts that bind exact native identity before Surface rendering. */
+    public PackedStereoMediaReceiver(Surface surface, String host, int port, long generation,
+            Bounds bounds, FrameListener listener, FrameLifecycleListener lifecycleListener) {
         if (surface == null || !surface.isValid()) throw new IllegalArgumentException("surface");
         if (host == null || host.trim().isEmpty() || host.length() > 1024
                 || port <= 0 || port > 65535 || generation <= 0L || bounds == null) {
@@ -63,6 +71,7 @@ public final class PackedStereoMediaReceiver implements AutoCloseable {
         this.generation = generation;
         this.bounds = bounds;
         this.listener = listener;
+        this.lifecycleListener = lifecycleListener;
         this.handleId = "packed-receiver-" + NEXT_HANDLE.getAndIncrement() + ":g" + generation;
     }
 
@@ -282,17 +291,18 @@ public final class PackedStereoMediaReceiver implements AutoCloseable {
             } else if (keyframe) {
                 keyframeSeen = true;
             }
-            queuePacket(codec, packet);
-            drain(codec);
+            queuePacket(codec, activeConnection, packet);
+            drain(codec, activeConnection);
         }
     }
 
-    private void queuePacket(MediaCodec codec, RmanvidPacketReader.Packet packet) throws Exception {
+    private void queuePacket(MediaCodec codec, long activeConnection,
+            RmanvidPacketReader.Packet packet) throws Exception {
         long deadline = SystemClock.elapsedRealtime() + bounds.codecInputTimeoutMs;
         int inputIndex;
         do {
             inputIndex = codec.dequeueInputBuffer(10_000L);
-            if (inputIndex < 0) drain(codec);
+            if (inputIndex < 0) drain(codec, activeConnection);
         } while (inputIndex < 0 && !stopRequested && SystemClock.elapsedRealtime() < deadline);
         if (inputIndex < 0) throw new IOException("decoder input buffer timed out");
         ByteBuffer input = codec.getInputBuffer(inputIndex);
@@ -309,14 +319,14 @@ public final class PackedStereoMediaReceiver implements AutoCloseable {
                     throw new IOException("decoder frame identity queue collision or overflow");
                 }
                 pendingFrames.put(packet.ptsUs,
-                        new PendingFrame(connectionGeneration, FrameIdentity.from(packet)));
+                        new PendingFrame(activeConnection, FrameIdentity.from(packet)));
             }
         }
         codec.queueInputBuffer(inputIndex, 0, packet.payload.length, packet.ptsUs, packet.flags);
         synchronized (lock) { receivedPackets++; }
     }
 
-    private void drain(MediaCodec codec) throws Exception {
+    private void drain(MediaCodec codec, long activeConnection) throws Exception {
         MediaCodec.BufferInfo info = new MediaCodec.BufferInfo();
         while (!stopRequested) {
             int outputIndex = codec.dequeueOutputBuffer(info, 0L);
@@ -329,23 +339,74 @@ public final class PackedStereoMediaReceiver implements AutoCloseable {
                 codec.releaseOutputBuffer(outputIndex, false);
                 continue;
             }
+            PendingFrame pending;
             synchronized (lock) {
-                if (!pendingFrames.containsKey(info.presentationTimeUs)) {
-                    throw new IOException("decoder output has no exact frame identity");
+                pending = pendingFrames.get(info.presentationTimeUs);
+                if (pending == null || pending.connectionGeneration != activeConnection) {
+                    throw new IOException("decoder output has no exact current frame identity");
                 }
             }
-            codec.releaseOutputBuffer(outputIndex, true);
+            final long presentationTimeNs;
+            try {
+                presentationTimeNs = Math.multiplyExact(info.presentationTimeUs, 1_000L);
+            } catch (ArithmeticException overflow) {
+                synchronized (lock) { pendingFrames.remove(info.presentationTimeUs); }
+                codec.releaseOutputBuffer(outputIndex, false);
+                throw new IOException("decoder output timestamp overflows nanoseconds", overflow);
+            }
+            boolean accepted = true;
+            if (lifecycleListener != null) {
+                try {
+                    accepted = lifecycleListener.onFrameReadyForRender(
+                            generation, pending.connectionGeneration, presentationTimeNs,
+                            pending.identity);
+                } catch (RuntimeException callbackFailure) {
+                    accepted = false;
+                    failure = "pre-render callback failed: " + safeMessage(callbackFailure);
+                }
+            }
+            synchronized (lock) {
+                PendingFrame current = pendingFrames.get(info.presentationTimeUs);
+                accepted = accepted && current == pending && decoder == codec && !stopRequested;
+                if (accepted) {
+                    pending.presentationTimeNs = presentationTimeNs;
+                    pending.readyForRender = true;
+                } else {
+                    pendingFrames.remove(info.presentationTimeUs);
+                }
+            }
+            codec.releaseOutputBuffer(outputIndex, accepted);
+            if (!accepted) throw new IOException("decoder output pre-render identity was rejected");
         }
     }
 
     private void rendered(MediaCodec callbackCodec, long callbackConnection, long ptsUs) {
         FrameIdentity identity;
+        long presentationTimeNs;
         synchronized (lock) {
             if (decoder != callbackCodec || stopRequested || "stopping".equals(state)
                     || "stopped".equals(state) || "failed".equals(state)) return;
             PendingFrame pending = pendingFrames.get(ptsUs);
-            if (pending == null || pending.connectionGeneration != callbackConnection) return;
+            if (pending == null || pending.connectionGeneration != callbackConnection
+                    || !pending.readyForRender || pending.presentationTimeNs <= 0L) return;
             pendingFrames.remove(ptsUs);
+            identity = pending.identity;
+            presentationTimeNs = pending.presentationTimeNs;
+        }
+        if (lifecycleListener != null) {
+            try {
+                lifecycleListener.onFrameRendered(
+                        generation, callbackConnection, presentationTimeNs, identity);
+            } catch (RuntimeException callbackFailure) {
+                recordCleanupFailure("render callback failed: " + safeMessage(callbackFailure));
+                closeSocket();
+                return;
+            }
+        }
+        synchronized (lock) {
+            if (decoder != callbackCodec || connectionGeneration != callbackConnection
+                    || stopRequested || "stopping".equals(state) || "stopped".equals(state)
+                    || "failed".equals(state)) return;
             renderedFrames++;
             connectionState = "receiving";
             if (liveRequested && "receiver_armed".equals(state)) {
@@ -354,7 +415,6 @@ public final class PackedStereoMediaReceiver implements AutoCloseable {
             }
             CountDownLatch startReady = ready;
             if (startReady != null) startReady.countDown();
-            identity = pending.identity;
         }
         if (listener != null) {
             try {
@@ -378,7 +438,22 @@ public final class PackedStereoMediaReceiver implements AutoCloseable {
                 recordCleanupFailure("decoder release failed: " + safeMessage(releaseFailure));
             }
         }
-        synchronized (lock) { pendingFrames.clear(); }
+        long retiredConnection = 0L;
+        synchronized (lock) {
+            pendingFrames.clear();
+            if (connectionGeneration > retiredConnectionGeneration) {
+                retiredConnection = connectionGeneration;
+                retiredConnectionGeneration = connectionGeneration;
+            }
+        }
+        if (retiredConnection != 0L && lifecycleListener != null) {
+            try {
+                lifecycleListener.onConnectionRetired(generation, retiredConnection);
+            } catch (RuntimeException callbackFailure) {
+                recordCleanupFailure("connection retirement callback failed: "
+                        + safeMessage(callbackFailure));
+            }
+        }
     }
 
     private void closeSocket() {
@@ -428,6 +503,15 @@ public final class PackedStereoMediaReceiver implements AutoCloseable {
 
     public interface FrameListener {
         void onFrameRendered(long generation, FrameIdentity identity);
+    }
+
+    /** Exact before/after Surface-render witnesses for an embedding native host. */
+    public interface FrameLifecycleListener {
+        boolean onFrameReadyForRender(long receiverGeneration, long connectionGeneration,
+                long presentationTimeNs, FrameIdentity identity);
+        void onFrameRendered(long receiverGeneration, long connectionGeneration,
+                long presentationTimeNs, FrameIdentity identity);
+        void onConnectionRetired(long receiverGeneration, long connectionGeneration);
     }
 
     /** Immutable exact source identity for one frame released to the host Surface. */
@@ -509,6 +593,8 @@ public final class PackedStereoMediaReceiver implements AutoCloseable {
     private static final class PendingFrame {
         final long connectionGeneration;
         final FrameIdentity identity;
+        long presentationTimeNs;
+        boolean readyForRender;
         PendingFrame(long connectionGeneration, FrameIdentity identity) {
             this.connectionGeneration = connectionGeneration;
             this.identity = identity;

@@ -14,9 +14,6 @@ use crate::camera_hwb_freshness::{
 use crate::camera_hwb_marker::log_camera_hwb_marker as log_marker;
 #[cfg(target_os = "android")]
 use crate::camera_hwb_probe::CameraHwbProbeMode;
-#[cfg(target_os = "android")]
-use crate::camera_hwb_probe::Java_io_github_mesmerprism_rustyquest_spatial_1camera_1panel_SpatialCameraPanelActivity_nativeStartCameraHwbProjectionProbe;
-
 #[cfg(not(target_os = "android"))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum CameraHwbProbeMode {
@@ -351,7 +348,7 @@ pub(crate) fn record_vulkan_wsi_present_returned(
 #[allow(non_snake_case, clippy::too_many_arguments)]
 pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1panel_SpatialCameraPanelActivity_nativeStartCameraHwbProjectionProbeWithFence(
     env: *mut c_void,
-    thiz: *mut c_void,
+    _thiz: *mut c_void,
     surface: *mut c_void,
     width: c_int,
     height: c_int,
@@ -377,27 +374,28 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1pa
             return 1;
         }
     };
-    if let Some(route_generation) = crate::peer_projection_runtime::pending_route_generation(
-        crate::peer_projection_runtime::SOURCE_LOCAL,
+    let Some(camera_permit) = crate::peer_projection_runtime::current_local_camera_start_permit(
         launch_challenge,
         layer_generation,
-    ) {
-        let matches = unsafe {
-            crate::peer_projection_ingress::exact_bound_surface_matches(
-                env.cast(),
-                surface,
-                route_generation,
-                launch_challenge,
-                layer_generation,
-            )
-        };
-        if !matches {
-            crate::peer_projection_runtime::mark_route_lost(
-                route_generation,
-                crate::peer_projection_runtime::REASON_CARRIER_UNAVAILABLE,
-            );
-            return 1;
-        }
+    ) else {
+        return 1;
+    };
+    let route_generation = camera_permit.route_generation;
+    let matches = unsafe {
+        crate::peer_projection_ingress::exact_bound_surface_matches(
+            env.cast(),
+            surface,
+            route_generation,
+            launch_challenge,
+            layer_generation,
+        )
+    };
+    if !matches {
+        crate::peer_projection_runtime::mark_route_lost(
+            route_generation,
+            crate::peer_projection_runtime::REASON_CARRIER_UNAVAILABLE,
+        );
+        return 1;
     }
     let generation = match begin_camera_projection_freshness_session(launch_fence) {
         Ok(generation) => generation,
@@ -409,14 +407,14 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1pa
             return 1;
         }
     };
-    let start_mask = Java_io_github_mesmerprism_rustyquest_spatial_1camera_1panel_SpatialCameraPanelActivity_nativeStartCameraHwbProjectionProbe(
+    let start_mask = crate::camera_hwb_probe::start_camera_hwb_projection_probe_for_route(
         env,
-        thiz,
         surface,
         width,
         height,
         frame_count,
         reader_max_images,
+        camera_permit,
     );
     if start_mask & (1 << 3) == 0 {
         cancel_camera_projection_freshness_session(generation);

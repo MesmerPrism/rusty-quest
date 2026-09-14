@@ -1097,11 +1097,13 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
         )
     )
   }
+  @Volatile private var videoDecoderLifecycleThread: Thread? = null
   private val videoDecoderLifecycleExecutor =
       Executors.newSingleThreadExecutor { runnable ->
         Thread(runnable, "RQSpatialVideoLifecycle").apply {
           priority = Thread.NORM_PRIORITY
           isDaemon = true
+          videoDecoderLifecycleThread = this
         }
       }
   private val videoLifecycleShutdownCoordinator =
@@ -1591,6 +1593,22 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     )
   }
   private val projectionSourcePollQueued = AtomicBoolean(false)
+  private val embeddedDuplexDisplay by lazy(LazyThreadSafetyMode.NONE) {
+    io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex.EmbeddedDuplexDisplayCoordinator(
+        routing = spatialVideoSourceRoutingCoordinator,
+        dispatch = videoLifecycleShutdownCoordinator::dispatch,
+        onLifecycleThread = { Thread.currentThread() === videoDecoderLifecycleThread },
+        carrier = cameraHwbProjectionRawCarrierCoordinator::sourceCarrierContext,
+        bind = { identity ->
+          nativeBindSpatialProjectionPeerDecoder(
+              identity.routeGeneration, identity.decoderToken, identity.readerGeneration) == 1L
+        },
+        attach = cameraHwbProjectionRawCarrierCoordinator::attachProjectionPeerCommonGraph,
+        read = cameraHwbProjectionRawCarrierCoordinator::readNativeSource,
+        readWords = ::nativeReadSpatialVideoProjectionSource,
+        restartLocal = cameraHwbProjectionRawCarrierCoordinator::restartLocalAcquisition,
+    )
+  }
   private val projectionSourceRouteTransitionMarker = SpatialVideoSourceRouteTransitionMarker()
   @Volatile private var localSourceRetirementGeneration = 0L
   private var projectionSourcePollJob: Job? = null
