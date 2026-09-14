@@ -1285,12 +1285,25 @@ Invoke-Checked "d8" $d8 (@("--lib", $platformJar, "--output", $dexDir) + $d8Inpu
 $previousLinker = $env:CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER
 $previousCc = $env:CC_aarch64_linux_android
 $previousAr = $env:AR_aarch64_linux_android
+# MSVC also links host build scripts during an Android build. Keep their output
+# paths short even when the retained evidence capsule is deeply nested.
+$nativeCargoTargetRoot = Join-Path $repoRoot ('target/mbn-' + [guid]::NewGuid().ToString('N').Substring(0,12))
+if (Test-Path -LiteralPath $nativeCargoTargetRoot) { throw 'Native Cargo output must be a new capsule.' }
+$nativeTargetAncestor = $nativeCargoTargetRoot
+while ($nativeTargetAncestor) {
+    if ((Test-Path -LiteralPath $nativeTargetAncestor) -and
+        ((Get-Item -LiteralPath $nativeTargetAncestor -Force).Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+        throw 'Native Cargo output cannot traverse a reparse point.'
+    }
+    $nativeTargetAncestor = [IO.Path]::GetDirectoryName($nativeTargetAncestor)
+}
+[void][IO.Directory]::CreateDirectory($nativeCargoTargetRoot)
 try {
     $env:CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER = $androidClang
     $env:CC_aarch64_linux_android = $androidClang
     $env:AR_aarch64_linux_android = $androidAr
     if ($connectionHubSelected) {
-        $connectionHubNativeTarget = Join-Path $OutDir "connection-hub-native-target"
+        $connectionHubNativeTarget = $nativeCargoTargetRoot
         $generatedNativeManifest = if ($null -ne $isolatedCargo) {
             [string]$isolatedCargo.connection_hub_native_manifest
         } else { Join-Path $connectionHubNativeRoot "Cargo.toml" }
@@ -1302,7 +1315,7 @@ try {
             "--target", "aarch64-linux-android"
         )
     } else {
-        $standaloneNativeTarget = Join-Path $OutDir "standalone-native-target"
+        $standaloneNativeTarget = $nativeCargoTargetRoot
         $standaloneNativeManifest = if ($null -ne $isolatedCargo) {
             [string]$isolatedCargo.manifest
         } else { Join-Path $repoRoot "Cargo.toml" }
@@ -1426,6 +1439,7 @@ $manifest = [ordered]@{
     admission_decision_owner = "rusty.manifold.admission"
     admission_client_signing_certificate_sha256 = $certificateSha256
     admission_native_library_sha256 = Get-FileSha256Hex -Path $nativeSoPackaged
+    native_cargo_target = $nativeCargoTargetRoot
     manifold_product_id = [string]$productInputs.product_id
     manifold_product_lock_id = [string]$productInputs.manifold_lock_id
     manifold_product_lock_fingerprint = [string]$productInputs.manifold_lock_fingerprint
