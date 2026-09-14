@@ -7,6 +7,8 @@ param(
     [string]$ProductLockPath = "",
     [string]$ManifoldSourceRoot = "",
     [string[]]$MediaSessionBindingPath = @(),
+    [string]$MediaStreamAarPath = "",
+    [string]$ExpectedMediaStreamAarSha256 = "",
     [ValidateRange(1, 2100000000)]
     [int]$VersionCode = 1,
     [ValidatePattern('^[0-9A-Za-z][0-9A-Za-z._+-]{0,63}$')]
@@ -132,136 +134,7 @@ function Assert-ReusableOutputIsolated {
     }
 }
 
-function New-IsolatedBrokerCargoMaterialization {
-    param(
-        [Parameter(Mandatory=$true)][string]$RepoRoot,
-        [Parameter(Mandatory=$true)][string]$ManifoldRoot,
-        [Parameter(Mandatory=$true)][string]$OutputRoot
-    )
-
-    $materializedRoot = Join-Path $OutputRoot "isolated-cargo"
-    New-Item -ItemType Directory -Force -Path (
-        Join-Path $materializedRoot "crates"), (
-        Join-Path $materializedRoot "apps\manifold-broker-android") | Out-Null
-    $questCrates = @(
-        "rusty-quest-broker-product", "rusty-quest-broker-authority",
-        "rusty-quest-broker-admission", "rusty-quest-broker-contracts",
-        "rusty-quest-media-stream", "rusty-quest-device-link")
-    foreach ($crate in $questCrates) {
-        Copy-Item -LiteralPath (Join-Path $RepoRoot "crates\$crate") `
-            -Destination (Join-Path $materializedRoot "crates\$crate") -Recurse
-    }
-    foreach ($nativeCrate in @("native", "connection-hub-native")) {
-        Copy-Item -LiteralPath (
-            Join-Path $RepoRoot "apps\manifold-broker-android\$nativeCrate") `
-            -Destination (
-                Join-Path $materializedRoot "apps\manifold-broker-android\$nativeCrate") `
-            -Recurse
-    }
-    Copy-Item -LiteralPath (Join-Path $RepoRoot "fixtures") `
-        -Destination (Join-Path $materializedRoot "fixtures") -Recurse
-    Copy-Item -LiteralPath (Join-Path $RepoRoot "Cargo.lock") `
-        -Destination (Join-Path $materializedRoot "Cargo.lock")
-
-    $workspaceManifest = @'
-[workspace]
-members = [
-  "crates/rusty-quest-broker-product",
-  "crates/rusty-quest-broker-authority",
-  "crates/rusty-quest-broker-admission",
-  "crates/rusty-quest-broker-contracts",
-  "crates/rusty-quest-media-stream",
-  "crates/rusty-quest-device-link",
-  "apps/manifold-broker-android/native",
-]
-resolver = "2"
-
-[workspace.package]
-version = "0.1.0"
-edition = "2021"
-authors = ["Till Holzapfel"]
-license = "AGPL-3.0-or-later"
-rust-version = "1.80"
-
-[workspace.lints.rust]
-unsafe_code = "forbid"
-missing_docs = "warn"
-
-[workspace.lints.clippy]
-all = "warn"
-pedantic = "warn"
-'@
-    [IO.File]::WriteAllText((Join-Path $materializedRoot "Cargo.toml"),
-        $workspaceManifest, [Text.UTF8Encoding]::new($false))
-
-    $manifoldTomlRoot = $ManifoldRoot.Replace("\", "/")
-    foreach ($manifest in Get-ChildItem -LiteralPath $materializedRoot -Recurse `
-            -Filter Cargo.toml -File) {
-        $text = [IO.File]::ReadAllText($manifest.FullName)
-        $text = $text.Replace('../../../../rusty-manifold/crates/',
-            ($manifoldTomlRoot + '/crates/'))
-        $text = $text.Replace('../../../rusty-manifold/crates/',
-            ($manifoldTomlRoot + '/crates/'))
-        [IO.File]::WriteAllText($manifest.FullName, $text,
-            [Text.UTF8Encoding]::new($false))
-        $manifestDirectory = Split-Path -Parent $manifest.FullName
-        $approvedCrateRoot = [IO.Path]::GetFullPath(
-            (Join-Path $ManifoldRoot "crates")).TrimEnd("\", "/") + "\"
-        foreach ($pathMatch in [regex]::Matches(
-                $text, '(?m)\bpath\s*=\s*"(?<path>[^"]+)"')) {
-            $dependencyPath = [string]$pathMatch.Groups['path'].Value
-            $resolvedDependencyPath = [IO.Path]::GetFullPath($(if (
-                [IO.Path]::IsPathRooted($dependencyPath)) {
-                    $dependencyPath
-                } else {
-                    Join-Path $manifestDirectory $dependencyPath
-                })).TrimEnd("\", "/")
-            if (-not (Test-Path -LiteralPath $resolvedDependencyPath -PathType Container)) {
-                throw "Isolated Cargo dependency path does not resolve: $resolvedDependencyPath"
-            }
-            if ((Split-Path -Leaf $resolvedDependencyPath).StartsWith(
-                    "rusty-manifold-", [StringComparison]::Ordinal) -and
-                -not ($resolvedDependencyPath + "\").StartsWith(
-                    $approvedCrateRoot, [StringComparison]::OrdinalIgnoreCase)) {
-                throw "Isolated Cargo dependency resolved outside the supplied Manifold root: $resolvedDependencyPath"
-            }
-        }
-    }
-
-    # The isolated workspace is an admitted subset of the owner workspace. Start
-    # from the owner's lock and let Cargo prune only no-longer-member entries
-    # offline, then require the resulting materialized lock for every real use.
-    $lockMaterialization = @(& cargo metadata --offline --format-version 1 `
-        --manifest-path (Join-Path $materializedRoot "Cargo.toml") 2>&1)
-    if ($LASTEXITCODE -ne 0) {
-        throw "Isolated Cargo lock materialization failed: $($lockMaterialization -join [Environment]::NewLine)"
-    }
-    $metadataText = @(& cargo metadata --locked --offline --format-version 1 `
-        --manifest-path (Join-Path $materializedRoot "Cargo.toml") 2>&1)
-    if ($LASTEXITCODE -ne 0) {
-        throw "Isolated Cargo metadata resolution failed: $($metadataText -join [Environment]::NewLine)"
-    }
-    $metadata = ($metadataText -join "`n") | ConvertFrom-Json
-    $manifoldPrefix = $ManifoldRoot.TrimEnd("\") + "\"
-    $manifoldPackages = @($metadata.packages | Where-Object {
-        ([string]$_.name).StartsWith("rusty-manifold-", [StringComparison]::Ordinal)
-    })
-    if ($manifoldPackages.Count -lt 7 -or @($manifoldPackages | Where-Object {
-            -not ([IO.Path]::GetFullPath([string]$_.manifest_path)).StartsWith(
-                $manifoldPrefix, [StringComparison]::OrdinalIgnoreCase)
-        }).Count -ne 0) {
-        throw "Cargo metadata did not bind every resolved Manifold dependency to the supplied root."
-    }
-    return [pscustomobject]@{
-        root = $materializedRoot
-        manifest = Join-Path $materializedRoot "Cargo.toml"
-        native_manifest = Join-Path $materializedRoot `
-            "apps\manifold-broker-android\native\Cargo.toml"
-        connection_hub_native_manifest = Join-Path $materializedRoot `
-            "apps\manifold-broker-android\connection-hub-native\Cargo.toml"
-        manifold_packages = @($manifoldPackages.name | Sort-Object -Unique)
-    }
-}
+. (Join-Path $PSScriptRoot "../crates/rusty-quest-media-stream-android/tools/MediaStreamCargoInputs.ps1")
 
 function Read-ValidatedSpatialVideoHubContract {
     param([Parameter(Mandatory=$true)][string]$RepoRoot)
@@ -678,8 +551,15 @@ if (-not $resolvedOutFull.StartsWith($resolvedTargetRoot + "\", [System.StringCo
     throw "OutDir must be under the repo target directory: $resolvedOutFull"
 }
 $retainedBuildInputs = @(
-    $ProductSpecPath, $ProductLockPath, $ManifoldSourceRoot, $Keystore) +
+    $ProductSpecPath, $ProductLockPath, $ManifoldSourceRoot, $Keystore, $MediaStreamAarPath) +
     @(Expand-InputPaths -Path $MediaSessionBindingPath)
+if (-not [string]::IsNullOrWhiteSpace($MediaStreamAarPath)) {
+    if ($ExpectedMediaStreamAarSha256 -cnotmatch '^[0-9a-f]{64}$' -or
+        -not (Test-Path -LiteralPath $MediaStreamAarPath -PathType Leaf) -or
+        (Get-FileSha256Hex -Path $MediaStreamAarPath) -cne $ExpectedMediaStreamAarSha256) {
+        throw 'An explicit media AAR requires its exact SHA256 before preparing output.'
+    }
+} elseif ($ExpectedMediaStreamAarSha256) { throw 'An expected AAR hash requires its explicit input path.' }
 Assert-ReusableOutputIsolated -OutputPath $resolvedOutFull `
     -InputPath $retainedBuildInputs
 if (Test-Path $OutDir) {
@@ -843,6 +723,7 @@ foreach ($tool in @($platformJar, $aapt2, $d8, $zipalign, $apksigner, $javac, $j
 $classesDir = Join-Path $OutDir "classes"
 $dexDir = Join-Path $OutDir "dex"
 $classesJar = Join-Path $OutDir "classes.jar"
+$mediaStreamAarClassesJar = ""
 $apkUnsigned = Join-Path $OutDir "rusty-manifold-broker-unsigned.apk"
 $apkUnaligned = Join-Path $OutDir "rusty-manifold-broker-unaligned.apk"
 $apkAligned = Join-Path $OutDir "rusty-manifold-broker-aligned.apk"
@@ -852,6 +733,17 @@ if ([string]::IsNullOrWhiteSpace($Keystore)) {
 }
 
 New-Item -ItemType Directory -Force -Path $classesDir, $dexDir | Out-Null
+if ([string]::IsNullOrWhiteSpace($MediaStreamAarPath)) {
+    if ($ExpectedMediaStreamAarSha256) { throw 'An expected AAR hash requires an explicit AAR path.' }
+    $aarBuild = & (Join-Path $repoRoot 'crates/rusty-quest-media-stream-android/android/Build-MediaStreamAar.ps1') `
+        -AndroidHome $AndroidHome -JavaHome $JavaHome -OutDir (Join-Path $OutDir 'media-stream-aar-build')
+    $MediaStreamAarPath = $aarBuild.aar_path
+    $ExpectedMediaStreamAarSha256 = $aarBuild.aar_sha256
+}
+. (Join-Path $repoRoot 'crates/rusty-quest-media-stream-android/tools/MediaStreamAarInputs.ps1')
+$mediaStreamInput = Expand-ValidatedMediaStreamAar -Path $MediaStreamAarPath `
+    -ExpectedSha256 $ExpectedMediaStreamAarSha256 -OutputRoot (Join-Path $OutDir 'media-stream-aar')
+$mediaStreamAarClassesJar = $mediaStreamInput.classes_jar_path
 
 if ($RequireSharedMorphovisionSigner -and -not (Test-Path -LiteralPath $Keystore -PathType Leaf)) {
     throw "The explicit shared Morphovision signing keystore does not exist."
@@ -1380,9 +1272,14 @@ if ($sourceFiles.Count -eq 0) {
 $sourceList = Join-Path $OutDir "sources.rsp"
 $sourceFiles | Set-Content -Encoding ASCII -Path $sourceList
 
-Invoke-Checked "javac" $javac @("-encoding", "UTF-8", "-source", "1.8", "-target", "1.8", "-bootclasspath", $platformJar, "-d", $classesDir, "@$sourceList")
+ $javacArguments = @("-encoding", "UTF-8", "-source", "1.8", "-target", "1.8", "-bootclasspath", $platformJar, "-d", $classesDir)
+if (-not [string]::IsNullOrWhiteSpace($mediaStreamAarClassesJar)) { $javacArguments += @("-classpath", $mediaStreamAarClassesJar) }
+$javacArguments += "@$sourceList"
+Invoke-Checked "javac" $javac $javacArguments
 Invoke-Checked "jar class pack" $jar @("cf", $classesJar, "-C", $classesDir, ".")
-Invoke-Checked "d8" $d8 @("--lib", $platformJar, "--output", $dexDir, $classesJar)
+$d8Inputs = @($classesJar)
+if (-not [string]::IsNullOrWhiteSpace($mediaStreamAarClassesJar)) { $d8Inputs += $mediaStreamAarClassesJar }
+Invoke-Checked "d8" $d8 (@("--lib", $platformJar, "--output", $dexDir) + $d8Inputs)
 
 $previousLinker = $env:CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER
 $previousCc = $env:CC_aarch64_linux_android
@@ -1548,6 +1445,9 @@ $manifest = [ordered]@{
         @($isolatedCargo.manifold_packages)
     } else { @() })
     media_session_bindings = @($mediaSessionBindingReceipts)
+    media_stream_aar_sha256 = $mediaStreamInput.aar_sha256
+    media_stream_classes_jar_sha256 = $mediaStreamInput.classes_jar_sha256
+    media_stream_aar_native_libraries = @()
     spatial_camera_panel_package_name = [string]$spatialClientInput.lock.package_name
     spatial_camera_panel_package_specialized = -not [string]::IsNullOrWhiteSpace(
         $SpatialCameraPanelPackageName)

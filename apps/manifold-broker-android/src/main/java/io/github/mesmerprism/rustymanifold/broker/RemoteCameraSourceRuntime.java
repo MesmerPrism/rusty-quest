@@ -31,6 +31,8 @@ import android.view.Surface;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
+import io.github.mesmerprism.rustyquest.media.PackedStereoStreamMetadata;
+
 import java.io.Closeable;
 import java.io.IOException;
 import java.io.OutputStream;
@@ -122,7 +124,7 @@ final class RemoteCameraSourceRuntime {
             }
         }
 
-        if (RemoteCameraPackedStreamMetadata.MEDIA_LAYOUT.equals(cleanOptional(mediaLayout))) {
+        if (PackedStereoStreamMetadata.MEDIA_LAYOUT.equals(cleanOptional(mediaLayout))) {
             return RemoteCameraPackedStereoSourceRuntime.ensureStarted(
                     context,
                     sessionId,

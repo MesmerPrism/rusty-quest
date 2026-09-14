@@ -1,0 +1,2 @@
+// Intentionally empty. The module uses Gradle's bundled Java plugin so the
+// offline Android build does not resolve an Android Gradle Plugin graph.

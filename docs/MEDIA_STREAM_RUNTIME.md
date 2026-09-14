@@ -44,3 +44,61 @@ Validation:
 ```powershell
 cargo test -p rusty-quest-media-stream -p rusty-quest-remote-camera
 ```
+
+## Android module and artifact validation
+
+`crates/rusty-quest-media-stream-android` separates Android media execution from
+host permissions and policy. The standalone broker and the neutral
+`apps/media-stream-conformance-android` consumer use the same compiled AAR and
+link the `rlib` into their respective native authority libraries. The neutral
+host declares no camera, network, headset, or foreground-service permission;
+its changing stereo data and transport are bounded in-memory inputs.
+
+The host is a deployment choice: a Manifold module may run through Hostess or
+inside another application APK. An embedded consumer supplies its own lifecycle,
+permissions, display surfaces, and accepted product binding. It does not require
+a separately installed broker APK or create another Manifold authority.
+
+Packed capture, timestamp pairing, GLES composition, encoder draining, and
+transport live in the shared Android package. The broker's legacy packed-source
+class delegates to `PackedStereoMediaSourceRuntime`; it retains host commands
+and defaults without carrying a second implementation.
+
+The module's protocol must reject oversized or malformed packets, duplicate
+submitted presentation timestamps, missing exact timestamp associations,
+expired stereo pairs, and callbacks from a cancelled generation. Encoded
+frames retain their exact source identity; a nearest-timestamp fallback is not
+an identity match. Leases release frames exactly once. Network work must leave
+encoder/render callbacks promptly, bound its queues, and gate reconnect on
+configuration plus a keyframe. Camera disconnect/error and terminal cleanup
+must appear in effective state rather than leaving a stale active label.
+
+Run the bounded host and source checks before Android compilation:
+
+```powershell
+cargo test --locked -p rusty-quest-media-stream -p rusty-quest-broker-authority -p rusty-quest-manifold-broker-authority-native -p rusty-quest-media-stream-android
+pwsh -NoProfile -File ./tools/checks/Test-RustyQuestMediaStreamAndroid.ps1 -RepoRoot .
+pwsh -NoProfile -File ./tools/Build-MediaStreamConformanceAndroid.ps1 -HostOnly -JavaHome $env:JAVA_HOME -OutDir ./target/media-conformance-host
+```
+
+Build both consumers through the declared artifact route:
+
+```powershell
+pwsh -NoProfile -File ./tools/Build-MediaStreamConformanceAndroid.ps1 -BuildCompatibilityBroker -AndroidHome $env:ANDROID_HOME -JavaHome $env:JAVA_HOME -ManifoldSourceRoot $env:Q2Q_MANIFOLD_SOURCE_ROOT -OutDir ./target/media-conformance-android
+```
+
+The build records actual compiler identities and hashes of the AAR, native
+libraries, APKs, and packaged bindings. `-BuildCompatibilityBroker` invokes the
+existing explicit compatibility build using a PowerShell argument splat with
+the two camera/display binding paths as a string array. `-HostOnly` cannot use
+that switch. Neither path runs ADB, installs packages, or qualifies device
+behavior. Host tests prove the exercised contracts; compilation proves artifact
+composition. Sustained camera/codec/GLES/LAN execution and simultaneous duplex
+require separate device evidence for the integrated host.
+
+Builds use installed Gradle 8.7, Android platform/build-tools 36, NDK
+27.2.12479018, and Java 17 with Java 8 output. Host JSON contract tests use the
+hash-pinned `org.json` 20240303 jar, resolved from the local Gradle cache or
+`-HostJsonJar`. Missing tools fail explicitly; these commands do not download
+dependencies. Each invocation preserves prior evidence in its own output
+capsule under the selected repository `target` directory.

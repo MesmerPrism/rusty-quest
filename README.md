@@ -1,5 +1,12 @@
 # Rusty Quest
 
+Reusable Android media lives in `crates/rusty-quest-media-stream-android`.
+Its AAR and Rust library are consumed by the standalone broker and the neutral
+`apps/media-stream-conformance-android` host. Application permissions, defaults,
+and foreground lifecycle stay in the host. See the
+[media executor contract](docs/MEDIA_SESSION_RUNTIME.md) and
+[host/build validation](docs/MEDIA_STREAM_RUNTIME.md) before integrating it.
+
 `apps/lsl-rust-float32-lan-outlet-android` is the bounded P70 Rust-on-Quest
 outlet to Rust-host inlet LAN harness. It uses no Android properties or staging
 inputs and remains default-inert.

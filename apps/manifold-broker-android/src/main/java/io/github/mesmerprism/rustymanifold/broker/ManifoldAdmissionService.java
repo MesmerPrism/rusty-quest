@@ -39,6 +39,7 @@ public final class ManifoldAdmissionService extends Service {
         super.onCreate();
         try {
             JSONObject status = ManifoldRuntimeAuthorityBridge.initialize();
+            BrokerAndroidMediaRegistryProcess.installIfNeeded(this);
             Log.i(TAG, "status=initialized adapter=android_signature_scoped_binder"
                     + " providerEpoch=" + status.optString("provider_epoch_id", "missing")
                     + " existingAuthorityPreserved="
@@ -71,8 +72,9 @@ public final class ManifoldAdmissionService extends Service {
                     operation = new JSONObject(data.getString("mutation_json", "{}"));
                     response = ManifoldRuntimeAuthorityBridge.evaluateMutation(operation);
                 } else if (message.what == MESSAGE_COMPLETE_MEDIA_ACTION) {
-                    operation = new JSONObject(data.getString("completion_json", "{}"));
-                    response = ManifoldRuntimeAuthorityBridge.completeMediaAction(operation);
+                    dispatchMediaCompletion(message, caller,
+                            data.getString("completion_json", "{}"));
+                    return;
                 } else if (message.what == MESSAGE_RUNTIME_EVIDENCE) {
                     operation = new JSONObject().put("operation", "runtime_evidence");
                     response = ManifoldRuntimeAuthorityBridge.evidence();
@@ -97,6 +99,32 @@ public final class ManifoldAdmissionService extends Service {
                 Log.e(TAG, "status=error stage=handle reason=" + error.getClass().getSimpleName());
                 reply(message, null, error.getClass().getSimpleName());
             }
+        }
+    }
+
+    private void dispatchMediaCompletion(
+            Message message, QuestCaller caller, String completionJson) {
+        final Message retained = Message.obtain(message);
+        boolean accepted = MediaCompletionWorker.submit(new Runnable() {
+            @Override public void run() {
+                try {
+                    JSONObject operation = new JSONObject(completionJson);
+                    JSONObject response = ManifoldRuntimeAuthorityBridge.completeMediaAction(operation);
+                    reply(retained, response.toString(), null);
+                    Log.i(TAG, "status=receipt operation=complete_media_action callerPackage="
+                            + caller.packageName + " sendingUid=" + caller.uid);
+                } catch (Exception error) {
+                    Log.e(TAG, "status=error stage=media_completion reason="
+                            + error.getClass().getSimpleName());
+                    reply(retained, null, error.getClass().getSimpleName());
+                } finally {
+                    retained.recycle();
+                }
+            }
+        });
+        if (!accepted) {
+            retained.recycle();
+            reply(message, null, "ProviderBusy");
         }
     }
 

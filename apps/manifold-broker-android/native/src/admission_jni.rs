@@ -5,10 +5,148 @@ use rusty_manifold_admission::ManifoldAdmissionAuthority;
 use rusty_quest_broker_authority::QuestBrokerRuntimeProvider;
 use std::sync::{Mutex, OnceLock};
 
-static RUNTIME_PROVIDER: OnceLock<Mutex<QuestBrokerRuntimeProvider>> = OnceLock::new();
+#[cfg(target_os = "android")]
+use rusty_quest_media_stream_android::{
+    AndroidMediaExecutionMode, AndroidMediaExecutionTicket, AndroidMediaOwnerExecutor,
+    AndroidMediaOwnerReadback,
+};
 
-fn provider() -> &'static Mutex<QuestBrokerRuntimeProvider> {
-    RUNTIME_PROVIDER.get_or_init(|| Mutex::new(QuestBrokerRuntimeProvider::default()))
+static RUNTIME_PROVIDER: OnceLock<Mutex<Option<QuestBrokerRuntimeProvider>>> = OnceLock::new();
+
+fn provider() -> &'static Mutex<Option<QuestBrokerRuntimeProvider>> {
+    RUNTIME_PROVIDER.get_or_init(|| Mutex::new(Some(QuestBrokerRuntimeProvider::default())))
+}
+
+struct ProviderCheckout(Option<QuestBrokerRuntimeProvider>);
+
+impl Drop for ProviderCheckout {
+    fn drop(&mut self) {
+        if let Some(provider_value) = self.0.take() {
+            let mut slot = provider()
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if slot.is_none() {
+                *slot = Some(provider_value);
+            }
+        }
+    }
+}
+
+fn with_provider<T>(
+    operation: impl FnOnce(&mut QuestBrokerRuntimeProvider) -> Result<T, String>,
+) -> Result<T, String> {
+    let value = provider()
+        .lock()
+        .map_err(|_| "broker runtime lock poisoned".to_owned())?
+        .take()
+        .ok_or_else(|| "broker runtime provider busy".to_owned())?;
+    let mut checkout = ProviderCheckout(Some(value));
+    operation(checkout.0.as_mut().expect("checked-out provider retained"))
+}
+
+#[cfg(target_os = "android")]
+struct JniAndroidMediaOwnerExecutor {
+    vm: jni::JavaVM,
+    registry: jni::objects::Global<jni::objects::JObject<'static>>,
+    generation: u64,
+}
+
+#[cfg(target_os = "android")]
+impl JniAndroidMediaOwnerExecutor {
+    fn call_execute(
+        &self,
+        ticket: &AndroidMediaExecutionTicket,
+        compensate: bool,
+    ) -> Result<AndroidMediaOwnerReadback, String> {
+        use jni::{
+            jni_sig, jni_str,
+            objects::{JObject, JString, JValue},
+        };
+        let ticket_json = serde_json::to_string(ticket).map_err(|error| error.to_string())?;
+        self.vm
+            .attach_current_thread(|env| -> jni::errors::Result<String> {
+                let ticket_string = env.new_string(ticket_json.as_str())?;
+                let result = match env.call_method(
+                    &self.registry,
+                    jni_str!("execute"),
+                    jni_sig!("(Ljava/lang/String;Z)Ljava/lang/String;"),
+                    &[
+                        JValue::Object(&JObject::from(ticket_string)),
+                        JValue::Bool(compensate),
+                    ],
+                ) {
+                    Ok(result) => result.l()?,
+                    Err(error) => {
+                        if env.exception_check() {
+                            env.exception_clear();
+                        }
+                        return Err(error);
+                    }
+                };
+                let result: JString = env.cast_local::<JString>(result)?;
+                result.try_to_string(env)
+            })
+            .map_err(|error| format!("Android media registry execute failed: {error}"))
+            .and_then(|json| serde_json::from_str(&json).map_err(|error| error.to_string()))
+    }
+}
+
+#[cfg(target_os = "android")]
+impl AndroidMediaOwnerExecutor for JniAndroidMediaOwnerExecutor {
+    fn executor_generation(&self) -> u64 {
+        self.generation
+    }
+
+    fn execute(
+        &mut self,
+        ticket: &AndroidMediaExecutionTicket,
+        mode: AndroidMediaExecutionMode,
+    ) -> Result<AndroidMediaOwnerReadback, String> {
+        self.call_execute(
+            ticket,
+            mode == AndroidMediaExecutionMode::CompensateUncertain,
+        )
+    }
+
+    fn verify(
+        &self,
+        ticket: &AndroidMediaExecutionTicket,
+        readback: &AndroidMediaOwnerReadback,
+    ) -> bool {
+        use jni::{
+            jni_sig, jni_str,
+            objects::{JObject, JValue},
+        };
+        let Ok(ticket_json) = serde_json::to_string(ticket) else {
+            return false;
+        };
+        let Ok(readback_json) = serde_json::to_string(readback) else {
+            return false;
+        };
+        self.vm
+            .attach_current_thread(|env| -> jni::errors::Result<bool> {
+                let ticket_string = env.new_string(ticket_json.as_str())?;
+                let readback_string = env.new_string(readback_json.as_str())?;
+                match env.call_method(
+                    &self.registry,
+                    jni_str!("verify"),
+                    jni_sig!("(Ljava/lang/String;Ljava/lang/String;)Z"),
+                    &[
+                        JValue::Object(&JObject::from(ticket_string)),
+                        JValue::Object(&JObject::from(readback_string)),
+                    ],
+                ) {
+                    Ok(result) => result.z(),
+                    Err(error) => {
+                        if env.exception_check() {
+                            env.exception_clear();
+                        }
+                        Err(error)
+                    }
+                }
+            })
+            .unwrap_or(false)
+    }
 }
 
 pub(crate) fn initialize(
@@ -18,52 +156,63 @@ pub(crate) fn initialize(
     authority_wall_unix_ms: i64,
     authority_monotonic_elapsed_ns: u64,
 ) -> Result<String, String> {
-    let mut provider = provider()
-        .lock()
-        .map_err(|_| "broker runtime lock poisoned".to_owned())?;
-    let status = provider
-        .initialize(
-            config_json,
-            expected_config_sha256,
-            epoch_entropy_hex,
-            authority_wall_unix_ms,
-            authority_monotonic_elapsed_ns,
-        )
-        .map_err(|error| error.to_string())?;
+    let status = with_provider(|provider| {
+        provider
+            .initialize(
+                config_json,
+                expected_config_sha256,
+                epoch_entropy_hex,
+                authority_wall_unix_ms,
+                authority_monotonic_elapsed_ns,
+            )
+            .map_err(|error| error.to_string())
+    })?;
     serde_json::to_string(&status).map_err(|error| error.to_string())
 }
 
 pub(crate) fn execute_admission(operation_json: &str) -> Result<String, String> {
-    provider()
-        .lock()
-        .map_err(|_| "broker runtime lock poisoned".to_owned())?
-        .execute_admission_json(operation_json)
-        .map_err(|error| error.to_string())
+    with_provider(|provider| {
+        provider
+            .execute_admission_json(operation_json)
+            .map_err(|error| error.to_string())
+    })
 }
 
 pub(crate) fn mutate(mutation_json: &str, now_ms: u64) -> Result<String, String> {
-    provider()
-        .lock()
-        .map_err(|_| "broker runtime lock poisoned".to_owned())?
-        .handle_server_mutation_json(mutation_json, now_ms)
-        .map_err(|error| error.to_string())
+    with_provider(|provider| {
+        provider
+            .handle_server_mutation_json(mutation_json, now_ms)
+            .map_err(|error| error.to_string())
+    })
 }
 
 #[cfg_attr(not(target_os = "android"), allow(dead_code))]
 pub(crate) fn complete_media_action(completion_json: &str, now_ms: u64) -> Result<String, String> {
-    provider()
-        .lock()
-        .map_err(|_| "broker runtime lock poisoned".to_owned())?
-        .complete_media_action_json(completion_json, now_ms)
-        .map_err(|error| error.to_string())
+    with_provider(|provider| {
+        provider
+            .complete_media_action_json(completion_json, now_ms)
+            .map_err(|error| error.to_string())
+    })
+}
+
+#[cfg(test)]
+fn install_test_media_executor() {
+    let executor = rusty_quest_media_stream_android::DeterministicAndroidMediaOwnerExecutor::new(1)
+        .expect("test executor generation");
+    with_provider(|provider| {
+        provider
+            .install_media_owner_executor(Box::new(executor))
+            .map_err(|error| error.to_string())
+    })
+    .expect("install test media executor");
 }
 
 pub(crate) fn admission_snapshot() -> Result<String, String> {
-    provider()
-        .lock()
-        .map_err(|_| "broker runtime lock poisoned".to_owned())?
-        .admission_snapshot_json()
-        .map_err(|error| error.to_string())
+    with_provider(|provider| {
+        provider
+            .admission_snapshot_json()
+            .map_err(|error| error.to_string())
+    })
 }
 
 /// Returns a validated clone of the exact retained admission state for the
@@ -76,11 +225,7 @@ pub(crate) fn admission_authority() -> Result<ManifoldAdmissionAuthority, String
 }
 
 pub(crate) fn evidence() -> Result<String, String> {
-    provider()
-        .lock()
-        .map_err(|_| "broker runtime lock poisoned".to_owned())?
-        .evidence_json()
-        .map_err(|error| error.to_string())
+    with_provider(|provider| provider.evidence_json().map_err(|error| error.to_string()))
 }
 
 #[cfg(target_os = "android")]
@@ -153,6 +298,37 @@ fn jni_empty_string(
         jni::Outcome::Ok(value) => value,
         jni::Outcome::Err(_) | jni::Outcome::Panic(_) => std::ptr::null_mut(),
     }
+}
+
+#[cfg(target_os = "android")]
+#[no_mangle]
+pub extern "system" fn Java_io_github_mesmerprism_rustymanifold_broker_ManifoldRuntimeAuthorityBridge_nativeInstallAndroidMediaOwnerRegistry(
+    mut env: jni::EnvUnowned,
+    _class: jni::objects::JClass,
+    registry: jni::objects::JObject,
+    executor_generation: jni::sys::jlong,
+) {
+    let _ = env.with_env(|env| -> jni::errors::Result<()> {
+        let generation = u64::try_from(executor_generation)
+            .ok()
+            .filter(|value| *value != 0)
+            .ok_or(jni::errors::Error::JniCall(
+                jni::errors::JniError::InvalidArguments,
+            ))?;
+        let vm = env.get_java_vm()?;
+        let registry = env.new_global_ref(registry)?;
+        with_provider(|provider| {
+            provider
+                .install_media_owner_executor(Box::new(JniAndroidMediaOwnerExecutor {
+                    vm,
+                    registry,
+                    generation,
+                }))
+                .map_err(|error| error.to_string())
+        })
+        .map_err(|_| jni::errors::Error::JniCall(jni::errors::JniError::InvalidArguments))?;
+        Ok(())
+    });
 }
 
 #[cfg(target_os = "android")]
@@ -258,8 +434,26 @@ pub extern "system" fn Java_io_github_mesmerprism_rustymanifold_broker_ManifoldA
 #[cfg(test)]
 pub(super) mod tests {
     use super::{
-        admission_snapshot, complete_media_action, evidence, execute_admission, initialize, mutate,
+        admission_snapshot, complete_media_action, evidence, execute_admission, initialize,
+        install_test_media_executor, mutate, with_provider,
     };
+
+    #[test]
+    fn provider_checkout_reentry_is_busy_and_panic_restores_slot() {
+        with_provider(|_| {
+            assert_eq!(
+                with_provider(|_| Ok::<_, String>(())).expect_err("reentry must fail"),
+                "broker runtime provider busy"
+            );
+            Ok(())
+        })
+        .expect("outer checkout");
+        let panic = std::panic::catch_unwind(|| {
+            let _ = with_provider::<()>(|_| panic!("test callback panic"));
+        });
+        assert!(panic.is_err());
+        with_provider(|_| Ok(())).expect("provider restored after panic");
+    }
 
     pub(crate) fn runtime_config() -> serde_json::Value {
         let manifold_root =
@@ -472,6 +666,16 @@ pub(super) mod tests {
                 .map(Vec::len),
             Some(7)
         );
+        let absent = complete_media_action(
+            &serde_json::json!({"client_id": "client.quest.spatial-camera-panel"}).to_string(),
+            4_500,
+        )
+        .expect_err("production default must be fail-closed");
+        assert!(absent.contains("trusted Android media owner executor absent"));
+        assert!(evidence()
+            .expect("pending evidence retained")
+            .contains("\"media_pending_action\""));
+        install_test_media_executor();
         let completion = complete_media_action(
             &serde_json::json!({"client_id": "client.quest.spatial-camera-panel"}).to_string(),
             5_000,
