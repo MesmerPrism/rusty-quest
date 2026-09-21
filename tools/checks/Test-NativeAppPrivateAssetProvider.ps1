@@ -11,7 +11,7 @@ if ([string]::IsNullOrWhiteSpace($RepoRoot)) {
 $modulePath = Join-Path $RepoRoot 'tools\lib\NativeAppPrivateAssetProvider.psm1'
 $schemaPath = Join-Path $RepoRoot 'schemas\rusty.quest.native_app_private_asset_provider.v1.schema.json'
 $resolverPath = Join-Path $RepoRoot 'tools\Resolve-NativeAppBuild.ps1'
-Import-Module $modulePath -Force
+$privateAssetModule = Import-Module $modulePath -Force -PassThru
 $builderText = Get-Content -Raw -LiteralPath (Join-Path $RepoRoot 'tools\Build-NativeRendererAndroid.ps1')
 foreach ($requiredBuilderToken in @(
     'Copy-NativeAppPrivateAssetsFromClosure',
@@ -88,6 +88,25 @@ function New-TestDirectoryLink {
         throw "Directory-link damage fixture could not confirm reparse-point identity: $LinkPath"
     }
     return $true
+}
+
+$volumeRoot = [IO.Path]::GetPathRoot($RepoRoot)
+$volumeChild = Join-Path $volumeRoot ('rusty-quest-private-assets-volume-root-' + [guid]::NewGuid().ToString('N'))
+$volumeRootAccepted = & $privateAssetModule {
+    param($Path, $Root)
+    Test-NativeAppPathInsideRoot -Path $Path -Root $Root
+} $volumeChild $volumeRoot
+if (-not $volumeRootAccepted) {
+    throw "A canonical child of the current volume root was rejected: $volumeChild"
+}
+$containmentRoot = Join-Path $RepoRoot 'local-artifacts\private-asset-containment-root'
+$containmentSibling = Join-Path $RepoRoot 'local-artifacts\private-asset-containment-sibling'
+$siblingAccepted = & $privateAssetModule {
+    param($Path, $Root)
+    Test-NativeAppPathInsideRoot -Path $Path -Root $Root
+} $containmentSibling $containmentRoot
+if ($siblingAccepted) {
+    throw 'A sibling path outside the requested root passed private-asset containment.'
 }
 
 $tempBase = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\', '/')

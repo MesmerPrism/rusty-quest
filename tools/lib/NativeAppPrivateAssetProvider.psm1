@@ -65,7 +65,11 @@ function Test-NativeAppPathInsideRoot {
         [Parameter(Mandatory = $true)][string]$Root
     )
     $full = [System.IO.Path]::GetFullPath($Path)
-    $rootFull = [System.IO.Path]::GetFullPath($Root).TrimEnd('\', '/')
+    $rootFull = [System.IO.Path]::GetFullPath($Root)
+    $volumeRoot = [System.IO.Path]::GetPathRoot($rootFull)
+    if ($rootFull.Length -gt $volumeRoot.Length) {
+        $rootFull = $rootFull.TrimEnd('\', '/')
+    }
     $relative = [System.IO.Path]::GetRelativePath($rootFull, $full)
     return -not (
         [System.IO.Path]::IsPathRooted($relative) -or
