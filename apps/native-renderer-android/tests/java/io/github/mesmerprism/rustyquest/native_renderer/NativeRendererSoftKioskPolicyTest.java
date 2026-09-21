@@ -493,7 +493,8 @@ public final class NativeRendererSoftKioskPolicyTest {
 
     private static void launchAuthorityIsOneShotAndRejectsSpoofReplayAndRecreation() {
         NativeRendererExperimentLaunchAuthority.invalidatePending();
-        long epoch = NativeRendererExperimentLaunchAuthority.issueFromLauncher(9_000L);
+        equal(0L, NativeRendererExperimentLaunchAuthority.issueFromNativeActivity(null, false));
+        long epoch = issueAdmittedLaunchForTest(9_000L);
         equal(9_000L, epoch);
         reject(NativeRendererExperimentLaunchAuthority.consume(null, epoch));
         reject(NativeRendererExperimentLaunchAuthority.consume("internal-main", epoch));
@@ -507,7 +508,7 @@ public final class NativeRendererSoftKioskPolicyTest {
         reject(NativeRendererExperimentLaunchAuthority.consume(
             NativeRendererExperimentLaunchAuthority.PROVENANCE_EXPLICIT_USER_LAUNCH,
             epoch));
-        long later = NativeRendererExperimentLaunchAuthority.issueFromLauncher(8_000L);
+        long later = issueAdmittedLaunchForTest(8_000L);
         require(later > epoch);
         NativeRendererExperimentLaunchAuthority.invalidatePending();
         reject(NativeRendererExperimentLaunchAuthority.consume(
@@ -516,8 +517,7 @@ public final class NativeRendererSoftKioskPolicyTest {
     }
 
     private static void launcherAdmissionRejectsRecreationAndIntentAnomalies() {
-        String launcher =
-            "io.github.mesmerprism.rustyquest.native_renderer.NativeRendererExperimentLauncherActivity";
+        String launcher = "android.app.NativeActivity";
         require(NativeRendererExperimentLauncherPolicy.admits(
             false, "android.intent.action.MAIN", true, 1, false,
             APP, launcher, APP, launcher));
@@ -542,6 +542,17 @@ public final class NativeRendererSoftKioskPolicyTest {
         reject(NativeRendererExperimentLauncherPolicy.admits(
             false, "android.intent.action.MAIN", true, 1, false,
             APP, "com.example.SpoofLauncher", APP, launcher));
+    }
+
+    private static long issueAdmittedLaunchForTest(long candidate) {
+        try {
+            java.lang.reflect.Method method = NativeRendererExperimentLaunchAuthority.class
+                .getDeclaredMethod("issueAdmitted", long.class);
+            method.setAccessible(true);
+            return ((Long) method.invoke(null, Long.valueOf(candidate))).longValue();
+        } catch (ReflectiveOperationException error) {
+            throw new AssertionError("could not exercise private admitted-launch issuer", error);
+        }
     }
 
     private static NativeRendererSoftKioskCoordinator ready(

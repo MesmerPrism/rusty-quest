@@ -13,14 +13,29 @@ $schemaPath = Join-Path $RepoRoot 'schemas\rusty.quest.native_app_private_asset_
 $resolverPath = Join-Path $RepoRoot 'tools\Resolve-NativeAppBuild.ps1'
 $privateAssetModule = Import-Module $modulePath -Force -PassThru
 $builderText = Get-Content -Raw -LiteralPath (Join-Path $RepoRoot 'tools\Build-NativeRendererAndroid.ps1')
+$javaHome = [Environment]::GetEnvironmentVariable('JAVA_HOME')
+$jarPath = if (-not [string]::IsNullOrWhiteSpace($javaHome)) {
+    Join-Path $javaHome 'bin\jar.exe'
+} else {
+    (Get-Command jar -ErrorAction Stop).Source
+}
+if (-not (Test-Path -LiteralPath $jarPath -PathType Leaf)) {
+    throw "Pinned/resolved JDK jar tool is unavailable: $jarPath"
+}
 foreach ($requiredBuilderToken in @(
     'Copy-NativeAppPrivateAssetsFromClosure',
     'private_asset_provider =',
-    'closure_sha256 = Get-NativeAppPrivateAssetTextSha256'
+    'closure_sha256 = Get-NativeAppPrivateAssetTextSha256',
+    'jar portable asset update',
+    '"uf0", $apkUnaligned, "-C", $OutDir, "assets"',
+    'Assert-NativeAppApkAssetArchive'
 )) {
     if (-not $builderText.Contains($requiredBuilderToken, [StringComparison]::Ordinal)) {
         throw "Native renderer builder is missing private-asset integration: $requiredBuilderToken"
     }
+}
+if ($builderText.Contains('"-A", $assetsDir', [StringComparison]::Ordinal)) {
+    throw 'Native renderer builder still delegates nested APK asset paths to Windows aapt2.'
 }
 
 function Write-JsonNoBom {
@@ -88,6 +103,99 @@ function New-TestDirectoryLink {
         throw "Directory-link damage fixture could not confirm reparse-point identity: $LinkPath"
     }
     return $true
+}
+
+function New-TestAssetArchive {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][string]$AssetRoot,
+        [string]$BackslashEntry = '',
+        [string]$MissingEntry = '',
+        [string]$DuplicateEntry = '',
+        [string]$DriftEntry = '',
+        [string]$CompressedMp3Entry = '',
+        [switch]$AddUnexpected,
+        [switch]$AddBackslashUnexpected
+    )
+    Add-Type -AssemblyName System.IO.Compression
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $archive = [IO.Compression.ZipFile]::Open($Path, [IO.Compression.ZipArchiveMode]::Create)
+    try {
+        foreach ($file in @(Get-ChildItem -LiteralPath $AssetRoot -Recurse -File | Sort-Object FullName)) {
+            $relative = [IO.Path]::GetRelativePath($AssetRoot, $file.FullName).Replace('\', '/')
+            if ($relative -ceq $MissingEntry) { continue }
+            $entryName = "assets/$relative"
+            if ($relative -ceq $BackslashEntry) { $entryName = $entryName.Replace('/', '\') }
+            $compression = if ($relative -ceq $CompressedMp3Entry) {
+                [IO.Compression.CompressionLevel]::Optimal
+            } else {
+                [IO.Compression.CompressionLevel]::NoCompression
+            }
+            $entry = $archive.CreateEntry($entryName, $compression)
+            $stream = $entry.Open()
+            try {
+                $bytes = [IO.File]::ReadAllBytes($file.FullName)
+                if ($relative -ceq $DriftEntry) { $bytes[0] = $bytes[0] -bxor 0xFF }
+                $stream.Write($bytes, 0, $bytes.Length)
+            } finally {
+                $stream.Dispose()
+            }
+            if ($relative -ceq $DuplicateEntry) {
+                $duplicate = $archive.CreateEntry($entryName, [IO.Compression.CompressionLevel]::NoCompression)
+                $duplicateStream = $duplicate.Open()
+                try {
+                    $duplicateBytes = [IO.File]::ReadAllBytes($file.FullName)
+                    $duplicateStream.Write($duplicateBytes, 0, $duplicateBytes.Length)
+                } finally {
+                    $duplicateStream.Dispose()
+                }
+            }
+        }
+        if ($AddUnexpected) {
+            $unexpected = $archive.CreateEntry('assets/unexpected.bin', [IO.Compression.CompressionLevel]::NoCompression)
+            $stream = $unexpected.Open()
+            try { $stream.WriteByte(0x7F) } finally { $stream.Dispose() }
+        }
+        if ($AddBackslashUnexpected) {
+            $unexpected = $archive.CreateEntry('assets\unexpected.bin', [IO.Compression.CompressionLevel]::NoCompression)
+            $stream = $unexpected.Open()
+            try { $stream.WriteByte(0x6F) } finally { $stream.Dispose() }
+        }
+    } finally {
+        $archive.Dispose()
+    }
+}
+
+function Find-EqualLengthDeflatePayload {
+    foreach ($length in @(64, 128, 256, 512, 1024)) {
+        for ($noiseCount = 0; $noiseCount -le $length; $noiseCount += 1) {
+            $payload = [byte[]]::new($length)
+            for ($index = 0; $index -lt $noiseCount; $index += 1) {
+                $payload[$index] = [byte](($index * 73 + $noiseCount * 151 + ($index -shr 1)) % 256)
+            }
+            $memory = [IO.MemoryStream]::new()
+            $archive = [IO.Compression.ZipArchive]::new(
+                $memory,
+                [IO.Compression.ZipArchiveMode]::Create,
+                $true)
+            $entry = $archive.CreateEntry('equal.bin', [IO.Compression.CompressionLevel]::Optimal)
+            $stream = $entry.Open()
+            try { $stream.Write($payload, 0, $payload.Length) } finally { $stream.Dispose() }
+            $archive.Dispose()
+            $memory.Position = 0
+            $read = [IO.Compression.ZipArchive]::new(
+                $memory,
+                [IO.Compression.ZipArchiveMode]::Read,
+                $false)
+            try {
+                $readEntry = $read.Entries[0]
+                if ($readEntry.CompressedLength -eq $readEntry.Length) { return $payload }
+            } finally {
+                $read.Dispose()
+            }
+        }
+    }
+    throw 'Could not construct the deterministic equal-length DEFLATE damage fixture.'
 }
 
 $volumeRoot = [IO.Path]::GetPathRoot($RepoRoot)
@@ -219,6 +327,103 @@ try {
     }
     Assert-Rejected -Label 'package-create-new-collision' -Action {
         Copy-NativeAppPrivateAssetsFromClosure -Closure $closure -FeatureLockPath $lockPath -DestinationRoot $packageAssets | Out-Null
+    }
+
+    $archiveAssetRoot = Join-Path $tempRoot 'archive-assets'
+    [IO.Directory]::CreateDirectory((Join-Path $archiveAssetRoot 'session-config')) | Out-Null
+    [IO.Directory]::CreateDirectory((Join-Path $archiveAssetRoot 'session-audio')) | Out-Null
+    [IO.Directory]::CreateDirectory((Join-Path $archiveAssetRoot 'manifold')) | Out-Null
+    [IO.File]::WriteAllText(
+        (Join-Path $archiveAssetRoot 'session-config\experiment-session.json'),
+        '{"schema":"archive-test"}',
+        [Text.UTF8Encoding]::new($false))
+    [IO.File]::WriteAllBytes(
+        (Join-Path $archiveAssetRoot 'session-audio\condition-a.mp3'),
+        [byte[]]::new(1024))
+    [IO.File]::WriteAllBytes(
+        (Join-Path $archiveAssetRoot 'manifold\runtime-config.json'),
+        [byte[]](1, 2, 3, 4, 5))
+    $goodArchive = Join-Path $tempRoot 'portable-assets.apk'
+    New-TestAssetArchive -Path $goodArchive -AssetRoot $archiveAssetRoot
+    $portableRecords = @(Assert-NativeAppApkAssetArchive -ApkPath $goodArchive -AssetRoot $archiveAssetRoot)
+    if ($portableRecords.Count -ne 3 -or
+        @($portableRecords | Where-Object {
+            [string]$_.apk_asset_path -ceq 'assets/session-audio/condition-a.mp3' -and
+            [bool]$_.stored_uncompressed
+        }).Count -ne 1) {
+        throw 'Portable APK asset archive audit did not preserve the exact staged closure.'
+    }
+
+    $jarPackageRoot = Join-Path $tempRoot 'jar-production-route'
+    $jarAssetRoot = Join-Path $jarPackageRoot 'assets'
+    [IO.Directory]::CreateDirectory($jarPackageRoot) | Out-Null
+    Copy-Item -LiteralPath $archiveAssetRoot -Destination $jarAssetRoot -Recurse
+    $jarProducedArchive = Join-Path $tempRoot 'jar-produced.apk'
+    $seed = [IO.Compression.ZipFile]::Open(
+        $jarProducedArchive,
+        [IO.Compression.ZipArchiveMode]::Create)
+    try {
+        $seedEntry = $seed.CreateEntry('AndroidManifest.xml', [IO.Compression.CompressionLevel]::NoCompression)
+        $seedStream = $seedEntry.Open()
+        try { $seedStream.WriteByte(0x01) } finally { $seedStream.Dispose() }
+    } finally {
+        $seed.Dispose()
+    }
+    & $jarPath 'uf0' $jarProducedArchive '-C' $jarPackageRoot 'assets'
+    if ($LASTEXITCODE -ne 0) { throw "Production jar uf0 asset route failed: $LASTEXITCODE" }
+    $jarRecords = @(Assert-NativeAppApkAssetArchive -ApkPath $jarProducedArchive -AssetRoot $jarAssetRoot)
+    if ($jarRecords.Count -ne 3 -or
+        @($jarRecords | Where-Object {
+            [string]$_.apk_asset_path -ceq 'assets/session-audio/condition-a.mp3' -and
+            [int]$_.compression_method -eq 0
+        }).Count -ne 1) {
+        throw 'The real jar uf0 producer did not emit the exact portable stored asset closure.'
+    }
+    foreach ($archiveDamage in @(
+        @{ name = 'apk-backslash-entry'; args = @{ BackslashEntry = 'session-config/experiment-session.json' } },
+        @{ name = 'apk-missing-entry'; args = @{ MissingEntry = 'manifold/runtime-config.json' } },
+        @{ name = 'apk-duplicate-entry'; args = @{ DuplicateEntry = 'manifold/runtime-config.json' } },
+        @{ name = 'apk-byte-drift'; args = @{ DriftEntry = 'manifold/runtime-config.json' } },
+        @{ name = 'apk-compressed-mp3'; args = @{ CompressedMp3Entry = 'session-audio/condition-a.mp3' } },
+        @{ name = 'apk-unexpected-entry'; args = @{ AddUnexpected = $true } },
+        @{ name = 'apk-backslash-unexpected-entry'; args = @{ AddBackslashUnexpected = $true } }
+    )) {
+        $damagedArchive = Join-Path $tempRoot ("$($archiveDamage.name).apk")
+        $archiveArguments = @{
+            Path = $damagedArchive
+            AssetRoot = $archiveAssetRoot
+        }
+        foreach ($key in $archiveDamage.args.Keys) { $archiveArguments[$key] = $archiveDamage.args[$key] }
+        New-TestAssetArchive @archiveArguments
+        Assert-Rejected -Label ([string]$archiveDamage.name) -Action {
+            Assert-NativeAppApkAssetArchive -ApkPath $damagedArchive -AssetRoot $archiveAssetRoot | Out-Null
+        }
+    }
+    $mp3Path = Join-Path $archiveAssetRoot 'session-audio\condition-a.mp3'
+    $originalMp3 = [IO.File]::ReadAllBytes($mp3Path)
+    try {
+        [IO.File]::WriteAllBytes($mp3Path, (Find-EqualLengthDeflatePayload))
+        $equalLengthDeflate = Join-Path $tempRoot 'apk-equal-length-deflate.apk'
+        New-TestAssetArchive `
+            -Path $equalLengthDeflate `
+            -AssetRoot $archiveAssetRoot `
+            -CompressedMp3Entry 'session-audio/condition-a.mp3'
+        $equalRead = [IO.Compression.ZipFile]::OpenRead($equalLengthDeflate)
+        try {
+            $equalEntry = @($equalRead.Entries | Where-Object {
+                $_.FullName -ceq 'assets/session-audio/condition-a.mp3'
+            })[0]
+            if ($equalEntry.CompressedLength -ne $equalEntry.Length) {
+                throw 'Equal-length DEFLATE damage fixture lost its defining property.'
+            }
+        } finally {
+            $equalRead.Dispose()
+        }
+        Assert-Rejected -Label 'apk-equal-length-deflate-method-8' -Action {
+            Assert-NativeAppApkAssetArchive -ApkPath $equalLengthDeflate -AssetRoot $archiveAssetRoot | Out-Null
+        }
+    } finally {
+        [IO.File]::WriteAllBytes($mp3Path, $originalMp3)
     }
 
     foreach ($damage in @(

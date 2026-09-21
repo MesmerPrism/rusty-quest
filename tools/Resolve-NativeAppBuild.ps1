@@ -696,7 +696,6 @@ function New-GeneratedAndroidManifestText {
     [void]$lines.Add(('        android:label="{0}"' -f [System.Security.SecurityElement]::Escape($ApplicationLabel)))
     [void]$lines.Add('        android:theme="@android:style/Theme.Material.NoActionBar">')
     [void]$lines.Add('        <meta-data android:name="com.samsung.android.vr.application.mode" android:value="vr_only" />')
-    $experimentLauncherSelected = $Activities -contains "NativeRendererExperimentLauncherActivity"
     if ($Activities -contains "android.app.NativeActivity") {
         [void]$lines.Add('        <activity')
         [void]$lines.Add('            android:name="android.app.NativeActivity"')
@@ -711,27 +710,10 @@ function New-GeneratedAndroidManifestText {
         [void]$lines.Add('            <meta-data android:name="com.oculus.vr.focusaware" android:value="true" />')
         [void]$lines.Add('            <meta-data android:name="com.oculus.intent.category.VR" android:value="vr_only" />')
         [void]$lines.Add('            <meta-data android:name="android.app.lib_name" android:value="rusty_quest_native_renderer" />')
-        if (-not $experimentLauncherSelected) {
-            [void]$lines.Add('            <intent-filter>')
-            [void]$lines.Add('                <action android:name="android.intent.action.MAIN" />')
-            [void]$lines.Add('                <category android:name="com.oculus.intent.category.VR" />')
-            [void]$lines.Add('                <category android:name="android.intent.category.LAUNCHER" />')
-            [void]$lines.Add('            </intent-filter>')
-        }
-        [void]$lines.Add('        </activity>')
-    }
-    if ($experimentLauncherSelected) {
-        [void]$lines.Add('        <activity')
-        [void]$lines.Add('            android:name="io.github.mesmerprism.rustyquest.native_renderer.NativeRendererExperimentLauncherActivity"')
-        [void]$lines.Add('            android:excludeFromRecents="true"')
-        [void]$lines.Add('            android:exported="true"')
-        [void]$lines.Add(('            android:label="{0}"' -f [System.Security.SecurityElement]::Escape($ApplicationLabel)))
-        [void]$lines.Add('            android:launchMode="singleTop"')
-        [void]$lines.Add('            android:noHistory="true">')
         [void]$lines.Add('            <intent-filter>')
         [void]$lines.Add('                <action android:name="android.intent.action.MAIN" />')
+        [void]$lines.Add('                <category android:name="com.oculus.intent.category.VR" />')
         [void]$lines.Add('                <category android:name="android.intent.category.LAUNCHER" />')
-        [void]$lines.Add('                <category android:name="com.oculus.intent.category.2D" />')
         [void]$lines.Add('            </intent-filter>')
         [void]$lines.Add('        </activity>')
     }

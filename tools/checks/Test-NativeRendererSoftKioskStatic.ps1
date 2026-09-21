@@ -36,9 +36,11 @@ $recoveryTimerGatePath = Join-Path $javaRoot 'NativeRendererSoftKioskRecoveryTim
 $servicePath = Join-Path $javaRoot 'NativeRendererSoftKioskAccessibilityService.java'
 $launchAuthorityPath = Join-Path $javaRoot 'NativeRendererExperimentLaunchAuthority.java'
 $launcherPolicyPath = Join-Path $javaRoot 'NativeRendererExperimentLauncherPolicy.java'
-$launcherPath = Join-Path $javaRoot 'NativeRendererExperimentLauncherActivity.java'
 $handoffLifecyclePath = Join-Path $javaRoot 'PanelImmersiveHandoffLifecyclePolicy.java'
 $handoffPath = Join-Path $javaRoot 'PanelImmersiveHandoff.java'
+$nativeEntryPath = Join-Path $repo 'apps\native-renderer-android\native\src\lib.rs'
+$panelBridgePath = Join-Path $repo 'apps\native-renderer-android\native\src\native_renderer_panel_bridge.rs'
+$openXrPath = Join-Path $repo 'apps\native-renderer-android\native\src\xr_vulkan.rs'
 $testPath = Join-Path $testRoot 'NativeRendererSoftKioskPolicyTest.java'
 foreach ($path in @(
     $policyPath,
@@ -48,9 +50,11 @@ foreach ($path in @(
     $servicePath,
     $launchAuthorityPath,
     $launcherPolicyPath,
-    $launcherPath,
     $handoffLifecyclePath,
     $handoffPath,
+    $nativeEntryPath,
+    $panelBridgePath,
+    $openXrPath,
     $testPath,
     $featurePath
 )) {
@@ -63,7 +67,7 @@ $feature = Get-Content -Raw -LiteralPath $featurePath | ConvertFrom-Json
 if ([string]$feature.schema -cne 'rusty.quest.native_app_feature.v1' -or
     [string]$feature.feature_id -cne 'ui.same_apk_soft_kiosk' -or
     @($feature.depends_on) -cnotcontains 'ui.same_apk_control_panel' -or
-    @($feature.android_manifest.activities) -cnotcontains 'NativeRendererExperimentLauncherActivity' -or
+    @($feature.android_manifest.activities).Count -ne 0 -or
     @($feature.android_manifest.services) -cnotcontains 'NativeRendererSoftKioskAccessibilityService' -or
     @($feature.android_manifest.permissions).Count -ne 0) {
     throw 'Same-APK soft-kiosk feature descriptor is not the closed opt-in surface.'
@@ -78,10 +82,26 @@ Assert-Contains $servicePath 'cancelRecovery();'
 Assert-Contains $coordinatorPath 'BEGIN_TERMINAL_EXIT'
 Assert-Contains $coordinatorPath 'TERMINAL_ROUTE_SAVE_AND_EXIT'
 Assert-Contains $launchAuthorityPath 'explicit-user-launch-v1'
-Assert-Contains $launcherPath 'Intent.CATEGORY_LAUNCHER'
-Assert-Contains $launcherPath 'NativeRendererExperimentLaunchAuthority.issueFromLauncher('
-Assert-Contains $launcherPath 'state != null'
-Assert-Contains $launcherPath 'incoming.getData() != null || incoming.getSelector() != null'
+Assert-Contains $launchAuthorityPath 'issueFromNativeActivity(Activity activity, boolean recreation)'
+Assert-Contains $launchAuthorityPath 'Intent.CATEGORY_LAUNCHER'
+Assert-Contains $launchAuthorityPath '"android.app.NativeActivity"'
+Assert-Contains $launchAuthorityPath 'incoming.getData() != null || incoming.getSelector() != null'
+Assert-Contains $nativeEntryPath 'admit_explicit_native_activity_launch(state)'
+Assert-Contains $panelBridgePath 'pending_experiment_launch_epoch(app)'
+Assert-Contains $panelBridgePath 'open_experimenter_panel_from_explicit_launch(app, epoch)'
+Assert-Contains $panelBridgePath 'FLAG_ACTIVITY_REORDER_TO_FRONT | FLAG_ACTIVITY_SINGLE_TOP'
+Assert-Contains $panelBridgePath 'after_current_session_frame_submitted('
+Assert-NotContains $panelBridgePath 'fn control_panel_mode_is_breath_mapping()'
+Assert-Contains $panelBridgePath 'packaged_control_panel_mode_is_breath_mapping_installed()'
+Assert-Contains $openXrPath 'control_panel_command_poller.after_current_session_frame_submitted('
+$openXrText = [IO.File]::ReadAllText($openXrPath)
+$endFrameIndex = $openXrText.IndexOf('trace_startup_frame(frame_count, "after-xr-end-frame");', [StringComparison]::Ordinal)
+$startupDispatchIndex = $openXrText.IndexOf(
+    'control_panel_command_poller.after_current_session_frame_submitted(',
+    [StringComparison]::Ordinal)
+if ($endFrameIndex -lt 0 -or $startupDispatchIndex -le $endFrameIndex) {
+    throw 'Experimenter cold-panel dispatch must remain after successful xrEndFrame return.'
+}
 Assert-Contains $coordinatorPath 'RECOVERY_EXHAUSTED'
 Assert-Contains $coordinatorPath 'UNAVAILABLE_HOME_SURFACE'
 Assert-Contains $servicePath 'replaceDeadlineTimer('
@@ -100,16 +120,8 @@ foreach ($literal in @(
     Assert-NotContains $servicePath $literal
 }
 
-$productionJava = Get-ChildItem -LiteralPath $javaRoot -Filter '*.java' -File
-$launcherIssueCallers = @($productionJava | Where-Object {
-    $_.Name -ne 'NativeRendererExperimentLaunchAuthority.java' -and
-    [IO.File]::ReadAllText($_.FullName).Contains(
-        'NativeRendererExperimentLaunchAuthority.issueFromLauncher(',
-        [StringComparison]::Ordinal)
-})
-if ($launcherIssueCallers.Count -ne 1 -or
-    $launcherIssueCallers[0].Name -cne 'NativeRendererExperimentLauncherActivity.java') {
-    throw 'Only the exported launcher trampoline may issue an explicit-launch epoch.'
+if (Test-Path -LiteralPath (Join-Path $javaRoot 'NativeRendererExperimentLauncherActivity.java')) {
+    throw 'The experiment profile must not package a competing launcher trampoline.'
 }
 
 $panelPath = Join-Path $repo 'apps\native-renderer-android\panel-modules\breath-composition\src\main\java\io\github\mesmerprism\rustyquest\native_renderer\BreathCompositionPanelModule.java'
@@ -157,7 +169,6 @@ try {
         $servicePath,
         $launchAuthorityPath,
         $launcherPolicyPath,
-        $launcherPath,
         $handoffLifecyclePath,
         $handoffPath,
         $testPath
@@ -166,7 +177,8 @@ try {
     if ($LASTEXITCODE -ne 0) {
         throw "Soft-kiosk javac failed with exit code $LASTEXITCODE"
     }
-    & $java '-cp' $classes 'io.github.mesmerprism.rustyquest.native_renderer.NativeRendererSoftKioskPolicyTest'
+    $runtimeClassPath = "$classes$([IO.Path]::PathSeparator)$androidJar"
+    & $java '-cp' $runtimeClassPath 'io.github.mesmerprism.rustyquest.native_renderer.NativeRendererSoftKioskPolicyTest'
     if ($LASTEXITCODE -ne 0) {
         throw "Soft-kiosk Java traces failed with exit code $LASTEXITCODE"
     }
@@ -176,7 +188,6 @@ try {
     $selectedSpec.app_id = 'native_soft_kiosk_static_probe'
     $selectedSpec.package_name = 'io.github.mesmerprism.rustyquest.native_renderer.soft_kiosk_probe'
     $selectedSpec.requested_features = @($selectedSpec.requested_features) + 'ui.same_apk_soft_kiosk'
-    $selectedSpec.declared_manifest.activities = @($selectedSpec.declared_manifest.activities) + 'NativeRendererExperimentLauncherActivity'
     $selectedSpec.declared_manifest.services = @('NativeRendererSoftKioskAccessibilityService')
     [IO.File]::WriteAllText(
         $selectedSpecPath,
@@ -201,7 +212,6 @@ try {
         throw 'Selected resolver probe omitted the soft-kiosk feature.'
     }
     foreach ($literal in @(
-        'android:name="io.github.mesmerprism.rustyquest.native_renderer.NativeRendererExperimentLauncherActivity"',
         'android:name="io.github.mesmerprism.rustyquest.native_renderer.NativeRendererSoftKioskAccessibilityService"',
         'android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"',
         'android:name="android.accessibilityservice.AccessibilityService"',
@@ -213,6 +223,35 @@ try {
     }
     if ([regex]::Matches($selectedManifest, 'android.intent.category.LAUNCHER').Count -ne 1) {
         throw 'Selected experiment profile must expose exactly one LAUNCHER category.'
+    }
+    if ($selectedManifest.Contains('NativeRendererExperimentLauncherActivity', [StringComparison]::Ordinal)) {
+        throw 'Selected experiment profile must keep NativeActivity as the sole launcher.'
+    }
+    $nativeActivityBlock = [regex]::Match(
+        $selectedManifest,
+        '(?s)<activity\s+[^>]*android:name="android\.app\.NativeActivity".*?</activity>').Value
+    foreach ($literal in @(
+        'android:screenOrientation="landscape"',
+        'android.intent.action.MAIN',
+        'com.oculus.intent.category.VR',
+        'android.intent.category.LAUNCHER'
+    )) {
+        if (-not $nativeActivityBlock.Contains($literal, [StringComparison]::Ordinal)) {
+            throw "NativeActivity launcher block omitted '$literal'."
+        }
+    }
+    $panelActivityBlock = [regex]::Match(
+        $selectedManifest,
+        '(?s)<activity\s+[^>]*android:name="io\.github\.mesmerprism\.rustyquest\.native_renderer\.ControlPanelActivity".*?</activity>').Value
+    foreach ($literal in @(
+        'android:screenOrientation="landscape"',
+        'android:defaultHeight="720dp"',
+        'android:defaultWidth="960dp"',
+        'com.oculus.intent.category.2D'
+    )) {
+        if (-not $panelActivityBlock.Contains($literal, [StringComparison]::Ordinal)) {
+            throw "ControlPanelActivity landscape handoff block omitted '$literal'."
+        }
     }
     if ($selectedManifest.Contains(
         '<uses-permission android:name="android.permission.BIND_ACCESSIBILITY_SERVICE"',
@@ -234,9 +273,8 @@ try {
     $baselineLock = Get-Content -Raw -LiteralPath ([string]$baselineResult.feature_lock_path) | ConvertFrom-Json
     $baselineManifest = [IO.File]::ReadAllText([string]$baselineLock.generated_outputs.android_manifest)
     if ($baselineManifest.Contains('NativeRendererSoftKioskAccessibilityService', [StringComparison]::Ordinal) -or
-        $baselineManifest.Contains('NativeRendererExperimentLauncherActivity', [StringComparison]::Ordinal) -or
         [regex]::Matches($baselineManifest, 'android.intent.category.LAUNCHER').Count -ne 1) {
-        throw 'Unselected apps must retain the legacy NativeActivity launcher and omit the soft-kiosk surface.'
+        throw 'Unselected apps must retain the NativeActivity launcher and omit the soft-kiosk service.'
     }
 } finally {
     if (Test-Path -LiteralPath $resolvedTempRoot) {

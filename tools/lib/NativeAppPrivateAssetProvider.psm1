@@ -569,6 +569,196 @@ function Copy-NativeAppPrivateAssetsFromClosure {
     return $packaged
 }
 
+function Get-NativeAppZipCentralDirectoryEntries {
+    param([Parameter(Mandatory = $true)][string]$ArchivePath)
+
+    if (-not [BitConverter]::IsLittleEndian) {
+        throw 'ZIP central-directory inspection requires a little-endian host.'
+    }
+    $bytes = [IO.File]::ReadAllBytes($ArchivePath)
+    if ($bytes.Length -lt 22) { throw 'APK archive is too short to contain a ZIP end record.' }
+    $minimum = [Math]::Max(0, $bytes.Length - 22 - 65535)
+    $eocd = -1
+    for ($cursor = $bytes.Length - 22; $cursor -ge $minimum; $cursor -= 1) {
+        if ([BitConverter]::ToUInt32($bytes, $cursor) -eq 0x06054b50 -and
+                $cursor + 22 + [BitConverter]::ToUInt16($bytes, $cursor + 20) -eq $bytes.Length) {
+            $eocd = $cursor
+            break
+        }
+    }
+    if ($eocd -lt 0) { throw 'APK archive ZIP end record is missing or malformed.' }
+    $disk = [BitConverter]::ToUInt16($bytes, $eocd + 4)
+    $centralDisk = [BitConverter]::ToUInt16($bytes, $eocd + 6)
+    $diskEntries = [BitConverter]::ToUInt16($bytes, $eocd + 8)
+    $totalEntries = [BitConverter]::ToUInt16($bytes, $eocd + 10)
+    $centralBytes = [BitConverter]::ToUInt32($bytes, $eocd + 12)
+    $centralOffset = [BitConverter]::ToUInt32($bytes, $eocd + 16)
+    if ($disk -ne 0 -or $centralDisk -ne 0 -or $diskEntries -ne $totalEntries -or
+            $totalEntries -eq 0xFFFF -or $centralBytes -eq 0xFFFFFFFF -or
+            $centralOffset -eq 0xFFFFFFFF) {
+        throw 'APK archive uses unsupported multi-disk or ZIP64 central-directory metadata.'
+    }
+    $centralEnd = [int64]$centralOffset + [int64]$centralBytes
+    if ($centralEnd -gt $eocd -or $centralEnd -gt $bytes.Length) {
+        throw 'APK archive central-directory bounds are malformed.'
+    }
+
+    $utf8 = [Text.UTF8Encoding]::new($false, $true)
+    $records = @()
+    $cursor = [int64]$centralOffset
+    for ($index = 0; $index -lt $totalEntries; $index += 1) {
+        if ($cursor + 46 -gt $centralEnd -or
+                [BitConverter]::ToUInt32($bytes, [int]$cursor) -ne 0x02014b50) {
+            throw "APK archive central-directory entry $index is malformed."
+        }
+        $flags = [BitConverter]::ToUInt16($bytes, [int]$cursor + 8)
+        $method = [BitConverter]::ToUInt16($bytes, [int]$cursor + 10)
+        $compressedBytes = [BitConverter]::ToUInt32($bytes, [int]$cursor + 20)
+        $uncompressedBytes = [BitConverter]::ToUInt32($bytes, [int]$cursor + 24)
+        $nameBytes = [BitConverter]::ToUInt16($bytes, [int]$cursor + 28)
+        $extraBytes = [BitConverter]::ToUInt16($bytes, [int]$cursor + 30)
+        $commentBytes = [BitConverter]::ToUInt16($bytes, [int]$cursor + 32)
+        $diskStart = [BitConverter]::ToUInt16($bytes, [int]$cursor + 34)
+        $localOffset = [BitConverter]::ToUInt32($bytes, [int]$cursor + 42)
+        $entryEnd = $cursor + 46 + $nameBytes + $extraBytes + $commentBytes
+        if ($entryEnd -gt $centralEnd -or $diskStart -ne 0 -or
+                $compressedBytes -eq 0xFFFFFFFF -or $uncompressedBytes -eq 0xFFFFFFFF -or
+                $localOffset -eq 0xFFFFFFFF) {
+            throw "APK archive central-directory entry $index uses malformed or ZIP64 metadata."
+        }
+        try {
+            $name = $utf8.GetString($bytes, [int]$cursor + 46, $nameBytes)
+        } catch {
+            throw "APK archive central-directory entry $index has a non-UTF-8 path."
+        }
+        $records += [pscustomobject]@{
+            name = $name
+            flags = [int]$flags
+            compression_method = [int]$method
+            compressed_bytes = [int64]$compressedBytes
+            bytes = [int64]$uncompressedBytes
+        }
+        $cursor = $entryEnd
+    }
+    if ($cursor -ne $centralEnd) {
+        throw 'APK archive central-directory size does not match its entry inventory.'
+    }
+    return $records
+}
+
+function Assert-NativeAppApkAssetArchive {
+    param(
+        [Parameter(Mandatory = $true)][string]$ApkPath,
+        [Parameter(Mandatory = $true)][string]$AssetRoot
+    )
+    $resolvedApk = [IO.Path]::GetFullPath($ApkPath)
+    if (-not (Test-Path -LiteralPath $resolvedApk -PathType Leaf)) {
+        throw "APK archive does not exist: $resolvedApk"
+    }
+    $resolvedAssetRoot = [IO.Path]::GetFullPath($AssetRoot)
+    if (-not (Test-Path -LiteralPath $resolvedAssetRoot -PathType Container)) {
+        throw "APK asset source root does not exist: $resolvedAssetRoot"
+    }
+
+    Add-Type -AssemblyName System.IO.Compression
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $centralEntries = @(Get-NativeAppZipCentralDirectoryEntries -ArchivePath $resolvedApk)
+    $centralByName = [Collections.Generic.Dictionary[string, object]]::new(
+        [StringComparer]::Ordinal)
+    foreach ($entry in $centralEntries) {
+        $name = [string]$entry.name
+        if ($centralByName.ContainsKey($name)) {
+            throw "APK archive central directory contains a duplicate entry: $name"
+        }
+        $centralByName[$name] = $entry
+    }
+    $archive = [IO.Compression.ZipFile]::OpenRead($resolvedApk)
+    try {
+        $expected = [Collections.Generic.Dictionary[string, object]]::new(
+            [StringComparer]::Ordinal)
+        foreach ($file in @(Get-ChildItem -LiteralPath $resolvedAssetRoot -Recurse -File)) {
+            $relative = [IO.Path]::GetRelativePath($resolvedAssetRoot, $file.FullName).Replace('\', '/')
+            Assert-NativeAppPortableRelativePath -Path $relative -Label 'staged APK asset' -LogicalDestination
+            $entryName = "assets/$relative"
+            if ($expected.ContainsKey($entryName)) {
+                throw "Staged APK assets contain a duplicate portable path: $entryName"
+            }
+            $expected[$entryName] = [pscustomobject]@{
+                path = $file.FullName
+                bytes = [int64]$file.Length
+                sha256 = Get-NativeAppPrivateAssetFileSha256 -Path $file.FullName
+            }
+        }
+
+        $observed = [Collections.Generic.Dictionary[string, object]]::new(
+            [StringComparer]::Ordinal)
+        foreach ($entry in @($archive.Entries)) {
+            $name = [string]$entry.FullName
+            if ($name.StartsWith('assets\', [StringComparison]::Ordinal)) {
+                throw "APK asset entry uses a non-portable separator: $name"
+            }
+            if (-not $name.StartsWith('assets/', [StringComparison]::Ordinal) -or
+                    $name.EndsWith('/', [StringComparison]::Ordinal)) {
+                continue
+            }
+            if ($name.Contains('\')) {
+                throw "APK asset entry uses a non-portable separator: $name"
+            }
+            $relative = $name.Substring('assets/'.Length)
+            Assert-NativeAppPortableRelativePath -Path $relative -Label 'packaged APK asset' -LogicalDestination
+            if ($observed.ContainsKey($name)) {
+                throw "APK archive contains a duplicate entry: $($entry.FullName)"
+            }
+            if (-not $centralByName.ContainsKey($name)) {
+                throw "APK asset entry is missing from the inspected central directory: $name"
+            }
+            $central = $centralByName[$name]
+            $memory = [IO.MemoryStream]::new()
+            $input = $entry.Open()
+            try { $input.CopyTo($memory) } finally { $input.Dispose() }
+            try {
+                $bytes = $memory.ToArray()
+                $observed[$name] = [pscustomobject]@{
+                    bytes = [int64]$entry.Length
+                    compressed_bytes = [int64]$entry.CompressedLength
+                    compression_method = [int]$central.compression_method
+                    sha256 = Get-NativeAppPrivateAssetBytesSha256 -Bytes $bytes
+                }
+            } finally {
+                $memory.Dispose()
+            }
+        }
+
+        $missing = @($expected.Keys | Where-Object { -not $observed.ContainsKey($_) } | Sort-Object)
+        $unexpected = @($observed.Keys | Where-Object { -not $expected.ContainsKey($_) } | Sort-Object)
+        if ($missing.Count -gt 0 -or $unexpected.Count -gt 0) {
+            throw "APK asset archive closure mismatch; missing=$($missing -join ','); unexpected=$($unexpected -join ',')"
+        }
+        $records = @()
+        foreach ($name in @($expected.Keys | Sort-Object)) {
+            $source = $expected[$name]
+            $packaged = $observed[$name]
+            if ($source.bytes -ne $packaged.bytes -or $source.sha256 -cne $packaged.sha256) {
+                throw "APK asset bytes changed during packaging: $name"
+            }
+            if ($name.EndsWith('.mp3', [StringComparison]::OrdinalIgnoreCase) -and
+                    $packaged.compression_method -ne 0) {
+                throw "APK audio asset must use ZIP STORE (method 0) for AssetManager.openFd: $name"
+            }
+            $records += [ordered]@{
+                apk_asset_path = $name
+                sha256 = [string]$packaged.sha256
+                bytes = [int64]$packaged.bytes
+                compression_method = [int]$packaged.compression_method
+                stored_uncompressed = [bool]($packaged.compression_method -eq 0)
+            }
+        }
+        return $records
+    } finally {
+        $archive.Dispose()
+    }
+}
+
 Export-ModuleMember -Function @(
     'Get-NativeAppPrivateAssetFileSha256',
     'Get-NativeAppPrivateAssetTextSha256',
@@ -578,5 +768,6 @@ Export-ModuleMember -Function @(
     'Assert-NativeAppPrivateAssetRequest',
     'Resolve-NativeAppPrivateAssetProvider',
     'Publish-NativeAppPrivateAssetStaging',
-    'Copy-NativeAppPrivateAssetsFromClosure'
+    'Copy-NativeAppPrivateAssetsFromClosure',
+    'Assert-NativeAppApkAssetArchive'
 )

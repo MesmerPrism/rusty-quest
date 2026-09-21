@@ -16,6 +16,8 @@ const ACTION_OPEN_EXPERIMENTER_PANEL: &str =
 const ACTION_OPEN_DEVELOPER_PANEL: &str =
     "io.github.mesmerprism.rustyquest.native_renderer.action.OPEN_DEVELOPER_PANEL";
 #[cfg(target_os = "android")]
+const ACTION_MAIN: &str = "android.intent.action.MAIN";
+#[cfg(target_os = "android")]
 const EXTRA_PANEL_ROUTE: &str = "native_renderer_panel_route";
 #[cfg(target_os = "android")]
 const EXTRA_PANEL_ROUTE_GENERATION: &str = "native_renderer_panel_route_generation";
@@ -25,6 +27,12 @@ const EXTRA_PANEL_ROUTE_PROVENANCE: &str = "native_renderer_panel_route_provenan
 const EXTRA_PANEL_SESSION_GENERATION: &str = "native_renderer_panel_session_generation";
 #[cfg(target_os = "android")]
 const EXTRA_PANEL_OPERATION_ID: &str = "native_renderer_panel_operation_id";
+#[cfg(target_os = "android")]
+const EXTRA_LAUNCH_PROVENANCE: &str = "native_renderer_launch_provenance";
+#[cfg(target_os = "android")]
+const EXTRA_LAUNCH_EPOCH: &str = "native_renderer_launch_epoch";
+#[cfg(target_os = "android")]
+const PROVENANCE_EXPLICIT_USER_LAUNCH: &str = "explicit-user-launch-v1";
 #[cfg(target_os = "android")]
 const PROP_CONTROL_PANEL_OPEN_TOKEN: &str =
     "debug.rustyquest.native_renderer.control_panel.open_token";
@@ -48,6 +56,58 @@ pub(crate) fn install_packaged_control_panel_mode(
 ) {
     let _ = PACKAGED_CONTROL_PANEL_MODE.set(defaults.lookup(PROP_CONTROL_PANEL_MODE));
 }
+
+#[cfg(target_os = "android")]
+pub(crate) fn packaged_control_panel_mode_is_breath_mapping(
+    defaults: &crate::native_app_settings::NativeAppSettingsDefaults,
+) -> bool {
+    defaults
+        .lookup(PROP_CONTROL_PANEL_MODE)
+        .as_deref()
+        .is_some_and(|value| value == "breath-mapping")
+}
+
+#[cfg(target_os = "android")]
+pub(crate) fn admit_explicit_native_activity_launch(
+    state: &android_activity::OnCreateState,
+) -> Result<Option<u64>, String> {
+    use jni::{
+        jni_sig, jni_str,
+        objects::{JClass, JClassLoader, JObject, JValue},
+        JavaVM,
+    };
+
+    const AUTHORITY_CLASS_NAME: &str =
+        "io.github.mesmerprism.rustyquest.native_renderer.NativeRendererExperimentLaunchAuthority";
+    let vm = unsafe { JavaVM::from_raw(state.vm_as_ptr().cast()) };
+    let activity = state.activity_as_ptr() as jni::sys::jobject;
+    let recreation = !state.saved_state().is_empty();
+    vm.attach_current_thread(|env| -> jni::errors::Result<u64> {
+        let activity = unsafe { env.as_cast_raw::<JObject>(&activity)? };
+        let class_loader = env
+            .call_method(
+                &activity,
+                jni_str!("getClassLoader"),
+                jni_sig!("()Ljava/lang/ClassLoader;"),
+                &[],
+            )?
+            .l()?;
+        let class_loader: JClassLoader = env.cast_local::<JClassLoader>(class_loader)?;
+        let authority_name = env.new_string(AUTHORITY_CLASS_NAME)?;
+        let authority = JClass::for_name_with_loader(env, authority_name, true, class_loader)?;
+        let epoch = env
+            .call_static_method(
+                authority,
+                jni_str!("issueFromNativeActivity"),
+                jni_sig!("(Landroid/app/Activity;Z)J"),
+                &[JValue::Object(&activity), JValue::Bool(recreation)],
+            )?
+            .j()?;
+        Ok(epoch.max(0) as u64)
+    })
+    .map(|epoch| if epoch == 0 { None } else { Some(epoch) })
+    .map_err(|error| format!("experiment NativeActivity launch admission failed: {error}"))
+}
 #[cfg(target_os = "android")]
 const EXTRA_DRIVER_PROFILE_SESSION_STARTUP_RESET: &str =
     "spatial_camera_panel_session_startup_reset";
@@ -59,6 +119,7 @@ const PANEL_COMMAND_POLL_INTERVAL_FRAMES: u64 = 30;
 pub(crate) struct ControlPanelCommandPoller {
     last_open_token: String,
     startup_open_sent: bool,
+    explicit_experiment_startup: ExplicitExperimentPanelStartupGate,
 }
 
 #[cfg(target_os = "android")]
@@ -123,6 +184,103 @@ impl ControlPanelCommandPoller {
             ),
         }
     }
+
+    pub(crate) fn after_current_session_frame_submitted(
+        &mut self,
+        app: &android_activity::AndroidApp,
+        openxr_session_generation: u64,
+        submitted_frame: u64,
+    ) {
+        if self.explicit_experiment_startup.is_closed() {
+            return;
+        }
+        if !packaged_control_panel_mode_is_breath_mapping_installed() {
+            self.explicit_experiment_startup.close();
+            return;
+        }
+        let pending_epoch = match pending_experiment_launch_epoch(app) {
+            Ok(epoch) => epoch,
+            Err(error) => {
+                self.explicit_experiment_startup.close();
+                crate::marker(
+                    "experiment-session-panel",
+                    format!(
+                        "event=control-panel-startup-open status=authority-error openxrSessionGeneration={} submittedFrame={} route=experimenter source=validated-immersive-cold-launch reason={}",
+                        openxr_session_generation,
+                        submitted_frame,
+                        crate::sanitize(&error)
+                    ),
+                );
+                return;
+            }
+        };
+        let Some(epoch) = self
+            .explicit_experiment_startup
+            .after_submitted_frame(pending_epoch, openxr_session_generation)
+        else {
+            return;
+        };
+        crate::marker(
+            "experiment-session-panel",
+            format!(
+                "event=control-panel-startup-open status=intent-dispatching openxrSessionGeneration={} submittedFrame={} panelActivity=ControlPanelActivity route=experimenter source=validated-immersive-cold-launch launchEpoch={}",
+                openxr_session_generation, submitted_frame, epoch
+            ),
+        );
+        match open_experimenter_panel_from_explicit_launch(app, epoch) {
+            Ok(()) => crate::marker(
+                "experiment-session-panel",
+                format!(
+                    "event=control-panel-startup-open status=intent-returned openxrSessionGeneration={} submittedFrame={} panelActivity=ControlPanelActivity route=experimenter source=validated-immersive-cold-launch launchEpoch={}",
+                    openxr_session_generation, submitted_frame, epoch
+                ),
+            ),
+            Err(error) => crate::marker(
+                "experiment-session-panel",
+                format!(
+                    "event=control-panel-startup-open status=intent-error openxrSessionGeneration={} submittedFrame={} route=experimenter source=validated-immersive-cold-launch reason={}",
+                    openxr_session_generation,
+                    submitted_frame,
+                    crate::sanitize(&error)
+                ),
+            ),
+        }
+    }
+}
+
+#[derive(Debug, Default)]
+struct ExplicitExperimentPanelStartupGate {
+    closed: bool,
+}
+
+impl ExplicitExperimentPanelStartupGate {
+    fn after_submitted_frame(
+        &mut self,
+        pending_epoch: Option<u64>,
+        openxr_session_generation: u64,
+    ) -> Option<u64> {
+        if self.closed || openxr_session_generation == 0 {
+            return None;
+        }
+        self.closed = true;
+        pending_epoch.filter(|value| *value > 0)
+    }
+
+    fn close(&mut self) {
+        self.closed = true;
+    }
+
+    fn is_closed(&self) -> bool {
+        self.closed
+    }
+}
+
+#[cfg(target_os = "android")]
+fn packaged_control_panel_mode_is_breath_mapping_installed() -> bool {
+    PACKAGED_CONTROL_PANEL_MODE
+        .get()
+        .and_then(|value| value.as_deref())
+        .is_some_and(|value| value == "breath-mapping")
 }
 
 #[cfg(target_os = "android")]
@@ -191,6 +349,7 @@ pub(crate) fn open_experimenter_panel(
         false,
         Some("experimenter"),
         None,
+        None,
     ) {
         Ok(()) => crate::marker(
             "stimulus-panel",
@@ -255,6 +414,7 @@ pub(crate) fn open_experimenter_panel_with_receipt(
         false,
         Some("experimenter"),
         Some(receipt),
+        None,
     ) {
         Ok(()) => crate::marker(
             "stimulus-panel",
@@ -290,6 +450,7 @@ pub(crate) fn open_developer_panel(
         ACTION_OPEN_DEVELOPER_PANEL,
         false,
         Some("developer"),
+        None,
         None,
     ) {
         Ok(()) => crate::marker(
@@ -331,6 +492,7 @@ pub(crate) fn open_developer_panel_with_route_generation(
         false,
         Some("developer"),
         Some(receipt),
+        None,
     ) {
         Ok(()) => crate::marker(
             "stimulus-panel",
@@ -393,19 +555,27 @@ fn control_panel_mode() -> Option<String> {
 
 #[cfg(target_os = "android")]
 fn toggle_control_panel_impl(app: &android_activity::AndroidApp) -> Result<(), String> {
-    send_control_panel_intent(app, ACTION_TOGGLE_PANEL, false, None, None)
+    send_control_panel_intent(app, ACTION_TOGGLE_PANEL, false, None, None, None)
 }
 
 #[cfg(target_os = "android")]
 fn open_control_panel_impl(app: &android_activity::AndroidApp) -> Result<(), String> {
-    send_control_panel_intent(app, ACTION_OPEN_PANEL, false, None, None)
+    send_control_panel_intent(app, ACTION_OPEN_PANEL, false, None, None, None)
 }
 
 #[cfg(target_os = "android")]
 fn open_control_panel_impl_with_startup_reset(
     app: &android_activity::AndroidApp,
 ) -> Result<(), String> {
-    send_control_panel_intent(app, ACTION_OPEN_PANEL, true, None, None)
+    send_control_panel_intent(app, ACTION_OPEN_PANEL, true, None, None, None)
+}
+
+#[cfg(target_os = "android")]
+fn open_experimenter_panel_from_explicit_launch(
+    app: &android_activity::AndroidApp,
+    epoch: u64,
+) -> Result<(), String> {
+    send_control_panel_intent(app, ACTION_MAIN, false, None, None, Some(epoch))
 }
 
 #[cfg(target_os = "android")]
@@ -455,6 +625,7 @@ fn send_control_panel_intent(
     spatial_camera_panel_session_startup_reset: bool,
     route: Option<&str>,
     route_receipt: Option<PanelRouteReceipt<'_>>,
+    explicit_launch_epoch: Option<u64>,
 ) -> Result<(), String> {
     use jni::{
         jni_sig, jni_str,
@@ -567,6 +738,15 @@ fn send_control_panel_intent(
                 put_string_extra(env, &intent, EXTRA_PANEL_OPERATION_ID, operation_id)?;
             }
         }
+        if let Some(epoch) = explicit_launch_epoch {
+            put_string_extra(
+                env,
+                &intent,
+                EXTRA_LAUNCH_PROVENANCE,
+                PROVENANCE_EXPLICIT_USER_LAUNCH,
+            )?;
+            put_long_extra(env, &intent, EXTRA_LAUNCH_EPOCH, epoch)?;
+        }
         env.call_method(
             &activity,
             jni_str!("startActivity"),
@@ -576,6 +756,47 @@ fn send_control_panel_intent(
         Ok(())
     })
     .map_err(|error| format!("control panel intent failed: {error}"))
+}
+
+#[cfg(target_os = "android")]
+fn pending_experiment_launch_epoch(
+    app: &android_activity::AndroidApp,
+) -> Result<Option<u64>, String> {
+    use jni::{
+        jni_sig, jni_str,
+        objects::{JClass, JClassLoader, JObject},
+        JavaVM,
+    };
+
+    const AUTHORITY_CLASS_NAME: &str =
+        "io.github.mesmerprism.rustyquest.native_renderer.NativeRendererExperimentLaunchAuthority";
+    let vm = unsafe { JavaVM::from_raw(app.vm_as_ptr().cast()) };
+    let activity = app.activity_as_ptr() as jni::sys::jobject;
+    vm.attach_current_thread(|env| -> jni::errors::Result<u64> {
+        let activity = unsafe { env.as_cast_raw::<JObject>(&activity)? };
+        let class_loader = env
+            .call_method(
+                &activity,
+                jni_str!("getClassLoader"),
+                jni_sig!("()Ljava/lang/ClassLoader;"),
+                &[],
+            )?
+            .l()?;
+        let class_loader: JClassLoader = env.cast_local::<JClassLoader>(class_loader)?;
+        let authority_name = env.new_string(AUTHORITY_CLASS_NAME)?;
+        let authority = JClass::for_name_with_loader(env, authority_name, true, class_loader)?;
+        let epoch = env
+            .call_static_method(
+                authority,
+                jni_str!("pendingEpochForImmersiveStartup"),
+                jni_sig!("()J"),
+                &[],
+            )?
+            .j()?;
+        Ok(epoch.max(0) as u64)
+    })
+    .map(|epoch| if epoch == 0 { None } else { Some(epoch) })
+    .map_err(|error| format!("experiment launch authority readback failed: {error}"))
 }
 
 #[cfg(target_os = "android")]
@@ -625,4 +846,37 @@ fn put_string_extra(
         ],
     )?;
     Ok(())
+}
+
+#[cfg(test)]
+mod startup_gate_tests {
+    use super::ExplicitExperimentPanelStartupGate;
+
+    #[test]
+    fn explicit_panel_never_dispatches_without_a_current_openxr_session() {
+        let mut gate = ExplicitExperimentPanelStartupGate::default();
+        assert_eq!(gate.after_submitted_frame(Some(17), 0), None);
+        assert_eq!(gate.after_submitted_frame(Some(17), 1), Some(17));
+    }
+
+    #[test]
+    fn explicit_panel_dispatches_exactly_once_after_submission() {
+        let mut gate = ExplicitExperimentPanelStartupGate::default();
+        assert_eq!(gate.after_submitted_frame(Some(23), 1), Some(23));
+        assert_eq!(gate.after_submitted_frame(Some(24), 2), None);
+    }
+
+    #[test]
+    fn absent_ticket_at_first_submission_closes_against_later_drift() {
+        let mut gate = ExplicitExperimentPanelStartupGate::default();
+        assert_eq!(gate.after_submitted_frame(None, 1), None);
+        assert_eq!(gate.after_submitted_frame(Some(23), 1), None);
+    }
+
+    #[test]
+    fn authority_error_closes_the_startup_gate() {
+        let mut gate = ExplicitExperimentPanelStartupGate::default();
+        gate.close();
+        assert_eq!(gate.after_submitted_frame(Some(31), 1), None);
+    }
 }

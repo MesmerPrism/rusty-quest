@@ -4,8 +4,10 @@
 
 `ui.same_apk_soft_kiosk` is an explicit native-app feature. When selected, it:
 
-- replaces NativeActivity's launcher filter with one UI-free 2D launcher trampoline;
-- keeps NativeActivity and ControlPanelActivity available as explicit same-package surfaces;
+- preserves NativeActivity as the sole immersive launcher and defers the initial 2D panel until
+  the renderer has submitted a current-session frame;
+- keeps NativeActivity as the sole MAIN/VR/LAUNCHER surface and ControlPanelActivity as an
+  explicit same-package landscape 2D surface;
 - declares `NativeRendererSoftKioskAccessibilityService` behind Android's
   `BIND_ACCESSIBILITY_SERVICE` binding permission; and
 - adds no requested runtime permission, hidden enablement route, device-owner authority, input
@@ -19,12 +21,15 @@ grant. Recovery remains unavailable until the current HOME component resolves ex
 
 ## Authority
 
-`NativeRendererExperimentLauncherActivity` is the sole production caller that mints a monotonic,
-process-local launch epoch. It forwards the epoch and literal `explicit-user-launch-v1` provenance
-to ControlPanelActivity. These extras do not authenticate a human. They are launcher-path
-provenance whose trust is bounded to Android starting the sole exported launcher component with a
-fresh exact MAIN/LAUNCHER intent. The trampoline rejects saved-state recreation, non-MAIN or
-non-LAUNCHER routes, extra categories, data/selectors, and observable component mismatches.
+The Rust NativeActivity entry point asks `NativeRendererExperimentLaunchAuthority` to mint a
+monotonic, process-local launch epoch only when Android created the exact exported NativeActivity
+with a fresh exact MAIN/LAUNCHER intent for the owning package. The authority rejects saved-state
+recreation, non-MAIN or non-LAUNCHER routes, extra categories, data/selectors, and observable
+component mismatches. NativeActivity starts the OpenXR renderer first. After at least one submitted
+current-session frame, the native panel bridge opens the existing ControlPanelActivity with the
+landscape 2D category and `REORDER_TO_FRONT | SINGLE_TOP`, forwarding the epoch and literal
+`explicit-user-launch-v1` provenance. These extras do not authenticate a human; they only bind the
+one immersive-first launcher episode.
 `NativeRendererExperimentLaunchAuthority` still consumes the pair once, so bare extras, internal
 MAIN intents, Activity recreation, soft-kiosk recovery, replay, and terminal intents cannot arm a
 cold-launch epoch.
@@ -76,5 +81,5 @@ pwsh -NoProfile -ExecutionPolicy Bypass `
 ```
 
 The test compiles the real Java adapter, executes pure one/two/three-Home and damage traces, and
-dry-resolves both selected and unselected app manifests. The unselected route must retain the
-existing NativeActivity launcher and omit the service/trampoline.
+dry-resolves both selected and unselected app manifests. Both routes keep NativeActivity as the
+only launcher; the unselected route omits the soft-kiosk service.

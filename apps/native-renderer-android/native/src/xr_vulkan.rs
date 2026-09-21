@@ -2095,6 +2095,7 @@ unsafe fn run_projection_frames(
     let mut event_storage = xr::EventDataBuffer::new();
     let mut display_refresh = NativeDisplayRefreshRuntimeState::new(display_refresh_settings);
     let mut session_running = false;
+    let mut openxr_session_generation = 0_u64;
     let mut renderer_focus_session_state = "IDLE";
     let mut app_running = true;
     let mut frame_slot = 0_usize;
@@ -2243,6 +2244,9 @@ unsafe fn run_projection_frames(
                             session
                                 .begin(VIEW_TYPE)
                                 .map_err(|error| format!("begin OpenXR session: {error}"))?;
+                            openxr_session_generation = openxr_session_generation
+                                .checked_add(1)
+                                .ok_or_else(|| "OpenXR session generation exhausted".to_string())?;
                             if display_refresh.requested() {
                                 let generation = display_refresh.begin_session();
                                 crate::marker(
@@ -3897,6 +3901,11 @@ unsafe fn run_projection_frames(
             )
             .map_err(|error| format!("end OpenXR frame: {error}"))?;
         trace_startup_frame(frame_count, "after-xr-end-frame");
+        control_panel_command_poller.after_current_session_frame_submitted(
+            app,
+            openxr_session_generation,
+            frame_count,
+        );
         frame_timings.openxr_end_frame_ms = elapsed_ms(stage_started);
         frame_timings.submitted_frame_host_ms = elapsed_ms(submitted_frame_host_started);
         if let Some(renderer) = gpu_private_particle_renderer.as_deref_mut() {

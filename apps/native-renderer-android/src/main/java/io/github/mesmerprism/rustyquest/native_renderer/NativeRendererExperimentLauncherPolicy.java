@@ -1,6 +1,6 @@
 package io.github.mesmerprism.rustyquest.native_renderer;
 
-/** Pure admission seam for the exported launcher trampoline. */
+/** Pure admission seam for the exported NativeActivity launcher. */
 final class NativeRendererExperimentLauncherPolicy {
     private NativeRendererExperimentLauncherPolicy() {
     }

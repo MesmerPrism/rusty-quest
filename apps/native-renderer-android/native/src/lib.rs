@@ -100,7 +100,7 @@ mod native_renderer_hand_anchor_particle_options;
 mod native_renderer_options;
 #[cfg(test)]
 mod native_renderer_options_tests;
-#[cfg(target_os = "android")]
+#[cfg(any(test, target_os = "android"))]
 mod native_renderer_panel_bridge;
 mod native_renderer_passthrough_style_options;
 mod native_renderer_private_particle_heartbeat_orbit_request;
@@ -181,6 +181,30 @@ fn android_on_create(state: &android_activity::OnCreateState) {
     let native_app_settings =
         native_app_settings::NativeAppSettingsDefaults::load_from_on_create_state(state);
     marker("native-app-settings", native_app_settings.marker_fields());
+    if native_renderer_panel_bridge::packaged_control_panel_mode_is_breath_mapping(
+        &native_app_settings,
+    ) {
+        match native_renderer_panel_bridge::admit_explicit_native_activity_launch(state) {
+            Ok(Some(epoch)) => marker(
+                "experiment-session-panel",
+                format!(
+                    "event=native-activity-cold-launch status=accepted launchEpoch={} launcher=android.app.NativeActivity panelDeferredUntilSubmittedFrame=true",
+                    epoch
+                ),
+            ),
+            Ok(None) => marker(
+                "experiment-session-panel",
+                "event=native-activity-cold-launch status=rejected launchEpoch=0 panelDeferredUntilSubmittedFrame=true",
+            ),
+            Err(error) => marker(
+                "experiment-session-panel",
+                format!(
+                    "event=native-activity-cold-launch status=error launchEpoch=0 reason={}",
+                    sanitize(&error)
+                ),
+            ),
+        }
+    }
     breath_composition_runtime::install_from_android_properties_with_defaults(|name| {
         native_app_settings.lookup(name)
     });

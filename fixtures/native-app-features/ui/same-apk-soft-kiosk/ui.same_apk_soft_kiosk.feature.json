@@ -9,7 +9,7 @@
   },
   "owner_lane": "rusty-quest",
   "status": "public-substrate",
-  "description": "Explicitly selected same-APK Accessibility foreground recovery and experiment-launch trampoline; user enablement remains mandatory.",
+  "description": "Explicitly selected same-APK Accessibility foreground recovery with NativeActivity-owned immersive-first experiment launch; user enablement remains mandatory.",
   "provides": [
     "ui.same_apk_soft_kiosk"
   ],
@@ -19,14 +19,12 @@
   "incompatible_with": [],
   "exclusive_groups": {
     "foreground_guard": "same-apk-soft-kiosk",
-    "launcher_route": "experimenter-panel-trampoline"
+    "launcher_route": "native-activity-immersive-first"
   },
   "android_manifest": {
     "permissions": [],
     "uses_features": [],
-    "activities": [
-      "NativeRendererExperimentLauncherActivity"
-    ],
+    "activities": [],
     "services": [
       "NativeRendererSoftKioskAccessibilityService"
     ],

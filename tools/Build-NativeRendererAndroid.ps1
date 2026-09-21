@@ -1603,7 +1603,6 @@ Invoke-Checked "aapt2 link" $aapt2 @(
     "link",
     "-o", $apkUnsigned,
     "--manifest", $manifestInputPath,
-    "-A", $assetsDir,
     "-I", $platformJar,
     "--min-sdk-version", "29",
     "--target-sdk-version", "35",
@@ -1612,6 +1611,10 @@ Invoke-Checked "aapt2 link" $aapt2 @(
 )
 
 Copy-Item $apkUnsigned $apkUnaligned
+Invoke-Checked "jar portable asset update" $jar @("uf0", $apkUnaligned, "-C", $OutDir, "assets")
+$portableApkAssetEntries = @(Assert-NativeAppApkAssetArchive `
+    -ApkPath $apkUnaligned `
+    -AssetRoot $assetsDir)
 Invoke-Checked "jar native lib update" $jar @("uf", $apkUnaligned, "-C", $nativeStageRoot, "lib")
 Invoke-Checked "jar dex update" $jar @("uf", $apkUnaligned, "-C", $dexDir, "classes.dex")
 Invoke-Checked "zipalign" $zipalign @("-f", "4", $apkUnaligned, $apkAligned)
@@ -1715,6 +1718,7 @@ $manifest = [ordered]@{
             assets = $privateAssetsPackaged
         }
     }
+    portable_apk_asset_entries = $portableApkAssetEntries
     questionnaire_assets_packaged = $questionnaireAssetsPackaged
     questionnaire_asset_source = $questionnaireAssetSource
     questionnaire_asset_root = if ($questionnaireAssetsPackaged) { "assets/maia_spatial_questionnaire" } else { "" }
