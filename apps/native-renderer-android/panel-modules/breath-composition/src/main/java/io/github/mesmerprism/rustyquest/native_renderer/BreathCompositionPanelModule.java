@@ -3967,9 +3967,9 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
 
     private void closePanelAndReturnToImmersive() {
         ExperimentSessionPanelState state = EXPERIMENT_SESSION_PANEL.snapshot();
-        if (state.phase == ExperimentSessionPanelState.Phase.ARMING
-                || state.phase == ExperimentSessionPanelState.Phase.STARTING) {
-            updateStatus("Please wait until condition audio is prepared and the run is armed.");
+        if (state.hasActiveSession()
+                && !ExperimentSessionPanelViewPolicy.canReturnToImmersive(state)) {
+            updateStatus("Please wait until the current session operation completes before returning to VR.");
             refreshExperimenterAfterReadback();
             return;
         }

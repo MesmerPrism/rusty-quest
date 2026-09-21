@@ -35,7 +35,9 @@ feedback, verifies the packaged condition audio, and keeps that audio silent; on
 the durable `armed` receipt arrives, the panel closes to the particle scene. The
 experimenter holds Right Grip+A for 0.75 seconds to create the durable
 `official-start` event and start audio, holds Right Grip+B to pause, and holds
-Right Grip+A again to resume. Triple-B without grip finalizes the run. Pre-roll and
+Right Grip+A again to resume. In the experiment profile, triple-B without grip
+opens or closes the menu without changing session state; Save and exit is the
+explicit terminal action. Pre-roll and
 paused time do not advance the completion clock. Routine Polar/session readbacks
 update visible labels in place so they do not rebuild the Activity or reset the
 current page's scroll position. Audio failures enter an explicit technical hold;

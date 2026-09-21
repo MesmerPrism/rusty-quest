@@ -161,7 +161,7 @@ public final class ExperimentSessionPanelCoordinatorTest {
 
         ExperimentSessionPanelCoordinator.NativeCommand restart = coordinator.restartToExperimenter(11L);
         check(restart != null && coordinator.snapshot().phase == ExperimentSessionPanelState.Phase.SAVING,
-            "triple-B enters Saving");
+            "explicit restart-to-experimenter enters Saving");
         check(!coordinator.accept(receipt(
             restart.operationId, true, false, 1L, 4L, "idle", false,
             "show-experimenter", 2L, 3L, 1L, 3L, 4L

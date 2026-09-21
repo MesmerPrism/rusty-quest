@@ -123,11 +123,11 @@ final class ExperimentSessionPanelViewPolicy {
     static String stageInstruction(ExperimentSessionPanelState state) {
         String phase = state.phase.name();
         if ("ARMED".equals(phase)) return "Fit the headset and verify the participant is settled. The experimenter then holds Right Grip + A for about 0.75 seconds to start the official run.";
-        if ("PAUSED".equals(phase)) return "Hold Right Grip + A for about 0.75 seconds to resume. Use B three times without grip to finish and return here.";
-        if ("RUNNING".equals(phase) || "RECORDING".equals(phase)) return "Hold Right Grip + B for about 0.75 seconds to pause. Audio ending does not finish the session; use B three times without grip to finish.";
+        if ("PAUSED".equals(phase)) return "Hold Right Grip + A for about 0.75 seconds to resume. Press B three times without grip to open or close this menu without ending the run.";
+        if ("RUNNING".equals(phase) || "RECORDING".equals(phase)) return "Hold Right Grip + B for about 0.75 seconds to pause. Audio ending does not finish the session. Press B three times without grip to open this menu; use Save and exit only when the run is complete.";
         if ("ARMING".equals(phase) || "STARTING".equals(phase)) return "Wait for the condition to be armed before using the start gesture.";
         if ("FINALIZING".equals(phase) || "SAVING".equals(phase)) return "Wait for the recording to finish saving before preparing another run.";
-        if ("ERROR".equals(phase) && state.recording) return "Audio entered a technical hold. Do not use resume. Return to VR and press B three times without grip to finish this run, then re-arm it.";
+        if ("ERROR".equals(phase) && state.recording) return "Audio entered a technical hold. Do not use resume. Use Save and exit to preserve the incomplete run, then restart the app and re-arm it.";
         if ("ERROR".equals(phase)) return "Go back to Choose condition and try again. If the condition is rejected again, restart the app before fitting the headset.";
         if (state.recovery || "RECOVERY".equals(phase)) return "Review the session and storage status before preparing another run.";
         return "Review the saved-session totals, then prepare the next run.";
