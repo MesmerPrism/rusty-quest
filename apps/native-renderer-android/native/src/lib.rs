@@ -392,19 +392,55 @@ fn request_runtime_permissions(
 }
 
 #[cfg(target_os = "android")]
+struct ExperimentSessionImmersiveOwner {
+    initialized: bool,
+}
+
+#[cfg(target_os = "android")]
+impl Drop for ExperimentSessionImmersiveOwner {
+    fn drop(&mut self) {
+        if !self.initialized {
+            return;
+        }
+        match experiment_session_runtime::shutdown_for_immersive_owner_destroyed() {
+            Ok(()) => marker(
+                "experiment-session-runtime",
+                "status=immersive-owner-destroyed recordingFinalized=true nextLaunchFresh=true",
+            ),
+            Err(error) => marker(
+                "experiment-session-runtime",
+                format!(
+                    "status=immersive-owner-destroy-failed recordingFinalized=false nextLaunchFresh=false reason={}",
+                    sanitize(&error)
+                ),
+            ),
+        }
+    }
+}
+
+#[cfg(target_os = "android")]
 #[no_mangle]
 fn android_main(app: android_activity::AndroidApp) {
-    if let Err(error) = experiment_session_runtime::initialize_from_android_app(&app) {
-        marker(
-            "experiment-session-runtime",
-            format!("status=error reason={}", sanitize(&error)),
-        );
-    } else {
-        marker(
-            "experiment-session-runtime",
-            "status=ready inventoryStatus=inventory-unavailable startAdmitted=false",
-        );
-    }
+    let experiment_session_initialized =
+        match experiment_session_runtime::initialize_from_android_app(&app) {
+            Err(error) => {
+                marker(
+                    "experiment-session-runtime",
+                    format!("status=error reason={}", sanitize(&error)),
+                );
+                false
+            }
+            Ok(()) => {
+                marker(
+                    "experiment-session-runtime",
+                    "status=ready inventoryStatus=inventory-unavailable startAdmitted=false",
+                );
+                true
+            }
+        };
+    let _experiment_session_immersive_owner = ExperimentSessionImmersiveOwner {
+        initialized: experiment_session_initialized,
+    };
     let native_app_settings =
         native_app_settings::NativeAppSettingsDefaults::load_from_apk_asset(&app);
     marker("native-app-settings", native_app_settings.marker_fields());

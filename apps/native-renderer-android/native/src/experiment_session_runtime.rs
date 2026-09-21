@@ -1309,6 +1309,23 @@ impl SessionWorker {
         self.drain_pending_retries();
     }
 
+    fn process_immersive_owner_destroyed(&mut self) -> Result<(), String> {
+        let at = match (
+            current_from_bridge(&self.monotonic_bridge),
+            self.controller.last_monotonic(),
+        ) {
+            (Some(current), Some(last)) => std::cmp::max(current, last),
+            (Some(current), None) => current,
+            (None, Some(last)) => last,
+            (None, None) => MonotonicNanos::new(0),
+        };
+        let stopping = self.apply_internal(at, SessionCommand::ImmersiveOwnerDestroyed)?;
+        self.refresh_controller_projection();
+        let result = self.process_effects(stopping.effects, at);
+        self.refresh_controller_projection();
+        result
+    }
+
     fn process_timed_tick(&mut self) {
         let Some(now) = current_from_bridge(&self.monotonic_bridge) else {
             return;
@@ -1488,6 +1505,9 @@ enum WorkerMessage {
         raw: String,
         received_at: Instant,
         terminal_claim: Option<u64>,
+    },
+    ImmersiveOwnerDestroyed {
+        acknowledgement: SyncSender<Result<(), String>>,
     },
     Shutdown,
     #[cfg(test)]
@@ -1738,8 +1758,7 @@ impl ExperimentSessionRuntime {
         self.worker
             .try_lock()
             .ok()
-            .and_then(|worker| worker.as_ref().map(JoinHandle::is_finished))
-            .unwrap_or(false)
+            .is_some_and(|worker| worker.as_ref().map_or(true, JoinHandle::is_finished))
     }
 
     fn rearmable_after_shutdown(&self) -> bool {
@@ -1764,17 +1783,47 @@ impl ExperimentSessionRuntime {
             .worker
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let Some(handle) = worker.as_ref() else {
+        let Some(handle) = worker.take() else {
             return Ok(());
         };
-        if !handle.is_finished() {
-            return Err("experiment-session-worker-still-running".to_owned());
-        }
-        worker
-            .take()
-            .expect("checked worker handle")
+        handle
             .join()
             .map_err(|_| "experiment-session-worker-panicked".to_owned())
+    }
+
+    fn shutdown_for_immersive_owner_destroyed(&self) -> Result<(), String> {
+        if self.worker_finished() {
+            return self.join_finished_worker();
+        }
+        let (acknowledgement, result) = mpsc::sync_channel(1);
+        if self
+            .terminal_sender
+            .send(WorkerMessage::ImmersiveOwnerDestroyed { acknowledgement })
+            .is_err()
+        {
+            if self.worker_finished() {
+                return self.join_finished_worker();
+            }
+            return Err("experiment-session-owner-destroy-dispatch-failed".to_owned());
+        }
+        let deadline = Instant::now() + CONTROL_TIMEOUT;
+        let worker_result = loop {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return Err("experiment-session-owner-destroy-ack-timeout".to_owned());
+            }
+            match result.recv_timeout(remaining.min(Duration::from_millis(50))) {
+                Ok(result) => break result,
+                Err(mpsc::RecvTimeoutError::Timeout) if self.worker_finished() => break Ok(()),
+                Err(mpsc::RecvTimeoutError::Timeout) => {}
+                Err(mpsc::RecvTimeoutError::Disconnected) if self.worker_finished() => break Ok(()),
+                Err(mpsc::RecvTimeoutError::Disconnected) => {
+                    return Err("experiment-session-owner-destroy-ack-disconnected".to_owned())
+                }
+            }
+        };
+        let join_result = self.join_finished_worker();
+        worker_result.and(join_result)
     }
 
     pub(crate) fn try_offer(&self, record: SessionRecord) -> OfferOutcome {
@@ -1929,6 +1978,17 @@ fn run_worker(
                 }
                 continue;
             }
+            Ok(WorkerMessage::ImmersiveOwnerDestroyed { acknowledgement }) => {
+                let result = worker.process_immersive_owner_destroyed();
+                if let Err(error) = result.as_ref() {
+                    worker.publish_rejection(None, error);
+                }
+                let _ = acknowledgement.send(result);
+                if worker.stop_after_ack {
+                    break;
+                }
+                continue;
+            }
             #[cfg(test)]
             Ok(WorkerMessage::PauseForTest { entered, resume }) => {
                 let _ = entered.send(());
@@ -1953,6 +2013,16 @@ fn run_worker(
                     worker.publish_rejection(None, &error);
                 }
                 break;
+            }
+            Ok(WorkerMessage::ImmersiveOwnerDestroyed { acknowledgement }) => {
+                let result = worker.process_immersive_owner_destroyed();
+                if let Err(error) = result.as_ref() {
+                    worker.publish_rejection(None, error);
+                }
+                let _ = acknowledgement.send(result);
+                if worker.stop_after_ack {
+                    break;
+                }
             }
             #[cfg(test)]
             Ok(WorkerMessage::PauseForTest { entered, resume }) => {
@@ -2033,6 +2103,18 @@ impl RuntimeRegistry {
         *slot = Some(runtime);
         Ok(())
     }
+
+    fn shutdown_for_immersive_owner_destroyed(&self) -> Result<(), String> {
+        let current = self
+            .slot
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .as_ref()
+            .cloned();
+        current.map_or(Ok(()), |runtime| {
+            runtime.shutdown_for_immersive_owner_destroyed()
+        })
+    }
 }
 
 static RUNTIME: OnceLock<RuntimeRegistry> = OnceLock::new();
@@ -2043,6 +2125,10 @@ fn registry() -> &'static RuntimeRegistry {
 
 fn runtime() -> Result<Arc<ExperimentSessionRuntime>, &'static str> {
     registry().current()
+}
+
+pub(crate) fn shutdown_for_immersive_owner_destroyed() -> Result<(), String> {
+    registry().shutdown_for_immersive_owner_destroyed()
 }
 
 fn load_compiled_experiment_inventory(
@@ -4060,6 +4146,67 @@ mod tests {
         assert!(second_ready.contains("\"runtime_epoch\":2"));
         assert!(second_ready.contains("\"generation\":0"));
         second.shutdown_for_test().unwrap();
+    }
+
+    #[test]
+    fn immersive_owner_destruction_finalizes_active_recording_and_relaunches_idle() {
+        let root = temp_root("owner-destroy-fresh-launch");
+        let registry = RuntimeRegistry::default();
+        registry
+            .initialize(root.clone(), Some(trusted_inventory()))
+            .unwrap();
+        let first = registry.current().unwrap();
+        wait_for(&first, "\"initialization_status\":\"ready\"");
+        first.apply_command_json(&start_command(&root, "first-owner"));
+        wait_for(&first, "\"phase\":\"active\"");
+
+        registry.shutdown_for_immersive_owner_destroyed().unwrap();
+        assert!(first.worker_finished());
+        let first_status = first.status_json();
+        assert!(first_status.contains("\"phase\":\"closed\""));
+        assert!(first_status.contains("\"shutdown_status\":\"complete\""));
+        let first_directory = fs::read_dir(&root)
+            .unwrap()
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .find(|path| path.is_dir())
+            .expect("first recording directory");
+        let first_final = fs::read(first_directory.join("final.json")).unwrap();
+        let first_final_value: Value = serde_json::from_slice(&first_final).unwrap();
+        assert_eq!(
+            first_final_value["stop_reason"],
+            json!("interrupted-recovery")
+        );
+
+        registry
+            .initialize(root.clone(), Some(trusted_inventory()))
+            .unwrap();
+        let second = registry.current().unwrap();
+        assert!(!Arc::ptr_eq(&first, &second));
+        assert_eq!(second.runtime_epoch, 2);
+        let ready = wait_for(&second, "\"initialization_status\":\"ready\"");
+        assert!(ready.contains("\"phase\":\"idle\""));
+        assert!(ready.contains("\"generation\":0"));
+
+        let mut fresh_start: Value =
+            serde_json::from_str(&start_command(&root, "second-owner")).unwrap();
+        fresh_start["started_at_utc_ns"] = json!(1_725_000_000_000_001_000_u64);
+        second.apply_command_json(&fresh_start.to_string());
+        wait_for(&second, "\"phase\":\"active\"");
+        registry.shutdown_for_immersive_owner_destroyed().unwrap();
+        assert_eq!(
+            fs::read_dir(&root)
+                .unwrap()
+                .filter_map(Result::ok)
+                .filter(|entry| entry.path().is_dir())
+                .count(),
+            2
+        );
+        assert_eq!(
+            fs::read(first_directory.join("final.json")).unwrap(),
+            first_final
+        );
+        fs::remove_dir_all(root.parent().unwrap()).unwrap();
     }
 
     #[test]

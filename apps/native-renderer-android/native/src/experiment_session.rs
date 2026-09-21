@@ -198,6 +198,7 @@ pub(crate) enum SessionCommand {
     CompletionDurable,
     RestartToExperimenter,
     SaveAndExit,
+    ImmersiveOwnerDestroyed,
     RecordingFinalized {
         durable_completion: bool,
         saved: bool,
@@ -335,6 +336,10 @@ impl ExperimentSessionController {
 
     pub(crate) fn recording_result(&self) -> RecordingResult {
         self.recording_result
+    }
+
+    pub(crate) fn last_monotonic(&self) -> Option<MonotonicNanos> {
+        self.last_monotonic
     }
 
     /// The elapsed-realtime deadline at which a worker-owned tick must be
@@ -645,6 +650,37 @@ impl ExperimentSessionController {
                     effects.push(SessionEffect::FinalizeRecording {
                         generation: self.generation,
                         reason: FinalizationReason::SaveAndExit,
+                        threshold_reached: self.completion != CompletionProgress::NotReached,
+                    });
+                } else if self.phase == SessionPhase::Idle {
+                    self.phase = SessionPhase::Closed;
+                    effects.push(SessionEffect::ShutdownApp);
+                } else {
+                    return Err(CommandRejection::InvalidPhase);
+                }
+                Ok(effects)
+            }
+            SessionCommand::ImmersiveOwnerDestroyed => {
+                let mut effects = vec![SessionEffect::DisarmKiosk];
+                if self.phase == SessionPhase::Closed || self.phase == SessionPhase::Exiting {
+                    return Ok(effects);
+                }
+                if self.phase == SessionPhase::FinalizingRestart {
+                    self.phase = SessionPhase::Exiting;
+                    self.presentation = PresentationState::Unfocused;
+                    return Ok(effects);
+                }
+                if self.phase == SessionPhase::Active {
+                    effects.extend(self.advance_active_time(at));
+                }
+                self.active_since = None;
+                self.presentation = PresentationState::Unfocused;
+                if matches!(self.phase, SessionPhase::Preparing | SessionPhase::Active) {
+                    self.phase = SessionPhase::Exiting;
+                    self.control_state = ExperimentControlState::Finalizing;
+                    effects.push(SessionEffect::FinalizeRecording {
+                        generation: self.generation,
+                        reason: FinalizationReason::InterruptedRecovery,
                         threshold_reached: self.completion != CompletionProgress::NotReached,
                     });
                 } else if self.phase == SessionPhase::Idle {
@@ -1225,6 +1261,47 @@ mod tests {
         ));
         assert_eq!(exit.phase(), SessionPhase::Closed);
         assert_eq!(finished.effects, vec![SessionEffect::ShutdownApp]);
+    }
+
+    #[test]
+    fn immersive_owner_destruction_finalizes_as_interrupted_and_closes_idle_runtime() {
+        let mut active = ExperimentSessionController::default();
+        let generation = start(&mut active);
+        let stopping = active.apply(command(
+            3,
+            generation,
+            10,
+            SessionCommand::ImmersiveOwnerDestroyed,
+        ));
+        assert!(stopping.accepted);
+        assert_eq!(stopping.effects.first(), Some(&SessionEffect::DisarmKiosk));
+        assert!(stopping.effects.iter().any(|effect| matches!(
+            effect,
+            SessionEffect::FinalizeRecording {
+                reason: FinalizationReason::InterruptedRecovery,
+                ..
+            }
+        )));
+        let finalized = active.apply(command(
+            4,
+            generation,
+            11,
+            SessionCommand::RecordingFinalized {
+                durable_completion: false,
+                saved: true,
+            },
+        ));
+        assert_eq!(active.phase(), SessionPhase::Closed);
+        assert_eq!(finalized.effects, vec![SessionEffect::ShutdownApp]);
+
+        let mut idle = ExperimentSessionController::default();
+        let closed = idle.apply(command(1, 0, 0, SessionCommand::ImmersiveOwnerDestroyed));
+        assert!(closed.accepted);
+        assert_eq!(idle.phase(), SessionPhase::Closed);
+        assert_eq!(
+            closed.effects,
+            vec![SessionEffect::DisarmKiosk, SessionEffect::ShutdownApp]
+        );
     }
 
     #[test]

@@ -27,6 +27,8 @@ public final class NativeRendererSoftKioskPolicyTest {
         selfWatchdogDoesNotNeedHomeResolutionOrAccessibility();
         selfDepartureNeedsRecoveryAndIgnoresFocusNoiseAndPrompts();
         selfPromptAndExplicitExitCancelPendingReturn();
+        explicitExitCreatesItsOwnAdmissionBeforeKioskArm();
+        immersiveOwnerDestructionDisarmsRecoveryAndAllowsFreshLaunch();
         System.out.println("NativeRendererSoftKioskPolicyTest PASS");
     }
 
@@ -597,6 +599,36 @@ public final class NativeRendererSoftKioskPolicyTest {
         // A different desired presentation must first acquire its own confirmed foreground.
         equal(0L, p.observe(2L, false, true, false, 16_000L));
         equal(0L, p.observe(2L, false, true, false, 17_000L));
+    }
+
+    private static void explicitExitCreatesItsOwnAdmissionBeforeKioskArm() {
+        NativeRendererSoftKioskCoordinator coordinator = new NativeRendererSoftKioskCoordinator();
+        NativeRendererSoftKioskCoordinator.Action exit = coordinator.requestExplicitTerminalExit();
+        equal(NativeRendererSoftKioskCoordinator.ActionKind.BEGIN_TERMINAL_EXIT, exit.kind);
+        require(exit.generation > 0L);
+        require(coordinator.admitsTerminalIntent(
+            NativeRendererSoftKioskCoordinator.ACTION_TERMINAL_SAVE_AND_EXIT,
+            NativeRendererSoftKioskCoordinator.TERMINAL_ROUTE_SAVE_AND_EXIT,
+            exit.generation,
+            Long.MAX_VALUE));
+        equal(NativeRendererSoftKioskCoordinator.ActionKind.NONE,
+            coordinator.requestExplicitTerminalExit().kind);
+    }
+
+    private static void immersiveOwnerDestructionDisarmsRecoveryAndAllowsFreshLaunch() {
+        NativeRendererSoftKioskCoordinator coordinator = ready(
+            120L,
+            NativeRendererForegroundGuardPolicy.Presentation.IMMERSIVE,
+            NativeRendererSoftKioskCoordinator.PANEL_ROUTE_EXPERIMENTER);
+        coordinator.releaseImmersiveOwner();
+        reject(coordinator.snapshot().armed);
+        equal(NativeRendererSoftKioskCoordinator.ActionKind.NOT_EFFECTIVE,
+            coordinator.observeSelfDeparture(120L, 1L, 1_000L).kind);
+        require(coordinator.armFromExplicitColdLaunch(
+            121L,
+            NativeRendererForegroundGuardPolicy.Presentation.IMMERSIVE,
+            NativeRendererSoftKioskCoordinator.PANEL_ROUTE_EXPERIMENTER));
+        require(coordinator.snapshot().armed);
     }
 
     private static void selfPromptAndExplicitExitCancelPendingReturn() {

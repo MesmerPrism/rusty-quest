@@ -201,8 +201,38 @@ final class NativeRendererSoftKioskCoordinator {
     }
 
     synchronized Action requestExplicitTerminalExit() {
-        if (policy == null) return action(ActionKind.NONE, 0L, false, 0);
+        if (terminal) return action(ActionKind.NONE, 0L, false, 0);
+        if (policy == null || !armed) {
+            long basis = Math.max(generation, explicitLaunchEpoch);
+            if (basis == Long.MAX_VALUE) return action(ActionKind.NONE, 0L, false, 0);
+            long terminalGeneration = Math.max(1L, basis + 1L);
+            NativeRendererForegroundGuardPolicy replacement =
+                new NativeRendererForegroundGuardPolicy();
+            replacement.arm(terminalGeneration, presentation);
+            policy = replacement;
+            generation = terminalGeneration;
+            armed = true;
+            transitionDeadlineMs = Long.MIN_VALUE;
+            terminalHomeEpisode = 0L;
+            selfPromptDeadlineMs = Long.MIN_VALUE;
+            promptLease = null;
+            deferredForeground = null;
+            clearRecoveryEpisode();
+        }
         return fromPolicyDecision(policy.beginTerminalExit(), Long.MAX_VALUE, false, 0);
+    }
+
+    synchronized void releaseImmersiveOwner() {
+        if (!terminal) {
+            policy = null;
+            armed = false;
+        }
+        transitionDeadlineMs = Long.MIN_VALUE;
+        selfPromptDeadlineMs = Long.MIN_VALUE;
+        promptLease = null;
+        deferredForeground = null;
+        clearRecoveryEpisode();
+        notifyTimingChanged(true);
     }
 
     synchronized void setTimingObserver(TimingObserver observer) { timingObserver = observer; }

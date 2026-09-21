@@ -50,11 +50,19 @@ public final class NativeRendererSelfKioskApplication extends Application {
             @Override public void onActivitySaveInstanceState(Activity a, Bundle b) { }
             @Override public void onActivityDestroyed(Activity a) {
                 if (!own(a)) return;
-                WeakReference<Activity> current = activities.get(a.getClass().getName());
+                String name = a.getClass().getName();
+                WeakReference<Activity> current = activities.get(name);
                 if (current != null && current.get() == a) {
-                    activities.remove(a.getClass().getName());
-                    resumed.remove(a.getClass().getName());
-                    departures.remove(a.getClass().getName());
+                    activities.remove(name);
+                    resumed.remove(name);
+                    departures.remove(name);
+                }
+                if (NativeRendererForegroundGuardPolicy.NATIVE_ACTIVITY.equals(name)
+                        && !a.isChangingConfigurations()) {
+                    NativeRendererSoftKioskCoordinator.process().releaseImmersiveOwner();
+                    NativeRendererExperimentLaunchAuthority.invalidatePending();
+                    Log.i("RustyQuestSelfKiosk",
+                        "status=immersive-owner-destroyed guardArmed=false nextLaunchFresh=true");
                 }
             }
         });
@@ -152,6 +160,8 @@ public final class NativeRendererSelfKioskApplication extends Application {
         if (!(activity.getApplicationContext() instanceof NativeRendererSelfKioskApplication)) return;
         NativeRendererSoftKioskCoordinator.Action action =
             NativeRendererSoftKioskCoordinator.process().requestExplicitTerminalExit();
+        Log.i("RustyQuestSelfKiosk", "status=explicit-save-exit-requested action="
+            + action.kind + " generation=" + action.generation);
         if (action.kind == NativeRendererSoftKioskCoordinator.ActionKind.BEGIN_TERMINAL_EXIT) {
             NativeRendererSelfKioskService.dispatchTerminal(activity, action);
         } else {
