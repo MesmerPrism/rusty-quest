@@ -1,6 +1,10 @@
 //! Generic private particle payload slot for downstream GPU-resident effects.
 
-use std::{ffi::CString, mem};
+use std::{
+    ffi::CString,
+    mem,
+    sync::atomic::{AtomicU64, Ordering},
+};
 
 use ash::vk;
 
@@ -43,6 +47,24 @@ use crate::native_renderer_properties::{
     PROP_PRIVATE_PARTICLES_TRANSPARENCY_RGB_ALPHA_COUPLING, PROP_PRIVATE_PARTICLES_VISUAL_SCALE,
     PROP_PRIVATE_PARTICLES_VISUAL_SCALE_REQUEST_V1,
 };
+
+static NEXT_PRIVATE_PARTICLE_RENDER_SESSION_GENERATION: AtomicU64 = AtomicU64::new(0);
+static PACKAGED_DEFAULTS_RESET_REVISION: AtomicU64 = AtomicU64::new(0);
+
+pub(crate) fn request_packaged_defaults_reset() -> u64 {
+    PACKAGED_DEFAULTS_RESET_REVISION
+        .fetch_add(1, Ordering::AcqRel)
+        .saturating_add(1)
+}
+
+fn packaged_defaults_reset_revision() -> u64 {
+    PACKAGED_DEFAULTS_RESET_REVISION.load(Ordering::Acquire)
+}
+
+fn pending_packaged_defaults_reset(last_consumed: u64, observed: u64) -> Option<u64> {
+    (observed != last_consumed).then_some(observed)
+}
+
 use crate::native_renderer_property_values::{bool_value, f32_clamped_value, u32_value};
 use crate::native_renderer_stimulus_panel::PrivateParticlePanelUpdateMask;
 use crate::private_particle_breath_state_driver::{
@@ -1712,6 +1734,9 @@ pub(crate) struct GpuPrivateParticleRenderer {
     panel_settings_override: Option<GpuPrivateParticlePanelSettings>,
     pending_phase_reset_revision: i64,
     last_phase_reset_revision: i64,
+    settings_revision: u64,
+    last_packaged_defaults_reset_revision: u64,
+    render_session_generation: u64,
     manifold_driver_bridge: Option<ManifoldScalarDriverBridge>,
     manifold_driver_connected_marker_emitted: bool,
     breath_state_driver: PrivateParticleBreathStateDriver,
@@ -2551,6 +2576,11 @@ impl GpuPrivateParticleRenderer {
             panel_settings_override: None,
             pending_phase_reset_revision: 0,
             last_phase_reset_revision: 0,
+            settings_revision: 0,
+            last_packaged_defaults_reset_revision: packaged_defaults_reset_revision(),
+            render_session_generation: NEXT_PRIVATE_PARTICLE_RENDER_SESSION_GENERATION
+                .fetch_add(1, Ordering::AcqRel)
+                .saturating_add(1),
             manifold_driver_bridge,
             manifold_driver_connected_marker_emitted: false,
             breath_state_driver,
@@ -2596,6 +2626,9 @@ impl GpuPrivateParticleRenderer {
     }
 
     pub(crate) fn begin_runtime_session(&mut self) {
+        // OpenXR lifecycle return is not a product reset. Developer-panel
+        // overrides survive a temporary 2D-panel/dev-menu round trip and are
+        // cleared only by the explicit durable B restart reset revision.
         self.visual_scale_request_state.begin_session();
         self.heartbeat_orbit_request_state.begin_session();
         self.material_request_state.begin_session();
@@ -2639,6 +2672,32 @@ impl GpuPrivateParticleRenderer {
                 "status=session-ready {}",
                 self.render_experiment_request_state.session_marker_fields()
             ),
+        );
+    }
+
+    fn consume_packaged_defaults_reset_if_requested(&mut self) {
+        let revision = packaged_defaults_reset_revision();
+        let Some(revision) =
+            pending_packaged_defaults_reset(self.last_packaged_defaults_reset_revision, revision)
+        else {
+            return;
+        };
+        self.last_packaged_defaults_reset_revision = revision;
+        self.panel_settings_override = None;
+        self.settings_revision = self.settings_revision.saturating_add(1);
+        self.visual_scale_request_state.begin_session();
+        self.heartbeat_orbit_request_state.begin_session();
+        self.material_request_state.begin_session();
+        self.render_experiment_request_state.begin_session();
+        if self.heartbeat_pulse_adapter.settings() != self.heartbeat_orbit_packaged_settings {
+            self.heartbeat_pulse_adapter
+                .reconfigure(self.heartbeat_orbit_packaged_settings);
+            self.heartbeat_pulse_adapter_connected_marker_emitted = false;
+        }
+        self.runtime_settings_last_poll_frame = u64::MAX;
+        crate::marker(
+            "private-particle-packaged-defaults",
+            format!("status=reset revision={revision}"),
         );
     }
 
@@ -3212,6 +3271,20 @@ impl GpuPrivateParticleRenderer {
             tracer_draw_slots_capacity: self.tracer_draw_slots_per_oscillator,
             diagnostic_snapshot: self.last_diagnostic_snapshot,
         };
+        if let Some(observed_at_ns) =
+            crate::experiment_session_runtime::current_elapsed_realtime_ns()
+        {
+            let _ = crate::experiment_session_runtime::record_effective_radius_snapshot(
+                frame_count,
+                observed_at_ns,
+                runtime_settings.driver0_value01,
+                world_center_scale[3],
+                runtime_settings.driver0_value01,
+                self.settings_revision,
+                self.render_session_generation,
+                world_anchor_scale_parameter_source,
+            );
+        }
         self.visual_scale_request_state
             .note_renderer_prepared_frame(
                 frame_count,
@@ -3278,6 +3351,9 @@ impl GpuPrivateParticleRenderer {
         revision: i64,
     ) -> GpuPrivateParticlePanelEffectiveSettings {
         let settings = settings.clamped();
+        if revision > 0 {
+            self.settings_revision = revision as u64;
+        }
         if settings.update_mask.polar_rr_orbit_boost {
             self.heartbeat_orbit_request_state
                 .clear_request_for_panel_authority();
@@ -3392,6 +3468,7 @@ impl GpuPrivateParticleRenderer {
     }
 
     fn runtime_settings(&mut self, frame_count: u64) -> PrivateParticleRuntimeSettings {
+        self.consume_packaged_defaults_reset_if_requested();
         let has_input_driver = self
             .panel_settings_override
             .as_ref()
@@ -6873,6 +6950,18 @@ mod material_request_tests {
             alpha_over as u32 / PRIVATE_PARTICLE_BLEND_MODE_PACK_OFFSET,
             1
         );
+    }
+}
+
+#[cfg(test)]
+mod packaged_defaults_reset_tests {
+    use super::*;
+
+    #[test]
+    fn explicit_reset_revision_is_edge_triggered_and_idempotent() {
+        assert_eq!(pending_packaged_defaults_reset(7, 7), None);
+        assert_eq!(pending_packaged_defaults_reset(7, 8), Some(8));
+        assert_eq!(pending_packaged_defaults_reset(8, 8), None);
     }
 }
 

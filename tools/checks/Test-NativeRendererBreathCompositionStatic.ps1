@@ -153,6 +153,8 @@ $ingress = Read-RequiredText $ingressPath "Polar ingress"
 $capture = Read-RequiredText $capturePath "synchronized source capture"
 $captureAnalyzer = Read-RequiredText $captureAnalyzerPath "host capture analyzer"
 $panel = Read-RequiredText $panelPath "same-APK panel"
+$panelImmersiveHandoffPath = Join-Path $repo "apps\native-renderer-android\src\main\java\io\github\mesmerprism\rustyquest\native_renderer\PanelImmersiveHandoff.java"
+$panelImmersiveHandoff = Read-RequiredText $panelImmersiveHandoffPath "shared panel/immersive handoff"
 $polarPanel = Read-RequiredText $polarPanelPath "sole Polar acquisition panel"
 $calibrationAction = Read-RequiredText $calibrationActionPath "controller calibration action"
 $worldBasis = Read-RequiredText $worldBasisPath "captured private-particle world basis"
@@ -426,29 +428,33 @@ Assert-Tokens $panel @(
     "pollPrivateParticleEffectiveRevision",
     "effective_revision",
     "Particle edit remains queued; renderer effective receipt has not arrived yet.",
+    "ControlPanelActivity.closePanelAndReturnToImmersive(this)"
+) "organized persistent breath-composition panel and delegated VR return"
+Assert-Tokens $panelImmersiveHandoff @(
     "renderer_focus_state.json",
-    "rendererHasAdvancedFocusedFrame",
-    "stable_focused_submitted_frames_panel_retained",
-    "focused_submitted_frame_timeout_panel_retained",
+    "STABLE_MS = 750L",
+    "state.frameCount > stableFrame",
     "status=timeout panelTaskRetained=true",
     "panelPaused=true panelTaskRetained=true",
     "status=probe-retained-after-destroy",
-    "RENDERER_RETURN_RELAUNCH_MS",
-    "RENDERER_RETURN_STABLE_FOCUS_MS",
-    "RENDERER_FOCUS_FRESH_MS",
-    "resetRendererReturnStableFocus"
-) "organized persistent breath-composition panel and receipt-gated VR return"
+    "RELAUNCH_MS = 1000L",
+    "FRESH_MS = 2000L",
+    "cancelActiveForTerminalExit",
+    "APPLICATION_LIFECYCLE.canLaunch(ownerToken, expectedGeneration)",
+    "new WeakReference<PanelImmersiveHandoff>(null)"
+) "shared receipt-gated VR return"
 $rendererReturnStart = $panel.IndexOf("private void closePanelAndReturnToImmersive()")
-$rendererReturnEnd = $panel.IndexOf("private static final class RendererFocusState", $rendererReturnStart)
+$rendererReturnEnd = $panel.IndexOf("private void writeFile", $rendererReturnStart)
 if ($rendererReturnStart -lt 0 -or $rendererReturnEnd -le $rendererReturnStart) {
-    throw "Breath composition static check could not isolate the renderer return handoff"
+    throw "Breath composition static check could not isolate the delegated renderer return"
 }
 $rendererReturnMethods = $panel.Substring(
     $rendererReturnStart,
     $rendererReturnEnd - $rendererReturnStart
 )
 foreach ($forbiddenPanelRemovalToken in @("finishAndRemoveTask();", "finish();")) {
-    if ($rendererReturnMethods -match [regex]::Escape($forbiddenPanelRemovalToken)) {
+    if ($rendererReturnMethods -match [regex]::Escape($forbiddenPanelRemovalToken) -or
+        $panelImmersiveHandoff -match [regex]::Escape($forbiddenPanelRemovalToken)) {
         throw "Ordinary renderer return must retain the paused panel task: $forbiddenPanelRemovalToken"
     }
 }

@@ -32,7 +32,10 @@ use crate::{
     },
     private_particle_breath_state_driver::PrivateParticleBreathStateDriverSettings,
     projection_target_state::{ProjectionTargetInput, ProjectionTargetSettings},
-    same_apk_panel_action::{SameApkPanelAction, SameApkPanelActionSettings},
+    same_apk_panel_action::{
+        SameApkDeveloperAction, SameApkPanelAction, SameApkPanelActionSettings,
+        SameApkPanelActionTrigger,
+    },
 };
 
 const RIGHT_HAND_HAPTIC_OUTPUT_PATH: &str = "/user/hand/right/output/haptic";
@@ -96,6 +99,7 @@ pub(crate) struct StimulusVolumeActions {
     right_primary_control_panel_enabled: bool,
     right_primary_reset_enabled: bool,
     same_apk_panel_action: SameApkPanelAction,
+    same_apk_developer_action: SameApkDeveloperAction,
     breath_calibration_controller_action: BreathCalibrationControllerAction,
     breath_calibration_controller_action_selected: bool,
 }
@@ -106,6 +110,8 @@ pub(crate) struct NativeRendererControllerEvents {
     pub(crate) stimulus_randomize_triggered: bool,
     pub(crate) panel_toggle_triggered: bool,
     pub(crate) panel_toggle_source: Option<&'static str>,
+    pub(crate) experimenter_restart_triggered: bool,
+    pub(crate) developer_panel_triggered: bool,
     pub(crate) private_particle_recenter_triggered: bool,
     pub(crate) projection_target_inputs: Vec<ProjectionTargetInput>,
     pub(crate) environment_depth_alignment_inputs: Vec<EnvironmentDepthAlignmentInput>,
@@ -177,7 +183,8 @@ impl StimulusVolumeActions {
     ) -> Result<Option<Self>, String> {
         let breath_calibration_controller_action_selected =
             breath_calibration_controller_action_settings.enabled()
-                && crate::breath_composition_runtime::feature_lock_active();
+                && crate::breath_composition_runtime::feature_lock_active()
+                && !same_apk_panel_action_settings.experimenter_profile_enabled();
         let controller_capture_annotation_feature_active =
             crate::breath_composition_runtime::feature_lock_active();
         if !stimulus_settings.enabled
@@ -588,6 +595,7 @@ impl StimulusVolumeActions {
             right_primary_control_panel_enabled: right_primary_control_panel_binding_enabled,
             right_primary_reset_enabled: primary_recenter_binding_enabled,
             same_apk_panel_action: SameApkPanelAction::new(same_apk_panel_action_settings),
+            same_apk_developer_action: SameApkDeveloperAction::new(same_apk_panel_action_settings),
             breath_calibration_controller_action: BreathCalibrationControllerAction::new(
                 breath_calibration_controller_action_settings,
             ),
@@ -798,6 +806,8 @@ impl StimulusVolumeActions {
             self.apply_composition_controller_actions(observed_at);
         }
         if let Err(error) = session.sync_actions(&[(&self.action_set).into()]) {
+            self.same_apk_panel_action.cancel_pending_sequence(false);
+            self.same_apk_developer_action.cancel_pending_sequence();
             self.observe_composition_controller_missing(observed_at, frame_count.saturating_add(1));
             crate::breath_composition_runtime::poll_polar(observed_at);
             if crate::breath_capture::active() {
@@ -824,7 +834,10 @@ impl StimulusVolumeActions {
         }
 
         events.stimulus_randomize_triggered = self.poll_primary_randomize(session, frame_count);
-        events.panel_toggle_triggered = self.poll_panel_toggle(session, frame_count);
+        let (compatibility_trigger_toggle, developer_panel_triggered) =
+            self.poll_panel_toggle(session, frame_count, dt_seconds);
+        events.panel_toggle_triggered = compatibility_trigger_toggle;
+        events.developer_panel_triggered = developer_panel_triggered;
         if events.panel_toggle_triggered {
             events.panel_toggle_source = Some("right-trigger-or-select");
         }
@@ -845,11 +858,18 @@ impl StimulusVolumeActions {
                 );
             }
         }
-        let (secondary_panel_toggle, secondary_projection_input) =
+        let (secondary_panel_action, secondary_projection_input) =
             self.poll_right_secondary_action(session, frame_count, dt_seconds);
-        events.panel_toggle_triggered |= secondary_panel_toggle;
-        if secondary_panel_toggle {
-            events.panel_toggle_source = Some("right-secondary-triple-press");
+        if let Some(action) = secondary_panel_action {
+            match action {
+                SameApkPanelActionTrigger::CompatibilityToggle => {
+                    events.panel_toggle_triggered = true;
+                    events.panel_toggle_source = Some("right-secondary-triple-press");
+                }
+                SameApkPanelActionTrigger::ExperimenterRestart => {
+                    events.experimenter_restart_triggered = true;
+                }
+            }
         }
         if let Some(input) = secondary_projection_input {
             events.projection_target_inputs.push(input);
@@ -1479,7 +1499,12 @@ impl StimulusVolumeActions {
         triggered
     }
 
-    fn poll_panel_toggle<G>(&mut self, session: &xr::Session<G>, frame_count: u64) -> bool {
+    fn poll_panel_toggle<G>(
+        &mut self,
+        session: &xr::Session<G>,
+        frame_count: u64,
+        dt_seconds: f32,
+    ) -> (bool, bool) {
         let trigger_state = match self
             .right_trigger_panel_toggle
             .state(session, xr::Path::NULL)
@@ -1519,9 +1544,31 @@ impl StimulusVolumeActions {
             }
         };
 
-        let trigger_pressed = trigger_state
+        let trigger_active = trigger_state.as_ref().is_some_and(|state| state.is_active);
+        let trigger_value = trigger_state
             .as_ref()
-            .is_some_and(|state| state.is_active && state.current_state >= 0.82);
+            .map(|state| state.current_state)
+            .unwrap_or(0.0);
+        if self.same_apk_panel_action.experimenter_profile_enabled() {
+            let developer_triggered =
+                self.same_apk_developer_action
+                    .update(dt_seconds, trigger_active, trigger_value);
+            self.previous_right_trigger_panel_toggle_pressed = false;
+            self.previous_right_select_panel_toggle_pressed = false;
+            if developer_triggered {
+                crate::marker(
+                    "same-apk-panel-action",
+                    format!(
+                        "event=right-trigger-developer-panel status=triggered frame={} {}",
+                        frame_count,
+                        self.same_apk_developer_action.marker_fields(),
+                    ),
+                );
+            }
+            return (false, developer_triggered);
+        }
+
+        let trigger_pressed = trigger_active && trigger_value >= 0.82;
         let select_pressed = select_state
             .as_ref()
             .is_some_and(|state| state.is_active && state.current_state);
@@ -1562,7 +1609,7 @@ impl StimulusVolumeActions {
                 ),
             );
         }
-        triggered
+        (triggered, false)
     }
 
     fn poll_primary_reset<G>(&mut self, session: &xr::Session<G>, frame_count: u64) -> bool {
@@ -1608,12 +1655,15 @@ impl StimulusVolumeActions {
         session: &xr::Session<G>,
         frame_count: u64,
         dt_seconds: f32,
-    ) -> (bool, Option<ProjectionTargetInput>) {
+    ) -> (
+        Option<SameApkPanelActionTrigger>,
+        Option<ProjectionTargetInput>,
+    ) {
         if !self.projection_target_settings.controls_enabled
             && !self.same_apk_panel_action.enabled()
             && !self.breath_calibration_controller_action_selected
         {
-            return (false, None);
+            return (None, None);
         }
         let state = match self.right_secondary_action.state(session, xr::Path::NULL) {
             Ok(state) => state,
@@ -1628,9 +1678,19 @@ impl StimulusVolumeActions {
                         ),
                     );
                 }
-                return (false, None);
+                self.same_apk_panel_action.cancel_pending_sequence(false);
+                self.previous_right_secondary_pressed = false;
+                return (None, None);
             }
         };
+        if !state.is_active {
+            self.same_apk_panel_action.cancel_pending_sequence(false);
+            self.previous_right_secondary_pressed = false;
+            let _ = self
+                .breath_calibration_controller_action
+                .update(dt_seconds, false);
+            return (None, None);
+        }
         let pressed = state.is_active && state.current_state;
         let rising_edge = pressed && !self.previous_right_secondary_pressed;
         self.previous_right_secondary_pressed = pressed;
@@ -1653,15 +1713,20 @@ impl StimulusVolumeActions {
                 ),
             );
         }
-        let panel_toggle = self.same_apk_panel_action.update(dt_seconds, pressed);
-        if panel_toggle {
+        let panel_action = self.same_apk_panel_action.update(dt_seconds, pressed);
+        if panel_action.is_some() {
             crate::marker(
                 "same-apk-panel-action",
                 format!(
-                    "event=right-secondary-panel-toggle status=triggered frame={} actionActive={} changedSinceLastSync={} {}",
+                    "event=right-secondary-panel-action status=triggered frame={} actionActive={} changedSinceLastSync={} route={} {}",
                     frame_count,
                     state.is_active,
                     state.changed_since_last_sync,
+                    match panel_action {
+                        Some(SameApkPanelActionTrigger::CompatibilityToggle) => "compatibility-toggle",
+                        Some(SameApkPanelActionTrigger::ExperimenterRestart) => "experimenter-restart",
+                        None => "none",
+                    },
                     self.same_apk_panel_action.marker_fields(),
                 ),
             );
@@ -1680,9 +1745,9 @@ impl StimulusVolumeActions {
                     state.changed_since_last_sync
                 ),
             );
-            return (false, Some(ProjectionTargetInput::ToggleScaleDriver));
+            return (None, Some(ProjectionTargetInput::ToggleScaleDriver));
         }
-        (panel_toggle, None)
+        (panel_action, None)
     }
 
     fn poll_thumbstick_y<G>(

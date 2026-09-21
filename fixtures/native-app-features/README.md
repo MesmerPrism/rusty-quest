@@ -27,4 +27,7 @@ Module families:
   `projection-target/`, `sdf/`, `stimulus/`, and `video/`: feature lanes that
   must be selected explicitly before their permissions, properties, or runtime
   markers enter an APK profile.
+- `ui/same-apk-soft-kiosk/`: opt-in experiment launcher and consent-enabled
+  same-APK Accessibility foreground recovery; unselected apps retain their
+  existing launcher and carry no service declaration.
 - `damaged/`: malformed descriptors used only by rejection tests.

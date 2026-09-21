@@ -45,6 +45,8 @@ mod environment_depth_projection_alignment;
 mod environment_depth_scene_map;
 #[cfg(any(test, not(target_os = "android")))]
 mod environment_depth_surface_support;
+mod experiment_session;
+mod experiment_session_runtime;
 #[cfg(target_os = "android")]
 mod gpu_environment_depth_particle_stats;
 #[cfg(target_os = "android")]
@@ -141,6 +143,10 @@ mod recorded_hand_replay;
 #[cfg(target_os = "android")]
 mod remote_camera_projection_native_stream;
 mod same_apk_panel_action;
+mod session_recording_clock;
+mod session_recording_contract;
+mod session_recording_recovery;
+mod session_recording_writer;
 mod simultaneous_hands_controllers;
 #[cfg(target_os = "android")]
 mod video_projection;
@@ -363,6 +369,17 @@ fn request_runtime_permissions(
 #[cfg(target_os = "android")]
 #[no_mangle]
 fn android_main(app: android_activity::AndroidApp) {
+    if let Err(error) = experiment_session_runtime::initialize_from_android_app(&app) {
+        marker(
+            "experiment-session-runtime",
+            format!("status=error reason={}", sanitize(&error)),
+        );
+    } else {
+        marker(
+            "experiment-session-runtime",
+            "status=ready inventoryStatus=inventory-unavailable startAdmitted=false",
+        );
+    }
     let native_app_settings =
         native_app_settings::NativeAppSettingsDefaults::load_from_apk_asset(&app);
     marker("native-app-settings", native_app_settings.marker_fields());

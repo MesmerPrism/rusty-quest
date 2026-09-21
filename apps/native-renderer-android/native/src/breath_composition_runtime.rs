@@ -145,6 +145,7 @@ pub(crate) struct PendingAdapterAction {
 
 #[derive(Debug)]
 pub(crate) struct BreathCompositionRuntime {
+    packaged_config: BreathCompositionRuntimeConfig,
     authority: BreathCompositionAuthority,
     controller_adapter_available: bool,
     pending_actions: VecDeque<PendingAdapterAction>,
@@ -156,6 +157,7 @@ pub(crate) struct BreathCompositionRuntime {
     latest_calibration: Option<CalibrationPanelReadback>,
     polar_state_tuning: PolarStateTuningControl,
     last_polar_diagnostics: Option<PolarAccRuntimeDiagnostics>,
+    settings_revision: u64,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -273,6 +275,7 @@ impl BreathCompositionRuntime {
             authority.select(config.initial_request);
         }
         Self {
+            packaged_config: config,
             authority,
             controller_adapter_available,
             pending_actions: VecDeque::new(),
@@ -284,6 +287,7 @@ impl BreathCompositionRuntime {
             latest_calibration: None,
             polar_state_tuning: PolarStateTuningControl::new(config.polar_state_parameters),
             last_polar_diagnostics: None,
+            settings_revision: 0,
         }
     }
 
@@ -291,17 +295,42 @@ impl BreathCompositionRuntime {
         self.authority.snapshot()
     }
 
+    pub(crate) fn reset_to_packaged_defaults(&mut self) {
+        let config = self.packaged_config;
+        *self = Self::new(config);
+    }
+
     pub(crate) fn apply_command(&mut self, command_json: &str) -> String {
+        let settings_mutation = serde_json::from_str::<Value>(command_json)
+            .ok()
+            .and_then(|value| {
+                value
+                    .as_object()
+                    .and_then(|object| object.get("operation"))
+                    .and_then(Value::as_str)
+                    .map(|operation| {
+                        matches!(
+                            operation,
+                            "select" | "disable" | "configure" | "configure_polar_state"
+                        )
+                    })
+            })
+            .unwrap_or(false);
         let result = self.apply_command_inner(command_json);
         match result {
-            Ok(()) => response_json(
-                "accepted",
-                "none",
-                self.authority.snapshot(),
-                self.latest_calibration.as_ref(),
-                Some(&self.polar_state_tuning),
-                self.last_polar_diagnostics.as_ref(),
-            ),
+            Ok(()) => {
+                if settings_mutation {
+                    self.settings_revision = self.settings_revision.saturating_add(1);
+                }
+                response_json(
+                    "accepted",
+                    "none",
+                    self.authority.snapshot(),
+                    self.latest_calibration.as_ref(),
+                    Some(&self.polar_state_tuning),
+                    self.last_polar_diagnostics.as_ref(),
+                )
+            }
             Err(reason) => response_json(
                 "rejected",
                 reason,
@@ -757,6 +786,11 @@ impl BreathCompositionRuntime {
                 assessment,
                 snapshot,
             );
+            record_session_assessment(
+                BreathCompositionSource::PolarAcc,
+                assessment,
+                self.settings_revision,
+            );
         }
         self.refresh_polar_state_diagnostics();
     }
@@ -896,6 +930,10 @@ pub(crate) fn feature_lock_active() -> bool {
     lock_runtime().snapshot().feature_lock_active
 }
 
+pub(crate) fn reset_to_packaged_defaults() {
+    lock_runtime().reset_to_packaged_defaults();
+}
+
 pub(crate) fn take_adapter_action(source: BreathCompositionSource) -> Option<AdapterAction> {
     lock_runtime().take_action(source)
 }
@@ -905,9 +943,60 @@ pub(crate) fn submit_assessment(
     source: BreathCompositionSource,
     assessment: BreathAssessmentObservation,
 ) -> BreathCompositionSnapshot {
-    let snapshot = lock_runtime().submit_assessment(at, source, assessment);
+    let mut state = lock_runtime();
+    let snapshot = state.submit_assessment(at, source, assessment);
+    let settings_revision = state.settings_revision;
+    drop(state);
     crate::breath_capture::record_assessment(source, assessment, snapshot);
+    record_session_assessment(source, assessment, settings_revision);
     snapshot
+}
+
+fn record_session_assessment(
+    source: BreathCompositionSource,
+    assessment: BreathAssessmentObservation,
+    settings_revision: u64,
+) {
+    use rusty_quest_breath_contract::assessment::CommonBreathPhase;
+
+    let phase = match assessment.phase {
+        CommonBreathPhase::Inhale => crate::session_recording_contract::BreathPhase::Inhale,
+        CommonBreathPhase::Exhale => crate::session_recording_contract::BreathPhase::Exhale,
+        CommonBreathPhase::Hold => crate::session_recording_contract::BreathPhase::Hold,
+        CommonBreathPhase::Unknown | CommonBreathPhase::BadTracking => {
+            crate::session_recording_contract::BreathPhase::Unknown
+        }
+    };
+    let (sampled_at_clock, observed_at_clock) = session_assessment_clocks(source);
+    let _ = crate::experiment_session_runtime::record_breath_assessment(
+        assessment.sequence_id,
+        assessment.sampled_at.get(),
+        sampled_at_clock,
+        assessment.observed_at.get(),
+        observed_at_clock,
+        phase,
+        assessment.volume01.map(|value| value as f32),
+        assessment.quality01 as f32,
+        settings_revision,
+    );
+}
+
+fn session_assessment_clocks(
+    source: BreathCompositionSource,
+) -> (
+    crate::session_recording_clock::SourceClock,
+    crate::session_recording_clock::SourceClock,
+) {
+    match source {
+        BreathCompositionSource::Controller => (
+            crate::session_recording_clock::SourceClock::OpenXrTime,
+            crate::session_recording_clock::SourceClock::OpenXrTime,
+        ),
+        BreathCompositionSource::PolarAcc => (
+            crate::session_recording_clock::SourceClock::JavaNanoTime,
+            crate::session_recording_clock::SourceClock::OpenXrTime,
+        ),
+    }
 }
 
 pub(crate) fn submit_calibration(
@@ -934,6 +1023,20 @@ pub(crate) fn status_json() -> String {
 }
 
 pub(crate) fn apply_command_json(command_json: &str) -> String {
+    if serde_json::from_str::<Value>(command_json)
+        .ok()
+        .and_then(|value| {
+            value
+                .as_object()
+                .and_then(|object| object.get("schema"))
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+        })
+        .as_deref()
+        == Some(crate::experiment_session_runtime::EXPERIMENT_SESSION_COMMAND_SCHEMA)
+    {
+        return crate::experiment_session_runtime::apply_command_json(command_json);
+    }
     lock_runtime().apply_command(command_json)
 }
 
@@ -1598,6 +1701,42 @@ mod tests {
         assert_eq!(response["command_status"], "accepted");
         assert_eq!(response["snapshot"]["requested"]["source"], "controller");
         assert_eq!(response["snapshot"]["effective"]["mapping"], "volume");
+    }
+
+    #[test]
+    fn packaged_defaults_reset_discards_developer_edits() {
+        let mut runtime = runtime();
+        let baseline_snapshot = runtime.snapshot();
+        let baseline_config = runtime.packaged_config;
+
+        let edited: Value =
+            serde_json::from_str(&runtime.apply_command(&select("controller", "volume")))
+                .expect("edited response");
+        assert_eq!(edited["command_status"], "accepted");
+        assert_ne!(runtime.snapshot(), baseline_snapshot);
+        assert!(runtime.settings_revision > 0);
+
+        runtime.reset_to_packaged_defaults();
+
+        assert_eq!(runtime.packaged_config, baseline_config);
+        assert_eq!(runtime.snapshot(), baseline_snapshot);
+        assert_eq!(runtime.settings_revision, 0);
+        assert!(runtime.pending_actions.is_empty());
+        assert!(runtime.latest_calibration.is_none());
+    }
+
+    #[test]
+    fn session_assessment_clock_identity_is_source_specific() {
+        use crate::session_recording_clock::SourceClock;
+
+        assert_eq!(
+            session_assessment_clocks(BreathCompositionSource::Controller),
+            (SourceClock::OpenXrTime, SourceClock::OpenXrTime)
+        );
+        assert_eq!(
+            session_assessment_clocks(BreathCompositionSource::PolarAcc),
+            (SourceClock::JavaNanoTime, SourceClock::OpenXrTime)
+        );
     }
 
     #[test]

@@ -4,6 +4,7 @@ param(
     [string]$FeatureDir = "fixtures\native-app-features",
     [string]$OutputRoot = "local-artifacts\native-app-builds",
     [string]$ResultJsonPath,
+    [string]$PrivateAssetProviderManifest,
     [switch]$DryRun
 )
 
@@ -695,6 +696,7 @@ function New-GeneratedAndroidManifestText {
     [void]$lines.Add(('        android:label="{0}"' -f [System.Security.SecurityElement]::Escape($ApplicationLabel)))
     [void]$lines.Add('        android:theme="@android:style/Theme.Material.NoActionBar">')
     [void]$lines.Add('        <meta-data android:name="com.samsung.android.vr.application.mode" android:value="vr_only" />')
+    $experimentLauncherSelected = $Activities -contains "NativeRendererExperimentLauncherActivity"
     if ($Activities -contains "android.app.NativeActivity") {
         [void]$lines.Add('        <activity')
         [void]$lines.Add('            android:name="android.app.NativeActivity"')
@@ -709,10 +711,27 @@ function New-GeneratedAndroidManifestText {
         [void]$lines.Add('            <meta-data android:name="com.oculus.vr.focusaware" android:value="true" />')
         [void]$lines.Add('            <meta-data android:name="com.oculus.intent.category.VR" android:value="vr_only" />')
         [void]$lines.Add('            <meta-data android:name="android.app.lib_name" android:value="rusty_quest_native_renderer" />')
+        if (-not $experimentLauncherSelected) {
+            [void]$lines.Add('            <intent-filter>')
+            [void]$lines.Add('                <action android:name="android.intent.action.MAIN" />')
+            [void]$lines.Add('                <category android:name="com.oculus.intent.category.VR" />')
+            [void]$lines.Add('                <category android:name="android.intent.category.LAUNCHER" />')
+            [void]$lines.Add('            </intent-filter>')
+        }
+        [void]$lines.Add('        </activity>')
+    }
+    if ($experimentLauncherSelected) {
+        [void]$lines.Add('        <activity')
+        [void]$lines.Add('            android:name="io.github.mesmerprism.rustyquest.native_renderer.NativeRendererExperimentLauncherActivity"')
+        [void]$lines.Add('            android:excludeFromRecents="true"')
+        [void]$lines.Add('            android:exported="true"')
+        [void]$lines.Add(('            android:label="{0}"' -f [System.Security.SecurityElement]::Escape($ApplicationLabel)))
+        [void]$lines.Add('            android:launchMode="singleTop"')
+        [void]$lines.Add('            android:noHistory="true">')
         [void]$lines.Add('            <intent-filter>')
         [void]$lines.Add('                <action android:name="android.intent.action.MAIN" />')
-        [void]$lines.Add('                <category android:name="com.oculus.intent.category.VR" />')
         [void]$lines.Add('                <category android:name="android.intent.category.LAUNCHER" />')
+        [void]$lines.Add('                <category android:name="com.oculus.intent.category.2D" />')
         [void]$lines.Add('            </intent-filter>')
         [void]$lines.Add('        </activity>')
     }
@@ -788,6 +807,17 @@ function New-GeneratedAndroidManifestText {
     }
     if ($Services -contains "DisplayCompositeProjectionService") {
         [void]$lines.Add('        <service android:name="io.github.mesmerprism.rustyquest.native_renderer.DisplayCompositeProjectionService" android:exported="false" android:foregroundServiceType="mediaProjection" />')
+    }
+    if ($Services -contains "NativeRendererSoftKioskAccessibilityService") {
+        [void]$lines.Add('        <service')
+        [void]$lines.Add('            android:name="io.github.mesmerprism.rustyquest.native_renderer.NativeRendererSoftKioskAccessibilityService"')
+        [void]$lines.Add('            android:exported="true"')
+        [void]$lines.Add('            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"')
+        [void]$lines.Add('            android:stopWithTask="false">')
+        [void]$lines.Add('            <intent-filter>')
+        [void]$lines.Add('                <action android:name="android.accessibilityservice.AccessibilityService" />')
+        [void]$lines.Add('            </intent-filter>')
+        [void]$lines.Add('        </service>')
     }
     [void]$lines.Add('    </application>')
     if ($Queries.Count -gt 0) {
@@ -990,6 +1020,7 @@ function Resolve-NativePanelComposition {
 
 $RepoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 $repoRootText = [string]$RepoRoot
+Import-Module (Join-Path $PSScriptRoot 'lib\NativeAppPrivateAssetProvider.psm1') -Force
 $appSpecPath = Resolve-RepoPath -Path $AppSpec -RepoRoot $repoRootText
 $featureDirPath = Resolve-RepoPath -Path $FeatureDir -RepoRoot $repoRootText
 $outputRootPath = Resolve-RepoPath -Path $OutputRoot -RepoRoot $repoRootText
@@ -1006,6 +1037,14 @@ $nativeRendererPropertyByName = $propertyManifest.by_name
 $nativeRendererPropertiesByFamily = $propertyManifest.by_family
 $app = Read-JsonFile -Path $appSpecPath
 Assert-AppSpecShape -Spec $app -Path (Get-RepoRelativePath -RepoRoot $repoRootText -Path $appSpecPath)
+$hasPrivateAssetRequest = $null -ne $app.PSObject.Properties['private_asset_provider_request']
+$hasPrivateAssetManifest = -not [string]::IsNullOrWhiteSpace($PrivateAssetProviderManifest)
+if ($hasPrivateAssetRequest -ne $hasPrivateAssetManifest) {
+    throw 'Native app private asset provider request and -PrivateAssetProviderManifest must be supplied together.'
+}
+if ($hasPrivateAssetRequest) {
+    Assert-NativeAppPrivateAssetRequest -Request $app.private_asset_provider_request
+}
 $features = Read-FeatureLibrary -FeatureDirPath $featureDirPath -RepoRoot $repoRootText -ManifestByName $nativeRendererPropertyByName
 $privateParticlePayloadLinkage = Resolve-PrivateParticlePayloadInventory -App $app
 
@@ -1292,6 +1331,23 @@ $clearFamilies = @(Get-SortedSet -Set $clearFamiliesSet)
 $expectedRenderModes = @(Get-SortedSet -Set $expectedRenderModesSet)
 $requiredMarkers = @(Get-SortedSet -Set $requiredMarkerSet)
 $forbiddenMarkers = @(Get-SortedSet -Set $forbiddenMarkerSet)
+$resolvedPublicAssets = @(Get-SortedSet -Set $assetSet)
+$publicAssetDestinationRecords = @(Get-NativeAppPublicAssetDestinationRecords -AssetInputs $resolvedPublicAssets -RepoRoot $repoRootText)
+$privateAssetValidation = $null
+$privateAssetClosure = New-NativeAppInactivePrivateAssetClosure
+if ($hasPrivateAssetRequest) {
+    $privateAssetManifestPath = if ([IO.Path]::IsPathRooted($PrivateAssetProviderManifest)) {
+        [IO.Path]::GetFullPath($PrivateAssetProviderManifest)
+    } else {
+        [IO.Path]::GetFullPath((Join-Path (Get-Location) $PrivateAssetProviderManifest))
+    }
+    $privateAssetValidation = Resolve-NativeAppPrivateAssetProvider `
+        -Request $app.private_asset_provider_request `
+        -ManifestPath $privateAssetManifestPath `
+        -SchemaPath (Join-Path $repoRootText 'schemas\rusty.quest.native_app_private_asset_provider.v1.schema.json') `
+        -PublicAssetDestinationRecords $publicAssetDestinationRecords
+    $privateAssetClosure = $privateAssetValidation.closure
+}
 foreach ($receiver in $receivers) {
     if ($receiver -notin @("PolarSensorCommandReceiver", "LslPanelCommandReceiver", "BreathCompositionCommandReceiver")) {
         throw "Android receiver surface contains an unsupported closed-world receiver: $receiver"
@@ -1520,6 +1576,7 @@ $resolutionInputs = [ordered]@{
     feature_descriptors = $featureDescriptorRecords
     panel_source_closure = $panelSourceClosure
     private_particle_payload_linkage = $privateParticlePayloadLinkageReceipt
+    private_asset_closure = $privateAssetClosure
     build_env = @($envByName.Keys | Sort-Object | ForEach-Object { $envByName[$_] })
     runtime_set = @($runtimeSet.Keys | Sort-Object | ForEach-Object { [ordered]@{ name = [string]$_; value = [string]$runtimeSet[$_] } })
 }
@@ -1534,6 +1591,10 @@ $buildEnvPath = Join-Path $appOutputDir "build-env.json"
 $buildManifestPath = Join-Path $appOutputDir "build-manifest.json"
 $auditPath = Join-Path $appOutputDir "app-build-audit.json"
 $permissionPregrantPath = Join-Path $appOutputDir "permission-pregrant.json"
+
+if ($null -ne $privateAssetValidation) {
+    $privateAssetClosure = Publish-NativeAppPrivateAssetStaging -Validation $privateAssetValidation -OutputRoot $appOutputDir
+}
 
 $dependencyReasons = [ordered]@{}
 foreach ($featureId in $selectedFeatureIds) {
@@ -1791,10 +1852,11 @@ $featureLock = [ordered]@{
     permission_pregrant = $permissionPregrant
     build_inputs = [ordered]@{
         env = @($envByName.Keys | Sort-Object | ForEach-Object { $envByName[$_] })
-        assets = @(Get-SortedSet -Set $assetSet)
+        assets = $resolvedPublicAssets
         shaders = @(Get-SortedSet -Set $shaderSet)
         payloads = @($app.payloads)
         private_particle_payload_linkage = $privateParticlePayloadLinkageReceipt
+        private_asset_closure = $privateAssetClosure
     }
     expected_markers = [ordered]@{
         required = $requiredMarkers
@@ -1839,9 +1901,10 @@ $buildEnv = [ordered]@{
     schema = "rusty.quest.native_app_build_env.v1"
     app_id = [string]$app.app_id
     env = @($envByName.Keys | Sort-Object | ForEach-Object { $envByName[$_] })
-    assets = @(Get-SortedSet -Set $assetSet)
+    assets = $resolvedPublicAssets
     shaders = @(Get-SortedSet -Set $shaderSet)
     payloads = @($app.payloads)
+    private_asset_closure = $privateAssetClosure
 }
 Write-JsonArtifact -Value $buildEnv -Path $buildEnvPath
 
@@ -1859,6 +1922,15 @@ $buildManifest = [ordered]@{
     property_write_plan_sha256 = Get-FileSha256 -Path $propertyWritePlanPath
     android_manifest_sha256 = Get-FileSha256 -Path $androidManifestPath
     build_env_sha256 = Get-FileSha256 -Path $buildEnvPath
+    private_asset_closure = [ordered]@{
+        schema = [string]$privateAssetClosure.schema
+        mode = [string]$privateAssetClosure.mode
+        provider_id = [string]$privateAssetClosure.provider_id
+        provider_manifest_sha256 = [string]$privateAssetClosure.provider_manifest_sha256
+        inventory_sha256 = [string]$privateAssetClosure.inventory_sha256
+        asset_count = [int]$privateAssetClosure.asset_count
+        closure_sha256 = Get-StringSha256 -Value ($privateAssetClosure | ConvertTo-Json -Depth 12 -Compress)
+    }
 }
 Write-JsonArtifact -Value $buildManifest -Path $buildManifestPath
 
@@ -1880,6 +1952,7 @@ $audit = [ordered]@{
     settings_hotload = $settingsHotload
     permission_pregrant = $permissionPregrant
     private_particle_payload_linkage = $privateParticlePayloadLinkageReceipt
+    private_asset_closure = $privateAssetClosure
     generated_outputs = $generatedOutputs
     artifact_hashes = $buildManifest
     result = "accepted"

@@ -172,10 +172,15 @@ function Copy-AssetInput {
         [Parameter(Mandatory=$true)][string]$Source,
         [Parameter(Mandatory=$true)][string]$DestinationRoot,
         [Parameter(Mandatory=$true)][string]$RepoRoot,
-        [string]$DestinationName = ""
+        [string]$DestinationName = "",
+        [switch]$ExplicitExternalSource
     )
 
-    $sourcePath = Resolve-RepoPath -Path $Source -RepoRoot $RepoRoot
+    $sourcePath = if ($ExplicitExternalSource) {
+        [IO.Path]::GetFullPath($Source)
+    } else {
+        Resolve-NativeAppPublicAssetInput -AssetInput $Source -RepoRoot $RepoRoot
+    }
     if (-not (Test-Path -LiteralPath $sourcePath)) {
         throw "Declared APK asset input is missing: $sourcePath"
     }
@@ -217,6 +222,7 @@ if ([string]::IsNullOrWhiteSpace($NdkHome)) {
 }
 
 $repoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
+Import-Module (Join-Path $PSScriptRoot 'lib\NativeAppPrivateAssetProvider.psm1') -Force
 $appRoot = Resolve-Path (Join-Path $repoRoot "apps\native-renderer-android")
 $targetRoot = Join-Path $repoRoot "target"
 $requestedOutDir = $OutDir
@@ -719,6 +725,22 @@ final class GeneratedEmbeddedManifoldRuntimeConfig {
     (New-Object System.Text.UTF8Encoding($false)))
 $generatedControlPanelActivityPath = ""
 if (-not [string]::IsNullOrWhiteSpace($selectedPanelModuleId)) {
+    # The experiment-session shell is an owning breath-composition concern.  Do
+    # not let its audio/profile/native dependencies leak into another panel's
+    # generated Java closure: those closures deliberately omit that source
+    # family and its JNI declarations.
+    $isExperimentSessionPanel = $selectedPanelModuleId -ceq "breath-composition-controls"
+    $usesPolarSessionRuntime = $isExperimentSessionPanel -or
+        $selectedPanelModuleId -ceq "polar-controls"
+    $experimentSessionProfileSha256 = if ($appBuildEnvByName.ContainsKey("RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_EXPERIMENT_SESSION_PROFILE_SHA256")) {
+        [string]$appBuildEnvByName["RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_EXPERIMENT_SESSION_PROFILE_SHA256"]
+    } else { "" }
+    $experimentSessionProviderManifestSha256 = if ($appBuildEnvByName.ContainsKey("RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_EXPERIMENT_SESSION_PROVIDER_MANIFEST_SHA256")) {
+        [string]$appBuildEnvByName["RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_EXPERIMENT_SESSION_PROVIDER_MANIFEST_SHA256"]
+    } else { "" }
+    $experimentSessionInventorySha256 = if ($appBuildEnvByName.ContainsKey("RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_EXPERIMENT_SESSION_INVENTORY_SHA256")) {
+        [string]$appBuildEnvByName["RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_EXPERIMENT_SESSION_INVENTORY_SHA256"]
+    } else { "" }
     $panelNativeMethods = if ($selectedPanelModuleId -ceq "stimulus-volume") {
 @"
     static native String nativeSubmitLiveStimulusCandidate(String candidateJson);
@@ -736,6 +758,7 @@ if (-not [string]::IsNullOrWhiteSpace($selectedPanelModuleId)) {
     static native String nativeSubmitLivePrivateParticleDynamics(String dynamicsJson);
     static native String nativeStartDriverProfileSessionBlock(String blockJson);
     static native String nativeApplyBreathCompositionCommand(String commandJson);
+    static native String nativeInitializeExperimentSessionRuntime(String appPrivateFilesRoot);
     static native String nativeApplyLslTransportCommand(String commandJson);
     static native String nativeReadLslTransportStatus();
     static native String nativeReadBreathCompositionStatus();
@@ -746,6 +769,21 @@ if (-not [string]::IsNullOrWhiteSpace($selectedPanelModuleId)) {
 "@
     } else {
         throw "Native panel module has no declared JNI adapter surface: $selectedPanelModuleId"
+    }
+    $experimentSessionTerminalAudioStop = if ($isExperimentSessionPanel) {
+        "        stopCurrentConditionAudioForTerminal(true);"
+    } else {
+        ""
+    }
+    $experimentSessionOnCreate = if ($isExperimentSessionPanel) {
+        "        ownerApplicationContext = getApplicationContext();"
+    } else {
+        ""
+    }
+    $polarRuntimeReopenFromExplicitLaunch = if ($usesPolarSessionRuntime) {
+        "            PolarSensorRuntime.reopenClosedFromExplicitLaunch();"
+    } else {
+        ""
     }
     $generatedControlPanelActivityPath = Join-Path $generatedEmbeddedPackageDir "ControlPanelActivity.java"
     $generatedControlPanelActivitySource = @"
@@ -768,6 +806,470 @@ public final class ControlPanelActivity extends $selectedPanelEntrySimpleName {
     }
 
     private final PanelImmersiveHandoff immersiveHandoff = new PanelImmersiveHandoff(this);
+    private static final Object PRESENTATION_LOCK = new Object();
+    private static long presentationGeneration;
+    private static boolean terminalIntentAdmitted;
+    private static boolean terminalFinishConsumed;
+    // EXPERIMENT_SESSION_SHELL_BEGIN
+    private static volatile android.content.Context ownerApplicationContext;
+    private static volatile ConditionAudioRuntime conditionAudioRuntime;
+    private static long pendingAudioGeneration;
+    private static String pendingAudioPrepareOperation = "";
+    private static boolean audioImmersiveAdmitted;
+    private static boolean audioPrepared;
+    private static final ExperimentSessionPackagedClosure.Anchors EXPERIMENT_SESSION_ANCHORS =
+        new ExperimentSessionPackagedClosure.Anchors(
+            "$experimentSessionProfileSha256",
+            "$experimentSessionProviderManifestSha256",
+            "$experimentSessionInventorySha256");
+
+    static String initializeExperimentSessionRuntimeFromOwner(String appPrivateFilesRoot) {
+        if (appPrivateFilesRoot == null || appPrivateFilesRoot.trim().isEmpty()) {
+            throw new IllegalArgumentException("exact app-private files root is required");
+        }
+        installConditionAudioFromPackagedClosure(appPrivateFilesRoot);
+        PanelImmersiveHandoff.setCompletionListener(new PanelImmersiveHandoff.CompletionListener() {
+            @Override public long currentSessionGeneration() {
+                synchronized (PRESENTATION_LOCK) { return pendingAudioGeneration; }
+            }
+            @Override public void onCompletion(long generation, boolean stable) {
+                synchronized (PRESENTATION_LOCK) {
+                    if (generation <= 0L || generation != pendingAudioGeneration) return;
+                    if (stable) admitStableImmersiveAudio(); else cancelPendingImmersiveAudio();
+                }
+            }
+        });
+        return nativeInitializeExperimentSessionRuntime(appPrivateFilesRoot);
+    }
+
+    private static void installConditionAudioFromPackagedClosure(String appPrivateFilesRoot) {
+        android.content.Context context = ownerApplicationContext;
+        ConditionAudioContract.TrustedPackagedInventory inventory =
+            ConditionAudioContract.TrustedPackagedInventory.unavailable(
+                "packaged-inventory-not-loaded");
+        RuntimeException closureFailure = null;
+        if (context == null) {
+            closureFailure = new IllegalStateException("owner-application-context-unavailable");
+        } else {
+            try {
+                final android.content.res.AssetManager assets = context.getAssets();
+                java.nio.file.Path exactFilesRoot = context.getFilesDir().toPath();
+                if (!exactFilesRoot.toString().equals(appPrivateFilesRoot)) {
+                    throw new SecurityException("app-private-files-root-mismatch");
+                }
+                ExperimentSessionPackagedClosure.Result closure =
+                    ExperimentSessionPackagedClosure.prepare(
+                        readPackagedAsset(assets, "feature-lock.json"),
+                        new ExperimentSessionPackagedClosure.AssetReader() {
+                            @Override public byte[] read(String logicalDestination)
+                                    throws Exception {
+                                return readPackagedAsset(assets, logicalDestination);
+                            }
+                        },
+                        exactFilesRoot,
+                        EXPERIMENT_SESSION_ANCHORS);
+                if (closure.active) {
+                    ConditionAudioContract.Provider[] providers =
+                        new ConditionAudioContract.Provider[closure.audioEntries.length];
+                    for (int index = 0; index < closure.audioEntries.length; index += 1) {
+                        ExperimentSessionPackagedClosure.AudioEntry entry =
+                            closure.audioEntries[index];
+                        providers[index] = new ConditionAudioContract.Provider(
+                            entry.conditionId,
+                            entry.logicalDestination,
+                            entry.logicalDestination,
+                            entry.sourceSha256,
+                            entry.sourceBytes,
+                            entry.mediaType);
+                    }
+                    inventory =
+                        ConditionAudioContract.TrustedPackagedInventory.fromValidatedProvider(
+                            ConditionAudioContract.PACKAGED_PROVIDER_ORIGIN,
+                            closure.inventorySha256,
+                            providers);
+                    if (!inventory.available) {
+                        throw new SecurityException("condition-audio-inventory-invalid");
+                    }
+                } else {
+                    inventory = ConditionAudioContract.TrustedPackagedInventory.unavailable(
+                        "packaged-inventory-inactive");
+                }
+            } catch (Exception error) {
+                inventory = ConditionAudioContract.TrustedPackagedInventory.unavailable(
+                    "packaged-inventory-unavailable");
+                closureFailure = new IllegalStateException(
+                    "experiment-session-packaged-closure-rejected", error);
+            }
+        }
+        android.content.res.AssetManager assets = context == null ? null : context.getAssets();
+        conditionAudioRuntime = ConditionAudioRuntime.installAppLifetime(
+            inventory,
+            assets == null ? null : new ConditionAudioAndroidMediaBackendFactory(assets),
+            new ConditionAudioContract.ReceiptSink() {
+                @Override public void onReceipt(ConditionAudioContract.Receipt receipt) {
+                    android.util.Log.i("RustyQuestNativeRenderer",
+                        "channel=condition-audio event="
+                            + receipt.event.name().toLowerCase(java.util.Locale.ROOT)
+                            + " generation=" + receipt.sessionGeneration
+                            + " revision=" + receipt.receiptRevision
+                            + " reason=" + receipt.reason);
+                    String eventOperation = receipt.event == ConditionAudioContract.Event.ACTUAL_START
+                        ? "audio-started" : receipt.event == ConditionAudioContract.Event.NATURAL_END
+                        ? "audio-ended" : receipt.event == ConditionAudioContract.Event.ERROR
+                        ? "audio-error" : "";
+                    if (!eventOperation.isEmpty()) {
+                        synchronized (PRESENTATION_LOCK) {
+                            if (terminalIntentAdmitted || receipt.sessionGeneration != pendingAudioGeneration)
+                                return;
+                        }
+                        try {
+                            org.json.JSONObject event = new org.json.JSONObject()
+                                .put("schema", "rusty.quest.experiment_session.command.v1")
+                                .put("operation", eventOperation)
+                                .put("operation_id", "audio-event-" + receipt.sessionGeneration
+                                    + "-" + receipt.receiptRevision)
+                                .put("expected_generation", receipt.sessionGeneration)
+                                .put("elapsed_realtime_ns", android.os.SystemClock.elapsedRealtimeNanos());
+                            nativeApplyBreathCompositionCommand(event.toString());
+                        } catch (Exception error) {
+                            android.util.Log.e("RustyQuestNativeRenderer", "audio-event-record-failed", error);
+                        }
+                    }
+                    if (receipt.event == ConditionAudioContract.Event.PREPARED) {
+                        ConditionAudioRuntime runtime = conditionAudioRuntime;
+                        String expectedOperation;
+                        long expectedGeneration;
+                        synchronized (PRESENTATION_LOCK) {
+                            expectedOperation = pendingAudioPrepareOperation;
+                            expectedGeneration = pendingAudioGeneration;
+                            if (receipt.sessionGeneration == expectedGeneration
+                                    && expectedOperation.equals(receipt.operationId)) audioPrepared = true;
+                            if (!audioImmersiveAdmitted) return;
+                        }
+                        if (runtime != null
+                                && receipt.sessionGeneration == expectedGeneration
+                                && expectedOperation.equals(receipt.operationId)) {
+                            runtime.submit(ConditionAudioContract.Command.start(
+                                expectedGeneration,
+                                expectedOperation + "-start"));
+                        }
+                    }
+                }
+            });
+        if (closureFailure != null) throw closureFailure;
+    }
+
+    private static byte[] readPackagedAsset(
+            android.content.res.AssetManager assets, String logicalDestination) throws Exception {
+        java.io.InputStream stream = assets.open(
+            logicalDestination, android.content.res.AssetManager.ACCESS_STREAMING);
+        java.io.ByteArrayOutputStream bytes = new java.io.ByteArrayOutputStream();
+        try {
+            byte[] buffer = new byte[8192];
+            int read;
+            while ((read = stream.read(buffer)) >= 0) {
+                if (read > 0) bytes.write(buffer, 0, read);
+            }
+        } finally {
+            stream.close();
+        }
+        return bytes.toByteArray();
+    }
+
+    static String conditionAudioReadiness(String conditionId) {
+        ConditionAudioRuntime runtime = conditionAudioRuntime;
+        if (runtime == null) return "audio-inventory-unavailable";
+        ConditionAudioContract.TrackReadiness readiness = runtime.trackReadiness(conditionId);
+        return readiness.state == ConditionAudioContract.TrackState.READY
+            ? "track-ready" : readiness.reason;
+    }
+
+    static boolean startConditionAudio(
+            long sessionGeneration, String operationId, String conditionId) {
+        ConditionAudioRuntime runtime = conditionAudioRuntime;
+        if (runtime == null || sessionGeneration <= 0L || operationId == null
+                || operationId.isEmpty()) return false;
+        ConditionAudioContract.TrackReadiness readiness = runtime.trackReadiness(conditionId);
+        if (readiness.state != ConditionAudioContract.TrackState.READY) return false;
+        String prepareOperation = operationId + "-audio-prepare";
+        synchronized (PRESENTATION_LOCK) {
+            pendingAudioGeneration = sessionGeneration;
+            pendingAudioPrepareOperation = prepareOperation;
+            audioImmersiveAdmitted = false;
+            audioPrepared = false;
+        }
+        return runtime.submit(ConditionAudioContract.Command.prepare(
+            sessionGeneration, prepareOperation, conditionId)).accepted;
+    }
+
+    static void admitStableImmersiveAudio() {
+        synchronized (PRESENTATION_LOCK) {
+            if (terminalIntentAdmitted || pendingAudioGeneration <= 0L) return;
+            audioImmersiveAdmitted = true;
+            if (audioPrepared && conditionAudioRuntime != null) {
+                conditionAudioRuntime.submit(ConditionAudioContract.Command.start(
+                    pendingAudioGeneration, pendingAudioPrepareOperation + "-start"));
+            }
+        }
+    }
+
+    static void cancelPendingImmersiveAudio() {
+        long generation;
+        String operation;
+        synchronized (PRESENTATION_LOCK) {
+            generation = pendingAudioGeneration;
+            operation = pendingAudioPrepareOperation;
+        }
+        if (generation > 0L) requestConditionAudioRestartStop(generation, operation + "-handoff-failed");
+    }
+
+    static boolean closeExperimentResourcesFromOwner() {
+        if (android.os.Looper.myLooper() == android.os.Looper.getMainLooper())
+            throw new IllegalStateException("terminal cleanup must run off main");
+        boolean clean = true;
+        PanelImmersiveHandoff.setCompletionListener(null);
+        try { clean = PolarSensorRuntime.closeExistingFromOwner(); }
+        catch (Exception error) { clean = false; }
+        ConditionAudioRuntime audio = conditionAudioRuntime;
+        if (audio != null) {
+            audio.close();
+            try { clean = audio.awaitClosed(5000L) && clean; }
+            catch (InterruptedException error) { Thread.currentThread().interrupt(); clean = false; }
+            if (ConditionAudioRuntime.appLifetimeReleasedForTest()) conditionAudioRuntime = null;
+        }
+        return clean;
+    }
+
+    static boolean requestConditionAudioStop(long sessionGeneration, String operationId) {
+        return requestConditionAudioStop(
+            sessionGeneration, operationId, ConditionAudioContract.StopReason.SAVE_AND_EXIT);
+    }
+
+    static boolean requestConditionAudioRestartStop(long sessionGeneration, String operationId) {
+        return requestConditionAudioStop(
+            sessionGeneration,
+            operationId,
+            ConditionAudioContract.StopReason.RESTART_TO_EXPERIMENTER);
+    }
+
+    // Called at the physical terminal latch, before native recording finalization completes.
+    static void stopCurrentConditionAudioForTerminal(boolean fullExit) {
+        ConditionAudioRuntime runtime = conditionAudioRuntime;
+        if (runtime == null) return;
+        long generation = runtime.snapshot().sessionGeneration;
+        if (generation <= 0L) return;
+        requestConditionAudioStop(generation, "audio-terminal-latch-" + generation,
+            fullExit ? ConditionAudioContract.StopReason.SAVE_AND_EXIT
+                : ConditionAudioContract.StopReason.RESTART_TO_EXPERIMENTER);
+    }
+
+    private static boolean requestConditionAudioStop(
+            long sessionGeneration,
+            String operationId,
+            ConditionAudioContract.StopReason stopReason) {
+        synchronized (PRESENTATION_LOCK) {
+            if (sessionGeneration == pendingAudioGeneration) {
+                pendingAudioGeneration = 0L;
+                pendingAudioPrepareOperation = "";
+                audioImmersiveAdmitted = false;
+                audioPrepared = false;
+            }
+        }
+        ConditionAudioRuntime runtime = conditionAudioRuntime;
+        if (runtime == null || sessionGeneration == 0L) return true;
+        if (sessionGeneration < 0L || operationId == null || operationId.isEmpty()) return false;
+        ConditionAudioContract.Snapshot snapshot = runtime.snapshot();
+        if (snapshot.phase == ConditionAudioContract.Phase.UNAVAILABLE
+                || snapshot.phase == ConditionAudioContract.Phase.IDLE
+                || snapshot.phase == ConditionAudioContract.Phase.STOPPED
+                || snapshot.phase == ConditionAudioContract.Phase.STOPPING) return true;
+        return runtime.submit(ConditionAudioContract.Command.stop(
+            sessionGeneration,
+            operationId,
+            stopReason)).accepted;
+    }
+
+    static String conditionAudioShutdownStatus() {
+        ConditionAudioRuntime runtime = conditionAudioRuntime;
+        if (runtime == null) return "complete";
+        ConditionAudioContract.Phase phase = runtime.snapshot().phase;
+        if (phase == ConditionAudioContract.Phase.UNAVAILABLE
+                || phase == ConditionAudioContract.Phase.IDLE
+                || phase == ConditionAudioContract.Phase.STOPPED) return "complete";
+        if (phase == ConditionAudioContract.Phase.ERROR) return "error";
+        return "pending";
+    }
+    // EXPERIMENT_SESSION_SHELL_END
+
+    static boolean consumeExplicitColdUserLaunch(
+            android.app.Activity activity,
+            boolean recreation,
+            android.content.Intent intent) {
+        if (!(activity instanceof ControlPanelActivity) || recreation || intent == null
+                || !android.content.Intent.ACTION_MAIN.equals(intent.getAction())
+                || intent.getData() != null || intent.getSelector() != null
+                || intent.getComponent() == null
+                || !activity.getPackageName().equals(intent.getComponent().getPackageName())
+                || !ControlPanelActivity.class.getName().equals(
+                    intent.getComponent().getClassName())
+                || intent.getCategories() == null
+                || intent.getCategories().size() != 1
+                || !intent.getCategories().contains("com.oculus.intent.category.2D")) {
+            return false;
+        }
+        return NativeRendererExperimentLaunchAuthority.consume(
+            intent.getStringExtra(NativeRendererExperimentLaunchAuthority.EXTRA_LAUNCH_PROVENANCE),
+            intent.getLongExtra(NativeRendererExperimentLaunchAuthority.EXTRA_LAUNCH_EPOCH, 0L));
+    }
+
+    static boolean admitExplicitColdExperimentShell(
+            android.app.Activity activity, long launchEpoch, String panelRoute) {
+        if (!(activity instanceof ControlPanelActivity) || launchEpoch <= 0L
+                || !NativeRendererSoftKioskCoordinator.PANEL_ROUTE_EXPERIMENTER.equals(
+                    panelRoute)) {
+            return false;
+        }
+        ControlPanelActivity owner = (ControlPanelActivity) activity;
+        NativeRendererSoftKioskCoordinator coordinator =
+            NativeRendererSoftKioskCoordinator.process();
+        NativeRendererSoftKioskCoordinator.Snapshot before = coordinator.snapshot();
+        if (launchEpoch <= before.explicitLaunchEpoch
+                || !owner.immersiveHandoff.admitExplicitColdUserLaunch()) {
+            return false;
+        }
+        boolean armed = coordinator.armFromExplicitColdLaunch(
+            launchEpoch,
+            NativeRendererForegroundGuardPolicy.Presentation.PANEL,
+        NativeRendererSoftKioskCoordinator.PANEL_ROUTE_EXPERIMENTER);
+        if (armed) {
+$polarRuntimeReopenFromExplicitLaunch
+            synchronized (PRESENTATION_LOCK) {
+                presentationGeneration = launchEpoch;
+                terminalIntentAdmitted = false;
+                terminalFinishConsumed = false;
+            }
+        }
+        return armed;
+    }
+
+    private static long nextPresentationGeneration(long hint) {
+        synchronized (PRESENTATION_LOCK) {
+            NativeRendererSoftKioskCoordinator.Snapshot snapshot =
+                NativeRendererSoftKioskCoordinator.process().snapshot();
+            long next = Math.max(presentationGeneration, snapshot.generation);
+            if (next == Long.MAX_VALUE) {
+                throw new IllegalStateException("presentation generation exhausted");
+            }
+            next += 1L;
+            if (hint > next) next = hint;
+            presentationGeneration = next;
+            return next;
+        }
+    }
+
+    static boolean beginPanelTransition(
+            android.app.Activity activity, String panelRoute, long routeGeneration) {
+        if (!(activity instanceof ControlPanelActivity)) return false;
+        String route = NativeRendererSoftKioskCoordinator.PANEL_ROUTE_DEVELOPER.equals(panelRoute)
+            ? NativeRendererSoftKioskCoordinator.PANEL_ROUTE_DEVELOPER
+            : NativeRendererSoftKioskCoordinator.PANEL_ROUTE_EXPERIMENTER;
+        return NativeRendererSoftKioskCoordinator.process().beginTransition(
+            nextPresentationGeneration(routeGeneration),
+            NativeRendererForegroundGuardPolicy.Presentation.PANEL,
+            route,
+            android.os.SystemClock.uptimeMillis(),
+            5_000L);
+    }
+
+    static String softKioskEffectiveStatus(android.app.Activity activity) {
+        NativeRendererSoftKioskCoordinator.Snapshot state =
+            NativeRendererSoftKioskCoordinator.process().snapshot();
+        return "Soft kiosk requested=true; effective="
+            + state.effectiveness.name().toLowerCase(java.util.Locale.ROOT)
+            + "; accessibility=" + state.serviceState.name().toLowerCase(java.util.Locale.ROOT)
+            + "; home=" + state.homeSurfaceState.name().toLowerCase(java.util.Locale.ROOT)
+            + "; armed=" + state.armed;
+    }
+
+    static boolean openAccessibilitySettingsWithExactLease(android.app.Activity activity) {
+        if (!(activity instanceof ControlPanelActivity)) return false;
+        android.content.Intent query = new android.content.Intent(
+            android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS);
+        android.content.pm.ResolveInfo resolved = activity.getPackageManager().resolveActivity(
+            query, android.content.pm.PackageManager.MATCH_DEFAULT_ONLY);
+        android.content.pm.ActivityInfo target = resolved == null ? null : resolved.activityInfo;
+        if (target == null || target.packageName == null || target.name == null) return false;
+        android.content.ComponentName component = new android.content.ComponentName(
+            target.packageName, target.name);
+        NativeRendererSoftKioskCoordinator coordinator =
+            NativeRendererSoftKioskCoordinator.process();
+        NativeRendererSoftKioskCoordinator.Snapshot state = coordinator.snapshot();
+        long nowMs = android.os.SystemClock.uptimeMillis();
+        if (!coordinator.allowExactSystemPrompt(
+                state.generation, component.getPackageName(), component.getClassName(),
+                nowMs, 60_000L)) {
+            return false;
+        }
+        activity.startActivity(new android.content.Intent(
+            android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS)
+            .setComponent(component));
+        return true;
+    }
+
+    static boolean admitTerminalSaveAndExit(
+            android.app.Activity activity, android.content.Intent intent) {
+        if (!(activity instanceof ControlPanelActivity) || intent == null) return false;
+        long guardGeneration = intent.getLongExtra(
+            NativeRendererSoftKioskCoordinator.EXTRA_GUARD_GENERATION, 0L);
+        long homeEpisode = intent.getLongExtra(
+            NativeRendererSoftKioskCoordinator.EXTRA_HOME_EPISODE, 0L);
+        if (!NativeRendererSoftKioskCoordinator.process().admitsTerminalIntent(
+                intent.getAction(),
+                intent.getStringExtra(NativeRendererSoftKioskCoordinator.EXTRA_TERMINAL_ROUTE),
+                guardGeneration,
+                homeEpisode)) {
+            return false;
+        }
+        synchronized (PRESENTATION_LOCK) {
+            if (terminalIntentAdmitted) return false;
+            terminalIntentAdmitted = true;
+        }
+        NativeRendererExperimentLaunchAuthority.invalidatePending();
+        PanelImmersiveHandoff.cancelForTerminalExit(activity);
+$experimentSessionTerminalAudioStop
+        return true;
+    }
+
+    static void finishTerminalSaveAndExit(
+            android.app.Activity activity,
+            boolean saved,
+            long sessionGeneration,
+            String operationId,
+            long shutdownAckRevision) {
+        if (!(activity instanceof ControlPanelActivity) || sessionGeneration < 0L
+                || operationId == null || !operationId.startsWith("panel-save-and-exit-")
+                || shutdownAckRevision <= 0L) {
+            return;
+        }
+        synchronized (PRESENTATION_LOCK) {
+            if (!terminalIntentAdmitted || terminalFinishConsumed) return;
+            terminalFinishConsumed = true;
+        }
+        android.util.Log.i("RustyQuestNativeRenderer",
+            "status=terminal-finish saved=" + saved
+                + " session_generation=" + sessionGeneration
+                + " shutdown_ack_revision=" + shutdownAckRevision);
+        android.app.ActivityManager manager = (android.app.ActivityManager)
+            activity.getSystemService(android.content.Context.ACTIVITY_SERVICE);
+        if (manager != null) for (android.app.ActivityManager.AppTask task : manager.getAppTasks()) {
+            if (task.getTaskInfo().id == activity.getTaskId()) continue;
+            android.content.Intent base = task.getTaskInfo().baseIntent;
+            android.content.ComponentName component = base == null ? null : base.getComponent();
+            if (component != null && activity.getPackageName().equals(component.getPackageName()))
+                task.finishAndRemoveTask();
+        }
+        activity.finishAndRemoveTask();
+    }
 
     static int panelBackgroundColor() {
         return android.graphics.Color.rgb(17, 18, 22);
@@ -807,12 +1309,19 @@ public final class ControlPanelActivity extends $selectedPanelEntrySimpleName {
         if (!(activity instanceof ControlPanelActivity)) {
             throw new IllegalStateException("Panel handoff owner is not the packaged ControlPanelActivity");
         }
+        NativeRendererSoftKioskCoordinator.process().beginTransition(
+            nextPresentationGeneration(0L),
+            NativeRendererForegroundGuardPolicy.Presentation.IMMERSIVE,
+            NativeRendererSoftKioskCoordinator.PANEL_ROUTE_EXPERIMENTER,
+            android.os.SystemClock.uptimeMillis(),
+            5_000L);
         ((ControlPanelActivity) activity).immersiveHandoff.request();
     }
 
     @Override
     protected void onCreate(android.os.Bundle state) {
         PACKAGED_PANEL.entryClass();
+$experimentSessionOnCreate
         super.onCreate(state);
     }
 
@@ -851,6 +1360,17 @@ public final class ControlPanelActivity extends $selectedPanelEntrySimpleName {
 $panelNativeMethods
 }
 "@
+    if ($isExperimentSessionPanel) {
+        $generatedControlPanelActivitySource = $generatedControlPanelActivitySource.Replace(
+            '    // EXPERIMENT_SESSION_SHELL_BEGIN' + [Environment]::NewLine, '')
+        $generatedControlPanelActivitySource = $generatedControlPanelActivitySource.Replace(
+            '    // EXPERIMENT_SESSION_SHELL_END' + [Environment]::NewLine, '')
+    } else {
+        $generatedControlPanelActivitySource = [regex]::Replace(
+            $generatedControlPanelActivitySource,
+            '(?s)    // EXPERIMENT_SESSION_SHELL_BEGIN\r?\n.*?    // EXPERIMENT_SESSION_SHELL_END\r?\n',
+            '')
+    }
     [System.IO.File]::WriteAllText(
         $generatedControlPanelActivityPath,
         $generatedControlPanelActivitySource,
@@ -886,6 +1406,17 @@ if ($null -ne $appBuildLockObject -and $null -ne $appBuildLockObject.build_input
     }
 }
 
+$privateAssetsPackaged = @()
+if ($null -ne $appBuildLockObject) {
+    if ($null -eq $appBuildLockObject.build_inputs.PSObject.Properties['private_asset_closure']) {
+        throw 'Native app-build feature lock is missing build_inputs.private_asset_closure.'
+    }
+    $privateAssetsPackaged = @(Copy-NativeAppPrivateAssetsFromClosure `
+        -Closure $appBuildLockObject.build_inputs.private_asset_closure `
+        -FeatureLockPath $appBuildLockPath `
+        -DestinationRoot $assetsDir)
+}
+
 $questionnaireAssetDir = [Environment]::GetEnvironmentVariable("RUSTY_QUEST_NATIVE_RENDERER_QUESTIONNAIRE_ASSET_DIR")
 $questionnaireAssetsPackaged = $false
 $questionnaireAssetSource = ""
@@ -897,7 +1428,7 @@ if (-not [string]::IsNullOrWhiteSpace($questionnaireAssetDir)) {
     if (-not (Get-Item -LiteralPath $questionnaireAssetSource).PSIsContainer) {
         throw "RUSTY_QUEST_NATIVE_RENDERER_QUESTIONNAIRE_ASSET_DIR must be a directory: $questionnaireAssetSource"
     }
-    [void](Copy-AssetInput -Source $questionnaireAssetSource -DestinationRoot $assetsDir -RepoRoot ([string]$repoRoot) -DestinationName "maia_spatial_questionnaire")
+    [void](Copy-AssetInput -Source $questionnaireAssetSource -DestinationRoot $assetsDir -RepoRoot ([string]$repoRoot) -DestinationName "maia_spatial_questionnaire" -ExplicitExternalSource)
     $questionnaireAssetsPackaged = $true
 }
 
@@ -1153,6 +1684,29 @@ $manifest = [ordered]@{
     rusty_lsl_source_commit = if ($rustyLslBackendPackaged) { "8b6b2a6cd0c0e5147b7e1cc076a116ef226cddbd" } else { "" }
     rusty_lsl_source_tree = if ($rustyLslBackendPackaged) { "4bfd1b1b5621af6706aafa9477e7a4f5764dd688" } else { "" }
     declared_asset_inputs_packaged = $declaredAssetInputsPackaged
+    private_asset_provider = if ($null -eq $appBuildLockObject) {
+        [ordered]@{
+            schema = 'rusty.quest.native_app_private_asset_closure.v1'
+            mode = 'inactive'
+            provider_id = ''
+            provider_manifest_sha256 = ''
+            inventory_sha256 = ''
+            closure_sha256 = ''
+            asset_count = 0
+            assets = @()
+        }
+    } else {
+        [ordered]@{
+            schema = [string]$appBuildLockObject.build_inputs.private_asset_closure.schema
+            mode = [string]$appBuildLockObject.build_inputs.private_asset_closure.mode
+            provider_id = [string]$appBuildLockObject.build_inputs.private_asset_closure.provider_id
+            provider_manifest_sha256 = [string]$appBuildLockObject.build_inputs.private_asset_closure.provider_manifest_sha256
+            inventory_sha256 = [string]$appBuildLockObject.build_inputs.private_asset_closure.inventory_sha256
+            closure_sha256 = Get-NativeAppPrivateAssetTextSha256 -Text ($appBuildLockObject.build_inputs.private_asset_closure | ConvertTo-Json -Depth 12 -Compress)
+            asset_count = [int]$appBuildLockObject.build_inputs.private_asset_closure.asset_count
+            assets = $privateAssetsPackaged
+        }
+    }
     questionnaire_assets_packaged = $questionnaireAssetsPackaged
     questionnaire_asset_source = $questionnaireAssetSource
     questionnaire_asset_root = if ($questionnaireAssetsPackaged) { "assets/maia_spatial_questionnaire" } else { "" }

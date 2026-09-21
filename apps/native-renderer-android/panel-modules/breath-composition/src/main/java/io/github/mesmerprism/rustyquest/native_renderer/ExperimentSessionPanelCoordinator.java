@@ -1,0 +1,449 @@
+package io.github.mesmerprism.rustyquest.native_renderer;
+
+import java.util.Locale;
+import java.util.concurrent.atomic.AtomicLong;
+
+/**
+ * Pure UI coordinator. Native receipts remain authoritative; constructing or hydrating this
+ * object never starts a session or writes settings.
+ */
+final class ExperimentSessionPanelCoordinator {
+    static final String SCHEMA = "rusty.quest.experiment_session.command.v1";
+    static final String CONDITION_ONE = "condition-a";
+    static final String CONDITION_TWO = "condition-b";
+    static final long COMPLETION_THRESHOLD_MS = 30_000L;
+
+    enum LaunchKind { EXPLICIT_COLD_ROOT, INTERNAL_MAIN, RECREATION_MAIN }
+
+    static final class NativeCommand {
+        final String operation;
+        final String operationId;
+        final long expectedGeneration;
+        final String condition;
+
+        NativeCommand(String operation, String operationId, long expectedGeneration, String condition) {
+            this.operation = operation;
+            this.operationId = operationId;
+            this.expectedGeneration = expectedGeneration;
+            this.condition = condition == null ? "" : condition;
+        }
+    }
+
+    static final class NativeReceipt {
+        final String operationId;
+        final boolean accepted;
+        final boolean durable;
+        final long generation;
+        final long revision;
+        final String phase;
+        final String activeCondition;
+        final boolean recording;
+        final boolean recovery;
+        final String storageStatus;
+        final boolean kioskRequested;
+        final long completedOne;
+        final long completedTwo;
+        final long stoppedEarlyOne;
+        final long stoppedEarlyTwo;
+        final boolean perConditionCountsAvailable;
+        final boolean countsAvailable;
+        final boolean countsInvalid;
+        final long completedTotal;
+        final long stoppedEarlyTotal;
+        final long errors;
+        final String routeAction;
+        final long routeActionRevision;
+        final String detail;
+
+        NativeReceipt(
+            String operationId,
+            boolean accepted,
+            boolean durable,
+            long generation,
+            long revision,
+            String phase,
+            String activeCondition,
+            boolean recording,
+            boolean recovery,
+            String storageStatus,
+            boolean kioskRequested,
+            long completedOne,
+            long completedTwo,
+            long stoppedEarlyOne,
+            long stoppedEarlyTwo,
+            boolean perConditionCountsAvailable,
+            boolean countsAvailable,
+            boolean countsInvalid,
+            long completedTotal,
+            long stoppedEarlyTotal,
+            long errors,
+            String routeAction,
+            long routeActionRevision,
+            String detail
+        ) {
+            this.operationId = safe(operationId);
+            this.accepted = accepted;
+            this.durable = durable;
+            this.generation = Math.max(0L, generation);
+            this.revision = Math.max(0L, revision);
+            this.phase = safe(phase);
+            this.activeCondition = safe(activeCondition);
+            this.recording = recording;
+            this.recovery = recovery;
+            this.storageStatus = safe(storageStatus);
+            this.kioskRequested = kioskRequested;
+            this.completedOne = completedOne;
+            this.completedTwo = completedTwo;
+            this.stoppedEarlyOne = stoppedEarlyOne;
+            this.stoppedEarlyTwo = stoppedEarlyTwo;
+            this.perConditionCountsAvailable = perConditionCountsAvailable;
+            this.countsAvailable = countsAvailable;
+            this.countsInvalid = countsInvalid;
+            this.completedTotal = completedTotal;
+            this.stoppedEarlyTotal = stoppedEarlyTotal;
+            this.errors = errors;
+            this.routeAction = safe(routeAction);
+            this.routeActionRevision = Math.max(0L, routeActionRevision);
+            this.detail = safe(detail);
+        }
+    }
+
+    private final AtomicLong operationSequence = new AtomicLong(0L);
+    private ExperimentSessionPanelState state = ExperimentSessionPanelState.initial();
+    private long routeEventGeneration;
+    private long routeEventAllocation;
+    private long trustedLaunchEpoch;
+    private long runtimeEpoch;
+    private boolean freshRuntimeExpected;
+
+    synchronized boolean acceptRuntimeEpoch(long epoch) {
+        if (epoch <= 0L || epoch == runtimeEpoch) return false;
+        if (runtimeEpoch != 0L && (!freshRuntimeExpected || epoch < runtimeEpoch)) return false;
+        runtimeEpoch = epoch;
+        freshRuntimeExpected = false;
+        state = ExperimentSessionPanelState.initial();
+        routeEventGeneration = 0L;
+        routeEventAllocation = 0L;
+        return true;
+    }
+
+    synchronized ExperimentSessionPanelState snapshot() { return state; }
+
+    synchronized long allocateRouteEvent() {
+        routeEventAllocation = Math.max(routeEventAllocation, routeEventGeneration) + 1L;
+        return routeEventAllocation;
+    }
+
+    synchronized boolean admitTrustedColdLaunch(long launchEpoch) {
+        if (launchEpoch <= 0L || launchEpoch <= trustedLaunchEpoch) {
+            return false;
+        }
+        trustedLaunchEpoch = launchEpoch;
+        freshRuntimeExpected = true;
+        setRoute(ExperimentSessionPanelState.Route.EXPERIMENTER);
+        return true;
+    }
+
+    synchronized void onLaunch(
+        LaunchKind kind,
+        ExperimentSessionPanelState.Route requestedRoute,
+        long eventGeneration
+    ) {
+        if (eventGeneration > 0L && eventGeneration <= routeEventGeneration) {
+            return;
+        }
+        if (eventGeneration > 0L) {
+            routeEventGeneration = eventGeneration;
+            routeEventAllocation = Math.max(routeEventAllocation, eventGeneration);
+        }
+        if (kind != LaunchKind.EXPLICIT_COLD_ROOT
+                && requestedRoute != null
+                && kind != LaunchKind.RECREATION_MAIN) {
+            setRoute(requestedRoute);
+        }
+    }
+
+    synchronized void openDeveloper(long eventGeneration) {
+        if (!admitRouteEvent(eventGeneration)) {
+            return;
+        }
+        setRoute(ExperimentSessionPanelState.Route.DEVELOPER);
+    }
+
+    synchronized void returnFromDeveloper() {
+        setRoute(ExperimentSessionPanelState.Route.EXPERIMENTER);
+    }
+
+    synchronized NativeCommand start(String condition) {
+        if (!CONDITION_ONE.equals(condition) && !CONDITION_TWO.equals(condition)) {
+            return null;
+        }
+        if (state.hasActiveSession() || !state.pendingOperationId.isEmpty()) {
+            return null;
+        }
+        String operationId = nextOperationId("start");
+        state = copy(
+            state.route,
+            ExperimentSessionPanelState.Phase.STARTING,
+            state.generation,
+            state.revision,
+            condition,
+            operationId,
+            state.routeActionRevision,
+            state.counts,
+            state.polar,
+            false,
+            state.recovery,
+            "preparing",
+            state.kioskRequested,
+            "Preparing recording and audio."
+        );
+        return new NativeCommand("start", operationId, state.generation, condition);
+    }
+
+    synchronized NativeCommand restartToExperimenter(long eventGeneration) {
+        if (!admitRouteEvent(eventGeneration)) {
+            return null;
+        }
+        if (!state.hasActiveSession()) {
+            setRoute(ExperimentSessionPanelState.Route.EXPERIMENTER);
+            return null;
+        }
+        if (state.phase == ExperimentSessionPanelState.Phase.SAVING) {
+            return null;
+        }
+        String operationId = nextOperationId("restart");
+        state = copy(
+            ExperimentSessionPanelState.Route.EXPERIMENTER,
+            ExperimentSessionPanelState.Phase.SAVING,
+            state.generation,
+            state.revision,
+            state.activeCondition,
+            operationId,
+            state.routeActionRevision,
+            state.counts,
+            state.polar,
+            state.recording,
+            state.recovery,
+            "finalizing",
+            state.kioskRequested,
+            "Saving…"
+        );
+        return new NativeCommand("restart-to-experimenter", operationId, state.generation, "");
+    }
+
+    synchronized boolean awaitNativeRestartRoute(
+        long eventGeneration,
+        long expectedSessionGeneration,
+        String expectedOperationId
+    ) {
+        if (eventGeneration <= routeEventGeneration
+                || expectedSessionGeneration <= 0L
+                || expectedSessionGeneration != state.generation
+                || expectedOperationId == null
+                || expectedOperationId.trim().isEmpty()
+                || !state.hasActiveSession()) {
+            return false;
+        }
+        routeEventGeneration = eventGeneration;
+        routeEventAllocation = Math.max(routeEventAllocation, eventGeneration);
+        state = copy(
+            ExperimentSessionPanelState.Route.EXPERIMENTER,
+            ExperimentSessionPanelState.Phase.SAVING,
+            state.generation,
+            state.revision,
+            state.activeCondition,
+            expectedOperationId.trim(),
+            state.routeActionRevision,
+            state.counts,
+            state.polar,
+            state.recording,
+            state.recovery,
+            "finalizing",
+            state.kioskRequested,
+            "Saving… awaiting exact native receipt."
+        );
+        return true;
+    }
+
+    synchronized boolean admitIdleExperimenterRecall(long eventGeneration) {
+        if (eventGeneration <= routeEventGeneration || state.hasActiveSession()) {
+            return false;
+        }
+        routeEventGeneration = eventGeneration;
+        routeEventAllocation = Math.max(routeEventAllocation, eventGeneration);
+        setRoute(ExperimentSessionPanelState.Route.EXPERIMENTER);
+        return true;
+    }
+
+    synchronized boolean accept(NativeReceipt receipt) {
+        if (receipt == null || receipt.revision < state.revision || receipt.generation < state.generation) {
+            return false;
+        }
+        boolean pendingMatch = !state.pendingOperationId.isEmpty()
+            && state.pendingOperationId.equals(receipt.operationId);
+        if (state.phase == ExperimentSessionPanelState.Phase.SAVING
+                && !state.pendingOperationId.isEmpty()
+                && receipt.generation != state.generation) {
+            return false;
+        }
+        if (!state.pendingOperationId.isEmpty() && !pendingMatch) {
+            return false;
+        }
+        if (pendingMatch && !receipt.accepted) {
+            state = copy(
+                state.route,
+                ExperimentSessionPanelState.Phase.ERROR,
+                state.generation,
+                Math.max(state.revision, receipt.revision),
+                state.activeCondition,
+                "",
+                state.routeActionRevision,
+                state.counts,
+                state.polar,
+                state.recording,
+                receipt.recovery,
+                emptyAs(receipt.storageStatus, "error"),
+                receipt.kioskRequested,
+                emptyAs(receipt.detail, "Native command rejected.")
+            );
+            return true;
+        }
+        if (state.phase == ExperimentSessionPanelState.Phase.SAVING) {
+            boolean exactRoute = receipt.durable
+                && "show-experimenter".equals(receipt.routeAction)
+                && receipt.routeActionRevision > state.routeActionRevision;
+            if (!exactRoute || (!state.pendingOperationId.isEmpty() && !pendingMatch)) {
+                return false;
+            }
+        }
+        if (state.phase == ExperimentSessionPanelState.Phase.STARTING && pendingMatch) {
+            boolean exactActive = receipt.accepted
+                && ("active".equals(receipt.phase) || "recording".equals(receipt.phase));
+            if (!exactActive) {
+                return false;
+            }
+        }
+        ExperimentSessionPanelState.Phase phase = parsePhase(receipt.phase, state.phase);
+        String pending = pendingMatch ? "" : state.pendingOperationId;
+        boolean showExperimenter = receipt.accepted && receipt.durable
+            && "show-experimenter".equals(receipt.routeAction);
+        state = copy(
+            showExperimenter || state.phase == ExperimentSessionPanelState.Phase.SAVING
+                ? ExperimentSessionPanelState.Route.EXPERIMENTER : state.route,
+            phase,
+            receipt.generation,
+            receipt.revision,
+            emptyAs(receipt.activeCondition, phase == ExperimentSessionPanelState.Phase.IDLE ? "none" : state.activeCondition),
+            pending,
+            Math.max(state.routeActionRevision, receipt.routeActionRevision),
+            receipt.perConditionCountsAvailable
+                ? ExperimentSessionPanelState.Counts.withBreakdown(
+                    receipt.completedTotal,
+                    receipt.stoppedEarlyTotal,
+                    receipt.errors,
+                    receipt.completedOne,
+                    receipt.completedTwo,
+                    receipt.stoppedEarlyOne,
+                    receipt.stoppedEarlyTwo
+                )
+                : (receipt.countsAvailable
+                    ? ExperimentSessionPanelState.Counts.totalsOnly(
+                    receipt.completedTotal,
+                    receipt.stoppedEarlyTotal,
+                    receipt.errors
+                    )
+                    : (receipt.countsInvalid
+                        ? ExperimentSessionPanelState.Counts.invalid()
+                        : ExperimentSessionPanelState.Counts.unknown())),
+            state.polar,
+            receipt.recording,
+            receipt.recovery,
+            emptyAs(receipt.storageStatus, state.storageStatus),
+            receipt.kioskRequested,
+            receipt.detail
+        );
+        return true;
+    }
+
+    synchronized void updatePolar(ExperimentSessionPanelState.PolarProjection projection) {
+        if (projection == null
+                || projection.generation < state.polar.generation
+                || (projection.generation == state.polar.generation
+                    && state.polar.observedAtUnixMs > 0L
+                    && projection.observedAtUnixMs < state.polar.observedAtUnixMs)) {
+            return;
+        }
+        state = copy(
+            state.route, state.phase, state.generation, state.revision, state.activeCondition,
+            state.pendingOperationId, state.routeActionRevision, state.counts, projection,
+            state.recording, state.recovery, state.storageStatus, state.kioskRequested, state.detail
+        );
+    }
+
+    private boolean admitRouteEvent(long generation) {
+        if (generation <= 0L) {
+            generation = routeEventGeneration + 1L;
+        }
+        if (generation <= routeEventGeneration) {
+            return false;
+        }
+        routeEventGeneration = generation;
+        routeEventAllocation = Math.max(routeEventAllocation, generation);
+        return true;
+    }
+
+    private void setRoute(ExperimentSessionPanelState.Route route) {
+        state = copy(
+            route, state.phase, state.generation, state.revision, state.activeCondition,
+            state.pendingOperationId, state.routeActionRevision, state.counts, state.polar,
+            state.recording, state.recovery, state.storageStatus, state.kioskRequested, state.detail
+        );
+    }
+
+    private String nextOperationId(String prefix) {
+        return String.format(Locale.US, "panel-%s-%d", prefix, operationSequence.incrementAndGet());
+    }
+
+    private static ExperimentSessionPanelState.Phase parsePhase(
+        String value,
+        ExperimentSessionPanelState.Phase fallback
+    ) {
+        String normalized = safe(value).toLowerCase(Locale.US);
+        if ("idle".equals(normalized) || "closed".equals(normalized)) return ExperimentSessionPanelState.Phase.IDLE;
+        if ("preparing".equals(normalized)) return ExperimentSessionPanelState.Phase.STARTING;
+        if ("active".equals(normalized) || "recording".equals(normalized)) return ExperimentSessionPanelState.Phase.RECORDING;
+        if ("finalizing-restart".equals(normalized) || "saving".equals(normalized)) return ExperimentSessionPanelState.Phase.SAVING;
+        if ("recovery".equals(normalized)) return ExperimentSessionPanelState.Phase.RECOVERY;
+        if ("error".equals(normalized) || "failed".equals(normalized)) return ExperimentSessionPanelState.Phase.ERROR;
+        return fallback;
+    }
+
+    private static ExperimentSessionPanelState copy(
+        ExperimentSessionPanelState.Route route,
+        ExperimentSessionPanelState.Phase phase,
+        long generation,
+        long revision,
+        String activeCondition,
+        String pendingOperation,
+        long routeActionRevision,
+        ExperimentSessionPanelState.Counts counts,
+        ExperimentSessionPanelState.PolarProjection polar,
+        boolean recording,
+        boolean recovery,
+        String storageStatus,
+        boolean kioskRequested,
+        String detail
+    ) {
+        return new ExperimentSessionPanelState(
+            route, phase, generation, revision, activeCondition, pendingOperation,
+            routeActionRevision, counts, polar, recording, recovery, storageStatus,
+            kioskRequested, detail
+        );
+    }
+
+    private static String safe(String value) { return value == null ? "" : value; }
+    private static String emptyAs(String value, String fallback) {
+        return safe(value).isEmpty() ? fallback : value;
+    }
+}

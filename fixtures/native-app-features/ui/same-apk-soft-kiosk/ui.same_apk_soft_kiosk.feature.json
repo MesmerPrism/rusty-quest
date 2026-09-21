@@ -1,0 +1,57 @@
+{
+  "schema": "rusty.quest.native_app_feature.v1",
+  "feature_id": "ui.same_apk_soft_kiosk",
+  "module_path": "ui/same-apk-soft-kiosk",
+  "module_kind": "same-apk-accessibility-soft-kiosk",
+  "settings_surface": {
+    "authority": "rusty.quest.native_app_settings.v1",
+    "adapter": "packaged-feature-selection"
+  },
+  "owner_lane": "rusty-quest",
+  "status": "public-substrate",
+  "description": "Explicitly selected same-APK Accessibility foreground recovery and experiment-launch trampoline; user enablement remains mandatory.",
+  "provides": [
+    "ui.same_apk_soft_kiosk"
+  ],
+  "depends_on": [
+    "ui.same_apk_control_panel"
+  ],
+  "incompatible_with": [],
+  "exclusive_groups": {
+    "foreground_guard": "same-apk-soft-kiosk",
+    "launcher_route": "experimenter-panel-trampoline"
+  },
+  "android_manifest": {
+    "permissions": [],
+    "uses_features": [],
+    "activities": [
+      "NativeRendererExperimentLauncherActivity"
+    ],
+    "services": [
+      "NativeRendererSoftKioskAccessibilityService"
+    ],
+    "queries": []
+  },
+  "runtime_profile": {
+    "set": {},
+    "clear_families": [],
+    "expected_render_modes": []
+  },
+  "build_inputs": {
+    "env": [],
+    "assets": [],
+    "shaders": []
+  },
+  "markers": {
+    "required": [],
+    "forbidden": []
+  },
+  "validation": {
+    "quick": [
+      "pwsh -NoProfile -ExecutionPolicy Bypass -File tools/checks/Test-NativeRendererSoftKioskStatic.ps1 -RepoRoot ."
+    ],
+    "standard": [],
+    "device": []
+  },
+  "public_private_boundary": "The generic guard observes only top-level package/component transitions. Product session, condition, data, and shutdown durability remain with the consuming app."
+}
