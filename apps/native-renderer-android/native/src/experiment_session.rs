@@ -41,6 +41,99 @@ pub(crate) enum SessionPhase {
     Closed,
 }
 
+/// Experiment timing is independent of recording acquisition and Android focus.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum ExperimentControlState {
+    #[default]
+    Idle,
+    Arming,
+    Armed,
+    Running,
+    Paused,
+    Finalizing,
+}
+
+impl ExperimentControlState {
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::Idle => "idle",
+            Self::Arming => "arming",
+            Self::Armed => "armed",
+            Self::Running => "running",
+            Self::Paused => "paused",
+            Self::Finalizing => "finalizing",
+        }
+    }
+}
+
+/// A grip chord consumes A/B until all buttons are released, including when a
+/// chord is invalid for this state. No held button may become a fresh command.
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct ExperimentControlGesture {
+    held_seconds: f32,
+    candidate: Option<&'static str>,
+    consumed: bool,
+    suppress_buttons: bool,
+}
+
+impl ExperimentControlGesture {
+    pub(crate) fn update(
+        &mut self,
+        dt: f32,
+        grip: bool,
+        a: bool,
+        b: bool,
+        state: ExperimentControlState,
+    ) -> Option<&'static str> {
+        if !grip && !a && !b {
+            *self = Self::default();
+            return None;
+        }
+        if grip {
+            self.suppress_buttons = true;
+        }
+        if !dt.is_finite() || dt <= 0.0 || dt > 0.25 {
+            self.held_seconds = 0.0;
+            return None;
+        }
+        let candidate = if grip && a && !b {
+            match state {
+                ExperimentControlState::Armed => Some("official-start"),
+                ExperimentControlState::Paused => Some("resume"),
+                _ => None,
+            }
+        } else if grip && b && !a && state == ExperimentControlState::Running {
+            Some("pause")
+        } else {
+            None
+        };
+        if self.consumed {
+            return None;
+        }
+        if candidate != self.candidate {
+            self.held_seconds = 0.0;
+            self.candidate = candidate;
+        }
+        if candidate.is_none() {
+            self.held_seconds = 0.0;
+            if grip && (a || b) {
+                self.consumed = true;
+            }
+            return None;
+        }
+        self.held_seconds += dt;
+        if self.held_seconds < 0.75 {
+            return None;
+        }
+        self.consumed = true;
+        candidate
+    }
+
+    pub(crate) fn suppress_buttons(&self) -> bool {
+        self.suppress_buttons
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) enum PresentationState {
     #[default]
@@ -81,6 +174,14 @@ pub(crate) enum RecordingResult {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum SessionCommand {
+    Arm {
+        condition: ConditionKey,
+        completion_threshold_ns: u64,
+    },
+    AudioPrepared,
+    OfficialStart,
+    Pause,
+    Resume,
     Start {
         condition: ConditionKey,
         completion_threshold_ns: u64,
@@ -117,6 +218,7 @@ pub(crate) struct CommandEnvelope {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum SessionEffect {
+    RecordControl(crate::session_recording_contract::SessionEventKind),
     PrepareRecording {
         generation: u64,
         condition: ConditionKey,
@@ -174,6 +276,9 @@ struct AppliedOperation {
 #[derive(Clone, Debug, Default)]
 pub(crate) struct ExperimentSessionController {
     phase: SessionPhase,
+    control_state: ExperimentControlState,
+    explicit_start: bool,
+    audio_prepared: bool,
     presentation: PresentationState,
     generation: u64,
     revision: u64,
@@ -192,6 +297,9 @@ pub(crate) struct ExperimentSessionController {
 }
 
 impl ExperimentSessionController {
+    pub(crate) fn control_state(&self) -> ExperimentControlState {
+        self.control_state
+    }
     pub(crate) fn phase(&self) -> SessionPhase {
         self.phase
     }
@@ -221,8 +329,7 @@ impl ExperimentSessionController {
         self.audio_started
     }
 
-    #[cfg(test)]
-    fn audio_error(&self) -> bool {
+    pub(crate) fn audio_error(&self) -> bool {
         self.audio_error
     }
 
@@ -235,6 +342,7 @@ impl ExperimentSessionController {
     /// deadline: only time spent in `ImmersiveActive` counts toward completion.
     pub(crate) fn completion_deadline(&self) -> Option<MonotonicNanos> {
         if self.phase != SessionPhase::Active
+            || self.control_state != ExperimentControlState::Running
             || self.presentation != PresentationState::ImmersiveActive
             || self.completion != CompletionProgress::NotReached
         {
@@ -303,7 +411,64 @@ impl ExperimentSessionController {
     ) -> Result<Vec<SessionEffect>, CommandRejection> {
         let at = envelope.at;
         match &envelope.command {
-            SessionCommand::Start {
+            SessionCommand::AudioPrepared => {
+                if self.phase != SessionPhase::Active
+                    || self.control_state != ExperimentControlState::Arming
+                {
+                    return Err(CommandRejection::InvalidPhase);
+                }
+                self.audio_prepared = true;
+                self.control_state = ExperimentControlState::Armed;
+                Ok(vec![SessionEffect::RecordControl(
+                    crate::session_recording_contract::SessionEventKind::Armed,
+                )])
+            }
+            SessionCommand::OfficialStart | SessionCommand::Pause | SessionCommand::Resume => {
+                use crate::session_recording_contract::SessionEventKind;
+                let (required, next, event) = match envelope.command {
+                    SessionCommand::OfficialStart => (
+                        ExperimentControlState::Armed,
+                        ExperimentControlState::Running,
+                        SessionEventKind::OfficialStart,
+                    ),
+                    SessionCommand::Pause => (
+                        ExperimentControlState::Running,
+                        ExperimentControlState::Paused,
+                        SessionEventKind::ExperimentPaused,
+                    ),
+                    _ => (
+                        ExperimentControlState::Paused,
+                        ExperimentControlState::Running,
+                        SessionEventKind::ExperimentResumed,
+                    ),
+                };
+                if self.phase != SessionPhase::Active || self.control_state != required {
+                    return Err(CommandRejection::InvalidPhase);
+                }
+                if matches!(envelope.command, SessionCommand::Resume) && self.audio_error {
+                    return Err(CommandRejection::InvalidPhase);
+                }
+                // Start/resume requires confirmed immersive presentation. Losing focus never
+                // constitutes an operator start or resume.
+                if next == ExperimentControlState::Running
+                    && self.presentation != PresentationState::ImmersiveActive
+                {
+                    return Err(CommandRejection::InvalidPhase);
+                }
+                let mut effects = self.advance_active_time(at);
+                self.control_state = next;
+                if next == ExperimentControlState::Running {
+                    self.audio_error = false;
+                }
+                self.active_since = (next == ExperimentControlState::Running).then_some(at);
+                effects.push(SessionEffect::RecordControl(event));
+                Ok(effects)
+            }
+            SessionCommand::Arm {
+                condition,
+                completion_threshold_ns,
+            }
+            | SessionCommand::Start {
                 condition,
                 completion_threshold_ns,
             } => {
@@ -315,6 +480,9 @@ impl ExperimentSessionController {
                 }
                 self.generation = self.generation.saturating_add(1).max(1);
                 self.phase = SessionPhase::Preparing;
+                self.explicit_start = matches!(envelope.command, SessionCommand::Arm { .. });
+                self.control_state = ExperimentControlState::Arming;
+                self.audio_prepared = false;
                 self.presentation = PresentationState::Transition;
                 self.active_since = None;
                 self.active_time_ns = 0;
@@ -336,6 +504,11 @@ impl ExperimentSessionController {
                     return Err(CommandRejection::InvalidPhase);
                 }
                 self.phase = SessionPhase::Active;
+                self.control_state = if self.explicit_start {
+                    ExperimentControlState::Arming
+                } else {
+                    ExperimentControlState::Running
+                };
                 Ok(Vec::new())
             }
             SessionCommand::RecordingPrepareFailed { error } => {
@@ -348,10 +521,12 @@ impl ExperimentSessionController {
                 };
                 if self.phase == SessionPhase::Exiting {
                     self.phase = SessionPhase::Closed;
+                    self.control_state = ExperimentControlState::Idle;
                     self.presentation = PresentationState::Unfocused;
                     Ok(vec![SessionEffect::ShutdownApp])
                 } else {
                     self.phase = SessionPhase::Idle;
+                    self.control_state = ExperimentControlState::Idle;
                     self.presentation = PresentationState::Experimenter;
                     self.condition = None;
                     Ok(vec![
@@ -366,8 +541,9 @@ impl ExperimentSessionController {
                 }
                 let mut effects = self.advance_active_time(at);
                 self.presentation = *presentation;
-                self.active_since =
-                    (*presentation == PresentationState::ImmersiveActive).then_some(at);
+                self.active_since = (*presentation == PresentationState::ImmersiveActive
+                    && self.control_state == ExperimentControlState::Running)
+                    .then_some(at);
                 effects.push(SessionEffect::RecordPresentation(*presentation));
                 Ok(effects)
             }
@@ -408,6 +584,13 @@ impl ExperimentSessionController {
                     self.audio_error = true;
                     effects.push(SessionEffect::RecordAudioError);
                 }
+                if self.explicit_start && self.control_state == ExperimentControlState::Running {
+                    self.control_state = ExperimentControlState::Paused;
+                    self.active_since = None;
+                    effects.push(SessionEffect::RecordControl(
+                        crate::session_recording_contract::SessionEventKind::ExperimentPaused,
+                    ));
+                }
                 Ok(effects)
             }
             SessionCommand::CompletionDurable => {
@@ -432,6 +615,7 @@ impl ExperimentSessionController {
                 };
                 self.active_since = None;
                 self.phase = SessionPhase::FinalizingRestart;
+                self.control_state = ExperimentControlState::Finalizing;
                 self.presentation = PresentationState::Experimenter;
                 effects.push(SessionEffect::FinalizeRecording {
                     generation: self.generation,
@@ -457,6 +641,7 @@ impl ExperimentSessionController {
                 self.presentation = PresentationState::Unfocused;
                 if matches!(self.phase, SessionPhase::Preparing | SessionPhase::Active) {
                     self.phase = SessionPhase::Exiting;
+                    self.control_state = ExperimentControlState::Finalizing;
                     effects.push(SessionEffect::FinalizeRecording {
                         generation: self.generation,
                         reason: FinalizationReason::SaveAndExit,
@@ -520,6 +705,7 @@ impl ExperimentSessionController {
     }
 
     fn finish_terminal_transition(&mut self) -> Vec<SessionEffect> {
+        self.control_state = ExperimentControlState::Idle;
         if self.phase == SessionPhase::FinalizingRestart {
             self.phase = SessionPhase::Idle;
             self.presentation = PresentationState::Experimenter;
@@ -541,7 +727,9 @@ impl ExperimentSessionController {
     }
 
     fn advance_active_time(&mut self, at: MonotonicNanos) -> Vec<SessionEffect> {
-        if self.presentation != PresentationState::ImmersiveActive {
+        if self.presentation != PresentationState::ImmersiveActive
+            || self.control_state != ExperimentControlState::Running
+        {
             self.active_since = None;
             return Vec::new();
         }
@@ -605,6 +793,159 @@ impl ExperimentSessionController {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn explicit_arm_waits_for_audio_and_excludes_preroll_and_paused_time() {
+        let mut c = ExperimentSessionController::default();
+        assert!(
+            c.apply(command(
+                1,
+                0,
+                1,
+                SessionCommand::Arm {
+                    condition: condition(),
+                    completion_threshold_ns: 100
+                }
+            ))
+            .accepted
+        );
+        assert!(
+            c.apply(command(2, 1, 2, SessionCommand::RecordingPrepared))
+                .accepted
+        );
+        assert_eq!(c.control_state(), ExperimentControlState::Arming);
+        assert!(
+            !c.apply(command(3, 1, 3, SessionCommand::OfficialStart))
+                .accepted
+        );
+        assert!(
+            c.apply(command(4, 1, 4, SessionCommand::AudioPrepared))
+                .accepted
+        );
+        assert_eq!(c.control_state(), ExperimentControlState::Armed);
+        assert!(
+            c.apply(command(
+                5,
+                1,
+                5,
+                SessionCommand::PresentationChanged(PresentationState::ImmersiveActive)
+            ))
+            .accepted
+        );
+        c.apply(command(6, 1, 500, SessionCommand::Tick));
+        assert_eq!(c.active_time_ns(), 0);
+        assert!(c.completion_deadline().is_none());
+        assert!(
+            c.apply(command(7, 1, 501, SessionCommand::OfficialStart))
+                .accepted
+        );
+        let pause = command(8, 1, 511, SessionCommand::Pause);
+        assert!(c.apply(pause.clone()).accepted);
+        assert!(c.apply(pause).duplicate);
+        c.apply(command(9, 1, 1000, SessionCommand::Tick));
+        c.apply(command(
+            10,
+            1,
+            1001,
+            SessionCommand::PresentationChanged(PresentationState::ImmersiveActive),
+        ));
+        assert_eq!(c.control_state(), ExperimentControlState::Paused);
+        assert_eq!(c.active_time_ns(), 10);
+        assert!(
+            c.apply(command(11, 1, 1100, SessionCommand::Resume))
+                .accepted
+        );
+        c.apply(command(12, 1, 1190, SessionCommand::Tick));
+        assert_eq!(c.active_time_ns(), 100);
+        assert_eq!(c.completion(), CompletionProgress::PersistencePending);
+    }
+
+    #[test]
+    fn audio_technical_hold_cannot_be_resumed() {
+        let mut c = ExperimentSessionController::default();
+        assert!(
+            c.apply(command(
+                1,
+                0,
+                1,
+                SessionCommand::Arm {
+                    condition: condition(),
+                    completion_threshold_ns: 100,
+                },
+            ))
+            .accepted
+        );
+        assert!(
+            c.apply(command(2, 1, 2, SessionCommand::RecordingPrepared))
+                .accepted
+        );
+        assert!(
+            c.apply(command(3, 1, 3, SessionCommand::AudioPrepared))
+                .accepted
+        );
+        assert!(
+            c.apply(command(
+                4,
+                1,
+                4,
+                SessionCommand::PresentationChanged(PresentationState::ImmersiveActive),
+            ))
+            .accepted
+        );
+        assert!(
+            c.apply(command(5, 1, 5, SessionCommand::OfficialStart))
+                .accepted
+        );
+        assert!(
+            c.apply(command(6, 1, 6, SessionCommand::AudioError))
+                .accepted
+        );
+        assert_eq!(c.control_state(), ExperimentControlState::Paused);
+        assert!(!c.apply(command(7, 1, 7, SessionCommand::Resume)).accepted);
+        assert!(c.audio_error());
+        assert_eq!(c.control_state(), ExperimentControlState::Paused);
+    }
+
+    #[test]
+    fn grip_chords_are_gated_debounced_and_consumed_until_release() {
+        let mut g = ExperimentControlGesture::default();
+        for _ in 0..4 {
+            assert_eq!(
+                g.update(0.2, true, true, false, ExperimentControlState::Idle),
+                None
+            );
+        }
+        assert!(g.suppress_buttons());
+        g.update(0.1, false, false, false, ExperimentControlState::Armed);
+        for _ in 0..3 {
+            assert_eq!(
+                g.update(0.2, true, true, false, ExperimentControlState::Armed),
+                None
+            );
+        }
+        assert_eq!(
+            g.update(0.2, true, true, false, ExperimentControlState::Armed),
+            Some("official-start")
+        );
+        assert_eq!(
+            g.update(0.2, true, false, true, ExperimentControlState::Running),
+            None
+        );
+        g.update(0.1, false, false, true, ExperimentControlState::Running);
+        assert!(g.suppress_buttons());
+        g.update(0.1, false, false, false, ExperimentControlState::Running);
+        assert!(!g.suppress_buttons());
+        for _ in 0..3 {
+            assert_eq!(
+                g.update(0.2, true, false, true, ExperimentControlState::Running),
+                None
+            );
+        }
+        assert_eq!(
+            g.update(0.2, true, false, true, ExperimentControlState::Running),
+            Some("pause")
+        );
+    }
 
     fn token(value: u64) -> OperationToken {
         OperationToken::new(value).unwrap()

@@ -21,6 +21,7 @@ public final class ConditionAudioRuntimeTest {
     }
 
     private static void runNormalSuite() throws Exception {
+        explicitPauseResumeRetainsPlayerAndPosition();
         missingInventoryIsUnavailable();
         untrustedInventoryIsUnavailable();
         lifecycleNaturalEndAndNoLoop();
@@ -33,6 +34,44 @@ public final class ConditionAudioRuntimeTest {
         stoppedReceiptSurvivesNewPrepareRace();
         appLifetimeOwnerIsUniqueThroughBlockedClose();
         closeReleasesPreloadsOnceAndRejectsLateReadiness();
+    }
+
+    private static void explicitPauseResumeRetainsPlayerAndPosition() throws Exception {
+        ReceiptLog receipts = new ReceiptLog();
+        FakeFactory factory = new FakeFactory();
+        ConditionAudioRuntime runtime = ConditionAudioRuntime.createForTest(inventory(), factory, receipts);
+        try {
+            check(runtime.submit(ConditionAudioContract.Command.prepare(1L, "arm", "condition-alpha")).accepted, "arm prepares");
+            FakeBackend backend = factory.awaitBackend(1);
+            backend.awaitPrepare();
+            backend.listener.onPrepared();
+            receipts.await(ConditionAudioContract.Event.PREPARED, 1L);
+            check(backend.startCount == 0, "preparation never autoplays");
+            check(!runtime.submit(ConditionAudioContract.Command.pause(1L, "pause-before-start")).accepted, "armed audio cannot pause");
+            check(runtime.submit(ConditionAudioContract.Command.start(1L, "official-start")).accepted, "explicit start accepted");
+            backend.awaitStart();
+            backend.listener.onActualStart(0L);
+            receipts.await(ConditionAudioContract.Event.ACTUAL_START, 1L);
+            ConditionAudioContract.Command pause = ConditionAudioContract.Command.pause(1L, "pause");
+            check(runtime.submit(pause).accepted, "pause accepted");
+            ConditionAudioContract.Receipt paused = receipts.await(ConditionAudioContract.Event.PAUSED, 1L);
+            check(paused.positionMs == 1234L, "pause reports actual player position");
+            check(runtime.submit(pause).duplicate, "pause retry is idempotent");
+            check(runtime.submit(ConditionAudioContract.Command.resume(1L, "resume")).accepted, "resume accepted");
+            backend.listener.onActualStart(1234L);
+            ConditionAudioContract.Receipt resumed = receipts.await(ConditionAudioContract.Event.RESUMED, 1L);
+            check(resumed.positionMs == 1234L && backend.prepareCount == 1 && backend.stopCount == 0
+                && backend.releaseCount == 0, "resume retains exact prepared player and position");
+            backend.listener.onNaturalEnd(2000L);
+            receipts.await(ConditionAudioContract.Event.NATURAL_END, 1L);
+            check(runtime.submit(ConditionAudioContract.Command.pause(1L, "silent-pause")).accepted, "natural-end silence can pause");
+            long deadline = System.currentTimeMillis() + 3000L;
+            while (runtime.snapshot().phase != ConditionAudioContract.Phase.PAUSED && System.currentTimeMillis() < deadline) Thread.sleep(5L);
+            check(runtime.submit(ConditionAudioContract.Command.resume(1L, "silent-resume")).accepted, "natural-end silence can resume");
+            deadline = System.currentTimeMillis() + 3000L;
+            while (runtime.snapshot().phase != ConditionAudioContract.Phase.SILENT_AFTER_NATURAL_END && System.currentTimeMillis() < deadline) Thread.sleep(5L);
+            check(runtime.snapshot().phase == ConditionAudioContract.Phase.SILENT_AFTER_NATURAL_END && backend.startCount == 2, "resume never replays a naturally ended track");
+        } finally { runtime.close(); }
     }
 
     private static void closeReleasesPreloadsOnceAndRejectsLateReadiness() throws Exception {
@@ -700,6 +739,7 @@ public final class ConditionAudioRuntimeTest {
     }
 
     private static final class FakeBackend implements ConditionAudioRuntime.MediaBackend {
+        @Override public long pause() { return 1234L; }
         final ConditionAudioContract.Provider provider;
         final Listener listener;
         volatile int prepareCount;

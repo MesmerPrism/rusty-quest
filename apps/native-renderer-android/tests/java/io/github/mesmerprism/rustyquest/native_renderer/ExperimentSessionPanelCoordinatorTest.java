@@ -3,10 +3,29 @@ package io.github.mesmerprism.rustyquest.native_renderer;
 public final class ExperimentSessionPanelCoordinatorTest {
     public static void main(String[] args) {
         launchAndRoutePolicy();
+        armControlStatePolicy();
         startDeveloperAndRestartReceiptPolicy();
         polarAndViewPolicy();
         closedRuntimeEpochResetsGenerationButRecreationDoesNot();
         System.out.println("ExperimentSessionPanelCoordinatorTest PASS");
+    }
+
+    private static void armControlStatePolicy() {
+        ExperimentSessionPanelCoordinator coordinator = new ExperimentSessionPanelCoordinator();
+        ExperimentSessionPanelCoordinator.NativeCommand arm =
+            coordinator.arm(ExperimentSessionPanelCoordinator.CONDITION_ONE);
+        check(arm != null && "arm".equals(arm.operation)
+                && coordinator.snapshot().phase == ExperimentSessionPanelState.Phase.ARMING,
+            "condition selection emits an arm command and visible preparation state");
+        check(coordinator.accept(new ExperimentSessionPanelCoordinator.NativeReceipt(
+            arm.operationId, true, false, 1L, 1L, "active", "armed",
+            ExperimentSessionPanelCoordinator.CONDITION_ONE, true, false, "ready", true,
+            0L, 0L, 0L, 0L, true, true, false, 0L, 0L, 0L,
+            "none", 0L, "armed"
+        )), "durable native control state is accepted");
+        check(coordinator.snapshot().phase == ExperimentSessionPanelState.Phase.ARMED
+                && ExperimentSessionPanelViewPolicy.canReturnToImmersive(coordinator.snapshot()),
+            "armed control state closes preparation and admits the particle scene");
     }
 
     private static void closedRuntimeEpochResetsGenerationButRecreationDoesNot() {

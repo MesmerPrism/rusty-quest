@@ -311,6 +311,12 @@ impl LossSnapshot {
 }
 
 enum ControlCommand {
+    RecordControl {
+        generation: u64,
+        at: MonotonicNanos,
+        kind: SessionEventKind,
+        reply: mpsc::Sender<Result<(), String>>,
+    },
     Prepare {
         generation: u64,
         spec: SessionStartSpec,
@@ -436,6 +442,24 @@ impl SessionRecordingWriter {
             .send(ControlCommand::MarkCompletion {
                 generation,
                 at,
+                reply,
+            })
+            .map_err(|_| "recording-writer-closed".to_owned())?;
+        Ok(ControlReceipt { receiver })
+    }
+
+    pub(crate) fn record_control(
+        &self,
+        generation: u64,
+        at: MonotonicNanos,
+        kind: SessionEventKind,
+    ) -> Result<ControlReceipt<()>, String> {
+        let (reply, receiver) = mpsc::channel();
+        self.control_sender
+            .send(ControlCommand::RecordControl {
+                generation,
+                at,
+                kind,
                 reply,
             })
             .map_err(|_| "recording-writer-closed".to_owned())?;
@@ -683,6 +707,29 @@ fn handle_control(
                     receipt
                 })
             };
+            let _ = reply.send(result);
+        }
+        ControlCommand::RecordControl {
+            generation,
+            at,
+            kind,
+            reply,
+        } => {
+            let result = active
+                .as_mut()
+                .ok_or_else(|| "recording-not-active".to_owned())
+                .and_then(|recording| {
+                    if recording.generation != generation {
+                        return Err("recording-generation-stale".to_owned());
+                    }
+                    recording.write_internal_event(kind, at)?;
+                    recording
+                        .checkpoint(
+                            recording.completion_durable,
+                            loss_snapshot(admission, external_loss, generation),
+                        )
+                        .map(|_| ())
+                });
             let _ = reply.send(result);
         }
         ControlCommand::MarkCompletion {

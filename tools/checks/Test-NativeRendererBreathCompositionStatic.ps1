@@ -549,8 +549,8 @@ Assert-Tokens ($operator + [Environment]::NewLine + $operatorReceiver) @(
 ) "headless operator command and structured readback"
 Assert-Tokens $polarPanel @(
     "buildEmbeddedAcquisitionView",
-    "buildView(false)",
-    'Button scan = button("Scan")',
+    "buildView()",
+    'scanButton = button(scanning ? "Scanning…" : "Scan")',
     'Button connect = button("Connect")',
     'Button startPmd = button("Start PMD")'
 ) "sole embedded Polar acquisition owner"

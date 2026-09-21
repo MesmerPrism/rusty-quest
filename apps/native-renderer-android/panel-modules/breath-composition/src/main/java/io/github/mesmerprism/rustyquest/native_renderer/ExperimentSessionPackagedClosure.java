@@ -81,18 +81,21 @@ final class ExperimentSessionPackagedClosure {
         final boolean active;
         final String providerId;
         final String inventorySha256;
+        final String nonAudioProfileSha256;
         final AudioEntry[] audioEntries;
 
         private Result(boolean active, String providerId, String inventorySha256,
+                String nonAudioProfileSha256,
                 AudioEntry[] audioEntries) {
             this.active = active;
             this.providerId = safe(providerId);
             this.inventorySha256 = safe(inventorySha256);
+            this.nonAudioProfileSha256 = safe(nonAudioProfileSha256);
             this.audioEntries = audioEntries == null ? new AudioEntry[0] : audioEntries.clone();
         }
 
         static Result inactive() {
-            return new Result(false, "", "", new AudioEntry[0]);
+            return new Result(false, "", "", "", new AudioEntry[0]);
         }
     }
 
@@ -230,6 +233,10 @@ final class ExperimentSessionPackagedClosure {
         }
 
         Map<String, AudioIdentity> outerAudio = parseOuterConditions(profile);
+        String nonAudioProfileSha256 = string(profile, "non_audio_profile_sha256");
+        if (!sha256(nonAudioProfileSha256)) {
+            fail("experiment-session-non-audio-profile-sha256-invalid");
+        }
         Map<String, Object> projection = object(profile.get("runtime_projection"),
             "runtime_projection");
         requireExactFields(projection, "schema", "provider_id",
@@ -255,7 +262,8 @@ final class ExperimentSessionPackagedClosure {
         }
 
         materialize(filesRoot, profileBytes);
-        return new Result(true, providerId, inventorySha256, new AudioEntry[] {
+        return new Result(true, providerId, inventorySha256, nonAudioProfileSha256,
+            new AudioEntry[] {
             new AudioEntry("condition-a", packagedA),
             new AudioEntry("condition-b", packagedB)
         });

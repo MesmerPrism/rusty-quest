@@ -335,6 +335,11 @@ impl ExperimentIdentity {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum SessionEventKind {
+    Armed,
+    OfficialStart,
+    ExperimentPaused,
+    ExperimentResumed,
+    /// Recording acquisition/pre-roll began. Experimental t0 is OfficialStart.
     Started,
     ImmersiveActive,
     ImmersivePaused,
@@ -352,6 +357,10 @@ pub(crate) enum SessionEventKind {
 impl SessionEventKind {
     pub(crate) const fn as_str(self) -> &'static str {
         match self {
+            Self::Armed => "armed",
+            Self::OfficialStart => "official-start",
+            Self::ExperimentPaused => "experiment-paused",
+            Self::ExperimentResumed => "experiment-resumed",
             Self::Started => "started",
             Self::ImmersiveActive => "immersive-active",
             Self::ImmersivePaused => "immersive-paused",

@@ -117,6 +117,8 @@ const PANEL_COMMAND_POLL_INTERVAL_FRAMES: u64 = 30;
 #[cfg(target_os = "android")]
 #[derive(Debug, Default)]
 pub(crate) struct ControlPanelCommandPoller {
+    last_control_receipt_generation: u64,
+    last_control_receipt_revision: u64,
     last_open_token: String,
     startup_open_sent: bool,
     explicit_experiment_startup: ExplicitExperimentPanelStartupGate,
@@ -125,6 +127,35 @@ pub(crate) struct ControlPanelCommandPoller {
 #[cfg(target_os = "android")]
 impl ControlPanelCommandPoller {
     pub(crate) fn poll_and_apply(&mut self, app: &android_activity::AndroidApp, frame_count: u64) {
+        if let Some((_, generation, revision, event)) =
+            crate::experiment_session_runtime::current_control_receipt()
+        {
+            if generation > self.last_control_receipt_generation {
+                self.last_control_receipt_generation = generation;
+                self.last_control_receipt_revision = 0;
+            }
+            if generation == self.last_control_receipt_generation
+                && revision > self.last_control_receipt_revision
+            {
+                if generation > 0 {
+                    match apply_condition_audio_control_receipt(app, generation, revision, event) {
+                        Ok(()) => self.last_control_receipt_revision = revision,
+                        Err(error) => {
+                            // Retry the same receipt; the app-lifetime Java owner deduplicates it.
+                            if frame_count % PANEL_COMMAND_POLL_INTERVAL_FRAMES == 0 {
+                                crate::marker(
+                                    "experiment-control",
+                                    format!(
+                                        "status=audio-control-bridge-error reason={}",
+                                        crate::sanitize(&error)
+                                    ),
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
         if frame_count % PANEL_COMMAND_POLL_INTERVAL_FRAMES != 0 {
             return;
         }
@@ -246,6 +277,50 @@ impl ControlPanelCommandPoller {
             ),
         }
     }
+}
+
+#[cfg(target_os = "android")]
+fn apply_condition_audio_control_receipt(
+    app: &android_activity::AndroidApp,
+    generation: u64,
+    revision: u64,
+    event: &str,
+) -> Result<(), String> {
+    use jni::{
+        jni_sig, jni_str,
+        objects::{JClass, JClassLoader, JObject, JValue},
+        JavaVM,
+    };
+    let vm = unsafe { JavaVM::from_raw(app.vm_as_ptr().cast()) };
+    let activity = app.activity_as_ptr() as jni::sys::jobject;
+    vm.attach_current_thread(|env| -> jni::errors::Result<()> {
+        let activity = unsafe { env.as_cast_raw::<JObject>(&activity)? };
+        let loader = env
+            .call_method(
+                &activity,
+                jni_str!("getClassLoader"),
+                jni_sig!("()Ljava/lang/ClassLoader;"),
+                &[],
+            )?
+            .l()?;
+        let loader: JClassLoader = env.cast_local::<JClassLoader>(loader)?;
+        let name = env
+            .new_string("io.github.mesmerprism.rustyquest.native_renderer.ControlPanelActivity")?;
+        let class = JClass::for_name_with_loader(env, name, true, loader)?;
+        let event = env.new_string(event)?;
+        env.call_static_method(
+            class,
+            jni_str!("applyConditionAudioControlReceipt"),
+            jni_sig!("(JJLjava/lang/String;)V"),
+            &[
+                JValue::Long(generation as i64),
+                JValue::Long(revision as i64),
+                JValue::Object(&event),
+            ],
+        )?;
+        Ok(())
+    })
+    .map_err(|error| format!("condition-audio-control-receipt:{error}"))
 }
 
 #[derive(Debug, Default)]

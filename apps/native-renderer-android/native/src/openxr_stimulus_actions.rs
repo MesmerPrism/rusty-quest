@@ -60,6 +60,12 @@ fn right_thumbstick_binding_enabled(
 }
 
 pub(crate) struct StimulusVolumeActions {
+    experiment_controls_enabled: bool,
+    experiment_control_gesture: crate::experiment_session::ExperimentControlGesture,
+    experiment_control_sequence: u64,
+    pending_control_haptic: Option<(u64, u64, &'static str)>,
+    control_haptic_cooldown: f32,
+    right_experiment_grip: xr::Action<f32>,
     action_set: xr::ActionSet,
     right_primary_randomize: xr::Action<bool>,
     right_trigger_panel_toggle: xr::Action<f32>,
@@ -222,6 +228,11 @@ impl StimulusVolumeActions {
         let right_primary_randomize = action_set
             .create_action::<bool>("right_primary_randomize", "Right Primary Randomize", &[])
             .map_err(|error| format!("create stimulus randomize action: {error}"))?;
+        let experiment_controls_enabled =
+            same_apk_panel_action_settings.experimenter_profile_enabled();
+        let right_experiment_grip = action_set
+            .create_action::<f32>("right_experiment_grip", "Right Experiment Grip", &[])
+            .map_err(|error| format!("create experiment grip action: {error}"))?;
         let right_trigger_panel_toggle = action_set
             .create_action::<f32>(
                 "right_trigger_panel_toggle",
@@ -372,7 +383,7 @@ impl StimulusVolumeActions {
                 if stimulus_randomize_binding_enabled {
                     bindings.push(xr::Binding::new(&right_primary_randomize, input));
                 }
-                if primary_recenter_binding_enabled {
+                if primary_recenter_binding_enabled || experiment_controls_enabled {
                     bindings.push(xr::Binding::new(&right_primary_reset, input));
                 }
             }
@@ -394,7 +405,7 @@ impl StimulusVolumeActions {
                 let input = instance.string_to_path(input_path).map_err(|error| {
                     format!("create OpenXR path for secondary input {input_path}: {error}")
                 })?;
-                if right_secondary_binding_enabled {
+                if right_secondary_binding_enabled || experiment_controls_enabled {
                     bindings.push(xr::Binding::new(&right_secondary_action, input));
                 }
             }
@@ -430,11 +441,18 @@ impl StimulusVolumeActions {
                     bindings.push(xr::Binding::new(&right_grip_pose, input));
                 }
             }
+            // Grip squeeze exists on Touch profiles, not the simple-controller fallback.
+            if experiment_controls_enabled && profile.right_secondary_path.is_some() {
+                let input = instance
+                    .string_to_path("/user/hand/right/input/squeeze/value")
+                    .map_err(|error| format!("create experiment grip path: {error}"))?;
+                bindings.push(xr::Binding::new(&right_experiment_grip, input));
+            }
             if let Some(output_path) = profile.right_haptic_output_path {
                 let output = instance.string_to_path(output_path).map_err(|error| {
                     format!("create OpenXR path for right haptic output {output_path}: {error}")
                 })?;
-                if breath_haptics_configured {
+                if breath_haptics_configured || experiment_controls_enabled {
                     bindings.push(xr::Binding::new(&right_breath_haptic, output));
                 }
             }
@@ -558,6 +576,12 @@ impl StimulusVolumeActions {
         Ok(Some(Self {
             action_set,
             right_primary_randomize,
+            experiment_controls_enabled,
+            experiment_control_gesture: Default::default(),
+            experiment_control_sequence: 0,
+            pending_control_haptic: None,
+            control_haptic_cooldown: 0.0,
+            right_experiment_grip,
             right_trigger_panel_toggle,
             right_select_panel_toggle,
             right_primary_reset,
@@ -806,6 +830,8 @@ impl StimulusVolumeActions {
             self.apply_composition_controller_actions(observed_at);
         }
         if let Err(error) = session.sync_actions(&[(&self.action_set).into()]) {
+            self.experiment_control_gesture = Default::default();
+            self.pending_control_haptic = None;
             self.same_apk_panel_action.cancel_pending_sequence(false);
             self.same_apk_developer_action.cancel_pending_sequence();
             self.observe_composition_controller_missing(observed_at, frame_count.saturating_add(1));
@@ -833,7 +859,10 @@ impl StimulusVolumeActions {
             return events;
         }
 
-        events.stimulus_randomize_triggered = self.poll_primary_randomize(session, frame_count);
+        let control_haptic = self.poll_experiment_control(session, dt_seconds);
+        let suppress_buttons = self.experiment_control_gesture.suppress_buttons();
+        events.stimulus_randomize_triggered =
+            !suppress_buttons && self.poll_primary_randomize(session, frame_count);
         let (compatibility_trigger_toggle, developer_panel_triggered) =
             self.poll_panel_toggle(session, frame_count, dt_seconds);
         events.panel_toggle_triggered = compatibility_trigger_toggle;
@@ -841,7 +870,7 @@ impl StimulusVolumeActions {
         if events.panel_toggle_triggered {
             events.panel_toggle_source = Some("right-trigger-or-select");
         }
-        if self.poll_primary_reset(session, frame_count) {
+        if self.poll_primary_reset(session, frame_count) && !suppress_buttons {
             if self.projection_target_settings.controls_enabled {
                 events
                     .projection_target_inputs
@@ -858,8 +887,13 @@ impl StimulusVolumeActions {
                 );
             }
         }
-        let (secondary_panel_action, secondary_projection_input) =
-            self.poll_right_secondary_action(session, frame_count, dt_seconds);
+        let (secondary_panel_action, secondary_projection_input) = if suppress_buttons {
+            self.same_apk_panel_action.cancel_pending_sequence(true);
+            self.previous_right_secondary_pressed = true;
+            (None, None)
+        } else {
+            self.poll_right_secondary_action(session, frame_count, dt_seconds)
+        };
         if let Some(action) = secondary_panel_action {
             match action {
                 SameApkPanelActionTrigger::CompatibilityToggle => {
@@ -1058,7 +1092,7 @@ impl StimulusVolumeActions {
         );
         self.pulse_breath_haptic(
             session,
-            breath_haptics_enabled,
+            breath_haptics_enabled && !control_haptic,
             events.right_grip_pose_tracked,
             frame_count,
             dt_seconds,
@@ -1610,6 +1644,97 @@ impl StimulusVolumeActions {
             );
         }
         (triggered, false)
+    }
+
+    fn poll_experiment_control<G>(&mut self, session: &xr::Session<G>, dt: f32) -> bool {
+        if !self.experiment_controls_enabled {
+            return false;
+        }
+        if dt.is_finite() && dt > 0.0 {
+            self.control_haptic_cooldown = (self.control_haptic_cooldown - dt).max(0.0);
+        }
+        let Some((state, receipt_generation, revision, event)) =
+            crate::experiment_session_runtime::current_control_receipt()
+        else {
+            return self.control_haptic_cooldown > 0.0;
+        };
+        let generation = crate::experiment_session_runtime::current_generation();
+        let mut acknowledged = false;
+        if let Some((expected_generation, previous_revision, expected_event)) =
+            self.pending_control_haptic
+        {
+            if generation != expected_generation {
+                self.pending_control_haptic = None;
+            } else if receipt_generation == expected_generation
+                && revision > previous_revision
+                && event == expected_event
+            {
+                self.pending_control_haptic = None;
+                let vibration = xr::HapticVibration::new()
+                    .duration(xr::Duration::from_nanos(120_000_000))
+                    .frequency(xr::FREQUENCY_UNSPECIFIED)
+                    .amplitude(0.65);
+                acknowledged = self
+                    .right_breath_haptic
+                    .apply_feedback(session, self.right_hand_subaction_path, &vibration)
+                    .is_ok();
+                if acknowledged {
+                    self.control_haptic_cooldown = 0.15;
+                }
+                crate::marker(
+                    "experiment-control",
+                    format!(
+                        "event={} generation={} receiptRevision={} hapticAcknowledged={}",
+                        event, generation, revision, acknowledged
+                    ),
+                );
+            }
+        }
+        let grip = self.right_experiment_grip.state(session, xr::Path::NULL);
+        let a = self.right_primary_reset.state(session, xr::Path::NULL);
+        let b = self.right_secondary_action.state(session, xr::Path::NULL);
+        let (Ok(grip), Ok(a), Ok(b)) = (grip, a, b) else {
+            self.experiment_control_gesture = Default::default();
+            return acknowledged;
+        };
+        let grip_pressed = grip.is_active && grip.current_state >= 0.7;
+        let operation = self.experiment_control_gesture.update(
+            dt,
+            grip_pressed,
+            a.is_active && a.current_state,
+            b.is_active && b.current_state,
+            state,
+        );
+        if let Some(operation) = operation {
+            if generation > 0 {
+                if let Some(at) = crate::experiment_session_runtime::current_elapsed_realtime_ns() {
+                    self.experiment_control_sequence =
+                        self.experiment_control_sequence.saturating_add(1);
+                    let operation_id = format!(
+                        "controller-control-{generation}-{at}-{}",
+                        self.experiment_control_sequence
+                    );
+                    let response = crate::experiment_session_runtime::request_control_from_native(
+                        operation,
+                        &operation_id,
+                        generation,
+                        at,
+                    );
+                    if response.contains("\"command_status\":\"queued\"") {
+                        self.pending_control_haptic = Some((
+                            generation,
+                            revision,
+                            match operation {
+                                "official-start" => "official-start",
+                                "pause" => "experiment-paused",
+                                _ => "experiment-resumed",
+                            },
+                        ));
+                    }
+                }
+            }
+        }
+        acknowledged || self.control_haptic_cooldown > 0.0
     }
 
     fn poll_primary_reset<G>(&mut self, session: &xr::Session<G>, frame_count: u64) -> bool {

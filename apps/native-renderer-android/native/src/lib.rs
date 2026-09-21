@@ -4,6 +4,7 @@
 //! path. It keeps the public APK free of app Java and private effect payloads.
 
 #![cfg_attr(not(target_os = "android"), allow(dead_code))]
+#![recursion_limit = "256"]
 
 use rusty_quest_native_renderer_contracts::{validate_native_renderer_plan, NativeRendererPlan};
 

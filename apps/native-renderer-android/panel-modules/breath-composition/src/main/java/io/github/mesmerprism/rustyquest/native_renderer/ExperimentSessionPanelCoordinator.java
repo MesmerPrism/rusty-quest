@@ -36,6 +36,7 @@ final class ExperimentSessionPanelCoordinator {
         final long generation;
         final long revision;
         final String phase;
+        final String controlState;
         final String activeCondition;
         final boolean recording;
         final boolean recovery;
@@ -81,12 +82,50 @@ final class ExperimentSessionPanelCoordinator {
             long routeActionRevision,
             String detail
         ) {
+            this(
+                operationId, accepted, durable, generation, revision, phase,
+                "", activeCondition, recording, recovery, storageStatus, kioskRequested,
+                completedOne, completedTwo, stoppedEarlyOne, stoppedEarlyTwo,
+                perConditionCountsAvailable, countsAvailable, countsInvalid,
+                completedTotal, stoppedEarlyTotal, errors, routeAction,
+                routeActionRevision, detail
+            );
+        }
+
+        NativeReceipt(
+            String operationId,
+            boolean accepted,
+            boolean durable,
+            long generation,
+            long revision,
+            String phase,
+            String controlState,
+            String activeCondition,
+            boolean recording,
+            boolean recovery,
+            String storageStatus,
+            boolean kioskRequested,
+            long completedOne,
+            long completedTwo,
+            long stoppedEarlyOne,
+            long stoppedEarlyTwo,
+            boolean perConditionCountsAvailable,
+            boolean countsAvailable,
+            boolean countsInvalid,
+            long completedTotal,
+            long stoppedEarlyTotal,
+            long errors,
+            String routeAction,
+            long routeActionRevision,
+            String detail
+        ) {
             this.operationId = safe(operationId);
             this.accepted = accepted;
             this.durable = durable;
             this.generation = Math.max(0L, generation);
             this.revision = Math.max(0L, revision);
             this.phase = safe(phase);
+            this.controlState = safe(controlState);
             this.activeCondition = safe(activeCondition);
             this.recording = recording;
             this.recovery = recovery;
@@ -199,6 +238,33 @@ final class ExperimentSessionPanelCoordinator {
             "Preparing recording and audio."
         );
         return new NativeCommand("start", operationId, state.generation, condition);
+    }
+
+    synchronized NativeCommand arm(String condition) {
+        if (!CONDITION_ONE.equals(condition) && !CONDITION_TWO.equals(condition)) {
+            return null;
+        }
+        if (state.hasActiveSession() || !state.pendingOperationId.isEmpty()) {
+            return null;
+        }
+        String operationId = nextOperationId("arm");
+        state = copy(
+            state.route,
+            ExperimentSessionPanelState.Phase.ARMING,
+            state.generation,
+            state.revision,
+            condition,
+            operationId,
+            state.routeActionRevision,
+            state.counts,
+            state.polar,
+            false,
+            state.recovery,
+            "preparing",
+            state.kioskRequested,
+            "Preparing recording and audio; audio remains silent."
+        );
+        return new NativeCommand("arm", operationId, state.generation, condition);
     }
 
     synchronized NativeCommand restartToExperimenter(long eventGeneration) {
@@ -317,14 +383,17 @@ final class ExperimentSessionPanelCoordinator {
                 return false;
             }
         }
-        if (state.phase == ExperimentSessionPanelState.Phase.STARTING && pendingMatch) {
+        if ((state.phase == ExperimentSessionPanelState.Phase.STARTING
+                || state.phase == ExperimentSessionPanelState.Phase.ARMING) && pendingMatch) {
             boolean exactActive = receipt.accepted
                 && ("active".equals(receipt.phase) || "recording".equals(receipt.phase));
             if (!exactActive) {
                 return false;
             }
         }
-        ExperimentSessionPanelState.Phase phase = parsePhase(receipt.phase, state.phase);
+        ExperimentSessionPanelState.Phase phase = parsePhase(
+            receipt.phase, receipt.controlState, state.phase
+        );
         String pending = pendingMatch ? "" : state.pendingOperationId;
         boolean showExperimenter = receipt.accepted && receipt.durable
             && "show-experimenter".equals(receipt.routeAction);
@@ -407,8 +476,16 @@ final class ExperimentSessionPanelCoordinator {
 
     private static ExperimentSessionPanelState.Phase parsePhase(
         String value,
+        String controlState,
         ExperimentSessionPanelState.Phase fallback
     ) {
+        String control = safe(controlState).toLowerCase(Locale.US);
+        if ("arming".equals(control)) return ExperimentSessionPanelState.Phase.ARMING;
+        if ("armed".equals(control)) return ExperimentSessionPanelState.Phase.ARMED;
+        if ("running".equals(control)) return ExperimentSessionPanelState.Phase.RUNNING;
+        if ("paused".equals(control)) return ExperimentSessionPanelState.Phase.PAUSED;
+        if ("finalizing".equals(control)) return ExperimentSessionPanelState.Phase.FINALIZING;
+        if ("audio-error".equals(control)) return ExperimentSessionPanelState.Phase.ERROR;
         String normalized = safe(value).toLowerCase(Locale.US);
         if ("idle".equals(normalized) || "closed".equals(normalized)) return ExperimentSessionPanelState.Phase.IDLE;
         if ("preparing".equals(normalized)) return ExperimentSessionPanelState.Phase.STARTING;

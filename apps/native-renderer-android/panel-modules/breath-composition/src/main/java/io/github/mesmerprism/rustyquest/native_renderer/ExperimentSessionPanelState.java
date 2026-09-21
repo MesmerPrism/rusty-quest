@@ -3,7 +3,10 @@ package io.github.mesmerprism.rustyquest.native_renderer;
 /** Immutable presentation projection for the experimenter panel. */
 final class ExperimentSessionPanelState {
     enum Route { EXPERIMENTER, DEVELOPER }
-    enum Phase { IDLE, STARTING, RECORDING, SAVING, RECOVERY, ERROR, UNAVAILABLE }
+    enum Phase {
+        IDLE, STARTING, ARMING, ARMED, RUNNING, PAUSED, RECORDING,
+        FINALIZING, SAVING, RECOVERY, ERROR, UNAVAILABLE
+    }
     enum Bluetooth { ON, OFF, UNSUPPORTED, PERMISSION_REQUIRED, TURNING, UNKNOWN }
     enum Polar {
         CONNECTED, SCANNING, CONNECTING, MULTIPLE, NOT_FOUND,
@@ -206,7 +209,9 @@ final class ExperimentSessionPanelState {
     }
 
     boolean hasActiveSession() {
-        return recording || phase == Phase.STARTING || phase == Phase.RECORDING
+        return recording || phase == Phase.STARTING || phase == Phase.ARMING
+            || phase == Phase.ARMED || phase == Phase.RUNNING || phase == Phase.PAUSED
+            || phase == Phase.RECORDING || phase == Phase.FINALIZING
             || phase == Phase.SAVING || phase == Phase.RECOVERY;
     }
 }

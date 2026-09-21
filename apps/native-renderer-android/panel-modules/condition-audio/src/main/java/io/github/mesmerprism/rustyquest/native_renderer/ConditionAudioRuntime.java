@@ -49,6 +49,8 @@ final class ConditionAudioRuntime implements AutoCloseable {
 
         void prepare(boolean looping) throws Exception;
         void start() throws Exception;
+        /** Pause must retain the prepared player and return its actual media position. */
+        long pause() throws Exception;
         void stop() throws Exception;
         void release();
     }
@@ -77,6 +79,7 @@ final class ConditionAudioRuntime implements AutoCloseable {
     private ConditionAudioContract.Provider provider;
     private MediaBackend backend;
     private boolean closed;
+    private boolean pausedAfterNaturalEnd;
 
     private ConditionAudioRuntime(
         ConditionAudioContract.TrustedPackagedInventory inventory,
@@ -187,6 +190,7 @@ final class ConditionAudioRuntime implements AutoCloseable {
                 );
                 activeOperationId = command.operationId;
                 phase = ConditionAudioContract.Phase.PREPARING;
+                pausedAfterNaturalEnd = false;
                 positionMs = 0L;
                 reason = "prepare-pending";
                 lifecycleEpoch += 1L;
@@ -194,6 +198,15 @@ final class ConditionAudioRuntime implements AutoCloseable {
                 activeOperationId = command.operationId;
                 phase = ConditionAudioContract.Phase.STARTING;
                 reason = "start-pending";
+            } else if (command.kind == ConditionAudioContract.CommandKind.PAUSE) {
+                pausedAfterNaturalEnd = phase == ConditionAudioContract.Phase.SILENT_AFTER_NATURAL_END;
+                activeOperationId = command.operationId;
+                phase = ConditionAudioContract.Phase.PAUSING;
+                reason = "pause-pending";
+            } else if (command.kind == ConditionAudioContract.CommandKind.RESUME) {
+                activeOperationId = command.operationId;
+                phase = ConditionAudioContract.Phase.RESUMING;
+                reason = "resume-pending";
             } else if (command.kind == ConditionAudioContract.CommandKind.STOP) {
                 activeOperationId = command.operationId;
                 phase = ConditionAudioContract.Phase.STOPPING;
@@ -337,6 +350,14 @@ final class ConditionAudioRuntime implements AutoCloseable {
             return startupPreloader != null && phase == ConditionAudioContract.Phase.PREPARING
                 ? "audio-track-not-ready" : "audio-not-prepared";
         }
+        if (command.kind == ConditionAudioContract.CommandKind.PAUSE) {
+            return phase == ConditionAudioContract.Phase.PLAYING
+                || phase == ConditionAudioContract.Phase.SILENT_AFTER_NATURAL_END
+                ? "" : "audio-not-playing";
+        }
+        if (command.kind == ConditionAudioContract.CommandKind.RESUME) {
+            return phase == ConditionAudioContract.Phase.PAUSED ? "" : "audio-not-paused";
+        }
         if (command.kind == ConditionAudioContract.CommandKind.THRESHOLD_REACHED) {
             return phase == ConditionAudioContract.Phase.PLAYING
                     || phase == ConditionAudioContract.Phase.SILENT_AFTER_NATURAL_END
@@ -348,6 +369,9 @@ final class ConditionAudioRuntime implements AutoCloseable {
                     || phase == ConditionAudioContract.Phase.PREPARED
                     || phase == ConditionAudioContract.Phase.STARTING
                     || phase == ConditionAudioContract.Phase.PLAYING
+                    || phase == ConditionAudioContract.Phase.PAUSING
+                    || phase == ConditionAudioContract.Phase.PAUSED
+                    || phase == ConditionAudioContract.Phase.RESUMING
                     || phase == ConditionAudioContract.Phase.SILENT_AFTER_NATURAL_END
                     || phase == ConditionAudioContract.Phase.ERROR
                 ? "" : "audio-not-stoppable";
@@ -454,6 +478,9 @@ final class ConditionAudioRuntime implements AutoCloseable {
             applyPrepare(command, admittedEpoch, admittedReceipt);
         } else if (command.kind == ConditionAudioContract.CommandKind.START) {
             applyStart(command, admittedEpoch, admittedReceipt);
+        } else if (command.kind == ConditionAudioContract.CommandKind.PAUSE
+                || command.kind == ConditionAudioContract.CommandKind.RESUME) {
+            applyPauseResume(command, admittedEpoch, admittedReceipt);
         } else if (command.kind == ConditionAudioContract.CommandKind.THRESHOLD_REACHED) {
             emit(admittedReceipt);
         } else if (command.kind == ConditionAudioContract.CommandKind.STOP) {
@@ -461,6 +488,40 @@ final class ConditionAudioRuntime implements AutoCloseable {
                     && command.stopReason == ConditionAudioContract.StopReason.SAVE_AND_EXIT)
                 startupPreloader.disableReplacement();
             applyStop(command, admittedReceipt);
+        }
+    }
+
+    private void applyPauseResume(ConditionAudioContract.Command command, long epoch, ReceiptContext accepted) {
+        final MediaBackend captured;
+        final boolean silent;
+        synchronized (authorityLock) {
+            if (!current(command.sessionGeneration, epoch)) return;
+            captured = backend;
+            silent = pausedAfterNaturalEnd;
+        }
+        emit(accepted);
+        try {
+            if (command.kind == ConditionAudioContract.CommandKind.RESUME && !silent) {
+                captured.start(); // MediaPlayer.start resumes its retained position; no seek/reprepare.
+                return; // Effective receipt is emitted by onActualStart.
+            }
+            long pausedPosition = silent ? positionMs : captured.pause();
+            final ReceiptContext receipt;
+            synchronized (authorityLock) {
+                if (!current(command.sessionGeneration, epoch)
+                        || phase == ConditionAudioContract.Phase.STOPPING) return;
+                positionMs = Math.max(positionMs, pausedPosition);
+                boolean pause = command.kind == ConditionAudioContract.CommandKind.PAUSE;
+                phase = pause ? ConditionAudioContract.Phase.PAUSED
+                    : ConditionAudioContract.Phase.SILENT_AFTER_NATURAL_END;
+                reason = pause ? "paused" : "resumed-after-natural-end-silence";
+                receipt = receiptLocked(pause ? ConditionAudioContract.Event.PAUSED
+                    : ConditionAudioContract.Event.RESUMED, command.sessionGeneration,
+                    command.operationId, reason, null);
+            }
+            emit(receipt);
+        } catch (Exception error) {
+            publishError(command.sessionGeneration, command.operationId, epoch, "media-pause-resume-failed");
         }
     }
 
@@ -588,15 +649,17 @@ final class ConditionAudioRuntime implements AutoCloseable {
                         final ReceiptContext receipt;
                         synchronized (authorityLock) {
                             if (!current(generation, epoch)
-                                    || phase != ConditionAudioContract.Phase.STARTING) return;
+                                    || (phase != ConditionAudioContract.Phase.STARTING
+                                        && phase != ConditionAudioContract.Phase.RESUMING)) return;
+                            boolean resuming = phase == ConditionAudioContract.Phase.RESUMING;
                             phase = ConditionAudioContract.Phase.PLAYING;
                             reason = "playing";
-                            positionMs = Math.max(0L, observedPositionMs);
+                            positionMs = Math.max(resuming ? positionMs : 0L, observedPositionMs);
                             receipt = receiptLocked(
-                                ConditionAudioContract.Event.ACTUAL_START,
+                                resuming ? ConditionAudioContract.Event.RESUMED : ConditionAudioContract.Event.ACTUAL_START,
                                 generation,
                                 activeOperationId,
-                                "actual-start",
+                                resuming ? "resumed" : "actual-start",
                                 null
                             );
                         }
@@ -632,8 +695,13 @@ final class ConditionAudioRuntime implements AutoCloseable {
                         final MediaBackend ended;
                         synchronized (authorityLock) {
                             if (!current(generation, epoch)
-                                    || phase != ConditionAudioContract.Phase.PLAYING) return;
-                            phase = ConditionAudioContract.Phase.SILENT_AFTER_NATURAL_END;
+                                    || (phase != ConditionAudioContract.Phase.PLAYING
+                                        && phase != ConditionAudioContract.Phase.PAUSED
+                                        && phase != ConditionAudioContract.Phase.PAUSING)) return;
+                            boolean paused = phase != ConditionAudioContract.Phase.PLAYING;
+                            pausedAfterNaturalEnd = paused;
+                            phase = paused ? ConditionAudioContract.Phase.PAUSED
+                                : ConditionAudioContract.Phase.SILENT_AFTER_NATURAL_END;
                             reason = "natural-end-silence";
                             positionMs = Math.max(positionMs, observedPositionMs);
                             ended = backend;
@@ -644,7 +712,8 @@ final class ConditionAudioRuntime implements AutoCloseable {
                         synchronized (authorityLock) {
                             if (cleanup.success) {
                                 if (backend == ended) backend = null;
-                                receipt = phase == ConditionAudioContract.Phase.SILENT_AFTER_NATURAL_END
+                                receipt = (phase == ConditionAudioContract.Phase.SILENT_AFTER_NATURAL_END
+                                        || phase == ConditionAudioContract.Phase.PAUSED)
                                     ? receiptLocked(
                                         ConditionAudioContract.Event.NATURAL_END,
                                         generation,
@@ -654,7 +723,8 @@ final class ConditionAudioRuntime implements AutoCloseable {
                                     ) : null;
                             } else {
                                 backend = ended;
-                                if (phase == ConditionAudioContract.Phase.SILENT_AFTER_NATURAL_END) {
+                                if (phase == ConditionAudioContract.Phase.SILENT_AFTER_NATURAL_END
+                                        || phase == ConditionAudioContract.Phase.PAUSED) {
                                     phase = ConditionAudioContract.Phase.ERROR;
                                     reason = cleanup.reason;
                                     receipt = receiptLocked(
@@ -846,6 +916,8 @@ final class ConditionAudioRuntime implements AutoCloseable {
 
     private static boolean isPending(ConditionAudioContract.Phase value) {
         return value == ConditionAudioContract.Phase.PREPARING
+            || value == ConditionAudioContract.Phase.PAUSING
+            || value == ConditionAudioContract.Phase.RESUMING
             || value == ConditionAudioContract.Phase.STARTING
             || value == ConditionAudioContract.Phase.STOPPING;
     }
@@ -864,6 +936,8 @@ final class ConditionAudioRuntime implements AutoCloseable {
         if (kind == ConditionAudioContract.CommandKind.START) {
             return ConditionAudioContract.Event.START_ACCEPTED;
         }
+        if (kind == ConditionAudioContract.CommandKind.PAUSE) return ConditionAudioContract.Event.PAUSE_ACCEPTED;
+        if (kind == ConditionAudioContract.CommandKind.RESUME) return ConditionAudioContract.Event.RESUME_ACCEPTED;
         if (kind == ConditionAudioContract.CommandKind.STOP) {
             return ConditionAudioContract.Event.STOP_ACCEPTED;
         }
@@ -873,6 +947,8 @@ final class ConditionAudioRuntime implements AutoCloseable {
     private static String acceptedReason(ConditionAudioContract.CommandKind kind) {
         if (kind == ConditionAudioContract.CommandKind.PREPARE) return "prepare-accepted";
         if (kind == ConditionAudioContract.CommandKind.START) return "start-accepted";
+        if (kind == ConditionAudioContract.CommandKind.PAUSE) return "pause-accepted";
+        if (kind == ConditionAudioContract.CommandKind.RESUME) return "resume-accepted";
         if (kind == ConditionAudioContract.CommandKind.STOP) return "stop-accepted";
         return "threshold-does-not-stop-audio";
     }

@@ -9,7 +9,7 @@ final class ConditionAudioContract {
     static final String SCHEMA = "rusty.quest.condition_audio.receipt.v1";
     static final String PACKAGED_PROVIDER_ORIGIN = "packaged-native-app-provider";
 
-    enum CommandKind { PREPARE, START, THRESHOLD_REACHED, STOP }
+    enum CommandKind { PREPARE, START, PAUSE, RESUME, THRESHOLD_REACHED, STOP }
     enum StopReason { RESTART_TO_EXPERIMENTER, SAVE_AND_EXIT }
     enum TrackState { UNAVAILABLE, PENDING, READY, FAILED }
     enum Event {
@@ -17,6 +17,10 @@ final class ConditionAudioContract {
         PREPARED,
         START_ACCEPTED,
         ACTUAL_START,
+        PAUSE_ACCEPTED,
+        PAUSED,
+        RESUME_ACCEPTED,
+        RESUMED,
         PROGRESS,
         THRESHOLD_CONTINUES,
         NATURAL_END,
@@ -33,6 +37,9 @@ final class ConditionAudioContract {
         PREPARED,
         STARTING,
         PLAYING,
+        PAUSING,
+        PAUSED,
+        RESUMING,
         SILENT_AFTER_NATURAL_END,
         STOPPING,
         STOPPED,
@@ -174,6 +181,14 @@ final class ConditionAudioContract {
 
         static Command start(long generation, String operationId) {
             return new Command(CommandKind.START, generation, operationId, "", null);
+        }
+
+        static Command pause(long generation, String operationId) {
+            return new Command(CommandKind.PAUSE, generation, operationId, "", null);
+        }
+
+        static Command resume(long generation, String operationId) {
+            return new Command(CommandKind.RESUME, generation, operationId, "", null);
         }
 
         static Command thresholdReached(long generation, String operationId) {

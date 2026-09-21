@@ -16,6 +16,7 @@ import android.os.SystemClock;
 import android.util.Log;
 import android.view.Gravity;
 import android.view.View;
+import android.view.ViewGroup;
 import android.widget.AdapterView;
 import android.widget.ArrayAdapter;
 import android.widget.Button;
@@ -189,7 +190,7 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
                 }
 
                 @Override public String apply(String commandJson) {
-                    return ControlPanelActivity.nativeApplyBreathCompositionCommand(commandJson);
+                    return ControlPanelActivity.applyExperimentSessionCommand(commandJson);
                 }
 
                 @Override public boolean requestAudioStop(
@@ -290,6 +291,23 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
     private Button experimenterPolarFallback;
     private Button experimenterStartOne;
     private Button experimenterStartTwo;
+    private final ExperimentSessionPanelViewPolicy.Navigation experimenterNavigation =
+        new ExperimentSessionPanelViewPolicy.Navigation();
+    private ScrollView panelScrollView;
+    private String renderedPanelRoute;
+    private String renderedPanelTopic;
+    private ExperimentSessionPanelViewPolicy.Page renderedExperimenterPage;
+    private int polarPageScrollY;
+    private final java.util.Map<String, Integer> developerPageScroll = new java.util.HashMap<>();
+    private TextView experimenterStageReadback;
+    private TextView experimenterInstructionReadback;
+    private TextView experimenterStorageReadback;
+    private TextView experimenterFooterReadback;
+    private TextView experimenterAudioOneReadback;
+    private TextView experimenterAudioTwoReadback;
+    private Button experimenterResume;
+    private Button experimenterNext;
+    private Button experimenterDeveloper;
     private PolarSensorPanel polarSensorPanel;
     private long breathCompositionGeneration;
     private TextView breathOverviewReadback;
@@ -343,10 +361,27 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
                 ? 0L : routeGeneration(initialIntent)
         );
         applyPanelRouteIntent(initialIntent, freshGestureRoute);
+        if (savedInstanceState != null) {
+            experimenterNavigation.restore(savedInstanceState.getString("experimenter-page"),
+                savedInstanceState.getIntArray("experimenter-page-scroll"));
+            breathCompositionPanelTopic = savedInstanceState.getString("panel-topic", "home");
+            polarPageScrollY = savedInstanceState.getInt("polar-page-scroll", 0);
+            Bundle savedDeveloperScroll = savedInstanceState.getBundle("developer-page-scroll");
+            if (savedDeveloperScroll != null) {
+                for (String key : savedDeveloperScroll.keySet()) {
+                    developerPageScroll.put(key, Math.max(0, savedDeveloperScroll.getInt(key)));
+                }
+            }
+        } else if (EXPERIMENT_SESSION_PANEL.snapshot().hasActiveSession()) {
+            // The panel Activity may have finished when VR resumed. Recall an active
+            // run at its session page without turning ordinary readbacks into navigation.
+            experimenterNavigation.select(ExperimentSessionPanelViewPolicy.Page.SESSION);
+        }
         if (trustedColdMain && PANEL_ROUTE_EXPERIMENTER.equals(panelRoute)) {
             PolarSensorRuntime.forApplication(getApplicationContext()).ensureAutoConnection();
         }
         setContentView(buildContentView());
+        restorePanelScrollAfterLayout();
         EXPERIMENT_SESSION_SHELL.initialize(getFilesDir().getAbsolutePath(), this);
         scheduleExperimenterProjectionRefresh();
         updateReadyStatusForPanelMode();
@@ -354,6 +389,21 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
         handlePolarSensorPanelCommandIntent(getIntent());
         handleBreathCompositionCommandIntent(getIntent());
         handleTerminalSaveAndExitIntent(initialIntent);
+    }
+
+    @Override
+    protected void onSaveInstanceState(Bundle outState) {
+        rememberPanelScroll();
+        outState.putString("experimenter-page", experimenterNavigation.page().name());
+        outState.putIntArray("experimenter-page-scroll", experimenterNavigation.savedScroll());
+        outState.putString("panel-topic", breathCompositionPanelTopic);
+        outState.putInt("polar-page-scroll", polarPageScrollY);
+        Bundle savedDeveloperScroll = new Bundle();
+        for (java.util.Map.Entry<String, Integer> entry : developerPageScroll.entrySet()) {
+            savedDeveloperScroll.putInt(entry.getKey(), entry.getValue());
+        }
+        outState.putBundle("developer-page-scroll", savedDeveloperScroll);
+        super.onSaveInstanceState(outState);
     }
 
     @Override
@@ -589,23 +639,20 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
 
     private View buildBreathCompositionControlPanelView() {
         clearExperimenterProjectionViews();
+        renderedPanelRoute = panelRoute;
+        renderedPanelTopic = breathCompositionPanelTopic;
+        renderedExperimenterPage = experimenterNavigation.page();
+        if (PANEL_ROUTE_EXPERIMENTER.equals(panelRoute)) {
+            return buildExperimenterWorkflowView();
+        }
         ScrollView scroll = new ScrollView(this);
+        panelScrollView = scroll;
         scroll.setBackgroundColor(PANEL_BG);
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
         int pad = dp(18);
         root.setPadding(pad, pad, pad, pad);
         scroll.addView(root);
-
-        if (PANEL_ROUTE_EXPERIMENTER.equals(panelRoute)) {
-            appendExperimenterPanelHeader(root);
-            if ("polar".equals(breathCompositionPanelTopic)) {
-                appendBreathCompositionPolarControls(root);
-            } else {
-                appendExperimenterPanelHome(root);
-            }
-            return scroll;
-        }
 
         appendBreathCompositionPanelHeader(root);
         if ("particles".equals(breathCompositionPanelTopic)) {
@@ -676,29 +723,47 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
         root.addView(topicScroll);
     }
 
+    private View buildExperimenterWorkflowView() {
+        LinearLayout frame = new LinearLayout(this);
+        frame.setOrientation(LinearLayout.VERTICAL);
+        frame.setBackgroundColor(PANEL_BG);
+        frame.setPadding(dp(18), dp(12), dp(18), dp(12));
+        // Consume initial focus on the stable frame. Recreated child buttons must not ask
+        // ScrollView to reveal themselves after an asynchronous status update.
+        frame.setFocusableInTouchMode(true);
+        frame.setDescendantFocusability(ViewGroup.FOCUS_BEFORE_DESCENDANTS);
+        frame.requestFocus();
+        appendExperimenterPanelHeader(frame);
+        ScrollView scroll = new ScrollView(this);
+        panelScrollView = scroll;
+        scroll.setFillViewport(true);
+        LinearLayout body = new LinearLayout(this);
+        body.setOrientation(LinearLayout.VERTICAL);
+        scroll.addView(body);
+        frame.addView(scroll, new LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f));
+        if ("polar".equals(breathCompositionPanelTopic)) {
+            appendBreathCompositionPolarControls(body);
+        } else {
+            appendExperimenterPanelHome(body);
+        }
+        appendExperimenterWorkflowFooter(frame);
+        return frame;
+    }
+
     private void appendExperimenterPanelHeader(LinearLayout root) {
         LinearLayout header = new LinearLayout(this);
         header.setOrientation(LinearLayout.HORIZONTAL);
         header.setGravity(Gravity.CENTER_VERTICAL);
         String titleText = "polar".equals(breathCompositionPanelTopic)
-            ? "Polar connection" : "Experimenter session";
+            ? "Polar connection" : experimenterNavigation.page().title;
         header.addView(
             text(titleText, 22, PANEL_FG),
             new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
         );
-        if ("polar".equals(breathCompositionPanelTopic)) {
-            Button back = button("Back");
-            back.setOnClickListener(new View.OnClickListener() {
-                @Override
-                public void onClick(View view) {
-                    replaceBreathCompositionPanelContent("home");
-                }
-            });
-            header.addView(back);
-        }
         root.addView(header);
         root.addView(text(
-            "Start creates one recording. Opening or refreshing this menu never creates a session.",
+            "1 Prepare  →  2 Controls  →  3 Choose condition  →  4 Session",
             13,
             PANEL_MUTED
         ));
@@ -710,16 +775,34 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
         ExperimentSessionPanelViewPolicy.ViewState view =
             ExperimentSessionPanelViewPolicy.project(state);
 
+        ExperimentSessionPanelViewPolicy.Page page = experimenterNavigation.page();
+        if (page == ExperimentSessionPanelViewPolicy.Page.PREPARE) {
+            root.addView(text("Check the headset and sensor, then review the controls with the participant.", 16, PANEL_FG));
+            appendExperimenterConnection(root, state, view);
+            experimenterStorageReadback = experimenterIndicator(root,
+                "Storage: " + state.storageStatus, ExperimentSessionPanelViewPolicy.storageTone(state));
+            appendExperimenterKiosk(root);
+        } else if (page == ExperimentSessionPanelViewPolicy.Page.CONTROLS) {
+            appendExperimenterControls(root);
+        } else if (page == ExperimentSessionPanelViewPolicy.Page.CONDITION) {
+            appendExperimenterCondition(root, state, view);
+        } else {
+            appendExperimenterSession(root, state, view);
+        }
+    }
+
+    private void appendExperimenterConnection(LinearLayout root,
+            ExperimentSessionPanelState state, ExperimentSessionPanelViewPolicy.ViewState view) {
         LinearLayout connection = panelCard("Sensor connection");
         experimenterBluetoothReadback = text(view.bluetoothLine, 14, PANEL_FG);
         experimenterPolarReadback = text(view.polarLine, 14, PANEL_FG);
+        styleExperimenterIndicator(experimenterBluetoothReadback, ExperimentSessionPanelViewPolicy.bluetoothTone(state));
+        styleExperimenterIndicator(experimenterPolarReadback, ExperimentSessionPanelViewPolicy.polarTone(state));
         connection.addView(experimenterBluetoothReadback);
         connection.addView(experimenterPolarReadback);
-        if (!state.polar.detail.isEmpty()) {
-            connection.addView(text(state.polar.detail, 12, PANEL_MUTED));
-        }
         experimenterPolarFallback = button("Open Polar connection");
-        experimenterPolarFallback.setVisibility(view.showPolarFallback ? View.VISIBLE : View.GONE);
+        // Keep this row stable as Bluetooth/Polar callbacks arrive.
+        experimenterPolarFallback.setVisibility(View.VISIBLE);
         experimenterPolarFallback.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
@@ -728,30 +811,10 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
         });
         connection.addView(experimenterPolarFallback);
         root.addView(connection);
+    }
 
-        LinearLayout sessions = panelCard("Recorded sessions");
-        experimenterCountReadback = text(view.countLine, 14, PANEL_FG);
-        experimenterStatusReadback = text(
-            view.statusLine,
-            13,
-            view.saving ? PANEL_ACCENT : PANEL_MUTED
-        );
-        sessions.addView(experimenterCountReadback);
-        sessions.addView(experimenterStatusReadback);
-        if (!state.detail.isEmpty()) {
-            sessions.addView(text(state.detail, 12, PANEL_MUTED));
-        }
-        Button refresh = button("Refresh status");
-        refresh.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View ignored) {
-                requestExperimentSessionStatus();
-            }
-        });
-        sessions.addView(refresh);
-        root.addView(sessions);
-
-        LinearLayout kiosk = panelCard("Soft kiosk and exit");
+    private void appendExperimenterKiosk(LinearLayout root) {
+        LinearLayout kiosk = panelCard("Headset background return");
         experimenterKioskReadback = text(
             ControlPanelActivity.softKioskEffectiveStatus(this),
             13,
@@ -759,7 +822,7 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
         );
         kiosk.addView(experimenterKioskReadback);
         kiosk.addView(text(
-            "The session guard uses this app's lifecycle. Background return may need display-over-other-apps access. Three recovered departures within 5 seconds request save and exit; this is not physical Home interception.",
+            "Enable background return if requested by the headset. The current permission and guard status are shown above.",
             12,
             PANEL_MUTED
         ));
@@ -774,23 +837,39 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
             }
         });
         kiosk.addView(overlaySetup);
-        Button saveExit = button("Save and exit");
-        saveExit.setOnClickListener(new View.OnClickListener() {
-            @Override public void onClick(View ignored) {
-                NativeRendererSelfKioskApplication.requestSaveAndExit(BreathCompositionPanelModule.this);
-            }
-        });
-        kiosk.addView(saveExit);
         root.addView(kiosk);
+    }
 
-        LinearLayout start = panelCard("Start a condition");
+    private void appendExperimenterControls(LinearLayout root) {
+        root.addView(text("Review these controls before arming a condition. Release the buttons between gestures.", 16, PANEL_FG));
+        appendExperimenterControl(root, "Start / resume", "Hold Right Grip + A for about 0.75 seconds. Starts the official run when armed; resumes it when paused.");
+        appendExperimenterControl(root, "Pause", "Hold Right Grip + B for about 0.75 seconds during the run.");
+        appendExperimenterControl(root, "Recenter", "Press A without holding the grip to recenter.");
+        appendExperimenterControl(root, "Finish this run", "Press B three times without holding the grip. The run is finalized and the experimenter menu returns.");
+        appendExperimenterControl(root, "Developer settings", "Press the trigger three times to open the developer panel.");
+        appendExperimenterControl(root, "Save and exit the app", "Use Save and exit in this panel. The app can also request exit after three recovered departures within 5 seconds; this depends on background return and is not guaranteed physical Home-button interception.");
+    }
+
+    private void appendExperimenterControl(LinearLayout root, String title, String description) {
+        LinearLayout row = panelCard(title);
+        row.addView(text(description, 15, PANEL_FG));
+        root.addView(row);
+    }
+
+    private void appendExperimenterCondition(LinearLayout root,
+            ExperimentSessionPanelState state, ExperimentSessionPanelViewPolicy.ViewState view) {
+        LinearLayout start = panelCard("Arm one condition");
         start.addView(text(
-            "Both conditions use a 30 second completion threshold. Recording continues after completion and after natural audio end.",
-            12,
+            "Arming prepares the selected condition while audio remains silent. After fitting and checking the headset, the experimenter starts the official run in VR with Right Grip + A. Both conditions use a 30 second completion threshold; natural audio end does not finish the run.",
+            15,
             PANEL_MUTED
         ));
-        experimenterStartOne = button("Start Condition 1");
-        experimenterStartTwo = button("Start Condition 2");
+        experimenterAudioOneReadback = experimenterIndicator(start, "Condition 1 audio: checking…", ExperimentSessionPanelViewPolicy.Tone.WAITING);
+        experimenterAudioTwoReadback = experimenterIndicator(start, "Condition 2 audio: checking…", ExperimentSessionPanelViewPolicy.Tone.WAITING);
+        experimenterStartOne = button("Arm Condition 1");
+        experimenterStartTwo = button("Arm Condition 2");
+        experimenterStartOne.setMinHeight(dp(52));
+        experimenterStartTwo.setMinHeight(dp(52));
         experimenterStartOne.setEnabled(view.startEnabled);
         experimenterStartTwo.setEnabled(view.startEnabled);
         experimenterStartOne.setOnClickListener(new View.OnClickListener() {
@@ -808,11 +887,80 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
         start.addView(experimenterStartOne);
         start.addView(experimenterStartTwo);
         root.addView(start);
+        appendExperimenterConnection(root, state, view);
+        refreshExperimenterProjectionViews();
+    }
 
-        LinearLayout tools = panelCard("Operator tools");
-        Button developer = button("Open developer settings");
-        developer.setEnabled(!view.saving);
-        developer.setOnClickListener(new View.OnClickListener() {
+    private void appendExperimenterSession(LinearLayout root,
+            ExperimentSessionPanelState state, ExperimentSessionPanelViewPolicy.ViewState view) {
+        experimenterStageReadback = experimenterIndicator(root,
+            ExperimentSessionPanelViewPolicy.stageTitle(state), ExperimentSessionPanelViewPolicy.stageTone(state));
+        experimenterInstructionReadback = text(ExperimentSessionPanelViewPolicy.stageInstruction(state), 16, PANEL_FG);
+        root.addView(experimenterInstructionReadback);
+        root.addView(text("Start / resume: Right Grip + A · Pause: Right Grip + B · Hold for about 0.75 seconds.", 14, PANEL_MUTED));
+        experimenterResume = button("Return to VR");
+        experimenterResume.setMinHeight(dp(52));
+        experimenterResume.setEnabled(
+            ExperimentSessionPanelViewPolicy.canReturnToImmersive(state) && !view.saving
+        );
+        experimenterResume.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View ignored) { closePanelAndReturnToImmersive(); }
+        });
+        root.addView(experimenterResume);
+        LinearLayout sessions = panelCard("Session status");
+        experimenterCountReadback = text(view.countLine, 14, PANEL_FG);
+        experimenterStatusReadback = text(view.statusLine, 14, PANEL_MUTED);
+        sessions.addView(experimenterCountReadback);
+        sessions.addView(experimenterStatusReadback);
+        Button refresh = button("Refresh status");
+        refresh.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View ignored) { requestExperimentSessionStatus(); }
+        });
+        sessions.addView(refresh);
+        root.addView(sessions);
+    }
+
+    private void appendExperimenterWorkflowFooter(LinearLayout root) {
+        LinearLayout footer = new LinearLayout(this);
+        footer.setOrientation(LinearLayout.HORIZONTAL);
+        footer.setGravity(Gravity.CENTER_VERTICAL);
+        footer.setPadding(0, dp(10), 0, 0);
+        final ExperimentSessionPanelViewPolicy.Page page = experimenterNavigation.page();
+        Button back = button("Back");
+        back.setEnabled("polar".equals(breathCompositionPanelTopic) || page != ExperimentSessionPanelViewPolicy.Page.PREPARE);
+        back.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View ignored) {
+                if ("polar".equals(breathCompositionPanelTopic)) replaceBreathCompositionPanelContent("home");
+                else selectExperimenterPage(ExperimentSessionPanelViewPolicy.Page.values()[page.ordinal() - 1]);
+            }
+        });
+        footer.addView(back);
+        experimenterFooterReadback = text("", 13, PANEL_MUTED);
+        footer.addView(experimenterFooterReadback, new LinearLayout.LayoutParams(0,
+            LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+        if (!"polar".equals(breathCompositionPanelTopic)) {
+            String nextText = page == ExperimentSessionPanelViewPolicy.Page.PREPARE ? "Next: Controls"
+                : page == ExperimentSessionPanelViewPolicy.Page.CONTROLS ? "Next: Choose condition"
+                : page == ExperimentSessionPanelViewPolicy.Page.CONDITION ? "Session status" : "Prepare next run";
+            Button next = button(nextText);
+            experimenterNext = next;
+            next.setMinHeight(dp(48));
+            next.setEnabled(page != ExperimentSessionPanelViewPolicy.Page.SESSION
+                || !EXPERIMENT_SESSION_PANEL.snapshot().hasActiveSession());
+            next.setOnClickListener(new View.OnClickListener() {
+                @Override public void onClick(View ignored) {
+                    selectExperimenterPage(page == ExperimentSessionPanelViewPolicy.Page.SESSION
+                        ? ExperimentSessionPanelViewPolicy.Page.PREPARE
+                        : ExperimentSessionPanelViewPolicy.Page.values()[page.ordinal() + 1]);
+                }
+            });
+            footer.addView(next);
+        }
+        root.addView(footer);
+        LinearLayout tools = new LinearLayout(this);
+        tools.setOrientation(LinearLayout.HORIZONTAL);
+        experimenterDeveloper = button("Open developer settings");
+        experimenterDeveloper.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View ignored) {
                 EXPERIMENT_SESSION_PANEL.openDeveloper(
@@ -822,18 +970,16 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
                 replaceBreathCompositionPanelContent("home");
             }
         });
-        tools.addView(developer);
-        if (state.hasActiveSession() && !view.saving) {
-            Button resume = button("Resume current session");
-            resume.setOnClickListener(new View.OnClickListener() {
-                @Override
-                public void onClick(View ignored) {
-                    closePanelAndReturnToImmersive();
-                }
-            });
-            tools.addView(resume);
-        }
+        tools.addView(experimenterDeveloper);
+        Button saveExit = button("Save and exit");
+        saveExit.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View ignored) {
+                NativeRendererSelfKioskApplication.requestSaveAndExit(BreathCompositionPanelModule.this);
+            }
+        });
+        tools.addView(saveExit);
         root.addView(tools);
+        refreshExperimenterProjectionViews();
     }
 
     private String breathCompositionTopicTitle() {
@@ -882,6 +1028,7 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
     }
 
     private void replaceBreathCompositionPanelContent(String topic) {
+        rememberPanelScroll();
         cancelPendingPrivateParticleDynamicsApply();
         cancelPendingPrivateParticleEffectReadback();
         cancelBreathCompositionRefresh();
@@ -889,7 +1036,79 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
         breathCompositionPanelNavigationEpoch += 1L;
         breathCompositionPanelTopic = topic;
         setContentView(buildBreathCompositionControlPanelView());
+        restorePanelScrollAfterLayout();
         scheduleExperimenterProjectionRefresh();
+    }
+
+    private void selectExperimenterPage(ExperimentSessionPanelViewPolicy.Page page) {
+        rememberPanelScroll();
+        experimenterNavigation.select(page);
+        replaceBreathCompositionPanelContent("home");
+    }
+
+    private void rememberPanelScroll() {
+        if (panelScrollView == null) return;
+        int y = panelScrollView.getScrollY();
+        if (PANEL_ROUTE_EXPERIMENTER.equals(renderedPanelRoute)) {
+            if ("polar".equals(renderedPanelTopic)) polarPageScrollY = y;
+            else experimenterNavigation.rememberScroll(renderedExperimenterPage, y);
+        } else if (renderedPanelTopic != null) developerPageScroll.put(renderedPanelTopic, y);
+    }
+
+    private void restorePanelScrollAfterLayout() {
+        final ScrollView scroll = panelScrollView;
+        if (scroll == null) return;
+        final long epoch = breathCompositionPanelNavigationEpoch;
+        Integer developerY = developerPageScroll.get(breathCompositionPanelTopic);
+        final int y = PANEL_ROUTE_EXPERIMENTER.equals(panelRoute)
+            ? ("polar".equals(breathCompositionPanelTopic) ? polarPageScrollY : experimenterNavigation.scrollY())
+            : (developerY == null ? 0 : developerY);
+        scroll.addOnLayoutChangeListener(new View.OnLayoutChangeListener() {
+            @Override public void onLayoutChange(View view, int left, int top, int right, int bottom,
+                    int oldLeft, int oldTop, int oldRight, int oldBottom) {
+                scroll.removeOnLayoutChangeListener(this);
+                if (panelScrollView == scroll && epoch == breathCompositionPanelNavigationEpoch) {
+                    scroll.scrollTo(0, y);
+                }
+            }
+        });
+    }
+
+    /** Native callbacks update current views; only explicit navigation replaces the body. */
+    private void refreshExperimenterAfterReadback() {
+        if (PANEL_ROUTE_EXPERIMENTER.equals(panelRoute)) refreshExperimenterProjectionViews();
+    }
+
+    /** Call after an accepted arm, before returning to VR, so panel recall shows run controls. */
+    private void showExperimenterSessionPage() {
+        selectExperimenterPage(ExperimentSessionPanelViewPolicy.Page.SESSION);
+    }
+
+    private TextView experimenterIndicator(LinearLayout root, String value,
+            ExperimentSessionPanelViewPolicy.Tone tone) {
+        TextView label = text(value, 15, PANEL_FG);
+        styleExperimenterIndicator(label, tone);
+        root.addView(label);
+        return label;
+    }
+
+    private void styleExperimenterIndicator(TextView label, ExperimentSessionPanelViewPolicy.Tone tone) {
+        if (label.getTag() == tone) return;
+        label.setTag(tone);
+        int color = tone == ExperimentSessionPanelViewPolicy.Tone.READY ? Color.rgb(139, 223, 174)
+            : tone == ExperimentSessionPanelViewPolicy.Tone.ATTENTION ? Color.rgb(255, 158, 154)
+            : tone == ExperimentSessionPanelViewPolicy.Tone.WAITING ? PANEL_ACCENT : PANEL_FG;
+        label.setTextColor(color);
+        label.setPadding(dp(10), dp(8), dp(10), dp(8));
+        GradientDrawable background = new GradientDrawable();
+        background.setColor(PANEL_SURFACE);
+        background.setCornerRadius(dp(3));
+        background.setStroke(dp(1), color);
+        label.setBackground(background);
+    }
+
+    private void setExperimenterText(TextView view, String value) {
+        if (view != null && !value.contentEquals(view.getText())) view.setText(value);
     }
 
     private void invalidatePrivateParticleControls() {
@@ -2139,12 +2358,13 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
             return;
         }
         ExperimentSessionPanelCoordinator.NativeCommand command =
-            EXPERIMENT_SESSION_PANEL.start(condition);
+            EXPERIMENT_SESSION_PANEL.arm(condition);
         if (command == null) {
             updateStatus("Start rejected: a session or operation is already active.");
             rebuildContentViewForCurrentMode();
             return;
         }
+        showExperimenterSessionPage();
         submitExperimentSessionCommand(command, true);
     }
 
@@ -2164,7 +2384,7 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
             return;
         }
         EXPERIMENT_SESSION_SHELL.submit(command, start, this);
-        rebuildContentViewForCurrentMode();
+        refreshExperimenterAfterReadback();
     }
 
     @Override
@@ -2178,7 +2398,8 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
         if (readback == null || readback.receipt == null) return;
         EXPERIMENT_SESSION_PANEL.acceptRuntimeEpoch(readback.runtimeEpoch);
         ExperimentSessionPanelState before = EXPERIMENT_SESSION_PANEL.snapshot();
-        boolean startingOperation = before.phase == ExperimentSessionPanelState.Phase.STARTING
+        boolean startingOperation = (before.phase == ExperimentSessionPanelState.Phase.STARTING
+                || before.phase == ExperimentSessionPanelState.Phase.ARMING)
             && before.pendingOperationId.equals(readback.receipt.operationId);
         boolean changed = EXPERIMENT_SESSION_PANEL.accept(readback.receipt);
         if (changed && startingOperation && EXPERIMENT_SESSION_PANEL.snapshot().recording) {
@@ -2186,17 +2407,16 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
                     readback.receipt.generation,
                     readback.receipt.operationId,
                     readback.receipt.activeCondition)) {
-                updateStatus("Session active; condition audio start was rejected.");
+                updateStatus("Session armed, but condition audio preparation was rejected.");
             }
+        }
+        ExperimentSessionPanelState after = EXPERIMENT_SESSION_PANEL.snapshot();
+        if (changed && before.phase != ExperimentSessionPanelState.Phase.ARMED
+                && after.phase == ExperimentSessionPanelState.Phase.ARMED) {
             closePanelAndReturnToImmersive();
             return;
         }
-        updateStatus(
-            "Session runtime " + emptyAs(readback.initializationStatus, "unknown")
-                + "; inventory=" + emptyAs(readback.inventoryStatus, "unavailable")
-                + "; storage=" + emptyAs(readback.recordingRootStatus, "unavailable")
-        );
-        rebuildContentViewForCurrentMode();
+        refreshExperimenterAfterReadback();
     }
 
     @Override
@@ -2248,6 +2468,7 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
             public void run() {
                 refreshExperimenterPolarProjection();
                 refreshExperimenterProjectionViews();
+                EXPERIMENT_SESSION_SHELL.requestStatus(BreathCompositionPanelModule.this);
                 if (experimenterProjectionRefresh == this && liveApplyHandler != null) {
                     liveApplyHandler.postDelayed(this, 1000L);
                 }
@@ -2272,39 +2493,87 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
         experimenterPolarFallback = null;
         experimenterStartOne = null;
         experimenterStartTwo = null;
+        experimenterStageReadback = null;
+        experimenterInstructionReadback = null;
+        experimenterStorageReadback = null;
+        experimenterFooterReadback = null;
+        experimenterAudioOneReadback = null;
+        experimenterAudioTwoReadback = null;
+        experimenterResume = null;
+        experimenterNext = null;
+        experimenterDeveloper = null;
     }
 
     private void refreshExperimenterProjectionViews() {
+        ExperimentSessionPanelState state = EXPERIMENT_SESSION_PANEL.snapshot();
         ExperimentSessionPanelViewPolicy.ViewState projected =
-            ExperimentSessionPanelViewPolicy.project(EXPERIMENT_SESSION_PANEL.snapshot());
+            ExperimentSessionPanelViewPolicy.project(state);
         if (experimenterBluetoothReadback != null) {
-            experimenterBluetoothReadback.setText(projected.bluetoothLine);
+            setExperimenterText(experimenterBluetoothReadback, projected.bluetoothLine);
+            styleExperimenterIndicator(experimenterBluetoothReadback, ExperimentSessionPanelViewPolicy.bluetoothTone(state));
         }
         if (experimenterPolarReadback != null) {
-            experimenterPolarReadback.setText(projected.polarLine);
+            setExperimenterText(experimenterPolarReadback, projected.polarLine);
+            styleExperimenterIndicator(experimenterPolarReadback, ExperimentSessionPanelViewPolicy.polarTone(state));
         }
         if (experimenterCountReadback != null) {
-            experimenterCountReadback.setText(projected.countLine);
+            setExperimenterText(experimenterCountReadback, projected.countLine);
         }
         if (experimenterStatusReadback != null) {
-            experimenterStatusReadback.setText(projected.statusLine);
+            setExperimenterText(experimenterStatusReadback, projected.statusLine);
             experimenterStatusReadback.setTextColor(projected.saving ? PANEL_ACCENT : PANEL_MUTED);
         }
         if (experimenterKioskReadback != null) {
-            experimenterKioskReadback.setText(
+            setExperimenterText(experimenterKioskReadback,
                 ControlPanelActivity.softKioskEffectiveStatus(this)
             );
         }
         if (experimenterPolarFallback != null) {
-            experimenterPolarFallback.setVisibility(
-                projected.showPolarFallback ? View.VISIBLE : View.GONE
-            );
+            setExperimenterText(experimenterPolarFallback, projected.showPolarFallback
+                ? "Open Polar connection" : "Inspect Polar connection");
         }
+        String audioOne = experimenterStartOne == null ? ""
+            : ControlPanelActivity.conditionAudioReadiness(ExperimentSessionPanelCoordinator.CONDITION_ONE);
+        String audioTwo = experimenterStartTwo == null ? ""
+            : ControlPanelActivity.conditionAudioReadiness(ExperimentSessionPanelCoordinator.CONDITION_TWO);
         if (experimenterStartOne != null) {
-            experimenterStartOne.setEnabled(projected.startEnabled);
+            experimenterStartOne.setEnabled(projected.startEnabled && "track-ready".equals(audioOne));
         }
         if (experimenterStartTwo != null) {
-            experimenterStartTwo.setEnabled(projected.startEnabled);
+            experimenterStartTwo.setEnabled(projected.startEnabled && "track-ready".equals(audioTwo));
+        }
+        updateExperimenterAudioReadback(experimenterAudioOneReadback, "Condition 1", audioOne);
+        updateExperimenterAudioReadback(experimenterAudioTwoReadback, "Condition 2", audioTwo);
+        if (experimenterStageReadback != null) {
+            setExperimenterText(experimenterStageReadback, ExperimentSessionPanelViewPolicy.stageTitle(state));
+            styleExperimenterIndicator(experimenterStageReadback, ExperimentSessionPanelViewPolicy.stageTone(state));
+        }
+        setExperimenterText(experimenterInstructionReadback, ExperimentSessionPanelViewPolicy.stageInstruction(state));
+        if (experimenterStorageReadback != null) {
+            setExperimenterText(experimenterStorageReadback, "Storage: " + state.storageStatus);
+            styleExperimenterIndicator(experimenterStorageReadback, ExperimentSessionPanelViewPolicy.storageTone(state));
+        }
+        setExperimenterText(experimenterFooterReadback, ExperimentSessionPanelViewPolicy.stageTitle(state));
+        if (experimenterResume != null) {
+            experimenterResume.setEnabled(
+                ExperimentSessionPanelViewPolicy.canReturnToImmersive(state) && !projected.saving
+            );
+            experimenterResume.setText(state.phase == ExperimentSessionPanelState.Phase.ERROR
+                ? "Return to VR to finish" : "Return to VR");
+        }
+        if (experimenterNext != null
+                && experimenterNavigation.page() == ExperimentSessionPanelViewPolicy.Page.SESSION) {
+            experimenterNext.setEnabled(!state.hasActiveSession());
+        }
+        if (experimenterDeveloper != null) experimenterDeveloper.setEnabled(!projected.saving);
+    }
+
+    private void updateExperimenterAudioReadback(TextView readback, String label, String readiness) {
+        if (readback != null) {
+            boolean ready = "track-ready".equals(readiness);
+            setExperimenterText(readback, label + " audio: " + (ready ? "ready" : readiness));
+            styleExperimenterIndicator(readback, ready
+                ? ExperimentSessionPanelViewPolicy.Tone.READY : ExperimentSessionPanelViewPolicy.Tone.ATTENTION);
         }
     }
 
@@ -3615,6 +3884,13 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
     }
 
     private void closePanelAndReturnToImmersive() {
+        ExperimentSessionPanelState state = EXPERIMENT_SESSION_PANEL.snapshot();
+        if (state.phase == ExperimentSessionPanelState.Phase.ARMING
+                || state.phase == ExperimentSessionPanelState.Phase.STARTING) {
+            updateStatus("Please wait until condition audio is prepared and the run is armed.");
+            refreshExperimenterAfterReadback();
+            return;
+        }
         ControlPanelActivity.closePanelAndReturnToImmersive(this);
     }
 
@@ -3998,6 +4274,8 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
                         projection.optLong("generation", 0L),
                         projection.optLong("revision", 0L),
                         phase,
+                        projection.optBoolean("audio_technical_hold", false)
+                            ? "audio-error" : projection.optString("control_state", ""),
                         before.activeCondition,
                         "active".equals(phase),
                         "running".equals(projection.optString("recovery_status", "not-run"))
@@ -4019,7 +4297,9 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
                         counts == null ? 0L : counts.optLong("errors", 0L),
                         routeAction,
                         projection.optLong("route_action_revision", 0L),
-                        startingOperation && !accepted
+                        projection.optBoolean("audio_technical_hold", false)
+                            ? "audio-technical-hold"
+                            : startingOperation && !accepted
                             ? "start-identity-binding-missing"
                             : reason
                                 + " · recovery="

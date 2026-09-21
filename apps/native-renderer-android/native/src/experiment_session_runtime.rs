@@ -196,6 +196,12 @@ impl RouteAction {
 
 #[derive(Clone, Debug)]
 struct Projection {
+    audio_technical_hold: bool,
+    control_state: crate::experiment_session::ExperimentControlState,
+    control_receipt_generation: u64,
+    control_receipt_revision: u64,
+    control_event: &'static str,
+    control_event_elapsed_realtime_ns: u64,
     runtime_epoch: u64,
     revision: u64,
     generation: u64,
@@ -231,6 +237,12 @@ struct Projection {
 impl Default for Projection {
     fn default() -> Self {
         Self {
+            audio_technical_hold: false,
+            control_state: crate::experiment_session::ExperimentControlState::Idle,
+            control_receipt_generation: 0,
+            control_receipt_revision: 0,
+            control_event: "none",
+            control_event_elapsed_realtime_ns: 0,
             runtime_epoch: 0,
             revision: 0,
             generation: 0,
@@ -276,6 +288,12 @@ impl Projection {
                 "revision": self.revision,
                 "generation": self.generation,
                 "phase": phase_token(self.phase),
+                "control_state": self.control_state.as_str(),
+                "audio_technical_hold": self.audio_technical_hold,
+                "control_receipt_generation": self.control_receipt_generation,
+                "control_receipt_revision": self.control_receipt_revision,
+                "control_event": self.control_event,
+                "control_event_elapsed_realtime_ns": self.control_event_elapsed_realtime_ns,
                 "presentation": presentation_token(self.presentation),
                 "active_time_ms": self.active_time_ns / 1_000_000,
                 "completion": completion_token(self.completion),
@@ -422,6 +440,7 @@ impl TrustedExperimentInventory {
 #[derive(Clone, Debug)]
 enum ParsedOperation {
     Start {
+        arm: bool,
         condition: ConditionKey,
         completion_threshold_ns: u64,
         utc_ns: u64,
@@ -432,6 +451,10 @@ enum ParsedOperation {
     AudioStarted,
     AudioEnded,
     AudioError,
+    AudioPrepared,
+    OfficialStart,
+    Pause,
+    Resume,
     RestartToExperimenter,
     SaveAndExit,
 }
@@ -469,6 +492,12 @@ struct ProducerGate {
 }
 
 trait RecordingBackend: Send {
+    fn record_control(
+        &self,
+        generation: u64,
+        at: MonotonicNanos,
+        kind: SessionEventKind,
+    ) -> Result<(), String>;
     fn recover(&mut self, root: &Path) -> Result<RecoveryReport, String>;
     fn prepare(&mut self, generation: u64, spec: SessionStartSpec) -> Result<(), String>;
     fn offer(&self, generation: u64, record: SessionRecord) -> OfferReceipt;
@@ -539,6 +568,16 @@ impl ActualRecordingBackend {
 }
 
 impl RecordingBackend for ActualRecordingBackend {
+    fn record_control(
+        &self,
+        generation: u64,
+        at: MonotonicNanos,
+        kind: SessionEventKind,
+    ) -> Result<(), String> {
+        self.writer()?
+            .record_control(generation, at, kind)?
+            .receive_timeout(CONTROL_TIMEOUT)
+    }
     fn recover(&mut self, root: &Path) -> Result<RecoveryReport, String> {
         self.ensure_writer(root)?
             .recover()?
@@ -772,6 +811,7 @@ impl SessionWorker {
         };
         let command = match &parsed.operation {
             ParsedOperation::Start {
+                arm,
                 condition,
                 completion_threshold_ns,
                 utc_ns,
@@ -787,9 +827,16 @@ impl SessionWorker {
                         .expect("resolved start identity"),
                 };
                 self.pending_start = Some((spec, identity.clone(), parsed.received_at));
-                SessionCommand::Start {
-                    condition: condition.clone(),
-                    completion_threshold_ns: *completion_threshold_ns,
+                if *arm {
+                    SessionCommand::Arm {
+                        condition: condition.clone(),
+                        completion_threshold_ns: *completion_threshold_ns,
+                    }
+                } else {
+                    SessionCommand::Start {
+                        condition: condition.clone(),
+                        completion_threshold_ns: *completion_threshold_ns,
+                    }
                 }
             }
             ParsedOperation::Presentation(value) => SessionCommand::PresentationChanged(*value),
@@ -797,6 +844,10 @@ impl SessionWorker {
             ParsedOperation::AudioStarted => SessionCommand::AudioStarted,
             ParsedOperation::AudioEnded => SessionCommand::AudioEnded,
             ParsedOperation::AudioError => SessionCommand::AudioError,
+            ParsedOperation::AudioPrepared => SessionCommand::AudioPrepared,
+            ParsedOperation::OfficialStart => SessionCommand::OfficialStart,
+            ParsedOperation::Pause => SessionCommand::Pause,
+            ParsedOperation::Resume => SessionCommand::Resume,
             ParsedOperation::RestartToExperimenter => SessionCommand::RestartToExperimenter,
             ParsedOperation::SaveAndExit => SessionCommand::SaveAndExit,
         };
@@ -985,6 +1036,28 @@ impl SessionWorker {
                     } else if presentation == PresentationState::ImmersiveActive {
                         self.set_route(RouteAction::None);
                     }
+                }
+                SessionEffect::RecordControl(kind) => {
+                    if let Err(error) =
+                        self.backend
+                            .record_control(self.controller.generation(), at, kind)
+                    {
+                        // An uncertain control checkpoint must never leave an apparently
+                        // running experiment. Finalize once and report the recording failure.
+                        self.completion_persistence_failure = Some(error.clone());
+                        let stopping =
+                            self.apply_internal(at, SessionCommand::RestartToExperimenter)?;
+                        self.refresh_controller_projection();
+                        let _ = self.process_effects(stopping.effects, at);
+                        return Err(format!("recording-control-persistence:{error}"));
+                    }
+                    self.projection_write(|projection| {
+                        projection.control_receipt_generation = self.controller.generation();
+                        projection.control_receipt_revision =
+                            projection.control_receipt_revision.saturating_add(1);
+                        projection.control_event = kind.as_str();
+                        projection.control_event_elapsed_realtime_ns = at.get();
+                    });
                 }
                 SessionEffect::RecordAudioStarted => {
                     self.offer_control_event(at, SessionEventKind::AudioStarted)?;
@@ -1362,6 +1435,8 @@ impl SessionWorker {
         self.projection_write(|projection| {
             projection.generation = self.controller.generation();
             projection.phase = self.controller.phase();
+            projection.control_state = self.controller.control_state();
+            projection.audio_technical_hold = self.controller.audio_error();
             projection.presentation = self.controller.presentation();
             self.presentation_state.store(
                 presentation_code(self.controller.presentation()),
@@ -2207,6 +2282,40 @@ pub(crate) fn request_restart_from_native(
     )
 }
 
+pub(crate) fn request_control_from_native(
+    operation: &str,
+    operation_id: &str,
+    expected_generation: u64,
+    elapsed_realtime_ns: u64,
+) -> String {
+    apply_command_json(
+        &json!({
+            "schema": EXPERIMENT_SESSION_COMMAND_SCHEMA,
+            "operation": operation,
+            "operation_id": operation_id,
+            "expected_generation": expected_generation,
+            "elapsed_realtime_ns": elapsed_realtime_ns,
+        })
+        .to_string(),
+    )
+}
+
+pub(crate) fn current_control_receipt() -> Option<(
+    crate::experiment_session::ExperimentControlState,
+    u64,
+    u64,
+    &'static str,
+)> {
+    let runtime = runtime().ok()?;
+    let projection = runtime.projection.try_read().ok()?;
+    Some((
+        projection.control_state,
+        projection.control_receipt_generation,
+        projection.control_receipt_revision,
+        projection.control_event,
+    ))
+}
+
 pub(crate) fn request_open_developer_from_native(
     operation_id: &str,
     expected_generation: u64,
@@ -2486,7 +2595,7 @@ fn parse_mutating_command(
         .and_then(Value::as_str)
         .ok_or_else(|| failure("operation-invalid"))?;
     let operation = match operation_name {
-        "start" => {
+        "start" | "arm" => {
             if !object.contains_key("non_audio_profile_sha256") {
                 return Err(failure("profile-identity-missing"));
             }
@@ -2542,6 +2651,7 @@ fn parse_mutating_command(
             )
             .map_err(|reason| failure(reason))?;
             ParsedOperation::Start {
+                arm: operation_name == "arm",
                 condition,
                 completion_threshold_ns: threshold_ms.saturating_mul(1_000_000),
                 utc_ns,
@@ -2574,6 +2684,15 @@ fn parse_mutating_command(
         "tick" => {
             require_common_fields(object, &[]).map_err(|reason| failure(reason))?;
             ParsedOperation::Tick
+        }
+        "audio-prepared" | "official-start" | "pause" | "resume" => {
+            require_common_fields(object, &[]).map_err(|reason| failure(reason))?;
+            match operation_name {
+                "audio-prepared" => ParsedOperation::AudioPrepared,
+                "official-start" => ParsedOperation::OfficialStart,
+                "pause" => ParsedOperation::Pause,
+                _ => ParsedOperation::Resume,
+            }
         }
         "audio-started" => {
             require_common_fields(object, &[]).map_err(|reason| failure(reason))?;
@@ -3101,6 +3220,7 @@ mod tests {
     }
 
     struct DamageBackend {
+        fail_control_once: AtomicBool,
         inner: ActualRecordingBackend,
         recover_delay: Duration,
         prepare_delay: Duration,
@@ -3115,6 +3235,7 @@ mod tests {
             loss: Arc<OnceLock<ExternalLossRecorder>>,
         ) -> Self {
             Self {
+                fail_control_once: AtomicBool::new(false),
                 inner: ActualRecordingBackend::new(slot, loss),
                 recover_delay: Duration::ZERO,
                 prepare_delay: Duration::ZERO,
@@ -3126,6 +3247,19 @@ mod tests {
     }
 
     impl RecordingBackend for DamageBackend {
+        fn record_control(
+            &self,
+            generation: u64,
+            at: MonotonicNanos,
+            kind: SessionEventKind,
+        ) -> Result<(), String> {
+            if kind == SessionEventKind::OfficialStart
+                && self.fail_control_once.swap(false, Ordering::AcqRel)
+            {
+                return Err("injected-control-checkpoint-failure".to_owned());
+            }
+            self.inner.record_control(generation, at, kind)
+        }
         fn recover(&mut self, root: &Path) -> Result<RecoveryReport, String> {
             thread::sleep(self.recover_delay);
             self.inner.recover(root)
@@ -3214,6 +3348,98 @@ mod tests {
             thread::sleep(Duration::from_millis(5));
         }
         panic!("status did not contain {needle}: {}", runtime.status_json());
+    }
+
+    #[test]
+    fn explicit_control_events_are_durable_once_and_audio_errors_hold_timing() {
+        let root = temp_root("explicit-control");
+        let runtime = runtime(&root);
+        wait_for(&runtime, "\"initialization_status\":\"ready\"");
+        let arm =
+            start_command(&root, "arm").replace("\"operation\":\"start\"", "\"operation\":\"arm\"");
+        runtime.apply_command_json(&arm);
+        wait_for(&runtime, "\"control_state\":\"arming\"");
+        runtime.apply_command_json(&command("audio-prepared", "prepared", 1, 2000));
+        wait_for(&runtime, "\"control_receipt_revision\":1");
+        runtime.note_submitted_frame(1, 1);
+        runtime.apply_command_json(&json!({ "schema":EXPERIMENT_SESSION_COMMAND_SCHEMA, "operation":"presentation",
+            "operation_id":"present", "expected_generation":1, "elapsed_realtime_ns":3000, "presentation":"immersive-active" }).to_string());
+        wait_for(&runtime, "\"presentation\":\"immersive-active\"");
+        let start = command("official-start", "official", 1, 4000);
+        runtime.apply_command_json(&start);
+        wait_for(&runtime, "\"control_receipt_revision\":2");
+        runtime.apply_command_json(&start);
+        wait_for(&runtime, "\"last_operation_status\":\"duplicate\"");
+        runtime.apply_command_json(&command("pause", "pause", 1, 5000));
+        wait_for(&runtime, "\"control_receipt_revision\":3");
+        runtime.apply_command_json(&command("resume", "resume", 1, 6000));
+        wait_for(&runtime, "\"control_receipt_revision\":4");
+        runtime.apply_command_json(&command("audio-error", "audio-failure", 1, 7000));
+        let held = wait_for(&runtime, "\"control_receipt_revision\":5");
+        assert!(held.contains("\"control_state\":\"paused\""));
+        assert!(held.contains("\"audio_technical_hold\":true"));
+        // Read before finalization: the control receipt requires a flushed checkpoint,
+        // not eventual persistence when the user exits.
+        let directory = fs::read_dir(&root)
+            .unwrap()
+            .filter_map(Result::ok)
+            .find(|entry| entry.path().join("events.jsonl").is_file())
+            .unwrap()
+            .path();
+        let events = fs::read_to_string(directory.join("events.jsonl")).unwrap();
+        assert_eq!(
+            events.matches("\"event\":\"official-start\"").count(),
+            1,
+            "{events}"
+        );
+        assert_eq!(events.matches("\"event\":\"armed\"").count(), 1, "{events}");
+        assert_eq!(
+            events.matches("\"event\":\"experiment-resumed\"").count(),
+            1,
+            "{events}"
+        );
+        assert!(
+            events.contains("4000"),
+            "official t0 must retain command time"
+        );
+        runtime.apply_command_json(&command("save-and-exit", "exit", 1, 8000));
+        wait_for(&runtime, "\"shutdown_status\":\"complete\"");
+        runtime.shutdown_for_test().unwrap();
+        fs::remove_dir_all(root.parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn failed_official_start_checkpoint_finalizes_instead_of_running() {
+        let root = temp_root("control-checkpoint-failure");
+        let runtime = ExperimentSessionRuntime::spawn(
+            root.clone(),
+            Some(trusted_inventory()),
+            |slot, loss| {
+                let backend = DamageBackend::new(slot, loss);
+                backend.fail_control_once.store(true, Ordering::Release);
+                Box::new(backend)
+            },
+        )
+        .unwrap();
+        wait_for(&runtime, "\"initialization_status\":\"ready\"");
+        runtime.apply_command_json(
+            &start_command(&root, "arm")
+                .replace("\"operation\":\"start\"", "\"operation\":\"arm\""),
+        );
+        wait_for(&runtime, "\"control_state\":\"arming\"");
+        runtime.apply_command_json(&command("audio-prepared", "prepared", 1, 2000));
+        wait_for(&runtime, "\"control_receipt_revision\":1");
+        runtime.note_submitted_frame(1, 1);
+        runtime.apply_command_json(&json!({ "schema":EXPERIMENT_SESSION_COMMAND_SCHEMA, "operation":"presentation",
+            "operation_id":"present", "expected_generation":1, "elapsed_realtime_ns":3000, "presentation":"immersive-active" }).to_string());
+        wait_for(&runtime, "\"presentation\":\"immersive-active\"");
+        runtime.apply_command_json(&command("official-start", "official", 1, 4000));
+        let failed = wait_for(&runtime, "recording-control-persistence");
+        assert!(failed.contains("\"control_state\":\"idle\""));
+        assert!(failed.contains("\"control_receipt_revision\":1"));
+        assert!(failed.contains("\"status\":\"unsaved\""));
+        runtime.shutdown_for_test().unwrap();
+        fs::remove_dir_all(root.parent().unwrap()).unwrap();
     }
 
     #[test]

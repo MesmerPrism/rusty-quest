@@ -223,6 +223,11 @@ final class ConditionAudioAndroidMediaBackendFactory
 
         @Override public void stop() { player.stop(); }
 
+        @Override public long pause() {
+            player.pause();
+            return Math.max(0L, player.getCurrentPosition());
+        }
+
         @Override public void release() {
             if (released) return;
             released = true;

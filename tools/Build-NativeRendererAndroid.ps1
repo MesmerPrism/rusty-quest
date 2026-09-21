@@ -813,10 +813,13 @@ public final class ControlPanelActivity extends $selectedPanelEntrySimpleName {
     // EXPERIMENT_SESSION_SHELL_BEGIN
     private static volatile android.content.Context ownerApplicationContext;
     private static volatile ConditionAudioRuntime conditionAudioRuntime;
+    private static volatile ExperimentSessionPackagedClosure.Result experimentSessionClosure;
     private static long pendingAudioGeneration;
     private static String pendingAudioPrepareOperation = "";
     private static boolean audioImmersiveAdmitted;
     private static boolean audioPrepared;
+    private static long appliedAudioControlGeneration;
+    private static long appliedAudioControlRevision;
     private static final ExperimentSessionPackagedClosure.Anchors EXPERIMENT_SESSION_ANCHORS =
         new ExperimentSessionPackagedClosure.Anchors(
             "$experimentSessionProfileSha256",
@@ -868,6 +871,7 @@ public final class ControlPanelActivity extends $selectedPanelEntrySimpleName {
                         },
                         exactFilesRoot,
                         EXPERIMENT_SESSION_ANCHORS);
+                experimentSessionClosure = closure;
                 if (closure.active) {
                     ConditionAudioContract.Provider[] providers =
                         new ConditionAudioContract.Provider[closure.audioEntries.length];
@@ -895,6 +899,7 @@ public final class ControlPanelActivity extends $selectedPanelEntrySimpleName {
                         "packaged-inventory-inactive");
                 }
             } catch (Exception error) {
+                experimentSessionClosure = null;
                 inventory = ConditionAudioContract.TrustedPackagedInventory.unavailable(
                     "packaged-inventory-unavailable");
                 closureFailure = new IllegalStateException(
@@ -913,7 +918,8 @@ public final class ControlPanelActivity extends $selectedPanelEntrySimpleName {
                             + " generation=" + receipt.sessionGeneration
                             + " revision=" + receipt.receiptRevision
                             + " reason=" + receipt.reason);
-                    String eventOperation = receipt.event == ConditionAudioContract.Event.ACTUAL_START
+                    String eventOperation = receipt.event == ConditionAudioContract.Event.PREPARED
+                        ? "audio-prepared" : receipt.event == ConditionAudioContract.Event.ACTUAL_START
                         ? "audio-started" : receipt.event == ConditionAudioContract.Event.NATURAL_END
                         ? "audio-ended" : receipt.event == ConditionAudioContract.Event.ERROR
                         ? "audio-error" : "";
@@ -936,7 +942,6 @@ public final class ControlPanelActivity extends $selectedPanelEntrySimpleName {
                         }
                     }
                     if (receipt.event == ConditionAudioContract.Event.PREPARED) {
-                        ConditionAudioRuntime runtime = conditionAudioRuntime;
                         String expectedOperation;
                         long expectedGeneration;
                         synchronized (PRESENTATION_LOCK) {
@@ -944,19 +949,44 @@ public final class ControlPanelActivity extends $selectedPanelEntrySimpleName {
                             expectedGeneration = pendingAudioGeneration;
                             if (receipt.sessionGeneration == expectedGeneration
                                     && expectedOperation.equals(receipt.operationId)) audioPrepared = true;
-                            if (!audioImmersiveAdmitted) return;
-                        }
-                        if (runtime != null
-                                && receipt.sessionGeneration == expectedGeneration
-                                && expectedOperation.equals(receipt.operationId)) {
-                            runtime.submit(ConditionAudioContract.Command.start(
-                                expectedGeneration,
-                                expectedOperation + "-start"));
                         }
                     }
                 }
             });
         if (closureFailure != null) throw closureFailure;
+    }
+
+    /** Binds a panel arm/start request to the verified packaged profile and audio asset. */
+    static String applyExperimentSessionCommand(String commandJson) {
+        try {
+            org.json.JSONObject command = new org.json.JSONObject(commandJson == null ? "{}" : commandJson);
+            String operation = command.optString("operation", "");
+            if ("arm".equals(operation) || "start".equals(operation)) {
+                ExperimentSessionPackagedClosure.Result closure = experimentSessionClosure;
+                if (closure == null || !closure.active) {
+                    throw new SecurityException("experiment-session-packaged-closure-unavailable");
+                }
+                String condition = command.optString("condition", "");
+                ExperimentSessionPackagedClosure.AudioEntry selected = null;
+                for (ExperimentSessionPackagedClosure.AudioEntry entry : closure.audioEntries) {
+                    if (entry.conditionId.equals(condition)) selected = entry;
+                }
+                if (selected == null) {
+                    throw new SecurityException("experiment-session-condition-not-packaged");
+                }
+                command.put("non_audio_profile_sha256", closure.nonAudioProfileSha256);
+                command.put("audio", new org.json.JSONObject()
+                    .put("logical_destination", selected.logicalDestination)
+                    .put("source_sha256", selected.sourceSha256)
+                    .put("source_bytes", selected.sourceBytes)
+                    .put("media_type", selected.mediaType));
+            }
+            return nativeApplyBreathCompositionCommand(command.toString());
+        } catch (RuntimeException error) {
+            throw error;
+        } catch (Exception error) {
+            throw new IllegalArgumentException("experiment-session-command-binding-failed", error);
+        }
     }
 
     private static byte[] readPackagedAsset(
@@ -997,6 +1027,8 @@ public final class ControlPanelActivity extends $selectedPanelEntrySimpleName {
             pendingAudioPrepareOperation = prepareOperation;
             audioImmersiveAdmitted = false;
             audioPrepared = false;
+            appliedAudioControlGeneration = sessionGeneration;
+            appliedAudioControlRevision = 0L;
         }
         return runtime.submit(ConditionAudioContract.Command.prepare(
             sessionGeneration, prepareOperation, conditionId)).accepted;
@@ -1006,10 +1038,74 @@ public final class ControlPanelActivity extends $selectedPanelEntrySimpleName {
         synchronized (PRESENTATION_LOCK) {
             if (terminalIntentAdmitted || pendingAudioGeneration <= 0L) return;
             audioImmersiveAdmitted = true;
-            if (audioPrepared && conditionAudioRuntime != null) {
-                conditionAudioRuntime.submit(ConditionAudioContract.Command.start(
-                    pendingAudioGeneration, pendingAudioPrepareOperation + "-start"));
+        }
+    }
+
+    /**
+     * Called from the app-owned OpenXR loop only after the matching control event is durable.
+     * The generation/revision fence makes controller and panel status projections idempotent.
+     */
+    public static void applyConditionAudioControlReceipt(
+            long sessionGeneration, long receiptRevision, String event) {
+        ConditionAudioRuntime runtime;
+        String operationId;
+        synchronized (PRESENTATION_LOCK) {
+            if (terminalIntentAdmitted || sessionGeneration <= 0L || receiptRevision <= 0L
+                    || sessionGeneration != pendingAudioGeneration
+                    || sessionGeneration < appliedAudioControlGeneration
+                    || (sessionGeneration == appliedAudioControlGeneration
+                        && receiptRevision <= appliedAudioControlRevision)) {
+                return;
             }
+            appliedAudioControlGeneration = sessionGeneration;
+            appliedAudioControlRevision = receiptRevision;
+            if ("armed".equals(event)) return;
+            if (!audioPrepared) {
+                publishConditionAudioControlFailure(
+                    sessionGeneration, receiptRevision, "audio-not-prepared");
+                return;
+            }
+            runtime = conditionAudioRuntime;
+            operationId = "controller-" + event + "-" + sessionGeneration + "-" + receiptRevision;
+        }
+        if (runtime == null) {
+            publishConditionAudioControlFailure(
+                sessionGeneration, receiptRevision, "audio-runtime-unavailable");
+            return;
+        }
+        ConditionAudioContract.Command command;
+        if ("official-start".equals(event)) {
+            command = ConditionAudioContract.Command.start(sessionGeneration, operationId);
+        } else if ("experiment-paused".equals(event)) {
+            command = ConditionAudioContract.Command.pause(sessionGeneration, operationId);
+        } else if ("experiment-resumed".equals(event)) {
+            command = ConditionAudioContract.Command.resume(sessionGeneration, operationId);
+        } else {
+            return;
+        }
+        ConditionAudioContract.Submission submitted = runtime.submit(command);
+        if (!submitted.accepted) {
+            publishConditionAudioControlFailure(
+                sessionGeneration, receiptRevision, submitted.reason);
+        }
+    }
+
+    private static void publishConditionAudioControlFailure(
+            long sessionGeneration, long receiptRevision, String reason) {
+        android.util.Log.e("RustyQuestNativeRenderer",
+            "channel=condition-audio event=controller-effect-rejected generation="
+                + sessionGeneration + " revision=" + receiptRevision + " reason=" + reason);
+        try {
+            org.json.JSONObject event = new org.json.JSONObject()
+                .put("schema", "rusty.quest.experiment_session.command.v1")
+                .put("operation", "audio-error")
+                .put("operation_id", "audio-control-error-" + sessionGeneration
+                    + "-" + receiptRevision)
+                .put("expected_generation", sessionGeneration)
+                .put("elapsed_realtime_ns", android.os.SystemClock.elapsedRealtimeNanos());
+            nativeApplyBreathCompositionCommand(event.toString());
+        } catch (Exception error) {
+            android.util.Log.e("RustyQuestNativeRenderer", "audio-control-error-record-failed", error);
         }
     }
 
@@ -1073,6 +1169,8 @@ public final class ControlPanelActivity extends $selectedPanelEntrySimpleName {
                 pendingAudioPrepareOperation = "";
                 audioImmersiveAdmitted = false;
                 audioPrepared = false;
+                appliedAudioControlGeneration = 0L;
+                appliedAudioControlRevision = 0L;
             }
         }
         ConditionAudioRuntime runtime = conditionAudioRuntime;
