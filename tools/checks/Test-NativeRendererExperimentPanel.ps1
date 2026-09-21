@@ -65,6 +65,11 @@ Assert-Contains $viewPolicy 'Recording ready'
 Assert-Contains $module 'ControlPanelActivity.softKioskUiState(this)'
 Assert-NotContains $module 'ControlPanelActivity.softKioskEffectiveStatus(this)'
 Assert-Contains $module 'ControlPanelActivity.applyExperimentSessionCommand'
+Assert-Contains $module 'experimenterPanelShortcut.onKeySecondary('
+Assert-Contains $module 'experimenterPanelShortcut.onMotionSecondary('
+Assert-Contains $module 'event=panel-toggle'
+Assert-Contains $module 'This does not start, pause, or end the run.'
+Assert-Contains $module 'Use Return to VR above, or press B three times again'
 Assert-Contains $polar 'Side-effect-free experimenter projection'
 Assert-Contains $polar 'automatic_connection_state'
 Assert-Contains $polar 'ensureAutoConnection'
@@ -131,8 +136,10 @@ try {
         (Join-Path $panelRoot 'ExperimentSessionPanelState.java'),
         (Join-Path $panelRoot 'ExperimentSessionPanelCoordinator.java'),
         (Join-Path $panelRoot 'ExperimentSessionPanelViewPolicy.java'),
+        (Join-Path $panelRoot 'ExperimenterPanelShortcutPolicy.java'),
         (Join-Path $testRoot 'ExperimentSessionPanelCoordinatorTest.java'),
-        (Join-Path $testRoot 'ExperimentSessionPanelViewPolicyTest.java')
+        (Join-Path $testRoot 'ExperimentSessionPanelViewPolicyTest.java'),
+        (Join-Path $testRoot 'ExperimenterPanelShortcutPolicyTest.java')
     )
     & $javacCommand.Source '--release' '8' '-encoding' 'UTF-8' '-d' $output @sources
     if ($LASTEXITCODE -ne 0) { throw "javac failed: $LASTEXITCODE" }
@@ -140,6 +147,8 @@ try {
     if ($LASTEXITCODE -ne 0) { throw "Java test failed: $LASTEXITCODE" }
     & $javaCommand.Source '-cp' $output 'io.github.mesmerprism.rustyquest.native_renderer.ExperimentSessionPanelViewPolicyTest'
     if ($LASTEXITCODE -ne 0) { throw "Panel presentation Java test failed: $LASTEXITCODE" }
+    & $javaCommand.Source '-cp' $output 'io.github.mesmerprism.rustyquest.native_renderer.ExperimenterPanelShortcutPolicyTest'
+    if ($LASTEXITCODE -ne 0) { throw "Panel controller shortcut policy Java test failed: $LASTEXITCODE" }
 
     $androidSdk = @(
         [Environment]::GetEnvironmentVariable('ANDROID_HOME'),
@@ -203,6 +212,7 @@ final class ControlPanelActivity extends BreathCompositionPanelModule {
         (Join-Path $panelRoot 'ExperimentSessionPanelState.java'),
         (Join-Path $panelRoot 'ExperimentSessionPanelCoordinator.java'),
         (Join-Path $panelRoot 'ExperimentSessionPanelViewPolicy.java'),
+        (Join-Path $panelRoot 'ExperimenterPanelShortcutPolicy.java'),
         (Join-Path $polarRoot 'PolarBleRuntimeSupport.java'),
         (Join-Path $polarRoot 'PolarSensorCommandReceiver.java'),
         (Join-Path $polarRoot 'PolarSensorPanel.java'),

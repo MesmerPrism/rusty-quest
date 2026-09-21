@@ -15,6 +15,8 @@ import android.os.Looper;
 import android.os.SystemClock;
 import android.util.Log;
 import android.view.Gravity;
+import android.view.KeyEvent;
+import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.AdapterView;
@@ -322,6 +324,8 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
     private long experimentShellLaunchEpoch;
     private boolean experimentShellDestroyed;
     private boolean terminalFinishDispatched;
+    private final ExperimenterPanelShortcutPolicy experimenterPanelShortcut =
+        new ExperimenterPanelShortcutPolicy();
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -551,6 +555,7 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
 
     @Override
     protected void onPause() {
+        experimenterPanelShortcut.cancel();
         cancelExperimenterProjectionRefresh();
         cancelBreathCompositionRefresh();
         if ("breath-mapping".equals(readControlPanelMode())) {
@@ -560,6 +565,49 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
             );
         }
         super.onPause();
+    }
+
+    @Override
+    public boolean dispatchKeyEvent(KeyEvent event) {
+        boolean rightSecondary = event != null
+            && (event.getKeyCode() == KeyEvent.KEYCODE_BUTTON_B
+                || event.getKeyCode() == KeyEvent.KEYCODE_BUTTON_2);
+        if (!rightSecondary) {
+            return super.dispatchKeyEvent(event);
+        }
+        boolean triggered = experimenterPanelShortcut.onKeySecondary(
+            event.getAction() == KeyEvent.ACTION_DOWN,
+            event.getAction() == KeyEvent.ACTION_DOWN && event.getRepeatCount() > 0,
+            SystemClock.uptimeMillis()
+        );
+        if (triggered) {
+            experimenterPanelShortcutMarker("status=close-requested source=android-key-event");
+            closePanelAndReturnToImmersive();
+        }
+        return true;
+    }
+
+    @Override
+    public boolean dispatchGenericMotionEvent(MotionEvent event) {
+        if (event == null) {
+            return false;
+        }
+        boolean secondaryDown = (event.getButtonState() & MotionEvent.BUTTON_SECONDARY) != 0;
+        boolean secondaryEvent = secondaryDown
+            || event.getActionButton() == MotionEvent.BUTTON_SECONDARY
+            || experimenterPanelShortcut.isMotionDown();
+        if (!secondaryEvent) {
+            return super.dispatchGenericMotionEvent(event);
+        }
+        boolean triggered = experimenterPanelShortcut.onMotionSecondary(
+            secondaryDown,
+            SystemClock.uptimeMillis()
+        );
+        if (triggered) {
+            experimenterPanelShortcutMarker("status=close-requested source=android-motion-event");
+            closePanelAndReturnToImmersive();
+        }
+        return true;
     }
 
     @Override
@@ -762,6 +810,20 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
             text(titleText, 22, PANEL_FG),
             new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
         );
+        ExperimentSessionPanelState state = EXPERIMENT_SESSION_PANEL.snapshot();
+        ExperimentSessionPanelViewPolicy.ViewState view =
+            ExperimentSessionPanelViewPolicy.project(state);
+        if (state.hasActiveSession()) {
+            experimenterResume = button("Return to VR");
+            experimenterResume.setMinHeight(dp(52));
+            experimenterResume.setEnabled(
+                ExperimentSessionPanelViewPolicy.canReturnToImmersive(state) && !view.saving
+            );
+            experimenterResume.setOnClickListener(new View.OnClickListener() {
+                @Override public void onClick(View ignored) { closePanelAndReturnToImmersive(); }
+            });
+            header.addView(experimenterResume);
+        }
         root.addView(header);
         root.addView(text(
             "1 Prepare  →  2 Controls  →  3 Choose condition  →  4 Session",
@@ -858,7 +920,7 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
         appendExperimenterControl(root, "Start / resume", "Hold Right Grip + A for about 0.75 seconds. Starts the official run when armed; resumes it when paused.");
         appendExperimenterControl(root, "Pause", "Hold Right Grip + B for about 0.75 seconds during the run.");
         appendExperimenterControl(root, "Recenter", "Press A without holding the grip to recenter.");
-        appendExperimenterControl(root, "Finish this run", "Press B three times without holding the grip. The run is finalized and the experimenter menu returns.");
+        appendExperimenterControl(root, "Open or close this menu", "Press B three times without holding the grip. In VR it opens the experimenter menu; in the panel it returns to VR. This does not start, pause, or end the run.");
         appendExperimenterControl(root, "Developer settings", "Press the trigger three times to open the developer panel.");
         appendExperimenterControl(root, "Save and exit the app", "Use Save and exit in this panel. The app can also request exit after three recovered departures within 5 seconds; this depends on background return and is not guaranteed physical Home-button interception.");
     }
@@ -911,15 +973,7 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
         experimenterInstructionReadback = text(ExperimentSessionPanelViewPolicy.stageInstruction(state), 16, PANEL_FG);
         root.addView(experimenterInstructionReadback);
         root.addView(text("Start / resume: Right Grip + A · Pause: Right Grip + B · Hold for about 0.75 seconds.", 14, PANEL_MUTED));
-        experimenterResume = button("Return to VR");
-        experimenterResume.setMinHeight(dp(52));
-        experimenterResume.setEnabled(
-            ExperimentSessionPanelViewPolicy.canReturnToImmersive(state) && !view.saving
-        );
-        experimenterResume.setOnClickListener(new View.OnClickListener() {
-            @Override public void onClick(View ignored) { closePanelAndReturnToImmersive(); }
-        });
-        root.addView(experimenterResume);
+        root.addView(text("Use Return to VR above, or press B three times again, without changing the session state.", 14, PANEL_MUTED));
         LinearLayout sessions = panelCard("Session status");
         experimenterCountReadback = text(view.countLine, 14, PANEL_FG);
         experimenterStatusReadback = text(view.statusLine, 14, PANEL_MUTED);
@@ -3965,6 +4019,15 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
             TAG,
             MARKER_PREFIX
                 + " channel=breath-operator "
+                + String.valueOf(detail).replace('\n', ' ').replace('\r', ' ')
+        );
+    }
+
+    private static void experimenterPanelShortcutMarker(String detail) {
+        Log.i(
+            TAG,
+            MARKER_PREFIX
+                + " channel=experiment-session-panel event=panel-toggle "
                 + String.valueOf(detail).replace('\n', ' ').replace('\r', ' ')
         );
     }
