@@ -157,6 +157,19 @@ public final class NativeRendererExperimentShellPolicyTest {
     }
 
     private static void recreationAndTerminalExitInvalidateHandoffLaunches() {
+        PanelImmersiveHandoffLifecyclePolicy initialLaunch =
+            new PanelImmersiveHandoffLifecyclePolicy();
+        PanelImmersiveHandoffLifecyclePolicy.Registration initialRegistration =
+            initialLaunch.register(11L);
+        require(initialRegistration.admitted);
+        PanelImmersiveHandoffLifecyclePolicy.Registration initialExplicitLaunch =
+            initialLaunch.admitExplicitLaunchEpoch(11L);
+        require(initialExplicitLaunch.admitted);
+        require(initialExplicitLaunch.generation > initialRegistration.generation);
+        reject(initialLaunch.admitExplicitLaunchEpoch(11L).admitted);
+        long initialRequest = initialLaunch.beginRequest(11L);
+        require(initialLaunch.canLaunch(11L, initialRequest));
+
         PanelImmersiveHandoffLifecyclePolicy lifecycle =
             new PanelImmersiveHandoffLifecyclePolicy();
         PanelImmersiveHandoffLifecyclePolicy.Registration first = lifecycle.register(1L);

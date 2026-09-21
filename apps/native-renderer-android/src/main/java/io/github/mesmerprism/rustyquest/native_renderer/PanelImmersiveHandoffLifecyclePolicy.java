@@ -25,6 +25,7 @@ final class PanelImmersiveHandoffLifecyclePolicy {
     private long ownerToken;
     private long pendingExplicitLaunchOwnerToken;
     private boolean terminalExit;
+    private boolean explicitLaunchAdmitted;
 
     Registration register(long candidateOwnerToken) {
         requireOwnerToken(candidateOwnerToken);
@@ -33,16 +34,26 @@ final class PanelImmersiveHandoffLifecyclePolicy {
         if (terminalExit) {
             ownerToken = 0L;
             pendingExplicitLaunchOwnerToken = candidateOwnerToken;
+            explicitLaunchAdmitted = false;
             return new Registration(generation, replacedOwnerToken, false);
         }
         ownerToken = candidateOwnerToken;
         pendingExplicitLaunchOwnerToken = 0L;
+        explicitLaunchAdmitted = false;
         return new Registration(generation, replacedOwnerToken, true);
     }
 
     Registration admitExplicitLaunchEpoch(long candidateOwnerToken) {
         requireOwnerToken(candidateOwnerToken);
-        if (!terminalExit || pendingExplicitLaunchOwnerToken != candidateOwnerToken) {
+        if (!terminalExit) {
+            if (ownerToken != candidateOwnerToken || explicitLaunchAdmitted) {
+                return new Registration(generation, ownerToken, false);
+            }
+            generation += 1L;
+            explicitLaunchAdmitted = true;
+            return new Registration(generation, ownerToken, true);
+        }
+        if (pendingExplicitLaunchOwnerToken != candidateOwnerToken) {
             return new Registration(generation, ownerToken, false);
         }
         long replacedOwnerToken = ownerToken;
@@ -50,6 +61,7 @@ final class PanelImmersiveHandoffLifecyclePolicy {
         terminalExit = false;
         ownerToken = candidateOwnerToken;
         pendingExplicitLaunchOwnerToken = 0L;
+        explicitLaunchAdmitted = true;
         return new Registration(generation, replacedOwnerToken, true);
     }
 
@@ -71,6 +83,7 @@ final class PanelImmersiveHandoffLifecyclePolicy {
         terminalExit = true;
         ownerToken = 0L;
         pendingExplicitLaunchOwnerToken = 0L;
+        explicitLaunchAdmitted = false;
         generation += 1L;
         return generation;
     }
@@ -78,10 +91,12 @@ final class PanelImmersiveHandoffLifecyclePolicy {
     boolean release(long candidateOwnerToken) {
         if (ownerToken == candidateOwnerToken) {
             ownerToken = 0L;
+            explicitLaunchAdmitted = false;
             return true;
         }
         if (pendingExplicitLaunchOwnerToken == candidateOwnerToken) {
             pendingExplicitLaunchOwnerToken = 0L;
+            explicitLaunchAdmitted = false;
             return true;
         }
         return false;
