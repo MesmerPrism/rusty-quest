@@ -76,6 +76,8 @@ final class PolarSensorPanel {
     private static final String PAIRED_INSTANCE_KEY = "preferred_device_instance_id";
     private static final int AUTO_CONNECTION_MAX_ATTEMPTS = 2;
     private static final long AUTO_CONNECTION_TIMEOUT_MS = 15_000L;
+    private static final long AUTO_CONNECTION_RETRY_DELAY_MS = 2_000L;
+    private static final long AUTO_CONNECTION_CYCLE_DELAY_MS = 10_000L;
 
     private static final int PANEL_BG = Color.rgb(16, 18, 22);
     private static final int PANEL_SURFACE = Color.rgb(31, 35, 43);
@@ -213,6 +215,11 @@ final class PolarSensorPanel {
     private volatile long autoConnectionGeneration;
     private long autoScanGeneration = -1L;
     private int autoConnectionAttempts;
+    private boolean automaticConnectionRequested;
+    private boolean automaticConnectionCycleActive;
+    private boolean automaticConnectionRetryScheduled;
+    private boolean manualConnectionControl;
+    private long automaticRecoveryGeneration;
     private String automaticConnectionState = "not-started";
     private String automaticConnectionDetail = "cold-root request not observed";
     private volatile long automaticConnectionUpdatedAtUnixMs = System.currentTimeMillis();
@@ -309,6 +316,7 @@ final class PolarSensorPanel {
         scanButton.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
+                beginManualConnectionControl();
                 startScan();
             }
         });
@@ -316,6 +324,7 @@ final class PolarSensorPanel {
         connect.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
+                beginManualConnectionControl();
                 connectSelected();
             }
         });
@@ -463,6 +472,7 @@ final class PolarSensorPanel {
             setStatusState("permission-ready", "BLE/location permissions accepted.");
             marker("status=permission-accepted");
             resumePendingBleAction();
+            resumeAutomaticConnectionIfRequested();
         } else {
             String missing = PolarBleRuntimeSupport.join(
                 PolarBleRuntimeSupport.missingPermissions(appContext),
@@ -475,20 +485,19 @@ final class PolarSensorPanel {
     }
 
     void onHostResume() {
-        if (activity == null) {
-            return;
-        }
         boolean returnedFromLocationSettings = locationSettingsPromptPending;
         if (returnedFromLocationSettings) {
             locationSettingsPromptPending = false;
-            NativeRendererSelfKioskApplication.endSystemPrompt(activity);
+            if (activity != null) NativeRendererSelfKioskApplication.endSystemPrompt(activity);
         }
         String locationState = PolarBleRuntimeSupport.locationServicesState(appContext);
         if ("enabled".equals(locationState)) {
             if ("location-services-disabled".equals(automaticConnectionState)) {
                 setAutomaticConnectionState(
                     "not-started",
-                    "Location services are enabled; press Scan to discover Polar sensors."
+                    automaticConnectionRequested
+                        ? "Location services are enabled; automatic Polar discovery is resuming."
+                        : "Location services are enabled; press Scan to discover Polar sensors."
                 );
             }
             if (returnedFromLocationSettings) {
@@ -521,12 +530,14 @@ final class PolarSensorPanel {
                 );
             }
         }
+        resumeAutomaticConnectionIfRequested();
     }
 
     void shutdown() {
         synchronized (connectionIdentityLock) {
             closing = true;
         }
+        cancelAutomaticRecovery(true);
         stopScan();
         closeGatt();
         handler.removeCallbacksAndMessages(null);
@@ -576,12 +587,14 @@ final class PolarSensorPanel {
         if ("scan".equals(command)) {
             setStatus("CLI command: scan.");
             marker("status=cli-command command=scan");
+            beginManualConnectionControl();
             startScan();
             return finishOperatorCommand(operationGeneration, command, "accepted", "none", "pending");
         }
         if ("connect".equals(command)) {
             setStatus("CLI command: connect.");
             marker("status=cli-command command=connect");
+            beginManualConnectionControl();
             connectSelected();
             return finishOperatorCommand(operationGeneration, command, "accepted", "none", "pending");
         }
@@ -728,6 +741,28 @@ final class PolarSensorPanel {
             });
             return;
         }
+        automaticConnectionRequested = true;
+        manualConnectionControl = false;
+        if (!automaticConnectionCycleActive && !automaticConnectionRetryScheduled) {
+            beginAutomaticConnectionCycle();
+        }
+        runAutomaticConnectionAttempt();
+    }
+
+    private void runAutomaticConnectionAttempt() {
+        if (connected) {
+            ensureAutoConnectionGeneration();
+            finishAutomaticConnectionCycle();
+            setAutomaticConnectionState("connected", "Existing Polar link remains active.");
+            return;
+        }
+        if (!PolarAutoConnectionPolicy.automaticRecoveryAllowed(
+                automaticConnectionRequested,
+                manualConnectionControl,
+                closing,
+                connected) || automaticConnectionRetryScheduled) {
+            return;
+        }
         JSONObject ble = PolarBleRuntimeSupport.statusJson(appContext);
         PolarAutoConnectionPolicy.Decision decision = PolarAutoConnectionPolicy.preflight(
             ble.optBoolean("runtime_permission_ready", false),
@@ -738,17 +773,15 @@ final class PolarSensorPanel {
             autoConnectionAttempts,
             AUTO_CONNECTION_MAX_ATTEMPTS
         );
-        if (decision == PolarAutoConnectionPolicy.Decision.CONNECTED) {
-            ensureAutoConnectionGeneration();
-            setAutomaticConnectionState("connected", "Existing Polar link remains active.");
-            return;
-        }
+        // The explicit connected guard above keeps this policy result defensive-only.
+        if (decision == PolarAutoConnectionPolicy.Decision.CONNECTED) return;
         if (decision == PolarAutoConnectionPolicy.Decision.PERMISSION_REQUIRED) {
             ensureAutoConnectionGeneration();
             setAutomaticConnectionState(
                 "permission-required",
                 "Required BLE/location permission is not effective; automatic connection did not run."
             );
+            scheduleAutomaticRecovery("Waiting for BLE/location permission.", false);
             return;
         }
         if (decision == PolarAutoConnectionPolicy.Decision.BLUETOOTH_UNAVAILABLE) {
@@ -757,6 +790,7 @@ final class PolarSensorPanel {
                 "bluetooth-unavailable",
                 "Bluetooth is unsupported, off, changing state, or permission-blocked."
             );
+            scheduleAutomaticRecovery("Waiting for Bluetooth to become available.", false);
             return;
         }
         if (decision == PolarAutoConnectionPolicy.Decision.LOCATION_SERVICES_DISABLED) {
@@ -769,14 +803,14 @@ final class PolarSensorPanel {
                 "location-services-disabled",
                 "Location services are off. Open headset location settings, enable them, then press Scan."
             );
+            scheduleAutomaticRecovery("Waiting for headset location services.", false);
             return;
         }
         if (decision == PolarAutoConnectionPolicy.Decision.WAIT_FOR_IN_FLIGHT) {
             return;
         }
         if (decision == PolarAutoConnectionPolicy.Decision.RETRY_EXHAUSTED) {
-            ensureAutoConnectionGeneration();
-            setAutomaticConnectionState("failed", "Automatic connection retry budget is exhausted.");
+            scheduleAutomaticRecovery("Automatic connection cycle finished without a link.");
             return;
         }
         autoConnectionAttempts += 1;
@@ -788,6 +822,7 @@ final class PolarSensorPanel {
         } else {
             autoScanGeneration = -1L;
             setAutomaticConnectionState("failed", "Automatic scan could not start.");
+            scheduleAutomaticRecovery("Automatic scan could not start.");
         }
     }
 
@@ -804,9 +839,12 @@ final class PolarSensorPanel {
         autoScanGeneration = -1L;
         if (decision == PolarAutoConnectionPolicy.Decision.NOT_FOUND) {
             setAutomaticConnectionState("not-found", "No eligible Polar sensor was found.");
+            scheduleAutomaticRecovery("No eligible Polar sensor was found.");
             return;
         }
         if (decision == PolarAutoConnectionPolicy.Decision.REQUIRES_SELECTION) {
+            automaticConnectionCycleActive = false;
+            manualConnectionControl = true;
             setAutomaticConnectionState(
                 "multiple-candidates",
                 "Multiple eligible sensors were found; use the dedicated Polar page to choose one."
@@ -820,18 +858,118 @@ final class PolarSensorPanel {
         );
         if (admittedIndex < 0) {
             setAutomaticConnectionState("failed", "Automatic scan admission produced no exact candidate.");
+            scheduleAutomaticRecovery("Automatic scan admission produced no exact candidate.");
             return;
         }
         DeviceEntry admittedCandidate = devices.get(admittedIndex);
         if (decision == PolarAutoConnectionPolicy.Decision.CONNECT_PAIRED) {
             selectedDeviceIndex = admittedIndex;
             setAutomaticConnectionState("connecting", "Reconnecting the app-private preferred sensor.");
-            connectAdmittedCandidate(admittedCandidate);
+            connectAdmittedCandidate(admittedCandidate, true);
             return;
         }
         selectedDeviceIndex = admittedIndex;
         setAutomaticConnectionState("connecting", "Connecting the unique eligible sensor.");
-        connectAdmittedCandidate(admittedCandidate);
+        connectAdmittedCandidate(admittedCandidate, true);
+    }
+
+    private void beginAutomaticConnectionCycle() {
+        autoConnectionAttempts = 0;
+        automaticConnectionCycleActive = true;
+        automaticConnectionRetryScheduled = false;
+        automaticRecoveryGeneration += 1L;
+    }
+
+    private void resumeAutomaticConnectionIfRequested() {
+        if (!PolarAutoConnectionPolicy.automaticRecoveryAllowed(
+                automaticConnectionRequested,
+                manualConnectionControl,
+                closing,
+                connected)) {
+            return;
+        }
+        if (!automaticConnectionCycleActive && !automaticConnectionRetryScheduled) {
+            beginAutomaticConnectionCycle();
+        }
+        runAutomaticConnectionAttempt();
+    }
+
+    private void scheduleAutomaticRecovery(String detail) {
+        scheduleAutomaticRecovery(detail, true);
+    }
+
+    private void scheduleAutomaticRecovery(String detail, boolean announceRetry) {
+        if (!PolarAutoConnectionPolicy.automaticRecoveryAllowed(
+                automaticConnectionRequested,
+                manualConnectionControl,
+                closing,
+                connected) || automaticConnectionRetryScheduled) {
+            return;
+        }
+        final boolean nextCycle = autoConnectionAttempts >= AUTO_CONNECTION_MAX_ATTEMPTS;
+        final long delayMs = PolarAutoConnectionPolicy.retryDelayMs(
+            autoConnectionAttempts,
+            AUTO_CONNECTION_MAX_ATTEMPTS,
+            AUTO_CONNECTION_RETRY_DELAY_MS,
+            AUTO_CONNECTION_CYCLE_DELAY_MS
+        );
+        final long recoveryGeneration = ++automaticRecoveryGeneration;
+        automaticConnectionRetryScheduled = true;
+        if (nextCycle) automaticConnectionCycleActive = false;
+        if (announceRetry) {
+            setAutomaticConnectionState(
+                "scanning",
+                detail + (nextCycle
+                    ? " Automatic discovery will keep trying."
+                    : " Retrying automatically.")
+            );
+        }
+        handler.postDelayed(new Runnable() {
+            @Override
+            public void run() {
+                if (recoveryGeneration != automaticRecoveryGeneration
+                        || !automaticConnectionRetryScheduled) {
+                    return;
+                }
+                automaticConnectionRetryScheduled = false;
+                if (!PolarAutoConnectionPolicy.automaticRecoveryAllowed(
+                        automaticConnectionRequested,
+                        manualConnectionControl,
+                        closing,
+                        connected)) {
+                    return;
+                }
+                if (nextCycle) {
+                    autoConnectionAttempts = 0;
+                    automaticConnectionCycleActive = true;
+                }
+                runAutomaticConnectionAttempt();
+            }
+        }, delayMs);
+    }
+
+    private void finishAutomaticConnectionCycle() {
+        automaticRecoveryGeneration += 1L;
+        automaticConnectionRetryScheduled = false;
+        automaticConnectionCycleActive = false;
+        autoConnectionAttempts = 0;
+    }
+
+    private void cancelAutomaticRecovery(boolean clearRequest) {
+        automaticRecoveryGeneration += 1L;
+        automaticConnectionRetryScheduled = false;
+        automaticConnectionCycleActive = false;
+        if (clearRequest) automaticConnectionRequested = false;
+    }
+
+    private void beginManualConnectionControl() {
+        manualConnectionControl = true;
+        cancelAutomaticRecovery(false);
+        autoScanGeneration = -1L;
+        if (scanning) stopScan();
+        if (gatt != null && !connected) closeGatt();
+        advanceAutoConnectionGeneration();
+        automaticConnectionDeadlineElapsedMs = 0L;
     }
 
     private int pairedCandidateIndex() {
@@ -871,23 +1009,7 @@ final class PolarSensorPanel {
             automaticConnectionUpdatedAtUnixMs = System.currentTimeMillis();
             automaticConnectionEvidenceGeneration = autoConnectionGeneration;
         }
-        if ("connecting".equals(automaticConnectionState)) {
-            final long expectedGeneration = currentAutoConnectionGeneration();
-            automaticConnectionDeadlineElapsedMs = SystemClock.elapsedRealtime()
-                + AUTO_CONNECTION_TIMEOUT_MS;
-            handler.postDelayed(new Runnable() {
-                @Override
-                public void run() {
-                    if (expectedGeneration != currentAutoConnectionGeneration()
-                            || !"connecting".equals(automaticConnectionState)
-                            || connected) {
-                        return;
-                    }
-                    closeGatt();
-                    setAutomaticConnectionState("failed", "Polar connection timed out.");
-                }
-            }, AUTO_CONNECTION_TIMEOUT_MS);
-        } else {
+        if (!"connecting".equals(automaticConnectionState)) {
             automaticConnectionDeadlineElapsedMs = 0L;
         }
     }
@@ -1042,16 +1164,18 @@ final class PolarSensorPanel {
             setStatus("No Polar device selected.");
             return;
         }
-        connectAdmittedCandidate(devices.get(index));
+        connectAdmittedCandidate(devices.get(index), false);
     }
 
-    private void connectAdmittedCandidate(DeviceEntry entry) {
+    private void connectAdmittedCandidate(DeviceEntry entry, boolean automatic) {
         if (entry == null) {
             setAutomaticConnectionState("failed", "Admitted Polar candidate is unavailable.");
+            if (automatic) scheduleAutomaticRecovery("Admitted Polar candidate is unavailable.");
             return;
         }
         if (!PolarBleRuntimeSupport.hasRequiredPermissions(appContext)) {
             setAutomaticConnectionState("permission-required", "BLE connect permission is missing.");
+            if (automatic) scheduleAutomaticRecovery("BLE connect permission is missing.");
             return;
         }
         stopScan();
@@ -1088,16 +1212,24 @@ final class PolarSensorPanel {
                 if ("connecting".equals(automaticConnectionState)) {
                     setAutomaticConnectionState("failed", "BLE connect returned no transport handle.");
                 }
+                if (automatic) scheduleAutomaticRecovery("BLE connect returned no transport handle.");
                 marker("status=error reason=connect-null-gatt");
                 return;
             }
+            if (!automatic) {
+                setAutomaticConnectionState("connecting", "Connecting to the manually selected sensor.");
+            }
             setStatusState("connecting", "Connecting to selected Polar device.");
+            if (automatic) {
+                scheduleAutomaticConnectionTimeout(currentAutoConnectionGeneration(), nextGatt);
+            }
             marker("status=connecting deviceInstanceId=" + markerToken(entry.instanceId())
                 + " rawDeviceIdentifierLogged=false");
         } catch (SecurityException ex) {
             closeGatt();
             setStatusState("permission-required", "BLE connect permission is missing.");
             setAutomaticConnectionState("permission-required", "BLE connect permission is missing.");
+            if (automatic) scheduleAutomaticRecovery("BLE connect permission is missing.");
             marker("status=error reason=connect-security-exception");
         } catch (RuntimeException ex) {
             closeGatt();
@@ -1105,11 +1237,39 @@ final class PolarSensorPanel {
             if ("connecting".equals(automaticConnectionState)) {
                 setAutomaticConnectionState("failed", "BLE connect failed to start.");
             }
+            if (automatic) scheduleAutomaticRecovery("BLE connect failed to start.");
             marker("status=error reason=connect-start-failed");
         }
     }
 
+    private void scheduleAutomaticConnectionTimeout(
+        final long expectedGeneration,
+        final BluetoothGatt expectedGatt
+    ) {
+        automaticConnectionDeadlineElapsedMs = SystemClock.elapsedRealtime()
+            + AUTO_CONNECTION_TIMEOUT_MS;
+        handler.postDelayed(new Runnable() {
+            @Override
+            public void run() {
+                if (expectedGeneration != currentAutoConnectionGeneration()
+                        || expectedGatt == null
+                        || expectedGatt != gatt
+                        || connected
+                        || closing
+                        || manualConnectionControl) {
+                    return;
+                }
+                closeGatt();
+                setAutomaticConnectionState("failed", "Polar connection timed out.");
+                scheduleAutomaticRecovery("Polar connection timed out.");
+            }
+        }, AUTO_CONNECTION_TIMEOUT_MS);
+    }
+
     private void disconnect() {
+        manualConnectionControl = true;
+        cancelAutomaticRecovery(true);
+        advanceAutoConnectionGeneration();
         stopScan();
         closeGatt();
         setAutomaticConnectionState("not-started", "Polar connection was manually disconnected.");
@@ -1389,6 +1549,17 @@ final class PolarSensorPanel {
                             scanRejectedAdvertisementCount += 1L;
                         } else {
                             addOrUpdateDevice(entry);
+                            if (autoScanGeneration == generation && pairedCandidateMatches() == 1) {
+                                stopScan();
+                                setStatusState(
+                                    "candidate-found",
+                                    "Preferred Polar sensor found; connecting automatically."
+                                );
+                                marker("status=auto-preferred-candidate-admitted"
+                                    + " rawDeviceIdentifierLogged=false");
+                                completeAutoScan(generation);
+                                return;
+                            }
                         }
                         if (scanRawCallbackCount == 1L) {
                             setStatusState(
@@ -1426,6 +1597,7 @@ final class PolarSensorPanel {
                         if (autoScanGeneration == generation) {
                             autoScanGeneration = -1L;
                             setAutomaticConnectionState("failed", "BLE scan failed.");
+                            scheduleAutomaticRecovery("BLE scan failed.");
                         }
                         marker("status=scan-failed errorCode=" + errorCode);
                     }
@@ -1466,7 +1638,10 @@ final class PolarSensorPanel {
                         return;
                     }
                     if (statusCode != BluetoothGatt.GATT_SUCCESS) {
-                        setStatus("Service discovery failed: " + statusCode);
+                        closeGatt();
+                        setStatusState("connection-failed", "Service discovery failed: " + statusCode);
+                        setAutomaticConnectionState("failed", "Polar service discovery failed.");
+                        scheduleAutomaticRecovery("Polar service discovery failed.");
                         marker("status=error reason=service-discovery statusCode=" + statusCode);
                         return;
                     }
@@ -1609,10 +1784,12 @@ final class PolarSensorPanel {
             closeGatt();
             setStatusState("connection-failed", "Connection failed: " + statusCode);
             setAutomaticConnectionState("failed", "Polar connection failed.");
+            scheduleAutomaticRecovery("Polar connection failed with GATT status " + statusCode + ".");
             marker("status=connection-failed statusCode=" + statusCode);
             return;
         }
         if (newState == BluetoothProfile.STATE_CONNECTED) {
+            boolean manuallySelected = manualConnectionControl;
             synchronized (connectionIdentityLock) {
                 if (closing || callbackGatt != gatt) {
                     return;
@@ -1625,19 +1802,30 @@ final class PolarSensorPanel {
             pendingConnectionDeviceInstanceId = "none";
             setStatusState("connected", "Connected. Discovering services.");
             rememberConnectedPairing();
-            setAutomaticConnectionState("connected", "Automatic Polar connection succeeded.");
+            manualConnectionControl = false;
+            finishAutomaticConnectionCycle();
+            setAutomaticConnectionState(
+                "connected",
+                manuallySelected
+                    ? "Manually selected Polar connection succeeded."
+                    : "Automatic Polar connection succeeded."
+            );
             marker("status=connected");
             try {
                 callbackGatt.requestConnectionPriority(BluetoothGatt.CONNECTION_PRIORITY_HIGH);
                 callbackGatt.discoverServices();
             } catch (SecurityException ex) {
+                closeGatt();
                 setStatusState("permission-required", "BLE service discovery permission is missing.");
+                setAutomaticConnectionState("permission-required", "BLE service discovery permission is missing.");
+                scheduleAutomaticRecovery("Waiting for BLE service discovery permission.", false);
                 marker("status=error reason=discover-security-exception");
             }
         } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
             closeGatt();
             setAutomaticConnectionState("failed", "Polar device disconnected.");
             setStatusState("disconnected", "Polar device disconnected.");
+            scheduleAutomaticRecovery("Polar device disconnected.");
             marker("status=device-disconnected");
             updateCounters();
         }
@@ -1667,7 +1855,10 @@ final class PolarSensorPanel {
             descriptorTasks.add(new DescriptorTask(pmdDataCharacteristic, BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE));
         }
         if (hrCharacteristic == null && pmdControlCharacteristic == null) {
-            setStatus("Connected device has no supported Polar HR or PMD services.");
+            closeGatt();
+            setStatusState("connection-failed", "Connected device has no supported Polar HR or PMD services.");
+            setAutomaticConnectionState("failed", "Connected device exposed no supported Polar services.");
+            scheduleAutomaticRecovery("Connected device exposed no supported Polar services.");
             marker("status=error reason=no-supported-services");
             return;
         }

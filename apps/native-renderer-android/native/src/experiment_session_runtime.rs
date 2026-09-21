@@ -2075,9 +2075,17 @@ fn load_compiled_experiment_inventory(
     }
     let document: Value = serde_json::from_str(text)
         .map_err(|error| format!("experiment-session-profile-json-invalid:{error}"))?;
-    let projection = document
+    let document_object = document
         .as_object()
-        .and_then(|object| object.get("runtime_projection"))
+        .ok_or_else(|| "experiment-session-profile-document-invalid".to_owned())?;
+    let non_audio_profile_sha256 = document_object
+        .get("non_audio_profile_sha256")
+        .and_then(Value::as_str)
+        .filter(|value| valid_sha256(value))
+        .ok_or_else(|| "experiment-session-non-audio-profile-sha256-invalid".to_owned())?
+        .to_owned();
+    let projection = document_object
+        .get("runtime_projection")
         .ok_or_else(|| "experiment-session-runtime-projection-missing".to_owned())?;
     let object = projection
         .as_object()
@@ -2141,7 +2149,7 @@ fn load_compiled_experiment_inventory(
         provider_id,
         provider_manifest_sha256: provider_manifest_sha256.to_owned(),
         provider_inventory_sha256: provider_inventory_sha256.to_owned(),
-        non_audio_profile_sha256: profile_sha256.to_owned(),
+        non_audio_profile_sha256,
         effective_radius_profile,
         conditions: [
             parse_condition("condition-a")?,
@@ -3041,6 +3049,7 @@ mod tests {
         json!({
             "schema_id": "private-outer-profile-v1",
             "private_metadata": {"owned_by": "private-provider"},
+            "non_audio_profile_sha256": "66".repeat(32),
             "runtime_projection": {
                 "schema": EXPERIMENT_SESSION_RUNTIME_PROJECTION_SCHEMA,
                 "provider_id": "private-provider",
@@ -3203,7 +3212,8 @@ mod tests {
         let inventory = load_compiled_experiment_inventory(files_root, compiled_anchors(&digest))
             .unwrap()
             .expect("trusted inventory");
-        assert_eq!(inventory.non_audio_profile_sha256, digest);
+        assert_ne!(inventory.non_audio_profile_sha256, digest);
+        assert_eq!(inventory.non_audio_profile_sha256, "66".repeat(32));
         assert_eq!(inventory.provider_manifest_sha256, "33".repeat(32));
         assert_eq!(inventory.provider_inventory_sha256, "44".repeat(32));
         assert_eq!(
@@ -3214,6 +3224,36 @@ mod tests {
                     at_radius_max: 0.9,
                 }
             )
+        );
+        fs::remove_dir_all(files_root).unwrap();
+    }
+
+    #[test]
+    fn compiled_inventory_rejects_missing_or_invalid_inner_profile_identity() {
+        let recording_root = temp_root("compiled-profile-inner-identity");
+        let files_root = recording_root.parent().unwrap();
+        let mut document: Value = serde_json::from_str(&compiled_profile_document()).unwrap();
+        document
+            .as_object_mut()
+            .unwrap()
+            .remove("non_audio_profile_sha256");
+        let missing = document.to_string();
+        let missing_digest = rusty_quest_broker_authority::packaged_json_sha256(&missing);
+        materialize_compiled_profile(files_root, &missing);
+        assert!(
+            load_compiled_experiment_inventory(files_root, compiled_anchors(&missing_digest))
+                .unwrap_err()
+                .contains("non-audio-profile-sha256-invalid")
+        );
+
+        document["non_audio_profile_sha256"] = json!("not-a-sha256");
+        let invalid = document.to_string();
+        let invalid_digest = rusty_quest_broker_authority::packaged_json_sha256(&invalid);
+        materialize_compiled_profile(files_root, &invalid);
+        assert!(
+            load_compiled_experiment_inventory(files_root, compiled_anchors(&invalid_digest))
+                .unwrap_err()
+                .contains("non-audio-profile-sha256-invalid")
         );
         fs::remove_dir_all(files_root).unwrap();
     }

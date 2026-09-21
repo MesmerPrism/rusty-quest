@@ -129,7 +129,7 @@ Assert-ContainsTokens "$controlPanel`n$polarPanel" @(
     'if \(!closing\) handler\.post\(new Runnable\(\)',
     'if \(closing\) return;',
     'boolean scanInFlight = projection\.optBoolean\("scanning", false\);',
-    'boolean fresh = scanInFlight \|\| PolarAutoConnectionPolicy\.evidenceFresh'
+    'boolean fresh = currentPlatformPrerequisite \|\| scanInFlight \|\| PolarAutoConnectionPolicy\.evidenceFresh'
 ) "visible retained Polar scan state"
 
 $deviceStatusIndex = $polarPanel.IndexOf(

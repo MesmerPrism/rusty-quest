@@ -146,6 +146,22 @@ public final class PolarAutoConnectionPolicyTest {
             ),
             "generation change fences callback even if platform reuses identity"
         );
+        check(
+            PolarAutoConnectionPolicy.automaticRecoveryAllowed(true, false, false, false),
+            "retained automatic intent retries after a transient failure"
+        );
+        check(
+            !PolarAutoConnectionPolicy.automaticRecoveryAllowed(true, true, false, false)
+                && !PolarAutoConnectionPolicy.automaticRecoveryAllowed(false, false, false, false)
+                && !PolarAutoConnectionPolicy.automaticRecoveryAllowed(true, false, true, false)
+                && !PolarAutoConnectionPolicy.automaticRecoveryAllowed(true, false, false, true),
+            "manual control, cancellation, shutdown, and an active link suppress recovery"
+        );
+        check(
+            PolarAutoConnectionPolicy.retryDelayMs(1, 2, 2_000L, 10_000L) == 2_000L
+                && PolarAutoConnectionPolicy.retryDelayMs(2, 2, 2_000L, 10_000L) == 10_000L,
+            "bounded attempts use short retry then a paced fresh cycle"
+        );
         PolarStatusPersistenceThreadPolicy.requireBackgroundThread(false);
         boolean rejectedMainThread = false;
         try {

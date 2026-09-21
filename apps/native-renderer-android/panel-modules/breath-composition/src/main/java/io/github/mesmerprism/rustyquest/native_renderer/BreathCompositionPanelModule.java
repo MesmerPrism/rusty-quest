@@ -536,9 +536,7 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
     @Override
     protected void onResume() {
         super.onResume();
-        if (polarSensorPanel != null) {
-            polarSensorPanel.onHostResume();
-        }
+        PolarSensorRuntime.forApplication(getApplicationContext()).onHostResume();
         handleDisplayCompositeIntent(getIntent());
         if ("breath-mapping".equals(readControlPanelMode())) {
             breathOperatorMarker(
@@ -4292,10 +4290,10 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
                 boolean durable = accepted
                     && "idle".equals(phase)
                     && "show-experimenter".equals(routeAction);
-                String reason = response.optString(
-                    "reason_code",
-                    projection.optString("last_reason", "")
-                );
+                String responseReason = response.optString("reason_code", "");
+                String projectionReason = projection.optString("last_reason", "");
+                String reason = !projectionReason.isEmpty() && !"none".equals(projectionReason)
+                    ? projectionReason : responseReason;
                 ExperimentSessionPanelCoordinator.NativeReceipt receipt =
                     new ExperimentSessionPanelCoordinator.NativeReceipt(
                         operationId,
@@ -4330,7 +4328,7 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
                         projection.optBoolean("audio_technical_hold", false)
                             ? "audio-technical-hold"
                             : startingOperation && !accepted
-                            ? "start-identity-binding-missing"
+                            ? "Condition was not armed: " + emptySessionReason(reason) + "."
                             : reason
                                 + " · recovery="
                                 + projection.optString("recovery_status", "unavailable")
@@ -4378,6 +4376,19 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
                 && !Double.isInfinite(floating)
                 && floating == (double) integer
                 && integer >= 0L;
+        }
+
+        private static String emptySessionReason(String reason) {
+            if ("profile-identity-not-packaged".equals(reason)) {
+                return "the packaged study profile identity did not match";
+            }
+            if ("audio-identity-not-packaged".equals(reason)) {
+                return "the packaged condition audio identity did not match";
+            }
+            if (reason == null || reason.isEmpty() || "none".equals(reason)) {
+                return "native admission was rejected";
+            }
+            return reason;
         }
     }
 

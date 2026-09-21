@@ -154,6 +154,7 @@ final class ExperimentSessionPanelCoordinator {
     private long trustedLaunchEpoch;
     private long runtimeEpoch;
     private boolean freshRuntimeExpected;
+    private String lastRejectedOperationId = "";
 
     synchronized boolean acceptRuntimeEpoch(long epoch) {
         if (epoch <= 0L || epoch == runtimeEpoch) return false;
@@ -161,6 +162,7 @@ final class ExperimentSessionPanelCoordinator {
         runtimeEpoch = epoch;
         freshRuntimeExpected = false;
         state = ExperimentSessionPanelState.initial();
+        lastRejectedOperationId = "";
         routeEventGeneration = 0L;
         routeEventAllocation = 0L;
         return true;
@@ -221,6 +223,7 @@ final class ExperimentSessionPanelCoordinator {
             return null;
         }
         String operationId = nextOperationId("start");
+        lastRejectedOperationId = "";
         state = copy(
             state.route,
             ExperimentSessionPanelState.Phase.STARTING,
@@ -248,6 +251,7 @@ final class ExperimentSessionPanelCoordinator {
             return null;
         }
         String operationId = nextOperationId("arm");
+        lastRejectedOperationId = "";
         state = copy(
             state.route,
             ExperimentSessionPanelState.Phase.ARMING,
@@ -348,6 +352,30 @@ final class ExperimentSessionPanelCoordinator {
         }
         boolean pendingMatch = !state.pendingOperationId.isEmpty()
             && state.pendingOperationId.equals(receipt.operationId);
+        boolean repeatedRejectedOperation = state.phase == ExperimentSessionPanelState.Phase.ERROR
+            && state.pendingOperationId.isEmpty()
+            && !lastRejectedOperationId.isEmpty()
+            && lastRejectedOperationId.equals(receipt.operationId)
+            && !receipt.accepted;
+        if (repeatedRejectedOperation) {
+            state = copy(
+                state.route,
+                ExperimentSessionPanelState.Phase.ERROR,
+                state.generation,
+                Math.max(state.revision, receipt.revision),
+                state.activeCondition,
+                "",
+                state.routeActionRevision,
+                state.counts,
+                state.polar,
+                state.recording,
+                receipt.recovery,
+                emptyAs(receipt.storageStatus, state.storageStatus),
+                receipt.kioskRequested,
+                emptyAs(state.detail, emptyAs(receipt.detail, "Native command rejected."))
+            );
+            return true;
+        }
         if (state.phase == ExperimentSessionPanelState.Phase.SAVING
                 && !state.pendingOperationId.isEmpty()
                 && receipt.generation != state.generation) {
@@ -357,6 +385,7 @@ final class ExperimentSessionPanelCoordinator {
             return false;
         }
         if (pendingMatch && !receipt.accepted) {
+            lastRejectedOperationId = receipt.operationId;
             state = copy(
                 state.route,
                 ExperimentSessionPanelState.Phase.ERROR,
@@ -390,6 +419,9 @@ final class ExperimentSessionPanelCoordinator {
             if (!exactActive) {
                 return false;
             }
+        }
+        if (pendingMatch && receipt.accepted) {
+            lastRejectedOperationId = "";
         }
         ExperimentSessionPanelState.Phase phase = parsePhase(
             receipt.phase, receipt.controlState, state.phase

@@ -77,6 +77,27 @@ public final class ExperimentSessionPanelViewPolicyTest {
         check(ExperimentSessionPanelViewPolicy.canReturnToImmersive(audioHold)
                 && ExperimentSessionPanelViewPolicy.stageInstruction(audioHold).contains("Do not use resume"),
             "technical hold permits only the explicit finish path");
+        ExperimentSessionPanelState armFailure = new ExperimentSessionPanelState(
+            ExperimentSessionPanelState.Route.EXPERIMENTER,
+            ExperimentSessionPanelState.Phase.ERROR,
+            0L,
+            2L,
+            "condition-a",
+            "",
+            0L,
+            ExperimentSessionPanelState.Counts.unknown(),
+            ExperimentSessionPanelState.PolarProjection.unknown(),
+            false,
+            false,
+            "ready",
+            true,
+            "Condition was not armed: packaged profile mismatch."
+        );
+        check(ExperimentSessionPanelViewPolicy.stageTitle(armFailure).contains("not armed")
+                && ExperimentSessionPanelViewPolicy.stageInstruction(armFailure).contains("Choose condition")
+                && ExperimentSessionPanelViewPolicy.project(armFailure).statusLine.contains("packaged profile mismatch")
+                && ExperimentSessionPanelViewPolicy.project(armFailure).startEnabled,
+            "arm admission failure stays visible, distinct from technical hold, and retryable");
         ExperimentSessionPanelState recovery = state(ExperimentSessionPanelState.Phase.RECOVERY, false, true);
         check(ExperimentSessionPanelViewPolicy.storageTone(recovery) == ExperimentSessionPanelViewPolicy.Tone.ATTENTION,
             "recovery overrides superficially ready storage");

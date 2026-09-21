@@ -4,6 +4,7 @@ public final class ExperimentSessionPanelCoordinatorTest {
     public static void main(String[] args) {
         launchAndRoutePolicy();
         armControlStatePolicy();
+        rejectedArmRemainsVisibleAndRetryable();
         startDeveloperAndRestartReceiptPolicy();
         polarAndViewPolicy();
         closedRuntimeEpochResetsGenerationButRecreationDoesNot();
@@ -26,6 +27,33 @@ public final class ExperimentSessionPanelCoordinatorTest {
         check(coordinator.snapshot().phase == ExperimentSessionPanelState.Phase.ARMED
                 && ExperimentSessionPanelViewPolicy.canReturnToImmersive(coordinator.snapshot()),
             "armed control state closes preparation and admits the particle scene");
+    }
+
+    private static void rejectedArmRemainsVisibleAndRetryable() {
+        ExperimentSessionPanelCoordinator coordinator = new ExperimentSessionPanelCoordinator();
+        ExperimentSessionPanelCoordinator.NativeCommand arm =
+            coordinator.arm(ExperimentSessionPanelCoordinator.CONDITION_ONE);
+        ExperimentSessionPanelCoordinator.NativeReceipt rejected =
+            new ExperimentSessionPanelCoordinator.NativeReceipt(
+                arm.operationId, false, false, 0L, 2L, "idle", "idle",
+                ExperimentSessionPanelCoordinator.CONDITION_ONE, false, false, "ready", true,
+                0L, 0L, 0L, 0L, true, true, false, 0L, 0L, 0L,
+                "none", 0L,
+                "Condition was not armed: the packaged study profile identity did not match."
+            );
+        check(coordinator.accept(rejected), "matching rejected arm receipt is accepted as failure evidence");
+        check(coordinator.snapshot().phase == ExperimentSessionPanelState.Phase.ERROR
+                && coordinator.snapshot().detail.contains("not armed"),
+            "arm rejection remains explicit");
+        check(coordinator.accept(rejected), "repeated status projection remains admissible");
+        check(coordinator.snapshot().phase == ExperimentSessionPanelState.Phase.ERROR,
+            "repeated rejected receipt cannot collapse into idle");
+        check(ExperimentSessionPanelViewPolicy.project(coordinator.snapshot()).startEnabled,
+            "a non-recording arm rejection permits an explicit retry");
+        ExperimentSessionPanelCoordinator.NativeCommand retry =
+            coordinator.arm(ExperimentSessionPanelCoordinator.CONDITION_ONE);
+        check(retry != null && !retry.operationId.equals(arm.operationId),
+            "retry allocates a fresh arm operation");
     }
 
     private static void closedRuntimeEpochResetsGenerationButRecreationDoesNot() {

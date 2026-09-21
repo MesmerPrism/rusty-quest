@@ -118,6 +118,12 @@ final class PolarSensorRuntime {
         panel.ensureAutoConnection();
     }
 
+    /** Rechecks prerequisites and resumes the retained automatic intent after host resume. */
+    void onHostResume() {
+        if (closed) return;
+        panel.onHostResume();
+    }
+
     private void dispatch(String rawCommand, String token, String origin) {
         if (closed) return;
         String safeToken = token == null ? "" : token;
@@ -372,6 +378,26 @@ final class PolarAutoConnectionPolicy {
             && admittedGatt == currentGatt
             && admittedGeneration > 0L
             && admittedGeneration == currentGeneration;
+    }
+
+    static boolean automaticRecoveryAllowed(
+        boolean requested,
+        boolean manualControl,
+        boolean closing,
+        boolean connected
+    ) {
+        return requested && !manualControl && !closing && !connected;
+    }
+
+    static long retryDelayMs(
+        int attempts,
+        int maximumAttempts,
+        long withinCycleDelayMs,
+        long betweenCycleDelayMs
+    ) {
+        return attempts >= maximumAttempts
+            ? Math.max(0L, betweenCycleDelayMs)
+            : Math.max(0L, withinCycleDelayMs);
     }
 }
 
