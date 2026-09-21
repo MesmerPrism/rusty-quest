@@ -3,7 +3,7 @@ package io.github.mesmerprism.rustyquest.native_renderer;
 /**
  * Pure decision policy for the experiment shell's foreground guard.
  *
- * <p>The eventual AccessibilityService is an adapter only: it classifies an observed
+ * <p>A platform observation adapter is an adapter only: it classifies an observed
  * foreground surface, supplies a monotonic event time, and executes the returned decision.
  * This class owns transition generations, distinct Home episodes, and the terminal-exit
  * latch so a delayed recovery callback cannot relaunch either activity after exit begins.</p>
@@ -93,6 +93,24 @@ final class NativeRendererForegroundGuardPolicy {
             long generation,
             long homeEpisodeId,
             long eventMs) {
+        return observeDeparture(exactHomeSurface, generation, homeEpisodeId, eventMs);
+    }
+
+    /** A recovered own-Activity departure, not evidence of a physical HOME button. */
+    Decision observeSelfDeparture(long generation, long departureId, long eventMs) {
+        return observeDeparture(departureId > 0L, generation, departureId, eventMs);
+    }
+
+    Decision beginTerminalExit() {
+        if (!armed || terminalExit) return Decision.NONE;
+        armed = false;
+        terminalExit = true;
+        recoveryPending = false;
+        return Decision.BEGIN_TERMINAL_EXIT;
+    }
+
+    private Decision observeDeparture(boolean countEscape, long generation,
+            long homeEpisodeId, long eventMs) {
         if (!armed
             || terminalExit
             || generation != transitionGeneration
@@ -101,7 +119,7 @@ final class NativeRendererForegroundGuardPolicy {
         }
 
         recoveryPending = true;
-        if (!exactHomeSurface
+        if (!countEscape
             || homeEpisodeId <= 0L
             || containsHomeEpisode(homeEpisodeId)) {
             return recoveryDecision();

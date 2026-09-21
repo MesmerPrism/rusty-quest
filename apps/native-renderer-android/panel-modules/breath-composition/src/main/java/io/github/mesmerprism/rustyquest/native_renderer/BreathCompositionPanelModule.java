@@ -678,7 +678,7 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
         header.setOrientation(LinearLayout.HORIZONTAL);
         header.setGravity(Gravity.CENTER_VERTICAL);
         String titleText = "polar".equals(breathCompositionPanelTopic)
-            ? "Polar connection" : "Viscereality experimenter";
+            ? "Polar connection" : "Experimenter session";
         header.addView(
             text(titleText, 22, PANEL_FG),
             new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
@@ -756,21 +756,28 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
         );
         kiosk.addView(experimenterKioskReadback);
         kiosk.addView(text(
-            "Accessibility is wearer-enabled. This app never enables it silently.",
+            "The session guard uses this app's lifecycle. Background return may need display-over-other-apps access. Three recovered departures within 5 seconds request save and exit; this is not physical Home interception.",
             12,
             PANEL_MUTED
         ));
-        Button accessibilitySetup = button("Open Accessibility settings");
-        accessibilitySetup.setOnClickListener(new View.OnClickListener() {
+        Button overlaySetup = button("Allow app background return");
+        overlaySetup.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View ignored) {
-                if (!ControlPanelActivity.openAccessibilitySettingsWithExactLease(
+                if (!ControlPanelActivity.openSelfKioskOverlaySettings(
                         BreathCompositionPanelModule.this)) {
-                    updateStatus("Accessibility settings unavailable or kiosk is not armed.");
+                    updateStatus("Display-over-other-apps settings unavailable on this headset.");
                 }
             }
         });
-        kiosk.addView(accessibilitySetup);
+        kiosk.addView(overlaySetup);
+        Button saveExit = button("Save and exit");
+        saveExit.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View ignored) {
+                NativeRendererSelfKioskApplication.requestSaveAndExit(BreathCompositionPanelModule.this);
+            }
+        });
+        kiosk.addView(saveExit);
         root.addView(kiosk);
 
         LinearLayout start = panelCard("Start a condition");
@@ -2056,10 +2063,11 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
                 bluetooth = ExperimentSessionPanelState.Bluetooth.UNKNOWN;
             }
             String automatic = projection.optString("automatic_connection_state", "not-started");
+            boolean scanInFlight = projection.optBoolean("scanning", false);
             ExperimentSessionPanelState.Polar polar;
             if ("connected".equals(automatic)) {
                 polar = ExperimentSessionPanelState.Polar.CONNECTED;
-            } else if ("scanning".equals(automatic)) {
+            } else if (scanInFlight || "scanning".equals(automatic)) {
                 polar = ExperimentSessionPanelState.Polar.SCANNING;
             } else if ("connecting".equals(automatic)) {
                 polar = ExperimentSessionPanelState.Polar.CONNECTING;
@@ -2081,7 +2089,7 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
                 "automatic_connection_deadline_elapsed_ms",
                 0L
             );
-            boolean fresh = PolarAutoConnectionPolicy.evidenceFresh(
+            boolean fresh = scanInFlight || PolarAutoConnectionPolicy.evidenceFresh(
                 connectionGeneration,
                 projection.optLong("automatic_connection_evidence_generation", 0L),
                 observedAt,
@@ -2103,10 +2111,12 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
                     observedAt,
                     deadlineElapsedMs,
                     fresh,
-                    projection.optString(
-                        "automatic_connection_detail",
-                        projection.optString("detail", automatic)
-                    )
+                    scanInFlight
+                        ? projection.optString("detail", "Scanning for a Polar sensor.")
+                        : projection.optString(
+                            "automatic_connection_detail",
+                            projection.optString("detail", automatic)
+                        )
                 )
             );
         } catch (Throwable ignored) {

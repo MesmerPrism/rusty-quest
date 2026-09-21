@@ -1142,6 +1142,7 @@ public final class ControlPanelActivity extends $selectedPanelEntrySimpleName {
             NativeRendererForegroundGuardPolicy.Presentation.PANEL,
         NativeRendererSoftKioskCoordinator.PANEL_ROUTE_EXPERIMENTER);
         if (armed) {
+            NativeRendererSelfKioskApplication.armed(activity);
 $polarRuntimeReopenFromExplicitLaunch
             synchronized (PRESENTATION_LOCK) {
                 presentationGeneration = launchEpoch;
@@ -1184,35 +1185,31 @@ $polarRuntimeReopenFromExplicitLaunch
     static String softKioskEffectiveStatus(android.app.Activity activity) {
         NativeRendererSoftKioskCoordinator.Snapshot state =
             NativeRendererSoftKioskCoordinator.process().snapshot();
-        return "Soft kiosk requested=true; effective="
+        return "Self guard requested=true; state="
             + state.effectiveness.name().toLowerCase(java.util.Locale.ROOT)
-            + "; accessibility=" + state.serviceState.name().toLowerCase(java.util.Locale.ROOT)
-            + "; home=" + state.homeSurfaceState.name().toLowerCase(java.util.Locale.ROOT)
+            + "; self_watchdog=" + state.serviceState.name().toLowerCase(java.util.Locale.ROOT)
+            + "; " + NativeRendererSelfKioskService.readback()
             + "; armed=" + state.armed;
     }
 
-    static boolean openAccessibilitySettingsWithExactLease(android.app.Activity activity) {
+    static boolean openSelfKioskOverlaySettings(android.app.Activity activity) {
         if (!(activity instanceof ControlPanelActivity)) return false;
         android.content.Intent query = new android.content.Intent(
-            android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS);
+            android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+            android.net.Uri.parse("package:" + activity.getPackageName()));
         android.content.pm.ResolveInfo resolved = activity.getPackageManager().resolveActivity(
             query, android.content.pm.PackageManager.MATCH_DEFAULT_ONLY);
         android.content.pm.ActivityInfo target = resolved == null ? null : resolved.activityInfo;
         if (target == null || target.packageName == null || target.name == null) return false;
         android.content.ComponentName component = new android.content.ComponentName(
             target.packageName, target.name);
-        NativeRendererSoftKioskCoordinator coordinator =
-            NativeRendererSoftKioskCoordinator.process();
-        NativeRendererSoftKioskCoordinator.Snapshot state = coordinator.snapshot();
-        long nowMs = android.os.SystemClock.uptimeMillis();
-        if (!coordinator.allowExactSystemPrompt(
-                state.generation, component.getPackageName(), component.getClassName(),
-                nowMs, 60_000L)) {
+        NativeRendererSelfKioskApplication.beginSystemPrompt(activity);
+        try {
+            activity.startActivityForResult(query.setComponent(component), 60612);
+        } catch (RuntimeException error) {
+            NativeRendererSelfKioskApplication.endSystemPrompt(activity);
             return false;
         }
-        activity.startActivity(new android.content.Intent(
-            android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS)
-            .setComponent(component));
         return true;
     }
 
@@ -1234,6 +1231,7 @@ $polarRuntimeReopenFromExplicitLaunch
             if (terminalIntentAdmitted) return false;
             terminalIntentAdmitted = true;
         }
+        NativeRendererSelfKioskService.acknowledgeTerminalIntent(guardGeneration, homeEpisode);
         NativeRendererExperimentLaunchAuthority.invalidatePending();
         PanelImmersiveHandoff.cancelForTerminalExit(activity);
 $experimentSessionTerminalAudioStop
@@ -1332,7 +1330,14 @@ $experimentSessionOnCreate
 
     @Override
     protected void onActivityResult(int requestCode, int resultCode, android.content.Intent data) {
+        if (requestCode == 60612) NativeRendererSelfKioskApplication.endSystemPrompt(this);
         super.onActivityResult(requestCode, resultCode, data);
+    }
+
+    @Override
+    protected void onUserLeaveHint() {
+        NativeRendererSelfKioskApplication.userLeaveHint(this);
+        super.onUserLeaveHint();
     }
 
     @Override

@@ -141,7 +141,7 @@ final class ControlPanelActivity extends BreathCompositionPanelModule {
     static boolean admitExplicitColdExperimentShell(android.app.Activity activity, long epoch, String route) { return false; }
     static boolean beginPanelTransition(android.app.Activity activity, String route, long generation) { return true; }
     static String softKioskEffectiveStatus(android.app.Activity activity) { return "unavailable"; }
-    static boolean openAccessibilitySettingsWithExactLease(android.app.Activity activity) { return false; }
+    static boolean openSelfKioskOverlaySettings(android.app.Activity activity) { return false; }
     static boolean admitTerminalSaveAndExit(android.app.Activity activity, android.content.Intent intent) { return false; }
     static void finishTerminalSaveAndExit(android.app.Activity activity, boolean saved, long generation, String operationId, long revision) {}
     static String conditionAudioReadiness(String condition) { return "audio-track-not-ready"; }
@@ -165,6 +165,13 @@ final class ControlPanelActivity extends BreathCompositionPanelModule {
         (Join-Path $mainRoot 'NativeRendererForegroundGuardPolicy.java'),
         (Join-Path $mainRoot 'NativeRendererSoftKioskCoordinator.java'),
         (Join-Path $mainRoot 'NativeRendererWriterAcknowledgedExitPolicy.java'),
+        (Join-Path $mainRoot 'NativeRendererSelfKioskApplication.java'),
+        (Join-Path $mainRoot 'NativeRendererSelfKioskService.java'),
+        (Join-Path $mainRoot 'NativeRendererSelfKioskDeparturePolicy.java'),
+        (Join-Path $mainRoot 'NativeRendererExperimentLaunchAuthority.java'),
+        (Join-Path $mainRoot 'NativeRendererExperimentLauncherPolicy.java'),
+        (Join-Path $mainRoot 'PanelImmersiveHandoff.java'),
+        (Join-Path $mainRoot 'PanelImmersiveHandoffLifecyclePolicy.java'),
         (Join-Path $panelRoot 'BreathCompositionCommandReceiver.java'),
         (Join-Path $panelRoot 'BreathCompositionPanelModule.java'),
         (Join-Path $panelRoot 'ExperimentSessionAndroidShell.java'),
@@ -211,6 +218,9 @@ final class ControlPanelActivity extends BreathCompositionPanelModule {
         (Join-Path $mainRoot 'NativeRendererExperimentLaunchAuthority.java'),
         (Join-Path $mainRoot 'NativeRendererExperimentLauncherPolicy.java'),
         (Join-Path $mainRoot 'NativeRendererSoftKioskAccessibilityService.java'),
+        (Join-Path $mainRoot 'NativeRendererSelfKioskApplication.java'),
+        (Join-Path $mainRoot 'NativeRendererSelfKioskService.java'),
+        (Join-Path $mainRoot 'NativeRendererSelfKioskDeparturePolicy.java'),
         (Join-Path $mainRoot 'NativeRendererHomeEpisodePolicy.java'),
         (Join-Path $mainRoot 'NativeRendererSoftKioskRecoveryTimerGate.java'),
         (Join-Path $panelRoot 'ExperimentSessionPackagedClosure.java'),
@@ -272,6 +282,9 @@ final class ControlPanelActivity extends BreathCompositionPanelModule {
         (Join-Path $mainRoot 'NativeRendererExperimentLaunchAuthority.java'),
         (Join-Path $mainRoot 'NativeRendererExperimentLauncherPolicy.java'),
         (Join-Path $mainRoot 'NativeRendererSoftKioskAccessibilityService.java'),
+        (Join-Path $mainRoot 'NativeRendererSelfKioskApplication.java'),
+        (Join-Path $mainRoot 'NativeRendererSelfKioskService.java'),
+        (Join-Path $mainRoot 'NativeRendererSelfKioskDeparturePolicy.java'),
         (Join-Path $mainRoot 'NativeRendererHomeEpisodePolicy.java'),
         (Join-Path $mainRoot 'NativeRendererSoftKioskRecoveryTimerGate.java'),
         (Join-Path $mainRoot 'PanelImmersiveHandoff.java'),

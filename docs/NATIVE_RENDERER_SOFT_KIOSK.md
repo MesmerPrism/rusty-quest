@@ -1,85 +1,82 @@
 # Native Renderer same-APK soft kiosk
 
-## Decision
+`ui.same_apk_soft_kiosk` explicitly selects `NativeRendererSelfKioskApplication`
+and the private same-process `NativeRendererSelfKioskService`. NativeActivity remains
+the only MAIN/VR/LAUNCHER surface. The existing frame-submission gate opens the
+landscape ControlPanelActivity after the first current-session frame.
 
-`ui.same_apk_soft_kiosk` is an explicit native-app feature. When selected, it:
+## Own-app observation and return
 
-- preserves NativeActivity as the sole immersive launcher and defers the initial 2D panel until
-  the renderer has submitted a current-session frame;
-- keeps NativeActivity as the sole MAIN/VR/LAUNCHER surface and ControlPanelActivity as an
-  explicit same-package landscape 2D surface;
-- declares `NativeRendererSoftKioskAccessibilityService` behind Android's
-  `BIND_ACCESSIBILITY_SERVICE` binding permission; and
-- adds no requested runtime permission, hidden enablement route, device-owner authority, input
-  interception, UI-tree access, global action, process kill, or host watchdog.
+The Application observes only the two known own-package Activities. The foreground
+service confirms the panel using resumed/window-focus readback, and immersive
+presentation using resumed NativeActivity plus fresh current-generation
+`renderer_focus_state.json` evidence: FOCUSED, submitted frame, valid schema/activity,
+and a non-future timestamp no more than three seconds old.
 
-The feature being packaged does not make it effective. The wearer must explicitly enable the
-service in Android Accessibility settings. App UI must project the coordinator's typed effective
-state (`needs setup`, `home resolving/degraded`, `home unavailable`, `connected/armed`,
-`interrupted`, `revoked`, or `terminal`) rather than treating a packaged/default request as a
-grant. Recovery remains unavailable until the current HOME component resolves exactly.
+The selected manifest contains no Accessibility service. It declares foreground
+service, special-use foreground service, and `SYSTEM_ALERT_WINDOW` permissions.
+The service starts only after the coordinator accepts an explicit launch epoch.
+Process death loses that authority; START_NOT_STICKY prevents silent re-arming.
+The service shares the app process so its coordinator is the same authority as the
+panel and session code.
 
-## Authority
+Android background-launch restrictions still apply. The UI offers this package's
+display-over-other-apps settings and reports `Settings.canDrawOverlays`; it never
+changes that setting itself. Dispatch is reported as requested/unconfirmed until
+own lifecycle and native focus confirm the desired presentation. Same-app identity
+and a successful `startActivity` call alone do not establish recovery.
 
-The Rust NativeActivity entry point asks `NativeRendererExperimentLaunchAuthority` to mint a
-monotonic, process-local launch epoch only when Android created the exact exported NativeActivity
-with a fresh exact MAIN/LAUNCHER intent for the owning package. The authority rejects saved-state
-recreation, non-MAIN or non-LAUNCHER routes, extra categories, data/selectors, and observable
-component mismatches. NativeActivity starts the OpenXR renderer first. After at least one submitted
-current-session frame, the native panel bridge opens the existing ControlPanelActivity with the
-landscape 2D category and `REORDER_TO_FRONT | SINGLE_TOP`, forwarding the epoch and literal
-`explicit-user-launch-v1` provenance. These extras do not authenticate a human; they only bind the
-one immersive-first launcher episode.
-`NativeRendererExperimentLaunchAuthority` still consumes the pair once, so bare extras, internal
-MAIN intents, Activity recreation, soft-kiosk recovery, replay, and terminal intents cannot arm a
-cold-launch epoch.
+The watchdog polls every 250 ms, waits 750 ms before requesting return, and permits
+at most three attempts per unresolved departure/generation, spaced 1500 ms apart.
+It targets only the known own-package panel or NativeActivity and preserves the
+selected panel route. It never inspects arbitrary foreground apps. Sleep, keyguard,
+bounded app transitions, and declared system prompts suppress recovery.
+Permission callers must invoke `NativeRendererSelfKioskApplication.beginSystemPrompt`
+before dispatch and `endSystemPrompt` when the result arrives. Prompt suppression
+expires after 60 seconds if no callback arrives.
 
-After the app's presentation owner accepts that one-shot launch, it arms
-`NativeRendererSoftKioskCoordinator` with the desired same-APK surface and transition generation.
-The Accessibility service only adapts focus/window observations into that pure policy. It resolves
-the current Android HOME component off the main thread and counts only exact, distinct Home
-episodes. Duplicate shell tails inside the debounce do not advance the escape count, while a
-spaced press opens a new episode even if recovery never succeeded. Unrelated external applications
-recover the current desired app surface after a bounded delay, with three attempts maximum per
-departure episode/generation and typed exhaustion. Alternating external activities remain one
-departure budget until the desired app returns, presentation generation changes, or a distinct
-exact Home episode begins. Repeated observations for the same generation/episode preserve the
-original recovery deadline rather than postponing it. Exact, generation-bound system-prompt leases and
-app-transition grace immediately invalidate older recovery callbacks. Generation-bound deadline
-timers evaluate expiry even without another window event. Claim suppression is bound to the exact
-leased surface; unrelated applications and exact Home episodes are not hidden by a Settings lease,
-and exact Home remains authoritative during a presentation transition.
+## Departure gesture and exit
 
-The third Home episode disarms the guard first, invalidates the pending launcher epoch, cancels its
-own recovery and the shared panel-to-immersive reassertion, then sends one explicit typed
-`TERMINAL_SAVE_AND_EXIT` intent to ControlPanelActivity. The service neither finishes activities
-nor reports saved data. The app-owned session/writer path must validate the process-local terminal
-binding, durably finalize, and only then finish its known tasks. Terminal state forbids recovery;
-only a later accepted explicit-launch epoch can install a fresh policy.
+The three-in-five-seconds escape is a **departure gesture**, not physical HOME
+interception. The panel requires `onUserLeaveHint` followed by pause. NativeActivity
+uses a conservative pause following its confirmed own presentation. An episode
+must remain absent for 750 ms; another episode requires confirmed recovery first.
+Focus loss alone never counts. Prompt/transition/lock/sleep episodes are discarded
+and cannot count retrospectively after suppression expires. Platform prompts not
+covered by those signals may require another explicit app-owned suppression hook.
 
-## Reference provenance and non-scope
+The third qualifying departure or the **Save and exit** button latches terminal
+before dispatching the typed `TERMINAL_SAVE_AND_EXIT` intent, invalidates pending
+launcher authority, and cancels panel-to-immersive reassertion. Every future tick
+and recovery claim checks the terminal/generation state. The service neither
+finishes Activities nor claims data was saved. The existing app-owned session/writer
+path validates the process-local terminal binding and waits for its shutdown
+acknowledgement before finishing its own tasks. The exact terminal request remains
+pending and is retried by the service or the next resumed own Activity until the
+control panel acknowledges admission; a silently denied background launch therefore
+cannot strand the recording behind a terminal latch. Only a newly accepted explicit
+launch epoch can install a fresh policy.
 
-The event/debounce and generation/cancellation design was informed by Rusty Kiosk at commit
-`10593c9750ba7d400f41951d9dad36c619da2219` and the Study 6 transition-exclusion report at commit
-`994498c9299b3f5d5475047eb32022b629a83473`. This implementation is new Java code under Rusty
-Quest's license; it does not copy the Rusty Kiosk catalogue/setup/network surfaces or the legacy
-Study 6 task removal/process-kill protocol.
+The NativeActivity launch authority still rejects recreation, mismatched component,
+data/selectors, unexpected categories, and replay. A self-return cannot create a
+new explicit launch epoch. Legacy Accessibility adapter source remains unselected
+compatibility code; it is not declared by the current feature.
 
-Host validation cannot prove that a given Horizon version emits the resolved HOME component for
-physical button episodes. Quest 2 and Quest 3-family attended tests remain required after the
-feature is selected by an exact product, wired to its writer-acknowledged exit, built, installed,
-and explicitly enabled.
+## Provenance and validation limits
 
-## Host validation
+The earlier generation/cancellation policy was informed by Rusty Kiosk commit
+`10593c9750ba7d400f41951d9dad36c619da2219`. The self-app observation approach is
+informed by Study 6 commit `994498c9299b3f5d5475047eb32022b629a83473`, whose own
+background-launch spike required overlay authorization. This implementation does
+not copy its study-specific session logic or process-kill protocol.
 
-Run:
+Run `tools/checks/Test-NativeRendererSoftKioskStatic.ps1` for real Java compilation,
+pure departure/suppression/terminal traces, and selected/unselected manifest dry
+resolution. Run `tools/checks/Test-NativeRendererExperimentPanel.ps1` for generated
+panel-shell compilation. Neither test establishes headset acceptance.
 
-```powershell
-pwsh -NoProfile -ExecutionPolicy Bypass `
-  -File .\tools\checks\Test-NativeRendererSoftKioskStatic.ps1 `
-  -RepoRoot .
-```
-
-The test compiles the real Java adapter, executes pure one/two/three-Home and damage traces, and
-dry-resolves both selected and unselected app manifests. Both routes keep NativeActivity as the
-only launcher; the unselected route omits the soft-kiosk service.
+Attended Quest validation must cover real Meta-button departures in both panel and
+immersive presentation, permission prompts, sleep, overlay permission readback,
+background-return acceptance, native focus, and writer-acknowledged exit. Synthetic
+ADB Home is not physical controller parity. Do not claim exact Home counting or
+unconditional return-to-foreground support from these host tests.

@@ -116,6 +116,38 @@ Assert-ContainsTokens "$polarPanel`n$polarRuntimeSupport" @(
     'rawDeviceIdentifierLogged=false'
 ) "Quest Polar discovery and structured readback"
 
+Assert-ContainsTokens "$controlPanel`n$polarPanel" @(
+    'View buildEmbeddedAcquisitionView\(\)',
+    'return buildContentView\(false\);',
+    'scanButton = button\(scanning \? "Scanning…" : "Scan"\);',
+    'scanButton\.setEnabled\(!scanning\);',
+    'status = text\(statusDetail, 14, scanning \? PANEL_ACCENT : PANEL_MUTED\);',
+    'status=scan-already-running',
+    'NativeRendererSelfKioskApplication\.beginSystemPrompt\(activity\);',
+    'NativeRendererSelfKioskApplication\.endSystemPrompt\(activity\);',
+    'if \(Looper\.myLooper\(\) != Looper\.getMainLooper\(\)\)',
+    'if \(!closing\) handler\.post\(new Runnable\(\)',
+    'if \(closing\) return;',
+    'boolean scanInFlight = projection\.optBoolean\("scanning", false\);',
+    'boolean fresh = scanInFlight \|\| PolarAutoConnectionPolicy\.evidenceFresh'
+) "visible retained Polar scan state"
+
+$deviceStatusIndex = $polarPanel.IndexOf(
+    'status = text(statusDetail, 14, scanning ? PANEL_ACCENT : PANEL_MUTED);',
+    [StringComparison]::Ordinal)
+$pmdSectionIndex = $polarPanel.IndexOf(
+    'root.addView(sectionTitle("PMD Stream"));',
+    [StringComparison]::Ordinal)
+if ($deviceStatusIndex -lt 0 -or $pmdSectionIndex -lt 0 -or $deviceStatusIndex -gt $pmdSectionIndex) {
+    throw 'Polar scan status must remain visible beside Device controls, before advanced PMD controls.'
+}
+if ($polarPanel.Contains('return buildView(false);', [StringComparison]::Ordinal)) {
+    throw 'Embedded Polar controls must not nest a second ScrollView inside the parent panel ScrollView.'
+}
+if ($polarPanel.Contains('setStatusState("ready", "panel-created");', [StringComparison]::Ordinal)) {
+    throw 'Attaching/rebuilding the Polar view must not overwrite process-owned acquisition state.'
+}
+
 Assert-ContainsTokens $polarPanel @(
     'private volatile boolean connected;',
     'private ScanCallback activeScanCallback;',

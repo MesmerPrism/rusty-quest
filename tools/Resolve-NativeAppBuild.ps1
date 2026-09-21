@@ -689,6 +689,9 @@ function New-GeneratedAndroidManifestText {
     }
     [void]$lines.Add("")
     [void]$lines.Add('    <application')
+    if ($Services -contains "NativeRendererSelfKioskService") {
+        [void]$lines.Add('        android:name="io.github.mesmerprism.rustyquest.native_renderer.NativeRendererSelfKioskApplication"')
+    }
     [void]$lines.Add('        android:allowBackup="false"')
     [void]$lines.Add('        android:debuggable="true"')
     [void]$lines.Add('        android:extractNativeLibs="true"')
@@ -790,15 +793,13 @@ function New-GeneratedAndroidManifestText {
     if ($Services -contains "DisplayCompositeProjectionService") {
         [void]$lines.Add('        <service android:name="io.github.mesmerprism.rustyquest.native_renderer.DisplayCompositeProjectionService" android:exported="false" android:foregroundServiceType="mediaProjection" />')
     }
-    if ($Services -contains "NativeRendererSoftKioskAccessibilityService") {
+    if ($Services -contains "NativeRendererSelfKioskService") {
         [void]$lines.Add('        <service')
-        [void]$lines.Add('            android:name="io.github.mesmerprism.rustyquest.native_renderer.NativeRendererSoftKioskAccessibilityService"')
-        [void]$lines.Add('            android:exported="true"')
-        [void]$lines.Add('            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"')
-        [void]$lines.Add('            android:stopWithTask="false">')
-        [void]$lines.Add('            <intent-filter>')
-        [void]$lines.Add('                <action android:name="android.accessibilityservice.AccessibilityService" />')
-        [void]$lines.Add('            </intent-filter>')
+        [void]$lines.Add('            android:name="io.github.mesmerprism.rustyquest.native_renderer.NativeRendererSelfKioskService"')
+        [void]$lines.Add('            android:exported="false"')
+        [void]$lines.Add('            android:foregroundServiceType="specialUse"')
+        [void]$lines.Add('            android:stopWithTask="true">')
+        [void]$lines.Add('            <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE" android:value="app-owned-session-foreground-recovery" />')
         [void]$lines.Add('        </service>')
     }
     [void]$lines.Add('    </application>')

@@ -2,14 +2,14 @@
   "schema": "rusty.quest.native_app_feature.v1",
   "feature_id": "ui.same_apk_soft_kiosk",
   "module_path": "ui/same-apk-soft-kiosk",
-  "module_kind": "same-apk-accessibility-soft-kiosk",
+  "module_kind": "same-apk-self-watchdog",
   "settings_surface": {
     "authority": "rusty.quest.native_app_settings.v1",
     "adapter": "packaged-feature-selection"
   },
   "owner_lane": "rusty-quest",
   "status": "public-substrate",
-  "description": "Explicitly selected same-APK Accessibility foreground recovery with NativeActivity-owned immersive-first experiment launch; user enablement remains mandatory.",
+  "description": "Explicitly selected app-owned lifecycle and OpenXR focus watchdog with NativeActivity-owned immersive-first launch. Background return requires platform authorization and own-presentation confirmation.",
   "provides": [
     "ui.same_apk_soft_kiosk"
   ],
@@ -22,11 +22,15 @@
     "launcher_route": "native-activity-immersive-first"
   },
   "android_manifest": {
-    "permissions": [],
+    "permissions": [
+      "android.permission.FOREGROUND_SERVICE",
+      "android.permission.FOREGROUND_SERVICE_SPECIAL_USE",
+      "android.permission.SYSTEM_ALERT_WINDOW"
+    ],
     "uses_features": [],
     "activities": [],
     "services": [
-      "NativeRendererSoftKioskAccessibilityService"
+      "NativeRendererSelfKioskService"
     ],
     "queries": []
   },
@@ -51,5 +55,5 @@
     "standard": [],
     "device": []
   },
-  "public_private_boundary": "The generic guard observes only top-level package/component transitions. Product session, condition, data, and shutdown durability remain with the consuming app."
+  "public_private_boundary": "The generic guard observes only its own activity lifecycle and native focus evidence. It neither observes arbitrary apps nor intercepts physical HOME. Product session, condition, data, and shutdown durability remain with the consuming app."
 }

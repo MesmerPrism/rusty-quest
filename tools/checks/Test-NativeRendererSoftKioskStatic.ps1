@@ -33,7 +33,9 @@ $policyPath = Join-Path $javaRoot 'NativeRendererForegroundGuardPolicy.java'
 $homePolicyPath = Join-Path $javaRoot 'NativeRendererHomeEpisodePolicy.java'
 $coordinatorPath = Join-Path $javaRoot 'NativeRendererSoftKioskCoordinator.java'
 $recoveryTimerGatePath = Join-Path $javaRoot 'NativeRendererSoftKioskRecoveryTimerGate.java'
-$servicePath = Join-Path $javaRoot 'NativeRendererSoftKioskAccessibilityService.java'
+$servicePath = Join-Path $javaRoot 'NativeRendererSelfKioskService.java'
+$applicationPath = Join-Path $javaRoot 'NativeRendererSelfKioskApplication.java'
+$departurePath = Join-Path $javaRoot 'NativeRendererSelfKioskDeparturePolicy.java'
 $launchAuthorityPath = Join-Path $javaRoot 'NativeRendererExperimentLaunchAuthority.java'
 $launcherPolicyPath = Join-Path $javaRoot 'NativeRendererExperimentLauncherPolicy.java'
 $handoffLifecyclePath = Join-Path $javaRoot 'PanelImmersiveHandoffLifecyclePolicy.java'
@@ -48,6 +50,8 @@ foreach ($path in @(
     $coordinatorPath,
     $recoveryTimerGatePath,
     $servicePath,
+    $applicationPath,
+    $departurePath,
     $launchAuthorityPath,
     $launcherPolicyPath,
     $handoffLifecyclePath,
@@ -68,17 +72,24 @@ if ([string]$feature.schema -cne 'rusty.quest.native_app_feature.v1' -or
     [string]$feature.feature_id -cne 'ui.same_apk_soft_kiosk' -or
     @($feature.depends_on) -cnotcontains 'ui.same_apk_control_panel' -or
     @($feature.android_manifest.activities).Count -ne 0 -or
-    @($feature.android_manifest.services) -cnotcontains 'NativeRendererSoftKioskAccessibilityService' -or
-    @($feature.android_manifest.permissions).Count -ne 0) {
+    @($feature.android_manifest.services) -cnotcontains 'NativeRendererSelfKioskService' -or
+    @($feature.android_manifest.permissions).Count -ne 3 -or
+    @($feature.android_manifest.permissions) -cnotcontains 'android.permission.SYSTEM_ALERT_WINDOW') {
     throw 'Same-APK soft-kiosk feature descriptor is not the closed opt-in surface.'
 }
 
-Assert-Contains $servicePath 'AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED'
-Assert-Contains $servicePath 'AccessibilityEvent.TYPE_WINDOWS_CHANGED'
-Assert-Contains $servicePath 'PackageManager.MATCH_DEFAULT_ONLY'
-Assert-Contains $servicePath 'Intent.CATEGORY_HOME'
-Assert-Contains $servicePath 'status=terminal-save-exit-requested saved=false'
-Assert-Contains $servicePath 'cancelRecovery();'
+Assert-Contains $applicationPath 'registerActivityLifecycleCallbacks'
+Assert-Contains $applicationPath 'beginSystemPrompt'
+Assert-Contains $servicePath 'renderer_focus_state.json'
+Assert-Contains $servicePath 'physical_home=false'
+Assert-Contains $servicePath 'Settings.canDrawOverlays(this)'
+Assert-Contains $servicePath 'status=terminal-save-exit-requested admitted=false saved=false'
+Assert-Contains $servicePath 'pendingTerminal'
+Assert-Contains $servicePath 'resumePendingTerminal(Context context)'
+Assert-Contains $servicePath 'acknowledgeTerminalIntent(long generation, long departureId)'
+Assert-Contains $applicationPath 'NativeRendererSelfKioskService.resumePendingTerminal(a)'
+Assert-Contains (Join-Path $repo 'tools\Build-NativeRendererAndroid.ps1') 'NativeRendererSelfKioskService.acknowledgeTerminalIntent(guardGeneration, homeEpisode)'
+Assert-Contains $servicePath 'handler.removeCallbacksAndMessages(null)'
 Assert-Contains $coordinatorPath 'BEGIN_TERMINAL_EXIT'
 Assert-Contains $coordinatorPath 'TERMINAL_ROUTE_SAVE_AND_EXIT'
 Assert-Contains $launchAuthorityPath 'explicit-user-launch-v1'
@@ -104,8 +115,8 @@ if ($endFrameIndex -lt 0 -or $startupDispatchIndex -le $endFrameIndex) {
 }
 Assert-Contains $coordinatorPath 'RECOVERY_EXHAUSTED'
 Assert-Contains $coordinatorPath 'UNAVAILABLE_HOME_SURFACE'
-Assert-Contains $servicePath 'replaceDeadlineTimer('
-Assert-Contains $servicePath 'Offer.UNCHANGED'
+Assert-Contains $servicePath 'coordinator.claimRecovery('
+Assert-Contains $servicePath 'coordinator.observeOwnSurface('
 foreach ($literal in @(
     'performGlobalAction(',
     'dispatchGesture(',
@@ -167,6 +178,8 @@ try {
         $coordinatorPath,
         $recoveryTimerGatePath,
         $servicePath,
+        $applicationPath,
+        $departurePath,
         $launchAuthorityPath,
         $launcherPolicyPath,
         $handoffLifecyclePath,
@@ -188,7 +201,8 @@ try {
     $selectedSpec.app_id = 'native_soft_kiosk_static_probe'
     $selectedSpec.package_name = 'io.github.mesmerprism.rustyquest.native_renderer.soft_kiosk_probe'
     $selectedSpec.requested_features = @($selectedSpec.requested_features) + 'ui.same_apk_soft_kiosk'
-    $selectedSpec.declared_manifest.services = @('NativeRendererSoftKioskAccessibilityService')
+    $selectedSpec.declared_manifest.services = @('NativeRendererSelfKioskService')
+    $selectedSpec.declared_manifest.permissions = @($selectedSpec.declared_manifest.permissions) + @($feature.android_manifest.permissions)
     [IO.File]::WriteAllText(
         $selectedSpecPath,
         ($selectedSpec | ConvertTo-Json -Depth 32),
@@ -212,9 +226,10 @@ try {
         throw 'Selected resolver probe omitted the soft-kiosk feature.'
     }
     foreach ($literal in @(
-        'android:name="io.github.mesmerprism.rustyquest.native_renderer.NativeRendererSoftKioskAccessibilityService"',
-        'android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"',
-        'android:name="android.accessibilityservice.AccessibilityService"',
+        'android:name="io.github.mesmerprism.rustyquest.native_renderer.NativeRendererSelfKioskService"',
+        'android:name="io.github.mesmerprism.rustyquest.native_renderer.NativeRendererSelfKioskApplication"',
+        'android:foregroundServiceType="specialUse"',
+        'android.permission.SYSTEM_ALERT_WINDOW',
         'android:name="android.app.NativeActivity"'
     )) {
         if (-not $selectedManifest.Contains($literal, [StringComparison]::Ordinal)) {
@@ -253,10 +268,9 @@ try {
             throw "ControlPanelActivity landscape handoff block omitted '$literal'."
         }
     }
-    if ($selectedManifest.Contains(
-        '<uses-permission android:name="android.permission.BIND_ACCESSIBILITY_SERVICE"',
-        [StringComparison]::Ordinal)) {
-        throw 'BIND_ACCESSIBILITY_SERVICE must remain a service binding permission, not a requested runtime permission.'
+    if ($selectedManifest.Contains('Accessibility', [StringComparison]::Ordinal) -or
+        $selectedManifest.Contains('BIND_ACCESSIBILITY_SERVICE', [StringComparison]::Ordinal)) {
+        throw 'Self-watchdog selected manifest must not contain Accessibility authority.'
     }
 
     $baselineOutput = Join-Path $resolvedTempRoot 'baseline-output'
@@ -272,7 +286,7 @@ try {
     $baselineResult = Get-Content -Raw -LiteralPath $baselineResultPath | ConvertFrom-Json
     $baselineLock = Get-Content -Raw -LiteralPath ([string]$baselineResult.feature_lock_path) | ConvertFrom-Json
     $baselineManifest = [IO.File]::ReadAllText([string]$baselineLock.generated_outputs.android_manifest)
-    if ($baselineManifest.Contains('NativeRendererSoftKioskAccessibilityService', [StringComparison]::Ordinal) -or
+    if ($baselineManifest.Contains('NativeRendererSelfKiosk', [StringComparison]::Ordinal) -or
         [regex]::Matches($baselineManifest, 'android.intent.category.LAUNCHER').Count -ne 1) {
         throw 'Unselected apps must retain the NativeActivity launcher and omit the soft-kiosk service.'
     }

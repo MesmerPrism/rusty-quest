@@ -136,6 +136,7 @@ final class PolarSensorPanel {
     private ArrayAdapter<String> deviceAdapter;
     private Spinner deviceSpinner;
     private Spinner pmdSpinner;
+    private Button scanButton;
     private TextView status;
     private TextView selectedDevice;
     private TextView hrStatus;
@@ -231,6 +232,7 @@ final class PolarSensorPanel {
         deviceAdapter = null;
         deviceSpinner = null;
         pmdSpinner = null;
+        scanButton = null;
         status = null;
         selectedDevice = null;
         hrStatus = null;
@@ -245,21 +247,21 @@ final class PolarSensorPanel {
     }
 
     View buildView() {
-        return buildView(true);
+        ScrollView scroll = new ScrollView(activity);
+        scroll.setBackgroundColor(PANEL_BG);
+        scroll.addView(buildContentView(true));
+        return scroll;
     }
 
     View buildEmbeddedAcquisitionView() {
-        return buildView(false);
+        return buildContentView(false);
     }
 
-    private View buildView(boolean includeCloseButton) {
-        ScrollView scroll = new ScrollView(activity);
-        scroll.setBackgroundColor(PANEL_BG);
+    private LinearLayout buildContentView(boolean includeCloseButton) {
         LinearLayout root = new LinearLayout(activity);
         root.setOrientation(LinearLayout.VERTICAL);
         int pad = dp(18);
         root.setPadding(pad, pad, pad, pad);
-        scroll.addView(root);
 
         LinearLayout header = row();
         TextView title = text("Polar Sensor Panel", 22, PANEL_FG);
@@ -294,8 +296,9 @@ final class PolarSensorPanel {
         root.addView(selectedDevice);
 
         LinearLayout scanRow = row();
-        Button scan = button("Scan");
-        scan.setOnClickListener(new View.OnClickListener() {
+        scanButton = button(scanning ? "Scanning…" : "Scan");
+        scanButton.setEnabled(!scanning);
+        scanButton.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
                 startScan();
@@ -315,10 +318,13 @@ final class PolarSensorPanel {
                 disconnect();
             }
         });
-        scanRow.addView(scan, rowButtonParams());
+        scanRow.addView(scanButton, rowButtonParams());
         scanRow.addView(connect, rowButtonParams());
         scanRow.addView(disconnect, rowButtonParams());
         root.addView(scanRow);
+        status = text(statusDetail, 14, scanning ? PANEL_ACCENT : PANEL_MUTED);
+        status.setPadding(0, dp(6), 0, dp(10));
+        root.addView(status);
 
         root.addView(sectionTitle("PMD Stream"));
         pmdSpinner = new Spinner(activity);
@@ -424,19 +430,19 @@ final class PolarSensorPanel {
         root.addView(accStatus);
         root.addView(ecgStatus);
 
-        status = text("Polar panel ready.", 13, PANEL_MUTED);
-        status.setPadding(0, dp(16), 0, 0);
-        root.addView(status);
+        updateDeviceAdapter();
         updateCounters();
-        setStatusState("ready", "panel-created");
-        marker("status=ready");
-        return scroll;
+        updateScanUi();
+        marker("status=ui-attached acquisitionState=" + markerToken(statusState)
+            + " scanning=" + scanning + " candidateCount=" + devices.size());
+        return root;
     }
 
     void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
         if (requestCode != REQUEST_BLE_PERMISSIONS) {
             return;
         }
+        NativeRendererSelfKioskApplication.endSystemPrompt(activity);
         if (hasRequiredPermissions()) {
             setStatusState("permission-ready", "BLE/location permissions accepted.");
             marker("status=permission-accepted");
@@ -843,6 +849,13 @@ final class PolarSensorPanel {
     }
 
     private void startScan() {
+        if (scanning) {
+            setStatus("Scan already running. Compatible candidates found: " + devices.size() + ".");
+            updateScanUi();
+            marker("status=scan-already-running generation=" + scanGeneration
+                + " candidateCount=" + devices.size());
+            return;
+        }
         if (!ensurePermissions(PENDING_BLE_SCAN)) {
             return;
         }
@@ -855,7 +868,7 @@ final class PolarSensorPanel {
         }
         BluetoothLeScanner nextScanner = adapter.getBluetoothLeScanner();
         if (nextScanner == null) {
-            setStatus("BLE scanner is unavailable.");
+            setStatusState("scanner-unavailable", "BLE scanner is unavailable.");
             marker("status=error reason=scanner-unavailable");
             return;
         }
@@ -886,6 +899,7 @@ final class PolarSensorPanel {
             return;
         }
         setStatusState("scanning", "Scanning for Polar H10 advertisements.");
+        updateScanUi();
         marker("status=scanning scanMode=low-latency platformFilter=empty");
         handler.postDelayed(new Runnable() {
             @Override
@@ -2544,6 +2558,7 @@ final class PolarSensorPanel {
             } catch (RuntimeException ignored) {
             }
         }
+        updateScanUi();
     }
 
     private void closeGatt() {
@@ -2602,6 +2617,7 @@ final class PolarSensorPanel {
             marker("status=permission-required origin=headless pendingAction=" + pendingAction);
             return false;
         }
+        NativeRendererSelfKioskApplication.beginSystemPrompt(activity);
         PolarBleRuntimeSupport.ensureReady(activity, REQUEST_BLE_PERMISSIONS);
         String missing = PolarBleRuntimeSupport.join(
             PolarBleRuntimeSupport.missingPermissions(appContext),
@@ -2757,6 +2773,23 @@ final class PolarSensorPanel {
         }
     }
 
+    private void updateScanUi() {
+        if (Looper.myLooper() != Looper.getMainLooper()) {
+            if (!closing) handler.post(new Runnable() {
+                @Override public void run() { updateScanUi(); }
+            });
+            return;
+        }
+        if (closing) return;
+        if (scanButton != null) {
+            scanButton.setText(scanning ? "Scanning…" : "Scan");
+            scanButton.setEnabled(!scanning);
+        }
+        if (status != null) {
+            status.setTextColor(scanning ? PANEL_ACCENT : PANEL_MUTED);
+        }
+    }
+
     private void markAutomaticConnectionEvidenceFromLiveCallback(
         BluetoothGatt admittedGatt,
         long admittedGeneration
@@ -2807,6 +2840,7 @@ final class PolarSensorPanel {
         statusDetail = detail == null ? "" : detail;
         statusUpdatedAtUnixMs = System.currentTimeMillis();
         setStatus(statusDetail);
+        updateScanUi();
         writeStatus(statusState, statusDetail);
     }
 

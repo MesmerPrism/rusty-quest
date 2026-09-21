@@ -23,6 +23,11 @@ Validate shared-core and placement parity on the host before device work.
 
 Runtime routes are selected by profile/property, not by separate APKs:
 
+The opt-in `ui.same_apk_soft_kiosk` feature uses own-Activity lifecycle and native
+focus evidence through a private foreground service, with no Accessibility setup.
+See [same-APK soft kiosk](../../docs/NATIVE_RENDERER_SOFT_KIOSK.md) for background
+launch authorization, departure gestures, permission suppression, and exit checks.
+
 The reusable particle-contract adapter is independently selectable with
 `quest-native-renderer-particle-adapter-conformance.profile.json`. Its property
 defaults false. When selected, startup emits a `channel=particle-adapter`

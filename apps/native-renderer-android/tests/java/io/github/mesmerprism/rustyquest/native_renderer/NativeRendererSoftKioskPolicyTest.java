@@ -24,6 +24,9 @@ public final class NativeRendererSoftKioskPolicyTest {
         terminalIntentAdmissionIsExact();
         launchAuthorityIsOneShotAndRejectsSpoofReplayAndRecreation();
         launcherAdmissionRejectsRecreationAndIntentAnomalies();
+        selfWatchdogDoesNotNeedHomeResolutionOrAccessibility();
+        selfDepartureNeedsRecoveryAndIgnoresFocusNoiseAndPrompts();
+        selfPromptAndExplicitExitCancelPendingReturn();
         System.out.println("NativeRendererSoftKioskPolicyTest PASS");
     }
 
@@ -553,6 +556,69 @@ public final class NativeRendererSoftKioskPolicyTest {
         } catch (ReflectiveOperationException error) {
             throw new AssertionError("could not exercise private admitted-launch issuer", error);
         }
+    }
+
+    private static void selfWatchdogDoesNotNeedHomeResolutionOrAccessibility() {
+        NativeRendererSoftKioskCoordinator c = new NativeRendererSoftKioskCoordinator();
+        c.useSelfWatchdog();
+        require(c.armFromExplicitColdLaunch(100L,
+            NativeRendererForegroundGuardPolicy.Presentation.IMMERSIVE, "experimenter"));
+        equal(NativeRendererSoftKioskCoordinator.Effectiveness.WATCHDOG_STARTING, c.snapshot().effectiveness);
+        c.updateServiceState(NativeRendererSoftKioskCoordinator.ServiceState.CONNECTED);
+        equal(NativeRendererSoftKioskCoordinator.Effectiveness.READY_ARMED, c.snapshot().effectiveness);
+        c.observeOwnSurface(NativeRendererForegroundGuardPolicy.NATIVE_ACTIVITY, 100L, 10L);
+        for (int i = 1; i <= 3; i++) {
+            NativeRendererSoftKioskCoordinator.Action a = c.observeSelfDeparture(100L, i, i * 1_000L);
+            equal(i == 3 ? NativeRendererSoftKioskCoordinator.ActionKind.BEGIN_TERMINAL_EXIT
+                : NativeRendererSoftKioskCoordinator.ActionKind.RECOVER_IMMERSIVE, a.kind);
+            if (i < 3) c.observeOwnSurface(NativeRendererForegroundGuardPolicy.NATIVE_ACTIVITY,
+                100L, i * 1_000L + 1L);
+        }
+        require(c.snapshot().terminal);
+        equal(NativeRendererSoftKioskCoordinator.ActionKind.NONE, c.claimRecovery(100L, 1L, 3_100L).kind);
+    }
+
+    private static void selfDepartureNeedsRecoveryAndIgnoresFocusNoiseAndPrompts() {
+        NativeRendererSelfKioskDeparturePolicy p = new NativeRendererSelfKioskDeparturePolicy();
+        equal(0L, p.observe(1L, true, false, false, 0L));
+        equal(0L, p.observe(1L, false, false, false, 1_000L));
+        equal(0L, p.observe(1L, false, false, false, 2_000L));
+        equal(0L, p.observe(1L, false, true, false, 2_100L));
+        long first = p.observe(1L, false, true, false, 2_850L);
+        require(first > 0L);
+        equal(first, p.observe(1L, false, true, false, 9_000L));
+        equal(0L, p.observe(1L, true, false, false, 10_000L));
+        equal(0L, p.observe(1L, false, true, true, 11_000L));
+        equal(0L, p.observe(1L, false, true, false, 12_000L));
+        equal(0L, p.observe(1L, false, true, false, 13_000L));
+        p.observe(1L, true, false, false, 14_000L);
+        p.observe(1L, false, true, false, 15_000L);
+        require(p.observe(1L, false, true, false, 15_750L) > first);
+        // A different desired presentation must first acquire its own confirmed foreground.
+        equal(0L, p.observe(2L, false, true, false, 16_000L));
+        equal(0L, p.observe(2L, false, true, false, 17_000L));
+    }
+
+    private static void selfPromptAndExplicitExitCancelPendingReturn() {
+        NativeRendererSoftKioskCoordinator c = new NativeRendererSoftKioskCoordinator();
+        c.useSelfWatchdog();
+        c.updateServiceState(NativeRendererSoftKioskCoordinator.ServiceState.CONNECTED);
+        require(c.armFromExplicitColdLaunch(200L,
+            NativeRendererForegroundGuardPolicy.Presentation.PANEL, "experimenter"));
+        NativeRendererSoftKioskCoordinator.Action pending = c.observeSelfDeparture(200L, 1L, 1_000L);
+        c.beginSelfSystemPrompt(1_001L);
+        equal(NativeRendererSoftKioskCoordinator.ActionKind.NONE,
+            c.claimRecovery(200L, pending.recoveryEpisodeId, 1_002L).kind);
+        equal(NativeRendererSoftKioskCoordinator.ActionKind.SUPPRESSED_TRANSITION,
+            c.observeSelfDeparture(200L, 2L, 2_000L).kind);
+        c.endSelfSystemPrompt();
+        NativeRendererSoftKioskCoordinator.Action exit = c.requestExplicitTerminalExit();
+        equal(NativeRendererSoftKioskCoordinator.ActionKind.BEGIN_TERMINAL_EXIT, exit.kind);
+        require(c.admitsTerminalIntent(NativeRendererSoftKioskCoordinator.ACTION_TERMINAL_SAVE_AND_EXIT,
+            NativeRendererSoftKioskCoordinator.TERMINAL_ROUTE_SAVE_AND_EXIT, 200L, exit.homeEpisodeId));
+        equal(NativeRendererSoftKioskCoordinator.ActionKind.NONE,
+            c.claimRecovery(200L, pending.recoveryEpisodeId, 2_100L).kind);
+        equal(NativeRendererSoftKioskCoordinator.ActionKind.NONE, c.requestExplicitTerminalExit().kind);
     }
 
     private static NativeRendererSoftKioskCoordinator ready(

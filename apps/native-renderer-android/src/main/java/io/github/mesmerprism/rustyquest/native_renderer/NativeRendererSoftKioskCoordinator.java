@@ -23,6 +23,7 @@ final class NativeRendererSoftKioskCoordinator {
         READY_ARMED,
         READY_DISARMED,
         NEEDS_ACCESSIBILITY_SETUP,
+        WATCHDOG_STARTING,
         INTERRUPTED,
         REVOKED,
         DEGRADED_HOME_RESOLVING,
@@ -163,8 +164,46 @@ final class NativeRendererSoftKioskCoordinator {
     private String activeRecoveryClass;
     private boolean activeRecoveryIsHome;
     private int recoveryAttempts;
+    private boolean selfWatchdog;
+    private long selfPromptDeadlineMs = Long.MIN_VALUE;
 
     static NativeRendererSoftKioskCoordinator process() { return PROCESS_INSTANCE; }
+
+    synchronized void useSelfWatchdog() { selfWatchdog = true; }
+
+    synchronized boolean selfRecoverySuppressed(long nowMs) {
+        return nowMs <= selfPromptDeadlineMs || promptActive(nowMs) || transitionActive(nowMs);
+    }
+
+    synchronized void beginSelfSystemPrompt(long nowMs) {
+        if (!selfWatchdog || !armed || terminal) return;
+        selfPromptDeadlineMs = saturatingAdd(nowMs, MAX_SYSTEM_PROMPT_MS);
+        if (policy != null) policy.cancelRecovery();
+        clearRecoveryEpisode();
+        notifyTimingChanged(true);
+    }
+
+    synchronized void endSelfSystemPrompt() { selfPromptDeadlineMs = Long.MIN_VALUE; }
+
+    synchronized Action observeOwnSurface(String component, long observedGeneration, long nowMs) {
+        return observeForeground("own-app", component, true, false, 0L, observedGeneration, nowMs);
+    }
+
+    synchronized Action observeSelfDeparture(long observedGeneration, long departureId, long nowMs) {
+        if (!selfWatchdog || serviceState != ServiceState.CONNECTED || !armed || terminal
+                || policy == null || generation != observedGeneration || nowMs < 0L) {
+            return action(ActionKind.NOT_EFFECTIVE, 0L, false, 0);
+        }
+        if (selfRecoverySuppressed(nowMs)) return action(ActionKind.SUPPRESSED_TRANSITION, 0L, false, 0);
+        ensureRecoveryEpisode("own-app", "own-presentation-absent", false, 0L);
+        return fromPolicyDecision(policy.observeSelfDeparture(generation, departureId, nowMs),
+            departureId, false, 0);
+    }
+
+    synchronized Action requestExplicitTerminalExit() {
+        if (policy == null) return action(ActionKind.NONE, 0L, false, 0);
+        return fromPolicyDecision(policy.beginTerminalExit(), Long.MAX_VALUE, false, 0);
+    }
 
     synchronized void setTimingObserver(TimingObserver observer) { timingObserver = observer; }
 
@@ -189,6 +228,7 @@ final class NativeRendererSoftKioskCoordinator {
         terminalHomeEpisode = 0L;
         armed = true;
         terminal = false;
+        selfPromptDeadlineMs = Long.MIN_VALUE;
         promptLease = null;
         deferredForeground = null;
         clearRecoveryEpisode();
@@ -229,7 +269,7 @@ final class NativeRendererSoftKioskCoordinator {
     synchronized Action observeForeground(String packageName, String className,
             boolean exactAllowedTarget, boolean exactHomeSurface, long homeEpisodeId,
             long observedGeneration, long eventMs) {
-        if (serviceState != ServiceState.CONNECTED || homeSurfaceState != HomeSurfaceState.RESOLVED
+        if (serviceState != ServiceState.CONNECTED || (!selfWatchdog && homeSurfaceState != HomeSurfaceState.RESOLVED)
                 || !armed || policy == null || terminal) {
             return action(ActionKind.NOT_EFFECTIVE, homeEpisodeId, false, 0);
         }
@@ -274,11 +314,11 @@ final class NativeRendererSoftKioskCoordinator {
 
     synchronized Action claimRecovery(long expectedGeneration, long expectedRecoveryEpisodeId,
             long nowMs) {
-        if (serviceState != ServiceState.CONNECTED || homeSurfaceState != HomeSurfaceState.RESOLVED
+        if (serviceState != ServiceState.CONNECTED || (!selfWatchdog && homeSurfaceState != HomeSurfaceState.RESOLVED)
                 || !armed || terminal || policy == null || expectedGeneration != generation
                 || expectedRecoveryEpisodeId <= 0L
                 || expectedRecoveryEpisodeId != activeRecoveryEpisodeId || nowMs < 0L
-                || recoverySuppressed(nowMs)) {
+                || recoverySuppressed(nowMs) || (selfWatchdog && selfRecoverySuppressed(nowMs))) {
             return action(ActionKind.NONE, 0L, false, 0);
         }
         if (recoveryAttempts >= MAX_RECOVERY_ATTEMPTS_PER_EPISODE) {
@@ -477,10 +517,11 @@ final class NativeRendererSoftKioskCoordinator {
     private Effectiveness effectiveness() {
         if (terminal) return Effectiveness.TERMINAL;
         if (serviceState == ServiceState.MISSING_OR_DISABLED) {
-            return Effectiveness.NEEDS_ACCESSIBILITY_SETUP;
+            return selfWatchdog ? Effectiveness.WATCHDOG_STARTING : Effectiveness.NEEDS_ACCESSIBILITY_SETUP;
         }
         if (serviceState == ServiceState.INTERRUPTED) return Effectiveness.INTERRUPTED;
         if (serviceState == ServiceState.REVOKED) return Effectiveness.REVOKED;
+        if (selfWatchdog) return armed ? Effectiveness.READY_ARMED : Effectiveness.READY_DISARMED;
         if (homeSurfaceState == HomeSurfaceState.UNAVAILABLE) {
             return Effectiveness.UNAVAILABLE_HOME_SURFACE;
         }
