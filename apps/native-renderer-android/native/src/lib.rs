@@ -392,16 +392,11 @@ fn request_runtime_permissions(
 }
 
 #[cfg(target_os = "android")]
-struct ExperimentSessionImmersiveOwner {
-    initialized: bool,
-}
+struct ExperimentSessionImmersiveOwner;
 
 #[cfg(target_os = "android")]
 impl Drop for ExperimentSessionImmersiveOwner {
     fn drop(&mut self) {
-        if !self.initialized {
-            return;
-        }
         match experiment_session_runtime::shutdown_for_immersive_owner_destroyed() {
             Ok(()) => marker(
                 "experiment-session-runtime",
@@ -421,26 +416,17 @@ impl Drop for ExperimentSessionImmersiveOwner {
 #[cfg(target_os = "android")]
 #[no_mangle]
 fn android_main(app: android_activity::AndroidApp) {
-    let experiment_session_initialized =
-        match experiment_session_runtime::initialize_from_android_app(&app) {
-            Err(error) => {
-                marker(
-                    "experiment-session-runtime",
-                    format!("status=error reason={}", sanitize(&error)),
-                );
-                false
-            }
-            Ok(()) => {
-                marker(
-                    "experiment-session-runtime",
-                    "status=ready inventoryStatus=inventory-unavailable startAdmitted=false",
-                );
-                true
-            }
-        };
-    let _experiment_session_immersive_owner = ExperimentSessionImmersiveOwner {
-        initialized: experiment_session_initialized,
-    };
+    match experiment_session_runtime::initialize_from_android_app(&app) {
+        Err(error) => marker(
+            "experiment-session-runtime",
+            format!("status=error reason={}", sanitize(&error)),
+        ),
+        Ok(()) => marker(
+            "experiment-session-runtime",
+            "status=ready inventoryStatus=inventory-unavailable startAdmitted=false",
+        ),
+    }
+    let _experiment_session_immersive_owner = ExperimentSessionImmersiveOwner;
     let native_app_settings =
         native_app_settings::NativeAppSettingsDefaults::load_from_apk_asset(&app);
     marker("native-app-settings", native_app_settings.marker_fields());
