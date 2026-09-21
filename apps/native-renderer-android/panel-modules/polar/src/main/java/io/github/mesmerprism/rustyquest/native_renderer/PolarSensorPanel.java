@@ -61,7 +61,9 @@ final class PolarSensorPanel {
     private static final int PENDING_BLE_SCAN = 1;
     private static final int PENDING_BLE_CONNECT = 2;
     private static final int PENDING_BLE_START_PMD = 3;
-    private static final long SCAN_TIMEOUT_MS = 15000L;
+    // Match the proven native Study 6 discovery window. H10 advertisements can
+    // be sparse enough that a single 15 second cold scan is not reliable.
+    private static final long SCAN_TIMEOUT_MS = 45000L;
 
     private static final String TAG = "RQNativeRenderer";
     private static final String MARKER_PREFIX = "RUSTY_QUEST_NATIVE_RENDERER";
@@ -164,6 +166,9 @@ final class PolarSensorPanel {
     private boolean startAllPending;
     private boolean stopAllPending;
     private long scanGeneration;
+    private long scanRawCallbackCount;
+    private long scanRejectedAdvertisementCount;
+    private long scanLastCallbackAtUnixMs;
     private int pendingBleAction;
     private String pendingCommand = "";
     private String pendingPmdMode = "acc";
@@ -626,6 +631,9 @@ final class PolarSensorPanel {
                 .put("automatic_connection_updated_at_unix_ms", automaticConnectionUpdatedAtUnixMs)
                 .put("automatic_connection_deadline_elapsed_ms", automaticConnectionDeadlineElapsedMs)
                 .put("candidate_count", devices.size())
+                .put("scan_raw_callback_count", scanRawCallbackCount)
+                .put("scan_rejected_advertisement_count", scanRejectedAdvertisementCount)
+                .put("scan_last_callback_at_unix_ms", scanLastCallbackAtUnixMs)
                 .put("connected", connected)
                 .put("scanning", scanning)
                 .put("status", statusState)
@@ -874,6 +882,9 @@ final class PolarSensorPanel {
         }
         stopScan();
         devices.clear();
+        scanRawCallbackCount = 0L;
+        scanRejectedAdvertisementCount = 0L;
+        scanLastCallbackAtUnixMs = 0L;
         updateDeviceAdapter();
         scanner = nextScanner;
         final long generation = scanGeneration;
@@ -906,8 +917,14 @@ final class PolarSensorPanel {
             public void run() {
                 if (isCurrentScanGeneration(generation)) {
                     stopScan();
-                    setStatusState("scan-finished", "Scan finished. Devices found: " + devices.size());
-                    marker("status=scan-finished deviceCount=" + devices.size());
+                    String detail = "Scan finished. Compatible devices: " + devices.size()
+                        + ". BLE advertisements received: " + scanRawCallbackCount
+                        + "; rejected as unrelated: " + scanRejectedAdvertisementCount + ".";
+                    setStatusState("scan-finished", detail);
+                    marker("status=scan-finished deviceCount=" + devices.size()
+                        + " rawCallbackCount=" + scanRawCallbackCount
+                        + " rejectedAdvertisementCount=" + scanRejectedAdvertisementCount
+                        + " rawDeviceIdentifierLogged=false");
                     completeAutoScan(generation);
                 }
             }
@@ -1232,40 +1249,75 @@ final class PolarSensorPanel {
         return new ScanCallback() {
             @Override
             public void onScanResult(int callbackType, ScanResult result) {
-                if (result == null || result.getDevice() == null) {
-                    return;
-                }
-                String discoveredName = safeName(result.getDevice());
-                if ((discoveredName == null || discoveredName.trim().isEmpty())
-                        && result.getScanRecord() != null
-                        && result.getScanRecord().getDeviceName() != null) {
-                    discoveredName = result.getScanRecord().getDeviceName();
-                }
+                final long observedAtUnixMs = System.currentTimeMillis();
+                String advertisedName = result == null || result.getScanRecord() == null
+                    ? ""
+                    : result.getScanRecord().getDeviceName();
+                String cachedName = result == null || result.getDevice() == null
+                    ? ""
+                    : safeName(result.getDevice());
+                String discoveredName = PolarAutoConnectionPolicy.preferredScanName(
+                    advertisedName,
+                    cachedName
+                );
                 boolean hasHeartRateService = scanRecordHasService(
-                    result.getScanRecord(),
+                    result == null ? null : result.getScanRecord(),
                     HEART_RATE_SERVICE
                 );
-                boolean hasPmdService = scanRecordHasService(result.getScanRecord(), PMD_SERVICE);
-                final DeviceEntry entry = new DeviceEntry(
-                    result.getDevice(),
-                    discoveredName,
-                    safeAddress(result.getDevice()),
-                    result.getRssi(),
-                    hasHeartRateService,
-                    hasPmdService
+                boolean hasPmdService = scanRecordHasService(
+                    result == null ? null : result.getScanRecord(),
+                    PMD_SERVICE
                 );
-                if (!entry.looksLikePolar() && !hasHeartRateService && !hasPmdService) {
-                    return;
-                }
+                final DeviceEntry entry = result == null || result.getDevice() == null
+                    ? null
+                    : new DeviceEntry(
+                        result.getDevice(),
+                        discoveredName,
+                        safeAddress(result.getDevice()),
+                        result.getRssi(),
+                        hasHeartRateService,
+                        hasPmdService
+                    );
+                final boolean accepted = entry != null
+                    && PolarAutoConnectionPolicy.acceptsScanCandidate(
+                        entry.name,
+                        hasHeartRateService,
+                        hasPmdService
+                    );
                 handler.post(new Runnable() {
                     @Override
                     public void run() {
                         if (!isCurrentScanGeneration(generation)) {
                             return;
                         }
-                        addOrUpdateDevice(entry);
+                        scanRawCallbackCount += 1L;
+                        scanLastCallbackAtUnixMs = observedAtUnixMs;
+                        if (!accepted) {
+                            scanRejectedAdvertisementCount += 1L;
+                        } else {
+                            addOrUpdateDevice(entry);
+                        }
+                        if (scanRawCallbackCount == 1L) {
+                            setStatusState(
+                                "scanning",
+                                "Scanning for Polar H10 advertisements. BLE callback received."
+                            );
+                            marker("status=scan-callback-received rawCallbackCount=1"
+                                + " accepted=" + accepted
+                                + " rawDeviceIdentifierLogged=false");
+                        }
                     }
                 });
+            }
+
+            @Override
+            public void onBatchScanResults(List<ScanResult> results) {
+                if (results == null) {
+                    return;
+                }
+                for (ScanResult result : results) {
+                    onScanResult(ScanSettings.CALLBACK_TYPE_ALL_MATCHES, result);
+                }
             }
 
             @Override
@@ -2323,6 +2375,9 @@ final class PolarSensorPanel {
         fields.put("detail", detail);
         fields.put("scanning", scanning);
         fields.put("candidate_count", devices.size());
+        fields.put("scan_raw_callback_count", scanRawCallbackCount);
+        fields.put("scan_rejected_advertisement_count", scanRejectedAdvertisementCount);
+        fields.put("scan_last_callback_at_unix_ms", scanLastCallbackAtUnixMs);
         fields.put("selected_device_instance_id", selectedDeviceInstanceId());
         fields.put("connected_device_instance_id", connectedDeviceInstanceId);
         fields.put("connected", connected);
@@ -2752,10 +2807,23 @@ final class PolarSensorPanel {
     private static boolean scanRecordHasService(
             android.bluetooth.le.ScanRecord record,
             UUID expectedService) {
-        if (record == null || record.getServiceUuids() == null) {
+        if (record == null) {
             return false;
         }
-        for (ParcelUuid parcelUuid : record.getServiceUuids()) {
+        if (parcelUuidListHasService(record.getServiceUuids(), expectedService)) {
+            return true;
+        }
+        return Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q
+            && parcelUuidListHasService(record.getServiceSolicitationUuids(), expectedService);
+    }
+
+    private static boolean parcelUuidListHasService(
+            List<ParcelUuid> parcelUuids,
+            UUID expectedService) {
+        if (parcelUuids == null) {
+            return false;
+        }
+        for (ParcelUuid parcelUuid : parcelUuids) {
             if (parcelUuid == null || parcelUuid.getUuid() == null) {
                 continue;
             }

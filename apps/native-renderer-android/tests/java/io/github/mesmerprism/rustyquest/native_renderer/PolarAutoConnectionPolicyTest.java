@@ -3,6 +3,34 @@ package io.github.mesmerprism.rustyquest.native_renderer;
 public final class PolarAutoConnectionPolicyTest {
     public static void main(String[] args) {
         check(
+            "Polar H10 TEST0001".equals(
+                PolarAutoConnectionPolicy.preferredScanName(" Polar H10 TEST0001 ", "Stale cached name")
+            ),
+            "fresh advertisement name wins over stale BluetoothDevice cache"
+        );
+        check(
+            "Polar H10 cached".equals(
+                PolarAutoConnectionPolicy.preferredScanName("", " Polar H10 cached ")
+            ),
+            "cached name remains the fallback when the advertisement has no local name"
+        );
+        check(
+            PolarAutoConnectionPolicy.acceptsScanCandidate("Polar H10 TEST0001", false, false),
+            "Polar advertisement name is accepted without visible services"
+        );
+        check(
+            PolarAutoConnectionPolicy.acceptsScanCandidate("unrelated", false, true),
+            "solicitation-only PMD visibility admits the candidate"
+        );
+        check(
+            PolarAutoConnectionPolicy.acceptsScanCandidate("unrelated", true, false),
+            "heart-rate service visibility admits the candidate"
+        );
+        check(
+            !PolarAutoConnectionPolicy.acceptsScanCandidate("unrelated", false, false),
+            "unrelated advertisement without Polar services is rejected"
+        );
+        check(
             PolarAutoConnectionPolicy.preflight(false, "on", false, false, 0, 2)
                 == PolarAutoConnectionPolicy.Decision.PERMISSION_REQUIRED,
             "permission gate"

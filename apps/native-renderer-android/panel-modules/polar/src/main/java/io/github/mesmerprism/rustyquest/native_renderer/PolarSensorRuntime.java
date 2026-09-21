@@ -270,6 +270,27 @@ final class PolarAutoConnectionPolicy {
 
     private PolarAutoConnectionPolicy() {}
 
+    static String preferredScanName(String advertisedName, String cachedName) {
+        String advertised = advertisedName == null ? "" : advertisedName.trim();
+        if (!advertised.isEmpty()) {
+            return advertised;
+        }
+        return cachedName == null ? "" : cachedName.trim();
+    }
+
+    static boolean acceptsScanCandidate(
+        String preferredName,
+        boolean hasHeartRateService,
+        boolean hasPmdService
+    ) {
+        String lower = preferredName == null ? "" : preferredName.toLowerCase(java.util.Locale.US);
+        return lower.contains("polar")
+            || lower.contains("h10")
+            || lower.contains("h9")
+            || hasHeartRateService
+            || hasPmdService;
+    }
+
     static Decision preflight(
         boolean permissionReady,
         String bluetoothState,
