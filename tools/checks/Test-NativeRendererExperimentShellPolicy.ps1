@@ -98,6 +98,9 @@ Assert-Contains $breathFeaturePath 'condition-audio-runtime'
 Assert-Contains $breathFeaturePath 'ConditionAudioAndroidMediaBackendFactory.java'
 Assert-Contains $packagedClosurePath 'string(profile, "schema_id")'
 Assert-NotContains $packagedClosurePath 'string(profile, "schema")'
+Assert-Contains $packagedClosurePath 'FileChannel.open(target,'
+Assert-Contains $packagedClosurePath 'StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE'
+Assert-NotContains $packagedClosurePath 'Files.createLink('
 
 $javac = $null
 $java = $null

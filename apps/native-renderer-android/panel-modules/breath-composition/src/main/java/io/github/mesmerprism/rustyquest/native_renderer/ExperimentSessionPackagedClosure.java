@@ -17,7 +17,6 @@ import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.UUID;
 
 /** Worker-only verifier/materializer for the packaged experiment-session trust closure. */
 final class ExperimentSessionPackagedClosure {
@@ -339,24 +338,24 @@ final class ExperimentSessionPackagedClosure {
             requireExistingExact(target, profileBytes);
             return;
         }
-        Path temporary = directory.resolve("." + MATERIALIZED_FILE + "."
-            + UUID.randomUUID().toString() + ".tmp");
+        boolean created = false;
         try {
-            try (FileChannel channel = FileChannel.open(temporary,
+            try (FileChannel channel = FileChannel.open(target,
                     StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE)) {
+                created = true;
                 ByteBuffer source = ByteBuffer.wrap(profileBytes);
                 while (source.hasRemaining()) channel.write(source);
                 channel.force(true);
             }
-            // A same-directory hard-link publication makes the fully synced temporary inode
-            // visible at the final name in one exclusive namespace operation. CREATE_NEW on the
-            // temporary and createLink on the target never overwrite a competing installation.
-            try { Files.createLink(target, temporary); }
-            catch (FileAlreadyExistsException race) {
-                requireExistingExact(target, profileBytes);
+        } catch (FileAlreadyExistsException race) {
+            requireExistingExact(target, profileBytes);
+            return;
+        } catch (IOException failure) {
+            if (created) {
+                try { Files.deleteIfExists(target); }
+                catch (IOException cleanup) { failure.addSuppressed(cleanup); }
             }
-        } finally {
-            Files.deleteIfExists(temporary);
+            throw failure;
         }
         requireExistingExact(target, profileBytes);
     }
