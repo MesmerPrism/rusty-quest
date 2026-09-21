@@ -1644,6 +1644,14 @@ $manifest = [ordered]@{
     java_classes_packaged = $true
     panel_activity_packaged = (-not [string]::IsNullOrWhiteSpace($selectedPanelModuleId))
     panel_activity = if ([string]::IsNullOrWhiteSpace($selectedPanelModuleId)) { "" } else { "$packageName/io.github.mesmerprism.rustyquest.native_renderer.ControlPanelActivity" }
+    selected_android_activities = if ($null -eq $appBuildLockObject) {
+        @(
+            "android.app.NativeActivity"
+            if (-not [string]::IsNullOrWhiteSpace($selectedPanelModuleId)) { "ControlPanelActivity" }
+        )
+    } else {
+        @($appBuildLockObject.android_manifest.activities | ForEach-Object { [string]$_ })
+    }
     selected_panel_module_id = $selectedPanelModuleId
     selected_panel_entry_class = $selectedPanelEntryClass
     panel_runtime_widening_allowed = $false
