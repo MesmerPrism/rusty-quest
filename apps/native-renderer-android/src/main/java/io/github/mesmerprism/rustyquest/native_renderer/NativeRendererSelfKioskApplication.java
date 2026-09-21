@@ -8,6 +8,7 @@ import android.os.Bundle;
 import android.os.SystemClock;
 import android.util.Log;
 import java.lang.ref.WeakReference;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -82,6 +83,40 @@ public final class NativeRendererSelfKioskApplication extends Application {
     }
 
     void discardDepartures() { departures.clear(); panelLeaveGeneration = 0L; }
+
+    /**
+     * Finish every other live Activity owned by this APK after durable terminal cleanup.
+     *
+     * <p>The panel may be a non-root Activity above NativeActivity in the same task, and Quest's
+     * task organizer may omit or reshape task inventory. Retaining weak lifecycle references gives
+     * terminal exit a direct fallback without inspecting or controlling any other application.</p>
+     */
+    public static int finishOwnedActivitiesForTerminalExit(Activity terminalActivity) {
+        if (terminalActivity == null
+                || !(terminalActivity.getApplicationContext()
+                    instanceof NativeRendererSelfKioskApplication)) {
+            return 0;
+        }
+        NativeRendererSelfKioskApplication owner =
+            (NativeRendererSelfKioskApplication) terminalActivity.getApplicationContext();
+        ArrayList<Activity> targets = new ArrayList<>();
+        for (WeakReference<Activity> reference : owner.activities.values()) {
+            Activity candidate = reference == null ? null : reference.get();
+            if (candidate != null && candidate != terminalActivity && owner.own(candidate)
+                    && !candidate.isFinishing()) {
+                targets.add(candidate);
+            }
+        }
+        int dispatched = 0;
+        for (Activity candidate : targets) {
+            Log.i("RustyQuestSelfKiosk", "status=terminal-owned-activity-finish-dispatched"
+                + " activity=" + candidate.getClass().getName()
+                + " task_id=" + candidate.getTaskId());
+            candidate.finishAndRemoveTask();
+            dispatched += 1;
+        }
+        return dispatched;
+    }
 
     public static void armed(Context context) {
         if (!(context.getApplicationContext() instanceof NativeRendererSelfKioskApplication)) return;

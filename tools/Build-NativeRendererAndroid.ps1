@@ -1378,13 +1378,20 @@ $experimentSessionTerminalAudioStop
         android.app.ActivityManager manager = (android.app.ActivityManager)
             activity.getSystemService(android.content.Context.ACTIVITY_SERVICE);
         if (manager != null) for (android.app.ActivityManager.AppTask task : manager.getAppTasks()) {
-            if (task.getTaskInfo().id == activity.getTaskId()) continue;
             android.content.Intent base = task.getTaskInfo().baseIntent;
             android.content.ComponentName component = base == null ? null : base.getComponent();
-            if (component != null && activity.getPackageName().equals(component.getPackageName()))
+            if (component == null || activity.getPackageName().equals(component.getPackageName())) {
+                android.util.Log.i("RustyQuestNativeRenderer",
+                    "status=terminal-app-task-finish-dispatched task_id="
+                        + task.getTaskInfo().id);
                 task.finishAndRemoveTask();
+            }
         }
-        activity.finishAndRemoveTask();
+        int ownedActivityFinishes =
+            NativeRendererSelfKioskApplication.finishOwnedActivitiesForTerminalExit(activity);
+        android.util.Log.i("RustyQuestNativeRenderer",
+            "status=terminal-owned-activity-finishes count=" + ownedActivityFinishes);
+        if (!activity.isFinishing()) activity.finishAndRemoveTask();
     }
 
     static int panelBackgroundColor() {

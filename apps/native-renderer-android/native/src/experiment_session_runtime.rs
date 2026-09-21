@@ -971,6 +971,11 @@ impl SessionWorker {
                     match preparation {
                         Ok(()) => {
                             let _ = identity;
+                            // Arming owns the pre-roll lifecycle: the participant must be able
+                            // to verify breathing before the official controller start. This is
+                            // opt-in and inert for builds without an effective breath selection.
+                            let _ = crate::breath_composition_runtime::
+                                ensure_running_for_experiment_arm();
                             self.current_identity = Some(spec.experiment_identity.clone());
                             *self
                                 .effective_radius_profile

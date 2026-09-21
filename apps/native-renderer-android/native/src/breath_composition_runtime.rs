@@ -579,6 +579,29 @@ impl BreathCompositionRuntime {
         self.commit_transition(candidate, &actions, true)
     }
 
+    /// Start the packaged, already-selected composition when an experiment is armed.
+    ///
+    /// A healthy running generation is deliberately preserved so opening the panel or
+    /// re-arming cannot throw away a completed calibration. A failed calibration is retried;
+    /// selected/configured/cancelled states take the same atomic Configure -> Start path as
+    /// the explicit calibration control. Disabled or unavailable configurations remain inert.
+    fn ensure_running_for_experiment_arm(&mut self) -> Result<&'static str, &'static str> {
+        let snapshot = self.authority.snapshot();
+        let calibration_failed = self
+            .latest_calibration
+            .as_ref()
+            .is_some_and(|calibration| calibration.lifecycle == "failed");
+        if snapshot.status == BreathCompositionStatus::Running && !calibration_failed {
+            return Ok("already-running");
+        }
+        self.start_calibration_inner()?;
+        Ok(if calibration_failed {
+            "restarted-failed-calibration"
+        } else {
+            "started"
+        })
+    }
+
     fn commit_transition(
         &mut self,
         candidate: BreathCompositionAuthority,
@@ -932,6 +955,36 @@ pub(crate) fn feature_lock_active() -> bool {
 
 pub(crate) fn reset_to_packaged_defaults() {
     lock_runtime().reset_to_packaged_defaults();
+}
+
+pub(crate) fn ensure_running_for_experiment_arm() -> Result<&'static str, &'static str> {
+    let mut state = lock_runtime();
+    let result = state.ensure_running_for_experiment_arm();
+    #[cfg(target_os = "android")]
+    {
+        let snapshot = state.snapshot();
+        let reason = match result {
+            Ok(status) => status,
+            Err(reason) => reason,
+        };
+        crate::marker(
+            "breath-composition-arm",
+            format!(
+                "status={} reason={} lifecycle={} generation={} source={} mapping={}",
+                if result.is_ok() { "accepted" } else { "inert" },
+                marker_token(reason),
+                snapshot.status.as_str(),
+                snapshot.generation.map_or(0, BreathGeneration::get),
+                snapshot
+                    .effective
+                    .map_or("none", |request| request.source.as_str()),
+                snapshot
+                    .effective
+                    .map_or("none", |request| request.mapping.as_str()),
+            ),
+        );
+    }
+    result
 }
 
 pub(crate) fn take_adapter_action(source: BreathCompositionSource) -> Option<AdapterAction> {
@@ -1947,6 +2000,84 @@ mod tests {
         .expect("response");
         assert_eq!(response["command_status"], "rejected");
         assert_eq!(response["reason_code"], "no-effective-selection");
+        assert_eq!(runtime.snapshot(), before);
+        assert!(runtime.pending_actions.is_empty());
+    }
+
+    #[test]
+    fn experiment_arm_starts_selected_composition_and_preserves_healthy_generation() {
+        let mut runtime = runtime();
+        runtime.apply_command(&select("polar-acc", "state"));
+        assert_eq!(runtime.ensure_running_for_experiment_arm(), Ok("started"));
+        assert_eq!(
+            runtime.take_action(BreathCompositionSource::PolarAcc),
+            Some(AdapterAction::Configure)
+        );
+        assert!(matches!(
+            runtime.take_action(BreathCompositionSource::PolarAcc),
+            Some(AdapterAction::Start(_))
+        ));
+        let generation = runtime.snapshot().generation.expect("armed generation");
+        runtime.latest_calibration = Some(CalibrationPanelReadback {
+            source: BreathCompositionSource::PolarAcc,
+            generation,
+            lifecycle: "ready",
+            progress01: 1.0,
+            accepted_frames: 120,
+            target_frames: Some(120),
+            watchdog_age_micros: Some(12_000_000),
+            failure_code: None,
+        });
+
+        assert_eq!(
+            runtime.ensure_running_for_experiment_arm(),
+            Ok("already-running")
+        );
+        assert_eq!(runtime.snapshot().generation, Some(generation));
+        assert!(runtime.pending_actions.is_empty());
+    }
+
+    #[test]
+    fn experiment_arm_restarts_failed_calibration_and_survives_defaults_reset() {
+        let mut runtime = runtime();
+        runtime.apply_command(&select("polar-acc", "state"));
+        runtime.packaged_config.initial_request = runtime.snapshot().effective;
+        runtime
+            .ensure_running_for_experiment_arm()
+            .expect("initial start");
+        runtime.pending_actions.clear();
+        let failed_generation = runtime.snapshot().generation.expect("failed generation");
+        runtime.latest_calibration = Some(CalibrationPanelReadback {
+            source: BreathCompositionSource::PolarAcc,
+            generation: failed_generation,
+            lifecycle: "failed",
+            progress01: 0.4,
+            accepted_frames: 48,
+            target_frames: Some(120),
+            watchdog_age_micros: Some(30_000_000),
+            failure_code: Some("Timeout".to_owned()),
+        });
+        assert_eq!(
+            runtime.ensure_running_for_experiment_arm(),
+            Ok("restarted-failed-calibration")
+        );
+        assert_ne!(runtime.snapshot().generation, Some(failed_generation));
+        runtime.pending_actions.clear();
+
+        runtime.reset_to_packaged_defaults();
+        assert_eq!(runtime.snapshot().status, BreathCompositionStatus::Selected);
+        assert_eq!(runtime.ensure_running_for_experiment_arm(), Ok("started"));
+        assert_eq!(runtime.snapshot().status, BreathCompositionStatus::Running);
+    }
+
+    #[test]
+    fn experiment_arm_keeps_disabled_composition_inert() {
+        let mut runtime = BreathCompositionRuntime::new(Default::default());
+        let before = runtime.snapshot();
+        assert_eq!(
+            runtime.ensure_running_for_experiment_arm(),
+            Err("no-effective-selection")
+        );
         assert_eq!(runtime.snapshot(), before);
         assert!(runtime.pending_actions.is_empty());
     }

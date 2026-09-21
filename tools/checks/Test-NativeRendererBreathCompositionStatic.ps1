@@ -114,6 +114,7 @@ function Get-ArtifactSha256 {
 
 $corePath = Join-Path $repo "crates\rusty-quest-breath-contract\src\composition.rs"
 $runtimePath = Join-Path $repo "apps\native-renderer-android\native\src\breath_composition_runtime.rs"
+$experimentSessionRuntimePath = Join-Path $repo "apps\native-renderer-android\native\src\experiment_session_runtime.rs"
 $controllerPath = Join-Path $repo "apps\native-renderer-android\native\src\openxr_stimulus_actions.rs"
 $polarPath = Join-Path $repo "apps\native-renderer-android\native\src\polar_acc_breath_adapter.rs"
 $polarPhasePath = Join-Path $repo "apps\native-renderer-android\native\src\polar_acc_phase_classifier.rs"
@@ -146,6 +147,7 @@ $featurePaths = @(
 
 $core = Read-RequiredText $corePath "pure composition"
 $runtime = Read-RequiredText $runtimePath "native runtime"
+$experimentSessionRuntime = Read-RequiredText $experimentSessionRuntimePath "experiment session runtime"
 $controller = Read-RequiredText $controllerPath "OpenXR adapter composition"
 $polar = Read-RequiredText $polarPath "Polar ACC adapter"
 $polarPhase = Read-RequiredText $polarPhasePath "Polar-specific phase classifier"
@@ -224,6 +226,10 @@ Assert-Tokens $runtime @(
     "AdapterAction::Reset",
     "start_calibration_restarts_running_ready_and_failed_generations_atomically",
     "running_calibration_restart_rejects_before_any_mutation_when_queue_is_full",
+    "ensure_running_for_experiment_arm",
+    "experiment_arm_starts_selected_composition_and_preserves_healthy_generation",
+    "experiment_arm_restarts_failed_calibration_and_survives_defaults_reset",
+    "experiment_arm_keeps_disabled_composition_inert",
     "source_change_queues_hard_resets_but_mapping_change_does_not"
     '"configure_polar_state"'
     '"polar_state_tuning"'
@@ -234,6 +240,10 @@ Assert-Tokens $runtime @(
     "malformed_session_nonfinite_range_and_unknown_fields_are_rejected_without_change"
     "compact_profile_is_exact_and_fresh_runtime_resets_request_fence"
 ) "native command/readback authority"
+Assert-Tokens $experimentSessionRuntime @(
+    "ensure_running_for_experiment_arm();",
+    "Arming owns the pre-roll lifecycle"
+) "experiment arm breath lifecycle"
 Assert-Tokens $controller @(
     "apply_composition_controller_actions",
     "BreathCompositionSource::Controller",
