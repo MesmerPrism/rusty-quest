@@ -17,6 +17,7 @@ import android.bluetooth.le.ScanFilter;
 import android.bluetooth.le.ScanResult;
 import android.bluetooth.le.ScanSettings;
 import android.content.Context;
+import android.content.Intent;
 import android.graphics.Color;
 import android.graphics.drawable.GradientDrawable;
 import android.os.Build;
@@ -24,6 +25,7 @@ import android.os.Handler;
 import android.os.Looper;
 import android.os.ParcelUuid;
 import android.os.SystemClock;
+import android.provider.Settings;
 import android.util.Log;
 import android.view.Gravity;
 import android.view.View;
@@ -165,6 +167,7 @@ final class PolarSensorPanel {
     private volatile boolean closing;
     private boolean startAllPending;
     private boolean stopAllPending;
+    private boolean locationSettingsPromptPending;
     private long scanGeneration;
     private long scanRawCallbackCount;
     private long scanRejectedAdvertisementCount;
@@ -327,6 +330,14 @@ final class PolarSensorPanel {
         scanRow.addView(connect, rowButtonParams());
         scanRow.addView(disconnect, rowButtonParams());
         root.addView(scanRow);
+        Button locationSettings = button("Open location settings");
+        locationSettings.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                openLocationSettings();
+            }
+        });
+        root.addView(locationSettings);
         status = text(statusDetail, 14, scanning ? PANEL_ACCENT : PANEL_MUTED);
         status.setPadding(0, dp(6), 0, dp(10));
         root.addView(status);
@@ -460,6 +471,55 @@ final class PolarSensorPanel {
             setStatusState("permission-required", "BLE/location permissions missing: " + missing);
             marker("status=permission-rejected missing=" + markerToken(missing));
             pendingBleAction = PENDING_BLE_NONE;
+        }
+    }
+
+    void onHostResume() {
+        if (activity == null) {
+            return;
+        }
+        boolean returnedFromLocationSettings = locationSettingsPromptPending;
+        if (returnedFromLocationSettings) {
+            locationSettingsPromptPending = false;
+            NativeRendererSelfKioskApplication.endSystemPrompt(activity);
+        }
+        String locationState = PolarBleRuntimeSupport.locationServicesState(appContext);
+        if ("enabled".equals(locationState)) {
+            if ("location-services-disabled".equals(automaticConnectionState)) {
+                setAutomaticConnectionState(
+                    "not-started",
+                    "Location services are enabled; press Scan to discover Polar sensors."
+                );
+            }
+            if (returnedFromLocationSettings) {
+                setStatusState("ready", "Location services are enabled. Press Scan to discover Polar sensors.");
+            }
+        } else if ("disabled".equals(locationState)) {
+            if (!connected) {
+                setAutomaticConnectionState(
+                    "location-services-disabled",
+                    "Location services are off; enable them before scanning for Polar sensors."
+                );
+            }
+            if (returnedFromLocationSettings) {
+                setStatusState(
+                    "location-services-disabled",
+                    "Location services are off. Enable them in headset settings, then press Scan again."
+                );
+            }
+        } else {
+            if ("location-services-disabled".equals(automaticConnectionState)) {
+                setAutomaticConnectionState(
+                    "failed",
+                    "Location-services state could not be confirmed."
+                );
+            }
+            if (returnedFromLocationSettings) {
+                setStatusState(
+                    "location-services-unavailable",
+                    "Location-services state could not be confirmed. Press Scan to retry discovery."
+                );
+            }
         }
     }
 
@@ -607,6 +667,7 @@ final class PolarSensorPanel {
         try {
             JSONObject ble = PolarBleRuntimeSupport.statusJson(appContext);
             String adapter = ble.optString("bluetooth_adapter_state", "unknown");
+            String locationServices = ble.optString("location_services_state", "unknown");
             String automatic;
             String automaticDetail = automaticConnectionDetail;
             if (!ble.optBoolean("runtime_permission_ready", false)) {
@@ -617,6 +678,17 @@ final class PolarSensorPanel {
                 automaticDetail = "Bluetooth is not currently available and on.";
             } else if (connected) {
                 automatic = "connected";
+            } else if ("disabled".equals(locationServices)) {
+                automatic = "location-services-disabled";
+                automaticDetail = "Location services are off; enable them before scanning for Polar sensors.";
+            } else if ("location-services-disabled".equals(automaticConnectionState)) {
+                if ("enabled".equals(locationServices)) {
+                    automatic = "not-started";
+                    automaticDetail = "Location services are enabled; press Scan to discover Polar sensors.";
+                } else {
+                    automatic = "failed";
+                    automaticDetail = "Location-services state could not be confirmed.";
+                }
             } else {
                 automatic = automaticConnectionState;
             }
@@ -660,6 +732,7 @@ final class PolarSensorPanel {
         PolarAutoConnectionPolicy.Decision decision = PolarAutoConnectionPolicy.preflight(
             ble.optBoolean("runtime_permission_ready", false),
             ble.optString("bluetooth_adapter_state", "unknown"),
+            ble.optString("location_services_state", "unknown"),
             connected,
             scanning || "connecting".equals(automaticConnectionState),
             autoConnectionAttempts,
@@ -683,6 +756,18 @@ final class PolarSensorPanel {
             setAutomaticConnectionState(
                 "bluetooth-unavailable",
                 "Bluetooth is unsupported, off, changing state, or permission-blocked."
+            );
+            return;
+        }
+        if (decision == PolarAutoConnectionPolicy.Decision.LOCATION_SERVICES_DISABLED) {
+            ensureAutoConnectionGeneration();
+            setAutomaticConnectionState(
+                "location-services-disabled",
+                "Location services are off; enable them before scanning for Polar sensors."
+            );
+            setStatusState(
+                "location-services-disabled",
+                "Location services are off. Open headset location settings, enable them, then press Scan."
             );
             return;
         }
@@ -868,6 +953,14 @@ final class PolarSensorPanel {
             return;
         }
         pendingBleAction = PENDING_BLE_NONE;
+        if ("disabled".equals(PolarBleRuntimeSupport.locationServicesState(appContext))) {
+            setStatusState(
+                "location-services-disabled",
+                "Location services are off. Open headset location settings, enable them, then press Scan."
+            );
+            marker("status=scan-blocked reason=location-services-disabled");
+            return;
+        }
         BluetoothAdapter adapter = bluetoothAdapter();
         if (adapter == null || !adapter.isEnabled()) {
             setStatusState("bluetooth-disabled", "Bluetooth is unavailable or turned off.");
@@ -2659,6 +2752,44 @@ final class PolarSensorPanel {
     private BluetoothAdapter bluetoothAdapter() {
         BluetoothManager manager = (BluetoothManager) appContext.getSystemService(Context.BLUETOOTH_SERVICE);
         return manager == null ? null : manager.getAdapter();
+    }
+
+    private void openLocationSettings() {
+        Activity currentActivity = activity;
+        if (currentActivity == null) {
+            setStatusState(
+                "location-settings-unavailable",
+                "Attach the Polar page before opening headset location settings."
+            );
+            return;
+        }
+        locationSettingsPromptPending = true;
+        NativeRendererSelfKioskApplication.beginSystemPrompt(currentActivity);
+        try {
+            currentActivity.startActivity(new Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS));
+            setStatusState(
+                "location-settings-opened",
+                "Enable location services in headset settings, return here, then press Scan."
+            );
+            marker("status=location-settings-opened");
+        } catch (RuntimeException primaryError) {
+            try {
+                currentActivity.startActivity(new Intent(Settings.ACTION_SETTINGS));
+                setStatusState(
+                    "location-settings-opened",
+                    "Open Location in headset settings, enable it, return here, then press Scan."
+                );
+                marker("status=settings-opened fallback=general-settings");
+            } catch (RuntimeException fallbackError) {
+                locationSettingsPromptPending = false;
+                NativeRendererSelfKioskApplication.endSystemPrompt(currentActivity);
+                setStatusState(
+                    "location-settings-unavailable",
+                    "Headset location settings could not be opened. Enable location services manually."
+                );
+                marker("status=error reason=location-settings-unavailable");
+            }
+        }
     }
 
     private boolean ensurePermissions(int pendingAction) {

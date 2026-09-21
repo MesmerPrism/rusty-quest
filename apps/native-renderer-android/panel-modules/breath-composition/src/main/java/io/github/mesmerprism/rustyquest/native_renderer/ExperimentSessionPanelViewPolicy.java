@@ -50,6 +50,9 @@ final class ExperimentSessionPanelViewPolicy {
             case CONNECTING: polarLine = "Polar automatic connection: connecting"; break;
             case MULTIPLE: polarLine = "Polar automatic connection: multiple sensors; choose one"; break;
             case NOT_FOUND: polarLine = "Polar automatic connection: no compatible sensor found"; break;
+            case LOCATION_SERVICES_DISABLED:
+                polarLine = "Polar automatic connection: location services must be enabled";
+                break;
             case FAILED: polarLine = "Polar automatic connection: failed"; break;
             case STALE: polarLine = "Polar automatic connection: stale status"; break;
             default: polarLine = "Polar automatic connection: not yet observed"; break;

@@ -31,27 +31,32 @@ public final class PolarAutoConnectionPolicyTest {
             "unrelated advertisement without Polar services is rejected"
         );
         check(
-            PolarAutoConnectionPolicy.preflight(false, "on", false, false, 0, 2)
+            PolarAutoConnectionPolicy.preflight(false, "on", "enabled", false, false, 0, 2)
                 == PolarAutoConnectionPolicy.Decision.PERMISSION_REQUIRED,
             "permission gate"
         );
         check(
-            PolarAutoConnectionPolicy.preflight(true, "off", false, false, 0, 2)
+            PolarAutoConnectionPolicy.preflight(true, "off", "enabled", false, false, 0, 2)
                 == PolarAutoConnectionPolicy.Decision.BLUETOOTH_UNAVAILABLE,
             "Bluetooth off gate"
         );
         check(
-            PolarAutoConnectionPolicy.preflight(true, "on", false, true, 0, 2)
+            PolarAutoConnectionPolicy.preflight(true, "on", "disabled", false, false, 0, 2)
+                == PolarAutoConnectionPolicy.Decision.LOCATION_SERVICES_DISABLED,
+            "location services gate"
+        );
+        check(
+            PolarAutoConnectionPolicy.preflight(true, "on", "enabled", false, true, 0, 2)
                 == PolarAutoConnectionPolicy.Decision.WAIT_FOR_IN_FLIGHT,
             "idempotent in-flight request"
         );
         check(
-            PolarAutoConnectionPolicy.preflight(true, "on", false, false, 1, 2)
+            PolarAutoConnectionPolicy.preflight(true, "on", "enabled", false, false, 1, 2)
                 == PolarAutoConnectionPolicy.Decision.START_SCAN,
             "one bounded retry"
         );
         check(
-            PolarAutoConnectionPolicy.preflight(true, "on", false, false, 2, 2)
+            PolarAutoConnectionPolicy.preflight(true, "on", "enabled", false, false, 2, 2)
                 == PolarAutoConnectionPolicy.Decision.RETRY_EXHAUSTED,
             "retry exhaustion"
         );

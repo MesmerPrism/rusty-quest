@@ -248,10 +248,25 @@ public final class ExperimentSessionPanelCoordinatorTest {
             "multiple Polar sensors require dedicated page");
         coordinator.updatePolar(new ExperimentSessionPanelState.PolarProjection(
             ExperimentSessionPanelState.Bluetooth.ON,
+            ExperimentSessionPanelState.Polar.LOCATION_SERVICES_DISABLED,
+            0,
+            1L,
+            13L,
+            0L,
+            true,
+            "location services disabled"
+        ));
+        check(
+            ExperimentSessionPanelViewPolicy.project(coordinator.snapshot()).polarLine
+                .contains("location services must be enabled"),
+            "location-services prerequisite is explicit"
+        );
+        coordinator.updatePolar(new ExperimentSessionPanelState.PolarProjection(
+            ExperimentSessionPanelState.Bluetooth.ON,
             ExperimentSessionPanelState.Polar.CONNECTED,
             1,
             1L,
-            13L,
+            14L,
             0L,
             true,
             "connected"

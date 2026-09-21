@@ -483,6 +483,9 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
     @Override
     protected void onResume() {
         super.onResume();
+        if (polarSensorPanel != null) {
+            polarSensorPanel.onHostResume();
+        }
         handleDisplayCompositeIntent(getIntent());
         if ("breath-mapping".equals(readControlPanelMode())) {
             breathOperatorMarker(
@@ -2075,6 +2078,8 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
                 polar = ExperimentSessionPanelState.Polar.MULTIPLE;
             } else if ("not-found".equals(automatic)) {
                 polar = ExperimentSessionPanelState.Polar.NOT_FOUND;
+            } else if ("location-services-disabled".equals(automatic)) {
+                polar = ExperimentSessionPanelState.Polar.LOCATION_SERVICES_DISABLED;
             } else if ("failed".equals(automatic)) {
                 polar = ExperimentSessionPanelState.Polar.FAILED;
             } else {
@@ -2089,7 +2094,9 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
                 "automatic_connection_deadline_elapsed_ms",
                 0L
             );
-            boolean fresh = scanInFlight || PolarAutoConnectionPolicy.evidenceFresh(
+            boolean currentPlatformPrerequisite =
+                polar == ExperimentSessionPanelState.Polar.LOCATION_SERVICES_DISABLED;
+            boolean fresh = currentPlatformPrerequisite || scanInFlight || PolarAutoConnectionPolicy.evidenceFresh(
                 connectionGeneration,
                 projection.optLong("automatic_connection_evidence_generation", 0L),
                 observedAt,

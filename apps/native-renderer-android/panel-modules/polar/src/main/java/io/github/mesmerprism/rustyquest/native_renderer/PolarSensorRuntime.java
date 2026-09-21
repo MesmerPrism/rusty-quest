@@ -258,6 +258,7 @@ final class PolarAutoConnectionPolicy {
         CONNECTED,
         PERMISSION_REQUIRED,
         BLUETOOTH_UNAVAILABLE,
+        LOCATION_SERVICES_DISABLED,
         WAIT_FOR_IN_FLIGHT,
         START_SCAN,
         CONNECT_PAIRED,
@@ -294,6 +295,7 @@ final class PolarAutoConnectionPolicy {
     static Decision preflight(
         boolean permissionReady,
         String bluetoothState,
+        String locationServicesState,
         boolean connected,
         boolean inFlight,
         int attempts,
@@ -302,6 +304,7 @@ final class PolarAutoConnectionPolicy {
         if (connected) return Decision.CONNECTED;
         if (!permissionReady) return Decision.PERMISSION_REQUIRED;
         if (!"on".equals(bluetoothState)) return Decision.BLUETOOTH_UNAVAILABLE;
+        if ("disabled".equals(locationServicesState)) return Decision.LOCATION_SERVICES_DISABLED;
         if (inFlight) return Decision.WAIT_FOR_IN_FLIGHT;
         if (attempts >= maximumAttempts) return Decision.RETRY_EXHAUSTED;
         return Decision.START_SCAN;

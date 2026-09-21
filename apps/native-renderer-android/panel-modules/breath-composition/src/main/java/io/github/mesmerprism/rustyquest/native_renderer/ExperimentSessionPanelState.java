@@ -5,7 +5,10 @@ final class ExperimentSessionPanelState {
     enum Route { EXPERIMENTER, DEVELOPER }
     enum Phase { IDLE, STARTING, RECORDING, SAVING, RECOVERY, ERROR, UNAVAILABLE }
     enum Bluetooth { ON, OFF, UNSUPPORTED, PERMISSION_REQUIRED, TURNING, UNKNOWN }
-    enum Polar { CONNECTED, SCANNING, CONNECTING, MULTIPLE, NOT_FOUND, FAILED, STALE, UNKNOWN }
+    enum Polar {
+        CONNECTED, SCANNING, CONNECTING, MULTIPLE, NOT_FOUND,
+        LOCATION_SERVICES_DISABLED, FAILED, STALE, UNKNOWN
+    }
 
     static final class Counts {
         final long completedOne;
