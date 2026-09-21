@@ -127,22 +127,29 @@ pub(crate) fn validate_recording_root_no_links(root: &Path) -> Result<(), String
     {
         return Err("recording-root-contract-invalid".to_owned());
     }
-    let mut cursor = root;
-    loop {
-        if cursor.exists() {
-            let metadata = fs::symlink_metadata(cursor)
-                .map_err(|error| format!("recording-root-metadata:{error}"))?;
-            if metadata.file_type().is_symlink() {
-                return Err("recording-root-symlink-rejected".to_owned());
-            }
-            if cursor == root && !metadata.is_dir() {
-                return Err("recording-root-not-directory".to_owned());
-            }
+    // The trust boundary starts at Android's app-private `files` directory. Do
+    // not reject platform-owned ancestors: Quest exposes `/data/user/0` through
+    // a system symlink on supported firmware. The app cannot replace that
+    // ancestor, while it can influence its direct recording root and parent.
+    let parent = root
+        .parent()
+        .ok_or_else(|| "recording-root-parent-missing".to_owned())?;
+    for (path, is_root) in [(parent, false), (root, true)] {
+        if !path.exists() {
+            continue;
         }
-        let Some(parent) = cursor.parent() else {
-            break;
-        };
-        cursor = parent;
+        let metadata = fs::symlink_metadata(path)
+            .map_err(|error| format!("recording-root-metadata:{error}"))?;
+        if metadata.file_type().is_symlink() {
+            return Err("recording-root-symlink-rejected".to_owned());
+        }
+        if !metadata.is_dir() {
+            return Err(if is_root {
+                "recording-root-not-directory".to_owned()
+            } else {
+                "recording-root-parent-not-directory".to_owned()
+            });
+        }
     }
     Ok(())
 }
@@ -941,6 +948,33 @@ mod tests {
 
     fn write_json(path: &Path, value: Value) {
         fs::write(path, format!("{}\n", value)).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn app_owned_link_checks_allow_platform_alias_but_reject_recording_root_link() {
+        use std::os::unix::fs::symlink;
+
+        let base = temp_root("platform-alias").parent().unwrap().to_owned();
+        let backing = base.join("backing");
+        let alias = base.join("platform-alias");
+        let files = backing.join("package/files");
+        let recording_root = files.join("viscereality-recordings");
+        fs::create_dir_all(&recording_root).unwrap();
+        symlink(&backing, &alias).unwrap();
+
+        let aliased_root = alias.join("package/files/viscereality-recordings");
+        assert_eq!(validate_recording_root_no_links(&aliased_root), Ok(()));
+
+        fs::remove_dir(&recording_root).unwrap();
+        let external = backing.join("external-recordings");
+        fs::create_dir(&external).unwrap();
+        symlink(&external, &recording_root).unwrap();
+        assert_eq!(
+            validate_recording_root_no_links(&aliased_root),
+            Err("recording-root-symlink-rejected".to_owned())
+        );
+        fs::remove_dir_all(&base).unwrap();
     }
 
     fn make_session(root: &Path, completed: bool, finalized: bool) -> PathBuf {

@@ -2158,8 +2158,7 @@ fn initialize_with_compiled_experiment_inventory(
     let trusted_inventory = load_compiled_experiment_inventory(
         &trusted_files_root,
         CompiledExperimentAnchors::production(),
-    )
-    .unwrap_or(None);
+    )?;
     initialize_app_lifetime(trusted_files_root, trusted_inventory)
 }
 

@@ -5,6 +5,7 @@ public final class ExperimentSessionPanelViewPolicyTest {
         independentPageScrollAndRecreation();
         changingReadinessPreservesNavigation();
         truthfulStageAndReadiness();
+        conciseReadinessCards();
         System.out.println("ExperimentSessionPanelViewPolicyTest PASS");
     }
 
@@ -85,6 +86,47 @@ public final class ExperimentSessionPanelViewPolicyTest {
             1, 1L, 1L, 0L, false, "stale"));
         check(ExperimentSessionPanelViewPolicy.polarTone(coordinator.snapshot()) != ExperimentSessionPanelViewPolicy.Tone.READY,
             "connected but stale is not ready");
+    }
+
+    private static void conciseReadinessCards() {
+        ExperimentSessionPanelViewPolicy.ReadinessCard kioskReady =
+            ExperimentSessionPanelViewPolicy.kioskCard("ready");
+        check(kioskReady.tone == ExperimentSessionPanelViewPolicy.Tone.READY
+                && kioskReady.label.contains("Background return ready")
+                && kioskReady.detail.isEmpty() && !kioskReady.showAction,
+            "ready kiosk is one concise visual status without a setup action");
+        ExperimentSessionPanelViewPolicy.ReadinessCard kioskPermission =
+            ExperimentSessionPanelViewPolicy.kioskCard("permission-required");
+        check(kioskPermission.tone == ExperimentSessionPanelViewPolicy.Tone.ATTENTION
+                && kioskPermission.showAction
+                && kioskPermission.detail.contains("display over other apps"),
+            "missing overlay permission exposes one relevant corrective action");
+        ExperimentSessionPanelViewPolicy.ReadinessCard storageReady =
+            ExperimentSessionPanelViewPolicy.storageCard(
+                state(ExperimentSessionPanelState.Phase.IDLE, false, false));
+        check(storageReady.tone == ExperimentSessionPanelViewPolicy.Tone.READY
+                && storageReady.label.contains("Recording ready")
+                && storageReady.detail.isEmpty(),
+            "ready recording storage is a concise positive status");
+        ExperimentSessionPanelState storageError = new ExperimentSessionPanelState(
+            ExperimentSessionPanelState.Route.EXPERIMENTER,
+            ExperimentSessionPanelState.Phase.IDLE,
+            0L,
+            0L,
+            "none",
+            "",
+            0L,
+            ExperimentSessionPanelState.Counts.unknown(),
+            ExperimentSessionPanelState.PolarProjection.unknown(),
+            false,
+            false,
+            "error",
+            true,
+            "recording-root-error"
+        );
+        check(ExperimentSessionPanelViewPolicy.storageCard(storageError).tone
+                == ExperimentSessionPanelViewPolicy.Tone.ATTENTION,
+            "a genuine storage fault remains visible and is never painted ready");
     }
 
     private static ExperimentSessionPanelState state(ExperimentSessionPanelState.Phase phase,

@@ -288,6 +288,8 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
     private TextView experimenterCountReadback;
     private TextView experimenterStatusReadback;
     private TextView experimenterKioskReadback;
+    private TextView experimenterKioskDetail;
+    private Button experimenterKioskSetup;
     private Button experimenterPolarFallback;
     private Button experimenterStartOne;
     private Button experimenterStartTwo;
@@ -302,6 +304,7 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
     private TextView experimenterStageReadback;
     private TextView experimenterInstructionReadback;
     private TextView experimenterStorageReadback;
+    private TextView experimenterStorageDetail;
     private TextView experimenterFooterReadback;
     private TextView experimenterAudioOneReadback;
     private TextView experimenterAudioTwoReadback;
@@ -779,8 +782,7 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
         if (page == ExperimentSessionPanelViewPolicy.Page.PREPARE) {
             root.addView(text("Check the headset and sensor, then review the controls with the participant.", 16, PANEL_FG));
             appendExperimenterConnection(root, state, view);
-            experimenterStorageReadback = experimenterIndicator(root,
-                "Storage: " + state.storageStatus, ExperimentSessionPanelViewPolicy.storageTone(state));
+            appendExperimenterStorage(root, state);
             appendExperimenterKiosk(root);
         } else if (page == ExperimentSessionPanelViewPolicy.Page.CONTROLS) {
             appendExperimenterControls(root);
@@ -813,21 +815,34 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
         root.addView(connection);
     }
 
+    private void appendExperimenterStorage(LinearLayout root,
+            ExperimentSessionPanelState state) {
+        ExperimentSessionPanelViewPolicy.ReadinessCard presentation =
+            ExperimentSessionPanelViewPolicy.storageCard(state);
+        LinearLayout storage = panelCard("Recording");
+        experimenterStorageReadback = experimenterIndicator(
+            storage, presentation.label, presentation.tone);
+        experimenterStorageDetail = text(presentation.detail, 12, PANEL_MUTED);
+        experimenterStorageDetail.setVisibility(
+            presentation.detail.isEmpty() ? View.GONE : View.VISIBLE);
+        storage.addView(experimenterStorageDetail);
+        root.addView(storage);
+    }
+
     private void appendExperimenterKiosk(LinearLayout root) {
-        LinearLayout kiosk = panelCard("Headset background return");
-        experimenterKioskReadback = text(
-            ControlPanelActivity.softKioskEffectiveStatus(this),
-            13,
-            PANEL_FG
-        );
-        kiosk.addView(experimenterKioskReadback);
-        kiosk.addView(text(
-            "Enable background return if requested by the headset. The current permission and guard status are shown above.",
-            12,
-            PANEL_MUTED
-        ));
-        Button overlaySetup = button("Allow app background return");
-        overlaySetup.setOnClickListener(new View.OnClickListener() {
+        ExperimentSessionPanelViewPolicy.ReadinessCard presentation =
+            ExperimentSessionPanelViewPolicy.kioskCard(
+                ControlPanelActivity.softKioskUiState(this));
+        LinearLayout kiosk = panelCard("Kiosk mode");
+        experimenterKioskReadback = experimenterIndicator(
+            kiosk, presentation.label, presentation.tone);
+        experimenterKioskDetail = text(presentation.detail, 12, PANEL_MUTED);
+        experimenterKioskDetail.setVisibility(
+            presentation.detail.isEmpty() ? View.GONE : View.VISIBLE);
+        kiosk.addView(experimenterKioskDetail);
+        experimenterKioskSetup = button("Open permission setup");
+        experimenterKioskSetup.setVisibility(presentation.showAction ? View.VISIBLE : View.GONE);
+        experimenterKioskSetup.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View ignored) {
                 if (!ControlPanelActivity.openSelfKioskOverlaySettings(
@@ -836,7 +851,7 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
                 }
             }
         });
-        kiosk.addView(overlaySetup);
+        kiosk.addView(experimenterKioskSetup);
         root.addView(kiosk);
     }
 
@@ -2490,12 +2505,15 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
         experimenterCountReadback = null;
         experimenterStatusReadback = null;
         experimenterKioskReadback = null;
+        experimenterKioskDetail = null;
+        experimenterKioskSetup = null;
         experimenterPolarFallback = null;
         experimenterStartOne = null;
         experimenterStartTwo = null;
         experimenterStageReadback = null;
         experimenterInstructionReadback = null;
         experimenterStorageReadback = null;
+        experimenterStorageDetail = null;
         experimenterFooterReadback = null;
         experimenterAudioOneReadback = null;
         experimenterAudioTwoReadback = null;
@@ -2524,9 +2542,16 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
             experimenterStatusReadback.setTextColor(projected.saving ? PANEL_ACCENT : PANEL_MUTED);
         }
         if (experimenterKioskReadback != null) {
-            setExperimenterText(experimenterKioskReadback,
-                ControlPanelActivity.softKioskEffectiveStatus(this)
-            );
+            ExperimentSessionPanelViewPolicy.ReadinessCard kiosk =
+                ExperimentSessionPanelViewPolicy.kioskCard(
+                    ControlPanelActivity.softKioskUiState(this));
+            setExperimenterText(experimenterKioskReadback, kiosk.label);
+            styleExperimenterIndicator(experimenterKioskReadback, kiosk.tone);
+            setExperimenterText(experimenterKioskDetail, kiosk.detail);
+            if (experimenterKioskDetail != null) experimenterKioskDetail.setVisibility(
+                kiosk.detail.isEmpty() ? View.GONE : View.VISIBLE);
+            if (experimenterKioskSetup != null) experimenterKioskSetup.setVisibility(
+                kiosk.showAction ? View.VISIBLE : View.GONE);
         }
         if (experimenterPolarFallback != null) {
             setExperimenterText(experimenterPolarFallback, projected.showPolarFallback
@@ -2550,8 +2575,13 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
         }
         setExperimenterText(experimenterInstructionReadback, ExperimentSessionPanelViewPolicy.stageInstruction(state));
         if (experimenterStorageReadback != null) {
-            setExperimenterText(experimenterStorageReadback, "Storage: " + state.storageStatus);
-            styleExperimenterIndicator(experimenterStorageReadback, ExperimentSessionPanelViewPolicy.storageTone(state));
+            ExperimentSessionPanelViewPolicy.ReadinessCard storage =
+                ExperimentSessionPanelViewPolicy.storageCard(state);
+            setExperimenterText(experimenterStorageReadback, storage.label);
+            styleExperimenterIndicator(experimenterStorageReadback, storage.tone);
+            setExperimenterText(experimenterStorageDetail, storage.detail);
+            if (experimenterStorageDetail != null) experimenterStorageDetail.setVisibility(
+                storage.detail.isEmpty() ? View.GONE : View.VISIBLE);
         }
         setExperimenterText(experimenterFooterReadback, ExperimentSessionPanelViewPolicy.stageTitle(state));
         if (experimenterResume != null) {

@@ -1290,6 +1290,26 @@ $polarRuntimeReopenFromExplicitLaunch
             + "; armed=" + state.armed;
     }
 
+    /** Stable, presentation-only status; verbose guard diagnostics stay out of operator UI. */
+    static String softKioskUiState(android.app.Activity activity) {
+        if (activity == null || !android.provider.Settings.canDrawOverlays(activity)) {
+            return "permission-required";
+        }
+        NativeRendererSoftKioskCoordinator.Effectiveness effectiveness =
+            NativeRendererSoftKioskCoordinator.process().snapshot().effectiveness;
+        switch (effectiveness) {
+            case READY_ARMED:
+            case READY_DISARMED:
+                return "ready";
+            case WATCHDOG_STARTING:
+                return "starting";
+            case TERMINAL:
+                return "ending";
+            default:
+                return "attention";
+        }
+    }
+
     static boolean openSelfKioskOverlaySettings(android.app.Activity activity) {
         if (!(activity instanceof ControlPanelActivity)) return false;
         android.content.Intent query = new android.content.Intent(

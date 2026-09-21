@@ -60,6 +60,10 @@ Assert-Contains $module 'validNonNegativeLong'
 Assert-Contains $viewPolicy 'Saving…'
 Assert-Contains $viewPolicy 'Unclassified/recovered:'
 Assert-Contains $viewPolicy 'invalid native readback'
+Assert-Contains $viewPolicy 'Background return ready'
+Assert-Contains $viewPolicy 'Recording ready'
+Assert-Contains $module 'ControlPanelActivity.softKioskUiState(this)'
+Assert-NotContains $module 'ControlPanelActivity.softKioskEffectiveStatus(this)'
 Assert-Contains $module 'ControlPanelActivity.applyExperimentSessionCommand'
 Assert-Contains $polar 'Side-effect-free experimenter projection'
 Assert-Contains $polar 'automatic_connection_state'
@@ -155,6 +159,7 @@ final class ControlPanelActivity extends BreathCompositionPanelModule {
     static boolean admitExplicitColdExperimentShell(android.app.Activity activity, long epoch, String route) { return false; }
     static boolean beginPanelTransition(android.app.Activity activity, String route, long generation) { return true; }
     static String softKioskEffectiveStatus(android.app.Activity activity) { return "unavailable"; }
+    static String softKioskUiState(android.app.Activity activity) { return "attention"; }
     static boolean openSelfKioskOverlaySettings(android.app.Activity activity) { return false; }
     static boolean admitTerminalSaveAndExit(android.app.Activity activity, android.content.Intent intent) { return false; }
     static void finishTerminalSaveAndExit(android.app.Activity activity, boolean saved, long generation, String operationId, long revision) {}

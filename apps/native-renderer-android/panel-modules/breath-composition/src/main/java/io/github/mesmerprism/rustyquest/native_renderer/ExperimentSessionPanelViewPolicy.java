@@ -50,6 +50,62 @@ final class ExperimentSessionPanelViewPolicy {
         return "ready".equals(state.storageStatus) ? Tone.READY : Tone.WAITING;
     }
 
+    static final class ReadinessCard {
+        final String label;
+        final String detail;
+        final Tone tone;
+        final boolean showAction;
+
+        ReadinessCard(String label, String detail, Tone tone, boolean showAction) {
+            this.label = label;
+            this.detail = detail;
+            this.tone = tone;
+            this.showAction = showAction;
+        }
+    }
+
+    static ReadinessCard storageCard(ExperimentSessionPanelState state) {
+        Tone tone = storageTone(state);
+        if (tone == Tone.READY) {
+            return new ReadinessCard("✓ Recording ready", "", tone, false);
+        }
+        if (tone == Tone.ATTENTION || "error".equals(state.storageStatus)) {
+            return new ReadinessCard(
+                "! Recording unavailable",
+                "Restart the app before the study.",
+                Tone.ATTENTION,
+                false
+            );
+        }
+        return new ReadinessCard("… Checking recording storage", "", Tone.WAITING, false);
+    }
+
+    static ReadinessCard kioskCard(String status) {
+        if ("ready".equals(status)) {
+            return new ReadinessCard("✓ Background return ready", "", Tone.READY, false);
+        }
+        if ("starting".equals(status)) {
+            return new ReadinessCard("… Starting background return", "", Tone.WAITING, false);
+        }
+        if ("permission-required".equals(status)) {
+            return new ReadinessCard(
+                "! Permission needed",
+                "Allow display over other apps.",
+                Tone.ATTENTION,
+                true
+            );
+        }
+        if ("ending".equals(status)) {
+            return new ReadinessCard("… Saving and closing", "", Tone.WAITING, false);
+        }
+        return new ReadinessCard(
+            "! Background return unavailable",
+            "Restart the app before the study.",
+            Tone.ATTENTION,
+            false
+        );
+    }
+
     static String stageTitle(ExperimentSessionPanelState state) {
         String phase = state.phase.name();
         if ("ARMED".equals(phase)) return "Armed · ready for the experimenter";
