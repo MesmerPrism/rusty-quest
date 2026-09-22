@@ -232,6 +232,7 @@ try {
         'android:name="io.github.mesmerprism.rustyquest.native_renderer.NativeRendererSelfKioskService"',
         'android:name="io.github.mesmerprism.rustyquest.native_renderer.NativeRendererSelfKioskApplication"',
         'android:foregroundServiceType="specialUse"',
+        'android:stopWithTask="false"',
         'android:name="android.app.NativeActivity"'
     )) {
         if (-not $selectedManifest.Contains($literal, [StringComparison]::Ordinal)) {

@@ -73,6 +73,23 @@ public final class NativeRendererSelfKioskService extends Service {
 
     @Override public IBinder onBind(Intent intent) { return null; }
 
+    @Override public void onTaskRemoved(Intent rootIntent) {
+        ComponentName removed = rootIntent == null ? null : rootIntent.getComponent();
+        if (removed != null && getPackageName().equals(removed.getPackageName())
+                && NativeRendererForegroundGuardPolicy.NATIVE_ACTIVITY.equals(
+                    removed.getClassName())) {
+            // A wearer-closing the VR task ends this app session. The panel's
+            // separate task, however, is routinely removed during a valid handoff.
+            coordinator.releaseImmersiveOwner();
+            Log.i(TAG, "status=immersive-task-removed guardArmed=false");
+            stopSelf();
+        } else {
+            Log.i(TAG, "status=non-immersive-task-removed guardRetained="
+                + coordinator.snapshot().armed);
+        }
+        super.onTaskRemoved(rootIntent);
+    }
+
     @Override public void onDestroy() {
         handler.removeCallbacksAndMessages(null);
         coordinator.updateServiceState(NativeRendererSoftKioskCoordinator.ServiceState.INTERRUPTED);

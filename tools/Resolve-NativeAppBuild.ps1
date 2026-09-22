@@ -798,7 +798,9 @@ function New-GeneratedAndroidManifestText {
         [void]$lines.Add('            android:name="io.github.mesmerprism.rustyquest.native_renderer.NativeRendererSelfKioskService"')
         [void]$lines.Add('            android:exported="false"')
         [void]$lines.Add('            android:foregroundServiceType="specialUse"')
-        [void]$lines.Add('            android:stopWithTask="true">')
+        # Quest places the 2D panel in a separate task and removes it during the
+        # return to VR. That task must not stop the app-owned session watchdog.
+        [void]$lines.Add('            android:stopWithTask="false">')
         [void]$lines.Add('            <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE" android:value="app-owned-session-foreground-recovery" />')
         [void]$lines.Add('        </service>')
     }
