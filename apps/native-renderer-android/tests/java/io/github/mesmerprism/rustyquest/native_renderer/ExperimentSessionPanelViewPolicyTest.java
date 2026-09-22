@@ -135,15 +135,15 @@ public final class ExperimentSessionPanelViewPolicyTest {
         ExperimentSessionPanelViewPolicy.ReadinessCard kioskReady =
             ExperimentSessionPanelViewPolicy.kioskCard("ready");
         check(kioskReady.tone == ExperimentSessionPanelViewPolicy.Tone.READY
-                && kioskReady.label.contains("Background return ready")
+                && kioskReady.label.contains("In-app session guard ready")
                 && kioskReady.detail.isEmpty() && !kioskReady.showAction,
             "ready kiosk is one concise visual status without a setup action");
         ExperimentSessionPanelViewPolicy.ReadinessCard kioskPermission =
             ExperimentSessionPanelViewPolicy.kioskCard("permission-required");
         check(kioskPermission.tone == ExperimentSessionPanelViewPolicy.Tone.ATTENTION
-                && kioskPermission.showAction
-                && kioskPermission.detail.contains("display over other apps"),
-            "missing overlay permission exposes one relevant corrective action");
+                && !kioskPermission.showAction
+                && kioskPermission.detail.contains("Restart the app"),
+            "legacy permission state never exposes an irrelevant special-access action");
         ExperimentSessionPanelViewPolicy.ReadinessCard storageReady =
             ExperimentSessionPanelViewPolicy.storageCard(
                 state(ExperimentSessionPanelState.Phase.IDLE, false, false));

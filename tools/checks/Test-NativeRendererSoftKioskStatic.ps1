@@ -73,8 +73,8 @@ if ([string]$feature.schema -cne 'rusty.quest.native_app_feature.v1' -or
     @($feature.depends_on) -cnotcontains 'ui.same_apk_control_panel' -or
     @($feature.android_manifest.activities).Count -ne 0 -or
     @($feature.android_manifest.services) -cnotcontains 'NativeRendererSelfKioskService' -or
-    @($feature.android_manifest.permissions).Count -ne 3 -or
-    @($feature.android_manifest.permissions) -cnotcontains 'android.permission.SYSTEM_ALERT_WINDOW') {
+    @($feature.android_manifest.permissions).Count -ne 2 -or
+    @($feature.android_manifest.permissions) -ccontains 'android.permission.SYSTEM_ALERT_WINDOW') {
     throw 'Same-APK soft-kiosk feature descriptor is not the closed opt-in surface.'
 }
 
@@ -82,7 +82,7 @@ Assert-Contains $applicationPath 'registerActivityLifecycleCallbacks'
 Assert-Contains $applicationPath 'beginSystemPrompt'
 Assert-Contains $servicePath 'renderer_focus_state.json'
 Assert-Contains $servicePath 'physical_home=false'
-Assert-Contains $servicePath 'Settings.canDrawOverlays(this)'
+Assert-NotContains $servicePath 'Settings.canDrawOverlays(this)'
 Assert-Contains $servicePath 'status=terminal-save-exit-requested admitted=false saved=false'
 Assert-Contains $servicePath 'pendingTerminal'
 Assert-Contains $servicePath 'resumePendingTerminal(Context context)'
@@ -139,6 +139,9 @@ $panelPath = Join-Path $repo 'apps\native-renderer-android\panel-modules\breath-
 Assert-Contains $panelPath 'native_renderer_launch_provenance'
 Assert-Contains $panelPath 'native_renderer_launch_epoch'
 Assert-Contains $panelPath 'explicit-user-launch-v1'
+Assert-NotContains $panelPath 'openSelfKioskOverlaySettings'
+Assert-NotContains $panelPath 'canDrawOverlays'
+Assert-NotContains (Join-Path $repo 'tools\Build-NativeRendererAndroid.ps1') 'openSelfKioskOverlaySettings'
 
 $javaHome = [Environment]::GetEnvironmentVariable('JAVA_HOME')
 $javac = if (-not [string]::IsNullOrWhiteSpace($javaHome)) { Join-Path $javaHome 'bin\javac.exe' } else { $null }
@@ -229,7 +232,6 @@ try {
         'android:name="io.github.mesmerprism.rustyquest.native_renderer.NativeRendererSelfKioskService"',
         'android:name="io.github.mesmerprism.rustyquest.native_renderer.NativeRendererSelfKioskApplication"',
         'android:foregroundServiceType="specialUse"',
-        'android.permission.SYSTEM_ALERT_WINDOW',
         'android:name="android.app.NativeActivity"'
     )) {
         if (-not $selectedManifest.Contains($literal, [StringComparison]::Ordinal)) {
@@ -271,6 +273,9 @@ try {
     if ($selectedManifest.Contains('Accessibility', [StringComparison]::Ordinal) -or
         $selectedManifest.Contains('BIND_ACCESSIBILITY_SERVICE', [StringComparison]::Ordinal)) {
         throw 'Self-watchdog selected manifest must not contain Accessibility authority.'
+    }
+    if ($selectedManifest.Contains('android.permission.SYSTEM_ALERT_WINDOW', [StringComparison]::Ordinal)) {
+        throw 'Same-app self-watchdog must not request display-over-other-apps authority.'
     }
 
     $baselineOutput = Join-Path $resolvedTempRoot 'baseline-output'

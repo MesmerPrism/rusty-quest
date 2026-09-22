@@ -168,6 +168,16 @@ public final class PolarAutoConnectionPolicyTest {
             "manual control, cancellation, shutdown, and an active link suppress recovery"
         );
         check(
+            PolarAutoConnectionPolicy.resumeAutomaticScanAfterPermission(true, false, true),
+            "startup permission acceptance resumes through the automatic scan state machine"
+        );
+        check(
+            !PolarAutoConnectionPolicy.resumeAutomaticScanAfterPermission(true, true, true)
+                && !PolarAutoConnectionPolicy.resumeAutomaticScanAfterPermission(false, false, true)
+                && !PolarAutoConnectionPolicy.resumeAutomaticScanAfterPermission(true, false, false),
+            "manual scans and non-scan permission actions retain their explicit resume route"
+        );
+        check(
             PolarAutoConnectionPolicy.retryDelayMs(1, 2, 2_000L, 10_000L) == 2_000L
                 && PolarAutoConnectionPolicy.retryDelayMs(2, 2, 2_000L, 10_000L) == 10_000L,
             "bounded attempts use short retry then a paced fresh cycle"

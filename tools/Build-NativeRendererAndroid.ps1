@@ -1349,9 +1349,7 @@ $polarRuntimeReopenFromExplicitLaunch
 
     /** Stable, presentation-only status; verbose guard diagnostics stay out of operator UI. */
     static String softKioskUiState(android.app.Activity activity) {
-        if (activity == null || !android.provider.Settings.canDrawOverlays(activity)) {
-            return "permission-required";
-        }
+        if (activity == null) return "attention";
         NativeRendererSoftKioskCoordinator.Effectiveness effectiveness =
             NativeRendererSoftKioskCoordinator.process().snapshot().effectiveness;
         switch (effectiveness) {
@@ -1365,27 +1363,6 @@ $polarRuntimeReopenFromExplicitLaunch
             default:
                 return "attention";
         }
-    }
-
-    static boolean openSelfKioskOverlaySettings(android.app.Activity activity) {
-        if (!(activity instanceof ControlPanelActivity)) return false;
-        android.content.Intent query = new android.content.Intent(
-            android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-            android.net.Uri.parse("package:" + activity.getPackageName()));
-        android.content.pm.ResolveInfo resolved = activity.getPackageManager().resolveActivity(
-            query, android.content.pm.PackageManager.MATCH_DEFAULT_ONLY);
-        android.content.pm.ActivityInfo target = resolved == null ? null : resolved.activityInfo;
-        if (target == null || target.packageName == null || target.name == null) return false;
-        android.content.ComponentName component = new android.content.ComponentName(
-            target.packageName, target.name);
-        NativeRendererSelfKioskApplication.beginSystemPrompt(activity);
-        try {
-            activity.startActivityForResult(query.setComponent(component), 60612);
-        } catch (RuntimeException error) {
-            NativeRendererSelfKioskApplication.endSystemPrompt(activity);
-            return false;
-        }
-        return true;
     }
 
     static boolean admitTerminalSaveAndExit(

@@ -488,8 +488,25 @@ final class PolarSensorPanel {
         if (hasRequiredPermissions()) {
             setStatusState("permission-ready", "BLE/location permissions accepted.");
             marker("status=permission-accepted");
-            resumePendingBleAction();
-            resumeAutomaticConnectionIfRequested();
+            boolean resumeAutomaticScan =
+                PolarAutoConnectionPolicy.resumeAutomaticScanAfterPermission(
+                    automaticConnectionRequested,
+                    manualConnectionControl,
+                    pendingBleAction == PENDING_BLE_SCAN
+                );
+            if (resumeAutomaticScan) {
+                // Startup requested the permission on behalf of the automatic state
+                // machine. Do not start an unowned manual scan here: the automatic
+                // attempt must bind autoScanGeneration before callbacks can admit a
+                // unique candidate.
+                pendingBleAction = PENDING_BLE_NONE;
+                cancelAutomaticRecovery(false);
+                marker("status=permission-resume route=automatic-scan");
+                resumeAutomaticConnectionIfRequested();
+            } else {
+                resumePendingBleAction();
+                resumeAutomaticConnectionIfRequested();
+            }
         } else {
             String missing = PolarBleRuntimeSupport.join(
                 PolarBleRuntimeSupport.missingPermissions(appContext),

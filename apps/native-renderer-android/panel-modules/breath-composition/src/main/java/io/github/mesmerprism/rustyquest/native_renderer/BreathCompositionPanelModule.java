@@ -291,7 +291,6 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
     private TextView experimenterStatusReadback;
     private TextView experimenterKioskReadback;
     private TextView experimenterKioskDetail;
-    private Button experimenterKioskSetup;
     private Button experimenterPolarFallback;
     private Button experimenterStartOne;
     private Button experimenterStartTwo;
@@ -332,7 +331,6 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
     private boolean experimentShellDestroyed;
     private boolean terminalFinishDispatched;
     private boolean startupPermissionFlowEligible;
-    private boolean startupOverlayRequestIssued;
     private final ExperimenterPanelShortcutPolicy experimenterPanelShortcut =
         new ExperimenterPanelShortcutPolicy();
 
@@ -405,10 +403,7 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
             PolarSensorRuntime.forApplication(getApplicationContext());
         if (startupPermissionFlowEligible) polarRuntime.ensureAutoConnection();
         setContentView(buildContentView());
-        if (startupPermissionFlowEligible
-                && polarRuntime.requestStartupPermissions(this)) {
-            maybeRequestStartupKioskPermission();
-        }
+        if (startupPermissionFlowEligible) polarRuntime.requestStartupPermissions(this);
         restorePanelScrollAfterLayout();
         EXPERIMENT_SESSION_SHELL.initialize(getFilesDir().getAbsolutePath(), this);
         scheduleExperimenterProjectionRefresh();
@@ -704,26 +699,6 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
             permissions,
             grantResults
         );
-        if (requestCode == PolarSensorPanel.REQUEST_BLE_PERMISSIONS) {
-            maybeRequestStartupKioskPermission();
-        }
-    }
-
-    private void maybeRequestStartupKioskPermission() {
-        if (!startupPermissionFlowEligible
-                || startupOverlayRequestIssued
-                || android.provider.Settings.canDrawOverlays(this)) {
-            return;
-        }
-        android.content.SharedPreferences preferences = getSharedPreferences(
-            "viscereality_startup_permissions_v1",
-            MODE_PRIVATE
-        );
-        if (preferences.getBoolean("overlay_prompt_attempted", false)) return;
-        if (ControlPanelActivity.openSelfKioskOverlaySettings(this)) {
-            startupOverlayRequestIssued = true;
-            preferences.edit().putBoolean("overlay_prompt_attempted", true).apply();
-        }
     }
 
     private View buildContentView() {
@@ -946,18 +921,6 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
         experimenterKioskDetail.setVisibility(
             presentation.detail.isEmpty() ? View.GONE : View.VISIBLE);
         kiosk.addView(experimenterKioskDetail);
-        experimenterKioskSetup = button("Open permission setup");
-        experimenterKioskSetup.setVisibility(presentation.showAction ? View.VISIBLE : View.GONE);
-        experimenterKioskSetup.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View ignored) {
-                if (!ControlPanelActivity.openSelfKioskOverlaySettings(
-                        BreathCompositionPanelModule.this)) {
-                    updateStatus("Display-over-other-apps settings unavailable on this headset.");
-                }
-            }
-        });
-        kiosk.addView(experimenterKioskSetup);
         root.addView(kiosk);
     }
 
@@ -2707,7 +2670,6 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
         experimenterStatusReadback = null;
         experimenterKioskReadback = null;
         experimenterKioskDetail = null;
-        experimenterKioskSetup = null;
         experimenterPolarFallback = null;
         experimenterStartOne = null;
         experimenterStartTwo = null;
@@ -2757,8 +2719,6 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
             setExperimenterText(experimenterKioskDetail, kiosk.detail);
             if (experimenterKioskDetail != null) experimenterKioskDetail.setVisibility(
                 kiosk.detail.isEmpty() ? View.GONE : View.VISIBLE);
-            if (experimenterKioskSetup != null) experimenterKioskSetup.setVisibility(
-                kiosk.showAction ? View.VISIBLE : View.GONE);
         }
         if (experimenterPolarFallback != null) {
             setExperimenterText(experimenterPolarFallback, projected.showPolarFallback

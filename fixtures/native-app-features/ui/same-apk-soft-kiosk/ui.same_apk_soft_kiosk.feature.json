@@ -9,7 +9,7 @@
   },
   "owner_lane": "rusty-quest",
   "status": "public-substrate",
-  "description": "Explicitly selected app-owned lifecycle and OpenXR focus watchdog with NativeActivity-owned immersive-first launch. Background return requires platform authorization and own-presentation confirmation.",
+  "description": "Explicitly selected app-owned lifecycle and OpenXR focus watchdog with NativeActivity-owned immersive-first launch. Recovery is limited to this app and confirmed from its own presentation state; no overlay or accessibility authority is requested.",
   "provides": [
     "ui.same_apk_soft_kiosk"
   ],
@@ -24,8 +24,7 @@
   "android_manifest": {
     "permissions": [
       "android.permission.FOREGROUND_SERVICE",
-      "android.permission.FOREGROUND_SERVICE_SPECIAL_USE",
-      "android.permission.SYSTEM_ALERT_WINDOW"
+      "android.permission.FOREGROUND_SERVICE_SPECIAL_USE"
     ],
     "uses_features": [],
     "activities": [],

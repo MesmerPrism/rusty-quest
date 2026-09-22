@@ -82,17 +82,17 @@ final class ExperimentSessionPanelViewPolicy {
 
     static ReadinessCard kioskCard(String status) {
         if ("ready".equals(status)) {
-            return new ReadinessCard("✓ Background return ready", "", Tone.READY, false);
+            return new ReadinessCard("✓ In-app session guard ready", "", Tone.READY, false);
         }
         if ("starting".equals(status)) {
-            return new ReadinessCard("… Starting background return", "", Tone.WAITING, false);
+            return new ReadinessCard("… Starting in-app session guard", "", Tone.WAITING, false);
         }
         if ("permission-required".equals(status)) {
             return new ReadinessCard(
-                "! Permission needed",
-                "Allow display over other apps.",
+                "! Session guard unavailable",
+                "Restart the app before the study.",
                 Tone.ATTENTION,
-                true
+                false
             );
         }
         if ("ending".equals(status)) {

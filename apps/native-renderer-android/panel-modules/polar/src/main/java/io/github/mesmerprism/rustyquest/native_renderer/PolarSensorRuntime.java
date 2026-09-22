@@ -418,6 +418,14 @@ final class PolarAutoConnectionPolicy {
         return requested && !manualControl && !closing && !connected;
     }
 
+    static boolean resumeAutomaticScanAfterPermission(
+        boolean requested,
+        boolean manualControl,
+        boolean scanPending
+    ) {
+        return requested && !manualControl && scanPending;
+    }
+
     static long retryDelayMs(
         int attempts,
         int maximumAttempts,

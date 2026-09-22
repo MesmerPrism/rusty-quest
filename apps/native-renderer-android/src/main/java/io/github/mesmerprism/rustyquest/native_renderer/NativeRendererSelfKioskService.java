@@ -14,7 +14,6 @@ import android.os.IBinder;
 import android.os.Looper;
 import android.os.PowerManager;
 import android.os.SystemClock;
-import android.provider.Settings;
 import android.util.Log;
 import java.io.File;
 import java.io.FileInputStream;
@@ -133,8 +132,7 @@ public final class NativeRendererSelfKioskService extends Service {
                 Log.i(TAG, "status=self-return-confirmed generation=" + state.generation
                     + " component=" + component + " evidence=own-lifecycle-and-presentation");
             }
-            readback = "own presentation confirmed; overlay access "
-                + (Settings.canDrawOverlays(this) ? "granted" : "absent (background return unverified)");
+            readback = "own presentation confirmed; same-app session guard active";
             return;
         }
         if (missingSinceMs < 0L) missingSinceMs = now;
@@ -162,7 +160,7 @@ public final class NativeRendererSelfKioskService extends Service {
             returnPending = true;
             readback = "return requested; awaiting own lifecycle/focus confirmation";
             Log.i(TAG, "status=self-return-requested confirmed=false attempt=" + claimed.recoveryAttempt
-                + " generation=" + claimed.generation + " can_draw_overlays=" + Settings.canDrawOverlays(this)
+                + " generation=" + claimed.generation
                 + " departure_source=own_lifecycle physical_home=false");
         } catch (RuntimeException error) {
             readback = "return blocked; " + error.getClass().getSimpleName();
