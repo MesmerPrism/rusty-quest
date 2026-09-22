@@ -124,10 +124,15 @@ public final class NativeRendererSelfKioskService extends Service {
         boolean protectedState = power == null || !power.isInteractive()
             || (keyguard != null && keyguard.isKeyguardLocked());
         boolean suppressed = protectedState || coordinator.selfRecoverySuppressed(now);
-        String component = state.presentation.componentClass;
-        boolean present = app.isResumed(component) && (state.presentation
-            == NativeRendererForegroundGuardPolicy.Presentation.IMMERSIVE
-                ? rendererFocused() : app.hasWindowFocus(component));
+        boolean panelFocused = app.hasWindowFocus(
+            NativeRendererForegroundGuardPolicy.CONTROL_PANEL_ACTIVITY);
+        boolean immersiveFocused = !panelFocused
+            && app.isResumed(NativeRendererForegroundGuardPolicy.NATIVE_ACTIVITY)
+            && rendererFocused();
+        String observedOwnComponent = NativeRendererForegroundGuardPolicy.visibleOwnedComponent(
+            panelFocused, immersiveFocused);
+        boolean present = observedOwnComponent != null;
+        String component = present ? observedOwnComponent : state.presentation.componentClass;
         long departure = departures.observe(state.generation, present,
             app.hasDeparture(component, state.generation), suppressed, now);
         if (departure > 0L && departure != lastDepartureId) {
@@ -142,7 +147,12 @@ public final class NativeRendererSelfKioskService extends Service {
             return;
         }
         if (present) {
-            coordinator.observeOwnSurface(component, state.generation, now);
+            if (!state.presentation.componentClass.equals(observedOwnComponent)) {
+                Log.i(TAG, "status=own-surface-adopted generation=" + state.generation
+                    + " from=" + state.presentation.componentClass
+                    + " to=" + observedOwnComponent + " recovery=false");
+            }
+            coordinator.observeOwnSurface(observedOwnComponent, state.generation, now);
             missingSinceMs = -1L;
             if (returnPending) {
                 returnPending = false;

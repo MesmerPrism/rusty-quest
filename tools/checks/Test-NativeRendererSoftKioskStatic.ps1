@@ -117,6 +117,9 @@ Assert-Contains $coordinatorPath 'RECOVERY_EXHAUSTED'
 Assert-Contains $coordinatorPath 'UNAVAILABLE_HOME_SURFACE'
 Assert-Contains $servicePath 'coordinator.claimRecovery('
 Assert-Contains $servicePath 'coordinator.observeOwnSurface('
+Assert-Contains $servicePath 'visibleOwnedComponent('
+Assert-Contains $servicePath 'app.hasWindowFocus('
+Assert-Contains $coordinatorPath 'policy.observeOwnedComponent('
 foreach ($literal in @(
     'performGlobalAction(',
     'dispatchGesture(',

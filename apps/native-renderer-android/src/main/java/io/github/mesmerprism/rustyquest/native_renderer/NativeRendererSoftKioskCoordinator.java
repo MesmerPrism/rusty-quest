@@ -186,7 +186,26 @@ final class NativeRendererSoftKioskCoordinator {
     synchronized void endSelfSystemPrompt() { selfPromptDeadlineMs = Long.MIN_VALUE; }
 
     synchronized Action observeOwnSurface(String component, long observedGeneration, long nowMs) {
-        return observeForeground("own-app", component, true, false, 0L, observedGeneration, nowMs);
+        if (!selfWatchdog || serviceState != ServiceState.CONNECTED || !armed
+                || terminal || policy == null) {
+            return action(ActionKind.NOT_EFFECTIVE, 0L, false, 0);
+        }
+        if (observedGeneration != generation || nowMs < 0L) {
+            return action(ActionKind.NONE, 0L, false, 0);
+        }
+        if (policy.observeOwnedComponent(component, generation, nowMs)) {
+            // This records what the app brought forward. It does not request a
+            // panel/VR switch; only an external departure may request recovery.
+            presentation = NativeRendererForegroundGuardPolicy.CONTROL_PANEL_ACTIVITY
+                .equals(component)
+                ? NativeRendererForegroundGuardPolicy.Presentation.PANEL
+                : NativeRendererForegroundGuardPolicy.Presentation.IMMERSIVE;
+            transitionDeadlineMs = Long.MIN_VALUE;
+            deferredForeground = null;
+            clearRecoveryEpisode();
+            notifyTimingChanged(true);
+        }
+        return action(ActionKind.NONE, 0L, false, 0);
     }
 
     synchronized Action observeSelfDeparture(long observedGeneration, long departureId, long nowMs) {

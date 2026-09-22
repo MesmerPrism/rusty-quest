@@ -25,6 +25,7 @@ public final class NativeRendererSoftKioskPolicyTest {
         launchAuthorityIsOneShotAndRejectsSpoofReplayAndRecreation();
         launcherAdmissionRejectsRecreationAndIntentAnomalies();
         selfWatchdogDoesNotNeedHomeResolutionOrAccessibility();
+        selfWatchdogAllowsBothOwnedSurfacesAndRecoversLastConfirmed();
         selfDepartureNeedsRecoveryAndIgnoresFocusNoiseAndPrompts();
         selfPromptAndExplicitExitCancelPendingReturn();
         explicitExitCreatesItsOwnAdmissionBeforeKioskArm();
@@ -578,6 +579,45 @@ public final class NativeRendererSoftKioskPolicyTest {
         }
         require(c.snapshot().terminal);
         equal(NativeRendererSoftKioskCoordinator.ActionKind.NONE, c.claimRecovery(100L, 1L, 3_100L).kind);
+    }
+
+    private static void selfWatchdogAllowsBothOwnedSurfacesAndRecoversLastConfirmed() {
+        equal(NativeRendererForegroundGuardPolicy.CONTROL_PANEL_ACTIVITY,
+            NativeRendererForegroundGuardPolicy.visibleOwnedComponent(true, true));
+        equal(NativeRendererForegroundGuardPolicy.NATIVE_ACTIVITY,
+            NativeRendererForegroundGuardPolicy.visibleOwnedComponent(false, true));
+        require(NativeRendererForegroundGuardPolicy.visibleOwnedComponent(false, false) == null);
+
+        NativeRendererSoftKioskCoordinator c = new NativeRendererSoftKioskCoordinator();
+        c.useSelfWatchdog();
+        require(c.armFromExplicitColdLaunch(130L,
+            NativeRendererForegroundGuardPolicy.Presentation.IMMERSIVE, "experimenter"));
+        c.updateServiceState(NativeRendererSoftKioskCoordinator.ServiceState.CONNECTED);
+        equal(NativeRendererSoftKioskCoordinator.ActionKind.NONE,
+            c.observeOwnSurface(NativeRendererForegroundGuardPolicy.CONTROL_PANEL_ACTIVITY,
+                130L, 100L).kind);
+        equal(NativeRendererForegroundGuardPolicy.Presentation.PANEL,
+            c.snapshot().presentation);
+        c.observeOwnSurface("com.example.ForeignActivity", 130L, 200L);
+        equal(NativeRendererForegroundGuardPolicy.Presentation.PANEL,
+            c.snapshot().presentation);
+        NativeRendererSoftKioskCoordinator.Action fromPanel =
+            c.observeSelfDeparture(130L, 0L, 1_000L);
+        equal(NativeRendererSoftKioskCoordinator.ActionKind.RECOVER_PANEL, fromPanel.kind);
+        equal(NativeRendererSoftKioskCoordinator.ActionKind.RECOVER_PANEL,
+            c.claimRecovery(130L, fromPanel.recoveryEpisodeId, 1_001L).kind);
+        equal(NativeRendererSoftKioskCoordinator.ActionKind.NONE,
+            c.observeOwnSurface(NativeRendererForegroundGuardPolicy.NATIVE_ACTIVITY,
+                130L, 1_100L).kind);
+        equal(NativeRendererForegroundGuardPolicy.Presentation.IMMERSIVE,
+            c.snapshot().presentation);
+        NativeRendererSoftKioskCoordinator.Action fromVr =
+            c.observeSelfDeparture(130L, 0L, 2_000L);
+        equal(NativeRendererSoftKioskCoordinator.ActionKind.RECOVER_IMMERSIVE, fromVr.kind);
+        c.observeOwnSurface(NativeRendererForegroundGuardPolicy.CONTROL_PANEL_ACTIVITY,
+            129L, 2_100L);
+        equal(NativeRendererForegroundGuardPolicy.Presentation.IMMERSIVE,
+            c.snapshot().presentation);
     }
 
     private static void selfDepartureNeedsRecoveryAndIgnoresFocusNoiseAndPrompts() {
