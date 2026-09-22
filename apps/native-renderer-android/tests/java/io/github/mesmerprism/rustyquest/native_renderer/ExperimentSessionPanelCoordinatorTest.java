@@ -6,6 +6,7 @@ public final class ExperimentSessionPanelCoordinatorTest {
         armControlStatePolicy();
         rejectedArmRemainsVisibleAndRetryable();
         startDeveloperAndRestartReceiptPolicy();
+        independentCompletionProjection();
         polarAndViewPolicy();
         closedRuntimeEpochResetsGenerationButRecreationDoesNot();
         System.out.println("ExperimentSessionPanelCoordinatorTest PASS");
@@ -54,6 +55,28 @@ public final class ExperimentSessionPanelCoordinatorTest {
             coordinator.arm(ExperimentSessionPanelCoordinator.CONDITION_ONE);
         check(retry != null && !retry.operationId.equals(arm.operationId),
             "retry allocates a fresh arm operation");
+    }
+
+    private static void independentCompletionProjection() {
+        ExperimentSessionPanelCoordinator coordinator = new ExperimentSessionPanelCoordinator();
+        ExperimentSessionPanelCoordinator.NativeCommand arm =
+            coordinator.arm(ExperimentSessionPanelCoordinator.CONDITION_ONE);
+        check(coordinator.accept(new ExperimentSessionPanelCoordinator.NativeReceipt(
+            arm.operationId, true, false, 1L, 1L, "active", "running",
+            ExperimentSessionPanelCoordinator.CONDITION_ONE, true,
+            "durable", 30_004L, false, "ready", true,
+            0L, 0L, 0L, 0L, true, true, false, 0L, 0L, 0L,
+            "none", 0L, "completion-reached"
+        )), "completion readback accepted");
+        check(coordinator.snapshot().phase == ExperimentSessionPanelState.Phase.RUNNING
+                && coordinator.snapshot().recording
+                && coordinator.snapshot().completion
+                    == ExperimentSessionPanelState.Completion.DURABLE
+                && coordinator.snapshot().activeTimeMs == 30_004L,
+            "condition completion remains independent from active recording state");
+        check(ExperimentSessionPanelViewPolicy.stageTitle(coordinator.snapshot())
+                .contains("recording continues"),
+            "durable completion receives the distinct operator label");
     }
 
     private static void closedRuntimeEpochResetsGenerationButRecreationDoesNot() {

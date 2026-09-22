@@ -39,6 +39,8 @@ final class ExperimentSessionPanelCoordinator {
         final String controlState;
         final String activeCondition;
         final boolean recording;
+        final String completion;
+        final long activeTimeMs;
         final boolean recovery;
         final String storageStatus;
         final boolean kioskRequested;
@@ -119,6 +121,45 @@ final class ExperimentSessionPanelCoordinator {
             long routeActionRevision,
             String detail
         ) {
+            this(
+                operationId, accepted, durable, generation, revision, phase,
+                controlState, activeCondition, recording, "", 0L, recovery,
+                storageStatus, kioskRequested, completedOne, completedTwo,
+                stoppedEarlyOne, stoppedEarlyTwo, perConditionCountsAvailable,
+                countsAvailable, countsInvalid, completedTotal, stoppedEarlyTotal,
+                errors, routeAction, routeActionRevision, detail
+            );
+        }
+
+        NativeReceipt(
+            String operationId,
+            boolean accepted,
+            boolean durable,
+            long generation,
+            long revision,
+            String phase,
+            String controlState,
+            String activeCondition,
+            boolean recording,
+            String completion,
+            long activeTimeMs,
+            boolean recovery,
+            String storageStatus,
+            boolean kioskRequested,
+            long completedOne,
+            long completedTwo,
+            long stoppedEarlyOne,
+            long stoppedEarlyTwo,
+            boolean perConditionCountsAvailable,
+            boolean countsAvailable,
+            boolean countsInvalid,
+            long completedTotal,
+            long stoppedEarlyTotal,
+            long errors,
+            String routeAction,
+            long routeActionRevision,
+            String detail
+        ) {
             this.operationId = safe(operationId);
             this.accepted = accepted;
             this.durable = durable;
@@ -128,6 +169,8 @@ final class ExperimentSessionPanelCoordinator {
             this.controlState = safe(controlState);
             this.activeCondition = safe(activeCondition);
             this.recording = recording;
+            this.completion = safe(completion);
+            this.activeTimeMs = Math.max(0L, activeTimeMs);
             this.recovery = recovery;
             this.storageStatus = safe(storageStatus);
             this.kioskRequested = kioskRequested;
@@ -235,6 +278,8 @@ final class ExperimentSessionPanelCoordinator {
             state.counts,
             state.polar,
             false,
+            ExperimentSessionPanelState.Completion.NOT_REACHED,
+            0L,
             state.recovery,
             "preparing",
             state.kioskRequested,
@@ -263,6 +308,8 @@ final class ExperimentSessionPanelCoordinator {
             state.counts,
             state.polar,
             false,
+            ExperimentSessionPanelState.Completion.NOT_REACHED,
+            0L,
             state.recovery,
             "preparing",
             state.kioskRequested,
@@ -294,6 +341,8 @@ final class ExperimentSessionPanelCoordinator {
             state.counts,
             state.polar,
             state.recording,
+            state.completion,
+            state.activeTimeMs,
             state.recovery,
             "finalizing",
             state.kioskRequested,
@@ -328,6 +377,8 @@ final class ExperimentSessionPanelCoordinator {
             state.counts,
             state.polar,
             state.recording,
+            state.completion,
+            state.activeTimeMs,
             state.recovery,
             "finalizing",
             state.kioskRequested,
@@ -369,6 +420,8 @@ final class ExperimentSessionPanelCoordinator {
                 state.counts,
                 state.polar,
                 state.recording,
+                state.completion,
+                state.activeTimeMs,
                 receipt.recovery,
                 emptyAs(receipt.storageStatus, state.storageStatus),
                 receipt.kioskRequested,
@@ -397,6 +450,8 @@ final class ExperimentSessionPanelCoordinator {
                 state.counts,
                 state.polar,
                 state.recording,
+                state.completion,
+                state.activeTimeMs,
                 receipt.recovery,
                 emptyAs(receipt.storageStatus, "error"),
                 receipt.kioskRequested,
@@ -459,6 +514,8 @@ final class ExperimentSessionPanelCoordinator {
                         : ExperimentSessionPanelState.Counts.unknown())),
             state.polar,
             receipt.recording,
+            parseCompletion(receipt.completion),
+            receipt.activeTimeMs,
             receipt.recovery,
             emptyAs(receipt.storageStatus, state.storageStatus),
             receipt.kioskRequested,
@@ -478,7 +535,8 @@ final class ExperimentSessionPanelCoordinator {
         state = copy(
             state.route, state.phase, state.generation, state.revision, state.activeCondition,
             state.pendingOperationId, state.routeActionRevision, state.counts, projection,
-            state.recording, state.recovery, state.storageStatus, state.kioskRequested, state.detail
+            state.recording, state.completion, state.activeTimeMs, state.recovery,
+            state.storageStatus, state.kioskRequested, state.detail
         );
     }
 
@@ -498,7 +556,8 @@ final class ExperimentSessionPanelCoordinator {
         state = copy(
             route, state.phase, state.generation, state.revision, state.activeCondition,
             state.pendingOperationId, state.routeActionRevision, state.counts, state.polar,
-            state.recording, state.recovery, state.storageStatus, state.kioskRequested, state.detail
+            state.recording, state.completion, state.activeTimeMs, state.recovery,
+            state.storageStatus, state.kioskRequested, state.detail
         );
     }
 
@@ -528,6 +587,20 @@ final class ExperimentSessionPanelCoordinator {
         return fallback;
     }
 
+    private static ExperimentSessionPanelState.Completion parseCompletion(String value) {
+        String normalized = safe(value).toLowerCase(Locale.US);
+        if ("not-reached".equals(normalized)) {
+            return ExperimentSessionPanelState.Completion.NOT_REACHED;
+        }
+        if ("persistence-pending".equals(normalized)) {
+            return ExperimentSessionPanelState.Completion.PERSISTENCE_PENDING;
+        }
+        if ("durable".equals(normalized)) {
+            return ExperimentSessionPanelState.Completion.DURABLE;
+        }
+        return ExperimentSessionPanelState.Completion.UNKNOWN;
+    }
+
     private static ExperimentSessionPanelState copy(
         ExperimentSessionPanelState.Route route,
         ExperimentSessionPanelState.Phase phase,
@@ -539,6 +612,8 @@ final class ExperimentSessionPanelCoordinator {
         ExperimentSessionPanelState.Counts counts,
         ExperimentSessionPanelState.PolarProjection polar,
         boolean recording,
+        ExperimentSessionPanelState.Completion completion,
+        long activeTimeMs,
         boolean recovery,
         String storageStatus,
         boolean kioskRequested,
@@ -546,8 +621,8 @@ final class ExperimentSessionPanelCoordinator {
     ) {
         return new ExperimentSessionPanelState(
             route, phase, generation, revision, activeCondition, pendingOperation,
-            routeActionRevision, counts, polar, recording, recovery, storageStatus,
-            kioskRequested, detail
+            routeActionRevision, counts, polar, recording, completion, activeTimeMs,
+            recovery, storageStatus, kioskRequested, detail
         );
     }
 

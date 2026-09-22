@@ -12,6 +12,7 @@ final class ExperimentSessionPanelState {
         CONNECTED, SCANNING, CONNECTING, MULTIPLE, NOT_FOUND,
         LOCATION_SERVICES_DISABLED, FAILED, STALE, UNKNOWN
     }
+    enum Completion { NOT_REACHED, PERSISTENCE_PENDING, DURABLE, UNKNOWN }
 
     static final class Counts {
         final long completedOne;
@@ -152,10 +153,48 @@ final class ExperimentSessionPanelState {
     final Counts counts;
     final PolarProjection polar;
     final boolean recording;
+    final Completion completion;
+    final long activeTimeMs;
     final boolean recovery;
     final String storageStatus;
     final boolean kioskRequested;
     final String detail;
+
+    ExperimentSessionPanelState(
+        Route route,
+        Phase phase,
+        long generation,
+        long revision,
+        String activeCondition,
+        String pendingOperationId,
+        long routeActionRevision,
+        Counts counts,
+        PolarProjection polar,
+        boolean recording,
+        Completion completion,
+        long activeTimeMs,
+        boolean recovery,
+        String storageStatus,
+        boolean kioskRequested,
+        String detail
+    ) {
+        this.route = route == null ? Route.EXPERIMENTER : route;
+        this.phase = phase == null ? Phase.UNAVAILABLE : phase;
+        this.generation = Math.max(0L, generation);
+        this.revision = Math.max(0L, revision);
+        this.activeCondition = activeCondition == null ? "none" : activeCondition;
+        this.pendingOperationId = pendingOperationId == null ? "" : pendingOperationId;
+        this.routeActionRevision = Math.max(0L, routeActionRevision);
+        this.counts = counts == null ? Counts.unknown() : counts;
+        this.polar = polar == null ? PolarProjection.unknown() : polar;
+        this.recording = recording;
+        this.completion = completion == null ? Completion.UNKNOWN : completion;
+        this.activeTimeMs = Math.max(0L, activeTimeMs);
+        this.recovery = recovery;
+        this.storageStatus = storageStatus == null ? "unknown" : storageStatus;
+        this.kioskRequested = kioskRequested;
+        this.detail = detail == null ? "" : detail;
+    }
 
     ExperimentSessionPanelState(
         Route route,
@@ -173,20 +212,11 @@ final class ExperimentSessionPanelState {
         boolean kioskRequested,
         String detail
     ) {
-        this.route = route == null ? Route.EXPERIMENTER : route;
-        this.phase = phase == null ? Phase.UNAVAILABLE : phase;
-        this.generation = Math.max(0L, generation);
-        this.revision = Math.max(0L, revision);
-        this.activeCondition = activeCondition == null ? "none" : activeCondition;
-        this.pendingOperationId = pendingOperationId == null ? "" : pendingOperationId;
-        this.routeActionRevision = Math.max(0L, routeActionRevision);
-        this.counts = counts == null ? Counts.unknown() : counts;
-        this.polar = polar == null ? PolarProjection.unknown() : polar;
-        this.recording = recording;
-        this.recovery = recovery;
-        this.storageStatus = storageStatus == null ? "unknown" : storageStatus;
-        this.kioskRequested = kioskRequested;
-        this.detail = detail == null ? "" : detail;
+        this(
+            route, phase, generation, revision, activeCondition, pendingOperationId,
+            routeActionRevision, counts, polar, recording, Completion.UNKNOWN, 0L,
+            recovery, storageStatus, kioskRequested, detail
+        );
     }
 
     static ExperimentSessionPanelState initial() {
@@ -201,6 +231,8 @@ final class ExperimentSessionPanelState {
             Counts.unknown(),
             PolarProjection.unknown(),
             false,
+            Completion.UNKNOWN,
+            0L,
             false,
             "awaiting-native-readback",
             true,

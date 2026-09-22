@@ -16,8 +16,9 @@ use serde_json::Value;
 use crate::{
     session_recording_clock::SessionTimestampKey,
     session_recording_contract::{
-        ConditionKey, ExperimentIdentity, SessionCounts, SESSION_CHECKPOINT_SCHEMA,
-        SESSION_FINAL_SCHEMA, SESSION_MANIFEST_SCHEMA, SESSION_ROW_SCHEMA, SESSION_STREAM_FILES,
+        ConditionKey, ExperimentIdentity, SessionCounts, SessionEventKind,
+        SESSION_CHECKPOINT_SCHEMA, SESSION_FINAL_SCHEMA, SESSION_MANIFEST_SCHEMA,
+        SESSION_ROW_SCHEMA, SESSION_STREAM_FILES,
     },
 };
 
@@ -657,25 +658,14 @@ fn validate_row(
     }
     let lifecycle = match expected_kind {
         "event" => {
-            require_enum(
-                object,
-                "event",
-                &[
-                    "started",
-                    "immersive-active",
-                    "immersive-paused",
-                    "developer-opened",
-                    "developer-closed",
-                    "audio-ended",
-                    "completion-reached",
-                    "restart-requested",
-                    "exit-requested",
-                    "source-gap",
-                ],
-            )?;
-            match object.get("event").and_then(Value::as_str) {
-                Some("started") => RowLifecycle::Started,
-                Some("completion-reached") => RowLifecycle::Completed,
+            let event = object
+                .get("event")
+                .and_then(Value::as_str)
+                .and_then(SessionEventKind::parse)
+                .ok_or_else(|| "recording-stream-row-field-invalid:event".to_owned())?;
+            match event {
+                SessionEventKind::Started => RowLifecycle::Started,
+                SessionEventKind::CompletionReached => RowLifecycle::Completed,
                 _ => RowLifecycle::None,
             }
         }
@@ -975,6 +965,50 @@ mod tests {
             Err("recording-root-symlink-rejected".to_owned())
         );
         fs::remove_dir_all(&base).unwrap();
+    }
+
+    #[test]
+    fn recovery_accepts_every_canonical_session_event_and_rejects_unknown_events() {
+        let started_at = SessionTimestampKey::parse("utc-ns-01725000000000000000").unwrap();
+        let condition = ConditionKey::parse("condition-a").unwrap();
+        for (sequence, event) in SessionEventKind::ALL.into_iter().enumerate() {
+            let row = json!({
+                "schema": SESSION_ROW_SCHEMA,
+                "record_sequence": sequence as u64,
+                "kind": "event",
+                "session_started_at_utc": started_at.as_str(),
+                "condition": condition.as_str(),
+                "observed_monotonic_ns": sequence as u64 + 1,
+                "observed_utc_ns": sequence as u64 + 2,
+                "event": event.as_str(),
+            });
+            let expected = match event {
+                SessionEventKind::Started => RowLifecycle::Started,
+                SessionEventKind::CompletionReached => RowLifecycle::Completed,
+                _ => RowLifecycle::None,
+            };
+            assert_eq!(
+                validate_row(&row, "events.jsonl", &started_at, &condition, true),
+                Ok(expected),
+                "{}",
+                event.as_str()
+            );
+        }
+
+        let unknown = json!({
+            "schema": SESSION_ROW_SCHEMA,
+            "record_sequence": 99,
+            "kind": "event",
+            "session_started_at_utc": started_at.as_str(),
+            "condition": condition.as_str(),
+            "observed_monotonic_ns": 100,
+            "observed_utc_ns": 101,
+            "event": "future-event-without-contract",
+        });
+        assert_eq!(
+            validate_row(&unknown, "events.jsonl", &started_at, &condition, true),
+            Err("recording-stream-row-field-invalid:event".to_owned())
+        );
     }
 
     fn make_session(root: &Path, completed: bool, finalized: bool) -> PathBuf {

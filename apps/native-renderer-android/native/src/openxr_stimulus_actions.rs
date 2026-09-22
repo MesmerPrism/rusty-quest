@@ -65,6 +65,7 @@ pub(crate) struct StimulusVolumeActions {
     experiment_control_sequence: u64,
     pending_control_haptic: Option<(u64, u64, &'static str)>,
     control_haptic_cooldown: f32,
+    right_experiment_grip_pressed: bool,
     right_experiment_grip: xr::Action<f32>,
     action_set: xr::ActionSet,
     right_primary_randomize: xr::Action<bool>,
@@ -581,6 +582,7 @@ impl StimulusVolumeActions {
             experiment_control_sequence: 0,
             pending_control_haptic: None,
             control_haptic_cooldown: 0.0,
+            right_experiment_grip_pressed: false,
             right_experiment_grip,
             right_trigger_panel_toggle,
             right_select_panel_toggle,
@@ -832,6 +834,7 @@ impl StimulusVolumeActions {
         if let Err(error) = session.sync_actions(&[(&self.action_set).into()]) {
             self.experiment_control_gesture = Default::default();
             self.pending_control_haptic = None;
+            self.right_experiment_grip_pressed = false;
             self.same_apk_panel_action.cancel_pending_sequence(false);
             self.same_apk_developer_action.cancel_pending_sequence();
             self.observe_composition_controller_missing(observed_at, frame_count.saturating_add(1));
@@ -859,7 +862,7 @@ impl StimulusVolumeActions {
             return events;
         }
 
-        let control_haptic = self.poll_experiment_control(session, dt_seconds);
+        let control_haptic = self.poll_experiment_control(session, dt_seconds, frame_count);
         let suppress_buttons = self.experiment_control_gesture.suppress_buttons();
         events.stimulus_randomize_triggered =
             !suppress_buttons && self.poll_primary_randomize(session, frame_count);
@@ -1646,7 +1649,12 @@ impl StimulusVolumeActions {
         (triggered, false)
     }
 
-    fn poll_experiment_control<G>(&mut self, session: &xr::Session<G>, dt: f32) -> bool {
+    fn poll_experiment_control<G>(
+        &mut self,
+        session: &xr::Session<G>,
+        dt: f32,
+        frame_count: u64,
+    ) -> bool {
         if !self.experiment_controls_enabled {
             return false;
         }
@@ -1695,43 +1703,95 @@ impl StimulusVolumeActions {
         let b = self.right_secondary_action.state(session, xr::Path::NULL);
         let (Ok(grip), Ok(a), Ok(b)) = (grip, a, b) else {
             self.experiment_control_gesture = Default::default();
+            self.right_experiment_grip_pressed = false;
             return acknowledged;
         };
-        let grip_pressed = grip.is_active && grip.current_state >= 0.7;
-        let operation = self.experiment_control_gesture.update(
-            dt,
-            grip_pressed,
-            a.is_active && a.current_state,
-            b.is_active && b.current_state,
-            state,
-        );
+        self.right_experiment_grip_pressed = grip.is_active
+            && if self.right_experiment_grip_pressed {
+                grip.current_state > 0.55
+            } else {
+                grip.current_state >= 0.7
+            };
+        let grip_pressed = self.right_experiment_grip_pressed;
+        let a_pressed = a.is_active && a.current_state;
+        let b_pressed = b.is_active && b.current_state;
+        if frame_count == 0 || frame_count % 120 == 0 {
+            crate::marker(
+                "experiment-control",
+                format!(
+                    "event=input-snapshot generation={} controlState={} gripActive={} gripValue={:.3} gripLatched={} primaryActive={} primaryPressed={} secondaryActive={} secondaryPressed={}",
+                    generation,
+                    state.as_str(),
+                    grip.is_active,
+                    grip.current_state,
+                    grip_pressed,
+                    a.is_active,
+                    a_pressed,
+                    b.is_active,
+                    b_pressed,
+                ),
+            );
+        }
+        let operation =
+            self.experiment_control_gesture
+                .update(dt, grip_pressed, a_pressed, b_pressed, state);
         if let Some(operation) = operation {
-            if generation > 0 {
-                if let Some(at) = crate::experiment_session_runtime::current_elapsed_realtime_ns() {
-                    self.experiment_control_sequence =
-                        self.experiment_control_sequence.saturating_add(1);
-                    let operation_id = format!(
-                        "controller-control-{generation}-{at}-{}",
-                        self.experiment_control_sequence
-                    );
-                    let response = crate::experiment_session_runtime::request_control_from_native(
+            let Some(at) = (generation > 0)
+                .then(crate::experiment_session_runtime::current_elapsed_realtime_ns)
+                .flatten()
+            else {
+                crate::marker(
+                    "experiment-control",
+                    format!(
+                        "event={} status=dispatch-pending reason={} generation={} controlState={} gripValue={:.3} gripLatched={} primaryPressed={} secondaryPressed={}",
                         operation,
-                        &operation_id,
+                        if generation == 0 { "generation-unavailable" } else { "clock-busy" },
                         generation,
-                        at,
-                    );
-                    if response.contains("\"command_status\":\"queued\"") {
-                        self.pending_control_haptic = Some((
-                            generation,
-                            revision,
-                            match operation {
-                                "official-start" => "official-start",
-                                "pause" => "experiment-paused",
-                                _ => "experiment-resumed",
-                            },
-                        ));
-                    }
-                }
+                        state.as_str(),
+                        grip.current_state,
+                        grip_pressed,
+                        a_pressed,
+                        b_pressed,
+                    ),
+                );
+                return acknowledged || self.control_haptic_cooldown > 0.0;
+            };
+            self.experiment_control_sequence = self.experiment_control_sequence.saturating_add(1);
+            let operation_id = format!(
+                "controller-control-{generation}-{at}-{}",
+                self.experiment_control_sequence
+            );
+            let admission = crate::experiment_session_runtime::request_control_from_native(
+                operation,
+                &operation_id,
+                generation,
+                at,
+            );
+            crate::marker(
+                "experiment-control",
+                format!(
+                    "event={} status={} generation={} controlState={} gripValue={:.3} gripLatched={} primaryPressed={} secondaryPressed={}",
+                    operation,
+                    admission.as_str(),
+                    generation,
+                    state.as_str(),
+                    grip.current_state,
+                    grip_pressed,
+                    a_pressed,
+                    b_pressed,
+                ),
+            );
+            if admission == crate::experiment_session_runtime::NativeControlAdmission::Queued {
+                self.experiment_control_gesture.confirm_dispatched();
+                self.pending_control_haptic = Some((
+                    generation,
+                    revision,
+                    match operation {
+                        "official-start" => "official-start",
+                        "pause" => "experiment-paused",
+                        _ => "experiment-resumed",
+                    },
+                ));
             }
         }
         acknowledged || self.control_haptic_cooldown > 0.0

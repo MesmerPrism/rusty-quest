@@ -60,8 +60,30 @@ public final class ExperimentSessionPanelViewPolicyTest {
         ExperimentSessionPanelState running = state(ExperimentSessionPanelState.Phase.RECORDING, true, false);
         check(ExperimentSessionPanelViewPolicy.stageInstruction(running).contains("Right Grip + B"),
             "running state explains pause");
-        check(ExperimentSessionPanelViewPolicy.stageInstruction(running).contains("does not finish"),
+        check(ExperimentSessionPanelViewPolicy.stageInstruction(running).contains("does not stop recording"),
             "audio completion cannot imply run finalization");
+        ExperimentSessionPanelState complete = state(
+            ExperimentSessionPanelState.Phase.RECORDING,
+            true,
+            ExperimentSessionPanelState.Completion.DURABLE,
+            false
+        );
+        check(ExperimentSessionPanelViewPolicy.stageTitle(complete)
+                .contains("Condition complete · recording continues")
+                && ExperimentSessionPanelViewPolicy.stageInstruction(complete)
+                    .contains("recording continue until Save and exit")
+                && ExperimentSessionPanelViewPolicy.project(complete).statusLine
+                    .contains("Official condition: complete · Recording: active"),
+            "official completion is distinct from continuing physiology recording");
+        ExperimentSessionPanelState completionPending = state(
+            ExperimentSessionPanelState.Phase.RECORDING,
+            true,
+            ExperimentSessionPanelState.Completion.PERSISTENCE_PENDING,
+            false
+        );
+        check(ExperimentSessionPanelViewPolicy.stageTitle(completionPending)
+                .contains("confirming completion"),
+            "elapsed condition time is not called complete before persistence");
         ExperimentSessionPanelState saving = state(ExperimentSessionPanelState.Phase.SAVING, false, false);
         check(ExperimentSessionPanelViewPolicy.stageInstruction(saving).contains("finish saving"),
             "saving instructs operator to wait");
@@ -152,9 +174,18 @@ public final class ExperimentSessionPanelViewPolicyTest {
 
     private static ExperimentSessionPanelState state(ExperimentSessionPanelState.Phase phase,
             boolean recording, boolean recovery) {
+        return state(phase, recording, ExperimentSessionPanelState.Completion.UNKNOWN, recovery);
+    }
+
+    private static ExperimentSessionPanelState state(
+            ExperimentSessionPanelState.Phase phase,
+            boolean recording,
+            ExperimentSessionPanelState.Completion completion,
+            boolean recovery) {
         return new ExperimentSessionPanelState(ExperimentSessionPanelState.Route.EXPERIMENTER,
             phase, 1L, 1L, "condition-a", "", 0L, ExperimentSessionPanelState.Counts.unknown(),
-            ExperimentSessionPanelState.PolarProjection.unknown(), recording, recovery, "ready", true, "");
+            ExperimentSessionPanelState.PolarProjection.unknown(), recording, completion, 30_000L,
+            recovery, "ready", true, "");
     }
 
     private static void check(boolean condition, String message) {

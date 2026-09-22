@@ -917,8 +917,8 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
 
     private void appendExperimenterControls(LinearLayout root) {
         root.addView(text("Review these controls before arming a condition. Release the buttons between gestures.", 16, PANEL_FG));
-        appendExperimenterControl(root, "Start / resume", "Hold Right Grip + A for about 0.75 seconds. Starts the official run when armed; resumes it when paused.");
-        appendExperimenterControl(root, "Pause", "Hold Right Grip + B for about 0.75 seconds during the run.");
+        appendExperimenterControl(root, "Start / resume", "Hold Right Grip + A for at least 0.75 seconds, then release after the confirmation pulse. Starts the official run when armed; resumes it when paused.");
+        appendExperimenterControl(root, "Pause", "Hold Right Grip + B for at least 0.75 seconds, then release after the confirmation pulse.");
         appendExperimenterControl(root, "Recenter", "Press A without holding the grip to recenter.");
         appendExperimenterControl(root, "Open or close this menu", "Press B three times without holding the grip. In VR it opens the experimenter menu; in the panel it returns to VR. This does not start, pause, or end the run.");
         appendExperimenterControl(root, "Developer settings", "Press the trigger three times to open the developer panel.");
@@ -972,7 +972,7 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
             ExperimentSessionPanelViewPolicy.stageTitle(state), ExperimentSessionPanelViewPolicy.stageTone(state));
         experimenterInstructionReadback = text(ExperimentSessionPanelViewPolicy.stageInstruction(state), 16, PANEL_FG);
         root.addView(experimenterInstructionReadback);
-        root.addView(text("Start / resume: Right Grip + A · Pause: Right Grip + B · Hold for about 0.75 seconds.", 14, PANEL_MUTED));
+        root.addView(text("Start / resume: Right Grip + A · Pause: Right Grip + B · Hold at least 0.75 seconds, then release after the pulse.", 14, PANEL_MUTED));
         root.addView(text("Use Return to VR above, or press B three times again, without changing the session state.", 14, PANEL_MUTED));
         LinearLayout sessions = panelCard("Session status");
         experimenterCountReadback = text(view.countLine, 14, PANEL_FG);
@@ -4369,6 +4369,8 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
                             ? "audio-error" : projection.optString("control_state", ""),
                         before.activeCondition,
                         "active".equals(phase),
+                        projection.optString("completion", ""),
+                        projection.optLong("active_time_ms", 0L),
                         "running".equals(projection.optString("recovery_status", "not-run"))
                             || "error".equals(
                                 projection.optString("recovery_status", "not-run")),

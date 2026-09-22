@@ -108,28 +108,44 @@ final class ExperimentSessionPanelViewPolicy {
 
     static String stageTitle(ExperimentSessionPanelState state) {
         String phase = state.phase.name();
-        if ("ARMED".equals(phase)) return "Armed · ready for the experimenter";
-        if ("PAUSED".equals(phase)) return "Paused · resume when ready";
-        if ("RUNNING".equals(phase) || "RECORDING".equals(phase)) return "Running · session in progress";
-        if ("ARMING".equals(phase) || "STARTING".equals(phase)) return "Preparing the selected condition…";
-        if ("FINALIZING".equals(phase) || "SAVING".equals(phase)) return "Saving…";
         if (state.recovery || "RECOVERY".equals(phase)) return "Recovery needs attention";
         if ("ERROR".equals(phase)) return state.recording
             ? "Session needs attention" : "Condition was not armed";
+        if (state.completion == ExperimentSessionPanelState.Completion.DURABLE
+                && state.recording) {
+            return "Condition complete · recording continues";
+        }
+        if (state.completion == ExperimentSessionPanelState.Completion.PERSISTENCE_PENDING
+                && state.recording) {
+            return "Condition time reached · confirming completion";
+        }
+        if ("ARMED".equals(phase)) return "Armed · ready for the experimenter";
+        if ("PAUSED".equals(phase)) return "Paused · resume when ready";
+        if ("RUNNING".equals(phase) || "RECORDING".equals(phase)) return "Condition running · recording active";
+        if ("ARMING".equals(phase) || "STARTING".equals(phase)) return "Preparing the selected condition…";
+        if ("FINALIZING".equals(phase) || "SAVING".equals(phase)) return "Saving…";
         if ("UNAVAILABLE".equals(phase)) return "Session status unavailable";
         return "No active session";
     }
 
     static String stageInstruction(ExperimentSessionPanelState state) {
         String phase = state.phase.name();
-        if ("ARMED".equals(phase)) return "Fit the headset and verify the participant is settled. The experimenter then holds Right Grip + A for about 0.75 seconds to start the official run.";
-        if ("PAUSED".equals(phase)) return "Hold Right Grip + A for about 0.75 seconds to resume. Press B three times without grip to open or close this menu without ending the run.";
-        if ("RUNNING".equals(phase) || "RECORDING".equals(phase)) return "Hold Right Grip + B for about 0.75 seconds to pause. Audio ending does not finish the session. Press B three times without grip to open this menu; use Save and exit only when the run is complete.";
-        if ("ARMING".equals(phase) || "STARTING".equals(phase)) return "Wait for the condition to be armed before using the start gesture.";
-        if ("FINALIZING".equals(phase) || "SAVING".equals(phase)) return "Wait for the recording to finish saving before preparing another run.";
+        if (state.recovery || "RECOVERY".equals(phase)) return "Review the session and storage status before preparing another run.";
         if ("ERROR".equals(phase) && state.recording) return "Audio entered a technical hold. Do not use resume. Use Save and exit to preserve the incomplete run, then restart the app and re-arm it.";
         if ("ERROR".equals(phase)) return "Go back to Choose condition and try again. If the condition is rejected again, restart the app before fitting the headset.";
-        if (state.recovery || "RECOVERY".equals(phase)) return "Review the session and storage status before preparing another run.";
+        if (state.completion == ExperimentSessionPanelState.Completion.DURABLE
+                && state.recording) {
+            return "The official condition time is complete. Physiology and recording continue until Save and exit. Return to VR keeps recording.";
+        }
+        if (state.completion == ExperimentSessionPanelState.Completion.PERSISTENCE_PENDING
+                && state.recording) {
+            return "The official condition time has elapsed. Wait for the durable completion confirmation; recording continues.";
+        }
+        if ("ARMED".equals(phase)) return "Fit the headset and verify the participant is settled. Hold Right Grip + A for at least 0.75 seconds, then release after the confirmation pulse to start the official run.";
+        if ("PAUSED".equals(phase)) return "Hold Right Grip + A for at least 0.75 seconds, then release after the confirmation pulse to resume. Triple-press B without grip to open or close this menu.";
+        if ("RUNNING".equals(phase) || "RECORDING".equals(phase)) return "Hold Right Grip + B for at least 0.75 seconds, then release after the confirmation pulse to pause. Audio ending does not stop recording; use Save and exit only when the run is complete.";
+        if ("ARMING".equals(phase) || "STARTING".equals(phase)) return "Wait for the condition to be armed before using the start gesture.";
+        if ("FINALIZING".equals(phase) || "SAVING".equals(phase)) return "Wait for the recording to finish saving before preparing another run.";
         return "Review the saved-session totals, then prepare the next run.";
     }
 
@@ -242,10 +258,12 @@ final class ExperimentSessionPanelViewPolicy {
             ? "status unavailable" : (state.recovery ? "required" : "none");
         String condition = "condition-a".equals(state.activeCondition) ? "Condition 1 · "
             : "condition-b".equals(state.activeCondition) ? "Condition 2 · " : "";
+        String conditionStatus = conditionStatus(state);
         String status = state.phase == ExperimentSessionPanelState.Phase.ERROR && !state.recording
             ? condition + "Not armed · " + emptyAs(state.detail, "Native arm command rejected.")
             : condition + (saving ? "Saving…"
-                : "Recording: " + (state.recording ? "active" : "idle")
+                : conditionStatus
+                    + " · Recording: " + (state.recording ? "active" : "idle")
                     + " · Recovery: " + recovery
                     + " · Storage: " + state.storageStatus);
         boolean polarOk = polar.bluetooth == ExperimentSessionPanelState.Bluetooth.ON
@@ -256,6 +274,26 @@ final class ExperimentSessionPanelViewPolicy {
             && state.phase != ExperimentSessionPanelState.Phase.UNAVAILABLE
             && state.pendingOperationId.isEmpty();
         return new ViewState(bluetooth, polarLine, counts, status, fallback, startEnabled, saving);
+    }
+
+    private static String conditionStatus(ExperimentSessionPanelState state) {
+        if (state.completion == ExperimentSessionPanelState.Completion.DURABLE) {
+            return "Official condition: complete";
+        }
+        if (state.completion == ExperimentSessionPanelState.Completion.PERSISTENCE_PENDING) {
+            return "Official condition: time reached, confirming";
+        }
+        if (state.phase == ExperimentSessionPanelState.Phase.ARMED) {
+            return "Official condition: not started";
+        }
+        if (state.phase == ExperimentSessionPanelState.Phase.PAUSED) {
+            return "Official condition: paused";
+        }
+        if (state.phase == ExperimentSessionPanelState.Phase.RUNNING
+                || state.phase == ExperimentSessionPanelState.Phase.RECORDING) {
+            return "Official condition: running";
+        }
+        return "Official condition: inactive";
     }
 
     private static String emptyAs(String value, String fallback) {

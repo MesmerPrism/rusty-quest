@@ -355,6 +355,25 @@ pub(crate) enum SessionEventKind {
 }
 
 impl SessionEventKind {
+    pub(crate) const ALL: [Self; 16] = [
+        Self::Armed,
+        Self::OfficialStart,
+        Self::ExperimentPaused,
+        Self::ExperimentResumed,
+        Self::Started,
+        Self::ImmersiveActive,
+        Self::ImmersivePaused,
+        Self::DeveloperOpened,
+        Self::DeveloperClosed,
+        Self::AudioStarted,
+        Self::AudioEnded,
+        Self::AudioError,
+        Self::CompletionReached,
+        Self::RestartRequested,
+        Self::ExitRequested,
+        Self::SourceGap,
+    ];
+
     pub(crate) const fn as_str(self) -> &'static str {
         match self {
             Self::Armed => "armed",
@@ -374,6 +393,12 @@ impl SessionEventKind {
             Self::ExitRequested => "exit-requested",
             Self::SourceGap => "source-gap",
         }
+    }
+
+    pub(crate) fn parse(value: &str) -> Option<Self> {
+        Self::ALL
+            .into_iter()
+            .find(|candidate| candidate.as_str() == value)
     }
 }
 

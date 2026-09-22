@@ -125,8 +125,15 @@ impl ExperimentControlGesture {
         if self.held_seconds < 0.75 {
             return None;
         }
-        self.consumed = true;
         candidate
+    }
+
+    /// Consume the recognized chord only after the command queue admits it.
+    /// Transient clock or queue contention must not silently discard a hold.
+    pub(crate) fn confirm_dispatched(&mut self) {
+        if self.candidate.is_some() {
+            self.consumed = true;
+        }
     }
 
     pub(crate) fn suppress_buttons(&self) -> bool {
@@ -964,6 +971,12 @@ mod tests {
             Some("official-start")
         );
         assert_eq!(
+            g.update(0.2, true, true, false, ExperimentControlState::Armed),
+            Some("official-start"),
+            "a longer hold remains dispatchable until queue admission"
+        );
+        g.confirm_dispatched();
+        assert_eq!(
             g.update(0.2, true, false, true, ExperimentControlState::Running),
             None
         );
@@ -980,6 +993,12 @@ mod tests {
         assert_eq!(
             g.update(0.2, true, false, true, ExperimentControlState::Running),
             Some("pause")
+        );
+        g.confirm_dispatched();
+        assert_eq!(
+            g.update(0.2, true, false, true, ExperimentControlState::Running),
+            None,
+            "an admitted command fires once until full release"
         );
     }
 

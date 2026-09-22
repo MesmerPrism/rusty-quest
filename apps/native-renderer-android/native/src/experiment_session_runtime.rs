@@ -2380,22 +2380,52 @@ pub(crate) fn request_restart_from_native(
     )
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum NativeControlAdmission {
+    Queued,
+    Retryable,
+    RuntimeUnavailable,
+}
+
+impl NativeControlAdmission {
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::Queued => "queued",
+            Self::Retryable => "retryable",
+            Self::RuntimeUnavailable => "runtime-unavailable",
+        }
+    }
+}
+
 pub(crate) fn request_control_from_native(
     operation: &str,
     operation_id: &str,
     expected_generation: u64,
     elapsed_realtime_ns: u64,
-) -> String {
-    apply_command_json(
-        &json!({
-            "schema": EXPERIMENT_SESSION_COMMAND_SCHEMA,
-            "operation": operation,
-            "operation_id": operation_id,
-            "expected_generation": expected_generation,
-            "elapsed_realtime_ns": elapsed_realtime_ns,
-        })
-        .to_string(),
-    )
+) -> NativeControlAdmission {
+    let Ok(runtime) = runtime() else {
+        return NativeControlAdmission::RuntimeUnavailable;
+    };
+    let raw = json!({
+        "schema": EXPERIMENT_SESSION_COMMAND_SCHEMA,
+        "operation": operation,
+        "operation_id": operation_id,
+        "expected_generation": expected_generation,
+        "elapsed_realtime_ns": elapsed_realtime_ns,
+    })
+    .to_string();
+    if raw.len() > MAX_COMMAND_BYTES {
+        return NativeControlAdmission::RuntimeUnavailable;
+    }
+    match runtime.command_sender.try_send(WorkerMessage::Command {
+        raw,
+        received_at: Instant::now(),
+        terminal_claim: None,
+    }) {
+        Ok(()) => NativeControlAdmission::Queued,
+        Err(TrySendError::Full(_)) => NativeControlAdmission::Retryable,
+        Err(TrySendError::Disconnected(_)) => NativeControlAdmission::RuntimeUnavailable,
+    }
 }
 
 pub(crate) fn current_control_receipt() -> Option<(
@@ -3533,7 +3563,12 @@ mod tests {
             "official t0 must retain command time"
         );
         runtime.apply_command_json(&command("save-and-exit", "exit", 1, 8000));
-        wait_for(&runtime, "\"shutdown_status\":\"complete\"");
+        let terminal = wait_for(&runtime, "\"shutdown_status\":\"complete\"");
+        assert!(
+            terminal.contains("\"recovery_status\":\"complete\""),
+            "{terminal}"
+        );
+        assert!(terminal.contains("\"status\":\"saved\""), "{terminal}");
         runtime.shutdown_for_test().unwrap();
         fs::remove_dir_all(root.parent().unwrap()).unwrap();
     }
