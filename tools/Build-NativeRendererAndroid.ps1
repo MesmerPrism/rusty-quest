@@ -806,6 +806,9 @@ public final class ControlPanelActivity extends $selectedPanelEntrySimpleName {
     }
 
     private final PanelImmersiveHandoff immersiveHandoff = new PanelImmersiveHandoff(this);
+    private static volatile java.lang.ref.WeakReference<ControlPanelActivity> visiblePanel =
+        new java.lang.ref.WeakReference<>(null);
+    private volatile boolean panelResumed;
     private static final Object PRESENTATION_LOCK = new Object();
     private static long presentationGeneration;
     private static boolean terminalIntentAdmitted;
@@ -1441,6 +1444,29 @@ $experimentSessionTerminalAudioStop
         ((ControlPanelActivity) activity).immersiveHandoff.request();
     }
 
+    /**
+     * Closes the foreground 2D panel without asking Quest's task organizer to resolve another
+     * Activity launch. A repeated controller shortcut can otherwise be placed in a fresh 2D root
+     * task, which creates another panel instead of delivering {@code onNewIntent} to this one.
+     */
+    static boolean requestCloseVisiblePanelFromNative() {
+        final ControlPanelActivity panel = visiblePanel.get();
+        if (panel == null || !panel.panelResumed || panel.isFinishing()
+                || panel.isDestroyed()) {
+            return false;
+        }
+        panel.runOnUiThread(new Runnable() {
+            @Override public void run() {
+                if (panel.isFinishing() || panel.isDestroyed()) return;
+                android.util.Log.i("RustyQuestNativeRenderer",
+                    "channel=experiment-session-panel event=panel-toggle"
+                        + " status=close-requested source=openxr-same-process");
+                closePanelAndReturnToImmersive(panel);
+            }
+        });
+        return true;
+    }
+
     @Override
     protected void onCreate(android.os.Bundle state) {
         PACKAGED_PANEL.entryClass();
@@ -1451,6 +1477,13 @@ $experimentSessionOnCreate
     @Override
     protected void onNewIntent(android.content.Intent intent) {
         super.onNewIntent(intent);
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        panelResumed = true;
+        visiblePanel = new java.lang.ref.WeakReference<>(this);
     }
 
     @Override
@@ -1477,6 +1510,11 @@ $experimentSessionOnCreate
 
     @Override
     protected void onPause() {
+        panelResumed = false;
+        java.lang.ref.WeakReference<ControlPanelActivity> current = visiblePanel;
+        if (current.get() == this) {
+            visiblePanel = new java.lang.ref.WeakReference<>(null);
+        }
         immersiveHandoff.onPanelPaused();
         super.onPause();
     }

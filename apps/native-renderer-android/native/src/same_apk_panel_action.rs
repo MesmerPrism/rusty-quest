@@ -19,6 +19,7 @@ const RIGHT_TRIGGER_RELEASE_THRESHOLD: f32 = 0.35;
 enum SameApkPanelActionMode {
     Disabled,
     RightSecondaryTriplePressToggle,
+    RightSecondaryTriplePressExperimenterToggle,
     RightSecondaryTriplePressExperimenterRestart,
 }
 
@@ -26,6 +27,9 @@ impl SameApkPanelActionMode {
     fn from_property(value: Option<String>) -> Self {
         match normalized_property(value).as_str() {
             "right-secondary-triple-press-toggle" => Self::RightSecondaryTriplePressToggle,
+            "right-secondary-triple-press-experimenter-toggle" => {
+                Self::RightSecondaryTriplePressExperimenterToggle
+            }
             "right-secondary-triple-press-experimenter-restart" => {
                 Self::RightSecondaryTriplePressExperimenterRestart
             }
@@ -37,6 +41,9 @@ impl SameApkPanelActionMode {
         match self {
             Self::Disabled => "disabled",
             Self::RightSecondaryTriplePressToggle => "right-secondary-triple-press-toggle",
+            Self::RightSecondaryTriplePressExperimenterToggle => {
+                "right-secondary-triple-press-experimenter-toggle"
+            }
             Self::RightSecondaryTriplePressExperimenterRestart => {
                 "right-secondary-triple-press-experimenter-restart"
             }
@@ -83,6 +90,14 @@ impl SameApkPanelActionSettings {
     }
 
     pub(crate) fn experimenter_profile_enabled(self) -> bool {
+        matches!(
+            self.mode,
+            SameApkPanelActionMode::RightSecondaryTriplePressExperimenterToggle
+                | SameApkPanelActionMode::RightSecondaryTriplePressExperimenterRestart
+        )
+    }
+
+    fn experimenter_restart_enabled(self) -> bool {
         self.mode == SameApkPanelActionMode::RightSecondaryTriplePressExperimenterRestart
     }
 
@@ -201,7 +216,7 @@ impl SameApkPanelAction {
             return None;
         }
         self.triggered_count = self.triggered_count.saturating_add(1);
-        Some(if self.experimenter_profile_enabled() {
+        Some(if self.settings.experimenter_restart_enabled() {
             SameApkPanelActionTrigger::ExperimenterRestart
         } else {
             SameApkPanelActionTrigger::CompatibilityToggle
@@ -361,9 +376,25 @@ mod tests {
     }
 
     #[test]
+    fn experimenter_toggle_profile_enables_controls_without_terminal_b_route() {
+        let settings = SameApkPanelActionSettings {
+            mode: SameApkPanelActionMode::RightSecondaryTriplePressExperimenterToggle,
+            window_seconds: 5.0,
+        };
+        assert!(settings.experimenter_profile_enabled());
+        let mut action = SameApkPanelAction::new(settings);
+        assert_eq!(press(&mut action, 0.0), None);
+        assert_eq!(press(&mut action, 1.0), None);
+        assert_eq!(
+            press(&mut action, 1.0),
+            Some(SameApkPanelActionTrigger::CompatibilityToggle)
+        );
+    }
+
+    #[test]
     fn trigger_triple_press_uses_hysteresis_and_rejects_held_or_stale_input() {
         let settings = SameApkPanelActionSettings {
-            mode: SameApkPanelActionMode::RightSecondaryTriplePressExperimenterRestart,
+            mode: SameApkPanelActionMode::RightSecondaryTriplePressExperimenterToggle,
             window_seconds: 5.0,
         };
         let mut action = SameApkDeveloperAction::new(settings);

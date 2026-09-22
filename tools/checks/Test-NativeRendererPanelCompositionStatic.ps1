@@ -319,9 +319,19 @@ try {
             throw "Breath-composition source physically retains a foreign product page: $foreignPageNeedle"
         }
     }
+    $androidBuildSource = Get-Content -LiteralPath (Join-Path $repoRootPath "tools\Build-NativeRendererAndroid.ps1") -Raw
     foreach ($lifecycleNeedle in @("onNewIntent", "onActivityResult", "onRequestPermissionsResult", "onConfigurationChanged")) {
-        if ((Get-Content -LiteralPath (Join-Path $repoRootPath "tools\Build-NativeRendererAndroid.ps1") -Raw) -notlike "*$lifecycleNeedle*") {
+        if ($androidBuildSource -notlike "*$lifecycleNeedle*") {
             throw "Generated panel shell is missing lifecycle/result delegation: $lifecycleNeedle"
+        }
+    }
+    foreach ($visiblePanelToggleNeedle in @(
+        "requestCloseVisiblePanelFromNative",
+        "visiblePanel",
+        "openxr-same-process"
+    )) {
+        if ($androidBuildSource -notlike "*$visiblePanelToggleNeedle*") {
+            throw "Generated panel shell is missing visible-panel toggle behavior: $visiblePanelToggleNeedle"
         }
     }
     foreach ($handoffNeedle in @("Resume VR", "closePanelAndReturnToImmersive", "ControlPanelActivity.closePanelAndReturnToImmersive(this)")) {

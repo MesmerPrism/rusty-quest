@@ -533,8 +533,14 @@ impl StimulusVolumeActions {
         crate::marker(
             "same-apk-panel-action",
             format!(
-                "status=config rightSecondaryBindingEnabled={} {} {}",
+                "status=config rightSecondaryBindingEnabled={} sameApkExperimentControlsEnabled={} sameApkDeveloperActionMode={} {} {}",
                 right_secondary_binding_enabled,
+                experiment_controls_enabled,
+                if experiment_controls_enabled {
+                    "right-trigger-triple-press-open-developer"
+                } else {
+                    "disabled"
+                },
                 same_apk_panel_action_settings.marker_fields(),
                 breath_calibration_controller_action_settings.marker_fields(),
             ),

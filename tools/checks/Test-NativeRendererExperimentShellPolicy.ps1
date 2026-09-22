@@ -18,6 +18,7 @@ $sessionShellPath = Join-Path $repo 'apps/native-renderer-android/panel-modules/
 $packagedClosurePath = Join-Path $repo 'apps/native-renderer-android/panel-modules/breath-composition/src/main/java/io/github/mesmerprism/rustyquest/native_renderer/ExperimentSessionPackagedClosure.java'
 $buildPath = Join-Path $repo 'tools/Build-NativeRendererAndroid.ps1'
 $breathFeaturePath = Join-Path $repo 'fixtures/native-app-features/ui/breath-composition-panel/ui.breath_composition_control_panel.feature.json'
+$propertyManifestPath = Join-Path $repo 'fixtures/native-renderer/native-renderer-property-manifest.json'
 
 function Assert-Contains {
     param([string]$Path, [string]$Literal)
@@ -43,6 +44,10 @@ $handoffPath = Join-Path $javaRoot 'PanelImmersiveHandoff.java'
 $selfKioskApplicationPath = Join-Path $javaRoot 'NativeRendererSelfKioskApplication.java'
 
 Assert-Contains $actionPath 'right-secondary-triple-press-experimenter-restart'
+Assert-Contains $actionPath 'right-secondary-triple-press-experimenter-toggle'
+Assert-Contains $actionPath 'experimenter_toggle_profile_enables_controls_without_terminal_b_route'
+Assert-Contains $propertyManifestPath 'right-secondary-triple-press-experimenter-toggle'
+Assert-Contains $propertyManifestPath 'right-secondary-triple-press-experimenter-restart'
 Assert-Contains $actionPath 'SameApkDeveloperAction'
 Assert-Contains $actionPath 'RIGHT_TRIGGER_PRESS_THRESHOLD: f32 = 0.82'
 Assert-Contains $actionPath 'RIGHT_TRIGGER_RELEASE_THRESHOLD: f32 = 0.35'

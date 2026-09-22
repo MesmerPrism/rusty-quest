@@ -364,6 +364,9 @@ pub(crate) fn toggle_control_panel(
     frame_count: u64,
     source: &str,
 ) {
+    if request_close_visible_control_panel(app, frame_count, source) {
+        return;
+    }
     match toggle_control_panel_impl(app) {
         Ok(()) => crate::marker(
             "stimulus-panel",
@@ -382,6 +385,40 @@ pub(crate) fn toggle_control_panel(
                 crate::sanitize(&error)
             ),
         ),
+    }
+}
+
+#[cfg(target_os = "android")]
+pub(crate) fn request_close_visible_control_panel(
+    app: &android_activity::AndroidApp,
+    frame_count: u64,
+    source: &str,
+) -> bool {
+    match request_close_visible_control_panel_impl(app) {
+        Ok(true) => {
+            crate::marker(
+                "stimulus-panel",
+                format!(
+                    "event=control-panel-toggle status=close-dispatched frame={} panelActivity=ControlPanelActivity route=same-process-visible-panel source={}",
+                    frame_count,
+                    crate::sanitize(source)
+                ),
+            );
+            true
+        }
+        Ok(false) => false,
+        Err(error) => {
+            crate::marker(
+                "stimulus-panel",
+                format!(
+                    "event=control-panel-toggle status=close-probe-error frame={} source={} reason={}",
+                    frame_count,
+                    crate::sanitize(source),
+                    crate::sanitize(&error)
+                ),
+            );
+            false
+        }
     }
 }
 
@@ -631,6 +668,45 @@ fn control_panel_mode() -> Option<String> {
 #[cfg(target_os = "android")]
 fn toggle_control_panel_impl(app: &android_activity::AndroidApp) -> Result<(), String> {
     send_control_panel_intent(app, ACTION_TOGGLE_PANEL, false, None, None, None)
+}
+
+#[cfg(target_os = "android")]
+fn request_close_visible_control_panel_impl(
+    app: &android_activity::AndroidApp,
+) -> Result<bool, String> {
+    use jni::{
+        jni_sig, jni_str,
+        objects::{JClass, JClassLoader, JObject},
+        JavaVM,
+    };
+
+    const PANEL_CLASS_NAME: &str =
+        "io.github.mesmerprism.rustyquest.native_renderer.ControlPanelActivity";
+
+    let vm = unsafe { JavaVM::from_raw(app.vm_as_ptr().cast()) };
+    let activity = app.activity_as_ptr() as jni::sys::jobject;
+    vm.attach_current_thread(|env| -> jni::errors::Result<bool> {
+        let activity = unsafe { env.as_cast_raw::<JObject>(&activity)? };
+        let class_loader = env
+            .call_method(
+                &activity,
+                jni_str!("getClassLoader"),
+                jni_sig!("()Ljava/lang/ClassLoader;"),
+                &[],
+            )?
+            .l()?;
+        let class_loader: JClassLoader = env.cast_local::<JClassLoader>(class_loader)?;
+        let panel_class_name = env.new_string(PANEL_CLASS_NAME)?;
+        let panel_class = JClass::for_name_with_loader(env, panel_class_name, true, class_loader)?;
+        env.call_static_method(
+            panel_class,
+            jni_str!("requestCloseVisiblePanelFromNative"),
+            jni_sig!("()Z"),
+            &[],
+        )?
+        .z()
+    })
+    .map_err(|error| format!("visible control panel close probe failed: {error}"))
 }
 
 #[cfg(target_os = "android")]
