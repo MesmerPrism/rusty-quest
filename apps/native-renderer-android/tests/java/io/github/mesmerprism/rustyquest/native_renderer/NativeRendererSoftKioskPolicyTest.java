@@ -587,6 +587,15 @@ public final class NativeRendererSoftKioskPolicyTest {
         equal(NativeRendererForegroundGuardPolicy.NATIVE_ACTIVITY,
             NativeRendererForegroundGuardPolicy.visibleOwnedComponent(false, true));
         require(NativeRendererForegroundGuardPolicy.visibleOwnedComponent(false, false) == null);
+        require(NativeRendererForegroundGuardPolicy.matchesDesiredOwnedSurface(
+            NativeRendererForegroundGuardPolicy.Presentation.IMMERSIVE,
+            NativeRendererForegroundGuardPolicy.NATIVE_ACTIVITY));
+        reject(NativeRendererForegroundGuardPolicy.matchesDesiredOwnedSurface(
+            NativeRendererForegroundGuardPolicy.Presentation.IMMERSIVE,
+            NativeRendererForegroundGuardPolicy.CONTROL_PANEL_ACTIVITY));
+        require(NativeRendererForegroundGuardPolicy.matchesDesiredOwnedSurface(
+            NativeRendererForegroundGuardPolicy.Presentation.PANEL,
+            NativeRendererForegroundGuardPolicy.CONTROL_PANEL_ACTIVITY));
 
         NativeRendererSoftKioskCoordinator c = new NativeRendererSoftKioskCoordinator();
         c.useSelfWatchdog();

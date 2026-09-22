@@ -39,6 +39,7 @@ $departurePath = Join-Path $javaRoot 'NativeRendererSelfKioskDeparturePolicy.jav
 $launchAuthorityPath = Join-Path $javaRoot 'NativeRendererExperimentLaunchAuthority.java'
 $launcherPolicyPath = Join-Path $javaRoot 'NativeRendererExperimentLauncherPolicy.java'
 $handoffLifecyclePath = Join-Path $javaRoot 'PanelImmersiveHandoffLifecyclePolicy.java'
+$handoffProofPath = Join-Path $javaRoot 'PanelImmersiveHandoffProofPolicy.java'
 $handoffPath = Join-Path $javaRoot 'PanelImmersiveHandoff.java'
 $nativeEntryPath = Join-Path $repo 'apps\native-renderer-android\native\src\lib.rs'
 $panelBridgePath = Join-Path $repo 'apps\native-renderer-android\native\src\native_renderer_panel_bridge.rs'
@@ -55,6 +56,7 @@ foreach ($path in @(
     $launchAuthorityPath,
     $launcherPolicyPath,
     $handoffLifecyclePath,
+    $handoffProofPath,
     $handoffPath,
     $nativeEntryPath,
     $panelBridgePath,
@@ -79,8 +81,13 @@ if ([string]$feature.schema -cne 'rusty.quest.native_app_feature.v1' -or
 }
 
 Assert-Contains $applicationPath 'registerActivityLifecycleCallbacks'
+Assert-Contains $applicationPath 'setImmersiveForegroundProbe'
 Assert-Contains $applicationPath 'beginSystemPrompt'
 Assert-Contains $servicePath 'renderer_focus_state.json'
+Assert-Contains $servicePath 'app.hasWindowFocus(NativeRendererForegroundGuardPolicy.NATIVE_ACTIVITY)'
+Assert-Contains $servicePath 'matchesDesiredOwnedSurface'
+Assert-Contains $handoffPath 'PanelImmersiveHandoffProofPolicy.qualifies'
+Assert-Contains $handoffPath 'status=xr-focused-without-immersive-window-focus'
 Assert-Contains $servicePath 'physical_home=false'
 Assert-NotContains $servicePath 'Settings.canDrawOverlays(this)'
 Assert-Contains $servicePath 'status=terminal-save-exit-requested admitted=false saved=false'
@@ -199,6 +206,7 @@ try {
         $launchAuthorityPath,
         $launcherPolicyPath,
         $handoffLifecyclePath,
+        $handoffProofPath,
         $handoffPath,
         $testPath
     )

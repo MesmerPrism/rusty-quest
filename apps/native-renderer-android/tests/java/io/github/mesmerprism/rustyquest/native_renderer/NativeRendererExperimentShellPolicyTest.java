@@ -9,7 +9,25 @@ public final class NativeRendererExperimentShellPolicyTest {
         terminalExitCancelsEveryRecoveryPath();
         writerAcknowledgementPrecedesFinish();
         recreationAndTerminalExitInvalidateHandoffLaunches();
+        handoffRequiresRealImmersiveWindowFocus();
         System.out.println("NativeRendererExperimentShellPolicyTest PASS");
+    }
+
+    private static void handoffRequiresRealImmersiveWindowFocus() {
+        require(PanelImmersiveHandoffProofPolicy.qualifies(
+            true, true, true, true, true, true, 101L, 100L));
+        reject(PanelImmersiveHandoffProofPolicy.qualifies(
+            true, true, true, true, true, false, 101L, 100L));
+        reject(PanelImmersiveHandoffProofPolicy.qualifies(
+            false, true, true, true, true, true, 101L, 100L));
+        reject(PanelImmersiveHandoffProofPolicy.qualifies(
+            true, false, true, true, true, true, 101L, 100L));
+        reject(PanelImmersiveHandoffProofPolicy.qualifies(
+            true, true, true, true, true, true, 100L, 100L));
+        reject(PanelImmersiveHandoffProofPolicy.qualifies(
+            true, true, true, false, true, true, 101L, 100L));
+        reject(PanelImmersiveHandoffProofPolicy.qualifies(
+            true, true, true, true, false, true, 101L, 100L));
     }
 
     private static void exactAllowedComponentsAndGenerationAreRequired() {

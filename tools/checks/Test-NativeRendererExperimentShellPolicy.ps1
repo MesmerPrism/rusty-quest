@@ -173,6 +173,7 @@ try {
         (Join-Path $repo 'apps/native-renderer-android/panel-modules/breath-composition/src/main/java/io/github/mesmerprism/rustyquest/native_renderer/ExperimentSessionPanelCoordinator.java'),
         (Join-Path $repo 'apps/native-renderer-android/panel-modules/breath-composition/src/main/java/io/github/mesmerprism/rustyquest/native_renderer/ExperimentSessionPanelState.java'),
         (Join-Path $javaRoot 'PanelImmersiveHandoffLifecyclePolicy.java'),
+        (Join-Path $javaRoot 'PanelImmersiveHandoffProofPolicy.java'),
         (Join-Path $javaRoot 'PanelImmersiveHandoff.java'),
         (Join-Path $testRoot 'NativeRendererExperimentShellPolicyTest.java'),
         (Join-Path $testRoot 'ExperimentSessionAndroidShellTest.java'),

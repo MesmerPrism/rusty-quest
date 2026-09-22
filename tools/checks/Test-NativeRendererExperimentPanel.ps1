@@ -224,6 +224,7 @@ final class ControlPanelActivity extends BreathCompositionPanelModule {
         (Join-Path $mainRoot 'NativeRendererExperimentLauncherPolicy.java'),
         (Join-Path $mainRoot 'PanelImmersiveHandoff.java'),
         (Join-Path $mainRoot 'PanelImmersiveHandoffLifecyclePolicy.java'),
+        (Join-Path $mainRoot 'PanelImmersiveHandoffProofPolicy.java'),
         (Join-Path $panelRoot 'BreathCompositionCommandReceiver.java'),
         (Join-Path $panelRoot 'BreathCompositionPanelModule.java'),
         (Join-Path $panelRoot 'ExperimentSessionAndroidShell.java'),
@@ -268,6 +269,7 @@ final class ControlPanelActivity extends BreathCompositionPanelModule {
         (Join-Path $mainRoot 'PanelModuleRegistry.java'),
         (Join-Path $mainRoot 'PanelImmersiveHandoff.java'),
         (Join-Path $mainRoot 'PanelImmersiveHandoffLifecyclePolicy.java'),
+        (Join-Path $mainRoot 'PanelImmersiveHandoffProofPolicy.java'),
         (Join-Path $mainRoot 'NativeRendererExperimentLaunchAuthority.java'),
         (Join-Path $mainRoot 'NativeRendererExperimentLauncherPolicy.java'),
         (Join-Path $mainRoot 'NativeRendererSoftKioskAccessibilityService.java'),
@@ -342,6 +344,7 @@ final class ControlPanelActivity extends BreathCompositionPanelModule {
         (Join-Path $mainRoot 'NativeRendererSoftKioskRecoveryTimerGate.java'),
         (Join-Path $mainRoot 'PanelImmersiveHandoff.java'),
         (Join-Path $mainRoot 'PanelImmersiveHandoffLifecyclePolicy.java'),
+        (Join-Path $mainRoot 'PanelImmersiveHandoffProofPolicy.java'),
         $stimulusModule,
         $stub
     )

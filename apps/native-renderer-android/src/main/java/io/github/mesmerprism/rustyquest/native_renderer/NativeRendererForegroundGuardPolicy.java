@@ -96,6 +96,10 @@ final class NativeRendererForegroundGuardPolicy {
         return null;
     }
 
+    static boolean matchesDesiredOwnedSurface(Presentation desired, String observedComponent) {
+        return desired != null && desired.componentClass.equals(observedComponent);
+    }
+
     /**
      * Records a foreground outside the two allowed components.
      *

@@ -127,11 +127,13 @@ public final class NativeRendererSelfKioskService extends Service {
         boolean panelFocused = app.hasWindowFocus(
             NativeRendererForegroundGuardPolicy.CONTROL_PANEL_ACTIVITY);
         boolean immersiveFocused = !panelFocused
+            && app.hasWindowFocus(NativeRendererForegroundGuardPolicy.NATIVE_ACTIVITY)
             && app.isResumed(NativeRendererForegroundGuardPolicy.NATIVE_ACTIVITY)
             && rendererFocused();
         String observedOwnComponent = NativeRendererForegroundGuardPolicy.visibleOwnedComponent(
             panelFocused, immersiveFocused);
-        boolean present = observedOwnComponent != null;
+        boolean present = NativeRendererForegroundGuardPolicy.matchesDesiredOwnedSurface(
+            state.presentation, observedOwnComponent);
         String component = present ? observedOwnComponent : state.presentation.componentClass;
         long departure = departures.observe(state.generation, present,
             app.hasDeparture(component, state.generation), suppressed, now);

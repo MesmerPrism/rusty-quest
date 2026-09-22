@@ -22,6 +22,12 @@ public final class NativeRendererSelfKioskApplication extends Application {
     @Override public void onCreate() {
         super.onCreate();
         NativeRendererSoftKioskCoordinator.process().useSelfWatchdog();
+        PanelImmersiveHandoff.setImmersiveForegroundProbe(
+            new PanelImmersiveHandoff.ImmersiveForegroundProbe() {
+                @Override public boolean hasImmersiveWindowFocus() {
+                    return hasWindowFocus(NativeRendererForegroundGuardPolicy.NATIVE_ACTIVITY);
+                }
+            });
         registerActivityLifecycleCallbacks(new ActivityLifecycleCallbacks() {
             @Override public void onActivityCreated(Activity a, Bundle b) { remember(a); }
             @Override public void onActivityStarted(Activity a) { remember(a); }

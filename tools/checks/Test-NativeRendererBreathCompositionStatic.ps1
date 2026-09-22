@@ -447,7 +447,7 @@ Assert-Tokens $panelImmersiveHandoff @(
     "status=timeout panelTaskRetained=true",
     "panelPaused=true panelTaskRetained=true",
     "status=probe-retained-after-destroy",
-    "RELAUNCH_MS = 1000L",
+    "RELAUNCH_MS = 500L",
     "FRESH_MS = 2000L",
     "cancelActiveForTerminalExit",
     "APPLICATION_LIFECYCLE.canLaunch(ownerToken, expectedGeneration)",

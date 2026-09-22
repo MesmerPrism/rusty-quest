@@ -1487,7 +1487,7 @@ $experimentSessionTerminalAudioStop
             NativeRendererForegroundGuardPolicy.Presentation.IMMERSIVE,
             NativeRendererSoftKioskCoordinator.PANEL_ROUTE_EXPERIMENTER,
             android.os.SystemClock.uptimeMillis(),
-            5_000L);
+            2_000L);
         ((ControlPanelActivity) activity).immersiveHandoff.request();
     }
 

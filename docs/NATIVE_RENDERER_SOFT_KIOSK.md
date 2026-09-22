@@ -9,9 +9,22 @@ landscape ControlPanelActivity after the first current-session frame.
 
 The Application observes only the two known own-package Activities. The foreground
 service confirms the panel using resumed/window-focus readback, and immersive
-presentation using resumed NativeActivity plus fresh current-generation
+presentation using resumed NativeActivity, its own Android window focus, and fresh current-generation
 `renderer_focus_state.json` evidence: FOCUSED, submitted frame, valid schema/activity,
 and a non-future timestamp no more than three seconds old.
+
+The panel-to-VR handoff dispatches one reassertion after the panel actually pauses,
+because Quest may reveal a previous 2D launcher during that task transition. It
+then requires both advancing focused OpenXR frames and
+the immersive Activity's Android window focus for 750 ms. On a Quest task transition,
+the 2D panel can close while the previous 2D launcher becomes foreground even though
+OpenXR still reports focused frames. OpenXR alone is therefore not a handoff receipt.
+The panel reasserts its own VR launch every 500 ms while that mismatch persists,
+for at most 6.5 seconds; the self-watchdog begins recovery after the panel-to-VR
+transition grace period of two seconds and its normal 750 ms absence threshold.
+Only the app-selected presentation counts as a confirmed return. The other
+own-package Activity remains allowed, but it cannot satisfy or cancel recovery
+of a different desired presentation.
 
 The selected manifest contains no Accessibility service. It declares foreground
 service, special-use foreground service, and `SYSTEM_ALERT_WINDOW` permissions.

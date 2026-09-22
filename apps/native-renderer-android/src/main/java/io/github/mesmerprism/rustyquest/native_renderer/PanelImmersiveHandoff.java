@@ -17,6 +17,13 @@ import org.json.JSONObject;
 
 /** Shared, low-rate return-to-immersive lifecycle primitive owned by the Android shell. */
 final class PanelImmersiveHandoff {
+    interface ImmersiveForegroundProbe {
+        boolean hasImmersiveWindowFocus();
+    }
+    private static volatile ImmersiveForegroundProbe foregroundProbe;
+    static void setImmersiveForegroundProbe(ImmersiveForegroundProbe probe) {
+        foregroundProbe = probe;
+    }
     interface CompletionListener {
         long currentSessionGeneration();
         void onCompletion(long sessionGeneration, boolean stable);
@@ -33,8 +40,8 @@ final class PanelImmersiveHandoff {
     private static final String TAG = "RQNativeRenderer";
     private static final String STATUS_FILE = "renderer_focus_state.json";
     private static final long POLL_MS = 250L;
-    private static final long RELAUNCH_MS = 1000L;
-    private static final long TIMEOUT_MS = 4000L;
+    private static final long RELAUNCH_MS = 500L;
+    private static final long TIMEOUT_MS = 6500L;
     private static final long STABLE_MS = 750L;
     private static final long FRESH_MS = 2000L;
     private static final Object APPLICATION_LOCK = new Object();
@@ -49,6 +56,7 @@ final class PanelImmersiveHandoff {
     private final long ownerToken = NEXT_OWNER_TOKEN.getAndIncrement();
     private boolean pending;
     private boolean panelPaused;
+    private boolean postPauseLaunchDispatched;
     private boolean panelDestroyed;
     private long generation;
     private long baselineFrame = -1L;
@@ -56,6 +64,7 @@ final class PanelImmersiveHandoff {
     private long lastLaunchAtMs;
     private long stableStartedAtMs = -1L;
     private long stableFrame = -1L;
+    private boolean foregroundMismatchLogged;
     private Runnable poll;
 
     PanelImmersiveHandoff(Activity activity) {
@@ -97,7 +106,9 @@ final class PanelImmersiveHandoff {
         lastLaunchAtMs = 0L;
         stableStartedAtMs = -1L;
         stableFrame = -1L;
+        foregroundMismatchLogged = false;
         panelPaused = false;
+        postPauseLaunchDispatched = false;
         pending = true;
         if (launch("initial", requestGeneration)) {
             schedule(requestGeneration);
@@ -210,12 +221,33 @@ final class PanelImmersiveHandoff {
             return;
         }
         long nowMs = SystemClock.elapsedRealtime();
+        if (panelPaused && !postPauseLaunchDispatched) {
+            // Quest may foreground the previous 2D task after the panel closes. Reassert
+            // only after that task transition, even when OpenXR already reports FOCUSED.
+            if (!launch("post-panel-pause", expectedGeneration)) {
+                pending = false;
+                cancelCallbacks();
+                notifyCompletion(false);
+                releaseOwnershipIfDestroyed();
+                return;
+            }
+            postPauseLaunchDispatched = true;
+            schedule(expectedGeneration);
+            return;
+        }
         FocusState state = readFocusState();
-        boolean qualifies = panelPaused
-            && isCurrent(state)
-            && "FOCUSED".equals(state.sessionState)
-            && state.submitted
-            && state.frameCount > Math.max(0L, baselineFrame);
+        ImmersiveForegroundProbe probe = foregroundProbe;
+        boolean immersiveWindowFocused = probe == null || probe.hasImmersiveWindowFocus();
+        boolean xrFocused = state != null && "FOCUSED".equals(state.sessionState);
+        boolean qualifies = PanelImmersiveHandoffProofPolicy.qualifies(panelPaused,
+            postPauseLaunchDispatched,
+            isCurrent(state), xrFocused, state != null && state.submitted,
+            immersiveWindowFocused, state == null ? -1L : state.frameCount, baselineFrame);
+        if (panelPaused && xrFocused && !immersiveWindowFocused && !foregroundMismatchLogged) {
+            foregroundMismatchLogged = true;
+            marker("status=xr-focused-without-immersive-window-focus generation="
+                + expectedGeneration + " reassert=true");
+        }
         if (qualifies) {
             if (stableStartedAtMs < 0L) {
                 stableStartedAtMs = nowMs;
@@ -225,7 +257,8 @@ final class PanelImmersiveHandoff {
                 cancelCallbacks();
                 releaseOwnershipIfDestroyed();
                 marker("status=verified frame=" + state.frameCount
-                    + " panelPaused=true panelTaskRetained=true generation=" + expectedGeneration);
+                    + " panelPaused=true panelTaskRetained=true immersiveWindowFocused=true generation="
+                    + expectedGeneration);
                 notifyCompletion(true);
                 return;
             }
@@ -238,7 +271,8 @@ final class PanelImmersiveHandoff {
             cancelCallbacks();
             releaseOwnershipIfDestroyed();
             marker("status=timeout panelTaskRetained=true panelPaused=" + panelPaused
-                + " generation=" + expectedGeneration);
+                + " immersiveWindowFocused=" + immersiveWindowFocused
+                + " xrFocused=" + xrFocused + " generation=" + expectedGeneration);
             notifyCompletion(false);
             return;
         }
