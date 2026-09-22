@@ -135,7 +135,7 @@ final class ExperimentSessionPanelViewPolicy {
         if ("ERROR".equals(phase)) return "Go back to Choose condition and try again. If the condition is rejected again, restart the app before fitting the headset.";
         if (state.completion == ExperimentSessionPanelState.Completion.DURABLE
                 && state.recording) {
-            return "The official condition time is complete. Physiology and recording continue until Save and exit. Return to VR keeps recording.";
+            return "The official condition is complete. Select Save session & prepare next to finish this recording and set up another run.";
         }
         if (state.completion == ExperimentSessionPanelState.Completion.PERSISTENCE_PENDING
                 && state.recording) {
@@ -143,7 +143,7 @@ final class ExperimentSessionPanelViewPolicy {
         }
         if ("ARMED".equals(phase)) return "Fit the headset and verify the participant is settled. Hold Right Grip + A for at least 0.75 seconds, then release after the confirmation pulse to start the official run.";
         if ("PAUSED".equals(phase)) return "Hold Right Grip + A for at least 0.75 seconds, then release after the confirmation pulse to resume. Triple-press B without grip to open or close this menu.";
-        if ("RUNNING".equals(phase) || "RECORDING".equals(phase)) return "Hold Right Grip + B for at least 0.75 seconds, then release after the confirmation pulse to pause. Audio ending does not stop recording; use Save and exit only when the run is complete.";
+        if ("RUNNING".equals(phase) || "RECORDING".equals(phase)) return "Hold Right Grip + B for at least 0.75 seconds, then release after the confirmation pulse to pause. Audio ending does not stop recording; use Save session & prepare next when the run is complete.";
         if ("ARMING".equals(phase) || "STARTING".equals(phase)) return "Wait for the condition to be armed before using the start gesture.";
         if ("FINALIZING".equals(phase) || "SAVING".equals(phase)) return "Wait for the recording to finish saving before preparing another run.";
         return "Review the saved-session totals, then prepare the next run.";
@@ -162,6 +162,13 @@ final class ExperimentSessionPanelViewPolicy {
             || state.phase == ExperimentSessionPanelState.Phase.PAUSED
             || state.phase == ExperimentSessionPanelState.Phase.RECORDING
             || (state.phase == ExperimentSessionPanelState.Phase.ERROR && state.recording);
+    }
+
+    static boolean canSaveAndPrepareNext(ExperimentSessionPanelState state) {
+        return state.recording && state.pendingOperationId.isEmpty()
+            && state.phase != ExperimentSessionPanelState.Phase.SAVING
+            && state.phase != ExperimentSessionPanelState.Phase.FINALIZING
+            && state.phase != ExperimentSessionPanelState.Phase.RECOVERY;
     }
     static final class ViewState {
         final String bluetoothLine;

@@ -201,6 +201,12 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
                         sessionGeneration, operationId);
                 }
 
+                @Override public boolean requestAudioRestartStop(
+                        long sessionGeneration, String operationId) {
+                    return ControlPanelActivity.requestConditionAudioRestartStop(
+                        sessionGeneration, operationId);
+                }
+
                 @Override public String audioShutdownStatus() {
                     return ControlPanelActivity.conditionAudioShutdownStatus();
                 }
@@ -318,6 +324,7 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
     private int experimenterGuidanceBiasPercent = -1;
     private Button experimenterResume;
     private Button experimenterNext;
+    private Button experimenterSaveNext;
     private Button experimenterDeveloper;
     private PolarSensorPanel polarSensorPanel;
     private long breathCompositionGeneration;
@@ -1035,6 +1042,17 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
             @Override public void onClick(View ignored) { requestExperimentSessionStatus(); }
         });
         sessions.addView(refresh);
+        if (state.hasActiveSession()) {
+            experimenterSaveNext = button("Save session & prepare next");
+            experimenterSaveNext.setMinHeight(dp(52));
+            experimenterSaveNext.setEnabled(ExperimentSessionPanelViewPolicy.canSaveAndPrepareNext(state));
+            experimenterSaveNext.setOnClickListener(new View.OnClickListener() {
+                @Override public void onClick(View ignored) {
+                    saveExperimentSessionAndPrepareNext();
+                }
+            });
+            sessions.addView(experimenterSaveNext);
+        }
         root.addView(sessions);
     }
 
@@ -1057,19 +1075,28 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
         footer.addView(experimenterFooterReadback, new LinearLayout.LayoutParams(0,
             LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
         if (!"polar".equals(breathCompositionPanelTopic)) {
+            final ExperimentSessionPanelState sessionState = EXPERIMENT_SESSION_PANEL.snapshot();
             String nextText = page == ExperimentSessionPanelViewPolicy.Page.PREPARE ? "Next: Controls"
                 : page == ExperimentSessionPanelViewPolicy.Page.CONTROLS ? "Next: Choose condition"
-                : page == ExperimentSessionPanelViewPolicy.Page.CONDITION ? "Session status" : "Prepare next run";
+                : page == ExperimentSessionPanelViewPolicy.Page.CONDITION ? "Session status"
+                : sessionState.hasActiveSession() ? "Save session & prepare next" : "Prepare next run";
             Button next = button(nextText);
             experimenterNext = next;
             next.setMinHeight(dp(48));
             next.setEnabled(page != ExperimentSessionPanelViewPolicy.Page.SESSION
-                || !EXPERIMENT_SESSION_PANEL.snapshot().hasActiveSession());
+                || !sessionState.hasActiveSession()
+                || ExperimentSessionPanelViewPolicy.canSaveAndPrepareNext(sessionState));
             next.setOnClickListener(new View.OnClickListener() {
                 @Override public void onClick(View ignored) {
-                    selectExperimenterPage(page == ExperimentSessionPanelViewPolicy.Page.SESSION
-                        ? ExperimentSessionPanelViewPolicy.Page.PREPARE
-                        : ExperimentSessionPanelViewPolicy.Page.values()[page.ordinal() + 1]);
+                    if (page == ExperimentSessionPanelViewPolicy.Page.SESSION) {
+                        if (EXPERIMENT_SESSION_PANEL.snapshot().hasActiveSession()) {
+                            saveExperimentSessionAndPrepareNext();
+                        } else {
+                            selectExperimenterPage(ExperimentSessionPanelViewPolicy.Page.PREPARE);
+                        }
+                    } else {
+                        selectExperimenterPage(ExperimentSessionPanelViewPolicy.Page.values()[page.ordinal() + 1]);
+                    }
                 }
             });
             footer.addView(next);
@@ -2547,6 +2574,24 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
         submitExperimentSessionCommand(command, true);
     }
 
+    private void saveExperimentSessionAndPrepareNext() {
+        ExperimentSessionPanelState state = EXPERIMENT_SESSION_PANEL.snapshot();
+        if (!ExperimentSessionPanelViewPolicy.canSaveAndPrepareNext(state)) {
+            updateStatus("Wait for the current recording operation before preparing another run.");
+            return;
+        }
+        ExperimentSessionPanelCoordinator.NativeCommand command =
+            EXPERIMENT_SESSION_PANEL.restartToExperimenter(
+                EXPERIMENT_SESSION_PANEL.allocateRouteEvent());
+        if (command == null) {
+            updateStatus("Could not begin saving the current session. Refresh its status.");
+            return;
+        }
+        updateStatus("Saving this session before the next run…");
+        refreshExperimenterAfterReadback();
+        EXPERIMENT_SESSION_SHELL.submit(command, false, this);
+    }
+
     private void requestExperimentSessionStatus() {
         if (!nativeBridgeLoaded) {
             updateStatus("Session status unavailable: native bridge is not loaded.");
@@ -2593,6 +2638,14 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
         if (changed && before.phase != ExperimentSessionPanelState.Phase.ARMED
                 && after.phase == ExperimentSessionPanelState.Phase.ARMED) {
             closePanelAndReturnToImmersive();
+            return;
+        }
+        if (changed && before.phase == ExperimentSessionPanelState.Phase.SAVING
+                && after.phase == ExperimentSessionPanelState.Phase.IDLE
+                && "saved".equals(readback.recordingResult)
+                && after.pendingOperationId.isEmpty()) {
+            updateStatus("Session saved. Prepare the next run.");
+            selectExperimenterPage(ExperimentSessionPanelViewPolicy.Page.PREPARE);
             return;
         }
         refreshExperimenterAfterReadback();
@@ -2688,6 +2741,7 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
         developerGuidanceBias = null;
         experimenterResume = null;
         experimenterNext = null;
+        experimenterSaveNext = null;
         experimenterDeveloper = null;
     }
 
@@ -2808,7 +2862,16 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
         }
         if (experimenterNext != null
                 && experimenterNavigation.page() == ExperimentSessionPanelViewPolicy.Page.SESSION) {
-            experimenterNext.setEnabled(!state.hasActiveSession());
+            experimenterNext.setEnabled(!state.hasActiveSession()
+                || ExperimentSessionPanelViewPolicy.canSaveAndPrepareNext(state));
+            experimenterNext.setText(projected.saving ? "Saving session…"
+                : state.hasActiveSession() ? "Save session & prepare next" : "Prepare next run");
+        }
+        if (experimenterSaveNext != null) {
+            experimenterSaveNext.setEnabled(
+                ExperimentSessionPanelViewPolicy.canSaveAndPrepareNext(state));
+            experimenterSaveNext.setText(projected.saving
+                ? "Saving session…" : "Save session & prepare next");
         }
         if (experimenterDeveloper != null) experimenterDeveloper.setEnabled(!projected.saving);
     }
@@ -4520,6 +4583,15 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
                 boolean accepted = "accepted".equals(operationStatus);
                 String phase = projection.optString("phase", "");
                 String routeAction = projection.optString("route_action", "none");
+                JSONObject recordingResult = projection.optJSONObject("recording_result");
+                String recordingStatus = recordingResult == null
+                    ? "unknown" : recordingResult.optString("status", "unknown");
+                boolean restartReceipt = "idle".equals(phase)
+                    && "show-experimenter".equals(routeAction)
+                    && operationId.equals(projection.optString("finalized_operation_id", ""))
+                    && projection.optLong("finalized_session_generation", -1L)
+                        == projection.optLong("generation", -2L);
+                if (restartReceipt && !"saved".equals(recordingStatus)) accepted = false;
                 ExperimentSessionPanelState before = EXPERIMENT_SESSION_PANEL.snapshot();
                 boolean startingOperation = start && expected != null
                     && expected.operationId.equals(operationId);
@@ -4536,12 +4608,12 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
                                 != expected.breathGuidanceBiasPercent)) {
                     accepted = false;
                 }
-                boolean durable = accepted
-                    && "idle".equals(phase)
-                    && "show-experimenter".equals(routeAction);
+                boolean durable = accepted && restartReceipt
+                    && "saved".equals(recordingStatus);
                 String responseReason = response.optString("reason_code", "");
                 String projectionReason = projection.optString("last_reason", "");
-                String reason = !projectionReason.isEmpty() && !"none".equals(projectionReason)
+                String reason = restartReceipt && !"saved".equals(recordingStatus)
+                    ? "recording-not-saved" : !projectionReason.isEmpty() && !"none".equals(projectionReason)
                     ? projectionReason : responseReason;
                 ExperimentSessionPanelCoordinator.NativeReceipt receipt =
                     new ExperimentSessionPanelCoordinator.NativeReceipt(
@@ -4601,10 +4673,8 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
                     projection.optLong("finalized_session_generation", 0L),
                     projection.optString("finalized_operation_id", ""),
                     reason,
-                    projection.optJSONObject("recording_result") == null ? "unknown"
-                        : projection.optJSONObject("recording_result").optString("status", "unknown"),
-                    projection.optJSONObject("recording_result") == null ? ""
-                        : projection.optJSONObject("recording_result").optString("error", ""),
+                    recordingStatus,
+                    recordingResult == null ? "" : recordingResult.optString("error", ""),
                     projection.optLong("runtime_epoch", 0L),
                     projection.optString("last_operation_status", ""),
                     projection.optString("last_reason", "")

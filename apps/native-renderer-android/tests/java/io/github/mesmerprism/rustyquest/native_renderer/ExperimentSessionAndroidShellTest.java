@@ -5,6 +5,7 @@ import java.util.concurrent.TimeUnit;
 
 public final class ExperimentSessionAndroidShellTest {
     public static void main(String[] args) throws Exception {
+        restartWaitsForAudioStopBeforeFinalizing();
         idleGenerationZeroCanFinishOnlyAfterExactShutdownReceipt();
         shutdownErrorMayCloseButNeverClaimsSaved();
         unsavedRecordingCannotBecomeSavedThroughCleanShutdown();
@@ -21,6 +22,23 @@ public final class ExperimentSessionAndroidShellTest {
         definitiveClockRejectionRecoversWithFreshAttempt(true);
         definitiveRejectionRecoveryIsBoundedAndReasonSpecific();
         System.out.println("ExperimentSessionAndroidShellTest PASS");
+    }
+
+    private static void restartWaitsForAudioStopBeforeFinalizing() throws Exception {
+        FakeBridge bridge = new FakeBridge(false);
+        bridge.delayRestartAudio = true;
+        Sink sink = new Sink();
+        ExperimentSessionAndroidShell shell = ExperimentSessionAndroidShell.createForTest(
+            bridge, new FakeCodec(), new FakeClock(), new DirectDispatcher());
+        try {
+            shell.beginExplicitLaunchEpoch(1L);
+            shell.submit(new ExperimentSessionPanelCoordinator.NativeCommand(
+                "restart-to-experimenter", "panel-restart-1", 1L, ""), false, sink);
+            require(bridge.restartApplied.await(3L, TimeUnit.SECONDS));
+            equal(1, bridge.audioStops);
+            require(bridge.restartAudioPolls >= 3);
+            equal(1, bridge.submissions);
+        } finally { shell.closeForTest(); }
     }
 
     private static void delayedAudioSamplesCutoffAtDispatchAndReplaysAfterLaterActorEvents() throws Exception {
@@ -359,6 +377,9 @@ public final class ExperimentSessionAndroidShellTest {
         volatile int cleanups;
         volatile int submissions;
         volatile int audioStops;
+        volatile boolean delayRestartAudio;
+        volatile int restartAudioPolls;
+        final CountDownLatch restartApplied = new CountDownLatch(1);
         boolean recordingFailure;
         boolean busyOnce;
         boolean lateAck;
@@ -400,6 +421,12 @@ public final class ExperimentSessionAndroidShellTest {
         @Override public String apply(String command) {
             workerThread = Thread.currentThread().getName();
             if (malformed) return "malformed";
+            if (command.startsWith("restart-to-experimenter:")) {
+                if (delayRestartAudio) require(restartAudioPolls >= 3);
+                submissions++;
+                restartApplied.countDown();
+                return "restart-complete";
+            }
             if (command.startsWith("save-and-exit:")) {
                 if (firstTerminalBytes == null) firstTerminalBytes = command;
                 lastTerminalBytes = command;
@@ -462,7 +489,16 @@ public final class ExperimentSessionAndroidShellTest {
             return true;
         }
 
+        @Override public boolean requestAudioRestartStop(long generation, String operationId) {
+            audioStops++;
+            return true;
+        }
+
         @Override public String audioShutdownStatus() {
+            if (delayRestartAudio) {
+                restartAudioPolls++;
+                return restartAudioPolls < 3 ? "pending" : "complete";
+            }
             if (delayedAudioClock != null) {
                 audioPolls++;
                 if (audioPolls == 1) return "pending";

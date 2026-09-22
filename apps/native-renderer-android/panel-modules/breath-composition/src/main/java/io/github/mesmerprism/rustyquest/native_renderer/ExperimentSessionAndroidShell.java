@@ -25,6 +25,7 @@ final class ExperimentSessionAndroidShell {
         String initialize(String appPrivateFilesRoot);
         String apply(String commandJson);
         boolean requestAudioStop(long sessionGeneration, String operationId);
+        boolean requestAudioRestartStop(long sessionGeneration, String operationId);
         String audioShutdownStatus();
         boolean cleanupAfterAcknowledgement();
     }
@@ -325,17 +326,48 @@ final class ExperimentSessionAndroidShell {
                 requireWorkerThread();
                 if (!isCurrentEpoch(epoch)) return;
                 try {
-                    SessionReadback readback = apply(command, start);
-                    dispatchReadback(weakSink, epoch, readback);
-                    if (needsCommandPoll(readback, command, start)) {
-                        scheduleStatusPoll(weakSink, epoch, clock.elapsedRealtimeMillis()
-                            + POLL_TIMEOUT_MS, command, start);
+                    if ("restart-to-experimenter".equals(command.operation)) {
+                        nativeBridge.requestAudioRestartStop(command.expectedGeneration,
+                            command.operationId + "-audio-stop");
+                        submitAfterRestartAudio(weakSink, epoch, command,
+                            clock.elapsedRealtimeMillis() + POLL_TIMEOUT_MS);
+                    } else {
+                        submitOnOwner(weakSink, epoch, command, start);
                     }
                 } catch (Throwable error) {
                     dispatchFailure(weakSink, epoch, command.operation, error);
                 }
             }
         });
+    }
+
+    private void submitAfterRestartAudio(WeakReference<UiSink> sink, long epoch,
+            ExperimentSessionPanelCoordinator.NativeCommand command, long deadlineMs) {
+        if (!isCurrentEpoch(epoch) || cleanupConsumed) return;
+        try {
+            if ("pending".equals(nativeBridge.audioShutdownStatus())
+                    && clock.elapsedRealtimeMillis() <= deadlineMs) {
+                owner.schedule(new Runnable() {
+                    @Override public void run() {
+                        submitAfterRestartAudio(sink, epoch, command, deadlineMs);
+                    }
+                }, POLL_INTERVAL_MS, TimeUnit.MILLISECONDS);
+                return;
+            }
+            submitOnOwner(sink, epoch, command, false);
+        } catch (Throwable error) {
+            dispatchFailure(sink, epoch, command.operation, error);
+        }
+    }
+
+    private void submitOnOwner(WeakReference<UiSink> sink, long epoch,
+            ExperimentSessionPanelCoordinator.NativeCommand command, boolean start) {
+        SessionReadback readback = apply(command, start);
+        dispatchReadback(sink, epoch, readback);
+        if (needsCommandPoll(readback, command, start)) {
+            scheduleStatusPoll(sink, epoch, clock.elapsedRealtimeMillis()
+                + POLL_TIMEOUT_MS, command, start);
+        }
     }
 
     boolean beginTerminal(long guardGeneration, long homeEpisode, UiSink sink) {
@@ -653,6 +685,9 @@ final class ExperimentSessionAndroidShell {
         if (expected == null || readback.receipt == null) return false;
         if (!expected.operationId.equals(readback.receipt.operationId)) return true;
         if (!readback.receipt.accepted) return false;
+        if ("restart-to-experimenter".equals(expected.operation)) {
+            return !readback.receipt.durable;
+        }
         if (start) {
             return !("active".equals(readback.receipt.phase)
                 || "recording".equals(readback.receipt.phase)

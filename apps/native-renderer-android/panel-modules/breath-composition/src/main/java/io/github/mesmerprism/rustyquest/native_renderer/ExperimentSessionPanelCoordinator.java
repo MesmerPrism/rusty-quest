@@ -477,7 +477,9 @@ final class ExperimentSessionPanelCoordinator {
             lastRejectedOperationId = receipt.operationId;
             state = copy(
                 state.route,
-                ExperimentSessionPanelState.Phase.ERROR,
+                state.phase == ExperimentSessionPanelState.Phase.SAVING && !receipt.recording
+                    ? ExperimentSessionPanelState.Phase.RECOVERY
+                    : ExperimentSessionPanelState.Phase.ERROR,
                 state.generation,
                 Math.max(state.revision, receipt.revision),
                 state.activeCondition,

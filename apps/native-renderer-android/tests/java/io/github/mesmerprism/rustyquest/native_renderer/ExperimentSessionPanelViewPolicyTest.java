@@ -71,10 +71,12 @@ public final class ExperimentSessionPanelViewPolicyTest {
         check(ExperimentSessionPanelViewPolicy.stageTitle(complete)
                 .contains("Condition complete · recording continues")
                 && ExperimentSessionPanelViewPolicy.stageInstruction(complete)
-                    .contains("recording continue until Save and exit")
+                    .contains("Save session & prepare next")
                 && ExperimentSessionPanelViewPolicy.project(complete).statusLine
                     .contains("Official condition: complete · Recording: active"),
             "official completion is distinct from continuing physiology recording");
+        check(ExperimentSessionPanelViewPolicy.canSaveAndPrepareNext(complete),
+            "completed official condition can save its continuing recording for the next run");
         ExperimentSessionPanelState completionPending = state(
             ExperimentSessionPanelState.Phase.RECORDING,
             true,
@@ -89,6 +91,8 @@ public final class ExperimentSessionPanelViewPolicyTest {
             "saving instructs operator to wait");
         check(!ExperimentSessionPanelViewPolicy.project(saving).startEnabled,
             "saving cannot arm another run");
+        check(!ExperimentSessionPanelViewPolicy.canSaveAndPrepareNext(saving),
+            "saving cannot submit a second finalization");
         ExperimentSessionPanelState arming = state(ExperimentSessionPanelState.Phase.ARMING, true, false);
         check(!ExperimentSessionPanelViewPolicy.canReturnToImmersive(arming),
             "operator cannot leave before audio preparation is acknowledged");

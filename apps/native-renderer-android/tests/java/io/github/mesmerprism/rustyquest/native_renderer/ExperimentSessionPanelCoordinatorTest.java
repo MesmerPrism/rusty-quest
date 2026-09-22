@@ -6,6 +6,7 @@ public final class ExperimentSessionPanelCoordinatorTest {
         armControlStatePolicy();
         rejectedArmRemainsVisibleAndRetryable();
         startDeveloperAndRestartReceiptPolicy();
+        failedSaveCannotArmNextSession();
         independentCompletionProjection();
         polarAndViewPolicy();
         guidanceBiasPendingPolicy();
@@ -112,6 +113,23 @@ public final class ExperimentSessionPanelCoordinatorTest {
         check(ExperimentSessionPanelViewPolicy.stageTitle(coordinator.snapshot())
                 .contains("recording continues"),
             "durable completion receives the distinct operator label");
+    }
+
+    private static void failedSaveCannotArmNextSession() {
+        ExperimentSessionPanelCoordinator coordinator = new ExperimentSessionPanelCoordinator();
+        ExperimentSessionPanelCoordinator.NativeCommand start = coordinator.start(
+            ExperimentSessionPanelCoordinator.CONDITION_ONE);
+        check(coordinator.accept(receipt(start.operationId, true, true, 1L, 1L,
+            "active", true, "none", 0L, 0L, 0L, 0L, 0L)), "recording precondition");
+        ExperimentSessionPanelCoordinator.NativeCommand save =
+            coordinator.restartToExperimenter(2L);
+        check(save != null, "saving command emitted");
+        check(coordinator.accept(receipt(save.operationId, false, false, 1L, 2L,
+            "idle", false, "show-experimenter", 0L, 0L, 0L, 0L, 0L)),
+            "failed save receipt remains visible");
+        check(coordinator.snapshot().phase == ExperimentSessionPanelState.Phase.RECOVERY
+                && coordinator.arm(ExperimentSessionPanelCoordinator.CONDITION_TWO) == null,
+            "an unsaved recording cannot be silently replaced by a new condition");
     }
 
     private static void closedRuntimeEpochResetsGenerationButRecreationDoesNot() {
@@ -233,6 +251,10 @@ public final class ExperimentSessionPanelCoordinatorTest {
         check(coordinator.snapshot().phase == ExperimentSessionPanelState.Phase.IDLE
                 && coordinator.snapshot().route == ExperimentSessionPanelState.Route.EXPERIMENTER,
             "B receipt resets to experimenter home");
+        ExperimentSessionPanelCoordinator.NativeCommand nextArm = coordinator.arm(
+            ExperimentSessionPanelCoordinator.CONDITION_TWO);
+        check(nextArm != null && nextArm.expectedGeneration == 1L,
+            "same app process can arm a second condition after a durable save");
 
         ExperimentSessionPanelCoordinator bridgeObserver = new ExperimentSessionPanelCoordinator();
         ExperimentSessionPanelCoordinator.NativeCommand bridgeStart = bridgeObserver.start(
