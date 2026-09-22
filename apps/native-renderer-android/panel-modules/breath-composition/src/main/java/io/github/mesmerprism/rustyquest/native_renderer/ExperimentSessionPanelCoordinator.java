@@ -206,6 +206,7 @@ final class ExperimentSessionPanelCoordinator {
     private long runtimeEpoch;
     private boolean freshRuntimeExpected;
     private String lastRejectedOperationId = "";
+    private int pendingBreathGuidanceBiasPercent = -1;
 
     synchronized boolean acceptRuntimeEpoch(long epoch) {
         if (epoch <= 0L || epoch == runtimeEpoch) return false;
@@ -216,10 +217,23 @@ final class ExperimentSessionPanelCoordinator {
         lastRejectedOperationId = "";
         routeEventGeneration = 0L;
         routeEventAllocation = 0L;
+        pendingBreathGuidanceBiasPercent = -1;
         return true;
     }
 
     synchronized ExperimentSessionPanelState snapshot() { return state; }
+
+    synchronized int pendingBreathGuidanceBiasPercent() {
+        return pendingBreathGuidanceBiasPercent;
+    }
+
+    synchronized boolean updatePendingBreathGuidanceBiasPercent(int value) {
+        if (state.hasActiveSession() || !state.pendingOperationId.isEmpty()) {
+            return false;
+        }
+        pendingBreathGuidanceBiasPercent = Math.max(0, Math.min(100, value));
+        return true;
+    }
 
     synchronized long allocateRouteEvent() {
         routeEventAllocation = Math.max(routeEventAllocation, routeEventGeneration) + 1L;
@@ -297,6 +311,8 @@ final class ExperimentSessionPanelCoordinator {
             state.kioskRequested,
             "Preparing recording and audio."
         );
+        pendingBreathGuidanceBiasPercent = Math.max(0,
+            Math.min(100, breathGuidanceBiasPercent));
         return new NativeCommand("start", operationId, state.generation, condition,
             breathGuidanceBiasPercent);
     }
@@ -332,6 +348,8 @@ final class ExperimentSessionPanelCoordinator {
             state.kioskRequested,
             "Preparing recording and audio; audio remains silent."
         );
+        pendingBreathGuidanceBiasPercent = Math.max(0,
+            Math.min(100, breathGuidanceBiasPercent));
         return new NativeCommand("arm", operationId, state.generation, condition,
             breathGuidanceBiasPercent);
     }

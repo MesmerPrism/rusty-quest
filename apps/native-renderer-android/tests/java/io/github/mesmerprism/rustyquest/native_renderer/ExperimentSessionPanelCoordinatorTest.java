@@ -8,8 +8,43 @@ public final class ExperimentSessionPanelCoordinatorTest {
         startDeveloperAndRestartReceiptPolicy();
         independentCompletionProjection();
         polarAndViewPolicy();
+        guidanceBiasPendingPolicy();
         closedRuntimeEpochResetsGenerationButRecreationDoesNot();
         System.out.println("ExperimentSessionPanelCoordinatorTest PASS");
+    }
+
+    private static void guidanceBiasPendingPolicy() {
+        ExperimentSessionPanelCoordinator coordinator = new ExperimentSessionPanelCoordinator();
+        check(coordinator.pendingBreathGuidanceBiasPercent() == -1,
+            "guidance bias starts unresolved until packaged readiness is known");
+        check(coordinator.updatePendingBreathGuidanceBiasPercent(67)
+                && coordinator.pendingBreathGuidanceBiasPercent() == 67,
+            "developer guidance value is retained by the process coordinator");
+        coordinator.openDeveloper(coordinator.allocateRouteEvent());
+        coordinator.returnFromDeveloper();
+        coordinator.onLaunch(
+            ExperimentSessionPanelCoordinator.LaunchKind.RECREATION_MAIN,
+            null,
+            0L
+        );
+        check(coordinator.pendingBreathGuidanceBiasPercent() == 67,
+            "panel routing and Activity recreation retain the pending guidance value");
+        ExperimentSessionPanelCoordinator.NativeCommand arm = coordinator.arm(
+            ExperimentSessionPanelCoordinator.CONDITION_ONE,
+            coordinator.pendingBreathGuidanceBiasPercent()
+        );
+        check(arm != null && arm.breathGuidanceBiasPercent == 67,
+            "the next arm locks the retained developer guidance value");
+        check(!coordinator.updatePendingBreathGuidanceBiasPercent(20)
+                && coordinator.pendingBreathGuidanceBiasPercent() == 67,
+            "an arming or active session cannot silently change its guidance identity");
+
+        ExperimentSessionPanelCoordinator fresh = new ExperimentSessionPanelCoordinator();
+        check(fresh.updatePendingBreathGuidanceBiasPercent(42),
+            "fresh coordinator accepts pre-arm guidance tuning");
+        check(fresh.acceptRuntimeEpoch(100L)
+                && fresh.pendingBreathGuidanceBiasPercent() == -1,
+            "a fresh native runtime resets runtime-only guidance tuning");
     }
 
     private static void armControlStatePolicy() {

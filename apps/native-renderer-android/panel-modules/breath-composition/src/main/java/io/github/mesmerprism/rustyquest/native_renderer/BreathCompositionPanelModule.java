@@ -313,6 +313,9 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
     private TextView experimenterGuidanceOneReadback;
     private TextView experimenterGuidanceTwoReadback;
     private SliderControl experimenterGuidanceBias;
+    private TextView developerGuidanceOneReadback;
+    private TextView developerGuidanceTwoReadback;
+    private SliderControl developerGuidanceBias;
     private int experimenterGuidanceBiasPercent = -1;
     private Button experimenterResume;
     private Button experimenterNext;
@@ -389,6 +392,10 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
             // The panel Activity may have finished when VR resumed. Recall an active
             // run at its session page without turning ordinary readbacks into navigation.
             experimenterNavigation.select(ExperimentSessionPanelViewPolicy.Page.SESSION);
+        }
+        if (experimenterGuidanceBiasPercent < 0) {
+            experimenterGuidanceBiasPercent =
+                EXPERIMENT_SESSION_PANEL.pendingBreathGuidanceBiasPercent();
         }
         if (trustedColdMain && PANEL_ROUTE_EXPERIMENTER.equals(panelRoute)) {
             PolarSensorRuntime.forApplication(getApplicationContext()).ensureAutoConnection();
@@ -970,13 +977,20 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
                 : patternTwo ? secondDefault
                 : "no-pattern".equals(patternOneReadiness)
                     && "no-pattern".equals(patternTwoReadiness) ? 0 : -1;
+            if (experimenterGuidanceBiasPercent >= 0) {
+                EXPERIMENT_SESSION_PANEL.updatePendingBreathGuidanceBiasPercent(
+                    experimenterGuidanceBiasPercent);
+            }
         }
         experimenterGuidanceBias = new SliderControl(
             "Breathing-pattern bias", 0.0, 100.0,
             Math.max(0, experimenterGuidanceBiasPercent), 100, "%", true,
             new Runnable() {
                 @Override public void run() {
-                    experimenterGuidanceBiasPercent = experimenterGuidanceBias.intValue();
+                    int requested = experimenterGuidanceBias.intValue();
+                    if (EXPERIMENT_SESSION_PANEL.updatePendingBreathGuidanceBiasPercent(requested)) {
+                        experimenterGuidanceBiasPercent = requested;
+                    }
                 }
             });
         experimenterGuidanceBias.setInteractive(patternOne || patternTwo);
@@ -1319,6 +1333,64 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
         statusCard.addView(breathCalibrationProgress);
         statusCard.addView(breathOutputReadback);
         root.addView(statusCard);
+
+        LinearLayout guidanceCard = panelCard("Guided-breathing bias for next arm");
+        guidanceCard.addView(text(
+            "This is the same 0–100% value shown on the experimenter condition page. It is runtime-only and is locked into the recording when a condition is armed.",
+            12,
+            PANEL_MUTED
+        ));
+        developerGuidanceOneReadback = experimenterIndicator(
+            guidanceCard,
+            "Condition 1 breathing pattern: checking…",
+            ExperimentSessionPanelViewPolicy.Tone.WAITING
+        );
+        developerGuidanceTwoReadback = experimenterIndicator(
+            guidanceCard,
+            "Condition 2 breathing pattern: checking…",
+            ExperimentSessionPanelViewPolicy.Tone.WAITING
+        );
+        String developerGuidanceOne = ControlPanelActivity.conditionBreathGuidanceReadiness(
+            ExperimentSessionPanelCoordinator.CONDITION_ONE);
+        String developerGuidanceTwo = ControlPanelActivity.conditionBreathGuidanceReadiness(
+            ExperimentSessionPanelCoordinator.CONDITION_TWO);
+        boolean developerPatternOne = "pattern-ready".equals(developerGuidanceOne);
+        boolean developerPatternTwo = "pattern-ready".equals(developerGuidanceTwo);
+        if (experimenterGuidanceBiasPercent < 0) {
+            int firstDefault = ControlPanelActivity.conditionBreathGuidanceDefaultBias(
+                ExperimentSessionPanelCoordinator.CONDITION_ONE);
+            int secondDefault = ControlPanelActivity.conditionBreathGuidanceDefaultBias(
+                ExperimentSessionPanelCoordinator.CONDITION_TWO);
+            experimenterGuidanceBiasPercent = developerPatternOne ? firstDefault
+                : developerPatternTwo ? secondDefault
+                : "no-pattern".equals(developerGuidanceOne)
+                    && "no-pattern".equals(developerGuidanceTwo) ? 0 : -1;
+            if (experimenterGuidanceBiasPercent >= 0) {
+                EXPERIMENT_SESSION_PANEL.updatePendingBreathGuidanceBiasPercent(
+                    experimenterGuidanceBiasPercent);
+            }
+        }
+        developerGuidanceBias = new SliderControl(
+            "Breathing-pattern bias", 0.0, 100.0,
+            Math.max(0, experimenterGuidanceBiasPercent), 100, "%", true,
+            new Runnable() {
+                @Override public void run() {
+                    int requested = developerGuidanceBias.intValue();
+                    if (EXPERIMENT_SESSION_PANEL.updatePendingBreathGuidanceBiasPercent(requested)) {
+                        experimenterGuidanceBiasPercent = requested;
+                    }
+                }
+            });
+        developerGuidanceBias.setInteractive(
+            (developerPatternOne || developerPatternTwo)
+                && !EXPERIMENT_SESSION_PANEL.snapshot().hasActiveSession());
+        guidanceCard.addView(developerGuidanceBias.view);
+        guidanceCard.addView(text(
+            "0% is fully signal-driven; 100% is guidance-dominant while still requiring valid Polar tracking. Finish the current recording before changing the value for another arm.",
+            12,
+            PANEL_MUTED
+        ));
+        root.addView(guidanceCard);
 
         LinearLayout mappingCard = panelCard("Input mapping");
         final Spinner source = spinner(new String[] {"Controller", "Polar ACC"}, 0);
@@ -2618,6 +2690,9 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
         experimenterGuidanceOneReadback = null;
         experimenterGuidanceTwoReadback = null;
         experimenterGuidanceBias = null;
+        developerGuidanceOneReadback = null;
+        developerGuidanceTwoReadback = null;
+        developerGuidanceBias = null;
         experimenterResume = null;
         experimenterNext = null;
         experimenterDeveloper = null;
@@ -2670,17 +2745,23 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
         }
         updateExperimenterAudioReadback(experimenterAudioOneReadback, "Condition 1", audioOne);
         updateExperimenterAudioReadback(experimenterAudioTwoReadback, "Condition 2", audioTwo);
-        String guidanceOne = experimenterStartOne == null ? "" :
+        boolean guidanceControlsVisible = experimenterStartOne != null
+            || developerGuidanceBias != null;
+        String guidanceOne = !guidanceControlsVisible ? "" :
             ControlPanelActivity.conditionBreathGuidanceReadiness(
                 ExperimentSessionPanelCoordinator.CONDITION_ONE);
-        String guidanceTwo = experimenterStartTwo == null ? "" :
+        String guidanceTwo = !guidanceControlsVisible ? "" :
             ControlPanelActivity.conditionBreathGuidanceReadiness(
                 ExperimentSessionPanelCoordinator.CONDITION_TWO);
         updateExperimenterGuidanceReadback(
             experimenterGuidanceOneReadback, "Condition 1", guidanceOne);
         updateExperimenterGuidanceReadback(
             experimenterGuidanceTwoReadback, "Condition 2", guidanceTwo);
-        if (experimenterGuidanceBias != null) {
+        updateExperimenterGuidanceReadback(
+            developerGuidanceOneReadback, "Condition 1", guidanceOne);
+        updateExperimenterGuidanceReadback(
+            developerGuidanceTwoReadback, "Condition 2", guidanceTwo);
+        if (experimenterGuidanceBias != null || developerGuidanceBias != null) {
             boolean oneReady = "pattern-ready".equals(guidanceOne);
             boolean twoReady = "pattern-ready".equals(guidanceTwo);
             if (experimenterGuidanceBiasPercent < 0 && (oneReady || twoReady)) {
@@ -2688,14 +2769,29 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
                     .conditionBreathGuidanceDefaultBias(oneReady
                         ? ExperimentSessionPanelCoordinator.CONDITION_ONE
                         : ExperimentSessionPanelCoordinator.CONDITION_TWO);
-                experimenterGuidanceBias.setValue(experimenterGuidanceBiasPercent);
+                EXPERIMENT_SESSION_PANEL.updatePendingBreathGuidanceBiasPercent(
+                    experimenterGuidanceBiasPercent);
+                if (experimenterGuidanceBias != null) {
+                    experimenterGuidanceBias.setValue(experimenterGuidanceBiasPercent);
+                }
+                if (developerGuidanceBias != null) {
+                    developerGuidanceBias.setValue(experimenterGuidanceBiasPercent);
+                }
             } else if (experimenterGuidanceBiasPercent < 0
                     && "no-pattern".equals(guidanceOne)
                     && "no-pattern".equals(guidanceTwo)) {
                 experimenterGuidanceBiasPercent = 0;
-                experimenterGuidanceBias.setValue(0);
+                EXPERIMENT_SESSION_PANEL.updatePendingBreathGuidanceBiasPercent(0);
+                if (experimenterGuidanceBias != null) experimenterGuidanceBias.setValue(0);
+                if (developerGuidanceBias != null) developerGuidanceBias.setValue(0);
             }
-            experimenterGuidanceBias.setInteractive(oneReady || twoReady);
+            if (experimenterGuidanceBias != null) {
+                experimenterGuidanceBias.setInteractive(oneReady || twoReady);
+            }
+            if (developerGuidanceBias != null) {
+                developerGuidanceBias.setInteractive(
+                    (oneReady || twoReady) && !state.hasActiveSession());
+            }
         }
         if (experimenterStageReadback != null) {
             setExperimenterText(experimenterStageReadback, ExperimentSessionPanelViewPolicy.stageTitle(state));

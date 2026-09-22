@@ -53,6 +53,10 @@ shift directional evidence toward the scheduled phase, while valid tracking,
 confirmation, and dwell gates remain required. The session manifest records
 the exact pattern identity and chosen bias, and breath rows retain both the
 effective phase and the unbiased signal-derived phase.
+The same pending value is exposed on the experimenter condition page and under
+Developer settings → Breath. It is runtime-only and applies to the next arm;
+the developer control is disabled once a session is active so the recording's
+identity-bound bias cannot drift silently.
 
 The reusable particle-contract adapter is independently selectable with
 `quest-native-renderer-particle-adapter-conformance.profile.json`. Its property
