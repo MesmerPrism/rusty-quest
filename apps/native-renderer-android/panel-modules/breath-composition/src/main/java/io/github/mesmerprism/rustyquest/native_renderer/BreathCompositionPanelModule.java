@@ -4603,7 +4603,9 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
                     accepted = false;
                 }
                 JSONObject guidanceProjection = projection.optJSONObject("breath_guidance");
-                if (startingOperation && expected.breathGuidanceBiasPercent > 0
+                boolean guidanceExpected = startingOperation && "pattern-ready".equals(
+                    ControlPanelActivity.conditionBreathGuidanceReadiness(expected.condition));
+                if (guidanceExpected
                         && (guidanceProjection == null
                             || !guidanceProjection.optBoolean("identity_bound", false)
                             || guidanceProjection.optInt("bias_percent", -1)

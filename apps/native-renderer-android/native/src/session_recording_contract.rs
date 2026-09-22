@@ -140,6 +140,17 @@ pub(crate) struct EffectiveRadiusProfile {
 }
 
 impl EffectiveRadiusProfile {
+    pub(crate) fn radius_m_for_progress(self, progress01: f32) -> Option<f32> {
+        if self.validate().is_err() || !progress01.is_finite() {
+            return None;
+        }
+        Some(
+            self.configured_radius_min_m
+                + (self.configured_radius_max_m - self.configured_radius_min_m)
+                    * progress01.clamp(0.0, 1.0),
+        )
+    }
+
     pub(crate) fn validate(self) -> Result<(), &'static str> {
         if !self.configured_radius_min_m.is_finite()
             || !self.configured_radius_max_m.is_finite()
@@ -908,6 +919,22 @@ mod tests {
         assert!(!text.contains("participant"));
         assert!(!text.contains("session_id"));
         assert!(!text.contains("generation"));
+    }
+
+    #[test]
+    fn condition_radius_tracks_bounded_driver_progress() {
+        let profile = EffectiveRadiusProfile {
+            configured_radius_min_m: 1.0,
+            configured_radius_max_m: 2.0,
+            oblateness: None,
+            axis_profile: None,
+        };
+        assert_eq!(profile.radius_m_for_progress(0.0), Some(1.0));
+        assert_eq!(profile.radius_m_for_progress(0.5), Some(1.5));
+        assert_eq!(profile.radius_m_for_progress(1.0), Some(2.0));
+        assert_eq!(profile.radius_m_for_progress(-1.0), Some(1.0));
+        assert_eq!(profile.radius_m_for_progress(2.0), Some(2.0));
+        assert_eq!(profile.radius_m_for_progress(f32::NAN), None);
     }
 
     #[test]

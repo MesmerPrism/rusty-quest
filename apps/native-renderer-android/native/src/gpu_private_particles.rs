@@ -2907,6 +2907,14 @@ impl GpuPrivateParticleRenderer {
         frame_count: u64,
     ) -> GpuPrivateParticleFrameStats {
         let runtime_settings = self.runtime_settings(frame_count);
+        let mut world_center_scale = world_center_scale;
+        let mut world_anchor_scale_parameter_source = world_anchor_scale_parameter_source;
+        if let Some(radius_m) = crate::experiment_session_runtime::active_radius_m_for_progress(
+            runtime_settings.driver0_value01,
+        ) {
+            world_center_scale[3] = radius_m;
+            world_anchor_scale_parameter_source = "experiment-session-driver-slot-0";
+        }
         let driver_bank_rows = private_particle_driver_bank_rows(runtime_settings);
         if driver_bank_rows != self.driver_bank_uploaded_rows {
             match self.driver_bank_buffer.write_data(

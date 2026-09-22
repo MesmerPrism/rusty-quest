@@ -2867,6 +2867,17 @@ pub(crate) fn record_breath_assessment(
     }))
 }
 
+/// The trusted condition profile owns the physical radius envelope. Outside
+/// an armed session, the ordinary world-anchor scale remains authoritative.
+pub(crate) fn active_radius_m_for_progress(progress01: f32) -> Option<f32> {
+    let runtime = runtime().ok()?;
+    let profile = *runtime
+        .effective_radius_profile
+        .read()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    profile?.radius_m_for_progress(progress01)
+}
+
 pub(crate) fn record_effective_radius_snapshot(
     source_frame: u64,
     observed_at_ns: u64,
