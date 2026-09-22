@@ -524,6 +524,7 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
                 ? PANEL_ROUTE_EXPERIMENTER : PANEL_ROUTE_DEVELOPER;
             breathCompositionPanelTopic = "home";
             ControlPanelActivity.beginPanelTransition(this, panelRoute, generation);
+            NativeRendererSelfKioskApplication.ensureArmedService(this);
         }
         synchronizePanelRouteFromCoordinator();
         return admitted;
@@ -565,6 +566,7 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
     @Override
     protected void onResume() {
         super.onResume();
+        NativeRendererSelfKioskApplication.ensureArmedService(this);
         PolarSensorRuntime.forApplication(getApplicationContext()).onHostResume();
         handleDisplayCompositeIntent(getIntent());
         if ("breath-mapping".equals(readControlPanelMode())) {

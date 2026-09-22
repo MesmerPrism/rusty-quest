@@ -206,6 +206,10 @@ final class ExperimentSessionPanelCoordinator {
     private long runtimeEpoch;
     private boolean freshRuntimeExpected;
     private String lastRejectedOperationId = "";
+    private String panelRestartOperationId = "";
+    private long panelRestartGeneration;
+    private long panelRestartRouteRevision;
+    private boolean panelRestartDurable;
     private int pendingBreathGuidanceBiasPercent = -1;
 
     synchronized boolean acceptRuntimeEpoch(long epoch) {
@@ -215,6 +219,10 @@ final class ExperimentSessionPanelCoordinator {
         freshRuntimeExpected = false;
         state = ExperimentSessionPanelState.initial();
         lastRejectedOperationId = "";
+        panelRestartOperationId = "";
+        panelRestartGeneration = 0L;
+        panelRestartRouteRevision = 0L;
+        panelRestartDurable = false;
         routeEventGeneration = 0L;
         routeEventAllocation = 0L;
         pendingBreathGuidanceBiasPercent = -1;
@@ -366,6 +374,10 @@ final class ExperimentSessionPanelCoordinator {
             return null;
         }
         String operationId = nextOperationId("restart");
+        panelRestartOperationId = operationId;
+        panelRestartGeneration = state.generation;
+        panelRestartRouteRevision = 0L;
+        panelRestartDurable = false;
         state = copy(
             ExperimentSessionPanelState.Route.EXPERIMENTER,
             ExperimentSessionPanelState.Phase.SAVING,
@@ -392,7 +404,27 @@ final class ExperimentSessionPanelCoordinator {
         long expectedSessionGeneration,
         String expectedOperationId
     ) {
+        boolean exactPanelRestart = eventGeneration > 0L
+            && expectedSessionGeneration == panelRestartGeneration
+            && expectedOperationId != null
+            && expectedOperationId.equals(panelRestartOperationId)
+            && eventGeneration > panelRestartRouteRevision
+            && eventGeneration >= state.routeActionRevision
+            && (state.phase == ExperimentSessionPanelState.Phase.SAVING
+                && expectedOperationId.equals(state.pendingOperationId)
+                || panelRestartDurable
+                    && state.phase == ExperimentSessionPanelState.Phase.IDLE
+                    && state.pendingOperationId.isEmpty());
+        if (exactPanelRestart) {
+            panelRestartRouteRevision = eventGeneration;
+            routeEventGeneration = Math.max(routeEventGeneration, eventGeneration);
+            routeEventAllocation = Math.max(routeEventAllocation, routeEventGeneration);
+            return true;
+        }
+        if (expectedOperationId != null
+                && expectedOperationId.equals(panelRestartOperationId)) return false;
         if (eventGeneration <= routeEventGeneration
+                || eventGeneration <= state.routeActionRevision
                 || expectedSessionGeneration <= 0L
                 || expectedSessionGeneration != state.generation
                 || expectedOperationId == null
@@ -522,6 +554,11 @@ final class ExperimentSessionPanelCoordinator {
         String pending = pendingMatch ? "" : state.pendingOperationId;
         boolean showExperimenter = receipt.accepted && receipt.durable
             && "show-experimenter".equals(receipt.routeAction);
+        if (showExperimenter && pendingMatch && state.phase == ExperimentSessionPanelState.Phase.SAVING
+                && receipt.operationId.equals(panelRestartOperationId)
+                && receipt.generation == panelRestartGeneration) {
+            panelRestartDurable = true;
+        }
         state = copy(
             showExperimenter || state.phase == ExperimentSessionPanelState.Phase.SAVING
                 ? ExperimentSessionPanelState.Route.EXPERIMENTER : state.route,

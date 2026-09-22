@@ -6,6 +6,7 @@ public final class ExperimentSessionPanelCoordinatorTest {
         armControlStatePolicy();
         rejectedArmRemainsVisibleAndRetryable();
         startDeveloperAndRestartReceiptPolicy();
+        panelSaveRouteRemainsAdmissibleAfterDurableReceipt();
         failedSaveCannotArmNextSession();
         independentCompletionProjection();
         polarAndViewPolicy();
@@ -130,6 +131,44 @@ public final class ExperimentSessionPanelCoordinatorTest {
         check(coordinator.snapshot().phase == ExperimentSessionPanelState.Phase.RECOVERY
                 && coordinator.arm(ExperimentSessionPanelCoordinator.CONDITION_TWO) == null,
             "an unsaved recording cannot be silently replaced by a new condition");
+    }
+
+    private static void panelSaveRouteRemainsAdmissibleAfterDurableReceipt() {
+        ExperimentSessionPanelCoordinator early = new ExperimentSessionPanelCoordinator();
+        ExperimentSessionPanelCoordinator.NativeCommand earlyStart = early.start(
+            ExperimentSessionPanelCoordinator.CONDITION_ONE);
+        check(early.accept(receipt(earlyStart.operationId, true, true, 1L, 1L,
+            "active", true, "none", 0L, 0L, 0L, 0L, 0L)), "early-route precondition");
+        ExperimentSessionPanelCoordinator.NativeCommand earlySave =
+            early.restartToExperimenter(early.allocateRouteEvent());
+        check(early.awaitNativeRestartRoute(2L, 1L, earlySave.operationId)
+                && early.snapshot().phase == ExperimentSessionPanelState.Phase.SAVING
+                && earlySave.operationId.equals(early.snapshot().pendingOperationId),
+            "native route arriving before the save readback preserves the panel save operation");
+        check(early.accept(receipt(earlySave.operationId, true, true, 1L, 2L,
+            "idle", false, "show-experimenter", 2L, 1L, 0L, 0L, 0L)),
+            "early route still permits durable save readback");
+
+        ExperimentSessionPanelCoordinator coordinator = new ExperimentSessionPanelCoordinator();
+        ExperimentSessionPanelCoordinator.NativeCommand start = coordinator.start(
+            ExperimentSessionPanelCoordinator.CONDITION_ONE);
+        check(coordinator.accept(receipt(start.operationId, true, true, 1L, 1L,
+            "active", true, "none", 0L, 0L, 0L, 0L, 0L)), "recording precondition");
+        ExperimentSessionPanelCoordinator.NativeCommand save =
+            coordinator.restartToExperimenter(coordinator.allocateRouteEvent());
+        check(save != null, "panel save command emitted");
+        check(coordinator.accept(receipt(save.operationId, true, true, 1L, 2L,
+            "idle", false, "show-experimenter", 2L, 1L, 0L, 0L, 0L)),
+            "durable panel save accepted");
+        check(coordinator.awaitNativeRestartRoute(2L, 1L, save.operationId)
+                && coordinator.snapshot().phase == ExperimentSessionPanelState.Phase.IDLE,
+            "late native route for the same saved operation is an idempotent panel handoff");
+        check(!coordinator.awaitNativeRestartRoute(2L, 1L, save.operationId),
+            "exact native route replay cannot cause a second handoff");
+        check(coordinator.arm(ExperimentSessionPanelCoordinator.CONDITION_TWO) != null,
+            "the route handoff does not block the next arm");
+        check(!coordinator.awaitNativeRestartRoute(3L, 1L, save.operationId),
+            "old finalized route cannot replace a new arming session");
     }
 
     private static void closedRuntimeEpochResetsGenerationButRecreationDoesNot() {

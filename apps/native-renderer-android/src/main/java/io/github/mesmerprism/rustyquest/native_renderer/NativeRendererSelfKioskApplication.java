@@ -135,6 +135,21 @@ public final class NativeRendererSelfKioskApplication extends Application {
         }
     }
 
+    /** Restore an interrupted self-watchdog only while a trusted app session is still armed. */
+    public static void ensureArmedService(Context context) {
+        if (context == null || !(context.getApplicationContext()
+                instanceof NativeRendererSelfKioskApplication)) return;
+        NativeRendererSoftKioskCoordinator.Snapshot state =
+            NativeRendererSoftKioskCoordinator.process().snapshot();
+        if (state.armed && !state.terminal
+                && (state.serviceState == NativeRendererSoftKioskCoordinator.ServiceState.MISSING_OR_DISABLED
+                    || state.serviceState == NativeRendererSoftKioskCoordinator.ServiceState.INTERRUPTED)) {
+            Log.i("RustyQuestSelfKiosk", "status=watchdog-restart-requested generation="
+                + state.generation + " service=" + state.serviceState);
+            armed(context);
+        }
+    }
+
     public static void userLeaveHint(Activity activity) {
         Context app = activity.getApplicationContext();
         if (!(app instanceof NativeRendererSelfKioskApplication)) return;
