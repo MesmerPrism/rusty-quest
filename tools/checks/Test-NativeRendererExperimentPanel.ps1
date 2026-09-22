@@ -180,6 +180,8 @@ final class ControlPanelActivity extends BreathCompositionPanelModule {
     static boolean admitTerminalSaveAndExit(android.app.Activity activity, android.content.Intent intent) { return false; }
     static void finishTerminalSaveAndExit(android.app.Activity activity, boolean saved, long generation, String operationId, long revision) {}
     static String conditionAudioReadiness(String condition) { return "audio-track-not-ready"; }
+    static String conditionBreathGuidanceReadiness(String condition) { return "no-pattern"; }
+    static int conditionBreathGuidanceDefaultBias(String condition) { return 0; }
     static boolean startConditionAudio(long generation, String operationId, String condition) { return false; }
     static boolean requestConditionAudioStop(long generation, String operationId) { return true; }
     static boolean requestConditionAudioRestartStop(long generation, String operationId) { return true; }

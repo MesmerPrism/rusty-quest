@@ -21,6 +21,7 @@ use std::{
 use serde_json::{json, Map, Value};
 
 use crate::{
+    breath_guidance::{BreathGuidanceAssetIdentity, BreathGuidanceTarget, BreathGuidanceTimeline},
     experiment_session::{
         CommandEnvelope, CommandOutcome, CompletionProgress, ExperimentSessionController,
         OperationToken, PresentationState, RecordingFailure, RecordingResult, SessionCommand,
@@ -208,6 +209,7 @@ struct Projection {
     phase: SessionPhase,
     presentation: PresentationState,
     active_time_ns: u64,
+    active_interval_started_ns: Option<u64>,
     completion: CompletionProgress,
     recording_result: RecordingResult,
     counts: SessionCounts,
@@ -222,6 +224,8 @@ struct Projection {
     route_action_revision: u64,
     profile_identity_bound: bool,
     audio_identity_bound: bool,
+    breath_guidance_identity_bound: bool,
+    breath_guidance_bias_percent: u8,
     producer_retry_drops: u64,
     metric_status: &'static str,
     initialization_status: &'static str,
@@ -249,6 +253,7 @@ impl Default for Projection {
             phase: SessionPhase::Idle,
             presentation: PresentationState::Experimenter,
             active_time_ns: 0,
+            active_interval_started_ns: None,
             completion: CompletionProgress::NotReached,
             recording_result: RecordingResult::None,
             counts: SessionCounts::default(),
@@ -263,6 +268,8 @@ impl Default for Projection {
             route_action_revision: 0,
             profile_identity_bound: false,
             audio_identity_bound: false,
+            breath_guidance_identity_bound: false,
+            breath_guidance_bias_percent: 0,
             producer_retry_drops: 0,
             metric_status: "actual-runtime-radius-with-configured-deformation-envelopes",
             initialization_status: "initializing",
@@ -296,6 +303,11 @@ impl Projection {
                 "control_event_elapsed_realtime_ns": self.control_event_elapsed_realtime_ns,
                 "presentation": presentation_token(self.presentation),
                 "active_time_ms": self.active_time_ns / 1_000_000,
+                "breath_guidance": {
+                    "identity_bound": self.breath_guidance_identity_bound,
+                    "bias_percent": self.breath_guidance_bias_percent,
+                    "clock": "official-active-time-ms",
+                },
                 "completion": completion_token(self.completion),
                 "recording_result": recording_result_value(self.recording_result),
                 "counts": {
@@ -374,6 +386,14 @@ impl ReadbackCache {
 struct StartIdentity {
     profile_sha256: String,
     audio: AudioAssetIdentity,
+    breath_guidance: Option<BreathGuidanceAssetIdentity>,
+    breath_guidance_bias_percent: u8,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct TrustedBreathGuidanceInventory {
+    pub(crate) timeline: Arc<BreathGuidanceTimeline>,
+    pub(crate) default_bias_percent: u8,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -381,6 +401,7 @@ pub(crate) struct TrustedConditionInventory {
     pub(crate) condition: ConditionKey,
     pub(crate) completion_threshold_ms: u64,
     pub(crate) audio: AudioAssetIdentity,
+    pub(crate) breath_guidance: Option<TrustedBreathGuidanceInventory>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -406,6 +427,13 @@ impl TrustedExperimentInventory {
         }
         self.effective_radius_profile.validate()?;
         for condition in &self.conditions {
+            if condition
+                .breath_guidance
+                .as_ref()
+                .is_some_and(|guidance| guidance.default_bias_percent > 100)
+            {
+                return Err("trusted-inventory-breath-guidance-bias-invalid");
+            }
             ExperimentIdentity {
                 provider_id: self.provider_id.clone(),
                 provider_manifest_sha256: self.provider_manifest_sha256.clone(),
@@ -413,6 +441,14 @@ impl TrustedExperimentInventory {
                 non_audio_profile_sha256: self.non_audio_profile_sha256.clone(),
                 condition_id: condition.condition.as_str().to_owned(),
                 audio: condition.audio.clone(),
+                breath_guidance: condition
+                    .breath_guidance
+                    .as_ref()
+                    .map(|guidance| guidance.timeline.identity.clone()),
+                breath_guidance_bias_percent: condition
+                    .breath_guidance
+                    .as_ref()
+                    .map_or(0, |guidance| guidance.default_bias_percent),
                 effective_radius_profile: self.effective_radius_profile,
             }
             .validate_for(&condition.condition)?;
@@ -420,7 +456,11 @@ impl TrustedExperimentInventory {
         Ok(())
     }
 
-    fn identity_for(&self, condition: &ConditionKey) -> Option<ExperimentIdentity> {
+    fn identity_for(
+        &self,
+        condition: &ConditionKey,
+        breath_guidance_bias_percent: u8,
+    ) -> Option<ExperimentIdentity> {
         let selected = self
             .conditions
             .iter()
@@ -432,9 +472,21 @@ impl TrustedExperimentInventory {
             non_audio_profile_sha256: self.non_audio_profile_sha256.clone(),
             condition_id: condition.as_str().to_owned(),
             audio: selected.audio.clone(),
+            breath_guidance: selected
+                .breath_guidance
+                .as_ref()
+                .map(|guidance| guidance.timeline.identity.clone()),
+            breath_guidance_bias_percent,
             effective_radius_profile: self.effective_radius_profile,
         })
     }
+}
+
+#[derive(Clone, Debug)]
+struct ActiveBreathGuidance {
+    generation: u64,
+    timeline: Arc<BreathGuidanceTimeline>,
+    bias_percent: u8,
 }
 
 #[derive(Clone, Debug)]
@@ -669,6 +721,7 @@ struct SessionWorker {
     submitted_frame_sequence: Arc<AtomicU64>,
     submitted_frame_elapsed_ns: Arc<AtomicU64>,
     effective_radius_profile: Arc<RwLock<Option<EffectiveRadiusProfile>>>,
+    active_breath_guidance: Arc<RwLock<Option<ActiveBreathGuidance>>>,
     completion_persistence_failure: Option<String>,
     stop_after_ack: bool,
 }
@@ -692,6 +745,7 @@ impl SessionWorker {
         submitted_frame_sequence: Arc<AtomicU64>,
         submitted_frame_elapsed_ns: Arc<AtomicU64>,
         effective_radius_profile: Arc<RwLock<Option<EffectiveRadiusProfile>>>,
+        active_breath_guidance: Arc<RwLock<Option<ActiveBreathGuidance>>>,
     ) -> Self {
         Self {
             controller: ExperimentSessionController::default(),
@@ -718,6 +772,7 @@ impl SessionWorker {
             submitted_frame_sequence,
             submitted_frame_elapsed_ns,
             effective_radius_profile,
+            active_breath_guidance,
             completion_persistence_failure: None,
             stop_after_ack: false,
         }
@@ -898,7 +953,7 @@ impl SessionWorker {
             .ok_or("inventory-unavailable")?;
         inventory.validate()?;
         let expected = inventory
-            .identity_for(condition)
+            .identity_for(condition, requested.breath_guidance_bias_percent)
             .ok_or("condition-not-packaged")?;
         if completion_threshold_ns / 1_000_000
             != inventory
@@ -915,6 +970,14 @@ impl SessionWorker {
         }
         if requested.audio != expected.audio {
             return Err("audio-identity-not-packaged");
+        }
+        if requested.breath_guidance != expected.breath_guidance {
+            return Err("breath-guidance-identity-not-packaged");
+        }
+        if requested.breath_guidance_bias_percent > 100
+            || requested.breath_guidance.is_none() && requested.breath_guidance_bias_percent != 0
+        {
+            return Err("breath-guidance-bias-invalid");
         }
         Ok(expected)
     }
@@ -977,6 +1040,37 @@ impl SessionWorker {
                             let _ = crate::breath_composition_runtime::
                                 ensure_running_for_experiment_arm();
                             self.current_identity = Some(spec.experiment_identity.clone());
+                            let active_guidance = spec
+                                .experiment_identity
+                                .breath_guidance
+                                .as_ref()
+                                .map(|identity| -> Result<ActiveBreathGuidance, String> {
+                                    let packaged = self
+                                        .trusted_inventory
+                                        .as_ref()
+                                        .and_then(|inventory| {
+                                            inventory.conditions.iter().find(|condition| {
+                                                condition.condition == spec.condition
+                                            })
+                                        })
+                                        .and_then(|condition| condition.breath_guidance.as_ref())
+                                        .filter(|guidance| guidance.timeline.identity == *identity)
+                                        .ok_or_else(|| {
+                                            "session-breath-guidance-contract-missing".to_owned()
+                                        })?;
+                                    Ok(ActiveBreathGuidance {
+                                        generation,
+                                        timeline: Arc::clone(&packaged.timeline),
+                                        bias_percent: spec
+                                            .experiment_identity
+                                            .breath_guidance_bias_percent,
+                                    })
+                                })
+                                .transpose()?;
+                            *self
+                                .active_breath_guidance
+                                .write()
+                                .unwrap_or_else(|poisoned| poisoned.into_inner()) = active_guidance;
                             *self
                                 .effective_radius_profile
                                 .write()
@@ -1017,6 +1111,10 @@ impl SessionWorker {
                             self.active_generation.store(0, Ordering::Release);
                             *self
                                 .effective_radius_profile
+                                .write()
+                                .unwrap_or_else(|poisoned| poisoned.into_inner()) = None;
+                            *self
+                                .active_breath_guidance
                                 .write()
                                 .unwrap_or_else(|poisoned| poisoned.into_inner()) = None;
                             self.submitted_frame_generation.store(0, Ordering::Release);
@@ -1160,6 +1258,10 @@ impl SessionWorker {
                                 .write()
                                 .unwrap_or_else(|poisoned| poisoned.into_inner()) = None;
                             *self
+                                .active_breath_guidance
+                                .write()
+                                .unwrap_or_else(|poisoned| poisoned.into_inner()) = None;
+                            *self
                                 .monotonic_bridge
                                 .lock()
                                 .unwrap_or_else(|poisoned| poisoned.into_inner()) = None;
@@ -1183,6 +1285,10 @@ impl SessionWorker {
                             self.active_generation.store(0, Ordering::Release);
                             *self
                                 .effective_radius_profile
+                                .write()
+                                .unwrap_or_else(|poisoned| poisoned.into_inner()) = None;
+                            *self
+                                .active_breath_guidance
                                 .write()
                                 .unwrap_or_else(|poisoned| poisoned.into_inner()) = None;
                             *self
@@ -1465,10 +1571,23 @@ impl SessionWorker {
                 Ordering::Release,
             );
             projection.active_time_ns = self.controller.active_time_ns();
+            projection.active_interval_started_ns = (self.controller.control_state()
+                == crate::experiment_session::ExperimentControlState::Running
+                && self.controller.presentation() == PresentationState::ImmersiveActive)
+                .then(|| self.controller.last_monotonic().map(MonotonicNanos::get))
+                .flatten();
             projection.completion = self.controller.completion();
             projection.recording_result = self.controller.recording_result();
             projection.profile_identity_bound = self.current_identity.is_some();
             projection.audio_identity_bound = self.current_identity.is_some();
+            projection.breath_guidance_identity_bound = self
+                .current_identity
+                .as_ref()
+                .is_some_and(|identity| identity.breath_guidance.is_some());
+            projection.breath_guidance_bias_percent = self
+                .current_identity
+                .as_ref()
+                .map_or(0, |identity| identity.breath_guidance_bias_percent);
             projection.producer_retry_drops =
                 producer_loss_count(&self.producer_retry_drops, self.controller.generation());
         });
@@ -1537,6 +1656,7 @@ pub(crate) struct ExperimentSessionRuntime {
     submitted_frame_sequence: Arc<AtomicU64>,
     submitted_frame_elapsed_ns: Arc<AtomicU64>,
     effective_radius_profile: Arc<RwLock<Option<EffectiveRadiusProfile>>>,
+    active_breath_guidance: Arc<RwLock<Option<ActiveBreathGuidance>>>,
     worker: Mutex<Option<JoinHandle<()>>>,
 }
 
@@ -1591,6 +1711,7 @@ impl ExperimentSessionRuntime {
         let submitted_frame_sequence = Arc::new(AtomicU64::new(0));
         let submitted_frame_elapsed_ns = Arc::new(AtomicU64::new(0));
         let effective_radius_profile = Arc::new(RwLock::new(None));
+        let active_breath_guidance = Arc::new(RwLock::new(None));
         let worker_projection = Arc::clone(&projection);
         let worker_readback = Arc::clone(&readback_cache);
         let worker_generation = Arc::clone(&active_generation);
@@ -1606,6 +1727,7 @@ impl ExperimentSessionRuntime {
         let worker_submitted_frame_sequence = Arc::clone(&submitted_frame_sequence);
         let worker_submitted_frame_elapsed_ns = Arc::clone(&submitted_frame_elapsed_ns);
         let worker_effective_radius_profile = Arc::clone(&effective_radius_profile);
+        let worker_active_breath_guidance = Arc::clone(&active_breath_guidance);
         let runtime_recording_root = recording_root.clone();
         let worker = thread::Builder::new()
             .name("experiment-session-control".to_owned())
@@ -1632,6 +1754,7 @@ impl ExperimentSessionRuntime {
                         worker_submitted_frame_sequence,
                         worker_submitted_frame_elapsed_ns,
                         worker_effective_radius_profile,
+                        worker_active_breath_guidance,
                     ),
                 );
             })
@@ -1656,6 +1779,7 @@ impl ExperimentSessionRuntime {
             submitted_frame_sequence,
             submitted_frame_elapsed_ns,
             effective_radius_profile,
+            active_breath_guidance,
             worker: Mutex::new(Some(worker)),
         })
     }
@@ -1883,6 +2007,32 @@ impl ExperimentSessionRuntime {
 
     fn current_elapsed_realtime_ns(&self) -> Option<u64> {
         current_from_bridge(&self.monotonic_bridge).map(MonotonicNanos::get)
+    }
+
+    fn current_breath_guidance_target(&self) -> Option<BreathGuidanceTarget> {
+        let now_ns = self.current_elapsed_realtime_ns()?;
+        let projection = self.projection.try_read().ok()?;
+        if projection.phase != SessionPhase::Active
+            || projection.control_state
+                != crate::experiment_session::ExperimentControlState::Running
+            || projection.presentation != PresentationState::ImmersiveActive
+        {
+            return None;
+        }
+        let generation = projection.generation;
+        let mut active_time_ns = projection.active_time_ns;
+        if let Some(started_ns) = projection.active_interval_started_ns {
+            active_time_ns = active_time_ns.saturating_add(now_ns.saturating_sub(started_ns));
+        }
+        drop(projection);
+        let guidance = self.active_breath_guidance.try_read().ok()?;
+        let guidance = guidance.as_ref()?;
+        if guidance.generation != generation || guidance.bias_percent == 0 {
+            return None;
+        }
+        guidance
+            .timeline
+            .target_at(active_time_ns / 1_000_000, guidance.bias_percent)
     }
 
     fn note_submitted_frame(&self, generation: u64, frame_sequence: u64) -> bool {
@@ -2220,7 +2370,11 @@ fn load_compiled_experiment_inventory(
             .get(name)
             .and_then(Value::as_object)
             .ok_or_else(|| "experiment-session-runtime-condition-invalid".to_owned())?;
-        require_exact_fields(value, &["completion_threshold_ms", "audio"])
+        let mut condition_fields = vec!["completion_threshold_ms", "audio"];
+        if value.contains_key("breath_guidance") {
+            condition_fields.push("breath_guidance");
+        }
+        require_exact_fields(value, &condition_fields)
             .map_err(|_| "experiment-session-runtime-condition-fields-invalid".to_owned())?;
         let completion_threshold_ms = value
             .get("completion_threshold_ms")
@@ -2230,10 +2384,63 @@ fn load_compiled_experiment_inventory(
             .get("audio")
             .and_then(Value::as_object)
             .ok_or_else(|| "experiment-session-runtime-audio-invalid".to_owned())?;
+        let audio = parse_audio_identity(audio).map_err(str::to_owned)?;
+        let breath_guidance = value
+            .get("breath_guidance")
+            .map(
+                |encoded| -> Result<TrustedBreathGuidanceInventory, String> {
+                    let encoded = encoded.as_object().ok_or_else(|| {
+                        "experiment-session-runtime-breath-guidance-invalid".to_owned()
+                    })?;
+                    require_exact_fields(encoded, &["asset", "default_bias_percent"]).map_err(
+                        |_| "experiment-session-runtime-breath-guidance-fields-invalid".to_owned(),
+                    )?;
+                    let identity = encoded
+                        .get("asset")
+                        .and_then(Value::as_object)
+                        .ok_or_else(|| {
+                            "experiment-session-runtime-breath-guidance-asset-invalid".to_owned()
+                        })
+                        .and_then(|object| {
+                            parse_breath_guidance_identity(object).map_err(str::to_owned)
+                        })?;
+                    if identity.logical_destination != format!("breath-guidance/{name}.json") {
+                        return Err(
+                            "experiment-session-runtime-breath-guidance-destination-invalid"
+                                .to_owned(),
+                        );
+                    }
+                    let default_bias_percent = encoded
+                        .get("default_bias_percent")
+                        .and_then(Value::as_u64)
+                        .filter(|value| *value <= 100)
+                        .map(|value| value as u8)
+                        .ok_or_else(|| {
+                            "experiment-session-runtime-breath-guidance-bias-invalid".to_owned()
+                        })?;
+                    let materialized = trusted_files_root
+                        .join("viscereality-recordings")
+                        .join("breath-guidance")
+                        .join(format!("{name}.json"));
+                    let bytes = fs::read(materialized)
+                        .map_err(|error| format!("breath-guidance-read:{error}"))?;
+                    let timeline = BreathGuidanceTimeline::parse_exact(
+                        &bytes,
+                        identity,
+                        &audio.source_sha256,
+                    )?;
+                    Ok(TrustedBreathGuidanceInventory {
+                        timeline: Arc::new(timeline),
+                        default_bias_percent,
+                    })
+                },
+            )
+            .transpose()?;
         Ok(TrustedConditionInventory {
             condition,
             completion_threshold_ms,
-            audio: parse_audio_identity(audio).map_err(str::to_owned)?,
+            audio,
+            breath_guidance,
         })
     };
     let inventory = TrustedExperimentInventory {
@@ -2516,6 +2723,12 @@ pub(crate) fn current_elapsed_realtime_ns() -> Option<u64> {
         .and_then(|runtime| runtime.current_elapsed_realtime_ns())
 }
 
+pub(crate) fn current_breath_guidance_target() -> Option<BreathGuidanceTarget> {
+    runtime()
+        .ok()
+        .and_then(|runtime| runtime.current_breath_guidance_target())
+}
+
 pub(crate) fn note_current_session_submitted_frame(generation: u64, frame_sequence: u64) -> bool {
     runtime()
         .ok()
@@ -2621,6 +2834,10 @@ pub(crate) fn record_breath_assessment(
     observed_at_micros: u64,
     observed_at_clock: SourceClock,
     phase: BreathPhase,
+    unbiased_phase: BreathPhase,
+    guidance_phase: Option<BreathPhase>,
+    guidance_bias_percent: u8,
+    guidance_active_time_ms: Option<u64>,
     volume01: Option<f32>,
     quality01: f32,
     settings_revision: u64,
@@ -2640,6 +2857,10 @@ pub(crate) fn record_breath_assessment(
         },
         observed_at: MonotonicNanos::new(mapped_observed_at_ns),
         phase,
+        unbiased_phase,
+        guidance_phase,
+        guidance_bias_percent,
+        guidance_active_time_ms,
         volume01,
         quality01,
         settings_revision,
@@ -2730,22 +2951,23 @@ fn parse_mutating_command(
             if !object.contains_key("audio") {
                 return Err(failure("audio-identity-missing"));
             }
-            require_exact_fields(
-                object,
-                &[
-                    "schema",
-                    "operation",
-                    "operation_id",
-                    "expected_generation",
-                    "condition",
-                    "completion_threshold_ms",
-                    "started_at_utc_ns",
-                    "elapsed_realtime_ns",
-                    "non_audio_profile_sha256",
-                    "audio",
-                ],
-            )
-            .map_err(|reason| failure(reason))?;
+            let mut start_fields = vec![
+                "schema",
+                "operation",
+                "operation_id",
+                "expected_generation",
+                "condition",
+                "completion_threshold_ms",
+                "started_at_utc_ns",
+                "elapsed_realtime_ns",
+                "non_audio_profile_sha256",
+                "audio",
+                "breath_guidance_bias_percent",
+            ];
+            if object.contains_key("breath_guidance") {
+                start_fields.push("breath_guidance");
+            }
+            require_exact_fields(object, &start_fields).map_err(|reason| failure(reason))?;
             let condition_value = object
                 .get("condition")
                 .and_then(Value::as_str)
@@ -2778,6 +3000,22 @@ fn parse_mutating_command(
                     .ok_or_else(|| failure("audio-identity-missing"))?,
             )
             .map_err(|reason| failure(reason))?;
+            let breath_guidance = object
+                .get("breath_guidance")
+                .map(|value| {
+                    value
+                        .as_object()
+                        .ok_or("breath-guidance-identity-invalid")
+                        .and_then(parse_breath_guidance_identity)
+                })
+                .transpose()
+                .map_err(|reason| failure(reason))?;
+            let breath_guidance_bias_percent = object
+                .get("breath_guidance_bias_percent")
+                .and_then(Value::as_u64)
+                .filter(|value| *value <= 100)
+                .map(|value| value as u8)
+                .ok_or_else(|| failure("breath-guidance-bias-invalid"))?;
             ParsedOperation::Start {
                 arm: operation_name == "arm",
                 condition,
@@ -2786,6 +3024,8 @@ fn parse_mutating_command(
                 identity: StartIdentity {
                     profile_sha256,
                     audio,
+                    breath_guidance,
+                    breath_guidance_bias_percent,
                 },
             }
         }
@@ -2914,6 +3154,12 @@ fn parse_audio_identity(object: &Map<String, Value>) -> Result<AudioAssetIdentit
         source_bytes,
         media_type,
     })
+}
+
+fn parse_breath_guidance_identity(
+    object: &Map<String, Value>,
+) -> Result<BreathGuidanceAssetIdentity, &'static str> {
+    BreathGuidanceAssetIdentity::parse_encoded(&Value::Object(object.clone()))
 }
 
 fn require_common_fields(object: &Map<String, Value>, extras: &[&str]) -> Result<(), &'static str> {
@@ -3151,6 +3397,7 @@ mod tests {
                         source_bytes: 1024,
                         media_type: "audio/wav".to_owned(),
                     },
+                    breath_guidance: None,
                 },
                 TrustedConditionInventory {
                     condition: ConditionKey::parse("condition-b").unwrap(),
@@ -3161,6 +3408,7 @@ mod tests {
                         source_bytes: 2048,
                         media_type: "audio/wav".to_owned(),
                     },
+                    breath_guidance: None,
                 },
             ],
         }
@@ -3350,6 +3598,57 @@ mod tests {
     }
 
     #[test]
+    fn compiled_inventory_accepts_exact_audio_bound_breath_guidance() {
+        let recording_root = temp_root("compiled-profile-guidance");
+        let files_root = recording_root.parent().unwrap();
+        let guidance_text = json!({
+            "schema": crate::breath_guidance::BREATH_GUIDANCE_SCHEMA,
+            "timebase": crate::breath_guidance::BREATH_GUIDANCE_TIMEBASE,
+            "audio_source_sha256": "22".repeat(32),
+            "segments": [
+                {"start_ms": 0, "end_ms": 4_000, "phase": "inhale"},
+                {"start_ms": 4_000, "end_ms": 8_000, "phase": "exhale"}
+            ]
+        })
+        .to_string();
+        let guidance_identity = json!({
+            "logical_destination": "breath-guidance/condition-a.json",
+            "source_sha256": rusty_quest_broker_authority::packaged_json_sha256(&guidance_text),
+            "source_bytes": guidance_text.len(),
+            "media_type": "application/json"
+        });
+        let mut document: Value = serde_json::from_str(&compiled_profile_document()).unwrap();
+        document["runtime_projection"]["conditions"]["condition-a"]["breath_guidance"] =
+            json!({"asset": guidance_identity, "default_bias_percent": 35});
+        let profile_text = document.to_string();
+        let profile_digest = rusty_quest_broker_authority::packaged_json_sha256(&profile_text);
+        materialize_compiled_profile(files_root, &profile_text);
+        let guidance_root = recording_root.join("breath-guidance");
+        fs::create_dir_all(&guidance_root).unwrap();
+        fs::write(guidance_root.join("condition-a.json"), &guidance_text).unwrap();
+
+        let inventory =
+            load_compiled_experiment_inventory(files_root, compiled_anchors(&profile_digest))
+                .unwrap()
+                .expect("trusted guided inventory");
+        let guidance = inventory.conditions[0]
+            .breath_guidance
+            .as_ref()
+            .expect("condition-a guidance");
+        assert_eq!(guidance.default_bias_percent, 35);
+        assert_eq!(guidance.timeline.audio_source_sha256(), "22".repeat(32));
+        assert_eq!(
+            guidance
+                .timeline
+                .target_at(4_000, 35)
+                .unwrap()
+                .expected_phase_token,
+            "exhale"
+        );
+        fs::remove_dir_all(files_root).unwrap();
+    }
+
+    #[test]
     fn compiled_inventory_rejects_missing_or_invalid_inner_profile_identity() {
         let recording_root = temp_root("compiled-profile-inner-identity");
         let files_root = recording_root.parent().unwrap();
@@ -3479,6 +3778,7 @@ mod tests {
             "started_at_utc_ns":1_725_000_000_000_000_000_u64,
             "elapsed_realtime_ns":1_000_u64,
             "non_audio_profile_sha256":"1111111111111111111111111111111111111111111111111111111111111111",
+            "breath_guidance_bias_percent":0,
             "audio":{
                 "logical_destination":"audio/condition-a.wav",
                 "source_sha256":"2222222222222222222222222222222222222222222222222222222222222222",
@@ -3630,6 +3930,10 @@ mod tests {
                 },
                 observed_at: MonotonicNanos::new(1_100),
                 phase: BreathPhase::Inhale,
+                unbiased_phase: BreathPhase::Inhale,
+                guidance_phase: None,
+                guidance_bias_percent: 0,
+                guidance_active_time_ms: None,
                 volume01: Some(0.5),
                 quality01: 1.0,
                 settings_revision: 1,
@@ -4135,6 +4439,10 @@ mod tests {
                 },
                 observed_at: MonotonicNanos::new(20_002),
                 phase: BreathPhase::Inhale,
+                unbiased_phase: BreathPhase::Inhale,
+                guidance_phase: None,
+                guidance_bias_percent: 0,
+                guidance_active_time_ms: None,
                 volume01: Some(0.5),
                 quality01: 1.0,
                 settings_revision: 1,

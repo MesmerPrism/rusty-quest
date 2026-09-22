@@ -20,12 +20,20 @@ final class ExperimentSessionPanelCoordinator {
         final String operationId;
         final long expectedGeneration;
         final String condition;
+        final int breathGuidanceBiasPercent;
 
         NativeCommand(String operation, String operationId, long expectedGeneration, String condition) {
+            this(operation, operationId, expectedGeneration, condition, 0);
+        }
+
+        NativeCommand(String operation, String operationId, long expectedGeneration,
+                String condition, int breathGuidanceBiasPercent) {
             this.operation = operation;
             this.operationId = operationId;
             this.expectedGeneration = expectedGeneration;
             this.condition = condition == null ? "" : condition;
+            this.breathGuidanceBiasPercent = Math.max(0,
+                Math.min(100, breathGuidanceBiasPercent));
         }
     }
 
@@ -259,6 +267,10 @@ final class ExperimentSessionPanelCoordinator {
     }
 
     synchronized NativeCommand start(String condition) {
+        return start(condition, 0);
+    }
+
+    synchronized NativeCommand start(String condition, int breathGuidanceBiasPercent) {
         if (!CONDITION_ONE.equals(condition) && !CONDITION_TWO.equals(condition)) {
             return null;
         }
@@ -285,10 +297,15 @@ final class ExperimentSessionPanelCoordinator {
             state.kioskRequested,
             "Preparing recording and audio."
         );
-        return new NativeCommand("start", operationId, state.generation, condition);
+        return new NativeCommand("start", operationId, state.generation, condition,
+            breathGuidanceBiasPercent);
     }
 
     synchronized NativeCommand arm(String condition) {
+        return arm(condition, 0);
+    }
+
+    synchronized NativeCommand arm(String condition, int breathGuidanceBiasPercent) {
         if (!CONDITION_ONE.equals(condition) && !CONDITION_TWO.equals(condition)) {
             return null;
         }
@@ -315,7 +332,8 @@ final class ExperimentSessionPanelCoordinator {
             state.kioskRequested,
             "Preparing recording and audio; audio remains silent."
         );
-        return new NativeCommand("arm", operationId, state.generation, condition);
+        return new NativeCommand("arm", operationId, state.generation, condition,
+            breathGuidanceBiasPercent);
     }
 
     synchronized NativeCommand restartToExperimenter(long eventGeneration) {

@@ -43,6 +43,17 @@ update visible labels in place so they do not rebuild the Activity or reset the
 current page's scroll position. Audio failures enter an explicit technical hold;
 they cannot be resumed and must be finalized before re-arming.
 
+A condition may additionally bind one versioned
+`rusty.quest.breath_guidance_timeline.v1` JSON asset to the exact audio SHA-256.
+Its ordered inhale/exhale/hold segments use official active experiment time;
+gaps, pre-roll, pause, menu/developer presentation, and tracking loss never
+invent guidance evidence. Before arming, the experimenter can choose a 0–100%
+bias. Zero is exactly the existing Polar ACC signal classifier. Higher values
+shift directional evidence toward the scheduled phase, while valid tracking,
+confirmation, and dwell gates remain required. The session manifest records
+the exact pattern identity and chosen bias, and breath rows retain both the
+effective phase and the unbiased signal-derived phase.
+
 The reusable particle-contract adapter is independently selectable with
 `quest-native-renderer-particle-adapter-conformance.profile.json`. Its property
 defaults false. When selected, startup emits a `channel=particle-adapter`

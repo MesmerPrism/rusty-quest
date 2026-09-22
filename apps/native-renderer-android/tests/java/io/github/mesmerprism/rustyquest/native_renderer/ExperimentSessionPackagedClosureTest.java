@@ -14,6 +14,7 @@ public final class ExperimentSessionPackagedClosureTest {
 
     public static void main(String[] args) throws Exception {
         validClosureMaterializesExactBytesAndBuildsOnlyAudio();
+        validGuidanceClosureMaterializesAndBindsAudio();
         inactiveClosureDoesNotMaterialize();
         rejectsWrongAssetCardinalityAndIds();
         rejectsProfileHashBytesBomAndUtf8Damage();
@@ -104,6 +105,55 @@ public final class ExperimentSessionPackagedClosureTest {
                 ExperimentSessionPackagedClosure.MATERIALIZED_DIRECTORY)),
                 "inactive closure remains unavailable and does not materialize");
         } finally { deleteTree(root); }
+    }
+
+    private static void validGuidanceClosureMaterializesAndBindsAudio() throws Exception {
+        byte[] guidance = ("{\"schema\":\"rusty.quest.breath_guidance_timeline.v1\","
+            + "\"timebase\":\"official-active-time-ms\",\"audio_source_sha256\":\""
+            + AUDIO_A_SHA + "\",\"segments\":["
+            + "{\"start_ms\":0,\"end_ms\":4000,\"phase\":\"inhale\"},"
+            + "{\"start_ms\":4000,\"end_ms\":8000,\"phase\":\"exhale\"}]}")
+            .getBytes(StandardCharsets.UTF_8);
+        String guidanceIdentity = "{\"asset\":{"
+            + "\"logical_destination\":\"breath-guidance/condition-a.json\","
+            + "\"source_sha256\":\"" + sha(guidance) + "\","
+            + "\"source_bytes\":" + guidance.length + ","
+            + "\"media_type\":\"application/json\"},\"default_bias_percent\":35}";
+        String audioA = audio("session-audio/condition-a.mp3", AUDIO_A_SHA, 101L);
+        String audioB = audio("session-audio/condition-b.mp3", AUDIO_B_SHA, 202L);
+        String base = profile("provider.one", audioA, audioB, false);
+        String outer = outerCondition("condition-a", "Condition 1", audioA);
+        String projected = projectedCondition(audioA);
+        byte[] profile = base
+            .replace(outer, outer.substring(0, outer.length() - 1)
+                + ",\"breath_guidance\":" + guidanceIdentity + "}")
+            .replace("\"condition-a\":" + projected,
+                "\"condition-a\":" + projected.substring(0, projected.length() - 1)
+                    + ",\"breath_guidance\":" + guidanceIdentity + "}")
+            .getBytes(StandardCharsets.UTF_8);
+        String encodedEntries = entries(profile, "", false) + ","
+            + entry("breath-guidance-a", "breath-guidance/condition-a.json",
+                sha(guidance), guidance.length, "application/json");
+        Fixture fixture = fixture(profile, "provider.one", encodedEntries);
+        try {
+            ExperimentSessionPackagedClosure.Result result =
+                ExperimentSessionPackagedClosure.prepare(fixture.lock, destination -> {
+                    if (ExperimentSessionPackagedClosure.PROFILE_DESTINATION.equals(destination)) {
+                        return profile.clone();
+                    }
+                    if ("breath-guidance/condition-a.json".equals(destination)) {
+                        return guidance.clone();
+                    }
+                    return new byte[0];
+                }, fixture.root, fixture.anchors);
+            check(result.guidanceEntries.length == 1
+                    && result.guidanceEntries[0].defaultBiasPercent == 35,
+                "guided condition identity and default bias are exposed");
+            check(java.util.Arrays.equals(guidance, Files.readAllBytes(fixture.root.resolve(
+                ExperimentSessionPackagedClosure.MATERIALIZED_DIRECTORY)
+                .resolve("breath-guidance").resolve("condition-a.json"))),
+                "exact breathing pattern bytes are materialized");
+        } finally { fixture.close(); }
     }
 
     private static void rejectsWrongAssetCardinalityAndIds() throws Exception {

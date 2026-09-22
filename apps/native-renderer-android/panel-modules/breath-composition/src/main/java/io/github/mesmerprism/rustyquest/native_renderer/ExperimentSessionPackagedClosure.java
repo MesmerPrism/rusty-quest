@@ -30,6 +30,9 @@ final class ExperimentSessionPackagedClosure {
         "rusty.viscereality.experiment_session_profile.v1";
     private static final String PROJECTION_SCHEMA =
         "rusty.quest.experiment_session.runtime_projection.v1";
+    private static final String GUIDANCE_SCHEMA =
+        "rusty.quest.breath_guidance_timeline.v1";
+    private static final String GUIDANCE_TIMEBASE = "official-active-time-ms";
 
     interface AssetReader {
         byte[] read(String logicalDestination) throws Exception;
@@ -77,25 +80,54 @@ final class ExperimentSessionPackagedClosure {
         }
     }
 
+    static final class GuidanceEntry {
+        final String conditionId;
+        final String logicalDestination;
+        final String sourceSha256;
+        final long sourceBytes;
+        final String mediaType;
+        final int defaultBiasPercent;
+
+        GuidanceEntry(String conditionId, GuidanceIdentity identity) {
+            this.conditionId = conditionId;
+            this.logicalDestination = identity.asset.logicalDestination;
+            this.sourceSha256 = identity.asset.sourceSha256;
+            this.sourceBytes = identity.asset.sourceBytes;
+            this.mediaType = identity.asset.mediaType;
+            this.defaultBiasPercent = identity.defaultBiasPercent;
+        }
+    }
+
     static final class Result {
         final boolean active;
         final String providerId;
         final String inventorySha256;
         final String nonAudioProfileSha256;
         final AudioEntry[] audioEntries;
+        final GuidanceEntry[] guidanceEntries;
 
         private Result(boolean active, String providerId, String inventorySha256,
                 String nonAudioProfileSha256,
-                AudioEntry[] audioEntries) {
+                AudioEntry[] audioEntries,
+                GuidanceEntry[] guidanceEntries) {
             this.active = active;
             this.providerId = safe(providerId);
             this.inventorySha256 = safe(inventorySha256);
             this.nonAudioProfileSha256 = safe(nonAudioProfileSha256);
             this.audioEntries = audioEntries == null ? new AudioEntry[0] : audioEntries.clone();
+            this.guidanceEntries = guidanceEntries == null
+                ? new GuidanceEntry[0] : guidanceEntries.clone();
         }
 
         static Result inactive() {
-            return new Result(false, "", "", "", new AudioEntry[0]);
+            return new Result(false, "", "", "", new AudioEntry[0], new GuidanceEntry[0]);
+        }
+
+        GuidanceEntry guidanceFor(String conditionId) {
+            for (GuidanceEntry entry : guidanceEntries) {
+                if (entry.conditionId.equals(conditionId)) return entry;
+            }
+            return null;
         }
     }
 
@@ -161,6 +193,51 @@ final class ExperimentSessionPackagedClosure {
         }
     }
 
+    private static final class GuidanceIdentity {
+        final AssetEntry asset;
+        final int defaultBiasPercent;
+
+        GuidanceIdentity(Map<String, Object> object) {
+            requireExactFields(object, "asset", "default_bias_percent");
+            asset = new AssetEntry(identityAsAsset(object.get("asset")));
+            long bias = nonNegativeLong(object, "default_bias_percent");
+            if (bias > 100L || !"application/json".equals(asset.mediaType)) {
+                fail("experiment-session-profile-breath-guidance-invalid");
+            }
+            defaultBiasPercent = (int) bias;
+        }
+
+        void requireSame(GuidanceIdentity other, String reason) {
+            if (other == null || defaultBiasPercent != other.defaultBiasPercent
+                    || !asset.logicalDestination.equals(other.asset.logicalDestination)
+                    || !asset.sourceSha256.equals(other.asset.sourceSha256)
+                    || asset.sourceBytes != other.asset.sourceBytes
+                    || !asset.mediaType.equals(other.asset.mediaType)) {
+                fail(reason);
+            }
+        }
+
+        void requireSame(AssetEntry other, String reason) {
+            if (other == null
+                    || !asset.logicalDestination.equals(other.logicalDestination)
+                    || !asset.sourceSha256.equals(other.sourceSha256)
+                    || asset.sourceBytes != other.sourceBytes
+                    || !asset.mediaType.equals(other.mediaType)) {
+                fail(reason);
+            }
+        }
+    }
+
+    private static final class ConditionIdentity {
+        final AudioIdentity audio;
+        final GuidanceIdentity guidance;
+
+        ConditionIdentity(AudioIdentity audio, GuidanceIdentity guidance) {
+            this.audio = audio;
+            this.guidance = guidance;
+        }
+    }
+
     private ExperimentSessionPackagedClosure() {}
 
     static Result prepare(byte[] featureLockBytes, AssetReader assets, Path filesRoot,
@@ -185,8 +262,8 @@ final class ExperimentSessionPackagedClosure {
             }
             return Result.inactive();
         }
-        if (!"linked-provider".equals(mode) || assetCount != 3L
-                || encodedAssets.size() != 3) {
+        if (!"linked-provider".equals(mode) || assetCount < 3L || assetCount > 5L
+                || encodedAssets.size() != (int) assetCount) {
             fail("experiment-session-closure-cardinality-invalid");
         }
         anchors.requireComplete();
@@ -206,8 +283,12 @@ final class ExperimentSessionPackagedClosure {
                 fail("experiment-session-closure-asset-id-duplicate");
             }
         }
-        if (!entries.keySet().equals(new java.util.LinkedHashSet<String>(Arrays.asList(
-                "condition-audio-a", "condition-audio-b", PROFILE_ASSET_ID)))) {
+        java.util.LinkedHashSet<String> allowedAssetIds = new java.util.LinkedHashSet<String>(
+            Arrays.asList("condition-audio-a", "condition-audio-b", PROFILE_ASSET_ID,
+                "breath-guidance-a", "breath-guidance-b"));
+        if (!entries.keySet().containsAll(Arrays.asList(
+                "condition-audio-a", "condition-audio-b", PROFILE_ASSET_ID))
+                || !allowedAssetIds.containsAll(entries.keySet())) {
             fail("experiment-session-closure-asset-id-invalid");
         }
         AssetEntry profileEntry = entries.get(PROFILE_ASSET_ID);
@@ -232,7 +313,7 @@ final class ExperimentSessionPackagedClosure {
             fail("experiment-session-outer-schema-invalid");
         }
 
-        Map<String, AudioIdentity> outerAudio = parseOuterConditions(profile);
+        Map<String, ConditionIdentity> outerConditions = parseOuterConditions(profile);
         String nonAudioProfileSha256 = string(profile, "non_audio_profile_sha256");
         if (!sha256(nonAudioProfileSha256)) {
             fail("experiment-session-non-audio-profile-sha256-invalid");
@@ -255,35 +336,57 @@ final class ExperimentSessionPackagedClosure {
 
         AssetEntry packagedA = entries.get("condition-audio-a");
         AssetEntry packagedB = entries.get("condition-audio-b");
-        validateProjectedCondition("condition-a", projectedConditions, outerAudio, packagedA);
-        validateProjectedCondition("condition-b", projectedConditions, outerAudio, packagedB);
+        GuidanceIdentity guidanceA = validateProjectedCondition(
+            "condition-a", projectedConditions, outerConditions, packagedA,
+            entries.get("breath-guidance-a"));
+        GuidanceIdentity guidanceB = validateProjectedCondition(
+            "condition-b", projectedConditions, outerConditions, packagedB,
+            entries.get("breath-guidance-b"));
         if (packagedA.sourceSha256.equals(packagedB.sourceSha256)) {
             fail("experiment-session-audio-identities-not-distinct");
         }
 
         materialize(filesRoot, profileBytes);
+        ArrayList<GuidanceEntry> guidanceEntries = new ArrayList<GuidanceEntry>();
+        if (guidanceA != null) {
+            byte[] bytes = requireGuidanceBytes(
+                assets, guidanceA, outerConditions.get("condition-a").audio.sourceSha256);
+            materializeGuidance(filesRoot, "condition-a", bytes);
+            guidanceEntries.add(new GuidanceEntry("condition-a", guidanceA));
+        }
+        if (guidanceB != null) {
+            byte[] bytes = requireGuidanceBytes(
+                assets, guidanceB, outerConditions.get("condition-b").audio.sourceSha256);
+            materializeGuidance(filesRoot, "condition-b", bytes);
+            guidanceEntries.add(new GuidanceEntry("condition-b", guidanceB));
+        }
         return new Result(true, providerId, inventorySha256, nonAudioProfileSha256,
             new AudioEntry[] {
             new AudioEntry("condition-a", packagedA),
             new AudioEntry("condition-b", packagedB)
-        });
+        }, guidanceEntries.toArray(new GuidanceEntry[guidanceEntries.size()]));
     }
 
-    private static Map<String, AudioIdentity> parseOuterConditions(Map<String, Object> profile) {
+    private static Map<String, ConditionIdentity> parseOuterConditions(Map<String, Object> profile) {
         List<Object> values = array(profile.get("conditions"), "outer conditions");
         if (values.size() != 2) fail("experiment-session-outer-conditions-invalid");
-        LinkedHashMap<String, AudioIdentity> result = new LinkedHashMap<String, AudioIdentity>();
+        LinkedHashMap<String, ConditionIdentity> result =
+            new LinkedHashMap<String, ConditionIdentity>();
         for (Object value : values) {
             Map<String, Object> condition = object(value, "outer condition");
-            requireExactFields(condition, "condition_id", "ui_label",
-                "completion_threshold_ms", "audio");
+            requireFieldsWithOptional(condition,
+                new String[] {"condition_id", "ui_label", "completion_threshold_ms", "audio"},
+                "breath_guidance");
             String conditionId = string(condition, "condition_id");
             String expectedLabel = "condition-a".equals(conditionId) ? "Condition 1"
                 : "condition-b".equals(conditionId) ? "Condition 2" : "";
+            AudioIdentity audio = new AudioIdentity(object(condition.get("audio"), "outer audio"));
+            GuidanceIdentity guidance = condition.containsKey("breath_guidance")
+                ? new GuidanceIdentity(object(condition.get("breath_guidance"),
+                    "outer breath guidance")) : null;
             if (!expectedLabel.equals(string(condition, "ui_label"))
                     || exactLong(condition, "completion_threshold_ms") != 30_000L
-                    || result.put(conditionId,
-                        new AudioIdentity(object(condition.get("audio"), "outer audio"))) != null) {
+                    || result.put(conditionId, new ConditionIdentity(audio, guidance)) != null) {
                 fail("experiment-session-outer-condition-invalid");
             }
         }
@@ -294,20 +397,44 @@ final class ExperimentSessionPackagedClosure {
         return result;
     }
 
-    private static void validateProjectedCondition(String conditionId,
+    private static GuidanceIdentity validateProjectedCondition(String conditionId,
             Map<String, Object> projectedConditions,
-            Map<String, AudioIdentity> outerAudio, AssetEntry packaged) {
+            Map<String, ConditionIdentity> outerConditions, AssetEntry packagedAudio,
+            AssetEntry packagedGuidance) {
         Map<String, Object> condition = object(projectedConditions.get(conditionId),
             "runtime condition");
-        requireExactFields(condition, "completion_threshold_ms", "audio");
+        requireFieldsWithOptional(condition,
+            new String[] {"completion_threshold_ms", "audio"}, "breath_guidance");
         if (exactLong(condition, "completion_threshold_ms") != 30_000L) {
             fail("experiment-session-runtime-threshold-invalid");
         }
+        ConditionIdentity outer = outerConditions.get(conditionId);
         AudioIdentity projected = new AudioIdentity(object(condition.get("audio"),
             "runtime audio"));
-        projected.requireSame(outerAudio.get(conditionId),
+        projected.requireSame(outer.audio,
             "experiment-session-outer-runtime-audio-drift");
-        projected.requireSame(packaged, "experiment-session-runtime-closure-audio-drift");
+        projected.requireSame(packagedAudio, "experiment-session-runtime-closure-audio-drift");
+        GuidanceIdentity guidance = condition.containsKey("breath_guidance")
+            ? new GuidanceIdentity(object(condition.get("breath_guidance"),
+                "runtime breath guidance")) : null;
+        if ((guidance == null) != (outer.guidance == null)) {
+            fail("experiment-session-outer-runtime-breath-guidance-drift");
+        }
+        if (guidance == null) {
+            if (packagedGuidance != null) {
+                fail("experiment-session-unused-breath-guidance-asset");
+            }
+            return null;
+        }
+        guidance.requireSame(outer.guidance,
+            "experiment-session-outer-runtime-breath-guidance-drift");
+        guidance.requireSame(packagedGuidance,
+            "experiment-session-runtime-closure-breath-guidance-drift");
+        String expectedDestination = "breath-guidance/" + conditionId + ".json";
+        if (!expectedDestination.equals(guidance.asset.logicalDestination)) {
+            fail("experiment-session-breath-guidance-destination-invalid");
+        }
+        return guidance;
     }
 
     private static void validateRadiusProfile(Map<String, Object> radius) {
@@ -336,6 +463,44 @@ final class ExperimentSessionPackagedClosure {
         requireExactFields(endpoints, "at_radius_min", "at_radius_max");
         finite(endpoints, "at_radius_min");
         finite(endpoints, "at_radius_max");
+    }
+
+    private static byte[] requireGuidanceBytes(AssetReader assets,
+            GuidanceIdentity identity, String expectedAudioSha256) throws Exception {
+        byte[] bytes = assets.read(identity.asset.logicalDestination);
+        if (bytes == null || bytes.length != identity.asset.sourceBytes
+                || !identity.asset.sourceSha256.equals(digest(bytes))) {
+            fail("experiment-session-breath-guidance-bytes-mismatch");
+        }
+        Map<String, Object> document = object(parse(strictUtf8(bytes, "breath-guidance")),
+            "breath-guidance");
+        requireExactFields(document, "schema", "timebase", "audio_source_sha256", "segments");
+        if (!GUIDANCE_SCHEMA.equals(string(document, "schema"))
+                || !GUIDANCE_TIMEBASE.equals(string(document, "timebase"))
+                || !expectedAudioSha256.equals(string(document, "audio_source_sha256"))) {
+            fail("experiment-session-breath-guidance-document-invalid");
+        }
+        List<Object> segments = array(document.get("segments"), "breath guidance segments");
+        if (segments.isEmpty() || segments.size() > 4096) {
+            fail("experiment-session-breath-guidance-segments-invalid");
+        }
+        long priorEnd = 0L;
+        boolean first = true;
+        for (Object value : segments) {
+            Map<String, Object> segment = object(value, "breath guidance segment");
+            requireExactFields(segment, "start_ms", "end_ms", "phase");
+            long start = nonNegativeLong(segment, "start_ms");
+            long end = positiveLong(segment, "end_ms");
+            String phase = string(segment, "phase");
+            if (end <= start || end > 14_400_000L || (!first && start < priorEnd)
+                    || !("inhale".equals(phase) || "exhale".equals(phase)
+                        || "hold".equals(phase))) {
+                fail("experiment-session-breath-guidance-segment-invalid");
+            }
+            first = false;
+            priorEnd = end;
+        }
+        return bytes;
     }
 
     private static void materialize(Path filesRoot, byte[] profileBytes) throws IOException {
@@ -368,10 +533,49 @@ final class ExperimentSessionPackagedClosure {
         requireExistingExact(target, profileBytes);
     }
 
-    private static void requireExistingExact(Path target, byte[] expected) throws IOException {
-        if (!Arrays.equals(expected, Files.readAllBytes(target))) {
-            fail("experiment-session-materialized-profile-drift");
+    private static void materializeGuidance(Path filesRoot, String conditionId, byte[] bytes)
+            throws IOException {
+        Path directory = filesRoot.resolve(MATERIALIZED_DIRECTORY).resolve("breath-guidance");
+        Files.createDirectories(directory);
+        materializeExact(directory.resolve(conditionId + ".json"), bytes,
+            "experiment-session-materialized-breath-guidance-drift");
+    }
+
+    private static void materializeExact(Path target, byte[] bytes, String driftReason)
+            throws IOException {
+        if (Files.exists(target)) {
+            requireExistingExact(target, bytes, driftReason);
+            return;
         }
+        boolean created = false;
+        try {
+            try (FileChannel channel = FileChannel.open(target,
+                    StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE)) {
+                created = true;
+                ByteBuffer source = ByteBuffer.wrap(bytes);
+                while (source.hasRemaining()) channel.write(source);
+                channel.force(true);
+            }
+        } catch (FileAlreadyExistsException race) {
+            requireExistingExact(target, bytes, driftReason);
+            return;
+        } catch (IOException failure) {
+            if (created) {
+                try { Files.deleteIfExists(target); }
+                catch (IOException cleanup) { failure.addSuppressed(cleanup); }
+            }
+            throw failure;
+        }
+        requireExistingExact(target, bytes, driftReason);
+    }
+
+    private static void requireExistingExact(Path target, byte[] expected) throws IOException {
+        requireExistingExact(target, expected, "experiment-session-materialized-profile-drift");
+    }
+
+    private static void requireExistingExact(Path target, byte[] expected, String reason)
+            throws IOException {
+        if (!Arrays.equals(expected, Files.readAllBytes(target))) fail(reason);
     }
 
     private static String strictUtf8(byte[] bytes, String label) {
@@ -456,6 +660,28 @@ final class ExperimentSessionPackagedClosure {
         java.util.LinkedHashSet<String> expected =
             new java.util.LinkedHashSet<String>(Arrays.asList(fields));
         if (!object.keySet().equals(expected)) fail("json-fields-invalid");
+    }
+
+    private static void requireFieldsWithOptional(Map<String, Object> object,
+            String[] required, String optional) {
+        java.util.LinkedHashSet<String> expected =
+            new java.util.LinkedHashSet<String>(Arrays.asList(required));
+        if (object.containsKey(optional)) expected.add(optional);
+        if (!object.keySet().equals(expected)) fail("json-fields-invalid");
+    }
+
+    private static Map<String, Object> identityAsAsset(Object value) {
+        Map<String, Object> identity = object(value, "breath guidance asset");
+        requireExactFields(identity, "logical_destination", "source_sha256",
+            "source_bytes", "media_type");
+        LinkedHashMap<String, Object> asset = new LinkedHashMap<String, Object>();
+        asset.put("asset_id", "breath-guidance-identity");
+        asset.put("staged_object", "breath-guidance-identity");
+        asset.put("logical_destination", identity.get("logical_destination"));
+        asset.put("source_sha256", identity.get("source_sha256"));
+        asset.put("source_bytes", identity.get("source_bytes"));
+        asset.put("media_type", identity.get("media_type"));
+        return asset;
     }
 
     private static boolean token(String value) {

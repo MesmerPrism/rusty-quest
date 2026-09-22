@@ -5,6 +5,7 @@
 
 use serde_json::{json, Value};
 
+use crate::breath_guidance::BreathGuidanceAssetIdentity;
 use crate::session_recording_clock::{
     ClockAnchor, MonotonicNanos, SessionTimestampKey, SourceTimestamp,
 };
@@ -220,6 +221,8 @@ pub(crate) struct ExperimentIdentity {
     pub(crate) non_audio_profile_sha256: String,
     pub(crate) condition_id: String,
     pub(crate) audio: AudioAssetIdentity,
+    pub(crate) breath_guidance: Option<BreathGuidanceAssetIdentity>,
+    pub(crate) breath_guidance_bias_percent: u8,
     pub(crate) effective_radius_profile: EffectiveRadiusProfile,
 }
 
@@ -259,12 +262,22 @@ impl ExperimentIdentity {
         {
             return Err("experiment-audio-identity-invalid");
         }
+        match self.breath_guidance.as_ref() {
+            Some(identity) => identity.validate()?,
+            None if self.breath_guidance_bias_percent != 0 => {
+                return Err("experiment-breath-guidance-bias-without-asset");
+            }
+            None => {}
+        }
+        if self.breath_guidance_bias_percent > 100 {
+            return Err("experiment-breath-guidance-bias-invalid");
+        }
         self.effective_radius_profile.validate()?;
         Ok(())
     }
 
     pub(crate) fn encoded_value(&self) -> Value {
-        json!({
+        let mut value = json!({
             "provider_id": self.provider_id,
             "provider_manifest_sha256": self.provider_manifest_sha256,
             "provider_inventory_sha256": self.provider_inventory_sha256,
@@ -277,7 +290,12 @@ impl ExperimentIdentity {
                 "media_type": self.audio.media_type,
             },
             "effective_radius_profile": self.effective_radius_profile.encoded_value(),
-        })
+        });
+        if let Some(identity) = self.breath_guidance.as_ref() {
+            value["breath_guidance"] = identity.encoded_value();
+            value["breath_guidance_bias_percent"] = json!(self.breath_guidance_bias_percent);
+        }
+        value
     }
 
     pub(crate) fn parse_encoded(
@@ -285,7 +303,13 @@ impl ExperimentIdentity {
         condition: &ConditionKey,
     ) -> Result<Self, &'static str> {
         let object = value.as_object().ok_or("experiment-identity-not-object")?;
-        if object.len() != 7 {
+        let has_guidance = object.contains_key("breath_guidance")
+            || object.contains_key("breath_guidance_bias_percent");
+        if object.len() != if has_guidance { 9 } else { 7 }
+            || has_guidance
+                && (!object.contains_key("breath_guidance")
+                    || !object.contains_key("breath_guidance_bias_percent"))
+        {
             return Err("experiment-identity-fields-invalid");
         }
         let string = |name| {
@@ -322,6 +346,21 @@ impl ExperimentIdentity {
                     .ok_or("experiment-audio-identity-invalid")?,
                 media_type: audio_string("media_type")?,
             },
+            breath_guidance: object
+                .get("breath_guidance")
+                .map(BreathGuidanceAssetIdentity::parse_encoded)
+                .transpose()?,
+            breath_guidance_bias_percent: object
+                .get("breath_guidance_bias_percent")
+                .map(|value| {
+                    value
+                        .as_u64()
+                        .filter(|value| *value <= 100)
+                        .map(|value| value as u8)
+                        .ok_or("experiment-breath-guidance-bias-invalid")
+                })
+                .transpose()?
+                .unwrap_or(0),
             effective_radius_profile: EffectiveRadiusProfile::parse_encoded(
                 object
                     .get("effective_radius_profile")
@@ -475,6 +514,10 @@ pub(crate) struct BreathObservation {
     pub(crate) observed_source: SourceTimestamp,
     pub(crate) observed_at: MonotonicNanos,
     pub(crate) phase: BreathPhase,
+    pub(crate) unbiased_phase: BreathPhase,
+    pub(crate) guidance_phase: Option<BreathPhase>,
+    pub(crate) guidance_bias_percent: u8,
+    pub(crate) guidance_active_time_ms: Option<u64>,
     pub(crate) volume01: Option<f32>,
     pub(crate) quality01: f32,
     pub(crate) settings_revision: u64,
@@ -544,7 +587,16 @@ impl SessionRecord {
                 .iter()
                 .all(|sample| sample.xyz_mg.iter().all(|axis| axis.is_finite())),
             Self::PolarHeartRate(value) => optional_finite(value.rr_interval_ms),
-            Self::Breath(value) => optional_finite(value.volume01) && value.quality01.is_finite(),
+            Self::Breath(value) => {
+                optional_finite(value.volume01)
+                    && value.quality01.is_finite()
+                    && value.guidance_bias_percent <= 100
+                    && match (value.guidance_phase, value.guidance_active_time_ms) {
+                        (None, None) => value.guidance_bias_percent == 0,
+                        (Some(_), Some(_)) => value.guidance_bias_percent > 0,
+                        _ => false,
+                    }
+            }
             Self::EffectiveRadiusSnapshot(value) => {
                 value.configured_radius_min_m.is_finite()
                     && value.configured_radius_max_m.is_finite()
@@ -670,6 +722,14 @@ impl SessionRecord {
                 row["observed_source_clock"] = json!(value.observed_source.clock.as_str());
                 row["observed_source_time_ns"] = json!(value.observed_source.value_ns);
                 row["phase"] = json!(value.phase.as_str());
+                row["unbiased_phase"] = json!(value.unbiased_phase.as_str());
+                row["guidance_bias_percent"] = json!(value.guidance_bias_percent);
+                if let Some(guidance_phase) = value.guidance_phase {
+                    row["guidance_phase"] = json!(guidance_phase.as_str());
+                }
+                if let Some(active_time_ms) = value.guidance_active_time_ms {
+                    row["guidance_active_time_ms"] = json!(active_time_ms);
+                }
                 if let Some(volume01) = value.volume01 {
                     row["volume01"] = json!(volume01);
                 }
@@ -754,6 +814,8 @@ mod tests {
                     source_bytes: 1024,
                     media_type: "audio/wav".to_owned(),
                 },
+                breath_guidance: None,
+                breath_guidance_bias_percent: 0,
                 effective_radius_profile: EffectiveRadiusProfile {
                     configured_radius_min_m: 0.8,
                     configured_radius_max_m: 1.6,

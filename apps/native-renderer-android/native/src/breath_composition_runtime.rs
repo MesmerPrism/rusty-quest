@@ -791,13 +791,15 @@ impl BreathCompositionRuntime {
         self.last_polar_sequence_id = Some(measurement.sequence_id);
         self.last_polar_observed_at = Some(at);
         self.polar_missing_reported = false;
+        let guidance = crate::experiment_session_runtime::current_breath_guidance_target();
         let Some(adapter) = self.polar_adapter.as_mut() else {
             return;
         };
-        let result = adapter.observe(
+        let result = adapter.observe_guided(
             at,
             generation,
             PolarAccInput::Frame(TimedPolarAccFrame::from_pmd_measurement(measurement)),
+            guidance,
         );
         self.submit_calibration(BreathCompositionSource::PolarAcc, &result.calibration);
         if let Some(assessment) = result.assessment {
@@ -813,6 +815,8 @@ impl BreathCompositionRuntime {
                 BreathCompositionSource::PolarAcc,
                 assessment,
                 self.settings_revision,
+                result.unbiased_phase.map(|observation| observation.phase),
+                result.guidance,
             );
         }
         self.refresh_polar_state_diagnostics();
@@ -1001,7 +1005,7 @@ pub(crate) fn submit_assessment(
     let settings_revision = state.settings_revision;
     drop(state);
     crate::breath_capture::record_assessment(source, assessment, snapshot);
-    record_session_assessment(source, assessment, settings_revision);
+    record_session_assessment(source, assessment, settings_revision, None, None);
     snapshot
 }
 
@@ -1009,6 +1013,8 @@ fn record_session_assessment(
     source: BreathCompositionSource,
     assessment: BreathAssessmentObservation,
     settings_revision: u64,
+    unbiased_phase: Option<rusty_quest_breath_contract::assessment::CommonBreathPhase>,
+    guidance: Option<crate::breath_guidance::BreathGuidanceTarget>,
 ) {
     use rusty_quest_breath_contract::assessment::CommonBreathPhase;
 
@@ -1020,6 +1026,22 @@ fn record_session_assessment(
             crate::session_recording_contract::BreathPhase::Unknown
         }
     };
+    let unbiased_phase = match unbiased_phase.unwrap_or(assessment.phase) {
+        CommonBreathPhase::Inhale => crate::session_recording_contract::BreathPhase::Inhale,
+        CommonBreathPhase::Exhale => crate::session_recording_contract::BreathPhase::Exhale,
+        CommonBreathPhase::Hold => crate::session_recording_contract::BreathPhase::Hold,
+        CommonBreathPhase::Unknown | CommonBreathPhase::BadTracking => {
+            crate::session_recording_contract::BreathPhase::Unknown
+        }
+    };
+    let guidance_phase = guidance.map(|target| match target.expected_phase {
+        CommonBreathPhase::Inhale => crate::session_recording_contract::BreathPhase::Inhale,
+        CommonBreathPhase::Exhale => crate::session_recording_contract::BreathPhase::Exhale,
+        CommonBreathPhase::Hold => crate::session_recording_contract::BreathPhase::Hold,
+        CommonBreathPhase::Unknown | CommonBreathPhase::BadTracking => {
+            crate::session_recording_contract::BreathPhase::Unknown
+        }
+    });
     let (sampled_at_clock, observed_at_clock) = session_assessment_clocks(source);
     let _ = crate::experiment_session_runtime::record_breath_assessment(
         assessment.sequence_id,
@@ -1028,6 +1050,10 @@ fn record_session_assessment(
         assessment.observed_at.get(),
         observed_at_clock,
         phase,
+        unbiased_phase,
+        guidance_phase,
+        guidance.map_or(0, |target| target.bias_percent),
+        guidance.map(|target| target.official_active_time_ms),
         assessment.volume01.map(|value| value as f32),
         assessment.quality01 as f32,
         settings_revision,

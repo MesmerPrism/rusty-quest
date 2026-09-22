@@ -983,6 +983,23 @@ public final class ControlPanelActivity extends $selectedPanelEntrySimpleName {
                     .put("source_sha256", selected.sourceSha256)
                     .put("source_bytes", selected.sourceBytes)
                     .put("media_type", selected.mediaType));
+                int requestedBias = command.optInt("breath_guidance_bias_percent", 0);
+                if (requestedBias < 0 || requestedBias > 100) {
+                    throw new SecurityException("breath-guidance-bias-invalid");
+                }
+                ExperimentSessionPackagedClosure.GuidanceEntry guidance =
+                    closure.guidanceFor(condition);
+                if (guidance == null) {
+                    if (requestedBias != 0) {
+                        throw new SecurityException("breath-guidance-identity-not-packaged");
+                    }
+                } else {
+                    command.put("breath_guidance", new org.json.JSONObject()
+                        .put("logical_destination", guidance.logicalDestination)
+                        .put("source_sha256", guidance.sourceSha256)
+                        .put("source_bytes", guidance.sourceBytes)
+                        .put("media_type", guidance.mediaType));
+                }
             }
             return nativeApplyBreathCompositionCommand(command.toString());
         } catch (RuntimeException error) {
@@ -1015,6 +1032,19 @@ public final class ControlPanelActivity extends $selectedPanelEntrySimpleName {
         ConditionAudioContract.TrackReadiness readiness = runtime.trackReadiness(conditionId);
         return readiness.state == ConditionAudioContract.TrackState.READY
             ? "track-ready" : readiness.reason;
+    }
+
+    static String conditionBreathGuidanceReadiness(String conditionId) {
+        ExperimentSessionPackagedClosure.Result closure = experimentSessionClosure;
+        if (closure == null || !closure.active) return "pattern-inventory-unavailable";
+        return closure.guidanceFor(conditionId) == null ? "no-pattern" : "pattern-ready";
+    }
+
+    static int conditionBreathGuidanceDefaultBias(String conditionId) {
+        ExperimentSessionPackagedClosure.Result closure = experimentSessionClosure;
+        if (closure == null || !closure.active) return 0;
+        ExperimentSessionPackagedClosure.GuidanceEntry entry = closure.guidanceFor(conditionId);
+        return entry == null ? 0 : entry.defaultBiasPercent;
     }
 
     static boolean startConditionAudio(

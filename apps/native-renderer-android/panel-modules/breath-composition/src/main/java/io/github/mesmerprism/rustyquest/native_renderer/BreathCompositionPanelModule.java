@@ -310,6 +310,10 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
     private TextView experimenterFooterReadback;
     private TextView experimenterAudioOneReadback;
     private TextView experimenterAudioTwoReadback;
+    private TextView experimenterGuidanceOneReadback;
+    private TextView experimenterGuidanceTwoReadback;
+    private SliderControl experimenterGuidanceBias;
+    private int experimenterGuidanceBiasPercent = -1;
     private Button experimenterResume;
     private Button experimenterNext;
     private Button experimenterDeveloper;
@@ -373,6 +377,8 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
                 savedInstanceState.getIntArray("experimenter-page-scroll"));
             breathCompositionPanelTopic = savedInstanceState.getString("panel-topic", "home");
             polarPageScrollY = savedInstanceState.getInt("polar-page-scroll", 0);
+            experimenterGuidanceBiasPercent = savedInstanceState.getInt(
+                "experimenter-guidance-bias-percent", -1);
             Bundle savedDeveloperScroll = savedInstanceState.getBundle("developer-page-scroll");
             if (savedDeveloperScroll != null) {
                 for (String key : savedDeveloperScroll.keySet()) {
@@ -405,6 +411,8 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
         outState.putIntArray("experimenter-page-scroll", experimenterNavigation.savedScroll());
         outState.putString("panel-topic", breathCompositionPanelTopic);
         outState.putInt("polar-page-scroll", polarPageScrollY);
+        outState.putInt("experimenter-guidance-bias-percent",
+            Math.max(-1, Math.min(100, experimenterGuidanceBiasPercent)));
         Bundle savedDeveloperScroll = new Bundle();
         for (java.util.Map.Entry<String, Integer> entry : developerPageScroll.entrySet()) {
             savedDeveloperScroll.putInt(entry.getKey(), entry.getValue());
@@ -941,6 +949,41 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
         ));
         experimenterAudioOneReadback = experimenterIndicator(start, "Condition 1 audio: checking…", ExperimentSessionPanelViewPolicy.Tone.WAITING);
         experimenterAudioTwoReadback = experimenterIndicator(start, "Condition 2 audio: checking…", ExperimentSessionPanelViewPolicy.Tone.WAITING);
+        experimenterGuidanceOneReadback = experimenterIndicator(start,
+            "Condition 1 breathing pattern: checking…",
+            ExperimentSessionPanelViewPolicy.Tone.WAITING);
+        experimenterGuidanceTwoReadback = experimenterIndicator(start,
+            "Condition 2 breathing pattern: checking…",
+            ExperimentSessionPanelViewPolicy.Tone.WAITING);
+        String patternOneReadiness = ControlPanelActivity.conditionBreathGuidanceReadiness(
+            ExperimentSessionPanelCoordinator.CONDITION_ONE);
+        String patternTwoReadiness = ControlPanelActivity.conditionBreathGuidanceReadiness(
+            ExperimentSessionPanelCoordinator.CONDITION_TWO);
+        boolean patternOne = "pattern-ready".equals(patternOneReadiness);
+        boolean patternTwo = "pattern-ready".equals(patternTwoReadiness);
+        if (experimenterGuidanceBiasPercent < 0) {
+            int firstDefault = ControlPanelActivity.conditionBreathGuidanceDefaultBias(
+                ExperimentSessionPanelCoordinator.CONDITION_ONE);
+            int secondDefault = ControlPanelActivity.conditionBreathGuidanceDefaultBias(
+                ExperimentSessionPanelCoordinator.CONDITION_TWO);
+            experimenterGuidanceBiasPercent = patternOne ? firstDefault
+                : patternTwo ? secondDefault
+                : "no-pattern".equals(patternOneReadiness)
+                    && "no-pattern".equals(patternTwoReadiness) ? 0 : -1;
+        }
+        experimenterGuidanceBias = new SliderControl(
+            "Breathing-pattern bias", 0.0, 100.0,
+            Math.max(0, experimenterGuidanceBiasPercent), 100, "%", true,
+            new Runnable() {
+                @Override public void run() {
+                    experimenterGuidanceBiasPercent = experimenterGuidanceBias.intValue();
+                }
+            });
+        experimenterGuidanceBias.setInteractive(patternOne || patternTwo);
+        start.addView(experimenterGuidanceBias.view);
+        start.addView(text(
+            "0% is fully signal-driven feedback. Higher values increasingly favor the timestamped guided-breathing phase; 100% is guidance-dominant but still requires valid Polar tracking. The selected value is locked when the condition is armed.",
+            13, PANEL_MUTED));
         experimenterStartOne = button("Arm Condition 1");
         experimenterStartTwo = button("Arm Condition 2");
         experimenterStartOne.setMinHeight(dp(52));
@@ -2425,7 +2468,10 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
             return;
         }
         ExperimentSessionPanelCoordinator.NativeCommand command =
-            EXPERIMENT_SESSION_PANEL.arm(condition);
+            EXPERIMENT_SESSION_PANEL.arm(condition,
+                "pattern-ready".equals(
+                    ControlPanelActivity.conditionBreathGuidanceReadiness(condition))
+                    ? Math.max(0, Math.min(100, experimenterGuidanceBiasPercent)) : 0);
         if (command == null) {
             updateStatus("Start rejected: a session or operation is already active.");
             rebuildContentViewForCurrentMode();
@@ -2569,6 +2615,9 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
         experimenterFooterReadback = null;
         experimenterAudioOneReadback = null;
         experimenterAudioTwoReadback = null;
+        experimenterGuidanceOneReadback = null;
+        experimenterGuidanceTwoReadback = null;
+        experimenterGuidanceBias = null;
         experimenterResume = null;
         experimenterNext = null;
         experimenterDeveloper = null;
@@ -2621,6 +2670,33 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
         }
         updateExperimenterAudioReadback(experimenterAudioOneReadback, "Condition 1", audioOne);
         updateExperimenterAudioReadback(experimenterAudioTwoReadback, "Condition 2", audioTwo);
+        String guidanceOne = experimenterStartOne == null ? "" :
+            ControlPanelActivity.conditionBreathGuidanceReadiness(
+                ExperimentSessionPanelCoordinator.CONDITION_ONE);
+        String guidanceTwo = experimenterStartTwo == null ? "" :
+            ControlPanelActivity.conditionBreathGuidanceReadiness(
+                ExperimentSessionPanelCoordinator.CONDITION_TWO);
+        updateExperimenterGuidanceReadback(
+            experimenterGuidanceOneReadback, "Condition 1", guidanceOne);
+        updateExperimenterGuidanceReadback(
+            experimenterGuidanceTwoReadback, "Condition 2", guidanceTwo);
+        if (experimenterGuidanceBias != null) {
+            boolean oneReady = "pattern-ready".equals(guidanceOne);
+            boolean twoReady = "pattern-ready".equals(guidanceTwo);
+            if (experimenterGuidanceBiasPercent < 0 && (oneReady || twoReady)) {
+                experimenterGuidanceBiasPercent = ControlPanelActivity
+                    .conditionBreathGuidanceDefaultBias(oneReady
+                        ? ExperimentSessionPanelCoordinator.CONDITION_ONE
+                        : ExperimentSessionPanelCoordinator.CONDITION_TWO);
+                experimenterGuidanceBias.setValue(experimenterGuidanceBiasPercent);
+            } else if (experimenterGuidanceBiasPercent < 0
+                    && "no-pattern".equals(guidanceOne)
+                    && "no-pattern".equals(guidanceTwo)) {
+                experimenterGuidanceBiasPercent = 0;
+                experimenterGuidanceBias.setValue(0);
+            }
+            experimenterGuidanceBias.setInteractive(oneReady || twoReady);
+        }
         if (experimenterStageReadback != null) {
             setExperimenterText(experimenterStageReadback, ExperimentSessionPanelViewPolicy.stageTitle(state));
             styleExperimenterIndicator(experimenterStageReadback, ExperimentSessionPanelViewPolicy.stageTone(state));
@@ -2657,6 +2733,19 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
             styleExperimenterIndicator(readback, ready
                 ? ExperimentSessionPanelViewPolicy.Tone.READY : ExperimentSessionPanelViewPolicy.Tone.ATTENTION);
         }
+    }
+
+    private void updateExperimenterGuidanceReadback(
+            TextView readback, String label, String readiness) {
+        if (readback == null) return;
+        boolean ready = "pattern-ready".equals(readiness);
+        boolean absent = "no-pattern".equals(readiness);
+        setExperimenterText(readback, label + " breathing pattern: " + (ready
+            ? "ready" : absent ? "not supplied · signal-only" : "checking…"));
+        styleExperimenterIndicator(readback, ready
+            ? ExperimentSessionPanelViewPolicy.Tone.READY : absent
+                ? ExperimentSessionPanelViewPolicy.Tone.NEUTRAL
+                : ExperimentSessionPanelViewPolicy.Tone.WAITING);
     }
 
     private void applyBreathCompositionCommand(JSONObject command, TextView readback) {
@@ -4282,6 +4371,8 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
                             "completion_threshold_ms",
                             ExperimentSessionPanelCoordinator.COMPLETION_THRESHOLD_MS
                         )
+                        .put("breath_guidance_bias_percent",
+                            command.breathGuidanceBiasPercent)
                         .put("started_at_utc_ns", utcNanos);
                 }
                 return request.toString();
@@ -4348,6 +4439,14 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
                 if (startingOperation && "active".equals(phase)
                         && (!projection.optBoolean("profile_identity_bound", false)
                             || !projection.optBoolean("audio_identity_bound", false))) {
+                    accepted = false;
+                }
+                JSONObject guidanceProjection = projection.optJSONObject("breath_guidance");
+                if (startingOperation && expected.breathGuidanceBiasPercent > 0
+                        && (guidanceProjection == null
+                            || !guidanceProjection.optBoolean("identity_bound", false)
+                            || guidanceProjection.optInt("bias_percent", -1)
+                                != expected.breathGuidanceBiasPercent)) {
                     accepted = false;
                 }
                 boolean durable = accepted

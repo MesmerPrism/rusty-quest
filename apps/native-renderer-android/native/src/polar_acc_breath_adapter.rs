@@ -23,6 +23,7 @@ use rusty_quest_breath_contract::{
     BreathGeneration, BreathTimestampMicros,
 };
 
+use crate::breath_guidance::BreathGuidanceTarget;
 use crate::polar_acc_phase_classifier::{
     PolarAccPhaseClassifier, PolarAccPhaseConfiguration, PolarAccPhaseConfigurationError,
     PolarAccPhaseParameters,
@@ -280,6 +281,8 @@ pub(crate) struct PolarAccAssessmentResult {
     pub(crate) assessment: Option<BreathAssessmentObservation>,
     pub(crate) calibration: CalibrationObservation,
     pub(crate) phase: Option<CommonPhaseObservation>,
+    pub(crate) unbiased_phase: Option<CommonPhaseObservation>,
+    pub(crate) guidance: Option<BreathGuidanceTarget>,
     pub(crate) rejection: Option<PolarAccAssessmentRejection>,
     pub(crate) telemetry: PolarAccAdapterTelemetry,
 }
@@ -290,6 +293,7 @@ pub(crate) struct PolarAccBreathAdapter {
     settings: PolarAccVolumeSettings,
     calibration: AcceptedFrameCalibration,
     phase: PolarPhaseOwner,
+    unbiased_phase: PolarPhaseOwner,
     generation: Option<BreathGeneration>,
     next_runtime_generation: u64,
     last_sensor_monotonic_time_ns: Option<u64>,
@@ -297,6 +301,7 @@ pub(crate) struct PolarAccBreathAdapter {
     last_sampled_at: Option<BreathTimestampMicros>,
     last_acceleration_g: Option<[f64; 3]>,
     last_phase_observation: Option<CommonPhaseObservation>,
+    last_unbiased_phase_observation: Option<CommonPhaseObservation>,
     last_tracking: Option<BreathTrackingState>,
     telemetry: PolarAccAdapterTelemetry,
 }
@@ -305,6 +310,7 @@ impl PolarAccBreathAdapter {
     pub(crate) fn new(settings: PolarAccVolumeSettings) -> Self {
         Self {
             phase: PolarPhaseOwner::from_settings(settings),
+            unbiased_phase: PolarPhaseOwner::from_settings(settings),
             settings,
             calibration: AcceptedFrameCalibration::new(),
             generation: None,
@@ -314,6 +320,7 @@ impl PolarAccBreathAdapter {
             last_sampled_at: None,
             last_acceleration_g: None,
             last_phase_observation: None,
+            last_unbiased_phase_observation: None,
             last_tracking: None,
             telemetry: PolarAccAdapterTelemetry::default(),
         }
@@ -411,6 +418,7 @@ impl PolarAccBreathAdapter {
         self.last_acceleration_g = None;
         self.last_tracking = None;
         self.last_phase_observation = Some(self.phase.reset(at));
+        self.last_unbiased_phase_observation = Some(self.unbiased_phase.reset(at));
         self.telemetry = PolarAccAdapterTelemetry::default();
         self.calibration.reset(at)
     }
@@ -424,8 +432,13 @@ impl PolarAccBreathAdapter {
             .map_err(PolarAccVolumeSettingsError::InvalidPolarPhase)?;
         self.settings.polar_phase = Some(configuration);
         self.phase = PolarPhaseOwner::Tuned(PolarAccPhaseClassifier::new(configuration));
+        self.unbiased_phase = PolarPhaseOwner::Tuned(PolarAccPhaseClassifier::new(configuration));
         self.last_phase_observation = Some(
             self.phase
+                .reset_history(at, CommonPhaseResetReason::CalibrationChanged),
+        );
+        self.last_unbiased_phase_observation = Some(
+            self.unbiased_phase
                 .reset_history(at, CommonPhaseResetReason::CalibrationChanged),
         );
         self.last_tracking = None;
@@ -438,11 +451,23 @@ impl PolarAccBreathAdapter {
         generation: BreathGeneration,
         input: PolarAccInput,
     ) -> PolarAccAssessmentResult {
+        self.observe_guided(at, generation, input, None)
+    }
+
+    pub(crate) fn observe_guided(
+        &mut self,
+        at: BreathTimestampMicros,
+        generation: BreathGeneration,
+        input: PolarAccInput,
+        guidance: Option<BreathGuidanceTarget>,
+    ) -> PolarAccAssessmentResult {
         if self.generation != Some(generation) {
             return PolarAccAssessmentResult {
                 assessment: None,
                 calibration: self.calibration.snapshot(),
                 phase: None,
+                unbiased_phase: None,
+                guidance: None,
                 rejection: Some(if self.generation.is_none() {
                     PolarAccAssessmentRejection::Disabled
                 } else {
@@ -463,9 +488,18 @@ impl PolarAccBreathAdapter {
                 } else {
                     (BreathTrackingState::Missing, None)
                 };
-                self.finish(at, at, sequence_id, tracking, rejection, calibration, None)
+                self.finish(
+                    at,
+                    at,
+                    sequence_id,
+                    tracking,
+                    rejection,
+                    calibration,
+                    None,
+                    guidance,
+                )
             }
-            PolarAccInput::Frame(frame) => self.observe_frame(at, generation, frame),
+            PolarAccInput::Frame(frame) => self.observe_frame(at, generation, frame, guidance),
         }
     }
 
@@ -474,6 +508,7 @@ impl PolarAccBreathAdapter {
         at: BreathTimestampMicros,
         generation: BreathGeneration,
         frame: TimedPolarAccFrame,
+        guidance: Option<BreathGuidanceTarget>,
     ) -> PolarAccAssessmentResult {
         let sequence_id = frame.sequence_id;
         let fallback_sampled_at =
@@ -583,6 +618,7 @@ impl PolarAccBreathAdapter {
             rejection,
             calibration,
             Some(motion_delta_mg),
+            guidance,
         )
     }
 
@@ -592,6 +628,8 @@ impl PolarAccBreathAdapter {
             assessment: None,
             calibration: self.calibration.snapshot(),
             phase: self.last_phase_observation,
+            unbiased_phase: self.last_unbiased_phase_observation,
+            guidance: None,
             rejection: Some(PolarAccAssessmentRejection::LateSampleDropped),
             telemetry: self.telemetry,
         }
@@ -625,6 +663,7 @@ impl PolarAccBreathAdapter {
             Some(PolarAccAssessmentRejection::Translation(error)),
             calibration,
             None,
+            None,
         )
     }
 
@@ -637,6 +676,7 @@ impl PolarAccBreathAdapter {
         rejection: Option<PolarAccAssessmentRejection>,
         calibration: CalibrationObservation,
         motion_delta_mg: Option<f64>,
+        guidance: Option<BreathGuidanceTarget>,
     ) -> PolarAccAssessmentResult {
         let generation = self.generation.expect("active adapter retains generation");
         if tracking == BreathTrackingState::Stale
@@ -653,22 +693,42 @@ impl PolarAccBreathAdapter {
         let quality01 = calibration
             .model
             .map_or(0.0, |model| model.axis_dominance01.clamp(0.0, 1.0));
-        let phase_observation = if tracking == BreathTrackingState::Valid {
-            calibration.live.map(|live| {
-                self.phase.observe(
-                    observed_at,
-                    live.sequence_id,
-                    live.sampled_at,
-                    live.volume01,
-                    motion_delta_mg.unwrap_or_default(),
+        let (phase_observation, unbiased_phase_observation) =
+            if tracking == BreathTrackingState::Valid {
+                calibration
+                    .live
+                    .map(|live| {
+                        (
+                            self.phase.observe_guided(
+                                observed_at,
+                                live.sequence_id,
+                                live.sampled_at,
+                                live.volume01,
+                                motion_delta_mg.unwrap_or_default(),
+                                guidance,
+                            ),
+                            self.unbiased_phase.observe(
+                                observed_at,
+                                live.sequence_id,
+                                live.sampled_at,
+                                live.volume01,
+                                motion_delta_mg.unwrap_or_default(),
+                            ),
+                        )
+                    })
+                    .unzip()
+            } else {
+                let reason = phase_reset_reason(tracking);
+                (
+                    Some(self.phase.reset_history(observed_at, reason)),
+                    Some(self.unbiased_phase.reset_history(observed_at, reason)),
                 )
-            })
-        } else {
-            let reason = phase_reset_reason(tracking);
-            Some(self.phase.reset_history(observed_at, reason))
-        };
+            };
         if let Some(observation) = phase_observation {
             self.last_phase_observation = Some(observation);
+        }
+        if let Some(observation) = unbiased_phase_observation {
+            self.last_unbiased_phase_observation = Some(observation);
         }
         let phase = if matches!(
             tracking,
@@ -702,6 +762,8 @@ impl PolarAccBreathAdapter {
             assessment,
             calibration,
             phase: phase_observation,
+            unbiased_phase: unbiased_phase_observation,
+            guidance,
             rejection,
             telemetry: self.telemetry,
         }
@@ -764,6 +826,8 @@ impl PolarAccBreathAdapter {
     fn reset_phase(&mut self, at: BreathTimestampMicros, reason: CommonPhaseResetReason) {
         let observation = self.phase.reset_history(at, reason);
         self.last_phase_observation = Some(observation);
+        let unbiased = self.unbiased_phase.reset_history(at, reason);
+        self.last_unbiased_phase_observation = Some(unbiased);
     }
 }
 
@@ -804,6 +868,34 @@ impl PolarPhaseOwner {
                 sampled_at,
                 value01,
                 motion_delta_mg,
+            ),
+        }
+    }
+
+    fn observe_guided(
+        &mut self,
+        observed_at: BreathTimestampMicros,
+        sequence_id: u64,
+        sampled_at: BreathTimestampMicros,
+        value01: f64,
+        motion_delta_mg: f64,
+        guidance: Option<BreathGuidanceTarget>,
+    ) -> CommonPhaseObservation {
+        match self {
+            Self::Common(_) => self.observe(
+                observed_at,
+                sequence_id,
+                sampled_at,
+                value01,
+                motion_delta_mg,
+            ),
+            Self::Tuned(classifier) => classifier.observe_sample_guided(
+                observed_at,
+                sequence_id,
+                sampled_at,
+                value01,
+                motion_delta_mg,
+                guidance,
             ),
         }
     }

@@ -732,6 +732,33 @@ fn validate_row(
                 require_u64(object, "observed_source_time_ns")?;
             }
             require_enum(object, "phase", &["inhale", "exhale", "hold", "unknown"])?;
+            if object.contains_key("unbiased_phase") {
+                require_enum(
+                    object,
+                    "unbiased_phase",
+                    &["inhale", "exhale", "hold", "unknown"],
+                )?;
+            }
+            if object.contains_key("guidance_phase") {
+                require_enum(object, "guidance_phase", &["inhale", "exhale", "hold"])?;
+            }
+            let guidance_phase = object.contains_key("guidance_phase");
+            let guidance_time = object.contains_key("guidance_active_time_ms");
+            let guidance_bias = if object.contains_key("guidance_bias_percent") {
+                require_u64(object, "guidance_bias_percent")?;
+                object.get("guidance_bias_percent").and_then(Value::as_u64)
+            } else {
+                None
+            };
+            if guidance_phase != guidance_time
+                || guidance_bias.is_some_and(|value| value > 100)
+                || guidance_phase != guidance_bias.is_some_and(|value| value > 0)
+            {
+                return Err("recording-stream-row-field-invalid:breath-guidance".to_owned());
+            }
+            if guidance_time {
+                require_u64(object, "guidance_active_time_ms")?;
+            }
             require_optional_number(object, "volume01")?;
             require_number(object, "quality01")?;
             RowLifecycle::None
