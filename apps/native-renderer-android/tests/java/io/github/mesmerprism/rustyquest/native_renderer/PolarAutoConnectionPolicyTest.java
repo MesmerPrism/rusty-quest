@@ -101,6 +101,16 @@ public final class PolarAutoConnectionPolicyTest {
             "unique candidate admission is independent of attached activity"
         );
         check(
+            PolarAutoConnectionPolicy.shouldAdmitUniqueCandidateEarly(4L, 4L, 1, 0),
+            "a stable unique candidate may connect before the full discovery timeout"
+        );
+        check(
+            !PolarAutoConnectionPolicy.shouldAdmitUniqueCandidateEarly(4L, 5L, 1, 0)
+                && !PolarAutoConnectionPolicy.shouldAdmitUniqueCandidateEarly(4L, 4L, 2, 0)
+                && !PolarAutoConnectionPolicy.shouldAdmitUniqueCandidateEarly(4L, 4L, 1, 1),
+            "stale, ambiguous, and preferred-pair candidates do not use early unique admission"
+        );
+        check(
             PolarAutoConnectionPolicy.evidenceFresh(4L, 4L, 1_000L, 1_500L, 1_000L, 3_000L, 2_000L),
             "current callback evidence within generation-bound deadline"
         );

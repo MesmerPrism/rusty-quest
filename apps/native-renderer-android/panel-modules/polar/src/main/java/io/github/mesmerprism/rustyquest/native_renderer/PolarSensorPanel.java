@@ -78,6 +78,11 @@ final class PolarSensorPanel {
     private static final long AUTO_CONNECTION_TIMEOUT_MS = 15_000L;
     private static final long AUTO_CONNECTION_RETRY_DELAY_MS = 2_000L;
     private static final long AUTO_CONNECTION_CYCLE_DELAY_MS = 10_000L;
+    // A content-addressed experiment APK starts without the preceding build's
+    // app-private preferred-device identity. Do not make that normal first run
+    // wait for the complete 45 second discovery window when exactly one Polar
+    // candidate remains stable for a short settling interval.
+    private static final long AUTO_UNIQUE_CANDIDATE_SETTLE_MS = 1_500L;
 
     private static final int PANEL_BG = Color.rgb(16, 18, 22);
     private static final int PANEL_SURFACE = Color.rgb(31, 35, 43);
@@ -214,6 +219,7 @@ final class PolarSensorPanel {
     private long statusUpdatedAtUnixMs = System.currentTimeMillis();
     private volatile long autoConnectionGeneration;
     private long autoScanGeneration = -1L;
+    private long autoUniqueCandidateScheduledGeneration = -1L;
     private int autoConnectionAttempts;
     private boolean automaticConnectionRequested;
     private boolean automaticConnectionCycleActive;
@@ -464,10 +470,21 @@ final class PolarSensorPanel {
     }
 
     void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
+        onRequestPermissionsResult(activity, requestCode, permissions, grantResults);
+    }
+
+    void onRequestPermissionsResult(
+        Activity permissionHost,
+        int requestCode,
+        String[] permissions,
+        int[] grantResults
+    ) {
         if (requestCode != REQUEST_BLE_PERMISSIONS) {
             return;
         }
-        NativeRendererSelfKioskApplication.endSystemPrompt(activity);
+        if (permissionHost != null) {
+            NativeRendererSelfKioskApplication.endSystemPrompt(permissionHost);
+        }
         if (hasRequiredPermissions()) {
             setStatusState("permission-ready", "BLE/location permissions accepted.");
             marker("status=permission-accepted");
@@ -482,6 +499,29 @@ final class PolarSensorPanel {
             marker("status=permission-rejected missing=" + markerToken(missing));
             pendingBleAction = PENDING_BLE_NONE;
         }
+    }
+
+    boolean requestStartupPermissions(Activity permissionHost) {
+        if (closing || permissionHost == null) return hasRequiredPermissions();
+        automaticConnectionRequested = true;
+        if (hasRequiredPermissions()) {
+            resumeAutomaticConnectionIfRequested();
+            return true;
+        }
+        pendingBleAction = PENDING_BLE_SCAN;
+        NativeRendererSelfKioskApplication.beginSystemPrompt(permissionHost);
+        PolarBleRuntimeSupport.ensureReady(permissionHost, REQUEST_BLE_PERMISSIONS);
+        String missing = PolarBleRuntimeSupport.join(
+            PolarBleRuntimeSupport.missingPermissions(appContext),
+            ","
+        );
+        setStatusState("permission-required", "Requesting BLE/location permissions at startup.");
+        setAutomaticConnectionState(
+            "permission-required",
+            "Waiting for the headset BLE/location permission response."
+        );
+        marker("status=permission-requested origin=startup missing=" + markerToken(missing));
+        return false;
     }
 
     void onHostResume() {
@@ -837,6 +877,7 @@ final class PolarSensorPanel {
             return;
         }
         autoScanGeneration = -1L;
+        autoUniqueCandidateScheduledGeneration = -1L;
         if (decision == PolarAutoConnectionPolicy.Decision.NOT_FOUND) {
             setAutomaticConnectionState("not-found", "No eligible Polar sensor was found.");
             scheduleAutomaticRecovery("No eligible Polar sensor was found.");
@@ -959,6 +1000,7 @@ final class PolarSensorPanel {
         automaticRecoveryGeneration += 1L;
         automaticConnectionRetryScheduled = false;
         automaticConnectionCycleActive = false;
+        autoUniqueCandidateScheduledGeneration = -1L;
         if (clearRequest) automaticConnectionRequested = false;
     }
 
@@ -1560,6 +1602,9 @@ final class PolarSensorPanel {
                                 completeAutoScan(generation);
                                 return;
                             }
+                            if (autoScanGeneration == generation && devices.size() == 1) {
+                                scheduleUniqueAutomaticCandidateAdmission(generation);
+                            }
                         }
                         if (scanRawCallbackCount == 1L) {
                             setStatusState(
@@ -1604,6 +1649,34 @@ final class PolarSensorPanel {
                 });
             }
         };
+    }
+
+    private void scheduleUniqueAutomaticCandidateAdmission(final long generation) {
+        if (generation <= 0L || autoUniqueCandidateScheduledGeneration == generation) return;
+        autoUniqueCandidateScheduledGeneration = generation;
+        handler.postDelayed(new Runnable() {
+            @Override
+            public void run() {
+                if (!isCurrentScanGeneration(generation)
+                        || autoUniqueCandidateScheduledGeneration != generation
+                        || !PolarAutoConnectionPolicy.shouldAdmitUniqueCandidateEarly(
+                            autoScanGeneration,
+                            generation,
+                            devices.size(),
+                            pairedCandidateMatches())) {
+                    return;
+                }
+                stopScan();
+                setStatusState(
+                    "candidate-found",
+                    "One Polar sensor remained stable; connecting automatically."
+                );
+                marker("status=auto-unique-candidate-admitted settleMs="
+                    + AUTO_UNIQUE_CANDIDATE_SETTLE_MS
+                    + " rawDeviceIdentifierLogged=false");
+                completeAutoScan(generation);
+            }
+        }, AUTO_UNIQUE_CANDIDATE_SETTLE_MS);
     }
 
     private boolean isCurrentScanGeneration(long generation) {

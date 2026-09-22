@@ -331,6 +331,8 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
     private long experimentShellLaunchEpoch;
     private boolean experimentShellDestroyed;
     private boolean terminalFinishDispatched;
+    private boolean startupPermissionFlowEligible;
+    private boolean startupOverlayRequestIssued;
     private final ExperimenterPanelShortcutPolicy experimenterPanelShortcut =
         new ExperimenterPanelShortcutPolicy();
 
@@ -397,10 +399,16 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
             experimenterGuidanceBiasPercent =
                 EXPERIMENT_SESSION_PANEL.pendingBreathGuidanceBiasPercent();
         }
-        if (trustedColdMain && PANEL_ROUTE_EXPERIMENTER.equals(panelRoute)) {
-            PolarSensorRuntime.forApplication(getApplicationContext()).ensureAutoConnection();
-        }
+        startupPermissionFlowEligible = trustedColdMain
+            && PANEL_ROUTE_EXPERIMENTER.equals(panelRoute);
+        PolarSensorRuntime polarRuntime =
+            PolarSensorRuntime.forApplication(getApplicationContext());
+        if (startupPermissionFlowEligible) polarRuntime.ensureAutoConnection();
         setContentView(buildContentView());
+        if (startupPermissionFlowEligible
+                && polarRuntime.requestStartupPermissions(this)) {
+            maybeRequestStartupKioskPermission();
+        }
         restorePanelScrollAfterLayout();
         EXPERIMENT_SESSION_SHELL.initialize(getFilesDir().getAbsolutePath(), this);
         scheduleExperimenterProjectionRefresh();
@@ -690,8 +698,31 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
     @Override
     public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
-        if (polarSensorPanel != null) {
-            polarSensorPanel.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        PolarSensorRuntime.forApplication(getApplicationContext()).onRequestPermissionsResult(
+            this,
+            requestCode,
+            permissions,
+            grantResults
+        );
+        if (requestCode == PolarSensorPanel.REQUEST_BLE_PERMISSIONS) {
+            maybeRequestStartupKioskPermission();
+        }
+    }
+
+    private void maybeRequestStartupKioskPermission() {
+        if (!startupPermissionFlowEligible
+                || startupOverlayRequestIssued
+                || android.provider.Settings.canDrawOverlays(this)) {
+            return;
+        }
+        android.content.SharedPreferences preferences = getSharedPreferences(
+            "viscereality_startup_permissions_v1",
+            MODE_PRIVATE
+        );
+        if (preferences.getBoolean("overlay_prompt_attempted", false)) return;
+        if (ControlPanelActivity.openSelfKioskOverlaySettings(this)) {
+            startupOverlayRequestIssued = true;
+            preferences.edit().putBoolean("overlay_prompt_attempted", true).apply();
         }
     }
 
@@ -2583,19 +2614,19 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
         if (readback == null || readback.receipt == null) return;
         EXPERIMENT_SESSION_PANEL.acceptRuntimeEpoch(readback.runtimeEpoch);
         ExperimentSessionPanelState before = EXPERIMENT_SESSION_PANEL.snapshot();
-        boolean startingOperation = (before.phase == ExperimentSessionPanelState.Phase.STARTING
-                || before.phase == ExperimentSessionPanelState.Phase.ARMING)
-            && before.pendingOperationId.equals(readback.receipt.operationId);
         boolean changed = EXPERIMENT_SESSION_PANEL.accept(readback.receipt);
-        if (changed && startingOperation && EXPERIMENT_SESSION_PANEL.snapshot().recording) {
+        ExperimentSessionPanelState after = EXPERIMENT_SESSION_PANEL.snapshot();
+        // Audio preparation is an idempotent arm-stage effect. Reassert it from
+        // every authoritative arming readback so a reordered status callback or
+        // panel recreation cannot leave the native session permanently arming.
+        if (after.phase == ExperimentSessionPanelState.Phase.ARMING && after.recording) {
             if (!ControlPanelActivity.startConditionAudio(
-                    readback.receipt.generation,
-                    readback.receipt.operationId,
-                    readback.receipt.activeCondition)) {
+                    after.generation,
+                    "session-arm-" + after.generation,
+                    after.activeCondition)) {
                 updateStatus("Session armed, but condition audio preparation was rejected.");
             }
         }
-        ExperimentSessionPanelState after = EXPERIMENT_SESSION_PANEL.snapshot();
         if (changed && before.phase != ExperimentSessionPanelState.Phase.ARMED
                 && after.phase == ExperimentSessionPanelState.Phase.ARMED) {
             closePanelAndReturnToImmersive();

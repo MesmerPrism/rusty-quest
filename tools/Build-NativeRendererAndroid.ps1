@@ -819,6 +819,7 @@ public final class ControlPanelActivity extends $selectedPanelEntrySimpleName {
     private static volatile ExperimentSessionPackagedClosure.Result experimentSessionClosure;
     private static long pendingAudioGeneration;
     private static String pendingAudioPrepareOperation = "";
+    private static String pendingAudioCondition = "";
     private static boolean audioImmersiveAdmitted;
     private static boolean audioPrepared;
     private static long appliedAudioControlGeneration;
@@ -1056,15 +1057,37 @@ public final class ControlPanelActivity extends $selectedPanelEntrySimpleName {
         if (readiness.state != ConditionAudioContract.TrackState.READY) return false;
         String prepareOperation = operationId + "-audio-prepare";
         synchronized (PRESENTATION_LOCK) {
+            if (sessionGeneration == pendingAudioGeneration
+                    && conditionId.equals(pendingAudioCondition)) {
+                return true;
+            }
+            if (pendingAudioGeneration > 0L && sessionGeneration != pendingAudioGeneration) {
+                return false;
+            }
             pendingAudioGeneration = sessionGeneration;
             pendingAudioPrepareOperation = prepareOperation;
+            pendingAudioCondition = conditionId;
             audioImmersiveAdmitted = false;
             audioPrepared = false;
             appliedAudioControlGeneration = sessionGeneration;
             appliedAudioControlRevision = 0L;
         }
-        return runtime.submit(ConditionAudioContract.Command.prepare(
+        boolean accepted = runtime.submit(ConditionAudioContract.Command.prepare(
             sessionGeneration, prepareOperation, conditionId)).accepted;
+        if (!accepted) synchronized (PRESENTATION_LOCK) {
+            if (sessionGeneration == pendingAudioGeneration
+                    && conditionId.equals(pendingAudioCondition)
+                    && prepareOperation.equals(pendingAudioPrepareOperation)) {
+                pendingAudioGeneration = 0L;
+                pendingAudioPrepareOperation = "";
+                pendingAudioCondition = "";
+                audioImmersiveAdmitted = false;
+                audioPrepared = false;
+                appliedAudioControlGeneration = 0L;
+                appliedAudioControlRevision = 0L;
+            }
+        }
+        return accepted;
     }
 
     static void admitStableImmersiveAudio() {
@@ -1200,6 +1223,7 @@ public final class ControlPanelActivity extends $selectedPanelEntrySimpleName {
             if (sessionGeneration == pendingAudioGeneration) {
                 pendingAudioGeneration = 0L;
                 pendingAudioPrepareOperation = "";
+                pendingAudioCondition = "";
                 audioImmersiveAdmitted = false;
                 audioPrepared = false;
                 appliedAudioControlGeneration = 0L;

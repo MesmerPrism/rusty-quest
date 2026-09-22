@@ -118,6 +118,23 @@ final class PolarSensorRuntime {
         panel.ensureAutoConnection();
     }
 
+    /** Requests the runtime BLE/location closure from the visible startup Activity. */
+    boolean requestStartupPermissions(Activity activity) {
+        if (closed) return false;
+        return panel.requestStartupPermissions(activity);
+    }
+
+    /** Routes the startup Activity result to the process-owned Polar state machine. */
+    void onRequestPermissionsResult(
+        Activity activity,
+        int requestCode,
+        String[] permissions,
+        int[] grantResults
+    ) {
+        if (closed) return;
+        panel.onRequestPermissionsResult(activity, requestCode, permissions, grantResults);
+    }
+
     /** Rechecks prerequisites and resumes the retained automatic intent after host resume. */
     void onHostResume() {
         if (closed) return;
@@ -343,6 +360,18 @@ final class PolarAutoConnectionPolicy {
             return 0;
         }
         return -1;
+    }
+
+    static boolean shouldAdmitUniqueCandidateEarly(
+        long expectedGeneration,
+        long observedGeneration,
+        int candidateCount,
+        int pairedMatches
+    ) {
+        return expectedGeneration > 0L
+            && expectedGeneration == observedGeneration
+            && candidateCount == 1
+            && pairedMatches == 0;
     }
 
     static boolean evidenceFresh(
