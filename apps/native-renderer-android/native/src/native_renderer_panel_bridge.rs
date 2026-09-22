@@ -780,7 +780,7 @@ fn send_control_panel_intent(
 ) -> Result<(), String> {
     use jni::{
         jni_sig, jni_str,
-        objects::{JObject, JValue},
+        objects::{JClass, JClassLoader, JObject, JValue},
         JavaVM,
     };
 
@@ -898,6 +898,27 @@ fn send_control_panel_intent(
             )?;
             put_long_extra(env, &intent, EXTRA_LAUNCH_EPOCH, epoch)?;
         }
+        // The app's panel-open command selects the watchdog recovery target
+        // before Quest briefly reveals another 2D task during the handoff.
+        let class_loader = env
+            .call_method(
+                &activity,
+                jni_str!("getClassLoader"),
+                jni_sig!("()Ljava/lang/ClassLoader;"),
+                &[],
+            )?
+            .l()?;
+        let class_loader: JClassLoader = env.cast_local::<JClassLoader>(class_loader)?;
+        let panel_class_name = env.new_string(PANEL_CLASS_NAME)?;
+        let panel_class = JClass::for_name_with_loader(env, panel_class_name, true, class_loader)?;
+        let desired_route = env.new_string(route.unwrap_or("experimenter"))?;
+        env.call_static_method(
+            panel_class,
+            jni_str!("requestPanelPresentationFromNative"),
+            jni_sig!("(Ljava/lang/String;)Z"),
+            &[JValue::Object(&JObject::from(desired_route))],
+        )?
+        .z()?;
         env.call_method(
             &activity,
             jni_str!("startActivity"),

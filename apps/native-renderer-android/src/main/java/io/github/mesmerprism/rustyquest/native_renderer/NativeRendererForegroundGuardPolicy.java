@@ -80,14 +80,12 @@ final class NativeRendererForegroundGuardPolicy {
         return true;
     }
 
-    /** The same-APK watchdog observes either app-owned surface without initiating a switch. */
+    /** Either app-owned surface is allowed; only app commands change the recovery target. */
     boolean observeOwnedComponent(String componentClass, long generation, long eventMs) {
         if (!armed || terminalExit || generation != transitionGeneration
                 || !isAllowedComponent(componentClass) || !acceptEventTime(eventMs)) {
             return false;
         }
-        desiredPresentation = CONTROL_PANEL_ACTIVITY.equals(componentClass)
-            ? Presentation.PANEL : Presentation.IMMERSIVE;
         recoveryPending = false;
         return true;
     }

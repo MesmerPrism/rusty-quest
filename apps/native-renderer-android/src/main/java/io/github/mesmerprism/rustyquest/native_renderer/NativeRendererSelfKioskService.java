@@ -147,11 +147,6 @@ public final class NativeRendererSelfKioskService extends Service {
             return;
         }
         if (present) {
-            if (!state.presentation.componentClass.equals(observedOwnComponent)) {
-                Log.i(TAG, "status=own-surface-adopted generation=" + state.generation
-                    + " from=" + state.presentation.componentClass
-                    + " to=" + observedOwnComponent + " recovery=false");
-            }
             coordinator.observeOwnSurface(observedOwnComponent, state.generation, now);
             missingSinceMs = -1L;
             if (returnPending) {

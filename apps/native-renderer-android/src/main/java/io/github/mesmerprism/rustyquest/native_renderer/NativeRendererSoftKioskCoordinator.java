@@ -194,13 +194,11 @@ final class NativeRendererSoftKioskCoordinator {
             return action(ActionKind.NONE, 0L, false, 0);
         }
         if (policy.observeOwnedComponent(component, generation, nowMs)) {
-            // This records what the app brought forward. It does not request a
-            // panel/VR switch; only an external departure may request recovery.
-            presentation = NativeRendererForegroundGuardPolicy.CONTROL_PANEL_ACTIVITY
-                .equals(component)
-                ? NativeRendererForegroundGuardPolicy.Presentation.PANEL
-                : NativeRendererForegroundGuardPolicy.Presentation.IMMERSIVE;
-            transitionDeadlineMs = Long.MIN_VALUE;
+            // Observation only clears a handoff when the app-selected target arrives.
+            // The other own surface remains allowed but never changes recovery intent.
+            if (presentation.componentClass.equals(component)) {
+                transitionDeadlineMs = Long.MIN_VALUE;
+            }
             deferredForeground = null;
             clearRecoveryEpisode();
             notifyTimingChanged(true);

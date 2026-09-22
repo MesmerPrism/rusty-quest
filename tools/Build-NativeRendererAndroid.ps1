@@ -1337,6 +1337,22 @@ $polarRuntimeReopenFromExplicitLaunch
             5_000L);
     }
 
+    /** Same-process native panel-open command owns the desired foreground before dispatch. */
+    static boolean requestPanelPresentationFromNative(String panelRoute) {
+        String route = NativeRendererSoftKioskCoordinator.PANEL_ROUTE_DEVELOPER.equals(panelRoute)
+            ? NativeRendererSoftKioskCoordinator.PANEL_ROUTE_DEVELOPER
+            : NativeRendererSoftKioskCoordinator.PANEL_ROUTE_EXPERIMENTER;
+        boolean accepted = NativeRendererSoftKioskCoordinator.process().beginTransition(
+            nextPresentationGeneration(0L),
+            NativeRendererForegroundGuardPolicy.Presentation.PANEL,
+            route,
+            android.os.SystemClock.uptimeMillis(),
+            5_000L);
+        android.util.Log.i("RustyQuestSelfKiosk", "status=app-panel-desired accepted="
+            + accepted + " route=" + route);
+        return accepted;
+    }
+
     static String softKioskEffectiveStatus(android.app.Activity activity) {
         NativeRendererSoftKioskCoordinator.Snapshot state =
             NativeRendererSoftKioskCoordinator.process().snapshot();

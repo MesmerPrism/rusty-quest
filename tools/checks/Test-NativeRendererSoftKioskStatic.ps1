@@ -101,6 +101,16 @@ Assert-Contains $nativeEntryPath 'admit_explicit_native_activity_launch(state)'
 Assert-Contains $panelBridgePath 'pending_experiment_launch_epoch(app)'
 Assert-Contains $panelBridgePath 'open_experimenter_panel_from_explicit_launch(app, epoch)'
 Assert-Contains $panelBridgePath 'FLAG_ACTIVITY_REORDER_TO_FRONT | FLAG_ACTIVITY_SINGLE_TOP'
+Assert-Contains (Join-Path $repo 'tools\Build-NativeRendererAndroid.ps1') 'static boolean requestPanelPresentationFromNative(String panelRoute)'
+Assert-Contains $panelBridgePath 'jni_str!("requestPanelPresentationFromNative")'
+$panelBridgeText = [IO.File]::ReadAllText($panelBridgePath)
+$panelSendStart = $panelBridgeText.IndexOf('fn send_control_panel_intent(', [StringComparison]::Ordinal)
+$desiredBeforeLaunch = $panelBridgeText.IndexOf('jni_str!("requestPanelPresentationFromNative")', $panelSendStart)
+$panelLaunchDispatch = $panelBridgeText.IndexOf('jni_str!("startActivity")', $panelSendStart)
+if ($panelSendStart -lt 0 -or $desiredBeforeLaunch -le $panelSendStart -or
+    $panelLaunchDispatch -le $desiredBeforeLaunch) {
+    throw 'Native panel-open command must select the desired in-app foreground before dispatch.'
+}
 Assert-Contains $panelBridgePath 'after_current_session_frame_submitted('
 Assert-NotContains $panelBridgePath 'fn control_panel_mode_is_breath_mapping()'
 Assert-Contains $panelBridgePath 'packaged_control_panel_mode_is_breath_mapping_installed()'
