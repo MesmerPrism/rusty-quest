@@ -41,7 +41,7 @@ public final class NativeRendererSelfKioskService extends Service {
             evaluate();
             NativeRendererSoftKioskCoordinator.Snapshot state = coordinator.snapshot();
             if (hasPendingTerminal() || (state.armed && !state.terminal))
-                handler.postDelayed(this, 250L);
+                handler.postDelayed(this, 75L);
         }
     };
 
@@ -135,8 +135,12 @@ public final class NativeRendererSelfKioskService extends Service {
         boolean present = NativeRendererForegroundGuardPolicy.matchesDesiredOwnedSurface(
             state.presentation, observedOwnComponent);
         String component = present ? observedOwnComponent : state.presentation.componentClass;
+        // Quest can show Meta Navigator while NativeActivity stays resumed. Its own
+        // window loses focus, but no lifecycle pause arrives until our return launch.
+        // Count a sustained own-window departure, never a raw Home-key claim.
+        boolean ownWindowDeparted = !app.hasWindowFocus(component);
         long departure = departures.observe(state.generation, present,
-            app.hasDeparture(component, state.generation), suppressed, now);
+            app.hasDeparture(component, state.generation) || ownWindowDeparted, suppressed, now);
         if (departure > 0L && departure != lastDepartureId) {
             lastDepartureId = departure;
             Log.i(TAG, "status=own-departure generation=" + state.generation + " episode=" + departure
@@ -160,8 +164,8 @@ public final class NativeRendererSelfKioskService extends Service {
             return;
         }
         if (missingSinceMs < 0L) missingSinceMs = now;
-        // Focus-only absence can request recovery but is never counted as a Home-like departure.
-        if (now - missingSinceMs < 750L) return;
+        // A short focus flicker must neither trigger recovery nor advance escape.
+        if (now - missingSinceMs < 250L) return;
         NativeRendererSoftKioskCoordinator.Action action =
             coordinator.observeSelfDeparture(state.generation, departure, now);
         if (action.kind == NativeRendererSoftKioskCoordinator.ActionKind.BEGIN_TERMINAL_EXIT) {
@@ -185,7 +189,7 @@ public final class NativeRendererSelfKioskService extends Service {
             readback = "return requested; awaiting own lifecycle/focus confirmation";
             Log.i(TAG, "status=self-return-requested confirmed=false attempt=" + claimed.recoveryAttempt
                 + " generation=" + claimed.generation
-                + " departure_source=own_lifecycle physical_home=false");
+                + " departure_source=own_presentation physical_home=false");
         } catch (RuntimeException error) {
             readback = "return blocked; " + error.getClass().getSimpleName();
             Log.w(TAG, "status=self-return-failed confirmed=false", error);

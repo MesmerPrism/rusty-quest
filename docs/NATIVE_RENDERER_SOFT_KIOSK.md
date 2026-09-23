@@ -39,7 +39,7 @@ changes that setting itself. Dispatch is reported as requested/unconfirmed until
 own lifecycle and native focus confirm the desired presentation. Same-app identity
 and a successful `startActivity` call alone do not establish recovery.
 
-The watchdog polls every 250 ms, waits 750 ms before requesting return, and permits
+The watchdog polls every 75 ms, waits 250 ms before requesting return, and permits
 at most three attempts per unresolved departure/generation, spaced 1500 ms apart.
 It targets only the known own-package panel or NativeActivity and preserves the
 selected panel route. It never inspects arbitrary foreground apps. Sleep, keyguard,
@@ -51,10 +51,11 @@ expires after 60 seconds if no callback arrives.
 ## Departure gesture and exit
 
 The three-in-five-seconds escape is a **departure gesture**, not physical HOME
-interception. The panel requires `onUserLeaveHint` followed by pause. NativeActivity
-uses a conservative pause following its confirmed own presentation. An episode
-must remain absent for 750 ms; another episode requires confirmed recovery first.
-Focus loss alone never counts. Prompt/transition/lock/sleep episodes are discarded
+interception. On Quest 2, Meta Navigator can take focus without pausing NativeActivity;
+the app therefore accepts a sustained loss of its own window focus or a qualified
+lifecycle pause following confirmed presentation. An episode must remain absent for
+250 ms; another episode requires confirmed recovery first. Short focus flickers,
+prompt/transition/lock/sleep episodes are discarded
 and cannot count retrospectively after suppression expires. Platform prompts not
 covered by those signals may require another explicit app-owned suppression hook.
 
