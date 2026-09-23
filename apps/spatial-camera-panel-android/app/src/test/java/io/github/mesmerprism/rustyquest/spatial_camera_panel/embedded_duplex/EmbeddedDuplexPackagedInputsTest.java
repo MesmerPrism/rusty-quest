@@ -91,6 +91,81 @@ public final class EmbeddedDuplexPackagedInputsTest {
         assertThrows(IllegalArgumentException.class, () -> inputs.packagedConfigRequest(runtime));
     }
 
+    @Test public void preparedBootstrapRejectsChangedNativeRouteAndInputProjection() throws Exception {
+        EmbeddedDuplexPackagedInputs inputs = Fixture.valid().load(
+                EmbeddedDuplexPackagedInputs.InstalledRole.PEER_B);
+        JSONObject runtime = new JSONObject()
+                .put("adapter_id", "adapter.neutral")
+                .put("admission_authority_id", "admission.neutral")
+                .put("grant_id", "grant.neutral")
+                .put("grant_expires_at_ms", 3000)
+                .put("lease_expires_at_ms", 3000)
+                .put("max_token_ttl_ms", 1000)
+                .put("embedded_duplex", new JSONObject())
+                .put("validation_epoch_entropy_hex", repeat('a', 64))
+                .put("validation_wall_unix_ms", 1000)
+                .put("validation_monotonic_elapsed_ns", 1000);
+        EmbeddedDuplexBootstrap.Prepared prepared = EmbeddedDuplexBootstrap.prepare(inputs, runtime,
+                request -> fakeAssembly(new JSONObject(request), null).toString());
+        assertEquals("peer.fixture.b", prepared.localPeerId);
+        assertEquals("peer.fixture.a", prepared.remotePeerId);
+        assertEquals("runtime.device.fixture.b", prepared.outgoingRuntimeSpecId);
+        assertEquals(20_000_000L, prepared.maxPairDeltaNs);
+        byte[] remotePublic = new byte[32];
+        Arrays.fill(remotePublic, (byte) 0x11);
+        JSONObject startup = new JSONObject()
+                .put("remote_key_id", "ed25519." + sha256(remotePublic))
+                .put("remote_public_key_hex", repeat('1', 64))
+                .put("route_grant_id", "grant.route")
+                .put("executor_generation", 9)
+                .put("device_peers", new JSONArray()
+                        .put(new JSONObject().put("device_id", "device.fixture.a")
+                                .put("peer_id", "peer.fixture.a"))
+                        .put(new JSONObject().put("device_id", "device.fixture.b")
+                                .put("peer_id", "peer.fixture.b")));
+        JSONObject replay = new JSONObject().put("pending_request_sha256", new JSONObject())
+                .put("terminal", new JSONObject());
+        JSONObject bootstrap = EmbeddedDuplexBootstrap.runtimeBootstrap(prepared,
+                "ed25519." + repeat('2', 64), startup, replay, replay);
+        assertEquals("peer.fixture.b", bootstrap.getString("local_peer_id"));
+        assertEquals("runtime.device.fixture.a", bootstrap.getString("incoming_runtime_spec_id"));
+        startup.getJSONArray("device_peers").getJSONObject(0).put("peer_id", "peer.fixture.b");
+        assertThrows(IllegalStateException.class, () -> EmbeddedDuplexBootstrap.runtimeBootstrap(
+                prepared, "ed25519." + repeat('2', 64), startup, replay, replay));
+        for (String changed : new String[] {"local_peer_id", "remote_control", "exact_input_sha256"}) {
+            assertThrows(IllegalStateException.class, () -> EmbeddedDuplexBootstrap.prepare(inputs,
+                    runtime, request -> fakeAssembly(new JSONObject(request), changed).toString()));
+        }
+    }
+
+    private static JSONObject fakeAssembly(JSONObject request, String changed) throws Exception {
+        JSONArray mediaBindings = request.getJSONArray("media_bindings");
+        JSONObject digests = new JSONObject()
+                .put("product_spec", request.getJSONObject("product_spec").getString("sha256"))
+                .put("product_lock", request.getJSONObject("product_lock").getString("sha256"))
+                .put("client_lock", request.getJSONObject("client_lock").getString("sha256"))
+                .put("media_lifecycle_lock", request.getJSONObject("media_lifecycle_lock").getString("sha256"))
+                .put("app_feature_lock", request.getJSONObject("app_feature_lock").getString("sha256"))
+                .put("media_bindings", new JSONArray().put(mediaBindings.getJSONObject(0).getString("sha256"))
+                        .put(mediaBindings.getJSONObject(1).getString("sha256")));
+        if ("exact_input_sha256".equals(changed)) digests.put("client_lock", repeat('0', 64));
+        JSONObject route = new JSONObject()
+                .put("route_configuration_sha256", "sha256:" + request.getJSONObject("route_configuration").getString("sha256"))
+                .put("local_peer_id", "local_peer_id".equals(changed) ? "peer.foreign" : "peer.fixture.b")
+                .put("remote_peer_id", "peer.fixture.a")
+                .put("outgoing_runtime_spec_id", "runtime.device.fixture.b")
+                .put("incoming_runtime_spec_id", "runtime.device.fixture.a")
+                .put("max_pair_delta_ns", 20_000_000L)
+                .put("local_control", new JSONObject().put("host", "192.0.2.2").put("port", 20002))
+                .put("remote_control", new JSONObject().put("host", "192.0.2.1")
+                        .put("port", "remote_control".equals(changed) ? 20999 : 20001));
+        return new JSONObject().put("$schema", "rusty.quest.embedded_duplex.packaged_config_result.v1")
+                .put("runtime_config_json", "{}")
+                .put("runtime_config_sha256", sha256(bytes("{}")))
+                .put("exact_input_sha256", digests)
+                .put("packaged_route", route);
+    }
+
     @Test public void installedIdentityAndBuildFixedManifestHashAreMandatory() throws Exception {
         Fixture fixture = Fixture.valid();
         assertThrows(IllegalStateException.class, () -> EmbeddedDuplexPackagedInputs.load(
@@ -256,12 +331,16 @@ public final class EmbeddedDuplexPackagedInputsTest {
             String rawFeatureSha256 = sha256(fixture.files.get("planning-feature-lock.json"));
             fixture.files.put("peer_a.media-lifecycle-lock.json", lifecycle("lifecycle.a", rawFeatureSha256));
             fixture.files.put("peer_b.media-lifecycle-lock.json", lifecycle("lifecycle.b", rawFeatureSha256));
-            fixture.files.put("packed-stereo-profile.json", bytes("{\"id\":\"stereo\"}"));
+            fixture.files.put("packed-stereo-profile.json", bytes("{\"max_pair_delta_ns\":20000000}"));
             fixture.files.put("peer_a_to_peer_b.media-binding.json", binding("device.fixture.a"));
             fixture.files.put("peer_b_to_peer_a.media-binding.json", binding("device.fixture.b"));
             fixture.files.put("route-configuration.json", bytes(new JSONObject().put("peers", new JSONArray()
-                    .put(new JSONObject().put("installed_role_id", "role.fixture.a").put("device_id", "device.fixture.a"))
-                    .put(new JSONObject().put("installed_role_id", "role.fixture.b").put("device_id", "device.fixture.b"))).toString()));
+                    .put(new JSONObject().put("installed_role_id", "role.fixture.a").put("device_id", "device.fixture.a")
+                            .put("peer_id", "peer.fixture.a").put("control_endpoint",
+                                    new JSONObject().put("host", "192.0.2.1").put("port", 20001)))
+                    .put(new JSONObject().put("installed_role_id", "role.fixture.b").put("device_id", "device.fixture.b")
+                            .put("peer_id", "peer.fixture.b").put("control_endpoint",
+                                    new JSONObject().put("host", "192.0.2.2").put("port", 20002)))).toString()));
             fixture.rebuildArtifactsAndManifest();
             return fixture;
         }
@@ -357,6 +436,7 @@ public final class EmbeddedDuplexPackagedInputsTest {
 
         private static byte[] binding(String sourceDeviceId) throws Exception {
             return bytes(new JSONObject().put("quest", new JSONObject().put("spec", new JSONObject()
+                    .put("runtime_spec_id", "runtime." + sourceDeviceId)
                     .put("plan", new JSONObject().put("lanes", new JSONArray()
                             .put(new JSONObject().put("source_device_id", sourceDeviceId)))))).toString());
         }
