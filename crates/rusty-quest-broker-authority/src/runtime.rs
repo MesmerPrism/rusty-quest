@@ -94,6 +94,9 @@ pub const QUEST_BROKER_RUNTIME_EVIDENCE_SCHEMA: &str = "rusty.quest.broker.runti
 /// Runtime-owned media owner-completion response schema.
 pub const QUEST_BROKER_MEDIA_COMPLETION_RESPONSE_SCHEMA: &str =
     "rusty.quest.broker.media_completion_response.v1";
+/// Native-derived evidence for one fully verified seven-owner Stop.
+pub const QUEST_BROKER_MEDIA_STOP_EFFECT_RECEIPT_SCHEMA: &str =
+    "rusty.quest.broker.media_stop_effect_receipt.v1";
 /// Provider initialization/rebind status schema.
 pub const QUEST_BROKER_RUNTIME_INITIALIZE_STATUS_SCHEMA: &str =
     "rusty.quest.broker.runtime_initialize_status.v1";
@@ -416,8 +419,32 @@ pub struct QuestBrokerMediaCompletionResponse {
     pub owner_receipts: Vec<MediaStreamOwnerCompletionReceipt>,
     /// Rust-authored application receipt.
     pub application: MediaStreamPlatformApplicationReceipt,
+    /// Native-derived terminal effect identity and digest for a completed Stop.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stop_effect_receipt: Option<QuestBrokerMediaStopEffectReceipt>,
     /// Explicit proof that the platform effect is complete only after receipt application.
     pub platform_effect_completed: bool,
+}
+
+/// Exact target and verified platform effects supplied to route cleanup. The
+/// digest covers the full action, all owner readbacks, and applied lifecycle.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct QuestBrokerMediaStopEffectReceipt {
+    /// Schema identifier.
+    #[serde(rename = "$schema")]
+    pub schema_id: String,
+    /// Derived unique identity for this complete terminal effect.
+    pub effect_receipt_id: DottedId,
+    /// SHA-256 of the native-owned action, seven receipts, and application.
+    pub effect_receipt_sha256: String,
+    /// Immutable original media holder whose resources were stopped.
+    pub target_client_id: DottedId,
+    /// Immutable original media lease used in each owner ticket.
+    pub target_runtime_lease_id: DottedId,
+    /// Exact completed platform action.
+    pub action_id: String,
+    /// Seven provider-verified receipt identities in Stop order.
+    pub owner_receipt_ids: Vec<String>,
 }
 
 /// Native-only activation material derived atomically from a completed Start.
@@ -904,6 +931,52 @@ fn product_activation_material(
             completion_sha256: format!("sha256:{}", sha256_hex(completion_json.as_bytes())),
         },
         completion_json,
+    })
+}
+
+fn native_stop_effect_receipt(
+    provider_epoch_id: &DottedId,
+    action: &MediaStreamPlatformAction,
+    owner_receipts: &[MediaStreamOwnerCompletionReceipt],
+    application: &MediaStreamPlatformApplicationReceipt,
+) -> Result<QuestBrokerMediaStopEffectReceipt, QuestBrokerRuntimeError> {
+    let receipt_ids = owner_receipts
+        .iter()
+        .map(|receipt| receipt.receipt_id.clone())
+        .collect::<Vec<_>>();
+    if action.operation != MediaStreamPlatformOperation::Stop
+        || action.authority_epoch_id != provider_epoch_id.as_str()
+        || owner_receipts.len() != 7
+        || action.owner_actions.len() != 7
+        || receipt_ids.iter().collect::<BTreeSet<_>>().len() != 7
+        || application.owner_receipt_ids != receipt_ids
+        || application.action_id != action.action_id
+        || application.authority_epoch_id != action.authority_epoch_id
+        || !application.platform_effect_completed
+        || application.resulting_phase != rusty_quest_media_stream::MediaStreamRuntimePhase::Stopped
+    {
+        return Err(QuestBrokerRuntimeError::MediaExecutionTicketInvalid);
+    }
+    let evidence = serde_json::to_vec(&(
+        QUEST_BROKER_MEDIA_STOP_EFFECT_RECEIPT_SCHEMA,
+        provider_epoch_id,
+        action,
+        owner_receipts,
+        application,
+    ))
+    .map_err(QuestBrokerRuntimeError::Encode)?;
+    let digest = sha256_hex(&evidence);
+    Ok(QuestBrokerMediaStopEffectReceipt {
+        schema_id: QUEST_BROKER_MEDIA_STOP_EFFECT_RECEIPT_SCHEMA.to_owned(),
+        effect_receipt_id: DottedId::new(format!("receipt.quest.media.stop.{digest}"))
+            .map_err(|_| QuestBrokerRuntimeError::MediaExecutionTicketInvalid)?,
+        effect_receipt_sha256: format!("sha256:{digest}"),
+        target_client_id: DottedId::new(action.client_authority.client_id.clone())
+            .map_err(|_| QuestBrokerRuntimeError::MediaExecutionTicketInvalid)?,
+        target_runtime_lease_id: DottedId::new(action.client_authority.lease_id.clone())
+            .map_err(|_| QuestBrokerRuntimeError::MediaExecutionTicketInvalid)?,
+        action_id: action.action_id.clone(),
+        owner_receipt_ids: receipt_ids,
     })
 }
 
@@ -1404,8 +1477,44 @@ impl QuestBrokerAuthorityRuntime {
             .cloned()
             .ok_or(QuestBrokerRuntimeError::MediaPeerRuntimeConfig)?;
         let current_acceptance = media.current_acceptance().clone();
-        let mut owner_receipts = Vec::new();
-        for (index, owner) in action.owner_actions.clone().into_iter().enumerate() {
+        let progress = media.pending_stop_progress();
+        let mut owner_receipts = progress.as_ref().map_or_else(Vec::new, |progress| {
+            progress.verified_owner_receipts.clone()
+        });
+        if owner_receipts.len() > action.owner_actions.len() {
+            return Err(QuestBrokerRuntimeError::MediaExecutionTicketInvalid);
+        }
+        if let Some(uncertain) = progress.and_then(|progress| progress.uncertain_owner) {
+            let index = owner_receipts.len();
+            if action.owner_actions.get(index) != Some(&uncertain) {
+                return Err(QuestBrokerRuntimeError::MediaExecutionTicketInvalid);
+            }
+            let sequence = u32::try_from(index + 1)
+                .map_err(|_| QuestBrokerRuntimeError::MediaExecutionTicketInvalid)?;
+            let capability = next_media_execution_capability(
+                &action,
+                &uncertain,
+                sequence,
+                executor.executor_generation(),
+                next_execution_nonce,
+            )?;
+            let mut provider = QuestBrokerAndroidMediaOwnerProvider::new(
+                uncertain, sequence, capability, executor,
+            );
+            let receipt = media
+                .complete_uncertain_stop_owner(&mut provider, now_ms)
+                .map_err(|error| {
+                    QuestBrokerRuntimeError::MediaStopAttemptRetained(error.to_string())
+                })?;
+            owner_receipts.push(receipt);
+        }
+        for (index, owner) in action
+            .owner_actions
+            .iter()
+            .cloned()
+            .enumerate()
+            .skip(owner_receipts.len())
+        {
             let sequence = u32::try_from(index + 1)
                 .map_err(|_| QuestBrokerRuntimeError::MediaExecutionTicketInvalid)?;
             let capability = next_media_execution_capability(
@@ -1465,6 +1574,16 @@ impl QuestBrokerAuthorityRuntime {
                 ));
             }
         };
+        let stop_effect_receipt = if action.operation == MediaStreamPlatformOperation::Stop {
+            Some(native_stop_effect_receipt(
+                &provider_epoch_id,
+                &action,
+                &owner_receipts,
+                &application,
+            )?)
+        } else {
+            None
+        };
         Ok(QuestBrokerMediaCompletionResponse {
             schema_id: QUEST_BROKER_MEDIA_COMPLETION_RESPONSE_SCHEMA.to_owned(),
             provider_epoch_id,
@@ -1475,6 +1594,7 @@ impl QuestBrokerAuthorityRuntime {
             action,
             owner_receipts,
             application,
+            stop_effect_receipt,
             platform_effect_completed: true,
         })
     }
@@ -3939,7 +4059,7 @@ mod tests {
     }
 
     #[test]
-    fn stop_keeps_existing_authority_facades_on_the_live_host() {
+    fn stop_retry_preserves_verified_owners_and_existing_authority_facades() {
         let kind = QuestBrokerAuthorityBridgeKind::EmbeddedInProcessJni;
         let mut runtime = runtime_for(
             kind.clone(),
@@ -4037,7 +4157,11 @@ mod tests {
             .expect("prepared Stop");
         assert!(stopped.accepted);
         assert_eq!(
-            stopped.platform_action.expect("Stop action").operation,
+            stopped
+                .platform_action
+                .as_ref()
+                .expect("Stop action")
+                .operation,
             MediaStreamPlatformOperation::Stop
         );
         assert!(Arc::ptr_eq(
@@ -4054,9 +4178,91 @@ mod tests {
                 .snapshot_json()
                 .expect("live snapshot")
         );
-        runtime
-            .complete_media_session_action(&completion, 5_400, &mut executor, &mut nonce)
-            .expect("actual host Stop completion");
+        let mut executor = FailAfterSideEffect {
+            inner: executor,
+            fail_sequence: 3,
+            failed: false,
+            fail_abort_sequence: 0,
+            failed_abort: false,
+            fail_stop_compensate_sequence: 3,
+            failed_stop_compensate: false,
+            attempted_abort_sequences: Vec::new(),
+            attempted_stop_execute_sequences: Vec::new(),
+            attempted_stop_compensate_sequences: Vec::new(),
+        };
+        assert!(matches!(
+            runtime.complete_media_session_action(&completion, 5_400, &mut executor, &mut nonce),
+            Err(QuestBrokerRuntimeError::MediaStopAttemptRetained(_))
+        ));
+        let progress = runtime
+            .media_sessions
+            .get(&completion.client_id)
+            .expect("retained media")
+            .pending_stop_progress()
+            .expect("retained Stop");
+        assert_eq!(progress.verified_owner_receipts.len(), 2);
+        let first_two_receipts = progress.verified_owner_receipts.clone();
+        assert_eq!(
+            progress.uncertain_owner,
+            stopped
+                .platform_action
+                .as_ref()
+                .and_then(|action| action.owner_actions.get(2))
+                .cloned()
+        );
+        assert!(matches!(
+            runtime.complete_media_session_action(&completion, 5_450, &mut executor, &mut nonce),
+            Err(QuestBrokerRuntimeError::MediaStopAttemptRetained(_))
+        ));
+        assert_eq!(
+            runtime
+                .media_sessions
+                .get(&completion.client_id)
+                .expect("retained media")
+                .pending_stop_progress()
+                .expect("retained Stop")
+                .verified_owner_receipts,
+            first_two_receipts
+        );
+        let completed = runtime
+            .complete_media_session_action(&completion, 5_500, &mut executor, &mut nonce)
+            .expect("compensated Stop completion");
+        assert_eq!(completed.owner_receipts.len(), 7);
+        assert_eq!(
+            &completed.owner_receipts[..2],
+            first_two_receipts.as_slice()
+        );
+        assert_eq!(
+            executor.attempted_stop_execute_sequences,
+            (1..=7).collect::<Vec<_>>()
+        );
+        assert_eq!(executor.attempted_stop_compensate_sequences, vec![3, 3]);
+        let effect = completed
+            .stop_effect_receipt
+            .as_ref()
+            .expect("typed Stop effect");
+        assert_eq!(effect.target_client_id, completion.client_id);
+        assert_eq!(
+            effect.target_runtime_lease_id.as_str(),
+            completed.action.client_authority.lease_id
+        );
+        assert_eq!(
+            effect.owner_receipt_ids,
+            completed.application.owner_receipt_ids
+        );
+        assert_eq!(effect.owner_receipt_ids.len(), 7);
+        assert!(effect.effect_receipt_sha256.starts_with("sha256:"));
+        let mut changed_receipts = completed.owner_receipts.clone();
+        changed_receipts[0].receipt_id.push_str(".tampered");
+        assert!(matches!(
+            native_stop_effect_receipt(
+                &completed.provider_epoch_id,
+                &completed.action,
+                &changed_receipts,
+                &completed.application,
+            ),
+            Err(QuestBrokerRuntimeError::MediaExecutionTicketInvalid)
+        ));
     }
 
     struct FailAfterSideEffect {
@@ -4065,7 +4271,11 @@ mod tests {
         failed: bool,
         fail_abort_sequence: u32,
         failed_abort: bool,
+        fail_stop_compensate_sequence: u32,
+        failed_stop_compensate: bool,
         attempted_abort_sequences: Vec<u32>,
+        attempted_stop_execute_sequences: Vec<u32>,
+        attempted_stop_compensate_sequences: Vec<u32>,
     }
 
     impl AndroidMediaOwnerExecutor for FailAfterSideEffect {
@@ -4078,6 +4288,23 @@ mod tests {
             ticket: &AndroidMediaExecutionTicket,
             mode: AndroidMediaExecutionMode,
         ) -> Result<AndroidMediaOwnerReadback, String> {
+            if ticket.operation == MediaStreamPlatformOperation::Stop {
+                match mode {
+                    AndroidMediaExecutionMode::Execute => {
+                        self.attempted_stop_execute_sequences.push(ticket.sequence);
+                    }
+                    AndroidMediaExecutionMode::CompensateUncertain => {
+                        self.attempted_stop_compensate_sequences
+                            .push(ticket.sequence);
+                        if ticket.sequence == self.fail_stop_compensate_sequence
+                            && !self.failed_stop_compensate
+                        {
+                            self.failed_stop_compensate = true;
+                            return Err("injected Stop compensation interruption".to_owned());
+                        }
+                    }
+                }
+            }
             if ticket.action_id.ends_with(".abort") {
                 self.attempted_abort_sequences.push(ticket.sequence);
                 if ticket.sequence == self.fail_abort_sequence && !self.failed_abort {
@@ -4203,7 +4430,11 @@ mod tests {
             failed: false,
             fail_abort_sequence: 0,
             failed_abort: false,
+            fail_stop_compensate_sequence: 0,
+            failed_stop_compensate: false,
             attempted_abort_sequences: Vec::new(),
+            attempted_stop_execute_sequences: Vec::new(),
+            attempted_stop_compensate_sequences: Vec::new(),
         };
         let mut nonce = 1;
         let error = runtime
@@ -4268,7 +4499,11 @@ mod tests {
             failed: false,
             fail_abort_sequence: 2,
             failed_abort: false,
+            fail_stop_compensate_sequence: 0,
+            failed_stop_compensate: false,
             attempted_abort_sequences: Vec::new(),
+            attempted_stop_execute_sequences: Vec::new(),
+            attempted_stop_compensate_sequences: Vec::new(),
         };
         let mut nonce = 1;
         assert!(matches!(

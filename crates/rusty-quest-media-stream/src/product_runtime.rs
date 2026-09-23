@@ -289,6 +289,17 @@ pub struct MediaStreamOwnerCompletionReceipt {
     pub observed_state: String,
 }
 
+/// Retained progress for one pending Stop. Only provider-verified receipts are
+/// included; an uncertain attempt remains separate until a provider proves it
+/// terminal through the compensation callback.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MediaStreamPendingStopProgress {
+    /// Ordered, verified owner effects already applied to this pending action.
+    pub verified_owner_receipts: Vec<MediaStreamOwnerCompletionReceipt>,
+    /// The next owner whose effect may have occurred without trusted readback.
+    pub uncertain_owner: Option<MediaStreamOwnerAction>,
+}
+
 /// Rust-aggregated completion evidence after all owner-specific callbacks.
 ///
 /// This type is serialization-only and is never accepted from Java/JNI JSON.
@@ -676,6 +687,20 @@ impl MediaStreamSessionProductRuntime {
         self.pending_action.as_ref()
     }
 
+    /// Returns only verified Stop effects and the one attempt still requiring
+    /// provider compensation. Start has its separate abort continuation.
+    #[must_use]
+    pub fn pending_stop_progress(&self) -> Option<MediaStreamPendingStopProgress> {
+        self.pending_action.as_ref().and_then(|action| {
+            (action.operation == MediaStreamPlatformOperation::Stop).then(|| {
+                MediaStreamPendingStopProgress {
+                    verified_owner_receipts: self.pending_owner_receipts.clone(),
+                    uncertain_owner: self.pending_uncertain_owner.clone(),
+                }
+            })
+        })
+    }
+
     /// Prepares one exact platform action without claiming platform completion.
     pub fn prepare(
         &mut self,
@@ -906,6 +931,53 @@ impl MediaStreamSessionProductRuntime {
         let readback = provider
             .execute_and_readback(&action, &expected)
             .map_err(|_| MediaStreamProductRuntimeError::OwnerProviderFailed)?;
+        self.record_owner_readback(&action, &expected, provider, readback, sequence)
+    }
+
+    /// Completes an uncertain Stop owner only after its provider independently
+    /// proves the original handle absent at a newer state revision. The next
+    /// normal Stop owner remains blocked until this succeeds.
+    pub fn complete_uncertain_stop_owner<P: MediaStreamTrustedOwnerProvider>(
+        &mut self,
+        provider: &mut P,
+        now_ms: u64,
+    ) -> Result<MediaStreamOwnerCompletionReceipt, MediaStreamProductRuntimeError> {
+        if self.abort_in_progress {
+            return Err(MediaStreamProductRuntimeError::AbortInProgress);
+        }
+        let action = self
+            .pending_action
+            .as_ref()
+            .filter(|action| action.operation == MediaStreamPlatformOperation::Stop)
+            .ok_or(MediaStreamProductRuntimeError::InvalidOperationPhase)?
+            .clone();
+        let expected = self
+            .pending_uncertain_owner
+            .as_ref()
+            .ok_or(MediaStreamProductRuntimeError::NoUncertainOwnerAttempt)?
+            .clone();
+        let sequence = self.pending_owner_receipts.len();
+        if action.owner_actions.get(sequence) != Some(&expected) {
+            return Err(MediaStreamProductRuntimeError::OwnerCallbackOrderMismatch);
+        }
+        if provider.owner_kind() != expected.selection.owner_kind {
+            return Err(MediaStreamProductRuntimeError::OwnerProviderMismatch);
+        }
+        self.refresh_authority(now_ms, false)?;
+        let readback = provider
+            .compensate_uncertain_attempt(&action, &expected)
+            .map_err(|_| MediaStreamProductRuntimeError::OwnerProviderFailed)?;
+        self.record_owner_readback(&action, &expected, provider, readback, sequence)
+    }
+
+    fn record_owner_readback<P: MediaStreamTrustedOwnerProvider>(
+        &mut self,
+        action: &MediaStreamPlatformAction,
+        expected: &MediaStreamOwnerAction,
+        provider: &P,
+        readback: MediaStreamOwnerProviderReadback,
+        sequence: usize,
+    ) -> Result<MediaStreamOwnerCompletionReceipt, MediaStreamProductRuntimeError> {
         if readback.action_id != action.action_id
             || readback.authority_epoch_id != action.authority_epoch_id
             || readback.media_acceptance_authority_revision
@@ -1774,6 +1846,8 @@ pub enum MediaStreamProductRuntimeError {
     AbortInProgress,
     /// A provider call may have produced an unverified side effect and must be compensated.
     UncertainOwnerAttemptPending,
+    /// Stop compensation was requested without an uncertain owner attempt.
+    NoUncertainOwnerAttempt,
     /// Rollback is valid only for one pending Start action.
     AbortRequiresPendingStart,
     /// Not every observed partial-start owner supplied reverse cleanup proof.
@@ -1843,6 +1917,7 @@ impl std::fmt::Display for MediaStreamProductRuntimeError {
             Self::UncertainOwnerAttemptPending => {
                 "media owner attempt is uncertain and requires compensation"
             }
+            Self::NoUncertainOwnerAttempt => "media stop has no uncertain owner attempt",
             Self::AbortRequiresPendingStart => "media rollback requires one pending start action",
             Self::AbortCallbacksIncomplete => {
                 "media rollback lacks reverse cleanup for every observed owner"
