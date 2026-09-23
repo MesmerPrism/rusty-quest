@@ -401,6 +401,16 @@ unsafe fn run_projection_loop_inner(
     let mut enabled_extensions = xr::ExtensionSet::default();
     enabled_extensions.khr_android_create_instance = true;
     enabled_extensions.khr_vulkan_enable2 = true;
+    let sustained_high_requested =
+        option_env!("RUSTY_QUEST_NATIVE_RENDERER_SUSTAINED_HIGH") == Some("1");
+    enabled_extensions.ext_performance_settings =
+        sustained_high_requested && available_extensions.ext_performance_settings;
+    if sustained_high_requested && !enabled_extensions.ext_performance_settings {
+        crate::marker(
+            "openxr-performance-level",
+            "status=extension-unavailable cpu=sustained-high gpu=sustained-high",
+        );
+    }
     enabled_extensions.ext_hand_tracking = available_extensions.ext_hand_tracking;
     enabled_extensions.fb_hand_tracking_mesh =
         enabled_extensions.ext_hand_tracking && available_extensions.fb_hand_tracking_mesh;
@@ -693,6 +703,9 @@ unsafe fn run_projection_loop_inner(
             },
         )
         .map_err(|error| format!("create OpenXR Vulkan session: {error}"))?;
+    if sustained_high_requested {
+        request_sustained_high_performance(&xr_instance, &session);
+    }
     simultaneous_hands_controllers.resume(&xr_instance, &session)?;
     let mut stimulus_actions = match StimulusVolumeActions::new(
         &xr_instance,
@@ -1560,6 +1573,37 @@ unsafe fn run_projection_loop_inner(
     vk_instance.destroy_instance(None);
 
     loop_result
+}
+
+fn request_sustained_high_performance(instance: &xr::Instance, session: &xr::Session<xr::Vulkan>) {
+    let Some(extension) = instance.exts().ext_performance_settings.as_ref() else {
+        return;
+    };
+    for (domain, label) in [
+        (xr::sys::PerfSettingsDomainEXT::CPU, "cpu"),
+        (xr::sys::PerfSettingsDomainEXT::GPU, "gpu"),
+    ] {
+        let result = unsafe {
+            (extension.perf_settings_set_performance_level)(
+                session.as_raw(),
+                domain,
+                xr::sys::PerfSettingsLevelEXT::SUSTAINED_HIGH,
+            )
+        };
+        crate::marker(
+            "openxr-performance-level",
+            format!(
+                "status={} domain={} requested=sustained-high xrResult={:?}",
+                if result.into_raw() < 0 {
+                    "request-failed"
+                } else {
+                    "hint-requested"
+                },
+                label,
+                result
+            ),
+        );
+    }
 }
 
 unsafe fn probe_inner(

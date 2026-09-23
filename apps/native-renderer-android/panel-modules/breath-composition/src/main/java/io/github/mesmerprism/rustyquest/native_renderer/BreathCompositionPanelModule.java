@@ -2,6 +2,7 @@ package io.github.mesmerprism.rustyquest.native_renderer;
 
 import android.app.Activity;
 import android.content.ComponentName;
+import android.content.Context;
 import android.content.Intent;
 import android.graphics.Canvas;
 import android.graphics.Color;
@@ -37,6 +38,7 @@ import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.InputStreamReader;
+import java.lang.ref.WeakReference;
 import java.nio.charset.StandardCharsets;
 import java.util.LinkedHashSet;
 import java.util.Locale;
@@ -240,6 +242,257 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
                 }
             }
         );
+    private static WeakReference<BreathCompositionPanelModule> remotePanel =
+        new WeakReference<BreathCompositionPanelModule>(null);
+    private static Context remoteContext;
+    private static RemotePending remotePending;
+    private static long lastRemoteStatusPollMs;
+    private static final String EXTRA_REMOTE_OPEN_POLAR = "experiment_session_remote_open_polar";
+
+    private static final class RemotePending {
+        final String browserId;
+        final String nativeId;
+        final String operation;
+        RemotePending(String browserId, String nativeId, String operation) {
+            this.browserId = browserId;
+            this.nativeId = nativeId;
+            this.operation = operation;
+        }
+    }
+
+    private static ExperimentSessionBleServer remoteServer() {
+        return remoteContext == null ? null : ExperimentSessionBleServer.process(
+            remoteContext, REMOTE_DELEGATE);
+    }
+
+    private static final ExperimentSessionAndroidShell.UiSink REMOTE_SINK =
+        new ExperimentSessionAndroidShell.UiSink() {
+            @Override public boolean acceptsExperimentSessionCallbacks(long epoch) {
+                return epoch == EXPERIMENT_SESSION_SHELL.currentLaunchEpochForUi();
+            }
+
+            @Override public void onExperimentSessionReadback(
+                    ExperimentSessionAndroidShell.SessionReadback readback) {
+                if (readback == null || readback.receipt == null) return;
+                BreathCompositionPanelModule panel = remotePanel.get();
+                if (panel != null && !panel.experimentShellDestroyed) {
+                    panel.onExperimentSessionReadback(readback);
+                } else {
+                    EXPERIMENT_SESSION_PANEL.acceptRuntimeEpoch(readback.runtimeEpoch);
+                    EXPERIMENT_SESSION_PANEL.accept(readback.receipt);
+                    ExperimentSessionPanelState state = EXPERIMENT_SESSION_PANEL.snapshot();
+                    if (state.phase == ExperimentSessionPanelState.Phase.ARMING
+                            && state.recording) {
+                        ControlPanelActivity.startConditionAudio(
+                            state.generation, "session-arm-" + state.generation,
+                            state.activeCondition);
+                    }
+                }
+                RemotePending pending = remotePending;
+                if (pending == null || !pending.nativeId.equals(readback.receipt.operationId)) {
+                    return;
+                }
+                ExperimentSessionPanelState state = EXPERIMENT_SESSION_PANEL.snapshot();
+                ExperimentSessionBleServer server = remoteServer();
+                if (server == null) return;
+                if (!readback.receipt.accepted && !readback.commandPending()) {
+                    server.updateReceipt(pending.browserId, "rejected", "Native session rejected the command.");
+                    remotePending = null;
+                } else if ("arm".equals(pending.operation)
+                        && readback.receipt.durable
+                        && state.phase == ExperimentSessionPanelState.Phase.ARMED
+                        && state.pendingOperationId.isEmpty()) {
+                    server.updateReceipt(pending.browserId, "confirmed", "Condition armed by the Quest runtime.");
+                    remotePending = null;
+                } else if ("save-next".equals(pending.operation)
+                        && readback.receipt.durable
+                        && state.phase == ExperimentSessionPanelState.Phase.IDLE
+                        && "saved".equals(readback.recordingResult)) {
+                    server.updateReceipt(pending.browserId, "confirmed", "Session saved by the Quest writer.");
+                    remotePending = null;
+                } else {
+                    server.updateReceipt(pending.browserId, "pending", "Awaiting native session readback.");
+                }
+            }
+
+            @Override public void onExperimentSessionTerminal(
+                    ExperimentSessionAndroidShell.TerminalResult result) {
+                RemotePending pending = remotePending;
+                ExperimentSessionBleServer server = remoteServer();
+                if (pending != null && server != null && "save-exit".equals(pending.operation)) {
+                    server.updateReceipt(pending.browserId,
+                        result != null && result.shouldFinish && result.saved
+                            ? "confirmed" : "outcome_unknown",
+                        result != null && result.shouldFinish && result.saved
+                            ? "Recording saved; app is closing." : "Save and exit needs headset review.");
+                    remotePending = null;
+                }
+            }
+        };
+
+    private static final ExperimentSessionBleServer.Delegate REMOTE_DELEGATE =
+        new ExperimentSessionBleServer.Delegate() {
+            @Override public JSONObject snapshot() throws Exception {
+                long now = SystemClock.elapsedRealtime();
+                if (now - lastRemoteStatusPollMs >= 1200L) {
+                    lastRemoteStatusPollMs = now;
+                    EXPERIMENT_SESSION_SHELL.requestStatus(REMOTE_SINK);
+                }
+                ExperimentSessionPanelState state = EXPERIMENT_SESSION_PANEL.snapshot();
+                JSONObject status = new JSONObject()
+                    .put("f", NativeRendererSelfKioskApplication.foregroundForOwnApp(remoteContext))
+                    .put("p", state.phase.name())
+                    .put("g", state.generation)
+                    .put("r", state.revision)
+                    .put("c", state.activeCondition)
+                    .put("rec", state.recording)
+                    .put("co", state.completion.name())
+                    .put("ms", state.activeTimeMs)
+                    .put("st", state.storageStatus)
+                    .put("k", remoteKioskState())
+                    .put("bt", state.polar.bluetooth.name())
+                    .put("po", state.polar.polar.name())
+                    .put("pf", state.polar.fresh
+                        && state.polar.observedAtUnixMs > 0L
+                        && System.currentTimeMillis() - state.polar.observedAtUnixMs < 5000L)
+                    .put("done", state.counts.totalsAvailable
+                        ? state.counts.completedTotal() : JSONObject.NULL)
+                    .put("early", state.counts.totalsAvailable
+                        ? state.counts.stoppedEarlyTotal() : JSONObject.NULL)
+                    .put("a", new JSONArray()
+                        .put(ControlPanelActivity.conditionAudioReadiness(
+                            ExperimentSessionPanelCoordinator.CONDITION_ONE))
+                        .put(ControlPanelActivity.conditionAudioReadiness(
+                            ExperimentSessionPanelCoordinator.CONDITION_TWO)))
+                    .put("b", new JSONArray()
+                        .put(ControlPanelActivity.conditionBreathGuidanceReadiness(
+                            ExperimentSessionPanelCoordinator.CONDITION_ONE))
+                        .put(ControlPanelActivity.conditionBreathGuidanceReadiness(
+                            ExperimentSessionPanelCoordinator.CONDITION_TWO)))
+                    .put("pending", state.pendingOperationId.isEmpty() ? false : true);
+                RemotePending pending = remotePending;
+                if (pending != null && ("return-vr".equals(pending.operation)
+                        || "open-polar".equals(pending.operation))) {
+                    String foreground = NativeRendererSelfKioskApplication.foregroundForOwnApp(remoteContext);
+                    BreathCompositionPanelModule panel = remotePanel.get();
+                    boolean reached = "return-vr".equals(pending.operation)
+                        ? "focused".equals(foreground)
+                        : "panel".equals(foreground) && panel != null
+                            && "polar".equals(panel.breathCompositionPanelTopic);
+                    if (reached) {
+                        ExperimentSessionBleServer server = remoteServer();
+                        if (server != null) server.updateReceipt(pending.browserId,
+                            "confirmed", "Quest foreground confirmed.");
+                        remotePending = null;
+                    }
+                }
+                return status;
+            }
+
+            @Override public void dispatch(ExperimentSessionBleServer.CommandRequest request) {
+                ExperimentSessionBleServer server = remoteServer();
+                if (server == null) return;
+                if (remotePending != null) {
+                    server.updateReceipt(request.id, "rejected", "Another command is awaiting confirmation.");
+                    return;
+                }
+                if ("ping".equals(request.operation)) {
+                    server.updateReceipt(request.id, "confirmed", "Pairing code accepted by Quest.");
+                    return;
+                }
+                BreathCompositionPanelModule panel = remotePanel.get();
+                if ("arm".equals(request.operation)) {
+                    if (!"track-ready".equals(ControlPanelActivity.conditionAudioReadiness(
+                            request.condition))) {
+                        server.updateReceipt(request.id, "rejected", "Condition audio is not ready.");
+                        return;
+                    }
+                    ExperimentSessionPanelCoordinator.NativeCommand nativeCommand =
+                        EXPERIMENT_SESSION_PANEL.arm(request.condition,
+                            "pattern-ready".equals(
+                                ControlPanelActivity.conditionBreathGuidanceReadiness(
+                                    request.condition)) ? request.bias : 0);
+                    if (nativeCommand == null) {
+                        server.updateReceipt(request.id, "rejected", "Session is already active or pending.");
+                        return;
+                    }
+                    remotePending = new RemotePending(request.id, nativeCommand.operationId, "arm");
+                    server.updateReceipt(request.id, "pending", "Preparing condition in native session.");
+                    EXPERIMENT_SESSION_SHELL.submit(nativeCommand, true, REMOTE_SINK);
+                    return;
+                }
+                if ("save-next".equals(request.operation)) {
+                    if (!ExperimentSessionPanelViewPolicy.canSaveAndPrepareNext(
+                            EXPERIMENT_SESSION_PANEL.snapshot())) {
+                        server.updateReceipt(request.id, "rejected", "No savable active session.");
+                        return;
+                    }
+                    ExperimentSessionPanelCoordinator.NativeCommand nativeCommand =
+                        EXPERIMENT_SESSION_PANEL.restartToExperimenter(
+                            EXPERIMENT_SESSION_PANEL.allocateRouteEvent());
+                    if (nativeCommand == null) {
+                        server.updateReceipt(request.id, "rejected", "Could not begin session save.");
+                        return;
+                    }
+                    remotePending = new RemotePending(request.id, nativeCommand.operationId, "save-next");
+                    server.updateReceipt(request.id, "pending", "Saving recording in native session.");
+                    EXPERIMENT_SESSION_SHELL.submit(nativeCommand, false, REMOTE_SINK);
+                    return;
+                }
+                if ("save-exit".equals(request.operation)) {
+                    if (!NativeRendererSelfKioskApplication.requestSaveAndExitFromRemote(
+                            remoteContext)) {
+                        server.updateReceipt(request.id, "rejected", "Save and exit could not be admitted.");
+                        return;
+                    }
+                    remotePending = new RemotePending(request.id, "", "save-exit");
+                    server.updateReceipt(request.id, "pending", "Waiting for durable save and exit.");
+                    return;
+                }
+                if ("return-vr".equals(request.operation)) {
+                    if (panel != null && !panel.experimentShellDestroyed) {
+                        remotePending = new RemotePending(request.id, "", "return-vr");
+                        server.updateReceipt(request.id, "pending", "Waiting for immersive foreground.");
+                        panel.closePanelAndReturnToImmersive();
+                    } else if ("focused".equals(
+                            NativeRendererSelfKioskApplication.foregroundForOwnApp(remoteContext))) {
+                        server.updateReceipt(request.id, "confirmed", "Immersive app is in foreground.");
+                    } else {
+                        server.updateReceipt(request.id, "rejected", "No live panel can return to VR.");
+                    }
+                    return;
+                }
+                if ("open-polar".equals(request.operation)) {
+                    remotePending = new RemotePending(request.id, "", "open-polar");
+                    server.updateReceipt(request.id, "pending", "Opening Polar setup on Quest.");
+                    if (panel != null && !panel.experimentShellDestroyed) {
+                        panel.replaceBreathCompositionPanelContent("polar");
+                    } else {
+                        Intent intent = new Intent(remoteContext, ControlPanelActivity.class)
+                            .setAction(ACTION_OPEN_PANEL)
+                            .addCategory("com.oculus.intent.category.2D")
+                            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                            .putExtra(EXTRA_PANEL_ROUTE, PANEL_ROUTE_EXPERIMENTER)
+                            .putExtra(EXTRA_PANEL_ROUTE_GENERATION,
+                                EXPERIMENT_SESSION_PANEL.allocateRouteEvent())
+                            .putExtra(EXTRA_REMOTE_OPEN_POLAR, true);
+                        remoteContext.startActivity(intent);
+                    }
+                }
+            }
+        };
+
+    private static String remoteKioskState() {
+        NativeRendererSoftKioskCoordinator.Effectiveness effectiveness =
+            NativeRendererSoftKioskCoordinator.process().snapshot().effectiveness;
+        switch (effectiveness) {
+            case READY_ARMED:
+            case READY_DISARMED: return "ready";
+            case WATCHDOG_STARTING: return "starting";
+            case TERMINAL: return "ending";
+            default: return "attention";
+        }
+    }
 
     static {
         try {
@@ -344,6 +597,8 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        remoteContext = getApplicationContext();
+        remotePanel = new WeakReference<BreathCompositionPanelModule>(this);
         liveApplyHandler = new Handler(Looper.getMainLooper());
         Intent initialIntent = getIntent();
         long requestedLaunchEpoch = initialIntent == null
@@ -418,7 +673,11 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
         handleDisplayCompositeIntent(getIntent());
         handlePolarSensorPanelCommandIntent(getIntent());
         handleBreathCompositionCommandIntent(getIntent());
-        handleTerminalSaveAndExitIntent(initialIntent);
+        boolean terminalIntent = handleTerminalSaveAndExitIntent(initialIntent);
+        handleRemoteOpenPolarIntent(initialIntent);
+        if (!terminalIntent) {
+            ExperimentSessionBleServer.process(this, REMOTE_DELEGATE).startFromPanel(this);
+        }
     }
 
     @Override
@@ -460,6 +719,7 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
             handlePolarSensorPanelCommandIntent(intent);
             handleBreathCompositionCommandIntent(intent);
         }
+        handleRemoteOpenPolarIntent(intent);
     }
 
     private void rebuildContentViewForCurrentMode() {
@@ -640,6 +900,9 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
     @Override
     protected void onDestroy() {
         experimentShellDestroyed = true;
+        if (remotePanel.get() == this) {
+            remotePanel = new WeakReference<BreathCompositionPanelModule>(null);
+        }
         EXPERIMENT_SESSION_SHELL.detach(this);
         cancelExperimenterProjectionRefresh();
         cancelPendingPrivateParticleDynamicsApply();
@@ -708,6 +971,8 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
             permissions,
             grantResults
         );
+        ExperimentSessionBleServer.process(this, REMOTE_DELEGATE)
+            .onPermissionResult(this, requestCode);
     }
 
     private View buildContentView() {
@@ -874,6 +1139,7 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
             appendExperimenterConnection(root, state, view);
             appendExperimenterStorage(root, state);
             appendExperimenterKiosk(root);
+            appendExperimenterPhoneControl(root);
         } else if (page == ExperimentSessionPanelViewPolicy.Page.CONTROLS) {
             appendExperimenterControls(root);
         } else if (page == ExperimentSessionPanelViewPolicy.Page.CONDITION) {
@@ -931,6 +1197,49 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
             presentation.detail.isEmpty() ? View.GONE : View.VISIBLE);
         kiosk.addView(experimenterKioskDetail);
         root.addView(kiosk);
+    }
+
+    private void appendExperimenterPhoneControl(LinearLayout root) {
+        if (!ExperimentSessionBleServer.featurePackaged(this)) return;
+        final ExperimentSessionBleServer server =
+            ExperimentSessionBleServer.process(this, REMOTE_DELEGATE);
+        LinearLayout phone = panelCard("Phone control");
+        String state = !server.enabled() ? "Off" : server.active()
+            ? "Ready for nearby phones" : "Waiting for Bluetooth permission or adapter";
+        phone.addView(text("BLE: " + state, 15, PANEL_FG));
+        phone.addView(text("Phone page: https://mesmerprism.com/viscereality-control/",
+            13, PANEL_MUTED));
+        phone.addView(text("Access: " + (server.openControl()
+            ? "Open control — any nearby connected browser can send commands"
+            : "Pairing code required for commands"), 13, PANEL_MUTED));
+        if (server.active() && !server.openControl()) {
+            phone.addView(text("Pairing code: " + server.pairingCode(), 20, PANEL_FG));
+        }
+        Button toggle = button(server.enabled() ? "Turn phone control off" : "Turn phone control on");
+        toggle.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View ignored) {
+                server.setEnabled(!server.enabled(), BreathCompositionPanelModule.this);
+                replaceBreathCompositionPanelContent("home");
+            }
+        });
+        phone.addView(toggle);
+        Button mode = button(server.openControl()
+            ? "Require pairing code" : "Allow open control");
+        mode.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View ignored) {
+                server.setOpenControl(!server.openControl(), BreathCompositionPanelModule.this);
+                replaceBreathCompositionPanelContent("home");
+            }
+        });
+        phone.addView(mode);
+        root.addView(phone);
+    }
+
+    private void handleRemoteOpenPolarIntent(Intent intent) {
+        if (intent != null && intent.getBooleanExtra(EXTRA_REMOTE_OPEN_POLAR, false)) {
+            intent.removeExtra(EXTRA_REMOTE_OPEN_POLAR);
+            replaceBreathCompositionPanelContent("polar");
+        }
     }
 
     private void appendExperimenterControls(LinearLayout root) {
@@ -2657,6 +2966,15 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
     public void onExperimentSessionTerminal(
             ExperimentSessionAndroidShell.TerminalResult result) {
         if (result == null) return;
+        RemotePending remote = remotePending;
+        if (remote != null && "save-exit".equals(remote.operation)) {
+            ExperimentSessionBleServer server = remoteServer();
+            if (server != null) server.updateReceipt(remote.browserId,
+                result.shouldFinish && result.saved ? "confirmed" : "outcome_unknown",
+                result.shouldFinish && result.saved
+                    ? "Recording saved; app is closing." : "Save and exit needs headset review.");
+            remotePending = null;
+        }
         if (result.shouldFinish && !terminalFinishDispatched) {
             terminalFinishDispatched = true;
             ControlPanelActivity.finishTerminalSaveAndExit(

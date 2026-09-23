@@ -91,6 +91,21 @@ public final class NativeRendererSelfKioskApplication extends Application {
         return activity != null && isResumed(component) && activity.hasWindowFocus();
     }
 
+    /** App-owned foreground observation, sampled on the Android main thread. */
+    static String foregroundForOwnApp(Context context) {
+        if (context == null || !(context.getApplicationContext()
+                instanceof NativeRendererSelfKioskApplication)) return "unknown";
+        NativeRendererSelfKioskApplication owner =
+            (NativeRendererSelfKioskApplication) context.getApplicationContext();
+        if (owner.hasWindowFocus(NativeRendererForegroundGuardPolicy.NATIVE_ACTIVITY)) {
+            return "focused";
+        }
+        if (owner.hasWindowFocus(NativeRendererForegroundGuardPolicy.CONTROL_PANEL_ACTIVITY)) {
+            return "panel";
+        }
+        return "background";
+    }
+
     boolean hasDeparture(String component, long generation) {
         Long observed = departures.get(component);
         return observed != null && observed.longValue() == generation;
@@ -188,5 +203,18 @@ public final class NativeRendererSelfKioskApplication extends Application {
         } else {
             NativeRendererSelfKioskService.resumePendingTerminal(activity);
         }
+    }
+
+    /** Same-app remote operator path; the existing terminal writer remains authoritative. */
+    static boolean requestSaveAndExitFromRemote(Context context) {
+        if (context == null || !(context.getApplicationContext()
+                instanceof NativeRendererSelfKioskApplication)) return false;
+        NativeRendererSoftKioskCoordinator.Action action =
+            NativeRendererSoftKioskCoordinator.process().requestExplicitTerminalExit();
+        if (action.kind == NativeRendererSoftKioskCoordinator.ActionKind.BEGIN_TERMINAL_EXIT) {
+            NativeRendererSelfKioskService.dispatchTerminal(context, action);
+            return true;
+        }
+        return NativeRendererSelfKioskService.resumePendingTerminal(context);
     }
 }

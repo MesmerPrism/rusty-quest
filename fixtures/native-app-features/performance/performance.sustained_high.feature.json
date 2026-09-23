@@ -1,0 +1,40 @@
+{
+  "schema": "rusty.quest.native_app_feature.v1",
+  "feature_id": "performance.sustained_high",
+  "module_path": "performance/sustained-high",
+  "module_kind": "openxr-performance-level-hint",
+  "settings_surface": {
+    "authority": "rusty.quest.native_app_settings.v1",
+    "adapter": "packaged-feature-selection"
+  },
+  "owner_lane": "rusty-quest",
+  "status": "public-substrate",
+  "description": "Opt-in OpenXR CPU and GPU SustainedHigh performance-level requests after session creation.",
+  "provides": ["performance.sustained_high"],
+  "depends_on": ["quest.native.openxr_vulkan_base"],
+  "incompatible_with": [],
+  "exclusive_groups": {},
+  "android_manifest": {
+    "permissions": [],
+    "uses_features": [],
+    "activities": [],
+    "services": [],
+    "queries": []
+  },
+  "runtime_profile": {
+    "set": {},
+    "clear_families": [],
+    "expected_render_modes": []
+  },
+  "build_inputs": {
+    "env": [{"name": "RUSTY_QUEST_NATIVE_RENDERER_SUSTAINED_HIGH", "value": "1"}],
+    "assets": [],
+    "shaders": []
+  },
+  "markers": {
+    "required": ["openxr-performance-level"],
+    "forbidden": []
+  },
+  "validation": {"quick": [], "standard": [], "device": []},
+  "public_private_boundary": "Only the generic OpenXR performance-level hint is included; no private app profile is exposed."
+}
