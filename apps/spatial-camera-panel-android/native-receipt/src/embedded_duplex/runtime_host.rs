@@ -504,6 +504,13 @@ struct ClientInput {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+struct AbortInput {
+    client_id: String,
+    lease_id: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct StartInput {
     client_id: String,
     activation_id: String,
@@ -642,6 +649,27 @@ fn command(operation: &str, input: &str) -> Result<String, String> {
                 .get()
                 .complete_media_stop_for_cleanup(&client, now)
                 .map_err(|_| "media cleanup rejected".into())
+        }
+        "resume_media_start_abort" => {
+            let request: AbortInput = serde_json::from_str(input).map_err(safe_decode)?;
+            let grant = serde_json::from_value(json!(host.route_grant_id)).map_err(safe_decode)?;
+            let local = serde_json::from_value(json!(host.local_peer_id)).map_err(safe_decode)?;
+            let remote = serde_json::from_value(json!(host.remote_peer_id)).map_err(safe_decode)?;
+            let current = host
+                .authority
+                .current_owner_projection(&grant, &local, &remote, now)?;
+            if current.route_configuration_sha256 != host.route_configuration_sha256
+                || current.authority_client_id != request.client_id
+                || current.authority_runtime_lease_id != request.lease_id
+                || current.expires_at_ms <= now
+            {
+                return Err("failed-Start cleanup authority is not current".into());
+            }
+            let client = serde_json::from_value(json!(request.client_id)).map_err(safe_decode)?;
+            Checkout::take(host.provider)?
+                .get()
+                .resume_media_start_abort_for_cleanup(&client, &request.lease_id)
+                .map_err(|_| "failed-Start cleanup resume rejected".into())
         }
         "peer_snapshot" => host.authority.snapshot_json(),
         "peer_status" => {

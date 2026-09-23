@@ -55,8 +55,8 @@ use rusty_quest_broker_contracts::{
 };
 use rusty_quest_media_stream::{
     MediaStreamClientAuthorityBinding, MediaStreamOwnerAction, MediaStreamOwnerCompletionReceipt,
-    MediaStreamOwnerKind, MediaStreamOwnerProviderReadback, MediaStreamPlatformAction,
-    MediaStreamPlatformApplicationReceipt, MediaStreamPlatformOperation,
+    MediaStreamOwnerKind, MediaStreamOwnerProviderReadback, MediaStreamPlatformAbortReceipt,
+    MediaStreamPlatformAction, MediaStreamPlatformApplicationReceipt, MediaStreamPlatformOperation,
     MediaStreamRuntimeProductBinding, MediaStreamRuntimeState, MediaStreamSessionProductRuntime,
     MediaStreamTrustedOwnerProvider,
 };
@@ -769,6 +769,46 @@ impl QuestBrokerRuntimeProvider {
             &mut self.next_media_execution_nonce,
         )?;
         serde_json::to_string(&response).map_err(QuestBrokerRuntimeError::Encode)
+    }
+
+    /// Continues an already retained failed-Start abort at its next owner.
+    /// This never prepares a second abort or replays verified cleanup effects.
+    /// The caller must first validate current cleanup authority; this method
+    /// accepts only the exact pending Start's original client.
+    pub fn resume_media_start_abort_for_cleanup(
+        &mut self,
+        client_id: &DottedId,
+        lease_id: &str,
+    ) -> Result<String, QuestBrokerRuntimeError> {
+        let runtime = self
+            .runtime
+            .as_mut()
+            .ok_or(QuestBrokerRuntimeError::NotInitialized)?;
+        require_pending_operation(runtime, client_id, MediaStreamPlatformOperation::Start)?;
+        let media = runtime
+            .media_sessions
+            .get_mut(client_id)
+            .ok_or(QuestBrokerRuntimeError::MediaPeerRuntimeConfig)?;
+        if media
+            .pending_abort_action()
+            .as_ref()
+            .map_or(true, |action| {
+                action.client_authority.client_id != client_id.as_str()
+                    || action.client_authority.lease_id != lease_id
+            })
+        {
+            return Err(QuestBrokerRuntimeError::MediaPeerRuntimeConfig);
+        }
+        let executor = self
+            .media_owner_executor
+            .as_mut()
+            .ok_or(QuestBrokerRuntimeError::TrustedMediaExecutorAbsent)?;
+        let receipt = continue_partial_start_abort(
+            media,
+            executor.as_mut(),
+            &mut self.next_media_execution_nonce,
+        )?;
+        serde_json::to_string(&receipt).map_err(QuestBrokerRuntimeError::Encode)
     }
 
     /// Returns integrated runtime evidence JSON.
@@ -1620,10 +1660,36 @@ fn compensate_failed_start(
     media
         .begin_partial_start_abort()
         .map_err(QuestBrokerRuntimeError::MediaRuntime)?;
+    continue_partial_start_abort(media, executor, next_execution_nonce).map_err(|abort_error| {
+        QuestBrokerRuntimeError::MediaStartAbortFailed {
+            owner_error: owner_error.to_owned(),
+            abort_error: abort_error.to_string(),
+        }
+    })?;
+    Ok(())
+}
+
+fn continue_partial_start_abort(
+    media: &mut MediaStreamSessionProductRuntime,
+    executor: &mut dyn AndroidMediaOwnerExecutor,
+    next_execution_nonce: &mut u64,
+) -> Result<MediaStreamPlatformAbortReceipt, QuestBrokerRuntimeError> {
     let abort_action = media
         .pending_abort_action()
         .ok_or(QuestBrokerRuntimeError::MediaExecutionTicketInvalid)?;
-    for (abort_index, abort_owner) in abort_action.owner_actions.clone().into_iter().enumerate() {
+    let completed = media
+        .pending_abort_completed_count()
+        .ok_or(QuestBrokerRuntimeError::MediaExecutionTicketInvalid)?;
+    if completed > abort_action.owner_actions.len() {
+        return Err(QuestBrokerRuntimeError::MediaExecutionTicketInvalid);
+    }
+    for (abort_index, abort_owner) in abort_action
+        .owner_actions
+        .iter()
+        .cloned()
+        .enumerate()
+        .skip(completed)
+    {
         let abort_sequence = u32::try_from(abort_index + 1)
             .map_err(|_| QuestBrokerRuntimeError::MediaExecutionTicketInvalid)?;
         let capability = next_media_execution_capability(
@@ -1641,22 +1707,11 @@ fn compensate_failed_start(
         );
         media
             .complete_next_abort_owner(&mut abort_provider)
-            .map_err(
-                |abort_error| QuestBrokerRuntimeError::MediaStartAbortFailed {
-                    owner_error: owner_error.to_owned(),
-                    abort_error: abort_error.to_string(),
-                },
-            )?;
+            .map_err(QuestBrokerRuntimeError::MediaRuntime)?;
     }
     media
         .finalize_partial_start_abort()
-        .map_err(
-            |abort_error| QuestBrokerRuntimeError::MediaStartAbortFailed {
-                owner_error: owner_error.to_owned(),
-                abort_error: abort_error.to_string(),
-            },
-        )?;
-    Ok(())
+        .map_err(QuestBrokerRuntimeError::MediaRuntime)
 }
 
 fn initialize_status(
@@ -4008,6 +4063,9 @@ mod tests {
         inner: DeterministicAndroidMediaOwnerExecutor,
         fail_sequence: u32,
         failed: bool,
+        fail_abort_sequence: u32,
+        failed_abort: bool,
+        attempted_abort_sequences: Vec<u32>,
     }
 
     impl AndroidMediaOwnerExecutor for FailAfterSideEffect {
@@ -4020,6 +4078,13 @@ mod tests {
             ticket: &AndroidMediaExecutionTicket,
             mode: AndroidMediaExecutionMode,
         ) -> Result<AndroidMediaOwnerReadback, String> {
+            if ticket.action_id.ends_with(".abort") {
+                self.attempted_abort_sequences.push(ticket.sequence);
+                if ticket.sequence == self.fail_abort_sequence && !self.failed_abort {
+                    self.failed_abort = true;
+                    return Err("injected abort interruption".to_owned());
+                }
+            }
             let readback = self.inner.execute(ticket, mode)?;
             if mode == AndroidMediaExecutionMode::Execute
                 && ticket.sequence == self.fail_sequence
@@ -4136,6 +4201,9 @@ mod tests {
             inner: DeterministicAndroidMediaOwnerExecutor::new(9).expect("executor"),
             fail_sequence: 4,
             failed: false,
+            fail_abort_sequence: 0,
+            failed_abort: false,
+            attempted_abort_sequences: Vec::new(),
         };
         let mut nonce = 1;
         let error = runtime
@@ -4157,6 +4225,74 @@ mod tests {
             .expect("evidence")
             .media_pending_action
             .is_none());
+    }
+
+    #[test]
+    fn failed_start_abort_resumes_after_verified_reverse_owner() {
+        let command_id = "command.media.session.start";
+        let kind = QuestBrokerAuthorityBridgeKind::StandaloneProcessJni;
+        let mut runtime = runtime_for(
+            kind.clone(),
+            vec![ManifoldBrokerFeature::MediaSession],
+            command_id,
+            true,
+            "31",
+        );
+        let (use_id, token_id) = admit(&mut runtime, command_id);
+        let response = runtime
+            .handle_server_mutation(
+                &mutation(
+                    &runtime,
+                    kind,
+                    use_id,
+                    token_id,
+                    command_id,
+                    Some("lease.broker.media-session.quest.runtime"),
+                ),
+                4_000,
+            )
+            .expect("prepared Start");
+        let client = DottedId::new(
+            response
+                .platform_action
+                .as_ref()
+                .expect("action")
+                .client_authority
+                .client_id
+                .clone(),
+        )
+        .expect("client");
+        let mut executor = FailAfterSideEffect {
+            inner: DeterministicAndroidMediaOwnerExecutor::new(9).expect("executor"),
+            fail_sequence: 4,
+            failed: false,
+            fail_abort_sequence: 2,
+            failed_abort: false,
+            attempted_abort_sequences: Vec::new(),
+        };
+        let mut nonce = 1;
+        assert!(matches!(
+            runtime.complete_media_session_action(
+                &QuestBrokerMediaCompletionRequest {
+                    client_id: client.clone()
+                },
+                5_000,
+                &mut executor,
+                &mut nonce,
+            ),
+            Err(QuestBrokerRuntimeError::MediaStartAbortFailed { .. })
+        ));
+        let media = runtime
+            .media_sessions
+            .get_mut(&client)
+            .expect("retained media");
+        assert_eq!(media.pending_abort_completed_count(), Some(1));
+        assert_eq!(executor.attempted_abort_sequences, vec![1, 2]);
+        let receipt = continue_partial_start_abort(media, &mut executor, &mut nonce)
+            .expect("resume same abort");
+        assert_eq!(receipt.rollback_receipts.len(), 4);
+        assert_eq!(executor.attempted_abort_sequences, vec![1, 2, 2, 3, 4]);
+        assert!(media.pending_abort_action().is_none());
     }
 
     #[test]

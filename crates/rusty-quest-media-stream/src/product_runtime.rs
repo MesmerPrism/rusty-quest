@@ -1004,6 +1004,14 @@ impl MediaStreamSessionProductRuntime {
         })
     }
 
+    /// Number of reverse owner effects already verified for the retained abort.
+    /// A retry must start here instead of replaying earlier cleanup callbacks.
+    #[must_use]
+    pub fn pending_abort_completed_count(&self) -> Option<usize> {
+        self.abort_in_progress
+            .then_some(self.pending_abort_receipts.len())
+    }
+
     /// Reverses the next observed partial-start owner in exact reverse order.
     /// The provider must return the same live handle at a strictly newer state
     /// revision, so retry/death recovery cannot silently substitute resources.
