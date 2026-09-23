@@ -1,6 +1,5 @@
 package io.github.mesmerprism.rustyquest.spatial_camera_panel
 
-import android.os.Bundle
 import android.os.Process
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -21,6 +20,14 @@ class EmbeddedDuplexDiagnosticContractTest {
         EmbeddedDuplexDiagnosticContract.Route.READ,
         EmbeddedDuplexDiagnosticContract.parseCall("read", nonce, null).route,
     )
+    assertEquals(
+        EmbeddedDuplexDiagnosticContract.Route.ARM,
+        EmbeddedDuplexDiagnosticContract.parseCallKeys("arm", nonce, emptySet()).route,
+    )
+    assertEquals(
+        EmbeddedDuplexDiagnosticContract.Route.READ,
+        EmbeddedDuplexDiagnosticContract.parseCallKeys("read", nonce, emptySet()).route,
+    )
     listOf("status", "cleanup", "query", "insert", "delete", "intent", "component").forEach {
         method ->
       assertThrows(IllegalArgumentException::class.java) {
@@ -28,7 +35,7 @@ class EmbeddedDuplexDiagnosticContractTest {
       }
     }
     assertThrows(IllegalArgumentException::class.java) {
-      EmbeddedDuplexDiagnosticContract.parseCall("arm", nonce, Bundle())
+      EmbeddedDuplexDiagnosticContract.parseCallKeys("arm", nonce, setOf("extra"))
     }
   }
 

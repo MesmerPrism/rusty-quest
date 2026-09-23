@@ -20,8 +20,14 @@ internal object EmbeddedDuplexDiagnosticContract {
 
   fun callerIsShell(callingUid: Int): Boolean = callingUid == Process.SHELL_UID
 
-  fun parseCall(method: String, argument: String?, extras: Bundle?): Request {
-    require(extras == null) { "embedded_duplex_diagnostic_bundle_rejected" }
+  fun parseCall(method: String, argument: String?, extras: Bundle?): Request =
+      parseCallKeys(method, argument, extras?.keySet())
+
+  internal fun parseCallKeys(method: String, argument: String?, extrasKeys: Set<String>?): Request {
+    // Android's `content call` supplies an empty Bundle even without --extra.
+    require(extrasKeys == null || extrasKeys.isEmpty()) {
+      "embedded_duplex_diagnostic_bundle_rejected"
+    }
     require(argument != null && noncePattern.matches(argument)) {
       "embedded_duplex_diagnostic_nonce_rejected"
     }
