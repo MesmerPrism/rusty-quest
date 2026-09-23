@@ -10,6 +10,7 @@ use rusty_quest_broker_authority::{
     QuestBrokerMediaSessionProductBinding, QuestBrokerRuntimeConfig,
     QuestEmbeddedDuplexAuthorityConfig,
 };
+use rusty_quest_feature_activation::{inspect_feature_lock_v2, FeatureLockV2Effect};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{collections::BTreeSet, fmt};
@@ -20,7 +21,6 @@ const ADMISSION_SNAPSHOT_SCHEMA: &str = "rusty.manifold.admission.snapshot.v2";
 const ADAPTER_CONFIG_SCHEMA: &str = "rusty.manifold.broker.adapter_config.v2";
 const CLIENT_LOCK_SCHEMA: &str = "rusty.quest.broker_client_spec.v1";
 const MEDIA_LIFECYCLE_SCHEMA: &str = "rusty.quest.broker_media_lifecycle_lock.v2";
-const FEATURE_LOCK_SCHEMA: &str = "rusty.morphospace.workflow.feature_lock.v2";
 const BROKER_ADMISSION_PERMISSION: &str =
     "io.github.mesmerprism.rustymanifold.permission.BROKER_ADMISSION";
 
@@ -37,7 +37,6 @@ pub(crate) struct EmbeddedDuplexPackagedConfigInput<'a> {
     pub(crate) package_name: &'a str,
     pub(crate) signing_certificate_sha256: &'a str,
     pub(crate) expected_project_id: &'a str,
-    pub(crate) expected_feature_id: &'a str,
     pub(crate) expected_activation_marker: &'a str,
     pub(crate) adapter_id: &'a str,
     pub(crate) admission_authority_id: &'a str,
@@ -131,6 +130,11 @@ struct MediaLifecycleLock {
     app_feature_lock_fingerprint: String,
     app_feature_lock_sha256: String,
     app_feature_lock_revision: u64,
+    app_feature_id: String,
+    app_feature_module_id: String,
+    app_feature_project_revision: u64,
+    app_feature_resolver_fingerprint: String,
+    app_feature_activation_receipt_schema: String,
     activation_effective_marker: String,
     media_binding_path: String,
     broker_runtime_lease_id: String,
@@ -155,8 +159,7 @@ pub(crate) fn assemble_embedded_duplex_packaged_config(
     let product_lock: Value = decode(input.product_lock, "product lock")?;
     let client: ClientLock = decode(input.client_lock, "client lock")?;
     let lifecycle: MediaLifecycleLock = decode(input.media_lifecycle_lock, "media lifecycle lock")?;
-    let feature_lock: Value = decode(input.app_feature_lock, "app feature lock")?;
-    validate_client_and_lifecycle(&input, &product_lock, &client, &lifecycle, &feature_lock)?;
+    validate_client_and_lifecycle(&input, &product_lock, &client, &lifecycle)?;
 
     let mut bindings = input
         .media_bindings
@@ -326,7 +329,6 @@ fn validate_client_and_lifecycle(
     product_lock: &Value,
     client: &ClientLock,
     lifecycle: &MediaLifecycleLock,
-    feature_lock: &Value,
 ) -> Result<(), PackagedConfigError> {
     let product_id = required_string(product_lock, "product_id", "product id")?;
     if client.schema != CLIENT_LOCK_SCHEMA
@@ -353,6 +355,13 @@ fn validate_client_and_lifecycle(
         || lifecycle.app_feature_lock_id.trim().is_empty()
         || lifecycle.app_feature_lock_path.trim().is_empty()
         || lifecycle.app_feature_lock_revision == 0
+        || lifecycle.app_feature_id.trim().is_empty()
+        || lifecycle.app_feature_module_id.trim().is_empty()
+        || lifecycle.app_feature_project_revision == 0
+        || lifecycle
+            .app_feature_activation_receipt_schema
+            .trim()
+            .is_empty()
         || lifecycle.media_binding_path.trim().is_empty()
         || lifecycle.broker_runtime_lease_id.trim().is_empty()
         || lifecycle.media_runtime_lease_id.trim().is_empty()
@@ -364,46 +373,43 @@ fn validate_client_and_lifecycle(
     {
         return Err(PackagedConfigError::Binding("client/media lifecycle"));
     }
-    validate_feature_lock(input, feature_lock)
+    validate_feature_lock(input, lifecycle)
 }
 
 fn validate_feature_lock(
     input: &EmbeddedDuplexPackagedConfigInput<'_>,
-    feature_lock: &Value,
+    lifecycle: &MediaLifecycleLock,
 ) -> Result<(), PackagedConfigError> {
-    if required_string(feature_lock, "schema", "feature lock schema")? != FEATURE_LOCK_SCHEMA
-        || required_string(feature_lock, "project_id", "feature lock project")?
-            != input.expected_project_id
-    {
-        return Err(PackagedConfigError::Binding("app feature lock identity"));
-    }
-    let selected = string_array(feature_lock, "selected_features", "selected features")?;
-    if selected
-        .iter()
-        .filter(|value| **value == input.expected_feature_id)
-        .count()
-        != 1
-    {
-        return Err(PackagedConfigError::Binding("selected app feature"));
-    }
-    let features = feature_lock
-        .get("features")
-        .and_then(Value::as_array)
-        .ok_or(PackagedConfigError::Binding("feature records"))?;
-    let matching = features
-        .iter()
-        .filter(|feature| {
-            feature.get("feature_id").and_then(Value::as_str) == Some(input.expected_feature_id)
+    let inspected = inspect_feature_lock_v2(
+        input.app_feature_lock.json,
+        input.app_feature_lock.sha256,
+        &lifecycle.app_feature_id,
+    )
+    .map_err(|_| PackagedConfigError::Binding("app feature lock v2 inspection"))?;
+    let required_effects = [
+        (FeatureLockV2Effect::Command, "command.media.session.start"),
+        (FeatureLockV2Effect::Command, "command.media.session.stop"),
+        (FeatureLockV2Effect::Stream, "stream.media.video"),
+    ];
+    if inspected.generation != 2
+        || inspected.project_id != input.expected_project_id
+        || inspected.project_id != lifecycle.project_id
+        || inspected.project_revision != lifecycle.app_feature_project_revision
+        || inspected.lock_revision != lifecycle.app_feature_lock_revision
+        || inspected.feature_id != lifecycle.app_feature_id
+        || inspected.module_id != lifecycle.app_feature_module_id
+        || inspected.receipt_schema != lifecycle.app_feature_activation_receipt_schema
+        || inspected.effective_marker != lifecycle.activation_effective_marker
+        || lifecycle.app_feature_resolver_fingerprint
+            != format!("sha256:{}", inspected.resolver_fingerprint)
+        || required_effects.iter().any(|(kind, value)| {
+            !inspected.selected_has_effect(*kind, value)
+                || !inspected.union_has_effect(*kind, value)
         })
-        .collect::<Vec<_>>();
-    if matching.len() != 1
-        || matching[0]
-            .pointer("/activation/effective_marker")
-            .and_then(Value::as_str)
-            != Some(input.expected_activation_marker)
-        || matching[0].get("selected").and_then(Value::as_bool) != Some(true)
     {
-        return Err(PackagedConfigError::Binding("app feature activation"));
+        return Err(PackagedConfigError::Binding(
+            "app feature v2 lifecycle/effect join",
+        ));
     }
     Ok(())
 }

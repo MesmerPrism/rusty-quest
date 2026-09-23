@@ -749,6 +749,7 @@ version = "0.1.0"
 dependencies = [
  "rusty-manifold-broker-product",
  "rusty-manifold-media-session",
+ "rusty-quest-feature-activation",
  "rusty-quest-media-stream",
  "serde",
  "serde_json",

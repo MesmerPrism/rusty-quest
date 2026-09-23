@@ -133,11 +133,18 @@ final class EmbeddedDuplexPackagedInputs {
         }
         JSONObject authorities = manifest.getJSONObject("source_authorities");
         fields(authorities, "manifold_commit", "manifold_tree", "planning_feature_lock_sha256",
-                "planning_project_revision", "planning_lock_revision");
+                "planning_project_revision", "planning_lock_revision", "planning_feature_id",
+                "planning_feature_module_id", "planning_feature_activation_receipt_schema",
+                "planning_feature_resolver_fingerprint");
         if (!authorities.getString("manifold_commit").matches("[0-9a-f]{40}")
                 || !authorities.getString("manifold_tree").matches("[0-9a-f]{40}")
                 || !hashes.get("planning-feature-lock.json").equals(
                         authorities.getString("planning_feature_lock_sha256"))
+                || !authorities.getString("planning_feature_id").matches("[a-z][a-z0-9-]*")
+                || !authorities.getString("planning_feature_module_id").matches("[a-z][a-z0-9-]*")
+                || !authorities.getString("planning_feature_activation_receipt_schema")
+                        .matches("[a-z][a-z0-9_]*(?:\\.[a-z0-9_]+)+")
+                || !authorities.getString("planning_feature_resolver_fingerprint").matches("[0-9a-f]{64}")
                 || authorities.getLong("planning_project_revision") <= 0L
                 || authorities.getLong("planning_lock_revision") <= 0L) {
             throw new IllegalStateException("packaged source identity differs");
@@ -157,6 +164,7 @@ final class EmbeddedDuplexPackagedInputs {
                     "manifold_descriptor_canonical_sha256", "owner_selection_count");
             InstalledRole selected = InstalledRole.parse(direction.getString("installed_role"));
             String installedRoleId = direction.getString("installed_role_id");
+            JSONObject lifecycle = new JSONObject(docs.get(selected.lifecyclePath));
             JSONObject binding = new JSONObject(docs.get(selected.bindingPath));
             JSONArray lanes = binding.getJSONObject("quest").getJSONObject("spec")
                     .getJSONObject("plan").getJSONArray("lanes");
@@ -175,6 +183,20 @@ final class EmbeddedDuplexPackagedInputs {
                     || !roleIds.add(installedRoleId) || matchingRolePeers != 1
                     || !selected.bindingPath.equals(direction.getString("media_binding_path"))
                     || !hashes.get(selected.lifecyclePath).equals(direction.getString("lifecycle_lock_sha256"))
+                    || !authorities.getString("planning_feature_id").equals(lifecycle.getString("app_feature_id"))
+                    || !authorities.getString("planning_feature_module_id")
+                            .equals(lifecycle.getString("app_feature_module_id"))
+                    || !authorities.getString("planning_feature_activation_receipt_schema")
+                            .equals(lifecycle.getString("app_feature_activation_receipt_schema"))
+                    || authorities.getLong("planning_project_revision")
+                            != lifecycle.getLong("app_feature_project_revision")
+                    || authorities.getLong("planning_lock_revision") != lifecycle.getLong("app_feature_lock_revision")
+                    || !("sha256:" + authorities.getString("planning_feature_lock_sha256"))
+                            .equals(lifecycle.getString("app_feature_lock_sha256"))
+                    || !("sha256:" + authorities.getString("planning_feature_lock_sha256"))
+                            .equals(lifecycle.getString("app_feature_lock_fingerprint"))
+                    || !("sha256:" + authorities.getString("planning_feature_resolver_fingerprint"))
+                            .equals(lifecycle.getString("app_feature_resolver_fingerprint"))
                     || direction.getInt("owner_selection_count") != 7
                     || !direction.getString("runtime_spec_canonical_sha256").matches("sha256:[0-9a-f]{64}")
                     || !direction.getString("manifold_descriptor_canonical_sha256").matches("sha256:[0-9a-f]{64}")) {

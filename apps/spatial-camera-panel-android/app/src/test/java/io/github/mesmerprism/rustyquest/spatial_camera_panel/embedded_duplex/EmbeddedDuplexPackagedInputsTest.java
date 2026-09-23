@@ -25,6 +25,10 @@ import org.junit.Assume;
 public final class EmbeddedDuplexPackagedInputsTest {
     private static final String PACKAGE = "io.github.mesmerprism.test.embedded";
     private static final String SIGNER = repeat('a', 64);
+    private static final String FEATURE_ID = "neutral-peer-input";
+    private static final String MODULE_ID = "neutral-peer-module";
+    private static final String RECEIPT_SCHEMA = "rusty.quest.neutral_peer_input.receipt.v1";
+    private static final String RESOLVER = repeat('5', 64);
 
     @Test public void exactClosureKeepsBothBindingsAndSelectsOnlyInstalledLifecycle()
             throws Exception {
@@ -34,8 +38,8 @@ public final class EmbeddedDuplexPackagedInputsTest {
         EmbeddedDuplexPackagedInputs peerB = fixture.load(
                 EmbeddedDuplexPackagedInputs.InstalledRole.PEER_B);
 
-        assertEquals("{\"id\":\"lifecycle.a\"}", peerA.lifecycleJson());
-        assertEquals("{\"id\":\"lifecycle.b\"}", peerB.lifecycleJson());
+        assertEquals("lifecycle.a", new JSONObject(peerA.lifecycleJson()).getString("id"));
+        assertEquals("lifecycle.b", new JSONObject(peerB.lifecycleJson()).getString("id"));
         assertEquals("device.fixture.a", new JSONObject(
                 peerA.json("peer_a_to_peer_b.media-binding.json"))
                 .getJSONObject("quest").getJSONObject("spec").getJSONObject("plan")
@@ -120,6 +124,20 @@ public final class EmbeddedDuplexPackagedInputsTest {
         assertThrows(IllegalStateException.class,
                 () -> wrongAuthority.load(EmbeddedDuplexPackagedInputs.InstalledRole.PEER_A));
 
+        Fixture wrongResolver = Fixture.valid();
+        wrongResolver.manifest.getJSONObject("source_authorities")
+                .put("planning_feature_resolver_fingerprint", repeat('e', 64));
+        wrongResolver.resealManifest(false);
+        assertThrows(IllegalStateException.class,
+                () -> wrongResolver.load(EmbeddedDuplexPackagedInputs.InstalledRole.PEER_A));
+
+        Fixture wrongSelectedFeature = Fixture.valid();
+        wrongSelectedFeature.manifest.getJSONObject("source_authorities")
+                .put("planning_feature_id", "foreign-feature");
+        wrongSelectedFeature.resealManifest(false);
+        assertThrows(IllegalStateException.class,
+                () -> wrongSelectedFeature.load(EmbeddedDuplexPackagedInputs.InstalledRole.PEER_A));
+
         Fixture wrongRoleId = Fixture.valid();
         wrongRoleId.manifest.getJSONArray("directional_bindings").getJSONObject(0)
                 .put("installed_role_id", "role.fixture.b");
@@ -197,9 +215,10 @@ public final class EmbeddedDuplexPackagedInputsTest {
             fixture.files.put("product-spec.json", bytes("{\"id\":\"product\"}"));
             fixture.files.put("accepted-product-lock.json", bytes("{\"id\":\"lock\"}"));
             fixture.files.put("client-lock.json", bytes("{\"id\":\"client\"}"));
-            fixture.files.put("peer_a.media-lifecycle-lock.json", bytes("{\"id\":\"lifecycle.a\"}"));
-            fixture.files.put("peer_b.media-lifecycle-lock.json", bytes("{\"id\":\"lifecycle.b\"}"));
             fixture.files.put("planning-feature-lock.json", bytes("{\"id\":\"feature\"}"));
+            String rawFeatureSha256 = sha256(fixture.files.get("planning-feature-lock.json"));
+            fixture.files.put("peer_a.media-lifecycle-lock.json", lifecycle("lifecycle.a", rawFeatureSha256));
+            fixture.files.put("peer_b.media-lifecycle-lock.json", lifecycle("lifecycle.b", rawFeatureSha256));
             fixture.files.put("packed-stereo-profile.json", bytes("{\"id\":\"stereo\"}"));
             fixture.files.put("peer_a_to_peer_b.media-binding.json", binding("device.fixture.a"));
             fixture.files.put("peer_b_to_peer_a.media-binding.json", binding("device.fixture.b"));
@@ -232,6 +251,10 @@ public final class EmbeddedDuplexPackagedInputsTest {
                             .put("manifold_tree", repeat('4', 40))
                             .put("planning_feature_lock_sha256",
                                     hashes.get("planning-feature-lock.json"))
+                            .put("planning_feature_id", FEATURE_ID)
+                            .put("planning_feature_module_id", MODULE_ID)
+                            .put("planning_feature_activation_receipt_schema", RECEIPT_SCHEMA)
+                            .put("planning_feature_resolver_fingerprint", RESOLVER)
                             .put("planning_project_revision", 7)
                             .put("planning_lock_revision", 11))
                     .put("package", new JSONObject().put("application_id", PACKAGE)
@@ -295,10 +318,22 @@ public final class EmbeddedDuplexPackagedInputsTest {
                     .put("owner_selection_count", 7);
         }
 
-        private static byte[] binding(String sourceDeviceId) {
+        private static byte[] binding(String sourceDeviceId) throws Exception {
             return bytes(new JSONObject().put("quest", new JSONObject().put("spec", new JSONObject()
                     .put("plan", new JSONObject().put("lanes", new JSONArray()
                             .put(new JSONObject().put("source_device_id", sourceDeviceId)))))).toString());
+        }
+
+        private static byte[] lifecycle(String id, String rawFeatureSha256) throws Exception {
+            return bytes(new JSONObject().put("id", id)
+                    .put("app_feature_id", FEATURE_ID)
+                    .put("app_feature_module_id", MODULE_ID)
+                    .put("app_feature_activation_receipt_schema", RECEIPT_SCHEMA)
+                    .put("app_feature_project_revision", 7)
+                    .put("app_feature_lock_revision", 11)
+                    .put("app_feature_lock_sha256", "sha256:" + rawFeatureSha256)
+                    .put("app_feature_lock_fingerprint", "sha256:" + rawFeatureSha256)
+                    .put("app_feature_resolver_fingerprint", "sha256:" + RESOLVER).toString());
         }
     }
 

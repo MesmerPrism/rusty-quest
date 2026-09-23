@@ -7,6 +7,7 @@ use std::{collections::BTreeSet, path::Path};
 
 use rusty_manifold_broker_product::{ManifoldBrokerFeature, ManifoldBrokerProductLock};
 use rusty_manifold_media_session::ManifoldMediaSessionProductBinding;
+use rusty_quest_feature_activation::{inspect_feature_lock_v2, FeatureLockV2Effect};
 use rusty_quest_media_stream::{MediaStreamOwnerKind, MediaStreamRuntimeProductBinding};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -128,6 +129,21 @@ pub struct BrokerMediaLifecycleLock {
     pub app_feature_lock_sha256: String,
     /// Exact feature-lock revision.
     pub app_feature_lock_revision: u64,
+    /// Selected app feature, present for a v2 feature lock.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub app_feature_id: Option<String>,
+    /// Selected module identity carried by a v2 feature lock.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub app_feature_module_id: Option<String>,
+    /// Project revision carried by a v2 feature lock, independent of its lock revision.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub app_feature_project_revision: Option<u64>,
+    /// Resolver fingerprint of a v2 feature lock, distinct from its raw byte digest.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub app_feature_resolver_fingerprint: Option<String>,
+    /// Selected feature's activation receipt schema in a v2 lock.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub app_feature_activation_receipt_schema: Option<String>,
     /// Dotted effective activation marker, distinct from the log namespace.
     pub activation_effective_marker: String,
     /// Repo-relative canonical media-binding path.
@@ -464,6 +480,86 @@ fn validate_lifecycle_closure(
 }
 
 fn validate_feature_lock(bytes: &[u8], lock: &BrokerMediaLifecycleLock, errors: &mut Vec<String>) {
+    let is_v2 = serde_json::from_slice::<serde_json::Value>(bytes)
+        .ok()
+        .and_then(|value| {
+            value
+                .get("schema")
+                .and_then(|schema| schema.as_str())
+                .map(str::to_owned)
+        })
+        .as_deref()
+        == Some("rusty.morphospace.workflow.feature_lock.v2");
+    if is_v2 {
+        validate_feature_lock_v2(bytes, lock, errors);
+    } else {
+        validate_feature_lock_v1(bytes, lock, errors);
+    }
+}
+
+fn validate_feature_lock_v2(
+    bytes: &[u8],
+    lock: &BrokerMediaLifecycleLock,
+    errors: &mut Vec<String>,
+) {
+    let (
+        Some(feature_id),
+        Some(module_id),
+        Some(project_revision),
+        Some(resolver_fingerprint),
+        Some(receipt_schema),
+    ) = (
+        lock.app_feature_id.as_deref(),
+        lock.app_feature_module_id.as_deref(),
+        lock.app_feature_project_revision,
+        lock.app_feature_resolver_fingerprint.as_deref(),
+        lock.app_feature_activation_receipt_schema.as_deref(),
+    )
+    else {
+        errors.push("v2 app feature lifecycle bindings missing".to_string());
+        return;
+    };
+    let Ok(json) = std::str::from_utf8(bytes) else {
+        errors.push("app feature lock v2 UTF-8 invalid".to_string());
+        return;
+    };
+    let Some(raw_sha256) = lock.app_feature_lock_sha256.strip_prefix("sha256:") else {
+        errors.push("v2 app feature raw digest invalid".to_string());
+        return;
+    };
+    let Ok(inspected) = inspect_feature_lock_v2(json, raw_sha256, feature_id) else {
+        errors.push("app feature lock v2 inspection rejected".to_string());
+        return;
+    };
+    let expected_resolver = resolver_fingerprint.strip_prefix("sha256:");
+    let required_effects = [
+        (FeatureLockV2Effect::Command, "command.media.session.start"),
+        (FeatureLockV2Effect::Command, "command.media.session.stop"),
+        (FeatureLockV2Effect::Stream, "stream.media.video"),
+    ];
+    if inspected.generation != 2
+        || inspected.project_id != lock.project_id
+        || inspected.project_revision != project_revision
+        || inspected.lock_revision != lock.app_feature_lock_revision
+        || inspected.feature_id != feature_id
+        || inspected.module_id != module_id
+        || inspected.receipt_schema != receipt_schema
+        || inspected.effective_marker != lock.activation_effective_marker
+        || expected_resolver != Some(inspected.resolver_fingerprint.as_str())
+        || required_effects.iter().any(|(kind, value)| {
+            !inspected.selected_has_effect(*kind, value)
+                || !inspected.union_has_effect(*kind, value)
+        })
+    {
+        errors.push("app feature lock v2 lifecycle/effect join invalid".to_string());
+    }
+}
+
+fn validate_feature_lock_v1(
+    bytes: &[u8],
+    lock: &BrokerMediaLifecycleLock,
+    errors: &mut Vec<String>,
+) {
     let Ok(value) = serde_json::from_slice::<WorkflowFeatureLock>(bytes) else {
         errors.push("app feature lock JSON invalid".to_string());
         return;
