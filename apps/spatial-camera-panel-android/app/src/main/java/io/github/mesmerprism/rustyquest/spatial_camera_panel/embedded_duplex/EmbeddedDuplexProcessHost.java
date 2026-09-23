@@ -24,7 +24,10 @@ final class EmbeddedDuplexProcessHost {
 
     private final Context applicationContext;
     private final EmbeddedDuplexDisplaySlot display = new EmbeddedDuplexDisplaySlot();
+    private final Object attachmentGate = new Object();
     private final AtomicReference<Phase> phase = new AtomicReference<>(Phase.NEW);
+    private long attachmentGeneration;
+    private boolean displayDetaching;
     private final ExecutorService commands = Executors.newSingleThreadExecutor(runnable -> {
         Thread thread = new Thread(runnable, "embedded-duplex-command");
         thread.setDaemon(true);
@@ -42,13 +45,44 @@ final class EmbeddedDuplexProcessHost {
     EmbeddedDuplexDisplaySlot displayAttachment() { return display; }
     boolean ready() { return phase.get() == Phase.READY; }
 
+    long attachDisplay(EmbeddedDuplexDisplay next) {
+        synchronized (attachmentGate) {
+            if (phase.get() != Phase.NEW || attachmentGeneration != 0L || displayDetaching) {
+                throw new IllegalStateException("embedded display attachment unavailable");
+            }
+            attachmentGeneration = display.attach(next);
+            return attachmentGeneration;
+        }
+    }
+
+    /** Only an uninitialized host has no product effects to clean up. A live
+     * host needs typed Stop and platform cleanup before its display can move. */
+    void detachUninitializedDisplay(long expectedGeneration) throws Exception {
+        synchronized (attachmentGate) {
+            if (phase.get() != Phase.NEW || attachmentGeneration != expectedGeneration
+                    || expectedGeneration == 0L) {
+                throw new IllegalStateException("embedded product cleanup required before display detach");
+            }
+            displayDetaching = true;
+        }
+        // The display barrier may wait for callbacks; never hold a host lock.
+        display.detachAfterCleanup(expectedGeneration, () -> {});
+        synchronized (attachmentGate) {
+            attachmentGeneration = 0L;
+            displayDetaching = false;
+        }
+    }
+
     CompletableFuture<String> initialize(EmbeddedDuplexPackagedInputs.InstalledRole role,
             JSONObject runtimeBindings, JSONObject startup) {
         if (role == null || runtimeBindings == null || startup == null) {
             return failed(new IllegalArgumentException("embedded initialization inputs"));
         }
-        if (!phase.compareAndSet(Phase.NEW, Phase.BOOTSTRAPPING)) {
-            return failed(new IllegalStateException("embedded process host already owned"));
+        synchronized (attachmentGate) {
+            if (attachmentGeneration == 0L || displayDetaching || display.cleanupPending()
+                    || !phase.compareAndSet(Phase.NEW, Phase.BOOTSTRAPPING)) {
+                return failed(new IllegalStateException("embedded process host or display unavailable"));
+            }
         }
         // The caller may mutate its JSON after returning; command lane sees an
         // exact private copy and never retains an Activity, Intent or Bundle.

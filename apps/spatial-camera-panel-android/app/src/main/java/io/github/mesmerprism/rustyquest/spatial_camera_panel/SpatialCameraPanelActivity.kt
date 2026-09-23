@@ -1609,6 +1609,52 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
         restartLocal = cameraHwbProjectionRawCarrierCoordinator::restartLocalAcquisition,
     )
   }
+  @Volatile private var embeddedDuplexAttachmentGeneration = 0L
+  @Volatile private var embeddedDuplexActivityDestroying = false
+  private var embeddedDuplexAttachmentFailureReported = false
+
+  private fun attachEmbeddedDuplexDisplayWhenReady() {
+    if (!BuildConfig.EMBEDDED_DUPLEX_PRODUCT_INPUTS_ENABLED || embeddedDuplexActivityDestroying ||
+        embeddedDuplexAttachmentGeneration != 0L || !spatialSceneReady ||
+        cameraHwbProjectionRawCarrierCoordinator.sourceCarrierContext() == null) return
+    runCatching {
+          io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex
+              .EmbeddedDuplexActivityAttachment.attach(this, embeddedDuplexDisplay)
+        }
+        .onSuccess { generation ->
+          embeddedDuplexAttachmentGeneration = generation
+          embeddedDuplexAttachmentFailureReported = false
+          marker("channel=embedded-duplex status=display-attached generation=$generation")
+        }
+        .onFailure { failure ->
+          if (!embeddedDuplexAttachmentFailureReported) {
+            embeddedDuplexAttachmentFailureReported = true
+            marker(
+                "channel=embedded-duplex status=display-attachment-pending " +
+                    "reason=${activityMarkerToken(failure.javaClass.simpleName)}"
+            )
+          }
+        }
+  }
+
+  private fun detachUninitializedEmbeddedDuplexDisplay() {
+    val generation = embeddedDuplexAttachmentGeneration
+    if (generation == 0L) return
+    runCatching {
+          io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex
+              .EmbeddedDuplexActivityAttachment.detachUninitialized(this, generation)
+        }
+        .onSuccess {
+          embeddedDuplexAttachmentGeneration = 0L
+          marker("channel=embedded-duplex status=uninitialized-display-detached generation=$generation")
+        }
+        .onFailure { failure ->
+          marker(
+              "channel=embedded-duplex status=product-cleanup-required-before-display-detach " +
+                  "generation=$generation reason=${activityMarkerToken(failure.javaClass.simpleName)}"
+          )
+        }
+  }
   private val projectionSourceRouteTransitionMarker = SpatialVideoSourceRouteTransitionMarker()
   @Volatile private var localSourceRetirementGeneration = 0L
   private var projectionSourcePollJob: Job? = null
@@ -1728,6 +1774,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     if (projectionSourcePollJob?.isActive == true) return
     projectionSourcePollJob = activityScope.launch {
       while (true) {
+        attachEmbeddedDuplexDisplayWhenReady()
         enqueueProjectionSourcePoll("activity-lifecycle")
         delay(PROJECTION_SOURCE_POLL_CADENCE_MS)
       }
@@ -2901,6 +2948,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
       cameraHwbProjectionLaunchCoordinator.runIfRequested("scene-ready")
     }
     enforcePrivatePanelInputPolicy()
+    attachEmbeddedDuplexDisplayWhenReady()
   }
 
   override fun onVRReady() {
@@ -3332,12 +3380,20 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
   }
 
   override fun onDestroy() {
+    embeddedDuplexActivityDestroying = true
+    // Only the never-initialized attachment may leave through this existing
+    // lifecycle fence. A running embedded host needs typed Stop and its display
+    // callbacks before beginOrderedShutdown fences the executor.
     val cleanupScheduled =
         videoLifecycleShutdownCoordinator.beginOrderedShutdown(
             retireProjectionPeer = {
-              spatialPeerProjectionRuntimeCoordinator.retireForActivityDestroy(
-                  "activity-destroy-serialized"
-              )
+              try {
+                spatialPeerProjectionRuntimeCoordinator.retireForActivityDestroy(
+                    "activity-destroy-serialized"
+                )
+              } finally {
+                detachUninitializedEmbeddedDuplexDisplay()
+              }
             },
             finishCleanup = ::finishActivityDestroyCleanup,
         )
