@@ -54,6 +54,38 @@ public final class EmbeddedDuplexPackagedInputsTest {
         assertEquals("role.fixture.b", peerB.selectedRoleId());
     }
 
+    @Test public void nativeAssemblyRequestContainsOnlyVerifiedRoleAndExactInputBytes()
+            throws Exception {
+        EmbeddedDuplexPackagedInputs inputs = Fixture.valid().load(
+                EmbeddedDuplexPackagedInputs.InstalledRole.PEER_B);
+        JSONObject runtime = new JSONObject()
+                .put("adapter_id", "adapter.neutral")
+                .put("admission_authority_id", "admission.neutral")
+                .put("grant_id", "grant.neutral")
+                .put("grant_expires_at_ms", 3000)
+                .put("lease_expires_at_ms", 3000)
+                .put("max_token_ttl_ms", 1000)
+                .put("embedded_duplex", new JSONObject())
+                .put("validation_epoch_entropy_hex", repeat('a', 64))
+                .put("validation_wall_unix_ms", 1000)
+                .put("validation_monotonic_elapsed_ns", 1000);
+        JSONObject request = inputs.packagedConfigRequest(runtime);
+        assertEquals(PACKAGE, request.getString("package_name"));
+        assertEquals("neutral-project", request.getString("expected_project_id"));
+        assertEquals("rusty.quest.neutral.effective",
+                request.getString("expected_activation_marker"));
+        assertEquals(inputs.lifecycleJson(),
+                request.getJSONObject("media_lifecycle_lock").getString("json"));
+        assertEquals(inputs.lifecycleDigest(),
+                request.getJSONObject("media_lifecycle_lock").getString("sha256"));
+        assertEquals(inputs.digest("peer_a_to_peer_b.media-binding.json"),
+                request.getJSONArray("media_bindings").getJSONObject(0).getString("sha256"));
+        assertEquals(inputs.digest("peer_b_to_peer_a.media-binding.json"),
+                request.getJSONArray("media_bindings").getJSONObject(1).getString("sha256"));
+        runtime.put("unexpected", true);
+        assertThrows(IllegalArgumentException.class, () -> inputs.packagedConfigRequest(runtime));
+    }
+
     @Test public void installedIdentityAndBuildFixedManifestHashAreMandatory() throws Exception {
         Fixture fixture = Fixture.valid();
         assertThrows(IllegalStateException.class, () -> EmbeddedDuplexPackagedInputs.load(
@@ -326,6 +358,8 @@ public final class EmbeddedDuplexPackagedInputsTest {
 
         private static byte[] lifecycle(String id, String rawFeatureSha256) throws Exception {
             return bytes(new JSONObject().put("id", id)
+                    .put("project_id", "neutral-project")
+                    .put("activation_effective_marker", "rusty.quest.neutral.effective")
                     .put("app_feature_id", FEATURE_ID)
                     .put("app_feature_module_id", MODULE_ID)
                     .put("app_feature_activation_receipt_schema", RECEIPT_SCHEMA)

@@ -223,6 +223,41 @@ final class EmbeddedDuplexPackagedInputs {
     String selectedRoleId() { return selectedRoleId; }
     String manifestJson() { return manifestJson; }
 
+    /** Transfers only the verified asset closure to the native config assembler. */
+    JSONObject packagedConfigRequest(JSONObject runtimeBindings) throws Exception {
+        fields(runtimeBindings, "adapter_id", "admission_authority_id", "grant_id",
+                "grant_expires_at_ms", "lease_expires_at_ms", "max_token_ttl_ms",
+                "embedded_duplex", "validation_epoch_entropy_hex",
+                "validation_wall_unix_ms", "validation_monotonic_elapsed_ns");
+        JSONObject manifest = new JSONObject(manifestJson);
+        JSONObject identity = manifest.getJSONObject("package");
+        JSONObject lifecycle = new JSONObject(lifecycleJson());
+        JSONObject request = new JSONObject();
+        request.put("package_name", identity.getString("application_id"));
+        request.put("signing_certificate_sha256", identity.getString("signing_certificate_sha256"));
+        request.put("expected_project_id", lifecycle.getString("project_id"));
+        request.put("expected_activation_marker", lifecycle.getString("activation_effective_marker"));
+        for (String key : new String[] {"adapter_id", "admission_authority_id", "grant_id",
+                "grant_expires_at_ms", "lease_expires_at_ms", "max_token_ttl_ms",
+                "embedded_duplex", "validation_epoch_entropy_hex",
+                "validation_wall_unix_ms", "validation_monotonic_elapsed_ns"}) {
+            request.put(key, runtimeBindings.get(key));
+        }
+        request.put("product_spec", exact("product-spec.json"));
+        request.put("product_lock", exact("accepted-product-lock.json"));
+        request.put("client_lock", exact("client-lock.json"));
+        request.put("media_lifecycle_lock", exact(role.lifecyclePath));
+        request.put("app_feature_lock", exact("planning-feature-lock.json"));
+        request.put("media_bindings", new JSONArray()
+                .put(exact(InstalledRole.PEER_A.bindingPath))
+                .put(exact(InstalledRole.PEER_B.bindingPath)));
+        return request;
+    }
+
+    private JSONObject exact(String name) throws Exception {
+        return new JSONObject().put("json", json(name)).put("sha256", digest(name));
+    }
+
     private static void fields(JSONObject value, String... names) {
         Set<String> wanted = new HashSet<>(Arrays.asList(names));
         if (value.length() != wanted.size()) throw new IllegalArgumentException("closed document fields");
