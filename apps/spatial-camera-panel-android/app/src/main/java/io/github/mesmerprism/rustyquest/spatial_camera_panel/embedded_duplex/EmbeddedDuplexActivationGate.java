@@ -94,6 +94,8 @@ final class EmbeddedDuplexActivationGate {
     }
 
     String activate(String activationId, String authorityJson, String proofJson) throws Exception {
+        ArmEvidence current;
+        long claimedRevision;
         lock.lock();
         try {
             if (empty(activationId) || activationId.length() > 4096 || cleanupStarted
@@ -106,7 +108,7 @@ final class EmbeddedDuplexActivationGate {
             requireExactFields(proof, "action_id", "provider_epoch_id", "client_id", "lease_id",
                     "runtime_spec_id", "resulting_runtime_revision", "owner_receipt_ids",
                     "completion_sha256");
-            ArmEvidence current = armed;
+            current = armed;
             long before = clock.wallTimeMillis();
             if (!current.matches(authority, proof, before)
                     || !containsExactSeven(proof.getJSONArray("owner_receipt_ids"), current.receiptId)
@@ -115,17 +117,26 @@ final class EmbeddedDuplexActivationGate {
             }
             activationUncertain = true;
             stateRevision++;
-            target.awaitFirstRenderedFrame();
-            long[] frame = target.currentIncomingFrame(MAX_FRAME_AGE_NS);
-            if (!currentFrame(frame) || clock.wallTimeMillis() >= current.expiresAtMs) {
-                throw new IllegalStateException("fresh incoming frame unavailable");
-            }
-            target.activateIncomingProjection();
-            long[] projection = target.currentProjection();
-            if (!effectiveProjection(projection)
-                    || clock.wallTimeMillis() >= current.expiresAtMs) {
-                throw new IllegalStateException("native Peer projection not effective");
-            }
+            claimedRevision = stateRevision;
+        } finally { lock.unlock(); }
+
+        // Display and native callbacks can reenter the process. Keep the claim
+        // uncertain until readback succeeds, without holding the state lock.
+        target.awaitFirstRenderedFrame();
+        long[] frame = target.currentIncomingFrame(MAX_FRAME_AGE_NS);
+        if (!currentFrame(frame) || clock.wallTimeMillis() >= current.expiresAtMs) {
+            throw new IllegalStateException("fresh incoming frame unavailable");
+        }
+        requireCurrentClaim(current, claimedRevision);
+        target.activateIncomingProjection();
+        long[] projection = target.currentProjection();
+        if (!effectiveProjection(projection) || clock.wallTimeMillis() >= current.expiresAtMs) {
+            throw new IllegalStateException("native Peer projection not effective");
+        }
+
+        lock.lock();
+        try {
+            assertCurrentClaim(current, claimedRevision);
             activationUncertain = false;
             activated = true;
             stateRevision++;
@@ -137,6 +148,19 @@ final class EmbeddedDuplexActivationGate {
             result.put("activated", true);
             return result.toString();
         } finally { lock.unlock(); }
+    }
+
+    private void requireCurrentClaim(ArmEvidence current, long claimedRevision) {
+        lock.lock();
+        try { assertCurrentClaim(current, claimedRevision); }
+        finally { lock.unlock(); }
+    }
+
+    private void assertCurrentClaim(ArmEvidence current, long claimedRevision) {
+        if (cleanupStarted || armed != current || !activationUncertain || activated
+                || stateRevision != claimedRevision) {
+            throw new IllegalStateException("activation changed during display work");
+        }
     }
 
     private boolean currentFrame(long[] frame) {

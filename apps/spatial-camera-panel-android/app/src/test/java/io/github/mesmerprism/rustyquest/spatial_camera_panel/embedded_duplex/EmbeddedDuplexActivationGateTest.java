@@ -65,6 +65,29 @@ public final class EmbeddedDuplexActivationGateTest {
         assertTrue(target.retained);
     }
 
+    @Test public void cleanupCallbackCanRunWhileDisplayAwaitsAndFencesActivation() throws Exception {
+        FakeTarget target = new FakeTarget();
+        EmbeddedDuplexActivationGate gate = armed(target);
+        EmbeddedDuplexActivationGate.MediaTicket stop = new EmbeddedDuplexActivationGate.MediaTicket(
+                7, 9, "action.stop.1", "epoch.provider.1", "client.1", "lease.1",
+                "stop", "sink", "stop");
+        JSONObject authority = authority();
+        target.onAwait = () -> {
+            Thread cleanup = new Thread(() -> gate.beforeOwnerEffect(authority, stop, false));
+            cleanup.start();
+            try { cleanup.join(1000); }
+            catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                throw new AssertionError("cleanup callback interrupted", interrupted);
+            }
+            if (cleanup.isAlive()) throw new AssertionError("display callback held activation lock");
+        };
+        assertThrows(IllegalStateException.class,
+                () -> gate.activate("activation.5", authority.toString(), proof().toString()));
+        assertEquals(1, target.awaited);
+        assertEquals(0, target.activated);
+    }
+
     private static EmbeddedDuplexActivationGate armed(FakeTarget target) throws Exception {
         EmbeddedDuplexActivationGate gate = new EmbeddedDuplexActivationGate(target, () -> 1000L);
         gate.afterVerifiedOwnerEffect(authority(), ticket(), readback(), verified(), false);
@@ -126,11 +149,13 @@ public final class EmbeddedDuplexActivationGateTest {
         int activated;
         boolean failAwait;
         boolean retained = true;
+        Runnable onAwait;
 
         @Override public long generation() { return 7; }
         @Override public String incomingRuntimeSpecId() { return "runtime.incoming.1"; }
         @Override public void awaitFirstRenderedFrame() {
             awaited++;
+            if (onAwait != null) onAwait.run();
             if (failAwait) throw new IllegalStateException("receiver uncertain");
         }
         @Override public long[] currentIncomingFrame(long maxAgeNs) {
