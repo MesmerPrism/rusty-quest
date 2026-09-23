@@ -510,9 +510,11 @@ val embeddedMediaBuildDir = providers.gradleProperty("mediaBuildDir").orNull
 val embeddedMediaAar = embeddedMediaBuildDir.resolve(
   "outputs/aar/rusty-quest-media-stream-android-release.aar",
 )
-tasks.named("preBuild") { dependsOn(":media-stream-android:bundleReleaseAar") }
-tasks.matching { it.name == "findLibraryTask" }.configureEach {
-  dependsOn(":media-stream-android:bundleReleaseAar")
+// AGP resolves the file AAR from several tasks, including library discovery and component export.
+tasks.configureEach {
+  if (name != "clean" && group != "help") {
+    dependsOn(":media-stream-android:bundleReleaseAar")
+  }
 }
 
 dependencies {
