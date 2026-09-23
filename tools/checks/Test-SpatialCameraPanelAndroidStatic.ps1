@@ -3826,7 +3826,7 @@ Assert-Contains "Camera projection freshness runtime" $cameraFreshnessRuntime "t
 Assert-Contains "Camera projection freshness runtime" $cameraFreshnessRuntime '"status=camera-projection-freshness-receipt runtimeCrash=false {}"'
 Assert-Contains "Camera projection freshness runtime" $cameraFreshnessRuntime "nativeStartCameraHwbProjectionProbeWithFence("
 Assert-Contains "Camera projection freshness runtime" $cameraFreshnessRuntime "nativeUpdateCameraHwbProjectionLayerFence("
-Assert-Contains "Camera projection freshness runtime" $cameraFreshnessRuntime "nativeStartCameraHwbProjectionProbe("
+Assert-Contains "Camera HWB probe compatibility JNI" $cameraProbe "nativeStartCameraHwbProjectionProbe("
 Assert-Contains "Camera projection freshness runtime damage" $cameraFreshnessRuntime '"presented-command-buffer-identity-mismatch"'
 Assert-Contains "Camera projection freshness runtime damage" $cameraFreshnessRuntime '"live-layer-fence-transition-not-monotonic"'
 Assert-Contains "Camera projection freshness runtime damage" $cameraFreshnessRuntime "let absent = fence(701, 1, 1, 0);"
