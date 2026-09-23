@@ -511,6 +511,9 @@ val embeddedMediaAar = embeddedMediaBuildDir.resolve(
   "outputs/aar/rusty-quest-media-stream-android-release.aar",
 )
 tasks.named("preBuild") { dependsOn(":media-stream-android:bundleReleaseAar") }
+tasks.matching { it.name == "findLibraryTask" }.configureEach {
+  dependsOn(":media-stream-android:bundleReleaseAar")
+}
 
 dependencies {
   implementation(project(":spatial-sdk-shared"))
