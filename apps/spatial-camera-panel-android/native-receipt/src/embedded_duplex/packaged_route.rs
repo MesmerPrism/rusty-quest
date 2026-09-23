@@ -26,6 +26,7 @@ pub(crate) struct PackagedDuplexRoute {
     pub(crate) product_id: String,
     pub(crate) package_name: String,
     pub(crate) route_configuration_sha256: String,
+    pub(crate) network_scope_id: String,
     pub(crate) profile: PackedStereoProfile,
     pub(crate) peers: [PackagedPeer; 2],
     pub(crate) installed_peer_index: usize,
@@ -81,6 +82,7 @@ struct RouteConfiguration {
     product_id: String,
     package_name: String,
     packed_profile_sha256: String,
+    network_scope_id: String,
     peers: Vec<RoutePeer>,
     runtime_local_identity_source: String,
     device_local_private_key_source: String,
@@ -124,6 +126,7 @@ pub(crate) fn decode_and_validate_packaged_route(
         || route_value.product_id != expected.product_id
         || route_value.package_name != expected.package_name
         || route_value.packed_profile_sha256 != profile.sha256
+        || !dotted(&route_value.network_scope_id)
         || route_value.runtime_local_identity_source != "installed-role-bootstrap"
         || route_value.device_local_private_key_source != "app-private-no-backup-identity"
         || route_value.peers.len() != 2
@@ -164,6 +167,7 @@ pub(crate) fn decode_and_validate_packaged_route(
         product_id: route_value.product_id,
         package_name: route_value.package_name,
         route_configuration_sha256: format!("sha256:{}", route.sha256),
+        network_scope_id: route_value.network_scope_id,
         profile: profile_value,
         peers,
         installed_peer_index: installed,
@@ -589,6 +593,30 @@ mod tests {
         extra["operator_completion"] = json!(true);
         let extra = serde_json::to_string(&extra).expect("extra route");
         assert!(decode(&extra, &profile, &binding_a, &binding_b, expectation).is_err());
+
+        let mut missing_scope: Value = serde_json::from_str(&route).expect("route value");
+        missing_scope
+            .as_object_mut()
+            .expect("route object")
+            .remove("network_scope_id");
+        assert!(decode(
+            &serde_json::to_string(&missing_scope).expect("missing scope"),
+            &profile,
+            &binding_a,
+            &binding_b,
+            expectation
+        )
+        .is_err());
+        let mut malformed_scope: Value = serde_json::from_str(&route).expect("route value");
+        malformed_scope["network_scope_id"] = json!("network scope foreign");
+        assert!(decode(
+            &serde_json::to_string(&malformed_scope).expect("malformed scope"),
+            &profile,
+            &binding_a,
+            &binding_b,
+            expectation
+        )
+        .is_err());
     }
 
     fn decode<'a>(

@@ -8,6 +8,7 @@ use rusty_manifold_peer::{
     COMMON_LAN_RECIPROCAL_ED25519_CONTEXT_SCHEMA, COMMON_LAN_TCP_TRANSPORT_CONTRACT_ID,
 };
 use serde::Serialize;
+use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -17,6 +18,102 @@ pub(crate) struct EnrolledSigningPeer {
     pub(crate) key_id: String,
     pub(crate) key_generation: u64,
     pub(crate) public_key_sha256: String,
+}
+
+/// Read-only signing facts from the live process authority, never from the
+/// caller's context or enrollment request.
+pub(crate) struct LiveCommonLanSigningAuthority {
+    pub(crate) trust_policy_id: String,
+    pub(crate) trust_policy_revision: u64,
+    pub(crate) enrolled: Vec<EnrolledSigningPeer>,
+}
+
+pub(crate) fn signing_authority_from_live_snapshot(
+    snapshot_json: &str,
+    route: &PackagedDuplexRoute,
+    now_ms: u64,
+) -> Result<LiveCommonLanSigningAuthority, String> {
+    if snapshot_json.is_empty() || snapshot_json.len() > 16 * 1024 * 1024 || now_ms == 0 {
+        return Err("live signing snapshot bounds".into());
+    }
+    let snapshot: Value =
+        serde_json::from_str(snapshot_json).map_err(|_| "live signing snapshot JSON")?;
+    let trust = snapshot
+        .get("trust_policy")
+        .ok_or("live signing trust policy absent")?;
+    let trust_policy_id = trust
+        .get("policy_id")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .ok_or("live signing trust policy id")?
+        .to_owned();
+    let trust_policy_revision = trust
+        .get("revision")
+        .and_then(Value::as_u64)
+        .filter(|value| *value > 0)
+        .ok_or("live signing trust policy revision")?;
+    let credentials = snapshot
+        .pointer("/enrollment/credentials")
+        .and_then(Value::as_array)
+        .ok_or("live signing enrollment absent")?;
+    let mut enrolled = Vec::with_capacity(2);
+    for packaged in &route.peers {
+        let matching = credentials
+            .iter()
+            .filter(|record| {
+                record.get("peer_id").and_then(Value::as_str) == Some(packaged.peer_id.as_str())
+                    && record.get("status").and_then(Value::as_str) == Some("active")
+            })
+            .collect::<Vec<_>>();
+        if matching.len() != 1 {
+            return Err("live signing enrolled peer cardinality".into());
+        }
+        let record = matching[0];
+        let read = |name| -> Result<String, String> {
+            record
+                .get(name)
+                .and_then(Value::as_str)
+                .filter(|value| !value.is_empty())
+                .map(str::to_owned)
+                .ok_or_else(|| format!("live signing credential {name}"))
+        };
+        let key_generation = record
+            .get("key_generation")
+            .and_then(Value::as_u64)
+            .filter(|value| *value > 0)
+            .ok_or("live signing key generation")?;
+        let valid_from = record
+            .get("valid_from_ms")
+            .and_then(Value::as_u64)
+            .ok_or("live signing credential validity")?;
+        let expires = record
+            .get("expires_at_ms")
+            .and_then(Value::as_u64)
+            .ok_or("live signing credential expiry")?;
+        if valid_from > now_ms || expires <= now_ms {
+            return Err("live signing credential is not current".into());
+        }
+        enrolled.push(EnrolledSigningPeer {
+            peer_id: packaged.peer_id.clone(),
+            device_id: packaged.device_id.clone(),
+            key_id: read("key_id")?,
+            key_generation,
+            public_key_sha256: read("public_key_sha256")?,
+        });
+    }
+    if credentials.iter().any(|record| {
+        record.get("status").and_then(Value::as_str) == Some("active")
+            && !route.peers.iter().any(|peer| {
+                record.get("peer_id").and_then(Value::as_str) == Some(peer.peer_id.as_str())
+            })
+    }) {
+        return Err("foreign active signing credential".into());
+    }
+    Ok(LiveCommonLanSigningAuthority {
+        trust_policy_id,
+        trust_policy_revision,
+        enrolled,
+    })
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -241,7 +338,9 @@ mod tests {
     fn endpoint_key_host_role_and_expiry_damage_reject() {
         let route = route();
         let enrolled = enrolled();
-        for damage in ["endpoint", "key", "host", "role", "expiry", "control"] {
+        for damage in [
+            "endpoint", "key", "host", "role", "expiry", "control", "scope",
+        ] {
             let mut value = context_value("peer.a", "peer.b");
             match damage {
                 "endpoint" => value["transport"]["endpoints"][0]["listen_port"] = json!(41001),
@@ -253,6 +352,7 @@ mod tests {
                     value["transport"]["endpoints"][0]["listen_ip_address"] = json!("10.0.0.1");
                     value["transport"]["endpoints"][0]["listen_port"] = json!(42000);
                 }
+                "scope" => value["transport"]["network_scope_id"] = json!("network.scope.foreign"),
                 _ => unreachable!(),
             }
             let context: ManifoldCommonLanReciprocalEd25519Context =
@@ -292,11 +392,74 @@ mod tests {
         .is_err());
     }
 
+    #[test]
+    fn live_snapshot_is_the_only_enrollment_and_trust_source() {
+        let route = route();
+        let record = |peer: &str, key: char, hash: char, generation: u64| {
+            json!({"peer_id":peer,"status":"active",
+                "key_id":format!("ed25519.{}",hex(key)),
+                "key_generation":generation,
+                "public_key_sha256":format!("sha256:{}",hex(hash)),
+                "valid_from_ms":100,"expires_at_ms":20_000})
+        };
+        let snapshot = json!({"trust_policy":{"policy_id":"trust.duplex","revision":3},
+            "enrollment":{"credentials":[
+                record("peer.a",'a','1',1),record("peer.b",'b','2',2)]}});
+        let live = signing_authority_from_live_snapshot(&snapshot.to_string(), &route, 10_000)
+            .expect("live signing authority");
+        assert_eq!(live.trust_policy_id, "trust.duplex");
+        assert_eq!(live.trust_policy_revision, 3);
+        let approved = validate_common_lan_context_for_signing(
+            &route,
+            &live.enrolled,
+            &context("peer.a", "peer.b"),
+            CommonLanSigningPolicy {
+                trust_policy_id: &live.trust_policy_id,
+                trust_policy_revision: live.trust_policy_revision,
+                network_scope_id: &route.network_scope_id,
+                ..policy("peer.a")
+            },
+        )
+        .expect("live context");
+        assert_eq!(approved.signer_key_id, live.enrolled[0].key_id);
+        for damage in ["revoked", "expired", "duplicate", "foreign", "trust"] {
+            let mut changed = snapshot.clone();
+            match damage {
+                "revoked" => changed["enrollment"]["credentials"][0]["status"] = json!("revoked"),
+                "expired" => {
+                    changed["enrollment"]["credentials"][1]["expires_at_ms"] = json!(9_999)
+                }
+                "duplicate" => {
+                    let duplicate = changed["enrollment"]["credentials"][0].clone();
+                    changed["enrollment"]["credentials"]
+                        .as_array_mut()
+                        .unwrap()
+                        .push(duplicate);
+                }
+                "foreign" => {
+                    let mut foreign = changed["enrollment"]["credentials"][0].clone();
+                    foreign["peer_id"] = json!("peer.foreign");
+                    changed["enrollment"]["credentials"]
+                        .as_array_mut()
+                        .unwrap()
+                        .push(foreign);
+                }
+                "trust" => changed["trust_policy"]["revision"] = json!(0),
+                _ => unreachable!(),
+            }
+            assert!(
+                signing_authority_from_live_snapshot(&changed.to_string(), &route, 10_000).is_err(),
+                "damaged live snapshot accepted: {damage}"
+            );
+        }
+    }
+
     fn route() -> PackagedDuplexRoute {
         PackagedDuplexRoute {
             product_id: "product.duplex".into(),
             package_name: "io.example.duplex".into(),
             route_configuration_sha256: format!("sha256:{}", hex('8')),
+            network_scope_id: "network.scope.fixed".into(),
             profile: PackedStereoProfile {
                 schema: "rusty.quest.test.packed_profile.v1".into(),
                 profile_id: "qcl100-packed-sbs".into(),

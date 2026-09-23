@@ -3,12 +3,20 @@
 //! The slots are checked out before entering Java. Metadata/authority handles
 //! remain readable, but a second mutation cannot reenter an active provider.
 
+use super::common_lan_signing::{
+    signing_authority_from_live_snapshot, validate_common_lan_context_for_signing,
+    CommonLanSigningPolicy,
+};
 use super::java_bridge::JavaOwnerCallbacks;
 use super::packaged_config::assemble_packaged_config_request_json;
+use super::packaged_route::PackagedDuplexRoute;
 use super::runtime_slot::Checkout;
 use jni::objects::{JByteArray, JClass, JObject, JString};
 use jni::sys::{jbyteArray, jstring};
 use jni::JNIEnv;
+use rusty_manifold_peer::{
+    ManifoldCommonLanReciprocalEd25519Context, RECIPROCAL_ED25519_SIGNATURE_SCHEMA,
+};
 use rusty_quest_broker_authority::{
     QuestBrokerAuthorityBridgeKind, QuestBrokerProductActivationMaterial, QuestBrokerRuntimeConfig,
     QuestBrokerRuntimeProvider, QuestEmbeddedDuplexAuthority, QuestEmbeddedDuplexProjectionSource,
@@ -108,6 +116,7 @@ struct Host {
     remote_peer_id: String,
     route_grant_id: String,
     route_configuration_sha256: String,
+    packaged_route: PackagedDuplexRoute,
     remote_key_id: String,
     remote_public_key: [u8; 32],
 }
@@ -119,9 +128,44 @@ struct ProcessState {
 }
 
 static PROCESS: OnceLock<Mutex<ProcessState>> = OnceLock::new();
+static PREPARED_ROUTE: OnceLock<Mutex<Option<(String, PackagedDuplexRoute)>>> = OnceLock::new();
 
 fn process() -> &'static Mutex<ProcessState> {
     PROCESS.get_or_init(|| Mutex::new(ProcessState::default()))
+}
+
+fn prepared_route() -> &'static Mutex<Option<(String, PackagedDuplexRoute)>> {
+    PREPARED_ROUTE.get_or_init(|| Mutex::new(None))
+}
+
+fn stage_packaged_route(config_sha256: String, route: PackagedDuplexRoute) -> Result<(), String> {
+    {
+        let state = process().lock().map_err(|_| "process state poisoned")?;
+        if state.initializing || state.host.is_some() {
+            return Err("packaged route cannot replace a process authority".into());
+        }
+    }
+    let mut slot = prepared_route()
+        .lock()
+        .map_err(|_| "packaged route slot poisoned")?;
+    if slot.as_ref().is_some_and(|(prior_sha, prior_route)| {
+        prior_sha != &config_sha256 || prior_route != &route
+    }) {
+        return Err("another packaged route is already staged".into());
+    }
+    *slot = Some((config_sha256, route));
+    Ok(())
+}
+
+fn exact_staged_route(config_sha256: &str) -> Result<PackagedDuplexRoute, String> {
+    let slot = prepared_route()
+        .lock()
+        .map_err(|_| "packaged route slot poisoned")?;
+    let (prior_sha, route) = slot.as_ref().ok_or("validated packaged route absent")?;
+    if prior_sha != config_sha256 {
+        return Err("packaged route differs from runtime configuration".into());
+    }
+    Ok(route.clone())
 }
 
 /// A bounded consistency check rejects a wall-clock jump during this epoch.
@@ -230,6 +274,7 @@ fn build_host(
         return Err("embedded bridge required".into());
     }
     let bootstrap: Bootstrap = serde_json::from_str(&bootstrap_json).map_err(safe_decode)?;
+    let route = exact_staged_route(&expected_sha)?;
     if bootstrap.local_peer_id == bootstrap.remote_peer_id
         || bootstrap.device_peers.len() != 2
         || !bootstrap
@@ -247,6 +292,12 @@ fn build_host(
         || !bootstrap.route_configuration_sha256.as_bytes()[7..]
             .iter()
             .all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(c))
+        || route.route_configuration_sha256 != bootstrap.route_configuration_sha256
+        || route.local_peer().peer_id != bootstrap.local_peer_id
+        || route.peers[1 - route.installed_peer_index].peer_id != bootstrap.remote_peer_id
+        || route.runtime_spec_ids[route.installed_peer_index] != bootstrap.runtime_spec_id
+        || route.runtime_spec_ids[1 - route.installed_peer_index]
+            != bootstrap.incoming_runtime_spec_id
     {
         return Err("invalid embedded pair binding".into());
     }
@@ -373,6 +424,7 @@ fn build_host(
             remote_peer_id: bootstrap.remote_peer_id,
             route_grant_id: bootstrap.route_grant_id,
             route_configuration_sha256: bootstrap.route_configuration_sha256,
+            packaged_route: route,
             remote_key_id: bootstrap.remote_key_id,
             remote_public_key,
         },
@@ -432,7 +484,11 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1pa
     request: JString<'_>,
 ) -> jstring {
     let result = read_string(&mut env, &request, 8 * 1024 * 1024)
-        .and_then(|text| assemble_packaged_config_request_json(&text));
+        .and_then(|text| assemble_packaged_config_request_json(&text))
+        .and_then(|(result, config_sha256, route)| {
+            stage_packaged_route(config_sha256, route)?;
+            Ok(result)
+        });
     return_string(&mut env, result)
 }
 
@@ -625,6 +681,43 @@ fn complete_start(host: &Host, input: &str) -> Result<String, String> {
     )
 }
 
+fn sign_common_lan(host: &Host, input: &str, now: u64) -> Result<String, String> {
+    let context: ManifoldCommonLanReciprocalEd25519Context =
+        serde_json::from_str(input).map_err(safe_decode)?;
+    let snapshot = host.authority.snapshot_json()?;
+    let live = signing_authority_from_live_snapshot(&snapshot, &host.packaged_route, now)?;
+    let validated = validate_common_lan_context_for_signing(
+        &host.packaged_route,
+        &live.enrolled,
+        &context,
+        CommonLanSigningPolicy {
+            local_peer_id: &host.local_peer_id,
+            trust_policy_id: &live.trust_policy_id,
+            trust_policy_revision: live.trust_policy_revision,
+            network_scope_id: &host.packaged_route.network_scope_id,
+            now_ms: now,
+            max_context_age_ms: 30_000,
+            max_future_skew_ms: 0,
+            max_context_ttl_ms: 120_000,
+        },
+    )?;
+    // Snapshot and route are owned local values. No host, provider, peer, or
+    // process lock remains held when Java enters the private-key callback.
+    let signature = host.callbacks.sign_validated_common_lan(&validated)?;
+    let signature_hex = signature
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    Ok(json!({
+        "$schema": RECIPROCAL_ED25519_SIGNATURE_SCHEMA,
+        "signer_peer_id": validated.signer_peer_id,
+        "signer_key_id": validated.signer_key_id,
+        "context_sha256": validated.context_sha256,
+        "signature_hex": signature_hex,
+    })
+    .to_string())
+}
+
 fn command(operation: &str, input: &str) -> Result<String, String> {
     let host = host()?;
     let now = host.clock.now_ms()?;
@@ -687,6 +780,7 @@ fn command(operation: &str, input: &str) -> Result<String, String> {
             serde_json::to_string(&host.authority.prepare_common_lan_context(draft)?)
                 .map_err(safe_decode)
         }
+        "sign_common_lan" => sign_common_lan(&host, input, now),
         "apply_reciprocal" => {
             let request = serde_json::from_str(input).map_err(safe_decode)?;
             serde_json::to_string(&host.authority.apply_common_lan_reciprocal(&request, now)?)

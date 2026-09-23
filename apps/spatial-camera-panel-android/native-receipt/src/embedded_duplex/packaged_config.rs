@@ -6,7 +6,8 @@
 //! the runtime configuration.
 
 use super::packaged_route::{
-    decode_and_validate_packaged_route, ExactRouteDocument, PackagedRouteExpectations,
+    decode_and_validate_packaged_route, ExactRouteDocument, PackagedDuplexRoute,
+    PackagedRouteExpectations,
 };
 use rusty_quest_broker_authority::{
     canonical_runtime_config_sha256, packaged_json_sha256, QuestBrokerAuthorityRuntime,
@@ -82,7 +83,9 @@ struct PackagedConfigRequest {
 
 /// Parse the closed JNI envelope and return only the already revalidated
 /// canonical config, digest, and exact input digest projection.
-pub(crate) fn assemble_packaged_config_request_json(request_json: &str) -> Result<String, String> {
+pub(crate) fn assemble_packaged_config_request_json(
+    request_json: &str,
+) -> Result<(String, String, PackagedDuplexRoute), String> {
     let request: PackagedConfigRequest = serde_json::from_str(request_json)
         .map_err(|_| "invalid packaged configuration request".to_owned())?;
     let product_lock: Value = serde_json::from_str(&request.product_lock.json)
@@ -141,7 +144,8 @@ pub(crate) fn assemble_packaged_config_request_json(request_json: &str) -> Resul
         validation_monotonic_elapsed_ns: request.validation_monotonic_elapsed_ns,
     })
     .map_err(|error| error.to_string())?;
-    serde_json::to_string(&json!({
+    let config_sha256 = assembled.canonical_sha256.clone();
+    let result = serde_json::to_string(&json!({
         "$schema": "rusty.quest.embedded_duplex.packaged_config_result.v1",
         "runtime_config_json": assembled.canonical_json,
         "runtime_config_sha256": assembled.canonical_sha256,
@@ -163,7 +167,8 @@ pub(crate) fn assemble_packaged_config_request_json(request_json: &str) -> Resul
             }
         }
     }))
-    .map_err(|_| "packaged configuration result encoding failed".to_owned())
+    .map_err(|_| "packaged configuration result encoding failed".to_owned())?;
+    Ok((result, config_sha256, route))
 }
 
 /// Product/operator supplied inputs for one app-local embedded authority.

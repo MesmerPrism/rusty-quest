@@ -1,3 +1,4 @@
+use super::common_lan_signing::ValidatedCommonLanSigning;
 use std::sync::Arc;
 
 use jni::objects::{GlobalRef, JByteArray, JObject, JString, JValue};
@@ -25,6 +26,44 @@ pub(crate) struct JavaOwnerCallbacks {
 }
 
 impl JavaOwnerCallbacks {
+    pub(crate) fn sign_validated_common_lan(
+        &self,
+        validated: &ValidatedCommonLanSigning,
+    ) -> Result<[u8; 64], String> {
+        if validated.signer_key_id != self.key_id {
+            return Err("java_bridge.common_lan_signer_identity".into());
+        }
+        self.sign_callback(&validated.signing_bytes, "signValidatedCommonLanBytes")
+    }
+
+    fn sign_callback(&self, message: &[u8], method: &str) -> Result<[u8; 64], String> {
+        if message.is_empty() || message.len() > MAX_AUTHORITY_SIGNING_BYTES {
+            return Err("java_bridge.sign_input_bounds".to_owned());
+        }
+        let mut env = self.attached()?;
+        let input_result = env.byte_array_from_slice(message);
+        let input = checked_call(&mut env, input_result, "java_bridge.sign_input")?;
+        let input_object = JObject::from(input);
+        let call = env.call_method(
+            self.callback.as_obj(),
+            method,
+            "([B)[B",
+            &[JValue::Object(&input_object)],
+        );
+        let result = checked_call(&mut env, call, "java_bridge.sign_call")?
+            .l()
+            .map_err(|_| "java_bridge.sign_type".to_owned())?;
+        if result.is_null() {
+            return Err("java_bridge.sign_null".to_owned());
+        }
+        let array = JByteArray::from(result);
+        let bytes_result = env.convert_byte_array(&array);
+        let bytes = checked_call(&mut env, bytes_result, "java_bridge.sign_bytes")?;
+        bytes
+            .try_into()
+            .map_err(|_| "java_bridge.sign_length".to_owned())
+    }
+
     pub(crate) fn capture(
         env: &mut JNIEnv<'_>,
         callback: JObject<'_>,
@@ -187,31 +226,7 @@ impl OwnerDispatchSigner for JavaOwnerCallbacks {
     }
 
     fn sign(&self, message: &[u8]) -> Result<[u8; 64], String> {
-        if message.is_empty() || message.len() > MAX_AUTHORITY_SIGNING_BYTES {
-            return Err("java_bridge.sign_input_bounds".to_owned());
-        }
-        let mut env = self.attached()?;
-        let input_result = env.byte_array_from_slice(message);
-        let input = checked_call(&mut env, input_result, "java_bridge.sign_input")?;
-        let input_object = JObject::from(input);
-        let call = env.call_method(
-            self.callback.as_obj(),
-            "signAuthorityBytes",
-            "([B)[B",
-            &[JValue::Object(&input_object)],
-        );
-        let result = checked_call(&mut env, call, "java_bridge.sign_call")?
-            .l()
-            .map_err(|_| "java_bridge.sign_type".to_owned())?;
-        if result.is_null() {
-            return Err("java_bridge.sign_null".to_owned());
-        }
-        let array = JByteArray::from(result);
-        let bytes_result = env.convert_byte_array(&array);
-        let bytes = checked_call(&mut env, bytes_result, "java_bridge.sign_bytes")?;
-        bytes
-            .try_into()
-            .map_err(|_| "java_bridge.sign_length".to_owned())
+        self.sign_callback(message, "signAuthorityBytes")
     }
 }
 
