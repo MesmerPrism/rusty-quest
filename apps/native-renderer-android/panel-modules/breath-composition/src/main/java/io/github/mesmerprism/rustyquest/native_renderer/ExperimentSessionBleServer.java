@@ -155,7 +155,7 @@ final class ExperimentSessionBleServer {
                     != PackageManager.PERMISSION_GRANTED
                     || activity.checkSelfPermission(Manifest.permission.BLUETOOTH_ADVERTISE)
                     != PackageManager.PERMISSION_GRANTED)) return;
-        start();
+        if (enabled()) start();
     }
 
     private synchronized void start() {

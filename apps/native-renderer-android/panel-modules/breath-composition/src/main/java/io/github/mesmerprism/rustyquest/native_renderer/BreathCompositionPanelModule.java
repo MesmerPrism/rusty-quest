@@ -253,10 +253,12 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
         final String browserId;
         final String nativeId;
         final String operation;
+        final long startedAtElapsedMs;
         RemotePending(String browserId, String nativeId, String operation) {
             this.browserId = browserId;
             this.nativeId = nativeId;
             this.operation = operation;
+            this.startedAtElapsedMs = SystemClock.elapsedRealtime();
         }
     }
 
@@ -371,6 +373,13 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
                             ExperimentSessionPanelCoordinator.CONDITION_TWO)))
                     .put("pending", state.pendingOperationId.isEmpty() ? false : true);
                 RemotePending pending = remotePending;
+                if (pending != null && now - pending.startedAtElapsedMs > 30000L) {
+                    ExperimentSessionBleServer server = remoteServer();
+                    if (server != null) server.updateReceipt(pending.browserId,
+                        "outcome_unknown", "Quest confirmation timed out. Check the headset.");
+                    remotePending = null;
+                    pending = null;
+                }
                 if (pending != null && ("return-vr".equals(pending.operation)
                         || "open-polar".equals(pending.operation))) {
                     String foreground = NativeRendererSelfKioskApplication.foregroundForOwnApp(remoteContext);
@@ -440,13 +449,14 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
                     return;
                 }
                 if ("save-exit".equals(request.operation)) {
+                    remotePending = new RemotePending(request.id, "", "save-exit");
+                    server.updateReceipt(request.id, "pending", "Waiting for durable save and exit.");
                     if (!NativeRendererSelfKioskApplication.requestSaveAndExitFromRemote(
                             remoteContext)) {
+                        remotePending = null;
                         server.updateReceipt(request.id, "rejected", "Save and exit could not be admitted.");
                         return;
                     }
-                    remotePending = new RemotePending(request.id, "", "save-exit");
-                    server.updateReceipt(request.id, "pending", "Waiting for durable save and exit.");
                     return;
                 }
                 if ("return-vr".equals(request.operation)) {
