@@ -759,9 +759,13 @@ fn cleanup_projection_from_retained(
     if route.lifecycle_status == ManifoldPairMediaRouteLifecycleStatus::Current
         || route.cleanup_status != ManifoldPairMediaRouteCleanupStatus::Pending
         || route.authority_provider_epoch_id.to_string() != ticket.authority_epoch_id
-        || ticket.client_id != route.authority_client_id.to_string()
-        || ticket.lease_id != route.authority_runtime_lease_id.to_string()
-        || ticket.operation != rusty_quest_media_stream::MediaStreamPlatformOperation::Stop
+        || !ticket_targets_original_holder(
+            &route.authority_client_id,
+            &route.authority_runtime_lease_id,
+            &ticket.client_id,
+            &ticket.lease_id,
+            ticket.operation,
+        )
     {
         return Err("route has no retained cleanup authorization".to_owned());
     }
@@ -852,6 +856,18 @@ fn current_cleanup_requester(
         return Ok(true);
     }
     Err("cleanup requester is not original client or non-derivative trusted revoker".to_owned())
+}
+
+fn ticket_targets_original_holder(
+    original_client_id: &DottedId,
+    original_lease_id: &DottedId,
+    ticket_client_id: &str,
+    ticket_lease_id: &str,
+    operation: rusty_quest_media_stream::MediaStreamPlatformOperation,
+) -> bool {
+    operation == rusty_quest_media_stream::MediaStreamPlatformOperation::Stop
+        && ticket_client_id == original_client_id.as_str()
+        && ticket_lease_id == original_lease_id.as_str()
 }
 
 fn verify_projection_against_retained(
@@ -1010,5 +1026,40 @@ mod tests {
             source_authorization_id: DottedId::new("authorization.revoker").expect("source"),
         });
         assert!(check(&lease, &revoker, &revoker_lease, 100).is_err());
+    }
+
+    #[test]
+    fn retained_cleanup_ticket_never_relabels_original_target_as_revoker() {
+        let original = DottedId::new("client.original").expect("original");
+        let original_lease = DottedId::new("lease.original").expect("lease");
+        use rusty_quest_media_stream::MediaStreamPlatformOperation::{Start, Stop};
+        assert!(ticket_targets_original_holder(
+            &original,
+            &original_lease,
+            "client.original",
+            "lease.original",
+            Stop,
+        ));
+        assert!(!ticket_targets_original_holder(
+            &original,
+            &original_lease,
+            "client.revoker",
+            "lease.revoker",
+            Stop,
+        ));
+        assert!(!ticket_targets_original_holder(
+            &original,
+            &original_lease,
+            "client.original",
+            "lease.revoker",
+            Stop,
+        ));
+        assert!(!ticket_targets_original_holder(
+            &original,
+            &original_lease,
+            "client.original",
+            "lease.original",
+            Start,
+        ));
     }
 }
