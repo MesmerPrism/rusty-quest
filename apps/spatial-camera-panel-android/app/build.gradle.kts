@@ -504,13 +504,17 @@ android {
   kotlinOptions { jvmTarget = "17" }
 }
 
-val embeddedMediaAar = project(":media-stream-android").layout.buildDirectory.file(
+val embeddedMediaBuildDir = providers.gradleProperty("mediaBuildDir").orNull
+  ?.let { file(it) }
+  ?: project(":media-stream-android").layout.buildDirectory.get().asFile
+val embeddedMediaAar = embeddedMediaBuildDir.resolve(
   "outputs/aar/rusty-quest-media-stream-android-release.aar",
 )
+tasks.named("preBuild") { dependsOn(":media-stream-android:bundleReleaseAar") }
 
 dependencies {
   implementation(project(":spatial-sdk-shared"))
-  implementation(files(embeddedMediaAar).builtBy(":media-stream-android:bundleReleaseAar"))
+  implementation(files(embeddedMediaAar))
   implementation(libs.androidx.core.ktx)
   implementation(libs.androidx.activity.compose)
   implementation(platform(libs.androidx.compose.bom))
