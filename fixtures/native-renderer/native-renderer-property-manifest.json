@@ -424,7 +424,9 @@
       "value_kind": "token",
       "allowed_values": [
         "disabled",
-        "right-secondary-triple-press-toggle"
+        "right-secondary-triple-press-toggle",
+        "right-secondary-triple-press-experimenter-toggle",
+        "right-secondary-triple-press-experimenter-restart"
       ],
       "validators": [
         "runtime-parser",

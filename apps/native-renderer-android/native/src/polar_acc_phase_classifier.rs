@@ -14,6 +14,8 @@ use rusty_quest_breath_contract::{
     BreathTimestampMicros,
 };
 
+use crate::breath_guidance::BreathGuidanceTarget;
+
 const MAX_DERIVATIVE_PER_SECOND: f64 = 1_000.0;
 const MAX_INTERVAL_MICROS: u64 = 10_000_000;
 const MAX_MOTION_ADMISSION_MG: f64 = 1_000.0;
@@ -206,6 +208,25 @@ impl PolarAccPhaseClassifier {
         value01: f64,
         motion_delta_mg: f64,
     ) -> CommonPhaseObservation {
+        self.observe_sample_guided(
+            observed_at,
+            sequence_id,
+            sampled_at,
+            value01,
+            motion_delta_mg,
+            None,
+        )
+    }
+
+    pub(crate) fn observe_sample_guided(
+        &mut self,
+        observed_at: BreathTimestampMicros,
+        sequence_id: u64,
+        sampled_at: BreathTimestampMicros,
+        value01: f64,
+        motion_delta_mg: f64,
+        guidance: Option<BreathGuidanceTarget>,
+    ) -> CommonPhaseObservation {
         increment(&mut self.telemetry.received_input_count);
         if self.last_observed_at.is_some_and(|old| observed_at < old) {
             return self.reset_recorded(observed_at, CommonPhaseResetReason::TimeRegression);
@@ -241,6 +262,7 @@ impl PolarAccPhaseClassifier {
             value01,
             motion_delta_mg,
             parameters,
+            guidance,
         )
     }
 
@@ -252,6 +274,7 @@ impl PolarAccPhaseClassifier {
         value01: f64,
         motion_delta_mg: f64,
         parameters: PolarAccPhaseParameters,
+        guidance: Option<BreathGuidanceTarget>,
     ) -> CommonPhaseObservation {
         increment(&mut self.telemetry.accepted_sample_count);
         let (Some(previous_sampled_at), Some(previous_value01)) =
@@ -290,7 +313,10 @@ impl PolarAccPhaseClassifier {
         } else if value01 >= 1.0 - f64::EPSILON {
             self.endpoint_latch = EndpointLatch::FullExpansion;
         }
-        let candidate = self.classify_candidate(filtered, parameters);
+        let classified_derivative = guidance
+            .map(|target| guided_derivative(filtered, parameters, target))
+            .unwrap_or(filtered);
+        let candidate = self.classify_candidate(classified_derivative, parameters);
         if candidate != self.candidate {
             self.candidate = candidate;
             self.candidate_started_at = Some(sampled_at);
@@ -469,6 +495,43 @@ impl PolarAccPhaseClassifier {
     }
 }
 
+/// Convert the bounded operator bias into an evidence offset.  Zero is exactly
+/// the honest classifier.  Approaching 100% rapidly lowers the expected
+/// phase's effective boundary while retaining tracking, confirmation and dwell
+/// gates; malformed or missing sensor data therefore never becomes fabricated
+/// valid breathing evidence.
+fn guided_derivative(
+    derivative: f64,
+    parameters: PolarAccPhaseParameters,
+    target: BreathGuidanceTarget,
+) -> f64 {
+    let strength = f64::from(target.bias_percent.min(100)) / 100.0;
+    if strength <= 0.0 {
+        return derivative;
+    }
+    if target.expected_phase == CommonBreathPhase::Hold {
+        return derivative * (1.0 - strength);
+    }
+    if strength >= 1.0 {
+        return if target.expected_phase == CommonBreathPhase::Inhale {
+            MAX_DERIVATIVE_PER_SECOND
+        } else {
+            -MAX_DERIVATIVE_PER_SECOND
+        };
+    }
+    let scale = parameters
+        .inhale_entry_per_second
+        .max(parameters.exhale_entry_per_second)
+        .max(parameters.hold_band_per_second);
+    let offset = (scale * strength / (1.0 - strength)).min(MAX_DERIVATIVE_PER_SECOND);
+    let adjusted = if target.expected_phase == CommonBreathPhase::Inhale {
+        derivative + offset
+    } else {
+        derivative - offset
+    };
+    adjusted.clamp(-MAX_DERIVATIVE_PER_SECOND, MAX_DERIVATIVE_PER_SECOND)
+}
+
 fn increment(counter: &mut u64) {
     *counter = counter.saturating_add(1);
 }
@@ -574,5 +637,60 @@ mod tests {
         assert_eq!(reset.phase, CommonBreathPhase::Unknown);
         let primed = classifier.observe_sample(at(2_100_000), 1, at(2_100_000), 0.5, 3.0);
         assert_eq!(primed.status, CommonPhaseStatus::Primed);
+    }
+
+    #[test]
+    fn zero_bias_is_bit_for_bit_the_signal_classifier() {
+        let mut honest = PolarAccPhaseClassifier::new(tuned());
+        let mut guided = PolarAccPhaseClassifier::new(tuned());
+        let target = BreathGuidanceTarget {
+            expected_phase: CommonBreathPhase::Inhale,
+            expected_phase_token: "inhale",
+            bias_percent: 0,
+            official_active_time_ms: 250,
+        };
+        for (index, value) in [0.50, 0.48, 0.46, 0.44, 0.42].into_iter().enumerate() {
+            let time = 1_000_000 + index as u64 * 100_000;
+            let expected = honest.observe_sample(at(time), index as u64 + 1, at(time), value, 3.0);
+            let actual = guided.observe_sample_guided(
+                at(time),
+                index as u64 + 1,
+                at(time),
+                value,
+                3.0,
+                Some(target),
+            );
+            assert_eq!(actual, expected);
+        }
+    }
+
+    #[test]
+    fn guidance_shifts_directional_evidence_and_hold_attenuates_it() {
+        let parameters = tuned().parameters();
+        let inhale = BreathGuidanceTarget {
+            expected_phase: CommonBreathPhase::Inhale,
+            expected_phase_token: "inhale",
+            bias_percent: 80,
+            official_active_time_ms: 1_000,
+        };
+        let hold = BreathGuidanceTarget {
+            expected_phase: CommonBreathPhase::Hold,
+            expected_phase_token: "hold",
+            bias_percent: 80,
+            official_active_time_ms: 1_000,
+        };
+        assert!(guided_derivative(-0.02, parameters, inhale) > parameters.inhale_entry_per_second);
+        assert!((guided_derivative(0.10, parameters, hold) - 0.02).abs() < 1.0e-9);
+        assert_eq!(
+            guided_derivative(
+                -0.10,
+                parameters,
+                BreathGuidanceTarget {
+                    bias_percent: 100,
+                    ..inhale
+                }
+            ),
+            MAX_DERIVATIVE_PER_SECOND
+        );
     }
 }

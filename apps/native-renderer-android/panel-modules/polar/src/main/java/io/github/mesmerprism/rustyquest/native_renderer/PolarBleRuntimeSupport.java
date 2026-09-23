@@ -6,6 +6,7 @@ import android.bluetooth.BluetoothAdapter;
 import android.bluetooth.BluetoothManager;
 import android.content.Context;
 import android.content.pm.PackageManager;
+import android.location.LocationManager;
 import android.os.Build;
 import java.util.ArrayList;
 import java.util.List;
@@ -60,6 +61,7 @@ final class PolarBleRuntimeSupport {
             status.put("runtime_permission_ready", missing.isEmpty());
             status.put("missing_permissions", missingPermissionsJson(context));
             status.put("bluetooth_adapter_state", bluetoothAdapterState(context));
+            status.put("location_services_state", locationServicesState(context));
             status.put(
                 "permission_model",
                 Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
@@ -95,6 +97,26 @@ final class PolarBleRuntimeSupport {
             }
         } catch (SecurityException error) {
             return "permission-blocked";
+        }
+    }
+
+    static String locationServicesState(Context context) {
+        if (context == null) {
+            return "unavailable";
+        }
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P) {
+            return "legacy-unobserved";
+        }
+        LocationManager manager = (LocationManager) context.getSystemService(Context.LOCATION_SERVICE);
+        if (manager == null) {
+            return "unavailable";
+        }
+        try {
+            return manager.isLocationEnabled() ? "enabled" : "disabled";
+        } catch (SecurityException error) {
+            return "permission-blocked";
+        } catch (RuntimeException error) {
+            return "unknown";
         }
     }
 

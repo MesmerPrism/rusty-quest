@@ -23,6 +23,41 @@ Validate shared-core and placement parity on the host before device work.
 
 Runtime routes are selected by profile/property, not by separate APKs:
 
+The opt-in `ui.same_apk_soft_kiosk` feature uses own-Activity lifecycle and native
+focus evidence through a private foreground service, with no Accessibility setup.
+See [same-APK soft kiosk](../../docs/NATIVE_RENDERER_SOFT_KIOSK.md) for background
+launch authorization, departure gestures, permission suppression, and exit checks.
+
+The experimenter session panel is a four-page guided workflow: Prepare,
+Controls, Choose condition, and Session. Readiness is shown with explicit
+green/amber/red status cards. Arming starts recording and live physiology/particle
+feedback, verifies the packaged condition audio, and keeps that audio silent; once
+the durable `armed` receipt arrives, the panel closes to the particle scene. The
+experimenter holds Right Grip+A for 0.75 seconds to create the durable
+`official-start` event and start audio, holds Right Grip+B to pause, and holds
+Right Grip+A again to resume. In the experiment profile, triple-B without grip
+opens or closes the menu without changing session state; Save and exit is the
+explicit terminal action. Pre-roll and
+paused time do not advance the completion clock. Routine Polar/session readbacks
+update visible labels in place so they do not rebuild the Activity or reset the
+current page's scroll position. Audio failures enter an explicit technical hold;
+they cannot be resumed and must be finalized before re-arming.
+
+A condition may additionally bind one versioned
+`rusty.quest.breath_guidance_timeline.v1` JSON asset to the exact audio SHA-256.
+Its ordered inhale/exhale/hold segments use official active experiment time;
+gaps, pre-roll, pause, menu/developer presentation, and tracking loss never
+invent guidance evidence. Before arming, the experimenter can choose a 0–100%
+bias. Zero is exactly the existing Polar ACC signal classifier. Higher values
+shift directional evidence toward the scheduled phase, while valid tracking,
+confirmation, and dwell gates remain required. The session manifest records
+the exact pattern identity and chosen bias, and breath rows retain both the
+effective phase and the unbiased signal-derived phase.
+The same pending value is exposed on the experimenter condition page and under
+Developer settings → Breath. It is runtime-only and applies to the next arm;
+the developer control is disabled once a session is active so the recording's
+identity-bound bias cannot drift silently.
+
 The reusable particle-contract adapter is independently selectable with
 `quest-native-renderer-particle-adapter-conformance.profile.json`. Its property
 defaults false. When selected, startup emits a `channel=particle-adapter`

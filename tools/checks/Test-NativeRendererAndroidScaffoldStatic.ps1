@@ -52,6 +52,7 @@ $controlPanel = @(
     (Read-RequiredText (Join-Path $appRoot "panel-modules\driver-profile\src\main\java\io\github\mesmerprism\rustyquest\native_renderer\DriverProfilePanelModule.java") "driver-profile panel module"),
     (Read-RequiredText (Join-Path $appRoot "panel-modules\polar\src\main\java\io\github\mesmerprism\rustyquest\native_renderer\PolarPanelModule.java") "Polar-only panel module"),
     (Read-RequiredText (Join-Path $appRoot "src\main\java\io\github\mesmerprism\rustyquest\native_renderer\PanelModuleRegistry.java") "typed panel registry"),
+    (Read-RequiredText (Join-Path $appRoot "src\main\java\io\github\mesmerprism\rustyquest\native_renderer\PanelImmersiveHandoff.java") "shared panel/immersive handoff"),
     (Read-RequiredText (Join-Path $repoRootPath "tools\Build-NativeRendererAndroid.ps1") "generated control panel shell")
 ) -join [Environment]::NewLine
 $polarPanel = Read-RequiredText (Join-Path $appRoot "panel-modules\polar\src\main\java\io\github\mesmerprism\rustyquest\native_renderer\PolarSensorPanel.java") "Polar sensor panel"
@@ -150,8 +151,12 @@ Assert-ContainsTokens $controlPanel @(
     'onResume',
     'Close',
     'closePanelAndReturnToImmersive',
+    'ControlPanelActivity\.closePanelAndReturnToImmersive\(this\)',
     'panelTaskRetained=true',
-    'RENDERER_RETURN_STABLE_FOCUS_MS',
+    'STABLE_MS\s*=\s*750L',
+    'state\.frameCount > stableFrame',
+    'cancelActiveForTerminalExit',
+    'APPLICATION_LIFECYCLE\.canLaunch\(ownerToken, expectedGeneration\)',
     'FLAG_ACTIVITY_REORDER_TO_FRONT',
     'com.oculus.intent.category.VR',
     'android.app.NativeActivity',

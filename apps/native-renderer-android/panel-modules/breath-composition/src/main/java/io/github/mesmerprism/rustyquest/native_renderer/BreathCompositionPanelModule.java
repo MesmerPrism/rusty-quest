@@ -15,7 +15,10 @@ import android.os.Looper;
 import android.os.SystemClock;
 import android.util.Log;
 import android.view.Gravity;
+import android.view.KeyEvent;
+import android.view.MotionEvent;
 import android.view.View;
+import android.view.ViewGroup;
 import android.widget.AdapterView;
 import android.widget.ArrayAdapter;
 import android.widget.Button;
@@ -50,7 +53,8 @@ import org.json.JSONObject;
  * low-rate command adapters, and native-effective readback projection. It is compiled only
  * when the resolved native-app lock selects the {@code breath-composition-controls} module.</p>
  */
-public class BreathCompositionPanelModule extends Activity implements PanelModule {
+public class BreathCompositionPanelModule extends Activity implements PanelModule,
+        ExperimentSessionAndroidShell.UiSink {
     public static final String MODULE_ID = "breath-composition-controls";
 
     @Override
@@ -65,6 +69,22 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
         "io.github.mesmerprism.rustyquest.native_renderer.action.TOGGLE_PANEL";
     public static final String ACTION_OPEN_PANEL =
         "io.github.mesmerprism.rustyquest.native_renderer.action.OPEN_PANEL";
+    public static final String ACTION_OPEN_EXPERIMENTER_PANEL =
+        "io.github.mesmerprism.rustyquest.native_renderer.action.OPEN_EXPERIMENTER_PANEL";
+    public static final String ACTION_OPEN_DEVELOPER_PANEL =
+        "io.github.mesmerprism.rustyquest.native_renderer.action.OPEN_DEVELOPER_PANEL";
+    public static final String EXTRA_PANEL_ROUTE = "native_renderer_panel_route";
+    public static final String EXTRA_PANEL_ROUTE_GENERATION = "native_renderer_panel_route_generation";
+    public static final String EXTRA_PANEL_ROUTE_PROVENANCE = "native_renderer_panel_route_provenance";
+    public static final String EXTRA_PANEL_SESSION_GENERATION = "native_renderer_panel_session_generation";
+    public static final String EXTRA_PANEL_OPERATION_ID = "native_renderer_panel_operation_id";
+    public static final String EXTRA_LAUNCH_PROVENANCE = "native_renderer_launch_provenance";
+    public static final String EXTRA_LAUNCH_EPOCH = "native_renderer_launch_epoch";
+    public static final String PROVENANCE_EXPLICIT_USER_LAUNCH = "explicit-user-launch-v1";
+    public static final String PROVENANCE_NATIVE_B_RESTART = "native-b-restart-v1";
+    public static final String PROVENANCE_NATIVE_MENU_RECALL = "native-menu-recall-v1";
+    public static final String PANEL_ROUTE_EXPERIMENTER = "experimenter";
+    public static final String PANEL_ROUTE_DEVELOPER = "developer";
     public static final String ACTION_REQUEST_DISPLAY_COMPOSITE_CAPTURE =
         "io.github.mesmerprism.rustyquest.native_renderer.action.REQUEST_DISPLAY_COMPOSITE_CAPTURE";
     public static final String ACTION_POLAR_SENSOR_PANEL_COMMAND =
@@ -91,12 +111,6 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
     private static final int REQUEST_DISPLAY_COMPOSITE_CAPTURE = 7401;
     private static final String PRIVATE_PARTICLE_DYNAMICS_STATUS_FILE =
         "private_particle_dynamics_status.json";
-    private static final String RENDERER_FOCUS_STATUS_FILE = "renderer_focus_state.json";
-    private static final long RENDERER_RETURN_POLL_MS = 250L;
-    private static final long RENDERER_RETURN_RELAUNCH_MS = 1000L;
-    private static final long RENDERER_RETURN_TIMEOUT_MS = 4000L;
-    private static final long RENDERER_RETURN_STABLE_FOCUS_MS = 750L;
-    private static final long RENDERER_FOCUS_FRESH_MS = 2000L;
     private static final String BREATH_COMPOSITION_OPERATOR_STATUS_FILE =
         "breath_composition_operator_status.json";
     private static final String POLAR_SENSOR_OPERATOR_STATUS_FILE =
@@ -167,6 +181,65 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
     };
     private static boolean nativeBridgeLoaded;
     private static String nativeBridgeLoadError;
+    private static final ExperimentSessionPanelCoordinator EXPERIMENT_SESSION_PANEL =
+        new ExperimentSessionPanelCoordinator();
+    private static final ExperimentSessionAndroidShell EXPERIMENT_SESSION_SHELL =
+        ExperimentSessionAndroidShell.installProcess(
+            new ExperimentSessionAndroidShell.NativeBridge() {
+                @Override public String initialize(String appPrivateFilesRoot) {
+                    return ControlPanelActivity.initializeExperimentSessionRuntimeFromOwner(
+                        appPrivateFilesRoot);
+                }
+
+                @Override public String apply(String commandJson) {
+                    return ControlPanelActivity.applyExperimentSessionCommand(commandJson);
+                }
+
+                @Override public boolean requestAudioStop(
+                        long sessionGeneration, String operationId) {
+                    return ControlPanelActivity.requestConditionAudioStop(
+                        sessionGeneration, operationId);
+                }
+
+                @Override public boolean requestAudioRestartStop(
+                        long sessionGeneration, String operationId) {
+                    return ControlPanelActivity.requestConditionAudioRestartStop(
+                        sessionGeneration, operationId);
+                }
+
+                @Override public String audioShutdownStatus() {
+                    return ControlPanelActivity.conditionAudioShutdownStatus();
+                }
+                @Override public boolean cleanupAfterAcknowledgement() {
+                    return ControlPanelActivity.closeExperimentResourcesFromOwner();
+                }
+            },
+            new ExperimentSessionJsonCodec(),
+            new ExperimentSessionAndroidShell.Clock() {
+                @Override public long elapsedRealtimeMillis() {
+                    return SystemClock.elapsedRealtime();
+                }
+
+                @Override public long elapsedRealtimeNanos() {
+                    return SystemClock.elapsedRealtimeNanos();
+                }
+
+                @Override public long utcNanos() {
+                    return System.currentTimeMillis() * 1_000_000L;
+                }
+            },
+            new ExperimentSessionAndroidShell.UiDispatcher() {
+                private final Handler main = new Handler(Looper.getMainLooper());
+
+                @Override public void post(Runnable runnable) {
+                    main.post(runnable);
+                }
+
+                @Override public boolean isUiThread() {
+                    return Looper.myLooper() == Looper.getMainLooper();
+                }
+            }
+        );
 
     static {
         try {
@@ -216,15 +289,43 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
     private long privateParticlePendingReadbackDeadlineMs;
     private Runnable pendingPrivateParticleEffectReadback;
     private String breathCompositionPanelTopic = "home";
-    private boolean rendererReturnPending;
-    private long rendererReturnBaselineFrame;
-    private long rendererReturnStartedAtMs;
-    private long rendererReturnLastLaunchAtMs;
-    private long rendererReturnStableFocusStartedAtMs;
-    private long rendererReturnStableFocusFrame;
-    private int rendererReturnGeneration;
-    private boolean rendererReturnPanelPaused;
-    private Runnable rendererReturnReadinessPoll;
+    private String panelRoute = PANEL_ROUTE_EXPERIMENTER;
+    private Runnable experimenterProjectionRefresh;
+    private TextView experimenterBluetoothReadback;
+    private TextView experimenterPolarReadback;
+    private TextView experimenterCountReadback;
+    private TextView experimenterStatusReadback;
+    private TextView experimenterKioskReadback;
+    private TextView experimenterKioskDetail;
+    private Button experimenterPolarFallback;
+    private Button experimenterStartOne;
+    private Button experimenterStartTwo;
+    private final ExperimentSessionPanelViewPolicy.Navigation experimenterNavigation =
+        new ExperimentSessionPanelViewPolicy.Navigation();
+    private ScrollView panelScrollView;
+    private String renderedPanelRoute;
+    private String renderedPanelTopic;
+    private ExperimentSessionPanelViewPolicy.Page renderedExperimenterPage;
+    private int polarPageScrollY;
+    private final java.util.Map<String, Integer> developerPageScroll = new java.util.HashMap<>();
+    private TextView experimenterStageReadback;
+    private TextView experimenterInstructionReadback;
+    private TextView experimenterStorageReadback;
+    private TextView experimenterStorageDetail;
+    private TextView experimenterFooterReadback;
+    private TextView experimenterAudioOneReadback;
+    private TextView experimenterAudioTwoReadback;
+    private TextView experimenterGuidanceOneReadback;
+    private TextView experimenterGuidanceTwoReadback;
+    private SliderControl experimenterGuidanceBias;
+    private TextView developerGuidanceOneReadback;
+    private TextView developerGuidanceTwoReadback;
+    private SliderControl developerGuidanceBias;
+    private int experimenterGuidanceBiasPercent = -1;
+    private Button experimenterResume;
+    private Button experimenterNext;
+    private Button experimenterSaveNext;
+    private Button experimenterDeveloper;
     private PolarSensorPanel polarSensorPanel;
     private long breathCompositionGeneration;
     private TextView breathOverviewReadback;
@@ -233,25 +334,123 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
     private TextView breathDiagnosticsReadback;
     private ProgressBar breathCalibrationProgress;
     private Runnable breathCompositionRefresh;
+    private long experimentShellLaunchEpoch;
+    private boolean experimentShellDestroyed;
+    private boolean terminalFinishDispatched;
+    private boolean startupPermissionFlowEligible;
+    private final ExperimenterPanelShortcutPolicy experimenterPanelShortcut =
+        new ExperimenterPanelShortcutPolicy();
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         liveApplyHandler = new Handler(Looper.getMainLooper());
+        Intent initialIntent = getIntent();
+        long requestedLaunchEpoch = initialIntent == null
+            ? 0L : initialIntent.getLongExtra(EXTRA_LAUNCH_EPOCH, 0L);
+        boolean launchAuthorityConsumed = ControlPanelActivity.consumeExplicitColdUserLaunch(
+            this,
+            savedInstanceState != null,
+            initialIntent
+        );
+        boolean panelColdLaunchAdmitted = launchAuthorityConsumed
+            && EXPERIMENT_SESSION_SHELL.canBeginExplicitLaunchEpoch(requestedLaunchEpoch)
+            && EXPERIMENT_SESSION_PANEL.admitTrustedColdLaunch(requestedLaunchEpoch);
+        boolean trustedColdMain = panelColdLaunchAdmitted
+            && ControlPanelActivity.admitExplicitColdExperimentShell(
+                this,
+                requestedLaunchEpoch,
+                PANEL_ROUTE_EXPERIMENTER
+            );
+        if (trustedColdMain) {
+            EXPERIMENT_SESSION_SHELL.beginExplicitLaunchEpoch(requestedLaunchEpoch);
+        }
+        experimentShellLaunchEpoch = EXPERIMENT_SESSION_SHELL.currentLaunchEpochForUi();
+        boolean freshGestureRoute = savedInstanceState == null
+            && initialIntent != null
+            && (ACTION_OPEN_EXPERIMENTER_PANEL.equals(initialIntent.getAction())
+                || ACTION_OPEN_DEVELOPER_PANEL.equals(initialIntent.getAction()));
+        EXPERIMENT_SESSION_PANEL.onLaunch(
+            trustedColdMain
+                ? ExperimentSessionPanelCoordinator.LaunchKind.EXPLICIT_COLD_ROOT
+                : (savedInstanceState == null
+                    ? ExperimentSessionPanelCoordinator.LaunchKind.INTERNAL_MAIN
+                    : ExperimentSessionPanelCoordinator.LaunchKind.RECREATION_MAIN),
+            freshGestureRoute || Intent.ACTION_MAIN.equals(initialIntent == null ? null : initialIntent.getAction())
+                ? null : requestedPanelRoute(initialIntent),
+            freshGestureRoute || Intent.ACTION_MAIN.equals(initialIntent == null ? null : initialIntent.getAction())
+                ? 0L : routeGeneration(initialIntent)
+        );
+        applyPanelRouteIntent(initialIntent, freshGestureRoute);
+        if (savedInstanceState != null) {
+            experimenterNavigation.restore(savedInstanceState.getString("experimenter-page"),
+                savedInstanceState.getIntArray("experimenter-page-scroll"));
+            breathCompositionPanelTopic = savedInstanceState.getString("panel-topic", "home");
+            polarPageScrollY = savedInstanceState.getInt("polar-page-scroll", 0);
+            experimenterGuidanceBiasPercent = savedInstanceState.getInt(
+                "experimenter-guidance-bias-percent", -1);
+            Bundle savedDeveloperScroll = savedInstanceState.getBundle("developer-page-scroll");
+            if (savedDeveloperScroll != null) {
+                for (String key : savedDeveloperScroll.keySet()) {
+                    developerPageScroll.put(key, Math.max(0, savedDeveloperScroll.getInt(key)));
+                }
+            }
+        } else if (EXPERIMENT_SESSION_PANEL.snapshot().hasActiveSession()) {
+            // The panel Activity may have finished when VR resumed. Recall an active
+            // run at its session page without turning ordinary readbacks into navigation.
+            experimenterNavigation.select(ExperimentSessionPanelViewPolicy.Page.SESSION);
+        }
+        if (experimenterGuidanceBiasPercent < 0) {
+            experimenterGuidanceBiasPercent =
+                EXPERIMENT_SESSION_PANEL.pendingBreathGuidanceBiasPercent();
+        }
+        startupPermissionFlowEligible = trustedColdMain
+            && PANEL_ROUTE_EXPERIMENTER.equals(panelRoute);
+        PolarSensorRuntime polarRuntime =
+            PolarSensorRuntime.forApplication(getApplicationContext());
+        if (startupPermissionFlowEligible) polarRuntime.ensureAutoConnection();
         setContentView(buildContentView());
+        if (startupPermissionFlowEligible) polarRuntime.requestStartupPermissions(this);
+        restorePanelScrollAfterLayout();
+        EXPERIMENT_SESSION_SHELL.initialize(getFilesDir().getAbsolutePath(), this);
+        scheduleExperimenterProjectionRefresh();
         updateReadyStatusForPanelMode();
         handleDisplayCompositeIntent(getIntent());
         handlePolarSensorPanelCommandIntent(getIntent());
         handleBreathCompositionCommandIntent(getIntent());
+        handleTerminalSaveAndExitIntent(initialIntent);
+    }
+
+    @Override
+    protected void onSaveInstanceState(Bundle outState) {
+        rememberPanelScroll();
+        outState.putString("experimenter-page", experimenterNavigation.page().name());
+        outState.putIntArray("experimenter-page-scroll", experimenterNavigation.savedScroll());
+        outState.putString("panel-topic", breathCompositionPanelTopic);
+        outState.putInt("polar-page-scroll", polarPageScrollY);
+        outState.putInt("experimenter-guidance-bias-percent",
+            Math.max(-1, Math.min(100, experimenterGuidanceBiasPercent)));
+        Bundle savedDeveloperScroll = new Bundle();
+        for (java.util.Map.Entry<String, Integer> entry : developerPageScroll.entrySet()) {
+            savedDeveloperScroll.putInt(entry.getKey(), entry.getValue());
+        }
+        outState.putBundle("developer-page-scroll", savedDeveloperScroll);
+        super.onSaveInstanceState(outState);
     }
 
     @Override
     protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
         setIntent(intent);
+        if (handleTerminalSaveAndExitIntent(intent)) {
+            return;
+        }
         if (intent != null && ACTION_TOGGLE_PANEL.equals(intent.getAction())) {
             closePanelAndReturnToImmersive();
-        } else if (intent != null && ACTION_OPEN_PANEL.equals(intent.getAction())) {
+        } else if (intent != null && (ACTION_OPEN_PANEL.equals(intent.getAction())
+                || ACTION_OPEN_EXPERIMENTER_PANEL.equals(intent.getAction())
+                || ACTION_OPEN_DEVELOPER_PANEL.equals(intent.getAction()))) {
+            applyPanelRouteIntent(intent, true);
             rebuildContentViewForCurrentMode();
             handleDisplayCompositeIntent(intent);
             handlePolarSensorPanelCommandIntent(intent);
@@ -271,12 +470,104 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
     }
 
     private void updateReadyStatusForPanelMode() {
-        updateStatus("Direct breath mapping panel ready; native-effective readback required.");
+        if (PANEL_ROUTE_EXPERIMENTER.equals(panelRoute)) {
+            updateStatus("Experimenter menu ready; native-effective session receipts remain authoritative.");
+        } else {
+            updateStatus("Direct breath mapping panel ready; native-effective readback required.");
+        }
+    }
+
+    private boolean applyPanelRouteIntent(Intent intent, boolean interactiveRoute) {
+        if (intent == null) {
+            return false;
+        }
+        String requested = intent.getStringExtra(EXTRA_PANEL_ROUTE);
+        long generation = routeGeneration(intent);
+        boolean admitted = true;
+        if (ACTION_OPEN_EXPERIMENTER_PANEL.equals(intent.getAction())) {
+            requested = PANEL_ROUTE_EXPERIMENTER;
+            if (interactiveRoute) {
+                String provenance = intent.getStringExtra(EXTRA_PANEL_ROUTE_PROVENANCE);
+                if (PROVENANCE_NATIVE_B_RESTART.equals(provenance)) {
+                    admitted = EXPERIMENT_SESSION_PANEL.awaitNativeRestartRoute(
+                        intent.getLongExtra(EXTRA_PANEL_ROUTE_GENERATION, 0L),
+                        intent.getLongExtra(EXTRA_PANEL_SESSION_GENERATION, 0L),
+                        intent.getStringExtra(EXTRA_PANEL_OPERATION_ID)
+                    );
+                    if (admitted) {
+                        ControlPanelActivity.requestConditionAudioRestartStop(
+                            intent.getLongExtra(EXTRA_PANEL_SESSION_GENERATION, 0L),
+                            intent.getStringExtra(EXTRA_PANEL_OPERATION_ID) + "-audio-stop"
+                        );
+                        EXPERIMENT_SESSION_SHELL.requestStatus(this);
+                    }
+                } else if (PROVENANCE_NATIVE_MENU_RECALL.equals(provenance)) {
+                    admitted = EXPERIMENT_SESSION_PANEL.admitIdleExperimenterRecall(
+                        intent.getLongExtra(EXTRA_PANEL_ROUTE_GENERATION, 0L)
+                    );
+                    if (admitted) {
+                        EXPERIMENT_SESSION_SHELL.requestStatus(this);
+                    }
+                } else {
+                    admitted = false;
+                }
+            }
+        } else if (ACTION_OPEN_DEVELOPER_PANEL.equals(intent.getAction())) {
+            requested = PANEL_ROUTE_DEVELOPER;
+            if (interactiveRoute) {
+                EXPERIMENT_SESSION_PANEL.openDeveloper(generation);
+            }
+        }
+        if (admitted && (PANEL_ROUTE_EXPERIMENTER.equals(requested)
+                || PANEL_ROUTE_DEVELOPER.equals(requested))) {
+            panelRoute = PANEL_ROUTE_EXPERIMENTER.equals(requested)
+                ? PANEL_ROUTE_EXPERIMENTER : PANEL_ROUTE_DEVELOPER;
+            breathCompositionPanelTopic = "home";
+            ControlPanelActivity.beginPanelTransition(this, panelRoute, generation);
+            NativeRendererSelfKioskApplication.ensureArmedService(this);
+        }
+        synchronizePanelRouteFromCoordinator();
+        return admitted;
+    }
+
+    private ExperimentSessionPanelState.Route requestedPanelRoute(Intent intent) {
+        if (intent == null) {
+            return null;
+        }
+        String requested = intent.getStringExtra(EXTRA_PANEL_ROUTE);
+        if (ACTION_OPEN_EXPERIMENTER_PANEL.equals(intent.getAction())) {
+            requested = PANEL_ROUTE_EXPERIMENTER;
+        } else if (ACTION_OPEN_DEVELOPER_PANEL.equals(intent.getAction())) {
+            requested = PANEL_ROUTE_DEVELOPER;
+        }
+        if (PANEL_ROUTE_EXPERIMENTER.equals(requested)) {
+            return ExperimentSessionPanelState.Route.EXPERIMENTER;
+        }
+        if (PANEL_ROUTE_DEVELOPER.equals(requested)) {
+            return ExperimentSessionPanelState.Route.DEVELOPER;
+        }
+        return null;
+    }
+
+    private long routeGeneration(Intent intent) {
+        long supplied = intent == null ? 0L : intent.getLongExtra(EXTRA_PANEL_ROUTE_GENERATION, 0L);
+        if (supplied > 0L) {
+            return supplied;
+        }
+        return EXPERIMENT_SESSION_PANEL.allocateRouteEvent();
+    }
+
+    private void synchronizePanelRouteFromCoordinator() {
+        panelRoute = EXPERIMENT_SESSION_PANEL.snapshot().route
+            == ExperimentSessionPanelState.Route.DEVELOPER
+            ? PANEL_ROUTE_DEVELOPER : PANEL_ROUTE_EXPERIMENTER;
     }
 
     @Override
     protected void onResume() {
         super.onResume();
+        NativeRendererSelfKioskApplication.ensureArmedService(this);
+        PolarSensorRuntime.forApplication(getApplicationContext()).onHostResume();
         handleDisplayCompositeIntent(getIntent());
         if ("breath-mapping".equals(readControlPanelMode())) {
             breathOperatorMarker(
@@ -286,18 +577,14 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
             );
             scheduleBreathCompositionRefresh();
         }
+        scheduleExperimenterProjectionRefresh();
     }
 
     @Override
     protected void onPause() {
+        experimenterPanelShortcut.cancel();
+        cancelExperimenterProjectionRefresh();
         cancelBreathCompositionRefresh();
-        if (rendererReturnPending) {
-            rendererReturnPanelPaused = true;
-            rendererHandoffMarker(
-                "status=panel-paused supportingEvidence=true generation="
-                    + rendererReturnGeneration
-            );
-        }
         if ("breath-mapping".equals(readControlPanelMode())) {
             breathOperatorMarker(
                 "status=panel-background panelVisibility=background "
@@ -308,14 +595,53 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
     }
 
     @Override
-    protected void onDestroy() {
-        if (!rendererReturnPending) {
-            cancelRendererReturnReadinessPoll();
-        } else {
-            rendererHandoffMarker(
-                "status=probe-retained-after-destroy generation=" + rendererReturnGeneration
-            );
+    public boolean dispatchKeyEvent(KeyEvent event) {
+        boolean rightSecondary = event != null
+            && (event.getKeyCode() == KeyEvent.KEYCODE_BUTTON_B
+                || event.getKeyCode() == KeyEvent.KEYCODE_BUTTON_2);
+        if (!rightSecondary) {
+            return super.dispatchKeyEvent(event);
         }
+        boolean triggered = experimenterPanelShortcut.onKeySecondary(
+            event.getAction() == KeyEvent.ACTION_DOWN,
+            event.getAction() == KeyEvent.ACTION_DOWN && event.getRepeatCount() > 0,
+            SystemClock.uptimeMillis()
+        );
+        if (triggered) {
+            experimenterPanelShortcutMarker("status=close-requested source=android-key-event");
+            closePanelAndReturnToImmersive();
+        }
+        return true;
+    }
+
+    @Override
+    public boolean dispatchGenericMotionEvent(MotionEvent event) {
+        if (event == null) {
+            return false;
+        }
+        boolean secondaryDown = (event.getButtonState() & MotionEvent.BUTTON_SECONDARY) != 0;
+        boolean secondaryEvent = secondaryDown
+            || event.getActionButton() == MotionEvent.BUTTON_SECONDARY
+            || experimenterPanelShortcut.isMotionDown();
+        if (!secondaryEvent) {
+            return super.dispatchGenericMotionEvent(event);
+        }
+        boolean triggered = experimenterPanelShortcut.onMotionSecondary(
+            secondaryDown,
+            SystemClock.uptimeMillis()
+        );
+        if (triggered) {
+            experimenterPanelShortcutMarker("status=close-requested source=android-motion-event");
+            closePanelAndReturnToImmersive();
+        }
+        return true;
+    }
+
+    @Override
+    protected void onDestroy() {
+        experimentShellDestroyed = true;
+        EXPERIMENT_SESSION_SHELL.detach(this);
+        cancelExperimenterProjectionRefresh();
         cancelPendingPrivateParticleDynamicsApply();
         cancelPendingPrivateParticleEffectReadback();
         invalidatePrivateParticleControls();
@@ -376,9 +702,12 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
     @Override
     public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
-        if (polarSensorPanel != null) {
-            polarSensorPanel.onRequestPermissionsResult(requestCode, permissions, grantResults);
-        }
+        PolarSensorRuntime.forApplication(getApplicationContext()).onRequestPermissionsResult(
+            this,
+            requestCode,
+            permissions,
+            grantResults
+        );
     }
 
     private View buildContentView() {
@@ -388,7 +717,15 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
     }
 
     private View buildBreathCompositionControlPanelView() {
+        clearExperimenterProjectionViews();
+        renderedPanelRoute = panelRoute;
+        renderedPanelTopic = breathCompositionPanelTopic;
+        renderedExperimenterPage = experimenterNavigation.page();
+        if (PANEL_ROUTE_EXPERIMENTER.equals(panelRoute)) {
+            return buildExperimenterWorkflowView();
+        }
         ScrollView scroll = new ScrollView(this);
+        panelScrollView = scroll;
         scroll.setBackgroundColor(PANEL_BG);
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
@@ -430,6 +767,16 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
             }
         });
         header.addView(resume);
+        Button experimenter = button("Experimenter");
+        experimenter.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                EXPERIMENT_SESSION_PANEL.returnFromDeveloper();
+                synchronizePanelRouteFromCoordinator();
+                replaceBreathCompositionPanelContent("home");
+            }
+        });
+        header.addView(experimenter);
         root.addView(header);
         root.addView(text(breathCompositionTopicSubtitle(), 13, PANEL_MUTED));
 
@@ -453,6 +800,333 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
         }
         topicScroll.addView(topics);
         root.addView(topicScroll);
+    }
+
+    private View buildExperimenterWorkflowView() {
+        LinearLayout frame = new LinearLayout(this);
+        frame.setOrientation(LinearLayout.VERTICAL);
+        frame.setBackgroundColor(PANEL_BG);
+        frame.setPadding(dp(18), dp(12), dp(18), dp(12));
+        // Consume initial focus on the stable frame. Recreated child buttons must not ask
+        // ScrollView to reveal themselves after an asynchronous status update.
+        frame.setFocusableInTouchMode(true);
+        frame.setDescendantFocusability(ViewGroup.FOCUS_BEFORE_DESCENDANTS);
+        frame.requestFocus();
+        appendExperimenterPanelHeader(frame);
+        ScrollView scroll = new ScrollView(this);
+        panelScrollView = scroll;
+        scroll.setFillViewport(true);
+        LinearLayout body = new LinearLayout(this);
+        body.setOrientation(LinearLayout.VERTICAL);
+        scroll.addView(body);
+        frame.addView(scroll, new LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f));
+        if ("polar".equals(breathCompositionPanelTopic)) {
+            appendBreathCompositionPolarControls(body);
+        } else {
+            appendExperimenterPanelHome(body);
+        }
+        appendExperimenterWorkflowFooter(frame);
+        return frame;
+    }
+
+    private void appendExperimenterPanelHeader(LinearLayout root) {
+        LinearLayout header = new LinearLayout(this);
+        header.setOrientation(LinearLayout.HORIZONTAL);
+        header.setGravity(Gravity.CENTER_VERTICAL);
+        String titleText = "polar".equals(breathCompositionPanelTopic)
+            ? "Polar connection" : experimenterNavigation.page().title;
+        header.addView(
+            text(titleText, 22, PANEL_FG),
+            new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+        );
+        ExperimentSessionPanelState state = EXPERIMENT_SESSION_PANEL.snapshot();
+        ExperimentSessionPanelViewPolicy.ViewState view =
+            ExperimentSessionPanelViewPolicy.project(state);
+        if (state.hasActiveSession()) {
+            experimenterResume = button("Return to VR");
+            experimenterResume.setMinHeight(dp(52));
+            experimenterResume.setEnabled(
+                ExperimentSessionPanelViewPolicy.canReturnToImmersive(state) && !view.saving
+            );
+            experimenterResume.setOnClickListener(new View.OnClickListener() {
+                @Override public void onClick(View ignored) { closePanelAndReturnToImmersive(); }
+            });
+            header.addView(experimenterResume);
+        }
+        root.addView(header);
+        root.addView(text(
+            "1 Prepare  →  2 Controls  →  3 Choose condition  →  4 Session",
+            13,
+            PANEL_MUTED
+        ));
+    }
+
+    private void appendExperimenterPanelHome(LinearLayout root) {
+        refreshExperimenterPolarProjection();
+        final ExperimentSessionPanelState state = EXPERIMENT_SESSION_PANEL.snapshot();
+        ExperimentSessionPanelViewPolicy.ViewState view =
+            ExperimentSessionPanelViewPolicy.project(state);
+
+        ExperimentSessionPanelViewPolicy.Page page = experimenterNavigation.page();
+        if (page == ExperimentSessionPanelViewPolicy.Page.PREPARE) {
+            root.addView(text("Check the headset and sensor, then review the controls with the participant.", 16, PANEL_FG));
+            appendExperimenterConnection(root, state, view);
+            appendExperimenterStorage(root, state);
+            appendExperimenterKiosk(root);
+        } else if (page == ExperimentSessionPanelViewPolicy.Page.CONTROLS) {
+            appendExperimenterControls(root);
+        } else if (page == ExperimentSessionPanelViewPolicy.Page.CONDITION) {
+            appendExperimenterCondition(root, state, view);
+        } else {
+            appendExperimenterSession(root, state, view);
+        }
+    }
+
+    private void appendExperimenterConnection(LinearLayout root,
+            ExperimentSessionPanelState state, ExperimentSessionPanelViewPolicy.ViewState view) {
+        LinearLayout connection = panelCard("Sensor connection");
+        experimenterBluetoothReadback = text(view.bluetoothLine, 14, PANEL_FG);
+        experimenterPolarReadback = text(view.polarLine, 14, PANEL_FG);
+        styleExperimenterIndicator(experimenterBluetoothReadback, ExperimentSessionPanelViewPolicy.bluetoothTone(state));
+        styleExperimenterIndicator(experimenterPolarReadback, ExperimentSessionPanelViewPolicy.polarTone(state));
+        connection.addView(experimenterBluetoothReadback);
+        connection.addView(experimenterPolarReadback);
+        experimenterPolarFallback = button("Open Polar connection");
+        // Keep this row stable as Bluetooth/Polar callbacks arrive.
+        experimenterPolarFallback.setVisibility(View.VISIBLE);
+        experimenterPolarFallback.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                replaceBreathCompositionPanelContent("polar");
+            }
+        });
+        connection.addView(experimenterPolarFallback);
+        root.addView(connection);
+    }
+
+    private void appendExperimenterStorage(LinearLayout root,
+            ExperimentSessionPanelState state) {
+        ExperimentSessionPanelViewPolicy.ReadinessCard presentation =
+            ExperimentSessionPanelViewPolicy.storageCard(state);
+        LinearLayout storage = panelCard("Recording");
+        experimenterStorageReadback = experimenterIndicator(
+            storage, presentation.label, presentation.tone);
+        experimenterStorageDetail = text(presentation.detail, 12, PANEL_MUTED);
+        experimenterStorageDetail.setVisibility(
+            presentation.detail.isEmpty() ? View.GONE : View.VISIBLE);
+        storage.addView(experimenterStorageDetail);
+        root.addView(storage);
+    }
+
+    private void appendExperimenterKiosk(LinearLayout root) {
+        ExperimentSessionPanelViewPolicy.ReadinessCard presentation =
+            ExperimentSessionPanelViewPolicy.kioskCard(
+                ControlPanelActivity.softKioskUiState(this));
+        LinearLayout kiosk = panelCard("Kiosk mode");
+        experimenterKioskReadback = experimenterIndicator(
+            kiosk, presentation.label, presentation.tone);
+        experimenterKioskDetail = text(presentation.detail, 12, PANEL_MUTED);
+        experimenterKioskDetail.setVisibility(
+            presentation.detail.isEmpty() ? View.GONE : View.VISIBLE);
+        kiosk.addView(experimenterKioskDetail);
+        root.addView(kiosk);
+    }
+
+    private void appendExperimenterControls(LinearLayout root) {
+        root.addView(text("Review these controls before arming a condition. Release the buttons between gestures.", 16, PANEL_FG));
+        appendExperimenterControl(root, "Start / resume", "Hold Right Grip + A for at least 0.75 seconds, then release after the confirmation pulse. Starts the official run when armed; resumes it when paused.");
+        appendExperimenterControl(root, "Pause", "Hold Right Grip + B for at least 0.75 seconds, then release after the confirmation pulse.");
+        appendExperimenterControl(root, "Recenter", "Press A without holding the grip to recenter.");
+        appendExperimenterControl(root, "Open or close this menu", "Press B three times without holding the grip. In VR it opens the experimenter menu; in the panel it returns to VR. This does not start, pause, or end the run.");
+        appendExperimenterControl(root, "Developer settings", "Press the trigger three times to open the developer panel.");
+        appendExperimenterControl(root, "Save and exit the app", "Use Save and exit in this panel. The app can also request exit after three recovered departures within 5 seconds; this depends on background return and is not guaranteed physical Home-button interception.");
+    }
+
+    private void appendExperimenterControl(LinearLayout root, String title, String description) {
+        LinearLayout row = panelCard(title);
+        row.addView(text(description, 15, PANEL_FG));
+        root.addView(row);
+    }
+
+    private void appendExperimenterCondition(LinearLayout root,
+            ExperimentSessionPanelState state, ExperimentSessionPanelViewPolicy.ViewState view) {
+        LinearLayout start = panelCard("Arm one condition");
+        start.addView(text(
+            "Arming prepares the selected condition while audio remains silent. After fitting and checking the headset, the experimenter starts the official run in VR with Right Grip + A. Both conditions use a 30 second completion threshold; natural audio end does not finish the run.",
+            15,
+            PANEL_MUTED
+        ));
+        experimenterAudioOneReadback = experimenterIndicator(start, "Condition 1 audio: checking…", ExperimentSessionPanelViewPolicy.Tone.WAITING);
+        experimenterAudioTwoReadback = experimenterIndicator(start, "Condition 2 audio: checking…", ExperimentSessionPanelViewPolicy.Tone.WAITING);
+        experimenterGuidanceOneReadback = experimenterIndicator(start,
+            "Condition 1 breathing pattern: checking…",
+            ExperimentSessionPanelViewPolicy.Tone.WAITING);
+        experimenterGuidanceTwoReadback = experimenterIndicator(start,
+            "Condition 2 breathing pattern: checking…",
+            ExperimentSessionPanelViewPolicy.Tone.WAITING);
+        String patternOneReadiness = ControlPanelActivity.conditionBreathGuidanceReadiness(
+            ExperimentSessionPanelCoordinator.CONDITION_ONE);
+        String patternTwoReadiness = ControlPanelActivity.conditionBreathGuidanceReadiness(
+            ExperimentSessionPanelCoordinator.CONDITION_TWO);
+        boolean patternOne = "pattern-ready".equals(patternOneReadiness);
+        boolean patternTwo = "pattern-ready".equals(patternTwoReadiness);
+        if (experimenterGuidanceBiasPercent < 0) {
+            int firstDefault = ControlPanelActivity.conditionBreathGuidanceDefaultBias(
+                ExperimentSessionPanelCoordinator.CONDITION_ONE);
+            int secondDefault = ControlPanelActivity.conditionBreathGuidanceDefaultBias(
+                ExperimentSessionPanelCoordinator.CONDITION_TWO);
+            experimenterGuidanceBiasPercent = patternOne ? firstDefault
+                : patternTwo ? secondDefault
+                : "no-pattern".equals(patternOneReadiness)
+                    && "no-pattern".equals(patternTwoReadiness) ? 0 : -1;
+            if (experimenterGuidanceBiasPercent >= 0) {
+                EXPERIMENT_SESSION_PANEL.updatePendingBreathGuidanceBiasPercent(
+                    experimenterGuidanceBiasPercent);
+            }
+        }
+        experimenterGuidanceBias = new SliderControl(
+            "Breathing-pattern bias", 0.0, 100.0,
+            Math.max(0, experimenterGuidanceBiasPercent), 100, "%", true,
+            new Runnable() {
+                @Override public void run() {
+                    int requested = experimenterGuidanceBias.intValue();
+                    if (EXPERIMENT_SESSION_PANEL.updatePendingBreathGuidanceBiasPercent(requested)) {
+                        experimenterGuidanceBiasPercent = requested;
+                    }
+                }
+            });
+        experimenterGuidanceBias.setInteractive(patternOne || patternTwo);
+        start.addView(experimenterGuidanceBias.view);
+        start.addView(text(
+            "0% is fully signal-driven feedback. Higher values increasingly favor the timestamped guided-breathing phase; 100% is guidance-dominant but still requires valid Polar tracking. The selected value is locked when the condition is armed.",
+            13, PANEL_MUTED));
+        experimenterStartOne = button("Arm Condition 1");
+        experimenterStartTwo = button("Arm Condition 2");
+        experimenterStartOne.setMinHeight(dp(52));
+        experimenterStartTwo.setMinHeight(dp(52));
+        experimenterStartOne.setEnabled(view.startEnabled);
+        experimenterStartTwo.setEnabled(view.startEnabled);
+        experimenterStartOne.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View ignored) {
+                startExperimentSession(ExperimentSessionPanelCoordinator.CONDITION_ONE);
+            }
+        });
+        experimenterStartTwo.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View ignored) {
+                startExperimentSession(ExperimentSessionPanelCoordinator.CONDITION_TWO);
+            }
+        });
+        start.addView(experimenterStartOne);
+        start.addView(experimenterStartTwo);
+        root.addView(start);
+        appendExperimenterConnection(root, state, view);
+        refreshExperimenterProjectionViews();
+    }
+
+    private void appendExperimenterSession(LinearLayout root,
+            ExperimentSessionPanelState state, ExperimentSessionPanelViewPolicy.ViewState view) {
+        experimenterStageReadback = experimenterIndicator(root,
+            ExperimentSessionPanelViewPolicy.stageTitle(state), ExperimentSessionPanelViewPolicy.stageTone(state));
+        experimenterInstructionReadback = text(ExperimentSessionPanelViewPolicy.stageInstruction(state), 16, PANEL_FG);
+        root.addView(experimenterInstructionReadback);
+        root.addView(text("Start / resume: Right Grip + A · Pause: Right Grip + B · Hold at least 0.75 seconds, then release after the pulse.", 14, PANEL_MUTED));
+        root.addView(text("Use Return to VR above, or press B three times again, without changing the session state.", 14, PANEL_MUTED));
+        LinearLayout sessions = panelCard("Session status");
+        experimenterCountReadback = text(view.countLine, 14, PANEL_FG);
+        experimenterStatusReadback = text(view.statusLine, 14, PANEL_MUTED);
+        sessions.addView(experimenterCountReadback);
+        sessions.addView(experimenterStatusReadback);
+        Button refresh = button("Refresh status");
+        refresh.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View ignored) { requestExperimentSessionStatus(); }
+        });
+        sessions.addView(refresh);
+        if (state.hasActiveSession()) {
+            experimenterSaveNext = button("Save session & prepare next");
+            experimenterSaveNext.setMinHeight(dp(52));
+            experimenterSaveNext.setEnabled(ExperimentSessionPanelViewPolicy.canSaveAndPrepareNext(state));
+            experimenterSaveNext.setOnClickListener(new View.OnClickListener() {
+                @Override public void onClick(View ignored) {
+                    saveExperimentSessionAndPrepareNext();
+                }
+            });
+            sessions.addView(experimenterSaveNext);
+        }
+        root.addView(sessions);
+    }
+
+    private void appendExperimenterWorkflowFooter(LinearLayout root) {
+        LinearLayout footer = new LinearLayout(this);
+        footer.setOrientation(LinearLayout.HORIZONTAL);
+        footer.setGravity(Gravity.CENTER_VERTICAL);
+        footer.setPadding(0, dp(10), 0, 0);
+        final ExperimentSessionPanelViewPolicy.Page page = experimenterNavigation.page();
+        Button back = button("Back");
+        back.setEnabled("polar".equals(breathCompositionPanelTopic) || page != ExperimentSessionPanelViewPolicy.Page.PREPARE);
+        back.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View ignored) {
+                if ("polar".equals(breathCompositionPanelTopic)) replaceBreathCompositionPanelContent("home");
+                else selectExperimenterPage(ExperimentSessionPanelViewPolicy.Page.values()[page.ordinal() - 1]);
+            }
+        });
+        footer.addView(back);
+        experimenterFooterReadback = text("", 13, PANEL_MUTED);
+        footer.addView(experimenterFooterReadback, new LinearLayout.LayoutParams(0,
+            LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+        if (!"polar".equals(breathCompositionPanelTopic)) {
+            final ExperimentSessionPanelState sessionState = EXPERIMENT_SESSION_PANEL.snapshot();
+            String nextText = page == ExperimentSessionPanelViewPolicy.Page.PREPARE ? "Next: Controls"
+                : page == ExperimentSessionPanelViewPolicy.Page.CONTROLS ? "Next: Choose condition"
+                : page == ExperimentSessionPanelViewPolicy.Page.CONDITION ? "Session status"
+                : sessionState.hasActiveSession() ? "Save session & prepare next" : "Prepare next run";
+            Button next = button(nextText);
+            experimenterNext = next;
+            next.setMinHeight(dp(48));
+            next.setEnabled(page != ExperimentSessionPanelViewPolicy.Page.SESSION
+                || !sessionState.hasActiveSession()
+                || ExperimentSessionPanelViewPolicy.canSaveAndPrepareNext(sessionState));
+            next.setOnClickListener(new View.OnClickListener() {
+                @Override public void onClick(View ignored) {
+                    if (page == ExperimentSessionPanelViewPolicy.Page.SESSION) {
+                        if (EXPERIMENT_SESSION_PANEL.snapshot().hasActiveSession()) {
+                            saveExperimentSessionAndPrepareNext();
+                        } else {
+                            selectExperimenterPage(ExperimentSessionPanelViewPolicy.Page.PREPARE);
+                        }
+                    } else {
+                        selectExperimenterPage(ExperimentSessionPanelViewPolicy.Page.values()[page.ordinal() + 1]);
+                    }
+                }
+            });
+            footer.addView(next);
+        }
+        root.addView(footer);
+        LinearLayout tools = new LinearLayout(this);
+        tools.setOrientation(LinearLayout.HORIZONTAL);
+        experimenterDeveloper = button("Open developer settings");
+        experimenterDeveloper.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View ignored) {
+                EXPERIMENT_SESSION_PANEL.openDeveloper(
+                    EXPERIMENT_SESSION_PANEL.allocateRouteEvent()
+                );
+                synchronizePanelRouteFromCoordinator();
+                replaceBreathCompositionPanelContent("home");
+            }
+        });
+        tools.addView(experimenterDeveloper);
+        Button saveExit = button("Save and exit");
+        saveExit.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View ignored) {
+                NativeRendererSelfKioskApplication.requestSaveAndExit(BreathCompositionPanelModule.this);
+            }
+        });
+        tools.addView(saveExit);
+        root.addView(tools);
+        refreshExperimenterProjectionViews();
     }
 
     private String breathCompositionTopicTitle() {
@@ -494,13 +1168,14 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
     }
 
     private void selectBreathCompositionPanelTopic(String topic) {
-        if (topic.equals(breathCompositionPanelTopic) || rendererReturnPending) {
+        if (topic.equals(breathCompositionPanelTopic)) {
             return;
         }
         replaceBreathCompositionPanelContent(topic);
     }
 
     private void replaceBreathCompositionPanelContent(String topic) {
+        rememberPanelScroll();
         cancelPendingPrivateParticleDynamicsApply();
         cancelPendingPrivateParticleEffectReadback();
         cancelBreathCompositionRefresh();
@@ -508,6 +1183,79 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
         breathCompositionPanelNavigationEpoch += 1L;
         breathCompositionPanelTopic = topic;
         setContentView(buildBreathCompositionControlPanelView());
+        restorePanelScrollAfterLayout();
+        scheduleExperimenterProjectionRefresh();
+    }
+
+    private void selectExperimenterPage(ExperimentSessionPanelViewPolicy.Page page) {
+        rememberPanelScroll();
+        experimenterNavigation.select(page);
+        replaceBreathCompositionPanelContent("home");
+    }
+
+    private void rememberPanelScroll() {
+        if (panelScrollView == null) return;
+        int y = panelScrollView.getScrollY();
+        if (PANEL_ROUTE_EXPERIMENTER.equals(renderedPanelRoute)) {
+            if ("polar".equals(renderedPanelTopic)) polarPageScrollY = y;
+            else experimenterNavigation.rememberScroll(renderedExperimenterPage, y);
+        } else if (renderedPanelTopic != null) developerPageScroll.put(renderedPanelTopic, y);
+    }
+
+    private void restorePanelScrollAfterLayout() {
+        final ScrollView scroll = panelScrollView;
+        if (scroll == null) return;
+        final long epoch = breathCompositionPanelNavigationEpoch;
+        Integer developerY = developerPageScroll.get(breathCompositionPanelTopic);
+        final int y = PANEL_ROUTE_EXPERIMENTER.equals(panelRoute)
+            ? ("polar".equals(breathCompositionPanelTopic) ? polarPageScrollY : experimenterNavigation.scrollY())
+            : (developerY == null ? 0 : developerY);
+        scroll.addOnLayoutChangeListener(new View.OnLayoutChangeListener() {
+            @Override public void onLayoutChange(View view, int left, int top, int right, int bottom,
+                    int oldLeft, int oldTop, int oldRight, int oldBottom) {
+                scroll.removeOnLayoutChangeListener(this);
+                if (panelScrollView == scroll && epoch == breathCompositionPanelNavigationEpoch) {
+                    scroll.scrollTo(0, y);
+                }
+            }
+        });
+    }
+
+    /** Native callbacks update current views; only explicit navigation replaces the body. */
+    private void refreshExperimenterAfterReadback() {
+        if (PANEL_ROUTE_EXPERIMENTER.equals(panelRoute)) refreshExperimenterProjectionViews();
+    }
+
+    /** Call after an accepted arm, before returning to VR, so panel recall shows run controls. */
+    private void showExperimenterSessionPage() {
+        selectExperimenterPage(ExperimentSessionPanelViewPolicy.Page.SESSION);
+    }
+
+    private TextView experimenterIndicator(LinearLayout root, String value,
+            ExperimentSessionPanelViewPolicy.Tone tone) {
+        TextView label = text(value, 15, PANEL_FG);
+        styleExperimenterIndicator(label, tone);
+        root.addView(label);
+        return label;
+    }
+
+    private void styleExperimenterIndicator(TextView label, ExperimentSessionPanelViewPolicy.Tone tone) {
+        if (label.getTag() == tone) return;
+        label.setTag(tone);
+        int color = tone == ExperimentSessionPanelViewPolicy.Tone.READY ? Color.rgb(139, 223, 174)
+            : tone == ExperimentSessionPanelViewPolicy.Tone.ATTENTION ? Color.rgb(255, 158, 154)
+            : tone == ExperimentSessionPanelViewPolicy.Tone.WAITING ? PANEL_ACCENT : PANEL_FG;
+        label.setTextColor(color);
+        label.setPadding(dp(10), dp(8), dp(10), dp(8));
+        GradientDrawable background = new GradientDrawable();
+        background.setColor(PANEL_SURFACE);
+        background.setCornerRadius(dp(3));
+        background.setStroke(dp(1), color);
+        label.setBackground(background);
+    }
+
+    private void setExperimenterText(TextView view, String value) {
+        if (view != null && !value.contentEquals(view.getText())) view.setText(value);
     }
 
     private void invalidatePrivateParticleControls() {
@@ -608,6 +1356,64 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
         statusCard.addView(breathCalibrationProgress);
         statusCard.addView(breathOutputReadback);
         root.addView(statusCard);
+
+        LinearLayout guidanceCard = panelCard("Guided-breathing bias for next arm");
+        guidanceCard.addView(text(
+            "This is the same 0–100% value shown on the experimenter condition page. It is runtime-only and is locked into the recording when a condition is armed.",
+            12,
+            PANEL_MUTED
+        ));
+        developerGuidanceOneReadback = experimenterIndicator(
+            guidanceCard,
+            "Condition 1 breathing pattern: checking…",
+            ExperimentSessionPanelViewPolicy.Tone.WAITING
+        );
+        developerGuidanceTwoReadback = experimenterIndicator(
+            guidanceCard,
+            "Condition 2 breathing pattern: checking…",
+            ExperimentSessionPanelViewPolicy.Tone.WAITING
+        );
+        String developerGuidanceOne = ControlPanelActivity.conditionBreathGuidanceReadiness(
+            ExperimentSessionPanelCoordinator.CONDITION_ONE);
+        String developerGuidanceTwo = ControlPanelActivity.conditionBreathGuidanceReadiness(
+            ExperimentSessionPanelCoordinator.CONDITION_TWO);
+        boolean developerPatternOne = "pattern-ready".equals(developerGuidanceOne);
+        boolean developerPatternTwo = "pattern-ready".equals(developerGuidanceTwo);
+        if (experimenterGuidanceBiasPercent < 0) {
+            int firstDefault = ControlPanelActivity.conditionBreathGuidanceDefaultBias(
+                ExperimentSessionPanelCoordinator.CONDITION_ONE);
+            int secondDefault = ControlPanelActivity.conditionBreathGuidanceDefaultBias(
+                ExperimentSessionPanelCoordinator.CONDITION_TWO);
+            experimenterGuidanceBiasPercent = developerPatternOne ? firstDefault
+                : developerPatternTwo ? secondDefault
+                : "no-pattern".equals(developerGuidanceOne)
+                    && "no-pattern".equals(developerGuidanceTwo) ? 0 : -1;
+            if (experimenterGuidanceBiasPercent >= 0) {
+                EXPERIMENT_SESSION_PANEL.updatePendingBreathGuidanceBiasPercent(
+                    experimenterGuidanceBiasPercent);
+            }
+        }
+        developerGuidanceBias = new SliderControl(
+            "Breathing-pattern bias", 0.0, 100.0,
+            Math.max(0, experimenterGuidanceBiasPercent), 100, "%", true,
+            new Runnable() {
+                @Override public void run() {
+                    int requested = developerGuidanceBias.intValue();
+                    if (EXPERIMENT_SESSION_PANEL.updatePendingBreathGuidanceBiasPercent(requested)) {
+                        experimenterGuidanceBiasPercent = requested;
+                    }
+                }
+            });
+        developerGuidanceBias.setInteractive(
+            (developerPatternOne || developerPatternTwo)
+                && !EXPERIMENT_SESSION_PANEL.snapshot().hasActiveSession());
+        guidanceCard.addView(developerGuidanceBias.view);
+        guidanceCard.addView(text(
+            "0% is fully signal-driven; 100% is guidance-dominant while still requiring valid Polar tracking. Finish the current recording before changing the value for another arm.",
+            12,
+            PANEL_MUTED
+        ));
+        root.addView(guidanceCard);
 
         LinearLayout mappingCard = panelCard("Input mapping");
         final Spinner source = spinner(new String[] {"Controller", "Polar ACC"}, 0);
@@ -846,7 +1652,7 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
         JSONObject status = readLslTransportStatusJson();
         JSONObject config = status.optJSONObject("config");
         if (config == null) {
-            config = LslPanelConfigStore.read(getApplicationContext());
+            config = new JSONObject();
         }
         JSONObject outlets = config.optJSONObject("outlets");
         JSONObject inlet = config.optJSONObject("inlet");
@@ -965,9 +1771,9 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
         inletCard.addView(recover);
         root.addView(inletCard);
 
-        LinearLayout actions = panelCard("Apply and persistence");
+        LinearLayout actions = panelCard("Apply for this process");
         actions.addView(text(
-            "Apply writes only the native-accepted normalized configuration to app-private storage. It survives direct headset launches; no capsule or Android property is required.",
+            "Developer edits are runtime-only. They do not replay on the next launch; use the read-only effective snapshot when asking for reviewed packaged-default changes.",
             12,
             PANEL_MUTED
         ));
@@ -1044,7 +1850,7 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
                     .put("library_linked", false)
                     .put("app_session_id", "none")
                     .put("generation", 0)
-                    .put("config", LslPanelConfigStore.read(getApplicationContext()));
+                    .put("config", new JSONObject());
             } catch (Exception impossible) {
                 return new JSONObject();
             }
@@ -1093,15 +1899,10 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
                 return;
             }
             JSONObject acceptedConfig = response.optJSONObject("config");
-            boolean persisted = acceptedConfig != null
-                && LslPanelConfigStore.save(getApplicationContext(), acceptedConfig);
-            if ("reset".equals(operation)) {
-                persisted = LslPanelConfigStore.reset(getApplicationContext());
-            }
             boolean effectiveEnabled = acceptedConfig != null
                 && acceptedConfig.optBoolean("enabled", false);
             LslMulticastLockManager.setFromPanel(this, effectiveEnabled);
-            readback.setText(formatLslStatus(response) + "\npersisted=" + persisted);
+            readback.setText(formatLslStatus(response) + "\nephemeral=true");
         } catch (Exception error) {
             readback.setText("LSL request failed: " + markerToken(error.getMessage()));
         }
@@ -1137,9 +1938,39 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
             }
         });
         breath.addView(breathRefresh);
+        final TextView effectiveSnapshot = text(
+            "Canonical effective snapshot is read only on request.",
+            12,
+            PANEL_MUTED
+        );
+        Button snapshotRead = button("Read canonical effective snapshot");
+        snapshotRead.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                effectiveSnapshot.setText(readCanonicalEffectiveSnapshot());
+            }
+        });
+        breath.addView(snapshotRead);
+        breath.addView(effectiveSnapshot);
         root.addView(breath);
         refreshPrivateParticleDynamicsFromStatus(false);
         refreshBreathCompositionReadback(readback);
+    }
+
+    private String readCanonicalEffectiveSnapshot() {
+        try {
+            JSONObject breath = new JSONObject(nativeReadBreathCompositionStatus());
+            JSONObject particle = readPrivateParticleDynamicsStatusJson();
+            JSONObject result = new JSONObject()
+                .put("schema", "rusty.quest.native_renderer.effective_settings_export.v1")
+                .put("read_only", true)
+                .put("replay_supported", false)
+                .put("breath", breath)
+                .put("particles", particle == null ? JSONObject.NULL : particle);
+            return result.toString(2);
+        } catch (Throwable error) {
+            return "Effective snapshot unavailable: " + markerToken(error.getMessage());
+        }
     }
 
     private View buildBreathMappingPanelView() {
@@ -1633,6 +2464,440 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
         } catch (Exception error) {
             readback.setText("Lifecycle request failed: " + markerToken(error.getMessage()));
         }
+    }
+
+    private void refreshExperimenterPolarProjection() {
+        try {
+            JSONObject projection = PolarSensorRuntime.forApplication(getApplicationContext())
+                .experimenterStatusProjection();
+            JSONObject ble = projection.optJSONObject("ble_runtime");
+            String adapter = ble == null
+                ? "unknown" : ble.optString("bluetooth_adapter_state", "unknown");
+            ExperimentSessionPanelState.Bluetooth bluetooth;
+            if (ble != null && !ble.optBoolean("runtime_permission_ready", false)) {
+                bluetooth = ExperimentSessionPanelState.Bluetooth.PERMISSION_REQUIRED;
+            } else if ("on".equals(adapter)) {
+                bluetooth = ExperimentSessionPanelState.Bluetooth.ON;
+            } else if ("off".equals(adapter)) {
+                bluetooth = ExperimentSessionPanelState.Bluetooth.OFF;
+            } else if ("unavailable".equals(adapter)) {
+                bluetooth = ExperimentSessionPanelState.Bluetooth.UNSUPPORTED;
+            } else if ("turning-on".equals(adapter) || "turning-off".equals(adapter)) {
+                bluetooth = ExperimentSessionPanelState.Bluetooth.TURNING;
+            } else if ("permission-blocked".equals(adapter)) {
+                bluetooth = ExperimentSessionPanelState.Bluetooth.PERMISSION_REQUIRED;
+            } else {
+                bluetooth = ExperimentSessionPanelState.Bluetooth.UNKNOWN;
+            }
+            String automatic = projection.optString("automatic_connection_state", "not-started");
+            boolean scanInFlight = projection.optBoolean("scanning", false);
+            ExperimentSessionPanelState.Polar polar;
+            if ("connected".equals(automatic)) {
+                polar = ExperimentSessionPanelState.Polar.CONNECTED;
+            } else if (scanInFlight || "scanning".equals(automatic)) {
+                polar = ExperimentSessionPanelState.Polar.SCANNING;
+            } else if ("connecting".equals(automatic)) {
+                polar = ExperimentSessionPanelState.Polar.CONNECTING;
+            } else if ("multiple-candidates".equals(automatic)) {
+                polar = ExperimentSessionPanelState.Polar.MULTIPLE;
+            } else if ("not-found".equals(automatic)) {
+                polar = ExperimentSessionPanelState.Polar.NOT_FOUND;
+            } else if ("location-services-disabled".equals(automatic)) {
+                polar = ExperimentSessionPanelState.Polar.LOCATION_SERVICES_DISABLED;
+            } else if ("failed".equals(automatic)) {
+                polar = ExperimentSessionPanelState.Polar.FAILED;
+            } else {
+                polar = ExperimentSessionPanelState.Polar.UNKNOWN;
+            }
+            long observedAt = projection.optLong("automatic_connection_updated_at_unix_ms", 0L);
+            long connectionGeneration = projection.optLong(
+                "automatic_connection_generation",
+                0L
+            );
+            long deadlineElapsedMs = projection.optLong(
+                "automatic_connection_deadline_elapsed_ms",
+                0L
+            );
+            boolean currentPlatformPrerequisite =
+                polar == ExperimentSessionPanelState.Polar.LOCATION_SERVICES_DISABLED;
+            boolean fresh = currentPlatformPrerequisite || scanInFlight || PolarAutoConnectionPolicy.evidenceFresh(
+                connectionGeneration,
+                projection.optLong("automatic_connection_evidence_generation", 0L),
+                observedAt,
+                System.currentTimeMillis(),
+                10_000L,
+                polar == ExperimentSessionPanelState.Polar.CONNECTING
+                    ? deadlineElapsedMs : 0L,
+                SystemClock.elapsedRealtime()
+            );
+            if (!fresh && polar != ExperimentSessionPanelState.Polar.UNKNOWN) {
+                polar = ExperimentSessionPanelState.Polar.STALE;
+            }
+            EXPERIMENT_SESSION_PANEL.updatePolar(
+                new ExperimentSessionPanelState.PolarProjection(
+                    bluetooth,
+                    polar,
+                    projection.optInt("candidate_count", 0),
+                    connectionGeneration,
+                    observedAt,
+                    deadlineElapsedMs,
+                    fresh,
+                    scanInFlight
+                        ? projection.optString("detail", "Scanning for a Polar sensor.")
+                        : projection.optString(
+                            "automatic_connection_detail",
+                            projection.optString("detail", automatic)
+                        )
+                )
+            );
+        } catch (Throwable ignored) {
+            EXPERIMENT_SESSION_PANEL.updatePolar(ExperimentSessionPanelState.PolarProjection.unknown());
+        }
+    }
+
+    private void startExperimentSession(String condition) {
+        String audioReadiness = ControlPanelActivity.conditionAudioReadiness(condition);
+        if (!"track-ready".equals(audioReadiness)) {
+            updateStatus("Start rejected: " + audioReadiness + ".");
+            rebuildContentViewForCurrentMode();
+            return;
+        }
+        ExperimentSessionPanelCoordinator.NativeCommand command =
+            EXPERIMENT_SESSION_PANEL.arm(condition,
+                "pattern-ready".equals(
+                    ControlPanelActivity.conditionBreathGuidanceReadiness(condition))
+                    ? Math.max(0, Math.min(100, experimenterGuidanceBiasPercent)) : 0);
+        if (command == null) {
+            updateStatus("Start rejected: a session or operation is already active.");
+            rebuildContentViewForCurrentMode();
+            return;
+        }
+        showExperimenterSessionPage();
+        submitExperimentSessionCommand(command, true);
+    }
+
+    private void saveExperimentSessionAndPrepareNext() {
+        ExperimentSessionPanelState state = EXPERIMENT_SESSION_PANEL.snapshot();
+        if (!ExperimentSessionPanelViewPolicy.canSaveAndPrepareNext(state)) {
+            updateStatus("Wait for the current recording operation before preparing another run.");
+            return;
+        }
+        ExperimentSessionPanelCoordinator.NativeCommand command =
+            EXPERIMENT_SESSION_PANEL.restartToExperimenter(
+                EXPERIMENT_SESSION_PANEL.allocateRouteEvent());
+        if (command == null) {
+            updateStatus("Could not begin saving the current session. Refresh its status.");
+            return;
+        }
+        updateStatus("Saving this session before the next run…");
+        refreshExperimenterAfterReadback();
+        EXPERIMENT_SESSION_SHELL.submit(command, false, this);
+    }
+
+    private void requestExperimentSessionStatus() {
+        if (!nativeBridgeLoaded) {
+            updateStatus("Session status unavailable: native bridge is not loaded.");
+            return;
+        }
+        EXPERIMENT_SESSION_SHELL.requestStatus(this);
+    }
+
+    private void submitExperimentSessionCommand(
+        ExperimentSessionPanelCoordinator.NativeCommand command,
+        boolean start
+    ) {
+        if (command == null) {
+            return;
+        }
+        EXPERIMENT_SESSION_SHELL.submit(command, start, this);
+        refreshExperimenterAfterReadback();
+    }
+
+    @Override
+    public boolean acceptsExperimentSessionCallbacks(long launchEpoch) {
+        return !experimentShellDestroyed && launchEpoch == experimentShellLaunchEpoch;
+    }
+
+    @Override
+    public void onExperimentSessionReadback(
+            ExperimentSessionAndroidShell.SessionReadback readback) {
+        if (readback == null || readback.receipt == null) return;
+        EXPERIMENT_SESSION_PANEL.acceptRuntimeEpoch(readback.runtimeEpoch);
+        ExperimentSessionPanelState before = EXPERIMENT_SESSION_PANEL.snapshot();
+        boolean changed = EXPERIMENT_SESSION_PANEL.accept(readback.receipt);
+        ExperimentSessionPanelState after = EXPERIMENT_SESSION_PANEL.snapshot();
+        // Audio preparation is an idempotent arm-stage effect. Reassert it from
+        // every authoritative arming readback so a reordered status callback or
+        // panel recreation cannot leave the native session permanently arming.
+        if (after.phase == ExperimentSessionPanelState.Phase.ARMING && after.recording) {
+            if (!ControlPanelActivity.startConditionAudio(
+                    after.generation,
+                    "session-arm-" + after.generation,
+                    after.activeCondition)) {
+                updateStatus("Session armed, but condition audio preparation was rejected.");
+            }
+        }
+        if (changed && before.phase != ExperimentSessionPanelState.Phase.ARMED
+                && after.phase == ExperimentSessionPanelState.Phase.ARMED) {
+            closePanelAndReturnToImmersive();
+            return;
+        }
+        if (changed && before.phase == ExperimentSessionPanelState.Phase.SAVING
+                && after.phase == ExperimentSessionPanelState.Phase.IDLE
+                && "saved".equals(readback.recordingResult)
+                && after.pendingOperationId.isEmpty()) {
+            updateStatus("Session saved. Prepare the next run.");
+            selectExperimenterPage(ExperimentSessionPanelViewPolicy.Page.PREPARE);
+            return;
+        }
+        refreshExperimenterAfterReadback();
+    }
+
+    @Override
+    public void onExperimentSessionTerminal(
+            ExperimentSessionAndroidShell.TerminalResult result) {
+        if (result == null) return;
+        if (result.shouldFinish && !terminalFinishDispatched) {
+            terminalFinishDispatched = true;
+            ControlPanelActivity.finishTerminalSaveAndExit(
+                this,
+                result.saved,
+                result.sessionGeneration,
+                result.operationId,
+                result.shutdownAckRevision
+            );
+            return;
+        }
+        updateStatus("Save and exit pending: " + result.detail + "; saved=false");
+    }
+
+    private boolean handleTerminalSaveAndExitIntent(Intent intent) {
+        if (!ControlPanelActivity.admitTerminalSaveAndExit(this, intent)) {
+            return EXPERIMENT_SESSION_SHELL.resumePendingTerminal();
+        }
+        long guardGeneration = intent.getLongExtra(
+            NativeRendererSoftKioskCoordinator.EXTRA_GUARD_GENERATION,
+            0L
+        );
+        long homeEpisode = intent.getLongExtra(
+            NativeRendererSoftKioskCoordinator.EXTRA_HOME_EPISODE,
+            0L
+        );
+        if (EXPERIMENT_SESSION_SHELL.beginTerminal(
+                guardGeneration, homeEpisode, this)) {
+            updateStatus("Saving recording and closing…");
+        }
+        return true;
+    }
+
+    private void scheduleExperimenterProjectionRefresh() {
+        cancelExperimenterProjectionRefresh();
+        if (liveApplyHandler == null
+                || !PANEL_ROUTE_EXPERIMENTER.equals(panelRoute)
+                || !"home".equals(breathCompositionPanelTopic)) {
+            return;
+        }
+        experimenterProjectionRefresh = new Runnable() {
+            @Override
+            public void run() {
+                refreshExperimenterPolarProjection();
+                refreshExperimenterProjectionViews();
+                EXPERIMENT_SESSION_SHELL.requestStatus(BreathCompositionPanelModule.this);
+                if (experimenterProjectionRefresh == this && liveApplyHandler != null) {
+                    liveApplyHandler.postDelayed(this, 1000L);
+                }
+            }
+        };
+        liveApplyHandler.postDelayed(experimenterProjectionRefresh, 500L);
+    }
+
+    private void cancelExperimenterProjectionRefresh() {
+        if (liveApplyHandler != null && experimenterProjectionRefresh != null) {
+            liveApplyHandler.removeCallbacks(experimenterProjectionRefresh);
+        }
+        experimenterProjectionRefresh = null;
+    }
+
+    private void clearExperimenterProjectionViews() {
+        experimenterBluetoothReadback = null;
+        experimenterPolarReadback = null;
+        experimenterCountReadback = null;
+        experimenterStatusReadback = null;
+        experimenterKioskReadback = null;
+        experimenterKioskDetail = null;
+        experimenterPolarFallback = null;
+        experimenterStartOne = null;
+        experimenterStartTwo = null;
+        experimenterStageReadback = null;
+        experimenterInstructionReadback = null;
+        experimenterStorageReadback = null;
+        experimenterStorageDetail = null;
+        experimenterFooterReadback = null;
+        experimenterAudioOneReadback = null;
+        experimenterAudioTwoReadback = null;
+        experimenterGuidanceOneReadback = null;
+        experimenterGuidanceTwoReadback = null;
+        experimenterGuidanceBias = null;
+        developerGuidanceOneReadback = null;
+        developerGuidanceTwoReadback = null;
+        developerGuidanceBias = null;
+        experimenterResume = null;
+        experimenterNext = null;
+        experimenterSaveNext = null;
+        experimenterDeveloper = null;
+    }
+
+    private void refreshExperimenterProjectionViews() {
+        ExperimentSessionPanelState state = EXPERIMENT_SESSION_PANEL.snapshot();
+        ExperimentSessionPanelViewPolicy.ViewState projected =
+            ExperimentSessionPanelViewPolicy.project(state);
+        if (experimenterBluetoothReadback != null) {
+            setExperimenterText(experimenterBluetoothReadback, projected.bluetoothLine);
+            styleExperimenterIndicator(experimenterBluetoothReadback, ExperimentSessionPanelViewPolicy.bluetoothTone(state));
+        }
+        if (experimenterPolarReadback != null) {
+            setExperimenterText(experimenterPolarReadback, projected.polarLine);
+            styleExperimenterIndicator(experimenterPolarReadback, ExperimentSessionPanelViewPolicy.polarTone(state));
+        }
+        if (experimenterCountReadback != null) {
+            setExperimenterText(experimenterCountReadback, projected.countLine);
+        }
+        if (experimenterStatusReadback != null) {
+            setExperimenterText(experimenterStatusReadback, projected.statusLine);
+            experimenterStatusReadback.setTextColor(projected.saving ? PANEL_ACCENT : PANEL_MUTED);
+        }
+        if (experimenterKioskReadback != null) {
+            ExperimentSessionPanelViewPolicy.ReadinessCard kiosk =
+                ExperimentSessionPanelViewPolicy.kioskCard(
+                    ControlPanelActivity.softKioskUiState(this));
+            setExperimenterText(experimenterKioskReadback, kiosk.label);
+            styleExperimenterIndicator(experimenterKioskReadback, kiosk.tone);
+            setExperimenterText(experimenterKioskDetail, kiosk.detail);
+            if (experimenterKioskDetail != null) experimenterKioskDetail.setVisibility(
+                kiosk.detail.isEmpty() ? View.GONE : View.VISIBLE);
+        }
+        if (experimenterPolarFallback != null) {
+            setExperimenterText(experimenterPolarFallback, projected.showPolarFallback
+                ? "Open Polar connection" : "Inspect Polar connection");
+        }
+        String audioOne = experimenterStartOne == null ? ""
+            : ControlPanelActivity.conditionAudioReadiness(ExperimentSessionPanelCoordinator.CONDITION_ONE);
+        String audioTwo = experimenterStartTwo == null ? ""
+            : ControlPanelActivity.conditionAudioReadiness(ExperimentSessionPanelCoordinator.CONDITION_TWO);
+        if (experimenterStartOne != null) {
+            experimenterStartOne.setEnabled(projected.startEnabled && "track-ready".equals(audioOne));
+        }
+        if (experimenterStartTwo != null) {
+            experimenterStartTwo.setEnabled(projected.startEnabled && "track-ready".equals(audioTwo));
+        }
+        updateExperimenterAudioReadback(experimenterAudioOneReadback, "Condition 1", audioOne);
+        updateExperimenterAudioReadback(experimenterAudioTwoReadback, "Condition 2", audioTwo);
+        boolean guidanceControlsVisible = experimenterStartOne != null
+            || developerGuidanceBias != null;
+        String guidanceOne = !guidanceControlsVisible ? "" :
+            ControlPanelActivity.conditionBreathGuidanceReadiness(
+                ExperimentSessionPanelCoordinator.CONDITION_ONE);
+        String guidanceTwo = !guidanceControlsVisible ? "" :
+            ControlPanelActivity.conditionBreathGuidanceReadiness(
+                ExperimentSessionPanelCoordinator.CONDITION_TWO);
+        updateExperimenterGuidanceReadback(
+            experimenterGuidanceOneReadback, "Condition 1", guidanceOne);
+        updateExperimenterGuidanceReadback(
+            experimenterGuidanceTwoReadback, "Condition 2", guidanceTwo);
+        updateExperimenterGuidanceReadback(
+            developerGuidanceOneReadback, "Condition 1", guidanceOne);
+        updateExperimenterGuidanceReadback(
+            developerGuidanceTwoReadback, "Condition 2", guidanceTwo);
+        if (experimenterGuidanceBias != null || developerGuidanceBias != null) {
+            boolean oneReady = "pattern-ready".equals(guidanceOne);
+            boolean twoReady = "pattern-ready".equals(guidanceTwo);
+            if (experimenterGuidanceBiasPercent < 0 && (oneReady || twoReady)) {
+                experimenterGuidanceBiasPercent = ControlPanelActivity
+                    .conditionBreathGuidanceDefaultBias(oneReady
+                        ? ExperimentSessionPanelCoordinator.CONDITION_ONE
+                        : ExperimentSessionPanelCoordinator.CONDITION_TWO);
+                EXPERIMENT_SESSION_PANEL.updatePendingBreathGuidanceBiasPercent(
+                    experimenterGuidanceBiasPercent);
+                if (experimenterGuidanceBias != null) {
+                    experimenterGuidanceBias.setValue(experimenterGuidanceBiasPercent);
+                }
+                if (developerGuidanceBias != null) {
+                    developerGuidanceBias.setValue(experimenterGuidanceBiasPercent);
+                }
+            } else if (experimenterGuidanceBiasPercent < 0
+                    && "no-pattern".equals(guidanceOne)
+                    && "no-pattern".equals(guidanceTwo)) {
+                experimenterGuidanceBiasPercent = 0;
+                EXPERIMENT_SESSION_PANEL.updatePendingBreathGuidanceBiasPercent(0);
+                if (experimenterGuidanceBias != null) experimenterGuidanceBias.setValue(0);
+                if (developerGuidanceBias != null) developerGuidanceBias.setValue(0);
+            }
+            if (experimenterGuidanceBias != null) {
+                experimenterGuidanceBias.setInteractive(oneReady || twoReady);
+            }
+            if (developerGuidanceBias != null) {
+                developerGuidanceBias.setInteractive(
+                    (oneReady || twoReady) && !state.hasActiveSession());
+            }
+        }
+        if (experimenterStageReadback != null) {
+            setExperimenterText(experimenterStageReadback, ExperimentSessionPanelViewPolicy.stageTitle(state));
+            styleExperimenterIndicator(experimenterStageReadback, ExperimentSessionPanelViewPolicy.stageTone(state));
+        }
+        setExperimenterText(experimenterInstructionReadback, ExperimentSessionPanelViewPolicy.stageInstruction(state));
+        if (experimenterStorageReadback != null) {
+            ExperimentSessionPanelViewPolicy.ReadinessCard storage =
+                ExperimentSessionPanelViewPolicy.storageCard(state);
+            setExperimenterText(experimenterStorageReadback, storage.label);
+            styleExperimenterIndicator(experimenterStorageReadback, storage.tone);
+            setExperimenterText(experimenterStorageDetail, storage.detail);
+            if (experimenterStorageDetail != null) experimenterStorageDetail.setVisibility(
+                storage.detail.isEmpty() ? View.GONE : View.VISIBLE);
+        }
+        setExperimenterText(experimenterFooterReadback, ExperimentSessionPanelViewPolicy.stageTitle(state));
+        if (experimenterResume != null) {
+            experimenterResume.setEnabled(
+                ExperimentSessionPanelViewPolicy.canReturnToImmersive(state) && !projected.saving
+            );
+            experimenterResume.setText(state.phase == ExperimentSessionPanelState.Phase.ERROR
+                ? "Return to VR to finish" : "Return to VR");
+        }
+        if (experimenterNext != null
+                && experimenterNavigation.page() == ExperimentSessionPanelViewPolicy.Page.SESSION) {
+            experimenterNext.setEnabled(!state.hasActiveSession()
+                || ExperimentSessionPanelViewPolicy.canSaveAndPrepareNext(state));
+            experimenterNext.setText(projected.saving ? "Saving session…"
+                : state.hasActiveSession() ? "Save session & prepare next" : "Prepare next run");
+        }
+        if (experimenterSaveNext != null) {
+            experimenterSaveNext.setEnabled(
+                ExperimentSessionPanelViewPolicy.canSaveAndPrepareNext(state));
+            experimenterSaveNext.setText(projected.saving
+                ? "Saving session…" : "Save session & prepare next");
+        }
+        if (experimenterDeveloper != null) experimenterDeveloper.setEnabled(!projected.saving);
+    }
+
+    private void updateExperimenterAudioReadback(TextView readback, String label, String readiness) {
+        if (readback != null) {
+            boolean ready = "track-ready".equals(readiness);
+            setExperimenterText(readback, label + " audio: " + (ready ? "ready" : readiness));
+            styleExperimenterIndicator(readback, ready
+                ? ExperimentSessionPanelViewPolicy.Tone.READY : ExperimentSessionPanelViewPolicy.Tone.ATTENTION);
+        }
+    }
+
+    private void updateExperimenterGuidanceReadback(
+            TextView readback, String label, String readiness) {
+        if (readback == null) return;
+        boolean ready = "pattern-ready".equals(readiness);
+        boolean absent = "no-pattern".equals(readiness);
+        setExperimenterText(readback, label + " breathing pattern: " + (ready
+            ? "ready" : absent ? "not supplied · signal-only" : "checking…"));
+        styleExperimenterIndicator(readback, ready
+            ? ExperimentSessionPanelViewPolicy.Tone.READY : absent
+                ? ExperimentSessionPanelViewPolicy.Tone.NEUTRAL
+                : ExperimentSessionPanelViewPolicy.Tone.WAITING);
     }
 
     private void applyBreathCompositionCommand(JSONObject command, TextView readback) {
@@ -2942,179 +4207,15 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
     }
 
     private void closePanelAndReturnToImmersive() {
-        if (rendererReturnPending) {
+        ExperimentSessionPanelState state = EXPERIMENT_SESSION_PANEL.snapshot();
+        if (state.hasActiveSession()
+                && !ExperimentSessionPanelViewPolicy.canReturnToImmersive(state)) {
+            updateStatus("Please wait until the current session operation completes before returning to VR.");
+            refreshExperimenterAfterReadback();
             return;
         }
-        RendererFocusState baseline = readRendererFocusState();
-        rendererReturnBaselineFrame = rendererFocusReceiptIsCurrentActivity(baseline)
-            ? baseline.frameCount
-            : -1L;
-        rendererReturnStartedAtMs = SystemClock.elapsedRealtime();
-        rendererReturnLastLaunchAtMs = 0L;
-        resetRendererReturnStableFocus();
-        rendererReturnPanelPaused = false;
-        rendererReturnGeneration += 1;
-        rendererReturnPending = true;
-        int generation = rendererReturnGeneration;
-        rendererHandoffMarker(
-            "status=requested baselineFrame="
-                + rendererReturnBaselineFrame
-                + " generation="
-                + generation
-        );
-        launchImmersiveRendererForHandoff(generation, "initial");
-        scheduleRendererReturnReadinessPoll(generation);
+        ControlPanelActivity.closePanelAndReturnToImmersive(this);
     }
-
-    private void launchImmersiveRendererForHandoff(int generation, String source) {
-        rendererReturnLastLaunchAtMs = SystemClock.elapsedRealtime();
-        launchImmersiveRenderer();
-        rendererHandoffMarker(
-            "status=intent-dispatched source="
-                + markerToken(source)
-                + " generation="
-                + generation
-        );
-    }
-
-    private RendererFocusState readRendererFocusState() {
-        try {
-            String contents = readFile(RENDERER_FOCUS_STATUS_FILE);
-            if (contents.length() == 0) {
-                return null;
-            }
-            return new RendererFocusState(new JSONObject(contents));
-        } catch (Exception ignored) {
-            return null;
-        }
-    }
-
-    private boolean rendererHasAdvancedFocusedFrame(RendererFocusState state) {
-        if (!rendererFocusReceiptIsCurrentActivity(state)
-                || !"FOCUSED".equals(state.sessionState)
-                || !state.submitted) {
-            return false;
-        }
-        long minimumFrame = rendererReturnBaselineFrame >= 0L
-            ? rendererReturnBaselineFrame
-            : 0L;
-        return state.frameCount > minimumFrame;
-    }
-
-    private boolean rendererFocusReceiptIsCurrentActivity(RendererFocusState state) {
-        return state != null
-            && "rusty.quest.native_renderer.renderer_focus_state.v1".equals(state.schema)
-            && "android.app.NativeActivity".equals(state.activity)
-            && state.updatedAtUnixMs > 0L
-            && state.ageMs() <= RENDERER_FOCUS_FRESH_MS;
-    }
-
-    private void pollRendererReturnReadiness(int generation) {
-        if (!rendererReturnPending || generation != rendererReturnGeneration) {
-            return;
-        }
-        RendererFocusState state = readRendererFocusState();
-        long nowMs = SystemClock.elapsedRealtime();
-        boolean focusedFrameQualifies = rendererReturnPanelPaused
-            && rendererHasAdvancedFocusedFrame(state);
-        if (focusedFrameQualifies) {
-            if (rendererReturnStableFocusStartedAtMs < 0L) {
-                rendererReturnStableFocusStartedAtMs = nowMs;
-                rendererReturnStableFocusFrame = state.frameCount;
-                rendererHandoffMarker(
-                    "status=focus-stability-started frame="
-                        + state.frameCount
-                        + " panelPaused=true generation="
-                        + generation
-                );
-            } else if (state.frameCount > rendererReturnStableFocusFrame
-                    && nowMs - rendererReturnStableFocusStartedAtMs
-                        >= RENDERER_RETURN_STABLE_FOCUS_MS) {
-                long stableFocusMs = nowMs - rendererReturnStableFocusStartedAtMs;
-                rendererReturnPending = false;
-                cancelRendererReturnReadinessPoll();
-                rendererHandoffMarker(
-                    "status=verified frame="
-                        + state.frameCount
-                        + " focusAgeMs="
-                        + state.ageMs()
-                        + " stableFocusMs="
-                        + stableFocusMs
-                        + " panelPaused=true panelTaskRetained=true generation="
-                        + generation
-                        + " handoffReason=stable_focused_submitted_frames_panel_retained"
-                );
-                return;
-            }
-        } else {
-            resetRendererReturnStableFocus();
-        }
-        if (nowMs - rendererReturnStartedAtMs >= RENDERER_RETURN_TIMEOUT_MS) {
-            rendererReturnPending = false;
-            cancelRendererReturnReadinessPoll();
-            rendererHandoffMarker(
-                "status=timeout panelTaskRetained=true panelPaused="
-                    + rendererReturnPanelPaused
-                    + " generation="
-                    + generation
-                    + " handoffReason=focused_submitted_frame_timeout_panel_retained"
-            );
-            return;
-        }
-        if (rendererReturnStableFocusStartedAtMs < 0L
-                && nowMs - rendererReturnLastLaunchAtMs >= RENDERER_RETURN_RELAUNCH_MS) {
-            launchImmersiveRendererForHandoff(generation, "reassert");
-        }
-        scheduleRendererReturnReadinessPoll(generation);
-    }
-
-    private void resetRendererReturnStableFocus() {
-        rendererReturnStableFocusStartedAtMs = -1L;
-        rendererReturnStableFocusFrame = -1L;
-    }
-
-    private void scheduleRendererReturnReadinessPoll(final int generation) {
-        rendererReturnReadinessPoll = new Runnable() {
-            @Override
-            public void run() {
-                pollRendererReturnReadiness(generation);
-            }
-        };
-        liveApplyHandler.postDelayed(rendererReturnReadinessPoll, RENDERER_RETURN_POLL_MS);
-    }
-
-    private void cancelRendererReturnReadinessPoll() {
-        if (liveApplyHandler != null && rendererReturnReadinessPoll != null) {
-            liveApplyHandler.removeCallbacks(rendererReturnReadinessPoll);
-        }
-        rendererReturnReadinessPoll = null;
-    }
-
-    private static final class RendererFocusState {
-        final String schema;
-        final String activity;
-        final String sessionState;
-        final long updatedAtUnixMs;
-        final long frameCount;
-        final boolean submitted;
-
-        RendererFocusState(JSONObject json) {
-            schema = json.optString("schema", "");
-            activity = json.optString("activity", "");
-            sessionState = json.optString("session_state", "");
-            updatedAtUnixMs = json.optLong("updated_at_unix_ms", 0L);
-            frameCount = json.optLong("frame_count", -1L);
-            submitted = json.optBoolean("submitted", false);
-        }
-
-        long ageMs() {
-            if (updatedAtUnixMs <= 0L) {
-                return Long.MAX_VALUE;
-            }
-            return Math.max(0L, System.currentTimeMillis() - updatedAtUnixMs);
-        }
-    }
-
 
     private void writeFile(String name, String content) throws Exception {
         FileOutputStream out = openFileOutput(name, MODE_PRIVATE);
@@ -3163,11 +4264,11 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
         );
     }
 
-    private static void rendererHandoffMarker(String detail) {
+    private static void experimenterPanelShortcutMarker(String detail) {
         Log.i(
             TAG,
             MARKER_PREFIX
-                + " channel=renderer-handoff "
+                + " channel=experiment-session-panel event=panel-toggle "
                 + String.valueOf(detail).replace('\n', ' ').replace('\r', ' ')
         );
     }
@@ -3177,6 +4278,10 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
             return "none";
         }
         return raw.replaceAll("[^A-Za-z0-9._=:/-]+", "_");
+    }
+
+    private static String emptyAs(String value, String fallback) {
+        return value == null || value.isEmpty() ? fallback : value;
     }
 
     private TextView text(String value, int sp, int color) {
@@ -3381,6 +4486,235 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
 
     private int dp(int value) {
         return (int) (value * getResources().getDisplayMetrics().density + 0.5f);
+    }
+
+    /** JSON adapter invoked exclusively by {@link ExperimentSessionAndroidShell}'s worker. */
+    private static final class ExperimentSessionJsonCodec
+            implements ExperimentSessionAndroidShell.Codec {
+        @Override
+        public String statusCommand() {
+            try {
+                return new JSONObject()
+                    .put("schema", ExperimentSessionPanelCoordinator.SCHEMA)
+                    .put("operation", "status")
+                    .toString();
+            } catch (Exception error) {
+                throw new IllegalStateException("could not encode session status", error);
+            }
+        }
+
+        @Override
+        public String command(
+                ExperimentSessionPanelCoordinator.NativeCommand command,
+                boolean start,
+                long elapsedRealtimeNanos,
+                long utcNanos) {
+            try {
+                JSONObject request = new JSONObject()
+                    .put("schema", ExperimentSessionPanelCoordinator.SCHEMA)
+                    .put("operation", command.operation)
+                    .put("operation_id", command.operationId)
+                    .put("expected_generation", command.expectedGeneration)
+                    .put("elapsed_realtime_ns", elapsedRealtimeNanos);
+                if (start) {
+                    request
+                        .put("condition", command.condition)
+                        .put(
+                            "completion_threshold_ms",
+                            ExperimentSessionPanelCoordinator.COMPLETION_THRESHOLD_MS
+                        )
+                        .put("breath_guidance_bias_percent",
+                            command.breathGuidanceBiasPercent)
+                        .put("started_at_utc_ns", utcNanos);
+                }
+                return request.toString();
+            } catch (Exception error) {
+                throw new IllegalStateException("could not encode session command", error);
+            }
+        }
+
+        @Override
+        public ExperimentSessionAndroidShell.SessionReadback parse(
+                String responseJson,
+                ExperimentSessionPanelCoordinator.NativeCommand expected,
+                boolean start) {
+            try {
+                JSONObject response = new JSONObject(responseJson == null ? "{}" : responseJson);
+                if (!"rusty.quest.experiment_session.response.v1".equals(
+                        response.optString("schema", ""))) {
+                    throw new IllegalArgumentException("unexpected session response schema");
+                }
+                String commandStatus = response.optString("command_status", "rejected");
+                JSONObject projection = response.optJSONObject("readback");
+                if (projection == null) {
+                    throw new IllegalArgumentException("session response omitted readback");
+                }
+                if (!validNonNegativeLong(projection, "generation")) {
+                    String unavailableReason = response.optString("reason_code", "");
+                    if ("rejected".equals(commandStatus)
+                            && ExperimentSessionAndroidShell.retryableReason(unavailableReason)) {
+                        return new ExperimentSessionAndroidShell.SessionReadback(null,
+                            commandStatus, "unavailable", "unavailable", "unavailable",
+                            "not-requested", 0L, -1L, "", unavailableReason, "unknown", "", 0L, "", "");
+                    }
+                    throw new IllegalArgumentException("authoritative-session-generation-unavailable");
+                }
+                JSONObject counts = projection.optJSONObject("counts");
+                JSONObject byCondition = counts == null
+                    ? null : counts.optJSONObject("by_condition");
+                JSONObject conditionOne = byCondition == null
+                    ? null : byCondition.optJSONObject("condition-a");
+                JSONObject conditionTwo = byCondition == null
+                    ? null : byCondition.optJSONObject("condition-b");
+                boolean countsAvailable = validNonNegativeLong(counts, "completed")
+                    && validNonNegativeLong(counts, "stopped_early")
+                    && validNonNegativeLong(counts, "errors");
+                boolean countsInvalid = counts != null && !countsAvailable;
+                boolean perConditionCounts = countsAvailable
+                    && validNonNegativeLong(conditionOne, "completed")
+                    && validNonNegativeLong(conditionOne, "stopped_early")
+                    && validNonNegativeLong(conditionOne, "errors")
+                    && validNonNegativeLong(conditionTwo, "completed")
+                    && validNonNegativeLong(conditionTwo, "stopped_early")
+                    && validNonNegativeLong(conditionTwo, "errors");
+                String operationId = projection.optString("last_operation_id", "");
+                String operationStatus = projection.optString(
+                    "last_operation_status",
+                    commandStatus
+                );
+                boolean accepted = "accepted".equals(operationStatus);
+                String phase = projection.optString("phase", "");
+                String routeAction = projection.optString("route_action", "none");
+                JSONObject recordingResult = projection.optJSONObject("recording_result");
+                String recordingStatus = recordingResult == null
+                    ? "unknown" : recordingResult.optString("status", "unknown");
+                boolean restartReceipt = "idle".equals(phase)
+                    && "show-experimenter".equals(routeAction)
+                    && operationId.equals(projection.optString("finalized_operation_id", ""))
+                    && projection.optLong("finalized_session_generation", -1L)
+                        == projection.optLong("generation", -2L);
+                if (restartReceipt && !"saved".equals(recordingStatus)) accepted = false;
+                ExperimentSessionPanelState before = EXPERIMENT_SESSION_PANEL.snapshot();
+                boolean startingOperation = start && expected != null
+                    && expected.operationId.equals(operationId);
+                if (startingOperation && "active".equals(phase)
+                        && (!projection.optBoolean("profile_identity_bound", false)
+                            || !projection.optBoolean("audio_identity_bound", false))) {
+                    accepted = false;
+                }
+                JSONObject guidanceProjection = projection.optJSONObject("breath_guidance");
+                boolean guidanceExpected = startingOperation && "pattern-ready".equals(
+                    ControlPanelActivity.conditionBreathGuidanceReadiness(expected.condition));
+                if (guidanceExpected
+                        && (guidanceProjection == null
+                            || !guidanceProjection.optBoolean("identity_bound", false)
+                            || guidanceProjection.optInt("bias_percent", -1)
+                                != expected.breathGuidanceBiasPercent)) {
+                    accepted = false;
+                }
+                boolean durable = accepted && restartReceipt
+                    && "saved".equals(recordingStatus);
+                String responseReason = response.optString("reason_code", "");
+                String projectionReason = projection.optString("last_reason", "");
+                String reason = restartReceipt && !"saved".equals(recordingStatus)
+                    ? "recording-not-saved" : !projectionReason.isEmpty() && !"none".equals(projectionReason)
+                    ? projectionReason : responseReason;
+                ExperimentSessionPanelCoordinator.NativeReceipt receipt =
+                    new ExperimentSessionPanelCoordinator.NativeReceipt(
+                        operationId,
+                        accepted,
+                        durable,
+                        projection.optLong("generation", 0L),
+                        projection.optLong("revision", 0L),
+                        phase,
+                        projection.optBoolean("audio_technical_hold", false)
+                            ? "audio-error" : projection.optString("control_state", ""),
+                        before.activeCondition,
+                        "active".equals(phase),
+                        projection.optString("completion", ""),
+                        projection.optLong("active_time_ms", 0L),
+                        "running".equals(projection.optString("recovery_status", "not-run"))
+                            || "error".equals(
+                                projection.optString("recovery_status", "not-run")),
+                        projection.optString("storage_status", "unavailable"),
+                        projection.optBoolean("kiosk_requested", true),
+                        conditionOne == null ? 0L : conditionOne.optLong("completed", 0L),
+                        conditionTwo == null ? 0L : conditionTwo.optLong("completed", 0L),
+                        conditionOne == null
+                            ? 0L : conditionOne.optLong("stopped_early", 0L),
+                        conditionTwo == null
+                            ? 0L : conditionTwo.optLong("stopped_early", 0L),
+                        perConditionCounts,
+                        countsAvailable,
+                        countsInvalid,
+                        counts == null ? 0L : counts.optLong("completed", 0L),
+                        counts == null ? 0L : counts.optLong("stopped_early", 0L),
+                        counts == null ? 0L : counts.optLong("errors", 0L),
+                        routeAction,
+                        projection.optLong("route_action_revision", 0L),
+                        projection.optBoolean("audio_technical_hold", false)
+                            ? "audio-technical-hold"
+                            : startingOperation && !accepted
+                            ? "Condition was not armed: " + emptySessionReason(reason) + "."
+                            : reason
+                                + " · recovery="
+                                + projection.optString("recovery_status", "unavailable")
+                                + " · kiosk="
+                                + projection.optString("kiosk_effective", "unknown")
+                                + "/"
+                                + projection.optString(
+                                    "kiosk_enforcement",
+                                    "not-enforced")
+                    );
+                return new ExperimentSessionAndroidShell.SessionReadback(
+                    receipt,
+                    commandStatus,
+                    projection.optString("initialization_status", "unavailable"),
+                    projection.optString("inventory_status", "inventory-unavailable"),
+                    projection.optString("recording_root_status", "unavailable"),
+                    projection.optString("shutdown_status", "not-requested"),
+                    projection.optLong("shutdown_ack_revision", 0L),
+                    projection.optLong("finalized_session_generation", 0L),
+                    projection.optString("finalized_operation_id", ""),
+                    reason,
+                    recordingStatus,
+                    recordingResult == null ? "" : recordingResult.optString("error", ""),
+                    projection.optLong("runtime_epoch", 0L),
+                    projection.optString("last_operation_status", ""),
+                    projection.optString("last_reason", "")
+                );
+            } catch (RuntimeException error) {
+                throw error;
+            } catch (Exception error) {
+                throw new IllegalArgumentException("could not parse session response", error);
+            }
+        }
+
+        private static boolean validNonNegativeLong(JSONObject value, String field) {
+            if (value == null || !value.has(field) || value.isNull(field)) return false;
+            Object raw = value.opt(field);
+            if (!(raw instanceof Number)) return false;
+            Number number = (Number) raw;
+            double floating = number.doubleValue();
+            long integer = number.longValue();
+            return !Double.isNaN(floating)
+                && !Double.isInfinite(floating)
+                && floating == (double) integer
+                && integer >= 0L;
+        }
+
+        private static String emptySessionReason(String reason) {
+            if ("profile-identity-not-packaged".equals(reason)) {
+                return "the packaged study profile identity did not match";
+            }
+            if ("audio-identity-not-packaged".equals(reason)) {
+                return "the packaged condition audio identity did not match";
+            }
+            if (reason == null || reason.isEmpty() || "none".equals(reason)) {
+                return "native admission was rejected";
+            }
+            return reason;
+        }
     }
 
     private final class SliderControl {

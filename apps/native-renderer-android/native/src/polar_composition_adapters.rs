@@ -9,12 +9,17 @@ use std::{
     sync::{Mutex, MutexGuard, OnceLock},
 };
 
+#[cfg(target_os = "android")]
+use std::sync::atomic::{AtomicU16, Ordering};
+
 use serde_json::{json, Value};
 
 const RR_QUEUE_CAPACITY: usize = 64;
 const ACC_QUEUE_CAPACITY: usize = 2_048;
 pub(crate) const POLAR_ACC_PRESENTATION_DELAY_NS: u64 = 180_000_000;
 const POLAR_ACC_SMOOTHING_TIME_CONSTANT_NS: u64 = 120_000_000;
+#[cfg(target_os = "android")]
+static LATEST_POLAR_BPM: AtomicU16 = AtomicU16::new(0);
 
 /// Render-side ACC presentation policy. Both policies retain every decoded
 /// sample for capture and calibration; they differ only in how a frame-time
@@ -662,6 +667,13 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_native_1renderer_Po
         jni_submit_time_ns.max(0) as u64,
         xyz_mg,
     );
+    let _ = crate::experiment_session_runtime::record_polar_acc_sample(
+        frame_sequence_id.max(0) as u64,
+        sample_index.max(0) as u32,
+        sample_host_time_ns.max(0) as u64,
+        sample_sensor_time_ns.max(0) as u64,
+        xyz_mg,
+    );
 }
 
 #[cfg(target_os = "android")]
@@ -687,6 +699,13 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_native_1renderer_Po
         sample_host_time_ns.max(0) as u64,
         sample_sensor_time_ns.max(0) as u64,
         jni_submit_time_ns.max(0) as u64,
+        microvolts,
+    );
+    let _ = crate::experiment_session_runtime::record_polar_ecg_sample(
+        frame_sequence_id.max(0) as u64,
+        sample_index.max(0) as u32,
+        sample_host_time_ns.max(0) as u64,
+        sample_sensor_time_ns.max(0) as u64,
         microvolts,
     );
 }
@@ -728,8 +747,17 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_native_1renderer_Po
     host_time_ns: jni::sys::jlong,
     bpm: jni::sys::jint,
 ) {
-    crate::lsl_panel_runtime::submit_polar_hr(bpm.max(0) as u32);
-    crate::breath_capture::record_polar_hr(host_time_ns.max(0) as u64, bpm.max(0) as u32);
+    let bpm = bpm.clamp(0, u16::MAX as i32) as u16;
+    LATEST_POLAR_BPM.store(bpm, Ordering::Release);
+    crate::lsl_panel_runtime::submit_polar_hr(u32::from(bpm));
+    crate::breath_capture::record_polar_hr(host_time_ns.max(0) as u64, u32::from(bpm));
+    let host_time_ns = host_time_ns.max(0) as u64;
+    let _ = crate::experiment_session_runtime::record_polar_heart_rate(
+        host_time_ns,
+        host_time_ns,
+        bpm,
+        None,
+    );
 }
 
 #[cfg(target_os = "android")]
@@ -740,9 +768,16 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_native_1renderer_Po
     host_time_ns: jni::sys::jlong,
     rr_interval_ms: jni::sys::jfloat,
 ) {
-    submit_polar_rr_measurement(host_time_ns.max(0) as u64, rr_interval_ms);
+    let host_time_ns = host_time_ns.max(0) as u64;
+    submit_polar_rr_measurement(host_time_ns, rr_interval_ms);
     crate::lsl_panel_runtime::submit_polar_rr(rr_interval_ms);
-    crate::breath_capture::record_polar_rr(host_time_ns.max(0) as u64, rr_interval_ms);
+    crate::breath_capture::record_polar_rr(host_time_ns, rr_interval_ms);
+    let _ = crate::experiment_session_runtime::record_polar_heart_rate(
+        host_time_ns,
+        host_time_ns,
+        LATEST_POLAR_BPM.load(Ordering::Acquire),
+        Some(rr_interval_ms),
+    );
 }
 
 #[cfg(target_os = "android")]

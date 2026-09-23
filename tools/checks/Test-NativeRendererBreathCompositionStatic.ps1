@@ -114,6 +114,7 @@ function Get-ArtifactSha256 {
 
 $corePath = Join-Path $repo "crates\rusty-quest-breath-contract\src\composition.rs"
 $runtimePath = Join-Path $repo "apps\native-renderer-android\native\src\breath_composition_runtime.rs"
+$experimentSessionRuntimePath = Join-Path $repo "apps\native-renderer-android\native\src\experiment_session_runtime.rs"
 $controllerPath = Join-Path $repo "apps\native-renderer-android\native\src\openxr_stimulus_actions.rs"
 $polarPath = Join-Path $repo "apps\native-renderer-android\native\src\polar_acc_breath_adapter.rs"
 $polarPhasePath = Join-Path $repo "apps\native-renderer-android\native\src\polar_acc_phase_classifier.rs"
@@ -146,6 +147,7 @@ $featurePaths = @(
 
 $core = Read-RequiredText $corePath "pure composition"
 $runtime = Read-RequiredText $runtimePath "native runtime"
+$experimentSessionRuntime = Read-RequiredText $experimentSessionRuntimePath "experiment session runtime"
 $controller = Read-RequiredText $controllerPath "OpenXR adapter composition"
 $polar = Read-RequiredText $polarPath "Polar ACC adapter"
 $polarPhase = Read-RequiredText $polarPhasePath "Polar-specific phase classifier"
@@ -153,6 +155,8 @@ $ingress = Read-RequiredText $ingressPath "Polar ingress"
 $capture = Read-RequiredText $capturePath "synchronized source capture"
 $captureAnalyzer = Read-RequiredText $captureAnalyzerPath "host capture analyzer"
 $panel = Read-RequiredText $panelPath "same-APK panel"
+$panelImmersiveHandoffPath = Join-Path $repo "apps\native-renderer-android\src\main\java\io\github\mesmerprism\rustyquest\native_renderer\PanelImmersiveHandoff.java"
+$panelImmersiveHandoff = Read-RequiredText $panelImmersiveHandoffPath "shared panel/immersive handoff"
 $polarPanel = Read-RequiredText $polarPanelPath "sole Polar acquisition panel"
 $calibrationAction = Read-RequiredText $calibrationActionPath "controller calibration action"
 $worldBasis = Read-RequiredText $worldBasisPath "captured private-particle world basis"
@@ -222,6 +226,10 @@ Assert-Tokens $runtime @(
     "AdapterAction::Reset",
     "start_calibration_restarts_running_ready_and_failed_generations_atomically",
     "running_calibration_restart_rejects_before_any_mutation_when_queue_is_full",
+    "ensure_running_for_experiment_arm",
+    "experiment_arm_starts_selected_composition_and_preserves_healthy_generation",
+    "experiment_arm_restarts_failed_calibration_and_survives_defaults_reset",
+    "experiment_arm_keeps_disabled_composition_inert",
     "source_change_queues_hard_resets_but_mapping_change_does_not"
     '"configure_polar_state"'
     '"polar_state_tuning"'
@@ -232,6 +240,10 @@ Assert-Tokens $runtime @(
     "malformed_session_nonfinite_range_and_unknown_fields_are_rejected_without_change"
     "compact_profile_is_exact_and_fresh_runtime_resets_request_fence"
 ) "native command/readback authority"
+Assert-Tokens $experimentSessionRuntime @(
+    "ensure_running_for_experiment_arm();",
+    "Arming owns the pre-roll lifecycle"
+) "experiment arm breath lifecycle"
 Assert-Tokens $controller @(
     "apply_composition_controller_actions",
     "BreathCompositionSource::Controller",
@@ -426,29 +438,33 @@ Assert-Tokens $panel @(
     "pollPrivateParticleEffectiveRevision",
     "effective_revision",
     "Particle edit remains queued; renderer effective receipt has not arrived yet.",
+    "ControlPanelActivity.closePanelAndReturnToImmersive(this)"
+) "organized persistent breath-composition panel and delegated VR return"
+Assert-Tokens $panelImmersiveHandoff @(
     "renderer_focus_state.json",
-    "rendererHasAdvancedFocusedFrame",
-    "stable_focused_submitted_frames_panel_retained",
-    "focused_submitted_frame_timeout_panel_retained",
+    "STABLE_MS = 750L",
+    "state.frameCount > stableFrame",
     "status=timeout panelTaskRetained=true",
     "panelPaused=true panelTaskRetained=true",
     "status=probe-retained-after-destroy",
-    "RENDERER_RETURN_RELAUNCH_MS",
-    "RENDERER_RETURN_STABLE_FOCUS_MS",
-    "RENDERER_FOCUS_FRESH_MS",
-    "resetRendererReturnStableFocus"
-) "organized persistent breath-composition panel and receipt-gated VR return"
+    "RELAUNCH_MS = 500L",
+    "FRESH_MS = 2000L",
+    "cancelActiveForTerminalExit",
+    "APPLICATION_LIFECYCLE.canLaunch(ownerToken, expectedGeneration)",
+    "new WeakReference<PanelImmersiveHandoff>(null)"
+) "shared receipt-gated VR return"
 $rendererReturnStart = $panel.IndexOf("private void closePanelAndReturnToImmersive()")
-$rendererReturnEnd = $panel.IndexOf("private static final class RendererFocusState", $rendererReturnStart)
+$rendererReturnEnd = $panel.IndexOf("private void writeFile", $rendererReturnStart)
 if ($rendererReturnStart -lt 0 -or $rendererReturnEnd -le $rendererReturnStart) {
-    throw "Breath composition static check could not isolate the renderer return handoff"
+    throw "Breath composition static check could not isolate the delegated renderer return"
 }
 $rendererReturnMethods = $panel.Substring(
     $rendererReturnStart,
     $rendererReturnEnd - $rendererReturnStart
 )
 foreach ($forbiddenPanelRemovalToken in @("finishAndRemoveTask();", "finish();")) {
-    if ($rendererReturnMethods -match [regex]::Escape($forbiddenPanelRemovalToken)) {
+    if ($rendererReturnMethods -match [regex]::Escape($forbiddenPanelRemovalToken) -or
+        $panelImmersiveHandoff -match [regex]::Escape($forbiddenPanelRemovalToken)) {
         throw "Ordinary renderer return must retain the paused panel task: $forbiddenPanelRemovalToken"
     }
 }
@@ -543,8 +559,8 @@ Assert-Tokens ($operator + [Environment]::NewLine + $operatorReceiver) @(
 ) "headless operator command and structured readback"
 Assert-Tokens $polarPanel @(
     "buildEmbeddedAcquisitionView",
-    "buildView(false)",
-    'Button scan = button("Scan")',
+    "buildView()",
+    'scanButton = button(scanning ? "Scanning…" : "Scan")',
     'Button connect = button("Connect")',
     'Button startPmd = button("Start PMD")'
 ) "sole embedded Polar acquisition owner"

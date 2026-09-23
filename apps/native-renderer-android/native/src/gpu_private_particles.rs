@@ -1,6 +1,10 @@
 //! Generic private particle payload slot for downstream GPU-resident effects.
 
-use std::{ffi::CString, mem};
+use std::{
+    ffi::CString,
+    mem,
+    sync::atomic::{AtomicU64, Ordering},
+};
 
 use ash::vk;
 
@@ -43,6 +47,24 @@ use crate::native_renderer_properties::{
     PROP_PRIVATE_PARTICLES_TRANSPARENCY_RGB_ALPHA_COUPLING, PROP_PRIVATE_PARTICLES_VISUAL_SCALE,
     PROP_PRIVATE_PARTICLES_VISUAL_SCALE_REQUEST_V1,
 };
+
+static NEXT_PRIVATE_PARTICLE_RENDER_SESSION_GENERATION: AtomicU64 = AtomicU64::new(0);
+static PACKAGED_DEFAULTS_RESET_REVISION: AtomicU64 = AtomicU64::new(0);
+
+pub(crate) fn request_packaged_defaults_reset() -> u64 {
+    PACKAGED_DEFAULTS_RESET_REVISION
+        .fetch_add(1, Ordering::AcqRel)
+        .saturating_add(1)
+}
+
+fn packaged_defaults_reset_revision() -> u64 {
+    PACKAGED_DEFAULTS_RESET_REVISION.load(Ordering::Acquire)
+}
+
+fn pending_packaged_defaults_reset(last_consumed: u64, observed: u64) -> Option<u64> {
+    (observed != last_consumed).then_some(observed)
+}
+
 use crate::native_renderer_property_values::{bool_value, f32_clamped_value, u32_value};
 use crate::native_renderer_stimulus_panel::PrivateParticlePanelUpdateMask;
 use crate::private_particle_breath_state_driver::{
@@ -50,6 +72,9 @@ use crate::private_particle_breath_state_driver::{
 };
 use crate::private_particle_heartbeat_pulse_adapter::{
     PrivateParticleHeartbeatPulseAdapter, PrivateParticleHeartbeatPulseAdapterSettings,
+};
+use crate::private_particle_push_abi::{
+    private_particle_diagnostic_push, PrivateParticlePush, PrivateParticleSortPush,
 };
 use crate::private_particle_world_basis::PrivateParticleFrameEyeProjections;
 use crate::{
@@ -469,6 +494,19 @@ fn legacy_particle_size_percent_envelope(visual_scale: f32) -> (f32, f32, f32, f
     (base, oscillation_percent, min, max)
 }
 
+fn generated_private_particle_material_default() -> Option<PrivateParticleMaterialPreset> {
+    if PRIVATE_PARTICLE_DEFAULT_MATERIAL_PRESET == "packaged-default" {
+        None
+    } else {
+        Some(
+            PrivateParticleMaterialPreset::parse_marker_name(
+                PRIVATE_PARTICLE_DEFAULT_MATERIAL_PRESET,
+            )
+            .expect("build script emitted an unsupported private-particle material preset"),
+        )
+    }
+}
+
 impl PrivateParticleRuntimeSettings {
     fn from_generated_defaults() -> Self {
         let driver_values01 = private_particle_driver_values01_from_generated();
@@ -478,12 +516,28 @@ impl PrivateParticleRuntimeSettings {
         Self {
             visual_scale,
             visual_parameter_source: PRIVATE_PARTICLE_VISUAL_PARAMETER_SOURCE,
-            particle_size_override_enabled: false,
-            particle_size_mode: PRIVATE_PARTICLE_SIZE_MODE_LEGACY,
-            particle_size_world_meters: 0.05,
-            particle_size_sphere_percent: legacy_size_base,
-            particle_size_oscillation_percent: legacy_size_oscillation,
-            particle_size_parameter_source: "payload-legacy-size-envelope",
+            particle_size_override_enabled: PRIVATE_PARTICLE_DEFAULT_SIZE_OVERRIDE_ENABLED,
+            particle_size_mode: if PRIVATE_PARTICLE_DEFAULT_SIZE_OVERRIDE_ENABLED {
+                PRIVATE_PARTICLE_DEFAULT_SIZE_MODE
+            } else {
+                PRIVATE_PARTICLE_SIZE_MODE_LEGACY
+            },
+            particle_size_world_meters: if PRIVATE_PARTICLE_DEFAULT_SIZE_OVERRIDE_ENABLED {
+                PRIVATE_PARTICLE_DEFAULT_SIZE_WORLD_METERS
+            } else {
+                0.05
+            },
+            particle_size_sphere_percent: if PRIVATE_PARTICLE_DEFAULT_SIZE_OVERRIDE_ENABLED {
+                PRIVATE_PARTICLE_DEFAULT_SIZE_SPHERE_RADIUS_PERCENT
+            } else {
+                legacy_size_base
+            },
+            particle_size_oscillation_percent: if PRIVATE_PARTICLE_DEFAULT_SIZE_OVERRIDE_ENABLED {
+                PRIVATE_PARTICLE_DEFAULT_SIZE_OSCILLATION_PERCENT
+            } else {
+                legacy_size_oscillation
+            },
+            particle_size_parameter_source: PRIVATE_PARTICLE_DEFAULT_SIZE_PARAMETER_SOURCE,
             driver0_value01: PRIVATE_PARTICLE_DRIVER_VALUES01[0].clamp(0.0, 1.0),
             driver1_value01: PRIVATE_PARTICLE_DRIVER_VALUES01[1].clamp(0.0, 1.0),
             driver_values01,
@@ -512,8 +566,8 @@ impl PrivateParticleRuntimeSettings {
             color_facing_attenuation_strength: PRIVATE_PARTICLE_COLOR_FACING_ATTENUATION_STRENGTH
                 .clamp(0.0, 1.0),
             color_parameter_source: PRIVATE_PARTICLE_COLOR_PARAMETER_SOURCE,
-            material_preset: None,
-            material_parameter_source: "runtime-owner-default-when-unset",
+            material_preset: generated_private_particle_material_default(),
+            material_parameter_source: PRIVATE_PARTICLE_DEFAULT_MATERIAL_PARAMETER_SOURCE,
             render_experiment_preset: None,
             render_experiment_parameter_source: "runtime-owner-default-build-mask-policy",
             offscreen_half_res: false,
@@ -611,6 +665,7 @@ impl PrivateParticleRuntimeSettings {
             || transparency_rgb_alpha_overridden;
         let (legacy_size_base, legacy_size_oscillation, _, _) =
             legacy_particle_size_percent_envelope(visual_scale);
+        let material_scalar_overridden = transparency_overridden || color_facing_overridden;
         Self {
             visual_scale,
             visual_parameter_source: if visual_overridden {
@@ -618,12 +673,28 @@ impl PrivateParticleRuntimeSettings {
             } else {
                 PRIVATE_PARTICLE_VISUAL_PARAMETER_SOURCE
             },
-            particle_size_override_enabled: false,
-            particle_size_mode: PRIVATE_PARTICLE_SIZE_MODE_LEGACY,
-            particle_size_world_meters: 0.05,
-            particle_size_sphere_percent: legacy_size_base,
-            particle_size_oscillation_percent: legacy_size_oscillation,
-            particle_size_parameter_source: "payload-legacy-size-envelope",
+            particle_size_override_enabled: PRIVATE_PARTICLE_DEFAULT_SIZE_OVERRIDE_ENABLED,
+            particle_size_mode: if PRIVATE_PARTICLE_DEFAULT_SIZE_OVERRIDE_ENABLED {
+                PRIVATE_PARTICLE_DEFAULT_SIZE_MODE
+            } else {
+                PRIVATE_PARTICLE_SIZE_MODE_LEGACY
+            },
+            particle_size_world_meters: if PRIVATE_PARTICLE_DEFAULT_SIZE_OVERRIDE_ENABLED {
+                PRIVATE_PARTICLE_DEFAULT_SIZE_WORLD_METERS
+            } else {
+                0.05
+            },
+            particle_size_sphere_percent: if PRIVATE_PARTICLE_DEFAULT_SIZE_OVERRIDE_ENABLED {
+                PRIVATE_PARTICLE_DEFAULT_SIZE_SPHERE_RADIUS_PERCENT
+            } else {
+                legacy_size_base
+            },
+            particle_size_oscillation_percent: if PRIVATE_PARTICLE_DEFAULT_SIZE_OVERRIDE_ENABLED {
+                PRIVATE_PARTICLE_DEFAULT_SIZE_OSCILLATION_PERCENT
+            } else {
+                legacy_size_oscillation
+            },
+            particle_size_parameter_source: PRIVATE_PARTICLE_DEFAULT_SIZE_PARAMETER_SOURCE,
             driver0_value01,
             driver1_value01,
             driver_values01,
@@ -663,8 +734,16 @@ impl PrivateParticleRuntimeSettings {
             } else {
                 PRIVATE_PARTICLE_COLOR_PARAMETER_SOURCE
             },
-            material_preset: None,
-            material_parameter_source: "runtime-owner-default-when-unset",
+            material_preset: if material_scalar_overridden {
+                None
+            } else {
+                generated_private_particle_material_default()
+            },
+            material_parameter_source: if material_scalar_overridden {
+                "runtime-hotload-android-property"
+            } else {
+                PRIVATE_PARTICLE_DEFAULT_MATERIAL_PARAMETER_SOURCE
+            },
             render_experiment_preset: None,
             render_experiment_parameter_source: "runtime-owner-default-build-mask-policy",
             offscreen_half_res,
@@ -1655,6 +1734,9 @@ pub(crate) struct GpuPrivateParticleRenderer {
     panel_settings_override: Option<GpuPrivateParticlePanelSettings>,
     pending_phase_reset_revision: i64,
     last_phase_reset_revision: i64,
+    settings_revision: u64,
+    last_packaged_defaults_reset_revision: u64,
+    render_session_generation: u64,
     manifold_driver_bridge: Option<ManifoldScalarDriverBridge>,
     manifold_driver_connected_marker_emitted: bool,
     breath_state_driver: PrivateParticleBreathStateDriver,
@@ -2104,11 +2186,7 @@ impl GpuPrivateParticleRenderer {
         );
 
         let push_ranges = [vk::PushConstantRange::default()
-            .stage_flags(
-                vk::ShaderStageFlags::COMPUTE
-                    | vk::ShaderStageFlags::VERTEX
-                    | vk::ShaderStageFlags::FRAGMENT,
-            )
+            .stage_flags(private_particle_push_stages())
             .offset(0)
             .size(mem::size_of::<PrivateParticlePush>() as u32)];
         let pipeline_set_layouts = [descriptor_set_layout];
@@ -2498,6 +2576,11 @@ impl GpuPrivateParticleRenderer {
             panel_settings_override: None,
             pending_phase_reset_revision: 0,
             last_phase_reset_revision: 0,
+            settings_revision: 0,
+            last_packaged_defaults_reset_revision: packaged_defaults_reset_revision(),
+            render_session_generation: NEXT_PRIVATE_PARTICLE_RENDER_SESSION_GENERATION
+                .fetch_add(1, Ordering::AcqRel)
+                .saturating_add(1),
             manifold_driver_bridge,
             manifold_driver_connected_marker_emitted: false,
             breath_state_driver,
@@ -2543,6 +2626,9 @@ impl GpuPrivateParticleRenderer {
     }
 
     pub(crate) fn begin_runtime_session(&mut self) {
+        // OpenXR lifecycle return is not a product reset. Developer-panel
+        // overrides survive a temporary 2D-panel/dev-menu round trip and are
+        // cleared only by the explicit durable B restart reset revision.
         self.visual_scale_request_state.begin_session();
         self.heartbeat_orbit_request_state.begin_session();
         self.material_request_state.begin_session();
@@ -2586,6 +2672,32 @@ impl GpuPrivateParticleRenderer {
                 "status=session-ready {}",
                 self.render_experiment_request_state.session_marker_fields()
             ),
+        );
+    }
+
+    fn consume_packaged_defaults_reset_if_requested(&mut self) {
+        let revision = packaged_defaults_reset_revision();
+        let Some(revision) =
+            pending_packaged_defaults_reset(self.last_packaged_defaults_reset_revision, revision)
+        else {
+            return;
+        };
+        self.last_packaged_defaults_reset_revision = revision;
+        self.panel_settings_override = None;
+        self.settings_revision = self.settings_revision.saturating_add(1);
+        self.visual_scale_request_state.begin_session();
+        self.heartbeat_orbit_request_state.begin_session();
+        self.material_request_state.begin_session();
+        self.render_experiment_request_state.begin_session();
+        if self.heartbeat_pulse_adapter.settings() != self.heartbeat_orbit_packaged_settings {
+            self.heartbeat_pulse_adapter
+                .reconfigure(self.heartbeat_orbit_packaged_settings);
+            self.heartbeat_pulse_adapter_connected_marker_emitted = false;
+        }
+        self.runtime_settings_last_poll_frame = u64::MAX;
+        crate::marker(
+            "private-particle-packaged-defaults",
+            format!("status=reset revision={revision}"),
         );
     }
 
@@ -2795,6 +2907,14 @@ impl GpuPrivateParticleRenderer {
         frame_count: u64,
     ) -> GpuPrivateParticleFrameStats {
         let runtime_settings = self.runtime_settings(frame_count);
+        let mut world_center_scale = world_center_scale;
+        let mut world_anchor_scale_parameter_source = world_anchor_scale_parameter_source;
+        if let Some(radius_m) = crate::experiment_session_runtime::active_radius_m_for_progress(
+            runtime_settings.driver0_value01,
+        ) {
+            world_center_scale[3] = radius_m;
+            world_anchor_scale_parameter_source = "experiment-session-driver-slot-0";
+        }
         let driver_bank_rows = private_particle_driver_bank_rows(runtime_settings);
         if driver_bank_rows != self.driver_bank_uploaded_rows {
             match self.driver_bank_buffer.write_data(
@@ -2912,7 +3032,7 @@ impl GpuPrivateParticleRenderer {
         device.cmd_push_constants(
             cmd,
             self.pipeline_layout,
-            vk::ShaderStageFlags::COMPUTE,
+            private_particle_push_stages(),
             0,
             as_bytes(&push),
         );
@@ -2988,7 +3108,7 @@ impl GpuPrivateParticleRenderer {
             device.cmd_push_constants(
                 cmd,
                 self.pipeline_layout,
-                vk::ShaderStageFlags::COMPUTE,
+                private_particle_push_stages(),
                 0,
                 as_bytes(&push),
             );
@@ -3044,9 +3164,12 @@ impl GpuPrivateParticleRenderer {
             device.cmd_push_constants(
                 cmd,
                 self.pipeline_layout,
-                vk::ShaderStageFlags::COMPUTE,
+                private_particle_push_stages(),
                 0,
-                as_bytes(&push),
+                as_bytes(&private_particle_diagnostic_push(
+                    self.particle_count,
+                    frame_count,
+                )),
             );
             device.cmd_dispatch(
                 cmd,
@@ -3156,6 +3279,20 @@ impl GpuPrivateParticleRenderer {
             tracer_draw_slots_capacity: self.tracer_draw_slots_per_oscillator,
             diagnostic_snapshot: self.last_diagnostic_snapshot,
         };
+        if let Some(observed_at_ns) =
+            crate::experiment_session_runtime::current_elapsed_realtime_ns()
+        {
+            let _ = crate::experiment_session_runtime::record_effective_radius_snapshot(
+                frame_count,
+                observed_at_ns,
+                runtime_settings.driver0_value01,
+                world_center_scale[3],
+                runtime_settings.driver0_value01,
+                self.settings_revision,
+                self.render_session_generation,
+                world_anchor_scale_parameter_source,
+            );
+        }
         self.visual_scale_request_state
             .note_renderer_prepared_frame(
                 frame_count,
@@ -3222,6 +3359,9 @@ impl GpuPrivateParticleRenderer {
         revision: i64,
     ) -> GpuPrivateParticlePanelEffectiveSettings {
         let settings = settings.clamped();
+        if revision > 0 {
+            self.settings_revision = revision as u64;
+        }
         if settings.update_mask.polar_rr_orbit_boost {
             self.heartbeat_orbit_request_state
                 .clear_request_for_panel_authority();
@@ -3336,6 +3476,7 @@ impl GpuPrivateParticleRenderer {
     }
 
     fn runtime_settings(&mut self, frame_count: u64) -> PrivateParticleRuntimeSettings {
+        self.consume_packaged_defaults_reset_if_requested();
         let has_input_driver = self
             .panel_settings_override
             .as_ref()
@@ -3709,7 +3850,7 @@ impl GpuPrivateParticleRenderer {
         device.cmd_push_constants(
             cmd,
             self.pipeline_layout,
-            vk::ShaderStageFlags::COMPUTE,
+            private_particle_push_stages(),
             0,
             as_bytes(push),
         );
@@ -4006,7 +4147,7 @@ impl GpuPrivateParticleRenderer {
         device.cmd_push_constants(
             cmd,
             self.pipeline_layout,
-            vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
+            private_particle_push_stages(),
             0,
             as_bytes(&push),
         );
@@ -4068,12 +4209,6 @@ fn private_particle_push(
         eye_position: eye_projection.position,
         eye_orientation_xyzw: eye_projection.orientation_xyzw,
         fov_tangents: fov_tangents_override.unwrap_or(eye_projection.fov_tangents),
-        diagnostic_frame: [
-            frame_count as u32,
-            (frame_count >> 32) as u32,
-            0,
-            crate::native_renderer_diagnostics_contract::DIAGNOSTIC_SCHEMA_V2,
-        ],
     }
 }
 
@@ -6351,29 +6486,11 @@ fn cross3(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
     ]
 }
 
-#[repr(C)]
-struct PrivateParticleSortPush {
-    params0: [f32; 4],
-    params1: [f32; 4],
-    params2: [f32; 4],
+fn private_particle_push_stages() -> vk::ShaderStageFlags {
+    // VUID-vkCmdPushConstants-offset-01796: every update must include all
+    // stages in the overlapping range, including compute-only dispatches.
+    vk::ShaderStageFlags::COMPUTE | vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT
 }
-
-#[repr(C)]
-struct PrivateParticlePush {
-    params0: [f32; 4],
-    params1: [f32; 4],
-    transparency_params: [f32; 4],
-    tracer_params: [f32; 4],
-    world_center_scale: [f32; 4],
-    eye_position: [f32; 4],
-    eye_orientation_xyzw: [f32; 4],
-    fov_tangents: [f32; 4],
-    diagnostic_frame: [u32; 4],
-}
-
-// Eight legacy vec4s plus the v2 diagnostic frame envelope. Keep the private
-// detailed shader ABI explicit: 9 * 16 bytes.
-const _: [(); 144] = [(); mem::size_of::<PrivateParticlePush>()];
 
 #[cfg(test)]
 mod diagnostic_contract_tests {
@@ -6841,6 +6958,18 @@ mod material_request_tests {
             alpha_over as u32 / PRIVATE_PARTICLE_BLEND_MODE_PACK_OFFSET,
             1
         );
+    }
+}
+
+#[cfg(test)]
+mod packaged_defaults_reset_tests {
+    use super::*;
+
+    #[test]
+    fn explicit_reset_revision_is_edge_triggered_and_idempotent() {
+        assert_eq!(pending_packaged_defaults_reset(7, 7), None);
+        assert_eq!(pending_packaged_defaults_reset(7, 8), Some(8));
+        assert_eq!(pending_packaged_defaults_reset(8, 8), None);
     }
 }
 

@@ -23,6 +23,14 @@ public class PolarPanelModule extends Activity implements PanelModule, PolarSens
     }
 
     @Override
+    protected void onResume() {
+        super.onResume();
+        if (panel != null) {
+            panel.onHostResume();
+        }
+    }
+
+    @Override
     protected void onDestroy() {
         PolarSensorRuntime.forApplication(getApplicationContext()).detachPanel(this);
         panel = null;

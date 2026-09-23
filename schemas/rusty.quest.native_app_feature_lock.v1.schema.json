@@ -90,7 +90,80 @@
       "type": "object"
     },
     "build_inputs": {
-      "type": "object"
+      "type": "object",
+      "required": [
+        "env",
+        "assets",
+        "shaders",
+        "payloads",
+        "private_particle_payload_linkage",
+        "private_asset_closure"
+      ],
+      "properties": {
+        "env": { "type": "array" },
+        "assets": {
+          "type": "array",
+          "items": { "type": "string" },
+          "uniqueItems": true
+        },
+        "shaders": {
+          "type": "array",
+          "items": { "type": "string" },
+          "uniqueItems": true
+        },
+        "payloads": { "type": "array" },
+        "private_particle_payload_linkage": { "type": "object" },
+        "private_asset_closure": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "schema",
+            "mode",
+            "provider_id",
+            "provider_manifest_sha256",
+            "inventory_sha256",
+            "asset_count",
+            "assets"
+          ],
+          "properties": {
+            "schema": { "const": "rusty.quest.native_app_private_asset_closure.v1" },
+            "mode": { "enum": ["inactive", "linked-provider"] },
+            "provider_id": { "type": "string" },
+            "provider_manifest_sha256": { "type": "string" },
+            "inventory_sha256": { "type": "string" },
+            "asset_count": { "type": "integer", "minimum": 0, "maximum": 32 },
+            "assets": {
+              "type": "array",
+              "maxItems": 32,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "asset_id",
+                  "logical_destination",
+                  "staged_object",
+                  "source_sha256",
+                  "source_bytes",
+                  "media_type"
+                ],
+                "properties": {
+                  "asset_id": { "type": "string", "minLength": 1 },
+                  "logical_destination": { "type": "string", "minLength": 1 },
+                  "staged_object": { "type": "string", "minLength": 1 },
+                  "source_sha256": {
+                    "type": "string",
+                    "minLength": 64,
+                    "maxLength": 64,
+                    "pattern": "^[0-9a-f]{64}$"
+                  },
+                  "source_bytes": { "type": "integer", "minimum": 1 },
+                  "media_type": { "type": "string", "minLength": 3 }
+                }
+              }
+            }
+          }
+        }
+      }
     },
     "expected_markers": {
       "type": "object"

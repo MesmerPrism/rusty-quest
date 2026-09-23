@@ -777,4 +777,9 @@ try {
     }
 }
 
+& pwsh -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repoRootPath 'tools\checks\Test-NativeAppPrivateAssetProvider.ps1') -RepoRoot $repoRootPath
+if ($LASTEXITCODE -ne 0) {
+    throw "Native app private-asset provider gate failed with exit code $LASTEXITCODE"
+}
+
 Write-Host "Rusty Quest native app-build static validation passed"
