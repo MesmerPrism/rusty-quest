@@ -32,8 +32,10 @@ final class EmbeddedDuplexDisplaySlot implements EmbeddedDuplexDisplay {
         } finally { lock.unlock(); }
     }
 
-    /** Fence new calls, run typed product cleanup, then drain and clear. A failed
-     * cleanup or barrier retains the old attachment for an exact retry. */
+    /** Retain the attachment while typed cleanup may call back from another
+     * thread, then fence new calls, drain, and clear. The process host must
+     * reject new Start work before entering this barrier. A failed cleanup or
+     * barrier retains the old attachment for an exact retry. */
     void detachAfterCleanup(long expectedGeneration, Cleanup cleanup) throws Exception {
         if (cleanup == null || Boolean.TRUE.equals(inCallback.get())
                 || Boolean.TRUE.equals(cleanupPermit.get())) {
@@ -101,7 +103,7 @@ final class EmbeddedDuplexDisplaySlot implements EmbeddedDuplexDisplay {
         EmbeddedDuplexDisplay current;
         lock.lock();
         try {
-            if (attached == null || (detaching && !Boolean.TRUE.equals(cleanupPermit.get()))) {
+            if (attached == null || (detaching && !cleanupRunning)) {
                 throw new IllegalStateException("display attachment unavailable");
             }
             current = attached;
