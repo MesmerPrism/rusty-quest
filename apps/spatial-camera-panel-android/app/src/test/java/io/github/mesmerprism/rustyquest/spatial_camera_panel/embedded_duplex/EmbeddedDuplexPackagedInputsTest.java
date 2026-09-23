@@ -74,6 +74,11 @@ public final class EmbeddedDuplexPackagedInputsTest {
         assertEquals("neutral-project", request.getString("expected_project_id"));
         assertEquals("rusty.quest.neutral.effective",
                 request.getString("expected_activation_marker"));
+        assertEquals("role.fixture.b", request.getString("installed_role_id"));
+        assertEquals(inputs.digest("route-configuration.json"),
+                request.getJSONObject("route_configuration").getString("sha256"));
+        assertEquals(inputs.digest("packed-stereo-profile.json"),
+                request.getJSONObject("packed_profile").getString("sha256"));
         assertEquals(inputs.lifecycleJson(),
                 request.getJSONObject("media_lifecycle_lock").getString("json"));
         assertEquals(inputs.lifecycleDigest(),

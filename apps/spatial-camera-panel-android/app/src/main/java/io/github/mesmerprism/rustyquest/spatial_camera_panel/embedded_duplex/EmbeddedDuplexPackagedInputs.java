@@ -237,6 +237,7 @@ final class EmbeddedDuplexPackagedInputs {
         request.put("signing_certificate_sha256", identity.getString("signing_certificate_sha256"));
         request.put("expected_project_id", lifecycle.getString("project_id"));
         request.put("expected_activation_marker", lifecycle.getString("activation_effective_marker"));
+        request.put("installed_role_id", selectedRoleId);
         for (String key : new String[] {"adapter_id", "admission_authority_id", "grant_id",
                 "grant_expires_at_ms", "lease_expires_at_ms", "max_token_ttl_ms",
                 "embedded_duplex", "validation_epoch_entropy_hex",
@@ -248,6 +249,8 @@ final class EmbeddedDuplexPackagedInputs {
         request.put("client_lock", exact("client-lock.json"));
         request.put("media_lifecycle_lock", exact(role.lifecyclePath));
         request.put("app_feature_lock", exact("planning-feature-lock.json"));
+        request.put("route_configuration", exact("route-configuration.json"));
+        request.put("packed_profile", exact("packed-stereo-profile.json"));
         request.put("media_bindings", new JSONArray()
                 .put(exact(InstalledRole.PEER_A.bindingPath))
                 .put(exact(InstalledRole.PEER_B.bindingPath)));

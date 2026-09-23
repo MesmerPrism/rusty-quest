@@ -5,6 +5,9 @@
 //! documents. It verifies their exact bytes before assembling and validating
 //! the runtime configuration.
 
+use super::packaged_route::{
+    decode_and_validate_packaged_route, ExactRouteDocument, PackagedRouteExpectations,
+};
 use rusty_quest_broker_authority::{
     canonical_runtime_config_sha256, packaged_json_sha256, QuestBrokerAuthorityRuntime,
     QuestBrokerMediaSessionProductBinding, QuestBrokerRuntimeConfig,
@@ -56,6 +59,7 @@ struct PackagedConfigRequest {
     signing_certificate_sha256: String,
     expected_project_id: String,
     expected_activation_marker: String,
+    installed_role_id: String,
     adapter_id: String,
     admission_authority_id: String,
     grant_id: String,
@@ -67,6 +71,8 @@ struct PackagedConfigRequest {
     client_lock: OwnedExactPackagedJson,
     media_lifecycle_lock: OwnedExactPackagedJson,
     app_feature_lock: OwnedExactPackagedJson,
+    route_configuration: OwnedExactPackagedJson,
+    packed_profile: OwnedExactPackagedJson,
     media_bindings: [OwnedExactPackagedJson; 2],
     embedded_duplex: QuestEmbeddedDuplexAuthorityConfig,
     validation_epoch_entropy_hex: String,
@@ -79,6 +85,36 @@ struct PackagedConfigRequest {
 pub(crate) fn assemble_packaged_config_request_json(request_json: &str) -> Result<String, String> {
     let request: PackagedConfigRequest = serde_json::from_str(request_json)
         .map_err(|_| "invalid packaged configuration request".to_owned())?;
+    let product_lock: Value = serde_json::from_str(&request.product_lock.json)
+        .map_err(|_| "invalid packaged product lock".to_owned())?;
+    let product_id = product_lock
+        .get("product_id")
+        .and_then(Value::as_str)
+        .ok_or("packaged product id absent")?;
+    let route = decode_and_validate_packaged_route(
+        ExactRouteDocument {
+            json: &request.route_configuration.json,
+            sha256: &request.route_configuration.sha256,
+        },
+        ExactRouteDocument {
+            json: &request.packed_profile.json,
+            sha256: &request.packed_profile.sha256,
+        },
+        request
+            .media_bindings
+            .each_ref()
+            .map(|binding| ExactRouteDocument {
+                json: &binding.json,
+                sha256: &binding.sha256,
+            }),
+        PackagedRouteExpectations {
+            route_schema: "rusty.morphovision.embedded_duplex.route_configuration.v1",
+            profile_schema: "rusty.morphovision.embedded_duplex.packed_profile.v1",
+            product_id,
+            package_name: &request.package_name,
+            installed_role_id: &request.installed_role_id,
+        },
+    )?;
     let assembled = assemble_embedded_duplex_packaged_config(EmbeddedDuplexPackagedConfigInput {
         package_name: &request.package_name,
         signing_certificate_sha256: &request.signing_certificate_sha256,
@@ -109,7 +145,23 @@ pub(crate) fn assemble_packaged_config_request_json(request_json: &str) -> Resul
         "$schema": "rusty.quest.embedded_duplex.packaged_config_result.v1",
         "runtime_config_json": assembled.canonical_json,
         "runtime_config_sha256": assembled.canonical_sha256,
-        "exact_input_sha256": assembled.exact_input_sha256
+        "exact_input_sha256": assembled.exact_input_sha256,
+        "packaged_route": {
+            "route_configuration_sha256": route.route_configuration_sha256,
+            "local_peer_id": route.local_peer().peer_id,
+            "remote_peer_id": route.peers[1 - route.installed_peer_index].peer_id,
+            "outgoing_runtime_spec_id": route.runtime_spec_ids[route.installed_peer_index],
+            "incoming_runtime_spec_id": route.runtime_spec_ids[1 - route.installed_peer_index],
+            "max_pair_delta_ns": route.profile.max_pair_delta_ns,
+            "local_control": {
+                "host": route.local_peer().control.host,
+                "port": route.local_peer().control.port,
+            },
+            "remote_control": {
+                "host": route.peers[1 - route.installed_peer_index].control.host,
+                "port": route.peers[1 - route.installed_peer_index].control.port,
+            }
+        }
     }))
     .map_err(|_| "packaged configuration result encoding failed".to_owned())
 }
