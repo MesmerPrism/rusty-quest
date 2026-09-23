@@ -31,6 +31,89 @@ pub(crate) struct ExactPackagedJson<'a> {
     pub(crate) sha256: &'a str,
 }
 
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct OwnedExactPackagedJson {
+    json: String,
+    sha256: String,
+}
+
+impl OwnedExactPackagedJson {
+    fn borrowed(&self) -> ExactPackagedJson<'_> {
+        ExactPackagedJson {
+            json: &self.json,
+            sha256: &self.sha256,
+        }
+    }
+}
+
+/// JNI transfer envelope. The caller must obtain documents from the
+/// build-fixed packaged manifest before submitting this closed request.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PackagedConfigRequest {
+    package_name: String,
+    signing_certificate_sha256: String,
+    expected_project_id: String,
+    expected_activation_marker: String,
+    adapter_id: String,
+    admission_authority_id: String,
+    grant_id: String,
+    grant_expires_at_ms: u64,
+    lease_expires_at_ms: u64,
+    max_token_ttl_ms: u64,
+    product_spec: OwnedExactPackagedJson,
+    product_lock: OwnedExactPackagedJson,
+    client_lock: OwnedExactPackagedJson,
+    media_lifecycle_lock: OwnedExactPackagedJson,
+    app_feature_lock: OwnedExactPackagedJson,
+    media_bindings: [OwnedExactPackagedJson; 2],
+    embedded_duplex: QuestEmbeddedDuplexAuthorityConfig,
+    validation_epoch_entropy_hex: String,
+    validation_wall_unix_ms: i64,
+    validation_monotonic_elapsed_ns: u64,
+}
+
+/// Parse the closed JNI envelope and return only the already revalidated
+/// canonical config, digest, and exact input digest projection.
+pub(crate) fn assemble_packaged_config_request_json(request_json: &str) -> Result<String, String> {
+    let request: PackagedConfigRequest = serde_json::from_str(request_json)
+        .map_err(|_| "invalid packaged configuration request".to_owned())?;
+    let assembled = assemble_embedded_duplex_packaged_config(EmbeddedDuplexPackagedConfigInput {
+        package_name: &request.package_name,
+        signing_certificate_sha256: &request.signing_certificate_sha256,
+        expected_project_id: &request.expected_project_id,
+        expected_activation_marker: &request.expected_activation_marker,
+        adapter_id: &request.adapter_id,
+        admission_authority_id: &request.admission_authority_id,
+        grant_id: &request.grant_id,
+        grant_expires_at_ms: request.grant_expires_at_ms,
+        lease_expires_at_ms: request.lease_expires_at_ms,
+        max_token_ttl_ms: request.max_token_ttl_ms,
+        product_spec: request.product_spec.borrowed(),
+        product_lock: request.product_lock.borrowed(),
+        client_lock: request.client_lock.borrowed(),
+        media_lifecycle_lock: request.media_lifecycle_lock.borrowed(),
+        app_feature_lock: request.app_feature_lock.borrowed(),
+        media_bindings: request
+            .media_bindings
+            .each_ref()
+            .map(OwnedExactPackagedJson::borrowed),
+        embedded_duplex: request.embedded_duplex,
+        validation_epoch_entropy_hex: &request.validation_epoch_entropy_hex,
+        validation_wall_unix_ms: request.validation_wall_unix_ms,
+        validation_monotonic_elapsed_ns: request.validation_monotonic_elapsed_ns,
+    })
+    .map_err(|error| error.to_string())?;
+    serde_json::to_string(&json!({
+        "$schema": "rusty.quest.embedded_duplex.packaged_config_result.v1",
+        "runtime_config_json": assembled.canonical_json,
+        "runtime_config_sha256": assembled.canonical_sha256,
+        "exact_input_sha256": assembled.exact_input_sha256
+    }))
+    .map_err(|_| "packaged configuration result encoding failed".to_owned())
+}
+
 /// Product/operator supplied inputs for one app-local embedded authority.
 #[derive(Clone, Debug)]
 pub(crate) struct EmbeddedDuplexPackagedConfigInput<'a> {

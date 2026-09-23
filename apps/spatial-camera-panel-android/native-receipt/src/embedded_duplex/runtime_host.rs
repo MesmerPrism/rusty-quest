@@ -4,6 +4,7 @@
 //! remain readable, but a second mutation cannot reenter an active provider.
 
 use super::java_bridge::JavaOwnerCallbacks;
+use super::packaged_config::assemble_packaged_config_request_json;
 use super::runtime_slot::Checkout;
 use jni::objects::{JByteArray, JClass, JObject, JString};
 use jni::sys::{jbyteArray, jstring};
@@ -422,6 +423,17 @@ fn return_string(env: &mut JNIEnv<'_>, result: Result<String, String>) -> jstrin
             std::ptr::null_mut()
         }
     }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1panel_embedded_1duplex_EmbeddedDuplexNative_assemblePackagedConfig(
+    mut env: JNIEnv<'_>,
+    _class: JClass<'_>,
+    request: JString<'_>,
+) -> jstring {
+    let result = read_string(&mut env, &request, 8 * 1024 * 1024)
+        .and_then(|text| assemble_packaged_config_request_json(&text));
+    return_string(&mut env, result)
 }
 
 #[no_mangle]

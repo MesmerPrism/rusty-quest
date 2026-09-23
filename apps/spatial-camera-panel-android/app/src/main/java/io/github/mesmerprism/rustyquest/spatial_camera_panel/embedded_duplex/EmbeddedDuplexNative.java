@@ -18,6 +18,7 @@ public final class EmbeddedDuplexNative {
     public static native void retireReceiverConnection(long receiverGeneration, long connectionGeneration);
     public static native boolean localCameraQuiescent();
 
+    static native String assemblePackagedConfig(String exactRequestJson);
     static native String initializeRuntime(String runtimeConfig, String expectedConfigSha256,
             String providerEpochEntropyHex, String bootstrap, Object platformCallbacks);
     static native String runtimeCommand(String operation, String input);
