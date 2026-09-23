@@ -1006,7 +1006,7 @@ mod tests {
                 .expect("schema"),
             binding_id: DottedId::new("binding.revoker").expect("binding"),
             provider_epoch_id: DottedId::new("epoch.one").expect("epoch"),
-            upstream_control_lease_id: original_lease,
+            upstream_control_lease_id: original_lease.clone(),
             source_authorization_id: DottedId::new("authorization.revoker").expect("source"),
         });
         assert!(check(&lease, &revoker, &revoker_lease, 100).is_err());
