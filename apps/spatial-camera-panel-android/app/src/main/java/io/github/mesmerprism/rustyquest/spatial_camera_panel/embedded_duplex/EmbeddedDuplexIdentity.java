@@ -112,6 +112,20 @@ final class EmbeddedDuplexIdentity {
                 || !hasSupportedAuthorityDomain(signingBytes)) {
             throw new IllegalArgumentException("unsupported or out-of-bounds authority signing bytes");
         }
+        return sign(identity, signingBytes);
+    }
+
+    /** Called only after the native host validates the live enrolled Common-LAN context. */
+    static byte[] signValidatedCommonLanBytes(Identity identity, byte[] signingBytes) throws Exception {
+        if (identity == null || signingBytes == null || signingBytes.length == 0
+                || signingBytes.length > MAX_AUTHORITY_BYTES
+                || !startsWith(signingBytes, COMMON_LAN_CONTEXT_DOMAIN)) {
+            throw new IllegalArgumentException("unvalidated Common-LAN signing bytes");
+        }
+        return sign(identity, signingBytes);
+    }
+
+    private static byte[] sign(Identity identity, byte[] signingBytes) throws Exception {
         Signature signer = Signature.getInstance(availableEd25519Name("Signature"));
         signer.initSign(identity.privateKey);
         signer.update(signingBytes);
@@ -256,9 +270,8 @@ final class EmbeddedDuplexIdentity {
         return Arrays.copyOfRange(encoded, X509_ED25519_PREFIX.length, encoded.length);
     }
 
-    private static boolean hasSupportedAuthorityDomain(byte[] value) {
-        return startsWith(value, COMMON_LAN_CONTEXT_DOMAIN)
-                || startsWith(value, OWNER_DISPATCH_REQUEST_DOMAIN)
+    static boolean hasSupportedAuthorityDomain(byte[] value) {
+        return startsWith(value, OWNER_DISPATCH_REQUEST_DOMAIN)
                 || startsWith(value, OWNER_DISPATCH_RESPONSE_DOMAIN)
                 || startsWith(value, PRODUCT_ACTIVATION_DOMAIN)
                 || startsWith(value, PRODUCT_ACTIVATION_ACK_DOMAIN);

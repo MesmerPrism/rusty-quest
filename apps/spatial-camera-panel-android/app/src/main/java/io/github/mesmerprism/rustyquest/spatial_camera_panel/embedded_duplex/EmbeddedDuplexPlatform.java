@@ -149,6 +149,12 @@ final class EmbeddedDuplexPlatform {
         return EmbeddedDuplexIdentity.signExactAuthorityBytes(identity, exactNativeBytes);
     }
 
+    // Native calls this only after current route, enrollment, endpoint and time
+    // validation. The generic dispatch signer cannot sign this domain.
+    public byte[] signValidatedCommonLanBytes(byte[] validatedNativeBytes) throws Exception {
+        return EmbeddedDuplexIdentity.signValidatedCommonLanBytes(identity, validatedNativeBytes);
+    }
+
     public byte[] exchangeOwnerFrame(String targetPeerId, byte[] exactFrame) throws Exception {
         if (!remotePeerId.equals(targetPeerId) || !controlReady()) {
             throw new IllegalStateException("owner control target unavailable");
