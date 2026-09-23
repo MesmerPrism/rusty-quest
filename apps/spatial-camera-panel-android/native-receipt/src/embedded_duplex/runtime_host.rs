@@ -567,6 +567,13 @@ struct AbortInput {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+struct CleanupTargetInput {
+    requester_id: String,
+    requester_lease_id: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct StartInput {
     client_id: String,
     activation_id: String,
@@ -763,6 +770,20 @@ fn command(operation: &str, input: &str) -> Result<String, String> {
                 .get()
                 .resume_media_start_abort_for_cleanup(&client, &request.lease_id)
                 .map_err(|_| "failed-Start cleanup resume rejected".into())
+        }
+        "inspect_retained_cleanup_target" => {
+            let request: CleanupTargetInput = serde_json::from_str(input).map_err(safe_decode)?;
+            let grant = serde_json::from_value(json!(host.route_grant_id)).map_err(safe_decode)?;
+            let requester =
+                serde_json::from_value(json!(request.requester_id)).map_err(safe_decode)?;
+            let lease =
+                serde_json::from_value(json!(request.requester_lease_id)).map_err(safe_decode)?;
+            serde_json::to_string(
+                &host
+                    .authority
+                    .retained_cleanup_target(&grant, &requester, &lease, now)?,
+            )
+            .map_err(safe_decode)
         }
         "peer_snapshot" => host.authority.snapshot_json(),
         "peer_status" => {

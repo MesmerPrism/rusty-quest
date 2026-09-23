@@ -25,7 +25,7 @@ use rusty_manifold_peer_runtime_host::{
     ManifoldPeerRuntimeHost, ManifoldPeerRuntimeHostError,
     ManifoldPeerRuntimeHostSnapshotMigrationReceipt,
 };
-use rusty_manifold_runtime_host::ManifoldRuntimeCommandRequest;
+use rusty_manifold_runtime_host::{ManifoldRuntimeCommandRequest, ManifoldRuntimeLease};
 use rusty_quest_media_stream_android::{
     request_signing_bytes, AndroidMediaExecutionMode, AndroidMediaExecutionTicket,
     CurrentOwnerProjectionSource, OwnerDispatchAuthorityProjection, OwnerDispatchAuthorityVerifier,
@@ -41,6 +41,41 @@ pub const QUEST_C1_OWNER_PROJECTION_SCHEMA: &str = "rusty.quest.c1.owner_project
 /// Product-owned C1 authority bootstrap schema.
 pub const QUEST_EMBEDDED_DUPLEX_AUTHORITY_CONFIG_SCHEMA: &str =
     "rusty.quest.embedded_duplex.authority_config.v1";
+/// Read-only retained cleanup target and current requester projection.
+pub const QUEST_RETAINED_CLEANUP_TARGET_SCHEMA: &str =
+    "rusty.quest.embedded_duplex.retained_cleanup_target.v1";
+
+/// Separates the immutable media target from the live cleanup requester.
+/// This is a preflight projection, never an owner-effect completion receipt.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct QuestRetainedCleanupTarget {
+    /// Schema.
+    #[serde(rename = "$schema")]
+    pub schema_id: String,
+    /// Retained terminal route grant.
+    pub route_grant_id: DottedId,
+    /// Original media holder whose handles must be stopped.
+    pub target_client_id: DottedId,
+    /// Original media lease retained as target evidence.
+    pub target_runtime_lease_id: DottedId,
+    /// Current authorized cleanup requester.
+    pub requester_id: DottedId,
+    /// Current requester's distinct lease.
+    pub requester_lease_id: DottedId,
+    /// Whether this requester is a trusted revoker rather than the original holder.
+    pub trusted_revoker: bool,
+    /// Retained authority process epoch.
+    pub provider_epoch_id: DottedId,
+    /// Exact retained platform runtime.
+    pub platform_runtime_spec_id: DottedId,
+    /// Digest of the immutable cleanup target fields.
+    pub cleanup_target_sha256: String,
+    /// Digest of the full terminal route record.
+    pub terminal_route_sha256: String,
+    /// Current requester lease expiry.
+    pub requester_expires_at_ms: u64,
+}
 
 /// Immutable trust roots that enable the mixed peer authority families.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -353,6 +388,79 @@ impl QuestEmbeddedDuplexAuthority {
         )
     }
 
+    /// Reads a terminal route and a live original-holder or non-derivative
+    /// trusted-revoker lease without changing route or platform state.
+    ///
+    /// # Errors
+    /// Rejects a missing/changed target, stale or foreign lease, derivative
+    /// revoker lease, or untrusted requester.
+    pub fn retained_cleanup_target(
+        &self,
+        grant_id: &DottedId,
+        requester_id: &DottedId,
+        requester_lease_id: &DottedId,
+        now_ms: u64,
+    ) -> Result<QuestRetainedCleanupTarget, String> {
+        let peer = read_peer(&self.peer)?;
+        let snapshot = peer.snapshot();
+        let route = snapshot
+            .pair_media_routes
+            .routes
+            .iter()
+            .find(|route| route.grant_id() == grant_id)
+            .ok_or_else(|| "cleanup route is absent".to_owned())?;
+        let rusty_manifold_peer::ManifoldAcceptedPairMediaRouteV2::CommonLan(route) = route else {
+            return Err("cleanup requires common-LAN route".to_owned());
+        };
+        if route.lifecycle_status == ManifoldPairMediaRouteLifecycleStatus::Current
+            || route.cleanup_status != ManifoldPairMediaRouteCleanupStatus::Pending
+            || route.authority_provider_epoch_id != snapshot.provider_epoch_id
+            || route.authority_host_id != snapshot.host_id
+        {
+            return Err("route has no retained cleanup target".to_owned());
+        }
+        let lease = snapshot
+            .media_command_runtime
+            .leases
+            .iter()
+            .find(|lease| lease.lease_id == *requester_lease_id)
+            .ok_or_else(|| "cleanup requester lease is absent".to_owned())?;
+        let trusted_revoker = current_cleanup_requester(
+            &route.authority_client_id,
+            &route.authority_runtime_lease_id,
+            requester_id,
+            requester_lease_id,
+            lease,
+            &snapshot.trust_policy.media_runtime_lease_scope_id,
+            &snapshot.trust_policy.trusted_media_revoker_ids,
+            now_ms,
+        )?;
+        let target = (
+            &route.grant_id,
+            &route.authority_client_id,
+            &route.authority_runtime_lease_id,
+            &route.authority_provider_epoch_id,
+            &route.platform_runtime_spec_id,
+            &route.peer_session_id,
+            &route.signed_topology_evidence,
+            &route.transport,
+        );
+        Ok(QuestRetainedCleanupTarget {
+            schema_id: QUEST_RETAINED_CLEANUP_TARGET_SCHEMA.to_owned(),
+            route_grant_id: route.grant_id.clone(),
+            target_client_id: route.authority_client_id.clone(),
+            target_runtime_lease_id: route.authority_runtime_lease_id.clone(),
+            requester_id: requester_id.clone(),
+            requester_lease_id: requester_lease_id.clone(),
+            trusted_revoker,
+            provider_epoch_id: route.authority_provider_epoch_id.clone(),
+            platform_runtime_spec_id: route.platform_runtime_spec_id.clone(),
+            cleanup_target_sha256: typed_sha256(&target)?,
+            terminal_route_sha256: typed_sha256(route)?,
+            requester_expires_at_ms: lease.expires_at_ms,
+        })
+    }
+
     /// Returns the complete durable v5 Runtime Host snapshot JSON.
     ///
     /// # Errors
@@ -435,7 +543,7 @@ impl CurrentOwnerProjectionSource for QuestEmbeddedDuplexProjectionSource {
         &self,
         ticket: &AndroidMediaExecutionTicket,
         target_peer_id: &str,
-        mode: AndroidMediaExecutionMode,
+        _mode: AndroidMediaExecutionMode,
         now_ms: u64,
     ) -> Result<OwnerDispatchAuthorityProjection, String> {
         let target = DottedId::new(target_peer_id.to_owned()).map_err(|error| error.to_string())?;
@@ -451,7 +559,7 @@ impl CurrentOwnerProjectionSource for QuestEmbeddedDuplexProjectionSource {
                 if matches!(
                     ticket.operation,
                     rusty_quest_media_stream::MediaStreamPlatformOperation::Stop
-                ) || matches!(mode, AndroidMediaExecutionMode::CompensateUncertain) =>
+                ) =>
             {
                 self.authority.retained_cleanup_owner_projection(
                     &self.route_grant_id,
@@ -651,6 +759,9 @@ fn cleanup_projection_from_retained(
     if route.lifecycle_status == ManifoldPairMediaRouteLifecycleStatus::Current
         || route.cleanup_status != ManifoldPairMediaRouteCleanupStatus::Pending
         || route.authority_provider_epoch_id.to_string() != ticket.authority_epoch_id
+        || ticket.client_id != route.authority_client_id.to_string()
+        || ticket.lease_id != route.authority_runtime_lease_id.to_string()
+        || ticket.operation != rusty_quest_media_stream::MediaStreamPlatformOperation::Stop
     {
         return Err("route has no retained cleanup authorization".to_owned());
     }
@@ -660,21 +771,23 @@ fn cleanup_projection_from_retained(
         .media_command_runtime
         .leases
         .iter()
-        .find(|lease| {
-            lease.lease_id == lease_id
-                && lease.holder_id == requester
-                && lease.scope == snapshot.trust_policy.media_runtime_lease_scope_id
-                && lease.expires_at_ms > now_ms
-        })
-        .ok_or_else(|| "cleanup requester lease is not current".to_owned())?;
-    if !cleanup_requester_authorized(
+        .find(|lease| lease.lease_id == lease_id)
+        .ok_or_else(|| "cleanup requester lease is absent".to_owned())?;
+    let trusted_revoker = current_cleanup_requester(
         &route.authority_client_id,
         &route.authority_runtime_lease_id,
         &requester,
         &lease_id,
+        lease,
+        &snapshot.trust_policy.media_runtime_lease_scope_id,
         &snapshot.trust_policy.trusted_media_revoker_ids,
-    ) {
-        return Err("cleanup requester is not original client or trusted revoker".to_owned());
+        now_ms,
+    )?;
+    // This dispatch schema has only one client/lease field, which is the media
+    // ticket's immutable target. Revoker execution needs a distinct signed
+    // requester binding; it cannot be represented by relabeling this ticket.
+    if trusted_revoker {
+        return Err("revoker owner dispatch requires distinct requester binding".to_owned());
     }
     let topology = &route.signed_topology_evidence;
     let peers_match = (&topology.initiator_peer_id == authority_peer_id
@@ -702,8 +815,8 @@ fn cleanup_projection_from_retained(
         authority_runtime_host_id: route.authority_host_id.to_string(),
         authority_provider_epoch_id: route.authority_provider_epoch_id.to_string(),
         platform_runtime_spec_id: route.platform_runtime_spec_id.to_string(),
-        authority_client_id: requester.to_string(),
-        authority_runtime_lease_id: lease_id.to_string(),
+        authority_client_id: route.authority_client_id.to_string(),
+        authority_runtime_lease_id: route.authority_runtime_lease_id.to_string(),
         signed_topology_sha256: typed_sha256(topology)?,
         route_configuration_sha256: route.transport.route_configuration_sha256.clone(),
         route_authority_evidence_sha256: typed_sha256(route)?,
@@ -712,15 +825,33 @@ fn cleanup_projection_from_retained(
     })
 }
 
-fn cleanup_requester_authorized(
+fn current_cleanup_requester(
     original_client_id: &DottedId,
     original_lease_id: &DottedId,
     requester_id: &DottedId,
     requester_lease_id: &DottedId,
+    lease: &ManifoldRuntimeLease,
+    required_scope: &DottedId,
     trusted_revoker_ids: &[DottedId],
-) -> bool {
-    (original_client_id == requester_id && original_lease_id == requester_lease_id)
-        || trusted_revoker_ids.contains(requester_id)
+    now_ms: u64,
+) -> Result<bool, String> {
+    if lease.lease_id != *requester_lease_id
+        || lease.holder_id != *requester_id
+        || lease.scope != *required_scope
+        || lease.expires_at_ms <= now_ms
+    {
+        return Err("cleanup requester lease is not current".to_owned());
+    }
+    if original_client_id == requester_id && original_lease_id == requester_lease_id {
+        return Ok(false);
+    }
+    if requester_id != original_client_id
+        && trusted_revoker_ids.contains(requester_id)
+        && lease.derivative_binding.is_none()
+    {
+        return Ok(true);
+    }
+    Err("cleanup requester is not original client or non-derivative trusted revoker".to_owned())
 }
 
 fn verify_projection_against_retained(
@@ -830,6 +961,7 @@ fn canonical_set(values: &[DottedId]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rusty_manifold_runtime_host::ManifoldRuntimeDerivativeLeaseBinding;
 
     #[test]
     fn cleanup_requester_requires_exact_original_or_trusted_revoker() {
@@ -838,33 +970,45 @@ mod tests {
         let revoker = DottedId::new("client.revoker").expect("revoker");
         let revoker_lease = DottedId::new("lease.revoker").expect("revoker lease");
         let attacker = DottedId::new("client.attacker").expect("attacker");
-        assert!(cleanup_requester_authorized(
-            &original,
-            &original_lease,
-            &original,
-            &original_lease,
-            std::slice::from_ref(&revoker),
-        ));
-        assert!(!cleanup_requester_authorized(
-            &original,
-            &original_lease,
-            &original,
-            &revoker_lease,
-            std::slice::from_ref(&revoker),
-        ));
-        assert!(cleanup_requester_authorized(
-            &original,
-            &original_lease,
-            &revoker,
-            &revoker_lease,
-            std::slice::from_ref(&revoker),
-        ));
-        assert!(!cleanup_requester_authorized(
-            &original,
-            &original_lease,
-            &attacker,
-            &revoker_lease,
-            std::slice::from_ref(&revoker),
-        ));
+        let scope = DottedId::new("scope.media").expect("scope");
+        let mut lease = ManifoldRuntimeLease {
+            lease_id: original_lease.clone(),
+            scope: scope.clone(),
+            holder_id: original.clone(),
+            expires_at_ms: 200,
+            derivative_binding: None,
+        };
+        let trusted = std::slice::from_ref(&revoker);
+        let check = |lease: &ManifoldRuntimeLease,
+                     requester: &DottedId,
+                     requested_lease: &DottedId,
+                     now| {
+            current_cleanup_requester(
+                &original,
+                &original_lease,
+                requester,
+                requested_lease,
+                lease,
+                &scope,
+                trusted,
+                now,
+            )
+        };
+        assert_eq!(check(&lease, &original, &original_lease, 100), Ok(false));
+        assert!(check(&lease, &original, &revoker_lease, 100).is_err());
+        assert!(check(&lease, &original, &original_lease, 200).is_err());
+        lease.lease_id = revoker_lease.clone();
+        lease.holder_id = revoker.clone();
+        assert_eq!(check(&lease, &revoker, &revoker_lease, 100), Ok(true));
+        assert!(check(&lease, &attacker, &revoker_lease, 100).is_err());
+        lease.derivative_binding = Some(ManifoldRuntimeDerivativeLeaseBinding {
+            schema_id: SchemaId::new("rusty.manifold.runtime_host.derivative_lease_binding.v1")
+                .expect("schema"),
+            binding_id: DottedId::new("binding.revoker").expect("binding"),
+            provider_epoch_id: DottedId::new("epoch.one").expect("epoch"),
+            upstream_control_lease_id: original_lease,
+            source_authorization_id: DottedId::new("authorization.revoker").expect("source"),
+        });
+        assert!(check(&lease, &revoker, &revoker_lease, 100).is_err());
     }
 }
