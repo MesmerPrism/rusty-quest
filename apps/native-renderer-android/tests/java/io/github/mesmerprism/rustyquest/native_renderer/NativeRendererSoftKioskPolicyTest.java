@@ -656,7 +656,8 @@ public final class NativeRendererSoftKioskPolicyTest {
         equal(0L, p.observe(1L, false, false, false, 1_000L));
         equal(0L, p.observe(1L, false, false, false, 2_000L));
         equal(0L, p.observe(1L, false, true, false, 2_100L));
-        long first = p.observe(1L, false, true, false, 2_850L);
+        equal(0L, p.observe(1L, false, true, false, 2_349L));
+        long first = p.observe(1L, false, true, false, 2_350L);
         require(first > 0L);
         equal(first, p.observe(1L, false, true, false, 9_000L));
         equal(0L, p.observe(1L, true, false, false, 10_000L));
@@ -665,7 +666,7 @@ public final class NativeRendererSoftKioskPolicyTest {
         equal(0L, p.observe(1L, false, true, false, 13_000L));
         p.observe(1L, true, false, false, 14_000L);
         p.observe(1L, false, true, false, 15_000L);
-        require(p.observe(1L, false, true, false, 15_750L) > first);
+        require(p.observe(1L, false, true, false, 15_250L) > first);
         // A different desired presentation must first acquire its own confirmed foreground.
         equal(0L, p.observe(2L, false, true, false, 16_000L));
         equal(0L, p.observe(2L, false, true, false, 17_000L));
