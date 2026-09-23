@@ -1,5 +1,8 @@
+use std::collections::HashSet;
 use std::ffi::{CStr, CString};
 use std::mem;
+use std::sync::Mutex;
+use std::time::Instant;
 
 use ash::vk;
 
@@ -11,11 +14,16 @@ use crate::ahardware_buffer_vulkan::{
 use crate::bool_token;
 use crate::camera_hwb_marker::log_camera_hwb_marker as log_marker;
 use crate::camera_hwb_probe::CameraHwbProbeMode;
+use crate::camera_hwb_projection_freshness_runtime::{
+    stage_camera_projection_command_buffer, CameraProjectionFrameIdentity,
+};
 use crate::camera_hwb_projection_target::{
     camera_hwb_projection_eye_push, camera_hwb_projection_marker_fields,
-    camera_hwb_projection_zone_frame, CameraHwbProjectionEyePush,
+    camera_hwb_projection_zone_frame, projection_zone_alpha_policy, readback::ProjectionReadback,
+    CameraHwbProjectionEyePush, ProjectionZoneCompositeAlpha,
 };
 use crate::camera_hwb_stream::CameraProbeFrame;
+use crate::camera_hwb_timing::{CameraHwbGpuTimestampStage, CameraHwbGpuTimestampTracker};
 use crate::camera_latency_diagnostics::{
     CameraLatencyIsolationMode, CameraLatencySettings, CameraLatencyStereoReprojection,
 };
@@ -24,9 +32,9 @@ use crate::camera_reprojection_guard_band::CameraReprojectionGuardBandFrame;
 use crate::spatial_guide_processing::current_spatial_guide_processing_policy;
 use crate::spatial_public_multistack::public_multistack_marker_fields;
 use crate::spatial_public_multistack_runtime::{
-    record_spatial_public_meta_passthrough_edge_window_cutout,
-    spatial_public_meta_passthrough_edge_window_selected,
-    spatial_public_raw_custom_projection_selected, SpatialPublicGuideTargets,
+    current_spatial_public_guide_pass_plan,
+    record_spatial_public_meta_passthrough_edge_window_cutout, SpatialPublicGuidePassRecord,
+    SpatialPublicGuideTargets,
 };
 use crate::spatial_video_projection::{
     SpatialVideoProjectionFrameStats, SpatialVideoProjectionRenderer,
@@ -41,25 +49,429 @@ pub(crate) struct CameraHwbRecordResult {
     pub(crate) projection_zone_stats: ProjectionZoneRenderStats,
 }
 
+#[derive(Default)]
+pub(crate) struct CameraHwbImportPerformanceStats {
+    attempts: u64,
+    hits: u64,
+    misses: u64,
+    property_query_calls: u64,
+    property_query_total_ns: u64,
+    property_query_max_ns: u64,
+    vulkan_import_calls: u64,
+    vulkan_import_total_ns: u64,
+    vulkan_import_max_ns: u64,
+    evictions: u64,
+    removal_signals: u64,
+    removal_evictions: u64,
+    removal_overflows: u64,
+    cache_disabled: bool,
+    cache_entries: usize,
+    cache_high_water: usize,
+    cache_inactive_limit: usize,
+}
+
+impl CameraHwbImportPerformanceStats {
+    pub(crate) fn with_cache_inactive_limit(cache_inactive_limit: usize) -> Self {
+        Self {
+            cache_inactive_limit,
+            ..Self::default()
+        }
+    }
+
+    fn record_hit(&mut self) {
+        self.attempts = self.attempts.saturating_add(1);
+        self.hits = self.hits.saturating_add(1);
+    }
+
+    fn record_miss(&mut self) {
+        self.attempts = self.attempts.saturating_add(1);
+        self.misses = self.misses.saturating_add(1);
+    }
+
+    fn record_property_query(&mut self, started_at: Instant) {
+        let elapsed_ns = u64::try_from(started_at.elapsed().as_nanos()).unwrap_or(u64::MAX);
+        self.property_query_calls = self.property_query_calls.saturating_add(1);
+        self.property_query_total_ns = self.property_query_total_ns.saturating_add(elapsed_ns);
+        self.property_query_max_ns = self.property_query_max_ns.max(elapsed_ns);
+    }
+
+    fn record_vulkan_import(&mut self, started_at: Instant) {
+        let elapsed_ns = u64::try_from(started_at.elapsed().as_nanos()).unwrap_or(u64::MAX);
+        self.vulkan_import_calls = self.vulkan_import_calls.saturating_add(1);
+        self.vulkan_import_total_ns = self.vulkan_import_total_ns.saturating_add(elapsed_ns);
+        self.vulkan_import_max_ns = self.vulkan_import_max_ns.max(elapsed_ns);
+    }
+
+    fn record_cache_state(&mut self, entries: usize) {
+        self.cache_entries = entries;
+        self.cache_high_water = self.cache_high_water.max(entries);
+    }
+
+    fn record_eviction(&mut self, removed: bool) {
+        self.evictions = self.evictions.saturating_add(1);
+        if removed {
+            self.removal_evictions = self.removal_evictions.saturating_add(1);
+        }
+    }
+
+    fn record_removal_signals(&mut self, count: usize) {
+        self.removal_signals = self
+            .removal_signals
+            .saturating_add(u64::try_from(count).unwrap_or(u64::MAX));
+    }
+
+    fn record_removal_overflow(&mut self) {
+        self.removal_overflows = self.removal_overflows.saturating_add(1);
+        self.cache_disabled = true;
+    }
+
+    pub(crate) fn marker_fields(&self, eye: &str) -> String {
+        format!(
+            "eye={eye} attempts={} hits={} misses={} propertyQueries={} propertyQueryTotalNs={} propertyQueryMaxNs={} vulkanImports={} vulkanImportTotalNs={} vulkanImportMaxNs={} evictions={} removalSignals={} removalEvictions={} removalOverflows={} cacheDisabled={} cacheEntries={} cacheHighWater={} cacheInactiveLimit={}",
+            self.attempts,
+            self.hits,
+            self.misses,
+            self.property_query_calls,
+            self.property_query_total_ns,
+            self.property_query_max_ns,
+            self.vulkan_import_calls,
+            self.vulkan_import_total_ns,
+            self.vulkan_import_max_ns,
+            self.evictions,
+            self.removal_signals,
+            self.removal_evictions,
+            self.removal_overflows,
+            self.cache_disabled,
+            self.cache_entries,
+            self.cache_high_water,
+            self.cache_inactive_limit,
+        )
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct CameraHwbImportCacheKey {
+    stream_generation: u64,
+    hardware_buffer_id: u64,
+    width: u32,
+    height: u32,
+    layers: u32,
+    native_format: u32,
+    usage: u64,
+    stride: u32,
+    format_key: AhbVulkanFormatKey,
+}
+
+impl CameraHwbImportCacheKey {
+    fn from_frame(
+        stream_generation: u64,
+        frame: &CameraProbeFrame,
+        format_key: AhbVulkanFormatKey,
+    ) -> Self {
+        Self {
+            stream_generation,
+            hardware_buffer_id: frame.descriptor.hardware_buffer_id,
+            width: frame.descriptor.width,
+            height: frame.descriptor.height,
+            layers: frame.descriptor.layers,
+            native_format: frame.descriptor.format,
+            usage: frame.descriptor.usage,
+            stride: frame.descriptor.stride,
+            format_key,
+        }
+    }
+
+    fn cacheable(self, hardware_buffer_id_status: i32) -> bool {
+        self.hardware_buffer_id != 0 && hardware_buffer_id_status == 0
+    }
+}
+
+struct CameraHwbCachedImport {
+    key: CameraHwbImportCacheKey,
+    image: AhbVulkanSampledImage,
+}
+
+static CAMERA_HWB_WSI_IMPORT_IDENTITIES: Mutex<[Option<CameraProjectionFrameIdentity>; 2]> =
+    Mutex::new([None, None]);
+
+fn publish_camera_hwb_wsi_import_identity(stream_generation: u64, frame: &CameraProbeFrame) {
+    let side = match frame.side_label {
+        "left" => 0,
+        "right" => 1,
+        _ => return,
+    };
+    if let Ok(mut identities) = CAMERA_HWB_WSI_IMPORT_IDENTITIES.lock() {
+        identities[side] = Some(CameraProjectionFrameIdentity {
+            stream_generation,
+            frame_index: frame.frame_index,
+            hwb_import_sequence: frame.hwb_import_sequence,
+            timestamp_ns: frame.timestamp_ns,
+            hardware_buffer_id: frame.descriptor.hardware_buffer_id,
+        });
+    }
+}
+
+fn exact_camera_hwb_wsi_import_identities(
+    left_frame_index: u64,
+    right_frame_index: u64,
+    left_timestamp_ns: i64,
+    right_timestamp_ns: i64,
+) -> Result<[CameraProjectionFrameIdentity; 2], &'static str> {
+    let identities = CAMERA_HWB_WSI_IMPORT_IDENTITIES
+        .lock()
+        .map_err(|_| "camera-hwb-wsi-import-identity-lock-unavailable")?;
+    let left = identities[0].ok_or("left-camera-hwb-wsi-import-identity-unavailable")?;
+    let right = identities[1].ok_or("right-camera-hwb-wsi-import-identity-unavailable")?;
+    if left.frame_index != left_frame_index
+        || right.frame_index != right_frame_index
+        || left.timestamp_ns != left_timestamp_ns
+        || right.timestamp_ns != right_timestamp_ns
+        || left.stream_generation == 0
+        || left.stream_generation != right.stream_generation
+    {
+        return Err("camera-hwb-wsi-import-identity-mismatch");
+    }
+    Ok([left, right])
+}
+
+pub(crate) struct CameraHwbImportCache {
+    stream_generation: u64,
+    side_label: &'static str,
+    camera_id: String,
+    inactive_limit: usize,
+    removal_tombstone_limit: usize,
+    entries: Vec<CameraHwbCachedImport>,
+    removed_hardware_buffer_ids: HashSet<u64>,
+    disabled: bool,
+}
+
+impl CameraHwbImportCache {
+    pub(crate) fn new(
+        stream_generation: u64,
+        initial_frame: &CameraProbeFrame,
+        inactive_limit: usize,
+    ) -> Self {
+        publish_camera_hwb_wsi_import_identity(stream_generation, initial_frame);
+        Self {
+            stream_generation,
+            side_label: initial_frame.side_label,
+            camera_id: initial_frame.camera_id.clone(),
+            inactive_limit,
+            removal_tombstone_limit: inactive_limit.saturating_mul(4).max(16),
+            entries: Vec::with_capacity(inactive_limit),
+            removed_hardware_buffer_ids: HashSet::new(),
+            disabled: false,
+        }
+    }
+
+    fn key_for_frame(
+        &self,
+        frame: &CameraProbeFrame,
+        expected_format_key: AhbVulkanFormatKey,
+    ) -> Result<CameraHwbImportCacheKey, String> {
+        if frame.side_label != self.side_label || frame.camera_id != self.camera_id {
+            return Err(format!(
+                "camera-import-cache-source-changed-expected-side-{}-camera-{}-actual-side-{}-camera-{}",
+                self.side_label, self.camera_id, frame.side_label, frame.camera_id,
+            ));
+        }
+        Ok(CameraHwbImportCacheKey::from_frame(
+            self.stream_generation,
+            frame,
+            expected_format_key,
+        ))
+    }
+
+    pub(crate) unsafe fn acquire(
+        &mut self,
+        device: &ash::Device,
+        memory_properties: &vk::PhysicalDeviceMemoryProperties,
+        ahb_device: &ash::android::external_memory_android_hardware_buffer::Device,
+        resources: &CameraHwbProbeResources,
+        expected_format_key: AhbVulkanFormatKey,
+        frame: &CameraProbeFrame,
+        stats: &mut CameraHwbImportPerformanceStats,
+    ) -> Result<AhbVulkanSampledImage, String> {
+        let key = self.key_for_frame(frame, expected_format_key)?;
+        if !self.disabled
+            && key.cacheable(frame.descriptor.hardware_buffer_id_status)
+            && !self
+                .removed_hardware_buffer_ids
+                .contains(&key.hardware_buffer_id)
+        {
+            if let Some(index) = self.entries.iter().position(|entry| entry.key == key) {
+                let cached = self.entries.remove(index);
+                stats.record_hit();
+                stats.record_cache_state(self.entries.len());
+                publish_camera_hwb_wsi_import_identity(self.stream_generation, frame);
+                return Ok(cached.image);
+            }
+        }
+        let image = import_replacement_camera_frame_uncached(
+            device,
+            memory_properties,
+            ahb_device,
+            resources,
+            expected_format_key,
+            frame,
+            stats,
+        )?;
+        publish_camera_hwb_wsi_import_identity(self.stream_generation, frame);
+        Ok(image)
+    }
+
+    pub(crate) unsafe fn retire(
+        &mut self,
+        device: &ash::Device,
+        expected_format_key: AhbVulkanFormatKey,
+        frame: &CameraProbeFrame,
+        image: AhbVulkanSampledImage,
+        stats: &mut CameraHwbImportPerformanceStats,
+    ) -> Result<(), String> {
+        let key = self.key_for_frame(frame, expected_format_key)?;
+        let removed = self
+            .removed_hardware_buffer_ids
+            .contains(&key.hardware_buffer_id);
+        if self.disabled
+            || self.inactive_limit == 0
+            || !key.cacheable(frame.descriptor.hardware_buffer_id_status)
+            || removed
+        {
+            image.destroy(device);
+            if removed {
+                stats.record_eviction(true);
+            }
+            return Ok(());
+        }
+        if let Some(index) = self.entries.iter().position(|entry| entry.key == key) {
+            let duplicate = self.entries.remove(index);
+            duplicate.image.destroy(device);
+            stats.record_eviction(false);
+        }
+        if self.entries.len() >= self.inactive_limit {
+            let evicted = self.entries.remove(0);
+            evicted.image.destroy(device);
+            stats.record_eviction(false);
+        }
+        self.entries.push(CameraHwbCachedImport { key, image });
+        stats.record_cache_state(self.entries.len());
+        Ok(())
+    }
+
+    pub(crate) unsafe fn process_removed_hardware_buffer_ids(
+        &mut self,
+        device: &ash::Device,
+        ids: &[u64],
+        queue_overflowed: bool,
+        stats: &mut CameraHwbImportPerformanceStats,
+    ) {
+        stats.record_removal_signals(ids.len());
+        if queue_overflowed {
+            self.disable_after_removal_overflow(device, stats);
+            return;
+        }
+        for hardware_buffer_id in ids.iter().copied().filter(|id| *id != 0) {
+            if !self
+                .removed_hardware_buffer_ids
+                .contains(&hardware_buffer_id)
+                && self.removed_hardware_buffer_ids.len() >= self.removal_tombstone_limit
+            {
+                self.disable_after_removal_overflow(device, stats);
+                return;
+            }
+            self.removed_hardware_buffer_ids.insert(hardware_buffer_id);
+            let mut index = 0;
+            while index < self.entries.len() {
+                if self.entries[index].key.hardware_buffer_id == hardware_buffer_id {
+                    let removed = self.entries.remove(index);
+                    removed.image.destroy(device);
+                    stats.record_eviction(true);
+                } else {
+                    index += 1;
+                }
+            }
+        }
+        stats.record_cache_state(self.entries.len());
+    }
+
+    unsafe fn disable_after_removal_overflow(
+        &mut self,
+        device: &ash::Device,
+        stats: &mut CameraHwbImportPerformanceStats,
+    ) {
+        if !self.disabled {
+            for entry in self.entries.drain(..) {
+                entry.image.destroy(device);
+                stats.record_eviction(true);
+            }
+        }
+        self.disabled = true;
+        stats.record_removal_overflow();
+        stats.record_cache_state(0);
+    }
+
+    pub(crate) unsafe fn destroy(self, device: &ash::Device) {
+        for entry in self.entries {
+            entry.image.destroy(device);
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct ProjectionZoneRenderStats {
     pub(crate) requested_mode: u32,
+    pub(crate) requested_composition_options: u32,
+    pub(crate) recorded_composition_options: u32,
+    pub(crate) recorded_attachment_blend_enabled: bool,
     pub(crate) prepared_video_ready: bool,
     pub(crate) public_projection_ready: bool,
     pub(crate) pipeline_ready: bool,
     pub(crate) rendered: bool,
     pub(crate) native_video_drawn: bool,
     pub(crate) native_video_suppressed: bool,
+    pub(crate) readable_video_consumer_required: bool,
     pub(crate) transparent_underlay_requested: bool,
     pub(crate) transparent_underlay_supported: bool,
+    pub(crate) swapchain_composite_alpha_selected: &'static str,
+    pub(crate) shader_alpha_output_contract: &'static str,
     pub(crate) synthetic_displacement_suppressed: bool,
+    pub(crate) descriptor_route: &'static str,
     pub(crate) descriptor_source: &'static str,
+    pub(crate) descriptor_available: bool,
+    pub(crate) prepare_status: &'static str,
+    pub(crate) system_layer_blend_observation: &'static str,
+    pub(crate) render_route: &'static str,
+    pub(crate) applied_region_contract_version: u32,
+    pub(crate) applied_center_content_mode: u32,
+    pub(crate) applied_center_corner_radius_uv_bits: u32,
+    pub(crate) applied_buffer_geometry_mode: u32,
+    pub(crate) applied_buffer_fill_mode: u32,
+    pub(crate) applied_buffer_static_width_uv_bits: u32,
+    pub(crate) applied_outer_content_mode: u32,
+    pub(crate) applied_outer_target_mode: u32,
+    pub(crate) guide_layer_override_bits: u32,
+    pub(crate) guide_passes_requested: usize,
+    pub(crate) guide_passes_recorded: usize,
+    pub(crate) guide_record_status: &'static str,
+    pub(crate) camera_payload_source: &'static str,
+    pub(crate) downstream_effect_passes_recorded: usize,
+    pub(crate) parity_loss_reason: &'static str,
 }
 
 impl ProjectionZoneRenderStats {
-    pub(crate) fn marker_fields(self) -> String {
+    pub(crate) fn composition_marker_fields(self) -> String {
+        crate::camera_hwb_projection_target::projection_composition_marker_fields(
+            self.requested_composition_options,
+            self.recorded_composition_options,
+            self.rendered,
+            self.recorded_attachment_blend_enabled,
+            self.shader_alpha_output_contract == "pre-multiplied",
+        )
+    }
+
+    pub(crate) fn readiness_marker_fields(self) -> String {
         format!(
-            "projectionZoneRequestedMode={} projectionZonePreparedVideoReady={} projectionZonePublicProjectionReady={} projectionZonePipelineReady={} projectionZoneRendered={} projectionZoneNativeVideoDrawn={} projectionZoneNativeVideoSuppressed={} projectionZoneTransparentUnderlayRequested={} projectionZoneTransparentUnderlaySupported={} projectionZoneSyntheticDisplacementSuppressed={} projectionZoneDescriptorSource={}",
+            "projectionZoneRequestedMode={} projectionZonePreparedVideoReady={} projectionZonePublicProjectionReady={} projectionZonePipelineReady={} projectionZoneRendered={} projectionZoneNativeVideoDrawn={} projectionZoneNativeVideoSuppressed={} readableVideoConsumerRequired={} projectionZoneTransparentUnderlayRequested={} projectionZoneTransparentUnderlaySupported={} projectionZoneSwapchainCompositeAlphaSelected={} projectionZoneShaderAlphaOutputContract={} projectionZoneSyntheticDisplacementSuppressed={} projectionZoneDescriptorRoute={} projectionZoneDescriptorSource={} projectionZoneDescriptorAvailable={} projectionZonePrepareStatus={} projectionZoneSystemLayerBlendObservation={} projectionZoneRenderRoute={}",
             self.requested_mode,
             bool_token(self.prepared_video_ready),
             bool_token(self.public_projection_ready),
@@ -67,11 +479,139 @@ impl ProjectionZoneRenderStats {
             bool_token(self.rendered),
             bool_token(self.native_video_drawn),
             bool_token(self.native_video_suppressed),
+            bool_token(self.readable_video_consumer_required),
             bool_token(self.transparent_underlay_requested),
             bool_token(self.transparent_underlay_supported),
+            self.swapchain_composite_alpha_selected,
+            self.shader_alpha_output_contract,
             bool_token(self.synthetic_displacement_suppressed),
+            self.descriptor_route,
             self.descriptor_source,
+            bool_token(self.descriptor_available),
+            self.prepare_status,
+            self.system_layer_blend_observation,
+            self.render_route,
         )
+    }
+
+    pub(crate) fn applied_configuration_marker_fields(self) -> String {
+        format!(
+            "projectionZoneAppliedRegionContractVersion={} projectionZoneAppliedCenterContentMode={} projectionZoneAppliedCenterCornerRadiusUv={:.6} projectionZoneAppliedBufferGeometryMode={} projectionZoneAppliedBufferFillMode={} projectionZoneAppliedBufferStaticWidthUv={:.6} projectionZoneAppliedOuterContentMode={} projectionZoneAppliedOuterTargetMode={}",
+            self.applied_region_contract_version,
+            self.applied_center_content_mode,
+            f32::from_bits(self.applied_center_corner_radius_uv_bits),
+            self.applied_buffer_geometry_mode,
+            self.applied_buffer_fill_mode,
+            f32::from_bits(self.applied_buffer_static_width_uv_bits),
+            self.applied_outer_content_mode,
+            self.applied_outer_target_mode,
+        )
+    }
+
+    pub(crate) fn raw_parity_marker_fields(self) -> String {
+        format!(
+            "rawCustomProjectionLayerOverride={:.3} rawCustomProjectionGuidePassesRequested={} rawCustomProjectionGuidePassesRecorded={} rawCustomProjectionGuideRecordStatus={} projectionZoneCameraPayloadSource={} rawCustomProjectionDownstreamEffectPassesRecorded={} projectionZoneParityLossReason={}",
+            f32::from_bits(self.guide_layer_override_bits),
+            self.guide_passes_requested,
+            self.guide_passes_recorded,
+            self.guide_record_status,
+            self.camera_payload_source,
+            self.downstream_effect_passes_recorded,
+            self.parity_loss_reason,
+        )
+    }
+}
+
+fn projection_zone_render_route_token(
+    camera_projection_visible: bool,
+    edge_window_cutout_applied: bool,
+    public_projection_ready: bool,
+    projection_zone_ready: bool,
+    projection_zone_rendered: bool,
+    projected_by_public_stack: bool,
+) -> &'static str {
+    if projection_zone_rendered {
+        "shared-zone-compositor"
+    } else if edge_window_cutout_applied {
+        "meta-passthrough-edge-window"
+    } else if public_projection_ready && !projection_zone_ready {
+        "public-projection-without-zone"
+    } else if projected_by_public_stack {
+        "public-projection"
+    } else if camera_projection_visible {
+        "camera-hwb-fallback"
+    } else {
+        "none"
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ProjectionZoneDescriptorRoute {
+    SyntheticDiagnostic,
+    RetainedUnusedVideo,
+    TransparentUnderlayFallback,
+    CameraFallback,
+    PreparedVideo,
+    Unavailable,
+}
+
+impl ProjectionZoneDescriptorRoute {
+    fn marker_token(self) -> &'static str {
+        match self {
+            Self::SyntheticDiagnostic => "synthetic-diagnostic",
+            Self::RetainedUnusedVideo => "retained-unused-video",
+            Self::TransparentUnderlayFallback => "transparent-underlay-fallback",
+            Self::CameraFallback => "camera-fallback",
+            Self::PreparedVideo => "prepared-video",
+            Self::Unavailable => "unavailable",
+        }
+    }
+}
+
+fn projection_zone_descriptor_route(
+    synthetic_diagnostic: bool,
+    readable_video_consumer_required: bool,
+    transparent_underlay_requested: bool,
+    retained_unused_video_descriptor_available: bool,
+    prepared_video_descriptor_available: bool,
+) -> ProjectionZoneDescriptorRoute {
+    if synthetic_diagnostic {
+        ProjectionZoneDescriptorRoute::SyntheticDiagnostic
+    } else if !readable_video_consumer_required && retained_unused_video_descriptor_available {
+        ProjectionZoneDescriptorRoute::RetainedUnusedVideo
+    } else if !readable_video_consumer_required && transparent_underlay_requested {
+        ProjectionZoneDescriptorRoute::TransparentUnderlayFallback
+    } else if !readable_video_consumer_required {
+        ProjectionZoneDescriptorRoute::CameraFallback
+    } else if prepared_video_descriptor_available {
+        ProjectionZoneDescriptorRoute::PreparedVideo
+    } else {
+        ProjectionZoneDescriptorRoute::Unavailable
+    }
+}
+
+fn projection_zone_parity_loss_reason(
+    guide_record: SpatialPublicGuidePassRecord,
+    camera_projection_visible: bool,
+    public_projection_ready: bool,
+    projection_zone_descriptor_available: bool,
+    projection_zone_ready: bool,
+    projection_zone_rendered: bool,
+) -> &'static str {
+    if !guide_record.camera_content_only {
+        "not-applicable"
+    } else if !camera_projection_visible {
+        "camera-projection-not-visible"
+    } else if !guide_record.complete() || !public_projection_ready {
+        "raw-reprojection-staging-unavailable"
+    } else if !projection_zone_descriptor_available {
+        "zone-descriptor-unavailable"
+    } else if !projection_zone_ready {
+        "shared-zone-pipeline-unavailable"
+    } else if !projection_zone_rendered {
+        "shared-zone-render-not-recorded"
+    } else {
+        "none"
     }
 }
 
@@ -254,7 +794,7 @@ pub(crate) unsafe fn create_camera_hwb_probe_resources(
     if matches!(mode, CameraHwbProbeMode::RawColorProjection) {
         let sampling = current_spatial_guide_processing_policy().camera_sampling;
         log_marker(format!(
-            "status=projection-composition-policy projectionBlendPolicy=premultiplied-alpha-over-same-surface-video rawCustomProjectionBorderBlend=true opaqueProjectionBorderBlend=true videoBorderInnerBlendUv=0.040 videoBorderBlendCurve=1.600 offscreenGuideBlendPolicy=opaque publicCameraSampling={} publicCameraSamplingRadiusTexels={:.2} runtimeCrash=false",
+            "status=projection-composition-policy projectionBlendPolicy=premultiplied-alpha-over-same-surface-video rawCustomProjectionBorderBlend=false opaqueProjectionBorderBlend=legacy-only projectionZoneBoundaryOwner=center-middle-outer rawCustomProjectionRoute=zone-compositor-with-fallback-no-fade videoBorderInnerBlendUv=0.040 videoBorderBlendCurve=1.600 offscreenGuideBlendPolicy=opaque publicCameraSampling={} publicCameraSamplingRadiusTexels={:.2} runtimeCrash=false",
             sampling.marker_token(),
             sampling.radius_texels(),
         ));
@@ -361,16 +901,20 @@ pub(crate) unsafe fn update_camera_hwb_probe_descriptor_set(
     device.update_descriptor_sets(&writes, &[]);
 }
 
-pub(crate) unsafe fn import_replacement_camera_frame(
+unsafe fn import_replacement_camera_frame_uncached(
     device: &ash::Device,
     memory_properties: &vk::PhysicalDeviceMemoryProperties,
     ahb_device: &ash::android::external_memory_android_hardware_buffer::Device,
     resources: &CameraHwbProbeResources,
     expected_format_key: AhbVulkanFormatKey,
     frame: &CameraProbeFrame,
+    stats: &mut CameraHwbImportPerformanceStats,
 ) -> Result<AhbVulkanSampledImage, String> {
-    let (import_properties, _format_props) =
-        query_ahb_vulkan_import_properties(ahb_device, &frame.hardware_buffer)?;
+    stats.record_miss();
+    let query_started_at = Instant::now();
+    let query_result = query_ahb_vulkan_import_properties(ahb_device, &frame.hardware_buffer);
+    stats.record_property_query(query_started_at);
+    let (import_properties, _format_props) = query_result?;
     if import_properties.format_key != expected_format_key {
         return Err(format!(
             "format-key-changed-expected-external-{}-vk-{:?}-actual-external-{}-vk-{:?}",
@@ -380,6 +924,7 @@ pub(crate) unsafe fn import_replacement_camera_frame(
             import_properties.format_key.format,
         ));
     }
+    let import_started_at = Instant::now();
     let sampled_image = import_ahb_sampled_image(
         device,
         memory_properties,
@@ -397,7 +942,9 @@ pub(crate) unsafe fn import_replacement_camera_frame(
                 "camera-hwb-raw-projection-left-frame"
             },
         },
-    )?;
+    );
+    stats.record_vulkan_import(import_started_at);
+    let sampled_image = sampled_image?;
     Ok(sampled_image)
 }
 
@@ -507,13 +1054,19 @@ pub(crate) unsafe fn record_camera_hwb_probe_command_buffer(
     video_renderer: Option<&mut SpatialVideoProjectionRenderer>,
     video_frame: Option<&SpatialVideoProjectionFrame>,
     video_settings: &SpatialVideoProjectionSettings,
+    gpu_timestamps: &mut CameraHwbGpuTimestampTracker,
     frame_slot: usize,
+    frame_id: u64,
     camera_reprojection: CameraLatencyStereoReprojection,
     projection_guard_band: CameraReprojectionGuardBandFrame,
     latency_settings: CameraLatencySettings,
     camera_replay_capture: Option<&mut CameraReplayCaptureRecorder>,
     camera_replay_boottime_ns: u64,
     camera_replay_metadata: CameraReplayFrameMetadata,
+    composite_alpha: vk::CompositeAlphaFlagsKHR,
+    swapchain_image: vk::Image,
+    surface_generation: u64,
+    projection_readback: &mut ProjectionReadback,
 ) -> Result<CameraHwbRecordResult, String> {
     device
         .reset_command_buffer(command_buffer, vk::CommandBufferResetFlags::empty())
@@ -521,6 +1074,7 @@ pub(crate) unsafe fn record_camera_hwb_probe_command_buffer(
     device
         .begin_command_buffer(command_buffer, &vk::CommandBufferBeginInfo::default())
         .map_err(|error| format!("begin-command-buffer-{error:?}"))?;
+    gpu_timestamps.begin_frame(device, command_buffer, frame_slot, frame_id);
     if transition_left_camera_image {
         transition_ahb_sampled_image_to_shader_read(
             device,
@@ -543,7 +1097,7 @@ pub(crate) unsafe fn record_camera_hwb_probe_command_buffer(
             command_buffer,
             descriptor_set,
             camera_replay_boottime_ns,
-            camera_replay_metadata,
+            camera_replay_metadata.clone(),
         );
     }
     let opaque_camera_only = latency_settings.enabled
@@ -552,25 +1106,63 @@ pub(crate) unsafe fn record_camera_hwb_probe_command_buffer(
         && latency_settings.isolation_mode == CameraLatencyIsolationMode::FreshFrameOnlyPulse;
     let camera_projection_visible =
         !fresh_frame_only_pulse || transition_left_camera_image || transition_right_camera_image;
+    let mut projection_zone_frame = camera_hwb_projection_zone_frame(
+        projection_guard_band.footprint_scale,
+        projection_guard_band.source_overscan_uv,
+        elapsed_seconds,
+        [
+            video_settings.source_rect_for_eye(0),
+            video_settings.source_rect_for_eye(1),
+        ],
+    );
+    let projection_zone_alpha_policy = projection_zone_alpha_policy(
+        projection_zone_frame.settings,
+        projection_zone_composite_alpha(composite_alpha),
+    );
+    projection_zone_frame.apply_alpha_policy(
+        projection_zone_alpha_policy.transparent_underlay_supported,
+        projection_zone_alpha_policy.premultiplied_alpha_output,
+    );
+    let requested_projection_zone_mode = projection_zone_frame.settings.coverage_mode;
+    let requested_composition_options = projection_zone_frame.settings.composition_option_flags();
+    // Import decoded video only while at least one compositor-owned region can contribute it.
+    // Transparent regions reveal the always-available system background without a decoder.
+    let readable_video_consumer_required =
+        projection_zone_alpha_policy.readable_video_consumer_required;
     let mut video_stats = SpatialVideoProjectionFrameStats::unavailable(
         video_settings,
         if opaque_camera_only {
             "camera-only-isolation"
+        } else if !readable_video_consumer_required {
+            "no-readable-video-consumer"
         } else if video_settings.active() {
             "waiting-for-decoded-frame"
         } else {
             "disabled"
         },
     );
+    let retained_unused_video_descriptor = video_renderer
+        .as_deref()
+        .and_then(SpatialVideoProjectionRenderer::retained_unused_descriptor_binding);
     let prepared_video = match (video_renderer, video_frame) {
-        (Some(renderer), Some(frame)) if video_settings.active() && !opaque_camera_only => {
+        (Some(renderer), Some(frame))
+            if video_settings.active()
+                && !opaque_camera_only
+                && readable_video_consumer_required =>
+        {
             match renderer.prepare_frame(device, command_buffer, frame_slot, frame, video_settings)
             {
                 Ok(Some(prepared)) => {
                     video_stats = prepared.stats.clone();
                     Some((renderer, prepared))
                 }
-                Ok(None) => None,
+                Ok(None) => {
+                    video_stats = SpatialVideoProjectionFrameStats::unavailable(
+                        video_settings,
+                        "resources-preparing-or-unavailable",
+                    );
+                    None
+                }
                 Err(error) => {
                     log_marker(format!(
                     "status=spatial-video-projection-prepare-skipped error={} {} runtimeCrash=false",
@@ -587,84 +1179,158 @@ pub(crate) unsafe fn record_camera_hwb_probe_command_buffer(
         }
         _ => None,
     };
-    let projection_zone_frame = camera_hwb_projection_zone_frame(
-        projection_guard_band.footprint_scale,
-        projection_guard_band.source_overscan_uv,
-        elapsed_seconds,
-        [
-            video_settings.source_rect_for_eye(0),
-            video_settings.source_rect_for_eye(1),
-        ],
-    );
-
     let mut public_guide_targets = public_guide_targets;
-    let edge_window_selected = spatial_public_meta_passthrough_edge_window_selected();
-    let raw_custom_projection_selected = spatial_public_raw_custom_projection_selected();
+    let guide_plan = current_spatial_public_guide_pass_plan();
+    let mut guide_record =
+        SpatialPublicGuidePassRecord::not_recorded(guide_plan, "camera-projection-not-attempted");
+    let edge_window_selected = guide_plan.edge_window_selected();
     let projection_footprint_scale = projection_guard_band.footprint_scale;
     let mut projection_zone_ready = false;
+    let mut projection_zone_descriptor_available = false;
     let mut projection_zone_descriptor_set = vk::DescriptorSet::null();
+    let mut selected_projection_zone_descriptor_route = ProjectionZoneDescriptorRoute::Unavailable;
     let mut projection_zone_descriptor_source = "unavailable";
+    let mut projection_zone_prepare_status = "not-attempted-public-projection-unavailable";
     let public_projection_ready = if !camera_projection_visible
         || opaque_camera_only
         || edge_window_selected
-        || raw_custom_projection_selected
     {
         false
     } else if let Some(targets) = public_guide_targets.as_deref_mut() {
-        targets.record_spatial_public_guide_passes(
+        guide_record = targets.record_spatial_public_guide_passes(
             device,
             command_buffer,
+            gpu_timestamps,
+            frame_slot,
             descriptor_set,
             elapsed_seconds,
             camera_reprojection,
             projection_guard_band.source_overscan_uv,
+            guide_plan,
         )?;
-        let sampling_ready =
-            targets.prepare_spatial_public_projection_sampling(device, command_buffer);
+        let sampling_ready = guide_record.complete()
+            && targets.prepare_spatial_public_projection_sampling(device, command_buffer);
         if sampling_ready {
             let synthetic_diagnostic = projection_zone_frame.settings.synthetic_diagnostic();
-            let transparent_underlay = projection_zone_frame
-                .settings
-                .transparent_underlay_requested();
-            let projection_zone_descriptor = if projection_zone_frame.settings.replaces_video()
-                || synthetic_diagnostic
-                || transparent_underlay
-            {
-                // These routes never sample u_video_projection. Bind the already-valid camera
-                // descriptor at the otherwise-compatible slot: full stretch replaces video,
-                // the deterministic diagnostic supplies three readable synthetic sources, and
-                // transparent underlay derives alpha only from the outgoing buffer source.
-                Some((
+            selected_projection_zone_descriptor_route = projection_zone_descriptor_route(
+                synthetic_diagnostic,
+                readable_video_consumer_required,
+                projection_zone_frame
+                    .settings
+                    .transparent_underlay_requested(),
+                retained_unused_video_descriptor.is_some(),
+                prepared_video.is_some(),
+            );
+            let projection_zone_descriptor = match selected_projection_zone_descriptor_route {
+                ProjectionZoneDescriptorRoute::SyntheticDiagnostic => {
+                    // Synthetic diagnostics can still carry a video-owning configuration. Bind
+                    // the live camera layout because prepare_frame may have replaced the retained
+                    // video resources earlier in this frame.
+                    Some((
+                        resources.descriptor_set_layout,
+                        descriptor_set,
+                        "synthetic-diagnostic-fallback-unused",
+                        None,
+                    ))
+                }
+                ProjectionZoneDescriptorRoute::RetainedUnusedVideo => {
+                    // These routes never sample u_video_projection. Prefer the last exact video
+                    // descriptor solely to retain its descriptor-set layout across a hot
+                    // Video/Transparent change. This avoids destroying and recompiling the Vulkan
+                    // compositor pipeline on the render thread.
+                    retained_unused_video_descriptor.as_ref().map(|binding| {
+                        (
+                            binding.descriptor_set_layout,
+                            binding.descriptor_set,
+                            "retained-video-fallback-unused",
+                            Some(binding.resource_lease.clone()),
+                        )
+                    })
+                }
+                ProjectionZoneDescriptorRoute::TransparentUnderlayFallback => Some((
                     resources.descriptor_set_layout,
                     descriptor_set,
-                    if synthetic_diagnostic {
-                        "synthetic-diagnostic-fallback-unused"
-                    } else if transparent_underlay {
-                        "transparent-underlay-fallback-unused"
-                    } else {
-                        "camera-fallback-unused"
-                    },
-                ))
-            } else {
-                prepared_video.as_ref().map(|(_, prepared)| {
-                    (
-                        prepared.descriptor_set_layout,
-                        prepared.descriptor_set,
-                        "prepared-video",
-                    )
-                })
+                    "transparent-underlay-fallback-unused",
+                    None,
+                )),
+                ProjectionZoneDescriptorRoute::CameraFallback => Some((
+                    resources.descriptor_set_layout,
+                    descriptor_set,
+                    "camera-fallback-unused",
+                    None,
+                )),
+                ProjectionZoneDescriptorRoute::PreparedVideo => {
+                    prepared_video.as_ref().map(|(_, prepared)| {
+                        (
+                            prepared.descriptor_set_layout,
+                            prepared.descriptor_set,
+                            "prepared-video",
+                            Some(prepared.resource_lease.clone()),
+                        )
+                    })
+                }
+                ProjectionZoneDescriptorRoute::Unavailable => None,
             };
-            if let Some((descriptor_set_layout, zone_descriptor_set, descriptor_source)) =
-                projection_zone_descriptor
+            if let Some((
+                descriptor_set_layout,
+                zone_descriptor_set,
+                descriptor_source,
+                resource_lease,
+            )) = projection_zone_descriptor
             {
-                projection_zone_ready = targets.prepare_projection_zone_compositor(
+                projection_zone_descriptor_available = true;
+                let prepare_status = targets.prepare_projection_zone_compositor(
                     device,
                     &projection_zone_frame,
                     descriptor_set_layout,
+                    resource_lease,
                 )?;
+                projection_zone_prepare_status = prepare_status.marker_token();
+                projection_zone_ready = prepare_status.ready();
                 if projection_zone_ready {
                     projection_zone_descriptor_set = zone_descriptor_set;
                     projection_zone_descriptor_source = descriptor_source;
+                }
+            } else {
+                projection_zone_prepare_status = "not-attempted-descriptor-unavailable";
+            }
+            if !projection_zone_ready && projection_zone_frame.settings.active() {
+                // Keep the last renderable zone frame while the decoder or an
+                // exact-layout pipeline is pending. Its uniform must travel with
+                // its descriptor; requested Video values cannot sample a camera
+                // descriptor that was only valid as an unused fallback.
+                let retained_camera = targets
+                    .retained_projection_zone_frame(resources.descriptor_set_layout, false)
+                    .map(|frame| (frame, descriptor_set, "last-good-camera-fallback"));
+                let retained_video = prepared_video.as_ref().and_then(|(_, prepared)| {
+                    targets
+                        .retained_projection_zone_frame(prepared.descriptor_set_layout, true)
+                        .map(|frame| (frame, prepared.descriptor_set, "last-good-prepared-video"))
+                });
+                let retained_unused = if !readable_video_consumer_required {
+                    retained_unused_video_descriptor
+                        .as_ref()
+                        .and_then(|binding| {
+                            targets
+                                .retained_projection_zone_frame(
+                                    binding.descriptor_set_layout,
+                                    false,
+                                )
+                                .map(|frame| {
+                                    (frame, binding.descriptor_set, "last-good-unused-video")
+                                })
+                        })
+                } else {
+                    None
+                };
+                if let Some((frame, set, source)) =
+                    retained_camera.or(retained_video).or(retained_unused)
+                {
+                    projection_zone_frame = frame;
+                    projection_zone_descriptor_set = set;
+                    projection_zone_descriptor_source = source;
+                    projection_zone_descriptor_available = true;
+                    projection_zone_ready = true;
                 }
             }
         }
@@ -673,6 +1339,12 @@ pub(crate) unsafe fn record_camera_hwb_probe_command_buffer(
         false
     };
 
+    gpu_timestamps.write_stage_start(
+        device,
+        command_buffer,
+        frame_slot,
+        CameraHwbGpuTimestampStage::FinalCompositor,
+    );
     begin_camera_hwb_final_render_pass(
         device,
         command_buffer,
@@ -681,14 +1353,19 @@ pub(crate) unsafe fn record_camera_hwb_probe_command_buffer(
         extent,
         opaque_camera_only,
     );
+    let effective_zone_alpha_policy =
+        crate::camera_hwb_projection_target::projection_zone_alpha_policy(
+            projection_zone_frame.settings,
+            projection_zone_composite_alpha(composite_alpha),
+        );
     let mut native_video_drawn = false;
-    let mut native_video_suppressed = false;
+    let mut native_video_suppressed = !effective_zone_alpha_policy.readable_video_consumer_required;
     if let Some((renderer, prepared)) = prepared_video.as_ref() {
-        if !(projection_zone_ready
-            && (projection_zone_frame.settings.replaces_video()
-                || projection_zone_frame
-                    .settings
-                    .transparent_underlay_requested()))
+        if effective_zone_alpha_policy.readable_video_consumer_required
+            && !effective_zone_alpha_policy.suppresses_same_surface_video(
+                projection_zone_frame.settings,
+                projection_zone_ready,
+            )
         {
             renderer.record_video_eye(device, command_buffer, extent, 0, video_settings, prepared);
             renderer.record_video_eye(device, command_buffer, extent, 1, video_settings, prepared);
@@ -704,6 +1381,7 @@ pub(crate) unsafe fn record_camera_hwb_probe_command_buffer(
             command_buffer,
             extent,
             projection_footprint_scale,
+            edge_window_selected,
         );
     let mut projection_zone_rendered = false;
     let projected_by_public_stack = if opaque_camera_only {
@@ -723,8 +1401,19 @@ pub(crate) unsafe fn record_camera_hwb_probe_command_buffer(
                 elapsed_seconds,
                 projection_footprint_scale,
                 &projection_zone_frame,
+                guide_record.camera_content_only,
+                f32::from_bits(guide_record.layer_override_bits),
             )?;
         projection_zone_rendered = rendered;
+        if rendered {
+            public_guide_targets
+                .as_deref()
+                .unwrap()
+                .remember_projection_zone_frame(
+                    projection_zone_frame,
+                    effective_zone_alpha_policy.readable_video_consumer_required,
+                );
+        }
         rendered
     } else if public_projection_ready {
         public_guide_targets
@@ -737,6 +1426,8 @@ pub(crate) unsafe fn record_camera_hwb_probe_command_buffer(
                 descriptor_set,
                 elapsed_seconds,
                 projection_footprint_scale,
+                guide_record.camera_content_only,
+                f32::from_bits(guide_record.layer_override_bits),
             )?
     } else {
         false
@@ -754,31 +1445,133 @@ pub(crate) unsafe fn record_camera_hwb_probe_command_buffer(
         );
     }
     device.cmd_end_render_pass(command_buffer);
-    device
-        .end_command_buffer(command_buffer)
-        .map_err(|error| format!("end-command-buffer-{error:?}"))?;
+    projection_readback.record_after_draw(
+        device,
+        command_buffer,
+        swapchain_image,
+        frame_id,
+        surface_generation,
+        projection_zone_frame.settings,
+        projection_zone_frame.core_rects,
+    );
+    // Import readiness alone is not first-frame adoption. A prepared video is
+    // still absent from the output while the last no-video zone is retained.
+    video_stats.rendered = video_stats.ready
+        && (native_video_drawn
+            || (projection_zone_rendered
+                && effective_zone_alpha_policy.readable_video_consumer_required));
+    if video_stats.ready && !video_stats.rendered {
+        video_stats.reason = "prepared-awaiting-zone-pipeline";
+    }
+    gpu_timestamps.write_stage_end(
+        device,
+        command_buffer,
+        frame_slot,
+        CameraHwbGpuTimestampStage::FinalCompositor,
+    );
+    gpu_timestamps.finish_frame(device, command_buffer, frame_slot);
+    if let Err(error) = device.end_command_buffer(command_buffer) {
+        projection_readback.cancel_unsubmitted("end-command-buffer");
+        return Err(format!("end-command-buffer-{error:?}"));
+    }
+    let frame_identities = exact_camera_hwb_wsi_import_identities(
+        camera_replay_metadata.left_frame_index,
+        camera_replay_metadata.right_frame_index,
+        camera_replay_metadata.left_timestamp_ns,
+        camera_replay_metadata.right_timestamp_ns,
+    );
+    let _ = stage_camera_projection_command_buffer(
+        frame_id,
+        if sampled_right_image.is_some() {
+            CameraHwbProbeMode::RawColorProjection
+        } else {
+            CameraHwbProbeMode::LumaChecker
+        },
+        camera_projection_visible,
+        camera_replay_metadata.left_frame_index,
+        camera_replay_metadata.right_frame_index,
+        camera_replay_metadata.left_timestamp_ns,
+        camera_replay_metadata.right_timestamp_ns,
+        frame_identities,
+    );
     Ok(CameraHwbRecordResult {
         projected_by_public_stack,
         camera_projection_visible,
         video_stats,
         projection_zone_stats: ProjectionZoneRenderStats {
-            requested_mode: projection_zone_frame.settings.coverage_mode,
+            requested_mode: requested_projection_zone_mode,
+            requested_composition_options,
+            recorded_composition_options: if projection_zone_rendered {
+                projection_zone_frame.settings.composition_option_flags()
+            } else {
+                0
+            },
+            recorded_attachment_blend_enabled: projection_zone_rendered
+                && projection_zone_frame.settings.same_surface_blend_required(),
             prepared_video_ready: prepared_video.is_some(),
             public_projection_ready,
             pipeline_ready: projection_zone_ready,
             rendered: projection_zone_rendered,
             native_video_drawn,
             native_video_suppressed,
+            readable_video_consumer_required,
             transparent_underlay_requested: projection_zone_frame
                 .settings
                 .transparent_underlay_requested(),
-            transparent_underlay_supported: projection_zone_frame
-                .settings
-                .transparent_underlay_supported(),
+            transparent_underlay_supported: effective_zone_alpha_policy
+                .transparent_underlay_supported,
+            swapchain_composite_alpha_selected: composite_alpha_token(composite_alpha),
+            shader_alpha_output_contract: if effective_zone_alpha_policy.premultiplied_alpha_output
+            {
+                "pre-multiplied"
+            } else {
+                "post-multiplied"
+            },
             synthetic_displacement_suppressed: projection_zone_frame
                 .settings
-                .synthetic_diagnostic(),
+                .synthetic_diagnostic()
+                || guide_record.camera_content_only,
+            descriptor_route: selected_projection_zone_descriptor_route.marker_token(),
             descriptor_source: projection_zone_descriptor_source,
+            descriptor_available: projection_zone_descriptor_available,
+            prepare_status: projection_zone_prepare_status,
+            system_layer_blend_observation: "not-observed-by-native-wsi",
+            render_route: projection_zone_render_route_token(
+                camera_projection_visible,
+                edge_window_cutout_applied,
+                public_projection_ready,
+                projection_zone_ready,
+                projection_zone_rendered,
+                projected_by_public_stack,
+            ),
+            applied_region_contract_version: projection_zone_frame.settings.region_contract_version,
+            applied_center_content_mode: projection_zone_frame.settings.center_content_mode,
+            applied_center_corner_radius_uv_bits: projection_zone_frame
+                .settings
+                .center_corner_radius_uv
+                .to_bits(),
+            applied_buffer_geometry_mode: projection_zone_frame.settings.buffer_geometry_mode,
+            applied_buffer_fill_mode: projection_zone_frame.settings.buffer_fill_mode,
+            applied_buffer_static_width_uv_bits: projection_zone_frame
+                .settings
+                .buffer_static_width_uv
+                .to_bits(),
+            applied_outer_content_mode: projection_zone_frame.settings.outer_content_mode,
+            applied_outer_target_mode: projection_zone_frame.settings.outer_target_mode,
+            guide_layer_override_bits: guide_record.layer_override_bits,
+            guide_passes_requested: guide_record.requested_pass_count,
+            guide_passes_recorded: guide_record.recorded_pass_count,
+            guide_record_status: guide_record.record_status,
+            camera_payload_source: guide_record.camera_payload_source,
+            downstream_effect_passes_recorded: guide_record.downstream_effect_pass_count,
+            parity_loss_reason: projection_zone_parity_loss_reason(
+                guide_record,
+                camera_projection_visible,
+                public_projection_ready,
+                projection_zone_descriptor_available,
+                projection_zone_ready,
+                projection_zone_rendered,
+            ),
         },
     })
 }
@@ -1012,8 +1805,8 @@ pub(crate) fn choose_composite_alpha(
 ) -> vk::CompositeAlphaFlagsKHR {
     for candidate in [
         vk::CompositeAlphaFlagsKHR::PRE_MULTIPLIED,
-        vk::CompositeAlphaFlagsKHR::INHERIT,
         vk::CompositeAlphaFlagsKHR::POST_MULTIPLIED,
+        vk::CompositeAlphaFlagsKHR::INHERIT,
         vk::CompositeAlphaFlagsKHR::OPAQUE,
     ] {
         if flags.contains(candidate) {
@@ -1021,6 +1814,32 @@ pub(crate) fn choose_composite_alpha(
         }
     }
     vk::CompositeAlphaFlagsKHR::OPAQUE
+}
+
+pub(crate) fn composite_alpha_token(alpha: vk::CompositeAlphaFlagsKHR) -> &'static str {
+    if alpha == vk::CompositeAlphaFlagsKHR::PRE_MULTIPLIED {
+        "pre-multiplied"
+    } else if alpha == vk::CompositeAlphaFlagsKHR::POST_MULTIPLIED {
+        "post-multiplied"
+    } else if alpha == vk::CompositeAlphaFlagsKHR::INHERIT {
+        "inherit"
+    } else {
+        "opaque"
+    }
+}
+
+fn projection_zone_composite_alpha(
+    alpha: vk::CompositeAlphaFlagsKHR,
+) -> ProjectionZoneCompositeAlpha {
+    if alpha == vk::CompositeAlphaFlagsKHR::PRE_MULTIPLIED {
+        ProjectionZoneCompositeAlpha::PreMultiplied
+    } else if alpha == vk::CompositeAlphaFlagsKHR::POST_MULTIPLIED {
+        ProjectionZoneCompositeAlpha::PostMultiplied
+    } else if alpha == vk::CompositeAlphaFlagsKHR::INHERIT {
+        ProjectionZoneCompositeAlpha::Inherit
+    } else {
+        ProjectionZoneCompositeAlpha::Opaque
+    }
 }
 
 pub(crate) unsafe fn create_image_views(
@@ -1125,6 +1944,12 @@ mod tests {
         );
         assert_eq!(
             choose_composite_alpha(
+                vk::CompositeAlphaFlagsKHR::POST_MULTIPLIED | vk::CompositeAlphaFlagsKHR::INHERIT
+            ),
+            vk::CompositeAlphaFlagsKHR::POST_MULTIPLIED
+        );
+        assert_eq!(
+            choose_composite_alpha(
                 vk::CompositeAlphaFlagsKHR::INHERIT | vk::CompositeAlphaFlagsKHR::OPAQUE
             ),
             vk::CompositeAlphaFlagsKHR::INHERIT
@@ -1132,6 +1957,360 @@ mod tests {
         assert_eq!(
             choose_composite_alpha(vk::CompositeAlphaFlagsKHR::OPAQUE),
             vk::CompositeAlphaFlagsKHR::OPAQUE
+        );
+    }
+
+    #[test]
+    fn render_route_tokens_distinguish_shared_compositor_from_fallbacks() {
+        assert_eq!(
+            projection_zone_render_route_token(true, false, true, true, true, true),
+            "shared-zone-compositor"
+        );
+        assert_eq!(
+            projection_zone_render_route_token(true, false, true, false, false, false),
+            "public-projection-without-zone"
+        );
+        assert_eq!(
+            projection_zone_render_route_token(true, false, false, false, false, false),
+            "camera-hwb-fallback"
+        );
+    }
+
+    #[test]
+    fn descriptor_routing_and_raw_fallbacks_fail_closed_on_unavailable_inputs() {
+        assert_eq!(
+            projection_zone_descriptor_route(false, true, false, false, false),
+            ProjectionZoneDescriptorRoute::Unavailable
+        );
+        assert_eq!(
+            projection_zone_descriptor_route(false, true, false, true, true),
+            ProjectionZoneDescriptorRoute::PreparedVideo
+        );
+        assert_eq!(
+            projection_zone_descriptor_route(false, false, true, false, false),
+            ProjectionZoneDescriptorRoute::TransparentUnderlayFallback
+        );
+        assert_eq!(
+            projection_zone_render_route_token(true, false, false, false, false, false),
+            "camera-hwb-fallback"
+        );
+        assert_eq!(
+            projection_zone_render_route_token(true, false, true, false, false, true),
+            "public-projection-without-zone"
+        );
+    }
+
+    #[test]
+    fn raw_zone_parity_loss_is_typed_at_each_fail_closed_boundary() {
+        let recorded_raw = SpatialPublicGuidePassRecord {
+            layer_override_bits: 8.0_f32.to_bits(),
+            requested_pass_count: 1,
+            recorded_pass_count: 1,
+            camera_content_only: true,
+            camera_payload_source: "private-guide-pass0-prewarped-camera-color",
+            downstream_effect_pass_count: 0,
+            record_status: "recorded",
+        };
+        let unavailable_raw = SpatialPublicGuidePassRecord {
+            recorded_pass_count: 0,
+            camera_payload_source: "unavailable",
+            record_status: "guide-resources-unavailable",
+            ..recorded_raw
+        };
+        let processed = SpatialPublicGuidePassRecord {
+            camera_content_only: false,
+            camera_payload_source: "active-layer-guide-graph",
+            ..recorded_raw
+        };
+        assert_eq!(
+            projection_zone_parity_loss_reason(recorded_raw, true, true, true, true, true),
+            "none"
+        );
+        assert_eq!(
+            projection_zone_parity_loss_reason(unavailable_raw, true, false, false, false, false),
+            "raw-reprojection-staging-unavailable"
+        );
+        assert_eq!(
+            projection_zone_parity_loss_reason(recorded_raw, true, true, false, false, false),
+            "zone-descriptor-unavailable"
+        );
+        assert_eq!(
+            projection_zone_parity_loss_reason(recorded_raw, true, true, true, false, false),
+            "shared-zone-pipeline-unavailable"
+        );
+        assert_eq!(
+            projection_zone_parity_loss_reason(recorded_raw, true, true, true, true, false),
+            "shared-zone-render-not-recorded"
+        );
+        assert_eq!(
+            projection_zone_parity_loss_reason(processed, true, true, true, true, true),
+            "not-applicable"
+        );
+    }
+
+    #[test]
+    fn projection_zone_markers_separate_alpha_zone_source_and_fallback_facts() {
+        let stats = recorded_raw_zone_stats();
+        let readiness = stats.readiness_marker_fields();
+        let configuration = stats.applied_configuration_marker_fields();
+        let raw_parity = stats.raw_parity_marker_fields();
+        let marker = format!("{readiness} {configuration} {raw_parity}");
+        for expected in [
+            "projectionZoneSwapchainCompositeAlphaSelected=post-multiplied",
+            "projectionZoneShaderAlphaOutputContract=post-multiplied",
+            "projectionZoneSystemLayerBlendObservation=not-observed-by-native-wsi",
+            "projectionZoneRenderRoute=shared-zone-compositor",
+            "projectionZoneAppliedRegionContractVersion=4",
+            "projectionZoneAppliedCenterContentMode=0",
+            "projectionZoneAppliedCenterCornerRadiusUv=0.125000",
+            "projectionZoneAppliedBufferFillMode=1",
+            "projectionZoneAppliedOuterContentMode=2",
+            "rawCustomProjectionLayerOverride=8.000",
+            "rawCustomProjectionGuidePassesRecorded=1",
+            "projectionZoneDescriptorSource=transparent-underlay-fallback-unused",
+            "projectionZoneCameraPayloadSource=private-guide-pass0-prewarped-camera-color",
+            "rawCustomProjectionDownstreamEffectPassesRecorded=0",
+            "projectionZoneParityLossReason=none",
+        ] {
+            assert!(
+                marker.contains(expected),
+                "missing marker field: {expected}"
+            );
+        }
+        assert!(readiness.len() < 2048);
+        assert!(configuration.len() < 1024);
+        assert!(raw_parity.len() < 1024);
+    }
+
+    fn recorded_raw_zone_stats() -> ProjectionZoneRenderStats {
+        ProjectionZoneRenderStats {
+            requested_mode: 2,
+            requested_composition_options: 0,
+            recorded_composition_options: 0,
+            recorded_attachment_blend_enabled: false,
+            prepared_video_ready: false,
+            public_projection_ready: true,
+            pipeline_ready: true,
+            rendered: true,
+            native_video_drawn: false,
+            native_video_suppressed: true,
+            readable_video_consumer_required: false,
+            transparent_underlay_requested: true,
+            transparent_underlay_supported: true,
+            swapchain_composite_alpha_selected: "post-multiplied",
+            shader_alpha_output_contract: "post-multiplied",
+            synthetic_displacement_suppressed: true,
+            descriptor_route: "transparent-underlay-fallback",
+            descriptor_source: "transparent-underlay-fallback-unused",
+            descriptor_available: true,
+            prepare_status: "ready",
+            system_layer_blend_observation: "not-observed-by-native-wsi",
+            render_route: "shared-zone-compositor",
+            applied_region_contract_version: 4,
+            applied_center_content_mode: 0,
+            applied_center_corner_radius_uv_bits: 0.125_f32.to_bits(),
+            applied_buffer_geometry_mode: 1,
+            applied_buffer_fill_mode: 1,
+            applied_buffer_static_width_uv_bits: 0.08_f32.to_bits(),
+            applied_outer_content_mode: 2,
+            applied_outer_target_mode: 0,
+            guide_layer_override_bits: 8.0_f32.to_bits(),
+            guide_passes_requested: 1,
+            guide_passes_recorded: 1,
+            guide_record_status: "recorded",
+            camera_payload_source: "private-guide-pass0-prewarped-camera-color",
+            downstream_effect_passes_recorded: 0,
+            parity_loss_reason: "none",
+        }
+    }
+
+    #[test]
+    fn raw_fallback_markers_bind_record_route_descriptor_and_parity() {
+        let staging = ProjectionZoneRenderStats {
+            public_projection_ready: false,
+            pipeline_ready: false,
+            rendered: false,
+            descriptor_route: "unavailable",
+            descriptor_source: "unavailable",
+            descriptor_available: false,
+            prepare_status: "not-attempted-public-projection-unavailable",
+            render_route: "camera-hwb-fallback",
+            guide_passes_recorded: 0,
+            guide_record_status: "guide-resources-unavailable",
+            camera_payload_source: "unavailable",
+            parity_loss_reason: "raw-reprojection-staging-unavailable",
+            ..recorded_raw_zone_stats()
+        }
+        .readiness_marker_fields()
+            + " "
+            + &ProjectionZoneRenderStats {
+                public_projection_ready: false,
+                pipeline_ready: false,
+                rendered: false,
+                descriptor_route: "unavailable",
+                descriptor_source: "unavailable",
+                descriptor_available: false,
+                prepare_status: "not-attempted-public-projection-unavailable",
+                render_route: "camera-hwb-fallback",
+                guide_passes_recorded: 0,
+                guide_record_status: "guide-resources-unavailable",
+                camera_payload_source: "unavailable",
+                parity_loss_reason: "raw-reprojection-staging-unavailable",
+                ..recorded_raw_zone_stats()
+            }
+            .raw_parity_marker_fields();
+        for expected in [
+            "projectionZoneRendered=false",
+            "projectionZoneDescriptorSource=unavailable",
+            "projectionZoneRenderRoute=camera-hwb-fallback",
+            "rawCustomProjectionGuidePassesRequested=1",
+            "rawCustomProjectionGuidePassesRecorded=0",
+            "rawCustomProjectionGuideRecordStatus=guide-resources-unavailable",
+            "projectionZoneCameraPayloadSource=unavailable",
+            "rawCustomProjectionDownstreamEffectPassesRecorded=0",
+            "projectionZoneParityLossReason=raw-reprojection-staging-unavailable",
+        ] {
+            assert!(
+                staging.contains(expected),
+                "missing staging field: {expected}"
+            );
+        }
+
+        let descriptor = ProjectionZoneRenderStats {
+            pipeline_ready: false,
+            rendered: false,
+            descriptor_route: "unavailable",
+            descriptor_source: "unavailable",
+            descriptor_available: false,
+            prepare_status: "not-attempted-descriptor-unavailable",
+            render_route: "public-projection-without-zone",
+            parity_loss_reason: "zone-descriptor-unavailable",
+            ..recorded_raw_zone_stats()
+        }
+        .readiness_marker_fields()
+            + " "
+            + &ProjectionZoneRenderStats {
+                pipeline_ready: false,
+                rendered: false,
+                descriptor_route: "unavailable",
+                descriptor_source: "unavailable",
+                descriptor_available: false,
+                prepare_status: "not-attempted-descriptor-unavailable",
+                render_route: "public-projection-without-zone",
+                parity_loss_reason: "zone-descriptor-unavailable",
+                ..recorded_raw_zone_stats()
+            }
+            .raw_parity_marker_fields();
+        for expected in [
+            "projectionZoneRendered=false",
+            "projectionZoneDescriptorSource=unavailable",
+            "projectionZoneRenderRoute=public-projection-without-zone",
+            "rawCustomProjectionGuidePassesRecorded=1",
+            "rawCustomProjectionGuideRecordStatus=recorded",
+            "projectionZoneCameraPayloadSource=private-guide-pass0-prewarped-camera-color",
+            "rawCustomProjectionDownstreamEffectPassesRecorded=0",
+            "projectionZoneParityLossReason=zone-descriptor-unavailable",
+        ] {
+            assert!(
+                descriptor.contains(expected),
+                "missing descriptor field: {expected}"
+            );
+        }
+
+        let pipeline = ProjectionZoneRenderStats {
+            pipeline_ready: false,
+            rendered: false,
+            descriptor_route: "prepared-video",
+            descriptor_source: "prepared-video",
+            descriptor_available: true,
+            prepare_status: "pipeline-unavailable",
+            render_route: "public-projection-without-zone",
+            parity_loss_reason: "shared-zone-pipeline-unavailable",
+            ..recorded_raw_zone_stats()
+        }
+        .readiness_marker_fields()
+            + " "
+            + &ProjectionZoneRenderStats {
+                pipeline_ready: false,
+                rendered: false,
+                descriptor_route: "prepared-video",
+                descriptor_source: "prepared-video",
+                descriptor_available: true,
+                prepare_status: "pipeline-unavailable",
+                render_route: "public-projection-without-zone",
+                parity_loss_reason: "shared-zone-pipeline-unavailable",
+                ..recorded_raw_zone_stats()
+            }
+            .raw_parity_marker_fields();
+        for expected in [
+            "projectionZoneRendered=false",
+            "projectionZoneDescriptorSource=prepared-video",
+            "projectionZoneRenderRoute=public-projection-without-zone",
+            "rawCustomProjectionGuidePassesRecorded=1",
+            "rawCustomProjectionGuideRecordStatus=recorded",
+            "rawCustomProjectionDownstreamEffectPassesRecorded=0",
+            "projectionZoneParityLossReason=shared-zone-pipeline-unavailable",
+        ] {
+            assert!(
+                pipeline.contains(expected),
+                "missing pipeline field: {expected}"
+            );
+        }
+    }
+
+    #[test]
+    fn camera_import_cache_identity_is_generation_and_descriptor_exact() {
+        let key = CameraHwbImportCacheKey {
+            stream_generation: 7,
+            hardware_buffer_id: 42,
+            width: 1280,
+            height: 1280,
+            layers: 1,
+            native_format: 35,
+            usage: 0x100,
+            stride: 1280,
+            format_key: AhbVulkanFormatKey {
+                format: vk::Format::UNDEFINED,
+                external_format: 99,
+            },
+        };
+        assert!(key.cacheable(0));
+        assert!(!CameraHwbImportCacheKey {
+            hardware_buffer_id: 0,
+            ..key
+        }
+        .cacheable(0));
+        assert!(!key.cacheable(-1));
+        assert_ne!(
+            key,
+            CameraHwbImportCacheKey {
+                stream_generation: 8,
+                ..key
+            }
+        );
+        assert_ne!(
+            key,
+            CameraHwbImportCacheKey {
+                hardware_buffer_id: 43,
+                ..key
+            }
+        );
+        assert_ne!(
+            key,
+            CameraHwbImportCacheKey {
+                stride: 1344,
+                ..key
+            }
+        );
+        assert_ne!(
+            key,
+            CameraHwbImportCacheKey {
+                format_key: AhbVulkanFormatKey {
+                    format: vk::Format::UNDEFINED,
+                    external_format: 100,
+                },
+                ..key
+            }
         );
     }
 }

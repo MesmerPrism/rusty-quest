@@ -1,4 +1,4 @@
-package io.github.mesmerprism.rustymanifold.broker;
+package io.github.mesmerprism.rustyquest.media;
 
 import java.util.ArrayDeque;
 import java.util.ArrayList;
@@ -7,7 +7,7 @@ import java.util.Iterator;
 import java.util.List;
 
 /** Bounded, source-timestamp-authoritative stereo frame pairer. */
-final class RemoteCameraStereoFramePairer {
+final class PackedStereoFramePairer {
     static final String LEFT = "left";
     static final String RIGHT = "right";
 
@@ -119,7 +119,7 @@ final class RemoteCameraStereoFramePairer {
     private int queueMaxDepthLeft;
     private int queueMaxDepthRight;
 
-    RemoteCameraStereoFramePairer(int maxQueueDepth, long maxPairDeltaNs) {
+    PackedStereoFramePairer(int maxQueueDepth, long maxPairDeltaNs) {
         if (maxQueueDepth < 1 || maxQueueDepth > 32) {
             throw new IllegalArgumentException("maxQueueDepth must be 1..=32");
         }

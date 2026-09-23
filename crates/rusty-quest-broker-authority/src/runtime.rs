@@ -50,11 +50,15 @@ use rusty_quest_broker_contracts::{
     BROKER_MEDIA_LIFECYCLE_PACKAGE_SCHEMA,
 };
 use rusty_quest_media_stream::{
-    MediaStreamClientAuthorityBinding, MediaStreamOwnerAction, MediaStreamOwnerActionKind,
-    MediaStreamOwnerCompletionReceipt, MediaStreamOwnerKind, MediaStreamOwnerProviderReadback,
-    MediaStreamPlatformAction, MediaStreamPlatformApplicationReceipt, MediaStreamPlatformOperation,
+    MediaStreamClientAuthorityBinding, MediaStreamOwnerAction, MediaStreamOwnerCompletionReceipt,
+    MediaStreamOwnerKind, MediaStreamOwnerProviderReadback, MediaStreamPlatformAction,
+    MediaStreamPlatformApplicationReceipt, MediaStreamPlatformOperation,
     MediaStreamRuntimeProductBinding, MediaStreamRuntimeState, MediaStreamSessionProductRuntime,
     MediaStreamTrustedOwnerProvider,
+};
+use rusty_quest_media_stream_android::{
+    execution_ticket, validate_readback, AndroidMediaExecutionMode, AndroidMediaExecutionTicket,
+    AndroidMediaOwnerExecutor, AndroidMediaOwnerReadback,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -389,27 +393,74 @@ pub struct QuestBrokerAuthorityRuntime {
 }
 
 /// Process-local owner that distinguishes same-provider rebind from restart.
-#[derive(Default)]
 pub struct QuestBrokerRuntimeProvider {
     runtime: Option<QuestBrokerAuthorityRuntime>,
     config_sha256: Option<String>,
+    media_owner_executor: Option<Box<dyn AndroidMediaOwnerExecutor>>,
+    next_media_execution_nonce: u64,
 }
 
-struct QuestBrokerMediaOwnerProvider {
-    owner: MediaStreamOwnerAction,
-    readback: Option<MediaStreamOwnerProviderReadback>,
-}
-
-impl QuestBrokerMediaOwnerProvider {
-    fn new(owner: MediaStreamOwnerAction) -> Self {
+impl Default for QuestBrokerRuntimeProvider {
+    fn default() -> Self {
         Self {
-            owner,
-            readback: None,
+            runtime: None,
+            config_sha256: None,
+            media_owner_executor: None,
+            next_media_execution_nonce: 1,
         }
     }
 }
 
-impl MediaStreamTrustedOwnerProvider for QuestBrokerMediaOwnerProvider {
+struct QuestBrokerAndroidMediaOwnerProvider<'a> {
+    owner: MediaStreamOwnerAction,
+    sequence: u32,
+    capability: String,
+    executor: &'a mut dyn AndroidMediaOwnerExecutor,
+    verified: Option<(AndroidMediaExecutionTicket, AndroidMediaOwnerReadback)>,
+}
+
+impl<'a> QuestBrokerAndroidMediaOwnerProvider<'a> {
+    fn new(
+        owner: MediaStreamOwnerAction,
+        sequence: u32,
+        capability: String,
+        executor: &'a mut dyn AndroidMediaOwnerExecutor,
+    ) -> Self {
+        Self {
+            owner,
+            sequence,
+            capability,
+            executor,
+            verified: None,
+        }
+    }
+
+    fn execute(
+        &mut self,
+        action: &MediaStreamPlatformAction,
+        owner_action: &MediaStreamOwnerAction,
+        mode: AndroidMediaExecutionMode,
+    ) -> Result<MediaStreamOwnerProviderReadback, String> {
+        if owner_action != &self.owner {
+            return Err("owner action mismatch".to_owned());
+        }
+        let ticket = execution_ticket(
+            action,
+            owner_action,
+            self.sequence,
+            self.executor.executor_generation(),
+            self.capability.clone(),
+        )
+        .map_err(|error| error.to_string())?;
+        let android_readback = self.executor.execute(&ticket, mode)?;
+        let readback =
+            validate_readback(&ticket, &android_readback).map_err(|error| error.to_string())?;
+        self.verified = Some((ticket, android_readback));
+        Ok(readback)
+    }
+}
+
+impl MediaStreamTrustedOwnerProvider for QuestBrokerAndroidMediaOwnerProvider<'_> {
     fn owner_kind(&self) -> MediaStreamOwnerKind {
         self.owner.selection.owner_kind
     }
@@ -419,42 +470,7 @@ impl MediaStreamTrustedOwnerProvider for QuestBrokerMediaOwnerProvider {
         action: &MediaStreamPlatformAction,
         owner_action: &MediaStreamOwnerAction,
     ) -> Result<MediaStreamOwnerProviderReadback, String> {
-        if owner_action != &self.owner {
-            return Err("owner action mismatch".to_owned());
-        }
-        let revision_base = match owner_action.action_kind {
-            MediaStreamOwnerActionKind::ArmReceiver
-            | MediaStreamOwnerActionKind::ArmCleanup
-            | MediaStreamOwnerActionKind::Start => 10,
-            MediaStreamOwnerActionKind::Stop | MediaStreamOwnerActionKind::Cleanup => 100,
-        };
-        let provider_handle_id = format!(
-            "handle.{}.{}.{}",
-            action.client_authority.client_id,
-            owner_action.selection.owner_id,
-            owner_action.selection.resource_id
-        );
-        let receipt_id = format!(
-            "receipt.{}.{}.{}",
-            action.action_id, owner_action.selection.owner_id, owner_action.selection.resource_id
-        );
-        let readback = MediaStreamOwnerProviderReadback {
-            action_id: action.action_id.clone(),
-            authority_epoch_id: action.authority_epoch_id.clone(),
-            media_acceptance_authority_revision: action.media_acceptance_authority_revision,
-            client_id: action.client_authority.client_id.clone(),
-            lease_id: action.client_authority.lease_id.clone(),
-            provider_kind: owner_action.selection.provider_kind.clone(),
-            resource_id: owner_action.selection.resource_id.clone(),
-            provider_handle_id,
-            provider_state_revision: revision_base
-                + u64::from(owner_action.selection.owner_kind as u8)
-                + u64::from(owner_action.action_kind as u8),
-            observed_state: expected_media_owner_state(owner_action.action_kind).to_owned(),
-            receipt_id,
-        };
-        self.readback = Some(readback.clone());
-        Ok(readback)
+        self.execute(action, owner_action, AndroidMediaExecutionMode::Execute)
     }
 
     fn compensate_uncertain_attempt(
@@ -462,30 +478,55 @@ impl MediaStreamTrustedOwnerProvider for QuestBrokerMediaOwnerProvider {
         action: &MediaStreamPlatformAction,
         owner_action: &MediaStreamOwnerAction,
     ) -> Result<MediaStreamOwnerProviderReadback, String> {
-        self.execute_and_readback(action, owner_action)
+        self.execute(
+            action,
+            owner_action,
+            AndroidMediaExecutionMode::CompensateUncertain,
+        )
     }
 
     fn verify_readback(
         &self,
-        _action: &MediaStreamPlatformAction,
-        _owner_action: &MediaStreamOwnerAction,
+        action: &MediaStreamPlatformAction,
+        owner_action: &MediaStreamOwnerAction,
         readback: &MediaStreamOwnerProviderReadback,
     ) -> bool {
-        self.readback.as_ref() == Some(readback)
-    }
-}
-
-const fn expected_media_owner_state(action: MediaStreamOwnerActionKind) -> &'static str {
-    match action {
-        MediaStreamOwnerActionKind::ArmReceiver => "receiver_armed",
-        MediaStreamOwnerActionKind::ArmCleanup => "cleanup_armed",
-        MediaStreamOwnerActionKind::Start => "started",
-        MediaStreamOwnerActionKind::Stop => "stopped",
-        MediaStreamOwnerActionKind::Cleanup => "cleaned",
+        self.verified.as_ref().is_some_and(|(ticket, android)| {
+            owner_action == &self.owner
+                && execution_ticket(
+                    action,
+                    owner_action,
+                    self.sequence,
+                    self.executor.executor_generation(),
+                    self.capability.clone(),
+                )
+                .as_ref()
+                    == Ok(ticket)
+                && validate_readback(ticket, android).as_ref() == Ok(readback)
+                && self.executor.verify(ticket, android)
+        })
     }
 }
 
 impl QuestBrokerRuntimeProvider {
+    /// Installs the sole process-local media owner executor. Replacing it changes
+    /// generation and invalidates every older in-flight ticket.
+    ///
+    /// # Errors
+    ///
+    /// Rejects generation zero because it cannot authorize an execution ticket.
+    pub fn install_media_owner_executor(
+        &mut self,
+        executor: Box<dyn AndroidMediaOwnerExecutor>,
+    ) -> Result<(), QuestBrokerRuntimeError> {
+        if executor.executor_generation() == 0 {
+            return Err(QuestBrokerRuntimeError::InvalidMediaExecutorGeneration);
+        }
+        self.media_owner_executor = Some(executor);
+        self.next_media_execution_nonce = 1;
+        Ok(())
+    }
+
     /// Initializes a new provider or preserves the exact existing provider on rebind.
     ///
     /// # Errors
@@ -568,11 +609,20 @@ impl QuestBrokerRuntimeProvider {
     ) -> Result<String, QuestBrokerRuntimeError> {
         let request: QuestBrokerMediaCompletionRequest =
             serde_json::from_str(request_json).map_err(QuestBrokerRuntimeError::Decode)?;
-        let response = self
+        let runtime = self
             .runtime
             .as_mut()
-            .ok_or(QuestBrokerRuntimeError::NotInitialized)?
-            .complete_media_session_action(&request, now_ms)?;
+            .ok_or(QuestBrokerRuntimeError::NotInitialized)?;
+        let executor = self
+            .media_owner_executor
+            .as_mut()
+            .ok_or(QuestBrokerRuntimeError::TrustedMediaExecutorAbsent)?;
+        let response = runtime.complete_media_session_action(
+            &request,
+            now_ms,
+            executor.as_mut(),
+            &mut self.next_media_execution_nonce,
+        )?;
         serde_json::to_string(&response).map_err(QuestBrokerRuntimeError::Encode)
     }
 
@@ -1067,6 +1117,8 @@ impl QuestBrokerAuthorityRuntime {
         &mut self,
         request: &QuestBrokerMediaCompletionRequest,
         now_ms: u64,
+        executor: &mut dyn AndroidMediaOwnerExecutor,
+        next_execution_nonce: &mut u64,
     ) -> Result<QuestBrokerMediaCompletionResponse, QuestBrokerRuntimeError> {
         let provider_epoch_id = self.provider_epoch_id.clone();
         let media = self
@@ -1079,8 +1131,22 @@ impl QuestBrokerAuthorityRuntime {
             .ok_or(QuestBrokerRuntimeError::MediaPeerRuntimeConfig)?;
         let current_acceptance = media.current_acceptance().clone();
         let mut owner_receipts = Vec::new();
-        for owner in action.owner_actions.clone() {
-            let mut provider = QuestBrokerMediaOwnerProvider::new(owner.clone());
+        for (index, owner) in action.owner_actions.clone().into_iter().enumerate() {
+            let sequence = u32::try_from(index + 1)
+                .map_err(|_| QuestBrokerRuntimeError::MediaExecutionTicketInvalid)?;
+            let capability = next_media_execution_capability(
+                &action,
+                &owner,
+                sequence,
+                executor.executor_generation(),
+                next_execution_nonce,
+            )?;
+            let mut provider = QuestBrokerAndroidMediaOwnerProvider::new(
+                owner.clone(),
+                sequence,
+                capability,
+                executor,
+            );
             let receipt = match owner.selection.owner_kind {
                 MediaStreamOwnerKind::Source => media.complete_source(&mut provider, now_ms),
                 MediaStreamOwnerKind::Processor => media.complete_processor(&mut provider, now_ms),
@@ -1089,13 +1155,42 @@ impl QuestBrokerAuthorityRuntime {
                 MediaStreamOwnerKind::Codec => media.complete_codec(&mut provider, now_ms),
                 MediaStreamOwnerKind::Sink => media.complete_sink(&mut provider, now_ms),
                 MediaStreamOwnerKind::Cleanup => media.complete_cleanup(&mut provider, now_ms),
-            }
-            .map_err(QuestBrokerRuntimeError::MediaRuntime)?;
+            };
+            let receipt = match receipt {
+                Ok(receipt) => receipt,
+                Err(error) if action.operation == MediaStreamPlatformOperation::Start => {
+                    compensate_failed_start(
+                        media,
+                        executor,
+                        next_execution_nonce,
+                        &error.to_string(),
+                    )?;
+                    return Err(QuestBrokerRuntimeError::MediaStartAborted(
+                        error.to_string(),
+                    ));
+                }
+                Err(error) => {
+                    return Err(QuestBrokerRuntimeError::MediaStopAttemptRetained(
+                        error.to_string(),
+                    ));
+                }
+            };
             owner_receipts.push(receipt);
         }
-        let application = media
-            .apply_recorded_owner_completions(now_ms)
-            .map_err(QuestBrokerRuntimeError::MediaRuntime)?;
+        let application = match media.apply_recorded_owner_completions(now_ms) {
+            Ok(application) => application,
+            Err(error) if action.operation == MediaStreamPlatformOperation::Start => {
+                compensate_failed_start(media, executor, next_execution_nonce, &error.to_string())?;
+                return Err(QuestBrokerRuntimeError::MediaStartAborted(
+                    error.to_string(),
+                ));
+            }
+            Err(error) => {
+                return Err(QuestBrokerRuntimeError::MediaStopAttemptRetained(
+                    error.to_string(),
+                ));
+            }
+        };
         Ok(QuestBrokerMediaCompletionResponse {
             schema_id: QUEST_BROKER_MEDIA_COMPLETION_RESPONSE_SCHEMA.to_owned(),
             provider_epoch_id,
@@ -1280,6 +1375,54 @@ impl QuestBrokerAuthorityRuntime {
             .map_err(|_| QuestBrokerRuntimeError::RuntimeLockPoisoned)?;
         serde_json::to_string(runtime.admission_snapshot()).map_err(QuestBrokerRuntimeError::Encode)
     }
+}
+
+fn compensate_failed_start(
+    media: &mut MediaStreamSessionProductRuntime,
+    executor: &mut dyn AndroidMediaOwnerExecutor,
+    next_execution_nonce: &mut u64,
+    owner_error: &str,
+) -> Result<(), QuestBrokerRuntimeError> {
+    media
+        .begin_partial_start_abort()
+        .map_err(QuestBrokerRuntimeError::MediaRuntime)?;
+    let abort_action = media
+        .pending_abort_action()
+        .ok_or(QuestBrokerRuntimeError::MediaExecutionTicketInvalid)?;
+    for (abort_index, abort_owner) in abort_action.owner_actions.clone().into_iter().enumerate() {
+        let abort_sequence = u32::try_from(abort_index + 1)
+            .map_err(|_| QuestBrokerRuntimeError::MediaExecutionTicketInvalid)?;
+        let capability = next_media_execution_capability(
+            &abort_action,
+            &abort_owner,
+            abort_sequence,
+            executor.executor_generation(),
+            next_execution_nonce,
+        )?;
+        let mut abort_provider = QuestBrokerAndroidMediaOwnerProvider::new(
+            abort_owner,
+            abort_sequence,
+            capability,
+            executor,
+        );
+        media
+            .complete_next_abort_owner(&mut abort_provider)
+            .map_err(
+                |abort_error| QuestBrokerRuntimeError::MediaStartAbortFailed {
+                    owner_error: owner_error.to_owned(),
+                    abort_error: abort_error.to_string(),
+                },
+            )?;
+    }
+    media
+        .finalize_partial_start_abort()
+        .map_err(
+            |abort_error| QuestBrokerRuntimeError::MediaStartAbortFailed {
+                owner_error: owner_error.to_owned(),
+                abort_error: abort_error.to_string(),
+            },
+        )?;
+    Ok(())
 }
 
 fn initialize_status(
@@ -2153,6 +2296,34 @@ fn runtime_host_authority_owner() -> DottedId {
     DottedId::new(RUNTIME_HOST_AUTHORITY_OWNER).expect("static authority owner")
 }
 
+fn next_media_execution_capability(
+    action: &MediaStreamPlatformAction,
+    owner: &MediaStreamOwnerAction,
+    sequence: u32,
+    executor_generation: u64,
+    next_nonce: &mut u64,
+) -> Result<String, QuestBrokerRuntimeError> {
+    let nonce = *next_nonce;
+    *next_nonce = next_nonce
+        .checked_add(1)
+        .ok_or(QuestBrokerRuntimeError::MediaExecutionTicketInvalid)?;
+    let material = format!(
+        "{}\0{}\0{}\0{}\0{}\0{}\0{}\0{}",
+        action.action_id,
+        action.authority_epoch_id,
+        action.client_authority.client_id,
+        action.client_authority.lease_id,
+        owner.selection.owner_id,
+        owner.selection.resource_id,
+        sequence,
+        executor_generation ^ nonce,
+    );
+    Ok(format!(
+        "media-capability.{}",
+        sha256_hex(material.as_bytes())
+    ))
+}
+
 /// Stateful runtime initialization, projection, or serialization failure.
 #[derive(Debug)]
 pub enum QuestBrokerRuntimeError {
@@ -2208,6 +2379,24 @@ pub enum QuestBrokerRuntimeError {
     MediaLifecycleAuthorityMismatch,
     /// Media platform completion was used by a non-media product.
     MediaProductNotSelected,
+    /// No process-local trusted Android media executor was installed.
+    TrustedMediaExecutorAbsent,
+    /// An installed executor used generation zero, which can never authorize a ticket.
+    InvalidMediaExecutorGeneration,
+    /// An owner sequence could not be represented as a closed Android ticket.
+    MediaExecutionTicketInvalid,
+    /// A failed Start was fully compensated and remains unapplied.
+    MediaStartAborted(String),
+    /// A failed Start could not complete exact reverse-order compensation.
+    MediaStartAbortFailed {
+        /// Original owner execution failure.
+        owner_error: String,
+        /// Cleanup/compensation failure.
+        abort_error: String,
+    },
+    /// Stop execution failed or was uncertain. The pending action and cleanup
+    /// obligation are retained because the generic runtime has no Stop-abort API.
+    MediaStopAttemptRetained(String),
     /// Quest media binding, prepare, or exact completion application failed.
     MediaRuntime(rusty_quest_media_stream::MediaStreamProductRuntimeError),
     /// Product/client/lease closure could not form a media peer Runtime Host.
@@ -2319,6 +2508,29 @@ impl fmt::Display for QuestBrokerRuntimeError {
             Self::MediaProductNotSelected => {
                 write!(formatter, "broker product did not select media session")
             }
+            Self::TrustedMediaExecutorAbsent => {
+                write!(formatter, "trusted Android media owner executor absent")
+            }
+            Self::InvalidMediaExecutorGeneration => {
+                write!(formatter, "Android media executor generation must be nonzero")
+            }
+            Self::MediaExecutionTicketInvalid => {
+                write!(formatter, "Android media execution ticket is invalid")
+            }
+            Self::MediaStartAborted(error) => {
+                write!(formatter, "media Start failed and was compensated: {error}")
+            }
+            Self::MediaStartAbortFailed {
+                owner_error,
+                abort_error,
+            } => write!(
+                formatter,
+                "media Start failed ({owner_error}) and compensation remains incomplete: {abort_error}"
+            ),
+            Self::MediaStopAttemptRetained(error) => write!(
+                formatter,
+                "media Stop failed or is uncertain; pending cleanup retained: {error}"
+            ),
             Self::MediaRuntime(error) => write!(formatter, "Quest media runtime failed: {error}"),
             Self::MediaPeerRuntimeConfig => {
                 write!(formatter, "media peer Runtime Host config closure invalid")
@@ -2374,6 +2586,7 @@ mod tests {
     use rusty_quest_broker_admission::{
         QuestAndroidBinderCaller, QUEST_ADMISSION_OPERATION_SCHEMA,
     };
+    use rusty_quest_media_stream_android::DeterministicAndroidMediaOwnerExecutor;
 
     fn id(value: &str) -> DottedId {
         DottedId::new(value).expect("id")
@@ -2991,6 +3204,108 @@ mod tests {
             .expect("right");
         assert_eq!(left.dispatch, right.dispatch);
         assert_eq!(left.application, right.application);
+    }
+
+    struct FailAfterSideEffect {
+        inner: DeterministicAndroidMediaOwnerExecutor,
+        fail_sequence: u32,
+        failed: bool,
+    }
+
+    impl AndroidMediaOwnerExecutor for FailAfterSideEffect {
+        fn executor_generation(&self) -> u64 {
+            self.inner.executor_generation()
+        }
+
+        fn execute(
+            &mut self,
+            ticket: &AndroidMediaExecutionTicket,
+            mode: AndroidMediaExecutionMode,
+        ) -> Result<AndroidMediaOwnerReadback, String> {
+            let readback = self.inner.execute(ticket, mode)?;
+            if mode == AndroidMediaExecutionMode::Execute
+                && ticket.sequence == self.fail_sequence
+                && !self.failed
+            {
+                self.failed = true;
+                return Err("injected uncertain owner attempt".to_owned());
+            }
+            Ok(readback)
+        }
+
+        fn verify(
+            &self,
+            ticket: &AndroidMediaExecutionTicket,
+            readback: &AndroidMediaOwnerReadback,
+        ) -> bool {
+            self.inner.verify(ticket, readback)
+        }
+    }
+
+    #[test]
+    fn failed_start_compensates_uncertain_and_completed_owners_in_reverse() {
+        let command_id = "command.media.session.start";
+        let kind = QuestBrokerAuthorityBridgeKind::StandaloneProcessJni;
+        let mut runtime = runtime_for(
+            kind.clone(),
+            vec![ManifoldBrokerFeature::MediaSession],
+            command_id,
+            true,
+            "31",
+        );
+        let (use_id, token_id) = admit(&mut runtime, command_id);
+        let response = runtime
+            .handle_server_mutation(
+                &mutation(
+                    &runtime,
+                    kind,
+                    use_id,
+                    token_id,
+                    command_id,
+                    Some("lease.broker.media-session.quest.runtime"),
+                ),
+                4_000,
+            )
+            .expect("prepared start");
+        assert_eq!(
+            response
+                .platform_action
+                .as_ref()
+                .map(|a| a.owner_actions.len()),
+            Some(7)
+        );
+        let client_id = response
+            .platform_action
+            .as_ref()
+            .expect("action")
+            .client_authority
+            .client_id
+            .clone();
+        let mut executor = FailAfterSideEffect {
+            inner: DeterministicAndroidMediaOwnerExecutor::new(9).expect("executor"),
+            fail_sequence: 4,
+            failed: false,
+        };
+        let mut nonce = 1;
+        let error = runtime
+            .complete_media_session_action(
+                &QuestBrokerMediaCompletionRequest {
+                    client_id: DottedId::new(client_id).expect("client id"),
+                },
+                5_000,
+                &mut executor,
+                &mut nonce,
+            )
+            .expect_err("injected failure must not apply Start");
+        assert!(matches!(
+            error,
+            QuestBrokerRuntimeError::MediaStartAborted(_)
+        ));
+        assert!(runtime
+            .evidence()
+            .expect("evidence")
+            .media_pending_action
+            .is_none());
     }
 
     #[test]

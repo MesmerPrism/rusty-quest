@@ -44,12 +44,13 @@ pub(crate) struct CameraReprojectionGuardBandFrame {
     pub(crate) saturation_count: u64,
     pub(crate) angular_displacement_degrees: f32,
     pub(crate) angular_speed_degrees_per_second: f32,
+    pub(crate) linear_speed_meters_per_second: f32,
 }
 
 impl CameraReprojectionGuardBandFrame {
     pub(crate) fn marker_fields(self) -> String {
         format!(
-            "guardBandMinimumUv={:.4} guardBandLeftRequiredUv={:.4} guardBandRightRequiredUv={:.4} guardBandRequestedUv={:.4} guardBandAppliedUv={:.4} guardBandFootprintScale={:.4} guardBandPhase={} guardBandSaturated={} guardBandSaturationCount={} captureToPresentationAngularDisplacementDegrees={:.3} captureToPresentationAngularSpeedDegreesPerSecond={:.3}",
+            "guardBandMinimumUv={:.4} guardBandLeftRequiredUv={:.4} guardBandRightRequiredUv={:.4} guardBandRequestedUv={:.4} guardBandAppliedUv={:.4} guardBandFootprintScale={:.4} guardBandPhase={} guardBandSaturated={} guardBandSaturationCount={} captureToPresentationAngularDisplacementDegrees={:.3} captureToPresentationAngularSpeedDegreesPerSecond={:.3} headsetLinearSpeedMetersPerSecond={:.3}",
             self.minimum_margin_uv,
             self.left_required_margin_uv,
             self.right_required_margin_uv,
@@ -61,6 +62,7 @@ impl CameraReprojectionGuardBandFrame {
             self.saturation_count,
             self.angular_displacement_degrees,
             self.angular_speed_degrees_per_second,
+            self.linear_speed_meters_per_second,
         )
     }
 }
@@ -72,6 +74,8 @@ pub(crate) struct CameraReprojectionGuardBandController {
     last_update_ns: i64,
     hold_until_ns: i64,
     saturation_count: u64,
+    last_presentation_position: Option<[f32; 3]>,
+    last_presentation_timestamp_ns: i64,
 }
 
 impl CameraReprojectionGuardBandController {
@@ -81,15 +85,114 @@ impl CameraReprojectionGuardBandController {
         reprojection: CameraLatencyStereoReprojection,
         now_ns: i64,
     ) -> CameraReprojectionGuardBandFrame {
-        let minimum_margin_uv = settings.reprojection_source_overscan_uv();
-        if settings.reprojection_guard_band_mode
-            != CameraLatencyReprojectionGuardBandMode::DynamicReducedFootprint
+        self.update_with_policy(
+            settings.reprojection_source_overscan_uv(),
+            MAX_MARGIN_UV,
+            f32::NAN,
+            0.0,
+            settings.reprojection_guard_band_mode,
+            reprojection,
+            now_ns,
+        )
+    }
+
+    /// Applies the product Buffer contract. Static uses one guard size; Dynamic interpolates
+    /// between its minimum and maximum guard at the tracked speed threshold. In either mode the
+    /// effective guard owns both the retained source border and visible projection contraction.
+    pub(crate) fn update_for_projection_buffer(
+        &mut self,
+        settings: CameraLatencySettings,
+        buffer_geometry_mode: u32,
+        buffer_static_width_uv: f32,
+        buffer_minimum_width_uv: f32,
+        buffer_maximum_width_uv: f32,
+        buffer_maximum_speed_meters_per_second: f32,
+        reprojection: CameraLatencyStereoReprojection,
+        now_ns: i64,
+    ) -> CameraReprojectionGuardBandFrame {
+        let static_width_uv = if buffer_static_width_uv.is_finite() {
+            buffer_static_width_uv.clamp(0.0, MAX_MARGIN_UV)
+        } else {
+            0.08
+        };
+        let minimum_width_uv = if buffer_minimum_width_uv.is_finite() {
+            buffer_minimum_width_uv.clamp(0.0, MAX_MARGIN_UV)
+        } else {
+            0.06
+        };
+        let maximum_width_uv = if buffer_maximum_width_uv.is_finite() {
+            buffer_maximum_width_uv.clamp(minimum_width_uv, MAX_MARGIN_UV)
+        } else {
+            0.18
+        };
+        let maximum_speed_meters_per_second = if buffer_maximum_speed_meters_per_second.is_finite()
         {
+            buffer_maximum_speed_meters_per_second.clamp(0.05, 3.0)
+        } else {
+            0.80
+        };
+        let linear_speed_meters_per_second = self.presentation_linear_speed(reprojection);
+        let dynamic_margin_uv = minimum_width_uv
+            + (maximum_width_uv - minimum_width_uv)
+                * (linear_speed_meters_per_second / maximum_speed_meters_per_second)
+                    .clamp(0.0, 1.0);
+        let (minimum_margin_uv, maximum_margin_uv, requested_dynamic_margin_uv, mode) =
+            match buffer_geometry_mode {
+                0 => (
+                    0.0,
+                    0.0,
+                    0.0,
+                    CameraLatencyReprojectionGuardBandMode::ZoomToFill,
+                ),
+                1 => (
+                    static_width_uv,
+                    static_width_uv,
+                    static_width_uv,
+                    CameraLatencyReprojectionGuardBandMode::ReducedFootprint,
+                ),
+                2 => (
+                    minimum_width_uv,
+                    maximum_width_uv,
+                    dynamic_margin_uv,
+                    CameraLatencyReprojectionGuardBandMode::DynamicReducedFootprint,
+                ),
+                _ => {
+                    let legacy = settings.reprojection_source_overscan_uv();
+                    (
+                        legacy,
+                        MAX_MARGIN_UV,
+                        legacy,
+                        settings.reprojection_guard_band_mode,
+                    )
+                }
+            };
+        self.update_with_policy(
+            minimum_margin_uv,
+            maximum_margin_uv,
+            requested_dynamic_margin_uv,
+            linear_speed_meters_per_second,
+            mode,
+            reprojection,
+            now_ns,
+        )
+    }
+
+    fn update_with_policy(
+        &mut self,
+        minimum_margin_uv: f32,
+        maximum_margin_uv: f32,
+        requested_dynamic_margin_uv: f32,
+        linear_speed_meters_per_second: f32,
+        mode: CameraLatencyReprojectionGuardBandMode,
+        reprojection: CameraLatencyStereoReprojection,
+        now_ns: i64,
+    ) -> CameraReprojectionGuardBandFrame {
+        if mode != CameraLatencyReprojectionGuardBandMode::DynamicReducedFootprint {
             self.dynamic_active = false;
             self.applied_margin_uv = minimum_margin_uv;
             self.last_update_ns = now_ns;
             self.hold_until_ns = now_ns;
-            let footprint_scale = match settings.reprojection_guard_band_mode {
+            let footprint_scale = match mode {
                 CameraLatencyReprojectionGuardBandMode::ZoomToFill => 1.0,
                 CameraLatencyReprojectionGuardBandMode::ReducedFootprint
                 | CameraLatencyReprojectionGuardBandMode::DynamicReducedFootprint => {
@@ -110,13 +213,24 @@ impl CameraReprojectionGuardBandController {
                 angular_speed_degrees_per_second: stereo_angular_speed_degrees_per_second(
                     reprojection,
                 ),
+                linear_speed_meters_per_second,
             };
         }
 
         let left = required_margin_for_eye(reprojection.left);
         let right = required_margin_for_eye(reprojection.right);
-        let requested_margin_uv = minimum_margin_uv.max(left.margin_uv).max(right.margin_uv);
-        let saturated = left.saturated || right.saturated;
+        let requested_margin_uv = if requested_dynamic_margin_uv.is_finite() {
+            requested_dynamic_margin_uv.clamp(minimum_margin_uv, maximum_margin_uv)
+        } else {
+            minimum_margin_uv
+                .max(left.margin_uv)
+                .max(right.margin_uv)
+                .clamp(minimum_margin_uv, maximum_margin_uv)
+        };
+        let saturated = left.saturated
+            || right.saturated
+            || left.margin_uv > maximum_margin_uv
+            || right.margin_uv > maximum_margin_uv;
         if saturated {
             self.saturation_count = self.saturation_count.saturating_add(1);
         }
@@ -153,7 +267,7 @@ impl CameraReprojectionGuardBandController {
 
         self.applied_margin_uv = self
             .applied_margin_uv
-            .clamp(minimum_margin_uv, MAX_MARGIN_UV);
+            .clamp(minimum_margin_uv, maximum_margin_uv);
         self.last_update_ns = now_ns;
         CameraReprojectionGuardBandFrame {
             source_overscan_uv: self.applied_margin_uv,
@@ -167,7 +281,38 @@ impl CameraReprojectionGuardBandController {
             saturation_count: self.saturation_count,
             angular_displacement_degrees: stereo_angular_displacement_degrees(reprojection),
             angular_speed_degrees_per_second: stereo_angular_speed_degrees_per_second(reprojection),
+            linear_speed_meters_per_second,
         }
+    }
+
+    fn presentation_linear_speed(&mut self, reprojection: CameraLatencyStereoReprojection) -> f32 {
+        let Some(basis) = reprojection.presentation.basis else {
+            self.last_presentation_position = None;
+            self.last_presentation_timestamp_ns = 0;
+            return 0.0;
+        };
+        let speed = if let Some(previous) = self.last_presentation_position {
+            let elapsed_ns = basis
+                .timestamp_ns
+                .saturating_sub(self.last_presentation_timestamp_ns);
+            if elapsed_ns > 0 {
+                let delta = [
+                    basis.position[0] - previous[0],
+                    basis.position[1] - previous[1],
+                    basis.position[2] - previous[2],
+                ];
+                let meters =
+                    (delta[0] * delta[0] + delta[1] * delta[1] + delta[2] * delta[2]).sqrt();
+                (meters * 1_000_000_000.0 / elapsed_ns as f32).clamp(0.0, 10.0)
+            } else {
+                0.0
+            }
+        } else {
+            0.0
+        };
+        self.last_presentation_position = Some(basis.position);
+        self.last_presentation_timestamp_ns = basis.timestamp_ns;
+        speed
     }
 }
 
@@ -364,6 +509,25 @@ mod tests {
         }
     }
 
+    fn stereo_at_position(
+        position: [f32; 3],
+        timestamp_ns: i64,
+    ) -> CameraLatencyStereoReprojection {
+        let mut result = stereo(eye_with_yaw(0.0, 31.0), eye_with_yaw(0.0, 31.0));
+        result.presentation.basis = Some(
+            crate::camera_latency_diagnostics::CameraLatencyViewerBasis {
+                timestamp_ns,
+                sequence: timestamp_ns.max(0) as u64,
+                position,
+                right: [1.0, 0.0, 0.0],
+                up: [0.0, 1.0, 0.0],
+                forward: [0.0, 0.0, -1.0],
+            },
+        );
+        result.presentation.target_timestamp_ns = timestamp_ns;
+        result
+    }
+
     fn settings(
         mode: CameraLatencyReprojectionGuardBandMode,
         minimum_percent: u32,
@@ -395,6 +559,86 @@ mod tests {
         assert_eq!(reduced.source_overscan_uv, 0.1);
         assert!((reduced.footprint_scale - 0.8).abs() < f32::EPSILON);
         assert_eq!(reduced.phase, CameraReprojectionGuardBandPhase::Fixed);
+    }
+
+    #[test]
+    fn projection_buffer_guard_is_the_single_crop_and_footprint_authority() {
+        let idle = stereo(eye_with_yaw(0.0, 31.0), eye_with_yaw(0.0, 31.0));
+        let diagnostics = settings(CameraLatencyReprojectionGuardBandMode::ZoomToFill, 3);
+        let mut controller = CameraReprojectionGuardBandController::default();
+
+        let off = controller.update_for_projection_buffer(
+            diagnostics,
+            0,
+            0.12,
+            0.06,
+            0.18,
+            0.80,
+            idle,
+            1,
+        );
+        assert_eq!(off.source_overscan_uv, 0.0);
+        assert_eq!(off.footprint_scale, 1.0);
+
+        let fixed = controller.update_for_projection_buffer(
+            diagnostics,
+            1,
+            0.12,
+            0.06,
+            0.18,
+            0.80,
+            idle,
+            2,
+        );
+        assert_eq!(fixed.source_overscan_uv, 0.12);
+        assert!((fixed.footprint_scale - 0.76).abs() < f32::EPSILON);
+        assert_eq!(fixed.minimum_margin_uv, 0.12);
+
+        let dynamic = controller.update_for_projection_buffer(
+            diagnostics,
+            2,
+            0.12,
+            0.06,
+            0.18,
+            0.80,
+            idle,
+            3,
+        );
+        assert_eq!(dynamic.source_overscan_uv, 0.06);
+        assert!((dynamic.footprint_scale - 0.88).abs() < f32::EPSILON);
+        assert_eq!(dynamic.phase, CameraReprojectionGuardBandPhase::Baseline);
+    }
+
+    #[test]
+    fn dynamic_projection_buffer_reaches_maximum_at_configured_headset_speed() {
+        let diagnostics = settings(CameraLatencyReprojectionGuardBandMode::ZoomToFill, 3);
+        let mut controller = CameraReprojectionGuardBandController::default();
+        let initial = controller.update_for_projection_buffer(
+            diagnostics,
+            2,
+            0.08,
+            0.06,
+            0.18,
+            0.80,
+            stereo_at_position([0.0, 0.0, 0.0], 1_000_000_000),
+            1_000_000_000,
+        );
+        assert_eq!(initial.source_overscan_uv, 0.06);
+
+        let at_threshold = controller.update_for_projection_buffer(
+            diagnostics,
+            2,
+            0.08,
+            0.06,
+            0.18,
+            0.80,
+            stereo_at_position([0.80, 0.0, 0.0], 2_000_000_000),
+            2_000_000_000,
+        );
+        assert!((at_threshold.linear_speed_meters_per_second - 0.80).abs() < 0.000_01);
+        assert_eq!(at_threshold.source_overscan_uv, 0.18);
+        assert!((at_threshold.footprint_scale - 0.64).abs() < f32::EPSILON);
+        assert_eq!(at_threshold.phase, CameraReprojectionGuardBandPhase::Attack);
     }
 
     #[test]

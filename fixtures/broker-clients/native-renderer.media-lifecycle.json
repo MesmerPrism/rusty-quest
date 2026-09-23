@@ -5,7 +5,7 @@
   "broker_client_lock_id":"lock.broker-client.native-renderer.v1",
   "marker_namespace":"RUSTY_QUEST_NATIVE_BROKER_CLIENT",
   "project_id":"native-renderer",
-  "product_ids":["broker.media_session.embedded","broker.media_session.standalone"],
+  "product_ids":["broker.legacy_camera_p2p.standalone","broker.media_session.embedded","broker.media_session.standalone"],
   "app_feature_lock_id":"lock.app.native-renderer.broker-media-client.v1",
   "app_feature_lock_path":"apps/native-renderer-android/morphospace/conformance-locks/broker-media-client.feature.lock.json",
   "app_feature_lock_fingerprint":"sha256:c27f769772ec07937a3ca5a02ccde511b8654b9d6cd541550ed9b2c15748ce77",

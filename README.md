@@ -1,5 +1,12 @@
 # Rusty Quest
 
+Reusable Android media lives in `crates/rusty-quest-media-stream-android`.
+Its AAR and Rust library are consumed by the standalone broker and the neutral
+`apps/media-stream-conformance-android` host. Application permissions, defaults,
+and foreground lifecycle stay in the host. See the
+[media executor contract](docs/MEDIA_SESSION_RUNTIME.md) and
+[host/build validation](docs/MEDIA_STREAM_RUNTIME.md) before integrating it.
+
 `apps/lsl-rust-float32-lan-outlet-android` is the bounded P70 Rust-on-Quest
 outlet to Rust-host inlet LAN harness. It uses no Android properties or staging
 inputs and remains default-inert.
@@ -65,6 +72,21 @@ receipt-bound recovery entrypoint for a process interrupted after entering a
 run transaction; it has no generic package or shell authority.
 
 ## Device Link Contracts
+
+`tools/diagnostics/quest-shell-capabilities` is a bounded Android 14 diagnostic
+for APK↔UID-2000 transport and lifecycle: loopback TCP and abstract Unix socket
+comparison, exact external-provider Binder bootstrap, fixed Binder-carried pipe
+sizes, authenticated BLE no-op/Wi-Fi off/resume, and bounded restoration. Its
+host BLE client accepts only the fixed protocol sequence and one TCP endpoint;
+it is not a shell or product command channel.
+
+`tools/diagnostics/quest-offline-hotspot-handoff` is the separate attended
+UID-2000 A→temporary-B→A saved-network diagnostic. It uses the actual
+`NETWORK_SELECTION_ENABLED` and `DISABLED_NONE` fields, creates one
+run-identified WPA2 profile, and restores the original profile under a bounded
+guardian. Both diagnostics keep device receipts, network identities, tokens,
+and credentials outside this repository and provide source-only checks beside
+their build scripts.
 
 `crates/rusty-quest-device-link` defines
 `rusty.quest.device_link.v1`, the reusable report contract for host-to-Quest
@@ -249,6 +271,14 @@ can be tested with Spatial SDK placement, sizing, and scaling. It does not repla
 particle payloads through Java/Kotlin JSON, and keeps hand visuals explicit:
 the Spatial SDK avatar hand visual and the public ECS hand-billboard flock are
 both opt-in comparison surfaces.
+
+Diagnostic activity-marker file persistence is also opt-in through
+`debug.rustyquest.spatial_camera_panel.activity_marker_file.enabled=true`.
+Normal launches retain bounded, deduplicated Logcat markers but create no
+marker-file thread and perform no marker-file I/O. When explicitly enabled,
+persistence runs on a background thread and stops at 8 MiB without implicitly
+truncating historical evidence. External control-profile hotload is likewise
+opt-in and uses file-observer events rather than XR scene-tick polling.
 
 That directory now supplies shared public adapter source to private downstream
 effect projects and the public Spatial VR Strobe application. Their adapter
@@ -907,6 +937,15 @@ lock, registry, and projection as APK assets and emits
 `rusty.quest.manifold_broker_android.build_manifest.v2`. There is no ambient
   app-local `AndroidManifest.xml` fallback. See
   [Broker Packaging](docs/BROKER_PACKAGING.md).
+
+The supplier-only legacy camera/P2P specialization uses
+`-SpatialCameraPanelPackageName` together with an explicit tracked-clean
+`-ManifoldSourceRoot`, both reviewed media bindings, the remote-camera debug
+operator, shared signer, and explicit version. Its compatibility diagnostic is
+static-receipt gated and performs only an inspected same-version replacement,
+installed-byte readback, bounded provider status read, and exact rollback-byte
+restore. It does not uninstall, clear app data or global logs, blanket
+force-stop, request downgrade, or alter ADB lifecycle.
 
 The same build binds exact packaged product-spec, accepted-lock, and client-lock
 bytes plus their hashes into the runtime config. Grants are generated only from

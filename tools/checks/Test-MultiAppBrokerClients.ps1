@@ -82,7 +82,7 @@ if ($nativeBuild -notmatch "rusty-quest-broker-client" -or $spatialBuild -notmat
 foreach ($token in @("[string]`$Keystore", "RUSTY_QUEST_SPATIAL_SIGNING_KEYSTORE", "signing_keystore")) {
     if ($spatialBuildScript -notmatch [regex]::Escape($token)) { throw "Spatial build wrapper missing shared signing control token $token" }
 }
-foreach ($token in @("RUSTY_QUEST_SPATIAL_SIGNING_KEYSTORE", "signingConfigs.getByName(`"debug`")", "storePassword = `"android`"", "keyAlias = `"androiddebugkey`"")) {
+foreach ($token in @("RUSTY_QUEST_SPATIAL_SIGNING_KEYSTORE", "RUSTY_QUEST_SPATIAL_SIGNING_KEY_ALIAS", "RUSTY_QUEST_SPATIAL_SIGNING_STORE_PASSWORD", "RUSTY_QUEST_SPATIAL_SIGNING_KEY_PASSWORD", "signingConfigs.getByName(`"debug`")", "storePassword = spatialSigningStorePassword.get()", "keyAlias = spatialSigningKeyAlias.get()", "keyPassword = spatialSigningKeyPassword.get()")) {
     if ($spatialBuild -notmatch [regex]::Escape($token)) { throw "Spatial Gradle build missing shared signing override token $token" }
 }
 foreach ($token in @("expected_authority_revision","client_uid_not_distinct","marker_bleed","qcl100_generic_fold","cleanup_complete","system_fatal_count","NativeLifecycleEvidence","SpatialLifecycleEvidence","validate_media_lifecycle_evidence","media_lifecycle_pair_receipt")) {

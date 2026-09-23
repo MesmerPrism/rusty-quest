@@ -5,6 +5,8 @@ import android.util.Log;
 
 import org.json.JSONObject;
 
+import io.github.mesmerprism.rustyquest.media.AndroidMediaOwnerRegistry;
+
 /** JNI transport to one stateful Rust Runtime Host plus Manifold admission. */
 public final class ManifoldRuntimeAuthorityBridge {
     private static final String INITIALIZE_SCHEMA =
@@ -55,6 +57,15 @@ public final class ManifoldRuntimeAuthorityBridge {
                 "media completion");
     }
 
+    /** Installs the process-internal executor. Its GlobalRef and receipts remain native-owned. */
+    static void installAndroidMediaOwnerRegistry(
+            AndroidMediaOwnerRegistry registry, long executorGeneration) {
+        if (registry == null || executorGeneration <= 0) {
+            throw new IllegalArgumentException("invalid Android media owner registry");
+        }
+        nativeInstallAndroidMediaOwnerRegistry(registry, executorGeneration);
+    }
+
     public static JSONObject evidence() throws Exception {
         String responseJson = nativeEvidence();
         return requireAuthorityResponse(responseJson, EVIDENCE_SCHEMA, "evidence");
@@ -84,5 +95,7 @@ public final class ManifoldRuntimeAuthorityBridge {
             long authorityMonotonicElapsedNs);
     private static native String nativeMutate(String mutationJson, long nowMs);
     private static native String nativeCompleteMediaAction(String completionJson, long nowMs);
+    private static native void nativeInstallAndroidMediaOwnerRegistry(
+            AndroidMediaOwnerRegistry registry, long executorGeneration);
     private static native String nativeEvidence();
 }

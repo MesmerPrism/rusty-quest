@@ -24,10 +24,12 @@ function Assert-Contains {
 $model = Read-RequiredFile "crates\rusty-quest-remote-camera\src\model.rs"
 $validation = Read-RequiredFile "crates\rusty-quest-remote-camera\src\validation.rs"
 $packedStream = Read-RequiredFile "crates\rusty-quest-remote-camera\src\packed_stream.rs"
-$pairer = Read-RequiredFile "apps\manifold-broker-android\src\main\java\io\github\mesmerprism\rustymanifold\broker\RemoteCameraStereoFramePairer.java"
-$metadata = Read-RequiredFile "apps\manifold-broker-android\src\main\java\io\github\mesmerprism\rustymanifold\broker\RemoteCameraPackedStreamMetadata.java"
-$compositor = Read-RequiredFile "apps\manifold-broker-android\src\main\java\io\github\mesmerprism\rustymanifold\broker\RemoteCameraStereoGlCompositor.java"
-$source = Read-RequiredFile "apps\manifold-broker-android\src\main\java\io\github\mesmerprism\rustymanifold\broker\RemoteCameraPackedStereoSourceRuntime.java"
+$moduleJava = 'crates\rusty-quest-media-stream-android\android\library\src\main\java\io\github\mesmerprism\rustyquest\media'
+$pairer = Read-RequiredFile "$moduleJava\PackedStereoFramePairer.java"
+$metadata = Read-RequiredFile "$moduleJava\PackedStereoStreamMetadata.java"
+$compositor = Read-RequiredFile "$moduleJava\PackedStereoGlCompositor.java"
+$source = Read-RequiredFile "$moduleJava\PackedStereoMediaSourceRuntime.java"
+$compatibilityFacade = Read-RequiredFile "apps\manifold-broker-android\src\main\java\io\github\mesmerprism\rustymanifold\broker\RemoteCameraPackedStereoSourceRuntime.java"
 $nativePlayback = Read-RequiredFile "apps\native-renderer-android\src\main\java\io\github\mesmerprism\rustyquest\native_renderer\StereoVideoPlayback.java"
 $nativeStream = Read-RequiredFile "apps\native-renderer-android\native\src\remote_camera_projection_native_stream.rs"
 $cameraProjectionMetadata = Read-RequiredFile "apps\native-renderer-android\native\src\camera_projection_metadata.rs"
@@ -50,6 +52,12 @@ Assert-Contains "Packed RMANVID contract" $packedStream "PACKED_STEREO_PAIR_EXTE
 Assert-Contains "Packed RMANVID contract" $packedStream "validate_packed_pair_sequence"
 
 Assert-Contains "Stereo frame pairer" $pairer "chooseNearest"
+Assert-Contains "Packed compatibility facade" $compatibilityFacade "PackedStereoMediaSourceRuntime.ensureStarted"
+Assert-Contains "Packed compatibility facade" $compatibilityFacade "PackedStereoMediaSourceRuntime.stop"
+Assert-Contains "Packed compatibility facade" $compatibilityFacade "PackedStereoMediaSourceRuntime.statusForSession"
+if ($compatibilityFacade -match 'import android\.(hardware\.camera2|opengl|media)\.' -or $compatibilityFacade -match 'new ServerSocket|new Socket|MediaCodec\.') {
+    throw 'Packed compatibility facade contains platform implementation instead of consuming the shared module.'
+}
 Assert-Contains "Stereo frame pairer" $pairer "staleEyeReuseCount"
 Assert-Contains "Packed stream metadata" $metadata "RMANVID_SCHEMA_VERSION = 4"
 Assert-Contains "Packed stream metadata" $metadata "PAIR_EXTENSION_BYTES = 48"

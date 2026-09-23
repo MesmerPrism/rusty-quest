@@ -7,6 +7,7 @@ import com.meta.spatial.runtime.SceneSwapchain
 
 internal data class SpatialVideoProjectionProbeState(
     val enabled: Boolean,
+    val cameraProjectionEnabled: Boolean,
     val sceneReady: Boolean,
     val virtualRoomEnabled: Boolean,
     val virtualRoomLoaded: Boolean,
@@ -53,8 +54,23 @@ internal class SpatialVideoProjectionProbeCoordinator(
       )
       return
     }
-    started = true
     val videoSettings = bindings.resolveSettings()
+    if (
+        SpatialVideoProjectionStartupPolicy.delegateStreamToCameraProjection(
+            state.cameraProjectionEnabled,
+            videoSettings.source,
+        )
+    ) {
+      started = true
+      bindings.marker(
+          "channel=spatial-video-projection status=delegated-to-camera-projection " +
+              "reason=$reason source=${videoSettings.source} " +
+              "decoderOwner=raw-projection decoderStartCount=0 " +
+              "peerEndpointRedacted=true peerSecretSerialized=false"
+      )
+      return
+    }
+    started = true
     bindings.marker(
         SpatialVideoProjectionRouteModule.startMarker(
             reason = reason,
@@ -200,4 +216,10 @@ internal class SpatialVideoProjectionProbeCoordinator(
   companion object {
     const val MODULE_ID = "spatial-video-projection-probe-coordinator"
   }
+}
+
+internal object SpatialVideoProjectionStartupPolicy {
+  fun delegateStreamToCameraProjection(cameraProjectionEnabled: Boolean, source: String): Boolean =
+      cameraProjectionEnabled &&
+          (source == "broker-rmanvid1" || source == "peer-packed-stereo")
 }

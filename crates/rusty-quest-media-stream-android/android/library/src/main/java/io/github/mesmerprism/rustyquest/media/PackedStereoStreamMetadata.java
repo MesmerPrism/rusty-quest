@@ -1,4 +1,4 @@
-package io.github.mesmerprism.rustymanifold.broker;
+package io.github.mesmerprism.rustyquest.media;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -7,11 +7,11 @@ import java.io.IOException;
 import java.io.OutputStream;
 
 /** RMANVID v4 packed-stereo header and fixed per-packet pair extension. */
-final class RemoteCameraPackedStreamMetadata {
+public final class PackedStereoStreamMetadata {
     static final int RMANVID_SCHEMA_VERSION = 4;
     static final int PAIR_EXTENSION_BYTES = 48;
-    static final String MEDIA_LAYOUT = "side-by-side-left-right";
-    static final String FRAME_LAYOUT = "side_by_side_left_right";
+    public static final String MEDIA_LAYOUT = "side-by-side-left-right";
+    public static final String FRAME_LAYOUT = "side_by_side_left_right";
     static final String TIMESTAMP_AUTHORITY = "camera2_sensor_timestamp";
     static final String PAIRING_POLICY = "nearest_timestamp_bounded";
 
@@ -129,7 +129,7 @@ final class RemoteCameraPackedStreamMetadata {
             this.pairDeltaNs = pairDeltaNs;
         }
 
-        static PairRecord fromPair(RemoteCameraStereoFramePairer.Pair pair) {
+        static PairRecord fromPair(PackedStereoFramePairer.Pair pair) {
             return new PairRecord(
                     pair.pairId,
                     pair.left.sourceFrame,
@@ -173,7 +173,7 @@ final class RemoteCameraPackedStreamMetadata {
         }
     }
 
-    private RemoteCameraPackedStreamMetadata() {
+    private PackedStereoStreamMetadata() {
     }
 
     private static int[] parseSize(String value) {

@@ -46,6 +46,54 @@ val spatialDistortionSpeedScale =
     }
     .orElse("1.0")
 
+fun boundedFloatBuildInput(
+  name: String,
+  defaultValue: Float,
+  minimum: Float,
+  maximum: Float,
+) =
+  providers.environmentVariable(name)
+    .map { raw ->
+      val value = raw.trim().toFloatOrNull() ?: error("$name must be numeric")
+      require(value.isFinite() && value in minimum..maximum) {
+        "$name must be finite and between $minimum and $maximum"
+      }
+      value.toString()
+    }
+    .orElse(defaultValue.toString())
+
+val spatialDepthAlignmentDefaultLeftX =
+  boundedFloatBuildInput(
+    "RUSTY_QUEST_SPATIAL_DEPTH_ALIGNMENT_DEFAULT_LEFT_X",
+    0.0f,
+    -0.25f,
+    0.25f,
+  )
+
+val spatialDepthAlignmentDefaultLeftY =
+  boundedFloatBuildInput(
+    "RUSTY_QUEST_SPATIAL_DEPTH_ALIGNMENT_DEFAULT_LEFT_Y",
+    0.0f,
+    -0.25f,
+    0.25f,
+  )
+
+val spatialDepthAlignmentDefaultRightX =
+  boundedFloatBuildInput(
+    "RUSTY_QUEST_SPATIAL_DEPTH_ALIGNMENT_DEFAULT_RIGHT_X",
+    0.0f,
+    -0.25f,
+    0.25f,
+  )
+
+val spatialDepthAlignmentDefaultRightY =
+  boundedFloatBuildInput(
+    "RUSTY_QUEST_SPATIAL_DEPTH_ALIGNMENT_DEFAULT_RIGHT_Y",
+    0.0f,
+    -0.25f,
+    0.25f,
+  )
+
 fun booleanBuildInput(name: String, defaultValue: String = "false") =
   providers.environmentVariable(name)
     .map { raw ->
@@ -59,6 +107,27 @@ fun booleanBuildInput(name: String, defaultValue: String = "false") =
 
 val spatialCameraProjectionDefaultEnabled =
   booleanBuildInput("RUSTY_QUEST_SPATIAL_CAMERA_PROJECTION_DEFAULT_ENABLED")
+
+val spatialEnvironmentDepthOwner =
+  providers.environmentVariable("RUSTY_QUEST_SPATIAL_ENVIRONMENT_DEPTH_OWNER")
+    .map { raw ->
+      val value = raw.trim().lowercase()
+      require(
+        value in setOf(
+          "disabled",
+          "legacy-native-sidecar",
+          "spatial-sdk-api-layer",
+        )
+      ) {
+        "RUSTY_QUEST_SPATIAL_ENVIRONMENT_DEPTH_OWNER must be disabled, " +
+          "legacy-native-sidecar, or spatial-sdk-api-layer"
+      }
+      value
+    }
+    .orElse("legacy-native-sidecar")
+
+val spatialSdkDepthApiLayerEnabled =
+  spatialEnvironmentDepthOwner.map { it == "spatial-sdk-api-layer" }
 
 val spatialImmersiveVideoDefaultEnabled =
   booleanBuildInput("RUSTY_QUEST_SPATIAL_IMMERSIVE_VIDEO_DEFAULT_ENABLED")
@@ -122,6 +191,15 @@ val spatialHandMeshRigPackaged =
 val spatialSigningKeystore =
   providers.environmentVariable("RUSTY_QUEST_SPATIAL_SIGNING_KEYSTORE")
 
+val spatialSigningKeyAlias =
+  providers.environmentVariable("RUSTY_QUEST_SPATIAL_SIGNING_KEY_ALIAS")
+
+val spatialSigningStorePassword =
+  providers.environmentVariable("RUSTY_QUEST_SPATIAL_SIGNING_STORE_PASSWORD")
+
+val spatialSigningKeyPassword =
+  providers.environmentVariable("RUSTY_QUEST_SPATIAL_SIGNING_KEY_PASSWORD")
+
 val offlineMediaKeyHex =
   providers.environmentVariable("RUSTY_QUEST_OFFLINE_MEDIA_KEY_HEX")
     .map { raw ->
@@ -166,6 +244,15 @@ android {
     targetSdk = 34
     versionCode = 1
     versionName = "0.1.0"
+    if (spatialSdkDepthApiLayerEnabled.get()) {
+      ndk { abiFilters += "arm64-v8a" }
+      externalNativeBuild {
+        cmake {
+          cppFlags += listOf("-std=c++20")
+          targets += "XR_APILAYER_MESMERPRISM_spatial_sdk_depth_handoff"
+        }
+      }
+    }
     manifestPlaceholders["spatialAppLabel"] = spatialAppLabel.get()
     manifestPlaceholders["spatialClientId"] = spatialClientId.get()
     manifestPlaceholders["spatialFeatureLockId"] = spatialFeatureLockId.get()
@@ -201,9 +288,34 @@ android {
       "${spatialDistortionSpeedScale.get()}f",
     )
     buildConfigField(
+      "float",
+      "DEPTH_ALIGNMENT_DEFAULT_LEFT_X",
+      "${spatialDepthAlignmentDefaultLeftX.get()}f",
+    )
+    buildConfigField(
+      "float",
+      "DEPTH_ALIGNMENT_DEFAULT_LEFT_Y",
+      "${spatialDepthAlignmentDefaultLeftY.get()}f",
+    )
+    buildConfigField(
+      "float",
+      "DEPTH_ALIGNMENT_DEFAULT_RIGHT_X",
+      "${spatialDepthAlignmentDefaultRightX.get()}f",
+    )
+    buildConfigField(
+      "float",
+      "DEPTH_ALIGNMENT_DEFAULT_RIGHT_Y",
+      "${spatialDepthAlignmentDefaultRightY.get()}f",
+    )
+    buildConfigField(
       "boolean",
       "CAMERA_PROJECTION_DEFAULT_ENABLED",
       spatialCameraProjectionDefaultEnabled.get(),
+    )
+    buildConfigField(
+      "String",
+      "ENVIRONMENT_DEPTH_OWNER",
+      buildConfigString(spatialEnvironmentDepthOwner.get()),
     )
     buildConfigField(
       "boolean",
@@ -262,14 +374,23 @@ android {
     )
   }
 
+  if (spatialSdkDepthApiLayerEnabled.get()) {
+    externalNativeBuild {
+      cmake {
+        path = file("src/main/cpp/spatial_depth_layer/CMakeLists.txt")
+        version = "3.22.1"
+      }
+    }
+  }
+
   spatialSigningKeystore.orNull
     ?.takeIf { it.isNotBlank() }
     ?.let { keystorePath ->
       signingConfigs.getByName("debug") {
         storeFile = file(keystorePath)
-        storePassword = "android"
-        keyAlias = "androiddebugkey"
-        keyPassword = "android"
+        storePassword = spatialSigningStorePassword.get()
+        keyAlias = spatialSigningKeyAlias.get()
+        keyPassword = spatialSigningKeyPassword.get()
       }
     }
 
@@ -307,6 +428,9 @@ android {
   sourceSets {
     getByName("main") {
       jniLibs.srcDir(layout.buildDirectory.dir("generated/rustJniLibs"))
+      if (spatialSdkDepthApiLayerEnabled.get()) {
+        assets.srcDir(file("src/main/spatial-sdk-api-layer-assets"))
+      }
       providers.environmentVariable("RUSTY_QUEST_SPATIAL_PRIVATE_FEATURE_SRC_DIR").orNull
         ?.takeIf { it.isNotBlank() }
         ?.let { java.srcDir(it) }
@@ -329,6 +453,14 @@ android {
       providers.environmentVariable("RUSTY_QUEST_SPATIAL_PRIVATE_FEATURE_RES_DIR").orNull
         ?.takeIf { it.isNotBlank() }
         ?.let { res.srcDir(it) }
+    }
+    getByName("test") {
+      providers.environmentVariable("RUSTY_QUEST_SPATIAL_PRIVATE_FEATURE_TEST_SRC_DIR").orNull
+        ?.takeIf { it.isNotBlank() }
+        ?.let { java.srcDir(it) }
+      providers.environmentVariable("RUSTY_QUEST_SPATIAL_PRIVATE_FEATURE_TEST_RES_DIR").orNull
+        ?.takeIf { it.isNotBlank() }
+        ?.let { resources.srcDir(it) }
     }
   }
 

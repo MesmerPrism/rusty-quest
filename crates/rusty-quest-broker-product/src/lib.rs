@@ -356,6 +356,16 @@ fn render_standalone_android_manifest(
     } else {
         "Rusty Manifold Broker"
     };
+    let app_theme = if connection_hub {
+        "@android:style/Theme.Material.NoActionBar"
+    } else {
+        "@android:style/Theme.Material.Light.NoActionBar"
+    };
+    let activity_presentation = if connection_hub {
+        "\n            android:screenOrientation=\"landscape\""
+    } else {
+        ""
+    };
     let (activity_name, foreground_service_name, admission_service_name) = if connection_hub {
         (
             ".ConnectionHubStartActivity",
@@ -394,7 +404,7 @@ fn render_standalone_android_manifest(
     }
     let _ = write!(
         xml,
-        "\n    <application\n        android:allowBackup=\"false\"\n        android:hasCode=\"true\"\n        android:label=\"{app_label}\"\n        android:theme=\"@android:style/Theme.Material.Light.NoActionBar\"\n        android:usesCleartextTraffic=\"false\">\n        <activity\n            android:name=\"{activity_name}\"\n            android:exported=\"true\"\n            android:launchMode=\"singleTask\">\n            <intent-filter>\n                <action android:name=\"android.intent.action.MAIN\" />\n                <category android:name=\"android.intent.category.LAUNCHER\" />\n            </intent-filter>\n        </activity>\n        <service\n            android:name=\"{foreground_service_name}\"\n            {foreground_service_access}\n            android:foregroundServiceType=\"{service_types}\"\n            android:stopWithTask=\"false\" />\n        <service\n            android:name=\"{admission_service_name}\"\n            android:exported=\"true\"\n            android:permission=\"{QUEST_BROKER_ADMISSION_PERMISSION}\"\n            android:stopWithTask=\"false\" />\n    </application>\n</manifest>\n"
+        "\n    <application\n        android:allowBackup=\"false\"\n        android:hasCode=\"true\"\n        android:label=\"{app_label}\"\n        android:theme=\"{app_theme}\"\n        android:usesCleartextTraffic=\"false\">\n        <activity\n            android:name=\"{activity_name}\"\n            android:exported=\"true\"\n            android:launchMode=\"singleTask\"{activity_presentation}>\n            <intent-filter>\n                <action android:name=\"android.intent.action.MAIN\" />\n                <category android:name=\"android.intent.category.LAUNCHER\" />\n            </intent-filter>\n        </activity>\n        <service\n            android:name=\"{foreground_service_name}\"\n            {foreground_service_access}\n            android:foregroundServiceType=\"{service_types}\"\n            android:stopWithTask=\"false\" />\n        <service\n            android:name=\"{admission_service_name}\"\n            android:exported=\"true\"\n            android:permission=\"{QUEST_BROKER_ADMISSION_PERMISSION}\"\n            android:stopWithTask=\"false\" />\n    </application>\n</manifest>\n"
     );
     xml
 }
@@ -639,7 +649,10 @@ mod tests {
         let artifacts = prepare_standalone_android_package(&spec, &lock).expect("package");
         let manifest = artifacts.android_manifest_xml;
         assert!(manifest.contains("android:label=\"Rusty Connection Hub\""));
-        assert!(manifest.contains("android:name=\".ConnectionHubStartActivity\""));
+        assert!(manifest.contains("android:theme=\"@android:style/Theme.Material.NoActionBar\""));
+        assert!(manifest.contains(
+            "android:name=\".ConnectionHubStartActivity\"\n            android:exported=\"true\"\n            android:launchMode=\"singleTask\"\n            android:screenOrientation=\"landscape\""
+        ));
         assert!(manifest.contains(
             "android:name=\".ConnectionHubStartService\"\n            android:exported=\"true\"\n            android:permission=\"android.permission.DUMP\"\n            android:foregroundServiceType=\"dataSync\"\n            android:stopWithTask=\"false\""
         ));

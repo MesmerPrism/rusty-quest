@@ -15,6 +15,7 @@ internal data class SpatialCameraControlProfile(
     val projectionSurfaceDisplacement: ProjectionSurfaceDisplacement,
     val projectionSurfaceTiling: ProjectionSurfaceTiling,
     val projectionInnerAlpha: ProjectionInnerAlpha,
+    val strengthCycleSpeedHz: Float = SpatialStrengthCycleControls.defaultSpeedHz,
 )
 
 internal object SpatialCameraControlProfileContract {
@@ -58,6 +59,7 @@ internal object SpatialCameraControlProfileContract {
         "projection_surface_displacement",
         "projection_surface_tiling",
         "projection_inner_alpha",
+        "strength_cycle_hz",
     )
     return SpatialCameraControlProfile(
         profileId = profileId,
@@ -82,6 +84,16 @@ internal object SpatialCameraControlProfileContract {
               parseInnerAlpha(controls.requireObject("projection_inner_alpha"))
             } else {
               ProjectionInnerAlphaControls.off
+            },
+        strengthCycleSpeedHz =
+            if (controls.has("strength_cycle_hz")) {
+              controls.requireFloat(
+                  "strength_cycle_hz",
+                  SpatialStrengthCycleControls.minSpeedHz,
+                  SpatialStrengthCycleControls.maxSpeedHz,
+              )
+            } else {
+              SpatialStrengthCycleControls.defaultSpeedHz
             },
     )
   }
@@ -113,29 +125,153 @@ internal object SpatialCameraControlProfileContract {
   private fun parseZone(json: JSONObject): PrivateLayerZoneCompositor {
     json.requireOnlyKeys(
         "coverage_mode",
+        "region_contract",
+        "center_content",
+        "center_projection_mix",
+        "center_corner_radius_uv",
+        "buffer_geometry",
+        "buffer_static_width_uv",
+        "buffer_minimum_width_uv",
+        "buffer_maximum_width_uv",
+        "buffer_maximum_speed_meters_per_second",
+        "buffer_fill",
+        "stretch_extent",
         "stretch_source",
         "debug_mode",
         "outer_target_mode",
         "stretch_mapping",
         "projection_effect_edge_guard_enabled",
+        "stretch_option_flags",
         "edge_inset_uv",
         "max_inset_uv",
         "stretch_curve",
         "processed_mix",
+        "outer_content",
+        "outer_stretch_source",
+        "outer_stretch_option_flags",
+        "outer_edge_inset_uv",
+        "outer_max_inset_uv",
+        "outer_stretch_curve",
+        "outer_processed_mix",
         "inner",
         "outer",
     )
     val edgeInset = json.requireFloat("edge_inset_uv", 0.0f, 0.49f)
     val inner = parseZoneBand(json.requireObject("inner"))
     val outer = parseZoneBand(json.requireObject("outer"))
-    val normalized =
-        PrivateLayerZoneCompositorModule.normalize(
-            PrivateLayerZoneCompositor(
+    val requested =
+        PrivateLayerZoneCompositor(
             coverageMode =
                 when (json.requireToken("coverage_mode", "off", "buffer", "full")) {
                   "buffer" -> PrivateLayerZoneCompositorControls.coverageDynamicBuffer
                   "full" -> PrivateLayerZoneCompositorControls.coverageReplaceVideo
                   else -> PrivateLayerZoneCompositorControls.coverageOff
+                },
+            regionContractVersion =
+                if (json.has("region_contract")) {
+                  when (json.requireToken("region_contract", "v2", "v3", "v4")) {
+                    "v4" -> PrivateLayerZoneCompositorControls.regionContractCompositorOwned
+                    "v3" -> PrivateLayerZoneCompositorControls.regionContractRegionOwned
+                    else -> PrivateLayerZoneCompositorControls.regionContractIndependent
+                  }
+                } else {
+                  PrivateLayerZoneCompositorControls.regionContractLegacy
+                },
+            centerContentMode =
+                if (json.has("center_content")) {
+                  when (
+                      json.requireToken(
+                          "center_content",
+                          "projection",
+                          "video",
+                          "projection-video-blend",
+                          "transparent",
+                      )
+                  ) {
+                    "video" -> PrivateLayerZoneCompositorControls.centerContentVideo
+                    "projection-video-blend" ->
+                        PrivateLayerZoneCompositorControls.centerContentBlend
+                    "transparent" -> PrivateLayerZoneCompositorControls.centerContentTransparent
+                    else -> PrivateLayerZoneCompositorControls.centerContentProjection
+                  }
+                } else {
+                  PrivateLayerZoneCompositorControls.centerContentProjection
+                },
+            centerProjectionMix =
+                if (json.has("center_projection_mix")) {
+                  json.requireFloat("center_projection_mix", 0.0f, 1.0f)
+                } else {
+                  1.0f
+                },
+            centerCornerRadiusUv =
+                if (json.has("center_corner_radius_uv")) {
+                  json.requireFloat("center_corner_radius_uv", 0.0f, 0.49f)
+                } else {
+                  0.08f
+                },
+            bufferGeometryMode =
+                if (json.has("buffer_geometry")) {
+                  when (json.requireToken("buffer_geometry", "off", "static", "dynamic")) {
+                    "static" -> PrivateLayerZoneCompositorControls.bufferGeometryStatic
+                    "dynamic" -> PrivateLayerZoneCompositorControls.bufferGeometryDynamic
+                    else -> PrivateLayerZoneCompositorControls.bufferGeometryOff
+                  }
+                } else {
+                  PrivateLayerZoneCompositorControls.bufferGeometryOff
+                },
+            bufferStaticWidthUv =
+                if (json.has("buffer_static_width_uv")) {
+                  json.requireFloat("buffer_static_width_uv", 0.0f, 0.5f)
+                } else {
+                  0.08f
+                },
+            bufferMinimumWidthUv =
+                if (json.has("buffer_minimum_width_uv")) {
+                  json.requireFloat("buffer_minimum_width_uv", 0.0f, 0.5f)
+                } else {
+                  0.06f
+                },
+            bufferMaximumWidthUv =
+                if (json.has("buffer_maximum_width_uv")) {
+                  json.requireFloat("buffer_maximum_width_uv", 0.0f, 0.5f)
+                } else {
+                  0.18f
+                },
+            bufferMaximumSpeedMetersPerSecond =
+                if (json.has("buffer_maximum_speed_meters_per_second")) {
+                  json.requireFloat("buffer_maximum_speed_meters_per_second", 0.05f, 5.0f)
+                } else {
+                  0.80f
+                },
+            bufferFillMode =
+                if (json.has("buffer_fill")) {
+                  when (
+                      json.requireToken(
+                          "buffer_fill",
+                          "outer-continuation",
+                          "transparent-reveal",
+                          "stretch",
+                          "video",
+                      )
+                  ) {
+                    "transparent-reveal" ->
+                        PrivateLayerZoneCompositorControls.bufferFillTransparentReveal
+                    "stretch" -> PrivateLayerZoneCompositorControls.bufferFillStretch
+                    "video" -> PrivateLayerZoneCompositorControls.bufferFillVideo
+                    else -> PrivateLayerZoneCompositorControls.bufferFillOuterContinuation
+                  }
+                } else {
+                  PrivateLayerZoneCompositorControls.bufferFillOuterContinuation
+                },
+            stretchExtentMode =
+                if (json.has("stretch_extent")) {
+                  when (json.requireToken("stretch_extent", "buffer-only", "replace-outer")) {
+                    "replace-outer" ->
+                        PrivateLayerZoneCompositorControls.stretchExtentReplaceOuter
+                    else -> PrivateLayerZoneCompositorControls.stretchExtentBufferOnly
+                  }
+                } else {
+                  PrivateLayerZoneCompositorControls.stretchExtentBufferOnly
                 },
             stretchSource =
                 when (json.requireToken("stretch_source", "raw", "processed", "mix")) {
@@ -172,10 +308,72 @@ internal object SpatialCameraControlProfileContract {
                 },
             projectionEffectEdgeGuardEnabled =
                 json.requireBoolean("projection_effect_edge_guard_enabled"),
+            stretchOptionFlags =
+                if (json.has("stretch_option_flags")) {
+                  json.requireOptionFlags(
+                      "stretch_option_flags",
+                      PrivateLayerZoneCompositorControls.stretchOptionMask,
+                  )
+                } else {
+                  0
+                },
             edgeInsetUv = edgeInset,
             maxInsetUv = json.requireFloat("max_inset_uv", edgeInset, 0.49f),
             stretchCurve = json.requireFloat("stretch_curve", 0.25f, 6.0f),
             processedMix = json.requireFloat("processed_mix", 0.0f, 1.0f),
+            outerContentMode =
+                if (json.has("outer_content")) {
+                  when (json.requireToken("outer_content", "video", "stretch", "transparent")) {
+                    "stretch" -> PrivateLayerZoneCompositorControls.outerContentStretch
+                    "transparent" -> PrivateLayerZoneCompositorControls.outerContentTransparent
+                    else -> PrivateLayerZoneCompositorControls.outerContentVideo
+                  }
+                } else {
+                  PrivateLayerZoneCompositorControls.outerContentVideo
+                },
+            outerStretchSource =
+                if (json.has("outer_stretch_source")) {
+                  when (json.requireToken("outer_stretch_source", "raw", "processed", "mix")) {
+                    "processed" -> PrivateLayerZoneCompositorControls.sourceProcessed
+                    "mix" -> PrivateLayerZoneCompositorControls.sourceMixed
+                    else -> PrivateLayerZoneCompositorControls.sourceRaw
+                  }
+                } else {
+                  PrivateLayerZoneCompositorControls.sourceProcessed
+                },
+            outerStretchOptionFlags =
+                if (json.has("outer_stretch_option_flags")) {
+                  json.requireOptionFlags(
+                      "outer_stretch_option_flags",
+                      PrivateLayerZoneCompositorControls.outerStretchOptionMask,
+                  )
+                } else {
+                  0
+                },
+            outerEdgeInsetUv =
+                if (json.has("outer_edge_inset_uv")) {
+                  json.requireFloat("outer_edge_inset_uv", 0.0f, 0.49f)
+                } else {
+                  0.015f
+                },
+            outerMaxInsetUv =
+                if (json.has("outer_max_inset_uv")) {
+                  json.requireFloat("outer_max_inset_uv", 0.0f, 0.49f)
+                } else {
+                  0.14f
+                },
+            outerStretchCurve =
+                if (json.has("outer_stretch_curve")) {
+                  json.requireFloat("outer_stretch_curve", 0.25f, 6.0f)
+                } else {
+                  1.6f
+                },
+            outerProcessedMix =
+                if (json.has("outer_processed_mix")) {
+                  json.requireFloat("outer_processed_mix", 0.0f, 1.0f)
+                } else {
+                  1.0f
+                },
             innerSignal = inner.signal,
             innerWidthUv = inner.widthUv,
             innerCurve = inner.curve,
@@ -200,8 +398,16 @@ internal object SpatialCameraControlProfileContract {
             outerMotionGain = outer.motionGain,
             innerChannelDynamics = inner.channelDynamics,
             outerChannelDynamics = outer.channelDynamics,
-            )
         )
+    if (
+        requested.outerTargetMode ==
+            PrivateLayerZoneCompositorControls.outerTargetTransparentSpatialVideo
+    ) {
+      require(PrivateLayerZoneCompositorControls.transparentSpatialVideoSupported(requested)) {
+        "unsupported_transparent_spatial_video_blend"
+      }
+    }
+    val normalized = PrivateLayerZoneCompositorModule.normalize(requested)
     if (
         normalized.outerTargetMode ==
             PrivateLayerZoneCompositorControls.outerTargetTransparentSpatialVideo
@@ -321,7 +527,15 @@ internal object SpatialCameraControlProfileContract {
   }
 
   private fun parseRgbTransform(json: JSONObject): RgbChannelTransform {
-    json.requireOnlyKeys("mode", "edge_mode", "red", "green", "blue")
+    json.requireOnlyKeys(
+        "mode",
+        "edge_mode",
+        "direction_noise_amount_turns",
+        "direction_noise_rate_hz",
+        "red",
+        "green",
+        "blue",
+    )
     return RgbChannelTransformModule.normalize(
         RgbChannelTransform(
             mode =
@@ -335,6 +549,18 @@ internal object SpatialCameraControlProfileContract {
                   "mirror" -> RgbChannelTransformControls.edgeMirror
                   "fade" -> RgbChannelTransformControls.edgeFade
                   else -> RgbChannelTransformControls.edgeClamp
+                },
+            directionNoiseAmountTurns =
+                if (json.has("direction_noise_amount_turns")) {
+                  json.requireFloat("direction_noise_amount_turns", 0.0f, 0.125f)
+                } else {
+                  0.0f
+                },
+            directionNoiseRateHz =
+                if (json.has("direction_noise_rate_hz")) {
+                  json.requireFloat("direction_noise_rate_hz", 0.0f, 1.0f)
+                } else {
+                  0.1f
                 },
             red = parseRgbChannel(json.requireObject("red")),
             green = parseRgbChannel(json.requireObject("green")),
@@ -394,16 +620,24 @@ internal object SpatialCameraControlProfileContract {
         ProjectionSurfaceTiling(
             enabled = json.requireBoolean("enabled"),
             topology =
-                when (json.requireToken("topology", "continuous", "tiled")) {
+                when (json.requireToken("topology", "continuous", "tiled", "triangle-tiles")) {
                   "tiled" -> ProjectionSurfaceTilingControls.topologyTiled
+                  "triangle-tiles" -> ProjectionSurfaceTilingControls.topologyTriangleTiles
                   else -> ProjectionSurfaceTilingControls.topologyContinuous
                 },
             gapNormalized = json.requireFloat("gap_normalized", 0.0f, 0.45f),
             depthFlexibility = json.requireFloat("depth_flexibility", 0.0f, 1.0f),
             scope =
-                when (json.requireToken("scope", "core-and-stretch", "core-only")) {
+                when (
+                    json.requireToken(
+                        "scope",
+                        "inner-and-buffer",
+                        "core-and-stretch",
+                        "core-only",
+                    )
+                ) {
                   "core-only" -> ProjectionSurfaceTilingControls.scopeCoreOnly
-                  else -> ProjectionSurfaceTilingControls.scopeCoreAndStretch
+                  else -> ProjectionSurfaceTilingControls.scopeInnerAndBuffer
                 },
         )
     )
@@ -541,4 +775,26 @@ internal fun JSONObject.requireToken(name: String, vararg allowed: String): Stri
   val value = requireString(name)
   require(allowed.contains(value)) { "${name}_unsupported_token" }
   return value
+}
+
+private fun JSONObject.requireOptionFlags(name: String, allowedMask: Int): Int {
+  val flags =
+      requireLong(
+              name,
+              0L,
+              maxOf(
+                      0xff,
+                      allowedMask or
+                          PrivateLayerZoneCompositorControls.stretchOptionLegacyReservedBit,
+                  )
+                  .toLong(),
+          )
+          .toInt()
+  require(
+      flags and
+          (allowedMask or PrivateLayerZoneCompositorControls.stretchOptionLegacyReservedBit) == flags
+  ) {
+    "${name}_unsupported_bits"
+  }
+  return flags
 }

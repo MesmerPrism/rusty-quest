@@ -524,6 +524,7 @@ internal object CameraHwbProjectionModule {
       publicMultiStackMarkerFields: String,
       nativePassthroughStartMask: Long,
       nativeEnvironmentDepthStartMask: Long,
+      launchFenceMarkerFields: String,
   ): String =
       "channel=camera-hwb-spatial-probe status=native-start-requested rawCameraProjectionProbe=true " +
           "sdkSwapchainCreated=true surfaceValid=$surfaceValid sceneQuadLayerCreated=true " +
@@ -536,6 +537,7 @@ internal object CameraHwbProjectionModule {
           "${publicMultiStackMarkerFields.trim()} " +
           "nativePassthroughStartMask=$nativePassthroughStartMask " +
           "nativeEnvironmentDepthStartMask=$nativeEnvironmentDepthStartMask " +
+          "${launchFenceMarkerFields.trim()} " +
           "outputMode=raw-color-target-rect sampledCameraTexture=see-native-logcat " +
           "sampledLeftCameraTexture=see-native-logcat sampledRightCameraTexture=see-native-logcat " +
           "monoDuplicated=false " +
@@ -562,6 +564,11 @@ internal object CameraHwbProjectionModule {
           "renderSurfaceCarrier=scenequadlayer-createAsAndroid-vulkan-wsi " +
           "projectionPanelAlphaBlendEnabled=true " +
           "projectionPanelAlphaBlend=premultiplied-one-over-one-minus-source-alpha " +
+          "projectionCarrierAlphaRequested=pre-multiplied " +
+          "projectionCarrierLayerBlendRequested=source-one-destination-one-minus-source-alpha " +
+          "projectionCarrierLayerBlendAppApplied=true " +
+          "projectionCarrierRuntimeBlendObserved=false " +
+          "projectionCarrierRuntimeAlphaEffective=unobserved " +
           "projectionCarrierRoomObject=${carrierMode == CameraHwbProjectionCarrierMode.SceneQuadLayerRoomObject} " +
           "projectionAnchorHittable=none-first-room-diagnostic " +
           "projectionAnchorMaterialRenderOrder=default-first-room-diagnostic " +
@@ -585,6 +592,11 @@ internal object CameraHwbProjectionModule {
       "channel=camera-hwb-spatial-probe status=layer-create-failed " +
           "rawCameraProjectionProbe=true sceneQuadLayerCreated=false " +
           "anchorMode=generated-single-sided-quad " +
+          "projectionCarrierAlphaRequested=pre-multiplied " +
+          "projectionCarrierLayerBlendRequested=source-one-destination-one-minus-source-alpha " +
+          "projectionCarrierLayerBlendAppApplied=false " +
+          "projectionCarrierRuntimeBlendObserved=false " +
+          "projectionCarrierRuntimeAlphaEffective=unavailable " +
           "error=${activityMarkerToken(error)} " +
           "message=${activityMarkerToken(message)} runtimeCrash=false"
 
@@ -790,6 +802,11 @@ internal object CameraHwbProjectionModule {
           "panelRegistrationId=$panelRegistrationId " +
           "carrier=$carrier " +
           "panelLayerUpdateStatus=${activityMarkerToken(panelLayerUpdateStatus)} " +
+          "projectionCarrierAlphaRequested=straight " +
+          "projectionCarrierLayerBlendConfigured=source-alpha-destination-one-minus-source-alpha " +
+          "projectionCarrierLayerBlendApplication=see-panelLayerUpdateStatus " +
+          "projectionCarrierRuntimeBlendObserved=false " +
+          "projectionCarrierRuntimeAlphaEffective=unobserved " +
           "${projectionMarkerFields.trim()} " +
           "${stereoMarkerFields.trim()} " +
           "${videoProjectionMarkerFields.trim()} " +
@@ -924,7 +941,8 @@ internal object CameraHwbProjectionModule {
       "channel=camera-hwb-spatial-probe status=projection-placement-toggle-ignored " +
           "controllerInput=right-secondary-button inputSource=${activityMarkerToken(inputSource)} " +
           "${detail.trim()} placementMode=${placementMode.markerToken} " +
-          "cameraProjectionWallToggleInput=disabled-right-secondary-noop " +
+          "cameraProjectionWallToggleInput=disabled-unassigned " +
+          "rightSecondaryInput=direct-video-recenter " +
           "cameraProjectionWallToggleEnabled=false " +
           "toggleGuard=disabled-no-room-distance-diagnostic " +
           "projectionStartsInFullFov=true runtimeCrash=false"
@@ -976,7 +994,8 @@ internal object CameraHwbProjectionModule {
           "projectionDisplaySurface=${displayRoleForPlacement(placementMode)} " +
           "projectionRoomRenderOrder=$roomRenderOrderToken " +
           "cameraVideoProjectionLayerZIndex=${zIndexForPlacement(carrierMode, placementMode)} " +
-          "cameraProjectionWallToggleInput=disabled-right-secondary-noop " +
+          "cameraProjectionWallToggleInput=disabled-unassigned " +
+          "rightSecondaryInput=direct-video-recenter " +
           "cameraProjectionWallToggleEnabled=false " +
           "virtualRoomWallCenterM=$CAMERA_HWB_PROJECTION_WALL_CENTER_MARKER " +
           "virtualRoomWallSizeM=$CAMERA_HWB_PROJECTION_WALL_SIZE_MARKER " +
@@ -1032,7 +1051,8 @@ internal object CameraHwbProjectionModule {
         "viewerLockedPlacementMode=$CAMERA_HWB_PROJECTION_PLACEMENT_MODE " +
         "virtualRoomWallPlacementMode=$CAMERA_HWB_PROJECTION_WALL_PLACEMENT_MODE " +
         "virtualRoomWallPlacementActive=${input.placementMode == CameraHwbProjectionPlacementMode.VirtualRoomWall} " +
-        "cameraProjectionWallToggleInput=disabled-right-secondary-noop " +
+        "cameraProjectionWallToggleInput=disabled-unassigned " +
+        "rightSecondaryInput=direct-video-recenter " +
         "cameraProjectionWallToggleEnabled=false " +
         "virtualRoomWallCenterM=$CAMERA_HWB_PROJECTION_WALL_CENTER_MARKER " +
         "virtualRoomWallSizeM=$CAMERA_HWB_PROJECTION_WALL_SIZE_MARKER " +

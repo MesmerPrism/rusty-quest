@@ -145,46 +145,67 @@ const main = async () => {
       throw new Error("locked-playlist provider package mismatch");
     }
 
-    const readState = key => spatial.evaluate((card, stateKey) => {
-      const label = stateKey.replaceAll("_", " ");
-      const row = [...card.querySelectorAll(".state div")]
-        .find(candidate => candidate.querySelector("dt")?.textContent === label);
-      return row?.querySelector("dd")?.textContent ?? null;
-    }, key);
-    const readRevision = async () => {
-      const value = Number(await readState("revision"));
-      if (!Number.isSafeInteger(value) || value < 0) throw new Error("locked-playlist revision invalid");
-      return value;
-    };
-    const waitForState = (key, expected) => page.waitForFunction(({surfaceId, stateKey, expectedValue}) => {
+    const readPresentedState = () => spatial.evaluate(card => {
+      const rows = Object.fromEntries([...card.querySelectorAll(".state div")].map(row => [
+        row.querySelector("dt")?.textContent ?? "",
+        row.querySelector("dd")?.textContent ?? "",
+      ]));
+      const progress = card.querySelector('progress[aria-label="Item time"]');
+      return {
+        playlist: rows.Playlist ?? null,
+        current_item: rows["Current item"] ?? null,
+        item: rows.Item ?? null,
+        item_time: rows["Item time"] ?? null,
+        progress: progress ? Number(progress.value) : null,
+        playback_toggle: card.querySelector("button.playback-toggle")?.textContent ?? null,
+      };
+    });
+    const waitForPresentedItemChange = before => page.waitForFunction(({surfaceId, previous}) => {
       const card = document.querySelector(`[data-surface-id="${CSS.escape(surfaceId)}"]`);
-      const label = stateKey.replaceAll("_", " ");
-      const row = [...(card?.querySelectorAll(".state div") || [])]
-        .find(candidate => candidate.querySelector("dt")?.textContent === label);
-      return row?.querySelector("dd")?.textContent === expectedValue;
-    }, {surfaceId: fixed.surface, stateKey: key, expectedValue: expected}, {timeout: 10000});
-    const issue = async (label, command, expectedState = null) => {
-      const beforeRevision = await readRevision();
-      await spatial.getByRole("button", {name: label, exact: true}).click();
+      const rows = Object.fromEntries([...(card?.querySelectorAll(".state div") || [])].map(row => [
+        row.querySelector("dt")?.textContent ?? "",
+        row.querySelector("dd")?.textContent ?? "",
+      ]));
+      return rows["Current item"] !== previous.current_item || rows.Item !== previous.item;
+    }, {surfaceId: fixed.surface, previous: before}, {timeout: 10000});
+    const issue = async (label, command, expectedToggle = null) => {
+      const before = await readPresentedState();
+      const button = expectedToggle
+        ? spatial.getByRole("button", {name: new RegExp(`^${label} · `)})
+        : spatial.getByRole("button", {name: label, exact: true});
+      await button.click();
       await spatial.locator(".receipt")
         .filter({hasText: `${command}: provider_effect_observed`})
         .waitFor({timeout: 10000});
-      await page.waitForFunction(({surfaceId, minimum}) => {
-        const card = document.querySelector(`[data-surface-id="${CSS.escape(surfaceId)}"]`);
-        const row = [...(card?.querySelectorAll(".state div") || [])]
-          .find(candidate => candidate.querySelector("dt")?.textContent === "revision");
-        const value = Number(row?.querySelector("dd")?.textContent);
-        return Number.isSafeInteger(value) && value > minimum;
-      }, {surfaceId: fixed.surface, minimum: beforeRevision}, {timeout: 10000});
-      if (expectedState) await waitForState(expectedState.key, expectedState.value);
+      if (expectedToggle) {
+        await spatial.getByRole("button", {name: expectedToggle, exact: true}).waitFor({timeout: 10000});
+      } else {
+        await waitForPresentedItemChange(before);
+      }
       observations.push(`${label.toLowerCase()}-owner-effect-confirmed-once`);
     };
 
-    if (await readState("running") !== "true") throw new Error("locked playlist is not effectively running");
+    const baseline = await readPresentedState();
+    const position = /^(\d+) of (\d+)$/.exec(baseline.current_item || "");
+    if (!baseline.playlist || baseline.playlist === "Untitled playlist"
+        || !position || Number(position[1]) < 1 || Number(position[1]) > Number(position[2])
+        || Number(position[2]) < 2 || !baseline.item || baseline.item === "Unnamed item"
+        || !/^\d+:\d{2} \/ \d+:\d{2}$/.test(baseline.item_time || "")
+        || !Number.isFinite(baseline.progress) || baseline.progress < 0 || baseline.progress > 1
+        || !/^Pause · (Playing|Transitioning)$/.test(baseline.playback_toggle || "")) {
+      throw new Error("locked playlist presentation is incomplete or not effectively running");
+    }
+    observations.push("locked-playlist-title-count-index-label-state-progress-observed");
     await issue("Previous", fixed.previous);
     await issue("Next", fixed.next);
-    await issue("Pause", fixed.pause, {key: "paused", value: "true"});
-    await issue("Resume", fixed.resume, {key: "paused", value: "false"});
+    await issue("Pause", fixed.pause, "Resume · Paused");
+    const pausedTime = (await readPresentedState()).item_time;
+    await page.waitForTimeout(1500);
+    if ((await readPresentedState()).item_time !== pausedTime) {
+      throw new Error("paused playlist clock advanced");
+    }
+    observations.push("paused-clock-frozen");
+    await issue("Resume", fixed.resume, "Pause · Playing");
 
     await page.locator("#disconnect-button").click();
     await page.locator("#pair-status").filter({hasText: "Disconnected"}).waitFor({timeout: 10000});

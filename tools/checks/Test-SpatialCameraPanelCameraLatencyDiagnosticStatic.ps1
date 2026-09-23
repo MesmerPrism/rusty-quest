@@ -116,7 +116,8 @@ Assert-Contains $projectionShader "presentationSourceUv" "Rotation reprojection 
 Assert-Contains $projection "effective_rect(left_base_effective, footprint_scale" "Projection geometry must scale the retained-source footprint around each existing eye center."
 Assert-Contains $probe "cameraAngularScalePolicy" "Presentation evidence must distinguish zoom-to-fill from preserved angular scale."
 Assert-Contains $probe "projection_guard_band.marker_fields()" "Presentation evidence must report the applied per-frame guard-band decision."
-Assert-Contains $probe "camera_reprojection_guard_band.update(" "Render loop must compute exactly one guard-band decision for the current stereo reprojection."
+Assert-Contains $probe "camera_reprojection_guard_band.update_for_projection_buffer(" "Render loop must compute exactly one guard-band decision from the current buffer policy and stereo reprojection."
+Assert-Contains $probe "projection_zone_settings.buffer_static_width_uv" "Render loop must bind the configured buffer guard to the guard-band decision."
 Assert-Contains $wsi "let projection_footprint_scale = projection_guard_band.footprint_scale" "Projection geometry must use the per-frame guard-band footprint."
 Assert-Contains $wsi "projection_guard_band.source_overscan_uv" "Raw and guide camera ingress must use the per-frame guard-band crop."
 if ($wsi.Contains("latency_settings.reprojection_source_overscan_uv()")) {

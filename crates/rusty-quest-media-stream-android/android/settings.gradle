@@ -1,0 +1,3 @@
+rootProject.name = "rusty-quest-media-stream-android"
+include(":rusty-quest-media-stream-android")
+project(":rusty-quest-media-stream-android").projectDir = file("library")

@@ -64,7 +64,7 @@ internal object SpatialControllerRoutingModule {
   fun shouldConsumeLeftRightInput(rawValue: Boolean?): Boolean =
       rawValue ?: SPATIAL_SHOULD_CONSUME_LEFT_RIGHT_INPUT_DEFAULT
 
-  fun panelHeadlockJoystickEnabled(rawValue: Boolean?): Boolean = rawValue ?: true
+  fun panelHeadlockJoystickEnabled(rawValue: Boolean?): Boolean = false
 
   fun leftStickPanelDistanceEnabled(
       joystickEnabled: Boolean,
@@ -263,7 +263,7 @@ internal object SpatialControllerRoutingModule {
   ): String =
       "channel=spatial-panel status=controller-input-route-ready " +
           "inputSource=${activityMarkerToken(snapshot.rightInputSource)} " +
-          "controllerInput=right-primary-button+right-secondary-button-wall-toggle+right-trigger-particle-recenter+right-thumb-left-right-video-selection+right-thumb-up-down-projection-scale+$leftStickPanelDistanceMapping " +
+          "controllerInput=right-primary-button+right-secondary-button-video-recenter+right-trigger-particle-recenter+right-thumb-left-right-video-selection+right-thumb-up-down-projection-scale+$leftStickPanelDistanceMapping " +
           "spatialVrInputSystem=$spatialVrInputSystem " +
           "controllerComponentCount=${snapshot.componentCount} " +
           "controllerTypeComponentCount=${snapshot.controllerTypeCount} " +
@@ -353,7 +353,7 @@ internal object SpatialControllerRoutingModule {
           "controllerComponentCount=${snapshot.componentCount} " +
           "activeControllerComponentCount=${snapshot.activeCount}"
 
-  fun rightSecondaryPlacementToggleDetail(snapshot: SpatialControllerPrimarySnapshot): String =
+  fun rightSecondaryVideoRecenterDetail(snapshot: SpatialControllerPrimarySnapshot): String =
       "buttonBBit=${ButtonBits.ButtonB} buttonState=${snapshot.buttonState} " +
           "changedButtons=${snapshot.changedButtons} " +
           "localRightControllerPreferred=${snapshot.rightInputSource == "spatial-sdk-controller-component"} " +

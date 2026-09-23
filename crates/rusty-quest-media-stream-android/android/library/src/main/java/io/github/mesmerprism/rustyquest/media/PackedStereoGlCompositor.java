@@ -1,4 +1,4 @@
-package io.github.mesmerprism.rustymanifold.broker;
+package io.github.mesmerprism.rustyquest.media;
 
 import android.graphics.SurfaceTexture;
 import android.opengl.EGL14;
@@ -17,9 +17,9 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 
 /** GPU-only OES snapshot and side-by-side encoder-surface compositor. */
-final class RemoteCameraStereoGlCompositor implements Closeable {
+final class PackedStereoGlCompositor implements Closeable {
     interface Listener {
-        void onPairPresented(RemoteCameraStereoFramePairer.Pair pair, long presentationTimeUs);
+        void onPairPresented(PackedStereoFramePairer.Pair pair, long presentationTimeUs);
 
         void onCompositorFailure(Throwable error);
     }
@@ -30,11 +30,11 @@ final class RemoteCameraStereoGlCompositor implements Closeable {
     private static final long START_TIMEOUT_MS = 5_000L;
 
     private final Object signal = new Object();
-    private final RemoteCameraPackedStreamMetadata.Layout layout;
+    private final PackedStereoStreamMetadata.Layout layout;
     private final Surface encoderInputSurface;
     private final boolean synthetic;
     private final Listener listener;
-    private final RemoteCameraStereoFramePairer pairer;
+    private final PackedStereoFramePairer pairer;
     private final CaptureCorrelation leftCorrelation = new CaptureCorrelation();
     private final CaptureCorrelation rightCorrelation = new CaptureCorrelation();
     private final CountDownLatch ready = new CountDownLatch(1);
@@ -46,6 +46,8 @@ final class RemoteCameraStereoGlCompositor implements Closeable {
     private volatile Surface rightCameraSurface;
     private volatile boolean gpuCompositorActive;
     private volatile long composedFrames;
+    private final MonotonicFreshnessDeadline compositionFreshness =
+            new MonotonicFreshnessDeadline(3_000L);
     private volatile long syntheticFrames;
     private volatile long leftSurfaceFrames;
     private volatile long rightSurfaceFrames;
@@ -58,8 +60,8 @@ final class RemoteCameraStereoGlCompositor implements Closeable {
     private int rightPending;
     private SyntheticRequest syntheticRequest;
 
-    RemoteCameraStereoGlCompositor(
-            RemoteCameraPackedStreamMetadata.Layout layout,
+    PackedStereoGlCompositor(
+            PackedStereoStreamMetadata.Layout layout,
             Surface encoderInputSurface,
             boolean synthetic,
             Listener listener) throws Exception {
@@ -67,11 +69,11 @@ final class RemoteCameraStereoGlCompositor implements Closeable {
         this.encoderInputSurface = encoderInputSurface;
         this.synthetic = synthetic;
         this.listener = listener;
-        this.pairer = new RemoteCameraStereoFramePairer(RING_SIZE - 2, layout.maxPairDeltaNs);
+        this.pairer = new PackedStereoFramePairer(RING_SIZE - 2, layout.maxPairDeltaNs);
         this.thread = new Thread(new Runnable() {
             @Override
             public void run() {
-                RemoteCameraStereoGlCompositor.this.run();
+                PackedStereoGlCompositor.this.run();
             }
         }, "rusty-remote-camera-packed-gl");
         this.thread.start();
@@ -104,7 +106,7 @@ final class RemoteCameraStereoGlCompositor implements Closeable {
         }
     }
 
-    RemoteCameraStereoFramePairer.Snapshot pairerSnapshot() {
+    PackedStereoFramePairer.Snapshot pairerSnapshot() {
         return pairer.snapshot();
     }
 
@@ -114,6 +116,10 @@ final class RemoteCameraStereoGlCompositor implements Closeable {
 
     long composedFrames() {
         return composedFrames;
+    }
+
+    boolean compositionFresh(long nowElapsedMs) {
+        return compositionFreshness.fresh(nowElapsedMs);
     }
 
     long syntheticFrames() {
@@ -158,6 +164,8 @@ final class RemoteCameraStereoGlCompositor implements Closeable {
         }
         pairer.clear();
     }
+
+    boolean isTerminated() { return !thread.isAlive(); }
 
     private void run() {
         GlState gl = null;
@@ -228,11 +236,11 @@ final class RemoteCameraStereoGlCompositor implements Closeable {
                 }
                 if (consumeLeft > 0) {
                     leftSurfaceFrames += consumeLeft;
-                    consumeCameraFrame(gl, gl.leftInput, leftCorrelation, RemoteCameraStereoFramePairer.LEFT);
+                    consumeCameraFrame(gl, gl.leftInput, leftCorrelation, PackedStereoFramePairer.LEFT);
                 }
                 if (consumeRight > 0) {
                     rightSurfaceFrames += consumeRight;
-                    consumeCameraFrame(gl, gl.rightInput, rightCorrelation, RemoteCameraStereoFramePairer.RIGHT);
+                    consumeCameraFrame(gl, gl.rightInput, rightCorrelation, PackedStereoFramePairer.RIGHT);
                 }
             }
         } catch (InterruptedException interrupted) {
@@ -260,15 +268,15 @@ final class RemoteCameraStereoGlCompositor implements Closeable {
         gl.snapshotExternal(input.externalTexture, transform, input.snapshotTextures[slot]);
         CaptureFrame capture = correlation.match(timestampNs, 20L);
         if (capture == null) {
-            if (RemoteCameraStereoFramePairer.LEFT.equals(eye)) {
+            if (PackedStereoFramePairer.LEFT.equals(eye)) {
                 leftUncorrelatedFrames++;
             } else {
                 rightUncorrelatedFrames++;
             }
             return;
         }
-        RemoteCameraStereoFramePairer.Pair pair = pairer.add(
-                new RemoteCameraStereoFramePairer.Candidate(
+        PackedStereoFramePairer.Pair pair = pairer.add(
+                new PackedStereoFramePairer.Candidate(
                         eye,
                         capture.sourceFrame,
                         capture.sensorTimestampNs,
@@ -284,22 +292,22 @@ final class RemoteCameraStereoGlCompositor implements Closeable {
         gl.makePbufferCurrent();
         int leftSlot = gl.leftInput.nextSlot();
         int rightSlot = gl.rightInput.nextSlot();
-        pairer.discardTextureSlot(RemoteCameraStereoFramePairer.LEFT, leftSlot);
-        pairer.discardTextureSlot(RemoteCameraStereoFramePairer.RIGHT, rightSlot);
+        pairer.discardTextureSlot(PackedStereoFramePairer.LEFT, leftSlot);
+        pairer.discardTextureSlot(PackedStereoFramePairer.RIGHT, rightSlot);
         gl.drawSynthetic(gl.leftInput.snapshotTextures[leftSlot], true, request.sourceFrame);
         gl.drawSynthetic(gl.rightInput.snapshotTextures[rightSlot], false, request.sourceFrame);
         long queuedNs = SystemClock.elapsedRealtimeNanos();
         pairer.add(
-                new RemoteCameraStereoFramePairer.Candidate(
-                        RemoteCameraStereoFramePairer.LEFT,
+                new PackedStereoFramePairer.Candidate(
+                        PackedStereoFramePairer.LEFT,
                         request.sourceFrame,
                         request.leftTimestampNs,
                         leftSlot,
                         queuedNs),
                 queuedNs);
-        RemoteCameraStereoFramePairer.Pair pair = pairer.add(
-                new RemoteCameraStereoFramePairer.Candidate(
-                        RemoteCameraStereoFramePairer.RIGHT,
+        PackedStereoFramePairer.Pair pair = pairer.add(
+                new PackedStereoFramePairer.Candidate(
+                        PackedStereoFramePairer.RIGHT,
                         request.sourceFrame,
                         request.rightTimestampNs,
                         rightSlot,
@@ -311,7 +319,7 @@ final class RemoteCameraStereoGlCompositor implements Closeable {
         }
     }
 
-    private void composePair(GlState gl, RemoteCameraStereoFramePairer.Pair pair) throws Exception {
+    private void composePair(GlState gl, PackedStereoFramePairer.Pair pair) throws Exception {
         long startNs = SystemClock.elapsedRealtimeNanos();
         int leftTexture = gl.leftInput.snapshotTextures[pair.left.textureSlot];
         int rightTexture = gl.rightInput.snapshotTextures[pair.right.textureSlot];
@@ -321,16 +329,17 @@ final class RemoteCameraStereoGlCompositor implements Closeable {
         gl.compose(leftTexture, rightTexture, presentationNs);
         long elapsedNs = Math.max(0L, SystemClock.elapsedRealtimeNanos() - startNs);
         composedFrames++;
+        compositionFreshness.progress(SystemClock.elapsedRealtime());
         compositorTimeTotalNs += elapsedNs;
         compositorTimeMaxNs = Math.max(compositorTimeMaxNs, elapsedNs);
         listener.onPairPresented(pair, presentationNs / 1_000L);
     }
 
     private CaptureCorrelation correlation(String eye) {
-        if (RemoteCameraStereoFramePairer.LEFT.equals(eye)) {
+        if (PackedStereoFramePairer.LEFT.equals(eye)) {
             return leftCorrelation;
         }
-        if (RemoteCameraStereoFramePairer.RIGHT.equals(eye)) {
+        if (PackedStereoFramePairer.RIGHT.equals(eye)) {
             return rightCorrelation;
         }
         throw new IllegalArgumentException("unsupported eye " + eye);
@@ -487,7 +496,7 @@ final class RemoteCameraStereoGlCompositor implements Closeable {
                  1f,  1f, 1f, 1f
         };
 
-        final RemoteCameraPackedStreamMetadata.Layout layout;
+        final PackedStereoStreamMetadata.Layout layout;
         final EGLDisplay display;
         final EGLContext context;
         final EGLSurface pbufferSurface;
@@ -500,7 +509,7 @@ final class RemoteCameraStereoGlCompositor implements Closeable {
         final java.nio.FloatBuffer quadBuffer;
 
         GlState(
-                RemoteCameraPackedStreamMetadata.Layout layout,
+                PackedStereoStreamMetadata.Layout layout,
                 Surface encoderInputSurface,
                 boolean cameraInput) {
             this.layout = layout;

@@ -7,6 +7,7 @@ use std::process::Command;
 
 fn main() {
     let out_dir = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR must be set"));
+    emit_environment_depth_owner_cfg();
     write_spatial_presentation_policy(&out_dir);
     write_recorded_hand_replay_source(&out_dir);
     let shaders = [
@@ -104,12 +105,21 @@ fn main() {
         "fragment",
         &["-DPRIVATE_LAYER_VIDEO_COMPOSITOR=0".to_string()],
     );
-    let opaque_projection_vertex_shader = compile_optional_shader_env(
+    let opaque_projection_vertex_shader = compile_optional_shader_env_with_args(
         &glslc,
         &out_dir,
         "RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OPAQUE_PROJECTION_VERTEX_SHADER",
         "spatial_opaque_projection.vert.spv",
         "vertex",
+        &["-DPRIVATE_LAYER_VIDEO_COMPOSITOR=0".to_string()],
+    );
+    let _opaque_projection_video_compositor_vertex_shader = compile_optional_shader_env_with_args(
+        &glslc,
+        &out_dir,
+        "RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OPAQUE_PROJECTION_VERTEX_SHADER",
+        "spatial_opaque_projection_video_compositor.vert.spv",
+        "vertex",
+        &["-DPRIVATE_LAYER_VIDEO_COMPOSITOR=1".to_string()],
     );
     let opaque_projection_video_compositor_shader = compile_optional_shader_env_with_args(
         &glslc,
@@ -137,6 +147,31 @@ fn main() {
         opaque_projection_effect,
         &private_surface_particle,
     );
+}
+
+fn emit_environment_depth_owner_cfg() {
+    const OWNER_ENV: &str = "RUSTY_QUEST_SPATIAL_ENVIRONMENT_DEPTH_OWNER";
+    println!("cargo:rerun-if-env-changed={OWNER_ENV}");
+    for cfg_name in [
+        "rq_environment_depth_disabled",
+        "rq_environment_depth_legacy_native_sidecar",
+        "rq_environment_depth_spatial_sdk_api_layer",
+    ] {
+        println!("cargo:rustc-check-cfg=cfg({cfg_name})");
+    }
+    let owner = env::var(OWNER_ENV)
+        .unwrap_or_else(|_| "legacy-native-sidecar".to_string())
+        .trim()
+        .to_ascii_lowercase();
+    let cfg_name = match owner.as_str() {
+        "disabled" => "rq_environment_depth_disabled",
+        "legacy-native-sidecar" => "rq_environment_depth_legacy_native_sidecar",
+        "spatial-sdk-api-layer" => "rq_environment_depth_spatial_sdk_api_layer",
+        _ => {
+            panic!("{OWNER_ENV} must be disabled, legacy-native-sidecar, or spatial-sdk-api-layer")
+        }
+    };
+    println!("cargo:rustc-cfg={cfg_name}");
 }
 
 fn write_spatial_presentation_policy(out_dir: &Path) {

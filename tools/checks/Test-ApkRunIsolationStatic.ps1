@@ -6,6 +6,7 @@ $repo = (Resolve-Path -LiteralPath $RepoRoot).Path
 Import-Module (Join-Path $repo "tools\lib\SourceComposition.psm1") -Force
 
 function Assert-Contains { param([string]$Label,[string]$Text,[string]$Needle) if (-not $Text.Contains($Needle)) { throw "$Label is missing isolation guardrail: $Needle" } }
+function Assert-NotContains { param([string]$Label,[string]$Text,[string]$Needle) if ($Text.Contains($Needle)) { throw "$Label contains forbidden isolation token: $Needle" } }
 function Get-Sha { param([string]$Path) (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant() }
 function Get-StringSha { param([string]$Value) $sha=[Security.Cryptography.SHA256]::Create();try{([BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($Value)))).Replace("-","").ToLowerInvariant()}finally{$sha.Dispose()} }
 function Invoke-ExpectedCapsuleFailure {
@@ -31,9 +32,12 @@ $isolationModule = Get-Content -LiteralPath (Join-Path $repo "tools\lib\QuestRun
 $propertyTransportModule = Get-Content -LiteralPath (Join-Path $repo "tools\lib\QuestPropertyTransport.psm1") -Raw
 $recoveryTool = Get-Content -LiteralPath (Join-Path $repo "tools\Recover-QuestRunIsolation.ps1") -Raw
 $sourceCompositionModule = Get-Content -LiteralPath (Join-Path $repo "tools\lib\SourceComposition.psm1") -Raw
+$spatialDebugManifest = Get-Content -LiteralPath (Join-Path $repo "apps\spatial-camera-panel-android\app\src\debug\AndroidManifest.xml") -Raw
 
 foreach ($needle in @("-AppBuildLock is required", "Locked native APK build rejected undeclared ambient feature inputs", "content-addressed-app-lock-source-composition", "generated-native-renderer.broker-media-client.feature.lock.json", "embedded_manifold_app_feature_lock_sha256", "run-capsule.json")) { Assert-Contains "native build" $nativeBuild $needle }
 foreach ($needle in @("-AppId is required so each Spatial project has a distinct Android identity", "RUSTY_QUEST_SPATIAL_BUILD_ROOT", "content-addressed-explicit-input-lock", "ambient_spatial_feature_environment_ignored", "`$propertyScanRoots", "spatial-property-manifest.json", "complete-source-consumer-surface", "run-capsule.json")) { Assert-Contains "Spatial build" $spatialBuild $needle }
+Assert-Contains "Spatial debug provider" $spatialDebugManifest '${applicationId}.debug-host-receipt'
+Assert-NotContains "Spatial debug provider" $spatialDebugManifest 'io.github.mesmerprism.rustyquest.spatial_camera_panel.debug-host-receipt'
 foreach ($text in @($nativeSmoke, $spatialSmoke)) {
     Assert-Contains "smoke wrapper" $text "-RunCapsule is required"
     Assert-Contains "smoke wrapper" $text "Enter-QuestRunIsolation"
@@ -52,13 +56,36 @@ Assert-Contains "runtime profile" $profileTool "ordered-batched-setprop"
 foreach ($needle in @("New-QuestPropertySetpropBatches", "Get-QuestPropertyGlobalReadback", "Test-QuestPropertyExactReadback", "MaxCommandUtf8Bytes", "QuestPropertySetpropCommandSeparator", " && ", "duplicate property")) { Assert-Contains "property transport module" $propertyTransportModule $needle }
 foreach ($needle in @("-EnteredReceiptPath", "-TerminalReceiptPath", "-ExpectedSerial", "-ExpectedPackageName", "-Adb must be an explicit existing executable path")) { Assert-Contains "recovery entrypoint" $recoveryTool $needle }
 foreach ($text in @($nativeSmoke, $spatialSmoke)) { Assert-Contains "smoke wrapper short APK staging" $text "Get-QuestRunCapsuleInstallApk" }
-foreach ($needle in @("cargo metadata --format-version 1 --locked", "path-dependency", "tracked_worktree_clean", "rusty.quest.apk_source_composition_identity.v1")) { Assert-Contains "source composition module" $sourceCompositionModule $needle }
+foreach ($needle in @("cargo metadata --format-version 1 --locked", "path-dependency", "tracked_worktree_clean", "worktree_overlay_sha256", "AllowWorkingTreeChanges", "apk_source_composition_identity.v")) { Assert-Contains "source composition module" $sourceCompositionModule $needle }
 foreach ($text in @($nativeBuild, $spatialBuild)) {
     Assert-Contains "APK builder" $text "Get-QuestBuildSourceComposition"
     Assert-Contains "APK builder" $text "source_composition_fingerprint"
     Assert-Contains "APK builder" $text "source_dependencies"
     Assert-Contains "APK builder" $text '"--locked"'
     Assert-Contains "APK builder" $text "apk-i"
+}
+Assert-Contains "Spatial iteration build" $spatialBuild "-AllowWorkingTreeChanges:(-not [bool]`$PublicationBuild)"
+Assert-Contains "Spatial publication build" $spatialBuild '[switch]$PublicationBuild'
+foreach ($needle in @(
+    '$BuildCacheRoot.Length -gt 64',
+    'BuildCacheRoot must remain deliberately short (64 characters or fewer)',
+    '$cacheLaneId = (("{0}-{1}" -f $resolvedProductId, $buildTypeLower)',
+    'Join-Path $BuildCacheRoot ("l\{0}" -f $cacheLaneId)',
+    'Join-Path $BuildCacheRoot ("g\{0}" -f $cacheLaneId)',
+    'Join-Path $BuildCacheRoot "gp"',
+    'Join-Path $BuildCacheRoot "gu"',
+    'Join-Path $BuildCacheRoot ("c\{0}" -f $RustStdLinkage.Substring(0, 1).ToLowerInvariant())',
+    'native = $nativeFingerprint',
+    'android_shell = $shellFingerprint',
+    'package = $packageFingerprint',
+    'stable_short_cache = $true',
+    'paths_recorded = $false',
+    'build_cache_paths_recorded = $false'
+)) {
+    Assert-Contains "Spatial stable cache identity" $spatialBuild $needle
+}
+if ($spatialBuild.Contains('buildInputFingerprint.Substring(0, 16)', [StringComparison]::Ordinal)) {
+    throw 'Spatial compiler intermediates must not derive from the complete APK buildInputFingerprint.'
 }
 
 $temp = Join-Path ([IO.Path]::GetTempPath()) ("rusty-quest-run-capsule-test-" + [guid]::NewGuid().ToString("N"))

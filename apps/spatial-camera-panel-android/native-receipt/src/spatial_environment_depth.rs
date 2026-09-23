@@ -2,12 +2,17 @@ use std::ffi::CString;
 use std::mem;
 use std::ptr;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
-use std::thread::{self, JoinHandle};
-use std::time::{Duration, Instant};
+use std::sync::Mutex;
+use std::time::Instant;
 
+use jni::sys::jboolean;
 use openxr_sys::Handle;
 
+use crate::spatial_environment_depth_policy::{
+    environment_depth_acquire_disposition, environment_depth_retry_not_before_request,
+    environment_depth_retry_rate_limited, EnvironmentDepthAcquireDisposition,
+    BOUNDED_RECOVERY_RETRY_INTERVAL_REQUESTS,
+};
 use crate::{android_log_info, bool_token, marker_token};
 
 const RECEIPT_RECEIVED: i64 = 1 << 0;
@@ -33,12 +38,17 @@ const RECEIPT_SWAPCHAIN_STATE_OBTAINED: i64 = 1 << 19;
 const RECEIPT_IMAGES_ENUMERATED: i64 = 1 << 20;
 const RECEIPT_REFERENCE_SPACE_CREATED: i64 = 1 << 21;
 const RECEIPT_PROVIDER_STARTED: i64 = 1 << 22;
-const RECEIPT_ACQUIRE_THREAD_STARTED: i64 = 1 << 23;
+const RECEIPT_FRAME_CALLBACK_READY: i64 = 1 << 23;
 const RECEIPT_ALREADY_ACTIVE: i64 = 1 << 24;
-const ENVIRONMENT_DEPTH_ESTIMATED_PRESENTATION_LEAD_NS: i64 = 11_000_000;
-const ENVIRONMENT_DEPTH_POST_SUCCESS_DELAY_MS: u64 = 32;
-const ENVIRONMENT_DEPTH_CALL_ORDER_RETRY_DELAY_MS: u64 = 1;
-const ENVIRONMENT_DEPTH_NOT_AVAILABLE_RETRY_DELAY_MS: u64 = 4;
+
+const ACQUIRE_RECEIPT_RECEIVED: i64 = 1 << 0;
+const ACQUIRE_RECEIPT_ACQUIRED: i64 = 1 << 1;
+const ACQUIRE_RECEIPT_NOT_AVAILABLE: i64 = 1 << 2;
+const ACQUIRE_RECEIPT_ERROR: i64 = 1 << 3;
+const ACQUIRE_RECEIPT_CALL_ORDER_INVALID: i64 = 1 << 4;
+const ACQUIRE_RECEIPT_RETRY_RATE_LIMITED: i64 = 1 << 6;
+const ACQUIRE_RECEIPT_TIME_INVALID: i64 = 1 << 7;
+const LAST_VALID_LIVE_AGE_MS: u128 = 100;
 
 static SPATIAL_ENVIRONMENT_DEPTH_REQUESTED: AtomicBool = AtomicBool::new(false);
 static SPATIAL_ENVIRONMENT_DEPTH_PROVIDER_BOUND: AtomicBool = AtomicBool::new(false);
@@ -51,6 +61,9 @@ static SPATIAL_ENVIRONMENT_DEPTH_HEIGHT: AtomicU32 = AtomicU32::new(0);
 static SPATIAL_ENVIRONMENT_DEPTH_NEAR_Z_BITS: AtomicU32 = AtomicU32::new(0.001f32.to_bits());
 static SPATIAL_ENVIRONMENT_DEPTH_FAR_Z_BITS: AtomicU32 = AtomicU32::new(4.0f32.to_bits());
 static SPATIAL_ENVIRONMENT_DEPTH_CALL_ORDER_ERROR_COUNT: AtomicU64 = AtomicU64::new(0);
+static SPATIAL_ENVIRONMENT_DEPTH_TIME_INVALID_ERROR_COUNT: AtomicU64 = AtomicU64::new(0);
+static SPATIAL_ENVIRONMENT_DEPTH_RETRY_RATE_LIMITED_COUNT: AtomicU64 = AtomicU64::new(0);
+static SPATIAL_ENVIRONMENT_DEPTH_AGGRESSIVE_RECOVERY: AtomicBool = AtomicBool::new(false);
 static SPATIAL_ENVIRONMENT_DEPTH_FRAME_METADATA: Mutex<
     Option<SpatialEnvironmentDepthFrameMetadata>,
 > = Mutex::new(None);
@@ -121,16 +134,34 @@ pub(crate) struct SpatialEnvironmentDepthFrameSnapshot {
 
 struct SpatialEnvironmentDepthRuntime {
     session_raw: u64,
+    session: openxr_sys::Session,
     provider: openxr_sys::EnvironmentDepthProviderMETA,
     swapchain: openxr_sys::EnvironmentDepthSwapchainMETA,
     reference_space: openxr_sys::Space,
     image_handles: Vec<u64>,
+    width: u32,
+    height: u32,
+    acquire_image: openxr_sys::pfn::AcquireEnvironmentDepthImageMETA,
+    locate_views: Option<openxr_sys::pfn::LocateViews>,
     stop_provider: openxr_sys::pfn::StopEnvironmentDepthProviderMETA,
     destroy_provider: openxr_sys::pfn::DestroyEnvironmentDepthProviderMETA,
     destroy_swapchain: openxr_sys::pfn::DestroyEnvironmentDepthSwapchainMETA,
     destroy_space: openxr_sys::pfn::DestroySpace,
-    stop_requested: Arc<AtomicBool>,
-    acquire_thread: Option<JoinHandle<()>>,
+    started_at: Instant,
+    requests: u64,
+    attempts: u64,
+    acquired: u64,
+    unavailable: u64,
+    errors: u64,
+    time_invalid_errors: u64,
+    retry_rate_limited: u64,
+    retry_not_before_request: u64,
+    unique_captures: u64,
+    repeated_captures: u64,
+    last_capture_time_ns: i64,
+    last_success_at: Option<Instant>,
+    last_error: String,
+    first_acquired_logged: bool,
 }
 
 pub(crate) fn spatial_environment_depth_frame_snapshot(
@@ -140,15 +171,18 @@ pub(crate) fn spatial_environment_depth_frame_snapshot(
     {
         return None;
     }
+    // Copy the runtime-owned image handles before taking the metadata lock. The frame callback
+    // updates runtime statistics and then publishes metadata, so this consistent lock order also
+    // prevents a renderer snapshot from deadlocking against an acquisition callback.
+    let image_handles = {
+        let guard = SPATIAL_ENVIRONMENT_DEPTH_RUNTIME.lock().ok()?;
+        guard.as_ref()?.image_handles.clone()
+    };
     let metadata = SPATIAL_ENVIRONMENT_DEPTH_FRAME_METADATA
         .lock()
         .ok()?
         .as_ref()
         .copied()?;
-    let image_handles = {
-        let guard = SPATIAL_ENVIRONMENT_DEPTH_RUNTIME.lock().ok()?;
-        guard.as_ref()?.image_handles.clone()
-    };
     if image_handles
         .get(metadata.swapchain_index as usize)
         .copied()
@@ -181,6 +215,15 @@ pub(crate) fn spatial_environment_depth_marker_fields() -> String {
     let total_acquired = SPATIAL_ENVIRONMENT_DEPTH_TOTAL_ACQUIRED.load(Ordering::Relaxed);
     let call_order_errors =
         SPATIAL_ENVIRONMENT_DEPTH_CALL_ORDER_ERROR_COUNT.load(Ordering::Relaxed);
+    let time_invalid_errors =
+        SPATIAL_ENVIRONMENT_DEPTH_TIME_INVALID_ERROR_COUNT.load(Ordering::Relaxed);
+    let retry_rate_limited =
+        SPATIAL_ENVIRONMENT_DEPTH_RETRY_RATE_LIMITED_COUNT.load(Ordering::Relaxed);
+    let aggressive_recovery = SPATIAL_ENVIRONMENT_DEPTH_AGGRESSIVE_RECOVERY.load(Ordering::Relaxed);
+    let last_valid_age_ms = last_valid_depth_age_ms();
+    let last_valid_available = valid_data && last_valid_age_ms.is_some();
+    let freshness = depth_freshness_token(last_valid_age_ms);
+    let fallback_binding = depth_fallback_binding(last_valid_available, last_valid_age_ms);
     let metadata = SPATIAL_ENVIRONMENT_DEPTH_FRAME_METADATA
         .lock()
         .ok()
@@ -206,7 +249,9 @@ pub(crate) fn spatial_environment_depth_marker_fields() -> String {
     } else {
         "not-bound"
     };
-    let acquire_status = if total_acquired > 0 {
+    let acquire_status = if total_acquired > 0 && call_order_errors > 0 {
+        "acquired-with-recoverable-errors"
+    } else if total_acquired > 0 {
         "acquired"
     } else if provider_bound {
         "waiting-for-first-acquire"
@@ -214,7 +259,7 @@ pub(crate) fn spatial_environment_depth_marker_fields() -> String {
         "not-attempted-provider-not-bound"
     };
     format!(
-        "publicMultiStackDepthSource={} publicMultiStackDepthProviderRequested={} publicMultiStackDepthRealProviderBound={} publicMultiStackDepthValidData={} publicMultiStackDepthPermissionSurface=horizonos.permission.USE_SCENE+USE_SCENE_DATA environmentDepthSource={} environmentDepthProviderState={} environmentDepthProviderAvailable={} environmentDepthRealProviderBound={} environmentDepthAcquireStatus={} environmentDepthValidData={} environmentDepthDebugValidSampleCount={} environmentDepthAcquiredFrameCount={} environmentDepthSourceViewCount=2 environmentDepthDepthViewValidMask={} environmentDepthRenderViewValidMask={} environmentDepthCaptureTimeNs={} environmentDepthAcquireDisplayTimeNs={} environmentDepthAcquireDisplayTimePolicy=monotonic-plus-11ms-estimate-with-zero-fallback environmentDepthAcquireFrameLoopIntegration=spatial-sdk-sidecar-compatibility environmentDepthAcquireCallOrderConformant=false environmentDepthAcquireCallOrderErrorCount={}",
+        "publicMultiStackDepthSource={} publicMultiStackDepthProviderRequested={} publicMultiStackDepthRealProviderBound={} publicMultiStackDepthValidData={} publicMultiStackDepthPermissionSurface=horizonos.permission.USE_SCENE+USE_SCENE_DATA environmentDepthSource={} environmentDepthProviderState={} environmentDepthProviderAvailable={} environmentDepthRealProviderBound={} environmentDepthAcquireStatus={} environmentDepthValidData={} environmentDepthDebugValidSampleCount={} environmentDepthAcquiredFrameCount={} environmentDepthSourceViewCount=2 environmentDepthDepthViewValidMask={} environmentDepthRenderViewValidMask={} environmentDepthCaptureTimeNs={} environmentDepthAcquireDisplayTimeNs={} environmentDepthAcquireDisplayTimePolicy=spatial-sdk-predicted-display-time environmentDepthAcquireFrameLoopIntegration=spatial-sdk-early-system-after-fresh-wait-frame-return environmentDepthAcquireScheduling={} environmentDepthAcquireDuplicateFrameSuppression={} environmentDepthRecoveryPolicy={} environmentDepthAcquireThread=false environmentDepthAcquireCallOrderConformant={} environmentDepthAcquireCallOrderErrorCount={} environmentDepthAcquireTimeInvalidErrorCount={} environmentDepthAcquireRetryRateLimitedCount={} environmentDepthAcquireTimeInvalidRetryIntervalRequests={} environmentDepthAcquisitionQuarantined=false environmentDepthUnavailableReason={} environmentDepthQuarantineScope=none environmentDepthLastValidRetention=true environmentDepthLastValidAvailable={} environmentDepthLastValidAgeMs={} environmentDepthFrameFreshness={} environmentDepthFallbackBinding={}",
         source,
         bool_token(SPATIAL_ENVIRONMENT_DEPTH_REQUESTED.load(Ordering::Relaxed)),
         bool_token(provider_bound),
@@ -231,7 +276,23 @@ pub(crate) fn spatial_environment_depth_marker_fields() -> String {
         render_view_valid_mask,
         capture_time_ns,
         acquire_display_time_ns,
+        acquire_scheduling_token(aggressive_recovery),
+        bool_token(!aggressive_recovery),
+        recovery_policy_token(aggressive_recovery),
+        bool_token(total_acquired > 0 && call_order_errors == 0),
         call_order_errors,
+        time_invalid_errors,
+        retry_rate_limited,
+        BOUNDED_RECOVERY_RETRY_INTERVAL_REQUESTS,
+        if call_order_errors > 0 {
+            "openxr-call-order-invalid-recovering"
+        } else {
+            "none"
+        },
+        bool_token(last_valid_available),
+        last_valid_age_ms_token(last_valid_age_ms),
+        freshness,
+        fallback_binding,
     )
 }
 
@@ -253,14 +314,90 @@ pub(crate) fn spatial_environment_depth_compact_marker_fields() -> String {
                 )
             })
             .unwrap_or((0, 0, 0, 0));
+    let total_acquired = SPATIAL_ENVIRONMENT_DEPTH_TOTAL_ACQUIRED.load(Ordering::Relaxed);
+    let time_invalid_errors =
+        SPATIAL_ENVIRONMENT_DEPTH_TIME_INVALID_ERROR_COUNT.load(Ordering::Relaxed);
+    let retry_rate_limited =
+        SPATIAL_ENVIRONMENT_DEPTH_RETRY_RATE_LIMITED_COUNT.load(Ordering::Relaxed);
+    let aggressive_recovery = SPATIAL_ENVIRONMENT_DEPTH_AGGRESSIVE_RECOVERY.load(Ordering::Relaxed);
+    let last_valid_age_ms = last_valid_depth_age_ms();
+    let last_valid_available =
+        SPATIAL_ENVIRONMENT_DEPTH_VALID_DATA.load(Ordering::Relaxed) && last_valid_age_ms.is_some();
     format!(
-        "environmentDepthSourceViewCount=2 environmentDepthDepthViewValidMask={} environmentDepthRenderViewValidMask={} environmentDepthCaptureTimeNs={} environmentDepthAcquireDisplayTimeNs={} environmentDepthAcquireDisplayTimePolicy=monotonic-plus-11ms-estimate-with-zero-fallback environmentDepthAcquireScheduling=phase-lock-32ms-success-1ms-call-order-retry environmentDepthAcquireFrameLoopIntegration=spatial-sdk-sidecar-compatibility environmentDepthAcquireCallOrderConformant=false environmentDepthAcquireCallOrderErrorCount={}",
+        "environmentDepthSourceViewCount=2 environmentDepthDepthViewValidMask={} environmentDepthRenderViewValidMask={} environmentDepthCaptureTimeNs={} environmentDepthAcquireDisplayTimeNs={} environmentDepthAcquireDisplayTimePolicy=spatial-sdk-predicted-display-time environmentDepthAcquireScheduling={} environmentDepthAcquireDuplicateFrameSuppression={} environmentDepthRecoveryPolicy={} environmentDepthAcquireThread=false environmentDepthAcquireFrameLoopIntegration=spatial-sdk-early-system-after-fresh-wait-frame-return environmentDepthAcquireCallOrderConformant={} environmentDepthAcquireCallOrderErrorCount={} environmentDepthAcquireTimeInvalidErrorCount={} environmentDepthAcquireRetryRateLimitedCount={} environmentDepthAcquireTimeInvalidRetryIntervalRequests={} environmentDepthAcquisitionQuarantined=false environmentDepthUnavailableReason={} environmentDepthQuarantineScope=none environmentDepthLastValidRetention=true environmentDepthLastValidAvailable={} environmentDepthLastValidAgeMs={} environmentDepthFrameFreshness={} environmentDepthFallbackBinding={}",
         depth_view_valid_mask,
         render_view_valid_mask,
         capture_time_ns,
         acquire_display_time_ns,
+        acquire_scheduling_token(aggressive_recovery),
+        bool_token(!aggressive_recovery),
+        recovery_policy_token(aggressive_recovery),
+        bool_token(total_acquired > 0 && call_order_errors == 0),
         call_order_errors,
+        time_invalid_errors,
+        retry_rate_limited,
+        BOUNDED_RECOVERY_RETRY_INTERVAL_REQUESTS,
+        if call_order_errors > 0 {
+            "openxr-call-order-invalid-recovering"
+        } else {
+            "none"
+        },
+        bool_token(last_valid_available),
+        last_valid_age_ms_token(last_valid_age_ms),
+        depth_freshness_token(last_valid_age_ms),
+        depth_fallback_binding(last_valid_available, last_valid_age_ms),
     )
+}
+
+fn last_valid_depth_age_ms() -> Option<u128> {
+    SPATIAL_ENVIRONMENT_DEPTH_RUNTIME
+        .lock()
+        .ok()
+        .and_then(|guard| guard.as_ref().and_then(|runtime| runtime.last_success_at))
+        .map(|last_success_at| last_success_at.elapsed().as_millis())
+}
+
+fn last_valid_age_ms_token(last_valid_age_ms: Option<u128>) -> String {
+    last_valid_age_ms
+        .map(|age_ms| age_ms.to_string())
+        .unwrap_or_else(|| "-1".to_string())
+}
+
+fn depth_freshness_token(last_valid_age_ms: Option<u128>) -> &'static str {
+    match last_valid_age_ms {
+        Some(age_ms) if age_ms <= LAST_VALID_LIVE_AGE_MS => "live",
+        Some(_) => "stale",
+        None => "unavailable",
+    }
+}
+
+fn depth_fallback_binding(
+    last_valid_available: bool,
+    last_valid_age_ms: Option<u128>,
+) -> &'static str {
+    if !last_valid_available {
+        "neutral"
+    } else if last_valid_age_ms.unwrap_or(u128::MAX) <= LAST_VALID_LIVE_AGE_MS {
+        "live-depth"
+    } else {
+        "last-valid-depth"
+    }
+}
+
+fn recovery_policy_token(aggressive_recovery: bool) -> &'static str {
+    if aggressive_recovery {
+        "aggressive"
+    } else {
+        "bounded"
+    }
+}
+
+fn acquire_scheduling_token(aggressive_recovery: bool) -> &'static str {
+    if aggressive_recovery {
+        "every-positive-spatial-sdk-ecs-tick"
+    } else {
+        "once-per-unique-spatial-sdk-wait-frame"
+    }
 }
 
 #[no_mangle]
@@ -288,6 +425,17 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1pa
     _thiz: *mut std::ffi::c_void,
 ) -> i64 {
     stop_spatial_environment_depth_probe("jni-stop")
+}
+
+#[no_mangle]
+#[allow(non_snake_case)]
+pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1panel_SpatialCameraPanelActivity_nativeAcquireSpatialEnvironmentDepthFrame(
+    _env: *mut std::ffi::c_void,
+    _thiz: *mut std::ffi::c_void,
+    predicted_display_time_ns: i64,
+    aggressive_retry: jboolean,
+) -> i64 {
+    acquire_spatial_environment_depth_frame(predicted_display_time_ns, aggressive_retry != 0)
 }
 
 unsafe fn start_spatial_environment_depth_probe(
@@ -335,7 +483,7 @@ unsafe fn start_spatial_environment_depth_probe(
                 | RECEIPT_SWAPCHAIN_CREATED
                 | RECEIPT_REFERENCE_SPACE_CREATED
                 | RECEIPT_PROVIDER_STARTED
-                | RECEIPT_ACQUIRE_THREAD_STARTED
+                | RECEIPT_FRAME_CALLBACK_READY
                 | RECEIPT_ALREADY_ACTIVE;
             log_spatial_environment_depth(format!(
                 "status=already-active environmentDepthProviderRequested=true environmentDepthRealProviderBound=true environmentDepthProviderState=provider-running environmentDepthAcquireStatus={} nativeReceiptMask={}",
@@ -408,12 +556,6 @@ unsafe fn start_spatial_environment_depth_probe(
         resolve_openxr_function(instance, get_instance_proc_addr, "xrDestroySpace");
     let locate_views_resolution =
         resolve_openxr_function(instance, get_instance_proc_addr, "xrLocateViews");
-    let convert_timespec_time_resolution = resolve_openxr_function(
-        instance,
-        get_instance_proc_addr,
-        "xrConvertTimespecTimeToTimeKHR",
-    );
-
     if get_system_resolution.resolved {
         mask |= RECEIPT_GET_SYSTEM_RESOLVED;
     }
@@ -511,14 +653,6 @@ unsafe fn start_spatial_environment_depth_probe(
     let locate_views = locate_views_resolution.function.map(|function| {
         mem::transmute::<openxr_sys::pfn::VoidFunction, openxr_sys::pfn::LocateViews>(function)
     });
-    let convert_timespec_time_to_time =
-        convert_timespec_time_resolution.function.map(|function| {
-            mem::transmute::<
-                openxr_sys::pfn::VoidFunction,
-                openxr_sys::pfn::ConvertTimespecTimeToTimeKHR,
-            >(function)
-        });
-
     let get_info = openxr_sys::SystemGetInfo {
         ty: openxr_sys::SystemGetInfo::TYPE,
         next: ptr::null(),
@@ -700,33 +834,18 @@ unsafe fn start_spatial_environment_depth_probe(
     SPATIAL_ENVIRONMENT_DEPTH_NEAR_Z_BITS.store(0.001f32.to_bits(), Ordering::Relaxed);
     SPATIAL_ENVIRONMENT_DEPTH_FAR_Z_BITS.store(4.0f32.to_bits(), Ordering::Relaxed);
     SPATIAL_ENVIRONMENT_DEPTH_CALL_ORDER_ERROR_COUNT.store(0, Ordering::Relaxed);
+    SPATIAL_ENVIRONMENT_DEPTH_TIME_INVALID_ERROR_COUNT.store(0, Ordering::Relaxed);
+    SPATIAL_ENVIRONMENT_DEPTH_RETRY_RATE_LIMITED_COUNT.store(0, Ordering::Relaxed);
+    SPATIAL_ENVIRONMENT_DEPTH_AGGRESSIVE_RECOVERY.store(false, Ordering::Relaxed);
     if let Ok(mut metadata) = SPATIAL_ENVIRONMENT_DEPTH_FRAME_METADATA.lock() {
         *metadata = None;
     }
 
-    let stop_requested = Arc::new(AtomicBool::new(false));
-    let acquire_stop_requested = Arc::clone(&stop_requested);
-    let acquire_thread = thread::spawn(move || {
-        run_acquire_thread(
-            acquire_image,
-            instance,
-            session,
-            provider,
-            reference_space,
-            locate_views,
-            convert_timespec_time_to_time,
-            acquire_stop_requested,
-            width,
-            height,
-        )
-    });
-    mask |= RECEIPT_ACQUIRE_THREAD_STARTED;
+    mask |= RECEIPT_FRAME_CALLBACK_READY;
 
     let mut guard = match SPATIAL_ENVIRONMENT_DEPTH_RUNTIME.lock() {
         Ok(guard) => guard,
         Err(_) => {
-            stop_requested.store(true, Ordering::Relaxed);
-            let _ = acquire_thread.join();
             let stop_result = stop_provider(provider);
             let destroy_space_result = destroy_space(reference_space);
             let destroy_swapchain_result = destroy_swapchain(swapchain);
@@ -745,66 +864,100 @@ unsafe fn start_spatial_environment_depth_probe(
     };
     *guard = Some(SpatialEnvironmentDepthRuntime {
         session_raw,
+        session,
         provider,
         swapchain,
         reference_space,
         image_handles: depth_image_handles,
+        width,
+        height,
+        acquire_image,
+        locate_views,
         stop_provider,
         destroy_provider,
         destroy_swapchain,
         destroy_space,
-        stop_requested,
-        acquire_thread: Some(acquire_thread),
+        started_at: Instant::now(),
+        requests: 0,
+        attempts: 0,
+        acquired: 0,
+        unavailable: 0,
+        errors: 0,
+        time_invalid_errors: 0,
+        retry_rate_limited: 0,
+        retry_not_before_request: 0,
+        unique_captures: 0,
+        repeated_captures: 0,
+        last_capture_time_ns: 0,
+        last_success_at: None,
+        last_error: "none".to_string(),
+        first_acquired_logged: false,
     });
 
     log_spatial_environment_depth(format!(
-        "status=provider-created environmentDepthSource=xr-meta-environment-depth environmentDepthProviderRequested=true environmentDepthProviderState=provider-running environmentDepthProviderAvailable=true environmentDepthRealProviderBound=true environmentDepthSupported=true environmentDepthImageSize={}x{} environmentDepthFormat=VK_FORMAT_D16_UNORM environmentDepthLayerCount=2 environmentDepthSourceViewCount=2 environmentDepthSwapchainImages={} environmentDepthVkImagesExported=true environmentDepthAcquireStatus=waiting-for-first-acquire environmentDepthValidData=false environmentDepthDebugValidSampleCount=0 environmentDepthReferenceSpace=LOCAL xrLocateViewsResolved={} xrConvertTimespecTimeToTimeKHRResolved={} environmentDepthAcquireDisplayTimePolicy=monotonic-plus-11ms-estimate-with-zero-fallback environmentDepthAcquireScheduling=phase-lock-32ms-success-1ms-call-order-retry environmentDepthAcquireFrameLoopIntegration=spatial-sdk-sidecar-compatibility environmentDepthAcquireCallOrderConformant=false spatialSdkOwnsFrameLoop=true nativeReceiptMask={}",
+        "status=provider-created environmentDepthSource=xr-meta-environment-depth environmentDepthProviderRequested=true environmentDepthProviderState=provider-running environmentDepthProviderAvailable=true environmentDepthRealProviderBound=true environmentDepthSupported=true environmentDepthImageSize={}x{} environmentDepthFormat=VK_FORMAT_D16_UNORM environmentDepthLayerCount=2 environmentDepthSourceViewCount=2 environmentDepthSwapchainImages={} environmentDepthVkImagesExported=true environmentDepthAcquireStatus=waiting-for-first-acquire environmentDepthValidData=false environmentDepthDebugValidSampleCount=0 environmentDepthReferenceSpace=LOCAL xrLocateViewsResolved={} environmentDepthAcquireDisplayTimePolicy=spatial-sdk-predicted-display-time environmentDepthAcquireScheduling=selected-by-kotlin-frame-feature environmentDepthAcquireDuplicateFrameSuppression=selected-by-recovery-policy environmentDepthRecoveryPolicy=pending-first-acquire environmentDepthLastValidRetention=true environmentDepthAcquireThread=false environmentDepthAcquireFrameLoopIntegration=spatial-sdk-early-system-after-fresh-wait-frame-return environmentDepthAcquireCallOrderConformant=pending-first-frame spatialSdkOwnsFrameLoop=true nativeReceiptMask={}",
         width,
         height,
         image_count,
         bool_token(locate_views.is_some()),
-        bool_token(convert_timespec_time_to_time.is_some()),
         mask,
     ));
     mask
 }
 
-fn run_acquire_thread(
-    acquire_image: openxr_sys::pfn::AcquireEnvironmentDepthImageMETA,
-    instance: openxr_sys::Instance,
-    session: openxr_sys::Session,
-    provider: openxr_sys::EnvironmentDepthProviderMETA,
-    reference_space: openxr_sys::Space,
-    locate_views: Option<openxr_sys::pfn::LocateViews>,
-    convert_timespec_time_to_time: Option<openxr_sys::pfn::ConvertTimespecTimeToTimeKHR>,
-    stop_requested: Arc<AtomicBool>,
-    width: u32,
-    height: u32,
-) {
-    let start = Instant::now();
-    let mut attempts = 0_u64;
-    let mut acquired = 0_u64;
-    let mut unavailable = 0_u64;
-    let mut errors = 0_u64;
-    let mut unique_captures = 0_u64;
-    let mut repeated_captures = 0_u64;
-    let mut last_capture_time_ns = 0_i64;
-    let mut last_error = "none".to_string();
-    let mut first_acquired_logged = false;
-    while !stop_requested.load(Ordering::Relaxed) {
-        attempts = attempts.saturating_add(1);
-        let (display_time, display_time_policy) =
-            estimated_environment_depth_display_time(instance, convert_timespec_time_to_time);
+fn acquire_spatial_environment_depth_frame(
+    predicted_display_time_ns: i64,
+    aggressive_retry: bool,
+) -> i64 {
+    if predicted_display_time_ns <= 0 {
+        return 0;
+    }
+    SPATIAL_ENVIRONMENT_DEPTH_AGGRESSIVE_RECOVERY.store(aggressive_retry, Ordering::Release);
+    let mut guard = match SPATIAL_ENVIRONMENT_DEPTH_RUNTIME.lock() {
+        Ok(guard) => guard,
+        Err(_) => return 0,
+    };
+    let Some(runtime) = guard.as_mut() else {
+        return 0;
+    };
+    runtime.requests = runtime.requests.saturating_add(1);
+    let mut receipt = ACQUIRE_RECEIPT_RECEIVED;
+    if environment_depth_retry_rate_limited(
+        runtime.requests,
+        runtime.retry_not_before_request,
+        aggressive_retry,
+    ) {
+        receipt |= ACQUIRE_RECEIPT_RETRY_RATE_LIMITED;
+        runtime.retry_rate_limited = runtime.retry_rate_limited.saturating_add(1);
+        SPATIAL_ENVIRONMENT_DEPTH_RETRY_RATE_LIMITED_COUNT
+            .store(runtime.retry_rate_limited, Ordering::Relaxed);
+        if runtime.retry_rate_limited == 1 || runtime.retry_rate_limited % 60 == 0 {
+            log_spatial_environment_depth(format!(
+                "status=acquire-retry-rate-limited reason=xr-error-time-invalid acquireRequests={} acquireAttempts={} retryNotBeforeRequest={} environmentDepthAcquireRetryRateLimitedCount={} environmentDepthAcquireTimeInvalidRetryIntervalRequests={} nativeAcquireReceiptMask={}",
+                runtime.requests,
+                runtime.attempts,
+                runtime.retry_not_before_request,
+                runtime.retry_rate_limited,
+                BOUNDED_RECOVERY_RETRY_INTERVAL_REQUESTS,
+                receipt,
+            ));
+        }
+        return receipt;
+    }
+    runtime.attempts = runtime.attempts.saturating_add(1);
+    unsafe {
+        let display_time = openxr_sys::Time::from_nanos(predicted_display_time_ns);
+        let display_time_policy = "spatial-sdk-predicted-display-time";
         let (render_views, render_view_valid_mask) = locate_environment_depth_render_views(
-            session,
-            reference_space,
-            locate_views,
+            runtime.session,
+            runtime.reference_space,
+            runtime.locate_views,
             display_time,
         );
         let acquire_info = openxr_sys::EnvironmentDepthImageAcquireInfoMETA {
             ty: openxr_sys::EnvironmentDepthImageAcquireInfoMETA::TYPE,
             next: ptr::null(),
-            space: reference_space,
+            space: runtime.reference_space,
             display_time,
         };
         let empty_view = openxr_sys::EnvironmentDepthImageViewMETA {
@@ -826,24 +979,28 @@ fn run_acquire_thread(
             far_z: 0.0,
             views: [empty_view; 2],
         };
-        let result = unsafe { acquire_image(provider, &acquire_info, &mut image) };
-        if result == openxr_sys::Result::SUCCESS {
-            acquired = acquired.saturating_add(1);
+        let result = (runtime.acquire_image)(runtime.provider, &acquire_info, &mut image);
+        let disposition = environment_depth_acquire_disposition(result);
+        if disposition == EnvironmentDepthAcquireDisposition::Acquired {
+            receipt |= ACQUIRE_RECEIPT_ACQUIRED;
+            runtime.acquired = runtime.acquired.saturating_add(1);
+            runtime.retry_not_before_request = 0;
+            runtime.last_success_at = Some(Instant::now());
             let capture_time_ns = timestamp.capture_time.as_nanos();
-            if capture_time_ns > 0 && capture_time_ns != last_capture_time_ns {
-                unique_captures = unique_captures.saturating_add(1);
-                last_capture_time_ns = capture_time_ns;
+            if capture_time_ns > 0 && capture_time_ns != runtime.last_capture_time_ns {
+                runtime.unique_captures = runtime.unique_captures.saturating_add(1);
+                runtime.last_capture_time_ns = capture_time_ns;
             } else {
-                repeated_captures = repeated_captures.saturating_add(1);
+                runtime.repeated_captures = runtime.repeated_captures.saturating_add(1);
             }
-            let valid_sample_count = acquired;
-            SPATIAL_ENVIRONMENT_DEPTH_TOTAL_ACQUIRED.store(acquired, Ordering::Relaxed);
+            let valid_sample_count = runtime.acquired;
+            SPATIAL_ENVIRONMENT_DEPTH_TOTAL_ACQUIRED.store(runtime.acquired, Ordering::Relaxed);
             SPATIAL_ENVIRONMENT_DEPTH_VALID_SAMPLE_COUNT
                 .store(valid_sample_count, Ordering::Relaxed);
             SPATIAL_ENVIRONMENT_DEPTH_LAST_SWAPCHAIN_INDEX
                 .store(image.swapchain_index, Ordering::Relaxed);
-            SPATIAL_ENVIRONMENT_DEPTH_WIDTH.store(width, Ordering::Relaxed);
-            SPATIAL_ENVIRONMENT_DEPTH_HEIGHT.store(height, Ordering::Relaxed);
+            SPATIAL_ENVIRONMENT_DEPTH_WIDTH.store(runtime.width, Ordering::Relaxed);
+            SPATIAL_ENVIRONMENT_DEPTH_HEIGHT.store(runtime.height, Ordering::Relaxed);
             SPATIAL_ENVIRONMENT_DEPTH_NEAR_Z_BITS.store(image.near_z.to_bits(), Ordering::Relaxed);
             SPATIAL_ENVIRONMENT_DEPTH_FAR_Z_BITS.store(image.far_z.to_bits(), Ordering::Relaxed);
             let depth_views = image.views.map(spatial_environment_depth_view_snapshot);
@@ -861,11 +1018,11 @@ fn run_acquire_thread(
             if let Ok(mut metadata) = SPATIAL_ENVIRONMENT_DEPTH_FRAME_METADATA.lock() {
                 *metadata = Some(SpatialEnvironmentDepthFrameMetadata {
                     swapchain_index: image.swapchain_index,
-                    width,
-                    height,
+                    width: runtime.width,
+                    height: runtime.height,
                     near_z: image.near_z,
                     far_z: image.far_z,
-                    acquired_frame_count: acquired,
+                    acquired_frame_count: runtime.acquired,
                     capture_time_ns,
                     acquire_display_time_ns: display_time.as_nanos(),
                     depth_views,
@@ -875,13 +1032,13 @@ fn run_acquire_thread(
                 });
             }
             SPATIAL_ENVIRONMENT_DEPTH_VALID_DATA.store(true, Ordering::Relaxed);
-            if !first_acquired_logged {
-                first_acquired_logged = true;
+            if !runtime.first_acquired_logged {
+                runtime.first_acquired_logged = true;
                 log_spatial_environment_depth(format!(
-                    "status=first-frame environmentDepthSource=xr-meta-environment-depth environmentDepthProviderState=provider-running environmentDepthProviderAvailable=true environmentDepthRealProviderBound=true environmentDepthAcquireStatus=acquired environmentDepthValidData=true environmentDepthDebugValidSampleCount={} environmentDepthImageSize={}x{} environmentDepthFormat=VK_FORMAT_D16_UNORM environmentDepthLayerCount=2 environmentDepthSourceViewCount=2 environmentDepthDepthViewValidMask={} environmentDepthRenderViewValidMask={} environmentDepthSwapchainIndex={} environmentDepthNearM={:.3} environmentDepthFarM={:.3} environmentDepthCaptureTimeNs={} environmentDepthAcquireDisplayTimeNs={} environmentDepthAcquireDisplayTimePolicy={} environmentDepthAcquireFrameLoopIntegration=spatial-sdk-sidecar-compatibility environmentDepthAcquireCallOrderConformant=false",
+                    "status=first-frame environmentDepthSource=xr-meta-environment-depth environmentDepthProviderState=provider-running environmentDepthProviderAvailable=true environmentDepthRealProviderBound=true environmentDepthAcquireStatus=acquired environmentDepthValidData=true environmentDepthDebugValidSampleCount={} environmentDepthImageSize={}x{} environmentDepthFormat=VK_FORMAT_D16_UNORM environmentDepthLayerCount=2 environmentDepthSourceViewCount=2 environmentDepthDepthViewValidMask={} environmentDepthRenderViewValidMask={} environmentDepthSwapchainIndex={} environmentDepthNearM={:.3} environmentDepthFarM={:.3} environmentDepthCaptureTimeNs={} environmentDepthAcquireDisplayTimeNs={} environmentDepthAcquireDisplayTimePolicy={} environmentDepthAcquireScheduling={} environmentDepthAcquireDuplicateFrameSuppression={} environmentDepthRecoveryPolicy={} environmentDepthAcquireThread=false environmentDepthAcquireFrameLoopIntegration=spatial-sdk-early-system-after-fresh-wait-frame-return environmentDepthAcquireCallOrderConformant=true environmentDepthLastValidRetention=true environmentDepthLastValidAvailable=true environmentDepthLastValidAgeMs=0 environmentDepthFrameFreshness=live environmentDepthFallbackBinding=live-depth",
                     valid_sample_count,
-                    width,
-                    height,
+                    runtime.width,
+                    runtime.height,
                     depth_view_valid_mask,
                     render_view_valid_mask,
                     image.swapchain_index,
@@ -890,97 +1047,105 @@ fn run_acquire_thread(
                     capture_time_ns,
                     display_time.as_nanos(),
                     display_time_policy,
+                    acquire_scheduling_token(aggressive_retry),
+                    bool_token(!aggressive_retry),
+                    recovery_policy_token(aggressive_retry),
                 ));
             }
-        } else if result == openxr_sys::Result::ENVIRONMENT_DEPTH_NOT_AVAILABLE_META {
-            unavailable = unavailable.saturating_add(1);
+        } else if disposition == EnvironmentDepthAcquireDisposition::RetryNextEligibleFrame {
+            receipt |= ACQUIRE_RECEIPT_NOT_AVAILABLE;
+            runtime.unavailable = runtime.unavailable.saturating_add(1);
         } else {
-            errors = errors.saturating_add(1);
-            last_error = xr_result_token(result);
-            if result == openxr_sys::Result::ERROR_CALL_ORDER_INVALID {
-                SPATIAL_ENVIRONMENT_DEPTH_CALL_ORDER_ERROR_COUNT.fetch_add(1, Ordering::Relaxed);
+            receipt |= ACQUIRE_RECEIPT_ERROR;
+            runtime.errors = runtime.errors.saturating_add(1);
+            runtime.last_error = xr_result_token(result);
+            if disposition == EnvironmentDepthAcquireDisposition::RecoverableCallOrder {
+                receipt |= ACQUIRE_RECEIPT_CALL_ORDER_INVALID;
+                let call_order_errors = SPATIAL_ENVIRONMENT_DEPTH_CALL_ORDER_ERROR_COUNT
+                    .fetch_add(1, Ordering::AcqRel)
+                    .saturating_add(1);
+                if !aggressive_retry {
+                    runtime.retry_not_before_request =
+                        environment_depth_retry_not_before_request(runtime.requests);
+                }
+                if call_order_errors == 1 || call_order_errors % 60 == 0 {
+                    log_spatial_environment_depth(format!(
+                        "status=acquire-recoverable-error reason=openxr-call-order-invalid acquireResult={} environmentDepthRecoveryPolicy={} environmentDepthLastValidRetention=true environmentDepthLastValidAvailable={} environmentDepthAcquisitionQuarantined=false retryNotBeforeRequest={} environmentDepthAcquireCallOrderErrorCount={} acquireAttempts={} acquiredFrames={} nativeAcquireReceiptMask={}",
+                        xr_result_token(result),
+                        recovery_policy_token(aggressive_retry),
+                        bool_token(runtime.last_success_at.is_some()),
+                        runtime.retry_not_before_request,
+                        call_order_errors,
+                        runtime.attempts,
+                        runtime.acquired,
+                        receipt,
+                    ));
+                }
+            } else if disposition == EnvironmentDepthAcquireDisposition::RateLimitRetry {
+                receipt |= ACQUIRE_RECEIPT_TIME_INVALID;
+                runtime.time_invalid_errors = runtime.time_invalid_errors.saturating_add(1);
+                if !aggressive_retry {
+                    runtime.retry_not_before_request =
+                        environment_depth_retry_not_before_request(runtime.requests);
+                }
+                SPATIAL_ENVIRONMENT_DEPTH_TIME_INVALID_ERROR_COUNT
+                    .store(runtime.time_invalid_errors, Ordering::Relaxed);
+                if runtime.time_invalid_errors == 1 || runtime.time_invalid_errors % 60 == 0 {
+                    log_spatial_environment_depth(format!(
+                        "status=acquire-time-invalid acquireResult={} acquireRequests={} acquireAttempts={} retryNotBeforeRequest={} environmentDepthAcquireTimeInvalidErrorCount={} environmentDepthAcquireTimeInvalidRetryIntervalRequests={} nativeAcquireReceiptMask={}",
+                        xr_result_token(result),
+                        runtime.requests,
+                        runtime.attempts,
+                        runtime.retry_not_before_request,
+                        runtime.time_invalid_errors,
+                        BOUNDED_RECOVERY_RETRY_INTERVAL_REQUESTS,
+                        receipt,
+                    ));
+                }
             }
         }
-        if attempts == 1 || attempts % 120 == 0 {
+        if runtime.attempts == 1 || runtime.attempts % 300 == 0 {
             let valid_data = SPATIAL_ENVIRONMENT_DEPTH_VALID_DATA.load(Ordering::Relaxed);
+            let call_order_errors =
+                SPATIAL_ENVIRONMENT_DEPTH_CALL_ORDER_ERROR_COUNT.load(Ordering::Relaxed);
+            let last_valid_age_ms = runtime
+                .last_success_at
+                .map(|last_success_at| last_success_at.elapsed().as_millis());
+            let last_valid_available = valid_data && last_valid_age_ms.is_some();
             log_spatial_environment_depth(format!(
-                "status=runtime environmentDepthSource=xr-meta-environment-depth environmentDepthProviderState=provider-running environmentDepthProviderAvailable=true environmentDepthRealProviderBound=true environmentDepthAcquireStatus={} environmentDepthValidData={} environmentDepthDebugValidSampleCount={} acquireAttempts={} acquiredFrames={} environmentDepthUniqueCaptureCount={} environmentDepthRepeatedCaptureCount={} unavailableFrames={} acquireErrors={} lastAcquireError={} environmentDepthAcquireCallOrderErrorCount={} elapsedMs={} environmentDepthAcquireDisplayTimeNs={} environmentDepthAcquireDisplayTimePolicy={} environmentDepthAcquireScheduling=phase-lock-32ms-success-1ms-call-order-retry environmentDepthAcquireFrameLoopIntegration=spatial-sdk-sidecar-compatibility environmentDepthAcquireCallOrderConformant=false",
-                if acquired > 0 { "acquired" } else if errors > 0 { "error" } else { "not-available" },
+                "status=runtime environmentDepthSource=xr-meta-environment-depth environmentDepthProviderState=provider-running environmentDepthProviderAvailable=true environmentDepthRealProviderBound=true environmentDepthAcquireStatus={} environmentDepthValidData={} environmentDepthDebugValidSampleCount={} acquireAttempts={} acquiredFrames={} environmentDepthUniqueCaptureCount={} environmentDepthRepeatedCaptureCount={} unavailableFrames={} acquireErrors={} lastAcquireError={} environmentDepthAcquireCallOrderErrorCount={} elapsedMs={} environmentDepthAcquireDisplayTimeNs={} environmentDepthAcquireDisplayTimePolicy={} environmentDepthAcquireScheduling={} environmentDepthAcquireDuplicateFrameSuppression={} environmentDepthRecoveryPolicy={} environmentDepthAcquireThread=false environmentDepthAcquireFrameLoopIntegration=spatial-sdk-early-system-after-fresh-wait-frame-return environmentDepthAcquireCallOrderConformant={} environmentDepthAcquisitionQuarantined=false environmentDepthLastValidRetention=true environmentDepthLastValidAvailable={} environmentDepthLastValidAgeMs={} environmentDepthFrameFreshness={} environmentDepthFallbackBinding={}",
+                if runtime.acquired > 0 {
+                    "acquired"
+                } else if runtime.errors > 0 {
+                    "error"
+                } else {
+                    "not-available"
+                },
                 bool_token(valid_data),
                 SPATIAL_ENVIRONMENT_DEPTH_VALID_SAMPLE_COUNT.load(Ordering::Relaxed),
-                attempts,
-                acquired,
-                unique_captures,
-                repeated_captures,
-                unavailable,
-                errors,
-                last_error,
-                SPATIAL_ENVIRONMENT_DEPTH_CALL_ORDER_ERROR_COUNT.load(Ordering::Relaxed),
-                start.elapsed().as_millis(),
+                runtime.attempts,
+                runtime.acquired,
+                runtime.unique_captures,
+                runtime.repeated_captures,
+                runtime.unavailable,
+                runtime.errors,
+                runtime.last_error,
+                call_order_errors,
+                runtime.started_at.elapsed().as_millis(),
                 display_time.as_nanos(),
                 display_time_policy,
+                acquire_scheduling_token(aggressive_retry),
+                bool_token(!aggressive_retry),
+                recovery_policy_token(aggressive_retry),
+                bool_token(runtime.acquired > 0 && call_order_errors == 0),
+                bool_token(last_valid_available),
+                last_valid_age_ms_token(last_valid_age_ms),
+                depth_freshness_token(last_valid_age_ms),
+                depth_fallback_binding(last_valid_available, last_valid_age_ms),
             ));
         }
-        let retry_delay_ms = if result == openxr_sys::Result::SUCCESS {
-            ENVIRONMENT_DEPTH_POST_SUCCESS_DELAY_MS
-        } else if result == openxr_sys::Result::ERROR_CALL_ORDER_INVALID {
-            ENVIRONMENT_DEPTH_CALL_ORDER_RETRY_DELAY_MS
-        } else {
-            ENVIRONMENT_DEPTH_NOT_AVAILABLE_RETRY_DELAY_MS
-        };
-        thread::sleep(Duration::from_millis(retry_delay_ms));
     }
-    log_spatial_environment_depth(format!(
-        "status=acquire-thread-stopped environmentDepthRealProviderBound={} environmentDepthAcquireStatus={} environmentDepthValidData={} environmentDepthDebugValidSampleCount={} acquireAttempts={} acquiredFrames={} environmentDepthUniqueCaptureCount={} environmentDepthRepeatedCaptureCount={} unavailableFrames={} acquireErrors={} lastAcquireError={}",
-        bool_token(SPATIAL_ENVIRONMENT_DEPTH_PROVIDER_BOUND.load(Ordering::Relaxed)),
-        acquire_status_token(),
-        bool_token(SPATIAL_ENVIRONMENT_DEPTH_VALID_DATA.load(Ordering::Relaxed)),
-        SPATIAL_ENVIRONMENT_DEPTH_VALID_SAMPLE_COUNT.load(Ordering::Relaxed),
-        attempts,
-        acquired,
-        unique_captures,
-        repeated_captures,
-        unavailable,
-        errors,
-        last_error,
-    ));
-}
-
-fn estimated_environment_depth_display_time(
-    instance: openxr_sys::Instance,
-    convert_timespec_time_to_time: Option<openxr_sys::pfn::ConvertTimespecTimeToTimeKHR>,
-) -> (openxr_sys::Time, &'static str) {
-    let Some(convert_timespec_time_to_time) = convert_timespec_time_to_time else {
-        return (
-            openxr_sys::Time::from_nanos(0),
-            "zero-fallback-function-unavailable",
-        );
-    };
-    let mut timespec = libc::timespec {
-        tv_sec: 0,
-        tv_nsec: 0,
-    };
-    if unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut timespec) } != 0 {
-        return (
-            openxr_sys::Time::from_nanos(0),
-            "zero-fallback-clock-failed",
-        );
-    }
-    let mut now = openxr_sys::Time::from_nanos(0);
-    let result = unsafe { convert_timespec_time_to_time(instance, &timespec, &mut now) };
-    if result != openxr_sys::Result::SUCCESS {
-        return (
-            openxr_sys::Time::from_nanos(0),
-            "zero-fallback-conversion-failed",
-        );
-    }
-    (
-        openxr_sys::Time::from_nanos(
-            now.as_nanos()
-                .saturating_add(ENVIRONMENT_DEPTH_ESTIMATED_PRESENTATION_LEAD_NS),
-        ),
-        "monotonic-plus-11ms-estimate",
-    )
+    receipt
 }
 
 fn locate_environment_depth_render_views(
@@ -1130,23 +1295,45 @@ fn stop_spatial_environment_depth_probe(reason: &str) -> i64 {
         };
         guard.take()
     };
-    if let Some(mut runtime) = runtime {
-        runtime.stop_requested.store(true, Ordering::Relaxed);
-        if let Some(thread) = runtime.acquire_thread.take() {
-            let _ = thread.join();
-        }
+    if let Some(runtime) = runtime {
         let stop_result = unsafe { (runtime.stop_provider)(runtime.provider) };
         let destroy_space_result = unsafe { (runtime.destroy_space)(runtime.reference_space) };
         let destroy_swapchain_result = unsafe { (runtime.destroy_swapchain)(runtime.swapchain) };
         let destroy_provider_result = unsafe { (runtime.destroy_provider)(runtime.provider) };
+        let call_order_errors =
+            SPATIAL_ENVIRONMENT_DEPTH_CALL_ORDER_ERROR_COUNT.load(Ordering::Relaxed);
+        let final_valid_data = SPATIAL_ENVIRONMENT_DEPTH_VALID_DATA.load(Ordering::Relaxed);
+        let last_valid_age_ms = runtime
+            .last_success_at
+            .map(|last_success_at| last_success_at.elapsed().as_millis());
+        let aggressive_recovery =
+            SPATIAL_ENVIRONMENT_DEPTH_AGGRESSIVE_RECOVERY.load(Ordering::Relaxed);
         clear_depth_state(false);
         log_spatial_environment_depth(format!(
-            "status=stopped stopReason={} environmentDepthRealProviderBound=false stopProviderResult={} destroySpaceResult={} destroySwapchainResult={} destroyProviderResult={}",
+            "status=stopped stopReason={} environmentDepthRealProviderBound=false stopProviderResult={} destroySpaceResult={} destroySwapchainResult={} destroyProviderResult={} environmentDepthAcquireScheduling={} environmentDepthAcquireDuplicateFrameSuppression={} environmentDepthRecoveryPolicy={} environmentDepthAcquireThread=false acquireRequests={} acquireAttempts={} acquiredFrames={} environmentDepthUniqueCaptureCount={} environmentDepthRepeatedCaptureCount={} unavailableFrames={} acquireErrors={} lastAcquireError={} environmentDepthAcquireCallOrderErrorCount={} environmentDepthAcquireTimeInvalidErrorCount={} environmentDepthAcquireRetryRateLimitedCount={} environmentDepthAcquireTimeInvalidRetryIntervalRequests={} environmentDepthAcquireCallOrderConformant={} environmentDepthValidDataBeforeStop={} environmentDepthAcquisitionQuarantined=false environmentDepthUnavailableReason=none environmentDepthQuarantineScope=none environmentDepthLastValidRetention=true environmentDepthLastValidAgeMsBeforeStop={} environmentDepthFallbackBinding=neutral",
             marker_token(reason),
             xr_result_token(stop_result),
             xr_result_token(destroy_space_result),
             xr_result_token(destroy_swapchain_result),
             xr_result_token(destroy_provider_result),
+            acquire_scheduling_token(aggressive_recovery),
+            bool_token(!aggressive_recovery),
+            recovery_policy_token(aggressive_recovery),
+            runtime.requests,
+            runtime.attempts,
+            runtime.acquired,
+            runtime.unique_captures,
+            runtime.repeated_captures,
+            runtime.unavailable,
+            runtime.errors,
+            runtime.last_error,
+            call_order_errors,
+            runtime.time_invalid_errors,
+            runtime.retry_rate_limited,
+            BOUNDED_RECOVERY_RETRY_INTERVAL_REQUESTS,
+            bool_token(runtime.acquired > 0 && call_order_errors == 0),
+            bool_token(final_valid_data),
+            last_valid_age_ms_token(last_valid_age_ms),
         ));
         1
     } else {
@@ -1205,8 +1392,7 @@ unsafe fn enumerate_depth_images(
         }
         log_spatial_environment_depth(format!(
             "status=swapchain-image index={} environmentDepthVkImage=0x{:x} environmentDepthFormat=VK_FORMAT_D16_UNORM environmentDepthLayerCount=2",
-            index,
-            image.image,
+            index, image.image,
         ));
     }
     Ok(images.into_iter().map(|image| image.image).collect())
@@ -1236,6 +1422,9 @@ fn clear_depth_state(keep_requested: bool) {
     SPATIAL_ENVIRONMENT_DEPTH_NEAR_Z_BITS.store(0.001f32.to_bits(), Ordering::Relaxed);
     SPATIAL_ENVIRONMENT_DEPTH_FAR_Z_BITS.store(4.0f32.to_bits(), Ordering::Relaxed);
     SPATIAL_ENVIRONMENT_DEPTH_CALL_ORDER_ERROR_COUNT.store(0, Ordering::Relaxed);
+    SPATIAL_ENVIRONMENT_DEPTH_TIME_INVALID_ERROR_COUNT.store(0, Ordering::Relaxed);
+    SPATIAL_ENVIRONMENT_DEPTH_RETRY_RATE_LIMITED_COUNT.store(0, Ordering::Relaxed);
+    SPATIAL_ENVIRONMENT_DEPTH_AGGRESSIVE_RECOVERY.store(false, Ordering::Relaxed);
     if let Ok(mut metadata) = SPATIAL_ENVIRONMENT_DEPTH_FRAME_METADATA.lock() {
         *metadata = None;
     }

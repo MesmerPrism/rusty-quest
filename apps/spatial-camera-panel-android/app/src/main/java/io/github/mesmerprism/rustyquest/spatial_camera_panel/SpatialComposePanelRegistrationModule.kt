@@ -13,6 +13,7 @@ import com.meta.spatial.core.Entity
 import com.meta.spatial.runtime.PanelSceneObject
 import com.meta.spatial.toolkit.PanelRegistration
 import com.meta.spatial.toolkit.PanelSettings
+import java.io.Closeable
 
 internal data class SpatialPrivateLayerPanelRegistrationBindings(
     val layerOverride: () -> Float,
@@ -23,13 +24,33 @@ internal data class SpatialPrivateLayerPanelRegistrationBindings(
     val depthAlignment: PrivateLayerDepthAlignment,
     val guideProcessing: PrivateLayerGuideProcessing,
     val rgbChannelTransform: RgbChannelTransform,
+    val strengthCycleSpeedHz: Float,
     val projectionSurfaceDisplacement: ProjectionSurfaceDisplacement,
     val projectionSurfaceTiling: ProjectionSurfaceTiling,
     val projectionInnerAlpha: ProjectionInnerAlpha,
+    val profileAppliedControls: () -> SpatialCameraPanelControlSnapshot?,
+    val passthroughLutSettings: () -> SpatialPassthroughLutSettings,
+    val backgroundVideoSession: () -> SpatialImmersiveVideoSessionSnapshot,
     val videoSession: () -> SpatialImmersiveVideoSessionSnapshot,
+    val sharedMediaLibraryStatus: () -> SharedOfflineImmersiveMediaLibrarySnapshot,
+    val observeSharedMediaLibrary:
+        ((SharedOfflineImmersiveMediaLibrarySnapshot) -> Unit) -> Closeable,
+    val refreshSharedMediaLibrary: () -> SharedOfflineImmersiveMediaLibrarySnapshot,
+    val connectionHubStatus: () -> ConnectionHubWearerControlSnapshot,
+    val observeConnectionHub:
+        ((ConnectionHubWearerControlSnapshot) -> Unit) -> Closeable,
+    val refreshConnectionHub: () -> ConnectionHubWearerControlSnapshot,
+    val startConnectionHub: () -> ConnectionHubWearerControlSnapshot,
+    val stopConnectionHub: () -> ConnectionHubWearerControlSnapshot,
+    val environmentDepthUnavailableWarning: () -> String?,
+    val environmentDepthRecoveryPolicy: () -> SpatialEnvironmentDepthRecoveryPolicy,
+    val updateEnvironmentDepthRecoveryPolicy:
+        (SpatialEnvironmentDepthRecoveryPolicy, String) -> SpatialEnvironmentDepthRecoveryPolicy,
     val setLayerOverride: (Float, String) -> Float,
     val setProjectionPanelEnabled: (Boolean, String) -> Boolean,
     val setVideoPlaybackEnabled:
+        (Boolean) -> SpatialImmersiveVideoSessionSnapshot,
+    val setBackgroundVideoPlaybackEnabled:
         (Boolean) -> SpatialImmersiveVideoSessionSnapshot,
     val updateProjectionScale: (Float, String) -> Float,
     val updateDepthLayerPolicy: (Int, String) -> Int,
@@ -39,16 +60,29 @@ internal data class SpatialPrivateLayerPanelRegistrationBindings(
         (PrivateLayerGuideProcessing, String) -> PrivateLayerGuideProcessing,
     val updateRgbChannelTransform:
         (RgbChannelTransform, String) -> RgbChannelTransform,
+    val updateStrengthCycleSpeedHz: (Float, String) -> Float,
     val updateProjectionSurfaceDisplacement:
         (ProjectionSurfaceDisplacement, String) -> ProjectionSurfaceDisplacement,
     val updateProjectionSurfaceTiling:
         (ProjectionSurfaceTiling, String) -> ProjectionSurfaceTiling,
     val updateProjectionInnerAlpha:
         (ProjectionInnerAlpha, String) -> ProjectionInnerAlpha,
+    val updatePassthroughLutSettings:
+        (SpatialPassthroughLutSettings, String) -> SpatialPassthroughLutSettings,
     val selectPreviousVideo: () -> SpatialImmersiveVideoSessionSnapshot,
     val selectNextVideo: () -> SpatialImmersiveVideoSessionSnapshot,
+    val selectVideo: (Int) -> SpatialImmersiveVideoSessionSnapshot,
+    val selectBackgroundVideo: (Int) -> SpatialImmersiveVideoSessionSnapshot,
     val setVideoPresentationMode:
         (SpatialImmersiveVideoPresentationMode) -> SpatialImmersiveVideoSessionSnapshot,
+    val setBackgroundMode: (SpatialBackgroundMode) -> SpatialImmersiveVideoSessionSnapshot,
+    val chooseSharedMediaFolder: () -> Unit,
+    val profileLibrary: () -> SpatialCameraPanelProfileLibrarySnapshot,
+    val saveStoredProfile: (String) -> SpatialCameraPanelProfileOperationResult,
+    val loadStoredProfile: (String) -> SpatialCameraPanelProfileOperationResult,
+    val deleteStoredProfile: (String) -> SpatialCameraPanelProfileOperationResult,
+    val importStagedProfiles: () -> SpatialCameraPanelProfileOperationResult,
+    val panelExtension: SpatialPrivatePanelExtension?,
     val closePanel: () -> Unit,
     val settings: (Entity) -> PanelSettings,
     val onPanelSetup: (PanelSceneObject) -> Unit,
@@ -93,25 +127,56 @@ internal object SpatialComposePanelRegistrationModule {
                       depthAlignment = bindings.depthAlignment,
                       guideProcessing = bindings.guideProcessing,
                       rgbChannelTransform = bindings.rgbChannelTransform,
+                      strengthCycleSpeedHz = bindings.strengthCycleSpeedHz,
                       projectionSurfaceDisplacement = bindings.projectionSurfaceDisplacement,
                       projectionSurfaceTiling = bindings.projectionSurfaceTiling,
                       projectionInnerAlpha = bindings.projectionInnerAlpha,
+                      profileAppliedControls = bindings.profileAppliedControls(),
+                      passthroughLutSettings = bindings.passthroughLutSettings,
+                      backgroundVideoSession = bindings.backgroundVideoSession,
                       videoSession = bindings.videoSession,
+                      sharedMediaLibraryStatus = bindings.sharedMediaLibraryStatus,
+                      observeSharedMediaLibrary = bindings.observeSharedMediaLibrary,
+                      refreshSharedMediaLibrary = bindings.refreshSharedMediaLibrary,
+                      connectionHubStatus = bindings.connectionHubStatus,
+                      observeConnectionHub = bindings.observeConnectionHub,
+                      refreshConnectionHub = bindings.refreshConnectionHub,
+                      startConnectionHub = bindings.startConnectionHub,
+                      stopConnectionHub = bindings.stopConnectionHub,
+                      environmentDepthUnavailableWarning =
+                          bindings.environmentDepthUnavailableWarning,
+                      environmentDepthRecoveryPolicy = bindings.environmentDepthRecoveryPolicy,
+                      updateEnvironmentDepthRecoveryPolicy =
+                          bindings.updateEnvironmentDepthRecoveryPolicy,
                       setLayerOverride = bindings.setLayerOverride,
                       setProjectionPanelEnabled = bindings.setProjectionPanelEnabled,
                       setVideoPlaybackEnabled = bindings.setVideoPlaybackEnabled,
+                      setBackgroundVideoPlaybackEnabled =
+                          bindings.setBackgroundVideoPlaybackEnabled,
                       updateProjectionScale = bindings.updateProjectionScale,
                       updateDepthLayerPolicy = bindings.updateDepthLayerPolicy,
                       updateDepthAlignment = bindings.updateDepthAlignment,
                       updateGuideProcessing = bindings.updateGuideProcessing,
                       updateRgbChannelTransform = bindings.updateRgbChannelTransform,
+                      updateStrengthCycleSpeedHz = bindings.updateStrengthCycleSpeedHz,
                       updateProjectionSurfaceDisplacement =
                           bindings.updateProjectionSurfaceDisplacement,
                       updateProjectionSurfaceTiling = bindings.updateProjectionSurfaceTiling,
                       updateProjectionInnerAlpha = bindings.updateProjectionInnerAlpha,
+                      updatePassthroughLutSettings = bindings.updatePassthroughLutSettings,
                       selectPreviousVideo = bindings.selectPreviousVideo,
                       selectNextVideo = bindings.selectNextVideo,
+                      selectVideo = bindings.selectVideo,
+                      selectBackgroundVideo = bindings.selectBackgroundVideo,
                       setVideoPresentationMode = bindings.setVideoPresentationMode,
+                      setBackgroundMode = bindings.setBackgroundMode,
+                      chooseSharedMediaFolder = bindings.chooseSharedMediaFolder,
+                      profileLibrary = bindings.profileLibrary,
+                      saveStoredProfile = bindings.saveStoredProfile,
+                      loadStoredProfile = bindings.loadStoredProfile,
+                      deleteStoredProfile = bindings.deleteStoredProfile,
+                      importStagedProfiles = bindings.importStagedProfiles,
+                      panelExtension = bindings.panelExtension,
                       closePanel = bindings.closePanel,
                   )
                 }

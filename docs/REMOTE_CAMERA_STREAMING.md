@@ -15,9 +15,44 @@ MediaCodec sender-source adapter and a diagnostic synthetic MediaCodec source.
 The Quest-side direct TCP broker lane has live headset evidence for the outside
 left/right eye camera map. The Rusty direct-p2p socket authority now has
 one-way two-Quest native OpenXR projection evidence for broker-owned media over
-Wi-Fi Direct. Android-phone runtime adapters, TLS relay handshakes, reverse-path
-stability, simultaneous two-way media, and Makepad direct-broker projection
-promotion remain pending.
+Wi-Fi Direct. A transport-neutral packed-stereo Spatial Camera Panel consumer and an
+endpoint-verified authenticated TLS relay adapter are implemented and have host
+contract/self-test coverage; their new two-headset live qualification remains
+pending. Android-phone runtime adapters and any new live promotion claims also
+remain pending.
+
+## Spatial Camera Panel peer-stereo adoption
+
+`peer-packed-stereo` is the product-facing alias for the existing RMANVID v4
+packed side-by-side stream. It preserves the proven one-socket, one-decoder,
+one-`AHardwareBuffer` path and carries Camera2 source-pair identity, both sensor
+timestamps, and bounded skew through final custom-projection consumption.
+Infrastructure LAN, Wi-Fi Direct, and authenticated TLS relay are transport
+adapters beneath that one media source; changing adapters does not create a new
+codec or rendering path.
+
+The sender and receiver runtime keep Manifold's accepted session above the
+binary media plane. Direct LAN/P2P streams remain binary TCP. Relay streams use
+endpoint-verified TLS and an authenticated binary prelude before forwarding
+the unmodified RMANVID bytes. The relay bearer is adopted only through an
+explicit launch intent and retained only in process memory. It is not written
+to system properties, profiles, Hub state, Fleet state, Manifold status JSON,
+or evidence markers. Hub, Fleet, and Manifold JSON carry only low-rate control,
+health, progress, stop, and evidence references.
+
+Production relay endpoints use the Android trust store plus HTTPS server-name
+verification. A local rehearsal may instead provision one exact leaf
+certificate SHA-256 through the same process-memory launch boundary; the
+adapter still verifies certificate validity and server name and compares the
+pin in constant time. The pin is optional, scoped to the accepted session, and
+cleared with its credential.
+
+The operator panel exposes secret-free peer health: route class, accepted
+session presence, packet/byte/frame counters, latest pair identity, source
+timestamps/skew, sequence advancement, decoder output, and final renderer
+adoption. A dark-room run is accepted from advancing Camera2 capture results,
+pair/encoder/transport/decoder/import/render counters; screenshot brightness is
+not camera freshness evidence.
 
 ## Lineage
 
@@ -245,10 +280,11 @@ right camera id `51`, and `high_rate_json_payload=false`. The current smoke
 therefore proves the Quest broker can source and bridge both Quest outside eye
 cameras on one headset with the repo-family Manifold H.264 stream framing.
 
-That evidence does not yet prove two physical Quest devices, Android-phone
-runtime execution, TLS relay handshakes, headset-to-phone evidence, or Makepad
-projection validation. Those belong to later Quest, Manifold, Android-phone,
-and Quest Makepad slices.
+That evidence does not by itself prove the new two-Quest LAN/Wi-Fi Direct/TLS
+ladder, Android-phone runtime execution, headset-to-phone evidence, or a new
+promotion. Those require a same-run receiver-first device pass with advancing
+source, transport, decode/import, final-window render, lifecycle, and cleanup
+evidence.
 
 ## Direct P2P Socket Authority
 

@@ -196,7 +196,7 @@ internal object SpatialPanelPlacementModule {
           rendering = UIPanelRenderOptions(PanelRenderMode.Layer()),
           input =
               PanelInputOptions(
-                  ButtonBits.ButtonA or ButtonBits.ButtonTriggerL or ButtonBits.ButtonTriggerR
+                  ButtonBits.ButtonTriggerL or ButtonBits.ButtonTriggerR
               ),
       )
 
@@ -321,13 +321,14 @@ internal object SpatialPanelPlacementModule {
           "privateLayerPanelTransformAuthority=app-stored-placement-unless-grabbed " +
           "composeDragPanelMovement=false " +
           "privateLayerPanelPoseSource=initial-headset-facing-world-space-then-stored-placement-unless-grabbed " +
-          "privateLayerPanelDistanceMode=left-stick-stored-placement " +
+          "privateLayerPanelDistanceMode=grip-only-placement " +
           "privateLayerPanelForcedDistanceDisabled=false " +
-          "privateLayerPanelDistanceControl=left-stick-y-private-panel-free-transform-distance " +
+          "privateLayerPanelDistanceControl=disabled " +
           "privateLayerPanelDistancePersistsAcrossToggle=true " +
           "rightStickSideFlickPanelMoveDisabled=true " +
           "leftStickYPanelDistanceEnabled=${input.leftStickYPanelDistanceEnabled} " +
-          "privateLayerPanelInputButtons=button-a+trigger-l+trigger-r " +
+          "privateLayerPanelInputButtons=trigger-l+trigger-r " +
+          "privateLayerPanelRightPrimarySelectEnabled=false " +
           "privateLayerPanelTriggerSelectEnabled=true " +
           "privateLayerPanelGrabButton=controller-squeeze " +
           "panelOpensInFrontOfCameraVideo=${input.panelOpensInFrontOfCameraVideo} " +
