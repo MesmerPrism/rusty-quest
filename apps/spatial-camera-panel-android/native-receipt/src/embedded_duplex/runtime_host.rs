@@ -12,7 +12,7 @@ use super::packaged_config::assemble_packaged_config_request_json;
 use super::packaged_route::PackagedDuplexRoute;
 use super::runtime_slot::Checkout;
 use jni::objects::{JByteArray, JClass, JObject, JString};
-use jni::sys::{jbyteArray, jstring};
+use jni::sys::{jboolean, jbyteArray, jstring, JNI_FALSE, JNI_TRUE};
 use jni::JNIEnv;
 use rusty_manifold_peer::{
     ManifoldCommonLanReciprocalEd25519Context, RECIPROCAL_ED25519_SIGNATURE_SCHEMA,
@@ -34,6 +34,8 @@ use rusty_quest_media_stream_android::{
 };
 use serde::Deserialize;
 use serde_json::json;
+use std::ops::Deref;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
@@ -119,12 +121,45 @@ struct Host {
     packaged_route: PackagedDuplexRoute,
     remote_key_id: String,
     remote_public_key: [u8; 32],
+    config_sha256: String,
+    owner_effect_attempted: Arc<AtomicBool>,
+    restored_owner_replay: bool,
 }
 
 #[derive(Default)]
 struct ProcessState {
     initializing: bool,
+    closing: bool,
+    host_leases: usize,
+    lease_integrity_failed: bool,
     host: Option<Host>,
+    last_closed_sha256: Option<String>,
+}
+
+struct HostLease(Host);
+
+impl Deref for HostLease {
+    type Target = Host;
+
+    fn deref(&self) -> &Host {
+        &self.0
+    }
+}
+
+impl Drop for HostLease {
+    fn drop(&mut self) {
+        // A poisoned process gate is already unusable for a successful close,
+        // but return this lease so the in-flight count remains truthful.
+        let mut state = process()
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        if let Some(remaining) = state.host_leases.checked_sub(1) {
+            state.host_leases = remaining;
+        } else {
+            state.lease_integrity_failed = true;
+            state.closing = true;
+        }
+    }
 }
 
 static PROCESS: OnceLock<Mutex<ProcessState>> = OnceLock::new();
@@ -139,11 +174,9 @@ fn prepared_route() -> &'static Mutex<Option<(String, PackagedDuplexRoute)>> {
 }
 
 fn stage_packaged_route(config_sha256: String, route: PackagedDuplexRoute) -> Result<(), String> {
-    {
-        let state = process().lock().map_err(|_| "process state poisoned")?;
-        if state.initializing || state.host.is_some() {
-            return Err("packaged route cannot replace a process authority".into());
-        }
+    let state = process().lock().map_err(|_| "process state poisoned")?;
+    if state.initializing || state.closing || state.host.is_some() {
+        return Err("packaged route cannot replace a process authority".into());
     }
     let mut slot = prepared_route()
         .lock()
@@ -154,6 +187,7 @@ fn stage_packaged_route(config_sha256: String, route: PackagedDuplexRoute) -> Re
         return Err("another packaged route is already staged".into());
     }
     *slot = Some((config_sha256, route));
+    drop(state);
     Ok(())
 }
 
@@ -221,13 +255,177 @@ fn monotonic_ns() -> Result<u64, String> {
         .ok_or_else(|| "monotonic clock overflow".into())
 }
 
-fn host() -> Result<Host, String> {
-    process()
-        .lock()
-        .map_err(|_| "process state poisoned")?
+fn host() -> Result<HostLease, String> {
+    let mut state = process().lock().map_err(|_| "process state poisoned")?;
+    if state.closing {
+        return Err("embedded runtime closing".into());
+    }
+    let host = state
         .host
         .clone()
-        .ok_or_else(|| "embedded runtime not initialized".into())
+        .ok_or("embedded runtime not initialized")?;
+    state.host_leases = state
+        .host_leases
+        .checked_add(1)
+        .ok_or("runtime host lease overflow")?;
+    Ok(HostLease(host))
+}
+
+fn slot_present<T>(slot: &Arc<Mutex<Option<T>>>) -> Result<(), String> {
+    let value = slot.try_lock().map_err(|_| "runtime slot busy")?;
+    if value.is_none() {
+        return Err("runtime slot busy".into());
+    }
+    Ok(())
+}
+
+fn close_no_media_runtime(expected_sha: &str) -> Result<String, String> {
+    if expected_sha.len() != 64
+        || !expected_sha
+            .bytes()
+            .all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c))
+    {
+        return Err("runtime configuration identity bounds".into());
+    }
+    let host = {
+        let mut state = process().lock().map_err(|_| "process state poisoned")?;
+        if state.initializing {
+            return Err("runtime initialization busy".into());
+        }
+        if let Some(host) = &state.host {
+            if host.config_sha256 != expected_sha {
+                return Err("runtime configuration identity differs".into());
+            }
+        }
+        let route = prepared_route()
+            .lock()
+            .map_err(|_| "packaged route slot poisoned")?;
+        match route.as_ref() {
+            Some((sha, _)) if sha == expected_sha => {}
+            Some(_) => return Err("packaged route identity differs".into()),
+            None if state.host.is_some() => return Err("packaged route absent during close".into()),
+            None if state.last_closed_sha256.as_deref() == Some(expected_sha) => {
+                return Ok(
+                    json!({"$schema":"rusty.quest.embedded_duplex.no_media_closed.v1",
+                    "config_sha256":expected_sha,"disposition":"already_closed"})
+                    .to_string(),
+                );
+            }
+            None => return Err("packaged route absent during close".into()),
+        }
+        state.closing = true;
+        if state.host_leases != 0 || state.lease_integrity_failed {
+            return Err("runtime host busy".into());
+        }
+        state.host.clone()
+    };
+
+    if let Some(host) = &host {
+        if host.owner_effect_attempted.load(Ordering::SeqCst) || host.restored_owner_replay {
+            return Err("owner effect history requires typed cleanup".into());
+        }
+        slot_present(&host.provider)?;
+        slot_present(&host.server)?;
+        slot_present(&host.activation_server)?;
+        slot_present(&host.activation_sender)?;
+        if host
+            .activation_sender
+            .lock()
+            .map_err(|_| "activation sender poisoned")?
+            .as_ref()
+            .is_some_and(|sender| sender.pending.is_some())
+        {
+            return Err("activation pending".into());
+        }
+        let server = host.server.lock().map_err(|_| "dispatch slot poisoned")?;
+        let replay = server
+            .as_ref()
+            .ok_or("dispatch slot busy")?
+            .replay_snapshot();
+        if !replay.pending_request_sha256.is_empty() || !replay.terminal.is_empty() {
+            return Err("owner dispatch history requires typed cleanup".into());
+        }
+        drop(server);
+        let provider = host.provider.lock().map_err(|_| "provider slot poisoned")?;
+        let evidence_json = provider
+            .as_ref()
+            .ok_or("provider slot busy")?
+            .evidence_json()
+            .map_err(|_| "runtime evidence unavailable")?;
+        let evidence: serde_json::Value =
+            serde_json::from_str(&evidence_json).map_err(|_| "runtime evidence invalid")?;
+        if !evidence
+            .get("media_pending_action")
+            .is_some_and(|value| value.is_null())
+        {
+            return Err("media action pending".into());
+        }
+        if let Some(value) = evidence
+            .get("media_runtime_state")
+            .filter(|value| !value.is_null())
+        {
+            if value.get("phase").and_then(|v| v.as_str()) != Some("planned")
+                || value
+                    .get("applied_request_ids")
+                    .and_then(|v| v.as_array())
+                    .is_none_or(|requests| !requests.is_empty())
+            {
+                return Err("media runtime is not unused".into());
+            }
+        } else if !evidence
+            .get("media_runtime_state")
+            .is_some_and(|value| value.is_null())
+        {
+            return Err("media runtime evidence absent".into());
+        }
+    }
+    drop(host);
+    let removed = {
+        let mut state = process().lock().map_err(|_| "process state poisoned")?;
+        if !state.closing || state.host_leases != 0 || state.lease_integrity_failed {
+            return Err("runtime host busy".into());
+        }
+        let mut route = prepared_route()
+            .lock()
+            .map_err(|_| "packaged route slot poisoned")?;
+        if route.as_ref().map(|(sha, _)| sha.as_str()) != Some(expected_sha) {
+            return Err("packaged route identity differs".into());
+        }
+        let removed = state.host.take();
+        route.take();
+        state.last_closed_sha256 = Some(expected_sha.to_owned());
+        state.closing = false;
+        removed
+    };
+    let disposition = if removed.is_some() {
+        "host_closed"
+    } else {
+        "staged_route_closed"
+    };
+    drop(removed);
+    Ok(
+        json!({"$schema":"rusty.quest.embedded_duplex.no_media_closed.v1",
+        "config_sha256":expected_sha,"disposition":disposition})
+        .to_string(),
+    )
+}
+
+fn process_idle_for_enrollment() -> bool {
+    let Ok(state) = process().lock() else {
+        return false;
+    };
+    if state.initializing
+        || state.closing
+        || state.host.is_some()
+        || state.host_leases != 0
+        || state.lease_integrity_failed
+    {
+        return false;
+    }
+    let Ok(route) = prepared_route().lock() else {
+        return false;
+    };
+    route.is_none()
 }
 
 fn initialize(
@@ -240,7 +438,7 @@ fn initialize(
 ) -> Result<String, String> {
     {
         let mut state = process().lock().map_err(|_| "process state poisoned")?;
-        if state.initializing || state.host.is_some() {
+        if state.initializing || state.closing || state.host.is_some() {
             return Err("embedded runtime already owned".into());
         }
         state.initializing = true;
@@ -257,6 +455,7 @@ fn initialize(
     state.initializing = false;
     let (host, result) = built?;
     state.host = Some(host);
+    state.last_closed_sha256 = None;
     Ok(result)
 }
 
@@ -274,6 +473,13 @@ fn build_host(
         return Err("embedded bridge required".into());
     }
     let bootstrap: Bootstrap = serde_json::from_str(&bootstrap_json).map_err(safe_decode)?;
+    let restored_owner_replay = !bootstrap.replay.pending_request_sha256.is_empty()
+        || !bootstrap.replay.terminal.is_empty()
+        || !bootstrap
+            .activation_replay
+            .pending_request_sha256
+            .is_empty()
+        || !bootstrap.activation_replay.terminal.is_empty();
     let route = exact_staged_route(&expected_sha)?;
     if bootstrap.local_peer_id == bootstrap.remote_peer_id
         || bootstrap.device_peers.len() != 2
@@ -427,6 +633,9 @@ fn build_host(
             packaged_route: route,
             remote_key_id: bootstrap.remote_key_id,
             remote_public_key,
+            config_sha256: expected_sha,
+            owner_effect_attempted: Arc::new(AtomicBool::new(false)),
+            restored_owner_replay,
         },
         result,
     ))
@@ -513,6 +722,29 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1pa
 }
 
 #[no_mangle]
+pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1panel_embedded_1duplex_EmbeddedDuplexNative_closeNoMediaRuntime(
+    mut env: JNIEnv<'_>,
+    _class: JClass<'_>,
+    expected_sha: JString<'_>,
+) -> jstring {
+    let result =
+        read_string(&mut env, &expected_sha, 64).and_then(|sha| close_no_media_runtime(&sha));
+    return_string(&mut env, result)
+}
+
+#[no_mangle]
+pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1panel_embedded_1duplex_EmbeddedDuplexNative_processIdleForEnrollment(
+    _env: JNIEnv<'_>,
+    _class: JClass<'_>,
+) -> jboolean {
+    if process_idle_for_enrollment() {
+        JNI_TRUE
+    } else {
+        JNI_FALSE
+    }
+}
+
+#[no_mangle]
 pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1panel_embedded_1duplex_EmbeddedDuplexNative_handleOwnerFrame(
     mut env: JNIEnv<'_>,
     _class: JClass<'_>,
@@ -529,13 +761,14 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1pa
             .convert_byte_array(&frame)
             .map_err(|_| "owner frame bytes")?;
         let host = host()?;
+        host.owner_effect_attempted.store(true, Ordering::SeqCst);
         if decode_product_activation_request(&bytes).is_ok() {
-            Checkout::take(host.activation_server)?
+            Checkout::take(host.activation_server.clone())?
                 .get()
                 .handle_frame(&bytes)
                 .map_err(|_| "product activation rejected".to_owned())
         } else {
-            Checkout::take(host.server)?
+            Checkout::take(host.server.clone())?
                 .get()
                 .handle_frame(&bytes)
                 .map_err(|_| "owner dispatch rejected".to_owned())
@@ -727,17 +960,26 @@ fn sign_common_lan(host: &Host, input: &str, now: u64) -> Result<String, String>
 
 fn command(operation: &str, input: &str) -> Result<String, String> {
     let host = host()?;
+    if matches!(
+        operation,
+        "media_command"
+            | "complete_media_start"
+            | "complete_media_stop"
+            | "resume_media_start_abort"
+    ) {
+        host.owner_effect_attempted.store(true, Ordering::SeqCst);
+    }
     let now = host.clock.now_ms()?;
     match operation {
-        "runtime_evidence" => Checkout::take(host.provider)?
+        "runtime_evidence" => Checkout::take(host.provider.clone())?
             .get()
             .evidence_json()
             .map_err(|_| "runtime evidence unavailable".into()),
-        "admission" => Checkout::take(host.provider)?
+        "admission" => Checkout::take(host.provider.clone())?
             .get()
             .execute_admission_json(input)
             .map_err(|_| "admission rejected".into()),
-        "media_command" => Checkout::take(host.provider)?
+        "media_command" => Checkout::take(host.provider.clone())?
             .get()
             .handle_server_mutation_json(input, now)
             .map_err(|_| "media command rejected".into()),
@@ -745,7 +987,7 @@ fn command(operation: &str, input: &str) -> Result<String, String> {
         "complete_media_stop" => {
             let request: ClientInput = serde_json::from_str(input).map_err(safe_decode)?;
             let client = serde_json::from_value(json!(request.client_id)).map_err(safe_decode)?;
-            Checkout::take(host.provider)?
+            Checkout::take(host.provider.clone())?
                 .get()
                 .complete_media_stop_for_cleanup(&client, now)
                 .map_err(|_| "media cleanup rejected".into())
@@ -766,7 +1008,7 @@ fn command(operation: &str, input: &str) -> Result<String, String> {
                 return Err("failed-Start cleanup authority is not current".into());
             }
             let client = serde_json::from_value(json!(request.client_id)).map_err(safe_decode)?;
-            Checkout::take(host.provider)?
+            Checkout::take(host.provider.clone())?
                 .get()
                 .resume_media_start_abort_for_cleanup(&client, &request.lease_id)
                 .map_err(|_| "failed-Start cleanup resume rejected".into())
@@ -865,4 +1107,137 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1pa
         command(&operation, &input).map_err(|_| "embedded runtime operation rejected".into())
     })();
     return_string(&mut env, result)
+}
+
+#[cfg(test)]
+mod no_media_close_tests {
+    use super::*;
+    use crate::embedded_duplex::packaged_route::{
+        PackagedEndpoint, PackagedPeer, PackedStereoProfile,
+    };
+
+    static TEST_GATE: Mutex<()> = Mutex::new(());
+    const SHA: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    const OTHER_SHA: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+
+    fn route() -> PackagedDuplexRoute {
+        let endpoint = PackagedEndpoint {
+            protocol: "tcp".into(),
+            host: "127.0.0.1".into(),
+            port: 1,
+        };
+        let peer = PackagedPeer {
+            peer_id: "test.peer".into(),
+            installed_role_id: "test.role".into(),
+            device_id: "test.device".into(),
+            left_camera_id: "left".into(),
+            right_camera_id: "right".into(),
+            media: endpoint.clone(),
+            control: endpoint,
+        };
+        PackagedDuplexRoute {
+            product_id: "test.product".into(),
+            package_name: "test.package".into(),
+            route_configuration_sha256: format!("sha256:{SHA}"),
+            network_scope_id: "test.network".into(),
+            profile: PackedStereoProfile {
+                schema: "test.profile".into(),
+                profile_id: "test".into(),
+                rmanvid_schema_version: 1,
+                frame_layout: "side_by_side".into(),
+                eye_order: vec!["left".into(), "right".into()],
+                codec: "h264".into(),
+                packed_width: 2,
+                packed_height: 1,
+                per_eye_width: 1,
+                per_eye_height: 1,
+                frame_rate_hz: 1,
+                bitrate_bps: 1,
+                max_packet_bytes: 1,
+                pair_timestamp_source: "test".into(),
+                pairing_policy: "test".into(),
+                max_pair_delta_ns: 0,
+                stale_eye_reuse_allowed: false,
+                cpu_pixel_copy: false,
+            },
+            peers: [peer.clone(), peer],
+            installed_peer_index: 0,
+            runtime_spec_ids: ["test.out".into(), "test.in".into()],
+        }
+    }
+
+    fn reset_with_staged_route() {
+        *process().lock().unwrap() = ProcessState::default();
+        *prepared_route().lock().unwrap() = Some((SHA.into(), route()));
+    }
+
+    #[test]
+    fn failed_initialize_staged_route_requires_exact_sha_then_closes_idempotently() {
+        let _serial = TEST_GATE.lock().unwrap();
+        reset_with_staged_route();
+        assert!(close_no_media_runtime(OTHER_SHA).is_err());
+        assert_eq!(prepared_route().lock().unwrap().as_ref().unwrap().0, SHA);
+        let first: serde_json::Value =
+            serde_json::from_str(&close_no_media_runtime(SHA).unwrap()).unwrap();
+        assert_eq!(first["disposition"], "staged_route_closed");
+        assert_eq!(first["config_sha256"], SHA);
+        assert!(prepared_route().lock().unwrap().is_none());
+        let retry: serde_json::Value =
+            serde_json::from_str(&close_no_media_runtime(SHA).unwrap()).unwrap();
+        assert_eq!(retry["disposition"], "already_closed");
+        assert!(close_no_media_runtime(OTHER_SHA).is_err());
+    }
+
+    #[test]
+    fn busy_lease_refuses_close_and_exact_retry_finishes() {
+        let _serial = TEST_GATE.lock().unwrap();
+        reset_with_staged_route();
+        process().lock().unwrap().host_leases = 1;
+        assert_eq!(close_no_media_runtime(SHA), Err("runtime host busy".into()));
+        assert!(process().lock().unwrap().closing);
+        assert!(prepared_route().lock().unwrap().is_some());
+        process().lock().unwrap().host_leases = 0;
+        assert!(close_no_media_runtime(SHA).is_ok());
+        assert!(!process().lock().unwrap().closing);
+    }
+
+    #[test]
+    fn checked_out_and_locked_slots_are_never_treated_as_idle() {
+        let slot = Arc::new(Mutex::new(Some(1_u8)));
+        assert!(slot_present(&slot).is_ok());
+        let checkout = Checkout::take(slot.clone()).unwrap();
+        assert_eq!(slot_present(&slot), Err("runtime slot busy".into()));
+        drop(checkout);
+        let held = slot.lock().unwrap();
+        assert_eq!(slot_present(&slot), Err("runtime slot busy".into()));
+        drop(held);
+        assert!(slot_present(&slot).is_ok());
+    }
+
+    #[test]
+    fn missing_route_and_lease_integrity_failure_never_close() {
+        let _serial = TEST_GATE.lock().unwrap();
+        *process().lock().unwrap() = ProcessState::default();
+        *prepared_route().lock().unwrap() = None;
+        assert!(close_no_media_runtime(SHA).is_err());
+        reset_with_staged_route();
+        process().lock().unwrap().lease_integrity_failed = true;
+        assert!(close_no_media_runtime(SHA).is_err());
+        assert!(prepared_route().lock().unwrap().is_some());
+    }
+
+    #[test]
+    fn enrollment_idle_requires_no_staged_route_or_process_lease() {
+        let _serial = TEST_GATE.lock().unwrap();
+        *process().lock().unwrap() = ProcessState::default();
+        *prepared_route().lock().unwrap() = None;
+        assert!(process_idle_for_enrollment());
+        reset_with_staged_route();
+        assert!(!process_idle_for_enrollment());
+        *prepared_route().lock().unwrap() = None;
+        process().lock().unwrap().host_leases = 1;
+        assert!(!process_idle_for_enrollment());
+        process().lock().unwrap().host_leases = 0;
+        assert!(process_idle_for_enrollment());
+    }
 }

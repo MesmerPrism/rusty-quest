@@ -23,6 +23,7 @@ public final class MediaProtocolConformanceMain {
         reconnectGate();
         registryProtocol();
         registryEvidence();
+        registryNoMediaBarrier();
         ownerDispatchTcpEndpoint();
         ownerDispatchCloseAbortsRead();
         System.out.println("rusty.quest.android.media.host-conformance.v1:pass");
@@ -137,6 +138,52 @@ public final class MediaProtocolConformanceMain {
                 "terminal compensation did not verify");
         registry.close();
     }
+    private static void registryNoMediaBarrier() {
+        AtomicInteger attempts = new AtomicInteger();
+        MediaOwnerProvider provider = new MediaOwnerProvider() {
+            @Override public MediaProviderReadback execute(MediaOwnerAction action,
+                    CancellationHandle cancellation) {
+                attempts.incrementAndGet();
+                return new MediaProviderReadback(action, "handle.no-media", 1, "started", "receipt.no-media");
+            }
+            @Override public MediaProviderReadback compensate(MediaOwnerAction action,
+                    CancellationHandle cancellation) { return execute(action, cancellation); }
+            @Override public MediaRuntimeSnapshot snapshot() {
+                return new MediaRuntimeSnapshot(9, 1, "started", false, "", "handle.no-media");
+            }
+        };
+        MediaProductBinding binding = new MediaProductBinding.Builder("no-media")
+                .bind("source", "owner.source", "camera2", "camera.stereo", provider).build();
+        String ticket = ticket(9, "no-media.1", "source", "owner.source", "camera2", "camera.stereo");
+        PackagedAndroidMediaOwnerRegistry unused = new PackagedAndroidMediaOwnerRegistry(9, binding);
+        unused.closeIfNeverAttempted();
+        unused.closeIfNeverAttempted();
+        expectFailure(() -> unused.execute(ticket, false));
+        require(attempts.get() == 0, "provider started after no-media close");
+
+        PackagedAndroidMediaOwnerRegistry completed = new PackagedAndroidMediaOwnerRegistry(9, binding);
+        String readback = completed.execute(ticket, false);
+        require(completed.verifyAndReadEvidence(ticket, readback) != null,
+                "completed effect did not verify");
+        expectFailure(completed::closeIfNeverAttempted);
+        require(attempts.get() == 1, "completed effect history was lost");
+
+        MediaOwnerProvider failing = new MediaOwnerProvider() {
+            @Override public MediaProviderReadback execute(MediaOwnerAction action,
+                    CancellationHandle cancellation) { throw new IllegalStateException("provider failed after entry"); }
+            @Override public MediaProviderReadback compensate(MediaOwnerAction action,
+                    CancellationHandle cancellation) { return execute(action, cancellation); }
+            @Override public MediaRuntimeSnapshot snapshot() {
+                return new MediaRuntimeSnapshot(9, 0, "stopped", true, "", "handle.failed");
+            }
+        };
+        MediaProductBinding failedBinding = new MediaProductBinding.Builder("failed-no-media")
+                .bind("source", "owner.source", "camera2", "camera.stereo", failing).build();
+        PackagedAndroidMediaOwnerRegistry failed = new PackagedAndroidMediaOwnerRegistry(9, failedBinding);
+        expectFailure(() -> failed.execute(ticket, false));
+        expectFailure(failed::closeIfNeverAttempted);
+    }
+
     private static void ownerDispatchTcpEndpoint() {
         AtomicInteger calls = new AtomicInteger();
         OwnerDispatchTcpEndpoint endpoint = null;

@@ -48,8 +48,8 @@ final class EmbeddedDuplexResources implements EmbeddedDuplexActivationGate.Targ
                 source.endpoint.getInt("source_port"), source.width, source.height,
                 source.width / 2, source.height, source.fps, source.bitrate,
                 leftCamera, rightCamera, maxPairDeltaNs);
-        outgoing = new PackedStereoMediaOwnerSet(generation, pipeline);
         try {
+            outgoing = new PackedStereoMediaOwnerSet(generation, pipeline);
             MediaProductBinding.Builder builder = new MediaProductBinding.Builder(outgoingSpec.getString("runtime_spec_id"));
             JSONArray outgoingPlacements = nativeInitialization.getJSONArray("owner_placements");
             JSONArray incomingPlacements = nativeInitialization.getJSONArray("incoming_owner_placements");
@@ -81,8 +81,12 @@ final class EmbeddedDuplexResources implements EmbeddedDuplexActivationGate.Targ
             binding = builder.build();
         } catch (Exception invalid) {
             // No owner action has run yet; pipeline construction creates no camera,
-            // codec or network worker. Remove its unstarted runtime registration.
-            pipeline.close();
+            // codec or network worker. Retire both staged registrations even if
+            // product binding fails before a registry can retain this object.
+            try { incoming.closeUnstartedAndVerify(); }
+            catch (Exception cleanup) { invalid.addSuppressed(cleanup); }
+            try { pipeline.close(); }
+            catch (Exception cleanup) { invalid.addSuppressed(cleanup); }
             throw invalid;
         }
     }
@@ -109,6 +113,14 @@ final class EmbeddedDuplexResources implements EmbeddedDuplexActivationGate.Targ
             if (!outgoing.provider(kind).snapshot().terminal()) return false;
         }
         return true;
+    }
+
+    void closeUnstartedAndVerify() {
+        incoming.closeUnstartedAndVerify();
+        pipeline.close();
+        if (!productResourcesTerminal()) {
+            throw new IllegalStateException("unstarted product resources remain live");
+        }
     }
 
     private static String camera(JSONObject source, String role) throws Exception {

@@ -187,6 +187,21 @@ public final class EmbeddedDuplexReceiver implements MediaOwnerProvider {
                 current.detail(), current.providerHandleId());
     }
 
+    /** Closes only the receiver that has never entered an owner Sink effect. */
+    synchronized void closeUnstartedAndVerify() {
+        if ("cleaned".equals(preparationState) && surfaceReleased && projectionRetired) return;
+        if (!"unprepared".equals(preparationState) || staged != null || receiver != null
+                || provider != null || connectionGeneration != 0L) {
+            throw new IllegalStateException("receiver needs typed owner cleanup");
+        }
+        surfaceReleased = true;
+        preparationState = "cleaned";
+        preparationRevision++;
+        if (!snapshot().terminal()) {
+            throw new IllegalStateException("unstarted receiver cleanup remains pending");
+        }
+    }
+
     private MediaProviderReadback cleanupUnprepared(MediaOwnerAction action) {
         if (staged != null && !surfaceReleased && !staged.release()) {
             preparationState = "cleanup_pending";

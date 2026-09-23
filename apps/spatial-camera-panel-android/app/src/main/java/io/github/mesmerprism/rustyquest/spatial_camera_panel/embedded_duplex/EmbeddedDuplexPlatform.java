@@ -34,6 +34,7 @@ final class EmbeddedDuplexPlatform {
     private final File replayDirectory;
     private final AtomicFile replayFile;
     private final AtomicFile activationReplayFile;
+    private final boolean localFixture;
     private volatile PackagedAndroidMediaOwnerRegistry registry;
     private volatile OwnerDispatchTcpEndpoint endpoint;
     private volatile EmbeddedDuplexResources resources;
@@ -42,6 +43,14 @@ final class EmbeddedDuplexPlatform {
     EmbeddedDuplexPlatform(Context context, EmbeddedDuplexDisplay display,
             EmbeddedDuplexIdentity.Identity identity, String localPeerId, String remotePeerId,
             String routeConfigurationSha256, String remoteControlIp, int remoteControlPort) throws Exception {
+        this(context, display, identity, localPeerId, remotePeerId, routeConfigurationSha256,
+                remoteControlIp, remoteControlPort, false);
+    }
+
+    EmbeddedDuplexPlatform(Context context, EmbeddedDuplexDisplay display,
+            EmbeddedDuplexIdentity.Identity identity, String localPeerId, String remotePeerId,
+            String routeConfigurationSha256, String remoteControlIp, int remoteControlPort,
+            boolean localFixture) throws Exception {
         if (context == null || display == null || identity == null || localPeerId.equals(remotePeerId)
                 || !routeConfigurationSha256.matches("sha256:[0-9a-f]{64}")
                 || remoteControlPort <= 0 || remoteControlPort > 65535) {
@@ -54,6 +63,7 @@ final class EmbeddedDuplexPlatform {
         this.routeConfigurationSha256 = routeConfigurationSha256;
         this.remoteControlAddress = numericIpv4(remoteControlIp);
         this.remoteControlPort = remoteControlPort;
+        this.localFixture = localFixture;
         replayDirectory = new File(context.getNoBackupFilesDir(), "embedded-duplex-replay");
         rejectLink(replayDirectory);
         if (!replayDirectory.isDirectory() && !replayDirectory.mkdir()) {
@@ -92,7 +102,12 @@ final class EmbeddedDuplexPlatform {
     void startControl(String localControlIp, int localControlPort) throws Exception {
         if (registry == null || endpoint != null) throw new IllegalStateException("control initialization order");
         endpoint = new OwnerDispatchTcpEndpoint(numericIpv4(localControlIp), localControlPort,
-                EmbeddedDuplexNative::handleOwnerFrame);
+                frame -> {
+                    if (localFixture) {
+                        throw new IllegalStateException("local fixture has no peer owner authority");
+                    }
+                    return EmbeddedDuplexNative.handleOwnerFrame(frame);
+                });
         if (!endpoint.ready()) throw new IllegalStateException("control endpoint not ready");
     }
 
@@ -231,6 +246,17 @@ final class EmbeddedDuplexPlatform {
         }
         PackagedAndroidMediaOwnerRegistry owners = registry;
         if (owners != null) owners.close();
+    }
+
+    /** Drain authenticated ingress before proving the registry never entered a provider. */
+    void closeControlForNoMedia() {
+        OwnerDispatchTcpEndpoint current = endpoint;
+        if (current != null) {
+            current.close();
+            if (!current.terminal()) throw new IllegalStateException("owner control cleanup pending");
+        }
+        PackagedAndroidMediaOwnerRegistry owners = registry;
+        if (owners != null) owners.closeIfNeverAttempted();
     }
 
     private void syncReplayDirectory() throws Exception {

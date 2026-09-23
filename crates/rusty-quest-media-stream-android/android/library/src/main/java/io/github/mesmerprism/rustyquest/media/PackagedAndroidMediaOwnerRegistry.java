@@ -15,6 +15,9 @@ public final class PackagedAndroidMediaOwnerRegistry implements AndroidMediaOwne
     private final ConcurrentHashMap<String, Execution> executions = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, String> issuedReceipts = new ConcurrentHashMap<>();
     private final Semaphore executionSlots = new Semaphore(MAX_IN_FLIGHT_EXECUTIONS);
+    private final Object lifecycleGate = new Object();
+    private boolean noMediaClosed;
+    private boolean anyOwnerEffectAttempted;
 
     public PackagedAndroidMediaOwnerRegistry(long generation, MediaProductBinding binding) {
         if (generation <= 0 || binding == null) throw new IllegalArgumentException("registry binding");
@@ -33,15 +36,21 @@ public final class PackagedAndroidMediaOwnerRegistry implements AndroidMediaOwne
         if (provider == null) throw new IllegalStateException("undeclared media provider binding");
         String key = action.executionKey(compensate);
         Execution mine = new Execution();
-        Execution existing = executions.putIfAbsent(key, mine);
-        if (existing != null) {
-            String completed = existing.completed;
-            if (completed != null) return completed;
-            throw new IllegalStateException("ProviderBusy");
-        }
-        if (!executionSlots.tryAcquire()) {
-            executions.remove(key, mine);
-            throw new IllegalStateException("media execution registry full");
+        synchronized (lifecycleGate) {
+            if (noMediaClosed) throw new IllegalStateException("no-media registry closed");
+            Execution existing = executions.putIfAbsent(key, mine);
+            if (existing != null) {
+                String completed = existing.completed;
+                if (completed != null) return completed;
+                throw new IllegalStateException("ProviderBusy");
+            }
+            if (!executionSlots.tryAcquire()) {
+                executions.remove(key, mine);
+                throw new IllegalStateException("media execution registry full");
+            }
+            // Set before entering a provider: an empty registry after a failed or
+            // verified effect is never evidence that no owner effect was tried.
+            anyOwnerEffectAttempted = true;
         }
         try {
             // No registry/provider monitor is held across this platform callback.
@@ -134,5 +143,15 @@ public final class PackagedAndroidMediaOwnerRegistry implements AndroidMediaOwne
     }
 
     @Override public void close() { cancellation.cancel(); }
+    /** One-way no-effect barrier. A provider callback cannot start after this succeeds. */
+    public void closeIfNeverAttempted() {
+        synchronized (lifecycleGate) {
+            if (anyOwnerEffectAttempted || !executions.isEmpty() || !issuedReceipts.isEmpty()) {
+                throw new IllegalStateException("owner effect was attempted or remains in flight");
+            }
+            noMediaClosed = true;
+            cancellation.cancel();
+        }
+    }
     private static final class Execution { volatile String completed; }
 }

@@ -9,7 +9,7 @@ import java.util.concurrent.atomic.AtomicReference;
 
 /** One app-context mutation lane. Endpoint and Activity display callbacks never enter its queue. */
 final class EmbeddedDuplexProcessHost {
-    private enum Phase { NEW, BOOTSTRAPPING, READY, FAILED }
+    private enum Phase { NEW, PROVISIONING, BOOTSTRAPPING, READY, CLOSING, FAILED }
     private static EmbeddedDuplexProcessHost instance;
 
     static synchronized EmbeddedDuplexProcessHost forApplication(Context context) {
@@ -28,6 +28,7 @@ final class EmbeddedDuplexProcessHost {
     private final AtomicReference<Phase> phase = new AtomicReference<>(Phase.NEW);
     private long attachmentGeneration;
     private boolean displayDetaching;
+    private boolean closeInFlight;
     private final ExecutorService commands = Executors.newSingleThreadExecutor(runnable -> {
         Thread thread = new Thread(runnable, "embedded-duplex-command");
         thread.setDaemon(true);
@@ -37,6 +38,9 @@ final class EmbeddedDuplexProcessHost {
     // post-initialization resource installation, so no second host can start.
     private EmbeddedDuplexPlatform platform;
     private EmbeddedDuplexResources resources;
+    private String runtimeConfigSha256;
+    private volatile boolean localFixture;
+    private String diagnosticChallenge;
 
     private EmbeddedDuplexProcessHost(Context applicationContext) {
         this.applicationContext = applicationContext;
@@ -70,6 +74,7 @@ final class EmbeddedDuplexProcessHost {
         synchronized (attachmentGate) {
             attachmentGeneration = 0L;
             displayDetaching = false;
+            localFixture = false;
         }
     }
 
@@ -88,25 +93,31 @@ final class EmbeddedDuplexProcessHost {
         // exact private copy and never retains an Activity, Intent or Bundle.
         String runtimeCopy = runtimeBindings.toString();
         String startupCopy = startup.toString();
-        return submit(() -> {
-            boolean nativeAttempted = false;
+        return submit(() -> initializeOnCommandLane(role, runtimeCopy, startupCopy, false));
+    }
+
+    private String initializeOnCommandLane(EmbeddedDuplexPackagedInputs.InstalledRole role,
+            String runtimeCopy, String startupCopy, boolean fixture) throws Exception {
+            localFixture = fixture;
             try {
                 JSONObject runtime = new JSONObject(runtimeCopy);
                 JSONObject enrollment = new JSONObject(startupCopy);
                 EmbeddedDuplexBootstrap.Prepared prepared = EmbeddedDuplexBootstrap.prepare(
                         applicationContext, role, runtime);
+                // Preparation stages this exact route in native process state.
+                // Retain its digest even if a later callback or JNI step fails.
+                runtimeConfigSha256 = prepared.runtimeConfigSha256;
                 EmbeddedDuplexIdentity.Identity identity = EmbeddedDuplexIdentity.loadOrCreate(
                         applicationContext);
                 EmbeddedDuplexPlatform callbacks = new EmbeddedDuplexPlatform(applicationContext,
                         display, identity, prepared.localPeerId, prepared.remotePeerId,
                         prepared.routeConfigurationSha256, prepared.remoteControlHost,
-                        prepared.remoteControlPort);
+                        prepared.remoteControlPort, fixture);
                 JSONObject bootstrap = EmbeddedDuplexBootstrap.runtimeBootstrap(prepared,
                         identity.keyId(), enrollment,
                         new JSONObject(callbacks.loadDispatchReplay()),
                         new JSONObject(callbacks.loadActivationReplay()));
                 platform = callbacks;
-                nativeAttempted = true;
                 String initialized = EmbeddedDuplexNative.initializeRuntime(prepared.runtimeConfigJson,
                         prepared.runtimeConfigSha256,
                         runtime.getString("validation_epoch_entropy_hex"),
@@ -126,12 +137,11 @@ final class EmbeddedDuplexProcessHost {
                 phase.set(Phase.READY);
                 return initialized;
             } catch (Exception failure) {
-                // Prior to native initialization no process authority exists.
-                // Afterwards uncertainty is retained and a second host is barred.
-                phase.set(nativeAttempted ? Phase.FAILED : Phase.NEW);
+                // A prepared native route, even without a completed host, must
+                // be closed under its exact digest before another bootstrap.
+                phase.set(runtimeConfigSha256 == null ? Phase.NEW : Phase.FAILED);
                 throw failure;
             }
-        });
     }
 
     CompletableFuture<String> command(String operation, String exactInputJson) {
@@ -140,10 +150,184 @@ final class EmbeddedDuplexProcessHost {
             return failed(new IllegalArgumentException("embedded command bounds"));
         }
         return submit(() -> {
-            if (phase.get() != Phase.READY) {
+            if (phase.get() != Phase.READY || localFixture) {
                 throw new IllegalStateException("embedded process host not ready");
             }
             return EmbeddedDuplexNative.runtimeCommand(operation, exactInputJson);
+        });
+    }
+
+    CompletableFuture<EmbeddedDuplexEnrollment> replaceEnrollment(
+            EmbeddedDuplexEnrollmentDraft reviewedDraft) {
+        if (reviewedDraft == null) return failed(new IllegalArgumentException("reviewed enrollment draft"));
+        synchronized (attachmentGate) {
+            if (displayDetaching || closeInFlight || platform != null || resources != null
+                    || runtimeConfigSha256 != null
+                    || !phase.compareAndSet(Phase.NEW, Phase.PROVISIONING)) {
+                return failed(new IllegalStateException("process authority must terminate before enrollment change"));
+            }
+        }
+        return submit(() -> {
+            try {
+                if (!EmbeddedDuplexNative.processIdleForEnrollment()) {
+                    throw new IllegalStateException("native process or staged route is not terminal");
+                }
+                return EmbeddedDuplexEnrollmentResolver.replace(applicationContext, reviewedDraft);
+            } finally {
+                phase.set(Phase.NEW);
+            }
+        });
+    }
+
+    void armDiagnosticChallenge(String challenge) {
+        synchronized (attachmentGate) {
+            if (challenge == null || !challenge.matches("[0-9a-f]{32}")
+                    || phase.get() != Phase.NEW || displayDetaching || closeInFlight
+                    || platform != null || resources != null || runtimeConfigSha256 != null) {
+                throw new IllegalStateException("local diagnostic challenge unavailable");
+            }
+            diagnosticChallenge = challenge;
+        }
+    }
+
+    /** One-Quest diagnostic: resolve the signed fixture in process scope,
+     * bootstrap without Start, then prove terminal closure before reporting. */
+    CompletableFuture<String> diagnoseLocalFixture(long expectedGeneration) {
+        final String challenge;
+        synchronized (attachmentGate) {
+            if (expectedGeneration == 0L || attachmentGeneration != expectedGeneration
+                    || displayDetaching || display.cleanupPending()
+                    || diagnosticChallenge == null
+                    || !phase.compareAndSet(Phase.NEW, Phase.BOOTSTRAPPING)) {
+                return failed(new IllegalStateException("local diagnostic display unavailable"));
+            }
+            challenge = diagnosticChallenge;
+            diagnosticChallenge = null;
+        }
+        AtomicReference<String> enrollmentSha = new AtomicReference<>();
+        CompletableFuture<String> bootstrap = submit(() -> {
+            try {
+                EmbeddedDuplexEnrollment enrollment =
+                        EmbeddedDuplexEnrollmentResolver.resolve(applicationContext);
+                enrollmentSha.set(enrollment.recordSha256);
+                EmbeddedDuplexLocalDiagnosticInputs fresh =
+                        EmbeddedDuplexLocalDiagnosticInputs.create(enrollment);
+                return initializeOnCommandLane(fresh.role, fresh.runtimeBindings.toString(),
+                        fresh.startup.toString(), true);
+            } catch (Exception failure) {
+                if (phase.get() == Phase.BOOTSTRAPPING) {
+                    phase.set(runtimeConfigSha256 == null ? Phase.NEW : Phase.FAILED);
+                }
+                throw failure;
+            }
+        });
+        return bootstrap.handle((initialized, failure) -> {
+            Phase current = phase.get();
+            String configSha = runtimeConfigSha256;
+            if (current == Phase.NEW) {
+                try {
+                    detachUninitializedDisplay(expectedGeneration);
+                    return CompletableFuture.completedFuture(
+                            terminalDiagnosticResult(challenge, "bootstrap_unavailable_closed",
+                                    enrollmentSha.get(), configSha));
+                } catch (Exception cleanup) { return EmbeddedDuplexProcessHost.<String>failed(cleanup); }
+            }
+            if (current != Phase.READY && current != Phase.FAILED) {
+                return EmbeddedDuplexProcessHost.<String>failed(
+                        new IllegalStateException("local diagnostic cleanup state unavailable"));
+            }
+            return closeNoMediaAndDetach(expectedGeneration).thenApply(closed ->
+                    terminalDiagnosticResult(challenge,
+                            failure == null ? "bootstrap_closed" : "bootstrap_failed_closed",
+                            enrollmentSha.get(), configSha));
+        }).thenCompose(next -> next);
+    }
+
+    private String terminalDiagnosticResult(String challenge, String status,
+            String enrollmentSha, String configSha) {
+        try {
+            return EmbeddedDuplexDiagnosticService.finalizeReceipt(applicationContext,
+                    challenge, status, enrollmentSha, configSha);
+        } catch (Exception receiptFailure) {
+            // Cleanup is already terminal. Do not strand the old Activity
+            // attachment merely because the optional diagnostic file failed.
+            return "{\"$schema\":\"rusty.quest.embedded_duplex.local_diagnostic.v1\","
+                    + "\"status\":\"receipt_unavailable_closed\","
+                    + "\"display_detached\":true}";
+        }
+    }
+
+    /** Retry the same attachment after a diagnostic failure. The Activity must
+     * not retire its display executor until this future has completed. */
+    CompletableFuture<String> retryLocalDiagnosticCleanup(long expectedGeneration) {
+        synchronized (attachmentGate) {
+            if (expectedGeneration == 0L || attachmentGeneration != expectedGeneration
+                    || !localFixture && runtimeConfigSha256 != null) {
+                return failed(new IllegalStateException("local fixture cleanup unavailable"));
+            }
+            if (phase.get() == Phase.NEW && runtimeConfigSha256 == null) {
+                return submit(() -> {
+                    detachUninitializedDisplay(expectedGeneration);
+                    return "uninitialized-display-detached";
+                });
+            }
+        }
+        return closeNoMediaAndDetach(expectedGeneration);
+    }
+
+    /** The no-Start path releases one process attachment only after all native,
+     * Java and display resources prove terminal. A failed close retains exactly
+     * the same attachment and objects for retry. */
+    CompletableFuture<String> closeNoMediaAndDetach(long expectedGeneration) {
+        synchronized (attachmentGate) {
+            Phase current = phase.get();
+            if (expectedGeneration == 0L || attachmentGeneration != expectedGeneration
+                    || closeInFlight || (current != Phase.READY && current != Phase.FAILED
+                    && current != Phase.CLOSING)) {
+                return failed(new IllegalStateException("embedded no-media close unavailable"));
+            }
+            closeInFlight = true;
+            displayDetaching = true;
+            phase.set(Phase.CLOSING);
+        }
+        return submit(() -> {
+            try {
+                final String expectedSha = runtimeConfigSha256;
+                if (expectedSha == null || !expectedSha.matches("[0-9a-f]{64}")) {
+                    throw new IllegalStateException("prepared native route identity unavailable");
+                }
+                display.detachAfterCleanup(expectedGeneration, () -> {
+                    EmbeddedDuplexPlatform currentPlatform = platform;
+                    if (currentPlatform != null) currentPlatform.closeControlForNoMedia();
+                    // Native refuses a busy host or any media/activation effect.
+                    // If Java resources later fail to close, an exact retry sees
+                    // already_closed and still retains these Java objects.
+                    JSONObject closed = new JSONObject(EmbeddedDuplexNative.closeNoMediaRuntime(expectedSha));
+                    String disposition = closed.getString("disposition");
+                    if (!"rusty.quest.embedded_duplex.no_media_closed.v1".equals(
+                            closed.getString("$schema"))
+                            || !expectedSha.equals(closed.getString("config_sha256"))
+                            || !("host_closed".equals(disposition)
+                                    || "staged_route_closed".equals(disposition)
+                                    || "already_closed".equals(disposition))) {
+                        throw new IllegalStateException("native no-media close proof differs");
+                    }
+                    EmbeddedDuplexResources currentResources = resources;
+                    if (currentResources != null) currentResources.closeUnstartedAndVerify();
+                });
+                platform = null;
+                resources = null;
+                runtimeConfigSha256 = null;
+                localFixture = false;
+                synchronized (attachmentGate) {
+                    attachmentGeneration = 0L;
+                    displayDetaching = false;
+                    phase.set(Phase.NEW);
+                }
+                return "no-media-closed";
+            } finally {
+                synchronized (attachmentGate) { closeInFlight = false; }
+            }
         });
     }
 

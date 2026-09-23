@@ -45,6 +45,26 @@ public final class EmbeddedDuplexProcessHostAttachmentTest {
         host.detachUninitializedDisplay(generation);
     }
 
+    @Test public void localDiagnosticFailureBeforeRouteStillClosesDisplay() throws Exception {
+        EmbeddedDuplexProcessHost host = newIsolatedHost();
+        long generation = host.attachDisplay(new FakeDisplay());
+        host.armDiagnosticChallenge("00112233445566778899aabbccddeeff");
+        // The isolated host intentionally has no Android Context for a durable
+        // receipt, but its failed bootstrap must still terminalize the display.
+        JSONObject result = new JSONObject(host.diagnoseLocalFixture(generation).get());
+        assertEquals("receipt_unavailable_closed", result.getString("status"));
+        assertTrue(result.getBoolean("display_detached"));
+        assertEquals(generation + 1L, host.attachDisplay(new FakeDisplay()));
+    }
+
+    @Test public void retryClosesOnlyUninitializedAttachmentWithoutNativeRoute() throws Exception {
+        EmbeddedDuplexProcessHost host = newIsolatedHost();
+        long generation = host.attachDisplay(new FakeDisplay());
+        assertEquals("uninitialized-display-detached",
+                host.retryLocalDiagnosticCleanup(generation).get());
+        assertEquals(generation + 1L, host.attachDisplay(new FakeDisplay()));
+    }
+
     private static EmbeddedDuplexProcessHost newIsolatedHost() throws Exception {
         Constructor<EmbeddedDuplexProcessHost> constructor =
                 EmbeddedDuplexProcessHost.class.getDeclaredConstructor(Context.class);

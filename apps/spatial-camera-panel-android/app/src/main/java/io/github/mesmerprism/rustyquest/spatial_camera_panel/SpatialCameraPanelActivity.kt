@@ -64,6 +64,7 @@ import com.meta.spatial.core.Vector4
 import com.meta.spatial.runtime.BlendFactor
 import com.meta.spatial.runtime.LayerAlphaBlend
 import java.util.concurrent.Executors
+import java.util.concurrent.CompletableFuture
 import java.util.concurrent.atomic.AtomicBoolean
 import com.meta.spatial.runtime.LayerFilters
 import com.meta.spatial.runtime.PanelSceneObject
@@ -1611,10 +1612,13 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
   }
   @Volatile private var embeddedDuplexAttachmentGeneration = 0L
   @Volatile private var embeddedDuplexActivityDestroying = false
+  @Volatile private var embeddedDuplexDiagnosticFinished = false
+  @Volatile private var embeddedDuplexDiagnosticFuture: CompletableFuture<String>? = null
   private var embeddedDuplexAttachmentFailureReported = false
 
   private fun attachEmbeddedDuplexDisplayWhenReady() {
     if (!BuildConfig.EMBEDDED_DUPLEX_PRODUCT_INPUTS_ENABLED || embeddedDuplexActivityDestroying ||
+        embeddedDuplexDiagnosticFinished ||
         embeddedDuplexAttachmentGeneration != 0L || !spatialSceneReady ||
         cameraHwbProjectionRawCarrierCoordinator.sourceCarrierContext() == null) return
     runCatching {
@@ -1635,6 +1639,36 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             )
           }
         }
+  }
+
+  /** Invoked only by the private panel after a reviewed local fixture was installed. */
+  fun runEmbeddedDuplexLocalDiagnostic(): CompletableFuture<String> {
+    val generation = embeddedDuplexAttachmentGeneration
+    if (generation == 0L || embeddedDuplexActivityDestroying || embeddedDuplexDiagnosticFinished ||
+        embeddedDuplexDiagnosticFuture != null) {
+      return CompletableFuture<String>().apply {
+        completeExceptionally(IllegalStateException("embedded display is not ready for local diagnostic"))
+      }
+    }
+    val result = io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex
+        .EmbeddedDuplexActivityAttachment.diagnoseLocalFixture(this, generation)
+    embeddedDuplexDiagnosticFuture = result
+    result.whenComplete { receipt, failure ->
+      if (failure == null) {
+        embeddedDuplexAttachmentGeneration = 0L
+        embeddedDuplexDiagnosticFinished = true
+      }
+      runOnUiThread {
+        marker(
+            if (failure == null)
+                "channel=embedded-duplex status=local-diagnostic-closed generation=$generation " +
+                    "diagnostic=${activityMarkerToken(JSONObject(receipt).getString("status"))}"
+            else
+                "channel=embedded-duplex status=local-diagnostic-cleanup-pending " +
+                    "generation=$generation reason=${activityMarkerToken(failure.javaClass.simpleName)}")
+      }
+    }
+    return result
   }
 
   private fun detachUninitializedEmbeddedDuplexDisplay() {
@@ -3381,9 +3415,44 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
 
   override fun onDestroy() {
     embeddedDuplexActivityDestroying = true
-    // Only the never-initialized attachment may leave through this existing
-    // lifecycle fence. A running embedded host needs typed Stop and its display
-    // callbacks before beginOrderedShutdown fences the executor.
+    // Keep the lifecycle executor available until the fixture has completed its
+    // display barrier. Fencing it while waiting on the diagnostic can deadlock
+    // a callback that needs that executor.
+    val diagnostic = embeddedDuplexDiagnosticFuture
+    if (diagnostic == null) {
+      scheduleOrderedActivityDestroyCleanup()
+    } else {
+      val generation = embeddedDuplexAttachmentGeneration
+      diagnostic.whenComplete { _, failure ->
+        if (failure == null) {
+          embeddedDuplexAttachmentGeneration = 0L
+          embeddedDuplexDiagnosticFinished = true
+          scheduleOrderedActivityDestroyCleanup()
+        } else {
+          io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex
+              .EmbeddedDuplexActivityAttachment.retryLocalDiagnosticCleanup(this, generation)
+              .whenComplete { _, retryFailure ->
+                if (retryFailure == null) {
+                  embeddedDuplexAttachmentGeneration = 0L
+                  embeddedDuplexDiagnosticFinished = true
+                } else {
+                  runOnUiThread {
+                    marker("channel=embedded-duplex status=local-diagnostic-cleanup-failed " +
+                        "reason=${activityMarkerToken(retryFailure.javaClass.simpleName)}")
+                  }
+                }
+                scheduleOrderedActivityDestroyCleanup()
+              }
+        }
+      }
+    }
+    stopProjectionSourceLifecyclePolling()
+    super.onDestroy()
+  }
+
+  private fun scheduleOrderedActivityDestroyCleanup() {
+    // Only the never-initialized attachment may leave through this fallback.
+    // A started host requires typed Stop before its display can move.
     val cleanupScheduled =
         videoLifecycleShutdownCoordinator.beginOrderedShutdown(
             retireProjectionPeer = {
@@ -3397,13 +3466,11 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             },
             finishCleanup = ::finishActivityDestroyCleanup,
         )
-    stopProjectionSourceLifecyclePolling()
     if (!cleanupScheduled) {
       marker(
           "channel=spatial-projection-peer status=activity-destroy-cleanup-already-scheduled"
       )
     }
-    super.onDestroy()
   }
 
   private fun finishActivityDestroyCleanup(peerRetirement: Boolean) {

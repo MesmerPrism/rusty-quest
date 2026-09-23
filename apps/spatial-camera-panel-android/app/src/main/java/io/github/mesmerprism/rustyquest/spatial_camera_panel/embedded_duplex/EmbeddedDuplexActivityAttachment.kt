@@ -1,6 +1,7 @@
 package io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex
 
 import android.content.Context
+import java.util.concurrent.CompletableFuture
 
 /** Activity lifecycle bridge; startup authorization remains with the process host. */
 internal object EmbeddedDuplexActivityAttachment {
@@ -11,4 +12,10 @@ internal object EmbeddedDuplexActivityAttachment {
   fun detachUninitialized(context: Context, generation: Long) {
     EmbeddedDuplexProcessHost.forApplication(context).detachUninitializedDisplay(generation)
   }
+
+  fun diagnoseLocalFixture(context: Context, generation: Long): CompletableFuture<String> =
+      EmbeddedDuplexProcessHost.forApplication(context).diagnoseLocalFixture(generation)
+
+  fun retryLocalDiagnosticCleanup(context: Context, generation: Long): CompletableFuture<String> =
+      EmbeddedDuplexProcessHost.forApplication(context).retryLocalDiagnosticCleanup(generation)
 }
