@@ -63,7 +63,7 @@ Assert-Contains "Kotlin tests" $kotlinTest "linkedModeUsesRedAsSingleChannelAuth
 Assert-Contains "Kotlin tests" $kotlinTest "independentModePreservesBoundedChannelDifferences"
 
 Assert-Contains "Layer panel" $panel 'Section("RGB Channel Transform")'
-Assert-Contains "Layer panel" $panel '"Direction speed"'
+Assert-Contains "Layer panel" $panel '"Direction speed (turns/s)"'
 Assert-Contains "Layer panel" $panel '"Coverage scale"'
 Assert-Contains "Coordinator" $coordinator "updateRgbChannelTransformNative"
 Assert-Contains "Coordinator" $coordinator "status=rgb-channel-transform-submitted"
@@ -90,7 +90,7 @@ Assert-Contains "Native contract" $native "coverage_scale: [f32; RGB_CHANNEL_COU
 
 Assert-Contains "Vulkan runtime" $runtime "SpatialRgbChannelTransformUniformResources"
 Assert-Contains "Vulkan runtime" $runtime "create_rgb_channel_transform_uniform_resources"
-Assert-Contains "Vulkan runtime" $runtime "current_rgb_channel_transform_settings().uniform()"
+Assert-Contains "Vulkan runtime" $runtime "current_rgb_channel_transform_settings().uniform_at_elapsed_seconds(elapsed_seconds)"
 Assert-Contains "Vulkan runtime" $runtime "self.rgb_channel_transform_uniform.descriptor_set"
 Assert-Contains "Public documentation" $docs "does not define an effect signal"
 Assert-Contains "Public documentation" $docs "descriptor set 3, binding 0"

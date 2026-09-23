@@ -28,12 +28,16 @@ class RgbChannelTransformTest {
                         imageScale = 1.25f,
                         coverageScale = 0.75f,
                     ),
+                directionNoiseAmountTurns = 0.08f,
+                directionNoiseRateHz = 0.5f,
                 green = RgbChannelParameters(directionTurns = 0.6f),
                 blue = RgbChannelParameters(directionTurns = 0.8f),
             )
         )
     assertEquals(value.red, value.green)
     assertEquals(value.red, value.blue)
+    assertEquals(0.08f, value.directionNoiseAmountTurns)
+    assertEquals(0.5f, value.directionNoiseRateHz)
   }
 
   @Test
@@ -43,6 +47,14 @@ class RgbChannelTransformTest {
     assertTrue(value.red.directionRateHz != value.green.directionRateHz)
     assertTrue(value.green.displacementStrengthUv != value.blue.displacementStrengthUv)
     assertTrue(value.red.coverageScale != value.blue.coverageScale)
+    assertEquals(1.0f, value.red.imageScale)
+    assertEquals(1.0f, value.green.imageScale)
+    assertEquals(1.0f, value.blue.imageScale)
+    assertEquals(0.055f, value.red.directionRateHz)
+    assertEquals(0.085f, value.green.directionRateHz)
+    assertEquals(-0.065f, value.blue.directionRateHz)
+    assertEquals(0.0f, value.directionNoiseAmountTurns)
+    assertEquals(0.1f, value.directionNoiseRateHz)
   }
 
   @Test
@@ -79,6 +91,21 @@ class RgbChannelTransformTest {
     assertTrue(marker.contains("rgbChannelTransformContract=rusty.quest.rgb-channel-transform.v1"))
     assertTrue(marker.contains("rgbChannelTransformMode=independent-rgb"))
     assertTrue(marker.contains("rgbDirectionRateHz="))
+    assertTrue(marker.contains("rgbDirectionNoiseAmountTurns="))
+    assertTrue(marker.contains("rgbDirectionNoiseRateHz="))
     assertTrue(marker.contains("rgbCoverageScale="))
+  }
+
+  @Test
+  fun noiseControlsNormalizeToSafeFiniteBounds() {
+    val value =
+        RgbChannelTransformModule.normalize(
+            RgbChannelTransform(
+                directionNoiseAmountTurns = Float.POSITIVE_INFINITY,
+                directionNoiseRateHz = -1.0f,
+            )
+        )
+    assertEquals(0.0f, value.directionNoiseAmountTurns)
+    assertEquals(0.0f, value.directionNoiseRateHz)
   }
 }

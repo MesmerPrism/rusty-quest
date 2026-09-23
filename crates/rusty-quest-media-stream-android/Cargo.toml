@@ -1,0 +1,19 @@
+[package]
+name = "rusty-quest-media-stream-android"
+description = "Fail-closed Android owner-execution contracts for Quest media streams."
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[features]
+default = []
+test-support = []
+
+[dependencies]
+rusty-quest-media-stream = { path = "../rusty-quest-media-stream" }
+serde = { version = "1", features = ["derive"] }
+
+[lints]
+workspace = true

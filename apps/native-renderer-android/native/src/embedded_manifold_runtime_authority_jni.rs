@@ -3,10 +3,37 @@
 use rusty_quest_broker_authority::QuestBrokerRuntimeProvider;
 use std::sync::{Mutex, OnceLock};
 
-static RUNTIME_PROVIDER: OnceLock<Mutex<QuestBrokerRuntimeProvider>> = OnceLock::new();
+static RUNTIME_PROVIDER: OnceLock<Mutex<Option<QuestBrokerRuntimeProvider>>> = OnceLock::new();
 
-fn provider() -> &'static Mutex<QuestBrokerRuntimeProvider> {
-    RUNTIME_PROVIDER.get_or_init(|| Mutex::new(QuestBrokerRuntimeProvider::default()))
+fn provider() -> &'static Mutex<Option<QuestBrokerRuntimeProvider>> {
+    RUNTIME_PROVIDER.get_or_init(|| Mutex::new(Some(QuestBrokerRuntimeProvider::default())))
+}
+
+struct ProviderCheckout(Option<QuestBrokerRuntimeProvider>);
+
+impl Drop for ProviderCheckout {
+    fn drop(&mut self) {
+        if let Some(provider_value) = self.0.take() {
+            let mut slot = provider()
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if slot.is_none() {
+                *slot = Some(provider_value);
+            }
+        }
+    }
+}
+
+fn with_provider<T>(
+    operation: impl FnOnce(&mut QuestBrokerRuntimeProvider) -> Result<T, String>,
+) -> Result<T, String> {
+    let value = provider()
+        .lock()
+        .map_err(|_| "embedded broker runtime lock poisoned".to_owned())?
+        .take()
+        .ok_or_else(|| "embedded broker runtime provider busy".to_owned())?;
+    let mut checkout = ProviderCheckout(Some(value));
+    operation(checkout.0.as_mut().expect("checked-out provider retained"))
 }
 
 pub(crate) fn initialize_for_host_test(
@@ -16,53 +43,49 @@ pub(crate) fn initialize_for_host_test(
     authority_wall_unix_ms: i64,
     authority_monotonic_elapsed_ns: u64,
 ) -> Result<String, String> {
-    let status = provider()
-        .lock()
-        .map_err(|_| "embedded broker runtime lock poisoned".to_owned())?
-        .initialize(
-            config_json,
-            expected_config_sha256,
-            epoch_entropy_hex,
-            authority_wall_unix_ms,
-            authority_monotonic_elapsed_ns,
-        )
-        .map_err(|error| error.to_string())?;
+    let status = with_provider(|provider| {
+        provider
+            .initialize(
+                config_json,
+                expected_config_sha256,
+                epoch_entropy_hex,
+                authority_wall_unix_ms,
+                authority_monotonic_elapsed_ns,
+            )
+            .map_err(|error| error.to_string())
+    })?;
     serde_json::to_string(&status).map_err(|error| error.to_string())
 }
 
 pub(crate) fn admit_for_host_test(operation_json: &str) -> Result<String, String> {
-    provider()
-        .lock()
-        .map_err(|_| "embedded broker runtime lock poisoned".to_owned())?
-        .execute_admission_json(operation_json)
-        .map_err(|error| error.to_string())
+    with_provider(|provider| {
+        provider
+            .execute_admission_json(operation_json)
+            .map_err(|error| error.to_string())
+    })
 }
 
 pub(crate) fn mutate_for_host_test(mutation_json: &str, now_ms: u64) -> Result<String, String> {
-    provider()
-        .lock()
-        .map_err(|_| "embedded broker runtime lock poisoned".to_owned())?
-        .handle_server_mutation_json(mutation_json, now_ms)
-        .map_err(|error| error.to_string())
+    with_provider(|provider| {
+        provider
+            .handle_server_mutation_json(mutation_json, now_ms)
+            .map_err(|error| error.to_string())
+    })
 }
 
 pub(crate) fn complete_media_action_for_host_test(
     completion_json: &str,
     now_ms: u64,
 ) -> Result<String, String> {
-    provider()
-        .lock()
-        .map_err(|_| "embedded broker runtime lock poisoned".to_owned())?
-        .complete_media_action_json(completion_json, now_ms)
-        .map_err(|error| error.to_string())
+    with_provider(|provider| {
+        provider
+            .complete_media_action_json(completion_json, now_ms)
+            .map_err(|error| error.to_string())
+    })
 }
 
 pub(crate) fn evidence_for_host_test() -> Result<String, String> {
-    provider()
-        .lock()
-        .map_err(|_| "embedded broker runtime lock poisoned".to_owned())?
-        .evidence_json()
-        .map_err(|error| error.to_string())
+    with_provider(|provider| provider.evidence_json().map_err(|error| error.to_string()))
 }
 
 #[cfg(target_os = "android")]
@@ -400,24 +423,14 @@ mod tests {
         assert!(mutate_for_host_test(&mutation.to_string(), 4_000)
             .expect("mutate")
             .contains("\"accepted\":true"));
-        let completion = complete_media_action_for_host_test(
+        let completion_error = complete_media_action_for_host_test(
             &serde_json::json!({"client_id": "client.quest.native-renderer"}).to_string(),
             5_000,
         )
-        .expect("complete media action");
-        let completion: serde_json::Value =
-            serde_json::from_str(&completion).expect("completion json");
-        assert_eq!(
-            completion["$schema"],
-            "rusty.quest.broker.media_completion_response.v1"
-        );
-        assert_eq!(completion["platform_effect_completed"], true);
-        assert_eq!(
-            completion["owner_receipts"].as_array().map(Vec::len),
-            Some(7)
-        );
+        .expect_err("embedded path has no supplier-installed Java executor");
+        assert!(completion_error.contains("trusted Android media owner executor absent"));
         assert!(evidence_for_host_test()
             .expect("evidence")
-            .contains("\"authority_revision\":2"));
+            .contains("\"media_pending_action\""));
     }
 }

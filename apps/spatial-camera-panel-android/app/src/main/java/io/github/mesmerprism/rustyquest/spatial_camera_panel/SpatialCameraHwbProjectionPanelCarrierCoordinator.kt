@@ -307,14 +307,14 @@ internal class SpatialCameraHwbProjectionPanelCarrierCoordinator(
     val nativePassthroughStartMask = bindings.startNativePassthrough(startReason)
     val nativePassthroughLayerActive =
         SpatialOpenXrRouteModule.nativePassthroughLayerActive(nativePassthroughStartMask)
+    bindings.updateNativeStereoOffset(startReason, true)
+    bindings.updateNativeTargetScale(startReason, true)
+    bindings.applyPrivateLayerConfiguration(startReason)
     val nativeEnvironmentDepthStartMask = bindings.startEnvironmentDepth(startReason)
     val nativeEnvironmentDepthProviderBound =
         SpatialOpenXrRouteModule.spatialEnvironmentDepthProviderStarted(
             nativeEnvironmentDepthStartMask
         )
-    bindings.updateNativeStereoOffset(startReason, true)
-    bindings.updateNativeTargetScale(startReason, true)
-    bindings.applyPrivateLayerConfiguration(startReason)
     val videoSettings = bindings.videoSettings()
     bindings.configureVideoProjection(videoSettings, startReason)
     if (videoSettings.active) {

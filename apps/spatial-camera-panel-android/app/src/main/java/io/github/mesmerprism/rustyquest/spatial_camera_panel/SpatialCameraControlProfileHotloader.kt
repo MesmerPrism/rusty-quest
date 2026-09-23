@@ -1,7 +1,9 @@
 package io.github.mesmerprism.rustyquest.spatial_camera_panel
 
 import android.content.Context
-import android.os.SystemClock
+import android.os.FileObserver
+import android.os.Handler
+import android.os.Looper
 import java.io.File
 import java.security.MessageDigest
 import org.json.JSONArray
@@ -15,6 +17,7 @@ internal data class SpatialCameraControlProfileEffective(
     val projectionSurfaceDisplacement: ProjectionSurfaceDisplacement,
     val projectionSurfaceTiling: ProjectionSurfaceTiling,
     val projectionInnerAlpha: ProjectionInnerAlpha,
+    val strengthCycleSpeedHz: Float,
 )
 
 internal class SpatialCameraControlProfileHotloader(
@@ -38,7 +41,8 @@ internal class SpatialCameraControlProfileHotloader(
   private var armed = false
   private var observedSignature: FileSignature? = null
   private var pendingSignature: FileSignature? = null
-  private var lastPollMs = 0L
+  private val mainHandler = Handler(Looper.getMainLooper())
+  private var fileObserver: FileObserver? = null
 
   fun arm() {
     if (armed) return
@@ -46,25 +50,29 @@ internal class SpatialCameraControlProfileHotloader(
     observedSignature = signature()
     pendingSignature = null
     armed = true
+    fileObserver =
+        object :
+            FileObserver(
+                directory,
+                CLOSE_WRITE or CREATE or DELETE or MOVED_FROM or MOVED_TO,
+            ) {
+          override fun onEvent(event: Int, path: String?) {
+            if (path != SpatialCameraControlProfileContract.ACTIVE_PROFILE_FILE) return
+            mainHandler.post { poll(force = true) }
+          }
+        }
+    fileObserver?.startWatching()
     marker(
         "channel=control-profile-hotload status=armed " +
             "schema=${SpatialCameraControlProfileContract.SCHEMA} " +
             "profilePath=external-files/${SpatialCameraControlProfileContract.PROFILE_DIRECTORY}/${SpatialCameraControlProfileContract.ACTIVE_PROFILE_FILE} " +
-            "staleProfileApplied=false pollIntervalMs=${SpatialCameraControlProfileContract.POLL_INTERVAL_MS}"
+            "staleProfileApplied=false changeDetection=file-observer sceneTickPolling=false"
     )
   }
 
   fun poll(force: Boolean = false) {
     if (!armed) return
-    val now = SystemClock.elapsedRealtime()
-    if (
-        !force &&
-            now - lastPollMs <
-                SpatialCameraControlProfileContract.POLL_INTERVAL_MS
-    ) {
-      return
-    }
-    lastPollMs = now
+    if (!force) return
     val current = signature()
     if (current == observedSignature) {
       pendingSignature = null
@@ -130,6 +138,7 @@ internal class SpatialCameraControlProfileHotloader(
             "profileId=${activityMarkerToken(profile.profileId)} revision=${profile.revision} " +
             "profileSha256=$digest transport=file-poll-atomic-replace " +
             "layerOverride=${effective.layerOverride} projectionScale=${effective.projectionScale} " +
+            "strengthCycleSpeedHz=${effective.strengthCycleSpeedHz} " +
             "${PrivateLayerZoneCompositorModule.markerFields(effective.zoneCompositor)} " +
             "${RgbChannelTransformModule.markerFields(effective.rgbChannelTransform)} " +
             "${ProjectionSurfaceDisplacementModule.markerFields(effective.projectionSurfaceDisplacement)} " +
@@ -137,6 +146,12 @@ internal class SpatialCameraControlProfileHotloader(
             "projectionInnerAlphaRequested=${ProjectionInnerAlphaModule.requested(effective.projectionInnerAlpha)} " +
             "runtimeCrash=false"
     )
+  }
+
+  fun close() {
+    armed = false
+    fileObserver?.stopWatching()
+    fileObserver = null
   }
 
   private fun reject(
@@ -205,6 +220,7 @@ internal class SpatialCameraControlProfileHotloader(
       JSONObject()
           .put("layer_override", effective.layerOverride)
           .put("projection_scale", effective.projectionScale)
+          .put("strength_cycle_hz", effective.strengthCycleSpeedHz)
           .put("zone_compositor", zoneJson(effective.zoneCompositor))
           .put("rgb_channel_transform", rgbJson(effective.rgbChannelTransform))
           .put(
@@ -229,6 +245,32 @@ internal class SpatialCameraControlProfileHotloader(
                 PrivateLayerZoneCompositorControls.coverageReplaceVideo -> "full"
                 else -> "off"
               },
+          )
+          .put("region_contract", "v4")
+          .put(
+              "center_content",
+              PrivateLayerZoneCompositorControls.centerContentToken(value.centerContentMode),
+          )
+          .put("center_projection_mix", value.centerProjectionMix)
+          .put("center_corner_radius_uv", value.centerCornerRadiusUv)
+          .put(
+              "buffer_geometry",
+              PrivateLayerZoneCompositorControls.bufferGeometryToken(value.bufferGeometryMode),
+          )
+          .put("buffer_static_width_uv", value.bufferStaticWidthUv)
+          .put("buffer_minimum_width_uv", value.bufferMinimumWidthUv)
+          .put("buffer_maximum_width_uv", value.bufferMaximumWidthUv)
+          .put(
+              "buffer_maximum_speed_meters_per_second",
+              value.bufferMaximumSpeedMetersPerSecond,
+          )
+          .put(
+              "buffer_fill",
+              PrivateLayerZoneCompositorControls.bufferFillToken(value.bufferFillMode),
+          )
+          .put(
+              "stretch_extent",
+              PrivateLayerZoneCompositorControls.stretchExtentToken(value.stretchExtentMode),
           )
           .put(
               "stretch_source",
@@ -262,10 +304,28 @@ internal class SpatialCameraControlProfileHotloader(
               "projection_effect_edge_guard_enabled",
               value.projectionEffectEdgeGuardEnabled,
           )
+          .put("stretch_option_flags", value.stretchOptionFlags)
           .put("edge_inset_uv", value.edgeInsetUv)
           .put("max_inset_uv", value.maxInsetUv)
           .put("stretch_curve", value.stretchCurve)
           .put("processed_mix", value.processedMix)
+          .put(
+              "outer_content",
+              PrivateLayerZoneCompositorControls.outerContentToken(value.outerContentMode),
+          )
+          .put(
+              "outer_stretch_source",
+              when (value.outerStretchSource) {
+                PrivateLayerZoneCompositorControls.sourceProcessed -> "processed"
+                PrivateLayerZoneCompositorControls.sourceMixed -> "mix"
+                else -> "raw"
+              },
+          )
+          .put("outer_stretch_option_flags", value.outerStretchOptionFlags)
+          .put("outer_edge_inset_uv", value.outerEdgeInsetUv)
+          .put("outer_max_inset_uv", value.outerMaxInsetUv)
+          .put("outer_stretch_curve", value.outerStretchCurve)
+          .put("outer_processed_mix", value.outerProcessedMix)
           .put("inner", zoneBandJson(value, true))
           .put("outer", zoneBandJson(value, false))
 
@@ -348,6 +408,8 @@ internal class SpatialCameraControlProfileHotloader(
               },
           )
           .put("edge_mode", RgbChannelTransformControls.edgeToken(value.edgeMode))
+          .put("direction_noise_amount_turns", value.directionNoiseAmountTurns)
+          .put("direction_noise_rate_hz", value.directionNoiseRateHz)
           .put("red", rgbChannelJson(value.red))
           .put("green", rgbChannelJson(value.green))
           .put("blue", rgbChannelJson(value.blue))

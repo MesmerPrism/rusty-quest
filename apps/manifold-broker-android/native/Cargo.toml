@@ -15,6 +15,7 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 rusty-quest-broker-authority = { path = "../../../crates/rusty-quest-broker-authority" }
 rusty-quest-broker-admission = { path = "../../../crates/rusty-quest-broker-admission" }
+rusty-quest-media-stream-android = { path = "../../../crates/rusty-quest-media-stream-android" }
 serde_json = "1"
 
 [features]
@@ -22,6 +23,9 @@ connection-hub-native = []
 
 [target.'cfg(target_os = "android")'.dependencies]
 jni = "0.22"
+
+[dev-dependencies]
+rusty-quest-media-stream-android = { path = "../../../crates/rusty-quest-media-stream-android", features = ["test-support"] }
 
 [lints.rust]
 unsafe_code = "allow"

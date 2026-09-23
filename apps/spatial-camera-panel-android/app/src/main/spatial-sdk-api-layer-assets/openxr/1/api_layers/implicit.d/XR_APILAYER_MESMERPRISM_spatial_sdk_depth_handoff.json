@@ -1,0 +1,11 @@
+{
+  "file_format_version": "1.0.0",
+  "api_layer": {
+    "name": "XR_APILAYER_MESMERPRISM_spatial_sdk_depth_handoff",
+    "library_path": "libXR_APILAYER_MESMERPRISM_spatial_sdk_depth_handoff.so",
+    "api_version": "1.0",
+    "implementation_version": "1",
+    "description": "Spatial SDK-owned environment-depth device-local handoff",
+    "disable_environment": "RUSTY_QUEST_SPATIAL_SDK_DEPTH_HANDOFF_DISABLED"
+  }
+}

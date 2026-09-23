@@ -20,18 +20,28 @@ function Get-QuestBuildSourceCompositionIdentityCanonicalText {
         [Parameter(Mandatory=$true)]$Repository
     )
     $lines = [Collections.Generic.List[string]]::new()
-    $lines.Add("schema=rusty.quest.apk_source_composition_identity.v1")
+    $hasWorkingTreeOverlay = @($Repository | Where-Object {
+        $_.PSObject.Properties.Name -contains "tracked_worktree_clean" -and $_.tracked_worktree_clean -ne $true
+    }).Count -gt 0
+    $lines.Add("schema=rusty.quest.apk_source_composition_identity.v$(if ($hasWorkingTreeOverlay) { '2' } else { '1' })")
     foreach ($package in @($PackageName | ForEach-Object { [string]$_ } | Sort-Object -Unique)) {
         $lines.Add("package=" + (ConvertTo-SourceCompositionCanonicalField -Value $package))
     }
     foreach ($record in @($Repository | Sort-Object repository_id, role, commit, tree)) {
-        $fields = @(
+        $fields = [Collections.Generic.List[string]]::new()
+        @(
             (ConvertTo-SourceCompositionCanonicalField -Value ([string]$record.repository_id)),
             (ConvertTo-SourceCompositionCanonicalField -Value ([string]$record.role)),
             ([string]$record.commit).ToLowerInvariant(),
             ([string]$record.tree).ToLowerInvariant()
-        )
-        $lines.Add("repository=" + ($fields -join ":"))
+        ) | ForEach-Object { $fields.Add([string]$_) }
+        if ($record.PSObject.Properties.Name -contains "tracked_worktree_clean" -and $record.tracked_worktree_clean -ne $true) {
+            $overlaySha256 = ([string]$record.worktree_overlay_sha256).ToLowerInvariant()
+            if ($overlaySha256 -notmatch '^[0-9a-f]{64}$') { throw "Dirty source composition record lacks an exact worktree overlay SHA-256." }
+            $fields.Add("dirty")
+            $fields.Add($overlaySha256)
+        }
+        $lines.Add("repository=" + ($fields.ToArray() -join ":"))
     }
     return $lines -join "`n"
 }
@@ -46,6 +56,29 @@ function Invoke-SourceCompositionGit {
 function Get-NormalizedSourceCompositionPath {
     param([Parameter(Mandatory=$true)][string]$Path)
     return [IO.Path]::GetFullPath($Path).TrimEnd([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar)
+}
+
+function Get-SourceCompositionWorktreeOverlaySha256 {
+    param([Parameter(Mandatory=$true)][string]$Root)
+    $trackedDiff = @(Invoke-SourceCompositionGit -Root $Root -Arguments @(
+        "-c", "core.quotepath=false", "diff", "--binary", "--full-index", "--no-ext-diff", "--no-color", "HEAD", "--"
+    )) -join "`n"
+    $untrackedPaths = @(Invoke-SourceCompositionGit -Root $Root -Arguments @(
+        "-c", "core.quotepath=false", "ls-files", "--others", "--exclude-standard"
+    ) | Sort-Object)
+    $lines = [Collections.Generic.List[string]]::new()
+    $lines.Add("schema=rusty.quest.source_worktree_overlay.v1")
+    $lines.Add("tracked_diff=" + (ConvertTo-SourceCompositionCanonicalField -Value $trackedDiff))
+    foreach ($relativePath in $untrackedPaths) {
+        $fullPath = Join-Path $Root $relativePath
+        if (-not (Test-Path -LiteralPath $fullPath -PathType Leaf)) {
+            $lines.Add("untracked=" + (ConvertTo-SourceCompositionCanonicalField -Value $relativePath) + ":missing")
+            continue
+        }
+        $fileHash = (Get-FileHash -LiteralPath $fullPath -Algorithm SHA256).Hash.ToLowerInvariant()
+        $lines.Add("untracked=" + (ConvertTo-SourceCompositionCanonicalField -Value $relativePath) + ":" + $fileHash)
+    }
+    return Get-SourceCompositionSha256 -Value ($lines -join "`n")
 }
 
 function Find-SourceCompositionGitRoot {
@@ -65,10 +98,19 @@ function Find-SourceCompositionGitRoot {
 }
 
 function Get-SourceCompositionRepository {
-    param([Parameter(Mandatory=$true)][string]$Root, [Parameter(Mandatory=$true)][string]$RepositoryId, [Parameter(Mandatory=$true)][string]$Role)
+    param(
+        [Parameter(Mandatory=$true)][string]$Root,
+        [Parameter(Mandatory=$true)][string]$RepositoryId,
+        [Parameter(Mandatory=$true)][string]$Role,
+        [switch]$AllowWorkingTreeChanges
+    )
     $resolvedRoot = Get-NormalizedSourceCompositionPath -Path (([string]@(Invoke-SourceCompositionGit -Root $Root -Arguments @("rev-parse", "--show-toplevel"))[0]).Trim())
-    $status = @(Invoke-SourceCompositionGit -Root $resolvedRoot -Arguments @("status", "--porcelain=v1", "--untracked-files=no"))
-    if ($status.Count -gt 0) { throw "APK source-composition repository has tracked changes: $RepositoryId ($resolvedRoot)" }
+    $status = @(Invoke-SourceCompositionGit -Root $resolvedRoot -Arguments @("status", "--porcelain=v1", "--untracked-files=all"))
+    $worktreeClean = $status.Count -eq 0
+    if (-not $worktreeClean -and -not $AllowWorkingTreeChanges) {
+        throw "Publication APK source-composition repository has working-tree changes: $RepositoryId ($resolvedRoot)"
+    }
+    $worktreeOverlaySha256 = if ($worktreeClean) { "" } else { Get-SourceCompositionWorktreeOverlaySha256 -Root $resolvedRoot }
     $commit = ([string]@(Invoke-SourceCompositionGit -Root $resolvedRoot -Arguments @("rev-parse", "HEAD"))[0]).Trim().ToLowerInvariant()
     $tree = ([string]@(Invoke-SourceCompositionGit -Root $resolvedRoot -Arguments @("rev-parse", "HEAD^{tree}"))[0]).Trim().ToLowerInvariant()
     if ($commit -notmatch '^[0-9a-f]{40}$' -or $tree -notmatch '^[0-9a-f]{40}$') { throw "APK source-composition repository lacks an exact commit/tree: $RepositoryId" }
@@ -78,7 +120,8 @@ function Get-SourceCompositionRepository {
         repository = [IO.Path]::GetFullPath($resolvedRoot)
         commit = $commit
         tree = $tree
-        tracked_worktree_clean = $true
+        tracked_worktree_clean = $worktreeClean
+        worktree_overlay_sha256 = $worktreeOverlaySha256
     }
 }
 
@@ -86,7 +129,8 @@ function Get-QuestBuildSourceComposition {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory=$true)][string]$RepoRoot,
-        [Parameter(Mandatory=$true)][string[]]$PackageName
+        [Parameter(Mandatory=$true)][string[]]$PackageName,
+        [switch]$AllowWorkingTreeChanges
     )
 
     $root = Get-NormalizedSourceCompositionPath -Path (Resolve-Path -LiteralPath $RepoRoot).Path
@@ -136,19 +180,26 @@ function Get-QuestBuildSourceComposition {
     foreach ($gitRoot in @($gitRoots | Sort-Object)) {
         $isPrimary = $gitRoot -ieq $root
         $repositoryId = if ($isPrimary) { "rusty-quest" } else { Split-Path -Leaf $gitRoot }
-        $records.Add((Get-SourceCompositionRepository -Root $gitRoot -RepositoryId $repositoryId -Role $(if ($isPrimary) { "primary" } else { "path-dependency" }))) | Out-Null
+        $records.Add((Get-SourceCompositionRepository -Root $gitRoot -RepositoryId $repositoryId -Role $(if ($isPrimary) { "primary" } else { "path-dependency" }) -AllowWorkingTreeChanges:$AllowWorkingTreeChanges)) | Out-Null
     }
     $duplicateRepositoryIds = @($records.ToArray() | Group-Object repository_id | Where-Object { $_.Count -ne 1 })
     if ($duplicateRepositoryIds.Count -gt 0) {
         throw "APK source composition contains duplicate repository identities: $(@($duplicateRepositoryIds.Name) -join ', ')"
     }
     $identityRecords = @($records.ToArray() | Sort-Object repository_id | ForEach-Object {
-        [pscustomobject][ordered]@{ repository_id = [string]$_.repository_id; role = [string]$_.role; commit = [string]$_.commit; tree = [string]$_.tree }
+        [pscustomobject][ordered]@{
+            repository_id = [string]$_.repository_id
+            role = [string]$_.role
+            commit = [string]$_.commit
+            tree = [string]$_.tree
+            tracked_worktree_clean = [bool]$_.tracked_worktree_clean
+            worktree_overlay_sha256 = [string]$_.worktree_overlay_sha256
+        }
     })
     $canonicalIdentity = Get-QuestBuildSourceCompositionIdentityCanonicalText -PackageName $PackageName -Repository $identityRecords
     $fingerprint = Get-SourceCompositionSha256 -Value $canonicalIdentity
     return [pscustomobject][ordered]@{
-        schema = "rusty.quest.apk_source_composition.v1"
+        schema = "rusty.quest.apk_source_composition.v$(if (@($records.ToArray() | Where-Object { $_.tracked_worktree_clean -ne $true }).Count -gt 0) { '2' } else { '1' })"
         fingerprint = $fingerprint
         packages = @($PackageName | Sort-Object -Unique)
         repositories = @($records.ToArray() | Sort-Object repository_id)

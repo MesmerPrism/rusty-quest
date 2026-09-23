@@ -99,6 +99,79 @@ pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\checks\Test-ManifoldBroker
   -RepoRoot . -BuildDir .\target\manifold-broker-android -ExpectedProductName base-standalone
 ```
 
+## Spatial Camera Panel supplier specialization
+
+The legacy camera/P2P compatibility package has one optional supplier binding:
+`-SpatialCameraPanelPackageName`. It changes only the packaged Spatial Camera
+Panel client lock, its media-lifecycle lock, and the derived signature-scoped
+admission subject. The checked-in baseline fixtures stay reusable for the
+ordinary public package. Specialization requires all of the following in the
+same build:
+
+- `-LegacyCameraP2pCompatibility` with an explicit tracked-clean
+  `-ManifoldSourceRoot`;
+- exactly
+  `fixtures/media-runtime-products/camera2-surface.binding.json` and
+  `fixtures/media-runtime-products/spatial-camera-panel-display.binding.json`;
+- `-EnableRemoteCameraDebugOperator` and
+  `-RequireSharedMorphovisionSigner` with the reviewed keystore;
+- an explicit version and content-addressed output directory.
+
+The build manifest records the exact Manifold commit/tree, both binding
+digests, specialized client/lifecycle digests, package, signer, version, and
+fixed diagnostic safety policy. It never records the local Manifold or
+keystore path.
+
+The B compatibility diagnostic is deliberately non-destructive. Before any
+device effect, `Test-ManifoldBrokerCompatibilityDiagnosticStatic.ps1` checks
+the build manifest, selected feature-lock raw hash/revision/fingerprint,
+rollback evidence, both APKs through the pinned File Manager CLI, and the
+pinned ADB bytes. Its receipt is then a mandatory input to
+`Invoke-ManifoldBrokerCompatibilityDiagnostic.ps1`.
+The default receipt is content-addressed beneath
+`target/manifold-broker-compatibility-gates/`, separate from the replaceable
+build directory; collisions, nesting, and reparse-point traversal fail closed.
+
+Rollback evidence has this closed local-only shape:
+
+```json
+{
+  "$schema": "rusty.quest.manifold_broker.compatibility_rollback_evidence.v1",
+  "candidate_apk_sha256": "<candidate-apk-sha256>",
+  "package_name": "io.github.mesmerprism.rustymanifold.broker",
+  "version_code": 10103,
+  "candidate_version_name": "0.1.0-unit020-lan-20260913",
+  "signer_certificate_sha256": "722f1f3dcb921918d2e02f39f1b1bd8f9ff2812e07757c5fc665f6b8f7ee32a8",
+  "rollback_apk": {
+    "path": "<captured-installed-apk>",
+    "sha256": "<sha256>",
+    "actual_version_name": "0.1.10103"
+  },
+  "captured_from_installed_bytes": true,
+  "same_version_restore": true,
+  "preservation": {
+    "uninstall_required": false,
+    "data_clear_required": false,
+    "global_log_clear_required": false,
+    "blanket_force_stop_required": false,
+    "downgrade_required": false,
+    "adb_lifecycle_required": false
+  }
+}
+```
+
+The device runner requires the exact prior broker bytes to be installed,
+performs a same-version/same-signer inspected replacement, verifies installed
+candidate bytes, reads only the bounded remote-camera `authority-status`, and
+reinstalls and verifies the exact prior bytes in `finally`. It never uninstalls,
+clears data or logs, requests downgrade, changes ADB lifecycle, or touches the
+Spatial package. After verified rollback, it may force-stop the exact broker
+package when that broker was initially inactive. It leaves unrelated packages
+alone. Failed or ambiguous candidate installation/readback still triggers the
+rollback attempt; any original failure and rollback failure remain in evidence.
+The evidence is local/target-only
+and proves neither a final media graph nor a hot Local consumer handoff.
+
 ## Runtime gate
 
 NET-014 binds the generated config to one process-local Rust provider. Binder,

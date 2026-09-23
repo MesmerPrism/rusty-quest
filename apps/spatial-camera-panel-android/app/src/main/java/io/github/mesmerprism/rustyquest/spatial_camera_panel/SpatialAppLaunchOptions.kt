@@ -135,4 +135,3 @@ class SpatialAppLaunchOptionsProvider : ContentProvider() {
       selectionArgs: Array<out String>?,
   ): Int = throw UnsupportedOperationException("launch-options-provider-read-only")
 }
-

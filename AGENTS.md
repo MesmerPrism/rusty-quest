@@ -1,5 +1,30 @@
 # Rusty Quest Agent Notes
 
+## Reusable Android media
+
+`crates/rusty-quest-media-stream-android` owns the Android media AAR and its
+Rust `rlib`. Hosts consume the artifact and link the Rust library into their
+one authority library. Keep permissions, Activity/service ownership, app
+defaults, and private behavior in each host. Provider completion must come
+from an injected executor's live registry; missing providers fail explicitly.
+Do not hold authority or registry locks across re-entrant platform callbacks.
+Use `docs/MEDIA_SESSION_RUNTIME.md` for the executor boundary and
+`docs/MEDIA_STREAM_RUNTIME.md` for host tests and two-consumer build checks.
+Those checks do not establish device, camera, codec, LAN, or duplex readiness.
+
+## Debug host receipt boundary
+
+The Spatial Camera Panel debug host receipt provider is debug-source-set only.
+Its authority is derived from the selected application id as
+`${applicationId}.debug-host-receipt`, requires Android `DUMP` plus the runtime
+shell UID, and accepts only closed arm/status/hash-read/hash-cleanup calls. It
+must never accept URI, intent, component, generic command, arbitrary bundle, or
+non-shell transport. Release source and release artifacts must contain neither
+its class nor authority suffix. A fixed cross-package authority is forbidden
+because distinct diagnostic application ids must remain co-installable. It is
+a receipt prerequisite only and does not authorize app launch, media dispatch,
+or device-performance inference.
+
 The P70 `lsl-rust-float32-lan-outlet-android` package is an opt-in,
 same-LAN, one-channel Float32 Quest-outlet to host-inlet qualification only.
 It does not establish the reverse direction or a default runtime feature.
@@ -155,11 +180,55 @@ apps in this repo. Keep reusable hand, space, mesh, visual, command, and report
 contracts in Lattice, Matter, Optics, Manifold, GUI, and Hostess before adding
 Quest adapters.
 
+For `spatial-camera-panel-android` performance work, this public adapter owns
+allocation-free, nonblocking Vulkan timestamp-query instrumentation and
+public, output-equivalent guide-kernel, host-upload, and hardware-buffer import
+optimizations. Timestamp readback must use a retired frame slot plus
+availability results and must never introduce a query-result `WAIT` into the
+render loop. A NativeBox5 reduction is admissible only when the packed-eye texel
+domain proves that the three filtered reads are equivalent to the existing five
+physical-texel taps. Keep Gaussian5 unchanged. Host-coherent uniform buffers may
+remain persistently mapped through resource lifetime, must be unmapped before
+free, and may skip a write only on exact value equality. Video imports must test
+their exact stable-ID/generation/descriptor cache key before querying Vulkan
+hardware-buffer properties. Camera imports may be reused only within one stream
+generation and exact eye, camera, stable hardware-buffer ID, descriptor, and
+Vulkan-format identity; retire active images only after the existing fence,
+bound inactive entries, consume AImageReader buffer-removal notifications, and
+disable reuse fail-safely if removal bookkeeping overflows. Keep performance
+telemetry scalar and low-rate. Private effect formulas, private shader source,
+and unsanitized headset evidence remain outside this repository.
+
+For Spatial Camera Panel video/compositor correctness, zero visible-zone video
+demand is a custom-decoder skip and must never select direct video as a
+fallback. A hidden projection keeps direct video as its own owner; only a
+failed custom decoder dispatch may choose fallback. A failed JNI compositor
+submission retains the prior submitted state, and queued JNI work is not render
+proof. Pipeline preparation stays on its worker and pending work retains the
+last good frame/state. Performance baselines record requested CPU/GPU level 4
+and 90 Hz separately from their effective readback values.
+
 Do not add new Makepad compatibility shims, profile surfaces, or Quest-Makepad
 parity work here unless the user explicitly asks for Makepad migration,
 regression repair, or historical evidence replay. When old Makepad evidence is
 useful, port the accepted contract, marker, fixture, or scorecard shape into a
 native Quest path.
+
+## Project continuation and source publication
+
+Use `$rusty-morphospace` for project and owner routing. Use
+`$rusty-morphospace-context` only when the registered machine-local owner must
+be located. After a project adopts an external planning workspace, that
+workspace owns its current unit and lifecycle; any embedded predecessor stays
+historical. Source repositories retain source and publication ownership.
+
+A planning repository that deliberately has no remote remains local. For an
+accepted development integration or reviewed source snapshot, use the adopted
+Work Environment's `docs/SOURCE_ONLY_PUBLICATION.md` route. Bind the tested
+candidate separately from any provider-generated merge commit, satisfy each
+source owner's required PR checks, publish providers before consumers, and
+record the exact source readbacks in local planning last. This grants no new
+release, feature, or device acceptance and does not change old unit statuses.
 
 ## Read Order
 
@@ -260,7 +329,13 @@ camera/P2P/BLE-free. `Build-ManifoldBrokerAndroid.ps1` must consume an exact
 spec/lock pair, generate the actual app manifest and command registry, and
 package their lock-stamped receipts; it must never fall back to an ambient app
 manifest. The broad camera/P2P validation surface is legacy compatibility and
-requires its explicit switch.
+requires its explicit switch. Supplier-specialized compatibility packages must
+also bind one explicit tracked-clean Manifold source root for both product
+fixtures and native compilation, the exact two reviewed media bindings, the
+remote-camera debug operator, shared signer, package specialization, and fixed
+version tuple. Their device diagnostic requires a matching static-gate receipt
+and exact same-version rollback bytes; uninstall, data/log clearing, blanket
+force-stop, downgrade, and ADB lifecycle changes remain prohibited.
 
 `crates/rusty-quest-broker-authority` is the trusted local process/JNI
 projection over `ManifoldBrokerRuntime`. Real standalone and embedded JNI
@@ -429,16 +504,18 @@ encrypted pack catalog generic, bounded, opt-in, and free of private media
 names. In direct video-only mode, each item owns its ideal Spatial SDK shape
 and stereo mode; switching may rebuild only that world-centered media surface
 and decoder, never head-lock an immersive surface, and must require neutral
-rearm between right-stick selection flicks. When video and the custom camera
-projection are both active, keep them on coordinated carriers: the video uses
-its declared world-anchored flat/180/360 surface or an explicitly selected
-legacy head-fixed background quad, while the custom camera/effect compositor
-retains its planar stereo carrier and camera mapping. The video carrier uses a
-strictly lower Spatial SDK z-index than the custom projection, and the control
-panel remains above both. Video selection or
-presentation changes may rebuild only the video surface and decoder; they must
-retain the Activity, planar camera carrier, control state, and current private
-configuration.
+rearm between right-stick selection flicks. World-anchored video continues to
+use its declared flat/180/360 Spatial SDK surface. Supported head-fixed stereo
+instead feeds the existing planar Vulkan camera/effect carrier: Center
+independently selects Projection, Video, Projection+Video, or Transparent;
+Middle selects Continue Outer, Stretch, or Transparent; Outer selects Video,
+Stretch, or Transparent. Full head-fixed video is therefore the same
+compositor surface with Center Video, Buffer Off, and Outer Video, not an
+additional panel. The direct head-fixed Spatial panel is retained only as a
+bounded fallback/diagnostic route for unsupported input or compositor
+unavailability. Video selection must retain the Activity, carrier, control
+state, and current private configuration; zero-contribution decoder teardown
+must never join on the Activity/XR thread.
 
 The reusable RGB-channel spatial transform is documented in
 `docs/RGB_CHANNEL_TRANSFORM.md`. Rusty Quest owns only its bounded neutral

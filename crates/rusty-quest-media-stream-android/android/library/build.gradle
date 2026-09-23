@@ -1,0 +1,57 @@
+plugins { id "java-library" }
+
+group = "io.github.mesmerprism.rustyquest"
+version = "0.1.0"
+if (providers.gradleProperty("mediaBuildDir").isPresent()) {
+    layout.buildDirectory = file(providers.gradleProperty("mediaBuildDir").get())
+}
+java {
+    sourceCompatibility = JavaVersion.VERSION_1_8
+    targetCompatibility = JavaVersion.VERSION_1_8
+}
+
+def androidJar = providers.provider {
+    if (providers.gradleProperty("androidJar").isPresent()) {
+        def explicit = file(providers.gradleProperty("androidJar").get())
+        if (!explicit.isFile()) throw new GradleException("androidJar is not a file: ${explicit}")
+        return explicit
+    }
+    def sdkRoot = providers.gradleProperty("android.sdk")
+            .orElse(providers.environmentVariable("ANDROID_HOME"))
+    def root = file(sdkRoot.get())
+    def platforms = new File(root, "platforms").listFiles()
+            .findAll { it.isDirectory() && it.name.startsWith("android-") }
+            .sort { a, b ->
+                Integer.parseInt(a.name.substring(8)) <=> Integer.parseInt(b.name.substring(8))
+            }
+    if (platforms.isEmpty()) throw new GradleException("No Android platform under ${root}")
+    new File(platforms.last(), "android.jar")
+}
+
+dependencies { compileOnly files(androidJar) }
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = "UTF-8"
+    options.compilerArgs += ["-Xlint:all", "-Werror"]
+}
+
+def aarStaging = layout.buildDirectory.dir("aar-staging")
+tasks.register("aarClassesJar", Jar) {
+    dependsOn(tasks.named("classes"))
+    from(sourceSets.main.output)
+    archiveFileName = "classes.jar"
+    destinationDirectory = aarStaging
+}
+tasks.register("bundleReleaseAar", Zip) {
+    dependsOn(tasks.named("aarClassesJar"))
+    from("src/main/AndroidManifest.xml") { rename { "AndroidManifest.xml" } }
+    from("src/main/R.txt") { rename { "R.txt" } }
+    from(tasks.named("aarClassesJar"))
+    archiveFileName = "rusty-quest-media-stream-android-release.aar"
+    destinationDirectory = layout.buildDirectory.dir("outputs/aar")
+}
+tasks.register("assembleRelease") { dependsOn(tasks.named("bundleReleaseAar")) }
+tasks.register("hostConformance", JavaExec) {
+    dependsOn(tasks.named("testClasses"))
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = "io.github.mesmerprism.rustyquest.media.MediaProtocolConformanceMain"
+}
