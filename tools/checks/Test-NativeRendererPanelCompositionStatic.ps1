@@ -110,7 +110,14 @@ try {
     Assert-PanelClosure `
         -Resolution $breathComposition `
         -ExpectedModule "breath-composition-controls" `
-        -RequiredSourceNeedles @("BreathCompositionPanelModule.java", "PolarSensorPanel.java", "LslPanelConfigStore.java") `
+        -RequiredSourceNeedles @(
+            "BreathCompositionPanelModule.java",
+            "ExperimentSessionPanelCoordinator.java",
+            "ExperimentSessionPanelState.java",
+            "ExperimentSessionPanelViewPolicy.java",
+            "PolarSensorPanel.java",
+            "LslPanelConfigStore.java"
+        ) `
         -ForbiddenSourceNeedles @("StimulusVolumePanelModule.java", "DriverProfileSession.java", "DriverProfilePanelModule.java", "PrivateParticlePanelModule.java", "PolarPanelModule.java")
 
     $strobe = Invoke-Resolution `
@@ -294,6 +301,7 @@ try {
     }
 
     $breathCompositionSource = Get-Content -LiteralPath (Join-Path $repoRootPath "apps\native-renderer-android\panel-modules\breath-composition\src\main\java\io\github\mesmerprism\rustyquest\native_renderer\BreathCompositionPanelModule.java") -Raw
+    $panelImmersiveHandoffSource = Get-Content -LiteralPath (Join-Path $repoRootPath "apps\native-renderer-android\src\main\java\io\github\mesmerprism\rustyquest\native_renderer\PanelImmersiveHandoff.java") -Raw
     if ($breathCompositionSource -match 'readSystemProperty\(PROP_CONTROL_PANEL_MODE\)' -or
         $breathCompositionSource -match 'private-layer-selector' -or
         $breathCompositionSource -match 'nativeSubmitLivePrivateLayerSelection' -or
@@ -311,14 +319,36 @@ try {
             throw "Breath-composition source physically retains a foreign product page: $foreignPageNeedle"
         }
     }
+    $androidBuildSource = Get-Content -LiteralPath (Join-Path $repoRootPath "tools\Build-NativeRendererAndroid.ps1") -Raw
     foreach ($lifecycleNeedle in @("onNewIntent", "onActivityResult", "onRequestPermissionsResult", "onConfigurationChanged")) {
-        if ((Get-Content -LiteralPath (Join-Path $repoRootPath "tools\Build-NativeRendererAndroid.ps1") -Raw) -notlike "*$lifecycleNeedle*") {
+        if ($androidBuildSource -notlike "*$lifecycleNeedle*") {
             throw "Generated panel shell is missing lifecycle/result delegation: $lifecycleNeedle"
         }
     }
-    foreach ($handoffNeedle in @("Resume VR", "closePanelAndReturnToImmersive", "focused_submitted_frame_timeout_panel_retained")) {
+    foreach ($visiblePanelToggleNeedle in @(
+        "requestCloseVisiblePanelFromNative",
+        "visiblePanel",
+        "openxr-same-process"
+    )) {
+        if ($androidBuildSource -notlike "*$visiblePanelToggleNeedle*") {
+            throw "Generated panel shell is missing visible-panel toggle behavior: $visiblePanelToggleNeedle"
+        }
+    }
+    foreach ($handoffNeedle in @("Resume VR", "closePanelAndReturnToImmersive", "ControlPanelActivity.closePanelAndReturnToImmersive(this)")) {
         if ($breathCompositionSource -notlike "*$handoffNeedle*") {
             throw "Breath-composition lifecycle handoff behavior is missing: $handoffNeedle"
+        }
+    }
+    foreach ($sharedHandoffNeedle in @(
+        "STABLE_MS = 750L",
+        "state.frameCount > stableFrame",
+        "panelPaused",
+        "panelTaskRetained=true",
+        "cancelActiveForTerminalExit",
+        "APPLICATION_LIFECYCLE.canLaunch(ownerToken, expectedGeneration)"
+    )) {
+        if ($panelImmersiveHandoffSource -notlike "*$sharedHandoffNeedle*") {
+            throw "Shared panel/immersive handoff behavior is missing: $sharedHandoffNeedle"
         }
     }
     foreach ($readbackNeedle in @(

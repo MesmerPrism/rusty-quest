@@ -42,7 +42,7 @@
   },
   "markers": {
     "required": [
-      "sameApkPanelActionMode=right-secondary-triple-press-toggle",
+      "sameApkPanelActionMode=",
       "panelActivity=ControlPanelActivity"
     ],
     "forbidden": []

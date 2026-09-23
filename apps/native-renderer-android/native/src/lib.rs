@@ -4,6 +4,7 @@
 //! path. It keeps the public APK free of app Java and private effect payloads.
 
 #![cfg_attr(not(target_os = "android"), allow(dead_code))]
+#![recursion_limit = "256"]
 
 use rusty_quest_native_renderer_contracts::{validate_native_renderer_plan, NativeRendererPlan};
 
@@ -16,6 +17,7 @@ mod breath_calibration_controller_action;
 mod breath_capture;
 mod breath_composition_driver;
 mod breath_composition_runtime;
+mod breath_guidance;
 mod breath_input_selection;
 
 #[cfg(target_os = "android")]
@@ -45,6 +47,8 @@ mod environment_depth_projection_alignment;
 mod environment_depth_scene_map;
 #[cfg(any(test, not(target_os = "android")))]
 mod environment_depth_surface_support;
+mod experiment_session;
+mod experiment_session_runtime;
 #[cfg(target_os = "android")]
 mod gpu_environment_depth_particle_stats;
 #[cfg(target_os = "android")]
@@ -98,7 +102,7 @@ mod native_renderer_hand_anchor_particle_options;
 mod native_renderer_options;
 #[cfg(test)]
 mod native_renderer_options_tests;
-#[cfg(target_os = "android")]
+#[cfg(any(test, target_os = "android"))]
 mod native_renderer_panel_bridge;
 mod native_renderer_passthrough_style_options;
 mod native_renderer_private_particle_heartbeat_orbit_request;
@@ -132,6 +136,8 @@ mod polar_composition_adapters;
 mod private_extension_slot;
 mod private_particle_breath_state_driver;
 mod private_particle_heartbeat_pulse_adapter;
+#[cfg(any(target_os = "android", test))]
+mod private_particle_push_abi;
 mod private_particle_world_basis;
 mod projection_rect;
 mod projection_target_state;
@@ -139,6 +145,10 @@ mod recorded_hand_replay;
 #[cfg(target_os = "android")]
 mod remote_camera_projection_native_stream;
 mod same_apk_panel_action;
+mod session_recording_clock;
+mod session_recording_contract;
+mod session_recording_recovery;
+mod session_recording_writer;
 mod simultaneous_hands_controllers;
 #[cfg(target_os = "android")]
 mod video_projection;
@@ -173,6 +183,30 @@ fn android_on_create(state: &android_activity::OnCreateState) {
     let native_app_settings =
         native_app_settings::NativeAppSettingsDefaults::load_from_on_create_state(state);
     marker("native-app-settings", native_app_settings.marker_fields());
+    if native_renderer_panel_bridge::packaged_control_panel_mode_is_breath_mapping(
+        &native_app_settings,
+    ) {
+        match native_renderer_panel_bridge::admit_explicit_native_activity_launch(state) {
+            Ok(Some(epoch)) => marker(
+                "experiment-session-panel",
+                format!(
+                    "event=native-activity-cold-launch status=accepted launchEpoch={} launcher=android.app.NativeActivity panelDeferredUntilSubmittedFrame=true",
+                    epoch
+                ),
+            ),
+            Ok(None) => marker(
+                "experiment-session-panel",
+                "event=native-activity-cold-launch status=rejected launchEpoch=0 panelDeferredUntilSubmittedFrame=true",
+            ),
+            Err(error) => marker(
+                "experiment-session-panel",
+                format!(
+                    "event=native-activity-cold-launch status=error launchEpoch=0 reason={}",
+                    sanitize(&error)
+                ),
+            ),
+        }
+    }
     breath_composition_runtime::install_from_android_properties_with_defaults(|name| {
         native_app_settings.lookup(name)
     });
@@ -359,8 +393,41 @@ fn request_runtime_permissions(
 }
 
 #[cfg(target_os = "android")]
+struct ExperimentSessionImmersiveOwner;
+
+#[cfg(target_os = "android")]
+impl Drop for ExperimentSessionImmersiveOwner {
+    fn drop(&mut self) {
+        match experiment_session_runtime::shutdown_for_immersive_owner_destroyed() {
+            Ok(()) => marker(
+                "experiment-session-runtime",
+                "status=immersive-owner-destroyed recordingFinalized=true nextLaunchFresh=true",
+            ),
+            Err(error) => marker(
+                "experiment-session-runtime",
+                format!(
+                    "status=immersive-owner-destroy-failed recordingFinalized=false nextLaunchFresh=false reason={}",
+                    sanitize(&error)
+                ),
+            ),
+        }
+    }
+}
+
+#[cfg(target_os = "android")]
 #[no_mangle]
 fn android_main(app: android_activity::AndroidApp) {
+    match experiment_session_runtime::initialize_from_android_app(&app) {
+        Err(error) => marker(
+            "experiment-session-runtime",
+            format!("status=error reason={}", sanitize(&error)),
+        ),
+        Ok(()) => marker(
+            "experiment-session-runtime",
+            "status=ready inventoryStatus=inventory-unavailable startAdmitted=false",
+        ),
+    }
+    let _experiment_session_immersive_owner = ExperimentSessionImmersiveOwner;
     let native_app_settings =
         native_app_settings::NativeAppSettingsDefaults::load_from_apk_asset(&app);
     marker("native-app-settings", native_app_settings.marker_fields());

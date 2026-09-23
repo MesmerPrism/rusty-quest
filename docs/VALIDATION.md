@@ -933,6 +933,7 @@ gate:
 cargo test -p rusty-quest-native-renderer-android-native manifold_scalar_driver_bridge
 python .\tools\check_native_renderer_property_parity.py
 pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\checks\Test-NativeAppBuildStatic.ps1 -RepoRoot .
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\checks\Test-NativeAppPrivateAssetProvider.ps1 -RepoRoot .
 ```
 
 Those checks prove the public adapter parses Manifold scalar samples, can send
@@ -941,6 +942,15 @@ a `stream_event` sample into the generic private-particle driver bank, the
 runtime property manifest covers its low-rate settings, and the opt-in
 `particles.private.manifold_scalar_driver` feature can be selected without
 folding Manifold stream input into every private-particle build.
+The private-asset provider check uses temporary synthetic bytes only. It proves
+linked and inert resolver states, exact manifest/inventory binding, two source
+files with the same basename at distinct logical destinations, create-new
+package behavior, public-repo string-asset confinement, collision/traversal/
+hash/size/media damage rejection, strict manifest byte-snapshot and integral-
+count semantics, Win32 alias/device-name rejection, recursive reparse-point
+damage at public-source/staging/staged-object/package boundaries, mutation
+rejection before atomic staging publication, and staged-byte mutation rejection
+without building an APK or introducing a product asset.
 Recorded-hand replay, live compact hand input, GPU-skinned hand mesh visual,
 graft-copy, and GPU mesh replay boundary assertions live in
 `tools\checks\Test-NativeRendererHandVisualStatic.ps1`.

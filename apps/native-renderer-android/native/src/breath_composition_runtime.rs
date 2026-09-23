@@ -145,6 +145,7 @@ pub(crate) struct PendingAdapterAction {
 
 #[derive(Debug)]
 pub(crate) struct BreathCompositionRuntime {
+    packaged_config: BreathCompositionRuntimeConfig,
     authority: BreathCompositionAuthority,
     controller_adapter_available: bool,
     pending_actions: VecDeque<PendingAdapterAction>,
@@ -156,6 +157,7 @@ pub(crate) struct BreathCompositionRuntime {
     latest_calibration: Option<CalibrationPanelReadback>,
     polar_state_tuning: PolarStateTuningControl,
     last_polar_diagnostics: Option<PolarAccRuntimeDiagnostics>,
+    settings_revision: u64,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -273,6 +275,7 @@ impl BreathCompositionRuntime {
             authority.select(config.initial_request);
         }
         Self {
+            packaged_config: config,
             authority,
             controller_adapter_available,
             pending_actions: VecDeque::new(),
@@ -284,6 +287,7 @@ impl BreathCompositionRuntime {
             latest_calibration: None,
             polar_state_tuning: PolarStateTuningControl::new(config.polar_state_parameters),
             last_polar_diagnostics: None,
+            settings_revision: 0,
         }
     }
 
@@ -291,17 +295,42 @@ impl BreathCompositionRuntime {
         self.authority.snapshot()
     }
 
+    pub(crate) fn reset_to_packaged_defaults(&mut self) {
+        let config = self.packaged_config;
+        *self = Self::new(config);
+    }
+
     pub(crate) fn apply_command(&mut self, command_json: &str) -> String {
+        let settings_mutation = serde_json::from_str::<Value>(command_json)
+            .ok()
+            .and_then(|value| {
+                value
+                    .as_object()
+                    .and_then(|object| object.get("operation"))
+                    .and_then(Value::as_str)
+                    .map(|operation| {
+                        matches!(
+                            operation,
+                            "select" | "disable" | "configure" | "configure_polar_state"
+                        )
+                    })
+            })
+            .unwrap_or(false);
         let result = self.apply_command_inner(command_json);
         match result {
-            Ok(()) => response_json(
-                "accepted",
-                "none",
-                self.authority.snapshot(),
-                self.latest_calibration.as_ref(),
-                Some(&self.polar_state_tuning),
-                self.last_polar_diagnostics.as_ref(),
-            ),
+            Ok(()) => {
+                if settings_mutation {
+                    self.settings_revision = self.settings_revision.saturating_add(1);
+                }
+                response_json(
+                    "accepted",
+                    "none",
+                    self.authority.snapshot(),
+                    self.latest_calibration.as_ref(),
+                    Some(&self.polar_state_tuning),
+                    self.last_polar_diagnostics.as_ref(),
+                )
+            }
             Err(reason) => response_json(
                 "rejected",
                 reason,
@@ -550,6 +579,29 @@ impl BreathCompositionRuntime {
         self.commit_transition(candidate, &actions, true)
     }
 
+    /// Start the packaged, already-selected composition when an experiment is armed.
+    ///
+    /// A healthy running generation is deliberately preserved so opening the panel or
+    /// re-arming cannot throw away a completed calibration. A failed calibration is retried;
+    /// selected/configured/cancelled states take the same atomic Configure -> Start path as
+    /// the explicit calibration control. Disabled or unavailable configurations remain inert.
+    fn ensure_running_for_experiment_arm(&mut self) -> Result<&'static str, &'static str> {
+        let snapshot = self.authority.snapshot();
+        let calibration_failed = self
+            .latest_calibration
+            .as_ref()
+            .is_some_and(|calibration| calibration.lifecycle == "failed");
+        if snapshot.status == BreathCompositionStatus::Running && !calibration_failed {
+            return Ok("already-running");
+        }
+        self.start_calibration_inner()?;
+        Ok(if calibration_failed {
+            "restarted-failed-calibration"
+        } else {
+            "started"
+        })
+    }
+
     fn commit_transition(
         &mut self,
         candidate: BreathCompositionAuthority,
@@ -739,13 +791,15 @@ impl BreathCompositionRuntime {
         self.last_polar_sequence_id = Some(measurement.sequence_id);
         self.last_polar_observed_at = Some(at);
         self.polar_missing_reported = false;
+        let guidance = crate::experiment_session_runtime::current_breath_guidance_target();
         let Some(adapter) = self.polar_adapter.as_mut() else {
             return;
         };
-        let result = adapter.observe(
+        let result = adapter.observe_guided(
             at,
             generation,
             PolarAccInput::Frame(TimedPolarAccFrame::from_pmd_measurement(measurement)),
+            guidance,
         );
         self.submit_calibration(BreathCompositionSource::PolarAcc, &result.calibration);
         if let Some(assessment) = result.assessment {
@@ -756,6 +810,13 @@ impl BreathCompositionRuntime {
                 BreathCompositionSource::PolarAcc,
                 assessment,
                 snapshot,
+            );
+            record_session_assessment(
+                BreathCompositionSource::PolarAcc,
+                assessment,
+                self.settings_revision,
+                result.unbiased_phase.map(|observation| observation.phase),
+                result.guidance,
             );
         }
         self.refresh_polar_state_diagnostics();
@@ -896,6 +957,40 @@ pub(crate) fn feature_lock_active() -> bool {
     lock_runtime().snapshot().feature_lock_active
 }
 
+pub(crate) fn reset_to_packaged_defaults() {
+    lock_runtime().reset_to_packaged_defaults();
+}
+
+pub(crate) fn ensure_running_for_experiment_arm() -> Result<&'static str, &'static str> {
+    let mut state = lock_runtime();
+    let result = state.ensure_running_for_experiment_arm();
+    #[cfg(target_os = "android")]
+    {
+        let snapshot = state.snapshot();
+        let reason = match result {
+            Ok(status) => status,
+            Err(reason) => reason,
+        };
+        crate::marker(
+            "breath-composition-arm",
+            format!(
+                "status={} reason={} lifecycle={} generation={} source={} mapping={}",
+                if result.is_ok() { "accepted" } else { "inert" },
+                marker_token(reason),
+                snapshot.status.as_str(),
+                snapshot.generation.map_or(0, BreathGeneration::get),
+                snapshot
+                    .effective
+                    .map_or("none", |request| request.source.as_str()),
+                snapshot
+                    .effective
+                    .map_or("none", |request| request.mapping.as_str()),
+            ),
+        );
+    }
+    result
+}
+
 pub(crate) fn take_adapter_action(source: BreathCompositionSource) -> Option<AdapterAction> {
     lock_runtime().take_action(source)
 }
@@ -905,9 +1000,82 @@ pub(crate) fn submit_assessment(
     source: BreathCompositionSource,
     assessment: BreathAssessmentObservation,
 ) -> BreathCompositionSnapshot {
-    let snapshot = lock_runtime().submit_assessment(at, source, assessment);
+    let mut state = lock_runtime();
+    let snapshot = state.submit_assessment(at, source, assessment);
+    let settings_revision = state.settings_revision;
+    drop(state);
     crate::breath_capture::record_assessment(source, assessment, snapshot);
+    record_session_assessment(source, assessment, settings_revision, None, None);
     snapshot
+}
+
+fn record_session_assessment(
+    source: BreathCompositionSource,
+    assessment: BreathAssessmentObservation,
+    settings_revision: u64,
+    unbiased_phase: Option<rusty_quest_breath_contract::assessment::CommonBreathPhase>,
+    guidance: Option<crate::breath_guidance::BreathGuidanceTarget>,
+) {
+    use rusty_quest_breath_contract::assessment::CommonBreathPhase;
+
+    let phase = match assessment.phase {
+        CommonBreathPhase::Inhale => crate::session_recording_contract::BreathPhase::Inhale,
+        CommonBreathPhase::Exhale => crate::session_recording_contract::BreathPhase::Exhale,
+        CommonBreathPhase::Hold => crate::session_recording_contract::BreathPhase::Hold,
+        CommonBreathPhase::Unknown | CommonBreathPhase::BadTracking => {
+            crate::session_recording_contract::BreathPhase::Unknown
+        }
+    };
+    let unbiased_phase = match unbiased_phase.unwrap_or(assessment.phase) {
+        CommonBreathPhase::Inhale => crate::session_recording_contract::BreathPhase::Inhale,
+        CommonBreathPhase::Exhale => crate::session_recording_contract::BreathPhase::Exhale,
+        CommonBreathPhase::Hold => crate::session_recording_contract::BreathPhase::Hold,
+        CommonBreathPhase::Unknown | CommonBreathPhase::BadTracking => {
+            crate::session_recording_contract::BreathPhase::Unknown
+        }
+    };
+    let guidance_phase = guidance.map(|target| match target.expected_phase {
+        CommonBreathPhase::Inhale => crate::session_recording_contract::BreathPhase::Inhale,
+        CommonBreathPhase::Exhale => crate::session_recording_contract::BreathPhase::Exhale,
+        CommonBreathPhase::Hold => crate::session_recording_contract::BreathPhase::Hold,
+        CommonBreathPhase::Unknown | CommonBreathPhase::BadTracking => {
+            crate::session_recording_contract::BreathPhase::Unknown
+        }
+    });
+    let (sampled_at_clock, observed_at_clock) = session_assessment_clocks(source);
+    let _ = crate::experiment_session_runtime::record_breath_assessment(
+        assessment.sequence_id,
+        assessment.sampled_at.get(),
+        sampled_at_clock,
+        assessment.observed_at.get(),
+        observed_at_clock,
+        phase,
+        unbiased_phase,
+        guidance_phase,
+        guidance.map_or(0, |target| target.bias_percent),
+        guidance.map(|target| target.official_active_time_ms),
+        assessment.volume01.map(|value| value as f32),
+        assessment.quality01 as f32,
+        settings_revision,
+    );
+}
+
+fn session_assessment_clocks(
+    source: BreathCompositionSource,
+) -> (
+    crate::session_recording_clock::SourceClock,
+    crate::session_recording_clock::SourceClock,
+) {
+    match source {
+        BreathCompositionSource::Controller => (
+            crate::session_recording_clock::SourceClock::OpenXrTime,
+            crate::session_recording_clock::SourceClock::OpenXrTime,
+        ),
+        BreathCompositionSource::PolarAcc => (
+            crate::session_recording_clock::SourceClock::JavaNanoTime,
+            crate::session_recording_clock::SourceClock::OpenXrTime,
+        ),
+    }
 }
 
 pub(crate) fn submit_calibration(
@@ -934,6 +1102,20 @@ pub(crate) fn status_json() -> String {
 }
 
 pub(crate) fn apply_command_json(command_json: &str) -> String {
+    if serde_json::from_str::<Value>(command_json)
+        .ok()
+        .and_then(|value| {
+            value
+                .as_object()
+                .and_then(|object| object.get("schema"))
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+        })
+        .as_deref()
+        == Some(crate::experiment_session_runtime::EXPERIMENT_SESSION_COMMAND_SCHEMA)
+    {
+        return crate::experiment_session_runtime::apply_command_json(command_json);
+    }
     lock_runtime().apply_command(command_json)
 }
 
@@ -1601,6 +1783,42 @@ mod tests {
     }
 
     #[test]
+    fn packaged_defaults_reset_discards_developer_edits() {
+        let mut runtime = runtime();
+        let baseline_snapshot = runtime.snapshot();
+        let baseline_config = runtime.packaged_config;
+
+        let edited: Value =
+            serde_json::from_str(&runtime.apply_command(&select("controller", "volume")))
+                .expect("edited response");
+        assert_eq!(edited["command_status"], "accepted");
+        assert_ne!(runtime.snapshot(), baseline_snapshot);
+        assert!(runtime.settings_revision > 0);
+
+        runtime.reset_to_packaged_defaults();
+
+        assert_eq!(runtime.packaged_config, baseline_config);
+        assert_eq!(runtime.snapshot(), baseline_snapshot);
+        assert_eq!(runtime.settings_revision, 0);
+        assert!(runtime.pending_actions.is_empty());
+        assert!(runtime.latest_calibration.is_none());
+    }
+
+    #[test]
+    fn session_assessment_clock_identity_is_source_specific() {
+        use crate::session_recording_clock::SourceClock;
+
+        assert_eq!(
+            session_assessment_clocks(BreathCompositionSource::Controller),
+            (SourceClock::OpenXrTime, SourceClock::OpenXrTime)
+        );
+        assert_eq!(
+            session_assessment_clocks(BreathCompositionSource::PolarAcc),
+            (SourceClock::JavaNanoTime, SourceClock::OpenXrTime)
+        );
+    }
+
+    #[test]
     fn polar_state_tuning_is_atomic_fenced_and_effective_only_at_consumer_boundary() {
         let mut runtime = runtime();
         let request_id = "11111111111111111111111111111111";
@@ -1808,6 +2026,84 @@ mod tests {
         .expect("response");
         assert_eq!(response["command_status"], "rejected");
         assert_eq!(response["reason_code"], "no-effective-selection");
+        assert_eq!(runtime.snapshot(), before);
+        assert!(runtime.pending_actions.is_empty());
+    }
+
+    #[test]
+    fn experiment_arm_starts_selected_composition_and_preserves_healthy_generation() {
+        let mut runtime = runtime();
+        runtime.apply_command(&select("polar-acc", "state"));
+        assert_eq!(runtime.ensure_running_for_experiment_arm(), Ok("started"));
+        assert_eq!(
+            runtime.take_action(BreathCompositionSource::PolarAcc),
+            Some(AdapterAction::Configure)
+        );
+        assert!(matches!(
+            runtime.take_action(BreathCompositionSource::PolarAcc),
+            Some(AdapterAction::Start(_))
+        ));
+        let generation = runtime.snapshot().generation.expect("armed generation");
+        runtime.latest_calibration = Some(CalibrationPanelReadback {
+            source: BreathCompositionSource::PolarAcc,
+            generation,
+            lifecycle: "ready",
+            progress01: 1.0,
+            accepted_frames: 120,
+            target_frames: Some(120),
+            watchdog_age_micros: Some(12_000_000),
+            failure_code: None,
+        });
+
+        assert_eq!(
+            runtime.ensure_running_for_experiment_arm(),
+            Ok("already-running")
+        );
+        assert_eq!(runtime.snapshot().generation, Some(generation));
+        assert!(runtime.pending_actions.is_empty());
+    }
+
+    #[test]
+    fn experiment_arm_restarts_failed_calibration_and_survives_defaults_reset() {
+        let mut runtime = runtime();
+        runtime.apply_command(&select("polar-acc", "state"));
+        runtime.packaged_config.initial_request = runtime.snapshot().effective;
+        runtime
+            .ensure_running_for_experiment_arm()
+            .expect("initial start");
+        runtime.pending_actions.clear();
+        let failed_generation = runtime.snapshot().generation.expect("failed generation");
+        runtime.latest_calibration = Some(CalibrationPanelReadback {
+            source: BreathCompositionSource::PolarAcc,
+            generation: failed_generation,
+            lifecycle: "failed",
+            progress01: 0.4,
+            accepted_frames: 48,
+            target_frames: Some(120),
+            watchdog_age_micros: Some(30_000_000),
+            failure_code: Some("Timeout".to_owned()),
+        });
+        assert_eq!(
+            runtime.ensure_running_for_experiment_arm(),
+            Ok("restarted-failed-calibration")
+        );
+        assert_ne!(runtime.snapshot().generation, Some(failed_generation));
+        runtime.pending_actions.clear();
+
+        runtime.reset_to_packaged_defaults();
+        assert_eq!(runtime.snapshot().status, BreathCompositionStatus::Selected);
+        assert_eq!(runtime.ensure_running_for_experiment_arm(), Ok("started"));
+        assert_eq!(runtime.snapshot().status, BreathCompositionStatus::Running);
+    }
+
+    #[test]
+    fn experiment_arm_keeps_disabled_composition_inert() {
+        let mut runtime = BreathCompositionRuntime::new(Default::default());
+        let before = runtime.snapshot();
+        assert_eq!(
+            runtime.ensure_running_for_experiment_arm(),
+            Err("no-effective-selection")
+        );
         assert_eq!(runtime.snapshot(), before);
         assert!(runtime.pending_actions.is_empty());
     }

@@ -50,6 +50,16 @@ cannot bleed into unrelated apps.
      ambiguous, or multiple payload inventories fail closed. Apps that select
      neither the renderer nor a payload remain `inactive` and receive no
      private-particle marker contract.
+   - `build_inputs.assets` remains a public-repository-relative string list.
+     Absolute, traversing, missing, or reparse-point paths are rejected and
+     this surface must not be used to smuggle downstream-private bytes into a
+     public build. A downstream app that explicitly requests private packaged
+     assets instead supplies one hash-bound
+     `rusty.quest.native_app_private_asset_provider.v1` manifest through
+     `-PrivateAssetProviderManifest`. The app request, raw manifest digest,
+     canonical inventory, byte hashes, sizes, media types, staged content
+     objects, and exact APK logical destinations are closed in the feature
+     lock. Source paths never enter the embedded lock.
 5. Build from the lock:
 
    ```powershell
@@ -65,6 +75,15 @@ cannot bleed into unrelated apps.
    `build-env.json`, verify the manifest reports the expected packaged payload
    booleans before launch. Build-env values select APK contents; runtime
    profiles and `adb setprop` values select startup behavior on the headset.
+   Private provider assets are copied from resolver-owned content-addressed
+   staging with create-new destination semantics. The builder rechecks every
+   staged hash and byte count and records expected and packaged identities in
+   `build-manifest.json`; changed, missing, colliding, or unrequested bytes
+   fail before APK packaging. Provider manifests are hashed and parsed from one
+   strict UTF-8/no-BOM byte snapshot. Portable path validation rejects Win32
+   aliases, device names, traversal, and reparse-point source, staging, or
+   destination chains; validation-to-staging mutation is verified before
+   atomic object publication.
 
 6. If `feature-lock.json.permission_pregrant.required_before_first_launch` is
    true, run its generated command before the first headset launch. Do not

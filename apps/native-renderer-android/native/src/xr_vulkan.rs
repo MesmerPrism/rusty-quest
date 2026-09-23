@@ -2095,10 +2095,17 @@ unsafe fn run_projection_frames(
     let mut event_storage = xr::EventDataBuffer::new();
     let mut display_refresh = NativeDisplayRefreshRuntimeState::new(display_refresh_settings);
     let mut session_running = false;
+    let mut openxr_session_generation = 0_u64;
     let mut renderer_focus_session_state = "IDLE";
     let mut app_running = true;
     let mut frame_slot = 0_usize;
     let mut frame_count = 0_u64;
+    let experiment_frame_gate_clock = Instant::now();
+    let mut experiment_frame_gate =
+        crate::experiment_session_runtime::SubmittedFrameReadinessGate::default();
+    let mut last_experiment_session_route_revision = 0_u64;
+    let mut experiment_shutdown_route_armed = false;
+    let mut experiment_shutdown_finish_observed = false;
     let mut pacing_window_start = Instant::now();
     let mut pacing_window_frames = 0_u64;
     let mut camera_projection_stats = CameraProjectionFrameStats::default();
@@ -2150,7 +2157,29 @@ unsafe fn run_projection_frames(
             Duration::from_millis(0),
             &mut app_running,
         );
+        let (pending_route_action, pending_route_revision) =
+            crate::experiment_session_runtime::current_route_action();
+        if consume_new_shutdown_route(
+            pending_route_action,
+            pending_route_revision,
+            &mut last_experiment_session_route_revision,
+        ) {
+            experiment_shutdown_route_armed = true;
+            crate::marker(
+                "experiment-session-native-shutdown",
+                format!(
+                    "status=armed-awaiting-android-finish routeRevision={pending_route_revision}"
+                ),
+            );
+        }
         if !app_running {
+            if experiment_shutdown_route_armed && !experiment_shutdown_finish_observed {
+                experiment_shutdown_finish_observed = true;
+                crate::marker(
+                    "experiment-session-native-shutdown",
+                    "status=android-finish-observed-requesting-openxr-exit",
+                );
+            }
             match session.request_exit() {
                 Ok(()) | Err(xr::sys::Result::ERROR_SESSION_NOT_RUNNING) => {}
                 Err(error) => crate::marker(
@@ -2174,6 +2203,37 @@ unsafe fn run_projection_frames(
                         xr::SessionState::LOSS_PENDING => "LOSS_PENDING",
                         _ => "OTHER",
                     };
+                    if event.state() == xr::SessionState::READY {
+                        experiment_frame_gate.begin_session();
+                    }
+                    let focused = event.state() == xr::SessionState::FOCUSED;
+                    let lost_frame_admission = experiment_frame_gate.set_focused(focused);
+                    let experiment_generation =
+                        crate::experiment_session_runtime::current_generation();
+                    let current_presentation =
+                        crate::experiment_session_runtime::current_presentation();
+                    if experiment_generation > 0
+                        && !focused
+                        && (lost_frame_admission
+                            || current_presentation
+                                == crate::experiment_session::PresentationState::ImmersiveActive)
+                    {
+                        if let Some(elapsed_realtime_ns) =
+                            crate::experiment_session_runtime::current_elapsed_realtime_ns()
+                        {
+                            let state_token = format!("{:?}", event.state()).to_ascii_lowercase();
+                            let operation_id = format!(
+                                "native-openxr-{state_token}-{experiment_generation}-{frame_count}"
+                            );
+                            let _ =
+                                crate::experiment_session_runtime::request_presentation_from_native(
+                                    &operation_id,
+                                    experiment_generation,
+                                    elapsed_realtime_ns,
+                                    crate::experiment_session::PresentationState::Unfocused,
+                                );
+                        }
+                    }
                     crate::marker(
                         "openxr-session",
                         format!("event=state-changed state={:?}", event.state()),
@@ -2184,6 +2244,9 @@ unsafe fn run_projection_frames(
                             session
                                 .begin(VIEW_TYPE)
                                 .map_err(|error| format!("begin OpenXR session: {error}"))?;
+                            openxr_session_generation = openxr_session_generation
+                                .checked_add(1)
+                                .ok_or_else(|| "OpenXR session generation exhausted".to_string())?;
                             if display_refresh.requested() {
                                 let generation = display_refresh.begin_session();
                                 crate::marker(
@@ -2585,10 +2648,106 @@ unsafe fn run_projection_frames(
                         .unwrap_or("controller-action"),
                 );
             }
+            if controller_events.experimenter_restart_triggered {
+                let generation = crate::experiment_session_runtime::current_generation();
+                if generation == 0 {
+                    crate::native_renderer_panel_bridge::open_experimenter_panel(
+                        app,
+                        frame_count,
+                        "right-secondary-triple-press-experimenter-idle",
+                    );
+                } else if let Some(elapsed_realtime_ns) =
+                    crate::experiment_session_runtime::current_elapsed_realtime_ns()
+                {
+                    crate::native_renderer_panel_bridge::stop_current_condition_audio_for_terminal(
+                        app,
+                        frame_count,
+                        false,
+                        "right-secondary-triple-press-experimenter",
+                    );
+                    let operation_id = format!("native-b-restart-{generation}-{frame_count}");
+                    let response = crate::experiment_session_runtime::request_restart_from_native(
+                        &operation_id,
+                        generation,
+                        elapsed_realtime_ns,
+                    );
+                    if !response.contains("\"command_status\":\"queued\"") {
+                        crate::marker(
+                            "experiment-session-terminal-admission",
+                            format!(
+                                "status=rejected operation=restart-to-experimenter generation={} response={}",
+                                generation,
+                                crate::sanitize(&response)
+                            ),
+                        );
+                    }
+                }
+            }
+            if controller_events.developer_panel_triggered {
+                let generation = crate::experiment_session_runtime::current_generation();
+                if generation == 0 {
+                    crate::native_renderer_panel_bridge::open_developer_panel(
+                        app,
+                        frame_count,
+                        "right-trigger-triple-press-developer-idle",
+                    );
+                } else if let Some(elapsed_realtime_ns) =
+                    crate::experiment_session_runtime::current_elapsed_realtime_ns()
+                {
+                    let operation_id = format!("native-developer-open-{generation}-{frame_count}");
+                    let _ = crate::experiment_session_runtime::request_open_developer_from_native(
+                        &operation_id,
+                        generation,
+                        elapsed_realtime_ns,
+                    );
+                }
+            }
             if controller_events.private_particle_recenter_triggered
                 && gpu_private_particle_renderer.is_some()
             {
                 private_particle_world_anchor.recenter(particle_sort_eye_projection, frame_count);
+            }
+        }
+        let (route_action, route_revision) =
+            crate::experiment_session_runtime::current_route_action();
+        if route_revision > last_experiment_session_route_revision {
+            last_experiment_session_route_revision = route_revision;
+            match route_action {
+                crate::experiment_session_runtime::RouteAction::OpenDeveloper => {
+                    crate::native_renderer_panel_bridge::open_developer_panel_with_route_generation(
+                        app,
+                        frame_count,
+                        "experiment-session-menu-recall",
+                        route_revision,
+                    );
+                }
+                crate::experiment_session_runtime::RouteAction::ShowExperimenter => {
+                    if let Some((session_generation, operation_id)) =
+                        crate::experiment_session_runtime::current_terminal_route_receipt()
+                    {
+                        crate::native_renderer_panel_bridge::open_experimenter_panel_with_receipt(
+                            app,
+                            frame_count,
+                            "experiment-session-finalization-receipt",
+                            crate::native_renderer_panel_bridge::PanelRouteReceipt {
+                                route_generation: route_revision,
+                                provenance: "native-b-restart-v1",
+                                session_generation: Some(session_generation),
+                                operation_id: Some(&operation_id),
+                            },
+                        );
+                    } else {
+                        crate::marker(
+                            "experiment-session-panel-route",
+                            format!(
+                                "status=rejected reason=durable-route-receipt-missing routeGeneration={} frame={}",
+                                route_revision, frame_count
+                            ),
+                        );
+                    }
+                }
+                crate::experiment_session_runtime::RouteAction::None
+                | crate::experiment_session_runtime::RouteAction::ShutdownApp => {}
             }
         }
         if let Some(renderer) = gpu_private_particle_renderer.as_deref_mut() {
@@ -3742,10 +3901,63 @@ unsafe fn run_projection_frames(
             )
             .map_err(|error| format!("end OpenXR frame: {error}"))?;
         trace_startup_frame(frame_count, "after-xr-end-frame");
+        control_panel_command_poller.after_current_session_frame_submitted(
+            app,
+            openxr_session_generation,
+            frame_count,
+        );
         frame_timings.openxr_end_frame_ms = elapsed_ms(stage_started);
         frame_timings.submitted_frame_host_ms = elapsed_ms(submitted_frame_host_started);
         if let Some(renderer) = gpu_private_particle_renderer.as_deref_mut() {
             renderer.confirm_submitted_frame(frame_count, private_particle_stats);
+        }
+        let experiment_generation = crate::experiment_session_runtime::current_generation();
+        if experiment_generation > 0 {
+            let _ = crate::experiment_session_runtime::note_current_session_submitted_frame(
+                experiment_generation,
+                frame_count,
+            );
+            let observed_host_ns = experiment_frame_gate_clock
+                .elapsed()
+                .as_nanos()
+                .min(u128::from(u64::MAX)) as u64;
+            if experiment_frame_gate.note_submitted(frame_count, observed_host_ns) {
+                let presentation = crate::experiment_session_runtime::current_presentation();
+                if matches!(
+                    presentation,
+                    crate::experiment_session::PresentationState::Transition
+                        | crate::experiment_session::PresentationState::Unfocused
+                ) {
+                    if let Some(elapsed_realtime_ns) =
+                        crate::experiment_session_runtime::current_elapsed_realtime_ns()
+                    {
+                        let operation_id = format!(
+                            "native-openxr-submitted-ready-{experiment_generation}-{frame_count}"
+                        );
+                        let response =
+                            crate::experiment_session_runtime::request_presentation_from_native(
+                                &operation_id,
+                                experiment_generation,
+                                elapsed_realtime_ns,
+                                crate::experiment_session::PresentationState::ImmersiveActive,
+                            );
+                        if !response.contains("\"command_status\":\"queued\"") {
+                            experiment_frame_gate.reject_activation();
+                            crate::marker(
+                                "experiment-session-frame-admission",
+                                format!(
+                                    "status=rejected generation={} frame={} response={}",
+                                    experiment_generation,
+                                    frame_count,
+                                    crate::sanitize(&response)
+                                ),
+                            );
+                        }
+                    } else {
+                        experiment_frame_gate.reject_activation();
+                    }
+                }
+            }
         }
         if frame_count == 0 || frame_count % 15 == 0 {
             write_renderer_focus_state(
@@ -3824,6 +4036,21 @@ unsafe fn run_projection_frames(
         swapchain.destroy(vk_device);
     }
     Ok(())
+}
+
+fn consume_new_shutdown_route(
+    action: crate::experiment_session_runtime::RouteAction,
+    revision: u64,
+    last_consumed_revision: &mut u64,
+) -> bool {
+    if action != crate::experiment_session_runtime::RouteAction::ShutdownApp
+        || revision == 0
+        || revision <= *last_consumed_revision
+    {
+        return false;
+    }
+    *last_consumed_revision = revision;
+    true
 }
 
 struct OpenXrDisplayRefreshSession<'a> {
@@ -6785,6 +7012,33 @@ fn ensure_xr_success(result: xr::sys::Result, operation: &str) -> Result<(), Str
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn shutdown_route_is_consumed_once_without_consuming_other_routes() {
+        let mut last_revision = 4;
+        assert!(!consume_new_shutdown_route(
+            crate::experiment_session_runtime::RouteAction::OpenDeveloper,
+            5,
+            &mut last_revision,
+        ));
+        assert_eq!(last_revision, 4);
+        assert!(!consume_new_shutdown_route(
+            crate::experiment_session_runtime::RouteAction::ShutdownApp,
+            4,
+            &mut last_revision,
+        ));
+        assert!(consume_new_shutdown_route(
+            crate::experiment_session_runtime::RouteAction::ShutdownApp,
+            6,
+            &mut last_revision,
+        ));
+        assert_eq!(last_revision, 6);
+        assert!(!consume_new_shutdown_route(
+            crate::experiment_session_runtime::RouteAction::ShutdownApp,
+            6,
+            &mut last_revision,
+        ));
+    }
 
     #[test]
     fn base_hand_meshes_require_explicit_visual_mode() {
