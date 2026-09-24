@@ -100,9 +100,8 @@ static SPATIAL_PUBLIC_DEPTH_ALIGNMENT_SAMPLE_SCALE_Y_BITS: AtomicU32 =
 static SPATIAL_PUBLIC_DEPTH_ALIGNMENT_ROLL_DEGREES_BITS: AtomicU32 =
     AtomicU32::new(0.0f32.to_bits());
 static SPATIAL_PUBLIC_DEPTH_ALIGNMENT_METADATA_AUTO: AtomicBool = AtomicBool::new(true);
-static SPATIAL_PUBLIC_STRENGTH_CYCLE_SPEED_HZ_BITS: AtomicU32 = AtomicU32::new(
-    SPATIAL_PUBLIC_STRENGTH_CYCLE_SPEED_HZ_DEFAULT.to_bits(),
-);
+static SPATIAL_PUBLIC_STRENGTH_CYCLE_SPEED_HZ_BITS: AtomicU32 =
+    AtomicU32::new(SPATIAL_PUBLIC_STRENGTH_CYCLE_SPEED_HZ_DEFAULT.to_bits());
 static SPATIAL_PUBLIC_STRENGTH_CYCLE_PHASE: OnceLock<Mutex<SpatialPublicStrengthCyclePhase>> =
     OnceLock::new();
 
@@ -113,7 +112,8 @@ struct SpatialPublicStrengthCyclePhase {
 }
 
 fn strength_cycle_phase_lock() -> &'static Mutex<SpatialPublicStrengthCyclePhase> {
-    SPATIAL_PUBLIC_STRENGTH_CYCLE_PHASE.get_or_init(|| Mutex::new(SpatialPublicStrengthCyclePhase::default()))
+    SPATIAL_PUBLIC_STRENGTH_CYCLE_PHASE
+        .get_or_init(|| Mutex::new(SpatialPublicStrengthCyclePhase::default()))
 }
 
 fn normalize_strength_cycle_speed_hz(requested_hz: f32) -> f32 {
@@ -165,8 +165,9 @@ fn advance_strength_cycle_phase(
     }
     let now = requested_now;
     if let Some(previous) = state.last_elapsed_seconds {
-        state.phase_turns = (state.phase_turns + (now - previous) * normalize_strength_cycle_speed_hz(rate_hz))
-            .rem_euclid(1.0);
+        state.phase_turns = (state.phase_turns
+            + (now - previous) * normalize_strength_cycle_speed_hz(rate_hz))
+        .rem_euclid(1.0);
     }
     state.last_elapsed_seconds = Some(now);
     state.phase_turns
@@ -1307,11 +1308,10 @@ impl SpatialPublicGuideTargets {
             packed_projection_target_rect(0, footprint_scale),
             packed_projection_target_rect(1, footprint_scale),
         ];
-        self.rgb_channel_transform_uniform
-            .update(
-                device,
-                &current_rgb_channel_transform_settings().uniform_at_elapsed_seconds(elapsed_seconds),
-            )?;
+        self.rgb_channel_transform_uniform.update(
+            device,
+            &current_rgb_channel_transform_settings().uniform_at_elapsed_seconds(elapsed_seconds),
+        )?;
         self.rgb_channel_transform_uniform
             .update_displacement(device, &surface_features.uniform(displacement, draw_rects))?;
         let tessellated_effective =
@@ -1321,7 +1321,8 @@ impl SpatialPublicGuideTargets {
                     PROJECTION_SURFACE_UNIFORM_ABI_VERSION >= 2
                         && self.opaque_projection_displacement_pipeline.is_some(),
                 );
-        let strength_cycle_phase_turns = advance_spatial_public_strength_cycle_phase(elapsed_seconds);
+        let strength_cycle_phase_turns =
+            advance_spatial_public_strength_cycle_phase(elapsed_seconds);
         for eye_index in 0..SPATIAL_PUBLIC_PACKED_EYE_COUNT {
             let target_rect = draw_rects[eye_index];
             set_packed_projection_target_view(device, command_buffer, extent, target_rect);
@@ -1399,11 +1400,10 @@ impl SpatialPublicGuideTargets {
             .update(device, &zone_frame.uniform)?;
         let displacement = current_projection_surface_displacement_settings();
         let surface_features = current_projection_surface_feature_settings();
-        self.rgb_channel_transform_uniform
-            .update(
-                device,
-                &current_rgb_channel_transform_settings().uniform_at_elapsed_seconds(elapsed_seconds),
-            )?;
+        self.rgb_channel_transform_uniform.update(
+            device,
+            &current_rgb_channel_transform_settings().uniform_at_elapsed_seconds(elapsed_seconds),
+        )?;
         self.rgb_channel_transform_uniform.update_displacement(
             device,
             &surface_features.uniform(displacement, zone_frame.draw_rects),
@@ -1415,7 +1415,8 @@ impl SpatialPublicGuideTargets {
             displacement,
             PROJECTION_SURFACE_UNIFORM_ABI_VERSION >= 2 && pipeline.displacement_pipeline.is_some(),
         );
-        let strength_cycle_phase_turns = advance_spatial_public_strength_cycle_phase(elapsed_seconds);
+        let strength_cycle_phase_turns =
+            advance_spatial_public_strength_cycle_phase(elapsed_seconds);
         for eye_index in 0..SPATIAL_PUBLIC_PACKED_EYE_COUNT {
             set_packed_projection_target_view(
                 device,
@@ -1618,7 +1619,8 @@ impl SpatialPublicGuideTargets {
             .targets
             .get(destination_target_index)
             .ok_or_else(|| "opaque-guide-destination-index-out-of-range".to_string())?;
-        let strength_cycle_phase_turns = advance_spatial_public_strength_cycle_phase(elapsed_seconds);
+        let strength_cycle_phase_turns =
+            advance_spatial_public_strength_cycle_phase(elapsed_seconds);
         begin_guide_pass(
             device,
             command_buffer,
@@ -1653,12 +1655,7 @@ impl SpatialPublicGuideTargets {
                     self.extent.height as f32,
                 ],
                 effect: [1.0, 1.0, 0.0, 1.0],
-                cycle: [
-                    strength_cycle_phase_turns,
-                    0.0,
-                    0.0,
-                    1.0,
-                ],
+                cycle: [strength_cycle_phase_turns, 0.0, 0.0, 1.0],
                 reprojection_row0: reprojection.row0,
                 reprojection_row1: reprojection.row1,
                 reprojection_row2: reprojection.row2,
@@ -5243,13 +5240,27 @@ mod tests {
         assert_eq!(packed_projection_target_rect(0, 1.0), push.left_rect);
         assert_eq!(packed_projection_target_rect(1, 1.0), push.right_rect);
         assert_eq!(
-            OpaqueProjectionPush::for_packed_eye(0, 1.25, 0.25, fallback_depth_binding(), 1.0, -1.0)
-                .target_rect,
+            OpaqueProjectionPush::for_packed_eye(
+                0,
+                1.25,
+                0.25,
+                fallback_depth_binding(),
+                1.0,
+                -1.0
+            )
+            .target_rect,
             push.left_rect
         );
         assert_eq!(
-            OpaqueProjectionPush::for_packed_eye(1, 1.25, 0.25, fallback_depth_binding(), 1.0, -1.0)
-                .target_rect,
+            OpaqueProjectionPush::for_packed_eye(
+                1,
+                1.25,
+                0.25,
+                fallback_depth_binding(),
+                1.0,
+                -1.0
+            )
+            .target_rect,
             push.right_rect
         );
     }
@@ -5511,8 +5522,15 @@ mod tests {
     #[test]
     fn opaque_projection_push_defaults_to_layer_cycle_without_android_property() {
         assert_eq!(
-            OpaqueProjectionPush::for_packed_eye(0, 1.25, 0.25, fallback_depth_binding(), 1.0, -1.0)
-                .params0[3],
+            OpaqueProjectionPush::for_packed_eye(
+                0,
+                1.25,
+                0.25,
+                fallback_depth_binding(),
+                1.0,
+                -1.0
+            )
+            .params0[3],
             SPATIAL_PUBLIC_OPAQUE_PROJECTION_LAYER_OVERRIDE_DEFAULT
         );
     }
