@@ -8,11 +8,11 @@ use rusty_manifold_peer::{
     ManifoldCommonLanPeerSessionProposal, ManifoldCommonLanReciprocalEd25519Context,
     ManifoldCommonLanReciprocalEd25519ReviewRequest, ManifoldCommonLanReciprocalEd25519Signature,
     ManifoldPeerEnrollmentAction, ManifoldPeerEnrollmentRejectionReason,
-    ManifoldPeerEnrollmentRequest, ManifoldPeerStatusProposal,
-    COMMON_LAN_PAIR_TOPOLOGY_CONTRACT_ID, COMMON_LAN_PEER_SESSION_PROPOSAL_SCHEMA,
-    COMMON_LAN_RECIPROCAL_ED25519_REVIEW_SCHEMA, COMMON_LAN_TCP_TRANSPORT_CONTRACT_ID,
-    PEER_CREDENTIAL_SCHEMA, PEER_ENROLLMENT_REQUEST_SCHEMA, PEER_IDENTITY_SCHEMA,
-    PEER_PROPOSAL_SCHEMA, PEER_STATUS_SCHEMA,
+    ManifoldPeerEnrollmentRequest, ManifoldPeerSessionRejectionReason, ManifoldPeerStatusProposal,
+    ManifoldReciprocalEd25519RejectionReason, COMMON_LAN_PAIR_TOPOLOGY_CONTRACT_ID,
+    COMMON_LAN_PEER_SESSION_PROPOSAL_SCHEMA, COMMON_LAN_RECIPROCAL_ED25519_REVIEW_SCHEMA,
+    COMMON_LAN_TCP_TRANSPORT_CONTRACT_ID, PEER_CREDENTIAL_SCHEMA, PEER_ENROLLMENT_REQUEST_SCHEMA,
+    PEER_IDENTITY_SCHEMA, PEER_PROPOSAL_SCHEMA, PEER_STATUS_SCHEMA,
 };
 use rusty_quest_broker_authority::QuestCommonLanContextDraft;
 use serde::Serialize;
@@ -449,6 +449,7 @@ fn apply(
     local_signature: ManifoldCommonLanReciprocalEd25519Signature,
     remote_signature: ManifoldCommonLanReciprocalEd25519Signature,
 ) -> Result<Value, String> {
+    set_step(host, "apply_reciprocal")?;
     let request: ManifoldCommonLanReciprocalEd25519ReviewRequest = serde_json::from_value(json!({
         "$schema": COMMON_LAN_RECIPROCAL_ED25519_REVIEW_SCHEMA,
         "request_id": format!("request.{}.reciprocal", ceremony_id),
@@ -459,8 +460,13 @@ fn apply(
     let now = host.clock.now_ms()?;
     let reciprocal = host.authority.apply_common_lan_reciprocal(&request, now)?;
     if !reciprocal.accepted {
+        remember_specific_failure(
+            host,
+            reciprocal_rejection_code(reciprocal.rejection_reason.as_ref()),
+        );
         return Err("pair reciprocal authority rejected".into());
     }
+    set_step(host, "apply_session")?;
     let current = snapshot(host)?;
     let proposal: ManifoldCommonLanPeerSessionProposal = serde_json::from_value(json!({
         "$schema": COMMON_LAN_PEER_SESSION_PROPOSAL_SCHEMA,
@@ -481,8 +487,13 @@ fn apply(
         host.authority
             .apply_common_lan_session(&proposal, &reciprocal, now)?;
     if !decision.applied || !topology.authorized || topology.session_id != proposal.session_id {
+        remember_specific_failure(
+            host,
+            session_rejection_code(decision.rejection_reason.as_ref()),
+        );
         return Err("pair session authority rejected".into());
     }
+    set_step(host, "apply_current")?;
     let session_id = serde_json::from_value(json!(session_id)).map_err(safe_decode)?;
     let current = host
         .authority
@@ -537,6 +548,42 @@ fn enrollment_rejection_code(
         Some(RevisionExhausted) => "enrollment_revision_exhausted",
         Some(InvalidAuthorityState) => "enrollment_invalid_authority_state",
         None => "enrollment_rejected",
+    }
+}
+
+fn reciprocal_rejection_code(
+    reason: Option<&ManifoldReciprocalEd25519RejectionReason>,
+) -> &'static str {
+    use ManifoldReciprocalEd25519RejectionReason::*;
+    match reason {
+        Some(SchemaMismatch) => "reciprocal_schema_mismatch",
+        Some(CrossContext) => "reciprocal_cross_context",
+        Some(Replay) => "reciprocal_replay",
+        Some(InvalidPeerPair) => "reciprocal_invalid_peer_pair",
+        Some(InvalidNonce) => "reciprocal_invalid_nonce",
+        Some(InvalidLifetime) => "reciprocal_invalid_lifetime",
+        Some(CredentialNotCurrent) => "reciprocal_credential_not_current",
+        Some(SignatureBindingMismatch) => "reciprocal_signature_binding_mismatch",
+        Some(SignatureInvalid) => "reciprocal_signature_invalid",
+        Some(RevisionExhausted) => "reciprocal_revision_exhausted",
+        Some(CapacityExceeded) => "reciprocal_capacity_exceeded",
+        Some(InvalidAuthorityState) => "reciprocal_invalid_authority_state",
+        None => "reciprocal_rejected",
+    }
+}
+
+fn session_rejection_code(reason: Option<&ManifoldPeerSessionRejectionReason>) -> &'static str {
+    use ManifoldPeerSessionRejectionReason::*;
+    match reason {
+        Some(SessionOutlivesEvidence) => "session_outlives_evidence",
+        Some(StalePeerStatus) => "session_stale_peer_status",
+        Some(SignedRendezvousMismatch) => "session_signed_rendezvous_mismatch",
+        Some(StaleRendezvousAuthority) => "session_stale_rendezvous_authority",
+        Some(InvalidTopologyRoles) => "session_invalid_topology_roles",
+        Some(InvalidCapabilitySet) => "session_invalid_capability_set",
+        Some(CapabilityNotShared) => "session_capability_not_shared",
+        Some(PeerNotAcceptedForRendezvous) => "session_peer_not_accepted",
+        _ => "session_rejected",
     }
 }
 
