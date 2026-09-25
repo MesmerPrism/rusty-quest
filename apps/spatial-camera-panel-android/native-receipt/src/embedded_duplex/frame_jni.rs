@@ -141,18 +141,18 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1pa
     {
         return std::ptr::null_mut();
     }
-    let Some((observation, observed_at)) =
-        stream::current_embedded_receiver_frame_timed_observation(
-            receiver as u64,
-            connection as u64,
-            route as u64,
-            decoder as u64,
-            reader as u64,
-            max_age_ns as u64,
-        )
-    else {
+    let Some(timed) = stream::current_embedded_receiver_frame_timed_observation(
+        receiver as u64,
+        connection as u64,
+        route as u64,
+        decoder as u64,
+        reader as u64,
+        max_age_ns as u64,
+    ) else {
         return std::ptr::null_mut();
     };
+    let observation = timed.observation;
+    let observed_at = timed.observed_at_monotonic_ns;
     let identity = observation.identity;
     let oldest = observation
         .registered_monotonic_ns
@@ -189,7 +189,7 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1pa
         observation.rendered_monotonic_ns as i64,
         observation.acquired_monotonic_ns as i64,
         observed_at as i64,
-        (observed_at - oldest) as i64,
+        timed.witness_age_ns as i64,
     ];
     let Ok(array) = env.new_long_array(words.len() as i32) else {
         return std::ptr::null_mut();

@@ -54,6 +54,13 @@ pub(crate) struct ReceiverFrameObservation {
     pub(crate) acquired_monotonic_ns: u64,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct TimedReceiverFrameObservation {
+    pub(crate) observation: ReceiverFrameObservation,
+    pub(crate) observed_at_monotonic_ns: u64,
+    pub(crate) witness_age_ns: u64,
+}
+
 impl ReceiverFrameObservation {
     pub(crate) fn is_fresh_at(&self, now_monotonic_ns: u64, max_age_ns: u64) -> bool {
         if max_age_ns == 0 {
@@ -64,6 +71,35 @@ impl ReceiverFrameObservation {
             .min(self.rendered_monotonic_ns)
             .min(self.acquired_monotonic_ns);
         oldest_witness <= now_monotonic_ns && now_monotonic_ns - oldest_witness <= max_age_ns
+    }
+
+    /// Keeps the native observation instant and oldest-witness age together.
+    /// All words must be representable by the signed JNI long array.
+    pub(crate) fn timed_at(
+        self,
+        observed_at_monotonic_ns: u64,
+        max_age_ns: u64,
+    ) -> Option<TimedReceiverFrameObservation> {
+        let registered = self.registered_monotonic_ns;
+        let rendered = self.rendered_monotonic_ns;
+        let acquired = self.acquired_monotonic_ns;
+        if registered == 0
+            || registered > rendered
+            || registered > acquired
+            || rendered > observed_at_monotonic_ns
+            || acquired > observed_at_monotonic_ns
+            || observed_at_monotonic_ns > i64::MAX as u64
+            || max_age_ns == 0
+        {
+            return None;
+        }
+        let oldest = registered.min(rendered).min(acquired);
+        let age = observed_at_monotonic_ns.checked_sub(oldest)?;
+        (age <= max_age_ns).then_some(TimedReceiverFrameObservation {
+            observation: self,
+            observed_at_monotonic_ns,
+            witness_age_ns: age,
+        })
     }
 }
 
@@ -387,6 +423,57 @@ mod tests {
         assert!(!observation.is_fresh_at(201, 100));
         assert!(!observation.is_fresh_at(99, 100));
         assert!(!observation.is_fresh_at(199, 0));
+    }
+
+    #[test]
+    fn timed_witness_uses_one_observation_instant_and_rejects_stale_or_wrong_route() {
+        let _guard = reset();
+        let current = identity(351, 12, 35_000);
+        assert_eq!(
+            register_receiver_frame(current, 100),
+            ReceiverFrameRegistrationResult::Accepted
+        );
+        assert_eq!(
+            record_receiver_frame_acquired(current, 110),
+            ReceiverFrameObservationResult::Accepted
+        );
+        assert_eq!(
+            record_receiver_frame_rendered(current, 120),
+            ReceiverFrameObservationResult::Accepted
+        );
+        assert!(latest_receiver_frame_observation(351, 12, 4, 4, 5, 150).is_none());
+        let exact = latest_receiver_frame_observation(351, 12, 3, 4, 5, 150)
+            .expect("exact route and acquired frame");
+        let timed = exact.timed_at(150, 50).expect("oldest witness at 100");
+        assert_eq!(timed.observation.identity, current);
+        assert_eq!(timed.observed_at_monotonic_ns, 150);
+        assert_eq!(timed.witness_age_ns, 50);
+        assert!(exact.timed_at(150, 49).is_none());
+        assert!(exact.timed_at(99, 50).is_none());
+    }
+
+    #[test]
+    fn timed_witness_rejects_future_or_unrepresentable_native_words() {
+        let frame = ReceiverFrameObservation {
+            identity: identity(352, 13, 36_000),
+            registered_monotonic_ns: 100,
+            rendered_monotonic_ns: 120,
+            acquired_monotonic_ns: 110,
+        };
+        assert!(frame.timed_at(119, 50).is_none());
+        assert!(frame.timed_at(i64::MAX as u64 + 1, u64::MAX).is_none());
+        assert!(ReceiverFrameObservation {
+            registered_monotonic_ns: 121,
+            ..frame
+        }
+        .timed_at(150, 50)
+        .is_none());
+        assert!(ReceiverFrameObservation {
+            acquired_monotonic_ns: i64::MAX as u64 + 1,
+            ..frame
+        }
+        .timed_at(150, 50)
+        .is_none());
     }
 
     #[test]
