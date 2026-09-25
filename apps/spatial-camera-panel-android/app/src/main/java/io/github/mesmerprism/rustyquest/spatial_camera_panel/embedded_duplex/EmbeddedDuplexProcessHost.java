@@ -44,6 +44,9 @@ final class EmbeddedDuplexProcessHost {
     private String diagnosticChallenge;
     // A single process-local review is held by object identity and consumed once.
     private EmbeddedDuplexEnrollmentReview pendingReview;
+    // A preflight intent binds the current signed session to this process and
+    // display. It is never sufficient to issue a route or invoke Start.
+    private EmbeddedDuplexStartPreflight pendingStartPreflight;
 
     private EmbeddedDuplexProcessHost(Context applicationContext) {
         this.applicationContext = applicationContext;
@@ -219,6 +222,37 @@ final class EmbeddedDuplexProcessHost {
         }
         return submit(() -> EmbeddedDuplexPairStatus.parse(EmbeddedDuplexNative.runtimeCommand(
                 "pair_ceremony", "{}")));
+    }
+
+    CompletableFuture<EmbeddedDuplexStartPreflight> prepareStartPreflight(long expectedGeneration) {
+        synchronized (attachmentGate) {
+            if (phase.get() != Phase.READY || localFixture || expectedGeneration == 0L
+                    || attachmentGeneration != expectedGeneration || displayDetaching
+                    || closeInFlight || display.cleanupPending()) {
+                return failed(new IllegalStateException("pre-Start display unavailable"));
+            }
+        }
+        return submit(() -> {
+            synchronized (attachmentGate) {
+                if (phase.get() != Phase.READY || localFixture
+                        || attachmentGeneration != expectedGeneration || displayDetaching
+                        || closeInFlight || display.cleanupPending()) {
+                    throw new IllegalStateException("pre-Start process changed");
+                }
+            }
+            EmbeddedDuplexPairStatus pair = EmbeddedDuplexPairStatus.parse(
+                    EmbeddedDuplexNative.runtimeCommand("pair_status", "{}"));
+            EmbeddedDuplexStartPreflight next = EmbeddedDuplexStartPreflight.prepare(pair,
+                    runtimeConfigSha256, enrollmentRecordSha256, expectedGeneration);
+            if (pendingStartPreflight != null
+                    && (!pendingStartPreflight.matches(runtimeConfigSha256,
+                            enrollmentRecordSha256, expectedGeneration)
+                            || !pendingStartPreflight.sessionId.equals(next.sessionId))) {
+                throw new IllegalStateException("pre-Start lineage changed");
+            }
+            pendingStartPreflight = next;
+            return next;
+        });
     }
 
     private EmbeddedDuplexRuntimeStatus runtimeStatusOnCommandLane() {
@@ -494,6 +528,7 @@ final class EmbeddedDuplexProcessHost {
                 resources = null;
                 runtimeConfigSha256 = null;
                 enrollmentRecordSha256 = null;
+                pendingStartPreflight = null;
                 localFixture = false;
                 synchronized (attachmentGate) {
                     attachmentGeneration = 0L;

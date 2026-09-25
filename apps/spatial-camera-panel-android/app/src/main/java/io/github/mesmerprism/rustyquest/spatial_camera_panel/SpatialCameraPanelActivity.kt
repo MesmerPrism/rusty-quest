@@ -1738,6 +1738,27 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     return result
   }
 
+  /** Shared pre-Start decision used by the panel and fixed debug CLI call. */
+  fun prepareEmbeddedDuplexStartPreflight(): CompletableFuture<
+      io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex.EmbeddedDuplexStartPreflight> {
+    val generation = embeddedDuplexAttachmentGeneration
+    if (generation == 0L || embeddedDuplexActivityDestroying) {
+      return CompletableFuture<io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex.EmbeddedDuplexStartPreflight>().apply {
+        completeExceptionally(IllegalStateException("embedded display unavailable"))
+      }
+    }
+    val result = io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex
+        .EmbeddedDuplexRuntimeService.prepareStartPreflight(this, generation)
+    result.whenComplete { _, failure ->
+      runOnUiThread {
+        marker("channel=embedded-duplex status=" +
+            if (failure == null) "start-preflight-intent-route-unverified"
+            else "start-preflight-unavailable")
+      }
+    }
+    return result
+  }
+
   private fun detachUninitializedEmbeddedDuplexDisplay() {
     val generation = embeddedDuplexAttachmentGeneration
     if (generation == 0L) return

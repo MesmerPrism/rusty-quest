@@ -98,6 +98,22 @@ class EmbeddedDuplexOperatorProvider : ContentProvider() {
         EmbeddedDuplexOperatorContract.Route.PAIR_SESSION ->
           pairBundle(request.challenge,
               EmbeddedDuplexDiagnosticActivityGate.requestPairSession().get(120, TimeUnit.SECONDS))
+        EmbeddedDuplexOperatorContract.Route.START_PREFLIGHT -> {
+          val decision = EmbeddedDuplexDiagnosticActivityGate.requestStartPreflight()
+              .get(10, TimeUnit.SECONDS)
+          Bundle().apply {
+            header("observed")
+            putString("challenge", request.challenge)
+            putString("preflight_state", decision.state)
+            putString("session_id", decision.sessionId)
+            putLong("session_expires_at_ms", decision.sessionExpiresAtMs)
+            putString("runtime_config_sha256", decision.runtimeConfigSha256)
+            putString("enrollment_record_sha256", decision.enrollmentRecordSha256)
+            putLong("display_generation", decision.displayGeneration)
+            putBoolean("peer_route_proven", decision.peerRouteProven)
+            putBoolean("media_effect_proven", decision.mediaEffectProven)
+          }
+        }
       }
     } catch (_: Exception) { closed() }
   }

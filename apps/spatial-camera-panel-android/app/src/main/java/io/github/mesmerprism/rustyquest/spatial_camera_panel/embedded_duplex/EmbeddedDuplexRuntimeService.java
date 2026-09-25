@@ -31,4 +31,11 @@ public final class EmbeddedDuplexRuntimeService {
     public static CompletableFuture<EmbeddedDuplexPairStatus> pairSession(Context context) {
         return EmbeddedDuplexProcessHost.forApplication(context).pairSession();
     }
+
+    /** Retains a current signed session and process lineage before any Start. */
+    public static CompletableFuture<EmbeddedDuplexStartPreflight> prepareStartPreflight(
+            Context context, long displayGeneration) {
+        return EmbeddedDuplexProcessHost.forApplication(context)
+                .prepareStartPreflight(displayGeneration);
+    }
 }
