@@ -949,7 +949,7 @@ fn sign_common_lan(host: &Host, input: &str, now: u64) -> Result<String, String>
             now_ms: now,
             max_context_age_ms: 30_000,
             max_future_skew_ms: 0,
-            max_context_ttl_ms: 120_000,
+            max_context_ttl_ms: 240_000,
         },
     )?;
     // Snapshot and route are owned local values. No host, provider, peer, or

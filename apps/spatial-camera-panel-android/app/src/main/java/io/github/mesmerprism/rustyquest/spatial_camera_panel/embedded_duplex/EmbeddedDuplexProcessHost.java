@@ -46,7 +46,7 @@ final class EmbeddedDuplexProcessHost {
     private EmbeddedDuplexEnrollmentReview pendingReview;
     // A preflight intent binds the current signed session to this process and
     // display. It is never sufficient to issue a route or invoke Start.
-    private EmbeddedDuplexStartPreflight pendingStartPreflight;
+    private volatile EmbeddedDuplexStartPreflight pendingStartPreflight;
 
     private EmbeddedDuplexProcessHost(Context applicationContext) {
         this.applicationContext = applicationContext;
@@ -244,15 +244,23 @@ final class EmbeddedDuplexProcessHost {
                     EmbeddedDuplexNative.runtimeCommand("pair_status", "{}"));
             EmbeddedDuplexStartPreflight next = EmbeddedDuplexStartPreflight.prepare(pair,
                     runtimeConfigSha256, enrollmentRecordSha256, expectedGeneration);
-            if (pendingStartPreflight != null
-                    && (!pendingStartPreflight.matches(runtimeConfigSha256,
-                            enrollmentRecordSha256, expectedGeneration)
-                            || !pendingStartPreflight.sessionId.equals(next.sessionId))) {
+            if (pendingStartPreflight != null && !pendingStartPreflight.sameLineage(next)) {
                 throw new IllegalStateException("pre-Start lineage changed");
             }
             pendingStartPreflight = next;
             return next;
         });
+    }
+
+    boolean preflightLive(EmbeddedDuplexStartPreflight observed) {
+        synchronized (attachmentGate) {
+            return observed != null && pendingStartPreflight == observed
+                    && phase.get() == Phase.READY && !localFixture && !displayDetaching
+                    && !closeInFlight && attachmentGeneration == observed.displayGeneration
+                    && observed.matches(runtimeConfigSha256, enrollmentRecordSha256,
+                            attachmentGeneration)
+                    && System.currentTimeMillis() < observed.sessionExpiresAtMs;
+        }
     }
 
     private EmbeddedDuplexRuntimeStatus runtimeStatusOnCommandLane() {

@@ -1,5 +1,8 @@
 package io.github.mesmerprism.rustyquest.spatial_camera_panel
 
+import android.os.Handler
+import android.os.Looper
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -46,6 +49,8 @@ import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import java.io.Closeable
+import java.util.concurrent.CompletableFuture
+import io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex.EmbeddedDuplexStartPreflight
 import kotlinx.coroutines.delay
 
 internal val LayerPanelBackground = Color(0xFF141820)
@@ -136,6 +141,8 @@ internal fun PrivateLayerControlPanel(
     refreshConnectionHub: () -> ConnectionHubWearerControlSnapshot,
     startConnectionHub: () -> ConnectionHubWearerControlSnapshot,
     stopConnectionHub: () -> ConnectionHubWearerControlSnapshot,
+    prepareEmbeddedDuplexStartPreflight: () -> CompletableFuture<EmbeddedDuplexStartPreflight>,
+    embeddedDuplexStartPreflightLive: (EmbeddedDuplexStartPreflight) -> Boolean,
     environmentDepthUnavailableWarning: () -> String?,
     environmentDepthRecoveryPolicy: () -> SpatialEnvironmentDepthRecoveryPolicy,
     updateEnvironmentDepthRecoveryPolicy:
@@ -222,6 +229,23 @@ internal fun PrivateLayerControlPanel(
   var localVideoCadenceMode by remember { mutableStateOf(SpatialVideoCadencePanelBridge.current()) }
   var localSharedMediaLibrary by remember { mutableStateOf(sharedMediaLibraryStatus()) }
   var localConnectionHub by remember { mutableStateOf(connectionHubStatus()) }
+  var duplexPreflight by remember { mutableStateOf<EmbeddedDuplexStartPreflight?>(null) }
+  var duplexPreflightPending by remember { mutableStateOf(false) }
+  var duplexPreflightUnavailable by remember { mutableStateOf(false) }
+  var duplexPreflightSecondsRemaining by remember { mutableStateOf(0L) }
+  LaunchedEffect(duplexPreflight) {
+    while (duplexPreflight != null) {
+      delay(500)
+      val observed = duplexPreflight ?: break
+      if (!embeddedDuplexStartPreflightLive(observed)) {
+        duplexPreflight = null
+        duplexPreflightSecondsRemaining = 0L
+        break
+      }
+      duplexPreflightSecondsRemaining =
+          ((observed.sessionExpiresAtMs - System.currentTimeMillis()) / 1000L).coerceAtLeast(0L)
+    }
+  }
   var localEnvironmentDepthUnavailableWarning by
       remember { mutableStateOf(environmentDepthUnavailableWarning()) }
   var localEnvironmentDepthRecoveryPolicy by
@@ -1181,6 +1205,48 @@ internal fun PrivateLayerControlPanel(
       }
 
       if (currentPage == PrivateLayerPanelPage.ExternalControl) {
+        if (BuildConfig.EMBEDDED_DUPLEX_PRODUCT_INPUTS_ENABLED) {
+          Section("Embedded duplex preflight") {
+            Text(
+                "Checks the current signed pair session and retains this display's pre-Start intent. No route or media starts.",
+                style = MaterialTheme.typography.bodySmall,
+                color = LayerPanelMuted,
+            )
+            Button(
+                modifier = Modifier.fillMaxWidth(),
+                enabled = !duplexPreflightPending,
+                onClick = {
+                  duplexPreflightPending = true
+                  duplexPreflightUnavailable = false
+                  prepareEmbeddedDuplexStartPreflight().whenComplete { result, failure ->
+                    Handler(Looper.getMainLooper()).post {
+                      val accepted = if (failure == null && result != null &&
+                          embeddedDuplexStartPreflightLive(result)) result else null
+                      duplexPreflight = accepted
+                      duplexPreflightSecondsRemaining = accepted?.let {
+                        ((it.sessionExpiresAtMs - System.currentTimeMillis()) / 1000L)
+                            .coerceAtLeast(0L)
+                      } ?: 0L
+                      duplexPreflightUnavailable = accepted == null
+                      duplexPreflightPending = false
+                    }
+                  }
+                },
+            ) { Text("Check signed session for Start") }
+            if (duplexPreflightPending) {
+              Text("Checking current session…", color = LayerPanelMuted)
+            } else if (duplexPreflightUnavailable) {
+              Text("Preflight unavailable. Check enrollment, pair session, and display.",
+                  color = LayerPanelWarm)
+            }
+            duplexPreflight?.let { result ->
+              Text("Signed session checked · expires in ${duplexPreflightSecondsRemaining}s",
+                  color = LayerPanelAccent)
+              Text("Route ready: ${result.peerRouteProven} · media started: ${result.mediaEffectProven}",
+                  color = LayerPanelMuted)
+            }
+          }
+        }
         Section("Connection Hub") {
           Text(
               when {

@@ -42,4 +42,11 @@ public final class EmbeddedDuplexStartPreflight {
                 && enrollmentRecordSha256.equals(enrollmentSha)
                 && displayGeneration == generation;
     }
+
+    boolean sameLineage(EmbeddedDuplexStartPreflight other) {
+        return other != null && sessionId.equals(other.sessionId)
+                && sessionExpiresAtMs == other.sessionExpiresAtMs
+                && matches(other.runtimeConfigSha256, other.enrollmentRecordSha256,
+                        other.displayGeneration);
+    }
 }

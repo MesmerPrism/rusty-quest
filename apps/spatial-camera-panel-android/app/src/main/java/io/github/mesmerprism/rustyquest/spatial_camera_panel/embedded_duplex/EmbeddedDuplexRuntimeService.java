@@ -38,4 +38,8 @@ public final class EmbeddedDuplexRuntimeService {
         return EmbeddedDuplexProcessHost.forApplication(context)
                 .prepareStartPreflight(displayGeneration);
     }
+
+    public static boolean preflightLive(Context context, EmbeddedDuplexStartPreflight observed) {
+        return EmbeddedDuplexProcessHost.forApplication(context).preflightLive(observed);
+    }
 }

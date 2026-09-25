@@ -153,7 +153,7 @@ pub(crate) fn validate_common_lan_context_for_signing(
         || policy.max_context_age_ms == 0
         || policy.max_future_skew_ms > policy.max_context_age_ms
         || policy.max_context_ttl_ms == 0
-        || policy.max_context_ttl_ms > 120_000
+        || policy.max_context_ttl_ms > 240_000
         || context.schema_id.as_str() != COMMON_LAN_RECIPROCAL_ED25519_CONTEXT_SCHEMA
         || context.trust_policy_id.as_str() != policy.trust_policy_id
         || context.trust_policy_revision.get() != policy.trust_policy_revision
@@ -332,6 +332,24 @@ mod tests {
         );
         assert_ne!(first.context_sha256, second.context_sha256);
         assert_ne!(first.signing_bytes, second.signing_bytes);
+    }
+
+    #[test]
+    fn adopted_common_lan_context_ceiling_accepts_exact_boundary_only() {
+        let mut route = route();
+        route.installed_peer_index = 1;
+        let enrolled = enrolled();
+        let mut value = context_value("peer.a", "peer.b");
+        value["expires_at_ms"] = json!(9_500 + 240_000);
+        let exact = serde_json::from_value(value.clone()).expect("exact context");
+        validate_common_lan_context_for_signing(&route, &enrolled, &exact, policy("peer.b"))
+            .expect("second peer signs exact 240-second Common-LAN context");
+        value["expires_at_ms"] = json!(9_500 + 240_001);
+        let too_long = serde_json::from_value(value).expect("overlong context shape");
+        assert!(validate_common_lan_context_for_signing(
+            &route, &enrolled, &too_long, policy("peer.b")
+        )
+        .is_err());
     }
 
     #[test]
@@ -537,7 +555,7 @@ mod tests {
             now_ms: 10_000,
             max_context_age_ms: 5_000,
             max_future_skew_ms: 500,
-            max_context_ttl_ms: 120_000,
+            max_context_ttl_ms: 240_000,
         }
     }
 

@@ -1738,7 +1738,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     return result
   }
 
-  /** Shared pre-Start decision used by the panel and fixed debug CLI call. */
+  /** Shared pre-Start preflight used by the visible panel and fixed debug CLI call. */
   fun prepareEmbeddedDuplexStartPreflight(): CompletableFuture<
       io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex.EmbeddedDuplexStartPreflight> {
     val generation = embeddedDuplexAttachmentGeneration
@@ -1758,6 +1758,11 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     }
     return result
   }
+
+  fun embeddedDuplexStartPreflightLive(
+      observed: io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex.EmbeddedDuplexStartPreflight
+  ): Boolean = io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex
+      .EmbeddedDuplexRuntimeService.preflightLive(this, observed)
 
   private fun detachUninitializedEmbeddedDuplexDisplay() {
     val generation = embeddedDuplexAttachmentGeneration
@@ -3669,6 +3674,10 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
                     refreshConnectionHub = connectionHubWearerControlClient::refresh,
                     startConnectionHub = connectionHubWearerControlClient::start,
                     stopConnectionHub = connectionHubWearerControlClient::stop,
+                    prepareEmbeddedDuplexStartPreflight =
+                        ::prepareEmbeddedDuplexStartPreflight,
+                    embeddedDuplexStartPreflightLive =
+                        ::embeddedDuplexStartPreflightLive,
                     environmentDepthUnavailableWarning =
                         cameraHwbProjectionDepthPrerequisiteCoordinator::environmentDepthUnavailableWarning,
                     environmentDepthRecoveryPolicy =

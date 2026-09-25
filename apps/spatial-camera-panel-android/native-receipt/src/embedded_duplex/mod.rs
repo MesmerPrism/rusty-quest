@@ -10,6 +10,7 @@ mod identity_jni;
 mod java_bridge;
 pub(crate) mod packaged_config;
 pub(crate) mod packaged_route;
+pub(crate) mod pair_lifetime_policy;
 #[cfg(target_os = "android")]
 mod runtime_host;
 mod runtime_slot;

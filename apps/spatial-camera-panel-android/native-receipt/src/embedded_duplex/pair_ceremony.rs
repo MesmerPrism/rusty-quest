@@ -3,6 +3,10 @@
 //! operator supplies only the fixed `pair_ceremony` action.
 
 use super::*;
+use super::super::pair_lifetime_policy::{
+    CEREMONY_TTL_MS, CONTEXT_TTL_MS, ISSUE_BACKDATE_MS, PAIR_CREDENTIAL_TTL_MS,
+    PAIR_STATUS_TTL_MS,
+};
 use ed25519_dalek::{Signature, VerifyingKey};
 use rusty_manifold_peer::{
     ManifoldCommonLanPeerSessionProposal, ManifoldCommonLanReciprocalEd25519Context,
@@ -24,8 +28,6 @@ pub(super) const FRAME_MAGIC: &[u8] = b"RQPC1";
 const FRAME_SCHEMA: &str = "rusty.quest.embedded_duplex.pair_ceremony_frame.v1";
 const SIGN_DOMAIN: &[u8] = b"rusty.quest.embedded_duplex.pair_ceremony.v1\0";
 const FRAME_TTL_MS: u64 = 30_000;
-const CEREMONY_TTL_MS: u64 = 60_000;
-const CONTEXT_TTL_MS: u64 = 120_000;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Stage {
@@ -145,9 +147,9 @@ fn encode(host: &Host, kind: &str, ceremony_id: &str, payload: Value) -> Result<
         sender_peer_id: host.local_peer_id.clone(),
         receiver_peer_id: host.remote_peer_id.clone(),
         route_configuration_sha256: host.route_configuration_sha256.clone(),
-        issued_at_ms: now.saturating_sub(5_000),
+        issued_at_ms: now.saturating_sub(ISSUE_BACKDATE_MS),
         expires_at_ms: now
-            .checked_add(FRAME_TTL_MS - 5_000)
+            .checked_add(FRAME_TTL_MS - ISSUE_BACKDATE_MS)
             .ok_or("pair time overflow")?,
         payload,
     };
@@ -309,7 +311,7 @@ fn prime(host: &Host, now: u64, suffix: &str) -> Result<(), String> {
                 "key_id": key_id, "key_generation": 1, "algorithm": "ed25519",
                 "public_key_hex": public, "public_key_sha256": format!("sha256:{digest}"),
                 "valid_from_ms": now.saturating_sub(1000),
-                "expires_at_ms": now.checked_add(180_000).ok_or("pair time overflow")?,
+                "expires_at_ms": now.checked_add(PAIR_CREDENTIAL_TTL_MS).ok_or("pair time overflow")?,
                 "status": "active", "replaced_by_key_id": null
         }))
         .map_err(safe_decode)?;
@@ -361,7 +363,7 @@ fn prime(host: &Host, now: u64, suffix: &str) -> Result<(), String> {
                 "trust_domain": "trust.morphospace.peer", "roles": ["observer", "rendezvous"]},
             "status": {"$schema": PEER_STATUS_SCHEMA, "peer_id": peer.peer_id,
                 "status_revision": 1, "observed_at_ms": now,
-                "expires_at_ms": now.checked_add(120_000).ok_or("pair time overflow")?,
+                "expires_at_ms": now.checked_add(PAIR_STATUS_TTL_MS).ok_or("pair time overflow")?,
                 "availability": "ready", "capability_ids": [
                     "capability.rendezvous.ble", "capability.route.rust-direct-p2p",
                     "capability.topology.wifi-direct"]},
@@ -424,8 +426,9 @@ fn prepare(
         "initiator": binding(host, &host.local_peer_id, nonce_local, "initiator")?,
         "responder": binding(host, &host.remote_peer_id, nonce_remote, "responder")?,
         "transport": transport(host)?, "coordinator_epoch": 1,
-        "issued_at_ms": now.saturating_sub(5_000),
-        "expires_at_ms": now.checked_add(CONTEXT_TTL_MS - 5_000).ok_or("pair time overflow")?
+        "issued_at_ms": now.saturating_sub(ISSUE_BACKDATE_MS),
+        "expires_at_ms": now.checked_add(CONTEXT_TTL_MS - ISSUE_BACKDATE_MS)
+            .ok_or("pair time overflow")?
     }))
     .map_err(safe_decode)?;
     let context = host.authority.prepare_common_lan_context(draft)?;

@@ -14,6 +14,8 @@ import com.meta.spatial.runtime.PanelSceneObject
 import com.meta.spatial.toolkit.PanelRegistration
 import com.meta.spatial.toolkit.PanelSettings
 import java.io.Closeable
+import java.util.concurrent.CompletableFuture
+import io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex.EmbeddedDuplexStartPreflight
 
 internal data class SpatialPrivateLayerPanelRegistrationBindings(
     val layerOverride: () -> Float,
@@ -43,6 +45,8 @@ internal data class SpatialPrivateLayerPanelRegistrationBindings(
     val refreshConnectionHub: () -> ConnectionHubWearerControlSnapshot,
     val startConnectionHub: () -> ConnectionHubWearerControlSnapshot,
     val stopConnectionHub: () -> ConnectionHubWearerControlSnapshot,
+    val prepareEmbeddedDuplexStartPreflight: () -> CompletableFuture<EmbeddedDuplexStartPreflight>,
+    val embeddedDuplexStartPreflightLive: (EmbeddedDuplexStartPreflight) -> Boolean,
     val environmentDepthUnavailableWarning: () -> String?,
     val environmentDepthRecoveryPolicy: () -> SpatialEnvironmentDepthRecoveryPolicy,
     val updateEnvironmentDepthRecoveryPolicy:
@@ -146,6 +150,10 @@ internal object SpatialComposePanelRegistrationModule {
                       refreshConnectionHub = bindings.refreshConnectionHub,
                       startConnectionHub = bindings.startConnectionHub,
                       stopConnectionHub = bindings.stopConnectionHub,
+                      prepareEmbeddedDuplexStartPreflight =
+                          bindings.prepareEmbeddedDuplexStartPreflight,
+                      embeddedDuplexStartPreflightLive =
+                          bindings.embeddedDuplexStartPreflightLive,
                       environmentDepthUnavailableWarning =
                           bindings.environmentDepthUnavailableWarning,
                       environmentDepthRecoveryPolicy = bindings.environmentDepthRecoveryPolicy,

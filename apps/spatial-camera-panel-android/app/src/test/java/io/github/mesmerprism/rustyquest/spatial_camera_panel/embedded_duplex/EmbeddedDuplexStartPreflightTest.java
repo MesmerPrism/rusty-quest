@@ -13,11 +13,15 @@ public final class EmbeddedDuplexStartPreflightTest {
     private static final String ENROLLMENT = "c".repeat(64);
 
     private static EmbeddedDuplexPairStatus pair(boolean current) throws Exception {
+        return pair(current, 100000L);
+    }
+
+    private static EmbeddedDuplexPairStatus pair(boolean current, long expiry) throws Exception {
         return EmbeddedDuplexPairStatus.parse("{\"$schema\":\"rusty.quest.embedded_duplex.pair_status.v1\","
                 + "\"state\":\"" + (current ? "peer_session_current_route_unverified" : "in_progress") + "\","
                 + "\"session_id\":\"" + SESSION + "\","
                 + "\"native_current_session\":{\"current\":" + current + ","
-                + "\"session_id\":\"" + SESSION + "\",\"expires_at_ms\":100000},"
+                + "\"session_id\":\"" + SESSION + "\",\"expires_at_ms\":" + expiry + "},"
                 + "\"route_current\":false,\"media_effect_proven\":false}");
     }
 
@@ -32,6 +36,10 @@ public final class EmbeddedDuplexStartPreflightTest {
         assertTrue(decision.matches(CONFIG, ENROLLMENT, 7L));
         assertFalse(decision.matches(CONFIG, ENROLLMENT, 8L));
         assertFalse(decision.matches("d".repeat(64), ENROLLMENT, 7L));
+        assertTrue(decision.sameLineage(EmbeddedDuplexStartPreflight.prepare(
+                pair(true), CONFIG, ENROLLMENT, 7L)));
+        assertFalse(decision.sameLineage(EmbeddedDuplexStartPreflight.prepare(
+                pair(true, 100001L), CONFIG, ENROLLMENT, 7L)));
         assertFalse(decision.peerRouteProven);
         assertFalse(decision.mediaEffectProven);
     }
