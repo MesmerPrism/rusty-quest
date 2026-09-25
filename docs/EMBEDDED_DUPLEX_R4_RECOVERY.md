@@ -60,6 +60,19 @@ write-ahead marker and authority snapshot is synced before the next effect.
 Malformed, missing, stale, or cross-epoch evidence blocks Start and fresh
 bootstrap while retaining the journal for operator-visible recovery.
 
+The app-private `recovery-evidence.v1.json` sidecar is a storage contract for
+eight exact JSON snapshots: Broker adapter, Broker runtime, peer runtime, media
+product, owner progress, owner dispatch replay, product activation replay, and
+the request/receipt ledger. Each field carries a SHA-256 of its exact UTF-8
+bytes. The file has a bounded AtomicFile write, a strict UTF-8 read, and no
+caller-facing write API. This storage record alone does not restore authority.
+The phase marker and evidence must have the same positive revision, lineage
+digest, and expected provider epoch before native restore can inspect them.
+Because they are separate AtomicFiles, both evidence-ahead and marker-ahead
+crash states remain unresolved. The eventual writer must sync evidence first,
+then sync the matching phase marker with the same revision. Neither skew case
+proves no effect or a completed effect.
+
 Recovery reconstructs the same provider epoch through Manifold's existing
 adapter `restart_from_json`, Broker
 `restore_from_caller_attested_exclusive_evidence`, and peer
