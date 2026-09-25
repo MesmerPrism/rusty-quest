@@ -303,4 +303,26 @@ mod tests {
         damaged.last_verified_receipt_sha256 = None;
         assert!(damaged.recovery_for_lineage(&old).is_err());
     }
+
+    #[test]
+    fn crash_checkpoint_round_trip_preserves_uncertainty_and_rejects_extra_state() {
+        let lineage = "a".repeat(64);
+        let attempted = StartCheckpoint::prepared(lineage.clone())
+            .unwrap()
+            .advance(StartPhase::AdmissionAttempted, None)
+            .unwrap()
+            .advance(StartPhase::Admitted, Some("b".repeat(64)))
+            .unwrap()
+            .advance(StartPhase::DecisionAttempted, None)
+            .unwrap();
+        let stored = serde_json::to_string(&attempted).unwrap();
+        let restored: StartCheckpoint = serde_json::from_str(&stored).unwrap();
+        assert_eq!(restored, attempted);
+        assert_eq!(
+            restored.recovery_for_lineage(&lineage),
+            Ok(RecoveryAction::ReconcileDecision)
+        );
+        let damaged = stored.replace("\"phase\":", "\"unexpected\":true,\"phase\":");
+        assert!(serde_json::from_str::<StartCheckpoint>(&damaged).is_err());
+    }
 }
